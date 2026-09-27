@@ -100,26 +100,26 @@ Three planned mutants did not go red as first written, and each exposed a test t
 
 The two rows under BeatPlayerTests above that mutated `PickemupHost.adopt`, and the `tapFan never un-calls` row under TableModelTests, mutated Swift that is now the kernel's (`pk_api_adopt`, `pk_api_tap_fan`, I29 and I30); they are replaced by the adopt and `PK_API_FAN_UNCALLED` rows in this table, which mutate the code as it is now.
 
-### The open-items pass (`docs/OPEN_ITEMS.md`), compiled, NOT run
+### The open-items pass (`docs/OPEN_ITEMS.md`), seen red
 
-Added or changed 2026-09-27 with no simulator (another worker held the only free one): `build-for-testing` of `PickemupKitTests` and the `PickemupMessagesApp` build succeed, nothing more.
+Added or changed 2026-09-27 with no simulator; run and mutation-checked the same afternoon by the B2/B3 simulator worker on `pk-b2`, after merging, with the whole scheme at 42 tests, 0 failures before and after.
 The C behind each was seen red on `build/pk_beats_test`, `build/pk_twophone_test` or `build/ios_smoke` (`pickemup/c/tests/MUTATIONS.md`, the rows marked A12, A13, A14, A15 and I37).
-Each Swift mutant below is planned, one at a time; until its red run exists the test proves nothing.
+Each Swift mutant was applied alone by `mutation_check.sh` with `-only-testing:` on its test; the key rename was applied to `keys.h` and `strings_en.c` together (a rename in one alone does not compile), the library rebuilt before and after.
 
-| Test | Planned mutation | Must go red on |
+| Test | Mutation | Assertion that went red |
 |---|---|---|
-| BeatPlayerTests.testAPickedWildSlidesItsBandUp | `BeatPlayer.effects` skips `PK_BK_BAND` (its `case` arm removed) | "hidden under the foot until it starts", "the band is part way up" |
+| BeatPlayerTests.testAPickedWildSlidesItsBandUp | `BeatPlayer.effects` skips `PK_BK_BAND` (its `case` arm removed) | "hidden under the foot until it starts" (nil against 0), "the band is part way up" |
 | TableModelTests.testPlayStagesWithTheKernelsCaption | `TableModel.play` stages `after: .draw` | "a play collapses" |
 | TableModelTests.testATapOnAFanStagesTheCatchAndASecondTakesItBack | `TableModel.tapFan` stages a call `after: .play` | "a call alone does not collapse the drawer (I37)" |
 | BeatPlayerTests.testTheLobbyRowsFadeInAndOutOnTheKernelsBeats | `TableModel.join` plays nothing when the join does not start the game | "a join fades its row up" |
-| BeatPlayerTests.testTheLobbyRowsFadeInAndOutOnTheKernelsBeats | `BeatPlayer.effects` drops the leave's `roster.gone` edit | "the row that left fades where it stood" |
-| BeatPlayerTests.testTheLobbyRowsFadeInAndOutOnTheKernelsBeats | `BeatPlayer.effects` answers `open` 0 while the close-up is pending | "the rows below stand one lower" |
-| DevFlaggedTests.testTheCollapseSlideRunsOnTheKernelsPush | `CollapseSlide.pickemup` hands the kernel seconds, not milliseconds | "the whole travel at the flip, nothing at the end" (at 0.169s the push is the kernel's at 0ms) and "the host's spring, as the kernel has it" |
-| DevFlaggedTests.testTheCollapseSlideRunsOnTheKernelsPush | `CollapseSlide.pickemup` takes its steps from `PK_LAY_COLLAPSE_MS` | "the kernel's keyframes" |
-| DevFlaggedTests.testTheSendReminderSaysTheKernelsWordAfterItsFuse | the `SEND_HINT` key renamed in `keys.h` (the generated key list follows it) | "the reminder's word is the kernel's" |
+| BeatPlayerTests.testTheLobbyRowsFadeInAndOutOnTheKernelsBeats | `BeatPlayer.effects` drops the leave's `roster.gone` edit | "the row that left fades where it stood" (nil against 1) |
+| BeatPlayerTests.testTheLobbyRowsFadeInAndOutOnTheKernelsBeats | `BeatPlayer.effects` answers `open` 0 while the close-up is pending | "the rows below stand one lower" (0 against 1) |
+| DevFlaggedTests.testTheCollapseSlideRunsOnTheKernelsPush | `CollapseSlide.pickemup` hands the kernel seconds, not milliseconds | "the whole travel at the flip, nothing at the end" (499.9 against 0), "the host's spring, as the kernel has it" (500 against 89.46) |
+| DevFlaggedTests.testTheCollapseSlideRunsOnTheKernelsPush | `CollapseSlide.pickemup` takes its steps from `PK_LAY_COLLAPSE_MS` | "the kernel's keyframes" (600 against 120) |
+| DevFlaggedTests.testTheSendReminderSaysTheKernelsWordAfterItsFuse | the `SEND_HINT` key renamed in `keys.h` and `strings_en.c` (the generated key list follows it), library rebuilt | "the reminder's word is the kernel's" ("" against "Send") |
 
 What no unit test reaches in this pass: `BandSlide` drawing the band where PkFX says, `LobbyScreen` drawing the gone row and the lowered rows, the slide on a real drawer and the reminder's place under Messages' Send button.
 Each is a screenshot or a filmed take owed on a simulator (the band, the rows) or a phone in Messages (the slide, the reminder), with `dev.slide` and `dev.sendhint` in the App Group.
 
-Every other test in `PickemupKitTests` has a row above.
+Every test in `PickemupKitTests` now has a row above; nothing is left unmutated.
 What these tests do not reach is the conversation itself (`PickemupMessages/MessagesViewController.swift`: staging through the insert loop, send, cancel, receive); it has no test target, as uttt's has none, and what was seen of it inside Messages is in `pickemup/docs/SIM_VERIFICATION.md`.
