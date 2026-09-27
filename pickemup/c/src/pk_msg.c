@@ -102,6 +102,7 @@ void pk_msg_lobby(const PkMsg *m, PkLobby *l)
     memset(l, 0, sizeof *l);
     l->n_seats = m->n_seats;
     l->dm = m->dm;
+    l->group_cap = PK_LOBBY_GROUP_CAP;
     l->started = (uint8_t)started(m);
     l->rev = m->lobby_rev;
     l->newest = (uint8_t)(m->left || started(m) ? PK_SEAT_NONE : m->n_seats - 1);
@@ -112,7 +113,7 @@ int pk_msg_offered(const PkMsg *m, int seat)
 {
     PkLobby l;
     pk_msg_lobby(m, &l);
-    return pk_lobby_offered(&l, seat);
+    return msg_lobby_roster_offered(&l, seat);
 }
 
 int pk_msg_seat_of_tag(const PkMsg *m, const uint8_t tag[PK_TAG_LEN])
@@ -130,8 +131,8 @@ int pk_msg_join(PkMsg *m, const uint8_t tag[PK_TAG_LEN], const uint8_t *name, in
         if (msg_seat_same_name(&m->seat[s], name, name_len)) return PK_EROSTER;
     PkLobby l;
     pk_msg_lobby(m, &l);
-    if (pk_lobby_offered(&l, -1) != PK_LOBBY_JOIN) return PK_EREFUSED;
-    int s = pk_lobby_join(&l, PK_MAX_SEATS + 1);      /* a handle no row holds */
+    if (msg_lobby_roster_offered(&l, -1) != PK_LOBBY_JOIN) return PK_EREFUSED;
+    int s = msg_lobby_roster_join(&l, PK_MAX_SEATS + 1);      /* a handle no row holds */
     if (s < 0) return PK_EREFUSED;
     memcpy(m->seat[s].tag, tag, PK_TAG_LEN);
     m->seat[s].name_len = (uint8_t)name_len;
@@ -146,7 +147,7 @@ int pk_msg_leave(PkMsg *m, int seat)
 {
     PkLobby l;
     pk_msg_lobby(m, &l);
-    if (!pk_lobby_leave(&l, seat)) return PK_EREFUSED;
+    if (!msg_lobby_roster_leave(&l, seat)) return PK_EREFUSED;
     for (int s = seat; s + 1 < m->n_seats; s++) m->seat[s] = m->seat[s + 1];
     memset(&m->seat[m->n_seats - 1], 0, sizeof m->seat[0]);
     m->n_seats = l.n_seats;
@@ -172,7 +173,7 @@ int pk_msg_join_start(PkMsg *m, const uint8_t tag[PK_TAG_LEN], const uint8_t *na
 {
     PkLobby l;
     pk_msg_lobby(m, &l);
-    if (!pk_lobby_can_join_and_start(&l)) return PK_EREFUSED;
+    if (!msg_lobby_roster_can_join_and_start(&l)) return PK_EREFUSED;
     static PkMsg t;
     t = *m;
     int s = pk_msg_join(&t, tag, name, name_len);

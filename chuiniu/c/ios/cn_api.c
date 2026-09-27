@@ -327,8 +327,8 @@ const void *cn_api_table(void)
     t->offered = (uint8_t)cn_msg_offered(&S.m, S.me);
     CnLobby l;
     cn_msg_lobby(&S.m, &l);
-    t->can_exit = (uint8_t)cn_lobby_can_exit(&l, S.me);
-    t->can_join_start = (uint8_t)(S.me < 0 && cn_lobby_can_join_and_start(&l));
+    t->can_exit = (uint8_t)msg_lobby_roster_can_exit(&l, S.me);
+    t->can_join_start = (uint8_t)(S.me < 0 && msg_lobby_roster_can_join_and_start(&l));
     t->starter = S.m.starter;
     int snd = cn_msg_sender(&S.m);
     t->sender = snd >= 0 ? (uint8_t)snd : CN_SEAT_NONE;

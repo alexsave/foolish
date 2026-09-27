@@ -364,9 +364,9 @@ const void *tb_api_table(void)
     if (!live) {
         TbLobby l;
         tb_msg_lobby(m, &l);
-        t->offered = (uint8_t)tb_lobby_offered(&l, S.me);
-        t->can_exit = (uint8_t)tb_lobby_can_exit(&l, S.me);
-        t->can_join_start = (uint8_t)(S.me < 0 && tb_lobby_can_join_and_start(&l));
+        t->offered = (uint8_t)msg_lobby_roster_offered(&l, S.me);
+        t->can_exit = (uint8_t)msg_lobby_roster_can_exit(&l, S.me);
+        t->can_join_start = (uint8_t)(S.me < 0 && msg_lobby_roster_can_join_and_start(&l));
     }
     t->starter = m->starter;
     int snd = tb_msg_sender(m);

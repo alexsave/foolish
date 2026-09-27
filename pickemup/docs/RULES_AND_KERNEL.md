@@ -1082,7 +1082,7 @@ The lobby is foolish's minus the rules checkbox (D27); the verdict functions are
 6. **First turn in the start bubble** (D28): if the starter is seat 1, they may go straight on into their turn before sealing.
 7. A tapped WAITING bubble always renders as the lobby it says, even after the game has started (foolish round 7, `IMESSAGE_LOBBY_V3.md`).
 
-Lobby controls (`pk_lobby_offered`, one enum, exactly one answer per state, walked exhaustively by test 7.8): `START`, `INVITE` (I am in alone and the newest bubble is not mine), `WAITING`, `JOIN`, `FULL`; plus the orthogonal `pk_lobby_can_exit`.
+Lobby controls (`msg_lobby_roster_offered` in `shared/c/msg_lobby_roster`, one enum, exactly one answer per state, walked exhaustively by test 7.8): `START`, `INVITE` (I am in alone and the newest bubble is not mine), `WAITING`, `JOIN`, `FULL`; plus the orthogonal `msg_lobby_roster_can_exit`.
 
 **Which seat am I** is UTTT's three witnesses in UTTT's order (`utm_resolve`): the device's own record keyed by game id, then the tag, then the sender in a DM; and foolish's nickname picker as the fallback for 3+ players when all three fail (`IMESSAGE_GAME_DESIGN.md` section 6.3).
 In a lobby, a resolved seat counts only if the bubble in hand lists it (`msg_seat_resolve_in_lobby`).

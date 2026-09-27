@@ -20,12 +20,12 @@ SRC     := src/tb.c src/tb_code.c src/tb_plan.c src/tb_view.c src/tb_lobby.c src
            src/tb_say.c src/tb_beats.c i18n/strings_en.c \
            $(SHARED)/deal_rng.c $(SHARED)/sha256.c $(SHARED)/b32.c $(SHARED)/mixrad.c \
            $(SHARED)/text_util/text_util.c $(SHARED)/wire_check/wire_check.c \
-           $(SHARED)/msg_seat_tag/msg_seat_tag.c
+           $(SHARED)/msg_seat_tag/msg_seat_tag.c $(SHARED)/msg_lobby_roster/msg_lobby_roster.c
 HDR     := $(wildcard src/*.h) i18n/keys.h tests/tb_check.h \
            $(SHARED)/deal_rng.h $(SHARED)/sha256.h $(SHARED)/b32.h $(SHARED)/mixrad.h \
            $(SHARED)/test/check.h $(SHARED)/test/twophone.h $(SHARED)/text_util/text_util.h \
            $(SHARED)/wire_check/wire_check.h $(SHARED)/stats/seed_hash.h \
-           $(SHARED)/msg_seat_tag/msg_seat_tag.h
+           $(SHARED)/msg_seat_tag/msg_seat_tag.h $(SHARED)/msg_lobby_roster/msg_lobby_roster.h
 
 # One binary per test file; each takes an optional scale argument.
 TESTS   := tb_test tb_msg_test tb_fuzz tb_say_test tb_beats_test tb_twophone_test
@@ -69,11 +69,21 @@ SEAT_TAG := $(SEAT_TAG_SRC) $(SHARED)/msg_seat_tag/msg_seat_tag.h
 build/msg_seat_tag_test: $(SEAT_TAG) | build
 	$(CC) $(CFLAGS) $(SEAT_TAG_SRC) -o $@
 
-run: $(addprefix build/,$(TESTS)) build/check_test build/text_util_test build/wire_check_test build/msg_seat_tag_test build/ios_smoke
+# The shared lobby rules' own test (shared/c/msg_lobby_roster): capacity,
+# join, leave, the one control each viewer is offered, the start through the
+# game's constructor, and the roster's changes, all of which the lobby
+# adapter and tb_msg.c call.
+LOBBY_ROSTER_SRC := $(SHARED)/msg_lobby_roster/msg_lobby_roster.c $(SHARED)/msg_lobby_roster/msg_lobby_roster_test.c
+LOBBY_ROSTER := $(LOBBY_ROSTER_SRC) $(SHARED)/msg_lobby_roster/msg_lobby_roster.h
+build/msg_lobby_roster_test: $(LOBBY_ROSTER) | build
+	$(CC) $(CFLAGS) $(LOBBY_ROSTER_SRC) -o $@
+
+run: $(addprefix build/,$(TESTS)) build/check_test build/text_util_test build/wire_check_test build/msg_seat_tag_test build/msg_lobby_roster_test build/ios_smoke
 	./build/check_test
 	./build/text_util_test
 	./build/wire_check_test
 	./build/msg_seat_tag_test
+	./build/msg_lobby_roster_test
 	./build/tb_test
 	./build/tb_msg_test $(WIRE_GAMES)
 	./build/tb_fuzz $(FUZZ_GAMES)
@@ -99,11 +109,15 @@ build/asan_wire_check_test: $(WIRE_CHECK) | build
 build/asan_msg_seat_tag_test: $(SEAT_TAG) | build
 	$(CC) $(ASAN_FLAGS) $(SEAT_TAG_SRC) -o $@
 
-asan: $(addprefix build/asan_,$(TESTS)) build/asan_check_test build/asan_text_util_test build/asan_wire_check_test build/asan_msg_seat_tag_test build/asan_ios_smoke
+build/asan_msg_lobby_roster_test: $(LOBBY_ROSTER) | build
+	$(CC) $(ASAN_FLAGS) $(LOBBY_ROSTER_SRC) -o $@
+
+asan: $(addprefix build/asan_,$(TESTS)) build/asan_check_test build/asan_text_util_test build/asan_wire_check_test build/asan_msg_seat_tag_test build/asan_msg_lobby_roster_test build/asan_ios_smoke
 	./build/asan_check_test
 	./build/asan_text_util_test
 	./build/asan_wire_check_test
 	./build/asan_msg_seat_tag_test
+	./build/asan_msg_lobby_roster_test
 	./build/asan_tb_test
 	./build/asan_tb_msg_test 2
 	./build/asan_tb_fuzz 140

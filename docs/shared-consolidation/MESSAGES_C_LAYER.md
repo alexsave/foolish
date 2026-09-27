@@ -303,3 +303,26 @@ This is a lift candidate for the harness skeleton only (a small shared header wi
 - Each product's `*_msg_sender`, `*_common_moves`/`*_common_bubbles`, and `*_msg_encode`'s per-game-counter block - each reads or writes that product's own history representation directly and has no product-neutral core left once the shared roster/check/bounds pieces above are subtracted out.
 - The two-phone tests' steering and oracle logic (section 3) - by construction as product-specific as the rules documents they are transcribing.
 - `fio_msg_staged_atoms_before` (`foolish/c/ios/ios_api_msg.c:220`) - confirmed not a duplicate of any `msg_stage` decision; it is animation atom-bookkeeping with a different job entirely, so there is nothing here to consolidate with `msg_stage.h`.
+
+## Lift attempt: the roster-struct lobby (M8, done)
+
+`pk_lobby.c`, `cn_lobby.c` and `tb_lobby.c` were re-diffed function by function after renaming the prefixes.
+
+| Function | Verdict | Difference |
+| --- | --- | --- |
+| `*_lobby_cap` | identical | the group cap constant only (8 / 6 / 8); the DM cap is 2 in all three |
+| `*_lobby_new` | identical | none |
+| `*_lobby_seat_of` | identical | none |
+| `*_lobby_join` | identical | none |
+| `*_lobby_can_exit` | identical | none |
+| `*_lobby_leave` | identical | one comment |
+| `*_lobby_offered` | identical | comment wording only; the rule (newest sender stands aside while there is room, full table exempt) is the same |
+| `*_lobby_can_join_and_start` | identical | none |
+| `*_lobby_start` | differs by the constructor only | `pk__new(g, seed, n, seat, 0)` / `cn_new(g, seed, n)` / `tb_new(g, seed, n, seat)`; the gate (offered START) and "started only when the constructor succeeds" are the same |
+| `*_plan_lobby` and its `ev` helper | differs by the event type only | the product's event struct (pickemup's has a `card` field set to `PK_CARD_NONE`); the rule (leaves at old seats, then joins at new seats, by handle) is the same |
+| the struct | differs by one bound | `who[MAX_SEATS]` is 8 / 6 / 8 wide; nothing outside the kernel sees it (not in any structgen root) |
+
+No function differs by a rule, so everything moved.
+The rules live in `shared/c/msg_lobby_roster` over `MsgLobbyRoster` (which carries `group_cap`), with the game constructor as the one callback of `msg_lobby_roster_start` and the roster's changes as a product-neutral list from `msg_lobby_roster_plan`.
+Each product keeps a lobby adapter of about 27 lines: its group cap, its `*_LOBBY_*` constants as aliases (structgen reads them), `typedef MsgLobbyRoster *Lobby`, `*_lobby_start` (binds its constructor) and `*_plan_lobby` (builds its events).
+The three lobby files went from 297 lines of `.c` to 81.

@@ -77,10 +77,16 @@ const REPO = resolve(PRODUCT, '..');
  *                          verdict and the record / tag / sender / name seat
  *                          resolver under three products' message coders; in
  *                          its own directory for the wildcard reason too
+ *   msg_lobby_roster.h     shared/c/msg_lobby_roster, the lobby's rules (cap,
+ *                          join, leave, the one control offered, the start
+ *                          through the product's game constructor, the
+ *                          roster's changes) under three products' lobby
+ *                          adapters; in its own directory for the wildcard
+ *                          reason too
  */
 const SHARED_HEADERS = ['sha256.h', 'deal_rng.h', 'b32.h', 'mixrad.h', 'languages.h', 'msg_stage.h', 'motion_ruler.h',
     'check.h', 'twophone.h', 'text_util.h', 'wire_check.h', 'stats.h', 'seed_hash.h',
-    'msg_seat_tag.h'];
+    'msg_seat_tag.h', 'msg_lobby_roster.h'];
 
 /** Every C source and header in the repo, both products, excluding build output. */
 function kernelSources(): string[] {
@@ -154,6 +160,7 @@ test('the shared sources compile with no -I whatsoever', () => {
         'shared/c/stats/stats.c',
         'shared/c/stats/stats_test.c',  // stats.h, seed_hash.h
         'shared/c/msg_seat_tag/msg_seat_tag.c',
+        'shared/c/msg_lobby_roster/msg_lobby_roster.c',
         'foolish/c/src/game.c',
         'foolish/c/src/main_eval.c',    // stats/stats.h
         'werewolf/c/src/ww_game.c',
@@ -172,6 +179,10 @@ test('the shared sources compile with no -I whatsoever', () => {
         'pickemup/c/ios/pk_api.c',      // msg_seat_tag.h (via ../src/pk_msg.h)
         'chuiniu/c/ios/cn_api.c',       // msg_seat_tag.h (via ../src/cn_msg.h)
         'tallybones/c/ios/tb_api.c',    // msg_seat_tag.h (via ../src/tb_msg.h)
+        // The lobby adapters, which include the shared lobby rules directly.
+        'pickemup/c/src/pk_lobby.c',    // msg_lobby_roster.h (via pk_lobby.h)
+        'chuiniu/c/src/cn_lobby.c',     // msg_lobby_roster.h (via cn_lobby.h)
+        'tallybones/c/src/tb_lobby.c',  // msg_lobby_roster.h (via tb_lobby.h)
         'tallybones/c/src/tb_code.c',   // mixrad.h
         'uttt/c/src/uttt_say.c',        // text_util.h
         'pickemup/c/src/pk_say.c',      // text_util.h
@@ -237,8 +248,13 @@ test('every build system that compiles the kernel also compiles the shared sourc
     // message coders; uttt keeps its own three-witness resolver, and the card
     // kernel and the third product resolve seats a different way (name and
     // cached seat, no tag).
+    // msg_lobby_roster.c is the roster-struct lobby of the same three; uttt's
+    // lobby is two fixed seats (the joiner sits by making the first move), and
+    // the card kernel and the third product decide their lobbies over scalar
+    // arguments with no roster struct.
     const KERNEL = ['deal_rng.c', 'sha256.c'];
-    const NEWER = ['deal_rng.c', 'sha256.c', 'b32.c', 'mixrad.c', 'text_util.c', 'wire_check.c', 'msg_seat_tag.c'];
+    const NEWER = ['deal_rng.c', 'sha256.c', 'b32.c', 'mixrad.c', 'text_util.c', 'wire_check.c', 'msg_seat_tag.c',
+        'msg_lobby_roster.c'];
     const builds: Array<{ make: string; variable: string; shared: string[] }> = [
         { make: 'foolish/c', variable: 'CORE_SRC', shared: KERNEL },
         { make: 'foolish/foolyard', variable: 'KERNEL_SRC', shared: KERNEL },

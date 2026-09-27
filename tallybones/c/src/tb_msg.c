@@ -116,6 +116,7 @@ void tb_msg_lobby(const TbMsg *m, TbLobby *l)
     memset(l, 0, sizeof *l);
     l->n_seats = m->n_seats;
     l->dm = m->dm;
+    l->group_cap = TB_LOBBY_GROUP_CAP;
     l->started = (uint8_t)started(m);
     l->rev = m->lobby_rev;
     l->newest = (uint8_t)(m->left || started(m) ? TB_SEAT_NONE : m->n_seats - 1);
@@ -126,7 +127,7 @@ int tb_msg_offered(const TbMsg *m, int seat)
 {
     TbLobby l;
     tb_msg_lobby(m, &l);
-    return tb_lobby_offered(&l, seat);
+    return msg_lobby_roster_offered(&l, seat);
 }
 
 int tb_msg_seat_of_tag(const TbMsg *m, const uint8_t tag[TB_TAG_LEN])
@@ -144,8 +145,8 @@ int tb_msg_join(TbMsg *m, const uint8_t tag[TB_TAG_LEN], const uint8_t *name, in
         if (msg_seat_same_name(&m->seat[s], name, name_len)) return TB_EROSTER;
     TbLobby l;
     tb_msg_lobby(m, &l);
-    if (tb_lobby_offered(&l, -1) != TB_LOBBY_JOIN) return TB_EREFUSED;
-    int s = tb_lobby_join(&l, TB_MAX_SEATS + 1);      /* a handle no row holds */
+    if (msg_lobby_roster_offered(&l, -1) != TB_LOBBY_JOIN) return TB_EREFUSED;
+    int s = msg_lobby_roster_join(&l, TB_MAX_SEATS + 1);      /* a handle no row holds */
     if (s < 0) return TB_EREFUSED;
     memcpy(m->seat[s].tag, tag, TB_TAG_LEN);
     m->seat[s].name_len = (uint8_t)name_len;
@@ -160,7 +161,7 @@ int tb_msg_leave(TbMsg *m, int seat)
 {
     TbLobby l;
     tb_msg_lobby(m, &l);
-    if (!tb_lobby_leave(&l, seat)) return TB_EREFUSED;
+    if (!msg_lobby_roster_leave(&l, seat)) return TB_EREFUSED;
     for (int s = seat; s + 1 < m->n_seats; s++) m->seat[s] = m->seat[s + 1];
     memset(&m->seat[m->n_seats - 1], 0, sizeof m->seat[0]);
     m->n_seats = l.n_seats;
@@ -186,7 +187,7 @@ int tb_msg_join_start(TbMsg *m, const uint8_t tag[TB_TAG_LEN], const uint8_t *na
 {
     TbLobby l;
     tb_msg_lobby(m, &l);
-    if (!tb_lobby_can_join_and_start(&l)) return TB_EREFUSED;
+    if (!msg_lobby_roster_can_join_and_start(&l)) return TB_EREFUSED;
     static TbMsg t;
     t = *m;
     int s = tb_msg_join(&t, tag, name, name_len);

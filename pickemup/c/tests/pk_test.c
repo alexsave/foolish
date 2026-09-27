@@ -595,12 +595,12 @@ static void t_lobby_verdicts(void)
         for (int n = 1; n <= cap; n++)
             for (int newest = -1; newest < n; newest++) {
                 PkLobby l;
-                pk_lobby_new(&l, dm, 100);
-                for (int s = 1; s < n; s++) pk_lobby_join(&l, (uint16_t)(100 + s));
+                msg_lobby_roster_new(&l, dm, PK_LOBBY_GROUP_CAP, 100);
+                for (int s = 1; s < n; s++) msg_lobby_roster_join(&l, (uint16_t)(100 + s));
                 l.newest = newest < 0 ? PK_SEAT_NONE : (uint8_t)newest;
                 int starters = 0;
                 for (int me = -1; me < n; me++) {
-                    int o = pk_lobby_offered(&l, me);
+                    int o = msg_lobby_roster_offered(&l, me);
                     CHECK(o >= PK_LOBBY_START && o <= PK_LOBBY_FULL, "dm %d n %d newest %d me %d: one control",
                           dm, n, newest, me);
                     if (me < 0) CHECK(o == (n < cap ? PK_LOBBY_JOIN : PK_LOBBY_FULL), "outsider: join or full");
@@ -612,18 +612,18 @@ static void t_lobby_verdicts(void)
                         CHECK(o == PK_LOBBY_START, "dm %d: a full table: everyone may start", dm);
                 }
                 if (n >= 2) CHECK(starters >= 1, "dm %d n %d newest %d: somebody can start", dm, n, newest);
-                CHECK(pk_lobby_can_join_and_start(&l) == (n + 1 == cap),
+                CHECK(msg_lobby_roster_can_join_and_start(&l) == (n + 1 == cap),
                       "dm %d n %d: join-and-start only on the filling join", dm, n);
             }
     }
     /* the DM: the joiner fills it and may start in the same bubble */
     PkLobby d;
-    pk_lobby_new(&d, 1, 7);
-    CHECK(pk_lobby_can_join_and_start(&d), "DM: join-and-start offered");
-    int s = pk_lobby_join(&d, 8);
-    CHECK(s == 1 && pk_lobby_offered(&d, 1) == PK_LOBBY_START, "DM joiner offered START");
-    CHECK(pk_lobby_offered(&d, 0) == PK_LOBBY_START, "DM creator offered START");
-    CHECK(pk_lobby_join(&d, 9) < 0, "DM full");
+    msg_lobby_roster_new(&d, 1, PK_LOBBY_GROUP_CAP, 7);
+    CHECK(msg_lobby_roster_can_join_and_start(&d), "DM: join-and-start offered");
+    int s = msg_lobby_roster_join(&d, 8);
+    CHECK(s == 1 && msg_lobby_roster_offered(&d, 1) == PK_LOBBY_START, "DM joiner offered START");
+    CHECK(msg_lobby_roster_offered(&d, 0) == PK_LOBBY_START, "DM creator offered START");
+    CHECK(msg_lobby_roster_join(&d, 9) < 0, "DM full");
 }
 
 static void t_two_routes(void)
@@ -633,25 +633,25 @@ static void t_two_routes(void)
     seed_of(seed, 77);
     PkLobby a, b;
     PkGame ga, gb;
-    pk_lobby_new(&a, 0, 1);
-    pk_lobby_join(&a, 2);
-    pk_lobby_leave(&a, 1);
-    pk_lobby_join(&a, 3);
+    msg_lobby_roster_new(&a, 0, PK_LOBBY_GROUP_CAP, 1);
+    msg_lobby_roster_join(&a, 2);
+    msg_lobby_roster_leave(&a, 1);
+    msg_lobby_roster_join(&a, 3);
     CHECK(pk_lobby_start(&a, 0, seed, &ga), "join, leave, join, then the creator starts");
-    pk_lobby_new(&b, 1, 1);
-    pk_lobby_join(&b, 3);
+    msg_lobby_roster_new(&b, 1, PK_LOBBY_GROUP_CAP, 1);
+    msg_lobby_roster_join(&b, 3);
     CHECK(pk_lobby_start(&b, 1, seed, &gb), "join-and-start");
     CHECK(ga.n == 2 && gb.n == 2, "two seats each");
     CHECK(!memcmp(ga.hand, gb.hand, sizeof ga.hand) && !memcmp(ga.deck, gb.deck, sizeof ga.deck),
           "identical hands and deck");
     CHECK(ga.starter == 0 && gb.starter == 1, "the starters differ and the deal does not care");
     PkLobby x, before;
-    pk_lobby_new(&x, 0, 1);
-    pk_lobby_join(&x, 2);
-    pk_lobby_join(&x, 3);
+    msg_lobby_roster_new(&x, 0, PK_LOBBY_GROUP_CAP, 1);
+    msg_lobby_roster_join(&x, 2);
+    msg_lobby_roster_join(&x, 3);
     before = x;
-    pk_lobby_leave(&x, 1);
-    pk_lobby_join(&x, 4);
+    msg_lobby_roster_leave(&x, 1);
+    msg_lobby_roster_join(&x, 4);
     PkEvent ev[8];
     int n = pk_plan_lobby(&before, &x, ev, 8);
     CHECK(n == 2 && ev[0].kind == PK_EV_LOBBY_LEAVE && ev[0].seat == 1
@@ -662,15 +662,15 @@ static void t_leave(void)
 {
     TEST("7.8.3 leave compacts seats");
     PkLobby l;
-    pk_lobby_new(&l, 0, 10);
-    pk_lobby_join(&l, 11); pk_lobby_join(&l, 12); pk_lobby_join(&l, 13);
-    CHECK(pk_lobby_leave(&l, 1), "seat 1 leaves");
-    CHECK(l.n_seats == 3 && pk_lobby_seat_of(&l, 12) == 1 && pk_lobby_seat_of(&l, 13) == 2
-          && pk_lobby_seat_of(&l, 11) < 0, "later rows moved down");
-    CHECK(pk_lobby_leave(&l, 0) && pk_lobby_seat_of(&l, 12) == 0, "the new seat 0 is the dealer");
-    CHECK(pk_lobby_offered(&l, 0) == PK_LOBBY_START, "and may start (newest is the leaver)");
-    CHECK(pk_lobby_leave(&l, 0) && l.n_seats == 1, "down to one");
-    CHECK(!pk_lobby_can_exit(&l, 0) && pk_lobby_offered(&l, 0) == PK_LOBBY_INVITE,
+    msg_lobby_roster_new(&l, 0, PK_LOBBY_GROUP_CAP, 10);
+    msg_lobby_roster_join(&l, 11); msg_lobby_roster_join(&l, 12); msg_lobby_roster_join(&l, 13);
+    CHECK(msg_lobby_roster_leave(&l, 1), "seat 1 leaves");
+    CHECK(l.n_seats == 3 && msg_lobby_roster_seat_of(&l, 12) == 1 && msg_lobby_roster_seat_of(&l, 13) == 2
+          && msg_lobby_roster_seat_of(&l, 11) < 0, "later rows moved down");
+    CHECK(msg_lobby_roster_leave(&l, 0) && msg_lobby_roster_seat_of(&l, 12) == 0, "the new seat 0 is the dealer");
+    CHECK(msg_lobby_roster_offered(&l, 0) == PK_LOBBY_START, "and may start (newest is the leaver)");
+    CHECK(msg_lobby_roster_leave(&l, 0) && l.n_seats == 1, "down to one");
+    CHECK(!msg_lobby_roster_can_exit(&l, 0) && msg_lobby_roster_offered(&l, 0) == PK_LOBBY_INVITE,
           "the last one cannot leave, and is offered INVITE");
 }
 

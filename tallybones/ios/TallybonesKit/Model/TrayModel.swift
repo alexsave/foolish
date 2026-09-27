@@ -117,8 +117,8 @@ public struct CardModel: Equatable, Sendable, Identifiable {
     public var filled: Int { slots.compactMap { $0 }.count }
 }
 
-/// The lobby, as the kernel offers it to this phone (pk_lobby_offered's
-/// shape, copied into tb_lobby, T2).
+/// The lobby, as the kernel offers it to this phone (shared/c/msg_lobby_roster's
+/// msg_lobby_roster_offered).
 public struct LobbyModel: Equatable, Sendable {
     public enum Offer: Equatable, Sendable { case none, join, start, invite, waiting, full }
     public var offer: Offer

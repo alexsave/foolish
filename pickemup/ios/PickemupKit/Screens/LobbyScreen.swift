@@ -3,7 +3,7 @@
 // foolish's lobby with the Passing checkbox deleted, and with it the rules
 // gate (D27): the title, the numbered roster (lowest free seat first), who
 // deals, and one control, which is the kernel's verdict for this phone
-// (pk_lobby_offered): Join, Start (plus Leave while I may), the invitation
+// (msg_lobby_roster_offered): Join, Start (plus Leave while I may), the invitation
 // again when I am alone, or nothing but a line. Wood buttons, 52pt, square
 // corners. Creating stages the invitation by itself: there is no Send
 // invite button (UI.html "Lobby").

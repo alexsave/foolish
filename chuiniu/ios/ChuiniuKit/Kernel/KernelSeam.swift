@@ -117,7 +117,7 @@ public struct Reveal: Equatable, Sendable {
     }
 }
 
-/// The lobby's one control for this phone (pickemup's pk_lobby_offered).
+/// The lobby's one control for this phone (shared/c/msg_lobby_roster's msg_lobby_roster_offered).
 public enum LobbyOffer: Equatable, Sendable {
     case join, start, waiting, full, alone
 }
