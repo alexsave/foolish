@@ -14,8 +14,10 @@ public final class ChuiniuHost: ObservableObject {
     /// The newest roll this phone has played, so a screen change does not
     /// replay it (DiceRoll).
     @Published public var playedRoll = 0
-    /// A touch left a bubble to stage, captioned with the kernel's caption.
-    public var onStage: ((String) -> Void)?
+    /// A touch left a bubble to stage, captioned with the kernel's caption;
+    /// `collapse` for a move (the drawer goes down once it has rested), not
+    /// for a lobby bubble.
+    public var onStage: ((_ caption: String, _ collapse: Bool) -> Void)?
 
     public init(kernel: Kernel) {
         self.kernel = kernel
@@ -27,17 +29,18 @@ public final class ChuiniuHost: ObservableObject {
     /// Read the resident again.
     public func refresh() { table = kernel.table }
 
-    /// One kernel call; when it staged, hand the caption to the conversation.
-    private func act(_ staged: Bool) {
+    /// One kernel call; when it staged, hand the bubble's caption to the
+    /// conversation.
+    private func act(_ staged: Bool, collapse: Bool) {
         refresh()
-        if staged { onStage?(table.caption) }
+        if staged { onStage?(table.bubbleCaption, collapse) }
     }
 
-    public func join(name: String) { act(kernel.join(name: name)) }
-    public func start() { act(kernel.start()) }
-    public func raise(_ bid: Bid) { act(kernel.raise(quantity: bid.quantity, face: bid.face)) }
-    public func call() { act(kernel.call()) }
-    public func nextRound() { act(kernel.nextRound()) }
+    public func join(name: String) { act(kernel.join(name: name), collapse: false) }
+    public func start() { act(kernel.start(), collapse: false) }
+    public func raise(_ bid: Bid) { act(kernel.raise(quantity: bid.quantity, face: bid.face), collapse: true) }
+    public func call() { act(kernel.call(), collapse: true) }
+    public func nextRound() { act(kernel.nextRound(), collapse: false) }
 
     /// Adopt a bubble's link: 0, or the kernel's error (and the unreadable
     /// screen).
@@ -58,7 +61,7 @@ public struct ChuiniuRoot: View {
     public var body: some View {
         Group {
             if let e = host.unreadable {
-                UnreadableScreen(code: e, title: host.word(.gameTitle))
+                UnreadableScreen(title: host.word(.gameTitle), reason: host.kernel.errorText(e))
             } else {
                 switch host.table.phase {
                 case .lobby:
@@ -74,16 +77,15 @@ public struct ChuiniuRoot: View {
     }
 }
 
-/// A link the kernel refused. The error's words are the tie-together's
-/// (the kernel's error table); the scaffold shows the code.
+/// A link the kernel refused, in the kernel's words for why.
 public struct UnreadableScreen: View {
-    let code: Int
     let title: String
+    let reason: String
 
     public var body: some View {
         VStack(spacing: 8) {
             Text(title).font(.system(size: 17, weight: .heavy)).onFeltText()
-            Text(verbatim: "\(code)").font(.system(size: 13, weight: .semibold)).onFeltText(FColor.textDim)
+            Text(reason).font(.system(size: 13, weight: .semibold)).onFeltText(FColor.textDim)
             Spacer(minLength: 0)
         }
         .padding(22)

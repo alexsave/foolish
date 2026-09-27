@@ -78,4 +78,8 @@ const char *const CN_STRINGS_EN[CN_K_COUNT] = {
     [CN_K_RULE_4             ] = "Instead of raising, call the last bid. Every cup lifts. If the bid was there, the caller loses a die, and if not, the bidder does",
     [CN_K_RULE_5             ] = "The loser opens the next round with fresh dice. You cannot call an opening bid",
     [CN_K_RULE_6             ] = "Run out of dice and you are out. The last player with dice wins",
+    [CN_K_NAME_PROMPT        ] = "Your name",
+    [CN_K_BTN_NEXT           ] = "Next round",
+    [CN_K_STAMP_LOSES        ] = "Loses a die",
+    [CN_K_STAMP_OUT          ] = "OUT",
 };

@@ -50,6 +50,7 @@ public struct LobbyScreen: View {
         .padding(.top, 22)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(FeltBackground())
+        .onAppear { if name.isEmpty { name = host.kernel.currentNickname } }
     }
 
     @ViewBuilder private var controls: some View {
@@ -69,7 +70,7 @@ public struct LobbyScreen: View {
     private var footLine: String? {
         switch table.offered {
         case .waiting: return host.word(.lobbyWaiting)
-        case .alone:   return host.word(.lobbyAlone)
+        case .alone:   return host.word(.lobbyWaiting)
         case .full:    return host.word(.lobbyFull)
         case .join, .start: return nil
         }

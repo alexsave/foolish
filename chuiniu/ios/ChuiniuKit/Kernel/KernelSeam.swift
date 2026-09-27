@@ -6,15 +6,10 @@
 // reveal is `Reveal.counts`, every word is `Kernel.word` or a string field of
 // the model. The screens never import the kernel module.
 //
-// THE SCAFFOLD RUNS ON `FakeKernel` (below), which plays scripted data so
-// every screen can be looked at before chuiniu/c exists. The fake is the ONLY
-// place a fake value lives. The tie-together step:
-//   1. adds a `BridgeKernel: Kernel` beside this file that reads CChuiniu
-//      (cn_api.h) and Generated/ChuiniuKernel.swift into a TableModel;
-//   2. makes `KernelSeam.make()` return it;
-//   3. deletes `FakeKernel` and everything below its MARK.
-// Nothing outside this file changes, unless the kernel's model needs a field
-// the screens do not draw yet.
+// THE ONE KERNEL is `BridgeKernel` (beside this file), which reads CChuiniu
+// (chuiniu/c/ios/include/cn_api.h) through the generated readers
+// (Generated/ChuiniuKernel.swift) into a TableModel. The scaffold's scripted
+// FakeKernel is gone; a test builds real positions by driving the bridge.
 
 import Foundation
 
@@ -95,18 +90,24 @@ public struct Reveal: Equatable, Sendable {
     public var counts: [[Bool]]
     /// The bid that was called.
     public var bid: Bid
-    /// The kernel's words for the tally ("Five 3s on the table").
+    /// The kernel's words for the tally ("There were five").
     public var tally: String
+    /// The kernel's outcome line, once the call is sent (K8): "Bo calls. Four
+    /// 3s was true, Bo loses a die".
+    public var outcome: String
     /// The seat that loses a die.
     public var loser: Int
-    /// This phone may start the next round.
+    /// This phone may go on to the next round's table (its own new dice,
+    /// and the opener's menu). A look, never a move: nothing is sent.
     public var nextAllowed: Bool
 
-    public init(dice: [[Int]], counts: [[Bool]], bid: Bid, tally: String, loser: Int, nextAllowed: Bool) {
+    public init(dice: [[Int]], counts: [[Bool]], bid: Bid, tally: String, outcome: String, loser: Int,
+                nextAllowed: Bool) {
         self.dice = dice
         self.counts = counts
         self.bid = bid
         self.tally = tally
+        self.outcome = outcome
         self.loser = loser
         self.nextAllowed = nextAllowed
     }
@@ -130,10 +131,18 @@ public struct TableModel: Equatable, Sendable {
     public var bidText: String
     /// Who made the bid on the table.
     public var bidder: Int?
+    /// My staged raise, not yet sent (the committed table never shows it;
+    /// only the bubble it goes out in does), and the kernel's words for it.
+    public var stagedBid: Bid?
+    public var stagedBidText: String
     /// Every seat's dice, once the bid is called (and at the end).
     public var reveal: Reveal?
-    /// The kernel's caption: the headline under the table, and the bubble's.
+    /// The kernel's headline for this phone, under the table ("Your turn:
+    /// raise or call", "Send to bid four 3s").
     public var caption: String
+    /// The kernel's caption of the bubble the resident would stage now,
+    /// shown in the transcript on every phone ("Alex bid four 3s").
+    public var bubbleCaption: String
     /// My choices when it is my turn to bid; nil otherwise.
     public var menu: Menu?
     /// The lobby's control for this phone.
@@ -145,8 +154,9 @@ public struct TableModel: Equatable, Sendable {
     public var winner: Int?
 
     public init(phase: Phase, seats: [SeatModel], me: Int?, myDice: [Int], bid: Bid?, bidText: String,
-                bidder: Int?, reveal: Reveal?, caption: String, menu: Menu?, offered: LobbyOffer,
-                rollID: Int, winner: Int?) {
+                bidder: Int?, stagedBid: Bid? = nil, stagedBidText: String = "", reveal: Reveal?,
+                caption: String, bubbleCaption: String, menu: Menu?, offered: LobbyOffer, rollID: Int,
+                winner: Int?) {
         self.phase = phase
         self.seats = seats
         self.me = me
@@ -154,8 +164,11 @@ public struct TableModel: Equatable, Sendable {
         self.bid = bid
         self.bidText = bidText
         self.bidder = bidder
+        self.stagedBid = stagedBid
+        self.stagedBidText = stagedBidText
         self.reveal = reveal
         self.caption = caption
+        self.bubbleCaption = bubbleCaption
         self.menu = menu
         self.offered = offered
         self.rollID = rollID
@@ -163,26 +176,42 @@ public struct TableModel: Equatable, Sendable {
     }
 
     public static let empty = TableModel(phase: .lobby, seats: [], me: nil, myDice: [], bid: nil, bidText: "",
-                                         bidder: nil, reveal: nil, caption: "", menu: nil, offered: .waiting,
-                                         rollID: 0, winner: nil)
+                                         bidder: nil, reveal: nil, caption: "", bubbleCaption: "", menu: nil,
+                                         offered: .waiting, rollID: 0, winner: nil)
 }
 
-/// Every fixed word a screen shows. The kernel's string table answers; the
-/// scaffold's fake answers in English.
+/// Every fixed word a screen shows. The kernel's string table answers
+/// (cn_api_string, by key name).
 public enum Word: CaseIterable, Sendable {
     case gameTitle
-    case lobbyTitle, lobbyWaiting, lobbyFull, lobbyAlone
+    case lobbyTitle, lobbyWaiting, lobbyFull
     case join, start
     case raise, call, nextRound
-    case quantity, face
-    case loses, wins, out
+    case loses, out
     case namePrompt
+}
+
+/// The kernel's motion at one moment of a reveal (cn_api_beats_frame): what
+/// the reveal screen draws instead of its settled look while the call's
+/// beats play.
+public struct RevealMotion: Equatable, Sendable {
+    /// Every cup is up (the LIFT beat has run).
+    public var cupsUp: Bool
+    /// How many of the counting dice are lit so far, in seat order.
+    public var lit: Int
+    /// Every beat has run: draw the settled reveal.
+    public var done: Bool
+    public init(cupsUp: Bool, lit: Int, done: Bool) {
+        self.cupsUp = cupsUp
+        self.lit = lit
+        self.done = done
+    }
 }
 
 // MARK: - the kernel, as the screens and the conversation see it
 
 /// One call per touch. A method that answers `true` has left a bubble to
-/// stage (`stagedURL()`, captioned `table.caption`).
+/// stage (`stagedURL()`, captioned `table.bubbleCaption`).
 @MainActor
 public protocol Kernel: AnyObject {
     /// The resident game as the screens draw it, read fresh.
@@ -191,6 +220,14 @@ public protocol Kernel: AnyObject {
 
     /// This device's participant identity in the conversation.
     func me(_ participant: Data)
+    /// The nickname this device sits down under ("" for none).
+    func nickname(_ name: String)
+    /// The nickname it has now, for the name field to open on.
+    var currentNickname: String { get }
+    /// Who sent the tapped bubble `url` (nil clears the fact).
+    func sender(_ url: URL?, isDM: Bool, iSent: Bool)
+    /// The kernel's words for a refused link's error.
+    func errorText(_ code: Int) -> String
     /// A new lobby with me in seat 0.
     func newGame(dm: Bool) -> Bool
     /// The kernel's verdict on a nickname typed into the lobby.
@@ -206,6 +243,17 @@ public protocol Kernel: AnyObject {
     func adoptBubble(_ url: URL) -> Int
     /// The link of the resident game, to stage.
     func stagedURL() -> URL?
+    /// `url` is exactly the link my staged move writes: the resident is the
+    /// truth, and the link must not be read over it (pickemup's keepsDraft).
+    func keepsStaged(_ url: URL) -> Bool
+    /// How long my staged move's own beats run, in ms (the collapse waits
+    /// for them).
+    var stagedSettleMs: Int { get }
+    /// The reveal's motion `ms` after the newest plan began; nil when no
+    /// reveal is playing.
+    func revealMotion(atMs ms: Int) -> RevealMotion?
+    /// When the newest plan began (the adopt or the send that built it).
+    var motionStart: Date? { get }
     /// `url` went out: it is the authority (pickemup's didStartSending rule).
     func sent(_ url: URL)
     /// Messages' X on the staged bubble: the draft is taken back.
@@ -217,256 +265,7 @@ public protocol Kernel: AnyObject {
 }
 
 public enum KernelSeam {
-    /// The kernel the extension runs on. The tie-together step returns the
-    /// bridge here; until then, the scripted fake.
+    /// The kernel the extension runs on: the bridge.
     @MainActor
-    public static func make() -> Kernel {
-#if DEBUG
-        return FakeKernel(scene: ChuiniuDev.scene ?? .lobby)
-#else
-        return FakeKernel(scene: .lobby)
-#endif
-    }
-}
-
-// MARK: - FakeKernel: scripted data, deleted by the tie-together step
-//
-// EVERY VALUE BELOW IS A STAND-IN. The dice are a fixed table, the menu's
-// arithmetic and the reveal's tally are placeholders so the screens respond
-// to a touch, and the words are English literals. None of it is the rules
-// (chuiniu/c is), and nothing outside this section may read or copy it.
-
-@MainActor
-public final class FakeKernel: Kernel {
-    public enum Scene: String, CaseIterable, Sendable {
-        case lobby, invited, bidding, waiting, revealed, over
-    }
-
-    private var names = ["Alex", "Bo", "Cy", "Dee"]
-    private var diceLeft = [5, 5, 5, 5]
-    private var phase: Phase = .lobby
-    private var joined = true
-    private var turn = 0
-    private var bid: Bid?
-    private var bidder: Int?
-    private var round = 0
-    private var reveal: Reveal?
-    private var stagedN = 0
-    private var mySeat = 0
-
-    /// A fixed table of rolls, one row per round, one entry per seat.
-    private static let rolls: [[[Int]]] = [
-        [[3, 1, 5, 3, 6], [2, 3, 3, 4, 1], [6, 6, 2, 5, 3], [1, 4, 4, 2, 5]],
-        [[2, 2, 6, 1, 4], [5, 3, 1, 6, 6], [4, 4, 3, 2, 2], [3, 6, 5, 5, 1]],
-        [[6, 5, 1, 1, 2], [4, 2, 2, 3, 5], [1, 3, 6, 4, 4], [5, 5, 2, 6, 3]],
-    ]
-
-    public init(scene: Scene = .lobby) {
-        switch scene {
-        case .lobby:
-            joined = true
-        case .invited:
-            joined = false
-            names = ["Bo", "Cy", "Dee"]
-            diceLeft = [5, 5, 5]
-            mySeat = -1
-        case .bidding:
-            phase = .bidding
-            bid = Bid(quantity: 4, face: 3)
-            bidder = 3
-            turn = mySeat
-        case .waiting:
-            phase = .bidding
-            bid = Bid(quantity: 5, face: 3)
-            bidder = mySeat
-            turn = 1
-        case .revealed:
-            phase = .bidding
-            bid = Bid(quantity: 5, face: 3)
-            bidder = 3
-            turn = mySeat
-            _ = call()
-        case .over:
-            diceLeft = [2, 0, 0, 0]
-            phase = .over
-            round = 1
-            reveal = revealFor(Bid(quantity: 2, face: 6), caller: 1, bidderSeat: mySeat)
-        }
-    }
-
-    private func dice(_ seat: Int) -> [Int] {
-        Array(Self.rolls[round % Self.rolls.count][seat].prefix(diceLeft[seat]))
-    }
-
-    private func nextAlive(after s: Int) -> Int {
-        var i = s
-        repeat { i = (i + 1) % names.count } while diceLeft[i] == 0 && i != s
-        return i
-    }
-
-    private static let numberWords = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight",
-                                      "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
-                                      "sixteen", "seventeen", "eighteen", "nineteen", "twenty"]
-
-    private static func words(_ b: Bid) -> String {
-        let n = b.quantity < numberWords.count ? numberWords[b.quantity] : "\(b.quantity)"
-        return "\(n) \(b.face)s"
-    }
-
-    private var totalDice: Int { diceLeft.reduce(0, +) }
-
-    private var menu: Menu? {
-        guard phase == .bidding, turn == mySeat else { return nil }
-        var mins = [Int](repeating: 0, count: 7)
-        if let b = bid {
-            for f in 2...6 { mins[f] = f > b.face ? b.quantity : b.quantity + 1 }
-            let first = (2...6).min { (mins[$0], $0) < (mins[$1], $1) } ?? 2
-            return Menu(minimumRaise: Bid(quantity: mins[first], face: first), minQuantityByFace: mins,
-                        maxQuantity: totalDice, callAllowed: true)
-        }
-        for f in 2...6 { mins[f] = 1 }
-        return Menu(minimumRaise: Bid(quantity: 1, face: 2), minQuantityByFace: mins,
-                    maxQuantity: totalDice, callAllowed: false)
-    }
-
-    private var caption: String {
-        switch phase {
-        case .lobby:
-            return "\(names[0]) wants to play \(word(.gameTitle))"
-        case .bidding:
-            guard let b = bid, let by = bidder else { return turn == mySeat ? "Your bid" : "\(names[turn]) to bid" }
-            let who = by == mySeat ? "You" : names[by]
-            let next = turn == mySeat ? "your turn" : "\(names[turn]) to bid"
-            return "\(who) bid \(Self.words(b)), \(next)"
-        case .revealed:
-            guard let r = reveal else { return "" }
-            return "\(r.tally). \(r.loser == mySeat ? "You lose" : "\(names[r.loser]) loses") a die"
-        case .over:
-            let w = diceLeft.firstIndex { $0 > 0 } ?? 0
-            return w == mySeat ? "You win" : "\(names[w]) wins"
-        }
-    }
-
-    public var table: TableModel {
-        let seats = names.indices.map { s in
-            SeatModel(id: s, name: joined && s == mySeat ? "\(names[s]) (You)" : names[s], dice: diceLeft[s],
-                      alive: diceLeft[s] > 0, isTurn: phase == .bidding && s == turn, isMe: joined && s == mySeat)
-        }
-        return TableModel(phase: phase, seats: seats, me: joined ? mySeat : nil,
-                          myDice: phase == .lobby || !joined ? [] : dice(mySeat),
-                          bid: bid, bidText: bid.map(Self.words) ?? "", bidder: bidder,
-                          reveal: reveal, caption: caption, menu: menu,
-                          offered: !joined ? .join : (mySeat == 0 ? .start : .waiting), rollID: round + 1,
-                          winner: phase == .over ? diceLeft.firstIndex { $0 > 0 } : nil)
-    }
-
-    public func word(_ w: Word) -> String {
-        switch w {
-        case .gameTitle: return "Chui Niu"
-        case .lobbyTitle: return "Chui Niu"
-        case .lobbyWaiting: return "Waiting for the host to start"
-        case .lobbyFull: return "The table is full"
-        case .lobbyAlone: return "Waiting for someone to join"
-        case .join: return "Join"
-        case .start: return "Start"
-        case .raise: return "Raise"
-        case .call: return "Call"
-        case .nextRound: return "Next round"
-        case .quantity: return "How many"
-        case .face: return "Of"
-        case .loses: return "loses a die"
-        case .wins: return "wins"
-        case .out: return "OUT"
-        case .namePrompt: return "Your name"
-        }
-    }
-
-    public func me(_ participant: Data) {}
-    public func newGame(dm: Bool) -> Bool { stagedN += 1; return true }
-    public func nameAccepted(_ name: String) -> Bool { !name.isEmpty && name.count <= 16 }
-    public func join(name: String) -> Bool {
-        guard !joined else { return false }
-        names.append(name.isEmpty ? "Alex" : name)
-        diceLeft.append(5)
-        mySeat = names.count - 1
-        joined = true
-        stagedN += 1
-        return true
-    }
-
-    public func start() -> Bool {
-        guard phase == .lobby else { return false }
-        phase = .bidding
-        turn = mySeat
-        stagedN += 1
-        return true
-    }
-
-    public func raise(quantity: Int, face: Int) -> Bool {
-        guard let m = menu, let least = m.minQuantity(face: face), quantity >= least else { return false }
-        bid = Bid(quantity: quantity, face: face)
-        bidder = mySeat
-        // the scripted table answers at once: the next seat raises by one
-        let bo = nextAlive(after: mySeat)
-        if quantity + 1 <= totalDice {
-            bid = Bid(quantity: quantity + 1, face: face)
-            bidder = bo
-            turn = mySeat
-        } else {
-            turn = bo
-        }
-        stagedN += 1
-        return true
-    }
-
-    private func revealFor(_ b: Bid, caller: Int, bidderSeat: Int) -> Reveal {
-        let all = names.indices.map { dice($0) }
-        let counts = all.map { $0.map { $0 == b.face || $0 == 1 } }
-        let n = counts.joined().filter { $0 }.count
-        let loser = n >= b.quantity ? caller : bidderSeat
-        let nw = n < Self.numberWords.count ? Self.numberWords[n] : "\(n)"
-        return Reveal(dice: all, counts: counts, bid: b, tally: "\(nw.capitalized) \(b.face)s on the table",
-                      loser: loser, nextAllowed: phase != .over)
-    }
-
-    public func call() -> Bool {
-        guard let b = bid, let by = bidder, menu?.callAllowed == true else { return false }
-        reveal = revealFor(b, caller: mySeat, bidderSeat: by)
-        phase = .revealed
-        stagedN += 1
-        return true
-    }
-
-    public func nextRound() -> Bool {
-        guard phase == .revealed, let r = reveal else { return false }
-        diceLeft[r.loser] = max(0, diceLeft[r.loser] - 1)
-        if diceLeft.filter({ $0 > 0 }).count <= 1 {
-            phase = .over
-            return true
-        }
-        round += 1
-        reveal = nil
-        bid = nil
-        bidder = nil
-        turn = diceLeft[r.loser] > 0 ? r.loser : nextAlive(after: r.loser)
-        phase = .bidding
-        if turn != mySeat {
-            // the scripted opener
-            bid = Bid(quantity: 2, face: 4)
-            bidder = turn
-            turn = mySeat
-        }
-        stagedN += 1
-        return true
-    }
-
-    public func adoptBubble(_ url: URL) -> Int { url.host == "chuiniu.invalid" ? 0 : -1 }
-    public func stagedURL() -> URL? { URL(string: "https://chuiniu.invalid/fake?n=\(stagedN)") }
-    public func sent(_ url: URL) {}
-    public func cancelStaged() {}
-    public func sameGame(_ a: URL, _ b: URL) -> Bool { a.host == b.host }
-    public func isNewer(_ a: URL, than b: URL) -> Bool { Self.n(a) > Self.n(b) }
-    private static func n(_ u: URL) -> Int {
-        Int(URLComponents(url: u, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "n" }?.value ?? "") ?? 0
-    }
+    public static func make() -> Kernel { BridgeKernel() }
 }

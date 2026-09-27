@@ -13,11 +13,18 @@
 //   - MY OWN BUBBLE COMING BACK THROUGH didReceive IS NOT AN ARRIVAL.
 //   - markSent NEVER REBASES BACKWARDS.
 //   - ONE MSSession PER GAME.
-//   - WHAT WENT OUT IS THE AUTHORITY (Kernel.sent).
-//
-// Not here yet (the tie-together's): the draft-keeping of pickemup's resident
-// slot, seat records and nicknames, the collapse-after-settle timing, and the
-// sender identity of a tapped bubble. The scaffold stages every move at once.
+//   - WHAT WENT OUT IS THE AUTHORITY (Kernel.sent): the staged move is
+//     committed only when the sent bytes are exactly its link, and anything
+//     else is adopted as sent.
+//   - THE RESIDENT IS ONE SLOT, and decoding is adopting. A staged move of
+//     mine is never re-read from its own staged link (`keepsStaged`), which
+//     would drop it.
+//   - WHO SENT THE TAPPED BUBBLE is handed to the kernel (cn_api_sender), one
+//     witness of the seat resolver; the seat records and the nickname are
+//     the kernel's bytes, kept by BridgeKernel.
+//   - A MOVE STAGES ONCE IT HAS RESTED: the kernel's staged beats run, the
+//     expanded drawer collapses, then the bubble goes in (pickemup's
+//     collapse-after-settle, DECISIONS I12). A lobby bubble goes in at once.
 
 import Messages
 import ChuiniuKit
@@ -35,6 +42,8 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     /// The link sitting in the input field, which nobody has sent yet.
     private var staged: URL?
+    /// That bubble's own url as Messages hands it back.
+    private var draftURL: URL?
     /// The last link this device SENT.
     private var sent: URL?
     /// A bubble that arrived while we were up.
@@ -51,7 +60,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         if ChuiniuDev.empty { return }
 #endif
         view.backgroundColor = .clear
-        host.onStage = { [weak self] caption in self?.stageResident(caption: caption) }
+        host.onStage = { [weak self] caption, collapse in self?.stageResident(caption: caption, collapse: collapse) }
         let h = UIHostingController(rootView: ChuiniuRoot(host: host))
         h.view.backgroundColor = .clear
         h.sizingOptions = []
@@ -138,7 +147,7 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func didSelect(_ message: MSMessage, conversation: MSConversation) {
         super.didSelect(message, conversation: conversation)
-        if let u = message.url, u == staged || u == sent { return }
+        if let u = message.url, u == draftURL || u == sent { return }
         if let t = becameActiveAt, Date().timeIntervalSince(t) < 1 { return }
         unbound = false
         arrived = nil
@@ -160,25 +169,34 @@ final class MessagesViewController: MSMessagesAppViewController {
         super.didStartSending(message, conversation: conversation)
         voidPendingStage()
         guard let url = message.url else { return }
-        // THE SENT BYTES ARE THE AUTHORITY
+        // THE SENT BYTES ARE THE AUTHORITY: my staged move is committed only
+        // when it is exactly what went (BridgeKernel.sent)
         host.kernel.sent(url)
         markSent(url)
-        if url == staged { staged = nil }
+        if message.url == draftURL { draftURL = nil; staged = nil }
         host.refresh()
         if presentationStyle != .compact || unbound { dismiss() }
     }
 
     override func didCancelSending(_ message: MSMessage, conversation: MSConversation) {
         super.didCancelSending(message, conversation: conversation)
-        guard message.url == staged else { return }   // a replaced draft
+        guard message.url == draftURL, let url = staged else { return }   // a replaced draft
+        draftURL = nil
         staged = nil
         voidPendingStage()
-        host.kernel.cancelStaged()
-        host.refresh()
+        if host.kernel.keepsStaged(url) {
+            host.kernel.cancelStaged()
+            host.refresh()
+        } else {
+            present(conversation)
+        }
     }
 
     override func didTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
         super.didTransition(to: presentationStyle)
+        let waiters = transitionWaiters
+        transitionWaiters.removeAll()
+        for seq in waiters.keys.sorted() { waiters[seq]?.resume() }
         if presentationStyle == .compact { act(loop.compact()) }
     }
 
@@ -192,7 +210,14 @@ final class MessagesViewController: MSMessagesAppViewController {
             create(in: conversation)
             return
         }
+        if host.kernel.keepsStaged(url) {
+            // my staged move is still the resident's: never read over it
+            host.refresh()
+            return
+        }
         guard host.adopt(url) == 0 else { return }
+        // A SUPERSEDED STAGE IS VOID (pickemup I35): a stage still resting
+        // before its insert must never put the old bubble in the field
         voidPendingStage()
     }
 
@@ -217,19 +242,28 @@ final class MessagesViewController: MSMessagesAppViewController {
         sent = url
     }
 
+    /// Who this device is: its participant id, and who sent the tapped
+    /// bubble.
     private func identify(_ conversation: MSConversation) {
         let id = withUnsafeBytes(of: conversation.localParticipantIdentifier.uuid) { Data($0) }
         host.kernel.me(id)
+        if let sel = conversation.selectedMessage, let url = sel.url {
+            host.kernel.sender(url, isDM: conversation.remoteParticipantIdentifiers.count == 1,
+                               iSent: sel.senderParticipantIdentifier == conversation.localParticipantIdentifier)
+        } else {
+            host.kernel.sender(nil, isDM: false, iSent: false)
+        }
     }
 
     /// A new lobby, me in seat 0, and its invitation staged once the drawer
     /// is up.
     private func create(in conversation: MSConversation) {
+        identify(conversation)
         guard host.kernel.newGame(dm: conversation.remoteParticipantIdentifiers.count == 1) else { return }
         session = nil
         sessionGame = nil
         host.refresh()
-        stageResident(caption: host.table.caption)
+        stageResident(caption: host.table.bubbleCaption, collapse: false)
     }
 
     // MARK: staging
@@ -251,17 +285,20 @@ final class MessagesViewController: MSMessagesAppViewController {
         return s
     }
 
-    private func stageResident(caption: String) {
+    /// Put the resident into the input field: baked now, from the resident,
+    /// before anything can load a different one into the kernel's slot.
+    private func stageResident(caption: String, collapse: Bool) {
         whenReady { [weak self] in
             guard let self, let conversation = self.activeConversation else { return }
-            self.stage(caption: caption, in: conversation)
+            self.stage(caption: caption, collapse: collapse, in: conversation)
         }
     }
 
-    private func stage(caption: String, in conversation: MSConversation) {
+    private func stage(caption: String, collapse: Bool, in conversation: MSConversation) {
         guard let url = host.kernel.stagedURL() else { return }
         voidPendingStage()
         let generation = stageGeneration
+        let settleMs = host.kernel.stagedSettleMs
 
         let message = MSMessage(session: sessionFor(url, conversation))
         message.url = url
@@ -272,7 +309,24 @@ final class MessagesViewController: MSMessagesAppViewController {
         message.layout = layout
         message.summaryText = caption
         staged = url
-        insert(message, generation: generation, in: conversation)
+        draftURL = message.url
+
+        guard collapse, presentationStyle != .compact else {
+            insert(message, generation: generation, in: conversation)
+            return
+        }
+        // THE DRAWER MOVES ONCE THE MOVE HAS RESTED: the kernel's staged
+        // beats, then the collapse, then the bubble goes in.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(max(settleMs, 0)) * 1_000_000)
+            guard let self, self.stageGeneration == generation else { return }
+            if self.presentationStyle != .compact {
+                self.requestPresentationStyle(.compact)
+                await self.awaitTransitionSettled()
+            }
+            guard self.stageGeneration == generation else { return }
+            self.insert(message, generation: generation, in: conversation)
+        }
     }
 
     /// Every waiter of the stage in progress sees a newer generation and
@@ -323,6 +377,22 @@ final class MessagesViewController: MSMessagesAppViewController {
         DispatchQueue.main.asyncAfter(deadline: .now() + InsertStaging.silenceSeconds) { [weak self] in
             guard let self, self.stageGeneration == s.generation else { return }
             self.act(self.loop.silence(try: t, compact: self.presentationStyle == .compact))
+        }
+    }
+
+    private var transitionWaiters: [Int: CheckedContinuation<Void, Never>] = [:]
+    private var transitionWaiterSeq = 0
+
+    @MainActor
+    private func awaitTransitionSettled(timeoutNs: UInt64 = 1_200_000_000) async {
+        transitionWaiterSeq += 1
+        let id = transitionWaiterSeq
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            transitionWaiters[id] = c
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: timeoutNs)
+                if let waiter = self?.transitionWaiters.removeValue(forKey: id) { waiter.resume() }
+            }
         }
     }
 }

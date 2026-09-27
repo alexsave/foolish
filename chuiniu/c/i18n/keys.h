@@ -106,7 +106,12 @@
     X(RULE_3,              0, 0)                                                 \
     X(RULE_4,              0, 0)                                                 \
     X(RULE_5,              0, 0)                                                 \
-    X(RULE_6,              0, 0)
+    X(RULE_6,              0, 0)                                                 \
+    /* the host's fixed labels, read by key through cn_api_string          */ \
+    X(NAME_PROMPT,        16, 0)  /* the nickname field's placeholder         */ \
+    X(BTN_NEXT,           12, 0)  /* after a reveal: look at the next round   */ \
+    X(STAMP_LOSES,        12, 0)  /* the loser's row at a reveal              */ \
+    X(STAMP_OUT,           8, 0)  /* a seat with no dice                      */
 
 #define CN_KEY_ENUM(name, max, empty) CN_K_##name,
 typedef enum { CN_KEYS(CN_KEY_ENUM) CN_K_COUNT } CnKey;

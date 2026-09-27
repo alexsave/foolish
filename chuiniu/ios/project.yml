@@ -3,12 +3,9 @@
 # The .xcodeproj is a BUILD ARTIFACT - never hand-edit it, never commit it
 # (git-ignored by chuiniu/ios/.gitignore, as pickemup's is).
 #
-# THE SCAFFOLD BUILDS WITHOUT THE KERNEL. Every kernel read goes through ONE
-# seam, ChuiniuKit/Kernel/KernelSeam.swift, whose FakeKernel plays scripted
-# data. The tie-together step uncomments the two KERNEL lines below (the
-# Generated/ source path and the xcframework dependency) and the two header
-# search paths, adds the real bridge beside the seam, and the bootstrap
-# becomes pickemup's:
+# Every kernel read goes through ONE seam, ChuiniuKit/Kernel/KernelSeam.swift,
+# which returns ChuiniuKit/Kernel/BridgeKernel.swift (the CChuiniu bridge).
+# The bootstrap is pickemup's:
 #   1. make -C ../c ios-lib      # writes ios/vendor/Chuiniu.xcframework and ios/Generated/
 #   2. xcodegen generate
 #   3. xcodebuild -scheme ChuiniuMessagesApp -destination 'generic/platform=iOS Simulator' build
@@ -106,11 +103,10 @@ targets:
     platform: iOS
     sources:
       - path: ChuiniuKit
-      # KERNEL (tie-together uncomments): the kernel's readers and string
-      # tables, written by `make -C ../c ios-lib` (structgen, datagen) beside
-      # the library they belong to. A build output: git-ignored.
-      # - path: Generated/ChuiniuKernel.swift
-      #
+      # KERNEL: the kernel's readers and string tables, written by
+      # `make -C ../c ios-lib` (structgen, datagen) beside the library they
+      # belong to. A build output: git-ignored.
+      - path: Generated
       # The shared Messages plumbing, named one file at a time as pickemup
       # does: when an insert may go and what its silence means, and the DEBUG
       # dev-file reader.
@@ -120,19 +116,18 @@ targets:
       # pickemup's baked JPEGs, copied into ChuiniuKit/Resources; nothing
       # renders a texture at run time.
       - path: ../../shared/swift/Textures
-    # KERNEL (tie-together uncomments): the static library, module CChuiniu.
-    # dependencies:
-    #   # STATIC (embed:false): the linker pulls it in per object.
-    #   - framework: vendor/Chuiniu.xcframework
-    #     embed: false
+    # KERNEL: the static library, module CChuiniu.
+    dependencies:
+      # STATIC (embed:false): the linker pulls it in per object.
+      - framework: vendor/Chuiniu.xcframework
+        embed: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: cards.chuiniu.kit
         GENERATE_INFOPLIST_FILE: "YES"
-        # KERNEL (tie-together uncomments): the clang module map that lets
-        # Swift `import CChuiniu`, copied into BUILT_PRODUCTS_DIR/include by
-        # the xcframework.
-        # HEADER_SEARCH_PATHS: $(inherited) $(BUILT_PRODUCTS_DIR)/include
+        # KERNEL: the clang module map that lets Swift `import CChuiniu`,
+        # copied into BUILT_PRODUCTS_DIR/include by the xcframework.
+        HEADER_SEARCH_PATHS: $(inherited) $(BUILT_PRODUCTS_DIR)/include
         TARGETED_DEVICE_FAMILY: "1"
 
   ChuiniuKitTests:
@@ -146,8 +141,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: cards.chuiniu.kit.tests
         GENERATE_INFOPLIST_FILE: "YES"
-        # KERNEL (tie-together uncomments):
-        # HEADER_SEARCH_PATHS: $(inherited) $(BUILT_PRODUCTS_DIR)/include
+        # KERNEL: the tests import CChuiniu too.
+        HEADER_SEARCH_PATHS: $(inherited) $(BUILT_PRODUCTS_DIR)/include
         TARGETED_DEVICE_FAMILY: "1"
 
 schemes:
