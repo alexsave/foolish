@@ -185,3 +185,26 @@ Each layout and words row was run alone with `build/ios_smoke` deleted first, be
 
 7.3.7 (native against wasm replay) waits for a wasm replay build; `make wasm` proves the kernel compiles freestanding for wasm32 and reaches only `memcpy`, `memset`, `memcmp`, `strlen` and `strncmp`.
 7.4 (the wire), 7.7.4 (Rule P races) and 7.8.7 (seat resolve) are in `pk_msg_test.c` above.
+
+## pk_twophone_test.c
+
+The two-phone game of `SIM_VERIFICATION.md`, played through `pk_api.c` (seed k=1, 67 bubbles, 2,409 assertions).
+Each row was applied alone, `build/pk_twophone_test` deleted and rebuilt, run, and the file restored byte for byte; the suite was green again after each.
+The bracket is the step tag the test prints on a red (`[S8c ...]`), which stays put when lines move.
+Where a mutation also stopped the seed search from finding a seed, the test played seed 0 with the assertions on, so the named assertion still went red.
+Run 2026-09-27.
+
+| Test | Mutation | Assertion that went red |
+|---|---|---|
+| twophone +2 | `PK_PEN_PLUS2` draws 3 | `[S7 a +2]` "the receiver's hand is the count kept here (6, want 5)", "the receiver's plan: event 2 ... n 3, want n 2", "pk_since counts the draws, penalty cards and plays" |
+| twophone catch | the catch's penalty is 1 card, not 2 | `[S8c Caught you! staged]` "the receiver's hand is the count kept here (2, want 3)", `[S8d Caught you! after Send]` "the caught player drew two (1.8)" |
+| twophone reshuffle | the reshuffle keeps the pile's bottom card instead of its top (`g->stack[0] = top` dropped) | `[S8 reshuffle]` "the reshuffle leaves the pile its top card and suit" |
+| twophone catch window | the window closes at the end of every bubble (`g->exposed = 0` at seal) | `[S8c Caught you! staged]` "the staged caption: \"Alex called Bo wrong and draws one\", want \"Alex caught Bo. Bo draws two\"", "the receiver's plan: event 4 is kind 26 (CALL_MISS), want 25 (CALL_HIT)" |
+| twophone Rule P | clause 4 compares the bubbles the wrong way round (fewer wins) | `[S11 Rule P]` "Rule P keeps the newer bubble, whichever way round", "the host adopts the newer: its tip said it" |
+| twophone masking | `pk_view` fills `reveal` while the game is live | `[S4 ...]`, `[S5 ...]`, `[S7 a Skip]` and every bubble after: "no seat's card count reaches the receiver while the game is played (D22)" |
+| twophone masking | the plan never masks a DEAL, DRAW or PENALTY_DRAW card | `[S4 three draws then a play]` "the receiver's plan: event 1 (kind 12, seat 1) shows a card only its receiver may see", `[S2 the deal on the receiver]` "fourteen DEALs ... Bo's hidden" |
+| twophone deal order | the deal starts at seat 0 (`j % n`) | `[S2 the deal on the receiver]` "fourteen DEALs, one card at a time from seat 1 ... (first wrong 0)" |
+| twophone caption key | a 2-player Reverse takes `CAP_REVERSED` (`seats >= 2`) | `[S7 a Reverse]` "the staged caption: \"Bo turned the table around\", want \"Bo reversed and goes again\"", "the receiver's caption of bubble 10" |
+| twophone say-it timing | "Last card!" legal in the bubble that exposed the player (`ref = g->exposed`) | `[S8b down to one]` "not in the bubble that exposed me (D3)" |
+| twophone undo | a draw is not the draft's floor (`b_floor` not moved) | `[S4 three draws then a play]` "a draw does not come back (D8)", `[S4b undo a staged play]` "the card is on the pile" |
+| twophone seat resolver | `pk_api_seats_load` keeps no records | `[S4 ...]` and every bubble after: "the receiver resolves to its own seat by its record (me 0 by 2)" |

@@ -40,6 +40,7 @@ The struct is fixed-size plain integers with no pointers and no bitfields, there
 | `tests/pk_plan_test.c` | masking (7.5) and the plan (7.6) |
 | `tests/pk_say_test.c` | the words (6) |
 | `tests/pk_fuzz.c` | random play at 2..8 players against every invariant |
+| `tests/pk_twophone_test.c` | the `SIM_VERIFICATION.md` game played phone to phone through the bridge, every bubble checked against the test's own events, counts and captions |
 | `tests/pk_msg_test.c` | the wire (7.4), Rule P (7.7.4), seat resolve (7.8.7), the tamper, corruption and truncation sweeps |
 | `ios/include/pk_api.h`, `module.modulemap` | the Swift-visible face (module `CPickemup`), the only header the xcframework carries |
 | `ios/pk_api.c` | the bridge: one resident message, lobby, staging, reading, words, two messages |
