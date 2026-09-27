@@ -1,6 +1,6 @@
 # PickemupKitTests, every test seen red
 
-Each row is one mutant, applied alone with `~/.claude/skills/ios-sim-verify/mutation_check.sh` (an exact string replacement, the source restored and verified byte for byte afterwards), and the full `PickemupKitTests` scheme run on the iPhone 17e simulator `FC7586CF-78D5-4E61-810E-9449B9AC6C5A` (iOS 27.0).
+Each row is one mutant, applied alone with the ios-sim-verify `mutation_check.sh` (an exact string replacement, the source restored and verified byte for byte afterwards), and the full `PickemupKitTests` scheme run on the iPhone 17e simulator `FC7586CF-78D5-4E61-810E-9449B9AC6C5A` (iOS 27.0).
 Every run executed all 17 tests; a row lists the assertions that went red, which were always in the test the mutant was aimed at, plus any other test that reads the same code.
 Run 2026-09-27 on the commit that added this file.
 The unmutated suite is 17 tests, 0 failures.
@@ -41,4 +41,4 @@ The C side's own rows (the layout thresholds, the words, the ranks, the buried c
 ## Not mutated
 
 Nothing in `PickemupKitTests` is left without a row.
-What these tests do not reach is the conversation itself (`PickemupMessages/MessagesViewController.swift`: staging through the insert loop, send, cancel, receive); it has no test target, as uttt's has none, and it was exercised by hand in Messages on the simulator (see `pickemup/docs/IOS_DECISIONS.md` and the orchestration log).
+What these tests do not reach is the conversation itself (`PickemupMessages/MessagesViewController.swift`: staging through the insert loop, send, cancel, receive); it has no test target, as uttt's has none, and it has NOT yet run inside Messages: on 2026-09-27 the app installed and registered on the simulator, but `simctl launch com.apple.MobileSMS` hung for over five minutes (BLOCKED B2 in `pickemup/docs/ORCHESTRATION.md`).
