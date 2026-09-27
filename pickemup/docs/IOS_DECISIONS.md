@@ -233,3 +233,27 @@ Alternative: stage state in `TableModel`.
 Why: the model does not know there is a conversation (its header says so), and only the controller hears Messages land, send and cancel.
 Confidence: medium, until it is seen inside Messages.
 
+## The B2/B3 simulator pass (2026-09-27, afternoon)
+
+Run on a fresh iPhone 17e simulator (iOS 27.0), inside Messages; see `SIM_VERIFICATION.md` and `MOTION_REPORT.md`.
+
+DECISION I42: a test that reads the accessibility tree of a hosted SwiftUI view first switches accessibility automation on (`PickemupKitTests/AXTree.swift`), and walks the tree through that one helper.
+SwiftUI builds its accessibility elements only once an assistive client has asked, and a unit-test process is not one, so the first simulator run of `ActionCardCornerTests` and `NoCountLeakTests` found an empty tree and went red on nothing; the views were right.
+`AXTree.enable` calls libAccessibility's `_AXSSetAutomationEnabled(1)` once per process, which is what VoiceOver and an XCUITest runner switch on before they read.
+Alternative: move both checks into an XCUITest target, which runs with automation on; or test the label strings as functions and not the tree.
+Why: the owner's rule is that no other seat's count reaches the tree, so the test must read the tree itself; a UI test target needs a host app this product does not have (the container is codeless), and a private symbol in a test bundle never ships.
+If the symbol ever disappears, both tests fail on "is on the tree"; they can never pass on an empty walk.
+Confidence: high.
+
+DECISION I43: a Debug build reads a `dev.persona` file ("1 Bo") from the App Group, and an appex process that finds it sits down as another person: its participant id's last byte XORed with the number, its own seat records and nickname (`pickemup.seats.v1.p1`, `pickemup.nickname.p1`).
+The simulator's Messages gives this extension ONE `localParticipantIdentifier` in every thread, so the rig's two-thread trick (a bubble sent in one stub thread arrives in the other) seated the same person twice and Bo's tap on Alex's invitation showed "1. Alex (You)".
+It is read once per process (`static let`), and the rig ends the process between the two threads (`rig.sh leave`, `killappex`), so a flipped file never splits one process's identity.
+Alternative: two simulators, one per person; there is no way to carry a bubble from one simulator's Messages to another's.
+Why: it is the only way to play a two-seat game inside Messages on one host, and every reader of it is inside `#if DEBUG` beside the other dev files (`PickemupDev.swift`), so Release has none of it.
+Confidence: high.
+
+DECISION I44: an anchor a flight aims at is laid out where it is (`.position`, a frame), never moved there with `.offset`.
+The pile's anchor was a clear 82 x 115 frame in an overlay, `.offset` to the pile's centre; an offset is a render transform, the anchor's GeometryReader measured the un-offset frame at the board's origin, and on the simulator every play, start card, bury and reshuffle gather flew to the top-left corner and snapped onto the pile when its ghost ended (`shots/motion/deal_bury_before_fix_sheet.png`).
+`BeatPlayerTests` could not see it: they hand the player synthetic anchors. `AnchorTests` hosts a real `TableScreen` and checks the pile's anchor is the pile, the deck is beside it on its line, and every anchor is on the board.
+Alternative: measure the pile's anchor on `PileView` itself; its frame carries the halo and the stack's lean, not one card.
+Confidence: high.

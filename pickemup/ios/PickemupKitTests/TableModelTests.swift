@@ -126,8 +126,9 @@ final class TableModelTests: XCTestCase {
 
     // MUTATE: TableModel.tapFan stages a call after `.play` -> "a call alone
     // does not collapse the drawer".
-    // MUTATE: TableModel.tapFan handles `.uncalled` as `.refused` (the un-call
-    // is not read back) -> "a second tap un-calls". (Before I30 the mutant was
+    // MUTATE: Pk.tapFan maps PK_API_FAN_UNCALLED to `.refused` -> "the
+    // un-call plays its own motion". (Both branches refresh, so "a second tap
+    // un-calls" reads the kernel either way; before I30 the mutant was
     // dropping the Swift `calling(seat)` branch, which no longer exists.)
     func testATapOnAFanStagesTheCatchAndASecondTakesItBack() {
         Phones.dmStartedByBo()
@@ -137,8 +138,10 @@ final class TableModelTests: XCTestCase {
         XCTAssertTrue(m.calling(0), "the call is staged on Alex's fan")
         XCTAssertEqual(m.strip.called, 0)
         XCTAssertEqual(stages.last?.collapse, false, "a call alone does not collapse the drawer (I37)")
+        let callPlan = m.player.plan?.serial
         m.tapFan(0)
         XCTAssertFalse(m.calling(0), "a second tap un-calls")
+        XCTAssertNotEqual(m.player.plan?.serial, callPlan, "the un-call plays its own motion (the ring fades off)")
     }
 
     // MUTATE: Pk.read adopts nothing (answers 0 without reading) -> Alex is

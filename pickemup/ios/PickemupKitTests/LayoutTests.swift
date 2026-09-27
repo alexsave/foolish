@@ -108,30 +108,8 @@ final class ActionCardCornerTests: XCTestCase {
 
     /// The one accessibility element a pile-sized card presents, hosted in a window.
     private func hostedCard(_ id: Int) -> NSObject? {
-        let host = UIHostingController(rootView: PkCard(card: id, size: CGSize(width: 82, height: 115), fullFace: true))
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
-        window.rootViewController = host
-        window.makeKeyAndVisible()
-        host.view.frame = window.bounds
-        host.view.layoutIfNeeded()
-        defer { window.isHidden = true }
-        return firstElement(host.view) { !($0.accessibilityLabel ?? "").isEmpty }
-    }
-
-    private func firstElement(_ root: NSObject, where ok: (NSObject) -> Bool) -> NSObject? {
-        var queue: [NSObject] = [root]
-        var seen = 0
-        while !queue.isEmpty, seen < 500 {
-            let o = queue.removeFirst(); seen += 1
-            if o !== root, o.isAccessibilityElement, ok(o) { return o }
-            if let els = o.accessibilityElements as? [NSObject] { queue += els }
-            let n = o.accessibilityElementCount()
-            if n != NSNotFound, n > 0 {
-                for i in 0..<n { if let e = o.accessibilityElement(at: i) as? NSObject { queue.append(e) } }
-            }
-            if let v = o as? UIView { queue += v.subviews }
-        }
-        return nil
+        AXTree.hosted(PkCard(card: id, size: CGSize(width: 82, height: 115), fullFace: true),
+                      size: CGSize(width: 200, height: 200)) { AXTree.elements($0).first }
     }
 }
 

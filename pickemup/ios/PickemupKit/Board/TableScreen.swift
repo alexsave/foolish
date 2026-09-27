@@ -132,12 +132,16 @@ public struct TableScreen: View {
                          : model.pickerFor.flatMap { $0 < hand.count ? hand[$0] : nil },
                      hot: pileHot)
                 .position(pc)
-                .overlay(alignment: .topLeading) {
-                    Color.clear.frame(width: PkLayout.pileSize.width, height: PkLayout.pileSize.height)
-                        .offset(x: pc.x - PkLayout.pileSize.width / 2, y: pc.y - PkLayout.pileSize.height / 2)
-                        .pkAnchor("stack")
-                        .allowsHitTesting(false)
-                }
+            // The pile card's own frame, for every flight to or from the pile.
+            // LAID OUT at the centre with `.position`, never moved there with
+            // `.offset`: an offset is a render transform, and the anchor's
+            // GeometryReader measured the un-offset frame at the board's
+            // origin, so every play, start card, bury and gather flew to the
+            // top-left corner and snapped onto the pile (AnchorTests).
+            Color.clear.frame(width: PkLayout.pileSize.width, height: PkLayout.pileSize.height)
+                .pkAnchor("stack")
+                .position(pc)
+                .allowsHitTesting(false)
 
             DeckStack(count: shown.deckN, label: Pk.words(PK_API_W_DECK_N, shown.deckN), buried: model.buried,
                       lifted: deckDrag != nil, buriedHold: shown.buriedHold)
