@@ -69,6 +69,12 @@ BLOCKED B2: the Pick 'Em Up extension has not yet been seen inside Messages.
 On 2026-09-27 at about 06:12 UTC, on iPhone 17e `FC7586CF`, `PickemupKitTests` ran green (17 tests) and every test was mutation-checked there (`pickemup/ios/TESTS_MUTATED.md`), and the app installed and registered with LaunchServices, but `simctl launch com.apple.MobileSMS` (the rig's `stage`) hung for over five minutes, the B1 symptom again, so no screenshot of the lobby, table, drag, picker or catch exists yet.
 The device was shut down.
 Next: on a healthy simulator, `source pickemup/ios/Tools/rig.env`, then the rig's `stage`, `open` and screenshots of each screen; and on a real phone, prove that dragging a card DOWN off the deck (U24, IOS_DECISIONS I9) never collapses the drawer.
+B2, second worker, 2026-09-27 06:29 to 06:56 UTC: the same iPhone 17e `FC7586CF` (iOS 26.3) never finished booting, so Messages, the rig and the fallback host were all out of reach.
+Three boots (06:28, 06:37 after a shutdown and a 10 second wait, and 06:53) each stopped on the black data-migration spinner with `simctl bootstatus` at "Waiting on System App" for 90 seconds and more (the first was watched for 7 minutes).
+Inside the device SpringBoard, backboardd and the data migrator were all running, and the migrator logged "System build version unchanged from 23D8133. Migration not necessary", so this is not a migration plugin; `log` itself answered `getpwuid_r did not find a match for uid 501`, which points at the host's user session under CoreSimulator, the B1 family.
+The device was shut down each time and is shut down now.
+What landed without a simulator, compile-checked (`PickemupKitTests` build-for-testing and the `PickemupMessagesApp` build both succeed): O6 (IOS_DECISIONS I27) with its test `ActionCardCornerTests`, the strip chips (I28), and the UI.html fixes listed in `SIM_VERIFICATION.md`.
+Still owed on a healthy simulator, in this order: `PickemupKitTests` green, the O6 test's red run (its MUTATE line), `mac_tests.sh` counts, then the full two-seat game and the eleven screenshots `SIM_VERIFICATION.md` lists; the host most likely needs the reboot B1 asked for.
 
 ## Found on the way (not pickemup's to fix in this pass)
 
