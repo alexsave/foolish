@@ -98,6 +98,34 @@ Sender and receiver play the same beats from the same resident history.
 T10: SwiftUI extension copied from Pick 'Em Up's shell (`MessagesViewController`, the lobby, felt and textures, seat badges, `BeatPlayer`), a dice tray in the middle of the felt instead of the pile, and the player's own scorecard as a tappable list; other seats show their running total on their badge and open their card on a tap.
 Dice faces are drawn (pips as circles on a rounded square), not image assets, so there is no art to license.
 
+T12: a die on the tray is 52pt, pickemup's widest hand card, with a corner radius of 0.2 of its side, and the five stand 10pt apart, so the tray is 300pt and fits the 304pt board of a 320pt phone.
+The face is foolish's card bone (#F4EFE6) and the pips its card ink (#17140F), each pip 0.18 of the side across, on the classic 3 x 3 grid at 0.27 / 0.5 / 0.73.
+An unknown die (value 0, T11) is the same square at 55% opacity with a dashed inner outline and no pips, so it never reads as a value.
+A kept die wears a 2.5pt brass ring (foolish's win brass, #D8B24A) 1.5pt outside its edge, which leaves 2pt between two kept neighbours.
+
+T13: the roll animation is a tumble of 600ms per die, dice starting 30ms apart in slot order: 1.5 revolutions on a cubic ease-out (alternate dice turning the other way), a swell to 1.18 at 30% and back, and the face flicking through fixed pip values every 80ms until 70%, then showing the value it landed on.
+It plays for the dice that just got a value: the rerolled ones when a KEEP is sent or opened, all five on a turn's first roll.
+The flicker is decoration, a fixed function of die and time, never a hint.
+It is Swift for now behind a `DiceMotion` protocol so the kernel's dice-settle beat (T9) can drive the same tray.
+
+T14: the scorecard's two halves stand side by side as two columns on a bone paper panel, numbers on the left with the Sum and the bonus line under them, combinations on the right with the Total under them; 24pt rows, 13pt names, 14pt numbers.
+This is deliberately not the branded card's one tall column with a how-to-score column (LEGAL.md).
+An open row on my card shows the kernel's preview for the dice on the tray, dimmed, and a tap on it scores there; a staged score shows in brass on a brass wash; the bonus line reads "-" until the kernel decides it.
+In the compact drawer the card scrolls under the tray; expanded, it all shows.
+
+T15: the table is pickemup's board inset (8 / 8 / 14 / 4) on foolish's felt, re-laid for dice from the top down: the other seats in one row across the top (44pt badges, each min(96pt, its share of the row), name over running total, the brass turn bar under the total), 8pt, the tray, 10pt, the status line with pickemup's 96 x 40 wood Roll pill 12pt from the trailing edge, 10pt, my card.
+A tap on another seat's badge opens that seat's card read-only in a medium-detent sheet.
+My own seat has no badge: my card is on the table.
+
+T16: the bubble picture is foolish's 300 x 195 on the felt: the five dice at 44pt, 8pt apart, kept ones ringed and rerolling ones blank (T11), over one line of the kernel's caption at 13pt heavy (the same words also go in the MSMessage caption); a lobby bubble is the title and the numbered roster.
+
+T17: a KEEP and a SCORE both collapse the drawer once staged, as a play does in Pick 'Em Up, because both want Send next.
+After a KEEP is sent the extension stays up (no dismiss): the reroll tumbles in right there and the player chooses again.
+After a SCORE is sent it dismisses as Pick 'Em Up's does after a turn.
+Until the kernel's plan says how long a move rests, the settle before the collapse is 750ms.
+
+T18: the Swift tests run on an iOS simulator when one is free, and otherwise as a Mac Catalyst test bundle (`DEST='platform=macOS,variant=Mac Catalyst' ios/scripts/mac_tests.sh unit`): TallybonesKit imports no Messages, so it builds for Catalyst with command-line overrides only, and a shared Mac's two simulator slots are no longer a reason for a test to go unrun.
+
 ## BLOCKED
 
 - The final name: a USPTO and App Store search for "Tallybones" is the owner's, before any store listing.
