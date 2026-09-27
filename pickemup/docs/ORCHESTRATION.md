@@ -65,39 +65,58 @@ Confidence: high.
 
 ## BLOCKED
 
-- The final game name: `Pick 'Em Up` collides with two same-genre titles (README); the USPTO search and the choice are the owner's, before any store listing.
-- App Store Connect record, signing and upload: the owner does these by hand; nothing in this pass touches them.
+Each item is one block: what is blocked now, what the owner (or the next worker) does, and a short dated history.
+Every simulator proof owed below is also listed, ready to run, in `pickemup/docs/SIM_VERIFICATION.md`.
 
-BLOCKED B1: the P8 after-run for lift S1 (and any later Swift lift).
-From 2026-09-26 23:06 every iOS simulator on this Mac hangs: test launches die with `Mach error -308 (ipc/mig) server died`, `simctl install` never returns, and a fresh device and the iOS 26.3 device both stop at boot in `com.apple.addressbook.migrator`.
-Restarting CoreSimulatorService did not clear it; a Mac reboot is the likely fix, and only the owner can do that.
-BLOCKED B1, confirmed by the orchestrator at 2026-09-27 04:55: after killing CoreSimulatorService and erasing a second iPhone 17e, the erased device still stops at boot in `com.apple.addressbook.migrator` (Migration Elapsed over a minute, `simctl launch` never returns).
-The host needs a reboot before any simulator test, screenshot or rig run can happen; everything below that needs a simulator is verified by compile only until then.
-B1 cleared on its own at about 05:10 on 2026-09-27 without a reboot: a health probe booted the first iPhone 17e and launched an app in under two minutes, so the after-run for S1 and the simulator proofs resumed then.
-Once it is clear, run `DEST='platform=iOS Simulator,name=iPhone 17e,OS=27.0' bash ios/scripts/mac_tests.sh --no-lib --regen` from `foolish/` on the S1 commit and compare with the baseline in `REUSE_AUDIT.md` under S1 (853 executed, 1 skipped, only the flaky `MemoryProfileTests` failing).
+### B1: iOS simulators on this Mac hang host-wide
 
-BLOCKED B2: the Pick 'Em Up extension has not yet been seen inside Messages.
-On 2026-09-27 at about 06:12 UTC, on iPhone 17e `FC7586CF`, `PickemupKitTests` ran green (17 tests) and every test was mutation-checked there (`pickemup/ios/TESTS_MUTATED.md`), and the app installed and registered with LaunchServices, but `simctl launch com.apple.MobileSMS` (the rig's `stage`) hung for over five minutes, the B1 symptom again, so no screenshot of the lobby, table, drag, picker or catch exists yet.
-The device was shut down.
-Next: on a healthy simulator, `source pickemup/ios/Tools/rig.env`, then the rig's `stage`, `open` and screenshots of each screen; and on a real phone, prove that dragging a card DOWN off the deck (U24, IOS_DECISIONS I9) never collapses the drawer.
-B2, second worker, 2026-09-27 06:29 to 06:56 UTC: the same iPhone 17e `FC7586CF` (iOS 26.3) never finished booting, so Messages, the rig and the fallback host were all out of reach.
-Three boots (06:28, 06:37 after a shutdown and a 10 second wait, and 06:53) each stopped on the black data-migration spinner with `simctl bootstatus` at "Waiting on System App" for 90 seconds and more (the first was watched for 7 minutes).
-Inside the device SpringBoard, backboardd and the data migrator were all running, and the migrator logged "System build version unchanged from 23D8133. Migration not necessary", so this is not a migration plugin; `log` itself answered `getpwuid_r did not find a match for uid 501`, which points at the host's user session under CoreSimulator, the B1 family.
-The device was shut down each time and is shut down now.
-What landed without a simulator, compile-checked (`PickemupKitTests` build-for-testing and the `PickemupMessagesApp` build both succeed): O6 (IOS_DECISIONS I27) with its test `ActionCardCornerTests`, the strip chips (I28), and the UI.html fixes listed in `SIM_VERIFICATION.md`.
-Still owed on a healthy simulator, in this order: `PickemupKitTests` green, the O6 test's red run (its MUTATE line), `mac_tests.sh` counts, then the full two-seat game and the eleven screenshots `SIM_VERIFICATION.md` lists; the host most likely needs the reboot B1 asked for.
+Now: blocked.
+The hang cleared once on its own and came back, and a fresh device on iOS 27.0 hangs too, so it is host-wide and not tied to one device's state.
+The `getpwuid_r did not find a match for uid 501` line seen inside a device points at the host's directory services under CoreSimulator, which only a reboot resets.
+Blocked by it: the P8 after-run for lift S1 (and any later Swift lift), plus B2 and B3 below.
+Owner action: reboot the Mac.
+Then, from `foolish/` on the S1 commit, run `DEST='platform=iOS Simulator,name=iPhone 17e,OS=27.0' bash ios/scripts/mac_tests.sh --no-lib --regen` and compare with the baseline in `REUSE_AUDIT.md` under S1 (853 executed, 1 skipped, only the flaky `MemoryProfileTests` failing).
+History:
+- 2026-09-26 23:06: every simulator hangs: test launches die with `Mach error -308 (ipc/mig) server died`, `simctl install` never returns, and a fresh device and the iOS 26.3 device both stop at boot in `com.apple.addressbook.migrator`; restarting CoreSimulatorService did not clear it.
+- 2026-09-27 04:55: the orchestrator killed CoreSimulatorService and erased a second iPhone 17e; the erased device still stopped at boot in `com.apple.addressbook.migrator` (Migration Elapsed over a minute, `simctl launch` never returned).
+- 2026-09-27 about 05:10: cleared on its own without a reboot; a health probe booted the first iPhone 17e and launched an app in under two minutes, and the S1 after-run and the simulator proofs resumed.
+- 2026-09-27 06:12 to 07:40: back (see B2), and a freshly created iPhone 17 on iOS 27.0 also never finished booting within 100 seconds.
 
-BLOCKED B2 confirmed by the orchestrator at 2026-09-27 07:40: a freshly created iPhone 17 on iOS 27.0 also never finished booting within 100 seconds, so the hang is host-wide and not tied to a device's state (an erased iPhone 17e hung the same way earlier).
-The `getpwuid_r did not find a match for uid 501` line the previous worker saw points at the host's directory services, which only a reboot resets.
-Every simulator proof in this pass (foolish's P8 after the lifts, the pickemup Messages run and screenshots, `pickemup/ios/scripts/mac_tests.sh` counts, the red run of `ActionCardCornerTests`, the filmed animation take) is therefore owed and listed in `pickemup/docs/SIM_VERIFICATION.md`, ready to run after the reboot.
+### B2: the extension has not yet been seen inside Messages
 
-BLOCKED B3: the filmed and measured animation take.
-On 2026-09-27 at about 03:35 local, the second iPhone 17e `6E0A730D` did boot within the 90-second watchdog, and `BeatPlayerTests` (7 then, 8 once A17's `testTheJoinThatStartsTheGamePlaysTheDeal` landed) and `TableModelTests` (10) ran green on it, and every `BeatPlayerTests` test was seen red there (`pickemup/ios/TESTS_MUTATED.md`).
-But any test that puts a window or a renderer on screen hung on it for ten minutes and was killed: `ActionCardCornerTests.testAnActionCardExposesItsSuitShape` (a card hosted in a `UIWindow`) and `RenderTests.testTheBubbleRendersAt300By195`, and `xcodebuild` itself hung after every finished run until killed.
-A filmed take is a window on screen, so it was not attempted; `pickemup/docs/MOTION_REPORT.md` gives both takes as the kernel's timeline instead (`make -C pickemup/c beats-dump`).
-B2 and B3, the architecture review worker, 2026-09-27: no simulator was attempted; the review's fixes (IOS_DECISIONS I29 to I37) are verified by `build-for-testing` of `PickemupKitTests`, the `PickemupMessagesApp` build and `make -C pickemup/c run asan` only.
-Owed with the rest after the reboot: the eight red runs listed under "The architecture review" in `pickemup/ios/TESTS_MUTATED.md`, and on a phone, I35 (a superseded stage never inserts) beside I9 and I36 (the deck's drag never collapses the drawer).
-Next, after the reboot: film a live arrival with three draws, a reshuffle and a play, and a deal, at normal speed, measure them with the `animation-measure` skill, put the contact sheets in `pickemup/docs/shots/motion/` and the scores in `MOTION_REPORT.md`; and run the whole `PickemupKitTests` scheme, which this worker could only run in part.
+Now: blocked by B1.
+Proven without Messages: `PickemupKitTests` ran green (17 tests) on iPhone 17e `FC7586CF` with every test mutation-checked there (`pickemup/ios/TESTS_MUTATED.md`), and the app installed and registered with LaunchServices.
+Compile-checked only (`PickemupKitTests` build-for-testing, the `PickemupMessagesApp` build and `make -C pickemup/c run asan`): O6 (IOS_DECISIONS I27) with its test `ActionCardCornerTests`, the strip chips (I28), the UI.html fixes listed in `SIM_VERIFICATION.md`, and the architecture review's fixes (I29 to I37).
+Owed after the reboot, in this order: `PickemupKitTests` green, the red run of `ActionCardCornerTests` (its MUTATE line), the eight red runs listed under "The architecture review" in `pickemup/ios/TESTS_MUTATED.md`, the `pickemup/ios/scripts/mac_tests.sh` counts, then `source pickemup/ios/Tools/rig.env`, the rig's `stage` and `open`, the full two-seat game and the eleven screenshots `SIM_VERIFICATION.md` lists (lobby, table, drag, picker, catch and the rest).
+Owed on a real phone: dragging a card DOWN off the deck never collapses the drawer (U24, IOS_DECISIONS I9 and I36), and a superseded stage never inserts (I35).
+History:
+- 2026-09-27 about 06:12 UTC: on `FC7586CF` the tests above ran green, but `simctl launch com.apple.MobileSMS` (the rig's `stage`) hung for over five minutes; the device was shut down.
+- 2026-09-27 06:29 to 06:56 UTC: a second worker booted the same device three times (06:28, 06:37 after a shutdown and a 10 second wait, and 06:53); each stopped on the black data-migration spinner with `simctl bootstatus` at "Waiting on System App" for 90 seconds and more (the first was watched for 7 minutes).
+  SpringBoard, backboardd and the data migrator were all running, and the migrator logged "System build version unchanged from 23D8133. Migration not necessary", so it is not a migration plugin; `log` answered `getpwuid_r did not find a match for uid 501`.
+  The device was shut down each time and is shut down now.
+- 2026-09-27 07:40: the orchestrator confirmed the hang is host-wide (B1).
+- 2026-09-27, later: the architecture review worker attempted no simulator.
+
+### B3: the filmed and measured animation take
+
+Now: blocked by B1.
+In its place, `pickemup/docs/MOTION_REPORT.md` gives both takes as the kernel's timeline (`make -C pickemup/c beats-dump`).
+Owed after the reboot: film a live arrival with three draws, a reshuffle and a play, and a deal, at normal speed; measure them with the `animation-measure` skill; put the contact sheets in `pickemup/docs/shots/motion/` and the scores in `MOTION_REPORT.md`; and run the whole `PickemupKitTests` scheme, which was only ever run in part.
+History:
+- 2026-09-27 about 03:35 local: the second iPhone 17e `6E0A730D` booted within the 90-second watchdog, and `BeatPlayerTests` (7 then, 8 once A17's `testTheJoinThatStartsTheGamePlaysTheDeal` landed) and `TableModelTests` (10) ran green on it, with every `BeatPlayerTests` test seen red there (`pickemup/ios/TESTS_MUTATED.md`).
+  Any test that puts a window or a renderer on screen hung for ten minutes and was killed (`ActionCardCornerTests.testAnActionCardExposesItsSuitShape`, a card hosted in a `UIWindow`, and `RenderTests.testTheBubbleRendersAt300By195`), and `xcodebuild` itself hung after every finished run until killed.
+  A filmed take is a window on screen, so it was not attempted.
+
+### The final game name
+
+Now: open, the owner's call.
+`Pick 'Em Up` collides with two same-genre titles (README); it stays the working title behind one `GAME_NAME` string (O5).
+Owner action: the USPTO search and the choice, before any store listing.
+
+### App Store Connect, signing and upload
+
+Now: not started, by design.
+Owner action: the owner does the App Store Connect record, signing and upload by hand; nothing in this pass touches them.
 
 ## Found on the way (not pickemup's to fix in this pass)
 
