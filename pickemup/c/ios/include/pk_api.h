@@ -94,6 +94,11 @@ int  pk_api_unsay(void);
 int  pk_api_uncall(void);
 int  pk_api_cancel(void);                /* back to the draft's floor (D9) */
 int  pk_api_can_play(int pos);           /* with some suit */
+/* What a card id IS, so a face is drawn without knowing the id order (3.2):
+ * its suit 0..3 (PK_NO_SUIT for a wild) and its rank 1..9 or PK_R_*; -1 for
+ * an id off the deck, PK_CARD_HIDDEN included. */
+int  pk_api_card_suit(int card);
+int  pk_api_card_rank(int card);
 int  pk_api_is_wild(int pos);            /* a play at pos needs a suit */
 
 /* ---- reading it ---------------------------------------------------------------- */

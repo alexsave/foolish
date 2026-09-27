@@ -369,6 +369,13 @@ int main(void)
     OK(pk_api_words(PK_API_W_ERROR, PK_ECHECK, line, sizeof line) > 0
        && !strcmp(line, "This game link is damaged"), "any other refusal is a damaged link");
     OK(pk_api_words(PK_API_W_ERROR, 0, line, sizeof line) == -1, "PK_EOK is not an error");
+    OK(pk_api_card_suit(0) == 0 && pk_api_card_rank(0) == 1 && pk_api_card_rank(17) == 9
+       && pk_api_card_suit(47) == 1 && pk_api_card_rank(47) == PK_R_PLUS2 && pk_api_card_rank(42) == PK_R_SKIP
+       && pk_api_card_rank(44) == PK_R_REVERSE, "a suited card's suit and rank (3.2)");
+    OK(pk_api_card_suit(96) == PK_NO_SUIT && pk_api_card_rank(99) == PK_R_WILD && pk_api_card_rank(100) == PK_R_WILD4,
+       "the wilds");
+    OK(pk_api_card_suit(PK_CARD_HIDDEN) == -1 && pk_api_card_rank(104) == -1 && pk_api_card_rank(-1) == -1,
+       "an id off the deck is nothing");
     OK(pk_api_read("hello") < 0 && pk_api_check("?m=AAAA") < 0, "a link that is not a game");
     OK(pk_api_prefer("junk", links[6]) > 0 && pk_api_prefer(links[6], "junk") < 0, "the unreadable one loses");
     OK(pk_api_same_game(links[3], links[6]) && !pk_api_same_game(links[0], links[6]), "same game by seed");

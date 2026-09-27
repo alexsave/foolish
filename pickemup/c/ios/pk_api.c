@@ -290,6 +290,16 @@ int pk_api_can_play(int pos)
     return g && pos >= 0 && pos < PK_HAND_CAP ? pk_can_play(g, S.me, pos) : 0;
 }
 
+int pk_api_card_suit(int card)
+{
+    return card >= 0 && card < PK_DECK ? pk_suit((uint8_t)card) : -1;
+}
+
+int pk_api_card_rank(int card)
+{
+    return card >= 0 && card < PK_DECK ? pk_rank((uint8_t)card) : -1;
+}
+
 int pk_api_is_wild(int pos)
 {
     PkGame *g = live();

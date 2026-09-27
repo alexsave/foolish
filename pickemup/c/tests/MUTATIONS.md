@@ -132,6 +132,8 @@ The sentinel mutation above is the one that breaks canonicality.
 | ios-smoke layout | the pile never lifts | `pk_api_smoke.c:136` "the pile lifts 24 in the drawer (U2)" |
 | ios-smoke layout | the deck 8pt from the pile | `pk_api_smoke.c:140` "the deck 10pt left of the pile, on its line (U3)" |
 | ios-smoke layout | Play offered for a selection when it is not my turn | `pk_api_smoke.c:152` "not my turn: a selection offers no Play" |
+| ios-smoke cards | `pk_api_card_suit` reads the next id's suit | `pk_api_smoke.c:374` "a suited card's suit and rank (3.2)" |
+| ios-smoke cards | `pk_api_card_rank` accepts id 104 | `pk_api_smoke.c:378` "an id off the deck is nothing" |
 | ios-smoke ranks | the losers sorted by most cards first | `pk_api_smoke.c:363` "then fewest cards first, ties in seat order" |
 
 Putting the winner first by name (rather than by fewest cards) survived its mutation: the winner of an OUT game holds none and the winner of a STUCK or LONG game is the one with the fewest, so the two orders differ only on a tie the kernel breaks the same way. It stays for the reader, not for a test.
