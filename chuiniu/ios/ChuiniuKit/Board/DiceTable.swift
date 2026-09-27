@@ -11,11 +11,11 @@ import SwiftUI
 /// Where every seat and the bid plate sit on a board.
 public enum DiceTableLayout {
     /// One other seat's badge: name, cup, turn marker.
-    public static let badge = CGSize(width: 80, height: 72)
+    public static let badge = CGSize(width: 72, height: 72)
     /// The band at the bottom that holds my name and my dice.
     public static let myBandHeight: CGFloat = 120
     /// The bid plate in the middle.
-    public static let plate = CGSize(width: 180, height: 56)
+    public static let plate = CGSize(width: 160, height: 56)
     static let margin: CGFloat = 8
 
     /// The seat drawn at the bottom: mine, or seat 0 for a spectator.

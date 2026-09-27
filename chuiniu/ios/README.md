@@ -26,6 +26,7 @@ DEST='platform=iOS Simulator,id=<udid>' chuiniu/ios/scripts/mac_tests.sh unit
 Each test's mutation, and the assertion it went red on, is in `TESTS_MUTATED.md`.
 Keep at most two simulators booted on this Mac, and shut yours down when done.
 
+To open the drawer inside Messages: build and install by hand, then `source chuiniu/ios/Tools/rig.env`, set `RIG_SIM`, and `foolish/ios/Tools/rig/rig.sh open` (the rig's `build` wants the kernel, so it waits for the tie-together).
 A Debug build reads `dev.scene` from the App Group (`ChuiniuKit/Kernel/ChuiniuDev.swift`): `lobby`, `invited`, `bidding`, `waiting`, `revealed` or `over` opens the fake on that scene.
 
 ## Wiring the kernel (the tie-together)
