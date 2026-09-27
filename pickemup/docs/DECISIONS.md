@@ -219,13 +219,13 @@ Open, and not pickemup's to fix in this pass:
 
 - `werewolf/docs/UI.html` fails `shared/tools/check_ui_doc.py` ("a `<template>` is never closed"), a literal template tag inside a script comment; still failing on 2026-09-27.
 - `foolish/e2e/validation/ci_toolchain_validation.test.ts` reads every `make ... wasm` line in every workflow as a build of foolish's test module, so no other product's lane can build its own wasm (D49).
-- `.github/workflows/uttt-c.yml` cannot go green on Linux gcc: under `-std=c11` glibc hides `M_PI`, and `uttt/c/src/uttt_pen.c` uses it six times, so `make -C c run` (and the `ios-smoke` step it now also runs) stops at the first compile (seen in the `gcc:13` image on 2026-09-27; the workflow is not on main yet, so no run has shown it).
-  The fix is uttt's: a file-local pi constant, or `_DEFAULT_SOURCE` in its CFLAGS.
 - `REUSE_AUDIT.md` section 8: `rig.sh` restores entitlements with `git checkout` (D1), the drawer-collapse numbers exist three times (D2), flight timing is typed twice (D3), foolish compiles the shared insert gating but never calls it (D4), uttt's iOS README is stale (D6), and two XCTest counts disagree (D7).
 - `pickemup/c/tests/pk_check.h`'s `seed_of` deals only 256 different games; the fuzz and wire tests use `seed_wide`, and `seed_of` stays for the committed 7.3 goldens.
 
 Found and fixed on this branch:
 
+- `.github/workflows/uttt-c.yml` could not go green on Linux gcc: under `-std=c11` glibc hides `M_PI`, and `uttt/c/src/uttt_pen.c` used it, so `make -C c run` stopped at the first compile (seen in the `gcc:13` image on 2026-09-27).
+  Fixed in the commit "uttt pen: a file-local pi, so the Linux lane compiles" with a file-local `UTTT_PI`, not `_DEFAULT_SOURCE`, so `-std=c11` stays strict; the constant is the same double, so `uttt_pen.o` is byte-identical and `rough-diff` and the rendered board are unchanged.
 - `.github/workflows/uttt-c.yml` ran uttt's `run` and `asan` but not its `ios-smoke`, which REUSE_AUDIT S3 planned; it runs it now (the open-items pass).
 - The repository `.gitignore` held an em dash and named the agent tool in a comment; it is plain words now.
 - `tests/pk_beats_dump.c` did not build under gcc (`-Wunused-variable` on the harness's test name), so `make beats-dump` would fail on Linux; fixed with D58.

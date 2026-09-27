@@ -126,8 +126,8 @@ Owner action: the owner does the App Store Connect record, signing and upload by
   Fixed on this branch in `d0ca1c99`: both its `push` and `pull_request` paths now list `'shared/c/mixrad.*'` beside `'shared/c/b32.*'`.
 - `foolish/e2e/validation/ci_toolchain_validation.test.ts` treats every `make ... wasm` line in every workflow as a build of foolish's test module and requires foolish's `scripts/ci_bots_test_wasm.sh` before it.
   So no other product's lane can build its own wasm without paying for foolish's (D49); the gate should look for foolish's targets, not the word.
-- `.github/workflows/uttt-c.yml` cannot go green on Linux gcc: glibc hides `M_PI` under `-std=c11`, and `uttt/c/src/uttt_pen.c` uses it, so `make -C c run` stops at the first compile (seen in the `gcc:13` image on 2026-09-27).
-  The fix is uttt's, one line: a file-local pi constant.
+- `.github/workflows/uttt-c.yml` could not go green on Linux gcc: glibc hides `M_PI` under `-std=c11`, and `uttt/c/src/uttt_pen.c` used it, so `make -C c run` stopped at the first compile (seen in the `gcc:13` image on 2026-09-27).
+  FIXED in the commit "uttt pen: a file-local pi, so the Linux lane compiles": `UTTT_PI`, the same double, so `uttt_pen.o` is byte-identical on the Mac and `rough-diff` and the rendered board are unchanged; `run`, `asan` and `ios-smoke` pass in `gcc:13`.
 - `pickemup/c/tests/pk_check.h`'s `seed_of` deals only 256 different games (every byte is a byte-valued function of k plus 7i).
   The fuzz and the wire tests now use `seed_wide`; `seed_of` stays for the committed 7.3 goldens.
 - `REUSE_AUDIT.md` section 8 lists four defects in foolish and uttt (rig.sh restores entitlements with `git checkout`, the drawer-collapse numbers exist three times, flight timing is typed twice, foolish compiles the shared insert gating but never calls it).
