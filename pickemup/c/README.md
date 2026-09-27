@@ -50,7 +50,7 @@ With no sink it is play; with one it is the animation plan.
 Nothing a turn action does reads them, and the catch is judged against the table as it stood at open and dealt at seal (D5d), so the order they were tapped in never matters.
 
 **Counts never reach a screen.**
-`PkView` has no slot for another seat's count while the game is played: every other seat's fan is drawn at `PK_FAN_BACKS` backs, and `reveal_n` is filled only once the game is over.
+`PkView` has no slot for another seat's count while the game is played: every other seat's fan is drawn at `PK_FAN_BACKS` backs, and `reveal` is filled only once the game is over.
 
 **The words are keys.**
 `pk_say.c` never formats a user string: every sentence is a key filled by `pk_fill`, numbers go through `pk_itoa`, and a caption is built from the bubble's own events (`pk_say_caption_of`), so a host holding a plan can caption it without a second replay.

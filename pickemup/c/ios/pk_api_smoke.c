@@ -1,0 +1,228 @@
+/* The bridge, proved WITHOUT a Mac: every entry point Swift will call, run
+ * against real games passed between simulated phones as the link text
+ * Messages carries, so a broken boundary fails here rather than in Xcode.
+ *
+ *     make -C pickemup/c ios-smoke
+ *
+ * It reads the returned structs through pk_api_layout.h because it is C; the
+ * Swift host reads the same pointers through the generated readers. */
+#include "include/pk_api.h"
+#include "pk_api_layout.h"
+#include <stdio.h>
+#include <string.h>
+
+static int fails, checks;
+#define OK(c, what) do { checks++; if (!(c)) { fails++; printf("  FAIL %s:%d %s\n", __FILE__, __LINE__, what); } } while (0)
+
+/* ONE KERNEL, SEVERAL PHONES: each person's identity, nickname and seat
+ * records are their own device's, so switching person swaps them - and drops
+ * the sender fact, which was about the other phone's screen. */
+static uint8_t recs[4][PK_API_REC_BYTES];
+static int     recn[4];
+static int     who = -1;
+static const char *NICK[4] = { "Alex", "Bo", "Cleo", "Dev" };
+
+static void be(int i)
+{
+    if (who >= 0) recn[who] = pk_api_seats_save(recs[who], PK_API_REC_BYTES);
+    pk_api_seats_load(recs[i], recn[i]);
+    pk_api_sender(NULL, 0, -1);
+    uint8_t id[16];
+    for (int k = 0; k < 16; k++) id[k] = (uint8_t)(i * 37 + k);
+    pk_api_me(id, 16);
+    pk_api_nickname((const uint8_t *)NICK[i], (int)strlen(NICK[i]));
+    who = i;
+}
+
+static const PkApiTable *table(void) { return (const PkApiTable *)pk_api_table(); }
+static const PkView *me_view(void) { return (const PkView *)pk_api_view(PK_API_ME); }
+
+static char link[8][PK_API_TEXT_MAX];
+
+/* Tap `text` as person i, who did (i_sent 1) or did not send it, in a DM. */
+static int open_as(int i, const char *text, int dm, int i_sent)
+{
+    be(i);
+    pk_api_sender(text, dm, i_sent);
+    return pk_api_read(text);
+}
+
+/* One bubble by the seat whose phone is in hand: "Last card!" when it may,
+ * then its turn if it is its turn - the first card it can play, else a draw
+ * and then that or a pass. */
+static void one_bubble(void)
+{
+    const PkView *v = me_view();
+    if (v->my_exposed) pk_api_say_it();
+    v = me_view();
+    if (v->turn != v->me) return;
+    for (int guard = 0; guard < 200; guard++) {
+        v = me_view();
+        int played = 0;
+        for (int p = 0; p < v->my_n && !played; p++)
+            if (v->my_playable[p]) played = pk_api_play(p, pk_api_is_wild(p) ? 0 : 4);
+        if (played) {
+            v = me_view();
+            if (v->turn != v->me || v->over || !v->can_draw) return;
+            continue;                                /* the turn came back (D7) */
+        }
+        if (v->can_draw && !pk_api_draw()) return;
+        v = me_view();
+        int again = 0;
+        for (int p = 0; p < v->my_n && !again; p++) again = v->my_playable[p];
+        if (!again) { pk_api_pass(); return; }
+    }
+}
+
+int main(void)
+{
+    char buf[PK_API_TEXT_MAX], line[256];
+    OK(pk_api_layout_hash() == 0, "the smoke build is not stamped (ios-lib stamps the shipped one)");
+    OK(pk_api_name_verdict((const uint8_t *)"Alex", 4) == 0 && pk_api_name_verdict((const uint8_t *)"", 0) == 1
+       && pk_api_name_verdict((const uint8_t *)"seventeen chars!!", 17) == 2, "nickname verdicts");
+
+    /* ---- a DM: Alex invites, Bo joins and starts in one bubble ---- */
+    be(0);
+    uint8_t seed[32];
+    for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(i * 29 + 7);
+    OK(pk_api_new(seed, 1) == 0, "Alex makes a lobby");
+    const PkApiTable *t = table();
+    OK(t->readable && t->phase == 0 && t->me == 0 && t->n_seats == 1 && t->offered == PK_LOBBY_WAITING,
+       "Alex waits in seat 0");
+    OK(pk_api_seats_dirty(), "the new game is recorded");
+    int n = pk_api_text(link[0], PK_API_TEXT_MAX);
+    OK(n > 3 && !strncmp(link[0], "?m=", 3), "the invitation is a link");
+    printf("  invitation: %d characters\n", n);
+    OK(pk_api_words(PK_API_W_INVITE, 0, line, sizeof line) > 0, "the invitation's caption");
+    printf("  \"%s\"\n", line);
+
+    OK(open_as(1, link[0], 1, 0) == 0, "Bo opens it");
+    t = table();
+    OK(t->me == 0xFF && t->offered == PK_LOBBY_JOIN && t->can_join_start, "Bo is offered join-and-start");
+    OK(pk_api_join_start() == 1, "Bo joins and starts");
+    t = table();
+    OK(t->phase == 2 && t->me == 1 && t->starter == 1 && t->n_seats == 2, "a live game, Bo in seat 1");
+    OK(pk_api_words(PK_API_W_CAPTION, 0, line, sizeof line) > 0, "the deal's caption");
+    printf("  \"%s\"\n", line);
+    const PkView *v = me_view();
+    OK(v->me == 1 && v->my_n == 7 && v->turn == 1, "Bo holds seven and moves first (D28)");
+    OK(pk_api_draw() == 1, "Bo draws in the start bubble");
+    OK(pk_api_undo() == 0, "a draw does not come back (D8)");
+    t = table();
+    OK(t->draft && !t->can_send, "mid-turn: a draft that cannot be sent");
+    const PkApiEvents *ev = (const PkApiEvents *)pk_api_plan_draft(PK_API_ME);
+    OK(ev && ev->n > 0 && ev->ev[0].kind == PK_EV_BUBBLE_BEGIN, "the draft's own plan");
+    int kinds = 0;
+    for (int i = 0; ev && i < ev->n; i++) kinds |= ev->ev[i].kind == PK_EV_DRAW && ev->ev[i].card != PK_CARD_HIDDEN;
+    OK(kinds, "Bo sees the card Bo drew");
+    OK(pk_api_text(buf, sizeof buf) < 0, "a draft mid-turn cannot be written");
+    one_bubble();
+    t = table();
+    OK(t->can_send, "the turn is done: it can be sent");
+    n = pk_api_text(link[1], PK_API_TEXT_MAX);
+    OK(n > 0, "the start bubble is a link");
+    OK(pk_api_check(link[1]) == 0, "and it reads");
+    OK(table()->draft, "writing the link left the draft staged");
+    OK(pk_api_commit() == 1 && !table()->draft, "sent: the draft is sealed");
+    OK(pk_api_seats_dirty(), "Bo's seat is recorded");
+
+    /* ---- play it out, phone to phone: the other phone reads each bubble,
+     * which at two players is always the turn seat's ---- */
+    int from = 1, reads = 0;
+    char *cur = link[1];
+    static char next[PK_API_TEXT_MAX];
+    for (int round = 0; round < 3000; round++) {
+        OK(open_as(from ^ 1, cur, 1, 0) == 0, "the other phone reads the bubble");
+        reads++;
+        const PkApiTable *tt = table();
+        OK(tt->me == (from ^ 1) && (tt->by == PK_BY_RECORD || tt->by == PK_BY_SENDER), "seated by record or sender");
+        if (tt->phase == 3) break;
+        v = me_view();
+        OK(v->my_n > 0 && v->me == tt->me, "my own hand");
+        if (v->turn != v->me) {
+            /* a play to one card ended the sender's bubble with the turn
+             * still theirs (D7): their own phone goes on */
+            OK(open_as(from, cur, 1, 1) == 0 && table()->me == from, "the sender's phone reads its own bubble");
+            v = me_view();
+        }
+        OK(v->turn == v->me, "the phone in hand is the turn seat's");
+        tt = table();
+        OK(pk_api_since(tt->bubbles - 1, tt->bubbles) != 0, "since the last bubble");
+        OK(pk_api_words(PK_API_W_CAPTION, tt->bubbles, line, sizeof line) > 0
+           && pk_api_words(PK_API_W_HEADLINE, 0, line, sizeof line) >= 0
+           && pk_api_words(PK_API_W_DECK_LEFT, 0, line, sizeof line) > 0, "the words");
+        one_bubble();
+        OK(table()->can_send, "a bubble that can be sent");
+        n = pk_api_text(next, sizeof next);
+        OK(n > 0, "it writes");
+        OK(pk_api_prefer(next, cur) < 0 && pk_api_prefer(cur, next) > 0, "the child beats its parent");
+        OK(pk_api_common(next, cur) == table()->bubbles, "they share every bubble of the parent");
+        pk_api_commit();
+        memcpy(link[2], next, (size_t)n + 1);
+        cur = link[2];
+        from = table()->me;
+    }
+    t = table();
+    OK(t->phase == 3, "the game ended");
+    v = (const PkView *)pk_api_view(PK_API_ME);
+    OK(v->over && v->reveal[0].n + v->reveal[1].n > 0, "the end reveals every hand");
+    OK(pk_api_words(PK_API_W_CAPTION, t->bubbles, line, sizeof line) > 0, "the last caption");
+    printf("  a 2p game in %d bubbles over %d reads; last: \"%s\" (%d characters)\n", t->bubbles, reads, line,
+           (int)strlen(cur));
+    ev = (const PkApiEvents *)pk_api_plan(PK_API_ALL, t->bubbles - 1, t->bubbles);
+    OK(ev && ev->n > 0 && ev->ev[ev->n - 1].kind == PK_EV_BUBBLE_END, "the last bubble's plan");
+
+    /* ---- a rotated id: no record, no tag, only the sender fact or the name ---- */
+    uint8_t other[16] = { 9, 9, 9 };
+    pk_api_seats_load(0, 0);
+    pk_api_me(other, 16);
+    pk_api_sender(cur, 1, 1);
+    OK(pk_api_read(cur) == 0 && table()->by == PK_BY_SENDER, "a rotated id in a DM: seated by the sender fact");
+    pk_api_seats_load(0, 0);
+    pk_api_sender(NULL, 0, -1);
+    pk_api_nickname((const uint8_t *)"Alex", 4);
+    OK(pk_api_read(cur) == 0 && table()->me == 0 && table()->by == PK_BY_NAME, "...or by the nickname");
+    pk_api_seats_load(0, 0);
+    pk_api_nickname((const uint8_t *)"Zed", 3);
+    OK(pk_api_read(cur) == 0 && table()->me == 0xFF, "nobody I know: a spectator");
+    OK(pk_api_draw() == 0, "a spectator stages nothing");
+
+    /* ---- a group lobby: three join, one leaves, the lobby plan ---- */
+    be(0);
+    for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(i * 13 + 1);
+    pk_api_new(seed, 0);
+    pk_api_text(link[3], PK_API_TEXT_MAX);
+    open_as(1, link[3], 0, 0);
+    OK(pk_api_join() == 1, "Bo joins");
+    pk_api_text(link[4], PK_API_TEXT_MAX);
+    open_as(2, link[4], 0, 0);
+    OK(table()->offered == PK_LOBBY_JOIN, "Cleo may join");
+    OK(pk_api_join() == 2, "Cleo joins");
+    pk_api_text(link[5], PK_API_TEXT_MAX);
+    ev = (const PkApiEvents *)pk_api_plan_lobby(link[4]);
+    OK(ev && ev->n == 1 && ev->ev[0].kind == PK_EV_LOBBY_JOIN && ev->ev[0].seat == 2, "the lobby plan: Cleo arrives");
+    OK(table()->offered == PK_LOBBY_WAITING, "the newest joiner waits while there is room");
+    open_as(1, link[5], 0, 0);
+    OK(table()->me == 1 && table()->offered == PK_LOBBY_START && table()->can_exit, "Bo may start, or leave");
+    OK(pk_api_words(PK_API_W_LEFT, 1, line, sizeof line) > 0, "Bo's leave is captioned before it");
+    OK(pk_api_leave() == 0 && table()->me == 0xFF && table()->n_seats == 2, "Bo leaves");
+    pk_api_text(link[6], PK_API_TEXT_MAX);
+    open_as(2, link[6], 0, 0);
+    OK(table()->me == 1 && table()->by == PK_BY_RECORD, "Cleo's record finds her in the row she moved down to");
+    OK(pk_api_start() == 0 && table()->phase == 2 && table()->starter == 1, "Cleo starts");
+    ev = (const PkApiEvents *)pk_api_plan(PK_API_ME, -1, 0);
+    OK(ev && ev->n > 7 && ev->ev[0].kind == PK_EV_LOBBY_START && ev->ev[0].seat == 1, "the deal's plan names its starter");
+
+    /* ---- refusals ---- */
+    OK(pk_api_read("hello") < 0 && pk_api_check("?m=AAAA") < 0, "a link that is not a game");
+    OK(pk_api_prefer("junk", link[6]) > 0 && pk_api_prefer(link[6], "junk") < 0, "the unreadable one loses");
+    OK(pk_api_same_game(link[3], link[6]) && !pk_api_same_game(link[0], link[6]), "same game by seed");
+    OK(pk_api_words(PK_API_W_COUNT, 0, line, sizeof line) == -1 && pk_api_string(-1, line, sizeof line) == -1,
+       "off the end of the words");
+    OK(pk_api_string(0, line, sizeof line) > 0, "the game's name by key");
+    OK(pk_api_seats_save((uint8_t *)buf, 3) == -1, "a short records buffer is refused");
+
+    printf("bridge: %d checks, %d failed\n", checks, fails);
+    if (!fails) printf("bridge ok\n");
+    return fails ? 1 : 0;
+}

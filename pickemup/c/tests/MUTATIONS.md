@@ -45,7 +45,7 @@ Run 2026-09-26 on the kernel as of this commit.
 
 | Test | Mutation | Assertion that went red |
 |---|---|---|
-| 7.5.1 other counts never leak | `reveal_n` / `reveal_hand` filled while playing | `pk_plan_test.c:81` "the view changed with another hand" |
+| 7.5.1 other counts never leak | `reveal` filled while playing | `pk_plan_test.c:81` "the view changed with another hand" |
 | 7.5.2 spectator | the spectator (-1) treated as seat 0 | `pk_plan_test.c:97` "a spectator sees no hand and can do nothing" |
 | 7.5.3 game end reveals all | keep masking when over | `pk_plan_test.c:113` "viewer -1 sees every hand at the end" |
 | 7.5.4 events mask draws | mask a card by `other` instead of `seat` | `pk_plan_test.c:131` "kind 5 to seat 0 hidden 1" |

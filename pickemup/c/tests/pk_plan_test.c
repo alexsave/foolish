@@ -93,7 +93,7 @@ static void t_spectator(void)
     PkView v;
     pk_view(&g, PK_VIEW_SPECTATOR, &v);
     int zero = v.my_n == 0 && !v.can_draw && !v.can_pass && !v.can_seal && !v.can_call && !v.my_exposed;
-    for (int s = 0; s < PK_MAX_SEATS; s++) zero &= v.reveal_n[s] == 0;
+    for (int s = 0; s < PK_MAX_SEATS; s++) zero &= v.reveal[s].n == 0;
     CHECK(v.me == PK_SEAT_NONE && zero, "a spectator sees no hand and can do nothing");
     CHECK(v.deck_n == g.deck_n && v.top == g.stack[g.stack_n - 1], "but sees the table");
 }
@@ -109,7 +109,7 @@ static void t_end_reveals(void)
         pk_view(&g, v, &w);
         int all = 1;
         for (int s = 0; s < g.n; s++)
-            all &= w.reveal_n[s] == g.hand_n[s] && !memcmp(w.reveal_hand[s], g.hand[s], g.hand_n[s]);
+            all &= w.reveal[s].n == g.hand_n[s] && !memcmp(w.reveal[s].card, g.hand[s], g.hand_n[s]);
         CHECK(all, "viewer %d sees every hand at the end", v);
     }
 }
