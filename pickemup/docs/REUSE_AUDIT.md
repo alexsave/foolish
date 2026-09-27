@@ -592,6 +592,29 @@ The test now takes the bare-cover byte from the SDK's own no-cover pair (`TableW
 Main still has the Xcode 27 compile problem in that file, and it goes away when this branch lands.
 No CI lane runs foolish's `tests-asan` (only uttt, werewolf and pickemup run an asan target), so main was never red on it.
 
+#### P8 after all lifts
+
+Run on 2026-09-27 from `foolish/` on branch `pickemup` at `e2a00158`, with S1 (textures in `shared/swift/Textures`), the `replay.c` fix (O8), the `TableWireTests` lint fix and S6 (rig) in the tree.
+The two commits that landed during the run (`a410d915`, `aed5005c`) touch nothing under `foolish/` or `shared/`.
+The simulator was a fresh `pk-p8` (iPhone 17e, iOS 27.0), which booted in 32 seconds, and every run named it by id: `DEST='platform=iOS Simulator,id=<udid>'`.
+
+A first `mac_tests.sh --no-lib --regen` stopped at the build: the script's stale-kernel guard found `c/src/replay.c` newer than `ios/vendor/Foolish.xcframework`, which is git-ignored and had not been rebuilt since O8.
+So the real run dropped `--no-lib` and rebuilt the xcframework, which is what section 2 asks for any change to C anyway.
+
+| Scheme | Command | Result |
+| --- | --- | --- |
+| `Foolish` (FoolishTests) | `DEST=... bash ios/scripts/mac_tests.sh --regen` | 853 executed, 1 skipped, 1 failed: `MemoryProfileTests.testMemoryProfileOfEverythingTheExtensionHolds` |
+| `FoolishHarness` (HarnessTests) | `DEST=... bash ios/scripts/mac_tests.sh --no-lib harness` | 29 executed, 0 failed, TEST SUCCEEDED |
+| `FoolishMessagesApp` | `DEST=... bash ios/scripts/mac_tests.sh --no-lib app` | BUILD SUCCEEDED |
+| P3 | `make -C c ios-smoke` | pass: SMOKE OK |
+
+This matches the S1 baseline: the same 853 executed, the same 1 skipped, and the same single flaky failure.
+The memory test failed at `MemoryProfileTests.swift:224` with 17.3 MB over 20 bubble renders against the 2 MB budget, where the baseline run measured 8.6 MB; it is the same assertion and the same known flake, and it does not touch textures, `replay.c` or the rig.
+HarnessTests had never run before, so its 29 (not the 24 the script header states) is the first recorded count and the baseline for later lifts.
+The script stops at the first failing scheme, which is why `harness` and `app` ran as their own invocations after the full run.
+`--regen` left the entitlements alone: `git status --short -- '*.entitlements'` printed nothing, and all three files matched a `cp -p` backup in bytes and mtime.
+The simulator was shut down and deleted afterwards.
+
 ---
 
 ## 6. Gaps: what neither foolish nor uttt has
