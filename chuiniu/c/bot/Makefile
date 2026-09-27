@@ -13,7 +13,8 @@ CC      ?= cc
 CFLAGS  ?= -O2 -Wall -Wextra -Werror -std=c11
 SHARED  := ../../../shared/c
 KSRC    := ../src/cn.c ../src/cn_dice.c ../src/cn_plan.c $(SHARED)/deal_rng.c $(SHARED)/sha256.c
-KHDR    := $(wildcard ../src/*.h) $(SHARED)/deal_rng.h $(SHARED)/sha256.h
+KHDR    := $(wildcard ../src/*.h) $(SHARED)/deal_rng.h $(SHARED)/sha256.h \
+           ../tests/cn_check.h $(SHARED)/test/check.h
 BSRC    := cn_bot.c cn_bot_random.c
 BHDR    := cn_bot.h
 LIBS    := -lm -lpthread

@@ -57,8 +57,13 @@ const REPO = resolve(PRODUCT, '..');
  *                          because Swift has no relative #include). No product C
  *                          file includes either today; listing them makes the
  *                          first one that does spell it relatively.
+ *   check.h, twophone.h    shared/c/test, the kernel test harness; test-only,
+ *                          nothing that ships includes them, but a test is
+ *                          compiled by a build system like any other file, so
+ *                          each product's test header spells them relatively
  */
-const SHARED_HEADERS = ['sha256.h', 'deal_rng.h', 'b32.h', 'mixrad.h', 'languages.h', 'msg_stage.h', 'motion_ruler.h'];
+const SHARED_HEADERS = ['sha256.h', 'deal_rng.h', 'b32.h', 'mixrad.h', 'languages.h', 'msg_stage.h', 'motion_ruler.h',
+    'check.h', 'twophone.h'];
 
 /** Every C source and header in the repo, both products, excluding build output. */
 function kernelSources(): string[] {
@@ -140,6 +145,9 @@ test('the shared sources compile with no -I whatsoever', () => {
         'tallybones/c/src/tb.c',        // sha256.h, deal_rng.h
         'tallybones/c/src/tb_msg.c',    // sha256.h, b32.h
         'tallybones/c/src/tb_code.c',   // mixrad.h
+        // The test harness, reached only from tests.
+        'chuiniu/c/tests/cn_test.c',            // test/check.h, through cn_check.h
+        'tallybones/c/tests/tb_twophone_test.c', // test/twophone.h
     ];
     const probes = expectedProbes.filter((p) => existsSync(join(REPO, p)));
     assert.equal(probes.length, expectedProbes.length,

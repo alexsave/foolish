@@ -38,7 +38,7 @@ The kernel is plain C11 with fixed-size structs and no allocation; it reaches `m
 | `ios/cn_api.c` | the bridge: the resident message, staging, reading, words, beats, two messages |
 | `ios/cn_api_layout.h`, `ios/layout.args` | the structs the bridge hands Swift and what structgen generates for |
 | `ios/cn_api_smoke.c`, `ios/cn_api_smoke.swift` | the bridge driven phone to phone, from C and from Swift |
-| `tests/cn_check.h` | the harness: `CHECK`, seeds, the random and the longest-game players |
+| `tests/cn_check.h` | the test helpers on top of `shared/c/test/check.h` (`CHECK`): seeds, the random and the longest-game players |
 | `tests/cn_test.c` | the rules |
 | `tests/cn_dice_test.c` | the recipe, the golden, same state same dice, and the cancel exploit through the bridge |
 | `tests/cn_plan_test.c` | the plan, masking, the menu, the reveal, the beats |

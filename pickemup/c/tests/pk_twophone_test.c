@@ -30,29 +30,9 @@
  * The bridge is compiled into this file (the TESTS rule builds the kernel
  * sources alone), so the calls below are the shipped pk_api.c's. */
 #include "../ios/pk_api.c"
+#include "../../../shared/c/test/twophone.h"
 #include <stdio.h>
 #include <stdlib.h>
-
-/* ---- the harness: named steps, every assertion counted ---------------------- */
-
-static int         g_checks, g_fails, g_quiet;
-static const char *g_step = "";
-
-#define STEP(name) (g_step = (name))
-#define OK(c, ...) do {                                                          \
-        int ok_ = (c) ? 1 : 0;                                                   \
-        if (g_quiet) break;                                                      \
-        g_checks++;                                                              \
-        if (!ok_) {                                                              \
-            g_fails++;                                                           \
-            if (g_fails <= 40) {                                                 \
-                fprintf(stderr, "FAIL %s:%d [%s] %s: ", __FILE__, __LINE__,      \
-                        g_step, #c);                                             \
-                fprintf(stderr, __VA_ARGS__);                                    \
-                fputc('\n', stderr);                                             \
-            }                                                                    \
-        }                                                                        \
-    } while (0)
 
 /* A step the seed cannot reach: the script gives up on this seed. */
 static const char *g_why;
@@ -216,7 +196,7 @@ static int do_draw(void)
     if (deck == 0) {
         expect_reshuffle(stack - 1);
         v = vme();
-        STEP(g_step);
+        STEP(g_test);
         OK(v->stack_n == 1 && v->top == top && v->live_suit == suit,
            "the reshuffle leaves the pile its top card and suit (stack %d top %d)", v->stack_n, v->top);
         OK(v->deck_n == stack - 2, "the deck refilled from the pile less its top, less the card drawn (%d, want %d)",
@@ -505,7 +485,7 @@ static int send_and_receive(void)
     char got[256];
     int gl = pk_api_words(PK_API_W_CAPTION, bubble, got, sizeof got);
     OK(gl > 0 && !strcmp(got, want), "the receiver's caption of bubble %d: \"%s\", want \"%s\"", bubble, got, want);
-    if (strcmp(g_step, "filler")) printf("  bubble %3d  %-34s \"%s\"\n", bubble, g_step, got);
+    if (strcmp(g_test, "filler")) printf("  bubble %3d  %-34s \"%s\"\n", bubble, g_test, got);
     return 1;
 }
 
@@ -946,6 +926,5 @@ int main(int argc, char **argv)
     STEP("seed");
     OK(ok, "the seed plays every step again with the assertions on (%s)", g_why ? g_why : "");
     printf("twophone: seed k=%d, %d bubbles, %d reshuffles\n", k, table_()->bubbles, resh_total);
-    printf("twophone: %d assertions, %d failed\n", g_checks, g_fails);
-    return g_fails ? 1 : 0;
+    return report("twophone");
 }

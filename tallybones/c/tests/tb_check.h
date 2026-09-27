@@ -1,10 +1,11 @@
-/* The harness every tallybones/c test shares (pickemup/c/tests/pk_check.h's
- * shape): CHECK names the test and the line, counts assertions, and the
- * binary exits 1 on any failure so `make run` goes red. Tests may poke
- * TbGame fields to build a position; the kernel's structs are plain data. */
+/* What every tallybones/c test shares on top of shared/c/test/check.h (TEST,
+ * CHECK, report): the tests' own randomness, seeds, moves, the random bot and
+ * the spec's roll. Tests may poke TbGame fields to build a position; the
+ * kernel's structs are plain data. */
 #ifndef TB_CHECK_H
 #define TB_CHECK_H
 
+#include "../../../shared/c/test/check.h"
 #include "../src/tb.h"
 #include "../src/tb_code.h"
 #include "../../../shared/c/sha256.h"
@@ -12,41 +13,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-static int         g_checks, g_fails;
-static const char *g_test = "";
-
-#define TEST(name) (g_test = (name))
-
-static const char *g_named[64];
-static int         g_named_fails[64];
-static inline int first_fails_of(const char *test)
-{
-    int i = 0;
-    while (i < 64 && g_named[i] && strcmp(g_named[i], test)) i++;
-    if (i == 64) return 0;
-    g_named[i] = test;
-    return ++g_named_fails[i] <= 5;
-}
-
-#define CHECK(cond, ...) do {                                                   \
-        g_checks++;                                                             \
-        if (!(cond)) {                                                          \
-            g_fails++;                                                          \
-            if (first_fails_of(g_test)) {                                       \
-                fprintf(stderr, "FAIL %s:%d [%s] %s: ", __FILE__, __LINE__,     \
-                        g_test, #cond);                                         \
-                fprintf(stderr, __VA_ARGS__);                                   \
-                fprintf(stderr, "\n");                                          \
-            }                                                                   \
-        }                                                                       \
-    } while (0)
-
-static inline int report(const char *what)
-{
-    printf("%s: %d assertions, %d failed\n", what, g_checks, g_fails);
-    return g_fails ? 1 : 0;
-}
 
 /* xorshift64*, the tests' own randomness (never the game's) */
 static uint64_t RS = 0x9e3779b97f4a7c15ull;

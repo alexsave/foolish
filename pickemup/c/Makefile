@@ -25,7 +25,8 @@ SRC     := src/pk.c src/pk_deck.c src/pk_plan.c src/pk_view.c src/pk_lobby.c src
 # link them, so SRC, the wasm objects and the xcframework never carry them.
 BOT_SRC := src/pk_belief.c src/pk_bot.c
 HDR     := $(wildcard src/*.h) i18n/keys.h tests/pk_check.h tests/pk_bot.h \
-           $(SHARED)/deal_rng.h $(SHARED)/sha256.h $(SHARED)/b32.h $(SHARED)/mixrad.h
+           $(SHARED)/deal_rng.h $(SHARED)/sha256.h $(SHARED)/b32.h $(SHARED)/mixrad.h \
+           $(SHARED)/test/check.h $(SHARED)/test/twophone.h
 
 # One binary per test file; each takes an optional scale argument.
 TESTS   := pk_test pk_rules_test pk_plan_test pk_say_test pk_fuzz pk_msg_test pk_twophone_test pk_beats_test pk_arrange_test pk_bot_test
@@ -48,7 +49,13 @@ build/%: tests/%.c $(SRC) $(HDR) | build
 build/pk_bot_test: tests/pk_bot_test.c $(SRC) $(BOT_SRC) $(HDR) | build
 	$(CC) $(CFLAGS) $(SRC) $(BOT_SRC) $< -o $@
 
-run: $(addprefix build/,$(TESTS)) build/ios_smoke
+# The shared harness's own test (shared/c/test): TEST, CHECK, report, STEP, OK.
+CHECK_TEST := $(SHARED)/test/check_test.c $(SHARED)/test/check.h $(SHARED)/test/twophone.h
+build/check_test: $(CHECK_TEST) | build
+	$(CC) $(CFLAGS) $(SHARED)/test/check_test.c -o $@
+
+run: $(addprefix build/,$(TESTS)) build/check_test build/ios_smoke
+	./build/check_test
 	./build/pk_test
 	./build/pk_rules_test
 	./build/pk_plan_test
@@ -69,7 +76,11 @@ build/asan_%: tests/%.c $(SRC) $(HDR) | build
 build/asan_pk_bot_test: tests/pk_bot_test.c $(SRC) $(BOT_SRC) $(HDR) | build
 	$(CC) $(ASAN_FLAGS) $(SRC) $(BOT_SRC) $< -o $@
 
-asan: $(addprefix build/asan_,$(TESTS)) build/asan_ios_smoke
+build/asan_check_test: $(CHECK_TEST) | build
+	$(CC) $(ASAN_FLAGS) $(SHARED)/test/check_test.c -o $@
+
+asan: $(addprefix build/asan_,$(TESTS)) build/asan_check_test build/asan_ios_smoke
+	./build/asan_check_test
 	./build/asan_pk_test
 	./build/asan_pk_rules_test
 	./build/asan_pk_plan_test

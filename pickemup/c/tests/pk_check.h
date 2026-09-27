@@ -1,54 +1,17 @@
-/* The test harness every pickemup/c test shares: CHECK names the test and
- * the line, counts assertions, and the binary exits 1 on any failure so
- * `make run` goes red. Tests may poke PkGame fields directly to build a
- * position; the kernel's structs are plain data on purpose. */
+/* What every pickemup/c test shares on top of shared/c/test/check.h (TEST,
+ * CHECK, report): actions, card ids and hand-built tables. Tests may poke
+ * PkGame fields directly to build a position; the kernel's structs are plain
+ * data on purpose. */
 #ifndef PK_CHECK_H
 #define PK_CHECK_H
 
+#include "../../../shared/c/test/check.h"
 #include "../src/pk.h"
 #include "../src/pk_plan.h"
 #include "pk_bot.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-static int         g_checks, g_fails;
-static const char *g_test = "";
-
-/* A failure report is capped PER TEST, not per binary, so a test that goes
- * red after a noisier one is still named in the output (a mutation check
- * reads it by name). */
-#define TEST(name) (g_test = (name))
-
-static const char *g_named[64];
-static int         g_named_fails[64];
-static inline int first_fails_of(const char *test)
-{
-    int i = 0;
-    while (i < 64 && g_named[i] && strcmp(g_named[i], test)) i++;
-    if (i == 64) return 0;
-    g_named[i] = test;
-    return ++g_named_fails[i] <= 5;
-}
-
-#define CHECK(cond, ...) do {                                                   \
-        g_checks++;                                                             \
-        if (!(cond)) {                                                          \
-            g_fails++;                                                          \
-            if (first_fails_of(g_test)) {                                       \
-                fprintf(stderr, "FAIL %s:%d [%s] %s: ", __FILE__, __LINE__,     \
-                        g_test, #cond);                                         \
-                fprintf(stderr, __VA_ARGS__);                                   \
-                fprintf(stderr, "\n");                                          \
-            }                                                                   \
-        }                                                                       \
-    } while (0)
-
-static inline int report(const char *what)
-{
-    printf("%s: %d assertions, %d failed\n", what, g_checks, g_fails);
-    return g_fails ? 1 : 0;
-}
 
 /* seed_of HAS ONLY 256 DEALS: every byte is f(k) + 7i with f(k) a byte, so k
  * and any k' with f(k') == f(k) deal the same game. Kept as it is because

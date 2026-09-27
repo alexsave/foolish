@@ -20,7 +20,8 @@ SRC     := src/tb.c src/tb_code.c src/tb_plan.c src/tb_view.c src/tb_lobby.c src
            src/tb_say.c src/tb_beats.c i18n/strings_en.c \
            $(SHARED)/deal_rng.c $(SHARED)/sha256.c $(SHARED)/b32.c $(SHARED)/mixrad.c
 HDR     := $(wildcard src/*.h) i18n/keys.h tests/tb_check.h \
-           $(SHARED)/deal_rng.h $(SHARED)/sha256.h $(SHARED)/b32.h $(SHARED)/mixrad.h
+           $(SHARED)/deal_rng.h $(SHARED)/sha256.h $(SHARED)/b32.h $(SHARED)/mixrad.h \
+           $(SHARED)/test/check.h $(SHARED)/test/twophone.h
 
 # One binary per test file; each takes an optional scale argument.
 TESTS   := tb_test tb_msg_test tb_fuzz tb_say_test tb_beats_test tb_twophone_test
@@ -38,7 +39,13 @@ build:
 build/%: tests/%.c $(SRC) $(HDR) | build
 	$(CC) $(CFLAGS) $(SRC) $< -o $@
 
-run: $(addprefix build/,$(TESTS)) build/ios_smoke
+# The shared harness's own test (shared/c/test): TEST, CHECK, report, STEP, OK.
+CHECK_TEST := $(SHARED)/test/check_test.c $(SHARED)/test/check.h $(SHARED)/test/twophone.h
+build/check_test: $(CHECK_TEST) | build
+	$(CC) $(CFLAGS) $(SHARED)/test/check_test.c -o $@
+
+run: $(addprefix build/,$(TESTS)) build/check_test build/ios_smoke
+	./build/check_test
 	./build/tb_test
 	./build/tb_msg_test $(WIRE_GAMES)
 	./build/tb_fuzz $(FUZZ_GAMES)
@@ -52,7 +59,11 @@ ASAN_FLAGS := -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefine
 build/asan_%: tests/%.c $(SRC) $(HDR) | build
 	$(CC) $(ASAN_FLAGS) $(SRC) $< -o $@
 
-asan: $(addprefix build/asan_,$(TESTS)) build/asan_ios_smoke
+build/asan_check_test: $(CHECK_TEST) | build
+	$(CC) $(ASAN_FLAGS) $(SHARED)/test/check_test.c -o $@
+
+asan: $(addprefix build/asan_,$(TESTS)) build/asan_check_test build/asan_ios_smoke
+	./build/asan_check_test
 	./build/asan_tb_test
 	./build/asan_tb_msg_test 2
 	./build/asan_tb_fuzz 140

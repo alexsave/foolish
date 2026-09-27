@@ -13,24 +13,9 @@
  * marked sent (didStartSending) and only then handed over. */
 #include "../ios/tb_api.c"
 #include "../ios/tb_lay.c"
+#include "../../../shared/c/test/twophone.h"
 #include <stdio.h>
 #include <stdlib.h>
-
-static int         g_checks, g_fails;
-static const char *g_step = "";
-#define STEP(name) (g_step = (name))
-#define OK(c, ...) do {                                                          \
-        g_checks++;                                                              \
-        if (!(c)) {                                                              \
-            g_fails++;                                                           \
-            if (g_fails <= 40) {                                                 \
-                fprintf(stderr, "FAIL %s:%d [%s] %s: ", __FILE__, __LINE__,      \
-                        g_step, #c);                                             \
-                fprintf(stderr, __VA_ARGS__);                                    \
-                fputc('\n', stderr);                                             \
-            }                                                                    \
-        }                                                                        \
-    } while (0)
 
 enum { A = 0, B = 1 };
 static const char *NICK[2] = { "Alex", "Bo" };
@@ -271,6 +256,5 @@ int main(void)
     lobby();
     first_turn();
     rest_of_game();
-    printf("tb_twophone_test: %d assertions, %d failed\n", g_checks, g_fails);
-    return g_fails ? 1 : 0;
+    return report("tb_twophone_test");
 }

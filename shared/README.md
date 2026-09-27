@@ -20,6 +20,7 @@ Swift reaches a header-only C module through its `module.modulemap` on `SWIFT_IN
 | `c/i18n/languages.h` | the language registry: every language's code, endonym and direction, one row each | CARDS (the string generator reads it), UTTT (compiled into its kernel, which indexes its tables by it) |
 | `c/motion_ruler/` | the debug ruler's palette and geometry (`CMotionRuler`), painted by both products and read by `tools/motion` | CARDS, UTTT |
 | `c/msg_stage/` | when a Messages insert may go, what a silent one means, and whether a received bubble is my own echo (`CMsgStage`); `INSERT_GATING.md` is the evidence, `msg_stage_test.c` the test | UTTT, SHED, LIAR, BONES (CARDS compiles the Swift face, its stage path does not call it) |
+| `c/test/` | the kernel test harness, test-only and never shipped: `check.h` (`TEST`, `CHECK` with its per-test failure cap `CHECK_NAMED_CAP`, `report`) and `twophone.h` (`STEP`, `OK` and the quiet rehearsal of a two-phone script, on the same counters); a product's own test header includes `check.h` and adds what pokes its own game; `check_test.c` tests the harness | SHED, LIAR, BONES |
 
 ## Swift (`swift/`)
 

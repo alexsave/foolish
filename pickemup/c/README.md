@@ -40,7 +40,7 @@ The struct is fixed-size plain integers with no pointers and no bitfields, there
 | `src/pk_beats.h`, `src/pk_beats.c` | the motion timeline: a plan's events laid out as beats on `UI.html`'s clock, the frame at any millisecond, one beat's transform (ANIMATION_DECISIONS A1) |
 | `src/pk_internal.h` | the sink `pk.c` shares with `pk_plan.c` and the tests |
 | `i18n/keys.h`, `i18n/strings_en.c` | every word, one key list, in the shape `shared/tools/datagen` reads |
-| `tests/pk_check.h` | the harness: `CHECK` and hand-built tables |
+| `tests/pk_check.h` | the test helpers on top of `shared/c/test/check.h` (`CHECK`): hand-built tables |
 | `tests/pk_bot.h` | the random tests' bot, its randomness and the wide seeds, freestanding |
 | `tests/pk_cross.c`, `tests/pk_cross.mjs` | 7.3.7: the same games natively and in wasm32 (node), compared by `make cross` |
 | `tests/pk_test.c` | legality (7.1), effects (7.2), the deck (7.3), call-out windows (7.7), lobby and edges (7.8) |
