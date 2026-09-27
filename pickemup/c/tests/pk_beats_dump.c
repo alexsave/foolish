@@ -58,8 +58,8 @@ static const char *event(int k)
 
 static void where(char *out, int n, int a, int i)
 {
-    if (a == PK_ANC_HAND || a == PK_ANC_FAN || a == PK_ANC_SLOT || a == PK_ANC_SEAT || a == PK_ANC_BURY ||
-        a == PK_ANC_PICKER || a == PK_ANC_ROW)
+    if (i != PK_SEAT_NONE && (a == PK_ANC_HAND || a == PK_ANC_FAN || a == PK_ANC_SLOT || a == PK_ANC_SEAT || a == PK_ANC_BURY ||
+        a == PK_ANC_PICKER || a == PK_ANC_ROW))
         snprintf(out, (size_t)n, "%s.%d", anc(a), i);
     else
         snprintf(out, (size_t)n, "%s", anc(a));
@@ -78,6 +78,7 @@ static void print_take(const char *title)
         where(t, sizeof t, b->to, b->to_i);
         if (b->card == PK_CARD_HIDDEN) snprintf(c, sizeof c, "back");
         else if (b->card == PK_CARD_NONE) snprintf(c, sizeof c, "-");
+        else if (b->kind == PK_BK_FLIGHT && b->sub == PK_FLIGHT_BACK) snprintf(c, sizeof c, "back (%d)", b->card);
         else snprintf(c, sizeof c, "%d", b->card);
         if (b->parts > 1) snprintf(p, sizeof p, "%d x %d, %d apart", b->parts, b->part_ms, b->stagger_ms);
         else snprintf(p, sizeof p, "-");
@@ -105,7 +106,8 @@ int main(void)
             int draws = 0, gag = 0, play = 0, other_seat = 0, turns = 0;
             for (int i = 0; i < n; i++) {
                 draws += EV[i].kind == PK_EV_DRAW;
-                gag += EV[i].kind == PK_EV_RESHUFFLE_GATHER && EV[i].half == PK_HALF_ACTION;
+                /* the reshuffle between two draws, the way the deck runs out mid-turn */
+                gag += EV[i].kind == PK_EV_RESHUFFLE_GATHER && EV[i].half == PK_HALF_ACTION && draws >= 1;
                 play += EV[i].kind == PK_EV_PLAY;
                 turns += EV[i].kind == PK_EV_TURN_TO;
                 if (EV[i].kind == PK_EV_DRAW && EV[i].seat != 0) other_seat = 1;

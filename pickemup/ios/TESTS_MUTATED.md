@@ -38,6 +38,27 @@ The C side's own rows (the layout thresholds, the words, the ranks, the buried c
 | testFacesComeFromTheKernel | `CardFace` reads the rank for the suit | "circle one" |
 | testTheBubbleRendersAt300By195 | `BubbleSnapshot.size` 300 x 300 | "the bubble is 300 x 195" |
 
+## BeatPlayerTests (the motion worker, 2026-09-27)
+
+Run on the OTHER iPhone 17e, `6E0A730D-2655-4E8E-B369-2CF274879D31` (iOS 27.0), with `-only-testing:PickemupKitTests/BeatPlayerTests`: the unmutated suite is 7 tests, 0 failures, and `TableModelTests` (10) stays green beside it.
+Each mutant was applied alone by a script (exact string replacement, the source restored and checked byte for byte), and the two C mutants rebuilt the xcframework before and after.
+The whole scheme could not be run there: `ActionCardCornerTests` and `RenderTests` hang on that simulator (ORCHESTRATION B3).
+
+| Test | Mutation | Assertion that went red |
+|---|---|---|
+| testADrawIsOneFlightDeckToTheNewSlotThenAFlip | `BeatPlayer.anchorName` maps `PK_ANC_HAND` to "hand" | "the flight lands in the new slot" ("hand" against "hand.7") |
+| testADrawIsOneFlightDeckToTheNewSlotThenAFlip | `BeatPlayer.ghosts` draws no flip ghost | "then it turns over there", "face up in its second half" |
+| testAnArrivalFliesEachDrawnCardIntoTheSeatsFan | `BeatPlayer.rect` lands a fan flight at the fan's left edge | "at the fan's right end" (153.98 against 174 +/- 2) |
+| testAnArrivalFliesEachDrawnCardIntoTheSeatsFan, testASupersedingPlanReplacesThePlayingOneCleanly | `PickemupHost.adopt` plays the newest bubble as if opened cold | "from the bubble on screen", "the kernel's stagger" ([100, 210, 320] against [16, 126, 236]), "mid-flight" |
+| testASupersedingPlanReplacesThePlayingOneCleanly, testAStagedPlayHoldsItsSettleUntilSend | `BeatPlayer.play` keeps a playing plan (`guard self.plan == nil`) | "the new plan starts from its own beginning" (181 against 0), "the board is the new plan's start, not a revert" (86 against 89), "the bar moves to Alex" |
+| testASupersedingPlanReplacesThePlayingOneCleanly | `BeatPlayer.play` does not restart the clock | "mid-flight", "the new plan starts from its own beginning" |
+| testNoAnimationWhenFromEqualsTo | (C) `pk_api_beats` lays out the newest bubble when `from == to`, library rebuilt | "no motion when nothing arrived" (5 against 0), "an empty plan clears" |
+| testNoAnimationWhenFromEqualsTo | `PickemupHost.adopt` plays the newest bubble when nothing is newer | "adopting the same bubble again moves nothing" |
+| testAStagedPlayHoldsItsSettleUntilSend | `BeatPlayer.ended` drops a plan that holds a staged draft | "the staged draft keeps its frame after the flight", "Bo's turn bar has not moved" |
+| testAStagedPlayHoldsItsSettleUntilSend | `TableModel.sent` plays nothing | the Send plan's mode (stage against send), "the bar moves to Alex" |
+| testUndoFliesThePlayedCardHome | `TableModel.undo` clears instead of flying the card home | "the card flies home" |
+| testThePickerTilesAreTheKernels | (C) `PICKER_REACH_X` 96 becomes 90, library rebuilt | "triangles east", "diamonds west", "the x" |
+
 ## Not mutated
 
 `ActionCardCornerTests.testAnActionCardExposesItsSuitShape` (O6, added 2026-09-27 by the second simulator worker) is compiled but has NOT run: the simulator would not boot (ORCHESTRATION B2).

@@ -85,6 +85,12 @@ BLOCKED B2 confirmed by the orchestrator at 2026-09-27 07:40: a freshly created 
 The `getpwuid_r did not find a match for uid 501` line the previous worker saw points at the host's directory services, which only a reboot resets.
 Every simulator proof in this pass (foolish's P8 after the lifts, the pickemup Messages run and screenshots, `pickemup/ios/scripts/mac_tests.sh` counts, the red run of `ActionCardCornerTests`, the filmed animation take) is therefore owed and listed in `pickemup/docs/SIM_VERIFICATION.md`, ready to run after the reboot.
 
+BLOCKED B3: the filmed and measured animation take.
+On 2026-09-27 at about 03:35 local, the second iPhone 17e `6E0A730D` did boot within the 90-second watchdog, and `BeatPlayerTests` (7) and `TableModelTests` (10) ran green on it, and every `BeatPlayerTests` test was seen red there (`pickemup/ios/TESTS_MUTATED.md`).
+But any test that puts a window or a renderer on screen hung on it for ten minutes and was killed: `ActionCardCornerTests.testAnActionCardExposesItsSuitShape` (a card hosted in a `UIWindow`) and `RenderTests.testTheBubbleRendersAt300By195`, and `xcodebuild` itself hung after every finished run until killed.
+A filmed take is a window on screen, so it was not attempted; `pickemup/docs/MOTION_REPORT.md` gives both takes as the kernel's timeline instead (`make -C pickemup/c beats-dump`).
+Next, after the reboot: film a live arrival with three draws, a reshuffle and a play, and a deal, at normal speed, measure them with the `animation-measure` skill, put the contact sheets in `pickemup/docs/shots/motion/` and the scores in `MOTION_REPORT.md`; and run the whole `PickemupKitTests` scheme, which this worker could only run in part.
+
 ## Found on the way (not pickemup's to fix in this pass)
 
 - `werewolf/docs/UI.html` fails `shared/tools/check_ui_doc.py` because of a literal template tag inside a script comment.

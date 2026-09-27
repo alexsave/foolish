@@ -102,6 +102,7 @@ DECISION I19: the suit picker's tile positions (96 across, 104 up and down from 
 Alternative: a `pk_lay_picker` entry point.
 Why: they are the one layout number the study leaves unstated; they should move to `pk_lay.c` with the flight layer that pops the tiles out, which will need them in C anyway.
 Confidence: low.
+Done by the motion worker: the tiles now stand where `pk_lay_picker` puts them (`PkLayout.pickerTile`), and the tile and x sizes are `PK_LAY_PICKER_TILE` and `PK_LAY_PICKER_X` (ANIMATION_DECISIONS A9).
 
 DECISION I20: no auto-collapse ride on render-server layers (uttt's `CollapseSlide`): the SwiftUI board relays out as the drawer moves, and a staged play asks for compact after foolish's 250 + 500 ms rest.
 Alternative: port `CollapseSlide` with a set of collapse numbers in the kernel.
