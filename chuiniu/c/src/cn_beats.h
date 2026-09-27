@@ -78,7 +78,8 @@ typedef struct {
     uint8_t  pad0;
     uint8_t  dice_n[CN_MAX_SEATS];      /* every seat's count as drawn now        */
     uint8_t  state[CN_BEATS_MAX];       /* CN_BS_* of each beat                   */
-    float    p[CN_BEATS_MAX];           /* each beat's eased progress, 0..1       */
+    float    prog[CN_BEATS_MAX];        /* each beat's eased progress, 0..1 (not `p`:
+                                           structgen's readers take a `p`)  */
 } CnBeatFrame;
 
 typedef struct {

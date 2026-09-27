@@ -89,13 +89,13 @@ void cn_beats_frame(const CnBeats *b, uint32_t now, CnBeatFrame *f)
         soonest(&f->next_ms, end, now);
         if (now < x->start_ms) {
             f->state[i] = CN_BS_PENDING;
-            f->p[i] = 0.0f;
+            f->prog[i] = 0.0f;
             all_done = 0;
             continue;
         }
         const int done = now >= end;
         f->state[i] = done ? CN_BS_DONE : CN_BS_ACTIVE;
-        f->p[i] = done || !x->dur_ms ? 1.0f : cn_ease((float)(now - x->start_ms) / (float)x->dur_ms);
+        f->prog[i] = done || !x->dur_ms ? 1.0f : cn_ease((float)(now - x->start_ms) / (float)x->dur_ms);
         if (!done) all_done = 0;
         switch (x->kind) {
         case CN_BK_SHAKE:

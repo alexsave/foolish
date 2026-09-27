@@ -185,7 +185,7 @@ static void test_beats(void)
             CHECK(b.start.bid_q == H.bid_q && !memcmp(b.start.dice_n, H.dice_n, sizeof H.dice_n) && !b.start.done,
                   "game %u move %d: the plan starts from the board before", k, i);
             cn_beats_frame(&b, 0, &f);
-            CHECK(!f.done && f.state[0] == CN_BS_ACTIVE && f.p[0] == 0.0f && (nb < 2 || f.state[1] == CN_BS_PENDING),
+            CHECK(!f.done && f.state[0] == CN_BS_ACTIVE && f.prog[0] == 0.0f && (nb < 2 || f.state[1] == CN_BS_PENDING),
                   "game %u move %d: t 0 starts the first beat", k, i);
             cn_beats_frame(&b, b.total_ms, &f);
             cn_replay(&H, &G, i + 1);
@@ -196,7 +196,7 @@ static void test_beats(void)
                   && !memcmp(f.dice_n, settled.dice_n, sizeof f.dice_n) && f.winner == settled.winner
                   && f.round == settled.round,
                   "game %u move %d: the end is the settled board", k, i);
-            for (int j = 0; j < nb; j++) CHECK(f.state[j] == CN_BS_DONE && f.p[j] == 1.0f, "every beat done");
+            for (int j = 0; j < nb; j++) CHECK(f.state[j] == CN_BS_DONE && f.prog[j] == 1.0f, "every beat done");
             /* the clock only moves forward to the next change */
             uint32_t t = 0;
             int steps = 0;
