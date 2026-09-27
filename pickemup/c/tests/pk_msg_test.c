@@ -413,6 +413,264 @@ static void bit_flips(void)
 
 }
 
+/* Does `in` carry a check that matches its own bytes, reading the roster
+ * lengths the way the decoder does? A test-side copy, bounds-checked, so a
+ * corrupted buffer is judged by what it says. */
+static int digest_ok(const uint8_t *in, int n)
+{
+    if (n < PK_HEAD_LEN) return 0;
+    int at = PK_HEAD_LEN;
+    for (int s = 0; s < in[42]; s++) {
+        if (n - at < PK_TAG_LEN + 1) return 0;
+        int len = in[at + PK_TAG_LEN];
+        at += PK_TAG_LEN + 1;
+        if (n - at < len) return 0;
+        at += len;
+    }
+    if (n - at < PK_CHECK_LEN) return 0;
+    uint8_t d[SHA256_DIGEST_LEN];
+    Sha256 c;
+    sha256_init(&c);
+    sha256_update(&c, in, (size_t)at);
+    sha256_update(&c, in + at + PK_CHECK_LEN, (size_t)(n - at - PK_CHECK_LEN));
+    sha256_final(&c, d);
+    return !memcmp(d, in + at, PK_CHECK_LEN);
+}
+
+/* Several bytes at once, at random places and values, in every envelope of
+ * the pool: with the check recomputed (the corruption reaches the roster and
+ * the body) it is refused or re-encodes to itself; raw, it is refused
+ * whenever its check fails - never accepted on a failing digest. */
+static void random_corruption(int trials)
+{
+    uint8_t *buf;
+    long raw = 0, rechecked = 0, read = 0;
+    TEST("the corruption sweep: several bytes at once");
+    for (int p = 0; p < npool; p++) {
+        int n = pool_n[p], at = check_at(pool[p]);
+        for (int t = 0; t < trials; t++) {
+            buf = at_end(area, (int)sizeof area, pool[p], n);
+            int k = 2 + (int)rnd(7);
+            for (int j = 0; j < k; j++) buf[rnd((uint32_t)n)] ^= (uint8_t)(1 + rnd(255));
+            int v, again = (int)rnd(2);
+            if (again) { recheck(buf, n, at); rechecked++; } else raw++;
+            int ok = refused_or_canonical(buf, n, &v);
+            CHECK(ok, "envelope %d trial %d (%d bytes, %s) reads as a different writing", p, t, k,
+                  again ? "re-checked" : "raw");
+            CHECK(!v || digest_ok(buf, n), "envelope %d trial %d: accepted with a failing check", p, t);
+            read += v;
+        }
+    }
+    printf("corruption: %ld multi-byte corruptions raw and %ld re-checked, %ld read, each re-encoding to itself\n",
+           raw, rechecked, read);
+}
+
+/* THE HEADER'S EVERY BOUNDARY, forged by hand with an honest check so the
+ * decoder's own judgement is what is tested: the seat count, the phase, the
+ * flags, the format, the name length, the starter, the counters, the body's
+ * presence and spelling, and the lobby_rev arithmetic. */
+typedef struct {
+    uint8_t head[PK_HEAD_LEN];
+    int     rows;
+    uint8_t tag[PK_MAX_SEATS + 2][PK_TAG_LEN];
+    int     name_len[PK_MAX_SEATS + 2];
+    uint8_t name[PK_MAX_SEATS + 2][64];
+    uint8_t body[PK_CODE_MAX + 2];
+    int     bn;
+} Forge;
+
+static void forge_from(Forge *f, const uint8_t *in, int n)
+{
+    memset(f, 0, sizeof *f);
+    memcpy(f->head, in, PK_HEAD_LEN);
+    int at = PK_HEAD_LEN;
+    f->rows = in[42];
+    for (int s = 0; s < f->rows; s++) {
+        memcpy(f->tag[s], in + at, PK_TAG_LEN);
+        at += PK_TAG_LEN;
+        f->name_len[s] = in[at++];
+        memcpy(f->name[s], in + at, (size_t)f->name_len[s]);
+        at += f->name_len[s];
+    }
+    at += PK_CHECK_LEN;
+    f->bn = n - at;
+    memcpy(f->body, in + at, (size_t)f->bn);
+}
+
+/* The bytes, with a check computed over them; placed at the end of `area`. */
+static uint8_t *forge_bytes(const Forge *f, int *len)
+{
+    static uint8_t b[PK_MSG_MAX_BYTES + 64];
+    int n = 0;
+    memcpy(b, f->head, PK_HEAD_LEN);
+    n = PK_HEAD_LEN;
+    for (int s = 0; s < f->rows; s++) {
+        memcpy(b + n, f->tag[s], PK_TAG_LEN);
+        n += PK_TAG_LEN;
+        b[n++] = (uint8_t)f->name_len[s];
+        memcpy(b + n, f->name[s], (size_t)f->name_len[s]);
+        n += f->name_len[s];
+    }
+    int at = n;
+    n += PK_CHECK_LEN;
+    memcpy(b + n, f->body, (size_t)f->bn);
+    n += f->bn;
+    recheck(b, n, at);
+    *len = n;
+    static uint8_t tail[PK_MSG_MAX_BYTES + 64];
+    return at_end(tail, (int)sizeof tail, b, n);
+}
+
+static int forge_decode(const Forge *f)
+{
+    static PkMsg m;
+    int n;
+    uint8_t *b = forge_bytes(f, &n);
+    return pk_msg_decode(b, n, &m);
+}
+
+/* A row of the forge's own making, name "Pat{i}". */
+static void forge_row(Forge *f, int s)
+{
+    memset(f->tag[s], 0x40 + s, PK_TAG_LEN);
+    f->name_len[s] = 4;
+    memcpy(f->name[s], "Pat", 3);
+    f->name[s][3] = (uint8_t)('A' + s);
+}
+
+static void header_bounds(void)
+{
+    static PkMsg live, lob, dm;
+    static uint8_t lb[PK_MSG_MAX_BYTES], wb[PK_MSG_MAX_BYTES], db[PK_MSG_MAX_BYTES];
+    static Forge base, f;
+    TEST("the header's boundaries");
+    uint8_t seed[32];
+    seed_wide(seed, 424242);
+    started_of(&live, seed, 3);
+    for (int step = 0; step < 400 && !(live.game.bubbles >= 12 && !live.game.b_open); step++) bot_step(&live.game);
+    int ln = pk_msg_encode(&live, lb, (int)sizeof lb);
+    lobby_of(&lob, seed, 3, 0);
+    int wn = pk_msg_encode(&lob, wb, (int)sizeof wb);
+    lobby_of(&dm, seed, 2, 1);
+    int dn = pk_msg_encode(&dm, db, (int)sizeof db);
+    CHECK(ln > 0 && wn > 0 && dn > 0, "three honest envelopes");
+
+    /* the forge reproduces an honest envelope byte for byte */
+    forge_from(&base, lb, ln);
+    int n;
+    uint8_t *b = forge_bytes(&base, &n);
+    CHECK(n == ln && !memcmp(b, lb, (size_t)n) && forge_decode(&base) == PK_EOK, "the forge is honest");
+
+    /* ---- LIVE ---- */
+    f = base; f.head[1] = PK_MSG_FORMAT + 1;
+    CHECK(forge_decode(&f) == PK_EFORMAT, "format + 1: a newer version, never misread");
+    f = base; f.head[0] = PK_MSG_MAGIC + 1;
+    CHECK(forge_decode(&f) == PK_EMAGIC, "magic + 1");
+    for (int ph = 0; ph < 8; ph++) {
+        f = base; f.head[2] = (uint8_t)ph;
+        int e = forge_decode(&f);
+        if (ph == PK_PHASE_LIVE) CHECK(e == PK_EOK, "phase LIVE is the honest one");
+        else CHECK(e < 0, "phase %d on a live body is refused (%d)", ph, e);
+    }
+    for (int bit = 3; bit < 8; bit++) {
+        f = base; f.head[3] |= (uint8_t)(1u << bit);
+        CHECK(forge_decode(&f) == PK_EFLAGS, "reserved flag bit %d", bit);
+    }
+    f = base; f.head[3] |= PK_FLAG_LEFT;
+    CHECK(forge_decode(&f) == PK_EFLAGS, "LEFT on a started game");
+    f = base; f.head[3] |= PK_FLAG_DM;
+    CHECK(forge_decode(&f) == PK_EROSTER, "DM with three seats");
+    f = base; f.rows = 0; f.head[42] = 0;
+    CHECK(forge_decode(&f) == PK_EROSTER, "no seats");
+    f = base; f.rows = 1; f.head[42] = 1; f.head[43] = 0;
+    CHECK(forge_decode(&f) == PK_EROSTER, "one seat, started");
+    f = base;
+    for (int s = f.rows; s < PK_MAX_SEATS + 1; s++) forge_row(&f, s);
+    f.rows = PK_MAX_SEATS + 1; f.head[42] = PK_MAX_SEATS + 1;
+    CHECK(forge_decode(&f) == PK_EROSTER, "nine seats");
+    f = base; f.head[42] = (uint8_t)(base.rows + 1);
+    CHECK(forge_decode(&f) < 0, "a seat count one past the rows");
+    f = base; f.head[43] = (uint8_t)base.rows;
+    CHECK(forge_decode(&f) == PK_EROSTER, "starter = n_seats");
+    f = base; f.head[43] = PK_SEAT_NONE;
+    CHECK(forge_decode(&f) == PK_EROSTER, "no starter on a started game");
+    f = base; f.head[38] = (uint8_t)((PK_MAX_BUBBLES + 1) & 0xFF); f.head[39] = (uint8_t)((PK_MAX_BUBBLES + 1) >> 8);
+    CHECK(forge_decode(&f) == PK_EGAME, "bubbles 751");
+    f = base; f.head[40] = 0xFF; f.head[41] = 0xFF;
+    CHECK(forge_decode(&f) == PK_EGAME, "turns 65535");
+    f = base; f.bn = 0;
+    CHECK(forge_decode(&f) == PK_EGAME, "a started game with no body");
+    f = base; f.body[f.bn++] = 0;
+    CHECK(forge_decode(&f) == PK_EGAME, "a trailing zero byte: a second spelling (D48)");
+    f = base; f.name_len[1] = 0;
+    CHECK(forge_decode(&f) == PK_EROSTER, "a name of 0 bytes");
+    f = base; f.name_len[1] = PK_NAME_MAX_BYTES + 1; memset(f.name[1], 'a', PK_NAME_MAX_BYTES + 1);
+    CHECK(forge_decode(&f) == PK_EROSTER, "a name of 49 bytes");
+    f = base; f.name_len[1] = PK_NAME_MAX_BYTES;
+    for (int i = 0; i < 16; i++) memcpy(f.name[1] + 3 * i, "\xE2\x82\xAC", 3);  /* sixteen euro signs */
+    CHECK(forge_decode(&f) == PK_EOK, "a name of 48 bytes and 16 characters is the most there is");
+    f.name_len[1] = 17; memset(f.name[1], 'a', 17);
+    CHECK(forge_decode(&f) == PK_EROSTER, "a name of 17 characters");
+    f = base; memcpy(f.tag[2], f.tag[0], PK_TAG_LEN);
+    CHECK(forge_decode(&f) == PK_EROSTER, "a tag twice");
+    f = base; f.name_len[2] = f.name_len[0]; memcpy(f.name[2], f.name[0], (size_t)f.name_len[0]);
+    CHECK(forge_decode(&f) == PK_EROSTER, "a name twice");
+    /* a started game's lobby_rev is the lobby it started from: at least one
+     * join per seat past the creator, and every leave matched by a join */
+    f = base; f.head[36] = (uint8_t)(base.rows - 2); f.head[37] = 0;
+    CHECK(forge_decode(&f) == PK_EROSTER, "a started roster with fewer joins than seats");
+    f = base; f.head[36] = (uint8_t)(base.head[36] + 1);
+    CHECK(forge_decode(&f) == PK_EROSTER, "a started lobby_rev of the wrong parity");
+    f = base; f.head[36] = (uint8_t)(base.head[36] + 2);
+    CHECK(forge_decode(&f) == PK_EOK, "a join and a leave before the start");
+
+    /* ---- WAITING ---- */
+    forge_from(&base, wb, wn);
+    CHECK(forge_decode(&base) == PK_EOK, "the honest lobby");
+    f = base; f.bn = 1; f.body[0] = 1;
+    CHECK(forge_decode(&f) == PK_EGAME, "a lobby with a body");
+    f = base; f.head[38] = 1;
+    CHECK(forge_decode(&f) == PK_EGAME, "a lobby with bubbles");
+    f = base; f.head[40] = 1;
+    CHECK(forge_decode(&f) == PK_EGAME, "a lobby with turns");
+    f = base; f.head[43] = 0;
+    CHECK(forge_decode(&f) == PK_EROSTER, "a lobby with a starter");
+    f = base; f.head[3] |= PK_FLAG_TIP_SAID;
+    CHECK(forge_decode(&f) == PK_EFLAGS, "TIP_SAID in a lobby");
+    f = base; f.rows = 0; f.head[42] = 0;
+    CHECK(forge_decode(&f) == PK_EROSTER, "a lobby of nobody");
+    f = base; f.rows = 1; f.head[42] = 1;
+    CHECK(forge_decode(&f) == PK_EOK, "a lobby of one, two joins and two leaves after it");
+    f.head[36] = 1;
+    CHECK(forge_decode(&f) == PK_EROSTER, "a lobby of one after one change");
+    f = base;
+    for (int s = f.rows; s < PK_MAX_SEATS; s++) forge_row(&f, s);
+    f.rows = PK_MAX_SEATS; f.head[42] = PK_MAX_SEATS; f.head[36] = PK_MAX_SEATS - 1;
+    CHECK(forge_decode(&f) == PK_EOK, "a full group lobby of eight");
+    forge_row(&f, PK_MAX_SEATS);
+    f.rows = PK_MAX_SEATS + 1; f.head[42] = PK_MAX_SEATS + 1; f.head[36] = PK_MAX_SEATS;
+    CHECK(forge_decode(&f) == PK_EROSTER, "a group lobby of nine");
+    f = base; f.head[3] |= PK_FLAG_LEFT;
+    CHECK(forge_decode(&f) == PK_EROSTER, "LEFT with no leave behind it");
+    f = base; f.head[36] = 3;
+    CHECK(forge_decode(&f) == PK_EROSTER, "a lobby_rev of the wrong parity");
+
+    /* ---- the DM ---- */
+    forge_from(&base, db, dn);
+    CHECK(forge_decode(&base) == PK_EOK, "the honest DM lobby");
+    f = base; forge_row(&f, 2); f.rows = 3; f.head[42] = 3; f.head[36] = 2;
+    CHECK(forge_decode(&f) == PK_EROSTER, "a DM of three");
+
+    /* ---- lengths ---- */
+    static uint8_t big[PK_MSG_MAX_BYTES + 1];
+    memcpy(big, lb, (size_t)ln);
+    CHECK(pk_msg_decode(big, PK_MSG_MAX_BYTES + 1, &live) < 0, "a buffer one past the longest envelope");
+    for (int k = 0; k < PK_HEAD_LEN; k++) {
+        uint8_t *cut = at_end(area, (int)sizeof area, lb, k);
+        CHECK(pk_msg_decode(cut, k, &live) < 0, "a header cut to %d bytes", k);
+    }
+}
+
 static void header_agreement(void)
 {
     static PkMsg m, back;
@@ -753,6 +1011,8 @@ int main(int argc, char **argv)
     truncation_sweep();
     corruption_sweep();
     bit_flips();
+    random_corruption(400);
+    header_bounds();
     caps_are_rules();
     many_draws(deals);
     round_trip(games);

@@ -76,7 +76,7 @@ static void t_counts_never_leak(void)
             for (int i = 0; i < moved && h.hand_n[x] > 1; i++)
                 h.hand[y][h.hand_n[y]++] = h.hand[x][--h.hand_n[x]];
             uint8_t mine = (uint8_t)(1u << v);
-            h.exposed = (uint8_t)((h.exposed & mine) | (rnd(256) & ~mine));
+            h.exposed = (uint8_t)((h.exposed & mine) | (rnd(256) & (0xFFu ^ mine)));
             pk_view(&h, v, &b);
             CHECK(!memcmp(&a, &b, sizeof a), "game %u viewer %d: the view changed with another hand", k, v);
             positions++;

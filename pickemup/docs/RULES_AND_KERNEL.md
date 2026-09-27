@@ -1,7 +1,7 @@
 # Pick 'Em Up - rules and kernel design
 
-Status: the kernel of sections 1, 3, 5 and 6 is built in `pickemup/c/` (see its README); the wire (section 4), the iOS bridge and CI are not yet.
-Where building it forced a change, the change is a DECISION from D29 on.
+Status: the kernel of sections 1, 3, 5 and 6, the wire of section 4, the iOS bridge and the CI lane are built in `pickemup/c/` (see its README).
+Where building or reviewing it forced a change, the change is a DECISION from D29 on, and the sketches in sections 3 to 5 are amended by them (each names what it amends).
 Written 2026-09-26 against `pickemup/README.md`, `pickemup/LEGAL.md` and `pickemup/docs/UI.html` (the surface study of 20 September 2026).
 Every rule in this file is a kernel rule: it lives in C, in `pickemup/c/`, and every host (the iMessage extension, a replay page) asks the kernel instead of re-deciding it.
 
@@ -493,6 +493,38 @@ Alternative: run `make -C c wasm` there too.
 Why: `foolish/e2e/validation/ci_toolchain_validation.test.ts` reads any `make ... wasm` line in any workflow as a build of foolish's test module and requires foolish's prebuild script before it, so the lane would turn foolish's validation red; the wasm objects stay a local target until that gate knows whose wasm it sees (ORCHESTRATION.md, found on the way).
 Recommendation confidence: medium.
 
+### Decisions the conformance review forced (D50 onwards)
+
+Taken while checking `pickemup/c/` rule by rule against this file (2026-09-27); each names the section it amends.
+The edge tests are `pickemup/c/tests/pk_rules_test.c`.
+
+**DECISION D50: a play whose penalty reshuffled the deck stays undoable; only the sender's own draws are the floor (amends D8, 3.7).**
+Alternative: move the floor at every penalty draw too, so no reshuffle is ever undone.
+Why: D8's floor exists because a draw shows the drawer a card of the shared future.
+A penalty's cards go to the victim and are masked for the sender (5.1), so a +2 or +4 that reshuffles shows the sender nothing but the deck count, which is public.
+Undo is a replay (3.7), so it restores the reshuffle counter and the old deck exactly; an own draw that reshuffled is below the floor and never undone.
+Recommendation confidence: high.
+
+**DECISION D51: a seat record whose tag no row carries is a witness that I am not seated, and it overrules the sender and the name witnesses; leaving keeps the record (amends 4.6, D42, D47).**
+Alternative: forget the record on a leave, as the bridge did, and let the nickname seat me.
+Why: names are unique only within one roster, so the name a leaver frees can be taken by somebody else, and a device that left would then be seated on that person's row by D47's name witness (and, in a lobby, by the sender witness when the namesake's join is the newest bubble).
+A record found for this game with no row says exactly "I sat here and I left" (or "this bubble is older than my join"), which no inference can know better.
+The tag witness still counts, because it is direct; a rejoin writes a new record over the old one.
+`pk_rec_find` returns `PK_REC_GONE` for it.
+Recommendation confidence: high.
+
+**DECISION D52: a started header's `lobby_rev` must be one its roster could have started from, the same arithmetic as a lobby's (amends 4.2).**
+Alternative: leave it unchecked once started, since only Rule P clause 6 reads it and two honest siblings share it.
+Why: a start is not a roster change, so a started game keeps the `lobby_rev` of the lobby it came from, which had at least one join per seat past the creator and a join for every leave; a header that says otherwise describes a game that cannot exist, and a decoder that accepts one has two rules for one field.
+The phase byte likewise has one judge: any value but WAITING reads as started and must then equal what the replay says (LIVE or FINISHED), so the decoder's separate whitelist of phases went.
+Recommendation confidence: high.
+
+**DECISION D53: the kernel stays at `-Wall -Wextra -Werror -std=c11` in the Makefile; `-Wpedantic -Wshadow -Wconversion` are a review-time check, not a build flag, until a gcc run proves them clean (amends 7).**
+Alternative: add all three to `CFLAGS` now.
+Why: with Apple clang every source and test is clean under all three (the one `-Wsign-conversion` hit, in a test, is fixed), but the CI lane is Linux gcc, whose `-Wconversion` warns on narrowing that clang does not (compound assignment to `uint8_t`, for one), and a flag no gcc has compiled under would turn that lane red on the next push.
+The review that adds them is one Linux gcc run of `make run CFLAGS="-O2 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror -std=c11"`.
+Recommendation confidence: medium.
+
 ---
 
 ## 3. Kernel design
@@ -833,13 +865,15 @@ off  size  field
 2    1     phase       0 WAITING (lobby), 2 LIVE, 3 FINISHED  (foolish's numbers; 1 unused)
 3    1     flags       bit0 DM (lobby capacity 2, else 8)
                        bit1 TIP_SAID (the newest bubble holds "Last card!"; derived)
-                       bits 2-7 reserved = 0, refused if set
+                       bit2 LEFT (WAITING only: the newest lobby bubble was a leave; D41)
+                       bits 3-7 reserved = 0, refused if set
 4    32    seed
 36   2     lobby_rev   u16, roster changes so far (joins and leaves)
 38   2     bubbles     u16, sealed bubbles since the deal (0 in WAITING)
 40   2     turns       u16, completed turns (0 in WAITING)
 42   1     n_seats     1..8 in WAITING, 2..8 once started (= n)
-43   var   roster      n_seats x { tag[9], u8 name_len (1..48), name utf8 }
+43   1     starter     the seat that started the game, 0xFF in WAITING (D41)
+44   var   roster      n_seats x { tag[9], u8 name_len (1..48), name utf8 }
 var  2     check       first 2 bytes of SHA-256 over every other byte
 var  var   body        the code (4.4), to the end of the buffer; empty in WAITING
 ```
@@ -944,6 +978,7 @@ Lobby controls (`pk_lobby_offered`, one enum, exactly one answer per state, walk
 
 **Which seat am I** is UTTT's three witnesses in UTTT's order (`utm_resolve`): the device's own record keyed by game id, then the tag, then the sender in a DM; and foolish's nickname picker as the fallback for 3+ players when all three fail (`IMESSAGE_GAME_DESIGN.md` section 6.3).
 In a lobby, a resolved seat counts only if the bubble in hand lists it (`msg_seat_resolve_in_lobby`).
+D47 makes the nickname the fourth witness and D51 makes a record that finds no row a witness of absence.
 
 ### 4.7 Versioning
 
