@@ -11,7 +11,7 @@ make -C pickemup/c arena                           the five main line-ups, 2,000
 ./pickemup/c/build/pk_arena 2000 8 248 x           the same plus the two extra line-ups (the tables below)
 ```
 
-Run on 2026-09-27 on an 8-core Mac, about ten minutes of wall clock for the whole table (the five main line-ups alone, `make arena`, about seven).
+Run on 2026-09-27 on an 8-core Mac, about ten minutes of wall clock for the whole table (the five main line-ups alone, `make arena`, 6 minutes 42 seconds).
 
 - A line-up is two agents seated alternately, A B A B, and every deal is played twice, once each way round.
   So each agent holds half the seats, and 50% is an even match at every table size.
