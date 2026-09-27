@@ -1,0 +1,6 @@
+# Build outputs: the kernel's xcframework and the generated readers and
+# string tables (`make -C chuiniu/c ios-lib`), and the project, generated
+# from project.yml as pickemup's is.
+/vendor/
+/Generated/
+/*.xcodeproj

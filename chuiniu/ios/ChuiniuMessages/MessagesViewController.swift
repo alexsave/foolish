@@ -1,0 +1,328 @@
+// COPIED from pickemup/ios/PickemupMessages/MessagesViewController.swift at 03eb3362 - a later lift into shared/ replaces it
+//
+// The extension. It owns the conversation and nothing else: every rule, every
+// word and every number is the kernel's, reached ONLY through the seam
+// (ChuiniuKit/Kernel/KernelSeam.swift); the screens are ChuiniuKit's.
+//
+// pickemup's (and uttt's) lifecycle, kept whole:
+//   - NOTHING IS INSERTED UNTIL THE DRAWER IS UP AND THE CONVERSATION IS
+//     ACTIVE (`whenReady`): an insert before the drawer is up is silently
+//     dropped on a real phone (InsertStaging.drawerUp).
+//   - ONE INSERT LOOP PER STAGE (shared/c/msg_stage via InsertStaging). A
+//     stage generation voids every waiter of an older stage.
+//   - MY OWN BUBBLE COMING BACK THROUGH didReceive IS NOT AN ARRIVAL.
+//   - markSent NEVER REBASES BACKWARDS.
+//   - ONE MSSession PER GAME.
+//   - WHAT WENT OUT IS THE AUTHORITY (Kernel.sent).
+//
+// Not here yet (the tie-together's): the draft-keeping of pickemup's resident
+// slot, seat records and nicknames, the collapse-after-settle timing, and the
+// sender identity of a tapped bubble. The scaffold stages every move at once.
+
+import Messages
+import ChuiniuKit
+import SwiftUI
+import UIKit
+
+final class MessagesViewController: MSMessagesAppViewController {
+
+    private lazy var host = ChuiniuHost(kernel: KernelSeam.make())
+    private var hosting: UIHostingController<ChuiniuRoot>?
+
+    private var loop = InsertStaging.Loop()
+    private var stageInsert: (message: MSMessage, generation: Int, conversation: MSConversation)?
+    private var stageGeneration = 0
+
+    /// The link sitting in the input field, which nobody has sent yet.
+    private var staged: URL?
+    /// The last link this device SENT.
+    private var sent: URL?
+    /// A bubble that arrived while we were up.
+    private var arrived: URL?
+    /// A drawer opened from the + menu is bound to no message; its first send
+    /// closes it so the next tap binds it (uttt, foolish).
+    private var unbound = true
+
+    // MARK: the view
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+#if DEBUG
+        if ChuiniuDev.empty { return }
+#endif
+        view.backgroundColor = .clear
+        host.onStage = { [weak self] caption in self?.stageResident(caption: caption) }
+        let h = UIHostingController(rootView: ChuiniuRoot(host: host))
+        h.view.backgroundColor = .clear
+        h.sizingOptions = []
+        addChild(h)
+        h.view.frame = view.bounds
+        h.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.addSubview(h.view)
+        h.didMove(toParent: self)
+        h.view.isHidden = true              // until the drawer has its size (uttt `appeared`)
+        hosting = h
+    }
+
+    private var appeared = false
+    private var conversationActive = false
+    private var ready: Bool { appeared && conversationActive }
+    private var afterReady: [() -> Void] = []
+
+    private var drawerUp: Bool {
+        guard let window = view.window else { return false }
+        return InsertStaging.drawerUp(window: window.bounds.height, view: view.bounds.height,
+                                      expanded: presentationStyle == .expanded)
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        if drawerUp { hosting?.view.isHidden = false }
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        if drawerUp {
+            appeared = true
+            hosting?.view.isHidden = false
+        }
+        becameReady()
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        appeared = false
+    }
+
+    private func becameReady() {
+        guard ready else { return }
+        let work = afterReady
+        afterReady.removeAll()
+        work.forEach { $0() }
+    }
+
+    private func whenReady(_ work: @escaping () -> Void) {
+        if ready { work() } else { afterReady.append(work) }
+    }
+
+    // MARK: the conversation
+
+    private var becameActiveAt: Date?
+
+    override func willBecomeActive(with conversation: MSConversation) {
+        super.willBecomeActive(with: conversation)
+        arrived = nil
+        unbound = conversation.selectedMessage == nil
+        present(conversation)
+        let activation = Date()
+        becameActiveAt = activation
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+            guard let self, self.becameActiveAt == activation, !self.ready else { return }
+            self.appeared = true
+            self.conversationActive = true
+            self.hosting?.view.isHidden = false
+            self.becameReady()
+        }
+    }
+
+    override func didBecomeActive(with conversation: MSConversation) {
+        super.didBecomeActive(with: conversation)
+        conversationActive = true
+        becameReady()
+    }
+
+    override func willResignActive(with conversation: MSConversation) {
+        super.willResignActive(with: conversation)
+        conversationActive = false
+    }
+
+    override func didSelect(_ message: MSMessage, conversation: MSConversation) {
+        super.didSelect(message, conversation: conversation)
+        if let u = message.url, u == staged || u == sent { return }
+        if let t = becameActiveAt, Date().timeIntervalSince(t) < 1 { return }
+        unbound = false
+        arrived = nil
+        present(conversation)
+    }
+
+    override func didReceive(_ message: MSMessage, conversation: MSConversation) {
+        super.didReceive(message, conversation: conversation)
+        guard let url = message.url else { return }
+        switch InsertStaging.receive(mine: url == staged || url == sent, staged: url == staged) {
+        case .arrival: break
+        case .echo, .echoOfStaged: return
+        }
+        arrived = url
+        present(conversation)
+    }
+
+    override func didStartSending(_ message: MSMessage, conversation: MSConversation) {
+        super.didStartSending(message, conversation: conversation)
+        voidPendingStage()
+        guard let url = message.url else { return }
+        // THE SENT BYTES ARE THE AUTHORITY
+        host.kernel.sent(url)
+        markSent(url)
+        if url == staged { staged = nil }
+        host.refresh()
+        if presentationStyle != .compact || unbound { dismiss() }
+    }
+
+    override func didCancelSending(_ message: MSMessage, conversation: MSConversation) {
+        super.didCancelSending(message, conversation: conversation)
+        guard message.url == staged else { return }   // a replaced draft
+        staged = nil
+        voidPendingStage()
+        host.kernel.cancelStaged()
+        host.refresh()
+    }
+
+    override func didTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
+        super.didTransition(to: presentationStyle)
+        if presentationStyle == .compact { act(loop.compact()) }
+    }
+
+    // MARK: routing
+
+    private func present(_ conversation: MSConversation) {
+        identify(conversation)
+        let tapped = newest(conversation.selectedMessage?.url, arrived)
+        guard let url = current(tapped) else {
+            // OPENING THE APP IS THE INVITATION (uttt)
+            create(in: conversation)
+            return
+        }
+        guard host.adopt(url) == 0 else { return }
+        voidPendingStage()
+    }
+
+    /// Of the selection and an arrival, the one the kernel ranks higher; an
+    /// arrival from a different game never overrides what was tapped.
+    private func newest(_ selected: URL?, _ arrival: URL?) -> URL? {
+        guard let arrival else { return selected }
+        guard let selected else { return arrival }
+        guard host.kernel.sameGame(selected, arrival) else { return selected }
+        return host.kernel.isNewer(selected, than: arrival) ? selected : arrival
+    }
+
+    /// This device's newest against what Messages handed over.
+    private func current(_ tapped: URL?) -> URL? {
+        guard let mine = staged ?? sent else { return tapped }
+        guard let tapped else { return mine }
+        return host.kernel.isNewer(tapped, than: mine) ? tapped : mine
+    }
+
+    private func markSent(_ url: URL) {
+        if let old = sent, host.kernel.sameGame(old, url), host.kernel.isNewer(old, than: url) { return }
+        sent = url
+    }
+
+    private func identify(_ conversation: MSConversation) {
+        let id = withUnsafeBytes(of: conversation.localParticipantIdentifier.uuid) { Data($0) }
+        host.kernel.me(id)
+    }
+
+    /// A new lobby, me in seat 0, and its invitation staged once the drawer
+    /// is up.
+    private func create(in conversation: MSConversation) {
+        guard host.kernel.newGame(dm: conversation.remoteParticipantIdentifiers.count == 1) else { return }
+        session = nil
+        sessionGame = nil
+        host.refresh()
+        stageResident(caption: host.table.caption)
+    }
+
+    // MARK: staging
+
+    private var session: MSSession?
+    private var sessionGame: URL?
+
+    private func sessionFor(_ url: URL, _ conversation: MSConversation) -> MSSession {
+        if let s = session, let g = sessionGame, host.kernel.sameGame(g, url) { return s }
+        let s: MSSession
+        if let sel = conversation.selectedMessage, let selURL = sel.url,
+           let selSession = sel.session, host.kernel.sameGame(selURL, url) {
+            s = selSession
+        } else {
+            s = MSSession()
+        }
+        session = s
+        sessionGame = url
+        return s
+    }
+
+    private func stageResident(caption: String) {
+        whenReady { [weak self] in
+            guard let self, let conversation = self.activeConversation else { return }
+            self.stage(caption: caption, in: conversation)
+        }
+    }
+
+    private func stage(caption: String, in conversation: MSConversation) {
+        guard let url = host.kernel.stagedURL() else { return }
+        voidPendingStage()
+        let generation = stageGeneration
+
+        let message = MSMessage(session: sessionFor(url, conversation))
+        message.url = url
+        let layout = MSMessageTemplateLayout()
+        layout.image = BubbleSnapshot.render(table: host.table, title: host.word(.gameTitle),
+                                             scheme: traitCollection.userInterfaceStyle == .dark ? .dark : .light)
+        layout.caption = caption
+        message.layout = layout
+        message.summaryText = caption
+        staged = url
+        insert(message, generation: generation, in: conversation)
+    }
+
+    /// Every waiter of the stage in progress sees a newer generation and
+    /// gives up.
+    private func voidPendingStage() {
+        stageGeneration += 1
+        loop.reset()
+        stageInsert = nil
+    }
+
+    private func insert(_ message: MSMessage, generation: Int, in conversation: MSConversation) {
+        stageInsert = (message, generation, conversation)
+        act(loop.first())
+    }
+
+    private func act(_ action: InsertStaging.Loop.Action) {
+        guard let s = stageInsert, s.generation == stageGeneration else { return }
+        let t = loop.tryNumber
+        switch action {
+        case .none, .park, .landed, .door:
+            return
+        case .insert:
+            issue(try: t, s)
+        case .insertLater:
+            DispatchQueue.main.asyncAfter(deadline: .now() + InsertStaging.errorBeatSeconds) { [weak self] in
+                guard let self, self.stageGeneration == s.generation else { return }
+                self.act(self.loop.due(try: t))
+            }
+        case .arm:
+            watchSilence(try: t, s)
+        case .revert:
+            didCancelSending(s.message, conversation: s.conversation)
+        }
+    }
+
+    private func issue(try t: Int, _ s: (message: MSMessage, generation: Int, conversation: MSConversation)) {
+        let target = activeConversation ?? s.conversation
+        watchSilence(try: t, s)
+        target.insert(s.message) { [weak self] error in
+            DispatchQueue.main.async {
+                guard let self, self.stageGeneration == s.generation else { return }
+                self.act(self.loop.answer(try: t, ok: error == nil))
+            }
+        }
+    }
+
+    private func watchSilence(try t: Int, _ s: (message: MSMessage, generation: Int, conversation: MSConversation)) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + InsertStaging.silenceSeconds) { [weak self] in
+            guard let self, self.stageGeneration == s.generation else { return }
+            self.act(self.loop.silence(try: t, compact: self.presentationStyle == .compact))
+        }
+    }
+}

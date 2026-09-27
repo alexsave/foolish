@@ -35,6 +35,25 @@ K2: dice derivation goes through `shared/c/deal_rng` only, seeded from a SHA-256
 
 I1: SwiftUI, in `pickemup/`'s shape: `ChuiniuKit`, `ChuiniuMessages`, `ChuiniuMessagesApp`, project `chuiniu/ios/Chuiniu.xcodeproj` from `chuiniu/ios/project.yml`, module `CChuiniu`, `chuiniu/ios/vendor/Chuiniu.xcframework` from `make -C c ios-lib`.
 
+I2: every kernel read goes through one file, `ChuiniuKit/Kernel/KernelSeam.swift`: a plain struct `TableModel` the screens draw and a `Kernel` protocol with one method per touch.
+Its `FakeKernel` is the only place a fake value lives, and the tie-together replaces it by returning a bridge from `KernelSeam.make()`.
+
+I3: the bid picker never ranks two bids: the kernel's `Menu` carries the least legal quantity for each face 2 to 6 (`minQuantityByFace`) plus the opening selection (`minimumRaise`), and Raise is lit when the chosen quantity reaches that face's number.
+So the kernel must export that per-face table (or the tie-together derives it in C), not only "the minimum raise".
+
+I4: which dice count at a reveal is the kernel's per-die flag (`Reveal.counts`), drawn as a brass ring, the rest dimmed; Swift knows 1s are wild only as a look, the 1 face's pip in foolish's deep red #8B1A1A.
+
+I5: the roll's durations and curves live in one enum, `RollBeats` in `Board/DiceRoll.swift`, and `FMotion` in the copied `Tokens.swift` types pickemup's three kernel numbers as literals; both give way to the kernel's beats when it exports them.
+
+I6: seat placement is `DiceTableLayout` in Swift for the scaffold: my seat is the bottom band with my dice, the others go left to right in seat order round the upper half of an ellipse, the bid plate sits between.
+It is a pure function with a test, so moving it into C behind the seam (as pickemup's `pk_lay.c`) changes no screen.
+
+I7: the felt and wood are pickemup's baked JPEGs copied into `ChuiniuKit/Resources`; the icons are two placeholder dice on felt green drawn by a throwaway script, to be replaced before any store build.
+
+I8: `Design/Die.swift`, `Design/Cup.swift` and `Board/DiceRoll.swift` name no product and no rule, so they are candidates for a later lift into `shared/swift` (not done in the proof of concept).
+
+I9: bundle ids `cards.chuiniu` (container), `cards.chuiniu.msg`, `cards.chuiniu.kit`, `cards.chuiniu.kit.tests`, and the App Group `group.cards.chuiniu` asked for by Debug only, from a hand-set `DebugAppGroup.entitlements` that xcodegen cannot blank.
+
 ## Orchestration (owner: the orchestrator; O1 onward)
 
 O1: the proof of concept is built in three parallel packages (kernel and wire; iOS scaffold with the dice and cup primitive; legal, README and CI) and one tie-together package that wires the screens to the bridge and proves it on a simulator inside Messages.
