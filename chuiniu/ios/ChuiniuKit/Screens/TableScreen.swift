@@ -11,7 +11,7 @@ public struct TableScreen: View {
     public var body: some View {
         let t = host.table
         VStack(spacing: 10) {
-            DiceTable(table: t, youWord: host.word(.yourDice), outWord: host.word(.out),
+            DiceTable(table: t, outWord: host.word(.out),
                       played: host.playedRoll, onPlayed: { host.playedRoll = $0 })
             Text(t.caption)
                 .font(.system(size: 14, weight: .semibold))

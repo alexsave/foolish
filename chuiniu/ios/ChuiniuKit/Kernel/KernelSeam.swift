@@ -175,7 +175,7 @@ public enum Word: CaseIterable, Sendable {
     case join, start
     case raise, call, nextRound
     case quantity, face
-    case yourDice, loses, wins, out
+    case loses, wins, out
     case namePrompt
 }
 
@@ -374,7 +374,6 @@ public final class FakeKernel: Kernel {
         case .nextRound: return "Next round"
         case .quantity: return "How many"
         case .face: return "Of"
-        case .yourDice: return "Your dice"
         case .loses: return "loses a die"
         case .wins: return "wins"
         case .out: return "OUT"

@@ -68,16 +68,14 @@ public enum DiceTableLayout {
 
 public struct DiceTable: View {
     public let table: TableModel
-    public let youWord: String
     public let outWord: String
     /// The newest roll this phone has played (the host keeps it).
     public let played: Int
     public let onPlayed: (Int) -> Void
 
-    public init(table: TableModel, youWord: String, outWord: String, played: Int,
+    public init(table: TableModel, outWord: String, played: Int,
                 onPlayed: @escaping (Int) -> Void) {
         self.table = table
-        self.youWord = youWord
         self.outWord = outWord
         self.played = played
         self.onPlayed = onPlayed
@@ -102,7 +100,7 @@ public struct DiceTable: View {
                         Group {
                             if seat.id == bottom {
                                 MyBand(seat: seat, dice: table.myDice, rollID: table.rollID, played: played,
-                                       yourDice: youWord, onPlayed: onPlayed)
+                                       onPlayed: onPlayed)
                             } else {
                                 SeatCup(seat: seat, outWord: outWord)
                             }
@@ -197,7 +195,6 @@ struct MyBand: View {
     let dice: [Int]
     let rollID: Int
     let played: Int
-    let yourDice: String
     let onPlayed: (Int) -> Void
 
     var body: some View {
