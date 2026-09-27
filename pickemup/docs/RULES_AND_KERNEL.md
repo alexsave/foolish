@@ -1,6 +1,7 @@
 # Pick 'Em Up - rules and kernel design
 
-Status: design only, nothing is built.
+Status: the kernel of sections 1, 3, 5 and 6 is built in `pickemup/c/` (see its README); the wire (section 4), the iOS bridge and CI are not yet.
+Where building it forced a change, the change is a DECISION from D29 on.
 Written 2026-09-26 against `pickemup/README.md`, `pickemup/LEGAL.md` and `pickemup/docs/UI.html` (the surface study of 20 September 2026).
 Every rule in this file is a kernel rule: it lives in C, in `pickemup/c/`, and every host (the iMessage extension, a replay page) asks the kernel instead of re-deciding it.
 
@@ -360,6 +361,75 @@ Alternative: the start bubble carries the deal only.
 Why: in a DM the joiner is seat 1, so "join, start and play" becomes one text instead of two.
 There is no reroll hole: the deal depends only on the seed and the seat count, which are fixed before the starter sees anything.
 Recommendation confidence: medium.
+
+### Decisions the kernel build forced (D29 onwards)
+
+Taken while building `pickemup/c/` (2026-09-26); each names the section it amends.
+
+**DECISION D29: the lobby's verdicts live in `pickemup/c/src/pk_lobby.{h,c}`, not in `pk_msg` (amends 3.1, 4.6).**
+Alternative: inside the envelope, as 3.1's table had it.
+Why: they are roster arithmetic with nothing about bytes in them, and `werewolf/COMMON.md` ("Wished-for" 2) records that keeping them inside foolish's envelope was a mistake.
+The envelope keeps the tags and names and calls `pk_lobby_*` for every verdict; the kernel knows a person only by a 16-bit handle.
+Recommendation confidence: high.
+
+**DECISION D30: `hist` holds `PK_HIST_CAP = 2 x PK_MAX_ACTIONS + PK_MAX_BUBBLES` = 3,750 records, and "Last card!" and "Caught you!" ride inside the bubble's `BUBBLE` record rather than as records of their own (amends 3.3, 3.4).**
+Alternative: a record per SAY_IT and CALL_OUT.
+Why: the bound is then provable: one `BUBBLE` per bubble, one record per turn action, and at most one `CONTINUE` per terminal; it is the same 3,750 the design wrote as `PK_MAX_ACTIONS + 3 x PK_MAX_BUBBLES`.
+Recommendation confidence: high.
+
+**DECISION D31: the `BUBBLE` record's `b` carries a third bit, SEALED (amends 3.4).**
+Alternative: tell the replay separately whether the last bubble is a draft.
+Why: the history then says everything a replay needs by itself, and `pk_replay` can refuse a history whose seal bits the rules would not have set.
+Recommendation confidence: high.
+
+**DECISION D32: CALL_OUT legality reads the LAST stamps as they stood when the bubble opened (`b_said_at_open`), not the live `said` (amends 3.6).**
+Alternative: the live bits, as 3.6's table reads.
+Why: a replay applies a bubble's catch at the bubble's open (D5d), so legality must not depend on anything that changes inside the bubble; with the live bits, a catch tapped after the catcher's own +2 had wiped the victim's stamp would be legal live and illegal on replay.
+It still reads nothing but public stamps, so 3.6's no-leak property holds (test 7.1.4).
+Recommendation confidence: high.
+
+**DECISION D33: SAY_IT is legal when the seat is exposed both now and at the bubble's open (amends 3.6).**
+Alternative: at open only, as the table read.
+Why: test 7.1.5 wants "refused after drawing", and a draw in the bubble clears `exposed`; reading both refuses it without a second rule.
+Recommendation confidence: high.
+
+**DECISION D34: 7.7.1's second case is a refusal, not a miss.**
+The case "exposed, says it standalone first, then the next turn catches: miss" contradicts D5c (nobody may catch a seat showing the LAST stamp); the kernel follows D5c and refuses the catch.
+The race the case was after, a say and a catch answering the same parent, is decided by 4.8 clause 5 before any catch is judged, and belongs to the envelope's 7.7.4.
+Alternative: allow the catch on a stamped seat and make it a miss.
+Recommendation confidence: high.
+
+**DECISION D35: `PkView` differs from 3.8's sketch: `all_n` / `all_hand` are `reveal_n` / `reveal_hand` and filled only when over; every other seat's fan is a constant `PK_FAN_BACKS` (3) backs; added `show_dir`, `can_call` (a bit per seat), `can_undo` and the viewer's draft (`draft_open`, `draft_said`, `draft_call`) (amends 3.8).**
+Alternative: the sketch as written.
+Why: the only per-seat counts left in the struct are named for the end reveal, so a renderer cannot mistake them for a live count; the fan is the catch's tap target and needs a size, and a constant one carries nothing.
+Recommendation confidence: medium.
+
+**DECISION D36: `PkSince`'s per-seat counts are 16 bits (amends 5.4).**
+Alternative: 8 bits as sketched.
+Why: one seat can draw more than 255 cards in a game under the 1,500-action stop.
+Recommendation confidence: high.
+
+**DECISION D37: plan details the table left open (amends 5.1 to 5.3).**
+`from = -1` includes the deal (bubble 0); the open draft is bubble `bubbles + 1`.
+Events the table marks "-" (lobby, deal, framing) are ACTION-half.
+`WIN` and the `REVEAL`s are emitted at seal, after the catch, so a draft's plan never holds the end and 5.3.3's order holds.
+`LOBBY_START` is the deal's first event and names `PkGame.starter`, a new field the lobby (or the envelope, after `pk_new`) sets and the deal never reads.
+A `DRAW`'s `n` and `i` are both the draws this turn so far; a reshuffle's `i` is `r & 0xFF`.
+`BUBBLE_BEGIN` has a step of its own.
+Recommendation confidence: medium.
+
+**DECISION D38: captions are composed from a bubble's own events, with three keys the table lacked (amends 6.1, 6.2).**
+`pk_say_caption_of` takes one bubble's events, so a host holding a plan captions it without a second replay; `pk_say_caption` is that plus the plan.
+New keys: `CAP_JOIN` (". " between clauses), `CAP_JOIN_BANG` (" " after a clause that ends in its own "!"), `SEAT_FALLBACK` ("Player {n}"), `RANK_SKIP` / `RANK_REVERSE` / `RANK_PLUS2` for `SUB_MATCH`'s `{rank}`, and `SUB_ORDER_1` ("{a}, then you").
+`CAP_INVITE` and `RULES_TITLE` say `{game}` so the name is in `GAME_NAME` only.
+A standalone "Last card!" bubble names nobody next, because nothing in it moved the turn.
+Alternative: one caption function over the whole game; literal names.
+Recommendation confidence: medium.
+
+**DECISION D39: an undo, unsay, uncall or cancel that would leave the draft with nothing in it closes the draft instead (amends 3.7).**
+Alternative: an open, empty draft.
+Why: an empty draft cannot be sealed and would still block every other seat (3.6), so it is no draft.
+Recommendation confidence: high.
 
 ---
 
