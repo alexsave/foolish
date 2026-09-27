@@ -9,6 +9,7 @@
 #   make -C pickemup/c datagen     the Swift strings  -> ../ios/Generated/i18n/
 #   make -C pickemup/c ios-lib     ../ios/vendor/Pickemup.xcframework (needs Xcode)
 #   make -C pickemup/c swift-smoke the bridge driven from Swift through the readers (a Mac)
+#   make -C pickemup/c arena       the bots against each other, 2,000 games a line-up (docs/BOT_REPORT.md)
 #   make -C pickemup/c clean
 CC      ?= cc
 # THE WARNINGS ARE ONE LIST for every build below (DECISION D58): proven clean
@@ -20,11 +21,14 @@ SHARED  := ../../shared/c
 SRC     := src/pk.c src/pk_deck.c src/pk_plan.c src/pk_view.c src/pk_lobby.c src/pk_say.c \
            src/pk_code.c src/pk_msg.c src/pk_beats.c src/pk_arrange.c i18n/strings_en.c \
            $(SHARED)/deal_rng.c $(SHARED)/sha256.c $(SHARED)/b32.c $(SHARED)/mixrad.c
+# THE BOTS ARE NOT IN THE APP (DECISION D63): only the bot test and the arena
+# link them, so SRC, the wasm objects and the xcframework never carry them.
+BOT_SRC := src/pk_belief.c src/pk_bot.c
 HDR     := $(wildcard src/*.h) i18n/keys.h tests/pk_check.h tests/pk_bot.h \
            $(SHARED)/deal_rng.h $(SHARED)/sha256.h $(SHARED)/b32.h $(SHARED)/mixrad.h
 
 # One binary per test file; each takes an optional scale argument.
-TESTS   := pk_test pk_rules_test pk_plan_test pk_say_test pk_fuzz pk_msg_test pk_twophone_test pk_beats_test pk_arrange_test
+TESTS   := pk_test pk_rules_test pk_plan_test pk_say_test pk_fuzz pk_msg_test pk_twophone_test pk_beats_test pk_arrange_test pk_bot_test
 FUZZ_GAMES ?= 2800
 # Games per table size that go through the wire after every bubble. The rules
 # doc's 10,000 is `./build/pk_msg_test 10000` by hand (DECISION D43).
@@ -41,6 +45,9 @@ build:
 build/%: tests/%.c $(SRC) $(HDR) | build
 	$(CC) $(CFLAGS) $(SRC) $< -o $@
 
+build/pk_bot_test: tests/pk_bot_test.c $(SRC) $(BOT_SRC) $(HDR) | build
+	$(CC) $(CFLAGS) $(SRC) $(BOT_SRC) $< -o $@
+
 run: $(addprefix build/,$(TESTS)) build/ios_smoke
 	./build/pk_test
 	./build/pk_rules_test
@@ -51,12 +58,16 @@ run: $(addprefix build/,$(TESTS)) build/ios_smoke
 	./build/pk_twophone_test
 	./build/pk_beats_test
 	./build/pk_arrange_test
+	./build/pk_bot_test
 	./build/ios_smoke
 
 ASAN_FLAGS := -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined $(WARN)
 
 build/asan_%: tests/%.c $(SRC) $(HDR) | build
 	$(CC) $(ASAN_FLAGS) $(SRC) $< -o $@
+
+build/asan_pk_bot_test: tests/pk_bot_test.c $(SRC) $(BOT_SRC) $(HDR) | build
+	$(CC) $(ASAN_FLAGS) $(SRC) $(BOT_SRC) $< -o $@
 
 asan: $(addprefix build/asan_,$(TESTS)) build/asan_ios_smoke
 	./build/asan_pk_test
@@ -68,6 +79,7 @@ asan: $(addprefix build/asan_,$(TESTS)) build/asan_ios_smoke
 	./build/asan_pk_twophone_test
 	./build/asan_pk_beats_test 60
 	./build/asan_pk_arrange_test
+	./build/asan_pk_bot_test 1
 	./build/asan_ios_smoke
 
 # THE SAME FILES FOR wasm32, freestanding (-nostdlib, shared/c/wasm's libc):
@@ -208,6 +220,16 @@ ios-lib: build/layout/ios.hash datagen
 	$(call IOS_XCFRAMEWORK,pickemup,$(IOS_SRC),$(IOS_CFLAGS),ios/include,$(IOS_MIN_VERSION),../ios/vendor/Pickemup.xcframework)
 	@echo "layout $$(cat build/layout/ios.hash)"
 
+# THE ARENA (tools/pk_arena.c): line-ups of the bots at 2, 4 and 8 players,
+# every seed both ways round, a 95% interval on each side's win share.
+# ARENA_GAMES games a line-up across ARENA_JOBS worker processes.
+ARENA_GAMES ?= 2000
+ARENA_JOBS  ?= 8
+build/pk_arena: tools/pk_arena.c $(SRC) $(BOT_SRC) $(HDR) | build
+	$(CC) $(CFLAGS) $(SRC) $(BOT_SRC) tools/pk_arena.c -lm -o $@
+arena: build/pk_arena
+	./build/pk_arena $(ARENA_GAMES) $(ARENA_JOBS)
+
 # The timeline of two takes as Markdown tables (docs/MOTION_REPORT.md).
 beats-dump: build/pk_beats_dump
 	./build/pk_beats_dump
@@ -215,6 +237,6 @@ beats-dump: build/pk_beats_dump
 clean:
 	rm -rf build
 
-.PHONY: all run asan wasm cross ios-smoke beats-dump swift-smoke structgen datagen ios-lib clean FORCE
+.PHONY: all run asan arena wasm cross ios-smoke beats-dump swift-smoke structgen datagen ios-lib clean FORCE
 FORCE:
 .SECONDARY:
