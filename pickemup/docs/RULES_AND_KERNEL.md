@@ -519,6 +519,12 @@ Why: a start is not a roster change, so a started game keeps the `lobby_rev` of 
 The phase byte likewise has one judge: any value but WAITING reads as started and must then equal what the replay says (LIVE or FINISHED), so the decoder's separate whitelist of phases went.
 Recommendation confidence: high.
 
+**DECISION D53: the kernel stays at `-Wall -Wextra -Werror -std=c11` in the Makefile; `-Wpedantic -Wshadow -Wconversion` are a review-time check, not a build flag, until a gcc run proves them clean (amends 7).**
+Alternative: add all three to `CFLAGS` now.
+Why: with Apple clang every source and test is clean under all three (the one `-Wsign-conversion` hit, in a test, is fixed), but the CI lane is Linux gcc, whose `-Wconversion` warns on narrowing that clang does not (compound assignment to `uint8_t`, for one), and a flag no gcc has compiled under would turn that lane red on the next push.
+The review that adds them is one Linux gcc run of `make run CFLAGS="-O2 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror -std=c11"`.
+Recommendation confidence: medium.
+
 ---
 
 ## 3. Kernel design
