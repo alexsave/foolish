@@ -33,7 +33,7 @@ static void lobby_of(PkMsg *m, const uint8_t seed[32], int n, int dm)
     pk_msg_new(m, seed, dm, tag, U(NAMES[0]), L(NAMES[0]));
     for (int s = 1; s < n; s++) {
         char id[16] = "id-";
-        memcpy(id + 3, NAMES[s], strlen(NAMES[s]) + 1);
+        for (int i = 0; NAMES[s][i] && i < 12; i++) id[3 + i] = NAMES[s][i];
         id_tag(seed, id, tag);
         pk_msg_join(m, tag, U(NAMES[s]), L(NAMES[s]));
     }
@@ -165,8 +165,7 @@ static void many_draws(int games)
             for (int i = 0; i < nm; i++)
                 if (menu[i].kind == PK_A_PLAY && rnd(100) < 60) { pick = i; break; }
             pk_apply(g, s, menu[pick]);
-            if (pk_can_seal(g) && pk_turn_ended(g)) pk_seal(g);
-            else if (pk_can_seal(g)) pk_seal(g);
+            if (pk_can_seal(g)) pk_seal(g);
         }
         int tl = text_len(&m);
         CHECK(tl > 0, "deal %d encodes", gi);
@@ -177,6 +176,7 @@ static void many_draws(int games)
     printf("  8p, 40 turns, 6 draws each, 10 catches: median %d, p99 %d, max %d characters (%d deals)\n",
            len[k / 2], p99, mx, k);
     CHECK(mx < 1000, "the owner's p99 case peaks at %d characters, the guardrail is 1,000", mx);
+    CHECK(p99 <= 530, "the owner's p99 case is %d characters at p99; 4.5 estimated 530", p99);
 }
 
 /* A game at `n` seats with every name at its 48-byte cap (sixteen three-byte
@@ -329,34 +329,36 @@ static uint8_t *at_end(uint8_t *arr, int arr_len, const uint8_t *src, int n)
     return p;
 }
 
-static void tamper(void)
+static uint8_t area[PK_MSG_MAX_BYTES];
+
+/* Every prefix of every envelope, in a buffer that ends where the prefix
+ * does: refused, and never read past its end. First of the three sweeps, so
+ * a decoder that reads a field before it has checked the length is named
+ * here. */
+static void truncation_sweep(void)
 {
-    static uint8_t area[PK_MSG_MAX_BYTES];
-    uint8_t *buf;
-    long flips = 0, valid_after = 0, body_flips = 0;
-    TEST("7.4.2 canonicality: every bit flipped");
+    TEST("7.4.4 check: every truncation");
+    long cuts = 0;
     for (int p = 0; p < npool; p++) {
-        int n = pool_n[p];
-        for (int bit = 0; bit < n * 8; bit++) {
-            buf = at_end(area, (int)sizeof area, pool[p], n);
-            buf[bit / 8] ^= (uint8_t)(1u << (bit % 8));
-            int v;
-            flips++;
-            CHECK(refused_or_canonical(buf, n, &v), "envelope %d bit %d reads as a different writing", p, bit);
-            valid_after += v;
-            /* ...and again with the check recomputed, so the flip reaches the
-             * header's semantics and the body decoder instead of stopping at
-             * the check */
-            if (bit / 8 >= check_at(pool[p]) && bit / 8 < check_at(pool[p]) + PK_CHECK_LEN) continue;
-            recheck(buf, n, check_at(pool[p]));
-            body_flips++;
-            CHECK(refused_or_canonical(buf, n, &v), "envelope %d bit %d (re-checked) reads as a different writing", p, bit);
-            valid_after += v;
+        int n = pool_n[p], body = check_at(pool[p]) + PK_CHECK_LEN;
+        for (int k = 0; k < n; k++) {
+            uint8_t *cut = at_end(area, (int)sizeof area, pool[p], k);
+            static PkMsg m;
+            int e = pk_msg_decode(cut, k, &m);
+            cuts++;
+            CHECK(e < 0, "envelope %d cut to %d of %d bytes still decodes", p, k, n);
+            if (k >= body) CHECK(e == PK_ECHECK || e == PK_EGAME, "envelope %d body cut to %d: %d", p, k, e);
         }
     }
-    printf("tamper: %d envelopes, %ld raw flips and %ld re-checked flips, %ld read as a game "
-           "(each re-encoding to itself)\n", npool, flips, body_flips, valid_after);
+    printf("truncation: %ld prefixes of %d envelopes, every one refused\n", cuts, npool);
+}
 
+/* Every byte of every seventh envelope XORed with fifteen values, the check
+ * recomputed so the corruption reaches the roster and the body: refused, or a
+ * message that writes back as exactly these bytes. */
+static void corruption_sweep(void)
+{
+    uint8_t *buf;
     TEST("the corruption sweep: every byte, every value");
     long bytes = 0;
     for (int p = 0; p < npool; p += 7) {
@@ -373,20 +375,42 @@ static void tamper(void)
     }
     printf("corruption: %ld corrupted envelopes (check recomputed), none crashed or misread\n", bytes);
 
-    TEST("7.4.4 check: every truncation");
-    long cuts = 0;
+}
+
+/* Every bit of every envelope: raw (the check must stop it) and re-checked
+ * (the semantics must). */
+static void bit_flips(void)
+{
+    uint8_t *buf;
+    long flips = 0, raw_valid = 0, valid_after = 0, body_flips = 0;
+    TEST("7.4.2 canonicality: every bit flipped");
     for (int p = 0; p < npool; p++) {
-        int n = pool_n[p], body = check_at(pool[p]) + PK_CHECK_LEN;
-        for (int k = 0; k < n; k++) {
-            uint8_t *cut = at_end(area, (int)sizeof area, pool[p], k);
-            static PkMsg m;
-            int e = pk_msg_decode(cut, k, &m);
-            cuts++;
-            CHECK(e < 0, "envelope %d cut to %d of %d bytes still decodes", p, k, n);
-            if (k >= body) CHECK(e == PK_ECHECK || e == PK_EGAME, "envelope %d body cut to %d: %d", p, k, e);
+        int n = pool_n[p];
+        for (int bit = 0; bit < n * 8; bit++) {
+            buf = at_end(area, (int)sizeof area, pool[p], n);
+            buf[bit / 8] ^= (uint8_t)(1u << (bit % 8));
+            int v;
+            flips++;
+            CHECK(refused_or_canonical(buf, n, &v), "envelope %d bit %d reads as a different writing", p, bit);
+            raw_valid += v;
+            /* ...and again with the check recomputed, so the flip reaches the
+             * header's semantics and the body decoder instead of stopping at
+             * the check */
+            if (bit / 8 >= check_at(pool[p]) && bit / 8 < check_at(pool[p]) + PK_CHECK_LEN) continue;
+            recheck(buf, n, check_at(pool[p]));
+            body_flips++;
+            CHECK(refused_or_canonical(buf, n, &v), "envelope %d bit %d (re-checked) reads as a different writing", p, bit);
+            valid_after += v;
         }
     }
-    printf("truncation: %ld prefixes of %d envelopes, every one refused\n", cuts, npool);
+    printf("tamper: %d envelopes, %ld raw flips (%ld read) and %ld re-checked flips (%ld read as a game, "
+           "each re-encoding to itself)\n", npool, flips, raw_valid, body_flips, valid_after);
+    /* 7.4.4 THE CHECK: two bytes of SHA-256 let about one flip in 65,536
+     * through by chance, so a thousandth is far above chance and far below
+     * what an envelope with no check lets through (a name byte, a flag) */
+    TEST("7.4.4 check: raw flips are refused");
+    CHECK(raw_valid * 1000 <= flips, "%ld of %ld raw flips read as a game", raw_valid, flips);
+
 }
 
 static void header_agreement(void)
@@ -726,7 +750,9 @@ int main(int argc, char **argv)
     seat_resolve();
     rule_p();
     build_pool();
-    tamper();
+    truncation_sweep();
+    corruption_sweep();
+    bit_flips();
     caps_are_rules();
     many_draws(deals);
     round_trip(games);

@@ -51,4 +51,10 @@ DECISION O5: the name stays `Pick 'Em Up` as a working title, threaded through o
 
 - `werewolf/docs/UI.html` fails `shared/tools/check_ui_doc.py` because of a literal template tag inside a script comment.
   The fix is one line; it is werewolf's file and out of this branch's scope, so it is reported here for the owner.
+- `.github/workflows/uttt-web.yml` does not trigger on `shared/c/mixrad.*`, which uttt's replay wasm now compiles (D45).
+  uttt's C tests do run on it (`uttt-c.yml` triggers on `shared/c/**`), but a change to mixrad alone would not rebuild or redeploy uttt.live; adding `'shared/c/mixrad.*'` beside `'shared/c/b32.*'` there is a one-line change to a workflow this pass may not edit.
+- `foolish/e2e/validation/ci_toolchain_validation.test.ts` treats every `make ... wasm` line in every workflow as a build of foolish's test module and requires foolish's `scripts/ci_bots_test_wasm.sh` before it.
+  So no other product's lane can build its own wasm without paying for foolish's (D49); the gate should look for foolish's targets, not the word.
+- `pickemup/c/tests/pk_check.h`'s `seed_of` deals only 256 different games (every byte is a byte-valued function of k plus 7i).
+  The fuzz and the wire tests now use `seed_wide`; `seed_of` stays for the committed 7.3 goldens.
 - `REUSE_AUDIT.md` section 8 lists four defects in foolish and uttt (rig.sh restores entitlements with `git checkout`, the drawer-collapse numbers exist three times, flight timing is typed twice, foolish compiles the shared insert gating but never calls it).

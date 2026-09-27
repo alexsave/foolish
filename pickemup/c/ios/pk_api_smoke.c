@@ -37,7 +37,7 @@ static void be(int i)
 static const PkApiTable *table(void) { return (const PkApiTable *)pk_api_table(); }
 static const PkView *me_view(void) { return (const PkView *)pk_api_view(PK_API_ME); }
 
-static char link[8][PK_API_TEXT_MAX];
+static char links[8][PK_API_TEXT_MAX];
 
 /* Tap `text` as person i, who did (i_sent 1) or did not send it, in a DM. */
 static int open_as(int i, const char *text, int dm, int i_sent)
@@ -76,6 +76,7 @@ static void one_bubble(void)
 
 int main(void)
 {
+    setvbuf(stdout, 0, _IONBF, 0);       /* a crash still shows what went red */
     char buf[PK_API_TEXT_MAX], line[256];
     OK(pk_api_layout_hash() == 0, "the smoke build is not stamped (ios-lib stamps the shipped one)");
     OK(pk_api_name_verdict((const uint8_t *)"Alex", 4) == 0 && pk_api_name_verdict((const uint8_t *)"", 0) == 1
@@ -90,13 +91,13 @@ int main(void)
     OK(t->readable && t->phase == 0 && t->me == 0 && t->n_seats == 1 && t->offered == PK_LOBBY_WAITING,
        "Alex waits in seat 0");
     OK(pk_api_seats_dirty(), "the new game is recorded");
-    int n = pk_api_text(link[0], PK_API_TEXT_MAX);
-    OK(n > 3 && !strncmp(link[0], "?m=", 3), "the invitation is a link");
+    int n = pk_api_text(links[0], PK_API_TEXT_MAX);
+    OK(n > 3 && !strncmp(links[0], "?m=", 3), "the invitation is a link");
     printf("  invitation: %d characters\n", n);
     OK(pk_api_words(PK_API_W_INVITE, 0, line, sizeof line) > 0, "the invitation's caption");
     printf("  \"%s\"\n", line);
 
-    OK(open_as(1, link[0], 1, 0) == 0, "Bo opens it");
+    OK(open_as(1, links[0], 1, 0) == 0, "Bo opens it");
     t = table();
     OK(t->me == 0xFF && t->offered == PK_LOBBY_JOIN && t->can_join_start, "Bo is offered join-and-start");
     OK(pk_api_join_start() == 1, "Bo joins and starts");
@@ -119,9 +120,10 @@ int main(void)
     one_bubble();
     t = table();
     OK(t->can_send, "the turn is done: it can be sent");
-    n = pk_api_text(link[1], PK_API_TEXT_MAX);
+    n = pk_api_text(links[1], PK_API_TEXT_MAX);
     OK(n > 0, "the start bubble is a link");
-    OK(pk_api_check(link[1]) == 0, "and it reads");
+    if (n <= 0) { printf("bridge: %d checks, %d failed\n", checks, fails); return 1; }
+    OK(pk_api_check(links[1]) == 0, "and it reads");
     OK(table()->draft, "writing the link left the draft staged");
     OK(pk_api_commit() == 1 && !table()->draft, "sent: the draft is sealed");
     OK(pk_api_seats_dirty(), "Bo's seat is recorded");
@@ -129,7 +131,7 @@ int main(void)
     /* ---- play it out, phone to phone: the other phone reads each bubble,
      * which at two players is always the turn seat's ---- */
     int from = 1, reads = 0;
-    char *cur = link[1];
+    char *cur = links[1];
     static char next[PK_API_TEXT_MAX];
     for (int round = 0; round < 3000; round++) {
         OK(open_as(from ^ 1, cur, 1, 0) == 0, "the other phone reads the bubble");
@@ -155,11 +157,12 @@ int main(void)
         OK(table()->can_send, "a bubble that can be sent");
         n = pk_api_text(next, sizeof next);
         OK(n > 0, "it writes");
+        if (n <= 0) break;
         OK(pk_api_prefer(next, cur) < 0 && pk_api_prefer(cur, next) > 0, "the child beats its parent");
         OK(pk_api_common(next, cur) == table()->bubbles, "they share every bubble of the parent");
         pk_api_commit();
-        memcpy(link[2], next, (size_t)n + 1);
-        cur = link[2];
+        memcpy(links[2], next, (size_t)n + 1);
+        cur = links[2];
         from = table()->me;
     }
     t = table();
@@ -191,23 +194,23 @@ int main(void)
     be(0);
     for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(i * 13 + 1);
     pk_api_new(seed, 0);
-    pk_api_text(link[3], PK_API_TEXT_MAX);
-    open_as(1, link[3], 0, 0);
+    pk_api_text(links[3], PK_API_TEXT_MAX);
+    open_as(1, links[3], 0, 0);
     OK(pk_api_join() == 1, "Bo joins");
-    pk_api_text(link[4], PK_API_TEXT_MAX);
-    open_as(2, link[4], 0, 0);
+    pk_api_text(links[4], PK_API_TEXT_MAX);
+    open_as(2, links[4], 0, 0);
     OK(table()->offered == PK_LOBBY_JOIN, "Cleo may join");
     OK(pk_api_join() == 2, "Cleo joins");
-    pk_api_text(link[5], PK_API_TEXT_MAX);
-    ev = (const PkApiEvents *)pk_api_plan_lobby(link[4]);
+    pk_api_text(links[5], PK_API_TEXT_MAX);
+    ev = (const PkApiEvents *)pk_api_plan_lobby(links[4]);
     OK(ev && ev->n == 1 && ev->ev[0].kind == PK_EV_LOBBY_JOIN && ev->ev[0].seat == 2, "the lobby plan: Cleo arrives");
     OK(table()->offered == PK_LOBBY_WAITING, "the newest joiner waits while there is room");
-    open_as(1, link[5], 0, 0);
+    open_as(1, links[5], 0, 0);
     OK(table()->me == 1 && table()->offered == PK_LOBBY_START && table()->can_exit, "Bo may start, or leave");
     OK(pk_api_words(PK_API_W_LEFT, 1, line, sizeof line) > 0, "Bo's leave is captioned before it");
     OK(pk_api_leave() == 0 && table()->me == 0xFF && table()->n_seats == 2, "Bo leaves");
-    pk_api_text(link[6], PK_API_TEXT_MAX);
-    open_as(2, link[6], 0, 0);
+    pk_api_text(links[6], PK_API_TEXT_MAX);
+    open_as(2, links[6], 0, 0);
     OK(table()->me == 1 && table()->by == PK_BY_RECORD, "Cleo's record finds her in the row she moved down to");
     OK(pk_api_start() == 0 && table()->phase == 2 && table()->starter == 1, "Cleo starts");
     ev = (const PkApiEvents *)pk_api_plan(PK_API_ME, -1, 0);
@@ -215,8 +218,8 @@ int main(void)
 
     /* ---- refusals ---- */
     OK(pk_api_read("hello") < 0 && pk_api_check("?m=AAAA") < 0, "a link that is not a game");
-    OK(pk_api_prefer("junk", link[6]) > 0 && pk_api_prefer(link[6], "junk") < 0, "the unreadable one loses");
-    OK(pk_api_same_game(link[3], link[6]) && !pk_api_same_game(link[0], link[6]), "same game by seed");
+    OK(pk_api_prefer("junk", links[6]) > 0 && pk_api_prefer(links[6], "junk") < 0, "the unreadable one loses");
+    OK(pk_api_same_game(links[3], links[6]) && !pk_api_same_game(links[0], links[6]), "same game by seed");
     OK(pk_api_words(PK_API_W_COUNT, 0, line, sizeof line) == -1 && pk_api_string(-1, line, sizeof line) == -1,
        "off the end of the words");
     OK(pk_api_string(0, line, sizeof line) > 0, "the game's name by key");
