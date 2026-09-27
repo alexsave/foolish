@@ -102,3 +102,22 @@ Next, after the reboot: film a live arrival with three draws, a reshuffle and a 
 - `pickemup/c/tests/pk_check.h`'s `seed_of` deals only 256 different games (every byte is a byte-valued function of k plus 7i).
   The fuzz and the wire tests now use `seed_wide`; `seed_of` stays for the committed 7.3 goldens.
 - `REUSE_AUDIT.md` section 8 lists four defects in foolish and uttt (rig.sh restores entitlements with `git checkout`, the drawer-collapse numbers exist three times, flight timing is typed twice, foolish compiles the shared insert gating but never calls it).
+
+## Final check
+
+Run on 2026-09-27 in the main checkout on branch `pickemup`, code as at `22c752d5` (every later commit is docs), with `WASM_CC=/opt/homebrew/opt/llvm/bin/clang`, and no simulator booted.
+xcodegen and xcodebuild were not run: `pickemup/ios` belongs to the iOS worker, and its last builds are recorded under B2.
+
+| Check | Command | Result |
+|---|---|---|
+| Kernel, wire, bridge | `make -C pickemup/c clean run asan wasm` | pass: `pk_test` 11,089, `pk_rules_test` 199, `pk_plan_test` 1,193,089, `pk_say_test` 55,579, `pk_fuzz` 3,921,125, `pk_msg_test` 298,141, `pk_twophone_test` 2,409, `pk_beats_test` 225 assertions and the bridge 1,207 checks, all 0 failed; the ASan + UBSan run 0 failed in every suite; wasm32 objects built |
+| iOS library, Swift bridge | `make -C pickemup/c ios-lib swift-smoke` | pass: xcframework written (layout `0x2ac6101c`); swift bridge 25 checks, 0 failed |
+| Timeline | `make -C pickemup/c beats-dump` | pass: both takes match `MOTION_REPORT.md` row for row |
+| Surface study | `python3 shared/tools/check_ui_doc.py pickemup/docs/UI.html` | pass: 80 devices, 13 views, markup and css balanced |
+| Workflows | `yaml.safe_load` of `.github/workflows/pickemup.yml` and `uttt-c.yml` | pass: both parse |
+| foolish validation | `cd foolish && npm run test:validate` | as known good: 150 tests, 128 pass; the 12 failed and 10 cancelled are all the Postgres suites (ECONNREFUSED on :5432, no database) |
+| uttt | `make -C uttt/c run` | pass: every suite 0 failed (`uttt_msg` 3,062,830 checks) |
+| werewolf | `make -C werewolf/c tests` | pass: 2,390 passed and the bridge smoke 115 passed, 0 failed |
+| foolish C | `make -C foolish/c tests` | pass: 7,389 passed, 0 failed |
+| foolish C, sanitized | `make -C foolish/c tests-asan` | pass: 7,389 passed, 0 failed |
+| werewolf's study (not in the list, run for the record) | `python3 shared/tools/check_ui_doc.py werewolf/docs/UI.html` | FAIL, known and reported above: a `<template>` is never closed |
