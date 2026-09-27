@@ -202,9 +202,13 @@ ios-lib: build/layout/ios.hash datagen
 	  -output ../ios/vendor/Pickemup.xcframework
 	@echo "wrote ../ios/vendor/Pickemup.xcframework (layout $$(cat build/layout/ios.hash))"
 
+# The timeline of two takes as Markdown tables (docs/MOTION_REPORT.md).
+beats-dump: build/pk_beats_dump
+	./build/pk_beats_dump
+
 clean:
 	rm -rf build
 
-.PHONY: all run asan wasm ios-smoke swift-smoke structgen datagen ios-lib clean FORCE
+.PHONY: all run asan wasm ios-smoke beats-dump swift-smoke structgen datagen ios-lib clean FORCE
 FORCE:
 .SECONDARY:

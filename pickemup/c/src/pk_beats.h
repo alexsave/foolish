@@ -138,6 +138,11 @@ enum {
     PK_BK_COUNT
 };
 
+/* A FLIGHT's sub: my drawn or dealt card flies as a back and turns over
+ * where it lands (grid "Draw x1", "Deal"); the card id rides along for the
+ * hand it lands in. */
+#define PK_FLIGHT_BACK 1
+
 /* STAMP subs */
 enum { PK_STAMP_LAST = 1, PK_STAMP_CAUGHT, PK_STAMP_WRONG, PK_STAMP_OUT };
 
@@ -174,7 +179,8 @@ typedef struct {
     int8_t   rot0, rot1; /* degrees at the start and at the end                   */
     int8_t   amp;        /* points or percent, by kind                            */
     uint8_t  seat;       /* the seat it is about, or PK_SEAT_NONE                 */
-    uint8_t  sub;        /* STAMP kind, TURN's new dir, FADE in (1) / out (0)     */
+    uint8_t  sub;        /* STAMP kind, TURN's new dir, FADE in (1) / out (0),
+                            FLIGHT: PK_FLIGHT_BACK (a known card flown face down) */
     uint8_t  suit;       /* HALO / BAND: the suit                                 */
     uint8_t  ev_kind;    /* the PK_EV_* it plays, 0 for a host motion             */
     uint8_t  pad0;

@@ -236,6 +236,9 @@ static void t_draw_live(void)
     CHECK(st(f) == 16 && du(f) == 320 && f->bulge == 108 && f->from == PK_ANC_DECK && f->to == PK_ANC_HAND &&
           f->to_i == 7 && f->card == 50, "deck -> the right end of my row");
     CHECK(st(fl) == 336 && du(fl) == 180 && fl->to_i == 7, "lands, flips face");
+    PkBeatSample sm;
+    pk_beat_sample(f, 200, 0, &sm);
+    CHECK(!sm.face && f->sub == PK_FLIGHT_BACK, "my own card flies face down");
     CHECK(st(p) == 16 && du(p) == 120 && p->to == PK_ANC_STRIP && p->amp == 8, "the chip pulses 1.08");
     PkBeatFrame fr;
     pk_beats_frame(&B1, 15, &fr);

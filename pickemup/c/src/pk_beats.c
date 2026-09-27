@@ -321,6 +321,7 @@ static uint32_t draw_to(B *b, int seat, uint8_t card, uint8_t deck_n, uint32_t s
         f.to_i = (uint8_t)b->hand_n;
         f.card = card;
         f.flags = PK_BF_ADDS;
+        f.sub = PK_FLIGHT_BACK;
         uint32_t e = add(b, f);
         PkBeat t = mk(b, PK_BK_FLIP, s + PK_T_DRAW, PK_T_DRAW_FLIP);
         t.to = t.from = PK_ANC_HAND;
@@ -487,6 +488,7 @@ static void on_event(B *b, const PkEvent *e)
             f.to_i = (uint8_t)b->hand_n;
             f.card = e->card;
             f.flags |= PK_BF_ADDS;
+            f.sub = PK_FLIGHT_BACK;
             add(b, f);
             PkBeat fl = mk(b, PK_BK_FLIP, s + PK_T_DEAL, PK_T_DEAL_FLIP);
             fl.from = fl.to = PK_ANC_HAND;
@@ -1142,7 +1144,7 @@ void pk_beat_sample(const PkBeat *b, uint32_t now, int part, PkBeatSample *out)
     case PK_BK_GATHER:
         out->scale = p <= .5f ? 1 + (bulge - 1) * p * 2 : bulge - (bulge - 1) * (p - .5f) * 2;
         out->rot = lerp((float)b->rot0, (float)b->rot1, p);
-        if (b->card == PK_CARD_HIDDEN) out->face = 0;
+        if (b->card == PK_CARD_HIDDEN || (b->kind == PK_BK_FLIGHT && b->sub == PK_FLIGHT_BACK)) out->face = 0;
         else if (b->flags & PK_BF_FACE_MID) out->face = u >= .5f;
         else out->face = 1;
         break;
