@@ -382,7 +382,7 @@ It calls the macro twice (core and bots) and keeps `SG_LAYOUT_HASH` and `archive
   - P8 without `--no-lib`.
 - Risk: low for S4, medium for S4b.
 
-DONE (S4) for uttt and pickemup; S4b (foolish) is not started.
+DONE (S4) for uttt and pickemup; S4b (foolish) is DONE too, see below.
 `shared/tools/ios_xcframework.mk` holds `IOS_XCFRAMEWORK(name, sources, cflags, headers dir, min iOS, xcframework path)` and its one-slice helper `IOS_XCF_SLICE`, lifted from uttt's `ios-lib`.
 Both products `include ../../shared/tools/ios_xcframework.mk` and their `ios-lib` is one `$(call ...)`; pickemup keeps its `SG_LAYOUT_HASH` target flag and prerequisites around the call and prints the layout on a line of its own.
 A `$$(cat build/layout/ios.hash)` in the flags reaches the shell unexpanded through the call, and `make -n ios-lib` prints the same compile lines as before.
@@ -394,6 +394,20 @@ Proof, with `make -C <product>/c ios-lib` before and after, then `xcrun nm -g | 
 - `make -C uttt/c ios-smoke run` passes; `make -C pickemup/c ios-lib swift-smoke run` passes (`swift bridge: 25 checks, 0 failed`, `bridge: 1269 checks, 0 failed`).
 - P7: 150 tests, 128 pass; the 22 others are the Postgres suites (ECONNREFUSED on :5432).
 Note: the PATH on this Mac finds Homebrew's binutils `nm` first, which cannot read Mach-O; use `xcrun nm`.
+
+DONE (S4b).
+`foolish/c/Makefile` drops its own `IOS_BUILD_SLICE` and `IOS_BUILD_BOTH`, gains `include ../../shared/tools/ios_xcframework.mk`, and its `ios-lib` is two calls, `foolish` over `IOS_CORE_SRC` with `ios/include` and `foolishbots` over `IOS_BOTS_SRC` with `ios/include-bots`, both at `IOS_MIN_VERSION` (15.0).
+The `SG_LAYOUT_HASH` target flag, the `build/layout/ios.hash` prerequisite and the closing `./ios/archive_check.sh` line are unchanged around the calls; the one comment that named the old slice macro now names `IOS_XCF_SLICE`.
+One difference in the recipe itself: both libraries of a slice now share one `obj/` directory, emptied at the start of each call, where they had `obj-foolish/` and `obj-foolishbots/`; the archives are built from the same objects either way.
+Proof, `make -C foolish/c ios-lib` before and after:
+- `make -n ios-lib`: the six distinct `clang -target` compile lines (three slices, the same flags for both libraries) are identical, `-DSG_LAYOUT_HASH=$(cat build/layout/ios.hash)` included.
+- `xcrun nm -g | sort` of all four archives (`Foolish.xcframework/ios-arm64` 697 lines, `ios-arm64_x86_64-simulator` 694; `FoolishBots.xcframework/ios-arm64` 698, simulator 692): the diff is empty; `lipo -info` is `arm64` and `x86_64 arm64` before and after; the file lists of both xcframeworks are identical.
+- Stronger than the nm diff: all 159 object members of the six per-slice archives in `build/ios/{device,sim-arm64,sim-x86_64}` have the same md5 before and after.
+- `build/layout/ios.hash` is `0xf2291573`; `archive_check.sh` prints `core: 0 ladder symbols; bots: 2 octogen symbols` both times.
+- `make -C foolish/c ios-smoke ios-archives`: SMOKE OK, ios archives ok, one resident game ok.
+- The iOS suite on a fresh `pk-s5` (iPhone 17e, iOS 27.0, booted in 43 seconds, named by id), without `--no-lib` so the tested xcframework is the one this recipe wrote: `mac_tests.sh --regen` recorded the 7 snapshot references of a fresh worktree (853 executed, 1 skipped, 8 failed: the 7 records and the known `MemoryProfileTests` flake at 14.3 MB); then `mac_tests.sh unit` gave 853 executed, 1 skipped, 0 failed (the flake passed this time), and `mac_tests.sh --no-lib harness app` gave HarnessTests 29 executed, 0 failed, and `FoolishMessagesApp` BUILD SUCCEEDED.
+That is the "P8 after all lifts" baseline.
+- `--regen` blanked `ios/FoolishApp/Foolish.entitlements` and the script restored it; `git status --short -- '*.entitlements'` printed nothing and all seven tracked entitlements files matched a `cp -p` backup in bytes and mtime.
 
 **S5 - the shared Mac test driver, `shared/scripts/ios_mac_tests.sh`.**
 - Move the generic body of `foolish/ios/scripts/mac_tests.sh` into a script driven by a product env:

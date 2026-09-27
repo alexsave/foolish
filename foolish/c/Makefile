@@ -336,23 +336,9 @@ IOS_SRC    := $(IOS_CORE_SRC) $(IOS_BOTS_SRC)
 # directory in HEADER_SEARCH_PATHS (ios/project.yml).
 IOS_CFLAGS := -O2 -Isrc -Iios/include -Iios/include-bots/CFoolishBots $(IOS_CAPS)
 
-# $(1)=target-triple  $(2)=sdk name  $(3)=output dir  $(4)=lib name  $(5)=sources
-define IOS_BUILD_SLICE
-	@rm -rf $(3)/obj-$(4)
-	@mkdir -p $(3)/obj-$(4)
-	@for s in $(5); do \
-	  o=$(3)/obj-$(4)/$$(basename $$s .c).o; \
-	  echo "  CC[$(2)] $$s"; \
-	  xcrun -sdk $(2) clang -target $(1) $(IOS_CFLAGS) -c $$s -o $$o || exit 1; \
-	done
-	libtool -static -o $(3)/lib$(4).a $(3)/obj-$(4)/*.o
-endef
-
-# Both libraries for one slice.
-define IOS_BUILD_BOTH
-	$(call IOS_BUILD_SLICE,$(1),$(2),$(3),foolish,$(IOS_CORE_SRC))
-	$(call IOS_BUILD_SLICE,$(1),$(2),$(3),foolishbots,$(IOS_BOTS_SRC))
-endef
+# The device slice, both simulator slices, the lipo and the xcframework, once
+# per library: IOS_XCFRAMEWORK(name, sources, cflags, headers, min iOS, out).
+include ../../shared/tools/ios_xcframework.mk
 
 .PHONY: ios-lib ios-smoke
 # THE LIBRARY CARRIES THE LAYOUT IT WAS COMPILED FOR. sdk/swift/gen is generated
@@ -363,27 +349,8 @@ endef
 # the HOST compiler and need no libclang on the machine that runs them.
 ios-lib: IOS_CFLAGS += -DSG_LAYOUT_HASH=$$(cat build/layout/ios.hash)
 ios-lib: build/layout/ios.hash
-	@echo "== device slice (arm64) =="
-	$(call IOS_BUILD_BOTH,arm64-apple-ios$(IOS_MIN_VERSION),iphoneos,build/ios/device)
-	@echo "== simulator slices (arm64 + x86_64) =="
-	$(call IOS_BUILD_BOTH,arm64-apple-ios$(IOS_MIN_VERSION)-simulator,iphonesimulator,build/ios/sim-arm64)
-	$(call IOS_BUILD_BOTH,x86_64-apple-ios$(IOS_MIN_VERSION)-simulator,iphonesimulator,build/ios/sim-x86_64)
-	@mkdir -p build/ios/sim
-	lipo -create build/ios/sim-arm64/libfoolish.a build/ios/sim-x86_64/libfoolish.a \
-	     -output build/ios/sim/libfoolish.a
-	lipo -create build/ios/sim-arm64/libfoolishbots.a build/ios/sim-x86_64/libfoolishbots.a \
-	     -output build/ios/sim/libfoolishbots.a
-	@rm -rf ../ios/vendor/Foolish.xcframework ../ios/vendor/FoolishBots.xcframework
-	@mkdir -p ../ios/vendor
-	xcodebuild -create-xcframework \
-	  -library build/ios/device/libfoolish.a -headers ios/include \
-	  -library build/ios/sim/libfoolish.a    -headers ios/include \
-	  -output ../ios/vendor/Foolish.xcframework
-	xcodebuild -create-xcframework \
-	  -library build/ios/device/libfoolishbots.a -headers ios/include-bots \
-	  -library build/ios/sim/libfoolishbots.a    -headers ios/include-bots \
-	  -output ../ios/vendor/FoolishBots.xcframework
-	@echo "wrote ../ios/vendor/Foolish.xcframework + FoolishBots.xcframework"
+	$(call IOS_XCFRAMEWORK,foolish,$(IOS_CORE_SRC),$(IOS_CFLAGS),ios/include,$(IOS_MIN_VERSION),../ios/vendor/Foolish.xcframework)
+	$(call IOS_XCFRAMEWORK,foolishbots,$(IOS_BOTS_SRC),$(IOS_CFLAGS),ios/include-bots,$(IOS_MIN_VERSION),../ios/vendor/FoolishBots.xcframework)
 	@./ios/archive_check.sh build/ios/device/libfoolish.a build/ios/device/libfoolishbots.a
 
 # The two shipped iOS libraries, built and checked WITHOUT a Mac.
@@ -396,7 +363,7 @@ ios-lib: build/layout/ios.hash
 # (1) is the one that keeps octogen out of the iMessage bundle. (2) is what
 # would break silently if the split were done carelessly.
 #
-# THE OBJECT DIRECTORIES ARE EMPTIED FIRST, here and in IOS_BUILD_SLICE, because
+# THE OBJECT DIRECTORIES ARE EMPTIED FIRST, here and in IOS_XCF_SLICE, because
 # both archives are made by globbing *.o: a source that MOVES from one list to
 # the other leaves its old object behind in the directory it left, the glob
 # picks it up, and the two archives then define the same symbols twice. Moving
