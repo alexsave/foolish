@@ -2,7 +2,8 @@
 
 ```
 make -C pickemup/c run          every test: rules, masking, plan, words, 2,800 fuzz games,
-                                the wire (pk_msg_test) and the bridge smoke
+                                the wire (pk_msg_test), the two-phone game, the timeline
+                                (pk_beats_test) and the bridge smoke
 make -C pickemup/c asan         the same under ASan + UBSan
 make -C pickemup/c wasm         the kernel as wasm32 objects, freestanding (needs a wasm clang)
 make -C pickemup/c ios-smoke    every bridge entry point, host compiler, no Mac
@@ -10,6 +11,7 @@ make -C pickemup/c structgen    the Swift readers   -> pickemup/ios/Generated/Pi
 make -C pickemup/c datagen      the Swift strings   -> pickemup/ios/Generated/i18n/
 make -C pickemup/c ios-lib      pickemup/ios/vendor/Pickemup.xcframework (Xcode; runs both above)
 make -C pickemup/c swift-smoke  the bridge driven from Swift through the generated readers (a Mac)
+make -C pickemup/c beats-dump   the timeline of two takes as Markdown tables (docs/MOTION_REPORT.md)
 ./pickemup/c/build/pk_fuzz 50000 7        more games, another stream
 ./pickemup/c/build/pk_msg_test 10000      7.4.1's 10,000 games a size through the wire
 ```
@@ -32,6 +34,7 @@ The struct is fixed-size plain integers with no pointers and no bitfields, there
 | `src/pk_say.h`, `src/pk_say.c` | which sentence a position says, composed by key |
 | `src/pk_code.h`, `src/pk_code.c` | the body: every choice since the deal as one mixed-radix number (`shared/c/mixrad`) |
 | `src/pk_msg.h`, `src/pk_msg.c` | the envelope: header, roster, check, lobby rows, Rule P, the seat resolver and its records |
+| `src/pk_beats.h`, `src/pk_beats.c` | the motion timeline: a plan's events laid out as beats on `UI.html`'s clock, the frame at any millisecond, one beat's transform (ANIMATION_DECISIONS A1) |
 | `src/pk_internal.h` | the sink `pk.c` shares with `pk_plan.c` and the tests |
 | `i18n/keys.h`, `i18n/strings_en.c` | every word, one key list, in the shape `shared/tools/datagen` reads |
 | `tests/pk_check.h` | the harness: `CHECK`, hand-built tables, the random bot |
@@ -42,8 +45,10 @@ The struct is fixed-size plain integers with no pointers and no bitfields, there
 | `tests/pk_fuzz.c` | random play at 2..8 players against every invariant |
 | `tests/pk_twophone_test.c` | the `SIM_VERIFICATION.md` game played phone to phone through the bridge, every bubble checked against the test's own events, counts and captions |
 | `tests/pk_msg_test.c` | the wire (7.4), Rule P (7.7.4), seat resolve (7.8.7), the tamper, corruption and truncation sweeps |
+| `tests/pk_beats_test.c` | every row of the motion grid against `UI.html`'s demo numbers, the A/B/C channels, and the arrival budgets over 400 games a size |
+| `tests/pk_beats_dump.c` | `make beats-dump`: the two takes of `docs/MOTION_REPORT.md` |
 | `ios/include/pk_api.h`, `module.modulemap` | the Swift-visible face (module `CPickemup`), the only header the xcframework carries |
-| `ios/pk_api.c` | the bridge: one resident message, lobby, staging, reading, words, two messages |
+| `ios/pk_api.c` | the bridge: one resident message, lobby, staging, reading, words, the beats of a plan, two messages |
 | `ios/pk_lay.c` | the layout numbers of `UI.html` (hand row, seat ring, fan, deck, pile, pill slots), so Swift derives none |
 | `ios/pk_api_layout.h` | the structs the bridge hands Swift (`PkApiTable`, `PkApiEvents`) |
 | `ios/layout.args` | what structgen generates Swift for: those, `PkView`, `PkSince`, and the constants |
@@ -93,19 +98,21 @@ The resident message is one slot: `pk_api_read` adopts, nothing seals or reads a
 
 ## Measured
 
-Over the 2,800 fuzz games of `make run` (400 at each table size): about 184 turn actions and 134 bubbles a game, the longest 1,051 actions, about 3,000 reshuffles in all, and two games stopped by the 750-bubble cap.
+From `make run` on 2026-09-27.
+Test counts: `pk_test` 11,089 assertions, `pk_rules_test` 199, `pk_plan_test` 1,193,089, `pk_say_test` 55,579, `pk_fuzz` 3,921,125, `pk_msg_test` 298,141, `pk_twophone_test` 2,409, `pk_beats_test` 225, and the bridge smoke 1,207 checks, every one 0 failed; `swift-smoke` adds 25 checks from Swift.
+Over the 2,800 fuzz games (400 at each table size): about 188 turn actions and 136 bubbles a game, the longest 1,079 actions, 3,108 reshuffles in all, and three games ended by the long-game stop (D23).
 The wire, over `make run`'s 30 games a size (every bubble of every game), in link characters per bubble:
 
 | Players | median | p95 | p99 | p99.9 | max | bubbles |
 |---|---|---|---|---|---|---|
-| 2 | 171 | 335 | 376 | 399 | 400 | 2,820 |
-| 3 | 200 | 386 | 424 | 447 | 448 | 3,284 |
-| 4 | 211 | 408 | 447 | 464 | 466 | 3,186 |
-| 5 | 248 | 362 | 389 | 400 | 403 | 4,135 |
-| 6 | 282 | 539 | 607 | 634 | 637 | 4,671 |
-| 7 | 317 | 611 | 799 | 835 | 840 | 5,518 |
-| 8 | 331 | 594 | 781 | 824 | 827 | 5,325 |
+| 2 | 194 | 386 | 455 | 472 | 474 | 4,092 |
+| 3 | 187 | 283 | 306 | 314 | 317 | 3,112 |
+| 4 | 243 | 471 | 549 | 576 | 579 | 5,008 |
+| 5 | 235 | 351 | 402 | 426 | 429 | 3,463 |
+| 6 | 263 | 389 | 439 | 464 | 467 | 3,661 |
+| 7 | 295 | 458 | 573 | 607 | 610 | 4,411 |
+| 8 | 320 | 699 | 853 | 890 | 893 | 4,389 |
 
-The owner's p99 case (8 players, 40 turns, six draws a turn, ten catches) measures 341 characters at the median and 349 at p99 over 1,000 deals, against 4.5's estimate of 530.
+The owner's p99 case (8 players, 40 turns, six draws a turn, ten catches) measures 341 characters at the median and 347 at p99 over 1,000 deals, against 4.5's estimate of 530.
 The 1,500-action stop at two players is 1,883 characters, and the longest eight-player game with eight 48-byte names (750 bubbles) is 1,928; the analytic bound on any game, asserted at compile time, is 4,720 against the 5,000 of `MSMessage.url`.
 The whole suite runs in about a minute, and under ASan in about 30 seconds.

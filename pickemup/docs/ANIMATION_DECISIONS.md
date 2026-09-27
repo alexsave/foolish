@@ -91,3 +91,4 @@ Confidence: medium.
 
 FOUND for the owner: U20 says the clamp "keeps every table between 3.2s and 4.2s end to end"; the upper bound holds for the shuffle and deal at every size, but the lower one does not at two or three players (a two-player shuffle and deal is 2.3s), and counting the start card too, an eight-player deal seen by the dealer is 4.3s.
 The numbers are U20's own clamp; only the sentence is off.
+U20's sentence now reads "under 4.2s" for the shuffle and deal, with this FOUND named beside it (docs pass, 2026-09-27); the clamp is unchanged.
