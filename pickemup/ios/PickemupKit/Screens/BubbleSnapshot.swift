@@ -60,8 +60,6 @@ private struct TablePicture: View {
         let v = Pk.view(Pk.viewerSpectator)
         let t = Pk.table()
         let n = t?.seat.count ?? 0
-        let bubbles = t?.bubbles ?? 0
-        let newest = bubbles > 0 ? Pk.since(from: bubbles - 1, to: bubbles) : nil
         let board = BubbleSnapshot.size
         let over = (v?.over ?? 0) != 0
         ZStack(alignment: .topLeading) {
@@ -87,7 +85,7 @@ private struct TablePicture: View {
                 SeatBadge(seat: seat, name: Pk.words(PK_API_W_SEAT, seat),
                           revealed: over ? v?.reveal[safe: seat]?.card : nil,
                           isTurn: false,
-                          stamp: TableModel.stamp(seat, view: v, newest: newest), calling: false, onTapFan: {})
+                          stamp: TableModel.Stamp(kernel: Pk.stamp(seat)), calling: false, onTapFan: {})
                     .scaleEffect(0.78)
                     .position(PkLayout.seat(seat, me: -1, count: n, board: board, collapse: 0.5))
             }

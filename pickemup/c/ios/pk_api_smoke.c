@@ -434,7 +434,7 @@ int main(void)
 
     /* ---- play it out, phone to phone: the other phone reads each bubble,
      * which at two players is always the turn seat's ---- */
-    int from = 1, reads = 0;
+    int from = 1, reads = 0, won_with_call = 0;
     char *cur = links[1];
     static char next[PK_API_TEXT_MAX];
     for (int round = 0; round < 3000; round++) {
@@ -470,20 +470,49 @@ int main(void)
             uint8_t rank[8];
             OK(pk_api_ranks(rank) == 0, "a live game ranks nobody (D22)");
         }
+        /* one wrong call, early (I37): the caller's stamp, in the kernel's order */
+        const int caller = table()->me, callee = caller ^ 1;
+        if (round == 3) {
+            OK((me_view()->can_call & (1 << callee)) && pk_api_catch(callee) == 1, "a call on a seat that is not exposed");
+            OK(pk_api_collapses(PK_API_TOUCH_CALL) == 0, "a call does not collapse the drawer");
+        }
+        /* the winning bubble carries a wrong call too: OUT outranks it (I37) */
+        const int last_call = me_view()->my_n == 1 && me_view()->my_playable[0]
+                              && (me_view()->can_call & (1 << callee)) && pk_api_catch(callee) == 1;
         one_bubble();
         OK(table()->can_send, "a bubble that can be sent");
+        if (round == 3) {
+            OK(pk_api_collapses(PK_API_TOUCH_SAY) == 0, "a bubble with a call is not a lone Last card!");
+            OK(pk_api_collapses(PK_API_TOUCH_PLAY) == 1 && pk_api_collapses(PK_API_TOUCH_PASS) == 1
+               && pk_api_collapses(PK_API_TOUCH_DRAW) == 0 && pk_api_collapses(PK_API_TOUCH_UNDO) == 0
+               && pk_api_collapses(PK_API_TOUCH_UNSAY) == 0 && pk_api_collapses(PK_API_TOUCH_UNCALL) == 0
+               && pk_api_collapses(0) == 0, "a play or a pass collapses; a draw, an undo, an un-say, an un-call do not");
+        }
         n = pk_api_text(next, sizeof next);
         OK(n > 0, "it writes");
         if (n <= 0) break;
         OK(pk_api_prefer(next, cur) < 0 && pk_api_prefer(cur, next) > 0, "the child beats its parent");
         OK(pk_api_common(next, cur) == table()->bubbles, "they share every bubble of the parent");
         pk_api_commit();
+        if (round == 3) {
+            OK(pk_api_stamp(caller) == PK_STAMP_WRONG && pk_api_stamp(callee) != PK_STAMP_CAUGHT,
+               "Wrong call under the caller, nothing caught on the other");
+            OK(pk_api_collapses(PK_API_TOUCH_PLAY) == 0, "no draft open: nothing to collapse for");
+        }
+        if (last_call && table()->phase == PK_PHASE_FINISHED) {
+            const PkSince *ls = (const PkSince *)pk_api_since(table()->bubbles - 1, table()->bubbles);
+            OK(ls && ls->wrong == caller, "the winning bubble's call was judged");
+            OK(pk_api_stamp(caller) == PK_STAMP_OUT && pk_api_stamp(callee) == 0,
+               "once it is over OUT outranks the newest bubble's verdict");
+            won_with_call = 1;
+        }
         memcpy(links[2], next, (size_t)n + 1);
         cur = links[2];
         from = table()->me;
     }
     t = table();
     OK(t->phase == 3, "the game ended");
+    OK(won_with_call, "the game was won by a bubble that also called");
     v = (const PkView *)pk_api_view(PK_API_ME);
     OK(v->over && v->reveal[0].n + v->reveal[1].n > 0, "the end reveals every hand");
     {

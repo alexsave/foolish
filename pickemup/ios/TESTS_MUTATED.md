@@ -86,5 +86,17 @@ The last row replaces the `tapFan never un-calls` row above: the Swift branch th
 Likewise the two `PickemupHost.adopt` rows under BeatPlayerTests mutated Swift that is now `pk_api_adopt`; their C equivalents went red on the smoke (I29), and the planned Swift mutant for the same tests is `PickemupHost.adopt` playing `Pk.beats(from: to - 1, ...)` instead of `Pk.beatsNow()`, which must go red on "from the bubble on screen" and "adopting the same bubble again moves nothing".
 `MessagesViewController.voidPendingStage` on a superseding adopt (I35) has no test target, like the rest of the conversation below.
 
+### The open-items pass (`docs/OPEN_ITEMS.md`), compiled, NOT run
+
+Added or changed 2026-09-27 with no simulator (another worker held the only free one): `build-for-testing` of `PickemupKitTests` and the `PickemupMessagesApp` build succeed, nothing more.
+The C behind each was seen red on `build/pk_beats_test`, `build/pk_twophone_test` or `build/ios_smoke` (`pickemup/c/tests/MUTATIONS.md`, the rows marked A12, A13, A14, A15 and I37).
+Each Swift mutant below is planned, one at a time; until its red run exists the test proves nothing.
+
+| Test | Planned mutation | Must go red on |
+|---|---|---|
+| BeatPlayerTests.testAPickedWildSlidesItsBandUp | `BeatPlayer.effects` skips `PK_BK_BAND` (its `case` arm removed) | "hidden under the foot until it starts", "the band is part way up" |
+| TableModelTests.testPlayStagesWithTheKernelsCaption | `TableModel.play` stages `after: .draw` | "a play collapses" |
+| TableModelTests.testATapOnAFanStagesTheCatchAndASecondTakesItBack | `TableModel.tapFan` stages a call `after: .play` | "a call alone does not collapse the drawer (I37)" |
+
 Every other test in `PickemupKitTests` has a row above.
 What these tests do not reach is the conversation itself (`PickemupMessages/MessagesViewController.swift`: staging through the insert loop, send, cancel, receive); it has no test target, as uttt's has none, and it has NOT yet run inside Messages: on 2026-09-27 the app installed and registered on the simulator, but `simctl launch com.apple.MobileSMS` hung for over five minutes (BLOCKED B2 in `pickemup/docs/ORCHESTRATION.md`).

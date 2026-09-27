@@ -313,6 +313,27 @@ const void *pk_api_beats_now(void);
 enum { PK_API_FAN_REFUSED = 0, PK_API_FAN_CALLED, PK_API_FAN_UNCALLED, PK_API_FAN_MOVED };
 int  pk_api_tap_fan(int seat);
 
+/* ---- the drawer after a touch, and the stamps (IOS_DECISIONS I37) ---------------
+ *
+ * WHETHER A STAGE ASKS FOR THE COMPACT DRAWER once the move has rested
+ * (settle_ms): the touch that staged it, against my draft as it now stands.
+ * A play or a pass ends my turn and collapses; a Last card! collapses when it
+ * is the whole bubble (no draw, play or pass of mine and no call in the
+ * draft); a draw, a call, an undo, an un-say or an un-call does not, because
+ * the player is still composing. 1 collapse, 0 not (and 0 with no draft of
+ * mine open). */
+enum { PK_API_TOUCH_DRAW = 1, PK_API_TOUCH_PLAY, PK_API_TOUCH_PASS, PK_API_TOUCH_SAY,
+       PK_API_TOUCH_UNDO, PK_API_TOUCH_UNSAY, PK_API_TOUCH_CALL, PK_API_TOUCH_UNCALL };
+int  pk_api_collapses(int touch);
+
+/* THE STAMP UNDER SEAT `seat`'s BADGE (U12, I17), one at a time, in this
+ * order: once the game is over, OUT for the winner and nothing for anyone
+ * else; else the newest sealed bubble's verdict, Caught you! on the caught and
+ * Wrong call on the caller; else LAST while the seat has said it (the public
+ * `said` bit, set only while it holds its one card). PK_STAMP_* of pk_beats.h,
+ * or 0 for none, and 0 for a seat off the table. */
+int  pk_api_stamp(int seat);
+
 /* ---- the board's zones (pk_lay.c, IOS_DECISIONS I31) -----------------------------
  *
  * The board is the extension's view less these insets, and the hand sits

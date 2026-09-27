@@ -898,6 +898,47 @@ int pk_api_tap_fan(int seat)
     return PK_API_FAN_MOVED;
 }
 
+/* ---- the drawer after a touch, and the stamps (I37) ------------------------------- */
+
+int pk_api_collapses(int touch)
+{
+    const PkGame *g = live();
+    if (!g || !g->b_open || g->b_sender != S.me) return 0;
+    switch (touch) {
+    case PK_API_TOUCH_PLAY:
+    case PK_API_TOUCH_PASS:
+        return 1;
+    case PK_API_TOUCH_SAY: {
+        /* a lone Last card!: nothing of mine in the draft but the saying */
+        int n = pk_plan_draft(g, S.me, S.events.ev, PK_API_EVENTS);
+        if (n < 0) return 0;
+        for (int i = 0; i < n; i++) {
+            const PkEvent *e = &S.events.ev[i];
+            if ((e->kind == PK_EV_DRAW || e->kind == PK_EV_PLAY || e->kind == PK_EV_PASS) && e->seat == S.me) return 0;
+            if (e->kind == PK_EV_CALL_OUT && e->other == S.me) return 0;
+        }
+        return 1;
+    }
+    default:
+        return 0;
+    }
+}
+
+int pk_api_stamp(int seat)
+{
+    const PkGame *g = started();
+    if (!g || seat < 0 || seat >= g->n) return 0;
+    if (g->over) return seat == g->winner ? PK_STAMP_OUT : 0;
+    if (g->bubbles > 0) {
+        PkSince s;
+        if (pk_since(g, g->bubbles - 1, g->bubbles, &s)) {
+            if (s.caught == seat) return PK_STAMP_CAUGHT;
+            if (s.wrong == seat) return PK_STAMP_WRONG;
+        }
+    }
+    return g->said & (1u << seat) ? PK_STAMP_LAST : 0;
+}
+
 /* ---- my own arrangement of my hand (O9, I38) ---------------------------------------- */
 
 int pk_api_arrange_move(int from, int to)

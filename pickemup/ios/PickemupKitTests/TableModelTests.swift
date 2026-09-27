@@ -38,7 +38,8 @@ final class TableModelTests: XCTestCase {
         XCTAssertEqual(m.pills.leading, .pass, "and Pass stands beside it (D10)")
     }
 
-    // MUTATE: TableModel.play stages with collapse: false -> "a play collapses".
+    // MUTATE: TableModel.play stages after `.draw` (the kernel then answers no
+    // collapse) -> "a play collapses".
     // MUTATE: stageIfSendable passes Pk.words(PK_API_W_HEADLINE) as the
     // caption -> "the caption is the kernel's staged caption".
     func testPlayStagesWithTheKernelsCaption() throws {
@@ -123,6 +124,8 @@ final class TableModelTests: XCTestCase {
         XCTAssertNil(m.strip.played)
     }
 
+    // MUTATE: TableModel.tapFan stages a call after `.play` -> "a call alone
+    // does not collapse the drawer".
     // MUTATE: TableModel.tapFan handles `.uncalled` as `.refused` (the un-call
     // is not read back) -> "a second tap un-calls". (Before I30 the mutant was
     // dropping the Swift `calling(seat)` branch, which no longer exists.)
@@ -133,6 +136,7 @@ final class TableModelTests: XCTestCase {
         m.tapFan(0)
         XCTAssertTrue(m.calling(0), "the call is staged on Alex's fan")
         XCTAssertEqual(m.strip.called, 0)
+        XCTAssertEqual(stages.last?.collapse, false, "a call alone does not collapse the drawer (I37)")
         m.tapFan(0)
         XCTAssertFalse(m.calling(0), "a second tap un-calls")
     }

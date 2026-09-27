@@ -183,6 +183,17 @@ The sentinel mutation above is the one that breaks canonicality.
 | ios-smoke zones (I31) | the draw band's `BAND_DOWN` 24 becomes 0 | `pk_api_smoke.c:157` "U24: the hand band, 64 up and 24 down" |
 | ios-smoke words (I33) | `W_INDEX` gives a Wild +4 the `RANK_PLUS2` index | `pk_api_smoke.c:562` "a Wild +4's index" |
 | ios-smoke words (I33) | `W_STRIP_DRAWS` accepts a count of 0 | `pk_api_smoke.c:567` "no draws, no chip" |
+| collapse (I37) | a pass does not collapse | `pk_api_smoke.c:489` "a play or a pass collapses; a draw, an undo, an un-say, an un-call do not" |
+| collapse (I37) | a play does not collapse | twophone `[S4 three draws then a play]` "the play ends the turn: the drawer collapses once it rests", `pk_api_smoke.c:489` |
+| collapse (I37) | a call in the draft does not stop a Last card! from being the whole bubble | twophone `[S9 Last card! in a later bubble]` "beside a call it is not the whole bubble; un-called, it is" |
+| collapse (I37) | a draw, play or pass in the draft does not stop it either | twophone `[S4 three draws then a play]` "the bubble is not a lone Last card!" |
+| collapse (I37) | no guard on an open draft of mine | `pk_api_smoke.c:500` "no draft open: nothing to collapse for" |
+| collapse (I37) | every other touch collapses (`default: return 1`) | twophone `[S4 ...]` "a draw does not collapse the drawer", `[S8c Caught you! staged]` "a call alone does not collapse the drawer", `pk_api_smoke.c:477` "a call does not collapse the drawer" |
+| stamp (I37) | OUT for every seat once it is over | twophone `[S12 the win]` "OUT under the winner and nothing else once it is over" |
+| stamp (I37) | no Caught you! | twophone `[S8d Caught you! after Send]` "Caught you! under the caught, nothing under the catcher" |
+| stamp (I37) | no Wrong call | `pk_api_smoke.c:499` "Wrong call under the caller, nothing caught on the other" |
+| stamp (I37) | no LAST | twophone `[S9 Last card! in a later bubble]` "the kernel's stamp: LAST under the sayer" |
+| stamp (I37) | the order: the newest verdict before OUT (the `over` test moved below it) | `pk_api_smoke.c:506` "once it is over OUT outranks the newest bubble's verdict" (the winning bubble also carries a wrong call) |
 
 Putting the winner first by name (rather than by fewest cards) survived its mutation: the winner of an OUT game holds none and the winner of a STUCK or LONG game is the one with the fewest, so the two orders differ only on a tie the kernel breaks the same way. It stays for the reader, not for a test.
 
@@ -241,6 +252,10 @@ Run 2026-09-27; every mutant went red, and every test in the file is named at le
 | ios-smoke motion | the bridge does not remember the draft after a build | `pk_api_smoke.c:224` "asked again with nothing new: nothing moves" |
 | ios-smoke motion | `pk_api_beats` refuses `from == to` | `pk_api_smoke.c:215` "from == to: no motion, a new plan" |
 | ios-smoke motion | `pk_api_beats_send` lays the bubble out as an open | `pk_api_smoke.c:248` "channel B: what staging held" |
+| play a wild (A12) | the BAND beat is not applied before its start (no fill backwards) | `[play a wild: the band slides up]` "hidden under the card's edge before it starts" |
+| play a wild (A12) | the BAND beat eases linearly | `[play a wild: the band slides up]` "E.out", "ease-out: past halfway at half time (0.500000)" |
+| play a wild (A12) | the BAND sample fades (`opacity = p`) as it did before A12 | `[play a wild: the band slides up]` "it slides, it does not fade" |
+| play a wild (A12) | a seat's wild gets a BAND beat too (`if (1)`) | `[play a wild: the band slides up]` "a seat's wild arrives with its band on", `[play a +2 / +4]` "arrival: the band is already on the card" |
 
 ## pk_twophone_test.c
 
