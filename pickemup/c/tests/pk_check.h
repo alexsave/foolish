@@ -62,6 +62,22 @@ static inline void seed_of(uint8_t seed[32], uint32_t k)
     for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(k * 131u + (uint32_t)i * 7u + (k >> 8) * 17u);
 }
 
+/* seed_of HAS ONLY 256 DEALS: every byte is f(k) + 7i with f(k) a byte, so k
+ * and any k' with f(k') == f(k) deal the same game. Kept as it is because
+ * the committed goldens (7.3) are read from it. Anything that wants many
+ * different deals uses this: all 32 bytes from splitmix64 of k. */
+static inline void seed_wide(uint8_t seed[32], uint32_t k)
+{
+    uint64_t x = 0x9e3779b97f4a7c15ull * ((uint64_t)k + 1);
+    for (int i = 0; i < 32; i += 8) {
+        uint64_t z = (x += 0x9e3779b97f4a7c15ull);
+        z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull;
+        z = (z ^ (z >> 27)) * 0x94d049bb133111ebull;
+        z ^= z >> 31;
+        for (int j = 0; j < 8; j++) seed[i + j] = (uint8_t)(z >> (8 * j));
+    }
+}
+
 static inline PkAct act(int kind, int a, int b)
 {
     PkAct x = { (uint8_t)kind, (uint8_t)a, (uint8_t)b, 0 };

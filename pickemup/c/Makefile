@@ -11,12 +11,15 @@ CC      ?= cc
 CFLAGS  ?= -O2 -Wall -Wextra -Werror -std=c11
 SHARED  := ../../shared/c
 SRC     := src/pk.c src/pk_deck.c src/pk_plan.c src/pk_view.c src/pk_lobby.c src/pk_say.c \
-           i18n/strings_en.c $(SHARED)/deal_rng.c
-HDR     := $(wildcard src/*.h) i18n/keys.h tests/pk_check.h $(SHARED)/deal_rng.h
+           src/pk_code.c src/pk_msg.c i18n/strings_en.c \
+           $(SHARED)/deal_rng.c $(SHARED)/sha256.c $(SHARED)/b32.c $(SHARED)/mixrad.c
+HDR     := $(wildcard src/*.h) i18n/keys.h tests/pk_check.h \
+           $(SHARED)/deal_rng.h $(SHARED)/sha256.h $(SHARED)/b32.h $(SHARED)/mixrad.h
 
 # One binary per test file; each takes an optional scale argument.
-TESTS   := pk_test pk_plan_test pk_say_test pk_fuzz
+TESTS   := pk_test pk_plan_test pk_say_test pk_fuzz pk_msg_test
 FUZZ_GAMES ?= 2800
+WIRE_GAMES ?= 30
 
 all: $(addprefix build/,$(TESTS))
 
@@ -31,6 +34,7 @@ run: $(addprefix build/,$(TESTS))
 	./build/pk_plan_test
 	./build/pk_say_test
 	./build/pk_fuzz $(FUZZ_GAMES)
+	./build/pk_msg_test $(WIRE_GAMES)
 
 ASAN_FLAGS := -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined \
               -Wall -Wextra -Werror -std=c11
@@ -43,6 +47,7 @@ asan: $(addprefix build/asan_,$(TESTS))
 	./build/asan_pk_plan_test
 	./build/asan_pk_say_test
 	./build/asan_pk_fuzz 2000
+	./build/asan_pk_msg_test 5 100
 
 # THE SAME FILES FOR wasm32, freestanding (-nostdlib, shared/c/wasm's libc):
 # the proof that nothing here reaches past memcpy / memset / strlen. Objects

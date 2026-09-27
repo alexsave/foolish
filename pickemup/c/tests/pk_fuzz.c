@@ -35,7 +35,7 @@ int main(int argc, char **argv)
     for (int gi = 0; gi < games; gi++) {
         TEST("fuzz");
         uint8_t seed[32];
-        seed_of(seed, 900000u + (uint32_t)gi);
+        seed_wide(seed, 900000u + (uint32_t)gi);
         int n = 2 + gi % 7;
         PkGame g, prev, tmp;
         CHECK(pk_new(&g, seed, n), "game %d deals", gi);
