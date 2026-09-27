@@ -100,6 +100,9 @@ Run 2026-09-27 on the kernel as of this commit, with `cn_fuzz 100` to `500`, `cn
 | a bid | staging refuses while a move is staged | `cn_twophone_test.c:266` "Alex stages 3 2, replacing it", `:270`, `:273` |
 | the end | the table reports no game phase once over | `cn_twophone_test.c:290` "Alex sees it finished" (every phone) |
 | the end | the win headline goes to every seat but the winner | `cn_twophone_test.c:295` "Alex: You win" |
+| a join that fills the table, then a leave | `shared/c/msg_lobby_roster.c` offered: the full table's START exemption dropped (the join that fills the table cannot start) | `cn_twophone_test.c:315` "the table is full: Bo, the newest sender, is offered Start (3) or a leave", `:327` "Bo joins and starts in one bubble" (green before these steps, 2026-09-27) |
+| a leave once live is refused | `shared/c/msg_lobby_roster.c` can_exit: true after the start (`!l->started` dropped) | `cn_twophone_test.c:338` "Bo is offered no leave once live", `:339` "Bo's leave is refused", `:341` "the roster is unchanged: 1 seats, me 255", `:342` "the bubble encodes no departure" (green before these steps) |
+| a join that fills the table, then a leave | `shared/c/msg_lobby_roster.c` offered: a lone seat offered START (the `n_seats >= 2` guard dropped) | `cn_twophone_test.c:321` "alone again, the newest bubble not his: Alex is offered Invite (1), not Start" (green before these steps) |
 
 ## ios/cn_api_smoke.c and ios/cn_api_smoke.swift
 

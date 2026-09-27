@@ -289,9 +289,64 @@ static int play(void)
     return moves;
 }
 
+/* ---- THE LOBBY'S RULES that the group game above never meets
+ * (shared/c/msg_lobby_roster): a creator left alone by a leaver is not
+ * offered Start, the join that fills a table starts it, and nobody leaves
+ * once the game is live. A two-person chat after the game, on Alex's and
+ * Bo's phones. */
+static void lobby_rules(void)
+{
+    uint8_t seed[32];
+    for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(i * 13 + 5);
+    char start[CN_API_TEXT_MAX], after[CN_API_TEXT_MAX];
+
+    STEP("a lone creator is not offered Start");
+    be(0);
+    OK(cn_api_new(seed, 1) == CN_EOK, "Alex makes a lobby in a two-person chat");
+    OK(table()->n_seats == 1 && table()->offered == CN_LOBBY_WAITING && !table()->can_exit,
+       "alone, the newest sender: waiting, offered %d", table()->offered);
+    OK(cn_api_start() != CN_EOK && table()->phase == CN_PHASE_WAITING, "Alex cannot roll alone");
+    OK(cn_api_text(link, sizeof link) > 0, "the invitation writes");
+
+    STEP("a join that fills the table, then a leave");
+    open_as(1);
+    OK(cn_api_join() == 1, "Bo joins with a plain join");
+    OK(table()->n_seats == 2 && table()->offered == CN_LOBBY_START && table()->can_exit,
+       "the table is full: Bo, the newest sender, is offered Start (%d) or a leave", table()->offered);
+    OK(!strcmp(words(CN_API_W_LEFT, 1), "Bo left"), "the leave's caption: %s", line);
+    OK(cn_api_leave() == CN_EOK && table()->n_seats == 1 && table()->me == CN_SEAT_NONE, "Bo leaves");
+    OK(cn_api_text(link, sizeof link) > 0, "the leave writes");
+    open_as(0);
+    OK(table()->me == 0 && table()->n_seats == 1 && table()->offered == CN_LOBBY_INVITE,
+       "alone again, the newest bubble not his: Alex is offered Invite (%d), not Start", table()->offered);
+    OK(cn_api_start() != CN_EOK && table()->phase == CN_PHASE_WAITING && table()->n_seats == 1, "and cannot roll alone");
+
+    STEP("the join that fills the table starts it");
+    open_as(1);
+    OK(table()->offered == CN_LOBBY_JOIN && table()->can_join_start, "Bo is offered join-and-start");
+    OK(cn_api_join_start() == 1, "Bo joins and starts in one bubble");
+    OK(table()->phase == CN_PHASE_LIVE && table()->n_seats == 2 && table()->starter == 1, "a live game of two");
+    int n = cn_api_text(start, sizeof start);
+    OK(n > 0, "the start writes");
+    memcpy(link, start, sizeof link);
+
+    STEP("a leave once live is refused");
+    for (int p = 1; p >= 0; p--) {
+        open_as(p);
+        OK(table()->phase == CN_PHASE_LIVE && table()->me == p, "%s is in the live game", NICK[p]);
+        uint16_t rev = table()->lobby_rev;
+        OK(!table()->can_exit, "%s is offered no leave once live", NICK[p]);
+        OK(cn_api_leave() != CN_EOK, "%s's leave is refused", NICK[p]);
+        OK(table()->phase == CN_PHASE_LIVE && table()->n_seats == 2 && table()->me == p && table()->lobby_rev == rev,
+           "the roster is unchanged: %d seats, me %d", table()->n_seats, table()->me);
+        OK(cn_api_text(after, sizeof after) == n && !strcmp(after, start), "the bubble encodes no departure");
+    }
+}
+
 int main(void)
 {
     lobby();
     play();
+    lobby_rules();
     return report("cn_twophone_test");
 }

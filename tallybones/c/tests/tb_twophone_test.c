@@ -251,10 +251,68 @@ static void rest_of_game(void)
     printf("  the game: %d bubbles, %s %d, %s %d\n", v.bubbles, NICK[0], v.seat[0].total, NICK[1], v.seat[1].total);
 }
 
+/* THE LOBBY'S RULES that the game above never meets (shared/c/msg_lobby_roster):
+ * a creator is not offered Start alone, nor when a leaver leaves them alone,
+ * the join that fills a table may start, and the roster never shrinks once
+ * the game is live (a live leave is the T5 game move, never a roster
+ * change). A second DM lobby, after the game. */
+static void lobby_rules(void)
+{
+    STEP("lobby rules");
+    holding = -1;
+    last[0][0] = last[1][0] = 0;
+    uint8_t seed[32];
+    for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(i * 11 + 7);
+    char line[256], start[TB_API_TEXT_MAX], after[TB_API_TEXT_MAX];
+    pick_up(A);
+    OK(tb_api_new(seed, 1) == TB_EOK, "Alex opens a second DM lobby");
+    TbApiTable t = table();
+    OK(t.n_seats == 1 && t.offered == TB_LOBBY_WAITING && !t.can_exit, "alone, the newest sender: waiting, offered %d",
+       t.offered);
+    OK(tb_api_stage_start() != TB_EOK && table().phase == TB_PHASE_WAITING, "Alex cannot roll alone");
+    OK(tb_api_text(tip, sizeof tip) > 0, "the invitation");
+
+    open_tip(B);
+    OK(tb_api_stage_join() == 1, "Bo joins with a plain join");
+    t = table();
+    OK(t.n_seats == 2 && t.offered == TB_LOBBY_START && t.can_exit,
+       "the table is full: Bo, the newest sender, is offered Start (%d) or a leave", t.offered);
+    words(TB_API_W_LEFT, 1, line);
+    OK(!strcmp(line, "Bo left"), "the leave's caption: %s", line);
+    OK(tb_api_stage_leave() == TB_EOK && table().n_seats == 1 && table().me == TB_SEAT_NONE, "Bo leaves");
+    OK(tb_api_text(tip, sizeof tip) > 0, "the leave writes");
+    open_tip(A);
+    t = table();
+    OK(t.me == 0 && t.n_seats == 1 && t.offered == TB_LOBBY_INVITE,
+       "alone again, the newest bubble not his: Alex is offered Invite (%d), not Start", t.offered);
+    OK(tb_api_stage_start() != TB_EOK && table().phase == TB_PHASE_WAITING && table().n_seats == 1,
+       "and cannot roll alone");
+
+    open_tip(B);
+    OK(table().offered == TB_LOBBY_JOIN && table().can_join_start, "Bo is offered join-and-start");
+    OK(tb_api_stage_join_start() == 1, "Bo joins and starts in one bubble");
+    OK(table().phase == TB_PHASE_LIVE && table().n_seats == 2 && table().starter == 1, "a live game of two");
+    int n = tb_api_text(start, sizeof start);
+    OK(n > 0, "the start writes");
+    memcpy(tip, start, sizeof tip);
+
+    for (int p = B; p >= A; p--) {
+        open_tip(p);
+        t = table();
+        OK(t.phase == TB_PHASE_LIVE && t.me == p && !t.can_exit, "%s is in the live game, offered no lobby leave", NICK[p]);
+        OK(tb_api_stage_leave() == 1 && table().staged, "%s's leave once live is a staged game move (T5)", NICK[p]);
+        OK(table().n_seats == 2 && table().me == p && table().lobby_rev == t.lobby_rev,
+           "the roster is unchanged: %d seats, me %d", table().n_seats, table().me);
+        OK(tb_api_cancel() == 1 && tb_api_text(after, sizeof after) == n && !strcmp(after, start),
+           "cancelled, the bubble is the start again");
+    }
+}
+
 int main(void)
 {
     lobby();
     first_turn();
     rest_of_game();
+    lobby_rules();
     return report("tb_twophone_test");
 }

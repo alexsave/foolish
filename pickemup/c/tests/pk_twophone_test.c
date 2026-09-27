@@ -896,6 +896,60 @@ won:
     return 1;
 }
 
+/* ---- THE LOBBY'S RULES that the game above never meets (shared/c/msg_lobby_roster):
+ * a creator left alone by a leaver is not offered START, the join that fills
+ * a table may start, and nobody leaves once the game is live. A second DM
+ * lobby, after the game, so the game's own seed search is untouched. */
+static void lobby_rules(void)
+{
+    uint8_t seed[32];
+    for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(i * 17 + 9);
+    char line[256], start[PK_API_TEXT_MAX], after[PK_API_TEXT_MAX];
+    reset_phones();
+
+    STEP("L1 a lone creator is not offered Start");
+    pick_up(A);
+    OK(pk_api_new(seed, 1) == 0, "Alex makes a second lobby");
+    OK(table_()->n_seats == 1 && table_()->offered == PK_LOBBY_WAITING && !table_()->can_exit,
+       "alone, the newest sender: waiting, offered %d", table_()->offered);
+    OK(pk_api_start() != 0 && table_()->phase == PK_PHASE_WAITING, "Alex cannot deal alone");
+    OK(pk_api_text(tip, sizeof tip) > 0, "the invitation writes");
+    tip_from = A;
+
+    STEP("L2 a join that fills the table, then a leave");
+    OK(open_tip(B) == 0 && pk_api_join() == B, "Bo joins with a plain join");
+    OK(table_()->n_seats == 2 && table_()->offered == PK_LOBBY_START && table_()->can_exit,
+       "the table is full: Bo, the newest sender, is offered Start (%d) or a leave", table_()->offered);
+    OK(pk_api_words(PK_API_W_LEFT, B, line, sizeof line) > 0 && !strcmp(line, "Bo left"), "the leave's caption: %s", line);
+    OK(pk_api_leave() == 0 && table_()->n_seats == 1 && table_()->me == PK_SEAT_NONE, "Bo leaves");
+    OK(pk_api_text(tip, sizeof tip) > 0, "the leave writes");
+    tip_from = B;
+    OK(open_tip(A) == 0, "Alex opens Bo's leave");
+    OK(table_()->me == A && table_()->n_seats == 1 && table_()->offered == PK_LOBBY_INVITE,
+       "alone again, the newest bubble not his: Alex is offered Invite (%d), not Start", table_()->offered);
+    OK(pk_api_start() != 0 && table_()->phase == PK_PHASE_WAITING && table_()->n_seats == 1, "and cannot deal alone");
+
+    STEP("L3 the join that fills the table starts it");
+    OK(open_tip(B) == 0 && table_()->offered == PK_LOBBY_JOIN && table_()->can_join_start, "Bo is offered join-and-start");
+    OK(pk_api_join_start() == B, "Bo joins and starts in one bubble");
+    OK(table_()->phase == PK_PHASE_LIVE && table_()->n_seats == 2 && table_()->starter == B, "a live game of two");
+    int n = pk_api_text(start, sizeof start);
+    OK(n > 0, "the start writes");
+    memcpy(tip, start, sizeof tip);
+    tip_from = B;
+
+    STEP("L4 a leave once live is refused");
+    for (int ph = B; ph >= A; ph--) {
+        OK(open_tip(ph) == 0 && table_()->phase == PK_PHASE_LIVE && table_()->me == ph, "phone %d is in the live game", ph);
+        uint16_t rev = table_()->lobby_rev;
+        OK(!table_()->can_exit, "%s is offered no leave once live", NICK[ph]);
+        OK(pk_api_leave() != 0, "%s's leave is refused", NICK[ph]);
+        OK(table_()->phase == PK_PHASE_LIVE && table_()->n_seats == 2 && table_()->me == ph && table_()->lobby_rev == rev,
+           "the roster is unchanged: %d seats, me %d", table_()->n_seats, table_()->me);
+        OK(pk_api_text(after, sizeof after) == n && !strcmp(after, start), "the bubble encodes no departure");
+    }
+}
+
 static void seed_k(uint8_t seed[32], int k)
 {
     for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(i * 31 + k * 7 + (k >> 8) * 13 + 5);
@@ -926,5 +980,6 @@ int main(int argc, char **argv)
     STEP("seed");
     OK(ok, "the seed plays every step again with the assertions on (%s)", g_why ? g_why : "");
     printf("twophone: seed k=%d, %d bubbles, %d reshuffles\n", k, table_()->bubbles, resh_total);
+    lobby_rules();
     return report("twophone");
 }

@@ -316,6 +316,9 @@ Run 2026-09-27.
 | twophone say-it timing | "Last card!" legal in the bubble that exposed the player (`ref = g->exposed`) | `[S8b down to one]` "not in the bubble that exposed me (D3)" |
 | twophone undo | a draw is not the draft's floor (`b_floor` not moved) | `[S4 three draws then a play]` "a draw does not come back (D8)", `[S4b undo a staged play]` "the card is on the pile" |
 | twophone seat resolver | `pk_api_seats_load` keeps no records | `[S4 ...]` and every bubble after: "the receiver resolves to its own seat by its record (me 0 by 2)" |
+| twophone lobby rules (2026-09-27) | `shared/c/msg_lobby_roster.c` offered: the full table's START exemption dropped (the join that fills the table cannot start) | `[S2 join starts the game]` "Bo joins and starts in one bubble" (red before the L steps too), `[L2 a join that fills the table, then a leave]` "the table is full: Bo, the newest sender, is offered Start (3) or a leave" |
+| twophone lobby rules (2026-09-27) | `shared/c/msg_lobby_roster.c` can_exit: true after the start (`!l->started` dropped) | `[L4 a leave once live is refused]` "Bo's leave is refused", "the roster is unchanged: 1 seats, me 255", "the bubble encodes no departure" (green before the L steps) |
+| twophone lobby rules (2026-09-27) | `shared/c/msg_lobby_roster.c` offered: a lone seat offered START (the `n_seats >= 2` guard dropped) | `[L2 a join that fills the table, then a leave]` "alone again, the newest bubble not his: Alex is offered Invite (1), not Start" (green before the L steps) |
 
 ## pk_arrange_test.c and the bridge smoke's arrangement section (O9)
 

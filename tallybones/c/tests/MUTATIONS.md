@@ -85,6 +85,9 @@ THE T11 ROWS are the four under `tb_test.c` named T11, the two Swift rows, and i
 | first turn | the send echo peeks instead of the resident replay | `tb_twophone_test.c:183` "sent: the reroll is there" |
 | first turn | `tb_api_view` shows a staged SCORE as the draft's next turn (the T66 overlay skipped) (integration) | `tb_twophone_test.c:219` "staged: the scored dice stay on the tray and the turn stays with Alex (T66)" |
 | the rest | a read past bubble 6 adopts the peek (no dice) | `tb_twophone_test.c:249` "both phones see one game (bubble 9)" |
+| lobby rules (2026-09-27) | `shared/c/msg_lobby_roster.c` offered: a lone seat offered START (the `n_seats >= 2` guard dropped) | `tb_twophone_test.c:287` "alone again, the newest bubble not his: Alex is offered Invite (1), not Start" (green before this step) |
+| lobby rules (2026-09-27) | `shared/c/msg_lobby_roster.c` offered: the full table's START exemption dropped (the join that fills the table cannot start) | `tb_twophone_test.c:131` "Bo joins and starts" (red before this step too), `:279` "the table is full: Bo, the newest sender, is offered Start (3) or a leave", `:293` "Bo joins and starts in one bubble" (read with the step run first: in place, the 40-line report cap is spent on the red game before it) |
+| lobby rules (2026-09-27) | `shared/c/msg_lobby_roster.c` can_exit: true after the start (`!l->started` dropped) | STAYS GREEN, and cannot go red through this product: the bridge asks `can_exit` only while WAITING and turns a live leave into the T5 game move, so nothing here reaches the roster's verdict once live. The step still asserts the live roster never shrinks. Only `msg_lobby_roster_test` sees this one. |
 
 ## ios/tb_api_smoke.c
 
