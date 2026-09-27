@@ -1,4 +1,5 @@
-#define _POSIX_C_SOURCE 200809L
+#define _DEFAULT_SOURCE   /* clock_gettime, sysconf(_SC_NPROCESSORS_ONLN) on Linux */
+#define _DARWIN_C_SOURCE  /* ... and on macOS */
 /* tb_solve - the exact expected final score of optimal single-player play,
  * and games played by that policy.
  *
