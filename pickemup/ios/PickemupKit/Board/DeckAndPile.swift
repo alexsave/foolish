@@ -118,7 +118,8 @@ struct PileView: View {
     }
 }
 
-/// The top-right direction box (78 x 68 at y -3), absent at two players (D13).
+/// The top-right direction box, absent at two players (D13). Its frame is the
+/// kernel's zone (PK_ZONE_DIR); this draws inside whatever it is given.
 struct DirectionBox: View {
     let word: String
     let clockwise: Bool
@@ -137,7 +138,7 @@ struct DirectionBox: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
         }
-        .frame(width: 78, height: 68)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(RoundedRectangle(cornerRadius: 9).fill(Color(red: 6 / 255, green: 20 / 255, blue: 18 / 255).opacity(0.4)))
         .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Color(red: 140 / 255, green: 190 / 255, blue: 178 / 255).opacity(0.16)))
         .pkAnchor("dir")

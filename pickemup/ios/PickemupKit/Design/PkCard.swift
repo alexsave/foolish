@@ -52,12 +52,11 @@ public struct CardFace: Equatable {
     public var cornerSuit: Int? {
         rank == PK_R_SKIP || rank == PK_R_REVERSE || rank == PK_R_PLUS2 ? suit : nil
     }
-    /// The word in the corner and on the pip, if it is one.
+    /// The index in the corner and on the pip, if the face prints one: the
+    /// kernel's word (PK_API_W_INDEX), "" for a face that prints a glyph.
     var label: String? {
-        if isNumber { return "\(rank)" }
-        if rank == PK_R_PLUS2 { return "+2" }
-        if rank == PK_R_WILD4 { return "+4" }
-        return nil
+        let w = Pk.words(PK_API_W_INDEX, id)
+        return w.isEmpty ? nil : w
     }
 }
 

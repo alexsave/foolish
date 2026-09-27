@@ -15,10 +15,36 @@ public enum PkLayout {
     public static let deckSize = CGSize(width: CGFloat(PK_LAY_DECK_W), height: CGFloat(PK_LAY_DECK_H))
     public static let fanCard = CGSize(width: CGFloat(PK_LAY_FAN_CARD_W), height: CGFloat(PK_LAY_FAN_CARD_H))
 
-    /// foolish's board inset inside the extension's view: 8 / 8 / 14 / 4.
-    public static let boardInset = (leading: CGFloat(8), trailing: CGFloat(8), top: CGFloat(14), bottom: CGFloat(4))
+    /// foolish's board inset inside the extension's view (the kernel's
+    /// coordinates are the board's, so the inset is the kernel's too).
+    public static let boardInset = (leading: CGFloat(PK_LAY_INSET_L), trailing: CGFloat(PK_LAY_INSET_R),
+                                    top: CGFloat(PK_LAY_INSET_T), bottom: CGFloat(PK_LAY_INSET_B))
     /// The hand's own side padding inside the board.
-    public static let handPadding: CGFloat = 8
+    public static let handPadding = CGFloat(PK_LAY_HAND_PAD)
+    /// A touch that travels less than this is a tap (foolish's tapThreshold).
+    public static let tapSlop = CGFloat(PK_LAY_TAP_SLOP)
+    public static let pillHeight = CGFloat(PK_LAY_PILL_H)
+
+    /// The board's zones (pk_lay_zone, I31): where a dragged back draws, where
+    /// a dragged card plays, the pill row, the toast's centre, the direction box.
+    public enum Zone {
+        case drawBand, pileDrop, pills, toast, dir
+        var c: Int32 {
+            switch self {
+            case .drawBand: return Int32(PK_ZONE_DRAW_BAND)
+            case .pileDrop: return Int32(PK_ZONE_PILE_DROP)
+            case .pills:    return Int32(PK_ZONE_PILLS)
+            case .toast:    return Int32(PK_ZONE_TOAST)
+            case .dir:      return Int32(PK_ZONE_DIR)
+            }
+        }
+    }
+
+    public static func zone(_ z: Zone, board: CGSize, collapse: CGFloat, handBox: CGFloat) -> CGRect {
+        var x: Float = 0, y: Float = 0, w: Float = 0, h: Float = 0
+        _ = pk_lay_zone(z.c, Float(board.width), Float(board.height), Float(collapse), Float(handBox), &x, &y, &w, &h)
+        return CGRect(x: CGFloat(x), y: CGFloat(y), width: CGFloat(w), height: CGFloat(h))
+    }
 
     public static func collapse(viewHeight: CGFloat) -> CGFloat { CGFloat(pk_lay_collapse(Float(viewHeight))) }
     public static func maxRows(viewHeight: CGFloat) -> Int { Int(pk_lay_max_rows(Float(viewHeight))) }

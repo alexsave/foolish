@@ -54,7 +54,8 @@ struct StagedStrip: View {
         HStack(spacing: 4) {
             if strip.draws > 0 {
                 PkCard(card: nil, size: CGSize(width: 12, height: 17), chip: true)
-                Text("\u{00D7}\(strip.draws)").font(.system(size: 11, weight: .heavy)).foregroundColor(Color(hex: 0xFFF1C9))
+                Text(Pk.words(PK_API_W_STRIP_DRAWS, strip.draws))
+                    .font(.system(size: 11, weight: .heavy)).foregroundColor(Color(hex: 0xFFF1C9))
             }
             if strip.reshuffled {
                 RiffleMark()
@@ -63,7 +64,9 @@ struct StagedStrip: View {
             }
             if let card = strip.played {
                 if strip.draws > 0 || strip.reshuffled {
-                    Text("\u{00B7}").font(.system(size: 11.5, weight: .bold)).foregroundColor(Color(hex: 0x9C8B5E))
+                    // UI.html's middle-dot separator, drawn: no glyph in a view is a word
+                    Circle().fill(Color(hex: 0x9C8B5E)).frame(width: 3, height: 3)
+                        .accessibilityHidden(true)
                 }
                 PkCard(card: card, size: CGSize(width: 12, height: 17), chosen: strip.chosen, chip: true)
             }
@@ -86,7 +89,8 @@ struct StagedStrip: View {
     }
 }
 
-/// The pill row, trailing; 96 x 40 wood, 8 apart, trailing edge 16 in.
+/// The pill row, trailing; 96-wide wood, 8 apart, trailing edge 12 in; its
+/// row is the kernel's zone (PK_ZONE_PILLS).
 struct PillRow: View {
     let trailing: PkLayout.Pill
     let leading: PkLayout.Pill
@@ -104,7 +108,7 @@ struct PillRow: View {
             pill(trailing)
         }
         .padding(.trailing, 12)
-        .frame(height: 40)
+        .frame(height: PkLayout.pillHeight)
         .transaction { $0.animation = nil }
         .pkAnchor("pills")
     }
@@ -144,7 +148,7 @@ struct LeftChrome: View {
             Spacer(minLength: 0)
         }
         .padding(.leading, 12)
-        .frame(height: 40)
+        .frame(height: PkLayout.pillHeight)
         .transaction { $0.animation = nil }
     }
 }

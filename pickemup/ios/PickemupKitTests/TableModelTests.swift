@@ -123,8 +123,9 @@ final class TableModelTests: XCTestCase {
         XCTAssertNil(m.strip.played)
     }
 
-    // MUTATE: tapFan never un-calls (drop the `calling(seat)` branch) ->
-    // "a second tap un-calls".
+    // MUTATE: TableModel.tapFan handles `.uncalled` as `.refused` (the un-call
+    // is not read back) -> "a second tap un-calls". (Before I30 the mutant was
+    // dropping the Swift `calling(seat)` branch, which no longer exists.)
     func testATapOnAFanStagesTheCatchAndASecondTakesItBack() {
         Phones.dmStartedByBo()
         let m = model()

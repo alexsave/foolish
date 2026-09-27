@@ -22,7 +22,16 @@ public enum Pk {
     /// The library and the readers were generated for one layout (D46). A
     /// mismatch is a stale xcframework or a stale Generated/: refuse, never
     /// read at a wrong offset.
-    public static var layoutMatches: Bool { pk_api_layout_hash() == SG_LAYOUT_HASH }
+    public static let layoutMatches: Bool = pk_api_layout_hash() == SG_LAYOUT_HASH
+
+    /// EVERY GENERATED READ GOES THROUGH HERE, so a mismatched pair reads
+    /// nothing at all (nil), whoever asks and whenever: the model's first
+    /// refresh runs before any screen is chosen. Which SCREEN a mismatch shows
+    /// is PickemupHost.readable's; these are two vectors, not two fixes.
+    private static func snap<T>(_ p: UnsafeRawPointer?, _ reader: (UnsafeRawPointer) throws -> T) -> T? {
+        guard layoutMatches, let p else { return nil }
+        return try? reader(p)
+    }
 
     // MARK: who I am
 
@@ -86,6 +95,13 @@ public enum Pk {
     @discardableResult
     public static func read(_ text: String) -> Int { Int(pk_api_read(text)) }
 
+    /// ADOPT `text` and lay out what it brings (pk_api_adopt, I29): which
+    /// bubbles play, from where, and whether a staged play of mine lost a
+    /// race is the kernel's comparison of the chain on screen with the one
+    /// adopted. The plan is `beatsNow`. 0, or a negative PK_E* and nothing
+    /// changed, the playing plan included.
+    public static func adopt(_ text: String, arrival: Bool) -> Int { Int(pk_api_adopt(text, arrival ? 1 : 0)) }
+
     /// Would `text` read? Adopts nothing.
     public static func check(_ text: String) -> Int { Int(pk_api_check(text)) }
 
@@ -122,6 +138,18 @@ public enum Pk {
     public static func play(_ pos: Int, suit: Int = PK_NO_SUIT) -> Bool { pk_api_play(Int32(pos), Int32(suit)) == 1 }
     public static func sayIt() -> Bool { pk_api_say_it() == 1 }
     public static func callOut(_ seat: Int) -> Bool { pk_api_catch(Int32(seat)) == 1 }
+
+    /// What a tap on a seat's fan did (U13, I30): the kernel calls, takes
+    /// the call back, or moves it, and a refused move keeps the old call.
+    public enum FanTap: Equatable { case refused, called, uncalled, moved }
+    public static func tapFan(_ seat: Int) -> FanTap {
+        switch Int(pk_api_tap_fan(Int32(seat))) {
+        case Int(PK_API_FAN_CALLED): return .called
+        case Int(PK_API_FAN_UNCALLED): return .uncalled
+        case Int(PK_API_FAN_MOVED): return .moved
+        default: return .refused
+        }
+    }
     public static func pass() -> Bool { pk_api_pass() == 1 }
     public static func undo() -> Bool { pk_api_undo() == 1 }
     public static func unsay() -> Bool { pk_api_unsay() == 1 }
@@ -139,31 +167,26 @@ public enum Pk {
     public static let viewerSpectator = Int(PK_API_SPECTATOR)
 
     public static func table() -> PkApiTableSnap? {
-        guard let p = pk_api_table() else { return nil }
-        return try? readPkApiTable(p)
+        snap(pk_api_table(), readPkApiTable)
     }
 
     /// The masked view: no other seat's count while the game is played (D22).
     public static func view(_ viewer: Int = viewerMe) -> PkViewSnap? {
-        guard let p = pk_api_view(Int32(viewer)) else { return nil }
-        return try? readPkView(p)
+        snap(pk_api_view(Int32(viewer)), readPkView)
     }
 
     /// Events of bubbles (from, to], masked for `viewer`; from -1 has the deal.
     public static func plan(_ viewer: Int = viewerMe, from: Int, to: Int) -> [PkEventSnap] {
-        guard let p = pk_api_plan(Int32(viewer), Int32(from), Int32(to)) else { return [] }
-        return (try? readPkApiEvents(p))?.ev ?? []
+        snap(pk_api_plan(Int32(viewer), Int32(from), Int32(to)), readPkApiEvents)?.ev ?? []
     }
 
     /// My open bubble's own events (channel A).
     public static func draftPlan(_ viewer: Int = viewerMe) -> [PkEventSnap] {
-        guard let p = pk_api_plan_draft(Int32(viewer)) else { return [] }
-        return (try? readPkApiEvents(p))?.ev ?? []
+        snap(pk_api_plan_draft(Int32(viewer)), readPkApiEvents)?.ev ?? []
     }
 
     public static func since(from: Int, to: Int) -> PkSinceSnap? {
-        guard let p = pk_api_since(Int32(from), Int32(to)) else { return nil }
-        return try? readPkSince(p)
+        snap(pk_api_since(Int32(from), Int32(to)), readPkSince)
     }
 
     /// The start cards still face up under the deck (D14, U16).
@@ -183,8 +206,7 @@ public enum Pk {
     // MARK: the motion (pk_beats.h): every duration, curve and order is C's
 
     private static func beatsSnap(_ p: UnsafeRawPointer?) -> PkBeatsSnap? {
-        guard let p else { return nil }
-        return try? readPkBeats(p)
+        snap(p, readPkBeats)
     }
 
     /// Channels C, D and E: bubbles (from, to], from the board at the end of
@@ -214,20 +236,21 @@ public enum Pk {
         beatsSnap(pk_api_beats_conflict(Int32(card), Int32(pos), Int32(from), Int32(to)))
     }
 
+    /// The current plan, or nil when the newest build laid nothing out.
+    public static func beatsNow() -> PkBeatsSnap? { beatsSnap(pk_api_beats_now()) }
+
     /// Remember the draft as it is (after a change that moves nothing).
     public static func beatsMark() { pk_api_beats_mark() }
     public static var beatsSerial: Int { Int(pk_api_beats_serial()) }
 
     /// The current plan's board at `ms`.
     public static func beatFrame(_ ms: Int) -> PkBeatFrameSnap? {
-        guard let p = pk_api_beats_frame(UInt32(max(ms, 0))) else { return nil }
-        return try? readPkBeatFrame(p)
+        snap(pk_api_beats_frame(UInt32(max(ms, 0))), readPkBeatFrame)
     }
 
     /// Beat `i` of the current plan at `ms`, one of its parts.
     public static func beatSample(_ i: Int, part: Int = 0, ms: Int) -> PkBeatSampleSnap? {
-        guard let p = pk_api_beat_sample(Int32(i), Int32(part), UInt32(max(ms, 0))) else { return nil }
-        return try? readPkBeatSample(p)
+        snap(pk_api_beat_sample(Int32(i), Int32(part), UInt32(max(ms, 0))), readPkBeatSample)
     }
 
     // MARK: the words (every line is the kernel's)
@@ -237,6 +260,17 @@ public enum Pk {
         var buf = [CChar](repeating: 0, count: 1024)
         let n = pk_api_words(what, Int32(arg), &buf, Int32(buf.count))
         return n >= 0 ? String(cString: buf) : ""
+    }
+
+    /// The rules page's lines, as many as the kernel has (PK_RULES_N): it
+    /// answers -1 past the last, so the host holds no count of its own.
+    public static var rules: [String] {
+        var out: [String] = []
+        var buf = [CChar](repeating: 0, count: 1024)
+        while out.count < 64, pk_api_words(PK_API_W_RULE, Int32(out.count), &buf, Int32(buf.count)) >= 0 {
+            out.append(String(cString: buf))
+        }
+        return out
     }
 
     /// The invitation's caption, for a lobby this device just made.

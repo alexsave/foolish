@@ -40,6 +40,22 @@ enum Phones {
         return invite
     }
 
+    /// A group of three: Alex invites, Bo and Cy join, Alex starts. Alex's
+    /// phone is in hand, resident in seat 0, with no bubble open.
+    @discardableResult
+    static func threeStartedByAlex(seed k: Int = 5) -> Bool {
+        reset()
+        be(0)
+        guard Pk.newGame(dm: false, seed: seed(k)), var link = Pk.text else { return false }
+        for i in 1...2 {
+            be(i)
+            guard Pk.read(link) == 0, Pk.join() == i, let next = Pk.text else { return false }
+            link = next
+        }
+        be(0)
+        return Pk.read(link) == 0 && Pk.start() == 0 && Pk.table()?.seat.count == 3
+    }
+
     /// The first DM deal whose starter holds a wild that is not their last card.
     static func dmWithWild() -> Int? {
         for k in 0..<400 {

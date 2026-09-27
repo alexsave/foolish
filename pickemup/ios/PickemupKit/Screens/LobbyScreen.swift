@@ -173,10 +173,9 @@ public struct RulesSheet: View {
             VStack(alignment: .leading, spacing: 12) {
                 Text(Pk.words(PK_API_W_RULES_TITLE))
                     .font(.system(size: 20, weight: .heavy))
-                // pk_api_words answers "" past the last rule (PK_RULES_N)
-                ForEach(0..<16, id: \.self) { i in
-                    let line = Pk.words(PK_API_W_RULE, i)
-                    if !line.isEmpty { Text(line).font(.system(size: 15)) }
+                // as many lines as the kernel has (PK_RULES_N)
+                ForEach(Array(Pk.rules.enumerated()), id: \.offset) { _, line in
+                    Text(line).font(.system(size: 15))
                 }
             }
             .padding(20)

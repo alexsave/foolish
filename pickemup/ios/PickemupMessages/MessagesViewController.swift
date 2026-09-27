@@ -71,10 +71,9 @@ final class MessagesViewController: MSMessagesAppViewController {
 #if DEBUG
         if PickemupSeats.nickname.isEmpty, let nick = PickemupDev.nickname { PickemupSeats.nickname = nick }
 #endif
-        if !Pk.layoutMatches {
-            // a stale xcframework or stale Generated/: never read at a wrong offset
-            host.screen = .unreadable(PK_EFORMAT)
-        }
+        // a stale xcframework or stale Generated/ shows the unreadable screen
+        // (the host's one gate, I34); every later read asks the same gate
+        _ = host.readable
         host.model.onStage = { [weak self] stage in self?.stageResident(stage) }
         host.onNamed = { [weak self] in
             guard let self, let c = self.activeConversation else { return }
@@ -187,9 +186,7 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func didStartSending(_ message: MSMessage, conversation: MSConversation) {
         super.didStartSending(message, conversation: conversation)
-        stageGeneration += 1
-        loop.reset()
-        stageInsert = nil
+        voidPendingStage()
         guard let text = message.url?.absoluteString else { return }
         // THE SENT BYTES ARE THE AUTHORITY. My open draft is sealed only when
         // it is exactly what went; anything else is adopted as sent.
@@ -213,19 +210,13 @@ final class MessagesViewController: MSMessagesAppViewController {
         guard message.url == draftURL, let text = staged else { return }   // a replaced draft
         draftURL = nil
         staged = nil
-        stageGeneration += 1
-        loop.reset()
-        stageInsert = nil
+        voidPendingStage()
         if keepsDraft(text) {
             host.model.cancelStaged()                // D9: to the floor, the draws stay
             host.showResident()
         } else {
             present(conversation)
         }
-    }
-
-    override func willTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
-        super.willTransition(to: presentationStyle)
     }
 
     override func didTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
@@ -261,6 +252,13 @@ final class MessagesViewController: MSMessagesAppViewController {
         // adopting plays what the bubble brings (channels C, D, E; a lost race)
         let e = host.adopt(text, arrival: arrived != nil)
         guard e == 0 else { host.screen = .unreadable(e); return }
+        // A SUPERSEDED STAGE IS VOID (I35): the resident is now a chain that is
+        // not my staged draft, so a stage still resting before its insert (the
+        // settle sleep, the collapse wait, an insert retry) must never put the
+        // old bubble in the field. What is already in the field stays known
+        // (`staged`, `draftURL`), so its Send or its X is still recognised,
+        // and a Send of it is adopted as sent (I5).
+        voidPendingStage()
         PickemupSeats.flush()
     }
 
@@ -300,6 +298,7 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// A new lobby, me in seat 0, and its invitation staged once the drawer
     /// is up (creating stages by itself: UI.html Lobby 01).
     private func create(in conversation: MSConversation) {
+        guard host.readable else { return }
         identify(conversation)
         guard Pk.newGame(dm: conversation.remoteParticipantIdentifiers.count == 1) else { return }
         session = nil
@@ -338,10 +337,8 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     private func stage(_ stage: TableModel.Stage, in conversation: MSConversation) {
         guard let text = Pk.text, let url = URL(string: text) else { return }
-        stageGeneration += 1
+        voidPendingStage()
         let generation = stageGeneration
-        loop.reset()
-        stageInsert = nil
 
         let message = MSMessage(session: sessionFor(text, conversation))
         message.url = url
@@ -371,6 +368,14 @@ final class MessagesViewController: MSMessagesAppViewController {
             guard self.stageGeneration == generation else { return }
             self.insert(message, generation: generation, in: conversation)
         }
+    }
+
+    /// Every waiter of the stage in progress (its settle, its collapse, its
+    /// insert loop) sees a newer generation and gives up.
+    private func voidPendingStage() {
+        stageGeneration += 1
+        loop.reset()
+        stageInsert = nil
     }
 
     private func insert(_ message: MSMessage, generation: Int, in conversation: MSConversation) {

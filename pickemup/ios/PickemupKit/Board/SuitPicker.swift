@@ -50,13 +50,15 @@ struct SuitPicker: View {
                 .position(PkLayout.pickerTile(suit, centre: centre))
             }
             Button(action: onCancel) {
-                Text("\u{00D7}")
-                    .font(.system(size: 15, weight: .semibold))
+                // the x is a drawn mark, spoken by the kernel's word
+                Image(systemName: "xmark")
+                    .font(.system(size: 12, weight: .bold))
                     .foregroundColor(Color(hex: 0xCFE0DA))
                     .frame(width: PkLayout.pickerX, height: PkLayout.pickerX)
                     .background(Circle().fill(Color(red: 20 / 255, green: 30 / 255, blue: 28 / 255).opacity(0.92)))
                     .overlay(Circle().strokeBorder(Color(red: 190 / 255, green: 215 / 255, blue: 220 / 255).opacity(0.3)))
             }
+            .accessibilityLabel(Pk.string("BTN_CANCEL"))
             .pkAnchor("picker.4")
             .position(PkLayout.pickerTile(4, centre: centre))
         }

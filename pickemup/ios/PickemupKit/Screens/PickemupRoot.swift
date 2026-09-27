@@ -29,8 +29,25 @@ public final class PickemupHost: ObservableObject {
         }
     }
 
+    /// Whether the library and the generated readers are one layout (D46).
+    /// Replaceable by a test; nothing else sets it.
+    public var layoutMatches: () -> Bool = { Pk.layoutMatches }
+
+    /// THE ONE GATE ON A MISMATCHED PAIR (I22, I34): every read of the
+    /// resident goes through `showResident` or `adopt`, and both refuse here,
+    /// so a stale xcframework or a stale Generated/ shows the unreadable
+    /// screen and nothing is read at a wrong offset.
+    public var readable: Bool {
+        guard layoutMatches() else {
+            screen = .unreadable(PK_EFORMAT)
+            return false
+        }
+        return true
+    }
+
     /// The screen for whatever is resident now.
     public func showResident() {
+        guard readable else { return }
         model.refresh()
         screen = model.table?.readable == 1
             ? (model.phase == PK_PHASE_WAITING ? .lobby : .table)
@@ -42,45 +59,16 @@ public final class PickemupHost: ObservableObject {
     /// board was up. 0, or the negative PK_E* the read refused with, and then
     /// nothing changed.
     ///
-    /// WHICH EVENTS PLAY is a comparison of two chains the kernel makes: the
-    /// board on screen and the one adopted. Of the same game and further on,
-    /// from the bubble on screen to the new tip; opened cold, the newest
-    /// bubble only (and the deal for a start bubble); my staged play lost to
-    /// another chain, the retraction and then the winner from the common
-    /// prefix; anything else, no motion.
+    /// WHICH EVENTS PLAY is the kernel's (pk_api_adopt, I29): it compares the
+    /// chain on screen with the one adopted, in the same call that adopts, so
+    /// nothing here holds the resident across the read.
     @discardableResult
     public func adopt(_ text: String, arrival: Bool) -> Int {
-        let prior = Pk.table()
-        let priorLive = prior.map { $0.readable == 1 && $0.phase != PK_PHASE_WAITING } ?? false
-        let priorText = prior?.readable == 1 ? Pk.text : nil
-        let staged = model.stagedPlay
-        let e = Pk.read(text)
+        guard readable else { return PK_EFORMAT }
+        let e = Pk.adopt(text, arrival: arrival)
         guard e == 0 else { return e }
         showResident()
-        guard let now = model.table, now.phase != PK_PHASE_WAITING else {
-            model.player.clear()
-            return 0
-        }
-        let to = now.bubbles
-        let same = priorText.map { Pk.sameGame($0, text) } ?? false
-        if same, priorLive, let prior, let priorText {
-            if let staged, prior.draft != 0 {
-                let common = Pk.common(priorText, text)
-                if common >= 0, common <= to, common < prior.bubbles + 1 {
-                    model.player.play(Pk.beatsConflict(card: staged.card, pos: staged.pos, from: common, to: to))
-                    return 0
-                }
-            }
-            if to > prior.bubbles {
-                model.player.play(Pk.beats(from: prior.bubbles, to: to, open: !arrival))
-            } else {
-                model.player.clear()
-            }
-            return 0
-        }
-        // cold, or the lobby this game was dealt from: the newest bubble, or
-        // the deal when the start bubble is the newest (bubble 0, from -1)
-        model.player.play(Pk.beats(from: to - 1, to: to, open: !arrival || !same))
+        model.player.play(Pk.beatsNow())
         return 0
     }
 }

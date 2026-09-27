@@ -54,6 +54,8 @@ public final class TableModel: ObservableObject {
     @Published public private(set) var toast: String?
     /// U23: an undo the floor refused, shown as SUB_DRAWN_STAY for a moment.
     @Published public private(set) var drawnStay = false
+    /// The newest showing of `drawnStay`: an older timer never hides a newer one.
+    private var drawnStayGeneration = 0
 
     public var onStage: ((Stage) -> Void)?
 
@@ -334,18 +336,21 @@ public final class TableModel: ObservableObject {
     }
 
     /// Tap a fan (U13): stage Caught you! on that seat, tap it again to
-    /// un-call, another to move the call. The verdict is never previewed.
+    /// un-call, another to move the call. Which of those a tap is, and that
+    /// a refused move keeps the old call, is the kernel's (pk_api_tap_fan).
+    /// The verdict is never previewed.
     public func tapFan(_ seat: Int) {
-        if calling(seat) {
-            guard Pk.uncall() else { return }
+        switch Pk.tapFan(seat) {
+        case .refused:
+            refresh()
+            Haptics.fire(.reject)
+            return
+        case .uncalled:
             refresh()
             // grid "Un-call": the ring and the tip fade off; a staged turn's
             // held settle keeps holding
             player.play((player.plan?.held ?? 0) > 0 ? Pk.beatsStage() : Pk.beatsHost(PK_HM_UNCALL, seat))
-        } else {
-            guard mayCall(seat) || (view?.draftCall ?? PK_SEAT_NONE) != PK_SEAT_NONE else { return }
-            if (view?.draftCall ?? PK_SEAT_NONE) != PK_SEAT_NONE { _ = Pk.uncall() }
-            guard Pk.callOut(seat) else { refresh(); Haptics.fire(.reject); return }
+        case .called, .moved:
             Haptics.fire(.pickUp)
             refresh()
             player.play(Pk.beatsStage())
@@ -422,7 +427,7 @@ public final class TableModel: ObservableObject {
         Haptics.fire(.reject)
         toast = Pk.string("TOAST_NO_MATCH")
         let shown = toast
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(PK_T_TOAST)) { [weak self] in
             if self?.toast == shown { self?.toast = nil }
         }
     }
@@ -438,6 +443,10 @@ public final class TableModel: ObservableObject {
 
     private func showDrawnStay() {
         drawnStay = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) { [weak self] in self?.drawnStay = false }
+        drawnStayGeneration += 1
+        let shown = drawnStayGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(PK_T_DRAWN_STAY)) { [weak self] in
+            if self?.drawnStayGeneration == shown { self?.drawnStay = false }
+        }
     }
 }

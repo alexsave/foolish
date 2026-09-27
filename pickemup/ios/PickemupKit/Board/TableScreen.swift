@@ -16,12 +16,19 @@
 // PkFX), and the flight layer draws the cards in the air between the anchors'
 // frames. With no plan it is the settled view, and a new state snaps in.
 //
-// THE DECK'S DRAG STAYS INSIDE THE EXTENSION (U24): foolish's
-// DragGesture(minimumDistance: 0) in the board space, attached with
-// highPriorityGesture, so it claims the touch on touch-down, before any pan
-// of the host's can begin; nothing in a drag asks Messages for a presentation
-// change. Whether a downward drag starting mid-board can still collapse the
-// drawer is a device question (IOS_DECISIONS.md I5, open).
+// WHO OWNS THE DECK'S DRAG (U24, IOS_DECISIONS I9 and I36). One recognizer:
+// the SwiftUI DragGesture(minimumDistance: 0, in the board space) that
+// `highPriorityGesture` puts on DeckStack. It is in this process, inside the
+// UIHostingController's view, and with a zero minimum distance it begins on
+// touch-down, so no other gesture in this view tree (a hand card's, the
+// ScrollView's pan, the fan's tap) can take the touch from it. Nothing in the
+// drag asks Messages for a presentation change (no requestPresentationStyle,
+// no dismiss). What this code CANNOT decide is the drawer's own swipe-down:
+// that recognizer is Messages', in another process, reading the touch
+// through the remote view that hosts this extension; an extension can
+// neither fail it nor require it to fail. So the claim that a downward drag
+// off the deck never collapses the drawer is a device observation, owed on
+// a phone (ORCHESTRATION B2), and not something any test here can prove.
 
 import CPickemup
 import SwiftUI
@@ -79,9 +86,12 @@ public struct TableScreen: View {
         let handTop = board.height - layout.boxHeight
         let pc = PkLayout.pileCentre(board: board, collapse: collapse)
         let deckAt = PkLayout.deckOrigin(board: board, collapse: collapse)
-        let pileRect = CGRect(x: pc.x - PkLayout.pileSize.width / 2 - 8, y: pc.y - PkLayout.pileSize.height / 2 - 8,
-                              width: PkLayout.pileSize.width + 16, height: PkLayout.pileSize.height + 16)
-        let band = CGRect(x: PkLayout.handPadding, y: handTop - 64, width: handW, height: layout.boxHeight + 88)
+        // every zone is the kernel's (pk_lay_zone, I31)
+        let pileRect = PkLayout.zone(.pileDrop, board: board, collapse: collapse, handBox: layout.boxHeight)
+        let band = PkLayout.zone(.drawBand, board: board, collapse: collapse, handBox: layout.boxHeight)
+        let pillRow = PkLayout.zone(.pills, board: board, collapse: collapse, handBox: layout.boxHeight)
+        let toastAt = PkLayout.zone(.toast, board: board, collapse: collapse, handBox: layout.boxHeight)
+        let dirBox = PkLayout.zone(.dir, board: board, collapse: collapse, handBox: layout.boxHeight)
         let me = model.me ?? -1
         let n = model.seatCount
         let pills = model.pills
@@ -112,7 +122,8 @@ public struct TableScreen: View {
 
             if !model.direction.isEmpty, !shown.holds(PK_HOLD_DIR) {
                 DirectionBox(word: Pk.words(PK_API_W_DIR_OF, shown.dir), clockwise: shown.dir == PK_DIR_CW)
-                    .offset(x: board.width - 78, y: -3)
+                    .frame(width: dirBox.width, height: dirBox.height)
+                    .offset(x: dirBox.minX, y: dirBox.minY)
             }
 
             PileView(top: shown.top,
@@ -149,14 +160,14 @@ public struct TableScreen: View {
             }
 
             LeftChrome(maySay: model.maySay, onSay: { model.sayIt() }, onRules: onRules)
-                .frame(width: board.width)
-                .offset(y: handTop - 4 - 40)
+                .frame(width: pillRow.width, height: pillRow.height)
+                .offset(x: pillRow.minX, y: pillRow.minY)
 
             PillRow(trailing: pills.trailing, leading: pills.leading,
                     onDraw: { model.draw() }, onPlay: { model.playSelected() },
                     onPass: { model.pass() }, onUndo: { model.undo() })
-                .frame(width: board.width)
-                .offset(y: handTop - 4 - 40)
+                .frame(width: pillRow.width, height: pillRow.height)
+                .offset(x: pillRow.minX, y: pillRow.minY)
 
             HandRow(cards: hand, layout: layout, selected: model.selected, dimmed: { model.dimmed($0) },
                     hidden: model.pickerFor, unseen: shown.unseen,
@@ -171,7 +182,7 @@ public struct TableScreen: View {
 
             if let toast = model.toast {
                 Toast(text: toast)
-                    .position(x: board.width / 2, y: handTop - 64)
+                    .position(x: toastAt.minX, y: toastAt.minY)
             }
 
             // up while the picker is asked, and while its tiles fall back in
@@ -200,13 +211,13 @@ public struct TableScreen: View {
         DragGesture(minimumDistance: 0, coordinateSpace: .named(boardSpace))
             .onChanged { g in
                 guard (model.view?.canDraw ?? 0) != 0 else { return }
-                if hypot(g.translation.width, g.translation.height) >= HandRow.tapThreshold {
+                if hypot(g.translation.width, g.translation.height) >= PkLayout.tapSlop {
                     deckDrag = g.translation
                     bandHot = band.contains(g.location)
                 }
             }
             .onEnded { g in
-                let moved = hypot(g.translation.width, g.translation.height) >= HandRow.tapThreshold
+                let moved = hypot(g.translation.width, g.translation.height) >= PkLayout.tapSlop
                 let inBand = band.contains(g.location)
                 withAnimation(FMotion.card) { deckDrag = nil }
                 bandHot = false

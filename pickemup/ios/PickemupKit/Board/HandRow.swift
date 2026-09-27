@@ -35,7 +35,6 @@ struct HandRow: View {
     @State private var dragOffset: CGSize = .zero
     @State private var dragMoved = false
 
-    static let tapThreshold: CGFloat = 8
 
     var body: some View {
         Group {
@@ -87,11 +86,11 @@ struct HandRow: View {
                         .onChanged { g in
                             if dragPos != pos { dragPos = pos; dragMoved = false }
                             dragOffset = g.translation
-                            if hypot(g.translation.width, g.translation.height) >= Self.tapThreshold { dragMoved = true }
+                            if hypot(g.translation.width, g.translation.height) >= PkLayout.tapSlop { dragMoved = true }
                             if dragMoved { onDragMoved(pos, g.location) }
                         }
                         .onEnded { g in
-                            let moved = dragMoved || hypot(g.translation.width, g.translation.height) >= Self.tapThreshold
+                            let moved = dragMoved || hypot(g.translation.width, g.translation.height) >= PkLayout.tapSlop
                             withAnimation(FMotion.card) { dragPos = nil; dragOffset = .zero }
                             dragMoved = false
                             if moved {
