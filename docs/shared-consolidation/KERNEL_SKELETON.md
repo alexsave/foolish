@@ -75,11 +75,11 @@ But underneath that layer, six low-level string primitives are **byte-identical*
 | Function | pickemup | chuiniu | tallybones | uttt (origin) | Identical? |
 | --- | --- | --- | --- | --- | --- |
 | `next_cp` (UTF-8 decode one codepoint) | `pk_say.c:30-40` | `cn_say.c:29-39` | `tb_say.c:29-39` | `uttt_lang.c:152-162` | yes, byte-for-byte in all four |
-| `cp_cols` (column width of a codepoint) | `pk_say.c:43-53` | `cn_say.c:42-52` | `tb_say.c:42-52` | `uttt_lang.c:165-175` (approx.) | yes, byte-for-byte in all four |
-| `pk_text_cols`/`cn_text_cols`/`tb_text_cols`/`uttt_text_cols` | `pk_say.c:56-65` | `cn_say.c:55-64` | `tb_say.c:55-64` | `uttt_lang.c:180` | yes, identical body, only the function name differs |
+| `cp_cols` (column width of a codepoint) | `pk_say.c:43-53` | `cn_say.c:42-52` | `tb_say.c:42-52` | `uttt_lang.c:165-175` | pk, cn and tb only: uttt's width table is a different rule (Hebrew, Arabic and Thai marks zero, no emoji row), found by the lift and left in uttt |
+| `pk_text_cols`/`cn_text_cols`/`tb_text_cols`/`uttt_text_cols` | `pk_say.c:56-65` | `cn_say.c:55-64` | `tb_say.c:55-64` | `uttt_lang.c:180` | pk, cn and tb only; uttt's calls its own `cp_cols` |
 | `pk_itoa`/`cn_itoa`/`tb_itoa` | `pk_say.c:69-80` | `cn_say.c:68-79` | `tb_say.c:68-79` | none (uttt uses `snprintf(num, sizeof num, "%d", n)`, `uttt_say.c:28,40`) | yes across pk/cn/tb; uttt diverges by using libc instead |
 | `static int put(...)` (bounded string copy) | `pk_say.c:82-88` | `cn_say.c:117-123` | `tb_say.c:81-87` | not present under this name | yes across pk/cn/tb |
-| `pk_fill`/`cn_fill`/`tb_fill`/`uttt_fill` ({placeholder} template filler) | `pk_say.c:90-124` | `cn_say.c:81-115` | `tb_say.c:89-123` | `uttt_lang.c:191` | yes, identical body (34-35 lines) across all four, including the literal `{game}`-is-always-`GAME_NAME` special case |
+| `pk_fill`/`cn_fill`/`tb_fill`/`uttt_fill` ({placeholder} template filler) | `pk_say.c:90-124` | `cn_say.c:81-115` | `tb_say.c:89-123` | `uttt_lang.c:191` | pk, cn and tb identical including the `{game}` fallback; uttt's has no `{game}` fallback, so the shared `text_fill` takes the fallback list as an argument |
 
 `diff`-ing the `pk_fill`/`cn_fill`/`tb_fill` bodies directly (with the prefix substituted) produces no output; same for `next_cp`, `cp_cols`, `text_cols` and `put`.
 The one real divergence sits one layer up: `append()`, the clause-joiner that composes a caption from its parts, is **not** identical - pickemup's version special-cases a `!`/`?` ending punctuation mark before choosing the join word (`pk_say.c:320-330`), chuiniu's does not (`cn_say.c:167-176`), and tallybones has no `append()` at all (its captioning goes through a different path, `tb_say_of`).
@@ -216,7 +216,7 @@ No shuffle other than `deal_rng`'s was found; `pk_shuffle` (`pickemup/c/src/pk_d
 **Lift now:**
 
 - `shared/c/say_util.{c,h}` (or a name in that vein, beside `shared/c/i18n/languages.h`): `next_cp`, `cp_cols`, `text_cols`, `itoa`, `put`, `fill`.
-  Six functions, all pure string manipulation with zero game or product state, proven byte-identical by `diff` across `pickemup/c/src/pk_say.c`, `chuiniu/c/src/cn_say.c`, `tallybones/c/src/tb_say.c`, and (all but `itoa`) `uttt/c/src/uttt_lang.c`.
+  Six functions, all pure string manipulation with zero game or product state, proven byte-identical by `diff` across `pickemup/c/src/pk_say.c`, `chuiniu/c/src/cn_say.c` and `tallybones/c/src/tb_say.c`; `uttt/c/src/uttt_lang.c` shares only `next_cp`, `put` and the body of `fill`, and its `cp_cols` width table is a different rule (corrected when the lift re-diffed it; the lift landed as `shared/c/text_util/`).
   Each product's `#include` stays relative, exactly as `sha256.h`/`deal_rng.h` already work (`shared_headers_reachable_validation.test.ts`'s `SHARED_HEADERS` list needs the new header added); no `module.modulemap` is needed since nothing here is reached from Swift directly (each product's own `pk_say.h`/`cn_say.h`/`tb_say.h` stays the Swift-visible surface, via structgen's bridge, unchanged).
   Proof: `make -C pickemup/c run`, `make -C chuiniu/c run`, `make -C tallybones/c run`, `make -C uttt/c run` all unchanged in assertion counts (baseline above: `pk_say_test` 55,609; `cn_say_test` 7,168; `tb_say_test` 344,338, all 0 failed); a new `shared/c/say_util_test.c` mutation-checked the way `pk_check.h`'s own tests already are.
 
