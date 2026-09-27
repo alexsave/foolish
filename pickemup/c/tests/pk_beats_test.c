@@ -96,6 +96,8 @@ static void t_vocabulary(void)
     CHECK(PK_T_POP == 260 && PK_T_SHAKE == 60 && PK_T_SPRING == 320, "pop, shake, spring");
     CHECK(PK_T_GATHER == 360 && PK_T_RIFFLE == 140 && PK_T_FATTEN == 240, "the gag");
     CHECK(PK_T_GAME_OVER == 1000 && PK_T_LEAD_LIVE == 16 && PK_T_LEAD_OPEN == 100, "holds");
+    /* A15: the Send reminder's fuse, the sister product's (uttt UTM_SEND_HINT_MS) */
+    CHECK(PK_T_SEND_HINT == 3000, "the Send reminder waits three seconds");
     /* the curves: ends pinned, the spring and the stamp overshoot, the flight never does */
     for (int e = 0; e < PK_EASE_COUNT; e++) {
         CHECK(pk_ease(e, 0) == 0 && pk_ease(e, 1) == 1, "curve %d ends", e);

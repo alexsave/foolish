@@ -257,6 +257,7 @@ static void t_screen(void)
     pk_say_rules_title(out, sizeof out);
     CHECK(!strcmp(out, "How to play Pick 'Em Up"), "the rules title: \"%s\"", out);
     for (int i = 0; i < PK_RULES_N; i++) CHECK(pk_say_rule(i, out, sizeof out) > 0, "rule %d", i);
+    CHECK(!strcmp(pk_text(PK_K_SEND_HINT), "Send"), "the Send reminder's word, under the arrow (A15)");
     CHECK(pk_itoa(-305, out, sizeof out) == 4 && !strcmp(out, "-305") && pk_itoa(12, out, 2) == -1,
           "numbers without libc");
 }

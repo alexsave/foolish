@@ -284,3 +284,18 @@ int pk_lay_drop(float board_w, float board_h, float collapse, float hand_box_h, 
     pk_lay_zone(PK_ZONE_PILE_DROP, board_w, board_h, collapse, hand_box_h, &rx, &ry, &rw, &rh);
     return inside(x, y, rx, ry, rw, rh) ? PK_DROP_PILE : PK_DROP_NONE;
 }
+
+/* ---- the auto-collapse's push (A14): uttt_collapse_push, on this kernel's numbers ---- */
+
+float pk_lay_collapse_push(float travel, int t_ms)
+{
+    if (t_ms <= 0) return travel;
+    if (t_ms >= PK_LAY_COLLAPSE_MS) return 0.0f;
+    const double w = 2.0 * 3.14159265358979 / PK_LAY_DRAWER_RESPONSE_MS, t = (double)t_ms;
+    const double left = (1.0 + w * t) * exp(-w * t);            /* 1 - the host's progress */
+    /* THE LAST KEYFRAME IS EXACTLY ZERO and is reached without a step: what
+     * the spring still has left at the end (under 0.3%) is faded out linearly
+     * over the slide, so removing the animation moves nothing. */
+    const double tail = (1.0 + w * PK_LAY_COLLAPSE_MS) * exp(-w * PK_LAY_COLLAPSE_MS);
+    return (float)(travel * (left - tail * t / PK_LAY_COLLAPSE_MS));
+}

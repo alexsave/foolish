@@ -194,6 +194,22 @@ The sentinel mutation above is the one that breaks canonicality.
 | stamp (I37) | no Wrong call | `pk_api_smoke.c:499` "Wrong call under the caller, nothing caught on the other" |
 | stamp (I37) | no LAST | twophone `[S9 Last card! in a later bubble]` "the kernel's stamp: LAST under the sayer" |
 | stamp (I37) | the order: the newest verdict before OUT (the `over` test moved below it) | `pk_api_smoke.c:506` "once it is over OUT outranks the newest bubble's verdict" (the winning bubble also carries a wrong call) |
+| lobby rows (A13) | `pk_api_join` remembers no lobby | `pk_api_smoke.c:564` "Join: Cleo's row fades up, 220ms after a 16ms beat", `:566` "Join: the row is unseen before its fade" |
+| lobby rows (A13) | `pk_api_leave` remembers no lobby | `pk_api_smoke.c:586` "Leave: Bo's row fades out, 220ms after a 16ms beat", `:589` "...close up, 320ms on the card spring", `:591` "the row that went, as it read to Bo" |
+| lobby rows (A13) | `pk_api_adopt` lays a lobby over its lobby out as nothing | `pk_api_smoke.c:601` "an arrival: the same two beats", `:603` "as it read to Cleo", `:605` "opened: the 100ms lead" |
+| lobby rows (A13) | `pk_api_adopt` lays out a lobby over another game's lobby | `pk_api_smoke.c:611` "another game's lobby, cold: nothing moves", `:612` "a read is no lobby action of mine" |
+| lobby rows (A13) | `pk_api_read` keeps the remembered lobby action | `pk_api_smoke.c:595` "a read forgets my lobby action" |
+| lobby rows (A13) | `pk_api_new` keeps it | `pk_api_smoke.c:610` "a new lobby is no roster change" |
+| lobby rows (A13) | `W_LOBBY_GONE` reads the current roster's names | `pk_api_smoke.c:591` "as it read to Bo", `:603` "as it read to Cleo" |
+| lobby rows (A13) | `W_LOBBY_GONE` never says "(You)" | `pk_api_smoke.c:591` "the row that went, as it read to Bo" |
+| lobby rows (A13) | a change that moved no row is a plan (`n < 0`) | `pk_api_smoke.c:606` "the same lobby again moves nothing" |
+| lobby rows (A13) | an opened lobby takes the arrival's 16ms lead | `pk_api_smoke.c:605` "opened: the 100ms lead" |
+| collapse slide (A14) | the push keeps the spring's tail (no linear fade to zero) | `pk_api_smoke.c:186` "nothing left at 600ms, and no step to it" |
+| collapse slide (A14) | the drawer's response 300ms, not 338 | `pk_api_smoke.c:184` "the host's spring at half its response", `:188` "uttt's numbers" |
+| collapse slide (A14) | a linear push | `pk_api_smoke.c:184` "the host's spring at half its response", `:186` "nothing left at 600ms" |
+| collapse slide (A14) | nothing pushed at the flip (`t == 0` answers 0) | `pk_api_smoke.c:182` "the whole travel at the flip", `:183` "the push only ever falls" |
+| send hint (A15) | `PK_T_SEND_HINT` 2000 | `[vocabulary]` "the Send reminder waits three seconds" |
+| send hint (A15) | `SEND_HINT` empty | `[6 the table]` "SEND_HINT: empty", `[6.3 screen lines]` "the Send reminder's word, under the arrow" |
 
 Putting the winner first by name (rather than by fewest cards) survived its mutation: the winner of an OUT game holds none and the winner of a STUCK or LONG game is the one with the fewest, so the two orders differ only on a tie the kernel breaks the same way. It stays for the reader, not for a test.
 

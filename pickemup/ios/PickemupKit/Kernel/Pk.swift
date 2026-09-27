@@ -257,6 +257,10 @@ public enum Pk {
         return beatsSnap(pk_api_beats_stage(Int32(flags)))
     }
 
+    /// The lobby's rows (A13): the roster change my own Join or Leave just
+    /// made, played live; nil when it moved nothing.
+    public static func beatsLobby() -> PkBeatsSnap? { beatsSnap(pk_api_beats_lobby()) }
+
     /// Channel B: after the commit, what staging held.
     public static func beatsSend() -> PkBeatsSnap? { beatsSnap(pk_api_beats_send()) }
 

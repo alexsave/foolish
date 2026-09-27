@@ -72,6 +72,12 @@ static struct {
     char        text[PK_MSG_MAX_TEXT];
     int         beats_ok;            /* the newest build laid a plan out        */
     PkMsg       prior;               /* pk_api_adopt: the chain on screen       */
+    /* THE LOBBY BEFORE ITS NEWEST ROSTER CHANGE (A13): my own Join or Leave,
+     * or the lobby on screen when a lobby bubble of the same game was
+     * adopted over it, and my seat in it; what a lobby plan starts from and
+     * what a leaving row read before it went */
+    PkMsg       lobby_prev;
+    int         lobby_prev_ok, lobby_prev_me;
 } S = { .me = -1 };
 
 uint32_t pk_api_layout_hash(void) { return (uint32_t)SG_LAYOUT_HASH; }
@@ -212,6 +218,7 @@ int pk_api_new(const uint8_t seed[32], int dm)
     if (e) return e;
     S.m = m;
     S.sent_set = 0;
+    S.lobby_prev_ok = 0;
     adopt_mine(0);
     return PK_EOK;
 }
@@ -227,6 +234,7 @@ int pk_api_read(const char *text)
     if (e) return e;
     S.m = S.other;
     S.have = 1;
+    S.lobby_prev_ok = 0;                 /* a read is not my lobby action */
     int mine = S.sent_set && text && !strcmp(text, S.sent_text);
     seat_me(mine ? S.sent_dm : 0, mine ? S.sent_mine : PK_SENT_UNKNOWN);
     return PK_EOK;
@@ -263,6 +271,13 @@ int pk_api_commit(void)
 
 /* ---- the lobby -------------------------------------------------------------- */
 
+static void lobby_remember(const PkMsg *before, int me)
+{
+    S.lobby_prev = *before;
+    S.lobby_prev_me = me;
+    S.lobby_prev_ok = 1;
+}
+
 int pk_api_join(void)
 {
     if (!S.have) return PK_EGAME;
@@ -271,6 +286,7 @@ int pk_api_join(void)
     S.other = S.m;
     int s = pk_msg_join(&S.other, tag, S.nick, S.nick_n);
     if (s < 0) return s;
+    lobby_remember(&S.m, S.me);
     S.m = S.other;
     adopt_mine(s);
     return s;
@@ -282,6 +298,7 @@ int pk_api_leave(void)
     S.other = S.m;
     int e = pk_msg_leave(&S.other, S.me);
     if (e) return e;
+    lobby_remember(&S.m, S.me);
     /* THE RECORD STAYS: its tag now has no row, which is this device's word
      * that it left (PK_REC_GONE, D51), so a namesake who takes the freed name
      * is never my seat. A rejoin records the new row over it. */
@@ -638,6 +655,21 @@ const void *pk_api_beats_conflict(int card, int pos, int from, int to)
     return prepend_beats2();
 }
 
+/* The roster change from the remembered lobby to the resident one, from the
+ * table before the deal (the lobby has no board of its own). */
+static const void *lobby_beats(int mode)
+{
+    if (!S.lobby_prev_ok || !S.have || S.m.phase != PK_PHASE_WAITING) return built(-1);
+    int n = pk_msg_plan_lobby(&S.lobby_prev, &S.m, S.events.ev, PK_API_EVENTS);
+    if (n <= 0) return built(-1);
+    PkBeatFrame start;
+    pk_beats_frame_of(0, S.m.n_seats, &start);
+    return built(pk_beats_build(S.events.ev, n, &start, S.me >= 0 ? S.me : PK_SEAT_NONE, S.m.n_seats, mode,
+                                0, 0, 0, &S.beats));
+}
+
+const void *pk_api_beats_lobby(void) { return lobby_beats(PK_BEATS_ARRIVAL); }
+
 const void *pk_api_beats_frame(uint32_t now_ms)
 {
     pk_beats_frame(&S.beats, now_ms, &S.frame);
@@ -671,13 +703,35 @@ static int empty(char *out, int cap)
     return 0;
 }
 
-/* "2. Bo", or "2. Bo (You)" when the row is my seat's and it may say so. */
-static int numbered_row(int number, int seat, int mine_marked, char *out, int cap)
+/* "2. Bo", or "2. Bo (You)" when the row is my seat's (`me`) and it may say
+ * so, from a roster's `names`. */
+static int numbered_row_of(const char *const *names, int me, int number, int seat, int mine_marked,
+                           char *out, int cap)
 {
     char num[8], who[PK_NAME_MAX_BYTES + 24];
-    if (pk_itoa(number, num, sizeof num) < 0 || pk_say_seat(S.names, seat, who, sizeof who) < 0) return -1;
+    if (pk_itoa(number, num, sizeof num) < 0 || pk_say_seat(names, seat, who, sizeof who) < 0) return -1;
     const char *kv[] = { "n", num, "who", who, 0 };
-    return pk_fill(out, cap, pk_text(mine_marked && seat == S.me ? PK_K_LOBBY_ROW_YOU : PK_K_LOBBY_ROW), kv);
+    return pk_fill(out, cap, pk_text(mine_marked && seat == me ? PK_K_LOBBY_ROW_YOU : PK_K_LOBBY_ROW), kv);
+}
+
+static int numbered_row(int number, int seat, int mine_marked, char *out, int cap)
+{
+    return numbered_row_of(S.names, S.me, number, seat, mine_marked, out, cap);
+}
+
+/* A row of the lobby before its newest roster change, as it read then. */
+static int gone_row(int seat, char *out, int cap)
+{
+    if (!S.lobby_prev_ok || seat < 0 || seat >= S.lobby_prev.n_seats) return -1;
+    static char name[PK_MAX_SEATS][PK_NAME_MAX_BYTES + 1];
+    const char *names[PK_MAX_SEATS];
+    for (int s = 0; s < PK_MAX_SEATS; s++) {
+        int n = s < S.lobby_prev.n_seats ? S.lobby_prev.seat[s].name_len : 0;
+        memcpy(name[s], S.lobby_prev.seat[s].name, (size_t)n);
+        name[s][n] = 0;
+        names[s] = name[s];
+    }
+    return numbered_row_of(names, S.lobby_prev_me, seat + 1, seat, 1, out, cap);
 }
 
 typedef struct { uint8_t card[8]; int n; } Buried;
@@ -739,6 +793,7 @@ int pk_api_words(int what, int arg, char *out, int cap)
     case PK_API_W_SPOKEN_FAN:
         if (!S.have || arg < 0 || arg >= S.m.n_seats) return -1;
         return pk_say_spoken_fan(S.names, arg, out, cap);
+    case PK_API_W_LOBBY_GONE:  return gone_row(arg, out, cap);
     case PK_API_W_LOBBY_ROW: case PK_API_W_PUBLIC_ROW:
         if (!S.have || arg < 0 || arg >= S.m.n_seats) return -1;
         return numbered_row(arg + 1, arg, what == PK_API_W_LOBBY_ROW, out, cap);
@@ -836,6 +891,7 @@ int pk_api_adopt(const char *text, int arrival)
      * as its link reads (a draft sealed into a copy, exactly what pk_api_text
      * writes; a draft that cannot be written yet is no chain to compare). */
     const int prior_live = S.have && S.m.phase != PK_PHASE_WAITING;
+    const int prior_lobby = S.have && S.m.phase == PK_PHASE_WAITING, prior_me = S.me;
     const int prior_draft = prior_live && S.me >= 0 && S.m.game.b_open && S.m.game.b_sender == S.me;
     const int prior_bubbles = prior_live ? S.m.game.bubbles : 0;
     int staged_card = -1, staged_pos = -1;
@@ -858,9 +914,20 @@ int pk_api_adopt(const char *text, int arrival)
 
     int e = pk_api_read(text);
     if (e) return e;
-    if (S.m.phase == PK_PHASE_WAITING) { built(-1); return PK_EOK; }
-    const int to = S.m.game.bubbles;
     const int same = prior_ok && pk_msg_same_game(&S.prior, &S.m);
+    if (S.m.phase == PK_PHASE_WAITING) {
+        /* a lobby over the lobby of the same game on screen: its rows (A13);
+         * opened cold, or over a table, nothing moves (the read forgot any
+         * lobby action of mine) */
+        if (same && prior_lobby) {
+            lobby_remember(&S.prior, prior_me);
+            lobby_beats(arrival ? PK_BEATS_ARRIVAL : PK_BEATS_OPEN);
+        } else {
+            built(-1);
+        }
+        return PK_EOK;
+    }
+    const int to = S.m.game.bubbles;
     if (same && prior_live) {
         if (staged_card >= 0) {
             /* my staged play is not in the adopted chain: a lost race (4.8) */

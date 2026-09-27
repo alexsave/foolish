@@ -193,6 +193,24 @@ public final class BeatPlayer: ObservableObject {
             fx[name] = v
         }
         for (k, b) in plan.beat.enumerated() {
+            // THE LOBBY'S LEAVE (grid "Leave", A13): the row that went fades
+            // out where it stood, and the rows from its seat on stand one row
+            // lower until the close-up (a HOLD on the card spring) lifts them.
+            // Both hold from the plan's start, before either beat begins, so
+            // the roster never shows the closed-up rows early.
+            if b.to == PK_ANC_ROW, b.kind == PK_BK_FADE, b.sub == 0 {
+                if let s = Pk.beatSample(k, ms: ms) {
+                    edit("roster.gone") { $0.gone = b.toI; $0.opacity = s.apply != 0 ? CGFloat(s.opacity) : 1 }
+                }
+                continue
+            }
+            if b.to == PK_ANC_ROW, b.kind == PK_BK_HOLD {
+                if let s = Pk.beatSample(k, ms: ms) {
+                    let open: CGFloat = s.state == PK_BS_PENDING ? 1 : s.state == PK_BS_ACTIVE ? 1 - CGFloat(s.p) : 0
+                    for r in b.toI..<PK_MAX_SEATS { edit("roster.\(r)") { $0.close = open } }
+                }
+                continue
+            }
             switch b.kind {
             case PK_BK_FLIGHT, PK_BK_GATHER, PK_BK_HOLD:
                 continue                      // ghosts, a rest

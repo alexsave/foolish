@@ -75,6 +75,9 @@
 #define PK_T_COLLAPSE_REST 500   /* drawer may collapse (foolish)                 */
 #define PK_T_TOAST        1600   /* a toast stays up (IOS_DECISIONS I32)          */
 #define PK_T_DRAWN_STAY   2400   /* U23's "drawn cards stay" line stays up        */
+#define PK_T_SEND_HINT    3000   /* a staged bubble unsent this long in the compact
+                                    drawer: the Send reminder (A15; the sister
+                                    product's fuse, uttt's UTM_SEND_HINT_MS) */
 
 /* How many under-cards the pile draws beneath its top one (UI.html `.und`):
  * also how many ghosts a reshuffle's gather slides into the deck. */

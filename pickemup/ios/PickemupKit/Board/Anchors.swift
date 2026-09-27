@@ -66,6 +66,12 @@ public struct PkFX: Equatable {
     /// A played wild's chosen-suit band, how far up from under the card's
     /// foot (0 hidden, 1 in place): the kernel's BAND beat (A12).
     public var band: CGFloat?
+    /// A lobby row that has not closed up yet over a row that left (A13):
+    /// how much of one row's pitch it still stands below its place, 1 to 0.
+    public var close: CGFloat?
+    /// The row that left (`roster.gone`): the seat it stood in, faded out by
+    /// `opacity` (A13).
+    public var gone: Int?
     public init() {}
 }
 

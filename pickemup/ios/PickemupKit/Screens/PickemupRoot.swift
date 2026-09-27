@@ -16,6 +16,13 @@ public final class PickemupHost: ObservableObject {
 
     @Published public var screen: Screen = .blank
     @Published public var rulesShown = false
+    /// THE SEND REMINDER (A15): a staged bubble sits in the field unsent
+    /// (`hintStaged`, and `hintRestart` counts each new one) while the drawer
+    /// is compact (`hintVisible`). The controller says which; what it looks
+    /// like is the shared SendHint's, its word and fuse the kernel's.
+    @Published public var hintStaged = false
+    @Published public var hintVisible = false
+    @Published public var hintRestart = 0
     public let model = TableModel()
     /// The name gate is done: make the new game.
     public var onNamed: (() -> Void)?
@@ -93,8 +100,20 @@ public struct PickemupRoot: View {
                 UnreadableScreen(code: code)
             }
         }
+        .overlay(alignment: .topTrailing) { sendHint }
         .onPreferenceChange(PkAnchorKey.self) { PkAnchors.latest = $0 }
         .sheet(isPresented: $host.rulesShown) { RulesSheet() }
+    }
+
+    /// The shared Send reminder, switched on by the rig's `dev.sendhint` in a
+    /// Debug build until Messages has judged its place (A15).
+    @ViewBuilder private var sendHint: some View {
+#if DEBUG
+        if PickemupDev.sendHint {
+            SendHint(staged: host.hintStaged, visible: host.hintVisible, caption: Pk.string("SEND_HINT"),
+                     fuse: Double(PK_T_SEND_HINT) / 1000, restart: host.hintRestart)
+        }
+#endif
     }
 }
 

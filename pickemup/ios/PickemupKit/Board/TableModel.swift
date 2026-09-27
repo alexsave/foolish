@@ -395,7 +395,7 @@ public final class TableModel: ObservableObject {
         refresh()
         onStage?(Stage(caption: fills ? Pk.words(PK_API_W_STAGED_CAPTION) : Pk.words(PK_API_W_JOINED, seat),
                        collapse: false))
-        if fills { onDealt?() }
+        if fills { onDealt?() } else { player.play(Pk.beatsLobby()) }    // grid "Join" (A13)
     }
 
     /// My tap started the game (Start, or the Join that filled the table):
@@ -407,6 +407,7 @@ public final class TableModel: ObservableObject {
         let caption = Pk.words(PK_API_W_LEFT, me)       // captioned while the row is still there
         guard Pk.leave() == PK_EOK else { Haptics.fire(.reject); return }
         refresh()
+        player.play(Pk.beatsLobby())                    // grid "Leave" (A13)
         onStage?(Stage(caption: caption, collapse: false))
     }
 

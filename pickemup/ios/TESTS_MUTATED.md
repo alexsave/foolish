@@ -97,6 +97,15 @@ Each Swift mutant below is planned, one at a time; until its red run exists the 
 | BeatPlayerTests.testAPickedWildSlidesItsBandUp | `BeatPlayer.effects` skips `PK_BK_BAND` (its `case` arm removed) | "hidden under the foot until it starts", "the band is part way up" |
 | TableModelTests.testPlayStagesWithTheKernelsCaption | `TableModel.play` stages `after: .draw` | "a play collapses" |
 | TableModelTests.testATapOnAFanStagesTheCatchAndASecondTakesItBack | `TableModel.tapFan` stages a call `after: .play` | "a call alone does not collapse the drawer (I37)" |
+| BeatPlayerTests.testTheLobbyRowsFadeInAndOutOnTheKernelsBeats | `TableModel.join` plays nothing when the join does not start the game | "a join fades its row up" |
+| BeatPlayerTests.testTheLobbyRowsFadeInAndOutOnTheKernelsBeats | `BeatPlayer.effects` drops the leave's `roster.gone` edit | "the row that left fades where it stood" |
+| BeatPlayerTests.testTheLobbyRowsFadeInAndOutOnTheKernelsBeats | `BeatPlayer.effects` answers `open` 0 while the close-up is pending | "the rows below stand one lower" |
+| DevFlaggedTests.testTheCollapseSlideRunsOnTheKernelsPush | `CollapseSlide.pickemup` hands the kernel seconds, not milliseconds | "the whole travel at the flip, nothing at the end" (at 0.169s the push is the kernel's at 0ms) and "the host's spring, as the kernel has it" |
+| DevFlaggedTests.testTheCollapseSlideRunsOnTheKernelsPush | `CollapseSlide.pickemup` takes its steps from `PK_LAY_COLLAPSE_MS` | "the kernel's keyframes" |
+| DevFlaggedTests.testTheSendReminderSaysTheKernelsWordAfterItsFuse | the `SEND_HINT` key renamed in `keys.h` (the generated key list follows it) | "the reminder's word is the kernel's" |
+
+What no unit test reaches in this pass: `BandSlide` drawing the band where PkFX says, `LobbyScreen` drawing the gone row and the lowered rows, the slide on a real drawer and the reminder's place under Messages' Send button.
+Each is a screenshot or a filmed take owed on a simulator (the band, the rows) or a phone in Messages (the slide, the reminder), with `dev.slide` and `dev.sendhint` in the App Group.
 
 Every other test in `PickemupKitTests` has a row above.
 What these tests do not reach is the conversation itself (`PickemupMessages/MessagesViewController.swift`: staging through the insert loop, send, cancel, receive); it has no test target, as uttt's has none, and it has NOT yet run inside Messages: on 2026-09-27 the app installed and registered on the simulator, but `simctl launch com.apple.MobileSMS` hung for over five minutes (BLOCKED B2 in `pickemup/docs/ORCHESTRATION.md`).

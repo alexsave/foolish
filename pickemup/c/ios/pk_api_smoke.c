@@ -166,6 +166,27 @@ static void layout(void)
        && near(zw, 78) && near(zh, 68), "the direction box, top right");
     OK(pk_lay_zone(PK_ZONE_N, 374, 700, 0, 80, &x, &y, &zw, &zh) == -1, "a zone off the list");
     OK(pk_lay_zone(PK_ZONE_DRAW_BAND, 10, 700, 0, 80, 0, 0, &zw, 0) == 0 && zw == 0, "a band never goes negative");
+
+    /* A14: the auto-collapse's push, uttt's curve on this kernel's numbers:
+     * the whole travel at the flip, the host's critically damped spring
+     * (at half its 338ms response, (1 + pi) e^-pi of the travel is left), and
+     * exactly nothing from 600ms on, reached without a step */
+    {
+        int mono = 1;
+        float prev = pk_lay_collapse_push(500, 0);
+        for (int t = 1; t <= PK_LAY_COLLAPSE_MS; t++) {
+            float p = pk_lay_collapse_push(500, t);
+            if (p > prev + 1e-4f || p < -1e-4f) mono = 0;
+            prev = p;
+        }
+        OK(pk_lay_collapse_push(500, 0) == 500 && pk_lay_collapse_push(500, -5) == 500, "the whole travel at the flip");
+        OK(mono, "the push only ever falls, and never below zero");
+        OK(near(pk_lay_collapse_push(500, 169), 500 * 0.178976f), "the host's spring at half its response");
+        OK(pk_lay_collapse_push(500, PK_LAY_COLLAPSE_MS) == 0 && pk_lay_collapse_push(500, 5000) == 0
+           && pk_lay_collapse_push(500, PK_LAY_COLLAPSE_MS - 1) < .05f, "nothing left at 600ms, and no step to it");
+        OK(PK_LAY_COLLAPSE_MS == 600 && PK_LAY_COLLAPSE_STEPS == 120 && PK_LAY_COLLAPSE_FLIP == 60.0f
+           && PK_LAY_DRAWER_RESPONSE_MS == 338, "uttt's numbers, so the two games collapse alike");
+    }
 }
 
 /* ---- adopting with its motion (I29) and the fan's tap (I30) ---- */
@@ -555,6 +576,17 @@ int main(void)
     open_as(2, links[4], 0, 0);
     OK(table()->offered == PK_LOBBY_JOIN, "Cleo may join");
     OK(pk_api_join() == 2, "Cleo joins");
+    {
+        /* grid "Join" (A13): the new row fades up, 220ms, one 16ms beat after
+         * the tap, and is unseen until then (fill backwards) */
+        const PkBeats *lb = (const PkBeats *)pk_api_beats_lobby();
+        OK(lb && lb->n == 1 && lb->beat[0].kind == PK_BK_FADE && lb->beat[0].sub == 1
+           && lb->beat[0].to == PK_ANC_ROW && lb->beat[0].to_i == 2 && lb->beat[0].start_ms == 16
+           && lb->beat[0].dur_ms == 220 && lb->total_ms == 236, "Join: Cleo's row fades up, 220ms after a 16ms beat");
+        const PkBeatSample *ls = (const PkBeatSample *)pk_api_beat_sample(0, 0, 0);
+        OK(ls && ls->apply && ls->opacity == 0, "Join: the row is unseen before its fade");
+        OK(pk_api_words(PK_API_W_LOBBY_GONE, 2, line, sizeof line) < 0, "Join: no row went");
+    }
     OK(pk_api_words(PK_API_W_LOBBY_DEALER, 0, line, sizeof line) > 0 && !strcmp(line, "Alex deals"),
        "seat 0 deals, whoever joined last");
     pk_api_text(links[5], PK_API_TEXT_MAX);
@@ -566,6 +598,40 @@ int main(void)
     OK(pk_api_words(PK_API_W_LEFT, 1, line, sizeof line) > 0, "Bo's leave is captioned before it");
     OK(pk_api_leave() == 0 && table()->me == 0xFF && table()->n_seats == 2, "Bo leaves");
     pk_api_text(links[6], PK_API_TEXT_MAX);
+    {
+        /* grid "Leave" (A13): the row fades out, 220ms, then the rows below
+         * close up on the card spring, 320ms */
+        const PkBeats *lb = (const PkBeats *)pk_api_beats_lobby();
+        OK(lb && lb->n == 2 && lb->beat[0].kind == PK_BK_FADE && lb->beat[0].sub == 0 && lb->beat[0].to == PK_ANC_ROW
+           && lb->beat[0].to_i == 1 && lb->beat[0].start_ms == 16 && lb->beat[0].dur_ms == 220,
+           "Leave: Bo's row fades out, 220ms after a 16ms beat");
+        OK(lb && lb->n == 2 && lb->beat[1].kind == PK_BK_HOLD && lb->beat[1].to == PK_ANC_ROW && lb->beat[1].to_i == 1
+           && lb->beat[1].start_ms == 236 && lb->beat[1].dur_ms == 320 && lb->beat[1].ease == PK_EASE_SPRING
+           && lb->total_ms == 556, "Leave: then the rows below close up, 320ms on the card spring");
+        OK(pk_api_words(PK_API_W_LOBBY_GONE, 1, line, sizeof line) > 0 && !strcmp(line, "2. Bo (You)"),
+           "Leave: the row that went, as it read to Bo");
+        static char bo_left[PK_API_TEXT_MAX];
+        memcpy(bo_left, links[6], sizeof bo_left);
+        OK(pk_api_read(bo_left) == 0 && !pk_api_beats_lobby() && pk_api_words(PK_API_W_LOBBY_GONE, 1, line, sizeof line) < 0,
+           "a read forgets my lobby action");
+        /* Cleo sees the same leave arrive over her lobby, and opened, and again */
+        be(2);
+        OK(pk_api_read(links[5]) == 0 && pk_api_adopt(links[6], 1) == 0, "Cleo adopts the leave over her lobby");
+        lb = (const PkBeats *)pk_api_beats_now();
+        OK(lb && lb->n == 2 && lb->beat[0].sub == 0 && lb->beat[0].to_i == 1 && lb->beat[0].start_ms == 16
+           && lb->beat[1].start_ms == 236, "an arrival: the same two beats");
+        OK(pk_api_words(PK_API_W_LOBBY_GONE, 1, line, sizeof line) > 0 && !strcmp(line, "2. Bo"),
+           "the row that went, as it read to Cleo");
+        OK(pk_api_read(links[5]) == 0 && pk_api_adopt(links[6], 0) == 0 && pk_api_beats_now()
+           && ((const PkBeats *)pk_api_beats_now())->beat[0].start_ms == 100, "opened: the 100ms lead");
+        OK(pk_api_adopt(links[6], 1) == 0 && !pk_api_beats_now(), "the same lobby again moves nothing");
+        uint8_t seed2[32];
+        for (int i = 0; i < 32; i++) seed2[i] = (uint8_t)(i * 7 + 3);
+        pk_api_new(seed2, 0);
+        OK(!pk_api_beats_lobby(), "a new lobby is no roster change");
+        OK(pk_api_adopt(links[6], 1) == 0 && !pk_api_beats_now(), "another game's lobby, cold: nothing moves");
+        OK(!pk_api_beats_lobby(), "a read is no lobby action of mine");
+    }
     open_as(2, links[6], 0, 0);
     OK(table()->me == 1 && table()->by == PK_BY_RECORD, "Cleo's record finds her in the row she moved down to");
     OK(pk_api_start() == 0 && table()->phase == 2 && table()->starter == 1, "Cleo starts");
