@@ -2,7 +2,7 @@
 
 Code that more than one product in this repo builds, kept once.
 A fix made here is a fix everywhere, which lasts only as long as nothing here names a product: `e2e/validation/shared_is_shared_validation.test.ts` refuses a product name anywhere under `shared/`.
-So products are named below by what they are: CARDS is the card game (the sibling folder with `c/`, `ios/`, `sdk/` and `server/` in it, and the largest), UTTT is `uttt/`, THIRD is the paused third product, and SHED is the shedding card game still being built.
+So products are named below by what they are: CARDS is the card game (the sibling folder with `c/`, `ios/`, `sdk/` and `server/` in it, and the largest), UTTT is `uttt/`, THIRD is the paused third product, SHED is the shedding card game still being built, LIAR is the liar's-dice game, and BONES is the dice solitaire.
 A path given for CARDS is inside that folder.
 
 A product reaches a shared C header by a relative `#include` from its own file, never by an include path (`shared_headers_reachable_validation.test.ts`).
@@ -12,14 +12,14 @@ Swift reaches a header-only C module through its `module.modulemap` on `SWIFT_IN
 
 | Path | What | Used by |
 | --- | --- | --- |
-| `c/sha256.{c,h}` | SHA-256 | CARDS, UTTT, THIRD, SHED |
-| `c/deal_rng.{c,h}` | the deal's RNG | CARDS, THIRD, SHED |
-| `c/b32.{c,h}` | base32 codes | UTTT, SHED |
-| `c/mixrad.{c,h}` | mixed-radix arithmetic on a byte bignum, the history-as-code body under both coders | UTTT, SHED |
-| `c/wasm/` | the freestanding libc and libm a wasm32 build compiles against | CARDS, UTTT, SHED (objects only) |
+| `c/sha256.{c,h}` | SHA-256 | CARDS, UTTT, THIRD, SHED, LIAR, BONES |
+| `c/deal_rng.{c,h}` | the deal's RNG | CARDS, THIRD, SHED, LIAR, BONES |
+| `c/b32.{c,h}` | base32 codes | UTTT, SHED, LIAR, BONES |
+| `c/mixrad.{c,h}` | mixed-radix arithmetic on a byte bignum, the history-as-code body under the game coders | UTTT, SHED, LIAR, BONES |
+| `c/wasm/` | the freestanding libc and libm a wasm32 build compiles against | CARDS, UTTT (both link `libc.c` and `libm.c`), SHED (its objects, and `libc.c` in its native-vs-wasm cross-check link), LIAR, BONES (headers only: their wasm build is objects only) |
 | `c/i18n/languages.h` | the language registry: every language's code, endonym and direction, one row each | CARDS (the string generator reads it), UTTT (compiled into its kernel, which indexes its tables by it) |
 | `c/motion_ruler/` | the debug ruler's palette and geometry (`CMotionRuler`), painted by both products and read by `tools/motion` | CARDS, UTTT |
-| `c/msg_stage/` | when a Messages insert may go, what a silent one means, and whether a received bubble is my own echo (`CMsgStage`); `INSERT_GATING.md` is the evidence, `msg_stage_test.c` the test | UTTT, SHED (CARDS compiles the Swift face, its stage path does not call it) |
+| `c/msg_stage/` | when a Messages insert may go, what a silent one means, and whether a received bubble is my own echo (`CMsgStage`); `INSERT_GATING.md` is the evidence, `msg_stage_test.c` the test | UTTT, SHED, LIAR, BONES (CARDS compiles the Swift face, its stage path does not call it) |
 
 ## Swift (`swift/`)
 
@@ -27,11 +27,11 @@ Swift reaches a header-only C module through its `module.modulemap` on `SWIFT_IN
 | --- | --- | --- |
 | `swift/PackedBytes.swift` | the fixed-layout byte reader | CARDS |
 | `swift/MotionRuler.swift` | the debug ruler on UIKit and Core Animation layers (DEBUG only) | UTTT; CARDS compiles it and paints its own SwiftUI ruler from the same `CMotionRuler` |
-| `swift/MessagesKit/DevFlags.swift` | the one DEBUG dev-file reader: App Group lookup once, `dev.*` files read fresh (compiled out of Release) | CARDS (`MessageDevBoard`), UTTT (`UtttDev`), SHED |
-| `swift/MessagesKit/InsertStaging.swift` | the Swift face of `c/msg_stage` | UTTT, SHED |
-| `swift/MessagesKit/SendHint*.swift` | the staged-but-unsent arrow at Messages' Send (SwiftUI and UIKit views, one set of numbers) | CARDS (`SendHint`), UTTT (`SendHintView`, `SendHintMetrics`) |
-| `swift/MessagesKit/CollapseSlide.swift` | the auto-collapse on Core Animation layers | UTTT |
-| `swift/Textures/` | the wool, felt, wood and fern-back generators and their palettes; CoreGraphics only, and the generator half compiles only under `-D TEXTURE_BAKE`, so a shipping target carries the palettes and resource names but never renders | CARDS (its texture loader reads the names, its `ios/Tools/regenerate_textures.sh` bakes into its own resources), SHED (compiles the palettes and names; its baked JPEGs are committed) |
+| `swift/MessagesKit/DevFlags.swift` | the one DEBUG dev-file reader: App Group lookup once, `dev.*` files read fresh (compiled out of Release) | CARDS (`MessageDevBoard`), UTTT (`UtttDev`), SHED, LIAR, BONES |
+| `swift/MessagesKit/InsertStaging.swift` | the Swift face of `c/msg_stage` | UTTT, SHED, LIAR, BONES |
+| `swift/MessagesKit/SendHint*.swift` | the staged-but-unsent arrow at Messages' Send (SwiftUI and UIKit views, one set of numbers) | CARDS (`SendHint`), UTTT (`SendHintView`, `SendHintMetrics`), SHED (`SendHint`, `SendHintMetrics`) |
+| `swift/MessagesKit/CollapseSlide.swift` | the auto-collapse on Core Animation layers | UTTT, SHED |
+| `swift/Textures/` | the wool, felt, wood and fern-back generators and their palettes; CoreGraphics only, and the generator half compiles only under `-D TEXTURE_BAKE`, so a shipping target carries the palettes and resource names but never renders | CARDS (its texture loader reads the names, its `ios/Tools/regenerate_textures.sh` bakes into its own resources), SHED, LIAR, BONES (compile the palettes and names; their baked JPEGs are committed) |
 
 ## Tools (`tools/`)
 
@@ -43,10 +43,10 @@ Swift reaches a header-only C module through its `module.modulemap` on `SWIFT_IN
 | `tools/devlogs.sh` | Release dev-install on a phone, the `log collect` line, and a subsystem filter | CARDS, UTTT (via `ship.env`) |
 | `tools/devcap/` | film a USB iPhone for the motion tool | CARDS, UTTT (via `ship.env`) |
 | `tools/motion/` | the ruler finder and ride scorer; `README.md` says how to film and score a take | CARDS, UTTT |
-| `tools/structgen/`, `tools/sgcommon/` | the C-layout-to-Swift/TS/Kotlin generator and its libclang driver | CARDS, THIRD, SHED |
-| `tools/datagen/` | the translation-table generator | CARDS, THIRD, SHED |
-| `tools/llvm.mk` | the one LLVM toolchain the wasm builds use | CARDS, THIRD, SHED (through structgen and datagen) |
-| `tools/ios_xcframework.mk` | the `ios-lib` recipe: `$(call IOS_XCFRAMEWORK,name,sources,cflags,headers,min-ios,out)` builds the device and both simulator slices and wraps them in an xcframework | UTTT, SHED |
+| `tools/structgen/`, `tools/sgcommon/` | the C-layout-to-Swift/TS/Kotlin generator and its libclang driver | CARDS, SHED, LIAR, BONES (THIRD hand-writes its bindings) |
+| `tools/datagen/` | the translation-table generator | CARDS, SHED, LIAR, BONES |
+| `tools/llvm.mk` | the one LLVM toolchain the wasm builds use | CARDS, SHED, LIAR, BONES (through structgen and datagen) |
+| `tools/ios_xcframework.mk` | the `ios-lib` recipe: `$(call IOS_XCFRAMEWORK,name,sources,cflags,headers,min-ios,out)` builds the device and both simulator slices and wraps them in an xcframework | CARDS, UTTT, SHED, LIAR, BONES |
 | `tools/tighten/` | the showcase video cutter (`media/`) | CARDS |
 | `tools/textures/` | the bake tool: `regenerate_textures.sh <out-dir>` compiles `swift/Textures` with `GenerateTextures.swift` and writes the JPEGs; a product passes its own resources folder | CARDS, SHED |
 | `tools/check_ui_doc.py` | the UI design doc checker | UTTT, SHED |
@@ -60,4 +60,4 @@ Swift reaches a header-only C module through its `module.modulemap` on `SWIFT_IN
 ## Rig (`rig/lib/`)
 
 The measurement half of the simulator rig: frame windows (`window.sh`), MSE and bars (`mse.py`, `msecmp.py`, `bars.py`, `avgbar.py`, `newbar.py`, `rate.py`, `traces.py`), squares (`squares.py`, `squareplot.py`), `motionplot.py` for `tools/motion` tables, and `ax.py`, the accessibility driver.
-Used by CARDS (`ios/Tools/rig`), UTTT (the same rig through `uttt/ios/Tools/rig.env`, and `motionplot.py` through `devcap`) and SHED (the same rig through its own `ios/Tools/rig.env`).
+Used by CARDS (`ios/Tools/rig`), UTTT (the same rig through `uttt/ios/Tools/rig.env`, and `motionplot.py` through `devcap`) and SHED, LIAR and BONES (the same rig, each through its own `ios/Tools/rig.env`).
