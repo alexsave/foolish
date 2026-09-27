@@ -9,10 +9,13 @@
  *
  * Policies:
  *   bot      the belief bot (cn_bot.c), default constants
- *   fixbeta  the belief bot with every seat's temperature fixed (no fit)
- *   prior    the belief bot with the opponent model off: every hidden hand
- *            from the prior, and bids never update anything (an ablation)
- *   random   uniform over the legal options (cn_bot_random.c): the baseline
+ *   random   uniform over the legal options (cn_bot_random.c): THE baseline
+ * and the bot's own ablations, each one switch away from `bot` (BOT.md):
+ *   prior    no opponent model: every hidden hand from the prior, and no bid
+ *            ever updates anything
+ *   noread   the decision-time belief, but rollout bids update nothing
+ *   readers  rollout opponents read my bids too, from the public belief
+ *   fitbeta  each seat's temperature fitted from its revealed hands
  *
  * Prints, per policy: seat-games, win rate with its 95% Wilson interval, and
  * mean dice lost per game with a 95% normal interval. --fast is a smoke run
@@ -26,12 +29,11 @@
 #include <string.h>
 #include <time.h>
 
-enum { P_BOT, P_FIXBETA, P_PRIOR, P_NOOBS, P_OBSONLY, P_RANDOM, P_N };
-static const char *const P_NAME[P_N] = { "bot", "fixbeta", "prior", "noobs", "obsonly", "random" };
+enum { P_BOT, P_RANDOM, P_PRIOR, P_NOREAD, P_READERS, P_FITBETA, P_N };
+static const char *const P_NAME[P_N] = { "bot", "random", "prior", "noread", "readers", "fitbeta" };
 
 static int      A_seats = 2, A_games = 1000, A_threads = 8, A_worlds = -1;
 static uint64_t A_seed = 1;
-static int      A_observe = -1, A_opp_reads = -1;
 static int      A_mix[CN_MAX_SEATS];
 static CnBotCfg A_cfg[P_N];
 
@@ -113,8 +115,6 @@ int main(int argc, char **argv)
         else if (!strncmp(a, "--seed=", 7)) A_seed = strtoull(a + 7, 0, 10);
         else if (!strncmp(a, "--mix=", 6)) mix = a + 6;
         else if (!strcmp(a, "--fast")) fast = 1;
-        else if (!strncmp(a, "--opp-reads=", 12)) A_opp_reads = atoi(a + 12);
-        else if (!strncmp(a, "--observe=", 10)) A_observe = atoi(a + 10);
         else { fprintf(stderr, "unknown argument %s\n", a); return 2; }
     }
     if (A_seats < CN_MIN_SEATS || A_seats > CN_MAX_SEATS) { fprintf(stderr, "--seats is 2..6\n"); return 2; }
@@ -134,15 +134,13 @@ int main(int argc, char **argv)
     for (int p = 0; p < P_N; p++) {
         cn_bot_cfg_default(&A_cfg[p]);
         if (A_worlds > 0) A_cfg[p].worlds = A_worlds;
-        if (A_opp_reads >= 0 && p == P_BOT) A_cfg[p].opp_reads = A_opp_reads;
-        if (A_observe >= 0 && p == P_BOT) A_cfg[p].observe = A_observe;
     }
-    A_cfg[P_FIXBETA].fit_beta = 0;
-    A_cfg[P_PRIOR].fit_beta = 0;
     A_cfg[P_PRIOR].use_belief = 0;
     A_cfg[P_PRIOR].observe = 0;
-    A_cfg[P_NOOBS].observe = 0;
-    A_cfg[P_OBSONLY].use_belief = 0;
+    A_cfg[P_NOREAD].observe = 0;
+    A_cfg[P_READERS].observe = 1;
+    A_cfg[P_READERS].opp_reads = 1;
+    A_cfg[P_FITBETA].fit_beta = 1;
 
     A_res = calloc((size_t)A_games, sizeof *A_res);
     struct timespec t0, t1;

@@ -22,8 +22,9 @@ void cn_bot_cfg_default(CnBotCfg *c)
 {
     c->worlds = 96;
     c->beta = 8.0f;
-    c->fit_beta = 1;
+    c->fit_beta = 0;
     c->use_belief = 1;
+    c->ro_beta = 8.0f;
     c->observe = 2;
     c->opp_reads = 0;
     c->rollout_steps = 64;
@@ -378,6 +379,7 @@ typedef struct {
     int     n, total, me;
     uint8_t dn[CN_MAX_SEATS];
     float   beta[CN_MAX_SEATS];
+    float   ro_beta;
     /* public: P(seat s holds k counting dice for face f) */
     float   pk[CN_MAX_SEATS][CN_FACES + 1][CN_START_DICE + 1];
     /* my own reading of the others, when only I read rollout bids (observe 2) */
@@ -459,7 +461,7 @@ static CnMove ro_policy(Pub *p, int t, const uint8_t k[CN_FACES + 1], int bq, in
     CnMove opt[1 + 2 * CN_BID_FACES];
     double w[1 + 2 * CN_BID_FACES], z = 0.0;
     int no = 0;
-    const double beta = p->beta[t];
+    const double beta = p->ro_beta;
     if (bq > 0) {
         opt[no] = (CnMove){ 0, 0 };
         w[no] = exp(beta * (1.0 - pub_true(p, t, k[bf], bq, bf)));
@@ -521,6 +523,7 @@ static void pub_build(Pub *p, const CnSeen *s, const CnBelief *b, const CnBotCfg
     p->me = s->me;
     memcpy(p->dn, s->dice_n, sizeof p->dn);
     memcpy(p->beta, b->beta, sizeof p->beta);
+    p->ro_beta = cfg->ro_beta;
     memcpy(p->pk, b->pk, sizeof p->pk);
     memcpy(p->pkm, b->pk, sizeof p->pkm);
     if (!cfg->opp_reads)

@@ -74,6 +74,7 @@ int cn_seen(const CnGame *g, int me, CnSeen *out);
 typedef struct {
     int   worlds;                    /* sampled worlds per decision              */
     float beta;                      /* the bluff temperature assumed with no data */
+    float ro_beta;                   /* the rollout policy's temperature, every seat */
     int   fit_beta;                  /* 1: fit each seat's temperature from reveals */
     int   use_belief;                /* 0: ablation - every hidden hand from the prior */
     int   observe;                   /* rollout bids: 0 read by nobody, 1 by everyone, 2 by me only */
