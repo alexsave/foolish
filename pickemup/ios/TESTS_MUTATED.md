@@ -60,31 +60,44 @@ The whole scheme could not be run there: `ActionCardCornerTests` and `RenderTest
 | testThePickerTilesAreTheKernels | (C) `PICKER_REACH_X` 96 becomes 90, library rebuilt | "triangles east", "diamonds west", "the x" |
 | testTheJoinThatStartsTheGamePlaysTheDeal | `TableModel.join` never calls `onDealt` | "the table takes over" (lobby against table), "the join that fills the table plays the deal" |
 
-## Not mutated
+## The review, O6 and O9 tests (the B2 simulator worker, 2026-09-27)
 
-`ActionCardCornerTests.testAnActionCardExposesItsSuitShape` (O6, added 2026-09-27 by the second simulator worker) is compiled but has NOT run: the simulator would not boot (ORCHESTRATION B2).
-Its planned mutant is `CardFace.cornerSuit` answering nil for Skip, which must go red on "a skip on squares carries the square"; until that red run exists this test proves nothing.
+Run on a fresh iPhone 17e, `pk-b2` (iOS 27.0), created for this pass and deleted after it.
+The unmutated scheme is 37 tests, 0 failures, before and after every row below.
+Each Swift mutant was applied alone by `mutation_check.sh` with `-only-testing:` on the class it aims at (the source restored and checked byte for byte); the C mutant rebuilt the xcframework before and after.
+Until this pass none of these had run: they were compiled only (ORCHESTRATION B2, B3).
 
-### The architecture review (IOS_DECISIONS I29 to I37), compiled, NOT run
+The first run found two of them red, and neither was a product regression.
+`ActionCardCornerTests` and `NoCountLeakTests` read labels off a hosted SwiftUI view, and SwiftUI builds its accessibility elements only once an assistive client (VoiceOver, an XCUITest runner) has switched accessibility automation on; a plain unit-test process never has, so both walks found an EMPTY tree ("both other seats are on the tree: []", "XCTUnwrap failed").
+The views were right all along: every seat label is the kernel's `PK_API_W_SPOKEN_FAN` word and the fan carries no count.
+The fix is in the tests, `PickemupKitTests/AXTree.swift`: it switches automation on once per process, as a client would, and is the one tree walker both tests use (IOS_DECISIONS I40).
+The first row below is that cause, proven: with the switch turned off again, both tests fail exactly as they first did.
+`NoCountLeakTests` was also narrowed to what it guards: it now walks each other seat's badge and fan elements, label and value, and asserts both are on the tree, where it used to read every label that merely contained a name (a future caption such as "Bo played 9 of squares" would have tripped it without being a count).
 
-Added or changed 2026-09-27 by the review worker with no simulator to run them on (ORCHESTRATION B2, B3): `build-for-testing` of `PickemupKitTests` and the `PickemupMessagesApp` build succeed, nothing more.
-The C mutants behind I29 to I33 WERE seen red, on `build/ios_smoke` (`pickemup/c/tests/MUTATIONS.md`, the bridge rows marked I29 to I33).
-Each Swift mutant below is planned, one at a time, with the `mutation_check.sh` of the rows above; until its red run exists the test proves nothing.
+Three planned mutants did not go red as first written, and each exposed a test that could not fail:
+- `KernelWordsTests.testTheRulesAreAsManyAsTheKernelHas` SURVIVED `out.count < 4`: its probe buffer was 64 bytes, a rule line is longer, and the kernel answers -1 for a buffer too small as well as for past the last, so the assertion passed whatever `Pk.rules` returned; the buffer is now 1024, as `Pk.rules`' own.
+- `FanTapTests` and `TableModelTests.testATapOnAFanStagesTheCatchAndASecondTakesItBack` SURVIVED `.moved` and `.uncalled` mapped to `.refused` (the planned `case` edits do not compile under warnings-as-errors, so the mutant moved into `Pk.tapFan`'s mapping): since I30 every branch of `TableModel.tapFan` refreshes, so the call on screen is the kernel's either way; what the branch still owns is the staging and the motion, and the tests now assert those.
 
-| Test | Planned mutation | Must go red on |
+| Test | Mutation | Assertion that went red |
 |---|---|---|
-| NoCountLeakTests.testNoOtherSeatsLabelCarriesADigit | SeatBadge's fan label appends its backs (`Pk.words(PK_API_W_SPOKEN_FAN, seat) + " \(backs)"`) | "no digit in another seat's label" |
-| FanTapTests.testATapOnAnotherFanMovesTheCallAndARefusedTapKeepsIt | `TableModel.tapFan` handles `.moved` as `.refused` | "the call moved" |
-| HostGateTests.testAMismatchedPairShowsUnreadableAndReadsNothing | `PickemupHost.adopt` drops its `readable` guard | "nothing was adopted" |
-| ZoneTests.testTheZonesAreTheKernels | `PkLayout.Zone` maps `.drawBand` to `PK_ZONE_PILE_DROP` | "the draw band (U24)" |
-| KernelWordsTests.testTheCornerIndexIsTheKernels | `CardFace.label` returns the kernel's word even when it is "" | "a skip prints its glyph, not an index" |
-| KernelWordsTests.testTheRulesAreAsManyAsTheKernelHas | `Pk.rules` stops at four lines (`out.count < 4`) | "every rule the kernel has" |
+| ActionCardCornerTests.testAnActionCardExposesItsSuitShape, NoCountLeakTests.testNoOtherSeatsLabelCarriesADigit | `AXTree.enable` passes 0 to `_AXSSetAutomationEnabled` (the cause, reproduced) | "XCTUnwrap failed: expected non-nil value"; "Bo's badge is on the tree: []", "Bo's fan is on the tree: []", the same for Cy |
+| ActionCardCornerTests.testAnActionCardExposesItsSuitShape | `CardFace.cornerSuit` drops Skip (`rank == PK_R_REVERSE \|\| ...`) | "a skip on squares carries the square" ("" against "square") |
+| NoCountLeakTests.testNoOtherSeatsLabelCarriesADigit | SeatBadge's fan label appends its backs (`Pk.words(PK_API_W_SPOKEN_FAN, seat) + " 3"`) | "no digit in another seat's label: Bo's cards. Tap to catch them on one 3", the same for Cy |
+| FanTapTests.testATapOnAnotherFanMovesTheCallAndARefusedTapKeepsIt | `Pk.tapFan` maps `PK_API_FAN_MOVED` to `.refused` | "the moved call stages again" (1 against 2) |
+| TableModelTests.testATapOnAFanStagesTheCatchAndASecondTakesItBack | `Pk.tapFan` maps `PK_API_FAN_UNCALLED` to `.refused` | "the un-call plays its own motion (the ring fades off)" (plan 1 kept) |
+| HostGateTests.testAMismatchedPairShowsUnreadableAndReadsNothing | `PickemupHost.adopt` drops its `guard readable` | the answer (0 against `PK_EFORMAT` -3), "nothing was adopted" |
+| ZoneTests.testTheZonesAreTheKernels | `PkLayout.Zone` maps `.drawBand` to `PK_ZONE_PILE_DROP` | "the draw band (U24)" (x, y and width) |
+| KernelWordsTests.testTheCornerIndexIsTheKernels | `CardFace.label` returns the kernel's word even when it is "" | "a skip prints its glyph, not an index", "a plain wild prints no index" |
+| KernelWordsTests.testTheRulesAreAsManyAsTheKernelHas | `Pk.rules` stops at four lines (`out.count < 4`) | "every rule the kernel has" (143 against -1), after the buffer fix above |
 | DrawnStayTests.testAnOlderTimerNeverHidesANewerDrawnStay | `showDrawnStay`'s timer clears `drawnStay` without comparing the generation | "a newer showing stays up" |
-| TableModelTests.testATapOnAFanStagesTheCatchAndASecondTakesItBack | `TableModel.tapFan` handles `.uncalled` as `.refused` | "a second tap un-calls" |
+| BeatPlayerTests (arrival, superseding, no animation) | `PickemupHost.adopt` plays `Pk.beats(from: 0, to: 1_000, open: true)` instead of `Pk.beatsNow()` (the newest bubble as if opened cold) | "from the bubble on screen", "the kernel's stagger" ([100, 210, 320] against [16, 126, 236]), "at the fan's right end", "mid-flight", "adopting the same bubble again moves nothing" |
+| ArrangeTests.testAReorderMovesTheCardAndTheNextViewReadsTheNewOrder, testAPlayAfterAReorderPlaysTheRightCard | `TableModel.arrange` skips its `refresh()` | "the next view reads the new order", "slot 0's card is drawn last", "the card at that slot plays", "the pile's top is the dragged card" |
+| ArrangeTests.testAReorderMovesTheCardAndTheNextViewReadsTheNewOrder | `TableModel.shown` sets `s.slot` from the hand's indices | "the next view reads the new order"; also testAPlayAfterAReorderPlaysTheRightCard "it is drawn first" |
+| ArrangeTests.testAPlayAfterAReorderPlaysTheRightCard | `TableModel.arrange` passes `pos` as the from slot | "the card at that slot plays" (82 against 65), "the pile's top is the dragged card"; also "a drag to where it already is moves nothing" |
+| ArrangeTests.testADrawAfterAReorderLandsOnTheRight | (C) `pk_arr_sync` puts a new card at the left (`insert_at(a, 0, ...)`), library rebuilt | "the drawn card lands on the right" (14 against 93); the deal also goes through the sync, so every ArrangeTests test is red on its acquisition order |
+| ArrangeTests.testTheDropIsTheKernels | `PkLayout.drop` maps `PK_DROP_HAND` to `.pile` | "a release in the row rearranges" |
 
-The last row replaces the `tapFan never un-calls` row above: the Swift branch that mutant deleted is now the kernel's (`pk_api_tap_fan`), so that red run no longer describes the code.
-Likewise the two `PickemupHost.adopt` rows under BeatPlayerTests mutated Swift that is now `pk_api_adopt`; their C equivalents went red on the smoke (I29), and the planned Swift mutant for the same tests is `PickemupHost.adopt` playing `Pk.beats(from: to - 1, ...)` instead of `Pk.beatsNow()`, which must go red on "from the bubble on screen" and "adopting the same bubble again moves nothing".
-`MessagesViewController.voidPendingStage` on a superseding adopt (I35) has no test target, like the rest of the conversation below.
+The two rows under BeatPlayerTests above that mutated `PickemupHost.adopt`, and the `tapFan never un-calls` row under TableModelTests, mutated Swift that is now the kernel's (`pk_api_adopt`, `pk_api_tap_fan`, I29 and I30); they are replaced by the adopt and `PK_API_FAN_UNCALLED` rows in this table, which mutate the code as it is now.
 
-Every other test in `PickemupKitTests` has a row above.
-What these tests do not reach is the conversation itself (`PickemupMessages/MessagesViewController.swift`: staging through the insert loop, send, cancel, receive); it has no test target, as uttt's has none, and it has NOT yet run inside Messages: on 2026-09-27 the app installed and registered on the simulator, but `simctl launch com.apple.MobileSMS` hung for over five minutes (BLOCKED B2 in `pickemup/docs/ORCHESTRATION.md`).
+Every test in `PickemupKitTests` now has a row above; nothing is left unmutated.
+What these tests do not reach is the conversation itself (`PickemupMessages/MessagesViewController.swift`: staging through the insert loop, send, cancel, receive); it has no test target, as uttt's has none, and what was seen of it inside Messages is in `pickemup/docs/SIM_VERIFICATION.md`.

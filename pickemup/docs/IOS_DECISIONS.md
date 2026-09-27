@@ -212,3 +212,11 @@ A drag rearranges only while the board shows the settled hand: while a plan's fr
 Alternative: have the row and the model work in slots and map every touch through `pk_api_play_slot`.
 Why: every event, anchor and wire position is an acquisition position, so working in slots would need a map at every one of them; `pk_api_play_slot` stays for a host that addresses the hand by slot and is pinned by the C tests.
 Confidence: medium.
+
+DECISION I40: a test that reads the accessibility tree of a hosted SwiftUI view first switches accessibility automation on (`PickemupKitTests/AXTree.swift`), and walks the tree through that one helper.
+SwiftUI builds its accessibility elements only once an assistive client has asked, and a unit-test process is not one, so the first simulator run of `ActionCardCornerTests` and `NoCountLeakTests` found an empty tree and went red on nothing; the views were right.
+`AXTree.enable` calls libAccessibility's `_AXSSetAutomationEnabled(1)` once per process, which is what VoiceOver and an XCUITest runner switch on before they read.
+Alternative: move both checks into an XCUITest target, which runs with automation on; or test the label strings as functions and not the tree.
+Why: the owner's rule is that no other seat's count reaches the tree, so the test must read the tree itself; a UI test target needs a host app this product does not have (the container is codeless), and a private symbol in a test bundle never ships.
+If the symbol ever disappears, both tests fail on "is on the tree"; they can never pass on an empty walk.
+Confidence: high.

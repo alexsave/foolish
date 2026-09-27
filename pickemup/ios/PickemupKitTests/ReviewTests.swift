@@ -4,9 +4,8 @@
 // the rules are as many as the kernel has, and an older timer never hides a
 // newer "drawn cards stay".
 //
-// Each test names the mutation it must go red on (MUTATE:). None of them has
-// run yet (every simulator on the host hangs, ORCHESTRATION B2 and B3), so
-// each is listed under "Not mutated" in pickemup/ios/TESTS_MUTATED.md.
+// Each test names the mutation it must go red on (MUTATE:); the red runs are
+// in pickemup/ios/TESTS_MUTATED.md.
 
 import CPickemup
 import SwiftUI
@@ -30,53 +29,45 @@ final class NoCountLeakTests: XCTestCase {
             XCTAssertNil(name.rangeOfCharacter(from: .decimalDigits),
                          "the names carry no digit, so any digit beside one is a count")
         }
-        let labels = hostedLabels(TableScreen(model: m, onRules: {}), size: CGSize(width: 390, height: 700))
-        let theirs = labels.filter { l in others.contains { l.contains($0) } }
-        XCTAssertGreaterThanOrEqual(theirs.count, 2, "both other seats are on the tree: \(labels)")
-        for l in theirs {
+        // What this walks: each other seat's badge, its name and its fan (the
+        // constant three backs, D22), label AND value. Other labels may carry
+        // digits that are not a seat's count ("Deck, 82 left", a card's rank
+        // on the pile or in a caption), so they are not read here.
+        let fans = [1, 2].map { Pk.words(PK_API_W_SPOKEN_FAN, $0) }
+        let seatLabels = AXTree.hosted(TableScreen(model: m, onRules: {}), size: CGSize(width: 390, height: 700)) { root in
+            AXTree.elements(root).filter { el in
+                let l = el.accessibilityLabel ?? ""
+                return others.contains(l) || fans.contains { !$0.isEmpty && l.hasPrefix($0) }
+            }.map { "\($0.accessibilityLabel ?? "")|\($0.accessibilityValue ?? "")" }
+        }
+        for (name, fan) in zip(others, fans) {
+            XCTAssertTrue(seatLabels.contains { $0.hasPrefix(name + "|") }, "\(name)'s badge is on the tree: \(seatLabels)")
+            XCTAssertTrue(seatLabels.contains { $0.hasPrefix(fan) }, "\(name)'s fan is on the tree: \(seatLabels)")
+        }
+        for l in seatLabels {
             XCTAssertNil(l.rangeOfCharacter(from: .decimalDigits), "no digit in another seat's label: \(l)")
         }
-    }
-
-    /// Every accessibility label and value under a view hosted in a window.
-    private func hostedLabels<V: View>(_ view: V, size: CGSize) -> [String] {
-        let host = UIHostingController(rootView: view)
-        let window = UIWindow(frame: CGRect(origin: .zero, size: size))
-        window.rootViewController = host
-        window.makeKeyAndVisible()
-        host.view.frame = window.bounds
-        host.view.layoutIfNeeded()
-        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
-        defer { window.isHidden = true }
-        var out: [String] = []
-        var queue: [NSObject] = [host.view]
-        var seen = 0
-        while !queue.isEmpty, seen < 2000 {
-            let o = queue.removeFirst(); seen += 1
-            for s in [o.accessibilityLabel, o.accessibilityValue] { if let s, !s.isEmpty { out.append(s) } }
-            if let els = o.accessibilityElements as? [NSObject] { queue += els }
-            let n = o.accessibilityElementCount()
-            if n != NSNotFound, n > 0 {
-                for i in 0..<n { if let e = o.accessibilityElement(at: i) as? NSObject { queue.append(e) } }
-            }
-            if let v = o as? UIView { queue += v.subviews }
-        }
-        return out
     }
 }
 
 @MainActor
 final class FanTapTests: XCTestCase {
 
-    // MUTATE: TableModel.tapFan handles `.moved` as `.refused` (no refresh)
-    // -> "the call moved".
+    // MUTATE: Pk.tapFan maps PK_API_FAN_MOVED to `.refused` -> "the moved
+    // call stages again". (The call itself is the kernel's and both branches
+    // refresh, so "the call moved" cannot tell them apart; what the branch
+    // owns is the staging and the motion.)
     func testATapOnAnotherFanMovesTheCallAndARefusedTapKeepsIt() {
         XCTAssertTrue(Phones.threeStartedByAlex())
         let m = TableModel()
+        var stages = 0
+        m.onStage = { _ in stages += 1 }
         m.tapFan(1)
         XCTAssertTrue(m.calling(1), "a tap calls Bo")
+        XCTAssertEqual(stages, 1, "the call stages")
         m.tapFan(2)
         XCTAssertTrue(m.calling(2), "the call moved")
+        XCTAssertEqual(stages, 2, "the moved call stages again")
         XCTAssertFalse(m.calling(1), "one call a bubble")
         m.tapFan(0)
         XCTAssertTrue(m.calling(2), "a refused tap keeps the call")
@@ -151,7 +142,11 @@ final class KernelWordsTests: XCTestCase {
         let rules = Pk.rules
         XCTAssertFalse(rules.isEmpty)
         XCTAssertTrue(rules.allSatisfy { !$0.isEmpty })
-        var buf = [CChar](repeating: 0, count: 64)
+        // As wide as Pk.rules' own buffer: a rule line is longer than 64
+        // bytes, and a buffer that cannot hold it also answers -1, which made
+        // this assertion pass whatever Pk.rules returned (its first mutation
+        // check survived, 2026-09-27).
+        var buf = [CChar](repeating: 0, count: 1024)
         XCTAssertEqual(pk_api_words(PK_API_W_RULE, Int32(rules.count), &buf, Int32(buf.count)), -1,
                        "every rule the kernel has")
     }
