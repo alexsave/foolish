@@ -50,6 +50,12 @@ Alternative: leave foolish untouched and list both under "Found on the way".
 Why: the owner's rule is that lint and test failures found on the way get fixed, and both fixes leave every committed artefact and every golden byte-identical; the replay.c change is the one place this branch touches foolish's shipped C, so it is called out here for veto.
 Confidence: high for the lint fix, medium for the replay.c fix only because it is shipped code.
 
+DECISION O9: the hand keeps foolish's drag-to-reorder, overriding D24 and I10.
+The wire still carries acquisition order and codes a play as a position in that order; each phone keeps its own arrangement (a permutation over the acquisition order) in the kernel, persisted in the phone's own record and never sent, and every hand read and every play goes through it in C.
+Alternative: D24 as written (no rearranging, acquisition order only).
+Why: the owner named "card dragging and hand ordering" as the first thing to reuse from foolish; D24's reason (a second derivation of hand order) is answered by keeping the arrangement in the kernel and off the wire, so there is one owner and no second derivation.
+Confidence: high.
+
 ## Order of work
 
 1. Design in parallel: rules and kernel doc, UI.html surface study with motion grid, reuse audit.
