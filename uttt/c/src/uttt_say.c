@@ -2,16 +2,9 @@
 #include "uttt_draw.h"
 #include "uttt_msg.h"
 #include "uttt_lang.h"
+#include "../../../shared/c/text_util/text_util.h"
 #include <stdio.h>
 #include <string.h>
-
-static int put(char *out, int cap, const char *s)
-{
-    int n = (int)strlen(s);
-    if (n >= cap) return -1;
-    memcpy(out, s, (size_t)n + 1);
-    return n;
-}
 
 
 /* THE WORDS ARE THE TABLE'S (uttt_lang.h, uttt/c/i18n): every sentence
@@ -63,7 +56,7 @@ int uttt_caption(int over, int turn, int block, int line, int n, const char *who
      * it is "New game?" (owner, 2026-09-23). */
     if (block < 0) {
         const char *kv[] = { "who", who, 0 };
-        return named ? uttt_fill(out, cap, T(CAP_INVITE), kv) : put(out, cap, T(CAP_NEW_GAME));
+        return named ? uttt_fill(out, cap, T(CAP_INVITE), kv) : text_put(out, cap, T(CAP_NEW_GAME));
     }
     /* WHOSE TURN, and not where: the yellow tint on the bubble's image
      * already shows which board is live, so a "centre board" or "anywhere"
@@ -93,7 +86,7 @@ static int say_line(const UtttGame *g, char *out, int cap)
         UT_K_END_DIAGONAL, UT_K_END_DIAGONAL,
     };
     int i = uttt_won_line(g);
-    return put(out, cap, i < 0 ? "" : uttt_text(KEY[i]));
+    return text_put(out, cap, i < 0 ? "" : uttt_text(KEY[i]));
 }
 
 int uttt_say_watch_mark(const UtttGame *g)
@@ -134,15 +127,15 @@ int uttt_say_by(int key, const UtttGame *g, int seat, const char *who,
          * the rest). They follow a DRAWN mark (uttt_say_bubble_mark), true on
          * both phones, where "You win" is false on the loser's copy. */
         switch (g->over) {
-        case UTTT_DRAW: return put(out, cap, T(BUBBLE_DRAW));
-        case UTTT_X: case UTTT_O: return put(out, cap, T(BUBBLE_WINS));
-        default:        return put(out, cap, "");
+        case UTTT_DRAW: return text_put(out, cap, T(BUBBLE_DRAW));
+        case UTTT_X: case UTTT_O: return text_put(out, cap, T(BUBBLE_WINS));
+        default:        return text_put(out, cap, "");
         }
 
     case UTTT_SAY_BUBBLE_PLACE:
         /* how long it took */
         if (g->over) return say_moves(g->n_plies, out, cap);
-        return put(out, cap, "");
+        return text_put(out, cap, "");
 
     case UTTT_SAY_CAPTION:
         return uttt_caption(g->over, g->turn, g->n_plies ? a : -1, uttt_won_line(g),
@@ -152,55 +145,55 @@ int uttt_say_by(int key, const UtttGame *g, int seat, const char *who,
      * (keys.h): a right-to-left language puts the words it reads first in
      * POST. A headline with no mark is all PRE. */
     case UTTT_SAY_HEADLINE_PRE:
-        if (g->over == UTTT_DRAW) return put(out, cap, T(HEAD_DRAWN));
-        if (g->over) return put(out, cap, g->over == you ? T(HEAD_YOU_WIN) : T(HEAD_WINS_PRE));
-        return put(out, cap, g->turn == you ? T(HEAD_YOUR_MOVE) : T(HEAD_WAITING_PRE));
+        if (g->over == UTTT_DRAW) return text_put(out, cap, T(HEAD_DRAWN));
+        if (g->over) return text_put(out, cap, g->over == you ? T(HEAD_YOU_WIN) : T(HEAD_WINS_PRE));
+        return text_put(out, cap, g->turn == you ? T(HEAD_YOUR_MOVE) : T(HEAD_WAITING_PRE));
 
     case UTTT_SAY_HEADLINE_POST:
-        if (!uttt_say_headline_mark(g, seat)) return put(out, cap, "");
-        return put(out, cap, g->over ? T(HEAD_WINS_POST) : T(HEAD_WAITING_POST));
+        if (!uttt_say_headline_mark(g, seat)) return text_put(out, cap, "");
+        return text_put(out, cap, g->over ? T(HEAD_WINS_POST) : T(HEAD_WAITING_POST));
 
     case UTTT_SAY_SUBLINE:
         /* WAITING ON THEM SAYS NOTHING UNDER IT (owner, 2026-09-25): it
          * named where you sent them ("Middle left"), which the board's
          * highlighter already shows. */
-        if (g->over == UTTT_DRAW) return put(out, cap, T(END_DRAW));
+        if (g->over == UTTT_DRAW) return text_put(out, cap, T(END_DRAW));
         if (g->over) return say_line(g, out, cap);
         /* A LIVE GAME SAYS NOTHING UNDER THE HEADLINE (owner, 2026-09-26):
          * "Anywhere you like" repeated the yellow tint over the whole sheet,
          * as "Middle left" repeated it over one block before it went. */
-        return put(out, cap, "");
+        return text_put(out, cap, "");
 
     case UTTT_SAY_WATCH_LABEL:
-        return put(out, cap, T(WATCH_LABEL));
+        return text_put(out, cap, T(WATCH_LABEL));
 
     case UTTT_SAY_WATCH_LINE:
         /* After the drawn mark (uttt_say_watch_mark): a letter here was the
          * one place on the sheet a side was TYPED rather than drawn. */
-        if (g->over == UTTT_DRAW) return put(out, cap, T(HEAD_DRAWN));
-        return put(out, cap, g->over ? T(WATCH_TOOK) : T(WATCH_TO_PLAY));
+        if (g->over == UTTT_DRAW) return text_put(out, cap, T(HEAD_DRAWN));
+        return text_put(out, cap, g->over ? T(WATCH_TOOK) : T(WATCH_TO_PLAY));
 
     /* VOICEOVER hears whole sentences in reading order, each its own key,
      * rather than the screen's halves glued round a letter: which side of
      * the mark the words sit on is a question about the screen. */
     case UTTT_SAY_WATCH_SPOKEN: {
         const char *kv[] = { "mark", mark_name(uttt_say_watch_mark(g)), 0 };
-        if (g->over == UTTT_DRAW) return put(out, cap, T(HEAD_DRAWN));
+        if (g->over == UTTT_DRAW) return text_put(out, cap, T(HEAD_DRAWN));
         return uttt_fill(out, cap, g->over ? T(SPOKEN_WATCH_TOOK) : T(CAP_TO_PLAY), kv);
     }
 
     case UTTT_SAY_WAITING_HEADLINE:
-        return put(out, cap, T(LOBBY_WAITING));
+        return text_put(out, cap, T(LOBBY_WAITING));
     case UTTT_SAY_WAITING_SUBLINE:
         /* NO MARK, and no hint of one: the joiner will be X, and until
          * somebody joins there is nobody to be anything. docs/UI.html, 02. */
-        return put(out, cap, T(LOBBY_NOBODY));
+        return text_put(out, cap, T(LOBBY_NOBODY));
     case UTTT_SAY_UNREADABLE_HEADLINE:
-        return put(out, cap, T(UNREADABLE));
+        return text_put(out, cap, T(UNREADABLE));
     case UTTT_SAY_UNREADABLE_SUBLINE:
-        return put(out, cap, T(UNREADABLE_WHY));
+        return text_put(out, cap, T(UNREADABLE_WHY));
 
-    case UTTT_SAY_DOOR_AGAIN: return put(out, cap, T(DOOR_AGAIN));
+    case UTTT_SAY_DOOR_AGAIN: return text_put(out, cap, T(DOOR_AGAIN));
 
     case UTTT_SAY_HEADLINE_SPOKEN: {
         int m = uttt_say_headline_mark(g, seat);
@@ -211,16 +204,16 @@ int uttt_say_by(int key, const UtttGame *g, int seat, const char *who,
     case UTTT_SAY_YOU_ARE_SPOKEN: {
         const char *kv[] = { "mark", mark_name(you), 0 };
         return you == UTTT_X || you == UTTT_O ? uttt_fill(out, cap, T(SPOKEN_YOU_ARE), kv)
-                                              : put(out, cap, "");
+                                              : text_put(out, cap, "");
     }
-    case UTTT_SAY_DOOR_RULES: return put(out, cap, T(DOOR_RULES));
-    case UTTT_SAY_SEND_HINT:  return put(out, cap, T(SEND_HINT));
-    case UTTT_SAY_DOOR_SEND:  return put(out, cap, T(DOOR_SEND));
-    case UTTT_SAY_DOOR_COPY:  return put(out, cap, T(DOOR_COPY));
-    case UTTT_SAY_DOOR_COPIED: return put(out, cap, T(DOOR_COPIED));
+    case UTTT_SAY_DOOR_RULES: return text_put(out, cap, T(DOOR_RULES));
+    case UTTT_SAY_SEND_HINT:  return text_put(out, cap, T(SEND_HINT));
+    case UTTT_SAY_DOOR_SEND:  return text_put(out, cap, T(DOOR_SEND));
+    case UTTT_SAY_DOOR_COPY:  return text_put(out, cap, T(DOOR_COPY));
+    case UTTT_SAY_DOOR_COPIED: return text_put(out, cap, T(DOOR_COPIED));
 
-    case UTTT_SAY_YOU_ARE_1: return put(out, cap, T(YOU_ARE_1));
-    case UTTT_SAY_YOU_ARE_2: return put(out, cap, T(YOU_ARE_2));
+    case UTTT_SAY_YOU_ARE_1: return text_put(out, cap, T(YOU_ARE_1));
+    case UTTT_SAY_YOU_ARE_2: return text_put(out, cap, T(YOU_ARE_2));
 
     default:
         return -1;

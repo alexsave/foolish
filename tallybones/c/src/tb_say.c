@@ -1,5 +1,6 @@
 /* Tallybones - which sentence a position says. See tb_say.h. */
 #include "tb_say.h"
+#include "../../../shared/c/text_util/text_util.h"
 #include "tb_plan.h"
 #include <string.h>
 
@@ -24,102 +25,16 @@ int tb_key_may_be_empty(int key) { return key >= 0 && key < TB_K_COUNT && KEY_EM
 
 #define T(k) tb_text(TB_K_##k)
 
-/* ---- columns (pk_text_cols's rule) ---------------------------------------------- */
+/* ---- columns and filling: shared/c/text_util, named for this kernel's API ----- */
 
-static unsigned next_cp(const unsigned char *s, int *len)
-{
-    if (s[0] < 0x80) { *len = 1; return s[0]; }
-    int n = s[0] >= 0xf0 ? 4 : s[0] >= 0xe0 ? 3 : 2;
-    unsigned c = s[0] & (0x3fu >> (n - 1));
-    for (int i = 1; i < n; i++) {
-        if ((s[i] & 0xc0) != 0x80) { *len = i; return 0xfffd; }
-        c = (c << 6) | (s[i] & 0x3f);
-    }
-    *len = n;
-    return c;
-}
+int tb_text_cols(const char *s) { return text_cols(s); }
+int tb_itoa(int v, char *out, int cap) { return text_itoa(v, out, cap); }
 
-static int cp_cols(unsigned c)
-{
-    if ((c >= 0x0300 && c <= 0x036f) || c == 0x200b || c == 0x200d || c == 0x200e
-        || c == 0x200f || (c >= 0xfe00 && c <= 0xfe0f))
-        return 0;
-    if ((c >= 0x1100 && c <= 0x115f) || (c >= 0x2e80 && c <= 0xa4cf) ||
-        (c >= 0xac00 && c <= 0xd7a3) || (c >= 0xf900 && c <= 0xfaff) ||
-        (c >= 0xfe30 && c <= 0xfe4f) || (c >= 0xff00 && c <= 0xff60) ||
-        (c >= 0xffe0 && c <= 0xffe6) || c >= 0x1f300)
-        return 2;
-    return 1;
-}
-
-int tb_text_cols(const char *s)
-{
-    int cols = 0;
-    for (const unsigned char *p = (const unsigned char *)s; p && *p;) {
-        int n;
-        cols += cp_cols(next_cp(p, &n));
-        p += n;
-    }
-    return cols;
-}
-
-/* ---- filling ------------------------------------------------------------------ */
-
-int tb_itoa(int v, char *out, int cap)
-{
-    char tmp[12];
-    int n = 0, neg = v < 0;
-    unsigned u = neg ? 0u - (unsigned)v : (unsigned)v;
-    do { tmp[n++] = (char)('0' + u % 10u); u /= 10u; } while (u);
-    if (neg) tmp[n++] = '-';
-    if (!out || n + 1 > cap) return -1;
-    for (int i = 0; i < n; i++) out[i] = tmp[n - 1 - i];
-    out[n] = 0;
-    return n;
-}
-
-static int put(char *out, int cap, const char *s)
-{
-    int n = (int)strlen(s);
-    if (!out || n >= cap) return -1;
-    memcpy(out, s, (size_t)n + 1);
-    return n;
-}
-
+/* {game} is the game's name wherever a list does not name it itself. */
 int tb_fill(char *out, int cap, const char *t, const char *const *kv)
 {
-    if (!out || cap < 1 || !t) return -1;
-    int o = 0;
-    for (const char *p = t; *p;) {
-        const char *v = 0;
-        int skip = 1;
-        if (*p == '{') {
-            const char *e = p + 1;
-            while (*e && *e != '}' && *e != '{') e++;
-            if (*e == '}') {
-                size_t len = (size_t)(e - p - 1);
-                for (int i = 0; kv && kv[i]; i += 2)
-                    if (len == strlen(kv[i]) && !strncmp(p + 1, kv[i], len)) {
-                        v = kv[i + 1] ? kv[i + 1] : "";
-                        break;
-                    }
-                if (!v && len == 4 && !strncmp(p + 1, "game", 4)) v = T(GAME_NAME);
-                if (v) skip = (int)(e - p) + 1;
-            }
-        }
-        if (v) {
-            int n = (int)strlen(v);
-            if (o + n >= cap) return -1;
-            memcpy(out + o, v, (size_t)n);
-            o += n;
-        } else {
-            if (o + 1 >= cap) return -1;
-            out[o++] = *p;
-        }
-        p += skip;
-    }
-    out[o] = 0;
-    return o;
+    const char *const game[] = { "game", T(GAME_NAME), 0 };
+    return text_fill(out, cap, t, kv, game);
 }
 
 static int fill_key(char *out, int cap, int key, const char *const *kv)
@@ -134,7 +49,7 @@ enum { NAME_CAP = 64, LINE_CAP = 256 };
 int tb_say_seat(const char *const *names, int seat, char *out, int cap)
 {
     if (seat < 0 || seat >= TB_MAX_SEATS) return -1;
-    if (names && names[seat] && names[seat][0]) return put(out, cap, names[seat]);
+    if (names && names[seat] && names[seat][0]) return text_put(out, cap, names[seat]);
     char num[4];
     tb_itoa(seat + 1, num, sizeof num);
     const char *kv[] = { "n", num, 0 };
@@ -151,9 +66,9 @@ int tb_say_row_label(int row, char *out, int cap)
 {
     if (row < 0 || row >= 16) return -1;
     if (row < 6) return tb_say_cat(row, out, cap);
-    if (row == 6) return put(out, cap, T(ROW_UPPER));
-    if (row == 7) return put(out, cap, T(ROW_BONUS));
-    if (row == 15) return put(out, cap, T(ROW_TOTAL));
+    if (row == 6) return text_put(out, cap, T(ROW_UPPER));
+    if (row == 7) return text_put(out, cap, T(ROW_BONUS));
+    if (row == 15) return text_put(out, cap, T(ROW_TOTAL));
     return tb_say_cat(row - 2, out, cap);
 }
 
@@ -209,9 +124,9 @@ static int kept_list(const Facts *f, char *out, int cap)
     out[0] = 0;
     for (int i = 0; i < k; i++) {
         char num[4];
-        if (i && put(out + o, cap - o, T(LIST_SEP)) < 0) return -1;
+        if (i && text_put(out + o, cap - o, T(LIST_SEP)) < 0) return -1;
         o = (int)strlen(out);
-        if (tb_itoa(v[i], num, sizeof num) < 0 || put(out + o, cap - o, num) < 0) return -1;
+        if (tb_itoa(v[i], num, sizeof num) < 0 || text_put(out + o, cap - o, num) < 0) return -1;
         o = (int)strlen(out);
     }
     return k;
@@ -275,9 +190,9 @@ static int winners_ab(int mask, const char *const *names, char *a, int acap, cha
         if (!(mask >> s & 1)) continue;
         char who[NAME_CAP];
         if (tb_say_seat(names, s, who, sizeof who) < 0) return -1;
-        if (!first && put(a + o, acap - o, T(LIST_SEP)) < 0) return -1;
+        if (!first && text_put(a + o, acap - o, T(LIST_SEP)) < 0) return -1;
         o = (int)strlen(a);
-        if (put(a + o, acap - o, who) < 0) return -1;
+        if (text_put(a + o, acap - o, who) < 0) return -1;
         o = (int)strlen(a);
         first = 0;
     }
@@ -299,7 +214,7 @@ int tb_say_of(const TbEvent *ev, int n, const char *const *names, int full, char
     if (!out || cap < 1 || n < 0) return -1;
     Facts f;
     facts_of(ev, n, &f);
-    if (!f.move) return put(out, cap, "");
+    if (!f.move) return text_put(out, cap, "");
     char c[4][LINE_CAP];
     int nc = 0;
     /* the summary tells it in order; the caption leads with what matters most */
@@ -316,7 +231,7 @@ int tb_say_of(const TbEvent *ev, int n, const char *const *names, int full, char
         if (f.bonus && clause_bonus(&f, names, c[nc++], LINE_CAP) < 0) return -1;
         if (f.next >= 0 && clause_next(&f, names, c[nc++], LINE_CAP) < 0) return -1;
     }
-    if (put(out, cap, c[0]) < 0) return -1;
+    if (text_put(out, cap, c[0]) < 0) return -1;
     int o = (int)strlen(out);
     for (int i = 1; i < nc; i++) {
         const char *join = o > 0 && out[o - 1] == '!' ? T(CAP_JOIN_BANG) : T(CAP_JOIN);
@@ -327,7 +242,7 @@ int tb_say_of(const TbEvent *ev, int n, const char *const *names, int full, char
         memcpy(line + o, join, jn);
         memcpy(line + o + jn, c[i], cn + 1);
         if (!full && tb_text_cols(line) > TB_CAPTION_MAX) break;
-        if (put(out, cap, line) < 0) return -1;
+        if (text_put(out, cap, line) < 0) return -1;
         o = (int)strlen(out);
     }
     return o;
@@ -376,22 +291,22 @@ int tb_say_headline(const TbGame *g, int viewer, const char *const *names, char 
     char who[NAME_CAP];
     if (g->over) {
         int w = tb_winners(g);
-        if (viewer >= 0 && w == (1 << viewer)) return put(out, cap, T(HEAD_YOU_WIN));
+        if (viewer >= 0 && w == (1 << viewer)) return text_put(out, cap, T(HEAD_YOU_WIN));
         char a[LINE_CAP], b[NAME_CAP];
         int k = winners_ab(w, names, a, sizeof a, b, sizeof b);
         if (k < 1) return -1;
         const char *kv[] = { "who", b, "a", a, "b", b, 0 };
         return fill_key(out, cap, k == 1 ? TB_K_HEAD_WINS : TB_K_HEAD_TIE, kv);
     }
-    if (viewer >= 0 && viewer < g->n && !tb_is_in(g, viewer)) return put(out, cap, T(HEAD_LEFT));
+    if (viewer >= 0 && viewer < g->n && !tb_is_in(g, viewer)) return text_put(out, cap, T(HEAD_LEFT));
     if (g->draft && g->pending.seat == viewer) {
         switch (g->pending.kind) {
-        case TB_M_KEEP:  return put(out, cap, T(HEAD_STAGED_KEEP));
-        case TB_M_SCORE: return put(out, cap, T(HEAD_STAGED_SCORE));
-        default:         return put(out, cap, T(HEAD_STAGED_LEAVE));
+        case TB_M_KEEP:  return text_put(out, cap, T(HEAD_STAGED_KEEP));
+        case TB_M_SCORE: return text_put(out, cap, T(HEAD_STAGED_SCORE));
+        default:         return text_put(out, cap, T(HEAD_STAGED_LEAVE));
         }
     }
-    if (g->turn == viewer) return put(out, cap, T(HEAD_YOUR_ROLL));
+    if (g->turn == viewer) return text_put(out, cap, T(HEAD_YOUR_ROLL));
     if (tb_say_seat(names, g->turn, who, sizeof who) < 0) return -1;
     const char *kv[] = { "who", who, 0 };
     return fill_key(out, cap, TB_K_HEAD_WAITING, kv);
@@ -400,11 +315,11 @@ int tb_say_headline(const TbGame *g, int viewer, const char *const *names, char 
 int tb_say_subline(const TbGame *g, int viewer, const char *const *names, char *out, int cap)
 {
     char who[NAME_CAP], num[8], cat[NAME_CAP];
-    if (g->over) return put(out, cap, T(SUB_OVER));
-    if (viewer >= 0 && viewer < g->n && !tb_is_in(g, viewer)) return put(out, cap, "");
+    if (g->over) return text_put(out, cap, T(SUB_OVER));
+    if (viewer >= 0 && viewer < g->n && !tb_is_in(g, viewer)) return text_put(out, cap, "");
     if (g->draft && g->pending.seat == viewer) {
-        if (g->pending.kind == TB_M_KEEP) return put(out, cap, T(SUB_STAGED_KEEP));
-        if (g->pending.kind != TB_M_SCORE) return put(out, cap, "");
+        if (g->pending.kind == TB_M_KEEP) return text_put(out, cap, T(SUB_STAGED_KEEP));
+        if (g->pending.kind != TB_M_SCORE) return text_put(out, cap, "");
         tb_itoa(g->score[viewer][g->pending.arg], num, sizeof num);
         if (tb_say_cat(g->pending.arg, cat, sizeof cat) < 0) return -1;
         const char *kv[] = { "cat", cat, "n", num, 0 };
@@ -412,7 +327,7 @@ int tb_say_subline(const TbGame *g, int viewer, const char *const *names, char *
     }
     if (g->turn == viewer) {
         int left = TB_ROLLS - g->roll;
-        return put(out, cap, left >= 2 ? T(SUB_ROLLS_2) : left == 1 ? T(SUB_ROLLS_1) : T(SUB_ROLLS_0));
+        return text_put(out, cap, left >= 2 ? T(SUB_ROLLS_2) : left == 1 ? T(SUB_ROLLS_1) : T(SUB_ROLLS_0));
     }
     if (tb_say_seat(names, g->turn, who, sizeof who) < 0) return -1;
     tb_itoa(g->roll, num, sizeof num);

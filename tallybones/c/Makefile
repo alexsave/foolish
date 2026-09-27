@@ -18,10 +18,11 @@ CFLAGS  ?= -O2 $(WARN)
 SHARED  := ../../shared/c
 SRC     := src/tb.c src/tb_code.c src/tb_plan.c src/tb_view.c src/tb_lobby.c src/tb_msg.c \
            src/tb_say.c src/tb_beats.c i18n/strings_en.c \
-           $(SHARED)/deal_rng.c $(SHARED)/sha256.c $(SHARED)/b32.c $(SHARED)/mixrad.c
+           $(SHARED)/deal_rng.c $(SHARED)/sha256.c $(SHARED)/b32.c $(SHARED)/mixrad.c \
+           $(SHARED)/text_util/text_util.c
 HDR     := $(wildcard src/*.h) i18n/keys.h tests/tb_check.h \
            $(SHARED)/deal_rng.h $(SHARED)/sha256.h $(SHARED)/b32.h $(SHARED)/mixrad.h \
-           $(SHARED)/test/check.h $(SHARED)/test/twophone.h
+           $(SHARED)/test/check.h $(SHARED)/test/twophone.h $(SHARED)/text_util/text_util.h
 
 # One binary per test file; each takes an optional scale argument.
 TESTS   := tb_test tb_msg_test tb_fuzz tb_say_test tb_beats_test tb_twophone_test
@@ -44,8 +45,15 @@ CHECK_TEST := $(SHARED)/test/check_test.c $(SHARED)/test/check.h $(SHARED)/test/
 build/check_test: $(CHECK_TEST) | build
 	$(CC) $(CFLAGS) $(SHARED)/test/check_test.c -o $@
 
-run: $(addprefix build/,$(TESTS)) build/check_test build/ios_smoke
+# The shared text writers' own test (shared/c/text_util): UTF-8, columns, the
+# buffer writers at their capacity.
+TEXT_UTIL := $(SHARED)/text_util/text_util.c $(SHARED)/text_util/text_util_test.c $(SHARED)/text_util/text_util.h
+build/text_util_test: $(TEXT_UTIL) | build
+	$(CC) $(CFLAGS) $(SHARED)/text_util/text_util.c $(SHARED)/text_util/text_util_test.c -o $@
+
+run: $(addprefix build/,$(TESTS)) build/check_test build/text_util_test build/ios_smoke
 	./build/check_test
+	./build/text_util_test
 	./build/tb_test
 	./build/tb_msg_test $(WIRE_GAMES)
 	./build/tb_fuzz $(FUZZ_GAMES)
@@ -62,8 +70,12 @@ build/asan_%: tests/%.c $(SRC) $(HDR) | build
 build/asan_check_test: $(CHECK_TEST) | build
 	$(CC) $(ASAN_FLAGS) $(SHARED)/test/check_test.c -o $@
 
-asan: $(addprefix build/asan_,$(TESTS)) build/asan_check_test build/asan_ios_smoke
+build/asan_text_util_test: $(TEXT_UTIL) | build
+	$(CC) $(ASAN_FLAGS) $(SHARED)/text_util/text_util.c $(SHARED)/text_util/text_util_test.c -o $@
+
+asan: $(addprefix build/asan_,$(TESTS)) build/asan_check_test build/asan_text_util_test build/asan_ios_smoke
 	./build/asan_check_test
+	./build/asan_text_util_test
 	./build/asan_tb_test
 	./build/asan_tb_msg_test 2
 	./build/asan_tb_fuzz 140

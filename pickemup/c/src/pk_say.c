@@ -1,5 +1,6 @@
 /* Pick 'Em Up - which sentence a position says. See pk_say.h. */
 #include "pk_say.h"
+#include "../../../shared/c/text_util/text_util.h"
 #include "pk_plan.h"
 #include "pk_view.h"
 #include <string.h>
@@ -25,102 +26,16 @@ int pk_key_may_be_empty(int key) { return key >= 0 && key < PK_K_COUNT && KEY_EM
 
 #define T(k) pk_text(PK_K_##k)
 
-/* ---- columns (the uttt_text_cols rule) ---------------------------------------- */
+/* ---- columns and filling: shared/c/text_util, named for this kernel's API ----- */
 
-static unsigned next_cp(const unsigned char *s, int *len)
-{
-    if (s[0] < 0x80) { *len = 1; return s[0]; }
-    int n = s[0] >= 0xf0 ? 4 : s[0] >= 0xe0 ? 3 : 2;
-    unsigned c = s[0] & (0x3fu >> (n - 1));
-    for (int i = 1; i < n; i++) {
-        if ((s[i] & 0xc0) != 0x80) { *len = i; return 0xfffd; }
-        c = (c << 6) | (s[i] & 0x3f);
-    }
-    *len = n;
-    return c;
-}
+int pk_text_cols(const char *s) { return text_cols(s); }
+int pk_itoa(int v, char *out, int cap) { return text_itoa(v, out, cap); }
 
-static int cp_cols(unsigned c)
-{
-    if ((c >= 0x0300 && c <= 0x036f) || c == 0x200b || c == 0x200d || c == 0x200e
-        || c == 0x200f || (c >= 0xfe00 && c <= 0xfe0f))
-        return 0;
-    if ((c >= 0x1100 && c <= 0x115f) || (c >= 0x2e80 && c <= 0xa4cf) ||
-        (c >= 0xac00 && c <= 0xd7a3) || (c >= 0xf900 && c <= 0xfaff) ||
-        (c >= 0xfe30 && c <= 0xfe4f) || (c >= 0xff00 && c <= 0xff60) ||
-        (c >= 0xffe0 && c <= 0xffe6) || c >= 0x1f300)
-        return 2;
-    return 1;
-}
-
-int pk_text_cols(const char *s)
-{
-    int cols = 0;
-    for (const unsigned char *p = (const unsigned char *)s; p && *p;) {
-        int n;
-        cols += cp_cols(next_cp(p, &n));
-        p += n;
-    }
-    return cols;
-}
-
-/* ---- filling ------------------------------------------------------------------ */
-
-int pk_itoa(int v, char *out, int cap)
-{
-    char tmp[12];
-    int n = 0, neg = v < 0;
-    unsigned u = neg ? 0u - (unsigned)v : (unsigned)v;
-    do { tmp[n++] = (char)('0' + u % 10u); u /= 10u; } while (u);
-    if (neg) tmp[n++] = '-';
-    if (!out || n + 1 > cap) return -1;
-    for (int i = 0; i < n; i++) out[i] = tmp[n - 1 - i];
-    out[n] = 0;
-    return n;
-}
-
-static int put(char *out, int cap, const char *s)
-{
-    int n = (int)strlen(s);
-    if (!out || n >= cap) return -1;
-    memcpy(out, s, (size_t)n + 1);
-    return n;
-}
-
+/* {game} is the game's name wherever a list does not name it itself. */
 int pk_fill(char *out, int cap, const char *t, const char *const *kv)
 {
-    if (!out || cap < 1 || !t) return -1;
-    int o = 0;
-    for (const char *p = t; *p;) {
-        const char *v = 0;
-        int skip = 1;
-        if (*p == '{') {
-            const char *e = p + 1;
-            while (*e && *e != '}' && *e != '{') e++;
-            if (*e == '}') {
-                size_t len = (size_t)(e - p - 1);
-                for (int i = 0; kv && kv[i]; i += 2)
-                    if (len == strlen(kv[i]) && !strncmp(p + 1, kv[i], len)) {
-                        v = kv[i + 1] ? kv[i + 1] : "";
-                        break;
-                    }
-                if (!v && len == 4 && !strncmp(p + 1, "game", 4)) v = T(GAME_NAME);
-                if (v) skip = (int)(e - p) + 1;
-            }
-        }
-        if (v) {
-            int n = (int)strlen(v);
-            if (o + n >= cap) return -1;
-            memcpy(out + o, v, (size_t)n);
-            o += n;
-        } else {
-            if (o + 1 >= cap) return -1;
-            out[o++] = *p;
-        }
-        p += skip;
-    }
-    out[o] = 0;
-    return o;
+    const char *const game[] = { "game", T(GAME_NAME), 0 };
+    return text_fill(out, cap, t, kv, game);
 }
 
 /* ---- things ------------------------------------------------------------------- */
@@ -138,8 +53,8 @@ int pk_say_card(uint8_t c, char *out, int cap)
     int r = pk_rank(c);
     const char *suits = suits_word(pk_suit(c));
     switch (r) {
-    case PK_R_WILD:  return put(out, cap, T(CARD_WILD));
-    case PK_R_WILD4: return put(out, cap, T(CARD_WILD4));
+    case PK_R_WILD:  return text_put(out, cap, T(CARD_WILD));
+    case PK_R_WILD4: return text_put(out, cap, T(CARD_WILD4));
     case PK_R_SKIP:    { const char *kv[] = { "suits", suits, 0 }; return pk_fill(out, cap, T(CARD_SKIP), kv); }
     case PK_R_REVERSE: { const char *kv[] = { "suits", suits, 0 }; return pk_fill(out, cap, T(CARD_REVERSE), kv); }
     case PK_R_PLUS2:   { const char *kv[] = { "suits", suits, 0 }; return pk_fill(out, cap, T(CARD_PLUS2), kv); }
@@ -155,7 +70,7 @@ int pk_say_card(uint8_t c, char *out, int cap)
 int pk_say_seat(const char *const *names, int seat, char *out, int cap)
 {
     if (seat < 0 || seat >= PK_MAX_SEATS) return -1;
-    if (names && names[seat] && names[seat][0]) return put(out, cap, names[seat]);
+    if (names && names[seat] && names[seat][0]) return text_put(out, cap, names[seat]);
     char num[4];
     pk_itoa(seat + 1, num, sizeof num);
     const char *kv[] = { "n", num, 0 };
@@ -178,8 +93,8 @@ int pk_say_deck_left(const PkGame *g, char *out, int cap)
 
 int pk_say_dir_of(int n_seats, int dir, char *out, int cap)
 {
-    if (n_seats <= 2) return put(out, cap, "");   /* D13: no word at 2 players */
-    return put(out, cap, dir == PK_DIR_CW ? T(DIR_CW) : T(DIR_ACW));
+    if (n_seats <= 2) return text_put(out, cap, "");   /* D13: no word at 2 players */
+    return text_put(out, cap, dir == PK_DIR_CW ? T(DIR_CW) : T(DIR_ACW));
 }
 
 int pk_say_dir(const PkGame *g, char *out, int cap)
@@ -302,7 +217,7 @@ static int clause_turn(const Ctx *c, const Facts *f, char *out, int cap)
         }
     }
     if (drew) return pk_fill(out, cap, drew == 1 ? T(CAP_DREW_ONE) : T(CAP_DREW_N), kv);
-    return put(out, cap, "");
+    return text_put(out, cap, "");
 }
 
 static int clause_next(const Ctx *c, int seat, int key, char *out, int cap)
@@ -321,7 +236,7 @@ static int append(char *out, int cap, int *len, const char *clause)
 {
     if (!clause[0]) return 1;
     if (!*len) {
-        int n = put(out, cap, clause);
+        int n = text_put(out, cap, clause);
         if (n < 0) return -1;
         *len = n;
         return 1;
@@ -418,12 +333,12 @@ int pk_say_headline(const PkGame *g, int viewer, const char *const *names, char 
     char who[NAME_CAP];
     int me = viewer >= 0 && viewer < g->n ? viewer : -1;
     if (g->over) {
-        if (me >= 0 && g->winner == me) return put(out, cap, T(HEAD_YOU_WIN));
+        if (me >= 0 && g->winner == me) return text_put(out, cap, T(HEAD_YOU_WIN));
         if (pk_say_seat(names, g->winner, who, sizeof who) < 0) return -1;
         const char *kv[] = { "who", who, 0 };
         return pk_fill(out, cap, T(HEAD_WINS), kv);
     }
-    if (me >= 0 && g->turn == me) return put(out, cap, T(HEAD_YOUR_TURN));
+    if (me >= 0 && g->turn == me) return text_put(out, cap, T(HEAD_YOUR_TURN));
     if (pk_say_seat(names, g->turn, who, sizeof who) < 0) return -1;
     const char *kv[] = { "who", who, 0 };
     return pk_fill(out, cap, T(HEAD_WAITING), kv);
@@ -432,9 +347,9 @@ int pk_say_headline(const PkGame *g, int viewer, const char *const *names, char 
 static int rank_word(uint8_t top, char *out, int cap)
 {
     switch (pk_rank(top)) {
-    case PK_R_SKIP:    return put(out, cap, T(RANK_SKIP));
-    case PK_R_REVERSE: return put(out, cap, T(RANK_REVERSE));
-    case PK_R_PLUS2:   return put(out, cap, T(RANK_PLUS2));
+    case PK_R_SKIP:    return text_put(out, cap, T(RANK_SKIP));
+    case PK_R_REVERSE: return text_put(out, cap, T(RANK_REVERSE));
+    case PK_R_PLUS2:   return text_put(out, cap, T(RANK_PLUS2));
     default:           return pk_itoa(pk_rank(top), out, cap);
     }
 }
@@ -442,11 +357,11 @@ static int rank_word(uint8_t top, char *out, int cap)
 int pk_say_subline(const PkGame *g, int viewer, const char *const *names, char *out, int cap)
 {
     int me = viewer >= 0 && viewer < g->n ? viewer : -1;
-    if (g->over || me < 0) return put(out, cap, "");
+    if (g->over || me < 0) return text_put(out, cap, "");
     PkView v;
     pk_view(g, me, &v);
-    if (v.my_exposed) return put(out, cap, T(SUB_ON_ONE));
-    if (g->said & (1u << me)) return put(out, cap, T(SUB_SAID));
+    if (v.my_exposed) return text_put(out, cap, T(SUB_ON_ONE));
+    if (g->said & (1u << me)) return text_put(out, cap, T(SUB_SAID));
     if (g->turn == me) {
         int any = 0;
         for (int p = 0; p < v.my_n; p++) any |= v.my_playable[p];
@@ -457,7 +372,7 @@ int pk_say_subline(const PkGame *g, int viewer, const char *const *names, char *
             const char *kv[] = { "suits", suits_word(g->live_suit), "rank", rank, 0 };
             return pk_fill(out, cap, pk_is_wild(top) ? T(SUB_MATCH_WILD) : T(SUB_MATCH), kv);
         }
-        return put(out, cap, v.can_draw ? T(SUB_PLAYABLE_NONE) : "");
+        return text_put(out, cap, v.can_draw ? T(SUB_PLAYABLE_NONE) : "");
     }
     /* who plays before you: at most the next two (UI.html "Bo, then Cy, then you") */
     char a[NAME_CAP], b[NAME_CAP];
@@ -472,7 +387,7 @@ int pk_say_subline(const PkGame *g, int viewer, const char *const *names, char *
         const char *kv[] = { "a", a, "b", b, 0 };
         return pk_fill(out, cap, T(SUB_ORDER), kv);
     }
-    return put(out, cap, "");
+    return text_put(out, cap, "");
 }
 
 int pk_say_spoken_card(const PkGame *g, int viewer, int pos, char *out, int cap)

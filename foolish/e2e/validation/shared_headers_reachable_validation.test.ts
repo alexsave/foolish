@@ -61,9 +61,13 @@ const REPO = resolve(PRODUCT, '..');
  *                          nothing that ships includes them, but a test is
  *                          compiled by a build system like any other file, so
  *                          each product's test header spells them relatively
+ *   text_util.h            shared/c/text_util, the UTF-8 stepping, column
+ *                          counting and buffer writers under four products'
+ *                          say layers; in its own directory beside its test so
+ *                          the builds that wildcard shared/c/*.c pick up neither
  */
 const SHARED_HEADERS = ['sha256.h', 'deal_rng.h', 'b32.h', 'mixrad.h', 'languages.h', 'msg_stage.h', 'motion_ruler.h',
-    'check.h', 'twophone.h'];
+    'check.h', 'twophone.h', 'text_util.h'];
 
 /** Every C source and header in the repo, both products, excluding build output. */
 function kernelSources(): string[] {
@@ -132,6 +136,7 @@ test('the shared sources compile with no -I whatsoever', () => {
         'shared/c/deal_rng.c',
         'shared/c/b32.c',
         'shared/c/mixrad.c',
+        'shared/c/text_util/text_util.c',
         'foolish/c/src/game.c',
         'werewolf/c/src/ww_game.c',
         // One TU per newer product, chosen for the shared headers it includes.
@@ -145,6 +150,10 @@ test('the shared sources compile with no -I whatsoever', () => {
         'tallybones/c/src/tb.c',        // sha256.h, deal_rng.h
         'tallybones/c/src/tb_msg.c',    // sha256.h, b32.h
         'tallybones/c/src/tb_code.c',   // mixrad.h
+        'uttt/c/src/uttt_say.c',        // text_util.h
+        'pickemup/c/src/pk_say.c',      // text_util.h
+        'chuiniu/c/src/cn_say.c',       // text_util.h
+        'tallybones/c/src/tb_say.c',    // text_util.h
         // The test harness, reached only from tests.
         'chuiniu/c/tests/cn_test.c',            // test/check.h, through cn_check.h
         'tallybones/c/tests/tb_twophone_test.c', // test/twophone.h
@@ -192,16 +201,17 @@ test('every build system that compiles the kernel also compiles the shared sourc
     // sim and the native server take $(wildcard shared/c/*.c), so they compile
     // b32.c and mixrad.c too; what they must not lose is the pair they link.)
     const KERNEL = ['deal_rng.c', 'sha256.c'];
-    const ALL_FOUR = ['deal_rng.c', 'sha256.c', 'b32.c', 'mixrad.c'];
+    const ALL_FIVE = ['deal_rng.c', 'sha256.c', 'b32.c', 'mixrad.c', 'text_util.c'];
     const builds: Array<{ make: string; variable: string; shared: string[] }> = [
         { make: 'foolish/c', variable: 'CORE_SRC', shared: KERNEL },
         { make: 'foolish/foolyard', variable: 'KERNEL_SRC', shared: KERNEL },
         { make: 'foolish/server/impls/native', variable: 'KERNEL_SRC', shared: KERNEL },
         { make: 'werewolf/c', variable: 'CORE_SRC', shared: KERNEL },
-        { make: 'uttt/c', variable: 'SRC', shared: ['sha256.c', 'b32.c', 'mixrad.c'] },
-        { make: 'pickemup/c', variable: 'SRC', shared: ALL_FOUR },
-        { make: 'chuiniu/c', variable: 'SRC', shared: ALL_FOUR },
-        { make: 'tallybones/c', variable: 'SRC', shared: ALL_FOUR },
+        { make: 'uttt/c', variable: 'SRC', shared: ['sha256.c', 'b32.c', 'mixrad.c', 'text_util.c'] },
+        { make: 'uttt/c', variable: 'WEB_WASM_SRC', shared: ['b32.c', 'mixrad.c', 'text_util.c'] },
+        { make: 'pickemup/c', variable: 'SRC', shared: ALL_FIVE },
+        { make: 'chuiniu/c', variable: 'SRC', shared: ALL_FIVE },
+        { make: 'tallybones/c', variable: 'SRC', shared: ALL_FIVE },
     ];
     const missing: string[] = [];
     for (const { make, variable, shared } of builds) {

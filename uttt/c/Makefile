@@ -30,7 +30,7 @@ LANGS   := en ru ko zh vi es pt fr de it ja pl uk tr id th nl sv da no fi cs ro 
 I18N    := $(foreach l,$(LANGS),i18n/strings_$(l).c)
 SRC     := src/uttt.c src/uttt_code.c src/uttt_bots.c src/uttt_msg.c src/uttt_say.c \
            src/uttt_pen.c src/uttt_draw.c src/uttt_anim.c src/uttt_rule.c src/uttt_lang.c \
-           $(I18N) $(SHARED)/sha256.c $(SHARED)/b32.c $(SHARED)/mixrad.c
+           $(I18N) $(SHARED)/sha256.c $(SHARED)/b32.c $(SHARED)/mixrad.c $(SHARED)/text_util/text_util.c
 
 all: build/uttt_test build/uttt_msg_test build/uttt_arena build/uttt_render build/uttt_mate
 
@@ -52,15 +52,22 @@ MSG_STAGE := ../../shared/c/msg_stage
 build/msg_stage_test: $(MSG_STAGE)/msg_stage_test.c $(MSG_STAGE)/msg_stage.h | build
 	$(CC) $(CFLAGS) $(MSG_STAGE)/msg_stage_test.c -o $@
 
+# The shared text writers (shared/c/text_util): the stepping, the copy and the
+# filler this kernel uses, and the column table it does not.
+TEXT_UTIL := $(SHARED)/text_util
+build/text_util_test: $(TEXT_UTIL)/text_util.c $(TEXT_UTIL)/text_util_test.c $(TEXT_UTIL)/text_util.h | build
+	$(CC) $(CFLAGS) $(TEXT_UTIL)/text_util.c $(TEXT_UTIL)/text_util_test.c -o $@
+
 # The message: every ply of 10,000 games through bytes and text, the seat
 # truth table, two joiners, the tap map and every sentence.
-run: build/uttt_test build/uttt_msg_test build/uttt_anim_test build/msg_stage_test build/uttt_bots_test build/uttt_ink_test build/uttt_lang_test build/uttt_lang_en_test
+run: build/uttt_test build/uttt_msg_test build/uttt_anim_test build/msg_stage_test build/text_util_test build/uttt_bots_test build/uttt_ink_test build/uttt_lang_test build/uttt_lang_en_test
 	./build/uttt_test 1000
 	./build/uttt_lang_test
 	./build/uttt_lang_en_test
 	./build/uttt_bots_test 10
 	./build/uttt_msg_test 10000
 	./build/msg_stage_test
+	./build/text_util_test
 	./build/uttt_anim_test
 	./build/uttt_ink_test
 
@@ -189,6 +196,9 @@ asan: $(SRC) tests/uttt_test.c | build
 	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
 	  $(SRC) tests/uttt_lang_test.c -o build/uttt_lang_asan $(LDLIBS)
 	./build/uttt_lang_asan
+	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
+	  $(TEXT_UTIL)/text_util.c $(TEXT_UTIL)/text_util_test.c -o build/text_util_asan
+	./build/text_util_asan
 
 clean:
 	rm -rf build
@@ -238,10 +248,11 @@ WEB_WASM_CC  ?= $(if $(WASM_CC),$(WASM_CC),clang)
 WEB_WASM_SRC := src/uttt.c src/uttt_code.c src/uttt_pen.c src/uttt_draw.c \
                 src/uttt_anim.c src/uttt_rule.c src/uttt_say.c src/uttt_lang.c \
                 i18n/strings_en.c ../../shared/c/b32.c ../../shared/c/mixrad.c \
+                ../../shared/c/text_util/text_util.c \
                 ../../shared/c/wasm/libc.c ../../shared/c/wasm/libm.c wasm/uttt_web.c
 WEB_WASM_OUT := ../web/public/uttt.wasm
 
-$(WEB_WASM_OUT): $(WEB_WASM_SRC) $(wildcard src/*.h i18n/*.h ../../shared/c/wasm/include/*.h) Makefile
+$(WEB_WASM_OUT): $(WEB_WASM_SRC) $(wildcard src/*.h i18n/*.h ../../shared/c/wasm/include/*.h ../../shared/c/text_util/*.h) Makefile
 	@mkdir -p $(dir $@)
 	$(WEB_WASM_CC) --target=wasm32 -Oz -nostdlib -ffreestanding -mbulk-memory \
 	  -mno-nontrapping-fptoint -std=c11 -Wall -Wextra -Werror -DUTTT_LANG_ENGLISH_ONLY \
