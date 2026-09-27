@@ -26,7 +26,7 @@ static void test_table(void)
         CHECK(s[0] || cn_key_may_be_empty(k), "%s is empty", cn_key_name(k));
         CHECK(!has_dash(s), "%s has an em or en dash", cn_key_name(k));
         size_t n = strlen(s);
-        CHECK(n == 0 || s[n - 1] != '.' || !strcmp(cn_key_name(k), "CAP_JOIN"), "%s ends in a full stop", cn_key_name(k));
+        CHECK(n == 0 || s[n - 1] != '.', "%s ends in a full stop", cn_key_name(k));
         CHECK(!cn_key_max(k) || cn_text_cols(s) <= cn_key_max(k), "%s is %d columns, the limit %d",
               cn_key_name(k), cn_text_cols(s), cn_key_max(k));
         for (const char *p = s; (p = strchr(p, '{')); p++) {
