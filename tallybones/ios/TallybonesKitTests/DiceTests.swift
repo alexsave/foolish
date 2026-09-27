@@ -191,10 +191,12 @@ final class TwoPhoneTests: XCTestCase {
         Phones.be(0)
         Tb.sender(of: keepLink, isDM: true, iSent: true)
         XCTAssertEqual(alex.adopt(keepLink, arrival: false), 0)
-        XCTAssertNotNil(alex.score(.fullHouse))
+        XCTAssertNotNil(alex.score(.tallybones))
         alex.commit()
         let scoreLink = try XCTUnwrap(alex.text)
         let alexCard = try XCTUnwrap(alex.view().cards.first)
+        XCTAssertEqual(alexCard.score(.tallybones), 0, "a row taken for zero is filled, not open")
+        XCTAssertEqual(alexCard.filled, 1)
 
         Phones.be(1)
         Tb.sender(of: scoreLink, isDM: true, iSent: false)
