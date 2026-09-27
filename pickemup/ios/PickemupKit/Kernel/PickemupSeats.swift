@@ -14,8 +14,16 @@
 import Foundation
 
 public enum PickemupSeats {
-    private static let recordsKey = "pickemup.seats.v1"
-    private static let nicknameKey = "pickemup.nickname"
+    private static let recordsKey = "pickemup.seats.v1" + personaSuffix
+    private static let nicknameKey = "pickemup.nickname" + personaSuffix
+
+    /// A Debug persona (`dev.persona`) keeps its own records and name.
+    private static var personaSuffix: String {
+#if DEBUG
+        if let p = PickemupDev.persona { return ".p\(p.n)" }
+#endif
+        return ""
+    }
     private static var loaded = false
 
     private static var store: UserDefaults { .standard }

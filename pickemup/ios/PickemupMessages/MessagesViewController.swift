@@ -69,7 +69,9 @@ final class MessagesViewController: MSMessagesAppViewController {
         PickemupSeats.load()
         Pk.nickname(PickemupSeats.nickname)
 #if DEBUG
-        if PickemupSeats.nickname.isEmpty, let nick = PickemupDev.nickname { PickemupSeats.nickname = nick }
+        if PickemupSeats.nickname.isEmpty, let nick = PickemupDev.persona?.name ?? PickemupDev.nickname {
+            PickemupSeats.nickname = nick
+        }
 #endif
         // a stale xcframework or stale Generated/ shows the unreadable screen
         // (the host's one gate, I34); every later read asks the same gate
@@ -283,10 +285,23 @@ final class MessagesViewController: MSMessagesAppViewController {
         sent = text
     }
 
+    /// This device's participant id as the kernel's bytes; a Debug persona
+    /// (`dev.persona`, I41) is another person on the same simulator.
+    private static func who(_ participant: UUID) -> Data {
+        let id = withUnsafeBytes(of: participant.uuid) { Data($0) }
+#if DEBUG
+        if let p = PickemupDev.persona {
+            var other = id
+            other[other.count - 1] ^= p.n
+            return other
+        }
+#endif
+        return id
+    }
+
     /// Who this device is: its participant id, and who sent the tapped bubble.
     private func identify(_ conversation: MSConversation) {
-        let id = withUnsafeBytes(of: conversation.localParticipantIdentifier.uuid) { Data($0) }
-        Pk.me(id)
+        Pk.me(Self.who(conversation.localParticipantIdentifier))
         if let sel = conversation.selectedMessage, let text = sel.url?.absoluteString {
             Pk.sender(of: text, isDM: conversation.remoteParticipantIdentifiers.count == 1,
                       iSent: sel.senderParticipantIdentifier == conversation.localParticipantIdentifier)

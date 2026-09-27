@@ -39,7 +39,7 @@ foolish/ios/Tools/rig/rig.sh build
 ```
 
 `rig.env` derives every path from its own location, so a worktree drives its own tree.
-A Debug build reads two dev files from the App Group (`PickemupKit/Kernel/PickemupDev.swift`): `dev.empty` draws nothing, and `dev.nick` is the nickname a fresh simulator sits down under.
+A Debug build reads three dev files from the App Group (`PickemupKit/Kernel/PickemupDev.swift`): `dev.empty` draws nothing, `dev.nick` is the nickname a fresh simulator sits down under, and `dev.persona` ("1 Bo") makes the next appex process another person with its own seat records, so one simulator's two stub threads can seat two players (IOS_DECISIONS I41; leave the thread before flipping it).
 
 ## What is where
 
