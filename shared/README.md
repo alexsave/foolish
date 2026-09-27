@@ -12,10 +12,10 @@ Swift reaches a header-only C module through its `module.modulemap` on `SWIFT_IN
 
 | Path | What | Used by |
 | --- | --- | --- |
-| `c/sha256.{c,h}` | SHA-256 | CARDS, UTTT, THIRD, SHED, LIAR, BONES |
-| `c/deal_rng.{c,h}` | the deal's RNG | CARDS, THIRD, SHED, LIAR, BONES |
-| `c/b32.{c,h}` | base32 codes | UTTT, SHED, LIAR, BONES |
-| `c/mixrad.{c,h}` | mixed-radix arithmetic on a byte bignum, the history-as-code body under the game coders | UTTT, SHED, LIAR, BONES |
+| `c/sha256.{c,h}` | SHA-256; `sha256_test.c` the NIST vectors (UTTT runs it) | CARDS, UTTT, THIRD, SHED, LIAR, BONES |
+| `c/deal_rng.{c,h}` | the deal's RNG; `deal_rng_test.c` the RFC 8439 vectors (UTTT runs it) | CARDS, THIRD, SHED, LIAR, BONES |
+| `c/b32.{c,h}` | base32 codes; `b32_test.c` (UTTT runs it) | UTTT, SHED, LIAR, BONES |
+| `c/mixrad.{c,h}` | mixed-radix arithmetic on a byte bignum, the history-as-code body under the game coders; `mixrad_test.c` (UTTT runs it) | UTTT, SHED, LIAR, BONES |
 | `c/wasm/` | the freestanding libc and libm a wasm32 build compiles against; `libc_test.c` runs `libc.c` natively against the host C library (UTTT runs it) | CARDS, UTTT (both link `libc.c` and `libm.c`), SHED (its objects, and `libc.c` in its native-vs-wasm cross-check link), LIAR, BONES (headers only: their wasm build is objects only) |
 | `c/i18n/languages.h` | the language registry: every language's code, endonym and direction, one row each | CARDS (the string generator reads it), UTTT (compiled into its kernel, which indexes its tables by it) |
 | `c/motion_ruler/` | the debug ruler's palette and geometry (`CMotionRuler`), painted by both products and read by `tools/motion` | CARDS, UTTT |
