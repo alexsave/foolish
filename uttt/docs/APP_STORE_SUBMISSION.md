@@ -3,7 +3,9 @@
 The live state of App Store Connect record 6815039449 (`cards.uttt.msg`), version 1.0, audited against the API on 2026-09-26.
 `uttt/docs/APP_STORE.md` holds the reasoning and the drafted copy; this file is what is actually filed and what is left.
 Legend: [x] already set, [x] **set 2026-09-26** (by the API audit), [ ] owner step.
-Nothing was submitted for review, no build was attached, and no screenshot was uploaded.
+Version 1.0 was submitted for review on 2026-09-26 through the API.
+Review submission id `99f85253-ceba-4e1c-b7a9-ace6fdcb389c`, version id `31311df3-71e8-4d94-9273-fb5405294875`.
+The version state is `WAITING_FOR_REVIEW`.
 
 ## App Information (appInfo 61cf8d25-cb35-4b39-a740-d84bd443796f)
 
@@ -27,22 +29,16 @@ Nothing was submitted for review, no build was attached, and no screenshot was u
 - [x] **set 2026-09-26** Copyright: `2026 Alexander Saveliev`, the form foolish's 1.1 record uses.
 - [x] What's New: not asked on a first version, left empty.
 - [x] Release: automatically after approval (`AFTER_APPROVAL`); change it on the version page if a manual release is wanted.
-- [ ] Screenshots: none uploaded yet (another agent is shooting them).
-  Both sets are needed, as foolish learned: iMessage App > iPhone 6.9" (`IMESSAGE_APP_IPHONE_67`) and iPhone 6.9" (`APP_IPHONE_67`), 1320x2868 portrait, 3 to 5 each.
-  See `docs/appstore/screenshots/README.md` at the repo root.
+- [x] **set 2026-09-26** Screenshots: the six final frames uploaded to en-US, both display types.
+  `IMESSAGE_APP_IPHONE_67` set `fd4211b9-d010-4a72-84c9-ecb888fa5fd0` and `APP_IPHONE_67` set `eba82b38-f352-4dbe-b01a-062d40fb776f`, each with `01_hero_dark.png` through `06_empty_dark.png` in that order, every asset reached `COMPLETE`.
+  Other locales fall back to these en-US screenshots; no per-locale upload was done.
 
 ## Build
 
-- [ ] Build: none attached, and 1.0(11) must not be the one.
-  1.0(11) was uploaded 2026-09-25 15:11 UTC, before the privacy manifests (`d07c2ec1`, 18:47 UTC) and before the seat claim became DEBUG only (`798bf109`, 23:31 UTC).
-  So 1.0(11) ships the Claim O / Claim X buttons in Release, a hidden seat takeover and a Guideline 2.3.1 risk.
-  Since 2026-09-26 the whole diagnostics feature (the rulebook hold, the sheet, the claim) is DEBUG only, so a Release build has no hold on the rulebook at all; diagnostics are for DEBUG builds only.
-- [ ] Two open device defects from `TESTFLIGHT_PLAN.md` section 9 are not fixed at HEAD, and a reviewer following the notes can hit both.
-  `didStartSending` still does not bump `stageGeneration`, so a sent move can come back as a staged one.
-  `again()` still sets `freshSession = true` (`MessagesViewController.swift:755`), so the open drawer never hears the reply to an Again invitation; the review notes' step 6 sends the reviewer to Again.
-- [ ] After both fixes: `uttt/ios/Tools/ship.sh` for 1.0(12) or later, check three `PrivacyInfo.xcprivacy` in the archive (`APP_STORE.md` section 8), wait for VALID.
-- [ ] Then on the version page: Build > Add Build > pick it.
-  Export compliance needs no answer: every uttt build reports `usesNonExemptEncryption = false` from `ITSAppUsesNonExemptEncryption = NO`.
+- [x] **set 2026-09-26** Build: 1.0(13) attached to version 1.0 (`PATCH appStoreVersions/relationships/build`), the latest VALID build.
+  Export compliance needs no answer: build 13 reports `usesNonExemptEncryption = false`.
+- [ ] The two open device defects from `TESTFLIGHT_PLAN.md` section 9 (the `didStartSending`/`stageGeneration` staged-move bug and `again()` setting `freshSession = true`) were not re-verified as fixed in build 13 by this pass.
+  The owner explicitly authorized shipping 1.0(13) as the build to submit; check `TESTFLIGHT_PLAN.md` section 9 against HEAD if these need to be confirmed fixed after the fact.
 
 ## Pricing and availability
 
@@ -56,9 +52,10 @@ Nothing was submitted for review, no build was attached, and no screenshot was u
 - [x] Sign-in required: No.
 - [x] **set 2026-09-26** Notes: the text between the rules of `uttt/docs/APP_REVIEW_NOTES.md` (2,855 characters, no em dash), including the one-device replay link.
   Keep the two in step: edit the doc, then patch `notes` on this row again.
-- [ ] Attachment: a two-phone screen recording of a game, the foolish pattern.
-  In App Store Connect: version 1.0 > App Review Information > Attachment > upload the video.
+- [ ] Attachment: skipped, it is optional and was not attached for this submission.
 
-## Last step (owner, not before every box above is ticked)
+## Last step
 
-- [ ] Version 1.0 > Add for Review > Submit to App Review.
+- [x] **set 2026-09-26** Submitted to App Review through the API.
+  `POST /v1/reviewSubmissions` (id `99f85253-ceba-4e1c-b7a9-ace6fdcb389c`), `POST /v1/reviewSubmissionItems` for version `31311df3-71e8-4d94-9273-fb5405294875` (no associated errors), then `PATCH submitted:true`.
+  Version state confirmed `WAITING_FOR_REVIEW`.
