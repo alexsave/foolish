@@ -10,6 +10,7 @@
  * Pure arithmetic: no resident, no game, no allocation. sinf / cosf are the
  * only libm this needs, and only the iOS bridge links this file. */
 #include "include/pk_api.h"
+#include "../../../shared/c/collapse/collapse.h"
 #include <math.h>
 #include <stddef.h>
 
@@ -356,17 +357,14 @@ int pk_lay_drop(float board_w, float board_h, float collapse, float hand_box_h, 
     return inside(x, y, rx, ry, rw, rh) ? PK_DROP_PILE : PK_DROP_NONE;
 }
 
-/* ---- the auto-collapse's push (A14): uttt_collapse_push, on this kernel's numbers ---- */
+/* ---- the auto-collapse's push (A14): shared/c/collapse, the one curve ---- */
 
-float pk_lay_collapse_push(float travel, int t_ms)
-{
-    if (t_ms <= 0) return travel;
-    if (t_ms >= PK_LAY_COLLAPSE_MS) return 0.0f;
-    const double w = 2.0 * 3.14159265358979 / PK_LAY_DRAWER_RESPONSE_MS, t = (double)t_ms;
-    const double left = (1.0 + w * t) * exp(-w * t);            /* 1 - the host's progress */
-    /* THE LAST KEYFRAME IS EXACTLY ZERO and is reached without a step: what
-     * the spring still has left at the end (under 0.3%) is faded out linearly
-     * over the slide, so removing the animation moves nothing. */
-    const double tail = (1.0 + w * PK_LAY_COLLAPSE_MS) * exp(-w * PK_LAY_COLLAPSE_MS);
-    return (float)(travel * (left - tail * t / PK_LAY_COLLAPSE_MS));
-}
+/* pk_api.h is the header the xcframework ships to Swift on its own, so it
+ * cannot include shared/ and spells the two numbers as literals; the compiler
+ * holds them to the shared ones, so they cannot drift apart. */
+_Static_assert(PK_LAY_COLLAPSE_MS == COLLAPSE_MS, "PK_LAY_COLLAPSE_MS is shared/c/collapse's COLLAPSE_MS");
+_Static_assert(PK_LAY_DRAWER_RESPONSE_MS == COLLAPSE_RESPONSE_MS,
+               "PK_LAY_DRAWER_RESPONSE_MS is shared/c/collapse's COLLAPSE_RESPONSE_MS");
+
+/* A one-line forwarder: the name is the one Swift calls (PkCollapse.swift). */
+float pk_lay_collapse_push(float travel, int t_ms) { return collapse_push(travel, t_ms); }
