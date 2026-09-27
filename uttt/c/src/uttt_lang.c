@@ -1,5 +1,6 @@
 #include "uttt_lang.h"
 #include "../../../shared/c/i18n/languages.h"
+#include "../../../shared/c/text_util/text_util.h"
 #include <string.h>
 
 /* One table per language, each in its own uttt/c/i18n/strings_<code>.c. */
@@ -148,20 +149,9 @@ int uttt_plural(int lang, int n)
     }
 }
 
-/* Decode one UTF-8 character at `s`; its length in `*len`. */
-static unsigned next_cp(const unsigned char *s, int *len)
-{
-    if (s[0] < 0x80) { *len = 1; return s[0]; }
-    int n = s[0] >= 0xf0 ? 4 : s[0] >= 0xe0 ? 3 : 2;
-    unsigned c = s[0] & (0x3fu >> (n - 1));
-    for (int i = 1; i < n; i++) {
-        if ((s[i] & 0xc0) != 0x80) { *len = i; return 0xfffd; }
-        c = (c << 6) | (s[i] & 0x3f);
-    }
-    *len = n;
-    return c;
-}
-
+/* THIS KERNEL'S OWN WIDTH TABLE, not shared/c/text_util's: it zeroes the
+ * Hebrew, Arabic and Thai marks its languages carry and has no emoji row, and
+ * the string limits in i18n/ were checked against it. The stepping is shared. */
 static int cp_cols(unsigned c)
 {
     if ((c >= 0x0300 && c <= 0x036f) || (c >= 0x0591 && c <= 0x05c7) ||
@@ -182,7 +172,7 @@ int uttt_text_cols(const char *s)
     int cols = 0;
     for (const unsigned char *p = (const unsigned char *)s; p && *p;) {
         int n;
-        cols += cp_cols(next_cp(p, &n));
+        cols += cp_cols(text_next_cp(p, &n));
         p += n;
     }
     return cols;
@@ -190,33 +180,5 @@ int uttt_text_cols(const char *s)
 
 int uttt_fill(char *out, int cap, const char *t, const char *const *kv)
 {
-    if (!out || cap < 1 || !t) return -1;
-    int o = 0;
-    for (const char *p = t; *p;) {
-        const char *v = 0;
-        int skip = 1;
-        if (*p == '{') {
-            const char *e = p + 1;
-            while (*e && *e != '}' && *e != '{') e++;
-            if (*e == '}')
-                for (int i = 0; kv && kv[i]; i += 2)
-                    if ((size_t)(e - p - 1) == strlen(kv[i]) && !strncmp(p + 1, kv[i], (size_t)(e - p - 1))) {
-                        v = kv[i + 1] ? kv[i + 1] : "";
-                        skip = (int)(e - p) + 1;
-                        break;
-                    }
-        }
-        if (v) {
-            int n = (int)strlen(v);
-            if (o + n >= cap) return -1;
-            memcpy(out + o, v, (size_t)n);
-            o += n;
-        } else {
-            if (o + 1 >= cap) return -1;
-            out[o++] = *p;
-        }
-        p += skip;
-    }
-    out[o] = 0;
-    return o;
+    return text_fill(out, cap, t, kv, 0);
 }

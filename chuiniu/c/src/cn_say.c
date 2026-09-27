@@ -1,5 +1,6 @@
 /* Chui Niu - which sentence a position says. See cn_say.h. */
 #include "cn_say.h"
+#include "../../../shared/c/text_util/text_util.h"
 #include "cn_msg.h"
 #include <string.h>
 
@@ -24,102 +25,16 @@ int cn_key_may_be_empty(int key) { return key >= 0 && key < CN_K_COUNT && KEY_EM
 
 #define T(k) cn_text(CN_K_##k)
 
-/* ---- columns (pickemup's pk_text_cols) ------------------------------------------ */
+/* ---- columns and filling: shared/c/text_util, named for this kernel's API ----- */
 
-static unsigned next_cp(const unsigned char *s, int *len)
-{
-    if (s[0] < 0x80) { *len = 1; return s[0]; }
-    int n = s[0] >= 0xf0 ? 4 : s[0] >= 0xe0 ? 3 : 2;
-    unsigned c = s[0] & (0x3fu >> (n - 1));
-    for (int i = 1; i < n; i++) {
-        if ((s[i] & 0xc0) != 0x80) { *len = i; return 0xfffd; }
-        c = (c << 6) | (s[i] & 0x3f);
-    }
-    *len = n;
-    return c;
-}
+int cn_text_cols(const char *s) { return text_cols(s); }
+int cn_itoa(int v, char *out, int cap) { return text_itoa(v, out, cap); }
 
-static int cp_cols(unsigned c)
-{
-    if ((c >= 0x0300 && c <= 0x036f) || c == 0x200b || c == 0x200d || c == 0x200e
-        || c == 0x200f || (c >= 0xfe00 && c <= 0xfe0f))
-        return 0;
-    if ((c >= 0x1100 && c <= 0x115f) || (c >= 0x2e80 && c <= 0xa4cf) ||
-        (c >= 0xac00 && c <= 0xd7a3) || (c >= 0xf900 && c <= 0xfaff) ||
-        (c >= 0xfe30 && c <= 0xfe4f) || (c >= 0xff00 && c <= 0xff60) ||
-        (c >= 0xffe0 && c <= 0xffe6) || c >= 0x1f300)
-        return 2;
-    return 1;
-}
-
-int cn_text_cols(const char *s)
-{
-    int cols = 0;
-    for (const unsigned char *p = (const unsigned char *)s; p && *p;) {
-        int n;
-        cols += cp_cols(next_cp(p, &n));
-        p += n;
-    }
-    return cols;
-}
-
-/* ---- filling ------------------------------------------------------------------ */
-
-int cn_itoa(int v, char *out, int cap)
-{
-    char tmp[12];
-    int n = 0, neg = v < 0;
-    unsigned u = neg ? 0u - (unsigned)v : (unsigned)v;
-    do { tmp[n++] = (char)('0' + u % 10u); u /= 10u; } while (u);
-    if (neg) tmp[n++] = '-';
-    if (!out || n + 1 > cap) return -1;
-    for (int i = 0; i < n; i++) out[i] = tmp[n - 1 - i];
-    out[n] = 0;
-    return n;
-}
-
+/* {game} is the game's name wherever a list does not name it itself. */
 int cn_fill(char *out, int cap, const char *t, const char *const *kv)
 {
-    if (!out || cap < 1 || !t) return -1;
-    int o = 0;
-    for (const char *p = t; *p;) {
-        const char *v = 0;
-        int skip = 1;
-        if (*p == '{') {
-            const char *e = p + 1;
-            while (*e && *e != '}' && *e != '{') e++;
-            if (*e == '}') {
-                size_t len = (size_t)(e - p - 1);
-                for (int i = 0; kv && kv[i]; i += 2)
-                    if (len == strlen(kv[i]) && !strncmp(p + 1, kv[i], len)) {
-                        v = kv[i + 1] ? kv[i + 1] : "";
-                        break;
-                    }
-                if (!v && len == 4 && !strncmp(p + 1, "game", 4)) v = T(GAME_NAME);
-                if (v) skip = (int)(e - p) + 1;
-            }
-        }
-        if (v) {
-            int n = (int)strlen(v);
-            if (o + n >= cap) return -1;
-            memcpy(out + o, v, (size_t)n);
-            o += n;
-        } else {
-            if (o + 1 >= cap) return -1;
-            out[o++] = *p;
-        }
-        p += skip;
-    }
-    out[o] = 0;
-    return o;
-}
-
-static int put(char *out, int cap, const char *s)
-{
-    int n = (int)strlen(s);
-    if (!out || n >= cap) return -1;
-    memcpy(out, s, (size_t)n + 1);
-    return n;
+    const char *const game[] = { "game", T(GAME_NAME), 0 };
+    return text_fill(out, cap, t, kv, game);
 }
 
 /* ---- things ------------------------------------------------------------------- */
@@ -129,7 +44,7 @@ enum { NAME_CAP = 64, PHRASE_CAP = 64, LINE_CAP = 256 };
 static int qty_word(int q, int initial, char *out, int cap)
 {
     if (q >= 1 && q <= CN_NUM_WORDS)
-        return put(out, cap, cn_text((initial ? CN_K_NUMCAP_1 : CN_K_NUM_1) + q - 1));
+        return text_put(out, cap, cn_text((initial ? CN_K_NUMCAP_1 : CN_K_NUM_1) + q - 1));
     return cn_itoa(q, out, cap);
 }
 
@@ -145,7 +60,7 @@ int cn_say_bid(int q, int f, int initial, char *out, int cap)
 int cn_say_seat(const char *const *names, int seat, char *out, int cap)
 {
     if (seat < 0 || seat >= CN_MAX_SEATS) return -1;
-    if (names && names[seat] && names[seat][0]) return put(out, cap, names[seat]);
+    if (names && names[seat] && names[seat][0]) return text_put(out, cap, names[seat]);
     char num[4];
     cn_itoa(seat + 1, num, sizeof num);
     const char *kv[] = { "n", num, 0 };
@@ -296,15 +211,15 @@ int cn_say_headline(const CnGame *g, int viewer, const char *const *names, char 
     const char *kv[] = { "who", who, 0 };
     const int me = viewer >= 0 && viewer < g->n ? viewer : -1;
     if (g->phase == CN_PH_OVER) {
-        if (me >= 0 && g->winner == me) return put(out, cap, T(HEAD_YOU_WIN));
+        if (me >= 0 && g->winner == me) return text_put(out, cap, T(HEAD_YOU_WIN));
         if (cn_say_seat(names, g->winner, who, sizeof who) < 0) return -1;
         return cn_fill(out, cap, T(HEAD_WINS), kv);
     }
-    if (me >= 0 && g->dice_n[me] == 0) return put(out, cap, T(HEAD_YOU_OUT));
+    if (me >= 0 && g->dice_n[me] == 0) return text_put(out, cap, T(HEAD_YOU_OUT));
     if (me >= 0 && g->turn == me) {
-        if (!cn_can_call(g)) return put(out, cap, T(HEAD_OPEN));
-        if (!cn_min_raise(g, 0, 0)) return put(out, cap, T(HEAD_ONLY_CALL));
-        return put(out, cap, T(HEAD_RAISE_OR_CALL));
+        if (!cn_can_call(g)) return text_put(out, cap, T(HEAD_OPEN));
+        if (!cn_min_raise(g, 0, 0)) return text_put(out, cap, T(HEAD_ONLY_CALL));
+        return text_put(out, cap, T(HEAD_RAISE_OR_CALL));
     }
     if (cn_say_seat(names, g->turn, who, sizeof who) < 0) return -1;
     return cn_fill(out, cap, T(HEAD_THEIR_TURN), kv);
@@ -312,8 +227,8 @@ int cn_say_headline(const CnGame *g, int viewer, const char *const *names, char 
 
 int cn_say_subline(const CnGame *g, const char *const *names, char *out, int cap)
 {
-    if (g->phase == CN_PH_OVER) return put(out, cap, "");
-    if (!g->bid_q) return put(out, cap, T(SUB_NONE));
+    if (g->phase == CN_PH_OVER) return text_put(out, cap, "");
+    if (!g->bid_q) return text_put(out, cap, T(SUB_NONE));
     char who[NAME_CAP], bid[PHRASE_CAP];
     if (cn_say_seat(names, g->bidder, who, sizeof who) < 0 || cn_say_bid(g->bid_q, g->bid_f, 0, bid, sizeof bid) < 0)
         return -1;
@@ -343,7 +258,7 @@ int cn_say_table(const CnGame *g, char *out, int cap)
 
 int cn_say_reveal_count(const CnGame *g, char *out, int cap)
 {
-    if (!g->call_at) return put(out, cap, "");
+    if (!g->call_at) return text_put(out, cap, "");
     char qty[16];
     if (qty_word(g->call_count, 0, qty, sizeof qty) < 0) return -1;
     const char *kv[] = { "qty", qty, 0 };
@@ -362,10 +277,10 @@ int cn_say_lobby_row(const char *const *names, int seat, int mine, char *out, in
 int cn_say_error(int code, char *out, int cap)
 {
     switch (code) {
-    case CN_EFORMAT: return put(out, cap, T(ERR_NEWER));
+    case CN_EFORMAT: return text_put(out, cap, T(ERR_NEWER));
     case CN_ESHORT: case CN_ECHECK: case CN_EGAME: case CN_ETEXT:
-              return put(out, cap, T(ERR_DAMAGED));
-    default:  return code < 0 ? put(out, cap, T(ERR_UNREADABLE)) : -1;
+              return text_put(out, cap, T(ERR_DAMAGED));
+    default:  return code < 0 ? text_put(out, cap, T(ERR_UNREADABLE)) : -1;
     }
 }
 
@@ -374,5 +289,5 @@ int cn_say_rules_title(char *out, int cap) { return cn_fill(out, cap, T(RULES_TI
 int cn_say_rule(int i, char *out, int cap)
 {
     if (i < 0 || i >= CN_RULES_N) return -1;
-    return put(out, cap, cn_text(CN_K_RULE_1 + i));
+    return text_put(out, cap, cn_text(CN_K_RULE_1 + i));
 }

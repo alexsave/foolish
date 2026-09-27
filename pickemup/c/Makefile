@@ -20,13 +20,14 @@ CFLAGS  ?= -O2 $(WARN)
 SHARED  := ../../shared/c
 SRC     := src/pk.c src/pk_deck.c src/pk_plan.c src/pk_view.c src/pk_lobby.c src/pk_say.c \
            src/pk_code.c src/pk_msg.c src/pk_beats.c src/pk_arrange.c i18n/strings_en.c \
-           $(SHARED)/deal_rng.c $(SHARED)/sha256.c $(SHARED)/b32.c $(SHARED)/mixrad.c
+           $(SHARED)/deal_rng.c $(SHARED)/sha256.c $(SHARED)/b32.c $(SHARED)/mixrad.c \
+           $(SHARED)/text_util/text_util.c
 # THE BOTS ARE NOT IN THE APP (DECISION D63): only the bot test and the arena
 # link them, so SRC, the wasm objects and the xcframework never carry them.
 BOT_SRC := src/pk_belief.c src/pk_bot.c
 HDR     := $(wildcard src/*.h) i18n/keys.h tests/pk_check.h tests/pk_bot.h \
            $(SHARED)/deal_rng.h $(SHARED)/sha256.h $(SHARED)/b32.h $(SHARED)/mixrad.h \
-           $(SHARED)/test/check.h $(SHARED)/test/twophone.h
+           $(SHARED)/test/check.h $(SHARED)/test/twophone.h $(SHARED)/text_util/text_util.h
 
 # One binary per test file; each takes an optional scale argument.
 TESTS   := pk_test pk_rules_test pk_plan_test pk_say_test pk_fuzz pk_msg_test pk_twophone_test pk_beats_test pk_arrange_test pk_bot_test
@@ -54,8 +55,15 @@ CHECK_TEST := $(SHARED)/test/check_test.c $(SHARED)/test/check.h $(SHARED)/test/
 build/check_test: $(CHECK_TEST) | build
 	$(CC) $(CFLAGS) $(SHARED)/test/check_test.c -o $@
 
-run: $(addprefix build/,$(TESTS)) build/check_test build/ios_smoke
+# The shared text writers' own test (shared/c/text_util): UTF-8, columns, the
+# buffer writers at their capacity.
+TEXT_UTIL := $(SHARED)/text_util/text_util.c $(SHARED)/text_util/text_util_test.c $(SHARED)/text_util/text_util.h
+build/text_util_test: $(TEXT_UTIL) | build
+	$(CC) $(CFLAGS) $(SHARED)/text_util/text_util.c $(SHARED)/text_util/text_util_test.c -o $@
+
+run: $(addprefix build/,$(TESTS)) build/check_test build/text_util_test build/ios_smoke
 	./build/check_test
+	./build/text_util_test
 	./build/pk_test
 	./build/pk_rules_test
 	./build/pk_plan_test
@@ -79,8 +87,12 @@ build/asan_pk_bot_test: tests/pk_bot_test.c $(SRC) $(BOT_SRC) $(HDR) | build
 build/asan_check_test: $(CHECK_TEST) | build
 	$(CC) $(ASAN_FLAGS) $(SHARED)/test/check_test.c -o $@
 
-asan: $(addprefix build/asan_,$(TESTS)) build/asan_check_test build/asan_ios_smoke
+build/asan_text_util_test: $(TEXT_UTIL) | build
+	$(CC) $(ASAN_FLAGS) $(SHARED)/text_util/text_util.c $(SHARED)/text_util/text_util_test.c -o $@
+
+asan: $(addprefix build/asan_,$(TESTS)) build/asan_check_test build/asan_text_util_test build/asan_ios_smoke
 	./build/asan_check_test
+	./build/asan_text_util_test
 	./build/asan_pk_test
 	./build/asan_pk_rules_test
 	./build/asan_pk_plan_test
