@@ -138,4 +138,54 @@ static inline int one_rep(const PkGame *g)
     return 1;
 }
 
+/* THE BOT the random tests drive: a legal action for a plausible seat,
+ * weighted so games end (plays preferred, a pass after a draw most of the
+ * time, "Last card!" half the time it is legal, a catch now and then, and
+ * out-of-turn bubbles 8% of the time). 1 if it did something. */
+
+static inline int bot_step(PkGame *g)
+{
+    if (g->over) return g->b_open ? pk_seal(g) : 0;
+    PkAct m[PK_MAX_SEATS * 2 + PK_HAND_CAP * 4 + 4];
+    int seat;
+    if (g->b_open) {
+        seat = g->b_sender;
+        if (pk_can_seal(g) && (pk_turn_ended(g) || rnd(100) < 60)) return pk_seal(g);
+    } else {
+        seat = g->turn;
+        if (rnd(100) < 8) {
+            int o = (int)rnd(g->n);
+            PkAct say = { PK_A_SAY_IT, 0, 0, 0 };
+            if (pk_is_legal(g, o, say)) seat = o;
+            else if (rnd(100) < 20) seat = o;
+        }
+    }
+    int n = pk_legal(g, seat, m, (int)(sizeof m / sizeof m[0]));
+    if (n == 0 && !g->b_open && seat != g->turn) {   /* nothing out of turn: the turn seat */
+        seat = g->turn;
+        n = pk_legal(g, seat, m, (int)(sizeof m / sizeof m[0]));
+    }
+    if (n == 0) return pk_can_seal(g) ? pk_seal(g) : 0;
+    int nd = -1, np = 0, npass = -1, nsay = -1, ncall = 0;
+    int plays[PK_HAND_CAP * 4 + 4], calls[PK_MAX_SEATS];
+    for (int i = 0; i < n; i++)
+        switch (m[i].kind) {
+        case PK_A_DRAW: nd = i; break;
+        case PK_A_PLAY: plays[np++] = i; break;
+        case PK_A_PASS: npass = i; break;
+        case PK_A_SAY_IT: nsay = i; break;
+        case PK_A_CALL_OUT: calls[ncall++] = i; break;
+        }
+    int pick;
+    if (nsay >= 0 && rnd(100) < 50) pick = nsay;
+    else if (ncall && rnd(100) < 4) pick = calls[rnd((uint32_t)ncall)];
+    else if (np && (nd < 0 || rnd(100) < 85)) pick = plays[rnd((uint32_t)np)];
+    else if (nd >= 0 && (npass < 0 || rnd(100) < 40)) pick = nd;
+    else if (npass >= 0) pick = npass;
+    else if (ncall) pick = calls[rnd((uint32_t)ncall)];
+    else if (nsay >= 0) pick = nsay;
+    else return pk_can_seal(g) ? pk_seal(g) : 0;
+    return pk_apply(g, seat, m[pick]);
+}
+
 #endif
