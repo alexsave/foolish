@@ -514,7 +514,7 @@ Run on 2026-09-27 from `foolish/` on branch `pickemup` at `bf37d297`, with S0, S
 The two failures are not caused by any lift.
 `tests-asan` fails the same way on a `git archive` of `661b23b2`, the commit before S0, and `replay.c` has not changed since the monorepo move.
 The lint fails the same way on that same pre-lift export.
-Both are open defects of foolish on main, and P1 and P5 cannot go green on any lift until they are fixed.
+Both were open when this run was made, and P1 and P5 could not go green on any lift until they were fixed; both are now fixed, see below (and the lint one turned out to come from this branch's `5f5211ce`, not from main).
 
 `npx vitest run e2e/validation/` is not a way to run P7: the gates use `node:test`, so vitest reports "No test suite found" for all 27 files and runs nothing.
 
@@ -523,6 +523,37 @@ The device booted in 20 seconds, but the `Foolish` scheme stalled for 35 minutes
 `simctl install` hung once for 90 seconds and succeeded in 13 seconds after a reboot, so the hang sits in app launch, not in the build.
 No test counts exist for this run, so there is nothing to compare with the 853-executed baseline yet; that comparison, HarnessTests included, still needs a simulator that launches apps.
 The simulator was shut down afterwards.
+
+#### The two failures, fixed
+
+Both were fixed on 2026-09-27, one commit each, on top of `98587f88`.
+
+| Proof | Command | Result after the fix |
+| --- | --- | --- |
+| P1 | `make -C c tests` | pass: 7389 passed, 0 failed (7385 plus the 4 checks of the new `test_b32_long_input`) |
+| P1 | `make -C c tests-asan` | pass: 7389 passed, 0 failed |
+| P2 | `make -C c difftests` | pass: replay v6 316992 checks, 0 failed, 1 skipped; analyse 83 passed; `msg_flow_sim` 0 failures at every size |
+| P3 | `make -C c ios-smoke` | pass: SMOKE OK |
+| P4 | `make -C c ios-goldens && git status --short -- ios/Fixtures` | pass: the status printed nothing |
+| P5 | `bash ios/scripts/lint_architecture.sh` | pass: architecture OK |
+| P6 | `bash tools/structgen/gen.sh --check` | pass: two runs wrote the same bytes |
+| P9 | `git status --short -- ios/FoolishKit/Resources` | pass: printed nothing |
+| wasm | `scripts/wasm_build.sh`, before and after | both sides reproduce byte for byte; see below |
+| iOS | `xcodebuild build-for-testing -scheme Foolish -destination 'generic/platform=iOS Simulator'` | TEST BUILD SUCCEEDED (no simulator booted) |
+
+P1 asan: `replay_b32_encode` and `replay_b32_decode` kept the whole bit accumulator in an `int` and shifted it left for every input byte or character, so the high bits overflowed after four bytes of high data.
+Only the low 12 bits are ever read, so the accumulator is now `unsigned` and the output bytes are the same.
+`test_b32_long_input` encodes 32 bytes of `0xFF` and the RFC 4648 `foobar` vector, and on the old code it trips UBSan at `replay.c:1836` (left shift of 16777215 by 8), which is the mutation check.
+No wasm module is committed and nothing in git records a wasm hash, so no committed artefact can change.
+The four shipped modules (`bots`, `web`, `oracle`, `oracle-mt`) do change bytes: the baseline rebuilt to the same hashes, and the fixed tree rebuilt to the same new hashes twice.
+`wasm-dis` of `bots`, `web` and `oracle` shows exactly two differences per module, `i32.shr_s` changed to `i32.shr_u`, and each result is masked (`& 31`, or `store8` keeping the low 8 bits) from bit positions the sign fill never reaches, so the modules behave the same.
+
+P5: this was not a defect of foolish on main.
+Main's `TableWireTests.swift` has no `import CFoolish`, and main's `ios.yml` lint step is green.
+It reached the C macro `FIO_CARD_NONE` through FoolishKit's own import, which Xcode 27 no longer allows, so this branch's `5f5211ce` added `import CFoolish` to make it compile, and that import broke the lint.
+The test now takes the bare-cover byte from the SDK's own no-cover pair (`TableWire.pairs` through `@testable import FoolishKit`), so it compiles on Xcode 27 and passes the lint; the change is test-only.
+Main still has the Xcode 27 compile problem in that file, and it goes away when this branch lands.
+No CI lane runs foolish's `tests-asan` (only uttt, werewolf and pickemup run an asan target), so main was never red on it.
 
 ---
 
