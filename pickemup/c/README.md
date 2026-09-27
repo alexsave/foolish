@@ -103,7 +103,7 @@ The resident message is one slot: `pk_api_read` adopts, nothing seals or reads a
 ## Measured
 
 From `make run` on 2026-09-27.
-Test counts: `pk_test` 11,089 assertions, `pk_rules_test` 199, `pk_plan_test` 1,193,089, `pk_say_test` 55,579, `pk_fuzz` 3,921,125, `pk_msg_test` 298,141, `pk_twophone_test` 2,409, `pk_beats_test` 225, and the bridge smoke 1,207 checks, every one 0 failed; `swift-smoke` adds 25 checks from Swift.
+Test counts (the open-items pass, 2026-09-27): `pk_test` 11,089 assertions, `pk_rules_test` 199, `pk_plan_test` 1,193,089, `pk_say_test` 55,609, `pk_fuzz` 3,921,125, `pk_msg_test` 298,141, `pk_twophone_test` 2,420, `pk_beats_test` 233, `pk_arrange_test` 49,995, and the bridge smoke 840 checks (its played-out game is shorter since it carries a wrong call, I40), every one 0 failed; `swift-smoke` adds 25 checks from Swift, and `make cross` compares 100 games natively and in wasm32.
 Over the 2,800 fuzz games (400 at each table size): about 188 turn actions and 136 bubbles a game, the longest 1,079 actions, 3,108 reshuffles in all, and three games ended by the long-game stop (D23).
 The wire, over `make run`'s 30 games a size (every bubble of every game), in link characters per bubble:
 
