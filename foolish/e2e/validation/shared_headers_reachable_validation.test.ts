@@ -83,10 +83,16 @@ const REPO = resolve(PRODUCT, '..');
  *                          roster's changes) under three products' lobby
  *                          adapters; in its own directory for the wildcard
  *                          reason too
+ *   collapse.h             shared/c/collapse, the auto-collapse's push (the
+ *                          host's drawer spring over the slide) and its two
+ *                          numbers; header-only (static inline), so no build
+ *                          list names a .c for it and the per-build check
+ *                          below does not list it; Swift may reach it through
+ *                          its module.modulemap
  */
 const SHARED_HEADERS = ['sha256.h', 'deal_rng.h', 'b32.h', 'mixrad.h', 'languages.h', 'msg_stage.h', 'motion_ruler.h',
     'check.h', 'twophone.h', 'text_util.h', 'wire_check.h', 'stats.h', 'seed_hash.h',
-    'msg_seat_tag.h', 'msg_lobby_roster.h'];
+    'msg_seat_tag.h', 'msg_lobby_roster.h', 'collapse.h'];
 
 /** Every C source and header in the repo, both products, excluding build output. */
 function kernelSources(): string[] {
@@ -196,6 +202,11 @@ test('the shared sources compile with no -I whatsoever', () => {
         'chuiniu/c/bot/cn_arena.c',             // stats/stats.h, stats/seed_hash.h
         'tallybones/c/bot/tb_solve.c',          // stats/stats.h
         'tallybones/c/tests/tb_test.c',         // stats/seed_hash.h, through tb_check.h
+        // The auto-collapse push, header-only: its test, and the two files that
+        // forward to it.
+        'shared/c/collapse/collapse_test.c',
+        'uttt/c/src/uttt_anim.c',       // collapse/collapse.h (via uttt_anim.h)
+        'pickemup/c/ios/pk_lay.c',      // collapse/collapse.h
     ];
     const probes = expectedProbes.filter((p) => existsSync(join(REPO, p)));
     assert.equal(probes.length, expectedProbes.length,

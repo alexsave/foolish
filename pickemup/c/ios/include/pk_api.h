@@ -382,6 +382,9 @@ int  pk_api_stamp(int seat);
  * auto-collapse is armed is the flip. uttt's numbers (uttt_anim.h), so the two
  * games collapse alike; the Swift side is compiled in behind the rig's
  * `dev.slide` file until Messages has judged it. */
+/* The two numbers are shared/c/collapse/collapse.h's (COLLAPSE_RESPONSE_MS,
+ * COLLAPSE_MS), spelled here because this header ships to Swift alone;
+ * pk_lay.c asserts they match, and pk_lay_collapse_push is the shared curve. */
 #define PK_LAY_DRAWER_RESPONSE_MS 338
 #define PK_LAY_COLLAPSE_MS        600
 #define PK_LAY_COLLAPSE_STEPS     120

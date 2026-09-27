@@ -201,18 +201,9 @@ void uttt_motion_at(const UtttMotion *m, int32_t now, UtttFrame *f)
     f->running = !still;
 }
 
-float uttt_collapse_push(float travel, int32_t t_ms)
-{
-    if (t_ms <= 0) return travel;
-    if (t_ms >= UTTT_COLLAPSE_MS) return 0.f;
-    double w = 2.0 * 3.14159265358979 / UTTT_DRAWER_RESPONSE_MS, t = (double)t_ms;
-    double left = (1.0 + w * t) * exp(-w * t);      /* 1 - the host's progress */
-    /* THE LAST KEYFRAME IS EXACTLY ZERO, and the curve reaches it without a
-     * step: what is left at the end (under 0.3%) is faded out linearly over
-     * the slide, so the release - the animation removed - moves nothing. */
-    double tail = (1.0 + w * UTTT_COLLAPSE_MS) * exp(-w * UTTT_COLLAPSE_MS);
-    return (float)(travel * (left - tail * t / UTTT_COLLAPSE_MS));
-}
+/* A one-line forwarder to the shared curve: the name is the bridge's and the
+ * kernel test's. */
+float uttt_collapse_push(float travel, int32_t t_ms) { return collapse_push(travel, t_ms); }
 
 float uttt_spring_left(float travel, float mass, float stiffness, float damping,
                        float v0, int32_t t_ms)

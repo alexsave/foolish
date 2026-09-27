@@ -103,6 +103,8 @@ DECISION A20: the two pieces only Messages can judge are compiled into every bui
 Alternative: compile them only when judged, as A14 and A15 had it.
 Why: code that is compiled is kept building (warnings are errors here), and the rig can switch either on without a new build; a Release build has no dev-file reader, so neither can switch on for a customer.
 The slide's numbers are uttt's (`PK_LAY_COLLAPSE_MS` 600, `_STEPS` 120, `_FLIP` 60, the 338ms drawer spring), a fourth copy of the drawer-collapse numbers REUSE_AUDIT section 8 already counts three of; the lift into `shared/c` is the candidate that removes all four, and belongs to whoever owns `shared/`.
+The curve and its two numbers have since moved: `shared/c/collapse/collapse.h` (`collapse_push`, `COLLAPSE_MS`, `COLLAPSE_RESPONSE_MS`) is the one C copy, `pk_lay_collapse_push` forwards to it under the name Swift calls, and `pk_lay.c` asserts `PK_LAY_COLLAPSE_MS` and `PK_LAY_DRAWER_RESPONSE_MS` equal the shared numbers, since `pk_api.h` ships to Swift alone and cannot include `shared/`.
+The steps, the flip and each rider's share of the push stay here, and foolish's Swift `CollapseTween` is untouched.
 Confidence: medium.
 
 ## Budgets, and what they found

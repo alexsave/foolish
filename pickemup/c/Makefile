@@ -88,6 +88,13 @@ LOBBY_ROSTER := $(LOBBY_ROSTER_SRC) $(SHARED)/msg_lobby_roster/msg_lobby_roster.
 build/msg_lobby_roster_test: $(LOBBY_ROSTER) | build
 	$(CC) $(CFLAGS) $(LOBBY_ROSTER_SRC) -o $@
 
+# The shared auto-collapse push's own test (shared/c/collapse): header-only,
+# the curve pk_lay_collapse_push forwards to and the two numbers pk_api.h
+# spells for Swift.
+COLLAPSE := $(SHARED)/collapse/collapse_test.c $(SHARED)/collapse/collapse.h
+build/collapse_test: $(COLLAPSE) | build
+	$(CC) $(CFLAGS) $(SHARED)/collapse/collapse_test.c -lm -o $@
+
 # The shared arena statistics' own test (shared/c/stats): mean and standard
 # error, the Wilson interval, and the per-game seed hash pk_arena.c seeds with.
 STATS_SRC := $(SHARED)/stats/stats.c $(SHARED)/stats/stats_test.c
@@ -95,13 +102,14 @@ STATS := $(STATS_SRC) $(SHARED)/stats/stats.h $(SHARED)/stats/seed_hash.h
 build/stats_test: $(STATS) | build
 	$(CC) $(CFLAGS) $(STATS_SRC) -lm -o $@
 
-run: $(addprefix build/,$(TESTS)) build/check_test build/text_util_test build/wire_check_test build/msg_seat_tag_test build/msg_lobby_roster_test build/stats_test build/ios_smoke
+run: $(addprefix build/,$(TESTS)) build/check_test build/text_util_test build/wire_check_test build/msg_seat_tag_test build/msg_lobby_roster_test build/stats_test build/collapse_test build/ios_smoke
 	./build/check_test
 	./build/text_util_test
 	./build/wire_check_test
 	./build/msg_seat_tag_test
 	./build/msg_lobby_roster_test
 	./build/stats_test
+	./build/collapse_test
 	./build/pk_test
 	./build/pk_rules_test
 	./build/pk_plan_test
@@ -140,13 +148,17 @@ build/asan_msg_lobby_roster_test: $(LOBBY_ROSTER) | build
 build/asan_stats_test: $(STATS) | build
 	$(CC) $(ASAN_FLAGS) $(STATS_SRC) -lm -o $@
 
-asan: $(addprefix build/asan_,$(TESTS)) build/asan_check_test build/asan_text_util_test build/asan_wire_check_test build/asan_msg_seat_tag_test build/asan_msg_lobby_roster_test build/asan_stats_test build/asan_ios_smoke
+build/asan_collapse_test: $(COLLAPSE) | build
+	$(CC) $(ASAN_FLAGS) $(SHARED)/collapse/collapse_test.c -lm -o $@
+
+asan: $(addprefix build/asan_,$(TESTS)) build/asan_check_test build/asan_text_util_test build/asan_wire_check_test build/asan_msg_seat_tag_test build/asan_msg_lobby_roster_test build/asan_stats_test build/asan_collapse_test build/asan_ios_smoke
 	./build/asan_check_test
 	./build/asan_text_util_test
 	./build/asan_wire_check_test
 	./build/asan_msg_seat_tag_test
 	./build/asan_msg_lobby_roster_test
 	./build/asan_stats_test
+	./build/asan_collapse_test
 	./build/asan_pk_test
 	./build/asan_pk_rules_test
 	./build/asan_pk_plan_test
@@ -202,7 +214,7 @@ cross: build/pk_cross build/pk_cross.wasm
 # (foolish/c/Makefile build/layout/ios.hash).
 IOS_MIN_VERSION := 17.0
 IOS_SRC    := $(SRC) ios/pk_api.c ios/pk_lay.c
-IOS_HDR    := $(HDR) ios/include/pk_api.h ios/pk_api_layout.h
+IOS_HDR    := $(HDR) ios/include/pk_api.h ios/pk_api_layout.h $(SHARED)/collapse/collapse.h
 IOS_CFLAGS := -O2 -Isrc -Iios -Iios/include $(WARN)
 
 build/ios_smoke: $(IOS_SRC) $(IOS_HDR) ios/pk_api_smoke.c | build

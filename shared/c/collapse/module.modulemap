@@ -1,0 +1,7 @@
+// CCollapse: the auto-collapse's push and its two numbers for Swift.
+// Header-only; a target that reads it adds this directory to
+// SWIFT_INCLUDE_PATHS.
+module CCollapse {
+    header "collapse.h"
+    export *
+}
