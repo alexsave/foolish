@@ -1,0 +1,168 @@
+# XcodeGen spec for Chui Niu, on pickemup/ios/project.yml's shape.
+#
+# The .xcodeproj is a BUILD ARTIFACT - never hand-edit it, never commit it
+# (git-ignored by chuiniu/ios/.gitignore, as pickemup's is).
+#
+# THE SCAFFOLD BUILDS WITHOUT THE KERNEL. Every kernel read goes through ONE
+# seam, ChuiniuKit/Kernel/KernelSeam.swift, whose FakeKernel plays scripted
+# data. The tie-together step uncomments the two KERNEL lines below (the
+# Generated/ source path and the xcframework dependency) and the two header
+# search paths, adds the real bridge beside the seam, and the bootstrap
+# becomes pickemup's:
+#   1. make -C ../c ios-lib      # writes ios/vendor/Chuiniu.xcframework and ios/Generated/
+#   2. xcodegen generate
+#   3. xcodebuild -scheme ChuiniuMessagesApp -destination 'generic/platform=iOS Simulator' build
+# scripts/mac_tests.sh runs all three, and the tests (--no-lib skips step 1).
+#
+# THREE SHIPPING TARGETS, for uttt's reason: an app extension cannot be
+# distributed on its own, so the iMessage game needs a codeless container to
+# carry it, and the container EMBEDS the framework without linking it (@rpath
+# for an extension resolves into its containing app's Frameworks/).
+#
+# WHAT THIS HAS NONE OF: no network stack, no accounts, no database. The whole
+# game is the message URL, so there is nothing to talk to.
+name: Chuiniu
+options:
+  bundleIdPrefix: cards.chuiniu
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.9"
+    # CMsgStage (shared/c/msg_stage), the insert-staging decisions that
+    # MessagesKit/InsertStaging.swift imports: every target, because a target
+    # that imports ChuiniuKit must find the C modules it was built against.
+    SWIFT_INCLUDE_PATHS: $(inherited) $(SRCROOT)/../../shared/c/msg_stage
+    # A WARNING THAT SHIPS IS A DEFECT (uttt's rule).
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: "YES"
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: 8N2Z544SB4
+
+configs:
+  Debug: debug
+  Release: release
+
+targets:
+  ChuiniuMessagesApp:
+    type: application.messages
+    platform: iOS
+    sources:
+      - path: ChuiniuMessagesApp
+    dependencies:
+      - target: ChuiniuMessages
+        embed: true
+      # Carried, not linked: the container has no code (see the header).
+      - target: ChuiniuKit
+        embed: true
+        link: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cards.chuiniu
+        INFOPLIST_FILE: ChuiniuMessagesApp/Info.plist
+        # LaunchServices will not register an app with no icon (uttt).
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # A hand-written Info.plist is not a whole one: the bundle keys are
+        # synthesised and merged in, or `simctl install` says "Missing bundle
+        # ID" (uttt).
+        GENERATE_INFOPLIST_FILE: "YES"
+        TARGETED_DEVICE_FAMILY: "1"
+      configs:
+        # ONLY DEBUG ASKS FOR THE APP GROUP, pickemup's trick: the group
+        # exists for the rig's dev.* files and every reader of it is inside
+        # `#if DEBUG` (ChuiniuKit/Kernel/ChuiniuDev.swift). A committed file
+        # set by hand here, not through xcodegen's `entitlements:` key, so
+        # xcodegen does not know the file exists and has nothing to blank.
+        Debug:
+          CODE_SIGN_ENTITLEMENTS: DebugAppGroup.entitlements
+
+  ChuiniuMessages:
+    type: app-extension.messages
+    platform: iOS
+    sources:
+      - path: ChuiniuMessages
+    dependencies:
+      - target: ChuiniuKit
+    settings:
+      base:
+        # Prefixed by its CONTAINER: an extension's bundle id extends the app
+        # that embeds it.
+        PRODUCT_BUNDLE_IDENTIFIER: cards.chuiniu.msg
+        INFOPLIST_FILE: ChuiniuMessages/Info.plist
+        GENERATE_INFOPLIST_FILE: "YES"
+        # An iMessage app without a .stickersiconset icon on the EXTENSION does
+        # not install and does not say so (uttt).
+        ASSETCATALOG_COMPILER_APPICON_NAME: "iMessage App Icon"
+        TARGETED_DEVICE_FAMILY: "1"
+      configs:
+        Debug:
+          CODE_SIGN_ENTITLEMENTS: DebugAppGroup.entitlements
+
+  ChuiniuKit:
+    type: framework
+    platform: iOS
+    sources:
+      - path: ChuiniuKit
+      # KERNEL (tie-together uncomments): the kernel's readers and string
+      # tables, written by `make -C ../c ios-lib` (structgen, datagen) beside
+      # the library they belong to. A build output: git-ignored.
+      # - path: Generated/ChuiniuKernel.swift
+      #
+      # The shared Messages plumbing, named one file at a time as pickemup
+      # does: when an insert may go and what its silence means, and the DEBUG
+      # dev-file reader.
+      - path: ../../shared/swift/MessagesKit/InsertStaging.swift
+      - path: ../../shared/swift/MessagesKit/DevFlags.swift
+      # The texture palettes and resource names. The images themselves are
+      # pickemup's baked JPEGs, copied into ChuiniuKit/Resources; nothing
+      # renders a texture at run time.
+      - path: ../../shared/swift/Textures
+    # KERNEL (tie-together uncomments): the static library, module CChuiniu.
+    # dependencies:
+    #   # STATIC (embed:false): the linker pulls it in per object.
+    #   - framework: vendor/Chuiniu.xcframework
+    #     embed: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cards.chuiniu.kit
+        GENERATE_INFOPLIST_FILE: "YES"
+        # KERNEL (tie-together uncomments): the clang module map that lets
+        # Swift `import CChuiniu`, copied into BUILT_PRODUCTS_DIR/include by
+        # the xcframework.
+        # HEADER_SEARCH_PATHS: $(inherited) $(BUILT_PRODUCTS_DIR)/include
+        TARGETED_DEVICE_FAMILY: "1"
+
+  ChuiniuKitTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: ChuiniuKitTests
+    dependencies:
+      - target: ChuiniuKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cards.chuiniu.kit.tests
+        GENERATE_INFOPLIST_FILE: "YES"
+        # KERNEL (tie-together uncomments):
+        # HEADER_SEARCH_PATHS: $(inherited) $(BUILT_PRODUCTS_DIR)/include
+        TARGETED_DEVICE_FAMILY: "1"
+
+schemes:
+  ChuiniuMessagesApp:
+    build:
+      targets:
+        ChuiniuMessagesApp: all
+    run:
+      config: Debug
+  ChuiniuKitTests:
+    build:
+      targets:
+        ChuiniuKit: all
+        ChuiniuKitTests: [test]
+    test:
+      config: Debug
+      targets:
+        - ChuiniuKitTests
