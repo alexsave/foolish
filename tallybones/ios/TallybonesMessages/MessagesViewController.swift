@@ -3,8 +3,7 @@
 // The extension. It owns the conversation and nothing else: every rule, every
 // word and every die is the kernel's, reached through the TallyKernel seam
 // (TallybonesKit/Kernel/TallyKernel.swift), and the screens are
-// TallybonesKit's. Today the kernel is the local stand-in; the integration
-// worker swaps it in TallybonesHost.init and nothing here changes.
+// TallybonesKit's. The kernel behind the seam is BridgeKernel (tb_api.h).
 //
 // pickemup's lifecycle, kept whole where it was learned the hard way:
 //   - NOTHING IS INSERTED UNTIL THE DRAWER IS UP AND THE CONVERSATION IS
@@ -189,14 +188,14 @@ final class MessagesViewController: MSMessagesAppViewController {
         let committed = keepsDraft(text)
         let wasKeep = committed && stagedIsKeep
         if committed {
-            kernel.commit()                  // T11: a KEEP's reroll exists from here
+            kernel.commit()                  // tb_api_mark_sent. T11: a KEEP's reroll exists from here
         } else {
             _ = kernel.adopt(text, arrival: false)
         }
         markSent(text)
         if message.url == draftURL { draftURL = nil; staged = nil; stagedIsKeep = false }
         TallybonesSeats.flush(kernel)
-        // the blanks that just got values tumble in (T11)
+        // the kernel's send plan: the blanks that just got values settle in (T11)
         host.showResident(animate: true)
         // a KEEP is the middle of my turn: stay up for the next choice
         if wasKeep { return }

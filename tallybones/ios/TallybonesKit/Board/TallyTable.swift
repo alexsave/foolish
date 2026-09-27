@@ -11,10 +11,10 @@
 // verdicts (TrayModel.canKeep, TallyKernel.mayRoll).
 //
 // THE PREVIEW NUMBERS: what the dice on the tray would score in each open row
-// come from `previewScores`, a closure, because scoring is the kernel's and
-// Swift computes none of it. KERNEL: set it to the bridge's per-category
-// preview (tb_api_preview or whatever the kernel names it) in
-// TallybonesHost.init; the stand-in's is StandInKernel.preview.
+// are the kernel's (TallyKernel.preview, tb_api_score_if); Swift scores none.
+//
+// THE MOTION is the kernel's too: an adopt or a send lays out a plan
+// (tb_beats.h), and `refresh(animate:)` hands the newest one to the player.
 
 import Combine
 import SwiftUI
@@ -23,26 +23,24 @@ import SwiftUI
 public final class TallyTable: ObservableObject {
 
     public let kernel: TallyKernel
-    /// Dice -> what they would score in each category (Category order); nil
-    /// for a row the kernel gives no number for.
-    public var previewScores: ([Int]) -> [Int?]
     public var onStage: ((TallyStage) -> Void)?
 
     @Published public private(set) var view = TallyView()
     /// My keep marks, before Roll sends them.
     @Published public private(set) var marks = Array(repeating: false, count: TrayModel.diceCount)
-    public let tumble = TumblePlayer()
+    public let player = BeatPlayer()
+    /// The newest plan handed to the player (tb_api_beats_serial).
+    private var playedSerial = -1
 
-    public init(kernel: TallyKernel, previewScores: @escaping ([Int]) -> [Int?]) {
+    public init(kernel: TallyKernel) {
         self.kernel = kernel
-        self.previewScores = previewScores
         refresh(animate: false)
     }
 
     // MARK: reading
 
-    /// Read everything back from the resident. `animate`: dice that were
-    /// blank (or a new roll's) and now have values tumble in.
+    /// Read everything back from the resident. `animate`: play the plan the
+    /// kernel laid out for what just came in or went out, if it is new.
     public func refresh(animate: Bool = true) {
         let old = view
         let new = kernel.view()
@@ -51,16 +49,10 @@ public final class TallyTable: ObservableObject {
         if newRoll || !new.tray.canKeep {
             marks = new.tray.kept
         }
-        guard animate else { return }
-        // KERNEL: the kernel's plan names which dice settle (T9); until then
-        // the dice that just got a value, or all five on a new turn's roll 1.
-        var rolled = Set<Int>()
-        for i in 0..<TrayModel.diceCount where i < new.tray.dice.count && new.tray.dice[i] != 0 {
-            let was = i < old.tray.dice.count ? old.tray.dice[i] : 0
-            let turnBegan = new.tray.turn != old.tray.turn && new.tray.roll == 1
-            if was == 0 || turnBegan || (newRoll && !new.tray.kept[i]) { rolled.insert(i) }
-        }
-        if !rolled.isEmpty { tumble.tumble(rolled) }
+        let serial = Tb.beatsSerial
+        guard serial != playedSerial else { return }
+        playedSerial = serial
+        if animate { player.play(Tb.beatsNow()) } else { player.clear() }
     }
 
     // MARK: what the screens draw
@@ -79,7 +71,7 @@ public final class TallyTable: ObservableObject {
     public var preview: [Int?] {
         let t = view.tray
         guard t.canScore, t.allKnown else { return Array(repeating: nil, count: Category.count) }
-        let p = previewScores(t.dice)
+        let p = kernel.preview()
         return p.count == Category.count ? p : Array(repeating: nil, count: Category.count)
     }
 

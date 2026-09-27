@@ -29,9 +29,9 @@ public enum FSpace {
 }
 
 /// foolish's motion tokens.
-/// KERNEL: pickemup reads these numbers from its kernel (PK_T_SPRING,
-/// PK_T_SPRING_DAMP, PK_T_CHROME, PK_T_PRESS in pk_beats.h); once tb_beats.h
-/// exports the same names, read them from CTallybones and delete the literals.
+/// Chrome motion only: every game motion is tb_beats.h's (BeatPlayer).
+/// pickemup reads these from pk_beats.h (PK_T_SPRING and friends); tb_beats.h
+/// has no such names, so they stay literals here (DECISIONS T62).
 public enum FMotion {
     /// The ONE spring for all piece movement (card-spring): 320ms, 0.82.
     public static let card: Animation = .spring(response: 0.320, dampingFraction: 0.82)

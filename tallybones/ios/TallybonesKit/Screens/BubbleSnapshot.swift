@@ -37,7 +37,7 @@ public struct BubbleContent: Equatable, Sendable {
     @MainActor
     public static func of(_ v: TallyView, title: String) -> BubbleContent {
         if v.phase == .lobby {
-            return BubbleContent(lobby: true, title: title, roster: v.lobby.rows, caption: v.caption)
+            return BubbleContent(lobby: true, title: title, roster: v.lobby.publicRows, caption: v.caption)
         }
         return BubbleContent(dice: v.tray.dice, kept: v.tray.kept, caption: v.caption)
     }

@@ -7,9 +7,8 @@
 // kernel's verdicts on what this phone may do right now. The verdicts are
 // fields, not functions, so no view ever works one out.
 //
-// KERNEL: the integration worker fills these from the generated readers
-// (Generated/TallybonesKernel.swift) inside the bridge-backed TallyKernel;
-// no view changes.
+// BridgeKernel fills these from the generated readers
+// (Generated/TallybonesKernel.swift); no view reads the kernel directly.
 
 import Foundation
 
@@ -124,15 +123,21 @@ public struct LobbyModel: Equatable, Sendable {
     public enum Offer: Equatable, Sendable { case none, join, start, invite, waiting, full }
     public var offer: Offer
     public var canLeave: Bool
-    /// The numbered roster, one line per seat, in the kernel's words.
+    /// The numbered roster, one line per seat, in the kernel's words, mine
+    /// marked (TB_API_W_LOBBY_ROW).
     public var rows: [String]
+    /// The same roster as every phone sees it, for the bubble's picture
+    /// (TB_API_W_PUBLIC_ROW): no "(You)".
+    public var publicRows: [String]
     /// Who starts, or nil.
     public var footnote: String?
 
-    public init(offer: Offer = .none, canLeave: Bool = false, rows: [String] = [], footnote: String? = nil) {
+    public init(offer: Offer = .none, canLeave: Bool = false, rows: [String] = [], publicRows: [String] = [],
+                footnote: String? = nil) {
         self.offer = offer
         self.canLeave = canLeave
         self.rows = rows
+        self.publicRows = publicRows
         self.footnote = footnote
     }
 }

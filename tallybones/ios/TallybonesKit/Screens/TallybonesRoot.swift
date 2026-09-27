@@ -21,13 +21,11 @@ public final class TallybonesHost: ObservableObject {
     /// The name gate is done: make the new game.
     public var onNamed: (() -> Void)?
 
-    /// KERNEL: this is the one line that picks the kernel. Replace
-    /// `StandInKernel()` with `BridgeKernel()` and `StandInKernel.preview`
-    /// with the bridge's preview, and delete StandInKernel.swift.
-    public init(kernel: TallyKernel? = nil, previewScores: (([Int]) -> [Int?])? = nil) {
-        let k = kernel ?? StandInKernel()
+    /// The kernel behind the seam: the bridge (tb_api.h), always.
+    public init(kernel: TallyKernel? = nil) {
+        let k = kernel ?? BridgeKernel()
         self.kernel = k
-        self.model = TallyTable(kernel: k, previewScores: previewScores ?? StandInKernel.preview)
+        self.model = TallyTable(kernel: k)
     }
 
     /// THE ONE GATE ON A MISMATCHED PAIR (pickemup I22, I34): a stale
@@ -86,11 +84,3 @@ public struct TallybonesRoot: View {
         }
     }
 }
-
-#if DEBUG
-#Preview("table, stand-in") {
-    let host = TallybonesHost(kernel: StandInKernel(started: true))
-    host.showResident()
-    return TallybonesRoot(host: host).frame(height: 600)
-}
-#endif

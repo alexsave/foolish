@@ -12,8 +12,10 @@
 // the turn. Both are one call on the model, and the drawer's staging is the
 // controller's.
 //
-// KERNEL: pickemup reads every one of these numbers from pk_lay.c; when
-// tb_lay.c exists, TbLayout's literals become calls, as PkLayout's are.
+// NOT YET THE KERNEL'S (DECISIONS T62): pickemup reads every one of these
+// numbers from pk_lay.c. tb_lay.c exists, but it lays the tray out for a die
+// of 40 to 64pt that shrinks with the drawer, and this table was drawn to
+// T50/T53's fixed 52pt die; moving the screen onto tb_lay_* is its own change.
 
 import SwiftUI
 
@@ -36,12 +38,12 @@ public enum TbLayout {
 
 public struct TableScreen: View {
     @ObservedObject var model: TallyTable
-    @ObservedObject private var tumble: TumblePlayer
+    @ObservedObject private var player: BeatPlayer
     @State private var looking: CardModel?
 
     public init(model: TallyTable) {
         self.model = model
-        self.tumble = model.tumble
+        self.player = model.player
     }
 
     public var body: some View {
@@ -70,7 +72,7 @@ public struct TableScreen: View {
                 .frame(height: SeatBadge.height)
                 .padding(.bottom, TbLayout.seatRowGap)
 
-            DiceTray(tray: tray, motion: tumble, animating: tumble.animating) { model.toggle($0) }
+            DiceTray(tray: tray, motion: player, animating: player.animating) { model.toggle($0) }
                 .frame(maxWidth: .infinity)
                 .tbAnchor("tray")
 

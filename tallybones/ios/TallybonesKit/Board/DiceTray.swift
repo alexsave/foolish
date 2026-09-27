@@ -3,7 +3,7 @@
 // A tap on a die toggles its keep mark, and only when the kernel says the
 // tray may be touched (TrayModel.canKeep); a refused tap is a reject haptic
 // and nothing else. Every frame the tray asks its DiceMotion what each die
-// looks like (TumblePlayer today, the kernel's BeatPlayer later) and draws
+// looks like (the kernel's timeline, through BeatPlayer) and draws
 // that; with nothing playing, the dice are at rest.
 //
 // T50: 52pt dice, 10pt apart, so the row is 300pt and fits the 304pt board
@@ -42,6 +42,7 @@ public struct DiceTray: View {
                     DiceFace(value: f.face ?? value, kept: i < tray.kept.count && tray.kept[i] && f.face == nil)
                         .scaleEffect(f.scale)
                         .rotationEffect(.degrees(f.rotation))
+                        .offset(y: f.dy)
                         .contentShape(Rectangle())
                         .onTapGesture {
                             if tray.canKeep {

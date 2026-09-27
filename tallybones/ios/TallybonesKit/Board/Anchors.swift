@@ -2,9 +2,9 @@
 //
 // Where every element of the table is, by name, so the kernel's beats (T9)
 // can aim at an element without asking any view where it is. pickemup's one
-// preference key and a name per anchor, without its PkFX half: that half
-// arrives with the BeatPlayer (KERNEL: copy PkFX, PkFXKey and PkFXModifier
-// when the beats are wired, and let `tbAnchor` apply them as pkAnchor does).
+// preference key and a name per anchor, without its PkFX half: the only beat
+// drawn today is the dice settle, which the tray applies itself (BeatPlayer),
+// so there is no effect to route by anchor yet (DECISIONS T62).
 //
 // The names: die.i (i 0...4), tray, pill.roll, seat.k, card, row.c (c a
 // Category raw value), status.
