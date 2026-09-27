@@ -10,6 +10,7 @@ Each product that is built follows the same rule: one kernel written in C owns t
 | [`uttt/`](uttt) | Ultimate Tic-Tac-Toe: an iMessage app, and the replay site at uttt.live that plays back a finished game. See [`uttt/README.md`](uttt/README.md). |
 | [`werewolf/`](werewolf) | A social-deduction game that lives inside an iMessage thread. Paused. See [`werewolf/README.md`](werewolf/README.md). |
 | [`pickemup/`](pickemup) | Pick 'Em Up (a working title), a shedding card game for 2 to 8 in an iMessage thread: the C kernel, its wire and bridge are built and tested, the Messages extension is built and unit-tested but not yet seen inside Messages. See [`pickemup/README.md`](pickemup/README.md). |
+| [`chuiniu/`](chuiniu) | Chui Niu (吹牛), Liar's Dice for 2 to 6 in an iMessage thread: a proof of concept with a C kernel and a Messages extension, no App Store Connect and no TestFlight. See [`chuiniu/README.md`](chuiniu/README.md). |
 | [`shared/`](shared) | The code more than one of them builds: the generators, the toolchain, the checksum and RNG, and the Messages helpers. It may not name a product, and a test enforces that. See [`shared/README.md`](shared/README.md). |
 | [`docs/`](docs) | The two method documents that apply to every product. Each product keeps its own docs in its own folder. |
 | [`.github/workflows/`](.github/workflows) | One workflow per lane. Each runs from its product's folder and triggers only on that folder and `shared/`. |
