@@ -197,40 +197,16 @@ swift-smoke: $(STRUCTGEN) datagen | build
 	  $(GEN)/i18n/*.swift ios/pk_api_smoke.swift build/swift/obj/*.o -o build/swift/smoke
 	./build/swift/smoke
 
-# $(1)=target-triple  $(2)=sdk  $(3)=out dir
-define IOS_SLICE
-	@rm -rf $(3)/obj
-	@mkdir -p $(3)/obj
-	@for s in $(IOS_SRC); do \
-	  o=$(3)/obj/$$(basename $$s .c).o; \
-	  echo "  CC[$(2)] $$s"; \
-	  xcrun -sdk $(2) clang -target $(1) $(IOS_CFLAGS) -c $$s -o $$o || exit 1; \
-	done
-	libtool -static -o $(3)/libpickemup.a $(3)/obj/*.o
-endef
+# The device slice, both simulator slices, the lipo and the xcframework are
+# the shared recipe (lifted from uttt, REUSE_AUDIT S4).
+include ../../shared/tools/ios_xcframework.mk
 
 # THE LIBRARY CARRIES THE LAYOUT IT WAS COMPILED FOR, and the readers are
 # written beside it in the same run, so the pair cannot come apart.
 ios-lib: IOS_CFLAGS += -DSG_LAYOUT_HASH=$$(cat build/layout/ios.hash)
 ios-lib: build/layout/ios.hash datagen
-	@echo "== device slice (arm64) =="
-	$(call IOS_SLICE,arm64-apple-ios$(IOS_MIN_VERSION),iphoneos,build/ios/device)
-	@echo "== simulator slices (arm64 + x86_64) =="
-	# BOTH, because `-destination 'generic/platform=iOS Simulator'` builds both
-	# and a one-arch library fails the link with "found architecture arm64,
-	# required architecture x86_64" (uttt/c/Makefile).
-	$(call IOS_SLICE,arm64-apple-ios$(IOS_MIN_VERSION)-simulator,iphonesimulator,build/ios/sim-arm64)
-	$(call IOS_SLICE,x86_64-apple-ios$(IOS_MIN_VERSION)-simulator,iphonesimulator,build/ios/sim-x86_64)
-	@mkdir -p build/ios/sim
-	lipo -create build/ios/sim-arm64/libpickemup.a build/ios/sim-x86_64/libpickemup.a \
-	     -output build/ios/sim/libpickemup.a
-	@rm -rf ../ios/vendor/Pickemup.xcframework
-	@mkdir -p ../ios/vendor
-	xcodebuild -create-xcframework \
-	  -library build/ios/device/libpickemup.a -headers ios/include \
-	  -library build/ios/sim/libpickemup.a    -headers ios/include \
-	  -output ../ios/vendor/Pickemup.xcframework
-	@echo "wrote ../ios/vendor/Pickemup.xcframework (layout $$(cat build/layout/ios.hash))"
+	$(call IOS_XCFRAMEWORK,pickemup,$(IOS_SRC),$(IOS_CFLAGS),ios/include,$(IOS_MIN_VERSION),../ios/vendor/Pickemup.xcframework)
+	@echo "layout $$(cat build/layout/ios.hash)"
 
 # The timeline of two takes as Markdown tables (docs/MOTION_REPORT.md).
 beats-dump: build/pk_beats_dump

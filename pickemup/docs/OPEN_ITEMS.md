@@ -20,7 +20,7 @@ This pass ran with no simulator (another worker holds the only free one).
 11. `ios/README.md` says the board is static and the flights are "the next layer", which the BeatPlayer has been since A1. DONE `c512dbe2`.
 12. `project.yml` says SendHint is not compiled "see IOS_DECISIONS I11", the wrong decision number. DONE `86667c43` (the comment names A14 and A15).
 13. I4, the study's Draw x1 and "x on a draws-only bubble" rows (`IOS_DECISIONS.md` I4). DONE: the rows were fixed by an earlier docs pass, and the "turn" view's first frame, which still drew a staged field after two draws, in `c512dbe2`.
-14. Open question 2, hands past thirteen cards (`RULES_AND_KERNEL.md` 8.2). DONE `c512dbe2`: decided on the owner's behalf by ORCHESTRATION O4 (flagged there for a veto), now said in 8.2.
+14. Open question 2, hands past thirteen cards (`RULES_AND_KERNEL.md` 8.2). DONE: answered in 8.2 by ORCHESTRATION O4 (flagged for a veto); the pickemup docs pass wrote the same answer in parallel, and its wording was kept in the merge.
 15. Open question 1, the name (`RULES_AND_KERNEL.md` 8.1, `ORCHESTRATION.md` O5 and BLOCKED). DEFERRED: owner-only (the trademark search and the choice).
 16. I9 and I36, a downward drag off the deck never collapses the drawer (`IOS_DECISIONS.md` I9, I36). DEFERRED: a phone (Messages' own recognizer, in another process).
 17. I35, a superseded stage never inserts, seen on a phone (`IOS_DECISIONS.md` I35). DEFERRED: a phone.

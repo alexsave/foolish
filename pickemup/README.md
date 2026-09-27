@@ -39,7 +39,7 @@ Search USPTO and decide before any store listing; that choice is the owner's (BL
 | Part | Where | What |
 |---|---|---|
 | Surface study | `docs/UI.html` | every screen at foolish's materials, the motion grid, the rulers; `UI_DECISIONS.md` is its record |
-| Rules | `docs/RULES_AND_KERNEL.md` | the rules, the kernel design, the wire and the test plan, with decisions D1 to D53 |
+| Rules | `docs/RULES_AND_KERNEL.md` | the rules, the kernel design, the wire and the test plan, with decisions D1 to D57 |
 | Kernel | `c/src/pk*.{c,h}` | deal, legality, apply, seal, undo by replay, the masked view, the animation plan, the lobby, the words; plain C11, no allocation, builds for wasm32 and iOS |
 | Wire | `c/src/pk_code.c`, `c/src/pk_msg.c` | every bubble carries the whole game as seed + roster + one mixed-radix number (D25), base32 in `MSMessage.url`; Rule P settles races; the seat resolver |
 | Timeline | `c/src/pk_beats.{c,h}` | a plan's events laid out as beats on `UI.html`'s clock, and the frame at any millisecond (A1) |
@@ -86,7 +86,7 @@ CI: `.github/workflows/pickemup.yml` runs `run`, `asan`, `structgen` and `datage
 - The conversation layer, `PickemupMessages/MessagesViewController.swift` (stage, send, cancel, receive), which has no test target and has never run.
 - `ios/scripts/mac_tests.sh` counts, and the red run of `ActionCardCornerTests`.
 - The filmed and measured animation take (a live arrival with draws, a reshuffle and a play, and a deal); `docs/MOTION_REPORT.md` gives both as the kernel's timeline instead (B3).
-- On a real phone, that dragging a card down off the deck never collapses the Messages drawer (U24, I9).
+- On a real phone, that dragging a card down off the deck never collapses the Messages drawer (U24, I9, I36), and that a superseded stage never inserts (I35).
 - foolish's own P8 simulator run after the S1 lift (B1, `docs/REUSE_AUDIT.md` S1).
 
 ## The layout is foolish's, minus three things
@@ -131,16 +131,18 @@ A right catch costs the caught player 2 cards, a wrong one costs the catcher 1 (
 
 ## Design docs
 
-| File | What |
+Every file under `docs/`, and the other records beside the code.
+
+| File | What it is for |
 |---|---|
 | [LEGAL.md](LEGAL.md) | the trademark and copyright research, and the never / always list |
-| [docs/DECISIONS.md](docs/DECISIONS.md) | the index of every decision (D, U, I, A, O), the flagged ones, BLOCKED |
-| [docs/RULES_AND_KERNEL.md](docs/RULES_AND_KERNEL.md) | the rules, the kernel and wire design, the test plan, D1 to D53 |
-| [docs/UI.html](docs/UI.html) | the surface study and the motion grid |
-| [docs/UI_DECISIONS.md](docs/UI_DECISIONS.md) | the visual decisions U1 to U25 |
-| [docs/IOS_DECISIONS.md](docs/IOS_DECISIONS.md) | the iOS decisions I1 to I28 |
-| [docs/ANIMATION_DECISIONS.md](docs/ANIMATION_DECISIONS.md) | the motion decisions A1 to A17 |
-| [docs/ORCHESTRATION.md](docs/ORCHESTRATION.md) | the orchestration decisions O1 to O8, BLOCKED, found on the way, the final check |
+| [docs/DECISIONS.md](docs/DECISIONS.md) | start here to veto: one row per decision (D, U, I, A, O), the flagged ones, and a pointer to BLOCKED |
+| [docs/ORCHESTRATION.md](docs/ORCHESTRATION.md) | the orchestration decisions O1 to O9, the current state of every BLOCKED item and what the owner does about it, found on the way, the final check |
+| [docs/RULES_AND_KERNEL.md](docs/RULES_AND_KERNEL.md) | the rules of play, the kernel and wire design, the test plan, and the rules decisions D1 to D57 |
+| [docs/UI.html](docs/UI.html) | the surface study: every screen at foolish's materials, the motion grid and the rulers |
+| [docs/UI_DECISIONS.md](docs/UI_DECISIONS.md) | the visual decisions U1 to U25 taken in the study |
+| [docs/IOS_DECISIONS.md](docs/IOS_DECISIONS.md) | the iOS decisions I1 to I39, including the architecture review |
+| [docs/ANIMATION_DECISIONS.md](docs/ANIMATION_DECISIONS.md) | the motion decisions A1 to A17 behind the kernel's timeline |
 | [docs/REUSE_AUDIT.md](docs/REUSE_AUDIT.md) | what is reused from foolish and uttt, the lift plan S0 to S16 and its proofs |
 | [docs/SIM_VERIFICATION.md](docs/SIM_VERIFICATION.md) | the two-seat game to play in Messages, the screenshot each step owes, and the bridge assertion that proves it |
 | [docs/MOTION_REPORT.md](docs/MOTION_REPORT.md) | the two takes as the kernel's timeline, against the grid's budgets |

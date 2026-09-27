@@ -202,38 +202,12 @@ IOS_MIN_VERSION := 17.0
 IOS_SRC    := $(SRC) ios/uttt_api.c
 IOS_CFLAGS := -O2 -Isrc -Iios/include -Wall -Wextra -Werror -std=c11
 
-# $(1)=target-triple  $(2)=sdk  $(3)=out dir
-define IOS_SLICE
-	@rm -rf $(3)/obj
-	@mkdir -p $(3)/obj
-	@for s in $(IOS_SRC); do \
-	  o=$(3)/obj/$$(basename $$s .c).o; \
-	  echo "  CC[$(2)] $$s"; \
-	  xcrun -sdk $(2) clang -target $(1) $(IOS_CFLAGS) -c $$s -o $$o || exit 1; \
-	done
-	libtool -static -o $(3)/libuttt.a $(3)/obj/*.o
-endef
+# The device slice, both simulator slices, the lipo and the xcframework are
+# the shared recipe.
+include ../../shared/tools/ios_xcframework.mk
 
 ios-lib:
-	@echo "== device slice (arm64) =="
-	$(call IOS_SLICE,arm64-apple-ios$(IOS_MIN_VERSION),iphoneos,build/ios/device)
-	@echo "== simulator slices (arm64 + x86_64) =="
-	# BOTH, because `-destination 'generic/platform=iOS Simulator'` builds both
-	# and a one-arch library fails the link with "ignoring file ... found
-	# architecture arm64, required architecture x86_64" - which reads like a
-	# missing symbol and is not.
-	$(call IOS_SLICE,arm64-apple-ios$(IOS_MIN_VERSION)-simulator,iphonesimulator,build/ios/sim-arm64)
-	$(call IOS_SLICE,x86_64-apple-ios$(IOS_MIN_VERSION)-simulator,iphonesimulator,build/ios/sim-x86_64)
-	@mkdir -p build/ios/sim
-	lipo -create build/ios/sim-arm64/libuttt.a build/ios/sim-x86_64/libuttt.a \
-	     -output build/ios/sim/libuttt.a
-	@rm -rf ../ios/vendor/Uttt.xcframework
-	@mkdir -p ../ios/vendor
-	xcodebuild -create-xcframework \
-	  -library build/ios/device/libuttt.a -headers ios/include \
-	  -library build/ios/sim/libuttt.a    -headers ios/include \
-	  -output ../ios/vendor/Uttt.xcframework
-	@echo "wrote ../ios/vendor/Uttt.xcframework"
+	$(call IOS_XCFRAMEWORK,uttt,$(IOS_SRC),$(IOS_CFLAGS),ios/include,$(IOS_MIN_VERSION),../ios/vendor/Uttt.xcframework)
 
 
 build/ios_smoke: $(IOS_SRC) ios/uttt_api_smoke.c | build

@@ -437,8 +437,10 @@ class ProductIdentityLivesInOnePlace(unittest.TestCase):
     # - so RIG_KERNEL_DIR took, the rig reported no error, and the build
     # compiled the wrong kernel into the right app. A name is easy to grep for
     # and a path is not, which is exactly why it has to be in here.
+    # A bare `Foolish` too: `probe` looked the + menu row up by that word long
+    # after the block had a MENU_NAME for it.
     IDENT = re.compile(r"cards\.foolish|group\.cards|FoolishMessages|Foolish\.xcodeproj"
-                       r"|\bFoolishKit\b|\"Foolish\""
+                       r"|\bFoolishKit\b|\"Foolish\"|\bFoolish\b"
                        r"|\$REPO/c\b|\$REPO/ios\b|\$\{REPO\}/(?:c|ios)\b")
 
     def setUp(self):
@@ -465,6 +467,125 @@ class ProductIdentityLivesInOnePlace(unittest.TestCase):
                 bad.append("%d: %s" % (n, line.strip()))
         self.assertEqual(bad, [], "product identity spelled outside the block:\n  "
                                   + "\n  ".join(bad))
+
+
+def stub_bin(scripts):
+    """A temp dir of executable shell stubs, {name: body}, for the front of PATH."""
+    d = tempfile.mkdtemp(prefix="rigstub")
+    for name, body in scripts.items():
+        p = os.path.join(d, name)
+        with open(p, "w") as fh:
+            fh.write("#!/bin/bash\n" + body + "\n")
+        os.chmod(p, 0o755)
+    return d
+
+
+def clean_env(**extra):
+    """os.environ without any RIG_* or FOOLISH_* knob, plus `extra`."""
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith("RIG_") and not k.startswith("FOOLISH_")}
+    env.update(extra)
+    return env
+
+
+class TheRigSpellingsWin(unittest.TestCase):
+    """RIG_SIM and friends are the rig's own names, and the FOOLISH_* ones
+    every script in shots/ and every note uses are the fallback. Driven
+    through `rig.sh doctor` with a stub xcrun, so no simulator is touched."""
+
+    def doctor(self, **env):
+        path = stub_bin({"xcrun": "exit 1", "idb": "exit 0"})
+        out = subprocess.run(
+            ["bash", os.path.join(RIG, "rig.sh"), "doctor"],
+            env=clean_env(PATH=path + os.pathsep + os.environ["PATH"], **env),
+            capture_output=True, text=True, timeout=60)
+        return out.stdout + out.stderr
+
+    def test_the_old_spelling_still_works(self):
+        self.assertIn("sim OLDNAME1 NOT booted", self.doctor(FOOLISH_SIM="OLDNAME1"))
+
+    def test_the_new_spelling_works(self):
+        self.assertIn("sim NEWNAME1 NOT booted", self.doctor(RIG_SIM="NEWNAME1"))
+
+    def test_the_new_spelling_wins(self):
+        out = self.doctor(RIG_SIM="NEWNAME1", FOOLISH_SIM="OLDNAME1")
+        self.assertIn("sim NEWNAME1 NOT booted", out)
+        self.assertNotIn("OLDNAME1", out)
+
+
+class SeedWritesIntoTheProductsGroup(unittest.TestCase):
+    """seed.py's App Group is the product block's, handed on as RIG_APP_GROUP."""
+
+    def group(self, **env):
+        return subprocess.run(
+            [sys.executable, "-c", "import seed; print(seed.GROUP_ID)"],
+            cwd=HERE, env=clean_env(**env), capture_output=True, text=True,
+            timeout=60).stdout.strip()
+
+    def test_the_default_is_durak(self):
+        self.assertEqual(self.group(), "group.cards.foolish.msg")
+
+    def test_rig_app_group_takes(self):
+        self.assertEqual(self.group(RIG_APP_GROUP="group.example.other"),
+                         "group.example.other")
+
+    def test_rig_sh_hands_its_group_on(self):
+        with open(os.path.join(RIG, "rig.sh")) as fh:
+            src = fh.read()
+        self.assertRegex(src, r'RIG_APP_GROUP="\$APP_GROUP" python3 "\$LIB/seed\.py"')
+
+
+class XcodegenKeepsTheEntitlements(unittest.TestCase):
+    """Defect D1: `build` restored the entitlements xcodegen blanks with
+    `git checkout`, which dropped uncommitted edits and left a new mtime that
+    poisons Xcode's build description. The function is lifted out of rig.sh
+    and run against a stub xcodegen that blanks the file, as the real one does."""
+
+    ORIGINAL = "<plist><dict><key>uncommitted</key><true/></dict></plist>\n"
+
+    def run_it(self, xcodegen_rc):
+        with open(os.path.join(RIG, "rig.sh")) as fh:
+            src = fh.read()
+        m = re.search(r"^xcodegen_keeping_entitlements\(\) \{.*?^\}", src, re.S | re.M)
+        self.assertIsNotNone(m, "xcodegen_keeping_entitlements is gone from rig.sh")
+        ios = tempfile.mkdtemp(prefix="rigios")
+        os.makedirs(os.path.join(ios, "App"))
+        self.ent = os.path.join(ios, "App", "App.entitlements")
+        with open(self.ent, "w") as fh:
+            fh.write(self.ORIGINAL)
+        os.utime(self.ent, ns=(1_600_000_000_123_456_789, 1_600_000_000_123_456_789))
+        self.mtime = os.stat(self.ent).st_mtime_ns
+        path = stub_bin({
+            "git": "echo App/App.entitlements",
+            "xcodegen": "printf '<dict/>' > App/App.entitlements; exit %d" % xcodegen_rc,
+        })
+        script = "set -euo pipefail\n%s\nxcodegen_keeping_entitlements" % m.group(0)
+        return subprocess.run(
+            ["bash", "-c", script],
+            env=clean_env(PATH=path + os.pathsep + os.environ["PATH"], IOS_DIR=ios),
+            capture_output=True, text=True, timeout=60)
+
+    def assert_kept(self):
+        with open(self.ent) as fh:
+            self.assertEqual(fh.read(), self.ORIGINAL, "the bytes did not come back")
+        self.assertEqual(os.stat(self.ent).st_mtime_ns, self.mtime,
+                         "the mtime did not come back, so Xcode sees a modified file")
+
+    def test_bytes_and_mtime_come_back(self):
+        out = self.run_it(0)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assert_kept()
+
+    def test_a_failed_xcodegen_still_restores_and_fails(self):
+        out = self.run_it(3)
+        self.assertEqual(out.returncode, 3, out.stderr)
+        self.assert_kept()
+
+    def test_build_never_checks_out(self):
+        with open(os.path.join(RIG, "rig.sh")) as fh:
+            code = [l.split("#", 1)[0] for l in fh if not l.lstrip().startswith("#")]
+        self.assertFalse([l for l in code if "git checkout" in l],
+                         "rig.sh runs `git checkout` again")
 
 
 if __name__ == "__main__":

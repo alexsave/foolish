@@ -98,9 +98,13 @@ LIB="$HERE/lib"
 # frame-window extractor, the accessibility driver - has no product knowledge
 # in it and is shared with the other product. $LIB is this product's half.
 SHLIB="$REPO/../shared/rig/lib"
-SIM="${FOOLISH_SIM:-}"
-IDB="${FOOLISH_IDB:-idb}"
-OUT="${FOOLISH_OUT:-$HOME/Downloads/foolish-shots}"
+# THE RIG'S OWN KNOBS are RIG_*, and the FOOLISH_* spellings every existing
+# script and note uses still work: RIG_X wins, FOOLISH_X is the fallback, and
+# with neither set the defaults are what they always were.
+SIM="${RIG_SIM:-${FOOLISH_SIM:-}}"
+IDB="${RIG_IDB:-${FOOLISH_IDB:-idb}}"
+OUT="${RIG_OUT:-${FOOLISH_OUT:-$HOME/Downloads/foolish-shots}}"
+WORK="${RIG_WORK:-${FOOLISH_WORK:-/tmp/foolishrig}}"
 
 # ---- the product ----------------------------------------------------------
 # WHICH PRODUCT THIS RIG IS DRIVING, and the only place that knows.
@@ -115,8 +119,8 @@ OUT="${FOOLISH_OUT:-$HOME/Downloads/foolish-shots}"
 # The defaults are today's Durak values, so nothing changes for Foolish. Each
 # is overridable from the environment for the same reason the simulator is.
 #
-# NB the scratch paths above and below (FOOLISH_OUT, FOOLISH_DD, FOOLISH_WORK)
-# are deliberately NOT in here: `lib/ui.py` carries its own copy of the
+# NB the scratch paths above and below (RIG_OUT, RIG_DD, RIG_WORK) are
+# deliberately NOT in here: `lib/ui.py` carries its own copy of the
 # FOOLISH_WORK default, and a rig that changed one of the two would put the
 # screenshot somewhere the finder does not look.
 APP_ID="${RIG_APP_ID:-cards.foolish.msg}"                 # the container app
@@ -148,14 +152,21 @@ SEEDER="${RIG_SEEDER-build/msg_wire_test}"
 # `ios_api.h` into the shared tree, and every later build here dies with
 # "file has been modified since the module file was built: size changed" -
 # a failure that names a header this checkout never touched.
-DD="${FOOLISH_DD:-/tmp/foolishDD-${FOOLISH_SIM:0:8}}"
-# BOTH SPELLINGS. shared/rig/lib/ax.py reads RIG_SIM/RIG_IDB, because a shared
-# file cannot be named after one product. Everything anyone types, and every
-# script in shots/, still says FOOLISH_* - so map it here, once.
-RIG_SIM="$SIM"; RIG_IDB="$IDB"
-export FOOLISH_SIM FOOLISH_IDB RIG_SIM RIG_IDB
+DD="${RIG_DD:-${FOOLISH_DD:-/tmp/foolishDD-${SIM:0:8}}}"
+# BOTH SPELLINGS, for everything this starts. shared/rig/lib/ax.py reads
+# RIG_SIM/RIG_IDB, because a shared file cannot be named after one product;
+# lib/ui.py, seed.py, transcript.py and every script in shots/ still read
+# FOOLISH_*. So whichever was set, both children see the one value. A scratch
+# path is handed on only when it was set, so an unset one keeps each child's
+# own default (shots/mse_run.sh defaults FOOLISH_OUT elsewhere).
+[ -z "$SIM" ] || export FOOLISH_SIM="$SIM"
+[ -z "${RIG_OUT:-}" ] || export FOOLISH_OUT="$OUT"
+[ -z "${RIG_DD:-}" ] || export FOOLISH_DD="$DD"
+[ -z "${RIG_WORK:-}" ] || export FOOLISH_WORK="$WORK"
+RIG_SIM="$SIM"; RIG_IDB="$IDB"; FOOLISH_IDB="$IDB"
+export RIG_SIM RIG_IDB FOOLISH_IDB
 
-need_sim() { [ -n "$SIM" ] || { echo "set FOOLISH_SIM (rig.sh newsim prints one)" >&2; exit 2; }; }
+need_sim() { [ -n "$SIM" ] || { echo "set RIG_SIM or FOOLISH_SIM (rig.sh newsim prints one)" >&2; exit 2; }; }
 
 # A TAP WITH A DURATION, because an instantaneous one is not always a tap.
 #
@@ -174,9 +185,9 @@ type_s(){ need_sim; "$IDB" ui text --udid "$SIM" "$1" >/dev/null 2>&1; sleep "${
 # that reports points on every device without a lookup table.
 # Cached per simulator: a device's point size cannot change inside a run, and
 # this was being answered by a full `describe-all` 28 times in a single chain.
-# Keyed on the UDID and kept in FOOLISH_WORK, so it survives the one-command-
+# Keyed on the UDID and kept in RIG_WORK, so it survives the one-command-
 # per-process shape the rig is driven with. `rig.sh probe` re-reads it.
-SCRCACHE="${FOOLISH_WORK:-/tmp/foolishrig}/screen.$SIM"
+SCRCACHE="$WORK/screen.$SIM"
 screen() {
   need_sim
   [ -s "$SCRCACHE" ] && { cat "$SCRCACHE"; return; }
@@ -457,7 +468,7 @@ cmd_doctor() {
     app_installed && echo "app installed" \
       || { echo "MISSING app - rig.sh build"; bad=1; }
   else
-    echo "FOOLISH_SIM unset - rig.sh newsim"
+    echo "RIG_SIM (or FOOLISH_SIM) unset - rig.sh newsim"
     bad=1
   fi
   [ "$bad" = 0 ] && echo "all good"
@@ -473,14 +484,39 @@ cmd_newsim() {
   echo "export FOOLISH_SIM=$udid   # $name"
 }
 
+# xcodegen BLANKS the entitlements files every run; without them the extension
+# loses its App Group and every seed silently does nothing. So every tracked
+# `*.entitlements` under IOS_DIR is copied aside with `cp -p` before it runs
+# and copied back the same way after, which keeps the bytes AND the mtime.
+# This used to be `git checkout -- ...` (REUSE_AUDIT defect D1), which did two
+# kinds of damage: it threw away any uncommitted entitlements edit, and it
+# left a NEW mtime, which Xcode's cached build description reads as "modified
+# during the build" and refuses every later build over (ios/scripts/
+# mac_tests.sh explains that at length). It also listed the entitlements of
+# $REPO, not of IOS_DIR, so a second product's were never restored at all.
+# git's list, not `find`: a find also matches read-only SPM checkouts under
+# the build tree, and copying onto one aborts the restore half way.
+xcodegen_keeping_entitlements() {
+  local ents bak rel rc=0
+  ents=$(git -C "$IOS_DIR" ls-files -- '*.entitlements')
+  bak=$(mktemp -d -t rig_entitlements)
+  for rel in $ents; do
+    mkdir -p "$bak/$(dirname "$rel")"
+    cp -p "$IOS_DIR/$rel" "$bak/$rel"
+  done
+  (cd "$IOS_DIR" && xcodegen generate) || rc=$?
+  for rel in $ents; do
+    cp -p "$bak/$rel" "$IOS_DIR/$rel"
+  done
+  rm -rf "$bak"
+  return "$rc"
+}
+
 cmd_build() {
   need_sim
   make -C "$KERNEL_DIR" ios-lib
   [ -z "$SEEDER" ] || make -C "$KERNEL_DIR" "$SEEDER"
-  (cd "$IOS_DIR" && xcodegen generate)
-  # xcodegen BLANKS the entitlements files every run; without this the
-  # extension loses its App Group and every seed silently does nothing.
-  (cd "$REPO" && git checkout -- $(cd "$REPO" && git ls-files -- '*.entitlements'))
+  xcodegen_keeping_entitlements
   local name; name=$(xcrun simctl list devices | grep "$SIM" | sed 's/ (.*//;s/^ *//')
   # DEBUG, not Release: `dev.fatboard` seeding is #if DEBUG.
   # RIG_RESEED is OPT-IN and off by default, so the ordinary build is the
@@ -656,7 +692,7 @@ cmd_enter() {
   # "opens Kate Bell and closes it immediately" the owner watched it do twice in
   # one run, and it costs a tap, a poll and a back-out each time.
   # The rig already knows the answer: it found this thread somewhere last time.
-  local ycache="${FOOLISH_WORK:-/tmp/foolishrig}/rowy.$SIM.${want:-any}"
+  local ycache="$WORK/rowy.$SIM.${want:-any}"
   local yfirst=""; [ -s "$ycache" ] && yfirst=$(cat "$ycache")
   local y
   for y in $yfirst $((H * 24 / 100)) $((H * 20 / 100)) $((H * 15 / 100)) $((H * 28 / 100)) $((H * 32 / 100)); do
@@ -952,7 +988,7 @@ cmd_open() {
   # opened with a `tap_ax "Foolish"` that could not succeed, every single time:
   # a describe-all spent proving something this rig already knew. Remember it,
   # and scroll first when we have learned it.
-  local mscroll="${FOOLISH_WORK:-/tmp/foolishrig}/menuscroll.$SIM"
+  local mscroll="$WORK/menuscroll.$SIM"
   if [ -s "$mscroll" ]; then
     menu_swipe || return 1
     poll 20 0.15 ax "$MENU_NAME" || true
@@ -1274,7 +1310,7 @@ seed_open() {
   # thread lands in that thread as incoming, so alternating sides means actually
   # being in the other conversation, and getting there leaves this one, which
   # kills the appex anyway. `chain` alternates every move; `batch` never does.
-  local lt="${FOOLISH_WORK:-/tmp/foolishrig}/lastthread.$SIM"
+  local lt="$WORK/lastthread.$SIM"
   if [ -f "$g/dev.reseed" ] && [ "$(cat "$lt" 2>/dev/null)" = "$thread" ] && drawer_up; then
     rm -f "$g/dev.claimed" "$g/dev.staged"
     printf '%s' "$hex"  > "$g/dev.fatboard"
@@ -1572,7 +1608,7 @@ cmd_openbubble() {
 import sys, ast
 v = ast.literal_eval(sys.stdin.read().split('BUBBLE ')[1])
 print(v[0], v[1]) if v else print(-1, -1)")
-  [ "$x" = "-1" ] && { echo "no Foolish bubble in the transcript"; return 1; }
+  [ "$x" = "-1" ] && { echo "no $MENU_NAME bubble in the transcript"; return 1; }
   tap "$x" "$y" 3
   echo "opened the bubble at $x,$y"
 }
@@ -1748,7 +1784,7 @@ import sys, ast; print(len(ast.literal_eval(sys.stdin.read().split('CARDS ')[1])
 
 # The plank's pixels as one hash - only its word changes between states.
 plank_hash() {
-  local f="${FOOLISH_WORK:-/tmp/foolishrig}/plank.$SIM.png"
+  local f="$WORK/plank.$SIM.png"
   mkdir -p "$(dirname "$f")"
   xcrun simctl io "$SIM" screenshot "$f" >/dev/null 2>&1
   python3 - "$f" "$1" "$2" <<'PY'
@@ -1809,7 +1845,7 @@ cmd_turn() {
 # last opened onto is no longer an answer about what it is being asked to open
 # onto now, and a receipt left standing would read as one.
 cmd_seed()   { need_sim; local g; g=$(group_dir); rm -f "$g/dev.claimed"
-               python3 "$LIB/seed.py" "$@"; }
+               RIG_APP_GROUP="$APP_GROUP" python3 "$LIB/seed.py" "$@"; }
 
 # Did the extension open onto the seed currently on disk? Trap 10: an appex that
 # did not die re-opens the seed it already claimed, and every frame after that
@@ -2192,7 +2228,7 @@ cmd_probe() {
   need_sim
   read -r W H < <(screen); echo "screen ${W}x${H}pt"
   echo "in a thread: $(in_thread && echo yes || echo no)"
-  for l in Messages add Message Send Foolish; do
+  for l in Messages add Message Send "$MENU_NAME"; do
     printf '  %-10s %s\n' "$l" "$(ax "$l" 2>/dev/null || echo '-')"
   done
   python3 "$LIB/ui.py" all

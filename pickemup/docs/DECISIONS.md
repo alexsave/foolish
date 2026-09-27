@@ -1,11 +1,14 @@
 # Pick 'Em Up - every decision taken on the owner's behalf
 
-One index of every decision the team took without the owner, one line each: its id, the choice, the alternative it rejected, and the file that holds the full entry with its reasons and confidence.
-Every decision can be vetoed on its own.
-The ones the workers themselves flagged as ones the owner may want to veto are marked **VETO?** in the last column.
+## How to read this
+
+Every decision the team took without the owner has one row here: its id, the choice, the alternative it rejected, and the file that holds the full entry.
+The owner vetoes by id, each one on its own, and never has to accept or reject a whole file.
+Each full entry names the alternative it rejected, the reason for the choice and a confidence, so a veto can be weighed without reading anything else.
+A SUPERSEDED row names the decision that overrode it, and the ones the workers themselves flagged as ones the owner may want to veto are marked **VETO?** in the last column and listed just below.
 If this index and a full entry ever disagree, the full entry is the truth; fix this file.
 
-Counts: 61 rules decisions (D1 to D58, plus D5b, D5c and D5d, of which D53 is superseded), 25 visual (U1 to U25), 41 iOS (I1 to I41, of which I10 and I16 are superseded), 20 animation (A1 to A20) and 9 orchestration (O1 to O9), 156 in all.
+Counts: 61 rules decisions (D1 to D58, plus D5b, D5c and D5d, of which D24 and D53 are superseded), 25 visual (U1 to U25), 41 iOS (I1 to I41, of which I10 and I16 are superseded), 20 animation (A1 to A20) and 9 orchestration (O1 to O9), 156 in all.
 
 ## Flagged for a possible veto
 
@@ -147,6 +150,15 @@ Counts: 61 rules decisions (D1 to D58, plus D5b, D5c and D5d, of which D53 is su
 | I26 | placeholder icons from a throwaway script | (none named) | IOS_DECISIONS.md | |
 | I27 | O6 drawn as the study's corner column in two corners, and said through the kernel | the shape top-left only | IOS_DECISIONS.md | |
 | I28 | the strip's chips are the glyph alone, as UI.html draws them | a thin face with a rank | IOS_DECISIONS.md | |
+| I29 | which events an adopted bubble plays is the kernel's (`pk_api_adopt`, `pk_api_beats_now`) | keeping the Swift branch that only called kernel functions | IOS_DECISIONS.md | |
+| I30 | a tap on a fan is one kernel call, and a refused new call keeps the old one | un-calling then calling in Swift | IOS_DECISIONS.md | |
+| I31 | the board's zones, insets, hand padding, tap slop and pill height are C; a component's inside is its view's | (none named) | IOS_DECISIONS.md | |
+| I32 | the toast and "drawn cards stay" times are timeline constants, and a showing carries a generation | (none named) | IOS_DECISIONS.md | |
+| I33 | no string literal a player sees is left in a view | (none named) | IOS_DECISIONS.md | |
+| I34 | a layout mismatch is two vectors with two owners, `Pk.snap` and `PickemupHost.readable` | (none named) | IOS_DECISIONS.md | |
+| I35 | adopting a bubble that is not my staged draft voids any stage still resting before its insert | (none named) | IOS_DECISIONS.md | |
+| I36 | the deck's drag is owned by one recognizer in this process; the drawer's swipe stays a phone proof | (none named) | IOS_DECISIONS.md | |
+| I37 | uttt's readiness fallback stays Swift on purpose; the collapse flag and the stamp order were LIFTED by I40 | (none named) | IOS_DECISIONS.md | |
 | I38 | foolish's drag-to-reorder in the hand row; the row beats the pile on release; none while it scrolls | a long press to lift out of the scroll | IOS_DECISIONS.md | |
 | I39 | Swift names a card by its acquisition position; the slot is geometry, mapped only by the kernel | working in slots through `pk_api_play_slot` | IOS_DECISIONS.md | |
 | I40 | whether a stage collapses the drawer, and which stamp a badge shows, are kernel entry points | keeping both in Swift (I37) | IOS_DECISIONS.md | |
@@ -193,40 +205,13 @@ Counts: 61 rules decisions (D1 to D58, plus D5b, D5c and D5d, of which D53 is su
 
 ## BLOCKED
 
-Copied from `ORCHESTRATION.md` on 2026-09-27; that file is the one kept current.
+The current state of every blocked item lives in `ORCHESTRATION.md` under BLOCKED; this is a pointer only.
 
-- The final game name: `Pick 'Em Up` collides with two same-genre titles (README); the USPTO search and the choice are the owner's, before any store listing.
-- App Store Connect record, signing and upload: the owner does these by hand; nothing in this pass touches them.
-
-BLOCKED B1: the P8 after-run for lift S1 (and any later Swift lift).
-From 2026-09-26 23:06 every iOS simulator on this Mac hangs: test launches die with `Mach error -308 (ipc/mig) server died`, `simctl install` never returns, and a fresh device and the iOS 26.3 device both stop at boot in `com.apple.addressbook.migrator`.
-Restarting CoreSimulatorService did not clear it; a Mac reboot is the likely fix, and only the owner can do that.
-BLOCKED B1, confirmed by the orchestrator at 2026-09-27 04:55: after killing CoreSimulatorService and erasing a second iPhone 17e, the erased device still stops at boot in `com.apple.addressbook.migrator` (Migration Elapsed over a minute, `simctl launch` never returns).
-The host needs a reboot before any simulator test, screenshot or rig run can happen; everything below that needs a simulator is verified by compile only until then.
-B1 cleared on its own at about 05:10 on 2026-09-27 without a reboot: a health probe booted the first iPhone 17e and launched an app in under two minutes, so the after-run for S1 and the simulator proofs resumed then.
-Once it is clear, run `DEST='platform=iOS Simulator,name=iPhone 17e,OS=27.0' bash ios/scripts/mac_tests.sh --no-lib --regen` from `foolish/` on the S1 commit and compare with the baseline in `REUSE_AUDIT.md` under S1 (853 executed, 1 skipped, only the flaky `MemoryProfileTests` failing).
-
-BLOCKED B2: the Pick 'Em Up extension has not yet been seen inside Messages.
-On 2026-09-27 at about 06:12 UTC, on iPhone 17e `FC7586CF`, `PickemupKitTests` ran green (17 tests) and every test was mutation-checked there (`pickemup/ios/TESTS_MUTATED.md`), and the app installed and registered with LaunchServices, but `simctl launch com.apple.MobileSMS` (the rig's `stage`) hung for over five minutes, the B1 symptom again, so no screenshot of the lobby, table, drag, picker or catch exists yet.
-The device was shut down.
-Next: on a healthy simulator, `source pickemup/ios/Tools/rig.env`, then the rig's `stage`, `open` and screenshots of each screen; and on a real phone, prove that dragging a card DOWN off the deck (U24, IOS_DECISIONS I9) never collapses the drawer.
-B2, second worker, 2026-09-27 06:29 to 06:56 UTC: the same iPhone 17e `FC7586CF` (iOS 26.3) never finished booting, so Messages, the rig and the fallback host were all out of reach.
-Three boots (06:28, 06:37 after a shutdown and a 10 second wait, and 06:53) each stopped on the black data-migration spinner with `simctl bootstatus` at "Waiting on System App" for 90 seconds and more (the first was watched for 7 minutes).
-Inside the device SpringBoard, backboardd and the data migrator were all running, and the migrator logged "System build version unchanged from 23D8133. Migration not necessary", so this is not a migration plugin; `log` itself answered `getpwuid_r did not find a match for uid 501`, which points at the host's user session under CoreSimulator, the B1 family.
-The device was shut down each time and is shut down now.
-What landed without a simulator, compile-checked (`PickemupKitTests` build-for-testing and the `PickemupMessagesApp` build both succeed): O6 (IOS_DECISIONS I27) with its test `ActionCardCornerTests`, the strip chips (I28), and the UI.html fixes listed in `SIM_VERIFICATION.md`.
-Still owed on a healthy simulator, in this order: `PickemupKitTests` green, the O6 test's red run (its MUTATE line), `mac_tests.sh` counts, then the full two-seat game and the eleven screenshots `SIM_VERIFICATION.md` lists; the host most likely needs the reboot B1 asked for.
-
-BLOCKED B2 confirmed by the orchestrator at 2026-09-27 07:40: a freshly created iPhone 17 on iOS 27.0 also never finished booting within 100 seconds, so the hang is host-wide and not tied to a device's state (an erased iPhone 17e hung the same way earlier).
-The `getpwuid_r did not find a match for uid 501` line the previous worker saw points at the host's directory services, which only a reboot resets.
-Every simulator proof in this pass (foolish's P8 after the lifts, the pickemup Messages run and screenshots, `pickemup/ios/scripts/mac_tests.sh` counts, the red run of `ActionCardCornerTests`, the filmed animation take) is therefore owed and listed in `pickemup/docs/SIM_VERIFICATION.md`, ready to run after the reboot.
-
-BLOCKED B3: the filmed and measured animation take.
-On 2026-09-27 at about 03:35 local, the second iPhone 17e `6E0A730D` did boot within the 90-second watchdog, and `BeatPlayerTests` (7 then, 8 once A17's `testTheJoinThatStartsTheGamePlaysTheDeal` landed) and `TableModelTests` (10) ran green on it, and every `BeatPlayerTests` test was seen red there (`pickemup/ios/TESTS_MUTATED.md`).
-But any test that puts a window or a renderer on screen hung on it for ten minutes and was killed: `ActionCardCornerTests.testAnActionCardExposesItsSuitShape` (a card hosted in a `UIWindow`) and `RenderTests.testTheBubbleRendersAt300By195`, and `xcodebuild` itself hung after every finished run until killed.
-A filmed take is a window on screen, so it was not attempted; `pickemup/docs/MOTION_REPORT.md` gives both takes as the kernel's timeline instead (`make -C pickemup/c beats-dump`).
-Next, after the reboot: film a live arrival with three draws, a reshuffle and a play, and a deal, at normal speed, measure them with the `animation-measure` skill, put the contact sheets in `pickemup/docs/shots/motion/` and the scores in `MOTION_REPORT.md`; and run the whole `PickemupKitTests` scheme, which this worker could only run in part.
-
+- B1: iOS simulators on this Mac hang host-wide; the owner reboots the Mac.
+- B2: the extension has not yet been seen inside Messages; owed after B1.
+- B3: the filmed and measured animation take; owed after B1.
+- The final game name: the USPTO search and the choice are the owner's (O5).
+- App Store Connect, signing and upload: the owner's, by hand.
 
 ## Found on the way
 
