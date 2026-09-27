@@ -2,7 +2,7 @@
 // is one kernel call, and what it stages (or does not) is the kernel's word.
 //
 // Each test names the mutation it must go red on (MUTATE:), listed with the
-// rest in pickemup/ios/TESTS_TO_MUTATE.md.
+// rest in pickemup/ios/TESTS_MUTATED.md with the assertion each went red on.
 
 import CPickemup
 import XCTest
@@ -20,8 +20,7 @@ final class TableModelTests: XCTestCase {
         return m
     }
 
-    // MUTATE: TableModel.draw calls onStage unconditionally (drop the
-    // `stageIfSendable` guard on table.canSend) -> "a draw stages nothing".
+    // MUTATE: stageIfSendable's canSend guard never refuses -> "a draw stages nothing".
     func testDrawOpensTheDraftAndStagesNothing() throws {
         XCTAssertNotNil(Phones.dmStartedByBo())
         let m = model()
@@ -107,7 +106,7 @@ final class TableModelTests: XCTestCase {
         XCTAssertEqual(m.subline, Pk.string("SUB_DRAWN_STAY"))
     }
 
-    // MUTATE: pk_api_undo returns 0 above the floor -> "the play comes back".
+    // MUTATE: Pk.undo always answers false -> "the play comes back".
     func testUndoOfAPlayBringsTheCardHome() throws {
         var found = false
         for k in 0..<50 {
@@ -137,8 +136,8 @@ final class TableModelTests: XCTestCase {
         XCTAssertFalse(m.calling(0), "a second tap un-calls")
     }
 
-    // MUTATE: Pk.text returns the resident draft unsealed (pk_api_text without
-    // the sealed copy) -> "Alex reads Bo's bubble".
+    // MUTATE: Pk.read adopts nothing (answers 0 without reading) -> Alex is
+    // not seated by the bubble ("XCTAssertEqual t.me 0").
     func testTheStagedLinkRoundTripsToTheOtherPhone() throws {
         var found = false
         for k in 0..<50 {

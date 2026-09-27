@@ -33,7 +33,7 @@ final class LayoutTests: XCTestCase {
     }
 
     // MUTATE: the slot loop stops one short (0..<n-1) -> "a slot per card".
-    // MUTATE: Hand.thin drops the flat condition -> "an overlapped card keeps its face".
+    // MUTATE: Hand.thin becomes `cardW <= thinBelow` -> "an overlapped card keeps its face".
     func testEverySlotIsInsideTheRowAndFacesAreRight() {
         for n in [1, 5, 9, 13, 26, 40] {
             let h = PkLayout.hand(count: n, width: w, maxRows: 2)
@@ -60,7 +60,7 @@ final class LayoutTests: XCTestCase {
         XCTAssertEqual(staged.leading, .none)
     }
 
-    // MUTATE: PkLayout.seat passes `seat` as `me` -> "my seat is at the bottom" fails for others.
+    // MUTATE: PkLayout.seat passes `seat` as `me` -> "the seat across is at the top".
     func testTheRingPutsMeAtTheBottom() {
         let board = CGSize(width: 374, height: 700)
         let mine = PkLayout.seat(2, me: 2, count: 4, board: board, collapse: 0)
