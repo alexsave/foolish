@@ -92,3 +92,10 @@ serve.log
 
 # shared/tools/ship/ship.sh writes every product's archive and .ipa under <repo root>/build/ship/.
 /build/
+
+# Build outputs of `make -C tallybones/c ios-lib` once the kernel lands, and
+# the project generated from tallybones/ios/project.yml, as pickemup's are.
+tallybones/c/build/
+tallybones/ios/vendor/
+tallybones/ios/Generated/
+tallybones/ios/*.xcodeproj
