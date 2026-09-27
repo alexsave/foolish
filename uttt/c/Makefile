@@ -30,7 +30,7 @@ LANGS   := en ru ko zh vi es pt fr de it ja pl uk tr id th nl sv da no fi cs ro 
 I18N    := $(foreach l,$(LANGS),i18n/strings_$(l).c)
 SRC     := src/uttt.c src/uttt_code.c src/uttt_bots.c src/uttt_msg.c src/uttt_say.c \
            src/uttt_pen.c src/uttt_draw.c src/uttt_anim.c src/uttt_rule.c src/uttt_lang.c \
-           $(I18N) $(SHARED)/sha256.c $(SHARED)/b32.c
+           $(I18N) $(SHARED)/sha256.c $(SHARED)/b32.c $(SHARED)/mixrad.c
 
 all: build/uttt_test build/uttt_msg_test build/uttt_arena build/uttt_render build/uttt_mate
 
@@ -263,7 +263,7 @@ WEB_WASM_CC  ?= $(if $(WASM_CC),$(WASM_CC),clang)
 # and every visitor would download the other twenty-four tables.
 WEB_WASM_SRC := src/uttt.c src/uttt_code.c src/uttt_pen.c src/uttt_draw.c \
                 src/uttt_anim.c src/uttt_rule.c src/uttt_say.c src/uttt_lang.c \
-                i18n/strings_en.c ../../shared/c/b32.c \
+                i18n/strings_en.c ../../shared/c/b32.c ../../shared/c/mixrad.c \
                 ../../shared/c/wasm/libc.c ../../shared/c/wasm/libm.c wasm/uttt_web.c
 WEB_WASM_OUT := ../web/public/uttt.wasm
 

@@ -104,6 +104,7 @@ test('shared/ holds the files both products actually build', () => {
     const expected = [
         'shared/c/sha256.c', 'shared/c/sha256.h',
         'shared/c/deal_rng.c', 'shared/c/deal_rng.h',
+        'shared/c/mixrad.c', 'shared/c/mixrad.h',   // the mixed-radix arithmetic under two game coders
         'shared/tools/llvm.mk',
         'shared/scripts/ci_llvm.sh',   // the pinned toolchain, for every product's lanes
         'shared/tools/sgcommon/sgc.c',
