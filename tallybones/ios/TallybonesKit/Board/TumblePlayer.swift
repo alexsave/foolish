@@ -42,11 +42,11 @@ public protocol DiceMotion: AnyObject {
 
 @MainActor
 public final class TumblePlayer: ObservableObject, DiceMotion {
-    public static let durationMs = 600
-    public static let staggerMs = 30
-    public static let flickMs = 80
-    public static let revolutions = 1.5
-    public static let swell: CGFloat = 0.18
+    public nonisolated static let durationMs = 600
+    public nonisolated static let staggerMs = 30
+    public nonisolated static let flickMs = 80
+    public nonisolated static let revolutions = 1.5
+    public nonisolated static let swell: CGFloat = 0.18
 
     @Published public private(set) var animating = false
     @Published public private(set) var dice: Set<Int> = []

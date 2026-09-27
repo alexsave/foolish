@@ -59,6 +59,10 @@ final class TrayTests: XCTestCase {
         XCTAssertFalse(t.tray.canScore, "no scoring blank dice")
         t.toggle(2)
         XCTAssertEqual(t.tray.kept, [true, true, false, false, true], "a refused tap changes no mark")
+        t.cancelStaged()                                    // Messages' X: the marks are as they were
+        XCTAssertEqual(t.tray.kept, [true, true, false, false, true], "the refused tap left no mark behind")
+        XCTAssertEqual(t.tray.dice, StandInKernel.h1, "a cancelled KEEP rerolls nothing")
+        t.roll()
 
         k.commit()                                          // the send echo
         t.refresh()
