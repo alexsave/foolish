@@ -42,8 +42,23 @@ import { join, resolve, dirname, relative, normalize } from 'node:path';
 const PRODUCT = resolve(import.meta.dirname, '../..');
 const REPO = resolve(PRODUCT, '..');
 
-/** The headers that live in shared/ and are therefore reachable from nowhere by name. */
-const SHARED_HEADERS = ['sha256.h', 'deal_rng.h'];
+/**
+ * The headers that live in shared/ and are therefore reachable from nowhere by name.
+ * Every header under shared/c is here, whoever reaches it today:
+ *
+ *   sha256.h, deal_rng.h   the first two, and the reason this test exists
+ *   b32.h, mixrad.h        the code alphabet and the mixed-radix arithmetic
+ *                          under the game coders, lifted after the first two
+ *                          and included by four products the same relative way
+ *   languages.h            shared/c/i18n/languages.h, the language registry; a
+ *                          kernel includes it as "../../../shared/c/i18n/languages.h"
+ *   msg_stage.h,           reached from Swift through each one's module.modulemap
+ *   motion_ruler.h         on SWIFT_INCLUDE_PATHS (the one sanctioned include path,
+ *                          because Swift has no relative #include). No product C
+ *                          file includes either today; listing them makes the
+ *                          first one that does spell it relatively.
+ */
+const SHARED_HEADERS = ['sha256.h', 'deal_rng.h', 'b32.h', 'mixrad.h', 'languages.h', 'msg_stage.h', 'motion_ruler.h'];
 
 /** Every C source and header in the repo, both products, excluding build output. */
 function kernelSources(): string[] {
@@ -107,13 +122,29 @@ test('the shared sources compile with no -I whatsoever', () => {
     // of them can take an include path away.
     //
     // -fsyntax-only, so this needs no linker, no libm and no wasm toolchain.
-    const probes = [
+    const expectedProbes = [
         'shared/c/sha256.c',
         'shared/c/deal_rng.c',
+        'shared/c/b32.c',
+        'shared/c/mixrad.c',
         'foolish/c/src/game.c',
         'werewolf/c/src/ww_game.c',
-    ].filter((p) => existsSync(join(REPO, p)));
-    assert.equal(probes.length, 4, 'a probe source is missing - did the kernel move again?');
+        // One TU per newer product, chosen for the shared headers it includes.
+        'uttt/c/src/uttt_code.c',       // b32.h, mixrad.h
+        'uttt/c/src/uttt_lang.c',       // i18n/languages.h
+        'uttt/c/src/uttt_msg.c',        // sha256.h, b32.h
+        'pickemup/c/src/pk_deck.c',     // deal_rng.h
+        'pickemup/c/src/pk_msg.c',      // sha256.h, b32.h
+        'chuiniu/c/src/cn_dice.c',      // deal_rng.h, sha256.h
+        'chuiniu/c/src/cn_code.c',      // mixrad.h
+        'tallybones/c/src/tb.c',        // sha256.h, deal_rng.h
+        'tallybones/c/src/tb_msg.c',    // sha256.h, b32.h
+        'tallybones/c/src/tb_code.c',   // mixrad.h
+    ];
+    const probes = expectedProbes.filter((p) => existsSync(join(REPO, p)));
+    assert.equal(probes.length, expectedProbes.length,
+        'a probe source is missing - did the kernel move again?\n  '
+        + expectedProbes.filter((p) => !probes.includes(p)).join('\n  '));
 
     const failures: string[] = [];
     for (const rel of probes) {
@@ -143,17 +174,29 @@ test('the shared sources compile with no -I whatsoever', () => {
 
 test('every build system that compiles the kernel also compiles the shared sources', () => {
     // The other half of the move, and the half a wildcard hides. These builds
-    // LINK deal_rng and sha256; a list that stopped naming them fails at the
+    // LINK the shared sources; a list that stopped naming one fails at the
     // link, far from the cause. Asserted by asking each Makefile what it thinks
     // its source list is, rather than by reading the list here.
-    const builds: Array<{ make: string; variable: string }> = [
-        { make: 'foolish/c', variable: 'CORE_SRC' },
-        { make: 'foolish/foolyard', variable: 'KERNEL_SRC' },
-        { make: 'foolish/server/impls/native', variable: 'KERNEL_SRC' },
-        { make: 'werewolf/c', variable: 'CORE_SRC' },
+    //
+    // The expected set is PER BUILD, and it is what that build's own sources
+    // include today: uttt deals no cards, so it has no deal_rng.c; the card
+    // kernel and the third product code nothing in base32 or mixed radix. (The
+    // sim and the native server take $(wildcard shared/c/*.c), so they compile
+    // b32.c and mixrad.c too; what they must not lose is the pair they link.)
+    const KERNEL = ['deal_rng.c', 'sha256.c'];
+    const ALL_FOUR = ['deal_rng.c', 'sha256.c', 'b32.c', 'mixrad.c'];
+    const builds: Array<{ make: string; variable: string; shared: string[] }> = [
+        { make: 'foolish/c', variable: 'CORE_SRC', shared: KERNEL },
+        { make: 'foolish/foolyard', variable: 'KERNEL_SRC', shared: KERNEL },
+        { make: 'foolish/server/impls/native', variable: 'KERNEL_SRC', shared: KERNEL },
+        { make: 'werewolf/c', variable: 'CORE_SRC', shared: KERNEL },
+        { make: 'uttt/c', variable: 'SRC', shared: ['sha256.c', 'b32.c', 'mixrad.c'] },
+        { make: 'pickemup/c', variable: 'SRC', shared: ALL_FOUR },
+        { make: 'chuiniu/c', variable: 'SRC', shared: ALL_FOUR },
+        { make: 'tallybones/c', variable: 'SRC', shared: ALL_FOUR },
     ];
     const missing: string[] = [];
-    for (const { make, variable } of builds) {
+    for (const { make, variable, shared } of builds) {
         const dir = join(REPO, make);
         if (!statSync(dir).isDirectory()) { missing.push(`${make}: not a directory`); continue; }
         // A tiny makefile that includes theirs and prints the one variable, so
@@ -169,7 +212,7 @@ test('every build system that compiles the kernel also compiles the shared sourc
             continue;
         }
         const list = printed.split(/\s+/).filter((s) => s !== '');
-        for (const base of ['deal_rng.c', 'sha256.c']) {
+        for (const base of shared) {
             const hit = list.find((s) => s.endsWith(`/${base}`) || s === base);
             if (!hit) {
                 missing.push(`${make}: ${variable} does not include ${base}`);
