@@ -49,7 +49,9 @@ public struct RevealScreen: View {
 
     @ViewBuilder private func content(_ motion: RevealMotion) -> some View {
         let t = host.table
-        VStack(spacing: 12) {
+        // spaced to fit the compact drawer: past its height every line with a
+        // minimum scale shrinks, and the names were seen at 70% there
+        VStack(spacing: 8) {
             if let r = t.reveal {
                 HStack(spacing: 10) {
                     Text(r.tally)
@@ -60,7 +62,7 @@ public struct RevealScreen: View {
                     Die(face: r.bid.face, size: 26)
                 }
                 .opacity(motion.done ? 1 : 0)
-                VStack(spacing: 8) {
+                VStack(spacing: 6) {
                     ForEach(t.seats) { seat in
                         RevealRow(seat: seat,
                                   dice: r.dice.indices.contains(seat.id) ? r.dice[seat.id] : [],
@@ -86,12 +88,12 @@ public struct RevealScreen: View {
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
             if motion.done, t.phase == .revealed, t.reveal?.nextAllowed == true {
-                WoodButton(title: host.word(.nextRound), height: 48, fontSize: 16) { host.nextRound() }
+                WoodButton(title: host.word(.nextRound), height: 44, fontSize: 16) { host.nextRound() }
             }
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 16)
-        .padding(.top, 16)
+        .padding(.top, 10)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(FeltBackground())
     }
@@ -122,7 +124,6 @@ struct RevealRow: View {
                 .font(.system(size: 13, weight: .semibold))
                 .onFeltText(winner ? FColor.win : FColor.textPrimary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.7)
                 .frame(width: 84, alignment: .leading)
                 // the name keeps its size when the loser's stamp takes room
                 .layoutPriority(1)

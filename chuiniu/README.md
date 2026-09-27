@@ -56,7 +56,7 @@ Every count below is from a run on 2026-09-27 on this Mac, on branch `cn-tie`.
 - Leave, the race between two bubbles of one game (Rule P) on screen, a cancel with Messages' X, and a link the kernel refuses (the unreadable screen) were not driven on the simulator; the kernel's side of each is in `cn_msg_test` and the bridge smoke.
 - The roll of a seat's own new dice runs on `RollBeats`, not on the kernel's frame (I10); only the reveal is driven by `cn_api_beats_frame`, and that driving has no automated test of its own.
 - The `chuiniu` addition to the shared-is-shared test was not mutation-checked: making it go red means putting the name in a file under `shared/`, which this package may not touch.
-- `There were 0`: the kernel's count line says a digit for none (K11), seen on the last screen of the game and left for the kernel's owner.
+- "There were 0" and "There were one": the kernel's count line has one form for every count (K11), seen on the simulator and left for the kernel's owner.
 
 ## Legal
 

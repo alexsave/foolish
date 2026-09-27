@@ -45,9 +45,11 @@ The whole log is `chuiniu/docs/SIM_GAME_LOG.txt`.
 - The bubble picture of a lobby said "1. Alex (You)" to every phone; it now says the bare name (I18).
 - On one opening of a call bubble the reveal stayed on its last animated frame, with no tally, outcome line or Next round, because a paused `TimelineView` keeps the frame it last drew; the settled reveal is now drawn outside the timeline once the kernel says done (the whole game above ran after that fix).
 
+- In the compact drawer the reveal's names came out at 70% of their size (the loser row's stamp squeezed the row and the name's minimum scale gave way); the name no longer scales and the reveal is spaced to fit the compact drawer. `tie_19_reveal_names_fixed.png`, one more round played after the fix; the earlier reveal shots are from before it.
+
 ## Not seen, or seen wrong and left
 
-- "There were 0": the kernel's `REVEAL_COUNT` puts the digit where a count of none is; the words are the kernel's (K11), so it is reported, not changed here.
+- "There were 0" and "There were one": the kernel's `REVEAL_COUNT` has one form for every count, so none reads as a digit and one reads as a plural; the words are the kernel's (K11, `cn_say.c`), so it is reported, not changed here.
 - The caption line above the newest bubble reads "Dice rolled. Alex bids first" for every move: the simulator's own corrupted summaries of a short session (rig README point 12), not the product.
 - A tapped bubble opens the drawer expanded; the collapse after a raise and the lobby's insert were seen, but a real phone was not used, and nothing was tried in dark appearance, at three or more seats, or with a typed nickname on a fresh device.
 - The roll of a seat's own new dice runs on `RollBeats`, not the kernel's frame (I10); it was seen to play and settle, not measured.
