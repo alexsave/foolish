@@ -951,9 +951,9 @@ The worst case is bounded because every menu is at most 128 options (DRAW + PASS
 **4,568 characters is under Apple's documented 5,000-character `MSMessage.url` cap** (`foolish/docs/IMESSAGE_IMPLEMENTATION_HANDOFF.md`, "MSMessage.url cap is documented: 5,000 characters").
 The realistic cases sit near foolish's self-imposed 1,000-character guardrail; that guardrail is a target, not a limit, and the test in 7.4 asserts the p95 8-player bubble under 1,000.
 
-**Measured (7.4.5, `tests/pk_msg_test.c`, 2026-09-26).**
-The owner's p99 case (8 players, 40 turns, six draws a turn, ten catches) is 341 characters at the median and 349 at p99 over 1,000 deals, under the 530 estimated above, and the test holds it there.
-Every bubble of the bot's games at 8 players is 594 characters at p95 and at most about 830; a 1,500-action game with eight 48-byte names is under 2,000.
+**Measured (7.4.5, `tests/pk_msg_test.c`, re-run 2026-09-27).**
+The owner's p99 case (8 players, 40 turns, six draws a turn, ten catches) is 341 characters at the median and 347 at p99 over 1,000 deals, under the 530 estimated above, and the test holds it there.
+Every bubble of the bot's games at 8 players is 699 characters at p95 and at most 893; a 1,500-action game with eight 48-byte names is under 2,000 (1,928).
 With D41's starter byte, the analytic worst case (`PK_MSG_MAX_TEXT`, asserted at compile time in `pk_msg.h`) is 4,720 characters.
 `pickemup/c/README.md` has the table per player count.
 

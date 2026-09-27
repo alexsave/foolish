@@ -86,7 +86,7 @@ The `getpwuid_r did not find a match for uid 501` line the previous worker saw p
 Every simulator proof in this pass (foolish's P8 after the lifts, the pickemup Messages run and screenshots, `pickemup/ios/scripts/mac_tests.sh` counts, the red run of `ActionCardCornerTests`, the filmed animation take) is therefore owed and listed in `pickemup/docs/SIM_VERIFICATION.md`, ready to run after the reboot.
 
 BLOCKED B3: the filmed and measured animation take.
-On 2026-09-27 at about 03:35 local, the second iPhone 17e `6E0A730D` did boot within the 90-second watchdog, and `BeatPlayerTests` (7) and `TableModelTests` (10) ran green on it, and every `BeatPlayerTests` test was seen red there (`pickemup/ios/TESTS_MUTATED.md`).
+On 2026-09-27 at about 03:35 local, the second iPhone 17e `6E0A730D` did boot within the 90-second watchdog, and `BeatPlayerTests` (7 then, 8 once A17's `testTheJoinThatStartsTheGamePlaysTheDeal` landed) and `TableModelTests` (10) ran green on it, and every `BeatPlayerTests` test was seen red there (`pickemup/ios/TESTS_MUTATED.md`).
 But any test that puts a window or a renderer on screen hung on it for ten minutes and was killed: `ActionCardCornerTests.testAnActionCardExposesItsSuitShape` (a card hosted in a `UIWindow`) and `RenderTests.testTheBubbleRendersAt300By195`, and `xcodebuild` itself hung after every finished run until killed.
 A filmed take is a window on screen, so it was not attempted; `pickemup/docs/MOTION_REPORT.md` gives both takes as the kernel's timeline instead (`make -C pickemup/c beats-dump`).
 Next, after the reboot: film a live arrival with three draws, a reshuffle and a play, and a deal, at normal speed, measure them with the `animation-measure` skill, put the contact sheets in `pickemup/docs/shots/motion/` and the scores in `MOTION_REPORT.md`; and run the whole `PickemupKitTests` scheme, which this worker could only run in part.
@@ -95,8 +95,8 @@ Next, after the reboot: film a live arrival with three draws, a reshuffle and a 
 
 - `werewolf/docs/UI.html` fails `shared/tools/check_ui_doc.py` because of a literal template tag inside a script comment.
   The fix is one line; it is werewolf's file and out of this branch's scope, so it is reported here for the owner.
-- `.github/workflows/uttt-web.yml` does not trigger on `shared/c/mixrad.*`, which uttt's replay wasm now compiles (D45).
-  uttt's C tests do run on it (`uttt-c.yml` triggers on `shared/c/**`), but a change to mixrad alone would not rebuild or redeploy uttt.live; adding `'shared/c/mixrad.*'` beside `'shared/c/b32.*'` there is a one-line change to a workflow this pass may not edit.
+- `.github/workflows/uttt-web.yml` did not trigger on `shared/c/mixrad.*`, which uttt's replay wasm compiles (D45).
+  Fixed on this branch in `d0ca1c99`: both its `push` and `pull_request` paths now list `'shared/c/mixrad.*'` beside `'shared/c/b32.*'`.
 - `foolish/e2e/validation/ci_toolchain_validation.test.ts` treats every `make ... wasm` line in every workflow as a build of foolish's test module and requires foolish's `scripts/ci_bots_test_wasm.sh` before it.
   So no other product's lane can build its own wasm without paying for foolish's (D49); the gate should look for foolish's targets, not the word.
 - `pickemup/c/tests/pk_check.h`'s `seed_of` deals only 256 different games (every byte is a byte-valued function of k plus 7i).

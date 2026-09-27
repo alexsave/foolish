@@ -364,6 +364,11 @@ Today no workflow runs uttt's C tests (`uttt-web.yml` only builds the site), so 
 - Proof: the lanes go red on a deliberately broken assertion, then green.
 - Risk: none.
 
+DONE (S3), in `2a02e1e2`, with two changes from the plan.
+`.github/workflows/pickemup.yml` runs `make -C c run` and `asan` (pickemup kept uttt's target names, ORCHESTRATION O2) and a second job for `structgen` and `datagen`; it does not run `wasm` (D49).
+`.github/workflows/uttt-c.yml` runs uttt's `make -C c run` and `asan`; it does not run uttt's `ios-smoke`, which the plan listed (recorded as a gap, not fixed: uttt's lane is outside this pass).
+Both files parse as YAML (the final check in `ORCHESTRATION.md`); the red-then-green run on GitHub is not recorded here.
+
 **S4 - the shared xcframework recipe, `shared/tools/ios_xcframework.mk`.**
 - One `define` taking `(name, sources, cflags, headers dir, min iOS, out dir)`.
 It emits the device slice, the two simulator slices, the lipo and `-create-xcframework`, lifted from `uttt/c/Makefile:204-236`.
@@ -577,7 +582,7 @@ No CI lane runs foolish's `tests-asan` (only uttt, werewolf and pickemup run an 
 Each one is hundreds of processes.
 Around the eighth, the per-user process limit is hit and every shell returns a bare `Exit code 1`.
 Reuse one named sim, `xcrun simctl shutdown` it when done, and check `xcrun simctl list devices booted` first.
-Source: `~/.claude/projects/-Users-alex-Dev-foolish/memory/feedback_sim_process_limit.md`.
+Source: the owner's working notes (`feedback_sim_process_limit.md`).
 It is not written down anywhere in the repo, and `foolish/ios/Tools/rig/README.md` should say it.
 - **xcodegen blanks the tracked entitlements files every run.**
 It reports only "Created project".

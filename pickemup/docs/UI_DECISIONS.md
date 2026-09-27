@@ -77,8 +77,8 @@ Why: 300 x 195 is what the shipped app bakes; the first draft's size and its car
 ## Motion
 
 DECISION U18: a play is foolish's flight: 500ms, timingCurve(.25,.46,.45,.94), ghost bulge 1.15, 25ms gap between steps.
-Alternative: the 420ms the first draft proposed, which RULES_AND_KERNEL 5.2 quotes.
-Why: foolish's number is the one its rig measured and its players already know; 5.2 should be updated to 500ms.
+Alternative: the 420ms the first draft proposed, which RULES_AND_KERNEL 5.2 quoted before commit 1fb896ab set it to 500ms.
+Why: foolish's number is the one its rig measured and its players already know; `PK_T_FLIGHT` in `pk_beats.h` is 500.
 
 DECISION U19: a draw is its own shorter flight, 320ms with a 1.08 bulge, then a 180ms flip; replayed and penalty draws start 110ms apart, one card per flight, never several in one flight.
 Alternative: foolish's rule that cards in one event fly together.
@@ -86,7 +86,8 @@ Why: every draw is its own kernel step here, and a quantity is being told; 110ms
 
 DECISION U20: the deal is one 320ms flight per card, round-robin, start-to-start clamp(1800ms / cards, 45, 110), after a two-riffle shuffle; own cards flip where they land.
 Alternative: a fixed stagger.
-Why: a fixed 110ms makes an eight-player deal take 6s; the clamp keeps every table between 3.2s and 4.2s end to end.
+Why: a fixed 110ms makes an eight-player deal take 6s; the clamp keeps every table's shuffle and deal under 4.2s end to end.
+Corrected from "between 3.2s and 4.2s": the kernel's timeline shows a two-player shuffle and deal is 2.3s (ANIMATION_DECISIONS.md, the FOUND under A16).
 
 DECISION U21: the reshuffle gag is gather (360ms ease-in each, 40ms apart), fatten (.7 to 1.14 to 1, 240ms), riffle twice (2 x 140ms), then the waiting draw.
 Alternative: a plain fade of the pile into the deck.

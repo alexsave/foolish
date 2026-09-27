@@ -23,7 +23,7 @@ Parts are staggered copies of one beat: the three gathered under-cards, the eigh
 | Take | Measured from the timeline | The grid's budget |
 |---|---|---|
 | 1: five draws, a reshuffle and a play, three players | 2618 ms end to end | U21: a five-draw turn with a reshuffle "in under four seconds" |
-| 2: a three-player deal, opened | 4426 ms, of which the shuffle and deal are 2586 ms (845 to 3431) | U20: "between 3.2s and 4.2s end to end" (see the FOUND in ANIMATION_DECISIONS.md) |
+| 2: a three-player deal, opened | 4426 ms, of which the shuffle and deal are 2586 ms (845 to 3431) | U20: the shuffle and deal "under 4.2s end to end" (corrected from "between 3.2s and 4.2s", see the FOUND in ANIMATION_DECISIONS.md) |
 | Every eight-player arrival in 400 played games | p50 806 ms, p99 about 2.9 s | U21's four seconds, held at the p99 by `pk_beats_test` |
 
 Every row of the grid is pinned by `pickemup/c/tests/pk_beats_test.c` against the numbers of `UI.html`'s demo script, and every one of those tests was seen red (`pickemup/c/tests/MUTATIONS.md`).
