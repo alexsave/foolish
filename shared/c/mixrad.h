@@ -20,18 +20,26 @@
 // theirs, not this file's.
 //
 // A digit's base must be at least 1 and below 2^23, so `byte * base + carry`
-// never leaves 32 bits. Freestanding: no allocation, no libc.
+// never leaves 32 bits. A call outside that - base 0, base 2^23 or more, a
+// negative *len, or *len past cap - is refused at entry with v untouched, so
+// a hostile menu size can neither divide by zero nor write before v.
+// (Base 1 is inside it: a forced choice, an exact no-op.) Freestanding: no
+// allocation, no libc.
 #ifndef SHARED_MIXRAD_H
 #define SHARED_MIXRAD_H
 
 #include <stdint.h>
 
+#define MIXRAD_BASE_LIMIT (1u << 23)
+#define MIXRAD_REFUSED    UINT32_MAX
+
 // v = v * base + digit. 1, or 0 if the result would not fit in `cap` bytes
-// (v is then partly updated and must be thrown away).
+// (v is then partly updated and must be thrown away) or the call is refused.
 int mixrad_mul_add(uint8_t *v, int *len, int cap, uint32_t base, uint32_t digit);
 
 // v /= base, returning the remainder. Leading (most significant) zero bytes
-// are dropped, so *len shrinks as the number does.
+// are dropped, so *len shrinks as the number does. A refused call returns
+// MIXRAD_REFUSED, which is never below any base, so `rem >= base` catches it.
 uint32_t mixrad_div_mod(uint8_t *v, int *len, uint32_t base);
 
 #endif
