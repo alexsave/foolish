@@ -124,7 +124,7 @@ static void b_end(void)
           && B.beat[2].kind == TB_BK_HOLD && B.beat[2].dur_ms == TB_T_OVER, "in that order");
     TbBeatFrame f;
     tb_beats_frame(&B, B.total_ms, &f);
-    CHECK(f.results && f.winners == 1 && !(f.in & 2) && f.turn == TB_SEAT_NONE, "Alex wins, Bo gone");
+    CHECK(f.results && f.winners == 1 && !(f.still_in & 2) && f.turn == TB_SEAT_NONE, "Alex wins, Bo gone");
 }
 
 /* Every bubble of random games: the plan ends on the board the game settles
@@ -155,7 +155,7 @@ static void b_games(int games)
             tb_beats_frame(&B, B.total_ms, &f);
             CHECK(f.done && !memcmp(f.dice, g.dice, 5) && f.turn == g.turn, "the end frame is the settled board");
             for (int s = 0; s < n; s++)
-                CHECK(f.filled[s] == g.filled[s] && f.total[s] == tb_total(&g, s) && ((f.in >> s) & 1) == tb_is_in(&g, s),
+                CHECK(f.filled[s] == g.filled[s] && f.total[s] == tb_total(&g, s) && ((f.still_in >> s) & 1) == tb_is_in(&g, s),
                       "seat %d settled", s);
             CHECK(B.total_ms <= 3000, "a bubble plays within 3 s (%u)", B.total_ms);
         }

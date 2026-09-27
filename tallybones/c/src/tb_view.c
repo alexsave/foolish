@@ -32,7 +32,7 @@ void tb_view(const TbGame *g, TbView *out)
         k->total = (uint16_t)tb_total(g, s);
         k->upper = (uint16_t)tb_upper(g, s);
         k->bonus = (uint8_t)tb_bonus(g, s);
-        k->in = (uint8_t)tb_is_in(g, s);
+        k->still_in = (uint8_t)tb_is_in(g, s);
         k->winner = (uint8_t)(out->winners >> s & 1);
         memcpy(k->score, g->score[s], TB_CATS);
     }

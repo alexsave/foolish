@@ -71,7 +71,7 @@ typedef struct {
     uint8_t  kept;               /* the held dice                                   */
     uint8_t  turn;               /* the turn bar's seat, or TB_SEAT_NONE            */
     uint8_t  roll;               /* the roll the tray shows, 1..3                   */
-    uint8_t  in;                 /* bit s: seat s is still shown in the game        */
+    uint8_t  still_in;           /* bit s: seat s is still shown in the game        */
     uint8_t  results;            /* 1 once the results have begun to fade in        */
     uint8_t  winners;
     uint8_t  done;               /* every beat has run                              */

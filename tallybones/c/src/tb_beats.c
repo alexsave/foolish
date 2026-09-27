@@ -30,7 +30,7 @@ static void frame_of(const TbGame *g, TbBeatFrame *f)
     memset(f, 0, sizeof *f);
     f->turn = TB_SEAT_NONE;
     f->next_ms = TB_BEAT_NEVER;
-    if (!g) { f->in = 0xFF; return; }
+    if (!g) { f->still_in = 0xFF; return; }
     memcpy(f->dice, g->dice, TB_DICE);
     f->kept = g->roll > 1 ? g->kept : 0;
     f->turn = g->turn;
@@ -38,7 +38,7 @@ static void frame_of(const TbGame *g, TbBeatFrame *f)
     f->results = g->over;
     f->winners = (uint8_t)tb_winners(g);
     for (int s = 0; s < g->n; s++) {
-        if (tb_is_in(g, s)) f->in |= (uint8_t)(1u << s);
+        if (tb_is_in(g, s)) f->still_in |= (uint8_t)(1u << s);
         f->filled[s] = g->filled[s];
         f->total[s] = (uint16_t)tb_total(g, s);
     }
@@ -212,7 +212,7 @@ void tb_beats_frame(const TbBeats *b, uint32_t now, TbBeatFrame *out)
                 out->winners = x->mask;
                 out->turn = TB_SEAT_NONE;
             } else if (now >= end && x->seat < TB_MAX_SEATS) {
-                out->in &= (uint8_t)~(1u << x->seat);
+                out->still_in &= (uint8_t)~(1u << x->seat);
             }
             break;
         }

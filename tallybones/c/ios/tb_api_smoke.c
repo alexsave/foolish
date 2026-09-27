@@ -66,7 +66,7 @@ int main(void)
     OK(t->phase == TB_PHASE_LIVE && t->me == 0 && t->by == TB_BY_RECORD && t->my_turn, "Alex, by the record, on turn");
     OK(t->n_seats == 2 && t->seat[1].name_len == 2 && !memcmp(t->seat[1].name, "Bo", 2), "the roster");
     const TbView *v = tb_api_view();
-    OK(v->known == 31 && v->n == 2 && v->seat[0].in && v->rolls_left == 2, "the view");
+    OK(v->known == 31 && v->n == 2 && v->seat[0].still_in && v->rolls_left == 2, "the view");
     /* one process, one slot: the start is already resident here, so the
      * adopt had nothing new to play (tb_twophone_test has the real flow) */
     OK(!tb_api_beats_now(), "the same bubble again: no motion");
