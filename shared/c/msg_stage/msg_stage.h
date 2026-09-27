@@ -98,6 +98,11 @@ static inline int ms_drawer_up(float window_h, float view_h, int expanded)
 #define MS_ACT_LANDED          6   /* in the field: hide the door, start the hint */
 #define MS_ACT_REVERT          7   /* give up: treat the draft as cancelled       */
 
+/* TRY NUMBERS RESTART AT 1 ON EVERY STAGE (ms_stage_reset), so a late answer
+ * from the PREVIOUS stage's try 1 looks like this stage's try 1, and a late
+ * yes lands the new stage. The host must drop answers that belong to an older
+ * stage by a generation of its own before calling in here (the Swift face,
+ * InsertStaging.swift, does). */
 typedef struct ms_stage {
     int state;    /* MS_STAGE_* */
     int try_no;   /* tries issued so far, 1-based; 0 before the first */
@@ -148,7 +153,13 @@ static inline int ms_stage_silence(ms_stage *s, int try_no, int compact)
  * late one, a parked one, one behind a door - the bubble is in the field,
  * whichever try put it there. An error counts only for the try that is
  * current and still waiting: an overtaken try's error says nothing the newer
- * try will not say for itself, and a door already up is the human's path. */
+ * try will not say for itself, and a door already up is the human's path.
+ *
+ * EXCEPT AFTER A REVERT: once the errors run out the stage is DONE and a yes
+ * that arrives later is dropped, so the field could hold a bubble the board
+ * has already taken back. INSERT_GATING.md's evidence is that a compact
+ * silence never answers later; a host that sees one do so has met a case
+ * this machine does not model. */
 static inline int ms_stage_answer(ms_stage *s, int try_no, int ok)
 {
     if (s->state == MS_STAGE_DONE || s->state == MS_STAGE_IDLE) return MS_ACT_NONE;

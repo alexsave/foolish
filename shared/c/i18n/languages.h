@@ -66,6 +66,11 @@ typedef enum {
 // It is a table of STRUCTS on purpose. datagen reads a row's fields by name the
 // same way it reads an array's slots by designator, so a column added here
 // reaches both hosts without either one being edited.
+//
+// A BARE ARRAY, NO ACCESSOR: an index that came from a bubble, a file or a
+// locale must be checked against FS_L_COUNT by whoever takes it (every C
+// reader does today). The day one does not, the fix is one accessor here
+// that answers English for an index out of range, not a check per caller.
 typedef struct {
     const char *code;     // the ISO 639-1 subtag a speaker's locale begins with
     const char *display;  // the name the language calls ITSELF, in its own script
