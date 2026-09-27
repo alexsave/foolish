@@ -39,7 +39,7 @@ Swift reaches a header-only C module through its `module.modulemap` on `SWIFT_IN
 | Path | What | Used by |
 | --- | --- | --- |
 | `tools/ship/ship.sh` | archive, export, check and upload an iMessage app to TestFlight; the product is its `ship.env` | CARDS (`ios/Tools/ship.env`), UTTT (`uttt/ios/Tools/ship.sh`) |
-| `tools/release_strings.sh` | fail a Release `.app`/`.ipa` on `dev.*` names, em dashes and forbidden frameworks (C scanner in `release_strings/`); `ship.sh` runs it | CARDS, UTTT |
+| `tools/release_strings.sh` | fail a Release `.app`/`.ipa` on DevFlags compiled in, `dev.*` names, em dashes (UTF-8, UTF-16 and Swift small strings rebuilt from arm64 code, asset catalogs included) and forbidden frameworks (C scanner in `release_strings/`, fixtures in its `test.sh`); `ship.sh` runs it | CARDS, UTTT |
 | `tools/asc/testflight.py` | TestFlight status, release to the external group; the product is its `asc.env` | CARDS (`ios/Tools/asc.env`), UTTT (`uttt/ios/Tools/asc.env`) |
 | `tools/devlogs.sh` | Release dev-install on a phone, the `log collect` line, and a subsystem filter | CARDS, UTTT (via `ship.env`) |
 | `tools/devcap/` | film a USB iPhone for the motion tool | CARDS, UTTT (via `ship.env`) |
