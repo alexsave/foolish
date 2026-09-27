@@ -266,6 +266,7 @@ static void arrange(void)
         pk_lay_hand_slot(n, w, 2, i, &x, &y);
         ok &= pk_lay_hand_nearest(n, w, 2, x + cw / 2, y + PK_LAY_CARD_H / 2) == i;
         ok &= pk_lay_hand_nearest(n, w, 2, x + cw / 2 + cw * 0.4f, y + 10) == i;
+        ok &= pk_lay_hand_nearest(n, w, 2, x + cw / 2 - cw * 0.4f, y + 10) == i;
     }
     OK(ok, "a card over a slot asks for that slot");
     float x0, x1;
@@ -315,6 +316,10 @@ static void arrange(void)
     OK(pk_api_arranged_pos(6) == 0 && pk_api_arranged_pos(0) == 1 && pk_api_arranged_pos(7) == -1,
        "the position drawn at a slot");
     OK(pk_api_arrange_move(2, 2) == 0 && pk_api_arrange_move(0, 7) == 0, "no move to itself or off the hand");
+    OK(pk_api_arrange_move(3, 1) == 1 && pk_api_arranged_pos(1) == 4 && pk_api_arranged_pos(2) == 2
+       && pk_api_arranged_pos(3) == 3, "a drag to a middle slot lands in that slot");
+    OK(pk_api_arrange_move(1, 3) == 1 && pk_api_arranged_pos(3) == 4 && pk_api_arranged_pos(4) == 5,
+       "and back again");
     OK(pk_api_play_slot(-1, 4) == 0, "no play off the hand");
     OK(pk_api_seats_dirty(), "a drag is saved with the seat records");
     int rn = pk_api_seats_save((uint8_t *)l[2], PK_API_REC_BYTES);
