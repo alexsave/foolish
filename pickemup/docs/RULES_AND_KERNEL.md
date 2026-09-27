@@ -1189,6 +1189,7 @@ A bubble's caption is its most important clause, then the next if it fits (`PK_C
 | `BTN_DRAW` | Draw |
 | `BTN_PLAY` | Play |
 | `BTN_PASS` | Pass |
+| `BTN_UNDO` | Undo |
 | `BTN_SAY` | Last card! |
 | `BTN_CAUGHT` | Caught you! |
 | `BTN_AGAIN` | Again |

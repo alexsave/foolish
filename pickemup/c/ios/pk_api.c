@@ -428,13 +428,13 @@ static int empty(char *out, int cap)
     return 0;
 }
 
-/* "2. Bo", or "2. Bo (You)" when the row is my seat's. */
-static int numbered_row(int number, int seat, char *out, int cap)
+/* "2. Bo", or "2. Bo (You)" when the row is my seat's and it may say so. */
+static int numbered_row(int number, int seat, int mine_marked, char *out, int cap)
 {
     char num[8], who[PK_NAME_MAX_BYTES + 24];
     if (pk_itoa(number, num, sizeof num) < 0 || pk_say_seat(S.names, seat, who, sizeof who) < 0) return -1;
     const char *kv[] = { "n", num, "who", who, 0 };
-    return pk_fill(out, cap, pk_text(seat == S.me ? PK_K_LOBBY_ROW_YOU : PK_K_LOBBY_ROW), kv);
+    return pk_fill(out, cap, pk_text(mine_marked && seat == S.me ? PK_K_LOBBY_ROW_YOU : PK_K_LOBBY_ROW), kv);
 }
 
 typedef struct { uint8_t card[8]; int n; } Buried;
@@ -496,14 +496,14 @@ int pk_api_words(int what, int arg, char *out, int cap)
     case PK_API_W_SPOKEN_FAN:
         if (!S.have || arg < 0 || arg >= S.m.n_seats) return -1;
         return pk_say_spoken_fan(S.names, arg, out, cap);
-    case PK_API_W_LOBBY_ROW:
+    case PK_API_W_LOBBY_ROW: case PK_API_W_PUBLIC_ROW:
         if (!S.have || arg < 0 || arg >= S.m.n_seats) return -1;
-        return numbered_row(arg + 1, arg, out, cap);
+        return numbered_row(arg + 1, arg, what == PK_API_W_LOBBY_ROW, out, cap);
     case PK_API_W_RANK_ROW: {
         uint8_t rank[PK_MAX_SEATS];
         int n = pk_api_ranks(rank);
         if (arg < 0 || arg >= n) return -1;
-        return numbered_row(arg + 1, rank[arg], out, cap);
+        return numbered_row(arg + 1, rank[arg], 1, out, cap);
     }
     case PK_API_W_LOBBY_DEALER: {
         if (!S.have || S.m.n_seats < 1) return -1;

@@ -83,6 +83,7 @@ const char *const PK_STRINGS_EN[PK_K_COUNT] = {
     [PK_K_BTN_DRAW           ] = "Draw",
     [PK_K_BTN_PLAY           ] = "Play",
     [PK_K_BTN_PASS           ] = "Pass",
+    [PK_K_BTN_UNDO           ] = "Undo",
     [PK_K_BTN_SAY            ] = "Last card!",
     [PK_K_BTN_CAUGHT         ] = "Caught you!",
     [PK_K_BTN_AGAIN          ] = "Again",

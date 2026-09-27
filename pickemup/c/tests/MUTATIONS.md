@@ -120,6 +120,7 @@ The sentinel mutation above is the one that breaks canonicality.
 | swift-smoke | the host library stamped with a hash that is not the readers' | `pk_api_smoke.swift:36` "the library and the readers are one layout" |
 | ios-smoke words | `W_STAGED_CAPTION` captions `bubbles - 1` of the sealed copy | `pk_api_smoke.c:224` "the staged caption is the sent bubble's" |
 | ios-smoke words | `W_LOBBY_ROW` says "(You)" on every row but mine | `pk_api_smoke.c:179` "my own roster row says so", `:197` "somebody else's roster row" |
+| ios-smoke words | `W_PUBLIC_ROW` marks my row "(You)" like `W_LOBBY_ROW` | `pk_api_smoke.c:183` "the bubble's roster says nobody is you" |
 | ios-smoke words | `W_LOBBY_DEALER` names the last seat, not seat 0 | `pk_api_smoke.c:303` "seat 0 deals, whoever joined last" |
 | ios-smoke words | `W_ERROR` maps `PK_ECHECK` (not `PK_EFORMAT`) to the newer-version line | `pk_api_smoke.c:321` "a newer format says so", `:323` "any other refusal is a damaged link" |
 | ios-smoke layout | `TWO_ROW` 34 becomes 30 | `pk_api_smoke.c:95` "ten: two rows, the 166 box (table 04)", `:117` "card 5 of ten opens the lower row" |

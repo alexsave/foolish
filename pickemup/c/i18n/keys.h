@@ -119,6 +119,7 @@
     X(BTN_DRAW,           14, 0)                                                 \
     X(BTN_PLAY,           14, 0)                                                 \
     X(BTN_PASS,           14, 0)                                                 \
+    X(BTN_UNDO,           14, 0)  /* the Undo pill: a staged play comes back */ \
     X(BTN_SAY,            14, 0)                                                 \
     X(BTN_CAUGHT,         14, 0)                                                 \
     X(BTN_AGAIN,          14, 0)                                                 \

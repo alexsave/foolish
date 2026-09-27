@@ -179,6 +179,8 @@ int main(void)
        "my own roster row says so");
     OK(pk_api_words(PK_API_W_LOBBY_DEALER, 0, line, sizeof line) > 0 && !strcmp(line, "Alex deals"),
        "seat 0 deals");
+    OK(pk_api_words(PK_API_W_PUBLIC_ROW, 0, line, sizeof line) > 0 && !strcmp(line, "1. Alex"),
+       "the bubble's roster says nobody is you");
     OK(pk_api_words(PK_API_W_STAGED_CAPTION, 0, line, sizeof line) == 0, "a lobby is captioned by its lobby line");
 
     OK(open_as(1, links[0], 1, 0) == 0, "Bo opens it");
