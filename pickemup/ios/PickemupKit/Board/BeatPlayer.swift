@@ -13,6 +13,15 @@
 // clear-not-revert rule), and the new plan starts from the board the kernel
 // says it starts from, not from what was on screen.
 //
+// THE CLOCK STARTS ON THE FIRST FRAME ANYBODY SEES (MOTION_REPORT Take B,
+// IOS_DECISIONS I46). An opened bubble is adopted, and its plan handed here,
+// while the extension's view is still hidden behind a white drawer; a clock
+// started then played the first draws to nobody. So `play` only starts the
+// clock when the board is on screen (`onScreen`, the controller's); otherwise
+// the plan waits at its first frame, and the clock starts in the first BODY
+// that samples it on screen (`ms()`, foolish's first-paint rule: derived where
+// the frame is drawn, never in an onChange a paint later).
+//
 // A STAGED DRAFT HOLDS. A plan whose settle half is held until Send (`held`)
 // stays current at its last frame after it ends, so the board keeps showing
 // the draft as played rather than the kernel's settled state; Send's plan
@@ -30,10 +39,16 @@ public final class BeatPlayer: ObservableObject {
     /// True while a frame can still change (the timeline is running).
     @Published public private(set) var animating = false
 
-    private var began: CFTimeInterval = 0
+    /// When the current plan's clock started; nil while it waits for the
+    /// board to be on screen.
+    public private(set) var began: CFTimeInterval?
     private var endWork: DispatchWorkItem?
     /// The clock, replaceable by a test.
     public var now: () -> CFTimeInterval = { CACurrentMediaTime() }
+    /// Is the board on screen? The controller says (the hosting view hidden
+    /// until the drawer is up, the extension off screen after it disappears);
+    /// a host with no controller (a test, a preview) is always on screen.
+    @Published public var onScreen = true
 
     public init() {}
 
@@ -47,8 +62,15 @@ public final class BeatPlayer: ObservableObject {
             return
         }
         self.plan = plan
-        began = now()
+        began = nil
         animating = !plan.beat.isEmpty
+        if onScreen { start() }
+    }
+
+    /// The plan's clock starts now, and its end is due totalMs from now.
+    private func start() {
+        guard let plan, began == nil else { return }
+        began = now()
         let serial = plan.serial
         let work = DispatchWorkItem { [weak self] in self?.ended(serial) }
         endWork = work
@@ -59,6 +81,7 @@ public final class BeatPlayer: ObservableObject {
     public func clear() {
         endWork?.cancel()
         endWork = nil
+        began = nil
         plan = nil
         animating = false
     }
@@ -71,9 +94,13 @@ public final class BeatPlayer: ObservableObject {
         if plan.held == 0 { self.plan = nil }
     }
 
-    /// Milliseconds into the current plan.
+    /// Milliseconds into the current plan. Called by the board's body on every
+    /// frame it draws: the first one drawn on screen starts a waiting clock,
+    /// and until then the plan stands at 0.
     public func ms(at t: CFTimeInterval? = nil) -> Int {
         guard plan != nil else { return 0 }
+        if began == nil, onScreen { start() }
+        guard let began else { return 0 }
         return max(0, Int(((t ?? now()) - began) * 1000))
     }
 

@@ -113,13 +113,16 @@ int pk_lay_hand_slot(int n, float width, int max_rows, int i, float *x, float *y
 
 /* ---- foolish's ring (MessageTableView+Seats.swift ringPoint) ---------------- */
 
+/* The ring's vertical radius, a fraction of the board's height. */
+static float ring_ry(float collapse) { return 0.35f + 0.03f * collapse; }
+
 void pk_lay_seat(int seat, int me, int n, float board_w, float board_h, float collapse,
                  float *x, float *y)
 {
     if (n < 1) n = 1;
     int visual = me < 0 ? seat % n : ((seat - me) % n + n) % n;
     float rad = 2.0f * 3.14159265f * (float)visual / (float)n;
-    float ry = 0.35f + 0.03f * collapse;
+    float ry = ring_ry(collapse);
     if (x) *x = (-sinf(rad) * 0.42f + 0.5f) * board_w;
     if (y) *y = (cosf(rad) * ry + 0.5f) * board_h;
 }
@@ -145,22 +148,67 @@ int pk_lay_deck_layers(int deck_n)
     return deck_n <= 11 ? 7 : 8;
 }
 
-/* ---- the pile and the deck beside it (U2, U3) -------------------------------- */
+/* ---- the pile and the deck beside it (U2, U3), and the compact drawer (O10) ---- */
 #define PILE_LIFT 24.0f      /* exactly a pill row's clearance in the drawer     */
 #define DECK_GAP  10.0f      /* the deck sits 10pt left of the pile              */
+#define PILL_GAP   4.0f      /* the pill row sits 4 above the hand               */
+/* O10's band. The fan across the table: SeatBadge's centre is the ring point,
+ * and its fan's foot is 9.2 below it (a 12pt name 14.3 high, 2, the 44 fan
+ * box, 2, the 40 stamp slot: 102.3 high, the fan's foot at 60.3). */
+#define FAN_FOOT    9.2f
+#define BAND_CLEAR  4.0f     /* the pile stays this far off the fan and the pills */
+/* The pile's reach about its centre, at scale 1: the top card leans -3
+ * degrees, and the three under-cards (PileView.under: -8, 6 and -3 degrees,
+ * 4, -2 and 3 down) reach 63.5 above it and 66.7 below. */
+#define PILE_UP    64.0f
+#define PILE_DOWN  67.0f
+#define MIN_SCALE   0.5f
+
+/* The drawer's band, top and bottom, in the board. */
+static void band(float board_h, float collapse, float *top, float *bottom)
+{
+    *top = (0.5f - ring_ry(collapse)) * board_h + FAN_FOOT + BAND_CLEAR;
+    *bottom = board_h - PK_LAY_ROW_H - PILL_GAP - PK_LAY_PILL_H - BAND_CLEAR;   /* U7: one row */
+}
+
+static int in_drawer(float collapse) { return collapse >= 0.5f; }
+
+float pk_lay_table_scale(float board_h, float collapse)
+{
+    if (!in_drawer(collapse)) return 1.0f;
+    float top, bottom;
+    band(board_h, collapse, &top, &bottom);
+    float s = (bottom - top) / (PILE_UP + PILE_DOWN);
+    return s > 1.0f ? 1.0f : s < MIN_SCALE ? MIN_SCALE : s;
+}
 
 void pk_lay_pile(float board_w, float board_h, float collapse, float *cx, float *cy)
 {
+    float y = board_h / 2;
+    if (in_drawer(collapse)) {
+        float s = pk_lay_table_scale(board_h, collapse), top, bottom;
+        band(board_h, collapse, &top, &bottom);
+        float lo = top + PILE_UP * s, hi = bottom - PILE_DOWN * s;
+        y -= PILE_LIFT;
+        if (lo > hi) y = (lo + hi) / 2;           /* a band under half a pile: centred */
+        else if (y < lo) y = lo;
+        else if (y > hi) y = hi;
+    }
     if (cx) *cx = board_w / 2;
-    if (cy) *cy = board_h / 2 - (collapse >= 0.5f ? PILE_LIFT : 0);
+    if (cy) *cy = y;
 }
 
 void pk_lay_deck(float board_w, float board_h, float collapse, float *x, float *y)
 {
-    float cx, cy;
+    float cx, cy, s = pk_lay_table_scale(board_h, collapse);
     pk_lay_pile(board_w, board_h, collapse, &cx, &cy);
-    if (x) *x = cx - PK_LAY_PILE_W / 2 - DECK_GAP - PK_LAY_DECK_W;
-    if (y) *y = cy - PK_LAY_DECK_H / 2;
+    if (x) *x = cx - (PK_LAY_PILE_W / 2 + DECK_GAP + PK_LAY_DECK_W) * s;
+    if (y) *y = cy - PK_LAY_DECK_H / 2 * s;
+}
+
+int pk_lay_subline(float collapse)
+{
+    return !in_drawer(collapse);
 }
 
 /* ---- the pill row (U9) ------------------------------------------------------ */
@@ -192,15 +240,16 @@ void pk_lay_picker(int tile, float cx, float cy, float *x, float *y)
 {
     static const float dx[5] = { 0, 1, 0, -1, 1 }, dy[5] = { -1, 0, 1, 0, -1 };
     if (tile < 0 || tile > 4) tile = 4;
+    float ty = cy + dy[tile] * PICKER_REACH_Y;
+    if (ty < PK_LAY_PICKER_TILE / 2) ty = PK_LAY_PICKER_TILE / 2;    /* the whole tile on the board */
     if (x) *x = cx + dx[tile] * PICKER_REACH_X;
-    if (y) *y = cy + dy[tile] * PICKER_REACH_Y;
+    if (y) *y = ty;
 }
 
 /* ---- the board's zones (I31) -------------------------------------------------- */
 #define BAND_UP     64.0f    /* U24: foolish's hand band, grown 64 up ...         */
 #define BAND_DOWN   24.0f    /* ... and 24 down                                   */
 #define DROP_MARGIN  8.0f    /* a dragged card over the pile's edge still plays   */
-#define PILL_GAP     4.0f    /* the pill row sits 4 above the hand                */
 #define TOAST_UP    64.0f    /* the toast's centre above the hand                 */
 #define DIR_W       78.0f    /* UI.html's direction box                           */
 #define DIR_H       68.0f
@@ -218,12 +267,12 @@ int pk_lay_zone(int zone, float board_w, float board_h, float collapse, float ha
         rh = hand_box_h + BAND_UP + BAND_DOWN;
         break;
     case PK_ZONE_PILE_DROP: {
-        float cx, cy;
+        float cx, cy, s = pk_lay_table_scale(board_h, collapse);
         pk_lay_pile(board_w, board_h, collapse, &cx, &cy);
-        rx = cx - PK_LAY_PILE_W / 2 - DROP_MARGIN;
-        ry = cy - PK_LAY_PILE_H / 2 - DROP_MARGIN;
-        rw = PK_LAY_PILE_W + 2 * DROP_MARGIN;
-        rh = PK_LAY_PILE_H + 2 * DROP_MARGIN;
+        rx = cx - PK_LAY_PILE_W * s / 2 - DROP_MARGIN;
+        ry = cy - PK_LAY_PILE_H * s / 2 - DROP_MARGIN;
+        rw = PK_LAY_PILE_W * s + 2 * DROP_MARGIN;
+        rh = PK_LAY_PILE_H * s + 2 * DROP_MARGIN;
         break;
     }
     case PK_ZONE_PILLS:

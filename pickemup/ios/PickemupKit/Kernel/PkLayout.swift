@@ -113,6 +113,15 @@ public enum PkLayout {
     public static func fanStep(backs: Int) -> CGFloat { CGFloat(pk_lay_fan_step(Int32(backs))) }
     public static func deckLayers(_ deckCount: Int) -> Int { Int(pk_lay_deck_layers(Int32(deckCount))) }
 
+    /// O10: how much the pile and the deck are drawn at, 1 unless the drawer
+    /// is too short for them (pk_lay_table_scale; 0.81 in a 299pt drawer).
+    public static func tableScale(board: CGSize, collapse: CGFloat) -> CGFloat {
+        CGFloat(pk_lay_table_scale(Float(board.height), Float(collapse)))
+    }
+
+    /// O10: does the status corner show its sub-line? Not in the drawer.
+    public static func showsSubline(collapse: CGFloat) -> Bool { pk_lay_subline(Float(collapse)) != 0 }
+
     public static func pileCentre(board: CGSize, collapse: CGFloat) -> CGPoint {
         var x: Float = 0, y: Float = 0
         pk_lay_pile(Float(board.width), Float(board.height), Float(collapse), &x, &y)

@@ -24,6 +24,12 @@ public final class PickemupHost: ObservableObject {
     @Published public var hintVisible = false
     @Published public var hintRestart = 0
     public let model = TableModel()
+    /// Is the board on screen? The controller says; the motion's clock waits
+    /// for it (BeatPlayer.onScreen, IOS_DECISIONS I46).
+    public var onScreen: Bool {
+        get { model.player.onScreen }
+        set { if model.player.onScreen != newValue { model.player.onScreen = newValue } }
+    }
     /// The name gate is done: make the new game.
     public var onNamed: (() -> Void)?
 

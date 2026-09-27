@@ -86,6 +86,9 @@ public struct TableScreen: View {
         let handTop = board.height - layout.boxHeight
         let pc = PkLayout.pileCentre(board: board, collapse: collapse)
         let deckAt = PkLayout.deckOrigin(board: board, collapse: collapse)
+        // O10: in a drawer too short for them the pile and the deck are drawn
+        // smaller, in the band between the top fan and the pill row
+        let scale = PkLayout.tableScale(board: board, collapse: collapse)
         // every zone is the kernel's (pk_lay_zone, I31)
         let band = PkLayout.zone(.drawBand, board: board, collapse: collapse, handBox: layout.boxHeight)
         let pillRow = PkLayout.zone(.pills, board: board, collapse: collapse, handBox: layout.boxHeight)
@@ -115,7 +118,8 @@ public struct TableScreen: View {
                 }
             }
 
-            StatusCorner(headline: model.headline, subline: model.subline, strip: model.strip,
+            StatusCorner(headline: model.headline,
+                         subline: PkLayout.showsSubline(collapse: collapse) ? model.subline : "", strip: model.strip,
                          onUnsay: { model.unsay() })
                 .offset(x: 2, y: 0)
 
@@ -131,6 +135,7 @@ public struct TableScreen: View {
                      pending: shown.holds(PK_HOLD_PENDING) ? nil
                          : model.pickerFor.flatMap { $0 < hand.count ? hand[$0] : nil },
                      hot: pileHot)
+                .scaleEffect(scale)
                 .position(pc)
             // The pile card's own frame, for every flight to or from the pile.
             // LAID OUT at the centre with `.position`, never moved there with
@@ -138,13 +143,14 @@ public struct TableScreen: View {
             // GeometryReader measured the un-offset frame at the board's
             // origin, so every play, start card, bury and gather flew to the
             // top-left corner and snapped onto the pile (AnchorTests).
-            Color.clear.frame(width: PkLayout.pileSize.width, height: PkLayout.pileSize.height)
+            Color.clear.frame(width: PkLayout.pileSize.width * scale, height: PkLayout.pileSize.height * scale)
                 .pkAnchor("stack")
                 .position(pc)
                 .allowsHitTesting(false)
 
             DeckStack(count: shown.deckN, label: Pk.words(PK_API_W_DECK_N, shown.deckN), buried: model.buried,
                       lifted: deckDrag != nil, buriedHold: shown.buriedHold)
+                .scaleEffect(scale, anchor: .topLeading)
                 .offset(x: deckAt.x, y: deckAt.y)
                 .highPriorityGesture(deckGesture(band: band, origin: deckAt))
 

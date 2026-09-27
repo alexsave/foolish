@@ -106,6 +106,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         view.addSubview(h.view)
         h.didMove(toParent: self)
         h.view.isHidden = true              // until the drawer has its size (uttt `appeared`)
+        host.onScreen = false               // and no plan's clock runs behind it (I46)
         hosting = h
     }
 
@@ -122,7 +123,7 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        if drawerUp { hosting?.view.isHidden = false }
+        if drawerUp { showBoard() }
         let h = view.bounds.height
         if let slide, laidOutHeight > 0, h != laidOutHeight {
             slide.host = hosting?.view
@@ -135,7 +136,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         super.viewDidAppear(animated)
         if drawerUp {
             appeared = true
-            hosting?.view.isHidden = false
+            showBoard()
         }
         becameReady()
     }
@@ -143,6 +144,15 @@ final class MessagesViewController: MSMessagesAppViewController {
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         appeared = false
+        host.onScreen = false               // a plan adopted before the next appearance waits for it
+    }
+
+    /// THE BOARD IS ON SCREEN from here: the hosting view is shown, and a plan
+    /// adopted while it was hidden (an opened bubble) starts its clock on the
+    /// first frame drawn after this, not at the adopt (IOS_DECISIONS I46).
+    private func showBoard() {
+        hosting?.view.isHidden = false
+        host.onScreen = true
     }
 
     private func becameReady() {
@@ -170,7 +180,7 @@ final class MessagesViewController: MSMessagesAppViewController {
             guard let self, self.becameActiveAt == activation, !self.ready else { return }
             self.appeared = true
             self.conversationActive = true
-            self.hosting?.view.isHidden = false
+            self.showBoard()
             self.becameReady()
         }
     }

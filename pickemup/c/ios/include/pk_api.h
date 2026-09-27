@@ -224,14 +224,29 @@ float pk_lay_fan_step(int backs);
 /* The deck's drawn layers for a count: one per card to 6, 7 to 11, then 8. */
 int   pk_lay_deck_layers(int deck_n);
 
-/* The pile's centre, lifted clear of the pill row in the drawer (U2), and the
- * deck's top-left beside it (U3). */
+/* THE COMPACT DRAWER (ORCHESTRATION O10, IOS_DECISIONS I45). In the drawer
+ * (collapse 1/2 and over) the pile and the deck live in the BAND between the
+ * foot of the fan across the table and the top of the pill row, 4pt clear of
+ * each, and the pile's whole reach (its three leaning under-cards included)
+ * must fit in it. The table scale is how much the pile and the deck are drawn
+ * at: 1 while the band holds them (a 340pt drawer and up), less below (the
+ * iPhone 17e's 299pt drawer: 0.81), never under 1/2. Expanded it is 1. */
+float pk_lay_table_scale(float board_h, float collapse);
+
+/* The pile's centre (U2's 24pt lift in the drawer, held inside the band), and
+ * the deck's top-left beside it on its line (U3). Both are drawn at
+ * pk_lay_table_scale: the pile PK_LAY_PILE_W x PK_LAY_PILE_H times it, the
+ * deck PK_LAY_DECK_W x PK_LAY_DECK_H times it, 10pt times it left of the pile. */
 void  pk_lay_pile(float board_w, float board_h, float collapse, float *cx, float *cy);
 void  pk_lay_deck(float board_w, float board_h, float collapse, float *x, float *y);
 #define PK_LAY_PILE_W 82.0f
 #define PK_LAY_PILE_H 115.0f
 #define PK_LAY_DECK_W 50.0f
 #define PK_LAY_DECK_H 70.0f
+
+/* Does the status corner show its sub-line (what matches, the live suit)?
+ * Not in the drawer (O10): there it would run under the deck. 1 or 0. */
+int   pk_lay_subline(float collapse);
 
 /* The pill row (U9): what stands in the TRAILING slot and in the one to its
  * left. Draw holds the trailing slot whenever it is legal; beside it, Play
@@ -242,7 +257,9 @@ void  pk_lay_pills(int can_draw, int my_turn, int selected, int can_pass, int ca
                    int *trailing, int *leading);
 
 /* The suit picker (U14): tile `tile` (0 circles north, 1 triangles east, 2
- * squares south, 3 diamonds west, 4 the x) centred about the pile's centre. */
+ * squares south, 3 diamonds west, 4 the x) centred about the pile's centre,
+ * never higher than a whole tile below the board's top edge (the drawer's
+ * pile sits high enough that the north tile would leave the board). */
 void  pk_lay_picker(int tile, float cx, float cy, float *x, float *y);
 #define PK_LAY_PICKER_TILE 60.0f
 #define PK_LAY_PICKER_X    30.0f
