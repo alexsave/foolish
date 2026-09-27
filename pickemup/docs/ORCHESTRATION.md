@@ -14,7 +14,7 @@ The cost is uttt's extension-launch-weight argument; foolish already ships this 
 Confidence: high.
 
 DECISION O2: naming.
-C prefix `pu_`, kernel in `pickemup/c/src/pu_*.{c,h}`, tests in `pickemup/c/tests/`, iOS bridge in `pickemup/c/ios/`, Makefile targets `run`, `asan`, `ios-lib`, `ios-smoke` as in uttt.
+C prefix `pk_`, kernel in `pickemup/c/src/pk*.{c,h}` laid out as `RULES_AND_KERNEL.md` section 3.1 says, tests in `pickemup/c/tests/`, iOS bridge in `pickemup/c/ios/`, Makefile targets `run`, `asan`, `ios-lib`, `ios-smoke` as in uttt.
 `make -C c ios-lib` writes `pickemup/ios/vendor/Pickemup.xcframework`.
 Swift targets `PickemupKit`, `PickemupMessages`, `PickemupMessagesApp`, project `pickemup/ios/Pickemup.xcodeproj` from `pickemup/ios/project.yml`.
 Alternative: foolish's names (`msg_*`, FoolishKit shape).
@@ -26,6 +26,15 @@ Alternative: lift everything the screens need before building them.
 Why: the medium and high risk lifts touch foolish's animation and wire core, and foolish has real users; a copy with a `COPIED from` header costs nothing now and is deleted by the lift that owns it.
 Confidence: high.
 
+DECISION O4: hands past thirteen cards (the rules doc's open question 2).
+The hand row keeps foolish's one-row and two-row layouts up to the two-row limit, then the cards overlap within the two rows down to a 16pt visible strip per card, and past that the hand becomes a horizontally scrolling two-row strip.
+The kernel keeps D23 (no hand cap); the surface never truncates a hand.
+Alternative: a hand cap of 13 in the rules.
+Why: the owner asked for chaotic many-draw turns, and a cap would make the deck tap stop working exactly when it is funniest.
+Confidence: medium.
+
+DECISION O5: the name stays `Pick 'Em Up` as a working title, threaded through one `GAME_NAME` string, and the collision search before a store listing is the owner's (see BLOCKED).
+
 ## Order of work
 
 1. Design in parallel: rules and kernel doc, UI.html surface study with motion grid, reuse audit.
@@ -35,4 +44,5 @@ Confidence: high.
 
 ## BLOCKED
 
-Nothing yet.
+- The final game name: `Pick 'Em Up` collides with two same-genre titles (README); the USPTO search and the choice are the owner's, before any store listing.
+- App Store Connect record, signing and upload: the owner does these by hand; nothing in this pass touches them.

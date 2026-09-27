@@ -239,7 +239,7 @@ Recommendation confidence: medium.
 **DECISION D8: a draw is committed the moment it is drawn; plays, "Last card!" and "Caught you!" can be un-staged, draws cannot.
 The draft has a floor at its last draw, and undo never goes below it.**
 Alternative: everything undoable until Send.
-Why: a draw shows the drawer the next card of a deck that is the same on every phone, so drawing, looking and undoing is a free peek at the future (foolish's held-settlement argument, `docs/IMESSAGE_GAME_DESIGN.md` section 11.5).
+Why: a draw shows the drawer the next card of a deck that is the same on every phone, so drawing, looking and undoing is a free peek at the future (foolish's held-settlement argument, `foolish/docs/IMESSAGE_GAME_DESIGN.md` section 11.5).
 A play above the floor reveals nothing and stays undoable ("card flies home", `UI.html` Undo row).
 Recommendation confidence: high.
 
@@ -352,7 +352,7 @@ Recommendation confidence: medium.
 
 **DECISION D27: the lobby is foolish's lobby with the rules checkbox deleted: open roster, lowest-free-first seating, capacity 2 in a DM and 8 in a group, any seated player may start once 2 are seated except the newest joiner while there is still room, join-and-start in one bubble when the join fills the table.**
 Alternative: UTTT's "the joiner takes the seat and moves first" (2 seats only).
-Why: the owner's instruction ("like foolish's but simpler"), and foolish's lobby is where the racing-Start and ghost-seat bugs were already paid for (`docs/IMESSAGE_LOBBY_V3.md`).
+Why: the owner's instruction ("like foolish's but simpler"), and foolish's lobby is where the racing-Start and ghost-seat bugs were already paid for (`foolish/docs/IMESSAGE_LOBBY_V3.md`).
 Recommendation confidence: high.
 
 **DECISION D28: the starter may continue straight into their first turn in the start bubble when they are the first player (seat 1).**
@@ -782,7 +782,7 @@ Bits: a turn-seat bubble's header costs about 1.3 bits (S, and a rare C); an out
 | **Capped worst case** (1,500 actions x 7 bits, 750 bubbles x 11 bits, 8 names of 48 bytes) | 18,750 bits = 2,344 B | 43 + 8x58 + 2 = 509 | 2,853 | **4,568** |
 
 The worst case is bounded because every menu is at most 128 options (DRAW + PASS + 102 hand positions + 3 extra suits for each of 8 wilds = 128 = 7 bits) and a bubble header is at most 11 bits.
-**4,568 characters is under Apple's documented 5,000-character `MSMessage.url` cap** (`docs/IMESSAGE_IMPLEMENTATION_HANDOFF.md`, "MSMessage.url cap is documented: 5,000 characters").
+**4,568 characters is under Apple's documented 5,000-character `MSMessage.url` cap** (`foolish/docs/IMESSAGE_IMPLEMENTATION_HANDOFF.md`, "MSMessage.url cap is documented: 5,000 characters").
 The realistic cases sit near foolish's self-imposed 1,000-character guardrail; that guardrail is a target, not a limit, and the test in 7.4 asserts the p95 8-player bubble under 1,000.
 
 ### 4.6 The lobby and seat handshake
@@ -810,7 +810,7 @@ In a lobby, a resolved seat counts only if the bubble in hand lists it (`msg_sea
 ### 4.7 Versioning
 
 `format` is the second byte read, and a reader that meets a format it does not know refuses with `PK_EFORMAT` and the "newer version" screen.
-A rules change that would deal or play any existing code differently is a new format number, with no migration (foolish's deal-order break, `docs/DEAL_ORDER.md`, "There is no migration and there will not be one").
+A rules change that would deal or play any existing code differently is a new format number, with no migration (foolish's deal-order break, `foolish/docs/DEAL_ORDER.md`, "There is no migration and there will not be one").
 The card id order, the shuffle, the reshuffle key schedule, the menu order and the digit order are all part of format 1.
 
 ### 4.8 Which of two bubbles wins
@@ -1275,7 +1275,7 @@ Already consistent and kept: the 7-card deal ("Shed seven cards"), ranks 1-9, th
 
 - `pickemup/README.md`, `pickemup/LEGAL.md`, `pickemup/docs/UI.html`
 - `docs/ARCHITECTURE_AS_A_PATTERN.md`, `docs/MOTION_BEFORE_FLOW.md`, `shared/README.md`, `werewolf/COMMON.md`
-- `docs/IMESSAGE_GAME_DESIGN.md` (sections 4, 5, 6, 7, 11.5), `docs/IMESSAGE_BODY_CODEC.md`, `docs/IMESSAGE_LOBBY_V3.md`, `docs/DEAL_ORDER.md`, `docs/IMESSAGE_IMPLEMENTATION_HANDOFF.md` (the 5,000-character cap)
+- `foolish/docs/IMESSAGE_GAME_DESIGN.md` (sections 4, 5, 6, 7, 11.5), `foolish/docs/IMESSAGE_BODY_CODEC.md`, `foolish/docs/IMESSAGE_LOBBY_V3.md`, `foolish/docs/DEAL_ORDER.md`, `foolish/docs/IMESSAGE_IMPLEMENTATION_HANDOFF.md` (the 5,000-character cap)
 - `uttt/c/README.md`, `uttt/c/Makefile`, `uttt/c/src/uttt.h`, `uttt/c/src/uttt_code.h`, `uttt/c/src/uttt_code.c` (the sentinel coder), `uttt/c/src/uttt_msg.h`, `uttt/c/src/uttt_anim.h`, `uttt/c/src/uttt_say.h`, `uttt/c/i18n/keys.h`, `uttt/c/i18n/strings_en.c`
 - `c/src/msg_wire.h` (envelope, Rule P, lobby verdicts, seat resolution), `c/src/evwire.h` (event kinds, the settlement cut), `c/src/anim_plan.h` (surface plans for lobby beats)
 - `shared/c/deal_rng.h`, `shared/c/b32.h`, `shared/c/sha256.h`, `shared/tools/structgen/`, `shared/tools/datagen/`
