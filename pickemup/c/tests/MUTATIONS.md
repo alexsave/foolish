@@ -185,3 +185,50 @@ Each layout and words row was run alone with `build/ios_smoke` deleted first, be
 
 7.3.7 (native against wasm replay) waits for a wasm replay build; `make wasm` proves the kernel compiles freestanding for wasm32 and reaches only `memcpy`, `memset`, `memcmp`, `strlen` and `strncmp`.
 7.4 (the wire), 7.7.4 (Rule P races) and 7.8.7 (seat resolve) are in `pk_msg_test.c` above.
+
+## The timeline (tests/pk_beats_test.c, and the bridge's motion checks)
+
+Each row was applied alone as an exact string replacement by a script that deleted the one binary first (the same-second trap), rebuilt it, ran it (`pk_beats_test 100`, or `ios_smoke`), and restored the source byte for byte.
+Run 2026-09-27; every mutant went red, and every test in the file is named at least once.
+
+| Test | Mutation | Assertion that went red |
+|---|---|---|
+| play a number, draws replayed, skip, reverse, +2, pass, catch, the cut, deal row, reshuffle, real games | `step_start` drops the 25ms gap between steps | `:174` "riffle 1: 140 + 7 x 8", `:186` "28 cards at 1153 + i x 1800 / 28" (28 in all) |
+| deal step, deal row | `pk_beats_deal_at` multiplies by the truncated step (`i * (1800 / cards)`) | `:133` "no drift down the deal: 1728", `:186` "28 cards at 1153 + i x 1800 / 28" |
+| deal step | the 45ms floor is never applied | `:130` "6 seats: 42.9 clamps to 45", `:131` "8 seats: 45" |
+| deal row | the start card turns 120 (not 250) after the deal | `:191` "FLIP 250 after my last card turned: 3488" |
+| deal row | a buried card ends at -9 deg | `:197` "BURY: sleep(300), then under the deck at +9 deg, no bulge" |
+| draws replayed, reshuffle | replayed draws start 320 apart instead of 110 | `:264` "16, 126, 236", `:269` "the play ... : 1001" |
+| reshuffle | the gather has one ghost per gathered card, not three | `:305` "gather ... three ghosts 40 apart" |
+| reshuffle | the fatten beat does not carry the new count | `:307` "the count snaps", `:319` "the new count as the deck fattens" |
+| play a number, draws replayed | a play's bulge is 1.08 | `:347` "bulge 1.15", `:359` "the bulge peaks at 1.15: 1.079870" |
+| play a +2 / +4 | a wild's flight also gets a halo on landing | `:444` "a wild lands with its halo clear" |
+| play a skip | the skipped badge dims to .5 | `:384` "the badge dims to .45", `:390` "down to .45 and no further: 0.500000" |
+| play a skip | a one-part beat is sampled over its part, not its envelope | `:394` "the slash stays across until the dim ends" |
+| play a reverse, win and reveal | the direction word swaps at the TURN's start, not its midpoint | `:410` "the old word until the box is edge-on", `:554` "the first back is face up at its midpoint" |
+| play a +2 / +4, the cut | a +2 / +4 victim is never skip-slashed | `:441` "then the victim's skip slash (946)", `:442` "then the turn bar past them" |
+| play a +2 / +4, say it, catch, the cut | penalty draws all start together | `:438` "2 backs into the victim's fan, 110 apart" |
+| pass | my hand dims to .45 on a pass | `:468` "my hand dims to .5, all at once" |
+| pass, the cut, real games | a settle event of the last turn is never held (no cut) | `:469` "the turn bar is held until Send", `:577` "held: 0" |
+| draw live, pass, the cut, real games | a draft event counts as played by its index (`i < 2`), not by matching the previous plan | `:234` "flight, flip, pulse", and the real games' A + B counts |
+| real games | at Send the action half plays again | `:793` "kind 9 plays 3 times at A + B, 2 on open" |
+| say it, catch | a catch's penalty starts with its stamp, not after it | `:506` "then the two cards, 110 apart" |
+| win and reveal, real games | the reveal starts with OUT, not after it | `:542` "8 flips from 856, 60 apart", `:549` "the results fade in a game-over hold after the reveal" |
+| win and reveal | my own hand's reveal is flipped too | `:542` "viewer 0: 5 flips from 856", `:544` "card by card" |
+| win and reveal | the results fade in with no game-over hold | `:549` "the results fade in a game-over hold after the reveal" |
+| host motions | an undone card flies home with a 1.15 bulge | `:641` "after the 16ms beat, back to its slot, no bulge" |
+| host motions | the refused undo shakes once, not three times | `:653` "-5 at a fifth: -3.000000", `:655` "+5 at two fifths" |
+| host motions | the picker's tiles pop together | `:662` "five tiles pop, 30ms apart" |
+| draw live | a drawn card is seen the moment its slot opens | `:244` "the slot opens and the count ticks as it leaves", `:246` "still turning" |
+| deal row, draw live, host motions, play a number | the pile's top changes as a card leaves, not as it lands | `:213` "seat 1's first card has landed", `:246`, and "the old top until it lands" |
+| deal row, draw live, reshuffle, the cut, real games | a beat's deck count is never shown | `:213` "five have left the deck", `:218` "after: the dealt table" |
+| say it, catch | a stamp is never held back until its beat | `:490` "the stamp waits for its beat" |
+| real games | `pk_beats_pre` replays one bubble too far | `:782` "A + B end hand", `:806` "viewer 1: hand" |
+| vocabulary | `pk_ease` returns the x polynomial (every curve linear) | `:114` "card-spring and the stamp overshoot", `:117` "the flight curve at half time: 0.500000" |
+| budget, deal row, deal step | the deal's floor is 90ms | `:127` "3 seats: 85.7", and the 8-seat "shuffle and deal in ... ms" budget |
+| draws replayed, +2 / +4, reshuffle, catch, the cut, vocabulary | `PK_T_DRAW_STEP` 450 | `:94` "flight", `:264` "16, 126, 236" |
+| draw live, the cut, host motions, real games | a flip never shows its card | `:248` "seen once it has turned", `:627` "the drawn card is simply there", `:646` "and it is home" |
+| budget (and every row) | `PK_T_GAP` 525 | `:834` "8 players: the p99 bubble plays in under 4s (4056)" |
+| ios-smoke motion | the bridge does not remember the draft after a build | `pk_api_smoke.c:224` "asked again with nothing new: nothing moves" |
+| ios-smoke motion | `pk_api_beats` refuses `from == to` | `pk_api_smoke.c:215` "from == to: no motion, a new plan" |
+| ios-smoke motion | `pk_api_beats_send` lays the bubble out as an open | `pk_api_smoke.c:248` "channel B: what staging held" |

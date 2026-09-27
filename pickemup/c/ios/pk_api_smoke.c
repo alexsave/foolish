@@ -200,7 +200,29 @@ int main(void)
     }
     const PkView *v = me_view();
     OK(v->me == 1 && v->my_n == 7 && v->turn == 1, "Bo holds seven and moves first (D28)");
+    {
+        /* THE MOTION: the deal for Bo on the start bubble, and nothing at all
+         * for a range with no bubble in it */
+        const PkBeats *b = (const PkBeats *)pk_api_beats(PK_API_ME, -1, 0, PK_BEATS_OPEN);
+        OK(b && b->n >= 14 + 7 + 2 && b->total_ms > 3000 && b->viewer == 1, "the deal is a plan for Bo");
+        uint32_t serial = b ? b->serial : 0;
+        const PkBeatFrame *f = (const PkBeatFrame *)pk_api_beats_frame(0);
+        OK(f->deck_n == PK_DECK && f->my_n == 0, "it starts from a full deck");
+        f = (const PkBeatFrame *)pk_api_beats_frame(b ? b->total_ms : 0);
+        OK(f->done && f->my_n == 7 && !memcmp(f->my_hand, v->my_hand, 7), "and ends on Bo's seven");
+        OK(pk_api_beat_sample(0, 0, 0) != 0 && pk_api_beat_sample(b ? b->n : 0, 0, 0) == 0, "a sample per beat");
+        b = (const PkBeats *)pk_api_beats(PK_API_ME, 0, 0, PK_BEATS_ARRIVAL);
+        OK(b && b->n == 0 && b->total_ms == 0 && b->serial == serial + 1, "from == to: no motion, a new plan");
+        OK(pk_api_beats(PK_API_ME, 0, 0, 7) == 0, "a mode that is not a range's is refused");
+    }
     OK(pk_api_draw() == 1, "Bo draws in the start bubble");
+    {
+        const PkBeats *b = (const PkBeats *)pk_api_beats_stage(0);
+        OK(b && b->mode == PK_BEATS_STAGE && b->n == 3 && b->beat[0].kind == PK_BK_FLIGHT &&
+           b->beat[0].to == PK_ANC_HAND && b->beat[0].to_i == 7, "channel A: Bo's draw flies to the eighth slot");
+        b = (const PkBeats *)pk_api_beats_stage(0);
+        OK(b && b->n == 0, "asked again with nothing new: nothing moves");
+    }
     OK(pk_api_undo() == 0, "a draw does not come back (D8)");
     t = table();
     OK(t->draft && !t->can_send, "mid-turn: a draft that cannot be sent");
@@ -222,6 +244,11 @@ int main(void)
         char staged[256];
         OK(pk_api_words(PK_API_W_STAGED_CAPTION, 0, staged, sizeof staged) > 0, "the staged bubble's caption");
         OK(pk_api_commit() == 1 && !table()->draft, "sent: the draft is sealed");
+        const PkBeats *b = (const PkBeats *)pk_api_beats_send();
+        OK(b && b->mode == PK_BEATS_SEND && b->held == 0, "channel B: what staging held");
+        int turned = 0;
+        for (int i = 0; b && i < b->n; i++) turned |= b->beat[i].kind == PK_BK_TURN_BAR;
+        OK(turned, "the turn bar moves at Send");
         OK(pk_api_words(PK_API_W_CAPTION, table()->bubbles, line, sizeof line) > 0 && !strcmp(staged, line),
            "the staged caption is the sent bubble's");
         printf("  staged: \"%s\"\n", staged);

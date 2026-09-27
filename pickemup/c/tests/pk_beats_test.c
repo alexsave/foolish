@@ -694,11 +694,11 @@ static int sequenced(const PkBeats *b, char *why)
     for (int i = 0; i < b->n; i++) {
         const PkBeat *x = &b->beat[i];
         if ((x->kind == PK_BK_TURN_BAR || (x->kind == PK_BK_FLIGHT && x->ev_kind == PK_EV_PLAY)) && any &&
-            x->start_ms < moved + PK_T_GAP) { sprintf(why, "beat %d (%d) at %u before %u + 25", i, x->ev_kind, x->start_ms, moved); return 0; }
+            x->start_ms < moved + PK_T_GAP) { snprintf(why, 128, "beat %d (%d) at %u before %u + 25", i, x->ev_kind, x->start_ms, moved); return 0; }
         if (x->kind == PK_BK_FLIP && x->ev_kind == PK_EV_REVEAL) {
             const PkBeat *o = 0;
             for (int j = 0; j < i; j++) if (b->beat[j].kind == PK_BK_STAMP && b->beat[j].sub == PK_STAMP_OUT) o = &b->beat[j];
-            if (o && x->start_ms < beat_end_of(o)) { sprintf(why, "a reveal before OUT"); return 0; }
+            if (o && x->start_ms < beat_end_of(o)) { snprintf(why, 128, "a reveal before OUT"); return 0; }
         }
         if (!decoration(x) && x->kind != PK_BK_FLIP) {
             uint32_t e = x->start_ms + x->dur_ms;
@@ -713,18 +713,18 @@ static int sequenced(const PkBeats *b, char *why)
 
 static int same_board(const PkBeatFrame *f, const PkView *v, char *why)
 {
-    if (f->deck_n != v->deck_n) { sprintf(why, "deck %d vs %d", f->deck_n, v->deck_n); return 0; }
-    if (f->top != v->top) { sprintf(why, "top %d vs %d", f->top, v->top); return 0; }
-    if (f->dir != v->dir) { sprintf(why, "dir"); return 0; }
-    if (!v->over && f->turn != v->turn) { sprintf(why, "turn %d vs %d", f->turn, v->turn); return 0; }
-    if (v->over && f->turn != PK_SEAT_NONE) { sprintf(why, "a turn bar at the end"); return 0; }
-    if (f->my_n != v->my_n || memcmp(f->my_hand, v->my_hand, v->my_n)) { sprintf(why, "hand"); return 0; }
-    for (int i = 0; i < f->my_n; i++) if (f->my_unseen[i]) { sprintf(why, "card %d unseen", i); return 0; }
+    if (f->deck_n != v->deck_n) { snprintf(why, 128, "deck %d vs %d", f->deck_n, v->deck_n); return 0; }
+    if (f->top != v->top) { snprintf(why, 128, "top %d vs %d", f->top, v->top); return 0; }
+    if (f->dir != v->dir) { snprintf(why, 128, "dir"); return 0; }
+    if (!v->over && f->turn != v->turn) { snprintf(why, 128, "turn %d vs %d", f->turn, v->turn); return 0; }
+    if (v->over && f->turn != PK_SEAT_NONE) { snprintf(why, 128, "a turn bar at the end"); return 0; }
+    if (f->my_n != v->my_n || memcmp(f->my_hand, v->my_hand, v->my_n)) { snprintf(why, 128, "hand"); return 0; }
+    for (int i = 0; i < f->my_n; i++) if (f->my_unseen[i]) { snprintf(why, 128, "card %d unseen", i); return 0; }
     if ((f->hold & ~(v->over ? PK_HOLD_DIR : 0)) || f->stamp_hold || f->fans_empty || f->buried_hold) {
-        sprintf(why, "still holding %x %x %x %x", f->hold, f->stamp_hold, f->fans_empty, f->buried_hold);
+        snprintf(why, 128, "still holding %x %x %x %x", f->hold, f->stamp_hold, f->fans_empty, f->buried_hold);
         return 0;
     }
-    if (!f->done) { sprintf(why, "not done"); return 0; }
+    if (!f->done) { snprintf(why, 128, "not done"); return 0; }
     return 1;
 }
 
