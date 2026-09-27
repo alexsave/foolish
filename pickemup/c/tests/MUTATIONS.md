@@ -2,7 +2,7 @@
 
 Each row is one mutation of the kernel, applied alone, with `make -i run` (every test binary, so an early red binary does not hide a later one), and the assertion that went red for it.
 The file was restored byte for byte after each run and the suite was green again before the next.
-A test that never went red does not count, so every test function in `pk_test.c`, `pk_plan_test.c`, `pk_say_test.c` and `pk_fuzz.c` has at least one row.
+A test that never went red does not count, so every test function in `pk_test.c`, `pk_rules_test.c`, `pk_plan_test.c`, `pk_say_test.c` and `pk_fuzz.c` has at least one row.
 Section numbers are `pickemup/docs/RULES_AND_KERNEL.md`'s.
 The fuzz ran 400 games per mutation, 2,800 for the two cap rows.
 Run 2026-09-26 on the kernel as of this commit.
@@ -40,6 +40,35 @@ Run 2026-09-26 on the kernel as of this commit.
 | 7.8.4 2 players | continue allowed on one card | `pk_test.c:698` "a play to one card ends the bubble even when the turn comes back (D7)" |
 | 7.8.5 stuck table | a pass that drew counts as bare | `pk_test.c:732` "a pass that drew is not bare (idle 1)" |
 | 7.8.6 undo floor | the floor moves at the last play, not the last draw | `pk_test.c:752` "undo returns the play" |
+
+## pk_rules_test.c
+
+Run 2026-09-27, each mutation applied alone by a script that kept its own copy of the file, deleted the binary so make could not reuse a same-second build, ran the one binary, and restored the file byte for byte.
+
+| Test | Mutation | Assertion that went red |
+|---|---|---|
+| 1.8 say it in a later bubble, with the turn | SAY_IT reads only the live `exposed`, not `b_exposed_at_open` | `pk_rules_test.c:61` "not in the exposing bubble, even with the turn back (D3)" |
+| D32 a stamp wiped inside the bubble still protects | CALL_OUT reads the live `said` | `pk_rules_test.c:82` "a catch on the seat stamped at open is still refused (D5c, D32)" |
+| 1.8 the window and the bubbles that do not close it | a catch-only bubble closes the window too | `pk_rules_test.c:97` "the window is open, the catcher paid twice" |
+| D5b a catch penalty reshuffles the stack in | a penalty draw never reshuffles | `pk_rules_test.c:133` "a hit, two cards, one of them after a reshuffle (1, r 0)" |
+| 1.9 a reshuffle inside a penalty | the same | `pk_rules_test.c:159` "two cards, the deck's last one first", `:171` "draw, the triple, draw (2 events)" |
+| 1.9 a reshuffle inside a penalty | the reshuffle keeps the stack's bottom card as the top | `pk_rules_test.c:161` "reshuffled once: the +2 stays on top", `:172` conserved |
+| 1.9 the pile is only its top card | a short penalty goes on trying instead of forgiving the rest | `pk_rules_test.c:193` "three forgiven (1), one reshuffle" |
+| D14 a Wild +4 turned at the start is buried | a Wild +4 may be the start card | `pk_rules_test.c:230` "seed 10: seat 1 starts on a number", `:234` "the +4 is at the bottom of the deck (-1)" |
+| D7 a two-player chain | a 2-player Reverse moves the turn on | `pk_rules_test.c:251` "Reverse: a skip, dir unchanged (D13)" |
+| D7 a two-player chain | CONTINUE never written | `pk_rules_test.c:259` "one CONTINUE per turn that came back (5 records)" |
+| D7 a two-player chain | the direction word shown at 2 players | `pk_rules_test.c:263` "no direction word at two players" |
+| 1.7 going out on a +4 or a wild | a last-card wild takes a suit | `pk_rules_test.c:277` "n 2: a last-card +4 takes no suit (D17)" |
+| 1.7 going out on a +4 or a wild | WILD_SUIT announced for a suitless wild | `pk_rules_test.c:292` "no suit is chosen, so none is announced" |
+| 1.11 the long-game stop | the stop's winner counted from seat 0, not the seat to move | `pk_rules_test.c:311` "fewest wins; seats 1 and 3 tie, and 3 is next from 2 (1)" |
+| 1.11 the long-game stop | no stop after a draw | `pk_rules_test.c:311` "(255)", `:312` "the bubble seals mid-turn in this one case" |
+| 1.11 the 750-message stop | the stop at `bubbles > 750` | `pk_rules_test.c:328` "the game is over at 750 bubbles" |
+| 1.10 the stuck table | a tie goes to the last tied seat (`<=`) | `pk_rules_test.c:363` "row 0: winner 1, want 0" and rows 2 to 5 |
+| D30 the history cap holds at its worst | `PK_HIST_CAP` lowered to 2,750 | `pk_rules_test.c:406` "game 0: hist 2815 actions 1500 bubbles 62 within the caps" |
+| D8 an own-draw reshuffle is never undone | a draw does not move the floor | `pk_rules_test.c:422` "undo refuses: the draw is the floor" |
+| D50 undoing a play whose penalty reshuffled is exact | a penalty draw moves the floor | `pk_rules_test.c:447` "game 7: the play is undoable" |
+| D51 a device that left is never seated by a namesake | `pk_rec_find` returns -1 for a record with no row (before the fix) | `pk_rules_test.c:485` "the record now names a row that is gone" |
+| D51 a device that left is never seated by a namesake | the resolver ignores `PK_REC_GONE` | `pk_rules_test.c:493` "the leaver's device is not handed the namesake's seat", `:495` "not by the sender witness either" |
 
 ## pk_plan_test.c
 
@@ -107,6 +136,14 @@ Run 2026-09-26 with `./build/pk_msg_test 5 100` (the ASan rows with `./build/asa
 | 7.8.7 seat resolve | the tag trusted over the record | `pk_msg_test.c:593` "the record outranks the tag, the sender and the name" |
 | 7.8.7 seat resolve | the lobby gate removed | `pk_msg_test.c:632` "a lobby row under another name is not mine, whoever sent the bubble" |
 | lobby: rows, verdicts and the wire | a leave does not set LEFT | `pk_msg_test.c:705` "after a leave Bo, alone, is offered the invite" |
+| the corruption sweep: several bytes at once | the check comparison skipped | `pk_msg_test.c:459` "envelope 0 trial 1 (5 bytes, raw) reads as a different writing", `:460` "accepted with a failing check" |
+| the header's boundaries | the seat cap ignores DM (always 8) | `pk_msg_test.c:582` "DM with three seats", `:662` "a DM of three" |
+| the header's boundaries | a started game's starter not range-checked | `pk_msg_test.c:594` "starter = n_seats", `:596` "no starter on a started game" |
+| the header's boundaries | a body with a zero top byte accepted | `pk_msg_test.c:604` "a trailing zero byte: a second spelling (D48)" |
+| the header's boundaries | a started game's lobby_rev unchecked (the decoder before D52) | `pk_msg_test.c:621` "a started roster with fewer joins than seats", `:623` "a started lobby_rev of the wrong parity" |
+| the header's boundaries | the replay agreement accepts a phase that is neither LIVE nor FINISHED (the one judge of the phase, once its whitelist was removed as a second guard) | `pk_msg_test.c:573` "phase 1 on a live body is refused (0)" and phases 4 to 7 |
+
+Run 2026-09-27 with `./build/pk_msg_test 1 10`, by the same restore-from-copy script as `pk_rules_test.c`'s rows.
 
 The rules doc's 7.4.2 mutation ("allow the empty-bubble option in the C digit") does not apply: D40 makes every digit a menu of non-empty bubbles, so an empty bubble is not an option to allow, and a coder that offered one would still round-trip (the decoder's seal refuses it).
 The sentinel mutation above is the one that breaks canonicality.
@@ -115,14 +152,16 @@ The sentinel mutation above is the one that breaks canonicality.
 
 | Test | Mutation | Assertion that went red |
 |---|---|---|
-| ios-smoke | `pk_api_text` writes the resident draft instead of a sealed copy | `pk_api_smoke.c:124` "the start bubble is a link" |
-| ios-smoke | a record finds a row by its offset, not its tag | `pk_api_smoke.c:214` "Cleo's record finds her in the row she moved down to" |
+| ios-smoke | `pk_api_text` writes the resident draft instead of a sealed copy | `pk_api_smoke.c:217` "the start bubble is a link" |
+| ios-smoke | a record finds a row by its offset, not its tag | `pk_api_smoke.c:328` "Cleo's record finds her in the row she moved down to" |
+| ios-smoke | `pk_api_leave` forgets the record (the bridge before D51) | `pk_api_smoke.c:340` "the first Bo, who left, is not seated by the name" |
+| ios-smoke | the resolver ignores `PK_REC_GONE` | `pk_api_smoke.c:340` "the first Bo, who left, is not seated by the name" |
 | swift-smoke | the host library stamped with a hash that is not the readers' | `pk_api_smoke.swift:36` "the library and the readers are one layout" |
-| ios-smoke words | `W_STAGED_CAPTION` captions `bubbles - 1` of the sealed copy | `pk_api_smoke.c:224` "the staged caption is the sent bubble's" |
-| ios-smoke words | `W_LOBBY_ROW` says "(You)" on every row but mine | `pk_api_smoke.c:179` "my own roster row says so", `:197` "somebody else's roster row" |
+| ios-smoke words | `W_STAGED_CAPTION` captions `bubbles - 1` of the sealed copy | `pk_api_smoke.c:226` "the staged caption is the sent bubble's" |
+| ios-smoke words | `W_LOBBY_ROW` says "(You)" on every row but mine | `pk_api_smoke.c:179` "my own roster row says so", `:199` "somebody else's roster row" |
 | ios-smoke words | `W_PUBLIC_ROW` marks my row "(You)" like `W_LOBBY_ROW` | `pk_api_smoke.c:183` "the bubble's roster says nobody is you" |
-| ios-smoke words | `W_LOBBY_DEALER` names the last seat, not seat 0 | `pk_api_smoke.c:303` "seat 0 deals, whoever joined last" |
-| ios-smoke words | `W_ERROR` maps `PK_ECHECK` (not `PK_EFORMAT`) to the newer-version line | `pk_api_smoke.c:321` "a newer format says so", `:323` "any other refusal is a damaged link" |
+| ios-smoke words | `W_LOBBY_DEALER` names the last seat, not seat 0 | `pk_api_smoke.c:317` "seat 0 deals, whoever joined last" |
+| ios-smoke words | `W_ERROR` maps `PK_ECHECK` (not `PK_EFORMAT`) to the newer-version line | `pk_api_smoke.c:421` "a newer format says so", `:423` "any other refusal is a damaged link" |
 | ios-smoke layout | `TWO_ROW` 34 becomes 30 | `pk_api_smoke.c:95` "ten: two rows, the 166 box (table 04)", `:117` "card 5 of ten opens the lower row" |
 | ios-smoke layout | `STRIP_MIN` 16 becomes 12 | `pk_api_smoke.c:105` "forty-two: the rows scroll (table 07)", `:113` "thirty in the drawer: scrolling (collapsed 03)" |
 | ios-smoke layout | the top row takes the larger half | `pk_api_smoke.c:97` "thirteen: the smaller half on top", `:101` "twenty-seven: overlapped, 40pt faces (U8)" |
@@ -133,10 +172,10 @@ The sentinel mutation above is the one that breaks canonicality.
 | ios-smoke layout | the pile never lifts | `pk_api_smoke.c:136` "the pile lifts 24 in the drawer (U2)" |
 | ios-smoke layout | the deck 8pt from the pile | `pk_api_smoke.c:140` "the deck 10pt left of the pile, on its line (U3)" |
 | ios-smoke layout | Play offered for a selection when it is not my turn | `pk_api_smoke.c:152` "not my turn: a selection offers no Play" |
-| ios-smoke cards | `pk_api_card_suit` reads the next id's suit | `pk_api_smoke.c:374` "a suited card's suit and rank (3.2)" |
-| ios-smoke cards | `pk_api_card_rank` accepts id 104 | `pk_api_smoke.c:378` "an id off the deck is nothing" |
-| ios-smoke buried | `pk_api_buried` reports every buried card without looking for it in the deck | `pk_api_smoke.c:361` "the buried cards are the deck's bottom ones" (at 1 and 0 left) |
-| ios-smoke ranks | the losers sorted by most cards first | `pk_api_smoke.c:363` "then fewest cards first, ties in seat order" |
+| ios-smoke cards | `pk_api_card_suit` reads the next id's suit | `pk_api_smoke.c:427` "a suited card's suit and rank (3.2)" |
+| ios-smoke cards | `pk_api_card_rank` accepts id 104 | `pk_api_smoke.c:431` "an id off the deck is nothing" |
+| ios-smoke buried | `pk_api_buried` reports every buried card without looking for it in the deck | `pk_api_smoke.c:372` "the buried cards are the deck's bottom ones" (at 1 and 0 left) |
+| ios-smoke ranks | the losers sorted by most cards first | `pk_api_smoke.c:416` "then fewest cards first, ties in seat order" |
 
 Putting the winner first by name (rather than by fewest cards) survived its mutation: the winner of an OUT game holds none and the winner of a STUCK or LONG game is the one with the fewest, so the two orders differ only on a tie the kernel breaks the same way. It stays for the reader, not for a test.
 

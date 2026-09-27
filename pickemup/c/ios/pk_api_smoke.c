@@ -330,6 +330,15 @@ int main(void)
     ev = (const PkApiEvents *)pk_api_plan(PK_API_ME, -1, 0);
     OK(ev && ev->n > 7 && ev->ev[0].kind == PK_EV_LOBBY_START && ev->ev[0].seat == 1, "the deal's plan names its starter");
 
+    /* ---- the name Bo freed is taken by somebody else: Bo's phone, which
+     * sat here and left, is not handed the namesake's seat (D51) ---- */
+    open_as(3, links[6], 0, 0);
+    pk_api_nickname((const uint8_t *)"Bo", 2);
+    OK(pk_api_read(links[6]) == 0 && table()->me == 0xFF && pk_api_join() == 2, "another Bo joins at seat 2");
+    pk_api_text(links[7], PK_API_TEXT_MAX);
+    OK(open_as(1, links[7], 0, 0) == 0 && table()->me == 0xFF && table()->offered == PK_LOBBY_JOIN,
+       "the first Bo, who left, is not seated by the name");
+
     /* ---- the buried start cards (D14, U16): there until drawn down to ---- */
     {
         int buried_at_deal = 0, found = 0;

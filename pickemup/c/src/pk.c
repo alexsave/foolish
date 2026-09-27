@@ -240,10 +240,12 @@ static int may_act(const PkGame *g, int seat)
     return !g->b_open || g->b_sender == seat;
 }
 
+/* The long-game stop needs nothing here: every turn action ends in
+ * long_stop, which sets `over` the moment `actions` reaches the cap, and
+ * may_act refuses everything once over. ONE OWNER (1.11, 4.4's empty menu). */
 static int turn_open(const PkGame *g, int seat)
 {
-    return may_act(g, seat) && seat == g->turn && !pk_turn_ended(g)
-        && g->actions < PK_MAX_ACTIONS;
+    return may_act(g, seat) && seat == g->turn && !pk_turn_ended(g);
 }
 
 static int draw_ok(const PkGame *g, int seat)

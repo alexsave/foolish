@@ -20,7 +20,7 @@ HDR     := $(wildcard src/*.h) i18n/keys.h tests/pk_check.h \
            $(SHARED)/deal_rng.h $(SHARED)/sha256.h $(SHARED)/b32.h $(SHARED)/mixrad.h
 
 # One binary per test file; each takes an optional scale argument.
-TESTS   := pk_test pk_plan_test pk_say_test pk_fuzz pk_msg_test
+TESTS   := pk_test pk_rules_test pk_plan_test pk_say_test pk_fuzz pk_msg_test
 FUZZ_GAMES ?= 2800
 # Games per table size that go through the wire after every bubble. The rules
 # doc's 10,000 is `./build/pk_msg_test 10000` by hand (DECISION D43).
@@ -36,6 +36,7 @@ build/%: tests/%.c $(SRC) $(HDR) | build
 
 run: $(addprefix build/,$(TESTS)) build/ios_smoke
 	./build/pk_test
+	./build/pk_rules_test
 	./build/pk_plan_test
 	./build/pk_say_test
 	./build/pk_fuzz $(FUZZ_GAMES)
@@ -50,6 +51,7 @@ build/asan_%: tests/%.c $(SRC) $(HDR) | build
 
 asan: $(addprefix build/asan_,$(TESTS)) build/asan_ios_smoke
 	./build/asan_pk_test
+	./build/asan_pk_rules_test
 	./build/asan_pk_plan_test
 	./build/asan_pk_say_test
 	./build/asan_pk_fuzz 2000

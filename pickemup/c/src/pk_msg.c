@@ -102,8 +102,10 @@ static int roster_ok(const PkMsg *m)
     return 1;
 }
 
-/* A WAITING roster's count and its changes agree: joins - leaves is the rows
- * past the creator, and a LEFT flag needs a leave to have happened. */
+/* A roster's count and its changes agree: joins - leaves is the rows past the
+ * creator, and a LEFT flag needs a leave to have happened. A started game
+ * keeps the lobby_rev it started from (a start is not a roster change), so
+ * this holds for every phase. */
 static int lobby_rev_ok(const PkMsg *m)
 {
     int grown = m->n_seats - 1, rev = m->lobby_rev;
@@ -279,12 +281,12 @@ int pk_msg_encode(const PkMsg *m, uint8_t *out, int cap)
     const int live = started(m);
     const PkGame *g = &m->game;
     if (m->n_seats < (live ? 2 : 1) || m->n_seats > cap_of(m)) return PK_EROSTER;
-    if (!roster_ok(m)) return PK_EROSTER;
+    if (!roster_ok(m) || !lobby_rev_ok(m)) return PK_EROSTER;
     if (live) {
         if (g->n != m->n_seats || m->starter >= m->n_seats || g->starter != m->starter) return PK_EROSTER;
         if (g->b_open) return PK_EGAME;
     } else {
-        if (m->starter != PK_SEAT_NONE || !lobby_rev_ok(m)) return PK_EROSTER;
+        if (m->starter != PK_SEAT_NONE) return PK_EROSTER;
     }
 
     int n = 0;
@@ -334,8 +336,10 @@ int pk_msg_decode(const uint8_t *in, int n, PkMsg *out)
     if (n > PK_MSG_MAX_BYTES) return PK_EGAME;
 
     memset(&m, 0, sizeof m);
+    /* THE PHASE HAS ONE JUDGE: any byte but WAITING is read as started, and
+     * a started header must then say exactly what its replay says (LIVE or
+     * FINISHED, below), so an unknown phase is refused there. */
     int phase = in[2], flags = in[3];
-    if (phase != PK_PHASE_WAITING && phase != PK_PHASE_LIVE && phase != PK_PHASE_FINISHED) return PK_EGAME;
     const int live = phase != PK_PHASE_WAITING;
     if (flags & ~PK_FLAGS_KNOWN) return PK_EFLAGS;
     if ((flags & PK_FLAG_LEFT) && live) return PK_EFLAGS;
@@ -370,9 +374,9 @@ int pk_msg_decode(const uint8_t *in, int n, PkMsg *out)
     check_of(in, at, body, bn, want);
     if (memcmp(want, in + at, PK_CHECK_LEN)) return PK_ECHECK;
 
-    if (!roster_ok(&m)) return PK_EROSTER;
+    if (!roster_ok(&m) || !lobby_rev_ok(&m)) return PK_EROSTER;
     if (!live) {
-        if (m.starter != PK_SEAT_NONE || !lobby_rev_ok(&m)) return PK_EROSTER;
+        if (m.starter != PK_SEAT_NONE) return PK_EROSTER;
         if (bn != 0 || bubbles != 0 || turns != 0) return PK_EGAME;
     } else {
         if (m.starter >= m.n_seats) return PK_EROSTER;
@@ -519,7 +523,10 @@ int pk_msg_resolve(const PkMsg *m, int record, int tag_seat, int is_dm, int i_se
     } else if (tag_seat >= 0 && tag_seat < n) {
         b = PK_BY_TAG;
         seat = tag_seat;
-    } else {
+    } else if (record != PK_REC_GONE) {
+        /* THE INFERENCES, only for a device with no word on this game: a
+         * record whose tag has no row says "not me" (D51), and a namesake who
+         * took the freed name, or the next joiner's bubble, cannot overrule it */
         int s = -1, snd = pk_msg_sender(m);
         if (i_sent == 1) s = snd;
         else if (i_sent == 0 && is_dm && n == 2 && snd >= 0) s = 1 - snd;
@@ -551,12 +558,14 @@ int pk_rec_find(const uint8_t *recs, int n, const PkMsg *m)
     uint8_t id[8];
     pk_game_id(m->seed, id);
     n = recs ? rec_n(n) : 0;
+    int gone = 0;
     for (int i = 0; i < n; i += PK_REC_LEN)
         if (!memcmp(recs + i, id, 8)) {
             int s = pk_msg_seat_of_tag(m, recs + i + 8);
             if (s >= 0) return s;
+            gone = 1;
         }
-    return -1;
+    return gone ? PK_REC_GONE : -1;
 }
 
 int pk_rec_forget(uint8_t *recs, int n, const PkMsg *m)

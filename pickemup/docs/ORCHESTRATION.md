@@ -52,6 +52,7 @@ From 2026-09-26 23:06 every iOS simulator on this Mac hangs: test launches die w
 Restarting CoreSimulatorService did not clear it; a Mac reboot is the likely fix, and only the owner can do that.
 BLOCKED B1, confirmed by the orchestrator at 2026-09-27 04:55: after killing CoreSimulatorService and erasing a second iPhone 17e, the erased device still stops at boot in `com.apple.addressbook.migrator` (Migration Elapsed over a minute, `simctl launch` never returns).
 The host needs a reboot before any simulator test, screenshot or rig run can happen; everything below that needs a simulator is verified by compile only until then.
+B1 cleared on its own at about 05:10 on 2026-09-27 without a reboot: a health probe booted the first iPhone 17e and launched an app in under two minutes, so the after-run for S1 and the simulator proofs resumed then.
 Once it is clear, run `DEST='platform=iOS Simulator,name=iPhone 17e,OS=27.0' bash ios/scripts/mac_tests.sh --no-lib --regen` from `foolish/` on the S1 commit and compare with the baseline in `REUSE_AUDIT.md` under S1 (853 executed, 1 skipped, only the flaky `MemoryProfileTests` failing).
 
 ## Found on the way (not pickemup's to fix in this pass)

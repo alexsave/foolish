@@ -217,8 +217,9 @@ int pk_api_leave(void)
     S.other = S.m;
     int e = pk_msg_leave(&S.other, S.me);
     if (e) return e;
-    S.rec_n = pk_rec_forget(S.rec, S.rec_n, &S.m);
-    S.rec_dirty = 1;
+    /* THE RECORD STAYS: its tag now has no row, which is this device's word
+     * that it left (PK_REC_GONE, D51), so a namesake who takes the freed name
+     * is never my seat. A rejoin records the new row over it. */
     S.m = S.other;
     S.me = -1;
     S.by = PK_BY_NONE;

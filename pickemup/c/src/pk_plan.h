@@ -99,7 +99,7 @@ int pk_plan_each(const PkGame *g, int viewer, int from, int to, PkEventFn fn, vo
  *
  * Counts of cards that MOVED over a bubble range, which are public; they
  * never become a hand count on screen. The per-seat counts are 16 bits
- * (DECISION D33): one seat can draw more than 255 cards in a whole game. */
+ * (DECISION D36): one seat can draw more than 255 cards in a whole game. */
 typedef struct {
     uint16_t from, to;                 /* the bubble range summarised           */
     uint16_t drawn[PK_MAX_SEATS];      /* own draws per seat                    */

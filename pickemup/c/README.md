@@ -36,6 +36,7 @@ The struct is fixed-size plain integers with no pointers and no bitfields, there
 | `i18n/keys.h`, `i18n/strings_en.c` | every word, one key list, in the shape `shared/tools/datagen` reads |
 | `tests/pk_check.h` | the harness: `CHECK`, hand-built tables, the random bot |
 | `tests/pk_test.c` | legality (7.1), effects (7.2), the deck (7.3), call-out windows (7.7), lobby and edges (7.8) |
+| `tests/pk_rules_test.c` | the edges a conformance review found untested: one-card timing and collisions, penalties that run the deck dry, the stops, the history cap, undo and the reshuffle, the resolver after a leave |
 | `tests/pk_plan_test.c` | masking (7.5) and the plan (7.6) |
 | `tests/pk_say_test.c` | the words (6) |
 | `tests/pk_fuzz.c` | random play at 2..8 players against every invariant |
