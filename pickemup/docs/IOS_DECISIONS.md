@@ -149,3 +149,51 @@ Confidence: medium.
 DECISION I28: the staged strip's chips are UI.html's `.strip .chip .cf`: the glyph alone at 76 x 64 percent, radius 2, no index and no pip (`PkCard(chip:)`).
 Before this the chip was a thin face with a 7pt rank over a half-size glyph.
 Confidence: high.
+
+## The architecture review (2026-09-27)
+
+An adversarial pass over `PickemupKit`, `PickemupMessages`, `PickemupMessagesApp` and `PickemupKitTests` against `docs/ARCHITECTURE_AS_A_PATTERN.md`, with no simulator (ORCHESTRATION B2, B3).
+Each fix below has a C smoke check seen red (`pickemup/c/tests/MUTATIONS.md`) or a Swift test whose planned mutant is listed under "Not mutated" in `pickemup/ios/TESTS_MUTATED.md`.
+
+DECISION I29: which events an adopted bubble plays is the kernel's (`pk_api_adopt`, `pk_api_beats_now`).
+`PickemupHost.adopt` had held the prior table, its sealed link and my staged play across the read and chosen between a lost race, a further-on range, nothing and a cold open in Swift; that is a decision about the game's chains, so it moved into the call that adopts, and the host now plays whatever plan the kernel laid out.
+Alternative: keep the Swift branch, since it only called kernel functions.
+Why: the comparison is the rule (4.8), and doing it in the same call as the read means nothing on the host side holds the one resident slot across a decode.
+Confidence: high.
+
+DECISION I30: a tap on a fan is one kernel call (`pk_api_tap_fan`: called, uncalled, moved or refused).
+The Swift version un-called and then called, so a refused new call silently lost the old one; the kernel tries a move on a copy and keeps the old call on a refusal.
+Confidence: high.
+
+DECISION I31: the board's zones are `pk_lay_zone` (the U24 draw band, the pile's drop target, the pill row, the toast's centre, the direction box), and the board inset, the hand padding, the tap slop and the pill height are kernel constants (`PK_LAY_INSET_*`, `PK_LAY_HAND_PAD`, `PK_LAY_TAP_SLOP`, `PK_LAY_PILL_H`).
+What stays Swift is how a component draws itself inside the rect it is given: font sizes, paddings, radii, the pill's 96pt width, the chip sizes, the buried and under-card tilts, and the bubble picture's own composition.
+The rule for a new number: a position on the board, a hit test or a threshold is C; the inside of a component is its view's.
+Confidence: medium.
+
+DECISION I32: the toast's 1600ms and the "drawn cards stay" line's 2400ms are `PK_T_TOAST` and `PK_T_DRAWN_STAY` beside the rest of the timeline, and a showing of that line carries a generation, so an older timer never hides a newer showing.
+Confidence: high.
+
+DECISION I33: no string literal a player sees is left in a view.
+The corner index is `PK_API_W_INDEX` ("7", "+2", and the new `INDEX_PLUS4` "+4"), the strip's count is `PK_API_W_STRIP_DRAWS` (the new `STRIP_DRAWS`), the picker's x is an `xmark` symbol spoken as the new `BTN_CANCEL`, and the strip's middle dot is a drawn 3pt circle.
+The rules page reads lines until the kernel answers -1, so it holds no count.
+`uppercased()` on the direction word stays: it is the study's CSS `text-transform`, applied to the kernel's word.
+Confidence: high.
+
+DECISION I34: a mismatched library and readers (I22) is two vectors with two owners, written down in both places so they are not collapsed.
+`Pk.snap` is the one path every generated read takes, and it reads nothing for a mismatched pair, which covers the model's first refresh before any screen is chosen; `PickemupHost.readable` is the one place that turns a mismatch into the unreadable screen, and `showResident`, `adopt` and the controller's `create` all ask it.
+Before this, `viewDidLoad` set the unreadable screen and the next `present` adopted over it at a wrong offset.
+Confidence: high.
+
+DECISION I35: adopting a bubble that is not my staged draft voids any stage still resting before its insert (the settle sleep, the collapse wait, an insert retry), so an older bubble can never be put in the field after the resident moved on.
+What is already in the field stays known (`staged`, `draftURL`), so its Send is adopted as sent (I5) and its X is still recognised.
+Confidence: medium, until it is seen on a phone.
+
+DECISION I36: the deck's drag is owned by one recognizer, the SwiftUI `DragGesture(minimumDistance: 0)` that `highPriorityGesture` puts on the deck, in this process; it begins on touch-down, so nothing else in the extension's view tree can take the touch, and nothing in it asks Messages for a presentation change.
+The drawer's own swipe-down is Messages' recognizer in another process, which an extension can neither fail nor require to fail, so I9's open question stays open: only a phone can show that a downward drag off the deck never collapses the drawer.
+Confidence: medium.
+
+DECISION I37: what the review left in Swift, on purpose.
+The collapse flag a touch stages with (a play and a pass collapse, a lone Last card! collapses, a draw or a call does not) is drawer policy read off the kernel's own draft events, and the stamp's display order (OUT, then the newest verdict, then LAST) orders kernel verdicts without deciding one; both are candidates for the next lift, not rules.
+The 3 second readiness fallback and the silence and error beats are uttt's shared lifecycle (`InsertStaging`), kept whole.
+Found clean: no JSON or `Codable` anywhere (the seat records are the kernel's fixed-layout bytes, the nickname a string); no byte layout outside `Generated/` (the only `withUnsafeBytes` calls pass the participant id, the nickname and the seat records to C as bytes); no force unwrap on a kernel return; and no path from another seat's card count to a view, an accessibility label or an overlay (the fan is `PK_FAN_BACKS`, the reveal rows exist only once the game is over, and `NoCountLeakTests` walks a three-seat table's accessibility tree for digits).
+Confidence: high.

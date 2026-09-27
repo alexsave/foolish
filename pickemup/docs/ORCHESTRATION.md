@@ -89,6 +89,8 @@ BLOCKED B3: the filmed and measured animation take.
 On 2026-09-27 at about 03:35 local, the second iPhone 17e `6E0A730D` did boot within the 90-second watchdog, and `BeatPlayerTests` (7) and `TableModelTests` (10) ran green on it, and every `BeatPlayerTests` test was seen red there (`pickemup/ios/TESTS_MUTATED.md`).
 But any test that puts a window or a renderer on screen hung on it for ten minutes and was killed: `ActionCardCornerTests.testAnActionCardExposesItsSuitShape` (a card hosted in a `UIWindow`) and `RenderTests.testTheBubbleRendersAt300By195`, and `xcodebuild` itself hung after every finished run until killed.
 A filmed take is a window on screen, so it was not attempted; `pickemup/docs/MOTION_REPORT.md` gives both takes as the kernel's timeline instead (`make -C pickemup/c beats-dump`).
+B2 and B3, the architecture review worker, 2026-09-27: no simulator was attempted; the review's fixes (IOS_DECISIONS I29 to I37) are verified by `build-for-testing` of `PickemupKitTests`, the `PickemupMessagesApp` build and `make -C pickemup/c run asan` only.
+Owed with the rest after the reboot: the eight red runs listed under "The architecture review" in `pickemup/ios/TESTS_MUTATED.md`, and on a phone, I35 (a superseded stage never inserts) beside I9 and I36 (the deck's drag never collapses the drawer).
 Next, after the reboot: film a live arrival with three draws, a reshuffle and a play, and a deal, at normal speed, measure them with the `animation-measure` skill, put the contact sheets in `pickemup/docs/shots/motion/` and the scores in `MOTION_REPORT.md`; and run the whole `PickemupKitTests` scheme, which this worker could only run in part.
 
 ## Found on the way (not pickemup's to fix in this pass)

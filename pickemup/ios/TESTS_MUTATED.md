@@ -65,5 +65,26 @@ The whole scheme could not be run there: `ActionCardCornerTests` and `RenderTest
 `ActionCardCornerTests.testAnActionCardExposesItsSuitShape` (O6, added 2026-09-27 by the second simulator worker) is compiled but has NOT run: the simulator would not boot (ORCHESTRATION B2).
 Its planned mutant is `CardFace.cornerSuit` answering nil for Skip, which must go red on "a skip on squares carries the square"; until that red run exists this test proves nothing.
 
+### The architecture review (IOS_DECISIONS I29 to I37), compiled, NOT run
+
+Added or changed 2026-09-27 by the review worker with no simulator to run them on (ORCHESTRATION B2, B3): `build-for-testing` of `PickemupKitTests` and the `PickemupMessagesApp` build succeed, nothing more.
+The C mutants behind I29 to I33 WERE seen red, on `build/ios_smoke` (`pickemup/c/tests/MUTATIONS.md`, the bridge rows marked I29 to I33).
+Each Swift mutant below is planned, one at a time, with the `mutation_check.sh` of the rows above; until its red run exists the test proves nothing.
+
+| Test | Planned mutation | Must go red on |
+|---|---|---|
+| NoCountLeakTests.testNoOtherSeatsLabelCarriesADigit | SeatBadge's fan label appends its backs (`Pk.words(PK_API_W_SPOKEN_FAN, seat) + " \(backs)"`) | "no digit in another seat's label" |
+| FanTapTests.testATapOnAnotherFanMovesTheCallAndARefusedTapKeepsIt | `TableModel.tapFan` handles `.moved` as `.refused` | "the call moved" |
+| HostGateTests.testAMismatchedPairShowsUnreadableAndReadsNothing | `PickemupHost.adopt` drops its `readable` guard | "nothing was adopted" |
+| ZoneTests.testTheZonesAreTheKernels | `PkLayout.Zone` maps `.drawBand` to `PK_ZONE_PILE_DROP` | "the draw band (U24)" |
+| KernelWordsTests.testTheCornerIndexIsTheKernels | `CardFace.label` returns the kernel's word even when it is "" | "a skip prints its glyph, not an index" |
+| KernelWordsTests.testTheRulesAreAsManyAsTheKernelHas | `Pk.rules` stops at four lines (`out.count < 4`) | "every rule the kernel has" |
+| DrawnStayTests.testAnOlderTimerNeverHidesANewerDrawnStay | `showDrawnStay`'s timer clears `drawnStay` without comparing the generation | "a newer showing stays up" |
+| TableModelTests.testATapOnAFanStagesTheCatchAndASecondTakesItBack | `TableModel.tapFan` handles `.uncalled` as `.refused` | "a second tap un-calls" |
+
+The last row replaces the `tapFan never un-calls` row above: the Swift branch that mutant deleted is now the kernel's (`pk_api_tap_fan`), so that red run no longer describes the code.
+Likewise the two `PickemupHost.adopt` rows under BeatPlayerTests mutated Swift that is now `pk_api_adopt`; their C equivalents went red on the smoke (I29), and the planned Swift mutant for the same tests is `PickemupHost.adopt` playing `Pk.beats(from: to - 1, ...)` instead of `Pk.beatsNow()`, which must go red on "from the bubble on screen" and "adopting the same bubble again moves nothing".
+`MessagesViewController.voidPendingStage` on a superseding adopt (I35) has no test target, like the rest of the conversation below.
+
 Every other test in `PickemupKitTests` has a row above.
 What these tests do not reach is the conversation itself (`PickemupMessages/MessagesViewController.swift`: staging through the insert loop, send, cancel, receive); it has no test target, as uttt's has none, and it has NOT yet run inside Messages: on 2026-09-27 the app installed and registered on the simulator, but `simctl launch com.apple.MobileSMS` hung for over five minutes (BLOCKED B2 in `pickemup/docs/ORCHESTRATION.md`).
