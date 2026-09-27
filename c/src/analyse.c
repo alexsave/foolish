@@ -69,7 +69,7 @@ static int an_card_score(Card c, int trump) {
 }
 
 // The seat's finish position on a finished board: 1 = first out, N = the fool.
-static int an_finish_of(const Game *g, int seat) {
+int analyse_finish_of(const Game *g, int seat) {
     for (int i = 0; i < g->num_eliminated; i++)
         if (g->elimination_order[i] == seat) return i + 1;
     return g->num_players;
@@ -310,7 +310,7 @@ static int an_exact(const Game *g, int me, long budget) {
 
 // ---------- the playout -----------------------------------------------------------
 
-static int an_playout(Game *g, int seat, int strat) {
+int analyse_playout_board(Game *g, int strat) {
     for (int p = 0; p < g->num_players; p++) g->players[p].strategy_key = (int8_t)strat;
     BotDriveOut drv;
     for (int it = 0; it < AN_PLAYOUT_CYCLES && game_done(g) < 0; it++) {
@@ -318,8 +318,12 @@ static int an_playout(Game *g, int seat, int strat) {
         if (drv.stop == BOT_STOP_ENDED) break;
         if (n <= 0) return 0;            // nobody can act: a stalled board, not a result
     }
-    if (game_done(g) < 0) return 0;
-    return an_finish_of(g, seat);
+    return game_done(g) < 0 ? 0 : 1;
+}
+
+static int an_playout(Game *g, int seat, int strat) {
+    if (!analyse_playout_board(g, strat)) return 0;
+    return analyse_finish_of(g, seat);
 }
 
 // ---------- node results ------------------------------------------------------------
