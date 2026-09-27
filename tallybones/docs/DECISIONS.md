@@ -161,6 +161,30 @@ T56 (ios): the Swift tests run on an iOS simulator when one is free, and otherwi
 T22 (bridge): one staged move at a time, since every bubble is one move: staging replaces it, cancel drops it, and `tb_api_mark_sent` (from `didStartSending`) makes it resident, which is when its roll first exists.
 The lobby's join, leave and start change the resident at once, as Pick 'Em Up's do; in a live game `tb_api_stage_leave` stages a LEAVE bubble instead.
 
+### Integration (the shell wired to the kernel)
+
+T60 (integration): the seam is `BridgeKernel: TallyKernel` over a caseless `Tb` enum (pickemup's `Pk` shape), both in `ios/TallybonesKit/Kernel/`; the protocol stays so screens and tests name one seam, and `StandInKernel` is deleted with its canned hands.
+The scorecard preview is `TallyKernel.preview()`, one `tb_api_score_if` per category, replacing the `previewScores(dice)` closure: the kernel scores the dice it shows, so Swift never hands it dice.
+A lobby row on the bubble picture is `TB_API_W_PUBLIC_ROW` (no "(You)"), the table's is `TB_API_W_LOBBY_ROW`; the Close button's word is a new kernel key, `BTN_CLOSE`; the "who rolls first" footnote the stand-in drew has no kernel sentence and is dropped.
+
+T61 (integration, kernel): `TbCard.bonus_known` (was `pad0`, so the layout hash moved to 0xd9115cf3) is 1 once the bonus can no longer change: earned, or every numbers row filled short of 63 (`tb_bonus_known` in `tb.c`). The card's bonus line reads "-" until then (T52) without Swift deciding it.
+
+T62 (integration): the tray plays the kernel's timeline (`Board/BeatPlayer.swift`, pickemup's BeatPlayer cut down): each frame asks `tb_api_beats_frame` for the face (blank in the cup, the tumble's blur, the landed value) and `tb_api_beat_sample` for the drop, spin and swell of the SETTLE beat, per die; T51's Swift tumble and `TumblePlayer` are deleted, T21's numbers rule.
+There is no held plan (TbBeats has none): a staged move lays out nothing, since a staged KEEP's reroll does not exist.
+Not drawn yet, deliberately left for a later pass: the STAMP, TURN and FADE beats (the card and the badges show the settled view), the PkFX anchor effects, and `tb_lay_*` (the table keeps T50/T53's fixed 52pt die; tb_lay's shrinking 40 to 64pt tray is its own change). The chrome springs in `FMotion` stay literals: tb_beats.h has no such names.
+
+T63 (integration): the Swift tests run on Mac Catalyst with the kernel linked through `make -C tallybones/c ios-lib-catalyst`, which adds an arm64 macabi slice of the same sources, stamped with the same hash after checking that the macabi triple lays the structs out alike; `mac_tests.sh` picks it for a Catalyst DEST. The slice is never shipped.
+`mac_tests.sh` runs xcodebuild as `env -u DEST xcodebuild`: with DEST exported (the way the script is driven), the Catalyst build failed with "no library for this platform was found" in the xcframework while the identical command passed without it; the cause inside xcodebuild was not found, the fix is not handing it the variable.
+
+T64 (integration): two defects the first runs showed, each fixed with a test and a mutation row.
+The keep marks forgot themselves on a cancel: a staged KEEP's draft view is roll n + 1, so Messages' X brought roll n back and `TallyTable.refresh` read that as a new roll; the marks now belong to (turn, roll, dice) and reset only when a roll I may keep from is new.
+A sent KEEP's plan started from the dice the send replaced, so the old faces flashed for the 16ms lead between the staged blanks and the settle; `tb_beats_build` in SEND mode now starts a leading SETTLE from blanks (`tb_beats_test` "beats send"). An OPENED keep still starts from the board before it, which is what that phone showed.
+
+T65 (integration, DEBUG only): `dev.who` in the App Group names the person a simulator plays. One simulator is one Messages identity in both of its stub threads, and every bubble reads as sent by it, so a second participant could never be seated; with `dev.who`, the nickname is that name, the participant id is derived from it, the seat records and nickname keys are that person's own, and the sender fact is withheld. The rig switches person between drawer openings (write the file, kill the appex). Nothing of it exists in a Release build.
+
+T66 (integration, bridge): a staged SCORE (or LEAVE) shows the move, not the next turn. `tb_api_view` keeps the draft's cards (the staged score on the card, in brass) but the resident's dice, keep marks, turn and roll, so the tray and the bubble picture show the dice being scored and the turn bar stays until the send. Before, the draft's view put the next seat on turn with five blank dice, and the SCORE bubble's picture was five blanks. T11 is untouched: the next roll still exists only once the bubble is sent.
+Also from the run: the table replaces the lobby the moment my own join fills the table or my Start starts it, and that tap lays out roll 1's settle (`tb_api_beats(-1, 0, SEND)`); the Reroll pill shows only on my own turn; another seat's card sheet takes the card's height, not the sheet's.
+
 ## BLOCKED
 
 - The final name: a USPTO and App Store search for "Tallybones" is the owner's, before any store listing.

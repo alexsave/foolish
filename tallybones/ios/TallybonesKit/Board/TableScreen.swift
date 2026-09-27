@@ -157,6 +157,7 @@ struct OtherCardSheet: View {
                       rows: ScoreRow.rows(card: live, preview: [], draft: .none, canScore: false,
                                           name: model.kernel.categoryName),
                       words: model.kernel.string, onPick: nil)
+                .fixedSize(horizontal: false, vertical: true)      // the card's own height, not the sheet's
             WoodButton(title: model.kernel.string(.close), width: TbLayout.pillWidth,
                        height: TbLayout.pillHeight, action: onClose)
             Spacer(minLength: 0)
