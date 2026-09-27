@@ -71,6 +71,14 @@ static int checked_bubble(PkGame *g, int seat, int strat, const PkBotKnobs *k, u
         if (!got) return done;
         g_moves++;
         if (mv.what == PK_BOT_ACT) {
+            const char *was = g_test;
+            TEST("D60: say it at once, call only the proven");
+            CHECK(!pk_is_legal(g, seat, SAY) || mv.act.kind == PK_A_SAY_IT, "a legal say comes first");
+            if (mv.act.kind == PK_A_CALL_OUT) {
+                uint8_t ref = g->b_open ? (uint8_t)(g->exposed & g->b_exposed_at_open) : g->exposed;
+                CHECK(ref >> mv.act.a & 1u, "a call names an exposed seat: %d", mv.act.a);
+            }
+            g_test = was;
             CHECK(mv.seat == seat, "the move is the asked seat's");
             CHECK(pk_is_legal(g, seat, mv.act), "legal: kind %d a %d b %d, n %d", mv.act.kind, mv.act.a, mv.act.b, g->n);
             CHECK(in_menu(g, seat, mv.act), "on the menu: kind %d a %d b %d", mv.act.kind, mv.act.a, mv.act.b);
@@ -158,8 +166,15 @@ static void belief_vs_truth(const PkGame *g, int me)
     CHECK(agree, "every pool card is unseen");
     /* a sampled world keeps every public fact */
     PkGame w;
-    pk_belief_sample(&b, g, 0x77 + (uint64_t)g->hist_n, 1, &w);
+    int broken = pk_belief_sample(&b, g, 0x77 + (uint64_t)g->hist_n, 1, &w);
     CHECK(conserved(&w), "a world holds every card once");
+    for (int s = 0; s < g->n; s++) {
+        if (s == me) continue;
+        int ok = 1;
+        for (int i = 0; i < b.count[s] - b.pinned_n[s]; i++)
+            ok &= pk_belief_allows(&b, s, i, w.hand[s][b.pinned_n[s] + i], 1);
+        CHECK(ok || broken, "seat %d: every constrained slot holds a card its voids allow", s);
+    }
     int same = w.deck_n == g->deck_n && w.stack_n == g->stack_n && w.live_suit == g->live_suit;
     for (int s = 0; s < g->n; s++) same &= w.hand_n[s] == g->hand_n[s];
     for (int i = 0; i < g->hand_n[me]; i++) same &= w.hand[me][i] == g->hand[me][i];
@@ -350,6 +365,16 @@ static void t_soft_void_distrust(void)
         CHECK(!(b.distrust >> 1 & 1u), "trusted so far");
         CHECK(!pk_belief_allows(&b, 1, 0, other, 1) && pk_belief_allows(&b, 1, 0, other, 0),
               "the soft void forbids only when soft voids are asked for");
+        int in_l = 0, free_l = 0;
+        for (uint64_t ws = 1; ws <= 40; ws++) {
+            PkGame w;
+            if (pk_belief_sample(&b, &g, ws, 1, &w)) continue;
+            for (int i = 0; i < 7; i++) in_l += pk_suit(w.hand[1][i]) == live;
+            pk_belief_sample(&b, &g, ws, 0, &w);
+            for (int i = 0; i < 7; i++) free_l += pk_suit(w.hand[1][i]) == live;
+        }
+        CHECK(in_l == 0 && free_l > 0, "worlds keep the live suit out of the 7 bound slots (%d), "
+              "and only when asked (%d without)", in_l, free_l);
         CHECK(pk_apply(&g, 1, PLAYW(pos_of(&g, 1, skip), PK_NO_SUIT)) && g.turn == 1,
               "the Skip: the turn comes straight back (2 players)");
         pk_belief_build(&b, &g, 0);
@@ -361,6 +386,59 @@ static void t_soft_void_distrust(void)
         CHECK(pk_belief_allows(&b, 1, 0, other, 1), "a distrusted seat is never constrained softly");
     }
     CHECK(found, "a deal with a Skip and a number of the live suit for seat 1");
+}
+
+/* ---- 3b. "Last card!" and "Caught you!" (D60) ---------------------------------------
+ *
+ * Real games (greedy, 3 and 4 players) stopped right after a seal leaves a
+ * seat exposed. Before that seat speaks, every other seat's bot calls it
+ * out, and nobody else; the exposed seat's own bot says it. */
+static void t_say_and_call(void)
+{
+    TEST("D60: an exposed seat is called by the others and says it itself");
+    int found = 0;
+    uint64_t rs = 11;
+    for (uint32_t gi = 0; gi < 2000 && found < 10 * SCALE; gi++) {
+        int n = 3 + (int)(gi % 2);
+        PkGame g;
+        uint8_t seed[32];
+        seed_wide(seed, 60000 + gi);
+        pk_new(&g, seed, n);
+        PkBotKnobs k;
+        pk_bot_knobs_default(&k);
+        for (int guard = 0; guard < 400 && !g.over; guard++) {
+            int t = g.turn;
+            PkAct m[PK_BOT_MENU_CAP];
+            int nt = pk_legal_turn(&g, t, m, PK_BOT_MENU_CAP);
+            if (nt <= 0) break;
+            PkAct a = m[pk_bot_greedy(&g, t, m, nt)];
+            pk_apply(&g, t, a);
+            if (a.kind == PK_A_DRAW) continue;
+            pk_seal(&g);
+            if (!g.exposed || g.over) continue;
+            int x = 0;
+            while (!(g.exposed >> x & 1u)) x++;
+            found++;
+            for (int s = 0; s < n; s++) {
+                PkBotMove mv;
+                int got = pk_bot_choose(&g, s, PK_BOT_GREEDY, &k, &rs, &mv);
+                if (s == x) CHECK(got && mv.what == PK_BOT_ACT && mv.act.kind == PK_A_SAY_IT, "seat %d says it", s);
+                else CHECK(got && mv.what == PK_BOT_ACT && mv.act.kind == PK_A_CALL_OUT && mv.act.a == x,
+                           "seat %d calls seat %d", s, x);
+            }
+            /* a seat that is not exposed is never called */
+            PkGame c = g;
+            PkBotMove mv;
+            pk_apply(&c, x, SAY);
+            pk_seal(&c);
+            for (int s = 0; s < n; s++) {
+                int got = pk_bot_choose(&c, s, PK_BOT_GREEDY, &k, &rs, &mv);
+                if (s != c.turn) CHECK(!got, "after the say, seat %d has nothing to send out of turn", s);
+            }
+            break;
+        }
+    }
+    CHECK(found == 10 * SCALE, "exposures found: %d", found);
 }
 
 /* ---- 4. determinism ---------------------------------------------------------------- */
@@ -622,6 +700,7 @@ int main(int argc, char **argv)
     t_legal_everywhere();
     t_drawout_bare_pass();
     t_soft_void_distrust();
+    t_say_and_call();
     t_deterministic();
     t_wild_held_most();
     t_wild_void();

@@ -188,8 +188,9 @@ int main(int argc, char **argv)
     PkBotKnobs d = g_knobs;
     printf("pick 'em up arena: %d games a line-up (each seed both ways round), %d worker%s\n",
            games, jobs, jobs == 1 ? "" : "s");
-    printf("mc knobs: worlds %d/%d/%d, depth %d (0 = to the end), wild_keep %d, soft voids %d of %d worlds\n\n",
-           d.w1, d.w2, d.w3, d.depth, d.wild_keep, d.soft_mod ? d.soft_mod - 1 : 0, d.soft_mod);
+    printf("mc knobs: worlds %d/%d/%d, depth %d (0 = to the end), wild_keep %d, draw_keep %d, "
+           "soft voids in %d of %d worlds\n\n", d.w1, d.w2, d.w3, d.depth, d.wild_keep, d.draw_keep,
+           d.soft_mod ? d.soft_mod - 1 : 0, d.soft_mod);
 
     static Tally all;
     memset(&all, 0, sizeof all);
