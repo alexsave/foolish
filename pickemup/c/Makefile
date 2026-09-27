@@ -254,6 +254,15 @@ build/pk_arena: tools/pk_arena.c $(SRC) $(BOT_SRC) $(HDR) | build
 arena: build/pk_arena
 	./build/pk_arena $(ARENA_GAMES) $(ARENA_JOBS)
 
+# THE TERMINAL GAME (tools/pk_play.c): you against five Monte Carlo bots,
+# every move through the kernel. PLAY_ARGS="--seed 42 --bots 5 --seat 0".
+PLAY_ARGS ?=
+build/pk_play: tools/pk_play.c $(SRC) $(BOT_SRC) $(HDR) | build
+	$(CC) $(CFLAGS) $(SRC) $(BOT_SRC) tools/pk_play.c -o $@
+play: build/pk_play
+	./build/pk_play $(PLAY_ARGS)
+.PHONY: play
+
 # The timeline of two takes as Markdown tables (docs/MOTION_REPORT.md).
 beats-dump: build/pk_beats_dump
 	./build/pk_beats_dump
