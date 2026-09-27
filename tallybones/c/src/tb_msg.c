@@ -428,7 +428,7 @@ static const char *find(const char *s, char c)
     return 0;
 }
 
-int tb_msg_text_decode(const char *text, TbMsg *out)
+static int text_decode(const char *text, TbMsg *out, int derive)
 {
     static char span[TB_MSG_MAX_TEXT];
     static uint8_t b[TB_MSG_MAX_BYTES];
@@ -451,7 +451,17 @@ int tb_msg_text_decode(const char *text, TbMsg *out)
     span[k] = 0;
     int n = b32_decode(span, b, (int)sizeof b);
     if (n <= 0) return TB_ETEXT;
-    return tb_msg_decode(b, n, out);
+    return decode(b, n, out, derive);
+}
+
+int tb_msg_text_decode(const char *text, TbMsg *out)
+{
+    return text_decode(text, out, 1);
+}
+
+int tb_msg_text_peek(const char *text, TbMsg *out)
+{
+    return text_decode(text, out, 0);
 }
 
 /* ---- two messages ---------------------------------------------------------------- */

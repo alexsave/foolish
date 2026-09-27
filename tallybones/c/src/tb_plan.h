@@ -11,8 +11,8 @@
  * and the next seat's ROLL, or OVER. A LEAVE is LEAVE, then TURN and ROLL
  * when the turn seat left, or OVER.
  *
- * A DRAFT'S PLAN (tb_plan_draft) is its pending move applied with nothing
- * derived: its ROLL events carry 0 for every rerolled die. */
+ * A STAGED MOVE'S PLAN (tb_plan_move) is the move applied to the resident
+ * with nothing derived: its ROLL events carry 0 for every rolled die. */
 #ifndef TB_PLAN_H
 #define TB_PLAN_H
 
@@ -51,9 +51,10 @@ typedef struct {
  * small, or a history that does not replay. `g` must not be a draft. */
 int tb_plan(const TbGame *g, int from, int to, TbEvent *out, int cap);
 
-/* The draft's own events (its pending move, nothing derived). 0 with no
- * draft, -1 for a `cap` too small. */
-int tb_plan_draft(const TbGame *g, TbEvent *out, int cap);
+/* The events move `m` would have on resident `g` (the bubble a host has
+ * staged), nothing derived. -1 for a move the rules refuse, a draft `g`, or
+ * a `cap` too small. */
+int tb_plan_move(const TbGame *g, TbMove m, TbEvent *out, int cap);
 
 typedef void (*TbEventFn)(const TbEvent *e, void *ctx);
 int tb_plan_each(const TbGame *g, int from, int to, TbEventFn fn, void *ctx);

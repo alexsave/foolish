@@ -292,7 +292,7 @@ static void t11_draft_unknown(void)
                       "game %u keep %d: die %d is %d, a draft has values only where kept", k, keeps[j], i, d.dice[i]);
             }
             TbEvent ev[16];
-            int n = tb_plan_draft(&d, ev, 16);
+            int n = tb_plan_move(&g, mv(TB_M_KEEP, g.turn, keeps[j]), ev, 16);
             int roll_seen = 0;
             for (int e = 0; e < n; e++)
                 if (ev[e].kind == TB_EV_ROLL) {

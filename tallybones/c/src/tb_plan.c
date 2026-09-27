@@ -29,15 +29,14 @@ int tb_plan(const TbGame *g, int from, int to, TbEvent *out, int cap)
     return k.n;
 }
 
-int tb_plan_draft(const TbGame *g, TbEvent *out, int cap)
+int tb_plan_move(const TbGame *g, TbMove m, TbEvent *out, int cap)
 {
     static TbGame d;
-    if (!g || !g->draft) return 0;
-    /* the resident is the draft without its move: the state it was staged on */
-    if (!tb__replay(&d, g->seed, g->n, g->starter, g->hist, g->hist_n, 0)) return -1;
+    if (!g || g->draft) return -1;
+    d = *g;
     Keep kp = { out, cap, 0 };
     TbSink k = { keep_one, &kp, g->hist_n, g->hist_n + 1, 0, (uint16_t)(g->hist_n + 1) };
-    /* nothing derived: the draft's step is given no body */
-    if (!tb__step(&d, g->pending, 0, 0, &k)) return -1;
+    /* nothing derived: a staged move's step is given no body */
+    if (!tb__step(&d, m, 0, 0, &k)) return -1;
     return kp.n > cap ? -1 : kp.n;
 }

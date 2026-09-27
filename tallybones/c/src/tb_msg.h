@@ -177,6 +177,10 @@ int tb_msg_decode(const uint8_t *in, int n, TbMsg *out);
  * reader takes a whole URL string and finds the value. */
 int tb_msg_text_encode(const TbMsg *m, char *out, int cap);
 int tb_msg_text_decode(const char *text, TbMsg *out);
+/* The same read WITHOUT deriving: the roster and the moves, every die 0.
+ * For comparing two chains (which is newer, what they share, whether a link
+ * is my own staged bubble), never for showing a game. */
+int tb_msg_text_peek(const char *text, TbMsg *out);
 
 /* ------------------------------------------------------- two messages */
 
