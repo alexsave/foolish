@@ -418,6 +418,31 @@ static int empty(char *out, int cap)
     return 0;
 }
 
+/* "2. Bo", or "2. Bo (You)" when the row is my seat's. */
+static int numbered_row(int number, int seat, char *out, int cap)
+{
+    char num[8], who[PK_NAME_MAX_BYTES + 24];
+    if (pk_itoa(number, num, sizeof num) < 0 || pk_say_seat(S.names, seat, who, sizeof who) < 0) return -1;
+    const char *kv[] = { "n", num, "who", who, 0 };
+    return pk_fill(out, cap, pk_text(seat == S.me ? PK_K_LOBBY_ROW_YOU : PK_K_LOBBY_ROW), kv);
+}
+
+int pk_api_ranks(uint8_t out[8])
+{
+    if (!out || !S.have || S.m.phase == PK_PHASE_WAITING || !S.m.game.over) return 0;
+    const PkGame *g = &S.m.game;
+    int n = 0;
+    if (g->winner < g->n) out[n++] = g->winner;
+    /* an insertion sort of at most eight: fewest cards first, ties by seat */
+    for (int s = 0; s < g->n; s++) {
+        if (s == g->winner) continue;
+        int k = n++;
+        while (k > (g->winner < g->n) && g->hand_n[out[k - 1]] > g->hand_n[s]) { out[k] = out[k - 1]; k--; }
+        out[k] = (uint8_t)s;
+    }
+    return n;
+}
+
 int pk_api_words(int what, int arg, char *out, int cap)
 {
     if (!out || cap < 1 || what < 0 || what >= PK_API_W_COUNT) return -1;
@@ -439,12 +464,14 @@ int pk_api_words(int what, int arg, char *out, int cap)
     case PK_API_W_SPOKEN_FAN:
         if (!S.have || arg < 0 || arg >= S.m.n_seats) return -1;
         return pk_say_spoken_fan(S.names, arg, out, cap);
-    case PK_API_W_LOBBY_ROW: {
+    case PK_API_W_LOBBY_ROW:
         if (!S.have || arg < 0 || arg >= S.m.n_seats) return -1;
-        char num[8], who[PK_NAME_MAX_BYTES + 24];
-        if (pk_itoa(arg + 1, num, sizeof num) < 0 || pk_say_seat(S.names, arg, who, sizeof who) < 0) return -1;
-        const char *kv[] = { "n", num, "who", who, 0 };
-        return pk_fill(out, cap, pk_text(arg == S.me ? PK_K_LOBBY_ROW_YOU : PK_K_LOBBY_ROW), kv);
+        return numbered_row(arg + 1, arg, out, cap);
+    case PK_API_W_RANK_ROW: {
+        uint8_t rank[PK_MAX_SEATS];
+        int n = pk_api_ranks(rank);
+        if (arg < 0 || arg >= n) return -1;
+        return numbered_row(arg + 1, rank[arg], out, cap);
     }
     case PK_API_W_LOBBY_DEALER: {
         if (!S.have || S.m.n_seats < 1) return -1;

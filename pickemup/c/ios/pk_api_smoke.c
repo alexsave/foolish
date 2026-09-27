@@ -251,6 +251,10 @@ int main(void)
         OK(pk_api_words(PK_API_W_CAPTION, tt->bubbles, line, sizeof line) > 0
            && pk_api_words(PK_API_W_HEADLINE, 0, line, sizeof line) >= 0
            && pk_api_words(PK_API_W_DECK_LEFT, 0, line, sizeof line) > 0, "the words");
+        {
+            uint8_t rank[8];
+            OK(pk_api_ranks(rank) == 0, "a live game ranks nobody (D22)");
+        }
         one_bubble();
         OK(table()->can_send, "a bubble that can be sent");
         n = pk_api_text(next, sizeof next);
@@ -267,6 +271,14 @@ int main(void)
     OK(t->phase == 3, "the game ended");
     v = (const PkView *)pk_api_view(PK_API_ME);
     OK(v->over && v->reveal[0].n + v->reveal[1].n > 0, "the end reveals every hand");
+    {
+        uint8_t rank[8];
+        int loser = v->winner ^ 1;
+        OK(pk_api_ranks(rank) == 2 && rank[0] == v->winner && rank[1] == loser, "the winner ranks first");
+        OK(v->reveal[v->winner].n <= v->reveal[loser].n, "the winner holds the fewest");
+        OK(pk_api_words(PK_API_W_RANK_ROW, 0, line, sizeof line) > 0 && line[0] == '1'
+           && pk_api_words(PK_API_W_RANK_ROW, 2, line, sizeof line) == -1, "the results rows");
+    }
     OK(pk_api_words(PK_API_W_CAPTION, t->bubbles, line, sizeof line) > 0, "the last caption");
     printf("  a 2p game in %d bubbles over %d reads; last: \"%s\" (%d characters)\n", t->bubbles, reads, line,
            (int)strlen(cur));
@@ -315,6 +327,41 @@ int main(void)
     OK(pk_api_start() == 0 && table()->phase == 2 && table()->starter == 1, "Cleo starts");
     ev = (const PkApiEvents *)pk_api_plan(PK_API_ME, -1, 0);
     OK(ev && ev->n > 7 && ev->ev[0].kind == PK_EV_LOBBY_START && ev->ev[0].seat == 1, "the deal's plan names its starter");
+
+    /* ---- three players to the end: the results order ---- */
+    {
+        be(0);
+        for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(i * 7 + 3);
+        pk_api_new(seed, 0);
+        pk_api_text(links[3], PK_API_TEXT_MAX);
+        open_as(1, links[3], 0, 0);
+        pk_api_join();
+        pk_api_text(links[4], PK_API_TEXT_MAX);
+        open_as(2, links[4], 0, 0);
+        pk_api_join();
+        pk_api_text(links[5], PK_API_TEXT_MAX);
+        open_as(0, links[5], 0, 0);
+        OK(pk_api_start() == 0 && table()->n_seats == 3, "a three-seat game");
+        n = pk_api_text(links[6], PK_API_TEXT_MAX);
+        char *at = links[6];
+        for (int round = 0; round < 3000 && n > 0; round++) {
+            open_as(0, at, 0, 0);
+            if (table()->phase == 3) break;
+            int turn = me_view()->turn;
+            open_as(turn, at, 0, 0);
+            one_bubble();
+            n = pk_api_text(links[7], PK_API_TEXT_MAX);
+            pk_api_commit();
+            memcpy(links[6], links[7], (size_t)(n > 0 ? n : 0) + 1);
+        }
+        OK(table()->phase == 3, "the three-seat game ended");
+        uint8_t rank[8];
+        const PkView *all = (const PkView *)pk_api_view(PK_API_ALL);
+        OK(pk_api_ranks(rank) == 3 && rank[0] == all->winner, "three ranked, the winner first");
+        OK(all->reveal[rank[1]].n <= all->reveal[rank[2]].n
+           && (all->reveal[rank[1]].n < all->reveal[rank[2]].n || rank[1] < rank[2]),
+           "then fewest cards first, ties in seat order");
+    }
 
     /* ---- refusals ---- */
     OK(pk_api_words(PK_API_W_ERROR, PK_EFORMAT, line, sizeof line) > 0

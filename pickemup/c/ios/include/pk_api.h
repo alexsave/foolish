@@ -143,8 +143,14 @@ int  pk_api_string(int key, char *out, int cap);       /* one table entry by PK_
 #define PK_API_W_LOBBY_ROW    17   /* arg: seat. "2. Bo", or "2. Bo (You)" for mine */
 #define PK_API_W_LOBBY_DEALER 18   /* "Alex deals": seat 0 deals (4.6.3)           */
 #define PK_API_W_ERROR        19   /* arg: a negative PK_E*. Why a link did not read */
-#define PK_API_W_COUNT        20
+#define PK_API_W_RANK_ROW     20   /* arg: a place 0..n-1 of pk_api_ranks, "1. Cy"  */
+#define PK_API_W_COUNT        21
 int  pk_api_words(int what, int arg, char *out, int cap);
+
+/* THE FINISHED TABLE'S ORDER: the winner first, then every other seat by
+ * fewest cards left, ties in seat order. Writes n seats and returns n, or 0
+ * while the game is not over (a live count is never ranked, D22). */
+int  pk_api_ranks(uint8_t out[8]);
 
 /* ---- the layout (pk_lay.c) ------------------------------------------------------
  *
