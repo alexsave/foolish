@@ -11,7 +11,7 @@ Each knew something the others did not, and each was one machine away from being
 lost.
 
 ```
-export FOOLISH_SIM=<udid>          # rig.sh newsim prints one
+export RIG_SIM=<udid>              # rig.sh newsim prints one (FOOLISH_SIM works too)
 ios/Tools/rig/rig.sh doctor        # what is missing, and how to get it
 ios/Tools/rig/rig.sh               # the full command list
 python3 ios/Tools/rig/lib/test_rig.py      # the checks that need no device
@@ -37,7 +37,10 @@ The path constants are the ones that got away the first time. `build` and
 errored, and the build compiled Durak's kernel into the other app - a name is
 easy to grep for and a path is not, which is why `test_rig.py` now fails on
 both.
-The scratch paths (`FOOLISH_OUT`, `FOOLISH_DD`, `FOOLISH_WORK`) are NOT in the
+The rig's own knobs are `RIG_SIM`, `RIG_IDB`, `RIG_OUT`, `RIG_DD` and
+`RIG_WORK`; the `FOOLISH_*` spellings of each still work as the fallback, and
+`rig.sh` hands whichever was set on to its children under both names.
+The scratch paths (`RIG_OUT`, `RIG_DD`, `RIG_WORK`) are NOT in the
 block, because `lib/ui.py` carries its own copy of the `FOOLISH_WORK` default
 and a rig that changed one of the two would write the screenshot somewhere the
 finder does not look.
@@ -327,9 +330,12 @@ game screen's black name field reports 739 for a drawer whose edge is 584).
   plain int whatever `x` was); `round(x, 1)` hands back the type it was given,
   so every rounded measurement in `lib/` writes `round(float(...), 1)` and
   `lib/test_rig.py` fails on one that does not.
-- **`xcodegen generate` blanks the entitlements files.** `build` restores them
-  from git; without that the extension loses its App Group and every seed
-  silently does nothing.
+- **`xcodegen generate` blanks the entitlements files.** `build` copies every
+  tracked `*.entitlements` under `IOS_DIR` aside with `cp -p` first and copies it
+  back the same way, keeping the bytes and the mtime; without that the extension
+  loses its App Group and every seed silently does nothing.
+  It used to restore them with `git checkout`, which discarded uncommitted
+  edits and left a new mtime that Xcode's cached build description refuses.
 - **`local a=$1 b=$((a*2))` does not work in bash** - every word on a `local`
   line is expanded before any of them is assigned.
 - **Stop `recordVideo` with SIGINT, always.** A recorder killed any other way

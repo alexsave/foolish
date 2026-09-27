@@ -382,6 +382,19 @@ It calls the macro twice (core and bots) and keeps `SG_LAYOUT_HASH` and `archive
   - P8 without `--no-lib`.
 - Risk: low for S4, medium for S4b.
 
+DONE (S4) for uttt and pickemup; S4b (foolish) is not started.
+`shared/tools/ios_xcframework.mk` holds `IOS_XCFRAMEWORK(name, sources, cflags, headers dir, min iOS, xcframework path)` and its one-slice helper `IOS_XCF_SLICE`, lifted from uttt's `ios-lib`.
+Both products `include ../../shared/tools/ios_xcframework.mk` and their `ios-lib` is one `$(call ...)`; pickemup keeps its `SG_LAYOUT_HASH` target flag and prerequisites around the call and prints the layout on a line of its own.
+A `$$(cat build/layout/ios.hash)` in the flags reaches the shell unexpanded through the call, and `make -n ios-lib` prints the same compile lines as before.
+Proof, with `make -C <product>/c ios-lib` before and after, then `xcrun nm -g | sort` and `lipo -info` on every `.a` in the xcframework:
+- uttt: `ios-arm64/libuttt.a` (arm64, 540 lines) and `ios-arm64_x86_64-simulator/libuttt.a` (x86_64 arm64, 537 lines); the diff of the nm outputs is empty, the lipo lines are identical, and so is the file list.
+- pickemup: `ios-arm64/libpickemup.a` (arm64, 394 lines) and `ios-arm64_x86_64-simulator/libpickemup.a` (x86_64 arm64, 392 lines); the diff of the nm outputs is empty, the lipo lines are identical, and so is the file list.
+- pickemup's `build/layout/ios.hash` is `0x177c2c55` before and after (`cmp`).
+- `Info.plist` holds the same lines, but the order of its two `AvailableLibraries` entries differs: that is `xcodebuild -create-xcframework` itself, which wrote the simulator entry first twice and the device entry first once in three runs of the same recipe.
+- `make -C uttt/c ios-smoke run` passes; `make -C pickemup/c ios-lib swift-smoke run` passes (`swift bridge: 25 checks, 0 failed`, `bridge: 1269 checks, 0 failed`).
+- P7: 150 tests, 128 pass; the 22 others are the Postgres suites (ECONNREFUSED on :5432).
+Note: the PATH on this Mac finds Homebrew's binutils `nm` first, which cannot read Mach-O; use `xcrun nm`.
+
 **S5 - the shared Mac test driver, `shared/scripts/ios_mac_tests.sh`.**
 - Move the generic body of `foolish/ios/scripts/mac_tests.sh` into a script driven by a product env:
   - the entitlements backup and `cp -p` restore;
@@ -405,6 +418,25 @@ The current line both poisons Xcode's build description and throws away uncommit
 - foolish change: none outside the rig.
 - Proof: `python3 foolish/ios/Tools/rig/lib/test_rig.py`, then `rig.sh doctor` for foolish and for uttt on ONE simulator, shut down afterwards.
 - Risk: medium.
+
+DONE (S6).
+`rig.sh` reads `RIG_SIM`, `RIG_IDB`, `RIG_OUT`, `RIG_DD` and `RIG_WORK` first and the `FOOLISH_*` spelling of each as the fallback, with the old defaults when neither is set.
+It hands whichever was set on to its children under both names, because `lib/ui.py`, `seed.py`, `transcript.py` and `shots/` read `FOOLISH_*` and `shared/rig/lib/ax.py` reads `RIG_*`; an unset scratch path is not exported, so each child keeps its own default.
+`seed.py` takes `GROUP_ID` from `RIG_APP_GROUP` (default `group.cards.foolish.msg`), and `cmd_seed` passes the product block's `APP_GROUP` on as that.
+`probe` and the "no bubble" message use `MENU_NAME` (default `Foolish`), so a bare `Foolish` below the block now fails `test_rig.py`.
+D1 is fixed: `cmd_build` calls `xcodegen_keeping_entitlements`, which `cp -p`s every tracked `*.entitlements` under `IOS_DIR` aside, runs xcodegen, and `cp -p`s them back even when xcodegen fails.
+The old line also listed `$REPO`'s entitlements, not `IOS_DIR`'s, so a second product's were never restored.
+`uttt/ios/Tools/rig.env` derives its paths from its own location, as pickemup's already did; both were sourced from `/tmp` under bash and zsh and named this worktree.
+foolish's diff is the rig only (`rig.sh`, `README.md`, `lib/seed.py`, `lib/test_rig.py`).
+Proof:
+- `python3 foolish/ios/Tools/rig/lib/test_rig.py`: 22 tests OK before, 31 OK after.
+- The nine new tests: `rig.sh doctor` with a stub `xcrun` for the old spelling, the new one, and the new one winning; `seed.GROUP_ID` with and without `RIG_APP_GROUP`; `cmd_seed` handing the group on; the lifted function against a stub xcodegen that blanks the file, bytes and nanosecond mtime restored on success and on failure (exit code kept); no `git checkout` in rig.sh.
+- Mutation check: ten mutations (the precedence flipped, each spelling dropped, the seed default and override, `cp` without `-p`, the `|| rc=$?` removed, `Foolish` back in `probe`, the group not handed on, a `git checkout` added) each turned the named test red, and restoring turned it green.
+- `bash -n rig.sh` passes.
+- `rig.sh doctor` on a throwaway iPhone 17 Pro Max (iOS 27.0) created, booted under a 90-second watchdog (booted in about 32 s) and deleted afterwards (one other simulator was booted): for foolish with `FOOLISH_SIM` and with `RIG_SIM` it names the simulator booted and asks for the seeder and the app; for pickemup through its `rig.env` it names the simulator at 440x956 pt and asks only for the app.
+The first foolish run printed an empty screen size (`booted,  pt`) and the next two read 440 956: the accessibility read seems to answer nothing on the first call just after boot, and `screen` does not cache an empty answer, so it recovers on the next call; this was not caused by S6.
+
+Commits: S4 `2d7cb43d`; S6 is the commit that adds this note.
 
 **S7 - one source for the drawer-collapse numbers (defect D2).**
 - Move uttt's C port (`uttt_collapse_push`, `uttt_spring_left` / `_past`, `UTTT_COLLAPSE_MS`, `UTTT_DRAWER_RESPONSE_MS` in `uttt/c/src/uttt_anim.{c,h}`) into `shared/c/collapse/` with a module map, the way `motion_ruler` is done.
@@ -625,7 +657,7 @@ Either way, S11 and S12 put the geometry in C, so the geometry does not depend o
 
 **D1 - `rig.sh` restores entitlements with `git checkout`** (`foolish/ios/Tools/rig/rig.sh:483`).
 This is the mtime poisoning `mac_tests.sh` exists to avoid, and it also discards uncommitted entitlements edits.
-S6 fixes it.
+Fixed in S6.
 
 **D2 - the drawer-collapse numbers exist three times:**
 

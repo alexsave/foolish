@@ -46,6 +46,7 @@ Swift reaches a header-only C module through its `module.modulemap` on `SWIFT_IN
 | `tools/structgen/`, `tools/sgcommon/` | the C-layout-to-Swift/TS/Kotlin generator and its libclang driver | CARDS, THIRD, SHED |
 | `tools/datagen/` | the translation-table generator | CARDS, THIRD, SHED |
 | `tools/llvm.mk` | the one LLVM toolchain the wasm builds use | CARDS, THIRD, SHED (through structgen and datagen) |
+| `tools/ios_xcframework.mk` | the `ios-lib` recipe: `$(call IOS_XCFRAMEWORK,name,sources,cflags,headers,min-ios,out)` builds the device and both simulator slices and wraps them in an xcframework | UTTT, SHED |
 | `tools/tighten/` | the showcase video cutter (`media/`) | CARDS |
 | `tools/textures/` | the bake tool: `regenerate_textures.sh <out-dir>` compiles `swift/Textures` with `GenerateTextures.swift` and writes the JPEGs; a product passes its own resources folder | CARDS, SHED |
 | `tools/check_ui_doc.py` | the UI design doc checker | UTTT, SHED |
