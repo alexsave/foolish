@@ -23,6 +23,7 @@
 #define PK_SAY_H
 
 #include "pk.h"
+#include "pk_plan.h"
 #include "../i18n/keys.h"
 
 /* THE CAPTION IS ONE LINE (uttt measured 36 characters of a sent bubble's
@@ -62,6 +63,12 @@ int pk_say_dir(const PkGame *g, char *out, int cap);         /* "" at 2 players 
  * while the line fits PK_CAPTION_MAX: the end, a catch, a "Last card!", the
  * play and its consequence (with the draws), a reshuffle, the next turn. */
 int pk_say_caption(const PkGame *g, int bubble, const char *const *names, char *out, int cap);
+
+/* The same caption from a bubble's own events (pk_plan of that one bubble,
+ * PK_VIEW_ALL), for a host that already holds them. `seats` is the table's
+ * size (a Reverse reads differently at two). */
+int pk_say_caption_of(const PkEvent *ev, int n, int seats, const char *const *names,
+                      char *out, int cap);
 
 /* The lobby's captions, naming the sender. */
 enum { PK_SAY_INVITE = 0, PK_SAY_JOINED, PK_SAY_LEFT };

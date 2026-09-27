@@ -67,6 +67,7 @@
     /* 6.2 bubble captions: one line in the SENDER's language, composed by   \
      * pk_say_caption; never "you", every caption names the actor */           \
     X(CAP_JOIN,            4, 0)  /* ". " between two clauses                 */ \
+    X(CAP_JOIN_BANG,       4, 0)  /* " " after a clause ending in "!"         */ \
     X(CAP_INVITE,          0, 0)                                                 \
     X(CAP_JOINED,          0, 0)                                                 \
     X(CAP_LEFT,            0, 0)                                                 \

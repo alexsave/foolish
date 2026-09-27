@@ -32,6 +32,7 @@ const char *const PK_STRINGS_EN[PK_K_COUNT] = {
     [PK_K_STAMP_LAST         ] = "LAST",
     [PK_K_SEAT_FALLBACK      ] = "Player {n}",
     [PK_K_CAP_JOIN           ] = ". ",
+    [PK_K_CAP_JOIN_BANG      ] = " ",
     [PK_K_CAP_INVITE         ] = "{who} wants a game of {game}. Tap to join",
     [PK_K_CAP_JOINED         ] = "{who} joined",
     [PK_K_CAP_LEFT           ] = "{who} left",

@@ -231,7 +231,7 @@ static void facts_one(const PkEvent *e, void *ctx)
 }
 
 /* One clause, or -1. */
-typedef struct { const PkGame *g; const char *const *names; } Ctx;
+typedef struct { int seats; const char *const *names; } Ctx;
 
 static int clause_end(const Ctx *c, const Facts *f, char *out, int cap)
 {
@@ -283,7 +283,7 @@ static int clause_turn(const Ctx *c, const Facts *f, char *out, int cap)
         case PK_R_WILD4:   return pk_fill(out, cap, T(CAP_WILD4), kv);
         case PK_R_PLUS2:   return pk_fill(out, cap, T(CAP_PLUS2), kv);
         case PK_R_SKIP:    return pk_fill(out, cap, T(CAP_SKIPPED), kv);
-        case PK_R_REVERSE: return pk_fill(out, cap, c->g->n > 2 ? T(CAP_REVERSED) : T(CAP_REVERSE_2P), kv);
+        case PK_R_REVERSE: return pk_fill(out, cap, c->seats > 2 ? T(CAP_REVERSED) : T(CAP_REVERSE_2P), kv);
         case PK_R_WILD:
             return pk_fill(out, cap, drew ? T(CAP_DREW_AND_PLAYED) : T(CAP_PLAYED_WILD), kv);
         default:
@@ -302,8 +302,10 @@ static int clause_next(const Ctx *c, int seat, int key, char *out, int cap)
     return pk_fill(out, cap, pk_text(key), kv);
 }
 
-/* Append `clause` after `out` with CAP_JOIN if the line still fits. 1 if it
- * was appended, 0 if it did not fit (and nothing after it is tried). */
+/* Append `clause` after `out` if the line still fits. 1 if it was appended,
+ * 0 if it did not fit (and nothing after it is tried), -1 on no room at all.
+ * The joint is CAP_JOIN, or CAP_JOIN_BANG after a clause that already ends
+ * in its own mark ("Ana: Last card! Bo to play"). */
 static int append(char *out, int cap, int *len, const char *clause)
 {
     if (!clause[0]) return 1;
@@ -313,7 +315,8 @@ static int append(char *out, int cap, int *len, const char *clause)
         *len = n;
         return 1;
     }
-    const char *join = T(CAP_JOIN);
+    char end = out[*len - 1];
+    const char *join = end == '!' || end == '?' ? T(CAP_JOIN_BANG) : T(CAP_JOIN);
     if (pk_text_cols(out) + pk_text_cols(join) + pk_text_cols(clause) > PK_CAPTION_MAX) return 0;
     int jl = (int)strlen(join), cl = (int)strlen(clause);
     if (*len + jl + cl >= cap) return 0;
@@ -323,18 +326,19 @@ static int append(char *out, int cap, int *len, const char *clause)
     return 1;
 }
 
-int pk_say_caption(const PkGame *g, int bubble, const char *const *names, char *out, int cap)
+static void facts_init(Facts *f)
 {
-    if (!out || cap < 1 || bubble < 0 || bubble > g->bubbles) return -1;
-    Ctx c = { g, names };
-    if (bubble == 0) return clause_next(&c, 1, PK_K_CAP_STARTED, out, cap);
+    memset(f, 0, sizeof *f);
+    f->effect_seat = PK_SEAT_NONE;
+    f->next = PK_SEAT_NONE;
+    f->sender = PK_SEAT_NONE;
+}
 
-    Facts f;
-    memset(&f, 0, sizeof f);
-    f.effect_seat = PK_SEAT_NONE;
-    f.next = PK_SEAT_NONE;
-    if (pk_plan_each(g, PK_VIEW_ALL, bubble - 1, bubble, facts_one, &f) < 0) return -1;
-
+static int caption(const Facts *fp, int seats, const char *const *names, char *out, int cap)
+{
+    const Facts f = *fp;
+    Ctx c = { seats, names };
+    if (f.sender == PK_SEAT_NONE) return -1;
     char clause[256];
     int len = 0, r = 1;
     out[0] = 0;
@@ -359,7 +363,30 @@ int pk_say_caption(const PkGame *g, int bubble, const char *const *names, char *
         if (clause_next(&c, f.next, PK_K_CAP_NEXT, clause, sizeof clause) < 0) return -1;
         r = append(out, cap, &len, clause);
     }
-    return r < 0 ? -1 : len;
+    return r < 0 || !len ? -1 : len;
+}
+
+int pk_say_caption(const PkGame *g, int bubble, const char *const *names, char *out, int cap)
+{
+    if (!out || cap < 1 || bubble < 0 || bubble > g->bubbles) return -1;
+    if (bubble == 0) {
+        Ctx c = { g->n, names };
+        return clause_next(&c, 1, PK_K_CAP_STARTED, out, cap);
+    }
+    Facts f;
+    facts_init(&f);
+    if (pk_plan_each(g, PK_VIEW_ALL, bubble - 1, bubble, facts_one, &f) < 0) return -1;
+    return caption(&f, g->n, names, out, cap);
+}
+
+int pk_say_caption_of(const PkEvent *ev, int n, int seats, const char *const *names,
+                      char *out, int cap)
+{
+    if (!out || cap < 1 || !ev || n < 1) return -1;
+    Facts f;
+    facts_init(&f);
+    for (int i = 0; i < n; i++) facts_one(&ev[i], &f);
+    return caption(&f, seats, names, out, cap);
 }
 
 int pk_say_lobby_caption(int which, const char *who, char *out, int cap)
