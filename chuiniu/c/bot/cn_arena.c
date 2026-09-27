@@ -169,14 +169,14 @@ int main(int argc, char **argv)
     for (int s = 0; s < A_seats; s++) printf("%c%s", s ? ',' : ' ', P_NAME[A_mix[s]]);
     printf("  (%.1fs, %.1f moves/game)\n", secs, moves / A_games);
     printf("fair share of wins: %.3f\n", 1.0 / A_seats);
-    printf("%-8s %8s %7s  %-17s %9s  %s\n", "policy", "seats", "win", "win 95% CI", "diceLost", "95% CI");
+    printf("%-8s %8s %8s %7s  %-17s %9s  %s\n", "policy", "seats", "wins", "win", "win 95% CI", "diceLost", "95% CI");
     for (int p = 0; p < P_N; p++) {
         if (!seats[p]) continue;
         double lo, hi;
         wilson(wins[p], seats[p], &lo, &hi);
         double mu = lost[p] / seats[p], var = lost2[p] / seats[p] - mu * mu;
         double se = sqrt(var > 0 ? var / seats[p] : 0);
-        printf("%-8s %8.0f %7.3f  [%.3f, %.3f]    %9.3f  [%.3f, %.3f]\n", P_NAME[p], seats[p], wins[p] / seats[p],
+        printf("%-8s %8.0f %8.0f %7.3f  [%.3f, %.3f]    %9.3f  [%.3f, %.3f]\n", P_NAME[p], seats[p], wins[p], wins[p] / seats[p],
                lo, hi, mu, mu - 1.96 * se, mu + 1.96 * se);
     }
     free(A_res);

@@ -22,11 +22,11 @@ void cn_bot_cfg_default(CnBotCfg *c)
 {
     c->worlds = 96;
     c->beta = 8.0f;
-    c->fit_beta = 0;
+    c->fit_beta = 0;         /* measured: fitting lost to a fixed 8 (BOT.md) */
     c->use_belief = 1;
     c->ro_beta = 8.0f;
-    c->observe = 2;
-    c->opp_reads = 0;
+    c->observe = 2;          /* level 1: I read the rollout's bids, nobody reads mine */
+    c->opp_reads = 0;        /* ... and rollout opponents judge by the prior */
     c->rollout_steps = 64;
 }
 

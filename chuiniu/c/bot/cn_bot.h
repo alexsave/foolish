@@ -23,7 +23,8 @@
  *   4. cn_bot_choose   - the best candidate
  *
  * Every constant a result depends on is in CnBotCfg, and cn_bot_cfg_default
- * is the one place its values are written. */
+ * (with the two #defines and the temperature grid just above it in
+ * cn_bot.c) is the one place their values are written. */
 #ifndef CN_BOT_H
 #define CN_BOT_H
 
