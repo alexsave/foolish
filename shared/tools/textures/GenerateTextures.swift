@@ -1,21 +1,20 @@
-// GenerateTextures.swift — the BUILD-TIME half of the wool/wood materials.
+// GenerateTextures.swift - the BUILD-TIME half of the wool/wood materials.
 //
-// Runs on the Mac, calls the very same WoolTexture/WoodTexture generators the
-// app used to run on launch, and writes the results to
-// ios/FoolishKit/Resources/. The shipping app then loads those images
-// (FTextures) and
-// generates zero procedural pixels — which is the point: an iMessage extension
+// Runs on the Mac, calls the very same generators an app used to run on
+// launch (shared/swift/Textures), and writes the results to the output
+// directory. The shipping app then loads those images through its texture
+// loader and generates zero procedural pixels - which is the point: an iMessage extension
 // is memory- and watchdog-capped far below an app, and round-5 proved that a
 // big procedural render there is a dark, empty panel on a real phone even when
 // the simulator looks perfect.
 //
 // This is NOT compiled into any target. It is compiled ad hoc by
-// ios/Tools/regenerate_textures.sh, which passes the two generator sources
-// alongside it — so there is ONE generator, not a build-time copy that drifts
+// shared/tools/textures/regenerate_textures.sh, which passes the generator
+// sources alongside it - so there is ONE generator, not a build-time copy that drifts
 // from the runtime one. (The generators are deliberately UIKit-free for exactly
 // this reason.)
 //
-// Usage:  ios/Tools/regenerate_textures.sh [output-dir]
+// Usage:  shared/tools/textures/regenerate_textures.sh <out-dir>
 // then commit the regenerated JPEGs.
 
 import CoreGraphics
@@ -29,7 +28,7 @@ import UniformTypeIdentifiers
 ///
 /// JPEG, not PNG, and the reason is measured: a wool weave is high-frequency
 /// noise, which is the worst case for PNG's predictors. The same 592x1280
-/// weave is 2071 KB as PNG and 590 KB at quality 0.85 — 3.5x smaller in a
+/// weave is 2071 KB as PNG and 590 KB at quality 0.85 - 3.5x smaller in a
 /// download for a texture that is then MAGNIFIED 2.3x on screen (see
 /// WoolTexture.pointsPerTexel), so a JPEG block is a third of a display pixel
 /// and cannot be resolved. Nothing here is line art or has hard edges; the
@@ -61,8 +60,12 @@ func report(_ name: String, _ url: URL, _ image: CGImage, seconds: Double) {
 struct GenerateTextures {
 static func main() {
     let args = CommandLine.arguments
-    let outDir = URL(fileURLWithPath: args.count > 1 ? args[1] : FileManager.default.currentDirectoryPath,
-                     isDirectory: true)
+    // Required: each product keeps its own baked images, and this tool cannot
+    // tell which product ran it.
+    guard args.count > 1 else {
+        FileHandle.standardError.write(Data("usage: gentex <out-dir>\n".utf8)); exit(2)
+    }
+    let outDir = URL(fileURLWithPath: args[1], isDirectory: true)
     try? FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
 
     print("Baking textures into \(outDir.path)")
@@ -142,6 +145,6 @@ static func main() {
         report(bake.name, url, fern, seconds: Date().timeIntervalSince(t0))
     }
 
-    print("Done. Commit the images; the app loads them through FTextures.")
+    print("Done. Commit the images; the app loads them through its texture loader.")
 }
 }

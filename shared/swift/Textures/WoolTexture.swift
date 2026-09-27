@@ -1,19 +1,19 @@
-// WoolTexture.swift — the woven-wool table surface (§IOS_PHONE_LAYOUT §4:
-// "the phone app should lean on what the website does — wool/wood/fern").
+// WoolTexture.swift - the woven-wool table surface (§IOS_PHONE_LAYOUT §4:
+// "the phone app should lean on what the website does - wool/wood/fern").
 // A faithful CPU port of the web's TableBackground generator (the CPU-fallback
-// path, which writes a flat RGBA buffer — the same shape as our UInt8 buffer):
+// path, which writes a flat RGBA buffer - the same shape as our UInt8 buffer):
 // a brown base woven by a horizontal fiber phase then a vertical one, with a
 // tan-XOR plaid modulating the colour. The math is ported, not the WebGL.
 //
 // THIS FILE NO LONGER RUNS IN THE SHIPPING APP. It is the SOURCE OF TRUTH for
 // what the wool looks like, and it is executed at BUILD time by
-// ios/Tools/GenerateTextures.swift, which bakes one image per entry in `bakes`
-// into FoolishKit/Resources/ - today wool-classic.jpg and wool-dark.jpg, one
+// shared/tools/textures/GenerateTextures.swift, which bakes one image per entry in `bakes`
+// into the product's Resources/ - today wool-classic.jpg and wool-dark.jpg, one
 // per entry in `bakes`. The extension then loads whichever one the colour
 // scheme calls for (FTextures) and generates zero procedural pixels on launch.
 //
 // Why: a 1920x1080 weave is ~2.4M brush iterations, each writing up to a 5x5
-// span — tens of millions of blends and an 8.3MB scratch buffer — on the first
+// span - tens of millions of blends and an 8.3MB scratch buffer - on the first
 // launch of a process that iOS memory- and watchdog-caps far below an app. It
 // was a live suspect for the round-5 "the extension comes up as a dark, empty
 // panel on a real phone" report, and a disk cache does not help the launch that
@@ -21,11 +21,11 @@
 // first launch that renders.
 //
 // TO CHANGE THE LOOK: edit `render` / `Palette` here, then run
-//   ios/Tools/regenerate_textures.sh
+//   shared/tools/textures/regenerate_textures.sh <resources-dir>
 // and commit the regenerated images. Nothing else in the app reads this code.
 //
 // Deliberately UIKit-free (CoreGraphics only) so the macOS build-time tool can
-// compile this exact file — one generator, no port to drift.
+// compile this exact file - one generator, no port to drift.
 
 import CoreGraphics
 import Foundation
@@ -35,7 +35,7 @@ public enum WoolTexture {
     // MARK: - Palette (the ONE place wool colour lives)
 
     /// Every colour the weave uses. A dark-mode wool is a second `Palette` plus
-    /// a second output file (see `bakes` and FTextures.Variant) — NOT a
+    /// a second output file (see `bakes` and FTextures.Variant) - NOT a
     /// second copy of the generator, and never a tint applied at draw time.
     public struct Palette {
         /// The brown showing between fibres (web BASE_R/G/B).
@@ -46,7 +46,7 @@ public enum WoolTexture {
         public let warpR, warpG, warpB: Double
         /// How far a fibre's colour swings with its phase, per channel.
         public let swingR, swingG, swingB: Double
-        /// The tan-XOR plaid shift — what makes the ~1cm chequer blocks read —
+        /// The tan-XOR plaid shift - what makes the ~1cm chequer blocks read -
         /// as a signed PER-CHANNEL delta added to the fibre colour inside a
         /// block and nothing outside it.
         ///
@@ -56,7 +56,7 @@ public enum WoolTexture {
         /// "the wool red colour becomes green or navy" impossible to express:
         /// the direction of the shift was a constant of the generator rather
         /// than a property of the palette. Three signed numbers say the same
-        /// thing with the hue included — `classic` below is the old
+        /// thing with the hue included - `classic` below is the old
         /// (+100, -100, -50) written out, so the light bake is unchanged to
         /// the byte.
         public let plaidR, plaidG, plaidB: Double
@@ -80,7 +80,7 @@ public enum WoolTexture {
             self.fallbackHex = fallbackHex
         }
 
-        /// The shipped light wool — the web's numbers, unchanged.
+        /// The shipped light wool - the web's numbers, unchanged.
         public static let classic = Palette(
             baseR: 113, baseG: 65,  baseB: 27,
             weftR: 209, weftG: 208, weftB: 183,
@@ -141,7 +141,7 @@ public enum WoolTexture {
     /// The sub-rectangle of `renderCanvas` that actually ships.
     ///
     /// A phone shows about 590 of the canvas's 1920 columns (a portrait window
-    /// on a landscape weave — the web crops the same way), so shipping the full
+    /// on a landscape weave - the web crops the same way), so shipping the full
     /// canvas would be ~3x the bytes and ~3x the decoded memory for pixels no
     /// device can display. The 64/16 origin skips the canvas edges, where the
     /// fibre passes start mid-stroke and cover thinly.
@@ -151,7 +151,7 @@ public enum WoolTexture {
     /// margin to spare.
     ///
     /// PORTRAIT ONLY, deliberately. The host app is portrait-locked
-    /// (FoolishApp/Info.plist) and the board layout is portrait-tuned (8-seat
+    /// (its Info.plist) and the board layout is portrait-tuned (8-seat
     /// arc, two-row hand, full-width plank), so a landscape stage - which the
     /// Messages host can still hand the extension - would show the beige
     /// fallback beside a 458pt-wide weave. Covering landscape too means a
@@ -161,7 +161,7 @@ public enum WoolTexture {
     /// widen `w` to 1248 here and re-bake - nothing else changes.
     public static let shippedCrop = (x: 64, y: 16, w: 592, h: 1280)
 
-    /// Base name of the baked LIGHT image in FoolishKit's bundle.
+    /// Base name of the baked LIGHT image in the product's resource bundle.
     public static let classicResourceName = "wool-classic"
 
     /// Base name of the baked DARK image. One dark weave now (the two-tone grey
@@ -171,7 +171,7 @@ public enum WoolTexture {
     /// Every weave the build-time tool bakes, as (file base name, palette).
     ///
     /// The list lives HERE and not in the tool so that adding a look is one
-    /// entry beside the palette it names — and so the tool stays UIKit-free and
+    /// entry beside the palette it names - and so the tool stays UIKit-free and
     /// knows nothing about which of these the app then chooses (that is
     /// `FTextures.Variant`, which needs SwiftUI and so cannot be seen from the
     /// macOS generator).
@@ -200,7 +200,7 @@ public enum WoolTexture {
     /// shows LESS weave, never smaller weave.
     public static let pointsPerTexel: CGFloat = 0.775
 
-    /// The plaid block size in texels — the web's literal `/80`, in pixels.
+    /// The plaid block size in texels - the web's literal `/80`, in pixels.
     ///
     /// Three passes got this wrong before it got right, all by treating the
     /// number as a free parameter to taste instead of reading what the web
@@ -212,17 +212,17 @@ public enum WoolTexture {
     /// file line up, because the whole generator is written in its pixels.
     public static let blockPx = 80.0
 
-#if FOOLISH_TEXTURE_BAKE
+#if TEXTURE_BAKE
 // BUILD-TIME ONLY, and now enforced rather than only asked for.
 //
-// The generator below has no caller in any shipping target - ios/Tools/
-// GenerateTextures.swift and FeltVariations.swift are the only ones - but
+// The generator below has no caller in any shipping target - the bake tool
+// (shared/tools/textures) and a product's own dev tools are the only ones - but
 // `public` in a DYNAMIC framework is a dead-strip root, so it was linked into
-// FoolishKit.framework anyway, and FoolishKit.framework ships inside the
+// the product's UI framework anyway, and that framework ships inside the
 // iMessage bundle.  A procedural render on launch is what took the extension
 // down on a real phone (see this file's header); carrying the code that does it
 // is the same mistake one step removed.  The two tools pass
-// `-D FOOLISH_TEXTURE_BAKE`; no shipping target defines it.
+// `-D TEXTURE_BAKE`; no shipping target defines it.
 //
 // Worth ~1KB of binary, measured (2.639MB -> 2.638MB), so this is a RULE and
 // not a diet: the reason to keep it is that a shipping build cannot render a
@@ -307,7 +307,7 @@ public enum WoolTexture {
                     let bInt = Int(floor((Double(i % h) + offY) / blockPx))
                     // Inside a chequer block the fibre takes the palette's plaid
                     // delta; outside it, nothing. (Was `red`/`-red`/`-red/2`,
-                    // i.e. the same three numbers with the hue hard-coded — see
+                    // i.e. the same three numbers with the hue hard-coded - see
                     // `Palette.plaidR`.)
                     let inBlock = tan(Double(aInt ^ bInt)) > 0.3
                     let pr = inBlock ? palette.plaidR : 0
@@ -342,20 +342,20 @@ public enum WoolTexture {
 
         return cgImageFromRGBA(&data, w: w, h: h)
     }
-#endif  // FOOLISH_TEXTURE_BAKE
+#endif  // TEXTURE_BAKE
 }
 
-#if FOOLISH_TEXTURE_BAKE
+#if TEXTURE_BAKE
 // BUILD-TIME ONLY, and now enforced rather than only asked for.
 //
-// The generator below has no caller in any shipping target - ios/Tools/
-// GenerateTextures.swift and FeltVariations.swift are the only ones - but
+// The generator below has no caller in any shipping target - the bake tool
+// (shared/tools/textures) and a product's own dev tools are the only ones - but
 // `public` in a DYNAMIC framework is a dead-strip root, so it was linked into
-// FoolishKit.framework anyway, and FoolishKit.framework ships inside the
+// the product's UI framework anyway, and that framework ships inside the
 // iMessage bundle.  A procedural render on launch is what took the extension
 // down on a real phone (see this file's header); carrying the code that does it
 // is the same mistake one step removed.  The two tools pass
-// `-D FOOLISH_TEXTURE_BAKE`; no shipping target defines it.
+// `-D TEXTURE_BAKE`; no shipping target defines it.
 //
 // Worth ~1KB of binary, measured (2.639MB -> 2.638MB), so this is a RULE and
 // not a diet: the reason to keep it is that a shipping build cannot render a
@@ -374,4 +374,4 @@ func cgImageFromRGBA(_ data: inout [UInt8], w: Int, h: Int) -> CGImage? {
         return ctx?.makeImage()
     }
 }
-#endif  // FOOLISH_TEXTURE_BAKE
+#endif  // TEXTURE_BAKE

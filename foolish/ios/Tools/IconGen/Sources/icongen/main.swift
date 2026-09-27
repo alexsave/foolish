@@ -1,5 +1,5 @@
 // icongen — render the 1024px app icon: the fern IFS (ported from the web's
-// fernFractal, same as FoolishKit/DesignSystem/FernCardBack) drawn bone-on-felt.
+// fernFractal, same as shared/swift/Textures/FernCardBack) drawn bone-on-felt.
 // One blessed seed so the icon is stable. macOS command-line tool.
 
 import Foundation

@@ -47,6 +47,11 @@ DECISION O5: the name stays `Pick 'Em Up` as a working title, threaded through o
 - The final game name: `Pick 'Em Up` collides with two same-genre titles (README); the USPTO search and the choice are the owner's, before any store listing.
 - App Store Connect record, signing and upload: the owner does these by hand; nothing in this pass touches them.
 
+BLOCKED B1: the P8 after-run for lift S1 (and any later Swift lift).
+From 2026-09-26 23:06 every iOS simulator on this Mac hangs: test launches die with `Mach error -308 (ipc/mig) server died`, `simctl install` never returns, and a fresh device and the iOS 26.3 device both stop at boot in `com.apple.addressbook.migrator`.
+Restarting CoreSimulatorService did not clear it; a Mac reboot is the likely fix, and only the owner can do that.
+Once it is clear, run `DEST='platform=iOS Simulator,name=iPhone 17e,OS=27.0' bash ios/scripts/mac_tests.sh --no-lib --regen` from `foolish/` on the S1 commit and compare with the baseline in `REUSE_AUDIT.md` under S1 (853 executed, 1 skipped, only the flaky `MemoryProfileTests` failing).
+
 ## Found on the way (not pickemup's to fix in this pass)
 
 - `werewolf/docs/UI.html` fails `shared/tools/check_ui_doc.py` because of a literal template tag inside a script comment.

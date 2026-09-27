@@ -298,6 +298,15 @@ That means rewording `shared/README.md:5` and every `uttt/` path in the README i
 - Proof: P7.
 - Risk: none.
 
+DONE (S0).
+The code name is SHED.
+`PRODUCT` gained `/pickemup/i` and `/pick ?'?em ?up/i`.
+A second hit the guard found: `shared/tools/check_ui_doc.py` defaulted to `pickemup/docs/UI.html` when run with no argument, so it now prints its usage line instead (both READMEs that call it pass a path).
+Mutation check: a file under `shared/` holding `pickemup`, then one holding `Pick 'Em Up`, each turned the guard red on the first test naming that line; removing it turned it green.
+P7: 150 tests, 128 pass before and after with the same set of names; the 22 that fail or cancel are the Postgres suites (ECONNREFUSED on :5432, Docker was not running), identical before and after.
+`\buttt\b` was NOT added: the code name UTTT is the product name, so the guard would first need a new code name for uttt and a reword of 32 lines, including comments in `shared/swift/MessagesKit` and `shared/c/i18n/languages.h`, and the path `uttt/ios/Tools/store_frames.py` in `shared/tools/store/market.py`.
+That is its own step.
+
 **S1 - texture bakers to `shared/swift/Textures/` and `shared/tools/textures/`.**
 - `git mv` `FeltTexture.swift`, `WoolTexture.swift`, `WoodTexture.swift` and `FernCardBack.swift` from `foolish/ios/FoolishKit/DesignSystem/` into `shared/swift/Textures/`.
 FoolishKit still compiles them through `project.yml:346`.
@@ -313,12 +322,36 @@ If the bake is not byte-identical on this machine, record that; do not commit a 
 - Risk: low.
 - Follow-up in the same PR: delete werewolf's third copy in `werewolf/ios/Tools/` only if werewolf builds from shared (paused; otherwise leave it and note it).
 
+DONE (S1), except the after-run of P8, which is BLOCKED (see `ORCHESTRATION.md`).
+The four generators are in `shared/swift/Textures/`, the bake tool and its script in `shared/tools/textures/`, and the flag is `TEXTURE_BAKE`.
+The output directory is required by both the script and `GenerateTextures.swift`.
+foolish's diff: `ios/Tools/regenerate_textures.sh` now `exec`s the shared script with `${1:-$IOS/FoolishKit/Resources}`, `ios/Tools/felt_variations.sh` points at the new paths and flag, and two comments (`IconGen/.../main.swift`, `fern_ifs.html`) name the new path.
+Re-bake: the JPEGs baked before the move and after it through foolish's wrapper are all seven `cmp`-identical to the committed ones, so no re-bake was committed.
+P9 prints nothing, and no entitlements changed.
+P7: 150 tests, 128 pass, the same set as before S0 (the 22 others are the Postgres suites).
+P8 baseline in this worktree: run 1 recorded the snapshots (853 executed, 7 snapshot records failing, as expected); run 2 executed 853 with 1 skipped and one failing test, `MemoryProfileTests.testMemoryProfileOfEverythingTheExtensionHolds` (bubble snapshots grew 8.6 MB over 20 renders against a 2 MB budget), which passed in run 1, so it is flaky and not caused by this lift.
+HarnessTests did not run in either baseline, because the script stops at the first failing scheme.
+P8 after the lift never reached a test: from 23:06 on, every simulator on this Mac hung (a test launch died with `Mach error -308 (ipc/mig) server died`, `simctl install` hung, and a freshly created device and the iOS 26.3 device both stuck at boot in `com.apple.addressbook.migrator`), and restarting CoreSimulatorService did not clear it.
+In its place: `xcodebuild -scheme Foolish -destination 'generic/platform=iOS Simulator' build-for-testing` succeeds, and the built `FoolishKit` exports 426 symbols of the four texture types and none named `renderCGImage`, so the generator half stays out of the shipping framework.
+Werewolf keeps its own copy in `werewolf/ios/Tools/` (werewolf is paused); its scripts still compile its own sources under `-D FOOLISH_TEXTURE_BAKE`.
+Found on the way: `mac_tests.sh` regenerates the project only when `project.yml` is newer than the `.pbxproj`, so a checkout that already has a generated project needs `--regen` after this move, or it builds against the old paths.
+
 **S2 - design tokens and the square button to `shared/swift/DesignKit/`.**
 - `git mv` `Tokens.swift` and `FSquareButton.swift`.
 - Reword the two comments in FSquareButton (:9, :89).
 - foolish change: none.
 - Proof: P8, P7.
 - Risk: low.
+
+NOT DONE (S2): neither file is product-neutral, so a `git mv` would put code into `shared/` that only compiles inside FoolishKit.
+`Tokens.swift` takes foolish's `Suit` in `FColor.suitColor` (it reads `suit.isRed`), and its header and colours are the card game's identity ("Gosizdat Card Table", "Soviet red").
+`FSquareButton.swift` calls `Haptics`, `WoodFill`, `FPressStyle` and `onWoodText`, and its `SettingsHelpSquares` reads `FPrefs`, `FStrings` keys and `FActionBar.innerInset`; its `:89` comment names the Durak rules redesign.
+Making either neutral means splitting declarations out of a foolish file, which is more than the path-only diff foolish is allowed in a lift.
+The split this step needs: a neutral `shared/swift/DesignKit/Tokens.swift` holding `FSpace`, `FRadius`, `FMotion`, `FType` and `Color(hex:)`, with `FColor` and the text modifiers staying in foolish; and the square button taking its surface, press style and haptic as arguments.
+That is a code change in foolish, so it goes in its own reviewed step with P8 run before and after on a working simulator.
+Until then pickemup copies the numbers it needs.
+
+Commits: S0 `24372df8`, S1 `c3d99192`.
 
 **S3 - pickemup's own CI lane and a uttt C lane (no lift, but it protects every lift after it).**
 - Write `.github/workflows/pickemup.yml` on the shape of `.github/workflows/werewolf.yml`.

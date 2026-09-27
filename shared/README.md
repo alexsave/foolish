@@ -2,7 +2,7 @@
 
 Code that more than one product in this repo builds, kept once.
 A fix made here is a fix everywhere, which lasts only as long as nothing here names a product: `e2e/validation/shared_is_shared_validation.test.ts` refuses a product name anywhere under `shared/`.
-So products are named below by what they are: CARDS is the card game (the sibling folder with `c/`, `ios/`, `sdk/` and `server/` in it, and the largest), UTTT is `uttt/`, and THIRD is the paused third product.
+So products are named below by what they are: CARDS is the card game (the sibling folder with `c/`, `ios/`, `sdk/` and `server/` in it, and the largest), UTTT is `uttt/`, THIRD is the paused third product, and SHED is the shedding card game still being built.
 A path given for CARDS is inside that folder.
 
 A product reaches a shared C header by a relative `#include` from its own file, never by an include path (`shared_headers_reachable_validation.test.ts`).
@@ -29,6 +29,7 @@ Swift reaches a header-only C module through its `module.modulemap` on `SWIFT_IN
 | `swift/MessagesKit/InsertStaging.swift` | the Swift face of `c/msg_stage` | UTTT |
 | `swift/MessagesKit/SendHint*.swift` | the staged-but-unsent arrow at Messages' Send (SwiftUI and UIKit views, one set of numbers) | CARDS (`SendHint`), UTTT (`SendHintView`, `SendHintMetrics`) |
 | `swift/MessagesKit/CollapseSlide.swift` | the auto-collapse on Core Animation layers | UTTT |
+| `swift/Textures/` | the wool, felt, wood and fern-back generators and their palettes; CoreGraphics only, and the generator half compiles only under `-D TEXTURE_BAKE`, so a shipping target carries the palettes and resource names but never renders | CARDS (its texture loader reads the names, its `ios/Tools/regenerate_textures.sh` bakes into its own resources) |
 
 ## Tools (`tools/`)
 
@@ -44,7 +45,8 @@ Swift reaches a header-only C module through its `module.modulemap` on `SWIFT_IN
 | `tools/datagen/` | the translation-table generator | CARDS, THIRD |
 | `tools/llvm.mk` | the one LLVM toolchain the wasm builds use | CARDS, THIRD |
 | `tools/tighten/` | the showcase video cutter (`media/`) | CARDS |
-| `tools/check_ui_doc.py` | the UI design doc checker | UTTT, `pickemup/` |
+| `tools/textures/` | the bake tool: `regenerate_textures.sh <out-dir>` compiles `swift/Textures` with `GenerateTextures.swift` and writes the JPEGs; a product passes its own resources folder | CARDS |
+| `tools/check_ui_doc.py` | the UI design doc checker | UTTT, SHED |
 
 ## Rig (`rig/lib/`)
 
