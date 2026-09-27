@@ -20,13 +20,16 @@ HDR     := $(wildcard src/*.h) i18n/keys.h tests/pk_check.h \
            $(SHARED)/deal_rng.h $(SHARED)/sha256.h $(SHARED)/b32.h $(SHARED)/mixrad.h
 
 # One binary per test file; each takes an optional scale argument.
-TESTS   := pk_test pk_rules_test pk_plan_test pk_say_test pk_fuzz pk_msg_test pk_beats_test
+TESTS   := pk_test pk_rules_test pk_plan_test pk_say_test pk_fuzz pk_msg_test pk_twophone_test pk_beats_test
 FUZZ_GAMES ?= 2800
 # Games per table size that go through the wire after every bubble. The rules
 # doc's 10,000 is `./build/pk_msg_test 10000` by hand (DECISION D43).
 WIRE_GAMES ?= 30
 
 all: $(addprefix build/,$(TESTS))
+
+# pk_twophone_test compiles the bridge in (tests/pk_twophone_test.c).
+build/pk_twophone_test build/asan_pk_twophone_test: ios/pk_api.c ios/include/pk_api.h ios/pk_api_layout.h
 
 build:
 	@mkdir -p build
@@ -41,6 +44,7 @@ run: $(addprefix build/,$(TESTS)) build/ios_smoke
 	./build/pk_say_test
 	./build/pk_fuzz $(FUZZ_GAMES)
 	./build/pk_msg_test $(WIRE_GAMES)
+	./build/pk_twophone_test
 	./build/pk_beats_test
 	./build/ios_smoke
 
@@ -57,6 +61,7 @@ asan: $(addprefix build/asan_,$(TESTS)) build/asan_ios_smoke
 	./build/asan_pk_say_test
 	./build/asan_pk_fuzz 2000
 	./build/asan_pk_msg_test 5 100
+	./build/asan_pk_twophone_test
 	./build/asan_pk_beats_test 60
 	./build/asan_ios_smoke
 
