@@ -28,10 +28,10 @@ and the plies after the prefix are played on the simulator, each as a real messa
 
 | Frames | `devgame` prefix | Played on the simulator |
 |---|---|---|
-| 01, 04 | 32 plies | 33-36 as real messages, then 37 sent (01) or, after a re-sent copy of 36, staged (04) |
-| 03, 06 | 41 plies | 42 by O from the + menu; X opens it |
-| 05 | 49 plies | 50, O from the + menu in the photographed thread; the sent bubble is then tapped and the drawer collapsed. Round four: with 47-49 as lines the texts sat half under the Messages header |
-| 02 | none | O's invitation from the + menu with `dev.invite`; X opens it |
+| 01, 03 | 32 plies | 33-36 as real messages, then 37 sent (01) or, after a re-sent copy of 36, staged (03) |
+| 02, 05 | 41 plies | 42 by O from the + menu; X opens it |
+| 04 | 49 plies | 50, O from the + menu in the photographed thread; the thread is left and re-entered, the sent bubble tapped open and the drawer dragged back down |
+| 06 | none | O's invitation from the + menu with `dev.invite`; X opens it |
 
 Ply 37 and not the more dramatic 39 for the Send frames: 39 wins X the middle-left board and sends O to a won board, so the whole napkin lights up as "play anywhere" and buries the marks.
 The collapsed drawer's height follows the last keyboard the simulator showed, so it is not a constant: every tap on the collapsed board is placed from the board's own main lines in a fresh screenshot, and every transcript frame is shot in one session of the same state, so the drawers sit at the same height.
@@ -39,16 +39,18 @@ The collapsed drawer's height follows the last keyboard the simulator showed, so
 ## Frames
 
 Six scenes, DARK MODE ONLY (owner, 2026-09-26: no light variants).
-One title size across the set, 124 px Futura Bold, every title two lines with a manual break.
+One title size across the set, 114 px Futura Bold (the largest at which "Ultimate Tic-Tac-Toe" fits one line), every title two lines with a manual break.
+Round four (owner, 2026-09-26): new titles for the hero, the rules and the empty board, the empty board moved to last, and the hero and the win reshot with no text messages in the thread, only the game.
+Round three's set is kept in `~/Downloads/uttt-store/round3/`.
 
 | # | Title | Scene | Ply shown | Seat | Ground |
 |---|---|---|---|---|---|
-| 01 | "Play Ultimate / Tic-Tac-Toe" | The transcript with our SENT move on the right, the collapsed drawer under it | 37 (X, top-right board, top-left square), sent. The shot is round two's: on the round-three build the drawer sat higher and pushed the texts under the header; the bubble is identical pixel for pixel | X | coal |
-| 02 | "Nine boards, / one big game" | The empty napkin: O's invitation opened by X, expanded | 0 | X | O red |
-| 03 | "Your move picks / their board" | Expanded board, X to play in the top-middle board O's square sent them to | 42 (O) received | X | X blue |
-| 04 | "Send your moves / to the chat" | The staged draft in the compose field, collapsed drawer | 37 (X), staged and not sent; O is sent to the top-left board. The Send hint bobs, so the frame is a 16-shot burst; the owner picked b08 | X | coal |
-| 05 | "Win three boards / in a row" | The transcript: the two texts, then O's winning move sent, the drawer reading "You win" | 50 (O wins the anti-diagonal), sent | O | O red |
-| 06 | "Learn the rules / in a minute" | The rules page, opened from the rulebook and not scrolled | over ply 42 | X | X blue |
+| 01 | "Ultimate Tic-Tac-Toe / in Messages" | The transcript, only the game: three caption lines, our SENT move on the right, the collapsed drawer under it | 37 (X, top-right board, top-left square), sent | X | O red |
+| 02 | "Your move picks / their board" | Expanded board, X to play in the top-middle board O's square sent them to | 42 (O) received | X | X blue |
+| 03 | "Send your moves / to the chat" | The two texts, then the staged draft in the compose field, collapsed drawer | 37 (X), staged and not sent; O is sent to the top-left board. The Send hint bobs, so the frame is a 16-shot burst; the owner picked b08 (round three's shot, not retaken) | X | coal |
+| 04 | "Win three boards / in a row" | The transcript, only the game: O's winning move sent, the drawer reading "You win" | 50 (O wins the anti-diagonal), sent | O | O red |
+| 05 | "Learn the rules / to a fun game" | The rules page, opened from the rulebook and not scrolled | over ply 42 | X | X blue |
+| 06 | "Nine times / the fun" | The empty napkin: O's invitation opened by X, expanded | 0 | X | coal |
 
 The grounds are the napkin's two inks, taken from the kernel's draw code (`uttt/c/src/uttt_draw.c`), and foolish's coal; napkin white was dropped (owner, 2026-09-26):
 
@@ -58,10 +60,16 @@ The grounds are the napkin's two inks, taken from the kernel's draw code (`uttt/
 | O red | (168,50,31) | (112,33,20) | white | `INK_O` 0xa8321f |
 | X blue | (37,55,107) | (22,33,66) | white | `INK_X` 0x25376b |
 
-They cycle coal / O red / X blue, so no two neighbours match and O's win lands on O red.
+They cycle O red / X blue / coal, so no two neighbours match and O's win (04) lands on O red.
 `python3 uttt/ios/Tools/store_frames.py` composes the set, and a contact sheet, with `shared/tools/store/market.py`.
 
 ## Transcript frames on the simulator
+
+Straight after a send, the thread's "iMessage / Today" stamp sits half under the header's phone-number pill once three caption lines and a bubble are above the drawer.
+For 01 the sent bubble is tapped open and the drawer dragged back down by its grabber (a swipe from y 82 to 560 points); that settles the transcript at its top, so the stamp clears the pill.
+The compose field keeps focus through that and its cursor blinks, so the frame is taken on an off phase of the blink (no blue in the field).
+For 04 the thread is left and re-entered first, which drops the focus.
+At the collapsed height these frames land on (387 points), the drawer's "You win" is mid-crossfade (uttt_sheet's column words) and reads paler than the expanded sheet's; round three's win, at 338 points, had it at full ink.
 
 The simulator draws each superseded line of a session with a neighbour's summary (rig README, iOS 26 and 27 notes): a collapsed line shows the summary of the NEXT message in the session.
 Each move after the first is therefore staged with the DEBUG-only `dev.caption` set to the line the move BEFORE it has to read; the bubble's own caption stays the kernel's.

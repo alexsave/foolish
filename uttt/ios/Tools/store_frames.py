@@ -5,7 +5,7 @@
 RAW_DIR holds one simulator screenshot per scene, named NN_scene_dark.png
 (default ~/Downloads/uttt-store/raw): the set is DARK MODE ONLY (owner,
 2026-09-26). Every frame is written to OUT_DIR under the same name (default
-~/Downloads/uttt-store), plus a contact sheet. 04_send_dark.png is a copy of
+~/Downloads/uttt-store), plus a contact sheet. 03_send_dark.png is a copy of
 the burst frame the owner picked (burst_send_dark/b08.png): the Send hint
 bobs, so that frame is shot as a 16-shot burst. The scenes, their plies and how each was shot are in
 uttt/docs/STORE_SHOTS.md.
@@ -27,18 +27,20 @@ GROUNDS = {
     "coal":   ((24, 20, 19), (12, 10, 9), (255, 255, 255)),
 }
 
-# One size for the whole set; every title is two lines by a manual break.
-SIZE = 124
+# One size for the whole set; every title is two lines by a manual break. 114
+# is the largest at which "Ultimate Tic-Tac-Toe" fits one line (fit_size).
+SIZE = 114
 
-# (file stem, title, ground) in listing order. The ground cycles coal /
-# O red / X blue, so no two neighbours match and O's win lands on O red.
+# (file stem, title, ground) in listing order (owner, round four: the empty
+# board moved to last). The ground cycles O red / X blue / coal, so no two
+# neighbours match and O's win (04) lands on O red.
 SCENES = [
-    ("01_hero",  "Play Ultimate\nTic-Tac-Toe",    "coal"),
-    ("02_empty", "Nine boards,\none big game",    "ored"),
-    ("03_picks", "Your move picks\ntheir board",  "xblue"),
-    ("04_send",  "Send your moves\nto the chat",  "coal"),
-    ("05_win",   "Win three boards\nin a row",    "ored"),
-    ("06_rules", "Learn the rules\nin a minute",  "xblue"),
+    ("01_hero",  "Ultimate Tic-Tac-Toe\nin Messages", "ored"),
+    ("02_picks", "Your move picks\ntheir board",      "xblue"),
+    ("03_send",  "Send your moves\nto the chat",      "coal"),
+    ("04_win",   "Win three boards\nin a row",        "ored"),
+    ("05_rules", "Learn the rules\nto a fun game",    "xblue"),
+    ("06_empty", "Nine times\nthe fun",               "coal"),
 ]
 
 
