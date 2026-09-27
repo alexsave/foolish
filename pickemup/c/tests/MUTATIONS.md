@@ -215,9 +215,18 @@ Putting the winner first by name (rather than by fewest cards) survived its muta
 
 Each layout and words row was run alone with `build/ios_smoke` deleted first, because `cp -p` puts the restored file's old mtime back and make then keeps the mutated binary (the same-second trap).
 
-## Not in this kernel
+## Native against wasm (tests/pk_cross.c, 7.3.7)
 
-7.3.7 (native against wasm replay) waits for a wasm replay build; `make wasm` proves the kernel compiles freestanding for wasm32 and reaches only `memcpy`, `memset`, `memcmp`, `strlen` and `strncmp`.
+`make cross WASM_CC=/opt/homebrew/opt/llvm/bin/clang` plays 100 of the fuzz harness's deals with the random tests' bot (`tests/pk_bot.h`) natively and in a wasm32 build run by node, and compares one value a game: the kernel's hash of the final state folded with every event of the whole game's plan.
+Each row was applied alone, both builds deleted and rebuilt, `make cross` run, and the file restored byte for byte; `make cross` was green again after the last.
+Run 2026-09-27 with Homebrew clang 22 and node 26.
+
+| Test | Mutation | What went red |
+|---|---|---|
+| cross | wasm32 alone swaps the first two cards of every reshuffle (`#ifdef __wasm__` in `pk_shuffle`) | `cmp`: "build/cross_native.txt build/cross_wasm.txt differ: char 3, line 1" |
+| cross | wasm32 alone plans every TURN_TO with `i = 1` (`#ifdef __wasm__` in `emit`), the state untouched | `cmp`: "differ: char 3, line 1" (the plan's fold is what catches it) |
+| cross | the node host reads the values one on (`at + 8`) | `cmp`: "differ: char 3, line 1" |
+
 7.4 (the wire), 7.7.4 (Rule P races) and 7.8.7 (seat resolve) are in `pk_msg_test.c` above.
 
 ## The timeline (tests/pk_beats_test.c, and the bridge's motion checks)

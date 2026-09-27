@@ -20,7 +20,7 @@ SHARED  := ../../shared/c
 SRC     := src/pk.c src/pk_deck.c src/pk_plan.c src/pk_view.c src/pk_lobby.c src/pk_say.c \
            src/pk_code.c src/pk_msg.c src/pk_beats.c src/pk_arrange.c i18n/strings_en.c \
            $(SHARED)/deal_rng.c $(SHARED)/sha256.c $(SHARED)/b32.c $(SHARED)/mixrad.c
-HDR     := $(wildcard src/*.h) i18n/keys.h tests/pk_check.h \
+HDR     := $(wildcard src/*.h) i18n/keys.h tests/pk_check.h tests/pk_bot.h \
            $(SHARED)/deal_rng.h $(SHARED)/sha256.h $(SHARED)/b32.h $(SHARED)/mixrad.h
 
 # One binary per test file; each takes an optional scale argument.
@@ -84,6 +84,26 @@ wasm: | build
 	    -isystem $(SHARED)/wasm/include -c $$s -o $$o || exit 1; \
 	done
 	@echo "wasm32 objects in build/wasm/"
+
+# 7.3.7, NATIVE AGAINST WASM (tests/pk_cross.c): the same games played by
+# this build of the kernel and by a wasm32 build of it, run in node, must
+# end in the same states. Needs a wasm clang with wasm-ld (WASM_CC) and node,
+# so it is not in `run`; `make cross WASM_CC=/opt/homebrew/opt/llvm/bin/clang`
+# on a Mac. CROSS_GAMES games (the rules doc's 100 by default).
+CROSS_GAMES ?= 100
+CROSS_WASM_SRC := $(SRC) $(SHARED)/wasm/libc.c tests/pk_cross.c
+build/pk_cross: tests/pk_cross.c $(SRC) $(HDR) | build
+	$(CC) $(CFLAGS) $(SRC) tests/pk_cross.c -o $@
+build/pk_cross.wasm: $(CROSS_WASM_SRC) $(HDR) | build
+	$(WASM_CC) --target=wasm32 -O2 -nostdlib -ffreestanding -mbulk-memory $(WARN) -DPK_CROSS_WASM \
+	  -isystem $(SHARED)/wasm/include \
+	  -Wl,--no-entry -Wl,--export=pk_cross_run -Wl,--export=pk_cross_hashes -Wl,--export-memory \
+	  -Wl,-z,stack-size=1048576 $(CROSS_WASM_SRC) -o $@
+cross: build/pk_cross build/pk_cross.wasm
+	./build/pk_cross $(CROSS_GAMES) > build/cross_native.txt
+	node tests/pk_cross.mjs build/pk_cross.wasm $(CROSS_GAMES) > build/cross_wasm.txt
+	@cmp build/cross_native.txt build/cross_wasm.txt \
+	  && echo "cross: $$(wc -l < build/cross_native.txt | tr -d ' ') games, native and wasm32 end alike"
 
 # ---- the iOS bridge -----------------------------------------------------------
 # ios-smoke runs the identical bridge with the host compiler, so every
@@ -219,6 +239,6 @@ beats-dump: build/pk_beats_dump
 clean:
 	rm -rf build
 
-.PHONY: all run asan wasm ios-smoke beats-dump swift-smoke structgen datagen ios-lib clean FORCE
+.PHONY: all run asan wasm cross ios-smoke beats-dump swift-smoke structgen datagen ios-lib clean FORCE
 FORCE:
 .SECONDARY:
