@@ -14,13 +14,27 @@
 static int         g_checks, g_fails;
 static const char *g_test = "";
 
+/* A failure report is capped PER TEST, not per binary, so a test that goes
+ * red after a noisier one is still named in the output (a mutation check
+ * reads it by name). */
 #define TEST(name) (g_test = (name))
+
+static const char *g_named[64];
+static int         g_named_fails[64];
+static inline int first_fails_of(const char *test)
+{
+    int i = 0;
+    while (i < 64 && g_named[i] && strcmp(g_named[i], test)) i++;
+    if (i == 64) return 0;
+    g_named[i] = test;
+    return ++g_named_fails[i] <= 5;
+}
 
 #define CHECK(cond, ...) do {                                                   \
         g_checks++;                                                             \
         if (!(cond)) {                                                          \
             g_fails++;                                                          \
-            if (g_fails <= 30) {                                                \
+            if (first_fails_of(g_test)) {                                       \
                 fprintf(stderr, "FAIL %s:%d [%s] %s: ", __FILE__, __LINE__,     \
                         g_test, #cond);                                         \
                 fprintf(stderr, __VA_ARGS__);                                   \
