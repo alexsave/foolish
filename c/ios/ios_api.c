@@ -88,13 +88,32 @@
 // is the classic passing game (game.h GAME_RULE_NO_PASS is what a variant
 // costs, not what a default does).
 //
-// The sentinels are named in the initialiser rather than assumed to be zero,
-// because two of them are not.
-static FioSession g_session = {
-    .msg_base_logs  = -1,
-    .msg_opening    = MSG_NO_OPENING,
-    .msg_carry_fool = MSG_NO_FOOL,
-};
+// The sentinels are set by name rather than assumed to be zero, because two of
+// them are not.
+//
+// SET AT LOAD, NOT IN THE INITIALISER. With `= { .msg_base_logs = -1, ... }` the
+// whole 136 KB struct is an initialised global, and an initialised global is
+// __data: 136 KB of the shipped FoolishKit was a file image of a Game full of
+// zeros with three non-zero bytes in it. Left uninitialised it is __bss, which
+// costs nothing on disk, and the three sentinels are written by a constructor
+// the dynamic loader runs when the framework is mapped, before any Swift can
+// call in - the same "fresh session" every caller has always seen.
+// ios/ios_api_smoke.c checks the fresh session shows all three.
+static FioSession g_session;
+
+__attribute__((constructor)) static void fio_session_init(void) {
+    // Through a volatile pointer ON PURPOSE. clang's global optimiser evaluates
+    // a constructor that only stores constants into a global and folds the
+    // result back into a static initialiser - which put the struct straight
+    // back into __data (measured: the first version of this function vanished
+    // from the object and _g_session stayed in __data). A volatile store cannot
+    // be evaluated at compile time, so the stores stay here and the struct
+    // stays zero-fill.
+    volatile FioSession *s = &g_session;
+    s->msg_base_logs  = -1;
+    s->msg_opening    = MSG_NO_OPENING;
+    s->msg_carry_fool = MSG_NO_FOOL;
+}
 
 // ---------- THE ONE SCRATCH GAME ------------------------------------------
 //

@@ -10,6 +10,7 @@
 // this test drives a bot-vs-bot game, so it names them, and a compiler that
 // makes an implicit declaration an error - any recent clang - needs this.
 #include "ios_bots_api.h"
+#include "ios_internal.h" // FioSession: the fresh-session check reads it where it lies
 #include "replay.h"   // the codec version this build stamps (-Isrc)
 #include "replay_extras.h"
 #include "evwire.h"   // the packed event reader - see smoke_walk_frames
@@ -2056,6 +2057,20 @@ static int extras_link_check(void) {
 int main(void) {
     unsigned char seed[32];
     for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(i * 7 + 1);
+
+    // THE FRESH SESSION, before anything has touched it. g_session is __bss
+    // (ios_api.c: a 136 KB initialised global was 136 KB of shipped __data)
+    // and a load-time constructor writes the three non-zero sentinels; this is
+    // the check that they are there when the first call arrives. Mutation-
+    // checked: with the constructor's body emptied, all three lines fail.
+    {
+        const FioSession *s = fio_session();
+        if (s->has_game) { printf("FAIL fresh session has a game\n"); return 1; }
+        if (s->msg_base_logs != -1) { printf("FAIL fresh msg_base_logs = %d\n", s->msg_base_logs); return 1; }
+        if (s->msg_opening != MSG_NO_OPENING) { printf("FAIL fresh msg_opening = %d\n", s->msg_opening); return 1; }
+        if (s->msg_carry_fool != MSG_NO_FOOL) { printf("FAIL fresh msg_carry_fool = %d\n", s->msg_carry_fool); return 1; }
+        if (fio_msg_staged_atoms_before() != -1) { printf("FAIL fresh staged_atoms_before\n"); return 1; }
+    }
 
     if (fio_new_game(seed, 32, 4) != FIO_EOK) { printf("FAIL new_game\n"); return 1; }
     printf("strategies=%d\n", fio_strategy_count());

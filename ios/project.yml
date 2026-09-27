@@ -433,14 +433,19 @@ targets:
         # Swift type-metadata symbol NAMES (a dylib exports them; see below) and
         # ~130KB of C kernel - not a hidden SDK.
         APPLICATION_EXTENSION_API_ONLY: "YES"
-        # Measured Sep 2026 and deliberately NOT changed, so nobody re-measures:
-        #   SWIFT_OPTIMIZATION_LEVEL=-Osize  -> 42KB off a 2.62MB binary (1.6%).
-        #   c/Makefile IOS_CFLAGS -O2 -> -Oz -> 45KB off the core archive, but
-        #     that archive is also the inner loop of the host app's Monte Carlo
-        #     bots (FoolishBots resolves game_*/legal_* against THIS framework),
-        #     so taking it needs a third, size-built archive for the extension.
-        # Both are under 1% of the install. The bundle's weight is icons,
-        # textures and SwiftUI - not compiler flags.
+        # Re-measured Sep 2026 on the 3.83 MB build 75 binary, and the earlier
+        # numbers here were stale (docs/CODE_SIZE.md has the whole picture):
+        #   SWIFT_OPTIMIZATION_LEVEL=-Osize  -> 258 KB off (6.7%), not the 42 KB
+        #     measured on the 2.62 MB binary. NOT taken here because nobody has
+        #     yet filmed a rig take at -Osize; take it once the frame check is in.
+        #   c/Makefile IOS_CFLAGS -O2 -> -Os/-Oz -> ~45-50 KB off the linked C,
+        #     but that archive is also the inner loop of the host app's Monte
+        #     Carlo bots (FoolishBots resolves game_*/legal_* against THIS
+        #     framework), so taking it needs a third, size-built archive for the
+        #     extension.
+        # The bigger levers are not flags: 540 KB of LINKEDIT exists only because
+        # this is a dylib exporting 5,072 symbols of which the appex uses 43, and
+        # 830 KB is the 25 language tables as Swift dictionaries.
 
   # ---- Online-only framework: Supabase, auth, edge functions, realtime ----
   # Split out of FoolishKit so the iMessage extension stops linking a network
