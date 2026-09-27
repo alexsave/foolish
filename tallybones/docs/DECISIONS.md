@@ -38,6 +38,16 @@ T5: the game ends when every seat has filled all 13 categories (13 turns each, i
 Highest total wins; a tie is shared and the caption says so.
 A player who leaves mid-game is skipped; their card stands as it is.
 
+T12 (kernel): seat 0 rolls first, whoever pressed Start; the order is the roster's.
+
+T13 (kernel): LEAVE is a move any seat still in may send at any time, as its own bubble.
+The turn seat's leave passes the turn at once (the next seat's roll 1 derives from the history through the leave).
+When fewer than two seats remain in, the game ends there, and the winner is the highest total among the seats still in; a seat that left never wins.
+
+T14 (kernel): Full House is three of one face and two of another, so five alike is not a full house; a long run also scores as a short run.
+
+T15 (kernel): `turns` counts SCOREs, and it is the turn index the roll hashes; a turn seat's leave is not a turn.
+
 ## Randomness
 
 T6: every roll is derived, never rolled by the phone, through `deal_rng` (`shared/c/deal_rng.{c,h}`, the same RNG that deals Foolish's and Pick 'Em Up's decks), seeded with the SHA-256 digest of the sent history that precedes the roll (T11 says exactly which bytes).
@@ -78,6 +88,18 @@ The kernel test that tries to defeat it (`tb_test`, the T11 group, mutation-chec
 Mutation for 1: make the draft replay derive (drop the pending-move guard) and the test fails on "draft has values".
 Mutation for 2: seed the derivation without the history (seed, seat, turn, roll only) and the test fails on "A and B produce the same reroll".
 
+T16 (kernel): the roll's hash input is exactly `seed (32) || u16le body length || body || seat (1) || u16le turns || roll (1)`, the length making the variable-length body unambiguous.
+The body is the minimal little-endian mixed-radix number the wire would carry for the history through the move (the one byte 1 for the empty history).
+`mixrad` folds backwards, so the replay keeps the same number forwards as S + P (`tb_code.h`); `shared/c/mixrad` has no bignum add, so that sum is a local helper in `tb_code.c` and `shared/` is untouched.
+Each roll draws one value per position, kept or not, so die i is draw i whatever else is kept, and two subsets that reroll a position differ there only through their histories.
+
+T17 (kernel): the envelope's own read-back of a link it is writing decodes WITHOUT deriving (a draft is never rolled, not even in scratch), and `tb_msg_text_peek` is that read for comparing chains (prefer, common, same game, "is this my staged bubble").
+
+T18 (bridge): `tb_api_read` refuses my own staged, unsent bubble (`TB_ESTAGED`), found move by move without deriving, so a host cannot adopt its staged link by accident.
+The limit, recorded rather than enforced: a link a host kept after a cancel decodes like any link, so T11 also rests on the extension never reading back a link it did not send.
+
+T23 (kernel): roll 1 of turn 0 depends on the seed alone, and the seed is drawn when the lobby is made (Pick 'Em Up's `pk_api_new`), so a modified client could remake lobbies to shop for seat 0's opening roll; accepted for the proof of concept, since every later roll depends on sent moves.
+
 ## Wire
 
 T7: the wire is Pick 'Em Up's: every bubble carries the whole game as version + seed + roster + one mixed-radix number that is the move history, base32 in `MSMessage.url`, with the same race rule and seat resolver (copy `pk_code.c` / `pk_msg.c`, rename, and shrink the alphabet of moves).
@@ -86,6 +108,10 @@ The wire carries NO dice values ever: every die on every phone is replayed from 
 At most 3 moves per turn, 104 turns for 8 players, well under 200 bytes before base32; the fit is asserted at compile time against `MSMessage.url`'s 5,000 characters, as Pick 'Em Up does.
 Everyone always sees everything (grade A), so there is no masked view: `tb_view` is the plain game state.
 
+T19 (wire): magic 0xD7, format 1, flags DM and LEFT only (Pick 'Em Up's TIP_SAID has no meaning here).
+The race rule is more turns, then more bubbles, then lobby_rev and seats, then the smaller digest; the sender is the newest move's seat, so KEEP, KEEP, SCORE from one seat is one chain growing.
+One digit a bubble, base at most 52 (6 bits): the analytic bound is 1,203 link characters with eight 48-byte names, asserted at compile time; the longest real game (8 seats, 312 bubbles, 48-byte names) is 1,130.
+
 ## Words and animation
 
 T8: captions are the kernel's (`tb_say`), in the shape "Alex rolled a full house, 25 points" / "Bo to roll" / "Alex wins with 241"; English only for the proof of concept, through the same `datagen` table shape as Pick 'Em Up so a second language is a file.
@@ -93,10 +119,19 @@ T8: captions are the kernel's (`tb_say`), in the shape "Alex rolled a full house
 T9: the animation plan is the kernel's (`tb_plan`, `tb_beats`) and small: opening a KEEP bubble plays one dice-settle beat for the rerolled dice (the kept ones stay put); opening a SCORE bubble plays the score stamping into the category and the turn passing; opening the bubble that starts a turn plays the five-dice settle of roll 1.
 Sender and receiver play the same beats from the same resident history.
 
+T20 (words): a caption is the move, then the bonus and the next roll while the line stays within 36 columns; the game's last bubble says only the result ("Alex wins with 241", "Alex and Bo tie at 200"); the summary (`summaryText`) says every clause.
+The five-alike category's name and shout are `{game}`, so "Tallybones" is written once, in GAME_NAME; `tb_say_test` refuses "yahtzee", "kniffel", "generala", "yacht", "straight" and "chance" in every string and every composed sentence.
+
+T21 (animation): the beats are settle 620 ms a die, 70 ms apart, stamp 340, turn 340, fade 220, the result held 1,000; a bubble opened leads by 100 ms, one that lands or is sent (the send echo) by 16.
+A tumbling die's face is a blur of time and its landed value, and a settle is only ever laid out for a resident roll, so no frame can show a draft's reroll.
+
 ## iOS
 
 T10: SwiftUI extension copied from Pick 'Em Up's shell (`MessagesViewController`, the lobby, felt and textures, seat badges, `BeatPlayer`), a dice tray in the middle of the felt instead of the pile, and the player's own scorecard as a tappable list; other seats show their running total on their badge and open their card on a tap.
 Dice faces are drawn (pips as circles on a rounded square), not image assets, so there is no art to license.
+
+T22 (bridge): one staged move at a time, since every bubble is one move: staging replaces it, cancel drops it, and `tb_api_mark_sent` (from `didStartSending`) makes it resident, which is when its roll first exists.
+The lobby's join, leave and start change the resident at once, as Pick 'Em Up's do; in a live game `tb_api_stage_leave` stages a LEAVE bubble instead.
 
 ## BLOCKED
 

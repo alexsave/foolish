@@ -7,6 +7,8 @@
 
 #include "../src/tb.h"
 #include "../src/tb_code.h"
+#include "../../../shared/c/sha256.h"
+#include "../../../shared/c/deal_rng.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -97,6 +99,46 @@ static inline int bot_step(TbGame *g, int leave_odds)
     memcpy(h, g->hist, sizeof(TbMove) * g->hist_n);
     h[g->hist_n] = m;
     return tb_replay(g, g->seed, g->n, g->starter, h, g->hist_n + 1);
+}
+
+/* The test's own derivation, from DECISIONS.md T6/T11 and T14's byte order. */
+static inline void spec_roll(const uint8_t seed[32], const uint8_t *body, int bl, int seat, int turn, int roll,
+                      uint8_t out[5])
+{
+    Sha256 c;
+    uint8_t d[32], w[2] = { (uint8_t)bl, (uint8_t)(bl >> 8) }, s = (uint8_t)seat, r = (uint8_t)roll;
+    sha256_init(&c);
+    sha256_update(&c, seed, 32);
+    sha256_update(&c, w, 2);
+    sha256_update(&c, body, (size_t)bl);
+    sha256_update(&c, &s, 1);
+    w[0] = (uint8_t)turn; w[1] = (uint8_t)(turn >> 8);
+    sha256_update(&c, w, 2);
+    sha256_update(&c, &r, 1);
+    sha256_final(&c, d);
+    DealRng rng;
+    deal_rng_seed(&rng, d);
+    for (int i = 0; i < 5; i++) out[i] = (uint8_t)(1 + deal_rng_bounded(&rng, 6));
+}
+
+/* Check the roll the newest bubble of `g` made against spec_roll over the
+ * body the ENCODER writes for the history through it (tb_code_body, the
+ * backward fold): the resident replay's forward body must be the same bytes.
+ * `prev` is the game one bubble earlier. The count of dice checked. */
+static inline int roll_is_the_spec(const TbGame *prev, const TbGame *g, int *bad)
+{
+    TbMove m = g->hist[g->hist_n - 1];
+    int rolled = m.kind == TB_M_KEEP || g->turn != prev->turn || g->turns != prev->turns;
+    if (!rolled || g->over) return 0;
+    uint8_t body[TB_CODE_MAX], want[5];
+    int bl = tb_code_body(g, g->hist_n, body, sizeof body);
+    if (bl <= 0) { (*bad)++; return 0; }
+    spec_roll(g->seed, body, bl, g->turn, g->turns, g->roll, want);
+    for (int i = 0; i < 5; i++) {
+        int kept = m.kind == TB_M_KEEP && (m.arg >> i & 1);
+        if (g->dice[i] != (kept ? prev->dice[i] : want[i])) (*bad)++;
+    }
+    return 5;
 }
 
 #endif

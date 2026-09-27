@@ -4,8 +4,6 @@
 #include "tb_check.h"
 #include "../src/tb_internal.h"
 #include "../src/tb_plan.h"
-#include "../../../shared/c/sha256.h"
-#include "../../../shared/c/deal_rng.h"
 
 /* ---- T4: every category on hand-picked dice --------------------------------- */
 
@@ -190,26 +188,6 @@ static void t5_left_skipped(void)
 }
 
 /* ---- T6: the derivation is the one the spec names --------------------------------------- */
-
-/* The test's own derivation, from DECISIONS.md T6/T11 and T14's byte order. */
-static void spec_roll(const uint8_t seed[32], const uint8_t *body, int bl, int seat, int turn, int roll,
-                      uint8_t out[5])
-{
-    Sha256 c;
-    uint8_t d[32], w[2] = { (uint8_t)bl, (uint8_t)(bl >> 8) }, s = (uint8_t)seat, r = (uint8_t)roll;
-    sha256_init(&c);
-    sha256_update(&c, seed, 32);
-    sha256_update(&c, w, 2);
-    sha256_update(&c, body, (size_t)bl);
-    sha256_update(&c, &s, 1);
-    w[0] = (uint8_t)turn; w[1] = (uint8_t)(turn >> 8);
-    sha256_update(&c, w, 2);
-    sha256_update(&c, &r, 1);
-    sha256_final(&c, d);
-    DealRng rng;
-    deal_rng_seed(&rng, d);
-    for (int i = 0; i < 5; i++) out[i] = (uint8_t)(1 + deal_rng_bounded(&rng, 6));
-}
 
 static void t6_formula(void)
 {

@@ -46,7 +46,7 @@ static void wire(const TbGame *g)
     CHECK(tb_code_decode(&back, g->seed, g->n, g->starter, g->hist_n, a, n, 1) && tb_hash(&back) == tb_hash(g),
           "decode(encode) is the game at bubble %d", g->hist_n);
     int m = tb_code_body(g, g->hist_n, b, sizeof b);
-    CHECK(m == n && !memcmp(a, b, (size_t)n), "the body the roll reads is the body the wire carries");
+    CHECK(m == n && !memcmp(a, b, (size_t)n), "the body of the whole history is the message's body");
 }
 
 static void draft_of(const TbGame *g)
@@ -96,6 +96,10 @@ int main(int argc, char **argv)
                     if (m.arg >> i & 1) CHECK(g.dice[i] == before.dice[i], "a kept die holds");
             }
             invariants(&g, &scores);
+            TEST("fuzz spec roll");
+            int bad = 0;
+            roll_is_the_spec(&before, &g, &bad);
+            CHECK(bad == 0, "the roll at bubble %d is SHA-256 over the body the wire carries through it", g.hist_n);
             if (g.hist_n % 7 == 0 || g.over) wire(&g);
         }
         bubbles += g.hist_n;
