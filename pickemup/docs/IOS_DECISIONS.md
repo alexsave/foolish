@@ -88,9 +88,8 @@ Alternative: C polygon lists, as uttt draws its board (REUSE_AUDIT.md 4).
 Why: two of the four suits are curves (a circle, a rounded square), which a polygon list would approximate; the coordinates are the study's, in one file, and a later lift can move them.
 Confidence: medium.
 
-DECISION I16: the Skip and Reverse faces are drawn as the study draws them: the action glyph in the suit's colour, with no suit shape.
-FOUND for the owner: that makes those two cards' suit readable by colour alone, which the shape-and-colour rule was meant to avoid; the study should decide whether they carry the suit shape too.
-Confidence: low.
+DECISION I16: SUPERSEDED by ORCHESTRATION O6 and I27 below.
+It drew the Skip and Reverse faces as the study draws them, the action glyph in the suit's colour with no suit shape, which left their suit readable by colour alone.
 
 DECISION I17: the Caught you! and Wrong call stamps show for the newest bubble's verdict only (`pk_api_since` of the last bubble).
 Alternative: "until that seat's next move", which the kernel does not report.
@@ -135,4 +134,17 @@ Confidence: medium.
 
 DECISION I26: the icons are placeholders drawn by a throwaway CoreGraphics script (the wild's four suits on a cream card on the felt).
 Why: no store metadata or art direction in this pass; LaunchServices will not register an app with no icon.
+Confidence: high.
+
+## Found and fixed on the way to the simulator
+
+DECISION I27: O6 is drawn as the study's own corner column (`.cr`, a flex column with a 1pt gap): the index (the Skip or Reverse glyph, or +2) with the suit's shape at half the index size under it, top-left, and the same column turned half round at bottom-right.
+A thin face (under 40pt) and an overlapped hand card show the shape under the centred index at the top, since that strip is all of the card a hand shows.
+The card says itself through the kernel: its accessibility label is `W_CARD` ("skip on squares") and, for an action card, its value is the kernel's one-shape noun (`SUIT_ONE_n`, "square"), read from the same `CardFace.cornerSuit` that draws the corners.
+Alternative: the shape only top-left, where a number card has its one index.
+Why: O6 says two corners, and a card upside down on the pile or half hidden in a fan still shows one of them; a number card's shape is its big centre glyph, so it needs no corner mark.
+Confidence: medium.
+
+DECISION I28: the staged strip's chips are UI.html's `.strip .chip .cf`: the glyph alone at 76 x 64 percent, radius 2, no index and no pip (`PkCard(chip:)`).
+Before this the chip was a thin face with a 7pt rank over a half-size glyph.
 Confidence: high.

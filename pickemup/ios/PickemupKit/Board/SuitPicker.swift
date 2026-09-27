@@ -34,12 +34,17 @@ struct SuitPicker: View {
                         SuitMark(suit: suit, ink: .white).frame(width: 26, height: 26)
                         Text(Pk.string("SUIT_\(suit)"))
                             .font(.system(size: 9.5, weight: .bold))
+                            .tracking(9.5 * 0.02)
                             .foregroundColor(.white)
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
                     }
                     .frame(width: 60, height: 60)
                     .background(RoundedRectangle(cornerRadius: 14).fill(SuitInk.color(suit)))
+                    // UI.html `.pt`: inset 0 1px 0 rgba(255,255,255,.2), the tile's lit top edge
+                    .overlay(RoundedRectangle(cornerRadius: 14)
+                        .subtracting(RoundedRectangle(cornerRadius: 14).offset(x: 0, y: 1))
+                        .fill(Color.white.opacity(0.2)))
                     .shadow(color: .black.opacity(0.55), radius: 10, y: 8)
                 }
                 .buttonStyle(FPressStyle())

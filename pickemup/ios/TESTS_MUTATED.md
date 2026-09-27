@@ -40,5 +40,8 @@ The C side's own rows (the layout thresholds, the words, the ranks, the buried c
 
 ## Not mutated
 
-Nothing in `PickemupKitTests` is left without a row.
+`ActionCardCornerTests.testAnActionCardExposesItsSuitShape` (O6, added 2026-09-27 by the second simulator worker) is compiled but has NOT run: the simulator would not boot (ORCHESTRATION B2).
+Its planned mutant is `CardFace.cornerSuit` answering nil for Skip, which must go red on "a skip on squares carries the square"; until that red run exists this test proves nothing.
+
+Every other test in `PickemupKitTests` has a row above.
 What these tests do not reach is the conversation itself (`PickemupMessages/MessagesViewController.swift`: staging through the insert loop, send, cancel, receive); it has no test target, as uttt's has none, and it has NOT yet run inside Messages: on 2026-09-27 the app installed and registered on the simulator, but `simctl launch com.apple.MobileSMS` hung for over five minutes (BLOCKED B2 in `pickemup/docs/ORCHESTRATION.md`).

@@ -46,6 +46,12 @@ public struct CardFace: Equatable {
     }
     public var isWild: Bool { rank == PK_R_WILD || rank == PK_R_WILD4 }
     public var isNumber: Bool { rank >= 1 && rank <= 9 }
+    /// O6: Skip, Reverse and +2 carry their suit's SHAPE small in the corners,
+    /// so an action card is readable without its colour. nil on number cards
+    /// (the big centre glyph is the shape) and on wilds (no suit).
+    public var cornerSuit: Int? {
+        rank == PK_R_SKIP || rank == PK_R_REVERSE || rank == PK_R_PLUS2 ? suit : nil
+    }
     /// The word in the corner and on the pip, if it is one.
     var label: String? {
         if isNumber { return "\(rank)" }
@@ -151,14 +157,17 @@ public struct PkCard: View {
     public var fullFace = false
     /// A played wild's chosen suit: the band along its foot (U15).
     public var chosen: Int? = nil
+    /// The staged strip's 12 x 17 chip: the glyph alone, no index and no pip
+    /// (UI.html `.strip .chip .cf`).
+    public var chip = false
 
     public init(card: Int?, size: CGSize, selected: Bool = false, dimmed: Bool = false,
-                fullFace: Bool = false, chosen: Int? = nil) {
+                fullFace: Bool = false, chosen: Int? = nil, chip: Bool = false) {
         self.card = card; self.size = size; self.selected = selected
-        self.dimmed = dimmed; self.fullFace = fullFace; self.chosen = chosen
+        self.dimmed = dimmed; self.fullFace = fullFace; self.chosen = chosen; self.chip = chip
     }
 
-    private var radius: CGFloat { min(5, size.width * 0.1) }
+    private var radius: CGFloat { chip ? 2 : min(5, size.width * 0.1) }
     private var thin: Bool { !fullFace && size.width < PkLayout.thinBelow }
     private static let selWidth: CGFloat = 4
     private static let restWidth: CGFloat = 1
@@ -169,8 +178,23 @@ public struct PkCard: View {
         }
         .frame(width: size.width, height: size.height)
         .opacity(dimmed ? 0.5 : 1)
-        .accessibilityElement()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(spokenCard)
+        .accessibilityValue(spokenCorner)
         .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    /// The card by the kernel's word ("skip on squares"); empty for a back.
+    private var spokenCard: String {
+        guard let card, CardFace(card) != nil else { return "" }
+        return Pk.words(PK_API_W_CARD, card)
+    }
+
+    /// O6: the shape printed in an action card's corners, by the kernel's
+    /// one-shape noun ("square"), so what the corners draw is also what is read.
+    private var spokenCorner: String {
+        guard let card, let s = CardFace(card)?.cornerSuit else { return "" }
+        return Pk.string("SUIT_ONE_\(s)")
     }
 
     private var edge: some View {
@@ -195,15 +219,21 @@ public struct PkCard: View {
         let w = size.width, h = size.height
         let ink = SuitInk.color(f.suit)
         let rankSize = w * (thin ? 0.56 : 0.36)
+        // the glyph's box as a fraction of the card: x, y, w, h (UI.html .g,
+        // .cf.thin .g, .cf.thin.wildc .g, .strip .chip .cf .g)
+        let g: (CGFloat, CGFloat, CGFloat, CGFloat) =
+            chip ? (0.12, 0.18, 0.76, 0.64)
+            : thin ? (0.22, f.isWild ? 0.34 : 0.52, 0.56, f.isWild ? 0.50 : 0.36)
+            : (0.19, 0.21, 0.62, 0.62)
         RoundedRectangle(cornerRadius: radius)
             .fill(FColor.card)
             .overlay(alignment: .topLeading) {
                 glyph(f, ink)
-                    .frame(width: w * (thin ? 0.56 : 0.62), height: h * (thin ? (f.isWild ? 0.50 : 0.36) : 0.62))
-                    .offset(x: w * (thin ? 0.22 : 0.19), y: h * (thin ? (f.isWild ? 0.34 : 0.52) : 0.21))
+                    .frame(width: w * g.2, height: h * g.3)
+                    .offset(x: w * g.0, y: h * g.1)
             }
             .overlay {
-                if !thin, let label = f.label {
+                if !thin, !chip, let label = f.label {
                     Text(label)
                         .font(.custom("Georgia", size: w * 0.44 * (f.isNumber ? 1 : 0.7)).weight(.bold))
                         .foregroundColor(Color(hex: 0xFBF8F1))
@@ -212,7 +242,11 @@ public struct PkCard: View {
                         .offset(y: h * 0.02)
                 }
             }
-            .overlay(alignment: thin ? .top : .topLeading) { corner(f, rankSize) }
+            .overlay(alignment: thin ? .top : .topLeading) { if !chip { corner(f, rankSize) } }
+            .overlay(alignment: .bottomTrailing) {
+                // O6: the action card's second corner, the first turned half round
+                if !chip, !thin, f.cornerSuit != nil { corner(f, rankSize).rotationEffect(.degrees(180)) }
+            }
             .overlay(alignment: .bottom) {
                 if let chosen, f.isWild {
                     Rectangle().fill(SuitInk.color(chosen)).frame(height: h * 0.16)
@@ -234,16 +268,22 @@ public struct PkCard: View {
         }
     }
 
-    /// The corner index: the rank (or +2 / +4), or the action's own glyph
-    /// for Skip and Reverse; nothing on a plain wild. Thin: centred, rank only.
+    /// The corner index, UI.html's `.cr` column: the rank (or +2 / +4), or
+    /// the action's own glyph for Skip and Reverse; nothing on a plain wild.
+    /// An action card's column carries its suit's shape under the index (O6),
+    /// thin faces included, since a hand's overlapped cards show only this.
+    /// Thin: centred, and the Skip / Reverse glyph is the body's, not the corner's.
     @ViewBuilder private func corner(_ f: CardFace, _ rankSize: CGFloat) -> some View {
         let ink = SuitInk.color(f.suit)
-        Group {
+        VStack(spacing: 1) {
             if let label = f.label {
                 Text(label).font(.custom("Georgia", size: rankSize).weight(.bold)).foregroundColor(ink).fixedSize()
             } else if !thin, f.rank == PK_R_SKIP || f.rank == PK_R_REVERSE {
                 GlyphShape(glyph: f.rank == PK_R_SKIP ? .skip : .reverse).fill(ink)
                     .frame(width: rankSize * 0.72, height: rankSize * 0.72)
+            }
+            if let s = f.cornerSuit {
+                SuitMark(suit: s).frame(width: rankSize * 0.5, height: rankSize * 0.5)
             }
         }
         .padding(.leading, thin ? 0 : size.width * 0.08)
