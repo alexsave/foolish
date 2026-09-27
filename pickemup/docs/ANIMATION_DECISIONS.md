@@ -61,6 +61,11 @@ Confidence: medium.
 DECISION A11: things with no anchor on this phone keep their time but draw nothing: my own seat has no badge, so an OUT stamp for me still takes its 340ms before the reveal, while a Last card! of mine has no stamp beat at all (the grid's own-view cell is a snap) and my own hand's REVEAL cards are skipped (it is already face up).
 Confidence: medium.
 
+DECISION A17: the starter's own Start (or the Join that fills the table) switches to the table and plays the deal at once, as channel A of bubble 0 with the live 16ms lead, where before the lobby stayed up until the bubble was sent.
+Alternative: wait for Send, and play the deal as the others see it.
+Why: the grid plays bubble 0 "by the starter at Start (A)".
+Confidence: medium.
+
 ## Deferred, with the reason
 
 DECISION A12: the wild's chosen-suit band snaps with the card; the kernel lays the BAND beat out (220ms, at the landing) but the Swift card draws its band inside its face, so there is nothing to slide yet.
