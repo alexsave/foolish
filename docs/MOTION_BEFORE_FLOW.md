@@ -8,6 +8,8 @@ rather than arrive at.
 Neither is a style opinion.
 They are the two reasons foolish reached **build 74**.
 
+A path here that does not start with `werewolf/`, `uttt/` or `shared/` is inside `foolish/`.
+
 ## 1. The loop, not the work, is the cost
 
 Foolish's surface was designed in Swift.
