@@ -144,6 +144,12 @@ int tb_beats_build(const TbEvent *ev, int n, const TbBeatFrame *start, int n_sea
             t += TB_T_OVER;
         }
     }
+    /* MY OWN KEEP, SENT: the tray already shows its rerolled dice blank (the
+     * staged draft, T11), so the plan starts from those blanks, not from the
+     * values the send replaced; otherwise the old faces flash for the lead. */
+    if (mode == TB_BEATS_SEND && out->n && out->beat[0].kind == TB_BK_SETTLE)
+        for (int i = 0; i < TB_DICE; i++)
+            if (out->beat[0].mask >> i & 1) out->start.dice[i] = 0;
     out->total_ms = out->n ? out->beat[out->n - 1].start_ms + out->beat[out->n - 1].dur_ms : 0;
     return out->n;
 }

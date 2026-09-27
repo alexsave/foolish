@@ -7,9 +7,9 @@
 #
 # It does the three things that are easy to forget (foolish's reasons, kept):
 #   1. rebuild the kernel's xcframework AND the generated readers and string
-#      tables beside it (`make -C tallybones/c ios-lib`), so the tests run
-#      against the kernel in this tree and readers of its layout. SKIPPED
-#      with a note while tallybones/c does not exist (the stand-in shell);
+#      tables beside it (`make -C tallybones/c ios-lib`, or `ios-lib-catalyst`
+#      for a Mac Catalyst DEST), so the tests run against the kernel in this
+#      tree and readers of its layout;
 #   2. regenerate Tallybones.xcodeproj from project.yml (a git-ignored build
 #      artifact, like uttt's);
 #   3. put every tracked entitlements file back, BYTES AND MTIME (`cp -p`),
@@ -67,13 +67,12 @@ else FMT=(cat); fi
 say() { printf '\n\033[1m== %s\033[0m\n' "$1"; }
 
 # ---- 1. the kernel, its readers and its strings, as the app links them -------
-# KERNEL: once tallybones/c exists this block is pickemup's unchanged; until
-# then there is nothing to build and the shell runs on the stand-in.
-if [ ! -d tallybones/c ]; then
-  say "no tallybones/c yet - the shell builds on the stand-in kernel, nothing to build"
-elif [ "$build_lib" -eq 1 ]; then
-  say "kernel xcframework + generated readers (make -C tallybones/c ios-lib)"
-  make -C tallybones/c ios-lib
+# A Mac Catalyst run needs the xcframework's extra macabi slice (T63).
+LIB_TARGET=ios-lib
+case "$DEST" in *"Mac Catalyst"*) LIB_TARGET=ios-lib-catalyst ;; esac
+if [ "$build_lib" -eq 1 ]; then
+  say "kernel xcframework + generated readers (make -C tallybones/c $LIB_TARGET)"
+  make -C tallybones/c "$LIB_TARGET"
 else
   say "skipping the xcframework build (--no-lib)"
   [ -d tallybones/ios/vendor/Tallybones.xcframework ] && [ -f tallybones/ios/Generated/TallybonesKernel.swift ] || {
@@ -141,17 +140,23 @@ case "$DEST" in
   *"Mac Catalyst"*) EXTRA=(SUPPORTS_MACCATALYST=YES CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=) ;;
 esac
 
+# xcodebuild reads its environment as build settings, and an exported DEST
+# (the way this script is driven) made the Catalyst build of TallybonesKit
+# fail with "no library for this platform was found" in the xcframework, the
+# same command passing without it (DECISIONS T63). So xcodebuild never sees it.
+XB=(env -u DEST xcodebuild)
+
 run_scheme() {   # $1 = scheme, $2 = build|test
   local scheme="$1" action="$2" log rc
   log="$(mktemp -t tallybones_xcodebuild)"
   say "$action: scheme $scheme"
   set +e
-  xcodebuild -project "$PROJECT" -scheme "$scheme" -destination "$DEST" ${EXTRA[@]+"${EXTRA[@]}"} "$action" 2>&1 | tee "$log" | "${FMT[@]}"
+  "${XB[@]}" -project "$PROJECT" -scheme "$scheme" -destination "$DEST" ${EXTRA[@]+"${EXTRA[@]}"} "$action" 2>&1 | tee "$log" | "${FMT[@]}"
   rc=${PIPESTATUS[0]}
   set -e
   if [ "$rc" -ne 0 ] && grep -q "$POISON" "$log" && unpoison_derived_data "$log"; then
     set +e
-    xcodebuild -project "$PROJECT" -scheme "$scheme" -destination "$DEST" ${EXTRA[@]+"${EXTRA[@]}"} "$action" 2>&1 | tee "$log" | "${FMT[@]}"
+    "${XB[@]}" -project "$PROJECT" -scheme "$scheme" -destination "$DEST" ${EXTRA[@]+"${EXTRA[@]}"} "$action" 2>&1 | tee "$log" | "${FMT[@]}"
     rc=${PIPESTATUS[0]}
     set -e
   fi

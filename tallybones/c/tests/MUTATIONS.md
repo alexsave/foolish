@@ -70,6 +70,7 @@ THE T11 ROWS are the four under `tb_test.c` named T11, the two Swift rows, and i
 |---|---|---|
 | beats start | the leads swapped | `tb_beats_test.c:38` "an opened bubble leads by 100: 16" |
 | beats keep | every settle rolls all five | `tb_beats_test.c:64` "the rerolled three only" |
+| beats send | a sent keep's plan starts from the values it replaced (the SEND blanking skipped) (integration, T64) | `tb_beats_test.c:99` "sent: the rerolled dice start blank: 4 4 2" |
 | beats score | a stamp lands when it starts | `tb_beats_test.c:102` "in the air: not on the card yet" |
 | beats end | no hold after the result | `tb_beats_test.c:122` "a leave that ends it: fade, results, hold (2)" |
 | beats games | the turn bar ignores a turn away from seat 1 | `tb_beats_test.c:156` "the end frame is the settled board" |

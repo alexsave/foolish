@@ -80,6 +80,31 @@ static void b_keep(void)
     CHECK(x.state == TB_BS_PENDING, "die 3 waits two steps");
 }
 
+/* My own KEEP, sent: the plan starts from the draft's blanks (integration,
+ * T64), and an opened one from the values it replaced. */
+static void b_send(void)
+{
+    TEST("beats send");
+    uint8_t seed[32];
+    seed_wide(seed, 2);
+    TbGame g, before;
+    tb_new(&g, seed, 2, 0);
+    before = g;
+    TbMove h[1] = { mv(TB_M_KEEP, 0, 0x05) };
+    tb_replay(&g, seed, 2, 0, h, 1);
+    CHECK(build(&g, 0, 1, TB_BEATS_SEND, &B) == 1, "a sent keep: one settle (%d)", B.n);
+    TbBeatFrame f;
+    tb_beats_frame(&B, 0, &f);
+    CHECK(f.dice[1] == 0 && f.dice[3] == 0 && f.dice[4] == 0, "sent: the rerolled dice start blank: %d %d %d",
+          f.dice[1], f.dice[3], f.dice[4]);
+    CHECK(f.dice[0] == before.dice[0] && f.dice[2] == before.dice[2], "and the kept ones as they were");
+    tb_beats_frame(&B, B.total_ms, &f);
+    CHECK(f.done && !memcmp(f.dice, g.dice, 5), "and it lands on the reroll");
+    CHECK(build(&g, 0, 1, TB_BEATS_OPEN, &B) == 1, "an opened keep");
+    tb_beats_frame(&B, 0, &f);
+    CHECK(f.dice[1] == before.dice[1] && f.dice[1] != 0, "opened: the board before the bubble shows first");
+}
+
 static void b_score(void)
 {
     TEST("beats score");
@@ -170,6 +195,7 @@ int main(int argc, char **argv)
 {
     b_start();
     b_keep();
+    b_send();
     b_score();
     b_end();
     b_games(argc > 1 ? atoi(argv[1]) : 70);

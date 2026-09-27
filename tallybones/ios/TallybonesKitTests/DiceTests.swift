@@ -29,7 +29,7 @@ final class TrayTests: XCTestCase {
 
     /// Alex's phone in hand, seat 0, roll 1 of the first turn.
     private func table() throws -> TallyTable {
-        try XCTUnwrap(Phones.dmStarted(), "a DM started")
+        _ = try XCTUnwrap(Phones.dmStarted(), "a DM started")
         return TallyTable(kernel: BridgeKernel())
     }
 
@@ -122,7 +122,7 @@ final class ScorecardTests: XCTestCase {
     }
 
     func testAScoreTapStagesTheScoreAndTheRowShowsItStaged() throws {
-        try XCTUnwrap(Phones.dmStarted(), "a DM started")
+        _ = try XCTUnwrap(Phones.dmStarted(), "a DM started")
         let t = TallyTable(kernel: BridgeKernel())
         let points = try XCTUnwrap(t.preview[Category.any.rawValue], "Any has a preview on roll 1")
         XCTAssertEqual(points, t.tray.dice.reduce(0, +), "the kernel's Any is the sum of the dice")
@@ -158,7 +158,7 @@ final class BubbleTests: XCTestCase {
     }
 
     func testAKeepBubbleCarriesTheBlanks() throws {
-        try XCTUnwrap(Phones.dmStarted(), "a DM started")
+        _ = try XCTUnwrap(Phones.dmStarted(), "a DM started")
         let k = BridgeKernel()
         let roll1 = k.view().tray.dice
         XCTAssertNotNil(k.roll(keeping: 0b10011))
@@ -173,7 +173,7 @@ final class BubbleTests: XCTestCase {
 final class TwoPhoneTests: XCTestCase {
 
     func testTheReceiverSeesTheSendersRerollAndCard() throws {
-        try XCTUnwrap(Phones.dmStarted(seed: 3), "a DM started")
+        _ = try XCTUnwrap(Phones.dmStarted(seed: 3), "a DM started")
         let alex = BridgeKernel()
         XCTAssertNotNil(alex.roll(keeping: 0b00001))
         alex.commit()

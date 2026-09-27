@@ -8,6 +8,7 @@
 #   make -C tallybones/c structgen   the Swift readers  -> ../ios/Generated/ (needs libclang)
 #   make -C tallybones/c datagen     the Swift strings  -> ../ios/Generated/i18n/
 #   make -C tallybones/c ios-lib     ../ios/vendor/Tallybones.xcframework (needs Xcode)
+#   make -C tallybones/c ios-lib-catalyst   the same plus a Mac Catalyst slice, for the Swift tests
 #   make -C tallybones/c swift-smoke the bridge driven from Swift through the readers (a Mac)
 #   make -C tallybones/c clean
 CC      ?= cc
@@ -176,9 +177,29 @@ ios-lib: build/layout/ios.hash datagen
 	$(call IOS_XCFRAMEWORK,tallybones,$(IOS_SRC),$(IOS_CFLAGS),ios/include,$(IOS_MIN_VERSION),../ios/vendor/Tallybones.xcframework)
 	@echo "layout $$(cat build/layout/ios.hash)"
 
+# THE SAME XCFRAMEWORK WITH A MAC CATALYST SLICE, for the Swift tests on a Mac
+# with no simulator free (DECISIONS T56, T63): `ios-lib`, then an arm64 macabi
+# slice of the same sources stamped with the same hash, and the xcframework
+# rewritten with all three libraries. The macabi triple is checked to lay the
+# structs out as the iOS slices do, or the stamp would lie. Never shipped.
+CATALYST_TRIPLE := arm64-apple-ios$(IOS_MIN_VERSION)-macabi
+ios-lib-catalyst: IOS_CFLAGS += -DSG_LAYOUT_HASH=$$(cat build/layout/ios.hash)
+ios-lib-catalyst: ios-lib
+	@h=$$($(STRUCTGEN) --cwd . $(SG_ARGS) --build 'ios=$(strip $(IOS_CFLAGS))' --target $(CATALYST_TRIPLE) --print-hash) \
+	  && [ "$$h" = "$$(cat build/layout/ios.hash)" ] \
+	  || { echo "layout catalyst: $$h is not the iOS slices' $$(cat build/layout/ios.hash)"; exit 1; }
+	$(call IOS_XCF_SLICE,$(CATALYST_TRIPLE),macosx,build/ios/catalyst,tallybones,$(IOS_SRC),$(IOS_CFLAGS))
+	@rm -rf ../ios/vendor/Tallybones.xcframework
+	xcodebuild -create-xcframework \
+	  -library build/ios/device/libtallybones.a -headers ios/include \
+	  -library build/ios/sim/libtallybones.a -headers ios/include \
+	  -library build/ios/catalyst/libtallybones.a -headers ios/include \
+	  -output ../ios/vendor/Tallybones.xcframework
+	@echo "wrote ../ios/vendor/Tallybones.xcframework (device, simulator, Mac Catalyst)"
+
 clean:
 	rm -rf build
 
-.PHONY: all run asan wasm ios-smoke swift-smoke structgen datagen ios-lib clean FORCE
+.PHONY: all run asan wasm ios-smoke swift-smoke structgen datagen ios-lib ios-lib-catalyst clean FORCE
 FORCE:
 .SECONDARY:

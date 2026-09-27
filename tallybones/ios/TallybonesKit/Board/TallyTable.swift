@@ -29,6 +29,8 @@ public final class TallyTable: ObservableObject {
     /// My keep marks, before Roll sends them.
     @Published public private(set) var marks = Array(repeating: false, count: TrayModel.diceCount)
     public let player = BeatPlayer()
+    /// The roll my marks belong to: whose turn, which roll, which dice.
+    private var markedRoll: [Int] = []
     /// The newest plan handed to the player (tb_api_beats_serial).
     private var playedSerial = -1
 
@@ -42,12 +44,18 @@ public final class TallyTable: ObservableObject {
     /// Read everything back from the resident. `animate`: play the plan the
     /// kernel laid out for what just came in or went out, if it is new.
     public func refresh(animate: Bool = true) {
-        let old = view
         let new = kernel.view()
         view = new
-        let newRoll = new.tray.roll != old.tray.roll || new.tray.turn != old.tray.turn
-        if newRoll || !new.tray.canKeep {
-            marks = new.tray.kept
+        // MY MARKS ARE KEPT ACROSS A STAGE AND ITS CANCEL, and reset to the
+        // kernel's held dice when a roll I may keep from is new: a staged KEEP's
+        // draft is roll n + 1, so comparing with the view before it would
+        // forget the marks the moment Messages' X brings roll n back.
+        if new.tray.canKeep {
+            let roll = [new.tray.turn ?? -1, new.tray.roll, new.tray.dice.reduce(0) { $0 * 7 + $1 }]
+            if roll != markedRoll {
+                marks = new.tray.kept
+                markedRoll = roll
+            }
         }
         let serial = Tb.beatsSerial
         guard serial != playedSerial else { return }
