@@ -11,7 +11,7 @@
 #   make -C pickemup/c swift-smoke the bridge driven from Swift through the readers (a Mac)
 #   make -C pickemup/c clean
 CC      ?= cc
-# THE WARNINGS ARE ONE LIST for every build below (DECISION D53): proven clean
+# THE WARNINGS ARE ONE LIST for every build below (DECISION D58): proven clean
 # under Apple clang and under Linux gcc 13 (the CI lane's compiler), whose
 # -Wconversion warns on narrowing that clang does not.
 WARN    := -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror -std=c11

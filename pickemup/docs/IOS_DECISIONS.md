@@ -109,11 +109,13 @@ DECISION I20: no auto-collapse ride on render-server layers (uttt's `CollapseSli
 Alternative: port `CollapseSlide` with a set of collapse numbers in the kernel.
 Why: this kernel has no collapse curve yet, and the flight worker owns motion; the `collapse` anchors are in place.
 Confidence: medium.
+Amended by ANIMATION_DECISIONS A14 and A20: the kernel now has the curve (`pk_lay_collapse_push`), and the slide is compiled in behind `dev.slide`; without the file this decision is what runs.
 
 DECISION I21: the shared Send reminder (`SendHint`) is not compiled in yet; the status corner's HEAD_STAGED line says the bubble is staged.
 Alternative: compile it with a new caption key.
 Why: it is motion and chrome the next worker places together with the flights.
 Confidence: medium.
+Amended by ANIMATION_DECISIONS A15 and A20: it is compiled in, on the kernel's word and fuse, behind `dev.sendhint` (I41).
 
 DECISION I22: a layout mismatch between the library and the generated readers (`Pk.layoutMatches`) shows the unreadable screen with the newer-version line, and reads nothing.
 Confidence: high.
@@ -195,6 +197,7 @@ Confidence: medium.
 
 DECISION I37: what the review left in Swift, on purpose.
 The collapse flag a touch stages with (a play and a pass collapse, a lone Last card! collapses, a draw or a call does not) is drawer policy read off the kernel's own draft events, and the stamp's display order (OUT, then the newest verdict, then LAST) orders kernel verdicts without deciding one; both are candidates for the next lift, not rules.
+Both LIFTED by I40.
 The 3 second readiness fallback and the silence and error beats are uttt's shared lifecycle (`InsertStaging`), kept whole.
 Found clean: no JSON or `Codable` anywhere (the seat records are the kernel's fixed-layout bytes, the nickname a string); no byte layout outside `Generated/` (the only `withUnsafeBytes` calls pass the participant id, the nickname and the seat records to C as bytes); no force unwrap on a kernel return; and no path from another seat's card count to a view, an accessibility label or an overlay (the fan is `PK_FAN_BACKS`, the reveal rows exist only once the game is over, and `NoCountLeakTests` walks a three-seat table's accessibility tree for digits).
 Confidence: high.
@@ -212,3 +215,21 @@ A drag rearranges only while the board shows the settled hand: while a plan's fr
 Alternative: have the row and the model work in slots and map every touch through `pk_api_play_slot`.
 Why: every event, anchor and wire position is an acquisition position, so working in slots would need a map at every one of them; `pk_api_play_slot` stays for a host that addresses the hand by slot and is pinned by the C tests.
 Confidence: medium.
+
+## The open-items pass (2026-09-27)
+
+No simulator was used (another worker held the only free one); every change below is verified by `make -C pickemup/c run asan`, `make -C pickemup/c ios-lib swift-smoke`, `build-for-testing` of `PickemupKitTests` and the `PickemupMessagesApp` build, with its planned Swift mutants under "Not mutated" in `pickemup/ios/TESTS_MUTATED.md`.
+
+DECISION I40: whether a stage collapses the drawer, and which stamp a badge shows, are the kernel's (`pk_api_collapses(touch)`, `pk_api_stamp(seat)`), lifting what I37 left in Swift.
+The collapse answer takes the touch that staged and reads the draft as it now stands: a play or a pass collapses; a Last card! collapses when it is the whole bubble, which the kernel reads as no draw, play or pass of mine and no call in the draft (the Swift rule had not counted a pass); a draw, a call, an undo, an un-say or an un-call does not.
+The stamp is OUT for the winner and nothing else once it is over, else the newest sealed bubble's verdict (Caught you! on the caught, Wrong call on the caller), else LAST while the seat has said it.
+`TableModel` and the bubble picture ask the kernel, and the published newest-bubble summary the Swift rule read is gone.
+Alternative: keep both in Swift, as I37 did, because neither decides a rule.
+Why: each is one function of the kernel's state with an order in it, and an order is exactly what a second copy gets wrong; in C each branch has a mutation row.
+Confidence: high.
+
+DECISION I41: the Send reminder's state is the controller's, which is where the conversation is: `hintStaged` goes up when the insert loop says the bubble landed in the field (and `hintRestart` counts each one, restarting the fuse), and down at a send or a cancel; `hintVisible` is whether the drawer is compact.
+Alternative: stage state in `TableModel`.
+Why: the model does not know there is a conversation (its header says so), and only the controller hears Messages land, send and cancel.
+Confidence: medium, until it is seen inside Messages.
+

@@ -66,21 +66,43 @@ Alternative: wait for Send, and play the deal as the others see it.
 Why: the grid plays bubble 0 "by the starter at Start (A)".
 Confidence: medium.
 
-## Deferred, with the reason
+## Once deferred, now closed (the open-items pass, 2026-09-27)
 
-DECISION A12: the wild's chosen-suit band snaps with the card; the kernel lays the BAND beat out (220ms, at the landing) but the Swift card draws its band inside its face, so there is nothing to slide yet.
-Alternative: a band overlay on the pile that the beat slides up.
-Why: the card face is being reworked in parallel (O6); the beat is already in the plan for whoever draws the band as its own layer.
+DECISION A12: the wild's chosen-suit band slides up on the kernel's BAND beat (220ms, at the landing, E.out), for my own wild only; a seat's wild arrives with its band already on, as the grid says.
+CLOSED by A18 below: the pile's top card draws its band through `BandSlide`, which reads the beat's sample.
+It had snapped while the card face was being reworked (O6).
 Confidence: medium.
 
-DECISION A13: the lobby's Join and Leave rows are laid out by the kernel (a 220ms fade, and a 320ms close-up on a leave) but not played: the bridge has no lobby entry to beats yet (`pk_api_plan_lobby` feeds nothing), and the lobby screen reports `roster.k` anchors for when it does.
-The start bubble's lobby rest (500ms) and FADE play over the felt, because the lobby screen is gone once the game has started.
+DECISION A13: the lobby's Join and Leave rows play the kernel's beats (a 220ms fade in; a 220ms fade out, then a 320ms close-up on the card spring).
+CLOSED by A19 below: `pk_api_beats_lobby` lays out my own Join or Leave, and `pk_api_adopt` lays out a lobby bubble adopted over the lobby of the same game on screen.
+The start bubble's lobby rest (500ms) and FADE still play over the felt, because the lobby screen is gone once the game has started.
 Confidence: medium.
 
-DECISION A14: uttt's `CollapseSlide` is still not compiled (IOS_DECISIONS I20 stands): the drawer's auto-collapse now waits the kernel's `settle_ms` (250 + the move's own plan + 500) instead of the 750ms literal, but the render-server slide needs a collapse curve in the kernel and can only be judged on a phone in Messages, which could not be launched (ORCHESTRATION B2).
+DECISION A14: uttt's `CollapseSlide` is compiled in, on a collapse curve in the kernel, and switched on only by the rig's `dev.slide` file in a Debug build (A20).
+Without the file the drawer's auto-collapse waits the kernel's `settle_ms` (250 + the move's own plan + 500) and the board relays out as it moves (IOS_DECISIONS I20).
+What is still owed is the judgement: the slide can only be seen inside Messages on a phone.
 Confidence: medium.
 
-DECISION A15: the shared Send reminder (`SendHint`, IOS_DECISIONS I21) is still not compiled: it needs a kernel word, a fuse number and its place against Messages' own Send button, and none of it can be seen without Messages.
+DECISION A15: the shared Send reminder (`SendHint`) is compiled in with the kernel's word (`SEND_HINT`, "Send") and fuse (`PK_T_SEND_HINT`, 3000ms, the sister product's), and switched on only by `dev.sendhint` in a Debug build (A20).
+Its place against Messages' own Send button is `SendHintMetrics`' shared axis (42pt from the screen's trailing edge), with the root view as its container, so both offsets are the same.
+What is still owed is the judgement inside Messages.
+Confidence: medium.
+
+DECISION A18: the BAND beat is a slide, not a fade: its sample's `p` is how far up the band stands (0 hidden under the card's edge, 1 in place), it is applied before its start (CSS fill backwards, so the band never flashes in place first), and its opacity is left alone.
+Alternative: keep the sampler's `opacity = p`.
+Why: DEMO.wild animates `translateY(100%)` to `translateY(0)` with `E.out` and never fades the band; the card clips it.
+Confidence: high.
+
+DECISION A19: the lobby before a roster change is remembered in the bridge (by `pk_api_join`, `pk_api_leave` and a lobby adopted over its own lobby), and forgotten by any other read and by a new lobby; a leave's row is drawn from that remembered lobby as it read (`PK_API_W_LOBBY_GONE`, "2. Bo (You)" to Bo), fading where it stood, while the rows from its seat on stand one row lower until the close-up (the HOLD on the card spring) lifts them.
+Alternative: have the host keep the link of the lobby before its own action and pass it to `pk_api_plan_lobby`.
+Why: the resident is one slot and the host holds no chain across a call (I29); a remembered lobby in the bridge is the same shape as `pk_api_adopt`'s prior chain, and the words of a row that is no longer on the roster can only come from the kernel.
+The rows' pitch (a row's height and the 6pt gap under it) is the lobby view's own (I31's rule: the inside of a component is its view's).
+Confidence: medium.
+
+DECISION A20: the two pieces only Messages can judge are compiled into every build and switched on by a dev file in a Debug build (`dev.slide`, `dev.sendhint`, read once per process), the pattern `dev.empty` and `dev.nick` already use (shared/swift/MessagesKit/DevFlags).
+Alternative: compile them only when judged, as A14 and A15 had it.
+Why: code that is compiled is kept building (warnings are errors here), and the rig can switch either on without a new build; a Release build has no dev-file reader, so neither can switch on for a customer.
+The slide's numbers are uttt's (`PK_LAY_COLLAPSE_MS` 600, `_STEPS` 120, `_FLIP` 60, the 338ms drawer spring), a fourth copy of the drawer-collapse numbers REUSE_AUDIT section 8 already counts three of; the lift into `shared/c` is the candidate that removes all four, and belongs to whoever owns `shared/`.
 Confidence: medium.
 
 ## Budgets, and what they found

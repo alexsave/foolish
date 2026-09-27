@@ -366,7 +366,8 @@ Today no workflow runs uttt's C tests (`uttt-web.yml` only builds the site), so 
 
 DONE (S3), in `2a02e1e2`, with two changes from the plan.
 `.github/workflows/pickemup.yml` runs `make -C c run` and `asan` (pickemup kept uttt's target names, ORCHESTRATION O2) and a second job for `structgen` and `datagen`; it does not run `wasm` (D49).
-`.github/workflows/uttt-c.yml` runs uttt's `make -C c run` and `asan`; it does not run uttt's `ios-smoke`, which the plan listed (recorded as a gap, not fixed: uttt's lane is outside this pass).
+`.github/workflows/uttt-c.yml` runs uttt's `make -C c run`, `asan` and, since the open-items pass, `ios-smoke`, which the plan listed.
+The lane cannot go green on Linux gcc until `uttt/c/src/uttt_pen.c` stops relying on `M_PI` under `-std=c11` (DECISIONS.md, "Found on the way").
 Both files parse as YAML (the final check in `ORCHESTRATION.md`); the red-then-green run on GitHub is not recorded here.
 
 **S4 - the shared xcframework recipe, `shared/tools/ios_xcframework.mk`.**

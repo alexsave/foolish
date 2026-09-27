@@ -525,6 +525,7 @@ Alternative: add all three to `CFLAGS` now.
 Why: with Apple clang every source and test is clean under all three (the one `-Wsign-conversion` hit, in a test, is fixed), but the CI lane is Linux gcc, whose `-Wconversion` warns on narrowing that clang does not (compound assignment to `uint8_t`, for one), and a flag no gcc has compiled under would turn that lane red on the next push.
 The review that adds them is one Linux gcc run of `make run CFLAGS="-O2 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror -std=c11"`.
 Recommendation confidence: medium.
+SUPERSEDED by D58: that gcc run was made, and the flags are in the build.
 
 **DECISION D54: the phone's own arrangement is a permutation laid over acquisition order, never a second hand order (O9, `src/pk_arrange.h`).**
 `PkGame.hand`, the wire, every event and a PLAY's position stay acquisition order; `PkView.my_slot` and `PkBeatFrame.my_slot` (appended, field order kept) say where each position is drawn, and `pk_api_arrange_move`, `pk_api_arranged_pos` and `pk_api_play_slot` go through the arrangement in C.
@@ -551,6 +552,13 @@ An arrangement whose receipts match nothing in the hand matches nothing, so a re
 Alternative: a separate store key for the arrangements.
 Why: the host already persists these bytes whenever they are dirty, unread (I24), so the arrangement rides the one path that exists; no JSON, no second store.
 Recommendation confidence: medium.
+
+**DECISION D58: every build takes `-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror -std=c11`, one `WARN` list in the Makefile for `run`, `asan`, `wasm`, `cross` and the bridge (supersedes D53).**
+The run D53 asked for was made on 2026-09-27 under gcc 13.5 (the `gcc:13` image, Linux, as the CI lane compiles) and under Apple clang 21 and Homebrew clang 22 for wasm32.
+gcc named four things clang does not: three narrowing conversions in `tests/pk_beats_test.c` and an unused harness variable in `tests/pk_beats_dump.c` (`-Wunused-variable`, not one of the three); the kernel's own sources were clean.
+Alternative: keep the three as a review-time check.
+Why: a check that is not in the build is not run; with gcc proven clean the reason D53 gave for waiting is gone.
+Recommendation confidence: high.
 
 ---
 
@@ -1362,6 +1370,8 @@ All run under `make -C pickemup/c run` and `make asan`, with no Mac.
    Mutation: include the top in the reshuffle (red).
 7. **Cross-engine.** The native build and the wasm replay build (if one exists by then) agree on 100 golden games' final states.
    Mutation: none needed beyond any single change to 7.3.2.
+   DONE as `make cross` (`tests/pk_cross.c`, `tests/pk_cross.mjs`): 100 of the fuzz harness's deals, played by the random tests' bot (`tests/pk_bot.h`, freestanding), natively and in a wasm32 build that node runs; one value a game, the final state's `pk_hash` folded with every event of the game's plan, compared by `cmp`.
+   It needs a wasm clang with wasm-ld and node, so it is not in `run` or the CI lane (D49); its mutation rows are in `tests/MUTATIONS.md`.
 
 ### 7.4 Wire round trip and size
 
@@ -1443,6 +1453,7 @@ All run under `make -C pickemup/c run` and `make asan`, with no Mac.
 1. **The name.** `Pick 'Em Up` is a placeholder with a same-genre collision (README); every caption uses `GAME_NAME`, so changing it is one string, but it has to be decided before a store listing.
 2. **Hands past thirteen cards.** Free drawing (D6) with no hand cap (D23) means a hand can reach 102 cards; `UI.html` stops at thirteen, where the thin-face rule already fires.
    The kernel is fine either way; the surface needs a design (a scrolling hand, a second compression, or a cap after all) before D23 can stand.
+   DECIDED on the owner's behalf by ORCHESTRATION O4 (overlap to a 16pt strip, then scroll; no cap), flagged there for a veto; built as I11, I12 and `pk_lay_hand`.
 
 Everything else is decided above and can be vetoed line by line.
 
