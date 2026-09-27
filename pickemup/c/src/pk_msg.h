@@ -50,6 +50,7 @@
 #include "pk_lobby.h"
 #include "pk_plan.h"
 #include "pk_code.h"
+#include "../../../shared/c/msg_seat_tag/msg_seat_tag.h"
 
 #define PK_MSG_MAGIC      0xB9
 #define PK_MSG_FORMAT     1
@@ -63,9 +64,9 @@
 #define PK_FLAG_LEFT      0x04
 #define PK_FLAGS_KNOWN    (PK_FLAG_DM | PK_FLAG_TIP_SAID | PK_FLAG_LEFT)
 
-#define PK_TAG_LEN        9
-#define PK_NAME_MAX_BYTES 48          /* D23 */
-#define PK_NAME_MAX_CHARS 16          /* D23; the seat-name clipping cap */
+#define PK_TAG_LEN        MSG_SEAT_TAG_LEN
+#define PK_NAME_MAX_BYTES MSG_SEAT_NAME_MAX_BYTES  /* D23 */
+#define PK_NAME_MAX_CHARS MSG_SEAT_NAME_MAX_CHARS  /* D23; the seat-name clipping cap */
 #define PK_CHECK_LEN      2
 #define PK_HEAD_LEN       44
 #define PK_ROW_MAX        (PK_TAG_LEN + 1 + PK_NAME_MAX_BYTES)
@@ -91,11 +92,9 @@ _Static_assert(PK_MSG_MAX_TEXT - 1 < 5000, "the capped worst case fits MSMessage
 #define PK_ETEXT   -9    /* no "m=" in the text, or it is not base32         */
 #define PK_EREFUSED -10  /* a lobby or seat verdict said no (not a wire error, D41) */
 
-typedef struct {
-    uint8_t tag[PK_TAG_LEN];          /* SHA-256("pickemup.seat.1|" || seed || id)[0..9) */
-    uint8_t name_len;                 /* 1..48 bytes of UTF-8                            */
-    uint8_t name[PK_NAME_MAX_BYTES];
-} PkSeat;
+/* A roster row, shared/c/msg_seat_tag's: the tag is
+ * SHA-256("pickemup.seat.1|" || seed || id)[0..9), then a 1..48-byte UTF-8 name. */
+typedef MsgSeat PkSeat;
 
 typedef struct {
     uint8_t  phase;                   /* PK_PHASE_*                                  */
@@ -121,13 +120,13 @@ void pk_tag(const uint8_t seed[32], const uint8_t *id, int id_len, uint8_t out[P
 /* The game's identity (D21): SHA-256("pickemup.game.1|" || seed)[0..8). */
 void pk_game_id(const uint8_t seed[32], uint8_t out[8]);
 
-/* A NICKNAME, JUDGED (foolish's msg_nickname_verdict). The host trims; the
- * caps are here. Rejects rather than truncates. */
-#define PK_NAME_OK       0
-#define PK_NAME_EMPTY    1
-#define PK_NAME_TOO_LONG 2
-#define PK_NAME_BAD      3     /* not UTF-8, or a control character */
-int pk_name_verdict(const uint8_t *name, int len);
+/* A NICKNAME, JUDGED (foolish's msg_nickname_verdict) by shared/c/msg_seat_tag's
+ * msg_seat_name_verdict. The host trims; the caps are there. Rejects rather
+ * than truncates. */
+#define PK_NAME_OK       MSG_SEAT_NAME_OK
+#define PK_NAME_EMPTY    MSG_SEAT_NAME_EMPTY
+#define PK_NAME_TOO_LONG MSG_SEAT_NAME_TOO_LONG
+#define PK_NAME_BAD      MSG_SEAT_NAME_BAD
 
 /* ------------------------------------------------------------ the lobby
  *
@@ -225,13 +224,13 @@ int pk_common_bubbles(const PkMsg *a, const PkMsg *b);
  * seat found by the sender witness counts only if the row carries my name
  * when I have one, because a lobby seat is claimed by a named join and an
  * inference cannot overrule "none of these rows is me". */
-#define PK_BY_NONE   0
-#define PK_BY_RECORD 1
-#define PK_BY_TAG    2
-#define PK_BY_SENDER 3
-#define PK_BY_NAME   4
+#define PK_BY_NONE   MSG_SEAT_BY_NONE
+#define PK_BY_RECORD MSG_SEAT_BY_RECORD
+#define PK_BY_TAG    MSG_SEAT_BY_TAG
+#define PK_BY_SENDER MSG_SEAT_BY_SENDER
+#define PK_BY_NAME   MSG_SEAT_BY_NAME
 
-#define PK_SENT_UNKNOWN (-1)
+#define PK_SENT_UNKNOWN MSG_SEAT_SENT_UNKNOWN
 
 /* The seat holding `tag`, or -1. */
 int pk_msg_seat_of_tag(const PkMsg *m, const uint8_t tag[PK_TAG_LEN]);
@@ -256,7 +255,7 @@ int pk_msg_resolve(const PkMsg *m, int record, int tag_seat, int is_dm, int i_se
 /* The seat my recorded tag holds in this roster; -1 when this device has no
  * record of this game; PK_REC_GONE when it has one and no row carries its
  * tag - I sat and I left, or this bubble is from before I joined (D51). */
-#define PK_REC_GONE  (-2)
+#define PK_REC_GONE  MSG_SEAT_REC_GONE
 int pk_rec_find(const uint8_t *recs, int n, const PkMsg *m);
 /* Record `seat`'s tag for this game at the front, replacing any record of
  * it; the oldest fall off. `recs` holds PK_REC_BYTES. The new byte count. */

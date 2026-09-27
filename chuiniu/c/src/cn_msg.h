@@ -41,6 +41,7 @@
 #include "cn.h"
 #include "cn_lobby.h"
 #include "cn_code.h"
+#include "../../../shared/c/msg_seat_tag/msg_seat_tag.h"
 
 #define CN_MSG_MAGIC      0xC5
 #define CN_MSG_FORMAT     1
@@ -53,9 +54,9 @@
 #define CN_FLAG_LEFT      0x02
 #define CN_FLAGS_KNOWN    (CN_FLAG_DM | CN_FLAG_LEFT)
 
-#define CN_TAG_LEN        9
-#define CN_NAME_MAX_BYTES 48
-#define CN_NAME_MAX_CHARS 16
+#define CN_TAG_LEN        MSG_SEAT_TAG_LEN
+#define CN_NAME_MAX_BYTES MSG_SEAT_NAME_MAX_BYTES
+#define CN_NAME_MAX_CHARS MSG_SEAT_NAME_MAX_CHARS
 #define CN_CHECK_LEN      2
 #define CN_HEAD_LEN       42
 #define CN_ROW_MAX        (CN_TAG_LEN + 1 + CN_NAME_MAX_BYTES)
@@ -81,11 +82,9 @@ _Static_assert(CN_MSG_MAX_TEXT - 1 < 5000, "the capped worst case fits MSMessage
 #define CN_ETEXT   -9    /* no "m=" in the text, or it is not base32         */
 #define CN_EREFUSED -10  /* a lobby or seat verdict said no                  */
 
-typedef struct {
-    uint8_t tag[CN_TAG_LEN];          /* SHA-256("chuiniu.seat.1|" || seed || id)[0..9) */
-    uint8_t name_len;                 /* 1..48 bytes of UTF-8                           */
-    uint8_t name[CN_NAME_MAX_BYTES];
-} CnSeat;
+/* A roster row, shared/c/msg_seat_tag's: the tag is
+ * SHA-256("chuiniu.seat.1|" || seed || id)[0..9), then a 1..48-byte UTF-8 name. */
+typedef MsgSeat CnSeat;
 
 typedef struct {
     uint8_t  phase;                   /* CN_PHASE_*                                  */
@@ -106,11 +105,11 @@ void cn_tag(const uint8_t seed[32], const uint8_t *id, int id_len, uint8_t out[C
 /* SHA-256("chuiniu.game.1|" || seed)[0..8). */
 void cn_game_id(const uint8_t seed[32], uint8_t out[8]);
 
-#define CN_NAME_OK       0
-#define CN_NAME_EMPTY    1
-#define CN_NAME_TOO_LONG 2
-#define CN_NAME_BAD      3     /* not UTF-8, or a control character */
-int cn_name_verdict(const uint8_t *name, int len);
+/* A NICKNAME, JUDGED by shared/c/msg_seat_tag's msg_seat_name_verdict. */
+#define CN_NAME_OK       MSG_SEAT_NAME_OK
+#define CN_NAME_EMPTY    MSG_SEAT_NAME_EMPTY
+#define CN_NAME_TOO_LONG MSG_SEAT_NAME_TOO_LONG
+#define CN_NAME_BAD      MSG_SEAT_NAME_BAD
 
 /* ------------------------------------------------------------ the lobby
  * Each returns 0 (CN_EOK), a seat, or a negative CN_E*, and leaves `m`
@@ -160,13 +159,13 @@ int cn_common_moves(const CnMsg *a, const CnMsg *b);
  * then the tag, then the sender fact, then the nickname; a record whose tag
  * has no row says "not me" and only the tag may overrule it; in a WAITING
  * bubble the sender witness counts only if the row carries my name. */
-#define CN_BY_NONE   0
-#define CN_BY_RECORD 1
-#define CN_BY_TAG    2
-#define CN_BY_SENDER 3
-#define CN_BY_NAME   4
+#define CN_BY_NONE   MSG_SEAT_BY_NONE
+#define CN_BY_RECORD MSG_SEAT_BY_RECORD
+#define CN_BY_TAG    MSG_SEAT_BY_TAG
+#define CN_BY_SENDER MSG_SEAT_BY_SENDER
+#define CN_BY_NAME   MSG_SEAT_BY_NAME
 
-#define CN_SENT_UNKNOWN (-1)
+#define CN_SENT_UNKNOWN MSG_SEAT_SENT_UNKNOWN
 
 int cn_msg_seat_of_tag(const CnMsg *m, const uint8_t tag[CN_TAG_LEN]);
 /* The seat that sent this bubble, or -1 (a leave: the sender has no seat). */
@@ -179,7 +178,7 @@ int cn_msg_resolve(const CnMsg *m, int record, int tag_seat, int is_dm, int i_se
 #define CN_REC_LEN   (8 + CN_TAG_LEN)
 #define CN_REC_MAX   256
 #define CN_REC_BYTES (CN_REC_LEN * CN_REC_MAX)
-#define CN_REC_GONE  (-2)
+#define CN_REC_GONE  MSG_SEAT_REC_GONE
 int cn_rec_find(const uint8_t *recs, int n, const CnMsg *m);
 int cn_rec_put(uint8_t *recs, int n, const CnMsg *m, int seat);
 int cn_rec_forget(uint8_t *recs, int n, const CnMsg *m);

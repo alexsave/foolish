@@ -73,9 +73,14 @@ const REPO = resolve(PRODUCT, '..');
  *                          arenas and the test helpers that seed games; dev
  *                          tools only, so no kernel build list names stats.c
  *                          and the per-build check below does not list it
+ *   msg_seat_tag.h         shared/c/msg_seat_tag, the roster row, the nickname
+ *                          verdict and the record / tag / sender / name seat
+ *                          resolver under three products' message coders; in
+ *                          its own directory for the wildcard reason too
  */
 const SHARED_HEADERS = ['sha256.h', 'deal_rng.h', 'b32.h', 'mixrad.h', 'languages.h', 'msg_stage.h', 'motion_ruler.h',
-    'check.h', 'twophone.h', 'text_util.h', 'wire_check.h', 'stats.h', 'seed_hash.h'];
+    'check.h', 'twophone.h', 'text_util.h', 'wire_check.h', 'stats.h', 'seed_hash.h',
+    'msg_seat_tag.h'];
 
 /** Every C source and header in the repo, both products, excluding build output. */
 function kernelSources(): string[] {
@@ -148,6 +153,7 @@ test('the shared sources compile with no -I whatsoever', () => {
         'shared/c/wire_check/wire_check.c',
         'shared/c/stats/stats.c',
         'shared/c/stats/stats_test.c',  // stats.h, seed_hash.h
+        'shared/c/msg_seat_tag/msg_seat_tag.c',
         'foolish/c/src/game.c',
         'foolish/c/src/main_eval.c',    // stats/stats.h
         'werewolf/c/src/ww_game.c',
@@ -156,12 +162,16 @@ test('the shared sources compile with no -I whatsoever', () => {
         'uttt/c/src/uttt_lang.c',       // i18n/languages.h
         'uttt/c/src/uttt_msg.c',        // sha256.h, b32.h, wire_check.h
         'pickemup/c/src/pk_deck.c',     // deal_rng.h
-        'pickemup/c/src/pk_msg.c',      // sha256.h, b32.h, wire_check.h
+        'pickemup/c/src/pk_msg.c',      // sha256.h, b32.h, wire_check.h, msg_seat_tag.h (via pk_msg.h)
         'chuiniu/c/src/cn_dice.c',      // deal_rng.h, sha256.h
         'chuiniu/c/src/cn_code.c',      // mixrad.h
-        'chuiniu/c/src/cn_msg.c',       // sha256.h, b32.h, wire_check.h
+        'chuiniu/c/src/cn_msg.c',       // sha256.h, b32.h, wire_check.h, msg_seat_tag.h (via cn_msg.h)
         'tallybones/c/src/tb.c',        // sha256.h, deal_rng.h
-        'tallybones/c/src/tb_msg.c',    // sha256.h, b32.h, wire_check.h
+        'tallybones/c/src/tb_msg.c',    // sha256.h, b32.h, wire_check.h, msg_seat_tag.h (via tb_msg.h)
+        // The bridges, which reach the seat module through the message header.
+        'pickemup/c/ios/pk_api.c',      // msg_seat_tag.h (via ../src/pk_msg.h)
+        'chuiniu/c/ios/cn_api.c',       // msg_seat_tag.h (via ../src/cn_msg.h)
+        'tallybones/c/ios/tb_api.c',    // msg_seat_tag.h (via ../src/tb_msg.h)
         'tallybones/c/src/tb_code.c',   // mixrad.h
         'uttt/c/src/uttt_say.c',        // text_util.h
         'pickemup/c/src/pk_say.c',      // text_util.h
@@ -223,8 +233,12 @@ test('every build system that compiles the kernel also compiles the shared sourc
     // b32.c and mixrad.c too; what they must not lose is the pair they link.)
     // wire_check.c follows the message coders: the replay page's WEB_WASM_SRC
     // has no message coder in it, so it has no wire check either.
+    // msg_seat_tag.c is the tag-and-record seat identity of the three newer
+    // message coders; uttt keeps its own three-witness resolver, and the card
+    // kernel and the third product resolve seats a different way (name and
+    // cached seat, no tag).
     const KERNEL = ['deal_rng.c', 'sha256.c'];
-    const ALL_SIX = ['deal_rng.c', 'sha256.c', 'b32.c', 'mixrad.c', 'text_util.c', 'wire_check.c'];
+    const NEWER = ['deal_rng.c', 'sha256.c', 'b32.c', 'mixrad.c', 'text_util.c', 'wire_check.c', 'msg_seat_tag.c'];
     const builds: Array<{ make: string; variable: string; shared: string[] }> = [
         { make: 'foolish/c', variable: 'CORE_SRC', shared: KERNEL },
         { make: 'foolish/foolyard', variable: 'KERNEL_SRC', shared: KERNEL },
@@ -232,9 +246,9 @@ test('every build system that compiles the kernel also compiles the shared sourc
         { make: 'werewolf/c', variable: 'CORE_SRC', shared: KERNEL },
         { make: 'uttt/c', variable: 'SRC', shared: ['sha256.c', 'b32.c', 'mixrad.c', 'text_util.c', 'wire_check.c'] },
         { make: 'uttt/c', variable: 'WEB_WASM_SRC', shared: ['b32.c', 'mixrad.c', 'text_util.c'] },
-        { make: 'pickemup/c', variable: 'SRC', shared: ALL_SIX },
-        { make: 'chuiniu/c', variable: 'SRC', shared: ALL_SIX },
-        { make: 'tallybones/c', variable: 'SRC', shared: ALL_SIX },
+        { make: 'pickemup/c', variable: 'SRC', shared: NEWER },
+        { make: 'chuiniu/c', variable: 'SRC', shared: NEWER },
+        { make: 'tallybones/c', variable: 'SRC', shared: NEWER },
     ];
     const missing: string[] = [];
     for (const { make, variable, shared } of builds) {

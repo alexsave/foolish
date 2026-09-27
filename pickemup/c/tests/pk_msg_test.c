@@ -949,7 +949,7 @@ static void lobby_wire(void)
     CHECK(pk_msg_join(&m, t, U("\x01x"), 2) == PK_EROSTER, "a control character cannot join");
     CHECK(pk_msg_join(&m, t, U("\xC0\x80"), 2) == PK_EROSTER, "an overlong encoding cannot join");
     CHECK(pk_msg_join(&m, t, U("seventeen chars!!"), 17) == PK_EROSTER, "seventeen characters cannot join");
-    CHECK(pk_name_verdict(U("sixteen chars!!!"), 16) == PK_NAME_OK, "sixteen characters are fine");
+    CHECK(msg_seat_name_verdict(U("sixteen chars!!!"), 16) == PK_NAME_OK, "sixteen characters are fine");
     CHECK(pk_msg_offered(&m, 0) == PK_LOBBY_START && pk_msg_offered(&m, 1) == PK_LOBBY_WAITING,
           "two in a group: the creator may start, the newest joiner may not");
     int n = 0;

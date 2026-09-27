@@ -37,48 +37,6 @@ void cn_game_id(const uint8_t seed[32], uint8_t out[8])
     memcpy(out, d, 8);
 }
 
-/* Strict UTF-8: shortest forms only, no surrogates, nothing past U+10FFFF,
- * and no control characters. The character count, or -1. */
-static int utf8_chars(const uint8_t *s, int len)
-{
-    int chars = 0;
-    for (int i = 0; i < len;) {
-        uint32_t b = s[i], cp;
-        int k;
-        if (b < 0x80)      { cp = b; k = 1; }
-        else if (b < 0xC2) return -1;
-        else if (b < 0xE0) { cp = b & 0x1F; k = 2; }
-        else if (b < 0xF0) { cp = b & 0x0F; k = 3; }
-        else if (b < 0xF5) { cp = b & 0x07; k = 4; }
-        else return -1;
-        if (i + k > len) return -1;
-        for (int j = 1; j < k; j++) {
-            if ((s[i + j] & 0xC0) != 0x80) return -1;
-            cp = (cp << 6) | (s[i + j] & 0x3F);
-        }
-        if ((k == 3 && cp < 0x800) || (k == 4 && (cp < 0x10000 || cp > 0x10FFFF))) return -1;
-        if (cp >= 0xD800 && cp <= 0xDFFF) return -1;
-        if (cp < 0x20 || cp == 0x7F || (cp >= 0x80 && cp < 0xA0)) return -1;
-        i += k;
-        chars++;
-    }
-    return chars;
-}
-
-int cn_name_verdict(const uint8_t *name, int len)
-{
-    if (!name || len <= 0) return CN_NAME_EMPTY;
-    if (len > CN_NAME_MAX_BYTES) return CN_NAME_TOO_LONG;
-    int chars = utf8_chars(name, len);
-    if (chars < 0) return CN_NAME_BAD;
-    return chars > CN_NAME_MAX_CHARS ? CN_NAME_TOO_LONG : CN_NAME_OK;
-}
-
-static int same_name(const CnSeat *s, const uint8_t *name, int len)
-{
-    return s->name_len == len && len > 0 && memcmp(s->name, name, (size_t)len) == 0;
-}
-
 static int cap_of(const CnMsg *m)
 {
     return m->dm ? CN_LOBBY_DM_CAP : CN_LOBBY_GROUP_CAP;
@@ -94,10 +52,10 @@ static int roster_ok(const CnMsg *m)
 {
     for (int s = 0; s < m->n_seats; s++) {
         const CnSeat *a = &m->seat[s];
-        if (cn_name_verdict(a->name, a->name_len) != CN_NAME_OK) return 0;
+        if (msg_seat_name_verdict(a->name, a->name_len) != CN_NAME_OK) return 0;
         for (int t = 0; t < s; t++) {
             if (!memcmp(a->tag, m->seat[t].tag, CN_TAG_LEN)) return 0;
-            if (same_name(&m->seat[t], a->name, a->name_len)) return 0;
+            if (msg_seat_same_name(&m->seat[t], a->name, a->name_len)) return 0;
         }
     }
     return 1;
@@ -119,7 +77,7 @@ static int lobby_rev_ok(const CnMsg *m)
 int cn_msg_new(CnMsg *m, const uint8_t seed[32], int dm, const uint8_t tag[CN_TAG_LEN],
                const uint8_t *name, int name_len)
 {
-    if (cn_name_verdict(name, name_len) != CN_NAME_OK) return CN_EROSTER;
+    if (msg_seat_name_verdict(name, name_len) != CN_NAME_OK) return CN_EROSTER;
     memset(m, 0, sizeof *m);
     m->phase = CN_PHASE_WAITING;
     m->dm = (uint8_t)(dm != 0);
@@ -159,10 +117,10 @@ int cn_msg_seat_of_tag(const CnMsg *m, const uint8_t tag[CN_TAG_LEN])
 
 int cn_msg_join(CnMsg *m, const uint8_t tag[CN_TAG_LEN], const uint8_t *name, int name_len)
 {
-    if (cn_name_verdict(name, name_len) != CN_NAME_OK) return CN_EROSTER;
+    if (msg_seat_name_verdict(name, name_len) != CN_NAME_OK) return CN_EROSTER;
     if (cn_msg_seat_of_tag(m, tag) >= 0) return CN_EROSTER;
     for (int s = 0; s < m->n_seats; s++)
-        if (same_name(&m->seat[s], name, name_len)) return CN_EROSTER;
+        if (msg_seat_same_name(&m->seat[s], name, name_len)) return CN_EROSTER;
     CnLobby l;
     cn_msg_lobby(m, &l);
     if (cn_lobby_offered(&l, -1) != CN_LOBBY_JOIN) return CN_EREFUSED;
@@ -252,7 +210,7 @@ static int same_msg(const CnMsg *a, const CnMsg *b)
     if (!started(a) && (a->left != b->left || a->starter != b->starter)) return 0;
     for (int s = 0; s < a->n_seats; s++)
         if (memcmp(a->seat[s].tag, b->seat[s].tag, CN_TAG_LEN)
-            || !same_name(&a->seat[s], b->seat[s].name, b->seat[s].name_len))
+            || !msg_seat_same_name(&a->seat[s], b->seat[s].name, b->seat[s].name_len))
             return 0;
     return !started(a) || (a->starter == b->starter && cn_hash(&a->game) == cn_hash(&b->game));
 }
@@ -473,35 +431,8 @@ int cn_msg_sender(const CnMsg *m)
 int cn_msg_resolve(const CnMsg *m, int record, int tag_seat, int is_dm, int i_sent,
                    const uint8_t *name, int name_len, int *by)
 {
-    const int n = m->n_seats;
-    int b = CN_BY_NONE, seat = -1;
-    if (record >= 0 && record < n) {
-        b = CN_BY_RECORD;
-        seat = record;
-    } else if (tag_seat >= 0 && tag_seat < n) {
-        b = CN_BY_TAG;
-        seat = tag_seat;
-    } else if (record != CN_REC_GONE) {
-        /* THE INFERENCES, only for a device with no word on this game: a
-         * record whose tag has no row says "not me" (pickemup D51), and a namesake who
-         * took the freed name, or the next joiner's bubble, cannot overrule it */
-        int s = -1, snd = cn_msg_sender(m);
-        if (i_sent == 1) s = snd;
-        else if (i_sent == 0 && is_dm && n == 2 && snd >= 0) s = 1 - snd;
-        /* THE LOBBY GATE: a named device gets a lobby seat by its name or not
-         * by inference at all */
-        if (s >= 0 && !started(m) && name && name_len > 0 && !same_name(&m->seat[s], name, name_len))
-            s = -1;
-        if (s >= 0) {
-            b = CN_BY_SENDER;
-            seat = s;
-        } else if (name && name_len > 0) {
-            for (int t = 0; t < n; t++)
-                if (same_name(&m->seat[t], name, name_len)) { b = CN_BY_NAME; seat = t; break; }
-        }
-    }
-    if (by) *by = b;
-    return seat;
+    return msg_seat_resolve(m->seat, m->n_seats, started(m), cn_msg_sender(m), record, tag_seat,
+                            is_dm, i_sent, name, name_len, by);
 }
 
 static int rec_n(int n)

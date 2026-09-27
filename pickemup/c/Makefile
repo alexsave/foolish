@@ -21,14 +21,16 @@ SHARED  := ../../shared/c
 SRC     := src/pk.c src/pk_deck.c src/pk_plan.c src/pk_view.c src/pk_lobby.c src/pk_say.c \
            src/pk_code.c src/pk_msg.c src/pk_beats.c src/pk_arrange.c i18n/strings_en.c \
            $(SHARED)/deal_rng.c $(SHARED)/sha256.c $(SHARED)/b32.c $(SHARED)/mixrad.c \
-           $(SHARED)/text_util/text_util.c $(SHARED)/wire_check/wire_check.c
+           $(SHARED)/text_util/text_util.c $(SHARED)/wire_check/wire_check.c \
+           $(SHARED)/msg_seat_tag/msg_seat_tag.c
 # THE BOTS ARE NOT IN THE APP (DECISION D63): only the bot test and the arena
 # link them, so SRC, the wasm objects and the xcframework never carry them.
 BOT_SRC := src/pk_belief.c src/pk_bot.c
 HDR     := $(wildcard src/*.h) i18n/keys.h tests/pk_check.h tests/pk_bot.h \
            $(SHARED)/deal_rng.h $(SHARED)/sha256.h $(SHARED)/b32.h $(SHARED)/mixrad.h \
            $(SHARED)/test/check.h $(SHARED)/test/twophone.h $(SHARED)/text_util/text_util.h \
-           $(SHARED)/wire_check/wire_check.h $(SHARED)/stats/seed_hash.h
+           $(SHARED)/wire_check/wire_check.h $(SHARED)/stats/seed_hash.h \
+           $(SHARED)/msg_seat_tag/msg_seat_tag.h
 
 # One binary per test file; each takes an optional scale argument.
 TESTS   := pk_test pk_rules_test pk_plan_test pk_say_test pk_fuzz pk_msg_test pk_twophone_test pk_beats_test pk_arrange_test pk_bot_test
@@ -69,6 +71,14 @@ WIRE_CHECK := $(WIRE_CHECK_SRC) $(SHARED)/wire_check/wire_check.h $(SHARED)/sha2
 build/wire_check_test: $(WIRE_CHECK) | build
 	$(CC) $(CFLAGS) $(WIRE_CHECK_SRC) -o $@
 
+# The shared seat identity's own test (shared/c/msg_seat_tag): the roster row,
+# the nickname verdict and the record / tag / sender / name resolver that
+# pk_msg.c's pk_msg_resolve hands its rows to.
+SEAT_TAG_SRC := $(SHARED)/msg_seat_tag/msg_seat_tag.c $(SHARED)/msg_seat_tag/msg_seat_tag_test.c
+SEAT_TAG := $(SEAT_TAG_SRC) $(SHARED)/msg_seat_tag/msg_seat_tag.h
+build/msg_seat_tag_test: $(SEAT_TAG) | build
+	$(CC) $(CFLAGS) $(SEAT_TAG_SRC) -o $@
+
 # The shared arena statistics' own test (shared/c/stats): mean and standard
 # error, the Wilson interval, and the per-game seed hash pk_arena.c seeds with.
 STATS_SRC := $(SHARED)/stats/stats.c $(SHARED)/stats/stats_test.c
@@ -76,10 +86,11 @@ STATS := $(STATS_SRC) $(SHARED)/stats/stats.h $(SHARED)/stats/seed_hash.h
 build/stats_test: $(STATS) | build
 	$(CC) $(CFLAGS) $(STATS_SRC) -lm -o $@
 
-run: $(addprefix build/,$(TESTS)) build/check_test build/text_util_test build/wire_check_test build/stats_test build/ios_smoke
+run: $(addprefix build/,$(TESTS)) build/check_test build/text_util_test build/wire_check_test build/msg_seat_tag_test build/stats_test build/ios_smoke
 	./build/check_test
 	./build/text_util_test
 	./build/wire_check_test
+	./build/msg_seat_tag_test
 	./build/stats_test
 	./build/pk_test
 	./build/pk_rules_test
@@ -110,13 +121,17 @@ build/asan_text_util_test: $(TEXT_UTIL) | build
 build/asan_wire_check_test: $(WIRE_CHECK) | build
 	$(CC) $(ASAN_FLAGS) $(WIRE_CHECK_SRC) -o $@
 
+build/asan_msg_seat_tag_test: $(SEAT_TAG) | build
+	$(CC) $(ASAN_FLAGS) $(SEAT_TAG_SRC) -o $@
+
 build/asan_stats_test: $(STATS) | build
 	$(CC) $(ASAN_FLAGS) $(STATS_SRC) -lm -o $@
 
-asan: $(addprefix build/asan_,$(TESTS)) build/asan_check_test build/asan_text_util_test build/asan_wire_check_test build/asan_stats_test build/asan_ios_smoke
+asan: $(addprefix build/asan_,$(TESTS)) build/asan_check_test build/asan_text_util_test build/asan_wire_check_test build/asan_msg_seat_tag_test build/asan_stats_test build/asan_ios_smoke
 	./build/asan_check_test
 	./build/asan_text_util_test
 	./build/asan_wire_check_test
+	./build/asan_msg_seat_tag_test
 	./build/asan_stats_test
 	./build/asan_pk_test
 	./build/asan_pk_rules_test

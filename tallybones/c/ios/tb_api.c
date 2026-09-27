@@ -71,12 +71,12 @@ void tb_api_me(const uint8_t *id, int n)
 
 void tb_api_nickname(const uint8_t *name, int n)
 {
-    if (!name || tb_name_verdict(name, n) != TB_NAME_OK) { S.nick_n = 0; return; }
+    if (!name || msg_seat_name_verdict(name, n) != TB_NAME_OK) { S.nick_n = 0; return; }
     memcpy(S.nick, name, (size_t)n);
     S.nick_n = n;
 }
 
-int tb_api_name_verdict(const uint8_t *name, int n) { return tb_name_verdict(name, n); }
+int tb_api_name_verdict(const uint8_t *name, int n) { return msg_seat_name_verdict(name, n); }
 
 void tb_api_seats_load(const uint8_t *bytes, int n)
 {

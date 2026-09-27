@@ -46,6 +46,7 @@
 #include "tb_lobby.h"
 #include "tb_plan.h"
 #include "tb_code.h"
+#include "../../../shared/c/msg_seat_tag/msg_seat_tag.h"
 
 #define TB_MSG_MAGIC      0xD7
 #define TB_MSG_FORMAT     1
@@ -58,9 +59,9 @@
 #define TB_FLAG_LEFT      0x02
 #define TB_FLAGS_KNOWN    (TB_FLAG_DM | TB_FLAG_LEFT)
 
-#define TB_TAG_LEN        9
-#define TB_NAME_MAX_BYTES 48          /* D23 */
-#define TB_NAME_MAX_CHARS 16          /* D23; the seat-name clipping cap */
+#define TB_TAG_LEN        MSG_SEAT_TAG_LEN
+#define TB_NAME_MAX_BYTES MSG_SEAT_NAME_MAX_BYTES  /* D23 */
+#define TB_NAME_MAX_CHARS MSG_SEAT_NAME_MAX_CHARS  /* D23; the seat-name clipping cap */
 #define TB_CHECK_LEN      2
 #define TB_HEAD_LEN       44
 #define TB_ROW_MAX        (TB_TAG_LEN + 1 + TB_NAME_MAX_BYTES)
@@ -88,11 +89,9 @@ _Static_assert(TB_MSG_MAX_TEXT - 1 < 5000, "the capped worst case fits MSMessage
 #define TB_EREFUSED -10  /* a lobby or seat verdict said no (not a wire error, D41) */
 #define TB_ESTAGED  -11  /* the bridge: this is my own staged, unsent bubble (T15) */
 
-typedef struct {
-    uint8_t tag[TB_TAG_LEN];          /* SHA-256("tallybones.seat.1|" || seed || id)[0..9) */
-    uint8_t name_len;                 /* 1..48 bytes of UTF-8                            */
-    uint8_t name[TB_NAME_MAX_BYTES];
-} TbSeat;
+/* A roster row, shared/c/msg_seat_tag's: the tag is
+ * SHA-256("tallybones.seat.1|" || seed || id)[0..9), then a 1..48-byte UTF-8 name. */
+typedef MsgSeat TbSeat;
 
 typedef struct {
     uint8_t  phase;                   /* TB_PHASE_*                                  */
@@ -118,13 +117,13 @@ void tb_tag(const uint8_t seed[32], const uint8_t *id, int id_len, uint8_t out[T
 /* The game's identity (D21): SHA-256("tallybones.game.1|" || seed)[0..8). */
 void tb_game_id(const uint8_t seed[32], uint8_t out[8]);
 
-/* A NICKNAME, JUDGED (foolish's msg_nickname_verdict). The host trims; the
- * caps are here. Rejects rather than truncates. */
-#define TB_NAME_OK       0
-#define TB_NAME_EMPTY    1
-#define TB_NAME_TOO_LONG 2
-#define TB_NAME_BAD      3     /* not UTF-8, or a control character */
-int tb_name_verdict(const uint8_t *name, int len);
+/* A NICKNAME, JUDGED (foolish's msg_nickname_verdict) by shared/c/msg_seat_tag's
+ * msg_seat_name_verdict. The host trims; the caps are there. Rejects rather
+ * than truncates. */
+#define TB_NAME_OK       MSG_SEAT_NAME_OK
+#define TB_NAME_EMPTY    MSG_SEAT_NAME_EMPTY
+#define TB_NAME_TOO_LONG MSG_SEAT_NAME_TOO_LONG
+#define TB_NAME_BAD      MSG_SEAT_NAME_BAD
 
 /* ------------------------------------------------------------ the lobby
  *
@@ -226,13 +225,13 @@ int tb_common_bubbles(const TbMsg *a, const TbMsg *b);
  * seat found by the sender witness counts only if the row carries my name
  * when I have one, because a lobby seat is claimed by a named join and an
  * inference cannot overrule "none of these rows is me". */
-#define TB_BY_NONE   0
-#define TB_BY_RECORD 1
-#define TB_BY_TAG    2
-#define TB_BY_SENDER 3
-#define TB_BY_NAME   4
+#define TB_BY_NONE   MSG_SEAT_BY_NONE
+#define TB_BY_RECORD MSG_SEAT_BY_RECORD
+#define TB_BY_TAG    MSG_SEAT_BY_TAG
+#define TB_BY_SENDER MSG_SEAT_BY_SENDER
+#define TB_BY_NAME   MSG_SEAT_BY_NAME
 
-#define TB_SENT_UNKNOWN (-1)
+#define TB_SENT_UNKNOWN MSG_SEAT_SENT_UNKNOWN
 
 /* The seat holding `tag`, or -1. */
 int tb_msg_seat_of_tag(const TbMsg *m, const uint8_t tag[TB_TAG_LEN]);
@@ -257,7 +256,7 @@ int tb_msg_resolve(const TbMsg *m, int record, int tag_seat, int is_dm, int i_se
 /* The seat my recorded tag holds in this roster; -1 when this device has no
  * record of this game; TB_REC_GONE when it has one and no row carries its
  * tag - I sat and I left, or this bubble is from before I joined (D51). */
-#define TB_REC_GONE  (-2)
+#define TB_REC_GONE  MSG_SEAT_REC_GONE
 int tb_rec_find(const uint8_t *recs, int n, const TbMsg *m);
 /* Record `seat`'s tag for this game at the front, replacing any record of
  * it; the oldest fall off. `recs` holds TB_REC_BYTES. The new byte count. */

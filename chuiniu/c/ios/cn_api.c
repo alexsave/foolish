@@ -73,12 +73,12 @@ void cn_api_me(const uint8_t *id, int n)
 
 void cn_api_nickname(const uint8_t *name, int n)
 {
-    if (!name || cn_name_verdict(name, n) != CN_NAME_OK) { S.nick_n = 0; return; }
+    if (!name || msg_seat_name_verdict(name, n) != CN_NAME_OK) { S.nick_n = 0; return; }
     memcpy(S.nick, name, (size_t)n);
     S.nick_n = n;
 }
 
-int cn_api_name_verdict(const uint8_t *name, int n) { return cn_name_verdict(name, n); }
+int cn_api_name_verdict(const uint8_t *name, int n) { return msg_seat_name_verdict(name, n); }
 
 void cn_api_seats_load(const uint8_t *bytes, int n)
 {

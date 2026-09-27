@@ -94,12 +94,12 @@ void pk_api_me(const uint8_t *id, int n)
 
 void pk_api_nickname(const uint8_t *name, int n)
 {
-    if (!name || pk_name_verdict(name, n) != PK_NAME_OK) { S.nick_n = 0; return; }
+    if (!name || msg_seat_name_verdict(name, n) != PK_NAME_OK) { S.nick_n = 0; return; }
     memcpy(S.nick, name, (size_t)n);
     S.nick_n = n;
 }
 
-int pk_api_name_verdict(const uint8_t *name, int n) { return pk_name_verdict(name, n); }
+int pk_api_name_verdict(const uint8_t *name, int n) { return msg_seat_name_verdict(name, n); }
 
 static const uint8_t ARR_MAGIC[4] = { 'P', 'K', 'A', '1' };
 
