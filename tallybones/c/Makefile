@@ -13,12 +13,12 @@
 CC      ?= cc
 CFLAGS  ?= -O2 -Wall -Wextra -Werror -std=c11
 SHARED  := ../../shared/c
-SRC     := src/tb.c src/tb_code.c src/tb_plan.c \
+SRC     := src/tb.c src/tb_code.c src/tb_plan.c src/tb_lobby.c src/tb_msg.c \
            $(SHARED)/deal_rng.c $(SHARED)/sha256.c $(SHARED)/b32.c $(SHARED)/mixrad.c
 HDR     := $(wildcard src/*.h) tests/tb_check.h \
            $(SHARED)/deal_rng.h $(SHARED)/sha256.h $(SHARED)/b32.h $(SHARED)/mixrad.h
 
-TESTS   := tb_test
+TESTS   := tb_test tb_msg_test
 
 all: $(addprefix build/,$(TESTS))
 
@@ -30,6 +30,7 @@ build/%: tests/%.c $(SRC) $(HDR) | build
 
 run: $(addprefix build/,$(TESTS))
 	./build/tb_test
+	./build/tb_msg_test 10
 
 ASAN_FLAGS := -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined \
               -Wall -Wextra -Werror -std=c11
@@ -39,6 +40,7 @@ build/asan_%: tests/%.c $(SRC) $(HDR) | build
 
 asan: $(addprefix build/asan_,$(TESTS))
 	./build/asan_tb_test
+	./build/asan_tb_msg_test 2
 
 clean:
 	rm -rf build

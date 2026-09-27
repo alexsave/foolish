@@ -250,7 +250,7 @@ static void t6_same_history(void)
     seed_wide(seed, 77);
     TbGame a, b;
     tb_new(&a, seed, 4, 1);
-    while (a.hist_n < 40) bot_step(&a, 0);
+    while (a.hist_n < 40 && bot_step(&a, 0)) {}
     for (int i = 0; i < 5; i++) {
         CHECK(tb_replay(&b, seed, 4, 1, a.hist, a.hist_n), "replay %d", i);
         CHECK(tb_hash(&a) == tb_hash(&b) && !memcmp(a.dice, b.dice, 5), "same history, same dice (%d)", i);
@@ -271,8 +271,8 @@ static void resident_on_roll1(TbGame *g, uint32_t k)
     tb_new(g, seed, 2 + (int)(k % 3), 0);
     /* a turn or two in, so the history is not empty */
     int turns = (int)(k % 3);
-    while (g->turns < turns) bot_step(g, 0);
-    while (g->roll != 1) bot_step(g, 0);
+    while (g->turns < turns && bot_step(g, 0)) {}
+    while (g->roll != 1 && bot_step(g, 0)) {}
 }
 
 static void t11_draft_unknown(void)
@@ -349,7 +349,7 @@ static void t11_no_value_field(void)
     for (uint32_t k = 0; k < 16; k++) {
         TbGame g;
         resident_on_roll1(&g, k);
-        while (g.hist_n < 30 && !g.over) bot_step(&g, 50);
+        while (g.hist_n < 30 && !g.over && bot_step(&g, 50)) {}
         /* the menu and the body are the same whatever the dice show */
         TbMove m1[TB_MENU_MAX], m2[TB_MENU_MAX];
         uint8_t b1[TB_CODE_MAX], b2[TB_CODE_MAX];
