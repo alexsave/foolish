@@ -37,7 +37,7 @@ The version state is `WAITING_FOR_REVIEW`.
 
 - [x] **set 2026-09-26** Build: 1.0(13) attached to version 1.0 (`PATCH appStoreVersions/relationships/build`), the latest VALID build.
   Export compliance needs no answer: build 13 reports `usesNonExemptEncryption = false`.
-- [ ] The two open device defects from `TESTFLIGHT_PLAN.md` section 9 (the `didStartSending`/`stageGeneration` staged-move bug and `again()` setting `freshSession = true`) were not re-verified as fixed in build 13 by this pass.
+- [x] The two device defects from `TESTFLIGHT_PLAN.md` section 9 (a sent move re-staged, and no live reply after Again) were fixed in 69cbefa7, shipped from 1.0(12), and the owner confirmed live arrival after Again on a device.
   The owner explicitly authorized shipping 1.0(13) as the build to submit; check `TESTFLIGHT_PLAN.md` section 9 against HEAD if these need to be confirmed fixed after the fact.
 
 ## Pricing and availability
