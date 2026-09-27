@@ -51,6 +51,12 @@ Swift reaches a header-only C module through its `module.modulemap` on `SWIFT_IN
 | `tools/textures/` | the bake tool: `regenerate_textures.sh <out-dir>` compiles `swift/Textures` with `GenerateTextures.swift` and writes the JPEGs; a product passes its own resources folder | CARDS, SHED |
 | `tools/check_ui_doc.py` | the UI design doc checker | UTTT, SHED |
 
+## Scripts (`scripts/`)
+
+| Path | What | Used by |
+| --- | --- | --- |
+| `scripts/ios_mac_tests.sh` | the Mac-side iOS gate: xcframework, xcodegen with every tracked entitlements file put back by `cp -p` (bytes and mtime), then each test scheme and each build scheme; the product is the env its own `ios/scripts/mac_tests.sh` sets before it `exec`s this one | CARDS, UTTT, SHED |
+
 ## Rig (`rig/lib/`)
 
 The measurement half of the simulator rig: frame windows (`window.sh`), MSE and bars (`mse.py`, `msecmp.py`, `bars.py`, `avgbar.py`, `newbar.py`, `rate.py`, `traces.py`), squares (`squares.py`, `squareplot.py`), `motionplot.py` for `tools/motion` tables, and `ax.py`, the accessibility driver.

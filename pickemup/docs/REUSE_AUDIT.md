@@ -421,6 +421,26 @@ Keep the long comment next to the code it explains, which means in the shared fi
 - Proof: P8 before and after, with identical counts and `git status --short -- '*.entitlements'` empty; run `--regen` once to exercise the restore.
 - Risk: low.
 
+DONE (S5).
+`shared/scripts/ios_mac_tests.sh` holds the body: `PRE_CMD`, `LIB_CMD` (or, under `--no-lib`, a check that every path in `XCFRAMEWORK` exists), xcodegen with the `cp -p` backup and restore of every tracked `*.entitlements` under the working directory (restored on an xcodegen failure too, through the EXIT trap), the regeneration trigger on `project.yml`'s mtime plus an optional `REGEN_WATCH` of source folders, `run_scheme` with `unpoison_derived_data`, and a refusal of a green test run that executed zero tests.
+The schemes are `TEST_SCHEMES` and `BUILD_SCHEMES`, each a list of `word=Scheme`, where the word is the command-line selector; with no selector every scheme runs, tests first.
+The long comments on the entitlements restore and the stale build description moved with the code, reworded so that no product is named; the product-specific reasons stay in each product's script.
+Each product's `ios/scripts/mac_tests.sh` keeps its usage text, `cd`s to its own folder, exports its env and `exec`s the shared script:
+- foolish: `unit=Foolish harness=FoolishHarness`, `app=FoolishMessagesApp`, `make -C c ios-lib`, `PRE_CMD` `tools/structgen/gen.sh` with its comment beside it; its diff is only this file.
+- pickemup: `unit=PickemupKitTests`, `app=PickemupMessagesApp`, and it now runs from `pickemup/` (the same files, relative paths shorter).
+- uttt, new: no test target, so `preview=UtttPreview app=UtttMessagesApp` are both builds.
+The only behaviour foolish's run gains is the zero-tests refusal, which pickemup's copy already had; foolish's schemes execute 853 and 29, so it cannot trip there.
+Proof:
+- `bash -n` passes on all four scripts; `--help` prints foolish's usage block; an unknown argument exits 2 as before.
+- foolish, new path, `DEST=... bash ios/scripts/mac_tests.sh --no-lib --regen` on the xcframework S4b wrote: FoolishTests 853 executed, 1 skipped, 0 failed; HarnessTests 29 executed, 0 failed; `FoolishMessagesApp` BUILD SUCCEEDED; the same counts as S4b and the "P8 after all lifts" baseline.
+- That `--regen` blanked `ios/FoolishApp/Foolish.entitlements` and the shared script restored it; `git status --short -- '*.entitlements'` printed nothing and all seven tracked entitlements files matched a `cp -p` backup in bytes and mtime.
+- uttt, `bash uttt/ios/scripts/mac_tests.sh` (lib built, project generated, "entitlements untouched"): `UtttPreview` and `UtttMessagesApp` BUILD SUCCEEDED.
+- pickemup, `bash pickemup/ios/scripts/mac_tests.sh`: `PickemupKitTests` 37 executed, 2 failed (`ActionCardCornerTests.testAnActionCardExposesItsSuitShape`, an `XCTUnwrap` at `LayoutTests.swift:101`, and `NoCountLeakTests.testNoOtherSeatsLabelCarriesADigit`, 0 other seats on the accessibility tree at `ReviewTests.swift:35`); the committed pre-S5 copy of the script, run with `--no-lib unit` on the same simulator, gave the same 37 executed and the same 2 failures, so they are not the script's (recorded under B2 in `ORCHESTRATION.md`); `--no-lib app` then built `PickemupMessagesApp`.
+- Mutation check, against a copy of the shared script driven by stub `xcodegen` (blanks the entitlements, optionally fails) and stub `xcodebuild` in a throwaway git repo: the unmutated script passed all eight checks (bytes and mtime restored after `--regen` and after a failing xcodegen, the restore reported, test-then-build order, the zero-tests refusal, a selector running only its scheme, an unknown argument, `--no-lib` with a missing `XCFRAMEWORK`); `cp` without `-p` in the restore, the EXIT trap removed, the zero-tests refusal removed, the `--no-lib` existence check removed and the test selector ignored each turned the matching check red.
+- P7: 150 tests, 128 pass, the 22 others the Postgres suites (ECONNREFUSED on :5432); `shared_is_shared` passes with the new script and the new `shared/README.md` row.
+
+Commits: S4b `18da9316`; S5 is the commit that adds this note.
+
 **S6 - rig parameterisation, in place.**
 - In `foolish/ios/Tools/rig/rig.sh`, rename `FOOLISH_SIM` / `_IDB` / `_OUT` / `_DD` / `_WORK` to `RIG_*`, keeping the old names as fallbacks.
 - In `lib/seed.py`, read `GROUP_ID` from `RIG_APP_GROUP`.

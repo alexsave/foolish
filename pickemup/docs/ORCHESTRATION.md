@@ -96,6 +96,9 @@ History:
   The device was shut down each time and is shut down now.
 - 2026-09-27 07:40: the orchestrator confirmed the hang is host-wide (B1).
 - 2026-09-27, later: the architecture review worker attempted no simulator.
+- 2026-09-27 about 12:00 local: the S5 worker ran the whole `PickemupKitTests` scheme on a fresh iPhone 17e (iOS 27.0) through `pickemup/ios/scripts/mac_tests.sh`: 37 executed, 2 failed, with no hang.
+  The failures: `ActionCardCornerTests.testAnActionCardExposesItsSuitShape` (`XCTUnwrap` nil at `LayoutTests.swift:101`) and `NoCountLeakTests.testNoOtherSeatsLabelCarriesADigit` (no other seat on the accessibility tree, `ReviewTests.swift:35`).
+  The pre-S5 script gave the same two, so they are the tests or the code, not the driver; they are owed a fix before "`PickemupKitTests` green" above can be ticked.
 
 ### B3: the filmed and measured animation take
 
