@@ -343,6 +343,16 @@ Found on the way: `mac_tests.sh` regenerates the project only when `project.yml`
 - Proof: P8, P7.
 - Risk: low.
 
+NOT DONE (S2): neither file is product-neutral, so a `git mv` would put code into `shared/` that only compiles inside FoolishKit.
+`Tokens.swift` takes foolish's `Suit` in `FColor.suitColor` (it reads `suit.isRed`), and its header and colours are the card game's identity ("Gosizdat Card Table", "Soviet red").
+`FSquareButton.swift` calls `Haptics`, `WoodFill`, `FPressStyle` and `onWoodText`, and its `SettingsHelpSquares` reads `FPrefs`, `FStrings` keys and `FActionBar.innerInset`; its `:89` comment names the Durak rules redesign.
+Making either neutral means splitting declarations out of a foolish file, which is more than the path-only diff foolish is allowed in a lift.
+The split this step needs: a neutral `shared/swift/DesignKit/Tokens.swift` holding `FSpace`, `FRadius`, `FMotion`, `FType` and `Color(hex:)`, with `FColor` and the text modifiers staying in foolish; and the square button taking its surface, press style and haptic as arguments.
+That is a code change in foolish, so it goes in its own reviewed step with P8 run before and after on a working simulator.
+Until then pickemup copies the numbers it needs.
+
+Commits: S0 `24372df8`, S1 `c3d99192`.
+
 **S3 - pickemup's own CI lane and a uttt C lane (no lift, but it protects every lift after it).**
 - Write `.github/workflows/pickemup.yml` on the shape of `.github/workflows/werewolf.yml`.
 It triggers on `pickemup/**`, `shared/c/**` and itself, and runs `make -C c tests tests-asan ios-smoke` from `pickemup/`.
