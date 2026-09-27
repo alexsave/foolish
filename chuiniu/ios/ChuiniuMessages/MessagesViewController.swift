@@ -173,6 +173,9 @@ final class MessagesViewController: MSMessagesAppViewController {
         // when it is exactly what went (BridgeKernel.sent)
         host.kernel.sent(url)
         markSent(url)
+#if DEBUG
+        ChuiniuDev.noteSent(url)
+#endif
         if message.url == draftURL { draftURL = nil; staged = nil }
         host.refresh()
         if presentationStyle != .compact || unbound { dismiss() }
@@ -310,6 +313,9 @@ final class MessagesViewController: MSMessagesAppViewController {
         message.summaryText = caption
         staged = url
         draftURL = message.url
+#if DEBUG
+        ChuiniuDev.noteStaged(url)
+#endif
 
         guard collapse, presentationStyle != .compact else {
             insert(message, generation: generation, in: conversation)

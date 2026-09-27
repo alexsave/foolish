@@ -152,4 +152,29 @@ final class BridgeKernelTests: XCTestCase {
         XCTAssertEqual(m.myDice, round2[1])
         XCTAssertEqual(m.menu != nil, loser == 1, "the menu is the opener's")
     }
+
+    /// The top of the table: after ten 5s on ten dice only ten 6s is left,
+    /// and the faces the kernel gives no raise read as above maxQuantity.
+    func testAFaceWithNoRaiseLeftIsAboveTheStepper() throws {
+        let alex = phone("Ace")
+        XCTAssertTrue(alex.newGame(dm: true, seed: Self.seed.reversed()))
+        let lobby = try XCTUnwrap(alex.stagedURL())
+        let bo = phone("Bee")
+        XCTAssertEqual(bo.adoptBubble(lobby), 0)
+        XCTAssertTrue(bo.join(name: "Bee"))
+        let start = try XCTUnwrap(bo.stagedURL())
+        let ace = phone("Ace")
+        XCTAssertEqual(ace.adoptBubble(start), 0)
+        XCTAssertTrue(ace.raise(quantity: 10, face: 5))
+        let top = try XCTUnwrap(ace.stagedURL())
+        ace.sent(top)
+        let bee = phone("Bee")
+        XCTAssertEqual(bee.adoptBubble(top), 0)
+        let menu = try XCTUnwrap(bee.table.menu)
+        XCTAssertEqual(menu.maxQuantity, 10)
+        XCTAssertEqual(Array(menu.minQuantityByFace[2...6]), [11, 11, 11, 11, 10], "only ten 6s is left")
+        XCTAssertFalse(BidPicker.raiseEnabled(quantity: 10, face: 4, menu: menu), "ten 4s is no raise")
+        XCTAssertTrue(BidPicker.raiseEnabled(quantity: 10, face: 6, menu: menu), "ten 6s is")
+        XCTAssertTrue(menu.callAllowed)
+    }
 }

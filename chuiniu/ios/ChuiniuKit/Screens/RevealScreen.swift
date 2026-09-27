@@ -19,9 +19,19 @@ public struct RevealScreen: View {
 
     public var body: some View {
         let start = host.kernel.motionStart
-        TimelineView(.animation(paused: start == nil || !playing)) { ctx in
-            let ms = start.map { Int(ctx.date.timeIntervalSince($0) * 1000) } ?? Int.max
-            content(host.kernel.revealMotion(atMs: ms) ?? RevealMotion(cupsUp: true, lit: .max, done: true))
+        Group {
+            // ONCE THE KERNEL SAYS DONE, THE SETTLED REVEAL, not the timeline's
+            // last frame: a paused TimelineView keeps the frame it last drew,
+            // which was seen on the simulator as a reveal stuck before its
+            // outcome line and its Next round
+            if let start, playing {
+                TimelineView(.animation) { ctx in
+                    let ms = Int(ctx.date.timeIntervalSince(start) * 1000)
+                    content(host.kernel.revealMotion(atMs: ms) ?? Self.settled)
+                }
+            } else {
+                content(Self.settled)
+            }
         }
         .task(id: start) {
             // stop sampling once the kernel says the reveal has run
@@ -34,6 +44,8 @@ public struct RevealScreen: View {
             playing = false
         }
     }
+
+    private static let settled = RevealMotion(cupsUp: true, lit: .max, done: true)
 
     @ViewBuilder private func content(_ motion: RevealMotion) -> some View {
         let t = host.table
@@ -112,6 +124,8 @@ struct RevealRow: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
                 .frame(width: 84, alignment: .leading)
+                // the name keeps its size when the loser's stamp takes room
+                .layoutPriority(1)
             if motion.cupsUp {
                 HStack(spacing: 6) {
                     ForEach(Array(dice.enumerated()), id: \.offset) { i, v in

@@ -18,6 +18,13 @@ public enum ChuiniuDev {
     /// rig never has to type into the name field (pickemup's).
     public static var nickname: String? { files.string("dev.nick") }
 
+    /// `dev.staged` and `dev.sent`: the newest link this extension put in the
+    /// input field and the newest one Messages sent, so a check outside the
+    /// simulator can decode exactly what the screen drew
+    /// (chuiniu/c/tests/cn_link_dump.c).
+    public static func noteStaged(_ url: URL) { files.write(url.absoluteString, to: "dev.staged") }
+    public static func noteSent(_ url: URL) { files.write(url.absoluteString, to: "dev.sent") }
+
     /// `dev.seat` (`rig.sh seat WORD`): WHO THIS DEVICE IS, for a game that
     /// needs two people on one simulator. Messages gives a conversation one
     /// local participant, so without it the invitation goes out and nobody

@@ -88,6 +88,31 @@ I8: `Design/Die.swift`, `Design/Cup.swift` and `Board/DiceRoll.swift` name no pr
 
 I9: bundle ids `cards.chuiniu` (container), `cards.chuiniu.msg`, `cards.chuiniu.kit`, `cards.chuiniu.kit.tests`, and the App Group `group.cards.chuiniu` asked for by Debug only, from a hand-set `DebugAppGroup.entitlements` that xcodegen cannot blank.
 
+I10: the reveal's motion is the kernel's: `RevealScreen` samples `cn_api_beats_frame` every display tick from the moment the plan was built, keeps the cups down until the LIFT beat, lights the counting dice one by one as the COUNT beat's `highlight_n` says (in seat order, a position and not a tally), and shows the loser's stamp and the outcome line only once the plan hands over to the next round's SHAKE.
+The roll of a seat's own new dice (`DiceRoll`) still runs on `RollBeats`: its shake, lift and tumble are one seat's decoration with no kernel event of its own beyond the SHAKE, and driving it from the frame would mean rebuilding the primitive around a timeline for no visible gain in a proof of concept.
+
+I11: `BridgeKernel` is the seam's one kernel and the only Swift that imports `CChuiniu`; every read goes through the generated readers and a stale pair (`cn_api_layout_hash` against `SG_LAYOUT_HASH`) reads nothing and refuses every adopt.
+Where the model's shape differs from the kernel's the mapping is a representation and says so: a face with no legal raise is 0 in `min_q_face` and `maxQuantity + 1` in `Menu`, and with no raise left `maxQuantity` is the dice on the table.
+
+I12: a move stages once it has rested, pickemup's collapse-after-settle cut to what the kernel exports: wait `cn_api_beats_staged`'s `total_ms`, collapse an expanded drawer, then insert; a lobby bubble (the invitation, a join, a start) goes in at once.
+Chui Niu has no `settle_ms` of its own, so there is no extra lead or tail.
+
+I13: R8's revealed table is kept by a look, never a move: after a call every phone with dice gets Next round (the kernel's `BTN_NEXT`), which only switches this phone to the next round's table (its own new dice, and the opener's menu); nothing is staged or sent, and the look is dropped by the next adopt.
+
+I14: the seat records and the nickname live in the extension's own `UserDefaults`, as pickemup's do, because Release asks for no App Group; they are the kernel's `CN_API_REC_BYTES` bytes and a string, flushed after every call that can dirty them.
+A device with no nickname creates a lobby under the kernel's fallback name ("Player 1") and first names itself in the Join field; there is no separate name gate in the proof of concept.
+
+I15: two people on one simulator, for the rig: in a Debug build the App Group file `dev.seat` (`rig.sh seat WORD`) makes the extension that person, with identity bytes, nickname and seat records of its own, exactly as `cn_twophone_test.c`'s `be()` switches phone, and Messages' sender fact is withheld because the one real participant says nothing about the person.
+A Debug build also writes the newest staged and sent links to `dev.staged` and `dev.sent`, so `tests/cn_link_dump.c` can decode exactly what the screen drew.
+
+I16: the host's fixed labels are four new entries in the kernel's string table, read by key through `cn_api_string` (a bridge read, no kernel logic): `NAME_PROMPT`, `BTN_NEXT`, `STAMP_LOSES`, `STAMP_OUT`.
+The scaffold's `quantity`, `face`, `wins` and `lobbyAlone` words were drawn by no screen and are gone; a seat alone in its lobby shows `LOBBY_WAITING`.
+
+I17: the compact drawer's table is a short board: under 280pt the other seats go in one row along the top, the bid plate takes the rest of that row (at least 100pt, so at five or more other seats it is not drawn and the headline alone carries the turn), and my band is 64pt, one row of dice with the name and turn bar; the roll's cup may stand above that row.
+The first run inside Messages showed the ellipse's seat and the plate drawn over each other there, which `DiceTableLayoutTests` did not see because it measured expanded boards only; it now measures three short ones too.
+
+I18: the bubble's picture shows my staged raise (`TableModel.stagedBid`), because the committed table does not hold it until it is sent, and every name on it is the seat's bare name, since a bubble is seen by every phone and "(You)" belongs to the lobby screen's own row (`SeatModel.lobbyRow`).
+
 ## Orchestration (owner: the orchestrator; O1 onward)
 
 O1: the proof of concept is built in three parallel packages (kernel and wire; iOS scaffold with the dice and cup primitive; legal, README and CI) and one tie-together package that wires the screens to the bridge and proves it on a simulator inside Messages.

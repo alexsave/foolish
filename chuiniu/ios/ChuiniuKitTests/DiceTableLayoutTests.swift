@@ -24,6 +24,8 @@ final class DiceTableLayoutTests: XCTestCase {
                     if n <= 4 { XCTAssertFalse(plate.isNull, "\(tag): the plate has room") }
                     XCTAssertTrue(plate.isNull || CGRect(origin: .zero, size: board).contains(plate),
                                   "\(tag): the plate \(plate) is on the board")
+                    XCTAssertTrue(plate.isNull || plate.width >= 100,
+                                  "\(tag): a drawn plate is wide enough to read (\(plate.width))")
                     let bounds = CGRect(origin: .zero, size: board)
                     for i in 0..<n {
                         XCTAssertFalse(frames[i].isEmpty, "\(tag): seat \(i) is placed")
