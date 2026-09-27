@@ -11,7 +11,11 @@
 #   make -C pickemup/c swift-smoke the bridge driven from Swift through the readers (a Mac)
 #   make -C pickemup/c clean
 CC      ?= cc
-CFLAGS  ?= -O2 -Wall -Wextra -Werror -std=c11
+# THE WARNINGS ARE ONE LIST for every build below (DECISION D53): proven clean
+# under Apple clang and under Linux gcc 13 (the CI lane's compiler), whose
+# -Wconversion warns on narrowing that clang does not.
+WARN    := -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror -std=c11
+CFLAGS  ?= -O2 $(WARN)
 SHARED  := ../../shared/c
 SRC     := src/pk.c src/pk_deck.c src/pk_plan.c src/pk_view.c src/pk_lobby.c src/pk_say.c \
            src/pk_code.c src/pk_msg.c src/pk_beats.c src/pk_arrange.c i18n/strings_en.c \
@@ -49,8 +53,7 @@ run: $(addprefix build/,$(TESTS)) build/ios_smoke
 	./build/pk_arrange_test
 	./build/ios_smoke
 
-ASAN_FLAGS := -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined \
-              -Wall -Wextra -Werror -std=c11
+ASAN_FLAGS := -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined $(WARN)
 
 build/asan_%: tests/%.c $(SRC) $(HDR) | build
 	$(CC) $(ASAN_FLAGS) $(SRC) $< -o $@
@@ -77,7 +80,7 @@ wasm: | build
 	@mkdir -p build/wasm
 	@for s in $(WASM_SRC); do \
 	  o=build/wasm/$$(basename $$s .c).o; \
-	  $(WASM_CC) --target=wasm32 -Oz -nostdlib -ffreestanding -std=c11 -Wall -Wextra -Werror \
+	  $(WASM_CC) --target=wasm32 -Oz -nostdlib -ffreestanding $(WARN) \
 	    -isystem $(SHARED)/wasm/include -c $$s -o $$o || exit 1; \
 	done
 	@echo "wasm32 objects in build/wasm/"
@@ -90,7 +93,7 @@ wasm: | build
 IOS_MIN_VERSION := 17.0
 IOS_SRC    := $(SRC) ios/pk_api.c ios/pk_lay.c
 IOS_HDR    := $(HDR) ios/include/pk_api.h ios/pk_api_layout.h
-IOS_CFLAGS := -O2 -Isrc -Iios -Iios/include -Wall -Wextra -Werror -std=c11
+IOS_CFLAGS := -O2 -Isrc -Iios -Iios/include $(WARN)
 
 build/ios_smoke: $(IOS_SRC) $(IOS_HDR) ios/pk_api_smoke.c | build
 	$(CC) $(CFLAGS) -Iios/include $(IOS_SRC) ios/pk_api_smoke.c -lm -o $@

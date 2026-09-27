@@ -103,7 +103,7 @@ static void t_vocabulary(void)
     float mx_spring = 0, mx_stamp = 0, prev = 0;
     int mono = 1;
     for (int i = 1; i <= 100; i++) {
-        float x = i / 100.0f;
+        float x = (float)i / 100.0f;
         float f = pk_ease(PK_EASE_FLIGHT, x);
         if (f < prev) mono = 0;
         prev = f;
@@ -758,7 +758,7 @@ static void t_real_games(int games)
         seed_wide(seed, 90000u + (uint32_t)k);
         int n = 2 + k % 7;
         pk__new(&g, seed, n, 0, 0);
-        RS = 0x1234567ull + (uint64_t)k;
+        RS = 0x1234567ull + (uint64_t)(unsigned)k;
         /* the sender's view of the draft as it grows: A at each action */
         int prev_n = 0, a_counts[PK_BK_COUNT] = { 0 };
         for (int step = 0; step < 3000 && !(g.over && !g.b_open); step++) {
@@ -852,7 +852,7 @@ static void t_budget(void)
             pk__new(&g, seed, n, 0, 0);
             int m = pk_plan(&g, viewer, -1, 0, EV, EV_CAP);
             pk_beats_build(EV, m, 0, viewer, n, PK_BEATS_OPEN, 0, 0, 0, &B1);
-            uint32_t from = st(nth(&B1, PK_BK_RIFFLE, 0, 0)), to = 0;
+            uint32_t from = (uint32_t)st(nth(&B1, PK_BK_RIFFLE, 0, 0)), to = 0;
             for (int i = 0; i < B1.n; i++)
                 if (B1.beat[i].ev_kind == PK_EV_DEAL && B1.beat[i].start_ms + B1.beat[i].dur_ms > to)
                     to = B1.beat[i].start_ms + B1.beat[i].dur_ms;
