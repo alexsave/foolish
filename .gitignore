@@ -42,7 +42,7 @@ yarn-error.log*
 .cursor
 
 
-# Local Claude Code agent worktrees / local state — ignored, EXCEPT the shared
+# Local agent worktrees and local state - ignored, EXCEPT the shared
 # project hook below (installs binaryen so `make wasm-bots` can run wasm-opt).
 .claude/*
 !.claude/settings.json
