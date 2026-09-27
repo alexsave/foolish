@@ -81,6 +81,9 @@ static void test_raise(void)
     CHECK(cn_is_legal(&G, 1, bid(4, 2)), "higher quantity, any face");
     int q, f;
     CHECK(cn_min_raise(&G, &q, &f) && q == 3 && f == 5, "the lowest raise is three 5s (%d %d)", q, f);
+    CHECK(cn_min_quantity(&G, 2) == 4 && cn_min_quantity(&G, 4) == 4, "faces up to 4 need four");
+    CHECK(cn_min_quantity(&G, 5) == 3 && cn_min_quantity(&G, 6) == 3, "faces above 4 stay at three");
+    CHECK(cn_min_quantity(&G, 1) == 0 && cn_min_quantity(&G, 7) == 0, "no face 1 or 7");
     CnMove m[200];
     int n = cn_legal(&G, m, 200);
     CHECK(m[0].q == 0 && m[1].q == 3 && m[1].f == 5, "the call first, then the lowest raise");
@@ -89,6 +92,7 @@ static void test_raise(void)
     G.bid_q = 15; G.bid_f = 6;
     CHECK(!cn_min_raise(&G, &q, &f), "nothing above fifteen 6s");
     CHECK(cn_legal(&G, m, 200) == 1 && m[0].q == 0, "the call alone");
+    for (int face = 2; face <= 6; face++) CHECK(cn_min_quantity(&G, face) == 0, "no face %d above the top", face);
 }
 
 static void test_call(void)

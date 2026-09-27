@@ -48,6 +48,12 @@ int main(int argc, char **argv)
             for (int i = 1 + cn_can_call(&G); i < nm; i++)
                 CHECK(cn_rank(menu[i].q, menu[i].f) > cn_rank(menu[i - 1].q, menu[i - 1].f), "ranked");
             CHECK(G.bid_q == 0 ? !cn_can_call(&G) : 1, "game %d: no call on an opening", k);
+            /* the picker's table: for each face, the least legal quantity */
+            for (int f = 2; f <= 6; f++) {
+                int least = 0;
+                for (int q = G.total; q >= 1; q--) if (cn_is_legal(&G, G.turn, bid(q, f))) least = q;
+                CHECK(cn_min_quantity(&G, f) == least, "game %d face %d: least %d, the table %d", k, f, least, cn_min_quantity(&G, f));
+            }
 
             H = G;
             CnMove m = bot_move(&G);

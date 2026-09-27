@@ -46,6 +46,7 @@ void cn_view(const CnGame *g, int viewer, CnView *v)
             v->min_f = (uint8_t)f;
             v->max_q = g->total;
         }
+        for (int face = CN_FACE_LO; face <= CN_FACES; face++) v->min_q_face[face] = (uint8_t)cn_min_quantity(g, face);
     }
 
     v->call_seat = g->call_seat;
@@ -59,6 +60,8 @@ void cn_view(const CnGame *g, int viewer, CnView *v)
         v->call_true = g->call_loser == g->call_seat;
         memcpy(v->shown_n, g->shown_n, sizeof v->shown_n);
         for (int s = 0; s < g->n; s++) sorted(v->shown + s * CN_START_DICE, g->shown[s], g->shown_n[s]);
+        for (int i = 0; i < CN_MAX_DICE; i++)
+            v->shown_counts[i] = v->shown[i] && (v->shown[i] == g->call_f || v->shown[i] == CN_WILD);
     } else {
         v->call_bidder = v->call_loser = CN_SEAT_NONE;
     }

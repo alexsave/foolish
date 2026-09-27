@@ -128,10 +128,14 @@ int  cn_api_can_raise(int quantity, int face);
 /* CnApiTable: phase, roster, my seat, the lobby's offer, my staged move. */
 const void *cn_api_table(void);
 /* CnView of the COMMITTED game for `viewer`: my own dice (sorted), every
- * seat's count, the standing bid, the menu (can_raise, min_q/min_f, max_q,
- * can_call) when it is my turn, and the newest call's reveal (shown_*,
- * revealed while it is the news). A staged move never changes it. NULL
- * before a game has started. */
+ * seat's count, the standing bid, the menu when it is my turn (can_raise,
+ * can_call, the lowest raise min_q/min_f, max_q, and min_q_face[f], the
+ * least legal quantity for each face 2..6 or 0: Raise is legal at (q, f)
+ * exactly when min_q_face[f] != 0 and min_q_face[f] <= q <= max_q, so the
+ * picker never ranks two bids), and the newest call's reveal (shown_n,
+ * shown, shown_counts[i] = 1 for a die that counts toward the bid; revealed
+ * while it is the news). A staged move never changes it. NULL before a game
+ * has started. */
 const void *cn_api_view(int viewer);
 /* CnApiEvents of committed moves (from, to]; from = -1 includes the start.
  * NULL for a range that does not fit or a game that has not started. */

@@ -40,6 +40,10 @@ typedef struct {
     uint8_t  can_call;
     uint8_t  min_q, min_f;              /* the lowest legal raise                   */
     uint8_t  max_q;                     /* the highest quantity a bid may name      */
+    /* the least legal quantity for each face 2..6 (0: none on that face);
+     * entries 0 and 1 unused. Raise is legal at (q, f) exactly when
+     * min_q_face[f] and min_q_face[f] <= q <= max_q (DECISIONS I3) */
+    uint8_t  min_q_face[CN_FACES + 1];
 
     /* the newest call, public; revealed while its reveal is the table's news
      * (phase REVEALED or OVER) */
@@ -52,6 +56,8 @@ typedef struct {
     uint8_t  call_true;                 /* the bid stood: the caller lost           */
     uint8_t  shown_n[CN_MAX_SEATS];
     uint8_t  shown[CN_MAX_DICE];        /* seat s at s*5, sorted within the seat    */
+    uint8_t  shown_counts[CN_MAX_DICE]; /* 1: that shown die counts toward the call's
+                                           bid, its face or a wild 1 (DECISIONS I4) */
 
     uint8_t  all[CN_MAX_DICE];          /* CN_VIEW_ALL only, seat s at s*5, sorted  */
 } CnView;

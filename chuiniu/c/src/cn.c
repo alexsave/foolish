@@ -108,6 +108,13 @@ int cn_min_raise(const CnGame *g, int *q, int *f)
     return 1;
 }
 
+int cn_min_quantity(const CnGame *g, int f)
+{
+    if (g->phase == CN_PH_OVER || f < CN_FACE_LO || f > CN_FACES) return 0;
+    int q = g->bid_q == 0 ? 1 : f > g->bid_f ? g->bid_q : g->bid_q + 1;
+    return q <= g->total ? q : 0;
+}
+
 int cn_legal(const CnGame *g, CnMove *out, int cap)
 {
     if (g->phase == CN_PH_OVER) return 0;

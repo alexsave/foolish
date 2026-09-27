@@ -120,6 +120,11 @@ int  cn_is_legal(const CnGame *g, int seat, CnMove m);
  * none (the standing bid is the top one, only the call is left). */
 int  cn_min_raise(const CnGame *g, int *q, int *f);
 
+/* The least quantity the seat on turn may bid on face `f` (2..6), or 0
+ * when no bid on that face is legal (R2, R7). The bid picker's table: a
+ * host never ranks two bids (DECISIONS I3). */
+int  cn_min_quantity(const CnGame *g, int f);
+
 /* May the seat on turn call? Never on a round's opening bid (R3, R5). */
 int  cn_can_call(const CnGame *g);
 

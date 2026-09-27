@@ -136,6 +136,8 @@ static void test_view_menu_reveal(void)
     cn_apply(&G, 0, bid(4, 6));
     cn_view(&G, 1, &v);
     CHECK(v.can_call && v.can_raise && v.min_q == 5 && v.min_f == 2, "above four 6s is five 2s");
+    for (int f = 2; f <= 6; f++) CHECK(v.min_q_face[f] == 5, "face %d from five (%d)", f, v.min_q_face[f]);
+    CHECK(v.min_q_face[0] == 0 && v.min_q_face[1] == 0, "no bid on 0 or 1");
     CHECK(v.bid_q == 4 && v.bid_f == 6 && v.bidder == 0, "the standing bid");
     H = G;
     cn_apply(&G, 1, call_move());
@@ -144,6 +146,12 @@ static void test_view_menu_reveal(void)
         CHECK(v.revealed && v.call_seat == 1 && v.call_bidder == 0 && v.call_q == 4 && v.call_f == 6,
               "seat %d: the call is public", s);
         CHECK(v.call_count == cn_count(&H, 6) && v.call_true == (cn_count(&H, 6) >= 4), "seat %d: its count", s);
+        int lit = 0;
+        for (int i = 0; i < CN_MAX_DICE; i++) {
+            lit += v.shown_counts[i];
+            CHECK(v.shown_counts[i] == (v.shown[i] == 6 || v.shown[i] == 1), "seat %d: die %d counts exactly when a 6 or a 1", s, i);
+        }
+        CHECK(lit == v.call_count, "seat %d: the flags are the count (%d)", s, lit);
         for (int t = 0; t < 3; t++) {
             CHECK(v.shown_n[t] == 5, "seat %d sees seat %d's five", s, t);
             uint8_t want[5];
