@@ -46,6 +46,26 @@ public enum PkLayout {
         return CGRect(x: CGFloat(x), y: CGFloat(y), width: CGFloat(w), height: CGFloat(h))
     }
 
+    /// What a dragged hand card let go at `point` does (pk_lay_drop, I38): in
+    /// the hand row it rearranges and never plays, on the pile it plays.
+    public enum Drop: Equatable { case none, hand, pile }
+
+    public static func drop(board: CGSize, collapse: CGFloat, handBox: CGFloat, at point: CGPoint) -> Drop {
+        switch pk_lay_drop(Float(board.width), Float(board.height), Float(collapse), Float(handBox),
+                           Float(point.x), Float(point.y)) {
+        case Int32(PK_DROP_HAND): return .hand
+        case Int32(PK_DROP_PILE): return .pile
+        default:                  return .none
+        }
+    }
+
+    /// The slot a dragged card whose centre is at `centre` (the hand box's
+    /// coordinates) asks for (pk_lay_hand_nearest, FHandFan.slotIndex).
+    public static func handNearest(count n: Int, width: CGFloat, maxRows: Int, centre: CGPoint) -> Int? {
+        let s = Int(pk_lay_hand_nearest(Int32(n), Float(width), Int32(maxRows), Float(centre.x), Float(centre.y)))
+        return s >= 0 ? s : nil
+    }
+
     public static func collapse(viewHeight: CGFloat) -> CGFloat { CGFloat(pk_lay_collapse(Float(viewHeight))) }
     public static func maxRows(viewHeight: CGFloat) -> Int { Int(pk_lay_max_rows(Float(viewHeight))) }
 

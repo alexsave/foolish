@@ -44,8 +44,8 @@ int  pk_api_name_verdict(const uint8_t *name, int n);
  * seat records (17 bytes each, the newest 256 games), then this phone's own
  * arrangement of its hand in its newest 8 games (PK_API_ARR_BYTES, O9; the
  * block is left off while there is none, and bytes without it still load). */
-#define PK_API_ARR_BYTES (8 + 8 * (10 + 3 * 104) + 4)
-#define PK_API_REC_BYTES (17 * 256 + PK_API_ARR_BYTES)
+#define PK_API_ARR_BYTES 2588        /* 8 + 8 x (10 + 3 x 104) + 4, asserted in pk_api.c */
+#define PK_API_REC_BYTES 6940        /* 17 x 256 + PK_API_ARR_BYTES: a plain number for Swift */
 void pk_api_seats_load(const uint8_t *bytes, int n);
 int  pk_api_seats_dirty(void);
 int  pk_api_seats_save(uint8_t *out, int cap);    /* length, or -1; clears dirty */

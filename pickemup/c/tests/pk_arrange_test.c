@@ -517,13 +517,18 @@ static void test_bridge(void)
     int with_n = pk_api_seats_save(alex_rec, PK_API_REC_BYTES);
     pk_api_seats_load(alex_rec, with_n - PK_API_ARR_BYTES);        /* the seat records alone */
     CHECK(pk_api_read(link_) == 0, "Bo's bubble again, on a phone that never dragged");
-    ident = 1;
-    v = me_view();
-    for (int i = 0; i < v->my_n; i++) ident &= v->my_slot[i] == i;
-    CHECK(ident, "no arrangement: acquisition order");
+    /* no view before the play: the hand was never read on this phone */
     CHECK(pk_api_draw() && pk_api_play(pos, wild ? 1 : PK_NO_SUIT), "the same draw and the same position");
     CHECK(pk_api_text(plain_text, sizeof plain_text) > 0 && strcmp(plain_text, arranged_text) == 0,
           "byte for byte the link the arranged phone wrote");
+    TEST("bridge: an undo on a phone that never read its hand before the play");
+    v = me_view();
+    CHECK(v->my_n == n1 - 1, "the play is staged");
+    CHECK(pk_api_undo(), "and undone");
+    ident = 1;
+    v = me_view();
+    for (int i = 0; i < v->my_n; i++) ident &= v->my_slot[i] == i;
+    CHECK(ident, "no drags: acquisition order, the card back at position %d", pos);
     pk_api_seats_load(alex_rec, with_n);
     CHECK(pk_api_read(link_) == 0 && pk_api_draw(), "back on the arranged phone");
     CHECK(pk_api_play_slot(back_s, wild ? 1 : PK_NO_SUIT) && me_view()->top == card, "the same play by slot");

@@ -130,6 +130,9 @@ public final class TableModel: ObservableObject {
         public var dir = PK_DIR_CW
         public var turn: Int?
         public var hand: [Int] = []
+        /// Where hand position i is drawn: the phone's own arrangement, the
+        /// kernel's (PkView.my_slot / PkBeatFrame.my_slot, O9).
+        public var slot: [Int] = []
         public var unseen: Set<Int> = []
         public var stampHold = 0
         public var fansEmpty = 0
@@ -155,6 +158,7 @@ public final class TableModel: ObservableObject {
             s.dir = f.dir
             s.turn = f.turn == PK_SEAT_NONE ? nil : f.turn
             s.hand = f.myHand
+            s.slot = f.mySlot
             s.unseen = Set(f.myUnseen.enumerated().filter { $0.element != 0 }.map(\.offset))
             s.stampHold = f.stampHold
             s.fansEmpty = f.fansEmpty
@@ -172,6 +176,7 @@ public final class TableModel: ObservableObject {
         s.dir = v.dir
         s.turn = v.over == 0 ? v.turn : nil
         s.hand = v.myHand
+        s.slot = v.mySlot
         return s
     }
 
@@ -247,6 +252,17 @@ public final class TableModel: ObservableObject {
     public func tap(_ pos: Int) {
         guard pickerFor == nil else { return }
         selected = selected == pos ? nil : pos
+    }
+
+    /// A drag within the hand row (O9, I38): the card at hand position `pos`
+    /// goes to arranged slot `slot`. The phone's own order, the kernel's to
+    /// keep; the selection and every staged thing name the card by its
+    /// position, which a rearrange never changes.
+    @discardableResult
+    public func arrange(_ pos: Int, toSlot slot: Int) -> Bool {
+        guard let v = view, pos < v.mySlot.count, Pk.arrangeMove(from: v.mySlot[pos], to: slot) else { return false }
+        refresh()
+        return true
     }
 
     /// Play the card at `pos`: dropped on the pile, or selected then Play.

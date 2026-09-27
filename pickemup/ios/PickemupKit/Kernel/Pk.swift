@@ -157,6 +157,17 @@ public enum Pk {
     /// Back to the draft's floor (D9): the X on the staged bubble.
     public static func cancel() -> Bool { pk_api_cancel() == 1 }
     public static func canPlay(_ pos: Int) -> Bool { pk_api_can_play(Int32(pos)) == 1 }
+
+    // MARK: my own arrangement of my hand (O9, IOS_DECISIONS I38)
+
+    /// Drag the card drawn at slot `from` to slot `to`. The phone's own order,
+    /// kept in its record by the kernel and never sent.
+    public static func arrangeMove(from: Int, to: Int) -> Bool { pk_api_arrange_move(Int32(from), Int32(to)) == 1 }
+    /// The hand position drawn at `slot` (the kernel's map, never Swift's).
+    public static func arrangedPos(_ slot: Int) -> Int? {
+        let p = Int(pk_api_arranged_pos(Int32(slot)))
+        return p >= 0 ? p : nil
+    }
     /// A play at `pos` asks for a suit (a wild that is not the last card).
     public static func isWild(_ pos: Int) -> Bool { pk_api_is_wild(Int32(pos)) == 1 }
 

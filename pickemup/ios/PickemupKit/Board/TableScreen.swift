@@ -87,7 +87,6 @@ public struct TableScreen: View {
         let pc = PkLayout.pileCentre(board: board, collapse: collapse)
         let deckAt = PkLayout.deckOrigin(board: board, collapse: collapse)
         // every zone is the kernel's (pk_lay_zone, I31)
-        let pileRect = PkLayout.zone(.pileDrop, board: board, collapse: collapse, handBox: layout.boxHeight)
         let band = PkLayout.zone(.drawBand, board: board, collapse: collapse, handBox: layout.boxHeight)
         let pillRow = PkLayout.zone(.pills, board: board, collapse: collapse, handBox: layout.boxHeight)
         let toastAt = PkLayout.zone(.toast, board: board, collapse: collapse, handBox: layout.boxHeight)
@@ -169,14 +168,25 @@ public struct TableScreen: View {
                 .frame(width: pillRow.width, height: pillRow.height)
                 .offset(x: pillRow.minX, y: pillRow.minY)
 
-            HandRow(cards: hand, layout: layout, selected: model.selected, dimmed: { model.dimmed($0) },
+            // where a dragged card lets go is the kernel's (pk_lay_drop, I38): the
+            // row rearranges and never plays, the pile plays
+            let drop = { (p: CGPoint) in
+                PkLayout.drop(board: board, collapse: collapse, handBox: layout.boxHeight, at: p)
+            }
+            HandRow(cards: hand, slotOf: shown.slot, layout: layout, selected: model.selected,
+                    dimmed: { model.dimmed($0) },
                     hidden: model.pickerFor, unseen: shown.unseen,
                     onTap: { model.tap($0) },
-                    onDragMoved: { _, p in pileHot = pileRect.contains(p) },
+                    onDragMoved: { _, p in pileHot = drop(p) == .pile },
                     onDragEnded: { pos, p in
                         pileHot = false
-                        if pileRect.contains(p) { model.play(pos) }
-                    })
+                        if drop(p) == .pile { model.play(pos) }
+                    },
+                    inRow: { drop($0) == .hand },
+                    nearest: { PkLayout.handNearest(count: hand.count, width: handW, maxRows: rows, centre: $0) },
+                    // a position names a card of the SETTLED hand only: while a
+                    // plan's frame shows a different hand, a drag rearranges nothing
+                    onReorder: { pos, to in shown.hand == model.hand && model.arrange(pos, toSlot: to) })
                 .frame(width: handW)
                 .offset(x: PkLayout.handPadding, y: handTop)
 
