@@ -16,7 +16,8 @@ struct StatusCorner: View {
     let onUnsay: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        // UI.html: .strip margin 5 above and 1 below, .ss margin-top 3
+        VStack(alignment: .leading, spacing: 0) {
             Text(headline)
                 .font(.system(size: 15, weight: .bold))
                 .onFeltText()
@@ -25,6 +26,7 @@ struct StatusCorner: View {
             if !strip.isEmpty {
                 StagedStrip(strip: strip, onUnsay: onUnsay)
                     .pkAnchor("strip")
+                    .padding(.top, 5).padding(.bottom, 1)
             }
             if !subline.isEmpty {
                 Text(subline)
@@ -32,6 +34,7 @@ struct StatusCorner: View {
                     .onFeltText(Color(hex: 0xCFD8CF))
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 3)
             }
         }
         .frame(width: 128, alignment: .topLeading)
@@ -50,18 +53,19 @@ struct StagedStrip: View {
     var body: some View {
         HStack(spacing: 4) {
             if strip.draws > 0 {
-                PkCard(card: nil, size: CGSize(width: 12, height: 17))
+                PkCard(card: nil, size: CGSize(width: 12, height: 17), chip: true)
                 Text("\u{00D7}\(strip.draws)").font(.system(size: 11, weight: .heavy)).foregroundColor(Color(hex: 0xFFF1C9))
             }
             if strip.reshuffled {
-                Image(systemName: "arrow.left.arrow.right")
-                    .font(.system(size: 11, weight: .bold)).foregroundColor(Color(hex: 0xE3C985))
+                RiffleMark()
+                    .stroke(Color(hex: 0xE3C985), style: StrokeStyle(lineWidth: 2 * 14 / 24, lineCap: .round, lineJoin: .round))
+                    .frame(width: 14, height: 14)
             }
             if let card = strip.played {
                 if strip.draws > 0 || strip.reshuffled {
                     Text("\u{00B7}").font(.system(size: 11.5, weight: .bold)).foregroundColor(Color(hex: 0x9C8B5E))
                 }
-                PkCard(card: card, size: CGSize(width: 12, height: 17), chosen: strip.chosen)
+                PkCard(card: card, size: CGSize(width: 12, height: 17), chosen: strip.chosen, chip: true)
             }
             if strip.said {
                 Text(Pk.string("CALL_WORD"))
@@ -156,5 +160,18 @@ struct Toast: View {
             .background(Capsule().fill(Color.black.opacity(0.62)))
             .fixedSize()
             .allowsHitTesting(false)
+    }
+}
+
+/// The strip's reshuffle mark, UI.html `svg.rf` (24-unit box): two opposed
+/// hooked arrows, `M4 7h11l-3-3 M20 17H9l3 3`.
+private struct RiffleMark: Shape {
+    func path(in r: CGRect) -> Path {
+        let s = r.width / 24
+        func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: r.minX + x * s, y: r.minY + y * s) }
+        var path = Path()
+        path.move(to: p(4, 7)); path.addLine(to: p(15, 7)); path.addLine(to: p(12, 4))
+        path.move(to: p(20, 17)); path.addLine(to: p(9, 17)); path.addLine(to: p(12, 20))
+        return path
     }
 }

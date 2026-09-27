@@ -4,6 +4,7 @@
 // bridge carries them (a wrong enum mapping, a lost slot) into what is drawn.
 
 import CPickemup
+import SwiftUI
 import XCTest
 @testable import PickemupKit
 
@@ -82,6 +83,55 @@ final class CardFaceTests: XCTestCase {
         XCTAssertTrue(wild4.isWild)
         XCTAssertEqual(wild4.label, "+4")
         XCTAssertNil(CardFace(PK_CARD_HIDDEN), "a hidden card is a back")
+    }
+}
+
+/// O6: an action card says the shape its corners print, through the same
+/// `cornerSuit` that draws them, so colour is never the only way to its suit.
+@MainActor
+final class ActionCardCornerTests: XCTestCase {
+    // MUTATE: CardFace.cornerSuit answers nil for Skip -> "a skip on squares carries the square".
+    func testAnActionCardExposesItsSuitShape() throws {
+        let faces = (0..<256).compactMap { CardFace($0) }
+        let skip = try XCTUnwrap(faces.first { $0.rank == PK_R_SKIP && $0.suit == 2 })
+        let three = try XCTUnwrap(faces.first { $0.rank == 3 && $0.suit == 2 })
+        let square = Pk.string("SUIT_ONE_2")
+        XCTAssertFalse(square.isEmpty, "the kernel names the shape")
+
+        let skipEl = try XCTUnwrap(hostedCard(skip.id))
+        XCTAssertEqual(skipEl.accessibilityValue, square, "a skip on squares carries the square")
+        XCTAssertEqual(skipEl.accessibilityLabel, Pk.words(PK_API_W_CARD, skip.id), "the card by the kernel's word")
+
+        let threeEl = try XCTUnwrap(hostedCard(three.id))
+        XCTAssertEqual(threeEl.accessibilityValue ?? "", "", "a number card's shape is its centre glyph, no corner mark")
+    }
+
+    /// The one accessibility element a pile-sized card presents, hosted in a window.
+    private func hostedCard(_ id: Int) -> NSObject? {
+        let host = UIHostingController(rootView: PkCard(card: id, size: CGSize(width: 82, height: 115), fullFace: true))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        host.view.frame = window.bounds
+        host.view.layoutIfNeeded()
+        defer { window.isHidden = true }
+        return firstElement(host.view) { !($0.accessibilityLabel ?? "").isEmpty }
+    }
+
+    private func firstElement(_ root: NSObject, where ok: (NSObject) -> Bool) -> NSObject? {
+        var queue: [NSObject] = [root]
+        var seen = 0
+        while !queue.isEmpty, seen < 500 {
+            let o = queue.removeFirst(); seen += 1
+            if o !== root, o.isAccessibilityElement, ok(o) { return o }
+            if let els = o.accessibilityElements as? [NSObject] { queue += els }
+            let n = o.accessibilityElementCount()
+            if n != NSNotFound, n > 0 {
+                for i in 0..<n { if let e = o.accessibilityElement(at: i) as? NSObject { queue.append(e) } }
+            }
+            if let v = o as? UIView { queue += v.subviews }
+        }
+        return nil
     }
 }
 

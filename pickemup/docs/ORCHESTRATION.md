@@ -45,6 +45,11 @@ Alternative: stage a bubble after every draw.
 Why: the kernel refuses to seal a turn mid-draw (rules 1.5), and Messages cannot take a staged bubble back, so a staged half-turn would be a lie in the transcript.
 Confidence: high.
 
+DECISION O8: two pre-existing failures in foolish's own proof set were fixed on this branch rather than only reported: the UBSan left-shift overflow in `foolish/c/src/replay.c` (`replay_b32_encode`, now accumulating in `unsigned`, output bytes identical, two `i32.shr_s` opcodes become `i32.shr_u` in the uncommitted wasm build) and the `import CFoolish` lint failure in `TableWireTests.swift` (test-only, introduced by this branch's own commit 5f5211ce under Xcode 27).
+Alternative: leave foolish untouched and list both under "Found on the way".
+Why: the owner's rule is that lint and test failures found on the way get fixed, and both fixes leave every committed artefact and every golden byte-identical; the replay.c change is the one place this branch touches foolish's shipped C, so it is called out here for veto.
+Confidence: high for the lint fix, medium for the replay.c fix only because it is shipped code.
+
 ## Order of work
 
 1. Design in parallel: rules and kernel doc, UI.html surface study with motion grid, reuse audit.
@@ -69,6 +74,16 @@ BLOCKED B2: the Pick 'Em Up extension has not yet been seen inside Messages.
 On 2026-09-27 at about 06:12 UTC, on iPhone 17e `FC7586CF`, `PickemupKitTests` ran green (17 tests) and every test was mutation-checked there (`pickemup/ios/TESTS_MUTATED.md`), and the app installed and registered with LaunchServices, but `simctl launch com.apple.MobileSMS` (the rig's `stage`) hung for over five minutes, the B1 symptom again, so no screenshot of the lobby, table, drag, picker or catch exists yet.
 The device was shut down.
 Next: on a healthy simulator, `source pickemup/ios/Tools/rig.env`, then the rig's `stage`, `open` and screenshots of each screen; and on a real phone, prove that dragging a card DOWN off the deck (U24, IOS_DECISIONS I9) never collapses the drawer.
+B2, second worker, 2026-09-27 06:29 to 06:56 UTC: the same iPhone 17e `FC7586CF` (iOS 26.3) never finished booting, so Messages, the rig and the fallback host were all out of reach.
+Three boots (06:28, 06:37 after a shutdown and a 10 second wait, and 06:53) each stopped on the black data-migration spinner with `simctl bootstatus` at "Waiting on System App" for 90 seconds and more (the first was watched for 7 minutes).
+Inside the device SpringBoard, backboardd and the data migrator were all running, and the migrator logged "System build version unchanged from 23D8133. Migration not necessary", so this is not a migration plugin; `log` itself answered `getpwuid_r did not find a match for uid 501`, which points at the host's user session under CoreSimulator, the B1 family.
+The device was shut down each time and is shut down now.
+What landed without a simulator, compile-checked (`PickemupKitTests` build-for-testing and the `PickemupMessagesApp` build both succeed): O6 (IOS_DECISIONS I27) with its test `ActionCardCornerTests`, the strip chips (I28), and the UI.html fixes listed in `SIM_VERIFICATION.md`.
+Still owed on a healthy simulator, in this order: `PickemupKitTests` green, the O6 test's red run (its MUTATE line), `mac_tests.sh` counts, then the full two-seat game and the eleven screenshots `SIM_VERIFICATION.md` lists; the host most likely needs the reboot B1 asked for.
+
+BLOCKED B2 confirmed by the orchestrator at 2026-09-27 07:40: a freshly created iPhone 17 on iOS 27.0 also never finished booting within 100 seconds, so the hang is host-wide and not tied to a device's state (an erased iPhone 17e hung the same way earlier).
+The `getpwuid_r did not find a match for uid 501` line the previous worker saw points at the host's directory services, which only a reboot resets.
+Every simulator proof in this pass (foolish's P8 after the lifts, the pickemup Messages run and screenshots, `pickemup/ios/scripts/mac_tests.sh` counts, the red run of `ActionCardCornerTests`, the filmed animation take) is therefore owed and listed in `pickemup/docs/SIM_VERIFICATION.md`, ready to run after the reboot.
 
 ## Found on the way (not pickemup's to fix in this pass)
 

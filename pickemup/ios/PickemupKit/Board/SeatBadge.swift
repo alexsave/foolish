@@ -8,7 +8,7 @@
 // backs while the game is played, whatever the seat holds, and no numeral is
 // drawn on it. At the end the reveal rows are the hand, face up.
 //
-// The fan is the Caught you! target (U13): pressed to .95 with a brass ring
+// The fan is the Caught you! target (U13): pressed to .95 with an amber ring
 // and a red tip while staged. Whose turn it is shows as a brass bar under
 // the fan and the name in brass (U5).
 
@@ -114,15 +114,30 @@ struct StampSlot: View {
                 case .out:    return (Pk.string("STAMP_OUT"), FColor.win, Color(hex: 0x241804))
                 }
             }()
+            // UI.html `.said`: one face for all four (800 11px, .06em), a 5pt
+            // tail pointing up at the fan, 2pt below the slot's top (`.rrow`)
             Text(word)
-                .font(.system(size: stamp == .last || stamp == .out ? 10 : 11, weight: .heavy))
-                .tracking(stamp == .last || stamp == .out ? 1.4 : 0.2)
+                .font(.system(size: 11, weight: .heavy))
+                .tracking(11 * 0.06)
                 .foregroundColor(ink)
                 .padding(.horizontal, 9).padding(.vertical, 6)
                 .background(RoundedRectangle(cornerRadius: 9).fill(fill))
+                .overlay(alignment: .top) { StampTail().fill(fill).frame(width: 10, height: 5).offset(y: -5) }
                 .shadow(color: .black.opacity(0.45), radius: 4, y: 2)
                 .fixedSize()
-                .padding(.top, 4)
+                .padding(.top, 2)
         }
+    }
+}
+
+/// The stamp's speech tail, UI.html `.said::before`: a 10 x 5 triangle, point up.
+private struct StampTail: Shape {
+    func path(in r: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: r.midX, y: r.minY))
+        p.addLine(to: CGPoint(x: r.maxX, y: r.maxY))
+        p.addLine(to: CGPoint(x: r.minX, y: r.maxY))
+        p.closeSubpath()
+        return p
     }
 }

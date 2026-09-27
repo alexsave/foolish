@@ -20,8 +20,7 @@
 // fixture agrees with whatever the kernel says).
 
 import XCTest
-import CFoolish   // FIO_CARD_NONE is a C macro; a test imports the module it reads, it does not lean on FoolishKit's
-@testable import FoolishKit
+@testable import FoolishKit   // CFoolish stays inside sdk/swift/ (lint_architecture.sh), tests included
 
 final class TableWireTests: XCTestCase {
 
@@ -65,7 +64,8 @@ final class TableWireTests: XCTestCase {
         let n = r.u8()
         XCTAssertGreaterThan(n, 0, "the fixture carries no vectors")
         var out: [Vector] = []
-        let none = Int(FIO_CARD_NONE)
+        // The bare-cover byte, as the SDK's own no-cover pair spells it.
+        let none = Int(TableWire.pairs([BattleView(attack: Card(s: 0, v: 0), defense: nil)])[2])
         for _ in 0..<n {
             let nameLen = r.u8()
             let name = String(decoding: r.bytes(nameLen), as: UTF8.self)
