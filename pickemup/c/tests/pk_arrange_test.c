@@ -107,6 +107,11 @@ static void test_module(void)
     CHECK(!pk_arr_receipts(&g, 3, rc) && !pk_arr_receipts(&g, -1, rc), "a seat off the table has none");
 
     TEST("empty reads in acquisition order");
+    static PkView pv;
+    pk_view(&g, 0, &pv);
+    int kident = pv.my_n == 7;
+    for (int i = 0; i < pv.my_n; i++) kident &= pv.my_slot[i] == i;
+    CHECK(kident, "the kernel's own view: slot i is position i (D54)");
     pk_arr_reset(&a, id, 0);
     CHECK(a.n == 0 && a.seat == 0 && !memcmp(a.id, id, 8), "reset keeps the game and the seat");
     pk_arr_slots(&a, g.hand[0], g.hand_n[0], slot);
@@ -155,6 +160,11 @@ static void test_module(void)
     CHECK(pk_arr_get(&back, b) && back.n == a.n && back.seat == a.seat && !memcmp(back.id, a.id, 8)
           && !memcmp(back.card, a.card, a.n) && !memcmp(back.receipt, a.receipt, a.n * sizeof a.receipt[0]),
           "an arrangement survives its bytes");
+    PkArr late = a;
+    late.receipt[0] = 300;                                        /* a long game: past one byte */
+    pk_arr_put(&late, b);
+    CHECK(pk_arr_get(&back, b) && back.receipt[0] == 300, "a receipt past 255 survives its bytes (%d)", back.receipt[0]);
+    pk_arr_put(&a, b);
     uint8_t bad[PK_ARR_LEN];
     memcpy(bad, b, sizeof bad);
     bad[10 + 3] = bad[10];                                        /* entry 1 is entry 0's card */
@@ -395,6 +405,20 @@ static void test_bridge(void)
     send_();
     hold(1);
     pk_api_join_start();
+    /* Bo's hand came from the deal Bo made, never from a read: the fold that
+     * gives a played card its entry is the one just before the play (D56) */
+    TEST("bridge: a play straight after my own deal, the hand never read");
+    int bo_pos = -1;
+    for (int p = 1; p < 7 && bo_pos < 0; p++) if (pk_api_can_play(p)) bo_pos = p;
+    CHECK(bo_pos >= 0, "Bo has a card to play past position 0");
+    if (bo_pos >= 0) {
+        CHECK(pk_api_play(bo_pos, pk_api_is_wild(bo_pos) ? 0 : PK_NO_SUIT), "Bo plays position %d", bo_pos);
+        CHECK(me_view()->my_n == 6 && pk_api_undo(), "the view after the play, then undo");
+        const PkView *bv = me_view();
+        int back_ident = 1;
+        for (int i = 0; i < bv->my_n; i++) back_ident &= bv->my_slot[i] == i;
+        CHECK(bv->my_n == 7 && back_ident, "the card is back at position %d, the hand in acquisition order", bo_pos);
+    }
     send_();
     hold(0);
 
@@ -578,6 +602,25 @@ static void test_bridge(void)
     /* bytes from before O9: seat records only */
     pk_api_seats_load(saved, saved_n - PK_API_ARR_BYTES);
     CHECK(pk_api_read(arranged_text) == 0 && ((const PkApiTable *)pk_api_table())->by == PK_BY_RECORD, "a record with no block still seats me");
+
+    TEST("bridge: a slot's position folds the hand in first");
+    /* the card at slot 0 recorded as some other acquisition of it (a card
+     * that left and came back after a reshuffle): the fold must put it on
+     * the right before a play by slot reads a position, view read or not */
+    memcpy(bad, saved, (size_t)saved_n);
+    blk = bad + saved_n - PK_API_ARR_BYTES;
+    int stale = -1;
+    for (int e = 0; e < blk[8 + 9] && stale < 0; e++) if (blk[8 + 10 + 3 * e] == want.c[0]) stale = e;
+    CHECK(stale >= 0 && want.n >= 2, "slot 0's card has its entry in the record");
+    if (stale >= 0) blk[8 + 12 + 3 * stale] ^= 0x01;                 /* receipt + 256: no acquisition of this hand */
+    sum = fnv32(blk, PK_API_ARR_BYTES - 4);
+    for (int i = 0; i < 4; i++) blk[PK_API_ARR_BYTES - 4 + i] = (uint8_t)(sum >> (8 * i));
+    pk_api_seats_load(bad, saved_n);
+    CHECK(pk_api_read(arranged_text) == 0, "read with the stale entry");
+    int last_pos = pk_api_arranged_pos(want.n - 1);                  /* before any view */
+    v = me_view();
+    CHECK(last_pos >= 0 && v->my_hand[last_pos] == want.c[0] && v->my_slot[last_pos] == want.n - 1,
+          "a card back as a new acquisition is at the right end, for a play by slot too (at %d)", last_pos);
 
     TEST("bridge: frames of a plan are laid out by the arrangement");
     pk_api_seats_load(saved, saved_n);
