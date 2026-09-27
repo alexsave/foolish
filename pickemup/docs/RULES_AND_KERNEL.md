@@ -1311,6 +1311,7 @@ A bubble's caption is its most important clause, then the next if it fits (`PK_C
 | `HEAD_YOU_WIN` | You win |
 | `HEAD_WINS` | {who} wins |
 | `SUB_MATCH` | {suits}, or a {rank} |
+| `SUB_MATCH_AN` | {suits}, or an {rank} (pk_say picks it when the rank word starts with a vowel sound: "8", or a word starting a, e, i, o or u) |
 | `SUB_MATCH_WILD` | {suits} |
 | `SUB_PLAYABLE_NONE` | Nothing plays. Draw |
 | `SUB_ORDER` | {a}, then {b}, then you |

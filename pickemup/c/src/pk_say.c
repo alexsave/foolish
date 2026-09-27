@@ -354,6 +354,16 @@ static int rank_word(uint8_t top, char *out, int cap)
     }
 }
 
+/* Whether a rank word takes SUB_MATCH_AN: it starts with a vowel sound when
+ * read aloud. Of the digits only 8 does ("eight"); a word does when it starts
+ * with a vowel letter ("ace"). "+2" reads "plus two" and keeps SUB_MATCH. */
+static int rank_takes_an(const char *w)
+{
+    char c = w[0];
+    if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+    return c == '8' || c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u';
+}
+
 int pk_say_subline(const PkGame *g, int viewer, const char *const *names, char *out, int cap)
 {
     int me = viewer >= 0 && viewer < g->n ? viewer : -1;
@@ -370,7 +380,9 @@ int pk_say_subline(const PkGame *g, int viewer, const char *const *names, char *
             char rank[16];
             if (rank_word(top, rank, sizeof rank) < 0) return -1;
             const char *kv[] = { "suits", suits_word(g->live_suit), "rank", rank, 0 };
-            return pk_fill(out, cap, pk_is_wild(top) ? T(SUB_MATCH_WILD) : T(SUB_MATCH), kv);
+            return pk_fill(out, cap, pk_is_wild(top)       ? T(SUB_MATCH_WILD)
+                                   : rank_takes_an(rank) ? T(SUB_MATCH_AN)
+                                                         : T(SUB_MATCH), kv);
         }
         return text_put(out, cap, v.can_draw ? T(SUB_PLAYABLE_NONE) : "");
     }

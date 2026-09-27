@@ -103,7 +103,11 @@
     X(HEAD_STAGED,         0, 0)                                                 \
     X(HEAD_YOU_WIN,       20, 0)                                                 \
     X(HEAD_WINS,           0, 0)                                                 \
-    X(SUB_MATCH,           0, 0)                                                 \
+    X(SUB_MATCH,           0, 0)  /* "{suits}, or a {rank}"                   */ \
+    X(SUB_MATCH_AN,        0, 0)  /* "{suits}, or an {rank}": SUB_MATCH before\
+                                   * a rank word that pk_say reads as a vowel   \
+                                   * sound ("8", or a word starting a e i o u);  \
+                                   * a language with one article repeats SUB_MATCH */ \
     X(SUB_MATCH_WILD,      0, 0)                                                 \
     X(SUB_PLAYABLE_NONE,   0, 0)                                                 \
     X(SUB_ORDER,           0, 0)  /* "{a}, then {b}, then you"                */ \

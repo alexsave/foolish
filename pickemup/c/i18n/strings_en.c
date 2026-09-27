@@ -68,6 +68,7 @@ const char *const PK_STRINGS_EN[PK_K_COUNT] = {
     [PK_K_HEAD_YOU_WIN       ] = "You win",
     [PK_K_HEAD_WINS          ] = "{who} wins",
     [PK_K_SUB_MATCH          ] = "{suits}, or a {rank}",
+    [PK_K_SUB_MATCH_AN       ] = "{suits}, or an {rank}",
     [PK_K_SUB_MATCH_WILD     ] = "{suits}",
     [PK_K_SUB_PLAYABLE_NONE  ] = "Nothing plays. Draw",
     [PK_K_SUB_ORDER          ] = "{a}, then {b}, then you",

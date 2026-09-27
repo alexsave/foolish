@@ -232,6 +232,18 @@ static void t_screen(void)
     CHECK(!strcmp(out, "Waiting on Bo"), "another seat: \"%s\"", out);
     pk_say_subline(&g, 1, NAMES, out, sizeof out);
     CHECK(!strcmp(out, "circles, or a 6"), "what matches: \"%s\"", out);
+    {
+        /* the article follows the word: "an 8", "a 7" (pk_play showed "or a 8") */
+        PkGame h;
+        table(&h, 2, num(0, 8, 0), 0);
+        give(&h, 0, num(0, 3, 0)); give(&h, 0, num(1, 4, 0)); give(&h, 1, num(2, 5, 0));
+        pk_say_subline(&h, 0, NAMES, out, sizeof out);
+        CHECK(!strcmp(out, "circles, or an 8"), "an 8: \"%s\"", out);
+        table(&h, 2, num(1, 7, 0), 1);
+        give(&h, 0, num(1, 3, 0)); give(&h, 0, num(2, 4, 0)); give(&h, 1, num(2, 5, 0));
+        pk_say_subline(&h, 0, NAMES, out, sizeof out);
+        CHECK(!strcmp(out, "triangles, or a 7"), "a 7: \"%s\"", out);
+    }
     pk_say_subline(&g, 2, NAMES, out, sizeof out);
     CHECK(!strcmp(out, "Bo, then you"), "who is before you: \"%s\"", out);
     pk_say_subline(&g, 0, NAMES, out, sizeof out);
