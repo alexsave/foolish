@@ -99,3 +99,17 @@ The names Perudo and Dudo, pirate theming and any published product's cup or box
 
 - A real trademark search on "Chui Niu" and on "Liar's Dice" as a store name.
 - App Store Connect, signing, TestFlight and store metadata: skipped for the proof of concept on purpose.
+
+## Bot (owner: the bot worker; B1 onward)
+
+B1: the bot is offline only: `chuiniu/c/bot/` (a C module, its tests and the arena), built by its own `chuiniu/c/bot/Makefile` against the kernel's sources by relative path.
+Nothing of it is in the bridge, the lobby or `chuiniu/ios/`, and it decides from a `CnSeen` (my dice, the counts, the moves, the hands shown at past calls), never from a `CnGame`.
+
+B2: the opponent model is a quantal response: a seat raises or calls with probability proportional to exp(8 x the chance the claim is true given its own hand and the prior for everyone else), normalised over every legal option.
+Each seat's belief is the exact posterior over its hand as a multiset of faces (252 at five dice), not a per-face weight table, because 1s are wild and so one die moves every face at once.
+Rollouts are level 1: I read the other seats' rollout bids, the rollout opponents judge by their own dice and the prior and read nobody's bids; the arena measured every other reading as worse (`BOT.md`).
+
+B3: the claim question "is this bid true right now" is answered in closed form, never by sampling: the direct binomial sum for the flat p (`cn_claim_prob`), and the exact convolution of the other seats' posterior count distributions when the belief refines it (`cn_belief_claim`); the call's value is that closed form, and only raises are rolled out.
+
+B4: the only baseline is uniform over the legal options (the owner's call); the bot's own ablations, each one switch away from it, are what measure the opponent model.
+Design, constants and the measured numbers: `chuiniu/docs/BOT.md`.
