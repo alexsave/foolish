@@ -382,6 +382,19 @@ It calls the macro twice (core and bots) and keeps `SG_LAYOUT_HASH` and `archive
   - P8 without `--no-lib`.
 - Risk: low for S4, medium for S4b.
 
+DONE (S4) for uttt and pickemup; S4b (foolish) is not started.
+`shared/tools/ios_xcframework.mk` holds `IOS_XCFRAMEWORK(name, sources, cflags, headers dir, min iOS, xcframework path)` and its one-slice helper `IOS_XCF_SLICE`, lifted from uttt's `ios-lib`.
+Both products `include ../../shared/tools/ios_xcframework.mk` and their `ios-lib` is one `$(call ...)`; pickemup keeps its `SG_LAYOUT_HASH` target flag and prerequisites around the call and prints the layout on a line of its own.
+A `$$(cat build/layout/ios.hash)` in the flags reaches the shell unexpanded through the call, and `make -n ios-lib` prints the same compile lines as before.
+Proof, with `make -C <product>/c ios-lib` before and after, then `xcrun nm -g | sort` and `lipo -info` on every `.a` in the xcframework:
+- uttt: `ios-arm64/libuttt.a` (arm64, 540 lines) and `ios-arm64_x86_64-simulator/libuttt.a` (x86_64 arm64, 537 lines); the diff of the nm outputs is empty, the lipo lines are identical, and so is the file list.
+- pickemup: `ios-arm64/libpickemup.a` (arm64, 394 lines) and `ios-arm64_x86_64-simulator/libpickemup.a` (x86_64 arm64, 392 lines); the diff of the nm outputs is empty, the lipo lines are identical, and so is the file list.
+- pickemup's `build/layout/ios.hash` is `0x177c2c55` before and after (`cmp`).
+- `Info.plist` holds the same lines, but the order of its two `AvailableLibraries` entries differs: that is `xcodebuild -create-xcframework` itself, which wrote the simulator entry first twice and the device entry first once in three runs of the same recipe.
+- `make -C uttt/c ios-smoke run` passes; `make -C pickemup/c ios-lib swift-smoke run` passes (`swift bridge: 25 checks, 0 failed`, `bridge: 1269 checks, 0 failed`).
+- P7: 150 tests, 128 pass; the 22 others are the Postgres suites (ECONNREFUSED on :5432).
+Note: the PATH on this Mac finds Homebrew's binutils `nm` first, which cannot read Mach-O; use `xcrun nm`.
+
 **S5 - the shared Mac test driver, `shared/scripts/ios_mac_tests.sh`.**
 - Move the generic body of `foolish/ios/scripts/mac_tests.sh` into a script driven by a product env:
   - the entitlements backup and `cp -p` restore;
