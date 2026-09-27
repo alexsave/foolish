@@ -1,0 +1,25 @@
+{
+  "name": "uttt-web",
+  "private": true,
+  "//": "uttt.live: a finished game's replay link opens here. The board is drawn by the uttt kernel compiled to wasm (../c, `make wasm-web`), a build output the pre-hooks make, never committed.",
+  "scripts": {
+    "wasm": "make -s -C ../c wasm-web",
+    "predev": "npm run wasm",
+    "dev": "next dev",
+    "prebuild": "npm run wasm",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "16.2.6",
+    "react": "19.2.6",
+    "react-dom": "19.2.6"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "^5.4.0"
+  }
+}

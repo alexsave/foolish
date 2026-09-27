@@ -255,13 +255,8 @@ public enum FTextures {
     /// The dev felt override, re-read every call (deliberately uncached - the
     /// whole point is to swap it under a running extension).
     private static func devFeltOverride() -> UIImage? {
-        guard let dir = FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: "group.cards.foolish.msg"),
-              let name = try? String(contentsOf: dir.appendingPathComponent("dev.felt"),
-                                     encoding: .utf8)
-        else { return nil }
-        let file = dir.appendingPathComponent(name.trimmingCharacters(in: .whitespacesAndNewlines))
-        guard let data = try? Data(contentsOf: file) else { return nil }
+        guard let file = MessageDevBoard.feltFile,
+              let data = try? Data(contentsOf: file) else { return nil }
         return UIImage(data: data, scale: 1)
     }
     #endif

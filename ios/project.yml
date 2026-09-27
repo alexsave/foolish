@@ -28,6 +28,12 @@ settings:
     MARKETING_VERSION: "1.1"
     CURRENT_PROJECT_VERSION: "74"
     SWIFT_VERSION: "5.9"
+    # CMotionRuler, the debug ruler's palette and sizes once in C
+    # (shared/c/motion_ruler): every target, because a target that imports the
+    # Swift module compiling MotionRuler.swift must find the C module it imports.
+    # CMsgStage (shared/c/msg_stage), the insert-staging decisions, the same way
+    # for MessagesKit/InsertStaging.swift.
+    SWIFT_INCLUDE_PATHS: $(inherited) $(SRCROOT)/../shared/c/motion_ruler $(SRCROOT)/../shared/c/msg_stage
     # Milestone F: signing enabled. Xcode manages the certificate + provisioning
     # profiles automatically against the registered App IDs (cards.foolish.app,
     # cards.foolish.app.MessagesExtension) and App Group (group.cards.foolish).

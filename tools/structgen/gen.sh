@@ -273,7 +273,7 @@ fi
 [ "${1:-}" = "--verify-wasm" ] || exit 0
 
 verify_link() {
-  "$CLANG" --target=wasm32 -nostdlib -ffreestanding -O1 -I"$here/test" -I"$sg/test" -I"$root/c/src" -isystem "$root/c/wasm/include" \
+  "$CLANG" --target=wasm32 -nostdlib -ffreestanding -O1 -I"$here/test" -I"$sg/test" -I"$root/c/src" -isystem "$root/c/wasm/include" -isystem "$root/shared/c/wasm/include" \
     -D_Thread_local= -DMAX_LOG_PAIRS=64 -DMAX_LEGAL_MOVES=4096 -DMAX_MOVE_CARDS=28 -DMAX_BATTLES=64 \
     -Wl,--no-entry -Wl,--export-all "$here/test/verify.c" -o "$1"
 }

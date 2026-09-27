@@ -50,7 +50,9 @@
 import Foundation
 
 public enum MessageDevBoard {
-    private static let appGroup = "group.cards.foolish.msg"
+    /// Every dev file lives here. Finding, reading, writing and parsing them
+    /// is shared/swift/MessagesKit/DevFlags.swift; the keys below are ours.
+    private static let dev = DevFlags(group: "group.cards.foolish.msg")
     private static let flagFile = "dev.fatboard"
     private static let claimFile = "dev.claimed"
     private static let stagedFile = "dev.staged"
@@ -81,14 +83,7 @@ public enum MessageDevBoard {
     /// Split out of `seededPayload` so the claim receipt below can echo the
     /// SAME characters back, rather than a re-encoding of the bytes that a
     /// shell comparison would then have to agree with about case.
-    private static var seededHex: String? {
-        guard let dir = FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: appGroup),
-              let raw = try? String(contentsOf: dir.appendingPathComponent(flagFile),
-                                    encoding: .utf8)
-        else { return nil }
-        return raw.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
+    private static var seededHex: String? { dev.raw(flagFile) }
 
     /// ONCE PER PROCESS. The seed answers "what does the extension open ONTO",
     /// and after that the surface belongs to whatever the run does next - which
@@ -129,10 +124,7 @@ public enum MessageDevBoard {
 #endif
         claimed = true
         claimedHex = raw
-        if let dir = FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: appGroup) {
-            try? Data(raw.utf8).write(to: dir.appendingPathComponent(claimFile))
-        }
+        dev.write(bytes: Data(raw.utf8), to: claimFile)
         return p
     }
     private static var claimed = false
@@ -159,12 +151,7 @@ public enum MessageDevBoard {
     /// this process has genuinely not claimed re-arms it.
     ///
     /// Never in Release: this whole type is `#if DEBUG || SOLO_TESTING`.
-    public static var reseeds: Bool {
-        guard let dir = FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: appGroup)
-        else { return false }
-        return FileManager.default.fileExists(atPath: dir.appendingPathComponent(reseedFile).path)
-    }
+    public static var reseeds: Bool { dev.exists(reseedFile) }
 
     /// True when `dev.reseed` is on and the flag file names a payload this
     /// process has not opened onto. The watcher in MessagesRootView polls this;
@@ -195,10 +182,8 @@ public enum MessageDevBoard {
     /// Best-effort, like the claim receipt: a failed write costs the rig a
     /// wait, never a frame.
     public static func noteStaged(_ payload: Data) {
-        guard let dir = FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: appGroup) else { return }
         let s = payload.map { String(format: "%02x", $0) }.joined()
-        try? Data(s.utf8).write(to: dir.appendingPathComponent(stagedFile))
+        dev.write(bytes: Data(s.utf8), to: stagedFile)
     }
 
     /// WHAT TO CALL THE PUPPET SEAT that `addSoloSeat` adds.
@@ -211,15 +196,7 @@ public enum MessageDevBoard {
     /// consistent with every other frame in the set.
     ///
     /// Unset, nothing moves - the caller keeps its own default.
-    public static var soloName: String? {
-        guard let dir = FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: appGroup),
-              let raw = try? String(contentsOf: dir.appendingPathComponent(soloNameFile),
-                                    encoding: .utf8)
-        else { return nil }
-        let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        return t.isEmpty ? nil : t
-    }
+    public static var soloName: String? { dev.string(soloNameFile) }
 
     /// Which seat to sit at, or nil to sit at the defender's.
     ///
@@ -227,15 +204,7 @@ public enum MessageDevBoard {
     /// the DEAL case needs the opposite chair: it is an ATTACKER saying good
     /// that closes the bout and triggers the round transition, and the deal is
     /// what the animation under test belongs to.
-    public static var seededSeat: Int? {
-        guard let dir = FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: appGroup),
-              let raw = try? String(contentsOf: dir.appendingPathComponent(seatFile),
-                                    encoding: .utf8),
-              let n = Int(raw.trimmingCharacters(in: .whitespacesAndNewlines))
-        else { return nil }
-        return n
-    }
+    public static var seededSeat: Int? { dev.int(seatFile) }
 
     /// Should a seeded open REPLAY the bubble it opens (round 16)?
     ///
@@ -260,19 +229,9 @@ public enum MessageDevBoard {
     ///
     /// Nothing else changes: it is the ordinary stage path, with the ordinary
     /// bubble, and the human still presses Send.
-    public static var seededStages: Bool {
-        guard let dir = FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: appGroup)
-        else { return false }
-        return FileManager.default.fileExists(atPath: dir.appendingPathComponent(stageFile).path)
-    }
+    public static var seededStages: Bool { dev.exists(stageFile) }
 
-    public static var seededReplays: Bool {
-        guard let dir = FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: appGroup)
-        else { return false }
-        return FileManager.default.fileExists(atPath: dir.appendingPathComponent(replayFile).path)
-    }
+    public static var seededReplays: Bool { dev.exists(replayFile) }
 
     /// How far to stretch every animation, or 0 for real time.
     ///
@@ -284,12 +243,7 @@ public enum MessageDevBoard {
     /// flight, and a per-flight file read is a stutter in the thing being
     /// filmed.
     public static let slowmo: Double = {
-        guard let dir = FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: appGroup),
-              let raw = try? String(contentsOf: dir.appendingPathComponent(slowmoFile),
-                                    encoding: .utf8),
-              let n = Double(raw.trimmingCharacters(in: .whitespacesAndNewlines)), n > 0
-        else { return 0 }
+        guard let n = dev.double(slowmoFile), n > 0 else { return 0 }
         return n
     }()
 
@@ -304,12 +258,7 @@ public enum MessageDevBoard {
     ///
     /// Read ONCE, like `slowmo` and for the same reason: it is asked for on
     /// every layout pass of the thing being filmed.
-    public static let rulerOn: Bool = {
-        guard let dir = FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: appGroup)
-        else { return false }
-        return FileManager.default.fileExists(atPath: dir.appendingPathComponent(rulerFile).path)
-    }()
+    public static let rulerOn: Bool = dev.exists(rulerFile)
 
     /// The collapse driver's knobs, for a filmed sweep: `lead=0.02 hz=120
     /// resp=0.338` (seconds, Hz, seconds; any subset) in `dev.collapse`. The
@@ -332,15 +281,9 @@ public enum MessageDevBoard {
     }
     public static let collapseKnobs: CollapseKnobs = {
         var k = CollapseKnobs()
-        guard let dir = FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: appGroup),
-              let raw = try? String(contentsOf: dir.appendingPathComponent(collapseFile),
-                                    encoding: .utf8)
-        else { return k }
-        for pair in raw.split(whereSeparator: { $0 == " " || $0 == "\n" }) {
-            let kv = pair.split(separator: "=", maxSplits: 1)
-            guard kv.count == 2, let v = Double(kv[1]) else { continue }
-            switch kv[0] {
+        for (key, value) in dev.pairs(collapseFile) {
+            guard let v = Double(value) else { continue }
+            switch key {
             case "lead": k.lead = v
             case "hz": k.hz = v
             case "resp": k.response = v
@@ -350,6 +293,20 @@ public enum MessageDevBoard {
         }
         return k
     }()
+
+    /// `dev.seed`: the byte every genesis seed byte is pinned to, so a
+    /// verification run can choose its deal (GameSurface's new-game path).
+    /// Read fresh on every new game.
+    public static var genesisSeed: UInt8? { dev.raw("dev.seed").flatMap { UInt8($0) } }
+
+    /// `dev.automove`: the rig asks the board to play a move by itself
+    /// (MessageTableView+AutoPlay). Read fresh on every ask.
+    public static var autoMove: Bool { dev.exists("dev.automove") }
+
+    /// `dev.felt` names a texture file beside it in the group, which replaces
+    /// the felt (FTextures). Read fresh every call - the point is to swap it
+    /// under a running extension.
+    public static var feltFile: URL? { dev.raw("dev.felt").flatMap { dev.url($0) } }
 
     /// Even-length hex to bytes; nil on anything malformed, so a truncated or
     /// half-written file reads as "no seed" rather than as a damaged game.
@@ -394,23 +351,6 @@ public enum MessageDevBoard {
         devFlags[key] ?? shipping
     }
 
-    private static let devFlags: [String: Bool] = {
-        guard let dir = FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: appGroup),
-              let raw = try? String(contentsOf: dir.appendingPathComponent(flagsFile),
-                                    encoding: .utf8)
-        else { return [:] }
-        var out: [String: Bool] = [:]
-        for pair in raw.split(whereSeparator: { $0 == " " || $0 == "\n" }) {
-            let kv = pair.split(separator: "=", maxSplits: 1)
-            guard kv.count == 2 else { continue }
-            switch kv[1] {
-            case "1", "true", "on": out[String(kv[0])] = true
-            case "0", "false", "off": out[String(kv[0])] = false
-            default: continue
-            }
-        }
-        return out
-    }()
+    private static let devFlags: [String: Bool] = dev.bools(flagsFile)
 }
 #endif

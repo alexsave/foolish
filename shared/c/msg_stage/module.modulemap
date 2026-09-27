@@ -1,0 +1,7 @@
+// CMsgStage: the insert-staging decisions for Swift (MessagesKit/InsertStaging.swift).
+// Header-only; a target that compiles shared/swift adds this directory to
+// SWIFT_INCLUDE_PATHS.
+module CMsgStage {
+    header "msg_stage.h"
+    export *
+}

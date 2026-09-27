@@ -55,6 +55,15 @@ unsigned uttt_line_mask(int i)
     return (i >= 0 && i < 8) ? LINE_MASKS[i] : 0u;
 }
 
+int uttt_won_line(const UtttGame *g)
+{
+    if (g->over != UTTT_X && g->over != UTTT_O) return -1;
+    unsigned held = g->bm[g->over - 1];
+    for (int i = 0; i < 8; i++)
+        if ((held & LINE_MASKS[i]) == LINE_MASKS[i]) return i;
+    return -1;
+}
+
 unsigned uttt_mask_wins(unsigned mask)
 {
     if (!has_line_ready) build_has_line();
@@ -164,4 +173,12 @@ int uttt_play(UtttGame *g, uint8_t mv)
     g->forced = (uint8_t)c;
     g->turn   = (uint8_t)(g->turn == UTTT_X ? UTTT_O : UTTT_X);
     return 1;
+}
+
+int uttt_active(const UtttGame *g)
+{
+    if (g->over) return -1;
+    if (g->forced != UTTT_ANY && uttt_block(g, g->forced) == UTTT_OPEN)
+        return g->forced;
+    return 9;
 }

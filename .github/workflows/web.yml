@@ -53,8 +53,14 @@ name: web
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'uttt/**'
+      - '.github/workflows/uttt-web.yml'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - 'uttt/**'
+      - '.github/workflows/uttt-web.yml'
     # `labeled` is here so that adding the `preview` label is itself enough to
     # get a URL. Without it the label would only take effect on the next push,
     # which is a trap: you ask for a preview, nothing happens, and there is no

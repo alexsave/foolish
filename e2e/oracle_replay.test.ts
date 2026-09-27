@@ -68,6 +68,12 @@ const WIDE: [string, string[], number][] =
 // no longer stages a defender holding three of the attack's value; 752 does,
 // with seven legal passes at its widest over five pass decisions - measured, not
 // guessed, and the assertion at the bottom is what holds it there.
+//
+// AND 752 -> 758 WHEN THE SILENT GOOD CAME BACK. A good said over an uncovered
+// table is bundled again (game_shown_good_mask, c/src/game.h) while a good over
+// a fully covered one still ends its cycle, so the bot order changed once more
+// and 752 stopped staging the board. 758 is the first seed after it that does:
+// seven legal passes at its widest over five pass decisions, measured.
 const PASS_BOARD = ['handwritten', 'octogen', 'random', 'handwritten', 'octogen', 'random'];
 /** REPLAY_STEP id -> its name, so a failure names the move type it broke on. */
 const STEP_NAME: Record<number, string> =
@@ -222,7 +228,7 @@ test('§12.2-1c every pass a hand can make is on the panel', async () => {
     // just animated, and octogen, sharing this selection, could not have chosen
     // it either.
     const inst = await freshInstance();
-    const { code, frames, id } = await fixture('6p-pass', PASS_BOARD, 752);
+    const { code, frames, id } = await fixture('6p-pass', PASS_BOARD, 758);
     let widest = 0, walked = 0;
     for (let j = 1; j < frames.length; j++) {
         if (findDecisionIndex(frames, j) !== j) continue;

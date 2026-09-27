@@ -1001,6 +1001,40 @@ test('a second good in a row is not eaten as a duplicate of the first', async ()
     });
 });
 
+test('a good over an uncovered table is silent: no push, and no badge ever turns for it', async () => {
+    // THE OTHER HALF OF "A GOOD IS A MOVE". The owner: "I don't want to see any
+    // sword->checkbox rotation animations unless all cards are covered." A human
+    // cannot say good over an uncovered attack (play_can_say_good), but the
+    // kernel lets a bot, because that is how a bot declines to throw in - and
+    // pushing each of those as a move turned every bout into a parade of flips.
+    //
+    // Boris and Carl hold no seven, so over my uncovered 7h `good` is all either
+    // of them has. Each one commits and sends me NOTHING (goods_changed compares
+    // game_shown_good_mask, which is 0 while an attack is uncovered). Then Anna
+    // covers - and that cover used to be where the flips surfaced: handle_cover
+    // cleared the goods only AFTER its snapshot, so the cover step's own board
+    // carried both checks and the opening beat turned both badges on it.
+    const board = four().hand(0, 'Ad Qd 6d').hand(1, '9h Tc Jd').hand(2, 'Js Qs Ks').hand(3, '8d Td Kd')
+        .table('7h').attacker(0).defender(1).build();
+    await play('silent_goods', 138, 'a-silent-goods', board, async (s, srv) => {
+        await s.step('Boris says good on the server', () => { srv.act(BORIS, encodeAction({ kind: 'good' })); });
+        await s.step('Carl says good on the server', () => { srv.act(CARL, encodeAction({ kind: 'good' })); });
+        assert.equal((srv.outbox.get(ME) ?? []).length, 0, 'neither good sent me a push: they are silent');
+        s.track('7h');
+        await s.step('Anna covers 7h with 9h on the server',
+            () => { srv.act(ANNA, encodeAction({ kind: 'cover', cards: cards('9h'), attack_cards: cards('7h') })); });
+        await deliver(s, 'push: Anna covers');
+        for (let t = 0; t < 12; t++) {
+            await s.advance(60);
+            assert.equal(markOf(s, 2), 'sword', `Boris's badge never turns (${t * 60 + 60}ms)`);
+            assert.equal(markOf(s, 3), 'sword', `nor Carl's (${t * 60 + 60}ms)`);
+        }
+        const flipped = s.frames.filter((f) => /data-role-seat="[23]"[^>]*data-role-mark="check"|data-role-mark="check"[^>]*data-role-seat="[23]"/.test(f.html));
+        assert.equal(flipped.length, 0, `no frame the page drew showed a check on Boris or Carl (${flipped.map((f) => f.t).join(', ')})`);
+        assert.ok(s.frames.some((f) => /data-role-seat="2"/.test(f.html)), 'and the badges were on the page to be read');
+    });
+});
+
 test('a good that lands while a card of mine is still in the air turns the badge at once', async () => {
     // THE CASE THAT NEEDS THE LEAD, and the reason the good is played ABOVE the
     // empty-stream guard rather than left to the board-changed effect below it.

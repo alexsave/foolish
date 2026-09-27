@@ -533,8 +533,9 @@ leafbook-verify:
 
 # ---------------------------------------------------------------------------
 # WebAssembly rules kernel: game.c + legal.c + the wasm bridge, compiled
-# freestanding (no libc; wasm/include has the tiny shims, wasm_api.c provides
-# memcpy/memset). This is THE production rules engine: the TS server imports
+# freestanding (no libc: ../shared/c/wasm is the C library every wasm kernel in
+# the repo links - memcpy, memset, strcmp - and wasm/include keeps this
+# kernel's own stdio.h and stdlib.h, first on the path so they win). This is THE production rules engine: the TS server imports
 # the resulting module via sdk/ts/wasm/. `-D_Thread_local=`
 # strips TLS (single-threaded module); the bridge sets the production
 # deck-size boundary at init (see card.h).
@@ -714,7 +715,8 @@ endef
 # letting the local compiler decide what the shipped artifact requires.
 WASM_FLAGS := --target=wasm32 $(WASM_OPT) -nostdlib -ffreestanding -mbulk-memory \
               -mno-nontrapping-fptoint \
-              -isystem wasm/include -Isrc -D_Thread_local= -DMAX_LOG_PAIRS=64 \
+              -isystem wasm/include -isystem $(SHARED)/wasm/include -Isrc \
+              -D_Thread_local= -DMAX_LOG_PAIRS=64 \
               -DMAX_LEGAL_MOVES=4096 -DMAX_MOVE_CARDS=28 -DMAX_BATTLES=64 \
               -DWORLD_LOG_CAP=40 \
               -DREPLAY_REC_CAP=4096 -DWASM_REPLAY_IO_CAP=32768 -DMAX_SNAPS=16 \
@@ -759,7 +761,7 @@ WASM_FLAGS := --target=wasm32 $(WASM_OPT) -nostdlib -ffreestanding -mbulk-memory
 # directories had rules; the oracle rules below would have widened it to four,
 # so it is closed here rather than copied twice more.
 WASM_HDRS := $(wildcard src/*.h) $(wildcard $(SHARED)/*.h) $(wildcard wasm/*.h) \
-             $(wildcard wasm/include/*.h)
+             $(wildcard wasm/include/*.h) $(wildcard $(SHARED)/wasm/include/*.h)
 
 # Explicit export allow-list — only the memory (above) + wasm_* API the TS
 # bridge actually calls (engine.ts / bots.ts). This REPLACES -Wl,--export-all,
@@ -1191,7 +1193,7 @@ WASM_RULES_FLAGS := $(filter-out -DMAX_LEGAL_MOVES=4096,$(WASM_FLAGS)) \
 # opening a bubble needs it and it is not optional at any size.
 WASM_MSG_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/view.c src/awire.c \
                 src/evwire.c $(SHARED)/sha256.c src/msg_wire.c src/anim_plan.c \
-                src/replay.c src/replay_extras.c \
+                src/replay.c src/replay_extras.c $(SHARED)/wasm/libc.c \
                 wasm/wasm_api.c wasm/wasm_msg_api.c
 
 WASM_MSG_EXPORTS := \
@@ -1244,6 +1246,9 @@ build/msgobj/wasm_api.o: wasm/wasm_api.c build/layout/msg.hash $(WASM_HDRS)
 	$(WASM_CC) $(WASM_MSG_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/msg.hash) -c $< -o $@
 
 build/msgobj/%.o: $(SHARED)/%.c $(WASM_HDRS)
+	@mkdir -p build/msgobj
+	$(WASM_CC) $(WASM_MSG_CFLAGS) -c $< -o $@
+build/msgobj/%.o: $(SHARED)/wasm/%.c $(WASM_HDRS)
 	@mkdir -p build/msgobj
 	$(WASM_CC) $(WASM_MSG_CFLAGS) -c $< -o $@
 
@@ -1338,6 +1343,7 @@ WASM_BOT_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/rep
                 src/handwritten_prod_strategy.c \
                 src/octogen_strategy.c \
                 src/bot_knobs.c src/bot_roster.c src/bot_drive.c src/roster.c src/table.c src/client_table.c src/card.c \
+                $(SHARED)/wasm/libc.c \
                 wasm/wasm_api.c wasm/wasm_bots_api.c wasm/wasm_msg_api.c wasm/wasm_table_api.c
 
 # PER-FILE opt (a mix one clang invocation can't express): the profiled hot MC
@@ -1420,6 +1426,9 @@ build/botobj/wasm_api.o: wasm/wasm_api.c build/layout/bots.hash $(WASM_HDRS)
 	$(WASM_CC) $(WASM_BOT_CFLAGS) $(WASM_BOT_FILE_OPT) -DSG_LAYOUT_HASH=$$(cat build/layout/bots.hash) -c $< -o $@
 
 build/botobj/%.o: $(SHARED)/%.c $(WASM_HDRS)
+	@mkdir -p build/botobj
+	$(WASM_CC) $(WASM_BOT_CFLAGS) $(WASM_BOT_FILE_OPT) -c $< -o $@
+build/botobj/%.o: $(SHARED)/wasm/%.c $(WASM_HDRS)
 	@mkdir -p build/botobj
 	$(WASM_CC) $(WASM_BOT_CFLAGS) $(WASM_BOT_FILE_OPT) -c $< -o $@
 
@@ -1704,6 +1713,9 @@ build/botoracle/%.o: wasm/%.c build/layout/oracle.hash $(WASM_HDRS)
 build/botoracle/%.o: $(SHARED)/%.c build/layout/oracle.hash $(WASM_HDRS)
 	@mkdir -p build/botoracle
 	$(WASM_CC) $(WASM_ORACLE_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle.hash) $(WASM_ORACLE_FILE_OPT) -c $< -o $@
+build/botoracle/%.o: $(SHARED)/wasm/%.c build/layout/oracle.hash $(WASM_HDRS)
+	@mkdir -p build/botoracle
+	$(WASM_CC) $(WASM_ORACLE_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle.hash) $(WASM_ORACLE_FILE_OPT) -c $< -o $@
 
 # Makefile is a prerequisite for the reason build/bots.wasm names it: the export
 # list IS this file, and the link had been .PHONY (so always run) until now.
@@ -1776,6 +1788,9 @@ build/botoraclemt/%.o: wasm/%.c build/layout/oracle-mt.hash $(WASM_HDRS)
 	@mkdir -p build/botoraclemt
 	$(WASM_CC) $(WASM_ORACLE_MT_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle-mt.hash) $(WASM_ORACLE_MT_FILE_OPT) -c $< -o $@
 build/botoraclemt/%.o: $(SHARED)/%.c build/layout/oracle-mt.hash $(WASM_HDRS)
+	@mkdir -p build/botoraclemt
+	$(WASM_CC) $(WASM_ORACLE_MT_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle-mt.hash) $(WASM_ORACLE_MT_FILE_OPT) -c $< -o $@
+build/botoraclemt/%.o: $(SHARED)/wasm/%.c build/layout/oracle-mt.hash $(WASM_HDRS)
 	@mkdir -p build/botoraclemt
 	$(WASM_CC) $(WASM_ORACLE_MT_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle-mt.hash) $(WASM_ORACLE_MT_FILE_OPT) -c $< -o $@
 

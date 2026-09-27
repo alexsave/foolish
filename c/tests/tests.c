@@ -1940,48 +1940,55 @@ static void test_bot_drive_basic(void) {
 // A cycle stops on the FIRST visible action: everything before it must be
 // silent, or the host would render a move it was never told about.
 //
-// THIS SWEEP USED TO END WITH THE OPPOSITE ASSERTION - "silent actions really
-// do bundle at 6 players (the padding F3 removes)" - and it cannot be true any
-// more, because a `good` is not silent. classify() (bot_drive.c) now prices one
-// as a move, so it ends its cycle like any other, and the only move left that
-// can class BUNDLED_PASSIVE is `wait`, which is never enumerated as legal. The
-// bundling machinery is therefore unreachable in ordinary play, deliberately:
-// the owner's rule is "goods are now animation-causing moves", and a move that
-// is bundled away is a move a host is never told to draw.
-//
-// What is still worth sweeping for is the ORDERING invariant - the thing the
-// bundle rule actually protects - and, at the exact board the old assertion
-// measured (6 players, where goods are everywhere), that every good really does
-// end its cycle, through BOTH of classify's visible verdicts.
+// And WHICH goods are silent. #229 priced every good as a move, which made a
+// bot's "I won't throw in" - said over a table with an attack still uncovered -
+// cost a 3000ms beat and a badge flip each, several per bout. The owner's rule:
+// "I don't want to see any sword->checkbox rotation animations unless all
+// cards are covered." So a good over an uncovered table is BUNDLED_PASSIVE and
+// a good over a fully covered one is a MOVE (or a ROUND_TRANSITION when it
+// closes the bout). The per-action half of this sweep drives ONE action at a
+// time so the board each good was said over is known exactly; the full-cycle
+// half proves the silent ones really do bundle again at 6 players (F3).
 static void test_bot_drive_bundles_only_silent(void) {
-    int bad_order = 0, cycles = 0, goods = 0, silent_goods = 0, good_moves = 0, good_transitions = 0;
+    int bad_order = 0, cycles = 0, bundles = 0;
+    int silent_goods = 0, shown_goods = 0, wrong_silent = 0, wrong_shown = 0, good_transitions = 0;
     for (int seed = 0; seed < 12; seed++) {
         Game g;
         make_seeded_game(&g, 6, seed);
-        seat_all(&g, STRAT_HANDWRITTEN_PROD);
-
-        BotDriveOut out;
-        for (int step = 0; step < 400 && game_done(&g) < 0; step++) {
+        for (int i = 0; i < 400 && game_done(&g) < 0; i++) {
+            bool covered = g.num_battles > 0;
+            for (int b = 0; b < g.num_battles; b++) if (card_is_none(g.table_battles[b].defense)) covered = false;
+            BotDriveOut out;
+            int n = bot_drive(&g, 0, 1, 0, 0, &out);
+            if (n == 0) break;
+            if (out.actions[0].move.type != MOVE_GOOD) continue;
+            const int pc = out.actions[0].pacing_class;
+            if (pc == BOT_PACE_ROUND_TRANSITION) { good_transitions++; continue; }
+            if (covered) { shown_goods++;  if (pc != BOT_PACE_MOVE) wrong_shown = 1; }
+            else         { silent_goods++; if (pc != BOT_PACE_BUNDLED_PASSIVE) wrong_silent = 1; }
+        }
+    }
+    for (int seed = 0; seed < 12; seed++) {
+        Game g;
+        make_seeded_game(&g, 6, seed);
+        for (int i = 0; i < 400 && game_done(&g) < 0; i++) {
+            BotDriveOut out;
             int n = bot_drive(&g, 0, BOT_DRIVE_MAX_ACTIONS, 0, 0, &out);
             if (n == 0) break;
             cycles++;
-            for (int a = 0; a < out.n; a++) {
-                if (out.actions[a].move.type != MOVE_GOOD) continue;
-                goods++;
-                if (out.actions[a].pacing_class == BOT_PACE_BUNDLED_PASSIVE) silent_goods++;
-                if (out.actions[a].pacing_class == BOT_PACE_MOVE) good_moves++;
-                if (out.actions[a].pacing_class == BOT_PACE_ROUND_TRANSITION) good_transitions++;
-            }
+            if (n > 1) bundles++;
             for (int a = 0; a < out.n - 1; a++)
                 if (out.actions[a].pacing_class != BOT_PACE_BUNDLED_PASSIVE) bad_order = 1;
         }
     }
     CHECK(cycles > 0, "the bundling sweep actually drove games");
     CHECK(!bad_order, "only silent actions are bundled; a visible one ends the cycle");
-    CHECK(goods > 0, "6-player games really are full of goods (what F3's padding was about)");
-    CHECK(silent_goods == 0, "a good is a move: it is never bundled away as silent");
-    CHECK(good_moves > 0, "a good that leaves the bout open is paced as a move of its own");
+    CHECK(silent_goods > 0, "6-player bots really do say good over an uncovered table");
+    CHECK(!wrong_silent, "a good over an uncovered table is SILENT: bundled, no beat, no badge");
+    CHECK(shown_goods > 0, "and they say good over a fully covered table too");
+    CHECK(!wrong_shown, "a good over a fully covered table is a move of its own");
     CHECK(good_transitions > 0, "a good that closes the bout is still paced by the sweep it caused");
+    CHECK(bundles > 0, "silent goods really do bundle at 6 players (the padding F3 removes)");
 }
 
 // The divergence F2 exists to kill: a first-eligible seat walk gives low seats

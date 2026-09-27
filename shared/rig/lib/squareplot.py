@@ -17,7 +17,7 @@ import argparse, csv
 import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-COLS = {"cyan": "#00a5b8", "yellow": "#c9a400", "green": "#2e9d3a",
+COLS = {"cyan": "#00a5b8", "yellow": "#c9a400", "lime": "#6fb800", "green": "#2e9d3a",
         "magenta": "#b0269c", "orange": "#e36a00", "blue": "#1f3fd1"}
 
 ap = argparse.ArgumentParser()

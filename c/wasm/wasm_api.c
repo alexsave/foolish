@@ -13,6 +13,7 @@
 // Freestanding: no libc. memcpy/memset are provided here (clang lowers
 // struct copies to them on wasm32).
 
+#include <string.h>   /* memcpy/memset: ../shared/c/wasm/libc.c, linked into every module */
 #include "game.h"
 #include "wire.h"
 #include "legal.h"
@@ -25,22 +26,6 @@
 #include "evwire.h"
 #include "anim_plan.h"
 
-// ---------- minimal libc ------------------------------------------------
-
-// The build enables -mbulk-memory, so these __builtin calls (and every
-// clang-lowered struct copy across the module) compile to the single wasm
-// memory.copy / memory.fill instruction - native memmove in the runtime.
-// These out-of-line definitions only back the calls clang chooses not to
-// lower inline.
-void *memcpy(void *dst, const void *src, size_t n) {
-    __builtin_memcpy(dst, src, n);
-    return dst;
-}
-
-void *memset(void *dst, int c, size_t n) {
-    __builtin_memset(dst, c, n);
-    return dst;
-}
 
 // ---------- shared buffers ----------------------------------------------
 

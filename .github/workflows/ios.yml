@@ -32,8 +32,14 @@ name: ios
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'uttt/**'
+      - '.github/workflows/uttt-web.yml'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - 'uttt/**'
+      - '.github/workflows/uttt-web.yml'
 
 jobs:
   # ---- Portable: proves the bridge and fixtures on any clang box ------------

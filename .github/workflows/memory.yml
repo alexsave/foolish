@@ -13,8 +13,14 @@ name: memory
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'uttt/**'
+      - '.github/workflows/uttt-web.yml'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - 'uttt/**'
+      - '.github/workflows/uttt-web.yml'
 
 jobs:
   mem:

@@ -767,6 +767,12 @@ const SCENARIOS: Record<string, () => Scenario> = {
      * board is wide open (ME leads, seat 1 defends) so seats 2..7 are all
      * eligible throw-in attackers, and cordite says good over an uncovered
      * table, so several goods land in quick succession.
+     *
+     * THOSE GOODS ARE SILENT NOW. A good over an uncovered table is a bot
+     * declining to throw in, which no human can say, and the owner's rule is no
+     * badge flip "unless all cards are covered": they bundle into one cycle with
+     * no push and no beat (game_shown_good_mask, c/src/game.h). The checks that
+     * still arrive one push at a time are the goods said after ANNA covers.
      */
     eight_goods: () => ({
         gameId: 'eight8',
@@ -865,7 +871,16 @@ const SCENARIOS: Record<string, () => Scenario> = {
      * carried the mask in with it - so ANNA covering 7h with Th (a cover moves a
      * card and clears no goods) turns both badges at once, a whole move late.
      * That is the "lumped in" symptom, staged, and the two arrival times are the
-     * before and after of this branch.
+     * before and after of #229.
+     *
+     * AND THEN IT WAS TURNED BACK, for exactly these two goods. They are said
+     * over an UNCOVERED 7h - a bot declining to throw in, which no human can do -
+     * and pricing each as a move made every bout a 3000ms-a-beat parade of badge
+     * flips. They are SILENT now (game_shown_good_mask, c/src/game.h): one
+     * bundled cycle, no push, no beat, and ANNA's cover clears them before its
+     * snapshot, so no badge turns at all. What this board shows today is the
+     * other half: after the cover the table is fully covered, the bots are
+     * eligible again, and THOSE goods each arrive on a push of their own.
      *
      *   POST /__control/act {user:'u-me',   gameId:'botgood', move:{kind:'attack', cards:'7h'}}
      *   POST /__control/act {user:'u-anna', gameId:'botgood',

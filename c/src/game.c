@@ -923,6 +923,16 @@ bool handle_cover(Game *g, int player_idx,
         if (!can_cover(attack_cards[i], cover_cards[i], g->power_suit)) REJECT(ENGINE_REJECT_CANNOT_COVER);
     }
 
+    // A COVER CLEARS THE GOODS, and it clears them BEFORE its snapshots. Any
+    // good still set here was said over an uncovered table - a covered table has
+    // nothing left to cover - so it is a silent good (game_shown_good_mask) and
+    // no viewer was ever told about it. Clearing it after the SNAPs below put it
+    // on the cover step's own board, and the client's opening beat
+    // (anim_goods_opening reads the first step's mask) then flipped every one of
+    // those badges to a check at the moment the cover landed.
+    g->good_players_mask = 0;
+    g->has_good_timestamp = false;
+
     // Apply each cover (with logging) and record discards if defender clears
     // their hand.
     for (int i = 0; i < n; i++) {
@@ -1078,6 +1088,11 @@ bool handle_pickup(Game *g, int player_idx) {
 
     Player *def = &g->players[player_idx];
     GameLog *l = log_alloc(g, LOG_PICKUP, player_idx);
+    // Before the PICKUP snapshot, for the reason handle_cover gives: a defender
+    // picks up only while an attack is uncovered, so any good still set is a
+    // silent one, and the pickup step's board must not be the first to show it.
+    g->good_players_mask = 0;
+    g->has_good_timestamp = false;
 
     // TS pickup logs table cards attack-major (all attacks' cards in battle
     // order, defense right after its attack) — same interleaving here.
@@ -1143,6 +1158,11 @@ static void execute_round_transition(Game *g) {
 
     g->good_players_mask = 0;
     g->has_good_timestamp = false;
+}
+
+uint32_t game_shown_good_mask(const Game *g) {
+    if (g->num_battles == 0 || count_uncovered(g) > 0) return 0;
+    return g->good_players_mask;
 }
 
 bool handle_good(Game *g, int player_idx) {

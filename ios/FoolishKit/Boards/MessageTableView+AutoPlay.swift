@@ -59,10 +59,7 @@ extension MessageTableView {
     private func humanMoves() -> [Move] { controller.humanLegal }
 
     func autoPlayIfAsked(waitForBoard: Bool = false) async {
-        let devAutoMove = FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: "group.cards.foolish.msg")
-            .map { FileManager.default.fileExists(atPath: $0.appendingPathComponent("dev.automove").path) }
-            ?? false
+        let devAutoMove = MessageDevBoard.autoMove
         let asked = ProcessInfo.processInfo.environment["HARNESS_AUTOMOVE"] != nil || devAutoMove
         AnimLog.say("automove enter asked=\(asked) tick=\(controller.arrivalTick) "
             + "ready=\(controller.ready) hold=\(controller.pickupHold) legal=\(controller.legal.count) "

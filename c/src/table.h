@@ -129,7 +129,7 @@ typedef struct {
     bool        lobby_event;    // this operation is a lobby edit its pushes announce
     bool        pre_has_flip;   // the face-up trump before the operation (DRAW privacy)
     Card        pre_flip;
-    uint32_t    pre_good_mask;  // good_players_mask before the operation (goods_changed)
+    uint32_t    pre_good_mask;  // game_shown_good_mask before the operation (goods_changed)
     int8_t      actor;          // the acting seat, -1 for none
     int32_t     log_start;      // the operation's first log record
     int32_t     log_len;        // records the ROW's session log holds (table_set_session_log), loaded or not
@@ -261,6 +261,10 @@ typedef struct {
     //
     // A good being SET is somebody's move (round 21, same file: "A GOOD IS A
     // MOVE, SO IT PLAYS FIRST"), and a move is worth a broadcast.
+    //
+    // BUT ONLY A GOOD A VIEWER IS SHOWN: this compares game_shown_good_mask
+    // (game.h), so a bot's SILENT good - said over an uncovered table, which no
+    // human can do - leaves it false and is bundled with the next card instead.
     bool    goods_changed;
     Span    state;         // durable state blob
     Span    roster;        // durable roster (ROSTER_BYTES)
