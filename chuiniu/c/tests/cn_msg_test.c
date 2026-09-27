@@ -181,6 +181,7 @@ static void test_hostile(void)
     for (int p = 0; p < POOL; p++) {
         const int n = pool_n[p];
         CHECK(decode_exact(pool[p], n, &D) == CN_EOK, "pool %d reads", p);
+        if (n <= 0) continue;                  /* red above; nothing to corrupt */
         for (int k = 0; k < n; k++)
             CHECK(decode_exact(pool[p], k, &D) != CN_EOK, "pool %d: the prefix of %d refused", p, k);
         /* EVERY BYTE TO EVERY OTHER VALUE */
@@ -233,6 +234,8 @@ static void test_tamper(void)
     cn_apply(&M.game, 0, bid(2, 3));
     cn_apply(&M.game, 1, bid(3, 3));
     const int n = cn_msg_encode(&M, buf, sizeof buf);
+    CHECK(n > 0, "the bubble to tamper with encodes (%d)", n);
+    if (n <= 0) return;
     uint8_t c[CN_MSG_MAX_BYTES];
 #define TAMPER(expr, want, what) do { memcpy(c, buf, (size_t)n); expr; reseal(c, n); \
         int e_ = decode_exact(c, n, &D); CHECK(e_ == (want), "%s: %d, want %d", what, e_, want); } while (0)
