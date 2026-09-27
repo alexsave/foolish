@@ -20,6 +20,7 @@
 // fixture agrees with whatever the kernel says).
 
 import XCTest
+import CFoolish   // FIO_CARD_NONE is a C macro; a test imports the module it reads, it does not lean on FoolishKit's
 @testable import FoolishKit
 
 final class TableWireTests: XCTestCase {

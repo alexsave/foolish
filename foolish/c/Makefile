@@ -1524,7 +1524,7 @@ wasm-bots: wasm-cc-check build/layout/bots.hash
 # wasm-opt pass. The ONLY difference is which names are exported, and an export
 # is a GC root: wasm-ld drops every function no exported name reaches. That is
 # the doctrine's "per call site, by export allow-list"
-# (docs/ARCHITECTURE_AS_A_PATTERN.md Part 1 piece 1, Part 3 move 3) rather than
+# (../docs/ARCHITECTURE_AS_A_PATTERN.md Part 1 piece 1, Part 3 move 3) rather than
 # the "per role" split that killed guards.wasm and rules.wasm — those were three
 # SOURCES answering one question, and two of them could answer it differently.
 # Two links of one object set cannot: any function present in both is the same
@@ -1585,7 +1585,7 @@ WASM_WEB_EXPORTS = $(WASM_CLIENT_EXPORTS) $(WASM_REPLAY_WEB_EXPORTS) \
 
 # AND THE GATE ON THE FILTER ITSELF. $(filter) over a name the shipped list does
 # not have expands to NOTHING, which is the "matched nothing looks exactly like
-# found no problem" failure docs/ARCHITECTURE_AS_A_PATTERN.md Part 3 move 2
+# found no problem" failure ../docs/ARCHITECTURE_AS_A_PATTERN.md Part 3 move 2
 # names three times over. A typo here, or a name retired into
 # WASM_BOTS_UNSHIPPED_API, would silently shrink the browser's module and the
 # first symptom would be a TypeError in someone's tab.

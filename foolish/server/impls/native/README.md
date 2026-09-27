@@ -9,7 +9,7 @@ hands them to the kernel — swap Postgres for a hash table and the edge runtime
 for a thread pool, and the *game* is byte-for-byte the same.
 
 This is the "in-memory authoritative state" design from
-[`docs/ARCHITECTURE_AS_A_PATTERN.md`](../../../docs/ARCHITECTURE_AS_A_PATTERN.md)
+[`../docs/ARCHITECTURE_AS_A_PATTERN.md`](../../../../docs/ARCHITECTURE_AS_A_PATTERN.md)
 ("The C-server unlock"): no marshal in/out, no DB read on the hot path.
 
 ## The kernel drives everything

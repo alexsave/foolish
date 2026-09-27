@@ -80,7 +80,7 @@ everything this document does not explicitly correct in §3.*
 | `docs/IOS_APP_DESIGN.md` §17 | State of the host iOS app (built; Swift pending first `xcodebuild`). The extension ships INSIDE this app. |
 | `docs/REPLAY_FORMAT6_HIDDEN_STATE.md` | The shipped v6 replay codec — what "mid-game encoding" now exists (and §3.3 below: what it does and doesn't give this project). |
 | `docs/IOS_BOT_NAMING.md` | iOS bot display names (no bots in iMessage v1 — relevant only for shared strings hygiene). |
-| `README.md` + `docs/ARCHITECTURE_AS_A_PATTERN.md` | The repo's one law: game rules exist ONCE, in C, compiled to wasm (server/web) and a static lib (iOS). TS/Swift marshal and render. |
+| `README.md` + `../docs/ARCHITECTURE_AS_A_PATTERN.md` | The repo's one law: game rules exist ONCE, in C, compiled to wasm (server/web) and a static lib (iOS). TS/Swift marshal and render. |
 
 **The one hard rule, repeated:** no Durak rule is ever reimplemented in Swift
 or TS. Whose move, legality, capacity — always the kernel. Any hand-rolled

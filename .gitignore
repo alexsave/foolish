@@ -80,3 +80,6 @@ shared/tools/tighten/build/
 # dev server log. Bare names, so they are caught wherever they appear.
 .watchrealsizevim
 serve.log
+
+# shared/tools/ship/ship.sh writes every product's archive and .ipa under <repo root>/build/ship/.
+/build/

@@ -87,7 +87,7 @@ if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {};
 // reports each module's gzip size and metrics.yml diffs it head-vs-base on every
 // pull request, which the note above already calls "a better instrument for a few
 // hundred bytes than a boolean ever was". What is given up is the one-way ratchet
-// of Part 3 of docs/ARCHITECTURE_AS_A_PATTERN.md - the discipline that banked the
+// of Part 3 of ../docs/ARCHITECTURE_AS_A_PATTERN.md - the discipline that banked the
 // browser's 62% cut as a lower pin instead of headroom to spend again. Re-pinning
 // after a deliberate win is now something a person chooses to do, not something
 // CI makes them do. It also makes this gate runnable off CI again: at 192,000 B

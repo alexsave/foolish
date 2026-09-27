@@ -1832,7 +1832,7 @@ The integrator runs the full suite ONCE after Phase 10, together with test:valid
 
 ### Phase 11: update the doctrine document (owner-approved 2026-09-17)
 
-`docs/ARCHITECTURE_AS_A_PATTERN.md` (391 lines, last substantive write 1b272382 "docs: generalize the WASM architecture into a reusable pattern", then only moved by the A10 refactors) generalizes this repo's split into C and everything else, for reuse in other repos.
+`../docs/ARCHITECTURE_AS_A_PATTERN.md` (391 lines, last substantive write 1b272382 "docs: generalize the WASM architecture into a reusable pattern", then only moved by the A10 refactors) generalizes this repo's split into C and everything else, for reuse in other repos.
 This migration went considerably further than the version that document describes, so it is now behind in several concrete ways.
 Rewrite it against what the repo actually does, keeping its three-part shape (the pattern; how to build an app this way; the performance playbook) and its "written for someone who has never seen Durak" rule.
 
@@ -1855,7 +1855,7 @@ No code changes in this phase; docs only, so its gate is a read-through plus the
 
 #### Phase 11 as built
 
-`docs/ARCHITECTURE_AS_A_PATTERN.md` is rewritten (391 lines to 610), keeping its three parts and its "never seen Durak" rule.
+`../docs/ARCHITECTURE_AS_A_PATTERN.md` is rewritten (391 lines to 610), keeping its three parts and its "never seen Durak" rule.
 All eight required additions are in, plus the multi-language story (one clang-derived model, three emitters, a per-target hash), a "what did NOT move" section, the two refusals, a section on running an effort like this, and a closing section on where the repo is still short of the pattern.
 
 Three things in the brief did not survive contact with the sources, and the document says so rather than repeating them.

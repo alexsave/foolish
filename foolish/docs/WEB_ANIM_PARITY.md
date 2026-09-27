@@ -47,7 +47,7 @@ landing. When nothing matches, the chain falls through to `getFallbackPosition('
 which is the viewport centre.
 
 This is a host restating a decision the kernel already made, which is the single thing
-`docs/ARCHITECTURE_AS_A_PATTERN.md` exists to prevent. `findElementByLocation` already
+`../docs/ARCHITECTURE_AS_A_PATTERN.md` exists to prevent. `findElementByLocation` already
 accepts a `battleIndex` and queries `[data-battle-index]`; the cover path never passes one.
 
 ## 2. The battle row is never frozen, so the grid re-lays out under the flights

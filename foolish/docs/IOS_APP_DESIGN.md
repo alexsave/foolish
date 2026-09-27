@@ -50,7 +50,7 @@ URL/QR via an rANS codec). Repo layout and philosophy: `README.md`; the
 architecture in one line: **all game rules live once, in C
 (`c/src/game.c`, `legal.c`, `view.c`, `replay.c`), compiled to WASM for
 the web client, the Deno edge functions, and tests** — the TS around it is
-marshaling and UI (`docs/ARCHITECTURE_AS_A_PATTERN.md`).
+marshaling and UI (`../docs/ARCHITECTURE_AS_A_PATTERN.md`).
 
 **Backend.** Supabase: Postgres + edge functions (`server/impls/supabase/functions/`:
 `create`, `action`, `meta`, `bot-heartbeat`) + Realtime broadcasts. Moves

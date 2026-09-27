@@ -12,7 +12,7 @@
  * ever ran in.
  *
  * THIS FILE IS THE REASON THAT IS SAFE, and it is written against a specific
- * history. docs/ARCHITECTURE_AS_A_PATTERN.md Part 1 piece 1 records that
+ * history. ../docs/ARCHITECTURE_AS_A_PATTERN.md Part 1 piece 1 records that
  * guards.wasm (a validate-only client build) and rules.wasm (a server-only
  * build) were deleted because they were "three kernels answering the same
  * questions". They were three SOURCES. Two links of one object set are not that

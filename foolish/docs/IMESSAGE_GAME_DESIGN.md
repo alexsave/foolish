@@ -44,7 +44,7 @@ which is what makes asynchronous, message-at-a-time play possible.
 
 **The repo.** `foolish.cards` is a Next.js web client + Supabase backend, but
 the domain logic has exactly ONE implementation, in portable C, that runs
-everywhere (see `docs/ARCHITECTURE_AS_A_PATTERN.md`):
+everywhere (see `../docs/ARCHITECTURE_AS_A_PATTERN.md`):
 
 | Piece | Where | What it gives this project |
 | --- | --- | --- |

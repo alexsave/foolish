@@ -369,13 +369,13 @@ source uttt/ios/Tools/rig.env
 export RIG_XCPROJ=/Users/alex/Dev/foolish-uttt/uttt/ios/Uttt.xcodeproj \
        RIG_KERNEL_DIR=/Users/alex/Dev/foolish-uttt/uttt/c \
        RIG_IOS_DIR=/Users/alex/Dev/foolish-uttt/uttt/ios
-eval "$(ios/Tools/rig/rig.sh newsim UtttAudit)"   # this audit: 611A9A19-F55C-481E-9B70-6440E49C3BFC
-ios/Tools/rig/rig.sh build
-ios/Tools/rig/rig.sh stage
-ios/Tools/rig/rig.sh enter
-ios/Tools/rig/rig.sh open          # prints "no 'Ultimate' on screen" but the drawer does open
-ios/Tools/rig/rig.sh picker on     # or: rig.sh seat a|b between taps
-ios/Tools/rig/rig.sh devgame 12    # straight to a seeded board; rig.sh killappex then open to switch seats
+eval "$(foolish/ios/Tools/rig/rig.sh newsim UtttAudit)"   # this audit: 611A9A19-F55C-481E-9B70-6440E49C3BFC
+foolish/ios/Tools/rig/rig.sh build
+foolish/ios/Tools/rig/rig.sh stage
+foolish/ios/Tools/rig/rig.sh enter
+foolish/ios/Tools/rig/rig.sh open          # prints "no 'Ultimate' on screen" but the drawer does open
+foolish/ios/Tools/rig/rig.sh picker on     # or: rig.sh seat a|b between taps
+foolish/ios/Tools/rig/rig.sh devgame 12    # straight to a seeded board; rig.sh killappex then open to switch seats
 ```
 
 Taps were done directly with `idb ui tap --udid $FOOLISH_SIM X Y` in points (a 1320x2868 screenshot pixel divided by 3).

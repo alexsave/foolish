@@ -3,7 +3,7 @@
 // A second backend under server/impls (sibling to supabase/), to prove the
 // server API is language-agnostic: same game, no TypeScript, no edge runtime,
 // no Postgres. A long-lived process holds every game as a `Game` struct in RAM
-// (the "in-memory authoritative state" of docs/ARCHITECTURE_AS_A_PATTERN.md),
+// (the "in-memory authoritative state" of ../docs/ARCHITECTURE_AS_A_PATTERN.md),
 // guarded by per-game locks (see registry.h's "Locking"), and the C KERNEL
 // drives all of it - this server only starts a socket, routes requests, and
 // hands them to the kernel. Every rule (deal, legality, apply, refill,

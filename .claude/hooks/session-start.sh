@@ -1,9 +1,9 @@
 #!/bin/bash
 # SessionStart hook — ensure binaryen (wasm-opt) is available.
 #
-# c/Makefile runs `wasm-opt` on the linked bots.wasm by default
+# foolish/c/Makefile runs `wasm-opt` on the linked bots.wasm by default
 # (WASM_BOTS_POSTOPT), so `make wasm-bots` — which regenerates the shipped
-# sdk/ts/wasm/bots.wasm.gz — needs it on PATH. Everything
+# foolish/sdk/ts/wasm/bots.wasm.gz — needs it on PATH. Everything
 # else the repo builds with (clang/wasm-ld, node, postgres) is already
 # provisioned in the web environment; binaryen is the only gap.
 #

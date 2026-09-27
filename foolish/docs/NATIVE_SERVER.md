@@ -12,7 +12,7 @@ It reimplements no Durak rule.
 The deal, legality, apply, per-seat masking, the bot cycle and its pacing, and the bot roster are all kernel calls; the server contributes a socket, an in-memory store, a lock, and a thread pool.
 
 That is the point.
-`docs/ARCHITECTURE_AS_A_PATTERN.md` claims the server API is language-agnostic because the kernel does the work.
+`../docs/ARCHITECTURE_AS_A_PATTERN.md` claims the server API is language-agnostic because the kernel does the work.
 This is the falsification test for that claim, and it passes: swapping Postgres for a hash table and the Deno edge runtime for an epoll loop leaves the *game* byte-for-byte identical.
 
 Beyond the architectural point it is also the only place in the tree where the kernel is exercised **concurrently and adversarially at load**, which is where several of the fixes below came from.
@@ -95,7 +95,7 @@ The short version:
 ## Related reading
 
 - [`server/impls/native/README.md`](../server/impls/native/README.md) - endpoints, protocol, the kernel/server split, current status
-- [`docs/ARCHITECTURE_AS_A_PATTERN.md`](ARCHITECTURE_AS_A_PATTERN.md) - the doctrine this implementation tests
+- [`../docs/ARCHITECTURE_AS_A_PATTERN.md`](../../docs/ARCHITECTURE_AS_A_PATTERN.md) - the doctrine this implementation tests
 - [`docs/C_CORE_CONSOLIDATION.md`](C_CORE_CONSOLIDATION.md) - A10, the split into `server/api` + `server/impls/*` and the DAG that `e2e/validation/layering_validation.test.ts` enforces
 - [`docs/SERVER_LIFECYCLE_CONSOLIDATION.md`](SERVER_LIFECYCLE_CONSOLIDATION.md) - the follow-on audit of the lobby/result/scoring skin, which found the native server hand-rolling a partial rematch reset instead of calling the kernel's `game_reset_to_lobby` (L2, since done)
 - [`c/MAKE_UNMAKE.md`](../c/MAKE_UNMAKE.md) - a banked negative result from the same profiling work: make/unmake in the endgame solver, measured, reverted
