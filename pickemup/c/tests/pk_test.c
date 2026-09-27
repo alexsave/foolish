@@ -424,23 +424,6 @@ static void t_start_card(void)
     }
 }
 
-/* A table whose deck is empty and whose stack holds `m` cards under `top`;
- * everything else is in seat 1's hand. Seat 0 holds two non-matching cards. */
-static void empty_deck(PkGame *g, int m, uint8_t top, int live)
-{
-    table(g, 2, top, live);
-    give(g, 0, num(3, 1, 0));
-    give(g, 0, num(3, 1, 1));
-    g->stack_n = 0;
-    for (int i = 0; i < m; i++) {
-        uint8_t c = g->deck[g->deck_n - 1];
-        g->deck_n--;
-        g->stack[g->stack_n++] = c;
-    }
-    g->stack[g->stack_n++] = top;
-    while (g->deck_n) give(g, 1, g->deck[g->deck_n - 1]);
-}
-
 static void t_reshuffle(void)
 {
     TEST("7.3.4 reshuffle determinism");
@@ -504,17 +487,6 @@ static void t_top_stays(void)
 }
 
 /* ---- 7.7 call-out windows ---------------------------------------------------------- */
-
-/* Three seats, seat 0 plays down to one card and seals; turn is seat 1. */
-static void exposed3(PkGame *g)
-{
-    table(g, 3, num(0, 5, 0), 0);
-    give(g, 0, num(0, 6, 0)); give(g, 0, num(1, 1, 0));
-    give(g, 1, num(0, 7, 0)); give(g, 1, num(2, 2, 0)); give(g, 1, num(3, 3, 0));
-    give(g, 2, num(0, 8, 0)); give(g, 2, num(2, 4, 0)); give(g, 2, num(3, 6, 0));
-    pk_apply(g, 0, PLAY(0));
-    pk_seal(g);
-}
 
 static void t_windows(void)
 {

@@ -138,6 +138,34 @@ static inline int one_rep(const PkGame *g)
     return 1;
 }
 
+/* A table whose deck is empty and whose stack holds `m` cards under `top`;
+ * everything else is in seat 1's hand. Seat 0 holds two non-matching cards. */
+static inline void empty_deck(PkGame *g, int m, uint8_t top, int live)
+{
+    table(g, 2, top, live);
+    give(g, 0, num(3, 1, 0));
+    give(g, 0, num(3, 1, 1));
+    g->stack_n = 0;
+    for (int i = 0; i < m; i++) {
+        uint8_t c = g->deck[g->deck_n - 1];
+        g->deck_n--;
+        g->stack[g->stack_n++] = c;
+    }
+    g->stack[g->stack_n++] = top;
+    while (g->deck_n) give(g, 1, g->deck[g->deck_n - 1]);
+}
+
+/* Three seats, seat 0 plays down to one card and seals; turn is seat 1. */
+static inline void exposed3(PkGame *g)
+{
+    table(g, 3, num(0, 5, 0), 0);
+    give(g, 0, num(0, 6, 0)); give(g, 0, num(1, 1, 0));
+    give(g, 1, num(0, 7, 0)); give(g, 1, num(2, 2, 0)); give(g, 1, num(3, 3, 0));
+    give(g, 2, num(0, 8, 0)); give(g, 2, num(2, 4, 0)); give(g, 2, num(3, 6, 0));
+    pk_apply(g, 0, PLAY(0));
+    pk_seal(g);
+}
+
 /* THE BOT the random tests drive: a legal action for a plausible seat,
  * weighted so games end (plays preferred, a pass after a draw most of the
  * time, "Last card!" half the time it is legal, a catch now and then, and
