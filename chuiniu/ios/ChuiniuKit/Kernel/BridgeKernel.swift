@@ -53,14 +53,19 @@ public final class BridgeKernel: Kernel {
     private var revealEndMs: Int?
     public private(set) var motionStart: Date?
 
-    public init(store: UserDefaults = .standard) {
+    /// Whether the Debug `dev.seat` file may switch the person. Tests say no:
+    /// a test host on the rig's simulator shares the rig's App Group.
+    private let devPerson: Bool
+
+    public init(store: UserDefaults = .standard, devPerson: Bool = true) {
         self.store = store
+        self.devPerson = devPerson
         loadPerson()
     }
 
     private var person: String {
 #if DEBUG
-        return ChuiniuDev.person ?? ""
+        return devPerson ? ChuiniuDev.person ?? "" : ""
 #else
         return ""
 #endif
@@ -80,7 +85,7 @@ public final class BridgeKernel: Kernel {
         loadedFor = p
         var n = store.string(forKey: key("chuiniu.nickname")) ?? ""
 #if DEBUG
-        if !p.isEmpty { n = p } else if n.isEmpty, let dev = ChuiniuDev.nickname { n = dev }
+        if !p.isEmpty { n = p } else if n.isEmpty, devPerson, let dev = ChuiniuDev.nickname { n = dev }
 #endif
         setNick(n)
     }
@@ -175,8 +180,8 @@ public final class BridgeKernel: Kernel {
 
         guard t.phase != CN_PHASE_WAITING, let v = view else {
             let seats = t.seat.indices.map { s in
-                SeatModel(id: s, name: line(CN_API_W_LOBBY_ROW, s), dice: 0, alive: true, isTurn: false,
-                          isMe: s == me)
+                SeatModel(id: s, name: line(CN_API_W_SEAT, s), dice: 0, alive: true, isTurn: false,
+                          isMe: s == me, lobbyRow: line(CN_API_W_LOBBY_ROW, s))
             }
             return TableModel(phase: .lobby, seats: seats, me: me, myDice: [], bid: nil, bidText: "", bidder: nil,
                               reveal: nil, caption: caption, bubbleCaption: bubble, menu: nil,

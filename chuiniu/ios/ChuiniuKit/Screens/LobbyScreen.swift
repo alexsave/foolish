@@ -26,7 +26,7 @@ public struct LobbyScreen: View {
                 ForEach(table.seats) { seat in
                     HStack(spacing: 10) {
                         Cup(width: 20)
-                        Text(seat.name)
+                        Text(seat.lobbyRow.isEmpty ? seat.name : seat.lobbyRow)
                             .font(.system(size: 15, weight: .heavy))
                             .onFeltText()
                             .lineLimit(1)

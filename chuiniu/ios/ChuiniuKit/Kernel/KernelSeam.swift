@@ -45,9 +45,13 @@ public struct SeatModel: Equatable, Sendable, Identifiable {
     public var alive: Bool
     public var isTurn: Bool
     public var isMe: Bool
-    public init(id: Int, name: String, dice: Int, alive: Bool, isTurn: Bool, isMe: Bool) {
+    /// The kernel's lobby row for this phone ("2. Bo (You)"); the name alone
+    /// is what a bubble every phone sees may show.
+    public var lobbyRow: String
+    public init(id: Int, name: String, dice: Int, alive: Bool, isTurn: Bool, isMe: Bool, lobbyRow: String = "") {
         self.id = id
         self.name = name
+        self.lobbyRow = lobbyRow
         self.dice = dice
         self.alive = alive
         self.isTurn = isTurn

@@ -88,7 +88,9 @@ public struct DiceRoll: View {
                 .animation(RollBeats.lift, value: stage)
                 .allowsHitTesting(false)
         }
-        .frame(width: max(rowWidth, cupWidth), height: max(dieSize, cupWidth * Cup.aspect), alignment: .bottom)
+        // THE ROW'S HEIGHT IS THE DICE'S: the cup stands over them and may
+        // rise above the row, so a short band still fits (DiceTableLayout)
+        .frame(width: max(rowWidth, cupWidth), height: dieSize, alignment: .bottom)
         .task(id: rollID) { await play() }
     }
 

@@ -27,7 +27,7 @@ final class BridgeKernelTests: XCTestCase {
             stores[name] = d
             return d
         }()
-        let k = BridgeKernel(store: store)
+        let k = BridgeKernel(store: store, devPerson: false)
         k.me(Data(repeating: UInt8(name.utf8.first!), count: 16))
         k.nickname(name)
         k.sender(nil, isDM: false, iSent: false)
@@ -52,7 +52,8 @@ final class BridgeKernelTests: XCTestCase {
         XCTAssertTrue(alex.newGame(dm: true, seed: Self.seed))
         var m = alex.table
         XCTAssertEqual(m.phase, .lobby)
-        XCTAssertEqual(m.seats.map(\.name), ["1. Alex (You)"], "the lobby row is the kernel's")
+        XCTAssertEqual(m.seats.map(\.lobbyRow), ["1. Alex (You)"], "the lobby row is the kernel's")
+        XCTAssertEqual(m.seats.map(\.name), ["Alex"], "the name a bubble shows never says You")
         XCTAssertEqual(m.me, 0)
         XCTAssertEqual(m.offered, .waiting, "seated alone, and the newest bubble is mine")
         XCTAssertEqual(m.bubbleCaption, "Alex wants a game of Chui Niu. Tap to join")
