@@ -81,6 +81,10 @@ The device was shut down each time and is shut down now.
 What landed without a simulator, compile-checked (`PickemupKitTests` build-for-testing and the `PickemupMessagesApp` build both succeed): O6 (IOS_DECISIONS I27) with its test `ActionCardCornerTests`, the strip chips (I28), and the UI.html fixes listed in `SIM_VERIFICATION.md`.
 Still owed on a healthy simulator, in this order: `PickemupKitTests` green, the O6 test's red run (its MUTATE line), `mac_tests.sh` counts, then the full two-seat game and the eleven screenshots `SIM_VERIFICATION.md` lists; the host most likely needs the reboot B1 asked for.
 
+BLOCKED B2 confirmed by the orchestrator at 2026-09-27 07:40: a freshly created iPhone 17 on iOS 27.0 also never finished booting within 100 seconds, so the hang is host-wide and not tied to a device's state (an erased iPhone 17e hung the same way earlier).
+The `getpwuid_r did not find a match for uid 501` line the previous worker saw points at the host's directory services, which only a reboot resets.
+Every simulator proof in this pass (foolish's P8 after the lifts, the pickemup Messages run and screenshots, `pickemup/ios/scripts/mac_tests.sh` counts, the red run of `ActionCardCornerTests`, the filmed animation take) is therefore owed and listed in `pickemup/docs/SIM_VERIFICATION.md`, ready to run after the reboot.
+
 ## Found on the way (not pickemup's to fix in this pass)
 
 - `werewolf/docs/UI.html` fails `shared/tools/check_ui_doc.py` because of a literal template tag inside a script comment.
