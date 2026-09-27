@@ -661,7 +661,7 @@ static int play_game(const uint8_t seed[32])
 
     int need = NEED_EARLY, phase = PH_EARLY, x = -1;
     static char exposing[PK_API_TEXT_MAX];
-    for (int round = 0; round < 400; round++) {
+    for (int round = 0; round < 200; round++) {
         /* who sends next: the turn seat, or an exposed player saying it */
         OK(open_tip(A) == 0 && table_()->me == A, "Alex's phone resolves to seat 0");
         int turn = vme()->turn;
@@ -861,7 +861,7 @@ static int play_game(const uint8_t seed[32])
         if (!filler_(2, shed)) return 0;
         if (!send_and_receive()) return 0;
     }
-    g_why = "the game ran past 400 bubbles";
+    g_why = "the game ran past 200 bubbles";
     return 0;
 
 won:
@@ -902,29 +902,36 @@ won:
     return 1;
 }
 
+static void seed_k(uint8_t seed[32], int k)
+{
+    for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(i * 31 + k * 7 + (k >> 8) * 13 + 5);
+}
+
 int main(int argc, char **argv)
 {
     setvbuf(stdout, 0, _IONBF, 0);
-    int tries = argc > 1 ? atoi(argv[1]) : 2000;
+    /* The shipped kernel finds seed k=1 on the second try. The bound keeps a
+     * broken kernel from searching for minutes; with no seed found, seed 0 is
+     * played with the assertions on anyway, so the red names what broke. */
+    int tries = argc > 1 ? atoi(argv[1]) : 100;
     uint8_t seed[32];
     int found = -1;
     g_quiet = 1;
     for (int k = 0; k < tries && found < 0; k++) {
-        for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(i * 31 + k * 7 + (k >> 8) * 13 + 5);
+        seed_k(seed, k);
         g_why = 0;
         if (play_game(seed)) found = k;
     }
     g_quiet = 0;
     STEP("seed");
     OK(found >= 0, "a seed that reaches every step within %d tries (last refusal: %s)", tries, g_why ? g_why : "none");
-    if (found >= 0) {
-        for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(i * 31 + found * 7 + (found >> 8) * 13 + 5);
-        g_why = 0;
-        int ok = play_game(seed);
-        STEP("seed");
-        OK(ok, "the found seed plays every step again with the assertions on (%s)", g_why ? g_why : "");
-        printf("twophone: seed k=%d, %d bubbles, %d reshuffles\n", found, table_()->bubbles, resh_total);
-    }
+    int k = found >= 0 ? found : 0;
+    seed_k(seed, k);
+    g_why = 0;
+    int ok = play_game(seed);
+    STEP("seed");
+    OK(ok, "the seed plays every step again with the assertions on (%s)", g_why ? g_why : "");
+    printf("twophone: seed k=%d, %d bubbles, %d reshuffles\n", k, table_()->bubbles, resh_total);
     printf("twophone: %d assertions, %d failed\n", g_checks, g_fails);
     return g_fails ? 1 : 0;
 }
