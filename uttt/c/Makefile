@@ -30,7 +30,8 @@ LANGS   := en ru ko zh vi es pt fr de it ja pl uk tr id th nl sv da no fi cs ro 
 I18N    := $(foreach l,$(LANGS),i18n/strings_$(l).c)
 SRC     := src/uttt.c src/uttt_code.c src/uttt_bots.c src/uttt_msg.c src/uttt_say.c \
            src/uttt_pen.c src/uttt_draw.c src/uttt_anim.c src/uttt_rule.c src/uttt_lang.c \
-           $(I18N) $(SHARED)/sha256.c $(SHARED)/b32.c $(SHARED)/mixrad.c $(SHARED)/text_util/text_util.c
+           $(I18N) $(SHARED)/sha256.c $(SHARED)/b32.c $(SHARED)/mixrad.c $(SHARED)/text_util/text_util.c \
+           $(SHARED)/wire_check/wire_check.c
 
 all: build/uttt_test build/uttt_msg_test build/uttt_arena build/uttt_render build/uttt_mate
 
@@ -58,9 +59,16 @@ TEXT_UTIL := $(SHARED)/text_util
 build/text_util_test: $(TEXT_UTIL)/text_util.c $(TEXT_UTIL)/text_util_test.c $(TEXT_UTIL)/text_util.h | build
 	$(CC) $(CFLAGS) $(TEXT_UTIL)/text_util.c $(TEXT_UTIL)/text_util_test.c -o $@
 
+# The shared wire check (shared/c/wire_check): the envelope's truncated
+# SHA-256 over head and body, which uttt_msg.c carries UTM_CHECK_LEN bytes of.
+WIRE_CHECK := $(SHARED)/wire_check
+WIRE_CHECK_SRC := $(SHARED)/sha256.c $(WIRE_CHECK)/wire_check.c $(WIRE_CHECK)/wire_check_test.c
+build/wire_check_test: $(WIRE_CHECK_SRC) $(WIRE_CHECK)/wire_check.h $(SHARED)/sha256.h | build
+	$(CC) $(CFLAGS) $(WIRE_CHECK_SRC) -o $@
+
 # The message: every ply of 10,000 games through bytes and text, the seat
 # truth table, two joiners, the tap map and every sentence.
-run: build/uttt_test build/uttt_msg_test build/uttt_anim_test build/msg_stage_test build/text_util_test build/uttt_bots_test build/uttt_ink_test build/uttt_lang_test build/uttt_lang_en_test
+run: build/uttt_test build/uttt_msg_test build/uttt_anim_test build/msg_stage_test build/text_util_test build/wire_check_test build/uttt_bots_test build/uttt_ink_test build/uttt_lang_test build/uttt_lang_en_test
 	./build/uttt_test 1000
 	./build/uttt_lang_test
 	./build/uttt_lang_en_test
@@ -68,6 +76,7 @@ run: build/uttt_test build/uttt_msg_test build/uttt_anim_test build/msg_stage_te
 	./build/uttt_msg_test 10000
 	./build/msg_stage_test
 	./build/text_util_test
+	./build/wire_check_test
 	./build/uttt_anim_test
 	./build/uttt_ink_test
 
@@ -199,6 +208,9 @@ asan: $(SRC) tests/uttt_test.c | build
 	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
 	  $(TEXT_UTIL)/text_util.c $(TEXT_UTIL)/text_util_test.c -o build/text_util_asan
 	./build/text_util_asan
+	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
+	  $(WIRE_CHECK_SRC) -o build/wire_check_asan
+	./build/wire_check_asan
 
 clean:
 	rm -rf build

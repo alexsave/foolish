@@ -1,6 +1,7 @@
 #include "uttt_msg.h"
 #include "uttt_code.h"
 #include "../../../shared/c/sha256.h"
+#include "../../../shared/c/wire_check/wire_check.h"
 #include "../../../shared/c/b32.h"
 #include <string.h>
 
@@ -63,18 +64,6 @@ static int roster_ok(const UtmMsg *m)
     return memcmp(m->x, m->o, UTM_TAG_LEN) != 0;
 }
 
-static void check_of(const uint8_t *head, int hn, const uint8_t *code, int cn,
-                     uint8_t out[UTM_CHECK_LEN])
-{
-    uint8_t d[SHA256_DIGEST_LEN];
-    Sha256 c;
-    sha256_init(&c);
-    sha256_update(&c, head, (size_t)hn);
-    sha256_update(&c, code, (size_t)cn);
-    sha256_final(&c, d);
-    memcpy(out, d, UTM_CHECK_LEN);
-}
-
 int utm_encode(const UtmMsg *m, uint8_t *out, int cap)
 {
     if (!roster_ok(m)) return UTM_EROSTER;
@@ -91,7 +80,7 @@ int utm_encode(const UtmMsg *m, uint8_t *out, int cap)
     n += UTM_CHECK_LEN;
     int cn = uttt_encode(&m->game, buf + n, UTM_MAX_CODE);
     if (cn <= 0) return UTM_EGAME;
-    check_of(buf, head, buf + n, cn, buf + head);
+    wire_check(buf, (size_t)head, buf + n, (size_t)cn, buf + head, UTM_CHECK_LEN);
     n += cn;
     if (n > cap) return UTM_ECAP;
     memcpy(out, buf, (size_t)n);
@@ -118,7 +107,7 @@ int utm_decode(const uint8_t *in, int n, UtmMsg *out)
     const uint8_t *code = in + head + UTM_CHECK_LEN;
     int cn = n - head - UTM_CHECK_LEN;
     uint8_t want[UTM_CHECK_LEN];
-    check_of(in, head, code, cn, want);
+    wire_check(in, (size_t)head, code, (size_t)cn, want, UTM_CHECK_LEN);
     if (memcmp(want, in + head, UTM_CHECK_LEN) != 0) return UTM_ECHECK;
 
     UtmMsg m;

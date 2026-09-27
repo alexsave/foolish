@@ -21,13 +21,14 @@ SHARED  := ../../shared/c
 SRC     := src/pk.c src/pk_deck.c src/pk_plan.c src/pk_view.c src/pk_lobby.c src/pk_say.c \
            src/pk_code.c src/pk_msg.c src/pk_beats.c src/pk_arrange.c i18n/strings_en.c \
            $(SHARED)/deal_rng.c $(SHARED)/sha256.c $(SHARED)/b32.c $(SHARED)/mixrad.c \
-           $(SHARED)/text_util/text_util.c
+           $(SHARED)/text_util/text_util.c $(SHARED)/wire_check/wire_check.c
 # THE BOTS ARE NOT IN THE APP (DECISION D63): only the bot test and the arena
 # link them, so SRC, the wasm objects and the xcframework never carry them.
 BOT_SRC := src/pk_belief.c src/pk_bot.c
 HDR     := $(wildcard src/*.h) i18n/keys.h tests/pk_check.h tests/pk_bot.h \
            $(SHARED)/deal_rng.h $(SHARED)/sha256.h $(SHARED)/b32.h $(SHARED)/mixrad.h \
-           $(SHARED)/test/check.h $(SHARED)/test/twophone.h $(SHARED)/text_util/text_util.h
+           $(SHARED)/test/check.h $(SHARED)/test/twophone.h $(SHARED)/text_util/text_util.h \
+           $(SHARED)/wire_check/wire_check.h
 
 # One binary per test file; each takes an optional scale argument.
 TESTS   := pk_test pk_rules_test pk_plan_test pk_say_test pk_fuzz pk_msg_test pk_twophone_test pk_beats_test pk_arrange_test pk_bot_test
@@ -61,9 +62,17 @@ TEXT_UTIL := $(SHARED)/text_util/text_util.c $(SHARED)/text_util/text_util_test.
 build/text_util_test: $(TEXT_UTIL) | build
 	$(CC) $(CFLAGS) $(SHARED)/text_util/text_util.c $(SHARED)/text_util/text_util_test.c -o $@
 
-run: $(addprefix build/,$(TESTS)) build/check_test build/text_util_test build/ios_smoke
+# The shared wire check's own test (shared/c/wire_check): the envelope's
+# truncated SHA-256 over head and body, which pk_msg.c carries PK_CHECK_LEN bytes of.
+WIRE_CHECK_SRC := $(SHARED)/sha256.c $(SHARED)/wire_check/wire_check.c $(SHARED)/wire_check/wire_check_test.c
+WIRE_CHECK := $(WIRE_CHECK_SRC) $(SHARED)/wire_check/wire_check.h $(SHARED)/sha256.h
+build/wire_check_test: $(WIRE_CHECK) | build
+	$(CC) $(CFLAGS) $(WIRE_CHECK_SRC) -o $@
+
+run: $(addprefix build/,$(TESTS)) build/check_test build/text_util_test build/wire_check_test build/ios_smoke
 	./build/check_test
 	./build/text_util_test
+	./build/wire_check_test
 	./build/pk_test
 	./build/pk_rules_test
 	./build/pk_plan_test
@@ -90,9 +99,13 @@ build/asan_check_test: $(CHECK_TEST) | build
 build/asan_text_util_test: $(TEXT_UTIL) | build
 	$(CC) $(ASAN_FLAGS) $(SHARED)/text_util/text_util.c $(SHARED)/text_util/text_util_test.c -o $@
 
-asan: $(addprefix build/asan_,$(TESTS)) build/asan_check_test build/asan_text_util_test build/asan_ios_smoke
+build/asan_wire_check_test: $(WIRE_CHECK) | build
+	$(CC) $(ASAN_FLAGS) $(WIRE_CHECK_SRC) -o $@
+
+asan: $(addprefix build/asan_,$(TESTS)) build/asan_check_test build/asan_text_util_test build/asan_wire_check_test build/asan_ios_smoke
 	./build/asan_check_test
 	./build/asan_text_util_test
+	./build/asan_wire_check_test
 	./build/asan_pk_test
 	./build/asan_pk_rules_test
 	./build/asan_pk_plan_test

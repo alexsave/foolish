@@ -1,6 +1,7 @@
 /* Chui Niu - the envelope. See cn_msg.h. */
 #include "cn_msg.h"
 #include "../../../shared/c/sha256.h"
+#include "../../../shared/c/wire_check/wire_check.h"
 #include "../../../shared/c/b32.h"
 #include <string.h>
 
@@ -240,17 +241,6 @@ int cn_msg_plan_lobby(const CnMsg *before, const CnMsg *after, CnEvent *out, int
 
 /* ---- the bytes ------------------------------------------------------------------- */
 
-static void check_of(const uint8_t *head, int hn, const uint8_t *body, int bn, uint8_t out[CN_CHECK_LEN])
-{
-    uint8_t d[SHA256_DIGEST_LEN];
-    Sha256 c;
-    sha256_init(&c);
-    sha256_update(&c, head, (size_t)hn);
-    if (bn > 0) sha256_update(&c, body, (size_t)bn);
-    sha256_final(&c, d);
-    memcpy(out, d, CN_CHECK_LEN);
-}
-
 /* The same message, by everything that is not derived (the phase within a
  * started game): what the encoder is asked to write against what it reads
  * back. */
@@ -303,7 +293,7 @@ int cn_msg_encode(const CnMsg *m, uint8_t *out, int cap)
         bn = cn_code_encode(g, buf + n, CN_CODE_MAX);
         if (bn < 0) return CN_EGAME;
     }
-    check_of(buf, head, buf + n, bn, buf + head);
+    wire_check(buf, (size_t)head, buf + n, (size_t)bn, buf + head, CN_CHECK_LEN);
     n += bn;
 
     /* WHAT WAS WRITTEN IS READ BACK: a payload this build would refuse, or one
@@ -359,7 +349,7 @@ int cn_msg_decode(const uint8_t *in, int n, CnMsg *out)
     const uint8_t *body = in + at + CN_CHECK_LEN;
     int bn = n - at - CN_CHECK_LEN;
     uint8_t want[CN_CHECK_LEN];
-    check_of(in, at, body, bn, want);
+    wire_check(in, (size_t)at, body, (size_t)bn, want, CN_CHECK_LEN);
     if (memcmp(want, in + at, CN_CHECK_LEN)) return CN_ECHECK;
 
     if (!roster_ok(&m) || !lobby_rev_ok(&m)) return CN_EROSTER;
