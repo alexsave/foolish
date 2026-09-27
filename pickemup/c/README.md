@@ -43,6 +43,7 @@ The struct is fixed-size plain integers with no pointers and no bitfields, there
 | `tests/pk_msg_test.c` | the wire (7.4), Rule P (7.7.4), seat resolve (7.8.7), the tamper, corruption and truncation sweeps |
 | `ios/include/pk_api.h`, `module.modulemap` | the Swift-visible face (module `CPickemup`), the only header the xcframework carries |
 | `ios/pk_api.c` | the bridge: one resident message, lobby, staging, reading, words, two messages |
+| `ios/pk_lay.c` | the layout numbers of `UI.html` (hand row, seat ring, fan, deck, pile, pill slots), so Swift derives none |
 | `ios/pk_api_layout.h` | the structs the bridge hands Swift (`PkApiTable`, `PkApiEvents`) |
 | `ios/layout.args` | what structgen generates Swift for: those, `PkView`, `PkSince`, and the constants |
 | `ios/pk_api_smoke.c`, `pk_api_smoke.swift` | the bridge driven phone to phone, from C and from Swift |

@@ -1,0 +1,44 @@
+# PickemupKitTests, every test seen red
+
+Each row is one mutant, applied alone with the ios-sim-verify `mutation_check.sh` (an exact string replacement, the source restored and verified byte for byte afterwards), and the full `PickemupKitTests` scheme run on the iPhone 17e simulator `FC7586CF-78D5-4E61-810E-9449B9AC6C5A` (iOS 27.0).
+Every run executed all 17 tests; a row lists the assertions that went red, which were always in the test the mutant was aimed at, plus any other test that reads the same code.
+Run 2026-09-27 on the commit that added this file.
+The unmutated suite is 17 tests, 0 failures.
+
+The C side's own rows (the layout thresholds, the words, the ranks, the buried cards) are in `pickemup/c/tests/MUTATIONS.md`.
+
+## TableModelTests
+
+| Test | Mutation | Assertion that went red |
+|---|---|---|
+| testDrawOpensTheDraftAndStagesNothing | `stageIfSendable`'s canSend guard never refuses | "a draw stages nothing" |
+| testPlayStagesWithTheKernelsCaption | `play` stages with `collapse: false` | "a play collapses" |
+| testPlayStagesWithTheKernelsCaption | `stageIfSendable` captions with `W_HEADLINE` | "the caption is the kernel's staged caption" ("Waiting on Alex" against "Bo played 9 of squares. Alex to play") |
+| testAWildWaitsForItsSuit | `play` skips the `Pk.isWild` branch | "no pills under the picker", "the choice stages the wild", the picker position (6 in all) |
+| testAWildWaitsForItsSuit | `choose` plays suit 0 whatever was tapped | "the chosen suit is live" (0 against 2), the strip's chosen suit |
+| testCancellingThePickerLeavesNothingStaged | `cancelPicker` plays the wild with suit 0 | "the wild is home", "cancel stages nothing" |
+| testUndoOfADrawIsRefusedAndSaysSo | `undo` drops `refusedBelowFloor` | "the refusal says drawn cards stay (U23)", the subline |
+| testUndoOfAPlayBringsTheCardHome | `Pk.undo` always answers false | "the play comes back", the strip still shows the card |
+| testATapOnAFanStagesTheCatchAndASecondTakesItBack | `tapFan` never un-calls | "a second tap un-calls" |
+| testTheStagedLinkRoundTripsToTheOtherPhone | `Pk.read` answers 0 without adopting | `t.me` 1 against 0, "Alex's own seven" (6 against 7); also testJoiningADMStartsIt |
+| testTheMaskedViewNeverExposesAnotherSeatsCount | (C) `pk_view` fills `reveal[]` while live (`if (1)` for `if (g->over \|\| viewer == PK_VIEW_ALL)`), library rebuilt | "no count while it is played" |
+| testJoiningADMStartsIt | `join` always calls `Pk.join` | "the second player's join starts the game" |
+
+## LayoutTests, CardFaceTests, RenderTests
+
+| Test | Mutation | Assertion that went red |
+|---|---|---|
+| testTheHandOverflowsAsO4Says | `PK_LAY_OVERLAP` maps to `.flat` | "twenty-seven overlap"; also the drawer's fourteen |
+| testTheHandOverflowsAsO4Says | `PK_LAY_SCROLL` maps to `.overlap` | "forty-two scroll"; also the drawer's thirty |
+| testTheDrawerKeepsOneRow | `maxRows` answers 2 | "the drawer keeps one row", the rows of fourteen |
+| testEverySlotIsInsideTheRowAndFacesAreRight | the slot loop stops one short | "a slot per card" (for every n) |
+| testEverySlotIsInsideTheRowAndFacesAreRight | `thin` becomes `cardW <= thinBelow` | "an overlapped card keeps its face (U8)" |
+| testThePillSlots | `PK_PILL_PASS` maps to `.undo` | "Pass beside Draw"; also testDrawOpensTheDraftAndStagesNothing "and Pass stands beside it (D10)" |
+| testTheRingPutsMeAtTheBottom | `PkLayout.seat` passes the seat as `me` | "the seat across is at the top" |
+| testFacesComeFromTheKernel | `CardFace` reads the rank for the suit | "circle one" |
+| testTheBubbleRendersAt300By195 | `BubbleSnapshot.size` 300 x 300 | "the bubble is 300 x 195" |
+
+## Not mutated
+
+Nothing in `PickemupKitTests` is left without a row.
+What these tests do not reach is the conversation itself (`PickemupMessages/MessagesViewController.swift`: staging through the insert loop, send, cancel, receive); it has no test target, as uttt's has none, and it has NOT yet run inside Messages: on 2026-09-27 the app installed and registered on the simulator, but `simctl launch com.apple.MobileSMS` hung for over five minutes (BLOCKED B2 in `pickemup/docs/ORCHESTRATION.md`).

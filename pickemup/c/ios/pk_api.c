@@ -6,6 +6,7 @@
 #include "../src/pk_plan.h"
 #include "../src/pk_say.h"
 #include "../src/pk_view.h"
+#include "../i18n/keys.h"
 #include <stddef.h>
 #include <string.h>
 
@@ -290,6 +291,16 @@ int pk_api_can_play(int pos)
     return g && pos >= 0 && pos < PK_HAND_CAP ? pk_can_play(g, S.me, pos) : 0;
 }
 
+int pk_api_card_suit(int card)
+{
+    return card >= 0 && card < PK_DECK ? pk_suit((uint8_t)card) : -1;
+}
+
+int pk_api_card_rank(int card)
+{
+    return card >= 0 && card < PK_DECK ? pk_rank((uint8_t)card) : -1;
+}
+
 int pk_api_is_wild(int pos)
 {
     PkGame *g = live();
@@ -418,6 +429,53 @@ static int empty(char *out, int cap)
     return 0;
 }
 
+/* "2. Bo", or "2. Bo (You)" when the row is my seat's and it may say so. */
+static int numbered_row(int number, int seat, int mine_marked, char *out, int cap)
+{
+    char num[8], who[PK_NAME_MAX_BYTES + 24];
+    if (pk_itoa(number, num, sizeof num) < 0 || pk_say_seat(S.names, seat, who, sizeof who) < 0) return -1;
+    const char *kv[] = { "n", num, "who", who, 0 };
+    return pk_fill(out, cap, pk_text(mine_marked && seat == S.me ? PK_K_LOBBY_ROW_YOU : PK_K_LOBBY_ROW), kv);
+}
+
+typedef struct { uint8_t card[8]; int n; } Buried;
+
+static void buried_one(const PkEvent *e, void *ctx)
+{
+    Buried *b = ctx;
+    if (e->kind == PK_EV_BURY && b->n < 8) b->card[b->n++] = e->card;
+}
+
+int pk_api_buried(uint8_t out[8])
+{
+    if (!out || !S.have || S.m.phase == PK_PHASE_WAITING) return 0;
+    const PkGame *g = &S.m.game;
+    if (g->reshuffles) return 0;              /* the deck has been rebuilt since */
+    Buried b = { { 0 }, 0 };
+    if (pk_plan_each(g, PK_VIEW_ALL, -1, 0, buried_one, &b) < 0) return 0;
+    int n = 0;
+    for (int i = 0; i < b.n; i++)
+        for (int d = 0; d < g->deck_n; d++)
+            if (g->deck[d] == b.card[i]) { out[n++] = b.card[i]; break; }
+    return n;
+}
+
+int pk_api_ranks(uint8_t out[8])
+{
+    if (!out || !S.have || S.m.phase == PK_PHASE_WAITING || !S.m.game.over) return 0;
+    const PkGame *g = &S.m.game;
+    int n = 0;
+    if (g->winner < g->n) out[n++] = g->winner;
+    /* an insertion sort of at most eight: fewest cards first, ties by seat */
+    for (int s = 0; s < g->n; s++) {
+        if (s == g->winner) continue;
+        int k = n++;
+        while (k > (g->winner < g->n) && g->hand_n[out[k - 1]] > g->hand_n[s]) { out[k] = out[k - 1]; k--; }
+        out[k] = (uint8_t)s;
+    }
+    return n;
+}
+
 int pk_api_words(int what, int arg, char *out, int cap)
 {
     if (!out || cap < 1 || what < 0 || what >= PK_API_W_COUNT) return -1;
@@ -439,10 +497,40 @@ int pk_api_words(int what, int arg, char *out, int cap)
     case PK_API_W_SPOKEN_FAN:
         if (!S.have || arg < 0 || arg >= S.m.n_seats) return -1;
         return pk_say_spoken_fan(S.names, arg, out, cap);
+    case PK_API_W_LOBBY_ROW: case PK_API_W_PUBLIC_ROW:
+        if (!S.have || arg < 0 || arg >= S.m.n_seats) return -1;
+        return numbered_row(arg + 1, arg, what == PK_API_W_LOBBY_ROW, out, cap);
+    case PK_API_W_RANK_ROW: {
+        uint8_t rank[PK_MAX_SEATS];
+        int n = pk_api_ranks(rank);
+        if (arg < 0 || arg >= n) return -1;
+        return numbered_row(arg + 1, rank[arg], 1, out, cap);
+    }
+    case PK_API_W_LOBBY_DEALER: {
+        if (!S.have || S.m.n_seats < 1) return -1;
+        char who[PK_NAME_MAX_BYTES + 24];
+        if (pk_say_seat(S.names, 0, who, sizeof who) < 0) return -1;
+        const char *kv[] = { "who", who, 0 };
+        return pk_fill(out, cap, pk_text(PK_K_LOBBY_DEALER), kv);
+    }
+    case PK_API_W_ERROR:
+        if (arg >= 0) return -1;
+        /* a newer format is the one refusal with a remedy (4.7); every other
+         * one is a link that was cut or changed on the way */
+        return pk_api_string(arg == PK_EFORMAT ? PK_K_UNREADABLE_WHY : PK_K_DAMAGED, out, cap);
     }
     if (!started) return empty(out, cap);
     switch (what) {
     case PK_API_W_CAPTION:      return pk_say_caption(g, arg, S.names, out, cap);
+    case PK_API_W_STAGED_CAPTION:
+        /* the bubble pk_api_text would write: my draft sealed into a copy
+         * (the resident keeps its draft), else the newest sealed bubble */
+        if (g->b_open) {
+            S.other = S.m;
+            if (!pk_seal(&S.other.game)) return -1;
+            return pk_say_caption(&S.other.game, S.other.game.bubbles, S.names, out, cap);
+        }
+        return pk_say_caption(g, g->bubbles, S.names, out, cap);
     case PK_API_W_HEADLINE:     return pk_say_headline(g, me, S.names, out, cap);
     case PK_API_W_SUBLINE:      return pk_say_subline(g, me, S.names, out, cap);
     case PK_API_W_DECK_LEFT:    return pk_say_deck_left(g, out, cap);

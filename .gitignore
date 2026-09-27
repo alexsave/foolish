@@ -67,6 +67,8 @@ pickemup/c/build/
 # uttt/ios/vendor and foolish/sdk/swift/gen.
 pickemup/ios/vendor/
 pickemup/ios/Generated/
+# The project is generated from pickemup/ios/project.yml, as uttt's is.
+pickemup/ios/*.xcodeproj
 uttt/ios/*/*.entitlements
 
 # The shared toolchain's own build outputs - the generator and datagen binaries,

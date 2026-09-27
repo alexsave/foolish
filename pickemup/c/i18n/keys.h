@@ -63,6 +63,8 @@
     X(DIR_ACW,            14, 0)                                                 \
     X(DECK_LEFT,          10, 0)  /* "{n} left"                               */ \
     X(STAMP_LAST,          6, 0)  /* "LAST"                                   */ \
+    X(STAMP_OUT,           6, 0)  /* "OUT", under the winner's badge          */ \
+    X(STAMP_WRONG,        14, 0)  /* "Wrong call", under a wrong catcher       */ \
     X(SEAT_FALLBACK,      16, 0)  /* "Player {n}", a seat with no name        */ \
     /* 6.2 bubble captions: one line in the SENDER's language, composed by   \
      * pk_say_caption; never "you", every caption names the actor */           \
@@ -113,9 +115,11 @@
     X(SUB_STAGED_SKIP,     0, 0)                                                 \
     X(SUB_STAGED_PLUS,     0, 0)                                                 \
     X(SUB_STAGED_CALL,     0, 0)                                                 \
+    X(TOAST_NO_MATCH,     28, 0)  /* a card dropped on the pile that does not play */ \
     X(BTN_DRAW,           14, 0)                                                 \
     X(BTN_PLAY,           14, 0)                                                 \
     X(BTN_PASS,           14, 0)                                                 \
+    X(BTN_UNDO,           14, 0)  /* the Undo pill: a staged play comes back */ \
     X(BTN_SAY,            14, 0)                                                 \
     X(BTN_CAUGHT,         14, 0)                                                 \
     X(BTN_AGAIN,          14, 0)                                                 \
@@ -136,6 +140,8 @@
     X(BTN_START,          14, 0)                                                 \
     X(BTN_LEAVE,          14, 0)                                                 \
     X(LOBBY_NAME_PROMPT,   0, 0)                                                 \
+    X(LOBBY_ROW,           0, 0)  /* "{n}. {who}", a numbered roster row      */ \
+    X(LOBBY_ROW_YOU,       0, 0)  /* "{n}. {who} (You)", this phone's row     */ \
     /* 6.5 errors and staleness */                                             \
     X(UNREADABLE,         24, 0)                                                 \
     X(UNREADABLE_WHY,      0, 0)                                                 \
