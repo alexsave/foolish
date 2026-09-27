@@ -55,7 +55,7 @@ enum {
 };
 
 /* How many may sit: MSG_LOBBY_ROSTER_DM_CAP in a two-person chat, else
- * group_cap. */
+ * group_cap, held to 2..MSG_LOBBY_ROSTER_MAX_SEATS. */
 int  msg_lobby_roster_cap(const MsgLobbyRoster *l);
 
 /* A new lobby with its creator in seat 0, who also sent the invitation.

@@ -2,9 +2,21 @@
 #include "msg_lobby_roster.h"
 #include <string.h>
 
+/* THE ROSTER NEVER OUTGROWS who[]: the capacity is 2..MAX whatever group_cap
+ * says, so a join can never write past the array, and every walk over the
+ * seats stops at MAX whatever n_seats says, so a hand-built roster with a bad
+ * count reads and writes nothing past it. Inside the contract (group_cap
+ * 2..MAX, n_seats at most the cap) neither changes anything. */
+static int seated(const MsgLobbyRoster *l)
+{
+    return l->n_seats < MSG_LOBBY_ROSTER_MAX_SEATS ? l->n_seats : MSG_LOBBY_ROSTER_MAX_SEATS;
+}
+
 int msg_lobby_roster_cap(const MsgLobbyRoster *l)
 {
-    return l->dm ? MSG_LOBBY_ROSTER_DM_CAP : l->group_cap;
+    if (l->dm) return MSG_LOBBY_ROSTER_DM_CAP;
+    if (l->group_cap < 2) return 2;
+    return l->group_cap > MSG_LOBBY_ROSTER_MAX_SEATS ? MSG_LOBBY_ROSTER_MAX_SEATS : l->group_cap;
 }
 
 void msg_lobby_roster_new(MsgLobbyRoster *l, int dm, int group_cap, uint16_t creator)
@@ -19,7 +31,7 @@ void msg_lobby_roster_new(MsgLobbyRoster *l, int dm, int group_cap, uint16_t cre
 
 int msg_lobby_roster_seat_of(const MsgLobbyRoster *l, uint16_t who)
 {
-    for (int s = 0; s < l->n_seats; s++)
+    for (int s = 0; s < seated(l); s++)
         if (l->who[s] == who) return s;
     return -1;
 }
@@ -37,7 +49,8 @@ int msg_lobby_roster_join(MsgLobbyRoster *l, uint16_t who)
 
 int msg_lobby_roster_can_exit(const MsgLobbyRoster *l, int seat)
 {
-    return !l->started && seat >= 0 && seat < l->n_seats && l->n_seats >= 2;
+    return !l->started && seat >= 0 && seat < l->n_seats && l->n_seats >= 2
+        && l->n_seats <= MSG_LOBBY_ROSTER_MAX_SEATS;
 }
 
 int msg_lobby_roster_leave(MsgLobbyRoster *l, int seat)
@@ -83,10 +96,10 @@ int msg_lobby_roster_plan(const MsgLobbyRoster *before, const MsgLobbyRoster *af
                           MsgLobbyRosterChange out[MSG_LOBBY_ROSTER_MAX_CHANGES])
 {
     int n = 0;
-    for (int s = 0; s < before->n_seats; s++)
+    for (int s = 0; s < seated(before); s++)
         if (msg_lobby_roster_seat_of(after, before->who[s]) < 0)
             out[n++] = (MsgLobbyRosterChange){ MSG_LOBBY_ROSTER_LEFT, (uint8_t)s };
-    for (int s = 0; s < after->n_seats; s++)
+    for (int s = 0; s < seated(after); s++)
         if (msg_lobby_roster_seat_of(before, after->who[s]) < 0)
             out[n++] = (MsgLobbyRosterChange){ MSG_LOBBY_ROSTER_JOINED, (uint8_t)s };
     return n;

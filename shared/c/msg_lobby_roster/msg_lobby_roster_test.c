@@ -223,6 +223,46 @@ static void test_plan(void)
        "only the leaver changes, though every row moved");
 }
 
+/* OUT OF CONTRACT, HELD: a group_cap past MAX or below 2, and a hand-built
+ * roster whose n_seats is past MAX. The roster sits in a block with a guard
+ * tail, so a write past who[] shows as a changed guard
+ * (SECURITY_REVIEW_LIFTED.md: a group_cap of 9 wrote who[8]). */
+static void test_bounds(void)
+{
+    struct { MsgLobbyRoster l; uint16_t guard[16]; } b;
+    memset(&b, 0, sizeof b);
+    memset(b.guard, 0xA5, sizeof b.guard);
+    msg_lobby_roster_new(&b.l, 0, 200, 1);
+    OK(msg_lobby_roster_cap(&b.l) == MSG_LOBBY_ROSTER_MAX_SEATS, "a group_cap of 200 seats MAX");
+    int joined = 0;
+    for (int w = 2; w < 40; w++) joined += msg_lobby_roster_join(&b.l, (uint16_t)w) >= 0;
+    OK(joined == MSG_LOBBY_ROSTER_MAX_SEATS - 1 && b.l.n_seats == MSG_LOBBY_ROSTER_MAX_SEATS, "joins stop at MAX");
+    int intact = 1;
+    for (int i = 0; i < 16; i++) intact &= b.guard[i] == 0xA5A5;
+    OK(intact, "nothing past who[] was written");
+
+    MsgLobbyRoster z;
+    msg_lobby_roster_new(&z, 0, 0, 1);
+    OK(msg_lobby_roster_cap(&z) == 2, "a group_cap of 0 seats two");
+    msg_lobby_roster_new(&z, 0, 1, 1);
+    OK(msg_lobby_roster_cap(&z) == 2, "a group_cap of 1 seats two");
+
+    /* n_seats past MAX: no leave, no walk past who[] */
+    struct { MsgLobbyRoster l; uint16_t guard[256]; } h, g;
+    memset(&h, 0xA5, sizeof h);
+    memset(&g, 0, sizeof g);
+    h.l.started = 0;
+    h.l.n_seats = 200;
+    g.l.n_seats = 0;
+    OK(!msg_lobby_roster_leave(&h.l, 150) && !msg_lobby_roster_can_exit(&h.l, 3), "a roster past MAX cannot be left");
+    for (int i = 0; i < MSG_LOBBY_ROSTER_MAX_SEATS; i++) h.l.who[i] = (uint16_t)(100 + i);
+    OK(msg_lobby_roster_seat_of(&h.l, 107) == 7, "seat_of finds the last handle in who[]");
+    OK(msg_lobby_roster_seat_of(&h.l, 0xA5A5) == -1, "seat_of looks no further than who[]");
+    MsgLobbyRosterChange ch[512];   /* room for what an unbounded walk would write */
+    OK(msg_lobby_roster_plan(&g.l, &h.l, ch) == MSG_LOBBY_ROSTER_MAX_SEATS, "plan counts at most MAX joins");
+    OK(msg_lobby_roster_plan(&h.l, &g.l, ch) == MSG_LOBBY_ROSTER_MAX_SEATS, "plan counts at most MAX leaves");
+}
+
 int main(void)
 {
     test_cap_and_new();
@@ -232,6 +272,7 @@ int main(void)
     test_start();
     test_leave();
     test_plan();
+    test_bounds();
     printf("msg_lobby_roster: %d checks, %d failed\n", checks, fails);
     return fails != 0;
 }
