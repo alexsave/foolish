@@ -452,6 +452,38 @@ static void t_play_penalty(void)
     }
 }
 
+/* DEMO.wild, my own wild (ANIMATION_DECISIONS A12): the card lands, then its
+ * chosen suit's band slides up from under its foot, `band.animate(
+ * translateY(100%) -> translateY(0), T.fade, E.out)`, while the halo turns. */
+static void t_play_wild(void)
+{
+    TEST("play a wild: the band slides up");
+    NE = 0;
+    ev(PK_EV_BUBBLE_BEGIN, A, 3);
+    PkEvent *p = ev(PK_EV_PLAY, A, 3); p->card = 96; p->suit = PK_NO_SUIT; p->i = 2;
+    PkEvent *w = ev(PK_EV_WILD_SUIT, A, 3); w->card = 96; w->suit = 2;
+    build(PK_BEATS_STAGE, 3, 4, 0, 0, &B1);
+    const PkBeat *band = nth(&B1, PK_BK_BAND, 0, 0);
+    CHECK(st(band) == 516 && du(band) == 220 && band->suit == 2 && band->to == PK_ANC_STACK,
+          "the band as the wild lands, T.fade long, in the chosen suit");
+    CHECK(band && band->ease == PK_EASE_EASE_OUT, "E.out");
+    PkBeatSample s;
+    pk_beat_sample(band, 515, 0, &s);
+    CHECK(s.state == PK_BS_PENDING && s.apply && s.p == 0, "hidden under the card's edge before it starts");
+    pk_beat_sample(band, 516 + 110, 0, &s);
+    CHECK(s.state == PK_BS_ACTIVE && s.p > .5f && s.p < 1, "ease-out: past halfway at half time (%f)", (double)s.p);
+    CHECK(s.opacity == 1, "it slides, it does not fade");
+    pk_beat_sample(band, 736, 0, &s);
+    CHECK(s.state == PK_BS_DONE && s.p == 1, "in place at the end");
+    /* the arrival of someone else's wild has its band already on (grid) */
+    NE = 0;
+    ev(PK_EV_BUBBLE_BEGIN, A, 0);
+    p = ev(PK_EV_PLAY, A, 0); p->card = 96; p->suit = PK_NO_SUIT; p->i = 2;
+    w = ev(PK_EV_WILD_SUIT, A, 0); w->card = 96; w->suit = 2;
+    build(PK_BEATS_ARRIVAL, 3, 4, 0, 0, &B1);
+    CHECK(count(&B1, PK_BK_BAND, 0) == 0, "a seat's wild arrives with its band on");
+}
+
 /* Grid "Pass": the passer's fan shrugs .96 and back, 200ms; mine dims to .5. */
 static void t_pass(void)
 {
@@ -873,6 +905,7 @@ int main(int argc, char **argv)
     t_play_skip();
     t_play_reverse();
     t_play_penalty();
+    t_play_wild();
     t_pass();
     t_say_and_catch();
     t_win_reveal();

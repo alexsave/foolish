@@ -194,8 +194,8 @@ public final class BeatPlayer: ObservableObject {
         }
         for (k, b) in plan.beat.enumerated() {
             switch b.kind {
-            case PK_BK_FLIGHT, PK_BK_GATHER, PK_BK_HOLD, PK_BK_BAND:
-                continue                      // ghosts, a rest, the band rides the card (DECISION A7)
+            case PK_BK_FLIGHT, PK_BK_GATHER, PK_BK_HOLD:
+                continue                      // ghosts, a rest
             case PK_BK_FLIP where b.to != PK_ANC_FAN:
                 continue
             default:
@@ -215,6 +215,8 @@ public final class BeatPlayer: ObservableObject {
                     edit(b.to == PK_ANC_DECK ? "deck" : "hand.\(b.toI)") { $0.dx += CGFloat(s.dx) }
                 case PK_BK_HALO:
                     edit("halo") { $0.opacity *= CGFloat(s.opacity) }
+                case PK_BK_BAND:              // the pile's wild draws it (PkCard.bandFX, A12)
+                    edit("band") { $0.band = p }
                 case PK_BK_STAMP:
                     edit("slot.\(b.toI)") { $0.scale *= CGFloat(s.scale); $0.opacity *= CGFloat(s.opacity) }
                 case PK_BK_SLASH:

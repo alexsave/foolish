@@ -156,6 +156,9 @@ public struct PkCard: View {
     public var fullFace = false
     /// A played wild's chosen suit: the band along its foot (U15).
     public var chosen: Int? = nil
+    /// The motion name the band slides up under (the pile's top card only):
+    /// PkFX.band, the kernel's BAND beat (ANIMATION_DECISIONS A12).
+    public var bandFX: String? = nil
     /// The staged strip's 12 x 17 chip: the glyph alone, no index and no pip
     /// (UI.html `.strip .chip .cf`).
     public var chip = false
@@ -164,6 +167,13 @@ public struct PkCard: View {
                 fullFace: Bool = false, chosen: Int? = nil, chip: Bool = false) {
         self.card = card; self.size = size; self.selected = selected
         self.dimmed = dimmed; self.fullFace = fullFace; self.chosen = chosen; self.chip = chip
+    }
+
+    /// This card's band slides up under the motion `name` (the pile's top).
+    public func slidingBand(_ name: String) -> PkCard {
+        var c = self
+        c.bandFX = name
+        return c
     }
 
     private var radius: CGFloat { chip ? 2 : min(5, size.width * 0.1) }
@@ -248,7 +258,9 @@ public struct PkCard: View {
             }
             .overlay(alignment: .bottom) {
                 if let chosen, f.isWild {
-                    Rectangle().fill(SuitInk.color(chosen)).frame(height: h * 0.16)
+                    BandSlide(name: bandFX, height: h * 0.16) {
+                        Rectangle().fill(SuitInk.color(chosen))
+                    }
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: radius))
@@ -287,5 +299,22 @@ public struct PkCard: View {
         }
         .padding(.leading, thin ? 0 : size.width * 0.08)
         .padding(.top, size.height * (thin ? 0.14 : 0.04))
+    }
+}
+
+/// The chosen-suit band, slid up from under the card's foot as far as the
+/// kernel's BAND beat has taken it (UI.html DEMO.wild: translateY(100%) to 0,
+/// clipped by the card). With no name, or no beat playing, it is in place.
+struct BandSlide<Content: View>: View {
+    let name: String?
+    let height: CGFloat
+    @ViewBuilder let content: () -> Content
+    @Environment(\.pkFX) private var all
+
+    var body: some View {
+        let up = name.flatMap { all[$0]?.band } ?? 1
+        content()
+            .frame(height: height)
+            .offset(y: (1 - up) * height)
     }
 }

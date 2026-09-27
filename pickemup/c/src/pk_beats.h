@@ -123,7 +123,8 @@ enum {
     PK_BK_FATTEN,       /* reshuffle: the deck swells (.7 -> 1.14 -> 1)           */
     PK_BK_RIFFLE,       /* the deck's layers splay and snap back                 */
     PK_BK_HALO,         /* the pile's halo cross-fades to `suit`                  */
-    PK_BK_BAND,         /* a wild's chosen-suit band slides up its foot          */
+    PK_BK_BAND,         /* a wild's chosen-suit band slides up its foot: p is how
+                           far up, 0 hidden under the card's edge, 1 in place */
     PK_BK_STAMP,        /* LAST / Caught you! / Wrong call / OUT (sub) into a slot */
     PK_BK_SLASH,        /* a skipped fan's red bar wipes across, then goes       */
     PK_BK_DIM,          /* dims to amp% and back (a skipped badge, my hand)      */

@@ -248,6 +248,30 @@ final class BeatPlayerTests: XCTestCase {
                        "seven into my hand")
     }
 
+    // MUTATE: BeatPlayer.effects skips PK_BK_BAND -> "the band is part way up".
+    // MUTATE: BandSlide ignores the fx (`let up: CGFloat = 1`) -> nothing here;
+    // it is a view, and the planned red run for it is a screenshot (A12).
+    func testAPickedWildSlidesItsBandUp() throws {
+        let pos = try XCTUnwrap(Phones.dmWithWild())
+        let m = TableModel()
+        m.play(pos)
+        XCTAssertEqual(m.pickerFor, pos)
+        m.choose(2)
+        let plan = try XCTUnwrap(m.player.plan, "the choice plays")
+        let band = try XCTUnwrap(plan.beat.first { $0.kind == PK_BK_BAND }, "my wild's band is a beat")
+        XCTAssertEqual(band.suit, 2, "in the chosen suit")
+        XCTAssertEqual(band.durMs, PK_T_FADE)
+        let a = anchors(hand: m.hand.count)
+        let before = m.player.effects(band.startMs - 1, anchors: a)
+        XCTAssertEqual(before["band"]?.band, 0, "hidden under the foot until it starts")
+        let mid = m.player.effects(band.startMs + band.durMs / 2, anchors: a)
+        let up = try XCTUnwrap(mid["band"]?.band, "the band is part way up")
+        XCTAssertGreaterThan(up, 0.5, "ease-out: past halfway at half time")
+        XCTAssertLessThan(up, 1)
+        XCTAssertNil(m.player.effects(band.startMs + band.durMs + 1, anchors: a)["band"]?.band,
+                     "in place once it has run")
+    }
+
     // MUTATE: pk_lay_picker's east reach 96 becomes 90 (C) -> "triangles east".
     func testThePickerTilesAreTheKernels() {
         let c = CGPoint(x: 200, y: 300)

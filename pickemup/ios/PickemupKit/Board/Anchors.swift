@@ -63,6 +63,9 @@ public struct PkFX: Equatable {
     public var bar: CGFloat?
     /// A called fan's ring, fading in or out.
     public var ring: CGFloat?
+    /// A played wild's chosen-suit band, how far up from under the card's
+    /// foot (0 hidden, 1 in place): the kernel's BAND beat (A12).
+    public var band: CGFloat?
     public init() {}
 }
 
