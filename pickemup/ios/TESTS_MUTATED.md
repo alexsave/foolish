@@ -123,3 +123,18 @@ Each is a screenshot or a filmed take owed on a simulator (the band, the rows) o
 
 Every test in `PickemupKitTests` now has a row above; nothing is left unmutated.
 What these tests do not reach is the conversation itself (`PickemupMessages/MessagesViewController.swift`: staging through the insert loop, send, cancel, receive); it has no test target, as uttt's has none, and what was seen of it inside Messages is in `pickemup/docs/SIM_VERIFICATION.md`.
+
+## The B4 pass (2026-09-27, `pk-b4`, iPhone 17e, iOS 27.0)
+
+Each mutant applied alone by an exact string replacement, the named class run on the simulator under a watchdog, the source restored and compared byte for byte.
+
+| Test | Mutation | Assertion that went red |
+|---|---|---|
+| CompactTests (281, 299) | TableScreen draws the pile and deck at `scale: CGFloat = 1` | "the pile is drawn at the scale" (82 against 57.4), "the deck is drawn at the scale", "the deck on the pile's line (U3)", "the pile clear of the fan across the table" (61.7 against 50.9) |
+| CompactTests (281, 299) | the pills never stack (`pillsStacked(collapse: 0)`) | "no pill over the pile" (pill.pass at 162, 139 over the pile) |
+| CompactTests (281, 299, 340) | StatusCorner always gets the sub-line | "the drawer's status corner ends with its strip: no sub-line" (65.3 against 48.5); it survived until that assertion was added |
+| OpenedBubbleTests.testTheClockStartsOnTheFirstBoardFrameOnScreen | `play` starts the clock whether or not the board is on screen | "nothing has played behind the white drawer" (1200 against 0), "no clock yet", "a body drawn off screen starts nothing", "at or after the first board frame" (1000 against 1001.5) |
+| OpenedBubbleTests.testTheClockStartsOnTheFirstBoardFrameOnScreen | `ms()` never starts a waiting clock | "the clock starts on the first frame on screen" |
+
+Not mutated: `OpenedBubbleTests.testAPlanWaitingForTheBoardIsNotEndedBehindIt` (its mutant is the first row's, which the other test already catches; not run alone), and the badge's stamp overlay (no Swift test places a stamp and measures the fan; owed).
+

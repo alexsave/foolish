@@ -132,32 +132,36 @@ static void layout(void)
        && pk_lay_deck_layers(12) == 8 && pk_lay_deck_layers(104) == 8, "the deck's layers");
 
     float cx, cy;
-    pk_lay_pile(374, 390, 0.5f, &cx, &cy);
-    OK(near(cx, 187) && near(cy, 195 - 24), "the pile lifts 24 in the drawer (U2)");
+    pk_lay_pile(374, 322, 1, &cx, &cy);
+    OK(near(cx, 187) && near(cy, 161 - 24), "the pile lifts 24 in the drawer (U2)");
     pk_lay_pile(374, 700, 0, &cx, &cy);
     OK(near(cy, 350), "and sits on the centre expanded");
     pk_lay_deck(374, 700, 0, &x, &y);
     OK(near(x, 187 - 41 - 10 - 50) && near(y, 350 - 35), "the deck 10pt left of the pile, on its line (U3)");
     OK(pk_lay_table_scale(700, 0) == 1 && pk_lay_subline(0) == 1, "expanded: the table at full size, the sub-line shown");
 
-    /* O10, the compact drawer: the pile and the deck in the band between the
-     * top fan's foot and the pill row, 4 clear of each, scaled to fit it. The
-     * band's two edges are read back from the ring and the pill zone, so a
-     * change to either moves the pile with it. */
+    /* O10, the compact drawer: the pile and the deck in the band under the
+     * top fan's foot, 4 clear of it; the pile's foot 4 over the hand (no pill
+     * in its column, the inner pill stands above Draw), the deck's 4 over the
+     * pill row. The band's edges are read back from the ring, the hand and the
+     * pill zone, so a change to any of them moves the pile with it. */
     {
         static const struct { float view_h, scale, cy; const char *what; } drawer[] = {
-            { 340, 1.0f, 127.0f, "a 340pt drawer (322 of board): full size, the lift held 67 over the pills" },
-            { 299, 0.80977f, 98.745f, "the iPhone 17e's 299pt drawer (281 of board): 0.81, filling the band" },
+            { 340, 1.0f, 137.0f, "a 340pt drawer (322 of board): full size, U2's lift" },
+            { 299, 0.85970f, 122.91f, "a 299pt drawer (281 of board): 0.86, the deck on the pill row's clearance" },
+            { 281, 0.69968f, 110.51f, "the iPhone 17e's drawer as measured, a 281pt view (263 of board): 0.70" },
         };
-        for (int k = 0; k < 2; k++) {
+        for (int k = 0; k < 3; k++) {
             float bh = drawer[k].view_h - PK_LAY_INSET_T - PK_LAY_INSET_B, c = pk_lay_collapse(drawer[k].view_h);
             float s = pk_lay_table_scale(bh, c), fx, fy, px, py, pw, ph;
             pk_lay_pile(374, bh, c, &cx, &cy);
             OK(c == 1 && near(s, drawer[k].scale) && near(cx, 187) && near(cy, drawer[k].cy), drawer[k].what);
             pk_lay_seat(1, 0, 2, 374, bh, c, &fx, &fy);
             pk_lay_zone(PK_ZONE_PILLS, 374, bh, c, PK_LAY_ROW_H, &px, &py, &pw, &ph);
-            OK(cy - 64 * s >= fy + 9.2f + 4 - 0.01f, "the pile's reach clears the top fan's foot by 4");
-            OK(cy + 67 * s <= py - 4 + 0.01f, "and the pill row by 4: no pill over the pile");
+            OK(cy - 64 * s >= fy + 30.17f + 4 - 0.01f, "the pile's reach clears the top fan's foot by 4");
+            OK(cy + 67 * s <= bh - PK_LAY_ROW_H - 4 + 0.01f, "and the hand by 4");
+            OK(cy + 35 * s <= py - 4 + 0.01f, "the deck's foot clears the pill row by 4");
+            OK(pk_lay_pills_stacked(c) == 1, "in the drawer the inner pill stands above Draw: none in the pile's column");
             pk_lay_deck(374, bh, c, &x, &y);
             OK(near(x, cx - (41 + 10 + 50) * s) && near(y, cy - 35 * s), "the deck beside it, scaled with it, on its line");
             OK(pk_lay_zone(PK_ZONE_PILE_DROP, 374, bh, c, PK_LAY_ROW_H, &px, &py, &pw, &ph) == 0
@@ -165,11 +169,12 @@ static void layout(void)
                "the drop zone is the drawn pile, 8 all round");
             OK(pk_lay_subline(c) == 0, "the drawer drops the status corner's sub-line");
         }
+        OK(pk_lay_pills_stacked(0) == 0, "expanded the pills stand in a row (U9)");
         OK(pk_lay_table_scale(100, 1) == 0.5f, "never under half size");
-        pk_lay_picker(0, 187, 98.745f, &x, &y);
+        pk_lay_picker(0, 187, 110.51f, &x, &y);
         OK(near(x, 187) && near(y, 30), "the north tile stays whole on the board");
-        pk_lay_picker(2, 187, 98.745f, &x, &y);
-        OK(near(y, 98.745f + 104), "the south tile keeps its reach");
+        pk_lay_picker(2, 187, 110.51f, &x, &y);
+        OK(near(y, 110.51f + 104), "the south tile keeps its reach");
     }
 
     int tr, ld;
@@ -189,7 +194,7 @@ static void layout(void)
     OK(pk_lay_zone(PK_ZONE_DRAW_BAND, 374, 700, 0, 80, &x, &y, &zw, &zh) == 0
        && near(x, 8) && near(y, 620 - 64) && near(zw, 358) && near(zh, 80 + 88), "U24: the hand band, 64 up and 24 down");
     OK(pk_lay_zone(PK_ZONE_PILE_DROP, 374, 322, 1, 80, &x, &y, &zw, &zh) == 0
-       && near(x, 187 - 41 - 8) && near(y, 127 - 57.5f - 8) && near(zw, 98) && near(zh, 131),
+       && near(x, 187 - 41 - 8) && near(y, 137 - 57.5f - 8) && near(zw, 98) && near(zh, 131),
        "the pile's drop target follows its lift, 8 all round");
     OK(pk_lay_zone(PK_ZONE_PILLS, 374, 700, 0, 166, &x, &y, &zw, &zh) == 0 && near(x, 0) && near(y, 534 - 44)
        && near(zw, 374) && near(zh, 40), "the pill row 4 above a two-row hand");

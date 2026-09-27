@@ -107,7 +107,12 @@ public struct PickemupRoot: View {
             }
         }
         .overlay(alignment: .topTrailing) { sendHint }
-        .onPreferenceChange(PkAnchorKey.self) { PkAnchors.latest = $0 }
+        .onPreferenceChange(PkAnchorKey.self) { a in
+            PkAnchors.latest = a
+#if DEBUG
+            PickemupDev.writeAnchors(a, inset: CGPoint(x: PkLayout.boardInset.leading, y: PkLayout.boardInset.top))
+#endif
+        }
         .sheet(isPresented: $host.rulesShown) { RulesSheet() }
     }
 

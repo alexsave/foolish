@@ -21,7 +21,9 @@ final class CompactTests: XCTestCase {
         m.draw()
         XCTAssertFalse(m.strip.isEmpty, "the strip is up")
         var anchors: [String: CGRect] = [:]
-        AXTree.hosted(TableScreen(model: m, onRules: {}).onPreferenceChange(PkAnchorKey.self) { anchors = $0 },
+        // the whole window, as the extension's GeometryReader sees its view
+        AXTree.hosted(TableScreen(model: m, onRules: {}).ignoresSafeArea()
+                        .onPreferenceChange(PkAnchorKey.self) { anchors = $0 },
                       size: CGSize(width: 390, height: h)) { _ in }
         XCTAssertNotNil(anchors["pill.pass"], "Pass beside Draw")
         return anchors
@@ -29,7 +31,8 @@ final class CompactTests: XCTestCase {
 
     private func checkTheBand(viewHeight h: CGFloat, scale want: CGFloat) throws {
         let a = try anchorsAfterADraw(viewHeight: h)
-        let board = try XCTUnwrap(a["board"]?.size)
+        let inset = PkLayout.boardInset
+        let board = CGSize(width: 390 - inset.leading - inset.trailing, height: h - inset.top - inset.bottom)
         let s = PkLayout.tableScale(board: board, collapse: PkLayout.collapse(viewHeight: h))
         XCTAssertEqual(s, want, accuracy: 0.001, "the kernel's scale for a \(h)pt drawer")
         let stack = try XCTUnwrap(a["stack"]), deck = try XCTUnwrap(a["deck"])
@@ -42,20 +45,31 @@ final class CompactTests: XCTestCase {
         let pile = stack.insetBy(dx: -3 * s, dy: -3 * s)
         let lean = CGFloat(PkLayout.deckLayers(Pk.view()?.deckN ?? 0) - 1)
         let deckDrawn = deck.union(deck.offsetBy(dx: -lean * DeckStack.leanX * s, dy: -lean * DeckStack.leanY * s))
-        for name in ["pill.draw", "pill.pass", "pills"] {
+        for name in ["pill.draw", "pill.pass"] {
             let pill = try XCTUnwrap(a[name], name)
             XCTAssertFalse(pill.intersects(pile), "no pill over the pile (\(name) \(pill), pile \(pile))")
         }
         XCTAssertFalse(deckDrawn.intersects(status), "the deck is not over the status corner (\(deckDrawn), \(status))")
+        let strip = try XCTUnwrap(a["strip"])
+        XCTAssertLessThanOrEqual(status.maxY, strip.maxY + 1.5, "the drawer's status corner ends with its strip: no sub-line")
         XCTAssertLessThan(fan.maxY, pile.minY, "the pile clear of the fan across the table")
     }
 
     // MUTATE: TableScreen draws the pile and the deck at scale 1 (`let scale:
-    // CGFloat = 1`) -> "no pill over the pile", "the pile is drawn at the scale".
-    // MUTATE: StatusCorner always gets the sub-line -> "the deck is not over
-    // the status corner".
+    // CGFloat = 1`) -> "the pile is drawn at the scale", "the pile clear of the
+    // fan across the table".
+    // MUTATE: the pills never stack (`let stacked = false`) -> "no pill over
+    // the pile".
+    // MUTATE: SeatBadge keeps its stamp slot in the VStack -> "the pile clear
+    // of the fan across the table" (the fan is 30 below the ring point, not 9).
+    // The iPhone 17e simulator's drawer, measured through dev.anchors: a 281pt
+    // view (263 of board).
     func testTheIPhone17eDrawerKeepsThePileInTheBand() throws {
-        try checkTheBand(viewHeight: 299, scale: 0.80977)
+        try checkTheBand(viewHeight: 281, scale: 0.69968)
+    }
+
+    func testA299DrawerKeepsItToo() throws {
+        try checkTheBand(viewHeight: 299, scale: 0.85970)
     }
 
     func testA340DrawerKeepsItToo() throws {

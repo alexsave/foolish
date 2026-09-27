@@ -257,3 +257,24 @@ The pile's anchor was a clear 82 x 115 frame in an overlay, `.offset` to the pil
 `BeatPlayerTests` could not see it: they hand the player synthetic anchors. `AnchorTests` hosts a real `TableScreen` and checks the pile's anchor is the pile, the deck is beside it on its line, and every anchor is on the board.
 Alternative: measure the pile's anchor on `PileView` itself; its frame carries the halo and the stack's lean, not one card.
 Confidence: high.
+
+## The B4 simulator pass (2026-09-27, late afternoon)
+
+Run on a fresh iPhone 17e simulator `pk-b4` (iOS 27.0), inside Messages; see `SIM_VERIFICATION.md`.
+
+DECISION I45: O10 as built. In the drawer the pile and the deck are drawn at `pk_lay_table_scale`, the pile's whole reach (its leaning under-cards too) sits from 4 under the fan across the table down to 4 over the hand, the deck's foot stays 4 over the pill row, and the pill beside Draw stands ABOVE Draw at the trailing edge (`pk_lay_pills_stacked`), so no pill is in the pile's column; the status corner drops its sub-line (`pk_lay_subline`).
+The iPhone 17e's drawer, measured on the simulator through the Debug `dev.anchors` file, is a 281pt view (263 of board), not the 299 B2 estimated from a screenshot; there the scale is 0.70 (a 57 x 80 pile), at 299 it is 0.86, and a 340pt drawer keeps full size and U2's 24pt lift.
+O10 said "the inner pill to the leading side, beside Rules"; that was not built, because a 96pt pill beside the Rules square ends at 156 and the Last card! pill ends at 108, so either the pile shrinks to 0.66 and still meets the Last card! case, or a pill covers it.
+The seat badge's stamp slot is now an overlay hanging under the fan: in the VStack an empty slot collapsed, so a stamp appearing re-centred the badge and moved the name and fan 21pt, and no kernel number could say where the fan was.
+The seat ring is drawn over the pile and the deck, so a stamp under the fan across the table overlaps the pile's top edge rather than hiding under it.
+Alternative: keep the pills in their row and fit the band above it (0.53 in the measured drawer, a deck label wider than the deck); or move the pile off centre.
+Why: the table is what the player reads in the drawer; the stacked pills cost nothing expanded, where the row is unchanged (U9).
+Not solved: with three or four seats the side seats' fans already reach the pill row's height in the drawer (a ring point at half the board), and five or more seats put upper seats beside the deck; the simulator cannot make a group thread, so neither was seen.
+Confidence: medium, until the owner has seen `shots/compact_after.png`.
+
+DECISION I46: the BeatPlayer's clock starts on the first frame the board is on screen, not at the adopt.
+`BeatPlayer.onScreen` is the controller's (false from `viewDidLoad` until the hosting view is shown with the drawer up, false again at `viewDidDisappear`, through `PickemupHost.onScreen`); `play` starts the clock at once only when the board is on screen, otherwise the plan stands at its first frame and the first `ms()` a body asks on screen starts it, and its end is scheduled from then.
+This is foolish's first-paint rule (derive in body, not in an onChange a paint later): the frame drawn is what decides, and a body drawn off screen starts nothing.
+Alternative: start the clock in `onScreen`'s didSet; one paint earlier than anything is drawn, and exactly the onChange shape the veil family warns about.
+Confidence: high for the rule (`OpenedBubbleTests`); the filmed proof is owed (below).
+

@@ -94,9 +94,16 @@ struct SeatBadge: View {
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(Pk.words(PK_API_W_SPOKEN_FAN, seat))
                 .accessibilityAddTraits(.isButton)
+        }
+        // THE STAMP HANGS UNDER THE FAN AND MOVES NOTHING (IOS_DECISIONS I45):
+        // in the VStack its empty slot collapsed, so a stamp appearing
+        // re-centred the badge and jumped the name and fan 21pt, and the
+        // drawer's band (pk_lay_table_scale) could not know where the fan was
+        .overlay(alignment: .bottom) {
             StampSlot(stamp: stamp)
-                .frame(height: 40, alignment: .top)
+                .frame(width: 112, height: 40, alignment: .top)
                 .pkAnchor("slot.\(seat)")
+                .offset(y: 42)
         }
         .frame(width: 112)
     }

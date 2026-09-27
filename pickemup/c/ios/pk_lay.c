@@ -152,11 +152,13 @@ int pk_lay_deck_layers(int deck_n)
 #define PILE_LIFT 24.0f      /* exactly a pill row's clearance in the drawer     */
 #define DECK_GAP  10.0f      /* the deck sits 10pt left of the pile              */
 #define PILL_GAP   4.0f      /* the pill row sits 4 above the hand               */
-/* O10's band. The fan across the table: SeatBadge's centre is the ring point,
- * and its fan's foot is 9.2 below it (a 12pt name 14.3 high, 2, the 44 fan
- * box, 2, the 40 stamp slot: 102.3 high, the fan's foot at 60.3). */
-#define FAN_FOOT    9.2f
-#define BAND_CLEAR  4.0f     /* the pile stays this far off the fan and the pills */
+/* O10's band. The fan across the table: SeatBadge is its 12pt name (14.33
+ * high), 2, and the 44pt fan box, centred on the ring point, so the fan's foot
+ * is half of 60.33 below it; the stamp hangs under the fan as an overlay and
+ * moves nothing (IOS_DECISIONS I45). Measured on the iPhone 17e simulator's
+ * drawer (dev.anchors): ring point 31.56, fan foot 61.7 on a 263 board. */
+#define FAN_FOOT   30.17f
+#define BAND_CLEAR  4.0f     /* the pile stays this far off the fan, the deck off the pills, the pile off the hand */
 /* The pile's reach about its centre, at scale 1: the top card leans -3
  * degrees, and the three under-cards (PileView.under: -8, 6 and -3 degrees,
  * 4, -2 and 3 down) reach 63.5 above it and 66.7 below. */
@@ -164,21 +166,30 @@ int pk_lay_deck_layers(int deck_n)
 #define PILE_DOWN  67.0f
 #define MIN_SCALE   0.5f
 
-/* The drawer's band, top and bottom, in the board. */
-static void band(float board_h, float collapse, float *top, float *bottom)
-{
-    *top = (0.5f - ring_ry(collapse)) * board_h + FAN_FOOT + BAND_CLEAR;
-    *bottom = board_h - PK_LAY_ROW_H - PILL_GAP - PK_LAY_PILL_H - BAND_CLEAR;   /* U7: one row */
-}
-
 static int in_drawer(float collapse) { return collapse >= 0.5f; }
+
+/* The drawer's band: its top (the fan's foot), how low the deck may reach
+ * (the pill row's top: Rules and Last card! stand there under it), and how low
+ * the pile may reach (the hand's top: no pill stands in the pile's column in
+ * the drawer, pk_lay_pills_stacked). */
+static void band(float board_h, float collapse, float *top, float *deck_bottom, float *pile_bottom)
+{
+    float hand_top = board_h - PK_LAY_ROW_H;                           /* U7: one row */
+    *top = (0.5f - ring_ry(collapse)) * board_h + FAN_FOOT + BAND_CLEAR;
+    *deck_bottom = hand_top - PILL_GAP - PK_LAY_PILL_H - BAND_CLEAR;
+    *pile_bottom = hand_top - BAND_CLEAR;
+}
 
 float pk_lay_table_scale(float board_h, float collapse)
 {
     if (!in_drawer(collapse)) return 1.0f;
-    float top, bottom;
-    band(board_h, collapse, &top, &bottom);
-    float s = (bottom - top) / (PILE_UP + PILE_DOWN);
+    float top, deck_bottom, pile_bottom;
+    band(board_h, collapse, &top, &deck_bottom, &pile_bottom);
+    /* the pile's top on the band's top: the pile's foot above the hand, and
+     * the deck's (half a deck below the pile's centre) above the pills */
+    float s = (pile_bottom - top) / (PILE_UP + PILE_DOWN);
+    float d = (deck_bottom - top) / (PILE_UP + PK_LAY_DECK_H / 2);
+    if (d < s) s = d;
     return s > 1.0f ? 1.0f : s < MIN_SCALE ? MIN_SCALE : s;
 }
 
@@ -186,9 +197,15 @@ void pk_lay_pile(float board_w, float board_h, float collapse, float *cx, float 
 {
     float y = board_h / 2;
     if (in_drawer(collapse)) {
-        float s = pk_lay_table_scale(board_h, collapse), top, bottom;
-        band(board_h, collapse, &top, &bottom);
-        float lo = top + PILE_UP * s, hi = bottom - PILE_DOWN * s;
+        float s = pk_lay_table_scale(board_h, collapse), top, deck_bottom, pile_bottom;
+        band(board_h, collapse, &top, &deck_bottom, &pile_bottom);
+        /* the pile's centre between its reach under the fan and over the
+         * hand. The deck's clearance of the pills needs no clamp of its own:
+         * where it binds, the scale already put the pile's top on the band's
+         * top; where the scale is 1 (a board of 297 and up), U2's lift leaves
+         * the deck over the pills (checked at 322 in pk_api_smoke.c). */
+        float lo = top + PILE_UP * s, hi = pile_bottom - PILE_DOWN * s;
+        (void)deck_bottom;
         y -= PILE_LIFT;
         if (lo > hi) y = (lo + hi) / 2;           /* a band under half a pile: centred */
         else if (y < lo) y = lo;
@@ -209,6 +226,11 @@ void pk_lay_deck(float board_w, float board_h, float collapse, float *x, float *
 int pk_lay_subline(float collapse)
 {
     return !in_drawer(collapse);
+}
+
+int pk_lay_pills_stacked(float collapse)
+{
+    return in_drawer(collapse);
 }
 
 /* ---- the pill row (U9) ------------------------------------------------------ */

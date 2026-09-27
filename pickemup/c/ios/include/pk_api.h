@@ -225,12 +225,14 @@ float pk_lay_fan_step(int backs);
 int   pk_lay_deck_layers(int deck_n);
 
 /* THE COMPACT DRAWER (ORCHESTRATION O10, IOS_DECISIONS I45). In the drawer
- * (collapse 1/2 and over) the pile and the deck live in the BAND between the
- * foot of the fan across the table and the top of the pill row, 4pt clear of
- * each, and the pile's whole reach (its three leaning under-cards included)
- * must fit in it. The table scale is how much the pile and the deck are drawn
- * at: 1 while the band holds them (a 340pt drawer and up), less below (the
- * iPhone 17e's 299pt drawer: 0.81), never under 1/2. Expanded it is 1. */
+ * (collapse 1/2 and over) the pile and the deck live in the BAND under the
+ * foot of the fan across the table, 4pt clear of it: the pile's whole reach
+ * (its three leaning under-cards included) down to 4 above the hand, since no
+ * pill stands in its column there (pk_lay_pills_stacked), and the deck down to
+ * 4 above the pill row, where Rules and Last card! stand. The table scale is
+ * how much the pile and the deck are drawn at: 1 while the band holds them,
+ * less below (the iPhone 17e's drawer, a 281pt view: 0.70), never under 1/2.
+ * Expanded it is 1. */
 float pk_lay_table_scale(float board_h, float collapse);
 
 /* The pile's centre (U2's 24pt lift in the drawer, held inside the band), and
@@ -247,6 +249,12 @@ void  pk_lay_deck(float board_w, float board_h, float collapse, float *x, float 
 /* Does the status corner show its sub-line (what matches, the live suit)?
  * Not in the drawer (O10): there it would run under the deck. 1 or 0. */
 int   pk_lay_subline(float collapse);
+
+/* In the drawer the pill beside Draw (Play, Pass or Undo) stands ABOVE it,
+ * PK_LAY_PILL_STACK_GAP higher, both at the trailing edge, so no pill is in
+ * the pile's column (O10); expanded they stand in a row (U9). 1 or 0. */
+int   pk_lay_pills_stacked(float collapse);
+#define PK_LAY_PILL_STACK_GAP 4.0f
 
 /* The pill row (U9): what stands in the TRAILING slot and in the one to its
  * left. Draw holds the trailing slot whenever it is legal; beside it, Play

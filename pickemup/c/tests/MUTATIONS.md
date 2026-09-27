@@ -169,16 +169,20 @@ The sentinel mutation above is the one that breaks canonicality.
 | ios-smoke layout | the ring's x loses its minus sign (seats go round the other way) | `pk_api_smoke.c:125` "the next seat sits on my left" |
 | ios-smoke layout | the fan step divides 96 instead of 96 less a card | `pk_api_smoke.c:130` "the fan steps 10, compressing to fit 96 (U6)" |
 | ios-smoke layout | 12 cards draw 7 layers | `pk_api_smoke.c:132` "the deck's layers" |
-| ios-smoke layout | the pile never lifts | `pk_api_smoke.c:136` "the pile lifts 24 in the drawer (U2)" (since O10 the check is at a 390 board with collapse 1/2, where the band does not bind; `y -= PILE_LIFT` removed went red there again) |
+| ios-smoke layout | the pile never lifts | `pk_api_smoke.c:136` "the pile lifts 24 in the drawer (U2)" (seen red again after O10, see the compact rows) |
 | ios-smoke layout | the deck 8pt from the pile | `pk_api_smoke.c:140` "the deck 10pt left of the pile, on its line (U3)" |
-| ios-smoke compact (O10) | `pk_lay_table_scale` always answers 1 | `pk_api_smoke.c:156` "the iPhone 17e's 299pt drawer (281 of board): 0.81, filling the band", `:159` "clears the top fan's foot by 4", `:160` "no pill over the pile", `:168` "never under half size" |
-| ios-smoke compact (O10) | the pile's centre is never held inside the band | `pk_api_smoke.c:156` both drawers, `:160` "no pill over the pile" (both), `:193` "the pile's drop target follows its lift" |
-| ios-smoke compact (O10) | the deck's x not scaled with the table | `pk_api_smoke.c:162` "the deck beside it, scaled with it, on its line" |
-| ios-smoke compact (O10) | the pile's drop zone keeps the full pile height | `pk_api_smoke.c:165` "the drop zone is the drawn pile, 8 all round" |
-| ios-smoke compact (O10) | `pk_lay_subline` answers 1 in the drawer | `pk_api_smoke.c:166` "the drawer drops the status corner's sub-line" (both drawers) |
-| ios-smoke compact (O10) | the picker's north tile not held on the board | `pk_api_smoke.c:170` "the north tile stays whole on the board" |
-| ios-smoke compact (O10) | `FAN_FOOT` 9.2 becomes 0 | `pk_api_smoke.c:156` "0.81, filling the band", `:159` "clears the top fan's foot by 4" |
-| ios-smoke compact (O10) | no half-size floor on the scale | `pk_api_smoke.c:168` "never under half size" |
+| ios-smoke compact (O10) | `pk_lay_table_scale` always answers 1 | `pk_api_smoke.c:158` the 299 and 281 drawers, `:161` "clears the top fan's foot by 4", `:162` "and the hand by 4", `:163` "the deck's foot clears the pill row by 4", `:173` "never under half size" |
+| ios-smoke compact (O10) | the pile's centre never held inside the band | `pk_api_smoke.c:158` the 299 and 281 drawers, `:161` "clears the top fan's foot by 4" |
+| ios-smoke compact (O10) | the deck's x not scaled with the table | `pk_api_smoke.c:166` "the deck beside it, scaled with it, on its line" |
+| ios-smoke compact (O10) | the pile's drop zone keeps the full pile height | `pk_api_smoke.c:169` "the drop zone is the drawn pile, 8 all round" |
+| ios-smoke compact (O10) | `pk_lay_subline` answers 1 in the drawer | `pk_api_smoke.c:170` "the drawer drops the status corner's sub-line" (all three drawers) |
+| ios-smoke compact (O10) | the picker's north tile not held on the board | `pk_api_smoke.c:175` "the north tile stays whole on the board" |
+| ios-smoke compact (O10) | `FAN_FOOT` 30.17 becomes 9.2 (a badge with its stamp slot in the stack) | `pk_api_smoke.c:158` the 299 and 281 drawers, `:161` "clears the top fan's foot by 4" |
+| ios-smoke compact (O10) | no half-size floor on the scale | `pk_api_smoke.c:173` "never under half size" |
+| ios-smoke compact (O10) | the deck's clearance of the pill row ignored in the scale | `pk_api_smoke.c:158` the 299 and 281 drawers, `:161`, `:163` "the deck's foot clears the pill row by 4" |
+| ios-smoke compact (O10) | `pk_lay_pills_stacked` answers 0 | `pk_api_smoke.c:164` "in the drawer the inner pill stands above Draw" (all three drawers) |
+| ios-smoke compact (O10) | no U2 lift | `pk_api_smoke.c:136` "the pile lifts 24 in the drawer (U2)", `:158` the 340 drawer, `:198` "the pile's drop target follows its lift" |
+| ios-smoke compact (O10) | (found) a second clamp of the pile's centre to the deck's clearance never went red: it was redundant (where it binds the scale already put the pile on the band's top), so it was removed and the reason written beside `pk_lay_pile` | none: no test can tell it from the code without it |
 | ios-smoke layout | Play offered for a selection when it is not my turn | `pk_api_smoke.c:152` "not my turn: a selection offers no Play" |
 | ios-smoke cards | `pk_api_card_suit` reads the next id's suit | `pk_api_smoke.c:427` "a suited card's suit and rank (3.2)" |
 | ios-smoke cards | `pk_api_card_rank` accepts id 104 | `pk_api_smoke.c:431` "an id off the deck is nothing" |

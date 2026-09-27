@@ -3,6 +3,7 @@
 // for (project.yml). Nothing here exists in a Release build.
 
 #if DEBUG || SOLO_TESTING
+import CoreGraphics
 import Foundation
 
 public enum PickemupDev {
@@ -31,6 +32,36 @@ public enum PickemupDev {
         guard parts.count == 2, let n = UInt8(parts[0]), n > 0, !parts[1].isEmpty else { return nil }
         return (n, parts[1])
     }()
+
+    /// `dev.seed` (64 hex digits): the next game this device makes deals from
+    /// this seed, so the rig can replay a known game inside Messages.
+    public static var seed: [UInt8]? {
+        guard let hex = files.string("dev.seed"), hex.count == 64 else { return nil }
+        var out: [UInt8] = []
+        var i = hex.startIndex
+        while i < hex.endIndex {
+            let j = hex.index(i, offsetBy: 2)
+            guard let b = UInt8(hex[i..<j], radix: 16) else { return nil }
+            out.append(b)
+            i = j
+        }
+        return out
+    }
+
+    /// `dev.anchors.on`: every anchor's frame is written to `dev.anchors` as it
+    /// changes, one `name x y w h` line each in the extension view's points
+    /// (the board inset added), so the rig taps a card where it is instead of
+    /// where a screenshot suggests. Read once per process.
+    public static let anchorsOn = files.exists("dev.anchors.on")
+
+    public static func writeAnchors(_ anchors: [String: CGRect], inset: CGPoint) {
+        guard anchorsOn else { return }
+        let lines = anchors.keys.sorted().map { k -> String in
+            let r = anchors[k]!
+            return String(format: "%@ %.1f %.1f %.1f %.1f", k, r.minX + inset.x, r.minY + inset.y, r.width, r.height)
+        }
+        files.write(lines.joined(separator: "\n") + "\n", to: "dev.anchors")
+    }
 
     /// `dev.slide`: the auto-collapse rides the shared CollapseSlide on the
     /// kernel's push (ANIMATION_DECISIONS A14). Read once per process.

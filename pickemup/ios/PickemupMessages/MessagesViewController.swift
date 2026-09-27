@@ -352,7 +352,14 @@ final class MessagesViewController: MSMessagesAppViewController {
     private func create(in conversation: MSConversation) {
         guard host.readable else { return }
         identify(conversation)
-        guard Pk.newGame(dm: conversation.remoteParticipantIdentifiers.count == 1) else { return }
+        let dm = conversation.remoteParticipantIdentifiers.count == 1
+#if DEBUG
+        // the rig's known deal (`dev.seed`), else a random one
+        let made = PickemupDev.seed.map { Pk.newGame(dm: dm, seed: $0) } ?? Pk.newGame(dm: dm)
+#else
+        let made = Pk.newGame(dm: dm)
+#endif
+        guard made else { return }
         session = nil
         sessionGame = nil
         host.showResident()

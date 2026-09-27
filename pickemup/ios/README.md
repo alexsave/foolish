@@ -39,7 +39,8 @@ foolish/ios/Tools/rig/rig.sh build
 ```
 
 `rig.env` derives every path from its own location, so a worktree drives its own tree.
-A Debug build reads five dev files from the App Group (`PickemupKit/Kernel/PickemupDev.swift`): `dev.empty` draws nothing, `dev.nick` is the nickname a fresh simulator sits down under, `dev.slide` turns on the auto-collapse slide (A14), `dev.sendhint` the Send reminder (A15), and `dev.persona` ("1 Bo") makes the next appex process another person with its own seat records, so one simulator's two stub threads can seat two players (IOS_DECISIONS I43; leave the thread before flipping it).
+A Debug build also reads `dev.seed` (64 hex digits: the next game deals from that seed) and `dev.anchors.on` (every anchor's frame written to `dev.anchors` as `name x y w h` lines, for a driver's taps), IOS_DECISIONS I45.
+It reads five more dev files from the App Group (`PickemupKit/Kernel/PickemupDev.swift`): `dev.empty` draws nothing, `dev.nick` is the nickname a fresh simulator sits down under, `dev.slide` turns on the auto-collapse slide (A14), `dev.sendhint` the Send reminder (A15), and `dev.persona` ("1 Bo") makes the next appex process another person with its own seat records, so one simulator's two stub threads can seat two players (IOS_DECISIONS I43; leave the thread before flipping it).
 
 ## What is where
 

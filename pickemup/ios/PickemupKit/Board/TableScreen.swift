@@ -101,23 +101,6 @@ public struct TableScreen: View {
         ZStack(alignment: .topLeading) {
             Color.clear
 
-            // the seat ring: everybody but me (a spectator sees them all)
-            ForEach(0..<n, id: \.self) { seat in
-                if seat != me {
-                    // the reveal rows once the plan's reveal has begun (or with
-                    // no plan, a finished table); backs before
-                    let revealing = model.isOver && (!shown.playing || shown.revealShown != nil)
-                    SeatBadge(seat: seat, name: seat < model.names.count ? model.names[seat] : "",
-                              revealed: revealing ? v?.reveal[safe: seat]?.card : nil,
-                              isTurn: shown.turn == seat,
-                              stamp: shown.stampHeld(seat) ? nil : model.stamp(seat), calling: model.calling(seat),
-                              fanEmpty: shown.fanEmpty(seat),
-                              revealShown: shown.playing ? shown.revealShown?[safe: seat] : nil,
-                              onTapFan: { model.tapFan(seat) })
-                        .position(PkLayout.seat(seat, me: me, count: n, board: board, collapse: collapse))
-                }
-            }
-
             StatusCorner(headline: model.headline,
                          subline: PkLayout.showsSubline(collapse: collapse) ? model.subline : "", strip: model.strip,
                          onUnsay: { model.unsay() })
@@ -154,6 +137,25 @@ public struct TableScreen: View {
                 .offset(x: deckAt.x, y: deckAt.y)
                 .highPriorityGesture(deckGesture(band: band, origin: deckAt))
 
+            // the seat ring: everybody but me (a spectator sees them all),
+            // drawn over the pile and the deck, so a stamp under the fan
+            // across the table is never hidden by the drawer's pile (I45)
+            ForEach(0..<n, id: \.self) { seat in
+                if seat != me {
+                    // the reveal rows once the plan's reveal has begun (or with
+                    // no plan, a finished table); backs before
+                    let revealing = model.isOver && (!shown.playing || shown.revealShown != nil)
+                    SeatBadge(seat: seat, name: seat < model.names.count ? model.names[seat] : "",
+                              revealed: revealing ? v?.reveal[safe: seat]?.card : nil,
+                              isTurn: shown.turn == seat,
+                              stamp: shown.stampHeld(seat) ? nil : model.stamp(seat), calling: model.calling(seat),
+                              fanEmpty: shown.fanEmpty(seat),
+                              revealShown: shown.playing ? shown.revealShown?[safe: seat] : nil,
+                              onTapFan: { model.tapFan(seat) })
+                        .position(PkLayout.seat(seat, me: me, count: n, board: board, collapse: collapse))
+                }
+            }
+
             if let drag = deckDrag {
                 deckGhost(at: CGPoint(x: deckAt.x + drag.width, y: deckAt.y + drag.height))
             }
@@ -172,11 +174,15 @@ public struct TableScreen: View {
                 .frame(width: pillRow.width, height: pillRow.height)
                 .offset(x: pillRow.minX, y: pillRow.minY)
 
-            PillRow(trailing: pills.trailing, leading: pills.leading,
+            // O10: in the drawer the pill beside Draw stands above it, so no
+            // pill is in the pile's column (pk_lay_pills_stacked)
+            let stacked = PkLayout.pillsStacked(collapse: collapse)
+            let lift = stacked ? PkLayout.pillHeight + PkLayout.pillStackGap : 0
+            PillRow(trailing: pills.trailing, leading: pills.leading, stacked: stacked,
                     onDraw: { model.draw() }, onPlay: { model.playSelected() },
                     onPass: { model.pass() }, onUndo: { model.undo() })
-                .frame(width: pillRow.width, height: pillRow.height)
-                .offset(x: pillRow.minX, y: pillRow.minY)
+                .frame(width: pillRow.width, height: pillRow.height + lift, alignment: .bottom)
+                .offset(x: pillRow.minX, y: pillRow.minY - lift)
 
             // where a dragged card lets go is the kernel's (pk_lay_drop, I38): the
             // row rearranges and never plays, the pile plays

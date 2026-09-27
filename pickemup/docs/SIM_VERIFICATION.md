@@ -13,8 +13,16 @@ Those steps stay proven by the bridge and owed on a phone or a longer session.
 
 Two defects were found and one is fixed:
 - FIXED (I44): every flight to or from the pile (a play, the start card, a bury, a reshuffle's gather) flew to the board's top-left corner and snapped onto the pile at its end; the pile's anchor was moved into place with `.offset`, which its GeometryReader does not see, so it reported (0, 0). `AnchorTests` hosts a real `TableScreen` and was seen red on exactly that frame (41, 57.5 against 187, 317.5).
-- OPEN, needs the owner (ORCHESTRATION B2): the compact drawer on an iPhone 17e is too short for the table as laid out. The pill row's inner pill (Undo or Pass beside Draw) is drawn over the pile, the deck's layers cover the status corner's sub-line when the staged strip is up, and the pile touches the top seat's fan (`compact_collision.png`, `skip_staged.png`). U2's 24pt lift was sized for a 340pt drawer; this board is about 299pt. See the B2 entry for the options.
-- OPEN (MOTION_REPORT): an opened bubble's plan starts while the drawer is still white, so its first few hundred milliseconds play unseen.
+- FIXED since (O10, IOS_DECISIONS I45, `shots/compact_after.png`): the compact drawer on an iPhone 17e was too short for the table as laid out. The pill row's inner pill (Undo or Pass beside Draw) is drawn over the pile, the deck's layers cover the status corner's sub-line when the staged strip is up, and the pile touches the top seat's fan (`compact_collision.png`, `skip_staged.png`). U2's 24pt lift was sized for a 340pt drawer; this board is about 299pt. See the B2 entry for the options.
+- FIXED since in code and test, the film owed (IOS_DECISIONS I46, `OpenedBubbleTests`): an opened bubble's plan started while the drawer was still white, so its first few hundred milliseconds played unseen.
+
+## Status on 2026-09-27, late afternoon: the B4 pass (O10 seen, the rest owed)
+
+A fresh iPhone 17e `pk-b4` (iOS 27.0) booted in 44 seconds under a 90-second watchdog; the pass was stopped by the orchestrator after O10, so only what is below was done.
+Two Debug rig aids were added (IOS_DECISIONS I45): `dev.anchors.on` makes the board write every anchor's frame to `dev.anchors` as `name x y w h` lines, so a driver taps a card where it is, and `dev.seed` (64 hex digits) makes the next game deal from a known seed.
+A scratch search over 20,000 seeds against the bridge found seed `f7cfa77f572f07dfb78f673f17efc79f774f27ffd7af875f370fe7bf976f471f`, whose two-seat game reaches a Reverse, a +2, a real Caught you!, a Last card! said a bubble before the win, and the win in 14 bubbles; that game was started inside Messages (the invitation, Bo's Join, Bo's opening Skip), and then a rebuild restarted Messages, which keeps its conversations in memory only (rig README note 1), so the transcript was lost.
+- The compact drawer, O10: Seen. `shots/compact_before.png` is B2's `compact_collision.png` (the build before O10: the pill over the pile, the deck on the sub-line, the pile on the fan). `shots/compact_after.png` is Bo's opening Skip staged in the drawer: the pile at 0.70 clear of Alex's fan, Undo standing above Draw at the trailing edge and no pill in the pile's column, the deck clear of "Your turn" and its strip, the sub-line gone. The deck's "89 left" is wider than the 0.70 deck and overhangs it by a few points; it is legible, and left as it is.
+- Still owed, exactly as B2 left them plus the seed above: the reshuffle after the pile fix, Catch, Last card!, the win with the end reveal, a +2 and a Reverse, each with a screenshot; the opened-bubble take re-filmed after I46 (MOTION_REPORT).
 
 ## What was done without a simulator
 

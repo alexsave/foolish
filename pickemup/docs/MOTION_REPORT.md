@@ -40,6 +40,8 @@ The play flies from Bo's fan straight down onto the pile (`shots/motion/take1_op
 FOUND, OPEN: the drawer is white for about a second after the tap, and when the board's first frame appears the three draw flights are already in the air near Bo's fan (frames 74 to 83).
 The plan's clock starts when the bubble is adopted, while the hosting view is still hidden until the drawer is up (`MessagesViewController`, uttt's `appeared` rule), so the first few hundred milliseconds of an opened bubble play unseen.
 The fix belongs with the lifecycle owner: start the plan's clock at the first frame the board is visible, not at the adopt.
+FIXED in code (IOS_DECISIONS I46): the controller tells the player whether the board is on screen, and a plan adopted while it is not waits at its first frame until the first body drawn on screen starts its clock; `OpenedBubbleTests` pins it and was seen red on both mutants.
+Owed: re-filming this take after the fix, and measuring the landing again at a stated capture rate (the 141 against 92 above came from a 29Hz recording, so it says nothing about smoothness); the B4 pass was stopped before it.
 The same white second shows on every first open of a new appex process (about 3.5 seconds on the very first open after an install).
 
 ### Take C: the reshuffle, before the fix (stage channel, Alex's own draw)

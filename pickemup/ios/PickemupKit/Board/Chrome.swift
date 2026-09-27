@@ -94,6 +94,8 @@ struct StagedStrip: View {
 struct PillRow: View {
     let trailing: PkLayout.Pill
     let leading: PkLayout.Pill
+    /// The drawer's column: the leading pill above the trailing one (O10).
+    var stacked = false
     let onDraw: () -> Void
     let onPlay: () -> Void
     let onPass: () -> Void
@@ -102,13 +104,25 @@ struct PillRow: View {
     static let width: CGFloat = 96
 
     var body: some View {
-        HStack(spacing: 8) {
-            Spacer(minLength: 0)
-            pill(leading)
-            pill(trailing)
+        Group {
+            if stacked {
+                HStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    VStack(spacing: PkLayout.pillStackGap) {
+                        pill(leading)
+                        pill(trailing)
+                    }
+                }
+            } else {
+                HStack(spacing: 8) {
+                    Spacer(minLength: 0)
+                    pill(leading)
+                    pill(trailing)
+                }
+                .frame(height: PkLayout.pillHeight)
+            }
         }
         .padding(.trailing, 12)
-        .frame(height: PkLayout.pillHeight)
         .transaction { $0.animation = nil }
         .pkAnchor("pills")
     }

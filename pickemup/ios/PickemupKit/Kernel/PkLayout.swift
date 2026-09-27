@@ -119,6 +119,10 @@ public enum PkLayout {
         CGFloat(pk_lay_table_scale(Float(board.height), Float(collapse)))
     }
 
+    /// O10: in the drawer the pill beside Draw stands above it.
+    public static func pillsStacked(collapse: CGFloat) -> Bool { pk_lay_pills_stacked(Float(collapse)) != 0 }
+    public static let pillStackGap = CGFloat(PK_LAY_PILL_STACK_GAP)
+
     /// O10: does the status corner show its sub-line? Not in the drawer.
     public static func showsSubline(collapse: CGFloat) -> Bool { pk_lay_subline(Float(collapse)) != 0 }
 
