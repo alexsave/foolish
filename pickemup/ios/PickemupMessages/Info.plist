@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The working title (ORCHESTRATION O5): one GAME_NAME in the kernel's
+	     table, and this, before any store listing. -->
+	<key>CFBundleDisplayName</key><string>Pick 'Em Up</string>
+	<!-- The kernel speaks English only for now (pickemup/c/i18n). -->
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+	</array>
+	<!-- The .appex needs its own export-compliance key: no network code. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<!-- Where the rig and a Debug build look for dev.* files (PickemupDev). -->
+	<key>PickemupAppGroup</key>
+	<string>group.cards.pickemup</string>
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.message-payload-provider</string>
+		<key>NSExtensionPrincipalClass</key>
+		<string>$(PRODUCT_MODULE_NAME).MessagesViewController</string>
+	</dict>
+</dict>
+</plist>
