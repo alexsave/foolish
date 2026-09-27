@@ -73,6 +73,12 @@ pickemup/ios/*.xcodeproj
 chuiniu/c/build/
 chuiniu/ios/vendor/
 chuiniu/ios/Generated/
+# Tallybones: the same three build outputs as Pick 'Em Up's, and the project
+# generated from tallybones/ios/project.yml.
+tallybones/c/build/
+tallybones/ios/vendor/
+tallybones/ios/Generated/
+tallybones/ios/*.xcodeproj
 uttt/ios/*/*.entitlements
 
 # The shared toolchain's own build outputs - the generator and datagen binaries,
