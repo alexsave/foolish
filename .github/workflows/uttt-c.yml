@@ -1,0 +1,39 @@
+# Ultimate Tic-Tac-Toe's C kernel, tested (pickemup/docs/REUSE_AUDIT.md S3).
+#
+# Until this file, no workflow ran uttt's C tests: uttt-web.yml triggers on
+# uttt/c/** but only builds the replay site. So a change to shared/c - which
+# uttt compiles sha256, b32 and mixrad out of - could break uttt and stay
+# green. This is that missing lane and nothing else; it builds no site and
+# touches no Xcode.
+name: uttt-c
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'uttt/c/**'
+      - 'shared/c/**'
+      - '.github/workflows/uttt-c.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'uttt/c/**'
+      - 'shared/c/**'
+      - '.github/workflows/uttt-c.yml'
+  workflow_dispatch: {}
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: uttt
+    steps:
+      - uses: actions/checkout@v4
+      # The rules, the message (10,000 games through bytes and text), the
+      # words in every language, the motion and the ink.
+      - name: kernel and message
+        run: make -C c run
+      # A separate build: the sanitizers change codegen.
+      - name: the same under ASan + UBSan
+        run: make -C c asan

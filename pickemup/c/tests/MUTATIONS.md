@@ -45,7 +45,7 @@ Run 2026-09-26 on the kernel as of this commit.
 
 | Test | Mutation | Assertion that went red |
 |---|---|---|
-| 7.5.1 other counts never leak | `reveal_n` / `reveal_hand` filled while playing | `pk_plan_test.c:81` "the view changed with another hand" |
+| 7.5.1 other counts never leak | `reveal` filled while playing | `pk_plan_test.c:81` "the view changed with another hand" |
 | 7.5.2 spectator | the spectator (-1) treated as seat 0 | `pk_plan_test.c:97` "a spectator sees no hand and can do nothing" |
 | 7.5.3 game end reveals all | keep masking when over | `pk_plan_test.c:113` "viewer -1 sees every hand at the end" |
 | 7.5.4 events mask draws | mask a card by `other` instead of `seat` | `pk_plan_test.c:131` "kind 5 to seat 0 hidden 1" |
@@ -78,13 +78,48 @@ Run 2026-09-26 on the kernel as of this commit.
 | fuzz conservation | a played card is not pushed on the stack | `pk_fuzz.c:58` "game 0 step 0: 104 cards accounted for" |
 | 7.2.5 one representation | no `hand_changed` after a penalty | `pk_fuzz.c:61` "game 1 step 95: exposed 02 said 00 on a seat not on one card" |
 | fuzz a turn ends | a draft may be sealed mid-turn | `pk_fuzz.c:64` "game 0 step 2: sealable mid-turn" |
-| fuzz a turn ends (the caps) | the 750-bubble stop removed (2,800 games) | `pk_fuzz.c:70` "game 1307: within the caps" |
+| fuzz a turn ends (the caps) | the 750-bubble stop removed (2,800 games) | `pk_fuzz.c:70` "game 587: within the caps" (re-run on `seed_wide`, 2026-09-26) |
 | fuzz undo by replay | the replay drops "Last card!" | `pk_fuzz.c:76` "the replay reproduces the game" |
 | fuzz undo by replay | undo leaves a CONTINUE behind | `pk_fuzz.c:87` "undo is the state before the play" |
 | fuzz undo by replay | undo ignores the floor | `pk_fuzz.c:82` "a draw was undone" |
-| fuzz terminates | the long-game stop does not end the game (2,800 games) | `pk_fuzz.c:92` "game 1307 (n=7) ended within 1845 steps" |
+| fuzz terminates | the long-game stop does not end the game (2,800 games) | `pk_fuzz.c:92` "game 1307 (n=7) ended within 1845 steps", on `seed_of`'s deals; on `seed_wide`'s no fuzz game reaches 1,500 actions, and this mutation is now caught by `pk_msg_test.c` 7.4.6 below |
+| fuzz terminates | `finish` leaves the winner NONE for a stop | `pk_fuzz.c:93` "game 587 has a winner" (`seed_wide`, 2026-09-26) |
+
+## pk_msg_test.c
+
+Run 2026-09-26 with `./build/pk_msg_test 5 100` (the ASan rows with `./build/asan_pk_msg_test 1 5` and `ASAN_OPTIONS=symbolize=0`, because the symbolizer hangs in this sandbox), each mutation applied alone by a script that restored the file from its own copy afterwards, never by `git checkout`.
+
+| Test | Mutation | Assertion that went red |
+|---|---|---|
+| 7.4.1 round trip | the continue digit K dropped (a turn that came back always ends the bubble) | `pk_msg_test.c:103` "game 0 bubble 20 encodes (-6)" |
+| 7.4.2 canonicality: every bit flipped | decode stops requiring the number to end on the sentinel | `pk_msg_test.c:402` "envelope 1 bit 304 (re-checked) reads as a different writing" |
+| the corruption sweep | the same | `pk_msg_test.c:373` "envelope 7 byte 38 ^ 01" |
+| 7.4.4 check: every truncation | the tag bounds check before a roster row removed | ASan global-buffer-overflow in the truncation sweep (the first sweep; nothing after `rule p` had printed) |
+| 7.4.4 check: every truncation | the name bounds check removed | ASan global-buffer-overflow in the truncation sweep, likewise |
+| 7.4.4 check: raw flips are refused | the check comparison skipped | `pk_msg_test.c:412` "21554 of 38784 raw flips read as a game" |
+| 7.4.3 header agreement | decode stops comparing `turns` with the replay | `pk_msg_test.c:444` "a header that says turns + 1 is refused" |
+| 7.4.5 size gate | every digit coded in base 255 on both sides (a coder that ignores the menus) | `pk_msg_test.c:131` "p95 at 8 players is 1143 characters, the guardrail is 1,000" |
+| 7.4.5 size gate: the owner's p99 case | seat tags 24 bytes instead of 9 | `pk_msg_test.c:179` "the owner's p99 case is 541 characters at p99; 4.5 estimated 530" |
+| 7.4.5 size gate: the capped worst case | `PK_MAX_ACTIONS` raised to 4,000 | the build: `pk_msg.h:79` static assertion "the capped worst case fits MSMessage.url" |
+| 7.4.6 caps are rules | the long-game stop never fires inside a turn | `pk_msg_test.c:239` "the game stops at the action cap: over 0 after 1500 actions, 570 bubbles" |
+| 7.7.4 Rule P races | clause 5 (TIP_SAID) dropped | `pk_msg_test.c:507` "race 2: say-it beats a catch of the same parent (1, -1)" |
+| 7.7.4 Rule P races | `bubbles` compared before `turns` | `pk_msg_test.c:518` "race 1: a turn beats catches that answered the same parent" |
+| 7.8.7 seat resolve | the tag trusted over the record | `pk_msg_test.c:593` "the record outranks the tag, the sender and the name" |
+| 7.8.7 seat resolve | the lobby gate removed | `pk_msg_test.c:632` "a lobby row under another name is not mine, whoever sent the bubble" |
+| lobby: rows, verdicts and the wire | a leave does not set LEFT | `pk_msg_test.c:705` "after a leave Bo, alone, is offered the invite" |
+
+The rules doc's 7.4.2 mutation ("allow the empty-bubble option in the C digit") does not apply: D40 makes every digit a menu of non-empty bubbles, so an empty bubble is not an option to allow, and a coder that offered one would still round-trip (the decoder's seal refuses it).
+The sentinel mutation above is the one that breaks canonicality.
+
+## The bridge (ios/)
+
+| Test | Mutation | Assertion that went red |
+|---|---|---|
+| ios-smoke | `pk_api_text` writes the resident draft instead of a sealed copy | `pk_api_smoke.c:124` "the start bubble is a link" |
+| ios-smoke | a record finds a row by its offset, not its tag | `pk_api_smoke.c:214` "Cleo's record finds her in the row she moved down to" |
+| swift-smoke | the host library stamped with a hash that is not the readers' | `pk_api_smoke.swift:36` "the library and the readers are one layout" |
 
 ## Not in this kernel
 
-7.3.7 (native against wasm replay) waits for a wasm replay build; `make wasm` proves the kernel compiles freestanding for wasm32 and reaches only `memcpy`, `memset`, `strlen` and `strncmp`.
-7.4 (the wire), 7.7.4 (Rule P races) and 7.8.7 (seat resolve) are the envelope's, and land with `pk_code` / `pk_msg`.
+7.3.7 (native against wasm replay) waits for a wasm replay build; `make wasm` proves the kernel compiles freestanding for wasm32 and reaches only `memcpy`, `memset`, `memcmp`, `strlen` and `strncmp`.
+7.4 (the wire), 7.7.4 (Rule P races) and 7.8.7 (seat resolve) are in `pk_msg_test.c` above.

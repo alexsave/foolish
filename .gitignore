@@ -61,6 +61,12 @@ uttt/ios/vendor/
 uttt/ios/*.xcodeproj
 uttt/c/build/
 pickemup/c/build/
+# Build outputs of `make -C pickemup/c ios-lib` (the xcframework) and of its
+# structgen / datagen targets (the generated Swift readers and string tables):
+# written by every build that consumes them, committed nowhere, like
+# uttt/ios/vendor and foolish/sdk/swift/gen.
+pickemup/ios/vendor/
+pickemup/ios/Generated/
 uttt/ios/*/*.entitlements
 
 # The shared toolchain's own build outputs - the generator and datagen binaries,

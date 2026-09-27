@@ -11,7 +11,7 @@
  * A seat's fan is drawn at a constant size whatever it holds
  * (PK_FAN_BACKS), and the fan is the tap target for "Caught you!" (can_call).
  *
- * `reveal_n` / `reveal_hand` are the only per-seat counts in the struct, and
+ * `reveal[s].n` / `reveal[s].card` are the only per-seat counts in the struct, and
  * they are filled ONLY once the game is over (or for PK_VIEW_ALL). They are
  * named for the end reveal on purpose: they are not a live count.
  *
@@ -25,6 +25,14 @@
 
 /* How many card backs every other seat's fan shows while playing. */
 #define PK_FAN_BACKS 3
+
+/* One seat's hand, face up, for the end reveal: a row of its own so the
+ * reveal is an array of counted rows (DECISION D44), which the generated
+ * Swift reads as it reads the viewer's own hand. */
+typedef struct {
+    uint8_t n;
+    uint8_t card[PK_HAND_CAP];
+} PkRevealRow;
 
 typedef struct {
     uint8_t n, turn, dir, live_suit, over, winner;
@@ -44,8 +52,7 @@ typedef struct {
     uint8_t my_hand[PK_HAND_CAP];
     uint8_t my_playable[PK_HAND_CAP]; /* 1 per position that PLAY accepts          */
     /* only when over (or PK_VIEW_ALL): every hand, face up */
-    uint8_t reveal_n[PK_MAX_SEATS];
-    uint8_t reveal_hand[PK_MAX_SEATS][PK_HAND_CAP];
+    PkRevealRow reveal[PK_MAX_SEATS];
 } PkView;
 
 /* `viewer`: a seat, PK_VIEW_SPECTATOR or PK_VIEW_ALL. Every byte of `out` is

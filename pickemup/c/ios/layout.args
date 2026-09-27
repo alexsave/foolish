@@ -1,0 +1,34 @@
+# structgen arguments for pickemup/ios/Generated/PickemupKernel.swift: every
+# struct the bridge (ios/include/pk_api.h) hands Swift a pointer to, as Swift
+# value snapshots, and the kernel constants a reader of them needs.
+#
+# Read by the Makefile's `structgen` target (and so by `ios-lib`), with --cwd
+# pickemup/c, the iOS flags and each iOS triple. The library is stamped with
+# the hash of exactly this layout (-DSG_LAYOUT_HASH, pk_api_layout_hash), so a
+# stale xcframework or a stale module is a refusal at startup rather than a
+# wrong offset.
+# Lines starting with # are dropped; everything else is split on whitespace.
+--header ios/pk_api_layout.h
+#
+# The frame (PkApiTable), a plan (PkApiEvents of PkEvent), the masked view
+# and "since last seen". PkApiName, PkEvent and PkRevealRow come with them as
+# embedded records.
+--root PkApiTable --root PkApiEvents --root PkView --root PkSince
+--snapshot PkApiTable --snapshot PkApiEvents --snapshot PkView --snapshot PkSince
+--count PkApiTable.seat=n_seats --count PkApiName.name=name_len
+--count PkApiEvents.ev=n
+--count PkView.my_hand=my_n --count PkView.my_playable=my_n
+--count PkView.reveal=n --count PkRevealRow.card=n
+#
+# The constants: event kinds and halves, penalties, the lobby's controls, the
+# phases, the seat witnesses, the refusals, and the card and table numbers a
+# renderer compares against.
+--const PK_EV_ --const PK_HALF_ --const PK_PEN_ --const PK_PHASE_ --const PK_BY_
+# (PK_LOBBY_ by name: the bare prefix also matches the include guard PK_LOBBY_H)
+--const PK_LOBBY_START --const PK_LOBBY_INVITE --const PK_LOBBY_WAITING --const PK_LOBBY_JOIN
+--const PK_LOBBY_FULL --const PK_LOBBY_DM_CAP --const PK_LOBBY_GROUP_CAP
+--const PK_OVER_ --const PK_DIR_ --const PK_R_ --const PK_NAME_ --const PK_API_EVENTS
+--const PK_SEAT_NONE --const PK_CARD_HIDDEN --const PK_CARD_NONE --const PK_NO_SUIT --const PK_SUITS
+--const PK_DECK --const PK_MAX_SEATS --const PK_FAN_BACKS
+--const PK_EOK --const PK_ESHORT --const PK_EMAGIC --const PK_EFORMAT --const PK_EFLAGS --const PK_ECHECK
+--const PK_EGAME --const PK_EROSTER --const PK_ECAP --const PK_ETEXT --const PK_EREFUSED

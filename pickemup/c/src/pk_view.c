@@ -46,7 +46,7 @@ void pk_view(const PkGame *g, int viewer, PkView *v)
 
     if (g->over || viewer == PK_VIEW_ALL)
         for (int s = 0; s < g->n; s++) {
-            v->reveal_n[s] = g->hand_n[s];
-            memcpy(v->reveal_hand[s], g->hand[s], g->hand_n[s]);
+            v->reveal[s].n = g->hand_n[s];
+            memcpy(v->reveal[s].card, g->hand[s], g->hand_n[s]);
         }
 }

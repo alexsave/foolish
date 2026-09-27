@@ -431,6 +431,68 @@ Alternative: an open, empty draft.
 Why: an empty draft cannot be sealed and would still block every other seat (3.6), so it is no draft.
 Recommendation confidence: high.
 
+### Decisions the envelope build forced (D40 onwards)
+
+Taken while building `pk_code`, `pk_msg`, `ios/pk_api` and the CI lanes (2026-09-26); each names the section it amends.
+
+**DECISION D40: every header digit of a bubble is a menu of the options that make a non-empty bubble, not a fixed base (amends 4.4).**
+S is base 2 only when some other seat has anything to send, and then its second digit is base k over those k seats, not base n - 1.
+Y is forced to "said" for an out-of-turn sender with nobody to catch; C is forced to "none" when there is nobody to catch.
+Alternative: 4.4's fixed bases (S base 2 then n - 1, C forced only for an out-of-turn sender who did not say it).
+Why: with fixed bases some digit values name a bubble that cannot exist (an out-of-turn sender with nothing to send), which the decoder must then refuse after the fact; as menus, every value of every digit is a real bubble, which is what 4.4's canonicality paragraph asks for, and it is never more bits.
+One walker (`pk_code.c`, `bubble`) runs both directions, so encoder and decoder cannot build different menus.
+Recommendation confidence: high.
+
+**DECISION D41: the header grows a `starter` byte at offset 43 and a LEFT flag (bit 2), and the roster starts at 44 (amends 4.2, 4.3).**
+`starter` is the seat that started the game (0xFF while WAITING); LEFT says the newest lobby bubble was a leave.
+A new error, `PK_EREFUSED -10`, is a lobby or seat verdict saying no; it is never a wire error.
+Alternative: derive both.
+Why: the deal's plan and caption name the starter (D37) and nothing else in the envelope records who sent a start bubble that plays no turn; and the lobby's "newest sender" (the M9 gate, D27) cannot be told apart after a leave from `lobby_rev` and `n_seats` alone.
+One byte and one bit, both checked on decode (LEFT only in WAITING, starter in range).
+Recommendation confidence: high.
+
+**DECISION D42: this device's seat record is (game id, the tag it sat with), 17 bytes, not (game id, seat number) (amends 4.6).**
+Alternative: UTTT's record of a seat number.
+Why: a leave moves every later row down one seat (4.6.3), so a recorded number would seat me on somebody else's row; a recorded tag finds my row wherever it moved, and still survives a rotated participant id because the tag is stored, not recomputed.
+Recommendation confidence: high.
+
+**DECISION D43: `make run` sends 30 games at each table size through the wire after every bubble; the 10,000 of 7.4.1 is `./build/pk_msg_test 10000` by hand (amends 7.4).**
+Alternative: 10,000 a size in `make run`.
+Why: every bubble of a game is encoded, decoded, re-encoded and sent through the text form, and each of those replays the whole game, so a game costs about 0.1 s; 70,000 games would make the one real test target a two-hour run.
+The tamper, corruption and truncation sweeps, Rule P and the size cases run in full every time.
+Recommendation confidence: medium.
+
+**DECISION D44: `PkView`'s end reveal is `PkRevealRow reveal[8]` (a count and 104 cards per row), not `reveal_n[8]` and `reveal_hand[8][104]` (amends D35).**
+Alternative: keep the two arrays and cross the reveal by a second entry point.
+Why: `shared/tools/structgen` copies one array dimension per field, so a two-dimensional array cannot cross to Swift; a row of its own is the same bytes and reads as the viewer's own hand does.
+Recommendation confidence: high.
+
+**DECISION D45: the bignum under the coder is `shared/c/mixrad.{c,h}`, lifted out of `uttt_code.c`, and uttt calls it (amends 3.1).**
+Alternative: a copy in `pk_code.c` with a `COPIED from` header.
+Why: the lift is two loops, and it was proven byte-identical before it landed: 30,000 random uttt games (the codes, the replay links and the envelopes) encode to the same bytes before and after, and uttt's `make run`, `asan`, `ios-smoke` and `wasm-web` pass.
+Recommendation confidence: high.
+
+**DECISION D46: the generated Swift is a build output in `pickemup/ios/Generated/` (ignored), written by `make -C pickemup/c structgen datagen`, and `ios-lib` stamps the library with the layout's hash (amends 3.1).**
+Alternative: uttt's shape, where Swift calls flat scalar accessors and nothing is generated.
+Why: the plan, the view and the frame are structs with arrays, and the rule for this product is that Swift never learns a byte layout; foolish already runs structgen this way (`sdk/swift/gen`, `SG_LAYOUT_HASH`, "Generated code becomes a build artifact"), so the pair of hash and readers is the proven pattern.
+Structs cross as `const void *` into the kernel's storage and are read by the generated `read*` functions; `pk_api_layout_hash()` is compared with the module's `SG_LAYOUT_HASH` at startup.
+Recommendation confidence: high.
+
+**DECISION D47: the seat resolver's fourth witness is the App Group nickname, and a WAITING bubble's sender witness counts only on a row carrying my name when I have one (amends 4.6).**
+Alternative: stop at UTTT's three witnesses and leave the nickname to a picker in the host.
+Why: foolish's name recovery is what seats a player after every other witness fails at 3+ players, names are unique within a roster (a taken name cannot join), and the lobby gate is foolish's fix for a leaver who was handed the stayer's seat (`msg_seat_resolve_in_lobby`).
+Recommendation confidence: medium.
+
+**DECISION D48: the body must be the minimal number (no zero top byte) and a decode must end on exactly the sentinel (amends 4.4).**
+Alternative: uttt's tolerance of trailing zero bytes.
+Why: 7.4.2 asks that anything that decodes re-encodes to its own bytes; a tolerated zero byte is a second spelling of the same game.
+Recommendation confidence: high.
+
+**DECISION D49: the pickemup CI lane runs `run`, `asan`, `structgen` and `datagen`, not `wasm` (amends 7, REUSE_AUDIT S3).**
+Alternative: run `make -C c wasm` there too.
+Why: `foolish/e2e/validation/ci_toolchain_validation.test.ts` reads any `make ... wasm` line in any workflow as a build of foolish's test module and requires foolish's prebuild script before it, so the lane would turn foolish's validation red; the wasm objects stay a local target until that gate knows whose wasm it sees (ORCHESTRATION.md, found on the way).
+Recommendation confidence: medium.
+
 ---
 
 ## 3. Kernel design
@@ -854,6 +916,12 @@ Bits: a turn-seat bubble's header costs about 1.3 bits (S, and a rare C); an out
 The worst case is bounded because every menu is at most 128 options (DRAW + PASS + 102 hand positions + 3 extra suits for each of 8 wilds = 128 = 7 bits) and a bubble header is at most 11 bits.
 **4,568 characters is under Apple's documented 5,000-character `MSMessage.url` cap** (`foolish/docs/IMESSAGE_IMPLEMENTATION_HANDOFF.md`, "MSMessage.url cap is documented: 5,000 characters").
 The realistic cases sit near foolish's self-imposed 1,000-character guardrail; that guardrail is a target, not a limit, and the test in 7.4 asserts the p95 8-player bubble under 1,000.
+
+**Measured (7.4.5, `tests/pk_msg_test.c`, 2026-09-26).**
+The owner's p99 case (8 players, 40 turns, six draws a turn, ten catches) is 341 characters at the median and 349 at p99 over 1,000 deals, under the 530 estimated above, and the test holds it there.
+Every bubble of the bot's games at 8 players is 594 characters at p95 and at most about 830; a 1,500-action game with eight 48-byte names is under 2,000.
+With D41's starter byte, the analytic worst case (`PK_MSG_MAX_TEXT`, asserted at compile time in `pk_msg.h`) is 4,720 characters.
+`pickemup/c/README.md` has the table per player count.
 
 ### 4.6 The lobby and seat handshake
 
