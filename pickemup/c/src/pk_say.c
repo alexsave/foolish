@@ -162,18 +162,29 @@ int pk_say_seat(const char *const *names, int seat, char *out, int cap)
     return pk_fill(out, cap, T(SEAT_FALLBACK), kv);
 }
 
-int pk_say_deck_left(const PkGame *g, char *out, int cap)
+int pk_say_deck_n(int deck_n, char *out, int cap)
 {
     char num[4];
-    pk_itoa(g->deck_n, num, sizeof num);
+    if (deck_n < 0 || deck_n > PK_DECK) return -1;
+    pk_itoa(deck_n, num, sizeof num);
     const char *kv[] = { "n", num, 0 };
     return pk_fill(out, cap, T(DECK_LEFT), kv);
 }
 
+int pk_say_deck_left(const PkGame *g, char *out, int cap)
+{
+    return pk_say_deck_n(g->deck_n, out, cap);
+}
+
+int pk_say_dir_of(int n_seats, int dir, char *out, int cap)
+{
+    if (n_seats <= 2) return put(out, cap, "");   /* D13: no word at 2 players */
+    return put(out, cap, dir == PK_DIR_CW ? T(DIR_CW) : T(DIR_ACW));
+}
+
 int pk_say_dir(const PkGame *g, char *out, int cap)
 {
-    if (g->n <= 2) return put(out, cap, "");      /* D13: no word at 2 players */
-    return put(out, cap, g->dir > 0 ? T(DIR_CW) : T(DIR_ACW));
+    return pk_say_dir_of(g->n, g->dir > 0 ? PK_DIR_CW : PK_DIR_ACW, out, cap);
 }
 
 /* ---- the caption -------------------------------------------------------------- */

@@ -5,6 +5,7 @@
 // (UI_DECISIONS U1), a DARK surface in both schemes, where foolish's
 // `onTableText` was written for the light wool. The values are foolish's.
 
+import CPickemup
 import SwiftUI
 
 public enum FColor {
@@ -33,11 +34,16 @@ public enum FType {
     public static func title(_ size: CGFloat = 22) -> Font { .system(size: size, weight: .semibold) }
 }
 
+/// foolish's two motion tokens, their numbers the kernel's (pk_beats.h), so
+/// no duration is typed in Swift.
 public enum FMotion {
-    /// The ONE spring for all card movement.
-    public static let card: Animation = .spring(response: 0.32, dampingFraction: 0.82)
-    /// Chrome: 150ms ease-out.
-    public static let chrome: Animation = .easeOut(duration: 0.15)
+    /// The ONE spring for all card movement (card-spring).
+    public static let card: Animation = .spring(response: Double(PK_T_SPRING) / 1000,
+                                                dampingFraction: Double(PK_T_SPRING_DAMP) / 100)
+    /// Chrome: ease-out.
+    public static let chrome: Animation = .easeOut(duration: Double(PK_T_CHROME) / 1000)
+    /// A pill or a tile pressed.
+    public static let press: Animation = .easeOut(duration: Double(PK_T_PRESS) / 1000)
 }
 
 extension Color {

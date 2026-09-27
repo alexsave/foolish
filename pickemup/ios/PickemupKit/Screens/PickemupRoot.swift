@@ -29,6 +29,53 @@ public final class PickemupHost: ObservableObject {
             ? (model.phase == PK_PHASE_WAITING ? .lobby : .table)
             : .blank
     }
+
+    /// ADOPT `text` and play what it brings (the motion grid's channels C, D
+    /// and E; a lost race is the Conflict row). `arrival`: it landed while the
+    /// board was up. 0, or the negative PK_E* the read refused with, and then
+    /// nothing changed.
+    ///
+    /// WHICH EVENTS PLAY is a comparison of two chains the kernel makes: the
+    /// board on screen and the one adopted. Of the same game and further on,
+    /// from the bubble on screen to the new tip; opened cold, the newest
+    /// bubble only (and the deal for a start bubble); my staged play lost to
+    /// another chain, the retraction and then the winner from the common
+    /// prefix; anything else, no motion.
+    @discardableResult
+    public func adopt(_ text: String, arrival: Bool) -> Int {
+        let prior = Pk.table()
+        let priorLive = prior.map { $0.readable == 1 && $0.phase != PK_PHASE_WAITING } ?? false
+        let priorText = prior?.readable == 1 ? Pk.text : nil
+        let staged = model.stagedPlay
+        let e = Pk.read(text)
+        guard e == 0 else { return e }
+        showResident()
+        guard let now = model.table, now.phase != PK_PHASE_WAITING else {
+            model.player.clear()
+            return 0
+        }
+        let to = now.bubbles
+        let same = priorText.map { Pk.sameGame($0, text) } ?? false
+        if same, priorLive, let prior, let priorText {
+            if let staged, prior.draft != 0 {
+                let common = Pk.common(priorText, text)
+                if common >= 0, common <= to, common < prior.bubbles + 1 {
+                    model.player.play(Pk.beatsConflict(card: staged.card, pos: staged.pos, from: common, to: to))
+                    return 0
+                }
+            }
+            if to > prior.bubbles {
+                model.player.play(Pk.beats(from: prior.bubbles, to: to, open: !arrival))
+            } else {
+                model.player.clear()
+            }
+            return 0
+        }
+        // cold, or the lobby this game was dealt from: the newest bubble, or
+        // the deal when the start bubble is the newest (bubble 0, from -1)
+        model.player.play(Pk.beats(from: to - 1, to: to, open: !arrival || !same))
+        return 0
+    }
 }
 
 public struct PickemupRoot: View {

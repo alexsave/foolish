@@ -79,6 +79,15 @@ public enum PkLayout {
         return CGPoint(x: CGFloat(x), y: CGFloat(y))
     }
 
+    /// U14: suit tile `tile` (0...3, 4 the x) about the pile's centre.
+    public static func pickerTile(_ tile: Int, centre: CGPoint) -> CGPoint {
+        var x: Float = 0, y: Float = 0
+        pk_lay_picker(Int32(tile), Float(centre.x), Float(centre.y), &x, &y)
+        return CGPoint(x: CGFloat(x), y: CGFloat(y))
+    }
+    public static let pickerTile = CGFloat(PK_LAY_PICKER_TILE)
+    public static let pickerX = CGFloat(PK_LAY_PICKER_X)
+
     public enum Pill: Equatable { case none, draw, play, pass, undo }
 
     /// U9: what stands in the trailing slot and the one to its left.

@@ -24,6 +24,8 @@ struct HandRow: View {
     let dimmed: (Int) -> Bool
     /// A card that is on its way somewhere (the wild waiting on the picker).
     let hidden: Int?
+    /// Slots already open for cards still in the air (pk_beats frame).
+    var unseen: Set<Int> = []
     let onTap: (Int) -> Void
     /// The drag's point in the board space, while it moves and where it ends.
     let onDragMoved: (Int, CGPoint) -> Void
@@ -48,6 +50,8 @@ struct HandRow: View {
             }
         }
         .frame(height: layout.boxHeight)
+        // the row makes room on card-spring as a slot opens or closes
+        .animation(FMotion.card, value: cards.count)
         .pkAnchor("hand")
     }
 
@@ -68,7 +72,7 @@ struct HandRow: View {
     @ViewBuilder private func cardView(_ pos: Int, _ card: Int, _ slot: CGRect) -> some View {
         let face = PkCard(card: card, size: slot.size, selected: selected == pos, dimmed: dimmed(pos),
                           fullFace: layout.mode != .flat)
-            .opacity(hidden == pos ? 0 : 1)
+            .opacity(hidden == pos || unseen.contains(pos) ? 0 : 1)
             .contentShape(Rectangle())
             .pkAnchor("hand.\(pos)")
             .accessibilityLabel(Pk.words(PK_API_W_SPOKEN_CARD, pos))

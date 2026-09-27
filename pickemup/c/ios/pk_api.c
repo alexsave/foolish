@@ -667,6 +667,10 @@ int pk_api_words(int what, int arg, char *out, int cap)
     case PK_API_W_SUBLINE:      return pk_say_subline(g, me, S.names, out, cap);
     case PK_API_W_DECK_LEFT:    return pk_say_deck_left(g, out, cap);
     case PK_API_W_DIR:          return pk_say_dir(g, out, cap);
+    case PK_API_W_DECK_N:       return pk_say_deck_n(arg, out, cap);
+    case PK_API_W_DIR_OF:
+        if (arg != PK_DIR_CW && arg != PK_DIR_ACW) return -1;
+        return pk_say_dir_of(g->n, arg, out, cap);
     case PK_API_W_SPOKEN_CARD:  return pk_say_spoken_card(g, me, arg, out, cap);
     case PK_API_W_SPOKEN_DECK:  return pk_say_spoken_deck(g, out, cap);
     case PK_API_W_SPOKEN_STACK: return pk_say_spoken_stack(g, out, cap);

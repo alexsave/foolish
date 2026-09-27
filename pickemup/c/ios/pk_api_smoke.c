@@ -280,6 +280,15 @@ int main(void)
         OK(pk_api_words(PK_API_W_CAPTION, tt->bubbles, line, sizeof line) > 0
            && pk_api_words(PK_API_W_HEADLINE, 0, line, sizeof line) >= 0
            && pk_api_words(PK_API_W_DECK_LEFT, 0, line, sizeof line) > 0, "the words");
+        if (round == 0) {
+            char a[64], b[64];
+            pk_api_words(PK_API_W_DECK_LEFT, 0, a, sizeof a);
+            pk_api_words(PK_API_W_DECK_N, me_view()->deck_n, b, sizeof b);
+            OK(!strcmp(a, b), "a plan's count reads as the settled one");
+            OK(pk_api_words(PK_API_W_DECK_N, 27, b, sizeof b) > 0 && !strcmp(b, "27 left"), "any count");
+            OK(pk_api_words(PK_API_W_DECK_N, 105, b, sizeof b) < 0, "no count past the deck");
+            OK(pk_api_words(PK_API_W_DIR_OF, PK_DIR_ACW, b, sizeof b) == 0, "two players: no direction word (D13)");
+        }
         {
             uint8_t rank[8];
             OK(pk_api_ranks(rank) == 0, "a live game ranks nobody (D22)");

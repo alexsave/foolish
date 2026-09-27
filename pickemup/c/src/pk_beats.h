@@ -69,6 +69,8 @@
 #define PK_T_LOBBY_REST    500   /* ANIM_SURFACE_HOLD_MS: the lobby rests         */
 #define PK_T_LEAD_LIVE      16   /* a sequence starts one beat after the touch    */
 #define PK_T_LEAD_OPEN     100   /* ... or after a bubble was opened              */
+#define PK_T_CHROME        150   /* FMotion.chrome: ease-out                      */
+#define PK_T_PRESS          80   /* a pill or a tile pressed to .96               */
 #define PK_T_COLLAPSE_WAIT 250   /* a staged play: 250 + the plan + 500, then the */
 #define PK_T_COLLAPSE_REST 500   /* drawer may collapse (foolish)                 */
 

@@ -30,7 +30,8 @@
 //   - Messages' X on the staged bubble rebuilds the draft to its floor (D9):
 //     drawn cards stay.
 //   - No auto-collapse slide on render-server layers (uttt's CollapseSlide):
-//     the board relays out as the drawer moves; see IOS_DECISIONS.md I10.
+//     the board relays out as the drawer moves; see IOS_DECISIONS.md I20 and
+//     ANIMATION_DECISIONS.md A9.
 
 import Messages
 import PickemupKit
@@ -192,7 +193,8 @@ final class MessagesViewController: MSMessagesAppViewController {
         guard let text = message.url?.absoluteString else { return }
         // THE SENT BYTES ARE THE AUTHORITY. My open draft is sealed only when
         // it is exactly what went; anything else is adopted as sent.
-        if keepsDraft(text) {
+        let sealed = keepsDraft(text)
+        if sealed {
             Pk.commit()
         } else {
             Pk.read(text)
@@ -201,6 +203,8 @@ final class MessagesViewController: MSMessagesAppViewController {
         if message.url == draftURL { draftURL = nil; staged = nil }
         PickemupSeats.flush()
         host.showResident()
+        // channel B: what staging held back plays at Send
+        if sealed { host.model.sent() } else { host.model.player.clear() }
         if presentationStyle != .compact || unbound { dismiss() }
     }
 
@@ -249,12 +253,15 @@ final class MessagesViewController: MSMessagesAppViewController {
             if PickemupSeats.nickname.isEmpty { host.screen = .nameGate } else { create(in: conversation) }
             return
         }
-        if !keepsDraft(text) {
-            let e = Pk.read(text)
-            guard e == 0 else { host.screen = .unreadable(e); return }
+        if keepsDraft(text) {
+            PickemupSeats.flush()
+            host.showResident()
+            return
         }
+        // adopting plays what the bubble brings (channels C, D, E; a lost race)
+        let e = host.adopt(text, arrival: arrived != nil)
+        guard e == 0 else { host.screen = .unreadable(e); return }
         PickemupSeats.flush()
-        host.showResident()
     }
 
     /// Of the selection and an arrival, the one the kernel ranks higher; an
@@ -350,10 +357,12 @@ final class MessagesViewController: MSMessagesAppViewController {
             insert(message, generation: generation, in: conversation)
             return
         }
-        // THE DRAWER MOVES ONCE THE MOVE HAS RESTED (foolish: 250ms + 500ms),
-        // then collapses, then the bubble goes in.
+        // THE DRAWER MOVES ONCE THE MOVE HAS RESTED (foolish: 250ms + the
+        // move's own motion + 500ms, the kernel's settle_ms), then collapses,
+        // then the bubble goes in.
+        let settle = UInt64(max(stage.settleMs, 0)) * 1_000_000
         Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 750_000_000)
+            try? await Task.sleep(nanoseconds: settle)
             guard let self, self.stageGeneration == generation else { return }
             if self.presentationStyle != .compact {
                 self.requestPresentationStyle(.compact)

@@ -180,6 +180,56 @@ public enum Pk {
         return out.prefix(n).map(Int.init)
     }
 
+    // MARK: the motion (pk_beats.h): every duration, curve and order is C's
+
+    private static func beatsSnap(_ p: UnsafeRawPointer?) -> PkBeatsSnap? {
+        guard let p else { return nil }
+        return try? readPkBeats(p)
+    }
+
+    /// Channels C, D and E: bubbles (from, to], from the board at the end of
+    /// `from`. `open` is a bubble opened (100ms lead), else an arrival (16ms).
+    public static func beats(from: Int, to: Int, open: Bool, viewer: Int = viewerMe) -> PkBeatsSnap? {
+        beatsSnap(pk_api_beats(Int32(viewer), Int32(from), Int32(to), Int32(open ? PK_BEATS_OPEN : PK_BEATS_ARRIVAL)))
+    }
+
+    /// Channel A: what my newest tap did. `picked` is the suit tile tapped
+    /// before a wild went down (its ring and collapse lead the plan).
+    public static func beatsStage(wildPlaced: Bool = false, picked: Int? = nil) -> PkBeatsSnap? {
+        var flags = wildPlaced ? PK_BFL_WILD_PLACED : 0
+        if let picked { flags |= PK_BFL_PICKED | ((picked & 3) << 8) }
+        return beatsSnap(pk_api_beats_stage(Int32(flags)))
+    }
+
+    /// Channel B: after the commit, what staging held.
+    public static func beatsSend() -> PkBeatsSnap? { beatsSnap(pk_api_beats_send()) }
+
+    /// A motion no event describes (PK_HM_*).
+    public static func beatsHost(_ what: Int, _ a: Int = 0, _ b: Int = 0) -> PkBeatsSnap? {
+        beatsSnap(pk_api_beats_host(Int32(what), Int32(a), Int32(b)))
+    }
+
+    /// A lost race: my staged card home as a retraction ghost, then (from, to].
+    public static func beatsConflict(card: Int, pos: Int, from: Int, to: Int) -> PkBeatsSnap? {
+        beatsSnap(pk_api_beats_conflict(Int32(card), Int32(pos), Int32(from), Int32(to)))
+    }
+
+    /// Remember the draft as it is (after a change that moves nothing).
+    public static func beatsMark() { pk_api_beats_mark() }
+    public static var beatsSerial: Int { Int(pk_api_beats_serial()) }
+
+    /// The current plan's board at `ms`.
+    public static func beatFrame(_ ms: Int) -> PkBeatFrameSnap? {
+        guard let p = pk_api_beats_frame(UInt32(max(ms, 0))) else { return nil }
+        return try? readPkBeatFrame(p)
+    }
+
+    /// Beat `i` of the current plan at `ms`, one of its parts.
+    public static func beatSample(_ i: Int, part: Int = 0, ms: Int) -> PkBeatSampleSnap? {
+        guard let p = pk_api_beat_sample(Int32(i), Int32(part), UInt32(max(ms, 0))) else { return nil }
+        return try? readPkBeatSample(p)
+    }
+
     // MARK: the words (every line is the kernel's)
 
     /// One composed line (PK_API_W_*), "" when the kernel has none to say.

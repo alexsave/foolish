@@ -9,10 +9,12 @@
 // (PkLayout, pk_lay.c); every word the kernel's table; every touch one call
 // on the model.
 //
-// STATIC ON PURPOSE. A new state snaps in. The flights, stamps, riffles and
-// turn-bar fades of the motion grid are the next layer's: every element here
-// reports its frame under the grid's anchor name (Anchors.swift), so that
-// layer can fly between them without changing this file's structure.
+// THE MOTION IS THE KERNEL'S TIMELINE (BeatPlayer, pk_beats.h). While a plan
+// plays, the board draws the plan's frame instead of the settled view (the
+// count, the pile, whose turn, my hand with the cards still in the air
+// unseen), every anchored element takes its beat's transform (Anchors.swift,
+// PkFX), and the flight layer draws the cards in the air between the anchors'
+// frames. With no plan it is the settled view, and a new state snaps in.
 //
 // THE DECK'S DRAG STAYS INSIDE THE EXTENSION (U24): foolish's
 // DragGesture(minimumDistance: 0) in the board space, attached with
@@ -31,10 +33,14 @@ public struct TableScreen: View {
     @State private var pileHot = false
     @State private var deckDrag: CGSize?
     @State private var bandHot = false
+    /// Every anchor's frame in the board space, for the flights.
+    @State private var anchors: [String: CGRect] = [:]
+    @ObservedObject private var player: BeatPlayer
 
     public init(model: TableModel, onRules: @escaping () -> Void) {
         self.model = model
         self.onRules = onRules
+        self.player = model.player
     }
 
     public var body: some View {
@@ -43,18 +49,31 @@ public struct TableScreen: View {
             let board = CGSize(width: max(0, outer.size.width - inset.leading - inset.trailing),
                                height: max(0, outer.size.height - inset.top - inset.bottom))
             let collapse = PkLayout.collapse(viewHeight: outer.size.height)
-            boardView(board, collapse: collapse, rows: PkLayout.maxRows(viewHeight: outer.size.height))
+            TimelineView(.animation(paused: !player.animating)) { _ in
+                let ms = player.ms()
+                let shown = model.shown(player.frame(ms))
+                ZStack(alignment: .topLeading) {
+                    boardView(board, collapse: collapse, rows: PkLayout.maxRows(viewHeight: outer.size.height),
+                              shown: shown, ms: ms)
+                        .opacity(shown.holds(PK_HOLD_BOARD) ? 0 : 1)
+                        .pkAnchor("board")
+                    FlightLayer(ghosts: player.ghosts(ms, anchors: anchors))
+                }
+                .environment(\.pkFX, player.effects(ms, anchors: anchors))
                 .frame(width: board.width, height: board.height, alignment: .topLeading)
                 .coordinateSpace(name: boardSpace)
-                .offset(x: inset.leading, y: inset.top)
+                .onPreferenceChange(PkAnchorKey.self) { anchors = $0 }
+            }
+            .offset(x: inset.leading, y: inset.top)
         }
         .background(FeltBackground())
     }
 
     @ViewBuilder
-    private func boardView(_ board: CGSize, collapse: CGFloat, rows: Int) -> some View {
+    private func boardView(_ board: CGSize, collapse: CGFloat, rows: Int, shown: TableModel.Shown,
+                           ms: Int) -> some View {
         let v = model.view
-        let hand = model.hand
+        let hand = shown.hand
         let handW = max(0, board.width - PkLayout.handPadding * 2)
         let layout = PkLayout.hand(count: hand.count, width: handW, maxRows: rows)
         let handTop = board.height - layout.boxHeight
@@ -73,10 +92,15 @@ public struct TableScreen: View {
             // the seat ring: everybody but me (a spectator sees them all)
             ForEach(0..<n, id: \.self) { seat in
                 if seat != me {
+                    // the reveal rows once the plan's reveal has begun (or with
+                    // no plan, a finished table); backs before
+                    let revealing = model.isOver && (!shown.playing || shown.revealShown != nil)
                     SeatBadge(seat: seat, name: seat < model.names.count ? model.names[seat] : "",
-                              revealed: model.isOver ? v?.reveal[safe: seat]?.card : nil,
-                              isTurn: !model.isOver && v?.turn == seat,
-                              stamp: model.stamp(seat), calling: model.calling(seat),
+                              revealed: revealing ? v?.reveal[safe: seat]?.card : nil,
+                              isTurn: shown.turn == seat,
+                              stamp: shown.stampHeld(seat) ? nil : model.stamp(seat), calling: model.calling(seat),
+                              fanEmpty: shown.fanEmpty(seat),
+                              revealShown: shown.playing ? shown.revealShown?[safe: seat] : nil,
                               onTapFan: { model.tapFan(seat) })
                         .position(PkLayout.seat(seat, me: me, count: n, board: board, collapse: collapse))
                 }
@@ -86,15 +110,16 @@ public struct TableScreen: View {
                          onUnsay: { model.unsay() })
                 .offset(x: 2, y: 0)
 
-            if !model.direction.isEmpty, let v {
-                DirectionBox(word: model.direction, clockwise: v.dir == PK_DIR_CW)
+            if !model.direction.isEmpty, !shown.holds(PK_HOLD_DIR) {
+                DirectionBox(word: Pk.words(PK_API_W_DIR_OF, shown.dir), clockwise: shown.dir == PK_DIR_CW)
                     .offset(x: board.width - 78, y: -3)
             }
 
-            PileView(top: v.map { $0.top == PK_CARD_NONE ? nil : $0.top } ?? nil,
-                     stackCount: v?.stackN ?? 0, liveSuit: v?.liveSuit ?? 0,
-                     chosen: topIsWild(v) ? v?.liveSuit : nil,
-                     pending: model.pickerFor.flatMap { $0 < hand.count ? hand[$0] : nil },
+            PileView(top: shown.top,
+                     stackCount: shown.stackN, liveSuit: shown.suit,
+                     chosen: topIsWild(shown.top) ? shown.suit : nil,
+                     pending: shown.holds(PK_HOLD_PENDING) ? nil
+                         : model.pickerFor.flatMap { $0 < hand.count ? hand[$0] : nil },
                      hot: pileHot)
                 .position(pc)
                 .overlay(alignment: .topLeading) {
@@ -104,7 +129,8 @@ public struct TableScreen: View {
                         .allowsHitTesting(false)
                 }
 
-            DeckStack(count: v?.deckN ?? 0, label: model.deckLeft, buried: model.buried, lifted: deckDrag != nil)
+            DeckStack(count: shown.deckN, label: Pk.words(PK_API_W_DECK_N, shown.deckN), buried: model.buried,
+                      lifted: deckDrag != nil, buriedHold: shown.buriedHold)
                 .offset(x: deckAt.x, y: deckAt.y)
                 .highPriorityGesture(deckGesture(band: band, origin: deckAt))
 
@@ -133,7 +159,7 @@ public struct TableScreen: View {
                 .offset(y: handTop - 4 - 40)
 
             HandRow(cards: hand, layout: layout, selected: model.selected, dimmed: { model.dimmed($0) },
-                    hidden: model.pickerFor,
+                    hidden: model.pickerFor, unseen: shown.unseen,
                     onTap: { model.tap($0) },
                     onDragMoved: { _, p in pileHot = pileRect.contains(p) },
                     onDragEnded: { pos, p in
@@ -148,20 +174,22 @@ public struct TableScreen: View {
                     .position(x: board.width / 2, y: handTop - 64)
             }
 
-            if model.pickerFor != nil {
+            // up while the picker is asked, and while its tiles fall back in
+            if model.pickerFor != nil || player.pending(PK_BK_COLLAPSE, at: ms) {
                 SuitPicker(centre: pc, onPick: { model.choose($0) }, onCancel: { model.cancelPicker() })
                     .frame(width: board.width, height: board.height)
+                    .allowsHitTesting(model.pickerFor != nil)
             }
 
-            if model.isOver {
+            if model.isOver, !shown.holds(PK_HOLD_RESULTS) {
                 ResultsPlank(model: model)
                     .position(x: board.width / 2, y: pc.y)
             }
         }
     }
 
-    private func topIsWild(_ v: PkViewSnap?) -> Bool {
-        guard let v, let f = CardFace(v.top) else { return false }
+    private func topIsWild(_ top: Int?) -> Bool {
+        guard let top, let f = CardFace(top) else { return false }
         return f.isWild
     }
 
@@ -201,6 +229,34 @@ public struct TableScreen: View {
         .offset(x: p.x, y: p.y)
         .allowsHitTesting(false)
         .zIndex(2000)
+    }
+}
+
+/// The cards in the air (BeatPlayer.ghosts): each one a face or a back tweened
+/// between two anchors' frames, on the kernel's curve. foolish's FlyingCardsLayer
+/// in shape; every position and transform is a sample of the timeline.
+struct FlightLayer: View {
+    let ghosts: [BeatPlayer.Ghost]
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            ForEach(ghosts) { g in
+                PkCard(card: g.card, size: g.size, fullFace: true)
+                    .brightness(g.dimmed ? -0.2 : 0)
+                    .overlay {
+                        if g.retract {       // UI.html `.retract`: foolish's red retraction ghost
+                            RoundedRectangle(cornerRadius: 5)
+                                .fill(Color(red: 1, green: 150 / 255, blue: 150 / 255).opacity(0.35))
+                                .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color(hex: 0xDC2626), lineWidth: 2))
+                        }
+                    }
+                    .scaleEffect(x: g.scale * g.scaleX, y: g.scale)
+                    .rotationEffect(.degrees(g.rot))
+                    .position(g.center)
+            }
+        }
+        .allowsHitTesting(false)
+        .zIndex(1500)
     }
 }
 

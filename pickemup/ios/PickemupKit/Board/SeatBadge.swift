@@ -23,10 +23,16 @@ struct SeatBadge: View {
     let isTurn: Bool
     let stamp: TableModel.Stamp?
     let calling: Bool
+    /// The deal has not reached this seat yet: an empty fan (grid "Start").
+    var fanEmpty = false
+    /// At the end reveal, how many of `revealed` have turned face up so far.
+    var revealShown: Int?
     let onTapFan: () -> Void
 
+    @Environment(\.pkFX) private var fx
+
     private let nameMax: CGFloat = 96
-    private var backs: Int { revealed?.count ?? PK_FAN_BACKS }
+    private var backs: Int { fanEmpty ? 0 : revealed?.count ?? PK_FAN_BACKS }
     private var step: CGFloat { PkLayout.fanStep(backs: backs) }
     private var fanWidth: CGFloat { PkLayout.fanCard.width + step * CGFloat(max(backs - 1, 0)) }
 
@@ -43,22 +49,43 @@ struct SeatBadge: View {
             fan
                 .frame(width: max(fanWidth, PkLayout.fanCard.width), height: 44)
                 .overlay(alignment: .bottom) {
-                    if isTurn {
+                    // the turn bar; while a turn moves, the old one fades out
+                    // and the new one in (grid "Turn moves")
+                    let bar = fx["bar.\(seat)"]?.bar
+                    if isTurn || bar != nil {
                         RoundedRectangle(cornerRadius: 2).fill(FColor.win)
                             .frame(height: 3).padding(.horizontal, 3).offset(y: 1)
                             .shadow(color: FColor.win.opacity(0.7), radius: 4)
+                            .opacity(bar ?? 1)
+                    }
+                }
+                .overlay(alignment: .top) {
+                    // grid "Play a skip": UI.html `.skipbar`, wiping left to right
+                    if let wipe = fx["fan.\(seat)"]?.slash {
+                        RoundedRectangle(cornerRadius: 2).fill(FColor.red)
+                            .frame(height: 4)
+                            .padding(.horizontal, -5)
+                            .mask(alignment: .leading) {
+                                GeometryReader { g in Rectangle().frame(width: g.size.width * wipe) }
+                            }
+                            .rotationEffect(.degrees(-9))
+                            .shadow(color: .black.opacity(0.6), radius: 1.5, y: 1)
+                            .offset(y: 18)
                     }
                 }
                 .background {
-                    if calling {
+                    let ring = fx["ring.\(seat)"]?.ring
+                    if calling || ring != nil {
                         RoundedRectangle(cornerRadius: 10)
                             .fill(FColor.amber.opacity(0.12))
                             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(FColor.amber, lineWidth: 1.5))
                             .padding(.horizontal, -9).padding(.top, -7).padding(.bottom, -3)
+                            .opacity(ring ?? 1)
                     }
                 }
                 .overlay(alignment: .top) {
-                    if calling { CatchTip().offset(y: -34) }
+                    let ring = fx["ring.\(seat)"]?.ring
+                    if calling || ring != nil { CatchTip().offset(y: -34).opacity(ring ?? 1) }
                 }
                 .scaleEffect(calling ? 0.95 : 1)
                 .contentShape(Rectangle())
@@ -79,7 +106,9 @@ struct SeatBadge: View {
         let mid = Double(max(n - 1, 0)) / 2
         return ZStack {
             ForEach(0..<n, id: \.self) { i in
-                PkCard(card: revealed?[i], size: PkLayout.fanCard, fullFace: true)
+                let up = revealed != nil && i < (revealShown ?? n)
+                PkCard(card: up ? revealed?[i] : nil, size: PkLayout.fanCard, fullFace: true)
+                    .pkFX("fan.\(seat).\(i)")
                     .offset(x: CGFloat(Double(i) - mid) * step)
             }
         }

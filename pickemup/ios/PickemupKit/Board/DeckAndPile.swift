@@ -20,6 +20,8 @@ struct DeckStack: View {
     let buried: [Int]
     /// Brass dashed band while a card dragged off the deck is over the hand.
     var lifted = false
+    /// The newest buried start cards still in the air (pk_beats frame).
+    var buriedHold = 0
 
     static let leanX: CGFloat = 1
     static let leanY: CGFloat = 2
@@ -29,13 +31,18 @@ struct DeckStack: View {
         let size = PkLayout.deckSize
         ZStack(alignment: .topLeading) {
             ForEach(Array(buried.enumerated()), id: \.offset) { i, card in
+                // laid out (and anchored) even while its BURY flight is in the
+                // air, so the flight has somewhere to land (grid "Start card")
                 PkCard(card: card, size: size, fullFace: true)
                     .brightness(-0.08)
+                    .pkAnchor("bury.\(i)")
                     .rotationEffect(.degrees(i == 0 ? 9 : -7))
                     .offset(x: i == 0 ? 10 : -6, y: 18 + CGFloat(i) * 4)
+                    .opacity(i < buried.count - buriedHold ? 1 : 0)
             }
             ForEach(0..<layers, id: \.self) { i in
                 PkCard(card: nil, size: size)
+                    .pkFX("deck.layer.\(i)")
                     .offset(x: -CGFloat(i) * Self.leanX, y: -CGFloat(i) * Self.leanY)
                     .opacity(lifted && i == layers - 1 ? 0.55 : 1)
             }
@@ -86,7 +93,7 @@ struct PileView: View {
                     .frame(width: 170, height: 170)
                     .pkAnchor("halo")
             }
-            ForEach(0..<min(max(stackCount - 1, 0), 3), id: \.self) { i in
+            ForEach(0..<min(max(stackCount - 1, 0), PK_BEAT_UNDER), id: \.self) { i in
                 PkCard(card: nil, size: size)
                     .brightness(-0.3)
                     .rotationEffect(.degrees(Self.under[i].deg))

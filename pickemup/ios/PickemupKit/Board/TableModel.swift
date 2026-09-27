@@ -25,8 +25,18 @@ public final class TableModel: ObservableObject {
         /// The drawer collapses by itself once the move has rested (foolish's
         /// 250ms + settle + 500ms): a play, a pass, a lone Last card!.
         public let collapse: Bool
-        public init(caption: String, collapse: Bool) { self.caption = caption; self.collapse = collapse }
+        /// When it may: the kernel's settle for the plan the move started
+        /// (PkBeats.settle_ms), in milliseconds from the stage.
+        public let settleMs: Int
+        public init(caption: String, collapse: Bool, settleMs: Int = PK_T_COLLAPSE_WAIT + PK_T_COLLAPSE_REST) {
+            self.caption = caption
+            self.collapse = collapse
+            self.settleMs = settleMs
+        }
     }
+
+    /// The motion: the kernel's timeline for every touch and every arrival.
+    public let player = BeatPlayer()
 
     @Published public private(set) var table: PkApiTableSnap?
     @Published public private(set) var view: PkViewSnap?
@@ -106,6 +116,63 @@ public final class TableModel: ObservableObject {
     /// The Last card! pill (U11): I may say it now, and have not in this bubble.
     public var maySay: Bool { (view?.myExposed ?? 0) != 0 && (view?.draftSaid ?? 0) == 0 }
 
+    // MARK: the board as shown: the settled view, or a plan's frame
+
+    /// What the board draws: the kernel's settled view, or while a plan
+    /// plays, the frame of it (pk_beats_frame). Nothing here is computed.
+    public struct Shown: Equatable {
+        public var deckN = 0
+        public var top: Int?
+        public var stackN = 0
+        public var suit = 0
+        public var dir = PK_DIR_CW
+        public var turn: Int?
+        public var hand: [Int] = []
+        public var unseen: Set<Int> = []
+        public var stampHold = 0
+        public var fansEmpty = 0
+        public var buriedHold = 0
+        /// Per seat, how many backs have turned at the end reveal; nil before
+        /// a reveal begins (or with no plan: every card of a finished table).
+        public var revealShown: [Int]?
+        public var hold = 0
+        public var playing = false
+
+        public func holds(_ h: Int) -> Bool { hold & h != 0 }
+        public func stampHeld(_ seat: Int) -> Bool { stampHold & (1 << seat) != 0 }
+        public func fanEmpty(_ seat: Int) -> Bool { fansEmpty & (1 << seat) != 0 }
+    }
+
+    public func shown(_ frame: PkBeatFrameSnap?) -> Shown {
+        var s = Shown()
+        if let f = frame {
+            s.deckN = f.deckN
+            s.top = f.top == PK_CARD_NONE ? nil : f.top
+            s.stackN = f.stackN
+            s.suit = f.suit
+            s.dir = f.dir
+            s.turn = f.turn == PK_SEAT_NONE ? nil : f.turn
+            s.hand = f.myHand
+            s.unseen = Set(f.myUnseen.enumerated().filter { $0.element != 0 }.map(\.offset))
+            s.stampHold = f.stampHold
+            s.fansEmpty = f.fansEmpty
+            s.buriedHold = f.buriedHold
+            s.revealShown = f.revealing != 0 ? f.revealShown : nil
+            s.hold = f.hold
+            s.playing = true
+            return s
+        }
+        guard let v = view else { return s }
+        s.deckN = v.deckN
+        s.top = v.top == PK_CARD_NONE ? nil : v.top
+        s.stackN = v.stackN
+        s.suit = v.liveSuit
+        s.dir = v.dir
+        s.turn = v.over == 0 ? v.turn : nil
+        s.hand = v.myHand
+        return s
+    }
+
     // MARK: the staged-turn strip (U10): one chip per kind of thing, counted
 
     public struct Strip: Equatable {
@@ -169,6 +236,7 @@ public final class TableModel: ObservableObject {
         Haptics.fire(.pickUp)
         drawnStay = false
         refresh()
+        player.play(Pk.beatsStage())
         stageIfSendable(collapse: false)
     }
 
@@ -186,11 +254,13 @@ public final class TableModel: ObservableObject {
         selected = nil
         if Pk.isWild(pos) {
             pickerFor = pos                    // U14: nothing staged until a suit
+            player.play(Pk.beatsHost(PK_HM_PICKER_OPEN, hand[pos], pos))
             return
         }
         guard Pk.play(pos) else { reject(); return }
         Haptics.fire(.drop)
         refresh()
+        player.play(Pk.beatsStage())
         stageIfSendable(collapse: true)
     }
 
@@ -206,29 +276,51 @@ public final class TableModel: ObservableObject {
         guard Pk.play(pos, suit: suit) else { reject(); refresh(); return }
         Haptics.fire(.drop)
         refresh()
+        player.play(Pk.beatsStage(wildPlaced: true, picked: suit))
         stageIfSendable(collapse: true)
     }
 
     /// The x or the scrim: the card goes home and nothing was staged.
-    public func cancelPicker() { pickerFor = nil }
+    public func cancelPicker() {
+        guard let pos = pickerFor else { return }
+        pickerFor = nil
+        player.play(pos < hand.count ? Pk.beatsHost(PK_HM_PICKER_CANCEL, hand[pos], pos) : nil)
+    }
 
     public func pass() {
         guard Pk.pass() else { Haptics.fire(.reject); return }
         refresh()
+        player.play(Pk.beatsStage())
         stageIfSendable(collapse: true)
     }
 
     /// The Undo pill. Drawn cards never come back (D8): the kernel refuses
     /// below the draft's floor, and the screen says so (U23).
     public func undo() {
+        let played = stagedPlay
         guard Pk.undo() else { refusedBelowFloor(); return }
         refresh()
+        // grid "Undo a staged card": the card flies home; anything else that
+        // came back moves nothing
+        if let played, played.pos < hand.count, hand[played.pos] == played.card {
+            player.play(Pk.beatsHost(PK_HM_UNDO, played.card, played.pos))
+        } else {
+            player.clear()
+            Pk.beatsMark()
+        }
         stageIfSendable(collapse: false)
+    }
+
+    /// My staged play, if the draft has one: the card and where it came from.
+    public var stagedPlay: (card: Int, pos: Int)? {
+        guard let me, let e = draft.last(where: { $0.kind == PK_EV_PLAY && $0.seat == me }) else { return nil }
+        return (e.card, e.i)
     }
 
     public func sayIt() {
         guard Pk.sayIt() else { Haptics.fire(.reject); return }
         refresh()
+        player.play(Pk.beatsStage())
         let alone = strip.played == nil && strip.draws == 0 && strip.called == nil
         stageIfSendable(collapse: alone)
     }
@@ -237,6 +329,7 @@ public final class TableModel: ObservableObject {
     public func unsay() {
         guard Pk.unsay() else { return }
         refresh()
+        Pk.beatsMark()                         // un-say moves nothing (grid "Un-say")
         stageIfSendable(collapse: false)
     }
 
@@ -245,13 +338,18 @@ public final class TableModel: ObservableObject {
     public func tapFan(_ seat: Int) {
         if calling(seat) {
             guard Pk.uncall() else { return }
+            refresh()
+            // grid "Un-call": the ring and the tip fade off; a staged turn's
+            // held settle keeps holding
+            player.play((player.plan?.held ?? 0) > 0 ? Pk.beatsStage() : Pk.beatsHost(PK_HM_UNCALL, seat))
         } else {
             guard mayCall(seat) || (view?.draftCall ?? PK_SEAT_NONE) != PK_SEAT_NONE else { return }
             if (view?.draftCall ?? PK_SEAT_NONE) != PK_SEAT_NONE { _ = Pk.uncall() }
             guard Pk.callOut(seat) else { refresh(); Haptics.fire(.reject); return }
             Haptics.fire(.pickUp)
+            refresh()
+            player.play(Pk.beatsStage())
         }
-        refresh()
         stageIfSendable(collapse: false)
     }
 
@@ -263,6 +361,8 @@ public final class TableModel: ObservableObject {
         selected = nil
         pickerFor = nil
         refresh()
+        player.clear()
+        Pk.beatsMark()
         if hadDraws { showDrawnStay() }
     }
 
@@ -304,8 +404,13 @@ public final class TableModel: ObservableObject {
 
     private func stageIfSendable(collapse: Bool) {
         guard (table?.canSend ?? 0) != 0 else { return }
-        onStage?(Stage(caption: Pk.words(PK_API_W_STAGED_CAPTION), collapse: collapse))
+        let settle = player.plan?.settleMs ?? PK_T_COLLAPSE_WAIT + PK_T_COLLAPSE_REST
+        onStage?(Stage(caption: Pk.words(PK_API_W_STAGED_CAPTION), collapse: collapse, settleMs: settle))
     }
+
+    /// My staged bubble went out and was sealed (channel B): what staging
+    /// held plays now.
+    public func sent() { player.play(Pk.beatsSend()) }
 
     private func reject() {
         Haptics.fire(.reject)
@@ -319,6 +424,10 @@ public final class TableModel: ObservableObject {
     private func refusedBelowFloor() {
         Haptics.fire(.reject)
         showDrawnStay()
+        // U23: the newest drawn card shakes and stays
+        if !hand.isEmpty, (player.plan?.held ?? 0) == 0 {
+            player.play(Pk.beatsHost(PK_HM_REFUSED, 0, hand.count - 1))
+        }
     }
 
     private func showDrawnStay() {

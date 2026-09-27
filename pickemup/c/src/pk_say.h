@@ -54,6 +54,10 @@ int pk_itoa(int v, char *out, int cap);
 int pk_say_card(uint8_t card, char *out, int cap);         /* "7 of circles"      */
 int pk_say_seat(const char *const *names, int seat, char *out, int cap);
 int pk_say_deck_left(const PkGame *g, char *out, int cap);   /* "27 left"           */
+/* The same for any count and any direction: the words a board shows while a
+ * plan plays (pk_beats), when the count and the direction are the timeline's. */
+int pk_say_deck_n(int deck_n, char *out, int cap);
+int pk_say_dir_of(int n_seats, int dir, char *out, int cap);   /* dir: PK_DIR_*     */
 int pk_say_dir(const PkGame *g, char *out, int cap);         /* "" at 2 players     */
 
 /* ---- the bubble -------------------------------------------------------------- */
