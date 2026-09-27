@@ -376,7 +376,12 @@ public final class TableModel: ObservableObject {
         refresh()
         onStage?(Stage(caption: fills ? Pk.words(PK_API_W_STAGED_CAPTION) : Pk.words(PK_API_W_JOINED, seat),
                        collapse: false))
+        if fills { onDealt?() }
     }
+
+    /// My tap started the game (Start, or the Join that filled the table):
+    /// the table takes over from the lobby and the deal plays (grid "Start").
+    public var onDealt: (() -> Void)?
 
     public func leave() {
         guard let me else { return }
@@ -390,6 +395,7 @@ public final class TableModel: ObservableObject {
         guard Pk.start() == PK_EOK else { Haptics.fire(.reject); refresh(); return }
         refresh()
         onStage?(Stage(caption: Pk.words(PK_API_W_STAGED_CAPTION), collapse: false))
+        onDealt?()
     }
 
     /// Again, on a finished table: a new lobby in the same chat shape.

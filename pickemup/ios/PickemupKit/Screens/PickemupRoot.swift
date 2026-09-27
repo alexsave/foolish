@@ -20,7 +20,14 @@ public final class PickemupHost: ObservableObject {
     /// The name gate is done: make the new game.
     public var onNamed: (() -> Void)?
 
-    public init() {}
+    public init() {
+        // channel A of the start bubble: the starter's own deal, live
+        model.onDealt = { [weak self] in
+            guard let self else { return }
+            self.showResident()
+            self.model.player.play(Pk.beats(from: -1, to: 0, open: false))
+        }
+    }
 
     /// The screen for whatever is resident now.
     public func showResident() {

@@ -224,6 +224,30 @@ final class BeatPlayerTests: XCTestCase {
         XCTAssertEqual(f.durMs, PK_T_FLIGHT)
     }
 
+    // MUTATE: TableModel.join never calls onDealt -> "the join that fills the
+    // table plays the deal".
+    func testTheJoinThatStartsTheGamePlaysTheDeal() throws {
+        Phones.reset()
+        Phones.be(0)
+        XCTAssertTrue(Pk.newGame(dm: true, seed: Phones.seed(3)))
+        let invite = try XCTUnwrap(Pk.text)
+        Phones.be(1)
+        Pk.sender(of: invite, isDM: true, iSent: false)
+        let host = PickemupHost()
+        XCTAssertEqual(host.adopt(invite, arrival: false), 0)
+        XCTAssertEqual(host.screen, .lobby)
+        XCTAssertNil(host.model.player.plan, "a lobby plays nothing here")
+        host.model.join()
+        XCTAssertEqual(host.screen, .table, "the table takes over")
+        let plan = try XCTUnwrap(host.model.player.plan, "the join that fills the table plays the deal")
+        XCTAssertEqual(plan.beat.first?.kind, PK_BK_HOLD, "the lobby rests first")
+        XCTAssertEqual(plan.beat.first?.durMs, PK_T_LOBBY_REST)
+        XCTAssertEqual(plan.beat.filter { $0.evKind == PK_EV_DEAL && $0.kind == PK_BK_FLIGHT }.count, 2 * PK_HAND_SIZE,
+                       "one flight per dealt card")
+        XCTAssertEqual(plan.beat.filter { $0.evKind == PK_EV_DEAL && $0.kind == PK_BK_FLIGHT && $0.to == PK_ANC_HAND }.count, PK_HAND_SIZE,
+                       "seven into my hand")
+    }
+
     // MUTATE: pk_lay_picker's east reach 96 becomes 90 (C) -> "triangles east".
     func testThePickerTilesAreTheKernels() {
         let c = CGPoint(x: 200, y: 300)

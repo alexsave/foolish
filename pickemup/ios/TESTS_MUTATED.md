@@ -40,7 +40,7 @@ The C side's own rows (the layout thresholds, the words, the ranks, the buried c
 
 ## BeatPlayerTests (the motion worker, 2026-09-27)
 
-Run on the OTHER iPhone 17e, `6E0A730D-2655-4E8E-B369-2CF274879D31` (iOS 27.0), with `-only-testing:PickemupKitTests/BeatPlayerTests`: the unmutated suite is 7 tests, 0 failures, and `TableModelTests` (10) stays green beside it.
+Run on the OTHER iPhone 17e, `6E0A730D-2655-4E8E-B369-2CF274879D31` (iOS 27.0), with `-only-testing:PickemupKitTests/BeatPlayerTests`: the unmutated suite is 8 tests, 0 failures, and `TableModelTests` (10) stays green beside it (18 tests, 0 failures).
 Each mutant was applied alone by a script (exact string replacement, the source restored and checked byte for byte), and the two C mutants rebuilt the xcframework before and after.
 The whole scheme could not be run there: `ActionCardCornerTests` and `RenderTests` hang on that simulator (ORCHESTRATION B3).
 
@@ -58,6 +58,7 @@ The whole scheme could not be run there: `ActionCardCornerTests` and `RenderTest
 | testAStagedPlayHoldsItsSettleUntilSend | `TableModel.sent` plays nothing | the Send plan's mode (stage against send), "the bar moves to Alex" |
 | testUndoFliesThePlayedCardHome | `TableModel.undo` clears instead of flying the card home | "the card flies home" |
 | testThePickerTilesAreTheKernels | (C) `PICKER_REACH_X` 96 becomes 90, library rebuilt | "triangles east", "diamonds west", "the x" |
+| testTheJoinThatStartsTheGamePlaysTheDeal | `TableModel.join` never calls `onDealt` | "the table takes over" (lobby against table), "the join that fills the table plays the deal" |
 
 ## Not mutated
 
