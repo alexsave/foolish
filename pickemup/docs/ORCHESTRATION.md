@@ -56,6 +56,11 @@ Alternative: D24 as written (no rearranging, acquisition order only).
 Why: the owner named "card dragging and hand ordering" as the first thing to reuse from foolish; D24's reason (a second derivation of hand order) is answered by keeping the arrangement in the kernel and off the wire, so there is one owner and no second derivation.
 Confidence: high.
 
+DECISION O10: in a drawer shorter than 340pt (the iPhone 17e compact drawer is about 299pt) the pile and the deck scale down to the band between the top fan and the pill row, the scale being a kernel number beside `pk_lay_pile` that the views read, the pill row keeps every pill out of the pile's column there, and the status corner drops its sub-line while compact.
+Alternative: keep the 340pt layout and let the pills overlap the pile on short drawers.
+Why: the table is the thing a player must read in the compact drawer, and a pill drawn over the pile hides the very card to match; all three options in B2 are taken together because each fixes a different collision.
+Confidence: medium.
+
 ## Order of work
 
 1. Design in parallel: rules and kernel doc, UI.html surface study with motion grid, reuse audit.
