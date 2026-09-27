@@ -10,7 +10,7 @@ else
   LDFLAGS ?= -lm
 endif
 
-SHARED := ../shared/c
+SHARED := ../../shared/c
 # …AND THE SHARED HALF. This used to be one wildcard over $(KDIR)/src, which is
 # why it broke silently when sha256.c and deal_rng.c moved to shared/: a wildcard
 # does not fail when a file leaves it, it just compiles less. Both directories are

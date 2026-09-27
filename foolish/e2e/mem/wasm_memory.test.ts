@@ -51,7 +51,7 @@ if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {};
 // this tight cannot be one number.
 //
 // The compiler is not the problem. With the toolchain pinned (clang 22.1.8 +
-// binaryen 130, scripts/ci_llvm.sh) the RAW module is byte-identical on macOS
+// binaryen 130, shared/scripts/ci_llvm.sh) the RAW module is byte-identical on macOS
 // arm64, Linux arm64 and Linux x86_64. The COMPRESSOR is the problem. gzip -9 -n
 // over one identical 191,485 B bots.wasm gave:
 //

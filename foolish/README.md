@@ -49,8 +49,8 @@ npm run dev          # http://localhost:3000
 ```
 
 `predev` runs `npm run gen` first, and that matters more than it looks: **a large part of the TypeScript the client imports does not exist in git.**
-[`shared/tools/structgen`](shared/tools/structgen) and [`shared/tools/datagen`](shared/tools/datagen) read the C through libclang at build time and write it.
-A checkout without a working `clang` cannot build the website, which is why CI installs libclang and why [`scripts/ci_llvm.sh`](scripts/ci_llvm.sh) exists.
+[`shared/tools/structgen`](../shared/tools/structgen) and [`shared/tools/datagen`](../shared/tools/datagen) read the C through libclang at build time and write it.
+A checkout without a working `clang` cannot build the website, which is why CI installs libclang and why [`shared/scripts/ci_llvm.sh`](../shared/scripts/ci_llvm.sh) exists.
 
 The dev server needs a Supabase backend, configured through two client-exposed variables:
 
@@ -203,9 +203,9 @@ That guard exists because the alternative already happened: a kernel fix that sh
 Several things in here would be their own repository anywhere else.
 
 **structgen, and its sibling datagen.**
-[`shared/tools/structgen`](shared/tools/structgen) is a libclang program: it loads the kernel's headers through clang's own parser, asks the real compiler for the real layout of a struct under one target's flags, and writes TypeScript accessors over wasm32 linear memory and Swift value snapshots over the natively-linked struct.
+[`shared/tools/structgen`](../shared/tools/structgen) is a libclang program: it loads the kernel's headers through clang's own parser, asks the real compiler for the real layout of a struct under one target's flags, and writes TypeScript accessors over wasm32 linear memory and Swift value snapshots over the natively-linked struct.
 The same header is a different shape on each: a pointer is 4 bytes on wasm32 and 8 on iOS, so the offsets cannot be shared, only derived.
-[`shared/tools/datagen`](shared/tools/datagen) is the mirror image, reading a `static const` table's initializers instead of its layout, which is what turns 25 C files of translations into 25 modules per host.
+[`shared/tools/datagen`](../shared/tools/datagen) is the mirror image, reading a `static const` table's initializers instead of its layout, which is what turns 25 C files of translations into 25 modules per host.
 Between them they are the reason no offset and no string in this repo is typed twice, and they are a compiler-adjacent tool that happens to live in a card game.
 
 **The replay codec.**
@@ -262,17 +262,17 @@ The Apple suite (847 Swift tests plus snapshot tests) runs on a Mac by hand via 
 
 **CI builds, Vercel never does.**
 The Git integration is disconnected on purpose.
-[`.github/workflows/web.yml`](.github/workflows/web.yml) generates the modules, builds with libclang present, and uploads a prebuilt bundle.
+[`.github/workflows/web.yml`](../.github/workflows/web.yml) generates the modules, builds with libclang present, and uploads a prebuilt bundle.
 Previews are **opt-in** via a `preview` label on the pull request, because Vercel's free plan allows 100 deployments per day across the whole account and a day of C and iOS work will otherwise spend them all and lock production out.
 A merge to `main` always deploys production, and [`scripts/web_deploy_scope.sh`](scripts/web_deploy_scope.sh) decides whether a change could have reached the bundle at all.
 
-The Supabase side deploys through [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml).
+The Supabase side deploys through [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml).
 The 39 migrations were folded into `seed.sql`, so a merge to `main` runs no SQL.
 
 The shipped wasm is a **build output**, like `sdk/ts/gen`: [`scripts/wasm_build.sh`](scripts/wasm_build.sh) is the one entry point, every lane that loads a module builds it, and nothing is committed.
 It used to be built by hand on a Mac and committed, which needed two gates to hold it up - a freshness check that compared commit *order* because it could not compare bytes, and a `WASM_STAMP` committed beside the artifacts to prove a human had run `make`.
 Neither caught the drift it was written for: `public/oracle.wasm.gz` sat unrebuilt for three weeks and served one seat the opposite endgame verdict, and it was behind again by exactly one raw byte on the day they were deleted.
-What made the change safe is a measurement - with the toolchain pinned (clang 22.1.8 + binaryen 130, [`scripts/ci_llvm.sh`](scripts/ci_llvm.sh)) the raw module is byte-identical on macOS arm64, Linux arm64 and Linux x86_64 - so `wasm_build.sh --check` can build twice and refuse a difference, which is a stronger question than any freshness gate could ask.
+What made the change safe is a measurement - with the toolchain pinned (clang 22.1.8 + binaryen 130, [`shared/scripts/ci_llvm.sh`](../shared/scripts/ci_llvm.sh)) the raw module is byte-identical on macOS arm64, Linux arm64 and Linux x86_64 - so `wasm_build.sh --check` can build twice and refuse a difference, which is a stronger question than any freshness gate could ask.
 
 ---
 

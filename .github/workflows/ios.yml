@@ -32,14 +32,24 @@ name: ios
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - 'uttt/**'
-      - '.github/workflows/uttt-web.yml'
+    # foolish/ and the shared/ under it; not the sibling products.
+    paths:
+      - 'foolish/**'
+      - 'shared/**'
+      - '.github/workflows/ios.yml'
   pull_request:
     branches: [main]
-    paths-ignore:
-      - 'uttt/**'
-      - '.github/workflows/uttt-web.yml'
+    # foolish/ and the shared/ under it; not the sibling products.
+    paths:
+      - 'foolish/**'
+      - 'shared/**'
+      - '.github/workflows/ios.yml'
+
+# Every step runs from foolish/, where these commands have always run. Only the
+# path globs and the `uses:`/`working-directory:` inputs are from the repo root.
+defaults:
+  run:
+    working-directory: foolish
 
 jobs:
   # ---- Portable: proves the bridge and fixtures on any clang box ------------

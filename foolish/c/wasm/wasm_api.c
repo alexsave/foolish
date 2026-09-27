@@ -13,7 +13,7 @@
 // Freestanding: no libc. memcpy/memset are provided here (clang lowers
 // struct copies to them on wasm32).
 
-#include <string.h>   /* memcpy/memset: ../shared/c/wasm/libc.c, linked into every module */
+#include <string.h>   /* memcpy/memset: ../../shared/c/wasm/libc.c, linked into every module */
 #include "game.h"
 #include "wire.h"
 #include "legal.h"

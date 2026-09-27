@@ -20,13 +20,15 @@
 set -uo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
 root="$(cd "$here/../.." && pwd)"
+# The repo root, one above the product: shared/ lives there, beside foolish/.
+mono="$(cd "$root/.." && pwd)"
 # The generator is shared (shared/tools/structgen); this test, and the specs
 # and fixtures it points the generator at, are this product's.
-sg="$root/shared/tools/structgen"
+sg="$mono/shared/tools/structgen"
 make -s -C "$sg" build/structgen
-make -s -C "$root/shared/tools/datagen" build/datagen
+make -s -C "$mono/shared/tools/datagen" build/datagen
 SG="$sg/build/structgen"
-DG="$root/shared/tools/datagen/build/datagen"
+DG="$mono/shared/tools/datagen/build/datagen"
 out="$here/build/kotlin"
 rm -rf "$out"; mkdir -p "$out"
 fails=0
@@ -183,7 +185,7 @@ i18n="$out/i18n"; mkdir -p "$i18n"
 dg() { "$DG" --cwd "$root/c/i18n" "$@"; }
 dg --header keys.h --table FS_KEY_NAME --require-complete --name FoolishStringKeys \
    --kotlin "$i18n/FoolishStringKeys.kt" --kotlin-package cards.foolish.i18n
-"$DG" --cwd "$root/shared/c/i18n" --header languages.h --table FS_LANGUAGES --require-complete --name FoolishLanguages \
+"$DG" --cwd "$mono/shared/c/i18n" --header languages.h --table FS_LANGUAGES --require-complete --name FoolishLanguages \
    --kotlin "$i18n/FoolishLanguages.kt" --kotlin-package cards.foolish.i18n
 nkeys="$(grep -c '^    "' "$i18n/FoolishStringKeys.kt")"
 [ "$nkeys" -gt 100 ]; ok $? "the key list came back with $nkeys keys"

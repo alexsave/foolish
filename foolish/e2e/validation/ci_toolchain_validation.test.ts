@@ -34,7 +34,8 @@ import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, resolve, dirname, relative } from 'node:path';
 
 const REPO = resolve(import.meta.dirname, '../..');
-const WORKFLOWS = join(REPO, '.github/workflows');
+// Workflows live at the repository root, one level above the product.
+const WORKFLOWS = join(resolve(REPO, '..'), '.github/workflows');
 
 /** The helper that shells out to `make -C c ... wasm-bots-test`. */
 const BUILDER = join(REPO, 'e2e/helpers/bots_test_wasm.ts');

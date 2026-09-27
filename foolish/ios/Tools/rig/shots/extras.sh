@@ -11,7 +11,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 RIG="$HERE/../rig.sh"
 LIB="$HERE/../lib"
-SHLIB="$HERE/../../../../shared/rig/lib"  # the shared measurement half (no product knowledge in it)
+SHLIB="$HERE/../../../../../shared/rig/lib"  # the shared measurement half (no product knowledge in it)
 
 read -r W H < <(python3 "$SHLIB/ax.py" screen)
 

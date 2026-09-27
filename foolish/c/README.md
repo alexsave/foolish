@@ -110,7 +110,7 @@ compressor moves them by up to 576 B on identical input, which is why
 
 Nothing here is committed. `sdk/ts/wasm/bots.wasm.gz` and the two
 `public/oracle*.wasm.gz` are gitignored build outputs, and CI builds them in the
-lane that ships them (`scripts/wasm_build.sh`, `scripts/ci_llvm.sh`).
+lane that ships them (`scripts/wasm_build.sh`, `shared/scripts/ci_llvm.sh`).
 
 
 ### The arena fingerprint - a cheap "did bot behaviour drift?" check

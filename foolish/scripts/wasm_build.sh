@@ -47,7 +47,7 @@
 # modules can be built by the lane that ships them and there is nothing left to
 # keep fresh.
 #
-# WHICH IS WHY THE TOOLCHAIN IS PINNED rather than inherited - scripts/ci_llvm.sh
+# WHICH IS WHY THE TOOLCHAIN IS PINNED rather than inherited - shared/scripts/ci_llvm.sh
 # installs it, scripts/ci_wasm.sh is that plus this script, and the version
 # really does decide the module:
 #
@@ -55,7 +55,7 @@
 #   clang 22.1.8 + binaryen 108   191,729 B raw   +244 B
 #   clang 18.1.3 + binaryen 108   194,997 B raw   +3,512 B
 #
-# clang 18 is what scripts/ci_llvm.sh used to install, back when the only wasm it
+# clang 18 is what shared/scripts/ci_llvm.sh used to install, back when the only wasm it
 # ever built was the throwaway test module and its version was therefore free.
 # On the shipped module it costs 3.5 KB of kernel and ~1.7 KB of download, so
 # that script raised its pin to 22 and is now the repo's one wasm toolchain.
@@ -203,7 +203,7 @@ VARS=()
 # CC too: every wasm target runs tools/structgen first for the layout hash it
 # compiles in, and structgen's Makefile builds the generator with $(CC). A
 # container that has clang but no `cc` fails there rather than in the link - the
-# same reason scripts/ci_llvm.sh names gcc explicitly.
+# same reason shared/scripts/ci_llvm.sh names gcc explicitly.
 [ -n "${CC:-}" ] && VARS+=("CC=$CC")
 
 if [ "$check" = 0 ]; then

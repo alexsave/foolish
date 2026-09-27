@@ -256,7 +256,7 @@ ladder: build/uttt_ladder
 # with.
 # A BUILD OUTPUT, never committed (uttt/web/.gitignore): the uttt-web workflow
 # builds it before it builds the site.
-# scripts/ci_llvm.sh exports WASM_CC, the repo's pinned clang; locally any
+# shared/scripts/ci_llvm.sh exports WASM_CC, the repo's pinned clang; locally any
 # clang with the wasm32 target and wasm-ld will do.
 WEB_WASM_CC  ?= $(if $(WASM_CC),$(WASM_CC),clang)
 # ENGLISH ONLY (UTTT_LANG_ENGLISH_ONLY, src/uttt_lang.c): the page is English

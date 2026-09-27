@@ -29,10 +29,20 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { join, resolve, dirname, relative } from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 const REPO = resolve(import.meta.dirname, '../..');
+// The workflow and the paths it feeds the filter are from the repository root,
+// one level above the product.
+const MONO = resolve(REPO, '..');
 const FILTER = join(REPO, 'scripts/web_deploy_scope.sh');
-const WORKFLOW = join(REPO, '.github/workflows/web.yml');
+const WORKFLOW = join(MONO, '.github/workflows/web.yml');
+
+/** What the REAL filter lets through, for paths given as `git diff` prints them. */
+function admitted(paths: string[]): string[] {
+    return execFileSync('bash', [FILTER], { input: paths.join('\n') + '\n', encoding: 'utf8' })
+        .split('\n').filter(Boolean);
+}
 
 /** The skip patterns, read out of the filter itself so the two cannot disagree. */
 function skipPatterns(): RegExp[] {
@@ -163,6 +173,37 @@ test('the filter never skips anything that can change what a visitor downloads',
         'so a change to one would merge with no preview and never redeploy main:',
         ...skipped.map((p) => `  ${p}`),
     ].join('\n'));
+
+    // AND THE SAME QUESTION ASKED OF THE REAL SCRIPT, in the spelling CI uses.
+    // `git diff --name-only` runs from the repository root, so a foolish path
+    // arrives as `foolish/c/src/game.c` and a shared one as `shared/c/sha256.c`.
+    // The regexes above are matched against paths written from inside foolish/;
+    // this is what proves the prefix is stripped and that shared/ is not skipped.
+    const arriving = never.map((p) => (p.startsWith('shared/') ? p : `foolish/${p}`));
+    const dropped = arriving.filter((p) => !admitted([p]).includes(p));
+    assert.deepEqual(dropped, [], [
+        'The filter script drops these repo-root paths, so a change to one would',
+        'merge with no preview and never redeploy main:',
+        ...dropped.map((p) => `  ${p}`),
+    ].join('\n'));
+});
+
+test('the filter skips what provably cannot reach the site, in repo-root spelling', () => {
+    // The other direction, so an over-broad rule cannot pass by admitting
+    // everything: docs, the iOS app, the sibling products and the other lanes'
+    // workflows are skipped, and web.yml and the filter itself are not.
+    const skippable = [
+        'foolish/docs/PROTOCOL.md', 'foolish/ios/FoolishKit/Boards/FCard.swift',
+        'foolish/e2e/harness.ts', 'uttt/web/app/page.tsx', 'uttt/c/src/uttt.c',
+        'werewolf/c/src/game.c', 'pickemup/README.md', 'docs/MOTION_BEFORE_FLOW.md',
+        '.github/workflows/ios.yml',
+    ];
+    const leaked = admitted(skippable);
+    assert.deepEqual(leaked, [], `these cannot reach the site but the filter admits them:\n  ${leaked.join('\n  ')}`);
+    assert.deepEqual(
+        admitted(['.github/workflows/web.yml', 'foolish/scripts/web_deploy_scope.sh']),
+        ['.github/workflows/web.yml', 'foolish/scripts/web_deploy_scope.sh'],
+        'web.yml and the filter script must always re-admit themselves, or the lane cannot be tested in a PR');
 });
 
 test('the workflow actually uses the filter, and production is never scoped', () => {
@@ -234,7 +275,7 @@ test('the filter is executable and self-consistent', () => {
     const skips = skipPatterns();
     // The filter re-admits these two by name; a SKIP entry that also matched them
     // would make that re-admission dead code and the lane untestable in a PR.
-    for (const p of ['.github/workflows/web.yml', 'scripts/web_deploy_scope.sh']) {
+    for (const p of ['.github/workflows/web.yml', 'foolish/scripts/web_deploy_scope.sh']) {
         assert.ok(readFileSync(FILTER, 'utf8').includes(p), `${p} is no longer re-admitted by name`);
     }
 });

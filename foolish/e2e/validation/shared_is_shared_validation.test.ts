@@ -29,7 +29,9 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve, relative } from 'node:path';
 
-const REPO = resolve(import.meta.dirname, '../..');
+// Rooted at the REPOSITORY, where foolish/, uttt/, werewolf/ and shared/ sit side
+// by side: this gate is about the line between them, so it cannot live inside one.
+const REPO = resolve(import.meta.dirname, '../../..');
 const SHARED = join(REPO, 'shared');
 
 /** Build outputs and generated modules are not source and are not committed. */
@@ -103,6 +105,7 @@ test('shared/ holds the files both products actually build', () => {
         'shared/c/sha256.c', 'shared/c/sha256.h',
         'shared/c/deal_rng.c', 'shared/c/deal_rng.h',
         'shared/tools/llvm.mk',
+        'shared/scripts/ci_llvm.sh',   // the pinned toolchain, for every product's lanes
         'shared/tools/sgcommon/sgc.c',
         'shared/tools/structgen/structgen.c',
         'shared/tools/structgen/Makefile',
@@ -129,15 +132,17 @@ test('the product does not keep its own copy of a shared file', () => {
     // which gets the next fix. A copy that comes BACK is the same bug, and it
     // reads as innocent - a file appearing where it used to live.
     const shadowed = [
-        'c/src/sha256.c', 'c/src/sha256.h',
-        'c/src/deal_rng.c', 'c/src/deal_rng.h',
-        'sdk/swift/PackedBytes.swift',
-        'tools/llvm.mk',
-        'tools/sgcommon',
-        'tools/datagen',
-        'c/i18n/languages.h',
+        'foolish/c/src/sha256.c', 'foolish/c/src/sha256.h',
+        'foolish/c/src/deal_rng.c', 'foolish/c/src/deal_rng.h',
+        'foolish/sdk/swift/PackedBytes.swift',
+        'foolish/tools/llvm.mk',
+        'foolish/tools/sgcommon',
+        'foolish/tools/datagen',
+        'foolish/c/i18n/languages.h',
         'uttt/c/i18n/languages.h',
-        'tools/structgen/structgen.c',
+        'foolish/tools/structgen/structgen.c',
+        'foolish/scripts/ci_llvm.sh',
+        'scripts/ci_llvm.sh',
         'werewolf/c/src/sha256.c',
         'werewolf/c/src/deal_rng.c',
         'werewolf/tools',

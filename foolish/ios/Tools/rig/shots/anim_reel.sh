@@ -36,7 +36,7 @@ set -uo pipefail
 : "${FOOLISH_SIM:?set FOOLISH_SIM}"
 export FOOLISH_OUT="${FOOLISH_OUT:-$HOME/Downloads/foolish-shots}"
 HERE="$(cd "$(dirname "$0")" && pwd)"; RIG="$HERE/../rig.sh"; LIB="$HERE/../lib"
-SHLIB="$HERE/../../../../shared/rig/lib"  # the shared measurement half (no product knowledge in it)
+SHLIB="$HERE/../../../../../shared/rig/lib"  # the shared measurement half (no product knowledge in it)
 REPO="$(cd "$HERE/../../../.." && pwd)"
 NAME="${1:-reel}"
 G=$("$RIG" group)

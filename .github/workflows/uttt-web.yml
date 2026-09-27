@@ -23,7 +23,7 @@ on:
       - 'shared/c/b32.*'
       - 'shared/c/i18n/**'
       - 'shared/c/wasm/**'
-      - 'scripts/ci_llvm.sh'
+      - 'shared/scripts/ci_llvm.sh'
       - '.github/workflows/uttt-web.yml'
   pull_request:
     branches: [main]
@@ -33,7 +33,7 @@ on:
       - 'shared/c/b32.*'
       - 'shared/c/i18n/**'
       - 'shared/c/wasm/**'
-      - 'scripts/ci_llvm.sh'
+      - 'shared/scripts/ci_llvm.sh'
       - '.github/workflows/uttt-web.yml'
   workflow_dispatch: {}
 
@@ -57,7 +57,7 @@ jobs:
           cache-dependency-path: uttt/web/package-lock.json
       - name: Toolchain (the repo's pinned clang, for the wasm)
         working-directory: .
-        run: bash scripts/ci_llvm.sh
+        run: bash shared/scripts/ci_llvm.sh
       - run: npm ci
       - name: The kernel, as wasm
         run: npm run wasm
@@ -98,7 +98,7 @@ jobs:
       - name: Toolchain
         if: steps.creds.outputs.ready == 'true'
         working-directory: .
-        run: bash scripts/ci_llvm.sh
+        run: bash shared/scripts/ci_llvm.sh
       - if: steps.creds.outputs.ready == 'true'
         run: npm ci
       - name: Install the Vercel CLI

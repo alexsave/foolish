@@ -17,9 +17,11 @@
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
 root="$(cd "$here/../.." && pwd)"
+# The repo root, one above the product: shared/ lives there, beside foolish/.
+mono="$(cd "$root/.." && pwd)"
 # The generator is shared (shared/tools/structgen); this test, and the specs
 # and fixtures it points the generator at, are this product's.
-sg="$root/shared/tools/structgen"
+sg="$mono/shared/tools/structgen"
 CLANG="${WASM_CC:-/opt/homebrew/opt/llvm/bin/clang}"
 out="$here/build/oracle"
 rm -rf "$out" && mkdir -p "$out/node" "$out/c"

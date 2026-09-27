@@ -13,14 +13,24 @@ name: memory
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - 'uttt/**'
-      - '.github/workflows/uttt-web.yml'
+    # foolish/ and the shared/ under it; not the sibling products.
+    paths:
+      - 'foolish/**'
+      - 'shared/**'
+      - '.github/workflows/memory.yml'
   pull_request:
     branches: [main]
-    paths-ignore:
-      - 'uttt/**'
-      - '.github/workflows/uttt-web.yml'
+    # foolish/ and the shared/ under it; not the sibling products.
+    paths:
+      - 'foolish/**'
+      - 'shared/**'
+      - '.github/workflows/memory.yml'
+
+# Every step runs from foolish/, where these commands have always run. Only the
+# path globs and the `uses:`/`working-directory:` inputs are from the repo root.
+defaults:
+  run:
+    working-directory: foolish
 
 jobs:
   mem:
@@ -38,6 +48,7 @@ jobs:
           # install is exactly today's. Nine jobs a push install this same
           # tree from this same lockfile; only the fetching is shared.
           cache: npm
+          cache-dependency-path: foolish/package-lock.json
 
       - name: Install dependencies
         run: npm install
@@ -75,7 +86,7 @@ jobs:
         run: |
           # SOURCED, not run: a step exports to LATER steps through GITHUB_ENV,
           # so within this one the toolchain has to land in this shell.
-          . scripts/ci_llvm.sh
+          . ../shared/scripts/ci_llvm.sh
           bash tools/structgen/gen.sh
 
       # AND THE KERNEL, which the injected [functions.memtest] stanza below

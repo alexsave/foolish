@@ -1,9 +1,9 @@
 CC      ?= clang
 
-# THE TWO SHARED PRIMITIVES. sha256 and deal_rng are compiled from ../shared/c
+# THE TWO SHARED PRIMITIVES. sha256 and deal_rng are compiled from ../../shared/c
 # by this product and by werewolf alike - a standard and a pure function, with
 # no game in either. Everything else under src/ is foolish's.
-SHARED  := ../shared/c
+SHARED  := ../../shared/c
 
 # A literal comma, so $(filter-out) patterns can name a -Wl,--flag. Defined here
 # rather than beside its first user: := expands immediately, so a definition
@@ -542,7 +542,7 @@ leafbook-verify:
 
 # ---------------------------------------------------------------------------
 # WebAssembly rules kernel: game.c + legal.c + the wasm bridge, compiled
-# freestanding (no libc: ../shared/c/wasm is the C library every wasm kernel in
+# freestanding (no libc: ../../shared/c/wasm is the C library every wasm kernel in
 # the repo links - memcpy, memset, strcmp - and wasm/include keeps this
 # kernel's own stdio.h and stdlib.h, first on the path so they win). This is THE production rules engine: the TS server imports
 # the resulting module via sdk/ts/wasm/. `-D_Thread_local=`
@@ -588,7 +588,7 @@ wasm-cc-check:
 	  *"clang version $(WASM_LLVM_MAJOR)."*) ;; \
 	  *) echo "wasm: WASM_CC is $$v, not the pinned clang $(WASM_LLVM_MAJOR) - sizes will differ from CI" >&2;; \
 	esac
-# The pinned major, matching scripts/ci_llvm.sh LLVM_VERSION. A warning and not
+# The pinned major, matching shared/scripts/ci_llvm.sh LLVM_VERSION. A warning and not
 # a refusal: a different clang 22 point release is a few bytes, a different
 # MAJOR is kilobytes (clang 18 cost 3.5 KB), and both are worth saying out loud
 # without stopping someone who knows why they are doing it.
@@ -845,7 +845,7 @@ WASM_API_EXPORTS := \
 # TWO DIRECTORIES, because the generator is shared and its configuration is not.
 # STRUCTGEN_DIR is the tool, built once for both products; SG_SPEC_DIR is this
 # product's description of its own structs and stays beside the product.
-STRUCTGEN_DIR  := ../shared/tools/structgen
+STRUCTGEN_DIR  := ../../shared/tools/structgen
 SG_SPEC_DIR    := ../tools/structgen/specs
 STRUCTGEN      := $(STRUCTGEN_DIR)/build/structgen
 SG_GAME_SPEC   := $(SG_SPEC_DIR)/game_layout.args

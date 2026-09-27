@@ -6,6 +6,8 @@
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
 root="$(cd "$here/../.." && pwd)"
+# The repo root, one above the product: shared/ lives there, beside foolish/.
+mono="$(cd "$root/.." && pwd)"
 out="$here/build/bench"
 REPS="${REPS:-3}"
 mkdir -p "$out"

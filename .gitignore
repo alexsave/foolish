@@ -5,21 +5,8 @@
 /.pnp
 .pnp.js
 
-# testing
-/coverage
-tests/coverage
-
-# production
-/build
-/dist
-
-# next.js
-/.next/
-/out/
-/next-env.d.ts
-*.tsbuildinfo
-
 # misc
+*.tsbuildinfo
 .DS_Store
 .env.local
 .env.development.local
@@ -55,76 +42,6 @@ yarn-error.log*
 .cursor
 
 
-# tools/structgen's outputs. BUILD OUTPUTS, written by tools/structgen/gen.sh
-# (and by the wasm and ios-lib make targets) on every build that consumes them -
-# the web, the type-check, every test lane, the edge-function deploy, FoolishKit.
-#
-# They used to be committed. verify.wasm is why they are not: it sat committed
-# under tools/structgen/gen/ with `diff -x verify.wasm` excusing it from the
-# freshness check, and the exclusion is what let it rot for months while the
-# check reported everything fresh (f6338351). An artifact nothing compares is an
-# artifact nothing keeps fresh, and the cheapest way to have nothing to compare
-# is to have nothing committed.
-#
-# e2e/validation/generated_outputs_validation.test.ts refuses a tracked file
-# under any of these, and reads the directory list out of gen.sh rather than
-# restating it here - so a new output is covered the day it lands.
-sdk/ts/gen/
-sdk/swift/gen/
-sdk/kotlin/gen/
-tools/structgen/gen/
-
-# The shipped wasm modules, for the same reason one step further along. These
-# WERE committed, and the arrangement needed two gates to hold it up: a
-# freshness check that compared commit ORDER because it could not compare bytes,
-# and a WASM_STAMP committed beside them to prove a human had run make. Neither
-# stopped the drift they were written for - public/oracle.wasm.gz shipped one of
-# two seats the opposite endgame verdict for three weeks, and was behind again by
-# exactly one raw byte on the day they were deleted.
-#
-# What changed is a measurement, not an opinion: with the toolchain pinned
-# (clang 22.1.8 + binaryen 130, scripts/ci_wasm.sh) c/build/bots.wasm is
-# byte-identical on macOS arm64, Linux arm64 and Linux x86_64, so the lane that
-# ships a module can build it and there is nothing left to keep fresh.
-#
-# e2e/validation/wasm_outputs_validation.test.ts refuses a tracked one and reads
-# the path list out of scripts/wasm_build.sh rather than restating it here, so a
-# new module is covered the day it lands.
-sdk/ts/wasm/bots.wasm.gz
-sdk/ts/wasm/web.wasm.gz
-public/oracle.wasm.gz
-public/oracle-mt.wasm.gz
-
-# c
-c/build/
-# The shared toolchain's own build outputs - the generator and datagen binaries,
-# and the wasm/twin links gen.sh makes. Same reason as tools/structgen/gen/
-# above: built on demand by whichever libclang is on the machine, committed
-# nowhere.
-shared/tools/structgen/build/
-shared/tools/datagen/build/
-# And tighten's, which is one C file and a `make` away on any machine.
-shared/tools/tighten/build/
-c/*.trace/
-c/tools/tt_divergence_viz/backup/
-c/tools/tt_divergence_viz/backup2/
-c/tools/tt_divergence_viz/data/W/
-
-# Local scratch that has snuck into commits before: a stray vim runtime file,
-# a dev server log, the iOS snapshot-test output dir, and the memtest edge
-# scratch function. (Bare-name editor spill is handled in the vim block above.)
-.watchrealsizevim
-serve.log
-ios/FoolishTests/__Snapshots__/
-server/impls/supabase/functions/memtest/
-# The supabase CLI's own version-check cache. Written by any `supabase` command,
-# so it appears as untracked the first time you touch the CLI in a session and
-# is exactly the shape of thing that rides along in a `git add -A`.
-supabase/.temp/
-
-# local dev overrides (shadows next.config.mjs if tracked!)
-next.config.js
-
 # Local Claude Code agent worktrees / local state — ignored, EXCEPT the shared
 # project hook below (installs binaryen so `make wasm-bots` can run wasm-opt).
 .claude/*
@@ -144,3 +61,22 @@ uttt/ios/vendor/
 uttt/ios/*.xcodeproj
 uttt/c/build/
 uttt/ios/*/*.entitlements
+
+# The shared toolchain's own build outputs - the generator and datagen binaries,
+# and the wasm/twin links gen.sh makes. Same reason as tools/structgen/gen/
+# above: built on demand by whichever libclang is on the machine, committed
+# nowhere.
+shared/tools/structgen/build/
+shared/tools/datagen/build/
+# And tighten's, which is one C file and a `make` away on any machine.
+shared/tools/tighten/build/
+
+# The supabase CLI's own version-check cache. Written by any `supabase` command,
+# so it appears as untracked the first time you touch the CLI in a session and
+# is exactly the shape of thing that rides along in a `git add -A`.
+**/supabase/.temp/
+
+# Local scratch that has snuck into commits before: a stray vim runtime file and a
+# dev server log. Bare names, so they are caught wherever they appear.
+.watchrealsizevim
+serve.log

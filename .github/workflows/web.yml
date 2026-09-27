@@ -53,20 +53,34 @@ name: web
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - 'uttt/**'
-      - '.github/workflows/uttt-web.yml'
+    # What can change this site: foolish/, and shared/ under it. Not the sibling
+    # products, and not this repo's other lanes (this file is the one workflow
+    # that has to run when it changes).
+    paths:
+      - 'foolish/**'
+      - 'shared/**'
+      - '.github/workflows/web.yml'
   pull_request:
     branches: [main]
-    paths-ignore:
-      - 'uttt/**'
-      - '.github/workflows/uttt-web.yml'
+    # What can change this site: foolish/, and shared/ under it. Not the sibling
+    # products, and not this repo's other lanes (this file is the one workflow
+    # that has to run when it changes).
+    paths:
+      - 'foolish/**'
+      - 'shared/**'
+      - '.github/workflows/web.yml'
     # `labeled` is here so that adding the `preview` label is itself enough to
     # get a URL. Without it the label would only take effect on the next push,
     # which is a trap: you ask for a preview, nothing happens, and there is no
     # message saying why.
     types: [opened, synchronize, reopened, labeled]
   workflow_dispatch: {}
+
+# Every step runs from foolish/, where these commands have always run. Only the
+# path globs above and the `uses:` inputs below are written from the repo root.
+defaults:
+  run:
+    working-directory: foolish
 
 concurrency:
   group: web-${{ github.ref }}
@@ -90,6 +104,7 @@ jobs:
           # install is exactly today's. Nine jobs a push install this same
           # tree from this same lockfile; only the fetching is shared.
           cache: npm
+          cache-dependency-path: foolish/package-lock.json
 
       - name: Install dependencies
         run: npm install
@@ -105,7 +120,7 @@ jobs:
       # and is no longer a reason to avoid one: those builds cannot work at all
       # while sdk/ts/gen is uncommitted, which it already is, so they are off.
       - name: Toolchain (libclang, for the generated modules)
-        run: bash scripts/ci_llvm.sh
+        run: bash ../shared/scripts/ci_llvm.sh
 
       - name: Generated modules
         run: bash tools/structgen/gen.sh
@@ -310,6 +325,7 @@ jobs:
           # install is exactly today's. Nine jobs a push install this same
           # tree from this same lockfile; only the fetching is shared.
           cache: npm
+          cache-dependency-path: foolish/package-lock.json
 
       - name: Install dependencies
         if: steps.creds.outputs.ready == 'true'
@@ -317,7 +333,7 @@ jobs:
 
       - name: Toolchain (libclang, for the generated modules)
         if: steps.creds.outputs.ready == 'true'
-        run: bash scripts/ci_llvm.sh
+        run: bash ../shared/scripts/ci_llvm.sh
 
       # Pinned, never floated, for the reason deploy.yml gives for pinning the
       # Supabase CLI: a deploy tool that changes under us changes what ships.

@@ -36,7 +36,7 @@ from PIL import Image
 HERE = os.path.dirname(os.path.abspath(__file__))
 # The measurement half of the rig lives in shared/rig/lib - it has no product
 # knowledge, so it is shared. This file does, so it stays here and reaches.
-SHLIB = os.path.join(HERE, "..", "..", "..", "..", "shared", "rig", "lib")
+SHLIB = os.path.join(HERE, "..", "..", "..", "..", "..", "shared", "rig", "lib")
 sys.path.insert(0, SHLIB)
 
 import squares as sq

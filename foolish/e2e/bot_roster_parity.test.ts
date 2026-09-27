@@ -187,7 +187,8 @@ test('the shipped kernel carries the roster the source says, and links every see
 // edge runtime. Text, like the rest of this file: it must fail on the commit
 // that culls a bot, not on the next run that happens to boot a stack.
 function parseWorkflowKeysets(): string[][] {
-    const yml = read('.github/workflows/memory.yml');
+    // Workflows live at the repository root, one level above the product.
+    const yml = read('../.github/workflows/memory.yml');
     const m = /^\s*for keys in ([^;]+); do\s*$/m.exec(yml);
     if (!m) {
         throw new Error('memory.yml no longer has a `for keys in ...; do` loop — '

@@ -243,7 +243,7 @@ const SWIFT_SOURCES = [
     // PackedBytes is in shared/ now: it is Foundation-only and both products
     // want a byte reader, so it moved out of sdk/swift with the rest of the
     // product-neutral code. RosterWire stays - it knows what a roster is.
-    'shared/swift/PackedBytes.swift',
+    '../shared/swift/PackedBytes.swift',
     'sdk/swift/RosterWire.swift',
 ];
 

@@ -13,9 +13,11 @@ name: metrics
 on:
   pull_request:
     branches: [main]
-    paths-ignore:
-      - 'uttt/**'
-      - '.github/workflows/uttt-web.yml'
+    # foolish/ and the shared/ under it; not the sibling products.
+    paths:
+      - 'foolish/**'
+      - 'shared/**'
+      - '.github/workflows/metrics.yml'
 
 # Least privilege: read the code, write the one sticky PR comment.
 permissions:
@@ -94,25 +96,25 @@ jobs:
       # predate them) — only the measured SOURCE differs.
       - name: Sync measurement scripts into base
         run: |
-          mkdir -p base/scripts
-          cp pr/scripts/collect_metrics.mjs base/scripts/collect_metrics.mjs
-          cp pr/scripts/render_metrics.cjs  base/scripts/render_metrics.cjs
-          cp pr/scripts/measure_web_bundle.mjs base/scripts/measure_web_bundle.mjs
-          cp pr/e2e/bench_bot_e2e.ts        base/e2e/bench_bot_e2e.ts
+          mkdir -p base/foolish/scripts
+          cp pr/foolish/scripts/collect_metrics.mjs base/foolish/scripts/collect_metrics.mjs
+          cp pr/foolish/scripts/render_metrics.cjs  base/foolish/scripts/render_metrics.cjs
+          cp pr/foolish/scripts/measure_web_bundle.mjs base/foolish/scripts/measure_web_bundle.mjs
+          cp pr/foolish/e2e/bench_bot_e2e.ts        base/foolish/e2e/bench_bot_e2e.ts
 
       - name: Install deps (head)
-        working-directory: pr
+        working-directory: pr/foolish
         run: npm install
 
       - name: Install deps (base)
-        working-directory: base
+        working-directory: base/foolish
         run: npm install
 
       # The head's benches play C tables sealed by the TEST bots module, which is
       # never committed (e2e/helpers/bots_test_wasm.ts). A base that predates it
       # still carries those exports in its shipped module and needs nothing.
       - name: Build the test bots module (head)
-        working-directory: pr
+        working-directory: pr/foolish
         run: bash scripts/ci_bots_test_wasm.sh
 
       # BOTH CHECKOUTS, and by hand rather than through the `premetrics` hook:
@@ -125,9 +127,9 @@ jobs:
         run: |
           # SOURCED, not run: a step exports to LATER steps through GITHUB_ENV,
           # so within this one the toolchain has to land in this shell.
-          . pr/scripts/ci_llvm.sh
-          bash pr/tools/structgen/gen.sh
-          bash base/tools/structgen/gen.sh
+          . pr/shared/scripts/ci_llvm.sh
+          bash pr/foolish/tools/structgen/gen.sh
+          bash base/foolish/tools/structgen/gen.sh
 
       # THE SHIPPED WASM MODULES, both sides, for the same reason and with the
       # same caveat. collect_metrics.mjs reports each one's gzip size and reads
@@ -142,19 +144,19 @@ jobs:
       # shape as the sync step above.
       - name: Shipped wasm modules (both sides)
         run: |
-          bash pr/scripts/wasm_build.sh
-          if [ -f base/scripts/wasm_build.sh ]; then
-            bash base/scripts/wasm_build.sh
+          bash pr/foolish/scripts/wasm_build.sh
+          if [ -f base/foolish/scripts/wasm_build.sh ]; then
+            bash base/foolish/scripts/wasm_build.sh
           else
             echo "base predates scripts/wasm_build.sh - its modules are committed there"
           fi
 
       - name: Collect base metrics
-        working-directory: base
+        working-directory: base/foolish
         run: node scripts/collect_metrics.mjs > "$GITHUB_WORKSPACE/base.json"
 
       - name: Collect head metrics
-        working-directory: pr
+        working-directory: pr/foolish
         run: node scripts/collect_metrics.mjs > "$GITHUB_WORKSPACE/head.json"
 
       - name: Upsert metrics comment
@@ -162,7 +164,7 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const { render, MARKER, extractSlot, spliceSlot } = require(`${process.env.GITHUB_WORKSPACE}/pr/scripts/render_metrics.cjs`);
+            const { render, MARKER, extractSlot, spliceSlot } = require(`${process.env.GITHUB_WORKSPACE}/pr/foolish/scripts/render_metrics.cjs`);
             const base = JSON.parse(fs.readFileSync(`${process.env.GITHUB_WORKSPACE}/base.json`, 'utf8'));
             const head = JSON.parse(fs.readFileSync(`${process.env.GITHUB_WORKSPACE}/head.json`, 'utf8'));
             const { owner, repo } = context.repo;

@@ -68,13 +68,15 @@
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
+# The repo root, one above the product: shared/ lives there, beside foolish/.
+mono="$(cd "$root/.." && pwd)"
 
 # THE GENERATOR IS SHARED, ITS CONFIGURATION IS NOT. structgen and datagen build
 # for both products in this monorepo and live in shared/tools; what they are
 # POINTED AT - specs/*.args, this script, and the product test fixtures - is
 # foolish's and stays beside it. So two roots below: "$sg" is the tool, "$here"
 # is this product's configuration of it.
-sg="$root/shared/tools/structgen"
+sg="$mono/shared/tools/structgen"
 
 # The output directories, repo-relative, as ONE fact. `gen.sh --print-dirs`
 # answers with them and needs no toolchain, so the gate that refuses a tracked
@@ -204,14 +206,14 @@ set +f
 # dynamic import keeps every export of its target alive in the web bundle
 # whatever the importer uses (src/wasm/msgKernel.ts learned this the expensive
 # way), so the module the site imports for a language has to BE one language.
-make -s -C "$root/shared/tools/datagen" build/datagen
-DG="$root/shared/tools/datagen/build/datagen"
+make -s -C "$mono/shared/tools/datagen" build/datagen
+DG="$mono/shared/tools/datagen/build/datagen"
 i18n_ts="$prod/i18n"; i18n_swift="$swift/i18n"; i18n_kotlin="$kotlin/i18n"
 mkdir -p "$i18n_ts" "$i18n_swift" "$i18n_kotlin"
 dg() { "$DG" --cwd "$root/c/i18n" "$@"; }
 # The registry is shared/c/i18n/languages.h: uttt/ compiles the same language
 # set into its kernel, so the list of languages is one file for both products.
-dgl() { "$DG" --cwd "$root/shared/c/i18n" "$@"; }
+dgl() { "$DG" --cwd "$mono/shared/c/i18n" "$@"; }
 
 # The registry first: what languages there are, what each calls itself, and
 # which way it is written. A table of structs, so datagen reads its columns by
@@ -276,7 +278,7 @@ fi
 [ "${1:-}" = "--verify-wasm" ] || exit 0
 
 verify_link() {
-  "$CLANG" --target=wasm32 -nostdlib -ffreestanding -O1 -I"$here/test" -I"$sg/test" -I"$root/c/src" -isystem "$root/c/wasm/include" -isystem "$root/shared/c/wasm/include" \
+  "$CLANG" --target=wasm32 -nostdlib -ffreestanding -O1 -I"$here/test" -I"$sg/test" -I"$root/c/src" -isystem "$root/c/wasm/include" -isystem "$mono/shared/c/wasm/include" \
     -D_Thread_local= -DMAX_LOG_PAIRS=64 -DMAX_LEGAL_MOVES=4096 -DMAX_MOVE_CARDS=28 -DMAX_BATTLES=64 \
     -Wl,--no-entry -Wl,--export-all "$here/test/verify.c" -o "$1"
 }

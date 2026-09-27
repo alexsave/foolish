@@ -27,9 +27,13 @@ import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { join, resolve, dirname, relative } from 'node:path';
 
 const REPO = resolve(import.meta.dirname, '../..');
+// The workflow's globs are written from the repository root, one level above
+// the product, so every path compared against them is in THAT coordinate
+// system: `foolish/sdk/...`, `shared/c/...`.
+const MONO = resolve(REPO, '..');
 const SUPA = join(REPO, 'server/impls/supabase');
 const FUNCTIONS = join(SUPA, 'functions');
-const WORKFLOW = join(REPO, '.github/workflows/deploy.yml');
+const WORKFLOW = join(MONO, '.github/workflows/deploy.yml');
 
 /** The function directories: every one with an index.ts entrypoint. */
 const functionNames = readdirSync(FUNCTIONS)
@@ -74,7 +78,7 @@ function compiledFiles(): string[] {
             if (target && existsSync(target) && !seen.has(target)) queue.push(target);
         }
     }
-    return [...seen].map((p) => relative(REPO, p));
+    return [...seen].map((p) => relative(MONO, p));
 }
 
 /** The assets bundled alongside the functions, from config.toml's static_files. */
@@ -85,7 +89,7 @@ function staticFiles(): string[] {
         const trimmed = line.trim();
         if (trimmed.startsWith('#') || !trimmed.startsWith('static_files')) continue;
         for (const m of trimmed.matchAll(/"([^"]+)"/g)) {
-            out.push(relative(REPO, resolve(SUPA, m[1])));
+            out.push(relative(MONO, resolve(SUPA, m[1])));
         }
     }
     return [...new Set(out)];   // every function bundles the same wasm blob
@@ -152,7 +156,7 @@ test('every trigger path still names something that exists', () => {
     // remembered.
     const dead = globs.filter((g) => {
         const literal = g.replace(/\/?\*\*$/, '').replace(/\/[^/]*\*.*$/, '');
-        return literal !== '' && !existsSync(join(REPO, literal));
+        return literal !== '' && !existsSync(join(MONO, literal));
     });
     assert.deepEqual(dead, [],
         'these deploy.yml trigger paths match nothing in the repo - they were\n'
@@ -170,16 +174,16 @@ test('the generated-module sources are watched, wherever they now live', () => {
     // input to `tools/structgen/gen.sh`, and each must be covered by some glob no
     // matter which directory it is sitting in this month.
     const sources = [
-        'tools/structgen/gen.sh',                  // the driver the deploy runs
-        'tools/structgen/specs/view_layout.args',  // this product's spec
+        'foolish/tools/structgen/gen.sh',                  // the driver the deploy runs
+        'foolish/tools/structgen/specs/view_layout.args',  // this product's spec
         'shared/tools/structgen/structgen.c',      // the generator
         'shared/tools/structgen/sg_ts.c',          // the emitter that writes the TS
         'shared/tools/llvm.mk',                    // how it finds libclang
         'shared/c/sha256.h',                       // in the layout, via msg_wire.h
         'shared/c/deal_rng.h',                     // in the layout, via game.h
-        'c/src/game.h',                            // the layout itself
+        'foolish/c/src/game.h',                    // the layout itself
     ];
-    const missing = sources.filter((p) => !existsSync(join(REPO, p)));
+    const missing = sources.filter((p) => !existsSync(join(MONO, p)));
     assert.deepEqual(missing, [], 'this test names files that no longer exist - '
         + 'it is the list that is stale, not the trigger:\n  ' + missing.join('\n  '));
     const unwatched = sources.filter((p) => !covered(p));
@@ -226,7 +230,7 @@ function staticFilesOf(name: string): string[] {
         const t = line.trim();
         if (t.startsWith('[')) break;
         if (!t.startsWith('static_files')) continue;
-        for (const m of t.matchAll(/"([^"]+)"/g)) out.push(relative(REPO, resolve(SUPA, m[1])));
+        for (const m of t.matchAll(/"([^"]+)"/g)) out.push(relative(MONO, resolve(SUPA, m[1])));
     }
     return out;
 }
@@ -272,7 +276,7 @@ test('every function that loads bots.wasm bundles it (config.toml static_files)'
     for (const name of readdirSync(FUNCTIONS)) {
         const entry = join(FUNCTIONS, name, 'index.ts');
         if (!existsSync(entry) || !graphOf(entry).has(loader)) continue;
-        if (!staticFilesOf(name).includes('sdk/ts/wasm/bots.wasm.gz')) missing.push(name);
+        if (!staticFilesOf(name).includes('foolish/sdk/ts/wasm/bots.wasm.gz')) missing.push(name);
     }
     assert.deepEqual(missing, [], `these functions load bots.wasm without bundling it: ${missing.join(', ')}`);
 });
@@ -297,7 +301,7 @@ test('every function has its own deno.json import map, config.toml names it, and
         const mine = aliasesOf(name);
         if (JSON.stringify(mine) !== JSON.stringify(aliases)) problems.push(`${name}: its aliases differ: ${JSON.stringify(mine)}`);
         for (const [alias, target] of Object.entries(mine)) {
-            if (!existsSync(target)) problems.push(`${name}: ${alias} resolves to a missing ${relative(REPO, target)}`);
+            if (!existsSync(target)) problems.push(`${name}: ${alias} resolves to a missing ${relative(MONO, target)}`);
         }
     }
     assert.ok(functionNames.length > 0 && Object.keys(aliases).length > 0, 'no functions or no aliases found');

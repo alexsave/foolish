@@ -97,7 +97,7 @@ LIB="$HERE/lib"
 # The measurement half of the rig - MSE, bar charts, square detection, the
 # frame-window extractor, the accessibility driver - has no product knowledge
 # in it and is shared with the other product. $LIB is this product's half.
-SHLIB="$REPO/shared/rig/lib"
+SHLIB="$REPO/../shared/rig/lib"
 SIM="${FOOLISH_SIM:-}"
 IDB="${FOOLISH_IDB:-idb}"
 OUT="${FOOLISH_OUT:-$HOME/Downloads/foolish-shots}"

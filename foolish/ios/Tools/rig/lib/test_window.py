@@ -15,7 +15,7 @@ from PIL import Image
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 # window.sh is shared now (it knows nothing about any game); tween is not.
-SHLIB = os.path.join(HERE, "..", "..", "..", "..", "shared", "rig", "lib")
+SHLIB = os.path.join(HERE, "..", "..", "..", "..", "..", "shared", "rig", "lib")
 sys.path.insert(0, HERE)
 import tween  # noqa: E402
 

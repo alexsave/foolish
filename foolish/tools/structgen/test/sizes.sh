@@ -3,9 +3,11 @@
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
 root="$(cd "$here/../.." && pwd)"
+# The repo root, one above the product: shared/ lives there, beside foolish/.
+mono="$(cd "$root/.." && pwd)"
 # The generator is shared (shared/tools/structgen); this test, and the specs
 # and fixtures it points the generator at, are this product's.
-sg="$root/shared/tools/structgen"
+sg="$mono/shared/tools/structgen"
 out="$here/build/sizes"
 mkdir -p "$out"
 make -s -C "$sg" build/structgen

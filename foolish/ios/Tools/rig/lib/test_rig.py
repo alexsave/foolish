@@ -27,7 +27,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 RIG = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 # squares moved to shared/rig/lib with the rest of the measurement half.
-SHLIB = os.path.join(RIG, "..", "..", "..", "shared", "rig", "lib")
+SHLIB = os.path.join(RIG, "..", "..", "..", "..", "shared", "rig", "lib")
 sys.path.insert(0, SHLIB)
 import squares  # noqa: E402
 import tween  # noqa: E402

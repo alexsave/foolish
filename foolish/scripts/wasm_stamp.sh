@@ -72,17 +72,18 @@ sha() {  # one file -> bare hex, on both a Mac and CI's Linux
 # check_paths() below is what made it fatal, and that is the correct trade - a
 # list of sources that is 5% English is a list nobody can reason about.
 sources() {
-  # PATHS COME BACK REPO-RELATIVE OR NOT AT ALL. The Makefile's lists are
+  # PATHS COME BACK RELATIVE TO foolish/ OR NOT AT ALL. Shared files are spelled
+  # `../shared/...`, the one spelling every source below agrees on. The Makefile's lists are
   # relative to c/, so this prefixes them with `c/` - and since the two shared
-  # primitives moved, two of them come back as `../shared/c/*.c` and that prefix
-  # produced `c/../shared/c/sha256.c`. That path OPENS FINE, so the hash stayed
+  # primitives moved, two of them come back as `../../shared/c/*.c` and that prefix
+  # produced `c/../../shared/c/sha256.c`. That path OPENS FINE, so the hash stayed
   # honest and nothing looked wrong; but two spellings of one file never match
   # when this list is compared against anything else that names it, and the now
   # deleted freshness gate compared it against `git diff --name-only`. Collapse
   # `c/../` the same way the structgen line below collapses its own, and assert
   # the result below.
   make -C c -s --no-print-directory print-wasm-src | tr ' ' '\n' | sed '/^$/d' | sed 's|^|c/|' | sed 's|^c/\.\./||'
-  ls c/src/*.h c/wasm/include/* shared/c/*.h shared/c/wasm/include/* 2>/dev/null || true
+  ls c/src/*.h c/wasm/include/* ../shared/c/*.h ../shared/c/wasm/include/* 2>/dev/null || true
   # structgen's own source and specs, because the layout hash compiled into
   # every module comes from them. NOT the modules it writes: those are build
   # outputs now, ignored and absent from a fresh checkout, and hashing them
@@ -108,13 +109,13 @@ sources() {
   # same move as `make -C c -s print-wasm-src` above: the build system is asked,
   # not mirrored. Paths come back relative to tools/structgen, hence the
   # rewrite of the ../sgcommon ones.
-  make -s --no-print-directory -C shared/tools/structgen -f print.mk -f Makefile \
+  make -s --no-print-directory -C ../shared/tools/structgen -f print.mk -f Makefile \
        sg-print-SG_SRC sg-print-SG_HDR sg-print-SGC_SRC sg-print-SGC_HDR \
     | tr ' ' '\n' | sed '/^$/d' \
-    | sed 's|^|shared/tools/structgen/|' | sed 's|shared/tools/structgen/\.\./|shared/tools/|'
+    | sed 's|^|../shared/tools/structgen/|' | sed 's|\.\./shared/tools/structgen/\.\./|../shared/tools/|'
   # llvm.mk moved with the generator; the specs did NOT - they are this
   # product's description of its own structs and stay beside it.
-  ls shared/tools/llvm.mk tools/structgen/specs/*.args
+  ls ../shared/tools/llvm.mk tools/structgen/specs/*.args
 }
 
 # The hash covers the source CONTENTS plus the c/Makefile lines that decide what
@@ -140,16 +141,16 @@ hash_all() {
     | cut -d' ' -f1
 }
 
-# EVERY PATH IN THE LIST MUST OPEN, FROM THE REPO ROOT. hash_all skips a path
+# EVERY PATH IN THE LIST MUST OPEN, FROM foolish/ (where this script runs). hash_all skips a path
 # that is not a file, so a path that is merely openable by some other spelling
-# (`c/../shared/...`) is a source this hash has quietly stopped covering - and
+# (`c/../../shared/...`) is a source this hash has quietly stopped covering - and
 # the hash is what decides whether the test module gets rebuilt. A move is
 # exactly when that happens, and it is silent, so it is checked rather than
 # assumed.
 check_paths() {
   bad=$(sources | sort -u | while IFS= read -r f; do [ -e "$f" ] || echo "$f"; done)
   [ -z "$bad" ] && return 0
-  echo "wasm_stamp.sh: these source paths do not exist from the repo root:" >&2
+  echo "wasm_stamp.sh: these source paths do not exist from foolish/:" >&2
   printf '  %s\n' $bad >&2
   echo "(a path that cannot be opened here is skipped by the hash, so an edit to" >&2
   echo " it would not rebuild anything keyed on this - see the header)" >&2

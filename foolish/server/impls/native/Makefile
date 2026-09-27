@@ -48,7 +48,7 @@ SQLITE_LDFLAGS ?= -lsqlite3
 TLS_LDFLAGS ?= -lssl -lcrypto
 
 # Every kernel source except the standalone tools (their own main()).
-SHARED := $(KDIR)/../shared/c
+SHARED := $(KDIR)/../../shared/c
 # …AND THE SHARED HALF. This used to be one wildcard over $(KDIR)/src, which is
 # why it broke silently when sha256.c and deal_rng.c moved to shared/: a wildcard
 # does not fail when a file leaves it, it just compiles less. Both directories are

@@ -36,7 +36,11 @@ import { readFileSync, existsSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, resolve, dirname, relative, normalize } from 'node:path';
 
-const REPO = resolve(import.meta.dirname, '../..');
+// This gate spans the products, so it is rooted at the REPOSITORY, where foolish/,
+// werewolf/ and shared/ sit side by side; PRODUCT is foolish/ itself, which is
+// where scripts/wasm_stamp.sh runs and what its paths are relative to.
+const PRODUCT = resolve(import.meta.dirname, '../..');
+const REPO = resolve(PRODUCT, '..');
 
 /** The headers that live in shared/ and are therefore reachable from nowhere by name. */
 const SHARED_HEADERS = ['sha256.h', 'deal_rng.h'];
@@ -106,7 +110,7 @@ test('the shared sources compile with no -I whatsoever', () => {
     const probes = [
         'shared/c/sha256.c',
         'shared/c/deal_rng.c',
-        'c/src/game.c',
+        'foolish/c/src/game.c',
         'werewolf/c/src/ww_game.c',
     ].filter((p) => existsSync(join(REPO, p)));
     assert.equal(probes.length, 4, 'a probe source is missing - did the kernel move again?');
@@ -143,9 +147,9 @@ test('every build system that compiles the kernel also compiles the shared sourc
     // link, far from the cause. Asserted by asking each Makefile what it thinks
     // its source list is, rather than by reading the list here.
     const builds: Array<{ make: string; variable: string }> = [
-        { make: 'c', variable: 'CORE_SRC' },
-        { make: 'foolyard', variable: 'KERNEL_SRC' },
-        { make: 'server/impls/native', variable: 'KERNEL_SRC' },
+        { make: 'foolish/c', variable: 'CORE_SRC' },
+        { make: 'foolish/foolyard', variable: 'KERNEL_SRC' },
+        { make: 'foolish/server/impls/native', variable: 'KERNEL_SRC' },
         { make: 'werewolf/c', variable: 'CORE_SRC' },
     ];
     const missing: string[] = [];
@@ -199,8 +203,8 @@ test('the wasm source list is the same list when make is the caller', () => {
     // Running it BOTH ways and demanding the same answer is the cheapest way to
     // stop that being a CI-only discovery.
     const run = (env: NodeJS.ProcessEnv) =>
-        execFileSync('bash', [join(REPO, 'scripts/wasm_stamp.sh'), '--list'],
-            { cwd: REPO, encoding: 'utf8', env }).trim().split('\n');
+        execFileSync('bash', [join(PRODUCT, 'scripts/wasm_stamp.sh'), '--list'],
+            { cwd: PRODUCT, encoding: 'utf8', env }).trim().split('\n');
 
     const plain = run({ ...process.env, MAKELEVEL: undefined, MAKEFLAGS: undefined });
     const underMake = run({ ...process.env, MAKELEVEL: '1', MAKEFLAGS: 'w' });
@@ -211,6 +215,6 @@ test('the wasm source list is the same list when make is the caller', () => {
         + 'its caller. That is "make[1]: Entering directory" landing in the list -\n'
         + 'add --no-print-directory to the make call that grew it.');
 
-    const missing = plain.filter((p) => !existsSync(join(REPO, p)));
+    const missing = plain.filter((p) => !existsSync(join(PRODUCT, p)));
     assert.deepEqual(missing, [], `these listed wasm sources do not exist:\n  ${missing.join('\n  ')}`);
 });
