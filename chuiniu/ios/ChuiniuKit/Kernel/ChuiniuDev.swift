@@ -6,7 +6,7 @@
 import Foundation
 
 public enum ChuiniuDev {
-    /// The group the rig writes into.
+    /// The group the rig writes into (RIG_APP_GROUP in Tools/rig.env).
     public static let group = (Bundle.main.object(forInfoDictionaryKey: "ChuiniuAppGroup") as? String)
         ?? "group.cards.chuiniu"
     static let files = DevFlags(group: group)
@@ -14,8 +14,29 @@ public enum ChuiniuDev {
     /// `dev.empty`: draw nothing at all (the rig's blank-drawer baseline).
     public static var empty: Bool { files.exists("dev.empty") }
 
-    /// `dev.scene`: which scripted scene the scaffold's FakeKernel opens on
-    /// (FakeKernel.Scene's raw values). Gone with the fake.
-    public static var scene: FakeKernel.Scene? { files.string("dev.scene").flatMap(FakeKernel.Scene.init(rawValue:)) }
+    /// `dev.nick`: the nickname a fresh simulator sits down under, so the
+    /// rig never has to type into the name field (pickemup's).
+    public static var nickname: String? { files.string("dev.nick") }
+
+    /// `dev.staged` and `dev.sent`: the newest link this extension put in the
+    /// input field and the newest one Messages sent, so a check outside the
+    /// simulator can decode exactly what the screen drew
+    /// (chuiniu/c/tests/cn_link_dump.c).
+    public static func noteStaged(_ url: URL) { files.write(url.absoluteString, to: "dev.staged") }
+    public static func noteSent(_ url: URL) { files.write(url.absoluteString, to: "dev.sent") }
+
+    /// `dev.seat` (`rig.sh seat WORD`): WHO THIS DEVICE IS, for a game that
+    /// needs two people on one simulator. Messages gives a conversation one
+    /// local participant, so without it the invitation goes out and nobody
+    /// can ever join it. With a word here the extension is that person: its
+    /// identity bytes, its nickname and its own set of seat records are the
+    /// word's, exactly as cn_twophone_test.c's `be()` switches phone. Read
+    /// fresh on every open, never cached, because it changes between two
+    /// openings a second apart.
+    public static var person: String? {
+        guard let w = files.string("dev.seat")?.trimmingCharacters(in: .whitespacesAndNewlines), !w.isEmpty
+        else { return nil }
+        return w
+    }
 }
 #endif

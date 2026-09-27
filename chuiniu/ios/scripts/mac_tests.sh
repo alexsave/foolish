@@ -5,9 +5,9 @@
 # The portable half (the kernel, its wire and the bridge smoke) is
 # `make -C chuiniu/c run asan`.
 #
-# THE SCAFFOLD HAS NO KERNEL YET: step 1 runs only once project.yml links
-# vendor/Chuiniu.xcframework (the tie-together uncomments that line); until
-# then it is skipped and says so.
+# Step 1 runs whenever project.yml links vendor/Chuiniu.xcframework, which it
+# does since the tie-together wired BridgeKernel in; without that line it is
+# skipped and says so.
 #
 # It does the three things that are easy to forget (foolish's reasons, kept):
 #   1. rebuild the kernel's xcframework AND the generated readers and string
@@ -76,7 +76,7 @@ say() { printf '\n\033[1m== %s\033[0m\n' "$1"; }
 
 # ---- 1. the kernel, its readers and its strings, as the app links them -------
 if [ "$kernel_linked" -eq 0 ]; then
-  say "no kernel linked yet (project.yml runs on FakeKernel) - skipping the xcframework build"
+  say "project.yml links no kernel - skipping the xcframework build"
 elif [ "$build_lib" -eq 1 ]; then
   say "kernel xcframework + generated readers (make -C chuiniu/c ios-lib)"
   make -C chuiniu/c ios-lib

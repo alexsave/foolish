@@ -9,29 +9,59 @@
 import SwiftUI
 
 /// Where every seat and the bid plate sit on a board.
+///
+/// TWO SHAPES. A tall board (the expanded drawer) puts the other seats round
+/// the upper half of an ellipse with the plate between. A SHORT board (the
+/// compact drawer, where the picker leaves about 150pt) cannot hold a badge,
+/// the plate and my band stacked, so the other seats go left to right in one
+/// row along the top, the plate takes the rest of that row, and my band is
+/// only as tall as my dice and name.
 public enum DiceTableLayout {
     /// One other seat's badge: name, cup, turn marker.
     public static let badge = CGSize(width: 72, height: 72)
     /// The band at the bottom that holds my name and my dice.
     public static let myBandHeight: CGFloat = 120
+    /// The same on a short board: one row of dice, the name, the turn bar.
+    public static let shortBandHeight: CGFloat = 64
     /// The bid plate in the middle.
     public static let plate = CGSize(width: 160, height: 56)
+    /// The narrowest a plate may be squeezed to beside a row of seats.
+    public static let plateMinWidth: CGFloat = 100
     static let margin: CGFloat = 8
 
     /// The seat drawn at the bottom: mine, or seat 0 for a spectator.
     public static func bottomSeat(me: Int?) -> Int { me ?? 0 }
 
+    /// A board too short for the ellipse.
+    public static func isShort(_ board: CGSize) -> Bool {
+        board.height < badge.height + plate.height + myBandHeight + 4 * margin
+    }
+
+    public static func bandHeight(_ board: CGSize) -> CGFloat { isShort(board) ? shortBandHeight : myBandHeight }
+
     /// The frame of every seat, indexed by seat. The bottom seat takes the
-    /// band at the bottom; the others go round the upper half of an ellipse,
-    /// left to right in seat order starting after the bottom seat.
+    /// band at the bottom; the others go left to right in seat order starting
+    /// after the bottom seat, round the upper half of an ellipse on a tall
+    /// board and in one top row on a short one.
     public static func seatFrames(count: Int, me: Int?, board: CGSize) -> [CGRect] {
         guard count > 0 else { return [] }
         let bottom = bottomSeat(me: me)
-        let bandTop = board.height - myBandHeight
+        let band = bandHeight(board)
+        let bandTop = board.height - band
         var frames = [CGRect](repeating: .zero, count: count)
-        frames[bottom] = CGRect(x: margin, y: bandTop, width: board.width - 2 * margin, height: myBandHeight)
+        frames[bottom] = CGRect(x: margin, y: bandTop, width: board.width - 2 * margin, height: band)
         let others = count - 1
         guard others > 0 else { return frames }
+        if isShort(board) {
+            let step = min(badge.width + margin, (board.width - 2 * margin) / CGFloat(others))
+            let w = min(badge.width, step)
+            let y = max(0, (bandTop - badge.height) / 2)
+            for j in 0..<others {
+                let seat = (bottom + 1 + j) % count
+                frames[seat] = CGRect(x: margin + CGFloat(j) * step, y: y, width: w, height: badge.height)
+            }
+            return frames
+        }
         let c = arcCentre(board)
         let (rx, ry) = radii(board)
         for j in 0..<others {
@@ -45,8 +75,18 @@ public enum DiceTableLayout {
         return frames
     }
 
-    /// The bid plate's frame.
-    public static func plateFrame(board: CGSize) -> CGRect {
+    /// The bid plate's frame, or nil on a short board whose row of seats
+    /// leaves it no room (five or more other seats).
+    public static func plateFrame(count: Int, board: CGSize) -> CGRect? {
+        if isShort(board) {
+            let others = CGFloat(max(count - 1, 0))
+            let rowEnd = margin + others * (badge.width + margin)
+            let w = min(plate.width, board.width - margin - rowEnd)
+            guard w >= plateMinWidth else { return nil }
+            let bandTop = board.height - shortBandHeight
+            let y = max(0, (bandTop - plate.height) / 2)
+            return CGRect(x: board.width - margin - w, y: y, width: w, height: plate.height)
+        }
         let c = arcCentre(board)
         let (_, ry) = radii(board)
         let y = c.y - ry * 0.3
@@ -88,8 +128,7 @@ public struct DiceTable: View {
             let bottom = DiceTableLayout.bottomSeat(me: table.me)
             ZStack(alignment: .topLeading) {
                 Color.clear
-                if !table.bidText.isEmpty {
-                    let p = DiceTableLayout.plateFrame(board: board)
+                if !table.bidText.isEmpty, let p = DiceTableLayout.plateFrame(count: table.seats.count, board: board) {
                     BidPlate(text: table.bidText, face: table.bid?.face)
                         .frame(width: p.width, height: p.height)
                         .position(x: p.midX, y: p.midY)

@@ -7,17 +7,25 @@ import XCTest
 
 final class DiceTableLayoutTests: XCTestCase {
     /// An expanded drawer's table above the picker on a small and a large
-    /// phone.
-    private let boards = [CGSize(width: 358, height: 380), CGSize(width: 398, height: 460)]
+    /// phone, and the compact drawer's short board (measured on an iPhone 17e
+    /// in Messages at about 358 x 150).
+    private let boards = [CGSize(width: 358, height: 380), CGSize(width: 398, height: 460),
+                          CGSize(width: 358, height: 140), CGSize(width: 358, height: 150),
+                          CGSize(width: 398, height: 160)]
 
     func testSeatsNeverOverlapEachOtherOrThePlate() {
         for board in boards {
             for n in 2...6 {
                 for me in [nil] + (0..<n).map({ Optional($0) }) {
                     let frames = DiceTableLayout.seatFrames(count: n, me: me, board: board)
-                    let plate = DiceTableLayout.plateFrame(board: board)
+                    let plate = DiceTableLayout.plateFrame(count: n, board: board) ?? .null
                     let tag = "\(n) seats, me \(me.map(String.init) ?? "none"), board \(board)"
                     XCTAssertEqual(frames.count, n, "\(tag): a frame per seat")
+                    if n <= 4 { XCTAssertFalse(plate.isNull, "\(tag): the plate has room") }
+                    XCTAssertTrue(plate.isNull || CGRect(origin: .zero, size: board).contains(plate),
+                                  "\(tag): the plate \(plate) is on the board")
+                    XCTAssertTrue(plate.isNull || plate.width >= 100,
+                                  "\(tag): a drawn plate is wide enough to read (\(plate.width))")
                     let bounds = CGRect(origin: .zero, size: board)
                     for i in 0..<n {
                         XCTAssertFalse(frames[i].isEmpty, "\(tag): seat \(i) is placed")

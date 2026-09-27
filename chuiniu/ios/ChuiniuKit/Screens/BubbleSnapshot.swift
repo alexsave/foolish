@@ -69,18 +69,31 @@ private struct TablePicture: View {
                     }
                 }
             }
-            if let r = table.reveal {
+            // the move this bubble carries: my staged raise first (the
+            // committed table does not have it yet), else the table's news
+            if let b = table.stagedBid {
+                BidLine(text: table.stagedBidText, face: b.face)
+            } else if let r = table.reveal {
                 Text(r.tally).font(.system(size: 20, weight: .heavy)).onFeltText().lineLimit(1)
                     .minimumScaleFactor(0.6)
             } else if !table.bidText.isEmpty {
-                HStack(spacing: 8) {
-                    Text(table.bidText).font(.system(size: 28, weight: .heavy)).onFeltText().lineLimit(1)
-                        .minimumScaleFactor(0.6)
-                    if let f = table.bid?.face { Die(face: f, size: 28) }
-                }
+                BidLine(text: table.bidText, face: table.bid?.face)
             }
         }
         .padding(.horizontal, 12)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private struct BidLine: View {
+    let text: String
+    let face: Int?
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(text).font(.system(size: 28, weight: .heavy)).onFeltText().lineLimit(1)
+                .minimumScaleFactor(0.6)
+            if let face { Die(face: face, size: 28) }
+        }
     }
 }
