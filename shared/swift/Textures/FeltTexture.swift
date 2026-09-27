@@ -1,4 +1,4 @@
-// FeltTexture.swift — the green casino-baize table surface, the alternative to
+// FeltTexture.swift - the green casino-baize table surface, the alternative to
 // the wool weave (owner, round 12: "Distracting wool?? Have felt texture green
 // casino table option in settings. Not quite solid, but with slightly lighter
 // and darker like felt patterns").
@@ -9,20 +9,20 @@
 // the build-time tool renders, and `pointsPerTexel` is THE magnification so a
 // felt table has the same physical grain size on every screen.
 //
-// THIS FILE NO LONGER RUNS IN THE SHIPPING APP — same rule as the wool, and for
-// the same reason. It is executed at BUILD time by ios/Tools/GenerateTextures
-// .swift, which bakes one image per `bakes` entry into FoolishKit/Resources/.
+// THIS FILE NO LONGER RUNS IN THE SHIPPING APP - same rule as the wool, and for
+// the same reason. It is executed at BUILD time by shared/tools/textures/
+// GenerateTextures.swift, which bakes one image per `bakes` entry into the product's Resources/.
 //
 // TO CHANGE THE LOOK: edit `render` / `Palette` here, then run
-//   ios/Tools/regenerate_textures.sh
+//   shared/tools/textures/regenerate_textures.sh <resources-dir>
 // and commit the regenerated images.
 //
 // Deliberately UIKit-free (CoreGraphics only) so the macOS build-time tool can
-// compile this exact file — one generator, no port to drift.
+// compile this exact file - one generator, no port to drift.
 //
 // WHY IT IS NOT A WOOL PALETTE. The wool generator is a woven structure: a weft
 // pass, a warp pass and a plaid modulation, all of which read as THREADS. Felt
-// is the opposite material — non-woven matted fibre, no threads, no repeat — so
+// is the opposite material - non-woven matted fibre, no threads, no repeat - so
 // no choice of wool palette produces it (the plaid chequer alone would give the
 // game away). This is a different generator, ~40 lines, and that is the honest
 // cost of a second material.
@@ -62,7 +62,7 @@ public enum FeltTexture {
         public let grainScale: Double
         /// How the swing is split across channels. Lit baize goes lighter AND a
         /// touch yellower (the fibre catches the light), shadowed baize goes
-        /// darker and bluer — a flat grey swing on all three channels reads as
+        /// darker and bluer - a flat grey swing on all three channels reads as
         /// dust on the surface rather than as the surface itself.
         public let tiltR, tiltG, tiltB: Double
         /// Texels per cloud cell, across and down. NOT equal: baize has a nap,
@@ -116,9 +116,9 @@ public enum FeltTexture {
 
     // MARK: - The shipped swatch
 
-    /// The baked size, in texels. Unlike the wool — whose generator is written
+    /// The baked size, in texels. Unlike the wool - whose generator is written
     /// in the pixels of the web's 1920x1080 canvas and therefore has to render
-    /// big and crop — felt has no inherited constants, so it is rendered at
+    /// big and crop - felt has no inherited constants, so it is rendered at
     /// exactly the size that ships. Same texel count as `WoolTexture
     /// .shippedCrop`, so both materials cover the same stage at the same
     /// magnification and switching between them cannot change the scale.
@@ -137,24 +137,24 @@ public enum FeltTexture {
         (darkResourceName, .dark),
     ]
 
-#if FOOLISH_TEXTURE_BAKE
+#if TEXTURE_BAKE
 // BUILD-TIME ONLY, and now enforced rather than only asked for.
 //
-// The generator below has no caller in any shipping target - ios/Tools/
-// GenerateTextures.swift and FeltVariations.swift are the only ones - but
+// The generator below has no caller in any shipping target - the bake tool
+// (shared/tools/textures) and a product's own dev tools are the only ones - but
 // `public` in a DYNAMIC framework is a dead-strip root, so it was linked into
-// FoolishKit.framework anyway, and FoolishKit.framework ships inside the
+// the product's UI framework anyway, and that framework ships inside the
 // iMessage bundle.  A procedural render on launch is what took the extension
 // down on a real phone (see this file's header); carrying the code that does it
 // is the same mistake one step removed.  The two tools pass
-// `-D FOOLISH_TEXTURE_BAKE`; no shipping target defines it.
+// `-D TEXTURE_BAKE`; no shipping target defines it.
 //
 // Worth ~1KB of binary, measured (2.639MB -> 2.638MB), so this is a RULE and
 // not a diet: the reason to keep it is that a shipping build cannot render a
 // texture procedurally even by accident, not the bytes.
     // MARK: - The generator
 
-    /// A hashed lattice value in 0..1. Deterministic and stateless — no RNG to
+    /// A hashed lattice value in 0..1. Deterministic and stateless - no RNG to
     /// seed, so two machines bake byte-identical images and a re-bake after an
     /// unrelated edit is a no-op in git.
     @inline(__always)
@@ -242,5 +242,5 @@ public enum FeltTexture {
     private static func clamp(_ v: Double) -> UInt8 {
         UInt8(max(0, min(255, v.rounded())))
     }
-#endif  // FOOLISH_TEXTURE_BAKE
+#endif  // TEXTURE_BAKE
 }

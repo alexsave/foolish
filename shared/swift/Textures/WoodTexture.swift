@@ -1,11 +1,11 @@
-// WoodTexture.swift — the wood-grain button/chrome material (§IOS_PHONE_LAYOUT
+// WoodTexture.swift - the wood-grain button/chrome material (§IOS_PHONE_LAYOUT
 // §4). A faithful CPU port of the web's WoodTexture generator (CPU-fallback
 // path): a dark red-brown base with 576 overlaid grain streaks from a chaotic
 // cosine map, edge-softened per streak. The math is ported, not the WebGL.
 //
 // THIS FILE NO LONGER RUNS IN THE SHIPPING APP. Like WoolTexture it is the
 // SOURCE OF TRUTH for the look, executed at BUILD time by
-// ios/Tools/GenerateTextures.swift into FoolishKit/Resources/ — one image per
+// shared/tools/textures/GenerateTextures.swift into the product's Resources/ - one image per
 // entry in `bakes` (wood-classic.jpg and wood-dark.jpg).
 //
 // Why, in one paragraph, because this is the exact code that took the extension
@@ -20,11 +20,11 @@
 // size, and zero procedural pixels at launch.
 //
 // TO CHANGE THE LOOK: edit `render` / `Palette` here, then run
-//   ios/Tools/regenerate_textures.sh
+//   shared/tools/textures/regenerate_textures.sh <resources-dir>
 // and commit the regenerated images.
 //
 // Deliberately UIKit-free (CoreGraphics only) so the macOS build-time tool can
-// compile this exact file — one generator, no port to drift.
+// compile this exact file - one generator, no port to drift.
 
 import CoreGraphics
 import Foundation
@@ -58,7 +58,7 @@ public enum WoodTexture {
             self.fallbackHex = fallbackHex
         }
 
-        /// The shipped light wood — the web's numbers, unchanged.
+        /// The shipped light wood - the web's numbers, unchanged.
         public static let classic = Palette(
             baseR: 70, baseG: 14, baseB: 9,
             redGain: 120, greenGain: 14, blueFlat: 9,
@@ -69,7 +69,7 @@ public enum WoodTexture {
         ///
         /// Every LIGHT-EMITTING number halved and nothing else touched: the base
         /// board, the streak gains, and the fallback. `streakAlpha` deliberately
-        /// stays at 0.1 — it controls how much of each of the 576 passes lands,
+        /// stays at 0.1 - it controls how much of each of the 576 passes lands,
         /// i.e. the CONTRAST of the grain, not its brightness. Dimming a texture
         /// by flattening its contrast is how wood turns into cardboard; halving
         /// the colours the grain is painted IN keeps every streak exactly where
@@ -90,19 +90,19 @@ public enum WoodTexture {
     /// nothing ever tiles: the widest is a full-width control on a 440pt iPhone
     /// inside the board's padding (~408pt), the tallest is the game-over plank
     /// at 8 rows x 34pt = 272pt. 448x288 covers both with margin. Every smaller
-    /// surface — a 96x40 action pill — shows a smaller PIECE of exactly this
+    /// surface - a 96x40 action pill - shows a smaller PIECE of exactly this
     /// grain, which is round-5 B2's rule ("the wood grains should be the same
     /// size everywhere, just maybe smaller or larger wood chunks").
     public static let renderCanvas = (w: 448, h: 288)
 
-    /// Base name of the baked LIGHT image in FoolishKit's bundle.
+    /// Base name of the baked LIGHT image in the product's resource bundle.
     public static let classicResourceName = "wood-classic"
-    /// Base name of the baked DARK image. Only one dark wood exists — the
+    /// Base name of the baked DARK image. Only one dark wood exists - the
     /// dark table is the WOOL's (`WoolTexture.bakes`); the wood is
     /// the same walnut under either.
     public static let darkResourceName = "wood-dark"
 
-    /// Every grain the build-time tool bakes, as (file base name, palette) —
+    /// Every grain the build-time tool bakes, as (file base name, palette) -
     /// the twin of `WoolTexture.bakes`, and for the same reason: the list sits
     /// beside the palettes, and the UIKit-free tool just walks it.
     public static let bakes: [(name: String, palette: Palette)] = [
@@ -115,17 +115,17 @@ public enum WoodTexture {
     /// bug it forbids is a taller plank getting proportionally giant grain.
     public static let pointsPerTexel: CGFloat = 1.0
 
-#if FOOLISH_TEXTURE_BAKE
+#if TEXTURE_BAKE
 // BUILD-TIME ONLY, and now enforced rather than only asked for.
 //
-// The generator below has no caller in any shipping target - ios/Tools/
-// GenerateTextures.swift and FeltVariations.swift are the only ones - but
+// The generator below has no caller in any shipping target - the bake tool
+// (shared/tools/textures) and a product's own dev tools are the only ones - but
 // `public` in a DYNAMIC framework is a dead-strip root, so it was linked into
-// FoolishKit.framework anyway, and FoolishKit.framework ships inside the
+// the product's UI framework anyway, and that framework ships inside the
 // iMessage bundle.  A procedural render on launch is what took the extension
 // down on a real phone (see this file's header); carrying the code that does it
 // is the same mistake one step removed.  The two tools pass
-// `-D FOOLISH_TEXTURE_BAKE`; no shipping target defines it.
+// `-D TEXTURE_BAKE`; no shipping target defines it.
 //
 // Worth ~1KB of binary, measured (2.639MB -> 2.638MB), so this is a RULE and
 // not a diet: the reason to keep it is that a shipping build cannot render a
@@ -222,7 +222,7 @@ public enum WoodTexture {
         // k-iterations it recomputes the same 40 numbers tens of millions of
         // times. Hoisted into a table: same output, one table lookup per pixel
         // instead of a subtract/abs/divide/max/multiply chain. (Kept even
-        // though this is build-time code — it is the difference between a
+        // though this is build-time code - it is the difference between a
         // regeneration you run and one you wait out.)
         var alphas = [Double](repeating: 0, count: rectW)
         var invAlphas = [Double](repeating: 0, count: rectW)
@@ -283,5 +283,5 @@ public enum WoodTexture {
 
         return cgImageFromRGBA(&data, w: w, h: h)
     }
-#endif  // FOOLISH_TEXTURE_BAKE
+#endif  // TEXTURE_BAKE
 }

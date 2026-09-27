@@ -1,4 +1,4 @@
-// FernCardBack.swift — the card-back fern, a FAITHFUL port of the web's finely
+// FernCardBack.swift - the card-back fern, a FAITHFUL port of the web's finely
 // tuned generator (src/utils/fernFractal.tsx, generateFernPattern), NOT the crude
 // 4-map single-colour slice this file used to be. The real fern is what the owner
 // spent a long time tuning, and it has all of this:
@@ -15,19 +15,19 @@
 // BUILD-TIME ONLY, like WoolTexture/WoodTexture: the shipping app never runs this
 // (a heavy procedural render on launch is what took the iMessage extension down on
 // a real phone - see those files). `regenerate_textures.sh` bakes `fern-back.jpg`
-// into FoolishKit/Resources/; FCard loads it through FTextures and draws zero
+// into the product's Resources/; FCard loads it through FTextures and draws zero
 // procedural pixels. UIKit-free CoreGraphics so the macOS bake tool can call it.
 //
 // Determinism here is byte-reproducible builds (a fixed-seed xorshift), NOT parity
 // with the web's Math.random() stream - the back is cosmetic. The tuning lab this
-// mirrors 1:1 is ios/Tools/fern_ifs.html (its "card-back" preset == these numbers).
+// mirrors 1:1 is the card game's ios/Tools/fern_ifs.html (its "card-back" preset == these numbers).
 
 import Foundation
 import CoreGraphics
 
 public enum FernCardBack {
 
-    /// Base name of the baked image in FoolishKit's bundle.
+    /// Base name of the baked image in the product's resource bundle.
     public static let resourceName = "fern-back"
 
     /// The bake list (one image), shaped like WoodTexture.bakes so GenerateTextures
@@ -39,17 +39,17 @@ public enum FernCardBack {
         (resourceName, 480, 672),
     ]
 
-#if FOOLISH_TEXTURE_BAKE
+#if TEXTURE_BAKE
 // BUILD-TIME ONLY, and now enforced rather than only asked for.
 //
-// The generator below has no caller in any shipping target - ios/Tools/
-// GenerateTextures.swift and FeltVariations.swift are the only ones - but
+// The generator below has no caller in any shipping target - the bake tool
+// (shared/tools/textures) and a product's own dev tools are the only ones - but
 // `public` in a DYNAMIC framework is a dead-strip root, so it was linked into
-// FoolishKit.framework anyway, and FoolishKit.framework ships inside the
+// the product's UI framework anyway, and that framework ships inside the
 // iMessage bundle.  A procedural render on launch is what took the extension
 // down on a real phone (see this file's header); carrying the code that does it
 // is the same mistake one step removed.  The two tools pass
-// `-D FOOLISH_TEXTURE_BAKE`; no shipping target defines it.
+// `-D TEXTURE_BAKE`; no shipping target defines it.
 //
 // Worth ~1KB of binary, measured (2.639MB -> 2.638MB), so this is a RULE and
 // not a diet: the reason to keep it is that a shipping build cannot render a
@@ -210,5 +210,5 @@ public enum FernCardBack {
         mutating func next() -> UInt64 { state ^= state << 13; state ^= state >> 7; state ^= state << 17; return state }
         mutating func nextUnit() -> Double { Double(next() >> 11) * (1.0 / 9_007_199_254_740_992.0) }
     }
-#endif  // FOOLISH_TEXTURE_BAKE
+#endif  // TEXTURE_BAKE
 }
