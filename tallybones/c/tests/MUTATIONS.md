@@ -13,6 +13,8 @@ THE T11 ROWS are the four under `tb_test.c` named T11, the two Swift rows, and i
 |---|---|---|
 | T4 categories | Full House also takes five alike | `tb_test.c:46` "row 15: 44444 in 8 scores 25, want 0" |
 | T4 bonus | the bonus at more than 63 | `tb_test.c:64` "63 earns the bonus: 0" |
+| T4 bonus | `tb_bonus_known` drops the earned-bonus clause (integration, T61) | `tb_test.c:67` "an earned bonus is known with rows still open" |
+| T4 bonus | `tb_bonus_known` never sees a full numbers half (`numbers + 1u`) (integration, T61) | `tb_test.c:73` "62 with every numbers row filled never will", `tb_test.c:77` "the view carries it: 0 0" |
 | T4 zero | a SCORE is legal only where the dice score | `tb_test.c:84` "any open category may be taken" |
 | T3 legality | a KEEP is legal at roll 3 | `tb_test.c:114` "no fourth roll" |
 | T5 game end | the next turn does not skip a full card | `tb_test.c:144` "winner bit 0" |

@@ -17,7 +17,7 @@ typedef struct {
     uint8_t  bonus;              /* 35 or 0                                     */
     uint8_t  still_in;           /* 1: still in the game; 0: left (T5)          */
     uint8_t  winner;             /* 1 once over, for every seat that won        */
-    uint8_t  pad0;
+    uint8_t  bonus_known;        /* 1: the bonus can no longer change (tb.h)  */
     uint8_t  score[TB_CATS];     /* points in each filled category, 0 when open */
     uint8_t  pad1;
 } TbCard;

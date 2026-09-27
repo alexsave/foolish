@@ -80,6 +80,7 @@ const char *const TB_STRINGS_EN[TB_K_COUNT] = {
     [TB_K_BTN_CANCEL         ] = "Cancel",
     [TB_K_BTN_RULES          ] = "Rules",
     [TB_K_BTN_AGAIN          ] = "Play again",
+    [TB_K_BTN_CLOSE          ] = "Close",
     [TB_K_SPOKEN_DIE         ] = "Die {n}, {face}",
     [TB_K_SPOKEN_DIE_KEPT    ] = "Die {n}, {face}, kept",
     [TB_K_SPOKEN_DIE_UNKNOWN ] = "Die {n}, rolling",

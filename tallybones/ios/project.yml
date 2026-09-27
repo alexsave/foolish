@@ -3,13 +3,13 @@
 # The .xcodeproj is a BUILD ARTIFACT - never hand-edit it, never commit it
 # (git-ignored, as pickemup's is).
 #
-# BOOTSTRAP ORDER (from a clean checkout), TODAY:
-#   1. xcodegen generate
-#   2. xcodebuild -scheme TallybonesMessagesApp -destination 'generic/platform=iOS Simulator' build
-# The kernel is not wired yet: the shell runs on a local stand-in behind the
-# TallyKernel protocol (TallybonesKit/Kernel/TallyKernel.swift). Once it is,
-# step 0 is `make -C ../c ios-lib` (writes vendor/Tallybones.xcframework and
-# Generated/), exactly as pickemup's; see README.md "Wiring the kernel".
+# BOOTSTRAP ORDER (from a clean checkout):
+#   1. make -C ../c ios-lib      # writes ios/vendor/Tallybones.xcframework and ios/Generated/
+#   2. xcodegen generate
+#   3. xcodebuild -scheme TallybonesMessagesApp -destination 'generic/platform=iOS Simulator' build
+# Step 1 must run first: TallybonesKit links vendor/Tallybones.xcframework and
+# compiles Generated/, and neither is in git because both are generated.
+# scripts/mac_tests.sh runs all three, and the tests.
 #
 # THREE SHIPPING TARGETS, for uttt's reason: an app extension cannot be
 # distributed on its own, so the iMessage game needs a codeless container to
@@ -102,8 +102,10 @@ targets:
     platform: iOS
     sources:
       - path: TallybonesKit
-      # KERNEL: add `- path: Generated` here (the structgen readers and the
-      # datagen string tables `make -C ../c ios-lib` writes; git-ignored).
+      # The structgen readers and the datagen string tables `make -C ../c
+      # ios-lib` writes beside the library they belong to. A build output:
+      # git-ignored, never hand-edited.
+      - path: Generated
       # The shared Messages plumbing, named one file at a time as pickemup
       # does: when an insert may go and what its silence means, and the DEBUG
       # dev-file reader.
@@ -113,17 +115,16 @@ targets:
       # baked by shared/tools/textures and committed in TallybonesKit/Resources;
       # nothing renders a texture at run time.
       - path: ../../shared/swift/Textures
-    # KERNEL: add the static xcframework here, as pickemup's does:
-    #   dependencies:
-    #     - framework: vendor/Tallybones.xcframework
-    #       embed: false
+    dependencies:
+      # STATIC (embed:false): the linker pulls it in per object.
+      - framework: vendor/Tallybones.xcframework
+        embed: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: cards.tallybones.kit
         GENERATE_INFOPLIST_FILE: "YES"
-        # KERNEL: the clang module map that lets Swift `import CTallybones` is
-        # copied into BUILT_PRODUCTS_DIR/include by the xcframework; this path
-        # is already here so wiring it is the two lines above and nothing else.
+        # The clang module map that lets Swift `import CTallybones`, copied
+        # into BUILT_PRODUCTS_DIR/include by the xcframework.
         HEADER_SEARCH_PATHS: $(inherited) $(BUILT_PRODUCTS_DIR)/include
         TARGETED_DEVICE_FAMILY: "1"
 

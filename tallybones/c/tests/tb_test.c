@@ -4,6 +4,7 @@
 #include "tb_check.h"
 #include "../src/tb_internal.h"
 #include "../src/tb_plan.h"
+#include "../src/tb_view.h"
 
 /* ---- T4: every category on hand-picked dice --------------------------------- */
 
@@ -63,8 +64,17 @@ static void t4_bonus(void)
     for (int c = 0; c < 6; c++) g.score[0][c] = three_each[c];
     CHECK(tb_upper(&g, 0) == 63 && tb_bonus(&g, 0) == 35, "63 earns the bonus: %d", tb_bonus(&g, 0));
     CHECK(tb_total(&g, 0) == 98, "total 63 + 35 = %d", tb_total(&g, 0));
+    CHECK(tb_bonus_known(&g, 0), "an earned bonus is known with rows still open");
     g.score[0][0] = 2;
     CHECK(tb_upper(&g, 0) == 62 && tb_bonus(&g, 0) == 0, "62 does not: %d", tb_bonus(&g, 0));
+    g.filled[0] = 0x1F;
+    CHECK(!tb_bonus_known(&g, 0), "62 with Sixes open can still earn it");
+    g.filled[0] = 0x3F;
+    CHECK(tb_bonus_known(&g, 0), "62 with every numbers row filled never will");
+    TbView v;
+    tb_view(&g, &v);
+    CHECK(v.seat[0].bonus_known == 1 && v.seat[1].bonus_known == 0, "the view carries it: %d %d",
+          v.seat[0].bonus_known, v.seat[1].bonus_known);
     g.score[0][TB_C_ANY] = 20;
     CHECK(tb_total(&g, 0) == 82, "total 62 + 20 = %d", tb_total(&g, 0));
 }

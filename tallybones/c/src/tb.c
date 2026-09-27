@@ -67,6 +67,13 @@ int tb_bonus(const TbGame *g, int s)
     return tb_upper(g, s) >= TB_BONUS_AT ? TB_BONUS : 0;
 }
 
+int tb_bonus_known(const TbGame *g, int s)
+{
+    const unsigned numbers = (1u << TB_UPPER_CATS) - 1u;
+    if (s < 0 || s >= g->n) return 0;
+    return tb_bonus(g, s) > 0 || (g->filled[s] & numbers) == numbers;
+}
+
 int tb_total(const TbGame *g, int s)
 {
     if (s < 0 || s >= g->n) return 0;

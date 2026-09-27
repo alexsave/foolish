@@ -137,6 +137,9 @@ int tb_draft(TbGame *out, const TbGame *g, TbMove m);
 
 int tb_upper(const TbGame *g, int s);       /* the numbers half                */
 int tb_bonus(const TbGame *g, int s);       /* 35 or 0                         */
+/* The bonus can no longer change: it is earned, or every numbers row is
+ * filled short of 63. The card shows the bonus line open until then. */
+int tb_bonus_known(const TbGame *g, int s);
 int tb_total(const TbGame *g, int s);       /* both halves and the bonus       */
 
 /* The winners once over: bit s for every seat still in with the highest

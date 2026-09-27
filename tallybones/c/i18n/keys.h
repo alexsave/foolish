@@ -112,6 +112,7 @@
     X(BTN_CANCEL,         14, 0)                                                 \
     X(BTN_RULES,          14, 0)                                                 \
     X(BTN_AGAIN,          14, 0)                                                 \
+    X(BTN_CLOSE,          14, 0)                                                 \
     X(SPOKEN_DIE,          0, 0)  /* "Die {n}, {face}"                        */ \
     X(SPOKEN_DIE_KEPT,     0, 0)                                                 \
     X(SPOKEN_DIE_UNKNOWN,  0, 0)                                                 \
