@@ -74,9 +74,88 @@ static void one_bubble(void)
     }
 }
 
+/* ---- the layout (pk_lay.c): UI.html's thresholds, pinned ---- */
+static int near(float a, float b) { return a > b - 0.05f && a < b + 0.05f; }
+
+static void layout(void)
+{
+    const float W = 358;                     /* a 390pt phone: the 374 board less 2 x 8 */
+    float cw, step, content, box, x, y;
+    int rows, top;
+
+    OK(pk_lay_collapse(340) == 1 && pk_lay_collapse(440) == 0 && near(pk_lay_collapse(390), 0.5f),
+       "collapse runs 440 -> 340");
+    OK(pk_lay_max_rows(340) == 1 && pk_lay_max_rows(718) == 2, "the drawer keeps one row (U7)");
+
+    /* expanded: foolish's rows */
+    OK(pk_lay_hand(7, W, 2, &cw, &step, &rows, &top, &content, &box) == PK_LAY_FLAT && rows == 1
+       && near(cw, 46.571f) && near(box, 80), "seven: one flat row of 46.6 (Rulers 01)");
+    OK(pk_lay_hand(9, W, 2, &cw, 0, &rows, 0, 0, 0) == PK_LAY_FLAT && rows == 1, "nine: still one row");
+    OK(pk_lay_hand(10, W, 2, &cw, 0, &rows, &top, 0, &box) == PK_LAY_FLAT && rows == 2 && top == 5
+       && near(box, 166), "ten: two rows, the 166 box (table 04)");
+    OK(pk_lay_hand(13, W, 2, 0, 0, &rows, &top, 0, 0) == PK_LAY_FLAT && rows == 2 && top == 6,
+       "thirteen: the smaller half on top");
+    OK(pk_lay_hand(26, W, 2, &cw, 0, &rows, 0, 0, 0) == PK_LAY_FLAT && rows == 2 && cw >= 22,
+       "twenty-six: two flat rows at the floor (table 05)");
+    OK(pk_lay_hand(27, W, 2, &cw, &step, &rows, 0, 0, 0) == PK_LAY_OVERLAP && rows == 2 && cw == 40,
+       "twenty-seven: overlapped, 40pt faces (U8)");
+    OK(pk_lay_hand(40, W, 2, 0, &step, 0, 0, &content, 0) == PK_LAY_OVERLAP && step >= 16 && content == W,
+       "forty: overlap down to a 16pt strip (table 06)");
+    OK(pk_lay_hand(42, W, 2, 0, &step, 0, 0, &content, 0) == PK_LAY_SCROLL && step == 16 && content > W,
+       "forty-two: the rows scroll (table 07)");
+
+    /* the drawer: one row, flat to overlap to scroll (U7) */
+    OK(pk_lay_hand(12, W, 1, &cw, 0, &rows, 0, 0, &box) == PK_LAY_FLAT && rows == 1 && cw < 40 && near(box, 80),
+       "twelve in the drawer: one thin flat row");
+    OK(pk_lay_hand(14, W, 1, &cw, &step, &rows, 0, 0, 0) == PK_LAY_OVERLAP && rows == 1 && near(step, 23.846f),
+       "fourteen in the drawer: overlapped at a 24pt strip (collapsed 02)");
+    OK(pk_lay_hand(30, W, 1, 0, &step, 0, 0, &content, 0) == PK_LAY_SCROLL && step == 16,
+       "thirty in the drawer: scrolling (collapsed 03)");
+
+    OK(pk_lay_hand_slot(7, W, 2, 0, &x, &y) == 0 && near(x, (W - 7 * 46.571f - 6 * 4) / 2) && near(y, 4),
+       "the first card of a flat row is centred");
+    OK(pk_lay_hand_slot(10, W, 2, 5, &x, &y) == 0 && near(y, 8 + 78), "card 5 of ten opens the lower row");
+    OK(pk_lay_hand_slot(42, W, 2, 21, &x, 0) == 0 && near(x, 4), "a scrolling row starts at the gap");
+    OK(pk_lay_hand_slot(7, W, 2, 7, &x, &y) == -1, "a slot off the end");
+
+    /* the ring: me at the bottom, the rest round */
+    pk_lay_seat(2, 2, 4, 374, 700, 0, &x, &y);
+    OK(near(x, 187) && near(y, 350 + 0.35f * 700), "my own seat is at the bottom");
+    pk_lay_seat(3, 2, 4, 374, 700, 0, &x, &y);
+    OK(x < 187 * 0.2f && near(y, 350), "the next seat sits on my left");
+    pk_lay_seat(0, 2, 4, 374, 322, 1, &x, &y);
+    OK(near(x, 187) && near(y, 161 - 0.38f * 322), "across the table, on the collapsed ellipse");
+
+    OK(pk_lay_fan_step(3) == 10 && near(pk_lay_fan_step(12), 68.0f / 11) && pk_lay_fan_step(40) == 3,
+       "the fan steps 10, compressing to fit 96 (U6)");
+    OK(pk_lay_deck_layers(0) == 0 && pk_lay_deck_layers(6) == 6 && pk_lay_deck_layers(7) == 7
+       && pk_lay_deck_layers(12) == 8 && pk_lay_deck_layers(104) == 8, "the deck's layers");
+
+    float cx, cy;
+    pk_lay_pile(374, 322, 1, &cx, &cy);
+    OK(near(cx, 187) && near(cy, 161 - 24), "the pile lifts 24 in the drawer (U2)");
+    pk_lay_pile(374, 700, 0, &cx, &cy);
+    OK(near(cy, 350), "and sits on the centre expanded");
+    pk_lay_deck(374, 700, 0, &x, &y);
+    OK(near(x, 187 - 41 - 10 - 50) && near(y, 350 - 35), "the deck 10pt left of the pile, on its line (U3)");
+
+    int tr, ld;
+    pk_lay_pills(1, 1, 0, 0, 0, &tr, &ld);
+    OK(tr == PK_PILL_DRAW && ld == PK_PILL_NONE, "my turn: Draw alone, trailing");
+    pk_lay_pills(1, 1, 1, 1, 0, &tr, &ld);
+    OK(tr == PK_PILL_DRAW && ld == PK_PILL_PLAY, "a card selected: Play beside Draw");
+    pk_lay_pills(1, 1, 0, 1, 0, &tr, &ld);
+    OK(tr == PK_PILL_DRAW && ld == PK_PILL_PASS, "drew: Pass beside Draw (D10)");
+    pk_lay_pills(0, 1, 0, 0, 1, &tr, &ld);
+    OK(tr == PK_PILL_UNDO && ld == PK_PILL_NONE, "a play staged: Undo alone takes the trailing slot");
+    pk_lay_pills(0, 0, 1, 0, 0, &tr, &ld);
+    OK(tr == PK_PILL_NONE && ld == PK_PILL_NONE, "not my turn: a selection offers no Play");
+}
+
 int main(void)
 {
     setvbuf(stdout, 0, _IONBF, 0);       /* a crash still shows what went red */
+    layout();
     char buf[PK_API_TEXT_MAX], line[256];
     OK(pk_api_layout_hash() == 0, "the smoke build is not stamped (ios-lib stamps the shipped one)");
     OK(pk_api_name_verdict((const uint8_t *)"Alex", 4) == 0 && pk_api_name_verdict((const uint8_t *)"", 0) == 1
@@ -96,6 +175,11 @@ int main(void)
     printf("  invitation: %d characters\n", n);
     OK(pk_api_words(PK_API_W_INVITE, 0, line, sizeof line) > 0, "the invitation's caption");
     printf("  \"%s\"\n", line);
+    OK(pk_api_words(PK_API_W_LOBBY_ROW, 0, line, sizeof line) > 0 && !strcmp(line, "1. Alex (You)"),
+       "my own roster row says so");
+    OK(pk_api_words(PK_API_W_LOBBY_DEALER, 0, line, sizeof line) > 0 && !strcmp(line, "Alex deals"),
+       "seat 0 deals");
+    OK(pk_api_words(PK_API_W_STAGED_CAPTION, 0, line, sizeof line) == 0, "a lobby is captioned by its lobby line");
 
     OK(open_as(1, links[0], 1, 0) == 0, "Bo opens it");
     t = table();
@@ -105,6 +189,13 @@ int main(void)
     OK(t->phase == 2 && t->me == 1 && t->starter == 1 && t->n_seats == 2, "a live game, Bo in seat 1");
     OK(pk_api_words(PK_API_W_CAPTION, 0, line, sizeof line) > 0, "the deal's caption");
     printf("  \"%s\"\n", line);
+    {
+        char staged[256];
+        OK(pk_api_words(PK_API_W_STAGED_CAPTION, 0, staged, sizeof staged) > 0 && !strcmp(staged, line),
+           "right after Start the staged caption is the deal's");
+        OK(pk_api_words(PK_API_W_LOBBY_ROW, 0, staged, sizeof staged) > 0 && !strcmp(staged, "1. Alex"),
+           "somebody else's roster row");
+    }
     const PkView *v = me_view();
     OK(v->me == 1 && v->my_n == 7 && v->turn == 1, "Bo holds seven and moves first (D28)");
     OK(pk_api_draw() == 1, "Bo draws in the start bubble");
@@ -125,7 +216,14 @@ int main(void)
     if (n <= 0) { printf("bridge: %d checks, %d failed\n", checks, fails); return 1; }
     OK(pk_api_check(links[1]) == 0, "and it reads");
     OK(table()->draft, "writing the link left the draft staged");
-    OK(pk_api_commit() == 1 && !table()->draft, "sent: the draft is sealed");
+    {
+        char staged[256];
+        OK(pk_api_words(PK_API_W_STAGED_CAPTION, 0, staged, sizeof staged) > 0, "the staged bubble's caption");
+        OK(pk_api_commit() == 1 && !table()->draft, "sent: the draft is sealed");
+        OK(pk_api_words(PK_API_W_CAPTION, table()->bubbles, line, sizeof line) > 0 && !strcmp(staged, line),
+           "the staged caption is the sent bubble's");
+        printf("  staged: \"%s\"\n", staged);
+    }
     OK(pk_api_seats_dirty(), "Bo's seat is recorded");
 
     /* ---- play it out, phone to phone: the other phone reads each bubble,
@@ -201,6 +299,8 @@ int main(void)
     open_as(2, links[4], 0, 0);
     OK(table()->offered == PK_LOBBY_JOIN, "Cleo may join");
     OK(pk_api_join() == 2, "Cleo joins");
+    OK(pk_api_words(PK_API_W_LOBBY_DEALER, 0, line, sizeof line) > 0 && !strcmp(line, "Alex deals"),
+       "seat 0 deals, whoever joined last");
     pk_api_text(links[5], PK_API_TEXT_MAX);
     ev = (const PkApiEvents *)pk_api_plan_lobby(links[4]);
     OK(ev && ev->n == 1 && ev->ev[0].kind == PK_EV_LOBBY_JOIN && ev->ev[0].seat == 2, "the lobby plan: Cleo arrives");
@@ -217,6 +317,11 @@ int main(void)
     OK(ev && ev->n > 7 && ev->ev[0].kind == PK_EV_LOBBY_START && ev->ev[0].seat == 1, "the deal's plan names its starter");
 
     /* ---- refusals ---- */
+    OK(pk_api_words(PK_API_W_ERROR, PK_EFORMAT, line, sizeof line) > 0
+       && !strcmp(line, "That game came from a newer version of the app"), "a newer format says so");
+    OK(pk_api_words(PK_API_W_ERROR, PK_ECHECK, line, sizeof line) > 0
+       && !strcmp(line, "This game link is damaged"), "any other refusal is a damaged link");
+    OK(pk_api_words(PK_API_W_ERROR, 0, line, sizeof line) == -1, "PK_EOK is not an error");
     OK(pk_api_read("hello") < 0 && pk_api_check("?m=AAAA") < 0, "a link that is not a game");
     OK(pk_api_prefer("junk", links[6]) > 0 && pk_api_prefer(links[6], "junk") < 0, "the unreadable one loses");
     OK(pk_api_same_game(links[3], links[6]) && !pk_api_same_game(links[0], links[6]), "same game by seed");

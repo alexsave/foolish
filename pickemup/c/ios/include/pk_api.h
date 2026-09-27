@@ -136,8 +136,80 @@ int  pk_api_string(int key, char *out, int cap);       /* one table entry by PK_
 #define PK_API_W_INVITE       13   /* the lobby's captions; arg: the seat they name. */
 #define PK_API_W_JOINED       14   /* A leave is captioned by the leaver BEFORE      */
 #define PK_API_W_LEFT         15   /* pk_api_leave, while their row is still there.  */
-#define PK_API_W_COUNT        16
+/* The caption of the bubble pk_api_text writes now: my draft sealed into a
+ * copy, else the newest sealed bubble (0, the deal, right after Start). ""
+ * while WAITING: a lobby bubble is captioned by W_INVITE / JOINED / LEFT. */
+#define PK_API_W_STAGED_CAPTION 16
+#define PK_API_W_LOBBY_ROW    17   /* arg: seat. "2. Bo", or "2. Bo (You)" for mine */
+#define PK_API_W_LOBBY_DEALER 18   /* "Alex deals": seat 0 deals (4.6.3)           */
+#define PK_API_W_ERROR        19   /* arg: a negative PK_E*. Why a link did not read */
+#define PK_API_W_COUNT        20
 int  pk_api_words(int what, int arg, char *out, int cap);
+
+/* ---- the layout (pk_lay.c) ------------------------------------------------------
+ *
+ * UI.html's numbers, so a host derives none of them: the hand row (O4, U7,
+ * U8), the seat ring, the fan, the deck's layers, the pile's lift and which
+ * pills stand in which slot (U9). Points throughout, in the board's own
+ * coordinates (the extension's view less foolish's 8/8/14/4 inset). Every
+ * function is pure: no resident, no game. */
+
+#define PK_LAY_CARD_H   72.0f     /* a hand card, whatever its width           */
+#define PK_LAY_ROW_H    80.0f     /* one hand row's box                        */
+#define PK_LAY_FACE_W   40.0f     /* an overlapped card keeps a full face (U8) */
+#define PK_LAY_THIN_W   40.0f     /* a flat card narrower than this goes thin  */
+
+/* How a hand of n lays out: one or two flat rows, overlapped rows, or rows
+ * that scroll (O4; the drawer keeps one row, U7). */
+enum { PK_LAY_FLAT = 1, PK_LAY_OVERLAP = 2, PK_LAY_SCROLL = 3 };
+
+/* How collapsed the drawer is, from the extension view's height: 0 expanded
+ * (440 and up) to 1 compact (340 and below), foolish's anchors. */
+float pk_lay_collapse(float view_h);
+/* One hand row, or two? The drawer (collapse 1/2 and over) keeps one. */
+int   pk_lay_max_rows(float view_h);
+
+/* A hand of `n` cards in `width` (the hand's width inside its 8pt side
+ * padding), at most `max_rows` rows. Returns the PK_LAY_* mode and writes the
+ * card width, the step from one card's left edge to the next's, the rows, how
+ * many cards the TOP row takes (the smaller half), the content width (wider
+ * than `width` only when it scrolls) and the box height. */
+int   pk_lay_hand(int n, float width, int max_rows, float *card_w, float *step, int *rows,
+                  int *top_n, float *content_w, float *box_h);
+/* Card i's top-left in the hand's box (content coordinates when it scrolls).
+ * 0, or -1 for an i out of 0..n-1. */
+int   pk_lay_hand_slot(int n, float width, int max_rows, int i, float *x, float *y);
+
+/* Where seat `seat` sits on the ring (its badge's centre), with my seat at
+ * the bottom (`me` = -1: a spectator sees seat 0 there). */
+void  pk_lay_seat(int seat, int me, int n, float board_w, float board_h, float collapse,
+                  float *x, float *y);
+
+/* The step between two backs of a `backs`-card fan: foolish's 10pt,
+ * compressing (never under 3pt) to keep the fan within 96pt (U6). */
+float pk_lay_fan_step(int backs);
+#define PK_LAY_FAN_CARD_W 28.0f
+#define PK_LAY_FAN_CARD_H 40.0f
+
+/* The deck's drawn layers for a count: one per card to 6, 7 to 11, then 8. */
+int   pk_lay_deck_layers(int deck_n);
+
+/* The pile's centre, lifted clear of the pill row in the drawer (U2), and the
+ * deck's top-left beside it (U3). */
+void  pk_lay_pile(float board_w, float board_h, float collapse, float *cx, float *cy);
+void  pk_lay_deck(float board_w, float board_h, float collapse, float *x, float *y);
+#define PK_LAY_PILE_W 82.0f
+#define PK_LAY_PILE_H 115.0f
+#define PK_LAY_DECK_W 50.0f
+#define PK_LAY_DECK_H 70.0f
+
+/* The pill row (U9): what stands in the TRAILING slot and in the one to its
+ * left. Draw holds the trailing slot whenever it is legal; beside it, Play
+ * (a card selected on my turn), else Pass, else Undo; with no Draw the first
+ * of those takes the trailing slot. */
+enum { PK_PILL_NONE = 0, PK_PILL_DRAW, PK_PILL_PLAY, PK_PILL_PASS, PK_PILL_UNDO };
+void  pk_lay_pills(int can_draw, int my_turn, int selected, int can_pass, int can_undo,
+                   int *trailing, int *leading);
 
 /* ---- two messages -------------------------------------------------------------- */
 

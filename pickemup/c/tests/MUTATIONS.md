@@ -118,6 +118,22 @@ The sentinel mutation above is the one that breaks canonicality.
 | ios-smoke | `pk_api_text` writes the resident draft instead of a sealed copy | `pk_api_smoke.c:124` "the start bubble is a link" |
 | ios-smoke | a record finds a row by its offset, not its tag | `pk_api_smoke.c:214` "Cleo's record finds her in the row she moved down to" |
 | swift-smoke | the host library stamped with a hash that is not the readers' | `pk_api_smoke.swift:36` "the library and the readers are one layout" |
+| ios-smoke words | `W_STAGED_CAPTION` captions `bubbles - 1` of the sealed copy | `pk_api_smoke.c:224` "the staged caption is the sent bubble's" |
+| ios-smoke words | `W_LOBBY_ROW` says "(You)" on every row but mine | `pk_api_smoke.c:179` "my own roster row says so", `:197` "somebody else's roster row" |
+| ios-smoke words | `W_LOBBY_DEALER` names the last seat, not seat 0 | `pk_api_smoke.c:303` "seat 0 deals, whoever joined last" |
+| ios-smoke words | `W_ERROR` maps `PK_ECHECK` (not `PK_EFORMAT`) to the newer-version line | `pk_api_smoke.c:321` "a newer format says so", `:323` "any other refusal is a damaged link" |
+| ios-smoke layout | `TWO_ROW` 34 becomes 30 | `pk_api_smoke.c:95` "ten: two rows, the 166 box (table 04)", `:117` "card 5 of ten opens the lower row" |
+| ios-smoke layout | `STRIP_MIN` 16 becomes 12 | `pk_api_smoke.c:105` "forty-two: the rows scroll (table 07)", `:113` "thirty in the drawer: scrolling (collapsed 03)" |
+| ios-smoke layout | the top row takes the larger half | `pk_api_smoke.c:97` "thirteen: the smaller half on top", `:101` "twenty-seven: overlapped, 40pt faces (U8)" |
+| ios-smoke layout | `pk_lay_max_rows` gives the drawer two rows | `pk_api_smoke.c:88` "the drawer keeps one row (U7)" |
+| ios-smoke layout | the ring's x loses its minus sign (seats go round the other way) | `pk_api_smoke.c:125` "the next seat sits on my left" |
+| ios-smoke layout | the fan step divides 96 instead of 96 less a card | `pk_api_smoke.c:130` "the fan steps 10, compressing to fit 96 (U6)" |
+| ios-smoke layout | 12 cards draw 7 layers | `pk_api_smoke.c:132` "the deck's layers" |
+| ios-smoke layout | the pile never lifts | `pk_api_smoke.c:136` "the pile lifts 24 in the drawer (U2)" |
+| ios-smoke layout | the deck 8pt from the pile | `pk_api_smoke.c:140` "the deck 10pt left of the pile, on its line (U3)" |
+| ios-smoke layout | Play offered for a selection when it is not my turn | `pk_api_smoke.c:152` "not my turn: a selection offers no Play" |
+
+Each layout and words row was run alone with `build/ios_smoke` deleted first, because `cp -p` puts the restored file's old mtime back and make then keeps the mutated binary (the same-second trap).
 
 ## Not in this kernel
 

@@ -6,6 +6,7 @@
 #include "../src/pk_plan.h"
 #include "../src/pk_say.h"
 #include "../src/pk_view.h"
+#include "../i18n/keys.h"
 #include <stddef.h>
 #include <string.h>
 
@@ -438,10 +439,38 @@ int pk_api_words(int what, int arg, char *out, int cap)
     case PK_API_W_SPOKEN_FAN:
         if (!S.have || arg < 0 || arg >= S.m.n_seats) return -1;
         return pk_say_spoken_fan(S.names, arg, out, cap);
+    case PK_API_W_LOBBY_ROW: {
+        if (!S.have || arg < 0 || arg >= S.m.n_seats) return -1;
+        char num[8], who[PK_NAME_MAX_BYTES + 24];
+        if (pk_itoa(arg + 1, num, sizeof num) < 0 || pk_say_seat(S.names, arg, who, sizeof who) < 0) return -1;
+        const char *kv[] = { "n", num, "who", who, 0 };
+        return pk_fill(out, cap, pk_text(arg == S.me ? PK_K_LOBBY_ROW_YOU : PK_K_LOBBY_ROW), kv);
+    }
+    case PK_API_W_LOBBY_DEALER: {
+        if (!S.have || S.m.n_seats < 1) return -1;
+        char who[PK_NAME_MAX_BYTES + 24];
+        if (pk_say_seat(S.names, 0, who, sizeof who) < 0) return -1;
+        const char *kv[] = { "who", who, 0 };
+        return pk_fill(out, cap, pk_text(PK_K_LOBBY_DEALER), kv);
+    }
+    case PK_API_W_ERROR:
+        if (arg >= 0) return -1;
+        /* a newer format is the one refusal with a remedy (4.7); every other
+         * one is a link that was cut or changed on the way */
+        return pk_api_string(arg == PK_EFORMAT ? PK_K_UNREADABLE_WHY : PK_K_DAMAGED, out, cap);
     }
     if (!started) return empty(out, cap);
     switch (what) {
     case PK_API_W_CAPTION:      return pk_say_caption(g, arg, S.names, out, cap);
+    case PK_API_W_STAGED_CAPTION:
+        /* the bubble pk_api_text would write: my draft sealed into a copy
+         * (the resident keeps its draft), else the newest sealed bubble */
+        if (g->b_open) {
+            S.other = S.m;
+            if (!pk_seal(&S.other.game)) return -1;
+            return pk_say_caption(&S.other.game, S.other.game.bubbles, S.names, out, cap);
+        }
+        return pk_say_caption(g, g->bubbles, S.names, out, cap);
     case PK_API_W_HEADLINE:     return pk_say_headline(g, me, S.names, out, cap);
     case PK_API_W_SUBLINE:      return pk_say_subline(g, me, S.names, out, cap);
     case PK_API_W_DECK_LEFT:    return pk_say_deck_left(g, out, cap);

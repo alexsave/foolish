@@ -1126,6 +1126,8 @@ Names come from the roster (`{who}`, `{target}`, `{next}`), because the kernel k
 | `DIR_ACW` | anticlockwise |
 | `DECK_LEFT` | {n} left |
 | `STAMP_LAST` | LAST |
+| `STAMP_OUT` | OUT |
+| `STAMP_WRONG` | Wrong call |
 
 ### 6.2 Bubble captions (one truncating line, composed by `pk_say_caption`)
 
@@ -1183,6 +1185,7 @@ A bubble's caption is its most important clause, then the next if it fits (`PK_C
 | `SUB_STAGED_SKIP` | {target} is skipped |
 | `SUB_STAGED_PLUS` | {target} draws {n} |
 | `SUB_STAGED_CALL` | You called {target} |
+| `TOAST_NO_MATCH` | That card doesn't match |
 | `BTN_DRAW` | Draw |
 | `BTN_PLAY` | Play |
 | `BTN_PASS` | Pass |
@@ -1213,6 +1216,8 @@ No screen line ever says how many cards another player holds.
 | `BTN_START` | Start |
 | `BTN_LEAVE` | Leave |
 | `LOBBY_NAME_PROMPT` | Your name at the table |
+| `LOBBY_ROW` | {n}. {who} |
+| `LOBBY_ROW_YOU` | {n}. {who} (You) |
 
 ### 6.5 Errors and staleness
 

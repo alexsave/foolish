@@ -77,15 +77,15 @@ wasm: | build
 # uttt's (uttt/c/Makefile ios-lib), and the layout stamp is foolish's
 # (foolish/c/Makefile build/layout/ios.hash).
 IOS_MIN_VERSION := 17.0
-IOS_SRC    := $(SRC) ios/pk_api.c
+IOS_SRC    := $(SRC) ios/pk_api.c ios/pk_lay.c
 IOS_HDR    := $(HDR) ios/include/pk_api.h ios/pk_api_layout.h
 IOS_CFLAGS := -O2 -Isrc -Iios -Iios/include -Wall -Wextra -Werror -std=c11
 
 build/ios_smoke: $(IOS_SRC) $(IOS_HDR) ios/pk_api_smoke.c | build
-	$(CC) $(CFLAGS) -Iios/include $(IOS_SRC) ios/pk_api_smoke.c -o $@
+	$(CC) $(CFLAGS) -Iios/include $(IOS_SRC) ios/pk_api_smoke.c -lm -o $@
 
 build/asan_ios_smoke: $(IOS_SRC) $(IOS_HDR) ios/pk_api_smoke.c | build
-	$(CC) $(ASAN_FLAGS) -Iios/include $(IOS_SRC) ios/pk_api_smoke.c -o $@
+	$(CC) $(ASAN_FLAGS) -Iios/include $(IOS_SRC) ios/pk_api_smoke.c -lm -o $@
 
 ios-smoke: build/ios_smoke
 	./build/ios_smoke
