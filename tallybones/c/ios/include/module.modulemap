@@ -1,0 +1,4 @@
+module CTallybones {
+    header "tb_api.h"
+    export *
+}
