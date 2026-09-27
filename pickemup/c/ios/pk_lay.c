@@ -195,3 +195,58 @@ void pk_lay_picker(int tile, float cx, float cy, float *x, float *y)
     if (x) *x = cx + dx[tile] * PICKER_REACH_X;
     if (y) *y = cy + dy[tile] * PICKER_REACH_Y;
 }
+
+/* ---- the board's zones (I31) -------------------------------------------------- */
+#define BAND_UP     64.0f    /* U24: foolish's hand band, grown 64 up ...         */
+#define BAND_DOWN   24.0f    /* ... and 24 down                                   */
+#define DROP_MARGIN  8.0f    /* a dragged card over the pile's edge still plays   */
+#define PILL_GAP     4.0f    /* the pill row sits 4 above the hand                */
+#define TOAST_UP    64.0f    /* the toast's centre above the hand                 */
+#define DIR_W       78.0f    /* UI.html's direction box                           */
+#define DIR_H       68.0f
+#define DIR_Y       -3.0f
+
+int pk_lay_zone(int zone, float board_w, float board_h, float collapse, float hand_box_h,
+                float *x, float *y, float *w, float *h)
+{
+    float hand_top = board_h - hand_box_h, rx = 0, ry = 0, rw = 0, rh = 0;
+    switch (zone) {
+    case PK_ZONE_DRAW_BAND:
+        rx = PK_LAY_HAND_PAD;
+        ry = hand_top - BAND_UP;
+        rw = board_w - 2 * PK_LAY_HAND_PAD;
+        rh = hand_box_h + BAND_UP + BAND_DOWN;
+        break;
+    case PK_ZONE_PILE_DROP: {
+        float cx, cy;
+        pk_lay_pile(board_w, board_h, collapse, &cx, &cy);
+        rx = cx - PK_LAY_PILE_W / 2 - DROP_MARGIN;
+        ry = cy - PK_LAY_PILE_H / 2 - DROP_MARGIN;
+        rw = PK_LAY_PILE_W + 2 * DROP_MARGIN;
+        rh = PK_LAY_PILE_H + 2 * DROP_MARGIN;
+        break;
+    }
+    case PK_ZONE_PILLS:
+        ry = hand_top - PILL_GAP - PK_LAY_PILL_H;
+        rw = board_w;
+        rh = PK_LAY_PILL_H;
+        break;
+    case PK_ZONE_TOAST:
+        rx = board_w / 2;
+        ry = hand_top - TOAST_UP;
+        break;
+    case PK_ZONE_DIR:
+        rx = board_w - DIR_W;
+        ry = DIR_Y;
+        rw = DIR_W;
+        rh = DIR_H;
+        break;
+    default:
+        return -1;
+    }
+    if (x) *x = rx;
+    if (y) *y = ry;
+    if (w) *w = rw < 0 ? 0 : rw;
+    if (h) *h = rh < 0 ? 0 : rh;
+    return 0;
+}

@@ -150,6 +150,108 @@ static void layout(void)
     OK(tr == PK_PILL_UNDO && ld == PK_PILL_NONE, "a play staged: Undo alone takes the trailing slot");
     pk_lay_pills(0, 0, 1, 0, 0, &tr, &ld);
     OK(tr == PK_PILL_NONE && ld == PK_PILL_NONE, "not my turn: a selection offers no Play");
+
+    /* the zones (I31): a 374 x 700 board with a one-row hand (80) */
+    float zw, zh;
+    OK(pk_lay_zone(PK_ZONE_DRAW_BAND, 374, 700, 0, 80, &x, &y, &zw, &zh) == 0
+       && near(x, 8) && near(y, 620 - 64) && near(zw, 358) && near(zh, 80 + 88), "U24: the hand band, 64 up and 24 down");
+    OK(pk_lay_zone(PK_ZONE_PILE_DROP, 374, 322, 1, 80, &x, &y, &zw, &zh) == 0
+       && near(x, 187 - 41 - 8) && near(y, 137 - 57.5f - 8) && near(zw, 98) && near(zh, 131),
+       "the pile's drop target follows its lift, 8 all round");
+    OK(pk_lay_zone(PK_ZONE_PILLS, 374, 700, 0, 166, &x, &y, &zw, &zh) == 0 && near(x, 0) && near(y, 534 - 44)
+       && near(zw, 374) && near(zh, 40), "the pill row 4 above a two-row hand");
+    OK(pk_lay_zone(PK_ZONE_TOAST, 374, 700, 0, 80, &x, &y, &zw, &zh) == 0 && near(x, 187) && near(y, 556)
+       && zw == 0 && zh == 0, "the toast's centre");
+    OK(pk_lay_zone(PK_ZONE_DIR, 374, 700, 0, 80, &x, &y, &zw, &zh) == 0 && near(x, 296) && near(y, -3)
+       && near(zw, 78) && near(zh, 68), "the direction box, top right");
+    OK(pk_lay_zone(PK_ZONE_N, 374, 700, 0, 80, &x, &y, &zw, &zh) == -1, "a zone off the list");
+    OK(pk_lay_zone(PK_ZONE_DRAW_BAND, 10, 700, 0, 80, 0, 0, &zw, 0) == 0 && zw == 0, "a band never goes negative");
+}
+
+/* ---- adopting with its motion (I29) and the fan's tap (I30) ---- */
+static void adopt_and_fan(void)
+{
+    static char l[4][PK_API_TEXT_MAX];
+    uint8_t seed[32];
+    for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(i * 17 + 9);
+    be(0);
+    pk_api_new(seed, 1);
+    pk_api_text(l[0], PK_API_TEXT_MAX);
+    open_as(1, l[0], 1, 0);
+    pk_api_join_start();
+    static char start[PK_API_TEXT_MAX];
+    OK(pk_api_text(start, PK_API_TEXT_MAX) > 0, "the start bubble");
+    one_bubble();
+    OK(pk_api_text(l[1], PK_API_TEXT_MAX) > 0 && pk_api_commit() == 1, "Bo's first bubble");
+
+    be(0);
+    {
+        uint32_t serial = pk_api_beats_serial();
+        const void *playing = pk_api_beats_now();
+        OK(pk_api_adopt("junk", 0) < 0 && pk_api_beats_serial() == serial && pk_api_beats_now() == playing,
+           "an unreadable link: refused, the playing plan kept");
+    }
+    OK(pk_api_adopt(l[0], 0) == 0 && pk_api_beats_now() == 0, "a lobby: no motion");
+    const PkBeats *b = (const PkBeats *)pk_api_beats_now();
+    OK(pk_api_adopt(l[1], 1) == 0 && (b = (const PkBeats *)pk_api_beats_now()) != 0 && b->n > 0
+       && b->mode == PK_BEATS_ARRIVAL, "from the lobby it was dealt from: the newest bubble, arriving");
+    OK(b && ((const PkBeatFrame *)pk_api_beats_frame(0))->deck_n < PK_DECK,
+       "the newest bubble only: it starts from the board after the deal");
+    OK(pk_api_adopt(l[0], 0) == 0 && pk_api_adopt(l[1], 0) == 0 && (b = (const PkBeats *)pk_api_beats_now()) != 0
+       && b->mode == PK_BEATS_OPEN, "opened, not arriving: the opened lead");
+    OK(pk_api_adopt(l[1], 1) == 0 && pk_api_beats_now() == 0, "the same bubble again moves nothing");
+    OK(pk_api_adopt(l[0], 0) == 0 && pk_api_adopt(start, 0) == 0 && pk_api_beats_now() != 0
+       && ((const PkBeatFrame *)pk_api_beats_frame(0))->deck_n == PK_DECK, "the start bubble plays its deal");
+    OK(pk_api_adopt(l[1], 0) == 0 && table()->bubbles == 1, "back on Bo's bubble");
+    OK(pk_api_adopt("junk", 1) < 0 && table()->bubbles == 1, "a refused adopt leaves the resident");
+
+    /* Alex moves; Bo's phone, showing bubble 1, adopts bubble 2 */
+    one_bubble();
+    OK(pk_api_text(l[2], PK_API_TEXT_MAX) > 0 && pk_api_commit() == 1, "Alex's bubble");
+    open_as(1, l[1], 1, 1);
+    OK(pk_api_adopt(l[2], 1) == 0 && (b = (const PkBeats *)pk_api_beats_now()) != 0
+       && b->mode == PK_BEATS_ARRIVAL && b->n > 0, "further on in the same game: an arrival");
+    {
+        /* the plan is exactly bubbles (1, 2]: no deal in it */
+        int dealt = 0;
+        for (int i = 0; b && i < b->n; i++) dealt |= b->beat[i].ev_kind == PK_EV_DEAL;
+        OK(!dealt, "from the bubble on screen, not from the deal");
+    }
+    OK(pk_api_adopt(l[2], 0) == 0 && pk_api_beats_now() == 0, "opened again: nothing new");
+
+    /* a staged play, then a chain without it: the retraction leads */
+    int staged = 0;
+    const PkView *v = me_view();
+    for (int p = 0; p < v->my_n && !staged; p++)
+        if (v->my_playable[p] && !pk_api_is_wild(p)) staged = pk_api_play(p, 4);
+    OK(staged, "Bo has a plain card to stage");
+    if (staged) {
+        OK(table()->draft && table()->can_send, "Bo's play is staged");
+        OK(pk_api_adopt(l[1], 0) == 0 && (b = (const PkBeats *)pk_api_beats_now()) != 0 && b->n > 0
+           && (b->beat[0].flags & PK_BF_RETRACT), "the staged card flies home first");
+    }
+
+    /* three seats: the fan's tap */
+    be(0);
+    for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(i * 5 + 77);
+    pk_api_new(seed, 0);
+    pk_api_text(l[0], PK_API_TEXT_MAX);
+    open_as(1, l[0], 0, 0);
+    pk_api_join();
+    pk_api_text(l[1], PK_API_TEXT_MAX);
+    open_as(2, l[1], 0, 0);
+    pk_api_join();
+    pk_api_text(l[2], PK_API_TEXT_MAX);
+    open_as(0, l[2], 0, 0);
+    OK(pk_api_start() == 0 && table()->n_seats == 3, "a three-seat game for the fans");
+    int me = table()->me, a = (me + 1) % 3, c = (me + 2) % 3;
+    OK(pk_api_tap_fan(me) == PK_API_FAN_REFUSED, "my own seat is no catch");
+    OK(pk_api_tap_fan(a) == PK_API_FAN_CALLED && me_view()->draft_call == a, "a tap calls that seat");
+    OK(pk_api_tap_fan(c) == PK_API_FAN_MOVED && me_view()->draft_call == c, "another seat's tap moves the call");
+    OK(pk_api_tap_fan(me) == PK_API_FAN_REFUSED && me_view()->draft_call == c,
+       "a refused move keeps the call it would have replaced");
+    OK(pk_api_tap_fan(c) == PK_API_FAN_UNCALLED && me_view()->draft_call == PK_SEAT_NONE, "a second tap takes it back");
+    OK(pk_api_tap_fan(9) == PK_API_FAN_REFUSED, "a seat off the table");
 }
 
 int main(void)
@@ -451,6 +553,18 @@ int main(void)
            && (all->reveal[rank[1]].n < all->reveal[rank[2]].n || rank[1] < rank[2]),
            "then fewest cards first, ties in seat order");
     }
+
+    adopt_and_fan();
+
+    /* ---- the corner index and the strip's count (I33) ---- */
+    OK(pk_api_words(PK_API_W_INDEX, 0, line, sizeof line) > 0 && !strcmp(line, "1"), "a number's index");
+    OK(pk_api_words(PK_API_W_INDEX, 47, line, sizeof line) > 0 && !strcmp(line, "+2"), "+2's index");
+    OK(pk_api_words(PK_API_W_INDEX, 100, line, sizeof line) > 0 && !strcmp(line, "+4"), "a Wild +4's index");
+    OK(pk_api_words(PK_API_W_INDEX, 42, line, sizeof line) == 0 && pk_api_words(PK_API_W_INDEX, 99, line, sizeof line) == 0,
+       "a skip and a wild print a glyph, not an index");
+    OK(pk_api_words(PK_API_W_INDEX, PK_CARD_HIDDEN, line, sizeof line) == -1, "a hidden card has no index");
+    OK(pk_api_words(PK_API_W_STRIP_DRAWS, 3, line, sizeof line) > 0 && !strcmp(line, "\xc3\x97" "3"), "my draws, counted");
+    OK(pk_api_words(PK_API_W_STRIP_DRAWS, 0, line, sizeof line) == -1, "no draws, no chip");
 
     /* ---- refusals ---- */
     OK(pk_api_words(PK_API_W_ERROR, PK_EFORMAT, line, sizeof line) > 0

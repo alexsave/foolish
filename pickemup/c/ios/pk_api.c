@@ -60,6 +60,8 @@ static struct {
     uint8_t     stage_seed[32];
     uint16_t    stage_bubbles;
     char        text[PK_MSG_MAX_TEXT];
+    int         beats_ok;            /* the newest build laid a plan out        */
+    PkMsg       prior;               /* pk_api_adopt: the chain on screen       */
 } S = { .me = -1 };
 
 uint32_t pk_api_layout_hash(void) { return (uint32_t)SG_LAYOUT_HASH; }
@@ -443,6 +445,7 @@ void pk_api_beats_mark(void)
 static const void *built(int n)
 {
     pk_api_beats_mark();
+    S.beats_ok = n >= 0;
     if (n < 0) { memset(&S.beats, 0, sizeof S.beats); return 0; }
     S.beats.serial = ++S.beats_serial;
     return &S.beats;
@@ -466,7 +469,7 @@ const void *pk_api_beats(int viewer, int from, int to, int mode)
 static const void *prepend_beats2(void)
 {
     int k = S.beats2.n, n = S.beats.n;
-    if (k + n > PK_BEATS_MAX) return built(-1);
+    if (!S.beats_ok || k + n > PK_BEATS_MAX) return built(-1);
     pk_beats_delay(&S.beats, 0, S.beats2.total_ms);
     memmove(&S.beats.beat[k], &S.beats.beat[0], (size_t)n * sizeof(PkBeat));
     memcpy(&S.beats.beat[0], &S.beats2.beat[0], (size_t)k * sizeof(PkBeat));
@@ -645,6 +648,21 @@ int pk_api_words(int what, int arg, char *out, int cap)
         const char *kv[] = { "who", who, 0 };
         return pk_fill(out, cap, pk_text(PK_K_LOBBY_DEALER), kv);
     }
+    case PK_API_W_INDEX:
+        /* the corner index a face prints; Skip, Reverse and a wild are glyphs */
+        if (arg < 0 || arg >= PK_DECK) return -1;
+        switch (pk_rank((uint8_t)arg)) {
+        case PK_R_PLUS2:   return pk_api_string(PK_K_RANK_PLUS2, out, cap);
+        case PK_R_WILD4:   return pk_api_string(PK_K_INDEX_PLUS4, out, cap);
+        case PK_R_SKIP: case PK_R_REVERSE: case PK_R_WILD: return empty(out, cap);
+        default:           return pk_itoa(pk_rank((uint8_t)arg), out, cap);
+        }
+    case PK_API_W_STRIP_DRAWS: {
+        char num[8];
+        if (arg < 1 || pk_itoa(arg, num, sizeof num) < 0) return -1;
+        const char *kv[] = { "n", num, 0 };
+        return pk_fill(out, cap, pk_text(PK_K_STRIP_DRAWS), kv);
+    }
     case PK_API_W_ERROR:
         if (arg >= 0) return -1;
         /* a newer format is the one refusal with a remedy (4.7); every other
@@ -698,4 +716,77 @@ int pk_api_common(const char *a, const char *b)
 {
     if (pk_msg_text_decode(a, &S.other) != PK_EOK || pk_msg_text_decode(b, &S.other2) != PK_EOK) return -1;
     return pk_common_bubbles(&S.other, &S.other2);
+}
+
+/* ---- adopting, with its motion (I29) ------------------------------------------------ */
+
+const void *pk_api_beats_now(void) { return S.beats_ok ? &S.beats : 0; }
+
+int pk_api_adopt(const char *text, int arrival)
+{
+    /* THE CHAIN ON SCREEN, before the read replaces the one slot: whether it
+     * was a live game, my open draft and the play staged in it, and the chain
+     * as its link reads (a draft sealed into a copy, exactly what pk_api_text
+     * writes; a draft that cannot be written yet is no chain to compare). */
+    const int prior_live = S.have && S.m.phase != PK_PHASE_WAITING;
+    const int prior_draft = prior_live && S.me >= 0 && S.m.game.b_open && S.m.game.b_sender == S.me;
+    const int prior_bubbles = prior_live ? S.m.game.bubbles : 0;
+    int staged_card = -1, staged_pos = -1;
+    if (prior_draft) {
+        int n = pk_plan_draft(&S.m.game, S.me, S.events.ev, PK_API_EVENTS);
+        for (int i = n - 1; i >= 0; i--)
+            if (S.events.ev[i].kind == PK_EV_PLAY && S.events.ev[i].seat == S.me) {
+                staged_card = S.events.ev[i].card;
+                staged_pos = S.events.ev[i].i;
+                break;
+            }
+    }
+    int prior_ok = S.have;
+    if (prior_ok) {
+        S.prior = S.m;
+        if (prior_live && S.prior.game.b_open && !pk_seal(&S.prior.game)) prior_ok = 0;
+        if (prior_ok && (pk_msg_text_encode(&S.prior, S.text, (int)sizeof S.text) <= 0
+                         || pk_msg_text_decode(S.text, &S.prior) != PK_EOK)) prior_ok = 0;
+    }
+
+    int e = pk_api_read(text);
+    if (e) return e;
+    if (S.m.phase == PK_PHASE_WAITING) { built(-1); return PK_EOK; }
+    const int to = S.m.game.bubbles;
+    const int same = prior_ok && pk_msg_same_game(&S.prior, &S.m);
+    if (same && prior_live) {
+        if (staged_card >= 0) {
+            /* my staged play is not in the adopted chain: a lost race (4.8) */
+            int common = pk_common_bubbles(&S.prior, &S.m);
+            if (common >= 0 && common <= to && common < prior_bubbles + 1) {
+                pk_api_beats_conflict(staged_card, staged_pos, common, to);
+                return PK_EOK;
+            }
+        }
+        if (to > prior_bubbles) pk_api_beats(PK_API_ME, prior_bubbles, to, arrival ? PK_BEATS_ARRIVAL : PK_BEATS_OPEN);
+        else built(-1);
+        return PK_EOK;
+    }
+    /* cold, or the lobby this game was dealt from: the newest bubble, or the
+     * deal when the start bubble is the newest (bubble 0, from -1) */
+    pk_api_beats(PK_API_ME, to - 1, to, arrival && same ? PK_BEATS_ARRIVAL : PK_BEATS_OPEN);
+    return PK_EOK;
+}
+
+/* ---- a tap on a seat's fan (I30) ---------------------------------------------------- */
+
+int pk_api_tap_fan(int seat)
+{
+    PkGame *g = live();
+    if (!g || seat < 0 || seat >= g->n) return PK_API_FAN_REFUSED;
+    const int called = g->b_open && g->b_sender == S.me ? g->b_call : PK_SEAT_NONE;
+    if (called == seat) return pk_uncall(g) ? PK_API_FAN_UNCALLED : PK_API_FAN_REFUSED;
+    if (called == PK_SEAT_NONE) return act(PK_A_CALL_OUT, seat, 0) ? PK_API_FAN_CALLED : PK_API_FAN_REFUSED;
+    /* moving the call: one call a bubble (3.6), so the old one comes off
+     * first, on a copy, and a refused new one leaves the draft as it was */
+    S.other = S.m;
+    PkAct x = { PK_A_CALL_OUT, (uint8_t)seat, 0, 0 };
+    if (!pk_uncall(&S.other.game) || !pk_apply(&S.other.game, S.me, x)) return PK_API_FAN_REFUSED;
+    S.m = S.other;
+    return PK_API_FAN_MOVED;
 }

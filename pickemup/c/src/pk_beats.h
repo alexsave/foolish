@@ -73,6 +73,8 @@
 #define PK_T_PRESS          80   /* a pill or a tile pressed to .96               */
 #define PK_T_COLLAPSE_WAIT 250   /* a staged play: 250 + the plan + 500, then the */
 #define PK_T_COLLAPSE_REST 500   /* drawer may collapse (foolish)                 */
+#define PK_T_TOAST        1600   /* a toast stays up (IOS_DECISIONS I32)          */
+#define PK_T_DRAWN_STAY   2400   /* U23's "drawn cards stay" line stays up        */
 
 /* How many under-cards the pile draws beneath its top one (UI.html `.und`):
  * also how many ghosts a reshuffle's gather slides into the deck. */

@@ -51,6 +51,7 @@
     X(RANK_SKIP,          10, 0)  /* "skip", for {rank}                       */ \
     X(RANK_REVERSE,       10, 0)                                                 \
     X(RANK_PLUS2,         10, 0)                                                 \
+    X(INDEX_PLUS4,         4, 0)  /* "+4", a Wild +4's corner index         */ \
     X(CARD_NUMBER,         0, 0)  /* "{rank} of {suits}"                      */ \
     X(CARD_SKIP,           0, 0)                                                 \
     X(CARD_REVERSE,        0, 0)                                                 \
@@ -124,6 +125,8 @@
     X(BTN_CAUGHT,         14, 0)                                                 \
     X(BTN_AGAIN,          14, 0)                                                 \
     X(BTN_RULES,          14, 0)                                                 \
+    X(BTN_CANCEL,         14, 0)  /* the suit picker's x, spoken             */ \
+    X(STRIP_DRAWS,         6, 0)  /* "×{n}", my staged draws, counted     */ \
     X(SPOKEN_FAN,          0, 0)                                                 \
     X(SPOKEN_CARD,         0, 0)                                                 \
     X(SPOKEN_PLAYABLE,     0, 0)                                                 \

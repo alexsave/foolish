@@ -176,6 +176,13 @@ The sentinel mutation above is the one that breaks canonicality.
 | ios-smoke cards | `pk_api_card_rank` accepts id 104 | `pk_api_smoke.c:431` "an id off the deck is nothing" |
 | ios-smoke buried | `pk_api_buried` reports every buried card without looking for it in the deck | `pk_api_smoke.c:372` "the buried cards are the deck's bottom ones" (at 1 and 0 left) |
 | ios-smoke ranks | the losers sorted by most cards first | `pk_api_smoke.c:416` "then fewest cards first, ties in seat order" |
+| ios-smoke adopt (I29) | a further-on bubble always lays out as opened | `pk_api_smoke.c:213` "further on in the same game: an arrival" |
+| ios-smoke adopt (I29) | the lost-race branch never taken | `pk_api_smoke.c:231` "the staged card flies home first" |
+| ios-smoke adopt (I29) | the same bubble again lays out (prior, to] instead of nothing | `pk_api_smoke.c:202` "the same bubble again moves nothing", `:220` "opened again: nothing new" |
+| ios-smoke fan (I30) | a moved call uncalls and calls on the resident, not a copy | `pk_api_smoke.c:252` "a refused move keeps the call it would have replaced", `:253` "a second tap takes it back" |
+| ios-smoke zones (I31) | the draw band's `BAND_DOWN` 24 becomes 0 | `pk_api_smoke.c:157` "U24: the hand band, 64 up and 24 down" |
+| ios-smoke words (I33) | `W_INDEX` gives a Wild +4 the `RANK_PLUS2` index | `pk_api_smoke.c:562` "a Wild +4's index" |
+| ios-smoke words (I33) | `W_STRIP_DRAWS` accepts a count of 0 | `pk_api_smoke.c:567` "no draws, no chip" |
 
 Putting the winner first by name (rather than by fewest cards) survived its mutation: the winner of an OUT game holds none and the winner of a STUCK or LONG game is the one with the fewest, so the two orders differ only on a tie the kernel breaks the same way. It stays for the reader, not for a test.
 

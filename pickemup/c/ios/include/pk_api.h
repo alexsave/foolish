@@ -152,7 +152,10 @@ int  pk_api_string(int key, char *out, int cap);       /* one table entry by PK_
 #define PK_API_W_PUBLIC_ROW   21   /* arg: seat. "2. Bo" for the bubble's picture: no "(You)" */
 #define PK_API_W_DECK_N       22   /* arg: a count. "27 left" for any count (a plan's) */
 #define PK_API_W_DIR_OF       23   /* arg: PK_DIR_*. The direction word for either way  */
-#define PK_API_W_COUNT        24
+#define PK_API_W_INDEX        24   /* arg: card id. Its corner index: "7", "+2", "+4";  */
+                                   /* "" for Skip, Reverse and a plain wild (a glyph)    */
+#define PK_API_W_STRIP_DRAWS  25   /* arg: a count. "×" and it: my staged draws     */
+#define PK_API_W_COUNT        26
 int  pk_api_words(int what, int arg, char *out, int cap);
 
 /* THE BURIED START CARDS STILL UNDER THE DECK (D14, U16): the non-numbers
@@ -282,5 +285,53 @@ int  pk_api_same_game(const char *a, const char *b);
 /* How many bubbles two chains of one game share (what to take back after a
  * lost race). -1 if either does not read. */
 int  pk_api_common(const char *a, const char *b);
+
+/* ---- adopting, with its motion (IOS_DECISIONS I29) -----------------------------
+ *
+ * ADOPT `text` (pk_api_read) AND LAY OUT WHAT IT BRINGS, from a comparison of
+ * the chain resident before the read with the one adopted: of the same game
+ * and further on, bubbles (on screen, new tip]; my staged play lost to another
+ * chain, its retraction and then the winner from the common prefix; the same
+ * bubble again, no motion; opened cold (or the lobby it was dealt from), the
+ * newest bubble, the deal for a start bubble; a lobby, no motion. `arrival`:
+ * it landed while the board was up (the 16ms lead), else it was opened.
+ * 0, or a negative PK_E* and nothing changed, the playing plan included. */
+int  pk_api_adopt(const char *text, int arrival);
+/* The current plan (PkBeats), or NULL when the newest build laid nothing out
+ * and the host shows the settled view. */
+const void *pk_api_beats_now(void);
+
+/* ---- a tap on a seat's fan (U13, IOS_DECISIONS I30) -----------------------------
+ *
+ * The catch target: stage Caught you! on `seat`; tap the called seat again to
+ * take it back; tap another to move the call there. A move is tried on a copy,
+ * so a refused new call keeps the old one. */
+enum { PK_API_FAN_REFUSED = 0, PK_API_FAN_CALLED, PK_API_FAN_UNCALLED, PK_API_FAN_MOVED };
+int  pk_api_tap_fan(int seat);
+
+/* ---- the board's zones (pk_lay.c, IOS_DECISIONS I31) -----------------------------
+ *
+ * The board is the extension's view less these insets, and the hand sits
+ * PK_LAY_HAND_PAD in from either side of it. A touch that travels less than
+ * PK_LAY_TAP_SLOP is a tap (foolish's tapThreshold, U24). */
+#define PK_LAY_INSET_L    8.0f
+#define PK_LAY_INSET_R    8.0f
+#define PK_LAY_INSET_T   14.0f
+#define PK_LAY_INSET_B    4.0f
+#define PK_LAY_HAND_PAD   8.0f
+#define PK_LAY_TAP_SLOP   8.0f
+#define PK_LAY_PILL_H    40.0f
+/* Each zone's rect in the board, for a board of board_w x board_h at
+ * `collapse` whose hand box is hand_box_h tall (pk_lay_hand):
+ *   DRAW_BAND  where a back dragged off the deck draws (U24: the hand grown
+ *              64 up and 24 down);
+ *   PILE_DROP  where a dragged hand card plays (the pile grown 8 all round);
+ *   PILLS      the pill row and the left chrome, 4 above the hand;
+ *   TOAST      the toast's centre, 64 above the hand (a zero-size rect);
+ *   DIR        the direction box, top right (78 x 68 at y -3).
+ * 0, or -1 for a zone off the list. */
+enum { PK_ZONE_DRAW_BAND = 0, PK_ZONE_PILE_DROP, PK_ZONE_PILLS, PK_ZONE_TOAST, PK_ZONE_DIR, PK_ZONE_N };
+int   pk_lay_zone(int zone, float board_w, float board_h, float collapse, float hand_box_h,
+                  float *x, float *y, float *w, float *h);
 
 #endif
