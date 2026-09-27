@@ -183,14 +183,50 @@ The sentinel mutation above is the one that breaks canonicality.
 | ios-smoke zones (I31) | the draw band's `BAND_DOWN` 24 becomes 0 | `pk_api_smoke.c:157` "U24: the hand band, 64 up and 24 down" |
 | ios-smoke words (I33) | `W_INDEX` gives a Wild +4 the `RANK_PLUS2` index | `pk_api_smoke.c:562` "a Wild +4's index" |
 | ios-smoke words (I33) | `W_STRIP_DRAWS` accepts a count of 0 | `pk_api_smoke.c:567` "no draws, no chip" |
+| collapse (I37) | a pass does not collapse | `pk_api_smoke.c:515` "a play or a pass collapses; a draw, an undo, an un-say, an un-call do not" |
+| collapse (I37) | a play does not collapse | twophone `[S4 three draws then a play]` "the play ends the turn: the drawer collapses once it rests", `pk_api_smoke.c:515` |
+| collapse (I37) | a call in the draft does not stop a Last card! from being the whole bubble | twophone `[S9 Last card! in a later bubble]` "beside a call it is not the whole bubble; un-called, it is" |
+| collapse (I37) | a draw, play or pass in the draft does not stop it either | twophone `[S4 three draws then a play]` "the bubble is not a lone Last card!" |
+| collapse (I37) | no guard on an open draft of mine | `pk_api_smoke.c:526` "no draft open: nothing to collapse for" |
+| collapse (I37) | every other touch collapses (`default: return 1`) | twophone `[S4 ...]` "a draw does not collapse the drawer", `[S8c Caught you! staged]` "a call alone does not collapse the drawer", `pk_api_smoke.c:503` "a call does not collapse the drawer" |
+| stamp (I37) | OUT for every seat once it is over | twophone `[S12 the win]` "OUT under the winner and nothing else once it is over" |
+| stamp (I37) | no Caught you! | twophone `[S8d Caught you! after Send]` "Caught you! under the caught, nothing under the catcher" |
+| stamp (I37) | no Wrong call | `pk_api_smoke.c:525` "Wrong call under the caller, nothing caught on the other" |
+| stamp (I37) | no LAST | twophone `[S9 Last card! in a later bubble]` "the kernel's stamp: LAST under the sayer" |
+| stamp (I37) | the order: the newest verdict before OUT (the `over` test moved below it) | `pk_api_smoke.c:532` "once it is over OUT outranks the newest bubble's verdict" (the winning bubble also carries a wrong call) |
+| lobby rows (A13) | `pk_api_join` remembers no lobby | `pk_api_smoke.c:590` "Join: Cleo's row fades up, 220ms after a 16ms beat", `:592` "Join: the row is unseen before its fade" |
+| lobby rows (A13) | `pk_api_leave` remembers no lobby | `pk_api_smoke.c:612` "Leave: Bo's row fades out, 220ms after a 16ms beat", `:615` "...close up, 320ms on the card spring", `:617` "the row that went, as it read to Bo" |
+| lobby rows (A13) | `pk_api_adopt` lays a lobby over its lobby out as nothing | `pk_api_smoke.c:627` "an arrival: the same two beats", `:629` "as it read to Cleo", `:631` "opened: the 100ms lead" |
+| lobby rows (A13) | `pk_api_adopt` lays out a lobby over another game's lobby | `pk_api_smoke.c:637` "another game's lobby, cold: nothing moves", `:638` "a read is no lobby action of mine" |
+| lobby rows (A13) | `pk_api_read` keeps the remembered lobby action | `pk_api_smoke.c:621` "a read forgets my lobby action" |
+| lobby rows (A13) | `pk_api_new` keeps it | `pk_api_smoke.c:636` "a new lobby is no roster change" |
+| lobby rows (A13) | `W_LOBBY_GONE` reads the current roster's names | `pk_api_smoke.c:617` "as it read to Bo", `:629` "as it read to Cleo" |
+| lobby rows (A13) | `W_LOBBY_GONE` never says "(You)" | `pk_api_smoke.c:617` "the row that went, as it read to Bo" |
+| lobby rows (A13) | a change that moved no row is a plan (`n < 0`) | `pk_api_smoke.c:632` "the same lobby again moves nothing" |
+| lobby rows (A13) | an opened lobby takes the arrival's 16ms lead | `pk_api_smoke.c:631` "opened: the 100ms lead" |
+| collapse slide (A14) | the push keeps the spring's tail (no linear fade to zero) | `pk_api_smoke.c:186` "nothing left at 600ms, and no step to it" |
+| collapse slide (A14) | the drawer's response 300ms, not 338 | `pk_api_smoke.c:184` "the host's spring at half its response", `:188` "uttt's numbers" |
+| collapse slide (A14) | a linear push | `pk_api_smoke.c:184` "the host's spring at half its response", `:186` "nothing left at 600ms" |
+| collapse slide (A14) | nothing pushed at the flip (`t == 0` answers 0) | `pk_api_smoke.c:182` "the whole travel at the flip", `:183` "the push only ever falls" |
+| send hint (A15) | `PK_T_SEND_HINT` 2000 | `[vocabulary]` "the Send reminder waits three seconds" |
+| send hint (A15) | `SEND_HINT` empty | `[6 the table]` "SEND_HINT: empty", `[6.3 screen lines]` "the Send reminder's word, under the arrow" |
 
 Putting the winner first by name (rather than by fewest cards) survived its mutation: the winner of an OUT game holds none and the winner of a STUCK or LONG game is the one with the fewest, so the two orders differ only on a tie the kernel breaks the same way. It stays for the reader, not for a test.
 
 Each layout and words row was run alone with `build/ios_smoke` deleted first, because `cp -p` puts the restored file's old mtime back and make then keeps the mutated binary (the same-second trap).
 
-## Not in this kernel
+## Native against wasm (tests/pk_cross.c, 7.3.7)
 
-7.3.7 (native against wasm replay) waits for a wasm replay build; `make wasm` proves the kernel compiles freestanding for wasm32 and reaches only `memcpy`, `memset`, `memcmp`, `strlen` and `strncmp`.
+`make cross WASM_CC=/opt/homebrew/opt/llvm/bin/clang` plays 100 of the fuzz harness's deals with the random tests' bot (`tests/pk_bot.h`) natively and in a wasm32 build run by node, and compares one value a game: the kernel's hash of the final state folded with every event of the whole game's plan.
+Each row was applied alone, both builds deleted and rebuilt, `make cross` run, and the file restored byte for byte; `make cross` was green again after the last.
+Run 2026-09-27 with Homebrew clang 22 and node 26.
+
+| Test | Mutation | What went red |
+|---|---|---|
+| cross | wasm32 alone swaps the first two cards of every reshuffle (`#ifdef __wasm__` in `pk_shuffle`) | `cmp`: "build/cross_native.txt build/cross_wasm.txt differ: char 3, line 1" |
+| cross | wasm32 alone plans every TURN_TO with `i = 1` (`#ifdef __wasm__` in `emit`), the state untouched | `cmp`: "differ: char 3, line 1" (the plan's fold is what catches it) |
+| cross | the node host reads the values one on (`at + 8`) | `cmp`: "differ: char 3, line 1" |
+
 7.4 (the wire), 7.7.4 (Rule P races) and 7.8.7 (seat resolve) are in `pk_msg_test.c` above.
 
 ## The timeline (tests/pk_beats_test.c, and the bridge's motion checks)
@@ -241,6 +277,10 @@ Run 2026-09-27; every mutant went red, and every test in the file is named at le
 | ios-smoke motion | the bridge does not remember the draft after a build | `pk_api_smoke.c:224` "asked again with nothing new: nothing moves" |
 | ios-smoke motion | `pk_api_beats` refuses `from == to` | `pk_api_smoke.c:215` "from == to: no motion, a new plan" |
 | ios-smoke motion | `pk_api_beats_send` lays the bubble out as an open | `pk_api_smoke.c:248` "channel B: what staging held" |
+| play a wild (A12) | the BAND beat is not applied before its start (no fill backwards) | `[play a wild: the band slides up]` "hidden under the card's edge before it starts" |
+| play a wild (A12) | the BAND beat eases linearly | `[play a wild: the band slides up]` "E.out", "ease-out: past halfway at half time (0.500000)" |
+| play a wild (A12) | the BAND sample fades (`opacity = p`) as it did before A12 | `[play a wild: the band slides up]` "it slides, it does not fade" |
+| play a wild (A12) | a seat's wild gets a BAND beat too (`if (1)`) | `[play a wild: the band slides up]` "a seat's wild arrives with its band on", `[play a +2 / +4]` "arrival: the band is already on the card" |
 
 ## pk_twophone_test.c
 

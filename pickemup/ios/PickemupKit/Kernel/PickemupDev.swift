@@ -17,5 +17,14 @@ public enum PickemupDev {
     /// `dev.nick`: the nickname a fresh simulator sits down under, so the
     /// rig never has to type into the name field.
     public static var nickname: String? { files.string("dev.nick") }
+
+    /// `dev.slide`: the auto-collapse rides the shared CollapseSlide on the
+    /// kernel's push (ANIMATION_DECISIONS A14). Read once per process.
+    public static let slide = files.exists("dev.slide")
+
+    /// `dev.sendhint`: the shared Send reminder under Messages' Send button,
+    /// on the kernel's word and fuse (A15). Read once per process: a view
+    /// body asks for it every frame.
+    public static let sendHint = files.exists("dev.sendhint")
 }
 #endif

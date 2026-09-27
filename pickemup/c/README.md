@@ -7,6 +7,8 @@ make -C pickemup/c run          every test: rules, masking, plan, words, 2,800 f
 make -C pickemup/c asan         the same under ASan + UBSan
 make -C pickemup/c wasm         the kernel as wasm32 objects, freestanding (needs a wasm clang)
 make -C pickemup/c ios-smoke    every bridge entry point, host compiler, no Mac
+make -C pickemup/c cross WASM_CC=/opt/homebrew/opt/llvm/bin/clang
+                                7.3.7: 100 games natively and in wasm32 under node, compared
 make -C pickemup/c structgen    the Swift readers   -> pickemup/ios/Generated/PickemupKernel.swift
 make -C pickemup/c datagen      the Swift strings   -> pickemup/ios/Generated/i18n/
 make -C pickemup/c ios-lib      pickemup/ios/vendor/Pickemup.xcframework (Xcode; runs both above)
@@ -37,7 +39,9 @@ The struct is fixed-size plain integers with no pointers and no bitfields, there
 | `src/pk_beats.h`, `src/pk_beats.c` | the motion timeline: a plan's events laid out as beats on `UI.html`'s clock, the frame at any millisecond, one beat's transform (ANIMATION_DECISIONS A1) |
 | `src/pk_internal.h` | the sink `pk.c` shares with `pk_plan.c` and the tests |
 | `i18n/keys.h`, `i18n/strings_en.c` | every word, one key list, in the shape `shared/tools/datagen` reads |
-| `tests/pk_check.h` | the harness: `CHECK`, hand-built tables, the random bot |
+| `tests/pk_check.h` | the harness: `CHECK` and hand-built tables |
+| `tests/pk_bot.h` | the random tests' bot, its randomness and the wide seeds, freestanding |
+| `tests/pk_cross.c`, `tests/pk_cross.mjs` | 7.3.7: the same games natively and in wasm32 (node), compared by `make cross` |
 | `tests/pk_test.c` | legality (7.1), effects (7.2), the deck (7.3), call-out windows (7.7), lobby and edges (7.8) |
 | `tests/pk_rules_test.c` | the edges a conformance review found untested: one-card timing and collisions, penalties that run the deck dry, the stops, the history cap, undo and the reshuffle, the resolver after a leave |
 | `tests/pk_plan_test.c` | masking (7.5) and the plan (7.6) |
@@ -99,7 +103,7 @@ The resident message is one slot: `pk_api_read` adopts, nothing seals or reads a
 ## Measured
 
 From `make run` on 2026-09-27.
-Test counts: `pk_test` 11,089 assertions, `pk_rules_test` 199, `pk_plan_test` 1,193,089, `pk_say_test` 55,579, `pk_fuzz` 3,921,125, `pk_msg_test` 298,141, `pk_twophone_test` 2,409, `pk_beats_test` 225, and the bridge smoke 1,207 checks, every one 0 failed; `swift-smoke` adds 25 checks from Swift.
+Test counts (the open-items pass, 2026-09-27): `pk_test` 11,089 assertions, `pk_rules_test` 199, `pk_plan_test` 1,193,089, `pk_say_test` 55,609, `pk_fuzz` 3,921,125, `pk_msg_test` 298,141, `pk_twophone_test` 2,420, `pk_beats_test` 233, `pk_arrange_test` 49,995, and the bridge smoke 840 checks (its played-out game is shorter since it carries a wrong call, I40), every one 0 failed; `swift-smoke` adds 25 checks from Swift, and `make cross` compares 100 games natively and in wasm32.
 Over the 2,800 fuzz games (400 at each table size): about 188 turn actions and 136 bubbles a game, the longest 1,079 actions, 3,108 reshuffles in all, and three games ended by the long-game stop (D23).
 The wire, over `make run`'s 30 games a size (every bubble of every game), in link characters per bubble:
 

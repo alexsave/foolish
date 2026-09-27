@@ -248,6 +248,70 @@ final class BeatPlayerTests: XCTestCase {
                        "seven into my hand")
     }
 
+    // MUTATE: BeatPlayer.effects skips PK_BK_BAND -> "the band is part way up".
+    // MUTATE: BandSlide ignores the fx (`let up: CGFloat = 1`) -> nothing here;
+    // it is a view, and the planned red run for it is a screenshot (A12).
+    func testAPickedWildSlidesItsBandUp() throws {
+        let pos = try XCTUnwrap(Phones.dmWithWild())
+        let m = TableModel()
+        m.play(pos)
+        XCTAssertEqual(m.pickerFor, pos)
+        m.choose(2)
+        let plan = try XCTUnwrap(m.player.plan, "the choice plays")
+        let band = try XCTUnwrap(plan.beat.first { $0.kind == PK_BK_BAND }, "my wild's band is a beat")
+        XCTAssertEqual(band.suit, 2, "in the chosen suit")
+        XCTAssertEqual(band.durMs, PK_T_FADE)
+        let a = anchors(hand: m.hand.count)
+        let before = m.player.effects(band.startMs - 1, anchors: a)
+        XCTAssertEqual(before["band"]?.band, 0, "hidden under the foot until it starts")
+        let mid = m.player.effects(band.startMs + band.durMs / 2, anchors: a)
+        let up = try XCTUnwrap(mid["band"]?.band, "the band is part way up")
+        XCTAssertGreaterThan(up, 0.5, "ease-out: past halfway at half time")
+        XCTAssertLessThan(up, 1)
+        XCTAssertNil(m.player.effects(band.startMs + band.durMs + 1, anchors: a)["band"]?.band,
+                     "in place once it has run")
+    }
+
+    // MUTATE: TableModel.join plays nothing for a join that does not start
+    // the game -> "a join fades its row up".
+    // MUTATE: BeatPlayer.effects drops the leave's `roster.gone` -> "the row
+    // that left fades where it stood".
+    // MUTATE: BeatPlayer.effects lets the rows close up before the HOLD
+    // (`open` 0 while pending) -> "the rows below stand one lower".
+    func testTheLobbyRowsFadeInAndOutOnTheKernelsBeats() throws {
+        Phones.reset()
+        Phones.be(0)
+        XCTAssertTrue(Pk.newGame(dm: false, seed: Phones.seed(9)))
+        let invite = try XCTUnwrap(Pk.text)
+        Phones.be(1)
+        XCTAssertEqual(Pk.read(invite), 0)
+        let m = TableModel()
+        m.join()
+        let join = try XCTUnwrap(m.player.plan, "a join fades its row up")
+        let fade = try XCTUnwrap(join.beat.first)
+        XCTAssertEqual(fade.kind, PK_BK_FADE)
+        XCTAssertEqual(fade.to, PK_ANC_ROW)
+        XCTAssertEqual(fade.toI, 1, "Bo's row")
+        XCTAssertEqual(m.player.effects(0, anchors: [:])["roster.1"]?.opacity, 0, "unseen before its fade")
+        m.leave()
+        let leave = try XCTUnwrap(m.player.plan, "a leave plays")
+        let out = try XCTUnwrap(leave.beat.first { $0.kind == PK_BK_FADE })
+        let hold = try XCTUnwrap(leave.beat.first { $0.kind == PK_BK_HOLD })
+        let early = m.player.effects(0, anchors: [:])
+        XCTAssertEqual(early["roster.gone"]?.gone, 1, "the row that left fades where it stood")
+        XCTAssertEqual(early["roster.gone"]?.opacity, 1)
+        XCTAssertEqual(early["roster.1"]?.close, 1, "the rows below stand one lower")
+        let mid = m.player.effects(out.startMs + out.durMs / 2, anchors: [:])
+        let o = try XCTUnwrap(mid["roster.gone"]?.opacity)
+        XCTAssertGreaterThan(o, 0)
+        XCTAssertLessThan(o, 1)
+        let closing = m.player.effects(hold.startMs + hold.durMs / 2, anchors: [:])
+        let c = try XCTUnwrap(closing["roster.1"]?.close)
+        XCTAssertLessThan(c, 1, "then close up")
+        XCTAssertEqual(m.player.effects(hold.startMs + hold.durMs, anchors: [:])["roster.1"]?.close, 0)
+        XCTAssertFalse(Pk.words(PK_API_W_LOBBY_GONE, 1).isEmpty, "the gone row's words are the kernel's")
+    }
+
     // MUTATE: pk_lay_picker's east reach 96 becomes 90 (C) -> "triangles east".
     func testThePickerTilesAreTheKernels() {
         let c = CGPoint(x: 200, y: 300)

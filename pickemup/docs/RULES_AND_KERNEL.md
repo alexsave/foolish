@@ -532,6 +532,7 @@ Alternative: add all three to `CFLAGS` now.
 Why: with Apple clang every source and test is clean under all three (the one `-Wsign-conversion` hit, in a test, is fixed), but the CI lane is Linux gcc, whose `-Wconversion` warns on narrowing that clang does not (compound assignment to `uint8_t`, for one), and a flag no gcc has compiled under would turn that lane red on the next push.
 The review that adds them is one Linux gcc run of `make run CFLAGS="-O2 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror -std=c11"`.
 Recommendation confidence: medium.
+SUPERSEDED by D58: that gcc run was made, and the flags are in the build.
 
 ### Decisions O9 forced (D54 onwards)
 
@@ -562,6 +563,17 @@ An arrangement whose receipts match nothing in the hand matches nothing, so a re
 Alternative: a separate store key for the arrangements.
 Why: the host already persists these bytes whenever they are dirty, unread (I24), so the arrangement rides the one path that exists; no JSON, no second store.
 Recommendation confidence: medium.
+
+### Decisions of the open-items pass (D58 onwards)
+
+Taken while closing what the earlier workers left open (`docs/OPEN_ITEMS.md`, 2026-09-27).
+
+**DECISION D58: every build takes `-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror -std=c11`, one `WARN` list in the Makefile for `run`, `asan`, `wasm`, `cross` and the bridge (supersedes D53).**
+The run D53 asked for was made on 2026-09-27 under gcc 13.5 (the `gcc:13` image, Linux, as the CI lane compiles) and under Apple clang 21 and Homebrew clang 22 for wasm32.
+gcc named four things clang does not: three narrowing conversions in `tests/pk_beats_test.c` and an unused harness variable in `tests/pk_beats_dump.c` (`-Wunused-variable`, not one of the three); the kernel's own sources were clean.
+Alternative: keep the three as a review-time check.
+Why: a check that is not in the build is not run; with gcc proven clean the reason D53 gave for waiting is gone.
+Recommendation confidence: high.
 
 ---
 
@@ -1373,6 +1385,8 @@ All run under `make -C pickemup/c run` and `make asan`, with no Mac.
    Mutation: include the top in the reshuffle (red).
 7. **Cross-engine.** The native build and the wasm replay build (if one exists by then) agree on 100 golden games' final states.
    Mutation: none needed beyond any single change to 7.3.2.
+   DONE as `make cross` (`tests/pk_cross.c`, `tests/pk_cross.mjs`): 100 of the fuzz harness's deals, played by the random tests' bot (`tests/pk_bot.h`, freestanding), natively and in a wasm32 build that node runs; one value a game, the final state's `pk_hash` folded with every event of the game's plan, compared by `cmp`.
+   It needs a wasm clang with wasm-ld and node, so it is not in `run` or the CI lane (D49); its mutation rows are in `tests/MUTATIONS.md`.
 
 ### 7.4 Wire round trip and size
 

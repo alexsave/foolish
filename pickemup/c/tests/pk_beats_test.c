@@ -96,6 +96,8 @@ static void t_vocabulary(void)
     CHECK(PK_T_POP == 260 && PK_T_SHAKE == 60 && PK_T_SPRING == 320, "pop, shake, spring");
     CHECK(PK_T_GATHER == 360 && PK_T_RIFFLE == 140 && PK_T_FATTEN == 240, "the gag");
     CHECK(PK_T_GAME_OVER == 1000 && PK_T_LEAD_LIVE == 16 && PK_T_LEAD_OPEN == 100, "holds");
+    /* A15: the Send reminder's fuse, the sister product's (uttt UTM_SEND_HINT_MS) */
+    CHECK(PK_T_SEND_HINT == 3000, "the Send reminder waits three seconds");
     /* the curves: ends pinned, the spring and the stamp overshoot, the flight never does */
     for (int e = 0; e < PK_EASE_COUNT; e++) {
         CHECK(pk_ease(e, 0) == 0 && pk_ease(e, 1) == 1, "curve %d ends", e);
@@ -103,7 +105,7 @@ static void t_vocabulary(void)
     float mx_spring = 0, mx_stamp = 0, prev = 0;
     int mono = 1;
     for (int i = 1; i <= 100; i++) {
-        float x = i / 100.0f;
+        float x = (float)i / 100.0f;
         float f = pk_ease(PK_EASE_FLIGHT, x);
         if (f < prev) mono = 0;
         prev = f;
@@ -452,6 +454,38 @@ static void t_play_penalty(void)
     }
 }
 
+/* DEMO.wild, my own wild (ANIMATION_DECISIONS A12): the card lands, then its
+ * chosen suit's band slides up from under its foot, `band.animate(
+ * translateY(100%) -> translateY(0), T.fade, E.out)`, while the halo turns. */
+static void t_play_wild(void)
+{
+    TEST("play a wild: the band slides up");
+    NE = 0;
+    ev(PK_EV_BUBBLE_BEGIN, A, 3);
+    PkEvent *p = ev(PK_EV_PLAY, A, 3); p->card = 96; p->suit = PK_NO_SUIT; p->i = 2;
+    PkEvent *w = ev(PK_EV_WILD_SUIT, A, 3); w->card = 96; w->suit = 2;
+    build(PK_BEATS_STAGE, 3, 4, 0, 0, &B1);
+    const PkBeat *band = nth(&B1, PK_BK_BAND, 0, 0);
+    CHECK(st(band) == 516 && du(band) == 220 && band->suit == 2 && band->to == PK_ANC_STACK,
+          "the band as the wild lands, T.fade long, in the chosen suit");
+    CHECK(band && band->ease == PK_EASE_EASE_OUT, "E.out");
+    PkBeatSample s;
+    pk_beat_sample(band, 515, 0, &s);
+    CHECK(s.state == PK_BS_PENDING && s.apply && s.p == 0, "hidden under the card's edge before it starts");
+    pk_beat_sample(band, 516 + 110, 0, &s);
+    CHECK(s.state == PK_BS_ACTIVE && s.p > .5f && s.p < 1, "ease-out: past halfway at half time (%f)", (double)s.p);
+    CHECK(s.opacity == 1, "it slides, it does not fade");
+    pk_beat_sample(band, 736, 0, &s);
+    CHECK(s.state == PK_BS_DONE && s.p == 1, "in place at the end");
+    /* the arrival of someone else's wild has its band already on (grid) */
+    NE = 0;
+    ev(PK_EV_BUBBLE_BEGIN, A, 0);
+    p = ev(PK_EV_PLAY, A, 0); p->card = 96; p->suit = PK_NO_SUIT; p->i = 2;
+    w = ev(PK_EV_WILD_SUIT, A, 0); w->card = 96; w->suit = 2;
+    build(PK_BEATS_ARRIVAL, 3, 4, 0, 0, &B1);
+    CHECK(count(&B1, PK_BK_BAND, 0) == 0, "a seat's wild arrives with its band on");
+}
+
 /* Grid "Pass": the passer's fan shrugs .96 and back, 200ms; mine dims to .5. */
 static void t_pass(void)
 {
@@ -758,7 +792,7 @@ static void t_real_games(int games)
         seed_wide(seed, 90000u + (uint32_t)k);
         int n = 2 + k % 7;
         pk__new(&g, seed, n, 0, 0);
-        RS = 0x1234567ull + (uint64_t)k;
+        RS = 0x1234567ull + (uint64_t)(unsigned)k;
         /* the sender's view of the draft as it grows: A at each action */
         int prev_n = 0, a_counts[PK_BK_COUNT] = { 0 };
         for (int step = 0; step < 3000 && !(g.over && !g.b_open); step++) {
@@ -852,7 +886,7 @@ static void t_budget(void)
             pk__new(&g, seed, n, 0, 0);
             int m = pk_plan(&g, viewer, -1, 0, EV, EV_CAP);
             pk_beats_build(EV, m, 0, viewer, n, PK_BEATS_OPEN, 0, 0, 0, &B1);
-            uint32_t from = st(nth(&B1, PK_BK_RIFFLE, 0, 0)), to = 0;
+            uint32_t from = (uint32_t)st(nth(&B1, PK_BK_RIFFLE, 0, 0)), to = 0;
             for (int i = 0; i < B1.n; i++)
                 if (B1.beat[i].ev_kind == PK_EV_DEAL && B1.beat[i].start_ms + B1.beat[i].dur_ms > to)
                     to = B1.beat[i].start_ms + B1.beat[i].dur_ms;
@@ -873,6 +907,7 @@ int main(int argc, char **argv)
     t_play_skip();
     t_play_reverse();
     t_play_penalty();
+    t_play_wild();
     t_pass();
     t_say_and_catch();
     t_win_reveal();

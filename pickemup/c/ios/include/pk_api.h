@@ -159,7 +159,10 @@ int  pk_api_string(int key, char *out, int cap);       /* one table entry by PK_
 #define PK_API_W_INDEX        24   /* arg: card id. Its corner index: "7", "+2", "+4";  */
                                    /* "" for Skip, Reverse and a plain wild (a glyph)    */
 #define PK_API_W_STRIP_DRAWS  25   /* arg: a count. "×" and it: my staged draws     */
-#define PK_API_W_COUNT        26
+/* The row a leave took, as it read in the lobby before (arg: the LOBBY_LEAVE
+ * event's seat): what the host fades out where it stood (A13). */
+#define PK_API_W_LOBBY_GONE   26
+#define PK_API_W_COUNT        27
 int  pk_api_words(int what, int arg, char *out, int cap);
 
 /* THE BURIED START CARDS STILL UNDER THE DECK (D14, U16): the non-numbers
@@ -273,6 +276,12 @@ const void *pk_api_beats_conflict(int card, int pos, int from, int to);
 /* Remember the draft as it is now, for the next pk_api_beats_stage (after a
  * change that moves nothing: an un-say, a cancel). */
 void        pk_api_beats_mark(void);
+/* THE LOBBY'S ROWS (grid "Join" and "Leave", ANIMATION_DECISIONS A13): the
+ * roster change my own pk_api_join or pk_api_leave just made, from the lobby
+ * before it, played live (the 16ms lead). A lobby bubble adopted over the
+ * lobby of the same game on screen lays its change out through pk_api_adopt.
+ * NULL when no lobby action of mine is remembered, or it moved no row. */
+const void *pk_api_beats_lobby(void);
 /* Which build is current (PkBeats.serial of the newest). */
 uint32_t    pk_api_beats_serial(void);
 /* The current plan's board at `now_ms` (PkBeatFrame), and one beat of it
@@ -312,6 +321,50 @@ const void *pk_api_beats_now(void);
  * so a refused new call keeps the old one. */
 enum { PK_API_FAN_REFUSED = 0, PK_API_FAN_CALLED, PK_API_FAN_UNCALLED, PK_API_FAN_MOVED };
 int  pk_api_tap_fan(int seat);
+
+/* ---- the drawer after a touch, and the stamps (IOS_DECISIONS I37) ---------------
+ *
+ * WHETHER A STAGE ASKS FOR THE COMPACT DRAWER once the move has rested
+ * (settle_ms): the touch that staged it, against my draft as it now stands.
+ * A play or a pass ends my turn and collapses; a Last card! collapses when it
+ * is the whole bubble (no draw, play or pass of mine and no call in the
+ * draft); a draw, a call, an undo, an un-say or an un-call does not, because
+ * the player is still composing. 1 collapse, 0 not (and 0 with no draft of
+ * mine open). */
+enum { PK_API_TOUCH_DRAW = 1, PK_API_TOUCH_PLAY, PK_API_TOUCH_PASS, PK_API_TOUCH_SAY,
+       PK_API_TOUCH_UNDO, PK_API_TOUCH_UNSAY, PK_API_TOUCH_CALL, PK_API_TOUCH_UNCALL };
+int  pk_api_collapses(int touch);
+
+/* THE STAMP UNDER SEAT `seat`'s BADGE (U12, I17), one at a time, in this
+ * order: once the game is over, OUT for the winner and nothing for anyone
+ * else; else the newest sealed bubble's verdict, Caught you! on the caught and
+ * Wrong call on the caller; else LAST while the seat has said it (the public
+ * `said` bit, set only while it holds its one card). PK_STAMP_* of pk_beats.h,
+ * or 0 for none, and 0 for a seat off the table. */
+int  pk_api_stamp(int seat);
+
+/* ---- the auto-collapse on the render server (uttt's CollapseSlide, A14) ------------
+ *
+ * The finding foolish and uttt share (docs/COLLAPSE_MSE.md there): the host
+ * moves the extension's view at the composite rate while the extension
+ * renders at 60, so a layout that follows the drawer per frame is a render
+ * behind on a third of the frames. Once the auto-collapse flips, the sheet is
+ * laid out at the COMPACT height and pushed down by the drawer's remaining
+ * travel on the render server, so its bottom edge never moves. The push is the
+ * host's drawer spring (critically damped, PK_LAY_DRAWER_RESPONSE_MS) from the
+ * whole travel to nothing over PK_LAY_COLLAPSE_MS, in PK_LAY_COLLAPSE_STEPS
+ * linear keyframes; a drop of more than PK_LAY_COLLAPSE_FLIP points while an
+ * auto-collapse is armed is the flip. uttt's numbers (uttt_anim.h), so the two
+ * games collapse alike; the Swift side is compiled in behind the rig's
+ * `dev.slide` file until Messages has judged it. */
+#define PK_LAY_DRAWER_RESPONSE_MS 338
+#define PK_LAY_COLLAPSE_MS        600
+#define PK_LAY_COLLAPSE_STEPS     120
+#define PK_LAY_COLLAPSE_FLIP      60.0f
+/* How far the compact sheet is pushed down `t_ms` into a slide of `travel`
+ * points: `travel` at 0, falling on the host's curve, exactly 0 from
+ * PK_LAY_COLLAPSE_MS on. */
+float pk_lay_collapse_push(float travel, int t_ms);
 
 /* ---- the board's zones (pk_lay.c, IOS_DECISIONS I31) -----------------------------
  *

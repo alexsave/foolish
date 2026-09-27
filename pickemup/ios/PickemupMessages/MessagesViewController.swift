@@ -29,9 +29,12 @@
 //     one sent, it is the move that happened).
 //   - Messages' X on the staged bubble rebuilds the draft to its floor (D9):
 //     drawn cards stay.
-//   - No auto-collapse slide on render-server layers (uttt's CollapseSlide):
-//     the board relays out as the drawer moves; see IOS_DECISIONS.md I20 and
-//     ANIMATION_DECISIONS.md A9.
+//   - The auto-collapse slide on render-server layers (the shared
+//     CollapseSlide, on the kernel's push) and the shared Send reminder are
+//     compiled in, and a Debug build switches each on with a dev file
+//     (`dev.slide`, `dev.sendhint`) until Messages has judged them
+//     (ANIMATION_DECISIONS.md A14, A15). Without them the board relays out
+//     as the drawer moves (IOS_DECISIONS.md I20).
 
 import Messages
 import PickemupKit
@@ -57,6 +60,19 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// A drawer opened from the + menu is bound to no message; its first send
     /// closes it so the next tap binds it (uttt, foolish).
     private var unbound = true
+
+    /// THE AUTO-COLLAPSE ON THE RENDER SERVER (A14): armed right before this
+    /// extension asks for compact, heard at every new height, only while the
+    /// rig's `dev.slide` file is there.
+    private lazy var slide: CollapseSlide? = {
+#if DEBUG
+        PickemupDev.slide ? CollapseSlide.pickemup() : nil
+#else
+        nil
+#endif
+    }()
+    /// The height the sheet was last laid out at, for the slide's flip.
+    private var laidOutHeight: CGFloat = 0
 
     // MARK: the view
 
@@ -105,6 +121,12 @@ final class MessagesViewController: MSMessagesAppViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         if drawerUp { hosting?.view.isHidden = false }
+        let h = view.bounds.height
+        if let slide, laidOutHeight > 0, h != laidOutHeight {
+            slide.host = hosting?.view
+            _ = slide.heard(h, after: laidOutHeight)
+        }
+        laidOutHeight = h
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -138,6 +160,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         super.willBecomeActive(with: conversation)
         arrived = nil
         unbound = conversation.selectedMessage == nil
+        host.hintVisible = presentationStyle == .compact
         present(conversation)
         let activation = Date()
         becameActiveAt = activation
@@ -160,6 +183,7 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func willResignActive(with conversation: MSConversation) {
         super.willResignActive(with: conversation)
+        slide?.end()
         PickemupSeats.flush()
         conversationActive = false
     }
@@ -186,6 +210,7 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func didStartSending(_ message: MSMessage, conversation: MSConversation) {
         super.didStartSending(message, conversation: conversation)
+        host.hintStaged = false
         voidPendingStage()
         guard let text = message.url?.absoluteString else { return }
         // THE SENT BYTES ARE THE AUTHORITY. My open draft is sealed only when
@@ -208,6 +233,7 @@ final class MessagesViewController: MSMessagesAppViewController {
     override func didCancelSending(_ message: MSMessage, conversation: MSConversation) {
         super.didCancelSending(message, conversation: conversation)
         guard message.url == draftURL, let text = staged else { return }   // a replaced draft
+        host.hintStaged = false
         draftURL = nil
         staged = nil
         voidPendingStage()
@@ -224,6 +250,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         let waiters = transitionWaiters
         transitionWaiters.removeAll()
         for seq in waiters.keys.sorted() { waiters[seq]?.resume() }
+        host.hintVisible = presentationStyle == .compact    // the drawer growing hides it (A15)
         if presentationStyle == .compact { act(loop.compact()) }
     }
 
@@ -362,8 +389,10 @@ final class MessagesViewController: MSMessagesAppViewController {
             try? await Task.sleep(nanoseconds: settle)
             guard let self, self.stageGeneration == generation else { return }
             if self.presentationStyle != .compact {
+                self.slide?.arm()
                 self.requestPresentationStyle(.compact)
                 await self.awaitTransitionSettled()
+                self.slide?.disarm()
             }
             guard self.stageGeneration == generation else { return }
             self.insert(message, generation: generation, in: conversation)
@@ -387,7 +416,12 @@ final class MessagesViewController: MSMessagesAppViewController {
         guard let s = stageInsert, s.generation == stageGeneration else { return }
         let t = loop.tryNumber
         switch action {
-        case .none, .park, .landed, .door:
+        case .landed:
+            // in the field: the Send reminder's fuse starts (A15)
+            host.hintStaged = true
+            host.hintRestart += 1
+            return
+        case .none, .park, .door:
             // .door: the shared send door is a later layer's; the bubble is
             // re-offered on the next touch that stages.
             return

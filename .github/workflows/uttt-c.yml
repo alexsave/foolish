@@ -37,3 +37,7 @@ jobs:
       # A separate build: the sanitizers change codegen.
       - name: the same under ASan + UBSan
         run: make -C c asan
+      # The iOS bridge (uttt_api.c) with the host compiler: every entry point
+      # the Swift side calls, driven phone to phone, no Mac (REUSE_AUDIT S3).
+      - name: the iOS bridge smoke
+        run: make -C c ios-smoke

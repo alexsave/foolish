@@ -604,6 +604,7 @@ static int play_game(const uint8_t seed[32])
     for (int k = 0; k < 3; k++) {
         if (!do_draw()) return 0;
         OK(!table_()->can_send, "mid-turn: the draft cannot be sent");
+        OK(pk_api_collapses(PK_API_TOUCH_DRAW) == 0, "a draw does not collapse the drawer (I37)");
         OK(pk_api_undo() == 0, "a draw does not come back (D8)");
     }
     v = vme();
@@ -625,6 +626,8 @@ static int play_game(const uint8_t seed[32])
     }
     STEP("S4 three draws then a play");
     if (!do_play(p, 4)) return 0;
+    OK(pk_api_collapses(PK_API_TOUCH_PLAY) == 1, "the play ends the turn: the drawer collapses once it rests (I37)");
+    OK(pk_api_collapses(PK_API_TOUCH_SAY) == 0, "the bubble is not a lone Last card!");
     {
         const PkApiEvents *d = (const PkApiEvents *)pk_api_plan_draft(PK_API_ME);
         int ok = d && d->n == 6 && d->ev[0].kind == PK_EV_BUBBLE_BEGIN && d->ev[4].kind == PK_EV_PLAY;
@@ -677,6 +680,10 @@ static int play_game(const uint8_t seed[32])
             STEP("S9 Last card! in a later bubble");
             OK(v->my_exposed && v->turn != sender, "exposed, out of turn, it may be said now");
             OK(pk_api_say_it() == 1, "Last card! is staged");
+            OK(pk_api_collapses(PK_API_TOUCH_SAY) == 1, "a lone Last card! collapses the drawer (I37)");
+            OK((vme()->can_call & (1 << (sender ^ 1))) && pk_api_catch(sender ^ 1) == 1
+               && pk_api_collapses(PK_API_TOUCH_SAY) == 0 && pk_api_uncall() == 1
+               && pk_api_collapses(PK_API_TOUCH_SAY) == 1, "beside a call it is not the whole bubble; un-called, it is");
             X.said = 1;
             OK(pk_api_unsay() == 1 && !vme()->draft_said && pk_api_say_it() == 1 && vme()->draft_said,
                "unsay and say again");
@@ -703,6 +710,8 @@ static int play_game(const uint8_t seed[32])
             v = vme();
             OK((v->said & (1 << sender)) && !(v->can_call & (1 << sender)),
                "the LAST stamp shows and the fan cannot be caught (D5c)");
+            OK(pk_api_stamp(sender) == PK_STAMP_LAST && pk_api_stamp(sender ^ 1) == 0,
+               "the kernel's stamp: LAST under the sayer (I37)");
             OK(pk_api_words(PK_API_W_SUBLINE, 0, line, sizeof line) >= 0, "a subline");
             {
                 /* ---- a stale bubble tapped after a newer one ---- */
@@ -805,6 +814,7 @@ static int play_game(const uint8_t seed[32])
                 STEP("S8c Caught you! staged");
                 OK(v->can_call & (1 << x), "the fan can be tapped");
                 OK(pk_api_catch(x) == 1, "the fan is tapped");
+                OK(pk_api_collapses(PK_API_TOUCH_CALL) == 0, "a call alone does not collapse the drawer (I37)");
                 const PkView *w = vme();
                 const PkApiEvents *d = (const PkApiEvents *)pk_api_plan_draft(PK_API_ME);
                 OK(w->draft_open && w->draft_call == x && !(w->can_call & (1 << x)) && table_()->can_send,
@@ -827,6 +837,8 @@ static int play_game(const uint8_t seed[32])
                 if (!send_and_receive()) return 0;
                 STEP("S8d Caught you! after Send");
                 OK(vme()->my_n == 3 && cnt[x] == 3, "the caught player drew two (1.8): %d", vme()->my_n);
+                OK(pk_api_stamp(x) == PK_STAMP_CAUGHT && pk_api_stamp(x ^ 1) == 0,
+                   "Caught you! under the caught, nothing under the catcher (I37)");
                 phase = PH_EXPOSE2;
                 continue;
             }
@@ -870,6 +882,8 @@ won:
         v = vme();
         const PkApiTable *tt = table_();
         OK(tt->phase == PK_PHASE_FINISHED && v->over == PK_OVER_OUT && v->winner == x, "the game is over, the shedder won");
+        OK(pk_api_stamp(x) == PK_STAMP_OUT && pk_api_stamp(x ^ 1) == 0 && pk_api_stamp(2) == 0 && pk_api_stamp(-1) == 0,
+           "OUT under the winner and nothing else once it is over (I37)");
         int ok = 1;
         for (int s = 0; s < 2; s++) ok &= v->reveal[s].n == cnt[s];
         OK(ok && v->reveal[x].n == 0 && v->reveal[x ^ 1].n > 0, "every hand is revealed: %d and %d",

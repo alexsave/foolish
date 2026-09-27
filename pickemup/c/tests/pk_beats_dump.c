@@ -90,6 +90,7 @@ static void print_take(const char *title)
 
 int main(void)
 {
+    (void)g_test;          /* the harness's test name: a dump names no test (gcc's -Wunused-variable) */
     static PkGame g;
     /* take 1: a 3-player bubble with 3+ draws, a reshuffle and a play */
     int found = 0;

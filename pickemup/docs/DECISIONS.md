@@ -8,7 +8,7 @@ Each full entry names the alternative it rejected, the reason for the choice and
 A SUPERSEDED row names the decision that overrode it, and the ones the workers themselves flagged as ones the owner may want to veto are marked **VETO?** in the last column and listed just below.
 If this index and a full entry ever disagree, the full entry is the truth; fix this file.
 
-Counts: 60 rules decisions (D1 to D57, plus D5b, D5c and D5d, of which D24 is superseded), 25 visual (U1 to U25), 39 iOS (I1 to I39, of which I10 and I16 are superseded), 17 animation (A1 to A17) and 9 orchestration (O1 to O9), 150 in all.
+Counts: 61 rules decisions (D1 to D58, plus D5b, D5c and D5d, of which D24 and D53 are superseded), 25 visual (U1 to U25), 41 iOS (I1 to I41, of which I10 and I16 are superseded), 20 animation (A1 to A20) and 9 orchestration (O1 to O9), 156 in all.
 
 ## Flagged for a possible veto
 
@@ -81,11 +81,12 @@ Counts: 60 rules decisions (D1 to D57, plus D5b, D5c and D5d, of which D24 is su
 | D50 | a play whose penalty reshuffled the deck stays undoable | moving the floor at every penalty draw | RULES_AND_KERNEL.md | |
 | D51 | a seat record with no row means "not seated" and overrules the other witnesses | forgetting the record on a leave | RULES_AND_KERNEL.md | |
 | D52 | a started header's `lobby_rev` must be one its roster could have started from | leaving it unchecked once started | RULES_AND_KERNEL.md | |
-| D53 | the build flags stay `-Wall -Wextra -Werror`, with the stricter three a review-time check | adding all three to `CFLAGS` now | RULES_AND_KERNEL.md | |
+| D53 | SUPERSEDED by D58: the build flags stay `-Wall -Wextra -Werror`, with the stricter three a review-time check | adding all three to `CFLAGS` now | RULES_AND_KERNEL.md | |
 | D54 | the phone's arrangement is `my_slot`, a permutation over acquisition order; the wire is unchanged | making `my_hand` the arranged order | RULES_AND_KERNEL.md | |
 | D55 | an arrangement entry is (card, receipt), so arrivals go right and an undo finds its slot | keying by card id, or pruning cards that left | RULES_AND_KERNEL.md | |
 | D56 | the arrangement is folded in before each of my actions and wherever the hand is read | also on every adopt | RULES_AND_KERNEL.md | |
 | D57 | the arrangements ride the seat records' bytes; a bad block reads as acquisition order | a separate store key | RULES_AND_KERNEL.md | |
+| D58 | every build takes `-Wpedantic -Wshadow -Wconversion` too, proven clean under Linux gcc 13 | keeping them a review-time check | RULES_AND_KERNEL.md | |
 
 ## Visual (U), full entries in `UI_DECISIONS.md`
 
@@ -140,8 +141,8 @@ Counts: 60 rules decisions (D1 to D57, plus D5b, D5c and D5d, of which D24 is su
 | I17 | catch verdict stamps show for the newest bubble only | until that seat's next move | IOS_DECISIONS.md | |
 | I18 | the end reveal is every hand face up on the ring and a plank with the results and Again | (none named) | IOS_DECISIONS.md | |
 | I19 | the picker tile positions were Swift numbers, since moved to `pk_lay_picker` (A9) | a `pk_lay_picker` entry point at the time | IOS_DECISIONS.md | |
-| I20 | no render-server collapse ride; the board relays out as the drawer moves | porting uttt's `CollapseSlide` | IOS_DECISIONS.md | |
-| I21 | the shared Send reminder is not compiled yet | compiling it with a new caption key | IOS_DECISIONS.md | |
+| I20 | no render-server collapse ride unless `dev.slide` (A14, A20); the board relays out as the drawer moves | porting uttt's `CollapseSlide` | IOS_DECISIONS.md | |
+| I21 | the shared Send reminder shows only under `dev.sendhint` (A15, A20); the status line says the bubble is staged | compiling it with a new caption key | IOS_DECISIONS.md | |
 | I22 | a layout hash mismatch shows the unreadable screen and reads nothing | (none named) | IOS_DECISIONS.md | |
 | I23 | the `cards.pickemup` bundle ids and a Debug-only App Group set per config | (none named) | IOS_DECISIONS.md | |
 | I24 | the nickname and seat records live in the extension's own defaults | foolish's App Group nickname | IOS_DECISIONS.md | |
@@ -157,9 +158,11 @@ Counts: 60 rules decisions (D1 to D57, plus D5b, D5c and D5d, of which D24 is su
 | I34 | a layout mismatch is two vectors with two owners, `Pk.snap` and `PickemupHost.readable` | (none named) | IOS_DECISIONS.md | |
 | I35 | adopting a bubble that is not my staged draft voids any stage still resting before its insert | (none named) | IOS_DECISIONS.md | |
 | I36 | the deck's drag is owned by one recognizer in this process; the drawer's swipe stays a phone proof | (none named) | IOS_DECISIONS.md | |
-| I37 | the collapse flag, the stamp order and uttt's readiness fallback stay Swift on purpose | (none named) | IOS_DECISIONS.md | |
+| I37 | uttt's readiness fallback stays Swift on purpose; the collapse flag and the stamp order were LIFTED by I40 | (none named) | IOS_DECISIONS.md | |
 | I38 | foolish's drag-to-reorder in the hand row; the row beats the pile on release; none while it scrolls | a long press to lift out of the scroll | IOS_DECISIONS.md | |
 | I39 | Swift names a card by its acquisition position; the slot is geometry, mapped only by the kernel | working in slots through `pk_api_play_slot` | IOS_DECISIONS.md | |
+| I40 | whether a stage collapses the drawer, and which stamp a badge shows, are kernel entry points | keeping both in Swift (I37) | IOS_DECISIONS.md | |
+| I41 | the Send reminder's state is the controller's: staged when the bubble lands, shown while compact | stage state in `TableModel` | IOS_DECISIONS.md | |
 
 ## Animation (A), full entries in `ANIMATION_DECISIONS.md`
 
@@ -176,12 +179,15 @@ Counts: 60 rules decisions (D1 to D57, plus D5b, D5c and D5d, of which D24 is su
 | A9 | the suit tiles pop where they stand, 30ms apart, as the demo does | popping out of the card to the compass points | ANIMATION_DECISIONS.md | VETO? |
 | A10 | a picked suit's ring and the tiles' collapse lead the wild's stage plan | (none named) | ANIMATION_DECISIONS.md | |
 | A11 | motion with no anchor on this phone keeps its time and draws nothing | (none named) | ANIMATION_DECISIONS.md | |
-| A12 | the wild's band snaps with the card for now | a band overlay the beat slides | ANIMATION_DECISIONS.md | |
-| A13 | the lobby's join and leave beats are laid out but not played | (deferred) | ANIMATION_DECISIONS.md | |
-| A14 | uttt's `CollapseSlide` is still not compiled; the collapse waits the kernel's `settle_ms` | (deferred until Messages can run) | ANIMATION_DECISIONS.md | |
-| A15 | the shared Send reminder is still not compiled | (deferred until Messages can run) | ANIMATION_DECISIONS.md | |
+| A12 | the wild's band slides up on the kernel's BAND beat (closed by A18) | snapping with the card | ANIMATION_DECISIONS.md | |
+| A13 | the lobby's join and leave rows play the kernel's beats (closed by A19) | laying them out unplayed | ANIMATION_DECISIONS.md | |
+| A14 | uttt's `CollapseSlide` is compiled on the kernel's curve, on only under `dev.slide` | (the judgement is owed in Messages) | ANIMATION_DECISIONS.md | |
+| A15 | the shared Send reminder is compiled on the kernel's word and fuse, on only under `dev.sendhint` | (the judgement is owed in Messages) | ANIMATION_DECISIONS.md | |
 | A16 | U21's budget is held by the synthetic turn and the eight-player p99 | (none named) | ANIMATION_DECISIONS.md | |
 | A17 | the starter's own Start plays the deal at once, as channel A of bubble 0 | waiting for Send | ANIMATION_DECISIONS.md | |
+| A18 | the BAND beat is a slide applied before its start, not a fade | the sampler's fade | ANIMATION_DECISIONS.md | |
+| A19 | the bridge remembers the lobby before a roster change; a leave's row fades where it stood and the rows below close up | the host passing the old link | ANIMATION_DECISIONS.md | |
+| A20 | the pieces only Messages can judge are compiled in and switched on by a Debug dev file | compiling them only once judged | ANIMATION_DECISIONS.md | |
 
 ## Orchestration (O), full entries in `ORCHESTRATION.md`
 
@@ -213,17 +219,20 @@ Open, and not pickemup's to fix in this pass:
 
 - `werewolf/docs/UI.html` fails `shared/tools/check_ui_doc.py` ("a `<template>` is never closed"), a literal template tag inside a script comment; still failing on 2026-09-27.
 - `foolish/e2e/validation/ci_toolchain_validation.test.ts` reads every `make ... wasm` line in every workflow as a build of foolish's test module, so no other product's lane can build its own wasm (D49).
-- `.github/workflows/uttt-c.yml` runs uttt's `run` and `asan` but not its `ios-smoke`, which REUSE_AUDIT S3 planned.
-- The repository `.gitignore` (line 45, on main before this branch) holds an em dash and names the agent tool in a comment.
 - `REUSE_AUDIT.md` section 8: `rig.sh` restores entitlements with `git checkout` (D1), the drawer-collapse numbers exist three times (D2), flight timing is typed twice (D3), foolish compiles the shared insert gating but never calls it (D4), uttt's iOS README is stale (D6), and two XCTest counts disagree (D7).
 - `pickemup/c/tests/pk_check.h`'s `seed_of` deals only 256 different games; the fuzz and wire tests use `seed_wide`, and `seed_of` stays for the committed 7.3 goldens.
 
 Found and fixed on this branch:
 
+- `.github/workflows/uttt-c.yml` could not go green on Linux gcc: under `-std=c11` glibc hides `M_PI`, and `uttt/c/src/uttt_pen.c` used it, so `make -C c run` stopped at the first compile (seen in the `gcc:13` image on 2026-09-27).
+  Fixed in the commit "uttt pen: a file-local pi, so the Linux lane compiles" with a file-local `UTTT_PI`, not `_DEFAULT_SOURCE`, so `-std=c11` stays strict; the constant is the same double, so `uttt_pen.o` is byte-identical and `rough-diff` and the rendered board are unchanged.
+- `.github/workflows/uttt-c.yml` ran uttt's `run` and `asan` but not its `ios-smoke`, which REUSE_AUDIT S3 planned; it runs it now (the open-items pass).
+- The repository `.gitignore` held an em dash and named the agent tool in a comment; it is plain words now.
+- `tests/pk_beats_dump.c` did not build under gcc (`-Wunused-variable` on the harness's test name), so `make beats-dump` would fail on Linux; fixed with D58.
 - foolish's `replay_b32_encode` shifted a signed accumulator into overflow under UBSan, and `TableWireTests.swift` broke the architecture lint under Xcode 27 (O8, commits `b5c35900` and `b78c5788`).
 - `.github/workflows/uttt-web.yml` did not rebuild uttt.live when `shared/c/mixrad.*` changed (`d0ca1c99`).
 - `shared/tools/check_ui_doc.py` defaulted to this product's UI.html, which named a product under `shared/` (S0).
 - U20's "between 3.2s and 4.2s" did not hold at two or three players; the sentence now says "under 4.2s" (ANIMATION_DECISIONS, the FOUND under A16).
-- UI.html still said a draw re-stages the bubble, which I4 and O7 overrule; its draw and undo rows and two notes now say a draw stages nothing (the drawing in the "turn" view still shows a staged field after two draws).
+- UI.html still said a draw re-stages the bubble, which I4 and O7 overrule; its draw and undo rows and two notes now say a draw stages nothing, and the "turn" view's first frame (two draws in) shows an empty compose field (the open-items pass).
 - The kernel README's size table and fuzz numbers, and RULES_AND_KERNEL 4.5's measured paragraph, were from an earlier build; both now carry the 2026-09-27 `make run` numbers.
 - `shared/README.md` did not list `c/mixrad` or `c/wasm`, or SHED against the shared code it builds.

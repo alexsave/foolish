@@ -127,6 +127,7 @@
     X(BTN_RULES,          14, 0)                                                 \
     X(BTN_CANCEL,         14, 0)  /* the suit picker's x, spoken             */ \
     X(STRIP_DRAWS,         6, 0)  /* "×{n}", my staged draws, counted     */ \
+    X(SEND_HINT,          10, 0)  /* under the arrow at Messages' Send (A15) */ \
     X(SPOKEN_FAN,          0, 0)                                                 \
     X(SPOKEN_CARD,         0, 0)                                                 \
     X(SPOKEN_PLAYABLE,     0, 0)                                                 \

@@ -166,6 +166,27 @@ static void layout(void)
        && near(zw, 78) && near(zh, 68), "the direction box, top right");
     OK(pk_lay_zone(PK_ZONE_N, 374, 700, 0, 80, &x, &y, &zw, &zh) == -1, "a zone off the list");
     OK(pk_lay_zone(PK_ZONE_DRAW_BAND, 10, 700, 0, 80, 0, 0, &zw, 0) == 0 && zw == 0, "a band never goes negative");
+
+    /* A14: the auto-collapse's push, uttt's curve on this kernel's numbers:
+     * the whole travel at the flip, the host's critically damped spring
+     * (at half its 338ms response, (1 + pi) e^-pi of the travel is left), and
+     * exactly nothing from 600ms on, reached without a step */
+    {
+        int mono = 1;
+        float prev = pk_lay_collapse_push(500, 0);
+        for (int t = 1; t <= PK_LAY_COLLAPSE_MS; t++) {
+            float p = pk_lay_collapse_push(500, t);
+            if (p > prev + 1e-4f || p < -1e-4f) mono = 0;
+            prev = p;
+        }
+        OK(pk_lay_collapse_push(500, 0) == 500 && pk_lay_collapse_push(500, -5) == 500, "the whole travel at the flip");
+        OK(mono, "the push only ever falls, and never below zero");
+        OK(near(pk_lay_collapse_push(500, 169), 500 * 0.178976f), "the host's spring at half its response");
+        OK(pk_lay_collapse_push(500, PK_LAY_COLLAPSE_MS) == 0 && pk_lay_collapse_push(500, 5000) == 0
+           && pk_lay_collapse_push(500, PK_LAY_COLLAPSE_MS - 1) < .05f, "nothing left at 600ms, and no step to it");
+        OK(PK_LAY_COLLAPSE_MS == 600 && PK_LAY_COLLAPSE_STEPS == 120 && PK_LAY_COLLAPSE_FLIP == 60.0f
+           && PK_LAY_DRAWER_RESPONSE_MS == 338, "uttt's numbers, so the two games collapse alike");
+    }
 }
 
 /* ---- adopting with its motion (I29) and the fan's tap (I30) ---- */
@@ -439,7 +460,7 @@ int main(void)
 
     /* ---- play it out, phone to phone: the other phone reads each bubble,
      * which at two players is always the turn seat's ---- */
-    int from = 1, reads = 0;
+    int from = 1, reads = 0, won_with_call = 0;
     char *cur = links[1];
     static char next[PK_API_TEXT_MAX];
     for (int round = 0; round < 3000; round++) {
@@ -475,20 +496,49 @@ int main(void)
             uint8_t rank[8];
             OK(pk_api_ranks(rank) == 0, "a live game ranks nobody (D22)");
         }
+        /* one wrong call, early (I37): the caller's stamp, in the kernel's order */
+        const int caller = table()->me, callee = caller ^ 1;
+        if (round == 3) {
+            OK((me_view()->can_call & (1 << callee)) && pk_api_catch(callee) == 1, "a call on a seat that is not exposed");
+            OK(pk_api_collapses(PK_API_TOUCH_CALL) == 0, "a call does not collapse the drawer");
+        }
+        /* the winning bubble carries a wrong call too: OUT outranks it (I37) */
+        const int last_call = me_view()->my_n == 1 && me_view()->my_playable[0]
+                              && (me_view()->can_call & (1 << callee)) && pk_api_catch(callee) == 1;
         one_bubble();
         OK(table()->can_send, "a bubble that can be sent");
+        if (round == 3) {
+            OK(pk_api_collapses(PK_API_TOUCH_SAY) == 0, "a bubble with a call is not a lone Last card!");
+            OK(pk_api_collapses(PK_API_TOUCH_PLAY) == 1 && pk_api_collapses(PK_API_TOUCH_PASS) == 1
+               && pk_api_collapses(PK_API_TOUCH_DRAW) == 0 && pk_api_collapses(PK_API_TOUCH_UNDO) == 0
+               && pk_api_collapses(PK_API_TOUCH_UNSAY) == 0 && pk_api_collapses(PK_API_TOUCH_UNCALL) == 0
+               && pk_api_collapses(0) == 0, "a play or a pass collapses; a draw, an undo, an un-say, an un-call do not");
+        }
         n = pk_api_text(next, sizeof next);
         OK(n > 0, "it writes");
         if (n <= 0) break;
         OK(pk_api_prefer(next, cur) < 0 && pk_api_prefer(cur, next) > 0, "the child beats its parent");
         OK(pk_api_common(next, cur) == table()->bubbles, "they share every bubble of the parent");
         pk_api_commit();
+        if (round == 3) {
+            OK(pk_api_stamp(caller) == PK_STAMP_WRONG && pk_api_stamp(callee) != PK_STAMP_CAUGHT,
+               "Wrong call under the caller, nothing caught on the other");
+            OK(pk_api_collapses(PK_API_TOUCH_PLAY) == 0, "no draft open: nothing to collapse for");
+        }
+        if (last_call && table()->phase == PK_PHASE_FINISHED) {
+            const PkSince *ls = (const PkSince *)pk_api_since(table()->bubbles - 1, table()->bubbles);
+            OK(ls && ls->wrong == caller, "the winning bubble's call was judged");
+            OK(pk_api_stamp(caller) == PK_STAMP_OUT && pk_api_stamp(callee) == 0,
+               "once it is over OUT outranks the newest bubble's verdict");
+            won_with_call = 1;
+        }
         memcpy(links[2], next, (size_t)n + 1);
         cur = links[2];
         from = table()->me;
     }
     t = table();
     OK(t->phase == 3, "the game ended");
+    OK(won_with_call, "the game was won by a bubble that also called");
     v = (const PkView *)pk_api_view(PK_API_ME);
     OK(v->over && v->reveal[0].n + v->reveal[1].n > 0, "the end reveals every hand");
     {
@@ -531,6 +581,17 @@ int main(void)
     open_as(2, links[4], 0, 0);
     OK(table()->offered == PK_LOBBY_JOIN, "Cleo may join");
     OK(pk_api_join() == 2, "Cleo joins");
+    {
+        /* grid "Join" (A13): the new row fades up, 220ms, one 16ms beat after
+         * the tap, and is unseen until then (fill backwards) */
+        const PkBeats *lb = (const PkBeats *)pk_api_beats_lobby();
+        OK(lb && lb->n == 1 && lb->beat[0].kind == PK_BK_FADE && lb->beat[0].sub == 1
+           && lb->beat[0].to == PK_ANC_ROW && lb->beat[0].to_i == 2 && lb->beat[0].start_ms == 16
+           && lb->beat[0].dur_ms == 220 && lb->total_ms == 236, "Join: Cleo's row fades up, 220ms after a 16ms beat");
+        const PkBeatSample *ls = (const PkBeatSample *)pk_api_beat_sample(0, 0, 0);
+        OK(ls && ls->apply && ls->opacity == 0, "Join: the row is unseen before its fade");
+        OK(pk_api_words(PK_API_W_LOBBY_GONE, 2, line, sizeof line) < 0, "Join: no row went");
+    }
     OK(pk_api_words(PK_API_W_LOBBY_DEALER, 0, line, sizeof line) > 0 && !strcmp(line, "Alex deals"),
        "seat 0 deals, whoever joined last");
     pk_api_text(links[5], PK_API_TEXT_MAX);
@@ -542,6 +603,40 @@ int main(void)
     OK(pk_api_words(PK_API_W_LEFT, 1, line, sizeof line) > 0, "Bo's leave is captioned before it");
     OK(pk_api_leave() == 0 && table()->me == 0xFF && table()->n_seats == 2, "Bo leaves");
     pk_api_text(links[6], PK_API_TEXT_MAX);
+    {
+        /* grid "Leave" (A13): the row fades out, 220ms, then the rows below
+         * close up on the card spring, 320ms */
+        const PkBeats *lb = (const PkBeats *)pk_api_beats_lobby();
+        OK(lb && lb->n == 2 && lb->beat[0].kind == PK_BK_FADE && lb->beat[0].sub == 0 && lb->beat[0].to == PK_ANC_ROW
+           && lb->beat[0].to_i == 1 && lb->beat[0].start_ms == 16 && lb->beat[0].dur_ms == 220,
+           "Leave: Bo's row fades out, 220ms after a 16ms beat");
+        OK(lb && lb->n == 2 && lb->beat[1].kind == PK_BK_HOLD && lb->beat[1].to == PK_ANC_ROW && lb->beat[1].to_i == 1
+           && lb->beat[1].start_ms == 236 && lb->beat[1].dur_ms == 320 && lb->beat[1].ease == PK_EASE_SPRING
+           && lb->total_ms == 556, "Leave: then the rows below close up, 320ms on the card spring");
+        OK(pk_api_words(PK_API_W_LOBBY_GONE, 1, line, sizeof line) > 0 && !strcmp(line, "2. Bo (You)"),
+           "Leave: the row that went, as it read to Bo");
+        static char bo_left[PK_API_TEXT_MAX];
+        memcpy(bo_left, links[6], sizeof bo_left);
+        OK(pk_api_read(bo_left) == 0 && !pk_api_beats_lobby() && pk_api_words(PK_API_W_LOBBY_GONE, 1, line, sizeof line) < 0,
+           "a read forgets my lobby action");
+        /* Cleo sees the same leave arrive over her lobby, and opened, and again */
+        be(2);
+        OK(pk_api_read(links[5]) == 0 && pk_api_adopt(links[6], 1) == 0, "Cleo adopts the leave over her lobby");
+        lb = (const PkBeats *)pk_api_beats_now();
+        OK(lb && lb->n == 2 && lb->beat[0].sub == 0 && lb->beat[0].to_i == 1 && lb->beat[0].start_ms == 16
+           && lb->beat[1].start_ms == 236, "an arrival: the same two beats");
+        OK(pk_api_words(PK_API_W_LOBBY_GONE, 1, line, sizeof line) > 0 && !strcmp(line, "2. Bo"),
+           "the row that went, as it read to Cleo");
+        OK(pk_api_read(links[5]) == 0 && pk_api_adopt(links[6], 0) == 0 && pk_api_beats_now()
+           && ((const PkBeats *)pk_api_beats_now())->beat[0].start_ms == 100, "opened: the 100ms lead");
+        OK(pk_api_adopt(links[6], 1) == 0 && !pk_api_beats_now(), "the same lobby again moves nothing");
+        uint8_t seed2[32];
+        for (int i = 0; i < 32; i++) seed2[i] = (uint8_t)(i * 7 + 3);
+        pk_api_new(seed2, 0);
+        OK(!pk_api_beats_lobby(), "a new lobby is no roster change");
+        OK(pk_api_adopt(links[6], 1) == 0 && !pk_api_beats_now(), "another game's lobby, cold: nothing moves");
+        OK(!pk_api_beats_lobby(), "a read is no lobby action of mine");
+    }
     open_as(2, links[6], 0, 0);
     OK(table()->me == 1 && table()->by == PK_BY_RECORD, "Cleo's record finds her in the row she moved down to");
     OK(pk_api_start() == 0 && table()->phase == 2 && table()->starter == 1, "Cleo starts");

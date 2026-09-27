@@ -151,6 +151,29 @@ public enum Pk {
         }
     }
     public static func pass() -> Bool { pk_api_pass() == 1 }
+
+    /// The touch a stage follows, for the kernel's drawer rule (I37).
+    public enum Touch {
+        case draw, play, pass, say, undo, unsay, call, uncall
+        var kernel: Int32 {
+            switch self {
+            case .draw: return Int32(PK_API_TOUCH_DRAW)
+            case .play: return Int32(PK_API_TOUCH_PLAY)
+            case .pass: return Int32(PK_API_TOUCH_PASS)
+            case .say: return Int32(PK_API_TOUCH_SAY)
+            case .undo: return Int32(PK_API_TOUCH_UNDO)
+            case .unsay: return Int32(PK_API_TOUCH_UNSAY)
+            case .call: return Int32(PK_API_TOUCH_CALL)
+            case .uncall: return Int32(PK_API_TOUCH_UNCALL)
+            }
+        }
+    }
+    /// Does a stage after `touch` collapse the drawer once it rests? The
+    /// kernel's answer from my draft as it now stands (pk_api_collapses).
+    public static func collapses(after touch: Touch) -> Bool { pk_api_collapses(touch.kernel) == 1 }
+    /// The stamp under a seat's badge, in the kernel's order (pk_api_stamp):
+    /// a PK_STAMP_*, or 0.
+    public static func stamp(_ seat: Int) -> Int { Int(pk_api_stamp(Int32(seat))) }
     public static func undo() -> Bool { pk_api_undo() == 1 }
     public static func unsay() -> Bool { pk_api_unsay() == 1 }
     public static func uncall() -> Bool { pk_api_uncall() == 1 }
@@ -233,6 +256,10 @@ public enum Pk {
         if let picked { flags |= PK_BFL_PICKED | ((picked & 3) << 8) }
         return beatsSnap(pk_api_beats_stage(Int32(flags)))
     }
+
+    /// The lobby's rows (A13): the roster change my own Join or Leave just
+    /// made, played live; nil when it moved nothing.
+    public static func beatsLobby() -> PkBeatsSnap? { beatsSnap(pk_api_beats_lobby()) }
 
     /// Channel B: after the commit, what staging held.
     public static func beatsSend() -> PkBeatsSnap? { beatsSnap(pk_api_beats_send()) }

@@ -75,6 +75,9 @@
 #define PK_T_COLLAPSE_REST 500   /* drawer may collapse (foolish)                 */
 #define PK_T_TOAST        1600   /* a toast stays up (IOS_DECISIONS I32)          */
 #define PK_T_DRAWN_STAY   2400   /* U23's "drawn cards stay" line stays up        */
+#define PK_T_SEND_HINT    3000   /* a staged bubble unsent this long in the compact
+                                    drawer: the Send reminder (A15; the sister
+                                    product's fuse, uttt's UTM_SEND_HINT_MS) */
 
 /* How many under-cards the pile draws beneath its top one (UI.html `.und`):
  * also how many ghosts a reshuffle's gather slides into the deck. */
@@ -123,7 +126,8 @@ enum {
     PK_BK_FATTEN,       /* reshuffle: the deck swells (.7 -> 1.14 -> 1)           */
     PK_BK_RIFFLE,       /* the deck's layers splay and snap back                 */
     PK_BK_HALO,         /* the pile's halo cross-fades to `suit`                  */
-    PK_BK_BAND,         /* a wild's chosen-suit band slides up its foot          */
+    PK_BK_BAND,         /* a wild's chosen-suit band slides up its foot: p is how
+                           far up, 0 hidden under the card's edge, 1 in place */
     PK_BK_STAMP,        /* LAST / Caught you! / Wrong call / OUT (sub) into a slot */
     PK_BK_SLASH,        /* a skipped fan's red bar wipes across, then goes       */
     PK_BK_DIM,          /* dims to amp% and back (a skipped badge, my hand)      */
