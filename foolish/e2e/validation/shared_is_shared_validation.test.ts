@@ -62,6 +62,8 @@ const PRODUCT = [
     // ("Pick 'Em Up", "Pick Em Up", "pickemup").
     /pickemup/i,
     /pick ?'?em ?up/i,
+    // Liar's Dice, in the folder name and the title ("Chui Niu", "chuiniu").
+    /chui ?niu/i,
     // Bundle ids, App Groups and the reverse-DNS they are built from.
     /cards\.foolish/i,
     /group\.cards/i,

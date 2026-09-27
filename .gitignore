@@ -69,6 +69,10 @@ pickemup/ios/vendor/
 pickemup/ios/Generated/
 # The project is generated from pickemup/ios/project.yml, as uttt's is.
 pickemup/ios/*.xcodeproj
+# The same outputs of `make -C chuiniu/c ios-lib`.
+chuiniu/c/build/
+chuiniu/ios/vendor/
+chuiniu/ios/Generated/
 uttt/ios/*/*.entitlements
 
 # The shared toolchain's own build outputs - the generator and datagen binaries,
