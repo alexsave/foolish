@@ -165,3 +165,43 @@ The lobby's join, leave and start change the resident at once, as Pick 'Em Up's 
 
 - The final name: a USPTO and App Store search for "Tallybones" is the owner's, before any store listing.
 - App Store Connect, signing, TestFlight: not started, by design.
+
+## Bot
+
+T30: the bot is an exact single-player expected-value solver in pure C, `tallybones/c/bot/` with its own Makefile, an internal simulation and evaluation tool only (no lobby seat, nothing in iOS or Swift).
+The game has no interaction between seats, so there is no opponent model: the bot maximises the expected value of its own final score.
+It scores with the kernel's `tb_score_of` and `TB_BONUS_AT` / `TB_BONUS`, compiled in, so the bot and the game have one scoring implementation.
+
+T31: the state.
+Between turns: the remaining-category mask (2^13) and the numbers-half total so far capped at 63 (64 values); the table holds the exact expected points still to come, with the 35 counted at the score that first reaches 63.
+Within a turn: the dice multiset in hand (252) and the rolls left (0 to 2).
+Keeping is by position but only the kept multiset matters, so each of the 32 keep masks collapses to one of the 462 sub-multisets of 0 to 5 dice.
+Keeping all five is stopping: the kernel has no KEEP(31) (T7), so that option is valued as scoring now, which equals deferring because more rolls never lower a value.
+
+T32: the distributions and the induction.
+For every keep sub-multiset with r dice to reroll, all 6^r raw outcomes are enumerated and collapsed by resulting hand into integer counts over 6^r (4368 entries); no sampling anywhere.
+Within a turn, the value of a keep is the exact expectation of the next level over its distribution, and the best keep inside a hand is taken as a max over the keep lattice (a keep, or the best keep one die smaller), which equals the max over all 32 masks.
+At rolls left 0 the value is the argmax over the open categories of points plus bonus plus the table at the state after.
+The table is built in order of increasing number of remaining categories, so every state reads only states solved a level earlier; each level's masks are split over threads and the result is bit-identical for any thread count.
+Doubles, not rationals: every probability is an integer count over at most 7776, and the checks below bound the accumulated error at about 1e-11.
+
+T33: the policy API is `tb_bot_turn(bot, remaining, upper, &turn)` once a turn, then `tb_bot_choose(bot, &turn, dice, rolls_left)`, which returns a move in the kernel's alphabet (KEEP with the positions to keep, 0 to 30, or SCORE with a category) and its exact expected value; ties go to scoring now, then the lowest mask.
+`tb_solve` prints the exact value and plays N games by the policy with `deal_rng` (ChaCha, `shared/c/deal_rng.h`): game g is seeded with a fixed 32-byte seed whose last 8 bytes are g, and every die is 1 + `deal_rng_bounded(6)`.
+
+T34: the numbers.
+The exact expected final score of optimal play is **245.870775**.
+The comparison is with published optimal-strategy solvers for the branded 13-category game (Tom Verhoeff's, and James Glenn's papers): about 254.59 under its full rules (the joker rule and the 100-point bonus for extra five-alikes), and about 245.87 without those two, which is exactly Tallybones' ruleset; the computed value agrees with 245.87 to every digit quoted.
+Those reference figures were recalled from the literature, not re-read from the sources for this row, so the agreement is to the 2 decimals recalled; the full 245.870775 is our own value, pinned by the test as a regression.
+Also checked: P(five alike in three rolls, optimal) = 2783176/6^10, the published figure, to 1e-9.
+200,000 games played by the policy: mean 245.9042, standard error 0.0890 (sd 39.8), so the exact value is 0.38 standard errors from the simulated mean.
+The table builds in 8.4 s on one thread and 2.2 s on 8.
+
+T35: the verification is `make -C tallybones/c/bot run` (and `asan`), `tb_bot_test`, eight groups, each mutation-checked (`tallybones/c/bot/MUTATIONS.md`).
+G1: every (hand, keep mask) distribution, 8064 of them, sums to 1 and equals a by-position enumeration of the raw rerolls.
+G2: one roll of five dice against hand counts: five alike 6, long run 240, full house 300, four alike 156, three alike 1656, short run 1200, all over 7776.
+G3: whole sub-problems with hand-computed values (Any alone 70/3, Sixes alone 30 x 91/216 and with the bonus at 33, Ones alone at 60, Tallybones alone, and one roll with no rerolls).
+G4: the policy against a by-position brute force of every keep mask for every hand, at seven states.
+G5: the table's structure and every sampled state as the policy's expectation over the first roll.
+G6: the reference number.
+G7: the simulation against the exact value within 4 standard errors, and the same tallies for any thread count.
+G8: the policy drives 200 two-seat games through the real kernel (`tb_replay`): every move legal, and the kernel's totals equal the bot's own tally.
