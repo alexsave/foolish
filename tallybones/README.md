@@ -15,7 +15,7 @@ The mechanic is public domain (Yacht, 1938; Generala; Poker Dice); the branded c
 
 | Part | Where | What |
 |---|---|---|
-| Decisions | `docs/DECISIONS.md` | the spec: naming (T1), rules (T2 to T5), randomness and the no-preview reroll (T6, T11), the wire (T7), words and motion (T8, T9), iOS (T10, T12 to T18) |
+| Decisions | `docs/DECISIONS.md` | the spec: naming (T1), rules (T2 to T5), randomness and the no-preview reroll (T6, T11), the wire (T7), words and motion (T8, T9), iOS (T10, T50 to T56) |
 | Legal | `LEGAL.md` | what is borrowed and what is not, and the never / always list |
 | iOS | `ios/` | `TallybonesKit` (dice tray, drawn dice, tumble, scorecard, seat badges, lobby, bubble picture), `TallybonesMessages` (the extension), `TallybonesMessagesApp` (the container) |
 | Kernel | `c/` (another branch) | NOT HERE YET: the C kernel and its bridge are written separately; the app runs on a local stand-in behind one protocol until they are wired (`ios/README.md`, "Wiring the kernel") |
@@ -27,7 +27,7 @@ The mechanic is public domain (Yacht, 1938; Generala; Poker Dice); the branded c
 cd ios && xcodegen generate
 xcodebuild -project Tallybones.xcodeproj -scheme TallybonesMessagesApp -destination 'generic/platform=iOS Simulator' build
 ios/scripts/mac_tests.sh                                                  xcodegen, the tests, the shipping build (a simulator)
-DEST='platform=macOS,variant=Mac Catalyst' ios/scripts/mac_tests.sh unit  the tests with no simulator free (T18)
+DEST='platform=macOS,variant=Mac Catalyst' ios/scripts/mac_tests.sh unit  the tests with no simulator free (T56)
 ```
 
 After any xcodegen run, `git status --short -- '*.entitlements'` must be empty.

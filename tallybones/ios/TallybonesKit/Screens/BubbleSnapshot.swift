@@ -45,7 +45,7 @@ public struct BubbleContent: Equatable, Sendable {
 
 public enum BubbleSnapshot {
     public static let size = CGSize(width: 300, height: 195)
-    /// T16: the bubble's dice are 44pt, 8pt apart (252pt of the 300).
+    /// T54: the bubble's dice are 44pt, 8pt apart (252pt of the 300).
     public static let dieSide: CGFloat = 44
     public static let dieGap: CGFloat = 8
 

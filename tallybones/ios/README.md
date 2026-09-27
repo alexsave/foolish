@@ -2,7 +2,7 @@
 
 The Messages extension and its container, on Pick 'Em Up's shape (`pickemup/ios/README.md`): SwiftUI screens on foolish's felt and wood, one conversation controller, and every rule, word and die behind one seam.
 The kernel (`tallybones/c`) is being written on another branch, so today the seam is a Swift protocol, `TallyKernel`, and the only thing behind it is `StandInKernel`: a fixed hand of dice, a second seat that plays itself, and no rules.
-Decisions taken on the owner's behalf are rows T10 to T18 of `../docs/DECISIONS.md`.
+Decisions taken on the owner's behalf are rows T10 and T50 to T56 of `../docs/DECISIONS.md`.
 
 ## Build
 
@@ -19,7 +19,7 @@ xcodebuild -project Tallybones.xcodeproj -scheme TallybonesMessagesApp \
 
 ```
 tallybones/ios/scripts/mac_tests.sh                                          # xcodegen, TallybonesKitTests, the shipping build
-DEST='platform=macOS,variant=Mac Catalyst' tallybones/ios/scripts/mac_tests.sh unit   # the tests with no simulator (T18)
+DEST='platform=macOS,variant=Mac Catalyst' tallybones/ios/scripts/mac_tests.sh unit   # the tests with no simulator (T56)
 DEST='platform=iOS Simulator,id=<udid>' tallybones/ios/scripts/mac_tests.sh
 DEST='generic/platform=iOS Simulator' tallybones/ios/scripts/mac_tests.sh app        # the shipping build only
 ```

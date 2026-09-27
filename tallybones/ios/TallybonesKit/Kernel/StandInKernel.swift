@@ -270,13 +270,13 @@ public final class StandInKernel: TallyKernel {
     public func roll(keeping mask: Int) -> TallyStage? {
         guard mayRoll(keeping: mask) else { return nil }
         draft = .keep(mask)
-        return TallyStage(caption: view().caption, collapse: true)       // T17
+        return TallyStage(caption: view().caption, collapse: true)       // T55
     }
 
     public func score(_ c: Category) -> TallyStage? {
         guard view().tray.canScore, slots[me][c.rawValue] == nil else { return nil }
         draft = .score(c)
-        return TallyStage(caption: view().caption, collapse: true)       // T17
+        return TallyStage(caption: view().caption, collapse: true)       // T55
     }
 
     public func join() -> TallyStage? { nil }

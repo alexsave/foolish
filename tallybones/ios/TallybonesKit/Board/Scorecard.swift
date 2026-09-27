@@ -1,7 +1,7 @@
 // Scorecard.swift - one seat's card: thirteen rows in two halves (T4), the
 // numbers-half sum and its bonus line, and the total.
 //
-// THE LAYOUT IS OURS, NOT THE BRANDED CARD'S (LEGAL.md, T14): the two halves
+// THE LAYOUT IS OURS, NOT THE BRANDED CARD'S (LEGAL.md, T52): the two halves
 // stand SIDE BY SIDE as two columns on a bone paper panel, numbers on the
 // left with the sum and the bonus under them, combinations on the right with
 // the total under them. The branded card is one tall column with a "how to
@@ -59,7 +59,7 @@ public struct Scorecard: View {
     public let words: (TallyString) -> String
     public let onPick: ((Category) -> Void)?
 
-    /// T14: one row is 24pt, the panel's padding 10, the column gap 12.
+    /// T52: one row is 24pt, the panel's padding 10, the column gap 12.
     public static let rowHeight: CGFloat = 24
     public static let padding: CGFloat = 10
     public static let columnGap: CGFloat = 12

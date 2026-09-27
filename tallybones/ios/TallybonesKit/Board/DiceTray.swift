@@ -6,7 +6,7 @@
 // looks like (TumblePlayer today, the kernel's BeatPlayer later) and draws
 // that; with nothing playing, the dice are at rest.
 //
-// T12: 52pt dice, 10pt apart, so the row is 300pt and fits the 304pt board
+// T50: 52pt dice, 10pt apart, so the row is 300pt and fits the 304pt board
 // of a 320pt phone (pickemup's 8pt side insets).
 
 import QuartzCore

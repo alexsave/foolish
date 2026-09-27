@@ -5,7 +5,7 @@
 // brass bar under the total and the name in brass (pickemup's U5), and a tap
 // opens that seat's card read-only.
 //
-// T15: the badges stand in one row across the top of the board, each at most
+// T53: the badges stand in one row across the top of the board, each at most
 // pickemup's 96pt name width and never wider than its share of the row.
 
 import SwiftUI

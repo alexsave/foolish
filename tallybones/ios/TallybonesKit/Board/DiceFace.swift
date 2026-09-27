@@ -1,7 +1,7 @@
 // DiceFace.swift - one die, drawn (T10: no image assets, so no art to license).
 //
 // A rounded square of foolish's card bone with pips as ink circles on the
-// classic 3 x 3 grid (T12). Value 0 is UNKNOWN (T11: a die being rerolled by a
+// classic 3 x 3 grid (T50). Value 0 is UNKNOWN (T11: a die being rerolled by a
 // bubble not sent yet): the same square, dimmed, with a dashed inner outline
 // and no pips, so it reads as "not rolled yet" and never as a value. A kept
 // die carries a brass ring outside its edge.
@@ -13,9 +13,9 @@ public struct DiceFace: View {
     public var kept = false
     public var side: CGFloat = DiceFace.side
 
-    /// T12: a die on the tray is 52pt, pickemup's widest hand card.
+    /// T50: a die on the tray is 52pt, pickemup's widest hand card.
     public static let side: CGFloat = 52
-    /// Corner radius, pip diameter and ring, as fractions of the side (T12).
+    /// Corner radius, pip diameter and ring, as fractions of the side (T50).
     public static let cornerFraction: CGFloat = 0.2
     public static let pipFraction: CGFloat = 0.18
     public static let ringWidth: CGFloat = 2.5

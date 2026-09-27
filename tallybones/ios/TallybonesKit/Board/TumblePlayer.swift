@@ -8,7 +8,7 @@
 // conforms to DiceMotion by sampling tb_api_beat_sample for the die's
 // anchor ("die.i"), and the tray and TallyTable change by one line each.
 //
-// The tumble (T13): 600ms per die, dice starting 30ms apart in slot order.
+// The tumble (T51): 600ms per die, dice starting 30ms apart in slot order.
 // The die turns 1.5 revolutions (alternate dice the other way) on an
 // ease-out, swells to 1.18 at 30% and settles back, and its face flicks
 // through pip values every 80ms until 70% of the way, then shows the value

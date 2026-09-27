@@ -1,10 +1,10 @@
 // TableScreen.swift - the table: the seat row, the dice tray in the middle of
 // the felt, the status line and the Roll pill under it, and my own card below
-// (T10, T15).
+// (T10, T53).
 //
 // pickemup's board, re-laid for dice: its felt, its board inset (8/8/14/4),
 // its 96 x 40 wood pill 12pt from the trailing edge, its felt text. The seat
-// ring becomes one row across the top (T15), and the pile's place in the
+// ring becomes one row across the top (T53), and the pile's place in the
 // middle holds the tray.
 //
 // THE TWO WAYS A TURN MOVES ON (T3): the Roll pill stages a KEEP of the
@@ -17,7 +17,7 @@
 
 import SwiftUI
 
-/// T15: the table's layout numbers, all in the board's coordinates.
+/// T53: the table's layout numbers, all in the board's coordinates.
 public enum TbLayout {
     /// pickemup's board inset inside the extension's view.
     public static let inset = (leading: CGFloat(8), trailing: CGFloat(8), top: CGFloat(14), bottom: CGFloat(4))
@@ -117,7 +117,7 @@ public struct TableScreen: View {
     }
 }
 
-/// Everybody but me, in one row across the top (T15).
+/// Everybody but me, in one row across the top (T53).
 struct SeatRow: View {
     @ObservedObject var model: TallyTable
     let others: [CardModel]

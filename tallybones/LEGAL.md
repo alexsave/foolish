@@ -25,7 +25,7 @@ What a branded dice game owns, beyond its name, is how it looks and what its car
 - the scorecard's exact layout (one tall column of categories with a "how to score" column beside it) and its exact words: "Small Straight", "Large Straight", "Chance", the shout word, and the bonus and joker rules for a second shout;
 - the logo, the dice-cup art, and the red and yellow palette.
 
-What this build does instead: the card's two halves stand side by side as two columns on bone paper, with no how-to-score column (T14); the categories are named in generic dice-poker words (T4); the shout word is the game's own, "Tallybones!"; there is no second-shout bonus and no joker rule; the table is foolish's green felt and wood; and the dice are drawn pips on bone squares with no cup (T10).
+What this build does instead: the card's two halves stand side by side as two columns on bone paper, with no how-to-score column (T52); the categories are named in generic dice-poker words (T4); the shout word is the game's own, "Tallybones!"; there is no second-shout bonus and no joker rule; the table is foolish's green felt and wood; and the dice are drawn pips on bone squares with no cup (T10).
 
 ## What is safe, and the one item worth a second look
 

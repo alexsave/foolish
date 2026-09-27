@@ -4,7 +4,7 @@
 // felt text treatment (`onFeltText`) is Pick 'Em Up's: this table is always
 // foolish's felt, a DARK surface in both schemes.
 //
-// Two additions for dice: the die's own face and pip ink (T12), which are
+// Two additions for dice: the die's own face and pip ink (T50), which are
 // foolish's card bone and card ink, so a die reads as the same material as a
 // card.
 
