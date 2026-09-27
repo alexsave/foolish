@@ -461,6 +461,23 @@ const void *pk_api_beats(int viewer, int from, int to, int mode)
     return built(pk_beats_build(S.events.ev, n, &start, v, g->n, mode, 0, 0, 0, &S.beats));
 }
 
+/* Put the host motion in beats2 in front of the plan in beats, which starts
+ * once it is over. */
+static const void *prepend_beats2(void)
+{
+    int k = S.beats2.n, n = S.beats.n;
+    if (k + n > PK_BEATS_MAX) return built(-1);
+    pk_beats_delay(&S.beats, 0, S.beats2.total_ms);
+    memmove(&S.beats.beat[k], &S.beats.beat[0], (size_t)n * sizeof(PkBeat));
+    memcpy(&S.beats.beat[0], &S.beats2.beat[0], (size_t)k * sizeof(PkBeat));
+    S.beats.n = (uint16_t)(k + n);
+    if (S.beats2.total_ms > S.beats.total_ms) S.beats.total_ms = S.beats2.total_ms;
+    S.beats.settle_ms = PK_T_COLLAPSE_WAIT + S.beats.total_ms + PK_T_COLLAPSE_REST;
+    return &S.beats;
+}
+
+uint32_t pk_api_beats_serial(void) { return S.beats_serial; }
+
 const void *pk_api_beats_stage(int flags)
 {
     const PkGame *g = started();
@@ -472,8 +489,12 @@ const void *pk_api_beats_stage(int flags)
     if (memcmp(S.stage_seed, g->seed, 32) != 0 || S.stage_bubbles != g->bubbles) prev_n = 0;
     PkBeatFrame start;
     if (!pk_beats_pre(g, S.me, g->bubbles, &start)) return built(-1);
-    return built(pk_beats_build(S.events.ev, n, &start, S.me, g->n, PK_BEATS_STAGE,
-                                S.stage_prev, prev_n, flags, &S.beats));
+    if (!built(pk_beats_build(S.events.ev, n, &start, S.me, g->n, PK_BEATS_STAGE,
+                              S.stage_prev, prev_n, flags & 0xFF, &S.beats))) return 0;
+    if (!(flags & PK_BFL_PICKED)) return &S.beats;
+    if (pk_beats_host(PK_HM_PICKER_PICK, (flags >> 8) & 3, 0, &S.beats.start, S.me, g->n, 0,
+                      &S.beats2) < 0) return built(-1);
+    return prepend_beats2();
 }
 
 const void *pk_api_beats_send(void)
@@ -505,15 +526,7 @@ const void *pk_api_beats_conflict(int card, int pos, int from, int to)
     /* the retraction first, from the board the winner starts from */
     if (pk_beats_host(PK_HM_RETRACT, card, pos, &S.beats.start, S.beats.viewer, S.beats.n_seats, 0,
                       &S.beats2) < 0) return built(-1);
-    int k = S.beats2.n, n = S.beats.n;
-    if (k + n > PK_BEATS_MAX) return built(-1);
-    pk_beats_delay(&S.beats, 0, S.beats2.total_ms);
-    memmove(&S.beats.beat[k], &S.beats.beat[0], (size_t)n * sizeof(PkBeat));
-    memcpy(&S.beats.beat[0], &S.beats2.beat[0], (size_t)k * sizeof(PkBeat));
-    S.beats.n = (uint16_t)(k + n);
-    if (S.beats2.total_ms > S.beats.total_ms) S.beats.total_ms = S.beats2.total_ms;
-    S.beats.settle_ms = PK_T_COLLAPSE_WAIT + S.beats.total_ms + PK_T_COLLAPSE_REST;
-    return &S.beats;
+    return prepend_beats2();
 }
 
 const void *pk_api_beats_frame(uint32_t now_ms)

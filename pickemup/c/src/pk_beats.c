@@ -233,6 +233,7 @@ typedef struct {                 /* the clock: restored after a DONE event   */
     int      deal_i;
     int      prev_kind;
     int32_t  last_play_land;
+    int      buried;             /* start cards buried so far (BURY to_i)    */
 } Clock;
 
 typedef struct {
@@ -532,6 +533,7 @@ static void on_event(B *b, const PkEvent *e)
         f.rot1 = 9;
         f.from = PK_ANC_STACK;
         f.to = PK_ANC_BURY;
+        f.to_i = (uint8_t)c->buried++;
         f.card = e->card;
         f.deck_n = e->deck_n;
         wait_for(b, add(b, f));
@@ -1128,6 +1130,10 @@ void pk_beat_sample(const PkBeat *b, uint32_t now, int part, PkBeatSample *out)
     if (b->part_ms == 0) u = now >= s ? 1 : 0;
     const float p = pk_ease(b->ease, u);
     out->p = p;
+    const int brings_in = b->kind == PK_BK_POP || b->kind == PK_BK_STAMP || (b->kind == PK_BK_FADE && b->sub);
+    const int takes_out = b->kind == PK_BK_COLLAPSE || (b->kind == PK_BK_FADE && !b->sub);
+    out->apply = (uint8_t)(out->state == PK_BS_ACTIVE || (out->state == PK_BS_PENDING && brings_in) ||
+                           (out->state == PK_BS_DONE && takes_out));
     const float bulge = b->bulge / 100.0f;
     const float a = (float)b->amp;
 

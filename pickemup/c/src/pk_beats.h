@@ -229,7 +229,12 @@ typedef struct {
     float   opacity;
     uint8_t state;      /* PK_BS_*                                                */
     uint8_t face;       /* 1: draw the card face, 0: its back                     */
-    uint8_t pad0, pad1;
+    /* 1: the host applies this transform now. Always while active; before its
+     * start for a beat that brings something IN (a pop, a stamp, a fade in:
+     * CSS fill backwards), after its end for one that takes something OUT (a
+     * fade out, a collapse: fill forwards). */
+    uint8_t apply;
+    uint8_t pad0;
 } PkBeatSample;
 
 /* ---- building ------------------------------------------------------------------ */
@@ -245,6 +250,7 @@ enum {
 /* Build flags */
 enum {
     PK_BFL_WILD_PLACED = 1,  /* STAGE: my wild already sits on the pile (the picker put it there) */
+    PK_BFL_PICKED      = 2,  /* STAGE (bridge): a suit tile was tapped first; suit in bits 8..15 */
 };
 
 typedef struct {

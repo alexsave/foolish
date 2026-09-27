@@ -660,6 +660,11 @@ static void t_host(void)
     CHECK(st(nth(&B1, PK_BK_FADE, 0, 0)) == 516 && nth(&B1, PK_BK_FADE, 0, 0)->to == PK_ANC_SCRIM, "the scrim");
     CHECK(st(pop) == 516 && pop->parts == 5 && pop->part_ms == 260 && pop->stagger_ms == 30 && pop->ease == PK_EASE_SPRING,
           "five tiles pop, 30ms apart");
+    /* fill backwards: a tile is at scale 0 before its pop (UI.html `fill: 'backwards'`) */
+    pk_beat_sample(pop, 0, 4, &x);
+    CHECK(x.state == PK_BS_PENDING && x.apply && x.scale == 0 && x.opacity == 0, "a tile waits unseen");
+    pk_beat_sample(nth(&B1, PK_BK_FLIGHT, 0, 0), 0, 0, &x);
+    CHECK(!x.apply, "a flight that has not begun is not drawn");
     pk_beats_frame(&B1, 0, &g);
     CHECK((g.hold & PK_HOLD_PENDING), "the wild is not on the pile yet");
     pk_beats_frame(&B1, 516, &g);
@@ -668,6 +673,9 @@ static void t_host(void)
     pk_beats_host(PK_HM_PICKER_PICK, 1, 0, &f, 3, 4, 0, &B1);
     CHECK(st(nth(&B1, PK_BK_RING, 0, 0)) == 16 && st(nth(&B1, PK_BK_COLLAPSE, 0, 0)) == 136 &&
           du(nth(&B1, PK_BK_COLLAPSE, 0, 0)) == 200, "ring 120, then collapse 200");
+    /* fill forwards: the collapsed tiles stay gone until the picker is taken down */
+    pk_beat_sample(nth(&B1, PK_BK_COLLAPSE, 0, 0), 5000, 0, &x);
+    CHECK(x.state == PK_BS_DONE && x.apply && x.opacity == 0, "collapsed tiles stay gone");
     /* the conflict ghost is the undo flight in red */
     pk_beats_host(PK_HM_RETRACT, 30, 6, &f, 3, 4, 0, &B1);
     CHECK((nth(&B1, PK_BK_FLIGHT, 0, 0)->flags & PK_BF_RETRACT) && du(nth(&B1, PK_BK_FLIGHT, 0, 0)) == 500, "retraction ghost");

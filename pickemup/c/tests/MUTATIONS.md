@@ -229,6 +229,8 @@ Run 2026-09-27; every mutant went red, and every test in the file is named at le
 | draws replayed, +2 / +4, reshuffle, catch, the cut, vocabulary | `PK_T_DRAW_STEP` 450 | `:94` "flight", `:264` "16, 126, 236" |
 | draw live, the cut, host motions, real games | a flip never shows its card | `:248` "seen once it has turned", `:627` "the drawn card is simply there", `:646` "and it is home" |
 | budget (and every row) | `PK_T_GAP` 525 | `:834` "8 players: the p99 bubble plays in under 4s (4056)" |
+| host motions | a beat that brings something in is not applied before its start (no fill backwards) | `:665` "a tile waits unseen" |
+| host motions | a beat that takes something out is not applied after its end (no fill forwards) | `:678` "collapsed tiles stay gone" |
 | ios-smoke motion | the bridge does not remember the draft after a build | `pk_api_smoke.c:224` "asked again with nothing new: nothing moves" |
 | ios-smoke motion | `pk_api_beats` refuses `from == to` | `pk_api_smoke.c:215` "from == to: no motion, a new plan" |
 | ios-smoke motion | `pk_api_beats_send` lays the bubble out as an open | `pk_api_smoke.c:248` "channel B: what staging held" |

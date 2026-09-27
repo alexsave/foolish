@@ -251,7 +251,8 @@ void  pk_lay_picker(int tile, float cx, float cy, float *x, float *y);
  * stood at the end of bubble `from`. PK_BEATS_OPEN or PK_BEATS_ARRIVAL. */
 const void *pk_api_beats(int viewer, int from, int to, int mode);
 /* Channel A: what my newest tap did, against the draft as the previous call
- * left it. flags: PK_BFL_*. */
+ * left it. flags: PK_BFL_*; with PK_BFL_PICKED the tapped tile's ring and the
+ * tiles' collapse go first, and the suit is (flags >> 8) & 3. */
 const void *pk_api_beats_stage(int flags);
 /* Channel B, after pk_api_commit: what staging held back. */
 const void *pk_api_beats_send(void);
@@ -263,6 +264,8 @@ const void *pk_api_beats_conflict(int card, int pos, int from, int to);
 /* Remember the draft as it is now, for the next pk_api_beats_stage (after a
  * change that moves nothing: an un-say, a cancel). */
 void        pk_api_beats_mark(void);
+/* Which build is current (PkBeats.serial of the newest). */
+uint32_t    pk_api_beats_serial(void);
 /* The current plan's board at `now_ms` (PkBeatFrame), and one beat of it
  * (PkBeatSample); NULL for an index off the plan. */
 const void *pk_api_beats_frame(uint32_t now_ms);
