@@ -62,7 +62,8 @@ int msg_seat_name_verdict(const uint8_t *name, int len);
 int msg_seat_utf8_chars(const uint8_t *s, int len);
 
 // The row carries exactly these bytes: same length, not empty, same bytes. No
-// folding of any kind, so "Alex" and "alex" are two names.
+// folding of any kind, so "Alex" and "alex" are two names. A length past
+// MSG_SEAT_NAME_MAX_BYTES matches nothing.
 int msg_seat_same_name(const MsgSeat *row, const uint8_t *name, int len);
 
 // The deciding witness.
@@ -80,7 +81,7 @@ int msg_seat_same_name(const MsgSeat *row, const uint8_t *name, int len);
 
 // Which of the `n` rows is this device. `started` is whether the game is past
 // its lobby; `sender` the seat that sent this bubble, or -1 (a leave: the
-// sender has no seat). `record` is the record lookup's answer (a seat, -1 or
+// sender has no seat); a sender at or past `n` is no witness. `record` is the record lookup's answer (a seat, -1 or
 // MSG_SEAT_REC_GONE), `tag_seat` the row holding my tag or -1, `i_sent` 1, 0
 // or MSG_SEAT_SENT_UNKNOWN, `name` my nickname (may be NULL). The seat, or -1
 // for "not seated here" (a spectator, or a lobby I may join); the deciding

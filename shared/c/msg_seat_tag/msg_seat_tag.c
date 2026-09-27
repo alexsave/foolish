@@ -39,7 +39,11 @@ int msg_seat_name_verdict(const uint8_t *name, int len)
 
 int msg_seat_same_name(const MsgSeat *row, const uint8_t *name, int len)
 {
-    return row->name_len == len && len > 0 && memcmp(row->name, name, (size_t)len) == 0;
+    // len at most the row's buffer: a row whose name_len says more than the
+    // buffer holds (a caller that trusted a length off the wire) is no match,
+    // never a read past the row
+    return row->name_len == len && len > 0 && len <= MSG_SEAT_NAME_MAX_BYTES
+        && memcmp(row->name, name, (size_t)len) == 0;
 }
 
 int msg_seat_resolve(const MsgSeat *rows, int n, int started, int sender,
@@ -60,6 +64,9 @@ int msg_seat_resolve(const MsgSeat *rows, int n, int started, int sender,
         int s = -1;
         if (i_sent == 1) s = sender;
         else if (i_sent == 0 && is_dm && n == 2 && sender >= 0) s = 1 - sender;
+        // a sender that is not a row is no witness: the lobby gate below reads
+        // rows[s], and the answer must be a seat of this roster
+        if (s >= n) s = -1;
         // THE LOBBY GATE: a named device gets a lobby seat by its name or not
         // by inference at all
         if (s >= 0 && !started && name && name_len > 0 && !msg_seat_same_name(&rows[s], name, name_len))

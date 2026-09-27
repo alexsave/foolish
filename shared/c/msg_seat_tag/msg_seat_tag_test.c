@@ -126,6 +126,21 @@ static void test_same_name(void)
     OK(!msg_seat_same_name(&r, U("Ale\xCC\x88x"), 6), "no normalization: decomposed is another name");
     row(&r, 1, "");
     OK(!msg_seat_same_name(&r, U(""), 0), "two empty names are never the same name");
+
+    /* A row whose name_len says more than its buffer holds (a length trusted
+     * off the wire) matches nothing and reads nothing past the row: the row
+     * sits in a block whose tail matches the probe name, so a read past the
+     * buffer would compare equal (SECURITY_REVIEW_LIFTED.md). */
+    struct { MsgSeat r; uint8_t tail[256]; } big;
+    uint8_t probe[MSG_SEAT_NAME_MAX_BYTES + 200];
+    memset(&big, 'q', sizeof big);
+    memset(probe, 'q', sizeof probe);
+    big.r.name_len = MSG_SEAT_NAME_MAX_BYTES;
+    OK(msg_seat_same_name(&big.r, probe, MSG_SEAT_NAME_MAX_BYTES), "a name at the byte cap matches");
+    big.r.name_len = MSG_SEAT_NAME_MAX_BYTES + 1;
+    OK(!msg_seat_same_name(&big.r, probe, MSG_SEAT_NAME_MAX_BYTES + 1), "a name_len one past the buffer matches nothing");
+    big.r.name_len = 255;
+    OK(!msg_seat_same_name(&big.r, probe, 255), "a name_len of 255 matches nothing");
 }
 
 /* A three-row roster: Alex, Bo, Cleo. */
@@ -182,6 +197,15 @@ static void test_resolve(void)
     row(&R[2], 3, "Bo");
     OK(res(3, 1, -1, -1, -1, 0, 1, "Bo", &by) == 1 && by == MSG_SEAT_BY_NAME, "two rows named Bo: the first");
     row(&R[2], 3, "Cleo");
+
+    /* A sender that is not a row is no witness, started or in the lobby,
+     * and the answer is never a seat past the roster
+     * (SECURITY_REVIEW_LIFTED.md: the lobby gate read rows[sender]). */
+    OK(res(3, 1, 3, -1, -1, 0, 1, NULL, &by) == -1 && by == MSG_SEAT_BY_NONE, "started: a sender one past the roster is no seat");
+    OK(res(3, 1, 200, -1, -1, 0, 1, NULL, &by) == -1 && by == MSG_SEAT_BY_NONE, "started: a sender far past the roster is no seat");
+    OK(res(3, 0, 3, -1, -1, 0, 1, "Cleo", &by) == 2 && by == MSG_SEAT_BY_NAME, "lobby: a sender past the roster falls to the name");
+    OK(res(0, 0, 0, -1, -1, 0, 1, "Cleo", &by) == -1 && by == MSG_SEAT_BY_NONE, "an empty roster: sender 0 is no seat");
+    OK(res(2, 1, 0, -1, -1, 1, 0, NULL, &by) == 1 && by == MSG_SEAT_BY_SENDER, "a DM of two still infers the other seat");
 
     /* *by may be NULL */
     OK(msg_seat_resolve(R, 3, 1, 2, -1, -1, 0, 1, NULL, 0, NULL) == 2, "by may be NULL");
