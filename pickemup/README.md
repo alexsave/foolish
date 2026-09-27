@@ -111,6 +111,7 @@ This game has no roles, so that 40pt holds only a player's own speech or a verdi
 A shedding hand grows when you are losing, and at thirteen cards a flat card is 23.2pt, under the 40pt thin-face line.
 The expanded hand goes one row, then foolish's two rows, then overlaps to a 16pt strip per card, then scrolls (O4); the drawer keeps one row (U7, I12); overlapped cards keep a full face so each strip shows its corner (U8); and a scrolling hand plays by tap + Play only (I11).
 No hand is ever capped (D23).
+You can drag a card sideways to rearrange your own hand, as in foolish (O9): the order is your phone's alone and never sent, new cards still arrive on the right, and a scrolling hand is not rearranged (I38).
 
 ## Why it suits a transcript
 

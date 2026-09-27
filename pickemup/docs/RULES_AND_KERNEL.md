@@ -335,6 +335,7 @@ The caps are provisional: they are to be reset to at least 3x the measured p99.9
 Recommendation confidence: medium.
 
 **DECISION D24: hand order is acquisition order, owned by the kernel: new cards go on the right, a played card leaves a gap that closes; the player cannot rearrange.**
+SUPERSEDED by ORCHESTRATION O9 and D54 to D57 below: the player rearranges on their own phone; acquisition order stays the order of the game, the wire and every event.
 Alternative: let the player sort or drag cards within the hand.
 Why: `UI.html` "It landed on you" ("sorting a hand on arrival is the fastest way to make a player lose their place"), and a play is coded as a position in the hand (4.4), so a hand order that only one phone knew would be a second derivation of it (the foolish hand-order divergence of September 2026).
 Recommendation confidence: medium.
@@ -523,6 +524,32 @@ Recommendation confidence: high.
 Alternative: add all three to `CFLAGS` now.
 Why: with Apple clang every source and test is clean under all three (the one `-Wsign-conversion` hit, in a test, is fixed), but the CI lane is Linux gcc, whose `-Wconversion` warns on narrowing that clang does not (compound assignment to `uint8_t`, for one), and a flag no gcc has compiled under would turn that lane red on the next push.
 The review that adds them is one Linux gcc run of `make run CFLAGS="-O2 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror -std=c11"`.
+Recommendation confidence: medium.
+
+**DECISION D54: the phone's own arrangement is a permutation laid over acquisition order, never a second hand order (O9, `src/pk_arrange.h`).**
+`PkGame.hand`, the wire, every event and a PLAY's position stay acquisition order; `PkView.my_slot` and `PkBeatFrame.my_slot` (appended, field order kept) say where each position is drawn, and `pk_api_arrange_move`, `pk_api_arranged_pos` and `pk_api_play_slot` go through the arrangement in C.
+Alternative: make `PkView.my_hand` the arranged order.
+Why: the BeatPlayer's anchors (`hand.i`), the flights' `to_i` and `from_i`, the staged play's position and the retraction's `pos` are all acquisition positions, so changing what `my_hand` means would change what every one of them names; a parallel index array changes nothing that exists and no wire byte (`pk_msg_test` and `pk_twophone_test` pass unchanged).
+Recommendation confidence: high.
+
+**DECISION D55: an arrangement entry is an acquisition, (card, receipt), where the receipt is "the k-th card this seat was ever given", computed by one replay of the history.**
+A card that arrives is a new receipt and goes on the right; a card that leaves keeps its entry, so an undo or a lost race that puts the same receipt back puts it back in its slot; the same card id drawn again after a reshuffle is a new receipt, so its stale entry is dropped and it goes on the right; a received bubble rebuilds the hand by replay with the same receipts, so nothing moves.
+At most one entry per card id, so an arrangement never outgrows the deck.
+Alternative: key by card id alone, or prune entries of cards that left.
+Why: by card id alone a card that comes back after a reshuffle would reappear in its old slot (mutation M2 in `tests/MUTATIONS.md`); pruning loses the slot an undo must restore (M3).
+Recommendation confidence: high.
+
+**DECISION D56: the arrangement is folded in before every action of mine and wherever the hand is read (the view, a move, a slot's position), and nowhere else.**
+A card can only leave by my own play, so folding in just before an action means every card that leaves has its entry, even one the host never drew between its draw and its play; a card that arrives needs nothing, because unknown cards read on the right in acquisition order, which is where the next fold puts them.
+Alternative: fold in on every adopt as well.
+Why: one rule with one owner; an adopt-time fold covered nothing the pre-action fold does not (M9 is the red run that pins it).
+Recommendation confidence: medium.
+
+**DECISION D57: the arrangements live in the seat records' bytes, the newest 8 games, as a fixed block after the 17-byte rows; a block that fails its magic or checksum, and a game in it that is not a valid arrangement, is dropped and that hand reads in acquisition order.**
+The block (2,588 bytes) is not a whole number of seat records, so bytes from before O9 (records only) and bytes with a block never look alike, and old records still load.
+An arrangement whose receipts match nothing in the hand matches nothing, so a record for some other hand also reads as acquisition order: reset, never trusted.
+Alternative: a separate store key for the arrangements.
+Why: the host already persists these bytes whenever they are dirty, unread (I24), so the arrangement rides the one path that exists; no JSON, no second store.
 Recommendation confidence: medium.
 
 ---

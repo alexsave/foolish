@@ -49,7 +49,7 @@ Counts: 56 rules decisions (D1 to D53, plus D5b, D5c and D5d), 25 visual (U1 to 
 | D21 | a 32-byte seed, the game id from its SHA-256, and a ChaCha block range per reshuffle | uttt's 4-byte seed, or a separate 8-byte id | RULES_AND_KERNEL.md | |
 | D22 | no hand count anywhere during play; the deck count is shown; every hand is shown at the end | hide the deck count too | RULES_AND_KERNEL.md | |
 | D23 | caps of 1,500 turn actions and 750 messages, names of 16 characters and 48 bytes, no hand cap | a 30-card hand cap, or no stop | RULES_AND_KERNEL.md | |
-| D24 | hand order is acquisition order, owned by the kernel | the player sorts or drags the hand | RULES_AND_KERNEL.md | |
+| D24 | SUPERSEDED by O9: hand order is acquisition order, owned by the kernel | the player sorts or drags the hand | RULES_AND_KERNEL.md | |
 | D25 | every bubble carries the whole game as seed, roster and one mixed-radix code | per-turn deltas | RULES_AND_KERNEL.md | |
 | D26 | races between sibling bubbles are settled by one total order in C, with no merge | foolish's Rule P unchanged, or a merge | RULES_AND_KERNEL.md | |
 | D27 | foolish's lobby minus the rules checkbox | uttt's "the joiner moves first" | RULES_AND_KERNEL.md | |
@@ -79,6 +79,10 @@ Counts: 56 rules decisions (D1 to D53, plus D5b, D5c and D5d), 25 visual (U1 to 
 | D51 | a seat record with no row means "not seated" and overrules the other witnesses | forgetting the record on a leave | RULES_AND_KERNEL.md | |
 | D52 | a started header's `lobby_rev` must be one its roster could have started from | leaving it unchecked once started | RULES_AND_KERNEL.md | |
 | D53 | the build flags stay `-Wall -Wextra -Werror`, with the stricter three a review-time check | adding all three to `CFLAGS` now | RULES_AND_KERNEL.md | |
+| D54 | the phone's arrangement is `my_slot`, a permutation over acquisition order; the wire is unchanged | making `my_hand` the arranged order | RULES_AND_KERNEL.md | |
+| D55 | an arrangement entry is (card, receipt), so arrivals go right and an undo finds its slot | keying by card id, or pruning cards that left | RULES_AND_KERNEL.md | |
+| D56 | the arrangement is folded in before each of my actions and wherever the hand is read | also on every adopt | RULES_AND_KERNEL.md | |
+| D57 | the arrangements ride the seat records' bytes; a bad block reads as acquisition order | a separate store key | RULES_AND_KERNEL.md | |
 
 ## Visual (U), full entries in `UI_DECISIONS.md`
 
@@ -123,7 +127,7 @@ Counts: 56 rules decisions (D1 to D53, plus D5b, D5c and D5d), 25 visual (U1 to 
 | I7 | a join that fills the table starts it in the same bubble | Join, then a separate Start | IOS_DECISIONS.md | |
 | I8 | a lobby alone carries no button | an Invite button | IOS_DECISIONS.md | |
 | I9 | the deck's drag is U24 exactly, with a tap under 8pt | (none; the device proof is open) | IOS_DECISIONS.md | |
-| I10 | the hand has no drag-to-reorder | foolish's reorder | IOS_DECISIONS.md | |
+| I10 | SUPERSEDED by O9 and I38: the hand has no drag-to-reorder | foolish's reorder | IOS_DECISIONS.md | |
 | I11 | while the hand scrolls, a card is played by tap + Play only | a long press that lifts it out | IOS_DECISIONS.md | VETO? |
 | I12 | in the drawer the hand stays flat to 22pt, then overlaps to 16pt, then scrolls | overlapping as soon as a card would go thin | IOS_DECISIONS.md | VETO? |
 | I13 | textures are baked by the shared tool and committed | baking at run time | IOS_DECISIONS.md | |
@@ -142,6 +146,8 @@ Counts: 56 rules decisions (D1 to D53, plus D5b, D5c and D5d), 25 visual (U1 to 
 | I26 | placeholder icons from a throwaway script | (none named) | IOS_DECISIONS.md | |
 | I27 | O6 drawn as the study's corner column in two corners, and said through the kernel | the shape top-left only | IOS_DECISIONS.md | |
 | I28 | the strip's chips are the glyph alone, as UI.html draws them | a thin face with a rank | IOS_DECISIONS.md | |
+| I38 | foolish's drag-to-reorder in the hand row; the row beats the pile on release; none while it scrolls | a long press to lift out of the scroll | IOS_DECISIONS.md | |
+| I39 | Swift names a card by its acquisition position; the slot is geometry, mapped only by the kernel | working in slots through `pk_api_play_slot` | IOS_DECISIONS.md | |
 
 ## Animation (A), full entries in `ANIMATION_DECISIONS.md`
 
@@ -177,6 +183,7 @@ Counts: 56 rules decisions (D1 to D53, plus D5b, D5c and D5d), 25 visual (U1 to 
 | O6 | action cards carry their suit shape as well as its colour | colour only | ORCHESTRATION.md | |
 | O7 | a draw is never staged on its own (affirms I4) | a bubble after every draw | ORCHESTRATION.md | |
 | O8 | two failures in foolish's proof set were fixed here: the base32 shift and a test lint | only reporting them | ORCHESTRATION.md | VETO? |
+| O9 | the hand keeps foolish's drag-to-reorder, per phone and off the wire, overriding D24 and I10 | D24 as written | ORCHESTRATION.md | |
 
 ## BLOCKED
 

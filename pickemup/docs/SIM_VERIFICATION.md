@@ -36,6 +36,10 @@ The screenshot is still owed for every step: the test proves the kernel and the 
   Bridge: proven in pk_twophone_test.c `[S2 join starts the game]` (JOIN offered with join-and-start, a live game, seven each, the deal's caption) and `[S2 the deal on the receiver]` (the other phone's bubble 0: fourteen DEALs round robin from seat 1, the other hand masked, a number START_CARD).
 - Tap a card to select it: `hand_select`, the 4pt red ring and nothing staged.
   Bridge: nothing to prove; selection is the host's alone and stages nothing in the kernel.
+- Drag a card sideways within the hand (O9, I38): `hand_reorder`, the card pinned under the finger while the others slide apart, then settled in its new slot; let go in the row and nothing is played or staged.
+  Then draw (the new card lands at the right end), play the dragged card by dragging it onto the pile (the flight leaves from the slot it sits in), undo (it flies home to that same slot), and close and reopen the extension (the order is still the dragged one).
+  Also owed on a real phone in the compact drawer: a sideways drag on the one row never plays a card and never collapses the drawer.
+  Bridge: proven in `pickemup/c/tests/pk_arrange_test.c` (`[bridge: ...]` steps: a reorder, a draw and a play after it, undo, a received bubble, the record's save and restore, a corrupted record, the frames) and compiled, not run, in `ArrangeTests` (ORCHESTRATION B2).
 - A turn with three draws then a play, one by drag onto the pile: `drag_to_pile`, then `chips_after_draws` with the strip reading a back x3, a dot and the played card's chip.
   Bridge: proven in pk_twophone_test.c `[S4 three draws then a play]` (the draft plan is three DRAWs then the PLAY) and `[S4b undo a staged play]` (the play comes home, the drawn cards stay, D8); the undo that empties a draft is `[S5 an undo that empties the draft]`.
 - Play a wild: `suit_picker`, four tiles at the compass points over the scrim, then the chosen suit's band on the pile.

@@ -57,6 +57,7 @@ OPEN: whether a downward drag starting mid-board can still collapse the drawer i
 Confidence: medium.
 
 DECISION I10: the hand has no drag-to-reorder.
+SUPERSEDED by ORCHESTRATION O9 and I38 below.
 Alternative: keep FHandFan's reorder.
 Why: the hand is in acquisition order and the kernel owns it (D24).
 Confidence: high.
@@ -197,3 +198,17 @@ The collapse flag a touch stages with (a play and a pass collapse, a lone Last c
 The 3 second readiness fallback and the silence and error beats are uttt's shared lifecycle (`InsertStaging`), kept whole.
 Found clean: no JSON or `Codable` anywhere (the seat records are the kernel's fixed-layout bytes, the nickname a string); no byte layout outside `Generated/` (the only `withUnsafeBytes` calls pass the participant id, the nickname and the seat records to C as bytes); no force unwrap on a kernel return; and no path from another seat's card count to a view, an accessibility label or an overlay (the fan is `PK_FAN_BACKS`, the reveal rows exist only once the game is over, and `NoCountLeakTests` walks a three-seat table's accessibility tree for digits).
 Confidence: high.
+
+DECISION I38: the hand row keeps foolish's drag-to-reorder (O9), copied from `FHandFan.reorder` with a `COPIED from` header.
+While the finger is in the hand row the dragged card asks for the slot whose centre is nearest its own centre (`pk_lay_hand_nearest`, FHandFan's `slotIndex`, ties to the lower slot) and goes there live under the card spring, with FHandFan's `reorderShift` pinning it to the finger; a release in the row is a rearrange and never a play, on the pile it plays (`pk_lay_drop`, FHandFan's `boardPoint` rule, the row tested first).
+While the hand scrolls there is no rearranging, as there is no drag to play (I11): no clean way was found to share the horizontal pan with a drag of no minimum distance.
+Alternative: a long press that lifts a card out of the scroll view to rearrange it there.
+Why: the owner named hand ordering first among what to reuse from foolish; the long press is a gesture the study does not draw.
+Confidence: medium.
+
+DECISION I39: Swift names a hand card by its acquisition position, and the arranged slot is geometry only.
+`HandRow` draws position i at `layout.slots[slotOf[i]]` and keeps `hand.i` as its anchor, so a flight lands on the right card whatever the arrangement; the selection, the picker's wild, the staged play and the undo's `PK_HM_UNDO` stay positions; the only maps between a position and a slot are the kernel's (`PkView.my_slot` one way, `pk_api_arranged_pos` the other).
+A drag rearranges only while the board shows the settled hand: while a plan's frame shows a different hand, a position would name a different card, so the drag moves nothing.
+Alternative: have the row and the model work in slots and map every touch through `pk_api_play_slot`.
+Why: every event, anchor and wire position is an acquisition position, so working in slots would need a map at every one of them; `pk_api_play_slot` stays for a host that addresses the hand by slot and is pinned by the C tests.
+Confidence: medium.
