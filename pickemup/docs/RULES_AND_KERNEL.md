@@ -1554,6 +1554,13 @@ What was imitated, piece by piece:
 What octogen has that this does not: the exact endgame solver and loss-avoiding root solve, exact leaf endgames inside rollouts, rank floors and per-seat behaviour profiles, the reply tournament and the compact bitboard rollout.
 Each exists in octogen because Durak's endgame is a perfect-information puzzle once the deck is gone; this game's deck never really ends (the stack reshuffles, 1.9), so none of them has an obvious analogue, and the owner asked for a basic bot.
 
+### What the bot may know (owner's note, 2026-09-27)
+
+It is legal for the bot to know the composition of the whole deck (1.1: 104 cards, fixed forever), and to subtract from it the cards in its own hand and every card it has seen thrown onto the stack, so that what is left is exactly the set the other players and the draw deck must hold between them.
+That remainder is the "unseen pool" of `pk_belief_build` above, and every hidden hand the bot samples is dealt from it; the buried start cards and each seat's hand size narrow it further.
+This is public information in the sense of D22: any player at the table who paid attention could keep the same count, so the bot gains nothing a careful human could not.
+What the bot may never read is a hidden hand itself or the deck's order: `pk_belief_build` consumes the event stream masked for the deciding seat, and the test that scrambles every hidden card and checks the belief is unmoved pins that.
+
 ### What the bot decides, and what it does not
 
 The strategies choose the turn: draw, which card and a wild's suit, pass (D60).
