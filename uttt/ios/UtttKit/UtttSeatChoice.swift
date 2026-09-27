@@ -1,5 +1,5 @@
 #if DEBUG
-import SwiftUI
+import UIKit
 
 /// WHICH OF THE TWO PEOPLE YOU ARE, asked once when a bubble is opened.
 ///
@@ -12,56 +12,58 @@ import SwiftUI
 /// IT DOES NOT NAME THE MARKS. Which seat is X is not decided until both are
 /// taken, and a chooser that leaked it would be a nicer version of the hole
 /// this app was just fixed to close.
-public struct UtttSeatChoice: View {
+///
+/// ON THE NAPKIN like every other screen: without the sheet this came up as
+/// dark ink on the drawer's own dark background and read as an empty box.
+public final class UtttSeatChoice: UtttSheetView {
     private let pick: (String) -> Void
-    public init(pick: @escaping (String) -> Void) { self.pick = pick }
+    private let title = UILabel()
+    private let line = UILabel()
+    private var seats: [UIButton] = []
 
-    private static let ink   = Color(red: 0.114, green: 0.106, blue: 0.086)
-    private static let label = Color(red: 0.541, green: 0.522, blue: 0.467)
-
-    public var body: some View {
-        UtttSheet { sheet }
-    }
-
-    /// ON THE NAPKIN like every other screen. Without the sheet this came up
-    /// as dark ink on the drawer's own dark background and read as an empty
-    /// box - which is what a screen looks like when it has no paper.
-    private var sheet: some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 8)
-            Text("Who are you?")
-                .font(.system(size: 21, weight: .bold))
-                .tracking(-0.315)
-                .foregroundStyle(Self.ink)
-            Text("One phone, two people. Pick a side and play.")
-                .font(.system(size: 13))
-                .foregroundStyle(Self.label)
-                .padding(.top, 5)
-            HStack(spacing: 12) {
-                seat("a", "The one who\nput it down")
-                seat("b", "The one who\ntook it up")
-            }
-            .padding(.top, 20)
-            Spacer(minLength: 8)
+    public init(pick: @escaping (String) -> Void) {
+        self.pick = pick
+        super.init(slide: nil)
+        title.attributedText = UtttType.headline.text("Who are you?", align: .center)
+        line.attributedText = UtttType(size: 13, color: UtttInk.label)
+            .text("One phone, two people. Pick a side and play.", align: .center)
+        line.adjustsFontSizeToFitWidth = true
+        content.addSubview(title)
+        content.addSubview(line)
+        for (word, t) in [("a", "The one who\nput it down"), ("b", "The one who\ntook it up")] {
+            let b = UIButton(type: .custom)
+            let p = NSMutableParagraphStyle()
+            p.alignment = .center
+            b.setAttributedTitle(NSAttributedString(string: t, attributes: [
+                .font: UIFont.systemFont(ofSize: 14, weight: .semibold),
+                .foregroundColor: UtttInk.ink, .paragraphStyle: p,
+            ]), for: .normal)
+            b.titleLabel?.numberOfLines = 2
+            b.layer.cornerRadius = 33
+            b.layer.borderWidth = 1.2
+            b.layer.borderColor = UtttInk.label.withAlphaComponent(0.7).cgColor
+            b.addAction(UIAction { [weak self] _ in self?.pick(word) }, for: .touchUpInside)
+            content.addSubview(b)
+            seats.append(b)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(13)
     }
+    required init?(coder: NSCoder) { fatalError() }
 
-    private func seat(_ word: String, _ title: String) -> some View {
-        Button { pick(word) } label: {
-            Text(title)
-                .font(.system(size: 14, weight: .semibold))
-                .multilineTextAlignment(.center)
-                .foregroundStyle(Self.ink)
-                .frame(width: 132, height: 66)
-                .background(
-                    RoundedRectangle(cornerRadius: 33)
-                        .stroke(Self.label.opacity(0.7), lineWidth: 1.2)
-                )
-                .contentShape(Rectangle())
+    override func lay(_ size: CGSize, from: CGFloat?) {
+        let inner = CGRect(origin: .zero, size: size).insetBy(dx: 13, dy: 13)
+        let ts = title.sizeThatFits(.zero)
+        let ls = line.sizeThatFits(.zero)
+        let block = ts.height + 5 + ls.height + 20 + 66
+        var y = inner.midY - block / 2
+        title.frame = CGRect(x: inner.midX - ts.width / 2, y: y, width: ts.width, height: ts.height)
+        y += ts.height + 5
+        let lw = min(ls.width, inner.width)
+        line.frame = CGRect(x: inner.midX - lw / 2, y: y, width: lw, height: ls.height)
+        y += ls.height + 20
+        let x0 = inner.midX - (132 * 2 + 12) / 2
+        for (i, b) in seats.enumerated() {
+            b.frame = CGRect(x: x0 + CGFloat(i) * (132 + 12), y: y, width: 132, height: 66)
         }
-        .buttonStyle(.plain)
     }
 }
 #endif

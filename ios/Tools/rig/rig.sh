@@ -31,6 +31,7 @@
 #   rig.sh seat [a|b]             which player this device is (DEBUG builds)
 #   rig.sh devgame [N]            open straight into a game N moves in
 #   rig.sh picker [on|off]        ask which player this device is on every open
+#   rig.sh arrive [WORD]          the other side's move lands in the open drawer
 #   rig.sh wipe [messages|state]  a clean slate: conversations, App Group, or both
 #   rig.sh clearstage [stay]      dismiss a staged bubble left in the compose
 #                                 field (then `back`, so the tap it just made
@@ -821,6 +822,23 @@ cmd_picker() {
   else
     : > "$g/dev.picker"; echo "picker: on - every opened bubble asks"
   fi
+}
+
+# SOMETHING ARRIVES at the open drawer (DEBUG builds).
+#
+#   rig.sh arrive [WORD]
+#
+# One simulator has one participant, so nothing ever arrives at a drawer that
+# is already open - and a move that lands while the board is up is a screen of
+# its own. The extension polls `dev.arrive` every 0.4s, deletes it and plays
+# WORD as the other side through its own didReceive lines. What WORD means is
+# the product's: Ultimate Tic-Tac-Toe takes a move (block*9+cell) or nothing
+# for its deterministic pick; Durak's RIG_ARRIVE takes join/start/rules/leave.
+cmd_arrive() {
+  need_sim
+  local g; g=$(group_dir)
+  case "$g" in /nonexistent/*) return 1 ;; esac
+  printf '%s' "${1:-}" > "$g/dev.arrive"; echo "arrive: '${1:-}' written"
 }
 
 cmd_devgame() {
@@ -2191,6 +2209,7 @@ case "${1:-}" in
   wipe)     shift; cmd_wipe "$@" ;;
   seat)     shift; cmd_seat "$@" ;;
   devgame)  shift; cmd_devgame "$@" ;;
+  arrive)   shift; cmd_arrive "$@" ;;
   picker)   shift; cmd_picker "$@" ;;
   enter)    shift; cmd_enter "$@" ;;
   open)     shift; cmd_open "$@" ;;

@@ -26,7 +26,7 @@ import assert from 'node:assert/strict';
 
 import {
     animBuildPlan, animPlanAt, animBuildBeats, animReversalOrder,
-    ANIM_EVT, ANIM_LOC, ANIM_STEP_NONE, ANIM_NEVER,
+    ANIM_EVT, ANIM_LOC, ANIM_STEP_NONE, ANIM_NEVER, ANIM_TIME_MS, ANIM_BOUT_END_HOLD_MS,
     ANIM_CONFLICT_REVERT, ANIM_CONFLICT_KEEP, ANIM_CONFLICT_CLEAR,
     type AnimPlanEventIn, type AnimBeatEventIn,
 } from '../sdk/ts/wasm/bots.ts';
@@ -144,6 +144,84 @@ test('a deal out of the deck carries its in-flight counts, and the trump does no
     const f = animPlanAt(0);
     assert.equal(f.inFlightFromDeck, 1);
     assert.equal(f.inFlightToFlipped, 1);
+});
+
+// ---- the plan is laid out in BEATS ------------------------------------------
+// The defect this pins, measured in a browser (docs/WEB_ANIM_PARITY.md section
+// 3): a bout-ending cover landed and the sweep took the whole table away 36ms
+// later. The web plays the kernel's plan and schedules nothing, so the rest can
+// only come from the plan's own start_ms - which means the plan has to know the
+// beats. These check the BYTE LAYOUT of that answer through the wasm bridge;
+// the C rules are pinned natively in c/tests/anim_plan_test.c section 8b.
+
+// A last defence as the wire delivers one: the cover that emptied the
+// defender's hand, then the discard that sweeps the table, then a refill.
+const lastDefence = (): AnimPlanEventIn[] => [
+    { type: ANIM_EVT.cover, seat: 1, from: ANIM_LOC.hand, to: ANIM_LOC.table, cards: [SEVEN_S] },
+    { type: ANIM_EVT.discard, from: ANIM_LOC.table, to: ANIM_LOC.discard, cards: [SIX_S, SEVEN_S] },
+    { type: ANIM_EVT.refill, seat: 0, from: ANIM_LOC.deck, to: ANIM_LOC.hand, cards: [TRUMP] },
+];
+
+test('the hold is the kernel\'s number, and it is three flights long', () => {
+    assert.equal(ANIM_BOUT_END_HOLD_MS, ANIM_TIME_MS * 3,
+        'iOS BoardFlight.boutEndHold is flightTime * 3; a bare 1500 in a host is a second timing policy');
+    assert.equal(ANIM_BOUT_END_HOLD_MS, 1500, 'and at the shipping flight time that is the 1.5s the owner asked for');
+});
+
+test('a bout-ending cover rests before the sweep, and the rest is inside the sweep\'s start', () => {
+    const p = animBuildPlan(lastDefence(), 2, FINAL);
+    assert.equal(p.steps[0].startMs, 0);
+    assert.equal(p.steps[0].holdMs, ANIM_BOUT_END_HOLD_MS, 'the cover carries the hold');
+    assert.equal(p.steps[1].startMs, TIME + GAP + ANIM_BOUT_END_HOLD_MS,
+        'the sweep waits the landing, the gap AND the hold');
+    assert.equal(p.steps[1].holdMs, 0, 'and nothing else in the sequence rests');
+    assert.equal(p.steps[2].startMs, 2 * (TIME + GAP) + ANIM_BOUT_END_HOLD_MS,
+        'the refill behind it keeps its ordinary gap');
+    assert.equal(p.totalMs, 2 * (TIME + GAP) + ANIM_BOUT_END_HOLD_MS + TIME);
+});
+
+test('sampled inside the hold, nothing is flying and the covered table is what shows', () => {
+    const p = animBuildPlan(lastDefence(), 2, FINAL);
+    const f = animPlanAt(TIME + 400);
+    assert.equal(f.step, ANIM_STEP_NONE, 'a hold is a beat of NOTHING moving - that is what makes it a hold');
+    assert.equal(f.landed, 1, 'the board on show is the one the cover landed on');
+    assert.equal(f.nextMs, p.steps[1].startMs, 'and the next thing to happen is the sweep, a hold away');
+});
+
+test('a cover with the bout still open keeps the ordinary gap', () => {
+    const p = animBuildPlan([
+        lastDefence()[0],
+        { type: ANIM_EVT.attack_pass, seat: 0, from: ANIM_LOC.hand, to: ANIM_LOC.table, cards: [SIX_S] },
+    ], 2, FINAL);
+    assert.equal(p.steps[0].holdMs, 0, 'the hold is a bout END, not a pause between any two moves');
+    assert.equal(p.steps[1].startMs, TIME + GAP);
+});
+
+test('two covers by one seat open at the same instant and name one beat', () => {
+    const p = animBuildPlan([
+        { type: ANIM_EVT.cover, seat: 1, from: ANIM_LOC.hand, to: ANIM_LOC.table, cards: [SEVEN_S] },
+        { type: ANIM_EVT.cover, seat: 1, from: ANIM_LOC.hand, to: ANIM_LOC.table, cards: [C(1, 6)] },
+        { type: ANIM_EVT.refill, seat: 0, from: ANIM_LOC.deck, to: ANIM_LOC.hand, cards: [TRUMP] },
+    ], 2, FINAL);
+    assert.equal(p.steps[0].startMs, 0);
+    assert.equal(p.steps[1].startMs, 0, 'one move is one movement; the kernel just spends an event per card');
+    assert.deepEqual([p.steps[0].beatFirst, p.steps[0].beatN], [0, 2]);
+    assert.deepEqual([p.steps[1].beatFirst, p.steps[1].beatN], [0, 2],
+        'the host reads the span off either step, and merges its own list the same way');
+    assert.deepEqual([p.steps[2].beatFirst, p.steps[2].beatN], [2, 1]);
+    assert.equal(p.steps[2].startMs, TIME + GAP, 'the beat after a merged cover opens one stride in, not two');
+});
+
+test('an `out` is a notice: no flight, no time, and it costs the beat behind it nothing', () => {
+    const p = animBuildPlan([
+        { type: ANIM_EVT.pickup, seat: 1, from: ANIM_LOC.table, to: ANIM_LOC.hand, cards: [SIX_S] },
+        { type: ANIM_EVT.out, seat: 0 },
+        { type: ANIM_EVT.refill, seat: 0, from: ANIM_LOC.deck, to: ANIM_LOC.hand, cards: [TRUMP] },
+    ], 2, FINAL);
+    assert.equal(p.steps[1].durationMs, 0, 'an out moves no card, so it flies for no time');
+    assert.equal(p.steps[1].startMs, TIME + GAP);
+    assert.equal(p.steps[2].startMs, TIME + GAP, 'the refill opens where it would have with no out at all');
+    assert.equal(p.totalMs, TIME + GAP + TIME, 'the sequence is two flights long, not three');
 });
 
 test('two covers by one seat are ONE beat, and a lone attack is its own', () => {

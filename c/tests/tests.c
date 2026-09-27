@@ -1939,15 +1939,40 @@ static void test_bot_drive_basic(void) {
 
 // A cycle stops on the FIRST visible action: everything before it must be
 // silent, or the host would render a move it was never told about.
+//
+// And WHICH goods are silent. #229 priced every good as a move, which made a
+// bot's "I won't throw in" - said over a table with an attack still uncovered -
+// cost a 3000ms beat and a badge flip each, several per bout. The owner's rule:
+// "I don't want to see any sword->checkbox rotation animations unless all
+// cards are covered." So a good over an uncovered table is BUNDLED_PASSIVE and
+// a good over a fully covered one is a MOVE (or a ROUND_TRANSITION when it
+// closes the bout). The per-action half of this sweep drives ONE action at a
+// time so the board each good was said over is known exactly; the full-cycle
+// half proves the silent ones really do bundle again at 6 players (F3).
 static void test_bot_drive_bundles_only_silent(void) {
     int bad_order = 0, cycles = 0, bundles = 0;
+    int silent_goods = 0, shown_goods = 0, wrong_silent = 0, wrong_shown = 0, good_transitions = 0;
     for (int seed = 0; seed < 12; seed++) {
         Game g;
         make_seeded_game(&g, 6, seed);
-        seat_all(&g, STRAT_HANDWRITTEN_PROD);
-
-        BotDriveOut out;
-        for (int step = 0; step < 400 && game_done(&g) < 0; step++) {
+        for (int i = 0; i < 400 && game_done(&g) < 0; i++) {
+            bool covered = g.num_battles > 0;
+            for (int b = 0; b < g.num_battles; b++) if (card_is_none(g.table_battles[b].defense)) covered = false;
+            BotDriveOut out;
+            int n = bot_drive(&g, 0, 1, 0, 0, &out);
+            if (n == 0) break;
+            if (out.actions[0].move.type != MOVE_GOOD) continue;
+            const int pc = out.actions[0].pacing_class;
+            if (pc == BOT_PACE_ROUND_TRANSITION) { good_transitions++; continue; }
+            if (covered) { shown_goods++;  if (pc != BOT_PACE_MOVE) wrong_shown = 1; }
+            else         { silent_goods++; if (pc != BOT_PACE_BUNDLED_PASSIVE) wrong_silent = 1; }
+        }
+    }
+    for (int seed = 0; seed < 12; seed++) {
+        Game g;
+        make_seeded_game(&g, 6, seed);
+        for (int i = 0; i < 400 && game_done(&g) < 0; i++) {
+            BotDriveOut out;
             int n = bot_drive(&g, 0, BOT_DRIVE_MAX_ACTIONS, 0, 0, &out);
             if (n == 0) break;
             cycles++;
@@ -1958,8 +1983,12 @@ static void test_bot_drive_bundles_only_silent(void) {
     }
     CHECK(cycles > 0, "the bundling sweep actually drove games");
     CHECK(!bad_order, "only silent actions are bundled; a visible one ends the cycle");
-    // The whole point of F3: 6-player games are full of silent goods.
-    CHECK(bundles > 0, "silent actions really do bundle at 6 players (the padding F3 removes)");
+    CHECK(silent_goods > 0, "6-player bots really do say good over an uncovered table");
+    CHECK(!wrong_silent, "a good over an uncovered table is SILENT: bundled, no beat, no badge");
+    CHECK(shown_goods > 0, "and they say good over a fully covered table too");
+    CHECK(!wrong_shown, "a good over a fully covered table is a move of its own");
+    CHECK(good_transitions > 0, "a good that closes the bout is still paced by the sweep it caused");
+    CHECK(bundles > 0, "silent goods really do bundle at 6 players (the padding F3 removes)");
 }
 
 // The divergence F2 exists to kill: a first-eligible seat walk gives low seats
@@ -9493,7 +9522,7 @@ static void test_table_deal_seed_and_session_log(void) {
 static void test_table_bot_drive_cycle(void) {
     tb_bot_table("espresso", 5);
     TableCommit c;
-    int drives = 0, logged_drives = 0, checked = 0, ended_by_drive = 0;
+    int drives = 0, logged_drives = 0, checked = 0, ended_by_drive = 0, good_only = 0;
     for (int step = 0; step < 4000; step++) {
         const int64_t now = 1700000001000LL + step * 1500;
         if (tb_reload(0) != 0) break;
@@ -9528,7 +9557,11 @@ static void test_table_bot_drive_cycle(void) {
             const int pn = table_commit_products(&tb, RS("g"), 2, now, &c, tb_arena, sizeof(tb_arena));
             CHECK(pn > 0 && c.logs.len == tb_record_bytes(&tb_game, imported) && c.logs.len > 0
                   && tb_arena[c.logs.off + 6] != LOG_GAME_START, "the commit carries only the cycle's own records");
-            CHECK(c.n_events > 0, "a visible bot move is announced");
+            // NOT `n_events > 0`: that is the very test this branch of the work
+            // removed from the adapter. A cycle that stopped on a visible action
+            // is announced, and a good is now one of those - with no card to fly
+            // and therefore no event, it is announced by goods_changed alone.
+            CHECK(c.n_events > 0 || c.goods_changed, "a visible bot move is announced");
             const int pl = table_push(&tb, RS("g"), 0, tb_buf, sizeof(tb_buf));
             EvwHeader h;
             CHECK(pl > 0 && evwire_read_header(tb_buf, pl, &h) == 0 && h.n_events == c.n_events
@@ -9541,6 +9574,19 @@ static void test_table_bot_drive_cycle(void) {
                   "a cycle that ends the game finalizes it: bots READY, the human IDLE");
         }
         if (tb_commit_row(now, &c) < 0) break;
+        // A GOOD THAT IS THE WHOLE OPERATION. The kernel has no card to move, so
+        // the stream is empty and `n_events` is 0 - which is exactly the state
+        // the adapter used to read as "nothing to broadcast", dropping the push
+        // and leaving the check to arrive folded into whatever moved next.
+        // goods_changed is the kernel's own answer, and this is the cycle that
+        // has nothing else to say it: the push it earns carries no events at all.
+        if (c.n_events == 0 && c.goods_changed && !good_only) {
+            good_only = 1;
+            const int pl = table_push(&tb, RS("g"), 0, tb_buf, sizeof(tb_buf));
+            EvwHeader h;
+            CHECK(pl > 0 && evwire_read_header(tb_buf, pl, &h) == 0 && h.n_events == 0,
+                  "a bot's good is broadcast by a push of no events at all");
+        }
         if (tb.ended) {
             const int pl = table_push(&tb, RS("g"), 0, tb_buf, sizeof(tb_buf));
             EvwHeader h;
@@ -9550,6 +9596,7 @@ static void test_table_bot_drive_cycle(void) {
         }
     }
     CHECK(checked && drives > 5 && logged_drives > 0, "the game had logged, visible bot cycles");
+    CHECK(good_only, "and a cycle whose entire product was a good, which used to be broadcast to nobody");
     // A game whose every seat is a bot ends in a cycle.
     tb_fixture(3, 7u, 97);
     tb_roster_for(3, 7u, "random", tb_roster);

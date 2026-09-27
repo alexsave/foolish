@@ -143,7 +143,12 @@ class Server {
         assert.ok(typeof p !== 'number', `commit products: ${p}`);
         const seats = t.seats();
         const pushes: [string, Uint8Array][] = [];
-        if (p.nEvents > 0) {
+        // THE ADAPTER'S GATE, and not `nEvents > 0` alone: a `good` flies no
+        // card, so it emits no event, and that lone test threw its push away
+        // (server/impls/supabase/functions/_shared/adapter/table_io.ts). A
+        // stale mirror here would leave the page's empty-stream path untested
+        // by the one suite that reads what the page actually drew.
+        if (p.nEvents > 0 || p.goodsChanged) {
             for (let s = 0; s < seats.length; s++) {
                 if (seats[s].brain) continue;
                 const b = t.push(this.gid, s);
@@ -496,6 +501,13 @@ const cards = (text: string) => text.split(' ').map((t) => {
     return { suit, value };
 });
 
+/** One seat's role coin, and the two things a case reads off it. */
+const coinOf = (s: Stage, seat: number) => s.host.querySelector(`[data-role-seat="${seat}"]`);
+const markOf = (s: Stage, seat: number) => coinOf(s, seat)?.getAttribute('data-role-mark') ?? null;
+/** The coin's width about its centre: 1 face-on, ~0 edge-on, mid-turn between. */
+const scaleOf = (s: Stage, seat: number) =>
+    Number(coinOf(s, seat)?.getAttribute('style')?.match(/scaleX\(([^)]*)\)/)?.[1] ?? NaN);
+
 /** A tap's promise, whose rejection (a refused move) is the page's to handle. */
 const tap = (p: Promise<unknown>) => { p.catch(() => {}); };
 
@@ -601,6 +613,15 @@ const three = () => fixture().title('Three of us').seats([seat(ANNA, 'Anna'), se
 const threeMeFirst = () => fixture().title('Three of us').seats([seat(ME, 'Me'), seat(ANNA, 'Anna'), seat(BORIS, 'Boris')])
     .status(PLAYING).deterministic().trump('Kc').deck('7s 8s 9s Ts');
 
+// FOUR SEATS, so that TWO other players can say good one after the other with
+// no card in between. Three is not enough: one of them has to defend and one is
+// me, which leaves a single seat that can go good, and a single good is exactly
+// the case that always worked.
+const CARL = 'u-carl-0002';
+const four = () => fixture().title('Four of us')
+    .seats([seat(ME, 'Me'), seat(ANNA, 'Anna'), seat(BORIS, 'Boris'), seat(CARL, 'Carl')])
+    .status(PLAYING).deterministic().trump('Kc').deck('7s 8s 9s Ts');
+
 // The cards in flight on the overlay: where each is drawn, its scale, and whether it is a refusal's red return.
 const flights = (host: HTMLElement) => Array.from(host.querySelectorAll<HTMLElement>('div'))
     .filter((d) => d.style.position === 'fixed' && d.style.zIndex === '10000')
@@ -631,6 +652,48 @@ async function tapCard(s: Stage, card: string): Promise<void> {
     await s.step(`release ${card}`, () => { dom.window.document.dispatchEvent(new dom.window.MouseEvent('mouseup', { bubbles: true })); });
 }
 
+// ---- the battle grid, as it is DRAWN and as the board holds it -------------------
+//
+// Two rows, deliberately read from two different places. `gridCells` is what
+// TableBattles painted - `shownRow`'s answer (src/state/animPlan.ts), the
+// board's row with the piles this run is still carrying taken out of it.
+// `storeRow` is the board the page was drawn FROM. Everywhere but a run whose
+// board has got ahead of its own flight the two are the same string, and the
+// one case below is about the frames where they are not.
+
+/** A card as the kernel writes it ("7h"), from the page's own `data-card`. */
+const notate = (data: string): string => {
+    const [suit, value] = data.split('-').map(Number);
+    return `${'23456789TJQKA'[value - 1] ?? '?'}${'shcd'[suit] ?? '?'}`;
+};
+
+/** The cells the grid has, in row order; a covered pile is "attack/cover". A
+ *  CELL, not a card: a pile whose card is still in the air has its slot here
+ *  with the card's own element in it, and `drawnCells` below is the one that
+ *  says whether that card is being painted. */
+const gridCells = (host: HTMLElement): string[] =>
+    Array.from(host.querySelectorAll<HTMLElement>('[data-table-container] [data-location="table"]'))
+        .map((cell) => Array.from(cell.querySelectorAll<HTMLElement>('[data-card]'))
+            .map((el) => notate(el.getAttribute('data-card') ?? '')).join('/'));
+
+/** The same cells, counting only the cards the page is actually PAINTING - the
+ *  veil hides a card at the place it is landing on for as long as its flight is
+ *  up (src/contexts/AnimationContext.tsx flightPlaces, CardFace), so a slot the
+ *  grid has opened for a card still in the air reads as an empty string here.
+ *  Two different claims, and since the row now makes room for a pile while its
+ *  card is crossing the board they have to be asked separately. */
+const drawnCells = (host: HTMLElement): string[] =>
+    Array.from(host.querySelectorAll<HTMLElement>('[data-table-container] [data-location="table"]'))
+        .map((cell) => Array.from(cell.querySelectorAll<HTMLElement>('[data-card]'))
+            .filter((el) => el.style.visibility !== 'hidden')
+            .map((el) => notate(el.getAttribute('data-card') ?? '')).join('/'));
+
+/** The same row off the store's board, so a cell the grid is withholding shows as a difference. */
+const storeRow = (): string[] => (JSON.parse(probe.store).view.battles as any[])
+    .map((b) => (b.defense.suit === V.CARD_NONE_SUIT && b.defense.value === V.CARD_NONE_VALUE
+        ? [b.attack] : [b.attack, b.defense])
+        .map((c: any) => `${'23456789TJQKA'[c.value - 1] ?? '?'}${'shcd'[c.suit] ?? '?'}`).join('/'));
+
 // ---- the cases ------------------------------------------------------------------------------
 
 test('attack: my card flies to the table, the server confirms it', async () => {
@@ -654,6 +717,75 @@ test('cover: my card covers the attack, the server confirms it', async () => {
         await answer(s, 'server applies');
         await s.advance(100);
         await deliver(s, 'push: my cover');
+    });
+});
+
+test('a LAST DEFENCE rests before the sweep takes the table', async () => {
+    // THE 1500ms THE OWNER ASKED FOR TWICE, and the one gap in a sequence that is
+    // not ANIM_GAP_MS. `8h` is my whole hand, so covering with it empties it and
+    // the bout closes on the cover (game.c handle_cover's `def->hand_count == 0`
+    // branch - the "last defense" the owner named): the push carries the cover,
+    // the discard that sweeps the table and the refills behind it, and the
+    // kernel's plan puts ANIM_BOUT_END_HOLD_MS between the cover LANDING and the
+    // sweep OPENING (anim_plan.h ANIM_BEAT_HOLDS, anim_build_plan's beat layout).
+    //
+    // HERE BECAUSE NOTHING ELSE IN THIS FILE REACHES IT. Every other case is a
+    // stream with no bout-ending cover in it - a good closes the bout in the
+    // `good` case, a pickup sweeps in `pickup` - so before this one the hold had
+    // no frame times gating it at all. Measured in a browser before it existed,
+    // the sweep took the table away 36ms after the card that won it landed
+    // (docs/WEB_ANIM_PARITY.md section 3).
+    const board = two(1).hand(0, '9c Tc Jd Qd').hand(1, '8h').table('6h')
+        .attacker(0).defender(1).build();
+    await play('cover_ends_bout', 130, 'a-bout-end', board, async (s) => {
+        await s.step('tap cover 8h on 6h', () => tap(probe.anim.cover(cards('8h'), cards('6h'))));
+        await s.advance(150);
+        await answer(s, 'server applies');
+        await s.advance(100);
+        await deliver(s, 'push: the last defence closes the bout');
+    });
+});
+
+test('the defender covers both attacks at once, and both cards fly together', async () => {
+    // ONE MOVE IS ONE MOVEMENT. The kernel spends one COVER event per card, so
+    // Anna covering two attacks in a single action reaches me as TWO cover
+    // events by one seat - and anim_build_plan opens both at the same
+    // millisecond (AnimPlanStep.beat_n), where before this they crawled across
+    // the table one 525ms flight after the other. The page draws the beat, not
+    // the step: useAnimationRun merges the run the same way the plan merged the
+    // clock, and each card keeps the pile the kernel named it for.
+    //
+    // Anna's move, not mine, on purpose: a multi-card cover of MY OWN is
+    // predicted as one event before any push exists, so it never reaches the
+    // merge. Every cover that ARRIVES does.
+    const board = two(0).hand(0, '9c Tc Jd Qd').hand(1, '8h 9h Ks').table('6h', '7h')
+        .attacker(0).defender(1).build();
+    await play('cover_both_at_once', 131, 'a-double-cover', board, async (s, srv) => {
+        await s.step('Anna covers both on the server', () => {
+            srv.act(ANNA, encodeAction({ kind: 'cover', cards: cards('8h 9h'), attack_cards: cards('6h 7h') }));
+        });
+        await s.advance(100);
+        await deliver(s, 'push: Anna covers both attacks');
+    });
+});
+
+test('the `out` that ends the game costs the sequence no time of its own', async () => {
+    // AN OUT IS A NOTICE - no cards, no flight, no time - and it used to burn a
+    // whole silent half second in the middle of a sequence (anim_plan.h's beats
+    // section; anim_step_duration_ms answers 0 for it). The deck is empty, so my
+    // last defence sweeps the table, the refill hands out nothing, I go out and
+    // the game ends: cover, discard, refill, OUT, defender_move, transition. The
+    // out lands in the gap the refill already had and the beat behind it opens
+    // where it would have with no out in the stream at all - the frames below
+    // are half a second shorter than they were.
+    const board = two(1).hand(0, '9c Tc Jd Qd').hand(1, '8h').table('6h').deck('')
+        .attacker(0).defender(1).build();
+    await play('out_costs_nothing', 140, 'an-out', board, async (s) => {
+        await s.step('tap cover 8h on 6h', () => tap(probe.anim.cover(cards('8h'), cards('6h'))));
+        await s.advance(150);
+        await answer(s, 'server applies');
+        await s.advance(100);
+        await deliver(s, 'push: the last defence ends the game');
     });
 });
 
@@ -693,6 +825,255 @@ test('good: my good closes the bout', async () => {
     });
 });
 
+test('my own good turns my badge as I tap it, and the confirmation finds nothing left to turn', async () => {
+    // THE OTHER HALF OF "A GOOD IS A MOVE", and the half no server fix reaches.
+    // Everything else on this branch makes ANOTHER player's good arrive as its
+    // own push; my own still waited for the round trip and then flipped.
+    //
+    // iMessage has no such lag because it flips the mark when the move is STAGED
+    // into the bubble - "so by the time the settlement is released there is no
+    // difference left to find" (MessageTableView+Sequence.swift, round 21). THE
+    // WEB HAS NO STAGING: a Messages extension stages and then sends as two
+    // acts, and that split is the platform's, not a design (the owner: "in the
+    // web there is no staged + actually sent distinction. Really more of an
+    // iMessage quirk"). Here the tap IS the send, so the flip goes at the
+    // optimistic submit. Same property on screen, different machinery.
+    //
+    // THE PROPERTY, IN TWO PARTS, and the second is what this case is really for:
+    // the check is up the moment I act, and when the server's answer and its push
+    // arrive there is NOTHING LEFT TO ANIMATE. That falls out of the kernel, not
+    // out of a special case: `anim_goods_opening` adds only the goods the shown
+    // roles do not already wear, so a confirmation of a badge already turned
+    // returns null and the coin does not turn twice.
+    //
+    // Anna has not said good, so mine closes nothing: my own push carries no
+    // events at all, which is the sharpest possible form of "nothing left".
+    const board = three().hand(0, 'Ad Qd 6d').hand(1, '9c Tc Jd').hand(2, 'Js Qs Ks').table('7h/9h')
+        .attacker(0).defender(2).goodTimestamp().build();
+    await play('my_good_optimistic', 135, 'a-my-good', board, async (s, srv) => {
+        assert.equal(markOf(s, 1), 'sword', 'I am an attacker to begin with');
+        await s.step('tap good', () => tap(probe.anim.good()));
+        await s.advance(90);
+        assert.ok(scaleOf(s, 1) < 0.5, `my coin is already turning on the tap (scaleX ${scaleOf(s, 1)})`);
+        await s.advance(210);
+        assert.equal(markOf(s, 1), 'check', 'the check is up before the server has answered');
+        assert.equal(scaleOf(s, 1), 1, 'and the coin has come to rest');
+
+        await answer(s, 'server applies my good');
+        await s.advance(120);
+        assert.equal(markOf(s, 1), 'check', 'the answer changes nothing');
+        assert.equal(scaleOf(s, 1), 1, 'and turns nothing: the coin never moves again');
+
+        const mine = srv.take(ME);
+        assert.equal(mine.bytes[3], 0, 'my own push carries no events - there was no card to fly');
+        await deliver(s, 'push: my own good, confirmed', mine);
+        await s.advance(300);
+        assert.equal(markOf(s, 1), 'check', 'the push confirms what is already on screen');
+        assert.equal(scaleOf(s, 1), 1, 'and anim_goods_opening finds nothing to add, so the badge does not flip twice');
+    });
+});
+
+test('a good the server refuses takes its own check back off', async () => {
+    // THE REVERT IS NOT OPTIONAL, and it matters MORE here than on iMessage. A
+    // staged move can be un-staged by hand before it is ever sent; the web's tap
+    // IS the send, so a refusal is the only way back, and a good that flipped
+    // optimistically and was then refused would strand a check on a seat that
+    // never said it.
+    //
+    // Boris takes the table before my good reaches the server. The kernel offers
+    // a good over an uncovered table (c/src/legal.c: "GOOD IS ALWAYS HERE WHILE
+    // THE SEAT HAS NOT SAID IT, uncovered table or not"), so my own gate lets the
+    // prediction through on the board I can see - and the board the server holds
+    // has moved on, which is the whole point.
+    const board = three().hand(0, 'Ad Qd 6d').hand(1, '9c Tc Jd').hand(2, 'Js Qs Ks').table('7h')
+        .attacker(0).defender(2).build();
+    await play('my_good_refused', 136, 'a-my-good-no', board, async (s, srv) => {
+        await s.step('Boris takes the table on the server', () => { srv.act(BORIS, encodeAction({ kind: 'pickup' })); });
+        await s.step('tap good', () => tap(probe.anim.good()));
+        await s.advance(210);
+        assert.equal(markOf(s, 1), 'check', 'the check went up on the board I could see');
+        await answer(s, 'server refuses mine');
+        await s.advance(300);
+        assert.equal(markOf(s, 1), 'sword', 'and the refusal took it back off');
+        await deliver(s, 'push: Boris\'s pickup');
+        await s.advance(900);
+        assert.notEqual(markOf(s, 1), 'check', 'and the board that follows does not put it back');
+    });
+});
+
+test('another player\'s good is the whole stream: the badge turns on its own push', async () => {
+    // THE CASE THE SERVER NEVER USED TO SEND. A `good` flies no card, so the
+    // kernel emits no event for it, and the adapter's `nEvents > 0` gate threw
+    // the push away: the check only reached a screen folded into whatever moved
+    // next ("all the goods are just getting lumped in with whatever animation
+    // causing move follows"). TableCommit.goods_changed broadcasts it now, and
+    // what lands is a push with an EMPTY event stream whose trailer board is the
+    // entire move.
+    //
+    // Which is why the page plays it ABOVE its empty-stream guard
+    // (AnimationContext, `nonOptimisticEvents.length === 0`) rather than below:
+    // everything below that guard is reached only by a stream with steps in it.
+    // iMessage made the same call and says why - it seeds its roles "AHEAD OF
+    // THE EMPTY-STREAM GUARD, because the stream that needs it most is the empty
+    // one: a `good` that does not close the bout emits no step, so the
+    // difference between these two role states is the ENTIRE move"
+    // (ios/FoolishKit/Boards/MessageTableView+Sequence.swift).
+    //
+    // Anna has NOT said good, so Boris's closes nothing: no transition, no
+    // sweep, no card. The badge is the only thing that may move, and the golden
+    // holds the frames either side of it.
+    const board = three().hand(0, 'Ad Qd 6d').hand(1, '9c Tc Jd').hand(2, 'Js Qs Ks').table('7h/9h')
+        .attacker(0).defender(1).goodTimestamp().build();
+    await play('bot_good_alone', 133, 'a-good-alone', board, async (s, srv) => {
+        assert.equal(markOf(s, 2), 'sword', 'Boris is an attacker to begin with');
+        await s.step('Boris says good on the server', () => { srv.act(BORIS, encodeAction({ kind: 'good' })); });
+        const good = srv.take(ME);
+        assert.equal(good.bytes[3], 0, 'his push carries no events at all - there is no card to fly');
+        assert.equal(markOf(s, 2), 'sword', 'and nothing on my screen has moved yet: the push has not been delivered');
+        await deliver(s, 'push: Boris says good', good);
+        // THE BADGE TURNS, it does not snap. A coin flip is one thing with two
+        // faces, so the old face is still up while the coin collapses onto its
+        // edge and the new one stands up behind it (src/state/roleMotion.ts
+        // coinFrameAt) - which is the whole reason this is a MOVE and not a
+        // state update, and the reason the push has to arrive on its own.
+        assert.equal(markOf(s, 2), 'sword', 'the old face is still up at the moment the push lands');
+        await s.advance(90);
+        assert.equal(markOf(s, 2), 'sword', 'and still up as the coin goes over');
+        assert.ok(scaleOf(s, 2) < 0.5, `the coin is edge-on: it is turning (scaleX ${scaleOf(s, 2)})`);
+        // A flip happens where the seat stands, so no ghost is ever in the air.
+        assert.equal(s.host.querySelector('[data-role-flight]'), null, 'and nothing flew to do it');
+        await s.advance(120);
+        assert.equal(markOf(s, 2), 'check', 'the check is up - on THIS push, not on the next move to carry a card');
+        await s.advance(600);
+        assert.equal(markOf(s, 2), 'check', 'and it stays up');
+    });
+});
+
+test('a second good in a row is not eaten as a duplicate of the first', async () => {
+    // THE BUG THIS BRANCH EXISTS FOR, found by the owner on an eight-seat board
+    // with a mix of bots: "I only ever see one checkmark per bout. I think some
+    // good events aren't coming through."
+    //
+    // They were coming through - the server sent all six and the client received
+    // all six. `handleAnimationMessage` threw them away. It carries a duplicate
+    // guard that signs a push by the CONTENT OF ITS EVENTS as a backup to the
+    // sequence-id check, and `eventsSignature([])` is the empty string, so every
+    // goods-only push in a game signed identically.
+    //
+    // WHY IT SURVIVED EVERYTHING UNTIL NOW: the set holding those signatures is
+    // cleared at the closing beat of an animated sequence. Until a good could be
+    // broadcast on its own there was always a card sequence between any two empty
+    // signatures, clearing the set each time. A goods-only push runs no sequence
+    // and so clears nothing - which means exactly ONE good gets through after the
+    // last card settles, and every one after it is dropped in silence. Two bots
+    // three seconds apart could never show it; the first good arrives while the
+    // opening attack is still animating and that sequence's closing beat clears
+    // the set in time for the second.
+    //
+    // So this case is deliberately TWO goods with no card between them, which is
+    // the smallest shape that fails. Reverting the fix turns it red on the second.
+    const board = four().hand(0, 'Ad Qd 6d').hand(1, '9c Tc Jd').hand(2, 'Js Qs Ks').hand(3, '8d Td Kd')
+        .table('7h/9h').attacker(0).defender(1).goodTimestamp().build();
+    await play('two_goods_in_a_row', 137, 'a-two-goods', board, async (s, srv) => {
+        assert.equal(markOf(s, 2), 'sword', 'Boris is an attacker to begin with');
+        assert.equal(markOf(s, 3), 'sword', 'and so is Carl');
+
+        await s.step('Boris says good on the server', () => { srv.act(BORIS, encodeAction({ kind: 'good' })); });
+        const first = srv.take(ME);
+        assert.equal(first.bytes[3], 0, 'his push carries no events');
+        await deliver(s, 'push: Boris says good', first);
+        await s.advance(260);
+        assert.equal(markOf(s, 2), 'check', 'Boris wears his check');
+
+        // NO CARD IN BETWEEN. Nothing here runs a sequence, so nothing clears the
+        // signature set - which is precisely the state the old guard could not
+        // survive.
+        await s.step('Carl says good on the server', () => { srv.act(CARL, encodeAction({ kind: 'good' })); });
+        const second = srv.take(ME);
+        assert.equal(second.bytes[3], 0, 'his push carries no events either - the same shape as the first');
+        await deliver(s, 'push: Carl says good', second);
+        assert.equal(markOf(s, 3), 'sword', 'the old face is still up as it lands');
+        await s.advance(90);
+        assert.ok(scaleOf(s, 3) < 0.5, `Carl's coin is turning too (scaleX ${scaleOf(s, 3)})`);
+        await s.advance(180);
+        assert.equal(markOf(s, 3), 'check', 'AND CARL WEARS HIS - the second good is not eaten as a duplicate of the first');
+        assert.equal(markOf(s, 2), 'check', 'with Boris still wearing his');
+    });
+});
+
+test('a good over an uncovered table is silent: no push, and no badge ever turns for it', async () => {
+    // THE OTHER HALF OF "A GOOD IS A MOVE". The owner: "I don't want to see any
+    // sword->checkbox rotation animations unless all cards are covered." A human
+    // cannot say good over an uncovered attack (play_can_say_good), but the
+    // kernel lets a bot, because that is how a bot declines to throw in - and
+    // pushing each of those as a move turned every bout into a parade of flips.
+    //
+    // Boris and Carl hold no seven, so over my uncovered 7h `good` is all either
+    // of them has. Each one commits and sends me NOTHING (goods_changed compares
+    // game_shown_good_mask, which is 0 while an attack is uncovered). Then Anna
+    // covers - and that cover used to be where the flips surfaced: handle_cover
+    // cleared the goods only AFTER its snapshot, so the cover step's own board
+    // carried both checks and the opening beat turned both badges on it.
+    const board = four().hand(0, 'Ad Qd 6d').hand(1, '9h Tc Jd').hand(2, 'Js Qs Ks').hand(3, '8d Td Kd')
+        .table('7h').attacker(0).defender(1).build();
+    await play('silent_goods', 138, 'a-silent-goods', board, async (s, srv) => {
+        await s.step('Boris says good on the server', () => { srv.act(BORIS, encodeAction({ kind: 'good' })); });
+        await s.step('Carl says good on the server', () => { srv.act(CARL, encodeAction({ kind: 'good' })); });
+        assert.equal((srv.outbox.get(ME) ?? []).length, 0, 'neither good sent me a push: they are silent');
+        s.track('7h');
+        await s.step('Anna covers 7h with 9h on the server',
+            () => { srv.act(ANNA, encodeAction({ kind: 'cover', cards: cards('9h'), attack_cards: cards('7h') })); });
+        await deliver(s, 'push: Anna covers');
+        for (let t = 0; t < 12; t++) {
+            await s.advance(60);
+            assert.equal(markOf(s, 2), 'sword', `Boris's badge never turns (${t * 60 + 60}ms)`);
+            assert.equal(markOf(s, 3), 'sword', `nor Carl's (${t * 60 + 60}ms)`);
+        }
+        const flipped = s.frames.filter((f) => /data-role-seat="[23]"[^>]*data-role-mark="check"|data-role-mark="check"[^>]*data-role-seat="[23]"/.test(f.html));
+        assert.equal(flipped.length, 0, `no frame the page drew showed a check on Boris or Carl (${flipped.map((f) => f.t).join(', ')})`);
+        assert.ok(s.frames.some((f) => /data-role-seat="2"/.test(f.html)), 'and the badges were on the page to be read');
+    });
+});
+
+test('a good that lands while a card of mine is still in the air turns the badge at once', async () => {
+    // THE CASE THAT NEEDS THE LEAD, and the reason the good is played ABOVE the
+    // empty-stream guard rather than left to the board-changed effect below it.
+    //
+    // That effect is a BYSTANDER write, and `anim_shown_ledger_allows` refuses a
+    // bystander outright while a sequence is still walking the marks forward
+    // (c/src/anim_plan.c) - correctly, because a board arriving underneath a
+    // running choreography would jump the badges. So a good delivered mid-flight
+    // has no bystander to fall back on: without a lead of its own it waits for
+    // the closing beat of whatever is flying, which is the owner's symptom
+    // exactly - "all the goods are just getting lumped in with whatever
+    // animation causing move follows".
+    //
+    // My cover is in the air when Boris's good arrives. Anna has not said good,
+    // so his closes nothing and his push carries no events at all.
+    const board = three().hand(0, 'Ad Qd 6d').hand(1, '9h 9c Tc').hand(2, 'Js Qs Ks')
+        .table('7h').attacker(0).defender(1).build();
+    await play('good_during_flight', 134, 'a-good-flight', board, async (s, srv) => {
+        s.track('9h', '7h');
+        await s.step('tap cover 9h on 7h', () => tap(probe.anim.cover(cards('9h'), cards('7h'))));
+        await s.advance(60);
+        await answer(s, 'server applies my cover');
+        // My cover's own confirming push is queued behind nothing and is NOT
+        // delivered here: it is every event this client already animated, so it
+        // would take the dedup branch and prove nothing about an empty stream.
+        srv.take(ME);
+        await s.step('Boris says good on the server, behind my cover',
+            () => { srv.act(BORIS, encodeAction({ kind: 'good' })); });
+        const good = srv.take(ME);
+        assert.equal(good.bytes[3], 0, 'his push carries no events - there is no card to fly');
+        assert.ok(probe.anim.isAnimating, 'and my own cover is still in the air as it arrives');
+        await deliver(s, 'push: Boris says good, mid-flight', good);
+        await s.advance(210);
+        assert.equal(markOf(s, 2), 'check', 'his badge turned during my flight, not after it');
+        await s.advance(600);
+        assert.equal(markOf(s, 2), 'check', 'and it stayed turned once my sequence settled');
+    });
+});
+
 test('throw-in while my move is pending: another attacker lands first', async () => {
     const board = threeMeFirst().hand(0, '7d Tc Jd').hand(1, 'Js Qs Ks 6s As').hand(2, '9d Qd 6d').table('7h/9h')
         .attacker(0).defender(1).build();
@@ -706,6 +1087,124 @@ test('throw-in while my move is pending: another attacker lands first', async ()
         await answer(s, 'server applies mine');
         await s.advance(150);
         await deliver(s, 'push: my throw-in');
+    });
+});
+
+test('a pile makes room for itself while its card is in the air, and a pile whose step has not opened gets nothing', async () => {
+    // WHAT `heldPiles` AND `arrivingPiles` EACH EXIST FOR (src/state/animPlan.ts),
+    // asserted rather than hashed, and the two rules read against each other
+    // because they answer the same question about different piles.
+    //
+    // THE ROW IS THE RUN'S, NOT THE BOARD'S. iMessage holds it in
+    // `ShownLedger.battles`, seeded to the row before the whole stream
+    // (`AnimPlan.pre.battles`) and advanced ONE STEP AT A TIME - and each
+    // advance is cut when that step OPENS, before its flights are even built:
+    // `ledger.write(.sequence) { $0.battles = s.battles }` inside
+    // `withAnimation(.timingCurve(..., duration: flightTime))`, in the same
+    // breath as the flight (ios/FoolishKit/Boards/MessageTableView+Sequence.swift,
+    // "…AND THE ROW GROWS AS THIS STEP'S CARDS COME DOWN ONTO IT"). So:
+    //
+    //   - a pile whose step HAS OPENED has its cell, and the piles already down
+    //     slide over to make room WHILE its card crosses the board. The card in
+    //     that cell is NOT painted - the veil holds it until the landing and the
+    //     overlay ghost carries the motion - which is why the two rows below are
+    //     read by two different helpers.
+    //   - a pile whose step has NOT OPENED has nothing at all. The grid centres
+    //     its cells, so a board that arrives holding a pile two flights down the
+    //     run would put every pile already down half a slot plus its gap to the
+    //     side, with a cold open having no previous layout to move it back from
+    //     (c/src/anim_plan.h AnimCounts).
+    //
+    // The stage puts BOTH on screen at once, which the earlier form of this case
+    // could not: it staged one in-flight pile, so "not landed" and "not opened"
+    // named the same pile and either rule could have been the one holding.
+    //
+    //   Boris throws in 7s and then 7c, so his two pushes are the OLDEST;
+    //   I throw in 7d, which the server applies behind them both;
+    //   Boris's FIRST push is delivered and 7s starts to fly;
+    //   his SECOND is delivered into the same run, where 7c waits its turn;
+    //   MY OWN push is delivered while 7s is still in the air - and every one
+    //   of its events is a motion this client already animated, so
+    //   AnimationContext takes the dedup branch and commits its board AT ONCE
+    //   (withoutConfirmedMotions -> updateGameState). That board holds 7s,
+    //   which is in the air, AND 7c, whose step has not opened.
+    //
+    // The three rules this pins, in the three rows:
+    //   - the OPENED pile 7s: a cell on the grid, its card not painted;
+    //   - the UNOPENED pile 7c: on the board, off the grid entirely;
+    //   - MY OWN pending 7d: on the board AND on the grid AND painted, right
+    //     through somebody else's flight. A pile nothing is flying never loses
+    //     its slot; that is the flicker the optimistic overlay exists to prevent.
+    // The same board e2e/fake_supabase.mts's `throw_in_race` scenario deals, so
+    // the case below and the browser run are one experiment: everyone holds a
+    // seven, and Anna's hand is long enough to be attacked three times.
+    const board = threeMeFirst().deck('6s 8s 9s Ts')
+        .hand(0, '7d Tc Jd Ad').hand(1, '8h 9h Th Jh Qh').hand(2, '7s 7c 6d 6c')
+        .table('7h').attacker(0).defender(1).build();
+    await play('held_pile_board_ahead', 132, 'a-held-pile', board, async (s, srv) => {
+        await s.step('Boris throws in 7s on the server, before my move reaches it',
+            () => { srv.act(BORIS, encodeAction({ kind: 'attack', cards: cards('7s') })); });
+        const borisFirst = srv.take(ME);
+        await s.step('…and 7c behind it, still before my move reaches it',
+            () => { srv.act(BORIS, encodeAction({ kind: 'attack', cards: cards('7c') })); });
+        const borisSecond = srv.take(ME);
+
+        await s.step('tap attack 7d', () => tap(probe.anim.attack(cards('7d'))));
+        await s.advance(120);
+        await answer(s, 'server applies mine, behind both of Boris\'s');
+        const mine = srv.take(ME);
+
+        // My own prediction lands and takes a cell, as any landed pile does.
+        await s.advance(600);
+        assert.deepEqual(gridCells(s.host), ['7h', '7d'], 'my prediction has landed and holds a cell');
+        assert.deepEqual(storeRow(), ['7h', '7d'], 'and the board it was drawn from says the same');
+
+        // 7s is in the air, so the row makes room for it AS it comes down - the
+        // cell is open at the pile's own place in the row, and the card in it is
+        // not painted. My pending 7d is not flying and keeps both.
+        await deliver(s, 'push: Boris\'s first throw-in', borisFirst);
+        s.track('7s');
+        await s.advance(100);
+        assert.equal(flights(s.host).length, 1, '7s is in the air');
+        assert.deepEqual(gridCells(s.host), ['7h', '7s', '7d'],
+            'the row has already made room for 7s, at the place its own step\'s board gives it');
+        assert.deepEqual(drawnCells(s.host), ['7h', '', '7d'],
+            'and the card is not painted there: the ghost is carrying it');
+
+        // The second throw-in joins the run behind 7s. Its step has not opened,
+        // so its pile gets nothing - not a cell, not a place in the row. The 30ms
+        // is a FRAME, not a wait: the held set is the run's own answer and the
+        // run answers once per animation frame, which a browser gives it for
+        // free and a fake clock has to be walked to.
+        await deliver(s, 'push: Boris\'s second throw-in, into the same run', borisSecond);
+        await s.advance(30);
+        assert.deepEqual(gridCells(s.host), ['7h', '7s', '7d'], '7c waits its turn: no cell for a step that has not opened');
+
+        // The confirmation of a card that is already on my table: nothing to
+        // animate, so its board - the server's, holding 7s AND 7c - commits at
+        // once, and the grid still refuses 7c its slot.
+        await deliver(s, 'push: my own throw-in, confirming a card already on the table', mine);
+        await s.advance(30);
+        assert.deepEqual(storeRow(), ['7h', '7s', '7c', '7d'], 'the board has got ahead of the run: it holds both of Boris\'s');
+        assert.equal(flights(s.host).length, 1, 'and 7s is still in the air');
+        assert.deepEqual(gridCells(s.host), ['7h', '7s', '7d'],
+            'so the grid gives 7c no cell, and the piles already down do not move for it');
+        assert.deepEqual(drawnCells(s.host), ['7h', '', '7d'], '7s is still the ghost\'s to draw');
+
+        // 7s lands into the slot that was waiting for it - no new cell, nothing
+        // re-orders - and only then does 7c open and take one of its own, on the
+        // same terms: a slot the row makes room for while the card is still up.
+        await s.advance(600);
+        assert.equal(flights(s.host).length, 1, '7c is in the air now, and it alone');
+        assert.deepEqual(gridCells(s.host), ['7h', '7s', '7c', '7d'], 'the row has made room for 7c as its step opened');
+        assert.deepEqual(drawnCells(s.host), ['7h', '7s', '', '7d'],
+            '7s has landed into the cell the row had already made for it; 7c is the ghost\'s');
+
+        await s.advance(1200);
+        assert.deepEqual(flights(s.host), [], 'everything has landed');
+        assert.deepEqual(gridCells(s.host), ['7h', '7s', '7c', '7d'], 'and 7c has its cell too');
+        assert.deepEqual(drawnCells(s.host), ['7h', '7s', '7c', '7d'], 'every pile painted');
+        assert.deepEqual(storeRow(), ['7h', '7s', '7c', '7d'], 'the grid and the board agree again');
     });
 });
 
@@ -744,7 +1243,12 @@ test('a rejected move whose push never arrives: the card goes home and stays the
         await s.advance(25);
         // ... to its own place in my hand, which kept it (hidden) all along.
         const home = handCard(s.host, '6s').getBoundingClientRect();
-        assert.deepEqual(flights(s.host), [{ left: home.left + home.width / 2 - 35, top: home.top + home.height / 2 - 45, scale: 1.8, red: true }],
+        // A flight is hung by its CENTRE: `left`/`top` ARE the point the overlay
+        // measured, and FlightCard's own `translate(-50%, -50%)` takes off the
+        // half card. This used to subtract a half card here too, from a 70x90
+        // card that does not exist - CardFace draws 50x70 - so the expectation
+        // and the code were wrong by the same 10px in the same direction.
+        assert.deepEqual(flights(s.host), [{ left: home.left + home.width / 2, top: home.top + home.height / 2, scale: 1.8, red: true }],
             'and lands on its own place in my hand');
         await s.advance(2500);
         const view = JSON.parse(probe.store).view;

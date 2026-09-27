@@ -2,7 +2,7 @@ import React from 'react';
 import { useServer } from '../contexts/ServerContext';
 import { TableBattles } from './GameDisplay/TableBattles';
 import { PlayerRing } from './GameDisplay/PlayerRing';
-import { DefenderShield } from './GameDisplay/DefenderShield';
+import { RoleFlightsLayer } from './GameDisplay/RoleFlightsLayer';
 import { ActionButtons } from './GameDisplay/ActionButtons';
 import { DeckAndFlipped } from './GameDisplay/DeckAndFlipped';
 import { DiscardPile } from './GameDisplay/DiscardPile';
@@ -13,6 +13,7 @@ import { AnimationOverlay } from './GameDisplay/AnimationOverlay';
 import { KeyboardInputHandler } from './KeyboardInputHandler';
 import { KeyboardPlayMode } from './GameDisplay/KeyboardPlayMode';
 import { Text } from './Text';
+import { useAnimation } from '../contexts/AnimationContext';
 
 /**
  * The one parameterized board behind every game-state source.
@@ -55,6 +56,14 @@ export interface GameBoardProps {
     overlay?: React.ReactNode;
 }
 
+/** The role hand-off's ghosts. Its own component so reading the animation
+ *  context - which changes on every frame of a card flight - does not re-render
+ *  the whole board with it. */
+const RoleFlights = () => {
+    const { roleHandOff, noteRoleFlightFrame, landRoleHandOff } = useAnimation();
+    return <RoleFlightsLayer flights={roleHandOff.flights} onDrawn={noteRoleFlightFrame} onLanded={landRoleHandOff} />;
+};
+
 export const GameBoard = ({
     interactive = false,
     showChat = false,
@@ -93,7 +102,6 @@ export const GameBoard = ({
                     className="absolute flex flex-col items-center justify-center w-full"
                     style={{ top: 0, bottom: 0 }}
                 >
-                    <DefenderShield />
                     <TableBattles />
                 </div>
 
@@ -103,6 +111,10 @@ export const GameBoard = ({
             </div>
 
             <AnimationOverlay />
+            {/* The two marks that TRAVEL, above the board AND above the cards:
+                while a role is being handed over it is the thing being read, and
+                a shield passing behind a badge would read as a glitch. */}
+            <RoleFlights />
             {chrome}
         </>
     );

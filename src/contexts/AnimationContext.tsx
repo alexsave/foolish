@@ -24,6 +24,13 @@ import { shouldDropStaleSequence } from '../state/clientReconcile';
 import { noteAuthoritativeVersion } from '../state/authoritativeVersion';
 import { animEventKey } from '@sdk/ts/wasm/bots.ts';
 import { useAnimationRun } from '../state/useAnimationRun';
+import type { ArrivingPile } from '../state/animPlan';
+import { ROLE_CLAIM, useRoleMotion, type RoleHandOff } from '../state/useRoleMotion';
+import { rolesOf } from '../state/roleLedger';
+import type { ShownBoard } from '../state/roleLedger';
+import {
+    ANIM_NO_MASK, animRolesGoodsCleared, animRolesGoodsOpening, animRolesPassHandOff,
+} from '@sdk/ts/wasm/bots.ts';
 
 // Bot bump timeout - 20 seconds of no animations (currently unused)
 // const BOT_BUMP_TIMEOUT = 20000;
@@ -58,6 +65,24 @@ interface AnimationContextType {
     /** How long the flight on screen lasts, from the kernel's plan: the number
      *  the overlay's CSS transition is written with. 0 when nothing is flying. */
     flightMs: number;
+    /** How long the BATTLE ROW's own layout change lasts - the plan's duration
+     *  for the step whose card the row is making room for. Not `flightMs` at the
+     *  moment it is read: the row also moves at a landing, which falls in the gap
+     *  between two flights where that one is already 0. 0 before a run's first
+     *  step opens and after a seek, which are both meant to be instant. */
+    rowMs: number;
+    /** THE PILES THE GRID MUST NOT MAKE ROOM FOR YET - the cards of the steps
+     *  this run has not started, which get no cell until their own flight opens
+     *  (src/state/animPlan.ts heldPiles, drawn through `shownRow`). Empty on
+     *  every frame with nothing in the air, and the same object each time, so
+     *  it compares by identity. */
+    heldPiles: ReadonlySet<number>;
+    /** …AND THE PILES IT MUST MAKE ROOM FOR NOW - the cards a step that HAS
+     *  started is bringing down, which take their cell while they are still in
+     *  the air so the row grows around them as they come (src/state/animPlan.ts
+     *  arrivingPiles, drawn through the same `shownRow`). This is the table's
+     *  half of iMessage's round 7, "it should be at the same TIME". */
+    arrivingPiles: readonly ArrivingPile[];
     // Cards currently flying from the deck pile. Drives the visible pile size.
     // Drops BEFORE the animation starts and resets when the snapshot commits.
     inFlightFromDeck: number;
@@ -82,6 +107,21 @@ interface AnimationContextType {
      *  states. Used by the replay player when seeking; a live game never
      *  needs it (the server stream is the only truth there). */
     resetAnimations: () => void;
+    // ---- the role marks (src/state/useRoleMotion.ts) -------------------------
+    /** WHAT THE BADGES ARE WEARING - the frozen ledger, not the live board. A
+     *  sequence walks it forward beat by beat, so a bout end does not re-cast
+     *  every sword a beat before the sequence that earns it has played. Null
+     *  until a board has shown anything. */
+    shownRoles: ShownBoard | null;
+    /** The marks in the air, and the seats they left and are going to. */
+    roleHandOff: RoleHandOff;
+    /** A seat publishes the box its mark is drawn in, so a mark can fly to it. */
+    publishRolePad: (seat: number, el: HTMLElement | null) => void;
+    /** The flights layer's two reports: a ghost drew a frame, and every ghost
+     *  has landed. The ghosts end a hand-off, because they run on the frames
+     *  that draw them and a wall-clock timer does not. */
+    noteRoleFlightFrame: () => void;
+    landRoleHandOff: () => void;
 }
 
 // Exported so the tutorial can re-provide a value that overrides the action
@@ -98,8 +138,25 @@ export const AnimationContext = createContext<AnimationContextType | null>(null)
 // same-shaped-but-distinct sequences - e.g. two single-card refills at different
 // deck sizes - still hash differently, the way the full stringify did, at a tiny
 // fraction of the cost.
-const eventsSignature = (events: any[]): string =>
-    events
+const eventsSignature = (events: any[], game?: { version?: number; goodMask?: number }): string =>
+    // A STREAM WITH NO EVENTS HAS NO EVENT CONTENT, and mapping it produced the
+    // empty string - so every goods-only push signed identically and the second
+    // one onward was thrown away as a duplicate of the first.
+    //
+    // It survived review because the set below is cleared at the closing beat of
+    // an animated sequence, and until a good could be broadcast alone there was
+    // always one of those between two empty signatures. A goods-only push runs
+    // no sequence, so it clears nothing: after the last card settles, exactly ONE
+    // good gets through and every later one is silently dropped. The owner found
+    // it the only way it can be found - eight seats and enough bots to say good
+    // several times in a row: "I only ever see one checkmark per bout."
+    //
+    // For such a push the BOARD is the content, so it signs with the board. A
+    // genuine duplicate still carries the same version and still dedupes; the
+    // monotonic version gate above catches those first in any case.
+    events.length === 0
+        ? `empty|${game?.version ?? ''}|${game?.goodMask ?? ''}`
+        : events
         .map((e) => {
             const gs = e.game_state;
             return [
@@ -213,6 +270,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         currentGameRef.current = url_game_id ? games[url_game_id] : undefined;
         gamesRef.current = games;
     }, [url_game_id, games]);
+
 
     // Start bot bump timer when component mounts and game is loaded
     useEffect(() => {
@@ -403,7 +461,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
         // Also check event content as backup (compact signature, not a full
         // JSON.stringify of the events + their embedded game snapshots).
-        const eventsString = eventsSignature(message.events);
+        const eventsString = eventsSignature(message.events, message.game);
 
         if (processedEventContent.current.has(eventsString)) {
             return;
@@ -419,6 +477,44 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
         // If ALL events were optimistic, just update state and return
         if (nonOptimisticEvents.length === 0) {
+            // A GOOD CAN BE THE WHOLE STREAM, AND THIS IS THE WEB'S EMPTY-STREAM
+            // GUARD - so the good has to be played ABOVE it, not below.
+            //
+            // There is no ANIM_EVT_GOOD: a good flies no card, so it emits no
+            // event. The server used to drop its push for exactly that reason
+            // (`nEvents > 0`) and the mark only reached a screen folded into
+            // whatever moved next; TableCommit.goods_changed sends it now, and
+            // what arrives is a push whose `events` are EMPTY and whose trailer
+            // board is the entire move. Everything below this guard - the
+            // opening role beat included - is reached only by a stream with
+            // steps in it, so a good that arrives alone would fall straight
+            // through to `updateGameState` and be left to the bystander effect,
+            // which `anim_shown_ledger_allows` refuses outright while another
+            // sequence is still walking the marks forward.
+            //
+            // iMessage made this exact call first and says why, from the other
+            // side: it seeds its roles "AHEAD OF THE EMPTY-STREAM GUARD, because
+            // the stream that needs it most is the empty one: a `good` that does
+            // not close the bout emits no step, so the difference between these
+            // two role states is the ENTIRE move" (MessageTableView+Sequence.swift).
+            //
+            // ADDED goods only - `animRolesGoodsOpening` is the kernel's rule and
+            // answers null for anything else, which is right: a good being taken
+            // away is a consequence of the card that cleared it, and that card is
+            // an event, so such a push is never one of these.
+            if (message.events.length === 0 && message.game) {
+                const shown = roleMotionRef.current.read();
+                const opening = shown ? animRolesGoodsOpening(shown.roles, message.game.goodMask) : null;
+                // The seats do not change, only what they are wearing: the same
+                // coin flip in place the opening beat of a real stream makes.
+                if (opening) roleMotionRef.current.syncRoles(opening);
+                // A sequence still in flight settles on the board in this ref at
+                // its closing beat. This push's board is strictly newer than that
+                // one (the version gate above guarantees it), so leaving the old
+                // board there would have the closing beat take the check back off
+                // the badge it was just put on.
+                if (sequenceFinalRef.current) sequenceFinalRef.current = message.game;
+            }
             if (message.game) {
                 updateGameState(message.game.gameId, message.game);
             }
@@ -460,6 +556,29 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         };
         remainingSequenceEventsRef.current = message.events.length + revertEvents.length;
 
+        // The board this stream SETTLES on, for the one rule that cannot be
+        // answered from the stream: a pass writes no event for the hand-over.
+        sequenceFinalRef.current = message.game ?? null;
+
+        // A GOOD BEING SET LEADS THE STREAM. It is somebody's move, and the
+        // transition, the discard and the deal behind it are its consequences -
+        // flip it late and an attacker's check would snap on after the cards it
+        // caused had already been swept. `firstGoodMask` is the stream's own
+        // event-0 mask (the kernel's AnimBeats.first_good_mask), and the rule
+        // that only ADDED goods lead is the kernel's too.
+        //
+        // A GOOD THAT ARRIVES ALONE never reaches this line: it has no `events[0]`
+        // to take a mask from, and it is played at the empty-stream guard above,
+        // where iMessage plays it too. `events[0]` is therefore still always
+        // there by the time this runs.
+        const openingShown = roleMotionRef.current.read();
+        const opening = openingShown
+            ? animRolesGoodsOpening(openingShown.roles, stepGoodMask(message.events[0]))
+            : null;
+        // The seats do not change here, only what they are wearing, so nothing
+        // flies: this is the coin flip each badge makes where it stands.
+        if (opening) roleMotionRef.current.syncRoles(opening);
+
         // Nothing doomed: the push plays as it came. Otherwise every return
         // flight goes first, over the board it must be drawn against
         // (src/state/revertFlights.ts).
@@ -469,17 +588,79 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     };
 
 
+    // ---- THE ROLE MARKS, and the three moments they move at ------------------
+    //
+    // The ledger and the hand-off live in src/state/useRoleMotion.ts; WHICH
+    // marks change at WHICH point of a sequence is the kernel's, and this file
+    // is where each of its three answers is asked, because this is where the
+    // sequence is. c/src/anim_plan.h states the rule the three firing points
+    // below are:
+    //
+    //   a good being SET leads the stream - it is somebody's move, and the
+    //     transition, the discard and the deal behind it are its consequences;
+    //   a good being CLEARED runs parallel with the throw-in that cleared it,
+    //     since the card and the marks are one event and neither leads;
+    //   a PASS hands the shield over WITH the transfer card;
+    //   everything else waits for the closing beat at the end of the sequence.
+    //
+    // iMessage fires them in exactly these four places
+    // (MessageTableView+Sequence.swift: the top of `runEventStream`, beside each
+    // beat's own flights, and the closing beat at the bottom).
+    const roleMotion = useRoleMotion();
+    const roleMotionRef = useRef(roleMotion);
+    roleMotionRef.current = roleMotion;
+    // The board a running sequence SETTLES on. A pass is snapshotted before the
+    // hand-over and writes no event for it, so the new defender appears nowhere
+    // in the stream - only on the final board, which is why
+    // `anim_pass_hand_off` takes it as an argument.
+    const sequenceFinalRef = useRef<TableView | null>(null);
+
+    /** The good mask a step's own board carries, or ANIM_NO_MASK for a step that
+     *  carried no board - the one value a mask may not take, and the value both
+     *  goods rules answer 0 for. */
+    const stepGoodMask = (step: ClientAnimationEvent): number =>
+        step.game_state ? step.game_state.goodMask : ANIM_NO_MASK;
+
     // ONE FRAME LOOP, and the kernel answers it (src/state/useAnimationRun.ts).
     // What is left here is what a landing MEANS - which board it commits, what
     // tracking it releases, when a sequence's final board is the truth - because
     // that is about the game, and the loop is about time.
     const {
-        isAnimating, currentAnimation, flightMs, inFlightFromDeck, inFlightToFlipped,
-        animatingCards, enqueue, reset: resetRun,
+        isAnimating, currentAnimation, flightMs, rowMs, heldPiles, arrivingPiles,
+        inFlightFromDeck, inFlightToFlipped, animatingCards, enqueue, reset: resetRun,
     } = useAnimationRun<ClientAnimationEvent>({
         board: () => currentGameRef.current,
         placesOf: (step) => flightPlaces(step.from_location, step.to_location, step.seat),
         keyOf: (card, place) => getCardKeyOwner(card, place),
+        // ONE MOVE, ONE MOVEMENT. The kernel spends one COVER event per card, so
+        // a defender who covered two attacks in one move arrives as two steps
+        // and the plan opens both at the same instant (AnimPlanStep.beat_n).
+        // This is what the page draws for that instant: the steps' cards in one
+        // flight, each still aimed at the pile the kernel named it for -
+        // `target_cards` is the per-card form the overlay already reads for a
+        // multi-card cover of my own, and it is the only form that survives the
+        // merge, because `target_card` and `battle_index` describe ONE event.
+        // The board is the LAST step's: the boards inside one move are boards
+        // nobody was ever shown.
+        //
+        // RENDERING ONLY. Every step of the beat still has its own landing
+        // taken, in order, so `commit_board`, `commit_if` and the sequence
+        // countdown are untouched by this.
+        mergeBeat: (steps) => {
+            const cards = steps.flatMap((s) => s.cards ?? []);
+            const targets = steps.flatMap((s) => (s.cards ?? []).map(() => s.target_card));
+            const named = targets.filter((t): t is Card => t !== undefined);
+            return {
+                ...steps[0],
+                cards,
+                // All or nothing: a half-named list would slide every card after
+                // the gap onto the wrong pile, where no list at all leaves the
+                // overlay's own last-resort guess exactly as it was.
+                target_cards: named.length === cards.length ? named : undefined,
+                battle_index: undefined,
+                game_state: steps[steps.length - 1].game_state ?? steps[0].game_state,
+            };
+        },
         onLanded: (step) => {
             // A PREDICTION'S BOARD IS MADE AT ITS LANDING, from whatever is on
             // screen then - a broadcast can commit fresher state inside the
@@ -501,7 +682,47 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 remainingSequenceEventsRef.current--;
             }
         },
+        // A STEP'S CARDS ARE IN THE AIR AS OF THIS FRAME, which is when the marks
+        // that move WITH a card move. Both rules are fired and not awaited: the
+        // badge's turn and the card's flight are one event and start in the same
+        // instant, the shorter of the two simply finishing first.
+        onOpened: (step) => {
+            const roles = roleMotionRef.current;
+            const shown = roles.read();
+            if (!shown) return;
+            // THE GOODS THIS STEP CLEARS TURN NOW, WITH ITS CARD. Gated on the
+            // step actually PUTTING A CARD DOWN (the kernel's ANIM_BEAT_PLACED
+            // read off the step's own destination): a throw-in is the only thing
+            // that clears a good this way, and a mask that changes for any other
+            // reason still belongs to the closing beat with the rest of the
+            // consequences.
+            if (step.to_location === 'table') {
+                const cleared = animRolesGoodsCleared(shown.roles, stepGoodMask(step));
+                if (cleared) roles.syncRoles(cleared, { tableOpen: true });
+            }
+            // AND A TRANSFER HANDS THE SHIELD OVER WITH ITS CARD. The kernel
+            // tells a pass from an attack, because on the wire they are the same
+            // event and only the rules say which is which; the web names the
+            // seats that laid cards and asks.
+            if (step.type === 'attack_pass' && step.seat !== undefined) {
+                const final = sequenceFinalRef.current;
+                const handOff = final
+                    ? animRolesPassHandOff(shown.roles, 1 << step.seat, rolesOf(final).defender)
+                    : null;
+                // The two swords need no line of their own: the coins turn them
+                // off the departing / arriving seats this sync publishes.
+                if (handOff) roles.syncRoles(handOff, { tableOpen: true });
+            }
+        },
         onIdle: () => {
+            // THE CLOSING BEAT: everything the three rules above did not already
+            // move. By now the sweep has landed and the board is the one the
+            // sequence settles on, so this is the hand-off - the shield to the
+            // next defender, the opening sword to the next seat to swing - and
+            // the rotate-out of every sword that nobody took over.
+            roleMotionRef.current.syncFromView(
+                sequenceFinalRef.current ?? currentGameRef.current, ROLE_CLAIM.handOff, false);
+            sequenceFinalRef.current = null;
             // Allows future legitimate duplicates of a sequence already played.
             if (processedEventContent.current.size > 0) processedEventContent.current.clear();
             if (pendingCompletionCallbackRef.current && remainingSequenceEventsRef.current === 0) {
@@ -520,6 +741,19 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             }
         },
     });
+
+    // A BOARD THAT CHANGED WITH NO SEQUENCE OF ITS OWN still moves the roles: a
+    // first load, a resync, a move whose whole stream this client had already
+    // animated as a prediction. A sequence syncs its own roles at its closing
+    // beat, so this write is a BYSTANDER's - and whether a bystander may write
+    // while a sequence runs is `anim_shown_ledger_allows`, asked rather than
+    // decided here (src/state/useRoleMotion.ts). iMessage has the same pair: a
+    // board's `onChange` syncs the roles when the change carried no sequence.
+    useEffect(() => {
+        roleMotion.syncFromView(url_game_id ? games[url_game_id] : undefined,
+                                ROLE_CLAIM.bystander, isAnimating);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [url_game_id, games, isAnimating]);
 
     // Queue a single animation
     const queueAnimation = (event: ClientAnimationEvent) => enqueue([event]);
@@ -957,7 +1191,88 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         }
     };
 
-    const good = async (): Promise<{ game_id: string }> => await serverActions.good();
+    /**
+     * MY OWN GOOD, FLIPPED THE INSTANT I TAP.
+     *
+     * The three lines above this one used to be one: `await serverActions.good()`.
+     * Everything else on the branch makes ANOTHER player's good arrive as its own
+     * push; none of it helps my own, which still waited for the round trip and
+     * then flipped - the same lag the owner named, wearing the one hat the server
+     * fix does not take off.
+     *
+     * WHAT IS BEING REPRODUCED IS THE VISIBLE PROPERTY, NOT THE MECHANISM.
+     * iMessage flips this badge when the move is STAGED into the bubble, and says
+     * so in the round-21 block of MessageTableView+Sequence.swift: "that board
+     * flipped the mark when the move was staged (the owner: 'we shouldn't show
+     * the good animation as staging it should've already shown it'), so by the
+     * time the settlement is released there is no difference left to find."
+     * THE WEB HAS NO STAGING. A Messages extension stages a move into a bubble
+     * and sends it as a separate act; that split is the platform's, not a design
+     * (the owner: "in the web there is no staged + actually sent distinction.
+     * Really more of an iMessage quirk"). Here the tap IS the send, so the only
+     * moment available is the optimistic submit, and that is where the flip goes.
+     * Same result on screen, different machinery - do not go looking for a
+     * staging concept in src/, there is none.
+     *
+     * The property both hosts end up with: the check is up the moment I act, and
+     * when the confirmation lands there is no difference left to animate. That
+     * second half is the kernel's doing and not a special case here -
+     * `anim_goods_opening` adds only the goods the shown roles DO NOT already
+     * wear, so the push that confirms my own good finds nothing to add and the
+     * badge does not turn twice.
+     *
+     * SAME POSTURE AS EVERY OTHER OPTIMISTIC MOVE (attack, pass, pickup, cover):
+     * send first, because the server is authoritative; predict only what the
+     * kernel's own gate says is legal; and put it back if the server refuses.
+     * The revert matters MORE here than on iMessage, not less: a staged move can
+     * be un-staged by hand before it is ever sent, but the web's tap is the send,
+     * so a refusal is the only way back and a good that flipped and was then
+     * refused would strand a check on a seat that never said it.
+     */
+    const good = async (): Promise<{ game_id: string }> => {
+        const game = game_id ? games[game_id] : undefined;
+        const seat = seatOf(game);
+        // The same awire bytes the request carries, put through the kernel's gate
+        // (c/src/legal.c, via validateActionWire) before anything is drawn. A
+        // spectator has no seat and predicts nothing.
+        const wire = encodeAction({ kind: 'good' });
+        const serverPromise = serverActions.good();
+
+        let flipped = false;
+        if (game && seat !== undefined) {
+            let legal = true;
+            try { validateActionWire(game, wire); } catch { legal = false; }
+            const shown = legal ? roleMotionRef.current.read() : null;
+            // The kernel decides what the badges become; this file only asks.
+            const opening = shown
+                ? animRolesGoodsOpening(shown.roles, shown.roles.goodMask | (1 << seat))
+                : null;
+            if (opening) {
+                // A coin turning where it stands - nothing flies, exactly as the
+                // same call does for a good that arrives on a push.
+                roleMotionRef.current.syncRoles(opening);
+                flipped = true;
+            }
+        }
+
+        try {
+            return await serverPromise;
+        } catch (error) {
+            // REFUSED: take the check back off. Asked of the kernel again rather
+            // than remembered, so a board that has moved on underneath the
+            // refusal answers for itself - if my bit is no longer shown (a round
+            // transition swept every good while the request was in the air),
+            // `anim_goods_cleared` finds nothing removed and returns null.
+            if (flipped && seat !== undefined) {
+                const shown = roleMotionRef.current.read();
+                const cleared = shown
+                    ? animRolesGoodsCleared(shown.roles, shown.roles.goodMask & ~(1 << seat))
+                    : null;
+                if (cleared) roleMotionRef.current.syncRoles(cleared);
+            }
+            throw error;
+        }
+    };
 
     // The frame loop drops itself on unmount; the bump timer is this file's.
     useEffect(() => {
@@ -981,9 +1296,17 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             isAnimating,
             currentAnimation,
             flightMs,
+            rowMs,
+            heldPiles,
+            arrivingPiles,
             inFlightFromDeck,
             inFlightToFlipped,
             getCardAnimationState,
+            shownRoles: roleMotion.shown,
+            roleHandOff: roleMotion.handOff,
+            publishRolePad: roleMotion.publishPad,
+            noteRoleFlightFrame: roleMotion.noteFlightFrame,
+            landRoleHandOff: roleMotion.landHandOff,
             attack,
             pass,
             pickup,

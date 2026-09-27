@@ -1,7 +1,7 @@
-// See bot_knobs.h. Self-contained on purpose: the wasm32 freestanding shim
-// (c/wasm/include/) provides only getenv/atoi/strcmp — no strlen, no
-// strncmp, no strcpy — so the scanning below is hand-rolled pointer work that
-// compiles identically for native and wasm.
+// See bot_knobs.h. Self-contained on purpose: the wasm32 builds are
+// freestanding (c/wasm/include for getenv/atoi, shared/c/wasm for a small
+// string library with no strcpy), so the scanning below is hand-rolled
+// pointer work that compiles identically for native and wasm.
 
 #include "bot_knobs.h"
 

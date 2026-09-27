@@ -554,6 +554,23 @@ bool handle_pass(Game *g, int player_idx, const Card *cards, int n_cards);
 bool handle_pickup(Game *g, int player_idx);
 bool handle_good(Game *g, int player_idx);
 
+// THE GOODS A VIEWER IS SHOWN: good_players_mask while every attack on the
+// table is covered, and 0 otherwise.
+//
+// A good is only a real "good" (Russian "bito") over a fully covered table -
+// that is the one a human can say (play_can_say_good), and the one a badge
+// turns for. The kernel also lets a BOT say good over an uncovered table
+// (legal.c: "GOOD IS ALWAYS HERE WHILE THE SEAT HAS NOT SAID IT"), because that
+// is how a bot declines to throw in and leaves the eligible set. That one is a
+// SILENT good: in the real game you skip attacking by not attacking. It is
+// never animated, never pushed on its own and never paced as a move - the next
+// card clears it anyway (every attack, cover, transfer and pickup zeroes the
+// mask), so no board a viewer is told about ever wears it.
+//
+// bot_drive.c classify() and table.c goods_changed both ask THIS mask, not the
+// raw one, so the two can never disagree about which goods are silent.
+uint32_t game_shown_good_mask(const Game *g);
+
 // ---------- Loop helpers ------------------------------------------------
 
 bool should_bot_act(const Game *g, int bot_idx);

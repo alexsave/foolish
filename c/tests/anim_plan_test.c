@@ -1265,6 +1265,162 @@ static void test_hand_order_with_hidden_slots(void) {
     CHECK(anim_hand_laid_out_masked(hand, 4, 0, order, 3, out, 3) == ANIM_ECAP, "a layout that does not fit is refused");
 }
 
+// ======================================================================
+// 8b. THE PLAN IS LAID OUT IN BEATS (anim_build_plan + anim_build_beats)
+// ======================================================================
+//
+// THE DEFECT, measured in a browser before this existed (docs/WEB_ANIM_PARITY.md
+// section 3): a bout-ending cover landed and the sweep took the whole table away
+// 36ms later, because the plan spaced every step at i x (TIME + GAP) and the web
+// had no beats at all. iMessage rests `boutEndHold` there and the owner asked
+// for it twice by name ("Make it like 1.5 second").
+//
+// Three rules, all of them the beats':
+//   the HOLD    a cover whose bout end follows pushes the sweep out by
+//               ANIM_BOUT_END_HOLD_MS, and nothing else in a sequence ever rests;
+//   the MERGE   consecutive covers by one seat open at the SAME moment, because
+//               the kernel spends one COVER event per card and one move is one
+//               movement;
+//   the NOTICE  an `out` is no cards, no flight, no time - so it spends none of
+//               the sequence's clock instead of a silent half second.
+//
+// MUTATION-CHECKED against c/src/anim_plan.c: laying the steps out at the old
+// i x stride fails 6 of the checks below; dropping the hold from the layout
+// fails 3; giving an `out` ANIM_TIME_MS fails 3; merging covers by DIFFERENT
+// seats fails 2.
+static void test_plan_is_laid_out_in_beats(void) {
+    // A bout end as the wire delivers one: seat 1 covers, the table goes to the
+    // discard, then both seats refill.
+    Card cov[1] = { C(0, 9) };
+    Card taken[2] = { C(0, 8), C(0, 9) };
+    Card drawn[1] = { C(1, 4) };
+    AnimPlanEvent ev[4];
+    memset(ev, 0, sizeof(ev));
+    ev[0].type = ANIM_EVT_COVER;   ev[0].seat = 1; ev[0].from = ANIM_LOC_HAND;  ev[0].to = ANIM_LOC_TABLE;   ev[0].cards = cov;   ev[0].n_cards = 1;
+    ev[1].type = ANIM_EVT_DISCARD; ev[1].seat = ANIM_SEAT_NONE; ev[1].from = ANIM_LOC_TABLE; ev[1].to = ANIM_LOC_DISCARD; ev[1].cards = taken; ev[1].n_cards = 2;
+    ev[2].type = ANIM_EVT_REFILL;  ev[2].seat = 0; ev[2].from = ANIM_LOC_DECK;  ev[2].to = ANIM_LOC_HAND;    ev[2].cards = drawn; ev[2].n_cards = 1;
+    ev[3].type = ANIM_EVT_REFILL;  ev[3].seat = 1; ev[3].from = ANIM_LOC_DECK;  ev[3].to = ANIM_LOC_HAND;    ev[3].cards = drawn; ev[3].n_cards = 1;
+
+    int final_hand[2] = { 6, 6 };
+    AnimPlan p;
+    CHECK(anim_build_plan(ev, 4, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "the bout-end plan builds");
+
+    const int stride = ANIM_TIME_MS + ANIM_GAP_MS;
+    CHECK(p.steps[0].start_ms == 0, "the cover opens the sequence");
+    CHECK(p.steps[0].hold_ms == ANIM_BOUT_END_HOLD_MS,
+          "the bout-ending cover carries the hold (got %d)", p.steps[0].hold_ms);
+    CHECK(p.steps[1].start_ms == stride + ANIM_BOUT_END_HOLD_MS,
+          "the sweep waits the cover's landing, its gap AND the hold (got %d, want %d)",
+          p.steps[1].start_ms, stride + ANIM_BOUT_END_HOLD_MS);
+    CHECK(p.steps[1].hold_ms == 0 && p.steps[2].hold_ms == 0,
+          "nothing after the cover rests - a hold is a bout end, not a pause between moves");
+    CHECK(p.steps[2].start_ms == 2 * stride + ANIM_BOUT_END_HOLD_MS
+          && p.steps[3].start_ms == 3 * stride + ANIM_BOUT_END_HOLD_MS,
+          "the refills keep their ordinary gap behind the sweep (got %d/%d)",
+          p.steps[2].start_ms, p.steps[3].start_ms);
+    CHECK(p.total_ms == 3 * stride + ANIM_BOUT_END_HOLD_MS + ANIM_TIME_MS,
+          "the whole sequence is one hold longer than it used to be (got %d)", p.total_ms);
+
+    // THE HOLD IS A BEAT OF NOTHING MOVING, which is the only thing that makes
+    // it a hold: sampled inside it, no step is flying and the board on show is
+    // the one the cover landed on.
+    AnimFrame f;
+    CHECK(anim_plan_at(&p, ANIM_TIME_MS + 200, &f) == ANIM_EOK, "the hold samples");
+    CHECK(f.step == ANIM_STEP_NONE && f.landed == 1,
+          "nothing flies during the hold and the cover's board is what shows (got step %d landed %d)",
+          f.step, f.landed);
+    CHECK(f.next_ms == p.steps[1].start_ms,
+          "the next thing to happen is the sweep, a hold away (got %d)", f.next_ms);
+    CHECK(anim_plan_at(&p, p.steps[1].start_ms - 1, &f) == ANIM_EOK && f.step == ANIM_STEP_NONE,
+          "one millisecond before the sweep the table is still there to read");
+
+    // …AND THE BEATS SAY THE SAME THING, which is the point of deriving both
+    // from one rule: a client that asked the two separately could be told the
+    // sequence holds and paced as though it did not.
+    AnimBeatEvent bev[4];
+    memset(bev, 0, sizeof(bev));
+    for (int i = 0; i < 4; i++) {
+        bev[i].type = ev[i].type; bev[i].seat = ev[i].seat;
+        bev[i].cards = ev[i].cards; bev[i].n_cards = ev[i].n_cards;
+        bev[i].good_mask = ANIM_NO_MASK;
+    }
+    AnimBeats bs;
+    CHECK(anim_build_beats(bev, 4, &bs) == 4, "four events, four beats");
+    CHECK((bs.beats[0].flags & ANIM_BEAT_HOLDS) != 0, "the beats flag the same cover");
+    CHECK((bs.beats[1].flags & ANIM_BEAT_HOLDS) == 0, "and only that one");
+    for (int g = 0; g < bs.n_beats; g++)
+        CHECK(p.steps[bs.beats[g].first].beat_first == bs.beats[g].first
+              && p.steps[bs.beats[g].first].beat_n == bs.beats[g].n_events,
+              "beat %d: the plan's grouping is the beats' (got %d/%d want %d/%d)", g,
+              p.steps[bs.beats[g].first].beat_first, p.steps[bs.beats[g].first].beat_n,
+              bs.beats[g].first, bs.beats[g].n_events);
+
+    // A COVER THAT DID NOT END A BOUT DOES NOT REST. The whole rule is that the
+    // table CLOSED on this card; a cover with the bout still open holds nothing
+    // and a sequence that is going somewhere is not stalled.
+    {
+        AnimPlanEvent open_bout[2];
+        memset(open_bout, 0, sizeof(open_bout));
+        open_bout[0] = ev[0];
+        open_bout[1].type = ANIM_EVT_ATTACK_PASS; open_bout[1].seat = 0;
+        open_bout[1].from = ANIM_LOC_HAND; open_bout[1].to = ANIM_LOC_TABLE;
+        open_bout[1].cards = drawn; open_bout[1].n_cards = 1;
+        AnimPlan q;
+        CHECK(anim_build_plan(open_bout, 2, 2, 10, 12, CARD_NONE, final_hand, &q) == ANIM_EOK, "the open-bout plan builds");
+        CHECK(q.steps[0].hold_ms == 0 && q.steps[1].start_ms == stride,
+              "a cover with the bout still open keeps the ordinary gap (got %d/%d)",
+              q.steps[0].hold_ms, q.steps[1].start_ms);
+    }
+
+    // TWO COVERS BY ONE SEAT ARE ONE MOVEMENT, so they open together and land
+    // together. The kernel spends one COVER event per card; a defender who
+    // covered two attacks in one move must not have them crawl across the table
+    // one at a time.
+    {
+        Card c1[1] = { C(0, 9) }, c2[1] = { C(1, 10) };
+        AnimPlanEvent m[3];
+        memset(m, 0, sizeof(m));
+        m[0].type = ANIM_EVT_COVER; m[0].seat = 1; m[0].from = ANIM_LOC_HAND; m[0].to = ANIM_LOC_TABLE; m[0].cards = c1; m[0].n_cards = 1;
+        m[1] = m[0]; m[1].cards = c2;
+        m[2].type = ANIM_EVT_REFILL; m[2].seat = 0; m[2].from = ANIM_LOC_DECK; m[2].to = ANIM_LOC_HAND; m[2].cards = drawn; m[2].n_cards = 1;
+        AnimPlan q;
+        CHECK(anim_build_plan(m, 3, 2, 10, 12, CARD_NONE, final_hand, &q) == ANIM_EOK, "the two-cover plan builds");
+        CHECK(q.steps[0].start_ms == 0 && q.steps[1].start_ms == 0,
+              "both covers open at once (got %d/%d)", q.steps[0].start_ms, q.steps[1].start_ms);
+        CHECK(q.steps[0].beat_first == 0 && q.steps[0].beat_n == 2
+              && q.steps[1].beat_first == 0 && q.steps[1].beat_n == 2,
+              "and they name one beat, so a host merges its own list the same way");
+        CHECK(q.steps[2].beat_first == 2 && q.steps[2].beat_n == 1, "the refill is its own beat");
+        CHECK(q.steps[2].start_ms == stride,
+              "the beat AFTER a merged cover opens one stride in, not two (got %d)", q.steps[2].start_ms);
+        CHECK(q.total_ms == stride + ANIM_TIME_MS, "a merged move costs one flight, not two (got %d)", q.total_ms);
+        // A SEAT BOUNDARY IS A BEAT BOUNDARY: two seats covering in one stream
+        // is two movements, however the events happen to sit next to each other.
+        m[1].seat = 0;
+        CHECK(anim_build_plan(m, 3, 2, 10, 12, CARD_NONE, final_hand, &q) == ANIM_EOK, "the two-seat plan builds");
+        CHECK(q.steps[1].start_ms == stride, "another seat's cover is another beat (got %d)", q.steps[1].start_ms);
+    }
+
+    // AN `out` SPENDS NO TIME. It is a notice - the badge collapses with the
+    // motion that caused it - and it used to burn a whole silent flight.
+    CHECK(anim_step_duration_ms(ANIM_EVT_OUT) == 0, "the duration policy says a notice takes no time");
+    {
+        AnimPlanEvent o[3];
+        memset(o, 0, sizeof(o));
+        o[0].type = ANIM_EVT_PICKUP; o[0].seat = 1; o[0].from = ANIM_LOC_TABLE; o[0].to = ANIM_LOC_HAND; o[0].cards = taken; o[0].n_cards = 2;
+        o[1].type = ANIM_EVT_OUT;    o[1].seat = 0; o[1].from = ANIM_LOC_NONE;  o[1].to = ANIM_LOC_NONE;
+        o[2].type = ANIM_EVT_REFILL; o[2].seat = 0; o[2].from = ANIM_LOC_DECK;  o[2].to = ANIM_LOC_HAND; o[2].cards = drawn; o[2].n_cards = 1;
+        AnimPlan q;
+        CHECK(anim_build_plan(o, 3, 2, 10, 12, CARD_NONE, final_hand, &q) == ANIM_EOK, "the out plan builds");
+        CHECK(q.steps[1].duration_ms == 0, "the notice has no flight (got %d)", q.steps[1].duration_ms);
+        CHECK(q.steps[1].start_ms == stride && q.steps[2].start_ms == stride,
+              "it lands in the gap the pickup already had, and costs the refill nothing (got %d/%d)",
+              q.steps[1].start_ms, q.steps[2].start_ms);
+        CHECK(q.total_ms == stride + ANIM_TIME_MS,
+              "the sequence is a pickup and a refill long, not three flights (got %d)", q.total_ms);
+    }
+}
+
 int main(void) {
     printf("anim_plan_test\n");
     test_optimistic_animation();
@@ -1276,6 +1432,7 @@ int main(void) {
     test_surface_plan();
     test_lobby_scenarios();
     test_plan_sampled_per_frame();
+    test_plan_is_laid_out_in_beats();
     test_hand_order_with_hidden_slots();
     if (g_fails == 0) printf("anim_plan_test: OK\n");
     else              printf("anim_plan_test: %d FAILURES\n", g_fails);

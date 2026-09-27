@@ -8,7 +8,7 @@
 // roster, the replay codec and its extras and links, the iMessage envelope, the
 // one-tap cover resolver and the animation rules. Loaded lazily and cached.
 
-import { loadWasmGz, loadWasmGzAsync } from './wasm_asset.ts';
+import { kernelModule, loadWasmGz, loadWasmGzAsync } from './wasm_asset.ts';
 import { LAYOUT_HASH as BOTS_LAYOUT_HASH } from '../gen/layout_hash.bots.ts';
 import { assertLayoutHash } from './layout_hash.ts';
 import { memOf as viewMemOf, readTableView, readReplaySummary, readReplayError, readReplayFrameIndex, TableView_Snap, ReplaySummary_Snap, ReplayError_Snap } from '../gen/view_layout.bots.ts';
@@ -185,6 +185,11 @@ interface BotsExports extends EngineExports {
     wasm_anim_plan_at(nowMs: number): number;
     wasm_anim_build_beats(nEvents: number): number;
     wasm_anim_reversal_order(): number;
+    wasm_anim_roles_goods_opening(d: number, fa: number, gm: number, firstGoodMask: number): number;
+    wasm_anim_roles_goods_cleared(d: number, fa: number, gm: number, stepGoodMask: number): number;
+    wasm_anim_roles_pass_hand_off(d: number, fa: number, gm: number,
+                                  attackPassSeats: number, finalDefender: number): number;
+    wasm_anim_shown_ledger_allows(claim: number, sequencing: number): number;
 }
 
 // ANIM_TRANSPORT_* (c/src/anim_plan.h).
@@ -285,17 +290,16 @@ export function __botsWasmBytes(): number {
 export function __ensureBots(): void { bots(); }
 
 /**
- * Prepare bots.wasm where it cannot be read synchronously — i.e. the browser,
+ * Prepare the kernel where it cannot be read synchronously — i.e. the browser,
  * which has no filesystem and must FETCH the .gz. Await this once before any
  * bots() call; on the server it is a no-op fast path (fs is synchronous).
  *
- * The browser needs the big module for two independent reasons, and both landed
- * the same day:
- *   * FMSG - the iMessage envelope - seals from a resident session log, and /m/
- *     is a web page; and
- *   * A5 - replaying a shared code rebuilds the game and plays it through the
- *     real engine (replay_steps.c).
- * One module behind every host is the steer (A10). This is the web's way in.
+ * WHICH module: kernelModule() answers, and in the browser the answer is
+ * web.wasm — the same objects as bots.wasm under a smaller export allow-list,
+ * so the browser gets the client slot, the animation plan, the replay reader
+ * and the FMSG decode it calls, and none of the C Table or the Monte-Carlo
+ * brains it does not. One source, one layout hash, two links (c/Makefile,
+ * WASM_WEB_NAMES; the reach set is pinned by e2e/wasm_web_link.test.ts).
  *
  * Deliberately a fetched ASSET rather than a base64 twin of the same bytes: a
  * second carrier of one kernel goes stale while the other is rebuilt, and 80 KB
@@ -304,7 +308,7 @@ export function __ensureBots(): void { bots(); }
  */
 export async function ensureBotsAsync(): Promise<void> {
     if (exportsCache) return;
-    await loadWasmGzAsync('bots');   // caches the inflated bytes for bots()
+    await loadWasmGzAsync(kernelModule());   // caches the inflated bytes for bots()
     bots();
 }
 
@@ -315,10 +319,15 @@ export function __clientKernelExports(): WebAssembly.Exports {
 
 function bots(): BotsExports {
     if (exportsCache) return exportsCache;
-    const module = new WebAssembly.Module(loadWasmGz('bots') as BufferSource);
+    const name = kernelModule();
+    const module = new WebAssembly.Module(loadWasmGz(name) as BufferSource);
     const instance = new WebAssembly.Instance(module, {});
     const ex = instance.exports as unknown as BotsExports;
-    assertLayoutHash('bots.wasm', ex, BOTS_LAYOUT_HASH, 'sdk/ts/gen/layout_hash.bots.ts');
+    // ONE hash for both links, because they are one compile: the constant is
+    // generated from the bots build's flags and web.wasm is those same objects.
+    // A mismatch here means the two came from different trees, which is the one
+    // way a per-call-site link could ever become a second kernel.
+    assertLayoutHash(`${name}.wasm`, ex, BOTS_LAYOUT_HASH, 'sdk/ts/gen/layout_hash.bots.ts');
     ex.wasm_init();
     // THE TRANSPORT, said once (anim_plan.h). Every host that reaches the
     // kernel through this module is the server shape: a card's confirmation is
@@ -996,6 +1005,76 @@ export function animStaleOptimisticOnTable(optCards: Card[], tableCards: Card[],
     return rel;
 }
 
+// ---- the role beat (anim_plan.h "the role beat") -----------------------------
+//
+// WHICH MARKS CHANGE AT WHICH POINT OF A SEQUENCE, which is three timings and
+// not one: a good being SET leads the stream, a good being CLEARED runs with the
+// throw-in that cleared it, a PASS hands the shield over with the transfer card,
+// and everything else waits for the closing beat. The rules are the kernel's
+// (anim_goods_opening / anim_goods_cleared / anim_pass_hand_off) and iOS has
+// reached them since round 28; these four are the same C, reached from a
+// browser.
+//
+// `shown` is WHAT THE BADGES ARE WEARING and not the live board - the host's
+// frozen ledger (src/state/roleLedger.ts), which is why it crosses as a value.
+
+/** The three facts a role mark is drawn from (anim_plan.h AnimRoles). A seat is
+ *  -1 for none, and `goodMask` is one bit per seat. */
+export interface AnimRoles { defender: number; firstAttacker: number; goodMask: number }
+
+/** "This step carried no board", the one value a good mask may not take
+ *  (anim_plan.h ANIM_NO_MASK). Both goods rules answer 0 for it. */
+export const ANIM_NO_MASK = A.ANIM_NO_MASK;
+/** Who is writing the shown badges (anim_plan.h ANIM_CLAIM_*). */
+export const ANIM_CLAIM_SEQUENCE = A.ANIM_CLAIM_SEQUENCE;
+export const ANIM_CLAIM_ARMING = A.ANIM_CLAIM_ARMING;
+export const ANIM_CLAIM_HAND_OFF = A.ANIM_CLAIM_HAND_OFF;
+export const ANIM_CLAIM_BYSTANDER = A.ANIM_CLAIM_BYSTANDER;
+
+/** The three bytes every role entry leaves in g_io, or null for "nothing changed". */
+function rolesAnswer(ex: BotsExports, rc: number): AnimRoles | null {
+    if (rc < 0) throw new Error(`anim roles error ${rc}`);
+    if (rc === 0) return null;
+    const buf = mem(ex);
+    const p = ex.wasm_io_ptr();
+    const seat = (b: number) => (b === 0xff ? -1 : b);
+    return { defender: seat(buf[p]), firstAttacker: seat(buf[p + 1]), goodMask: buf[p + 2] };
+}
+
+/** THE STATE A STREAM SHOULD OPEN ON (anim_goods_opening), or null for "start
+ *  playing straight away". `firstGoodMask` is the stream's event-0 mask. */
+export function animRolesGoodsOpening(shown: AnimRoles, firstGoodMask: number): AnimRoles | null {
+    const ex = bots();
+    return rolesAnswer(ex, ex.wasm_anim_roles_goods_opening(
+        shown.defender, shown.firstAttacker, shown.goodMask, firstGoodMask));
+}
+
+/** THE MIRROR IMAGE (anim_goods_cleared), played with the throw-in that cleared
+ *  it. `stepGoodMask` is that beat's own mask. */
+export function animRolesGoodsCleared(shown: AnimRoles, stepGoodMask: number): AnimRoles | null {
+    const ex = bots();
+    return rolesAnswer(ex, ex.wasm_anim_roles_goods_cleared(
+        shown.defender, shown.firstAttacker, shown.goodMask, stepGoodMask));
+}
+
+/** A PASS (anim_pass_hand_off): the shield travels with the transfer card.
+ *  `attackPassSeats` is the bit per seat that laid cards in this beat, and the
+ *  kernel - not the wire - decides which of them was a transfer.
+ *  `finalDefender` is the stream's FINAL board's defender, the only place a
+ *  pass's new defender ever appears. */
+export function animRolesPassHandOff(shown: AnimRoles, attackPassSeats: number,
+                                     finalDefender: number): AnimRoles | null {
+    const ex = bots();
+    return rolesAnswer(ex, ex.wasm_anim_roles_pass_hand_off(
+        shown.defender, shown.firstAttacker, shown.goodMask, attackPassSeats, finalDefender));
+}
+
+/** MAY THIS WRITER TOUCH THE SHOWN BADGES (anim_shown_ledger_allows)? A
+ *  bystander may not, while a sequence is running; everyone else may. */
+export function animShownLedgerAllows(claim: number, sequencing: boolean): boolean {
+    return bots().wasm_anim_shown_ledger_allows(claim, sequencing ? 1 : 0) !== 0;
+}
+
 /** One row of the end screen's finish order (anim_plan.h AnimFinishRow). */
 export interface AnimFinishRow { place: number; seat: number; isYou: boolean }
 
@@ -1179,6 +1258,10 @@ export const ANIM_STEP_NONE = A.ANIM_STEP_NONE;
 export const ANIM_NEVER = A.ANIM_NEVER;
 export const ANIM_TIME_MS = A.ANIM_TIME_MS;
 export const ANIM_GAP_MS = A.ANIM_GAP_MS;
+/** The rest after a bout-ending cover (anim_plan.h ANIM_BOUT_END_HOLD_MS). The
+ *  plan has already put it inside the next beat's startMs; it is re-exported so
+ *  a caller can NAME the pause, never so it can add one of its own. */
+export const ANIM_BOUT_END_HOLD_MS = A.ANIM_BOUT_END_HOLD_MS;
 
 /** One decoded event as the plan sees it (anim_plan.h AnimPlanEvent). */
 export interface AnimPlanEventIn {
@@ -1199,10 +1282,15 @@ export interface AnimCountsSnap {
     nBattles: number; battles: number[]; paired: boolean; flipped: Card | null;
 }
 
-/** One planned step (anim_plan.h AnimPlanStep). */
+/** One planned step (anim_plan.h AnimPlanStep). `beatFirst`/`beatN` are the
+ *  span of steps this one flies WITH - the kernel spends one COVER event per
+ *  card, so a two-card cover is two steps and one beat - and `holdMs` is the
+ *  rest the sequence takes after that beat lands, already inside the next
+ *  beat's `startMs`. */
 export interface AnimPlanStepSnap {
     type: number; seat: number; from: number; to: number; nCards: number;
     durationMs: number; startMs: number;
+    beatFirst: number; beatN: number; holdMs: number;
     deck: number; discard: number; hand: number[];
     inFlightFromDeck: number; inFlightToFlipped: number;
     reveals: bigint;
@@ -1377,6 +1465,9 @@ function readPlan(ex: BotsExports): AnimPlanSnap {
             nCards: A.AnimPlanStep_get_n_cards(m, s),
             durationMs: A.AnimPlanStep_get_duration_ms(m, s),
             startMs: A.AnimPlanStep_get_start_ms(m, s),
+            beatFirst: A.AnimPlanStep_get_beat_first(m, s),
+            beatN: A.AnimPlanStep_get_beat_n(m, s),
+            holdMs: A.AnimPlanStep_get_hold_ms(m, s),
             deck: A.AnimPlanStep_get_deck(m, s),
             discard: A.AnimPlanStep_get_discard(m, s),
             hand,

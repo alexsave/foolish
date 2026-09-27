@@ -82,7 +82,7 @@ sources() {
   # `c/../` the same way the structgen line below collapses its own, and assert
   # the result below.
   make -C c -s --no-print-directory print-wasm-src | tr ' ' '\n' | sed '/^$/d' | sed 's|^|c/|' | sed 's|^c/\.\./||'
-  ls c/src/*.h c/wasm/include/* shared/c/*.h 2>/dev/null || true
+  ls c/src/*.h c/wasm/include/* shared/c/*.h shared/c/wasm/include/* 2>/dev/null || true
   # structgen's own source and specs, because the layout hash compiled into
   # every module comes from them. NOT the modules it writes: those are build
   # outputs now, ignored and absent from a fresh checkout, and hashing them

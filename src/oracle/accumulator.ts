@@ -169,7 +169,24 @@ export class OracleAccumulator {
         let any = false;
         for (const a of this.acc.values()) if (a.n > 0) { any = true; break; }
         if (!any) return false;
-        return this.minN() >= ORACLE_CONVERGE_MIN_N || this.maxSE() <= ORACLE_CONVERGE_MAX_SE;
+        // AND, not OR. These are not two ways of being converged - one is the
+        // test and the other is a floor under it. maxSE is the test: the panel
+        // prints "EF x.xx +-y.yy" and the run is done when that number is small.
+        // minN only says the estimate has seen enough worlds to be believed, so
+        // a lucky-looking SE off a handful of samples cannot end the run.
+        //
+        // OR-ed, the floor was doing the stopping. On a board whose candidates
+        // sit close together the worlds arrive long before the standard errors
+        // separate, so minN crossed 65,536 first and the run ended with the
+        // worst SE still near 0.01 - which is what the panel was showing, and
+        // the target of 0.005 was never actually met. An SE only shrinks with
+        // the square root of the worlds, so the last stretch is the expensive
+        // one and it was exactly the stretch being skipped.
+        //
+        // The Oracle is the one thing here that is allowed to be slow: it is
+        // bounded by ORACLE_HARD_CAP_MS, and a hard board now spends that
+        // budget instead of stopping early with a number it did not earn.
+        return this.minN() >= ORACLE_CONVERGE_MIN_N && this.maxSE() <= ORACLE_CONVERGE_MAX_SE;
     }
 
     hasKey(key: string): boolean { return this.acc.has(key); }

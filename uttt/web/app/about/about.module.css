@@ -1,0 +1,31 @@
+/* The about page, shaped like foolish's (a centred title over a block of
+   paragraphs, src/components/About.tsx) on this game's napkin (globals.css),
+   in the rules sheet's ink and type. */
+.page {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
+  padding: max(28px, env(safe-area-inset-top)) 16px max(36px, env(safe-area-inset-bottom));
+}
+
+.title {
+  font: 700 26px/1.2 var(--sys);
+  letter-spacing: -0.02em;
+  margin: 0;
+  text-align: center;
+  text-wrap: balance;
+  max-width: 560px;
+}
+
+.content {
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  font: 400 16px/1.55 var(--sys);
+}
+.content p { margin: 0; }
+.content a { color: var(--ink); }

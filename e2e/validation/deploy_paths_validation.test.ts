@@ -231,6 +231,38 @@ function staticFilesOf(name: string): string[] {
     return out;
 }
 
+test('the edge asks for the module config.toml stages', async () => {
+    // The kernel has two links now (c/Makefile, WASM_WEB_NAMES): bots.wasm for a
+    // runtime with a filesystem, web.wasm for the browser, which fetches. The
+    // choice is made in code - kernelModule() - while the file that gets
+    // UPLOADED is named in config.toml, and nothing connects the two but this.
+    //
+    // Getting it wrong is invisible until production: a `web` answer here would
+    // make every edge function ask for a file the deploy never staged, and the
+    // first request after the deploy would be the first anyone heard of it.
+    const { kernelModule } = await import('../../sdk/ts/wasm/wasm_asset.ts');
+    assert.equal(kernelModule(), 'bots', 'Node has a filesystem, so it must read the staged module');
+
+    // And the runtime that actually runs there. `Deno` is absent under Node, so
+    // the branch is otherwise never exercised by any test in this repo.
+    const g = globalThis as Record<string, unknown>;
+    const had = 'Deno' in g, prev = g.Deno;
+    g.Deno = { readFileSync: () => new Uint8Array() };
+    try {
+        assert.equal(kernelModule(), 'bots',
+            'the Deno edge would load a module config.toml does not stage - every function would 500');
+    } finally {
+        if (had) g.Deno = prev; else delete g.Deno;
+    }
+
+    for (const name of readdirSync(FUNCTIONS)) {
+        for (const f of staticFilesOf(name)) {
+            assert.ok(!f.endsWith('/web.wasm.gz'),
+                `${name} stages the browser's link of the kernel; the edge reads ${kernelModule()}.wasm`);
+        }
+    }
+});
+
 test('every function that loads bots.wasm bundles it (config.toml static_files)', () => {
     // The C Table runs in every function that touches a game (Phase 4b of
     // docs/C_GAME_SHAPE_MIGRATION.md): create and delete-account load the module

@@ -110,29 +110,45 @@ static uint32_t xs32(uint32_t *s) {
 // The few scalars that tell a silent `good` from a round-transitioning one.
 // Snapshotting the whole Game would put ~100KB (logs[] included) on the stack,
 // which the wasm shadow stack cannot hold.
-typedef struct { int16_t discard; int8_t defender; int8_t battles; } BoardMark;
+typedef struct { int16_t discard; int8_t defender; int8_t battles; uint32_t shown_goods; } BoardMark;
 
 static BoardMark mark(const Game *g) {
     BoardMark m;
-    m.discard  = g->discard_pile_length;
-    m.defender = g->defender;
-    m.battles  = g->num_battles;
+    m.discard     = g->discard_pile_length;
+    m.defender    = g->defender;
+    m.battles     = g->num_battles;
+    m.shown_goods = game_shown_good_mask(g);
     return m;
 }
 
 // Did applying this move put anything on screen?
 //
-// This mirrors the server's test — `isPassive && moveEvents === 0` — without
-// building the event stream: only `good` (and the never-enumerated `wait`) can
-// be silent, and the one thing that makes a `good` visible is the round
-// transition it can trigger (handle_good runs execute_round_transition itself
-// once everyone is good and everything is covered), which moves the table to
-// the discard, changes the defender and refills hands.
+// TWO KINDS OF `good`, and only one of them is a move.
+//
+// A good said over a FULLY COVERED table is the real thing - the only good a
+// human can say (play_can_say_good), the Russian "bito". Its badge turns on its
+// own push (TableCommit.goods_changed) and it is paced like any other move.
+//
+// A good said while an attack is still UNCOVERED is a bot declining to throw
+// in. Bots need it - it is how a seat leaves the eligible set - but in the real
+// game you skip attacking by simply not attacking, and it is SILENT: classed
+// BUNDLED_PASSIVE, so it rides the same cycle as the next visible action and
+// costs no beat. Pricing it as a move (#229) turned "bot attacks, bot attacks"
+// into "good, good, good, attack, good, good, good, attack" at 3000ms a beat.
+// The next card clears it anyway, so nothing a viewer is shown ever wears it.
+//
+// The test is game_shown_good_mask, the same one table.c's goods_changed asks,
+// so the pacing and the push can never disagree about which goods are silent.
+//
+// ROUND TRANSITION outranks both: a good that empties the table is paced by the
+// sweep it caused. `wait` is never enumerated and changes nothing, so it stays
+// silent.
 static int classify(int move_type, const BoardMark *before, const Game *after) {
     if (move_type != MOVE_GOOD && move_type != MOVE_WAIT) return BOT_PACE_MOVE;
     if (after->discard_pile_length != before->discard
         || after->defender != before->defender
         || after->num_battles != before->battles) return BOT_PACE_ROUND_TRANSITION;
+    if (game_shown_good_mask(after) != before->shown_goods) return BOT_PACE_MOVE;
     return BOT_PACE_BUNDLED_PASSIVE;
 }
 

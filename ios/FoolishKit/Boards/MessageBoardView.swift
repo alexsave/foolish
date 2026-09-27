@@ -15,7 +15,7 @@ public struct MessageBoardView: View {
     /// Re-render on a settings change (see FPrefs). This is the BUBBLE board -
     /// the snapshot Messages renders in the transcript - and its game-over
     /// caption comes from `FStrings.t`, which resolves at body-eval time. Same
-    /// class of staleness as `SendHintReminder`'s send caption.
+    /// class of staleness as `StagedSendHint`'s send caption.
     @ObservedObject private var prefs = FPrefs.shared
     private let view: GameView
     private let names: [Int: String]

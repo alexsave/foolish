@@ -1,0 +1,7 @@
+// CMotionRuler: the ruler's palette and geometry for Swift (MotionRuler.swift).
+// Header-only; a target that compiles shared/swift adds this directory to
+// SWIFT_INCLUDE_PATHS.
+module CMotionRuler {
+    header "motion_ruler.h"
+    export *
+}

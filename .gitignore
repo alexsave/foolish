@@ -91,6 +91,7 @@ tools/structgen/gen/
 # the path list out of scripts/wasm_build.sh rather than restating it here, so a
 # new module is covered the day it lands.
 sdk/ts/wasm/bots.wasm.gz
+sdk/ts/wasm/web.wasm.gz
 public/oracle.wasm.gz
 public/oracle-mt.wasm.gz
 

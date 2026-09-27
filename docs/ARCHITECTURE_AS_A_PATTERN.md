@@ -92,6 +92,30 @@ What specialization survives is sharper than what it replaced:
 - **Per call site, by export allow-list.** The shipped module exports exactly what production calls; a second link of the same objects adds test-only entry points and is never committed (`make -C c wasm-bots-test`).
   Retiring the host-side game shape let 67 exports leave the shipped module, 56 of them rules and bot bridges that only the retired TypeScript shape had ever called.
   A test reads both export lists out of the makefile and holds the shipped module to none of the test entries and both modules to one layout hash.
+
+  **This is also where the "one big blob" the deletions left behind was finally cut, and the distinction that makes it safe is worth stating precisely.**
+  After `guards.wasm` and `rules.wasm` went, one module served everyone, and the browser was downloading the server's: 191,490 B raw, 81,902 B gzipped, 37 pages of linear memory.
+  The anatomy tool says what was in it.
+  Of 182,606 B of `CODE`, `wasm_table_bot_drive` alone is 40,716 B - 22 percent of the module - and the four Monte-Carlo brains with cordite's solver working set and leaf book are another 51 KB.
+  The bot loop runs in the edge functions and the in-browser analyser is already its own module, so none of it had ever executed in a tab.
+  The browser now fetches `web.wasm.gz`: 67,298 B raw, 31,050 B gzipped, 26 pages.
+  That is 62 percent off every first visit, 124 KB less module to compile, and 720,896 B of linear memory a tab no longer reserves.
+
+  The failed design and this one differ on one axis, and it is not the number of artifacts.
+  `guards.wasm` and `rules.wasm` were separate SOURCE SETS, compiled under different flags, and the danger was that two of them could answer one question two ways.
+  `web.wasm` and `bots.wasm` are one `make` variable's worth of object files linked twice, and any function present in both came out of the same `.o`.
+  Several artifacts is fine; several answers is not.
+
+  What makes that a fact rather than a claim is the gate, and the gate is the part the earlier split never had.
+  `e2e/wasm_web_link.test.ts` holds the two to a subset relation with identical wasm signatures, to one layout hash, and to one answer over a real replay code - the summary, the step index, every step's masked board for every viewer, every step's public log, byte for byte, which is the engine and the decoder and `view.c`'s masking driven end to end through both links.
+  Its export list is not a judgement either: esbuild bundles every browser entry with tree shaking on and the names that survive must be exactly what the module exports, so a new browser call site the module does not carry is red in CI rather than a `TypeError` in someone's tab, and an export nothing reaches has to leave.
+  The browser's link also makes the client-boundary gate stronger rather than weaker: the unmasked state codec it denies is now absent from the module the browser holds, not merely unreferenced by the bundle.
+
+  And a measurement that decided a question rather than illustrating one.
+  Splitting the browser further - a live-table module and a replay-screen module, which is the axis the old `guards`/`oracle` pair was on - was measured and refused.
+  Live alone is 31,439 B gz and replay alone is 32,408 B, against 36,312 B for both, because the two share the client slot, the masked view, the animation plan and the engine: the first paint saves 4,873 B and anyone who then opens a replay pays 32,408 B twice over.
+  Folding the Infinite Oracle into a replay module is worse still, since its whole point is that a 177,835 B analyser is fetched only when someone asks it to think.
+  The bytes said one browser module, so there is one.
 - **Per workload.** The replay analyser ships as its own modules (`oracle.wasm`, `oracle-mt.wasm`), built from the same sources with a much larger transposition table, because a browser tab asked to think hard has a different memory regime from an edge function answering a move.
 
 **2. Generated bindings as the replacement for hand-written marshalling.**
@@ -537,17 +561,22 @@ That is the shape of the curve: the first host is all cost, the second repays it
 **Size.**
 Moving this much logic into the kernel grew the shipped kernel and shrank the shipped host code, and both were measured every phase.
 
-| | Baseline | End of the migration | As measured 2026-09-20 |
-|---|---|---|---|
-| kernel module, gzipped | 65,307 B | 80,913 B | 81,317 B |
-| the two deleted role-specific modules | 18,549 B | 0 | 0 |
-| web bundle, first-load union, gzipped | 330,504 B | 304,551 B | 312,530 B |
+| | Baseline | End of the migration | As measured 2026-09-20 | 2026-09-22, after the browser got its own link |
+|---|---|---|---|---|
+| kernel the BROWSER downloads, gzipped | 65,307 B | 80,913 B | 81,317 B | **31,050 B** |
+| kernel the SERVER reads off disk, gzipped | 65,307 B | 80,913 B | 81,317 B | 81,902 B |
+| the two deleted role-specific modules | 18,549 B | 0 | 0 | 0 |
+| web bundle, first-load union, gzipped | 330,504 B | 304,551 B | 312,530 B | 312,530 B |
 
-The kernel is `sdk/ts/wasm/bots.wasm.gz` (a build output, see above); the bundle is `scripts/measure_web_bundle.mjs`.
-The kernel grew about 24 percent and the shipped web bundle fell about 5 percent, so total shipped bytes still fell, but the margin is narrower than the one this document originally recorded and it has been moving the wrong way.
+The first three columns had one kernel row because there was one module; the browser's is `sdk/ts/wasm/web.wasm.gz` and the server's is `bots.wasm.gz` (both build outputs, see above), and the bundle is `scripts/measure_web_bundle.mjs`.
+Through the first three columns the kernel grew about 24 percent while the shipped web bundle fell about 5 percent, so total shipped bytes still fell, but the margin kept narrowing and it was moving the wrong way.
+The fourth column is what stopped that, and it did not come from writing less C: the growth was real and is still in the kernel, it is just no longer in the file a visitor asks for.
 
 Two things about that third column are worth more than the numbers in it.
-The first is that the kernel figure is now **603 bytes** under the budget its own memory test asserts, so the next feature of any size turns that test red - and the budget was *raised* to accommodate the growth rather than re-pinned lower after each win, which is the opposite of the ratchet Part 3 recommends.
+The first is that the kernel figure was, when that column was taken, **603 bytes** under the budget its own memory test asserts, because the budget had been *raised* to accommodate the growth rather than re-pinned lower after each win, which is the opposite of the ratchet Part 3 recommends.
+That has since been fixed, and not by shrinking the kernel: the browser stopped downloading the server's link of it.
+The number this row is about is what a visitor downloads, and that is `web.wasm.gz` now - **31,050 B**, against the 80 KiB line the old module had been over by 123 bytes - with the server's link staying whatever size the server needs because nobody fetches it.
+`e2e/mem/wasm_memory.test.ts` re-pins to the measured figures rather than banking the 50 KB as headroom: 68,000 B raw and 33 KiB gzipped for the browser's link, and its 26 declared pages of linear memory, each of which a mutation check proved goes red for the right reason.
 The second is that the bundle figure had to be taken by hand.
 The measurement script's default mode copies the tree using a file list that excludes ignored files and then builds it directly, which stopped working the moment the generated modules became gitignored: the copy omits them, the build cannot resolve them, and the number cannot be taken at all.
 Only the in-place mode still runs, and only after a manual regeneration.
@@ -617,8 +646,13 @@ A constraint checked at runtime is a bug waiting to happen; a constraint the too
 Compile a tailored artifact per call site from one source and strip everything that site never executes.
 
 - Anchors: one kernel built per target and per export allow-list, with the test-only entry points living in an uncommitted second link; a shipped module that lost 67 exports when the host-side shape it served was retired; `-Oz` by default with `-O3` on only the three search-core files; the analyser built from the same sources with a much larger search table because a browser tab has a different memory regime from an edge function.
+- The sharpest instance, because one export was worth 99 KB: the browser's link of the kernel drops every name it does not call and comes out at 67,298 B against the server link's 191,490 B, 31,050 B gzipped against 81,902 B.
+  An export is a GC root, so this is not a diet - it is the linker deleting what nothing reaches.
+  The mutation check on its budget is the whole lesson in one number: putting `wasm_table_bot_drive` back on the browser's allow-list takes the module from 67,298 B to 166,513 B and from 26 pages to 33.
 - The correction worth carrying: specializing by *role* (a validate-only client build, a full server build) looked clever and did not survive, because it meant three artifacts answering the same questions.
   Specializing by *target* and by *export surface* survived, because neither duplicates a decision.
+  The refinement that came later, once the surviving blob was split again: the thing to avoid is not several artifacts, it is several answers.
+  Two links of ONE object set cannot disagree, because every function in both came out of the same `.o` - and the way you know that is still true in a year is a test that drives both and compares the bytes, not a paragraph like this one.
 - Generalized:
   - Route and component-level splitting, side-effect-free marking, dynamic imports - and remember that a dynamic import keeps every export of its target alive, so a bundle boundary is a module you create on purpose.
   - Per-target builds from shared source.
@@ -665,7 +699,9 @@ If work already happened, do not repeat it across a boundary.
 - **Every one is gated by correctness tests.**
   A faster wrong answer is worthless.
 - **Done in the right order:** correctness first, then measure the binding constraint, then specialize and shrink, then re-pin the budget lower after each win so the ratchet only turns one way.
-  This is the rule this repo has kept worst, and it is recorded here rather than quietly dropped: the wasm budget was raised to fit growth instead of re-pinned after each win, and it now sits 603 bytes from red (Part 2, the taxes table).
+  This is the rule this repo kept worst for a long stretch, and it is recorded here rather than quietly dropped: the wasm budget was raised to fit growth instead of re-pinned after each win, and it sat 603 bytes from red (Part 2, the taxes table).
+  Splitting the browser's link off closed it - the download fell 62 percent and the pins went to the measured numbers in the same commit, with a mutation check on each - so the ratchet turns one way again.
+  It took a 50 KB win to pay off a 603 byte debt, which is the argument for re-pinning when the win is small enough to be boring.
   A ratchet that can turn both ways is a graph with extra steps.
 
 ### The playbook, in one line
@@ -690,8 +726,8 @@ Stated plainly, because a doctrine document that only describes its successes is
   They are the smallest honest residue, not zero.
 - **The web bundle measurement does not run in its default mode**, and has not since the generated modules became gitignored (Part 2, the taxes table).
   The budget is therefore unenforced at the moment this sentence was written, which is worse than the bundle having grown, because the growth is a number and the broken gate is a blind spot.
-- **The wasm size budget was raised rather than re-pinned**, and sits 603 bytes from red.
-  Part 3 recommends the opposite and this repo did not do it.
+- ~~**The wasm size budget was raised rather than re-pinned**, and sits 603 bytes from red.~~
+  Closed: the browser's link of the kernel is 31,050 B gzipped where the shipped module was 81,902 B, and the pins moved down to the measured numbers in the same commit (Part 1, piece 1).
 - **Verification is uneven by host.**
   The kernel, the web and the database have suites that run on every commit; the phone's animation behaviour is proved by the kernel's tests, a compile, and one simulator pass per round rather than by continuous integration.
   The Kotlin emitter is a step further out still: it generates, and nothing anywhere compiles the result.

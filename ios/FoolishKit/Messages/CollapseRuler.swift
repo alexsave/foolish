@@ -21,30 +21,37 @@
 // It is attached to the surface's SIZED BOX, not to the screen, so it measures
 // `boxHeight` - the number the tween actually moves - rather than the drawer.
 //
-// PALETTE, and why these colours. Pure magenta / cyan / yellow / red / green:
-// the only fully-saturated primaries on screen. The wool and wood are warm and
-// desaturated, a card face is near-achromatic, so no band can be confused for
-// board content by the same colour tests `msgui.py` already uses. They also
+// PALETTE AND GEOMETRY: shared/c/motion_ruler/motion_ruler.h, the one palette
+// (module CMotionRuler) that shared/tools/motion finds on a filmed frame and
+// that the sister product's MotionRuler paints from - so a take of this ruler
+// is scored by the same `motion` commands, and a colour drawn here cannot
+// drift from the colour looked for there. Every ink is a saturated literal
+// sRGB colour: nothing on wool, wood or a card face is that colour, and they
 // survive h264 4:2:0 chroma subsampling, which a subtle palette would not.
+// RED and GREEN are the edge bars' and never a square, which is why the third
+// table pair's square is LIME (it was green before the palette was shared).
 //
 // DEBUG ONLY, and behind `dev.ruler` on top of that: a filmed run wants the
 // ruler, every other run does not. The release branch below is `EmptyView`, so
 // the call site in `MessagesRootView` stays unconditional.
 
 import SwiftUI
+#if DEBUG || SOLO_TESTING
+import CMotionRuler
+#endif
 
 #if DEBUG || SOLO_TESTING
 
 public struct CollapseRuler: View {
     /// Band height in points. The whole read is "count bands from the red bar",
     /// so this is the measurement's resolution as well as its scale check.
-    public static let band: CGFloat = 10
+    public static let band = CGFloat(MR_BAND_PT)
     /// The banded strip's width, wide enough that a column median is stable
     /// under compression and narrow enough not to cover the seat badges.
-    public static let strip: CGFloat = 18
+    public static let strip = CGFloat(MR_STRIP_PT)
     /// The full-width edge bars. 4pt is a whole pixel at every scale and still
     /// reads as an edge rather than as a band.
-    public static let edge: CGFloat = 4
+    public static let edge = CGFloat(MR_EDGE_PT)
 
     /// THE RED BAR MARKS THE DRAWER'S TOP EDGE, NOT THE RAW BOX.
     ///
@@ -85,11 +92,12 @@ public struct CollapseRuler: View {
                                 .offset(y: CGFloat(i) * Self.band)
                         }
                         // The top edge, full width: red = the drawer's top.
-                        Self.pure(1, 0, 0)
+                        Self.ink(MR_INK_RED)
                             .frame(width: geo.size.width, height: Self.edge)
-                        // The clock, immediately under the top bar.
+                        // The clock, immediately under the top bar, past the
+                        // strip - where shared/tools/motion reads it.
                         CollapseClock()
-                            .offset(y: Self.edge)
+                            .offset(x: Self.strip + CGFloat(MR_CLOCK_GAP_PT), y: Self.edge)
                     }
                     .frame(width: geo.size.width, height: geo.size.height,
                            alignment: .topLeading)
@@ -97,7 +105,7 @@ public struct CollapseRuler: View {
                     // The bottom edge: green = the bottom of the box, which is
                     // where the hand and the buttons sit. On the main tree, so
                     // it takes the whole of the hosting layer's push, as they do.
-                    Self.pure(0, 1, 0)
+                    Self.ink(MR_INK_GREEN)
                         .frame(width: geo.size.width, height: Self.edge)
                         .offset(y: geo.size.height - Self.edge)
                 }
@@ -108,12 +116,9 @@ public struct CollapseRuler: View {
         }
     }
 
-    /// Band `i`'s colour. Pure primaries only - see the file note.
-    static func colour(_ i: Int) -> Color {
-        if i == 0 { return pure(1, 0, 0) }              // the box top itself
-        if i % 10 == 0 { return pure(1, 1, 0) }         // every 100pt
-        return i % 2 == 0 ? pure(0, 1, 1) : pure(1, 0, 1)
-    }
+    /// Band `i`'s colour: red at the box top, yellow every 100pt, cyan and
+    /// magenta between (mr_band_ink).
+    static func colour(_ i: Int) -> Color { ink(mr_band_ink(Int32(i))) }
 
     /// WHAT ELSE IS MARKED, AND WHY AS SQUARES.
     ///
@@ -142,27 +147,35 @@ public struct CollapseRuler: View {
         case opponent
     }
 
-    /// Pair `i`'s square: cyan, yellow, green, repeating. The reader tells
+    /// Pair `i`'s square: cyan, yellow, lime, repeating. The reader tells
     /// repeated colours apart by position.
     static func tableSquareColour(_ i: Int) -> Color {
         switch i % 3 {
-        case 0: return pure(0, 1, 1)
-        case 1: return pure(1, 1, 0)
-        default: return pure(0, 1, 0)
+        case 0: return ink(MR_INK_CYAN)
+        case 1: return ink(MR_INK_YELLOW)
+        default: return ink(MR_INK_LIME)
         }
     }
-    static let squareSide: CGFloat = 12
+    static let squareSide = CGFloat(MR_SIDE_PT)
     /// The first opponent's square. Magenta: no table pair is ever magenta.
-    static let opponentSquareColour = pure(1, 0, 1)
+    static let opponentSquareColour = ink(MR_INK_MAGENTA)
     /// A flying card's square. See `flightSquare`.
-    static let flightSquareColour = pure(1, 0.5, 0)
+    static let flightSquareColour = ink(MR_INK_ORANGE)
     /// A card in MY HAND. See `handSquare`.
-    static let handSquareColour = pure(0, 0, 1)
+    static let handSquareColour = ink(MR_INK_BLUE)
 
-    /// A LITERAL sRGB colour, never `Color.red` and friends: the system colours
-    /// are dynamic (red is 255,59,48 in light and 255,69,58 in dark) and the
-    /// whole point of this palette is that a frame can be classified by channel
-    /// without knowing which appearance the run was filmed in.
+    /// An ink of the shared palette as a LITERAL sRGB colour, never `Color.red`
+    /// and friends: the system colours are dynamic (red is 255,59,48 in light
+    /// and 255,69,58 in dark) and the whole point of this palette is that a
+    /// frame can be classified without knowing which appearance it was filmed in.
+    static func ink(_ k: Int) -> Color { ink(Int32(k)) }
+    static func ink(_ k: Int32) -> Color {
+        Color(.sRGB, red: mr_ink_unit(k, 0), green: mr_ink_unit(k, 1),
+              blue: mr_ink_unit(k, 2), opacity: 1)
+    }
+
+    /// Black and white, for the clock's cells (not inks: the clock is read by
+    /// luminance, not hue).
     static func pure(_ r: Double, _ g: Double, _ b: Double) -> Color {
         Color(.sRGB, red: r, green: g, blue: b, opacity: 1)
     }
@@ -197,8 +210,8 @@ public struct CollapseRuler: View {
 /// separation after h264 chroma subsampling. The cell is 12pt so a column
 /// median is stable at every scale.
 struct CollapseClock: View {
-    static let bits = 14
-    static let cell: CGFloat = 12
+    static let bits = Int(MR_CLOCK_BITS)
+    static let cell = CGFloat(MR_CLOCK_CELL_PT)
 
     var body: some View {
         TimelineView(.animation) { ctx in

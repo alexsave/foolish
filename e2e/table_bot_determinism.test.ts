@@ -91,9 +91,18 @@ test('every brain chooses the same cycle on a fresh module and on one with anoth
 // is the 4-seat game that looped with a 12-cycle period from cycle 105.
 const SWEEP_SEATS = [4, 5, 6, 7];
 const SWEEP_SEEDS = 40;
-// Comfortably above the longest of these games (503 cycles over 2 to 8 seats), and
-// far below a loop, which never ends at all.
-const CYCLE_CEILING = 800;
+// Comfortably above the longest of these games, and far below a loop, which never
+// ends at all.
+//
+// RE-MEASURED WHEN A GOOD BECAME A MOVE. The longest was 503 cycles when a silent
+// `good` was bundled - several of them could ride one cycle and the cycle ended
+// on the first VISIBLE action. classify() (c/src/bot_drive.c) prices a good as a
+// move now, so a good ends its cycle like any other move and the same games take
+// more, finer cycles: measured over this exact sweep, 53886 cycles carrying
+// 53886 actions (one action per cycle, bundling having nothing left to bundle),
+// longest 858 at rnd-7-24. Nothing about the games changed - only the unit this
+// ceiling counts in - so the ceiling moves with the unit and keeps its margin.
+const CYCLE_CEILING = 1400;
 
 test('an all-random table always ends: no board can repeat its own move forever', () => {
     const table = createServerTable();

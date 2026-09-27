@@ -542,12 +542,57 @@ leafbook-verify:
 
 # ---------------------------------------------------------------------------
 # WebAssembly rules kernel: game.c + legal.c + the wasm bridge, compiled
-# freestanding (no libc; wasm/include has the tiny shims, wasm_api.c provides
-# memcpy/memset). This is THE production rules engine: the TS server imports
+# freestanding (no libc: ../shared/c/wasm is the C library every wasm kernel in
+# the repo links - memcpy, memset, strcmp - and wasm/include keeps this
+# kernel's own stdio.h and stdlib.h, first on the path so they win). This is THE production rules engine: the TS server imports
 # the resulting module via sdk/ts/wasm/. `-D_Thread_local=`
 # strips TLS (single-threaded module); the bridge sets the production
 # deck-size boundary at init (see card.h).
-WASM_CC    ?= clang
+# THE COMPILER IS PART OF THE MODULE, so picking it up off PATH is picking up
+# whatever is there. On a Mac that is Apple clang, and the old protection was
+# that Apple clang could not target wasm32 AT ALL, so the wrong one failed
+# loudly. That protection expired: Apple clang 21 targets wasm32 fine and
+# builds a module 271 B LARGER than the pinned toolchain's, silently. Against a
+# pin with 85 B of room, a developer running the documented command on a Mac
+# now gets a red size gate and a kernel CI never built, with nothing saying
+# which compiler asked.
+#
+# So macOS defaults to the pinned Homebrew LLVM when it is installed, and
+# wasm-cc-check below refuses Apple clang outright rather than letting it ship
+# a different answer. Setting WASM_CC= explicitly still wins, for whoever needs
+# to measure exactly this.
+ifeq ($(origin WASM_CC),undefined)
+  ifneq ($(wildcard /opt/homebrew/opt/llvm/bin/clang),)
+    WASM_CC := /opt/homebrew/opt/llvm/bin/clang
+  else
+    WASM_CC := clang
+  endif
+endif
+
+# Every wasm target depends on this. It is a guard and not advice, because the
+# failure it catches does not look like a failure: the build succeeds and the
+# bytes are wrong.
+.PHONY: wasm-cc-check
+wasm-cc-check:
+	@v="$$($(WASM_CC) --version 2>/dev/null | head -1)"; \
+	case "$$v" in \
+	  "") echo "wasm: WASM_CC=$(WASM_CC) is not runnable" >&2; exit 1;; \
+	  *"Apple clang"*) \
+	    echo "wasm: WASM_CC=$(WASM_CC) is $$v" >&2; \
+	    echo "wasm: Apple clang targets wasm32 but does NOT produce the pinned module" >&2; \
+	    echo "wasm: (measured: 271 B larger than Homebrew clang 22 on the same tree)" >&2; \
+	    echo "wasm: install the pinned toolchain (brew install llvm binaryen) or pass WASM_CC=" >&2; \
+	    exit 1;; \
+	esac; \
+	case "$$v" in \
+	  *"clang version $(WASM_LLVM_MAJOR)."*) ;; \
+	  *) echo "wasm: WASM_CC is $$v, not the pinned clang $(WASM_LLVM_MAJOR) - sizes will differ from CI" >&2;; \
+	esac
+# The pinned major, matching scripts/ci_llvm.sh LLVM_VERSION. A warning and not
+# a refusal: a different clang 22 point release is a few bytes, a different
+# MAJOR is kilobytes (clang 18 cost 3.5 KB), and both are worth saying out loud
+# without stopping someone who knows why they are doing it.
+WASM_LLVM_MAJOR ?= 22
 # Optimize for SIZE (-Oz), not speed (-O3). Measured: -Oz cuts every module
 # ~40% (bots 194->116KB, rules 49->27KB, guards 20->12KB embedded b64 drops
 # ~105KB) for ~0 warm-perf cost — cordite's hot loop is bitboard popcount/ctz
@@ -679,7 +724,8 @@ endef
 # letting the local compiler decide what the shipped artifact requires.
 WASM_FLAGS := --target=wasm32 $(WASM_OPT) -nostdlib -ffreestanding -mbulk-memory \
               -mno-nontrapping-fptoint \
-              -isystem wasm/include -Isrc -D_Thread_local= -DMAX_LOG_PAIRS=64 \
+              -isystem wasm/include -isystem $(SHARED)/wasm/include -Isrc \
+              -D_Thread_local= -DMAX_LOG_PAIRS=64 \
               -DMAX_LEGAL_MOVES=4096 -DMAX_MOVE_CARDS=28 -DMAX_BATTLES=64 \
               -DWORLD_LOG_CAP=40 \
               -DREPLAY_REC_CAP=4096 -DWASM_REPLAY_IO_CAP=32768 -DMAX_SNAPS=16 \
@@ -711,6 +757,20 @@ WASM_FLAGS := --target=wasm32 $(WASM_OPT) -nostdlib -ffreestanding -mbulk-memory
 # panel and at TT22 (the 40-bit tag + 12-bit index = 52-bit effective key aliases
 # to a wrong value at only ~1e-5/game, an order of magnitude below octogen's ~4e-4
 # inherent floor). Net solver table: 128 KiB (TT13) -> 64 KiB (TT12+2WAY) -> 32 KiB.
+
+# THE BLANKET HEADER DEPENDENCY every wasm object rule below carries, named
+# once instead of spelled out at each of them. Same rule as the native
+# build/%.o objects: a struct-layout change in ANY header must rebuild every
+# object, or one module links two layouts.
+#
+# wasm/include is in it and was NOT in the copies this replaces. That directory
+# is the freestanding libc shim set (-isystem wasm/include, see WASM_FLAGS):
+# string.h there declares the memcpy/memset every translation unit calls, and
+# an edit to it rebuilt nothing. The gap was harmless while only two object
+# directories had rules; the oracle rules below would have widened it to four,
+# so it is closed here rather than copied twice more.
+WASM_HDRS := $(wildcard src/*.h) $(wildcard $(SHARED)/*.h) $(wildcard wasm/*.h) \
+             $(wildcard wasm/include/*.h) $(wildcard $(SHARED)/wasm/include/*.h)
 
 # Explicit export allow-list — only the memory (above) + wasm_* API the TS
 # bridge actually calls (engine.ts / bots.ts). This REPLACES -Wl,--export-all,
@@ -808,6 +868,21 @@ $(STRUCTGEN): $(wildcard $(STRUCTGEN_DIR)/*.c) $(wildcard $(STRUCTGEN_DIR)/*.h) 
               $(STRUCTGEN_DIR)/Makefile $(STRUCTGEN_DIR)/../llvm.mk
 	$(MAKE) -C $(STRUCTGEN_DIR) build/structgen
 
+# $(call sg_hash,...) IS NOT SAFE AGAINST A SECOND MAKE IN THE SAME TREE, and
+# that is worth knowing before it costs someone an afternoon. It writes its
+# scratch to fixed paths - $@.new, and $@.ts / $@.hash.ts when there is a stem -
+# and ends by removing them. Two make processes in c/ that both reach a hash
+# target therefore race: one creates $@.new, the other's `rm -f $@.new` takes it
+# away, and the first dies with "cat: build/layout/bots.hash.new: No such file or
+# directory" followed by "mv: cannot stat". It is not a flake and it is not a
+# bad hash - it is two builds sharing one temp file. Hit repeatedly on a shared
+# box where several agents were building this tree at once; hit on bots.hash,
+# which nothing had changed. THIS IS PRE-EXISTING (every sg_hash caller has it,
+# and build/layout/ios.hash has its own copy of the same pattern) and it is NOT
+# fixed here: a per-process temp has to be threaded through sg_hash and sg_sync
+# together, and the ios copy of it can only be tested on a Mac. Left as a note
+# rather than a half-fix. One build at a time in one tree, or expect this.
+#
 # $(call sg_hash,<build name>,<cflags>,<ts stem, or empty>): with a stem, also
 # writes ../sdk/ts/gen/game_layout.<stem>.ts and ../sdk/ts/gen/layout_hash.<stem>.ts.
 sg_gen   = ../sdk/ts/gen
@@ -926,6 +1001,8 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_anim_plan_ptr -Wl,--export=wasm_anim_frame_ptr -Wl,--export=wasm_anim_beats_ptr \
   -Wl,--export=wasm_anim_build_plan -Wl,--export=wasm_anim_plan_at -Wl,--export=wasm_anim_build_beats \
   -Wl,--export=wasm_anim_reversal_order \
+  -Wl,--export=wasm_anim_roles_goods_opening -Wl,--export=wasm_anim_roles_goods_cleared \
+  -Wl,--export=wasm_anim_roles_pass_hand_off -Wl,--export=wasm_anim_shown_ledger_allows \
   -Wl,--export=wasm_belief_probe_reset -Wl,--export=wasm_belief_probe_dump -Wl,--export=wasm_belief_probe_ptr
 
 # The C Roster (src/roster.h), in the TEST build only (WASM_TEST_EXPORTS below):
@@ -1125,7 +1202,7 @@ WASM_RULES_FLAGS := $(filter-out -DMAX_LEGAL_MOVES=4096,$(WASM_FLAGS)) \
 # opening a bubble needs it and it is not optional at any size.
 WASM_MSG_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/view.c src/awire.c \
                 src/evwire.c $(SHARED)/sha256.c src/msg_wire.c src/anim_plan.c \
-                src/replay.c src/replay_extras.c \
+                src/replay.c src/replay_extras.c $(SHARED)/wasm/libc.c \
                 wasm/wasm_api.c wasm/wasm_msg_api.c
 
 WASM_MSG_EXPORTS := \
@@ -1143,7 +1220,9 @@ WASM_MSG_EXPORTS := \
   -Wl,--export=wasm_anim_set_transport -Wl,--export=wasm_anim_transport \
   -Wl,--export=wasm_anim_plan_ptr -Wl,--export=wasm_anim_frame_ptr -Wl,--export=wasm_anim_beats_ptr \
   -Wl,--export=wasm_anim_build_plan -Wl,--export=wasm_anim_plan_at -Wl,--export=wasm_anim_build_beats \
-  -Wl,--export=wasm_anim_reversal_order
+  -Wl,--export=wasm_anim_reversal_order \
+  -Wl,--export=wasm_anim_roles_goods_opening -Wl,--export=wasm_anim_roles_goods_cleared \
+  -Wl,--export=wasm_anim_roles_pass_hand_off -Wl,--export=wasm_anim_shown_ledger_allows
 
 # The rules API, minus the one export that would drag a replay DECODER in.
 # (wasm_replay_decode is declared in wasm_api.c, which this target shares with
@@ -1165,17 +1244,20 @@ WASM_MSG_LDFLAGS := --target=wasm32 -nostdlib $(filter -Wl%,$(WASM_MSG_FLAGS))
 WASM_MSG_POSTOPT ?= $(if $(strip $(WASM_POSTOPT)),$(WASM_POSTOPT),-Oz)
 WASM_MSG_OBJ := $(addprefix build/msgobj/,$(notdir $(WASM_MSG_SRC:.c=.o)))
 
-build/msgobj/%.o: src/%.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h) $(wildcard wasm/*.h)
+build/msgobj/%.o: src/%.c $(WASM_HDRS)
 	@mkdir -p build/msgobj
 	$(WASM_CC) $(WASM_MSG_CFLAGS) -c $< -o $@
-build/msgobj/%.o: wasm/%.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h) $(wildcard wasm/*.h)
+build/msgobj/%.o: wasm/%.c $(WASM_HDRS)
 	@mkdir -p build/msgobj
 	$(WASM_CC) $(WASM_MSG_CFLAGS) -c $< -o $@
-build/msgobj/wasm_api.o: wasm/wasm_api.c build/layout/msg.hash $(wildcard src/*.h) $(wildcard $(SHARED)/*.h) $(wildcard wasm/*.h)
+build/msgobj/wasm_api.o: wasm/wasm_api.c build/layout/msg.hash $(WASM_HDRS)
 	@mkdir -p build/msgobj
 	$(WASM_CC) $(WASM_MSG_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/msg.hash) -c $< -o $@
 
-build/msgobj/%.o: $(SHARED)/%.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h) $(wildcard wasm/*.h)
+build/msgobj/%.o: $(SHARED)/%.c $(WASM_HDRS)
+	@mkdir -p build/msgobj
+	$(WASM_CC) $(WASM_MSG_CFLAGS) -c $< -o $@
+build/msgobj/%.o: $(SHARED)/wasm/%.c $(WASM_HDRS)
 	@mkdir -p build/msgobj
 	$(WASM_CC) $(WASM_MSG_CFLAGS) -c $< -o $@
 
@@ -1186,7 +1268,7 @@ build/msg.wasm: $(WASM_MSG_OBJ) wasm/msg_exports_check.mjs Makefile
 	node wasm/msg_exports_check.mjs $@
 
 .PHONY: wasm-msg wasm-msg-size
-wasm-msg: build/layout/msg.hash
+wasm-msg: wasm-cc-check build/layout/msg.hash
 	$(call sg_settle,msg,build/msgobj,build/msg.wasm)
 	@$(MAKE) --no-print-directory build/msg.wasm
 
@@ -1248,10 +1330,12 @@ wasm-msg-size: build/msg.wasm
 # modules, never .gz sizes, and see e2e/mem/wasm_memory.test.ts for why the size
 # gate moved onto the raw one.
 #
-# The trap that keeps manufacturing a phantom skew: WASM_CC defaults to plain
-# `clang`, which on macOS is APPLE clang and cannot target wasm32 at all
-# ("No available targets are compatible with triple wasm32"). It is WASM_CC=,
-# not CC=.
+# The trap that used to manufacture a phantom skew: WASM_CC is the knob, not CC.
+# It used to announce itself - Apple clang could not target wasm32 at all ("No
+# available targets are compatible with triple wasm32") - and it stopped, because
+# Apple clang 21 targets wasm32 and just builds something 271 B bigger. See
+# WASM_CC and wasm-cc-check above: macOS now defaults to the Homebrew LLVM and
+# the build refuses Apple clang rather than quietly disagreeing with CI.
 #
 # Nothing here is committed any more - CI builds the shipped modules in the lane
 # that ships them (scripts/wasm_build.sh), so there is no committed artifact to
@@ -1268,6 +1352,7 @@ WASM_BOT_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/rep
                 src/handwritten_prod_strategy.c \
                 src/octogen_strategy.c \
                 src/bot_knobs.c src/bot_roster.c src/bot_drive.c src/roster.c src/table.c src/client_table.c src/card.c \
+                $(SHARED)/wasm/libc.c \
                 wasm/wasm_api.c wasm/wasm_bots_api.c wasm/wasm_msg_api.c wasm/wasm_table_api.c
 
 # PER-FILE opt (a mix one clang invocation can't express): the profiled hot MC
@@ -1339,17 +1424,20 @@ WASM_BOT_O3_OBJ := $(addprefix build/botobj/,$(notdir $(WASM_BOT_O3_SRC:.c=.o)))
 build/botobj/%.o: WASM_BOT_FILE_OPT := -Oz
 $(WASM_BOT_O3_OBJ): WASM_BOT_FILE_OPT := -O3
 
-build/botobj/%.o: src/%.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h) $(wildcard wasm/*.h)
+build/botobj/%.o: src/%.c $(WASM_HDRS)
 	@mkdir -p build/botobj
 	$(WASM_CC) $(WASM_BOT_CFLAGS) $(WASM_BOT_FILE_OPT) -c $< -o $@
-build/botobj/%.o: wasm/%.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h) $(wildcard wasm/*.h)
+build/botobj/%.o: wasm/%.c $(WASM_HDRS)
 	@mkdir -p build/botobj
 	$(WASM_CC) $(WASM_BOT_CFLAGS) $(WASM_BOT_FILE_OPT) -c $< -o $@
-build/botobj/wasm_api.o: wasm/wasm_api.c build/layout/bots.hash $(wildcard src/*.h) $(wildcard $(SHARED)/*.h) $(wildcard wasm/*.h)
+build/botobj/wasm_api.o: wasm/wasm_api.c build/layout/bots.hash $(WASM_HDRS)
 	@mkdir -p build/botobj
 	$(WASM_CC) $(WASM_BOT_CFLAGS) $(WASM_BOT_FILE_OPT) -DSG_LAYOUT_HASH=$$(cat build/layout/bots.hash) -c $< -o $@
 
-build/botobj/%.o: $(SHARED)/%.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h) $(wildcard wasm/*.h)
+build/botobj/%.o: $(SHARED)/%.c $(WASM_HDRS)
+	@mkdir -p build/botobj
+	$(WASM_CC) $(WASM_BOT_CFLAGS) $(WASM_BOT_FILE_OPT) -c $< -o $@
+build/botobj/%.o: $(SHARED)/wasm/%.c $(WASM_HDRS)
 	@mkdir -p build/botobj
 	$(WASM_CC) $(WASM_BOT_CFLAGS) $(WASM_BOT_FILE_OPT) -c $< -o $@
 
@@ -1411,13 +1499,11 @@ build/named/bots.named.wasm: $(WASM_BOT_OBJ) Makefile
 # bots.wasm ships as ONE gzip STATIC ASSET (config.toml static_files + deploy
 # --use-api, no Docker) — a real binary, not a base64 .ts embed.
 #
-# EVERY host reads this one file. The server (Deno edge / Node) with
-# fs/readFileSync; the browser by FETCHING it, because it has neither — see
-# sdk/ts/wasm/wasm_asset.ts. The browser needs the big module for two reasons
-# that arrived together: FMSG's decode/seal live only here (sealing reads a
-# resident session log rules.wasm cannot hold, and /m/ is a web page), and A5's
-# replay_steps does too (~272 KB of decoded actions vs a 196,608 B pin). One
-# module behind every host is the steer.
+# It is the SERVER-SIDE link: the edge functions and Node read it off the
+# filesystem (fs/readFileSync — see sdk/ts/wasm/wasm_asset.ts), and the e2e
+# suites drive it through every entry a test binds. The browser reads
+# web.wasm.gz below instead, which is the same objects under a smaller export
+# allow-list; no host downloads THIS module over a network.
 #
 # There was briefly a base64 twin here for the browser. It is deliberately gone:
 # a second carrier of the same bytes is exactly how rules_wasm.ts went stale for
@@ -1425,10 +1511,120 @@ build/named/bots.named.wasm: $(WASM_BOT_OBJ) Makefile
 # change invisible to every TS test that loaded the stale one. It also put 80 KB
 # of single-line base64, rewritten on every kernel build, into git. The price is
 # that the browser's door is async (ensureBotsAsync); that is the cheaper half.
-wasm-bots: build/layout/bots.hash
+wasm-bots: wasm-cc-check build/layout/bots.hash
 	$(call sg_settle,bots,build/botobj,build/bots.wasm)
 	@$(MAKE) --no-print-directory build/bots.wasm
 	gzip -9 -n -c build/bots.wasm > ../sdk/ts/wasm/bots.wasm.gz
+
+# ---------------------------------------------------------------------------
+# web.wasm — THE BROWSER'S LINK OF THE SAME KERNEL.
+#
+# Not a second kernel. Byte-for-byte the same OBJECTS as build/bots.wasm
+# ($(WASM_BOT_OBJ)), the same compile flags, the same layout hash, the same
+# wasm-opt pass. The ONLY difference is which names are exported, and an export
+# is a GC root: wasm-ld drops every function no exported name reaches. That is
+# the doctrine's "per call site, by export allow-list"
+# (docs/ARCHITECTURE_AS_A_PATTERN.md Part 1 piece 1, Part 3 move 3) rather than
+# the "per role" split that killed guards.wasm and rules.wasm — those were three
+# SOURCES answering one question, and two of them could answer it differently.
+# Two links of one object set cannot: any function present in both is the same
+# bytes, because it came out of the same .o.
+#
+# WHAT IT BUYS, measured on this Mac (clang 22.1.8 + binaryen 130, the pin):
+#
+#   bots.wasm   191,490 B raw   81,902 B gz   37 pages (2,424,832 B)
+#   web.wasm     67,311 B raw   31,219 B gz   26 pages (1,703,936 B)
+#
+# -50,683 B of download on every first visit (-62%), -124,179 B of module for
+# the browser to compile, and -720,896 B of linear memory in the tab. What the
+# browser was paying for and never ran: the four Monte-Carlo brains and cordite's
+# solver working set and leaf book (~92 KB of the 182 KB CODE section), plus the
+# whole C Table — wasm_table_bot_drive ALONE is 40,716 B of code, 22% of the old
+# module. The bot loop runs in the Supabase edge functions, and the in-browser
+# Infinite Oracle is already its own module (oracle.wasm / oracle-mt.wasm), so
+# every one of those bytes was downloaded and never called.
+#
+# THE LIST BELOW IS THE BROWSER'S REACH SET, MEASURED, NOT GUESSED.
+# e2e/wasm_web_link.test.ts bundles every browser entry with esbuild (the same
+# machinery as e2e/security_client_boundary.test.ts, tree shaking on), collects
+# every wasm_* name that survives, and fails if one of them is missing here — so
+# a new browser call site that this list does not carry is a red build and never
+# a "not a function" in production. The same test fails if a name here is NOT
+# reachable, so the list cannot rot upward either.
+#
+# Names deliberately absent, and why: every wasm_table_* (the server plays the
+# table), the bot bridge (wasm_choose_move and friends run on the edge, and the
+# Oracle's copies live in oracle.wasm), the durable state codec
+# (wasm_export_state / wasm_state_serialize / wasm_state_deserialize, which
+# e2e/security_client_boundary.test.ts denies the browser — they are now absent
+# from the module rather than merely unreferenced by the bundle), and the
+# test-only entries (wasm_msg_seal, wasm_legal_moves, wasm_anim_build_beats,
+# wasm_replay_extras_encode, wasm_replay_link_parse …) which run on Node against
+# bots.wasm.
+WASM_WEB_NAMES := \
+  wasm_init wasm_io_ptr wasm_io_cap wasm_layout_hash wasm_can_cover \
+  wasm_replay_io_ptr wasm_replay_io_cap wasm_replay_error_ptr \
+  wasm_bot_roster_dump \
+  wasm_msg_decode wasm_msg_header_ptr \
+  wasm_anim_set_transport wasm_anim_event_key \
+  wasm_anim_should_drop_stale wasm_anim_stale_optimistic \
+  wasm_anim_finish_rows wasm_anim_hand_laid_out wasm_anim_reversal_order \
+  wasm_anim_build_plan wasm_anim_plan_ptr wasm_anim_plan_at wasm_anim_frame_ptr \
+  wasm_anim_roles_goods_opening wasm_anim_roles_goods_cleared \
+  wasm_anim_roles_pass_hand_off wasm_anim_shown_ledger_allows \
+  wasm_replay_b32_encode wasm_replay_b32_decode wasm_replay_link \
+  wasm_replay_extras_ptr wasm_replay_extras_decode \
+  wasm_replay_events wasm_replay_events_index_ptr \
+  wasm_replay_step_count wasm_replay_step_index
+
+# Picked OUT of the shipped list rather than spelled a second time, so a name
+# cannot be in the browser's module and not in the server's — that would be the
+# beginning of two export surfaces with two meanings.
+WASM_WEB_EXPORTS = $(WASM_CLIENT_EXPORTS) $(WASM_REPLAY_WEB_EXPORTS) \
+                   $(filter $(addprefix -Wl$(comma)--export=,$(WASM_WEB_NAMES)),$(WASM_BOTS_SHIPPED_EXPORTS))
+
+# AND THE GATE ON THE FILTER ITSELF. $(filter) over a name the shipped list does
+# not have expands to NOTHING, which is the "matched nothing looks exactly like
+# found no problem" failure docs/ARCHITECTURE_AS_A_PATTERN.md Part 3 move 2
+# names three times over. A typo here, or a name retired into
+# WASM_BOTS_UNSHIPPED_API, would silently shrink the browser's module and the
+# first symptom would be a TypeError in someone's tab.
+WASM_WEB_MISSING = $(filter-out $(WASM_WEB_EXPORTS),$(addprefix -Wl$(comma)--export=,$(WASM_WEB_NAMES)))
+
+build/web.wasm: $(WASM_BOT_OBJ) Makefile
+	@mkdir -p build
+	@[ -z "$(WASM_WEB_MISSING)" ] || { \
+	  echo "c/Makefile: WASM_WEB_NAMES names exports the shipped link does not have:"; \
+	  for n in $(WASM_WEB_MISSING); do echo "  $$n"; done; \
+	  echo "Either the name is misspelled, or it is in WASM_BOTS_UNSHIPPED_API."; exit 1; }
+	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_BOT_LDFLAGS) \
+	          $(WASM_WEB_EXPORTS) $(WASM_BOT_OBJ) -o $@
+	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),$@)
+
+.PHONY: wasm-web wasm-web-size
+wasm-web: wasm-cc-check build/layout/bots.hash
+	$(call sg_settle,bots,build/botobj,build/web.wasm)
+	@$(MAKE) --no-print-directory build/web.wasm
+	gzip -9 -n -c build/web.wasm > ../sdk/ts/wasm/web.wasm.gz
+
+# The name-preserving companion, same arrangement as bots' above: same objects,
+# same link, same wasm-opt pass, minus --strip-all, so tools/wasm_anatomy can
+# map names onto the shipped bytes. It is what makes "which .c file are these
+# 67 KB" an answerable question for the browser's link and not just the
+# server's - and answering it for both side by side is how WASM_WEB_NAMES was
+# arrived at.
+build/named/web.named.wasm: $(WASM_BOT_OBJ) Makefile
+	@mkdir -p build/named
+	$(WASM_CC) --target=wasm32 -nostdlib $(filter-out -Wl$(comma)--strip-all,$(WASM_BOT_LDFLAGS)) \
+	          $(WASM_WEB_EXPORTS) $(WASM_BOT_OBJ) -o $@
+	$(if $(strip $(WASM_BOTS_POSTOPT)),$(WASM_OPT_BIN) $(WASM_OPT_FEATURES) $(WASM_BOTS_POSTOPT) --debuginfo $@ -o $@,:)
+
+# The number the download budget is about.
+wasm-web-size: build/web.wasm
+	@printf 'web.wasm    raw %7d  gzip %7d\n' \
+	  $$(wc -c < build/web.wasm) $$(gzip -9 -c build/web.wasm | wc -c)
+	@[ -f build/bots.wasm ] && printf 'bots.wasm   raw %7d  gzip %7d\n' \
+	  $$(wc -c < build/bots.wasm) $$(gzip -9 -c build/bots.wasm | wc -c) || true
 
 # The test build (WASM_TEST_EXPORTS above): never committed, never shipped.
 # build/bots_test.stamp records the wasm source hash it was built from
@@ -1441,7 +1637,7 @@ build/bots_test.wasm: $(WASM_BOT_OBJ) Makefile
 	mv $@.tmp $@
 
 .PHONY: wasm-bots-test
-wasm-bots-test: build/layout/bots.hash
+wasm-bots-test: wasm-cc-check build/layout/bots.hash
 	$(call sg_settle,bots,build/botobj,build/bots_test.wasm)
 	@$(MAKE) --no-print-directory build/bots_test.wasm
 	@bash ../scripts/wasm_stamp.sh --hash > build/bots_test.stamp.tmp && mv build/bots_test.stamp.tmp build/bots_test.stamp
@@ -1463,18 +1659,85 @@ WASM_ORACLE_EXPORTS := $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) \
   -Wl,--export=wasm_og_explain_ptr -Wl,--export=wasm_og_explain_len \
   -Wl,--export=wasm_og_explain_reset -Wl,--export=wasm_og_reload_flags \
   -Wl,--export=wasm_og_paths_ptr -Wl,--export=wasm_og_paths_len
-.PHONY: wasm-oracle
-wasm-oracle: build/layout/oracle.hash
+# ONE MAKE RULE PER OBJECT, the same shape wasm-bots has had all along. This
+# recipe used to be a shell `for` loop over all 34 sources inside a .PHONY
+# target, so every `npm run wasm` recompiled the whole oracle whether or not
+# anything had changed - and the gen+wasm pair is a pre-hook on nearly every
+# script in package.json. Measured on this tree: `npm run gen && npm run wasm`
+# was 15.9s warm with the loops and is 2.4s with these rules, while
+# `npm run wasm:bots` (rules already) was 0.4s. scripts/wasm_build.sh's header
+# and package.json's `//wasm` note carry the older Mac measurements that asked
+# for this change.
+#
+# NOTHING IS CACHED AND NOTHING IS ALLOWED TO GO STALE by this: make compares
+# each object against the source and the headers ($(WASM_HDRS)) it was built
+# from, which is a stronger contract than "recompile everything", not a weaker
+# one - the loop had no idea what an object was built from either, it just
+# overwrote it.
+#
+# ITS OWN OBJECT DIRECTORY, and that is load-bearing rather than tidy. These are
+# the bots sources at DIFFERENT flags (TT20 instead of TT12, -DOG_EXPLAIN_BUILD,
+# -DFOOLISH_ORACLE_BUILD - see WASM_ORACLE_CFLAGS above), and an object built at
+# one flag set that is reachable from a link of the other links silently and
+# wrongly. So each flag set keeps its own directory - build/botobj,
+# build/botoracle, build/botoraclemt, build/msgobj - and no rule writes across
+# them. That is the split that already existed; rules make it matter more,
+# because now an object SURVIVES between runs.
+#
+# SORTED, and byte-identity depends on it: object order on the link line decides
+# function order in the module. The loop linked `build/botoracle/*.o`, a shell
+# glob, and a glob is sorted; $(sort) reproduces that order, which is why these
+# rules write the same module the loop wrote - verified byte for byte, raw and
+# .gz, on all four modules. $(sort) is also the steadier of the two: a glob sorts
+# under LC_COLLATE, so its order is the machine's locale's and not necessarily
+# ASCII, while make's sort is ASCII everywhere. (Checked on a POSIX-locale Linux
+# box, where the two coincide; a machine whose collation differs would have got
+# different oracle bytes out of the loop than out of these rules, and the rules
+# are the side that cannot drift.)
+#
+# And the EXPLICIT LIST is what the glob could not be: a source removed from
+# WASM_BOT_SRC leaves its object behind in the directory, and a glob would keep
+# linking it. Same failure the iOS archive rules sweep for with `rm -rf`.
+WASM_ORACLE_OBJ    := $(sort $(addprefix build/botoracle/,$(notdir $(WASM_BOT_SRC:.c=.o))))
+WASM_ORACLE_O3_OBJ := $(addprefix build/botoracle/,$(notdir $(WASM_BOT_O3_SRC:.c=.o)))
+
+# Per-file opt, exactly as the loop chose it: -Oz for everything, -O3 for the
+# profiled MC core (WASM_BOT_O3_SRC). Target-specific beats pattern-specific.
+build/botoracle/%.o: WASM_ORACLE_FILE_OPT := -Oz
+$(WASM_ORACLE_O3_OBJ): WASM_ORACLE_FILE_OPT := -O3
+
+# EVERY object here bakes -DSG_LAYOUT_HASH, because the loop passed it to every
+# compile - so every object names build/layout/oracle.hash as a prerequisite.
+# (bots gives the define to wasm_api.o alone, which is why only that object
+# depends on the hash there.) The hash file's mtime moves only when its CONTENT
+# does, so this costs nothing on a warm build. sg_settle below is the other half
+# of it, for the same-second and mtime-went-backwards traps the layout notes
+# describe.
+build/botoracle/%.o: src/%.c build/layout/oracle.hash $(WASM_HDRS)
 	@mkdir -p build/botoracle
-	@for src in $(WASM_BOT_SRC); do \
-	  base=$$(basename $$src .c); opt=-Oz; \
-	  case " $(WASM_BOT_O3_SRC) " in *" $$src "*) opt=-O3;; esac; \
-	  echo "  CC(oracle) $$src [$$opt]"; \
-	  $(WASM_CC) $(WASM_ORACLE_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle.hash) $$opt -c $$src -o build/botoracle/$$base.o || exit 1; \
-	done
+	$(WASM_CC) $(WASM_ORACLE_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle.hash) $(WASM_ORACLE_FILE_OPT) -c $< -o $@
+build/botoracle/%.o: wasm/%.c build/layout/oracle.hash $(WASM_HDRS)
+	@mkdir -p build/botoracle
+	$(WASM_CC) $(WASM_ORACLE_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle.hash) $(WASM_ORACLE_FILE_OPT) -c $< -o $@
+build/botoracle/%.o: $(SHARED)/%.c build/layout/oracle.hash $(WASM_HDRS)
+	@mkdir -p build/botoracle
+	$(WASM_CC) $(WASM_ORACLE_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle.hash) $(WASM_ORACLE_FILE_OPT) -c $< -o $@
+build/botoracle/%.o: $(SHARED)/wasm/%.c build/layout/oracle.hash $(WASM_HDRS)
+	@mkdir -p build/botoracle
+	$(WASM_CC) $(WASM_ORACLE_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle.hash) $(WASM_ORACLE_FILE_OPT) -c $< -o $@
+
+# Makefile is a prerequisite for the reason build/bots.wasm names it: the export
+# list IS this file, and the link had been .PHONY (so always run) until now.
+build/oracle.wasm: $(WASM_ORACLE_OBJ) Makefile
+	@mkdir -p build
 	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_ORACLE_LDFLAGS) \
-	          $(WASM_ORACLE_EXPORTS) build/botoracle/*.o -o build/oracle.wasm
-	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),build/oracle.wasm)
+	          $(WASM_ORACLE_EXPORTS) $(WASM_ORACLE_OBJ) -o $@
+	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),$@)
+
+.PHONY: wasm-oracle
+wasm-oracle: wasm-cc-check build/layout/oracle.hash
+	$(call sg_settle,oracle,build/botoracle,build/oracle.wasm)
+	@$(MAKE) --no-print-directory build/oracle.wasm
 	gzip -9 -n -c build/oracle.wasm > ../public/oracle.wasm.gz
 	@echo "built ../public/oracle.wasm.gz ($$(wc -c < ../public/oracle.wasm.gz) B gz, $$(wc -c < build/oracle.wasm) B raw)"
 
@@ -1513,18 +1776,45 @@ WASM_ORACLE_MT_EXPORTS := $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) \
   -Wl,--export=wasm_mt_forced -Wl,--export=wasm_mt_candidates \
   -Wl,--export=wasm_mt_mismatch -Wl,--export=wasm_mt_canary \
   -Wl,--export=wasm_mt_solver -Wl,--export=wasm_mt_verdict -Wl,--export=wasm_mt_defuse
-.PHONY: wasm-oracle-mt
-wasm-oracle-mt: build/layout/oracle-mt.hash
+# The same rules as wasm-oracle just above, and everything said there applies
+# here - read that block first. The differences are only these: the source list
+# carries wasm/wasm_oracle_mt.c as well, the flags are the THREADED ones
+# (WASM_ORACLE_MT_CFLAGS: real TLS, -matomics, no CD_WASM_OVERLAY), and those
+# flags make build/botoraclemt a third object directory that must never mix with
+# the other two. Mixing here would be the worst of the three to debug: an object
+# compiled with -D_Thread_local= stripped into the threaded module is a data
+# race, not a link error.
+WASM_ORACLE_MT_OBJ    := $(sort $(addprefix build/botoraclemt/,$(notdir $(WASM_ORACLE_MT_SRC:.c=.o))))
+WASM_ORACLE_MT_O3_OBJ := $(addprefix build/botoraclemt/,$(notdir $(WASM_BOT_O3_SRC:.c=.o)))
+
+build/botoraclemt/%.o: WASM_ORACLE_MT_FILE_OPT := -Oz
+$(WASM_ORACLE_MT_O3_OBJ): WASM_ORACLE_MT_FILE_OPT := -O3
+
+build/botoraclemt/%.o: src/%.c build/layout/oracle-mt.hash $(WASM_HDRS)
 	@mkdir -p build/botoraclemt
-	@for src in $(WASM_ORACLE_MT_SRC); do \
-	  base=$$(basename $$src .c); opt=-Oz; \
-	  case " $(WASM_BOT_O3_SRC) " in *" $$src "*) opt=-O3;; esac; \
-	  echo "  CC(oracle-mt) $$src [$$opt]"; \
-	  $(WASM_CC) $(WASM_ORACLE_MT_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle-mt.hash) $$opt -c $$src -o build/botoraclemt/$$base.o || exit 1; \
-	done
+	$(WASM_CC) $(WASM_ORACLE_MT_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle-mt.hash) $(WASM_ORACLE_MT_FILE_OPT) -c $< -o $@
+build/botoraclemt/%.o: wasm/%.c build/layout/oracle-mt.hash $(WASM_HDRS)
+	@mkdir -p build/botoraclemt
+	$(WASM_CC) $(WASM_ORACLE_MT_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle-mt.hash) $(WASM_ORACLE_MT_FILE_OPT) -c $< -o $@
+build/botoraclemt/%.o: $(SHARED)/%.c build/layout/oracle-mt.hash $(WASM_HDRS)
+	@mkdir -p build/botoraclemt
+	$(WASM_CC) $(WASM_ORACLE_MT_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle-mt.hash) $(WASM_ORACLE_MT_FILE_OPT) -c $< -o $@
+build/botoraclemt/%.o: $(SHARED)/wasm/%.c build/layout/oracle-mt.hash $(WASM_HDRS)
+	@mkdir -p build/botoraclemt
+	$(WASM_CC) $(WASM_ORACLE_MT_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle-mt.hash) $(WASM_ORACLE_MT_FILE_OPT) -c $< -o $@
+
+# wasm-opt runs with --enable-threads here and writes the module in place, which
+# is not $(call wasm_postopt,...) - keep the line as the loop had it.
+build/oracle-mt.wasm: $(WASM_ORACLE_MT_OBJ) Makefile
+	@mkdir -p build
 	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_ORACLE_MT_LDFLAGS) \
-	          $(WASM_ORACLE_MT_EXPORTS) build/botoraclemt/*.o -o build/oracle-mt.wasm
-	$(WASM_OPT_BIN) $(WASM_OPT_FEATURES) --enable-threads $(WASM_BOTS_POSTOPT) build/oracle-mt.wasm -o build/oracle-mt.wasm
+	          $(WASM_ORACLE_MT_EXPORTS) $(WASM_ORACLE_MT_OBJ) -o $@
+	$(WASM_OPT_BIN) $(WASM_OPT_FEATURES) --enable-threads $(WASM_BOTS_POSTOPT) $@ -o $@
+
+.PHONY: wasm-oracle-mt
+wasm-oracle-mt: wasm-cc-check build/layout/oracle-mt.hash
+	$(call sg_settle,oracle-mt,build/botoraclemt,build/oracle-mt.wasm)
+	@$(MAKE) --no-print-directory build/oracle-mt.wasm
 	gzip -9 -n -c build/oracle-mt.wasm > ../public/oracle-mt.wasm.gz
 	@echo "built ../public/oracle-mt.wasm.gz ($$(wc -c < ../public/oracle-mt.wasm.gz) B gz, $$(wc -c < build/oracle-mt.wasm) B raw)"
 

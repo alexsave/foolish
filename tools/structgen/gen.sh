@@ -123,8 +123,10 @@ set +f
 "$SG" "${GAME[@]}" --build "bots=$BOTS" --ts "$prod/game_layout.bots.ts" --hash-ts "$prod/layout_hash.bots.ts"
 "$SG" --cwd "$root/c" --header anim_plan.h --header legal.h --build "bots=$BOTS" \
   --root AnimPlan --root AnimFrame --root AnimBeats --root AnimEvent --root LegalMoves \
-  --const ANIM_TIME_MS --const ANIM_GAP_MS --const ANIM_STEP_NONE --const ANIM_NEVER \
+  --const ANIM_TIME_MS --const ANIM_GAP_MS --const ANIM_BOUT_END_HOLD_MS \
+  --const ANIM_STEP_NONE --const ANIM_NEVER \
   --const ANIM_EVT_ --const ANIM_LOC_ --const ANIM_CONFLICT_ --const ANIM_SEAT_NONE \
+  --const ANIM_NO_MASK --const ANIM_CLAIM_ \
   --ts "$prod/anim.bots.ts"
 
 # The web client's reader of its slot (c/src/client_table.h): snapshot readers
@@ -271,7 +273,7 @@ fi
 [ "${1:-}" = "--verify-wasm" ] || exit 0
 
 verify_link() {
-  "$CLANG" --target=wasm32 -nostdlib -ffreestanding -O1 -I"$here/test" -I"$sg/test" -I"$root/c/src" -isystem "$root/c/wasm/include" \
+  "$CLANG" --target=wasm32 -nostdlib -ffreestanding -O1 -I"$here/test" -I"$sg/test" -I"$root/c/src" -isystem "$root/c/wasm/include" -isystem "$root/shared/c/wasm/include" \
     -D_Thread_local= -DMAX_LOG_PAIRS=64 -DMAX_LEGAL_MOVES=4096 -DMAX_MOVE_CARDS=28 -DMAX_BATTLES=64 \
     -Wl,--no-entry -Wl,--export-all "$here/test/verify.c" -o "$1"
 }

@@ -23,6 +23,7 @@ import {
 } from '../replay/frames';
 import { canCoverCards } from '../utils/gameValidation';
 import type { StringId } from '../localization/strings';
+import { buildBeats, type Beat, type TutKey } from './tutorialBeats.ts';
 import { TUTORIAL_MOVES_CODE, TUTORIAL_NAMES } from './tutorialGame';
 
 const LEARNER_SEAT = 0;
@@ -67,87 +68,6 @@ function sortedHand(state: TableView, powerSuit: number): Card[] {
 }
 const mkWithSelf = (powerSuit: number) => <T extends TableView>(state: T): T =>
     (!state || !state.seats ? state : ({ ...state, myHand: sortedHand(state, powerSuit) } as T));
-
-/* ----------------------------- concept beats ------------------------------- */
-
-/* The tutorial's own narration, in the one string table (c/i18n/keys.h, the
- * `tut_` keys). It used to be a second table in this directory with three
- * languages of its own; a learner reading one of the other twenty-two was
- * taught in English while the board around them spoke their language. The
- * narration is also why these keys are NOT the board's: `cover` is a button a
- * player presses, `tut_cover` is a sentence explaining what covering is, and
- * the two are different words in most languages. */
-type TutKey = Extract<StringId, `tut_${string}`>;
-
-interface Beat { at: number; key: TutKey; extra?: TutKey; name?: string; }
-
-/* A concept is taught the first time the game shows it.
- *
- * A step is one ACTION now, and an action brings its consequences with it, so
- * the concepts that used to be steps of their own are read off the step's own
- * EVENTS instead: a refill is what a draw looks like, an out is what going out
- * looks like. Both are the kernel's own events — the beat asks the frame what
- * happened, it does not re-derive it.
- *
- * At most one beat shows at a time (the latest at or before the cursor), so a
- * step that teaches two things at once — a round end is both "good" and
- * "discard" — would silently drop one. Rather than lose it, that step gets ONE
- * beat carrying both. */
-function buildBeats(frames: ReplayFrame[], summary: ReplaySummary, names: string[]): Beat[] {
-    const beats: Beat[] = [];
-    const seen = new Set<string>();
-    const once = (k: string) => (seen.has(k) ? false : (seen.add(k), true));
-    const ps = summary.powerSuit;
-    const fa = summary.firstAttacker;
-    beats.push({ at: 0, key: fa === LEARNER_SEAT ? 'tut_first_attacker_you' : 'tut_first_attacker', name: names[fa] });
-
-    const has = (f: ReplayFrame, type: string) => f.seq.events.some((e) => e.type === type);
-
-    for (let i = 0; i < frames.length; i++) {
-        const f = frames[i];
-        const prev = frames[i - 1];
-        switch (f.kind) {
-            case REPLAY_STEP.ATTACK:
-                if (prev && prev.game.battles.length > 0 && once('throwIn'))
-                    beats.push({ at: i, key: 'tut_throw_in', extra: 'tut_capacity' });
-                break;
-            case REPLAY_STEP.COVER: {
-                if (once('cover')) beats.push({ at: i, key: 'tut_cover', extra: 'tut_stack_rule' });
-                // EVERY pair of the move: one step can take several attacks
-                // (buildReplayFrames merges a multi-cover the wire split), and
-                // the trump may be spent on any of them - reading cards[0]
-                // against a single target would miss it and, worse, compare one
-                // pair's card with another pair's attack.
-                if ((f.pairs ?? []).some((pr) => pr.card.suit === ps && pr.target.suit !== ps)
-                    && once('trumpCover'))
-                    beats.push({ at: i, key: 'tut_trump_cover' });
-                break;
-            }
-            case REPLAY_STEP.PASS: if (once('pass')) beats.push({ at: i, key: 'tut_pass' }); break;
-            case REPLAY_STEP.PICKUP: if (once('pickup')) beats.push({ at: i, key: 'tut_pickup' }); break;
-            case REPLAY_STEP.GOOD: if (once('good')) beats.push({ at: i, key: 'tut_good' }); break;
-            case REPLAY_STEP.ROUND_END: {
-                // The bout closed: everyone said good, and the table was binned.
-                const g = once('good'), d = once('discard');
-                if (g) beats.push({ at: i, key: 'tut_good', extra: d ? 'tut_discard' : undefined });
-                else if (d) beats.push({ at: i, key: 'tut_discard' });
-                break;
-            }
-        }
-        // Draws and outs ride the action that caused them.
-        if (has(f, 'refill') && once('draw')) beats.push({ at: i, key: 'tut_draw' });
-        if (has(f, 'out') && once('out')) {
-            const outEv = f.seq.events.find((e) => e.type === 'out');
-            const seat = outEv?.seat ?? -1;
-            beats.push({ at: i, key: 'tut_out', name: names[seat >= 0 ? seat : 0] });
-        }
-        if (f.game.deckCount === 0 && !f.game.hasFlipped && once('deckEmpty'))
-            beats.push({ at: i, key: 'tut_deck_empty' });
-        if (i === frames.length - 1) beats.push({ at: i, key: 'tut_fool', name: names[summary.fool] });
-    }
-    beats.sort((a, b) => a.at - b.at);
-    return beats;
-}
 
 /* The learner's pending move, derived from the next scripted step. */
 interface Move {
@@ -295,7 +215,7 @@ const TutorialPlayback = ({ summary, frames, names, onExit }: PlaybackProps) => 
     }, [beats, stepIdx]);
     const beatText = activeBeat
         ? t(activeBeat.key, activeBeat.name ? { name: activeBeat.name } : undefined) +
-          (activeBeat.extra ? ' ' + t(activeBeat.extra) : '')
+          (activeBeat.extras ?? []).map((k) => ' ' + t(k)).join('')
         : '';
 
     const hint: TutorialHint | null = move

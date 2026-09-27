@@ -40,7 +40,7 @@ static void wr64(unsigned char *p, uint64_t v) {
 
 // Overlap-safe copy. In-place encode (out aliasing the body) is a documented
 // caller pattern, and the wasm build is freestanding: its string.h shim offers
-// only memcpy/memset (wasm/include/string.h), so memmove is not available to
+// only memcpy/memset (shared/c/wasm/include/string.h), so memmove is not available to
 // reach for. Copying downward is sufficient here — the body always moves toward
 // a LOWER address (the header it follows is fixed at 59 + joins bytes, which is
 // never longer than the envelope it came from).
@@ -692,13 +692,12 @@ int msg_chain_key(const unsigned char *envelope, int len, MsgChainKey *out) {
 }
 
 // Does `parent8` name `digest`? A plain byte walk rather than memcmp, because
-// this file is compiled into rules.wasm as well as the phone kernel, and that
-// build is freestanding: wasm/include/string.h deliberately declares only the
-// memcpy/memset clang lowers struct copies to. Widening the shim for one
-// eight-byte comparison would trade a real invariant ("the kernel needs no
-// libc") for nothing. Caught by the wasm build, which is the whole reason the
-// cross-engine gate exists - two engines that disagree about Rule P is a worse
-// bug than the one it fixes.
+// this file is compiled into the wasm modules as well as the phone kernel, and
+// those builds are freestanding: they link only the small C library in
+// shared/c/wasm, which held nothing but memcpy/memset when this was written.
+// An eight-byte comparison needs nothing from it either way. Caught by the
+// wasm build, which is the whole reason the cross-engine gate exists - two
+// engines that disagree about Rule P is a worse bug than the one it fixes.
 static int names_parent(const uint8_t *parent8, const uint8_t *digest) {
     for (int i = 0; i < MSG_PARENT_LEN; i++)
         if (parent8[i] != digest[i]) return 0;

@@ -113,6 +113,12 @@ export interface TableProducts {
     ended: boolean;
     dealtNow: boolean;
     rosterChanged: boolean;
+    /**
+     * The operation moved the goods, so a push must go out even with no events.
+     * A `good` flies no card and therefore emits none; gating the broadcast on
+     * `nEvents > 0` alone meant a good was never sent on its own.
+     */
+    goodsChanged: boolean;
     state: Uint8Array;
     roster: Uint8Array;
     /** The operation's session-log records, or null when it wrote none. */
@@ -402,6 +408,7 @@ export class ServerTable {
             ended: L.TableCommit_get_ended(m, c),
             dealtNow: L.TableCommit_get_dealt_now(m, c),
             rosterChanged: L.TableCommit_get_roster_changed(m, c),
+            goodsChanged: L.TableCommit_get_goods_changed(m, c),
             state: bytes(L.TableCommit_state_at(c)),
             roster: bytes(L.TableCommit_roster_at(c)),
             logs: L.Span_get_len(m, logs) > 0 ? bytes(logs) : null,

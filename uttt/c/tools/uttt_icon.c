@@ -102,8 +102,10 @@ int main(int argc, char **argv)
         fprintf(stderr, "icon %dx%d: display list overflowed\n", W, H);
 
     for (int i = 0; i < d.n_poly; i++) {
-        UtttPt tmp[64];
-        int n = d.poly[i].n > 64 ? 64 : d.poly[i].n;
+        /* a whole polygon: an O's ribbon runs past a hundred points at app
+         * icon sizes, and a cut one fills as a chord across the ring */
+        static UtttPt tmp[4096];
+        int n = d.poly[i].n > 4096 ? 4096 : d.poly[i].n;
         for (int k = 0; k < n; k++) {
             tmp[k].x = d.pt[d.poly[i].first + k].x * W;
             tmp[k].y = d.pt[d.poly[i].first + k].y * H;

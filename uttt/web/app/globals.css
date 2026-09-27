@@ -1,0 +1,20 @@
+:root {
+  color-scheme: light;
+  --paper: #f7f6f2;            /* UtttPaper.flat, under the napkin until it is drawn */
+  --ink: #1d1b16;              /* UtttInk.ink */
+  --label: #8a8577;            /* UtttInk.label */
+  --highlighter: #d6a836;      /* the wash, at full strength */
+  --sys: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+/* The napkin under every page: /napkin.png, the kernel's own paper drawn once
+   at build (app/napkin.png/route.ts), stretched as the app stretches it over
+   its sheet. The flat colour shows until it loads. */
+body {
+  background: var(--paper) url('/napkin.png') 0 0 / 100% 100% no-repeat fixed;
+  color: var(--ink);
+  font-family: var(--sys);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; }
