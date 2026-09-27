@@ -1702,6 +1702,28 @@ static void test_bot_roster_choose_scopes_knobs(void) {
     CHECK(all_ok, "every offline rung dispatches to a linked brain");
 }
 
+/* ---------------- base32 over long inputs ------------------------------- */
+
+// The codec's bit accumulator only ever needs its low 12 bits, but it keeps
+// shifting the whole word. Past four input bytes the high bits of 0xFF data
+// run off the top, which is undefined on a signed int (UBSan aborts in
+// tests-asan) and defined on an unsigned one. The bytes must not change.
+static void test_b32_long_input(void) {
+    unsigned char in[32], back[32];
+    char b32[64];
+    memset(in, 0xFF, sizeof in);
+    CHECK(replay_b32_encode(in, (int)sizeof in, b32, (int)sizeof b32) == 52,
+          "b32: 32 bytes are 52 characters");
+    int all_seven = 1;
+    for (int i = 0; i < 51; i++) if (b32[i] != '7') all_seven = 0;
+    CHECK(all_seven && b32[51] == 'Q', "b32: all-ones bytes encode to 7s and a padded tail");
+    CHECK(replay_b32_decode(b32, back, (int)sizeof back) == 32 && memcmp(in, back, 32) == 0,
+          "b32: 32 all-ones bytes read back unchanged");
+    CHECK(replay_b32_encode((const unsigned char *)"foobar", 6, b32, (int)sizeof b32) == 10
+          && strcmp(b32, "MZXW6YTBOI") == 0,
+          "b32: the RFC 4648 vector for foobar");
+}
+
 /* ---------------- reading a pasted replay link -------------------------- */
 
 static void test_link_parse(void) {
@@ -11662,6 +11684,7 @@ int main(void) {
     test_replay_refuses_every_retired_version();
     test_replay_v6_refuses_an_overflowed_log();
     test_bot_drive_preferred();
+    test_b32_long_input();
     test_link_parse();
     test_lobby();
     test_bot_pacing_table();

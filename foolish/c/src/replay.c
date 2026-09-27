@@ -1807,7 +1807,9 @@ int replay_decode_atoms_v6(const unsigned char *in, int in_len,
 // base32Encode/base32Decode, so a code made on the web reads here byte for byte.
 
 int replay_b32_decode(const char *s, unsigned char *out, int cap) {
-    int bits = 0, value = 0, n = 0;
+    // unsigned: only the low 12 bits are read, and the high ones run off the top.
+    int bits = 0, n = 0;
+    unsigned value = 0;
     for (; s && *s; s++) {
         char c = *s;
         if (c == '-') break;                 // the extras suffix begins here
@@ -1830,7 +1832,8 @@ int replay_b32_decode(const char *s, unsigned char *out, int cap) {
 static const char REPLAY_B32_ALPHA[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
 int replay_b32_encode(const unsigned char *in, int n, char *out, int cap) {
-    int bits = 0, value = 0, w = 0;
+    int bits = 0, w = 0;
+    unsigned value = 0;  // as in decode: the high bits run off the top
     if (cap < 1) return -1;
     for (int i = 0; i < n; i++) {
         value = (value << 8) | in[i];
