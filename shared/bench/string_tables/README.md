@@ -1,12 +1,12 @@
 # String tables: Swift dictionary vs C array vs C array + cache
 
-A toy that looks up foolish's real 388 strings (en + ru) from Swift three ways, each ending in a Swift `String`:
+A toy that looks up a real product's 388 strings (en + ru) from Swift three ways, each ending in a Swift `String`:
 
-- **Swift dictionary**: foolish today, the `[String: String]` tables tools/datagen generates.
-- **C array**: UTTT's way, `const char *[]` indexed by the key enum, `String(cString:)` on every lookup.
+- **Swift dictionary**: one `[String: String]` table per language, as a generator emitting Swift tables produces.
+- **C array**: `const char *[]` indexed by the key enum, `String(cString:)` on every lookup.
 - **C array + cache**: the C array, with each key converted to a `String` once, on first use (`Sources/Cache.swift`, 15 lines).
 
-Run: `shared/bench/string_tables/run.sh` (after `bash tools/structgen/gen.sh`).
+Run: `shared/bench/string_tables/run.sh c/i18n FS` (any directory holding keys.h and strings_en.c / strings_ru.c, and its key prefix).
 
 Measured 2026-09-26 on an Apple silicon Mac, `-O -wmo`:
 

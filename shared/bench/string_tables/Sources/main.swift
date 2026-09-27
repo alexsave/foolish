@@ -4,15 +4,15 @@ import CTables
 let mode = CommandLine.arguments.dropFirst().first ?? "both"
 var sink = 0
 // COLD: the first string a fresh process asks for, in Russian.
-if mode == "cold-swift" { let t0 = now(); let s = FoolishStringsRu["about"]!; let t1 = now(); sink &+= s.utf8.count; print(t1 - t0); exit(0) }
+if mode == "cold-swift" { let t0 = now(); let s = TableRu["about"]!; let t1 = now(); sink &+= s.utf8.count; print(t1 - t0); exit(0) }
 if mode == "cold-cache" { let t0 = now(); let s = CachedText.text(0); let t1 = now(); sink &+= s.utf8.count; print(t1 - t0); exit(0) }
 if mode == "cold-c"     { let t0 = now(); let s = String(cString: toy_text(1, 0)); let t1 = now(); sink &+= s.utf8.count; print(t1 - t0); exit(0) }
 // WARM: every key, many times; both ends produce a Swift String, as the UI needs.
-let keys = Array(FoolishStringsEn.keys).sorted()
+let keys = Array(TableEn.keys).sorted()
 let N = 3_000_000
-_ = FoolishStringsRu["about"]; _ = toy_text(1, 0)
+_ = TableRu["about"]; _ = toy_text(1, 0)
 var t0 = now()
-for i in 0..<N { sink &+= FoolishStringsRu[keys[i % keys.count]]!.utf8.count }
+for i in 0..<N { sink &+= TableRu[keys[i % keys.count]]!.utf8.count }
 let swiftNs = Double(now() - t0) / Double(N)
 let n = Int(toy_count())
 t0 = now()
