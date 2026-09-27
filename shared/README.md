@@ -46,6 +46,7 @@ Swift reaches a header-only C module through its `module.modulemap` on `SWIFT_IN
 | `tools/structgen/`, `tools/sgcommon/` | the C-layout-to-Swift/TS/Kotlin generator and its libclang driver | CARDS, SHED, LIAR, BONES (THIRD hand-writes its bindings) |
 | `tools/datagen/` | the translation-table generator | CARDS, SHED, LIAR, BONES |
 | `tools/llvm.mk` | the one LLVM toolchain the wasm builds use | CARDS, SHED, LIAR, BONES (through structgen and datagen) |
+| `tools/wasm_cc.mk` | which clang compiles a kernel for wasm32 (the pinned Homebrew LLVM on a Mac) and `wasm-cc-check`, the guard that refuses Apple clang, which targets wasm32 but produces different bytes | SHED, LIAR, BONES (CARDS still carries its own copy of the same guard) |
 | `tools/ios_xcframework.mk` | the `ios-lib` recipe: `$(call IOS_XCFRAMEWORK,name,sources,cflags,headers,min-ios,out)` builds the device and both simulator slices and wraps them in an xcframework | CARDS, UTTT, SHED, LIAR, BONES |
 | `tools/tighten/` | the showcase video cutter (`media/`) | CARDS |
 | `tools/textures/` | the bake tool: `regenerate_textures.sh <out-dir>` compiles `swift/Textures` with `GenerateTextures.swift` and writes the JPEGs; a product passes its own resources folder | CARDS, SHED |

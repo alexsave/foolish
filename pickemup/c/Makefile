@@ -86,9 +86,10 @@ asan: $(addprefix build/asan_,$(TESTS)) build/asan_ios_smoke
 # the proof that nothing here reaches past memcpy / memset / memcmp / strlen /
 # strncmp. Objects only; the replay page's module is linked by whoever builds
 # that page.
-WASM_CC ?= clang
+# WASM_CC and the guard that refuses Apple clang: shared/tools/wasm_cc.mk.
+include ../../shared/tools/wasm_cc.mk
 WASM_SRC := $(SRC)
-wasm: | build
+wasm: wasm-cc-check | build
 	@mkdir -p build/wasm
 	@for s in $(WASM_SRC); do \
 	  o=build/wasm/$$(basename $$s .c).o; \
@@ -99,14 +100,14 @@ wasm: | build
 
 # 7.3.7, NATIVE AGAINST WASM (tests/pk_cross.c): the same games played by
 # this build of the kernel and by a wasm32 build of it, run in node, must
-# end in the same states. Needs a wasm clang with wasm-ld (WASM_CC) and node,
-# so it is not in `run`; `make cross WASM_CC=/opt/homebrew/opt/llvm/bin/clang`
-# on a Mac. CROSS_GAMES games (the rules doc's 100 by default).
+# end in the same states. Needs a wasm clang with wasm-ld (WASM_CC, which
+# defaults to the pinned Homebrew LLVM on a Mac) and node, so it is not in
+# `run`. CROSS_GAMES games (the rules doc's 100 by default).
 CROSS_GAMES ?= 100
 CROSS_WASM_SRC := $(SRC) $(SHARED)/wasm/libc.c tests/pk_cross.c
 build/pk_cross: tests/pk_cross.c $(SRC) $(HDR) | build
 	$(CC) $(CFLAGS) $(SRC) tests/pk_cross.c -o $@
-build/pk_cross.wasm: $(CROSS_WASM_SRC) $(HDR) | build
+build/pk_cross.wasm: $(CROSS_WASM_SRC) $(HDR) | build wasm-cc-check
 	$(WASM_CC) --target=wasm32 -O2 -nostdlib -ffreestanding -mbulk-memory $(WARN) -DPK_CROSS_WASM \
 	  -isystem $(SHARED)/wasm/include \
 	  -Wl,--no-entry -Wl,--export=pk_cross_run -Wl,--export=pk_cross_hashes -Wl,--export-memory \

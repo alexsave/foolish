@@ -12,7 +12,9 @@
 #   make -C tallybones/c swift-smoke the bridge driven from Swift through the readers (a Mac)
 #   make -C tallybones/c clean
 CC      ?= cc
-CFLAGS  ?= -O2 -Wall -Wextra -Werror -std=c11
+# THE WARNINGS ARE ONE LIST for every build below.
+WARN    := -Wall -Wextra -Werror -std=c11
+CFLAGS  ?= -O2 $(WARN)
 SHARED  := ../../shared/c
 SRC     := src/tb.c src/tb_code.c src/tb_plan.c src/tb_view.c src/tb_lobby.c src/tb_msg.c \
            src/tb_say.c src/tb_beats.c i18n/strings_en.c \
@@ -45,8 +47,7 @@ run: $(addprefix build/,$(TESTS)) build/ios_smoke
 	./build/tb_twophone_test
 	./build/ios_smoke
 
-ASAN_FLAGS := -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined \
-              -Wall -Wextra -Werror -std=c11
+ASAN_FLAGS := -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined $(WARN)
 
 build/asan_%: tests/%.c $(SRC) $(HDR) | build
 	$(CC) $(ASAN_FLAGS) $(SRC) $< -o $@
@@ -63,13 +64,14 @@ asan: $(addprefix build/asan_,$(TESTS)) build/asan_ios_smoke
 # THE SAME FILES FOR wasm32, freestanding (-nostdlib, shared/c/wasm's libc):
 # the proof that nothing here reaches past memcpy / memset / memcmp / strlen /
 # strncmp. Objects only.
-WASM_CC ?= clang
+# WASM_CC and the guard that refuses Apple clang: shared/tools/wasm_cc.mk.
+include ../../shared/tools/wasm_cc.mk
 WASM_SRC := $(SRC)
-wasm: | build
+wasm: wasm-cc-check | build
 	@mkdir -p build/wasm
 	@for s in $(WASM_SRC); do \
 	  o=build/wasm/$$(basename $$s .c).o; \
-	  $(WASM_CC) --target=wasm32 -Oz -nostdlib -ffreestanding -std=c11 -Wall -Wextra -Werror \
+	  $(WASM_CC) --target=wasm32 -Oz -nostdlib -ffreestanding $(WARN) \
 	    -isystem $(SHARED)/wasm/include -c $$s -o $$o || exit 1; \
 	done
 	@echo "wasm32 objects in build/wasm/"
@@ -82,7 +84,7 @@ wasm: | build
 IOS_MIN_VERSION := 17.0
 IOS_SRC    := $(SRC) ios/tb_api.c ios/tb_lay.c
 IOS_HDR    := $(HDR) ios/include/tb_api.h ios/tb_api_layout.h
-IOS_CFLAGS := -O2 -Isrc -Iios -Iios/include -Wall -Wextra -Werror -std=c11
+IOS_CFLAGS := -O2 -Isrc -Iios -Iios/include $(WARN)
 
 build/ios_smoke: $(IOS_SRC) $(IOS_HDR) ios/tb_api_smoke.c | build
 	$(CC) $(CFLAGS) -Iios/include $(IOS_SRC) ios/tb_api_smoke.c -lm -o $@
