@@ -152,6 +152,12 @@ int  pk_api_string(int key, char *out, int cap);       /* one table entry by PK_
 #define PK_API_W_COUNT        21
 int  pk_api_words(int what, int arg, char *out, int cap);
 
+/* THE BURIED START CARDS STILL UNDER THE DECK (D14, U16): the non-numbers
+ * the deal turned up and sent face up to the deck's bottom, for as long as
+ * they are still there (drawn down to, or gone in a reshuffle, they are not).
+ * Public, so every viewer gets the same answer. Writes and returns the count. */
+int  pk_api_buried(uint8_t out[8]);
+
 /* THE FINISHED TABLE'S ORDER: the winner first, then every other seat by
  * fewest cards left, ties in seat order. Writes n seats and returns n, or 0
  * while the game is not over (a live count is never ranked, D22). */

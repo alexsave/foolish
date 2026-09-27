@@ -328,6 +328,48 @@ int main(void)
     ev = (const PkApiEvents *)pk_api_plan(PK_API_ME, -1, 0);
     OK(ev && ev->n > 7 && ev->ev[0].kind == PK_EV_LOBBY_START && ev->ev[0].seat == 1, "the deal's plan names its starter");
 
+    /* ---- the buried start cards (D14, U16): there until drawn down to ---- */
+    {
+        int buried_at_deal = 0, found = 0;
+        for (int k = 0; k < 400 && !found; k++) {
+            be(0);
+            for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(i * 11 + k * 5 + 1);
+            pk_api_new(seed, 1);
+            pk_api_text(links[3], PK_API_TEXT_MAX);
+            open_as(1, links[3], 1, 0);
+            pk_api_join_start();
+            ev = (const PkApiEvents *)pk_api_plan(PK_API_ALL, -1, 0);
+            buried_at_deal = 0;
+            for (int i = 0; ev && i < ev->n; i++) buried_at_deal += ev->ev[i].kind == PK_EV_BURY;
+            found = buried_at_deal > 1;         /* two, so one can go before the other */
+        }
+        OK(found, "a deal that buries two start cards");
+        uint8_t under[8];
+        OK(pk_api_buried(under) == buried_at_deal, "every buried card is under the deck after the deal");
+        OK(!pk_api_card_rank(under[0]) || pk_api_card_rank(under[0]) > 9, "a buried card is not a number");
+        /* draw and pass, phone to phone, until the deck is empty: no play, so
+         * the pile is one card and nothing can reshuffle */
+        n = pk_api_text(links[6], PK_API_TEXT_MAX);
+        int mid_checked = 0;
+        for (int round = 0; round < 400 && n > 0; round++) {
+            v = me_view();
+            if (!mid_checked && v->deck_n > 20) {
+                OK(pk_api_buried(under) == buried_at_deal, "still buried with the deck half drawn");
+                mid_checked = 1;
+            }
+            int want = buried_at_deal < v->deck_n ? buried_at_deal : v->deck_n;
+            OK(pk_api_buried(under) == want, "the buried cards are the deck's bottom ones");
+            if (v->deck_n == 0 || v->over) break;
+            int turn = v->turn;
+            open_as(turn, links[6], 1, 0);
+            if (!pk_api_draw() || !pk_api_pass()) break;
+            n = pk_api_text(links[6], PK_API_TEXT_MAX);
+            pk_api_commit();
+        }
+        OK(me_view()->deck_n == 0, "the deck was drawn down");
+        OK(pk_api_buried(under) == 0, "drawn down to, the buried cards are in hands now");
+    }
+
     /* ---- three players to the end: the results order ---- */
     {
         be(0);

@@ -437,6 +437,28 @@ static int numbered_row(int number, int seat, char *out, int cap)
     return pk_fill(out, cap, pk_text(seat == S.me ? PK_K_LOBBY_ROW_YOU : PK_K_LOBBY_ROW), kv);
 }
 
+typedef struct { uint8_t card[8]; int n; } Buried;
+
+static void buried_one(const PkEvent *e, void *ctx)
+{
+    Buried *b = ctx;
+    if (e->kind == PK_EV_BURY && b->n < 8) b->card[b->n++] = e->card;
+}
+
+int pk_api_buried(uint8_t out[8])
+{
+    if (!out || !S.have || S.m.phase == PK_PHASE_WAITING) return 0;
+    const PkGame *g = &S.m.game;
+    if (g->reshuffles) return 0;              /* the deck has been rebuilt since */
+    Buried b = { { 0 }, 0 };
+    if (pk_plan_each(g, PK_VIEW_ALL, -1, 0, buried_one, &b) < 0) return 0;
+    int n = 0;
+    for (int i = 0; i < b.n; i++)
+        for (int d = 0; d < g->deck_n; d++)
+            if (g->deck[d] == b.card[i]) { out[n++] = b.card[i]; break; }
+    return n;
+}
+
 int pk_api_ranks(uint8_t out[8])
 {
     if (!out || !S.have || S.m.phase == PK_PHASE_WAITING || !S.m.game.over) return 0;
