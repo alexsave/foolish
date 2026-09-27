@@ -15,6 +15,13 @@
 # embedded records.
 --root PkApiTable --root PkApiEvents --root PkView --root PkSince
 --snapshot PkApiTable --snapshot PkApiEvents --snapshot PkView --snapshot PkSince
+#
+# The motion (pk_beats.h): a plan on a clock, the board at a moment of it,
+# and one beat's transform at a moment.
+--root PkBeats --root PkBeatFrame --root PkBeatSample
+--snapshot PkBeats --snapshot PkBeatFrame --snapshot PkBeatSample
+--count PkBeats.beat=n
+--count PkBeatFrame.my_hand=my_n --count PkBeatFrame.my_unseen=my_n
 --count PkApiTable.seat=n_seats --count PkApiName.name=name_len
 --count PkApiEvents.ev=n
 --count PkView.my_hand=my_n --count PkView.my_playable=my_n
@@ -30,5 +37,11 @@
 --const PK_OVER_ --const PK_DIR_ --const PK_R_ --const PK_NAME_ --const PK_API_EVENTS
 --const PK_SEAT_NONE --const PK_CARD_HIDDEN --const PK_CARD_NONE --const PK_NO_SUIT --const PK_SUITS
 --const PK_DECK --const PK_MAX_SEATS --const PK_FAN_BACKS
+# the motion's constants, by prefix (none of these prefixes is an include guard)
+--const PK_BK_ --const PK_ANC_ --const PK_BF_ --const PK_BFL_ --const PK_HOLD_ --const PK_STAMP_
+--const PK_BS_ --const PK_HM_ --const PK_EASE_ --const PK_T_
+--const PK_BEATS_OPEN --const PK_BEATS_ARRIVAL --const PK_BEATS_STAGE --const PK_BEATS_SEND
+--const PK_BEATS_HOST --const PK_BEATS_MAX --const PK_BEAT_UNDER --const PK_BEAT_NO_DECK
+--const PK_BEAT_NEVER --const PK_BEAT_NO_EVENT
 --const PK_EOK --const PK_ESHORT --const PK_EMAGIC --const PK_EFORMAT --const PK_EFLAGS --const PK_ECHECK
 --const PK_EGAME --const PK_EROSTER --const PK_ECAP --const PK_ETEXT --const PK_EREFUSED

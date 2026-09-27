@@ -6,6 +6,7 @@
 #include "../src/pk_plan.h"
 #include "../src/pk_say.h"
 #include "../src/pk_view.h"
+#include "../src/pk_beats.h"
 #include "../i18n/keys.h"
 #include <stddef.h>
 #include <string.h>
@@ -48,6 +49,16 @@ static struct {
     PkApiEvents events;
     PkSince     since;
     PkMsg       other, other2;       /* scratch for check, prefer, lobby plans */
+    /* the motion: the current plan, a scratch for a lost race, the frame and
+     * sample a read hands back, and the draft as the last build saw it */
+    PkBeats     beats, beats2;
+    uint32_t    beats_serial;
+    PkBeatFrame frame;
+    PkBeatSample sample;
+    PkEvent     stage_prev[PK_API_EVENTS];
+    int         stage_prev_n;
+    uint8_t     stage_seed[32];
+    uint16_t    stage_bubbles;
     char        text[PK_MSG_MAX_TEXT];
 } S = { .me = -1 };
 
@@ -408,6 +419,114 @@ const void *pk_api_plan_lobby(const char *before)
     if (n < 0) return 0;
     S.events.n = (uint16_t)n;
     return &S.events;
+}
+
+/* ---- the motion ------------------------------------------------------------------ */
+
+static const PkGame *started(void)
+{
+    return S.have && S.m.phase != PK_PHASE_WAITING ? &S.m.game : 0;
+}
+
+void pk_api_beats_mark(void)
+{
+    const PkGame *g = started();
+    S.stage_prev_n = 0;
+    if (!g || S.me < 0 || !g->b_open || g->b_sender != S.me) return;
+    int n = pk_plan_draft(g, S.me, S.stage_prev, PK_API_EVENTS);
+    if (n < 0) return;
+    S.stage_prev_n = n;
+    memcpy(S.stage_seed, g->seed, 32);
+    S.stage_bubbles = g->bubbles;
+}
+
+static const void *built(int n)
+{
+    pk_api_beats_mark();
+    if (n < 0) { memset(&S.beats, 0, sizeof S.beats); return 0; }
+    S.beats.serial = ++S.beats_serial;
+    return &S.beats;
+}
+
+const void *pk_api_beats(int viewer, int from, int to, int mode)
+{
+    const PkGame *g = started();
+    int v = viewer_of(viewer);
+    if (!g || !valid_viewer(v) || v == PK_VIEW_ALL || from < -1 || to < from) return built(-1);
+    if (mode != PK_BEATS_OPEN && mode != PK_BEATS_ARRIVAL) return built(-1);
+    int n = pk_plan(g, v, from, to, S.events.ev, PK_API_EVENTS);
+    if (n < 0) return built(-1);
+    PkBeatFrame start;
+    if (!pk_beats_pre(g, v, from, &start)) return built(-1);
+    return built(pk_beats_build(S.events.ev, n, &start, v, g->n, mode, 0, 0, 0, &S.beats));
+}
+
+const void *pk_api_beats_stage(int flags)
+{
+    const PkGame *g = started();
+    if (!g || S.me < 0 || !g->b_open || g->b_sender != S.me) return built(-1);
+    int n = pk_plan_draft(g, S.me, S.events.ev, PK_API_EVENTS);
+    if (n < 0) return built(-1);
+    /* the previous tap's plan counts only for this very draft */
+    int prev_n = S.stage_prev_n;
+    if (memcmp(S.stage_seed, g->seed, 32) != 0 || S.stage_bubbles != g->bubbles) prev_n = 0;
+    PkBeatFrame start;
+    if (!pk_beats_pre(g, S.me, g->bubbles, &start)) return built(-1);
+    return built(pk_beats_build(S.events.ev, n, &start, S.me, g->n, PK_BEATS_STAGE,
+                                S.stage_prev, prev_n, flags, &S.beats));
+}
+
+const void *pk_api_beats_send(void)
+{
+    const PkGame *g = started();
+    if (!g || S.me < 0 || g->bubbles < 1) return built(-1);
+    int from = g->bubbles - 1;
+    int n = pk_plan(g, S.me, from, g->bubbles, S.events.ev, PK_API_EVENTS);
+    if (n < 0) return built(-1);
+    PkBeatFrame start;
+    if (!pk_beats_pre(g, S.me, from, &start)) return built(-1);
+    return built(pk_beats_build(S.events.ev, n, &start, S.me, g->n, PK_BEATS_SEND, 0, 0, 0, &S.beats));
+}
+
+const void *pk_api_beats_host(int what, int a, int b)
+{
+    const PkGame *g = started();
+    if (!g) return built(-1);
+    PkView v;
+    pk_view(g, S.me >= 0 ? S.me : PK_VIEW_SPECTATOR, &v);
+    PkBeatFrame start;
+    pk_beats_frame_of(&v, g->n, &start);
+    return built(pk_beats_host(what, a, b, &start, S.me, g->n, 0, &S.beats));
+}
+
+const void *pk_api_beats_conflict(int card, int pos, int from, int to)
+{
+    if (!pk_api_beats(PK_API_ME, from, to, PK_BEATS_ARRIVAL)) return 0;
+    /* the retraction first, from the board the winner starts from */
+    if (pk_beats_host(PK_HM_RETRACT, card, pos, &S.beats.start, S.beats.viewer, S.beats.n_seats, 0,
+                      &S.beats2) < 0) return built(-1);
+    int k = S.beats2.n, n = S.beats.n;
+    if (k + n > PK_BEATS_MAX) return built(-1);
+    pk_beats_delay(&S.beats, 0, S.beats2.total_ms);
+    memmove(&S.beats.beat[k], &S.beats.beat[0], (size_t)n * sizeof(PkBeat));
+    memcpy(&S.beats.beat[0], &S.beats2.beat[0], (size_t)k * sizeof(PkBeat));
+    S.beats.n = (uint16_t)(k + n);
+    if (S.beats2.total_ms > S.beats.total_ms) S.beats.total_ms = S.beats2.total_ms;
+    S.beats.settle_ms = PK_T_COLLAPSE_WAIT + S.beats.total_ms + PK_T_COLLAPSE_REST;
+    return &S.beats;
+}
+
+const void *pk_api_beats_frame(uint32_t now_ms)
+{
+    pk_beats_frame(&S.beats, now_ms, &S.frame);
+    return &S.frame;
+}
+
+const void *pk_api_beat_sample(int i, int part, uint32_t now_ms)
+{
+    if (i < 0 || i >= S.beats.n) return 0;
+    pk_beat_sample(&S.beats.beat[i], now_ms, part, &S.sample);
+    return &S.sample;
 }
 
 /* ---- the words ------------------------------------------------------------------ */

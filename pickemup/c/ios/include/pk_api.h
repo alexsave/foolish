@@ -229,6 +229,45 @@ enum { PK_PILL_NONE = 0, PK_PILL_DRAW, PK_PILL_PLAY, PK_PILL_PASS, PK_PILL_UNDO 
 void  pk_lay_pills(int can_draw, int my_turn, int selected, int can_pass, int can_undo,
                    int *trailing, int *leading);
 
+/* The suit picker (U14): tile `tile` (0 circles north, 1 triangles east, 2
+ * squares south, 3 diamonds west, 4 the x) centred about the pile's centre. */
+void  pk_lay_picker(int tile, float cx, float cy, float *x, float *y);
+#define PK_LAY_PICKER_TILE 60.0f
+#define PK_LAY_PICKER_X    30.0f
+
+/* ---- the motion (pk_beats.h) --------------------------------------------------------
+ *
+ * Every animation is the kernel's timeline: a PkBeats of the plan events laid
+ * out on a clock, which the host samples each frame (pk_api_beats_frame for
+ * the board, pk_api_beat_sample for one beat's transform) and tweens between
+ * the anchors its views report. The host holds no duration and no order.
+ *
+ * ONE PLAN IS CURRENT: each call below replaces it (a superseding arrival
+ * clears the one playing; nothing is reverted). Each returns the new plan
+ * (PkBeats), or NULL for a range the kernel cannot lay out, and the host then
+ * shows the settled view with no motion. */
+
+/* Channels C, D and E: the events of bubbles (from, to], from the board as it
+ * stood at the end of bubble `from`. PK_BEATS_OPEN or PK_BEATS_ARRIVAL. */
+const void *pk_api_beats(int viewer, int from, int to, int mode);
+/* Channel A: what my newest tap did, against the draft as the previous call
+ * left it. flags: PK_BFL_*. */
+const void *pk_api_beats_stage(int flags);
+/* Channel B, after pk_api_commit: what staging held back. */
+const void *pk_api_beats_send(void);
+/* A motion no event describes (PK_HM_*), from the resident as it is now. */
+const void *pk_api_beats_host(int what, int a, int b);
+/* A lost race (4.8): my staged `card` flies home to `pos` as a retraction
+ * ghost, then the winning chain (from, to] plays forward. */
+const void *pk_api_beats_conflict(int card, int pos, int from, int to);
+/* Remember the draft as it is now, for the next pk_api_beats_stage (after a
+ * change that moves nothing: an un-say, a cancel). */
+void        pk_api_beats_mark(void);
+/* The current plan's board at `now_ms` (PkBeatFrame), and one beat of it
+ * (PkBeatSample); NULL for an index off the plan. */
+const void *pk_api_beats_frame(uint32_t now_ms);
+const void *pk_api_beat_sample(int i, int part, uint32_t now_ms);
+
 /* ---- two messages -------------------------------------------------------------- */
 
 /* Which to show: <0 mine (the device's staged draft), >0 the tapped one, 0 the

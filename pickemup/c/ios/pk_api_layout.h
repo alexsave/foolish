@@ -15,11 +15,12 @@
 #include "../src/pk_plan.h"
 #include "../src/pk_view.h"
 #include "../src/pk_msg.h"
+#include "../src/pk_beats.h"
 
 /* A plan the host asked for (pk_api_plan, pk_api_plan_draft,
  * pk_api_plan_lobby). A range too long for this is refused, and the host
  * asks for a shorter one; a single bubble is far below it. */
-#define PK_API_EVENTS 4096
+#define PK_API_EVENTS PK_BEATS_EVENTS
 
 typedef struct {
     uint16_t n;

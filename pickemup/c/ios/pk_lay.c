@@ -183,3 +183,15 @@ void pk_lay_pills(int can_draw, int my_turn, int selected, int can_pass, int can
     if (trailing) *trailing = t;
     if (leading) *leading = l;
 }
+
+/* ---- the suit picker (U14) ----------------------------------------------------- */
+#define PICKER_REACH_X 96.0f     /* east and west of the pile's centre           */
+#define PICKER_REACH_Y 104.0f    /* north and south                              */
+
+void pk_lay_picker(int tile, float cx, float cy, float *x, float *y)
+{
+    static const float dx[5] = { 0, 1, 0, -1, 1 }, dy[5] = { -1, 0, 1, 0, -1 };
+    if (tile < 0 || tile > 4) tile = 4;
+    if (x) *x = cx + dx[tile] * PICKER_REACH_X;
+    if (y) *y = cy + dy[tile] * PICKER_REACH_Y;
+}
