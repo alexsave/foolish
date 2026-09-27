@@ -160,6 +160,11 @@ public enum Tb {
     // MARK: the motion (tb_beats.h): every duration, curve and order is C's
 
     public static func beatsNow() -> TbBeatsSnap? { snap(tb_api_beats_now(), readTbBeats) }
+    /// Lay out bubbles (from, to] (from -1: the start) as the current plan.
+    @discardableResult
+    public static func beats(from: Int, to: Int, mode: Int) -> TbBeatsSnap? {
+        snap(tb_api_beats(Int32(from), Int32(to), Int32(mode)), readTbBeats)
+    }
     public static var beatsSerial: Int { Int(tb_api_beats_serial()) }
     public static func beatFrame(_ ms: Int) -> TbBeatFrameSnap? {
         snap(tb_api_beats_frame(UInt32(max(ms, 0))), readTbBeatFrame)

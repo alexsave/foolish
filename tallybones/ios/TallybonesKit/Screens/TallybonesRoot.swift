@@ -26,6 +26,7 @@ public final class TallybonesHost: ObservableObject {
         let k = kernel ?? BridgeKernel()
         self.kernel = k
         self.model = TallyTable(kernel: k)
+        model.onScreen = { [weak self] in self?.pickScreen() }
     }
 
     /// THE ONE GATE ON A MISMATCHED PAIR (pickemup I22, I34): a stale
@@ -43,6 +44,10 @@ public final class TallybonesHost: ObservableObject {
     public func showResident(animate: Bool = false) {
         guard readable else { return }
         model.refresh(animate: animate)
+        pickScreen()
+    }
+
+    private func pickScreen() {
         let v = model.view
         screen = v.readable ? (v.phase == .lobby ? .lobby : .table) : .blank
     }

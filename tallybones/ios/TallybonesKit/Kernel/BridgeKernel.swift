@@ -150,6 +150,7 @@ public final class BridgeKernel: TallyKernel {
         let fills = (Tb.table()?.canJoinStart ?? 0) != 0
         let seat = fills ? Tb.joinStart() : Tb.join()
         guard seat >= 0 else { return nil }
+        if fills { Tb.beats(from: -1, to: 0, mode: TB_BEATS_SEND) }         // my tap started it: roll 1 settles
         return TallyStage(caption: fills ? Tb.words(TB_API_W_STAGED_CAPTION) : Tb.words(TB_API_W_JOINED, seat),
                           collapse: false)
     }
@@ -167,6 +168,7 @@ public final class BridgeKernel: TallyKernel {
 
     public func start() -> TallyStage? {
         guard Tb.start() == TB_EOK else { return nil }
+        Tb.beats(from: -1, to: 0, mode: TB_BEATS_SEND)                      // my tap started it: roll 1 settles
         return TallyStage(caption: Tb.words(TB_API_W_STAGED_CAPTION), collapse: false)
     }
 }

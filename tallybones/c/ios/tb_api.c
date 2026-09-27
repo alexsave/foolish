@@ -392,6 +392,24 @@ const void *tb_api_view(void)
     memset(&S.view, 0, sizeof S.view);
     if (!started()) return &S.view;
     tb_view(cur(), &S.view);
+    /* A STAGED SCORE (or LEAVE) SHOWS THE MOVE, NOT THE NEXT ROLL (T66): the
+     * cards are the draft's, the staged score on them, but the tray keeps the
+     * dice being scored and the turn stays where it is until the bubble is
+     * sent. The next seat's roll does not exist yet (T11), so the draft's tray
+     * would be five blanks and the turn bar would move before the send. */
+    if (S.staged && S.move.kind != TB_M_KEEP) {
+        static TbView r;
+        tb_view(&S.m.game, &r);
+        memcpy(S.view.dice, r.dice, TB_DICE);
+        S.view.known = r.known;
+        S.view.kept = r.kept;
+        S.view.turn = r.turn;
+        S.view.roll = r.roll;
+        S.view.rolls_left = r.rolls_left;
+        S.view.over = r.over;
+        S.view.winners = r.winners;
+        memset(S.view.would, 0, sizeof S.view.would);
+    }
     return &S.view;
 }
 

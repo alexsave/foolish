@@ -83,6 +83,7 @@ THE T11 ROWS are the four under `tb_test.c` named T11, the two Swift rows, and i
 | first turn | the staged-link guard dropped: my own staged link reads, and derives | `tb_twophone_test.c:169` "my own staged link does not read" |
 | first turn | the view ignores the staged move | `tb_twophone_test.c:101` "keep 3 staged, known 31" |
 | first turn | the send echo peeks instead of the resident replay | `tb_twophone_test.c:183` "sent: the reroll is there" |
+| first turn | `tb_api_view` shows a staged SCORE as the draft's next turn (the T66 overlay skipped) (integration) | `tb_twophone_test.c:219` "staged: the scored dice stay on the tray and the turn stays with Alex (T66)" |
 | the rest | a read past bubble 6 adopts the peek (no dice) | `tb_twophone_test.c:249` "both phones see one game (bubble 9)" |
 
 ## ios/tb_api_smoke.c

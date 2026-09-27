@@ -91,7 +91,7 @@ public struct TableScreen: View {
                 }
                 .tbAnchor("status")
                 Spacer(minLength: 0)
-                if tray.phase == .rolling {
+                if tray.phase == .rolling, tray.turn != nil, tray.turn == model.view.me {
                     WoodButton(title: model.kernel.string(.roll), width: TbLayout.pillWidth,
                                height: TbLayout.pillHeight, enabled: tray.canRoll) { model.roll() }
                         .tbAnchor("pill.roll")

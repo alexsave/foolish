@@ -275,6 +275,13 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     /// Who this device is: its participant id, and who sent the tapped bubble.
     private func identify(_ conversation: MSConversation) {
+#if DEBUG
+        if let who = TallybonesDev.who {                 // T65: the rig plays two people on one simulator
+            kernel.identify(me: TallybonesDev.participant(who))
+            kernel.sender(of: nil, isDM: false, iSent: false)
+            return
+        }
+#endif
         let id = withUnsafeBytes(of: conversation.localParticipantIdentifier.uuid) { Data($0) }
         kernel.identify(me: id)
         if let sel = conversation.selectedMessage, let text = sel.url?.absoluteString {

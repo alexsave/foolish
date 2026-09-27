@@ -15,8 +15,16 @@ import Foundation
 
 @MainActor
 public enum TallybonesSeats {
-    private static let recordsKey = "tallybones.seats.v1"
-    private static let nicknameKey = "tallybones.nickname"
+    private static var recordsKey: String { "tallybones.seats.v1" + person }
+    private static var nicknameKey: String { "tallybones.nickname" + person }
+    /// "" in a shipping build; in a DEBUG build under `dev.who`, that
+    /// person's own keys, so two people on one simulator keep two records.
+    private static var person: String {
+#if DEBUG
+        if let w = TallybonesDev.who { return "." + w }
+#endif
+        return ""
+    }
     private static var loaded = false
 
     private static var store: UserDefaults { .standard }
@@ -36,7 +44,12 @@ public enum TallybonesSeats {
     }
 
     /// The name this device sits down under, "" until one is typed.
-    public static var nickname: String { store.string(forKey: nicknameKey) ?? "" }
+    public static var nickname: String {
+#if DEBUG
+        if let w = TallybonesDev.who { return w }
+#endif
+        return store.string(forKey: nicknameKey) ?? ""
+    }
 
     public static func set(nickname: String, kernel: TallyKernel) {
         store.set(nickname, forKey: nicknameKey)

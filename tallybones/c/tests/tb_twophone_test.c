@@ -214,7 +214,9 @@ static void first_turn(void)
     int cat = best_open(&a), pts = tb_api_score_if(cat);
     OK(cat >= 0 && tb_api_stage_score(cat), "score the best");
     TbView d = view();
-    OK(d.draft && d.turn == 1 && d.known == 0 && d.seat[0].score[cat] == pts, "staged: on the card, Bo's roll unknown");
+    OK(d.draft && d.seat[0].score[cat] == pts && (d.seat[0].filled >> cat & 1), "staged: on the card");
+    OK(d.turn == 0 && d.known == 31 && !memcmp(d.dice, a.dice, 5),
+       "staged: the scored dice stay on the tray and the turn stays with Alex (T66)");
     a = send_staged();
     OK(a.turn == 1 && a.known == 31 && (a.seat[0].filled >> cat & 1), "sent: Bo's roll 1 exists");
     bt = tb_api_beats_now();

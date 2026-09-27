@@ -24,6 +24,9 @@ public final class TallyTable: ObservableObject {
 
     public let kernel: TallyKernel
     public var onStage: ((TallyStage) -> Void)?
+    /// A touch changed what the resident is (a join that started the game):
+    /// the host picks the screen again.
+    public var onScreen: (() -> Void)?
 
     @Published public private(set) var view = TallyView()
     /// My keep marks, before Roll sends them.
@@ -109,7 +112,8 @@ public final class TallyTable: ObservableObject {
 
     private func stage(_ s: TallyStage?) {
         guard let s else { return }
-        refresh(animate: false)
+        refresh(animate: true)
+        onScreen?()
         onStage?(s)
     }
 
