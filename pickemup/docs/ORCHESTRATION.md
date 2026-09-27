@@ -45,6 +45,11 @@ Alternative: stage a bubble after every draw.
 Why: the kernel refuses to seal a turn mid-draw (rules 1.5), and Messages cannot take a staged bubble back, so a staged half-turn would be a lie in the transcript.
 Confidence: high.
 
+DECISION O8: two pre-existing failures in foolish's own proof set were fixed on this branch rather than only reported: the UBSan left-shift overflow in `foolish/c/src/replay.c` (`replay_b32_encode`, now accumulating in `unsigned`, output bytes identical, two `i32.shr_s` opcodes become `i32.shr_u` in the uncommitted wasm build) and the `import CFoolish` lint failure in `TableWireTests.swift` (test-only, introduced by this branch's own commit 5f5211ce under Xcode 27).
+Alternative: leave foolish untouched and list both under "Found on the way".
+Why: the owner's rule is that lint and test failures found on the way get fixed, and both fixes leave every committed artefact and every golden byte-identical; the replay.c change is the one place this branch touches foolish's shipped C, so it is called out here for veto.
+Confidence: high for the lint fix, medium for the replay.c fix only because it is shipped code.
+
 ## Order of work
 
 1. Design in parallel: rules and kernel doc, UI.html surface study with motion grid, reuse audit.
