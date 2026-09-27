@@ -35,6 +35,16 @@ Confidence: medium.
 
 DECISION O5: the name stays `Pick 'Em Up` as a working title, threaded through one `GAME_NAME` string, and the collision search before a store listing is the owner's (see BLOCKED).
 
+DECISION O6: action cards (Skip, Reverse, +2) carry their suit SHAPE as well as its colour: the shape sits small in the two corners where a number card shows its rank, and the action glyph stays in the centre.
+Alternative: colour only, as the study drew them.
+Why: the README's reason for shape-and-colour suits is that a colourblind player must be able to read every card, and an action card is still a suit card that has to be matched.
+Confidence: high.
+
+DECISION O7: a draw is never staged on its own; the draft opens on the first draw and stays a draft until a play or a pass closes the turn (the iOS worker's I-decision that overrides the study's "re-stage after every draw" stands).
+Alternative: stage a bubble after every draw.
+Why: the kernel refuses to seal a turn mid-draw (rules 1.5), and Messages cannot take a staged bubble back, so a staged half-turn would be a lie in the transcript.
+Confidence: high.
+
 ## Order of work
 
 1. Design in parallel: rules and kernel doc, UI.html surface study with motion grid, reuse audit.
