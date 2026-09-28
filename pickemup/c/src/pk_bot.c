@@ -282,7 +282,7 @@ int pk_bot_choose(const PkGame *g, int seat, int strategy, const PkBotKnobs *k,
     for (int i = nt; i < n; i++)
         if (m[i].kind == PK_A_SAY_IT) { out->what = PK_BOT_ACT; out->act = m[i]; return 1; }
     for (int i = nt; i < n; i++)
-        if (m[i].kind == PK_A_CALL_OUT && (proven >> m[i].a & 1u)) {
+        if (m[i].kind == PK_A_CALL_OUT && (proven >> m[i].a & 1)) {
             out->what = PK_BOT_ACT; out->act = m[i]; return 1;
         }
 

@@ -114,7 +114,7 @@ static void on_event(const PkEvent *e, void *ctx)
     case PK_EV_DRAW:
         if (s >= b->n) break;
         /* D6: a draw proves nothing, but a first draw is usually a stuck hand */
-        if (e->i == 1 && s != b->me && !(b->distrust >> s & 1u))
+        if (e->i == 1 && s != b->me && !(b->distrust >> s & 1))
             push_void(b->soft[s], &b->soft_n[s], no_match(e->suit, b->top, b->count[s]));
         b->draws[s]++;
         drew(b, s, e->deck_n);
@@ -138,7 +138,7 @@ static void on_event(const PkEvent *e, void *ctx)
         if (s >= b->n || s == b->me) break;
         if (e->n == 0)          /* D10: a bare pass is legal only with nothing playable */
             push_void(b->hard[s], &b->hard_n[s], no_match(b->live_suit, b->top, b->count[s]));
-        else if (!(b->distrust >> s & 1u))   /* drew and still passed: likely nothing */
+        else if (!(b->distrust >> s & 1))   /* drew and still passed: likely nothing */
             push_void(b->soft[s], &b->soft_n[s], no_match(b->live_suit, b->top, b->count[s]));
         break;
     default:

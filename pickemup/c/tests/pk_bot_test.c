@@ -345,7 +345,7 @@ static void t_drawout_bare_pass(void)
             if (t == 0 && a.kind == PK_A_PLAY) {
                 uint8_t c = g.hand[0][a.a];
                 plays++;
-                forbidden += (c < 96 && (v.suits >> pk_suit(c) & 1u)) || (v.ranks >> pk_rank(c) & 1u);
+                forbidden += (c < 96 && (v.suits >> pk_suit(c) & 1)) || (v.ranks >> pk_rank(c) & 1);
             }
             pk_apply(&g, t, a);
             if (a.kind != PK_A_DRAW) pk_seal(&g);
@@ -384,7 +384,7 @@ static void t_soft_void_distrust(void)
         CHECK(pk_apply(&g, 1, DRAW), "seat 1 draws, holding two plays (D6)");
         PkBelief b;
         pk_belief_build(&b, &g, 0);
-        CHECK(b.soft_n[1] == 1 && b.soft[1][0].k == 7 && (b.soft[1][0].suits >> live & 1u),
+        CHECK(b.soft_n[1] == 1 && b.soft[1][0].k == 7 && (b.soft[1][0].suits >> live & 1),
               "a soft void on the live suit over the 7 cards held");
         CHECK(!(b.distrust >> 1 & 1u), "trusted so far");
         CHECK(!pk_belief_allows(&b, 1, 0, other, 1) && pk_belief_allows(&b, 1, 0, other, 0),
@@ -441,7 +441,7 @@ static void t_say_and_call(void)
             pk_seal(&g);
             if (!g.exposed || g.over) continue;
             int x = 0;
-            while (!(g.exposed >> x & 1u)) x++;
+            while (!(g.exposed >> x & 1)) x++;
             found++;
             for (int s = 0; s < n; s++) {
                 PkBotMove mv;
@@ -588,7 +588,7 @@ static void t_wild_void(void)
                     if ((int)b.soft[nx][j].k - b.pinned_n[nx] > 0) vs |= b.soft[nx][j].suits;
                 for (int j = 0; j < b.hard_n[nx]; j++)
                     if ((int)b.hard[nx][j].k - b.pinned_n[nx] > 0) vs |= b.hard[nx][j].suits;
-                if (vs && vs != 15 && !(b.distrust >> nx & 1u)) {
+                if (vs && vs != 15 && !(b.distrust >> nx & 1)) {
                     found++;
                     PkBotKnobs kk;
                     pk_bot_knobs_default(&kk);
