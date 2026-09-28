@@ -76,7 +76,7 @@ static int checked_bubble(PkGame *g, int seat, int strat, const PkBotKnobs *k, u
             CHECK(!pk_is_legal(g, seat, SAY) || mv.act.kind == PK_A_SAY_IT, "a legal say comes first");
             if (mv.act.kind == PK_A_CALL_OUT) {
                 uint8_t ref = g->b_open ? (uint8_t)(g->exposed & g->b_exposed_at_open) : g->exposed;
-                CHECK(ref >> mv.act.a & 1u, "a call names an exposed seat: %d", mv.act.a);
+                CHECK(ref >> mv.act.a & 1, "a call names an exposed seat: %d", mv.act.a);
             }
             g_test = was;
             CHECK(mv.seat == seat, "the move is the asked seat's");
