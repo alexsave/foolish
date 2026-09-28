@@ -276,8 +276,12 @@ jobs:
       # nothing. If a secret is missing this says which, in the log and in the
       # run summary, rather than failing inside the CLI with something
       # unreadable.
+      # Before the checkout, so the workflow's working directory (foolish/,
+      # inside the checkout) does not exist yet: this step reads only secrets,
+      # and runs at the workspace root, which always does.
       - name: Are the deploy credentials present?
         id: creds
+        working-directory: ${{ github.workspace }}
         run: |
           missing=""
           [ -n "$VERCEL_TOKEN" ]      || missing="$missing VERCEL_TOKEN"
@@ -302,6 +306,7 @@ jobs:
       - name: Production or preview?
         id: target
         if: steps.creds.outputs.ready == 'true'
+        working-directory: ${{ github.workspace }}
         run: |
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then
             echo "env=production" >> "$GITHUB_OUTPUT"
