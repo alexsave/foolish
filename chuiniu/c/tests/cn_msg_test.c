@@ -72,7 +72,7 @@ static int roundtrip(const CnMsg *m, const char *what)
               "%s: the same game, the same dice", what);
     int t = cn_msg_text_encode(m, text, sizeof text);
     CHECK(t > 0 && t < 5000 && t <= CN_MSG_MAX_TEXT - 1, "%s: a link of %d characters", what, t);
-    char url[CN_MSG_MAX_TEXT + 80];
+    char url[sizeof text + 64];     /* the whole text plus the URL around it */
     snprintf(url, sizeof url, "https://example.invalid/x%s&v=1#frag", text);
     CHECK(cn_msg_text_decode(url, &E) == CN_EOK && cn_msg_encode(&E, buf2, sizeof buf2) == n
           && !memcmp(buf, buf2, (size_t)n), "%s: through a whole URL", what);
