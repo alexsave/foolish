@@ -1,0 +1,4 @@
+module CPickemup {
+    header "pk_api.h"
+    export *
+}

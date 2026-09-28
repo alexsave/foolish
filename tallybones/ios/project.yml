@@ -1,0 +1,160 @@
+# XcodeGen spec for Tallybones, on pickemup/ios/project.yml's shape.
+#
+# The .xcodeproj is a BUILD ARTIFACT - never hand-edit it, never commit it
+# (git-ignored, as pickemup's is).
+#
+# BOOTSTRAP ORDER (from a clean checkout):
+#   1. make -C ../c ios-lib      # writes ios/vendor/Tallybones.xcframework and ios/Generated/
+#   2. xcodegen generate
+#   3. xcodebuild -scheme TallybonesMessagesApp -destination 'generic/platform=iOS Simulator' build
+# Step 1 must run first: TallybonesKit links vendor/Tallybones.xcframework and
+# compiles Generated/, and neither is in git because both are generated.
+# scripts/mac_tests.sh runs all three, and the tests.
+#
+# THREE SHIPPING TARGETS, for uttt's reason: an app extension cannot be
+# distributed on its own, so the iMessage game needs a codeless container to
+# carry it, and the container EMBEDS the framework without linking it (@rpath
+# for an extension resolves into its containing app's Frameworks/).
+#
+# WHAT THIS HAS NONE OF: no network stack, no accounts, no database. The whole
+# game is the message URL, so there is nothing to talk to.
+name: Tallybones
+options:
+  bundleIdPrefix: cards.tallybones
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.9"
+    # CMsgStage (shared/c/msg_stage), the insert-staging decisions that
+    # MessagesKit/InsertStaging.swift imports: every target, because a target
+    # that imports TallybonesKit must find the C modules it was built against.
+    SWIFT_INCLUDE_PATHS: $(inherited) $(SRCROOT)/../../shared/c/msg_stage
+    # A WARNING THAT SHIPS IS A DEFECT (uttt's rule).
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: "YES"
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: 8N2Z544SB4
+
+configs:
+  Debug: debug
+  Release: release
+
+targets:
+  TallybonesMessagesApp:
+    type: application.messages
+    platform: iOS
+    sources:
+      - path: TallybonesMessagesApp
+    dependencies:
+      - target: TallybonesMessages
+        embed: true
+      # Carried, not linked: the container has no code (see the header).
+      - target: TallybonesKit
+        embed: true
+        link: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cards.tallybones
+        INFOPLIST_FILE: TallybonesMessagesApp/Info.plist
+        # LaunchServices will not register an app with no icon (uttt).
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # A hand-written Info.plist is not a whole one: the bundle keys are
+        # synthesised and merged in (uttt).
+        GENERATE_INFOPLIST_FILE: "YES"
+        TARGETED_DEVICE_FAMILY: "1"
+      configs:
+        # ONLY DEBUG ASKS FOR THE APP GROUP (pickemup's trick): the group
+        # exists for the rig's dev.* files and every reader of it is inside
+        # `#if DEBUG` (TallybonesKit/Kernel/TallybonesDev.swift). A committed
+        # file set by hand here, not through xcodegen's `entitlements:` key, so
+        # xcodegen does not know the file exists and has nothing to blank.
+        Debug:
+          CODE_SIGN_ENTITLEMENTS: DebugAppGroup.entitlements
+
+  TallybonesMessages:
+    type: app-extension.messages
+    platform: iOS
+    sources:
+      - path: TallybonesMessages
+    dependencies:
+      - target: TallybonesKit
+    settings:
+      base:
+        # Prefixed by its CONTAINER: an extension's bundle id extends the app
+        # that embeds it.
+        PRODUCT_BUNDLE_IDENTIFIER: cards.tallybones.msg
+        INFOPLIST_FILE: TallybonesMessages/Info.plist
+        GENERATE_INFOPLIST_FILE: "YES"
+        # An iMessage app without a .stickersiconset icon on the EXTENSION does
+        # not install and does not say so (uttt).
+        ASSETCATALOG_COMPILER_APPICON_NAME: "iMessage App Icon"
+        TARGETED_DEVICE_FAMILY: "1"
+      configs:
+        Debug:
+          CODE_SIGN_ENTITLEMENTS: DebugAppGroup.entitlements
+
+  TallybonesKit:
+    type: framework
+    platform: iOS
+    sources:
+      - path: TallybonesKit
+      # The structgen readers and the datagen string tables `make -C ../c
+      # ios-lib` writes beside the library they belong to. A build output:
+      # git-ignored, never hand-edited.
+      - path: Generated
+      # The shared Messages plumbing, named one file at a time as pickemup
+      # does: when an insert may go and what its silence means, and the DEBUG
+      # dev-file reader.
+      - path: ../../shared/swift/MessagesKit/InsertStaging.swift
+      - path: ../../shared/swift/MessagesKit/DevFlags.swift
+      # The texture palettes and resource names. The images themselves are
+      # baked by shared/tools/textures and committed in TallybonesKit/Resources;
+      # nothing renders a texture at run time.
+      - path: ../../shared/swift/Textures
+    dependencies:
+      # STATIC (embed:false): the linker pulls it in per object.
+      - framework: vendor/Tallybones.xcframework
+        embed: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cards.tallybones.kit
+        GENERATE_INFOPLIST_FILE: "YES"
+        # The clang module map that lets Swift `import CTallybones`, copied
+        # into BUILT_PRODUCTS_DIR/include by the xcframework.
+        HEADER_SEARCH_PATHS: $(inherited) $(BUILT_PRODUCTS_DIR)/include
+        TARGETED_DEVICE_FAMILY: "1"
+
+  TallybonesKitTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: TallybonesKitTests
+    dependencies:
+      - target: TallybonesKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cards.tallybones.kit.tests
+        GENERATE_INFOPLIST_FILE: "YES"
+        HEADER_SEARCH_PATHS: $(inherited) $(BUILT_PRODUCTS_DIR)/include
+        TARGETED_DEVICE_FAMILY: "1"
+
+schemes:
+  TallybonesMessagesApp:
+    build:
+      targets:
+        TallybonesMessagesApp: all
+    run:
+      config: Debug
+  TallybonesKitTests:
+    build:
+      targets:
+        TallybonesKit: all
+        TallybonesKitTests: [test]
+    test:
+      config: Debug
+      targets:
+        - TallybonesKitTests

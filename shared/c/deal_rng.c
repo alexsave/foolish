@@ -1,8 +1,8 @@
-// deal_rng — ChaCha20 keystream generator. See deal_rng.h for rationale.
+// deal_rng - ChaCha20 keystream generator. See deal_rng.h for rationale.
 //
 // This is the standard ChaCha20 (RFC 8439) block function. We use the full 20
-// rounds so the output matches the RFC test vectors bit-for-bit (see the KAT in
-// tests.c); the deal consumes only a handful of blocks per game, so rounds are
+// rounds so the output matches the RFC test vectors bit-for-bit (see
+// deal_rng_test.c beside this file); the deal consumes only a handful of blocks per game, so rounds are
 // not a hot path. Integer-only => identical on x86 and wasm32.
 
 #include "deal_rng.h"
@@ -38,7 +38,7 @@ void deal_rng_block(const uint32_t state_in[16], uint32_t out[16]) {
 }
 
 void deal_rng_seed(DealRng *r, const uint8_t seed[32]) {
-    // "expand 32-byte k" — the ChaCha sigma constants.
+    // "expand 32-byte k", the ChaCha sigma constants.
     r->state[0] = 0x61707865u; r->state[1] = 0x3320646eu;
     r->state[2] = 0x79622d32u; r->state[3] = 0x6b206574u;
     for (int i = 0; i < 8; i++) r->state[4 + i] = rd_le32(seed + 4 * i);

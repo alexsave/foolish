@@ -1,0 +1,34 @@
+# structgen arguments for chuiniu/ios/Generated/ChuiniuKernel.swift: every
+# struct the bridge (ios/include/cn_api.h) hands Swift a pointer to, as Swift
+# value snapshots, and the kernel constants a reader of them needs.
+#
+# Read by the Makefile's `structgen` target (and so by `ios-lib`), with --cwd
+# chuiniu/c, the iOS flags and each iOS triple. The library is stamped with
+# the hash of exactly this layout (-DSG_LAYOUT_HASH, cn_api_layout_hash), so a
+# stale xcframework or a stale module is a refusal at startup rather than a
+# wrong offset.
+# Lines starting with # are dropped; everything else is split on whitespace.
+--header ios/cn_api_layout.h
+#
+# The frame (CnApiTable), a plan (CnApiEvents of CnEvent), the masked view,
+# and the motion: a plan on a clock and the board at a moment of it.
+--root CnApiTable --root CnApiEvents --root CnView --root CnBeats --root CnBeatFrame
+--snapshot CnApiTable --snapshot CnApiEvents --snapshot CnView --snapshot CnBeats --snapshot CnBeatFrame
+--count CnApiTable.seat=n_seats --count CnApiName.name=name_len
+--count CnApiEvents.ev=n
+--count CnView.my_dice=my_n
+--count CnBeats.beat=n
+--count CnBeatFrame.state=n --count CnBeatFrame.prog=n
+#
+# The constants: phases, events, beats, the lobby's controls, the seat
+# witnesses, the refusals, and the table's numbers.
+--const CN_PHASE_ --const CN_PH_ --const CN_EV_ --const CN_BK_ --const CN_BS_ --const CN_T_ --const CN_BY_
+# (CN_LOBBY_ by name: the bare prefix also matches the include guard CN_LOBBY_H)
+--const CN_LOBBY_START --const CN_LOBBY_INVITE --const CN_LOBBY_WAITING --const CN_LOBBY_JOIN
+--const CN_LOBBY_FULL --const CN_LOBBY_DM_CAP --const CN_LOBBY_GROUP_CAP
+--const CN_API_STAGED_ --const CN_API_EVENTS --const CN_NAME_OK --const CN_NAME_EMPTY
+--const CN_NAME_TOO_LONG --const CN_NAME_BAD --const CN_NAME_MAX_BYTES --const CN_NAME_MAX_CHARS
+--const CN_SEAT_NONE --const CN_MAX_SEATS --const CN_START_DICE --const CN_FACES --const CN_WILD
+--const CN_FACE_LO --const CN_MAX_DICE --const CN_BEATS_MAX --const CN_BEAT_NEVER
+--const CN_EOK --const CN_ESHORT --const CN_EMAGIC --const CN_EFORMAT --const CN_EFLAGS --const CN_ECHECK
+--const CN_EGAME --const CN_EROSTER --const CN_ECAP --const CN_ETEXT --const CN_EREFUSED

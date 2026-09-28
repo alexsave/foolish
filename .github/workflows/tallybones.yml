@@ -1,0 +1,79 @@
+# Tallybones' portable gate, from the monorepo root (pickemup.yml's shape, and
+# the reason it lives here is the same: GitHub reads workflows from the
+# repository root's .github/workflows only).
+#
+#   tests      the kernel, the wire and the bridge, and the same again under
+#              ASan + UBSan: the decoder never reads past a cut or corrupted
+#              link, and T11's draft-never-derives guard holds under the
+#              sanitizers too
+#   generated  the Swift the app compiles, written from the kernel's headers
+#              by shared/tools/structgen and datagen - both libclang programs,
+#              so this job installs the repo's pinned toolchain first
+#
+# What this cannot run is the Xcode half (`make ios-lib`, the Swift tests):
+# macOS runners bill at 10x Linux. `tallybones/ios/scripts/mac_tests.sh` is
+# that half, on a Mac.
+#
+# `make -C c wasm` is not run here either, for pickemup's reason:
+# foolish/e2e/validation/ci_toolchain_validation.test.ts reads any
+# `make ... wasm` line in any workflow as a build of foolish's test module.
+name: tallybones
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tallybones/**'
+      # All of shared/, not only what tallybones compiles today (deal_rng,
+      # sha256, b32, mixrad in shared/c): a narrower list goes stale the first
+      # time tallybones starts using another shared file. And this file.
+      - 'shared/**'
+      - '.github/workflows/tallybones.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tallybones/**'
+      - 'shared/**'
+      - '.github/workflows/tallybones.yml'
+  workflow_dispatch: {}
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tallybones
+    steps:
+      - uses: actions/checkout@v4
+      # Every test binary and the bridge smoke. It compiles the shared C it
+      # uses from ../../shared/c, so this lane is also the check that the
+      # shared half still builds for this product under -Werror.
+      - name: kernel, wire and bridge
+        run: make -C c run
+      # A SEPARATE run and not a flag on the one above, because the sanitizers
+      # change codegen: the plain build is the code that ships, and this one is
+      # the proof that no hostile buffer is read past its end.
+      - name: the same suite under ASan + UBSan
+        run: make -C c asan
+
+  generated:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tallybones
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain (the repo's pinned clang and libclang)
+        working-directory: .
+        run: bash shared/scripts/ci_llvm.sh
+      # The readers for every struct tb_api.h hands Swift, and the string
+      # tables. A header change that structgen cannot read, or a key a table
+      # lacks, fails here and not in Xcode.
+      - name: structgen and datagen
+        run: make -C c structgen datagen
+      - name: the generated files exist
+        run: |
+          test -s ios/Generated/TallybonesKernel.swift
+          test -s ios/Generated/i18n/TallybonesStringKeys.swift
+          test -s ios/Generated/i18n/TallybonesStringsEn.swift
+          grep -q 'SG_LAYOUT_HASH' ios/Generated/TallybonesKernel.swift

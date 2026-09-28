@@ -31,11 +31,14 @@ on:
     # import graph and fails if anything it reaches is not covered here, so this
     # list is checked rather than remembered. Do not prune an entry because it
     # "looks unrelated" - that test says what is related.
+    # Paths are from the REPOSITORY root: this repo holds foolish/, uttt/,
+    # werewolf/ and shared/ side by side, and only foolish/ and shared/ feed this
+    # server. (The steps below run from foolish/, where they always ran.)
     paths:
       # The backend moved to server/impls/supabase (A10). The old 'supabase/**'
       # is anchored at the repo root, so after the move it matched NOTHING and
       # pushes silently stopped triggering deploys — the server went stale.
-      - 'server/impls/supabase/**'
+      - 'foolish/server/impls/supabase/**'
       # The functions resolve @sdk/ and @api/ (functions/<name>/deno.json) and
       # import real code through them: the wire codecs and the wasm bindings out
       # of sdk/ts, and the whole host-neutral game layer out of server/api. That
@@ -48,8 +51,8 @@ on:
       # The cost is deploys that change nothing in the functions. That is the
       # cheap direction: `db push` + `functions deploy` are idempotent, while a
       # missed deploy is a server running code nobody merged.
-      - 'sdk/ts/**'
-      - 'server/api/**'
+      - 'foolish/sdk/ts/**'
+      - 'foolish/server/api/**'
       # bots.wasm.gz used to be listed here explicitly, because it is not
       # imported but BUNDLED as a static asset (config.toml static_files) and a
       # kernel rebuild alone had to redeploy. It is a build output now, so that
@@ -70,8 +73,8 @@ on:
       # a generator through a generated file, so these are the one pair of
       # entries in this list that the test does not derive. That is what the
       # comment is for.
-      - 'c/src/**'
-      - 'tools/structgen/**'
+      - 'foolish/c/src/**'
+      - 'foolish/tools/structgen/**'
       # AND THE SHARED HALF OF BOTH, because this repo holds two products now.
       # The generator, its libclang driver (llvm.mk) and datagen live in
       # shared/tools; sha256.h and deal_rng.h - which the layout is computed
@@ -95,6 +98,9 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: foolish
 
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
@@ -127,7 +133,7 @@ jobs:
         run: |
           # SOURCED, not run: a step exports to LATER steps through GITHUB_ENV,
           # so within this one the toolchain has to land in this shell.
-          . scripts/ci_llvm.sh
+          . ../shared/scripts/ci_llvm.sh
           bash tools/structgen/gen.sh
 
       # …AND THE KERNEL ITSELF, which this lane did not have to do while

@@ -1,0 +1,34 @@
+# structgen arguments for tallybones/ios/Generated/TallybonesKernel.swift:
+# every struct the bridge (ios/include/tb_api.h) hands Swift a pointer to, as
+# Swift value snapshots, and the kernel constants a reader of them needs.
+#
+# Read by the Makefile's `structgen` target (and so by `ios-lib`), with --cwd
+# tallybones/c, the iOS flags and each iOS triple. The library is stamped with
+# the hash of exactly this layout (-DSG_LAYOUT_HASH, tb_api_layout_hash).
+# Lines starting with # are dropped; everything else is split on whitespace.
+--header ios/tb_api_layout.h
+#
+# The frame (TbApiTable), the view (TbView of TbCard), a plan (TbApiEvents of
+# TbEvent), and the motion: a plan on a clock, the board at a moment of it,
+# one beat's transform at a moment.
+--root TbApiTable --root TbView --root TbApiEvents --root TbBeats --root TbBeatFrame --root TbBeatSample
+--snapshot TbApiTable --snapshot TbView --snapshot TbApiEvents
+--snapshot TbBeats --snapshot TbBeatFrame --snapshot TbBeatSample
+--count TbApiTable.seat=n_seats --count TbApiName.name=name_len
+--count TbView.seat=n
+--count TbApiEvents.ev=n
+--count TbBeats.beat=n
+#
+# The constants: moves, categories, events, the lobby's controls, the phases,
+# the seat witnesses, the refusals, the motion's kinds and times.
+--const TB_M_ --const TB_C_ --const TB_EV_ --const TB_PHASE_ --const TB_BY_
+# (TB_LOBBY_ by name: the bare prefix also matches the include guard TB_LOBBY_H)
+--const TB_LOBBY_START --const TB_LOBBY_INVITE --const TB_LOBBY_WAITING --const TB_LOBBY_JOIN
+--const TB_LOBBY_FULL --const TB_LOBBY_DM_CAP --const TB_LOBBY_GROUP_CAP
+--const TB_NAME_OK --const TB_NAME_EMPTY --const TB_NAME_TOO_LONG --const TB_NAME_BAD
+--const TB_SEAT_NONE --const TB_MAX_SEATS --const TB_DICE --const TB_CATS --const TB_ROLLS --const TB_ALL_KEPT
+--const TB_UPPER_CATS --const TB_BONUS_AT --const TB_BONUS --const TB_API_EVENTS
+--const TB_BK_ --const TB_STAMP_ --const TB_FADE_ --const TB_EASE_ --const TB_BS_ --const TB_T_
+--const TB_BEATS_OPEN --const TB_BEATS_ARRIVAL --const TB_BEATS_SEND --const TB_BEATS_MAX --const TB_BEAT_NEVER
+--const TB_EOK --const TB_ESHORT --const TB_EMAGIC --const TB_EFORMAT --const TB_EFLAGS --const TB_ECHECK
+--const TB_EGAME --const TB_EROSTER --const TB_ECAP --const TB_ETEXT --const TB_EREFUSED --const TB_ESTAGED

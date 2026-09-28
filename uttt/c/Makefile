@@ -30,7 +30,8 @@ LANGS   := en ru ko zh vi es pt fr de it ja pl uk tr id th nl sv da no fi cs ro 
 I18N    := $(foreach l,$(LANGS),i18n/strings_$(l).c)
 SRC     := src/uttt.c src/uttt_code.c src/uttt_bots.c src/uttt_msg.c src/uttt_say.c \
            src/uttt_pen.c src/uttt_draw.c src/uttt_anim.c src/uttt_rule.c src/uttt_lang.c \
-           $(I18N) $(SHARED)/sha256.c $(SHARED)/b32.c
+           $(I18N) $(SHARED)/sha256.c $(SHARED)/b32.c $(SHARED)/mixrad.c $(SHARED)/text_util/text_util.c \
+           $(SHARED)/wire_check/wire_check.c
 
 all: build/uttt_test build/uttt_msg_test build/uttt_arena build/uttt_render build/uttt_mate
 
@@ -40,8 +41,8 @@ build:
 build/uttt_test: $(SRC) tests/uttt_test.c | build
 	$(CC) $(CFLAGS) $(SRC) tests/uttt_test.c -o $@ $(LDLIBS)
 
-build/uttt_arena: $(SRC) tests/uttt_arena.c | build
-	$(CC) $(CFLAGS) $(SRC) tests/uttt_arena.c -o $@ $(LDLIBS)
+build/uttt_arena: $(SRC) tests/uttt_arena.c $(SHARED)/stats/stats.c $(SHARED)/stats/stats.h | build
+	$(CC) $(CFLAGS) $(SRC) $(SHARED)/stats/stats.c tests/uttt_arena.c -o $@ $(LDLIBS)
 
 build/uttt_msg_test: $(SRC) tests/uttt_msg_test.c | build
 	$(CC) $(CFLAGS) $(SRC) tests/uttt_msg_test.c -o $@ $(LDLIBS)
@@ -52,15 +53,45 @@ MSG_STAGE := ../../shared/c/msg_stage
 build/msg_stage_test: $(MSG_STAGE)/msg_stage_test.c $(MSG_STAGE)/msg_stage.h | build
 	$(CC) $(CFLAGS) $(MSG_STAGE)/msg_stage_test.c -o $@
 
+# The shared auto-collapse push (shared/c/collapse), header-only, so its test
+# is the only thing to build; uttt_collapse_push forwards to it.
+COLLAPSE := $(SHARED)/collapse
+build/collapse_test: $(COLLAPSE)/collapse_test.c $(COLLAPSE)/collapse.h | build
+	$(CC) $(CFLAGS) $(COLLAPSE)/collapse_test.c -o $@ -lm
+
+# The shared text writers (shared/c/text_util): the stepping, the copy and the
+# filler this kernel uses, and the column table it does not.
+TEXT_UTIL := $(SHARED)/text_util
+build/text_util_test: $(TEXT_UTIL)/text_util.c $(TEXT_UTIL)/text_util_test.c $(TEXT_UTIL)/text_util.h | build
+	$(CC) $(CFLAGS) $(TEXT_UTIL)/text_util.c $(TEXT_UTIL)/text_util_test.c -o $@
+
+# The shared wire check (shared/c/wire_check): the envelope's truncated
+# SHA-256 over head and body, which uttt_msg.c carries UTM_CHECK_LEN bytes of.
+WIRE_CHECK := $(SHARED)/wire_check
+WIRE_CHECK_SRC := $(SHARED)/sha256.c $(WIRE_CHECK)/wire_check.c $(WIRE_CHECK)/wire_check_test.c
+build/wire_check_test: $(WIRE_CHECK_SRC) $(WIRE_CHECK)/wire_check.h $(SHARED)/sha256.h | build
+	$(CC) $(CFLAGS) $(WIRE_CHECK_SRC) -o $@
+
+# The shared arena statistics (shared/c/stats): mean and standard error, the
+# Wilson interval, and the per-game seed hash.
+STATS := $(SHARED)/stats
+STATS_SRC := $(STATS)/stats.c $(STATS)/stats_test.c
+build/stats_test: $(STATS_SRC) $(STATS)/stats.h $(STATS)/seed_hash.h | build
+	$(CC) $(CFLAGS) $(STATS_SRC) -o $@ -lm
+
 # The message: every ply of 10,000 games through bytes and text, the seat
 # truth table, two joiners, the tap map and every sentence.
-run: build/uttt_test build/uttt_msg_test build/uttt_anim_test build/msg_stage_test build/uttt_bots_test build/uttt_ink_test build/uttt_lang_test build/uttt_lang_en_test
+run: build/uttt_test build/uttt_msg_test build/uttt_anim_test build/msg_stage_test build/collapse_test build/text_util_test build/wire_check_test build/stats_test build/uttt_bots_test build/uttt_ink_test build/uttt_lang_test build/uttt_lang_en_test
 	./build/uttt_test 1000
 	./build/uttt_lang_test
 	./build/uttt_lang_en_test
 	./build/uttt_bots_test 10
 	./build/uttt_msg_test 10000
 	./build/msg_stage_test
+	./build/collapse_test
+	./build/text_util_test
+	./build/wire_check_test
+	./build/stats_test
 	./build/uttt_anim_test
 	./build/uttt_ink_test
 
@@ -189,6 +220,18 @@ asan: $(SRC) tests/uttt_test.c | build
 	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
 	  $(SRC) tests/uttt_lang_test.c -o build/uttt_lang_asan $(LDLIBS)
 	./build/uttt_lang_asan
+	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
+	  $(TEXT_UTIL)/text_util.c $(TEXT_UTIL)/text_util_test.c -o build/text_util_asan
+	./build/text_util_asan
+	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
+	  $(WIRE_CHECK_SRC) -o build/wire_check_asan
+	./build/wire_check_asan
+	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
+	  $(STATS_SRC) -o build/stats_asan -lm
+	./build/stats_asan
+	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
+	  $(COLLAPSE)/collapse_test.c -o build/collapse_asan -lm
+	./build/collapse_asan
 
 clean:
 	rm -rf build
@@ -202,38 +245,12 @@ IOS_MIN_VERSION := 17.0
 IOS_SRC    := $(SRC) ios/uttt_api.c
 IOS_CFLAGS := -O2 -Isrc -Iios/include -Wall -Wextra -Werror -std=c11
 
-# $(1)=target-triple  $(2)=sdk  $(3)=out dir
-define IOS_SLICE
-	@rm -rf $(3)/obj
-	@mkdir -p $(3)/obj
-	@for s in $(IOS_SRC); do \
-	  o=$(3)/obj/$$(basename $$s .c).o; \
-	  echo "  CC[$(2)] $$s"; \
-	  xcrun -sdk $(2) clang -target $(1) $(IOS_CFLAGS) -c $$s -o $$o || exit 1; \
-	done
-	libtool -static -o $(3)/libuttt.a $(3)/obj/*.o
-endef
+# The device slice, both simulator slices, the lipo and the xcframework are
+# the shared recipe.
+include ../../shared/tools/ios_xcframework.mk
 
 ios-lib:
-	@echo "== device slice (arm64) =="
-	$(call IOS_SLICE,arm64-apple-ios$(IOS_MIN_VERSION),iphoneos,build/ios/device)
-	@echo "== simulator slices (arm64 + x86_64) =="
-	# BOTH, because `-destination 'generic/platform=iOS Simulator'` builds both
-	# and a one-arch library fails the link with "ignoring file ... found
-	# architecture arm64, required architecture x86_64" - which reads like a
-	# missing symbol and is not.
-	$(call IOS_SLICE,arm64-apple-ios$(IOS_MIN_VERSION)-simulator,iphonesimulator,build/ios/sim-arm64)
-	$(call IOS_SLICE,x86_64-apple-ios$(IOS_MIN_VERSION)-simulator,iphonesimulator,build/ios/sim-x86_64)
-	@mkdir -p build/ios/sim
-	lipo -create build/ios/sim-arm64/libuttt.a build/ios/sim-x86_64/libuttt.a \
-	     -output build/ios/sim/libuttt.a
-	@rm -rf ../ios/vendor/Uttt.xcframework
-	@mkdir -p ../ios/vendor
-	xcodebuild -create-xcframework \
-	  -library build/ios/device/libuttt.a -headers ios/include \
-	  -library build/ios/sim/libuttt.a    -headers ios/include \
-	  -output ../ios/vendor/Uttt.xcframework
-	@echo "wrote ../ios/vendor/Uttt.xcframework"
+	$(call IOS_XCFRAMEWORK,uttt,$(IOS_SRC),$(IOS_CFLAGS),ios/include,$(IOS_MIN_VERSION),../ios/vendor/Uttt.xcframework)
 
 
 build/ios_smoke: $(IOS_SRC) ios/uttt_api_smoke.c | build
@@ -256,18 +273,19 @@ ladder: build/uttt_ladder
 # with.
 # A BUILD OUTPUT, never committed (uttt/web/.gitignore): the uttt-web workflow
 # builds it before it builds the site.
-# scripts/ci_llvm.sh exports WASM_CC, the repo's pinned clang; locally any
+# shared/scripts/ci_llvm.sh exports WASM_CC, the repo's pinned clang; locally any
 # clang with the wasm32 target and wasm-ld will do.
 WEB_WASM_CC  ?= $(if $(WASM_CC),$(WASM_CC),clang)
 # ENGLISH ONLY (UTTT_LANG_ENGLISH_ONLY, src/uttt_lang.c): the page is English
 # and every visitor would download the other twenty-four tables.
 WEB_WASM_SRC := src/uttt.c src/uttt_code.c src/uttt_pen.c src/uttt_draw.c \
                 src/uttt_anim.c src/uttt_rule.c src/uttt_say.c src/uttt_lang.c \
-                i18n/strings_en.c ../../shared/c/b32.c \
+                i18n/strings_en.c ../../shared/c/b32.c ../../shared/c/mixrad.c \
+                ../../shared/c/text_util/text_util.c \
                 ../../shared/c/wasm/libc.c ../../shared/c/wasm/libm.c wasm/uttt_web.c
 WEB_WASM_OUT := ../web/public/uttt.wasm
 
-$(WEB_WASM_OUT): $(WEB_WASM_SRC) $(wildcard src/*.h i18n/*.h ../../shared/c/wasm/include/*.h) Makefile
+$(WEB_WASM_OUT): $(WEB_WASM_SRC) $(wildcard src/*.h i18n/*.h ../../shared/c/wasm/include/*.h ../../shared/c/text_util/*.h ../../shared/c/collapse/*.h) Makefile
 	@mkdir -p $(dir $@)
 	$(WEB_WASM_CC) --target=wasm32 -Oz -nostdlib -ffreestanding -mbulk-memory \
 	  -mno-nontrapping-fptoint -std=c11 -Wall -Wextra -Werror -DUTTT_LANG_ENGLISH_ONLY \
@@ -279,3 +297,24 @@ $(WEB_WASM_OUT): $(WEB_WASM_SRC) $(wildcard src/*.h i18n/*.h ../../shared/c/wasm
 wasm-web: $(WEB_WASM_OUT)
 
 .PHONY: wasm-web
+
+# ---- shared/c's own tests ---------------------------------------------------
+# The tests beside shared/c's primitives, run as part of `make run` (this
+# kernel links b32, mixrad and the wasm libc; sha256 and deal_rng have no
+# other home that runs every shared test in one place). Self-contained: each
+# test builds from its own file and the one it covers, so no SRC list changes.
+SHARED_C := ../../shared/c
+SHARED_TESTS := build/libc_test build/b32_test build/mixrad_test build/sha256_test build/deal_rng_test
+
+build/libc_test: $(SHARED_C)/wasm/libc_test.c $(SHARED_C)/wasm/libc.c $(SHARED_C)/test/check.h | build
+	$(CC) $(CFLAGS) $(SHARED_C)/wasm/libc_test.c -o $@
+
+build/%_test: $(SHARED_C)/%_test.c $(SHARED_C)/%.c $(SHARED_C)/%.h $(SHARED_C)/test/check.h | build
+	$(CC) $(CFLAGS) $(SHARED_C)/$*_test.c $(SHARED_C)/$*.c -o $@
+
+shared-tests: $(SHARED_TESTS)
+	@for t in $(SHARED_TESTS); do ./$$t || exit 1; done
+
+run: shared-tests
+
+.PHONY: shared-tests

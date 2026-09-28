@@ -9,7 +9,10 @@
 #                 uploaded ONCE, ever, even if its processing fails.
 #   --no-upload   stop after the export and the .ipa checks (release strings included).
 #   --dry-run     print the resolved product and every command that would run,
-#                 touch nothing. Needs no credentials when --build is given.
+#                 run none of them. Needs no credentials when --build is given.
+#                 The product env file is still SOURCED (it is shell, so it
+#                 runs), and build/ship/<SHIP_NAME> with its
+#                 ExportOptions.plist is still written.
 #
 # The product is ONE env file (the way the rig and testflight.py pick one). It
 # sets, with paths relative to the repo root:
@@ -110,7 +113,11 @@ fi
 ASC_KEY_ID="${ASC_KEY_ID:-<ASC_KEY_ID>}" ASC_ISSUER_ID="${ASC_ISSUER_ID:-<ASC_ISSUER_ID>}"
 KEY_PATH="${KEY_PATH:-$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8}"
 
-asc() {  # asc <python expression over call()> - prints what the expression returns
+# asc CODE [ARG...] - runs CODE (Python over call()) and prints what it prints.
+# CODE is a constant: every value from the env file or the command line goes
+# in as an ARG and is read as sys.argv[3:], never spliced into the text, so a
+# quote in a profile name cannot break or inject into it.
+asc() {
   python3 - "$ASC_PY" "$@" <<'PY'
 import sys, importlib.util
 spec = importlib.util.spec_from_file_location("asc", sys.argv[1])
@@ -129,9 +136,10 @@ run() {
 # ---- build number -----------------------------------------------------------
 if [ -z "$BUILD" ]; then
   BUILD=$(asc '
-st, js = call("GET", "/v1/builds?filter[app]='"$SHIP_APP_ID"'&fields[builds]=version&limit=200")
+from urllib.parse import quote
+st, js = call("GET", "/v1/builds?filter[app]=" + quote(sys.argv[3], safe="") + "&fields[builds]=version&limit=200")
 assert st == 200, (st, js)
-print(max([int(b["attributes"]["version"]) for b in js["data"]] or [0]) + 1)')
+print(max([int(b["attributes"]["version"]) for b in js["data"]] or [0]) + 1)' "$SHIP_APP_ID")
 fi
 [[ "$BUILD" =~ ^[0-9]+$ ]] || { echo "build number must be an integer, got $BUILD" >&2; exit 2; }
 VERSION=$(sed -n 's/^ *MARKETING_VERSION: "\(.*\)"/\1/p' "$ROOT/$SHIP_VERSION_FILE" | head -1)
@@ -166,23 +174,25 @@ if [ "$DRY" = 1 ]; then
 else
 asc '
 import base64, os, plistlib, subprocess
-want = {"'"$SHIP_APP_PROFILE"'": "'"$SHIP_BUNDLE"'", "'"$SHIP_EXT_PROFILE"'": "'"$SHIP_EXT_BUNDLE"'"}
-st, js = call("GET", "/v1/profiles?filter[name]=" + ",".join(want).replace(" ", "%20") + "&limit=10")
+from urllib.parse import quote
+app_profile, bundle, ext_profile, ext_bundle, profiles_dir, team = sys.argv[3:9]
+want = {app_profile: bundle, ext_profile: ext_bundle}
+st, js = call("GET", "/v1/profiles?filter[name]=" + ",".join(quote(n, safe="") for n in want) + "&limit=10")
 assert st == 200, (st, js)
 got = {p["attributes"]["name"]: p["attributes"] for p in js["data"]}
 for name, bundle in want.items():
     a = got.get(name)
     assert a and a["profileState"] == "ACTIVE", f"profile {name!r} missing or not ACTIVE"
     raw = base64.b64decode(a["profileContent"])
-    path = os.path.join("'"$PROFILES_DIR"'", a["uuid"] + ".mobileprovision")
+    path = os.path.join(profiles_dir, a["uuid"] + ".mobileprovision")
     open(path, "wb").write(raw)
     ent = plistlib.loads(subprocess.run(["security", "cms", "-D"], input=raw,
                          capture_output=True, check=True).stdout)["Entitlements"]
-    assert ent["application-identifier"] == "'"$SHIP_TEAM"'." + bundle, ent["application-identifier"]
+    assert ent["application-identifier"] == team + "." + bundle, ent["application-identifier"]
     groups = ent.get("com.apple.security.application-groups")
     print("  %s  %s  expires %s  app-groups=%s"
           % (name, a["uuid"], a["expirationDate"][:10], groups))
-'
+' "$SHIP_APP_PROFILE" "$SHIP_BUNDLE" "$SHIP_EXT_PROFILE" "$SHIP_EXT_BUNDLE" "$PROFILES_DIR" "$SHIP_TEAM"
 fi
 
 # ---- archive (automatic signing) --------------------------------------------
@@ -240,6 +250,9 @@ if [ "$DRY" = 1 ]; then
   run security unlock-keychain -p '<SIGNING_KEYCHAIN_PASSWORD>' "$KEYCHAIN"
   run xcodebuild -exportArchive -archivePath "$ARCH" -exportOptionsPlist "$OPTS" -exportPath "$EXP"
 else
+  # Locked again however the script ends, so the distribution key is never
+  # left open after a ship.
+  trap 'security lock-keychain "$KEYCHAIN" 2>/dev/null || true' EXIT
   security unlock-keychain -p "$SIGNING_KEYCHAIN_PASSWORD" "$KEYCHAIN"
   security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$SIGNING_KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
   rm -rf "$EXP"
@@ -300,9 +313,10 @@ echo "$UP" | grep -q "UPLOAD SUCCEEDED" || { echo "UPLOAD FAILED" >&2; exit 1; }
 step "waiting for App Store Connect to process $VERSION($BUILD)"
 for i in $(seq 1 45); do
   STATE=$(asc '
-st, js = call("GET", "/v1/builds?filter[app]='"$SHIP_APP_ID"'&filter[version]='"$BUILD"'&fields[builds]=version,processingState")
+from urllib.parse import quote
+st, js = call("GET", "/v1/builds?filter[app]=" + quote(sys.argv[3], safe="") + "&filter[version]=" + quote(sys.argv[4], safe="") + "&fields[builds]=version,processingState")
 d = js.get("data") if st == 200 else None
-print(d[0]["attributes"]["processingState"] + " " + d[0]["id"] if d else "NOT_LISTED")')
+print(d[0]["attributes"]["processingState"] + " " + d[0]["id"] if d else "NOT_LISTED")' "$SHIP_APP_ID" "$BUILD")
   echo "  $(date +%H:%M) $STATE"
   case "$STATE" in
     VALID*) echo "build ${STATE#VALID } is VALID"; exit 0 ;;

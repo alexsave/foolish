@@ -4,6 +4,9 @@ This document generalizes what this repo actually is, lifted off the card game, 
 It is written for someone who has never seen Durak and never will.
 The card game is only ever cited here as a worked example.
 
+A path in this document that does not start with `shared/`, `uttt/` or `werewolf/` is inside `foolish/`, the product used as the worked example.
+So `c/src/game.c` is `foolish/c/src/game.c`.
+
 It has three parts:
 
 1. **What this architecture is** - the concrete pattern, extracted.

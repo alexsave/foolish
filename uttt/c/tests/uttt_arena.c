@@ -18,11 +18,15 @@
  * worker its own copy of all of it for nothing. The same reason says do not
  * reach for threads here later.
  *
+ * The overall column carries a 95% Wilson interval over every game the bot
+ * played (shared/c/stats), a draw counted as half a win.
+ *
  * Seconds are CPU, not wall clock, so they still add up across workers and
  * still say what they said before.
  */
 #include "../src/uttt_bots.h"
 #include "../src/uttt_code.h"
+#include "../../../shared/c/stats/stats.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -189,7 +193,7 @@ int main(int argc, char **argv)
 
     printf("%-9s", "");
     for (int b = 0; b < BOT_COUNT; b++) printf("%9s", UTTT_BOT_NAME[b]);
-    printf("%9s\n", "overall");
+    printf("%9s  %s\n", "overall", "95% CI");
     for (int a = 0; a < BOT_COUNT; a++) {
         printf("%-9s", UTTT_BOT_NAME[a]);
         double tot = 0; int n = 0;
@@ -198,7 +202,10 @@ int main(int argc, char **argv)
             printf("%8.1f%%", win[a][b] * 100);
             tot += win[a][b]; n++;
         }
-        printf("%8.1f%%\n", tot / n * 100);
+        /* Wilson over every game this bot played, a draw scoring half */
+        double lo, hi;
+        stat_wilson(tot * games, (double)n * games, STAT_Z95, &lo, &hi);
+        printf("%8.1f%%  [%4.1f, %4.1f]\n", tot / n * 100, lo * 100, hi * 100);
     }
 
     printf("\nseconds of thinking per bot (both sides of its pairings)\n");

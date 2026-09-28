@@ -1,5 +1,6 @@
 #include "uttt_code.h"
 #include "../../../shared/c/b32.h"
+#include "../../../shared/c/mixrad.h"
 #include <math.h>
 #include <string.h>
 
@@ -22,34 +23,8 @@ static int collect(const UtttGame *g, uint8_t *idx, uint8_t *alpha)
     return g->n_plies;
 }
 
-/* v = v * n + carry, little-endian. Returns 0 if it overflowed CAP. */
-static int mul_add(uint8_t *v, int *len, uint32_t n, uint32_t carry)
-{
-    for (int i = 0; i < *len; i++) {
-        uint32_t t = (uint32_t)v[i] * n + carry;
-        v[i] = (uint8_t)(t & 0xff);
-        carry = t >> 8;
-    }
-    while (carry) {
-        if (*len >= CAP) return 0;
-        v[(*len)++] = (uint8_t)(carry & 0xff);
-        carry >>= 8;
-    }
-    return 1;
-}
-
-/* v /= n, returning the remainder. */
-static uint32_t div_mod(uint8_t *v, int *len, uint32_t n)
-{
-    uint32_t rem = 0;
-    for (int i = *len - 1; i >= 0; i--) {
-        uint32_t cur = (rem << 8) | v[i];
-        v[i] = (uint8_t)(cur / n);
-        rem  = cur % n;
-    }
-    while (*len > 0 && v[*len - 1] == 0) (*len)--;
-    return rem;
-}
+/* The mixed-radix arithmetic is shared/c/mixrad; CAP is this coder's bound
+ * on the number, in bytes. */
 
 int uttt_encode(const UtttGame *g, uint8_t *buf, size_t cap)
 {
@@ -63,7 +38,7 @@ int uttt_encode(const UtttGame *g, uint8_t *buf, size_t cap)
 
     /* backwards, so the decoder meets the digits in playing order */
     for (int p = np - 1; p >= 0; p--)
-        if (!mul_add(v, &len, alpha[p], idx[p])) return -1;
+        if (!mixrad_mul_add(v, &len, CAP, alpha[p], idx[p])) return -1;
 
     /* THE PLY COUNT GOES LAST, so it comes out FIRST.
      *
@@ -77,7 +52,7 @@ int uttt_encode(const UtttGame *g, uint8_t *buf, size_t cap)
      * One digit in base 82 - about six and a half bits, under a byte on
      * twenty-one - buys an unambiguous length. Correctness is worth the byte.
      */
-    if (!mul_add(v, &len, UTTT_MAX_PLIES + 1, (uint32_t)np)) return -1;
+    if (!mixrad_mul_add(v, &len, CAP, UTTT_MAX_PLIES + 1, (uint32_t)np)) return -1;
 
     if ((size_t)len > cap) return -1;
     memcpy(buf, v, (size_t)len);
@@ -93,13 +68,13 @@ int uttt_decode(UtttGame *out, const uint8_t *buf, size_t n)
 
     uttt_init(out);
     uint8_t list[81];
-    int np = (int)div_mod(v, &len, UTTT_MAX_PLIES + 1);
+    int np = (int)mixrad_div_mod(v, &len, UTTT_MAX_PLIES + 1);
     if (np > UTTT_MAX_PLIES) return 0;
     for (int p = 0; p < np; p++) {
         int m = uttt_legal(out, list);
         if (m <= 0) return 0;               /* the length lied */
         /* a forced move cost no digit on the way in, so it takes none out */
-        uint32_t i = (m == 1) ? 0 : div_mod(v, &len, (uint32_t)m);
+        uint32_t i = (m == 1) ? 0 : mixrad_div_mod(v, &len, (uint32_t)m);
         if (i >= (uint32_t)m) return 0;
         if (!uttt_play(out, list[i])) return 0;
     }

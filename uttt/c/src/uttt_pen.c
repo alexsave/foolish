@@ -2,6 +2,11 @@
 #include <math.h>
 #include <string.h>
 
+/* Pi, spelled out because M_PI is POSIX, not C11: glibc hides it under
+ * -std=c11, so the Linux lane would not compile. Same double as Apple's
+ * M_PI, so every sample is unchanged. */
+#define UTTT_PI 3.14159265358979323846
+
 /* ======================= rough.js, transcribed ========================= */
 
 /* Its randomiser is a Lehmer generator with the MINSTD multiplier, and the
@@ -149,7 +154,7 @@ static int hachure(const UtttPt *poly, int np, int gap, int alt, float angle,
         return 0;
     /* the caller's hachureAngle, turned ninety degrees, is the rotation that
      * makes the lines horizontal */
-    float a = (float)M_PI / 180.f * (angle + 90.f);
+    float a = (float)UTTT_PI / 180.f * (angle + 90.f);
     float c = cosf(a), s = sinf(a);
 
     UtttPt r[UTTT_HACHURE_POLY];
@@ -261,14 +266,14 @@ static int ell_points(UtttRough *o, float cx, float cy, float rx, float ry,
                       float inc, float off, float overlap, UtttPt *buf, int cap)
 {
     int n = 0;
-    float start = ofs1(.5f, o, 1.f) - (float)M_PI / 2.f;
+    float start = ofs1(.5f, o, 1.f) - (float)UTTT_PI / 2.f;
     #define P(ang, sc) do { if (n < cap) { \
         buf[n].x = ofs1(off,o,1.f) + cx + (sc) * rx * cosf(ang); \
         buf[n].y = ofs1(off,o,1.f) + cy + (sc) * ry * sinf(ang); n++; } } while (0)
     P(start - inc, .9f);
-    float end = 2.f * (float)M_PI + start - .01f;
+    float end = 2.f * (float)UTTT_PI + start - .01f;
     for (float a = start; a < end; a += inc) P(a, 1.f);
-    P(start + 2.f * (float)M_PI + overlap * .5f, 1.f);
+    P(start + 2.f * (float)UTTT_PI + overlap * .5f, 1.f);
     P(start + overlap, .98f);
     P(start + overlap * .5f, .9f);
     #undef P
@@ -280,11 +285,11 @@ int uttt_rough_ellipse(UtttRough *o, float cx, float cy, float w, float h,
                        UtttSpan *out, int out_cap)
 {
     /* ellipseParams */
-    float ps = sqrtf(2.f * (float)M_PI *
+    float ps = sqrtf(2.f * (float)UTTT_PI *
                      sqrtf((w*w/4.f + h*h/4.f) / 2.f));
     float sc = (float)o->curve_step_count;
     int   steps = (int)ceilf(fmaxf(sc, sc / sqrtf(200.f) * ps));
-    float inc = 2.f * (float)M_PI / steps;
+    float inc = 2.f * (float)UTTT_PI / steps;
     float rx = fabsf(w / 2.f), ry = fabsf(h / 2.f);
     float fit = 1.f - o->curve_fitting;
     rx += ofs1(rx * fit, o, 1.f);
@@ -339,13 +344,13 @@ UtttPen uttt_pen_92(void)
 static float pen_w(const UtttPen *p, float x, float y, float t)
 {
     float k = p->w;
-    if (p->vel)   k *= 1.f + p->vel * (.5f - sinf((float)M_PI * t));
+    if (p->vel)   k *= 1.f + p->vel * (.5f - sinf((float)UTTT_PI * t));
     /* sinf of a float pi is -8.7e-8, not 0, and powf of a negative number
      * is NaN - so the last segment of every lifted stroke used to come out
      * NaN and was never drawn: the four main lines lost their whole far
      * overshoot (owner: "major grid lines aren't centered on the grid"). */
     if (p->lift)  k *= (1.f - p->lift)
-                     + p->lift * powf(fmaxf(sinf((float)M_PI * t), 0.f), p->liftp);
+                     + p->lift * powf(fmaxf(sinf((float)UTTT_PI * t), 0.f), p->liftp);
     if (p->press) k *= 1.f + p->press * (.5f - t);
     if (p->grain) k *= (1.f - p->grain)
                      + 2.f * p->grain * uttt_grain(x, y, p->gfx, p->gfy, 3);
@@ -477,7 +482,7 @@ static int join(UtttPt *o, UtttPt c, float h, float s,
         o[k++] = c;
     } else {                                        /* the outside: an arc */
         float th = acosf(cs);
-        int steps = (int)ceilf(th / ((float)M_PI / 6.f));
+        int steps = (int)ceilf(th / ((float)UTTT_PI / 6.f));
         float cr = ax * by - ay * bx;
         /* which way round: the short way, and at a hairpin (the two normals
          * opposite, no short way) round the tip, the way the pen was going */
@@ -566,7 +571,7 @@ void uttt_ink_part(UtttDL *d, const UtttPt *pts, int n, int m, const UtttPen *p)
     PUT(c[e].x - uy[s] * hw[e], c[e].y + ux[s] * hw[e]);
     /* round the far end, through the way the pen was going */
     for (int j = 1; j < CAP; j++) {
-        float t = (float)M_PI * j / CAP, co = cosf(t), si = sinf(t);
+        float t = (float)UTTT_PI * j / CAP, co = cosf(t), si = sinf(t);
         PUT(c[e].x + (-uy[s] * co + ux[s] * si) * hw[e],
             c[e].y + ( ux[s] * co + uy[s] * si) * hw[e]);
     }
@@ -579,7 +584,7 @@ void uttt_ink_part(UtttDL *d, const UtttPt *pts, int n, int m, const UtttPen *p)
     PUT(c[0].x + uy[0] * hw[0], c[0].y - ux[0] * hw[0]);
     /* round the near end, through the way the pen came from */
     for (int j = 1; j < CAP; j++) {
-        float t = (float)M_PI * j / CAP, co = cosf(t), si = sinf(t);
+        float t = (float)UTTT_PI * j / CAP, co = cosf(t), si = sinf(t);
         PUT(c[0].x + ( uy[0] * co - ux[0] * si) * hw[0],
             c[0].y + (-ux[0] * co - uy[0] * si) * hw[0]);
     }

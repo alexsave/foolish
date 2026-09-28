@@ -1,0 +1,83 @@
+# Pick 'Em Up's portable gate, from the monorepo root (the shape is
+# werewolf.yml's, and the reason it lives here is the same: GitHub reads
+# workflows from the repository root's .github/workflows only).
+#
+#   tests      the kernel, the wire and the bridge, and the same again under
+#              ASan + UBSan: the decoder never reads past a cut or corrupted
+#              link (tests/pk_msg_test.c sweeps every prefix and every byte)
+#   generated  the Swift the app compiles, written from the kernel's headers
+#              by shared/tools/structgen and datagen - both libclang programs,
+#              so this job installs the repo's pinned toolchain first
+#
+# What this cannot run is the Xcode half (`make ios-lib`, `make swift-smoke`):
+# macOS runners bill at 10x Linux. `ios-smoke` runs the identical bridge with
+# the host compiler inside `make run`, so a broken entry point still fails here.
+#
+# `make -C c wasm` (the kernel as freestanding wasm32 objects) is not run here
+# either: foolish/e2e/validation/ci_toolchain_validation.test.ts reads any
+# `make ... wasm` line in any workflow as a build of foolish's test module and
+# requires foolish's prebuild script before it (ORCHESTRATION.md, found on the
+# way). It is a local target until that gate learns whose wasm it is looking at.
+name: pickemup
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pickemup/**'
+      # All of shared/, not only what pickemup compiles today (deal_rng,
+      # sha256, b32, mixrad in shared/c, the structgen and datagen generators
+      # in shared/tools, and shared/scripts/ci_llvm.sh): a narrower list goes
+      # stale the first time pickemup starts using another shared file, and a
+      # spare run costs less than a missed one. And this file.
+      - 'shared/**'
+      - '.github/workflows/pickemup.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pickemup/**'
+      - 'shared/**'
+      - '.github/workflows/pickemup.yml'
+  workflow_dispatch: {}
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pickemup
+    steps:
+      - uses: actions/checkout@v4
+      # Every test binary and the bridge smoke. It compiles deal_rng, sha256,
+      # b32 and mixrad from ../../shared/c, so this lane is also the check that
+      # the shared half still builds for this product under -Werror.
+      - name: kernel, wire and bridge
+        run: make -C c run
+      # A SEPARATE run and not a flag on the one above, because the sanitizers
+      # change codegen: the plain build is the code that ships, and this one is
+      # the proof that no hostile buffer is read past its end.
+      - name: the same suite under ASan + UBSan
+        run: make -C c asan
+
+  generated:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pickemup
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain (the repo's pinned clang and libclang)
+        working-directory: .
+        run: bash shared/scripts/ci_llvm.sh
+      # The readers for every struct pk_api.h hands Swift, generated for all
+      # three iOS slices (the target refuses slices that disagree on a
+      # layout), and the string tables. A header change that structgen cannot
+      # read, or a key a table lacks, fails here and not in Xcode.
+      - name: structgen and datagen
+        run: make -C c structgen datagen
+      - name: the generated files exist
+        run: |
+          test -s ios/Generated/PickemupKernel.swift
+          test -s ios/Generated/i18n/PickemupStringKeys.swift
+          test -s ios/Generated/i18n/PickemupStringsEn.swift
+          grep -q 'SG_LAYOUT_HASH' ios/Generated/PickemupKernel.swift

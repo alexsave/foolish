@@ -18,14 +18,24 @@ name: validate
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - 'uttt/**'
-      - '.github/workflows/uttt-web.yml'
+    # foolish/ and the shared/ under it; not the sibling products.
+    paths:
+      - 'foolish/**'
+      - 'shared/**'
+      - '.github/workflows/validate.yml'
   pull_request:
     branches: [main]
-    paths-ignore:
-      - 'uttt/**'
-      - '.github/workflows/uttt-web.yml'
+    # foolish/ and the shared/ under it; not the sibling products.
+    paths:
+      - 'foolish/**'
+      - 'shared/**'
+      - '.github/workflows/validate.yml'
+
+# Every step runs from foolish/, where these commands have always run. Only the
+# path globs and the `uses:`/`working-directory:` inputs are from the repo root.
+defaults:
+  run:
+    working-directory: foolish
 
 jobs:
   validate:
@@ -70,6 +80,7 @@ jobs:
           # install is exactly today's. Nine jobs a push install this same
           # tree from this same lockfile; only the fetching is shared.
           cache: npm
+          cache-dependency-path: foolish/package-lock.json
 
       - name: Install dependencies
         run: npm install
@@ -80,7 +91,7 @@ jobs:
       # compiler has to be here before the first of those - `npm run typecheck`,
       # two steps down. The wasm build below re-uses what this installs.
       - name: Toolchain (libclang, for the generated modules)
-        run: bash scripts/ci_llvm.sh
+        run: bash ../shared/scripts/ci_llvm.sh
 
       # No Math.random() in e2e/, sdk/ or server/. The invariant it guards: one
       # crypto draw per game, at the deal; everything after it derives from that

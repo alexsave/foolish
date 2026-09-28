@@ -44,14 +44,24 @@ name: wasm
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - 'uttt/**'
-      - '.github/workflows/uttt-web.yml'
+    # foolish/ and the shared/ under it; not the sibling products.
+    paths:
+      - 'foolish/**'
+      - 'shared/**'
+      - '.github/workflows/wasm.yml'
   pull_request:
     branches: [main]
-    paths-ignore:
-      - 'uttt/**'
-      - '.github/workflows/uttt-web.yml'
+    # foolish/ and the shared/ under it; not the sibling products.
+    paths:
+      - 'foolish/**'
+      - 'shared/**'
+      - '.github/workflows/wasm.yml'
+
+# Every step runs from foolish/, where these commands have always run. Only the
+# path globs and the `uses:`/`working-directory:` inputs are from the repo root.
+defaults:
+  run:
+    working-directory: foolish
 
 jobs:
   compile:
@@ -143,7 +153,7 @@ jobs:
     # test/hash.sh.
     #
     # The pin used to be installed by a bespoke step here, because this was the
-    # only job that wanted 22 while scripts/ci_llvm.sh installed 18. That script
+    # only job that wanted 22 while shared/scripts/ci_llvm.sh installed 18. That script
     # IS the pin now - the shipped wasm modules are built from it, so it had to
     # be - and two copies of one install is a thing that drifts, so this job
     # calls it like every other lane.
@@ -161,35 +171,39 @@ jobs:
           # install is exactly today's. Nine jobs a push install this same
           # tree from this same lockfile; only the fetching is shared.
           cache: npm
+          cache-dependency-path: foolish/package-lock.json
 
       - name: Install dependencies
         run: npm install
 
       - name: Toolchain (the pinned clang and binaryen)
-        run: . scripts/ci_llvm.sh
+        run: . ../shared/scripts/ci_llvm.sh
 
       - name: Build structgen
         # -Werror: gcc 13 here only warns on an undeclared function and assumes it
         # returns int. structgen once called strdup, which glibc does not declare
         # under -std=c11, and every copied pointer was cut to 32 bits: the tool
         # segfaulted on its first run and only this job's Linux saw it.
-        run: make -C shared/tools/structgen build/structgen CFLAGS="-O2 -std=c11 -Wall -Wextra -Werror"
+        run: make -C ../shared/tools/structgen build/structgen CFLAGS="-O2 -std=c11 -Wall -Wextra -Werror"
 
       - name: Build datagen
         # The sibling tool, on the same libclang and the same -Werror. structgen
         # reads layouts; datagen reads the contents of static tables (c/i18n, the
         # translated strings). Built here rather than only by gen.sh so a warning
         # this runner's gcc sees and the Mac's clang does not is caught by name.
-        run: make -C shared/tools/datagen build/datagen CFLAGS="-O2 -std=c11 -Wall -Wextra -Werror"
+        run: make -C ../shared/tools/datagen build/datagen CFLAGS="-O2 -std=c11 -Wall -Wextra -Werror"
 
       - name: The generators are a function of the tree (two runs agree)
         run: bash tools/structgen/gen.sh --check
 
       - name: CLI refusals and the layout hash
+        env:
+          # The real-table case reads a product's roster; here it must run, not skip.
+          DG_REQUIRE_REAL_TABLE: '1'
         run: |
-          bash shared/tools/structgen/test/cli.sh
-          bash shared/tools/structgen/test/hash.sh
-          bash shared/tools/datagen/test/cli.sh
+          bash ../shared/tools/structgen/test/cli.sh
+          bash ../shared/tools/structgen/test/hash.sh
+          bash ../shared/tools/datagen/test/cli.sh
 
       - name: Accessors against wasm32 C (verify)
         # --verify-wasm links test/verify.c into build/verify.wasm. That module is
@@ -228,6 +242,7 @@ jobs:
           # install is exactly today's. Nine jobs a push install this same
           # tree from this same lockfile; only the fetching is shared.
           cache: npm
+          cache-dependency-path: foolish/package-lock.json
 
       - name: Install dependencies
         run: npm install
@@ -235,7 +250,7 @@ jobs:
       # THE PIN, not the distro clang the `compile` job uses. This job is about
       # the bytes that ship, so it builds them the way they ship.
       - name: Toolchain (the pinned clang and binaryen)
-        run: . scripts/ci_llvm.sh
+        run: . ../shared/scripts/ci_llvm.sh
 
       - name: Two builds of this commit must write one kernel
         run: bash scripts/wasm_build.sh --check

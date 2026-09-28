@@ -20,6 +20,7 @@
 #define UTTT_ANIM_H
 
 #include "uttt.h"
+#include "../../../shared/c/collapse/collapse.h"
 
 /* THE TWO HALVES OF A MOVE (owner, 2026-09-23, after foolish's pre- and
  * post-settlement):
@@ -151,7 +152,9 @@ uint32_t uttt_wash_rgba(float alpha);
  * (below). The simulator's drag injection moves the drawer in 40-50 point
  * steps every ~140 ms; the extension's main thread is idle through them
  * (sampled), and the layout follows each step in the frame it lands. */
-#define UTTT_DRAWER_RESPONSE_MS 338   /* the host's spring, docs/COLLAPSE_MSE.md */
+/* The host's spring, docs/COLLAPSE_MSE.md; one number for every product,
+ * kept in shared/c/collapse/collapse.h beside the push it drives. */
+#define UTTT_DRAWER_RESPONSE_MS COLLAPSE_RESPONSE_MS
 
 
 /* THE AUTO-COLLAPSE IS A SLIDE ON THE COMPOSITOR, not a layout per frame.
@@ -173,12 +176,14 @@ uint32_t uttt_wash_rgba(float alpha);
  * UTTT_COLLAPSE_STEPS linear keyframes. A drop of more than
  * UTTT_COLLAPSE_FLIP points while an auto-collapse is armed is the flip;
  * anything else - a finger on the handle - is followed by the layout. */
-#define UTTT_COLLAPSE_MS     600
+#define UTTT_COLLAPSE_MS     COLLAPSE_MS   /* 600, shared/c/collapse/collapse.h */
 #define UTTT_COLLAPSE_STEPS  120
 #define UTTT_COLLAPSE_FLIP   60.f
 
 /* How far the compact sheet is pushed down `t_ms` into a slide of `travel`
- * points: travel at 0, falling on the host's curve, 0 at UTTT_COLLAPSE_MS. */
+ * points: travel at 0, falling on the host's curve, 0 at UTTT_COLLAPSE_MS.
+ * The curve is shared/c/collapse's collapse_push; this name stays because the
+ * bridge (uti_collapse_push) and the kernel test call it. */
 float uttt_collapse_push(float travel, int32_t t_ms);
 
 /* THE EXPAND IS THE HOST'S, AND THE SHEET RIDES IT ON THE COMPOSITOR TOO.

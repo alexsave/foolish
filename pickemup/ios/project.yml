@@ -1,0 +1,172 @@
+# XcodeGen spec for Pick 'Em Up, on uttt/ios/project.yml's shape.
+#
+# The .xcodeproj is a BUILD ARTIFACT - never hand-edit it, never commit it
+# (git-ignored, as uttt's is).
+#
+# BOOTSTRAP ORDER (from a clean checkout):
+#   1. make -C ../c ios-lib      # writes ios/vendor/Pickemup.xcframework and ios/Generated/
+#   2. xcodegen generate
+#   3. xcodebuild -scheme PickemupMessagesApp -destination 'generic/platform=iOS Simulator' build
+# Step 1 must run first: PickemupKit links vendor/Pickemup.xcframework and
+# compiles Generated/, and neither is in git because both are generated.
+# scripts/mac_tests.sh runs all three, and the tests.
+#
+# THREE SHIPPING TARGETS, for uttt's reason: an app extension cannot be
+# distributed on its own, so the iMessage game needs a codeless container to
+# carry it, and the container EMBEDS the framework without linking it (@rpath
+# for an extension resolves into its containing app's Frameworks/).
+#
+# SwiftUI THROUGHOUT (ORCHESTRATION O1): the screens are copies of foolish's
+# views, so unlike uttt this extension loads SwiftUI.
+#
+# WHAT THIS HAS NONE OF: no network stack, no accounts, no database. The whole
+# game is the message URL, so there is nothing to talk to.
+name: Pickemup
+options:
+  bundleIdPrefix: cards.pickemup
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.9"
+    # CMsgStage (shared/c/msg_stage), the insert-staging decisions that
+    # MessagesKit/InsertStaging.swift imports: every target, because a target
+    # that imports PickemupKit must find the C modules it was built against.
+    SWIFT_INCLUDE_PATHS: $(inherited) $(SRCROOT)/../../shared/c/msg_stage
+    # A WARNING THAT SHIPS IS A DEFECT (uttt's rule, for uttt's reason: an
+    # interpolated optional once reached a caption as `Optional("X")`).
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: "YES"
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: 8N2Z544SB4
+
+configs:
+  Debug: debug
+  Release: release
+
+targets:
+  PickemupMessagesApp:
+    type: application.messages
+    platform: iOS
+    sources:
+      - path: PickemupMessagesApp
+    dependencies:
+      - target: PickemupMessages
+        embed: true
+      # Carried, not linked: the container has no code (see the header).
+      - target: PickemupKit
+        embed: true
+        link: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cards.pickemup
+        INFOPLIST_FILE: PickemupMessagesApp/Info.plist
+        # LaunchServices will not register an app with no icon (uttt).
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # A hand-written Info.plist is not a whole one: the bundle keys are
+        # synthesised and merged in, or `simctl install` says "Missing bundle
+        # ID" (uttt).
+        GENERATE_INFOPLIST_FILE: "YES"
+        TARGETED_DEVICE_FAMILY: "1"
+      configs:
+        # ONLY DEBUG ASKS FOR THE APP GROUP, uttt's trick: the group exists for
+        # the rig's dev.* files and every reader of it is inside `#if DEBUG`
+        # (PickemupKit/Kernel/PickemupDev.swift). A committed file set by hand
+        # here, not through xcodegen's `entitlements:` key, so xcodegen does
+        # not know the file exists and has nothing to blank.
+        Debug:
+          CODE_SIGN_ENTITLEMENTS: DebugAppGroup.entitlements
+
+  PickemupMessages:
+    type: app-extension.messages
+    platform: iOS
+    sources:
+      - path: PickemupMessages
+    dependencies:
+      - target: PickemupKit
+    settings:
+      base:
+        # Prefixed by its CONTAINER: an extension's bundle id extends the app
+        # that embeds it.
+        PRODUCT_BUNDLE_IDENTIFIER: cards.pickemup.msg
+        INFOPLIST_FILE: PickemupMessages/Info.plist
+        GENERATE_INFOPLIST_FILE: "YES"
+        # An iMessage app without a .stickersiconset icon on the EXTENSION does
+        # not install and does not say so (uttt).
+        ASSETCATALOG_COMPILER_APPICON_NAME: "iMessage App Icon"
+        TARGETED_DEVICE_FAMILY: "1"
+      configs:
+        Debug:
+          CODE_SIGN_ENTITLEMENTS: DebugAppGroup.entitlements
+
+  PickemupKit:
+    type: framework
+    platform: iOS
+    sources:
+      - path: PickemupKit
+      # The kernel's readers and string tables, written by `make -C ../c
+      # ios-lib` (structgen, datagen) beside the library they belong to. A
+      # build output: git-ignored, never hand-edited.
+      - path: Generated
+      # The shared Messages plumbing, named one file at a time as uttt does
+      # (REUSE_AUDIT.md 1): when an insert may go and what its silence means,
+      # the DEBUG dev-file reader, and the two pieces a Debug build switches
+      # on with a dev file so Messages can judge them before they ship: the
+      # auto-collapse slide on the render server (CollapseSlide, `dev.slide`,
+      # docs/ANIMATION_DECISIONS.md A14) and the Send reminder (SendHint,
+      # `dev.sendhint`, A15).
+      - path: ../../shared/swift/MessagesKit/InsertStaging.swift
+      - path: ../../shared/swift/MessagesKit/DevFlags.swift
+      - path: ../../shared/swift/MessagesKit/CollapseSlide.swift
+      - path: ../../shared/swift/MessagesKit/SendHint.swift
+      - path: ../../shared/swift/MessagesKit/SendHintMetrics.swift
+      # The texture palettes (lift S1). The images themselves are baked by
+      # shared/tools/textures into PickemupKit/Resources; nothing renders a
+      # texture at run time.
+      - path: ../../shared/swift/Textures
+    dependencies:
+      # STATIC (embed:false): the linker pulls it in per object.
+      - framework: vendor/Pickemup.xcframework
+        embed: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cards.pickemup.kit
+        GENERATE_INFOPLIST_FILE: "YES"
+        # The clang module map that lets Swift `import CPickemup`, copied into
+        # BUILT_PRODUCTS_DIR/include by the xcframework.
+        HEADER_SEARCH_PATHS: $(inherited) $(BUILT_PRODUCTS_DIR)/include
+        TARGETED_DEVICE_FAMILY: "1"
+
+  PickemupKitTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: PickemupKitTests
+    dependencies:
+      - target: PickemupKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cards.pickemup.kit.tests
+        GENERATE_INFOPLIST_FILE: "YES"
+        HEADER_SEARCH_PATHS: $(inherited) $(BUILT_PRODUCTS_DIR)/include
+        TARGETED_DEVICE_FAMILY: "1"
+
+schemes:
+  PickemupMessagesApp:
+    build:
+      targets:
+        PickemupMessagesApp: all
+    run:
+      config: Debug
+  PickemupKitTests:
+    build:
+      targets:
+        PickemupKit: all
+        PickemupKitTests: [test]
+    test:
+      config: Debug
+      targets:
+        - PickemupKitTests
