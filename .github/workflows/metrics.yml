@@ -2,13 +2,13 @@ name: metrics
 
 # Surfaces the repo's health numbers ON THE PR, before vs after, instead of
 # leaving them buried in gate logs. The headline is thinking-bot end-to-end
-# latency (full move vs real Postgres — the number a human waits on and the 2s
+# latency (full move vs real Postgres - the number a human waits on and the 2s
 # CPU cap gates); size, engine speed, and wasm memory all feed into it.
 #
 # It runs scripts/collect_metrics.mjs on BOTH the PR head and its base (the new
 # measurement files are copied into the base checkout so only the SOURCE
 # differs), then posts/updates one sticky comment with the deltas. Informational
-# only — the pass/fail gates stay in coverage.yml / memory.yml / validate.yml.
+# only - the pass/fail gates stay in coverage.yml / memory.yml / validate.yml.
 
 on:
   pull_request:
@@ -57,13 +57,13 @@ jobs:
       E2E_PGDATABASE: foolish
       # Keep CI bounded; the E2E bench doubles (base + head).
       # Every bot here must be one the wasm build actually dispatches
-      # (wasm_bots_api.c) — any other STRAT falls through to
+      # (wasm_bots_api.c) - any other STRAT falls through to
       # random_strategy_choose, so benching a non-shipped bot measures a
       # trivial random move, not its search (that is why the ship-trim made
       # semtex/fulminate report phantom -80%/-28% deltas). octogen is the
       # headline (the MC bot the 2s CPU cap gates); cordite is the other
       # shipped MC "thinking" bot; blackpowder and firecracker are the Hard/Medium
-      # ladder rungs (now ported to the wasm dispatch — both MC bots that run a
+      # ladder rungs (now ported to the wasm dispatch - both MC bots that run a
       # rollout/solver, so they measure real search); handwritten (strategy_key ->
       # id 16 = STRAT_HANDWRITTEN_PROD)/simple_heuristic/random are the shipped fast
       # bots (sub-ms, they mostly measure the wasm + Postgres round-trip floor).
@@ -92,22 +92,29 @@ jobs:
         with:
           node-version: 20
 
+      # A BASE THAT PREDATES THE MOVE INTO foolish/ keeps the product at its
+      # root; the same "the base branch may predate them" shape as the two
+      # guards below, resolved once here for every later step.
+      - name: Find the base's product root
+        run: |
+          if [ -d base/foolish ]; then echo "BASE_DIR=base/foolish"; else echo "BASE_DIR=base"; fi >> "$GITHUB_ENV"
+
       # Measure both sides with the SAME collector/bench (the base branch may
-      # predate them) — only the measured SOURCE differs.
+      # predate them) - only the measured SOURCE differs.
       - name: Sync measurement scripts into base
         run: |
-          mkdir -p base/foolish/scripts
-          cp pr/foolish/scripts/collect_metrics.mjs base/foolish/scripts/collect_metrics.mjs
-          cp pr/foolish/scripts/render_metrics.cjs  base/foolish/scripts/render_metrics.cjs
-          cp pr/foolish/scripts/measure_web_bundle.mjs base/foolish/scripts/measure_web_bundle.mjs
-          cp pr/foolish/e2e/bench_bot_e2e.ts        base/foolish/e2e/bench_bot_e2e.ts
+          mkdir -p "$BASE_DIR/scripts" "$BASE_DIR/e2e"
+          cp pr/foolish/scripts/collect_metrics.mjs "$BASE_DIR/scripts/collect_metrics.mjs"
+          cp pr/foolish/scripts/render_metrics.cjs  "$BASE_DIR/scripts/render_metrics.cjs"
+          cp pr/foolish/scripts/measure_web_bundle.mjs "$BASE_DIR/scripts/measure_web_bundle.mjs"
+          cp pr/foolish/e2e/bench_bot_e2e.ts        "$BASE_DIR/e2e/bench_bot_e2e.ts"
 
       - name: Install deps (head)
         working-directory: pr/foolish
         run: npm install
 
       - name: Install deps (base)
-        working-directory: base/foolish
+        working-directory: ${{ env.BASE_DIR }}
         run: npm install
 
       # The head's benches play C tables sealed by the TEST bots module, which is
@@ -129,7 +136,7 @@ jobs:
           # so within this one the toolchain has to land in this shell.
           . pr/shared/scripts/ci_llvm.sh
           bash pr/foolish/tools/structgen/gen.sh
-          bash base/foolish/tools/structgen/gen.sh
+          bash "$BASE_DIR/tools/structgen/gen.sh"
 
       # THE SHIPPED WASM MODULES, both sides, for the same reason and with the
       # same caveat. collect_metrics.mjs reports each one's gzip size and reads
@@ -145,14 +152,14 @@ jobs:
       - name: Shipped wasm modules (both sides)
         run: |
           bash pr/foolish/scripts/wasm_build.sh
-          if [ -f base/foolish/scripts/wasm_build.sh ]; then
-            bash base/foolish/scripts/wasm_build.sh
+          if [ -f "$BASE_DIR/scripts/wasm_build.sh" ]; then
+            bash "$BASE_DIR/scripts/wasm_build.sh"
           else
             echo "base predates scripts/wasm_build.sh - its modules are committed there"
           fi
 
       - name: Collect base metrics
-        working-directory: base/foolish
+        working-directory: ${{ env.BASE_DIR }}
         run: node scripts/collect_metrics.mjs > "$GITHUB_WORKSPACE/base.json"
 
       - name: Collect head metrics
