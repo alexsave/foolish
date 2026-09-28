@@ -209,12 +209,12 @@ static int mc_pick(const PkGame *g, int seat, const PkAct *m, int n,
         if (a.kind == PK_A_DRAW && any_play) tax[i] = (double)k->draw_keep / 1000.0;
     }
 
-    uint64_t base = mix64(pk_bot_rand(rng) ^ k->seed ^ ((uint64_t)seat * 0x9e3779b97f4a7c15ull));
+    uint64_t base = mix64(pk_bot_rand(rng) ^ k->seed ^ ((uint64_t)seat * UINT64_C(0x9e3779b97f4a7c15)));
     PkGame world, trial;
     int W[3] = { k->w1, k->w2, k->w3 }, w = 0;
     for (int stage = 0; stage < 3; stage++) {
         for (int wi = 0; wi < W[stage]; wi++, w++) {
-            uint64_t ws = mix64(base + (uint64_t)(w + 1) * 0xd1b54a32d192ed03ull);
+            uint64_t ws = mix64(base + (uint64_t)(w + 1) * UINT64_C(0xd1b54a32d192ed03));
             int use_soft = k->soft_mod && (w % k->soft_mod) != k->soft_mod - 1;
             pk_belief_sample(&b, g, ws, use_soft, &world);
             for (int ci = 0; ci < nc; ci++) {
