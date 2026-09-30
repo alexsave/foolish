@@ -17,16 +17,16 @@
 
 import Foundation
 
-struct BoardActionMenu: Equatable, Sendable {
-    let canAttack: Bool
-    let canCover: Bool
-    let canPass: Bool
-    let canPickup: Bool
-    let canDone: Bool
+public struct BoardActionMenu: Equatable, Sendable {
+    public let canAttack: Bool
+    public let canCover: Bool
+    public let canPass: Bool
+    public let canPickup: Bool
+    public let canDone: Bool
 
     /// What the board knows about ITSELF - the gates that are not the kernel's
     /// to answer, because they are about this screen rather than about Durak.
-    struct Gates: Equatable, Sendable {
+    public struct Gates: Equatable, Sendable {
         /// The kernel published a menu for my seat (`controller.iCanAct`).
         var iCanAct: Bool
         /// A move is staged and waiting on Messages' Send. While it is, the only
@@ -49,7 +49,7 @@ struct BoardActionMenu: Equatable, Sendable {
         var tableIsEmpty: Bool
         var selectionIsEmpty: Bool
 
-        init(iCanAct: Bool, canSend: Bool, playInFlight: Bool, boardStill: Bool,
+        public init(iCanAct: Bool, canSend: Bool, playInFlight: Bool, boardStill: Bool,
                     superseded: Bool, pickupHeld: Bool, isDefender: Bool, isOut: Bool,
                     tableIsEmpty: Bool, selectionIsEmpty: Bool) {
             self.iCanAct = iCanAct; self.canSend = canSend
@@ -79,7 +79,7 @@ struct BoardActionMenu: Equatable, Sendable {
 
     /// The five play pills, from one kernel probe and the board's own gates,
     /// composed by `play_pills` (legal.h), where the rule and its history live.
-    static func resolve(_ probe: PlayProbe, _ g: Gates) -> BoardActionMenu {
+    public static func resolve(_ probe: PlayProbe, _ g: Gates) -> BoardActionMenu {
         let pills = PlayWire.pills(answers: probe.answers, gates: g.bits)
         func has(_ bit: Int) -> Bool { pills & UInt32(bit) != 0 }
         return BoardActionMenu(canAttack: has(PLAY_PILL_ATTACK),

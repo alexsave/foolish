@@ -228,14 +228,21 @@ public struct TableView<Session: GameSession>: View {
     @ViewBuilder
     private func actionBar(_ view: GameView) -> some View {
         let cards = selectedCards(view)
-        let defending = view.defender == game.humanSeat
-        let probe = self.probe(view, cards, .table)
+        // The same pills as the iMessage board and the website (legal.h
+        // play_pills): one move, one button.
+        let menu = BoardActionMenu.resolve(
+            probe(view, cards, .table),
+            .init(iCanAct: !game.humanLegal.isEmpty, canSend: false,
+                  playInFlight: !game.inFlight.isEmpty, boardStill: true,
+                  superseded: false, pickupHeld: false,
+                  isDefender: view.defender == game.humanSeat, isOut: view.me?.isOut ?? false,
+                  tableIsEmpty: view.battles.isEmpty, selectionIsEmpty: cards.isEmpty))
         FActionBar(
-            canAttack: !defending && probe.canAttack,
-            canCover: defending && probe.canCover,
-            canPass: defending && probe.canPass,
-            canPickup: game.humanLegal.contains { $0.type == .pickup },
-            canDone: probe.canSayGood,
+            canAttack: menu.canAttack,
+            canCover: menu.canCover,
+            canPass: menu.canPass,
+            canPickup: menu.canPickup,
+            canDone: menu.canDone,
             onAttack: { playAt(.table, cards, view) },
             onCover: { playCover(cards, view) },
             onPass: { playAt(.table, cards, view) },
