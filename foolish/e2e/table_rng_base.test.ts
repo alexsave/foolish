@@ -20,7 +20,7 @@ import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, resetDb, uuid, pgPool } from './harness.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { fixture, PLAYING } from './helpers/table_fixture.ts';
+import { boardBytes, fixture, PLAYING } from './helpers/table_fixture.ts';
 import { seedTable } from './helpers/table_db.ts';
 import { legalMoves, mustReadTable, type TableState } from './helpers/table_play.ts';
 import { runAction } from './helpers/table_server.ts';
@@ -92,7 +92,7 @@ test('a human move\'s draws come from its own game\'s seed, not from the game th
     assert.ok(outcomes[0].deckCount < 20, 'fixture: the round drew');
     assert.deepEqual(hands[1], hands[0], 'the same game and the same moves draw the same cards, whichever game the instance served before');
     // The same board, byte for byte; the blob's trailing clock says when it was shown, which two runs never share.
-    const board = (t: TableState) => Buffer.from(t.state.subarray(0, t.state.length - L.TABLE_STATE_CLOCK_BYTES)).toString('hex');
+    const board = (t: TableState) => Buffer.from(boardBytes(t.state)).toString('hex');
     assert.equal(board(outcomes[1]), board(outcomes[0]));
     assert.equal(outcomes[0].status, L.GAME_STATUS_PLAYING);
 });

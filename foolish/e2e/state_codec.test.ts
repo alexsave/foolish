@@ -28,7 +28,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { fixtureTable, reasonOf } from './helpers/table_fixture.ts';
+import { boardBytes, fixtureTable, reasonOf } from './helpers/table_fixture.ts';
 import { rebuild, residentBoard } from './helpers/table_play.ts';
 import { dealBotTable, driveBotTable, seedBytes, type BotTableRow } from './helpers/bot_table.ts';
 
@@ -91,7 +91,7 @@ test('the board the generated accessors read back rebuilds the blob, at every st
     // of the blob but its trailing clock, which is the table's and no field of
     // the Game (a rebuilt fixture has a zero clock, never having been shown).
     const again = rebuild(board).build();
-    const boardHex = (b: Uint8Array) => hex(b.subarray(0, b.length - L.TABLE_STATE_CLOCK_BYTES));
+    const boardHex = (b: Uint8Array) => hex(boardBytes(b));
     assert.equal(boardHex(again.state), boardHex(row.state), `check ${checks}: the board read back does not rebuild the blob`);
     checks++;
   };
