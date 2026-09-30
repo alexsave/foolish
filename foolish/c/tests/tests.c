@@ -9744,6 +9744,52 @@ static void test_opening_deal_bytes_are_unchanged(void) {
            (unsigned long long)hr, (unsigned long long)golden[1]);
 }
 
+
+// 7. THE DEAL ON THE CLOCK. The plan a seat builds from the deal it is pushed:
+// every dealt card its own beat, one after another, ANIM_DEAL_CARD_MS in the
+// air and ANIM_GAP_MS between - no two in flight at once, and no second timing
+// model. The whole opening plan's wall time is printed for 2 and 8 seats, the
+// numbers the owner retunes ANIM_DEAL_CARD_MS against.
+static void test_opening_deal_plan_paces_card_by_card(void) {
+    static AnimPlan plan;
+    for (int np = 2; np <= MAX_PLAYERS; np++) {
+        if (!dl_deal_table(np, 120 + np)) {
+            DCHECK(0, "deal clock: %d humans ready and the table deals", np);
+            continue;
+        }
+        EvSnap refs[MAX_SNAPS];
+        for (int i = 0; i < tb_snaps.n; i++) {
+            refs[i].g = (const Game *)(const void *)tb_snaps.slot[i].bytes;
+            refs[i].tag = tb_snaps.tag[i];
+            refs[i].aux = tb_snaps.aux[i];
+        }
+        pf_np = np;
+        pf_n = 0;
+        evwire_walk(refs, tb_snaps.n, tb_game.logs, tb_game.num_logs, 0, pf_sink, 0);
+        const PfCounts after = pf_counts_of(&tb_game);
+        const int rc = anim_build_plan(pf_evs, pf_n, np, after.deck, after.discard,
+                                       after.flipped, after.hand, &plan);
+        DCHECK(rc == ANIM_EOK, "deal clock (%dp): the opening plan builds, rc %d", np, rc);
+        if (rc != ANIM_EOK) continue;
+        int k = 0, first_ms = -1, why = 0;
+        for (int i = 0; i < plan.n_steps && !why; i++) {
+            const AnimPlanStep *st = &plan.steps[i];
+            if (st->type != ANIM_EVT_DEAL) continue;
+            if (first_ms < 0) first_ms = st->start_ms;
+            if (st->beat_n != 1 || st->beat_first != i) why = 1;
+            else if (st->duration_ms != ANIM_DEAL_CARD_MS) why = 2;
+            else if (st->start_ms != first_ms + k * (ANIM_DEAL_CARD_MS + ANIM_GAP_MS)) why = 3;
+            DCHECK(!why, "deal clock (%dp): dealt card %d is its own beat (%d/%d), flies %d ms, starts at %d (why %d)",
+                   np, k, st->beat_first, st->beat_n, st->duration_ms, st->start_ms, why);
+            k++;
+        }
+        DCHECK(k == np * CARDS_PER_PLAYER, "deal clock (%dp): %d dealt cards on the clock", np, k);
+        if (np == 2 || np == MAX_PLAYERS)
+            printf("    opening plan %dp: %d steps, deal %d..%d ms, total %d ms\n", np, plan.n_steps,
+                   first_ms, first_ms + (k - 1) * (ANIM_DEAL_CARD_MS + ANIM_GAP_MS) + ANIM_DEAL_CARD_MS,
+                   plan.total_ms);
+    }
+}
 static void test_table_reseat_retitle_continue(void) {
     tb_seed_fill(3);
     tb_lobby();
@@ -12342,6 +12388,7 @@ int main(void) {
     test_refill_events_and_plan_are_unchanged();
     test_deal_card_timing();
     test_opening_deal_bytes_are_unchanged();
+    test_opening_deal_plan_paces_card_by_card();
     test_table_reseat_retitle_continue();
     test_table_rearrange_and_redact();
     test_table_redact_default_title();
