@@ -21,6 +21,13 @@ const hex = (b: Uint8Array) => `\\x${Buffer.from(b).toString('hex')}`;
 export interface SeedTableOptions {
     /** games.version (default 0). */
     version?: number;
+    /**
+     * Also write each human seat's player_views row, as commit_table does for
+     * every commit: the envelope a page loads the game from
+     * (ServerContext loadGameFromCache). Off by default - a seeded row is
+     * otherwise one no commit has touched yet.
+     */
+    views?: boolean;
 }
 
 /** Inserts the row, its humans (auth.users, player_hands) and bots (bots, bot_hands), in one transaction. */
@@ -48,6 +55,16 @@ export async function seedTable(gameId: string, fx: TableFixture, opts: SeedTabl
         for (const s of seats) {
             if (s.brain) await c.query('INSERT INTO bot_hands(game_id, bot_id) VALUES ($1, $2)', [gameId, s.id]);
             else await c.query('INSERT INTO player_hands(game_id, player_id) VALUES ($1, $2)', [gameId, s.id]);
+        }
+        if (opts.views) {
+            for (let i = 0; i < seats.length; i++) {
+                const view = products.views[i];
+                if (seats[i].brain || !view) continue;
+                await c.query(
+                    `INSERT INTO player_views (game_id, player_id, view, version, status)
+                     VALUES ($1, $2, $3, $4, (enum_range(NULL::game_status))[$5 + 1]::text)`,
+                    [gameId, seats[i].id, hex(view), version, products.status]);
+            }
         }
         await c.query('COMMIT');
     } catch (e) {
