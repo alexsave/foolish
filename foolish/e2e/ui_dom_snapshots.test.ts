@@ -582,11 +582,15 @@ test('the attacker: Good over a covered table, gone once a throw-in is selected'
         assert.deepEqual(actionSlots(host), ['_', 'Attack'], 'a throw-in selected: Attack, and Good is gone');
         await press('g', wait);
         assert.equal(invoked.join(','), '', 'and G does not say Good over the selected card');
+        await press('ArrowDown', wait);
+        assert.equal(invoked.join(','), '', 'nor does the down arrow');
         await tapCard(host, 'Qd', wait);
         assert.deepEqual(actionSlots(host), ['_', '_'], 'a selection that is no throw-in: no button at all');
         await tapCard(host, '6s', wait);
         await tapCard(host, 'Qd', wait);
         assert.deepEqual(actionSlots(host), ['Good', '_'], 'the selection put back: Good again');
+        await press('ArrowDown', wait);
+        assert.ok(invoked.includes('action'), `with nothing selected the down arrow says Good (${invoked.join(',')})`);
     });
 });
 
@@ -605,6 +609,8 @@ test('the defender: Take with nothing selected; Cover, Pass, or both for the sel
         assert.deepEqual(actionSlots(host), ['_', '_', 'Cover'], 'a covering card: Cover, where it always stood');
         await press('u', wait);
         assert.equal(invoked.join(','), '', 'and U does not take the table over the selected card');
+        await press('ArrowDown', wait);
+        assert.equal(invoked.join(','), '', 'nor does the down arrow');
         await tapCard(host, '9h', wait);
         await tapCard(host, '6d', wait);
         assert.deepEqual(actionSlots(host), ['Pass', '_', '_'], 'a card of the attack\'s rank: Pass, where it always stood');
