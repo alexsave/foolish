@@ -10118,8 +10118,18 @@ static void test_table_bot_wait(void) {
     CHECK(table_bot_wait_ms(&tb, T0 + 1000) == deal_ms + pace - 1000, "time already gone comes off the wait");
     CHECK(table_bot_wait_ms(&tb, T0 + deal_ms + pace) == 0, "and when it has all gone the bot acts");
     CHECK(table_bot_wait_ms(&tb, T0 + 3600000) == 0, "a wait is never negative");
-    CHECK(table_bot_wait_ms(&tb, T0 - 3600000) == BOT_PACE_WAIT_MAX_MS,
-          "a clock far ahead of now holds a bot no longer than the ceiling");
+    CHECK(table_bot_wait_ms(&tb, T0 - 10000) == BOT_PACE_WAIT_MAX_MS,
+          "a wait longer than the ceiling is held to the ceiling");
+    // A clock shown further ahead of now than any wait was written by a host
+    // whose time is not this one's. A host asks again after every wait, so a
+    // ceiling-long answer would come back ask after ask until this host's time
+    // caught up - an hour's skew parked the game for an hour. It is no wait.
+    {
+        int64_t at = T0 - 3600000;
+        int asks = 0;
+        for (int w; asks < 8 && (w = table_bot_wait_ms(&tb, at)) > 0; asks++) at += w;
+        CHECK(asks == 0, "a clock shown an hour ahead of this host's time holds no bot at all");
+    }
     // ...and the next thing shown on that board, by a host whose clock is an hour
     // behind, starts its stream at that host's now rather than queueing behind a
     // clock nobody's screen is playing.

@@ -85,7 +85,10 @@ int bot_pacing_ms(int pacing_class, int humans_present);
 // exist in play (an 8-seat deal or a bout end with every seat refilling is
 // under 8s), but a persisted clock from a skewed or corrupt host must never park
 // a game, and a host's lease must outlive any wait (the Supabase bot lease is
-// 25s, bot_actions.ts BOT_LEASE_TTL_MS).
+// 25s, bot_actions.ts BOT_LEASE_TTL_MS). A host asks again after every wait, so
+// the ceiling alone would only slice a skewed clock's wait into ceiling-long
+// pieces: a board SHOWN further ahead of now than the ceiling is on another
+// host's time, and asks for no wait at all.
 #define BOT_PACE_WAIT_MAX_MS 15000
 int bot_wait_ms(const Game *g, uint32_t human_mask, int64_t shown_ms, int64_t settles_ms, int64_t now_ms);
 
