@@ -167,7 +167,7 @@ function memLimits(wasm: Uint8Array): { min: number; max: number | null } {
     throw new Error('no memory section');
 }
 
-test("bots.wasm declared INITIAL memory is 37 pages (static buffers, not the runtime TT)", () => {
+test("bots.wasm declared INITIAL memory is 38 pages (static buffers, not the runtime TT)", () => {
     // bots.wasm can't be pinned — it bump-allocates a per-family transposition
     // table at runtime (see the flat-across-families test below). So we assert
     // the INITIAL declared memory only: the static (data + bss) footprint the
@@ -191,7 +191,7 @@ test("bots.wasm declared INITIAL memory is 37 pages (static buffers, not the run
     // 37, RAISED DELIBERATELY (Phase 8's generated structs). This budget was 37
     // from 6d863b5 (the animation core moving to C), fell back to 36 at fccdb8f
     // when dropping replay format v9 and the retrodiction machinery freed ~9 KiB
-    // of statics, and is 37 again now. What crossed the line: the kernel entry
+    // of statics, and went back to 37 here. What crossed the line: the kernel entry
     // points whose arguments and results used to be byte strings a host packed
     // itself now cross as C STRUCTS, and a struct a host reads and writes has to
     // live somewhere below __heap_base (e2e/no_ts_game_shape.test.ts). Sizes
@@ -218,28 +218,43 @@ test("bots.wasm declared INITIAL memory is 37 pages (static buffers, not the run
     //   ------------------------------
     //   total           2,369,720 B   = 36.16 pages -> 37 declared
     //
-    // which leaves 55,112 BYTES under the 37-page line - room for a struct or
-    // two, not for another g_io. The alternative was to pay for them out of
+    // which left 55,112 BYTES under the 37-page line at the time - room for a
+    // struct or two, not for another g_io. The alternative was to pay for them out of
     // g_io (400 KiB, the biggest static here), and it was REJECTED: the
     // Makefile sizes that buffer for ~3,072 raw log records so the kernel can
     // filter the whole session itself, and narrowing a measured design target to
     // dodge a page is how a buffer quietly stops meeting it. The runtime peak is
     // unaffected - it is the solver's bump-allocated transposition table, which
     // the flat-across-families test below pins.
+    //
+    // 38, RAISED DELIBERATELY (the round-robin opening deal). The deal now fires
+    // one engine hook per dealt card, 51 at eight seats (ENGINE_DEAL_HOOKS,
+    // game.h), and every snapshot store that captures a deal is sized by the one
+    // MAX_SNAPS = 64 - so the wasm build's -DMAX_SNAPS=16 override is gone. The
+    // only static that moved is the Table's store, measured from a link of the
+    // shipped objects with __heap_base exported and a -Map:
+    //
+    //   g_table_snaps       12,552 B -> 50,184 B   (16 -> 64 slots of 784 B)
+    //   __heap_base      2,416,720 B -> 2,454,352 B   (+37,632 B, 36.88 -> 37.45 pages)
+    //
+    // Before it, only 8,112 B were left under the 37-page line (the 55,112 above
+    // had long since been spent), so a store that holds a deal cannot fit in 37.
+    // That leaves 36,016 BYTES under the 38-page line.
     const wasm = new Uint8Array(gunzipSync(readFileSync(resolve('sdk/ts/wasm/bots.wasm.gz'))));
     const { min } = memLimits(wasm);
-    assert.equal(min, 37, `bots.wasm initial memory is ${min} pages (${min * PAGE}B); expected 37: the deliberate static buffers (g_io 400 KiB, the cordite solver working set, the move enumerators, the resident and replay Games, the FMSG seal and rebase scratch games) plus the bridge's generated structs (ReplayExtras 8,744 B, RosterSpec 3,448 B, ReplayFrameIndex 1,032 B, MsgHeader 656 B). Going UP is a regression: 55,112 B of static room are left under the 37-page line, so look for a new buffer below __heap_base. Going DOWN means something was freed - lower this pin and take the page back.`);
+    assert.equal(min, 38, `bots.wasm initial memory is ${min} pages (${min * PAGE}B); expected 38: the deliberate static buffers (g_io 400 KiB, the cordite solver working set, the move enumerators, the resident and replay Games, the FMSG seal and rebase scratch games, the Table's 64-slot snapshot store that holds one deal) plus the bridge's generated structs (ReplayExtras 8,744 B, RosterSpec 3,448 B, ReplayFrameIndex 1,032 B, MsgHeader 656 B). Going UP is a regression: 36,016 B of static room are left under the 38-page line, so look for a new buffer below __heap_base. Going DOWN means something was freed - lower this pin and take the page back.`);
 });
 
-test("web.wasm declared INITIAL memory is 26 pages - 11 fewer than the server's link", () => {
+test("web.wasm declared INITIAL memory is 26 pages - 12 fewer than the server's link", () => {
     // A LINKER FACT, not a second budget. wasm-ld keeps a static only if
     // something an export reaches refers to it, so dropping the bot bridge and
     // the C Table from the browser's export list drops their buffers with their
     // code: the cordite solver working set, the world-log slots, g_io's 400 KiB
     // log-import staging (the session log the belief bots filter - a browser
-    // imports no logs) and the table's own scratch. 37 - 26 = 11 pages, 720,896 B
-    // of linear memory a tab no longer reserves, on top of the 50,852 B of
-    // download and the 124,192 B of module it no longer compiles.
+    // imports no logs) and the table's own scratch, deal-sized snapshot store
+    // included. 38 - 26 = 12 pages, 786,432 B of linear memory a tab no longer
+    // reserves, on top of the 51,241 B of download (83,111 - 31,870 gz) and the
+    // 124,657 B of module (193,966 - 69,309 raw) it no longer compiles.
     //
     // Pinned rather than merely reported for the reason the bots pin exists:
     // going UP means a browser call site pulled a server-sized buffer across,
