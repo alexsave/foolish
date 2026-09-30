@@ -207,8 +207,9 @@ int fio_legal_from_view(int seat, char *out, int cap);
 // ONE ANSWER for a selection, so a board cannot paint a highlight that the
 // release then refuses. Layout (LE):
 //
-//   0   u8    flags: 1 = an attack with this selection is legal,
-//                    2 = a pass is, 4 = this seat may say good
+//   0   u8    the kernel's verdicts about the selection: legal.h's
+//             PLAY_ANSWER_* bits (attack, cover, pass, may say good), as
+//             play_answers writes them and fio_play_pills reads them
 //   1   i8    the battle the Cover button aims at, -1 for none
 //   2   u64   bitmask of the battles this selection could cover
 //   10  ...   the move the gesture resolves to, as a ONE-ENTRY menu wire
@@ -236,11 +237,11 @@ int fio_play_human_menu(const uint8_t *menu, int menu_len,
                         char *out, int cap);
 
 // WHICH PILLS THE BOARD DRAWS (legal.h play_pills): the PLAY_PILL_* bits, from
-// the kernel's PLAY_ANSWER_* verdicts about the selection (the probe above
-// carries them) and the board's own PLAY_GATE_* facts. Reads its two arguments
-// and nothing else, so a render pass may call it. The bit values reach Swift
-// through structgen (sdk/swift/gen/kernel.ios.swift), not through this header,
-// so there is one spelling of each.
+// the kernel's PLAY_ANSWER_* verdicts about the selection - byte 0 of the probe
+// above, passed back as it came - and the board's PLAY_GATE_* facts. Reads its
+// two arguments and nothing else, so a render pass may call it. The bit values
+// reach Swift through structgen (sdk/swift/gen/kernel.ios.swift), not through
+// this header, so there is one spelling of each.
 unsigned fio_play_pills(unsigned answers, unsigned gates);
 // A MOVE, WRITTEN - the awire action frame for one move, so no host has to
 // know what that frame looks like. The inverse of the packed menu above, and

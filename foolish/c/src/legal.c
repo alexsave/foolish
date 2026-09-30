@@ -746,6 +746,17 @@ unsigned play_pills(unsigned answers, unsigned gates) {
     return out;
 }
 
+unsigned play_board_pills(const PlayBoard *b, const unsigned char *sel, int n_sel,
+                          unsigned host_gates) {
+    if (!b) return 0;
+    unsigned gates = host_gates
+        & ~(PLAY_GATE_IS_DEFENDER | PLAY_GATE_TABLE_EMPTY | PLAY_GATE_SELECTION_EMPTY);
+    if (b->is_defender)    gates |= PLAY_GATE_IS_DEFENDER;
+    if (b->n_battles <= 0) gates |= PLAY_GATE_TABLE_EMPTY;
+    if (n_sel <= 0)        gates |= PLAY_GATE_SELECTION_EMPTY;
+    return play_pills(play_answers(b, sel, n_sel), gates);
+}
+
 int play_human_menu(const PlayBoard *b, unsigned char *out, int cap) {
     if (!b || !b->menu || !out || cap < 4) return LEGAL_WIRE_ECAP;
     const int good_allowed = play_can_say_good(b);

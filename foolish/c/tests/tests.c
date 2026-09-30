@@ -4814,21 +4814,27 @@ static void test_play_human_menu_drops_wait_and_gates_good(void) {
 // card selected, quickly tried to pass cover, and hit pickup. Or quickly tried
 // to throw in a card, and hit 'good'."
 //
-// MUTATION-CHECKED, each applied to c/src/legal.c play_pills on its own:
+// MUTATION-CHECKED, each applied on its own and restored:
 //
-//   GOOD drops its SELECTION_EMPTY term                  ->  1 failure
-//   PICKUP drops its SELECTION_EMPTY term                ->  3 failures
-//   PICKUP drops its SUPERSEDED term                     ->  1 failure
-//   PASS drops its IS_DEFENDER term                      ->  1 failure
-//   `acting` drops its CAN_SEND term                     ->  1 failure
+//   play_pills: GOOD drops its SELECTION_EMPTY term           ->  3 failures
+//   play_pills: PICKUP drops its SELECTION_EMPTY term         ->  9 failures
+//   play_pills: PICKUP drops its SUPERSEDED term              ->  2 failures
+//   play_pills: PASS drops its IS_DEFENDER term               ->  1 failure
+//   play_pills: `acting` drops its CAN_SEND term              ->  2 failures
+//   play_board_pills believes the host's SELECTION_EMPTY      ->  1 failure
+//   client_play: a finished game is not out of play           ->  1 failure
+//                (test_client_play_is_the_engine)
+//
+// The PASS one survived the real positions - no menu tells an attacker it may
+// pass - and is caught only by the composition rows at the end.
 
 // A board ready to act: a menu, nothing staged, nothing in flight, at rest.
 #define PP_READY (PLAY_GATE_I_CAN_ACT | PLAY_GATE_BOARD_STILL)
 
 // The pills `seat` sees on `g` with `sel` selected, under the host facts
-// `host`. The board facts a host reads off its own screen - which seat
-// defends, whether the table and the selection are empty - are filled in here
-// the way every host fills them.
+// `host`, through play_board_pills - which reads the board facts (which seat
+// defends, whether the table and the selection are empty) off the board
+// itself, so a host cannot hand it the wrong ones.
 static unsigned pp_pills(const Game *g, int seat, const Card *sel, int n_sel, unsigned host) {
     calculate_legal_moves(g, seat, &g_pm);
     pm_seal();
@@ -4841,11 +4847,7 @@ static unsigned pp_pills(const Game *g, int seat, const Card *sel, int n_sel, un
     }
     const PlayBoard b = pm_board(g->power_suit, seat == g->defender);
     sel_set(sel, n_sel);
-    unsigned gates = host;
-    if (seat == g->defender) gates |= PLAY_GATE_IS_DEFENDER;
-    if (g->num_battles == 0) gates |= PLAY_GATE_TABLE_EMPTY;
-    if (n_sel == 0)          gates |= PLAY_GATE_SELECTION_EMPTY;
-    return play_pills(play_answers(&b, pm_sel, pm_sel_n), gates);
+    return play_board_pills(&b, pm_sel, pm_sel_n, host);
 }
 
 // Seat 0 attacks seat 1, trumps are diamonds, 7S is on the table (covered by
@@ -4961,6 +4963,21 @@ static void test_play_pills_one_move_one_button(void) {
           "every verdict and no gate: nothing");
     CHECK(play_pills(0, PP_READY | PLAY_GATE_SELECTION_EMPTY) == 0,
           "every gate and no verdict: nothing (an attacker, so no Take)");
+    // The roles do not mix, whatever the verdicts say: a real menu never tells
+    // an attacker it may pass, so only the composition itself can pin it.
+    const unsigned all = PLAY_ANSWER_ATTACK | PLAY_ANSWER_COVER | PLAY_ANSWER_PASS | PLAY_ANSWER_GOOD;
+    CHECK(play_pills(all, PP_READY) == PLAY_PILL_ATTACK,
+          "an attacker told yes to everything, a card selected: Attack, never Cover or Pass");
+    CHECK(play_pills(all, PP_READY | PLAY_GATE_IS_DEFENDER) == (PLAY_PILL_COVER | PLAY_PILL_PASS),
+          "a defender told yes to everything, a card selected: Cover and Pass, never Attack");
+
+    // The board facts are the board's: a host that claims the wrong ones is
+    // not believed.
+    pp_setup(&g, 0);
+    CHECK(pp_pills(&g, 1, &nine_s, 1, PP_READY | PLAY_GATE_SELECTION_EMPTY) == PLAY_PILL_COVER,
+          "a host claiming an empty selection over a selected cover gets Cover, not Take");
+    CHECK(pp_pills(&g, 0, 0, 0, PP_READY | PLAY_GATE_IS_DEFENDER) == 0,
+          "a host claiming the attacker defends gets no Take");
 }
 
 // ---------- GOOD stays in the ENUMERATED menu -------------------------------
@@ -12431,6 +12448,17 @@ static int cp_ask(const TableView *v, const Card *cards, int n, int target, Clie
     return client_play(&ct, v, &g, &cp_scratch, out);
 }
 
+// The same question with the host's pill gates set: a board ready to act.
+static int cp_ask_ready(const TableView *v, const Card *cards, int n, ClientPlay *out) {
+    ClientGesture g;
+    memset(&g, 0, sizeof g);
+    g.n_cards = (int8_t)n;
+    g.target = PLAY_TARGET_TABLE;
+    g.gates = PLAY_GATE_I_CAN_ACT | PLAY_GATE_BOARD_STILL;
+    for (int i = 0; i < n && i < MAX_MOVE_CARDS; i++) g.cards[i] = cards[i];
+    return client_play(&ct, v, &g, &cp_scratch, out);
+}
+
 // The engine's verdict on the move client_play resolved to, run against the
 // WHOLE game rather than the masked board - so the two cannot agree by sharing
 // a mistake.
@@ -12447,6 +12475,7 @@ static int cp_engine_takes(const Game *g, int seat, const ClientPlay *p) {
 
 static void test_client_play_is_the_engine(void) {
     int asked = 0, resolved = 0, covers = 0, wrong = 0, good_offers = 0;
+    int pill_wrong = 0, pickup_pills = 0, card_pills = 0;
     cb_rng = 11;
     for (int np = 2; np <= 4; np++) {
         cb_deal(&cb_game, np, 70 + np);
@@ -12478,6 +12507,23 @@ static void test_client_play_is_the_engine(void) {
                     good_offers += cp_out.can_say_good;
                 }
 
+                // THE PILLS WITH NOTHING SELECTED (play_board_pills through
+                // client_play): no play pill without a card; Good exactly when
+                // it is offered; Take exactly when the engine would take a
+                // pickup - over a covered table too, where the menu goes quiet,
+                // and not over the finished game's last table.
+                {
+                    ClientPlay pp;
+                    if (cp_ask_ready(&cb_view, 0, 0, &pp) != CLIENT_OK) { pill_wrong++; continue; }
+                    if (pp.pills & (PLAY_PILL_ATTACK | PLAY_PILL_COVER | PLAY_PILL_PASS)) pill_wrong++;
+                    if (((pp.pills & PLAY_PILL_GOOD) != 0) != cp_out.can_say_good) pill_wrong++;
+                    uint8_t w[64];
+                    const int wl = cb_wire(AWIRE_PICKUP, 0, 0, 0, w);
+                    const int engine_ok = cb_engine_verdict(&cb_game, seat, w, wl) == 0;
+                    if (((pp.pills & PLAY_PILL_PICKUP) != 0) != engine_ok) pill_wrong++;
+                    pickup_pills += (pp.pills & PLAY_PILL_PICKUP) != 0;
+                }
+
                 for (int h = 0; h < p->hand_count && h < 8; h++) {
                     const Card card = p->hand[h];
 
@@ -12486,6 +12532,25 @@ static void test_client_play_is_the_engine(void) {
                     // the engine must have no move of that shape either.
                     if (cp_ask(&cb_view, &card, 1, PLAY_TARGET_TABLE, &cp_out) != CLIENT_OK) { wrong++; continue; }
                     asked++;
+
+                    // A card selected: never Good, never Take, and every play
+                    // pill drawn is a move the engine takes with that card. One
+                    // way only: the engine takes some attacks no menu lists
+                    // (a seat whose turn it is not), and a pill reads the menu.
+                    {
+                        ClientPlay pp;
+                        if (cp_ask_ready(&cb_view, &card, 1, &pp) != CLIENT_OK) { pill_wrong++; continue; }
+                        if (pp.pills & (PLAY_PILL_GOOD | PLAY_PILL_PICKUP)) pill_wrong++;
+                        const int kinds[2][2] = { { PLAY_PILL_ATTACK, AWIRE_ATTACK }, { PLAY_PILL_PASS, AWIRE_PASS } };
+                        for (int k = 0; k < 2; k++) {
+                            uint8_t w[64];
+                            const int wl = cb_wire(kinds[k][1], &card, 0, 1, w);
+                            const int engine_ok = cb_engine_verdict(&cb_game, seat, w, wl) == 0;
+                            if ((pp.pills & (unsigned)kinds[k][0]) && !engine_ok) pill_wrong++;
+                        }
+                        if (((pp.pills & PLAY_PILL_COVER) != 0) != (cp_out.n_coverable > 0)) pill_wrong++;
+                        card_pills += pp.pills != 0;
+                    }
                     if (cp_out.move_type >= 0) {
                         resolved++;
                         if (!cp_engine_takes(&cb_game, seat, &cp_out)) wrong++;
@@ -12535,6 +12600,10 @@ static void test_client_play_is_the_engine(void) {
     CHECK(asked > 500 && resolved > 100 && covers > 50 && good_offers > 10,
           "enough gestures were read, resolved, offered a cover and offered a good");
     CHECK(wrong == 0, "a gesture means on a board exactly what the engine makes of it on the game");
+    fprintf(stderr, "  [client_play pills] %d Take offered, %d selections with a pill\n",
+            pickup_pills, card_pills);
+    CHECK(pickup_pills > 10 && card_pills > 100, "enough boards offered Take and a card pill");
+    CHECK(pill_wrong == 0, "every pill client_play draws is a move the engine takes, one move one button");
 }
 
 static void test_client_play_refuses_what_is_not_a_gesture(void) {

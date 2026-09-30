@@ -2120,7 +2120,7 @@ int main(void) {
         int prc = fio_play_probe(menu, lrc, 0, 0, 0, 0, menu + at + 2, n_sel,
                                  FIO_PLAY_TARGET_TABLE, (char *)probe, sizeof probe);
         if (prc < FIO_PLAY_PROBE_HEAD + 4) { printf("FAIL probe rc=%d\n", prc); return 1; }
-        if ((probe[0] & 1) == 0) { printf("FAIL probe: the attack was not offered\n"); return 1; }
+        if ((probe[0] & PLAY_ANSWER_ATTACK) == 0) { printf("FAIL probe: the attack was not offered\n"); return 1; }
         if ((signed char)probe[1] != -1) { printf("FAIL probe: a cover target on an empty table\n"); return 1; }
         for (int i = 0; i < 8; i++)
             if (probe[2 + i]) { printf("FAIL probe: a coverable battle on an empty table\n"); return 1; }

@@ -243,12 +243,13 @@ int play_human_menu(const PlayBoard *b, unsigned char *out, int cap);
 // the website decided the same pills its own way and got the selection half
 // wrong. It is here so both read one owner.
 //
-// It is TWO STEPS, and the split is the point. `play_answers` is the kernel's
-// verdict about the selection on this board - what the play_* rules above say.
-// `play_pills` composes those verdicts with the facts only the host knows about
-// its own screen (PLAY_GATE_*), and reads nothing else. A host that already
-// holds the verdicts (the iMessage board keeps a probe per selection) hands
-// them straight to `play_pills`; the composition is the same either way.
+// Hosts call `play_board_pills`, which is the other two in order.
+// `play_answers` is the kernel's verdict about the selection on this board -
+// what the play_* rules above say. `play_pills` composes those verdicts with
+// the facts about the screen (PLAY_GATE_*), and reads nothing else. The split
+// is there because the iMessage board already holds the verdicts: its probe
+// (fio_play_probe) carries play_answers' bits for the selection, and it hands
+// them to `play_pills` with its gates rather than asking for them twice.
 
 // The kernel's verdicts about a selection on a board (play_answers).
 #define PLAY_ANSWER_ATTACK (1u << 0)   // play_has_verb(MOVE_ATTACK)
@@ -256,8 +257,10 @@ int play_human_menu(const PlayBoard *b, unsigned char *out, int cap);
 #define PLAY_ANSWER_PASS   (1u << 2)   // play_has_verb(MOVE_PASS)
 #define PLAY_ANSWER_GOOD   (1u << 3)   // play_can_say_good
 
-// What the host knows about its own board that the kernel cannot: facts about
-// this screen rather than about Durak. Each bit is the fact being TRUE.
+// The facts about the board a pill depends on. Each bit is the fact being
+// TRUE. The first six are the host's alone - about its screen, not about Durak.
+// The last four are about the board and the selection, and play_board_pills
+// fills them in itself (IS_OUT only through client_play, which holds a view).
 #define PLAY_GATE_I_CAN_ACT       (1u << 0)  // the kernel published a menu for my seat
 #define PLAY_GATE_CAN_SEND        (1u << 1)  // a move is staged, waiting on Send
 #define PLAY_GATE_PLAY_IN_FLIGHT  (1u << 2)  // a move of mine is between the tap and the answer
@@ -265,7 +268,7 @@ int play_human_menu(const PlayBoard *b, unsigned char *out, int cap);
 #define PLAY_GATE_SUPERSEDED      (1u << 4)  // the kernel stood this seat down (a newer chain)
 #define PLAY_GATE_PICKUP_HELD     (1u << 5)  // the throw-in hold before a defender may take
 #define PLAY_GATE_IS_DEFENDER     (1u << 6)  // this seat defends the current bout
-#define PLAY_GATE_IS_OUT          (1u << 7)  // this seat has left the game
+#define PLAY_GATE_IS_OUT          (1u << 7)  // this seat is out of play (left, or the game ended)
 #define PLAY_GATE_TABLE_EMPTY     (1u << 8)  // no battle on the table
 #define PLAY_GATE_SELECTION_EMPTY (1u << 9)  // no card is selected
 
@@ -325,5 +328,11 @@ unsigned play_answers(const PlayBoard *b, const unsigned char *sel, int n_sel);
 //    read-only board would otherwise keep offering Take;
 //  - not PLAY_IN_FLIGHT and BOARD_STILL, like every other pill.
 unsigned play_pills(unsigned answers, unsigned gates);
+
+// play_pills(play_answers(b, sel, n_sel), gates) with IS_DEFENDER,
+// TABLE_EMPTY and SELECTION_EMPTY read off `b` and the selection rather than
+// taken from the host, which supplies the rest of `host_gates`.
+unsigned play_board_pills(const PlayBoard *b, const unsigned char *sel, int n_sel,
+                          unsigned host_gates);
 
 #endif

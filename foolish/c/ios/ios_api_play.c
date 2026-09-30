@@ -162,8 +162,7 @@ static PlayBoard fio_play_board(const uint8_t *menu, int menu_len,
 // refuses: the resolved move, the coverable set and the button states all come
 // out of one walk of one menu. Layout (LE):
 //
-//   0   u8    flags: 1 = attack legal with this selection, 2 = pass legal,
-//                    4 = this seat may say good
+//   0   u8    play_answers: the PLAY_ANSWER_* bits (legal.h)
 //   1   i8    the battle the Cover button aims at, -1 for none
 //   2   u64   bitmask of battles this selection could cover
 //   10  ...   the resolved move as a ONE-ENTRY menu wire (count 0 or 1), so
@@ -183,9 +182,7 @@ int fio_play_probe(const uint8_t *menu, int menu_len,
     const int idx  = play_resolve(&b, sel, n_sel, target);
 
     unsigned char *q = (unsigned char *)out;
-    q[0] = (unsigned char)((play_has_verb(&b, MOVE_ATTACK, sel, n_sel) ? 1 : 0)
-                         | (play_has_verb(&b, MOVE_PASS,   sel, n_sel) ? 2 : 0)
-                         | (play_can_say_good(&b)                      ? 4 : 0));
+    q[0] = (unsigned char)play_answers(&b, sel, n_sel);
     q[1] = (unsigned char)(signed char)best;
     for (int i = 0; i < 8; i++) q[2 + i] = (unsigned char)((mask >> (8 * i)) & 0xff);
 

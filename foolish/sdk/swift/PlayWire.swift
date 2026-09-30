@@ -101,9 +101,9 @@ public enum PlayWire {
         return PlayProbe(move: MoveWire.decode(Data(bytes[head...])).first,
                          coverable: coverable,
                          bestCover: best >= 0 ? best : nil,
-                         canAttack: flags & 1 != 0,
-                         canPass: flags & 2 != 0,
-                         canSayGood: flags & 4 != 0)
+                         canAttack: flags & UInt8(PLAY_ANSWER_ATTACK) != 0,
+                         canPass: flags & UInt8(PLAY_ANSWER_PASS) != 0,
+                         canSayGood: flags & UInt8(PLAY_ANSWER_GOOD) != 0)
     }
 
     /// The moves a HUMAN may make on this board: the kernel's menu minus `wait`,
