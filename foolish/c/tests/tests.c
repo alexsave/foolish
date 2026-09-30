@@ -9671,6 +9671,79 @@ static void test_deal_card_timing(void) {
     CHECK(anim_step_duration_ms(ANIM_EVT_REFILL) == ANIM_TIME_MS, "a refill step still paces at ANIM_TIME_MS");
 }
 
+// 6. THE BYTES THAT OUTLIVE THE MOVE ARE UNTOUCHED. Round-robin changes what a
+// deal PUSH carries and nothing a row, a log or a code holds. A digest over the
+// deal's commit products (the state blob, the roster, the session-log records,
+// every seat's response envelope and the spectator's) at 2..8 seats, and over
+// the full game log and the v6 replay code of handwritten-bot games at 2..6
+// seats. The deal writes no log record of its own, so a per-card DEAL record,
+// or any other byte a reveal pass might add, shows up here. Goldens taken on
+// 8cbdb81f (seat-major hooks).
+static uint64_t dl_bytes(uint64_t h, const uint8_t *p, int n) {
+    h = dl_fnv(h, n & 0xff);
+    h = dl_fnv(h, (n >> 8) & 0xff);
+    for (int i = 0; i < n; i++) h = dl_fnv(h, p[i]);
+    return h;
+}
+
+static void test_opening_deal_bytes_are_unchanged(void) {
+    // [0] the deal's commit products; [1] game logs + replay codes.
+    static const uint64_t golden[2] = { 0xe894896b849e0765ULL, 0x3ec4d781fc36b8baULL };
+    uint64_t hc = 1469598103934665603ULL;
+    for (int np = 2; np <= MAX_PLAYERS; np++) {
+        for (int seed_k = 1; seed_k <= 3; seed_k++) {
+            if (!dl_deal_table(np, 60 + seed_k * 5 + np)) {
+                DCHECK(0, "deal bytes: %d humans ready and the table deals", np);
+                continue;
+            }
+            TableCommit c;
+            const int rc = table_commit_products(&tb, RS("g"), 5, 42, &c, tb_arena, sizeof(tb_arena));
+            DCHECK(rc > 0 && c.dealt_now && c.logs_reset, "deal bytes (%dp): the deal commits", np);
+            if (rc <= 0) continue;
+            hc = dl_bytes(hc, tb_arena + c.state.off, c.state.len);
+            hc = dl_bytes(hc, tb_arena + c.roster.off, c.roster.len);
+            hc = dl_bytes(hc, tb_arena + c.logs.off, c.logs.len);
+            for (int s = 0; s < np; s++) hc = dl_bytes(hc, tb_arena + c.views[s].off, c.views[s].len);
+            hc = dl_bytes(hc, tb_arena + c.spectator.off, c.spectator.len);
+        }
+    }
+    uint64_t hr = 1469598103934665603ULL;
+    static Game g;
+    static unsigned char code[1 << 14];
+    for (int np = 2; np <= 6; np++) {
+        for (int seed = 0; seed < 6; seed++) {
+            unsigned char seed_bytes[FOOLISH_SEED_LEN];
+            game_force_first_attacker(-1);
+            game_open_at_seat(-1);
+            if (!rs_play_seeded(&g, np, 700 + seed * 3 + np, seed_bytes)) {
+                DCHECK(0, "deal bytes: a %dp game plays out", np);
+                continue;
+            }
+            hr = dl_fnv(hr, g.num_logs & 0xff);
+            hr = dl_fnv(hr, g.num_logs >> 8);
+            for (int i = 0; i < g.num_logs; i++) {
+                const GameLog *l = &g.logs[i];
+                hr = dl_fnv(hr, l->log_type);
+                hr = dl_fnv(hr, l->player_idx);
+                hr = dl_fnv(hr, l->defender_index);
+                hr = dl_fnv(hr, l->num_pairs);
+                for (int k = 0; k < l->num_pairs; k++) {
+                    hr = dl_fnv(hr, card_to_id(l->pairs[k].primary));
+                    hr = dl_fnv(hr, card_to_id(l->pairs[k].target));
+                }
+            }
+            const int n = replay_encode_v6_from_game(&g, seed_bytes, FOOLISH_SEED_LEN, 0x7fffffff, code, sizeof code);
+            DCHECK(n > 0, "deal bytes (%dp, seed %d): the game encodes, rc %d", np, seed, n);
+            if (n > 0) hr = dl_bytes(hr, code, n);
+        }
+    }
+    game_set_seed(1);
+    DCHECK(hc == golden[0], "deal commit bytes unchanged: digest 0x%016llxULL, want 0x%016llxULL",
+           (unsigned long long)hc, (unsigned long long)golden[0]);
+    DCHECK(hr == golden[1], "game logs and replay codes unchanged: digest 0x%016llxULL, want 0x%016llxULL",
+           (unsigned long long)hr, (unsigned long long)golden[1]);
+}
+
 static void test_table_reseat_retitle_continue(void) {
     tb_seed_fill(3);
     tb_lobby();
@@ -12268,6 +12341,7 @@ int main(void) {
     test_opening_deal_hands_are_unchanged();
     test_refill_events_and_plan_are_unchanged();
     test_deal_card_timing();
+    test_opening_deal_bytes_are_unchanged();
     test_table_reseat_retitle_continue();
     test_table_rearrange_and_redact();
     test_table_redact_default_title();
