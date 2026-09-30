@@ -50,7 +50,6 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import { clientTable } from '../sdk/ts/table/client_table.ts';
-import { createServerTable, type ServerTable } from '../sdk/ts/table/server_table.ts';
 import { animRolesGoodsOpening } from '../sdk/ts/wasm/bots.ts';
 import { encodeAction } from '../sdk/ts/wire/awire.ts';
 import { pushToSequence } from '../src/state/pushSequence.ts';
@@ -79,14 +78,14 @@ const openBout = (): TableFixture => fixture()
     .goodTimestamp(true)
     .build();
 
-// A second module, so asking about the committed row leaves the fixture table
-// holding the cycle (its pushes are read after).
-let next: ServerTable | null = null;
-
 /**
  * One bot cycle on a fixture, committed, exactly as bot_actions.ts runCycle makes
- * one - and `delay`, what the NEXT cycle's wait is on the row this one committed
- * (table_bot_wait_ms at the commit's own time): the beat this cycle bought.
+ * one - and `delay()`, what the NEXT cycle's wait is on the row this one committed
+ * (table_bot_wait_ms at the commit's own time): the beat this cycle bought. It is
+ * asked of the table that committed, as the loop asks it, because while v2 is
+ * written the row carries no clock and the beat lives in that table (table.h
+ * table_bot_wait_ms). Asking reloads the table, so it comes after anything that
+ * reads the cycle's pushes.
  */
 function cycle(f: TableFixture) {
     const t = fixtureTable();
@@ -96,9 +95,10 @@ function cycle(f: TableFixture) {
     assert.ok(typeof drive !== 'number', `the drive runs (${drive})`);
     const products = t.commit(GID, 2, NOW);
     assert.ok(typeof products !== 'number', `commit products (${products})`);
-    next ??= createServerTable();
-    assert.equal(next.load(products.state, products.roster), L.TABLE_OK, 'the committed row loads');
-    const delay = next.botWaitMs(NOW);
+    const delay = () => {
+        assert.equal(t.load(products.state, products.roster), L.TABLE_OK, 'the committed row loads');
+        return t.botWaitMs(NOW);
+    };
     return { table: t, drive, delay, products };
 }
 
@@ -115,7 +115,7 @@ test('a bot\'s good is a commit the kernel reports even though it carries no eve
 });
 
 test('the cycle is paced like a move, not like a silent passive', () => {
-    const { delay } = cycle(openBout());
+    const delay = cycle(openBout()).delay();
     // bot_wait_ms: a move a viewer is shown, with a human watching, buys the
     // pace after its stream has played (a good flies nothing, so no stream); a
     // move nobody is shown buys nothing. What this pins is WHICH kind a good is,
@@ -211,7 +211,8 @@ const uncoveredBout = (): TableFixture => fixture()
     .build();
 
 test('a good over an uncovered table is silent: bundled, unpaced, and never pushed', () => {
-    const { drive, delay, products } = cycle(uncoveredBout());
+    const { drive, delay: wait, products } = cycle(uncoveredBout());
+    const delay = wait();
 
     assert.equal(drive.n, 2, 'BOTH bots said good in ONE cycle: silent goods bundle again');
     assert.deepEqual([...drive.seats].sort(), [2, 3], 'the two bots whose only move is a good');
