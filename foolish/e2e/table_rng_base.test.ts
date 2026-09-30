@@ -91,6 +91,8 @@ test('a human move\'s draws come from its own game\'s seed, not from the game th
     assert.equal(outcomes[0].deckCount, outcomes[1].deckCount, 'the same number of cards drawn');
     assert.ok(outcomes[0].deckCount < 20, 'fixture: the round drew');
     assert.deepEqual(hands[1], hands[0], 'the same game and the same moves draw the same cards, whichever game the instance served before');
-    assert.equal(Buffer.from(outcomes[1].state).toString('hex'), Buffer.from(outcomes[0].state).toString('hex'));
+    // The same board, byte for byte; the blob's trailing clock says when it was shown, which two runs never share.
+    const board = (t: TableState) => Buffer.from(t.state.subarray(0, t.state.length - L.TABLE_STATE_CLOCK_BYTES)).toString('hex');
+    assert.equal(board(outcomes[1]), board(outcomes[0]));
     assert.equal(outcomes[0].status, L.GAME_STATUS_PLAYING);
 });

@@ -14,7 +14,7 @@
 //
 // ONE VIRTUAL CLOCK for both sides. setTimeout / setInterval / Date.now /
 // performance.now / requestAnimationFrame are the helper's, so the bot loop's
-// pacing sleep (bot_cycle_delay_ms) and the page's animation plan run on the
+// pacing sleep (table_bot_wait_ms) and the page's animation plan run on the
 // same milliseconds, and a timeline is the same every run. What is NOT virtual is
 // the I/O: a Postgres round trip happens in real time while the virtual clock
 // stands still, and `quiesce` waits for every query and every request the page

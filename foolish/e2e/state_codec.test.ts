@@ -1,7 +1,7 @@
 // Durable state codec: the `games.state bytea` blob is lossless.
 //
 // The blob is the kernel's (table.h: [TABLE_STATE_FORMAT][deterministic deck]
-// [state_put]). A table loads it (table_load: state_import, game_validate) and
+// [state_put][the board's clock]). A table loads it (table_load: state_import, game_validate) and
 // every commit writes it back (table_commit_products). Seat identity is not in
 // it: that is the roster column, a separate blob.
 //
@@ -38,22 +38,39 @@ const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
 
 test('every commit writes the durable blob at the current format', () => {
   const row = dealBotTable(['random', 'random', 'random', 'random'], seedBytes(4, 1));
-  assert.equal(L.TABLE_STATE_FORMAT, 2, 'the format this kernel writes');
+  assert.equal(L.TABLE_STATE_FORMAT, 3, 'the format this kernel writes');
   assert.equal(row.state[0], L.TABLE_STATE_FORMAT, 'the dealt blob leads with its format');
 });
 
 test('a blob of any other format is refused, not misread', () => {
   // v1 blobs were migrated to v2 at deploy (20260708130000_migrate_state_blobs_v2);
-  // a missed one must fail loud, never load as a mis-parsed game.
+  // a missed one must fail loud, never load as a mis-parsed game. v2 (the blob
+  // before the clock) is still read - see the next case.
   const row = dealBotTable(['random', 'random', 'random', 'random'], seedBytes(4, 2));
   const table = fixtureTable();
-  for (const version of [0, 1, 3, 0xff]) {
+  for (const version of [0, 1, 4, 0xff]) {
     const blob = row.state.slice();
     blob[0] = version;
     const rc = table.load(blob, row.roster);
     assert.equal(rc, L.TABLE_E_STATE_VERSION, `format ${version}: ${reasonOf(rc, ['TABLE_E_', 'GAME_INVALID_'])}`);
   }
   assert.equal(table.load(row.state, row.roster), L.TABLE_OK, 'the blob as written loads');
+});
+
+test('a v2 blob, written before the board carried a clock, still loads as the same board', () => {
+  // Every row stored before v3 is a v3 blob with no clock behind it: the kernel
+  // reads it as a board shown long ago, and its next commit writes v3.
+  const row = dealBotTable(['random', 'random', 'random', 'random'], seedBytes(4, 3));
+  const table = fixtureTable();
+  const v2 = row.state.slice(0, row.state.length - L.TABLE_STATE_CLOCK_BYTES);
+  v2[0] = 2;
+  assert.equal(table.load(v2, row.roster), L.TABLE_OK, 'the v2 blob loads');
+  const p = table.commit(row.gameId, row.version, 0);
+  assert.ok(typeof p !== 'number', 'products of the loaded v2 row');
+  assert.equal(p.state[0], L.TABLE_STATE_FORMAT, 'and is written back at the current format');
+  assert.equal(hex(p.state.subarray(1, p.state.length - L.TABLE_STATE_CLOCK_BYTES)), hex(v2.subarray(1)), 'as the same board');
+  assert.equal(hex(p.state.subarray(p.state.length - L.TABLE_STATE_CLOCK_BYTES)), '00'.repeat(L.TABLE_STATE_CLOCK_BYTES),
+    'with the zero clock of a board nobody has been shown');
 });
 
 test('the board the generated accessors read back rebuilds the blob, at every state of two games', () => {
@@ -70,9 +87,12 @@ test('the board the generated accessors read back rebuilds the blob, at every st
     const p = table.commit(row.gameId, row.version, 0);
     assert.ok(typeof p !== 'number', `check ${checks}: products of a loaded table`);
     assert.equal(hex(p.state), hex(row.state), `check ${checks}: load then commit is not byte-identical`);
-    // 2. the fields the generated accessors read are the whole blob.
+    // 2. the fields the generated accessors read are the whole BOARD: every byte
+    // of the blob but its trailing clock, which is the table's and no field of
+    // the Game (a rebuilt fixture has a zero clock, never having been shown).
     const again = rebuild(board).build();
-    assert.equal(hex(again.state), hex(row.state), `check ${checks}: the board read back does not rebuild the blob`);
+    const boardHex = (b: Uint8Array) => hex(b.subarray(0, b.length - L.TABLE_STATE_CLOCK_BYTES));
+    assert.equal(boardHex(again.state), boardHex(row.state), `check ${checks}: the board read back does not rebuild the blob`);
     checks++;
   };
 

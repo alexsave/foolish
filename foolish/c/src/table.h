@@ -64,6 +64,9 @@
 // (state_blob_put / state_blob_load) - the wasm bridge persists the same column
 // through the same pair, so there is one format byte, not two that can drift.
 #define TABLE_STATE_FORMAT STATE_BLOB_FORMAT
+// The board's clock the blob ends with (view.h BoardClock): a host comparing two
+// blobs for the same BOARD compares all but these last bytes.
+#define TABLE_STATE_CLOCK_BYTES STATE_BLOB_CLOCK_BYTES
 
 // ---- the action request and response (the `action` endpoint's body) --------
 //
@@ -130,6 +133,10 @@ typedef struct {
     int8_t      actor;          // the acting seat, -1 for none
     int32_t     log_start;      // the operation's first log record
     int32_t     log_len;        // records the ROW's session log holds (table_set_session_log), loaded or not
+    // The loaded board's clock (view.h BoardClock), from the state blob: what the
+    // row's viewers were last shown and when it finishes playing. Read by
+    // table_bot_wait_ms; the commit writes the next one (table_commit_products).
+    BoardClock  clock;
     // The preferred moves the last table_bot_drive was offered (BotDrivePref).
     int8_t      n_prefs;
     BotDrivePref prefs[MAX_PLAYERS];
@@ -272,7 +279,9 @@ typedef struct {
 
 // Every product of the loaded table and its last operation, written into
 // `arena`. `next_version` is the version the commit will produce (the envelope
-// carries it); `now_ms` stamps this operation's log records.
+// carries it); `now_ms` stamps this operation's log records and, when a viewer is
+// shown the operation, advances the board's clock the state blob carries (see
+// Table.clock).
 int table_commit_products(const Table *t, const char *game_id, int gid_len, uint32_t next_version,
                           int64_t now_ms, TableCommit *out, uint8_t *arena, int cap);
 
@@ -333,8 +342,13 @@ int table_drive_prefs(const Table *t, const BotDriveOut *drv, uint8_t *out, int 
 // default; bots.wasm points it at its belief probe (wasm_bots_api.c).
 extern void (*table_choose_observer)(const Game *g, int seat);
 
-// How long the host waits after the cycle `drv` describes (bot_cycle_delay_ms).
-int table_cycle_delay_ms(const Table *t, const BotDriveOut *drv);
+// How many ms from `now_ms` the host must wait before it drives the loaded board
+// (bot_drive.h bot_wait_ms, on the board's clock): 0 means drive now. A host
+// asks on the board it just loaded, BEFORE every cycle, and after the wait loads
+// the row again and asks again - somebody may have moved in the meantime, and
+// that move restarts the wait. There is no wait after a cycle: the next cycle's
+// question already counts the one just committed. TABLE_E_NOT_LOADED.
+int table_bot_wait_ms(const Table *t, int64_t now_ms);
 
 // ---- the end of a game -------------------------------------------------------
 

@@ -8546,9 +8546,7 @@ static int tb_state_len;
 static LegalMoves tb_moves;
 
 static int tb_blob(const Game *g, uint8_t *out) {
-    out[0] = TABLE_STATE_FORMAT;
-    out[1] = g->deterministic_deck ? 1 : 0;
-    return 2 + state_put(g, VIEW_UNMASKED, out + 2);
+    return state_blob_put(g, 0, out);   // a composed board: never shown, a zero clock
 }
 
 // Seats "id-0".."id-<n-1>", named "Seat i", with `brain` where `bots` says.
@@ -8615,8 +8613,10 @@ static void test_table_load(void) {
         if (rc_ != (want)) fprintf(stderr, "  table_load(%s): got %d, want %d\n", msg, rc_, want); \
         CHECK(rc_ == (want) && !tb.loaded, msg); \
         CHECK(memcmp(&tb_before, &tb_game, offsetof(Game, logs)) == 0, msg); } while (0)
-    memcpy(tb_state2, tb_state, sizeof(tb_state)); tb_state2[0] = 3;
+    memcpy(tb_state2, tb_state, sizeof(tb_state)); tb_state2[0] = STATE_BLOB_FORMAT + 1;
     REFUSE(TABLE_E_STATE_VERSION, "a state blob of an unknown format", tb_state2, tb_state_len, tb_roster);
+    tb_state2[0] = 1;
+    REFUSE(TABLE_E_STATE_VERSION, "a v1 state blob (rewritten to v2 by a migration long ago)", tb_state2, tb_state_len, tb_roster);
     REFUSE(TABLE_E_STATE_VERSION, "a state blob too short to hold a board", tb_state, 3, tb_roster);
     memcpy(tb_roster2, tb_roster, ROSTER_BYTES); tb_roster2[0] = 9;
     REFUSE(TABLE_E_ROSTER, "a roster of an unknown format", tb_state, tb_state_len, tb_roster2);
@@ -8802,8 +8802,17 @@ static void test_table_commit_products(void) {
     CHECK(table_act(&tb, fa_id, (int)strlen(fa_id), w, wl, -1, 0) == TABLE_APPLIED, "the attack applies");
     n = table_commit_products(&tb, RS("g-1"), 7, 0x010203040506LL, &c, tb_arena, sizeof(tb_arena));
     CHECK(n > 0, "the products fit");
-    CHECK(c.state.len == tb_blob(&tb_game, tb_buf) && memcmp(tb_arena + c.state.off, tb_buf, (size_t)c.state.len) == 0,
+    // The board, then the clock the move put on it (view.h BoardClock): shown at
+    // the commit's own time, and done playing one flight later - the attack is
+    // a single beat.
+    const uint8_t *ck = tb_arena + c.state.off + c.state.len - STATE_BLOB_CLOCK_BYTES;
+    CHECK(c.state.len == tb_blob(&tb_game, tb_buf)
+          && memcmp(tb_arena + c.state.off, tb_buf, (size_t)c.state.len - STATE_BLOB_CLOCK_BYTES) == 0,
           "the state blob is the board after the move");
+    CHECK(memcmp(ck, "\x06\x05\x04\x03\x02\x01", 6) == 0, "the clock shows the move at the commit's time");
+    int64_t settles = 0;
+    for (int b = 5; b >= 0; b--) settles = settles * 256 + ck[6 + b];
+    CHECK(settles == 0x010203040506LL + ANIM_TIME_MS, "and has it done playing one flight later");
     const uint8_t *lg = tb_arena + c.logs.off;
     CHECK(c.logs.len == 6 + 4 + 2 && lg[0] == 0x06 && lg[1] == 0x05 && lg[5] == 0x01 && lg[6] == LOG_ATTACK
           && lg[7] == fa && lg[8] == 0xFF && lg[9] == 1 && lg[10] == w[2] && lg[11] == 0xFF,
@@ -10060,6 +10069,177 @@ static void test_table_deal_seed_and_session_log(void) {
     CHECK(table_set_session_log(&unloaded, tb_log, tb_log_len) == TABLE_E_NOT_LOADED, "an unloaded table takes no log");
 }
 
+// ---- the bot wait (table_bot_wait_ms, bot_drive.h bot_wait_ms) ----
+
+// How long a CLIENT plays the last operation's push for `viewer`: the push read
+// back off the wire (evwire_read) and planned (anim_build_plan) the way a
+// client plans it. The table still holds the operation after its commit, so
+// this asks about the one just committed. The kernel's wait is held against
+// this, a derivation it does not share: the wire, not the table's own walk.
+static int tbw_n;
+static AnimPlanEvent tbw_events[ANIM_MAX_STEPS];
+static void tbw_sink(void *ctx, int index, const EvwRead *ev) {
+    (void)ctx; (void)index;
+    if (tbw_n >= ANIM_MAX_STEPS) return;
+    AnimPlanEvent *e = &tbw_events[tbw_n++];
+    memset(e, 0, sizeof(*e));
+    e->type = ev->type;
+    e->seat = ev->seat;
+    e->from = ev->from;
+    e->to = ev->to;
+    e->n_battles = ANIM_NO_BOARD;
+}
+static int tb_push_plan_ms(int viewer) {
+    static AnimPlan plan;
+    const int n = table_push(&tb, RS("g"), viewer, tb_buf2, sizeof(tb_buf2));
+    int seq_len = 0, flags = 0, block = 0;
+    if (n < 0 || evwire_as3_split(tb_buf2, n, &seq_len, &flags, &block) != 0) return -1;
+    tbw_n = 0;
+    if (evwire_read(tb_buf2, seq_len, 0, 0, 0, tbw_sink, 0) < 0) return -1;
+    const int final_hand[MAX_PLAYERS] = {0};
+    if (anim_build_plan(tbw_events, tbw_n, tb_game.num_players, 0, 0, CARD_NONE, final_hand, &plan) != ANIM_EOK) return -1;
+    return plan.total_ms;
+}
+
+static void test_table_bot_wait(void) {
+    const int pace = BOT_PACE_MS_WITH_HUMANS;
+    TableCommit c;
+
+    // THE DEAL. tb_bot_table deals a human and two bots and commits at T0.
+    const int64_t T0 = 1700000000000LL;
+    tb_bot_table("random", 21);
+    const int deal_ms = tb_push_plan_ms(0);
+    CHECK(deal_ms >= 3 * ANIM_TIME_MS, "a deal plays for several beats on the human's screen");
+    CHECK(tb_reload(1) >= 0, "the dealt row loads");
+    CHECK(tb.clock.shown_ms == T0 && tb.clock.settles_ms == T0 + deal_ms,
+          "the state blob carries the deal's clock: shown at the commit, done when its stream is");
+    CHECK(table_bot_wait_ms(&tb, T0) == deal_ms + pace,
+          "on the dealt board a bot waits out the deal on the human's screen, then the pace");
+    CHECK(table_bot_wait_ms(&tb, T0 + 1000) == deal_ms + pace - 1000, "time already gone comes off the wait");
+    CHECK(table_bot_wait_ms(&tb, T0 + deal_ms + pace) == 0, "and when it has all gone the bot acts");
+    CHECK(table_bot_wait_ms(&tb, T0 + 3600000) == 0, "a wait is never negative");
+    CHECK(table_bot_wait_ms(&tb, T0 - 3600000) == BOT_PACE_WAIT_MAX_MS,
+          "a clock far ahead of now holds a bot no longer than the ceiling");
+    // ...and the next thing shown on that board, by a host whose clock is an hour
+    // behind, starts its stream at that host's now rather than queueing behind a
+    // clock nobody's screen is playing.
+    {
+        static Game saved;
+        static uint8_t saved_state[8192], saved_log[1 << 16];
+        const int saved_state_len = tb_state_len, saved_log_len = tb_log_len;
+        memcpy(&saved, &tb_game, sizeof(Game));
+        memcpy(saved_state, tb_state, (size_t)tb_state_len);
+        memcpy(saved_log, tb_log, (size_t)tb_log_len);
+        const int64_t behind = T0 - 3600000;
+        int shown = 0;
+        if (bot_drive_eligible_mask(&tb_game, game_human_mask(&tb_game)) != 0
+            && table_bot_drive(&tb, 0, 0, 0, &tb_drv) > 0) {
+            const int ms = tb_push_plan_ms(0);
+            if (tb_commit_row(behind, &c) > 0 && tb_reload(1) >= 0 && ms > 0) {
+                shown = 1;
+                CHECK(tb.clock.shown_ms == behind && tb.clock.settles_ms == behind + ms,
+                      "a clock from another host's time is not queued behind: the stream starts now");
+            }
+        } else if (tb_human_move()) {
+            const int ms = tb_push_plan_ms(0);
+            if (tb_commit_row(behind, &c) > 0 && tb_reload(1) >= 0 && ms > 0) {
+                shown = 1;
+                CHECK(tb.clock.shown_ms == behind && tb.clock.settles_ms == behind + ms,
+                      "a clock from another host's time is not queued behind: the stream starts now");
+            }
+        }
+        CHECK(shown, "the dealt board's first move is shown");
+        memcpy(tb_state, saved_state, (size_t)saved_state_len);
+        memcpy(tb_log, saved_log, (size_t)saved_log_len);
+        tb_state_len = saved_state_len;
+        tb_log_len = saved_log_len;
+        CHECK(tb_reload(1) >= 0 && tb_same_board(&tb_game, &saved), "the dealt row is put back");
+    }
+
+    // A SILENT operation leaves the clock alone: a hand rearranged is shown to
+    // nobody (no push), so the deal is still what the wait is measured from.
+    {
+        uint8_t idx[MAX_HAND_SIZE];
+        const int hn = tb_game.players[0].hand_count;
+        for (int i = 0; i < hn; i++) idx[i] = (uint8_t)(hn - 1 - i);
+        CHECK(table_rearrange_hand(&tb, RS("h"), idx, hn) == TABLE_OK, "the human rearranges their hand");
+        CHECK(tb_commit_row(T0 + 500, &c) > 0 && c.n_events == 0 && !c.goods_changed, "a commit with nothing to show");
+        CHECK(tb_reload(1) >= 0 && tb.clock.shown_ms == T0 && tb.clock.settles_ms == T0 + deal_ms
+              && table_bot_wait_ms(&tb, T0) == deal_ms + pace,
+              "and it does not move the clock the bot waits on");
+    }
+
+    // A HUMAN'S MOVE, and a commit made while it still plays. Bots drive at the
+    // wait the kernel names; the first time the human moves, the bot's wait is
+    // that move's stream plus the pace, and a bot move committed 10ms later
+    // (before the human's has played) queues behind it.
+    int64_t now = T0 + deal_ms + pace;
+    int human_checked = 0, queue_checked = 0, bot_cycles = 0;
+    for (int step = 0; step < 400 && !(human_checked && queue_checked); step++) {
+        if (tb_reload(1) < 0 || tb_game.status != GAME_STATUS_PLAYING) break;
+        now += table_bot_wait_ms(&tb, now);
+        if (bot_drive_eligible_mask(&tb_game, game_human_mask(&tb_game)) != 0) {
+            if (table_bot_drive(&tb, 0, 0, 0, &tb_drv) <= 0) break;
+            if (tb_commit_row(now, &c) < 0) break;
+            bot_cycles++;
+            continue;
+        }
+        if (!tb_human_move()) break;
+        const int ms = tb_push_plan_ms(0);
+        if (tb_commit_row(now, &c) < 0) break;
+        if (tb_reload(1) < 0) break;
+        if (ms <= 0 || tb_game.status != GAME_STATUS_PLAYING) continue;
+        if (!human_checked) {
+            human_checked = 1;
+            CHECK(table_bot_wait_ms(&tb, now) == ms + pace,
+                  "after a human's move a bot waits for it to play on screen, then the pace");
+        }
+        if (!queue_checked && bot_drive_eligible_mask(&tb_game, game_human_mask(&tb_game)) != 0) {
+            const int64_t soon = now + 10;
+            if (table_bot_drive(&tb, 0, 0, 0, &tb_drv) <= 0) break;
+            const int bms = tb_push_plan_ms(0);
+            if (tb_commit_row(soon, &c) < 0 || tb_reload(1) < 0) break;
+            if (bms <= 0 || tb_game.status != GAME_STATUS_PLAYING) { now = soon; continue; }
+            queue_checked = 1;
+            CHECK(table_bot_wait_ms(&tb, soon) == (now + ms + bms + pace) - soon,
+                  "a move committed while the last one still plays queues behind it on screen");
+            now = soon;
+        }
+    }
+    CHECK(human_checked && queue_checked && bot_cycles > 0, "the game reached a human move and a bot answer inside it");
+    fprintf(stderr, "  [bot wait] deal plays %dms, then the %dms pace; %d bot cycles before the human's move was checked\n",
+            deal_ms, pace, bot_cycles);
+
+    // BOTS ONLY: nobody watches live, so the pace is the bots-only one from the
+    // commit, with no animation term.
+    tb_fixture(3, 0x7u, 5);
+    tb_log_len = 0;
+    table_init(&tb, &tb_game, &tb_snaps);
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK, "a bots-only row loads");
+    CHECK(table_bot_wait_ms(&tb, T0) == 0, "a board nobody has been shown asks for no wait");
+    CHECK(table_bot_drive(&tb, 0, 0, 0, &tb_drv) > 0, "a bot moves");
+    const int bots_ms = tb_push_plan_ms(-1);
+    CHECK(bots_ms > 0 && tb_commit_row(T0, &c) > 0, "and the move is shown to a spectator");
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK, "the committed row loads");
+    CHECK(table_bot_wait_ms(&tb, T0) == BOT_PACE_MS_BOTS_ONLY, "a bots-only game waits the bots-only pace from the commit");
+    CHECK(table_bot_wait_ms(&tb, T0 + BOT_PACE_MS_BOTS_ONLY) == 0, "and no longer");
+
+    // A v2 blob (before the clock) still loads, as a board shown long ago.
+    {
+        tb_state2[0] = STATE_BLOB_FORMAT_V2;
+        tb_state2[1] = tb_game.deterministic_deck ? 1 : 0;
+        const int n2 = STATE_BLOB_HEADER + state_put(&tb_game, VIEW_UNMASKED, tb_state2 + STATE_BLOB_HEADER);
+        CHECK(table_load(&tb, tb_state2, n2, tb_roster, ROSTER_BYTES) == TABLE_OK, "a v2 row still loads");
+        CHECK(tb.clock.shown_ms == 0 && tb.clock.settles_ms == 0 && table_bot_wait_ms(&tb, T0) == 0,
+              "with a zero clock, so its bot acts at once as it did before the clock");
+        CHECK(table_load(&tb, tb_state2, n2 - 1, tb_roster, ROSTER_BYTES) < 0, "a v2 row one byte short is refused");
+    }
+
+    Table unloaded;
+    table_init(&unloaded, &tb_src, &tb_snaps);
+    CHECK(table_bot_wait_ms(&unloaded, T0) == TABLE_E_NOT_LOADED, "an unloaded table names no wait");
+}
+
 static void test_table_bot_drive_cycle(void) {
     tb_bot_table("espresso", 5);
     TableCommit c;
@@ -10086,8 +10266,6 @@ static void test_table_bot_drive_cycle(void) {
             checked = 1;
             CHECK(tb.log_start == imported && tb.actor == tb_drv.actions[n - 1].seat,
                   "the cycle's records start above the session log, and its actor is its last action's seat");
-            CHECK(table_cycle_delay_ms(&tb, &tb_drv) == bot_cycle_delay_ms(&tb_game, humans, &tb_drv)
-                  && table_cycle_delay_ms(&tb, &tb_drv) > 0, "the delay is bot_cycle_delay_ms of the cycle");
             // The wasm bridge's cycle on the same board: the same moves and the same board.
             tb_hook_base = tb_fnv(tb_seed_hex, 64);
             bot_drive_pre_action_hook = tb_bridge_seed;
@@ -12396,6 +12574,7 @@ int main(void) {
     test_table_seat_of();
     test_table_deal_seed_and_session_log();
     test_table_bot_drive_cycle();
+    test_table_bot_wait();
     test_table_drive_prefs();
     test_table_bot_drive_ignores_instance_history();
     test_table_bot_drive_progress_seeds_the_decision();

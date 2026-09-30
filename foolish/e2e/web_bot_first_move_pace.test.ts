@@ -9,9 +9,9 @@
 // real bot loop (scheduleBotLoop -> lockedBotLoop), whose broadcasts reach the
 // page's own channel; the page and the server share one virtual clock, so the
 // loop's pacing sleep and the page's animation plan are measured on the same
-// milliseconds. The number the gap is held to is the kernel's own pace for the
-// attack's cycle (bot_cycle_delay_ms, read off the loop's table as it runs), not
-// a constant restated here.
+// milliseconds. The number the gap is held to is the kernel's own reaction pace
+// with a human watching (bot_drive.h BOT_PACE_MS_WITH_HUMANS, read through the
+// generated layout), not a constant restated here.
 
 import { LivePage, delivered, flightTimeline, now, probe } from './helpers/live_page.ts';
 import { test, before } from 'node:test';
@@ -26,13 +26,13 @@ import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 
 before(async () => { await applySchema(); });
 
-// The pace the loop's table reports for each cycle it drives, in order: the
-// kernel's answer (bot_cycle_delay_ms), recorded where lockedBotLoop reads it.
+// Every wait the loop asks the kernel for (table_bot_wait_ms), in order, with
+// the moment it asked: recorded where lockedBotLoop reads it, for the log.
 const paces: { at: number; ms: number }[] = [];
 before(async () => {
     const table = await serverTable();
-    const cycleDelayMs = table.cycleDelayMs.bind(table);
-    table.cycleDelayMs = () => { const ms = cycleDelayMs(); paces.push({ at: now(), ms }); return ms; };
+    const botWaitMs = table.botWaitMs.bind(table);
+    table.botWaitMs = (nowMs: number) => { const ms = botWaitMs(nowMs); paces.push({ at: now(), ms }); return ms; };
 });
 
 // A deal whose first attacker AND defender are both bots, with me watching from
@@ -74,25 +74,24 @@ test('the first bot move of a game: the defender bot answers a full pace after t
         await page.advance(1000);
         process.stderr.write(`[first-move] seats: me 0, attacker ${attacker}, defender ${defender}\n`
             + `[first-move] pushes the server sent me (ms after Start): ${delivered.map((d) => `v${d.version}@+${d.sentAt - startedAt}`).join(', ')}\n`
-            + `[first-move] kernel pace per bot cycle: ${paces.map((p) => `${p.ms}ms (cycle at +${p.at - startedAt})`).join(', ')}\n`
+            + `[first-move] kernel waits the loop asked for: ${paces.map((p) => `${p.ms}ms (asked at +${p.at - startedAt})`).join(', ')}\n`
             + `[first-move] what my page flew:\n${flightTimeline(page.frames).join('\n')}\n`);
         assert.ok(answered, 'the defender bot answered the first attack');
 
         // When the attack became visible on my page (its flight opened) and when
-        // the defender's answer did. The kernel paces the loop cycle to cycle, so
-        // two bot moves in a row are one pace apart on the server's clock; this
-        // asks the same of the clock my screen runs on.
+        // the defender's answer did. A bot reacts a full pace after the board it
+        // answers has played on my screen, so the answer cannot open less than
+        // one pace after the attack did, on the clock my screen runs on.
         const frames = page.frames;
         const isAttack = (f: (typeof frames)[number]) => f.flying?.type === 'attack_pass' && f.flying.seat === attacker;
         const attackOpen = frames.find(isAttack);
         assert.ok(attackOpen, 'the page flew the first attack');
         const answerOpen = frames.find(isAnswer)!;
         const gap = answerOpen.t - attackOpen.t;
-        const attackPace = paces[0]?.ms ?? 0;
-        assert.ok(attackPace > 0, `the kernel paced the attack's cycle (${attackPace}ms)`);
+        const attackPace = L.BOT_PACE_MS_WITH_HUMANS;
         assert.ok(gap >= attackPace,
             `the defender bot's ${answerOpen.flying!.type} started moving ${gap}ms after the first attack did on my screen `
-            + `(attack at ${attackOpen.t}ms, answer at ${answerOpen.t}ms after Start); the kernel's pace between those two cycles is ${attackPace}ms`);
+            + `(attack at ${attackOpen.t}ms, answer at ${answerOpen.t}ms after Start); the kernel's reaction pace is ${attackPace}ms`);
     } finally {
         await page.unmount();
         __setTableDealSeedOverride(null);

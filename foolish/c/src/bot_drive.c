@@ -8,18 +8,13 @@
 
 // ---------- pacing ---------------------------------------------------------
 
-// The server's values, adopted verbatim as the one table (owner decision, July
-// 2026): 3000ms is its tuned inter-bot pace with a human watching (its own note
-// records 4500ms as sluggish and 1500ms as too fast to follow), 300ms is the
-// bots-only pace nobody watches live.
-#define PACE_MS_WITH_HUMANS 3000
-#define PACE_MS_BOTS_ONLY    300
+// The values are bot_drive.h's (BOT_PACE_MS_*), where the reason for each is.
 
 int bot_pacing_ms(int pacing_class, int humans_present) {
     switch (pacing_class) {
         case BOT_PACE_MOVE:
         case BOT_PACE_ROUND_TRANSITION:
-            return humans_present ? PACE_MS_WITH_HUMANS : PACE_MS_BOTS_ONLY;
+            return humans_present ? BOT_PACE_MS_WITH_HUMANS : BOT_PACE_MS_BOTS_ONLY;
         // Nothing became visible, so there is nothing to give the eye time to
         // follow. NOTE this is deliberately stricter than the server's current
         // rule, which skips the wait only in bots-only games and otherwise
@@ -33,6 +28,14 @@ int bot_pacing_ms(int pacing_class, int humans_present) {
     }
 }
 
+// A human is still IN: they set the tempo. OUT humans still watch, but a game
+// they left plays at the bots-only pace, as it always has.
+static int humans_in(const Game *g, uint32_t human_mask) {
+    for (int i = 0; i < g->num_players; i++)
+        if ((human_mask & (1u << i)) && g->players[i].status == PLAYER_STATUS_IN) return 1;
+    return 0;
+}
+
 // The wait for one drive cycle, in a single call: the max pacing class across
 // the cycle's visible actions, priced by bot_pacing_ms, reduced when a human is
 // still IN (they set the tempo). Zero when nothing visible happened. Every host
@@ -41,13 +44,22 @@ int bot_pacing_ms(int pacing_class, int humans_present) {
 // the trampoline host is left owning only the loop and the actual sleep.
 int bot_cycle_delay_ms(const Game *g, uint32_t human_mask, const BotDriveOut *drv) {
     if (!g || !drv) return 0;
-    int humans_present = 0;
-    for (int i = 0; i < g->num_players; i++)
-        if ((human_mask & (1u << i)) && g->players[i].status == PLAYER_STATUS_IN) { humans_present = 1; break; }
     int pace = BOT_PACE_NONE;
     for (int i = 0; i < drv->n; i++)
         if (drv->actions[i].pacing_class > pace) pace = drv->actions[i].pacing_class;
-    return bot_pacing_ms(pace, humans_present);
+    return bot_pacing_ms(pace, humans_in(g, human_mask));
+}
+
+// See bot_drive.h. The pace is a visible move's: an operation that showed a
+// viewer nothing never moved the clock (table.c), so the clock only ever names
+// something somebody watched.
+int bot_wait_ms(const Game *g, uint32_t human_mask, int64_t shown_ms, int64_t settles_ms, int64_t now_ms) {
+    if (!g) return 0;
+    const int humans = humans_in(g, human_mask);
+    const int64_t from = humans ? settles_ms : shown_ms;
+    const int64_t wait = from + bot_pacing_ms(BOT_PACE_MOVE, humans) - now_ms;
+    if (from <= 0 || wait <= 0) return 0;
+    return wait > BOT_PACE_WAIT_MAX_MS ? BOT_PACE_WAIT_MAX_MS : (int)wait;
 }
 
 // ---------- eligibility ----------------------------------------------------

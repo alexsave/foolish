@@ -204,19 +204,46 @@ int state_import(Game *g, const unsigned char *p, int len, int masked) {
     return r;
 }
 
-int state_blob_put(const Game *g, unsigned char *out) {
-    out[0] = (unsigned char)STATE_BLOB_FORMAT;
-    out[1] = (unsigned char)(g->deterministic_deck ? 1 : 0);
-    return STATE_BLOB_HEADER + state_put(g, VIEW_UNMASKED, out + STATE_BLOB_HEADER);
+// A clock value as the blob stores it: u48 little-endian, epoch ms. Negative
+// values (never written) clamp to 0, so "never" has one spelling.
+static void put_u48(unsigned char *q, int64_t v) {
+    uint64_t u = v > 0 ? (uint64_t)v : 0;
+    for (int b = 0; b < 6; b++) { q[b] = (unsigned char)(u & 0xff); u >>= 8; }
 }
 
-int state_blob_load(Game *g, const unsigned char *p, int len) {
+static int64_t get_u48(const unsigned char *q) {
+    int64_t v = 0;
+    for (int b = 5; b >= 0; b--) v = v * 256 + q[b];
+    return v;
+}
+
+int state_blob_put(const Game *g, const BoardClock *clk, unsigned char *out) {
+    out[0] = (unsigned char)STATE_BLOB_FORMAT;
+    out[1] = (unsigned char)(g->deterministic_deck ? 1 : 0);
+    const int n = STATE_BLOB_HEADER + state_put(g, VIEW_UNMASKED, out + STATE_BLOB_HEADER);
+    put_u48(out + n, clk ? clk->shown_ms : 0);
+    put_u48(out + n + 6, clk ? clk->settles_ms : 0);
+    return n + STATE_BLOB_CLOCK_BYTES;
+}
+
+int state_blob_load(Game *g, const unsigned char *p, int len, BoardClock *clk) {
     if (len < STATE_BLOB_HEADER) return 0;
-    if (p[0] != STATE_BLOB_FORMAT) return 0;
-    // `len` counts the header bytes too; the state is the rest.
-    const int r = state_import(g, p + STATE_BLOB_HEADER, len - STATE_BLOB_HEADER, 0);
+    // `len` counts the header bytes too; the state is the rest, less the clock
+    // a v3 blob carries behind it (a v2 blob has none: see view.h).
+    int tail;
+    if (p[0] == STATE_BLOB_FORMAT) tail = STATE_BLOB_CLOCK_BYTES;
+    else if (p[0] == STATE_BLOB_FORMAT_V2) tail = 0;
+    else return 0;
+    if (len < STATE_BLOB_HEADER + tail) return GAME_INVALID_COUNT;
+    const int state_len = len - STATE_BLOB_HEADER - tail;
+    const int r = state_import(g, p + STATE_BLOB_HEADER, state_len, 0);
     if (r != GAME_VALID) return r;
     g->deterministic_deck = p[1] != 0;
+    if (clk) {
+        const unsigned char *c = p + STATE_BLOB_HEADER + state_len;
+        clk->shown_ms = tail ? get_u48(c) : 0;
+        clk->settles_ms = tail ? get_u48(c + 6) : 0;
+    }
     return 1;
 }
 

@@ -109,7 +109,8 @@ int table_load(Table *t, const uint8_t *state, int state_len, const uint8_t *ros
     int8_t kinds[MAX_PLAYERS];
     t->loaded = false;
     t->detail = 0;
-    if (!state || state_len < 4 || state[0] != TABLE_STATE_FORMAT) return TABLE_E_STATE_VERSION;
+    if (!state || state_len < 4 || (state[0] != TABLE_STATE_FORMAT && state[0] != STATE_BLOB_FORMAT_V2))
+        return TABLE_E_STATE_VERSION;
     const int rc = roster_decode(&r, roster, roster_len);
     if (rc != ROSTER_OK) { t->detail = rc; return TABLE_E_ROSTER; }
     // The seat count is the state's second byte; checked before the import so a
@@ -117,7 +118,7 @@ int table_load(Table *t, const uint8_t *state, int state_len, const uint8_t *ros
     if (state[STATE_BLOB_HEADER + 1] != (uint8_t)r.n) return TABLE_E_MISMATCH;
     const int kr = table_seat_kinds(&r, kinds);
     if (kr != TABLE_OK) return kr;
-    const int v = state_blob_load(t->g, state, state_len);
+    const int v = state_blob_load(t->g, state, state_len, &t->clock);
     if (v != 1) return v == 0 ? TABLE_E_STATE_VERSION : v;
     t->g->rules = 0;   // online play is the classic game (Q18); a previous FMSG decode may have left a variant
     for (int s = 0; s < r.n; s++) t->g->players[s].strategy_key = kinds[s];
@@ -201,7 +202,8 @@ bool table_bots_need_logs(const Table *t) {
 static int unnamed_seat(const Game *g);
 
 // A bound on one state_put, for reserving space before writing it.
-#define TABLE_STATE_MAX (STATE_BLOB_HEADER + 24 + MAX_DECK + 2 * MAX_BATTLES + MAX_PLAYERS * (3 + MAX_HAND_SIZE) + 1 + MAX_PLAYERS)
+#define TABLE_STATE_MAX (STATE_BLOB_HEADER + 24 + MAX_DECK + 2 * MAX_BATTLES + MAX_PLAYERS * (3 + MAX_HAND_SIZE) + 1 + MAX_PLAYERS \
+                         + STATE_BLOB_CLOCK_BYTES)
 
 // ---------- fixtures --------------------------------------------------------------
 
@@ -217,7 +219,8 @@ int table_seal(Table *t, const Game *g, const Roster *r, uint8_t *out, int cap) 
     if (g->num_eliminated < 0 || g->num_eliminated > MAX_PLAYERS) return GAME_INVALID_ELIMINATION;
     for (int i = 0; i < g->num_players; i++)
         if (g->players[i].hand_count < 0 || g->players[i].hand_count > MAX_HAND_SIZE) return GAME_INVALID_COUNT;
-    const int state_len = state_blob_put(g, out);
+    // A composed board has never been shown to anyone: a zero clock.
+    const int state_len = state_blob_put(g, 0, out);
     const int rc = roster_encode(r, out + state_len, cap - state_len);
     if (rc < 0) { t->detail = rc; return TABLE_E_ROSTER; }
     const int loaded = table_load(t, out, state_len, out + state_len, rc);
@@ -256,15 +259,65 @@ static int snap_refs(const Table *t, EvSnap *refs) {
     return s->n;
 }
 
-static void count_event(void *ctx, const EvwEvent *ev) { (void)ev; (*(int *)ctx)++; }
+// The operation's event stream as the timing sees it: each event's type and
+// acting seat, which is all anim_stream_ms reads, and the count of them. The
+// same walk table_push serializes, plus the trailing transition it appends, so
+// the count is the push's n_events and the shape is the stream a viewer plays.
+// The viewer only masks cards, never adds or drops an event, so the spectator's
+// walk is every viewer's.
+_Static_assert(EVW_T_MAGIC_TRANSITION == ANIM_EVT_MAGIC_TRANSITION && EVW_T_DEAL == ANIM_EVT_DEAL
+               && EVW_T_FLIPPED == ANIM_EVT_FLIPPED && EVW_T_DEFENDER_MOVE == ANIM_EVT_DEFENDER_MOVE
+               && EVW_T_ATTACK_PASS == ANIM_EVT_ATTACK_PASS && EVW_T_COVER == ANIM_EVT_COVER
+               && EVW_T_PICKUP == ANIM_EVT_PICKUP && EVW_T_DISCARD == ANIM_EVT_DISCARD
+               && EVW_T_OUT == ANIM_EVT_OUT && EVW_T_REFILL == ANIM_EVT_REFILL
+               && EVW_T_CARDS_TO_TRASH == ANIM_EVT_CARDS_TO_TRASH,
+               "the event walk and the animation plan number their event types alike");
+typedef struct {
+    int n;                         // every event, including any past the arrays
+    int types[ANIM_MAX_STEPS];
+    int seats[ANIM_MAX_STEPS];
+} OpStream;
 
-static int event_count(const Table *t) {
+static void stream_add(OpStream *s, int type, int seat) {
+    if (s->n < ANIM_MAX_STEPS) { s->types[s->n] = type; s->seats[s->n] = seat; }
+    s->n++;
+}
+
+static void stream_event(void *ctx, const EvwEvent *ev) { stream_add((OpStream *)ctx, ev->type, ev->seat); }
+
+static int op_stream(const Table *t, OpStream *s) {
     EvSnap refs[MAX_SNAPS];
     const int n = snap_refs(t, refs);
-    int count = 0;
+    s->n = 0;
     evwire_walk(refs, n, t->g->logs + t->log_start, t->g->num_logs - t->log_start, VIEW_SPECTATOR,
-                count_event, &count);
-    return count + ((t->ended || t->lobby_event) ? 1 : 0);
+                stream_event, s);
+    if (t->ended || t->lobby_event) stream_add(s, EVW_T_MAGIC_TRANSITION, -1);
+    return s->n;
+}
+
+// The board's clock once this operation is committed (view.h BoardClock). An
+// operation a viewer is SHOWN - one whose push carries an event or a change of
+// the goods, the same test the hosts broadcast on - is shown now, and finishes
+// playing its stream's length after whatever was still playing, because a
+// client queues a push behind the one in flight. An operation nobody is shown
+// (a silent good, a hand rearranged) leaves the clock where it was, so the last
+// thing a viewer watched is still what a bot's wait is measured from.
+//
+// A QUEUE LONGER THAN THE LONGEST WAIT IS NOT A QUEUE. A clock that settles
+// further ahead than BOT_PACE_WAIT_MAX_MS was written by a clock that is not
+// this one (a host whose time went backwards, a row carried between hosts), and
+// queueing behind it would carry the error into every commit after; the stream
+// starts now instead, so one commit puts the clock right.
+static BoardClock next_clock(const Table *t, const OpStream *s, bool shown, int64_t now_ms) {
+    BoardClock c = t->clock;
+    if (!shown) return c;
+    const int n = s->n < ANIM_MAX_STEPS ? s->n : ANIM_MAX_STEPS;
+    const int ms = anim_stream_ms(s->types, s->seats, n);
+    const bool queued = c.settles_ms > now_ms && c.settles_ms - now_ms <= BOT_PACE_WAIT_MAX_MS;
+    const int64_t start = queued ? c.settles_ms : now_ms;
+    c.shown_ms = now_ms;
+    c.settles_ms = start + (ms > 0 ? ms : 0);
+    return c;
 }
 
 int table_push(const Table *t, const char *game_id, int gid_len, int viewer, uint8_t *out, int cap) {
@@ -318,12 +371,14 @@ int table_commit_products(const Table *t, const char *game_id, int gid_len, uint
     // wore a check. The operation is broadcast anyway, by the sweep's events.
     // What a push must carry is the difference a viewer would SEE.
     out->goods_changed = (game_shown_good_mask(t->g) != t->pre_good_mask);
-    const int n_events = event_count(t);
+    OpStream stream;
+    const int n_events = op_stream(t, &stream);
     out->n_events = (uint8_t)(n_events > 255 ? 255 : n_events);
+    const BoardClock clock = next_clock(t, &stream, n_events > 0 || out->goods_changed, now_ms);
 
     if (cap - at < TABLE_STATE_MAX) return TABLE_E_CAP;
     out->state.off = at;
-    out->state.len = state_blob_put(g, arena + at);
+    out->state.len = state_blob_put(g, &clock, arena + at);
     at += out->state.len;
 
     const int rl = roster_encode(&t->r, arena + at, cap - at);
@@ -858,8 +913,9 @@ int table_drive_prefs(const Table *t, const BotDriveOut *drv, uint8_t *out, int 
     return at;
 }
 
-int table_cycle_delay_ms(const Table *t, const BotDriveOut *drv) {
-    return bot_cycle_delay_ms(t->g, game_human_mask(t->g), drv);
+int table_bot_wait_ms(const Table *t, int64_t now_ms) {
+    if (!t->loaded) return TABLE_E_NOT_LOADED;
+    return bot_wait_ms(t->g, game_human_mask(t->g), t->clock.shown_ms, t->clock.settles_ms, now_ms);
 }
 
 static bool info_type(int type) {

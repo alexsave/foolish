@@ -132,6 +132,62 @@ static int beat_end(const BeatShape *s, int g, int n_events) {
     return (g + 1 < s->n_beats) ? (int)s->first[g + 1] : n_events;
 }
 
+// ---- the clock: a stream laid out in beats, once -------------------------
+//
+// Consecutive covers by one seat open together, a beat of pure notices takes no
+// time, and a bout-ending cover pushes what follows out by ANIM_BOUT_END_HOLD_MS.
+// A host sampling anim_plan_at per frame then needs no scheduler of its own -
+// the rest comes out of the sampler, which is the whole reason it is here rather
+// than in a setTimeout on the other side of the boundary.
+//
+// ONE LAYOUT FOR TWO QUESTIONS. anim_build_plan asks it for every step's start
+// and duration; anim_stream_ms asks it only how long the whole stream plays
+// (the server's bot wait, bot_drive.h bot_wait_ms). `steps` NULL is the second
+// question. Returns the stream's wall time - the last beat's opening plus its
+// flight, so neither the trailing gap nor a trailing hold counts (see the note
+// at the end of anim_build_plan) - or a negative ANIM_E*.
+static int beat_clock(const int *types, const int *seats, int n, AnimPlanStep *steps) {
+    BeatShape shape;
+    const int nb = beat_shape(types, seats, n, &shape);
+    if (nb < 0) return nb;
+
+    int open = 0;   // when the next beat opens, from the sequence's start
+    int total = 0;  // when the last beat so far lands
+    for (int g = 0; g < nb; g++) {
+        const int first = (int)shape.first[g];
+        const int end = beat_end(&shape, g, n);
+        // ONE duration for the whole beat: its cards fly together, so they
+        // land together. The longest of them is the beat's, which today is
+        // ANIM_TIME_MS for anything that moves and 0 for a beat of notices.
+        int dur = 0;
+        for (int i = first; i < end; i++) {
+            const int d = anim_step_duration_ms(types[i]);
+            if (d > dur) dur = d;
+        }
+        const int hold = shape.holds[g] ? ANIM_BOUT_END_HOLD_MS : 0;
+        for (int i = first; steps && i < end; i++) {
+            AnimPlanStep *st = &steps[i];
+            st->start_ms = open;
+            st->duration_ms = dur;
+            st->beat_first = first;
+            st->beat_n = end - first;
+            st->hold_ms = hold;
+        }
+        total = open + dur;
+        // A beat that took no time waits no gap either - a notice rides the
+        // landing of the beat that caused it rather than opening a slot of
+        // its own. Then the rest, which is already the next beat's start.
+        if (dur > 0) open += dur + ANIM_GAP_MS;
+        open += hold;
+    }
+    return total;
+}
+
+int anim_stream_ms(const int *types, const int *seats, int n) {
+    if (n < 0 || (n > 0 && (!types || !seats))) return ANIM_EBADARG;
+    return beat_clock(types, seats, n, 0);
+}
+
 // ---- plan building --------------------------------------------------------
 
 // The per-event count delta, POSITIVE direction (forward in time):
@@ -322,56 +378,24 @@ int anim_build_plan(const AnimPlanEvent *events, int n_events, int n_players,
         }
     }
 
-    // …AND THE CLOCK, laid out in BEATS rather than in steps. The grouping is
-    // the beats' own (beat_shape, the one the beats entry uses), so the plan
-    // and anim_build_beats cannot name different boundaries: consecutive covers
-    // by one seat open together, a beat of pure notices takes no time, and a
-    // bout-ending cover pushes what follows out by ANIM_BOUT_END_HOLD_MS. A
-    // host sampling anim_plan_at per frame then needs no scheduler of its own -
-    // the rest comes out of the sampler, which is the whole reason it is here
-    // rather than in a setTimeout on the other side of the boundary.
+    // …AND THE CLOCK, laid out in BEATS rather than in steps (beat_clock, the
+    // one layout anim_stream_ms answers from too). The grouping is the beats'
+    // own (beat_shape, the one the beats entry uses), so the plan and
+    // anim_build_beats cannot name different boundaries.
     //
     // ARRAYS ZEROED WHOLE for the same reason pre_evs above is: only the first
     // n_events entries are read, but they cross into beat_shape as one object
     // and an array a rule walks should not have an undefined tail. ~1 KB of
     // frame on wasm32, against the ~2.5 KB the row adapter already spends.
+    int clock_ms;
     {
         int types[ANIM_MAX_STEPS] = {0}, seats[ANIM_MAX_STEPS] = {0};
         for (int i = 0; i < n_events; i++) {
             types[i] = events[i].type;
             seats[i] = events[i].seat;
         }
-        BeatShape shape;
-        const int nb = beat_shape(types, seats, n_events, &shape);
-        if (nb < 0) return nb;
-
-        int open = 0;   // when the next beat opens, from the sequence's start
-        for (int g = 0; g < nb; g++) {
-            const int first = (int)shape.first[g];
-            const int end = beat_end(&shape, g, n_events);
-            // ONE duration for the whole beat: its cards fly together, so they
-            // land together. The longest of them is the beat's, which today is
-            // ANIM_TIME_MS for anything that moves and 0 for a beat of notices.
-            int dur = 0;
-            for (int i = first; i < end; i++) {
-                const int d = anim_step_duration_ms(events[i].type);
-                if (d > dur) dur = d;
-            }
-            const int hold = shape.holds[g] ? ANIM_BOUT_END_HOLD_MS : 0;
-            for (int i = first; i < end; i++) {
-                AnimPlanStep *st = &out->steps[i];
-                st->start_ms = open;
-                st->duration_ms = dur;
-                st->beat_first = first;
-                st->beat_n = end - first;
-                st->hold_ms = hold;
-            }
-            // A beat that took no time waits no gap either - a notice rides the
-            // landing of the beat that caused it rather than opening a slot of
-            // its own. Then the rest, which is already the next beat's start.
-            if (dur > 0) open += dur + ANIM_GAP_MS;
-            open += hold;
-        }
+        clock_ms = beat_clock(types, seats, n_events, out->steps);
+        if (clock_ms < 0) return clock_ms;
     }
 
     // Forward walk from the freeze -> each step's post counts + veil. The
@@ -426,15 +450,13 @@ int anim_build_plan(const AnimPlanEvent *events, int n_events, int n_players,
             }
         }
     }
-    // Wall time: last step's start + its duration (the trailing gap is dead air
+    // Wall time: beat_clock's answer, the last step's start + its duration (the trailing gap is dead air
     // the queue does not wait on, and a trailing HOLD is too - a hold exists to
     // let the table be read before the sweep, and a stream with nothing after
     // the cover has no sweep to hold against. anim_build_beats only ever sets
     // ANIM_BEAT_HOLDS when a discard or a trash follows, so the last beat of a
     // plan cannot be the one holding; this is the belt to that braces).
-    out->total_ms = n_events > 0
-        ? out->steps[n_events - 1].start_ms + out->steps[n_events - 1].duration_ms
-        : 0;
+    out->total_ms = clock_ms;
     return ANIM_EOK;
 }
 

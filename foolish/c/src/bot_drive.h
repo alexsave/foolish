@@ -43,6 +43,52 @@
 // comment to "mirror the server", which was never true.
 int bot_pacing_ms(int pacing_class, int humans_present);
 
+// The values bot_pacing_ms prices a visible class at, adopted verbatim from the
+// server as the one table (owner decision, July 2026): 3000ms is its tuned pace
+// with a human watching (its own note records 4500ms as sluggish and 1500ms as
+// too fast to follow), 300ms the bots-only pace nobody watches live.
+#define BOT_PACE_MS_WITH_HUMANS 3000
+#define BOT_PACE_MS_BOTS_ONLY    300
+
+// ---------- the wait before a bot acts (a server's bot loop) ---------------
+//
+// HOW LONG A BOT MUST WAIT BEFORE IT ACTS ON THE BOARD IN FRONT OF IT, which is
+// a question about the viewers and not about the bot's own last move.
+//
+// A bot answers a board its human viewers must first have SEEN: the last
+// committed operation plays on their screens for its whole animation stream
+// (anim_plan.h anim_stream_ms - a deal is seven beats, a bout end a hold, a
+// sweep and the refills), and only then does the reaction pace start. So with a
+// human IN the bot may act at
+//
+//     settles_ms + BOT_PACE_MS_WITH_HUMANS
+//
+// where settles_ms is when the last shown operation finished playing, and in a
+// bots-only game at shown_ms + BOT_PACE_MS_BOTS_ONLY, the pace from the last
+// shown commit, with no animation term (nobody is watching live). The answer is
+// that instant minus now_ms, never negative, and never past BOT_PACE_WAIT_MAX_MS.
+//
+// THIS REPLACES a fixed sleep after each bot cycle (bot_cycle_delay_ms, which
+// the phone's local loop still uses: its board is on the same device, so its
+// wait is what its own renderer needs). A fixed sleep counted from the bot's
+// OWN commit ignored every other commit: the deal, whose seven beats ate the
+// pace between the first two bot moves of a game, and a human's move, which a
+// bot answered at t=0 - before the human's own screen had even landed it, so a
+// throw-in made on the open bout that screen showed was refused (e2e
+// web_bot_first_move_pace / web_throwin_vs_bot).
+//
+// The clock is the table's (table.h TableClock, persisted in the state blob by
+// every commit); a clock of zero - a board never shown, a blob older than the
+// clock - asks for no wait.
+//
+// THE CEILING is a guard, not a pace: a stream long enough to reach it does not
+// exist in play (an 8-seat deal or a bout end with every seat refilling is
+// under 8s), but a persisted clock from a skewed or corrupt host must never park
+// a game, and a host's lease must outlive any wait (the Supabase bot lease is
+// 25s, bot_actions.ts BOT_LEASE_TTL_MS).
+#define BOT_PACE_WAIT_MAX_MS 15000
+int bot_wait_ms(const Game *g, uint32_t human_mask, int64_t shown_ms, int64_t settles_ms, int64_t now_ms);
+
 // ---------- the drive cycle (F2) -------------------------------------------
 
 // Why the drive stopped.
