@@ -15,9 +15,9 @@
  * CONTROLS
  *   left/right (nothing selected) -> select the leftmost card
  *   left/right (card selected)    -> move the cursor between hand cards
- *   down  (defender)              -> pick up (if the table is non-empty)
- *   down  (attacker)              -> good   (if the table is fully covered)
- *       down works with or without an active cursor (neither needs a card).
+ *   down                          -> pick up (defender) or good (attacker),
+ *       exactly when the board shows that button (gameValidation boardPills):
+ *       with or without an active cursor, never while cards are selected.
  *   up    (attacker)              -> attack with the cursor card (if legal)
  *   up    (defender):
  *       can cover exactly one & cannot pass  -> cover it immediately
@@ -47,10 +47,12 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useServer } from '../../contexts/ServerContext';
 import { useAnimation } from '../../contexts/AnimationContext';
 import { useGame } from '../../contexts/GameContext';
-import { canAttack, canPass, coverGesture } from '../../utils/gameValidation';
+import { boardPills, coverGesture } from '../../utils/gameValidation';
 import { clientTable } from '@sdk/ts/table/client_table.ts';
-import { PLAY_TARGET_HAND } from '@sdk/ts/gen/view_layout.bots.ts';
-import { covered, rulesOf, seatKey, type TableView, type ViewCard as Card } from '../../state/view';
+import {
+    PLAY_PILL_ATTACK, PLAY_PILL_GOOD, PLAY_PILL_PASS, PLAY_PILL_PICKUP, PLAY_TARGET_HAND,
+} from '@sdk/ts/gen/view_layout.bots.ts';
+import { covered, seatKey, type TableView, type ViewCard as Card } from '../../state/view';
 
 type CoverTarget = { kind: 'cover'; attack: Card; battleIndex: number };
 type Target = CoverTarget | { kind: 'pass' };
@@ -208,6 +210,14 @@ export const KeyboardPlayMode = () => {
 
             e.preventDefault();
 
+            // Down is the Take or the Good button, whichever the board shows for
+            // the selection - so neither, while cards are selected.
+            const takeOrGood = () => {
+                const pills = boardPills(g, s.selectedCards || []);
+                if (pills & PLAY_PILL_PICKUP) s.fire('pickup', s.pickup());
+                else if (pills & PLAY_PILL_GOOD) s.fire('good', s.good());
+            };
+
             // ---------- TARGET (cover/pass) mode -------------------------------
             if (cur) {
                 const len = cur.targets.length;
@@ -229,11 +239,7 @@ export const KeyboardPlayMode = () => {
             if (sel == null) {
                 // Down picks up (defender) / goods (attacker) without needing a
                 // cursor first — neither move depends on a selected card.
-                if (k === 'ArrowDown') {
-                    if (isDefender) { if (g.battles.length > 0) s.fire('pickup', s.pickup()); }
-                    else { if (rulesOf(g).canSayGood) s.fire('good', s.good()); }
-                    return;
-                }
+                if (k === 'ArrowDown') { takeOrGood(); return; }
                 if (k === 'ArrowLeft' || k === 'ArrowRight') { if (h.length) setSelIdx(0); }
                 return;
             }
@@ -245,11 +251,7 @@ export const KeyboardPlayMode = () => {
             const card = h[sel];
             if (!card) return;
 
-            if (k === 'ArrowDown') {
-                if (isDefender) { if (g.battles.length > 0) s.fire('pickup', s.pickup()); }
-                else { if (rulesOf(g).canSayGood) s.fire('good', s.good()); }
-                return;
-            }
+            if (k === 'ArrowDown') { takeOrGood(); return; }
 
             if (k === 'ArrowUp') {
                 // ----- multi-select commit (Feature 2) -------------------------
@@ -259,8 +261,9 @@ export const KeyboardPlayMode = () => {
                 // is empty, fall through to the single-cursor-card behaviour.
                 const selected: Card[] = s.selectedCards || [];
                 if (selected.length > 0) {
+                    const pills = boardPills(g, selected);
                     if (!isDefender) {
-                        if (canAttack(g, selected)) {
+                        if (pills & PLAY_PILL_ATTACK) {
                             s.fire('attack', s.attack(selected), true);
                         }
                         return;
@@ -271,15 +274,17 @@ export const KeyboardPlayMode = () => {
                         s.fire('cover', s.cover([...move.cards], [...move.attackCards]), true);
                         return;
                     }
-                    if (canPass(g, selected)) {
+                    if (pills & PLAY_PILL_PASS) {
                         s.fire('pass', s.pass(selected), true);
                     }
                     // ambiguous / illegal multi-card cover: no-op, keep selection
                     return;
                 }
 
+                // The cursor card is played as the buttons would play it selected.
+                const pills = boardPills(g, [card]);
                 if (!isDefender) {
-                    if (canAttack(g, [card])) s.fire('attack', s.attack([card]));
+                    if (pills & PLAY_PILL_ATTACK) s.fire('attack', s.attack([card]));
                     return;
                 }
                 // defender: decide cover vs pass vs target-selection
@@ -288,7 +293,7 @@ export const KeyboardPlayMode = () => {
                 // to offer, and in what order to cycle them, is this picker's.
                 const coverable: CoverTarget[] = clientTable().play(g, [card], PLAY_TARGET_HAND).coverable
                     .map((i) => ({ kind: 'cover', attack: g.battles[i].attack, battleIndex: i }));
-                const passOK = canPass(g, [card]);
+                const passOK = (pills & PLAY_PILL_PASS) !== 0;
 
                 if (coverable.length === 0 && passOK) { s.fire('pass', s.pass([card])); return; }
                 if (coverable.length === 1 && !passOK) { s.fire('cover', s.cover([card], [coverable[0].attack])); return; }

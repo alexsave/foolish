@@ -1,5 +1,6 @@
-// The client's move gates (src/utils/gameValidation.ts, over the kernel's
-// client_validate on the board the screen holds) must answer with the EXACT
+// The client's move gates (src/utils/gameValidation.ts, over the kernel on the
+// board the screen holds: boardPills, the buttons a selection offers, and
+// validateActionWire, the optimistic pre-check) must answer with the EXACT
 // verdict the authoritative server kernel gives - despite the board holding
 // opponents' hands and the stock only as counts (the client can't see their
 // cards). That equivalence holds because none of the validators inspect another
@@ -19,7 +20,9 @@ import assert from 'node:assert/strict';
 
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import type { TableView, ViewCard as Card } from '../sdk/ts/table/client_table.ts';
-import { canAttack, canPass, canPickup, canCoverPair, validateCover } from '../src/utils/gameValidation.ts';
+import * as V from '../sdk/ts/gen/view_layout.bots.ts';
+import { boardPills, canCoverPair, validateActionWire } from '../src/utils/gameValidation.ts';
+import { clientTable } from '../sdk/ts/table/client_table.ts';
 import { __clientKernelExports } from '../sdk/ts/wasm/bots.ts';
 import { unambiguousCover as kernelUnambiguousCover } from './helpers/table_fixture.ts';
 import { encodeAction, type AwireMove } from '../sdk/ts/wire/awire.ts';
@@ -37,8 +40,10 @@ const legal = (t: MemTable, seat: number, move: AwireMove): boolean => {
   assert.ok(rc === L.TABLE_APPLIED || rc === L.TABLE_REJECTED, `a move is applied or rejected, got ${rc}`);
   return rc === L.TABLE_APPLIED;
 };
-const canCover = (view: TableView, covers: Card[], attacks: Card[]): boolean => {
-  try { validateCover(view, covers, attacks); return true; } catch { return false; }
+// Whether the board shows the button `pill` for the selection `cards`.
+const shows = (view: TableView, cards: Card[], pill: number): boolean => (boardPills(view, cards) & pill) !== 0;
+const preCheck = (view: TableView, move: AwireMove): boolean => {
+  try { validateActionWire(view, encodeAction(move)); return true; } catch { return false; }
 };
 
 test('client gates == authoritative kernel across random games (2..6 players)', () => {
@@ -60,30 +65,41 @@ test('client gates == authoritative kernel across random games (2..6 players)', 
         // Every enumerated legal move must be accepted by the client gate too.
         for (const m of moves) {
           if (m.kind === 'attack') {
-            assert.equal(canAttack(pg, m.cards), legal(t, seat, m), 'attack gate parity'); legalChecks++;
+            assert.equal(shows(pg, m.cards, V.PLAY_PILL_ATTACK), legal(t, seat, m), 'attack pill parity'); legalChecks++;
           } else if (m.kind === 'pass') {
-            assert.equal(canPass(pg, m.cards), legal(t, seat, m), 'pass gate parity'); legalChecks++;
+            assert.equal(shows(pg, m.cards, V.PLAY_PILL_PASS), legal(t, seat, m), 'pass pill parity'); legalChecks++;
           } else if (m.kind === 'cover') {
-            assert.equal(canCover(pg, m.cards, m.attack_cards!), legal(t, seat, m), 'cover gate parity'); legalChecks++;
+            assert.equal(preCheck(pg, m), legal(t, seat, m), 'cover pre-check parity'); legalChecks++;
           } else if (m.kind === 'pickup') {
-            assert.equal(canPickup(pg), legal(t, seat, m), 'pickup gate parity'); legalChecks++;
+            assert.equal(shows(pg, [], V.PLAY_PILL_PICKUP), legal(t, seat, m), 'pickup pill parity'); legalChecks++;
           }
         }
 
         // Negatives: every card of the seat's hand as a lone attack and a lone
         // pass, and a card the seat does not hold (an opponent's). Both engines
         // must agree on each.
+        //
+        // One difference is the kernel's and deliberate: an attacker who has
+        // said Good is offered no Attack (the kernel's menu lists nothing for
+        // them, and the pills are the menu), while table_act would still take a
+        // throw-in from them. So there the pill may only be the stricter side -
+        // it never offers a move the server refuses.
+        const saidGood = ((g.goodMask >>> seat) & 1) !== 0;
+        const attackParity = (cards: Card[], what: string) => {
+          const pill = shows(pg, cards, V.PLAY_PILL_ATTACK), server = legal(t, seat, { kind: 'attack', cards });
+          if (saidGood) assert.ok(!pill, `${what}: no Attack once Good is said`);
+          else assert.equal(pill, server, what);
+        };
         for (const card of p.hand) {
-          assert.equal(canAttack(pg, [card]), legal(t, seat, { kind: 'attack', cards: [card] }), 'lone attack parity');
-          assert.equal(canPass(pg, [card]), legal(t, seat, { kind: 'pass', cards: [card] }), 'lone pass parity');
+          attackParity([card], 'lone attack parity');
+          assert.equal(shows(pg, [card], V.PLAY_PILL_PASS), legal(t, seat, { kind: 'pass', cards: [card] }), 'lone pass parity');
           illegalChecks += 2;
         }
         const foreign = g.seats[(seat + 1) % np].hand[0];
         if (foreign) {
-          assert.equal(canAttack(pg, [foreign]), legal(t, seat, { kind: 'attack', cards: [foreign] }),
-            'foreign-card attack parity'); illegalChecks++;
+          attackParity([foreign], 'foreign-card attack parity'); illegalChecks++;
         }
-        assert.equal(canPickup(pg), legal(t, seat, { kind: 'pickup' }), 'pickup parity');
+        assert.equal(shows(pg, [], V.PLAY_PILL_PICKUP), legal(t, seat, { kind: 'pickup' }), 'pickup parity');
       }
 
       if (t.drive(1).drive.n === 0) break;
@@ -119,13 +135,16 @@ test('perf + mem: gates are fast and the module memory is flat (no leak)', () =>
   const card = pg.myHand[0];
   const memory = (__clientKernelExports() as unknown as { memory: WebAssembly.Memory }).memory;
 
-  canAttack(pg, [card]);
+  // The pre-check is asked afresh every time (the pills are memoised per board,
+  // so they would measure the memo).
+  const wire = encodeAction({ kind: 'attack', cards: [card] });
+  clientTable().validate(pg, wire);
   const memBefore = memory.buffer.byteLength;
 
   const N = 200_000;
   const t0 = performance.now();
   let truthy = 0;
-  for (let i = 0; i < N; i++) { if (canAttack(pg, [card])) truthy++; }
+  for (let i = 0; i < N; i++) { if (clientTable().validate(pg, wire) === 0) truthy++; }
   const dt = performance.now() - t0;
 
   const memAfter = memory.buffer.byteLength;

@@ -7,10 +7,13 @@ import { CardFace } from "./CardFace";
 import { TexturedSurface } from "../TexturedSurface";
 import { useEffect, useRef } from "react";
 import { Text } from "../Text";
-import { canAttack, canPass, canCoverCards, canPickup, coverGesture } from "../../utils/gameValidation";
+import { boardPills, coverGesture } from "../../utils/gameValidation";
 import { useStyles } from "../../contexts/StyleContext";
 import { useTutorialHint } from "../../contexts/TutorialHintContext";
-import { PLAYER_STATUS, rulesOf, seatKey } from "../../state/view";
+import { PLAYER_STATUS, seatKey } from "../../state/view";
+import {
+    PLAY_PILL_ATTACK, PLAY_PILL_COVER, PLAY_PILL_GOOD, PLAY_PILL_PASS, PLAY_PILL_PICKUP,
+} from "@sdk/ts/gen/view_layout.bots.ts";
 
 // Green glow used by the tutorial to point at the card/button to use next.
 const TUT_GLOW = '0 0 0 3px #2fcf63, 0 0 16px 3px rgba(47,207,99,0.85)';
@@ -144,19 +147,17 @@ export const ActionButtons = () => {
     const self_index = game?.mySeat ?? -1;
     const isDefending = game && self_index !== -1 ? game.defender === self_index : false;
 
-    // raw "this button is relevant" predicates, ignoring the optimistic pressed
-    // flag. The rendered button additionally requires !pressedActions[name], so a
-    // press (click OR keyboard) hides it immediately until the server catches up.
-    // Whether Good is offered is the kernel's (client_view_rules).
-    //
-    // TODO(ios-parity): iMessage board hides Take while cards are selected
-    // (defender) and Good while cards are selected (attacker); consider matching
-    // here.
-    const rawGood = !!game && rulesOf(game).canSayGood;
-    const rawAttack = !!(game && !isDefending && canAttack(game, selectedCards));
-    const rawPass = !!(game && isDefending && canPass(game, selectedCards));
-    const rawCover = !!(game && isDefending && canCoverCards(game, selectedCards));
-    const rawPickup = !!(game && canPickup(game));
+    // Which buttons this selection offers is the kernel's answer (legal.h
+    // play_board_pills, the rule the iMessage board draws by): one move, one
+    // button, so a card under the finger takes Take and Good away. The rendered
+    // button additionally requires !pressedActions[name], so a press (click OR
+    // keyboard) hides it immediately until the server catches up.
+    const pills = game ? boardPills(game, selectedCards) : 0;
+    const rawGood = (pills & PLAY_PILL_GOOD) !== 0;
+    const rawAttack = (pills & PLAY_PILL_ATTACK) !== 0;
+    const rawPass = (pills & PLAY_PILL_PASS) !== 0;
+    const rawCover = (pills & PLAY_PILL_COVER) !== 0;
+    const rawPickup = (pills & PLAY_PILL_PICKUP) !== 0;
 
     const shouldShowGoodButton = rawGood && !pressedActions['good'];
     const shouldShowAttackButton = rawAttack && !pressedActions['attack'];
@@ -164,18 +165,22 @@ export const ActionButtons = () => {
     const shouldShowCoverButton = rawCover && !pressedActions['cover'];
     const shouldShowPickupButton = rawPickup && !pressedActions['pickup'];
 
-    // when a button becomes legitimately relevant again (raw rising edge), drop
-    // its stale optimistic flag so it can re-show on the next turn.
-    const prevRaw = useRef<Record<string, boolean>>({});
+    // when a button becomes legitimately relevant again (a rising edge), drop
+    // its stale optimistic flag so it can re-show on the next turn. The edge is
+    // read with the empty selection's pills folded in: picking a card up and
+    // putting it down again takes Good or Take away and brings it back, and that
+    // must not re-arm a press still on its way to the server.
+    const rearm = pills | (game ? boardPills(game, []) : 0);
+    const prevRearm = useRef(0);
     useEffect(() => {
-        const raws: Record<string, boolean> = {
-            good: rawGood, attack: rawAttack, pass: rawPass, cover: rawCover, pickup: rawPickup,
+        const bits: Record<string, number> = {
+            good: PLAY_PILL_GOOD, attack: PLAY_PILL_ATTACK, pass: PLAY_PILL_PASS, cover: PLAY_PILL_COVER, pickup: PLAY_PILL_PICKUP,
         };
-        for (const a of Object.keys(raws)) {
-            if (!prevRaw.current[a] && raws[a] && pressedActions[a]) setActionPressed(a, false);
-            prevRaw.current[a] = raws[a];
+        for (const a of Object.keys(bits)) {
+            if (!(prevRearm.current & bits[a]) && (rearm & bits[a]) && pressedActions[a]) setActionPressed(a, false);
         }
-    }, [rawGood, rawAttack, rawPass, rawCover, rawPickup, pressedActions, setActionPressed]);
+        prevRearm.current = rearm;
+    }, [rearm, pressedActions, setActionPressed]);
 
     if (!game || game.mySeat < 0) {
         return <div></div>;
@@ -254,7 +259,7 @@ export const ActionButtons = () => {
                                 <div style={spacerStyle} />
                             )}
 
-                            {shouldShowPickupButton && (
+                            {shouldShowPickupButton ? (
                                 <Glow on={hint?.action === 'pickup'}>
                                     <ActionButton seed={0.15} onClick={() => {
                                         setActionPressed('pickup', true);
@@ -266,6 +271,11 @@ export const ActionButtons = () => {
                                         <Text id="pickup" />
                                     </ActionButton>
                                 </Glow>
+                            ) : (
+                                // Take keeps its slot when a selection takes it
+                                // away, so Pass above it does not drop into the
+                                // place Take was a moment ago.
+                                <div style={spacerStyle} />
                             )}
 
                             {shouldShowCoverButton ? (

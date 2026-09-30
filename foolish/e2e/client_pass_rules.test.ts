@@ -1,10 +1,10 @@
 // The pass, as the web plays it: the shield the optimistic board hands on and the
-// gate every input path asks (src/utils/gameValidation.ts canPass) are the kernel's,
-// on the board the screen holds.
+// Pass button every input path asks (src/utils/gameValidation.ts boardPills) are
+// the kernel's, on the board the screen holds.
 //
 //   1. The optimistic board of a pass hands the shield to the next seat still in
 //      play (get_next_player_index), skipping a seat that is out.
-//   2. canPass looks at that next defender's room for the table plus the passed card.
+//   2. the Pass button looks at that next defender's room for the table plus the passed card.
 //
 // Pure logic - no Postgres, no harness. The fast runner
 // (e2e/validation/client_rules_validation.test.ts) imports
@@ -12,11 +12,15 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { canPass } from '../src/utils/gameValidation.ts';
+import { boardPills } from '../src/utils/gameValidation.ts';
+import { PLAY_PILL_PASS } from '../sdk/ts/gen/view_layout.bots.ts';
 import { optimisticBoard } from '../src/state/clientBoards.ts';
 import { encodeAction } from '../sdk/ts/wire/awire.ts';
 import type { TableView, ViewCard as Card } from '../sdk/ts/table/client_table.ts';
 import { boardFixture, fixtureView, type BoardSpec } from './helpers/table_mem.ts';
+
+// Whether the board shows the Pass button for the selection `cards`.
+const showsPass = (view: TableView, cards: Card[]): boolean => (boardPills(view, cards) & PLAY_PILL_PASS) !== 0;
 
 // The shield the board passes to once the viewer's pass stands on it.
 const nextDefenderIndex = (view: TableView): number | undefined =>
@@ -26,7 +30,7 @@ interface Spec { status: 'in' | 'out'; hand_length: number }
 const c = (suit: number, value: number): Card => ({ suit, value });
 
 // The board the defender is shown: a kernel-sealed board read from the
-// defender's envelope. The pass's rotation and canPass read the seats' statuses
+// defender's envelope. The pass's rotation and the Pass button read the seats' statuses
 // and counts, the defender and the table. The defender is the local player and
 // must actually HOLD the cards it passes (the kernel checks hand membership -
 // the old TS canPass did not); every other seat holds its count of cards
@@ -52,29 +56,29 @@ export function registerClientRulesValidation(): void {
         assert.equal(nextDefenderIndex(g), 1);
     });
 
-    // ---- 2: canPass and the next defender's room ---------------------------------
-    test('canPass is FALSE when the next defender lacks room', () => {
+    // ---- 2: the Pass button and the next defender's room ---------------------------------
+    test('Pass is not shown when the next defender lacks room', () => {
         // Two uncovered 7s on the table; defender passes a third 7 -> next defender
         // would face 3 cards but holds only 1.
         const g = makeGame(0,
             [{ status: 'in', hand_length: 3 }, { status: 'in', hand_length: 1 }, { status: 'in', hand_length: 5 }],
             [{ attack: c(1, 7), defense: null }, { attack: c(2, 7), defense: null }], [c(0, 7)]);
-        assert.equal(canPass(g, [c(0, 7)]), false, '2 on table + 1 passed = 3 > next defender hand of 1');
+        assert.equal(showsPass(g, [c(0, 7)]), false, '2 on table + 1 passed = 3 > next defender hand of 1');
     });
 
-    test('canPass is TRUE for a legal pass the keyboard should offer', () => {
+    test('Pass is shown for a legal pass', () => {
         const g = makeGame(0,
             [{ status: 'in', hand_length: 3 }, { status: 'in', hand_length: 4 }, { status: 'in', hand_length: 5 }],
             [{ attack: c(1, 7), defense: null }], [c(0, 7)]);
-        assert.equal(canPass(g, [c(0, 7)]), true);
+        assert.equal(showsPass(g, [c(0, 7)]), true);
     });
 
-    test('canPass over an eliminated next seat checks the REAL next defender', () => {
+    test('Pass over an eliminated next seat checks the REAL next defender', () => {
         // defender seat 1, seat 2 OUT (0 cards), real next defender seat 0 has room.
         const g = makeGame(1,
             [{ status: 'in', hand_length: 5 }, { status: 'in', hand_length: 4 }, { status: 'out', hand_length: 0 }],
             [{ attack: c(3, 8), defense: null }, { attack: c(2, 8), defense: null }], [c(0, 8)]);
-        assert.equal(canPass(g, [c(0, 8)]), true, 'must look past the out seat to seat 0 (room for 3)');
+        assert.equal(showsPass(g, [c(0, 8)]), true, 'must look past the out seat to seat 0 (room for 3)');
     });
 }
 

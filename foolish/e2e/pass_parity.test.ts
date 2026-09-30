@@ -9,7 +9,7 @@
 //      and the client's move lists play), read through e2e/helpers/table_play.ts
 //   2. SERVER       - the C Table's table_act (the operation the move path runs
 //      for the auth id's seat): TABLE_APPLIED == legal, TABLE_REJECTED == illegal
-//   3. CLIENT       - canPass from src/utils/gameValidation.ts (the UI button gate),
+//   3. CLIENT       - the Pass button from src/utils/gameValidation.ts (boardPills),
 //      over the board (TableView) the client reads from the server's envelope bytes
 //      (readEnvelopeView, the web's reader): the stored player_views row for a human defender
 // The invariant: all three must agree for the defender's own hand. A disagreement
@@ -28,7 +28,8 @@ import assert from 'node:assert/strict';
 import { applySchema, resetDb, uuid, pgPool } from './harness.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import type { TableView } from '../sdk/ts/table/client_table.ts';
-import { canPass as clientCanPass } from '../src/utils/gameValidation.ts';
+import { boardPills } from '../src/utils/gameValidation.ts';
+import { PLAY_PILL_PASS } from '../sdk/ts/gen/view_layout.bots.ts';
 import { readEnvelopeView as readEnvelope } from './helpers/client_read.ts';
 import { encodeAction } from '../sdk/ts/wire/awire.ts';
 import { __setTableDealSeedOverride } from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
@@ -37,6 +38,9 @@ import { fixture, fixtureTable, OUT } from './helpers/table_fixture.ts';
 import { cardText, legalMoves, mustReadTable, residentBoard, type BoardState, type PlayCard } from './helpers/table_play.ts';
 import { runAction, runMeta, seedLobby } from './helpers/table_server.ts';
 import { suiteRng } from './helpers/rng.ts';
+
+// Whether the board shows the Pass button for the selection `cards`.
+const clientCanPass = (view: TableView, cards: readonly PlayCard[]): boolean => (boardPills(view, cards) & PLAY_PILL_PASS) !== 0;
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; }
 
