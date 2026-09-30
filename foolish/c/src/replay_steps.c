@@ -8,7 +8,9 @@
 // pass 2 builds the deck those atoms imply and plays the moves through the
 // engine. The decode is where the cost is and it happens once.
 
-#define RS_MAX_SNAPS   64
+// One step's hooks (the snapshots reset per step), and the deal is a step: the
+// kernel's one snapshot-store size, MAX_SNAPS (game.h), which holds it.
+#define RS_MAX_SNAPS   MAX_SNAPS
 
 typedef struct {
     Card hands[MAX_PLAYERS][CARDS_PER_PLAYER];
@@ -64,6 +66,7 @@ static int        g_rs_aux[RS_MAX_SNAPS];
 static int        g_rs_n;
 
 static void rs_snap_cb(const Game *g, int tag, int aux) {
+    ENGINE_SNAP_ROOM(g_rs_n < RS_MAX_SNAPS);
     if (g_rs_n >= RS_MAX_SNAPS) return;
     memcpy(g_rs_snaps[g_rs_n].bytes, g, RS_GAME_PREFIX);
     g_rs_tags[g_rs_n] = tag;

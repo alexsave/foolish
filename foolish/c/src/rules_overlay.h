@@ -39,7 +39,7 @@
 //
 // Offsets are 16-aligned; each buffer's fit into its slot is _Static_assert'd
 // at its definition site, and wasm_api.c asserts each family END fits the
-// arena — so a cap bump (MAX_LEGAL_MOVES, MAX_SNAPS, IO_CAP, REC_CAP,
+// arena - so a cap bump (MAX_LEGAL_MOVES, WASM_RING_SNAPS, IO_CAP, REC_CAP,
 // REPLAY_IO_CAP) that would overflow fails the LINK loudly (also caught by the
 // R0 memory pin) instead of corrupting a live buffer.
 #ifndef RULES_OVERLAY_H
@@ -54,9 +54,9 @@ extern unsigned char *const rules_overlay;   // == (unsigned char *)&g_rules_are
 
 // ACTION family, laid out from offset 0. Slot widths (next_off - this_off)
 // are 16-aligned around the measured sizes at the rules caps
-// (MAX_LEGAL_MOVES=1024, MAX_SNAPS=16, WASM_IO_CAP=24576):
+// (MAX_LEGAL_MOVES=1024, WASM_RING_SNAPS=16, WASM_IO_CAP=24576):
 #define RULES_OVL_MOVES_OFF     0u        // g_moves (LegalMoves): <= 59408 B slot
-#define RULES_OVL_SNAPS_OFF     59408u    // g_snaps (SnapSlot[MAX_SNAPS]): <= 18560 B slot
+#define RULES_OVL_SNAPS_OFF     59408u    // g_snaps (SnapSlot[WASM_RING_SNAPS]): <= 18560 B slot
 #define RULES_OVL_IO_OFF        77968u    // g_io (IO_CAP): <= 24576 B slot
 #define RULES_OVL_ACTION_END    102544u   // 77968 + 24576
 

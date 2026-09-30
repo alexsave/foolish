@@ -204,12 +204,24 @@ void evwire_walk(const EvSnap *snaps, int n_snaps,
                           0, CARD_NONE, 0, 0, s->g);
                 break;
             case ENGINE_HOOK_DEAL: {
-                // Cards = the dealt hand at snapshot time, masked per viewer.
+                // ONE card: the one that just arrived, masked per viewer. The
+                // opening deal goes round the table a card at a time
+                // (game.c deal_initial), one hook per card, and the card is the
+                // newest in the receiving seat's hand at that snapshot.
+                //
+                // Read off the SNAPSHOT, not off a log the way DRAW is. A DRAW
+                // is a logged move (LOG_DRAW, consumed in order by draw_i); the
+                // deal logs nothing, and giving it a record per card would put
+                // new bytes in the session log, the replay codes and the FMSG
+                // chains that are all built from the log. The snapshot already
+                // holds the answer, honestly: the reveal appends, so the
+                // arrival is hand[hand_count - 1].
                 const Player *pl = (s->aux >= 0 && s->aux < s->g->num_players)
                     ? &s->g->players[s->aux] : 0;
+                const int n = (pl && pl->hand_count > 0) ? 1 : 0;
                 ev_emit(sink, ctx, EVW_T_DEAL, s->aux, EVW_MSG_NONE,
                           EVW_LOC_DECK, EVW_LOC_HAND,
-                          pl ? pl->hand : 0, pl ? pl->hand_count : 0,
+                          n ? &pl->hand[pl->hand_count - 1] : 0, n,
                           viewer != s->aux,
                           0, CARD_NONE, 0, 0, s->g);
                 break;

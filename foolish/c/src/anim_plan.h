@@ -74,6 +74,15 @@
 #define ANIM_TIME_MS 500
 #define ANIM_GAP_MS  25
 
+// ONE DEALT CARD's flight. The opening deal goes round the table a card at a
+// time, one ANIM_EVT_DEAL per card (game.c deal_initial), and at ANIM_TIME_MS
+// that would be six seconds of dealing at two seats and 24 at eight. Only the
+// opening deal paces at this; a refill is a seat's whole draw in one event and
+// keeps ANIM_TIME_MS. Each card is still its own beat, so ANIM_GAP_MS sits
+// between cards and no two flights overlap. Retune freely: nothing else is
+// derived from it.
+#define ANIM_DEAL_CARD_MS 100
+
 // THE BOUT-END HOLD: the rest a sequence takes after a cover that ENDED its
 // bout, before the sweep takes the table away. The one gap in a sequence that
 // is not ANIM_GAP_MS, and the only one that exists so that nothing moves - the

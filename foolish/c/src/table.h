@@ -101,10 +101,7 @@ int table_action_response(int result, int reject, uint32_t version, uint8_t *out
 
 // Snapshots an operation's engine hooks captured, for its event pushes. Only
 // the log-free Game prefix is kept (state_put and the event walk read nothing
-// past it). The wasm builds size MAX_SNAPS for one action's worst case.
-#ifndef MAX_SNAPS
-#define MAX_SNAPS 48
-#endif
+// past it). MAX_SNAPS (game.h) sizes it for the largest operation, the deal.
 #define TABLE_SNAP_BYTES offsetof(Game, num_logs)
 typedef struct { _Alignas(8) unsigned char bytes[TABLE_SNAP_BYTES]; } TableSnapSlot;
 typedef struct {

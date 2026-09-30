@@ -54,15 +54,21 @@ _Static_assert(LOG_EXPORT_WORST <= IO_CAP,
                "IO_CAP cannot hold the log export at this MAX_LOGS/MAX_LOG_PAIRS "
                "- raise WASM_IO_CAP or lower MAX_LOGS (wasm_api.c export_logs "
                "writes unchecked)");
-// Snapshot slots for ONE marshal window (the ring resets per marshal).
-// Analytic worst is num_players + 3 (deal, or a round transition: MAGIC +
-// TRASH + <=num_players+1 per-player refill draws) = 11 at 8 players;
-// measured worst 12 over 63K games (tests/l1_measure.c). The builds pass 24
-// (~1.8x); overflow silently drops animation frames, hence the margin. This
-// default keeps the historical native value.
-#ifndef MAX_SNAPS
-#define MAX_SNAPS 48
-#endif
+// Snapshot slots for ONE action window of the wasm_* action exports (the ring
+// resets per action, begin_action). NOT MAX_SNAPS (game.h), which is sized for
+// a deal: no host deals through this ring and reads it back. The server deals
+// through the Table (table.c) and a replay through replay_steps.c, and both of
+// those stores are MAX_SNAPS. What does reach the ring is an action, or a bot
+// cycle (a silent bundle ahead of one visible action): a round transition at
+// worst, MAGIC + TRASH + <=num_players+1 per-seat refill draws, measured 12
+// over 63K games (tests/l1_measure.c). 16 is 1.33x that.
+//
+// Kept small ON PURPOSE: 48 more slots here are 37 KiB of bss in bots.wasm and
+// web.wasm, which is a page of linear memory in each (e2e/mem/wasm_memory.test.ts
+// pins both). wasm_start_game and msg_decode's re-deal still fire the deal's
+// hooks into it; past 16 they drop - cleanly, the ring never overruns - and
+// nothing reads a deal back from here.
+#define WASM_RING_SNAPS 16
 #define MAX_IN_CARDS 128
 
 #ifdef CD_RULES_OVERLAY
@@ -124,13 +130,13 @@ typedef struct { _Alignas(8) unsigned char bytes[GAME_PREFIX_SIZE]; } SnapSlot;
 // 8-aligned offset satisfies SnapSlot's _Alignas(8).
 _Static_assert(_Alignof(SnapSlot) <= 16, "SnapSlot alignment exceeds the arena's 16");
 _Static_assert(RULES_OVL_SNAPS_OFF % _Alignof(SnapSlot) == 0, "g_snaps offset misaligned");
-_Static_assert(sizeof(SnapSlot) * MAX_SNAPS <= RULES_OVL_IO_OFF - RULES_OVL_SNAPS_OFF, "g_snaps overflows its overlay slot");
+_Static_assert(sizeof(SnapSlot) * WASM_RING_SNAPS <= RULES_OVL_IO_OFF - RULES_OVL_SNAPS_OFF, "g_snaps overflows its overlay slot");
 #define g_snaps ((SnapSlot *)(rules_overlay + RULES_OVL_SNAPS_OFF))
 #else
-static SnapSlot g_snaps[MAX_SNAPS];
+static SnapSlot g_snaps[WASM_RING_SNAPS];
 #endif
-static int g_snap_tags[MAX_SNAPS];
-static int g_snap_aux[MAX_SNAPS];
+static int g_snap_tags[WASM_RING_SNAPS];
+static int g_snap_aux[WASM_RING_SNAPS];
 static int g_n_snaps;
 #ifdef CD_RULES_OVERLAY
 // R1: g_moves is the ACTION family's menu slot (offset 0).
@@ -169,7 +175,7 @@ unsigned char *wasm_cards_b_ptr(void) { return g_in_raw_b; }
 // ---------- snapshot hook -------------------------------------------------
 
 static void snap_cb(const Game *g, int tag, int aux) {
-    if (g_n_snaps >= MAX_SNAPS) return;
+    if (g_n_snaps >= WASM_RING_SNAPS) return;
     memcpy(g_snaps[g_n_snaps].bytes, g, GAME_PREFIX_SIZE);
     g_snap_tags[g_n_snaps] = tag;
     g_snap_aux[g_n_snaps] = aux;
@@ -583,7 +589,7 @@ int wasm_view_serialize(int viewer) {
 // wasm_export_logs_masked_from). Zero for every path that marshals fresh.
 int wasm_events_serialize_from(int viewer, int actor, int append_final_transition,
                                int log_start) {
-    EvSnap refs[MAX_SNAPS];
+    EvSnap refs[WASM_RING_SNAPS];
     for (int i = 0; i < g_n_snaps; i++) {
         // put_state/state_put only read prefix fields, which is exactly what
         // a snapshot slot holds.

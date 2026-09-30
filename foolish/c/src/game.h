@@ -325,6 +325,43 @@ uint32_t game_state_seed(const Game *g, uint32_t base, uint32_t salt);
 // tooling) is likewise unaffected — same reasoning as g_seed/g_rand_seed above.
 extern _Thread_local void (*engine_snap_hook)(const Game *g, int tag, int aux);
 
+// EVERY HOOK OF ONE DEAL: one ENGINE_HOOK_DEAL per dealt card (deal_initial
+// goes round the table a card at a time), then START_MAGIC, FLIPPED and
+// START_DEFENDER. It is the largest burst the engine fires in one operation -
+// a mid-game action's worst is about a dozen - so every snapshot store that can
+// capture a deal is sized to hold this many, and a store sized for
+// the old per-seat deal fails to COMPILE rather than silently losing the flip.
+// MAX_SNAPS below is that size, and it carries the assert.
+#define ENGINE_DEAL_HOOKS (MAX_PLAYERS * CARDS_PER_PLAYER + 3)
+
+// THE size of every snapshot store that captures a deal and reads it back: the
+// Table's (table.c, the server's deal) and the replay walker's (replay_steps.c,
+// a replay's opening step). One number for both, so neither can be sized for a
+// deal the other cannot hold. The deal is the largest operation (51 hooks at
+// eight seats); a mid-game window's measured worst is 12 over 63K games
+// (tests/l1_measure.c: a round transition, MAGIC + TRASH + the per-seat refill
+// draws; a bot cycle bundles silent actions, which fire next to nothing, ahead
+// of its one visible action). 64 holds the deal with 13 to spare. A store that
+// overflows drops the hook (see ENGINE_SNAP_ROOM), it never corrupts. The wasm
+// bridge's action ring is not one of these (wasm_api.c WASM_RING_SNAPS says why).
+#ifndef MAX_SNAPS
+#define MAX_SNAPS 64
+#endif
+_Static_assert(MAX_SNAPS >= ENGINE_DEAL_HOOKS, "MAX_SNAPS cannot hold one deal's hooks");
+
+// A snapshot store that is about to DROP a hook says so, loudly, in a native
+// debug build: a dropped hook is an animation that silently skips its tail (the
+// flip and the opening seats were the first casualties of a deal that outgrew
+// the store). Standard assert(), so NDEBUG turns it off like any other; wasm is
+// freestanding and has no assert.h, and there the store keeps dropping cleanly
+// - never corrupting - behind the compile-time size check above.
+#if defined(__wasm__) || defined(NDEBUG)
+#define ENGINE_SNAP_ROOM(ok) ((void)0)
+#else
+#include <assert.h>
+#define ENGINE_SNAP_ROOM(ok) assert((ok) && "snapshot store full: a hook would be dropped")
+#endif
+
 // ---------- Rejection reasons --------------------------------------------
 //
 // Why the last handle_* / validation returned false. The TS bridge maps

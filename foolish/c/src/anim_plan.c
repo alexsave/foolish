@@ -52,6 +52,9 @@ int anim_step_duration_ms(int event_type) {
     // the same answer by building no flights for it and returning from
     // playStep immediately (MessageTableView+Sequence.swift).
     if (event_type == ANIM_EVT_OUT) return 0;
+    // A DEALT CARD is one card of a deal that goes round the table a card at a
+    // time; it flies for ANIM_DEAL_CARD_MS (anim_plan.h says why).
+    if (event_type == ANIM_EVT_DEAL) return ANIM_DEAL_CARD_MS;
     // Everything else paces at ANIMATION_TIME; a revert is a client synthesis
     // that flies the same distance and gets the same beat. A magic transition
     // keeps its time deliberately: it carries no card but it IS a message the
