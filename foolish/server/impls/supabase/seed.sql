@@ -83,7 +83,7 @@ CREATE TYPE game_status AS ENUM (
 CREATE TABLE games (
   id TEXT PRIMARY KEY,
   status game_status NOT NULL DEFAULT 'waiting', -- the blob's status, written from the kernel on every commit (Q6): for SQL filters and player_views.status
-  state BYTEA NOT NULL, -- the kernel's durable board (c/src/table.h, v02): every hand and the deck order, a lobby included
+  state BYTEA NOT NULL, -- the kernel's durable board (c/src/table.h, v03; v02 still read): every hand and the deck order, a lobby included, then the board's clock the bot wait reads
   roster BYTEA NOT NULL, -- the kernel's durable roster (c/src/roster.h, format 1, 1227 bytes): each seat's id, name and bot brain, and the table title
   needs_bots BOOLEAN NOT NULL DEFAULT FALSE, -- PLAYING and a bot seat is still IN (the kernel's table_needs_bots): the bot heartbeat's scan predicate.
   game_seed TEXT, -- 64 hex chars = the 32-byte deal seed the deck was ChaCha-shuffled from. Regenerates the deal for audit/replay. NULL in a lobby.
@@ -102,7 +102,7 @@ CREATE TABLE games (
 -- where a reader of the hosted database finds them. A line comment in this file
 -- reaches nothing but this file.
 COMMENT ON COLUMN games.state IS
-  'The kernel''s durable board (c/src/table.h, v02): every hand and the deck order, a lobby included. SENSITIVE: service_role only.';
+  'The kernel''s durable board (c/src/table.h, v03; v02 still read): every hand and the deck order, a lobby included, then the board''s clock the bot wait reads. SENSITIVE: service_role only.';
 COMMENT ON COLUMN games.roster IS
   'The kernel''s durable roster (c/src/roster.h, format 1, 1227 bytes): each seat''s id, name and bot brain, and the table title. SENSITIVE: service_role only.';
 COMMENT ON COLUMN games.needs_bots IS
