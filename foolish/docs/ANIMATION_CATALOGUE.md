@@ -156,6 +156,10 @@ Status: both (unit `SendRebaseTests.testTheUndoPillGoesOnTheSendSignalNotOnTheRe
 The withheld half plays: table sweeps to the discard, each player refills in kernel order, then the role hand-off flight.
 Decided (keep) on both counts.
 The refills stay SERIAL, one seat at a time in kernel order - the single place in the whole catalogue where things that could go together deliberately do not, because a refill round is the one moment the deck is dealt out and watching it go round the table is the point.
+The opening deal goes round the table too, one card at a time: first to seat 0, then seat 1, and on round until every seat holds six.
+Each dealt card is its own event and its own beat, and flies for `ANIM_DEAL_CARD_MS` (100 ms, `c/src/anim_plan.h`) with `ANIM_GAP_MS` between cards, so no two are in the air at once.
+The kernel deals it that way (`c/src/game.c` `deal_initial`), so every host renders it without a line of its own.
+Refills stay serial by seat, each seat's whole draw in one flight at `ANIM_TIME_MS`; only the opening deal goes card by card.
 And the settlement starts IMMEDIATELY on the tap, with no beat between "I sent it" and "here is what it did".
 Status: unit (`MessageStagedDealTests.testSendReleasesTheHeldSettlement`, `MessageBoutEndHoldTests.testTheHoldIsAReadableBeatAndScalesWithTheFlights`).
 **Not exercised through a real Send in the rig** - the auto-player never picks a closing cover.
