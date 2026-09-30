@@ -1,7 +1,7 @@
 // Durable state codec: the `games.state bytea` blob is lossless.
 //
 // The blob is the kernel's (table.h: [TABLE_STATE_FORMAT][deterministic deck]
-// [state_put][the board's clock]). A table loads it (table_load: state_import, game_validate) and
+// [state_put], then the board's clock at v3). A table loads it (table_load: state_import, game_validate) and
 // every commit writes it back (table_commit_products). Seat identity is not in
 // it: that is the roster column, a separate blob.
 //
@@ -37,15 +37,19 @@ if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {};
 const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
 
 test('every commit writes the durable blob at the current format', () => {
+  // The expand step (c/src/view.h STATE_BLOB_FORMAT): this kernel reads v2 and
+  // v3 and still writes v2, so a kernel from before the clock can load every row
+  // it writes. The switch step flips the format written to v3.
   const row = dealBotTable(['random', 'random', 'random', 'random'], seedBytes(4, 1));
-  assert.equal(L.TABLE_STATE_FORMAT, 3, 'the format this kernel writes');
+  assert.equal(L.TABLE_STATE_FORMAT, L.TABLE_STATE_FORMAT_V2, 'the format this kernel writes');
+  assert.equal(L.TABLE_STATE_CLOCK_BYTES, 0, 'and a written blob carries no clock');
   assert.equal(row.state[0], L.TABLE_STATE_FORMAT, 'the dealt blob leads with its format');
 });
 
 test('a blob of any other format is refused, not misread', () => {
   // v1 blobs were migrated to v2 at deploy (20260708130000_migrate_state_blobs_v2);
-  // a missed one must fail loud, never load as a mis-parsed game. v2 (the blob
-  // before the clock) is still read - see the next case.
+  // a missed one must fail loud, never load as a mis-parsed game. v2 and v3 are
+  // both read - see the next case.
   const row = dealBotTable(['random', 'random', 'random', 'random'], seedBytes(4, 2));
   const table = fixtureTable();
   for (const version of [0, 1, 4, 0xff]) {
@@ -57,20 +61,33 @@ test('a blob of any other format is refused, not misread', () => {
   assert.equal(table.load(row.state, row.roster), L.TABLE_OK, 'the blob as written loads');
 });
 
-test('a v2 blob, written before the board carried a clock, still loads as the same board', () => {
-  // Every row stored before v3 is a v3 blob with no clock behind it: the kernel
-  // reads it as a board shown long ago, and its next commit writes v3.
+test('a v3 blob, the board with its clock behind it, loads with that clock', () => {
+  // The format the switch step writes, read by this kernel now so a rollback
+  // across the switch finds every row readable. The fixture is the written
+  // board with the v3 format byte and a clock: shown at T, done playing at T+500.
+  const T = 1_700_000_000_000;
   const row = dealBotTable(['random', 'random', 'random', 'random'], seedBytes(4, 3));
   const table = fixtureTable();
-  const v2 = row.state.slice(0, row.state.length - L.TABLE_STATE_CLOCK_BYTES);
-  v2[0] = 2;
-  assert.equal(table.load(v2, row.roster), L.TABLE_OK, 'the v2 blob loads');
+  const board = boardBytes(row.state);
+  const clock = new Uint8Array(L.TABLE_STATE_V3_CLOCK_BYTES);
+  for (let b = 0; b < 6; b++) {
+    clock[b] = Math.floor(T / 2 ** (8 * b)) % 256;
+    clock[6 + b] = Math.floor((T + 500) / 2 ** (8 * b)) % 256;
+  }
+  const v3 = new Uint8Array(board.length + clock.length);
+  v3.set(board);
+  v3.set(clock, board.length);
+  v3[0] = L.TABLE_STATE_FORMAT_V3;
+  assert.equal(table.load(v3, row.roster), L.TABLE_OK, 'the v3 blob loads');
+  // A bots-only board waits the bots-only pace from when it was shown, so the
+  // wait moves with the time gone since T: the clock was read.
+  const wait = table.botWaitMs(T + 100);
+  assert.ok(wait > 0, `a bot waits on the board the clock says was just shown (got ${wait})`);
+  assert.equal(table.botWaitMs(T + 150), wait - 50, 'less the time gone since the clock');
+  assert.equal(table.botWaitMs(T + 3_600_000), 0, 'and not at all an hour later');
   const p = table.commit(row.gameId, row.version, 0);
-  assert.ok(typeof p !== 'number', 'products of the loaded v2 row');
-  assert.equal(p.state[0], L.TABLE_STATE_FORMAT, 'and is written back at the current format');
-  assert.equal(hex(p.state.subarray(1, p.state.length - L.TABLE_STATE_CLOCK_BYTES)), hex(v2.subarray(1)), 'as the same board');
-  assert.equal(hex(p.state.subarray(p.state.length - L.TABLE_STATE_CLOCK_BYTES)), '00'.repeat(L.TABLE_STATE_CLOCK_BYTES),
-    'with the zero clock of a board nobody has been shown');
+  assert.ok(typeof p !== 'number', 'products of the loaded v3 row');
+  assert.equal(hex(p.state), hex(row.state), 'written back at the format this kernel writes, as the same board');
 });
 
 test('the board the generated accessors read back rebuilds the blob, at every state of two games', () => {

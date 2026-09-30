@@ -59,14 +59,20 @@
 // policy one by the number alone (sdk/ts/wire/awire.ts REJECT_STALE_ROUND).
 #define TABLE_REJECT_STALE_ROUND 100
 
-// The durable state blob: [STATE_BLOB_FORMAT][deterministic deck][state_put].
-// The format, and the codec this layer writes and reads it with, are view.h's
-// (state_blob_put / state_blob_load) - the wasm bridge persists the same column
-// through the same pair, so there is one format byte, not two that can drift.
+// The durable state blob: [STATE_BLOB_FORMAT][deterministic deck][state_put],
+// then the board's clock at v3. The format, and the codec this layer writes and
+// reads it with, are view.h's (state_blob_put / state_blob_load) - the wasm
+// bridge persists the same column through the same pair, so there is one format
+// byte, not two that can drift. TABLE_STATE_FORMAT is the format WRITTEN; both
+// TABLE_STATE_FORMAT_V2 and _V3 are read (view.h says why and until when).
 #define TABLE_STATE_FORMAT STATE_BLOB_FORMAT
-// The board's clock the blob ends with (view.h BoardClock): a host comparing two
-// blobs for the same BOARD compares all but these last bytes.
+#define TABLE_STATE_FORMAT_V2 STATE_BLOB_FORMAT_V2
+#define TABLE_STATE_FORMAT_V3 STATE_BLOB_FORMAT_V3
+// The board's clock a WRITTEN blob ends with (view.h BoardClock; 0 bytes while
+// v2 is written): a host comparing two blobs for the same BOARD compares all but
+// these last bytes. A v3 blob's clock is always TABLE_STATE_V3_CLOCK_BYTES.
 #define TABLE_STATE_CLOCK_BYTES STATE_BLOB_CLOCK_BYTES
+#define TABLE_STATE_V3_CLOCK_BYTES STATE_BLOB_V3_CLOCK_BYTES
 
 // ---- the action request and response (the `action` endpoint's body) --------
 //
@@ -114,6 +120,12 @@ typedef struct {
     TableSnapSlot slot[MAX_SNAPS];
 } TableSnaps;
 
+// How many bot-paced commits a table remembers while the clock is not persisted
+// (Table.paces): one per game whose bot loop shares this table, and a server's
+// isolate runs a handful at most.
+#define TABLE_PACE_MEMO 16
+typedef struct { uint64_t blob; int64_t due_ms; } TablePace;
+
 typedef struct {
     Game       *g;          // host storage: the board (the resident slot in wasm)
     TableSnaps *snaps;      // host storage: this operation's hook snapshots
@@ -137,6 +149,17 @@ typedef struct {
     // row's viewers were last shown and when it finishes playing. Read by
     // table_bot_wait_ms; the commit writes the next one (table_commit_products).
     BoardClock  clock;
+    // THE PRE-CLOCK PACE, kept only while the clock is not persisted (a v2
+    // blob; view.h STATE_BLOB_FORMAT). See table_bot_wait_ms.
+    //   unclocked   the loaded blob's FNV-1a 64 when it was v2, else 0
+    //   drive_pace  the last table_bot_drive's bot_cycle_delay_ms, 0 after any
+    //               other operation
+    //   paces       ring of { a v2 blob this table committed after a paced bot
+    //               cycle, the instant the old post-cycle sleep ended }
+    uint64_t    unclocked;
+    int32_t     drive_pace_ms;
+    uint8_t     pace_next;
+    TablePace   paces[TABLE_PACE_MEMO];
     // The preferred moves the last table_bot_drive was offered (BotDrivePref).
     int8_t      n_prefs;
     BotDrivePref prefs[MAX_PLAYERS];
@@ -275,14 +298,20 @@ typedef struct {
     Span    logs;          // session-log records, u48 LE ms timestamp each; len 0 when none
     Span    views[MAX_PLAYERS];  // the response envelope per HUMAN seat; len 0 for a bot or no seat
     Span    spectator;     // the spectator envelope
+    // The board's clock after this operation: what a v3 state blob carries
+    // behind the board (view.h BoardClock). While v2 is written it is computed
+    // and not persisted.
+    BoardClock clock;
 } TableCommit;
 
 // Every product of the loaded table and its last operation, written into
 // `arena`. `next_version` is the version the commit will produce (the envelope
 // carries it); `now_ms` stamps this operation's log records and, when a viewer is
-// shown the operation, advances the board's clock the state blob carries (see
-// Table.clock).
-int table_commit_products(const Table *t, const char *game_id, int gid_len, uint32_t next_version,
+// shown the operation, advances the board's clock (TableCommit.clock, carried by
+// a v3 state blob; see Table.clock). Nothing it writes is read back by the next
+// commit except the pre-clock pace a v2 blob needs (Table.paces), which is why
+// it takes the table unconst.
+int table_commit_products(Table *t, const char *game_id, int gid_len, uint32_t next_version,
                           int64_t now_ms, TableCommit *out, uint8_t *arena, int cap);
 
 // One viewer's response envelope (seat, or -1 for the spectator): the header
@@ -348,6 +377,20 @@ extern void (*table_choose_observer)(const Game *g, int seat);
 // the row again and asks again - somebody may have moved in the meantime, and
 // that move restarts the wait. There is no wait after a cycle: the next cycle's
 // question already counts the one just committed. TABLE_E_NOT_LOADED.
+//
+// A V2 BOARD HAS NO CLOCK, and while v2 is the format written (view.h
+// STATE_BLOB_FORMAT, the expand step) every board is one. A zero clock would ask
+// for no wait at all, and the loop would drive bots back to back: the fixed
+// sleep after each cycle this wait replaced is gone from the host. So on a v2
+// board the answer is that old sleep, kept by the kernel itself: a commit this
+// table made after a paced bot cycle (the cycle's bot_cycle_delay_ms, the rule
+// table_cycle_delay_ms priced it by) remembers the blob it wrote and when the
+// old sleep would have ended (Table.paces), and the wait on that same blob, and
+// only on it, is the rest of that sleep. Any other v2 board - a human's move, a
+// deal, a row this table never wrote - asks for no wait, which is what the old
+// loop did when it started on it. That is the old loop's pace exactly, with the
+// sleep moved from after the commit to before the next drive. Once v3 is
+// written a commit remembers nothing, and the contract step deletes it.
 int table_bot_wait_ms(const Table *t, int64_t now_ms);
 
 // ---- the end of a game -------------------------------------------------------

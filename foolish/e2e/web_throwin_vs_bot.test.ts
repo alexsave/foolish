@@ -31,7 +31,11 @@ const card = (t: string) => ({ suit: 'shcd'.indexOf(t[1]), value: '23456789TJQKA
 // 150-400ms): a slower one only widens the window this case is about.
 const LATENCY = { invokeMs: 80, realtimeMs: 40 };
 
-test('a throw-in I make while my screen shows the bout open is not refused because of a bot move I had not been shown', async () => {
+// NOT YET: the fix needs the board's clock persisted in the state blob (v3),
+// and the expand step still writes v2 (c/src/view.h STATE_BLOB_FORMAT). The
+// writer PR (web-bot-supersede-writer) flips the format and removes this skip.
+const NOT_YET = 'needs the v3 state blob the writer PR (web-bot-supersede-writer) starts writing';
+test('a throw-in I make while my screen shows the bout open is not refused because of a bot move I had not been shown', { skip: NOT_YET }, async () => {
     await resetDb();
     __clearGameCache();
     const gameId = `t${uuid().slice(0, 7)}`;

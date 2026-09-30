@@ -83,11 +83,16 @@ int state_import(Game *g, const unsigned char *p, int len, int masked);
 // to v3. There is no v1 read path - a data migration rewrote every stored v1
 // blob to v2 (flag 0), so no v1 blob ever reaches this kernel.
 //
-// v2 IS STILL READ, as a zero clock, and that is deliberate rather than a
-// migration skipped: a v2 row is exactly a v3 row whose board was last shown
-// long ago, which is what a zero clock says (bot_drive.h bot_wait_ms asks for
-// no wait on it), and its next commit writes it back as v3. Anything that is
-// neither is unreadable.
+// BOTH v2 AND v3 ARE READ; ONE OF THEM IS WRITTEN (STATE_BLOB_FORMAT below).
+// The column is durable, so its format moves the way the repo moves any durable
+// store (docs/ARCHITECTURE_AS_A_PATTERN.md): EXPAND, a kernel that reads the new
+// format and still writes the old one, deployed first; SWITCH, the same kernel
+// with STATE_BLOB_FORMAT flipped to v3, deployed once the expand kernel is live
+// everywhere, so a rollback or a deploy window never puts a v3 row in front of
+// a kernel that refuses it; CONTRACT, the v2 read path deleted once no v2 row
+// is left. A v2 row reads as a zero clock: a board last shown long ago, which
+// is what a zero clock says (bot_drive.h bot_wait_ms asks for no wait on it).
+// Anything that is neither is unreadable.
 //
 // ONE definition, for every writer and reader of that column: the wasm bridge
 // (wasm_state_serialize / wasm_state_deserialize) and the table layer
@@ -95,13 +100,19 @@ int state_import(Game *g, const unsigned char *p, int len, int masked);
 // are both these functions, so a format bump cannot land on one side only.
 // A richer on-disk layout that WRAPS this blob is a different format with its
 // own version (server/impls/native/snapshot.c PERSIST_GAME_BLOB_VERSION).
-#define STATE_BLOB_FORMAT 3
-#define STATE_BLOB_FORMAT_V2 2
+#define STATE_BLOB_FORMAT_V2 2   // [version][flag][state_put]
+#define STATE_BLOB_FORMAT_V3 3   // ... then the board's clock (BoardClock below)
+
+// THE FORMAT THIS KERNEL WRITES, and the one switch of the move above: v2 while
+// this is the expand kernel, V3 once it is the switch. Everything that depends
+// on which one is written - the clock bytes a blob ends with, the pre-clock
+// pace table.c keeps while the clock is not persisted - follows from it.
+#define STATE_BLOB_FORMAT STATE_BLOB_FORMAT_V2
 
 // The bytes the blob's header costs, ahead of the state_put payload.
 #define STATE_BLOB_HEADER 2
 
-// THE BOARD'S CLOCK, which the blob carries behind the state: when a viewer was
+// THE BOARD'S CLOCK, which a v3 blob carries behind the state: when a viewer was
 // last shown an operation on this board, and when that showing finishes playing
 // (the operation's animation stream, queued behind whatever was still playing).
 // Epoch milliseconds, 0 for never. It is a table fact, not a rule of the game -
@@ -111,10 +122,13 @@ typedef struct {
     int64_t shown_ms;
     int64_t settles_ms;
 } BoardClock;
-#define STATE_BLOB_CLOCK_BYTES 12
+#define STATE_BLOB_V3_CLOCK_BYTES 12
+// The clock bytes a WRITTEN blob ends with: none while v2 is written.
+#define STATE_BLOB_CLOCK_BYTES (STATE_BLOB_FORMAT == STATE_BLOB_FORMAT_V3 ? STATE_BLOB_V3_CLOCK_BYTES : 0)
 
-// Write g and its clock as a durable blob; returns the byte length. `clk` NULL
-// writes a zero clock (a board nobody has been shown).
+// Write g as a durable blob at STATE_BLOB_FORMAT, with its clock when that
+// format carries one; returns the byte length. `clk` NULL writes a zero clock
+// (a board nobody has been shown).
 int state_blob_put(const Game *g, const BoardClock *clk, unsigned char *out);
 
 // Load a durable blob back into g, and its clock into `clk` (may be NULL; a v2

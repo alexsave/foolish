@@ -77,9 +77,10 @@ int bot_pacing_ms(int pacing_class, int humans_present);
 // throw-in made on the open bout that screen showed was refused (e2e
 // web_bot_first_move_pace / web_throwin_vs_bot).
 //
-// The clock is the table's (table.h TableClock, persisted in the state blob by
-// every commit); a clock of zero - a board never shown, a blob older than the
-// clock - asks for no wait.
+// The clock is the table's (view.h BoardClock, advanced by every commit and
+// persisted in a v3 state blob); a clock of zero - a board never shown - asks
+// for no wait. A v2 blob has no clock at all, and table.h table_bot_wait_ms
+// says what a bot waits on one.
 //
 // THE CEILING is a guard, not a pace: a stream long enough to reach it does not
 // exist in play (an 8-seat deal or a bout end with every seat refilling is

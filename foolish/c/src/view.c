@@ -221,6 +221,7 @@ int state_blob_put(const Game *g, const BoardClock *clk, unsigned char *out) {
     out[0] = (unsigned char)STATE_BLOB_FORMAT;
     out[1] = (unsigned char)(g->deterministic_deck ? 1 : 0);
     const int n = STATE_BLOB_HEADER + state_put(g, VIEW_UNMASKED, out + STATE_BLOB_HEADER);
+    if (STATE_BLOB_CLOCK_BYTES == 0) return n;
     put_u48(out + n, clk ? clk->shown_ms : 0);
     put_u48(out + n + 6, clk ? clk->settles_ms : 0);
     return n + STATE_BLOB_CLOCK_BYTES;
@@ -231,7 +232,7 @@ int state_blob_load(Game *g, const unsigned char *p, int len, BoardClock *clk) {
     // `len` counts the header bytes too; the state is the rest, less the clock
     // a v3 blob carries behind it (a v2 blob has none: see view.h).
     int tail;
-    if (p[0] == STATE_BLOB_FORMAT) tail = STATE_BLOB_CLOCK_BYTES;
+    if (p[0] == STATE_BLOB_FORMAT_V3) tail = STATE_BLOB_V3_CLOCK_BYTES;
     else if (p[0] == STATE_BLOB_FORMAT_V2) tail = 0;
     else return 0;
     if (len < STATE_BLOB_HEADER + tail) return GAME_INVALID_COUNT;

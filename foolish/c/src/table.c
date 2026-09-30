@@ -81,6 +81,7 @@ static void scope_open(Table *t, int actor) {
     t->actor = (int8_t)actor;
     t->log_start = t->g->num_logs;
     t->reject = 0;
+    t->drive_pace_ms = 0;
 }
 
 // ---------- load ----------------------------------------------------------------
@@ -104,12 +105,20 @@ int table_seat_kinds(const Roster *r, int8_t *kinds) {
     return TABLE_OK;
 }
 
+// FNV-1a 64 over a state blob, never 0 (0 is Table.unclocked's "the blob had a
+// clock"): the name a v2 blob's pre-clock pace is remembered under.
+static uint64_t blob_fnv64(const uint8_t *p, int n) {
+    uint64_t h = 14695981039346656037ull;
+    for (int i = 0; i < n; i++) h = (h ^ p[i]) * 1099511628211ull;
+    return h ? h : 1;
+}
+
 int table_load(Table *t, const uint8_t *state, int state_len, const uint8_t *roster, int roster_len) {
     Roster r;
     int8_t kinds[MAX_PLAYERS];
     t->loaded = false;
     t->detail = 0;
-    if (!state || state_len < 4 || (state[0] != TABLE_STATE_FORMAT && state[0] != STATE_BLOB_FORMAT_V2))
+    if (!state || state_len < 4 || (state[0] != TABLE_STATE_FORMAT_V2 && state[0] != TABLE_STATE_FORMAT_V3))
         return TABLE_E_STATE_VERSION;
     const int rc = roster_decode(&r, roster, roster_len);
     if (rc != ROSTER_OK) { t->detail = rc; return TABLE_E_ROSTER; }
@@ -123,6 +132,7 @@ int table_load(Table *t, const uint8_t *state, int state_len, const uint8_t *ros
     t->g->rules = 0;   // online play is the classic game (Q18); a previous FMSG decode may have left a variant
     for (int s = 0; s < r.n; s++) t->g->players[s].strategy_key = kinds[s];
     t->r = r;
+    t->unclocked = state[0] == TABLE_STATE_FORMAT_V2 ? blob_fnv64(state, state_len) : 0;
     scope_open(t, -1);
     // The state blob carries no session log, so until the host hands one over
     // (table_set_session_log) the row's log is what the board holds: nothing.
@@ -203,7 +213,7 @@ static int unnamed_seat(const Game *g);
 
 // A bound on one state_put, for reserving space before writing it.
 #define TABLE_STATE_MAX (STATE_BLOB_HEADER + 24 + MAX_DECK + 2 * MAX_BATTLES + MAX_PLAYERS * (3 + MAX_HAND_SIZE) + 1 + MAX_PLAYERS \
-                         + STATE_BLOB_CLOCK_BYTES)
+                         + STATE_BLOB_V3_CLOCK_BYTES)
 
 // ---------- fixtures --------------------------------------------------------------
 
@@ -338,7 +348,7 @@ int table_push(const Table *t, const char *game_id, int gid_len, int viewer, uin
     return seq + 1 + tr;
 }
 
-int table_commit_products(const Table *t, const char *game_id, int gid_len, uint32_t next_version,
+int table_commit_products(Table *t, const char *game_id, int gid_len, uint32_t next_version,
                           int64_t now_ms, TableCommit *out, uint8_t *arena, int cap) {
     memset(out, 0, sizeof(*out));
     if (!t->loaded) return TABLE_E_NOT_LOADED;
@@ -379,6 +389,17 @@ int table_commit_products(const Table *t, const char *game_id, int gid_len, uint
     if (cap - at < TABLE_STATE_MAX) return TABLE_E_CAP;
     out->state.off = at;
     out->state.len = state_blob_put(g, &clock, arena + at);
+    out->clock = clock;
+    // The expand step's pre-clock pace (table.h table_bot_wait_ms): the blob just
+    // written carries no clock, so the old post-cycle sleep is remembered under it.
+    if (TABLE_STATE_CLOCK_BYTES == 0 && t->drive_pace_ms > 0) {
+        const uint64_t blob = blob_fnv64(arena + at, out->state.len);
+        int k = 0;
+        while (k < TABLE_PACE_MEMO && t->paces[k].blob != blob) k++;
+        if (k == TABLE_PACE_MEMO) { k = t->pace_next; t->pace_next = (uint8_t)((k + 1) % TABLE_PACE_MEMO); }
+        t->paces[k].blob = blob;
+        t->paces[k].due_ms = now_ms + t->drive_pace_ms;
+    }
     at += out->state.len;
 
     const int rl = roster_encode(&t->r, arena + at, cap - at);
@@ -876,6 +897,7 @@ int table_bot_drive(Table *t, const uint8_t *prefs, int prefs_len, int max_actio
     if (n > 0) {
         t->actor = out->actions[n - 1].seat;
         t->ended = finalize(t) >= 0;
+        t->drive_pace_ms = bot_cycle_delay_ms(t->g, game_human_mask(t->g), out);
     }
     return n;
 }
@@ -915,6 +937,17 @@ int table_drive_prefs(const Table *t, const BotDriveOut *drv, uint8_t *out, int 
 
 int table_bot_wait_ms(const Table *t, int64_t now_ms) {
     if (!t->loaded) return TABLE_E_NOT_LOADED;
+    if (t->unclocked) {
+        // A v2 board: the rest of the old post-cycle sleep, if this table wrote it
+        // after a paced bot cycle (table.h). The due time is this host's own
+        // clock, so the ceiling is only the same guard bot_wait_ms keeps.
+        for (int k = 0; k < TABLE_PACE_MEMO; k++) {
+            if (t->paces[k].blob != t->unclocked) continue;
+            const int64_t wait = t->paces[k].due_ms - now_ms;
+            return wait <= 0 ? 0 : wait > BOT_PACE_WAIT_MAX_MS ? BOT_PACE_WAIT_MAX_MS : (int)wait;
+        }
+        return 0;
+    }
     return bot_wait_ms(t->g, game_human_mask(t->g), t->clock.shown_ms, t->clock.settles_ms, now_ms);
 }
 

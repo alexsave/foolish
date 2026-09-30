@@ -8613,7 +8613,7 @@ static void test_table_load(void) {
         if (rc_ != (want)) fprintf(stderr, "  table_load(%s): got %d, want %d\n", msg, rc_, want); \
         CHECK(rc_ == (want) && !tb.loaded, msg); \
         CHECK(memcmp(&tb_before, &tb_game, offsetof(Game, logs)) == 0, msg); } while (0)
-    memcpy(tb_state2, tb_state, sizeof(tb_state)); tb_state2[0] = STATE_BLOB_FORMAT + 1;
+    memcpy(tb_state2, tb_state, sizeof(tb_state)); tb_state2[0] = TABLE_STATE_FORMAT_V3 + 1;
     REFUSE(TABLE_E_STATE_VERSION, "a state blob of an unknown format", tb_state2, tb_state_len, tb_roster);
     tb_state2[0] = 1;
     REFUSE(TABLE_E_STATE_VERSION, "a v1 state blob (rewritten to v2 by a migration long ago)", tb_state2, tb_state_len, tb_roster);
@@ -8802,17 +8802,21 @@ static void test_table_commit_products(void) {
     CHECK(table_act(&tb, fa_id, (int)strlen(fa_id), w, wl, -1, 0) == TABLE_APPLIED, "the attack applies");
     n = table_commit_products(&tb, RS("g-1"), 7, 0x010203040506LL, &c, tb_arena, sizeof(tb_arena));
     CHECK(n > 0, "the products fit");
-    // The board, then the clock the move put on it (view.h BoardClock): shown at
-    // the commit's own time, and done playing one flight later - the attack is
-    // a single beat.
-    const uint8_t *ck = tb_arena + c.state.off + c.state.len - STATE_BLOB_CLOCK_BYTES;
-    CHECK(c.state.len == tb_blob(&tb_game, tb_buf)
-          && memcmp(tb_arena + c.state.off, tb_buf, (size_t)c.state.len - STATE_BLOB_CLOCK_BYTES) == 0,
-          "the state blob is the board after the move");
-    CHECK(memcmp(ck, "\x06\x05\x04\x03\x02\x01", 6) == 0, "the clock shows the move at the commit's time");
-    int64_t settles = 0;
-    for (int b = 5; b >= 0; b--) settles = settles * 256 + ck[6 + b];
-    CHECK(settles == 0x010203040506LL + ANIM_TIME_MS, "and has it done playing one flight later");
+    // The board, at the format written, then - when that format carries it - the
+    // clock the move put on it (view.h BoardClock): shown at the commit's own
+    // time, and done playing one flight later - the attack is a single beat.
+    CHECK(tb_arena[c.state.off] == TABLE_STATE_FORMAT && c.state.len == tb_blob(&tb_game, tb_buf)
+          && memcmp(tb_arena + c.state.off, tb_buf, (size_t)c.state.len - TABLE_STATE_CLOCK_BYTES) == 0,
+          "the state blob is the board after the move, at the format this kernel writes");
+    CHECK(c.clock.shown_ms == 0x010203040506LL, "the clock shows the move at the commit's time");
+    CHECK(c.clock.settles_ms == 0x010203040506LL + ANIM_TIME_MS, "and has it done playing one flight later");
+    if (TABLE_STATE_CLOCK_BYTES > 0) {
+        const uint8_t *ck = tb_arena + c.state.off + c.state.len - TABLE_STATE_CLOCK_BYTES;
+        int64_t settles = 0;
+        for (int b = 5; b >= 0; b--) settles = settles * 256 + ck[6 + b];
+        CHECK(memcmp(ck, "\x06\x05\x04\x03\x02\x01", 6) == 0 && settles == c.clock.settles_ms,
+              "and a blob that carries a clock carries that one");
+    }
     const uint8_t *lg = tb_arena + c.logs.off;
     CHECK(c.logs.len == 6 + 4 + 2 && lg[0] == 0x06 && lg[1] == 0x05 && lg[5] == 0x01 && lg[6] == LOG_ATTACK
           && lg[7] == fa && lg[8] == 0xFF && lg[9] == 1 && lg[10] == w[2] && lg[11] == 0xFF,
@@ -9952,6 +9956,30 @@ static uint32_t tb_fnv(const char *s, int n) {
     return h;
 }
 
+// A v3 blob's clock bytes: shown_ms, then settles_ms, each u48 little-endian.
+static void tb_put_clock(uint8_t *q, const BoardClock *clk) {
+    int64_t v[2] = { clk->shown_ms, clk->settles_ms };
+    for (int i = 0; i < 2; i++)
+        for (int b = 0; b < 6; b++) { q[6 * i + b] = (uint8_t)(v[i] & 0xff); v[i] >>= 8; }
+}
+
+// THE ROWS AS THE SWITCH STEP WRITES THEM. While this kernel writes v2 (view.h
+// STATE_BLOB_FORMAT) the clock a commit computes (TableCommit.clock) is not
+// persisted. The clock tests set tb_rows_v3 and store each committed row as the
+// v3 blob the switch kernel writes - the same board, the v3 format byte, and the
+// commit's clock behind it - so the wait rule runs on the clock a row carries.
+// Once v3 is written the row already is one and this stores it as written.
+static int tb_rows_v3;
+static void tb_store_state(const TableCommit *c) {
+    memcpy(tb_state, tb_arena + c->state.off, (size_t)c->state.len);
+    tb_state_len = c->state.len;
+    if (tb_rows_v3 && tb_state[0] == TABLE_STATE_FORMAT_V2) {
+        tb_state[0] = TABLE_STATE_FORMAT_V3;
+        tb_put_clock(tb_state + tb_state_len, &c->clock);
+        tb_state_len += TABLE_STATE_V3_CLOCK_BYTES;
+    }
+}
+
 // tb_seed, its hex text, and a lobby of "h" (a human) and two `brain` bots dealt
 // from it: the committed row in tb_state / tb_roster, the session log in tb_log.
 static void tb_bot_table(const char *brain, int seed) {
@@ -9965,8 +9993,7 @@ static void tb_bot_table(const char *brain, int seed) {
     table_ready(&tb, RS("h"), tb_seed);
     game_set_seed(1);
     table_commit_products(&tb, RS("g"), 1, 1700000000000LL, &c, tb_arena, sizeof(tb_arena));
-    memcpy(tb_state, tb_arena + c.state.off, (size_t)c.state.len);
-    tb_state_len = c.state.len;
+    tb_store_state(&c);
     memcpy(tb_roster, tb_arena + c.roster.off, ROSTER_BYTES);
     memcpy(tb_log, tb_arena + c.logs.off, (size_t)c.logs.len);
     tb_log_len = c.logs.len;
@@ -9985,8 +10012,7 @@ static int tb_reload(int with_log) {
 static int tb_commit_row(int64_t now, TableCommit *c) {
     const int n = table_commit_products(&tb, RS("g"), 2, now, c, tb_arena, sizeof(tb_arena));
     if (n < 0) return n;
-    memcpy(tb_state, tb_arena + c->state.off, (size_t)c->state.len);
-    tb_state_len = c->state.len;
+    tb_store_state(c);
     memcpy(tb_roster, tb_arena + c->roster.off, ROSTER_BYTES);
     memcpy(tb_log + tb_log_len, tb_arena + c->logs.off, (size_t)c->logs.len);
     tb_log_len += c->logs.len;
@@ -10104,6 +10130,7 @@ static int tb_push_plan_ms(int viewer) {
 static void test_table_bot_wait(void) {
     const int pace = BOT_PACE_MS_WITH_HUMANS;
     TableCommit c;
+    tb_rows_v3 = 1;   // every row below carries its clock, as the switch step writes it
 
     // THE DEAL. tb_bot_table deals a human and two bots and commits at T0.
     const int64_t T0 = 1700000000000LL;
@@ -10234,20 +10261,95 @@ static void test_table_bot_wait(void) {
     CHECK(table_bot_wait_ms(&tb, T0) == BOT_PACE_MS_BOTS_ONLY, "a bots-only game waits the bots-only pace from the commit");
     CHECK(table_bot_wait_ms(&tb, T0 + BOT_PACE_MS_BOTS_ONLY) == 0, "and no longer");
 
-    // A v2 blob (before the clock) still loads, as a board shown long ago.
+    // A V3 BLOB IS READ WITH ITS CLOCK, whichever format this kernel writes: the
+    // board as v2 bytes with the v3 format byte and a clock behind it.
     {
-        tb_state2[0] = STATE_BLOB_FORMAT_V2;
+        const BoardClock clk = { T0, T0 + 500 };
+        tb_state2[0] = TABLE_STATE_FORMAT_V3;
         tb_state2[1] = tb_game.deterministic_deck ? 1 : 0;
         const int n2 = STATE_BLOB_HEADER + state_put(&tb_game, VIEW_UNMASKED, tb_state2 + STATE_BLOB_HEADER);
-        CHECK(table_load(&tb, tb_state2, n2, tb_roster, ROSTER_BYTES) == TABLE_OK, "a v2 row still loads");
-        CHECK(tb.clock.shown_ms == 0 && tb.clock.settles_ms == 0 && table_bot_wait_ms(&tb, T0) == 0,
-              "with a zero clock, so its bot acts at once as it did before the clock");
-        CHECK(table_load(&tb, tb_state2, n2 - 1, tb_roster, ROSTER_BYTES) < 0, "a v2 row one byte short is refused");
+        tb_put_clock(tb_state2 + n2, &clk);
+        const int n3 = n2 + TABLE_STATE_V3_CLOCK_BYTES;
+        const int rc = table_load(&tb, tb_state2, n3, tb_roster, ROSTER_BYTES);
+        CHECK(rc == TABLE_OK, "a v3 fixture blob loads");
+        CHECK(rc == TABLE_OK && tb.clock.shown_ms == T0 && tb.clock.settles_ms == T0 + 500,
+              "with the clock it carries");
+        CHECK(rc == TABLE_OK && table_bot_wait_ms(&tb, T0 + 100) == BOT_PACE_MS_BOTS_ONLY - 100,
+              "and the bot wait is measured from that clock");
+        CHECK(table_load(&tb, tb_state2, n2 + TABLE_STATE_V3_CLOCK_BYTES - 1, tb_roster, ROSTER_BYTES) < 0
+              && table_load(&tb, tb_state2, STATE_BLOB_HEADER + TABLE_STATE_V3_CLOCK_BYTES - 1, tb_roster, ROSTER_BYTES) < 0,
+              "a v3 blob one byte short, or too short to hold its clock, is refused");
     }
+    tb_rows_v3 = 0;
 
     Table unloaded;
     table_init(&unloaded, &tb_src, &tb_snaps);
     CHECK(table_bot_wait_ms(&unloaded, T0) == TABLE_E_NOT_LOADED, "an unloaded table names no wait");
+}
+
+// THE PRE-CLOCK PACE (table.h table_bot_wait_ms): while v2 is written a row has
+// no clock, and a bot must still wait what the old loop slept after its cycle -
+// bot_cycle_delay_ms of that cycle, from the commit - and nothing else.
+static void test_table_bot_wait_pre_clock(void) {
+    TableCommit c;
+    const int64_t T0 = 1700000000000LL;
+    tb_rows_v3 = 0;   // the rows exactly as this kernel writes them
+    tb_bot_table("random", 21);
+    CHECK(tb_reload(1) >= 0, "the dealt row loads");
+    if (TABLE_STATE_CLOCK_BYTES == 0)
+        CHECK(tb_state[0] == TABLE_STATE_FORMAT_V2 && tb.clock.shown_ms == 0 && tb.clock.settles_ms == 0,
+              "a v2 row loads with a zero clock");
+    CHECK(table_bot_wait_ms(&tb, T0) == 0, "a deal is not a bot's cycle: the old loop drove the dealt board at once");
+
+    int64_t now = T0;
+    int paced = 0, human = 0, silent = 0;
+    for (int step = 0; step < 400 && !(paced >= 3 && human); step++) {
+        if (tb_reload(1) < 0 || tb_game.status != GAME_STATUS_PLAYING) break;
+        now += table_bot_wait_ms(&tb, now);
+        if (bot_drive_eligible_mask(&tb_game, game_human_mask(&tb_game)) != 0) {
+            if (table_bot_drive(&tb, 0, 0, 0, &tb_drv) <= 0) break;
+            const int old = bot_cycle_delay_ms(&tb_game, game_human_mask(&tb_game), &tb_drv);
+            if (tb_commit_row(now, &c) < 0 || tb_reload(1) < 0) break;
+            if (tb_game.status != GAME_STATUS_PLAYING) break;
+            if (TABLE_STATE_CLOCK_BYTES > 0) continue;   // the switch step: the row's clock rules (test_table_bot_wait)
+            if (old == 0) {
+                silent++;
+                CHECK(table_bot_wait_ms(&tb, now) == 0, "a bot cycle that showed nothing asks for no wait, as the old loop slept none");
+                continue;
+            }
+            paced++;
+            CHECK(old == BOT_PACE_MS_WITH_HUMANS, "with the human in, the old sleep is the with-humans pace");
+            CHECK(table_bot_wait_ms(&tb, now) == old, "after a paced bot cycle a bot waits the old post-cycle sleep");
+            CHECK(table_bot_wait_ms(&tb, now + 1000) == old - 1000, "less the time already gone");
+            CHECK(table_bot_wait_ms(&tb, now + old) == 0, "and not a moment longer");
+            // The same blob in a table that did not write it is a row this host
+            // never paced: the old loop, starting on it, drove at once.
+            {
+                static Table t2;
+                static Game g2;
+                static TableSnaps s2;
+                table_init(&t2, &g2, &s2);
+                CHECK(table_load(&t2, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK
+                      && table_bot_wait_ms(&t2, now) == 0, "a table that did not write the row names no wait on it");
+            }
+            continue;
+        }
+        if (!tb_human_move()) break;
+        if (tb_commit_row(now, &c) < 0 || tb_reload(1) < 0) break;
+        if (tb_game.status != GAME_STATUS_PLAYING || TABLE_STATE_CLOCK_BYTES > 0) continue;
+        human++;
+        CHECK(table_bot_wait_ms(&tb, now) == 0, "after a human's move a bot answers at once, as the old loop did");
+    }
+    if (TABLE_STATE_CLOCK_BYTES == 0)
+        CHECK(paced >= 3 && human > 0, "the game reached paced bot cycles and a human move");
+    fprintf(stderr, "  [pre-clock pace] %d paced bot cycles, %d silent, %d human moves\n", paced, silent, human);
+
+    // A v2 row one byte short is refused (the reader, whatever is written).
+    tb_state2[0] = TABLE_STATE_FORMAT_V2;
+    tb_state2[1] = tb_game.deterministic_deck ? 1 : 0;
+    const int n2 = STATE_BLOB_HEADER + state_put(&tb_game, VIEW_UNMASKED, tb_state2 + STATE_BLOB_HEADER);
+    CHECK(table_load(&tb, tb_state2, n2, tb_roster, ROSTER_BYTES) == TABLE_OK, "a v2 row loads");
+    CHECK(table_load(&tb, tb_state2, n2 - 1, tb_roster, ROSTER_BYTES) < 0, "a v2 row one byte short is refused");
 }
 
 static void test_table_bot_drive_cycle(void) {
@@ -12585,6 +12687,7 @@ int main(void) {
     test_table_deal_seed_and_session_log();
     test_table_bot_drive_cycle();
     test_table_bot_wait();
+    test_table_bot_wait_pre_clock();
     test_table_drive_prefs();
     test_table_bot_drive_ignores_instance_history();
     test_table_bot_drive_progress_seeds_the_decision();
