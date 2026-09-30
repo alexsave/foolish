@@ -1,5 +1,6 @@
 // table.c - a game plus its roster. See table.h.
 #include "table.h"
+#include "snap_room.h"
 #include "awire.h"
 #include "view.h"
 #include "bot_roster.h"

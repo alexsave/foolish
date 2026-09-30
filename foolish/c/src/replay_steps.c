@@ -1,4 +1,5 @@
 #include "replay_steps.h"
+#include "snap_room.h"
 #include "card.h"
 #include "view.h"
 #include <string.h>
