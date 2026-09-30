@@ -68,7 +68,10 @@
 #                   for a project that lists its sources by folder (optional)
 #   SUITE_NAME      prefix of the final line (optional)
 #   HELP_FILE       the product script, whose "# Usage:" block --help prints
-#   DEST            the xcodebuild destination
+#   DEST            the xcodebuild destination (optional: unset, it is the
+#                   first available iPhone on the newest iOS runtime this Mac
+#                   has, by udid - a hard-coded model name goes stale with
+#                   every Xcode, and a name two runtimes share is ambiguous)
 #
 # Flags: --no-lib, --regen, -h/--help, and the scheme words.
 set -euo pipefail
@@ -76,7 +79,19 @@ set -euo pipefail
 ROOT="$PWD"
 
 : "${PROJECT:?PROJECT is not set - run ios/scripts/mac_tests.sh of the product instead}"
-: "${DEST:?DEST is not set}"
+if [ -z "${DEST:-}" ]; then
+  # `simctl list` prints runtimes oldest first, so the last iOS section wins.
+  sim_udid="$(xcrun simctl list devices available | awk '
+    /^-- iOS /   { in_ios = 1; first = ""; next }
+    /^-- /       { in_ios = 0; next }
+    in_ios && first == "" && /iPhone/ && match($0, /\([0-9A-F-]{36}\)/) {
+      first = substr($0, RSTART + 1, RLENGTH - 2); pick = first
+    }
+    END { print pick }')"
+  [ -n "$sim_udid" ] || { echo "error: no available iPhone simulator; set DEST" >&2; exit 2; }
+  DEST="platform=iOS Simulator,id=$sim_udid"
+  echo "DEST not set - using $DEST"
+fi
 : "${LIB_CMD:?LIB_CMD is not set}"
 : "${XCFRAMEWORK:?XCFRAMEWORK is not set}"
 IOS_DIR="${IOS_DIR:-$(dirname "$PROJECT")}"
