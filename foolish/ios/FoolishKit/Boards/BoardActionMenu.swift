@@ -9,11 +9,11 @@
 // flight still in the air, a retraction being peeked at - and returns what to
 // draw. A test can enumerate it; a board cannot disagree with it.
 //
-// EVERY PLAY ENABLE IS THE KERNEL'S ANSWER (§17.16). `canAttack`, `canCover`,
-// `canPass` and `canDone` are `probe.*` AND'ed with the board's own gates, and
-// there is no rule of this file's own in any of them. `canPickup` is the ONE
-// exception in the whole board, and it is now stated here where a reader looks
-// for it rather than buried in the middle of a view body - see its doc.
+// THE COMPOSITION IS THE KERNEL'S (legal.h play_pills), so the website draws
+// the same pills from the same rule. This file only translates: `Gates` to the
+// PLAY_GATE_* bits, the probe to the PLAY_ANSWER_* bits, and the PLAY_PILL_*
+// bits back. Every play enable is the kernel's answer (§17.16); Take is the one
+// pill that reads no answer, and why is written beside the rule in legal.h.
 
 import Foundation
 
@@ -58,6 +58,18 @@ struct BoardActionMenu: Equatable, Sendable {
             self.isDefender = isDefender; self.isOut = isOut
             self.tableIsEmpty = tableIsEmpty; self.selectionIsEmpty = selectionIsEmpty
         }
+
+        /// These facts as the kernel's PLAY_GATE_* bits.
+        var bits: UInt32 {
+            let facts: [(Bool, Int)] = [
+                (iCanAct, PLAY_GATE_I_CAN_ACT), (canSend, PLAY_GATE_CAN_SEND),
+                (playInFlight, PLAY_GATE_PLAY_IN_FLIGHT), (boardStill, PLAY_GATE_BOARD_STILL),
+                (superseded, PLAY_GATE_SUPERSEDED), (pickupHeld, PLAY_GATE_PICKUP_HELD),
+                (isDefender, PLAY_GATE_IS_DEFENDER), (isOut, PLAY_GATE_IS_OUT),
+                (tableIsEmpty, PLAY_GATE_TABLE_EMPTY), (selectionIsEmpty, PLAY_GATE_SELECTION_EMPTY),
+            ]
+            return facts.reduce(0) { $1.0 ? $0 | UInt32($1.1) : $0 }
+        }
     }
 
     /// Nothing offered. The read-only board a spectator is looking at, and the
@@ -65,63 +77,16 @@ struct BoardActionMenu: Equatable, Sendable {
     static let none = BoardActionMenu(canAttack: false, canCover: false, canPass: false,
                                              canPickup: false, canDone: false)
 
-    /// The five play pills, from one kernel probe and the board's own gates.
-    ///
-    /// `acting` is the gate every play button shares: the kernel offered me a
-    /// menu, I have not already staged, my last tap has landed and the board is
-    /// still. Whatever that gate says, the kernel still has the final word on
-    /// each individual pill - so a board that wrongly believed itself to be
-    /// acting could at worst offer a move the kernel had already listed.
+    /// The five play pills, from one kernel probe and the board's own gates,
+    /// composed by `play_pills` (legal.h), where the rule and its history live.
     static func resolve(_ probe: PlayProbe, _ g: Gates) -> BoardActionMenu {
-        let acting = g.iCanAct && !g.canSend && !g.playInFlight && g.boardStill
-        return BoardActionMenu(
-            canAttack: acting && !g.isDefender && probe.canAttack,
-            canCover: acting && g.isDefender && probe.canCover,
-            canPass: acting && g.isDefender && probe.canPass,
-            canPickup: pickup(g),
-            // Selection-aware, like Take: with cards selected, Good must
-            // disappear - a stray tap on it mid-selection would abandon the
-            // cards you had picked (web parity TODO).
-            canDone: acting && probe.canSayGood && g.selectionIsEmpty)
-    }
-
-    /// TAKE - THE ONE PILL ON THIS BOARD THAT IS NOT THE KERNEL'S LEGAL MENU,
-    /// and the reason is worth reading before anyone "fixes" it.
-    ///
-    /// The condition is the web's own (`rawPickup = isDefending &&
-    /// table_battles > 0`) and NOT `probe`'s, because the kernel stops LISTING
-    /// pickup once every attack on the table is covered - while still ACCEPTING
-    /// the move. Reading the menu here would therefore take Take away from a
-    /// defender who is allowed to take, which is a rule this screen would be
-    /// getting wrong in the strict direction. It is a duplicated rule either
-    /// way; this is the duplication that plays correctly. The honest fix is a
-    /// kernel answer for "may this seat pick up", and until there is one the
-    /// exception lives here, named, with a test on it.
-    ///
-    /// Everything AROUND it is still this board's own business:
-    ///
-    ///  - `selectionIsEmpty` so a stray tap cannot abandon a picked selection;
-    ///  - `!canSend`, added in round 7 on the owner's read on device. This
-    ///    REVERSES the earlier "Take survives the staged/all-covered state":
-    ///    leaving Take up while Undo appeared BELOW it shoved the
-    ///    bottom-anchored column upward, so the Take pill visibly rode up as
-    ///    Undo popped in (the "ghostly Pickup floating above Undo"). The owner
-    ///    chose the clean swap - to take your own covered table now, Undo
-    ///    first, then Take. The kernel still accepts the move, so no reject;
-    ///  - `!pickupHeld`, round 16 (owner: "you cannot pickup within 15 seconds
-    ///    of the attack ... this is to give attackers a fair chance to throw in
-    ///    additional cards"). While the hold stands the pill is simply not there
-    ///    - no greyed-out button, no countdown, nothing to press - and it
-    ///    appears on its own when the hold lapses. The same number refuses the
-    ///    move in `MessageTurnController.apply`, so this is the polite half of
-    ///    the rule, not the rule;
-    ///  - `!superseded` EXPLICITLY, round 20, precisely because this pill does
-    ///    not read the menu: standing `iCanAct` down does not reach it, so a
-    ///    read-only board would otherwise keep offering Take.
-    private static func pickup(_ g: Gates) -> Bool {
-        g.isDefender && !g.tableIsEmpty && g.selectionIsEmpty && !g.isOut
-            && !g.canSend && !g.pickupHeld && !g.superseded
-            && !g.playInFlight && g.boardStill
+        let pills = PlayWire.pills(answers: probe.answers, gates: g.bits)
+        func has(_ bit: Int) -> Bool { pills & UInt32(bit) != 0 }
+        return BoardActionMenu(canAttack: has(PLAY_PILL_ATTACK),
+                               canCover: has(PLAY_PILL_COVER),
+                               canPass: has(PLAY_PILL_PASS),
+                               canPickup: has(PLAY_PILL_PICKUP),
+                               canDone: has(PLAY_PILL_GOOD))
     }
 
     /// THE UNDO PILL, which is its own answer because it is drawn in its own

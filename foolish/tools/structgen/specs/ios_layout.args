@@ -73,4 +73,5 @@
 --const ANIM_BOUT_END_HOLD_MS
 --const ANIM_NO_MASK --const ANIM_BEAT_ --const ANIM_SURFACE_ --const ANIM_TABLE_NONE
 --const BOT_STOP_ --const BOT_PACE_ --const MOVE_
+--const PLAY_ANSWER_ --const PLAY_GATE_ --const PLAY_PILL_
 --const GAME_STATUS_ --const PLAYER_STATUS_ --const ROSTER_E_ --const MSG_

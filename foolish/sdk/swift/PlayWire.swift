@@ -51,6 +51,15 @@ public struct PlayProbe: Equatable, Sendable {
 
     public var canCover: Bool { !coverable.isEmpty }
 
+    /// The same verdicts as the kernel's PLAY_ANSWER_* bits (legal.h
+    /// play_answers), the form `PlayWire.pills` composes.
+    public var answers: UInt32 {
+        (canAttack ? UInt32(PLAY_ANSWER_ATTACK) : 0)
+            | (canCover ? UInt32(PLAY_ANSWER_COVER) : 0)
+            | (canPass ? UInt32(PLAY_ANSWER_PASS) : 0)
+            | (canSayGood ? UInt32(PLAY_ANSWER_GOOD) : 0)
+    }
+
     static let none = PlayProbe(move: nil, coverable: [], bestCover: nil,
                                 canAttack: false, canPass: false, canSayGood: false)
 }
@@ -117,6 +126,13 @@ public enum PlayWire {
             guard n == -3, cap < (1 << 21) else { return [] }   // FIO_ECAP
             cap *= 2
         }
+    }
+
+    /// WHICH PILLS THE BOARD DRAWS (legal.h play_pills): the PLAY_PILL_* bits
+    /// for the kernel's PLAY_ANSWER_* verdicts and the board's PLAY_GATE_*
+    /// facts. The composition is the kernel's; this only crosses it.
+    public static func pills(answers: UInt32, gates: UInt32) -> UInt32 {
+        UInt32(fio_play_pills(answers, gates))
     }
 
     // MARK: - the wire

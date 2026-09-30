@@ -230,4 +230,100 @@ int play_can_say_good(const PlayBoard *b);
 // with no button on screen.
 int play_human_menu(const PlayBoard *b, unsigned char *out, int cap);
 
+// ---------- which pills a human board offers ---------------------------------
+//
+// ONE MOVE, ONE BUTTON. A board offers the play pills the selection under the
+// finger can actually make, and no others: select a card and Good and Take are
+// gone, so a quick tap aimed at Pass or at a throw-in cannot land on a pill
+// that throws the selection away. The one time two pills stand together is the
+// card that is BOTH a cover and a transfer (a trump of the attack's rank), and
+// then both are the selection's own.
+//
+// This was Swift (ios/FoolishKit/Boards/BoardActionMenu.swift, `resolve`), and
+// the website decided the same pills its own way and got the selection half
+// wrong. It is here so both read one owner.
+//
+// It is TWO STEPS, and the split is the point. `play_answers` is the kernel's
+// verdict about the selection on this board - what the play_* rules above say.
+// `play_pills` composes those verdicts with the facts only the host knows about
+// its own screen (PLAY_GATE_*), and reads nothing else. A host that already
+// holds the verdicts (the iMessage board keeps a probe per selection) hands
+// them straight to `play_pills`; the composition is the same either way.
+
+// The kernel's verdicts about a selection on a board (play_answers).
+#define PLAY_ANSWER_ATTACK (1u << 0)   // play_has_verb(MOVE_ATTACK)
+#define PLAY_ANSWER_COVER  (1u << 1)   // play_coverable_battles is non-empty
+#define PLAY_ANSWER_PASS   (1u << 2)   // play_has_verb(MOVE_PASS)
+#define PLAY_ANSWER_GOOD   (1u << 3)   // play_can_say_good
+
+// What the host knows about its own board that the kernel cannot: facts about
+// this screen rather than about Durak. Each bit is the fact being TRUE.
+#define PLAY_GATE_I_CAN_ACT       (1u << 0)  // the kernel published a menu for my seat
+#define PLAY_GATE_CAN_SEND        (1u << 1)  // a move is staged, waiting on Send
+#define PLAY_GATE_PLAY_IN_FLIGHT  (1u << 2)  // a move of mine is between the tap and the answer
+#define PLAY_GATE_BOARD_STILL     (1u << 3)  // the board is at rest enough to accept a play
+#define PLAY_GATE_SUPERSEDED      (1u << 4)  // the kernel stood this seat down (a newer chain)
+#define PLAY_GATE_PICKUP_HELD     (1u << 5)  // the throw-in hold before a defender may take
+#define PLAY_GATE_IS_DEFENDER     (1u << 6)  // this seat defends the current bout
+#define PLAY_GATE_IS_OUT          (1u << 7)  // this seat has left the game
+#define PLAY_GATE_TABLE_EMPTY     (1u << 8)  // no battle on the table
+#define PLAY_GATE_SELECTION_EMPTY (1u << 9)  // no card is selected
+
+// The pills to draw (play_pills).
+#define PLAY_PILL_ATTACK (1u << 0)
+#define PLAY_PILL_COVER  (1u << 1)
+#define PLAY_PILL_PASS   (1u << 2)
+#define PLAY_PILL_PICKUP (1u << 3)
+#define PLAY_PILL_GOOD   (1u << 4)
+
+// The PLAY_ANSWER_* bits for `sel` on `b`, from one walk of the play_* rules.
+unsigned play_answers(const PlayBoard *b, const unsigned char *sel, int n_sel);
+
+// The PLAY_PILL_* bits a human board draws, from the kernel's PLAY_ANSWER_*
+// verdicts and the host's PLAY_GATE_* facts. Pure: reads its two arguments.
+//
+// `acting` is the gate every play pill shares: I_CAN_ACT, not CAN_SEND, not
+// PLAY_IN_FLIGHT, BOARD_STILL. Whatever it says, the kernel still has the
+// final word on each pill, so a host that wrongly believed itself to be acting
+// could at worst offer a move the kernel had already listed.
+//
+//   ATTACK  acting, not IS_DEFENDER, ANSWER_ATTACK
+//   COVER   acting, IS_DEFENDER, ANSWER_COVER
+//   PASS    acting, IS_DEFENDER, ANSWER_PASS
+//   GOOD    acting, ANSWER_GOOD, SELECTION_EMPTY
+//   PICKUP  see below - the one pill that reads no answer
+//
+// GOOD IS SELECTION-AWARE: with cards selected it is gone, because a stray tap
+// on it mid-selection would abandon the cards you had picked.
+//
+// TAKE (PICKUP) IS THE ONE PILL THAT IS NOT THE KERNEL'S LEGAL MENU, and the
+// reason is worth reading before anyone "fixes" it. The kernel stops LISTING
+// pickup once every attack on the table is covered - while still ACCEPTING the
+// move. Reading the menu here would therefore take Take away from a defender
+// who is allowed to take, which is a rule this board would be getting wrong in
+// the strict direction. So it reads IS_DEFENDER and a non-empty table
+// instead, and the honest fix is a kernel answer for "may this seat pick up"; until there is
+// one the exception lives here, named, with a test on it. Everything AROUND it
+// is still the board's own business:
+//
+//  - SELECTION_EMPTY, so a stray tap cannot abandon a picked selection;
+//  - not IS_OUT;
+//  - not CAN_SEND (iMessage round 7, the owner's read on device): leaving Take
+//    up while Undo appeared BELOW it shoved the bottom-anchored column upward,
+//    so the Take pill visibly rode up as Undo popped in (the "ghostly Pickup
+//    floating above Undo"). The owner chose the clean swap - to take your own
+//    covered table now, Undo first, then Take. The kernel still accepts the
+//    move, so no reject;
+//  - not PICKUP_HELD (round 16; owner: "you cannot pickup within 15 seconds of
+//    the attack ... this is to give attackers a fair chance to throw in
+//    additional cards"). While the hold stands the pill is simply not there -
+//    no greyed-out button, no countdown - and it appears on its own when the
+//    hold lapses. The host refuses the move for the same hold, so this is the
+//    polite half of the rule, not the rule;
+//  - not SUPERSEDED, EXPLICITLY (round 20), precisely because this pill does
+//    not read the menu: standing I_CAN_ACT down does not reach it, so a
+//    read-only board would otherwise keep offering Take;
+//  - not PLAY_IN_FLIGHT and BOARD_STILL, like every other pill.
+unsigned play_pills(unsigned answers, unsigned gates);
+
 #endif

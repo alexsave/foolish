@@ -717,6 +717,35 @@ int play_can_say_good(const PlayBoard *b) {
     return 0;
 }
 
+unsigned play_answers(const PlayBoard *b, const unsigned char *sel, int n_sel) {
+    if (!b) return 0;
+    return (play_has_verb(b, MOVE_ATTACK, sel, n_sel)  ? PLAY_ANSWER_ATTACK : 0u)
+         | (play_coverable_battles(b, sel, n_sel) != 0 ? PLAY_ANSWER_COVER  : 0u)
+         | (play_has_verb(b, MOVE_PASS, sel, n_sel)    ? PLAY_ANSWER_PASS   : 0u)
+         | (play_can_say_good(b)                       ? PLAY_ANSWER_GOOD   : 0u);
+}
+
+unsigned play_pills(unsigned answers, unsigned gates) {
+#define GATE(bit) ((gates & (bit)) != 0)
+    const int acting = GATE(PLAY_GATE_I_CAN_ACT) && !GATE(PLAY_GATE_CAN_SEND)
+                    && !GATE(PLAY_GATE_PLAY_IN_FLIGHT) && GATE(PLAY_GATE_BOARD_STILL);
+    const int defender = GATE(PLAY_GATE_IS_DEFENDER);
+    const int sel_empty = GATE(PLAY_GATE_SELECTION_EMPTY);
+    // Take, the one pill that reads no answer - see the note in legal.h.
+    const int take = defender && !GATE(PLAY_GATE_TABLE_EMPTY) && sel_empty
+                  && !GATE(PLAY_GATE_IS_OUT) && !GATE(PLAY_GATE_CAN_SEND)
+                  && !GATE(PLAY_GATE_PICKUP_HELD) && !GATE(PLAY_GATE_SUPERSEDED)
+                  && !GATE(PLAY_GATE_PLAY_IN_FLIGHT) && GATE(PLAY_GATE_BOARD_STILL);
+#undef GATE
+    unsigned out = 0;
+    if (acting && !defender && (answers & PLAY_ANSWER_ATTACK)) out |= PLAY_PILL_ATTACK;
+    if (acting && defender && (answers & PLAY_ANSWER_COVER))   out |= PLAY_PILL_COVER;
+    if (acting && defender && (answers & PLAY_ANSWER_PASS))    out |= PLAY_PILL_PASS;
+    if (acting && sel_empty && (answers & PLAY_ANSWER_GOOD))   out |= PLAY_PILL_GOOD;
+    if (take)                                                  out |= PLAY_PILL_PICKUP;
+    return out;
+}
+
 int play_human_menu(const PlayBoard *b, unsigned char *out, int cap) {
     if (!b || !b->menu || !out || cap < 4) return LEGAL_WIRE_ECAP;
     const int good_allowed = play_can_say_good(b);

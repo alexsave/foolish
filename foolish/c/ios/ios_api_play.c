@@ -208,6 +208,11 @@ int fio_play_probe(const uint8_t *menu, int menu_len,
     return FIO_PLAY_PROBE_HEAD + 4 + 2 + 2 * mm.n_cards;
 }
 
+// The pills a board draws: legal.h play_pills, crossed as it stands.
+unsigned fio_play_pills(unsigned answers, unsigned gates) {
+    return play_pills(answers, gates);
+}
+
 // The moves a HUMAN may make on this board, as the same menu wire in.
 int fio_play_human_menu(const uint8_t *menu, int menu_len,
                         const uint8_t *table, int n_battles,

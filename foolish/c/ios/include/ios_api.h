@@ -234,6 +234,14 @@ int fio_play_probe(const uint8_t *menu, int menu_len,
 int fio_play_human_menu(const uint8_t *menu, int menu_len,
                         const uint8_t *table, int n_battles,
                         char *out, int cap);
+
+// WHICH PILLS THE BOARD DRAWS (legal.h play_pills): the PLAY_PILL_* bits, from
+// the kernel's PLAY_ANSWER_* verdicts about the selection (the probe above
+// carries them) and the board's own PLAY_GATE_* facts. Reads its two arguments
+// and nothing else, so a render pass may call it. The bit values reach Swift
+// through structgen (sdk/swift/gen/kernel.ios.swift), not through this header,
+// so there is one spelling of each.
+unsigned fio_play_pills(unsigned answers, unsigned gates);
 // A MOVE, WRITTEN - the awire action frame for one move, so no host has to
 // know what that frame looks like. The inverse of the packed menu above, and
 // the thing every producer needs: the frame fio_apply_awire takes is also the
