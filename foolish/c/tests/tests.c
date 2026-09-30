@@ -4816,8 +4816,8 @@ static void test_play_human_menu_drops_wait_and_gates_good(void) {
 //
 // MUTATION-CHECKED, each applied on its own and restored:
 //
-//   play_pills: GOOD drops its SELECTION_EMPTY term           ->  3 failures
-//   play_pills: PICKUP drops its SELECTION_EMPTY term         ->  9 failures
+//   play_pills: GOOD drops its SELECTION_EMPTY term           ->  5 failures
+//   play_pills: PICKUP drops its SELECTION_EMPTY term         -> 10 failures
 //   play_pills: PICKUP drops its SUPERSEDED term              ->  2 failures
 //   play_pills: PASS drops its IS_DEFENDER term               ->  1 failure
 //   play_pills: `acting` drops its CAN_SEND term              ->  2 failures
