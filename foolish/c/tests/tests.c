@@ -9656,16 +9656,15 @@ static void test_refill_events_and_plan_are_unchanged(void) {
     }
 }
 
-// 5. A dealt card flies for ANIM_DEAL_CARD_MS (100): 36 of them at a refill's
-// half second would be eighteen seconds before anyone plays. A refill keeps
-// ANIM_TIME_MS.
+// 5. A dealt card flies for ANIM_DEAL_CARD_MS (350): a professional dealer's
+// pace, the owner's number. A refill keeps ANIM_TIME_MS.
 static void test_deal_card_timing(void) {
 #ifdef ANIM_DEAL_CARD_MS
-    CHECK(ANIM_DEAL_CARD_MS == 100, "a dealt card flies for 100 ms");
+    CHECK(ANIM_DEAL_CARD_MS == 350, "a dealt card flies for 350 ms");
     CHECK(anim_step_duration_ms(ANIM_EVT_DEAL) == ANIM_DEAL_CARD_MS, "a deal step paces at ANIM_DEAL_CARD_MS");
 #else
     CHECK(0, "ANIM_DEAL_CARD_MS is not defined (anim_plan.h)");
-    DCHECK(anim_step_duration_ms(ANIM_EVT_DEAL) == 100, "a deal step paces at 100 ms, got %d",
+    DCHECK(anim_step_duration_ms(ANIM_EVT_DEAL) == 350, "a deal step paces at 350 ms, got %d",
            anim_step_duration_ms(ANIM_EVT_DEAL));
 #endif
     CHECK(anim_step_duration_ms(ANIM_EVT_REFILL) == ANIM_TIME_MS, "a refill step still paces at ANIM_TIME_MS");
@@ -9771,11 +9770,12 @@ static void test_opening_deal_plan_paces_card_by_card(void) {
                                        after.flipped, after.hand, &plan);
         DCHECK(rc == ANIM_EOK, "deal clock (%dp): the opening plan builds, rc %d", np, rc);
         if (rc != ANIM_EOK) continue;
-        int k = 0, first_ms = -1, why = 0;
+        int k = 0, first_ms = -1, end_ms = -1, why = 0;
         for (int i = 0; i < plan.n_steps && !why; i++) {
             const AnimPlanStep *st = &plan.steps[i];
             if (st->type != ANIM_EVT_DEAL) continue;
             if (first_ms < 0) first_ms = st->start_ms;
+            end_ms = st->start_ms + st->duration_ms;
             if (st->beat_n != 1 || st->beat_first != i) why = 1;
             else if (st->duration_ms != ANIM_DEAL_CARD_MS) why = 2;
             else if (st->start_ms != first_ms + k * (ANIM_DEAL_CARD_MS + ANIM_GAP_MS)) why = 3;
@@ -9784,10 +9784,11 @@ static void test_opening_deal_plan_paces_card_by_card(void) {
             k++;
         }
         DCHECK(k == np * CARDS_PER_PLAYER, "deal clock (%dp): %d dealt cards on the clock", np, k);
+        // Read off the plan, not re-derived from the constants: the deal's first
+        // start, its last card's landing, and the whole opening plan's total.
         if (np == 2 || np == MAX_PLAYERS)
             printf("    opening plan %dp: %d steps, deal %d..%d ms, total %d ms\n", np, plan.n_steps,
-                   first_ms, first_ms + (k - 1) * (ANIM_DEAL_CARD_MS + ANIM_GAP_MS) + ANIM_DEAL_CARD_MS,
-                   plan.total_ms);
+                   first_ms, end_ms, plan.total_ms);
     }
 }
 static void test_table_reseat_retitle_continue(void) {

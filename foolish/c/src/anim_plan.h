@@ -76,13 +76,23 @@
 #define ANIM_GAP_MS  25
 
 // ONE DEALT CARD's flight. The opening deal goes round the table a card at a
-// time, one ANIM_EVT_DEAL per card (game.c deal_initial), and at ANIM_TIME_MS
-// that would be six seconds of dealing at two seats and 24 at eight. Only the
-// opening deal paces at this; a refill is a seat's whole draw in one event and
-// keeps ANIM_TIME_MS. Each card is still its own beat, so ANIM_GAP_MS sits
-// between cards and no two flights overlap. Retune freely: nothing else is
-// derived from it.
-#define ANIM_DEAL_CARD_MS 100
+// time, one ANIM_EVT_DEAL per card (game.c deal_initial). Only the opening deal
+// paces at this; a refill is a seat's whole draw in one event and keeps
+// ANIM_TIME_MS. Each card is still its own beat, so ANIM_GAP_MS sits between
+// cards and no two flights overlap.
+//
+// THE PACE IS A PROFESSIONAL DEALER'S. At 100 ms the owner said "slow the 1
+// card initial deal a bit it looks insane. like imagine a professional poker
+// dealer": 350 ms in the air plus the gap is 375 ms a card, about 2.7 cards a
+// second. Measured off the plan (tests.c test_opening_deal_plan_paces_card_by_card
+// prints it): at 2 seats the deal runs 525..5000 ms and the whole opening plan
+// 6575 ms; at 8 seats the deal runs 525..18500 ms and the plan 20075 ms.
+//
+// THE ONE KNOB for deal speed. The web and the iMessage board both pace from
+// the plan's step durations, and the iMessage extension's wait for a running
+// sequence (BoardAnimator.waitForSettle) reads the plan's total_ms, so retuning
+// this is the whole change.
+#define ANIM_DEAL_CARD_MS 350
 
 // THE BOUT-END HOLD: the rest a sequence takes after a cover that ENDED its
 // bout, before the sweep takes the table away. The one gap in a sequence that
