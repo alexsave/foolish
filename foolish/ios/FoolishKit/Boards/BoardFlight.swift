@@ -10,24 +10,37 @@
 // overlay for everything; iOS uses matchedGeometry where it can and this overlay
 // only where it must). Anchor preference keys publish the deck/discard/hand-card
 // rects in `boardSpace`. Card values are the kernel {s,v}; a hidden card ({-1,-1})
-// renders as a back. flightTime matches the web's 500ms.
+// renders as a back.
+//
+// NO PACING CONSTANT LIVES HERE. Every duration below is the kernel's
+// (anim_plan.h, through the generated module): a sequence's flights run for
+// their plan step's `durationMs`, and what has no plan step reads the kernel's
+// beat. A platform never invents its own pacing.
 
 import SwiftUI
 
-// web ANIMATION_TIME = 500ms; HARNESS_SLOWMO=N (dev) scales it up so flights are
-// catchable in screenshots / easy to eyeball. The harness reads it from its
-// environment; the iMessage extension cannot (it is spawned by the system, so
-// SIMCTL_CHILD_ never reaches it) and reads the `dev.slowmo` file instead.
-public var flightTime: Double {
+/// A kernel duration in milliseconds as the seconds this board plays it for.
+/// HARNESS_SLOWMO=N (dev) scales every one of them, so flights are catchable in
+/// screenshots and a filmed sequence keeps its proportions. The harness reads it
+/// from its environment; the iMessage extension cannot (it is spawned by the
+/// system, so SIMCTL_CHILD_ never reaches it) and reads `dev.slowmo` instead.
+public func boardSeconds(_ ms: Int) -> Double {
+    var scale = 1.0
     #if DEBUG
     if let s = ProcessInfo.processInfo.environment["HARNESS_SLOWMO"], let n = Double(s), n > 0 {
-        return 0.5 * n
-    }
-    if MessageDevBoard.slowmo > 0 { return 0.5 * MessageDevBoard.slowmo }
+        scale = n
+    } else if MessageDevBoard.slowmo > 0 { scale = MessageDevBoard.slowmo }
     #endif
-    return 0.5
+    return Double(ms) / 1000 * scale
 }
-public let flightGap: Double = 0.025       // web inter-event queue gap = 25ms
+
+/// ONE KERNEL BEAT (ANIM_TIME_MS), for motion that is not a step of a plan: a
+/// live play's flight, the fan and the table re-laying out around a card, an
+/// undo's return, the role marks. A sequence's flights never read this - they
+/// read their own step's duration off the plan (`MessageTableView.pace`).
+public var beatTime: Double { boardSeconds(ANIM_TIME_MS) }
+/// The rest between one flight landing and the next taking off (ANIM_GAP_MS).
+public var flightGap: Double { boardSeconds(ANIM_GAP_MS) }
 
 
 /// ROUND 16: the HOLD between a cover that ENDED THE BOUT and the sweep that
@@ -40,19 +53,20 @@ public let flightGap: Double = 0.025       // web inter-event queue gap = 25ms
 /// card that decided the bout is on the table for about a frame. The hold is a
 /// beat of NOTHING moving, which is the only thing that makes a board readable.
 ///
-/// Expressed against `flightTime` rather than as a bare 1.5 so it scales with
-/// HARNESS_SLOWMO like every other duration here - a filmed sequence keeps its
-/// proportions instead of the hold shrinking to nothing as the flights stretch.
+/// THE KERNEL'S NUMBER, ANIM_BOUT_END_HOLD_MS. A sequence rests for its plan
+/// step's `holdMs`, which is this; the name stays for the bounds that have to
+/// outlast a hold without a plan in hand (`drainOtherSequences`, the conflict
+/// failsafe). Scaled by HARNESS_SLOWMO like every other duration here.
 ///
 /// ROUND 20 took it from 0.9x to 3x a flight - 1.5 seconds at the shipping
-/// `flightTime` (owner: "for last defense, still not enough of a pause in
+/// beat (owner: "for last defense, still not enough of a pause in
 /// animation when they cover. Both for finish and for the other one. Make it
 /// like 1.5 second"). "Both" is the two ends the kernel's hold scans for
 /// (`AnimBeats`): the bout that closes into the DISCARD, and the last one of a
 /// game, which closes into the TRASH. Three flights' worth is deliberately
 /// longer than anything else on this board: the point is that the eye STOPS, and
 /// half a flight was still being read as part of the motion around it.
-public var boutEndHold: Double { flightTime * 3 }
+public var boutEndHold: Double { boardSeconds(ANIM_BOUT_END_HOLD_MS) }
 
 /// ROUND 28: the HOLD between the last move of a game and the RANKS replacing
 /// the board (owner, on the 1.0(28) walk of the animation catalogue: "hold for 1
@@ -64,9 +78,10 @@ public var boutEndHold: Double { flightTime * 3 }
 /// It was 500ms, hard-coded in `settleResults`, which reads as the board being
 /// taken away from you rather than given to you.
 ///
-/// Against `flightTime` like every other duration here, so a filmed game-over
-/// keeps its proportions under HARNESS_SLOWMO: 2x a flight is 1.0s shipping.
-public var gameOverHold: Double { flightTime * 2 }
+/// Against the kernel's beat, so a filmed game-over keeps its proportions under
+/// HARNESS_SLOWMO: 2x a beat is 1.0s shipping. The 2x is the owner's ask and
+/// has no kernel constant yet - a results screen is not a step of any plan.
+public var gameOverHold: Double { beatTime * 2 }
 
 /// The deck pile's rect in `boardSpace` (draw source / flip source).
 public struct DeckFrameKey: PreferenceKey {
@@ -158,8 +173,8 @@ public struct Flight: Identifiable, Equatable {
 /// event together, no intra-event stagger).
 public typealias FlightStep = [Flight]
 
-/// Plays overlay flights. `play(steps)` runs each step's cards as ONE
-/// `withAnimation` over `flightTime`, awaiting between steps with structured
+/// Plays overlay flights. `play(steps, over:)` runs each step's cards as ONE
+/// `withAnimation` over the duration it is handed, awaiting between steps with structured
 /// concurrency (a short cascade like discard→draws is a couple of steps, not a
 /// long-lived event loop).
 @MainActor
@@ -244,8 +259,8 @@ public final class BoardAnimator: ObservableObject {
     /// caller guessing how long one might take. A plain attack/cover (no
     /// bout end) never touches `sequenceDepth` at all — matchedGeometry's own
     /// spring animates it — so this returns almost immediately then; a bout
-    /// end or open-delta replay can run several steps at ~`flightTime` +
-    /// `flightGap` (≈0.55s) each, and this waits out the real total instead
+    /// end or open-delta replay can run several steps at their plan duration +
+    /// `flightGap` (≈0.55s for a refill) each, and this waits out the real total instead
     /// of a constant tuned for the common short case (the bug an all-players-
     /// draw sequence used to get cut off mid-flight by, note 8). `timeout`
     /// bounds the wait: an unbalanced `sequenceDepth` increment (a bug, not a
@@ -286,6 +301,12 @@ public final class BoardAnimator: ObservableObject {
     /// (`hidden` keeps it) but now laid out, so its landing frame publishes and
     /// the fan opens for it AS it arrives. Published so the board's layout reacts.
     @Published public private(set) var preHidden: Set<String> = []
+
+    /// HOW LONG THE FAN TAKES TO MAKE ROOM OR CLOSE UP: the duration of the
+    /// flight it is moving with. A plan step's while a sequence steps (set by
+    /// `openSlots(_:over:)` and `play`), one kernel beat otherwise - so an
+    /// opening deal's fan slides at the deal's pace, not a refill's.
+    @Published public private(set) var tween: Double = beatTime
 
     /// WHEN each pre-hidden card WAS VEILED, and the counter that stamps it.
     ///
@@ -343,11 +364,12 @@ public final class BoardAnimator: ObservableObject {
     /// `preHidden` (so `MessageTableView.handSlotDeferred` no longer excludes
     /// them and the fan opens for them, publishing their landing frame) but
     /// stay in `hidden`, so they are still invisible until their flight lands.
-    /// The caller wraps this in a `withAnimation` matching the flight so the
-    /// fan makes room over the flight rather than jumping. A no-op for ids not
-    /// currently predicted.
-    public func openSlots(_ ids: Set<String>) {
+    /// `duration` is the flight's, and the fan makes room over it (`tween`)
+    /// rather than jumping: a plan step's inside a sequence, the kernel beat
+    /// for a flight no plan paces. A no-op for ids not currently predicted.
+    public func openSlots(_ ids: Set<String>, over duration: Double = beatTime) {
         AnimLog.say("veil openSlots [\(ids.sorted().joined(separator: ","))] (make room, still hidden)")
+        tween = duration
         preHidden.subtract(ids)
     }
 
@@ -429,7 +451,10 @@ public final class BoardAnimator: ObservableObject {
         progress = 0
     }
 
-    public func play(_ steps: [FlightStep]) async {
+    /// `duration` is how long each step flies: the plan step's `durationMs`
+    /// (via `MessageTableView.pace`) for a sequence, `beatTime` for a flight
+    /// no plan paces.
+    public func play(_ steps: [FlightStep], over duration: Double) async {
         #if DEBUG || SOLO_TESTING
         // WHERE every flight goes, in the recorder: the one question a film
         // cannot answer about a card that lands somewhere surprising.
@@ -438,6 +463,7 @@ public final class BoardAnimator: ObservableObject {
                                 + "to=(\(Int(fl.to.midX)),\(Int(fl.to.midY)))")
         } }
         #endif
+        tween = duration
         for step in steps where !step.isEmpty {
             isAnimating = true
             flights = step
@@ -448,16 +474,16 @@ public final class BoardAnimator: ObservableObject {
             progress = 0
             // One paint at from-position, then animate to-position.
             try? await Task.sleep(nanoseconds: 25_000_000)
-            withAnimation(.timingCurve(0.25, 0.46, 0.45, 0.94, duration: flightTime)) {
+            withAnimation(.timingCurve(0.25, 0.46, 0.45, 0.94, duration: duration)) {
                 progress = 1
             }
-            try? await Task.sleep(nanoseconds: UInt64(flightTime * 1_000_000_000))
-            try? await Task.sleep(nanoseconds: UInt64(flightGap * 1_000_000_000))
+            try? await Task.sleep(nanoseconds: UInt64((duration + flightGap) * 1_000_000_000))
             AnimLog.say("flight LAND (pop IN at dest) [\(ids.sorted().joined(separator: ","))]")
         }
         // Un-hide this call's own step ids, but leave any OTHER pending
         // pre-hidden cards (for a step not yet reached) hidden.
         flights = []; hidden = preHidden; isAnimating = false; progress = 0
+        tween = beatTime
     }
 
     public func isHidden(_ identity: String) -> Bool { hidden.contains(identity) }

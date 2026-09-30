@@ -210,9 +210,12 @@ public struct FBattleGrid: View {
                 .transition(.identity)
             }
         }
-        .animation(slidesPreview ? .timingCurve(0.25, 0.46, 0.45, 0.94, duration: flightTime / 2) : nil,
+        // The kernel beat, not a plan step's: every card the table takes or
+        // gives up flies ANIM_TIME_MS (only an opening deal paces otherwise,
+        // and a deal never touches the table).
+        .animation(slidesPreview ? .timingCurve(0.25, 0.46, 0.45, 0.94, duration: beatTime / 2) : nil,
                    value: showGhostSlot)
-        .animation(slides ? .timingCurve(0.25, 0.46, 0.45, 0.94, duration: flightTime) : nil,
+        .animation(slides ? .timingCurve(0.25, 0.46, 0.45, 0.94, duration: beatTime) : nil,
                    value: battles.map(\.attack.identity))
     }
 
@@ -330,7 +333,7 @@ public struct FBattleGrid: View {
         // flying, not once it lands), so the covered card and the card covering
         // it rotate at the same speed. `coverTilted` starts the tilt at flight
         // start (`flyingNow`); the animation below matches `FlyingCardsLayer`'s
-        // own `flightTime` timing curve exactly, where it used to be a faster
+        // own timing curve over a cover's beat exactly, where it used to be a faster
         // 0.22s easeOut that only fired after the cover had already landed.
         let coverTilted = Self.coverTilted(defense: battle.defense, hidden: hidden, flyingNow: flyingNow)
         return ZStack(alignment: .bottom) {
@@ -358,7 +361,7 @@ public struct FBattleGrid: View {
                 // new ones appear and move"). Snap it; the ghost carries the motion.
                 .animation(nil, value: hidden.contains(battle.attack.identity))
                 .rotationEffect(.degrees(coverTilted ? -Self.coverAngle : 0), anchor: .bottom)
-                .animation(.timingCurve(0.25, 0.46, 0.45, 0.94, duration: flightTime), value: coverTilted)
+                .animation(.timingCurve(0.25, 0.46, 0.45, 0.94, duration: beatTime), value: coverTilted)
                 .zIndex(covered ? 1 : 2)
                 // Round-7 #2: a card the overlay is flying (in `hidden`) must NOT
                 // also carry matchedGeometry - see `handoffNamespace`.

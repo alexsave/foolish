@@ -260,7 +260,7 @@ public struct MessageTableView: View {
     /// This is the counts trick (`ledger.hand`) applied to the hand: hold
     /// the cards in the fan at their PRE-MOVE slots, seeded synchronously by
     /// `replayLastMoveOnOpen`, and drop each group the instant its flight is
-    /// built. The fan animates its own re-close over exactly `flightTime`
+    /// built. The fan animates its own re-close over exactly the flight's time
     /// (FHandFan's layout animation is keyed on the laid-out SET), so the hand
     /// closes up as the cards leave rather than before they do - the second
     /// half of the same report.

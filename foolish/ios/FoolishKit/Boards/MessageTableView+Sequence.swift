@@ -275,6 +275,9 @@ extension MessageTableView {
         // Every other board - a receiver watching it arrive, a cold open
         // replaying it - has one.
         let plan = AnimBeats(events)
+        // …AND THE CLOCK, from the kernel's plan for the same stream: each
+        // beat flies and rests for exactly what the plan says (`pace`).
+        let timing = AnimPlan(events, finalView: view)
         // The kernel refuses a stream it cannot hold whole rather than
         // truncating it, and a truncated shape would animate half a move. That
         // degrades to no flights at all - the closing beat below still settles
@@ -306,6 +309,7 @@ extension MessageTableView {
             // difference between "at the same time" and "one after another".
             let group = Array(events[beat.range])
             let ev = group[0]
+            let pace = Self.pace(of: beat, in: timing)
             // Bug 9: a newer sequence has taken over (a live bout-end played on
             // top of a replay still in flight). Stop stepping the stale one
             // rather than interleaving two sets of flights through one animator
@@ -334,13 +338,13 @@ extension MessageTableView {
                 // (handLandingSlot), so it lands correctly WHILE the row is still
                 // sliding - the make-room and the arrival play together, which is
                 // exactly what "the same time" asks for. Same in live and replay.
-                withAnimation(.timingCurve(0.25, 0.46, 0.45, 0.94, duration: flightTime)) {
-                    self.animator.openSlots(landing)
+                withAnimation(.timingCurve(0.25, 0.46, 0.45, 0.94, duration: pace.flight)) {
+                    self.animator.openSlots(landing, over: pace.flight)
                 }
             }
             // …AND THE ROW GROWS AS THIS STEP'S CARDS COME DOWN ONTO IT, which
             // is the table's twin of the fan's make-room just above and is
-            // timed identically: the same curve, the same `flightTime`, started
+            // timed identically: the same curve, the same plan duration, started
             // in the same breath as the flight. So a pile already on the table
             // slides over WHILE the new card is in the air and the two settle
             // together, which is what "the cards on the table should start as
@@ -364,7 +368,7 @@ extension MessageTableView {
                 // write means a newer sequence owns the row, which is exactly
                 // the case this step has nothing more to do about.
                 _ = withAnimation(reduceMotion ? nil
-                                  : .timingCurve(0.25, 0.46, 0.45, 0.94, duration: flightTime)) {
+                                  : .timingCurve(0.25, 0.46, 0.45, 0.94, duration: pace.flight)) {
                     ledger.write(.sequence) { $0.battles = s.battles }
                 }
             }
@@ -441,9 +445,10 @@ extension MessageTableView {
                 AnimLog.say("stream#\(run) out badges collapse \(goingOut.sorted())")
                 // `_ =` for the same reason as the row above: the ledger's
                 // "did this land" comes back through `withAnimation`, and a
-                // refusal here means a newer sequence owns the badges.
+                // refusal here means a newer sequence owns the badges. A badge
+                // is not a card, so it collapses over the kernel beat.
                 _ = withAnimation(reduceMotion ? nil
-                                  : .timingCurve(0.25, 0.46, 0.45, 0.94, duration: flightTime)) {
+                                  : .timingCurve(0.25, 0.46, 0.45, 0.94, duration: beatTime)) {
                     ledger.write(.sequence) { $0.out = ($0.out ?? []).union(goingOut) }
                 }
             }
@@ -496,7 +501,7 @@ extension MessageTableView {
             // the conflict record below - the builder's last successful answer
             // is exactly the flight list the animator played.
             var groupFlights: [Flight] = []
-            await playStep { lastChance in
+            await playStep(over: pace.flight) { lastChance in
                 // One builder call per event, one flight list for the group: the
                 // animator runs a list in PARALLEL, so a two-card cover leaves
                 // the hand as one movement. A builder that cannot resolve yet
@@ -513,7 +518,7 @@ extension MessageTableView {
                 // The flights above were built from the slots these cards still
                 // hold, so the takeoff is already captured; dropping them now
                 // starts the fan's re-close (FHandFan animates its layout over
-                // `flightTime`, keyed on the laid-out set) at the instant the
+                // the animator's `tween`, keyed on the laid-out set) at the instant the
                 // cards leave, which is the whole of "we'll want the hand to
                 // rearrange as a result of the cards leaving". Inside the
                 // builder rather than before the poll: the poll can run for up
@@ -601,15 +606,15 @@ extension MessageTableView {
                 }
             }
             // ROUND 16: a cover that ended the bout HOLDS before the sweep takes
-            // the table away. See `boutEndHold` for why this one beat is unlike
-            // every other gap in a sequence. Placed here rather than at either
-            // call site because both sides reach it: the defender's own board
-            // arrives with the landing flight already flown (its cover step is a
-            // no-op - the card is not in the final view to fly to), and every
-            // receiver replays the same stream from the top.
-            if beat.holds {
-                AnimLog.say("stream#\(run) hold \(Int(boutEndHold * 1000))ms - bout-ending cover")
-                try? await Task.sleep(nanoseconds: UInt64(boutEndHold * 1_000_000_000))
+            // the table away, for the plan's `holdMs`. See `boutEndHold` for why
+            // this one beat is unlike every other gap in a sequence. Placed here
+            // rather than at either call site because both sides reach it: the
+            // defender's own board arrives with the landing flight already flown
+            // (its cover step is a no-op - the card is not in the final view to
+            // fly to), and every receiver replays the same stream from the top.
+            if pace.hold > 0 {
+                AnimLog.say("stream#\(run) hold \(Int(pace.hold * 1000))ms - bout-ending cover")
+                try? await Task.sleep(nanoseconds: UInt64(pace.hold * 1_000_000_000))
             }
         }
         // ROUND 16: THE CLOSING BEAT. The roles were frozen for the whole
@@ -668,6 +673,21 @@ extension MessageTableView {
     // takes out with it, whether the sequence rests after it and which way its
     // badge counts. What is left in this file is the playing.
 
+    /// HOW LONG A BEAT FLIES AND RESTS: the kernel plan's answer, never a rule
+    /// of this file's. The plan lays its clock out beat by beat over the same
+    /// grouping `AnimBeats` answers (anim_plan.c), so the step leading a beat
+    /// carries the whole beat's `durationMs` and `holdMs` - a dealt card's
+    /// ANIM_DEAL_CARD_MS, a refill's ANIM_TIME_MS. A plan that does not cover
+    /// the stream (the kernel refused it) degrades to one kernel beat, and to
+    /// the kernel's hold where the beats say one is due.
+    static func pace(of beat: AnimBeats.Beat, in plan: AnimPlan) -> (flight: Double, hold: Double) {
+        guard beat.range.lowerBound < plan.steps.count else {
+            return (beatTime, beat.holds ? boutEndHold : 0)
+        }
+        let step = plan.steps[beat.range.lowerBound]
+        return (boardSeconds(step.durationMs), boardSeconds(step.holdMs))
+    }
+
     /// Wait for the host to finish moving the sheet.
     ///
     /// `CollapseTween.isPresenting` is the honest signal - the extension sets it
@@ -698,10 +718,13 @@ extension MessageTableView {
         }
     }
 
-    /// Poll (up to ~1.2s) for a step's frames to be ready, then play it and await
-    /// the animation. `build` returns nil (frames not ready - retry), [] (nothing
-    /// to animate), or the flights.
-    func playStep(_ build: (_ lastChance: Bool) -> [Flight]?) async {
+    /// Poll (up to ~1.2s) for a step's frames to be ready, then play it over
+    /// `duration` and await the animation. `build` returns nil (frames not ready
+    /// - retry), [] (nothing to animate), or the flights. A sequence passes its
+    /// plan step's duration (`pace`); a flight no plan paces (a live play, an
+    /// undo, the genesis fallback) flies the kernel beat.
+    func playStep(over duration: Double = beatTime,
+                  _ build: (_ lastChance: Bool) -> [Flight]?) async {
         for i in 0..<26 {
             // ROUND 30: never AIM at a board that is still moving under the
             // collapse tween - see `CollapseTween.isTweening` for the whole
@@ -723,7 +746,7 @@ extension MessageTableView {
             // to be hard-revealed (it "just suddenly appears in hand"). A rough
             // deck->hand flight reads far better than a pop-in.
             if let f = build(i == 25) {
-                if !f.isEmpty { await animator.play([f]) }
+                if !f.isEmpty { await animator.play([f], over: duration) }
                 return
             }
             try? await Task.sleep(nanoseconds: 45_000_000)
@@ -741,7 +764,7 @@ extension MessageTableView {
     /// a flight) with slack; on timeout we proceed anyway, which is today's
     /// overlap behaviour and strictly no worse.
     func drainOtherSequences(floor: Int = 1) async {
-        let deadline = Date().addingTimeInterval(boutEndHold + flightTime * 2 + 1.0)
+        let deadline = Date().addingTimeInterval(boutEndHold + beatTime * 2 + 1.0)
         while BoardAnimator.sequenceDepth > floor, Date() < deadline {
             try? await Task.sleep(nanoseconds: 50_000_000)
         }

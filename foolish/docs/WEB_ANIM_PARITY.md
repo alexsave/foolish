@@ -118,8 +118,8 @@ and the bout end is four big events glued together:
 ```
 
 A bout-ending cover is taken off the table 36ms after it lands. iMessage rests
-`boutEndHold` there, which is `flightTime * 3` = 1500ms
-(`ios/FoolishKit/Boards/BoardFlight.swift:55`), and that constant's comment records the
+`boutEndHold` there, which is the kernel's `ANIM_BOUT_END_HOLD_MS` = 1500ms
+(`ios/FoolishKit/Boards/BoardFlight.swift`), and that constant's comment records the
 owner asking for it twice, the second time by name: "for last defense, still not enough
 of a pause in animation when they cover ... Make it like 1.5 second".
 

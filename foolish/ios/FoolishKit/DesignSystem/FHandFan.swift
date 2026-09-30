@@ -113,6 +113,10 @@ public struct FHandFan: View {
     /// survives closing and reopening the game; defaulted no-op so every other
     /// call site (offline board, gallery, snapshots) is unchanged.
     public let onOrderChanged: ([String]) -> Void
+    /// How long the fan's own re-layout takes: the flight it is moving with.
+    /// The message board passes its animator's `tween` (a plan step's duration
+    /// mid-sequence); everywhere else it is one kernel beat.
+    public let reflow: Double
 
     public init(cards: [Card], trumpSuit: Suit?, disabled: Set<String> = [],
                 locked: Set<String> = [],
@@ -123,8 +127,10 @@ public struct FHandFan: View {
                 onDragCardMoved: @escaping (CGPoint) -> Void = { _ in },
                 reserveNoSlot: Set<String> = [], instantExit: Bool = false,
                 initialOrder: [String] = [],
-                onOrderChanged: @escaping ([String]) -> Void = { _ in }) {
+                onOrderChanged: @escaping ([String]) -> Void = { _ in },
+                reflow: Double = beatTime) {
         self.instantExit = instantExit
+        self.reflow = reflow
         self.cards = cards
         self.trumpSuit = trumpSuit
         self.disabled = disabled
@@ -697,7 +703,7 @@ public struct FHandFan: View {
             // so the compact-drawer collapse stays the board's animation. A leaving
             // card still EXITS instantly (`instantExit` / the identity transition),
             // so only the survivors slide - no fade, no ghost.
-            .animation(.timingCurve(0.25, 0.46, 0.45, 0.94, duration: flightTime),
+            .animation(.timingCurve(0.25, 0.46, 0.45, 0.94, duration: reflow),
                        value: Set(laidOutCards.map(\.identity)))
         }
         // Before the width probe lands (`measuredWidth == 0`, the very first

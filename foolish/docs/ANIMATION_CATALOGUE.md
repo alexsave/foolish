@@ -175,7 +175,7 @@ Released settlement, then the result screen: final board, then the rank list.
 Decided (change): the final board holds for ONE SECOND before the ranks come up.
 `settleResults` waited 500ms, which is half a beat and reads as the board being taken away from you.
 The ranks keep their current fade-in; only the wait changed.
-Built as `gameOverHold`, and expressed against `flightTime` so a filmed game-over keeps its proportions.
+Built as `gameOverHold`, and expressed against the kernel beat (`beatTime`) so a filmed game-over keeps its proportions.
 Status: unit (`Round28ShapeTests.testTheGameOverHoldIsASecond`, `testTheGameOverHoldScalesWithTheFlights`).
 Status: rig only as an ARRIVAL (`gameover`).
 **Never tested as my own send.**

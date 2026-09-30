@@ -70,7 +70,8 @@
 // long. The web's processAnimationQueue then waits ANIM_GAP_MS before creating
 // the next event's cards; the two are a matched pair (see the comment there:
 // the gap is coupled to the overlay's clear timeout, "don't lower one without
-// the other"). iOS's playStep awaits the flight for the same ANIMATION_TIME.
+// the other"). iOS's playStep awaits each flight for its plan step's
+// duration_ms and the gap after it.
 #define ANIM_TIME_MS 500
 #define ANIM_GAP_MS  25
 
@@ -104,7 +105,7 @@
 //
 // WHICH beat rests is ANIM_BEAT_HOLDS (anim_build_beats); HOW LONG is here,
 // because "for how long" is this layer's half of the boundary. iOS reads it as
-// BoardFlight.boutEndHold (flightTime * 3) and sleeps it between beats; a host
+// the plan step's hold_ms (MessageTableView.pace) and sleeps it between beats; a host
 // with a frame loop never sees it at all - anim_build_plan has already pushed
 // the next beat's start_ms out by it, so the rest comes out of the sampler.
 #define ANIM_BOUT_END_HOLD_MS (ANIM_TIME_MS * 3)

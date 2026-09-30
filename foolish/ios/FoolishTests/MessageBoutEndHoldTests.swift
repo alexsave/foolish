@@ -90,14 +90,14 @@ final class MessageBoutEndHoldTests: XCTestCase {
     /// to nothing when a filmed sequence is slowed down.
     ///
     /// ROUND 20 pins the number the owner asked for by name: a second and a
-    /// half at the shipping `flightTime`. Both bounds are still here - it is a
+    /// half at the shipping `beatTime`. Both bounds are still here - it is a
     /// pause, not a stall - they are just an order of magnitude apart now,
     /// because the first attempt at "a beat" (0.9 flights) was measured and
     /// still read as part of the motion.
     func testTheHoldIsAReadableBeatAndScalesWithTheFlights() {
         XCTAssertEqual(boutEndHold, 1.5, accuracy: 0.001, "the owner asked for 1.5s")
-        XCTAssertGreaterThan(boutEndHold, flightTime * 2, "long enough that the eye stops")
-        XCTAssertLessThan(boutEndHold, flightTime * 5, "a pause, not a stall")
+        XCTAssertGreaterThan(boutEndHold, beatTime * 2, "long enough that the eye stops")
+        XCTAssertLessThan(boutEndHold, beatTime * 5, "a pause, not a stall")
         XCTAssertGreaterThan(boutEndHold, flightGap * 10, "not the ordinary inter-step gap")
     }
 
