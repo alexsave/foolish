@@ -29,26 +29,29 @@ struct Variant {
     var n = 243          // cells a side
     var p = 3            // pixels per cell
     var grey = true      // luminance-only palette (false: the hue-separated one)
-    var str = 40         // characters in each of the seven strings
+    var str = 0          // characters in each of the seven strings; 0 sends none
     var media = false    // hand the picture over as a PNG file, not a UIImage
     var url = 200        // characters in the URL
 
     static let presets: [Variant] = [
-        Variant(name: "243x3col", grey: false),
-        Variant(name: "243x1col", p: 1, grey: false),
-        Variant(name: "243x1gry", p: 1),
-        Variant(name: "243x2gry", p: 2),
-        Variant(name: "243x3gry"),
-        Variant(name: "729x1gry", n: 729, p: 1),
-        Variant(name: "729x2gry", n: 729, p: 2),
-        Variant(name: "729x3gry", n: 729, p: 3),
-        Variant(name: "1458x3gry", n: 1458, p: 3),
-        Variant(name: "str1k", str: 1000),
-        Variant(name: "str20k", str: 20000),
-        Variant(name: "str200k", str: 200_000),
-        Variant(name: "mediaPNG", media: true),
-        Variant(name: "url4990", url: 4990),
-        Variant(name: "url5200", url: 5200),
+        // The picture ladder, by cells a side and pixels per cell: where does a
+        // real send cut a picture down, and what does the cut cost? No caption
+        // text on any of them (str 0) - the picture is the channel.
+        Variant(name: "243x3", n: 243, p: 3),       //  729 px
+        Variant(name: "243x4", n: 243, p: 4),       //  972
+        Variant(name: "243x5", n: 243, p: 5),       // 1215
+        Variant(name: "243x6", n: 243, p: 6),       // 1458
+        Variant(name: "243x8", n: 243, p: 8),       // 1944
+        Variant(name: "243x12", n: 243, p: 12),     // 2916
+        Variant(name: "500x2", n: 500, p: 2),       // 1000
+        Variant(name: "600x2", n: 600, p: 2),       // 1200
+        Variant(name: "800x2", n: 800, p: 2),       // 1600
+        Variant(name: "1000x2", n: 1000, p: 2),     // 2000
+        Variant(name: "400x3", n: 400, p: 3),       // 1200
+        Variant(name: "300x4", n: 300, p: 4),       // 1200
+        Variant(name: "243x1", n: 243, p: 1),       //  243
+        Variant(name: "1458x3", n: 1458, p: 3),     // 4374, over the 10 MiB limit
+        Variant(name: "243x3col", n: 243, p: 3, grey: false),
     ]
 
     /// `key=value` pairs from the rig's file; a key it does not name keeps its default.
@@ -66,7 +69,7 @@ struct Variant {
             }
         }
     }
-    init(name: String, n: Int = 243, p: Int = 3, grey: Bool = true, str: Int = 40, media: Bool = false, url: Int = 200) {
+    init(name: String, n: Int = 243, p: Int = 3, grey: Bool = true, str: Int = 0, media: Bool = false, url: Int = 200) {
         self.name = name; self.n = n; self.p = p; self.grey = grey; self.str = str; self.media = media; self.url = url
     }
 }
@@ -206,13 +209,15 @@ final class MessagesViewController: MSMessagesAppViewController {
         guard let c = activeConversation else { say("no conversation"); return }
         let m = MSMessage(session: MSSession())
         let l = MSMessageTemplateLayout()
-        l.caption = filler(v.str, "cap")
-        l.subcaption = filler(v.str, "sub")
-        l.trailingCaption = filler(v.str, "tcap")
-        l.trailingSubcaption = filler(v.str, "tsub")
-        l.imageTitle = filler(v.str, "ititle")
-        l.imageSubtitle = filler(v.str, "isub")
-        m.summaryText = filler(v.str, "sum")
+        if v.str > 0 {
+            l.caption = filler(v.str, "cap")
+            l.subcaption = filler(v.str, "sub")
+            l.trailingCaption = filler(v.str, "tcap")
+            l.trailingSubcaption = filler(v.str, "tsub")
+            l.imageTitle = filler(v.str, "ititle")
+            l.imageSubtitle = filler(v.str, "isub")
+            m.summaryText = filler(v.str, "sum")
+        }
         let img = patternImage(n: v.n, p: v.p, grey: v.grey)
         if v.media {
             let f = FileManager.default.temporaryDirectory.appendingPathComponent("pattern.png")

@@ -98,20 +98,21 @@ The Mac keeps the bubble's picture as a file under `~/Library/Messages/Attachmen
 | --- | --- | --- | --- |
 | 243 cells, 1 px each, grey (243 px) | 243 x 243, 41,570 B | 243 x 243, 72,040 B, quality 0.89 | 0 of 59,049 (worst channel error 37) |
 | 243 cells, 3 px each, grey, strings of 20,000 (729 px) | 729 x 729, 299,364 B | 729 x 729, 537,637 B, quality 0.89 | 0 of 59,049 (worst channel error 35) |
-| 729 cells, 3 px each, grey (2187 px) | 2187 x 2187, 2,673,015 B | **1200 x 1200**, 1,435,899 B, quality 0.89 | 12,150 of 531,441 (2.3%, worst channel error 150) |
+| 729 cells, 3 px each, grey (2187 px) | 2187 x 2187, 2,673,015 B | **1200 x 1200**, 1,435,899 B, quality 0.89 | 12,150 of 531,441 (2.3%) |
+| 1458 cells, 3 px each, grey (4374 px, 10.7 MB) | 4374 x 4374, 10,709,457 B | **1200 x 1200**, 1,354,537 B, quality 0.89 | 982,142 of 2,125,764 (46%, noise) |
+| 243 cells, 3 px each, strings of 200,000 (729 px) | 729 x 729, 299,364 B | 729 x 729, 537,637 B, quality 0.89 | 0 of 59,049 |
 
 - **A second encoder runs after the extension's.** Every received picture is a different JPEG from the one the extension made: quality 0.89 where the extension's was 0.50, still 4:2:0, and bigger on disk because it was decoded and written again at a higher quality. The sender's own synced copy on the Mac is the same file as the received copy, so the re-encode happens on the sending phone, after `didStartSending` and before upload. This is the transport's transcoder (see "The transport's transcoder" above).
-- **A picture is cut to 1200 px on a side.** The 2187 px picture came back 1200 x 1200; the 243 px and 729 px pictures kept their size. Only one picture over 1200 px was received, so the cap is 1200 in this one observation, not a measured ladder. It is far below the 10 MiB byte limit (2.67 MB went in), so it is a dimension limit and not the byte budget.
-- **The resize is what costs cells.** Pictures that kept their size decode with no wrong cell. The 729-cell grid, shrunk to 1.65 px per cell, lost 2.3% of its cells. So a design has to stay under 1200 px on the longest side with enough pixels per cell: 600 cells at 2 px is the largest grid that fits exactly.
-- **All seven strings come through.** The synced rows carry `payload_data` with every string at its sent length, 20,000 characters each in the second bubble (143,588 bytes for the row).
-- **Two sends never arrived.** The 1458-cell, 3 px picture (4374 px, 10.7 MB) and the 200,000-character strings both reported `insert ok` and `didStartSending` on the phone and have no row in the Mac's `chat.db` after several minutes, so they were either refused or are stuck on the phone. Whether the cause is the picture's 10 MiB limit or the strings' size is not separated: they were two different sends and neither showed up.
+- **A picture is cut to 1200 px on a side.** Two pictures over 1200 px, 2187 px and 4374 px, both came back 1200 x 1200. The 243 px and 729 px pictures kept their size. The cap does not depend on the byte size: the 2.67 MB picture, well under the 10 MiB limit, was cut to the same 1200.
+- **The resize is what costs cells.** Pictures that kept their size decode with no wrong cell. The 729-cell grid, shrunk to 1.65 px per cell, lost 2.3% of its cells; the 1458-cell grid, shrunk to 0.82 px per cell, is noise.
+- **All seven strings come through, even at 200,000 characters each** (a 1.4 MB row), although the phone labels that bubble "Not Delivered". The synced rows carry every string at its sent length. Not using them is a design choice, not a limit: a caption that long fills the bubble with text.
+- **Delivery is the practical limit, and it is erratic.** Measured from the attachment's `created_date` against the message's send time in `chat.db`: the 243 px picture (72,040 B) and the 729 px and 1200 px pictures were on the Mac within about two minutes of sending (the first listing after each round already had them); the 4374 px bubble's picture (1.35 MB, after the cut) and the 200,000-character-strings bubble arrived 106 to 109 s after sending. A round of ten pictures sent afterwards (972 to 2916 px, 1,000 to 1,600 px grids, none with strings) had not arrived after more than six minutes. Sizes alone do not explain it (the delivered 1200 px picture was 1.4 MB, the ten were of similar size), so the stall may be the "Not Delivered" 200,000-character bubble ahead of them in the thread's queue; that is not tested. A design should not count on a bubble arriving within seconds, and it should keep a picture small: the 72 KB, 243 px picture is the one that has arrived every time.
 
 ## What it did not find
 
 - **A second Apple ID.** The real send above is one account's phone and Mac. A message to a different person may take a different path, and a phone receiving it is a different reader; the numbers are for the sender's transcoder, which is the same either way, but nothing here measured the receiving phone's own handling.
-- **Where the picture limit is.** 1200 px came from one picture. The ladder (what a 1500, 2000 or 3000 px picture becomes, and what makes it stop at 1200) needs more pictures.
-- **Why two sends did not arrive.** See the last bullet of the real send above.
-- **A limit on the strings.** 20,000 characters arrived; 200,000 did not arrive, for a reason not yet separated from the 4374 px picture.
+- **Where below 1200 px a picture starts to be cut.** 972 and 1000 px are in the ladder run.
+- **Why the 200,000-character send shows "Not Delivered" on the phone** while the Mac received it in full.
 
 ## How much harsher an encoder the pattern would survive
 
@@ -183,7 +184,7 @@ xcrun simctl shutdown $RIG_SIM
 | `n` | 243 | cells a side |
 | `p` | 3 | pixels per cell |
 | `grey` | 1 | 1 for the luminance palette, 0 for the hue-separated one |
-| `str` | 40 | characters in each of the seven strings |
+| `str` | 0 | characters in each of the seven strings; 0 sends no caption text at all |
 | `media` | 0 | 1 to hand the picture over as a PNG file through `mediaFileURL` |
 | `url` | 200 | characters in the URL |
 
