@@ -70,9 +70,29 @@
 // long. The web's processAnimationQueue then waits ANIM_GAP_MS before creating
 // the next event's cards; the two are a matched pair (see the comment there:
 // the gap is coupled to the overlay's clear timeout, "don't lower one without
-// the other"). iOS's playStep awaits the flight for the same ANIMATION_TIME.
+// the other"). iOS's playStep awaits each flight for its plan step's
+// duration_ms and the gap after it.
 #define ANIM_TIME_MS 500
 #define ANIM_GAP_MS  25
+
+// ONE DEALT CARD's flight. The opening deal goes round the table a card at a
+// time, one ANIM_EVT_DEAL per card (game.c deal_initial). Only the opening deal
+// paces at this; a refill is a seat's whole draw in one event and keeps
+// ANIM_TIME_MS. Each card is still its own beat, so ANIM_GAP_MS sits between
+// cards and no two flights overlap.
+//
+// THE PACE IS A PROFESSIONAL DEALER'S. At 100 ms the owner said "slow the 1
+// card initial deal a bit it looks insane. like imagine a professional poker
+// dealer": 350 ms in the air plus the gap is 375 ms a card, about 2.7 cards a
+// second. Measured off the plan (tests.c test_opening_deal_plan_paces_card_by_card
+// prints it): at 2 seats the deal runs 525..5000 ms and the whole opening plan
+// 6575 ms; at 8 seats the deal runs 525..18500 ms and the plan 20075 ms.
+//
+// THE ONE KNOB for deal speed. The web and the iMessage board both pace from
+// the plan's step durations, and the iMessage extension's wait for a running
+// sequence (BoardAnimator.waitForSettle) reads the plan's total_ms, so retuning
+// this is the whole change.
+#define ANIM_DEAL_CARD_MS 350
 
 // THE BOUT-END HOLD: the rest a sequence takes after a cover that ENDED its
 // bout, before the sweep takes the table away. The one gap in a sequence that
@@ -95,7 +115,7 @@
 //
 // WHICH beat rests is ANIM_BEAT_HOLDS (anim_build_beats); HOW LONG is here,
 // because "for how long" is this layer's half of the boundary. iOS reads it as
-// BoardFlight.boutEndHold (flightTime * 3) and sleeps it between beats; a host
+// the plan step's hold_ms (MessageTableView.pace) and sleeps it between beats; a host
 // with a frame loop never sees it at all - anim_build_plan has already pushed
 // the next beat's start_ms out by it, so the rest comes out of the sampler.
 #define ANIM_BOUT_END_HOLD_MS (ANIM_TIME_MS * 3)

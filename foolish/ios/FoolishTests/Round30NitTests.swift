@@ -56,7 +56,7 @@ final class Round30NitTests: XCTestCase {
 
     func testTheSettleCannotSwallowTheCollapse() {
         // Proportional at the low end, so a short flip (or a future shorter
-        // flightTime) cannot leave the collapse with nothing - or negative time.
+        // beatTime) cannot leave the collapse with nothing - or negative time.
         XCTAssertGreaterThan(roleFlipCollapse, 0)
         XCTAssertLessThanOrEqual(roleFlipSettle, roleFlipHalf * 0.3 + 1e-9,
                                  "never more than a third of the half-turn")

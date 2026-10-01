@@ -1,5 +1,6 @@
 // table.c - a game plus its roster. See table.h.
 #include "table.h"
+#include "snap_room.h"
 #include "awire.h"
 #include "view.h"
 #include "bot_roster.h"
@@ -60,7 +61,9 @@ static _Thread_local TableSnaps *t_capture;
 
 static void table_snap(const Game *g, int tag, int aux) {
     TableSnaps *s = t_capture;
-    if (!s || s->n >= MAX_SNAPS) return;
+    if (!s) return;
+    ENGINE_SNAP_ROOM(s->n < MAX_SNAPS);
+    if (s->n >= MAX_SNAPS) return;
     memcpy(s->slot[s->n].bytes, g, TABLE_SNAP_BYTES);
     s->tag[s->n] = tag;
     s->aux[s->n] = aux;

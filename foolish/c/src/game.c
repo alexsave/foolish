@@ -504,20 +504,79 @@ static bool draw_card(Game *g, Card *out) {
     return true;
 }
 
+// DRAWN SEAT-MAJOR, SHOWN ROUND-ROBIN.
+//
+// The DRAWS are seat-major and must stay so: seat 0 takes its six, then seat 1,
+// and so on. That order is what every hand, the stock, the RNG stream and every
+// replay code are a function of (docs/DEAL_ORDER.md), so a deal that drew
+// round-robin would be a different game for every seed ever dealt.
+//
+// What the table SEES is round-robin: one card to seat 0, one to seat 1, ...,
+// then the second round, until every seat holds six. So the draws land in a
+// staging area first, and a reveal pass hands them out one at a time, firing
+// one ENGINE_HOOK_DEAL per card with the seat that just received it.
+//
+// Every snapshot is honest kernel state, not a picture evwire paints later. The
+// cards not yet revealed go back on TOP of the stock, in the order they are
+// about to be dealt, and each reveal pops the top - exactly the draw a
+// deterministic deck makes. So at hook k the stock really does hold the
+// initial count minus (k+1), the seat that just received holds r+1, the seats
+// before it in the round r+1 and the seats after it r, and every card is in
+// exactly one place. Once the last card is revealed the stock is the drawn
+// stock again, and the whole deck array is put back byte for byte, so the board
+// the pass leaves is the board the seat-major loop left.
+//
+// A short deck (a rebuilt game handed fewer cards than the table needs) ends
+// the draws where the old loop ended them, and a round simply skips a seat
+// whose staging ran out: the hands come out identical either way.
+_Static_assert(MAX_PLAYERS * CARDS_PER_PLAYER <= MAX_DECK,
+               "the deal's staged cards must fit back on the stock");
 static void deal_initial(Game *g) {
-    // Player-major deal, mirroring the TS start_game: each player draws all
-    // CARDS_PER_PLAYER cards before the next player starts, and a snapshot
-    // hook fires per player (that's the per-player DEAL animation event, with
-    // the deck draining 36 → 30 → 24 → ... between snapshots).
-    for (int j = 0; j < g->num_players; j++) g->players[j].hand_count = 0;
-    for (int j = 0; j < g->num_players; j++) {
+    const int np = g->num_players;
+    Card staged[MAX_PLAYERS][CARDS_PER_PLAYER];
+    int n_staged[MAX_PLAYERS];
+    for (int j = 0; j < np; j++) { g->players[j].hand_count = 0; n_staged[j] = 0; }
+    for (int j = 0; j < np; j++) {
         for (int i = 0; i < CARDS_PER_PLAYER; i++) {
             Card c;
             if (!draw_card(g, &c)) break;
-            g->players[j].hand[g->players[j].hand_count++] = c;
+            staged[j][n_staged[j]++] = c;
         }
-        SNAP(g, ENGINE_HOOK_DEAL, j);
     }
+
+    // The stock as the draws left it, restored whole after the reveal.
+    Card drawn_deck[MAX_DECK];
+    const int16_t drawn_count = g->deck_count;
+    memcpy(drawn_deck, g->deck, sizeof drawn_deck);
+
+    // The unrevealed cards on top, in reveal order, over the drawn stock. The
+    // two together are the stock the deal started from, so they fit - except in
+    // the short-deck case where the flip itself was dealt into a hand, and there
+    // the drawn stock is empty and the staged cards alone are at most
+    // MAX_PLAYERS * CARDS_PER_PLAYER, which the assert above holds to MAX_DECK.
+    int n_top = 0;
+    for (int j = 0; j < np; j++) n_top += n_staged[j];
+    memcpy(g->deck + n_top, drawn_deck, (size_t)drawn_count * sizeof(Card));
+    for (int r = 0, k = 0; r < CARDS_PER_PLAYER; r++)
+        for (int j = 0; j < np; j++)
+            if (r < n_staged[j]) g->deck[k++] = staged[j][r];
+    g->deck_count = (int16_t)(n_top + drawn_count);
+
+    for (int r = 0; r < CARDS_PER_PLAYER; r++) {
+        for (int j = 0; j < np; j++) {
+            if (r >= n_staged[j]) continue;
+            // Pop the top: it is staged[j][r], because the top was laid out in
+            // this very order.
+            Player *p = &g->players[j];
+            p->hand[p->hand_count++] = staged[j][r];
+            for (int i = 1; i < g->deck_count; i++) g->deck[i - 1] = g->deck[i];
+            g->deck_count--;
+            SNAP(g, ENGINE_HOOK_DEAL, j);
+        }
+    }
+
+    memcpy(g->deck, drawn_deck, sizeof drawn_deck);
+    g->deck_count = drawn_count;
 }
 
 // When nobody was dealt a trump there is nothing to derive the first attacker

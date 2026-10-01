@@ -134,7 +134,7 @@ final class SheetSettleTests: XCTestCase {
         // The constant that used to be added after the flag is gone; this is the
         // compile-time half of that (`sheetSettleBeat` no longer exists) and the
         // assertion above is the runtime half.
-        XCTAssertEqual(flightTime, 0.5, accuracy: 1e-9,
+        XCTAssertEqual(beatTime, 0.5, accuracy: 1e-9,
                        "the shipping flight is unchanged - only the added wait went")
     }
 }

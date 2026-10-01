@@ -4,7 +4,7 @@
 > retired with the TS game shape (`docs/C_GAME_SHAPE_MIGRATION.md` Phase 8), and
 > `make wasm` / `make wasm-guards` are no longer Makefile targets.
 > The doc is kept because its output still ships: `CD_RULES_OVERLAY` and the
-> 3-page pin live on inside `msg.wasm`, and `c/src/rules_overlay.h`,
+> 3-page pin live on inside `msg.wasm`, and `c/wasm/rules_overlay.h`,
 > `c/wasm/wasm_api.c`, `c/Makefile` and `e2e/rules_stack_canary.mts` all cite
 > this file by name as the explanation.
 > Its R4 stack measurement and the §2/§8 negative results are not recorded

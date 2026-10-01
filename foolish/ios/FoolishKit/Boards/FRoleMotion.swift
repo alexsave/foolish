@@ -143,15 +143,15 @@ public struct RoleMarkFramesKey: PreferenceKey {
 
 /// A little under a card flight. The role hand-off is the closing beat of a
 /// bout - the cards have already been swept and dealt - so it wants to feel
-/// quick and deliberate rather than ceremonial. Scales with HARNESS_SLOWMO like
-/// every other duration, via `flightTime`.
-public var roleFlightTime: Double { flightTime * 0.8 }
+/// quick and deliberate rather than ceremonial. A proportion of the kernel beat
+/// (and so scaled by HARNESS_SLOWMO): a role mark is not a step of any plan.
+public var roleFlightTime: Double { beatTime * 0.8 }
 
 /// Half a coin flip: collapse, swap, open. Two of these back to back is a full
 /// turn, one on its own is a mark arriving or leaving, and the pair deliberately
 /// comes in under a card's motion - the mark is a caption on the move, not the
 /// move.
-public var roleFlipHalf: Double { flightTime * 0.22 }
+public var roleFlipHalf: Double { beatTime * 0.22 }
 
 /// ROUND 30, the owner: "for the sword -> check rotation, the width doesn't
 /// QUITE go to zero during rotate out before swapping to the other glyph and

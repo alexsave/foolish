@@ -680,16 +680,14 @@ endef
 # WASM_REPLAY_IO_CAP=32768: observed worst encode input 3,117B / blob 200B
 #   (>10x margin); decode input is separately capped at 8KB by
 #   REPLAY_MAX_INT_BYTES. Cuts g_replay_io 2MB->32KB per module.
-# MAX_SNAPS=24: the ring holds ONE marshal window's animation snapshots
-#   (resets per marshal). Analytic worst is the round-transition window:
-#   MAGIC + TRASH + defender-draw + <=num_players batch draws = num_players
-#   + 3 = 11 at 8 players (refill snaps PER-PLAYER, not per card; no OUT/
-#   DEFENDER_CHANGE snap in that path). The deal window is num_players + 3 =
-#   11 too. Measured worst 12 over 63K games. 16 is 1.33x the measured worst
-#   and 1.45x the analytic ceiling (11) — snap-ring overflow silently DROPS
-#   animation frames (visual, not corruption), so a modest margin is safe.
-#   Cuts g_snaps 55.7KB->27.8KB->18.6KB (M4, docs/BOTS_WASM_MEMORY_PLAN.md;
-#   was 24). Shared by bots + rules; guards keeps its own MAX_SNAPS=1.
+# MAX_SNAPS is NOT set here. It was (24, then 16 in M4) while the deal fired
+#   one hook per seat and a marshal window's worst was 12. The opening deal now
+#   goes round the table a card at a time, one hook per card, 51 at eight seats,
+#   and a store smaller than that drops the flip and the opening seats off the
+#   end of the deal. game.h owns the size of the stores that capture a deal (the
+#   Table's, the replay walker's) and asserts it holds one, so this build takes
+#   the same number rather than a second one. The bridge's action ring
+#   (wasm_api.c) never reads a deal back and keeps its own 16, SNAP_RING_CAP.
 # -mno-nontrapping-fptoint pins the wasm FEATURE SET, the same way -mbulk-memory
 # does. clang >= 22 emits i32.trunc_sat_* by default; a wasm-opt built without
 # that feature enabled then rejects the module outright ("all used features
@@ -703,7 +701,7 @@ WASM_FLAGS := --target=wasm32 $(WASM_OPT) -nostdlib -ffreestanding -mbulk-memory
               -D_Thread_local= -DMAX_LOG_PAIRS=64 \
               -DMAX_LEGAL_MOVES=4096 -DMAX_MOVE_CARDS=28 -DMAX_BATTLES=64 \
               -DWORLD_LOG_CAP=40 \
-              -DREPLAY_REC_CAP=4096 -DWASM_REPLAY_IO_CAP=32768 -DMAX_SNAPS=16 \
+              -DREPLAY_REC_CAP=4096 -DWASM_REPLAY_IO_CAP=32768 \
               -DCD_TT_BITS=12 -DCD_TT_2WAY -DCD_TT_PACK8 \
               -Wall -Wextra -Wno-unused-parameter \
               -Wl,--no-entry -Wl,--export-memory -Wl,-z,stack-size=262144 -Wl,--stack-first \
@@ -1136,10 +1134,12 @@ WASM_TEST_EXPORTS := $(WASM_ROSTER_EXPORTS) $(WASM_FIXTURE_EXPORTS) $(WASM_REPLA
 # and its pin are rules.wasm's measured ones (docs/RULES_GUARDS_WASM_MEMORY_PLAN.md
 # R0, R1, R4): a 1024-move menu, MAX_LOGS=128 (one action's logs), a 32 KiB stack,
 # CD_RULES_OVERLAY (the replay scratch aliased over the action buffers, see
-# src/rules_overlay.h), and a 3-page memory pin that wasm-msg lifts to its own.
+# wasm/rules_overlay.h), and a 3-page memory pin that wasm-msg lifts to its own.
+# -Iwasm goes with CD_RULES_OVERLAY and nowhere else: src/replay.c includes the
+# arena layout only under that flag, so no other build resolves wasm/ headers.
 WASM_RULES_FLAGS := $(filter-out -DMAX_LEGAL_MOVES=4096,$(WASM_FLAGS)) \
                     -DMAX_LEGAL_MOVES=1024 -DMAX_LOGS=128 -DWASM_IO_CAP=24576 \
-                    -DCD_RULES_OVERLAY \
+                    -DCD_RULES_OVERLAY -Iwasm \
                     -Wl,-z,stack-size=32768 \
                     -Wl,--initial-memory=196608 -Wl,--max-memory=196608
 

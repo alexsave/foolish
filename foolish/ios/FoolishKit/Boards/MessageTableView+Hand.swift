@@ -106,7 +106,7 @@ extension MessageTableView {
         // A pickup builds its flight in the SAME MainActor turn as `openSlots`
         // (runEventStream calls playStep, which runs `build` with no suspension
         // in between), so `handFrame` is still the ONE-ROW box when this is
-        // asked; and because the row change is animated over `flightTime`,
+        // asked; and because the row change is animated over the flight,
         // `minY` then keeps moving for exactly as long as the flight lasts. At
         // the shipping metrics that is 86pt of error (a two-row box is 166,
         // a one-row box 80): the top row lands flush on the drawer's bottom
@@ -275,7 +275,8 @@ extension MessageTableView {
                  initialOrder: MessageGameStore.shared.handOrder(gameId: controller.gameIdString),
                  onOrderChanged: { [gameId = controller.gameIdString] in
                      MessageGameStore.shared.setHandOrder($0, gameId: gameId)
-                 })
+                 },
+                 reflow: animator.tween)
             .padding(.horizontal, FSpace.s)
     }
 }

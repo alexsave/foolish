@@ -2261,12 +2261,12 @@ static void rs_test_sink(void *ctx, const EvwEvent *ev) {
     RsTestCtx *c = (RsTestCtx *)ctx;
     c->n_events++;
     // The opening deal, as the replay renders it: cards come from the snapshot,
-    // so this is the rebuilt hand itself.
-    if (ev->type == EVW_T_DEAL && ev->seat >= 0 && ev->seat < MAX_PLAYERS &&
-        c->deal_n[ev->seat] == 0) {
-        c->deal_n[ev->seat] = ev->n_cards;
-        for (int i = 0; i < ev->n_cards && i < MAX_HAND_SIZE; i++)
-            c->deal_hand[ev->seat][i] = ev->cards[i];
+    // so this is the rebuilt hand itself. A seat's hand is ACCUMULATED across
+    // its deal events - the deal is round-robin, one card per event - so this
+    // reads a whole-hand event and a one-card event alike.
+    if (ev->type == EVW_T_DEAL && ev->seat >= 0 && ev->seat < MAX_PLAYERS) {
+        for (int i = 0; i < ev->n_cards && c->deal_n[ev->seat] < MAX_HAND_SIZE; i++)
+            c->deal_hand[ev->seat][c->deal_n[ev->seat]++] = ev->cards[i];
         c->n_deals++;
     }
     if (ev->snap) {
@@ -3695,7 +3695,9 @@ static void test_replay_steps_rebuilds_the_played_game(void) {
         if (r != REPLAY_EOK) continue;
 
         CHECK(ctx.n_events > 0, "a replay produces animation events");
-        CHECK(ctx.n_deals == np, "every seat's opening deal is an event");
+        CHECK(ctx.n_deals == np * CARDS_PER_PLAYER, "every card of the opening deal is its own event");
+        for (int s = 0; s < np; s++)
+            CHECK(ctx.deal_n[s] == CARDS_PER_PLAYER, "every seat is dealt a whole hand");
         CHECK(hdr.fool == want_fool, "the rebuilt game finds the same fool the code claims");
         // THE assertion: same final board, byte for byte, as the game that was
         // actually played. Unmasked, so hands are compared too and not hidden.
@@ -9239,7 +9241,8 @@ static void test_table_ready_deals(void) {
     TableCommit c;
     CHECK(table_commit_products(&tb, RS("g"), 5, 42, &c, tb_arena, sizeof(tb_arena)) > 0 && c.dealt_now && c.logs_reset
           && !c.closed_round && c.logs.len > 0 && tb_arena[c.logs.off + 6] == LOG_GAME_START
-          && c.n_events == 4 + 1 + 1 + 1 + 1, "the deal commits a fresh session log and every deal event");
+          && c.n_events == 4 * CARDS_PER_PLAYER + 1 + 1 + 1 + 1,
+          "the deal commits a fresh session log and every deal event (one per dealt card)");
     const uint8_t dealt_len = (uint8_t)c.state.len;
     memcpy(tb_state2, tb_arena + c.state.off, (size_t)c.state.len);
     CHECK(table_ready(&tb, RS("a"), tb_seed) == TABLE_MOOT && tb_game.status == GAME_STATUS_PLAYING,
@@ -9272,6 +9275,522 @@ static void test_table_ready_deals(void) {
           "and the deal's push carries the roster the bot changed");
 }
 
+/* ---------------- the opening deal, one card at a time ------------------- */
+//
+// The opening deal ANIMATES round-robin: one card to seat 0, one to seat 1, ...,
+// one to the last seat, and round again until every seat holds
+// CARDS_PER_PLAYER. Seat 0 is still the first to receive.
+//
+// Only the hooks change. The DRAWS under them stay seat-major, so every hand,
+// the deck, the RNG stream and every replay code are what they were - pinned
+// below by a golden digest taken against the seat-major hook code, which is the
+// one reference that cannot move with the code it checks.
+//
+// The deal is read the way the web and the iMessage board get it: the table
+// deals the lobby (table_ready -> start_game under table_snap), pushes packed
+// evwire for a viewer, and evwire_read walks what came over the wire. That is
+// the path MAX_SNAPS truncates silently, so it is the path that has to be read.
+
+#define DL_MAX_EVENTS 96
+#define DL_MAX_CARDS  CARDS_PER_PLAYER
+typedef struct {
+    int type, seat, msg, n_cards;
+    unsigned char cards[DL_MAX_CARDS];   // wire bytes, WIRE_CARD_HIDDEN kept
+    int has_board;
+    int deck;
+    int has_flipped;
+    Card flipped;
+    int hand_n[MAX_PLAYERS];
+    Card hand[MAX_PLAYERS][CARDS_PER_PLAYER];
+} DlEvent;
+
+typedef struct {
+    int n, overflow;
+    DlEvent ev[DL_MAX_EVENTS];
+} DlRead;
+
+static Game   dl_board;     // one event's decoded board (the Game is ~200 KB)
+static DlRead dl_read;
+
+static void dl_read_sink(void *ctx, int index, const EvwRead *r) {
+    DlRead *d = (DlRead *)ctx;
+    (void)index;
+    if (d->n >= DL_MAX_EVENTS) { d->overflow = 1; return; }
+    DlEvent *e = &d->ev[d->n++];
+    memset(e, 0, sizeof *e);
+    e->type = r->type;
+    e->seat = r->seat;
+    e->msg = r->msg;
+    e->n_cards = r->n_cards;
+    for (int i = 0; i < r->n_cards && i < DL_MAX_CARDS; i++) e->cards[i] = r->cards_wire[i];
+    if (!r->snap || state_get(&dl_board, r->snap, r->snap_len, 1) != GAME_VALID) return;
+    e->has_board = 1;
+    e->deck = dl_board.deck_count;
+    e->has_flipped = dl_board.has_flipped;
+    e->flipped = dl_board.flipped;
+    for (int s = 0; s < dl_board.num_players && s < MAX_PLAYERS; s++) {
+        e->hand_n[s] = dl_board.players[s].hand_count;
+        for (int i = 0; i < dl_board.players[s].hand_count && i < CARDS_PER_PLAYER; i++)
+            e->hand[s][i] = dl_board.players[s].hand[i];
+    }
+}
+
+static const char *const DL_IDS[MAX_PLAYERS] = { "a", "b", "c", "d", "e", "f", "g", "h" };
+
+// An np-seat lobby of humans, every one of them readied: the last ready deals.
+static int dl_deal_table(int np, int seed_k) {
+    tb_seed_fill(seed_k);
+    table_init(&tb, &tb_game, &tb_snaps);
+    if (table_create(&tb, DL_IDS[0], 1, DL_IDS[0], 1) != TABLE_OK) return 0;
+    for (int s = 1; s < np; s++)
+        if (table_join(&tb, DL_IDS[s], 1, DL_IDS[s], 1) != TABLE_OK) return 0;
+    for (int s = 0; s < np; s++) table_ready(&tb, DL_IDS[s], 1, tb_seed);
+    return tb.dealt_now && tb_game.status == GAME_STATUS_PLAYING && tb_game.num_players == np;
+}
+
+// The deal's push for `viewer` (a seat, or -1 for a spectator), read off the
+// wire into dl_read. Returns the header's event count, or -1.
+static int dl_read_push(int viewer) {
+    memset(&dl_read, 0, sizeof dl_read);
+    const int pl = table_push(&tb, "g", 1, viewer, tb_buf, sizeof(tb_buf));
+    int seq = 0, flags = 0, block = 0;
+    if (pl <= 0 || evwire_as3_split(tb_buf, pl, &seq, &flags, &block) != 0) return -1;
+    EvwHeader h;
+    if (evwire_read(tb_buf, seq, &h, 0, 0, dl_read_sink, &dl_read) < 0) return -1;
+    return dl_read.overflow ? -1 : h.n_events;
+}
+
+static int dl_deck_size(int np) { return NUM_SUITS * (ACE_VALUE - min_value_for(np) + 1); }
+
+// 1. The order, the one card, and the honest board under every deal event.
+static void test_opening_deal_is_round_robin(void) {
+    static const int nps[] = { 2, 3, 6, 8 };
+    for (int pi = 0; pi < (int)(sizeof nps / sizeof nps[0]); pi++) {
+        const int np = nps[pi];
+        for (int seed_k = 1; seed_k <= 3; seed_k++) {
+            if (!dl_deal_table(np, 40 + seed_k * 7 + np)) {
+                DCHECK(0, "round-robin deal: %d humans ready and the table deals", np);
+                continue;
+            }
+            const int deck0 = dl_deck_size(np);
+            for (int viewer = -1; viewer < np; viewer++) {
+                if (dl_read_push(viewer) < 0) {
+                    DCHECK(0, "round-robin deal: the %dp deal push reads for viewer %d", np, viewer);
+                    continue;
+                }
+                int k = 0;                  // deal events seen so far
+                char why[160];
+                why[0] = 0;
+                for (int i = 0; i < dl_read.n && !why[0]; i++) {
+                    const DlEvent *e = &dl_read.ev[i];
+                    if (e->type != EVW_T_DEAL) continue;
+                    const int r = k / np, j = k % np;
+                    if (k >= np * CARDS_PER_PLAYER) {
+                        snprintf(why, sizeof why, "more than %d deal events", np * CARDS_PER_PLAYER);
+                    } else if (e->seat != j) {
+                        snprintf(why, sizeof why, "deal event %d went to seat %d, want seat %d", k, e->seat, j);
+                    } else if (e->n_cards != 1) {
+                        snprintf(why, sizeof why, "deal event %d (seat %d) carries %d cards, want 1", k, j, e->n_cards);
+                    } else if (!e->has_board) {
+                        snprintf(why, sizeof why, "deal event %d carries no readable board", k);
+                    } else if (e->deck != deck0 - (k + 1)) {
+                        snprintf(why, sizeof why, "deal event %d: deck shows %d, want %d", k, e->deck, deck0 - (k + 1));
+                    } else {
+                        // Seats up to j have r+1 cards, seats after it still r.
+                        for (int s = 0; s < np && !why[0]; s++) {
+                            const int want = r + (s <= j ? 1 : 0);
+                            if (e->hand_n[s] != want)
+                                snprintf(why, sizeof why, "deal event %d (round %d, seat %d): seat %d holds %d, want %d",
+                                         k, r, j, s, e->hand_n[s], want);
+                        }
+                        const Card dealt = tb_game.players[j].hand[r];
+                        const unsigned char want_wire = viewer == j ? wire_from_card(dealt)
+                                                                    : (unsigned char)WIRE_CARD_HIDDEN;
+                        if (!why[0] && e->cards[0] != want_wire)
+                            snprintf(why, sizeof why, "deal event %d (round %d, seat %d): card byte %u, want %u",
+                                     k, r, j, e->cards[0], want_wire);
+                        if (!why[0] && viewer == j && !card_eq(e->hand[j][r], dealt))
+                            snprintf(why, sizeof why, "deal event %d: the owner's board does not hold the dealt card at %d",
+                                     k, r);
+                    }
+                    k++;
+                }
+                if (!why[0] && k != np * CARDS_PER_PLAYER)
+                    snprintf(why, sizeof why, "%d deal events, want %d", k, np * CARDS_PER_PLAYER);
+                DCHECK(!why[0], "round-robin deal (%dp, seed %d, viewer %d): %s", np, seed_k, viewer, why);
+            }
+        }
+    }
+}
+
+// 2. What follows the deal still arrives. Eight seats deal 48 hooks, which is
+// exactly MAX_SNAPS today, and table_snap drops what does not fit WITHOUT a
+// word - so the flip and the opening seats are the first casualties of a deal
+// that outgrows the snapshot store. Green before round-robin (8 deal hooks);
+// a guard for the 48 it brings.
+static void test_opening_deal_tail_survives_eight_seats(void) {
+    for (int np = 2; np <= MAX_PLAYERS; np++) {
+        if (!dl_deal_table(np, 90 + np)) {
+            DCHECK(0, "deal tail: %d humans ready and the table deals", np);
+            continue;
+        }
+        const int n = dl_read_push(0);
+        DCHECK(n > 0 && n == dl_read.n, "deal tail (%dp): the push reads whole, %d events", np, n);
+        if (n <= 0) continue;
+        int last_deal = -1;
+        for (int i = 0; i < dl_read.n; i++) if (dl_read.ev[i].type == EVW_T_DEAL) last_deal = i;
+        DCHECK(dl_read.ev[0].type == EVW_T_MAGIC_TRANSITION && dl_read.ev[0].msg == EVW_MSG_START_MAGIC,
+               "deal tail (%dp): the sequence opens on the start magic transition", np);
+        DCHECK(last_deal > 0 && dl_read.n == last_deal + 4,
+               "deal tail (%dp): three events follow the last deal, got %d after event %d",
+               np, dl_read.n - last_deal - 1, last_deal);
+        if (last_deal < 0 || dl_read.n < last_deal + 4) continue;
+        const DlEvent *f = &dl_read.ev[last_deal + 1];
+        const DlEvent *d = &dl_read.ev[last_deal + 2];
+        const DlEvent *m = &dl_read.ev[last_deal + 3];
+        DCHECK(f->type == EVW_T_FLIPPED && f->n_cards == 1 && f->cards[0] == wire_from_card(tb_game.flipped),
+               "deal tail (%dp): the flip follows the deal with the trump", np);
+        DCHECK(d->type == EVW_T_DEFENDER_MOVE && d->seat == tb_game.defender,
+               "deal tail (%dp): then the opening defender, seat %d (got type %d seat %d)",
+               np, tb_game.defender, d->type, d->seat);
+        DCHECK(m->type == EVW_T_MAGIC_TRANSITION && m->msg == EVW_MSG_FIRST_ATTACKER,
+               "deal tail (%dp): then the first-attacker transition", np);
+        DCHECK(m->has_board && m->deck == tb_game.deck_count,
+               "deal tail (%dp): and the last event's board is the dealt board", np);
+    }
+}
+
+// 3. THE HANDS ARE UNTOUCHED. A digest over every hand, the stock in order, the
+// flip and the opening seats, for 2..8 seats x 300 seeds, in both deal modes
+// (the seed-shuffled deal every product uses, and the legacy random draw). The
+// goldens were taken against the seat-major hook code, before round-robin: a
+// hook pass that moved a single card, or drew one more random number, shows up
+// here as a different digest.
+static uint64_t dl_fnv(uint64_t h, int v) {
+    h ^= (uint64_t)(unsigned char)v;
+    return h * 1099511628211ULL;
+}
+
+static uint64_t dl_hands_digest(int np, int wide) {
+    static Game g;
+    uint64_t h = 1469598103934665603ULL;
+    game_force_first_attacker(-1);
+    game_open_at_seat(-1);
+    for (int seed = 0; seed < 300; seed++) {
+        game_set_seed((uint32_t)(seed * 7 + np + 1));
+        if (wide) {
+            unsigned char bytes[FOOLISH_SEED_LEN];
+            for (int i = 0; i < FOOLISH_SEED_LEN; i++) bytes[i] = (unsigned char)(i * 29 + seed * 11 + np);
+            game_set_deal_seed_bytes(bytes, FOOLISH_SEED_LEN);
+        }
+        memset(&g, 0, sizeof g);
+        g.num_players = (int8_t)np;
+        for (int i = 0; i < np; i++) g.players[i].status = PLAYER_STATUS_READY;
+        start_game(&g);
+        for (int s = 0; s < np; s++) {
+            h = dl_fnv(h, g.players[s].hand_count);
+            for (int i = 0; i < g.players[s].hand_count; i++) h = dl_fnv(h, card_to_id(g.players[s].hand[i]));
+        }
+        h = dl_fnv(h, g.deck_count);
+        for (int i = 0; i < g.deck_count; i++) h = dl_fnv(h, card_to_id(g.deck[i]));
+        h = dl_fnv(h, g.has_flipped);
+        h = dl_fnv(h, card_to_id(g.flipped));
+        h = dl_fnv(h, g.power_suit);
+        h = dl_fnv(h, g.first_attacker);
+        h = dl_fnv(h, g.defender);
+        h = dl_fnv(h, g.status);
+    }
+    game_set_seed(1);   // leave wide deal mode off for whoever runs next
+    return h;
+}
+
+static void test_opening_deal_hands_are_unchanged(void) {
+    // [wide][np], np 2..8; taken on 8cbdb81f (seat-major hooks).
+    static const uint64_t golden[2][MAX_PLAYERS + 1] = {
+        { 0, 0, 0x690e152658d2f546ULL, 0xb6055d602d40f0fcULL, 0x7a3fc3492b5f6328ULL, 0xbdf09df63c7d7b26ULL,
+          0x0b11870e888114cbULL, 0xda7baca61b3906b8ULL, 0x5376d7da3657ca5dULL },
+        { 0, 0, 0x46a9e621612bc528ULL, 0x444f2a440b54c733ULL, 0x6d726bc6d309e712ULL, 0xca04dd1810f1613dULL,
+          0x9ab74ca063aa6584ULL, 0x5c89835e0e15ece8ULL, 0x546811c8ad70b0aaULL },
+    };
+    for (int wide = 0; wide <= 1; wide++) {
+        for (int np = 2; np <= MAX_PLAYERS; np++) {
+            const uint64_t got = dl_hands_digest(np, wide);
+            DCHECK(got == golden[wide][np],
+                   "dealt hands unchanged (%s deal, %dp): digest 0x%016llxULL, want 0x%016llxULL",
+                   wide ? "seeded" : "legacy", np, (unsigned long long)got,
+                   (unsigned long long)golden[wide][np]);
+        }
+    }
+}
+
+// 4. REFILLS ARE UNTOUCHED. Round-robin reuses the refill's per-card machinery
+// (a draw log and its index in the walk), so the refill is what it could break.
+// A digest over every mid-game EVW_T_REFILL event every viewer is shown (seat,
+// the cards as that viewer sees them, the board under it) and over every
+// refill step of the plan built from that stream (its clock, its counts, its
+// reveals), for handwritten-bot games at 2, 3, 4, 6 and 8 seats. Goldens taken
+// before round-robin.
+static uint64_t dl_fold_refills(uint64_t h, int np, int viewer, int *n_refill, int *n_steps) {
+    for (int i = 0; i < pf_n; i++) {
+        const AnimPlanEvent *e = &pf_evs[i];
+        if (e->type != EVW_T_REFILL) continue;
+        (*n_refill)++;
+        h = dl_fnv(h, viewer);
+        h = dl_fnv(h, i);
+        h = dl_fnv(h, e->seat);
+        h = dl_fnv(h, e->n_cards);
+        h = dl_fnv(h, e->mask_cards);
+        h = dl_fnv(h, e->from);
+        h = dl_fnv(h, e->to);
+        for (int c = 0; c < e->n_cards; c++)
+            h = dl_fnv(h, e->mask_cards ? 0xFE : card_to_id(e->cards[c]));
+        h = dl_fnv(h, e->deck);
+        h = dl_fnv(h, card_to_id(e->flipped));
+        for (int s = 0; s < np; s++) h = dl_fnv(h, e->hand[s]);
+    }
+    return h;
+}
+
+static uint64_t dl_refill_digest(int np, int *n_refill, int *n_steps) {
+    static Game g;
+    static LegalMoves moves;
+    static AnimPlan plan;
+    uint64_t h = 1469598103934665603ULL;
+    game_force_first_attacker(-1);
+    game_open_at_seat(-1);
+    for (int salt = 0; salt < 4; salt++) {
+        const int seed = 5100 + salt * 13 + np;
+        game_set_seed((uint32_t)seed);
+        random_strategy_set_seed((uint32_t)seed);
+        unsigned char deal[FOOLISH_SEED_LEN];
+        for (int i = 0; i < FOOLISH_SEED_LEN; i++) deal[i] = (unsigned char)(i * 31 + seed * 13 + np);
+        game_set_deal_seed_bytes(deal, FOOLISH_SEED_LEN);
+        memset(&g, 0, sizeof g);
+        g.num_players = (int8_t)np;
+        for (int i = 0; i < np; i++) g.players[i].status = PLAYER_STATUS_READY;
+        start_game(&g);
+        pf_np = np;
+        for (int guard = 0; guard < 20000 && game_done(&g) < 0; guard++) {
+            bool acted = false;
+            const int log_start = g.num_logs;
+            pf_n_snaps = 0;
+            engine_snap_hook = pf_snap_cb;
+            for (int pi = 0; pi < np && !acted; pi++) {
+                if (!should_bot_act(&g, pi)) continue;
+                calculate_legal_moves(&g, pi, &moves);
+                if (moves.n == 0) continue;
+                const LegalMove *m = &moves.moves[handwritten_strategy_choose(&g, pi, &moves, 0)];
+                switch (m->type) {
+                    case MOVE_ATTACK: acted = handle_attack(&g, pi, m->cards, m->n_cards); break;
+                    case MOVE_COVER:  acted = handle_cover(&g, pi, m->cards, m->attack_cards, m->n_cards); break;
+                    case MOVE_PASS:   acted = handle_pass(&g, pi, m->cards, m->n_cards); break;
+                    case MOVE_PICKUP: acted = handle_pickup(&g, pi); break;
+                    case MOVE_GOOD:   acted = handle_good(&g, pi); break;
+                    default: break;
+                }
+            }
+            engine_snap_hook = 0;
+            if (!acted) break;
+            EvSnap refs[PF_MAX_SNAPS];
+            for (int i = 0; i < pf_n_snaps; i++) {
+                refs[i].g = (const Game *)(const void *)pf_snaps[i].bytes;
+                refs[i].tag = pf_tags[i];
+                refs[i].aux = pf_aux[i];
+            }
+            const PfCounts after = pf_counts_of(&g);
+            for (int viewer = -1; viewer < np; viewer++) {
+                pf_n = 0;
+                pf_maybe_truncated = 0;
+                evwire_walk(refs, pf_n_snaps, g.logs + log_start, g.num_logs - log_start,
+                            viewer, pf_sink, 0);
+                h = dl_fold_refills(h, np, viewer, n_refill, n_steps);
+                if (pf_n == 0 || pf_n > ANIM_MAX_STEPS) continue;
+                const int rc = anim_build_plan(pf_evs, pf_n, np, after.deck, after.discard,
+                                               after.flipped, after.hand, &plan);
+                h = dl_fnv(h, rc);
+                if (rc != ANIM_EOK) continue;
+                for (int i = 0; i < plan.n_steps; i++) {
+                    const AnimPlanStep *st = &plan.steps[i];
+                    if (st->type != ANIM_EVT_REFILL) continue;
+                    (*n_steps)++;
+                    h = dl_fnv(h, i);
+                    h = dl_fnv(h, st->seat);
+                    h = dl_fnv(h, st->n_cards);
+                    h = dl_fnv(h, st->duration_ms);
+                    h = dl_fnv(h, st->duration_ms >> 8);
+                    h = dl_fnv(h, st->start_ms);
+                    h = dl_fnv(h, st->start_ms >> 8);
+                    h = dl_fnv(h, st->start_ms >> 16);
+                    h = dl_fnv(h, st->beat_first);
+                    h = dl_fnv(h, st->beat_n);
+                    h = dl_fnv(h, st->hold_ms);
+                    h = dl_fnv(h, st->deck);
+                    h = dl_fnv(h, st->discard);
+                    for (int s = 0; s < np; s++) h = dl_fnv(h, st->hand[s]);
+                    h = dl_fnv(h, st->in_flight_from_deck);
+                    h = dl_fnv(h, st->in_flight_to_flipped);
+                    for (int b = 0; b < 64; b += 8) h = dl_fnv(h, (int)((st->reveals >> b) & 0xff));
+                }
+            }
+        }
+    }
+    game_set_seed(1);
+    return h;
+}
+
+static void test_refill_events_and_plan_are_unchanged(void) {
+    static const int nps[] = { 2, 3, 4, 6, 8 };
+    // Per np, in nps order; taken on 8cbdb81f (seat-major hooks).
+    static const uint64_t golden[] = {
+        0xcd90a152de263054ULL, 0xb314abf40dccfb19ULL, 0xfb2c440b4a0d7bb9ULL,
+        0x413a12242d7dba47ULL, 0xb74067a0d288d61dULL,
+    };
+    for (int i = 0; i < (int)(sizeof nps / sizeof nps[0]); i++) {
+        int n_refill = 0, n_steps = 0;
+        const uint64_t got = dl_refill_digest(nps[i], &n_refill, &n_steps);
+        DCHECK(n_refill > 20 && n_steps > 20,
+               "refills unchanged (%dp): the games refilled (%d events, %d plan steps)",
+               nps[i], n_refill, n_steps);
+        DCHECK(got == golden[i], "refills unchanged (%dp): digest 0x%016llxULL, want 0x%016llxULL",
+               nps[i], (unsigned long long)got, (unsigned long long)golden[i]);
+    }
+}
+
+// 5. A dealt card flies for ANIM_DEAL_CARD_MS (350): a professional dealer's
+// pace, the owner's number. A refill keeps ANIM_TIME_MS.
+static void test_deal_card_timing(void) {
+#ifdef ANIM_DEAL_CARD_MS
+    CHECK(ANIM_DEAL_CARD_MS == 350, "a dealt card flies for 350 ms");
+    CHECK(anim_step_duration_ms(ANIM_EVT_DEAL) == ANIM_DEAL_CARD_MS, "a deal step paces at ANIM_DEAL_CARD_MS");
+#else
+    CHECK(0, "ANIM_DEAL_CARD_MS is not defined (anim_plan.h)");
+    DCHECK(anim_step_duration_ms(ANIM_EVT_DEAL) == 350, "a deal step paces at 350 ms, got %d",
+           anim_step_duration_ms(ANIM_EVT_DEAL));
+#endif
+    CHECK(anim_step_duration_ms(ANIM_EVT_REFILL) == ANIM_TIME_MS, "a refill step still paces at ANIM_TIME_MS");
+}
+
+// 6. THE BYTES THAT OUTLIVE THE MOVE ARE UNTOUCHED. Round-robin changes what a
+// deal PUSH carries and nothing a row, a log or a code holds. A digest over the
+// deal's commit products (the state blob, the roster, the session-log records,
+// every seat's response envelope and the spectator's) at 2..8 seats, and over
+// the full game log and the v6 replay code of handwritten-bot games at 2..6
+// seats. The deal writes no log record of its own, so a per-card DEAL record,
+// or any other byte a reveal pass might add, shows up here. Goldens taken on
+// 8cbdb81f (seat-major hooks).
+static uint64_t dl_bytes(uint64_t h, const uint8_t *p, int n) {
+    h = dl_fnv(h, n & 0xff);
+    h = dl_fnv(h, (n >> 8) & 0xff);
+    for (int i = 0; i < n; i++) h = dl_fnv(h, p[i]);
+    return h;
+}
+
+static void test_opening_deal_bytes_are_unchanged(void) {
+    // [0] the deal's commit products; [1] game logs + replay codes.
+    static const uint64_t golden[2] = { 0xe894896b849e0765ULL, 0x3ec4d781fc36b8baULL };
+    uint64_t hc = 1469598103934665603ULL;
+    for (int np = 2; np <= MAX_PLAYERS; np++) {
+        for (int seed_k = 1; seed_k <= 3; seed_k++) {
+            if (!dl_deal_table(np, 60 + seed_k * 5 + np)) {
+                DCHECK(0, "deal bytes: %d humans ready and the table deals", np);
+                continue;
+            }
+            TableCommit c;
+            const int rc = table_commit_products(&tb, RS("g"), 5, 42, &c, tb_arena, sizeof(tb_arena));
+            DCHECK(rc > 0 && c.dealt_now && c.logs_reset, "deal bytes (%dp): the deal commits", np);
+            if (rc <= 0) continue;
+            hc = dl_bytes(hc, tb_arena + c.state.off, c.state.len);
+            hc = dl_bytes(hc, tb_arena + c.roster.off, c.roster.len);
+            hc = dl_bytes(hc, tb_arena + c.logs.off, c.logs.len);
+            for (int s = 0; s < np; s++) hc = dl_bytes(hc, tb_arena + c.views[s].off, c.views[s].len);
+            hc = dl_bytes(hc, tb_arena + c.spectator.off, c.spectator.len);
+        }
+    }
+    uint64_t hr = 1469598103934665603ULL;
+    static Game g;
+    static unsigned char code[1 << 14];
+    for (int np = 2; np <= 6; np++) {
+        for (int seed = 0; seed < 6; seed++) {
+            unsigned char seed_bytes[FOOLISH_SEED_LEN];
+            game_force_first_attacker(-1);
+            game_open_at_seat(-1);
+            if (!rs_play_seeded(&g, np, 700 + seed * 3 + np, seed_bytes)) {
+                DCHECK(0, "deal bytes: a %dp game plays out", np);
+                continue;
+            }
+            hr = dl_fnv(hr, g.num_logs & 0xff);
+            hr = dl_fnv(hr, g.num_logs >> 8);
+            for (int i = 0; i < g.num_logs; i++) {
+                const GameLog *l = &g.logs[i];
+                hr = dl_fnv(hr, l->log_type);
+                hr = dl_fnv(hr, l->player_idx);
+                hr = dl_fnv(hr, l->defender_index);
+                hr = dl_fnv(hr, l->num_pairs);
+                for (int k = 0; k < l->num_pairs; k++) {
+                    hr = dl_fnv(hr, card_to_id(l->pairs[k].primary));
+                    hr = dl_fnv(hr, card_to_id(l->pairs[k].target));
+                }
+            }
+            const int n = replay_encode_v6_from_game(&g, seed_bytes, FOOLISH_SEED_LEN, 0x7fffffff, code, sizeof code);
+            DCHECK(n > 0, "deal bytes (%dp, seed %d): the game encodes, rc %d", np, seed, n);
+            if (n > 0) hr = dl_bytes(hr, code, n);
+        }
+    }
+    game_set_seed(1);
+    DCHECK(hc == golden[0], "deal commit bytes unchanged: digest 0x%016llxULL, want 0x%016llxULL",
+           (unsigned long long)hc, (unsigned long long)golden[0]);
+    DCHECK(hr == golden[1], "game logs and replay codes unchanged: digest 0x%016llxULL, want 0x%016llxULL",
+           (unsigned long long)hr, (unsigned long long)golden[1]);
+}
+
+
+// 7. THE DEAL ON THE CLOCK. The plan a seat builds from the deal it is pushed:
+// every dealt card its own beat, one after another, ANIM_DEAL_CARD_MS in the
+// air and ANIM_GAP_MS between - no two in flight at once, and no second timing
+// model. The whole opening plan's wall time is printed for 2 and 8 seats, the
+// numbers the owner retunes ANIM_DEAL_CARD_MS against.
+static void test_opening_deal_plan_paces_card_by_card(void) {
+    static AnimPlan plan;
+    for (int np = 2; np <= MAX_PLAYERS; np++) {
+        if (!dl_deal_table(np, 120 + np)) {
+            DCHECK(0, "deal clock: %d humans ready and the table deals", np);
+            continue;
+        }
+        EvSnap refs[MAX_SNAPS];
+        for (int i = 0; i < tb_snaps.n; i++) {
+            refs[i].g = (const Game *)(const void *)tb_snaps.slot[i].bytes;
+            refs[i].tag = tb_snaps.tag[i];
+            refs[i].aux = tb_snaps.aux[i];
+        }
+        pf_np = np;
+        pf_n = 0;
+        evwire_walk(refs, tb_snaps.n, tb_game.logs, tb_game.num_logs, 0, pf_sink, 0);
+        const PfCounts after = pf_counts_of(&tb_game);
+        const int rc = anim_build_plan(pf_evs, pf_n, np, after.deck, after.discard,
+                                       after.flipped, after.hand, &plan);
+        DCHECK(rc == ANIM_EOK, "deal clock (%dp): the opening plan builds, rc %d", np, rc);
+        if (rc != ANIM_EOK) continue;
+        int k = 0, first_ms = -1, end_ms = -1, why = 0;
+        for (int i = 0; i < plan.n_steps && !why; i++) {
+            const AnimPlanStep *st = &plan.steps[i];
+            if (st->type != ANIM_EVT_DEAL) continue;
+            if (first_ms < 0) first_ms = st->start_ms;
+            end_ms = st->start_ms + st->duration_ms;
+            if (st->beat_n != 1 || st->beat_first != i) why = 1;
+            else if (st->duration_ms != ANIM_DEAL_CARD_MS) why = 2;
+            else if (st->start_ms != first_ms + k * (ANIM_DEAL_CARD_MS + ANIM_GAP_MS)) why = 3;
+            DCHECK(!why, "deal clock (%dp): dealt card %d is its own beat (%d/%d), flies %d ms, starts at %d (why %d)",
+                   np, k, st->beat_first, st->beat_n, st->duration_ms, st->start_ms, why);
+            k++;
+        }
+        DCHECK(k == np * CARDS_PER_PLAYER, "deal clock (%dp): %d dealt cards on the clock", np, k);
+        // Read off the plan, not re-derived from the constants: the deal's first
+        // start, its last card's landing, and the whole opening plan's total.
+        if (np == 2 || np == MAX_PLAYERS)
+            printf("    opening plan %dp: %d steps, deal %d..%d ms, total %d ms\n", np, plan.n_steps,
+                   first_ms, end_ms, plan.total_ms);
+    }
+}
 static void test_table_reseat_retitle_continue(void) {
     tb_seed_fill(3);
     tb_lobby();
@@ -11864,6 +12383,13 @@ int main(void) {
     test_table_create_and_join();
     test_table_leave_and_bots();
     test_table_ready_deals();
+    test_opening_deal_is_round_robin();
+    test_opening_deal_tail_survives_eight_seats();
+    test_opening_deal_hands_are_unchanged();
+    test_refill_events_and_plan_are_unchanged();
+    test_deal_card_timing();
+    test_opening_deal_bytes_are_unchanged();
+    test_opening_deal_plan_paces_card_by_card();
     test_table_reseat_retitle_continue();
     test_table_rearrange_and_redact();
     test_table_redact_default_title();

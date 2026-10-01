@@ -108,6 +108,9 @@ public struct AnimPlan: Equatable, Sendable {
         /// invents its own.
         public let durationMs: Int
         public let startMs: Int
+        /// The rest after this step's beat lands (ANIM_BOUT_END_HOLD_MS after a
+        /// bout-ending cover, 0 otherwise).
+        public let holdMs: Int
         /// The board this step settles to - its OWN snapshot, which is what the
         /// badges are pinned to as the flight lands.
         public let counts: Counts
@@ -200,7 +203,7 @@ public struct AnimPlan: Equatable, Sendable {
         self.steps = pl.steps.map { st in
             Step(type: st.type, seat: st.seat == ANIM_SEAT_NONE ? -1 : st.seat,
                  from: st.from, to: st.to, cardCount: st.nCards,
-                 durationMs: st.durationMs, startMs: st.startMs,
+                 durationMs: st.durationMs, startMs: st.startMs, holdMs: st.holdMs,
                  counts: Counts(deck: st.deck, discard: st.discard,
                                 hand: Self.seatDict(st.hand, seats: np)),
                  inFlightFromDeck: st.inFlightFromDeck,

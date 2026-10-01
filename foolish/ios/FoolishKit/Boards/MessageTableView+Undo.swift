@@ -116,8 +116,10 @@ extension MessageTableView {
             if !flying.isEmpty {
                 // Make room for the returning cards (present cards slide apart),
                 // animated over the flight - the reverse of the play's gap-close.
-                withAnimation(.timingCurve(0.25, 0.46, 0.45, 0.94, duration: flightTime)) {
-                    self.animator.openSlots(flyIds)
+                // No plan paces a retraction, so it flies the kernel beat (the
+                // ANIM_TIME_MS anim_step_duration_ms gives a REVERT).
+                withAnimation(.timingCurve(0.25, 0.46, 0.45, 0.94, duration: beatTime)) {
+                    self.animator.openSlots(flyIds, over: beatTime)
                 }
                 // Lift the table copies: snap them hidden (no fade) as the flight
                 // starts. With the kernel's hold the held table itself is let go
@@ -320,7 +322,7 @@ extension MessageTableView {
             + "\(steps.reduce(0) { $0 + $1.count }) flights")
         let hold = BoardAnimator.holdSequence()
         defer { hold.release() }
-        await animator.play(steps)
+        await animator.play(steps, over: beatTime)
     }
 
     /// Which battle each card leaving my hand is going back to, as indices into

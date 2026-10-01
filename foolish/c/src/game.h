@@ -325,6 +325,31 @@ uint32_t game_state_seed(const Game *g, uint32_t base, uint32_t salt);
 // tooling) is likewise unaffected — same reasoning as g_seed/g_rand_seed above.
 extern _Thread_local void (*engine_snap_hook)(const Game *g, int tag, int aux);
 
+// EVERY HOOK OF ONE DEAL: one ENGINE_HOOK_DEAL per dealt card (deal_initial
+// goes round the table a card at a time), then START_MAGIC, FLIPPED and
+// START_DEFENDER. It is the largest burst the engine fires in one operation -
+// a mid-game action's worst is about a dozen - so every snapshot store that can
+// capture a deal is sized to hold this many, and a store sized for
+// the old per-seat deal fails to COMPILE rather than silently losing the flip.
+// MAX_SNAPS below is that size, and it carries the assert.
+#define ENGINE_DEAL_HOOKS (MAX_PLAYERS * CARDS_PER_PLAYER + 3)
+
+// THE size of every snapshot store that captures a deal and reads it back: the
+// Table's (table.c, the server's deal) and the replay walker's (replay_steps.c,
+// a replay's opening step). One number for both, so neither can be sized for a
+// deal the other cannot hold. The deal is the largest operation (51 hooks at
+// eight seats); a mid-game window's measured worst is 12 over 63K games
+// (tests/l1_measure.c: a round transition, MAGIC + TRASH + the per-seat refill
+// draws; a bot cycle bundles silent actions, which fire next to nothing, ahead
+// of its one visible action). 64 holds the deal with 13 to spare. A store that
+// overflows drops the hook (see snap_room.h), it never corrupts. A resident
+// table's action ring is not one of these: it holds one action window, never
+// reads a deal back, and is sized by SNAP_RING_CAP (its owner says why).
+#ifndef MAX_SNAPS
+#define MAX_SNAPS 64
+#endif
+_Static_assert(MAX_SNAPS >= ENGINE_DEAL_HOOKS, "MAX_SNAPS cannot hold one deal's hooks");
+
 // ---------- Rejection reasons --------------------------------------------
 //
 // Why the last handle_* / validation returned false. The TS bridge maps

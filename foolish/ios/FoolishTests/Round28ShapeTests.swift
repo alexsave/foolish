@@ -9,7 +9,7 @@
 // move is `runEventStream`'s job and the rig's.
 //
 //   THE GAME-OVER HOLD (`gameOverHold`). Was a bare 500ms inside settleResults;
-//   the owner asked for one second, and it is expressed against `flightTime` so
+//   the owner asked for one second, and it is expressed against `beatTime` so
 //   a filmed game-over keeps its proportions under HARNESS_SLOWMO.
 //
 //   UNDOING A PICKUP (`undoReleaseTargets`). The one retraction that had no
@@ -48,9 +48,9 @@ final class Round28ShapeTests: XCTestCase {
 
     /// One second at the shipping flight time, which is what was asked for.
     func testTheGameOverHoldIsASecond() {
-        // `flightTime` is 0.5 unless a dev slowmo is set; the suite runs without
+        // `beatTime` is 0.5 unless a dev slowmo is set; the suite runs without
         // one, so this is the shipping value.
-        XCTAssertEqual(flightTime, 0.5, accuracy: 0.0001, "the shipping flight time moved")
+        XCTAssertEqual(beatTime, 0.5, accuracy: 0.0001, "the shipping flight time moved")
         XCTAssertEqual(gameOverHold, 1.0, accuracy: 0.0001)
     }
 
@@ -59,7 +59,7 @@ final class Round28ShapeTests: XCTestCase {
     /// of watching it shrink to nothing as the flights around it stretch. This
     /// is the half of the change a bare `== 1.0` would pass right through.
     func testTheGameOverHoldScalesWithTheFlights() {
-        XCTAssertEqual(gameOverHold / flightTime, 2.0, accuracy: 0.0001)
+        XCTAssertEqual(gameOverHold / beatTime, 2.0, accuracy: 0.0001)
         // Longer than the settle it replaced, and shorter than the bout-end hold
         // - the last board of a game earns a longer look than a plain beat and a
         // shorter one than the bout the whole table is still reading.

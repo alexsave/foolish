@@ -102,7 +102,7 @@ final class TableThrowInSlideTests: XCTestCase {
         table.battles = Self.down + [BattleView(attack: Self.thrown, defense: nil)]
 
         var seen: [CGFloat] = []
-        let end = Date().addingTimeInterval(flightTime + 0.4)
+        let end = Date().addingTimeInterval(beatTime + 0.4)
         while Date() < end {
             RunLoop.current.run(until: Date().addingTimeInterval(1.0 / 60))
             if let x = Self.leftEdge(window) { seen.append(x) }
@@ -139,7 +139,7 @@ final class TableThrowInSlideTests: XCTestCase {
         let before = try XCTUnwrap(Self.leftEdge(window), "the table drew nothing")
         table.ghost = true
         var seen: [CGFloat] = []
-        let end = Date().addingTimeInterval(flightTime + 0.4)
+        let end = Date().addingTimeInterval(beatTime + 0.4)
         while Date() < end {
             RunLoop.current.run(until: Date().addingTimeInterval(1.0 / 60))
             if let x = Self.leftEdge(window) { seen.append(x) }
