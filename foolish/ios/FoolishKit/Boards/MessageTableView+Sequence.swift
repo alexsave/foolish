@@ -278,6 +278,9 @@ extension MessageTableView {
         // …AND THE CLOCK, from the kernel's plan for the same stream: each
         // beat flies and rests for exactly what the plan says (`pace`).
         let timing = AnimPlan(events, finalView: view)
+        // The extension's settle wait runs as long as this plan does (an 8-seat
+        // opening deal is ~20 s), not a fixed bound of its own.
+        hold.expect(boardSeconds(timing.totalMs))
         // The kernel refuses a stream it cannot hold whole rather than
         // truncating it, and a truncated shape would animate half a move. That
         // degrades to no flights at all - the closing beat below still settles

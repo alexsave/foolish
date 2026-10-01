@@ -248,11 +248,35 @@ public final class BoardAnimator: ObservableObject {
     public final class SequenceHold {
         private var held = true
         fileprivate init() { BoardAnimator.sequenceDepth += 1 }
+        /// THIS SEQUENCE'S KERNEL PLAN RUNS `seconds` FROM NOW (its `totalMs`),
+        /// so `waitForSettle` waits that long before its timeout starts to count.
+        /// Only ever pushes the planned landing later; a hold already given
+        /// back announces nothing.
+        public func expect(_ seconds: Double) {
+            guard held else { return }
+            let end = Date().addingTimeInterval(seconds)
+            BoardAnimator.plannedSettle = max(BoardAnimator.plannedSettle ?? end, end)
+        }
         public func release() {
             guard held else { return }
             held = false
             BoardAnimator.sequenceDepth -= 1
+            if BoardAnimator.sequenceDepth == 0 { BoardAnimator.plannedSettle = nil }
         }
+    }
+
+    /// The latest landing any running sequence's kernel plan has announced
+    /// (`SequenceHold.expect`), or nil when none has. Cleared when the last
+    /// hold is given back, so a finished plan never stretches a later wait.
+    public fileprivate(set) static var plannedSettle: Date?
+
+    /// When `waitForSettle`, begun at `start`, gives up: `timeout` past the
+    /// later of `start` and the planned landing. The PLAN decides how long a
+    /// real sequence may run - an 8-seat opening deal is about 20 s at
+    /// ANIM_DEAL_CARD_MS 350 - and `timeout` is only the slack past it, for a
+    /// sequence no plan paces and for a leaked hold.
+    static func settleDeadline(from start: Date, timeout: TimeInterval) -> Date {
+        max(start, plannedSettle ?? start).addingTimeInterval(timeout)
     }
 
     /// note 8: block until no animated sequence is running, instead of a
@@ -264,14 +288,21 @@ public final class BoardAnimator: ObservableObject {
     /// of a constant tuned for the common short case (the bug an all-players-
     /// draw sequence used to get cut off mid-flight by, note 8). `timeout`
     /// bounds the wait: an unbalanced `sequenceDepth` increment (a bug, not a
-    /// real long sequence) must never wedge the caller forever. 8s is
-    /// comfortably above the longest sequence today (an 8-seat bout end: one
-    /// discard/pickup step + up to 7 draw steps, each ≈0.55s, plus round 16's
-    /// one `boutEndHold`, is under 5s).
+    /// real long sequence) must never wedge the caller forever.
+    ///
+    /// THE BOUND STARTS COUNTING WHERE THE KERNEL'S PLAN ENDS
+    /// (`settleDeadline`). It used to be a flat 8 s from the call, "comfortably
+    /// above the longest sequence" while that was an 8-seat bout end at under
+    /// 5 s. The opening deal broke it: a card per step at ANIM_DEAL_CARD_MS
+    /// puts an 8-seat deal's plan at about 20 s, and the extension would have
+    /// staged its bubble 8 s into the deal. The sequence announces its plan's
+    /// `totalMs` (`SequenceHold.expect`), so a retuned deal moves this bound
+    /// with it and no Swift number has to know how long a deal is.
+    /// Re-read every poll: a sequence's plan is built after its hold is taken.
     public static func waitForSettle(pollInterval: UInt64 = 100_000_000,
                                      timeout: TimeInterval = 8.0) async {
-        let deadline = Date().addingTimeInterval(timeout)
-        while isSequencing, Date() < deadline {
+        let start = Date()
+        while isSequencing, Date() < settleDeadline(from: start, timeout: timeout) {
             try? await Task.sleep(nanoseconds: pollInterval)
         }
     }
