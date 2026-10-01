@@ -1537,8 +1537,12 @@ test('the tutorial: the deal lands on an empty hand, and the move hint waits for
         assert.ok(start, 'the intro card offers a start');
         await doAct(() => { start!.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })); });
         await settle();
-        // Past the deal and the lead's first prompt: fire every timer due, one at a time.
-        for (let end = clock + 6000; ;) {
+        // Past the deal and the lead's first prompt: fire every timer due, one at a
+        // time, until both have shown. No horizon of the test's own: the deal runs
+        // as long as the kernel plan says (ANIM_DEAL_CARD_MS a card), and the 60 s
+        // bound only stops a board that never deals from spinning forever.
+        const dealtAndPrompted = () => commits.some((c) => c.hand === 6) && commits.some((c) => c.hinted);
+        for (const end = clock + 60_000; !dealtAndPrompted();) {
             let next: Timer | null = null;
             for (const t of timers.values()) if (t.due <= end && (!next || t.due < next.due || (t.due === next.due && t.id < next.id))) next = t;
             if (!next) break;
