@@ -158,6 +158,13 @@ int wasm_table_retitle(int id_len, int title_len) {
     return table_retitle(table(), (const char *)io, id_len, (const char *)io + id_len, title_len);
 }
 
+// io = [actor id]; `passing` 1 the classic passing game, 0 podkidnoy.
+int wasm_table_set_rules(int id_len, int passing) {
+    const unsigned char *io = inputs(id_len);
+    if (!io || id_len < 0) return TABLE_E_WIRE;
+    return table_set_rules(table(), (const char *)io, id_len, passing);
+}
+
 // io = [actor id]
 int wasm_table_continue(int id_len) {
     const unsigned char *io = inputs(id_len);
