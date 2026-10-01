@@ -1494,7 +1494,10 @@ test('a hand rearrange', async () => {
 //     hand while the stock still shows the whole deck;
 //   - the move hint waits for the board it points at: no commit shows the hint
 //     before the deal it follows has started to fly.
-test('the tutorial: the deal lands on an empty hand, and the move hint waits for the deal', async () => {
+interface TutCommit { t: number; hand: number; fullStock: boolean; hinted: boolean; flying: number; shields: string }
+
+/** The tutorial from its intro card through the deal and the lead's first prompt, every React commit recorded. */
+async function tutorialOpening(): Promise<TutCommit[]> {
     const React = (await import('react')).default;
     const { act } = await import('react');
     const { createRoot } = await import('react-dom/client');
@@ -1512,8 +1515,7 @@ test('the tutorial: the deal lands on an empty hand, and the move hint waits for
 
     const host = dom.window.document.createElement('div');
     dom.window.document.body.appendChild(host);
-    interface Commit { t: number; hand: number; fullStock: boolean; hinted: boolean; flying: number }
-    const commits: Commit[] = [];
+    const commits: TutCommit[] = [];
     const record = () => {
         const html = host.innerHTML;
         const overlay = Array.from(host.querySelectorAll('div')).find((d) => d.style.position === 'fixed' && d.style.zIndex === '10000');
@@ -1524,6 +1526,7 @@ test('the tutorial: the deal lands on an empty hand, and the move hint waits for
             fullStock: html.includes('>36<'),
             hinted: !!state && state.getAttribute('data-action') !== '' || html.includes('tut-move') || html.includes('rgb(47, 207, 99)'),
             flying: overlay ? overlay.children.length : 0,
+            shields: shieldSeats(host).join(', '),
         });
     };
     const root = createRoot(host);
@@ -1557,7 +1560,11 @@ test('the tutorial: the deal lands on an empty hand, and the move hint waits for
         host.remove();
         removeClock();
     }
+    return commits;
+}
 
+test('the tutorial: the deal lands on an empty hand, and the move hint waits for the deal', async () => {
+    const commits = await tutorialOpening();
     assert.ok(commits.some((c) => c.hand === 6), 'the learner is dealt a hand');
     assert.ok(commits.some((c) => c.hinted), 'the learner is prompted for the lead');
     const early = commits.filter((c) => c.hand > 0 && c.fullStock);
@@ -1566,6 +1573,21 @@ test('the tutorial: the deal lands on an empty hand, and the move hint waits for
     const firstHint = commits.findIndex((c) => c.hinted);
     assert.ok(firstFlight >= 0, 'the deal flies');
     assert.ok(firstHint > firstFlight, `the hint first shows at commit ${firstHint} (${commits[firstHint]?.t}ms), after the deal starts to fly at commit ${firstFlight} (${commits[firstFlight]?.t}ms)`);
+});
+
+// NOBODY DEFENDS UNTIL THE TRUMP HAS TURNED, and then it is the seat the kernel
+// chose: the tutorial's learner (seat 0) holds the lowest trump and leads
+// (src/components/tutorialGame.ts), so seat 1 defends. A shield on seat 0 is the
+// lobby's `defender = 0` that the FLIPPED board still carries (game.c
+// start_game_dealt), and the owner's rule is one shield, put up once, on the
+// real defender.
+test('the tutorial: the opening draws one shield, on the real defender, and only once the trump has turned', async () => {
+    const commits = await tutorialOpening();
+    assert.ok(commits.some((c) => c.hand === 6), 'the learner is dealt a hand');
+    const wrong = commits.filter((c) => c.shields !== '' && c.shields !== 'seat 1');
+    assert.deepEqual(wrong.map((c) => `${c.t}ms (hand ${c.hand}, ${c.flying} in flight): ${c.shields}`), [],
+        'no commit of the tutorial\'s opening draws a shield anywhere but on seat 1, the real defender');
+    assert.ok(commits.some((c) => c.shields === 'seat 1'), 'seat 1 gets the shield');
 });
 
 // ---- the opening deal: nobody defends until the trump has turned ------------------
