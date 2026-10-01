@@ -68,9 +68,11 @@ int bot_pacing_ms(int pacing_class, int humans_present);
 // shown commit, with no animation term (nobody is watching live). The answer is
 // that instant minus now_ms, never negative, and never past BOT_PACE_WAIT_MAX_MS.
 //
-// THIS REPLACES a fixed sleep after each bot cycle (bot_cycle_delay_ms, which
-// the phone's local loop still uses: its board is on the same device, so its
-// wait is what its own renderer needs). A fixed sleep counted from the bot's
+// THIS REPLACES the server's fixed sleep after each bot cycle once the state
+// blob carries the clock (view.h STATE_BLOB_FORMAT, the switch step; until then
+// the server still sleeps bot_cycle_delay_ms, which the phone's local loop keeps
+// using: its board is on the same device, so its wait is what its own renderer
+// needs). A fixed sleep counted from the bot's
 // OWN commit ignored every other commit: the deal, whose seven beats ate the
 // pace between the first two bot moves of a game, and a human's move, which a
 // bot answered at t=0 - before the human's own screen had even landed it, so a
@@ -79,8 +81,7 @@ int bot_pacing_ms(int pacing_class, int humans_present);
 //
 // The clock is the table's (view.h BoardClock, advanced by every commit and
 // persisted in a v3 state blob); a clock of zero - a board never shown - asks
-// for no wait. A v2 blob has no clock at all, and table.h table_bot_wait_ms
-// says what a bot waits on one.
+// for no wait. A v2 blob has no clock at all and reads as a zero one.
 //
 // THE CEILING is a guard, not a pace: a stream long enough to reach it does not
 // exist in play (an 8-seat deal or a bout end with every seat refilling is

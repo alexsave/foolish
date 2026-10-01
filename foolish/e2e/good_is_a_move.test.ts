@@ -78,27 +78,16 @@ const openBout = (): TableFixture => fixture()
     .goodTimestamp(true)
     .build();
 
-/**
- * One bot cycle on a fixture, committed, exactly as bot_actions.ts runCycle makes
- * one - and `delay()`, what the NEXT cycle's wait is on the row this one committed
- * (table_bot_wait_ms at the commit's own time): the beat this cycle bought. It is
- * asked of the table that committed, as the loop asks it, because while v2 is
- * written the row carries no clock and the beat lives in that table (table.h
- * table_bot_wait_ms). Asking reloads the table, so it comes after anything that
- * reads the cycle's pushes.
- */
+/** One bot cycle on a fixture, committed, exactly as bot_actions.ts runCycle makes one. */
 function cycle(f: TableFixture) {
     const t = fixtureTable();
     assert.equal(t.load(f.state, f.roster), L.TABLE_OK, 'the row loads');
     assert.equal(t.setDealSeed(SEED), L.TABLE_OK, 'the deal seed is taken');
     const drive = t.botDrive(null);
     assert.ok(typeof drive !== 'number', `the drive runs (${drive})`);
+    const delay = t.cycleDelayMs();
     const products = t.commit(GID, 2, NOW);
     assert.ok(typeof products !== 'number', `commit products (${products})`);
-    const delay = () => {
-        assert.equal(t.load(products.state, products.roster), L.TABLE_OK, 'the committed row loads');
-        return t.botWaitMs(NOW);
-    };
     return { table: t, drive, delay, products };
 }
 
@@ -115,13 +104,12 @@ test('a bot\'s good is a commit the kernel reports even though it carries no eve
 });
 
 test('the cycle is paced like a move, not like a silent passive', () => {
-    const delay = cycle(openBout()).delay();
-    // bot_wait_ms: a move a viewer is shown, with a human watching, buys the
-    // pace after its stream has played (a good flies nothing, so no stream); a
-    // move nobody is shown buys nothing. What this pins is WHICH kind a good is,
-    // which is the goods_changed half of the owner's rule.
+    const { delay } = cycle(openBout());
+    // bot_pacing_ms: a visible move with a human watching is 3000ms, a bundled
+    // passive is 0. The number is the kernel's; what this pins is WHICH class a
+    // good is priced in, which is the classify() half of the owner's rule.
     assert.ok(delay > 0, `a good earns a beat of its own (delay was ${delay}ms)`);
-    assert.equal(delay, L.BOT_PACE_MS_WITH_HUMANS, 'the same beat any other visible move gets with a human at the table');
+    assert.equal(delay, 3000, 'the same beat any other visible move gets with a human at the table');
 });
 
 test('the push goes out, a client reads it, and the board it carries is the whole move', () => {
@@ -211,8 +199,7 @@ const uncoveredBout = (): TableFixture => fixture()
     .build();
 
 test('a good over an uncovered table is silent: bundled, unpaced, and never pushed', () => {
-    const { drive, delay: wait, products } = cycle(uncoveredBout());
-    const delay = wait();
+    const { drive, delay, products } = cycle(uncoveredBout());
 
     assert.equal(drive.n, 2, 'BOTH bots said good in ONE cycle: silent goods bundle again');
     assert.deepEqual([...drive.seats].sort(), [2, 3], 'the two bots whose only move is a good');

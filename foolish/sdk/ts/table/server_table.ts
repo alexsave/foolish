@@ -63,7 +63,7 @@ export interface TableExports {
     wasm_table_bot_drive(prefsLen: number, maxActions: number): number;
     wasm_table_drive_ptr(): number;
     wasm_table_drive_prefs(): number;
-    wasm_table_bot_wait_ms(nowMs: number): number;
+    wasm_table_cycle_delay_ms(): number;
     wasm_table_replay_code(seedLen: number, logLen: number): number;
     wasm_table_replay_extras(logLen: number): number;
     wasm_belief_probe_reset(): void;
@@ -316,8 +316,8 @@ export class ServerTable {
         return this.out(n);
     }
 
-    /** table_bot_wait_ms: ms from `nowMs` to wait before driving the loaded board (0: drive now), or a refusal. */
-    botWaitMs(nowMs: number): number { return this.ex.wasm_table_bot_wait_ms(nowMs); }
+    /** table_cycle_delay_ms: how long to wait after the last cycle. */
+    cycleDelayMs(): number { return this.ex.wasm_table_cycle_delay_ms(); }
 
     // ---- the end of a game ----
 

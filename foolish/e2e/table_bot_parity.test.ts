@@ -40,12 +40,10 @@ function cycleOn(table: ServerTable, row: BotTableRow, seedHex: string, prefs: U
     assert.equal(table.load(row.state, row.roster), L.TABLE_OK, `${row.gameId}: the row loads`);
     assert.equal(table.setDealSeed(seedHex), L.TABLE_OK);
     assert.ok(table.setSessionLog(row.log) >= 0, `${row.gameId}: the session log is handed over`);
-    // The wait the loop would ask on this row at this cycle's time: the kernel's
-    // own answer, held in the transcript like every other product.
-    const delay = table.botWaitMs(NOW0 + row.version);
     const d = table.botDrive(prefs);
     assert.ok(typeof d !== 'number', `${row.gameId}: the drive runs (${d})`);
     if (d.n === 0) return null;
+    const delay = table.cycleDelayMs();
     const nextPrefs = table.drivePrefs();
     const p = table.commit(row.gameId, row.version + 1, NOW0 + row.version);
     assert.ok(typeof p !== 'number', `${row.gameId}: commit products (${p})`);

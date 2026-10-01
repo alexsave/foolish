@@ -120,12 +120,6 @@ typedef struct {
     TableSnapSlot slot[MAX_SNAPS];
 } TableSnaps;
 
-// How many bot-paced commits a table remembers while the clock is not persisted
-// (Table.paces): one per game whose bot loop shares this table, and a server's
-// isolate runs a handful at most.
-#define TABLE_PACE_MEMO 16
-typedef struct { uint64_t blob; int64_t due_ms; } TablePace;
-
 typedef struct {
     Game       *g;          // host storage: the board (the resident slot in wasm)
     TableSnaps *snaps;      // host storage: this operation's hook snapshots
@@ -149,17 +143,6 @@ typedef struct {
     // row's viewers were last shown and when it finishes playing. Read by
     // table_bot_wait_ms; the commit writes the next one (table_commit_products).
     BoardClock  clock;
-    // THE PRE-CLOCK PACE, kept only while the clock is not persisted (a v2
-    // blob; view.h STATE_BLOB_FORMAT). See table_bot_wait_ms.
-    //   unclocked   the loaded blob's FNV-1a 64 when it was v2, else 0
-    //   drive_pace  the last table_bot_drive's bot_cycle_delay_ms, 0 after any
-    //               other operation
-    //   paces       ring of { a v2 blob this table committed after a paced bot
-    //               cycle, the instant the old post-cycle sleep ended }
-    uint64_t    unclocked;
-    int32_t     drive_pace_ms;
-    uint8_t     pace_next;
-    TablePace   paces[TABLE_PACE_MEMO];
     // The preferred moves the last table_bot_drive was offered (BotDrivePref).
     int8_t      n_prefs;
     BotDrivePref prefs[MAX_PLAYERS];
@@ -308,10 +291,8 @@ typedef struct {
 // `arena`. `next_version` is the version the commit will produce (the envelope
 // carries it); `now_ms` stamps this operation's log records and, when a viewer is
 // shown the operation, advances the board's clock (TableCommit.clock, carried by
-// a v3 state blob; see Table.clock). Nothing it writes is read back by the next
-// commit except the pre-clock pace a v2 blob needs (Table.paces), which is why
-// it takes the table unconst.
-int table_commit_products(Table *t, const char *game_id, int gid_len, uint32_t next_version,
+// a v3 state blob; see Table.clock).
+int table_commit_products(const Table *t, const char *game_id, int gid_len, uint32_t next_version,
                           int64_t now_ms, TableCommit *out, uint8_t *arena, int cap);
 
 // One viewer's response envelope (seat, or -1 for the spectator): the header
@@ -371,6 +352,9 @@ int table_drive_prefs(const Table *t, const BotDriveOut *drv, uint8_t *out, int 
 // default; bots.wasm points it at its belief probe (wasm_bots_api.c).
 extern void (*table_choose_observer)(const Game *g, int seat);
 
+// How long the host waits after the cycle `drv` describes (bot_cycle_delay_ms).
+int table_cycle_delay_ms(const Table *t, const BotDriveOut *drv);
+
 // How many ms from `now_ms` the host must wait before it drives the loaded board
 // (bot_drive.h bot_wait_ms, on the board's clock): 0 means drive now. A host
 // asks on the board it just loaded, BEFORE every cycle, and after the wait loads
@@ -378,19 +362,10 @@ extern void (*table_choose_observer)(const Game *g, int seat);
 // that move restarts the wait. There is no wait after a cycle: the next cycle's
 // question already counts the one just committed. TABLE_E_NOT_LOADED.
 //
-// A V2 BOARD HAS NO CLOCK, and while v2 is the format written (view.h
-// STATE_BLOB_FORMAT, the expand step) every board is one. A zero clock would ask
-// for no wait at all, and the loop would drive bots back to back: the fixed
-// sleep after each cycle this wait replaced is gone from the host. So on a v2
-// board the answer is that old sleep, kept by the kernel itself: a commit this
-// table made after a paced bot cycle (the cycle's bot_cycle_delay_ms, the rule
-// table_cycle_delay_ms priced it by) remembers the blob it wrote and when the
-// old sleep would have ended (Table.paces), and the wait on that same blob, and
-// only on it, is the rest of that sleep. Any other v2 board - a human's move, a
-// deal, a row this table never wrote - asks for no wait, which is what the old
-// loop did when it started on it. That is the old loop's pace exactly, with the
-// sleep moved from after the commit to before the next drive. Once v3 is
-// written a commit remembers nothing, and the contract step deletes it.
+// A v2 board has no clock and asks for no wait. While v2 is the format written
+// (view.h STATE_BLOB_FORMAT, the expand step) no host asks this yet: they still
+// sleep table_cycle_delay_ms after each cycle. The switch step writes v3 and
+// moves the hosts onto this wait.
 int table_bot_wait_ms(const Table *t, int64_t now_ms);
 
 // ---- the end of a game -------------------------------------------------------

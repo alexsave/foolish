@@ -1010,7 +1010,7 @@ WASM_TABLE_EXPORTS := \
   -Wl,--export=wasm_table_redact -Wl,--export=wasm_table_seat_of \
   -Wl,--export=wasm_table_set_deal_seed -Wl,--export=wasm_table_set_session_log \
   -Wl,--export=wasm_table_bot_drive -Wl,--export=wasm_table_drive_ptr \
-  -Wl,--export=wasm_table_drive_prefs -Wl,--export=wasm_table_bot_wait_ms \
+  -Wl,--export=wasm_table_drive_prefs -Wl,--export=wasm_table_cycle_delay_ms \
   -Wl,--export=wasm_table_replay_code -Wl,--export=wasm_table_replay_extras
 
 # The web client's slot (src/client_table.h, wasm/wasm_table_api.c), bots.wasm

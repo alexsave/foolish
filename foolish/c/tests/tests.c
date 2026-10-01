@@ -10282,74 +10282,22 @@ static void test_table_bot_wait(void) {
     }
     tb_rows_v3 = 0;
 
+    // A V2 BLOB IS READ TOO, as a zero clock (view.h): a board never shown asks
+    // for no wait. One byte short it is refused, like any blob.
+    {
+        tb_state2[0] = TABLE_STATE_FORMAT_V2;
+        tb_state2[1] = tb_game.deterministic_deck ? 1 : 0;
+        const int n2 = STATE_BLOB_HEADER + state_put(&tb_game, VIEW_UNMASKED, tb_state2 + STATE_BLOB_HEADER);
+        const int rc = table_load(&tb, tb_state2, n2, tb_roster, ROSTER_BYTES);
+        CHECK(rc == TABLE_OK, "a v2 row loads");
+        CHECK(rc == TABLE_OK && tb.clock.shown_ms == 0 && tb.clock.settles_ms == 0 && table_bot_wait_ms(&tb, T0) == 0,
+              "with a zero clock, which asks for no wait");
+        CHECK(table_load(&tb, tb_state2, n2 - 1, tb_roster, ROSTER_BYTES) < 0, "a v2 row one byte short is refused");
+    }
+
     Table unloaded;
     table_init(&unloaded, &tb_src, &tb_snaps);
     CHECK(table_bot_wait_ms(&unloaded, T0) == TABLE_E_NOT_LOADED, "an unloaded table names no wait");
-}
-
-// THE PRE-CLOCK PACE (table.h table_bot_wait_ms): while v2 is written a row has
-// no clock, and a bot must still wait what the old loop slept after its cycle -
-// bot_cycle_delay_ms of that cycle, from the commit - and nothing else.
-static void test_table_bot_wait_pre_clock(void) {
-    TableCommit c;
-    const int64_t T0 = 1700000000000LL;
-    tb_rows_v3 = 0;   // the rows exactly as this kernel writes them
-    tb_bot_table("random", 21);
-    CHECK(tb_reload(1) >= 0, "the dealt row loads");
-    if (TABLE_STATE_CLOCK_BYTES == 0)
-        CHECK(tb_state[0] == TABLE_STATE_FORMAT_V2 && tb.clock.shown_ms == 0 && tb.clock.settles_ms == 0,
-              "a v2 row loads with a zero clock");
-    CHECK(table_bot_wait_ms(&tb, T0) == 0, "a deal is not a bot's cycle: the old loop drove the dealt board at once");
-
-    int64_t now = T0;
-    int paced = 0, human = 0, silent = 0;
-    for (int step = 0; step < 400 && !(paced >= 3 && human); step++) {
-        if (tb_reload(1) < 0 || tb_game.status != GAME_STATUS_PLAYING) break;
-        now += table_bot_wait_ms(&tb, now);
-        if (bot_drive_eligible_mask(&tb_game, game_human_mask(&tb_game)) != 0) {
-            if (table_bot_drive(&tb, 0, 0, 0, &tb_drv) <= 0) break;
-            const int old = bot_cycle_delay_ms(&tb_game, game_human_mask(&tb_game), &tb_drv);
-            if (tb_commit_row(now, &c) < 0 || tb_reload(1) < 0) break;
-            if (tb_game.status != GAME_STATUS_PLAYING) break;
-            if (TABLE_STATE_CLOCK_BYTES > 0) continue;   // the switch step: the row's clock rules (test_table_bot_wait)
-            if (old == 0) {
-                silent++;
-                CHECK(table_bot_wait_ms(&tb, now) == 0, "a bot cycle that showed nothing asks for no wait, as the old loop slept none");
-                continue;
-            }
-            paced++;
-            CHECK(old == BOT_PACE_MS_WITH_HUMANS, "with the human in, the old sleep is the with-humans pace");
-            CHECK(table_bot_wait_ms(&tb, now) == old, "after a paced bot cycle a bot waits the old post-cycle sleep");
-            CHECK(table_bot_wait_ms(&tb, now + 1000) == old - 1000, "less the time already gone");
-            CHECK(table_bot_wait_ms(&tb, now + old) == 0, "and not a moment longer");
-            // The same blob in a table that did not write it is a row this host
-            // never paced: the old loop, starting on it, drove at once.
-            {
-                static Table t2;
-                static Game g2;
-                static TableSnaps s2;
-                table_init(&t2, &g2, &s2);
-                CHECK(table_load(&t2, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK
-                      && table_bot_wait_ms(&t2, now) == 0, "a table that did not write the row names no wait on it");
-            }
-            continue;
-        }
-        if (!tb_human_move()) break;
-        if (tb_commit_row(now, &c) < 0 || tb_reload(1) < 0) break;
-        if (tb_game.status != GAME_STATUS_PLAYING || TABLE_STATE_CLOCK_BYTES > 0) continue;
-        human++;
-        CHECK(table_bot_wait_ms(&tb, now) == 0, "after a human's move a bot answers at once, as the old loop did");
-    }
-    if (TABLE_STATE_CLOCK_BYTES == 0)
-        CHECK(paced >= 3 && human > 0, "the game reached paced bot cycles and a human move");
-    fprintf(stderr, "  [pre-clock pace] %d paced bot cycles, %d silent, %d human moves\n", paced, silent, human);
-
-    // A v2 row one byte short is refused (the reader, whatever is written).
-    tb_state2[0] = TABLE_STATE_FORMAT_V2;
-    tb_state2[1] = tb_game.deterministic_deck ? 1 : 0;
-    const int n2 = STATE_BLOB_HEADER + state_put(&tb_game, VIEW_UNMASKED, tb_state2 + STATE_BLOB_HEADER);
-    CHECK(table_load(&tb, tb_state2, n2, tb_roster, ROSTER_BYTES) == TABLE_OK, "a v2 row loads");
-    CHECK(table_load(&tb, tb_state2, n2 - 1, tb_roster, ROSTER_BYTES) < 0, "a v2 row one byte short is refused");
 }
 
 static void test_table_bot_drive_cycle(void) {
@@ -12687,7 +12635,6 @@ int main(void) {
     test_table_deal_seed_and_session_log();
     test_table_bot_drive_cycle();
     test_table_bot_wait();
-    test_table_bot_wait_pre_clock();
     test_table_drive_prefs();
     test_table_bot_drive_ignores_instance_history();
     test_table_bot_drive_progress_seeds_the_decision();

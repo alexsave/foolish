@@ -11,13 +11,9 @@
 //   - EdgeRuntime.waitUntil: the post-response work (create's persist, the bot
 //     loop) is COLLECTED, so a test can `settle()` and see a finished world
 //     instead of racing it.
-//   - bot pacing: the bot loop sleeps until the kernel says a bot may act -
-//     the last commit's animation on its viewers' screens, then the pace
-//     (table_bot_wait_ms, c/src/bot_drive.h bot_wait_ms). A sleep in that band
-//     resolves on the next tick instead AND moves Date.now on to the moment it
-//     was due, because the kernel's wait is a deadline on the clock, not a
-//     duration: a skipped sleep that left the clock behind would be asked the
-//     same wait again. The sequence of cycles is unchanged. The band stops
+//   - bot pacing: the bot loop sleeps up to 3s between cycles for a human to
+//     watch (bot_pacing_ms, c/src/bot_drive.c). Sleeps in that band resolve on
+//     the next tick instead; the sequence of cycles is unchanged. The band stops
 //     below pg's 10s idle timer so the pool is not touched.
 import './../harness.ts';
 import { servedHandlers, ServedHandler } from '../adapters/server.ts';
@@ -38,19 +34,8 @@ export async function settle(): Promise<void> {
 
 // ---- bot pacing --------------------------------------------------------------
 const realSetTimeout = globalThis.setTimeout;
-const realDateNow = Date.now;
-let skippedMs = 0;
-Date.now = () => realDateNow() + skippedMs;
-(globalThis as { setTimeout: unknown }).setTimeout = ((fn: (...a: unknown[]) => void, ms?: number, ...args: unknown[]) => {
-    const wait = ms ?? 0;
-    if (wait < 250 || wait > 9000) return realSetTimeout(fn, ms, ...args);
-    const due = Date.now() + wait;
-    return realSetTimeout(() => {
-        const now = Date.now();
-        if (due > now) skippedMs += due - now;
-        fn(...args);
-    }, 0);
-}) as unknown as typeof setTimeout;
+(globalThis as { setTimeout: unknown }).setTimeout = ((fn: (...a: unknown[]) => void, ms?: number, ...args: unknown[]) =>
+    realSetTimeout(fn, (ms ?? 0) >= 250 && (ms ?? 0) <= 5000 ? 0 : ms, ...args)) as unknown as typeof setTimeout;
 
 // ---- auth ------------------------------------------------------------------
 const enc = new TextEncoder();

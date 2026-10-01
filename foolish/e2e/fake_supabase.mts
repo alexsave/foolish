@@ -335,8 +335,7 @@ export async function startFakeSupabase(opts: FakeOptions = {}): Promise<FakeBac
     // ---- the bot loop --------------------------------------------------------
     //
     // bot_actions.ts's runCycle with the lease, the CAS and the CPU budget taken
-    // out: one drive per timer, each on a board the kernel says a bot may act on
-    // now (table_bot_wait_ms), else a timer for the wait it names.
+    // out: one drive per timer, the kernel's own delay between cycles.
 
     function wakeBots(gameId: string): void {
         if (botTimers.has(gameId)) return;
@@ -349,11 +348,6 @@ export async function startFakeSupabase(opts: FakeOptions = {}): Promise<FakeBac
         const t = fixtureTable();
         if (t.load(row.state, row.roster) < 0) return;
         if (!t.needsBots()) return;
-        const wait = t.botWaitMs(Date.now());
-        if (wait > 0) {
-            botTimers.set(gameId, setTimeout(() => { botTimers.delete(gameId); driveBots(gameId); }, wait));
-            return;
-        }
         t.setDealSeed(row.seedHex);
         t.setSessionLog(row.log);
         const drive = t.botDrive(null);
@@ -374,11 +368,12 @@ export async function startFakeSupabase(opts: FakeOptions = {}): Promise<FakeBac
             const spec = t.push(gameId, -1);
             if (typeof spec !== 'number') pushes.push({ topic: `game-${gameId}`, owner: null, seq: pushSeq(), version: row.version + 1, bytes: spec });
         }
+        const delay = t.cycleDelayMs();
         commitRow(row, p, seats, null);
         note(`bots drove ${drive.n} action(s) by seat(s) [${drive.seats.join(', ')}] -> v${row.version}`);
         dispatch(pushes);
         if (p.ended) return;
-        botTimers.set(gameId, setTimeout(() => { botTimers.delete(gameId); driveBots(gameId); }, 10));
+        botTimers.set(gameId, setTimeout(() => { botTimers.delete(gameId); driveBots(gameId); }, Math.max(10, delay)));
     }
 
     /** Does the loaded row still want a bot? Read in its own tiny section. */

@@ -105,8 +105,7 @@ int state_import(Game *g, const unsigned char *p, int len, int masked);
 
 // THE FORMAT THIS KERNEL WRITES, and the one switch of the move above: v2 while
 // this is the expand kernel, V3 once it is the switch. Everything that depends
-// on which one is written - the clock bytes a blob ends with, the pre-clock
-// pace table.c keeps while the clock is not persisted - follows from it.
+// on which one is written - the clock bytes a blob ends with - follows from it.
 #define STATE_BLOB_FORMAT STATE_BLOB_FORMAT_V2
 
 // The bytes the blob's header costs, ahead of the state_put payload.

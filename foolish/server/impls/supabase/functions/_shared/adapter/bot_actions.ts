@@ -2,13 +2,12 @@
 // for one game, cycle by cycle.
 //
 // Each cycle is one read and one kernel section: load the row WITH its session
-// log, ask the kernel how long its viewers still need before a bot may act on
-// that board (table_bot_wait_ms) and, when that is not now, sleep it and load
-// again; else hand the table the deal seed and the log, drive one cycle
-// (table_bot_drive), copy out every product, the pushes and the moves to offer a
-// retry; then the version-fenced commit, the end of the game when the cycle
-// ended it, and the broadcast. What stays here is what the kernel cannot do: the
-// lease, the CAS commit, the broadcast, the CPU budget and the sleep.
+// log, hand the table the row, the deal seed and the log, drive one cycle
+// (table_bot_drive), copy out every product, the pushes, the wait it is worth
+// and the moves to offer a retry; then the version-fenced commit, the end of the
+// game when the cycle ended it, the broadcast, and the wait. What stays here is
+// what the kernel cannot do: the lease, the CAS commit, the broadcast, the CPU
+// budget and the sleep.
 //
 // The log rides along on the row's SELECT because EVERY cycle needs its length:
 // it is the progress term of each bot decision's seed (c/src/bot_drive.h), which
@@ -117,12 +116,11 @@ export const lockedBotLoop = async (gameId: string): Promise<void> => {
 };
 
 /**
- * One cycle outside the lease, the loop's budget and its pace, for the bot
- * latency bench (e2e/bench_bot_e2e.ts): exactly the work a cycle does, with
- * nothing around it - it drives the board it loads whatever the kernel's wait.
+ * One cycle outside the lease and the loop's budget, for the bot latency bench
+ * (e2e/bench_bot_e2e.ts): exactly the work a cycle does, with nothing around it.
  */
 export async function __botCycle(gameId: string): Promise<void> {
-    await runCycle(gameId, 0, { computeMs: 0, cycles: 0, maxMs: 0 }, false);
+    await runCycle(gameId, 0, { computeMs: 0, cycles: 0, maxMs: 0 });
 }
 
 const refusal = (gameId: string, what: string, rc: number) =>
@@ -130,7 +128,7 @@ const refusal = (gameId: string, what: string, rc: number) =>
 
 /** One cycle, committed. Null when nothing was driven (no bot work, or the game ended). */
 async function runCycle(
-    gameId: string, cycle: number, cpu: CpuAcct, paced = true,
+    gameId: string, cycle: number, cpu: CpuAcct,
 ): Promise<{ delayMs: number } | null> {
     const reqId = `bot-${cycle}-${gameId.substring(0, 6)}`;
     const table = await serverTable();
@@ -148,8 +146,6 @@ async function runCycle(
         let rc = table.load(row.state, row.roster);
         if (rc < 0) throw refusal(gameId, 'load', rc);
         if (!table.needsBots()) return null;
-        const waitMs = paced ? table.botWaitMs(Date.now()) : 0;
-        if (waitMs > 0) return { delayMs: waitMs };
         rc = table.setDealSeed(row.gameSeed);
         if (rc < 0) throw refusal(gameId, 'deal seed', rc);
         rc = table.setSessionLog(row.log ?? new Uint8Array(0));
@@ -161,6 +157,7 @@ async function runCycle(
         let products: TableProducts | null = null;
         let seats: TableSeat[] = [];
         const pushes: { viewer: number; bytes: Uint8Array }[] = [];
+        let delayMs = 0;
         if (drive.n > 0) {
             const p = table.commit(gameId, row.version + 1, Date.now());
             if (typeof p === 'number') throw refusal(gameId, 'commit products', p);
@@ -178,6 +175,7 @@ async function runCycle(
                     pushes.push({ viewer, bytes: push });
                 }
             }
+            delayMs = table.cycleDelayMs();
             prefs = table.drivePrefs();
         }
         // ---- end of the kernel section ----
@@ -186,7 +184,7 @@ async function runCycle(
         cpu.cycles += 1;
         if (driveMs > cpu.maxMs) cpu.maxMs = driveMs;
         console.log(`[${reqId}] drove ${drive.n} action(s) by seats [${drive.seats.join(', ')}] in ${driveMs}ms `
-            + `(stop ${drive.stop}) ${memLine(table.memoryBytes())}`);
+            + `(stop ${drive.stop}, delay ${delayMs}ms) ${memLine(table.memoryBytes())}`);
 
         if (!products) return null;
         const version = await commitProducts(gameId, row, products, seats, null);
@@ -201,7 +199,7 @@ async function runCycle(
                 .catch((err) => console.error(`[${reqId}] broadcast failed:`, err));
         }
         if (products.ended) return null;
-        return { delayMs: 0 };
+        return { delayMs };
     }
     throw new Error(`Could not commit game ${gameId} after ${MAX_ATTEMPTS} attempts - write contention`);
 }
