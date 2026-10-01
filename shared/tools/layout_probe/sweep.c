@@ -10,6 +10,9 @@
  *   sweep --cells N            the same for an N x N grid
  *   sweep --match FILE.jpeg    which ImageIO quality wrote FILE (by its
  *                              quantisation table), and its chroma sampling
+ *   sweep --samples DIR        pictures of what comes back: for each case, a
+ *                              corner of the decoded picture magnified, beside
+ *                              the same corner as it DECODES, wrong cells green
  *
  * macOS only: ImageIO and CoreGraphics are the codec. The pattern and the
  * judge are layout_probe.h, the same file the probe app compiles.
@@ -85,6 +88,91 @@ static LpVerdict round_trip(int n, int p, int grey, int scaled, double q, long *
     return v;
 }
 
+static void png_to(const char *path, uint8_t *rgba, int w, int h)
+{
+    CGContextRef ctx = CGBitmapContextCreate(rgba, w, h, 8, w * 4, g_space, kCGImageAlphaNoneSkipLast);
+    CGImageRef img = CGBitmapContextCreateImage(ctx);
+    CFStringRef s = CFStringCreateWithCString(NULL, path, kCFStringEncodingUTF8);
+    CFURLRef url = CFURLCreateWithFileSystemPath(NULL, s, kCFURLPOSIXPathStyle, false);
+    CGImageDestinationRef dst = CGImageDestinationCreateWithURL(url, CFSTR("public.png"), 1, NULL);
+    CGImageDestinationAddImage(dst, img, NULL);
+    CGImageDestinationFinalize(dst);
+    CFRelease(dst); CFRelease(url); CFRelease(s); CGImageRelease(img); CGContextRelease(ctx);
+}
+
+/* One sample: the top-left SHOW x SHOW cells, each ZOOM px. Left, the picture
+ * as it came back (nearest pixel, so what is drawn is what was decoded from).
+ * Right, each cell as it READS: its palette colour, or green (in neither
+ * palette) where the reading is not what was painted. q < 0 is the pattern as painted, no encoder. */
+#define SHOW 32
+#define ZOOM 10
+#define GAP  12
+static void sample(const char *dir, int idx, const char *label, int n, int p, int grey, int scaled, double q)
+{
+    const int side = n * p;
+    uint8_t *rgba = malloc((size_t)side * side * 4);
+    lp_fill(rgba, n, p, grey);
+    uint8_t *got = rgba; int out = side;
+    CGImageRef img = image_of(rgba, side);
+    if (scaled > 0 && scaled < side) {
+        uint8_t *shrunk = pixels_of(img, scaled, scaled);
+        CGImageRelease(img);
+        img = image_of(shrunk, scaled);
+        got = shrunk; out = scaled;
+    }
+    if (q >= 0) {
+        CFDataRef jpg = jpeg_of(img, q);
+        CGImageSourceRef src = CGImageSourceCreateWithData(jpg, NULL);
+        CGImageRef back = CGImageSourceCreateImageAtIndex(src, 0, NULL);
+        uint8_t *dec = pixels_of(back, out, out);
+        if (got != rgba) free(got);
+        got = dec;
+        CGImageRelease(back); CFRelease(src); CFRelease(jpg);
+    }
+    CGImageRelease(img);
+    const LpVerdict v = lp_judge(got, out, out, n, grey);
+
+    const int panel = SHOW * ZOOM, W = panel * 2 + GAP, H = panel;
+    uint8_t *sheet = malloc((size_t)W * H * 4);
+    memset(sheet, 40, (size_t)W * H * 4);
+    for (int y = 0; y < H; y++)
+        for (int x = 0; x < panel; x++) {
+            const uint8_t *s = got + (((int64_t)y * out / (n * ZOOM)) * out + (int64_t)x * out / (n * ZOOM)) * 4;
+            memcpy(sheet + (y * W + x) * 4, s, 4);
+            const int cx = x / ZOOM, cy = y / ZOOM;
+            const int read = lp_read(got, out, out, n, grey, cx, cy, NULL);
+            static const uint8_t bad[3] = { 40, 230, 70 };
+            const uint8_t *c = read == lp_state((uint32_t)(cy * n + cx)) ? lp_rgb(read, grey) : bad;
+            uint8_t *o = sheet + (y * W + panel + GAP + x) * 4;
+            o[0] = c[0]; o[1] = c[1]; o[2] = c[2]; o[3] = 255;
+        }
+    char path[1024];
+    snprintf(path, sizeof path, "%s/%02d_%s_wrong%d.png", dir, idx, label, v.wrong);
+    png_to(path, sheet, W, H);
+    printf("%s  (%d of %d cells wrong)\n", path, v.wrong, v.cells);
+    free(sheet);
+    if (got != rgba) free(got);
+    free(rgba);
+}
+
+static int samples(const char *dir, int n)
+{
+    int i = 0;
+    sample(dir, i++, "grey_1px_as_painted", n, 1, LP_GREY, 0, -1);
+    sample(dir, i++, "grey_1px_q050_what_Messages_does", n, 1, LP_GREY, 0, 0.50);
+    sample(dir, i++, "grey_1px_q030", n, 1, LP_GREY, 0, 0.30);
+    sample(dir, i++, "grey_1px_q010", n, 1, LP_GREY, 0, 0.10);
+    sample(dir, i++, "grey_3px_q050_what_Messages_does", n, 3, LP_GREY, 0, 0.50);
+    sample(dir, i++, "grey_3px_q010", n, 3, LP_GREY, 0, 0.10);
+    sample(dir, i++, "grey_3px_scaled_to_2px_q050", n, 3, LP_GREY, n * 2, 0.50);
+    sample(dir, i++, "grey_3px_scaled_to_1px_q050", n, 3, LP_GREY, n, 0.50);
+    sample(dir, i++, "colour_1px_as_painted", n, 1, LP_COLOUR, 0, -1);
+    sample(dir, i++, "colour_1px_q050_what_Messages_does", n, 1, LP_COLOUR, 0, 0.50);
+    sample(dir, i++, "colour_3px_q050_what_Messages_does", n, 3, LP_COLOUR, 0, 0.50);
+    sample(dir, i++, "colour_3px_q010", n, 3, LP_COLOUR, 0, 0.10);
+    return 0;
+}
+
 /* The luminance quantisation table (id 0, 8-bit) of a JPEG, in file order,
  * and the luma component's sampling factors. Returns 1 when both were found. */
 static int jpeg_tables(const uint8_t *b, long n, uint8_t dqt[64], int *hs, int *vs)
@@ -149,11 +237,14 @@ int main(int argc, char **argv)
 {
     g_space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
     int n = 243;
+    const char *dir = NULL;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--match") && i + 1 < argc) return match(argv[i + 1]);
         else if (!strcmp(argv[i], "--cells") && i + 1 < argc) n = atoi(argv[++i]);
-        else { fprintf(stderr, "usage: sweep [--cells N] | --match FILE.jpeg\n"); return 2; }
+        else if (!strcmp(argv[i], "--samples") && i + 1 < argc) dir = argv[++i];
+        else { fprintf(stderr, "usage: sweep [--cells N] [--samples DIR] | --match FILE.jpeg\n"); return 2; }
     }
+    if (dir) return samples(dir, n);
     static const double qs[] = { 0.90, 0.80, 0.70, 0.60, 0.50, 0.40, 0.30, 0.20, 0.10 };
     const int nq = (int)(sizeof qs / sizeof *qs);
 

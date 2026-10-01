@@ -70,36 +70,46 @@ typedef struct {
     int max_err;   /* the worst channel error at a sampled pixel, 0..255     */
 } LpVerdict;
 
-/* Read an n x n pattern back out of a w x h picture. ONE SAMPLE PER CELL, at
- * the cell's centre wherever the picture's own size puts it - so a picture
- * that came back scaled is judged at the size it came back at, and the answer
- * is what a reader with no resampling of its own would decode. Nearest palette
- * entry by summed channel distance. */
+/* The state cell (cx, cy) of an n x n pattern reads as, in a w x h picture.
+ * ONE SAMPLE PER CELL, at the cell's centre wherever the picture's own size
+ * puts it - so a picture that came back scaled is read at the size it came
+ * back at, and the answer is what a reader with no resampling of its own would
+ * decode. Nearest palette entry by summed channel distance. `err`, when not
+ * NULL, takes the worst channel distance from what the cell was painted as. */
+static inline int lp_read(const uint8_t *rgba, int w, int h, int n, int grey, int cx, int cy, int *err)
+{
+    int px = (int)(((int64_t)(2 * cx + 1) * w) / (2 * n));
+    int py = (int)(((int64_t)(2 * cy + 1) * h) / (2 * n));
+    if (px > w - 1) px = w - 1;
+    if (py > h - 1) py = h - 1;
+    const uint8_t *s = rgba + ((int64_t)py * w + px) * 4;
+    int best = 0, best_d = 1 << 30;
+    for (int k = 0; k < LP_STATES; k++) {
+        const uint8_t *c = lp_rgb(k, grey);
+        int d = 0;
+        for (int ch = 0; ch < 3; ch++) d += s[ch] > c[ch] ? s[ch] - c[ch] : c[ch] - s[ch];
+        if (d < best_d) { best_d = d; best = k; }
+    }
+    if (err) {
+        const uint8_t *c = lp_rgb(lp_state((uint32_t)(cy * n + cx)), grey);
+        int e = 0;
+        for (int ch = 0; ch < 3; ch++) {
+            int d = s[ch] > c[ch] ? s[ch] - c[ch] : c[ch] - s[ch];
+            if (d > e) e = d;
+        }
+        *err = e;
+    }
+    return best;
+}
+
+/* Read the whole pattern back and count. */
 static inline LpVerdict lp_judge(const uint8_t *rgba, int w, int h, int n, int grey)
 {
     LpVerdict v = { n * n, 0, 0, 0 };
     for (int cy = 0; cy < n; cy++)
         for (int cx = 0; cx < n; cx++) {
-            int px = (int)(((int64_t)(2 * cx + 1) * w) / (2 * n));
-            int py = (int)(((int64_t)(2 * cy + 1) * h) / (2 * n));
-            if (px > w - 1) px = w - 1;
-            if (py > h - 1) py = h - 1;
-            const uint8_t *s = rgba + ((int64_t)py * w + px) * 4;
-            int best = 0, best_d = 1 << 30;
-            for (int k = 0; k < LP_STATES; k++) {
-                const uint8_t *c = lp_rgb(k, grey);
-                int d = 0;
-                for (int ch = 0; ch < 3; ch++) d += s[ch] > c[ch] ? s[ch] - c[ch] : c[ch] - s[ch];
-                if (d < best_d) { best_d = d; best = k; }
-            }
-            const int want = lp_state((uint32_t)(cy * n + cx));
-            if (best != want) v.wrong++;
-            const uint8_t *c = lp_rgb(want, grey);
             int e = 0;
-            for (int ch = 0; ch < 3; ch++) {
-                int d = s[ch] > c[ch] ? s[ch] - c[ch] : c[ch] - s[ch];
-                if (d > e) e = d;
-            }
+            if (lp_read(rgba, w, h, n, grey, cx, cy, &e) != lp_state((uint32_t)(cy * n + cx))) v.wrong++;
             if (e == 0) v.exact++;
             if (e > v.max_err) v.max_err = e;
         }

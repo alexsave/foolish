@@ -98,6 +98,7 @@ The C builds anywhere; the probe app and the sweep need a Mac.
 ```bash
 make -C shared/tools/layout_probe test     # the pattern and the judge
 make -C shared/tools/layout_probe sweep    # the two tables above
+shared/tools/layout_probe/build/sweep --samples DIR   # pictures: what came back beside how it decodes
 make -C shared/tools/layout_probe app      # xcodegen, then a simulator build
 ```
 
@@ -150,6 +151,6 @@ Three things the rig needs from an app, each of which cost a run here:
 | --- | --- |
 | `layout_probe.h` | the pattern (`lp_state`, `lp_fill`) and the verdict on what came back (`lp_judge`), header-only, with `module.modulemap` (`CLayoutProbe`) for Swift |
 | `layout_probe_test.c` | its test; each claim in it was mutation-checked against a broken copy of the header |
-| `sweep.c` | the recompression and resize tables, and `--match FILE.jpeg` to name the ImageIO quality that wrote a file |
+| `sweep.c` | the recompression and resize tables, `--match FILE.jpeg` to name the ImageIO quality that wrote a file, and `--samples DIR` to write a corner of each case as a picture, wrong cells in green |
 | `ios/` | the probe app: `project.yml` for xcodegen, a codeless container (`App/`) and the extension (`Ext/`) |
 | `rig.env` | the rig's product block for the probe |
