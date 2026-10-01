@@ -56,6 +56,7 @@ Swift reaches a header-only C module through its `module.modulemap` on `SWIFT_IN
 | `tools/llvm.mk` | the one LLVM toolchain the wasm builds use | CARDS, SHED, LIAR, BONES (through structgen and datagen) |
 | `tools/wasm_cc.mk` | which clang compiles a kernel for wasm32 (the pinned Homebrew LLVM on a Mac) and `wasm-cc-check`, the guard that refuses Apple clang, which targets wasm32 but produces different bytes | SHED, LIAR, BONES (CARDS still carries its own copy of the same guard) |
 | `tools/ios_xcframework.mk` | the `ios-lib` recipe: `$(call IOS_XCFRAMEWORK,name,sources,cflags,headers,min-ios,out)` builds the device and both simulator slices and wraps them in an xcframework | CARDS, UTTT, SHED, LIAR, BONES |
+| `tools/layout_probe/` | does the extension that reads a Messages app message get its layout back: a probe app that stages a message whose picture is a known pattern and whose strings are a known length, the pattern and its judge in C (`layout_probe.h`, `CLayoutProbe`), and the recompression sweep; `README.md` is the evidence (simulator only so far), `layout_probe_test.c` the test | nobody: a measurement, and no product sends data this way |
 | `tools/tighten/` | the showcase video cutter (`media/`) | CARDS |
 | `tools/textures/` | the bake tool: `regenerate_textures.sh <out-dir>` compiles `swift/Textures` with `GenerateTextures.swift` and writes the JPEGs; a product passes its own resources folder | CARDS, SHED |
 | `tools/check_ui_doc.py` | the UI design doc checker | UTTT, SHED |
