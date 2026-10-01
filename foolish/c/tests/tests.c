@@ -9621,6 +9621,7 @@ typedef struct {
     int deck;
     int has_flipped;
     Card flipped;
+    int defender, first_attacker;        // the board's roles, raw (state_get does not validate)
     int hand_n[MAX_PLAYERS];
     Card hand[MAX_PLAYERS][CARDS_PER_PLAYER];
 } DlEvent;
@@ -9649,6 +9650,8 @@ static void dl_read_sink(void *ctx, int index, const EvwRead *r) {
     e->deck = dl_board.deck_count;
     e->has_flipped = dl_board.has_flipped;
     e->flipped = dl_board.flipped;
+    e->defender = dl_board.defender;
+    e->first_attacker = dl_board.first_attacker;
     for (int s = 0; s < dl_board.num_players && s < MAX_PLAYERS; s++) {
         e->hand_n[s] = dl_board.players[s].hand_count;
         for (int i = 0; i < dl_board.players[s].hand_count && i < CARDS_PER_PLAYER; i++)
@@ -9778,6 +9781,74 @@ static void test_opening_deal_tail_survives_eight_seats(void) {
                "deal tail (%dp): then the first-attacker transition", np);
         DCHECK(m->has_board && m->deck == tb_game.deck_count,
                "deal tail (%dp): and the last event's board is the dealt board", np);
+    }
+}
+
+// 2b. NOBODY DEFENDS UNTIL THE TRUMP HAS TURNED. Who leads is the lowest trump's
+// holder, and the trump is not known until the flip, so no board of the opening
+// push before EVW_T_DEFENDER_MOVE may name a defender or a first attacker: both
+// are the sentinel -1 there. The owner, on the website: "while it does the
+// opening deal, it shows ME as having the shield, no matter who ends up actually
+// having it". The lobby's `first_attacker = 0; defender = 0`
+// (game.c game_reset_to_lobby) rode every START_MAGIC, DEAL and FLIPPED board,
+// so every host that reads a board's defender drew seat 0's shield through the
+// whole deal. The lobby itself names nobody either: it is the board a host has
+// on screen when the deal starts, and the web seeds its role marks from it.
+//
+// From DEFENDER_MOVE on, every board carries the real seats.
+static void test_opening_deal_names_no_defender(void) {
+    static const int nps[] = { 2, 3, 6, 8 };
+    for (int pi = 0; pi < (int)(sizeof nps / sizeof nps[0]); pi++) {
+        const int np = nps[pi];
+        for (int seed_k = 1; seed_k <= 3; seed_k++) {
+            // The lobby, every seat but the last ready: nobody leads or defends yet.
+            tb_seed_fill(60 + seed_k * 5 + np);
+            table_init(&tb, &tb_game, &tb_snaps);
+            int ok = table_create(&tb, DL_IDS[0], 1, DL_IDS[0], 1) == TABLE_OK;
+            for (int s = 1; ok && s < np; s++) ok = table_join(&tb, DL_IDS[s], 1, DL_IDS[s], 1) == TABLE_OK;
+            for (int s = 0; ok && s < np - 1; s++) table_ready(&tb, DL_IDS[s], 1, tb_seed);
+            if (!ok || tb_game.status != GAME_STATUS_WAITING) {
+                DCHECK(0, "no defender in the deal (%dp): the lobby seats and waits", np);
+                continue;
+            }
+            DCHECK(tb_game.defender == -1 && tb_game.first_attacker == -1,
+                   "no defender in the deal (%dp, seed %d): the lobby names defender %d, first attacker %d, want -1 and -1",
+                   np, seed_k, tb_game.defender, tb_game.first_attacker);
+            table_ready(&tb, DL_IDS[np - 1], 1, tb_seed);
+            if (!tb.dealt_now || tb_game.status != GAME_STATUS_PLAYING) {
+                DCHECK(0, "no defender in the deal (%dp): the last ready deals", np);
+                continue;
+            }
+            const int defender = tb_game.defender, first = tb_game.first_attacker;
+            for (int viewer = -1; viewer < np; viewer++) {
+                if (dl_read_push(viewer) < 0) {
+                    DCHECK(0, "no defender in the deal (%dp): the push reads for viewer %d", np, viewer);
+                    continue;
+                }
+                char why[200];
+                why[0] = 0;
+                int moved = -1;             // index of the DEFENDER_MOVE event
+                for (int i = 0; i < dl_read.n && !why[0]; i++) {
+                    const DlEvent *e = &dl_read.ev[i];
+                    if (e->type == EVW_T_DEFENDER_MOVE && moved < 0) moved = i;
+                    if (!e->has_board) {
+                        snprintf(why, sizeof why, "event %d (type %d) carries no readable board", i, e->type);
+                    } else if (moved < 0 && (e->defender != -1 || e->first_attacker != -1)) {
+                        snprintf(why, sizeof why,
+                                 "event %d (type %d, msg %d) is before DEFENDER_MOVE and names defender %d, first attacker %d,"
+                                 " want -1 and -1", i, e->type, e->msg, e->defender, e->first_attacker);
+                    } else if (moved >= 0 && (e->defender != defender || e->first_attacker != first)) {
+                        snprintf(why, sizeof why,
+                                 "event %d (type %d) is at or after DEFENDER_MOVE and names defender %d, first attacker %d,"
+                                 " want %d and %d", i, e->type, e->defender, e->first_attacker, defender, first);
+                    }
+                }
+                if (!why[0] && moved < 0) snprintf(why, sizeof why, "the push has no DEFENDER_MOVE");
+                if (!why[0] && dl_read.ev[moved].seat != defender)
+                    snprintf(why, sizeof why, "DEFENDER_MOVE names seat %d, want %d", dl_read.ev[moved].seat, defender);
+                DCHECK(!why[0], "no defender in the deal (%dp, seed %d, viewer %d): %s", np, seed_k, viewer, why);
+            }
+        }
     }
 }
 
@@ -13038,6 +13109,7 @@ int main(void) {
     test_table_ready_deals();
     test_opening_deal_is_round_robin();
     test_opening_deal_tail_survives_eight_seats();
+    test_opening_deal_names_no_defender();
     test_opening_deal_hands_are_unchanged();
     test_refill_events_and_plan_are_unchanged();
     test_deal_card_timing();
