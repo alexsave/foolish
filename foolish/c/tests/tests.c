@@ -12458,7 +12458,7 @@ static void test_client_optimistic_pickup_rotation_is_the_servers(void) {
 // count, the stock holds every card the deal handed out and every card it did
 // not, and nobody - the viewer least of all - holds a card before it lands.
 static void test_client_board_edit_undeal(void) {
-    int every = 1;
+    int every = 1, every_nobody = 1;
     for (int np = 2; np <= MAX_PLAYERS; np++) {
         cb_deal(&cb_game, np, 70 + np);
         int dealt = cb_game.deck_count + (cb_game.has_flipped ? 1 : 0);
@@ -12474,13 +12474,21 @@ static void test_client_board_edit_undeal(void) {
             int empty = rc == CLIENT_OK && cb_view.my_hand_count == 0 && cb_view.num_battles == 0 && !cb_view.has_flipped
                 && card_is_none(cb_view.flipped) && cb_view.deck_count == dealt;
             for (int s = 0; s < np; s++) empty &= cb_view.seats[s].hand_count == 0;
-            empty &= cb_view.num_players == np && cb_view.my_seat == viewer
-                && cb_view.first_attacker == ct.view.first_attacker && cb_view.defender == ct.view.defender;
+            empty &= cb_view.num_players == np && cb_view.my_seat == viewer;
+            // The deal's first board names nobody, like the kernel's own
+            // START_MAGIC board: no seat wears a mark before the deal lands.
+            ViewRules vr;
+            const int nobody = cb_view.first_attacker == GAME_SEAT_NONE && cb_view.defender == GAME_SEAT_NONE
+                && client_view_rules(&cb_view, 0, 0, &vr) == CLIENT_OK && vr.first_attacker_badge == -1 && vr.defender_badge == -1;
             if (!empty && every) fprintf(stderr, "  %dp viewer %d: rc %d, deck %d of %d, hand %d\n", np, viewer, rc, cb_view.deck_count, dealt, cb_view.my_hand_count);
+            if (!nobody && every_nobody)
+                fprintf(stderr, "  %dp viewer %d: the undealt board names lead %d, defender %d\n", np, viewer, cb_view.first_attacker, cb_view.defender);
             every &= empty;
+            every_nobody &= nobody;
         }
     }
     CHECK(every, "the board before a deal holds the whole deck in its stock and no card in any hand, for every seat count and viewer");
+    CHECK(every_nobody, "the board before a deal names no lead and no defender, and marks no seat, for every seat count and viewer");
 }
 
 static void test_client_board_edits(void) {

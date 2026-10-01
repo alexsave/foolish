@@ -587,6 +587,11 @@ int client_board_edit(ClientTable *c, TableView *v, const BoardEdit *e) {
             v->num_battles = 0;
             v->my_hand_count = 0;
             for (int s = 0; s < v->num_players; s++) v->seats[s].hand_count = 0;
+            // The deal's START_MAGIC board, so nobody leads or defends on it yet
+            // (game.c start_game_dealt): the roles arrive with the deal's last
+            // board, START_DEFENDER, never before it.
+            v->first_attacker = GAME_SEAT_NONE;
+            v->defender = GAME_SEAT_NONE;
             return CLIENT_OK;
         case CLIENT_EDIT_LOBBY: {
             const int valid = board_game(c, v);
