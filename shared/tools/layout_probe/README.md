@@ -87,6 +87,7 @@ The classes are `IMTranscoder_Image`, `IMTranscoderImageSizeEstimator`, `IMTrans
 - **What that says about the measurements above**: every picture in the table except the last row is under 4 MiB, so the transcoder has no reason to touch them. The 4374 px picture is 10,709,457 bytes, which is OVER the 10 MiB big limit, and the simulator still returned it whole, which is one more sign that the loopback does not run the transcoder. A real send of a picture over a limit is the case that would be resized.
 
 `make sweep` already runs the first encoder as Messages runs it: `UIImageJPEGRepresentation` is ImageIO, and the q0.50 column is that call.
+`shared/swift/BubbleDataKit` is the format built on these numbers: a board of three-state cells as a grey picture with a header and a CRC-32, and its tests run this same chain (q0.50 then q0.89, both 4:2:0) on every cell.
 
 ## A real send: the phone to this Mac (2026-10-01)
 

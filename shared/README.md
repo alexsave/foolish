@@ -40,6 +40,7 @@ Swift reaches a header-only C module through its `module.modulemap` on `SWIFT_IN
 | `swift/MessagesKit/SendHint*.swift` | the staged-but-unsent arrow at Messages' Send (SwiftUI and UIKit views, one set of numbers) | CARDS (`SendHint`), UTTT (`SendHintView`, `SendHintMetrics`), SHED (`SendHint`, `SendHintMetrics`) |
 | `swift/MessagesKit/CollapseSlide.swift` | the auto-collapse on Core Animation layers | UTTT, SHED |
 | `swift/Textures/` | the wool, felt, wood and fern-back generators and their palettes; CoreGraphics only, and the generator half compiles only under `-D TEXTURE_BAKE`, so a shipping target carries the palettes and resource names but never renders | CARDS (its texture loader reads the names, its `ios/Tools/regenerate_textures.sh` bakes into its own resources), SHED, LIAR, BONES (compile the palettes and names; their baked JPEGs are committed) |
+| `swift/BubbleDataKit/` | a board of three-state cells as a grey picture for a Messages bubble, and back: a Swift package whose format is all C (`CBubbleData`, `bubble_data.h`: a header row, a symbol layer and a 3-bytes-in-16-cells byte layer, a CRC-32, reading by sampling each cell's centre) with a thin Swift face (`CGImage`, `UIImage`, and `MSMessageTemplateLayout`/`MSMessage` helpers on iOS), sized to what `tools/layout_probe` measured a real send does; `make test` runs the C test and `swift test` through the measured JPEG chain, `make ios` builds it for iOS | nobody yet: no product sends a board this way |
 
 ## Tools (`tools/`)
 
