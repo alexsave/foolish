@@ -8,10 +8,11 @@
 // same legal moves (docs/PODKIDNOY.md).
 //
 // What is missing here is the SERVER half, which is why this is a note and not
-// a control: an online game's rules would have to survive `games.state`, and
-// that blob has no room for them today (wasm_api.c's durable codec is a
-// version byte plus a flags byte). Until it does, every online game is the
-// classic passing game - unchanged, and correct.
+// a control: an online game's rules have to survive `games.state`. The room is
+// being made: the kernel reads a v4 blob whose flags carry them (view.h
+// STATE_BLOB_FORMAT_V4), but still writes v3, which cannot. Until v4 is
+// written, every online game is the classic passing game - unchanged, and
+// correct.
 //
 // When it is built: the checkbox belongs beside the player list, and the
 // iMessage rule that "whoever changes it cannot be the one to start" has no

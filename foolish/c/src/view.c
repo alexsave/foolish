@@ -203,29 +203,45 @@ int state_import(Game *g, const unsigned char *p, int len, int masked) {
 // "never" has one spelling.
 static void put_clock(unsigned char *q, int64_t v) { le_put_u48(q, v > 0 ? (uint64_t)v : 0); }
 
-int state_blob_put(const Game *g, const BoardClock *clk, unsigned char *out) {
-    out[0] = (unsigned char)STATE_BLOB_FORMAT;
-    out[1] = (unsigned char)(g->deterministic_deck ? 1 : 0);
+int state_blob_put_at(const Game *g, const BoardClock *clk, int format, unsigned char *out) {
+    int flag = g->deterministic_deck ? STATE_BLOB_FLAG_DETERMINISTIC : 0;
+    if (format == STATE_BLOB_FORMAT_V4) {
+        // The one rule v4 carries; a rules bit beyond it has no flag to go in.
+        if (g->rules & ~GAME_RULE_NO_PASS) return STATE_BLOB_E_RULES;
+        if (game_pass_allowed(g)) flag |= STATE_BLOB_FLAG_PASSING;
+    } else if (g->rules != 0) {
+        return STATE_BLOB_E_RULES;   // before v4 a row is the classic game, and this one is not
+    }
+    out[0] = (unsigned char)format;
+    out[1] = (unsigned char)flag;
     const int n = STATE_BLOB_HEADER + state_put(g, VIEW_UNMASKED, out + STATE_BLOB_HEADER);
-    if (STATE_BLOB_CLOCK_BYTES == 0) return n;
+    if (format == STATE_BLOB_FORMAT_V2) return n;
     put_clock(out + n, clk ? clk->shown_ms : 0);
     put_clock(out + n + 6, clk ? clk->settles_ms : 0);
-    return n + STATE_BLOB_CLOCK_BYTES;
+    return n + STATE_BLOB_V3_CLOCK_BYTES;
+}
+
+int state_blob_put(const Game *g, const BoardClock *clk, unsigned char *out) {
+    return state_blob_put_at(g, clk, STATE_BLOB_FORMAT, out);
 }
 
 int state_blob_load(Game *g, const unsigned char *p, int len, BoardClock *clk) {
     if (len < STATE_BLOB_HEADER) return 0;
     // `len` counts the header bytes too; the state is the rest, less the clock
-    // a v3 blob carries behind it (a v2 blob has none: see view.h).
-    int tail;
-    if (p[0] == STATE_BLOB_FORMAT_V3) tail = STATE_BLOB_V3_CLOCK_BYTES;
-    else if (p[0] == STATE_BLOB_FORMAT_V2) tail = 0;
-    else return 0;
+    // a v3 or v4 blob carries behind it (a v2 blob has none: see view.h).
+    const int tail = state_blob_clock_bytes(p[0]);
+    if (tail < 0) return 0;
+    const int v4 = p[0] == STATE_BLOB_FORMAT_V4;
+    if (v4 && (p[1] & ~STATE_BLOB_FLAGS_V4)) return 0;   // a rule this kernel cannot honour
     if (len < STATE_BLOB_HEADER + tail) return GAME_INVALID_COUNT;
     const int state_len = len - STATE_BLOB_HEADER - tail;
     const int r = state_import(g, p + STATE_BLOB_HEADER, state_len, 0);
     if (r != GAME_VALID) return r;
-    g->deterministic_deck = p[1] != 0;
+    // v2 and v3 read the whole flag byte as the deck bit, as they always have.
+    g->deterministic_deck = v4 ? (p[1] & STATE_BLOB_FLAG_DETERMINISTIC) != 0 : p[1] != 0;
+    // THE one place a row sets the rules: before v4 every row is the classic
+    // game, whatever this Game held before it.
+    g->rules = (int8_t)(v4 && !(p[1] & STATE_BLOB_FLAG_PASSING) ? GAME_RULE_NO_PASS : 0);
     if (clk) {
         const unsigned char *c = p + STATE_BLOB_HEADER + state_len;
         clk->shown_ms = tail ? (int64_t)le_get_u48(c) : 0;
