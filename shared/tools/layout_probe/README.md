@@ -55,6 +55,20 @@ They are also drawn in the bubble, so a payload in them is visible to the people
 4,990 characters is accepted.
 5,200 is refused at insert with `com.apple.messages.messagesapp-error` code 8, on the simulator as on a phone.
 
+## Where the JPEG is made
+
+Read out of the iOS 27.0 simulator runtime's Messages framework with a debugger attached to the probe's own extension process (the framework lives in a shared cache, so there is no loose binary to open).
+
+- **It is made on the sending phone, inside the extension's own process.** `-[MSMessage _pluginPayloadWithAppIconData:appName:adamID:allowDataPayloads:]` takes the layout's `image`, loads the constant 0.5 and calls `UIImageJPEGRepresentation`. That is the whole conversion: no resize, no other branch for a picture.
+- **The file it writes is the bubble's attachment.** `-[_MSTempFileManager writeTemporaryFileWithData:type:]` puts the bytes at `ms-XXXXXX.jpeg` in the extension's temporary directory through `mkstemps`, and the payload's `setAttachments:` takes that URL. This is the `mediaFileURL` a reader is handed.
+- **A media file that is an image goes the same way.** `-[MSMessageTemplateLayout image]` reads `mediaFileURL`, and when the file's type conforms to an image type it decodes it into `image`, so the payload builder sees a picture and re-encodes it. That is why a PNG handed over as a file came back as the same JPEG.
+- **A media file that is NOT an image is not re-encoded there.** With no `image`, the payload builder attaches the file at `mediaFileURL` as it is. A video is the documented case. Whether its bytes then arrive untouched is not measured.
+- **The strings travel in the payload, not in the attachment.** `-[MSMessage _payloadDataFromAppIconData:appName:adamID:allowDataPayloads:]` puts the URL, the summary text and the six layout strings in a dictionary and keyed-archives it. Nothing in that function compares a length.
+- **The 5,000-character URL limit is not in this framework.** No 5,000 appears in its code, so the refusal comes from the host side.
+- **A second encoder exists downstream, and JPEG is on its list.** The transport's shared code has an outgoing transcode step with a low-quality-mode setting, and `IMSupportedImageUTITypesForOutgoingTranscode()` returns `public.jpeg` among its types. Whether that step runs on a bubble's attachment is exactly what the two-phone test has to answer. The host app refuses a debugger, so this was not followed further.
+
+`make sweep` already runs the first encoder as Messages runs it: `UIImageJPEGRepresentation` is ImageIO, and the q0.50 column is that call.
+
 ## What it did not find
 
 - **A real transport.** The simulator's two conversations are a loopback inside one process, with no account and no server. Whether Apple's servers and the receiving phone keep the picture at its size and quality, and the strings at their length, needs two real devices. Until that is measured, every number above is an upper bound.
