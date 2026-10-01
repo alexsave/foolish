@@ -27,7 +27,7 @@ const NONE: C = { suit: V.CARD_NONE_SUIT, value: V.CARD_NONE_VALUE };
 // viewer (seat 0 unless said) holds `hand`, the table is `battles`.
 const board = (battles: B[], hand: C[], mySeat = 0): TableView => ({
     status: V.GAME_STATUS_PLAYING, powerSuit: 2, firstAttacker: 1, defender: 0, mySeat, fool: -1,
-    deckCount: 0, discardPileLength: 0, hasFlipped: false, hasGoodTimestamp: false, flipped: NONE, goodMask: 0, version: 3,
+    deckCount: 0, discardPileLength: 0, hasFlipped: false, hasGoodTimestamp: false, passing: true, flipped: NONE, goodMask: 0, version: 3,
     battles: battles.map((b) => ({ attack: b.attack, defense: b.defense ?? NONE })),
     seats: [
         { status: V.PLAYER_STATUS_IN, handCount: mySeat === 0 ? hand.length : 5, awaitingAttack: false, isAi: false, id: 'p0', name: 'P0' },
