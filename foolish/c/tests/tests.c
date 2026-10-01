@@ -12248,7 +12248,7 @@ static void test_table_bots_never_transfer_under_podkidnoy(void) {
     static const char *const brains[] = { "random", "handwritten", "cordite" };
     uint8_t seed[FOOLISH_SEED_LEN];
     char hex[2 * FOOLISH_SEED_LEN + 1];
-    int transfers[2] = { 0, 0 }, games = 0, ended = 1, stayed = 1;
+    int transfers[2] = { 0, 0 }, games = 0, ended = 1, stayed = 1, codes = 0, coded = 1;
     table_init(&tb, &tb_game, &tb_snaps);
     for (int b = 0; b < 3; b++) {
         for (int np = 2; np <= (b == 2 ? 2 : 4); np++) {
@@ -12266,6 +12266,23 @@ static void test_table_bots_never_transfer_under_podkidnoy(void) {
                         if (podk) stayed &= !(row.state[1] & STATE_BLOB_FLAG_PASSING) && !game_pass_allowed(&tb_game);
                     }
                     ended &= row.status == GAME_STATUS_GAME_OVER;
+                    // The finished table's replay code is cut under its rules: the
+                    // code's own pass-mode bit says which game it was. Not for the
+                    // random brain: its pickups outgrow this build's MAX_LOG_PAIRS
+                    // (16 natively, 64 in every shipped build), and a truncated
+                    // record is a session no code can verify against.
+                    if (b != 0 && row.status == GAME_STATUS_GAME_OVER
+                        && table_load(&tb, row.state, row.state_len, row.roster, ROSTER_BYTES) == TABLE_OK) {
+                        const int n = table_replay_code(&tb, seed, FOOLISH_SEED_LEN, row.log, row.log_len, tb_code, sizeof(tb_code),
+                                                        tb_scratch, sizeof(tb_scratch));
+                        ReplayHeader hdr;
+                        memset(&hdr, 0, sizeof(hdr));
+                        const int dr = n > 0 ? replay_decode_atoms_v6(tb_code, n, &hdr, 0, 0) : -1;
+                        if (!(n > 0 && dr == REPLAY_EOK && hdr.pass_allowed == !podk))
+                            fprintf(stderr, "  replay code (%s %dp podk %d): n %d, decode %d, pass_allowed %d\n", brains[b], np, podk, n, dr, hdr.pass_allowed);
+                        coded &= n > 0 && dr == REPLAY_EOK && hdr.pass_allowed == !podk;
+                        codes++;
+                    }
                 }
             }
         }
@@ -12275,6 +12292,7 @@ static void test_table_bots_never_transfer_under_podkidnoy(void) {
     CHECK(transfers[0] > 0, "podkidnoy bots: the classic control transfers");
     CHECK(transfers[1] == 0, "podkidnoy bots: no bot transfers at a podkidnoy table");
     CHECK(stayed, "podkidnoy bots: every committed row of it stays podkidnoy");
+    CHECK(codes == 2 * 10 && coded, "podkidnoy bots: each finished table's replay code verifies and names the rules it was played under");
 }
 
 static void test_client_push_steps_and_refusals(void) {
