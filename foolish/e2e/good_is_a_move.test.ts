@@ -50,6 +50,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import { clientTable } from '../sdk/ts/table/client_table.ts';
+import { createServerTable, type ServerTable } from '../sdk/ts/table/server_table.ts';
 import { animRolesGoodsOpening } from '../sdk/ts/wasm/bots.ts';
 import { encodeAction } from '../sdk/ts/wire/awire.ts';
 import { pushToSequence } from '../src/state/pushSequence.ts';
@@ -78,16 +79,26 @@ const openBout = (): TableFixture => fixture()
     .goodTimestamp(true)
     .build();
 
-/** One bot cycle on a fixture, committed, exactly as bot_actions.ts runCycle makes one. */
+// A second module, so asking about the committed row leaves the fixture table
+// holding the cycle (its pushes are read after).
+let next: ServerTable | null = null;
+
+/**
+ * One bot cycle on a fixture, committed, exactly as bot_actions.ts runCycle makes
+ * one - and `delay`, what the NEXT cycle's wait is on the row this one committed
+ * (table_bot_wait_ms at the commit's own time): the beat this cycle bought.
+ */
 function cycle(f: TableFixture) {
     const t = fixtureTable();
     assert.equal(t.load(f.state, f.roster), L.TABLE_OK, 'the row loads');
     assert.equal(t.setDealSeed(SEED), L.TABLE_OK, 'the deal seed is taken');
     const drive = t.botDrive(null);
     assert.ok(typeof drive !== 'number', `the drive runs (${drive})`);
-    const delay = t.cycleDelayMs();
     const products = t.commit(GID, 2, NOW);
     assert.ok(typeof products !== 'number', `commit products (${products})`);
+    next ??= createServerTable();
+    assert.equal(next.load(products.state, products.roster), L.TABLE_OK, 'the committed row loads');
+    const delay = next.botWaitMs(NOW);
     return { table: t, drive, delay, products };
 }
 
@@ -105,11 +116,12 @@ test('a bot\'s good is a commit the kernel reports even though it carries no eve
 
 test('the cycle is paced like a move, not like a silent passive', () => {
     const { delay } = cycle(openBout());
-    // bot_pacing_ms: a visible move with a human watching is 3000ms, a bundled
-    // passive is 0. The number is the kernel's; what this pins is WHICH class a
-    // good is priced in, which is the classify() half of the owner's rule.
+    // bot_wait_ms: a move a viewer is shown, with a human watching, buys the
+    // pace after its stream has played (a good flies nothing, so no stream); a
+    // move nobody is shown buys nothing. What this pins is WHICH kind a good is,
+    // which is the goods_changed half of the owner's rule.
     assert.ok(delay > 0, `a good earns a beat of its own (delay was ${delay}ms)`);
-    assert.equal(delay, 3000, 'the same beat any other visible move gets with a human at the table');
+    assert.equal(delay, L.BOT_PACE_MS_WITH_HUMANS, 'the same beat any other visible move gets with a human at the table');
 });
 
 test('the push goes out, a client reads it, and the board it carries is the whole move', () => {

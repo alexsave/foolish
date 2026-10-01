@@ -68,11 +68,9 @@ int bot_pacing_ms(int pacing_class, int humans_present);
 // shown commit, with no animation term (nobody is watching live). The answer is
 // that instant minus now_ms, never negative, and never past BOT_PACE_WAIT_MAX_MS.
 //
-// THIS REPLACES the server's fixed sleep after each bot cycle once the state
-// blob carries the clock (view.h STATE_BLOB_FORMAT, the switch step; until then
-// the server still sleeps bot_cycle_delay_ms, which the phone's local loop keeps
-// using: its board is on the same device, so its wait is what its own renderer
-// needs). A fixed sleep counted from the bot's
+// THIS REPLACES a fixed sleep after each bot cycle (bot_cycle_delay_ms, which
+// the phone's local loop still uses: its board is on the same device, so its
+// wait is what its own renderer needs). A fixed sleep counted from the bot's
 // OWN commit ignored every other commit: the deal, whose seven beats ate the
 // pace between the first two bot moves of a game, and a human's move, which a
 // bot answered at t=0 - before the human's own screen had even landed it, so a

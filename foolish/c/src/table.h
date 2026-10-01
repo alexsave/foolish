@@ -352,20 +352,14 @@ int table_drive_prefs(const Table *t, const BotDriveOut *drv, uint8_t *out, int 
 // default; bots.wasm points it at its belief probe (wasm_bots_api.c).
 extern void (*table_choose_observer)(const Game *g, int seat);
 
-// How long the host waits after the cycle `drv` describes (bot_cycle_delay_ms).
-int table_cycle_delay_ms(const Table *t, const BotDriveOut *drv);
-
 // How many ms from `now_ms` the host must wait before it drives the loaded board
 // (bot_drive.h bot_wait_ms, on the board's clock): 0 means drive now. A host
 // asks on the board it just loaded, BEFORE every cycle, and after the wait loads
 // the row again and asks again - somebody may have moved in the meantime, and
 // that move restarts the wait. There is no wait after a cycle: the next cycle's
 // question already counts the one just committed. TABLE_E_NOT_LOADED.
-//
-// A v2 board has no clock and asks for no wait. While v2 is the format written
-// (view.h STATE_BLOB_FORMAT, the expand step) no host asks this yet: they still
-// sleep table_cycle_delay_ms after each cycle. The switch step writes v3 and
-// moves the hosts onto this wait.
+// A v2 board (a row written before the switch step) has no clock and asks for
+// no wait.
 int table_bot_wait_ms(const Table *t, int64_t now_ms);
 
 // ---- the end of a game -------------------------------------------------------

@@ -224,7 +224,7 @@ int wasm_table_drive_prefs(void) {
     return table_drive_prefs(table(), &g_table_drive, wasm_io_ptr(), wasm_io_cap());
 }
 
-int wasm_table_cycle_delay_ms(void) { return table_cycle_delay_ms(table(), &g_table_drive); }
+int wasm_table_bot_wait_ms(double now_ms) { return table_bot_wait_ms(table(), (int64_t)now_ms); }
 
 // io = [deal seed][session log] -> io = the verified v6 replay code. The code is
 // written into the replay buffer and decoded back into the IO buffer past the
