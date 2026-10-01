@@ -336,7 +336,8 @@ int wasm_export_state(void) { return put_state(&g_game, g_io); }
 // pair, so these entries are the bridge and nothing more.
 
 // Serialize the working game into g_io as a versioned durable blob; returns
-// the byte length (>=2).
+// the byte length (>=2), or STATE_BLOB_E_RULES for a game whose rules the
+// format written cannot carry (view.h).
 int wasm_state_serialize(void) {
     return state_blob_put(&g_game, 0, g_io);
 }

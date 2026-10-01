@@ -71,6 +71,9 @@
 #define TABLE_STATE_FORMAT_V2 STATE_BLOB_FORMAT_V2
 #define TABLE_STATE_FORMAT_V3 STATE_BLOB_FORMAT_V3
 #define TABLE_STATE_FORMAT_V4 STATE_BLOB_FORMAT_V4
+// The v4 flag byte's bits (view.h STATE_BLOB_FLAG_*): PASSING 1 the classic game, 0 podkidnoy.
+#define TABLE_STATE_FLAG_DETERMINISTIC STATE_BLOB_FLAG_DETERMINISTIC
+#define TABLE_STATE_FLAG_PASSING STATE_BLOB_FLAG_PASSING
 // The board's clock a WRITTEN blob ends with (view.h BoardClock; 0 bytes while
 // v2 is written): a host comparing two blobs for the same BOARD compares all but
 // these last bytes. A v3 or v4 blob's clock is always TABLE_STATE_V3_CLOCK_BYTES.
@@ -236,8 +239,9 @@ int table_redact(Table *t, const char *user_id, int id_len, const char *name, in
 // already accepted. `g` may be the table's own board (t->g): it is serialized
 // before the load adopts anything. Returns the state blob's length (the roster
 // follows it, ROSTER_BYTES long), or the refusal: TABLE_E_ROSTER with the
-// ROSTER_E_* in t->detail for a roster that does not encode, TABLE_E_CAP, or
-// whatever table_load says of the row.
+// ROSTER_E_* in t->detail for a roster that does not encode, TABLE_E_CAP,
+// TABLE_E_STATE_RULES for a board whose rules the format written cannot carry,
+// or whatever table_load says of the row.
 int table_seal(Table *t, const Game *g, const Roster *r, uint8_t *out, int cap);
 
 // ---- products ----------------------------------------------------------------
@@ -294,7 +298,8 @@ typedef struct {
 // `arena`. `next_version` is the version the commit will produce (the envelope
 // carries it); `now_ms` stamps this operation's log records and, when a viewer is
 // shown the operation, advances the board's clock (TableCommit.clock, carried by
-// a v3 state blob; see Table.clock).
+// a v3 state blob; see Table.clock). TABLE_E_STATE_RULES when the board's rules
+// are ones the state format written cannot carry: nothing is to be committed.
 int table_commit_products(const Table *t, const char *game_id, int gid_len, uint32_t next_version,
                           int64_t now_ms, TableCommit *out, uint8_t *arena, int cap);
 
