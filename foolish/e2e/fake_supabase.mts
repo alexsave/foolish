@@ -724,9 +724,9 @@ export async function startFakeSupabase(opts: FakeOptions = {}): Promise<FakeBac
 // ---- the bots table -----------------------------------------------------------
 
 const BOTS = [
-    { id: 'bot-cordite-1', nickname: '\u{1F916}Cordite', strategy_key: 'cordite', elo_rating: 1500 },
-    { id: 'bot-espresso-1', nickname: '\u{1F916}Espresso', strategy_key: 'espresso', elo_rating: 1200 },
-    { id: 'bot-random-1', nickname: '\u{1F916}Random', strategy_key: 'random', elo_rating: 900 },
+    { id: 'bot-cordite-1', nickname: '%Cordite', strategy_key: 'cordite', elo_rating: 1500 },
+    { id: 'bot-espresso-1', nickname: '%Espresso', strategy_key: 'espresso', elo_rating: 1200 },
+    { id: 'bot-random-1', nickname: '%Random', strategy_key: 'random', elo_rating: 900 },
 ];
 
 // ---- the scenarios ------------------------------------------------------------
@@ -785,12 +785,12 @@ const SCENARIOS: Record<string, () => Scenario> = {
         users: ['ME', 'ANNA'],
         board: fixture().title('Eight seats, many goods').seats([
             seat('ME'), seat('ANNA'),
-            { id: 'bot-cordite-1', name: '\u{1F916}C1', brain: 'cordite' },
-            { id: 'bot-cordite-2', name: '\u{1F916}C2', brain: 'cordite' },
-            { id: 'bot-cordite-3', name: '\u{1F916}C3', brain: 'cordite' },
-            { id: 'bot-cordite-4', name: '\u{1F916}C4', brain: 'cordite' },
-            { id: 'bot-cordite-5', name: '\u{1F916}C5', brain: 'cordite' },
-            { id: 'bot-cordite-6', name: '\u{1F916}C6', brain: 'cordite' },
+            { id: 'bot-cordite-1', name: '%C1', brain: 'cordite' },
+            { id: 'bot-cordite-2', name: '%C2', brain: 'cordite' },
+            { id: 'bot-cordite-3', name: '%C3', brain: 'cordite' },
+            { id: 'bot-cordite-4', name: '%C4', brain: 'cordite' },
+            { id: 'bot-cordite-5', name: '%C5', brain: 'cordite' },
+            { id: 'bot-cordite-6', name: '%C6', brain: 'cordite' },
         ])
             .status(PLAYING).deterministic().trump('Kc').deck('6h 6s 6d 6c')
             .hand(0, '7h 8c 9c Ad').hand(1, 'Th Jh Qh Ah')
@@ -804,7 +804,7 @@ const SCENARIOS: Record<string, () => Scenario> = {
         gameId: 'bot001',
         users: ['ME'],
         board: fixture().title('Against a bot')
-            .seats([seat('ME'), { id: 'bot-cordite-1', name: '\u{1F916}Cordite', brain: 'cordite' }])
+            .seats([seat('ME'), { id: 'bot-cordite-1', name: '%Cordite', brain: 'cordite' }])
             .status(PLAYING).deterministic().trump('Kc').deck('8s 9s Ts Js Qs 6s 7s')
             .hand(0, '6h 7d Tc Jd Ad Qc').hand(1, '8h 9h Th Jh Qh Ah')
             .attacker(0).defender(1).build(),
@@ -898,8 +898,8 @@ const SCENARIOS: Record<string, () => Scenario> = {
         board: fixture().title('A bot says good').seats([
             seat('ME'),
             seat('ANNA'),
-            { id: 'bot-cordite-1', name: '\u{1F916}Cordite', brain: 'cordite' },
-            { id: 'bot-cordite-2', name: '\u{1F916}Cordite II', brain: 'cordite' },
+            { id: 'bot-cordite-1', name: '%Cordite', brain: 'cordite' },
+            { id: 'bot-cordite-2', name: '%Cordite II', brain: 'cordite' },
         ])
             .status(PLAYING).deterministic().trump('Kc').deck('6h 6s 6d 6c')
             .hand(0, '7h 8c 9c Ad').hand(1, 'Th Jh Qh Ah')
