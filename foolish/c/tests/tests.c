@@ -8921,7 +8921,7 @@ static void test_table_load(void) {
         if (rc_ != (want)) fprintf(stderr, "  table_load(%s): got %d, want %d\n", msg, rc_, want); \
         CHECK(rc_ == (want) && !tb.loaded, msg); \
         CHECK(memcmp(&tb_before, &tb_game, offsetof(Game, logs)) == 0, msg); } while (0)
-    memcpy(tb_state2, tb_state, sizeof(tb_state)); tb_state2[0] = TABLE_STATE_FORMAT_V3 + 1;
+    memcpy(tb_state2, tb_state, sizeof(tb_state)); tb_state2[0] = TABLE_STATE_FORMAT_V4 + 1;
     REFUSE(TABLE_E_STATE_VERSION, "a state blob of an unknown format", tb_state2, tb_state_len, tb_roster);
     tb_state2[0] = 1;
     REFUSE(TABLE_E_STATE_VERSION, "a v1 state blob (rewritten to v2 by a migration long ago)", tb_state2, tb_state_len, tb_roster);
@@ -8951,6 +8951,124 @@ static void test_table_load(void) {
     tb_roster_for(3, 1u << 2, "random", tb_roster);
     CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK, "a lobby row loads");
     CHECK(!tb_game.deterministic_deck && tb_game.status == GAME_STATUS_WAITING, "a lobby row is a lobby");
+}
+
+// THE BOARD'S RULES IN THE DURABLE BLOB (view.h STATE_BLOB_FORMAT_V4). A v4 row
+// carries whether its game passes, and the load is the one place g->rules is
+// set from a row: a v4 row's bit, and the classic game for v2 and v3, whatever
+// the Game held before. The position is test_podkidnoy's, where the transfer is
+// legal under the classic rules, so "no transfer" after a load is the row
+// talking. This kernel still WRITES v3 (the expand step), and refuses to write a
+// variant into a format that cannot carry it rather than turn the game classic.
+static void test_state_blob_v4_carries_the_rules(void) {
+    static unsigned char blob[8192];
+    static Game g, back;
+    const BoardClock clk = { 1700000000000LL, 1700000000500LL };
+    BoardClock got;
+    uint8_t roster2p[ROSTER_BYTES];
+    tb_roster_for(2, 0, "", roster2p);
+
+    // Podkidnoy, written as v4: the passing bit clear. The attacker's hand is
+    // real cards, so the board is one game_validate accepts.
+    setup_transferable(&g);
+    for (int i = 0; i < 6; i++) g.players[0].hand[i] = (Card){ SUIT_CLUBS, (int8_t)(6 + i) };
+    g.rules |= GAME_RULE_NO_PASS;
+    g.deterministic_deck = true;
+    int n = state_blob_put_at(&g, &clk, STATE_BLOB_FORMAT_V4, blob);
+    CHECK(n > 0 && blob[0] == STATE_BLOB_FORMAT_V4 && blob[1] == STATE_BLOB_FLAG_DETERMINISTIC,
+          "v4: a podkidnoy board writes its deck bit and no passing bit");
+    memset(&back, 0, sizeof back);
+    memset(&got, 0, sizeof got);
+    const int lr = state_blob_load(&back, blob, n, &got);
+    if (lr != 1) fprintf(stderr, "  state_blob_load(v4 podkidnoy): got %d\n", lr);
+    CHECK(lr == 1, "v4: a podkidnoy row loads");
+    CHECK(lr == 1 && !game_pass_allowed(&back), "v4: podkidnoy survives the row");
+    CHECK(lr == 1 && !menu_has(&back, 1, MOVE_PASS) && menu_has(&back, 1, MOVE_COVER),
+          "v4: the loaded podkidnoy board offers no transfer, and still a cover");
+    CHECK(lr == 1 && back.deterministic_deck, "v4: the deterministic deck survives beside it");
+    CHECK(lr == 1 && got.shown_ms == clk.shown_ms && got.settles_ms == clk.settles_ms, "v4: the clock is read");
+    CHECK(lr == 1 && tb_same_board(&back, &g), "v4: the board is the one written");
+    table_init(&tb, &tb_game, &tb_snaps);
+    int tr = table_load(&tb, blob, n, roster2p, ROSTER_BYTES);
+    if (tr != TABLE_OK) fprintf(stderr, "  table_load(v4 podkidnoy): got %d\n", tr);
+    CHECK(tr == TABLE_OK && !game_pass_allowed(&tb_game) && !menu_has(&tb_game, 1, MOVE_PASS),
+          "v4: a table loads a podkidnoy row as podkidnoy");
+
+    // The expand kernel writes v3, which cannot say podkidnoy: the loaded row's
+    // commit, a seal, and every writer below v4 refuse it rather than write the
+    // classic game.
+    TableCommit c;
+    CHECK(tr == TABLE_OK && table_commit_products(&tb, RS("g"), 2, 0, &c, tb_arena, sizeof(tb_arena)) == TABLE_E_STATE_RULES,
+          "v3 writer: a podkidnoy table's commit is refused, not written classic");
+    CHECK(state_blob_put(&g, &clk, blob) == STATE_BLOB_E_RULES, "v3 writer: the shipped writer refuses a podkidnoy board");
+    CHECK(state_blob_put_at(&g, &clk, STATE_BLOB_FORMAT_V3, blob) == STATE_BLOB_E_RULES
+          && state_blob_put_at(&g, &clk, STATE_BLOB_FORMAT_V2, blob) == STATE_BLOB_E_RULES,
+          "v3 writer: neither v3 nor v2 writes a podkidnoy board");
+    {
+        Game other = g;
+        other.rules = (int8_t)(GAME_RULE_NO_PASS << 1);   // a rule no format has a bit for yet
+        CHECK(state_blob_put_at(&other, &clk, STATE_BLOB_FORMAT_V4, blob) == STATE_BLOB_E_RULES,
+              "v4 writer: a rule v4 has no bit for is refused, not dropped");
+    }
+    {
+        Roster r;
+        CHECK(roster_decode(&r, roster2p, ROSTER_BYTES) == ROSTER_OK
+              && table_seal(&tb, &g, &r, tb_buf, sizeof(tb_buf)) == TABLE_E_STATE_RULES,
+              "v3 writer: a podkidnoy fixture is refused at the seal");
+    }
+
+    // Passing, written as v4, into a Game that held podkidnoy before.
+    g.rules = 0;
+    g.deterministic_deck = false;
+    n = state_blob_put_at(&g, &clk, STATE_BLOB_FORMAT_V4, blob);
+    CHECK(n > 0 && blob[1] == STATE_BLOB_FLAG_PASSING, "v4: a passing board writes the passing bit and no deck bit");
+    back.rules = GAME_RULE_NO_PASS;
+    back.deterministic_deck = true;
+    CHECK(state_blob_load(&back, blob, n, 0) == 1 && game_pass_allowed(&back) && menu_has(&back, 1, MOVE_PASS),
+          "v4: a passing row loads as passing over a podkidnoy Game, and the transfer is offered");
+    CHECK(!back.deterministic_deck, "v4: a clear deck bit reads clear");
+    {
+        static unsigned char again[8192];
+        const int n2 = state_blob_put_at(&back, &clk, STATE_BLOB_FORMAT_V4, again);
+        CHECK(n2 == n && memcmp(again, blob, (size_t)n) == 0, "v4: load then write is byte-identical");
+    }
+    tb_game.rules = GAME_RULE_NO_PASS;
+    tr = table_load(&tb, blob, n, roster2p, ROSTER_BYTES);
+    CHECK(tr == TABLE_OK && game_pass_allowed(&tb_game) && menu_has(&tb_game, 1, MOVE_PASS),
+          "v4: a table loads a passing row as passing over a podkidnoy Game");
+    CHECK(tr == TABLE_OK && table_commit_products(&tb, RS("g"), 2, 0, &c, tb_arena, sizeof(tb_arena)) >= 0
+          && tb_arena[c.state.off] == TABLE_STATE_FORMAT,
+          "v3 writer: a passing v4 row commits, at the format written");
+
+    // v3 and v2 rows are the classic game, whatever the Game held before (an
+    // FMSG decode in the same module, say).
+    for (int f = STATE_BLOB_FORMAT_V2; f <= STATE_BLOB_FORMAT_V3; f++) {
+        n = state_blob_put_at(&g, &clk, f, blob);
+        back.rules = GAME_RULE_NO_PASS;
+        CHECK(state_blob_load(&back, blob, n, 0) == 1 && back.rules == 0 && menu_has(&back, 1, MOVE_PASS),
+              f == STATE_BLOB_FORMAT_V3 ? "v3: a row loads as the classic game over a podkidnoy Game"
+                                        : "v2: a row loads as the classic game over a podkidnoy Game");
+        tb_game.rules = GAME_RULE_NO_PASS;
+        CHECK(table_load(&tb, blob, n, roster2p, ROSTER_BYTES) == TABLE_OK && tb_game.rules == 0,
+              f == STATE_BLOB_FORMAT_V3 ? "v3: a table loads a row as the classic game over a podkidnoy Game"
+                                        : "v2: a table loads a row as the classic game over a podkidnoy Game");
+    }
+
+    // A v4 flag bit this kernel does not know is a rule it cannot honour: the
+    // row is unreadable, and nothing is adopted.
+    g.rules = GAME_RULE_NO_PASS;
+    n = state_blob_put_at(&g, &clk, STATE_BLOB_FORMAT_V4, blob);
+    int unknown_refused = 0;
+    for (int bit = 2; bit < 8; bit++) {
+        blob[1] = (unsigned char)(STATE_BLOB_FLAG_DETERMINISTIC | (1 << bit));
+        memset(&back, 0, sizeof back);
+        tb_game.rules = 0;
+        const int a = state_blob_load(&back, blob, n, 0);
+        const int b = table_load(&tb, blob, n, roster2p, ROSTER_BYTES);
+        if (a != 0 || b != TABLE_E_STATE_VERSION) fprintf(stderr, "  v4 flag bit %d: load %d, table_load %d\n", bit, a, b);
+        unknown_refused += a == 0 && back.rules == 0 && back.num_players == 0 && b == TABLE_E_STATE_VERSION && !tb.loaded;
+    }
+    CHECK(unknown_refused == 6, "v4: every unknown flag bit makes the row unreadable, and nothing is adopted");
 }
 
 // table_seal: a board a fixture composed field by field comes back as a row
@@ -13189,6 +13307,7 @@ int main(void) {
     test_roster_name_trim_matches_the_ts_and_swift_rule();
     test_roster_trailer();
     test_table_load();
+    test_state_blob_v4_carries_the_rules();
     test_table_seal();
     test_table_act_resolves_the_seat_from_the_actor_id();
     test_table_act_moot_and_stale_round();

@@ -109,8 +109,7 @@ int table_load(Table *t, const uint8_t *state, int state_len, const uint8_t *ros
     int8_t kinds[MAX_PLAYERS];
     t->loaded = false;
     t->detail = 0;
-    if (!state || state_len < 4 || (state[0] != TABLE_STATE_FORMAT_V2 && state[0] != TABLE_STATE_FORMAT_V3))
-        return TABLE_E_STATE_VERSION;
+    if (!state || state_len < 4 || state_blob_clock_bytes(state[0]) < 0) return TABLE_E_STATE_VERSION;
     const int rc = roster_decode(&r, roster, roster_len);
     if (rc != ROSTER_OK) { t->detail = rc; return TABLE_E_ROSTER; }
     // The seat count is the state's second byte; checked before the import so a
@@ -119,8 +118,9 @@ int table_load(Table *t, const uint8_t *state, int state_len, const uint8_t *ros
     const int kr = table_seat_kinds(&r, kinds);
     if (kr != TABLE_OK) return kr;
     const int v = state_blob_load(t->g, state, state_len, &t->clock);
+    // The row's rules are the load's to set (view.h state_blob_load): a v2 or v3
+    // row is the classic game, whatever an earlier FMSG decode left on t->g.
     if (v != 1) return v == 0 ? TABLE_E_STATE_VERSION : v;
-    t->g->rules = 0;   // online play is the classic game (Q18); a previous FMSG decode may have left a variant
     for (int s = 0; s < r.n; s++) t->g->players[s].strategy_key = kinds[s];
     t->r = r;
     scope_open(t, -1);
@@ -221,6 +221,7 @@ int table_seal(Table *t, const Game *g, const Roster *r, uint8_t *out, int cap) 
         if (g->players[i].hand_count < 0 || g->players[i].hand_count > MAX_HAND_SIZE) return GAME_INVALID_COUNT;
     // A composed board has never been shown to anyone: a zero clock.
     const int state_len = state_blob_put(g, 0, out);
+    if (state_len == STATE_BLOB_E_RULES) return TABLE_E_STATE_RULES;
     const int rc = roster_encode(r, out + state_len, cap - state_len);
     if (rc < 0) { t->detail = rc; return TABLE_E_ROSTER; }
     const int loaded = table_load(t, out, state_len, out + state_len, rc);
@@ -381,6 +382,7 @@ int table_commit_products(const Table *t, const char *game_id, int gid_len, uint
     if (cap - at < TABLE_STATE_MAX) return TABLE_E_CAP;
     out->state.off = at;
     out->state.len = state_blob_put(g, &clock, arena + at);
+    if (out->state.len == STATE_BLOB_E_RULES) return TABLE_E_STATE_RULES;
     out->clock = clock;
     at += out->state.len;
 

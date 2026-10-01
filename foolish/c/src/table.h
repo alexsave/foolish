@@ -53,24 +53,27 @@
 #define TABLE_E_NOT_LOADED    (-110)  // no table has been loaded
 #define TABLE_E_NOT_OVER      (-111)  // continue on a game that has not ended
 #define TABLE_E_REPLAY_VERIFY (-112)  // a replay code that does not decode back to its session log
+#define TABLE_E_STATE_RULES   (-113)  // the board's rules are ones the state format written cannot carry (view.h STATE_BLOB_E_RULES)
 
 // The response code for a stale-round refusal. It sits above the kernel's
 // ENGINE_REJECT_* space so a client can tell a rules rejection from a server
 // policy one by the number alone (sdk/ts/wire/awire.ts REJECT_STALE_ROUND).
 #define TABLE_REJECT_STALE_ROUND 100
 
-// The durable state blob: [STATE_BLOB_FORMAT][deterministic deck][state_put],
-// then the board's clock at v3. The format, and the codec this layer writes and
-// reads it with, are view.h's (state_blob_put / state_blob_load) - the wasm
-// bridge persists the same column through the same pair, so there is one format
-// byte, not two that can drift. TABLE_STATE_FORMAT is the format WRITTEN; both
-// TABLE_STATE_FORMAT_V2 and _V3 are read (view.h says why and until when).
+// The durable state blob: [STATE_BLOB_FORMAT][flags][state_put], then the
+// board's clock at v3 and v4, whose flags also carry the board's rules. The
+// format, and the codec this layer writes and reads it with, are view.h's
+// (state_blob_put / state_blob_load) - the wasm bridge persists the same column
+// through the same pair, so there is one format byte, not two that can drift.
+// TABLE_STATE_FORMAT is the format WRITTEN; TABLE_STATE_FORMAT_V2, _V3 and _V4
+// are read (view.h says why and until when).
 #define TABLE_STATE_FORMAT STATE_BLOB_FORMAT
 #define TABLE_STATE_FORMAT_V2 STATE_BLOB_FORMAT_V2
 #define TABLE_STATE_FORMAT_V3 STATE_BLOB_FORMAT_V3
+#define TABLE_STATE_FORMAT_V4 STATE_BLOB_FORMAT_V4
 // The board's clock a WRITTEN blob ends with (view.h BoardClock; 0 bytes while
 // v2 is written): a host comparing two blobs for the same BOARD compares all but
-// these last bytes. A v3 blob's clock is always TABLE_STATE_V3_CLOCK_BYTES.
+// these last bytes. A v3 or v4 blob's clock is always TABLE_STATE_V3_CLOCK_BYTES.
 #define TABLE_STATE_CLOCK_BYTES STATE_BLOB_CLOCK_BYTES
 #define TABLE_STATE_V3_CLOCK_BYTES STATE_BLOB_V3_CLOCK_BYTES
 
