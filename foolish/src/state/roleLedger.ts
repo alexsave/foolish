@@ -28,7 +28,7 @@
 import type { AnimRoles } from '@sdk/ts/wasm/bots.ts';
 import type { RoleMarkKind } from '../components/RoleMark';
 import type { RoleFlight, Spot } from './roleMotion';
-import { PLAYER_STATUS, rulesOf, type TableView, type ViewSeat } from './view';
+import { PLAYER_STATUS, type TableView, type ViewSeat } from './view';
 
 /** What the badges are wearing, as a value: the three facts a role mark is
  *  drawn from, so comparing two of them answers "did anything about the roles
@@ -55,16 +55,14 @@ export interface ShownBoard {
     tableOpen: boolean;
 }
 
-/** The roles a board holds. `defender` and `first_attacker` are raw fields of
- *  the view, but WHETHER A SEAT IS MARKED AT ALL is the kernel's
- *  (`client_view_rules`: the deal lays the stock out before it turns the trump,
- *  and until then nobody leads or defends anything). `defenderBadge` is that
- *  answer, so a board that is still dealing hands back no roles and no seat
- *  wears anything - which is also what keeps a cold first paint from flying a
- *  mark out of a seat that never held one. */
+/** The roles a board holds, as the board holds them. Until the trump has turned
+ *  the kernel names nobody (GAME_SEAT_NONE, c/src/game.h: the lobby and every
+ *  board of the opening deal before START_DEFENDER carry -1 in both fields), so
+ *  a board that is still dealing hands back no roles and no seat wears anything
+ *  - and a seat of -1 has no pad, so nothing flies out of it either
+ *  (`roleFlightsBetween`): the shield appears on the real defender where it
+ *  stands. */
 export function rolesOf(view: TableView): ShownRoles {
-    const dealt = rulesOf(view).defenderBadge >= 0;
-    if (!dealt) return { defender: -1, firstAttacker: -1, goodMask: 0 };
     return { defender: view.defender, firstAttacker: view.firstAttacker, goodMask: view.goodMask };
 }
 
