@@ -5,7 +5,8 @@ It also carries a layout: one picture and seven strings.
 This tool measures whether the extension that READS a message is handed that layout back, and how much of it survives.
 
 The answer on a simulator is yes, all of it, and the picture is by far the widest channel a message has.
-Whether it survives a real send between two phones is NOT measured yet, and that is the result that decides whether anything should be built on it.
+On a real send (a phone to this Mac) the picture survives at quality 0.89 but is cut to 1200 px on a side, which is the limit a design has to fit; see "A real send".
+Measured so far only between one account's own devices.
 No product uses this channel.
 
 ## What it found
@@ -87,12 +88,30 @@ The classes are `IMTranscoder_Image`, `IMTranscoderImageSizeEstimator`, `IMTrans
 
 `make sweep` already runs the first encoder as Messages runs it: `UIImageJPEGRepresentation` is ImageIO, and the q0.50 column is that call.
 
+## A real send: the phone to this Mac (2026-10-01)
+
+The first measurement through a real transport. An iPhone 15 Pro Max on iOS 27.0 sent probe bubbles in the thread to its own Apple ID, and this Mac, signed into the same account, received them through Apple's servers.
+The Mac keeps the bubble's picture as a file under `~/Library/Messages/Attachments/` and its strings in the message row's `payload_data` in `chat.db` (the terminal needs Full Disk Access to read either).
+`sweep --judge FILE --cells N` decodes such a file as the probe pattern; `sweep --match FILE` names its JPEG quality.
+
+| Sent as | The phone's extension saw (quality 0.50) | The file on the Mac | Wrong cells on the Mac |
+| --- | --- | --- | --- |
+| 243 cells, 1 px each, grey (243 px) | 243 x 243, 41,570 B | 243 x 243, 72,040 B, quality 0.89 | 0 of 59,049 (worst channel error 37) |
+| 243 cells, 3 px each, grey, strings of 20,000 (729 px) | 729 x 729, 299,364 B | 729 x 729, 537,637 B, quality 0.89 | 0 of 59,049 (worst channel error 35) |
+| 729 cells, 3 px each, grey (2187 px) | 2187 x 2187, 2,673,015 B | **1200 x 1200**, 1,435,899 B, quality 0.89 | 12,150 of 531,441 (2.3%, worst channel error 150) |
+
+- **A second encoder runs after the extension's.** Every received picture is a different JPEG from the one the extension made: quality 0.89 where the extension's was 0.50, still 4:2:0, and bigger on disk because it was decoded and written again at a higher quality. The sender's own synced copy on the Mac is the same file as the received copy, so the re-encode happens on the sending phone, after `didStartSending` and before upload. This is the transport's transcoder (see "The transport's transcoder" above).
+- **A picture is cut to 1200 px on a side.** The 2187 px picture came back 1200 x 1200; the 243 px and 729 px pictures kept their size. Only one picture over 1200 px was received, so the cap is 1200 in this one observation, not a measured ladder. It is far below the 10 MiB byte limit (2.67 MB went in), so it is a dimension limit and not the byte budget.
+- **The resize is what costs cells.** Pictures that kept their size decode with no wrong cell. The 729-cell grid, shrunk to 1.65 px per cell, lost 2.3% of its cells. So a design has to stay under 1200 px on the longest side with enough pixels per cell: 600 cells at 2 px is the largest grid that fits exactly.
+- **All seven strings come through.** The synced rows carry `payload_data` with every string at its sent length, 20,000 characters each in the second bubble (143,588 bytes for the row).
+- **Two sends never arrived.** The 1458-cell, 3 px picture (4374 px, 10.7 MB) and the 200,000-character strings both reported `insert ok` and `didStartSending` on the phone and have no row in the Mac's `chat.db` after several minutes, so they were either refused or are stuck on the phone. Whether the cause is the picture's 10 MiB limit or the strings' size is not separated: they were two different sends and neither showed up.
+
 ## What it did not find
 
-- **Whether a bubble's picture is transcoded on a real send.** The limits above say a picture of a few hundred KB is well under them, so the answer should be "no", but the balloon entry points exist and nothing here ran them.
-- **A real transport.** The simulator's two conversations are a loopback inside one process, with no account and no server. Whether Apple's servers and the receiving phone keep the picture at its size and quality, and the strings at their length, needs two real devices. Until that is measured, every number above is an upper bound.
-- **A limit on the picture.** Nothing refused or resized 4374 x 4374. A real send surely has one.
-- **A limit on the strings.** 200,000 characters was the longest tried.
+- **A second Apple ID.** The real send above is one account's phone and Mac. A message to a different person may take a different path, and a phone receiving it is a different reader; the numbers are for the sender's transcoder, which is the same either way, but nothing here measured the receiving phone's own handling.
+- **Where the picture limit is.** 1200 px came from one picture. The ladder (what a 1500, 2000 or 3000 px picture becomes, and what makes it stop at 1200) needs more pictures.
+- **Why two sends did not arrive.** See the last bullet of the real send above.
+- **A limit on the strings.** 20,000 characters arrived; 200,000 did not arrive, for a reason not yet separated from the 4374 px picture.
 
 ## How much harsher an encoder the pattern would survive
 
