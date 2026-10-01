@@ -67,10 +67,29 @@ Read out of the iOS 27.0 simulator runtime's Messages framework with a debugger 
 - **The 5,000-character URL limit is not in this framework.** No 5,000 appears in its code, so the refusal comes from the host side.
 - **A second encoder exists downstream, and JPEG is on its list.** The transport's shared code has an outgoing transcode step with a low-quality-mode setting, and `IMSupportedImageUTITypesForOutgoingTranscode()` returns `public.jpeg` among its types. Whether that step runs on a bubble's attachment is exactly what the two-phone test has to answer. The host app refuses a debugger, so this was not followed further.
 
+### The transport's transcoder
+
+Read from the simulator runtime's `IMTranscoderAgent` (a loose binary, 306 KB, with a bundled Core ML model `Image_Estimator_HEIF`) and from `IMDaemonCore`, with `otool` and no debugger.
+The classes are `IMTranscoder_Image`, `IMTranscoderImageSizeEstimator`, `IMTranscoderImageQualityEstimator` and `IMEmbeddedHardwareJPEGTranscoder`.
+
+- **When it acts**, from `shouldTranscodeTransfer:...fileSizeLimit:` and its own log strings: never on a sticker or Genmoji; always for MMS; for an image that is wide-gamut, WebP, or HEIF that the recipients do not want; and otherwise only when "That wasn't enough, let's look at filesize too" finds the file over `fileSizeLimit`. An image of a supported type under the limit is not touched by this step.
+- **What it does to an image that is over**: `_writeImage:...withMaxByteSize:maxDimension:startingLengthIndex:usedLengthIndex:` walks a ladder of sizes ("Trying maxSize = %lu (index: %d/%d)"), estimates the output size, and keeps the first that fits. With low-quality mode on, a Core ML model predicts a quality factor and falls back to the older estimator when it comes out too low.
+- **App messages have their own entry points** in `IMDaemonCore`: `transcodeLocalTransferPayloadData:balloonBundleID:completionBlock:` and `transcodeFallbackFileTransferPayloadData:balloonBundleID:attachments:completionBlock:`, with the log line "Received transcoded output from balloon bundle id %@ path %@". A bubble's attachment is handled on purpose on a real send; the simulator's loopback is not evidence about it.
+- **The byte limits** come from `IMiMessageSizeLimitsForTransferType(NSString *uti, unsigned long *big, unsigned long *small, id)`, logged as "Server bag File Size Limits". Called live in the iOS 27.0 simulator (where the server bag is not reachable, so these are the built-in defaults and a phone may differ):
+
+  | Type | big | small |
+  | --- | --- | --- |
+  | `public.jpeg`, `public.png`, `public.heic`, `com.compuserve.gif`, `public.data`, `public.item` | 10,485,760 B (10 MiB) | 4,194,304 B (4 MiB) |
+  | `public.mpeg-4`, `public.audio` | 41,943,040 B (40 MiB) | 4,194,304 B (4 MiB) |
+
+  A user default `TranscodeSizeLimitsKB` overrides them ("Overriding Transcode sizes limits due to default TranscodeSizeLimitsKB").
+- **What that says about the measurements above**: every picture in the table except the last row is under 4 MiB, so the transcoder has no reason to touch them. The 4374 px picture is 10,709,457 bytes, which is OVER the 10 MiB big limit, and the simulator still returned it whole, which is one more sign that the loopback does not run the transcoder. A real send of a picture over a limit is the case that would be resized.
+
 `make sweep` already runs the first encoder as Messages runs it: `UIImageJPEGRepresentation` is ImageIO, and the q0.50 column is that call.
 
 ## What it did not find
 
+- **Whether a bubble's picture is transcoded on a real send.** The limits above say a picture of a few hundred KB is well under them, so the answer should be "no", but the balloon entry points exist and nothing here ran them.
 - **A real transport.** The simulator's two conversations are a loopback inside one process, with no account and no server. Whether Apple's servers and the receiving phone keep the picture at its size and quality, and the strings at their length, needs two real devices. Until that is measured, every number above is an upper bound.
 - **A limit on the picture.** Nothing refused or resized 4374 x 4374. A real send surely has one.
 - **A limit on the strings.** 200,000 characters was the longest tried.
