@@ -28,6 +28,18 @@
 // Returns bytes written.
 int state_put(const Game *g, int viewer, unsigned char *out);
 
+// The board's flags byte, at this offset (after status, num_players,
+// power_suit, first_attacker, defender and the u16 discard count): bit 0 is
+// has_flipped, and the bits above it are Game.rules, shifted up by one. It was
+// the has_flipped byte, written 0 or 1, so a classic board (rules zero) is the
+// byte string it always was. The rules ride the board because a board is what
+// every importer builds a game from - the Oracle's octogen, a client slot, a
+// packed view's legal menu - and a game rebuilt without its rules is the
+// classic game, menus, rollouts and all (docs/PODKIDNOY.md).
+#define STATE_FLAGS_AT          7
+#define STATE_FLAG_FLIPPED      0x01
+#define STATE_FLAG_RULES_SHIFT  1
+
 // Parse the layout back into g, WITHOUT judging it - an import goes through
 // state_import below.
 // `len` is the payload's BYTE COUNT, never a buffer capacity.

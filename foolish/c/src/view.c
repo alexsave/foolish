@@ -8,7 +8,10 @@ static int hand_visible(int viewer, int seat) {
     return viewer == VIEW_UNMASKED || viewer == seat;
 }
 
-int state_put(const Game *g, int viewer, unsigned char *out) {
+// The board, with `rules` as the rules it names. state_put names the game's
+// own; the durable blob names none, because its flag byte is the rules' one
+// owner in a row (state_blob_put_at below).
+static int state_put_rules(const Game *g, int viewer, int rules, unsigned char *out) {
     const int unmasked = (viewer == VIEW_UNMASKED);
     unsigned char *q = out;
     *q++ = (unsigned char)g->status;
@@ -17,7 +20,14 @@ int state_put(const Game *g, int viewer, unsigned char *out) {
     *q++ = (unsigned char)g->first_attacker;
     *q++ = (unsigned char)g->defender;
     le_put_u16(q, (uint16_t)g->discard_pile_length); q += 2;
-    *q++ = (unsigned char)(g->has_flipped ? 1 : 0);
+    // THE FLAGS BYTE (STATE_FLAGS_AT): the flip in bit 0 and the game's RULES
+    // above it. A board is a whole game only with its rules: the Oracle builds
+    // the game it deliberates on from nothing but this board, and a board that
+    // dropped them handed it the transfer game at every podkidnoy table
+    // (docs/PODKIDNOY.md). Zero is the classic game, so every classic board is
+    // the byte string it always was.
+    *q++ = (unsigned char)((g->has_flipped ? STATE_FLAG_FLIPPED : 0)
+                           | (unsigned)(uint8_t)rules << STATE_FLAG_RULES_SHIFT);
     // Canonical no-flip byte: after the flipped trump is drawn the kernel
     // keeps the stale card in g->flipped (gated by has_flipped) — writing it
     // would make byte-equal states serialize differently depending on
@@ -66,6 +76,10 @@ int state_put(const Game *g, int viewer, unsigned char *out) {
     return (int)(q - out);
 }
 
+int state_put(const Game *g, int viewer, unsigned char *out) {
+    return state_put_rules(g, viewer, g->rules, out);
+}
+
 // A state card byte, decoded EXACTLY: 0..51 is that card, and every other byte
 // becomes the {-1,-1} not-a-card, which game_validate refuses. (It used to
 // clamp onto the ace of diamonds, which turned a corrupt byte into a real card
@@ -109,7 +123,12 @@ int state_get(Game *g, const unsigned char *p, int len, int masked) {
     g->first_attacker = (int8_t)*q++;
     g->defender = (int8_t)*q++;
     g->discard_pile_length = (int16_t)le_get_u16(q); q += 2;
-    g->has_flipped = (*q++ != 0);
+    // The flags byte: the flip, and the rules the board names - set here, so
+    // whatever the game held before never survives a board (zero is the
+    // classic game). A bit this kernel does not know is game_validate's to
+    // refuse (GAME_INVALID_RULES).
+    g->has_flipped = (*q & STATE_FLAG_FLIPPED) != 0;
+    g->rules = (int8_t)(*q++ >> STATE_FLAG_RULES_SHIFT);
     // When there is no flip (TS flipped === null), preserve the exact {0,0}
     // bytes the old 2-byte wire left in g->flipped — semtex-family belief
     // code reads it unguarded and {0,0} acts as a harmless never-matches pin.
@@ -214,7 +233,9 @@ int state_blob_put_at(const Game *g, const BoardClock *clk, int format, unsigned
     }
     out[0] = (unsigned char)format;
     out[1] = (unsigned char)flag;
-    const int n = STATE_BLOB_HEADER + state_put(g, VIEW_UNMASKED, out + STATE_BLOB_HEADER);
+    // The board inside names no rules: the flag above is the row's one owner of
+    // them, and a row stays the bytes every v4 reader already reads.
+    const int n = STATE_BLOB_HEADER + state_put_rules(g, VIEW_UNMASKED, 0, out + STATE_BLOB_HEADER);
     if (format == STATE_BLOB_FORMAT_V2) return n;
     put_clock(out + n, clk ? clk->shown_ms : 0);
     put_clock(out + n + 6, clk ? clk->settles_ms : 0);
@@ -234,6 +255,10 @@ int state_blob_load(Game *g, const unsigned char *p, int len, BoardClock *clk) {
     const int v4 = p[0] == STATE_BLOB_FORMAT_V4;
     if (v4 && (p[1] & ~STATE_BLOB_FLAGS_V4)) return 0;   // a rule this kernel cannot honour
     if (len < STATE_BLOB_HEADER + tail) return GAME_INVALID_COUNT;
+    // Nor does any row's board name rules (state_blob_put_at): the flag owns
+    // them, so a board that names some is not a row this kernel wrote.
+    if (len > STATE_BLOB_HEADER + STATE_FLAGS_AT
+        && (p[STATE_BLOB_HEADER + STATE_FLAGS_AT] & ~STATE_FLAG_FLIPPED)) return 0;
     const int state_len = len - STATE_BLOB_HEADER - tail;
     const int r = state_import(g, p + STATE_BLOB_HEADER, state_len, 0);
     if (r != GAME_VALID) return r;

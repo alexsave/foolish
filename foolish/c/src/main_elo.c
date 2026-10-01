@@ -50,22 +50,7 @@ static Competitor COMPS[MAX_COMPS];
 static int        N_COMPS = 0;
 
 static int dispatch_choose(int strat, const Game *g, int pi, const LegalMoves *moves) {
-    switch (strat) {
-        case STRAT_RANDOM:      return random_strategy_choose(g, pi, moves, NULL);
-        case STRAT_ESPRESSO:    return espresso_strategy_choose(g, pi, moves, NULL);
-        case STRAT_HANDWRITTEN: return handwritten_strategy_choose(g, pi, moves, NULL);
-        case STRAT_ROBUSTA:     return robusta_strategy_choose(g, pi, moves, NULL);
-        case STRAT_FIRECRACKER: return firecracker_strategy_choose(g, pi, moves, NULL);
-        case STRAT_GUNPOWDER:   return gunpowder_strategy_choose(g, pi, moves, NULL);
-        case STRAT_BLACKPOWDER: return blackpowder_strategy_choose(g, pi, moves, NULL);
-        case STRAT_CORDITE:     return cordite_strategy_choose(g, pi, moves, NULL);
-        case STRAT_ASTROLITE:   return astrolite_strategy_choose(g, pi, moves, NULL);
-        case STRAT_SEMTEX:      return semtex_strategy_choose(g, pi, moves, NULL);
-        case STRAT_OCTOGEN:     return octogen_strategy_choose(g, pi, moves, NULL);
-        case STRAT_TORPEX:      return torpex_strategy_choose(g, pi, moves, NULL);
-        case STRAT_NOVICHOK:    return novichok_strategy_choose(g, pi, moves, NULL);
-        default:                return -1;
-    }
+    return strategy_choose(strat, g, pi, moves);
 }
 
 static double elo_change(double player_rating, double opp_rating, double actual_score) {

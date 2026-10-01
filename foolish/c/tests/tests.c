@@ -33,6 +33,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <stddef.h>
 
 static int n_pass = 0;
 static int n_fail = 0;
@@ -2292,7 +2293,13 @@ static void rs_check_conservation(const RsTestCtx *c, int np, const char *what) 
 
 // A seeded game played to the end with the handwritten bot, plus the seed that
 // dealt it (replay_encode_v6_from_game re-derives the deal from it).
+static bool rs_play_seeded_rules(Game *g, int np, int seed, unsigned char *seed_out, int8_t rules);
 static bool rs_play_seeded(Game *g, int np, int seed, unsigned char *seed_out) {
+    return rs_play_seeded_rules(g, np, seed, seed_out, 0);
+}
+
+// The same, at a table playing `rules` (game.h GAME_RULE_*).
+static bool rs_play_seeded_rules(Game *g, int np, int seed, unsigned char *seed_out, int8_t rules) {
     for (int i = 0; i < FOOLISH_SEED_LEN; i++)
         seed_out[i] = (unsigned char)(i * 31 + seed * 13 + np);
     game_set_seed((uint32_t)(seed + 1));
@@ -2301,6 +2308,7 @@ static bool rs_play_seeded(Game *g, int np, int seed, unsigned char *seed_out) {
 
     memset(g, 0, sizeof(*g));
     g->num_players = (int8_t)np;
+    g->rules = rules;
     for (int i = 0; i < np; i++) g->players[i].status = PLAYER_STATUS_READY;
     start_game(g);
 
@@ -13380,7 +13388,379 @@ static void test_client_adopts_a_bare_board(void) {
     CHECK(ct.open == false, "and adopting never leaves a push open behind it");
 }
 
+// ---------- podkidnoy reaches every search (docs/PODKIDNOY.md) ----------------
+//
+// The rule is one bit on the Game, and every menu reads it. What these pin is
+// that the bit REACHES every Game a search runs on: the board the Infinite
+// Oracle imports, every Monte-Carlo world and rollout, the exact solvers, the
+// endgame book, and every brain the arena knows. A search that loses the bit
+// still returns a move off the real menu, so nothing on a board looks wrong;
+// only the values the move was chosen by are, and the Oracle prints those.
+
+#ifdef CD_PASS_PROBE
+
+// Would the defender's menu hold a transfer if this board were the classic game?
+static int pk_transferable(const Game *g, int seat) {
+    static Game classic;
+    memcpy(&classic, g, offsetof(Game, logs));
+    classic.num_logs = 0;
+    classic.rules = 0;
+    return menu_has(&classic, seat, MOVE_PASS);
+}
+
+// THE ORACLE'S BOARD. oracle.wasm never sees a code: it is handed the board the
+// deciding seat saw (replay_steps_board_v6, the bytes bots.wasm writes) and
+// imports it into its resident game (wasm_import_state(masked=1), i.e.
+// state_import over a game that starts zeroed), then asks octogen over that
+// game's calculate_legal_moves (wasm_choose_move). So the board must carry the
+// rules: a masked board that drops them hands the Oracle the passing game, and
+// its candidate list offers a transfer the table never had.
+static void test_oracle_board_keeps_the_rules(void) {
+    static unsigned char code[1 << 20], board[RS_BOARD_MAX], index[8192];
+    static Game imported;
+    static LegalMoves ml;
+    int boards = 0, lost = 0, menus_with_pass = 0, transferable = 0;
+    int searched = 0, chose_pass = 0;
+    long rollout_passes = 0;
+    const int og = bot_roster_find("octogen");
+    CHECK(og >= 0, "octogen is on the roster");
+
+    for (int np = 2; np <= 4; np++) {
+        for (int k = 0; k < 2; k++) {
+            Game g;
+            unsigned char seed[FOOLISH_SEED_LEN];
+            if (!rs_play_seeded_rules(&g, np, 930 + np * 7 + k, seed, GAME_RULE_NO_PASS)) {
+                CHECK(0, "a podkidnoy game plays out"); continue;
+            }
+            CHECK(!game_pass_allowed(&g), "the played game is podkidnoy to the end");
+            const int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 20,
+                                                       code, (int)sizeof code);
+            if (enc <= 0) { CHECK(0, "the podkidnoy game encodes as v6"); continue; }
+            const int steps = replay_steps_count_v6(code, enc, 0);
+            const int ilen = replay_steps_index_v6(code, enc, 0, index, (int)sizeof index);
+            if (ilen != steps * RS_INDEX_STRIDE) { CHECK(0, "the step index covers every step"); continue; }
+
+            for (int step = 1; step < steps; step++) {
+                const int seat = index[step * RS_INDEX_STRIDE + 1];
+                if (seat == RS_SEAT_NONE) continue;
+                const int len = replay_steps_board_v6(code, enc, step, seat, board, (int)sizeof board);
+                if (len <= 0) { CHECK(0, "a decision's board is written"); continue; }
+                memset(&imported, 0, sizeof imported);
+                if (state_import(&imported, board, len, 1) != GAME_VALID) {
+                    CHECK(0, "the oracle's board imports"); continue;
+                }
+                imported.deterministic_deck = false;   // as wasm_import_state leaves it
+                boards++;
+                lost += game_pass_allowed(&imported);
+                calculate_legal_moves(&imported, seat, &ml);
+                int has_pass = 0;
+                for (int i = 0; i < ml.n; i++) has_pass |= ml.moves[i].type == MOVE_PASS;
+                menus_with_pass += has_pass;
+                if (!pk_transferable(&imported, seat)) continue;
+                transferable++;
+
+                // The deliberation itself, on a dozen of the boards where the
+                // classic game would have offered the transfer: octogen, as the
+                // Oracle runs it, must neither pick a transfer nor play one in
+                // any world it searches.
+                if (searched >= 12 || ml.n == 0) continue;
+                searched++;
+                game_pass_probe = 0;
+                const int idx = bot_roster_choose(og, &imported, seat, &ml);
+                rollout_passes += game_pass_probe;
+                if (idx >= 0 && idx < ml.n && ml.moves[idx].type == MOVE_PASS) chose_pass++;
+            }
+        }
+    }
+    CHECK(boards > 100, "the podkidnoy games gave the oracle enough boards");
+    CHECK(transferable > 0, "and some of them would have offered a transfer in the classic game");
+    if (lost) fprintf(stderr, "  %d of %d oracle boards imported as the passing game\n", lost, boards);
+    CHECK(lost == 0, "every board the oracle imports keeps its podkidnoy rules");
+    if (menus_with_pass) fprintf(stderr, "  %d oracle menus offered a transfer\n", menus_with_pass);
+    CHECK(menus_with_pass == 0, "the oracle's candidate menu never offers a transfer at a podkidnoy table");
+    CHECK(searched > 0, "octogen deliberated on transferable podkidnoy boards");
+    if (rollout_passes) fprintf(stderr, "  octogen played %ld transfers inside its search\n", rollout_passes);
+    CHECK(rollout_passes == 0, "octogen's worlds, rollouts and solves never transfer at a podkidnoy table");
+    CHECK(chose_pass == 0, "octogen never chooses a transfer at a podkidnoy table");
+}
+
+// THE BOARD ITSELF: state_put writes the rules and state_get reads them back,
+// for every viewer, and a classic board is the byte string it always was.
+static void test_masked_board_carries_the_rules(void) {
+    static unsigned char a[RS_BOARD_MAX], b[RS_BOARD_MAX];
+    static Game g, back;
+    setup_transferable(&g);
+    for (int viewer = VIEW_UNMASKED; viewer < 2; viewer++) {
+        g.rules = 0;
+        const int na = state_put(&g, viewer, a);
+        g.rules = GAME_RULE_NO_PASS;
+        const int nb = state_put(&g, viewer, b);
+        CHECK(na == nb, "podkidnoy costs the board no byte");
+        int differ = 0;
+        for (int i = 0; i < na && i < nb; i++) differ += a[i] != b[i];
+        CHECK(differ == 1, "the rules are one bit of one byte of the board");
+        memset(&back, 0, sizeof back);
+        back.rules = GAME_RULE_NO_PASS;   // a resident game that held podkidnoy before
+        CHECK(state_get(&back, a, na, viewer != VIEW_UNMASKED) == GAME_VALID && game_pass_allowed(&back),
+              "a classic board reads back as the classic game, whatever the game held before");
+        memset(&back, 0, sizeof back);
+        CHECK(state_get(&back, b, nb, viewer != VIEW_UNMASKED) == GAME_VALID && !game_pass_allowed(&back),
+              "a podkidnoy board reads back as podkidnoy");
+        CHECK(!menu_has(&back, 1, MOVE_PASS), "the read-back podkidnoy board offers no transfer");
+        if (viewer == VIEW_UNMASKED || viewer == 1)
+            CHECK(menu_has(&back, 1, MOVE_COVER), "and the defender who sees their hand can still cover");
+    }
+}
+
+// A random two-seat endgame: deck gone, table empty, seat 0 to lead into seat 1.
+static void pk_endgame(Game *g, uint32_t *rng, int n0, int n1) {
+    memset(g, 0, offsetof(Game, logs));
+    g->status = GAME_STATUS_PLAYING;
+    g->num_players = 2;
+    *rng = *rng * 1103515245u + 12345u;
+    g->power_suit = (int8_t)((*rng >> 16) % 4);
+    g->first_attacker = 0;
+    g->defender = 1;
+    int ids[36];
+    for (int i = 0; i < 36; i++) ids[i] = i;
+    for (int i = 0; i < n0 + n1; i++) {
+        *rng = *rng * 1103515245u + 12345u;
+        const int j = i + (int)((*rng >> 16) % (uint32_t)(36 - i));
+        const int t = ids[i]; ids[i] = ids[j]; ids[j] = t;
+    }
+    for (int s = 0; s < 2; s++) {
+        Player *p = &g->players[s];
+        p->status = PLAYER_STATUS_IN;
+        p->hand_count = (int8_t)(s == 0 ? n0 : n1);
+        for (int h = 0; h < p->hand_count; h++) {
+            const int id = ids[s == 0 ? h : n0 + h];
+            p->hand[h] = (Card){ (int8_t)(id / 9), (int8_t)(5 + id % 9) };
+        }
+    }
+    g->discard_pile_length = (int16_t)(36 - n0 - n1);
+}
+
+static int pk_solve(const Game *g, int8_t rules, int book, int reset) {
+    SimState s;
+    cd_sim_from_game(&s, g);
+    s.rules = rules;
+    cd_sim_set_leafbook(book);
+    if (reset) cd_sim_solve_reset();
+    int aborted = 0;
+    const int v = cd_sim_solve(&s, 0, -1001, 1001, 2000000, &aborted);
+    cd_sim_set_leafbook(0);
+    return aborted ? 99999 : v;
+}
+
+// THE EXACT SOLVER, ITS TRANSPOSITION TABLE AND THE ENDGAME BOOK. The book
+// (c/LEAFBOOK.md) is a proof about the CLASSIC game, keyed on two hands and a
+// trump - no rules in the key - so at a podkidnoy table it must not be asked.
+// The table is shared by every solve in a process (a server holds both kinds of
+// table in one module), so its key must tell the two games apart.
+static void test_podkidnoy_solver_and_book(void) {
+    uint32_t rng = 4242u;
+    int differ = 0, book_wrong = 0, tt_wrong = 0, book_classic_hits = 0, book_classic_wrong = 0;
+    long pk_hits = 0;
+    static Game g;
+    for (int trial = 0; trial < 3000; trial++) {
+        rng = rng * 1103515245u + 12345u;
+        const int total = 2 + (int)((rng >> 16) % 6);          // 2..7 cards
+        const int n0 = 1 + (int)((rng >> 8) % (uint32_t)(total - 1));
+        pk_endgame(&g, &rng, n0, total - n0);
+        const int classic = pk_solve(&g, 0, 0, 1);
+        const int podk = pk_solve(&g, GAME_RULE_NO_PASS, 0, 1);
+        if (classic == 99999 || podk == 99999) continue;
+        if (classic != podk) differ++;
+
+        // The table, warm from the classic solve of the very same position.
+        (void)pk_solve(&g, 0, 0, 1);
+        if (pk_solve(&g, GAME_RULE_NO_PASS, 0, 0) != podk) tt_wrong++;
+
+#ifdef CD_LEAFBOOK
+        const long h0 = cd_sim_leafbook_hits();
+        if (pk_solve(&g, GAME_RULE_NO_PASS, 1, 1) != podk) book_wrong++;
+        pk_hits += cd_sim_leafbook_hits() - h0;
+        const long h1 = cd_sim_leafbook_hits();
+        if (pk_solve(&g, 0, 1, 1) != classic) book_classic_wrong++;
+        book_classic_hits += cd_sim_leafbook_hits() > h1;
+#endif
+    }
+    CHECK(differ > 0, "some endgames are worth something different without the transfer");
+    if (tt_wrong) fprintf(stderr, "  %d podkidnoy solves read the classic game's table entries\n", tt_wrong);
+    CHECK(tt_wrong == 0, "a podkidnoy solve never reads a classic solve's table entry");
+#ifdef CD_LEAFBOOK
+    CHECK(book_classic_hits > 0, "the book answers classic endgames");
+    CHECK(book_classic_wrong == 0, "and its answers are the classic solve's");
+    if (pk_hits || book_wrong) fprintf(stderr, "  the book answered %ld podkidnoy probes, %d values wrong\n", pk_hits, book_wrong);
+    CHECK(pk_hits == 0, "the classic endgame book is never asked about a podkidnoy endgame");
+    CHECK(book_wrong == 0, "a podkidnoy solve with the book on is the podkidnoy value");
+#else
+    (void)pk_hits; (void)book_wrong; (void)book_classic_hits; (void)book_classic_wrong;
+#endif
+}
+
+// EVERY ROLLOUT PATH, from real podkidnoy worlds: positions of played podkidnoy
+// games where the classic game would offer the defender a transfer, converted
+// once (cd_sim_from_game, as every MC brain does) and played out by each
+// playout the brains use. And the control, so the probe is known to see a
+// rollout's transfer at all: the same worlds with the rule taken off.
+static void test_podkidnoy_rollouts_never_transfer(void) {
+    static Game g;
+    static LegalMoves ml;
+    int worlds = 0;
+    long podk = 0, control = 0;
+    for (int np = 2; np <= 4; np++) {
+        unsigned char seed[FOOLISH_SEED_LEN];
+        for (int i = 0; i < FOOLISH_SEED_LEN; i++) seed[i] = (unsigned char)(i * 7 + np);
+        game_set_seed(77u + (uint32_t)np);
+        random_strategy_set_seed(77u + (uint32_t)np);
+        game_set_deal_seed_bytes(seed, FOOLISH_SEED_LEN);
+        memset(&g, 0, sizeof g);
+        g.num_players = (int8_t)np;
+        g.rules = GAME_RULE_NO_PASS;
+        for (int i = 0; i < np; i++) g.players[i].status = PLAYER_STATUS_READY;
+        start_game(&g);
+        for (int guard = 0; guard < 4000 && game_done(&g) < 0; guard++) {
+            if (g.num_battles > 0 && pk_transferable(&g, g.defender) && worlds < 60) {
+                worlds++;
+                SimState base;
+                cd_sim_from_game(&base, &g);
+                for (int pass = 0; pass < 2; pass++) {
+                    SimState w0 = base;
+                    if (pass) w0.rules = 0;
+                    game_pass_probe = 0;
+                    const uint8_t pol_loose[MAX_PLAYERS] = { CD_POL_LOOSE, CD_POL_LOOSE, CD_POL_LOOSE, CD_POL_LOOSE,
+                                                             CD_POL_LOOSE, CD_POL_LOOSE, CD_POL_LOOSE, CD_POL_LOOSE };
+                    const uint8_t pol_mcdef[MAX_PLAYERS] = { CD_POL_MCDEF, CD_POL_MCDEF, CD_POL_MCDEF, CD_POL_MCDEF,
+                                                             CD_POL_MCDEF, CD_POL_MCDEF, CD_POL_MCDEF, CD_POL_MCDEF };
+                    for (int r = 0; r < 20; r++) {
+                        SimState w;
+                        w = w0; (void)cd_sim_playout(&w, g.defender, 400, 0);
+                        w = w0; (void)cd_sim_playout_leaf(&w, g.defender, 400, 0, 8, 20000);
+                        w = w0; (void)cd_sim_playout_pol(&w, g.defender, 400, 0, 8, 20000, pol_loose);
+                        w = w0; (void)cd_sim_playout_pol(&w, g.defender, 400, 0, 0, 0, pol_mcdef);
+                        w = w0; (void)cd_sim_playout_reply(&w, g.defender, 400, 8, 20000, NULL, 8);
+                    }
+                    if (pass) control += game_pass_probe; else podk += game_pass_probe;
+                }
+            }
+            bool acted = false;
+            for (int pi = 0; pi < np && !acted; pi++) {
+                if (!should_bot_act(&g, pi)) continue;
+                calculate_legal_moves(&g, pi, &ml);
+                if (ml.n == 0) continue;
+                acted = legal_move_apply(&g, pi, &ml.moves[random_strategy_choose(&g, pi, &ml, 0)]);
+            }
+            if (!acted) break;
+        }
+    }
+    CHECK(worlds >= 20, "the podkidnoy games staged enough transferable worlds");
+    CHECK(control > 0, "the probe sees a rollout's transfer once the rule is off");
+    if (podk) fprintf(stderr, "  %ld transfers inside podkidnoy rollouts\n", podk);
+    CHECK(podk == 0, "no rollout of a podkidnoy world ever transfers");
+}
+
+// EVERY BRAIN THE ARENA KNOWS, AND EVERY BOT THE ROSTER SHIPS, at a podkidnoy
+// table. The brains come off strategy_choose's ids (STRAT_COUNT, held to the
+// dispatch below so a new brain cannot be left out), the bots off bot_roster
+// with their production knobs. Each seats a whole table of itself and plays
+// short podkidnoy games: no choice may be a transfer, the engine must never
+// refuse one, and - the part no board would show - no search inside any of them
+// may play one either.
+// Actions per game: enough for several defences, and the brains' first moves
+// are their slowest (a full deck of unknowns), so this is the test's cost.
+#define PK_ACTIONS 16
+static int pk_play(int brain, int roster_idx, int np, uint32_t seed, int max_actions,
+                   long *passes, int *chose_pass, int *refused, int *transferable) {
+    static Game g;
+    static LegalMoves ml;
+    unsigned char ds[FOOLISH_SEED_LEN];
+    for (int i = 0; i < FOOLISH_SEED_LEN; i++) ds[i] = (unsigned char)(seed * 17u + (uint32_t)i * 29u);
+    game_set_seed(seed);
+    random_strategy_set_seed(seed);
+    game_set_deal_seed_bytes(ds, FOOLISH_SEED_LEN);
+    memset(&g, 0, sizeof g);
+    g.num_players = (int8_t)np;
+    g.rules = GAME_RULE_NO_PASS;
+    for (int i = 0; i < np; i++) g.players[i].status = PLAYER_STATUS_READY;
+    start_game(&g);
+    int decisions = 0;
+    for (int a = 0; a < max_actions && game_done(&g) < 0; a++) {
+        bool acted = false;
+        for (int pi = 0; pi < np && !acted; pi++) {
+            if (!should_bot_act(&g, pi)) continue;
+            calculate_legal_moves(&g, pi, &ml);
+            if (ml.n == 0) continue;
+            *transferable += pi == g.defender && pk_transferable(&g, pi);
+            game_pass_probe = 0;
+            int idx = brain >= 0 ? strategy_choose(brain, &g, pi, &ml)
+                                 : bot_roster_choose(roster_idx, &g, pi, &ml);
+            *passes += game_pass_probe;
+            decisions++;
+            if (idx < 0 || idx >= ml.n) idx = 0;
+            if (ml.moves[idx].type == MOVE_PASS) (*chose_pass)++;
+            acted = legal_move_apply(&g, pi, &ml.moves[idx]);
+            if (!acted && engine_last_reject == ENGINE_REJECT_PASS_DISABLED) (*refused)++;
+        }
+        if (!acted) break;
+    }
+    return decisions;
+}
+
+static void test_podkidnoy_every_brain(void) {
+    static LegalMoves ml;
+    // The count and the dispatch are one list: every id below STRAT_COUNT is a
+    // brain, and the first id past it is not.
+    {
+        Game g; setup_transferable(&g);
+        calculate_legal_moves(&g, 1, &ml);
+        int unknown_below = 0, known_past = 0;
+        for (int s = 0; s < 64; s++) {
+            const int r = strategy_choose(s, &g, 1, &ml);
+            if (s < STRAT_COUNT && r < 0) unknown_below++;
+            if (s >= STRAT_COUNT && r >= 0) known_past++;
+        }
+        CHECK(unknown_below == 0, "every id below STRAT_COUNT dispatches to a brain");
+        CHECK(known_past == 0, "no id past STRAT_COUNT dispatches (bump STRAT_COUNT with a new brain)");
+    }
+    int brains = 0;
+    for (int s = 0; s < STRAT_COUNT; s++) {
+        long passes = 0; int chose = 0, refused = 0, decisions = 0, transferable = 0;
+        for (int np = 2; np <= 3; np++)
+            decisions += pk_play(s, -1, np, 500u + (uint32_t)(s * 3 + np), PK_ACTIONS, &passes, &chose, &refused, &transferable);
+        if (getenv("PK_TRACE")) fprintf(stderr, "  brain %d: %d decisions, %d transferable\n", s, decisions, transferable);
+        if (passes || chose || refused)
+            fprintf(stderr, "  brain %d: %ld transfers searched, %d chosen, %d refused\n", s, passes, chose, refused);
+        CHECK(transferable > 0 && passes == 0 && chose == 0 && refused == 0,
+              "a podkidnoy table: no brain searches, chooses or plays a transfer");
+        brains += transferable > 0;
+    }
+    CHECK(brains == STRAT_COUNT, "every brain met a defence the classic game would let it transfer");
+    int bots = 0;
+    for (int r = 0; r < bot_roster_count(); r++) {
+        if (!bot_roster_linked(r)) continue;
+        long passes = 0; int chose = 0, refused = 0, transferable = 0;
+        for (int np = 2; np <= 3; np++)
+            (void)pk_play(-1, r, np, 900u + (uint32_t)(r * 3 + np), PK_ACTIONS, &passes, &chose, &refused, &transferable);
+        if (passes || chose || refused)
+            fprintf(stderr, "  bot %s: %ld transfers searched, %d chosen, %d refused\n", bot_roster_at(r)->key, passes, chose, refused);
+        CHECK(transferable > 0 && passes == 0 && chose == 0 && refused == 0,
+              "a podkidnoy table: no shipped bot searches, chooses or plays a transfer");
+        bots += transferable > 0;
+    }
+    CHECK(bots == bot_roster_count(), "every roster bot is linked natively and met such a defence");
+}
+
+#endif  // CD_PASS_PROBE
+
 int main(void) {
+#ifdef CD_PASS_PROBE
+    test_masked_board_carries_the_rules();
+    test_oracle_board_keeps_the_rules();
+    test_podkidnoy_solver_and_book();
+    test_podkidnoy_rollouts_never_transfer();
+    test_podkidnoy_every_brain();
+#endif
     test_state_import_rejects_invalid_values();
     test_state_import_refuses_a_lobby_with_cards();
     test_state_import_refuses_a_truncated_payload();

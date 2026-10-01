@@ -39,18 +39,23 @@
 #define STRAT_OCTOGEN_ORACLE    21   // octogen at 6x worlds (research/audit only)
 #define STRAT_TORPEX            22   // semtex + learned value net replacing rollouts
 #define STRAT_NOVICHOK          23   // CHEATING apex (real hands; research/eval only)
+// One past the last brain. A new STRAT_* id bumps this and gets a case in
+// strategy_choose (strategy.c); tests.c holds the two together, so a brain the
+// dispatch forgot, or a count the new brain forgot, fails there.
+#define STRAT_COUNT             24
 
 // Returns chosen move index in moves->moves[] (0..moves->n-1).
 typedef int (*StrategyFn)(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 
+// Run brain `strat` (a STRAT_* id) at its C defaults - the arena's dispatch,
+// which every native tool (cnitro_eval, _elo, _gen, _showcase) and the tests
+// share. -1 for an id that is not a brain. A named, knob-tuned production bot
+// is bot_roster_choose instead.
+int strategy_choose(int strat, const Game *g, int bot_idx, const LegalMoves *moves);
+
 int random_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 int espresso_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 int handwritten_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
-// Direct rollout chooser: writes handwritten's lite-policy move into *out and
-// returns true, or returns false to defer to the slow enumerate-then-pick
-// path. Behaviorally identical to enumerating calculate_legal_moves_lite then
-// calling handwritten_strategy_choose. See handwritten_strategy.c.
-bool handwritten_rollout_choose(const Game *g, int bot_idx, LegalMove *out);
 int robusta_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 int firecracker_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 int gunpowder_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
