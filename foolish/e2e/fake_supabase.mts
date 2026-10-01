@@ -765,6 +765,41 @@ const SCENARIOS: Record<string, () => Scenario> = {
             .table('7h').attacker(0).defender(1).build(),
     }),
 
+    /**
+     * THE RULES BOX (docs/PODKIDNOY.md "The web lobby"): a lobby with ME and
+     * ANNA seated and nobody ready, so either may tick or untick it. BORIS, who
+     * opens it, joins it - a lobby with room seats whoever opens it.
+     */
+    lobby_rules: () => ({
+        gameId: 'rules1',
+        users: ['ME', 'ANNA', 'BORIS'],
+        board: fixture().title('Rules').seats([seat('ME'), seat('ANNA')]).build(),
+    }),
+
+    /** The same box seen by somebody who cannot join: a full table, and BORIS watching it. */
+    lobby_rules_full: () => ({
+        gameId: 'rules8',
+        users: ['ME', 'ANNA', 'BORIS'],
+        board: fixture().title('Rules, full').seats([
+            seat('ME'), seat('ANNA'),
+            { id: 'bot-random-1', name: '%R1', brain: 'random' },
+            { id: 'bot-random-2', name: '%R2', brain: 'random' },
+            { id: 'bot-random-3', name: '%R3', brain: 'random' },
+            { id: 'bot-random-4', name: '%R4', brain: 'random' },
+            { id: 'bot-random-5', name: '%R5', brain: 'random' },
+            { id: 'bot-random-6', name: '%R6', brain: 'random' },
+        ]).build(),
+    }),
+
+    /**
+     * ME DEFENDS against ANNA's 6h holding 6d (a transfer at a passing table)
+     * and 6c (a trump of the rank: Cover, and a transfer at a passing table).
+     * The two scenarios are the same board at the two tables, so the action
+     * column is the only thing that may differ.
+     */
+    defend_passing: () => defendBoard('defp01', true),
+    defend_podkidnoy: () => defendBoard('defk01', false),
+
     /** A plain two-hander against a bot, for playing by hand. */
     /**
      * EIGHT SEATS AND FIVE BOTS, which is where the owner found the goods bug:
@@ -945,6 +980,17 @@ const SCENARIOS: Record<string, () => Scenario> = {
             .attacker(0).defender(1).build(),
     }),
 };
+
+function defendBoard(gameId: string, passing: boolean): Scenario {
+    return {
+        gameId,
+        users: ['ME', 'ANNA'],
+        board: fixture().title(passing ? 'Passing' : 'Podkidnoy').seats([seat('ANNA'), seat('ME')])
+            .status(PLAYING).passing(passing).trump('Kc').deck('7s 8s 9s Ts Js Qs Ks As 7d 8d 9d Td Jd Kd')
+            .hand(0, '6s 7h Qd Ad').hand(1, '9h Th 6d 6c')
+            .table('6h').attacker(0).defender(1).build(),
+    };
+}
 
 function buildScenario(name: string): Scenario {
     const make = SCENARIOS[name];
