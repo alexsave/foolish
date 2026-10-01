@@ -519,7 +519,7 @@ test('a replay with names, at its last step', async () => {
 // ---- one move, one button ---------------------------------------------------------------
 //
 // The action buttons a board draws are the kernel's pills for the selection
-// (legal.h play_board_pills, the rule the iMessage board draws by): a selected
+// (legal.h play_pills, the rule the iMessage board draws by): a selected
 // card takes Take and Good away, and the one time two buttons stand together is a
 // card that both covers and transfers (a trump of the attack's rank). Each board
 // below is rendered for real and its cards are TAPPED, as a player selects them
