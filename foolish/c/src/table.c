@@ -912,10 +912,6 @@ int table_drive_prefs(const Table *t, const BotDriveOut *drv, uint8_t *out, int 
     return at;
 }
 
-int table_cycle_delay_ms(const Table *t, const BotDriveOut *drv) {
-    return bot_cycle_delay_ms(t->g, game_human_mask(t->g), drv);
-}
-
 int table_bot_wait_ms(const Table *t, int64_t now_ms) {
     if (!t->loaded) return TABLE_E_NOT_LOADED;
     return bot_wait_ms(t->g, game_human_mask(t->g), t->clock.shown_ms, t->clock.settles_ms, now_ms);

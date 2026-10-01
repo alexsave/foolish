@@ -37,12 +37,11 @@ if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {};
 const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
 
 test('every commit writes the durable blob at the current format', () => {
-  // The expand step (c/src/view.h STATE_BLOB_FORMAT): this kernel reads v2 and
-  // v3 and still writes v2, so a kernel from before the clock can load every row
-  // it writes. The switch step flips the format written to v3.
+  // The switch step (c/src/view.h STATE_BLOB_FORMAT): this kernel reads v2 and
+  // v3 and writes v3, the board with its clock behind it.
   const row = dealBotTable(['random', 'random', 'random', 'random'], seedBytes(4, 1));
-  assert.equal(L.TABLE_STATE_FORMAT, L.TABLE_STATE_FORMAT_V2, 'the format this kernel writes');
-  assert.equal(L.TABLE_STATE_CLOCK_BYTES, 0, 'and a written blob carries no clock');
+  assert.equal(L.TABLE_STATE_FORMAT, L.TABLE_STATE_FORMAT_V3, 'the format this kernel writes');
+  assert.equal(L.TABLE_STATE_CLOCK_BYTES, L.TABLE_STATE_V3_CLOCK_BYTES, 'and a written blob carries the clock');
   assert.equal(row.state[0], L.TABLE_STATE_FORMAT, 'the dealt blob leads with its format');
 });
 
@@ -61,7 +60,7 @@ test('a blob of any other format is refused, not misread', () => {
   assert.equal(table.load(row.state, row.roster), L.TABLE_OK, 'the blob as written loads');
 });
 
-test('a v3 blob, the board with its clock behind it, loads and is written back as the same board', () => {
+test('a v3 blob, the board with its clock behind it, loads with that clock', () => {
   // The format the switch step writes, read by this kernel now so a rollback
   // across the switch finds every row readable. The fixture is the written
   // board with the v3 format byte and a clock: shown at T, done playing at T+500.
@@ -79,12 +78,15 @@ test('a v3 blob, the board with its clock behind it, loads and is written back a
   v3.set(clock, board.length);
   v3[0] = L.TABLE_STATE_FORMAT_V3;
   assert.equal(table.load(v3, row.roster), L.TABLE_OK, 'the v3 blob loads');
-  // The clock itself is read by the bot wait, which the C tests drive on v3 rows
-  // (c/tests/tests.c test_table_bot_wait); the server binds that wait at the
-  // switch step.
+  // A bots-only board waits the bots-only pace from when it was shown, so the
+  // wait moves with the time gone since T: the clock was read.
+  const wait = table.botWaitMs(T + 100);
+  assert.ok(wait > 0, `a bot waits on the board the clock says was just shown (got ${wait})`);
+  assert.equal(table.botWaitMs(T + 150), wait - 50, 'less the time gone since the clock');
+  assert.equal(table.botWaitMs(T + 3_600_000), 0, 'and not at all an hour later');
   const p = table.commit(row.gameId, row.version, 0);
   assert.ok(typeof p !== 'number', 'products of the loaded v3 row');
-  assert.equal(hex(p.state), hex(row.state), 'written back at the format this kernel writes, as the same board');
+  assert.equal(hex(p.state), hex(v3), 'written back at the format this kernel writes, as the same board and clock');
 });
 
 test('the board the generated accessors read back rebuilds the blob, at every state of two games', () => {

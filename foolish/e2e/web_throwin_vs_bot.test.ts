@@ -31,12 +31,7 @@ const card = (t: string) => ({ suit: 'shcd'.indexOf(t[1]), value: '23456789TJQKA
 // 150-400ms): a slower one only widens the window this case is about.
 const LATENCY = { invokeMs: 80, realtimeMs: 40 };
 
-// NOT YET: the fix needs the board's clock persisted in the state blob (v3) and
-// the bot loop waiting on it (table_bot_wait_ms). The expand step still writes v2
-// (c/src/view.h STATE_BLOB_FORMAT) and the loop still sleeps its old fixed pace;
-// the switch step, PR #246, does both and removes this skip.
-const NOT_YET = 'needs the v3 state blob and the bot wait that PR #246 (the switch step) turns on';
-test('a throw-in I make while my screen shows the bout open is not refused because of a bot move I had not been shown', { skip: NOT_YET }, async () => {
+test('a throw-in I make while my screen shows the bout open is not refused because of a bot move I had not been shown', async () => {
     await resetDb();
     __clearGameCache();
     const gameId = `t${uuid().slice(0, 7)}`;

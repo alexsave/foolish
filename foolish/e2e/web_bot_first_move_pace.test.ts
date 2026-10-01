@@ -21,24 +21,30 @@ import { runMeta, seedLobby } from './helpers/table_server.ts';
 import { mustReadTable } from './helpers/table_play.ts';
 import { __setTableDealSeedOverride } from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
 import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
+import { serverTable } from '../sdk/ts/table/server_table.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 
 before(async () => { await applySchema(); });
+
+// Every wait the loop asks the kernel for (table_bot_wait_ms), in order, with
+// the moment it asked: recorded where lockedBotLoop reads it, for the log.
+const paces: { at: number; ms: number }[] = [];
+before(async () => {
+    const table = await serverTable();
+    const botWaitMs = table.botWaitMs.bind(table);
+    table.botWaitMs = (nowMs: number) => { const ms = botWaitMs(nowMs); paces.push({ at: now(), ms }); return ms; };
+});
 
 // A deal whose first attacker AND defender are both bots, with me watching from
 // the third seat. The deal is the kernel's from a fixed seed, so the case is the
 // same every run.
 const DEAL_SEED = Uint8Array.from({ length: 32 }, (_, i) => (i * 7 + 13) & 255);
 
-// NOT YET: the fix needs the board's clock persisted in the state blob (v3) and
-// the bot loop waiting on it (table_bot_wait_ms). The expand step still writes v2
-// (c/src/view.h STATE_BLOB_FORMAT) and the loop still sleeps its old fixed pace;
-// the switch step, PR #246, does both and removes this skip.
-const NOT_YET = 'needs the v3 state blob and the bot wait that PR #246 (the switch step) turns on';
-test('the first bot move of a game: the defender bot answers a full pace after the attack appears on my screen', { skip: NOT_YET }, async () => {
+test('the first bot move of a game: the defender bot answers a full pace after the attack appears on my screen', async () => {
     await resetDb();
     __clearGameCache();
     __setTableDealSeedOverride(DEAL_SEED);
+    paces.length = 0;
     const gameId = `f${uuid().slice(0, 7)}`;
     const me = uuid();
     await seedLobby(gameId, [
@@ -68,6 +74,7 @@ test('the first bot move of a game: the defender bot answers a full pace after t
         await page.advance(1000);
         process.stderr.write(`[first-move] seats: me 0, attacker ${attacker}, defender ${defender}\n`
             + `[first-move] pushes the server sent me (ms after Start): ${delivered.map((d) => `v${d.version}@+${d.sentAt - startedAt}`).join(', ')}\n`
+            + `[first-move] kernel waits the loop asked for: ${paces.map((p) => `${p.ms}ms (asked at +${p.at - startedAt})`).join(', ')}\n`
             + `[first-move] what my page flew:\n${flightTimeline(page.frames).join('\n')}\n`);
         assert.ok(answered, 'the defender bot answered the first attack');
 
