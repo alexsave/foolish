@@ -157,8 +157,9 @@ static int beat_clock(const int *types, const int *seats, int n, AnimPlanStep *s
         const int first = (int)shape.first[g];
         const int end = beat_end(&shape, g, n);
         // ONE duration for the whole beat: its cards fly together, so they
-        // land together. The longest of them is the beat's, which today is
-        // ANIM_TIME_MS for anything that moves and 0 for a beat of notices.
+        // land together. The longest of them is the beat's: ANIM_DEAL_CARD_MS
+        // for a dealt card, ANIM_TIME_MS for anything else that moves, and 0
+        // for a beat of notices (anim_step_duration_ms).
         int dur = 0;
         for (int i = first; i < end; i++) {
             const int d = anim_step_duration_ms(types[i]);

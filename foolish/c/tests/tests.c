@@ -9980,16 +9980,22 @@ static void tb_store_state(const TableCommit *c) {
     }
 }
 
-// tb_seed, its hex text, and a lobby of "h" (a human) and two `brain` bots dealt
-// from it: the committed row in tb_state / tb_roster, the session log in tb_log.
-static void tb_bot_table(const char *brain, int seed) {
+// tb_seed, its hex text, and a lobby of "h" (a human) and `n_bots` `brain` bots
+// dealt from it: the committed row in tb_state / tb_roster, the session log in
+// tb_log.
+static void tb_bot_table_n(const char *brain, int seed, int n_bots) {
     TableCommit c;
     tb_seed_fill(seed);
     for (int i = 0; i < FOOLISH_SEED_LEN; i++) snprintf(tb_seed_hex + 2 * i, 3, "%02x", tb_seed[i]);
     table_init(&tb, &tb_game, &tb_snaps);
     table_create(&tb, RS("h"), RS("Human"));
-    table_add_bot(&tb, RS("h"), RS("b1"), RS("Bot one"), brain, (int)strlen(brain), tb_seed);
-    table_add_bot(&tb, RS("h"), RS("b2"), RS("Бот"), brain, (int)strlen(brain), tb_seed);
+    for (int b = 0; b < n_bots; b++) {
+        char id[8], name[16];
+        snprintf(id, sizeof(id), "b%d", b + 1);
+        snprintf(name, sizeof(name), b == 1 ? "Бот" : "Bot %d", b + 1);
+        if (b == 0) snprintf(name, sizeof(name), "Bot one");
+        table_add_bot(&tb, RS("h"), RS(id), RS(name), brain, (int)strlen(brain), tb_seed);
+    }
     table_ready(&tb, RS("h"), tb_seed);
     game_set_seed(1);
     table_commit_products(&tb, RS("g"), 1, 1700000000000LL, &c, tb_arena, sizeof(tb_arena));
@@ -9998,6 +10004,7 @@ static void tb_bot_table(const char *brain, int seed) {
     memcpy(tb_log, tb_arena + c.logs.off, (size_t)c.logs.len);
     tb_log_len = c.logs.len;
 }
+static void tb_bot_table(const char *brain, int seed) { tb_bot_table_n(brain, seed, 2); }
 
 // The row as the bot loop loads it: the blob, the deal seed, and the session log
 // when asked (the loop always hands it over; `with_log` 0 is for the cases below
@@ -10246,6 +10253,50 @@ static void test_table_bot_wait(void) {
     CHECK(human_checked && queue_checked && bot_cycles > 0, "the game reached a human move and a bot answer inside it");
     fprintf(stderr, "  [bot wait] deal plays %dms, then the %dms pace; %d bot cycles before the human's move was checked\n",
             deal_ms, pace, bot_cycles);
+
+    // THE LONGEST DEAL. Eight seats deal 48 cards a card at a time (ANIM_DEAL_CARD_MS),
+    // a stream longer than one wait: the ceiling slices it into asks, and nothing
+    // that legitimately plays reads as another host's clock - a move committed a
+    // second into the deal still queues behind it on the human's screen.
+    {
+        tb_bot_table_n("random", 23, MAX_PLAYERS - 1);
+        const int deal8 = tb_push_plan_ms(0);
+        CHECK(deal8 + pace > BOT_PACE_WAIT_MAX_MS, "an eight-seat deal outlasts one wait");
+        CHECK(deal8 + pace <= BOT_CLOCK_HORIZON_MS, "and fits inside the clock's horizon");
+        CHECK(tb_reload(1) >= 0 && tb.clock.shown_ms == T0 && tb.clock.settles_ms == T0 + deal8,
+              "the eight-seat deal's clock is its whole stream");
+        CHECK(table_bot_wait_ms(&tb, T0) == BOT_PACE_WAIT_MAX_MS, "one ask waits the ceiling");
+        CHECK(table_bot_wait_ms(&tb, T0 + BOT_PACE_WAIT_MAX_MS) == deal8 + pace - BOT_PACE_WAIT_MAX_MS,
+              "and the next ask waits out the rest of the deal and the pace");
+        const int64_t during = T0 + 1000;
+        int ms = -1;
+        if (bot_drive_eligible_mask(&tb_game, game_human_mask(&tb_game)) != 0) {
+            if (table_bot_drive(&tb, 0, 0, 0, &tb_drv) > 0) ms = tb_push_plan_ms(0);
+        } else if (tb_human_move()) {
+            ms = tb_push_plan_ms(0);
+        }
+        CHECK(ms > 0 && tb_commit_row(during, &c) > 0 && tb_reload(1) >= 0
+              && tb.clock.shown_ms == during && tb.clock.settles_ms == T0 + deal8 + ms,
+              "a move committed during an eight-seat deal plays after it");
+
+        // A CLOCK SETTLING PAST THE HORIZON is not a queue anybody is playing
+        // (a corrupt row): it asks for no wait, and the next commit starts its
+        // stream now rather than behind it.
+        tb_bot_table_n("random", 23, MAX_PLAYERS - 1);
+        const BoardClock far = { T0, T0 + BOT_CLOCK_HORIZON_MS + 1 };
+        tb_put_clock(tb_state + tb_state_len - TABLE_STATE_V3_CLOCK_BYTES, &far);
+        CHECK(tb_reload(1) >= 0 && tb.clock.settles_ms == far.settles_ms && table_bot_wait_ms(&tb, T0) == 0,
+              "a clock settling past the horizon holds no bot");
+        ms = -1;
+        if (bot_drive_eligible_mask(&tb_game, game_human_mask(&tb_game)) != 0) {
+            if (table_bot_drive(&tb, 0, 0, 0, &tb_drv) > 0) ms = tb_push_plan_ms(0);
+        } else if (tb_human_move()) {
+            ms = tb_push_plan_ms(0);
+        }
+        CHECK(ms > 0 && tb_commit_row(T0, &c) > 0 && tb_reload(1) >= 0
+              && tb.clock.shown_ms == T0 && tb.clock.settles_ms == T0 + ms,
+              "and the next commit's stream starts now, not behind it");
+    }
 
     // BOTS ONLY: nobody watches live, so the pace is the bots-only one from the
     // commit, with no animation term.

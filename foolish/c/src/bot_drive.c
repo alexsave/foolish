@@ -59,11 +59,14 @@ int bot_wait_ms(const Game *g, uint32_t human_mask, int64_t shown_ms, int64_t se
     const int64_t from = humans ? settles_ms : shown_ms;
     const int64_t wait = from + bot_pacing_ms(BOT_PACE_MOVE, humans) - now_ms;
     if (from <= 0 || wait <= 0) return 0;
-    // shown_ms is the committing host's own now, so a board shown further ahead
-    // of this host's now than any wait says the two clocks disagree, not that a
+    // A clock on another host's time says the two clocks disagree, not that a
     // viewer is busy (the same test table.c next_clock queues by).
-    if (shown_ms - now_ms > BOT_PACE_WAIT_MAX_MS) return 0;
+    if (bot_clock_foreign(shown_ms, settles_ms, now_ms)) return 0;
     return wait > BOT_PACE_WAIT_MAX_MS ? BOT_PACE_WAIT_MAX_MS : (int)wait;
+}
+
+int bot_clock_foreign(int64_t shown_ms, int64_t settles_ms, int64_t now_ms) {
+    return shown_ms - now_ms > BOT_PACE_WAIT_MAX_MS || settles_ms - now_ms > BOT_CLOCK_HORIZON_MS;
 }
 
 // ---------- eligibility ----------------------------------------------------

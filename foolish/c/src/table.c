@@ -303,17 +303,19 @@ static int op_stream(const Table *t, OpStream *s) {
 // (a silent good, a hand rearranged) leaves the clock where it was, so the last
 // thing a viewer watched is still what a bot's wait is measured from.
 //
-// A QUEUE LONGER THAN THE LONGEST WAIT IS NOT A QUEUE. A clock that settles
-// further ahead than BOT_PACE_WAIT_MAX_MS was written by a clock that is not
-// this one (a host whose time went backwards, a row carried between hosts), and
-// queueing behind it would carry the error into every commit after; the stream
-// starts now instead, so one commit puts the clock right.
+// A CLOCK ON ANOTHER HOST'S TIME IS NOT A QUEUE (bot_drive.h bot_clock_foreign:
+// shown in the future, or settling past the horizon). It was written by a clock
+// that is not this one (a host whose time went backwards, a row carried between
+// hosts, a corrupt row), and queueing behind it would carry the error into every
+// commit after; the stream starts now instead, so one commit puts the clock
+// right. A long legitimate queue - a move made during an eight-seat deal - is
+// still one, though it outlasts a single bot wait.
 static BoardClock next_clock(const Table *t, const OpStream *s, bool shown, int64_t now_ms) {
     BoardClock c = t->clock;
     if (!shown) return c;
     const int n = s->n < ANIM_MAX_STEPS ? s->n : ANIM_MAX_STEPS;
     const int ms = anim_stream_ms(s->types, s->seats, n);
-    const bool queued = c.settles_ms > now_ms && c.settles_ms - now_ms <= BOT_PACE_WAIT_MAX_MS;
+    const bool queued = c.settles_ms > now_ms && !bot_clock_foreign(c.shown_ms, c.settles_ms, now_ms);
     const int64_t start = queued ? c.settles_ms : now_ms;
     c.shown_ms = now_ms;
     c.settles_ms = start + (ms > 0 ? ms : 0);

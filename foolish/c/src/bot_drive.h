@@ -57,7 +57,7 @@ int bot_pacing_ms(int pacing_class, int humans_present);
 //
 // A bot answers a board its human viewers must first have SEEN: the last
 // committed operation plays on their screens for its whole animation stream
-// (anim_plan.h anim_stream_ms - a deal is seven beats, a bout end a hold, a
+// (anim_plan.h anim_stream_ms - a deal is a beat a card, a bout end a hold, a
 // sweep and the refills), and only then does the reaction pace start. So with a
 // human IN the bot may act at
 //
@@ -83,16 +83,28 @@ int bot_pacing_ms(int pacing_class, int humans_present);
 // persisted in a v3 state blob); a clock of zero - a board never shown - asks
 // for no wait. A v2 blob has no clock at all and reads as a zero one.
 //
-// THE CEILING is a guard, not a pace: a stream long enough to reach it does not
-// exist in play (an 8-seat deal or a bout end with every seat refilling is
-// under 8s), but a persisted clock from a skewed or corrupt host must never park
-// a game, and a host's lease must outlive any wait (the Supabase bot lease is
-// 25s, bot_actions.ts BOT_LEASE_TTL_MS). A host asks again after every wait, so
-// the ceiling alone would only slice a skewed clock's wait into ceiling-long
-// pieces: a board SHOWN further ahead of now than the ceiling is on another
-// host's time, and asks for no wait at all.
+// THE CEILING is one ask's, not the longest wait: a host's lease must outlive
+// any single wait (the Supabase bot lease is 25s, bot_actions.ts
+// BOT_LEASE_TTL_MS), and a host asks again after every wait, so a longer one is
+// waited out in ceiling-long slices. One exists in play: an eight-seat opening
+// deal goes round the table a card at a time and plays about 20s
+// (anim_plan.h ANIM_DEAL_CARD_MS), so its wait is two asks.
 #define BOT_PACE_WAIT_MAX_MS 15000
+// THE HORIZON is how far ahead of now a clock can be and still be one somebody
+// is playing. Slicing alone would let a skewed or corrupt clock park a game ask
+// after ask, so a clock past it is on another host's time (bot_clock_foreign)
+// and asks for no wait at all. It sits well clear of the longest stream play
+// makes (the eight-seat deal, with a move queued behind it and the pace; tests.c
+// test_table_bot_wait holds the deal inside it).
+#define BOT_CLOCK_HORIZON_MS 60000
 int bot_wait_ms(const Game *g, uint32_t human_mask, int64_t shown_ms, int64_t settles_ms, int64_t now_ms);
+// 1 when a board clock cannot be this host's: SHOWN further ahead of now than
+// one wait (shown_ms is the committing host's own now, so a board shown in the
+// future was shown on another clock), or SETTLING past the horizon. The one
+// test both readers of a clock apply - bot_wait_ms, which then asks for no
+// wait, and table.c next_clock, which then starts the next stream now instead
+// of queueing it behind a stream nobody's screen is playing.
+int bot_clock_foreign(int64_t shown_ms, int64_t settles_ms, int64_t now_ms);
 
 // ---------- the drive cycle (F2) -------------------------------------------
 
