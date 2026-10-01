@@ -288,9 +288,8 @@ typedef struct {
     Span    logs;          // session-log records, u48 LE ms timestamp each; len 0 when none
     Span    views[MAX_PLAYERS];  // the response envelope per HUMAN seat; len 0 for a bot or no seat
     Span    spectator;     // the spectator envelope
-    // The board's clock after this operation: what a v3 state blob carries
-    // behind the board (view.h BoardClock). While v2 is written it is computed
-    // and not persisted.
+    // The board's clock after this operation: what a v3 or v4 state blob
+    // carries behind the board (view.h BoardClock).
     BoardClock clock;
 } TableCommit;
 
@@ -298,8 +297,9 @@ typedef struct {
 // `arena`. `next_version` is the version the commit will produce (the envelope
 // carries it); `now_ms` stamps this operation's log records and, when a viewer is
 // shown the operation, advances the board's clock (TableCommit.clock, carried by
-// a v3 state blob; see Table.clock). TABLE_E_STATE_RULES when the board's rules
-// are ones the state format written cannot carry: nothing is to be committed.
+// the state blob; see Table.clock). TABLE_E_STATE_RULES when the board's rules
+// are ones the state format written cannot carry (none today: v4 carries every
+// rule the kernel has): nothing is to be committed.
 int table_commit_products(const Table *t, const char *game_id, int gid_len, uint32_t next_version,
                           int64_t now_ms, TableCommit *out, uint8_t *arena, int cap);
 

@@ -8958,8 +8958,9 @@ static void test_table_load(void) {
 // set from a row: a v4 row's bit, and the classic game for v2 and v3, whatever
 // the Game held before. The position is test_podkidnoy's, where the transfer is
 // legal under the classic rules, so "no transfer" after a load is the row
-// talking. This kernel still WRITES v3 (the expand step), and refuses to write a
-// variant into a format that cannot carry it rather than turn the game classic.
+// talking. This kernel WRITES v4 (the switch step), so a podkidnoy table
+// commits and seals as podkidnoy; a variant is still refused by a format that
+// cannot carry it (v2, v3) rather than turned into the classic game.
 static void test_state_blob_v4_carries_the_rules(void) {
     static unsigned char blob[8192];
     static Game g, back;
@@ -8994,16 +8995,22 @@ static void test_state_blob_v4_carries_the_rules(void) {
     CHECK(tr == TABLE_OK && !game_pass_allowed(&tb_game) && !menu_has(&tb_game, 1, MOVE_PASS),
           "v4: a table loads a podkidnoy row as podkidnoy");
 
-    // The expand kernel writes v3, which cannot say podkidnoy: the loaded row's
-    // commit, a seal, and every writer below v4 refuse it rather than write the
-    // classic game.
+    // The switch kernel writes v4: the loaded row's commit is the row it loaded,
+    // byte for byte, still podkidnoy. A writer below v4 cannot say podkidnoy, and
+    // refuses rather than write the classic game.
     TableCommit c;
-    CHECK(tr == TABLE_OK && table_commit_products(&tb, RS("g"), 2, 0, &c, tb_arena, sizeof(tb_arena)) == TABLE_E_STATE_RULES,
-          "v3 writer: a podkidnoy table's commit is refused, not written classic");
-    CHECK(state_blob_put(&g, &clk, blob) == STATE_BLOB_E_RULES, "v3 writer: the shipped writer refuses a podkidnoy board");
+    {
+        static unsigned char loaded[8192];
+        memcpy(loaded, blob, (size_t)n);
+        const int cr = tr == TABLE_OK ? table_commit_products(&tb, RS("g"), 2, 0, &c, tb_arena, sizeof(tb_arena)) : tr;
+        CHECK(cr >= 0 && c.state.len == n && memcmp(tb_arena + c.state.off, loaded, (size_t)n) == 0,
+              "v4 writer: a podkidnoy table commits back the row it loaded, byte for byte");
+    }
+    CHECK(state_blob_put(&g, &clk, blob) == n && blob[0] == STATE_BLOB_FORMAT_V4 && !(blob[1] & STATE_BLOB_FLAG_PASSING),
+          "v4 writer: the shipped writer writes a podkidnoy board as v4, passing bit clear");
     CHECK(state_blob_put_at(&g, &clk, STATE_BLOB_FORMAT_V3, blob) == STATE_BLOB_E_RULES
           && state_blob_put_at(&g, &clk, STATE_BLOB_FORMAT_V2, blob) == STATE_BLOB_E_RULES,
-          "v3 writer: neither v3 nor v2 writes a podkidnoy board");
+          "v3 and v2 writers: neither writes a podkidnoy board");
     {
         Game other = g;
         other.rules = (int8_t)(GAME_RULE_NO_PASS << 1);   // a rule no format has a bit for yet
@@ -9013,8 +9020,8 @@ static void test_state_blob_v4_carries_the_rules(void) {
     {
         Roster r;
         CHECK(roster_decode(&r, roster2p, ROSTER_BYTES) == ROSTER_OK
-              && table_seal(&tb, &g, &r, tb_buf, sizeof(tb_buf)) == TABLE_E_STATE_RULES,
-              "v3 writer: a podkidnoy fixture is refused at the seal");
+              && table_seal(&tb, &g, &r, tb_buf, sizeof(tb_buf)) > 0 && !game_pass_allowed(&tb_game),
+              "v4 writer: a podkidnoy fixture seals, and the table it loads is podkidnoy");
     }
 
     // Passing, written as v4, into a Game that held podkidnoy before.
@@ -9037,8 +9044,9 @@ static void test_state_blob_v4_carries_the_rules(void) {
     CHECK(tr == TABLE_OK && game_pass_allowed(&tb_game) && menu_has(&tb_game, 1, MOVE_PASS),
           "v4: a table loads a passing row as passing over a podkidnoy Game");
     CHECK(tr == TABLE_OK && table_commit_products(&tb, RS("g"), 2, 0, &c, tb_arena, sizeof(tb_arena)) >= 0
-          && tb_arena[c.state.off] == TABLE_STATE_FORMAT,
-          "v3 writer: a passing v4 row commits, at the format written");
+          && tb_arena[c.state.off] == TABLE_STATE_FORMAT && c.state.len == n
+          && memcmp(tb_arena + c.state.off, blob, (size_t)n) == 0,
+          "v4 writer: a passing v4 row commits back byte for byte");
 
     // v3 and v2 rows are the classic game, whatever the Game held before (an
     // FMSG decode in the same module, say).
@@ -10275,8 +10283,11 @@ static void test_opening_deal_bytes_are_unchanged(void) {
     // [0] the deal's commit products; [1] game logs + replay codes. [0] moved
     // once, when the writer went to the v3 state blob: hashing that blob as its
     // v2 self (format byte 2, no trailing clock) gives the v2 writer's digest
-    // back, so the clock is the whole of the change.
-    static const uint64_t golden[2] = { 0xd207116e4eee7539ULL, 0x3ec4d781fc36b8baULL };
+    // back, so the clock is the whole of the change. It moved again when the
+    // writer went to v4: hashing each blob as its v3 self (format byte 3, the
+    // flag byte's deck bit alone) gives the v3 digest 0xd207116e4eee7539 back,
+    // so the format byte and the PASSING bit are the whole of that change.
+    static const uint64_t golden[2] = { 0xeaae85afbc52968eULL, 0x3ec4d781fc36b8baULL };
     uint64_t hc = 1469598103934665603ULL;
     for (int np = 2; np <= MAX_PLAYERS; np++) {
         for (int seed_k = 1; seed_k <= 3; seed_k++) {
@@ -11276,7 +11287,7 @@ static int tb_row_deal(TbRow *row, Table *t, int np, const char *brain, const ui
     row->version = 1;
     row->status = c.status;
     row->fool = c.fool;
-    return row->state[1] == 1 && c.status == GAME_STATUS_PLAYING;
+    return (row->state[1] & STATE_BLOB_FLAG_DETERMINISTIC) && c.status == GAME_STATUS_PLAYING;
 }
 
 // One server cycle on `row`, on `t`: one action by whichever bot is up, committed,

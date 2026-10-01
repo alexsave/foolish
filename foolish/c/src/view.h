@@ -99,8 +99,11 @@ int state_import(Game *g, const unsigned char *p, int len, int masked);
 // with STATE_BLOB_FORMAT flipped to the new one, deployed once the expand kernel
 // is live everywhere, so a rollback or a deploy window never puts a new row in
 // front of a kernel that refuses it; CONTRACT, the old read path deleted once no
-// old row is left. v2 -> v3 has had its switch (#244, #246). v3 -> v4 is at its
-// EXPAND: v4 is read, v3 is still written. A v2 row reads as a zero clock: a
+// old row is left. v2 -> v3 has had its switch (#244, #246), and v3 -> v4 has
+// had both: its expand (#249) read v4 and still wrote v3, and this kernel is the
+// switch, which writes v4. The CONTRACT of v2 and v3 is still to come: rows of
+// both stay in the column until a game rewrites them, so both are still read. A
+// v2 row reads as a zero clock: a
 // board last shown long ago, which is what a zero clock says (bot_drive.h
 // bot_wait_ms asks for no wait on it). A v2 or v3 row reads as the classic
 // passing game, which is all either could ever hold. Anything else is
@@ -121,16 +124,16 @@ int state_import(Game *g, const unsigned char *p, int len, int masked);
 #define STATE_BLOB_FORMAT_V4 4   // v3, its flag byte the bits below
 
 // The v4 flag byte. Bit 0 means what the whole v2/v3 flag byte meant; a classic
-// game's row, which is every row today, reads PASSING with it.
+// game's row reads PASSING with it.
 #define STATE_BLOB_FLAG_DETERMINISTIC 0x01   // the seed-dealt deck (Game.deterministic_deck)
 #define STATE_BLOB_FLAG_PASSING       0x02   // 1 the classic passing game, 0 podkidnoy (GAME_RULE_NO_PASS)
 #define STATE_BLOB_FLAGS_V4 (STATE_BLOB_FLAG_DETERMINISTIC | STATE_BLOB_FLAG_PASSING)
 
-// THE FORMAT THIS KERNEL WRITES, and the one switch of the move above: v3 while
-// this is the v4 expand kernel, V4 once it is the switch. Everything that
+// THE FORMAT THIS KERNEL WRITES, and the one switch of the move above: V4, the
+// switch step (it was V3 while the expand kernel was deploying). Everything that
 // depends on which one is written - the clock bytes a blob ends with, whether a
 // board's rules can be written at all - follows from it.
-#define STATE_BLOB_FORMAT STATE_BLOB_FORMAT_V3
+#define STATE_BLOB_FORMAT STATE_BLOB_FORMAT_V4
 
 // The bytes the blob's header costs, ahead of the state_put payload.
 #define STATE_BLOB_HEADER 2
@@ -166,9 +169,10 @@ static inline int state_blob_clock_bytes(int fmt) {
 // NULL writes a zero clock (a board nobody has been shown).
 int state_blob_put(const Game *g, const BoardClock *clk, unsigned char *out);
 
-// The same at an explicit format, v2, v3 or v4: the format the switch step will
-// write is written here first, for the tests that read it before any kernel
-// ships it. Nothing but state_blob_put names a format in shipped code.
+// The same at an explicit format, v2, v3 or v4: for the tests that write the
+// rows older kernels wrote, which this one must still read, and that pin the
+// refusal of a variant at a format that cannot carry it. Nothing but
+// state_blob_put names a format in shipped code.
 int state_blob_put_at(const Game *g, const BoardClock *clk, int format, unsigned char *out);
 
 // Load a durable blob back into g, and its clock into `clk` (may be NULL; a v2

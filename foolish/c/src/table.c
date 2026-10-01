@@ -654,9 +654,11 @@ int table_continue(Table *t, const char *actor_id, int id_len) {
     if (actor_seat(t, actor_id, id_len) < 0) return TABLE_E_NOT_SEATED;
     if (t->g->status != GAME_STATUS_GAME_OVER) return TABLE_E_NOT_OVER;
     game_reset_to_lobby(t->g, roster_bot_mask(&t->r));
-    // A lobby has no deck to draw from, so its blob says so: the flag byte of every
-    // lobby blob is 0, as the expand migration writes it (plan 3.4), and the next
-    // deal sets it again.
+    // A lobby has no deck to draw from, so its blob says so: the deck bit of every
+    // lobby blob's flag byte is clear (plan 3.4), and the next deal sets it again.
+    // The RULES carry over (game_reset_to_lobby leaves g->rules alone): a rematch
+    // is the same table playing the same game, and any seat may change them in
+    // the lobby before it deals (table_set_rules).
     t->g->deterministic_deck = false;
     lobby_edit(t, 0);
     return TABLE_OK;
