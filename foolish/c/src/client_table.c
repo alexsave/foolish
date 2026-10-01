@@ -328,12 +328,13 @@ int client_view_rules(const TableView *v, int from_deck, int to_flipped, ViewRul
         || v->my_seat < -1 || v->my_seat >= n || from_deck < 0 || to_flipped < 0) return CLIENT_E_FORMAT;
     memset(out, 0, sizeof(*out));
 
-    // The deal lays the stock out before it turns the trump: until then nobody
-    // leads or defends anything yet.
-    const bool dealt = !(v->deck_count > 0 && !v->has_flipped);
-    out->first_attacker_badge = (int8_t)(dealt && v->num_battles == 0 && v->first_attacker >= 0 && v->first_attacker < n
+    // A seat is marked when the board names it. Until the trump has turned the
+    // kernel names nobody (GAME_SEAT_NONE, game.h): the lobby and every board of
+    // the opening deal before START_DEFENDER, so no guess about "is it dealt
+    // yet" is made here.
+    out->first_attacker_badge = (int8_t)(v->num_battles == 0 && v->first_attacker >= 0 && v->first_attacker < n
                                          ? v->first_attacker : -1);
-    out->defender_badge = (int8_t)(dealt && v->defender >= 0 && v->defender < n ? v->defender : -1);
+    out->defender_badge = (int8_t)(v->defender >= 0 && v->defender < n ? v->defender : -1);
 
     // Good is handle_good's to allow (a playing game, a seat still in, not the
     // defender, not said already), and it is offered once the bout could close

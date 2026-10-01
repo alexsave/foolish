@@ -502,6 +502,9 @@ int table_create(Table *t, const char *actor_id, int id_len, const char *name, i
     Game *g = t->g;
     memset(g, 0, offsetof(Game, logs));
     g->num_logs = 0;
+    // The lobby's resting state has one owner, the reset a finished game takes
+    // back to its lobby: no seat leads or defends (GAME_SEAT_NONE).
+    game_reset_to_lobby(g, 0);
     game_lobby_seat(g, STRATEGY_KEY_HUMAN);
     t->r = r;
     t->log_len = 0;

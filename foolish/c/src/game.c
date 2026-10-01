@@ -266,11 +266,32 @@ int game_validate(const Game *g, int flags) {
             return GAME_INVALID_PLAYER_STATUS;
     if (g->power_suit < 0 || g->power_suit >= NUM_SUITS)
         return GAME_INVALID_POWER_SUIT;
-    // An empty lobby has no seat to point at; its seat fields rest at 0.
-    const int seats = np > 0 ? np : 1;
-    if (g->first_attacker < 0 || g->first_attacker >= seats
-        || g->defender < 0 || g->defender >= seats)
-        return GAME_INVALID_SEAT;
+    // GAME_SEAT_NONE (game.h) is legitimate in exactly two places, and only in
+    // both fields at once: a lobby, and the opening deal before START_DEFENDER
+    // (start_game_dealt) - a PLAYING board on which nothing has been played yet:
+    // no battle, no discard, nobody out or good, every seat in and no hand past
+    // a full deal. Anywhere else a game without a defender is a bug - a deal
+    // that never named one, or a bout that lost it - and is refused here rather
+    // than read as "nobody is marked" by every host.
+    const bool no_lead = g->first_attacker == GAME_SEAT_NONE, no_defender = g->defender == GAME_SEAT_NONE;
+    if (no_lead || no_defender) {
+        bool before_opening = g->status == GAME_STATUS_WAITING;
+        if (g->status == GAME_STATUS_PLAYING) {
+            before_opening = g->num_battles == 0 && g->discard_pile_length == 0 && g->num_eliminated == 0
+                          && g->good_players_mask == 0 && !g->has_good_timestamp;
+            for (int i = 0; i < np; i++)
+                before_opening = before_opening && g->players[i].status == PLAYER_STATUS_IN
+                              && g->players[i].hand_count <= CARDS_PER_PLAYER;
+        }
+        if (!(no_lead && no_defender) || !before_opening) return GAME_INVALID_SEAT;
+    } else {
+        // An empty lobby has no seat to point at. A lobby row sealed before the
+        // lobby rested at GAME_SEAT_NONE holds 0 there, which is still a seat.
+        const int seats = np > 0 ? np : 1;
+        if (g->first_attacker < 0 || g->first_attacker >= seats
+            || g->defender < 0 || g->defender >= seats)
+            return GAME_INVALID_SEAT;
+    }
 
     if (g->num_eliminated < 0 || g->num_eliminated > np) return GAME_INVALID_ELIMINATION;
     {
@@ -681,6 +702,13 @@ static void start_game_reset(Game *g) {
 // deal in replay_steps.c, which is the duplication this consolidation exists
 // to delete.
 static void start_game_dealt(Game *g) {
+    // Nobody leads or defends until the trump has turned: every board from here
+    // to START_DEFENDER says so. Whatever seats the Game held before (a lobby, a
+    // rebuilt replay's zeroed Game) are not the opening's, and START_MAGIC,
+    // every DEAL and FLIPPED used to carry them - which drew seat 0's shield
+    // through the whole deal on every host.
+    g->first_attacker = GAME_SEAT_NONE;
+    g->defender = GAME_SEAT_NONE;
     // TS emits its opening MAGIC_TRANSITION here: PLAYING status, full deck,
     // hands still empty from the lobby.
     SNAP(g, ENGINE_HOOK_START_MAGIC, -1);
@@ -738,8 +766,10 @@ void game_reset_to_lobby(Game *g, unsigned int bot_mask) {
     g->has_flipped = false;
     g->flipped = CARD_NONE;
     g->power_suit = 0;
-    g->first_attacker = 0;
-    g->defender = 0;
+    // A lobby names nobody: it is the board a host has on screen when the deal
+    // starts, and a seat it named would wear the shield through the whole deal.
+    g->first_attacker = GAME_SEAT_NONE;
+    g->defender = GAME_SEAT_NONE;
     g->num_battles = 0;
     g->num_eliminated = 0;
     // The server's handleContinue left these two set and leaned on the next
@@ -880,10 +910,18 @@ static bool all_same_value(const Card *c, int n) {
     return true;
 }
 
+// May a move be made at all? A playing game whose opening seats are named. The
+// opening deal's boards before START_DEFENDER are PLAYING with nobody defending
+// (GAME_SEAT_NONE); no move belongs to one, and without this a seat could say
+// good on one, since it is neither the defender nor the first attacker.
+static bool in_play(const Game *g) {
+    return g->status == GAME_STATUS_PLAYING && g->defender != GAME_SEAT_NONE;
+}
+
 bool handle_attack(Game *g, int player_idx, const Card *cards, int n_cards) {
     engine_last_reject = ENGINE_REJECT_NONE;
     if (n_cards <= 0) REJECT(ENGINE_REJECT_EMPTY);
-    if (g->status != GAME_STATUS_PLAYING) REJECT(ENGINE_REJECT_NOT_PLAYING);
+    if (!in_play(g)) REJECT(ENGINE_REJECT_NOT_PLAYING);
     if (player_idx == g->defender) REJECT(ENGINE_REJECT_IS_DEFENDER);
 
     // Validation ordering mirrors TS validateAttack: full in-hand sweep
@@ -949,7 +987,7 @@ bool handle_attack(Game *g, int player_idx, const Card *cards, int n_cards) {
 bool handle_cover(Game *g, int player_idx,
                   const Card *cover_cards, const Card *attack_cards, int n) {
     engine_last_reject = ENGINE_REJECT_NONE;
-    if (g->status != GAME_STATUS_PLAYING) REJECT(ENGINE_REJECT_NOT_PLAYING);
+    if (!in_play(g)) REJECT(ENGINE_REJECT_NOT_PLAYING);
     if (n <= 0) REJECT(ENGINE_REJECT_EMPTY);
 
     // TS validateCover checks for uncovered attacks BEFORE the defender
@@ -1074,7 +1112,7 @@ bool handle_cover(Game *g, int player_idx,
 
 bool handle_pass(Game *g, int player_idx, const Card *cards, int n_cards) {
     engine_last_reject = ENGINE_REJECT_NONE;
-    if (g->status != GAME_STATUS_PLAYING) REJECT(ENGINE_REJECT_NOT_PLAYING);
+    if (!in_play(g)) REJECT(ENGINE_REJECT_NOT_PLAYING);
     // PODKIDNOY (GAME_RULE_NO_PASS): this table plays the throw-in game, where
     // the defender covers or picks up and there is no transfer at all. Checked
     // FIRST, ahead of every card-shape rule below, because it is not a fact
@@ -1141,7 +1179,7 @@ bool handle_pass(Game *g, int player_idx, const Card *cards, int n_cards) {
 
 bool handle_pickup(Game *g, int player_idx) {
     engine_last_reject = ENGINE_REJECT_NONE;
-    if (g->status != GAME_STATUS_PLAYING) REJECT(ENGINE_REJECT_NOT_PLAYING);
+    if (!in_play(g)) REJECT(ENGINE_REJECT_NOT_PLAYING);
     if (player_idx != g->defender) REJECT(ENGINE_REJECT_NOT_DEFENDER);
     if (g->num_battles == 0) REJECT(ENGINE_REJECT_NO_TABLE_CARDS);
 
@@ -1226,7 +1264,7 @@ uint32_t game_shown_good_mask(const Game *g) {
 
 bool handle_good(Game *g, int player_idx) {
     engine_last_reject = ENGINE_REJECT_NONE;
-    if (g->status != GAME_STATUS_PLAYING) REJECT(ENGINE_REJECT_NOT_PLAYING);
+    if (!in_play(g)) REJECT(ENGINE_REJECT_NOT_PLAYING);
     if (g->players[player_idx].status != PLAYER_STATUS_IN) REJECT(ENGINE_REJECT_NOT_IN_STATUS);
     if (player_idx == g->defender) REJECT(ENGINE_REJECT_IS_DEFENDER);
     if (g->num_battles == 0 && player_idx == g->first_attacker) REJECT(ENGINE_REJECT_FIRST_MUST_ATTACK);

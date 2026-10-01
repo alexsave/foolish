@@ -4208,8 +4208,8 @@ static void test_reset_to_lobby(void) {
     CHECK(g.discard_pile_length == 0, "the discard is cleared");
     CHECK(!g.has_flipped, "the trump is cleared");
     CHECK(g.power_suit == 0, "the power suit is cleared");
-    CHECK(g.first_attacker == 0, "first_attacker is cleared");
-    CHECK(g.defender == 0, "defender is cleared");
+    CHECK(g.first_attacker == GAME_SEAT_NONE, "first_attacker is cleared: the lobby names no lead");
+    CHECK(g.defender == GAME_SEAT_NONE, "defender is cleared: the lobby names no defender");
     CHECK(g.num_battles == 0, "the table is cleared");
     CHECK(g.num_eliminated == 0, "the elimination order is cleared");
     CHECK(g.good_players_mask == 0, "good presses are cleared");
@@ -9852,6 +9852,82 @@ static void test_opening_deal_names_no_defender(void) {
     }
 }
 
+// 2c. NOBODY DEFENDS ONLY WHERE NOBODY CAN. GAME_SEAT_NONE is the lobby's and the
+// opening deal's, both fields at once, and game_validate refuses it anywhere
+// else: a defender that was never named after START_DEFENDER, or lost mid-game,
+// is a bug every host would otherwise draw as "nobody is marked". A board shaped
+// like the FLIPPED one (dealt, nothing played) is the one PLAYING board it may
+// sit on, and no move is legal there - not even a good, which used to slip
+// through because a seat of -1 is neither the defender nor the first attacker.
+static Game nd_dealt, nd_g;
+static void test_validate_seat_none_only_before_the_opening(void) {
+    unsigned char seed[FOOLISH_SEED_LEN];
+    for (int i = 0; i < FOOLISH_SEED_LEN; i++) seed[i] = (unsigned char)(i * 7 + 3);
+    game_set_deal_seed_bytes(seed, FOOLISH_SEED_LEN);
+    memset(&nd_dealt, 0, sizeof nd_dealt);
+    nd_dealt.num_players = 3;
+    for (int i = 0; i < 3; i++) nd_dealt.players[i].status = PLAYER_STATUS_READY;
+    start_game(&nd_dealt);
+    const int fa = nd_dealt.first_attacker, def = nd_dealt.defender;
+    CHECK(fa >= 0 && def >= 0 && game_validate(&nd_dealt, 0) == GAME_VALID, "seat none: a dealt game names its seats and validates");
+#define ND_FROM(src) memcpy(&nd_g, &(src), offsetof(Game, logs))
+
+    // The lobby, fresh and after a finished game (the rematch's lobby).
+    ND_FROM(nd_dealt);
+    game_reset_to_lobby(&nd_g, 0);
+    CHECK(nd_g.defender == GAME_SEAT_NONE && nd_g.first_attacker == GAME_SEAT_NONE,
+          "seat none: the lobby a game resets to names nobody");
+    CHECK(game_validate(&nd_g, 0) == GAME_VALID, "seat none: a lobby naming nobody validates");
+    nd_g.first_attacker = 0;
+    CHECK(game_validate(&nd_g, 0) == GAME_INVALID_SEAT, "seat none: a lobby naming a lead but no defender is refused");
+    nd_g.first_attacker = 0; nd_g.defender = 0;
+    CHECK(game_validate(&nd_g, 0) == GAME_VALID, "seat none: a lobby row sealed before the sentinel (seat 0) still validates");
+
+    // The FLIPPED board's shape: dealt, nothing played, nobody named.
+    ND_FROM(nd_dealt);
+    nd_g.first_attacker = GAME_SEAT_NONE; nd_g.defender = GAME_SEAT_NONE;
+    CHECK(game_validate(&nd_g, 0) == GAME_VALID, "seat none: the opening deal's board before START_DEFENDER validates");
+    int goods = 0;
+    for (int s = 0; s < 3; s++) goods += handle_good(&nd_g, s) ? 1 : 0;
+    CHECK(goods == 0 && engine_last_reject == ENGINE_REJECT_NOT_PLAYING && nd_g.good_players_mask == 0,
+          "seat none: no seat may say good before the opening names a defender");
+    Card lead = nd_g.players[fa].hand[0];
+    CHECK(!handle_attack(&nd_g, fa, &lead, 1) && nd_g.num_battles == 0,
+          "seat none: nobody may lead before the opening names a first attacker");
+
+    // A dealt game that lost one of its seats.
+    ND_FROM(nd_dealt);
+    nd_g.defender = GAME_SEAT_NONE;
+    CHECK(game_validate(&nd_g, 0) == GAME_INVALID_SEAT, "seat none: a dealt game with a first attacker but no defender is refused");
+    ND_FROM(nd_dealt);
+    nd_g.first_attacker = GAME_SEAT_NONE;
+    CHECK(game_validate(&nd_g, 0) == GAME_INVALID_SEAT, "seat none: a dealt game with a defender but no first attacker is refused");
+
+    // Mid-bout: an attack is on the table.
+    ND_FROM(nd_dealt);
+    Card c = nd_g.players[fa].hand[0];
+    CHECK(handle_attack(&nd_g, fa, &c, 1), "seat none: the lead attacks");
+    nd_g.first_attacker = GAME_SEAT_NONE; nd_g.defender = GAME_SEAT_NONE;
+    CHECK(game_validate(&nd_g, 0) == GAME_INVALID_SEAT, "seat none: a game with an attack on the table and nobody named is refused");
+
+    // The first bout is over (a pickup): the table is empty and nothing is
+    // discarded, but the defender holds the table, more than a deal gives.
+    ND_FROM(nd_dealt);
+    c = nd_g.players[fa].hand[0];
+    CHECK(handle_attack(&nd_g, fa, &c, 1) && handle_pickup(&nd_g, def) && nd_g.num_battles == 0 && nd_g.discard_pile_length == 0,
+          "seat none: the first bout ends in a pickup");
+    nd_g.first_attacker = GAME_SEAT_NONE; nd_g.defender = GAME_SEAT_NONE;
+    CHECK(game_validate(&nd_g, 0) == GAME_INVALID_SEAT, "seat none: a game past its first bout with nobody named is refused");
+
+    // A finished game.
+    CHECK(rs_play_seeded(&nd_g, 3, 717, seed), "seat none: a 3-seat game plays out");
+    game_settle_status(&nd_g);
+    CHECK(nd_g.status == GAME_STATUS_GAME_OVER && game_validate(&nd_g, 0) == GAME_VALID, "seat none: the finished game validates");
+    nd_g.first_attacker = GAME_SEAT_NONE; nd_g.defender = GAME_SEAT_NONE;
+    CHECK(game_validate(&nd_g, 0) == GAME_INVALID_SEAT, "seat none: a finished game with nobody named is refused");
+#undef ND_FROM
+}
+
 // 3. THE HANDS ARE UNTOUCHED. A digest over every hand, the stock in order, the
 // flip and the opening seats, for 2..8 seats x 300 seeds, in both deal modes
 // (the seed-shuffled deal every product uses, and the legacy random draw). The
@@ -11991,10 +12067,21 @@ static void test_client_view_rules(void) {
           "mid-bout: no sword, the shield on the defender");
     v.num_battles = 0;
     CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.first_attacker_badge == 0, "an empty table: the sword on the lead");
+    // Mid-deal (a stock and no trump yet) the board names nobody (game.c
+    // start_game_dealt), and that alone is why neither seat is marked: the rule
+    // reads the seats, never "is it dealt yet".
     v.has_flipped = false;
     v.flipped = CARD_NONE;
+    v.first_attacker = GAME_SEAT_NONE;
+    v.defender = GAME_SEAT_NONE;
     CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.first_attacker_badge == -1 && r.defender_badge == -1,
-          "mid-deal (a stock and no trump yet): neither badge");
+          "mid-deal (a stock and no trump yet, nobody named): neither badge");
+    v.has_flipped = true;
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.first_attacker_badge == -1 && r.defender_badge == -1,
+          "the trump turned, nobody named yet (FLIPPED): neither badge");
+    v.has_flipped = false;
+    v.first_attacker = 0;
+    v.defender = 1;
     v.deck_count = 0;
     CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.first_attacker_badge == 0 && r.defender_badge == 1,
           "the stock and trump drawn out late in the game: both badges");
@@ -13110,6 +13197,7 @@ int main(void) {
     test_opening_deal_is_round_robin();
     test_opening_deal_tail_survives_eight_seats();
     test_opening_deal_names_no_defender();
+    test_validate_seat_none_only_before_the_opening();
     test_opening_deal_hands_are_unchanged();
     test_refill_events_and_plan_are_unchanged();
     test_deal_card_timing();

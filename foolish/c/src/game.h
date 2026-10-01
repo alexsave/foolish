@@ -99,6 +99,14 @@
 #define GAME_STATUS_PLAYING   1
 #define GAME_STATUS_GAME_OVER 2
 
+// NOBODY LEADS OR DEFENDS YET: Game.first_attacker and Game.defender before the
+// opening seats are known. Who leads is the lowest trump's holder, and the trump
+// is not known until the flip, so a lobby (game_reset_to_lobby, table_create)
+// and every board of the opening deal before ENGINE_HOOK_START_DEFENDER carry
+// this in BOTH fields, and nothing else ever does (game_validate). A host needs
+// no rule of its own for it: it matches no seat, so no seat is marked.
+#define GAME_SEAT_NONE (-1)
+
 // ---------- Rules variants (Game.rules) ---------------------------------
 //
 // PODKIDNOY, the throw-in game with no transfer: the defender may not hand the
@@ -411,7 +419,7 @@ extern _Thread_local int engine_last_reject;
 #define GAME_INVALID_NUM_PLAYERS      (-3)  // too few seats for a dealt game
 #define GAME_INVALID_PLAYER_STATUS    (-4)  // a Player.status is not a PLAYER_STATUS_*
 #define GAME_INVALID_POWER_SUIT       (-5)  // power_suit is not a suit
-#define GAME_INVALID_SEAT             (-6)  // first_attacker/defender is not a seat
+#define GAME_INVALID_SEAT             (-6)  // first_attacker/defender is not a seat (or GAME_SEAT_NONE outside a lobby or the opening deal)
 #define GAME_INVALID_ELIMINATION      (-7)  // elimination order: bad seat, repeat, or too long
 #define GAME_INVALID_GOOD_MASK        (-8)  // a good bit for a seat that does not exist
 #define GAME_INVALID_CARD             (-9)  // a card that is not a card of this game's deck

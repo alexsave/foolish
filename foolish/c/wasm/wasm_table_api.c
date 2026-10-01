@@ -297,12 +297,13 @@ int wasm_elo_deltas(int n) {
 
 static Roster g_fixture_roster;
 
-// A zeroed resident game (no face-up trump) and an empty roster; the table
-// holds nothing loaded. -> the Game the host's setters write.
+// An empty lobby (game_reset_to_lobby: no face-up trump, nobody leading or
+// defending) and an empty roster; the table holds nothing loaded. -> the Game
+// the host's setters write. A field the fixture does not set keeps the lobby's.
 Game *wasm_fixture_begin(void) {
     Game *g = wasm_game_ptr_internal();
     memset(g, 0, sizeof(*g));
-    g->flipped = CARD_NONE;
+    game_reset_to_lobby(g, 0);
     memset(&g_fixture_roster, 0, sizeof(g_fixture_roster));
     table()->loaded = false;
     return g;
