@@ -67,7 +67,10 @@
 //    deploy - therefore reads every passing table as before, and refuses a
 //    podkidnoy table rather than show it as the passing game it is not. The
 //    trailer is not a durable column of its own; it rides the player_views rows
-//    and the pushes, which every commit rewrites.
+//    and the pushes, which every commit rewrites. Do not simplify the writer to
+//    always write format 2: that would change every classic table's bytes (and
+//    the goldens), and every old reader would then refuse every table, not just
+//    the podkidnoy ones.
 #ifndef CNITRO_ROSTER_H
 #define CNITRO_ROSTER_H
 
