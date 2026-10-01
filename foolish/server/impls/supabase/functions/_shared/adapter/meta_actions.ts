@@ -3,8 +3,8 @@
 //
 // The JSON request body stays (it is HTTP input, and shipped iOS builds send
 // it). Every edit's rule - who may do it (Q9), whether the table is in its
-// lobby, a full table, a duplicate join, a title, a permutation, whether it
-// deals - is the kernel's. What is left here is I/O: the `bots` read add-bot
+// lobby, a full table, a duplicate join, a title, a permutation, the rules,
+// whether it deals - is the kernel's. What is left here is I/O: the `bots` read add-bot
 // needs, the crypto deal seed an edit that may deal is handed (table_io), and
 // the CAS loop.
 
@@ -90,6 +90,15 @@ export async function handleMetaAction(ctx: RequestContext, botsPrefetch = prefe
         case 'update-name':
             out = await op(({ table }) => table.retitle(actor, str(body.new_name)), moot);
             break;
+        case 'set-rules': {
+            // { passing: true } the classic passing game, { passing: false }
+            // podkidnoy. Anything else is a malformed request, never a default.
+            const passing = body.passing;
+            out = await op(({ table }) => (typeof passing === 'boolean'
+                ? table.setRules(actor, passing)
+                : L.TABLE_E_WIRE), moot);
+            break;
+        }
         default:
             throw new Error(`unknown meta action type: ${body?.type}`);
     }

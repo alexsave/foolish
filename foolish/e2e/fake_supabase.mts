@@ -617,6 +617,7 @@ export async function startFakeSupabase(opts: FakeOptions = {}): Promise<FakeBac
             case 'rearrange-hand': return t.rearrangeHand(me.id, body.card_indices ?? []);
             case 'rearrange-players': return t.reseat(me.id, body.new_order ?? []);
             case 'update-name': return t.retitle(me.id, String(body.new_name ?? ''));
+            case 'set-rules': return typeof body.passing === 'boolean' ? t.setRules(me.id, body.passing) : L.TABLE_E_WIRE;
             default: throw new Error(`unknown meta type ${body?.type}`);
         }
     }
