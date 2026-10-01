@@ -162,14 +162,14 @@ let myToken = '';
 const channels = new Map<string, { handlers: { event: string; cb: (p: unknown) => void }[] }>();
 
 /** Every request the page sent, and when it was answered (virtual ms). */
-export interface Sent { at: number; answeredAt: number; name: string; kind: string; status: number }
+export interface Sent { at: number; answeredAt: number; name: string; kind: string; status: number; body: unknown }
 export const sent: Sent[] = [];
 
 const later = (ms: number): Promise<void> => new Promise((r) => { g.setTimeout(r, ms); });
 
 async function invoke(name: string, opts: { body?: unknown }): Promise<{ data: unknown; error: unknown }> {
     const body = opts?.body;
-    const rec: Sent = { at: clock, answeredAt: -1, name, kind: body instanceof Blob ? 'packed' : String((body as any)?.type ?? ''), status: 0 };
+    const rec: Sent = { at: clock, answeredAt: -1, name, kind: body instanceof Blob ? 'packed' : String((body as any)?.type ?? ''), status: 0, body };
     sent.push(rec);
     if (latency.invokeMs > 0) await later(latency.invokeMs);
     const res = body instanceof Blob
@@ -188,6 +188,11 @@ function query(table: string) {
         const gid = filters.game_id as string | undefined;
         if (table === 'player_views' && single && gid) {
             const { rows } = await pgPool.query('SELECT view FROM player_views WHERE game_id = $1 AND player_id = $2', [gid, me]);
+            return { data: rows[0] ? { view: rows[0].view } : null, error: null };
+        }
+        // A page that holds no seat reads the shared masked row (ServerContext loadGame).
+        if (table === 'spectator_views' && single && gid) {
+            const { rows } = await pgPool.query('SELECT view FROM spectator_views WHERE game_id = $1', [gid]);
             return { data: rows[0] ? { view: rows[0].view } : null, error: null };
         }
         if (table === 'player_views') {
