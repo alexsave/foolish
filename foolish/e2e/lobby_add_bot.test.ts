@@ -20,6 +20,8 @@
 import { test, mock, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
+import { fixture } from './helpers/table_fixture.ts';
+import { fixtureView } from './helpers/table_mem.ts';
 
 // ---- jsdom DOM env the React client renders into ----
 const dom = new JSDOM('<!DOCTYPE html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
@@ -62,14 +64,14 @@ const supabaseMock = {
     }),
 };
 
-// The board the lobby renders (a TableView snapshot): one human seated, the viewer.
-const GAME = {
-    gameId: 'abcde', title: 'G', status: 0, mySeat: 0,
-    seats: [{ id: 'h1', name: 'Me', status: 0, isAi: false, handCount: 0, awaitingAttack: false }],
-};
+// The board the lobby renders: one human seated, the viewer - the kernel's own
+// envelope for that seat, read the way the page reads one, so everything the
+// lobby asks the kernel of it (the rules box's canSetRules) has a whole view.
+const GAME = fixtureView(fixture().title('G').seats([{ id: 'h1', name: 'Me' }]).build(), 0, 'abcde');
 const SERVER = {
     view: GAME,
     updateGameName: () => Promise.resolve(),
+    setRules: () => Promise.resolve(),
     rearrangePlayer: () => Promise.resolve(),
     addBot: (_gameId: string, botId?: string) => { addBotCalls.push(botId); return Promise.resolve({ game_id: _gameId }); },
     exitGame: () => Promise.resolve(),

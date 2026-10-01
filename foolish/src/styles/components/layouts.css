@@ -129,6 +129,96 @@
   z-index: 10;
 }
 
+/* The lobby's rules: one wooden tick box under the player list, its left edge
+   on the cards' left edge. The box keeps its size whatever it holds, and the
+   tick turns edge-on rather than leaving, so ticking it moves nothing else. */
+.lobby__rules {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  width: 250px;
+  min-height: 44px;
+  margin: 2px 0 6px;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* The native control, kept for the keyboard and a screen reader, drawn by the box. */
+.lobby__rules-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.lobby__rules-box {
+  position: relative;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: var(--border-wood);
+  box-shadow: var(--shadow-wood-inset);
+  overflow: hidden;
+  transition: filter 0.2s ease;
+}
+
+.lobby__rules:not(.lobby__rules--disabled):hover .lobby__rules-box {
+  filter: brightness(1.1) contrast(1.1);
+}
+
+.lobby__rules-input:focus-visible + .lobby__rules-box {
+  outline: 2px solid var(--color-text-primary);
+  outline-offset: 2px;
+}
+
+.lobby__rules-tick {
+  display: inline-flex;
+  line-height: 0;
+  transition: transform 0.25s ease;
+}
+
+.lobby__rules-tick--off {
+  transform: scaleX(0.001);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lobby__rules-tick {
+    transition: none;
+  }
+}
+
+.lobby__rules-label {
+  color: var(--color-text-primary);
+  text-shadow: var(--text-shadow-outline);
+  font-weight: bold;
+  font-size: 1rem;
+  line-height: 1.2;
+}
+
+/* Somebody who may not move it still reads it: dimmed, never hidden. */
+.lobby__rules--disabled {
+  cursor: default;
+}
+
+.lobby__rules--disabled .lobby__rules-box {
+  filter: saturate(0.6) brightness(0.8);
+}
+
+.lobby__rules--disabled .lobby__rules-label {
+  opacity: 0.7;
+}
+
 /* Player Card */
 .player-card {
   border: 2px solid #5D3A1A;
@@ -943,6 +1033,13 @@
   background-color: #F5E6C8;
   border: 3px solid #0A0A0A;
   box-shadow: 4px 4px 0 #0A0A0A;
+}
+
+/* Lobby - Soviet rules box: a cream box in the player cards' black rim. */
+[data-theme="soviet"] .lobby__rules-box {
+  background-color: #F5E6C8;
+  border: 3px solid #0A0A0A;
+  box-shadow: 3px 3px 0 #0A0A0A;
 }
 
 /* Lobby - Soviet player card */

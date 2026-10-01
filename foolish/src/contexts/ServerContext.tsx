@@ -822,6 +822,29 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
+    // The lobby's rules (docs/PODKIDNOY.md): `passing` true for the classic
+    // passing game, false for podkidnoy. Shown at once, as a retitle is, and put
+    // back if the server refuses; whether this viewer may change them at all is
+    // the kernel's (ViewRules.canSetRules), and the server holds the same rule.
+    const setRules = useCallback((gameId: string, passing: boolean): Promise<{ game_id: string }> => {
+        const previous = gamesRef.current[gameId]?.passing;
+        setGames(prev => (prev[gameId] ? { ...prev, [gameId]: { ...prev[gameId], passing } } : prev));
+
+        const revert = () => {
+            if (previous === undefined) return;
+            setGames(prev => (prev[gameId] ? { ...prev, [gameId]: { ...prev[gameId], passing: previous } } : prev));
+        };
+
+        return invokeGameFunctions('meta', {
+            type: 'set-rules',
+            game_id: gameId,
+            passing,
+        }, {
+            onError: revert
+        });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
     const rearrangePlayer = useCallback((gameId: string, playerIds: string[]): Promise<{ game_id: string }> => {
         // A lobby's seats, reordered by their player ids (a lobby holds no cards,
         // so the seats are all a reorder moves).
@@ -1116,10 +1139,10 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     const actions: ServerActionsType = useMemo(() => ({
         createGame, joinGame, startGame, addBot, exitGame,
         attack, pass, pickup, cover, good,
-        sendMessage, getUserGames, updateGameState, updateGameName,
+        sendMessage, getUserGames, updateGameState, updateGameName, setRules,
         rearrangePlayer, rearrangeHand, continueGame, loadGame, setLocalHandOrder,
     }), [createGame, joinGame, startGame, addBot, exitGame, attack, pass, pickup, cover, good,
-        sendMessage, getUserGames, updateGameState, updateGameName, rearrangePlayer, rearrangeHand,
+        sendMessage, getUserGames, updateGameState, updateGameName, setRules, rearrangePlayer, rearrangeHand,
         continueGame, loadGame, setLocalHandOrder]);
 
     const state: ServerStateType = useMemo(() => ({
@@ -1165,6 +1188,8 @@ interface ServerActionsType {
     getUserGames: () => Promise<void>;
     updateGameState: (gameId: string, view: TableView) => void;
     updateGameName: (gameId: string, name: string) => Promise<{ game_id: string }>;
+    /** The lobby's rules: `passing` true the classic passing game, false podkidnoy. */
+    setRules: (gameId: string, passing: boolean) => Promise<{ game_id: string }>;
     rearrangePlayer: (gameId: string, playerIds: string[]) => Promise<{ game_id: string }>;
     rearrangeHand: (gameId: string, cardIndices: number[]) => Promise<{ game_id: string }>;
     continueGame: (gameId: string) => Promise<{ game_id: string }>;
@@ -1250,6 +1275,7 @@ export const ReplayServerProvider = ({ gameId, initialGame, children }: {
             getUserGames: async () => { },
             updateGameState,
             updateGameName: noop,
+            setRules: noop,
             rearrangePlayer: noop,
             rearrangeHand: noop,
             continueGame: noop,
