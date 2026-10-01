@@ -86,24 +86,18 @@ final class UndoGateTests: XCTestCase {
     /// selection and nothing staged - and the bar offered Good. Owner: "you just
     /// dont show any action button between when the attack animation starts
     /// playing and the autocollapse finishes".
-    /// MUTANTS: `acting` not reading the in-flight play; the mark set after
+    /// MUTANTS: the in-flight bit not handed to the kernel; the mark set after
     /// the selection is cleared; never cleared when the apply answers.
     func testNoPlayButtonBetweenTheTapAndTheStage() throws {
         let board = try BoardSource.text()
-        // The rule itself is a value now - see
-        // BoardActionMenuTests.testNoPillBetweenTheTapAndTheStage. What only
-        // this file can check is that the board still HANDS the menu its own
-        // in-flight flag, and that `play` sets it before it clears the
-        // selection. A menu that is never told is a menu that never stands down.
-        XCTAssertTrue(board.contains("playInFlight: playInFlight"),
+        // The rule itself is the kernel's now - see c/tests/tests.c
+        // test_play_pills_one_move_one_button, "a play in flight leaves no
+        // pill, Take included". What only this file can check is that the
+        // board still HANDS the kernel its own in-flight flag, and that `play`
+        // sets it before it clears the selection. A rule that is never told is
+        // a rule that never stands down.
+        XCTAssertTrue(board.contains("if playInFlight { host.insert(.inFlight) }"),
                       "the play buttons are not told a play is being applied")
-        XCTAssertEqual(BoardActionMenu.resolve(
-            PlayProbe(move: nil, coverable: [0], bestCover: 0,
-                      canAttack: true, canPass: true, canSayGood: true),
-            .init(iCanAct: true, canSend: false, playInFlight: true, boardStill: true,
-                  superseded: false, pickupHeld: false, isDefender: true, isOut: false,
-                  tableIsEmpty: false, selectionIsEmpty: true)), .none,
-            "a pill is offered while a play is being applied")
         let start = try XCTUnwrap(board.range(of: "func play(_ move: Move) {"))
         let body = String(board[start.upperBound...].prefix(4000))
         let mark = try XCTUnwrap(body.range(of: "playInFlight = ActionPillSlot.holdsWhilePlaying"),
@@ -121,37 +115,29 @@ final class UndoGateTests: XCTestCase {
     /// still board Undo does, redrawn on the same short timer (the sequence
     /// hold is let go after the animator's last publish, so nothing observed
     /// would redraw the column when it ends).
-    /// MUTANTS: `acting` not reading `boardStill`; the column not redrawn on
-    /// the timer; the flag shipping off.
+    /// MUTANTS: the moving bit not handed to the kernel; the column not
+    /// redrawn on the timer; the flag shipping off.
     func testNoPlayButtonWhileAnUndoFlies() throws {
         XCTAssertTrue(ActionPillSlot.waitsForStillByDefault)
         let board = try BoardSource.text()
-        // Again: the standing-down is BoardActionMenuTests'
-        // testNoPillWhileTheBoardIsStillMoving. Here: that the board computes
-        // "still" from the two statics, hands it over, and redraws on the timer
-        // that is the only thing those statics will ever be re-read by.
-        XCTAssertTrue(board.contains("let boardStill = !ActionPillSlot.waitsForStill\n            || UndoGate.acceptsNow(cardsVeiled: !animator.hidden.isEmpty)"),
-                      "the board no longer asks the gate whether it has come to rest")
-        XCTAssertTrue(board.contains("boardStill: boardStill"),
-                      "the menu is not told whether the board has come to rest")
+        // Again: the standing-down is the kernel's (c/tests/tests.c, "a moving
+        // board leaves no pill, Take included"). Here: that the board computes
+        // "moving" from the two statics, hands it over, and redraws on the
+        // timer that is the only thing those statics will ever be re-read by.
+        XCTAssertTrue(board.contains("if ActionPillSlot.waitsForStill\n            && !UndoGate.acceptsNow(cardsVeiled: !animator.hidden.isEmpty) { host.insert(.moving) }"),
+                      "the board no longer tells the kernel it has not come to rest")
         XCTAssertTrue(board.contains("TimelineView(.periodic(from: .now, by: 0.1)) { _ in\n                    actionBar(view)"),
                       "the play column is not redrawn when the board comes to rest")
-        // Take is the one pill NOT gated on `acting` (it deliberately does not
-        // read the kernel's menu), so the hold and the wait have to be spelled
-        // out on it - filmed: Pickup back on the plank through a pickup undo's
-        // whole flight, and (owner) "the label... changed for a single frame
-        // after you hit pickup".
-        XCTAssertEqual(BoardActionMenu.resolve(
-            PlayProbe(move: nil, coverable: [], bestCover: nil,
-                      canAttack: false, canPass: false, canSayGood: false),
-            .init(iCanAct: true, canSend: false, playInFlight: false, boardStill: false,
-                  superseded: false, pickupHeld: false, isDefender: true, isOut: false,
-                  tableIsEmpty: false, selectionIsEmpty: true)).canPickup, false,
-            "Take shows during a play in flight or an animation")
-        XCTAssertTrue(board.contains("pickupHeld: controller.pickupHold != 0"),
-                      "the menu is not told about the throw-in hold")
-        XCTAssertTrue(board.contains("superseded: controller.superseded"),
-                      "the menu is not told this seat was stood down")
+        // Take is the one pill that does not read the kernel's menu, so the
+        // hold and the wait have to reach it too - filmed: Pickup back on the
+        // plank through a pickup undo's whole flight, and (owner) "the label...
+        // changed for a single frame after you hit pickup". The rule is the
+        // kernel's (c/tests/tests.c, the [Swift] host rows); what is checked
+        // here is that the board hands both bits over.
+        XCTAssertTrue(board.contains("if controller.pickupHold != 0 { host.insert(.pickupHeld) }"),
+                      "the kernel is not told about the throw-in hold")
+        XCTAssertTrue(board.contains("if controller.superseded { host.insert(.superseded) }"),
+                      "the kernel is not told this seat was stood down")
     }
 
     /// Hidden, not dimmed - and it ships that way.

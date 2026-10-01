@@ -57,11 +57,41 @@ public struct PlayProbe: Equatable, Sendable {
 
 public enum PlayWire {
 
-    /// Ask the kernel about a selection on this board. `menu` is the packed
-    /// legal-move wire the seat was handed (`fio_legal_packed` bytes, or
-    /// `MoveWire.emptyMenu` for a board that is offering nothing).
+    /// What a host knows about its own screen and transport, for the pills
+    /// (legal.h PLAY_HOST_*) - the facts no board carries. Every fact about the
+    /// board itself is the kernel's to read off the view.
+    public struct Host: OptionSet, Sendable, Equatable {
+        public let rawValue: UInt32
+        public init(rawValue: UInt32) { self.rawValue = rawValue }
+
+        /// A move is staged, waiting on Messages' Send.
+        public static let staged     = Host(rawValue: UInt32(PLAY_HOST_STAGED))
+        /// A move of mine is between the tap and the kernel's answer.
+        public static let inFlight   = Host(rawValue: UInt32(PLAY_HOST_IN_FLIGHT))
+        /// The board is still animating and refuses a play.
+        public static let moving     = Host(rawValue: UInt32(PLAY_HOST_MOVING))
+        /// A newer chain stood this seat down (round 20).
+        public static let superseded = Host(rawValue: UInt32(PLAY_HOST_SUPERSEDED))
+        /// The throw-in hold before a defender may take (round 16).
+        public static let pickupHeld = Host(rawValue: UInt32(PLAY_HOST_PICKUP_HELD))
+    }
+
+    /// Ask the kernel about a selection on the board `view` shows, under the
+    /// menu the seat was handed. Which seat defends is the kernel's to decide
+    /// from the view's own fields.
+    public static func probe(menu: Data, view: GameView, selection: [Card],
+                             target: PlayTarget) -> PlayProbe {
+        probe(menu: menu, battles: view.battles, powerSuit: view.powerSuit,
+              mySeat: view.viewer, defender: view.defender,
+              selection: selection, target: target)
+    }
+
+    /// The same question over a bare table. `menu` is the packed legal-move
+    /// wire the seat was handed (`fio_legal_packed` bytes, or
+    /// `MoveWire.emptyMenu` for a board that is offering nothing); `mySeat` and
+    /// `defender` are the view's seats, -1 for a spectator.
     public static func probe(menu: Data, battles: [BattleView], powerSuit: Int,
-                             isDefender: Bool, selection: [Card],
+                             mySeat: Int, defender: Int, selection: [Card],
                              target: PlayTarget) -> PlayProbe {
         let table = TableWire.encode(battles)
         let sel = selection.map(selectionByte)
@@ -72,7 +102,7 @@ public enum PlayWire {
                 sel.withUnsafeBufferPointer { s in
                     fio_play_probe(m.bindMemory(to: UInt8.self).baseAddress, Int32(menu.count),
                                    t.baseAddress, Int32(table.count / 2),
-                                   Int32(powerSuit), isDefender ? 1 : 0,
+                                   Int32(powerSuit), Int32(mySeat), Int32(defender),
                                    s.baseAddress, Int32(sel.count), target.wire,
                                    &out, Int32(out.count))
                 }
@@ -92,9 +122,9 @@ public enum PlayWire {
         return PlayProbe(move: MoveWire.decode(Data(bytes[head...])).first,
                          coverable: coverable,
                          bestCover: best >= 0 ? best : nil,
-                         canAttack: flags & 1 != 0,
-                         canPass: flags & 2 != 0,
-                         canSayGood: flags & 4 != 0)
+                         canAttack: flags & UInt8(PLAY_ANSWER_ATTACK) != 0,
+                         canPass: flags & UInt8(PLAY_ANSWER_PASS) != 0,
+                         canSayGood: flags & UInt8(PLAY_ANSWER_GOOD) != 0)
     }
 
     /// The moves a HUMAN may make on this board: the kernel's menu minus `wait`,
@@ -116,6 +146,28 @@ public enum PlayWire {
             if n >= 0 { return MoveWire.decode(Data(out.prefix(Int(n)).map { UInt8(bitPattern: $0) })) }
             guard n == -3, cap < (1 << 21) else { return [] }   // FIO_ECAP
             cap *= 2
+        }
+    }
+
+    /// WHICH PILLS THE BOARD DRAWS (legal.h play_pills): the PLAY_PILL_* bits
+    /// for `selection` on the board `view` shows, under the seat's `menu` and
+    /// the host's own `host` bits. ONE kernel call: who defends, the table, the
+    /// selection, out of play and whether the seat has a move at all are read
+    /// off the view there, never here. The view crosses as its own fields.
+    public static func pills(menu: Data, view: GameView, selection: [Card],
+                             host: Host) -> UInt32 {
+        let table = TableWire.encode(view.battles)
+        let sel = selection.map(selectionByte)
+        return menu.withUnsafeBytes { m in
+            table.withUnsafeBufferPointer { t in
+                sel.withUnsafeBufferPointer { s in
+                    UInt32(fio_play_pills(m.bindMemory(to: UInt8.self).baseAddress, Int32(menu.count),
+                                          t.baseAddress, Int32(table.count / 2), Int32(view.powerSuit),
+                                          Int32(view.viewer), Int32(view.defender),
+                                          Int32(view.me?.status ?? -1), Int32(view.status),
+                                          s.baseAddress, Int32(sel.count), host.rawValue))
+                }
+            }
         }
     }
 

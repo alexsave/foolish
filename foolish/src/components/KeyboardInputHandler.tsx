@@ -3,7 +3,8 @@ import { useServer } from '../contexts/ServerContext';
 import { useAnimation } from '../contexts/AnimationContext';
 import { useGame } from '../contexts/GameContext';
 import { useAuth } from '../contexts/AuthContext';
-import { canPass, coverGesture } from '../utils/gameValidation';
+import { boardPills, coverGesture } from '../utils/gameValidation';
+import { PLAY_PILL_ATTACK, PLAY_PILL_GOOD, PLAY_PILL_PASS, PLAY_PILL_PICKUP } from '@sdk/ts/gen/view_layout.bots.ts';
 import { type ViewCard as Card } from '../state/view';
 
 export const KeyboardInputHandler = () => {
@@ -35,18 +36,15 @@ export const KeyboardInputHandler = () => {
         return localHandOrder[position - 1];
     };
 
-    // What the Cover key means lives in the kernel now (gameValidation
-    // coverGesture -> client_play, legal.h play_*), shared by every input path
-    // and every host.
-    //
-    // Pass legality uses the SHARED canPass (src/utils/gameValidation.ts) - the
-    // same predicate the buttons/drag use - so the keyboard path can't diverge.
-    // The previous local copy omitted the next-player capacity check AND the
-    // eliminated-seat skip, so it offered passes the server would reject.
+    // A key makes only the move whose button the board shows (gameValidation
+    // boardPills -> client_play, legal.h play_pills), so a stray U or G
+    // with a card selected cannot throw the selection away. What the Cover key
+    // does is the Cover button's own answer (coverGesture).
+    const pills = game ? boardPills(game, selectedCards) : 0;
 
     // Action handlers
     const handleAttack = useCallback(async () => {
-        if (!game || selectedCards.length === 0) return;
+        if (!game || !(pills & PLAY_PILL_ATTACK)) return;
 
         // A move spends the selection when it is sent, refused or not (see ActionButtons).
         try {
@@ -55,7 +53,7 @@ export const KeyboardInputHandler = () => {
         } catch (error) {
             console.error('Attack failed:', error);
         }
-    }, [game, selectedCards, attack, setSelectedCards]);
+    }, [game, pills, selectedCards, attack, setSelectedCards]);
 
     const handleCover = useCallback(async () => {
         if (!game || selectedCards.length === 0) return;
@@ -76,41 +74,35 @@ export const KeyboardInputHandler = () => {
     }, [game, selectedCards, cover, setSelectedCards]);
 
     const handlePass = useCallback(async () => {
-        if (!game || selectedCards.length === 0) return;
-
-        try {
-            if (canPass(game, selectedCards)) {
-                setSelectedCards([]);
-                await pass(selectedCards);
-            } else {
-                console.error('Pass is not valid');
-            }
-        } catch (error) {
-            console.error('Pass failed:', error);
-        }
-    }, [game, selectedCards, pass, setSelectedCards]);
-
-    const handlePickup = useCallback(async () => {
-        if (!game) return;
+        if (!game || !(pills & PLAY_PILL_PASS)) return;
 
         try {
             setSelectedCards([]);
+            await pass(selectedCards);
+        } catch (error) {
+            console.error('Pass failed:', error);
+        }
+    }, [game, pills, selectedCards, pass, setSelectedCards]);
+
+    const handlePickup = useCallback(async () => {
+        if (!game || !(pills & PLAY_PILL_PICKUP)) return;
+
+        try {
             await pickup();
         } catch (error) {
             console.error('Pickup failed:', error);
         }
-    }, [game, pickup, setSelectedCards]);
+    }, [game, pills, pickup]);
 
     const handleGood = useCallback(async () => {
-        if (!game) return;
+        if (!game || !(pills & PLAY_PILL_GOOD)) return;
 
         try {
-            setSelectedCards([]);
             await good();
         } catch (error) {
             console.error('Good failed:', error);
         }
-    }, [game, good, setSelectedCards]);
+    }, [game, pills, good]);
 
     // Handle keyboard events
     useEffect(() => {

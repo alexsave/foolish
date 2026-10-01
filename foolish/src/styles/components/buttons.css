@@ -131,12 +131,6 @@
   color: var(--color-text-dark);
 }
 
-/* Action button spacer */
-.btn-action-spacer {
-  width: var(--btn-action-width);
-  height: var(--btn-action-height);
-}
-
 /* ===== Player Card Remove Button ===== */
 .btn-remove-player {
   width: 50px;

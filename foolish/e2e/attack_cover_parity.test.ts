@@ -6,22 +6,24 @@
  *
  *   SERVER - table_act on the row (the move path's own operation; applied ==
  *            legal)
- *   CLIENT - canAttack / validateAttack / canCoverCards / validateCover
- *            (src/utils/gameValidation.ts - the UI button / optimistic gates),
- *            on the board the seat's envelope reads to
+ *   CLIENT - boardPills (the Attack / Cover buttons), coverGesture (the move
+ *            the Cover button makes) and validateActionWire (the optimistic
+ *            pre-check) from src/utils/gameValidation.ts, on the board the
+ *            seat's envelope reads to
  *
  * Invariants asserted on random kernel-played game states:
  *   1. ATTACK: for candidate sets from the acting player's own hand (unique,
  *      non-defender - the preconditions every UI caller establishes), the
  *      client and the kernel must agree exactly. This includes the
  *      first-attacker restriction on an empty table (the old client showed a
- *      live Attack button to every non-defender).
- *   2. COVER (button): whenever canCoverCards says yes, the mapping the
- *      client would submit (findUnambiguousCover) must be kernel-legal.
- *      The reverse is deliberately NOT asserted - an ambiguous cover is
- *      hidden by design even though some mapping would be legal.
- *   3. COVER (optimistic gate): the throwing validateCover must agree with
- *      the kernel on defender-owned mappings, in both directions.
+ *      live Attack button to every non-defender). An attacker who has said
+ *      Good is the one exception, and only for the button: the kernel's menu
+ *      offers them nothing while table_act would still take a throw-in, so the
+ *      button is the stricter side there.
+ *   2. COVER (button): whenever the Cover button shows, the move it would
+ *      send (coverGesture) must be kernel-legal.
+ *   3. COVER (optimistic gate): the pre-check must agree with the kernel on
+ *      defender-owned mappings, in both directions.
  *
  * Pure in-memory (no Postgres). Phase 8 (docs/C_GAME_SHAPE_MIGRATION.md) moved
  * it off the TypeScript Game: the SERVER is the C Table's table_act on the row
@@ -36,12 +38,8 @@ import assert from 'node:assert/strict';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import type { TableView, ViewCard as Card } from '../sdk/ts/table/client_table.ts';
 import { encodeAction } from '../sdk/ts/wire/awire.ts';
-import {
-  canAttack as clientCanAttack,
-  validateAttack as clientValidateAttack,
-  coverGesture as clientCoverGesture,
-  validateCover as clientValidateCover,
-} from '../src/utils/gameValidation.ts';
+import * as V from '../sdk/ts/gen/view_layout.bots.ts';
+import { boardPills, coverGesture as clientCoverGesture, validateActionWire } from '../src/utils/gameValidation.ts';
 import { MemTable, type MemBoard } from './helpers/table_mem.ts';
 import { suiteRng } from './helpers/rng.ts';
 
@@ -71,12 +69,12 @@ function serverAllows(t: MemTable, seat: number, wire: Uint8Array): boolean {
 const serverAllowsAttack = (t: MemTable, seat: number, cards: Card[]) => serverAllows(t, seat, encodeAction({ kind: 'attack', cards }));
 const serverAllowsCover = (t: MemTable, seat: number, covers: Card[], attacks: Card[]) =>
   serverAllows(t, seat, encodeAction({ kind: 'cover', cards: covers, attack_cards: attacks }));
-function clientAllowsAttackOptimistic(personal: TableView, cards: Card[]): boolean {
-  try { clientValidateAttack(personal, cards); return true; } catch { return false; }
+function preCheck(personal: TableView, wire: Uint8Array): boolean {
+  try { validateActionWire(personal, wire); return true; } catch { return false; }
 }
-function clientAllowsCoverOptimistic(personal: TableView, covers: Card[], attacks: Card[]): boolean {
-  try { clientValidateCover(personal, covers, attacks); return true; } catch { return false; }
-}
+const clientAllowsAttackOptimistic = (personal: TableView, cards: Card[]) => preCheck(personal, encodeAction({ kind: 'attack', cards }));
+const clientAllowsCoverOptimistic = (personal: TableView, covers: Card[], attacks: Card[]) =>
+  preCheck(personal, encodeAction({ kind: 'cover', cards: covers, attack_cards: attacks }));
 
 // Candidate attack sets from a hand: every same-value subset (the shapes the
 // UI can actually submit), capped to keep the state count sane.
@@ -133,13 +131,14 @@ function playAndCheck(np: number, brain: string, stats: { states: number; attack
         //    preconditions: own hand, unique, non-defender)
         for (const cards of candidateAttackSets(p.hand)) {
           const server = serverAllowsAttack(t, seat, cards);
-          const button = clientCanAttack(personal, cards);
+          const button = (boardPills(personal, cards) & V.PLAY_PILL_ATTACK) !== 0;
           const optimistic = clientAllowsAttackOptimistic(personal, cards);
           stats.attacks++;
           const detail = `seat=${seat} first_attacker=${game.firstAttacker} defender=${game.defender} `
             + `table=[${tableText(game)}] cards=[${cards.map(cardKey).join(',')}] seed=${rng.seed}`;
-          assert.equal(button, server, `canAttack !== kernel: ${detail}`);
-          assert.equal(optimistic, server, `validateAttack !== kernel: ${detail}`);
+          if ((game.goodMask >>> seat) & 1) assert.ok(!button, `Attack shown after Good: ${detail}`);
+          else assert.equal(button, server, `Attack button !== kernel: ${detail}`);
+          assert.equal(optimistic, server, `attack pre-check !== kernel: ${detail}`);
         }
       } else {
         // 2. COVER button: offered => the move it would send is kernel-legal
@@ -168,7 +167,7 @@ function playAndCheck(np: number, brain: string, stats: { states: number; attack
             stats.covers++;
             assert.equal(
               optimistic, server,
-              `validateCover !== kernel (seed=${rng.seed}): covers=[${m.covers.map(cardKey).join(',')}] `
+              `cover pre-check !== kernel (seed=${rng.seed}): covers=[${m.covers.map(cardKey).join(',')}] `
               + `attacks=[${m.attacks.map(cardKey).join(',')}] table=[${tableText(game)}]`,
             );
           }

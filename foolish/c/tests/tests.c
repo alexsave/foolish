@@ -4286,11 +4286,14 @@ static void tb_add(Card attack, int covered) {
     g_pm_nb++;
 }
 
+// Seat 1 looks at the board; it defends when `is_defender`, else seat 0 does.
 static PlayBoard pm_board(int power_suit, int is_defender) {
     PlayBoard b;
     b.menu = g_pm_wire; b.menu_len = g_pm_len;
     b.table = g_pm_table; b.n_battles = g_pm_nb;
-    b.power_suit = power_suit; b.is_defender = is_defender;
+    b.power_suit = power_suit;
+    b.my_seat = 1; b.defender = is_defender ? 1 : 0;
+    b.my_status = PLAYER_STATUS_IN; b.game_status = GAME_STATUS_PLAYING;
     return b;
 }
 
@@ -4803,6 +4806,310 @@ static void test_play_human_menu_drops_wait_and_gates_good(void) {
           "the survivor crosses the filter byte for byte");
 }
 
+// ---------- play_pills: one move, one button ---------------------------------
+//
+// WHICH PILLS A HUMAN BOARD DRAWS (legal.h play_pills), lifted out of Swift
+// (ios/FoolishKit/Boards/BoardActionMenu.swift) so the website reads the same
+// owner. Most positions here are a REAL game and a REAL menu -
+// calculate_legal_moves on it, written to the wire a board holds - so the
+// pass-and-cover card and podkidnoy's missing transfer are the kernel talking,
+// not a fixture. The owner's report this answers: "too many times I've had a
+// card selected, quickly tried to pass cover, and hit pickup. Or quickly tried
+// to throw in a card, and hit 'good'."
+//
+// The host hands in only its PLAY_HOST_* bits. Which seat defends, whether the
+// table and the selection are empty, whether the seat is out of play, and
+// whether it has a move at all are read off the board, so every one of those is
+// pinned below by a board that says it, never by a bit a host could set.
+//
+// The rows marked [Swift] are BoardActionMenuTests' and UndoGateTests' cases,
+// moved here when the rule they guard stopped being Swift's: same position,
+// same expected pills. Their "kernel says yes to everything" probe is
+// pp_yes_board, a menu that lists an attack, a cover and a pass for one card;
+// their "kernel says no" is an empty menu over the same table.
+//
+// MUTATION-CHECKED, each applied on its own and restored (the count is every
+// CHECK in the suite that went red):
+//
+//   board_defends returns the opposite                        -> 37 failures
+//   board_defends drops its spectator guard                   ->  1 failure
+//   play_pills: Take drops its non-empty-table term           ->  3 failures
+//   play_pills: sel_empty is always true                      -> 13 failures
+//   board_is_out is never true                                ->  3 failures
+//   board_is_out reads only the seat status                   ->  2 failures
+//   play_pills: the answers ignore the menu (every one yes)   -> 30 failures
+//   play_pills: `acting` is always false                      -> 20 failures
+//   play_pills: `acting` drops its SUPERSEDED term            ->  5 failures
+//   play_pills: `acting` drops its STAGED term                ->  5 failures
+//
+// The old host-supplied I_CAN_ACT has no mutant of its own because it has no
+// code of its own: "this seat has a move" is the answers reading the menu, and
+// the answers mutant above is that derivation broken.
+
+// `seat`'s board on `g`: the kernel's menu for it, the table, and the seat
+// facts exactly as the game states them.
+static PlayBoard pp_board(const Game *g, int seat) {
+    calculate_legal_moves(g, seat, &g_pm);
+    pm_seal();
+    g_pm_nb = 0;
+    for (int i = 0; i < g->num_battles; i++) {
+        g_pm_table[2 * i] = (unsigned char)card_to_id(g->table_battles[i].attack);
+        g_pm_table[2 * i + 1] = card_is_none(g->table_battles[i].defense)
+            ? (unsigned char)LEGAL_WIRE_NONE : (unsigned char)card_to_id(g->table_battles[i].defense);
+        g_pm_nb++;
+    }
+    PlayBoard b;
+    b.menu = g_pm_wire; b.menu_len = g_pm_len;
+    b.table = g_pm_table; b.n_battles = g_pm_nb;
+    b.power_suit = g->power_suit;
+    b.my_seat = seat; b.defender = g->defender;
+    b.my_status = g->players[seat].status; b.game_status = g->status;
+    return b;
+}
+
+static unsigned pp_on(const PlayBoard *b, const Card *sel, int n_sel, unsigned host) {
+    sel_set(sel, n_sel);
+    return play_pills(b, pm_sel, pm_sel_n, host);
+}
+
+// The pills `seat` sees on `g` with `sel` selected, under the host bits `host`.
+static unsigned pp_pills(const Game *g, int seat, const Card *sel, int n_sel, unsigned host) {
+    const PlayBoard b = pp_board(g, seat);
+    return pp_on(&b, sel, n_sel, host);
+}
+
+// A menu that lists nothing, the wire a stood-down seat or a held settlement
+// publishes.
+static const unsigned char pp_no_menu[4] = { 0, 0, 0, 0 };
+
+// The board told yes to everything, for the [Swift] rows: one uncovered 7S on
+// the table and a menu listing an attack, a cover and a pass for the 7H (no
+// real menu lists all three for one seat, which is the point - the roles must
+// not mix whatever the menu says). Seat 1 looks; it defends when `defends`.
+static const Card pp_yes_card = { SUIT_HEARTS, 7 };
+static PlayBoard pp_yes_board(int defends) {
+    const Card seven_s = { SUIT_SPADES, 7 };
+    pm_reset();
+    tb_add(seven_s, 0);
+    pm_add(MOVE_ATTACK, &pp_yes_card, 1, 0, 0);
+    pm_add(MOVE_COVER, &pp_yes_card, 1, &seven_s, 1);
+    pm_add(MOVE_PASS, &pp_yes_card, 1, 0, 0);
+    pm_add(MOVE_GOOD, 0, 0, 0, 0);
+    pm_seal();
+    return pm_board(SUIT_DIAMONDS, defends);
+}
+
+// …and the same table with an empty menu: the kernel says no.
+static PlayBoard pp_no_board(int defends) {
+    PlayBoard b = pp_yes_board(defends);
+    b.menu = pp_no_menu; b.menu_len = (int)sizeof pp_no_menu;
+    return b;
+}
+
+// Seat 0 attacks seat 1, trumps are diamonds, 7S is on the table (covered by
+// 9S when `covered`). The attacker holds 7H (a throw-in once the 7S is
+// covered) and KC (nothing). The defender holds 7C (a transfer), 9S (a cover;
+// QS once the 9S is on the table), 7D (a trump of the attack's rank: BOTH a
+// cover and a transfer) and 6H (neither).
+static void pp_setup(Game *g, int covered) {
+    setup_playing_2p(g);
+    fill_deck(g, 12);
+    g->num_battles = 1;
+    g->table_battles[0].attack  = (Card){ SUIT_SPADES, 7 };
+    g->table_battles[0].defense = covered ? (Card){ SUIT_SPADES, 9 } : CARD_NONE;
+    g->players[0].hand[0] = (Card){ SUIT_HEARTS, 7 };
+    g->players[0].hand[1] = (Card){ SUIT_CLUBS, 13 };
+    for (int i = 2; i < 6; i++) g->players[0].hand[i] = (Card){ SUIT_HEARTS, (int8_t)(8 + i) };
+    g->players[0].hand_count = 6;
+    g->players[1].hand[0] = (Card){ SUIT_CLUBS, 7 };
+    g->players[1].hand[1] = (Card){ SUIT_SPADES, covered ? 12 : 9 };
+    g->players[1].hand[2] = (Card){ SUIT_DIAMONDS, 7 };
+    g->players[1].hand[3] = (Card){ SUIT_HEARTS, 6 };
+    g->players[1].hand_count = 4;
+}
+
+static void test_play_pills_one_move_one_button(void) {
+    const Card seven_h = { SUIT_HEARTS, 7 }, king_c = { SUIT_CLUBS, 13 };
+    const Card seven_c = { SUIT_CLUBS, 7 }, nine_s = { SUIT_SPADES, 9 };
+    const Card seven_d = { SUIT_DIAMONDS, 7 }, six_h = { SUIT_HEARTS, 6 };
+    Game g;
+
+    // ---- the attacker ----
+    pp_setup(&g, 0);
+    CHECK(pp_pills(&g, 0, 0, 0, 0) == 0,
+          "attacker, open bout, nothing selected: no pill (Good waits for the cover)");
+    pp_setup(&g, 1);
+    CHECK(pp_pills(&g, 0, 0, 0, 0) == PLAY_PILL_GOOD,
+          "attacker, covered table, nothing selected: Good and only Good");
+    CHECK(pp_pills(&g, 0, &seven_h, 1, 0) == PLAY_PILL_ATTACK,
+          "[Swift] attacker, covered table, a throw-in selected: Attack only - Good is gone");
+    CHECK(pp_pills(&g, 0, &king_c, 1, 0) == 0,
+          "attacker, a card that plays nothing: no pill at all");
+    {
+        Game lead; pp_setup(&lead, 0);
+        lead.num_battles = 0;
+        CHECK(pp_pills(&lead, 0, &king_c, 1, 0) == PLAY_PILL_ATTACK,
+              "attacker, empty table, a lead selected: Attack only");
+        CHECK(pp_pills(&lead, 0, 0, 0, 0) == 0,
+              "attacker, empty table, nothing selected: no pill");
+    }
+
+    // ---- the defender ----
+    pp_setup(&g, 0);
+    CHECK(pp_pills(&g, 1, 0, 0, 0) == PLAY_PILL_PICKUP,
+          "defender, nothing selected: Take and only Take");
+    CHECK(pp_pills(&g, 1, &nine_s, 1, 0) == PLAY_PILL_COVER,
+          "defender, a cover selected: Cover only - Take is gone");
+    CHECK(pp_pills(&g, 1, &seven_c, 1, 0) == PLAY_PILL_PASS,
+          "defender, a transfer selected: Pass only - Take is gone");
+    CHECK(pp_pills(&g, 1, &seven_d, 1, 0) == (PLAY_PILL_COVER | PLAY_PILL_PASS),
+          "defender, a trump of the attack's rank: Cover AND Pass, the one pair");
+    CHECK(pp_pills(&g, 1, &six_h, 1, 0) == 0,
+          "defender, a card that plays nothing: no pill at all");
+
+    // Podkidnoy: the transfer is not a move, so it is never a pill.
+    g.rules |= GAME_RULE_NO_PASS;
+    CHECK(pp_pills(&g, 1, &seven_d, 1, 0) == PLAY_PILL_COVER,
+          "podkidnoy, the trump seven: Cover only, no Pass");
+    CHECK(pp_pills(&g, 1, &seven_c, 1, 0) == 0,
+          "podkidnoy, the transfer card: nothing");
+    CHECK(pp_pills(&g, 1, 0, 0, 0) == PLAY_PILL_PICKUP,
+          "podkidnoy, nothing selected: Take");
+
+    // THE TAKE EXCEPTION: over a covered table the kernel stops LISTING pickup
+    // while still accepting it, and the pill must not follow the menu.
+    pp_setup(&g, 1);
+    CHECK(!menu_has(&g, 1, MOVE_PICKUP),
+          "precondition: the menu goes quiet on pickup over a covered table");
+    CHECK(pp_pills(&g, 1, 0, 0, 0) == PLAY_PILL_PICKUP,
+          "[Swift] the defender of a covered table can still take it");
+
+    // ---- each host bit stands its pills down ----
+    pp_setup(&g, 0);
+    struct { unsigned host; unsigned none_sel; unsigned trump_sel; const char *what; } rows[] = {
+        { 0,                     PLAY_PILL_PICKUP, PLAY_PILL_COVER | PLAY_PILL_PASS,
+          "precondition: a host with nothing going on" },
+        { PLAY_HOST_STAGED,      0, 0, "[Swift] a staged move leaves no play pill, Take included" },
+        { PLAY_HOST_IN_FLIGHT,   0, 0, "[Swift] a play in flight leaves no pill, Take included" },
+        { PLAY_HOST_MOVING,      0, 0, "[Swift] a moving board leaves no pill, Take included" },
+        { PLAY_HOST_SUPERSEDED,  0, 0, "[Swift] a superseded seat is a read-only board: nothing at all" },
+        { PLAY_HOST_PICKUP_HELD, 0, PLAY_PILL_COVER | PLAY_PILL_PASS,
+          "[Swift] the throw-in hold takes Take and only Take" },
+    };
+    for (size_t i = 0; i < sizeof rows / sizeof rows[0]; i++) {
+        CHECK(pp_pills(&g, 1, 0, 0, rows[i].host) == rows[i].none_sel, rows[i].what);
+        CHECK(pp_pills(&g, 1, &seven_d, 1, rows[i].host) == rows[i].trump_sel, rows[i].what);
+    }
+    pp_setup(&g, 1);
+    CHECK(pp_pills(&g, 0, 0, 0, PLAY_HOST_STAGED) == 0,
+          "a staged move leaves the attacker no Good");
+    CHECK(pp_pills(&g, 0, 0, 0, PLAY_HOST_SUPERSEDED) == 0,
+          "a superseded attacker is offered no Good");
+
+    // ---- the board's facts, each read off the board ----
+
+    // WHO DEFENDS is the view's defender against the view's seat. The same
+    // position seen by the defender and by the attacker draws different pills,
+    // and a seat nobody named (a spectator) defends nothing.
+    pp_setup(&g, 0);
+    {
+        PlayBoard b = pp_board(&g, 1);
+        CHECK(pp_on(&b, 0, 0, 0) == PLAY_PILL_PICKUP, "the defender's seat: Take");
+        b.defender = 0;
+        CHECK(pp_on(&b, 0, 0, 0) == 0, "the same board with the other seat defending: no Take");
+        b.my_seat = -1; b.defender = -1;
+        CHECK(pp_on(&b, 0, 0, 0) == 0, "a spectator defends nothing, whatever the defender field holds");
+    }
+
+    // THE TABLE: Take is only ever over cards on the table.
+    {
+        Game lead; pp_setup(&lead, 0);
+        lead.num_battles = 0;
+        CHECK(pp_pills(&lead, 1, 0, 0, 0) == 0, "[Swift] Take was offered over an empty table");
+        PlayBoard b = pp_no_board(1);
+        b.n_battles = 0;
+        CHECK(pp_on(&b, 0, 0, 0) == 0, "[Swift] an empty table and an empty menu: no Take");
+    }
+
+    // THE SELECTION is the cards handed in: with one, Take and Good are gone.
+    pp_setup(&g, 0);
+    CHECK(pp_pills(&g, 1, &six_h, 1, 0) == 0,
+          "[Swift] a live selection takes Take down, even one that plays nothing");
+    {
+        PlayBoard b = pp_no_board(1);
+        CHECK(pp_on(&b, &pp_yes_card, 1, 0) == 0, "[Swift] a live selection over no menu: no Take");
+    }
+
+    // OUT OF PLAY: the seat's own status, or a game that is no longer running.
+    pp_setup(&g, 0);
+    {
+        PlayBoard b = pp_board(&g, 1);
+        b.my_status = PLAYER_STATUS_OUT;
+        CHECK(pp_on(&b, 0, 0, 0) == 0, "[Swift] a seat that is out was offered Take");
+        CHECK(pp_on(&b, &seven_d, 1, 0) == (PLAY_PILL_COVER | PLAY_PILL_PASS),
+              "out of play reaches Take only: every other pill is the menu's");
+        b.my_status = PLAYER_STATUS_IN; b.game_status = GAME_STATUS_GAME_OVER;
+        CHECK(pp_on(&b, 0, 0, 0) == 0, "a finished game's last table is taken by nobody");
+    }
+
+    // A SEAT WITH NO MOVE is offered no play pill: each one reads its answer
+    // off the menu, so there is no separate "may I act" for a host to supply.
+    pp_setup(&g, 1);
+    {
+        PlayBoard b = pp_board(&g, 0);
+        b.menu = pp_no_menu; b.menu_len = (int)sizeof pp_no_menu;
+        CHECK(pp_on(&b, 0, 0, 0) == 0, "no menu, no Good");
+        CHECK(pp_on(&b, &seven_h, 1, 0) == 0, "no menu, no Attack");
+    }
+
+    // ---- [Swift] the composition, over a board told yes to everything ----
+    {
+        // BoardActionMenuTests.testAPillIsNeverOfferedOverAKernelThatListsNothing
+        PlayBoard b = pp_no_board(0);
+        CHECK(pp_on(&b, 0, 0, 0) == 0 && pp_on(&b, &pp_yes_card, 1, 0) == 0,
+              "[Swift] a play pill was offered without the kernel listing the move");
+        // BoardActionMenuTests.testTheAttackersPillsAndTheDefendersDoNotMix
+        b = pp_yes_board(0);
+        CHECK(pp_on(&b, &pp_yes_card, 1, 0) == PLAY_PILL_ATTACK,
+              "[Swift] an attacker told yes to everything: Attack, never Cover or Pass");
+        b = pp_yes_board(1);
+        CHECK(pp_on(&b, &pp_yes_card, 1, 0) == (PLAY_PILL_COVER | PLAY_PILL_PASS),
+              "[Swift] a defender told yes to everything: Cover and Pass, never Attack");
+        // BoardActionMenuTests.testTakeIsOfferedOnATableTheKernelHasStoppedListing
+        b = pp_no_board(1);
+        CHECK(pp_on(&b, 0, 0, 0) == PLAY_PILL_PICKUP,
+              "[Swift] Take over a table whose menu lists nothing (Take is not the menu's)");
+        // BoardActionMenuTests.testTakeBelongsToTheDefenderOfANonEmptyTable
+        b = pp_yes_board(0);
+        CHECK((pp_on(&b, 0, 0, 0) & PLAY_PILL_PICKUP) == 0, "[Swift] an attacker was offered Take");
+        // BoardActionMenuTests.testTakeStandsDownForTheHoldTheSelectionAndTheSupersede
+        b = pp_no_board(1);
+        CHECK(pp_on(&b, 0, 0, PLAY_HOST_PICKUP_HELD) == 0, "[Swift] Take survived the 15s throw-in hold");
+        CHECK(pp_on(&b, 0, 0, PLAY_HOST_SUPERSEDED) == 0, "[Swift] Take survived a newer chain");
+        CHECK(pp_on(&b, 0, 0, PLAY_HOST_STAGED) == 0, "[Swift] Take survived a staged move");
+        // BoardActionMenuTests.testASupersededSeatIsOfferedNothingAtAll
+        b = pp_yes_board(1);
+        CHECK(pp_on(&b, 0, 0, PLAY_HOST_SUPERSEDED) == 0
+              && pp_on(&b, &pp_yes_card, 1, PLAY_HOST_SUPERSEDED) == 0,
+              "[Swift] a superseded seat is offered nothing at all");
+        // BoardActionMenuTests.testNoPillBetweenTheTapAndTheStage
+        CHECK(pp_on(&b, 0, 0, PLAY_HOST_IN_FLIGHT) == 0
+              && pp_on(&b, &pp_yes_card, 1, PLAY_HOST_IN_FLIGHT) == 0,
+              "[Swift] a pill - Take included - showed while a play was being applied");
+        // BoardActionMenuTests.testNoPillWhileTheBoardIsStillMoving
+        CHECK(pp_on(&b, 0, 0, PLAY_HOST_MOVING) == 0
+              && pp_on(&b, &pp_yes_card, 1, PLAY_HOST_MOVING) == 0,
+              "[Swift] a pill - Take included - showed while the board was moving");
+        // BoardActionMenuTests.testAStagedMoveLeavesNoPlayPill
+        CHECK(pp_on(&b, 0, 0, PLAY_HOST_STAGED) == 0
+              && pp_on(&b, &pp_yes_card, 1, PLAY_HOST_STAGED) == 0,
+              "[Swift] a play pill survived the staged bubble");
+        // BoardActionMenuTests.testASeatWithNoMenuIsOfferedNoPlay
+        b = pp_no_board(0);
+        CHECK(pp_on(&b, &pp_yes_card, 1, 0) == 0, "[Swift] a seat with no menu was offered a play");
+    }
+}
+
 // ---------- GOOD stays in the ENUMERATED menu -------------------------------
 //
 // The narrowing above is a rule about a board, and it must never migrate into
@@ -4858,7 +5165,8 @@ static void test_good_is_always_enumerated_for_an_attacker(void) {
     unsigned char table[2] = { (unsigned char)card_to_id(g.table_battles[0].attack), LEGAL_WIRE_NONE };
     PlayBoard b;
     b.menu = wire; b.menu_len = len; b.table = table; b.n_battles = 1;
-    b.power_suit = SUIT_DIAMONDS; b.is_defender = 0;
+    b.power_suit = SUIT_DIAMONDS;
+    b.my_seat = 0; b.defender = 1; b.my_status = PLAYER_STATUS_IN; b.game_status = GAME_STATUS_PLAYING;
     CHECK(!play_can_say_good(&b),
           "the human gate is the only place the same menu loses its GOOD");
 }
@@ -12274,6 +12582,17 @@ static int cp_ask(const TableView *v, const Card *cards, int n, int target, Clie
     return client_play(&ct, v, &g, &cp_scratch, out);
 }
 
+// The same question for the pills: a host with nothing going on (host 0).
+static int cp_ask_ready(const TableView *v, const Card *cards, int n, ClientPlay *out) {
+    ClientGesture g;
+    memset(&g, 0, sizeof g);
+    g.n_cards = (int8_t)n;
+    g.target = PLAY_TARGET_TABLE;
+    g.host = 0;
+    for (int i = 0; i < n && i < MAX_MOVE_CARDS; i++) g.cards[i] = cards[i];
+    return client_play(&ct, v, &g, &cp_scratch, out);
+}
+
 // The engine's verdict on the move client_play resolved to, run against the
 // WHOLE game rather than the masked board - so the two cannot agree by sharing
 // a mistake.
@@ -12290,6 +12609,7 @@ static int cp_engine_takes(const Game *g, int seat, const ClientPlay *p) {
 
 static void test_client_play_is_the_engine(void) {
     int asked = 0, resolved = 0, covers = 0, wrong = 0, good_offers = 0;
+    int pill_wrong = 0, pickup_pills = 0, card_pills = 0;
     cb_rng = 11;
     for (int np = 2; np <= 4; np++) {
         cb_deal(&cb_game, np, 70 + np);
@@ -12321,6 +12641,23 @@ static void test_client_play_is_the_engine(void) {
                     good_offers += cp_out.can_say_good;
                 }
 
+                // THE PILLS WITH NOTHING SELECTED (play_pills through
+                // client_play): no play pill without a card; Good exactly when
+                // it is offered; Take exactly when the engine would take a
+                // pickup - over a covered table too, where the menu goes quiet,
+                // and not over the finished game's last table.
+                {
+                    ClientPlay pp;
+                    if (cp_ask_ready(&cb_view, 0, 0, &pp) != CLIENT_OK) { pill_wrong++; continue; }
+                    if (pp.pills & (PLAY_PILL_ATTACK | PLAY_PILL_COVER | PLAY_PILL_PASS)) pill_wrong++;
+                    if (((pp.pills & PLAY_PILL_GOOD) != 0) != cp_out.can_say_good) pill_wrong++;
+                    uint8_t w[64];
+                    const int wl = cb_wire(AWIRE_PICKUP, 0, 0, 0, w);
+                    const int engine_ok = cb_engine_verdict(&cb_game, seat, w, wl) == 0;
+                    if (((pp.pills & PLAY_PILL_PICKUP) != 0) != engine_ok) pill_wrong++;
+                    pickup_pills += (pp.pills & PLAY_PILL_PICKUP) != 0;
+                }
+
                 for (int h = 0; h < p->hand_count && h < 8; h++) {
                     const Card card = p->hand[h];
 
@@ -12329,6 +12666,25 @@ static void test_client_play_is_the_engine(void) {
                     // the engine must have no move of that shape either.
                     if (cp_ask(&cb_view, &card, 1, PLAY_TARGET_TABLE, &cp_out) != CLIENT_OK) { wrong++; continue; }
                     asked++;
+
+                    // A card selected: never Good, never Take, and every play
+                    // pill drawn is a move the engine takes with that card. One
+                    // way only: the engine takes some attacks no menu lists
+                    // (a seat whose turn it is not), and a pill reads the menu.
+                    {
+                        ClientPlay pp;
+                        if (cp_ask_ready(&cb_view, &card, 1, &pp) != CLIENT_OK) { pill_wrong++; continue; }
+                        if (pp.pills & (PLAY_PILL_GOOD | PLAY_PILL_PICKUP)) pill_wrong++;
+                        const int kinds[2][2] = { { PLAY_PILL_ATTACK, AWIRE_ATTACK }, { PLAY_PILL_PASS, AWIRE_PASS } };
+                        for (int k = 0; k < 2; k++) {
+                            uint8_t w[64];
+                            const int wl = cb_wire(kinds[k][1], &card, 0, 1, w);
+                            const int engine_ok = cb_engine_verdict(&cb_game, seat, w, wl) == 0;
+                            if ((pp.pills & (unsigned)kinds[k][0]) && !engine_ok) pill_wrong++;
+                        }
+                        if (((pp.pills & PLAY_PILL_COVER) != 0) != (cp_out.n_coverable > 0)) pill_wrong++;
+                        card_pills += pp.pills != 0;
+                    }
                     if (cp_out.move_type >= 0) {
                         resolved++;
                         if (!cp_engine_takes(&cb_game, seat, &cp_out)) wrong++;
@@ -12378,6 +12734,10 @@ static void test_client_play_is_the_engine(void) {
     CHECK(asked > 500 && resolved > 100 && covers > 50 && good_offers > 10,
           "enough gestures were read, resolved, offered a cover and offered a good");
     CHECK(wrong == 0, "a gesture means on a board exactly what the engine makes of it on the game");
+    fprintf(stderr, "  [client_play pills] %d Take offered, %d selections with a pill\n",
+            pickup_pills, card_pills);
+    CHECK(pickup_pills > 10 && card_pills > 100, "enough boards offered Take and a card pill");
+    CHECK(pill_wrong == 0, "every pill client_play draws is a move the engine takes, one move one button");
 }
 
 static void test_client_play_refuses_what_is_not_a_gesture(void) {
@@ -12555,6 +12915,7 @@ int main(void) {
     test_play_can_say_good_only_over_a_covered_table();
     test_play_rules_over_a_card_nobody_can_name();
     test_play_human_menu_drops_wait_and_gates_good();
+    test_play_pills_one_move_one_button();
     test_good_is_always_enumerated_for_an_attacker();
     test_full_game_random();
     test_full_game_handwritten();

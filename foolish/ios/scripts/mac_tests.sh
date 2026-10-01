@@ -38,7 +38,7 @@
 #   ios/scripts/mac_tests.sh --no-lib unit   # skip the ~2 min xcframework build
 #   ios/scripts/mac_tests.sh --regen         # force xcodegen (project.yml is the trigger)
 #
-#   DEST='platform=iOS Simulator,name=iPhone 17' ios/scripts/mac_tests.sh
+#   DEST='platform=iOS Simulator,id=<udid>' ios/scripts/mac_tests.sh   # default: newest iPhone sim
 #
 # FIRST RUN IN A FRESH CHECKOUT FAILS, and that is not a regression: the
 # ComponentSnapshotTests references (ios/FoolishTests/__Snapshots__) are
@@ -57,7 +57,6 @@ HELP_FILE="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 cd "$(dirname "$0")/../.."          # foolish/
 
 export HELP_FILE
-export DEST="${DEST:-platform=iOS Simulator,name=iPhone 16}"
 export PROJECT="ios/Foolish.xcodeproj"
 export TEST_SCHEMES="unit=Foolish harness=FoolishHarness"
 export BUILD_SCHEMES="app=FoolishMessagesApp"

@@ -618,29 +618,6 @@
   z-index: var(--z-content);
 }
 
-/* ===== Action Buttons Container ===== */
-.action-buttons {
-  display: flex;
-  flex-direction: column;
-  position: absolute;
-  bottom: 10px;
-  left: 0;
-  right: 0;
-  justify-content: flex-end;
-  align-items: center;
-  height: 200px;
-}
-
-.action-buttons__sidebar {
-  position: absolute;
-  bottom: 90px;
-  right: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  z-index: 999;
-}
-
 /* ===== Deck Area ===== */
 .deck-area {
   display: flex;

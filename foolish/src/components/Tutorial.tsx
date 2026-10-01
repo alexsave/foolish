@@ -21,7 +21,8 @@ import { ensureBotsAsync, kernelB32Decode, replaySummary, type ReplaySummary } f
 import {
     buildReplayFrames, preDealGame, ReplayFrame, ReplayGameState, REPLAY_STEP,
 } from '../replay/frames';
-import { canCoverCards } from '../utils/gameValidation';
+import { boardPills } from '../utils/gameValidation';
+import { PLAY_PILL_COVER } from '@sdk/ts/gen/view_layout.bots.ts';
 import type { StringId } from '../localization/strings';
 import { buildBeats, type Beat, type TutKey } from './tutorialBeats.ts';
 import { TUTORIAL_MOVES_CODE, TUTORIAL_NAMES } from './tutorialGame';
@@ -200,9 +201,9 @@ const TutorialPlayback = ({ summary, frames, names, onExit }: PlaybackProps) => 
             return { kind: k, cards: [], target: null, action: 'good', mode: 'button' };
         if (k === REPLAY_STEP.COVER) {
             const coverCard = pending.cards[0];
-            // the Cover button only appears for an unambiguous single-target cover;
+            // the learner presses Cover when the board shows it for this card;
             // otherwise the learner drags the card onto the specific attack.
-            const canBtn = !!game && canCoverCards(game as any, [coverCard]);
+            const canBtn = !!game && (boardPills(game, [coverCard]) & PLAY_PILL_COVER) !== 0;
             return { kind: k, cards: [coverCard], target: pending.target, action: canBtn ? 'cover' : null, mode: canBtn ? 'button' : 'drag' };
         }
         return null;

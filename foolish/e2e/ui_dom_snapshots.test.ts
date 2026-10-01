@@ -28,7 +28,7 @@ import { test, mock, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
-import { fixture, fixtureTable, PLAYING, GAME_OVER, IN, OUT, READY, IDLE, type FixtureSeat } from './helpers/table_fixture.ts';
+import { fixture, fixtureTable, parseCardText, PLAYING, GAME_OVER, IN, OUT, READY, IDLE, type FixtureSeat } from './helpers/table_fixture.ts';
 import { encodeAction } from '../sdk/ts/wire/awire.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 
@@ -109,6 +109,7 @@ function query(table: string) {
     };
     return chain;
 }
+const invoked: string[] = [];
 const channel: any = { on: () => channel, subscribe: () => channel, unsubscribe: () => Promise.resolve() };
 const supabaseMock = {
     from: query,
@@ -116,7 +117,8 @@ const supabaseMock = {
     getChannels: () => [],
     removeChannel: () => Promise.resolve(),
     realtime: { setAuth: () => Promise.resolve() },
-    functions: { invoke: () => Promise.resolve({ data: null, error: null }) },
+    // Every edge function the page calls, by name, so a test can see a move sent.
+    functions: { invoke: (name: string) => { invoked.push(name); return Promise.resolve({ data: null, error: null }); } },
     auth: {
         getSession: () => Promise.resolve({ data: { session: null } }),
         onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }),
@@ -169,14 +171,18 @@ async function render(el: () => Promise<any>, interact?: Interact, settle = 120)
     const root = createRoot(host);
     const tree = await el();
     const wait = async (ms: number) => { for (let i = 0; i < 6; i++) await act(async () => { await new Promise((r) => setTimeout(r, ms / 6)); }); };
-    await act(async () => { root.render(tree); });
-    await wait(settle);
-    if (interact) await interact(host, wait);
-    const html = host.innerHTML;
-    await act(async () => { root.unmount(); });
-    host.remove();
-    void React;
-    return html;
+    // A red assertion in `interact` still unmounts the page: a board left
+    // mounted keeps its intervals alive, and the run never ends.
+    try {
+        await act(async () => { root.render(tree); });
+        await wait(settle);
+        if (interact) await interact(host, wait);
+        return host.innerHTML;
+    } finally {
+        await act(async () => { root.unmount(); });
+        host.remove();
+        void React;
+    }
 }
 
 async function gamePage(gameId: string, userId: string): Promise<any> {
@@ -507,5 +513,134 @@ test('a replay with names, at its last step', async () => {
             if (!next) break;
             await click(host, 'button[title="Next bout"]', wait);
         }
+    });
+});
+
+// ---- one move, one button ---------------------------------------------------------------
+//
+// The action buttons a board draws are the kernel's pills for the selection
+// (legal.h play_pills, the rule the iMessage board draws by): a selected
+// card takes Take and Good away, and the one time two buttons stand together is a
+// card that both covers and transfers (a trump of the attack's rank). Each board
+// below is rendered for real and its cards are TAPPED, as a player selects them
+// (DragContext: a press and a release under 150 ms), and the button column is
+// read back child by child, top to bottom. The column holds the kernel's pills
+// and nothing else - no spacer keeps a slot for a button that is not there - so
+// a lone pill is the column's only child, and Pass and Cover stand Cover above
+// Pass, as the iMessage column does (FActionBar). Podkidnoy (GAME_RULE_NO_PASS)
+// has no row: the website's boards carry no rules variant yet (Lobby.tsx
+// TODO(podkidnoy)), and legal.c's own tests hold its pills.
+
+/** The action column, top to bottom: each child's button label, "_" for a child that is no button. */
+function actionSlots(host: HTMLElement): string[] {
+    const col = host.querySelector('[style*="bottom: 90px"][style*="right: 20px"]');
+    assert.ok(col, 'the action column renders');
+    return Array.from(col.children, (c) => c.querySelector('.btn-action-text')?.textContent ?? '_');
+}
+
+/**
+ * Taps the hand card `text` (e.g. "9h"): selects it, or deselects it.
+ *
+ * The finger is down for TAP_MS by the events' own clocks, and the release is
+ * handled TAP_LATE_MS after the press - later than the 150 ms a tap may last.
+ * That is the slow machine, made the rule: the press re-renders the whole board,
+ * and under V8 coverage on a CI runner that render alone ran past 150 ms, so a
+ * page that timed the tap by Date.now() in its handlers saw a long press and
+ * selected nothing (DragContext endCardDrag). The tap must be judged on the
+ * events' timestamps, and this tap holds the page to that on every machine.
+ */
+const TAP_MS = 40;
+const TAP_LATE_MS = 200;
+async function tapCard(host: HTMLElement, text: string, wait: (ms: number) => Promise<void>): Promise<void> {
+    const [c] = parseCardText(text);
+    const el = host.querySelector(`[data-location="hand"][data-card="${c.suit}-${c.value}"]`);
+    assert.ok(el, `${text} is in the hand`);
+    // A browser stamps events in ms since the page loaded (performance.now's
+    // clock), not since 1970 as jsdom does, so a page that mixes either stamp with
+    // Date.now() reads every tap as a press of decades.
+    const down = new dom.window.MouseEvent('mousedown', { bubbles: true, clientX: 5, clientY: 5 });
+    Object.defineProperty(down, 'timeStamp', { value: 1000 });
+    el.dispatchEvent(down);
+    await wait(TAP_LATE_MS);
+    const up = new dom.window.MouseEvent('mouseup', { bubbles: true, clientX: 5, clientY: 5 });
+    Object.defineProperty(up, 'timeStamp', { value: 1000 + TAP_MS });
+    dom.window.document.dispatchEvent(up);
+    await wait(12);
+}
+
+/** Presses the key `key` on the page, as the keyboard shortcuts hear it. */
+async function press(key: string, wait: (ms: number) => Promise<void>): Promise<void> {
+    dom.window.document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key, bubbles: true }));
+    await wait(12);
+}
+
+/** Renders `board` for seat `viewer` (signed in as `userId`) and runs `steps` on it. */
+async function onBoard(gid: string, board: { state: Uint8Array; roster: Uint8Array }, viewer: number, userId: string,
+    steps: Interact): Promise<void> {
+    rows = emptyRows();
+    rows.playerViews.set(gid, envelope(gid, board, viewer));
+    seedRandom(7);
+    invoked.length = 0;
+    // The long timers are dropped, as screen() drops them, so none outlives the board.
+    const realSetTimeout = globalThis.setTimeout;
+    g.setTimeout = (fn: (...a: unknown[]) => void, ms?: number, ...a: unknown[]) =>
+        (ms ?? 0) >= 300 ? 0 : realSetTimeout(fn, ms, ...a);
+    try { await render(() => gamePage(gid, userId), steps); } finally { g.setTimeout = realSetTimeout; }
+}
+
+// Me (seat 0) against Anna (seat 1), clubs trump. `table` is the bout; `attacker` names who leads.
+function pillBoard(table: string[], attacker: 0 | 1) {
+    return fixture().title('Pills').seats([seat(ME, 'Me'), seat('u-anna-0001', 'Anna')]).status(PLAYING)
+        .trump('Kc').deck('7s 8s 9s Ts Js Qs Ks As 7d 8d 9d Td Jd Kd')
+        .hand(0, attacker === 0 ? '6s 7h Qd Ad' : '9h Th 6d 6c').hand(1, attacker === 0 ? '9h Th 6d 6c' : '6s 7h Qd Ad')
+        .table(...table).attacker(attacker).defender(attacker === 0 ? 1 : 0).build();
+}
+
+test('the attacker: Good over a covered table, gone once a throw-in is selected', async () => {
+    await onBoard('pilla', pillBoard(['6h/8h'], 0), 0, ME, async (host, wait) => {
+        assert.deepEqual(actionSlots(host), ['Good'], 'nothing selected over a covered table: Good');
+        await tapCard(host, '6s', wait);
+        assert.deepEqual(actionSlots(host), ['Attack'], 'a throw-in selected: Attack, and Good is gone');
+        await press('g', wait);
+        assert.equal(invoked.join(','), '', 'and G does not say Good over the selected card');
+        await press('ArrowDown', wait);
+        assert.equal(invoked.join(','), '', 'nor does the down arrow');
+        await tapCard(host, 'Qd', wait);
+        assert.deepEqual(actionSlots(host), [], 'a selection that is no throw-in: no button at all');
+        await tapCard(host, '6s', wait);
+        await tapCard(host, 'Qd', wait);
+        assert.deepEqual(actionSlots(host), ['Good'], 'the selection put back: Good again');
+        await press('ArrowDown', wait);
+        assert.ok(invoked.includes('action'), `with nothing selected the down arrow says Good (${invoked.join(',')})`);
+    });
+});
+
+test('the attacker over an open bout: no Good, and Attack for a throw-in', async () => {
+    await onBoard('pillb', pillBoard(['6h'], 0), 0, ME, async (host, wait) => {
+        assert.deepEqual(actionSlots(host), [], 'an uncovered attack: nothing to say yet');
+        await tapCard(host, '6s', wait);
+        assert.deepEqual(actionSlots(host), ['Attack'], 'a throw-in selected: Attack');
+    });
+});
+
+test('the defender: Take with nothing selected; Cover, Pass, or both for the selected card, and never Take', async () => {
+    await onBoard('pillc', pillBoard(['6h'], 1), 0, ME, async (host, wait) => {
+        assert.deepEqual(actionSlots(host), ['Pickup'], 'nothing selected: Take alone');
+        await tapCard(host, '9h', wait);
+        assert.deepEqual(actionSlots(host), ['Cover'], 'a covering card: Cover alone');
+        await press('u', wait);
+        assert.equal(invoked.join(','), '', 'and U does not take the table over the selected card');
+        await press('ArrowDown', wait);
+        assert.equal(invoked.join(','), '', 'nor does the down arrow');
+        await tapCard(host, '9h', wait);
+        await tapCard(host, '6d', wait);
+        assert.deepEqual(actionSlots(host), ['Pass'], 'a card of the attack\'s rank: Pass alone');
+        await tapCard(host, '6d', wait);
+        await tapCard(host, '6c', wait);
+        assert.deepEqual(actionSlots(host), ['Cover', 'Pass'], 'a trump of the attack\'s rank: Cover above Pass, as iMessage stacks them');
+        await tapCard(host, '6c', wait);
+        assert.deepEqual(actionSlots(host), ['Pickup'], 'the selection put back: Take again');
+        await press('u', wait);
+        assert.ok(invoked.includes('action'), `with nothing selected U takes the table (${invoked.join(',')})`);
     });
 });

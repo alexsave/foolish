@@ -32,7 +32,6 @@ HELP_FILE="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 cd "$(dirname "$0")/../.."           # pickemup/
 
 export HELP_FILE
-export DEST="${DEST:-platform=iOS Simulator,name=iPhone 17e}"
 export PROJECT="ios/Pickemup.xcodeproj"
 export TEST_SCHEMES="unit=PickemupKitTests"
 export BUILD_SCHEMES="app=PickemupMessagesApp"

@@ -291,7 +291,10 @@ export class ClientTable {
      * What a gesture means on `view` (c/src/client_table.h client_play, over
      * legal.h's play_* rules): the move `cards` let go at `target` resolves to,
      * which battles they could cover, the battle the Cover button aims at, and
-     * whether this seat may say Good yet.
+     * whether this seat may say Good yet, and `pills`: the PLAY_PILL_* bits of
+     * the action pills to draw for `cards` as the selection (legal.h
+     * play_pills), given the host's own PLAY_HOST_* bits in `host` - only its
+     * transport and screen; every fact about the board is the kernel's.
      *
      * `target` is a battle index, PLAY_TARGET_TABLE for the open table,
      * PLAY_TARGET_HAND for a drop back in the hand (always a rearrange, never a
@@ -303,13 +306,13 @@ export class ClientTable {
      * every frame while the finger sits still, and the menu behind it is a full
      * cover enumeration. The same memo `rules` above keeps, for the same reason.
      */
-    play(view: TableView, cards: readonly ViewCard[], target: number): ClientPlay {
-        const key = `${target}|${cards.map((c) => `${c.suit},${c.value}`).join(' ')}`;
+    play(view: TableView, cards: readonly ViewCard[], target: number, host = 0): ClientPlay {
+        const key = `${target}|${host}|${cards.map((c) => `${c.suit},${c.value}`).join(' ')}`;
         let byGesture = this.plays.get(view);
         const hit = byGesture?.get(key);
         if (hit) return hit;
         this.writeRulesView(view);
-        V.writeClientGesture(this.m(), this.ex.wasm_client_gesture_ptr(), { target, cards: [...cards] });
+        V.writeClientGesture(this.m(), this.ex.wasm_client_gesture_ptr(), { target, cards: [...cards], host });
         const rc = this.ex.wasm_client_play();
         if (rc !== V.CLIENT_OK) throw new Error(`client play: the gesture was refused (${rc})`);
         const p = V.readClientPlay(this.m(), this.ex.wasm_client_play_ptr());

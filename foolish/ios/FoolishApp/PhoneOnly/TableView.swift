@@ -228,14 +228,16 @@ public struct TableView<Session: GameSession>: View {
     @ViewBuilder
     private func actionBar(_ view: GameView) -> some View {
         let cards = selectedCards(view)
-        let defending = view.defender == game.humanSeat
-        let probe = self.probe(view, cards, .table)
+        // The same pills as the iMessage board and the website (legal.h
+        // play_pills): one move, one button.
+        let menu = BoardActionMenu(pills: PlayWire.pills(menu: game.humanLegalPacked, view: view, selection: cards,
+                                                         host: game.inFlight.isEmpty ? [] : .inFlight))
         FActionBar(
-            canAttack: !defending && probe.canAttack,
-            canCover: defending && probe.canCover,
-            canPass: defending && probe.canPass,
-            canPickup: game.humanLegal.contains { $0.type == .pickup },
-            canDone: probe.canSayGood,
+            canAttack: menu.canAttack,
+            canCover: menu.canCover,
+            canPass: menu.canPass,
+            canPickup: menu.canPickup,
+            canDone: menu.canDone,
             onAttack: { playAt(.table, cards, view) },
             onCover: { playCover(cards, view) },
             onPass: { playAt(.table, cards, view) },
@@ -279,9 +281,7 @@ public struct TableView<Session: GameSession>: View {
     /// One kernel answer about the current selection, for every question this
     /// board asks about it.
     private func probe(_ view: GameView, _ cards: [Card], _ target: PlayTarget) -> PlayProbe {
-        PlayWire.probe(menu: game.humanLegalPacked, battles: view.battles,
-                       powerSuit: view.powerSuit, isDefender: view.defender == game.humanSeat,
-                       selection: cards, target: target)
+        PlayWire.probe(menu: game.humanLegalPacked, view: view, selection: cards, target: target)
     }
 
     private func toggle(_ card: Card) {

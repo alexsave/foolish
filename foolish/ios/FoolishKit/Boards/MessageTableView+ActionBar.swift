@@ -1,11 +1,11 @@
 // THE ACTION PILLS, THE UNDO PILL AND THE SETTINGS SQUARES - the chrome that
 // floats over the hand.
 //
-// Every enable state here is the kernel's legal menu narrowed by
-// `BoardActionMenu.resolve`, never a hand-rolled "is it my turn". What this
-// file owns is the two things that are about this SCREEN rather than about
-// Durak: the gates (`actionGates`) and the slots the pills merely appear
-// inside, which is what keeps a pill from being animated into place.
+// Every play pill here is the kernel's answer (legal.h play_pills, through
+// `PlayWire.pills`), never a hand-rolled "is it my turn". What this file owns
+// is the two things that are about this SCREEN rather than about Durak: the
+// host bits (`actionHost`) and the slots the pills merely appear inside, which
+// is what keeps a pill from being animated into place.
 
 import SwiftUI
 import Foundation
@@ -22,38 +22,33 @@ extension MessageTableView {
                             onHelp: { showRules = true })
     }
 
-    /// WHAT THE BOARD KNOWS ABOUT ITSELF, as `BoardActionMenu` wants it - the
-    /// gates that are not the kernel's to answer because they are about this
-    /// screen rather than about Durak. Which pills they turn a kernel probe
-    /// into is `BoardActionMenu.resolve`, which is not a view and has a test.
+    /// WHAT THIS SCREEN KNOWS ABOUT ITSELF that no board carries (legal.h
+    /// PLAY_HOST_*): a move staged on Send, my play in flight, a board still
+    /// animating, a newer chain, the throw-in hold. Everything about the board
+    /// is the kernel's to read off the view.
     ///
-    /// `boardStill` reads statics nothing publishes (`ActionPillSlot`/
-    /// `UndoGate`), which is also why the column that draws this is redrawn on
-    /// a short timer rather than on a change.
-    private func actionGates(_ view: GameView, selectionIsEmpty: Bool) -> BoardActionMenu.Gates {
-        let boardStill = !ActionPillSlot.waitsForStill
-            || UndoGate.acceptsNow(cardsVeiled: !animator.hidden.isEmpty)
-        return .init(iCanAct: controller.iCanAct,
-                     canSend: controller.canSend,
-                     playInFlight: playInFlight,
-                     boardStill: boardStill,
-                     superseded: controller.superseded,
-                     pickupHeld: controller.pickupHold != 0,
-                     isDefender: view.defender == controller.mySeat,
-                     isOut: view.me?.isOut ?? false,
-                     tableIsEmpty: view.battles.isEmpty,
-                     selectionIsEmpty: selectionIsEmpty)
+    /// "Moving" reads statics nothing publishes (`ActionPillSlot`/`UndoGate`),
+    /// which is also why the column that draws this is redrawn on a short
+    /// timer rather than on a change.
+    private var actionHost: PlayWire.Host {
+        var host: PlayWire.Host = []
+        if controller.canSend { host.insert(.staged) }
+        if playInFlight { host.insert(.inFlight) }
+        if ActionPillSlot.waitsForStill
+            && !UndoGate.acceptsNow(cardsVeiled: !animator.hidden.isEmpty) { host.insert(.moving) }
+        if controller.superseded { host.insert(.superseded) }
+        if controller.pickupHold != 0 { host.insert(.pickupHeld) }
+        return host
     }
 
     func actionBar(_ view: GameView) -> some View {
         let cards = selectedCards(view)
-        // ONE kernel answer for every enable-state below, so no two of them can
-        // describe different menus - and ONE place that turns it into pills, so
-        // the rule can be read and tested without a board on screen. Every
-        // "why is this button not there" answer lives in BoardActionMenu now,
-        // Take's documented exception to the kernel menu included.
-        let menu = BoardActionMenu.resolve(probe(view, cards, .table),
-                                           actionGates(view, selectionIsEmpty: cards.isEmpty))
+        // ONE kernel answer for every pill below: the published menu and board,
+        // the selection, and this screen's own bits. Every "why is this button
+        // not there" answer lives in legal.h play_pills, Take's documented
+        // exception to the kernel menu included.
+        let menu = BoardActionMenu(pills: PlayWire.pills(menu: controller.legalPacked, view: view,
+                                                         selection: cards, host: actionHost))
         return FActionBar(
             canAttack: menu.canAttack,
             canCover: menu.canCover,

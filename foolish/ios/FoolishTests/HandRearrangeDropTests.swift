@@ -131,7 +131,7 @@ final class HandRearrangeDropTests: XCTestCase {
     private func resolve(_ cards: [Card], _ target: PlayTarget, defender: Bool,
                          battles: [BattleView], legal: [Move]) -> Move? {
         PlayWire.probe(menu: MoveWire.encode(legal), battles: battles, powerSuit: 3,
-                       isDefender: defender, selection: cards, target: target).move
+                       mySeat: 0, defender: defender ? 0 : 1, selection: cards, target: target).move
     }
 
     func testAnAttackerToldTheHandPlaysNothing() {

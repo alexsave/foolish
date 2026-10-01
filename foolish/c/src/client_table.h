@@ -361,11 +361,15 @@ int client_conflict_verdicts(const TableView *open, const TableView *final, cons
 // press does not, and that difference is the whole of it.
 #define CLIENT_PLAY_COVER_BUTTON (-3)
 
-// The cards under the finger, and where they were let go.
+// The cards under the finger, where they were let go, and what the host knows
+// about its own screen and transport for the pills (legal.h PLAY_HOST_*). Every
+// fact about the board - who defends, the table, the selection, out of play -
+// is read off the view by play_pills, so the host has no field to say it in.
 typedef struct {
-    int8_t n_cards;
-    int8_t target;                 // a battle index, PLAY_TARGET_*, or CLIENT_PLAY_COVER_BUTTON
-    Card   cards[MAX_MOVE_CARDS];
+    int8_t   n_cards;
+    int8_t   target;               // a battle index, PLAY_TARGET_*, or CLIENT_PLAY_COVER_BUTTON
+    Card     cards[MAX_MOVE_CARDS];
+    uint16_t host;                 // legal.h PLAY_HOST_*
 } ClientGesture;
 
 // What that gesture means on that board.
@@ -375,6 +379,7 @@ typedef struct {
     int8_t n_coverable;
     int8_t best_cover;             // the battle the Cover button aims at, -1 for none
     bool   can_say_good;           // play_can_say_good: may this seat end the bout yet
+    uint8_t pills;                 // legal.h play_pills: the PLAY_PILL_* to draw
     Card   cards[MAX_MOVE_CARDS];          // the resolved move's cards
     Card   attack_cards[MAX_MOVE_CARDS];   // the attack each of them covers (a cover only)
     int8_t coverable[MAX_BATTLES];         // the battles this selection could cover, ascending
@@ -391,7 +396,8 @@ typedef struct {
 } ClientPlayScratch;
 
 // The gesture `g` read against `v` (legal.h play_resolve, play_coverable_battles,
-// play_best_cover_target, play_can_say_good). CLIENT_OK and `out` filled -
+// play_best_cover_target, play_can_say_good, and play_pills over the
+// cards in `g` as a SELECTION - `target` does not change which pills show). CLIENT_OK and `out` filled -
 // move_type -1 when the gesture names no legal move, which is an answer, not a
 // refusal - or CLIENT_E_FORMAT for a view or a gesture that is not one,
 // CLIENT_E_MISMATCH when the viewer is not a seat, the GAME_INVALID_* the board
