@@ -800,6 +800,20 @@ const SCENARIOS: Record<string, () => Scenario> = {
     defend_passing: () => defendBoard('defp01', true),
     defend_podkidnoy: () => defendBoard('defk01', false),
 
+    /**
+     * FOUR SEATS, all human and nobody moving, so a browser can look at the
+     * ring's seat badges (role row, name, mini hand) at the four compass points.
+     * ME leads and ANNA defends one card.
+     */
+    four_seats: () => ({
+        gameId: 'four01',
+        users: ['ME', 'ANNA', 'BORIS', 'VERA'],
+        board: fixture().title('Four seats').seats([seat('ME'), seat('ANNA'), seat('BORIS'), seat('VERA')])
+            .status(PLAYING).deterministic().trump('Kc').deck('8s 9s Ts Js Qs')
+            .hand(0, '7d Tc Jd Ad').hand(1, '8h 9h Th Jh Qh').hand(2, '7s Qd 6d 6c').hand(3, '6h 7c 8c')
+            .table('7h').attacker(0).defender(1).build(),
+    }),
+
     /** A plain two-hander against a bot, for playing by hand. */
     /**
      * EIGHT SEATS AND FIVE BOTS, which is where the owner found the goods bug:
