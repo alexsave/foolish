@@ -148,9 +148,9 @@ class Builder {
     trump(card: string): this { this.trumpText = card; return this; }
     /** The power suit (SUIT_*) of a game whose trump is no longer face up. */
     powerSuit(suit: number): this { this.suit = suit; return this; }
-    /** The first attacker (default 0). */
+    /** The first attacker (default 0 once dealt, nobody in a lobby). */
     attacker(seat: number): this { this.attackerSeat = seat; return this; }
-    /** The defender (default the seat after the attacker once dealt, 0 in a lobby). */
+    /** The defender (default the seat after the attacker once dealt, nobody in a lobby). */
     defender(seat: number): this { this.defenderSeat = seat; return this; }
     /** The discard pile's size. */
     discard(n: number): this { this.discardCount = n; return this; }
@@ -188,8 +188,10 @@ class Builder {
         L.Game_set_status(m, g, this.gameStatus);
         L.Game_set_num_players(m, g, np);
         L.Game_set_power_suit(m, g, trump !== null ? L.Card_unpack_suit(trump) : this.suit ?? 0);
-        L.Game_set_first_attacker(m, g, attacker);
-        L.Game_set_defender(m, g, this.defenderSeat ?? (dealt && np >= 2 ? (attacker + 1) % np : 0));
+        // A lobby's seats are the kernel's (wasm_fixture_begin: nobody leads or
+        // defends) unless the fixture names them.
+        if (dealt || this.attackerSeat !== null) L.Game_set_first_attacker(m, g, attacker);
+        if (dealt || this.defenderSeat !== null) L.Game_set_defender(m, g, this.defenderSeat ?? (np >= 2 ? (attacker + 1) % np : 0));
         L.Game_set_discard_pile_length(m, g, this.discardCount);
         L.Game_set_deterministic_deck(m, g, this.seeded);
         if (trump !== null) {

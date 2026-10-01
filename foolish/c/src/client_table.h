@@ -100,8 +100,8 @@ typedef struct {
 // what the stock shows while cards fly out of it. A screen draws these instead
 // of deciding them (docs/C_GAME_SHAPE_MIGRATION.md Phase 6a).
 typedef struct {
-    int8_t  first_attacker_badge;  // the seat that leads the next bout, marked on an empty table once dealt; -1 none
-    int8_t  defender_badge;        // the defending seat, marked once dealt; -1 none
+    int8_t  first_attacker_badge;  // the seat that leads the next bout, marked on an empty table; -1 none (GAME_SEAT_NONE until the opening names it)
+    int8_t  defender_badge;        // the defending seat; -1 none (GAME_SEAT_NONE until the opening names it)
     bool    can_say_good;          // the viewer may say Good and the bout could close on it
     bool    show_deck_pile;        // the stock has cards left to draw on screen
     bool    show_flipped_slot;     // the trump's slot, kept while a card is on its way into it

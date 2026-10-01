@@ -75,9 +75,14 @@ test('the sword marks the next lead on an empty dealt table; the shield the defe
     assert.deepEqual([t.rules(v).firstAttackerBadge, t.rules(v).defenderBadge], [-1, 1], 'mid-bout: the shield only');
     const cleared = { ...v, battles: [] };
     assert.deepEqual([t.rules(cleared).firstAttackerBadge, t.rules(cleared).defenderBadge], [0, 1], 'an empty table: both');
-    const midDeal = { ...cleared, hasFlipped: false, flipped: { suit: V.CARD_NONE_SUIT, value: V.CARD_NONE_VALUE } };
-    assert.deepEqual([t.rules(midDeal).firstAttackerBadge, t.rules(midDeal).defenderBadge], [-1, -1], 'a stock before its trump: neither');
-    const late = { ...midDeal, deckCount: 0 };
+    // The deal's boards before START_DEFENDER name nobody (GAME_SEAT_NONE, -1, in
+    // both seats: c/src/game.c start_game_dealt), and that is the whole reason
+    // neither seat is marked - the rule reads the seats, not "is it dealt yet".
+    const midDeal = { ...cleared, hasFlipped: false, flipped: { suit: V.CARD_NONE_SUIT, value: V.CARD_NONE_VALUE }, firstAttacker: -1, defender: -1 };
+    assert.deepEqual([t.rules(midDeal).firstAttackerBadge, t.rules(midDeal).defenderBadge], [-1, -1], 'a stock before its trump, nobody named: neither');
+    const flipped = { ...cleared, firstAttacker: -1, defender: -1 };
+    assert.deepEqual([t.rules(flipped).firstAttackerBadge, t.rules(flipped).defenderBadge], [-1, -1], 'the trump turned, nobody named yet: neither');
+    const late = { ...midDeal, deckCount: 0, firstAttacker: 0, defender: 1 };
     assert.deepEqual([t.rules(late).firstAttackerBadge, t.rules(late).defenderBadge], [0, 1], 'stock and trump drawn out: both');
 });
 

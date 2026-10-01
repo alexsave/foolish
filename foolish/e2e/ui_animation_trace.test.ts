@@ -50,7 +50,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { JSDOM } from 'jsdom';
-import { fixture, fixtureTable, PLAYING, GAME_OVER, IN, OUT, type FixtureSeat, type TableFixture } from './helpers/table_fixture.ts';
+import { fixture, fixtureTable, WAITING, PLAYING, GAME_OVER, IN, OUT, type FixtureSeat, type TableFixture } from './helpers/table_fixture.ts';
 import { encodeAction } from '../sdk/ts/wire/awire.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import { clientTable } from '../sdk/ts/table/client_table.ts';
@@ -1494,7 +1494,10 @@ test('a hand rearrange', async () => {
 //     hand while the stock still shows the whole deck;
 //   - the move hint waits for the board it points at: no commit shows the hint
 //     before the deal it follows has started to fly.
-test('the tutorial: the deal lands on an empty hand, and the move hint waits for the deal', async () => {
+interface TutCommit { t: number; hand: number; fullStock: boolean; hinted: boolean; flying: number; shields: string }
+
+/** The tutorial from its intro card through the deal and the lead's first prompt, every React commit recorded. */
+async function tutorialOpening(): Promise<TutCommit[]> {
     const React = (await import('react')).default;
     const { act } = await import('react');
     const { createRoot } = await import('react-dom/client');
@@ -1512,8 +1515,7 @@ test('the tutorial: the deal lands on an empty hand, and the move hint waits for
 
     const host = dom.window.document.createElement('div');
     dom.window.document.body.appendChild(host);
-    interface Commit { t: number; hand: number; fullStock: boolean; hinted: boolean; flying: number }
-    const commits: Commit[] = [];
+    const commits: TutCommit[] = [];
     const record = () => {
         const html = host.innerHTML;
         const overlay = Array.from(host.querySelectorAll('div')).find((d) => d.style.position === 'fixed' && d.style.zIndex === '10000');
@@ -1524,6 +1526,7 @@ test('the tutorial: the deal lands on an empty hand, and the move hint waits for
             fullStock: html.includes('>36<'),
             hinted: !!state && state.getAttribute('data-action') !== '' || html.includes('tut-move') || html.includes('rgb(47, 207, 99)'),
             flying: overlay ? overlay.children.length : 0,
+            shields: shieldSeats(host).join(', '),
         });
     };
     const root = createRoot(host);
@@ -1557,7 +1560,11 @@ test('the tutorial: the deal lands on an empty hand, and the move hint waits for
         host.remove();
         removeClock();
     }
+    return commits;
+}
 
+test('the tutorial: the deal lands on an empty hand, and the move hint waits for the deal', async () => {
+    const commits = await tutorialOpening();
     assert.ok(commits.some((c) => c.hand === 6), 'the learner is dealt a hand');
     assert.ok(commits.some((c) => c.hinted), 'the learner is prompted for the lead');
     const early = commits.filter((c) => c.hand > 0 && c.fullStock);
@@ -1566,4 +1573,147 @@ test('the tutorial: the deal lands on an empty hand, and the move hint waits for
     const firstHint = commits.findIndex((c) => c.hinted);
     assert.ok(firstFlight >= 0, 'the deal flies');
     assert.ok(firstHint > firstFlight, `the hint first shows at commit ${firstHint} (${commits[firstHint]?.t}ms), after the deal starts to fly at commit ${firstFlight} (${commits[firstFlight]?.t}ms)`);
+});
+
+// NOBODY DEFENDS UNTIL THE TRUMP HAS TURNED, and then it is the seat the kernel
+// chose: the tutorial's learner (seat 0) holds the lowest trump and leads
+// (src/components/tutorialGame.ts), so seat 1 defends. A shield on seat 0 is the
+// lobby's `defender = 0` that the FLIPPED board still carries (game.c
+// start_game_dealt), and the owner's rule is one shield, put up once, on the
+// real defender.
+test('the tutorial: the opening draws one shield, on the real defender, and only once the trump has turned', async () => {
+    const commits = await tutorialOpening();
+    assert.ok(commits.some((c) => c.hand === 6), 'the learner is dealt a hand');
+    const wrong = commits.filter((c) => c.shields !== '' && c.shields !== 'seat 1');
+    assert.deepEqual(wrong.map((c) => `${c.t}ms (hand ${c.hand}, ${c.flying} in flight): ${c.shields}`), [],
+        'no commit of the tutorial\'s opening draws a shield anywhere but on seat 1, the real defender');
+    assert.ok(commits.some((c) => c.shields === 'seat 1'), 'seat 1 gets the shield');
+});
+
+// ---- the opening deal: nobody defends until the trump has turned ------------------
+// The owner: "while it does the opening deal, it shows ME as having the shield, no
+// matter who ends up actually having it. Which doesn't make any sense because who
+// goes first can't be determined until the flipped card is revealed." And the
+// rule: "just don't show the shield until deal is done, otherwise it can flicker".
+//
+// So a fresh table goes from its lobby through the Ready tap, the start and the
+// whole opening deal, on the real page against the real C Table, and every frame
+// is read for the one thing: which seat the page draws a shield on (a role coin
+// wearing it, or one in the air). No frame may draw one before the push's
+// START_DEFENDER board, and the first frame that does draws it on the seat the
+// kernel really chose. The deal seed is picked so that seat is NOT seat 0 - the
+// lobby's `defender = 0` (game.c game_reset_to_lobby) - and not me, so a stale
+// shield cannot hide behind the real one.
+
+/** Every seat the page draws a shield on: a coin wearing it, or one in flight. */
+const shieldSeats = (host: HTMLElement): string[] => {
+    const out: string[] = [];
+    for (const el of Array.from(host.querySelectorAll<HTMLElement>('[data-role-seat][data-role-mark="shield"]'))) {
+        out.push(`seat ${el.getAttribute('data-role-seat')}`);
+    }
+    for (const el of Array.from(host.querySelectorAll<HTMLElement>('[data-role-flight]'))) {
+        // roleLedger.ts roleFlightsBetween names a shield's ghost `shield-<from>-<to>`.
+        const id = el.getAttribute('data-role-flight') ?? '';
+        if (id.startsWith('shield-')) out.push(`flight ${id}`);
+    }
+    return out;
+};
+
+/** What a board in the store is, in the opening deal's terms. */
+const dealPhase = (view: any, finalDefender: number, finalAttacker: number): string => {
+    if (!view) return 'no board';
+    if (view.status === WAITING) return 'lobby';
+    const dealt = (view.seats as any[]).reduce((n, x) => n + x.handCount, 0);
+    if (!view.hasFlipped) return dealt === 0 ? 'START_MAGIC' : `DEAL ${dealt}`;
+    return view.defender === finalDefender && view.firstAttacker === finalAttacker ? 'START_DEFENDER' : `FLIPPED (board defender ${view.defender})`;
+};
+
+/** A lobby whose seats are `ids`, every one but me a bot (bots sit READY). */
+const lobby = (title: string, ids: FixtureSeat[]) => fixture().title(title).seats(ids).status(WAITING).build();
+
+/** A deal seed whose opening defender is `want`, found by dealing it on a throwaway table. */
+function seedFor(board: TableFixture, want: number): { seed: Uint8Array; defender: number; firstAttacker: number } {
+    for (let i = 0; i < 4096; i++) {
+        const seed = new Uint8Array(32);
+        seed[0] = i & 0xff; seed[1] = i >> 8; seed[31] = 0x5d;
+        const trial = new Server('a-seed', board);
+        trial.op(ME, (t) => t.ready(ME, seed));
+        const v = clientTable().adoptEnvelope(trial.envelope(ME))!;
+        if (v.status === PLAYING && v.defender === want) return { seed, defender: v.defender, firstAttacker: v.firstAttacker };
+    }
+    throw new Error(`no seed in 4096 opens with seat ${want} defending`);
+}
+
+async function openingDeal(name: string, gid: string, ids: FixtureSeat[], wantDefender: number): Promise<void> {
+    const board = lobby(name, ids);
+    const { seed, defender, firstAttacker } = seedFor(board, wantDefender);
+    const meSeat = ids.findIndex((x) => x.id === ME);
+    assert.notEqual(defender, 0, `${name}: the real defender is not the lobby's stale seat 0`);
+    assert.notEqual(defender, meSeat, `${name}: the real defender is not me`);
+
+    server = new Server(gid, board);
+    pending = [];
+    channels.clear();
+    seedRandom(301);
+    installClock();
+    /** `ledger` is what the role marks are WEARING (useRoleMotion's shown roles), the value the ring draws from. */
+    interface DealFrame { t: number; label: string; phase: string; shields: string[]; boardDefender: number | null; ledger: string }
+    const seen: DealFrame[] = [];
+    let recording = false;
+    class DealStage extends Stage {
+        capture(label: string): void {
+            super.capture(label);
+            if (!recording) return;
+            const view = probe.store ? JSON.parse(probe.store).view : null;
+            const f = { t: clock, label, phase: dealPhase(view, defender, firstAttacker), shields: shieldSeats(this.host), boardDefender: view?.defender ?? null,
+                ledger: probe.anim?.shownRoles ? `d${probe.anim.shownRoles.roles.defender}/a${probe.anim.shownRoles.roles.firstAttacker}` : 'none' };
+            const last = seen[seen.length - 1];
+            if (!last || last.phase !== f.phase || last.shields.join() !== f.shields.join() || last.boardDefender !== f.boardDefender
+                || last.ledger !== f.ledger) seen.push(f);
+        }
+    }
+    const stage = new DealStage();
+    try {
+        await stage.mount(gid);
+        recording = true;
+        stage.capture('lobby on screen');
+        await stage.step('tap Ready', () => tap(probe.actions.startGame(gid)));
+        await stage.advance(100);
+        const req = pending.shift();
+        assert.ok(req && req.kind === 'meta' && (req.body as { type: string }).type === 'start', `${name}: Ready asks the server to start`);
+        await stage.step('server starts the game', () => {
+            server!.op(ME, (t) => t.ready(ME, seed));
+            const env = server!.envelope(ME);
+            req!.resolve({ data: env.buffer.slice(env.byteOffset, env.byteOffset + env.byteLength), error: null });
+        });
+        await stage.advance(50);
+        await deliver(stage, 'push: the opening deal');
+        await stage.advance(20_000);
+    } finally {
+        await stage.unmount();
+        removeClock();
+        server = null;
+    }
+
+    const trace = seen.map((f) => `${f.t}ms ${f.phase} board.defender=${f.boardDefender} ledger=${f.ledger} shield=[${f.shields.join(', ')}]`).join('\n    ');
+    const settledAt = seen.findIndex((f) => f.phase === 'START_DEFENDER');
+    assert.ok(settledAt >= 0, `${name}: the page reaches the START_DEFENDER board:\n    ${trace}`);
+    const early = seen.slice(0, settledAt).filter((f) => f.shields.length > 0);
+    assert.deepEqual(early.map((f) => `${f.t}ms ${f.phase}: ${f.shields.join(', ')}`), [],
+        `${name}: no frame before START_DEFENDER draws a shield (real defender seat ${defender}, I am seat ${meSeat}):\n    ${trace}`);
+    const firstShield = seen.findIndex((f) => f.shields.length > 0);
+    assert.ok(firstShield >= settledAt, `${name}: the first shield is at or after START_DEFENDER:\n    ${trace}`);
+    for (const f of seen.slice(settledAt)) {
+        assert.ok(f.shields.every((s) => s === `seat ${defender}`), `${name}: from START_DEFENDER on the shield is only on seat ${defender} (${f.t}ms: ${f.shields.join(', ')}):\n    ${trace}`);
+    }
+    assert.ok(seen.slice(settledAt).some((f) => f.shields.includes(`seat ${defender}`)), `${name}: the real defender, seat ${defender}, gets the shield:\n    ${trace}`);
+}
+
+test('the opening deal, two of us: no shield until the trump turns, then on the real defender', async () => {
+    await openingDeal('Deal two', 'a-deal-two', [seat(ME, 'Me'), { id: ANNA, name: 'Anna', brain: 'random' }], 1);
+});
+
+test('the opening deal, three of us and I am seat 1: no shield until the trump turns, then on the real defender', async () => {
+    await openingDeal('Deal three', 'a-deal-three',
+        [{ id: ANNA, name: 'Anna', brain: 'random' }, seat(ME, 'Me'), { id: BORIS, name: 'Boris', brain: 'random' }], 2);
 });
