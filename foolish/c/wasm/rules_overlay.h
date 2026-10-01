@@ -1,8 +1,13 @@
-// R1 (docs/RULES_GUARDS_WASM_MEMORY_PLAN.md): rules.wasm-only arena overlay.
-// The bots round aliased the replay scratch into the solver's solve_ws arena
-// (M8/M9, wasm_overlay.h). rules.wasm links no solver — so it gets its OWN
-// arena (g_rules_arena, defined in wasm/wasm_api.c), into which the two
-// mutually-exclusive buffer families are aliased.
+// R1 (docs/RULES_GUARDS_WASM_MEMORY_PLAN.md): the arena overlay of the
+// small-memory module built from WASM_RULES_FLAGS (rules.wasm when R1 landed,
+// msg.wasm today). The bots round aliased the replay scratch into the solver's
+// solve_ws arena (M8/M9, wasm_overlay.h). This module links no solver, so it
+// gets its OWN arena (g_rules_arena, defined in wasm_api.c beside this header),
+// into which the two mutually-exclusive buffer families are aliased.
+//
+// It lives in c/wasm, not c/src, because only a module build ever needs it:
+// the kernel (replay.c) includes it under #ifdef CD_RULES_OVERLAY, and only the
+// flag sets that define that flag put c/wasm on the include path.
 //
 // The families never coexist because the wasm instance is single-threaded and
 // the two top-level export groups never nest (verified against the TS bridge,
@@ -31,15 +36,16 @@
 // next action re-marshals / re-enumerates, overwriting whatever replay bytes
 // remained before any read. Pure address reuse, zero behavior change.
 //
-// rules-ONLY: CD_RULES_OVERLAY is set only on the rules.wasm compile
-// (WASM_RULES_FLAGS). wasm_api.c / replay.c are ALSO compiled into bots.wasm
-// (with CD_WASM_OVERLAY, which aliases into solve_ws instead) and into native
-// tools (plain statics) — the two flavors are mutually exclusive (below) and a
-// native build sees neither, so its buffers stay independent statics.
+// CD_RULES_OVERLAY is set only by WASM_RULES_FLAGS (and the msg module's set
+// derived from it). wasm_api.c / replay.c are ALSO compiled into bots.wasm
+// (with CD_WASM_OVERLAY, which aliases into solve_ws instead), and replay.c
+// into native and iOS builds (plain statics) - the two flavors are mutually
+// exclusive (below) and those builds see neither, so their buffers stay
+// independent statics.
 //
 // Offsets are 16-aligned; each buffer's fit into its slot is _Static_assert'd
 // at its definition site, and wasm_api.c asserts each family END fits the
-// arena - so a cap bump (MAX_LEGAL_MOVES, WASM_RING_SNAPS, IO_CAP, REC_CAP,
+// arena - so a cap bump (MAX_LEGAL_MOVES, SNAP_RING_CAP, IO_CAP, REC_CAP,
 // REPLAY_IO_CAP) that would overflow fails the LINK loudly (also caught by the
 // R0 memory pin) instead of corrupting a live buffer.
 #ifndef RULES_OVERLAY_H
@@ -54,9 +60,9 @@ extern unsigned char *const rules_overlay;   // == (unsigned char *)&g_rules_are
 
 // ACTION family, laid out from offset 0. Slot widths (next_off - this_off)
 // are 16-aligned around the measured sizes at the rules caps
-// (MAX_LEGAL_MOVES=1024, WASM_RING_SNAPS=16, WASM_IO_CAP=24576):
+// (MAX_LEGAL_MOVES=1024, SNAP_RING_CAP=16, WASM_IO_CAP=24576):
 #define RULES_OVL_MOVES_OFF     0u        // g_moves (LegalMoves): <= 59408 B slot
-#define RULES_OVL_SNAPS_OFF     59408u    // g_snaps (SnapSlot[WASM_RING_SNAPS]): <= 18560 B slot
+#define RULES_OVL_SNAPS_OFF     59408u    // g_snaps (SnapSlot[SNAP_RING_CAP]): <= 18560 B slot
 #define RULES_OVL_IO_OFF        77968u    // g_io (IO_CAP): <= 24576 B slot
 #define RULES_OVL_ACTION_END    102544u   // 77968 + 24576
 

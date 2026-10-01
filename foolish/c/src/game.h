@@ -342,8 +342,9 @@ extern _Thread_local void (*engine_snap_hook)(const Game *g, int tag, int aux);
 // (tests/l1_measure.c: a round transition, MAGIC + TRASH + the per-seat refill
 // draws; a bot cycle bundles silent actions, which fire next to nothing, ahead
 // of its one visible action). 64 holds the deal with 13 to spare. A store that
-// overflows drops the hook (see snap_room.h), it never corrupts. The wasm
-// bridge's action ring is not one of these (wasm_api.c WASM_RING_SNAPS says why).
+// overflows drops the hook (see snap_room.h), it never corrupts. A resident
+// table's action ring is not one of these: it holds one action window, never
+// reads a deal back, and is sized by SNAP_RING_CAP (its owner says why).
 #ifndef MAX_SNAPS
 #define MAX_SNAPS 64
 #endif

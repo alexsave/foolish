@@ -23,7 +23,12 @@
 
 #include "replay.h"
 #include "wasm_overlay.h"
+#ifdef CD_RULES_OVERLAY
+// The arena layout belongs to the module that defines the arena
+// (c/wasm/rules_overlay.h, on the include path only of the builds that set this
+// flag). Every other build keeps plain statics and never resolves it.
 #include "rules_overlay.h"
+#endif
 #include <stddef.h>   // offsetof (the re-deal's short-log Game slot)
 #include <string.h>
 

@@ -687,7 +687,7 @@ endef
 #   end of the deal. game.h owns the size of the stores that capture a deal (the
 #   Table's, the replay walker's) and asserts it holds one, so this build takes
 #   the same number rather than a second one. The bridge's action ring
-#   (wasm_api.c) never reads a deal back and keeps its own 16, WASM_RING_SNAPS.
+#   (wasm_api.c) never reads a deal back and keeps its own 16, SNAP_RING_CAP.
 # -mno-nontrapping-fptoint pins the wasm FEATURE SET, the same way -mbulk-memory
 # does. clang >= 22 emits i32.trunc_sat_* by default; a wasm-opt built without
 # that feature enabled then rejects the module outright ("all used features
@@ -1134,10 +1134,12 @@ WASM_TEST_EXPORTS := $(WASM_ROSTER_EXPORTS) $(WASM_FIXTURE_EXPORTS) $(WASM_REPLA
 # and its pin are rules.wasm's measured ones (docs/RULES_GUARDS_WASM_MEMORY_PLAN.md
 # R0, R1, R4): a 1024-move menu, MAX_LOGS=128 (one action's logs), a 32 KiB stack,
 # CD_RULES_OVERLAY (the replay scratch aliased over the action buffers, see
-# src/rules_overlay.h), and a 3-page memory pin that wasm-msg lifts to its own.
+# wasm/rules_overlay.h), and a 3-page memory pin that wasm-msg lifts to its own.
+# -Iwasm goes with CD_RULES_OVERLAY and nowhere else: src/replay.c includes the
+# arena layout only under that flag, so no other build resolves wasm/ headers.
 WASM_RULES_FLAGS := $(filter-out -DMAX_LEGAL_MOVES=4096,$(WASM_FLAGS)) \
                     -DMAX_LEGAL_MOVES=1024 -DMAX_LOGS=128 -DWASM_IO_CAP=24576 \
-                    -DCD_RULES_OVERLAY \
+                    -DCD_RULES_OVERLAY -Iwasm \
                     -Wl,-z,stack-size=32768 \
                     -Wl,--initial-memory=196608 -Wl,--max-memory=196608
 

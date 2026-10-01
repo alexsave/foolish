@@ -68,7 +68,9 @@ _Static_assert(LOG_EXPORT_WORST <= IO_CAP,
 // pins both). wasm_start_game and msg_decode's re-deal still fire the deal's
 // hooks into it; past 16 they drop - cleanly, the ring never overruns - and
 // nothing reads a deal back from here.
-#define WASM_RING_SNAPS 16
+#ifndef SNAP_RING_CAP
+#define SNAP_RING_CAP 16
+#endif
 #define MAX_IN_CARDS 128
 
 #ifdef CD_RULES_OVERLAY
@@ -130,13 +132,13 @@ typedef struct { _Alignas(8) unsigned char bytes[GAME_PREFIX_SIZE]; } SnapSlot;
 // 8-aligned offset satisfies SnapSlot's _Alignas(8).
 _Static_assert(_Alignof(SnapSlot) <= 16, "SnapSlot alignment exceeds the arena's 16");
 _Static_assert(RULES_OVL_SNAPS_OFF % _Alignof(SnapSlot) == 0, "g_snaps offset misaligned");
-_Static_assert(sizeof(SnapSlot) * WASM_RING_SNAPS <= RULES_OVL_IO_OFF - RULES_OVL_SNAPS_OFF, "g_snaps overflows its overlay slot");
+_Static_assert(sizeof(SnapSlot) * SNAP_RING_CAP <= RULES_OVL_IO_OFF - RULES_OVL_SNAPS_OFF, "g_snaps overflows its overlay slot");
 #define g_snaps ((SnapSlot *)(rules_overlay + RULES_OVL_SNAPS_OFF))
 #else
-static SnapSlot g_snaps[WASM_RING_SNAPS];
+static SnapSlot g_snaps[SNAP_RING_CAP];
 #endif
-static int g_snap_tags[WASM_RING_SNAPS];
-static int g_snap_aux[WASM_RING_SNAPS];
+static int g_snap_tags[SNAP_RING_CAP];
+static int g_snap_aux[SNAP_RING_CAP];
 static int g_n_snaps;
 #ifdef CD_RULES_OVERLAY
 // R1: g_moves is the ACTION family's menu slot (offset 0).
@@ -175,7 +177,7 @@ unsigned char *wasm_cards_b_ptr(void) { return g_in_raw_b; }
 // ---------- snapshot hook -------------------------------------------------
 
 static void snap_cb(const Game *g, int tag, int aux) {
-    if (g_n_snaps >= WASM_RING_SNAPS) return;
+    if (g_n_snaps >= SNAP_RING_CAP) return;
     memcpy(g_snaps[g_n_snaps].bytes, g, GAME_PREFIX_SIZE);
     g_snap_tags[g_n_snaps] = tag;
     g_snap_aux[g_n_snaps] = aux;
@@ -589,7 +591,7 @@ int wasm_view_serialize(int viewer) {
 // wasm_export_logs_masked_from). Zero for every path that marshals fresh.
 int wasm_events_serialize_from(int viewer, int actor, int append_final_transition,
                                int log_start) {
-    EvSnap refs[WASM_RING_SNAPS];
+    EvSnap refs[SNAP_RING_CAP];
     for (int i = 0; i < g_n_snaps; i++) {
         // put_state/state_put only read prefix fields, which is exactly what
         // a snapshot slot holds.
