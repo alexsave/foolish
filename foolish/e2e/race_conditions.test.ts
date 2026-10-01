@@ -22,7 +22,7 @@ import assert from 'node:assert/strict';
 
 import { applySchema, resetDb, uuid, pgPool, broadcastLog } from './harness.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { fixture, fixtureTable, PLAYING } from './helpers/table_fixture.ts';
+import { boardBytes, fixture, fixtureTable, PLAYING } from './helpers/table_fixture.ts';
 import { seedTable } from './helpers/table_db.ts';
 import { cardText, checkCardConservation, legalMoves, mustReadTable, type PlayMove, type TableState } from './helpers/table_play.ts';
 import { runAction, runMeta } from './helpers/table_server.ts';
@@ -417,7 +417,7 @@ function expectedAfter(board: TableState, actorId: string, m: PlayMove): string 
     assert.equal(t.act(actorId, m.wire, null, 0), L.TABLE_APPLIED, 'fixture: the move applies in memory');
     const p = t.commit(board.gameId, board.version + 1, 0);
     if (typeof p === 'number') throw new Error(`no products (${p})`);
-    return hexOf(p.state);
+    return hexOf(boardBytes(p.state));
 }
 
 for (const otherWriter of [false, true]) {
@@ -476,8 +476,8 @@ for (const otherWriter of [false, true]) {
 
         const s1 = await mustReadTable(g1.gameId);
         const s2 = await mustReadTable(g2.gameId);
-        assert.equal(hexOf(s1.state), expectedAfter(base1, g1.A, m1), 'game 1 stores exactly its own move on its own board');
-        assert.equal(hexOf(s2.state), expectedAfter(b2, g2.B, m2), 'game 2 stores exactly its own move on its own board');
+        assert.equal(hexOf(boardBytes(s1.state)), expectedAfter(base1, g1.A, m1), 'game 1 stores exactly its own move on its own board');
+        assert.equal(hexOf(boardBytes(s2.state)), expectedAfter(b2, g2.B, m2), 'game 2 stores exactly its own move on its own board');
         assert.deepEqual(s1.battles.map((b) => cardText(b.attack)), ['6h', '6d'], 'game 1: the throw-in is down');
         assert.deepEqual(s2.battles.map((b) => [cardText(b.attack), b.defense && cardText(b.defense)]), [['6h', '7h']], 'game 2: the cover is down');
         if (otherWriter) assert.deepEqual(hand(s1, 1), ['Qh', 'Jh', 'Th', '9h', '8h', '7h'], 'game 1 kept the other writer\'s commit');

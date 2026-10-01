@@ -43,6 +43,69 @@
 // comment to "mirror the server", which was never true.
 int bot_pacing_ms(int pacing_class, int humans_present);
 
+// The values bot_pacing_ms prices a visible class at, adopted verbatim from the
+// server as the one table (owner decision, July 2026): 3000ms is its tuned pace
+// with a human watching (its own note records 4500ms as sluggish and 1500ms as
+// too fast to follow), 300ms the bots-only pace nobody watches live.
+#define BOT_PACE_MS_WITH_HUMANS 3000
+#define BOT_PACE_MS_BOTS_ONLY    300
+
+// ---------- the wait before a bot acts (a server's bot loop) ---------------
+//
+// HOW LONG A BOT MUST WAIT BEFORE IT ACTS ON THE BOARD IN FRONT OF IT, which is
+// a question about the viewers and not about the bot's own last move.
+//
+// A bot answers a board its human viewers must first have SEEN: the last
+// committed operation plays on their screens for its whole animation stream
+// (anim_plan.h anim_stream_ms - a deal is a beat a card, a bout end a hold, a
+// sweep and the refills), and only then does the reaction pace start. So with a
+// human IN the bot may act at
+//
+//     settles_ms + BOT_PACE_MS_WITH_HUMANS
+//
+// where settles_ms is when the last shown operation finished playing, and in a
+// bots-only game at shown_ms + BOT_PACE_MS_BOTS_ONLY, the pace from the last
+// shown commit, with no animation term (nobody is watching live). The answer is
+// that instant minus now_ms, never negative, and never past BOT_PACE_WAIT_MAX_MS.
+//
+// THIS REPLACES the server's fixed sleep after each bot cycle once the state
+// blob carries the clock (view.h STATE_BLOB_FORMAT, the switch step; until then
+// the server still sleeps bot_cycle_delay_ms, which the phone's local loop keeps
+// using: its board is on the same device, so its wait is what its own renderer
+// needs). A fixed sleep counted from the bot's
+// OWN commit ignored every other commit: the deal, whose seven beats ate the
+// pace between the first two bot moves of a game, and a human's move, which a
+// bot answered at t=0 - before the human's own screen had even landed it, so a
+// throw-in made on the open bout that screen showed was refused (e2e
+// web_bot_first_move_pace / web_throwin_vs_bot).
+//
+// The clock is the table's (view.h BoardClock, advanced by every commit and
+// persisted in a v3 state blob); a clock of zero - a board never shown - asks
+// for no wait. A v2 blob has no clock at all and reads as a zero one.
+//
+// THE CEILING is one ask's, not the longest wait: a host's lease must outlive
+// any single wait (the Supabase bot lease is 25s, bot_actions.ts
+// BOT_LEASE_TTL_MS), and a host asks again after every wait, so a longer one is
+// waited out in ceiling-long slices. One exists in play: an eight-seat opening
+// deal goes round the table a card at a time and plays about 20s
+// (anim_plan.h ANIM_DEAL_CARD_MS), so its wait is two asks.
+#define BOT_PACE_WAIT_MAX_MS 15000
+// THE HORIZON is how far ahead of now a clock can be and still be one somebody
+// is playing. Slicing alone would let a skewed or corrupt clock park a game ask
+// after ask, so a clock past it is on another host's time (bot_clock_foreign)
+// and asks for no wait at all. It sits well clear of the longest stream play
+// makes (the eight-seat deal, with a move queued behind it and the pace; tests.c
+// test_table_bot_wait holds the deal inside it).
+#define BOT_CLOCK_HORIZON_MS 60000
+int bot_wait_ms(const Game *g, uint32_t human_mask, int64_t shown_ms, int64_t settles_ms, int64_t now_ms);
+// 1 when a board clock cannot be this host's: SHOWN further ahead of now than
+// one wait (shown_ms is the committing host's own now, so a board shown in the
+// future was shown on another clock), or SETTLING past the horizon. The one
+// test both readers of a clock apply - bot_wait_ms, which then asks for no
+// wait, and table.c next_clock, which then starts the next stream now instead
+// of queueing it behind a stream nobody's screen is playing.
+int bot_clock_foreign(int64_t shown_ms, int64_t settles_ms, int64_t now_ms);
+
 // ---------- the drive cycle (F2) -------------------------------------------
 
 // Why the drive stopped.

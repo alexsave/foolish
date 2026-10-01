@@ -5,6 +5,7 @@
 #include "evwire.h"
 #include "view.h"
 #include "../wasm/wire.h"
+#include "../../../shared/c/le_bytes.h"
 #include <string.h>
 
 void client_init(ClientTable *c, ClientSlot *slot) {
@@ -266,7 +267,7 @@ int client_push_next(ClientTable *c) {
     e->has_target = (flags & 1) != 0;
     e->target = e->has_target ? card_of_id(q[at++]) : CARD_NONE;
     e->battle = (flags & 2) ? (int8_t)q[at++] : -1;
-    const int snap_len = q[at] | (q[at + 1] << 8);
+    const int snap_len = le_get_u16(q + at);
     at += 2;
     const int rc = board_import(c, q + at, snap_len);
     if (rc != CLIENT_OK) { c->open = false; return rc; }

@@ -9,6 +9,7 @@
 // not depend on the thread count. All scratch is thread-local.
 
 #include "winprob.h"
+#include "../../../shared/c/le_bytes.h"
 
 #include "analyse.h"
 #include "bot_roster.h"
@@ -434,13 +435,12 @@ int winprob_packed(const unsigned char *code, int code_len, const WinprobParams 
 
 static unsigned wp_rd8(const unsigned char **r) { return *(*r)++; }
 static unsigned wp_rd16(const unsigned char **r) {
-    unsigned v = (*r)[0] | ((unsigned)(*r)[1] << 8);
+    unsigned v = le_get_u16(*r);
     *r += 2;
     return v;
 }
 static uint32_t wp_rd32(const unsigned char **r) {
-    uint32_t v = 0;
-    for (int i = 0; i < 4; i++) v |= (uint32_t)(*r)[i] << (8 * i);
+    uint32_t v = le_get_u32(*r);
     *r += 4;
     return v;
 }

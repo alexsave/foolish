@@ -338,7 +338,7 @@ int wasm_export_state(void) { return put_state(&g_game, g_io); }
 // Serialize the working game into g_io as a versioned durable blob; returns
 // the byte length (>=2).
 int wasm_state_serialize(void) {
-    return state_blob_put(&g_game, g_io);
+    return state_blob_put(&g_game, 0, g_io);
 }
 
 // Load a durable blob (already written into g_io) back into the working game.
@@ -347,7 +347,7 @@ int wasm_state_serialize(void) {
 // a negative GAME_INVALID_* reason if the state inside is one the kernel
 // refuses (game.h game_validate) - the working game is then left as it was.
 int wasm_state_deserialize(int len) {
-    return state_blob_load(&g_game, g_io, len);
+    return state_blob_load(&g_game, g_io, len, 0);
 }
 
 // The version this kernel writes - lets the TS bridge assert the embed it

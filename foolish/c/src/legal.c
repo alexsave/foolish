@@ -3,6 +3,7 @@
 // downstream that picks "first matching" stays deterministic vs TS.
 
 #include "legal.h"
+#include "../../../shared/c/le_bytes.h"
 #include <string.h>
 
 // Output cap (see legal_set_move_cap in legal.h): defaults to the full
@@ -551,11 +552,7 @@ int legal_menu_write(const LegalMoves *lm, int start, int count,
         for (int j = 0; j < m->n_cards; j++) *q++ = (unsigned char)card_to_id(m->cards[j]);
         for (int j = 0; j < m->n_cards; j++) *q++ = (unsigned char)card_to_id(m->attack_cards[j]);
     }
-    const unsigned int n = (unsigned int)(end - start);
-    out[0] = (unsigned char)(n & 0xff);
-    out[1] = (unsigned char)((n >> 8) & 0xff);
-    out[2] = (unsigned char)((n >> 16) & 0xff);
-    out[3] = (unsigned char)((n >> 24) & 0xff);
+    le_put_u32(out, (uint32_t)(end - start));
     return (int)(q - out);
 }
 
@@ -563,8 +560,7 @@ int legal_menu_begin(MenuWalk *w, const unsigned char *buf, int len) {
     if (!w) return LEGAL_WIRE_EPARSE;
     w->buf = buf; w->len = len; w->n = 0; w->index = -1; w->q = 4;
     if (!buf || len < 4) return LEGAL_WIRE_EPARSE;
-    w->n = (int)((unsigned)buf[0] | ((unsigned)buf[1] << 8)
-                 | ((unsigned)buf[2] << 16) | ((unsigned)buf[3] << 24));
+    w->n = (int)le_get_u32(buf);
     if (w->n < 0) { w->n = 0; return LEGAL_WIRE_EPARSE; }
     return w->n;
 }
@@ -742,9 +738,6 @@ int play_human_menu(const PlayBoard *b, unsigned char *out, int cap) {
         n++;
     }
     if (rc == LEGAL_WIRE_EPARSE) return LEGAL_WIRE_EPARSE;
-    out[0] = (unsigned char)(n & 0xff);
-    out[1] = (unsigned char)((n >> 8) & 0xff);
-    out[2] = (unsigned char)((n >> 16) & 0xff);
-    out[3] = (unsigned char)((n >> 24) & 0xff);
+    le_put_u32(out, (uint32_t)n);
     return (int)(p - out);
 }

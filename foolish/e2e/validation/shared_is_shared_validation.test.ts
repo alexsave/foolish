@@ -155,6 +155,7 @@ function productCopies(): string[] {
         'c/src/msg_stage.h', 'c/msg_stage/msg_stage.h',
         'c/src/motion_ruler.h', 'c/motion_ruler/motion_ruler.h',
         'c/src/languages.h', 'c/i18n/languages.h',
+        'c/src/le_bytes.h',
     ];
     // The freestanding libc and libm. NOT wasm/include/stdio.h: shared/c/wasm's
     // own stdio.h says a build that needs a different stdio keeps its own, and

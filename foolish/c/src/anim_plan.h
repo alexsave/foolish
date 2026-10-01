@@ -465,6 +465,15 @@ int anim_build_plan(const AnimPlanEvent *events, int n_events, int n_players,
                     int final_deck, int final_discard, Card final_flipped,
                     const int *final_hand, AnimPlan *out);
 
+// ---- how long a stream plays ----------------------------------------------
+// The wall time anim_build_plan would give a stream of these event types and
+// acting seats (AnimPlan.total_ms), from the same beat layout: the timing needs
+// types and seats only, so a caller holding no boards and no cards - the server
+// deciding how long its viewers are busy with a commit (bot_drive.h
+// bot_wait_ms) - asks here instead of building a whole plan. Returns the ms, or
+// ANIM_ECAP (n over ANIM_MAX_STEPS) / ANIM_EBADARG.
+int anim_stream_ms(const int *types, const int *seats, int n);
+
 // ---- the plan, RE-ASKED ---------------------------------------------------
 //
 // A PLAN IS NOT A SCHEDULE, and a host with a frame loop wants the second one.

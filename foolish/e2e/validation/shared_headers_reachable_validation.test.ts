@@ -89,10 +89,14 @@ const REPO = resolve(PRODUCT, '..');
  *                          list names a .c for it and the per-build check
  *                          below does not list it; Swift may reach it through
  *                          its module.modulemap
+ *   le_bytes.h             shared/c/le_bytes.h, the fixed-width little-endian
+ *                          u16 / u32 / u48 put and get under the card kernel's
+ *                          blobs, wires and session log; header-only (static
+ *                          inline), so no build list names a .c for it either
  */
 const SHARED_HEADERS = ['sha256.h', 'deal_rng.h', 'b32.h', 'mixrad.h', 'languages.h', 'msg_stage.h', 'motion_ruler.h',
     'check.h', 'twophone.h', 'text_util.h', 'wire_check.h', 'stats.h', 'seed_hash.h',
-    'msg_seat_tag.h', 'msg_lobby_roster.h', 'collapse.h'];
+    'msg_seat_tag.h', 'msg_lobby_roster.h', 'collapse.h', 'le_bytes.h'];
 
 /** Every C source and header in the repo, both products, excluding build output. */
 function kernelSources(): string[] {
@@ -207,6 +211,10 @@ test('the shared sources compile with no -I whatsoever', () => {
         'shared/c/collapse/collapse_test.c',
         'uttt/c/src/uttt_anim.c',       // collapse/collapse.h (via uttt_anim.h)
         'pickemup/c/ios/pk_lay.c',      // collapse/collapse.h
+        // The little-endian integers, header-only: its test, and the kernel
+        // file that writes the blob's clocks through it.
+        'shared/c/le_bytes_test.c',
+        'foolish/c/src/view.c',         // le_bytes.h
     ];
     const probes = expectedProbes.filter((p) => existsSync(join(REPO, p)));
     assert.equal(probes.length, expectedProbes.length,

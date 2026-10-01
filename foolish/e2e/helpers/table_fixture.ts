@@ -68,6 +68,15 @@ function k(): { ex: FixtureExports; table: ServerTable } {
 /** The C Table over the fixtures' own bots.wasm instance. */
 export function fixtureTable(): ServerTable { return k().table; }
 
+/**
+ * A state blob's BOARD: every byte but a v3 blob's trailing clock (table.h
+ * TABLE_STATE_V3_CLOCK_BYTES; a v2 blob has none), which says when the board
+ * was shown rather than what is on it - so two commits of one board at two
+ * times, or a board and a fixture that was never shown, compare equal here.
+ */
+export const boardBytes = (state: Uint8Array): Uint8Array =>
+    state.subarray(0, state.length - (state[0] === L.TABLE_STATE_FORMAT_V3 ? L.TABLE_STATE_V3_CLOCK_BYTES : 0));
+
 /** The raw exports of that instance, for a test helper that reads the loaded board through the generated accessors. */
 export function fixtureExports(): TableExports & { wasm_game_ptr_internal(): number; wasm_moves_ptr_internal(): number; wasm_legal_moves(seat: number): number } {
     return k().ex as unknown as ReturnType<typeof fixtureExports>;

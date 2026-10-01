@@ -192,7 +192,10 @@ test('a bot cycle that loses its commit replays the moves it already chose inste
   assert.equal(retried.commits, 2, 'the first commit lost to a concurrent writer, the retry landed');
   assert.deepEqual(retried.searches, clean.searches,
     'the retry searched nothing: every decision of the cycle was searched once, by the attempt that lost');
-  assert.equal(retried.after.state, clean.after.state, 'and the retry committed the same moves');
+  // The same board; the blob's trailing clock says when it was committed, which the two runs do not share.
+  // (the pool hands bytea back as its '\\x..' hex text: two characters a byte)
+  const board = (state: string) => state.slice(0, state.length - 2 * L.TABLE_STATE_CLOCK_BYTES);
+  assert.equal(board(retried.after.state), board(clean.after.state), 'and the retry committed the same moves');
   assert.equal(retried.after.logs_packed.length, clean.after.logs_packed.length, 'the same number of log records');
   assert.equal(Number(retried.after.version), Number(clean.after.version) + 1, 'one extra version: the injected writer');
 });

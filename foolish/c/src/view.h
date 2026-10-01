@@ -76,11 +76,23 @@ int state_import(Game *g, const unsigned char *p, int len, int masked);
 // strategy_key/is_ai) is stable across a game and lives in a separate roster
 // column, reattached by the table layer.
 //
-// Layout: [version][deterministic_deck flag][state_put(VIEW_UNMASKED)]. The
-// flag byte (added with the seed-dealt deck; see the Game field) is what
-// bumped this from the old v1 [version][state_put...]. There is no v1 read
-// path - a data migration rewrote every stored v1 blob to v2 (flag 0), so no
-// v1 blob ever reaches this kernel; anything that isn't v2 is unreadable.
+// Layout v3: [version][deterministic_deck flag][state_put(VIEW_UNMASKED)]
+// [u48 LE shown_ms][u48 LE settles_ms]. The flag byte (added with the
+// seed-dealt deck; see the Game field) is what bumped the old v1
+// [version][state_put...] to v2, and the trailing BoardClock is what bumped v2
+// to v3. There is no v1 read path - a data migration rewrote every stored v1
+// blob to v2 (flag 0), so no v1 blob ever reaches this kernel.
+//
+// BOTH v2 AND v3 ARE READ; ONE OF THEM IS WRITTEN (STATE_BLOB_FORMAT below).
+// The column is durable, so its format moves the way the repo moves any durable
+// store (docs/ARCHITECTURE_AS_A_PATTERN.md): EXPAND, a kernel that reads the new
+// format and still writes the old one, deployed first; SWITCH, the same kernel
+// with STATE_BLOB_FORMAT flipped to v3, deployed once the expand kernel is live
+// everywhere, so a rollback or a deploy window never puts a v3 row in front of
+// a kernel that refuses it; CONTRACT, the v2 read path deleted once no v2 row
+// is left. A v2 row reads as a zero clock: a board last shown long ago, which
+// is what a zero clock says (bot_drive.h bot_wait_ms asks for no wait on it).
+// Anything that is neither is unreadable.
 //
 // ONE definition, for every writer and reader of that column: the wasm bridge
 // (wasm_state_serialize / wasm_state_deserialize) and the table layer
@@ -88,21 +100,44 @@ int state_import(Game *g, const unsigned char *p, int len, int masked);
 // are both these functions, so a format bump cannot land on one side only.
 // A richer on-disk layout that WRAPS this blob is a different format with its
 // own version (server/impls/native/snapshot.c PERSIST_GAME_BLOB_VERSION).
-#define STATE_BLOB_FORMAT 2
+#define STATE_BLOB_FORMAT_V2 2   // [version][flag][state_put]
+#define STATE_BLOB_FORMAT_V3 3   // ... then the board's clock (BoardClock below)
+
+// THE FORMAT THIS KERNEL WRITES, and the one switch of the move above: v2 while
+// this is the expand kernel, V3 once it is the switch. Everything that depends
+// on which one is written - the clock bytes a blob ends with - follows from it.
+#define STATE_BLOB_FORMAT STATE_BLOB_FORMAT_V2
 
 // The bytes the blob's header costs, ahead of the state_put payload.
 #define STATE_BLOB_HEADER 2
 
-// Write g as a durable blob; returns the byte length (>= STATE_BLOB_HEADER).
-int state_blob_put(const Game *g, unsigned char *out);
+// THE BOARD'S CLOCK, which a v3 blob carries behind the state: when a viewer was
+// last shown an operation on this board, and when that showing finishes playing
+// (the operation's animation stream, queued behind whatever was still playing).
+// Epoch milliseconds, 0 for never. It is a table fact, not a rule of the game -
+// the Game struct never holds it - and the one reader of it is the server's bot
+// wait (bot_drive.h bot_wait_ms). table.c table_commit_products advances it.
+typedef struct {
+    int64_t shown_ms;
+    int64_t settles_ms;
+} BoardClock;
+#define STATE_BLOB_V3_CLOCK_BYTES 12
+// The clock bytes a WRITTEN blob ends with: none while v2 is written.
+#define STATE_BLOB_CLOCK_BYTES (STATE_BLOB_FORMAT == STATE_BLOB_FORMAT_V3 ? STATE_BLOB_V3_CLOCK_BYTES : 0)
 
-// Load a durable blob back into g. Returns 1 on success; 0 if the leading
-// version byte is not one this kernel reads (the caller must treat that as
-// unreadable, never as an empty game); or a negative GAME_INVALID_* reason if
-// the state inside is one the kernel refuses (game.h game_validate) - g is
-// then left exactly as it was.
+// Write g as a durable blob at STATE_BLOB_FORMAT, with its clock when that
+// format carries one; returns the byte length. `clk` NULL writes a zero clock
+// (a board nobody has been shown).
+int state_blob_put(const Game *g, const BoardClock *clk, unsigned char *out);
+
+// Load a durable blob back into g, and its clock into `clk` (may be NULL; a v2
+// blob reads as a zero clock). Returns 1 on success; 0 if the leading version
+// byte is not one this kernel reads (the caller must treat that as unreadable,
+// never as an empty game); or a negative GAME_INVALID_* reason if the state
+// inside is one the kernel refuses (game.h game_validate) - g and clk are then
+// left exactly as they were.
 // `len` counts the header bytes too.
-int state_blob_load(Game *g, const unsigned char *p, int len);
+int state_blob_load(Game *g, const unsigned char *p, int len, BoardClock *clk);
 
 // ---------- the response envelope header ----------------------------------
 //

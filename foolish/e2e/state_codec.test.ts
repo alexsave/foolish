@@ -1,7 +1,7 @@
 // Durable state codec: the `games.state bytea` blob is lossless.
 //
 // The blob is the kernel's (table.h: [TABLE_STATE_FORMAT][deterministic deck]
-// [state_put]). A table loads it (table_load: state_import, game_validate) and
+// [state_put], then the board's clock at v3). A table loads it (table_load: state_import, game_validate) and
 // every commit writes it back (table_commit_products). Seat identity is not in
 // it: that is the roster column, a separate blob.
 //
@@ -28,7 +28,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { fixtureTable, reasonOf } from './helpers/table_fixture.ts';
+import { boardBytes, fixtureTable, reasonOf } from './helpers/table_fixture.ts';
 import { rebuild, residentBoard } from './helpers/table_play.ts';
 import { dealBotTable, driveBotTable, seedBytes, type BotTableRow } from './helpers/bot_table.ts';
 
@@ -37,23 +37,54 @@ if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {};
 const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
 
 test('every commit writes the durable blob at the current format', () => {
+  // The expand step (c/src/view.h STATE_BLOB_FORMAT): this kernel reads v2 and
+  // v3 and still writes v2, so a kernel from before the clock can load every row
+  // it writes. The switch step flips the format written to v3.
   const row = dealBotTable(['random', 'random', 'random', 'random'], seedBytes(4, 1));
-  assert.equal(L.TABLE_STATE_FORMAT, 2, 'the format this kernel writes');
+  assert.equal(L.TABLE_STATE_FORMAT, L.TABLE_STATE_FORMAT_V2, 'the format this kernel writes');
+  assert.equal(L.TABLE_STATE_CLOCK_BYTES, 0, 'and a written blob carries no clock');
   assert.equal(row.state[0], L.TABLE_STATE_FORMAT, 'the dealt blob leads with its format');
 });
 
 test('a blob of any other format is refused, not misread', () => {
   // v1 blobs were migrated to v2 at deploy (20260708130000_migrate_state_blobs_v2);
-  // a missed one must fail loud, never load as a mis-parsed game.
+  // a missed one must fail loud, never load as a mis-parsed game. v2 and v3 are
+  // both read - see the next case.
   const row = dealBotTable(['random', 'random', 'random', 'random'], seedBytes(4, 2));
   const table = fixtureTable();
-  for (const version of [0, 1, 3, 0xff]) {
+  for (const version of [0, 1, 4, 0xff]) {
     const blob = row.state.slice();
     blob[0] = version;
     const rc = table.load(blob, row.roster);
     assert.equal(rc, L.TABLE_E_STATE_VERSION, `format ${version}: ${reasonOf(rc, ['TABLE_E_', 'GAME_INVALID_'])}`);
   }
   assert.equal(table.load(row.state, row.roster), L.TABLE_OK, 'the blob as written loads');
+});
+
+test('a v3 blob, the board with its clock behind it, loads and is written back as the same board', () => {
+  // The format the switch step writes, read by this kernel now so a rollback
+  // across the switch finds every row readable. The fixture is the written
+  // board with the v3 format byte and a clock: shown at T, done playing at T+500.
+  const T = 1_700_000_000_000;
+  const row = dealBotTable(['random', 'random', 'random', 'random'], seedBytes(4, 3));
+  const table = fixtureTable();
+  const board = boardBytes(row.state);
+  const clock = new Uint8Array(L.TABLE_STATE_V3_CLOCK_BYTES);
+  for (let b = 0; b < 6; b++) {
+    clock[b] = Math.floor(T / 2 ** (8 * b)) % 256;
+    clock[6 + b] = Math.floor((T + 500) / 2 ** (8 * b)) % 256;
+  }
+  const v3 = new Uint8Array(board.length + clock.length);
+  v3.set(board);
+  v3.set(clock, board.length);
+  v3[0] = L.TABLE_STATE_FORMAT_V3;
+  assert.equal(table.load(v3, row.roster), L.TABLE_OK, 'the v3 blob loads');
+  // The clock itself is read by the bot wait, which the C tests drive on v3 rows
+  // (c/tests/tests.c test_table_bot_wait); the server binds that wait at the
+  // switch step.
+  const p = table.commit(row.gameId, row.version, 0);
+  assert.ok(typeof p !== 'number', 'products of the loaded v3 row');
+  assert.equal(hex(p.state), hex(row.state), 'written back at the format this kernel writes, as the same board');
 });
 
 test('the board the generated accessors read back rebuilds the blob, at every state of two games', () => {
@@ -70,9 +101,12 @@ test('the board the generated accessors read back rebuilds the blob, at every st
     const p = table.commit(row.gameId, row.version, 0);
     assert.ok(typeof p !== 'number', `check ${checks}: products of a loaded table`);
     assert.equal(hex(p.state), hex(row.state), `check ${checks}: load then commit is not byte-identical`);
-    // 2. the fields the generated accessors read are the whole blob.
+    // 2. the fields the generated accessors read are the whole BOARD: every byte
+    // of the blob but its trailing clock, which is the table's and no field of
+    // the Game (a rebuilt fixture has a zero clock, never having been shown).
     const again = rebuild(board).build();
-    assert.equal(hex(again.state), hex(row.state), `check ${checks}: the board read back does not rebuild the blob`);
+    const boardHex = (b: Uint8Array) => hex(boardBytes(b));
+    assert.equal(boardHex(again.state), boardHex(row.state), `check ${checks}: the board read back does not rebuild the blob`);
     checks++;
   };
 

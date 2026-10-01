@@ -25,7 +25,7 @@ import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, resetDb, uuid, pgPool } from './harness.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { fixture, fixtureTable } from './helpers/table_fixture.ts';
+import { boardBytes, fixture, fixtureTable } from './helpers/table_fixture.ts';
 import { mustReadTable } from './helpers/table_play.ts';
 import { playToEnd, runMeta, seedLobby } from './helpers/table_server.ts';
 import { suiteRng } from './helpers/rng.ts';
@@ -80,7 +80,7 @@ if (!process.env.VALIDATION_ONLY) {
         assert.notEqual(hex(t.state), hex(finishedState), 'the finished blob is gone');
         // A lobby of the same seats and title that never held a card.
         const clean = fixture().title(t.title).seats(humans.map((id, i) => ({ id, name: `H${i}` }))).build();
-        assert.equal(hex(t.state), hex(clean.state), 'the row holds exactly the lobby board of its seats');
+        assert.equal(hex(boardBytes(t.state)), hex(boardBytes(clean.state)), 'the row holds exactly the lobby board of its seats');
         assert.equal(hex(t.roster), hex(clean.roster), 'and the same roster');
         const { rows } = await pgPool.query('SELECT game_seed, logs_packed FROM games WHERE id=$1', [gameId]);
         assert.equal(rows[0].game_seed, null, 'no deal seed survives into the lobby');

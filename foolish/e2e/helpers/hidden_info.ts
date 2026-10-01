@@ -83,7 +83,7 @@ import { cRosterTrailerRead } from './roster_kernel.ts';
 import { clientTable } from '../../sdk/ts/table/client_table.ts';
 import { base64ToBytes } from '../../sdk/ts/wire/bytes.ts';
 import * as L from '../../sdk/ts/gen/game_layout.bots.ts';
-import { fixtureTable } from './table_fixture.ts';
+import { boardBytes, fixtureTable } from './table_fixture.ts';
 import { legalMoves, readTable, rebuild, type BoardState, type PlayCard } from './table_play.ts';
 import { suiteRng } from './rng.ts';
 import { isCard } from '../../src/state/view.ts';
@@ -599,7 +599,8 @@ async function doStep(t: Table, step: Step, noninterference: boolean): Promise<T
         const fresh = (await truthOf(t)).board!;
         // The twin is sealed by the kernel (table_seal); unrotated it must be the real blob.
         const realHex = String(s0.games.state).replace(/^\\x/, '');
-        assert.equal(hex(rebuild(fresh).build().state), realHex, 'the twin builder is faithful');
+        const clockHex = 2 * L.TABLE_STATE_CLOCK_BYTES;   // the board, not when it was shown (boardBytes)
+        assert.equal(hex(boardBytes(rebuild(fresh).build().state)), realHex.slice(0, realHex.length - clockHex), 'the twin builder is faithful');
         const twin = rotateHidden(fresh, pinSeats, drawn, step.pinDeck);
         if (twin.moved < 2) continue;
         const twinBlob = rebuild(twin.board).build().state;

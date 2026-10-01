@@ -304,10 +304,16 @@ wasm-web: $(WEB_WASM_OUT)
 # other home that runs every shared test in one place). Self-contained: each
 # test builds from its own file and the one it covers, so no SRC list changes.
 SHARED_C := ../../shared/c
-SHARED_TESTS := build/libc_test build/b32_test build/mixrad_test build/sha256_test build/deal_rng_test
+SHARED_TESTS := build/libc_test build/b32_test build/mixrad_test build/sha256_test build/deal_rng_test \
+                build/le_bytes_test
 
 build/libc_test: $(SHARED_C)/wasm/libc_test.c $(SHARED_C)/wasm/libc.c $(SHARED_C)/test/check.h | build
 	$(CC) $(CFLAGS) $(SHARED_C)/wasm/libc_test.c -o $@
+
+# Header-only, so the pattern rule below (which wants a .c beside the test)
+# does not match it.
+build/le_bytes_test: $(SHARED_C)/le_bytes_test.c $(SHARED_C)/le_bytes.h $(SHARED_C)/test/check.h | build
+	$(CC) $(CFLAGS) $(SHARED_C)/le_bytes_test.c -o $@
 
 build/%_test: $(SHARED_C)/%_test.c $(SHARED_C)/%.c $(SHARED_C)/%.h $(SHARED_C)/test/check.h | build
 	$(CC) $(CFLAGS) $(SHARED_C)/$*_test.c $(SHARED_C)/$*.c -o $@

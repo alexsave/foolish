@@ -1,6 +1,7 @@
 #include "evwire.h"
 #include "view.h"
 #include "../wasm/wire.h"
+#include "../../../shared/c/le_bytes.h"
 
 // Emission state threaded through the per-event writers. `fail` latches on
 // the first overflow so callers can bail with -1 (the buffer is bounds-
@@ -27,8 +28,7 @@ static void put_u8(Emit *e, unsigned char b) {
 static void put_snapshot(Emit *e, const Game *g) {
     if (e->fail || e->len + 2 + EVW_SNAP_MAX > e->cap) { e->fail = 1; return; }
     const int n = state_put(g, e->viewer, e->out + e->len + 2);
-    e->out[e->len] = (unsigned char)(n & 0xff);
-    e->out[e->len + 1] = (unsigned char)((n >> 8) & 0xff);
+    le_put_u16(e->out + e->len, (uint16_t)n);
     e->len += 2 + n;
 }
 
@@ -330,7 +330,7 @@ int evwire_read(const unsigned char *buf, int len,
         if (ev.has_target) ev.target_wire = buf[q++];
         if (ev.has_battle) ev.battle = buf[q++];
 
-        ev.snap_len = buf[q] | (buf[q + 1] << 8); q += 2;
+        ev.snap_len = le_get_u16(buf + q); q += 2;
         if (ev.snap_len < 0 || q + ev.snap_len > len) return EVW_EPARSE;
         ev.snap = buf + q;
         q += ev.snap_len;
@@ -340,7 +340,7 @@ int evwire_read(const unsigned char *buf, int len,
 
     // Trailer: the committed final board - the sequence's `game`.
     if (q + 2 > len) return EVW_EPARSE;
-    const int fin_len = buf[q] | (buf[q + 1] << 8); q += 2;
+    const int fin_len = le_get_u16(buf + q); q += 2;
     if (fin_len < 0 || q + fin_len > len) return EVW_EPARSE;
     if (out_final) *out_final = buf + q;
     if (out_final_len) *out_final_len = fin_len;
@@ -370,7 +370,7 @@ int evwire_frames_settlement_cut(const unsigned char *frames, int len) {
     int p = 0;
     while (p < len) {
         if (p + 2 > len) return EVW_EPARSE;
-        const int flen = frames[p] | (frames[p + 1] << 8);
+        const int flen = le_get_u16(frames + p);
         p += 2;
         if (flen <= 0 || p + flen > len) return EVW_EPARSE;
         const int n = evwire_read(frames + p, flen, 0, 0, 0, sink_cut, &c);
@@ -386,7 +386,7 @@ int evwire_frames(const unsigned char *frames, int len, int *off, int *flen, int
     int p = 0, n = 0;
     while (p < len) {
         if (p + 2 > len) return EVW_EPARSE;
-        const int f = frames[p] | (frames[p + 1] << 8);
+        const int f = le_get_u16(frames + p);
         p += 2;
         if (f <= 0 || p + f > len) return EVW_EPARSE;
         if (off || flen) {

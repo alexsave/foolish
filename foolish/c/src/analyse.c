@@ -13,6 +13,7 @@
 // thread-local, and the result does not depend on the thread count.
 
 #include "analyse.h"
+#include "../../../shared/c/le_bytes.h"
 
 #include "bot_drive.h"
 #include "bot_roster.h"
@@ -965,11 +966,11 @@ static inline int an_put8(unsigned char **q, const unsigned char *end, unsigned 
 }
 static inline int an_put16(unsigned char **q, const unsigned char *end, unsigned v) {
     if (*q + 2 > end) return 0;
-    *(*q)++ = (unsigned char)(v & 0xff); *(*q)++ = (unsigned char)((v >> 8) & 0xff); return 1;
+    le_put_u16(*q, (uint16_t)v); *q += 2; return 1;
 }
 static inline int an_put32(unsigned char **q, const unsigned char *end, uint32_t v) {
     if (*q + 4 > end) return 0;
-    for (int i = 0; i < 4; i++) *(*q)++ = (unsigned char)((v >> (8 * i)) & 0xff);
+    le_put_u32(*q, v); *q += 4;
     return 1;
 }
 static inline int an_clamp16(double v) {
@@ -1170,8 +1171,8 @@ int analyse_packed(const unsigned char *code, int code_len, const AnalyseParams 
 
 typedef struct { const unsigned char *p, *end; int bad; } AnRd;
 static unsigned rd8(AnRd *r)  { if (r->p + 1 > r->end) { r->bad = 1; return 0; } return *r->p++; }
-static unsigned rd16(AnRd *r) { if (r->p + 2 > r->end) { r->bad = 1; return 0; } unsigned v = r->p[0] | (r->p[1] << 8); r->p += 2; return v; }
-static uint32_t rd32(AnRd *r) { if (r->p + 4 > r->end) { r->bad = 1; return 0; } uint32_t v = 0; for (int i = 0; i < 4; i++) v |= (uint32_t)r->p[i] << (8 * i); r->p += 4; return v; }
+static unsigned rd16(AnRd *r) { if (r->p + 2 > r->end) { r->bad = 1; return 0; } unsigned v = le_get_u16(r->p); r->p += 2; return v; }
+static uint32_t rd32(AnRd *r) { if (r->p + 4 > r->end) { r->bad = 1; return 0; } uint32_t v = le_get_u32(r->p); r->p += 4; return v; }
 
 int analyse_read_header(const unsigned char *buf, int len, AnalyseHeader *h) {
     if (!buf || !h || len < 0) return -ANALYSE_EBADARG;

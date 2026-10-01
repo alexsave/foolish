@@ -1,5 +1,6 @@
 #include "view.h"
 #include "../wasm/wire.h"
+#include "../../../shared/c/le_bytes.h"
 #include <string.h>   // memset — the hidden-run fill in state_put (see below)
 
 // Whether the hand of seat `seat` is visible to `viewer`.
@@ -15,8 +16,7 @@ int state_put(const Game *g, int viewer, unsigned char *out) {
     *q++ = (unsigned char)g->power_suit;
     *q++ = (unsigned char)g->first_attacker;
     *q++ = (unsigned char)g->defender;
-    *q++ = (unsigned char)(g->discard_pile_length & 0xff);
-    *q++ = (unsigned char)((g->discard_pile_length >> 8) & 0xff);
+    le_put_u16(q, (uint16_t)g->discard_pile_length); q += 2;
     *q++ = (unsigned char)(g->has_flipped ? 1 : 0);
     // Canonical no-flip byte: after the flipped trump is drawn the kernel
     // keeps the stale card in g->flipped (gated by has_flipped) — writing it
@@ -25,13 +25,9 @@ int state_put(const Game *g, int viewer, unsigned char *out) {
     // {0,0} placeholder -> WIRE_CARD_HIDDEN) or stayed kernel-resident.
     // Decoders ignore this byte when has_flipped is 0.
     *q++ = g->has_flipped ? wire_from_card(g->flipped) : (unsigned char)WIRE_CARD_HIDDEN;
-    *q++ = (unsigned char)(g->good_players_mask & 0xff);
-    *q++ = (unsigned char)((g->good_players_mask >> 8) & 0xff);
-    *q++ = (unsigned char)((g->good_players_mask >> 16) & 0xff);
-    *q++ = (unsigned char)((g->good_players_mask >> 24) & 0xff);
+    le_put_u32(q, g->good_players_mask); q += 4;
     *q++ = (unsigned char)(g->has_good_timestamp ? 1 : 0);
-    *q++ = (unsigned char)(g->deck_count & 0xff);
-    *q++ = (unsigned char)((g->deck_count >> 8) & 0xff);
+    le_put_u16(q, (uint16_t)g->deck_count); q += 2;
     // Hoist the loop-invariant `unmasked` test out of the per-card loop. A
     // masked view (every /ws push) hides the ENTIRE deck, so that collapses to
     // one vectorized memset of WIRE_CARD_HIDDEN instead of a branch + byte
@@ -112,7 +108,7 @@ int state_get(Game *g, const unsigned char *p, int len, int masked) {
     g->power_suit = (int8_t)*q++;
     g->first_attacker = (int8_t)*q++;
     g->defender = (int8_t)*q++;
-    g->discard_pile_length = (int16_t)(q[0] | (q[1] << 8)); q += 2;
+    g->discard_pile_length = (int16_t)le_get_u16(q); q += 2;
     g->has_flipped = (*q++ != 0);
     // When there is no flip (TS flipped === null), preserve the exact {0,0}
     // bytes the old 2-byte wire left in g->flipped — semtex-family belief
@@ -122,11 +118,9 @@ int state_get(Game *g, const unsigned char *p, int len, int masked) {
         if (g->has_flipped) g->flipped = card_from_wire_exact(fw);
         else { g->flipped.suit = 0; g->flipped.value = 0; }
     }
-    g->good_players_mask = (uint32_t)q[0] | ((uint32_t)q[1] << 8)
-        | ((uint32_t)q[2] << 16) | ((uint32_t)q[3] << 24);
-    q += 4;
+    g->good_players_mask = le_get_u32(q); q += 4;
     g->has_good_timestamp = (*q++ != 0);
-    g->deck_count = (int16_t)(q[0] | (q[1] << 8)); q += 2;
+    g->deck_count = (int16_t)le_get_u16(q); q += 2;
     CLAMP(g->deck_count, MAX_DECK);
     for (int i = 0; i < g->deck_count; i++) {
         unsigned char b = *q++;
@@ -173,7 +167,7 @@ int state_measure(const unsigned char *p, int len) {
     // has_flipped, flipped, u32 good mask, has_good_timestamp, then u16 deck_count.
     if (!p || len < 16) return -1;
     const int np = (int8_t)p[1];
-    const int deck = (int16_t)(p[14] | (p[15] << 8));
+    const int deck = (int16_t)le_get_u16(p + 14);
     if (np < 0 || np > MAX_PLAYERS || deck < 0 || deck > MAX_DECK) return -1;
     int q = 16 + deck;
     if (q + 1 > len || p[q] > MAX_BATTLES) return -1;
@@ -204,19 +198,39 @@ int state_import(Game *g, const unsigned char *p, int len, int masked) {
     return r;
 }
 
-int state_blob_put(const Game *g, unsigned char *out) {
+// A clock value as the blob stores it: u48 little-endian epoch ms
+// (shared/c/le_bytes.h). Negative values (never written) clamp to 0, so
+// "never" has one spelling.
+static void put_clock(unsigned char *q, int64_t v) { le_put_u48(q, v > 0 ? (uint64_t)v : 0); }
+
+int state_blob_put(const Game *g, const BoardClock *clk, unsigned char *out) {
     out[0] = (unsigned char)STATE_BLOB_FORMAT;
     out[1] = (unsigned char)(g->deterministic_deck ? 1 : 0);
-    return STATE_BLOB_HEADER + state_put(g, VIEW_UNMASKED, out + STATE_BLOB_HEADER);
+    const int n = STATE_BLOB_HEADER + state_put(g, VIEW_UNMASKED, out + STATE_BLOB_HEADER);
+    if (STATE_BLOB_CLOCK_BYTES == 0) return n;
+    put_clock(out + n, clk ? clk->shown_ms : 0);
+    put_clock(out + n + 6, clk ? clk->settles_ms : 0);
+    return n + STATE_BLOB_CLOCK_BYTES;
 }
 
-int state_blob_load(Game *g, const unsigned char *p, int len) {
+int state_blob_load(Game *g, const unsigned char *p, int len, BoardClock *clk) {
     if (len < STATE_BLOB_HEADER) return 0;
-    if (p[0] != STATE_BLOB_FORMAT) return 0;
-    // `len` counts the header bytes too; the state is the rest.
-    const int r = state_import(g, p + STATE_BLOB_HEADER, len - STATE_BLOB_HEADER, 0);
+    // `len` counts the header bytes too; the state is the rest, less the clock
+    // a v3 blob carries behind it (a v2 blob has none: see view.h).
+    int tail;
+    if (p[0] == STATE_BLOB_FORMAT_V3) tail = STATE_BLOB_V3_CLOCK_BYTES;
+    else if (p[0] == STATE_BLOB_FORMAT_V2) tail = 0;
+    else return 0;
+    if (len < STATE_BLOB_HEADER + tail) return GAME_INVALID_COUNT;
+    const int state_len = len - STATE_BLOB_HEADER - tail;
+    const int r = state_import(g, p + STATE_BLOB_HEADER, state_len, 0);
     if (r != GAME_VALID) return r;
     g->deterministic_deck = p[1] != 0;
+    if (clk) {
+        const unsigned char *c = p + STATE_BLOB_HEADER + state_len;
+        clk->shown_ms = tail ? (int64_t)le_get_u48(c) : 0;
+        clk->settles_ms = tail ? (int64_t)le_get_u48(c + 6) : 0;
+    }
     return 1;
 }
 

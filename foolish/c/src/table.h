@@ -59,11 +59,20 @@
 // policy one by the number alone (sdk/ts/wire/awire.ts REJECT_STALE_ROUND).
 #define TABLE_REJECT_STALE_ROUND 100
 
-// The durable state blob: [STATE_BLOB_FORMAT][deterministic deck][state_put].
-// The format, and the codec this layer writes and reads it with, are view.h's
-// (state_blob_put / state_blob_load) - the wasm bridge persists the same column
-// through the same pair, so there is one format byte, not two that can drift.
+// The durable state blob: [STATE_BLOB_FORMAT][deterministic deck][state_put],
+// then the board's clock at v3. The format, and the codec this layer writes and
+// reads it with, are view.h's (state_blob_put / state_blob_load) - the wasm
+// bridge persists the same column through the same pair, so there is one format
+// byte, not two that can drift. TABLE_STATE_FORMAT is the format WRITTEN; both
+// TABLE_STATE_FORMAT_V2 and _V3 are read (view.h says why and until when).
 #define TABLE_STATE_FORMAT STATE_BLOB_FORMAT
+#define TABLE_STATE_FORMAT_V2 STATE_BLOB_FORMAT_V2
+#define TABLE_STATE_FORMAT_V3 STATE_BLOB_FORMAT_V3
+// The board's clock a WRITTEN blob ends with (view.h BoardClock; 0 bytes while
+// v2 is written): a host comparing two blobs for the same BOARD compares all but
+// these last bytes. A v3 blob's clock is always TABLE_STATE_V3_CLOCK_BYTES.
+#define TABLE_STATE_CLOCK_BYTES STATE_BLOB_CLOCK_BYTES
+#define TABLE_STATE_V3_CLOCK_BYTES STATE_BLOB_V3_CLOCK_BYTES
 
 // ---- the action request and response (the `action` endpoint's body) --------
 //
@@ -130,6 +139,10 @@ typedef struct {
     int8_t      actor;          // the acting seat, -1 for none
     int32_t     log_start;      // the operation's first log record
     int32_t     log_len;        // records the ROW's session log holds (table_set_session_log), loaded or not
+    // The loaded board's clock (view.h BoardClock), from the state blob: what the
+    // row's viewers were last shown and when it finishes playing. Read by
+    // table_bot_wait_ms; the commit writes the next one (table_commit_products).
+    BoardClock  clock;
     // The preferred moves the last table_bot_drive was offered (BotDrivePref).
     int8_t      n_prefs;
     BotDrivePref prefs[MAX_PLAYERS];
@@ -268,11 +281,17 @@ typedef struct {
     Span    logs;          // session-log records, u48 LE ms timestamp each; len 0 when none
     Span    views[MAX_PLAYERS];  // the response envelope per HUMAN seat; len 0 for a bot or no seat
     Span    spectator;     // the spectator envelope
+    // The board's clock after this operation: what a v3 state blob carries
+    // behind the board (view.h BoardClock). While v2 is written it is computed
+    // and not persisted.
+    BoardClock clock;
 } TableCommit;
 
 // Every product of the loaded table and its last operation, written into
 // `arena`. `next_version` is the version the commit will produce (the envelope
-// carries it); `now_ms` stamps this operation's log records.
+// carries it); `now_ms` stamps this operation's log records and, when a viewer is
+// shown the operation, advances the board's clock (TableCommit.clock, carried by
+// a v3 state blob; see Table.clock).
 int table_commit_products(const Table *t, const char *game_id, int gid_len, uint32_t next_version,
                           int64_t now_ms, TableCommit *out, uint8_t *arena, int cap);
 
@@ -335,6 +354,19 @@ extern void (*table_choose_observer)(const Game *g, int seat);
 
 // How long the host waits after the cycle `drv` describes (bot_cycle_delay_ms).
 int table_cycle_delay_ms(const Table *t, const BotDriveOut *drv);
+
+// How many ms from `now_ms` the host must wait before it drives the loaded board
+// (bot_drive.h bot_wait_ms, on the board's clock): 0 means drive now. A host
+// asks on the board it just loaded, BEFORE every cycle, and after the wait loads
+// the row again and asks again - somebody may have moved in the meantime, and
+// that move restarts the wait. There is no wait after a cycle: the next cycle's
+// question already counts the one just committed. TABLE_E_NOT_LOADED.
+//
+// A v2 board has no clock and asks for no wait. While v2 is the format written
+// (view.h STATE_BLOB_FORMAT, the expand step) no host asks this yet: they still
+// sleep table_cycle_delay_ms after each cycle. The switch step writes v3 and
+// moves the hosts onto this wait.
+int table_bot_wait_ms(const Table *t, int64_t now_ms);
 
 // ---- the end of a game -------------------------------------------------------
 

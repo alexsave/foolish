@@ -23,7 +23,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import { encodeAction } from '../sdk/ts/wire/awire.ts';
-import { fixture, fixtureExports, fixtureTable, reasonOf, IDLE, READY, type TableFixture } from './helpers/table_fixture.ts';
+import { boardBytes, fixture, fixtureExports, fixtureTable, reasonOf, IDLE, READY, type TableFixture } from './helpers/table_fixture.ts';
 import { legalMoves, residentBoard } from './helpers/table_play.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
@@ -137,7 +137,7 @@ test('a refused blob leaves the previously loaded board resident', () => {
     const table = fixtureTable();
     assert.equal(table.load(good.state, good.roster), L.TABLE_OK, 'load `good`: now resident');
     const expected = residentBlob();
-    assert.deepEqual([...expected], [...good.state], 'the resident blob is the loaded one');
+    assert.deepEqual([...boardBytes(expected)], [...boardBytes(good.state)], 'the resident board is the loaded one (the clock is the table\'s, not the board\'s)');
 
     refusedAs(table.load(bad, good.roster), L.GAME_INVALID_SEAT, 'the bad blob');
 
@@ -234,7 +234,7 @@ test('a dealt game, its played-on blob and a lobby all still load', () => {
     const fx = dealt();
     const table = fixtureTable();
     assert.equal(table.load(fx.state, fx.roster), L.TABLE_OK, 'the dealt blob loads');
-    assert.deepEqual([...residentBlob()], [...fx.state], 'and round-trips byte for byte');
+    assert.deepEqual([...boardBytes(residentBlob())], [...boardBytes(fx.state)], 'and its board round-trips byte for byte');
     assert.ok(table.envelope(GID, 1, 1) instanceof Uint8Array, 'an envelope is written from it');
 
     const { actorId, wire } = openingAttack(fx);
