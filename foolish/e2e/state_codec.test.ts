@@ -37,12 +37,11 @@ if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {};
 const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
 
 test('every commit writes the durable blob at the current format', () => {
-  // The expand step (c/src/view.h STATE_BLOB_FORMAT): this kernel reads v2 and
-  // v3 and still writes v2, so a kernel from before the clock can load every row
-  // it writes. The switch step flips the format written to v3.
+  // The switch step (c/src/view.h STATE_BLOB_FORMAT): this kernel reads v2 and
+  // v3 and writes v3, the board with its clock behind it.
   const row = dealBotTable(['random', 'random', 'random', 'random'], seedBytes(4, 1));
-  assert.equal(L.TABLE_STATE_FORMAT, L.TABLE_STATE_FORMAT_V2, 'the format this kernel writes');
-  assert.equal(L.TABLE_STATE_CLOCK_BYTES, 0, 'and a written blob carries no clock');
+  assert.equal(L.TABLE_STATE_FORMAT, L.TABLE_STATE_FORMAT_V3, 'the format this kernel writes');
+  assert.equal(L.TABLE_STATE_CLOCK_BYTES, L.TABLE_STATE_V3_CLOCK_BYTES, 'and a written blob carries the clock');
   assert.equal(row.state[0], L.TABLE_STATE_FORMAT, 'the dealt blob leads with its format');
 });
 
@@ -84,7 +83,7 @@ test('a v3 blob, the board with its clock behind it, loads and is written back a
   // switch step.
   const p = table.commit(row.gameId, row.version, 0);
   assert.ok(typeof p !== 'number', 'products of the loaded v3 row');
-  assert.equal(hex(p.state), hex(row.state), 'written back at the format this kernel writes, as the same board');
+  assert.equal(hex(p.state), hex(v3), 'written back at the format this kernel writes, as the same board and clock');
 });
 
 test('the board the generated accessors read back rebuilds the blob, at every state of two games', () => {
