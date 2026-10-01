@@ -74,7 +74,7 @@ static void table_snap(const Game *g, int tag, int aux) {
 // DRAW-privacy rule and the event walk need from before it.
 static void scope_open(Table *t, int actor) {
     t->snaps->n = 0;
-    t->ended = t->dealt_now = t->roster_changed = t->lobby_event = false;
+    t->ended = t->dealt_now = t->roster_changed = t->rules_changed = t->lobby_event = false;
     t->pre_has_flip = t->g->has_flipped;
     t->pre_flip = t->g->flipped;
     t->pre_good_mask = game_shown_good_mask(t->g);
@@ -243,7 +243,7 @@ int table_envelope(const Table *t, const char *game_id, int gid_len, int viewer,
     const int view_len = 2 + state_put(g, viewer >= 0 ? viewer : VIEW_SPECTATOR, out + view_at + 2);
     env_header_set_view_len(out, view_len);
     const int at = view_at + view_len;
-    const int n = roster_trailer_write(&t->r, game_id, gid_len, game_status_byte(g), g->good_players_mask,
+    const int n = roster_trailer_write(&t->r, game_id, gid_len, game_status_byte(g), g->good_players_mask, game_pass_allowed(g),
                                        out + at, cap - at);
     if (n < 0) return n == ROSTER_E_CAP ? TABLE_E_CAP : TABLE_E_ROSTER;
     return at + n;
@@ -333,9 +333,12 @@ int table_push(const Table *t, const char *game_id, int gid_len, int viewer, uin
                                      viewer >= 0 ? viewer : VIEW_SPECTATOR, t->actor,
                                      (t->ended || t->lobby_event) ? 1 : 0, out, cap);
     if (seq < 0 || seq + 1 > cap) return TABLE_E_CAP;
-    out[seq] = t->roster_changed ? EVW_AS3_ROSTER : 0;
-    if (!t->roster_changed) return seq + 1;
-    const int tr = roster_trailer_write(&t->r, game_id, gid_len, game_status_byte(g), g->good_players_mask,
+    // The trailer rides a push that changed the roster, and one that changed the
+    // rules, which the trailer is the only block to carry (roster.h, format 2).
+    const bool trailer = t->roster_changed || t->rules_changed;
+    out[seq] = trailer ? EVW_AS3_ROSTER : 0;
+    if (!trailer) return seq + 1;
+    const int tr = roster_trailer_write(&t->r, game_id, gid_len, game_status_byte(g), g->good_players_mask, game_pass_allowed(g),
                                         out + seq + 1, cap - seq - 1);
     if (tr < 0) return tr == ROSTER_E_CAP ? TABLE_E_CAP : TABLE_E_ROSTER;
     return seq + 1 + tr;
@@ -649,14 +652,28 @@ int table_retitle(Table *t, const char *actor_id, int id_len, const char *title,
     return TABLE_OK;
 }
 
+int table_set_rules(Table *t, const char *actor_id, int id_len, int passing) {
+    if (!t->loaded) return TABLE_E_NOT_LOADED;
+    const int seat = actor_seat(t, actor_id, id_len);
+    if (!game_lobby_can_set_rules(seat, t->g->status == GAME_STATUS_WAITING))
+        return seat < 0 ? TABLE_E_NOT_SEATED : TABLE_E_NOT_WAITING;
+    if (passing != 0 && passing != 1) return TABLE_E_WIRE;
+    if (!game_lobby_set_rules(t->g, passing)) return TABLE_MOOT;
+    lobby_edit(t, 0);
+    t->rules_changed = true;   // the push carries the trailer, which is where a viewer reads the rules
+    return TABLE_OK;
+}
+
 int table_continue(Table *t, const char *actor_id, int id_len) {
     if (!t->loaded) return TABLE_E_NOT_LOADED;
     if (actor_seat(t, actor_id, id_len) < 0) return TABLE_E_NOT_SEATED;
     if (t->g->status != GAME_STATUS_GAME_OVER) return TABLE_E_NOT_OVER;
     game_reset_to_lobby(t->g, roster_bot_mask(&t->r));
-    // A lobby has no deck to draw from, so its blob says so: the flag byte of every
-    // lobby blob is 0, as the expand migration writes it (plan 3.4), and the next
-    // deal sets it again.
+    // A lobby has no deck to draw from, so its blob says so: the deck bit of every
+    // lobby blob's flag byte is clear (plan 3.4), and the next deal sets it again.
+    // The RULES carry over (game_reset_to_lobby leaves g->rules alone): a rematch
+    // is the same table playing the same game, and any seat may change them in
+    // the lobby before it deals (table_set_rules).
     t->g->deterministic_deck = false;
     lobby_edit(t, 0);
     return TABLE_OK;

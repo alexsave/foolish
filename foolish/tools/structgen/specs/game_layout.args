@@ -6,9 +6,9 @@
 #
 # The resident Game prefix the TS marshal reads and writes.
 --header game.h --root Game
---fields Game=status,num_players,power_suit,first_attacker,defender,num_battles,deck_count,discard_pile_length,has_flipped,deterministic_deck,flipped,deck,table_battles,players,elimination_order,num_eliminated,good_players_mask,has_good_timestamp
+--fields Game=status,num_players,power_suit,first_attacker,defender,num_battles,deck_count,discard_pile_length,has_flipped,deterministic_deck,flipped,deck,table_battles,players,elimination_order,num_eliminated,good_players_mask,has_good_timestamp,rules
 --fields Player=status,hand_count,awaiting_attack,strategy_key,hand
---const GAME_STATUS_ --const PLAYER_STATUS_
+--const GAME_STATUS_ --const PLAYER_STATUS_ --const GAME_RULE_
 #
 # The C Table (c/src/table.h): what the server reads back from bots.wasm - the
 # loaded roster, a commit's spans and scalars, a decoded action request, the

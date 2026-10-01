@@ -161,7 +161,7 @@ test('accepted: a lobby, a finished game, eliminations and seat defaults', () =>
     assert.deepEqual(og.elimination, [1, 0]);
 
     const seeded = fixture().seats(seats.slice(0, 2)).status(PLAYING).deck('9h Th').deterministic().build();
-    assert.equal(seeded.state[1], 1, 'the durable blob carries the deterministic-deck flag');
+    assert.equal(seeded.state[1] & L.TABLE_STATE_FLAG_DETERMINISTIC, L.TABLE_STATE_FLAG_DETERMINISTIC, 'the durable blob carries the deterministic-deck flag');
     assert.equal(table.load(seeded.state, seeded.roster), L.TABLE_OK);
 });
 

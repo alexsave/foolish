@@ -48,9 +48,29 @@
 //      n x { u16 id_len, id, u8 is_ai }
 //      u8  n_good, then n_good x { u16 id_len, id }
 //      u8  has_ts, then f64 ts when has_ts != 0
+//      u8  rules                                         (format 2 only)
 //
 //    All little-endian. The C writer emits the good ids in SEAT order from the
 //    mask and has_ts = 0 (5.4 in the migration doc: no reader uses either).
+//
+//    FORMAT 2 is format 1 and then one byte, the table's RULES, so a joiner and
+//    every push that carries a trailer can say which game the table plays
+//    (docs/PODKIDNOY.md). Bit 0 is ROSTER_TRAILER_PASSING, read 1 for the
+//    classic passing game and 0 for podkidnoy (the boundary sense); any other
+//    bit is a rule this kernel cannot honour, so that trailer is refused. A
+//    format 1 trailer is the passing game, which is all it could ever describe.
+//
+//    BOTH ARE READ, AND THE WRITER WRITES THE OLDEST ONE THAT CAN CARRY THE
+//    TABLE: format 1 for a passing table, byte for byte what it always was, and
+//    format 2 only for a podkidnoy one. A reader that predates format 2 - an
+//    open web tab, or a stored player_views row read by the old bundle across a
+//    deploy - therefore reads every passing table as before, and refuses a
+//    podkidnoy table rather than show it as the passing game it is not. The
+//    trailer is not a durable column of its own; it rides the player_views rows
+//    and the pushes, which every commit rewrites. Do not simplify the writer to
+//    always write format 2: that would change every classic table's bytes (and
+//    the goldens), and every old reader would then refuse every table, not just
+//    the podkidnoy ones.
 #ifndef CNITRO_ROSTER_H
 #define CNITRO_ROSTER_H
 
@@ -66,12 +86,14 @@
 #define ROSTER_BYTES       1227 // the durable encoding is FIXED WIDTH
 
 #define ROSTER_SEAT_BYTES  128
-#define ROSTER_TRAILER_FORMAT 1
+#define ROSTER_TRAILER_FORMAT_V1 1   // the passing game, by definition
+#define ROSTER_TRAILER_FORMAT_V2 2   // format 1, then the rules byte
+#define ROSTER_TRAILER_PASSING 0x01  // the rules byte: 1 the classic passing game, 0 podkidnoy
 // The largest trailer roster_trailer_write can produce, for sizing a buffer.
 #define ROSTER_TRAILER_MAX (1 + 2 + ROSTER_GAME_ID_MAX + 2 + ROSTER_TITLE_MAX + 1 \
                             + 1 + MAX_PLAYERS * (2 + ROSTER_NAME_MAX)            \
                             + MAX_PLAYERS * (2 + ROSTER_ID_MAX + 1)              \
-                            + 1 + MAX_PLAYERS * (2 + ROSTER_ID_MAX) + 1)
+                            + 1 + MAX_PLAYERS * (2 + ROSTER_ID_MAX) + 1 + 1)
 
 // Results. Negative is a refusal; append-only numbering, because a host may
 // log or map the number.
@@ -94,6 +116,7 @@
 #define ROSTER_E_SHORT     (-16)  // trailer runs off the end
 #define ROSTER_E_GOOD      (-17)  // a good bit names no seat
 #define ROSTER_E_FLAG      (-18)  // a trailer flag byte is neither 0 nor 1
+#define ROSTER_E_RULES     (-19)  // a trailer rules byte holds a rule this kernel does not know, or `passing` is not 0 or 1
 
 typedef struct {
     uint8_t id_len, name_len, brain_len;
@@ -147,6 +170,7 @@ typedef struct {
     int32_t  status;      // GAME_STATUS_*
     uint32_t ai_mask;     // bot seats
     int32_t  consumed;    // trailer bytes read
+    int32_t  passing;     // the table's rules: 1 the classic passing game, 0 podkidnoy
     uint16_t gid_len;
     char     gid[ROSTER_GAME_ID_MAX];
 } RosterTrailerRead;
@@ -193,23 +217,26 @@ int      roster_redact(Roster *r, const char *id, int id_len, const char *name, 
 // nameBytes (both trim code points, never grapheme clusters). Input is UTF-8.
 int      roster_name_trim(const char *utf8, int len);
 
-// The envelope trailer (layout above). Returns bytes written, or E_* (the
-// roster is validated, status must be 0..2, good_mask must name seats only).
+// The envelope trailer (layout above) for a table whose rules are `passing` (1
+// the classic passing game, written as format 1; 0 podkidnoy, format 2).
+// Returns bytes written, or E_* (the roster is validated, status must be 0..2,
+// good_mask must name seats only, passing must be 0 or 1).
 int      roster_trailer_write(const Roster *r, const char *game_id, int gid_len, int status,
-                              uint32_t good_mask, uint8_t *out, int cap);
+                              uint32_t good_mask, int passing, uint8_t *out, int cap);
 
 // The same trailer with the AI seats named by a mask rather than by brains (a
 // client's roster, read from a trailer, has none). roster_trailer_write is this
 // with roster_bot_mask(r).
 int      roster_trailer_write_ai(const Roster *r, const char *game_id, int gid_len, int status,
-                                 uint32_t good_mask, uint32_t ai_mask, uint8_t *out, int cap);
+                                 uint32_t good_mask, uint32_t ai_mask, int passing, uint8_t *out, int cap);
 
-// Reads a trailer at p. game_id must hold ROSTER_GAME_ID_MAX + 1 bytes. The
-// trailer carries is_ai, not a brain, so the seats come back with no brain and
-// the AI seats in *ai_mask. The good ids and the timestamp are checked for
-// shape and skipped: the mask lives in the state blob. Returns ROSTER_OK and
-// the bytes read in *consumed, or E_*.
+// Reads a trailer at p, format 1 or 2. game_id must hold ROSTER_GAME_ID_MAX + 1
+// bytes. The trailer carries is_ai, not a brain, so the seats come back with no
+// brain and the AI seats in *ai_mask. The good ids and the timestamp are checked
+// for shape and skipped: the mask lives in the state blob. *passing is the
+// table's rules (1 for every format 1 trailer). Returns ROSTER_OK and the bytes
+// read in *consumed, or E_*.
 int      roster_trailer_read(Roster *r, char *game_id, int *gid_len, int *status,
-                             uint32_t *ai_mask, const uint8_t *p, int len, int *consumed);
+                             uint32_t *ai_mask, int *passing, const uint8_t *p, int len, int *consumed);
 
 #endif

@@ -124,6 +124,7 @@ class Builder {
     private goodTs = false;
     private awaitingSeats = new Set<number>();
     private seeded = false;
+    private rulesBits = 0;
 
     /** The roster, in seat order. The state's seat count follows it unless numPlayers() says otherwise. */
     seats(list: FixtureSeat[]): this { this.seatList = list; return this; }
@@ -162,6 +163,8 @@ class Builder {
     goodTimestamp(on = true): this { this.goodTs = on; return this; }
     /** Seats flagged awaiting an attack. */
     awaiting(...seats: number[]): this { this.awaitingSeats = new Set(seats); return this; }
+    /** The table's rules (Game.rules, GAME_RULE_*): `passing` false is podkidnoy, the game with no transfer. Default the passing game. */
+    passing(on: boolean): this { this.rulesBits = on ? 0 : L.GAME_RULE_NO_PASS; return this; }
     /** A seed-dealt game: every draw takes the deck's first card (game.c draw_index). */
     deterministic(on = true): this { this.seeded = on; return this; }
 
@@ -194,6 +197,7 @@ class Builder {
         if (dealt || this.defenderSeat !== null) L.Game_set_defender(m, g, this.defenderSeat ?? (np >= 2 ? (attacker + 1) % np : 0));
         L.Game_set_discard_pile_length(m, g, this.discardCount);
         L.Game_set_deterministic_deck(m, g, this.seeded);
+        L.Game_set_rules(m, g, this.rulesBits);
         if (trump !== null) {
             L.Game_set_has_flipped(m, g, true);
             L.Card_raw_set(m, L.Game_flipped_at(g), trump);

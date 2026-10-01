@@ -617,6 +617,7 @@ export async function startFakeSupabase(opts: FakeOptions = {}): Promise<FakeBac
             case 'rearrange-hand': return t.rearrangeHand(me.id, body.card_indices ?? []);
             case 'rearrange-players': return t.reseat(me.id, body.new_order ?? []);
             case 'update-name': return t.retitle(me.id, String(body.new_name ?? ''));
+            case 'set-rules': return typeof body.passing === 'boolean' ? t.setRules(me.id, body.passing) : L.TABLE_E_WIRE;
             default: throw new Error(`unknown meta type ${body?.type}`);
         }
     }
@@ -723,9 +724,9 @@ export async function startFakeSupabase(opts: FakeOptions = {}): Promise<FakeBac
 // ---- the bots table -----------------------------------------------------------
 
 const BOTS = [
-    { id: 'bot-cordite-1', nickname: '\u{1F916}Cordite', strategy_key: 'cordite', elo_rating: 1500 },
-    { id: 'bot-espresso-1', nickname: '\u{1F916}Espresso', strategy_key: 'espresso', elo_rating: 1200 },
-    { id: 'bot-random-1', nickname: '\u{1F916}Random', strategy_key: 'random', elo_rating: 900 },
+    { id: 'bot-cordite-1', nickname: '%Cordite', strategy_key: 'cordite', elo_rating: 1500 },
+    { id: 'bot-espresso-1', nickname: '%Espresso', strategy_key: 'espresso', elo_rating: 1200 },
+    { id: 'bot-random-1', nickname: '%Random', strategy_key: 'random', elo_rating: 900 },
 ];
 
 // ---- the scenarios ------------------------------------------------------------
@@ -764,6 +765,55 @@ const SCENARIOS: Record<string, () => Scenario> = {
             .table('7h').attacker(0).defender(1).build(),
     }),
 
+    /**
+     * THE RULES BOX (docs/PODKIDNOY.md "The web lobby"): a lobby with ME and
+     * ANNA seated and nobody ready, so either may tick or untick it. BORIS, who
+     * opens it, joins it - a lobby with room seats whoever opens it.
+     */
+    lobby_rules: () => ({
+        gameId: 'rules1',
+        users: ['ME', 'ANNA', 'BORIS'],
+        board: fixture().title('Rules').seats([seat('ME'), seat('ANNA')]).build(),
+    }),
+
+    /** The same box seen by somebody who cannot join: a full table, and BORIS watching it. */
+    lobby_rules_full: () => ({
+        gameId: 'rules8',
+        users: ['ME', 'ANNA', 'BORIS'],
+        board: fixture().title('Rules, full').seats([
+            seat('ME'), seat('ANNA'),
+            { id: 'bot-random-1', name: '%R1', brain: 'random' },
+            { id: 'bot-random-2', name: '%R2', brain: 'random' },
+            { id: 'bot-random-3', name: '%R3', brain: 'random' },
+            { id: 'bot-random-4', name: '%R4', brain: 'random' },
+            { id: 'bot-random-5', name: '%R5', brain: 'random' },
+            { id: 'bot-random-6', name: '%R6', brain: 'random' },
+        ]).build(),
+    }),
+
+    /**
+     * ME DEFENDS against ANNA's 6h holding 6d (a transfer at a passing table)
+     * and 6c (a trump of the rank: Cover, and a transfer at a passing table).
+     * The two scenarios are the same board at the two tables, so the action
+     * column is the only thing that may differ.
+     */
+    defend_passing: () => defendBoard('defp01', true),
+    defend_podkidnoy: () => defendBoard('defk01', false),
+
+    /**
+     * FOUR SEATS, all human and nobody moving, so a browser can look at the
+     * ring's seat badges (role row, name, mini hand) at the four compass points.
+     * ME leads and ANNA defends one card.
+     */
+    four_seats: () => ({
+        gameId: 'four01',
+        users: ['ME', 'ANNA', 'BORIS', 'VERA'],
+        board: fixture().title('Four seats').seats([seat('ME'), seat('ANNA'), seat('BORIS'), seat('VERA')])
+            .status(PLAYING).deterministic().trump('Kc').deck('8s 9s Ts Js Qs')
+            .hand(0, '7d Tc Jd Ad').hand(1, '8h 9h Th Jh Qh').hand(2, '7s Qd 6d 6c').hand(3, '6h 7c 8c')
+            .table('7h').attacker(0).defender(1).build(),
+    }),
+
     /** A plain two-hander against a bot, for playing by hand. */
     /**
      * EIGHT SEATS AND FIVE BOTS, which is where the owner found the goods bug:
@@ -784,12 +834,12 @@ const SCENARIOS: Record<string, () => Scenario> = {
         users: ['ME', 'ANNA'],
         board: fixture().title('Eight seats, many goods').seats([
             seat('ME'), seat('ANNA'),
-            { id: 'bot-cordite-1', name: '\u{1F916}C1', brain: 'cordite' },
-            { id: 'bot-cordite-2', name: '\u{1F916}C2', brain: 'cordite' },
-            { id: 'bot-cordite-3', name: '\u{1F916}C3', brain: 'cordite' },
-            { id: 'bot-cordite-4', name: '\u{1F916}C4', brain: 'cordite' },
-            { id: 'bot-cordite-5', name: '\u{1F916}C5', brain: 'cordite' },
-            { id: 'bot-cordite-6', name: '\u{1F916}C6', brain: 'cordite' },
+            { id: 'bot-cordite-1', name: '%C1', brain: 'cordite' },
+            { id: 'bot-cordite-2', name: '%C2', brain: 'cordite' },
+            { id: 'bot-cordite-3', name: '%C3', brain: 'cordite' },
+            { id: 'bot-cordite-4', name: '%C4', brain: 'cordite' },
+            { id: 'bot-cordite-5', name: '%C5', brain: 'cordite' },
+            { id: 'bot-cordite-6', name: '%C6', brain: 'cordite' },
         ])
             .status(PLAYING).deterministic().trump('Kc').deck('6h 6s 6d 6c')
             .hand(0, '7h 8c 9c Ad').hand(1, 'Th Jh Qh Ah')
@@ -803,7 +853,7 @@ const SCENARIOS: Record<string, () => Scenario> = {
         gameId: 'bot001',
         users: ['ME'],
         board: fixture().title('Against a bot')
-            .seats([seat('ME'), { id: 'bot-cordite-1', name: '\u{1F916}Cordite', brain: 'cordite' }])
+            .seats([seat('ME'), { id: 'bot-cordite-1', name: '%Cordite', brain: 'cordite' }])
             .status(PLAYING).deterministic().trump('Kc').deck('8s 9s Ts Js Qs 6s 7s')
             .hand(0, '6h 7d Tc Jd Ad Qc').hand(1, '8h 9h Th Jh Qh Ah')
             .attacker(0).defender(1).build(),
@@ -897,8 +947,8 @@ const SCENARIOS: Record<string, () => Scenario> = {
         board: fixture().title('A bot says good').seats([
             seat('ME'),
             seat('ANNA'),
-            { id: 'bot-cordite-1', name: '\u{1F916}Cordite', brain: 'cordite' },
-            { id: 'bot-cordite-2', name: '\u{1F916}Cordite II', brain: 'cordite' },
+            { id: 'bot-cordite-1', name: '%Cordite', brain: 'cordite' },
+            { id: 'bot-cordite-2', name: '%Cordite II', brain: 'cordite' },
         ])
             .status(PLAYING).deterministic().trump('Kc').deck('6h 6s 6d 6c')
             .hand(0, '7h 8c 9c Ad').hand(1, 'Th Jh Qh Ah')
@@ -944,6 +994,17 @@ const SCENARIOS: Record<string, () => Scenario> = {
             .attacker(0).defender(1).build(),
     }),
 };
+
+function defendBoard(gameId: string, passing: boolean): Scenario {
+    return {
+        gameId,
+        users: ['ME', 'ANNA'],
+        board: fixture().title(passing ? 'Passing' : 'Podkidnoy').seats([seat('ANNA'), seat('ME')])
+            .status(PLAYING).passing(passing).trump('Kc').deck('7s 8s 9s Ts Js Qs Ks As 7d 8d 9d Td Jd Kd')
+            .hand(0, '6s 7h Qd Ad').hand(1, '9h Th 6d 6c')
+            .table('6h').attacker(0).defender(1).build(),
+    };
+}
 
 function buildScenario(name: string): Scenario {
     const make = SCENARIOS[name];

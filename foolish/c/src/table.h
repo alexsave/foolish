@@ -138,6 +138,7 @@ typedef struct {
     bool        ended;          // this operation finished the game
     bool        dealt_now;      // this operation dealt (the session log restarts)
     bool        roster_changed; // this operation edited the roster
+    bool        rules_changed;  // this operation changed the game's rules (table_set_rules)
     bool        lobby_event;    // this operation is a lobby edit its pushes announce
     bool        pre_has_flip;   // the face-up trump before the operation (DRAW privacy)
     Card        pre_flip;
@@ -223,7 +224,19 @@ int table_reseat(Table *t, const char *actor_id, int id_len, const uint8_t *ids,
 // The lobby's title rule: at most 50 characters as the web counts them (UTF-16
 // code units, before trimming), then trimmed of JavaScript whitespace, not empty.
 int table_retitle(Table *t, const char *actor_id, int id_len, const char *title, int title_len);
-// A finished game back to its lobby (game_reset_to_lobby with the roster's bots).
+// The table's RULES (docs/PODKIDNOY.md): `passing` 1 the classic passing game,
+// 0 podkidnoy. Any seated player, while the lobby has not dealt
+// (game_lobby_can_set_rules): TABLE_E_NOT_SEATED for anybody else,
+// TABLE_E_NOT_WAITING once dealt, TABLE_E_WIRE for a `passing` that is neither
+// 0 nor 1, TABLE_MOOT for the rules the table already has. There is no changer
+// gate - whoever changed them may still Ready, and the change clears nobody's
+// Ready - so the game a lobby deals plays the rules standing at the last Ready.
+// The push carries the trailer (roster.h, format 2), which is where a viewer
+// reads the rules. The rules survive the row (view.h STATE_BLOB_FORMAT_V4) and a
+// rematch (table_continue leaves them).
+int table_set_rules(Table *t, const char *actor_id, int id_len, int passing);
+// A finished game back to its lobby (game_reset_to_lobby with the roster's
+// bots), playing the rules the finished game played.
 int table_continue(Table *t, const char *actor_id, int id_len);
 // The actor's own hand: new card i is old card idx[i]. TABLE_E_WIRE when idx is
 // not a permutation of the hand. No push: nobody else can see a hand's order.
@@ -288,9 +301,8 @@ typedef struct {
     Span    logs;          // session-log records, u48 LE ms timestamp each; len 0 when none
     Span    views[MAX_PLAYERS];  // the response envelope per HUMAN seat; len 0 for a bot or no seat
     Span    spectator;     // the spectator envelope
-    // The board's clock after this operation: what a v3 state blob carries
-    // behind the board (view.h BoardClock). While v2 is written it is computed
-    // and not persisted.
+    // The board's clock after this operation: what a v3 or v4 state blob
+    // carries behind the board (view.h BoardClock).
     BoardClock clock;
 } TableCommit;
 
@@ -298,8 +310,9 @@ typedef struct {
 // `arena`. `next_version` is the version the commit will produce (the envelope
 // carries it); `now_ms` stamps this operation's log records and, when a viewer is
 // shown the operation, advances the board's clock (TableCommit.clock, carried by
-// a v3 state blob; see Table.clock). TABLE_E_STATE_RULES when the board's rules
-// are ones the state format written cannot carry: nothing is to be committed.
+// the state blob; see Table.clock). TABLE_E_STATE_RULES when the board's rules
+// are ones the state format written cannot carry (none today: v4 carries every
+// rule the kernel has): nothing is to be committed.
 int table_commit_products(const Table *t, const char *game_id, int gid_len, uint32_t next_version,
                           int64_t now_ms, TableCommit *out, uint8_t *arena, int cap);
 

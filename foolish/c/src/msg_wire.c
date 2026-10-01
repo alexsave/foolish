@@ -1151,10 +1151,6 @@ int msg_lobby_can_exit(int my_seat, int joined) {
     return my_seat >= 0 && joined >= 2;
 }
 
-int msg_lobby_can_set_rules(int my_seat) {
-    return my_seat >= 0;
-}
-
 int msg_lobby_rules_changed(int have_baseline, int baseline, int current, int mine) {
     if (!mine || !have_baseline) return 0;
     return (baseline != 0) != (current != 0);

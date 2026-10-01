@@ -496,6 +496,28 @@ int game_lobby_unseat(Game *g, int seat);
 // count and perm a permutation of it. Returns 1, or 0 with nothing changed.
 int game_lobby_reorder(Game *g, const int8_t *perm, int n);
 
+// MAY THIS SEAT CHOOSE THE RULES (Game.rules)? From a seat (`seat` >= 0, -1 for
+// somebody who is not at the table), and only while the lobby has not dealt
+// (`waiting`). THE one predicate, for every host: the online table
+// (table_set_rules, and the lobby view's ViewRules.can_set_rules) and the
+// iMessage lobby (msg_wire.h msg_lobby_can_set_rules, whose lobby is a WAITING
+// envelope by construction) ask it, so neither spells the rule its own way.
+//
+// A spectator SEES the rules - they are as much "what game is this" as the
+// player list - but cannot move them: the change is a fact about the table, so
+// it has to be made by somebody at it. Once the game is dealt the rules are the
+// game being played, and nobody may change them. Who changed them last is NOT a
+// question here: the iMessage lobby withholds Start from its changer
+// (msg_lobby_offered), the online table has no such gate, and a change clears
+// nobody's Ready.
+int game_lobby_can_set_rules(int seat, int waiting);
+
+// Set a WAITING game's rules: `passing` 1 the classic passing game, 0 podkidnoy
+// (GAME_RULE_NO_PASS; the boundary sense, docs/PODKIDNOY.md). Returns 1 when the
+// rules changed, 0 for a game that is not WAITING, a `passing` that is neither 0
+// nor 1, or the rules it already has (nothing changed).
+int game_lobby_set_rules(Game *g, int passing);
+
 // Reorder a seat's own hand: new card i is old card idx[i]. The permutation
 // check is load-bearing - n must equal the hand count and each index be used
 // exactly once, or a hostile request mints duplicate cards. Returns 1, or 0

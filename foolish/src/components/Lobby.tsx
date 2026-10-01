@@ -1,29 +1,9 @@
-// TODO(podkidnoy): this lobby needs the passing checkbox too.
-//
-// The kernel now carries a rules variant on the Game itself (game.h
-// GAME_RULE_NO_PASS): podkidnoy, the throw-in game where the defender covers or
-// picks up and there is no transfer at all. The iMessage lobby already chooses
-// it - a wooden checkbox that reseals the chain, whose value rides the FMSG
-// header, and whose rule the replay code carries so every device enumerates the
-// same legal moves (docs/PODKIDNOY.md).
-//
-// What is missing here is the SERVER half, which is why this is a note and not
-// a control: an online game's rules have to survive `games.state`. The room is
-// being made: the kernel reads a v4 blob whose flags carry them (view.h
-// STATE_BLOB_FORMAT_V4), but still writes v3, which cannot. Until v4 is
-// written, every online game is the classic passing game - unchanged, and
-// correct.
-//
-// When it is built: the checkbox belongs beside the player list, and the
-// iMessage rule that "whoever changes it cannot be the one to start" has no
-// equivalent here yet (any seated player may start an online game), so that
-// question needs answering rather than porting.
 import { useServer } from "../contexts/ServerContext";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, useRef, useMemo } from "react";
 import { WEBSITE_DOMAIN } from "../constants/constants";
 import { QRCodeSVG } from "qrcode.react";
-import { PLAYER_STATUS, GAME_STATUS, type ViewSeat } from "../state/view";
+import { PLAYER_STATUS, GAME_STATUS, rulesOf, type ViewSeat } from "../state/view";
 import supabase from "../backend/Connector";
 import { usePreventScroll } from "../hooks/usePreventScroll";
 import { MAX_PLAYERS } from "@api/core/constants.ts";
@@ -33,6 +13,7 @@ import { BackButton } from "./BackButton";
 import { Text } from "./Text";
 import { useLocalization } from "../contexts/LocalizationContext";
 import { SovietIcon } from "./SovietIcon";
+import { Check } from "./RoleMark";
 import { useStyles } from "../contexts/StyleContext";
 import { botDisplayName } from "../common/botName";
 import { sortBotsByLadder } from "../common/botLadder";
@@ -96,9 +77,50 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
     );
 };
 
+interface RulesCheckboxProps {
+    /** The table plays the classic passing game (perevodnoy); clear is podkidnoy. */
+    passing: boolean;
+    /** The kernel's answer: this viewer may change the rules now (ViewRules.canSetRules). */
+    enabled: boolean;
+    onChange: (passing: boolean) => void;
+    boxStyle: React.CSSProperties | undefined;
+}
+
+/**
+ * The lobby's rules (docs/PODKIDNOY.md): one box, ticked for the passing game.
+ *
+ * Everybody SEES it - the rules are as much "what game is this" as the player
+ * list, so a joiner and a spectator read which game they are joining - and only
+ * a seated player in a lobby may move it, which is the kernel's rule, read here
+ * and never restated. The tick is the said-good check (RoleMark), the one glyph
+ * that means "yes, this" on the board, as the iMessage box (FCheckbox) uses the
+ * seat badges' check. A real checkbox carries it, visually hidden, so the
+ * keyboard and a screen reader get the native control.
+ */
+const RulesCheckbox: React.FC<RulesCheckboxProps> = ({ passing, enabled, onChange, boxStyle }) => {
+    const { t } = useLocalization();
+    return (
+        <label className={`lobby__rules${enabled ? '' : ' lobby__rules--disabled'}`}>
+            <input
+                type="checkbox"
+                className="lobby__rules-input"
+                checked={passing}
+                disabled={!enabled}
+                onChange={(e) => onChange(e.target.checked)}
+            />
+            <span className="lobby__rules-box" style={boxStyle} aria-hidden="true">
+                <span className={`lobby__rules-tick${passing ? '' : ' lobby__rules-tick--off'}`}>
+                    <Check size={24} />
+                </span>
+            </span>
+            <span className="lobby__rules-label">{t('ios.lobby.passing')}</span>
+        </label>
+    );
+};
+
 export const Lobby = () => {
     const game_id = useParams<{ game_id: string }>().game_id?.toLowerCase();
-    const { view: game, updateGameName, rearrangePlayer, addBot, exitGame, joinGame, startGame } = useServer();
+    const { view: game, updateGameName, setRules, rearrangePlayer, addBot, exitGame, joinGame, startGame } = useServer();
     const router = useRouter();
     // The viewer's own seat, by its player id: the lobby list is the viewer's
     // local order (seats dragged around before the server hears of it), so a
@@ -584,6 +606,13 @@ export const Lobby = () => {
                 })}
             </div>
             
+            <RulesCheckbox
+                passing={game.passing}
+                enabled={rulesOf(game).canSetRules}
+                onChange={(passing) => { setRules(game_id!, passing).catch(console.error); }}
+                boxStyle={useWoodTexture ? buttonTextureStyle : undefined}
+            />
+
             {game.status === GAME_STATUS.WAITING && game.mySeat >= 0 && localPlayerOrder.length < MAX_PLAYERS && (
                 <div className="lobby__add-bot-row">
                     {selectableBots.length > 1 && (

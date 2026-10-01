@@ -54,6 +54,7 @@ export interface TableExports {
     wasm_table_ready(idLen: number): number;
     wasm_table_reseat(idLen: number, idsLen: number): number;
     wasm_table_retitle(idLen: number, titleLen: number): number;
+    wasm_table_set_rules(idLen: number, passing: number): number;
     wasm_table_continue(idLen: number): number;
     wasm_table_rearrange_hand(idLen: number, n: number): number;
     wasm_table_redact(idLen: number, nameLen: number): number;
@@ -243,6 +244,11 @@ export class ServerTable {
 
     retitle(actorId: string, title: string): number {
         return this.ex.wasm_table_retitle(...this.put(enc.encode(actorId), enc.encode(title)) as [number, number]);
+    }
+
+    /** The table's rules: `passing` true the classic passing game, false podkidnoy. */
+    setRules(actorId: string, passing: boolean): number {
+        return this.ex.wasm_table_set_rules(...this.put(enc.encode(actorId)) as [number], passing ? 1 : 0);
     }
 
     continueGame(actorId: string): number {

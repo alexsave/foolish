@@ -236,6 +236,9 @@ export const RoleCoin = ({ seat, kind, departing = false, arriving = false, labe
             style={{
                 height: `${RoleMarkSize.rowHeight}px`,
                 width: `${RoleMarkSize.rowHeight}px`,
+                // Never squeezed by the seat box it sits in, or the name under
+                // it moves when a face arrives (PlayerRing's SeatBadgeSize).
+                flexShrink: 0,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',

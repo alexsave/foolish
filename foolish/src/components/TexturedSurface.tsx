@@ -43,6 +43,27 @@ export const useTexture = () => {
   return context;
 };
 
+/** The largest plank a seeded texture is laid on: the lobby's player cards and
+ *  buttons are 250 x 50 with their rim. */
+const PLANK_SPAN = { width: 260, height: 60 } as const;
+
+/**
+ * A background position whose first `span` pixels show no edge of the `tile`.
+ *
+ * The wood is a generated picture, not a seamless tile, so where it repeats it
+ * shows a hard vertical (or horizontal) seam. A position `p` starts the picture
+ * `p` pixels into the plank, so the plank shows the picture from `tile - p` on,
+ * and a plank that runs past the picture's far edge wears the seam across it -
+ * which every id whose first two characters are both letters did, because the
+ * seed that turns into `p` then passes the tile's width. The plank is moved back
+ * just far enough to end at the edge; a plank that was already clear keeps its
+ * place, so most planks look exactly as they did.
+ */
+const clearOfTileEdge = (p: number, tile: number, span: number): number => {
+  const start = (tile - (p % tile)) % tile;
+  return start > tile - span ? span : p;
+};
+
 /**
  * Calculate style from seed and texture URL.
  * Use this when you need to apply texture styles inside a map or callback.
@@ -65,8 +86,8 @@ export const getTextureStyle = (
   const scaleFactor = willRotate ? 1.5 : 1;
   const scaledWidth = Math.floor(baseWidth * scaleFactor);
   const scaledHeight = Math.floor(baseHeight * scaleFactor);
-  const adjustedXOffset = Math.floor(xOffset * scaleFactor);
-  const adjustedYOffset = Math.floor(yOffset * scaleFactor);
+  const adjustedXOffset = clearOfTileEdge(Math.floor(xOffset * scaleFactor), scaledWidth, PLANK_SPAN.width);
+  const adjustedYOffset = clearOfTileEdge(Math.floor(yOffset * scaleFactor), scaledHeight, PLANK_SPAN.height);
 
   return {
     backgroundColor: baseColor,

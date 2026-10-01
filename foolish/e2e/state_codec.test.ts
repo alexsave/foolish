@@ -38,11 +38,13 @@ const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
 
 test('every commit writes the durable blob at the current format', () => {
   // c/src/view.h STATE_BLOB_FORMAT: this kernel reads v2, v3 and v4 and writes
-  // v3, the board with its clock behind it (v4 is at its expand step).
+  // v4, the board with its clock behind it and its rules in the flag byte (the
+  // switch step of v3 -> v4).
   const row = dealBotTable(['random', 'random', 'random', 'random'], seedBytes(4, 1));
-  assert.equal(L.TABLE_STATE_FORMAT, L.TABLE_STATE_FORMAT_V3, 'the format this kernel writes');
+  assert.equal(L.TABLE_STATE_FORMAT, L.TABLE_STATE_FORMAT_V4, 'the format this kernel writes');
   assert.equal(L.TABLE_STATE_CLOCK_BYTES, L.TABLE_STATE_V3_CLOCK_BYTES, 'and a written blob carries the clock');
   assert.equal(row.state[0], L.TABLE_STATE_FORMAT, 'the dealt blob leads with its format');
+  assert.ok(row.state[1] & L.TABLE_STATE_FLAG_PASSING, 'and a classic table says PASSING in its flag byte');
 });
 
 test('a blob of any other format is refused, not misread', () => {
@@ -61,9 +63,10 @@ test('a blob of any other format is refused, not misread', () => {
 });
 
 test('a v3 blob, the board with its clock behind it, loads with that clock', () => {
-  // The format the switch step writes, read by this kernel now so a rollback
-  // across the switch finds every row readable. The fixture is the written
-  // board with the v3 format byte and a clock: shown at T, done playing at T+500.
+  // The format the expand kernel wrote, still read by this one: rows of it stay
+  // in the column until a game rewrites them. The fixture is the written board
+  // with the v3 format byte, the v3 flag byte (the deck bit alone) and a clock:
+  // shown at T, done playing at T+500.
   const T = 1_700_000_000_000;
   const row = dealBotTable(['random', 'random', 'random', 'random'], seedBytes(4, 3));
   const table = fixtureTable();
@@ -77,6 +80,7 @@ test('a v3 blob, the board with its clock behind it, loads with that clock', () 
   v3.set(board);
   v3.set(clock, board.length);
   v3[0] = L.TABLE_STATE_FORMAT_V3;
+  v3[1] = row.state[1] & L.TABLE_STATE_FLAG_DETERMINISTIC;
   assert.equal(table.load(v3, row.roster), L.TABLE_OK, 'the v3 blob loads');
   // A bots-only board waits the bots-only pace from when it was shown, so the
   // wait moves with the time gone since T: the clock was read.
@@ -86,14 +90,18 @@ test('a v3 blob, the board with its clock behind it, loads with that clock', () 
   assert.equal(table.botWaitMs(T + 3_600_000), 0, 'and not at all an hour later');
   const p = table.commit(row.gameId, row.version, 0);
   assert.ok(typeof p !== 'number', 'products of the loaded v3 row');
-  assert.equal(hex(p.state), hex(v3), 'written back at the format this kernel writes, as the same board and clock');
+  // Written back at v4: the same board and clock, its flag byte the v3 deck bit
+  // and PASSING, which is all a v3 row could ever have been.
+  const v4 = v3.slice();
+  v4[0] = L.TABLE_STATE_FORMAT_V4;
+  v4[1] = v3[1] | L.TABLE_STATE_FLAG_PASSING;
+  assert.equal(hex(p.state), hex(v4), 'written back as v4, as the same board and clock, passing');
 });
 
-test('a v4 blob carries the rules: passing commits back as v3, podkidnoy is not written as passing', () => {
-  // The expand step of v3 -> v4 (c/src/view.h STATE_BLOB_FORMAT_V4): v4 is v3
-  // with its flag byte a bitfield, and this kernel reads it but writes v3, which
-  // cannot say podkidnoy. A passing v4 row is a v3 row in all but those bytes; a
-  // podkidnoy one loads, and its commit is refused rather than written classic.
+test('a v4 blob carries the rules: passing and podkidnoy rows both commit back byte for byte', () => {
+  // The switch step of v3 -> v4 (c/src/view.h STATE_BLOB_FORMAT_V4): v4 is v3
+  // with its flag byte a bitfield, and this kernel reads and writes it, so a
+  // podkidnoy row survives a commit as podkidnoy rather than being refused.
   const row = dealBotTable(['random', 'random', 'random', 'random'], seedBytes(4, 4));
   const table = fixtureTable();
   const deck = row.state[1] & L.TABLE_STATE_FLAG_DETERMINISTIC;
@@ -107,11 +115,12 @@ test('a v4 blob carries the rules: passing commits back as v3, podkidnoy is not 
   assert.equal(table.load(v4(deck | L.TABLE_STATE_FLAG_PASSING), row.roster), L.TABLE_OK, 'a passing v4 row loads');
   const p = table.commit(row.gameId, row.version, 0);
   assert.ok(typeof p !== 'number', 'products of the loaded passing v4 row');
-  assert.equal(hex(p.state), hex(row.state), 'written back as the v3 row it is');
+  assert.equal(hex(p.state), hex(v4(deck | L.TABLE_STATE_FLAG_PASSING)), 'written back byte for byte');
 
   assert.equal(table.load(v4(deck), row.roster), L.TABLE_OK, 'a podkidnoy v4 row loads');
   const q = table.commit(row.gameId, row.version, 0);
-  assert.equal(q, L.TABLE_E_STATE_RULES, `a podkidnoy row is not committed as v3 (${typeof q === 'number' ? reasonOf(q, ['TABLE_E_', 'GAME_INVALID_']) : 'products'})`);
+  assert.ok(typeof q !== 'number', `products of the loaded podkidnoy v4 row (${typeof q === 'number' ? reasonOf(q, ['TABLE_E_', 'GAME_INVALID_']) : ''})`);
+  assert.equal(hex(q.state), hex(v4(deck)), 'written back byte for byte, still podkidnoy');
 
   const rc = table.load(v4(deck | L.TABLE_STATE_FLAG_PASSING | 0x04), row.roster);
   assert.equal(rc, L.TABLE_E_STATE_VERSION, `a v4 flag bit this kernel does not know is unreadable (${reasonOf(rc, ['TABLE_E_', 'GAME_INVALID_'])})`);

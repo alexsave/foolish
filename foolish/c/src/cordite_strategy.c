@@ -173,6 +173,22 @@ static void cd_floor_check(Belief *B, const Game *g, int p, Card c) {
     }
 }
 
+// The face-up trump the draw record L took, into *out; false when nothing says
+// which card it was. A Game that drew it itself still holds it in g->flipped
+// (the kernel leaves the drawn card there, gated by has_flipped). A Game a table
+// LOADED from its row does not - the blob carries no drawn trump, so state_get
+// leaves the {0,0} that is not a card - but its session log masks every draw
+// except the face-up trump's (view.c log_record_put), so the one card the record
+// names is it. Pinning the {0,0} instead put a card that does not exist in that
+// seat's hand: a phantom bit in every sampled world's hand bitboard (card_id -1).
+static bool cd_drawn_trump(const Game *g, const GameLog *L, Card *out) {
+    if (card_in_range(g->flipped, 1, ACE_VALUE)) { *out = g->flipped; return true; }
+    for (int k = 0; k < L->num_pairs; k++) {
+        if (card_in_range(L->pairs[k].primary, 1, ACE_VALUE)) { *out = L->pairs[k].primary; return true; }
+    }
+    return false;
+}
+
 // Chronological scan over logs: pinned cards, flipped-trump holder, void
 // constraints, rank floors and trust flags, all in one pass.
 static void cd_build_belief(const Game *g, int bot_idx, Belief *B) {
@@ -266,7 +282,8 @@ static void cd_build_belief(const Game *g, int bot_idx, Belief *B) {
                 if (p >= 0 && p != bot_idx) {
                     B->void_n[p] = 0;    // new unknown cards: constraints expire
                     B->floor_v[p] = 0;
-                    if (i == flip_log_idx) cd_pinned_add(B, p, g->flipped);
+                    Card trump;
+                    if (i == flip_log_idx && cd_drawn_trump(g, L, &trump)) cd_pinned_add(B, p, trump);
                 }
                 break;
             case LOG_PLAYER_OUT:

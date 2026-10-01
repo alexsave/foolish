@@ -4,7 +4,7 @@ import { useFernFractal } from "../../utils/fernFractal";
 import { useStyles } from "../../contexts/StyleContext";
 import { useLocalization } from "../../contexts/LocalizationContext";
 import { useState, useEffect, useRef } from "react";
-import { type RoleMarkKind } from "../RoleMark";
+import { RoleMarkSize, type RoleMarkKind } from "../RoleMark";
 import { RoleCoin } from "../RoleCoin";
 import { useAnimation } from "../../contexts/AnimationContext";
 import { markWorn, shownBoardOf } from "../../state/roleLedger";
@@ -17,13 +17,36 @@ const MiniSovietCardBack = () => (
     <SovietCardBack style={{ position: 'absolute', top: 0, left: 0 }} />
 );
 
+/** THE SEAT BADGE'S THREE ROWS, top to bottom: the role coin, the name, the
+ *  mini hand. Each row is exactly as tall as what it draws and none of them
+ *  shrinks, and the seat box is their sum, so nothing overflows into a
+ *  neighbour.
+ *
+ *  It used to be a fixed 80px box holding 40 + 30 + 20 = 90px of rows. Flexbox
+ *  answered the overflow by shrinking every row, and the mini hand's row
+ *  (declared 20px, squeezed to 16) held 35px cards centred on it, so they hung
+ *  ~10px up into the name and covered the lower half of its letters. The squeeze
+ *  also differed with the coin's face (an empty coin gave up 4.5px, a sword
+ *  none), so a name moved when a mark arrived, which the coin's constant box
+ *  exists to prevent. */
+const MINI_CARD_WIDTH = 25;
+const MINI_CARD_HEIGHT = MINI_CARD_WIDTH * 1.4;
+/** One 12px line, with its descenders, and nothing to spare. */
+const NAME_ROW_HEIGHT = 16;
+export const SeatBadgeSize = {
+    roleRow: RoleMarkSize.rowHeight,
+    nameRow: NAME_ROW_HEIGHT,
+    handRow: MINI_CARD_HEIGHT,
+    seat: RoleMarkSize.rowHeight + NAME_ROW_HEIGHT + MINI_CARD_HEIGHT,
+} as const;
+
 const CardsVisual = ({ player, handKey, selfHandLength, isSelf }: { player: ViewSeat, handKey: string, selfHandLength?: number, isSelf: boolean }) => {
     const styles = useStyles();
     const { fernPattern } = useFernFractal();
 
     const hasPattern = styles.miniCard.usePattern && !!fernPattern;
-    const cardWidth = 25;
-    const cardHeight = cardWidth * 1.4;
+    const cardWidth = MINI_CARD_WIDTH;
+    const cardHeight = MINI_CARD_HEIGHT;
     const displayHandLength = selfHandLength !== undefined ? selfHandLength : player.handCount;
 
     // Mark this container as the deal/refill destination for *other* players only.
@@ -40,8 +63,9 @@ const CardsVisual = ({ player, handKey, selfHandLength, isSelf }: { player: View
             alignItems: 'center',
             justifyContent: 'center',
             position: 'relative',
-            height: '20px',
+            height: `${SeatBadgeSize.handRow}px`,
             width: '100px',
+            flexShrink: 0,
         }} {...handAttrs}>
             {Array.from({ length: displayHandLength }).map((_, cardIndex) => {
                 const mid = (displayHandLength - 1) / 2;
@@ -55,6 +79,7 @@ const CardsVisual = ({ player, handKey, selfHandLength, isSelf }: { player: View
                     borderRadius: styles.miniCard.borderRadius,
                     border: styles.miniCard.border,
                     position: 'absolute',
+                    top: 0,
                     left: `${halfDivWidth + (cardIndex - mid) * 10 - halfCardWidth}px`,
                     zIndex: cardIndex,
                     boxShadow: styles.miniCard.boxShadow,
@@ -195,7 +220,7 @@ export const PlayerRing = () => {
                         flexDirection: 'column',
                         alignItems: 'center',
                         width: '80px',
-                        height: '80px',
+                        height: `${SeatBadgeSize.seat}px`,
                         transform: 'translate(-50%, -50%)'
                     }}>
                         {/* THE SEAT'S ROLE ROW (FSeatBadge.roleRow), which is a
@@ -256,7 +281,9 @@ export const PlayerRing = () => {
                             // a wrapped second line fell under the seat's mini hand.
                             whiteSpace: 'nowrap',
                             textAlign: 'center',
-                            height: '30px',
+                            height: `${SeatBadgeSize.nameRow}px`,
+                            lineHeight: `${SeatBadgeSize.nameRow}px`,
+                            flexShrink: 0,
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',

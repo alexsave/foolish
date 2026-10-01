@@ -371,6 +371,46 @@ test('4 seats, right after a pickup', async () => {
     }, () => gamePage(gid, ME));
 });
 
+/**
+ * THE SEAT BADGE'S ROWS FIT ITS BOX. A seat in the ring (PlayerRing) stacks a
+ * role row, the name and the mini hand in a column box. When the rows added up
+ * to more than the box, flexbox shrank them all and the mini hand's 35px cards,
+ * centred on a squeezed row, hung up over the bottom half of the name. jsdom has
+ * no layout, so this reads the declared geometry the browser lays out from:
+ * every row keeps its height (flex-shrink 0), the rows sum to the box, and each
+ * mini card lies inside its own row.
+ */
+test('every seat badge: role row, name and mini hand fit the seat box, none squeezed', async () => {
+    const board = fixture().title('Four').seats([seat(ME, 'Me'), seat('u-anna-0001', 'Anna'), seat('u-boris-001', 'Boris'), seat('u-vera-0001', 'Vera')])
+        .status(PLAYING).trump('Kc').deck('7s 8s 9s Ts Js Qs')
+        .hand(0, '6s 7h Qd Ad').hand(1, '9h Th 6d 6c').hand(2, '7d 8d').hand(3, '7c')
+        .table('6h').attacker(0).defender(1).build();
+    await onBoard('fits', board, 0, ME, async (host) => {
+        const px = (v: string, what: string) => {
+            assert.match(v, /^\d+(\.\d+)?px$/, `${what} has a pixel height (${v || 'none'})`);
+            return parseFloat(v);
+        };
+        const coins = host.querySelectorAll<HTMLElement>('[data-role-seat]');
+        assert.equal(coins.length, 4, 'four seats in the ring');
+        for (const coin of coins) {
+            const box = coin.parentElement as HTMLElement;
+            const rows = Array.from(box.children) as HTMLElement[];
+            const who = `seat ${coin.dataset.roleSeat}`;
+            assert.equal(rows.length, 3, `${who}: role row, name, mini hand`);
+            const heights = rows.map((r, i) => px(r.style.height, `${who} row ${i}`));
+            for (const [i, r] of rows.entries()) assert.equal(r.style.flexShrink, '0', `${who} row ${i} never shrinks`);
+            assert.equal(heights.reduce((x, y) => x + y, 0), px(box.style.height, `${who} box`),
+                `${who}: the rows (${heights.join(' + ')}) are the box`);
+            const hand = rows[2];
+            for (const card of Array.from(hand.children) as HTMLElement[]) {
+                if (!card.style.width) continue;   // the count label
+                assert.equal(card.style.top, '0px', `${who}: a mini card starts at its row's top`);
+                assert.ok(px(card.style.height, `${who} mini card`) <= heights[2], `${who}: a mini card lies inside its row, not over the name`);
+            }
+        }
+    });
+});
+
 function eightSeats() {
     const seats = [seat(ME, 'Me'), seat('u-anna-0001', 'Anna'), seat('b-cordite-01', 'St. Petersburg 1', 'cordite'),
         seat('u-boris-001', 'Boris'), seat('b-robusta-02', 'Seoul 2', 'robusta'), seat('u-vera-0001', 'Vera'),
@@ -527,9 +567,10 @@ test('a replay with names, at its last step', async () => {
 // read back child by child, top to bottom. The column holds the kernel's pills
 // and nothing else - no spacer keeps a slot for a button that is not there - so
 // a lone pill is the column's only child, and Pass and Cover stand Cover above
-// Pass, as the iMessage column does (FActionBar). Podkidnoy (GAME_RULE_NO_PASS)
-// has no row: the website's boards carry no rules variant yet (Lobby.tsx
-// TODO(podkidnoy)), and legal.c's own tests hold its pills.
+// Pass, as the iMessage column does (FActionBar). A podkidnoy table
+// (GAME_RULE_NO_PASS, chosen in the lobby) is the same board with the transfer
+// gone: the page has no gate of its own for it, so the Pass pill leaving is the
+// kernel's menu leaving, read through the envelope's rules.
 
 /** The action column, top to bottom: each child's button label, "_" for a child that is no button. */
 function actionSlots(host: HTMLElement): string[] {
@@ -588,9 +629,10 @@ async function onBoard(gid: string, board: { state: Uint8Array; roster: Uint8Arr
     try { await render(() => gamePage(gid, userId), steps); } finally { g.setTimeout = realSetTimeout; }
 }
 
-// Me (seat 0) against Anna (seat 1), clubs trump. `table` is the bout; `attacker` names who leads.
-function pillBoard(table: string[], attacker: 0 | 1) {
-    return fixture().title('Pills').seats([seat(ME, 'Me'), seat('u-anna-0001', 'Anna')]).status(PLAYING)
+// Me (seat 0) against Anna (seat 1), clubs trump. `table` is the bout; `attacker` names who leads;
+// `passing` false is a podkidnoy table.
+function pillBoard(table: string[], attacker: 0 | 1, passing = true) {
+    return fixture().title('Pills').seats([seat(ME, 'Me'), seat('u-anna-0001', 'Anna')]).status(PLAYING).passing(passing)
         .trump('Kc').deck('7s 8s 9s Ts Js Qs Ks As 7d 8d 9d Td Jd Kd')
         .hand(0, attacker === 0 ? '6s 7h Qd Ad' : '9h Th 6d 6c').hand(1, attacker === 0 ? '9h Th 6d 6c' : '6s 7h Qd Ad')
         .table(...table).attacker(attacker).defender(attacker === 0 ? 1 : 0).build();
@@ -642,5 +684,19 @@ test('the defender: Take with nothing selected; Cover, Pass, or both for the sel
         assert.deepEqual(actionSlots(host), ['Pickup'], 'the selection put back: Take again');
         await press('u', wait);
         assert.ok(invoked.includes('action'), `with nothing selected U takes the table (${invoked.join(',')})`);
+    });
+});
+
+test('the defender at a podkidnoy table: the same cards, and never Pass', async () => {
+    await onBoard('pilld', pillBoard(['6h'], 1, false), 0, ME, async (host, wait) => {
+        assert.deepEqual(actionSlots(host), ['Pickup'], 'nothing selected: Take alone, as at a passing table');
+        await tapCard(host, '6d', wait);
+        assert.deepEqual(actionSlots(host), [], "a card of the attack's rank that cannot cover: no button, where the passing table offers Pass");
+        await tapCard(host, '6d', wait);
+        await tapCard(host, '6c', wait);
+        assert.deepEqual(actionSlots(host), ['Cover'], "a trump of the attack's rank: Cover alone, where the passing table stacks Pass under it");
+        await tapCard(host, '6c', wait);
+        await tapCard(host, '9h', wait);
+        assert.deepEqual(actionSlots(host), ['Cover'], 'a covering card: Cover, as at a passing table');
     });
 });

@@ -184,18 +184,28 @@ That makes it self-cancelling - tick the box back and there is nothing left to
 withhold Start for - and it survives the extension being closed mid-lobby,
 which a flag would not.
 
+## The web lobby
+
+Online (supabase) games choose the rules too, in the website's lobby: a wooden box under the player list, labelled with the same string the iMessage box wears (`ios.lobby.passing`), ticked for the passing game and ticked by default.
+The tick is the said-good check (`RoleMark` `Check`), as the iMessage box borrows the seat badges' check.
+Everybody sees it, joiners and spectators included, and only a seated player in a WAITING lobby can move it.
+That is the kernel's rule (`game_lobby_can_set_rules`), which the page reads as `ViewRules.canSetRules` and the server enforces in `table_set_rules`; the page restates none of it.
+
+Ticking it sends the `set-rules` meta action (`{ passing: boolean }`), shown at once and put back if the server refuses, as a retitle is.
+The table's rules ride the roster trailer (format 2), so the other seats and the spectators read the change from their next push or their stored view before anyone readies.
+
+**The web's rule is not the iMessage one, on purpose.**
+Any seated player may change the rules at any time before the deal, including the player whose Ready deals, and a change clears nobody's Ready.
+The iMessage gate ("whoever changes it cannot start the game") exists because a reseal is a bubble somebody else has to open before they can know what changed.
+The web lobby is live over realtime, so every seat already sees the box move as it moves, and the gate would only withhold a Start that strands nobody.
+
+The board needed nothing.
+The Pass pill is the kernel's answer over its legal menu (`play_pills`), and the client slot builds its board's rules from the view (`client_table.c board_game`), so the pill is simply absent at a podkidnoy table.
+
 ## What is NOT wired
 
-**Online (supabase) games are always perevodnoy.**
-The rules would have to survive `games.state`, and that durable blob has no
-room for them today.
-Nothing about the online path changed: its games are the classic game, its
-stored replay codes decode as they always did.
-`src/components/Lobby.tsx` carries a note saying so, and what the web checkbox
-would need.
-
-**Local games against bots are perevodnoy**, for the same reason there is
-nothing to decide: the app's offline setup has no lobby, and a fresh deal is
+**Local games against bots are perevodnoy**, because there is nothing to
+decide: the app's offline setup has no lobby, and a fresh deal is
 always the classic game (`fio_new_game` resets the rules - without that, one
 podkidnoy lobby would leave every later game on the device podkidnoy, in a
 process that never restarts).
@@ -208,5 +218,8 @@ process that never restarts).
 | `c/tests/msg_wire_test.c test_podkidnoy_wire` | the seal, the wire, the replay, the rebuilt game, header/body disagreement, and the code SIZE (the menu gate) |
 | `c/ios/ios_api_smoke.c lobby_rules_check` | the lobby flow through the API the app really calls, including Start's re-deal |
 | `ios/FoolishTests/PodkidnoyTests.swift` | the checkbox → wire → Start → board chain, the Start gate, and the rulebook's silence |
+| `e2e/meta_set_rules.test.ts` | the server's `set-rules`: who may send it, every viewer's envelope and push, and the deal |
+| `e2e/web_lobby_rules.test.ts` | the website's box end to end: Ana unticks it and `passing: false` is sent, Bo reads it from his stored view and follows the pushes before he readies, a spectator's box is disabled, and the deal is podkidnoy |
+| `e2e/ui_dom_snapshots.test.ts` "the defender at a podkidnoy table" | the rendered action column offers Cover and Take and never Pass, where the same board at a passing table offers Pass |
 
 Each was mutation-checked against the change it guards.

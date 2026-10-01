@@ -1006,6 +1006,7 @@ WASM_TABLE_EXPORTS := \
   -Wl,--export=wasm_table_leave -Wl,--export=wasm_table_add_bot \
   -Wl,--export=wasm_table_remove_bot -Wl,--export=wasm_table_ready \
   -Wl,--export=wasm_table_reseat -Wl,--export=wasm_table_retitle \
+  -Wl,--export=wasm_table_set_rules \
   -Wl,--export=wasm_table_continue -Wl,--export=wasm_table_rearrange_hand \
   -Wl,--export=wasm_table_redact -Wl,--export=wasm_table_seat_of \
   -Wl,--export=wasm_table_set_deal_seed -Wl,--export=wasm_table_set_session_log \
