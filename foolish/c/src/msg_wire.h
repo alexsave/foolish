@@ -1142,7 +1142,12 @@ int msg_lobby_offered(int my_seat, int joined, int capacity,
 // leave INTO. A lone creator's exit is New game, which replaces the invite.
 int msg_lobby_can_exit(int my_seat, int joined);
 
-// May I move the passing checkbox? Only from a seat.
+// May I move the passing checkbox? Only from a seat. The rule is the kernel's
+// lobby rule (game.h game_lobby_can_set_rules), which the online table asks
+// too; this is its iMessage spelling, kept so the Swift bridge
+// (fio_msg_lobby_can_set_rules) does not move. An iMessage lobby is a WAITING
+// envelope by construction - the checkbox exists on nothing else - so the
+// lobby's half of the rule is always met here and `my_seat` decides alone.
 //
 // A spectator SEES the box - the rules are as much "what game is this" as the
 // player list, and hiding them from the person deciding whether to join would
@@ -1171,7 +1176,7 @@ int msg_lobby_can_exit(int my_seat, int joined);
 // and not on the reader, deliberately: suppressing it on arrival would leave her
 // chain saying one thing and every screen reading it another, which is a fork
 // rather than a rule.
-int msg_lobby_can_set_rules(int my_seat);
+static inline int msg_lobby_can_set_rules(int my_seat) { return game_lobby_can_set_rules(my_seat, 1); }
 
 // Did THIS device change the rules on the lobby it is showing? `have_baseline`
 // / `baseline` are the passing rule as of the last bubble somebody ELSE put on

@@ -405,6 +405,18 @@ int game_rearrange_hand(Game *g, int seat, const unsigned char *idx, int n) {
     return 1;
 }
 
+int game_lobby_can_set_rules(int seat, int waiting) {
+    return seat >= 0 && waiting;
+}
+
+int game_lobby_set_rules(Game *g, int passing) {
+    if (!g || g->status != GAME_STATUS_WAITING || (passing != 0 && passing != 1)) return 0;
+    const int8_t rules = (int8_t)(passing ? g->rules & ~GAME_RULE_NO_PASS : g->rules | GAME_RULE_NO_PASS);
+    if (rules == g->rules) return 0;
+    g->rules = rules;
+    return 1;
+}
+
 int game_lobby_can_deal(const Game *g) {
     if (!g || g->status != GAME_STATUS_WAITING) return 0;
     if (g->num_players < 2) return 0;

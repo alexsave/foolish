@@ -25,6 +25,7 @@
 #include "../src/roster.h"
 #include "../src/table.h"
 #include "../src/client_table.h"
+#include "../src/msg_wire.h"   // msg_lobby_can_set_rules, the iMessage spelling of the lobby rule
 #include "../wasm/wire.h"
 #include <stdio.h>
 #include <sys/mman.h>
@@ -8768,28 +8769,30 @@ static void test_roster_trailer(void) {
     const int golden_len = (int)sizeof(ROSTER_TRAILER_GOLDEN);
     roster_fixture(&r);
 
-    CHECK(roster_trailer_write(&r, RS("game-1"), 1, 1u << 1, out, sizeof(out)) == golden_len
+    CHECK(roster_trailer_write(&r, RS("game-1"), 1, 1u << 1, 1, out, sizeof(out)) == golden_len
           && memcmp(out, ROSTER_TRAILER_GOLDEN, golden_len) == 0, "the trailer is encodePackedRoster's bytes");
     int small_ok = 1;
     for (int cap = 0; cap < golden_len; cap++)
-        if (roster_trailer_write(&r, RS("game-1"), 1, 2, out, cap) != ROSTER_E_CAP) small_ok = 0;
+        if (roster_trailer_write(&r, RS("game-1"), 1, 2, 1, out, cap) != ROSTER_E_CAP) small_ok = 0;
     CHECK(small_ok, "every buffer smaller than the trailer is refused");
-    CHECK(roster_trailer_write(&r, RS("game-1"), 3, 0, out, sizeof(out)) == ROSTER_E_STATUS, "status 3 is refused");
-    CHECK(roster_trailer_write(&r, RS("game-1"), -1, 0, out, sizeof(out)) == ROSTER_E_STATUS, "status -1 is refused");
-    CHECK(roster_trailer_write(&r, RS("game-1"), 1, 1u << 2, out, sizeof(out)) == ROSTER_E_GOOD,
+    CHECK(roster_trailer_write(&r, RS("game-1"), 3, 0, 1, out, sizeof(out)) == ROSTER_E_STATUS, "status 3 is refused");
+    CHECK(roster_trailer_write(&r, RS("game-1"), -1, 0, 1, out, sizeof(out)) == ROSTER_E_STATUS, "status -1 is refused");
+    CHECK(roster_trailer_write(&r, RS("game-1"), 1, 1u << 2, 1, out, sizeof(out)) == ROSTER_E_GOOD,
           "a good bit past the seats is refused");
     char gid[ROSTER_GAME_ID_MAX + 1];
     memset(gid, 'g', sizeof(gid));
-    CHECK(roster_trailer_write(&r, gid, ROSTER_GAME_ID_MAX + 1, 0, 0, out, sizeof(out)) == ROSTER_E_GAME_ID,
+    CHECK(roster_trailer_write(&r, gid, ROSTER_GAME_ID_MAX + 1, 0, 0, 1, out, sizeof(out)) == ROSTER_E_GAME_ID,
           "a game id over its cap is refused");
     Roster bad = r; bad.seats[1].id_len = 0;
-    CHECK(roster_trailer_write(&bad, RS("game-1"), 0, 0, out, sizeof(out)) == ROSTER_E_ID,
+    CHECK(roster_trailer_write(&bad, RS("game-1"), 0, 0, 1, out, sizeof(out)) == ROSTER_E_ID,
           "an invalid roster writes no trailer");
 
     Roster full;
     roster_full_fixture(&full);
-    CHECK(roster_trailer_write(&full, gid, ROSTER_GAME_ID_MAX, 2, 0xff, out, sizeof(out)) == ROSTER_TRAILER_MAX,
-          "a trailer at every cap is ROSTER_TRAILER_MAX");
+    CHECK(roster_trailer_write(&full, gid, ROSTER_GAME_ID_MAX, 2, 0xff, 0, out, sizeof(out)) == ROSTER_TRAILER_MAX,
+          "a podkidnoy trailer at every cap is ROSTER_TRAILER_MAX");
+    CHECK(roster_trailer_write(&full, gid, ROSTER_GAME_ID_MAX, 2, 0xff, 1, out, sizeof(out)) == ROSTER_TRAILER_MAX - 1,
+          "and a passing one is a byte short of it: no rules byte");
 
     // read
     char got_gid[ROSTER_GAME_ID_MAX + 1];
@@ -8798,7 +8801,7 @@ static void test_roster_trailer(void) {
     uint8_t in[sizeof(ROSTER_TRAILER_GOLDEN) + 16];
     memcpy(in, ROSTER_TRAILER_GOLDEN, golden_len);
     in[golden_len] = 0x77;   // a byte after the trailer is not the trailer's
-    CHECK(roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, in, golden_len + 1, &consumed) == ROSTER_OK,
+    CHECK(roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, 0, in, golden_len + 1, &consumed) == ROSTER_OK,
           "the golden trailer reads");
     CHECK(consumed == golden_len, "the reader stops at the end of the trailer");
     CHECK(got_gid_len == 6 && memcmp(got_gid, "game-1", 6) == 0 && status == 1 && ai == (1u << 1),
@@ -8809,14 +8812,15 @@ static void test_roster_trailer(void) {
 
     int short_ok = 1;
     for (int cut = 0; cut < golden_len; cut++)
-        if (roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, in, cut, &consumed) >= 0) short_ok = 0;
+        if (roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, 0, in, cut, &consumed) >= 0) short_ok = 0;
     CHECK(short_ok, "every truncation of the trailer is refused");
-    CHECK(roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, in, 12, &consumed) == ROSTER_E_SHORT,
+    CHECK(roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, 0, in, 12, &consumed) == ROSTER_E_SHORT,
           "a cut trailer is E_SHORT");
 
 #define TMUTATE(expect, msg, ...) do { memcpy(in, ROSTER_TRAILER_GOLDEN, golden_len); __VA_ARGS__; \
-        CHECK(roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, in, golden_len, &consumed) == (expect), msg); } while (0)
-    TMUTATE(ROSTER_E_VERSION, "an unknown trailer version is refused", in[0] = 2);
+        CHECK(roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, 0, in, golden_len, &consumed) == (expect), msg); } while (0)
+    TMUTATE(ROSTER_E_VERSION, "an unknown trailer version is refused", in[0] = 3);
+    TMUTATE(ROSTER_E_VERSION, "a trailer version 0 is refused", in[0] = 0);
     TMUTATE(ROSTER_E_STATUS, "a trailer status over 2 is refused", in[23] = 3);
     TMUTATE(ROSTER_E_COUNT, "a trailer seat count over 8 is refused", in[24] = 9);
     TMUTATE(ROSTER_E_SEAT, "a names block out of seat order is refused", in[25] = 1);
@@ -8829,18 +8833,48 @@ static void test_roster_trailer(void) {
     memcpy(in, ROSTER_TRAILER_GOLDEN, golden_len);
     in[golden_len - 1] = 1;
     memset(in + golden_len, 0x42, 8);
-    CHECK(roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, in, golden_len + 8, &consumed) == ROSTER_OK
+    CHECK(roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, 0, in, golden_len + 8, &consumed) == ROSTER_OK
           && consumed == golden_len + 8, "a trailer with a timestamp reads past it");
-    CHECK(roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, in, golden_len + 7, &consumed) == ROSTER_E_SHORT,
+    CHECK(roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, 0, in, golden_len + 7, &consumed) == ROSTER_E_SHORT,
           "a cut timestamp is refused");
 
     // write -> read round trip at every cap
-    int n = roster_trailer_write(&full, gid, ROSTER_GAME_ID_MAX, 2, 0x81, out, sizeof(out));
-    CHECK(roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, out, n, &consumed) == ROSTER_OK
+    int n = roster_trailer_write(&full, gid, ROSTER_GAME_ID_MAX, 2, 0x81, 1, out, sizeof(out));
+    CHECK(roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, 0, out, n, &consumed) == ROSTER_OK
           && consumed == n && got_gid_len == ROSTER_GAME_ID_MAX && status == 2 && ai == 0xaa,
           "a full trailer reads back");
     for (int s = 0; s < MAX_PLAYERS; s++) { full.seats[s].brain_len = 0; }
     CHECK(roster_equal(&back, &full), "a full trailer keeps every id and name");
+
+    // THE RULES (format 2). A passing table writes the format 1 trailer it always
+    // did - the golden above is passing - and reads back passing; a podkidnoy table
+    // writes format 2, the same bytes and then a rules byte with PASSING clear.
+    int passing = -1;
+    CHECK(roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, &passing, ROSTER_TRAILER_GOLDEN, golden_len, &consumed) == ROSTER_OK
+          && passing == 1, "a format 1 trailer is the passing game");
+    n = roster_trailer_write(&r, RS("game-1"), 1, 1u << 1, 0, out, sizeof(out));
+    CHECK(n == golden_len + 1 && out[0] == ROSTER_TRAILER_FORMAT_V2 && memcmp(out + 1, ROSTER_TRAILER_GOLDEN + 1, (size_t)golden_len - 1) == 0
+          && out[golden_len] == 0, "a podkidnoy trailer is format 2: format 1's bytes, then a rules byte of 0");
+    passing = -1;
+    CHECK(roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, &passing, out, n, &consumed) == ROSTER_OK
+          && passing == 0 && consumed == n && status == 1 && ai == (1u << 1) && roster_equal(&back, &want),
+          "it reads back podkidnoy, with everything format 1 carries");
+    out[golden_len] = ROSTER_TRAILER_PASSING;
+    passing = -1;
+    CHECK(roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, &passing, out, n, &consumed) == ROSTER_OK
+          && passing == 1, "a format 2 trailer whose rules byte says PASSING reads passing");
+    int unknown_refused = 1;
+    for (int bit = 1; bit < 8; bit++) {
+        out[golden_len] = (uint8_t)(1u << bit);
+        if (roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, &passing, out, n, &consumed) != ROSTER_E_RULES) unknown_refused = 0;
+    }
+    CHECK(unknown_refused, "a rules bit this kernel does not know is refused, never read as a guess");
+    out[golden_len] = 0;
+    CHECK(roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, &passing, out, n - 1, &consumed) == ROSTER_E_SHORT,
+          "a format 2 trailer cut before its rules byte is refused");
+    CHECK(roster_trailer_write(&r, RS("game-1"), 1, 0, 2, out, sizeof(out)) == ROSTER_E_RULES
+          && roster_trailer_write(&r, RS("game-1"), 1, 0, -1, out, sizeof(out)) == ROSTER_E_RULES,
+          "a passing argument that is neither 0 nor 1 writes no trailer");
 }
 
 /* ---------------------- the C Table (src/table.h) ---------------------------- */
@@ -9271,7 +9305,7 @@ static void test_table_commit_products(void) {
         char gid[ROSTER_GAME_ID_MAX + 1];
         int gl, st, used;
         uint32_t ai;
-        CHECK(roster_trailer_read(&back, gid, &gl, &st, &ai, e + 11 + vl, m - 11 - vl, &used) == ROSTER_OK
+        CHECK(roster_trailer_read(&back, gid, &gl, &st, &ai, 0, e + 11 + vl, m - 11 - vl, &used) == ROSTER_OK
               && used == m - 11 - vl && gl == 3 && memcmp(gid, "g-1", 3) == 0 && st == GAME_STATUS_PLAYING
               && ai == (1u << 2), "the trailer names the game, its status and its bot");
     }
@@ -9596,7 +9630,7 @@ static void test_table_create_and_join(void) {
     int gl, st, used;
     uint32_t ai;
     CHECK(pl > 0 && evwire_as3_split(tb_buf, pl, &seq, &flags, &block) == 0 && flags == EVW_AS3_ROSTER
-          && roster_trailer_read(&pushed, gid, &gl, &st, &ai, tb_buf + block, pl - block, &used) == ROSTER_OK
+          && roster_trailer_read(&pushed, gid, &gl, &st, &ai, 0, tb_buf + block, pl - block, &used) == ROSTER_OK
           && block + used == pl && pushed.n == 2, "the join's push carries the new roster");
     TB_REFUSED(table_join(&tb, RS("b"), RS("Bob again")), TABLE_E_ROSTER, "a duplicate join is refused");
     CHECK(tb.detail == ROSTER_E_DUPLICATE, "as a duplicate");
@@ -11267,11 +11301,13 @@ static uint32_t tb_fold(uint32_t h, const uint8_t *p, int n) {
 // A bots-only lobby of `np` `brain` seats, dealt from `seed` by table_ready on
 // `t` as the server deals one (dealBotTable), committed as version 1 into `row`.
 // Returns 0 when the kernel refused any step, or the deal did not come out a
-// deterministic-deck PLAYING game.
-static int tb_row_deal(TbRow *row, Table *t, int np, const char *brain, const uint8_t *seed) {
+// deterministic-deck PLAYING game. The lobby plays `rules` (Game.rules), which
+// its row carries; tb_row_deal is the classic game.
+static int tb_row_deal_rules(TbRow *row, Table *t, int np, const char *brain, const uint8_t *seed, int rules) {
     TableCommit c;
     memset(t->g, 0, sizeof(Game));
     t->g->num_players = (int8_t)np;
+    t->g->rules = (int8_t)rules;
     game_reset_to_lobby(t->g, (1u << np) - 1u);
     row->state_len = tb_blob(t->g, row->state);
     tb_roster_for(np, (1u << np) - 1u, brain, row->roster);
@@ -11288,6 +11324,10 @@ static int tb_row_deal(TbRow *row, Table *t, int np, const char *brain, const ui
     row->status = c.status;
     row->fool = c.fool;
     return (row->state[1] & STATE_BLOB_FLAG_DETERMINISTIC) && c.status == GAME_STATUS_PLAYING;
+}
+
+static int tb_row_deal(TbRow *row, Table *t, int np, const char *brain, const uint8_t *seed) {
+    return tb_row_deal_rules(row, t, np, brain, seed, 0);
 }
 
 // One server cycle on `row`, on `t`: one action by whichever bot is up, committed,
@@ -11860,7 +11900,7 @@ static int ct_envelope(const uint8_t *state, int slen, int seat, const Roster *r
     out[9] = (uint8_t)vl; out[10] = (uint8_t)(vl >> 8);
     out[11] = VIEW_FORMAT_VERSION; out[12] = out[2];
     memcpy(out + 13, state, (size_t)slen);
-    const int tl = roster_trailer_write(r, "g-7", 3, GAME_STATUS_PLAYING, 0, out + 11 + vl, 4096);
+    const int tl = roster_trailer_write(r, "g-7", 3, GAME_STATUS_PLAYING, 0, 1, out + 11 + vl, 4096);
     return 11 + vl + tl;
 }
 
@@ -11911,13 +11951,13 @@ static void test_client_adopts_envelopes(void) {
     char gid[ROSTER_GAME_ID_MAX + 1];
     int gl, st, used;
     uint32_t ai;
-    CHECK(idn > 0 && roster_trailer_read(&back, gid, &gl, &st, &ai, ct_id, idn, &used) == ROSTER_OK && used == idn
+    CHECK(idn > 0 && roster_trailer_read(&back, gid, &gl, &st, &ai, 0, ct_id, idn, &used) == ROSTER_OK && used == idn
           && back.n == 3 && ai == (1u << 2) && gl == 3, "the identity it keeps is the table's roster trailer");
     {
         const int n = table_envelope(&tb, RS("g-7"), 1, 42, ct_env, sizeof(ct_env));
         const int at = (client_adopt_envelope(&ct, ct_env, n), client_identity_at(&ct));
         CHECK(at == 11 + (ct_env[9] | (ct_env[10] << 8)), "and it sits in the envelope, from the trailer to the end");
-        CHECK(roster_trailer_read(&back, gid, &gl, &st, &ai, ct_env + at, n - at, &used) == ROSTER_OK && used == n - at,
+        CHECK(roster_trailer_read(&back, gid, &gl, &st, &ai, 0, ct_env + at, n - at, &used) == ROSTER_OK && used == n - at,
               "which reads as the same identity");
     }
 
@@ -12034,6 +12074,203 @@ static void test_client_reads_every_push_of_a_game(void) {
     CHECK(finals_ok, "a push's final board is exactly the view its envelope gives");
     CHECK(as2_ok, "the as2 form of every push reads the same");
     CHECK(ct.view.status == GAME_STATUS_GAME_OVER && ct.view.fool >= 0 && ct.view.fool == c.fool, "the last view names the fool");
+}
+
+// THE LOBBY RULES PREDICATE (game.h game_lobby_can_set_rules): a seat, in a lobby
+// that has not dealt. The iMessage spelling (msg_wire.h msg_lobby_can_set_rules)
+// is the same rule with the lobby always waiting, so its answer is the seat's
+// alone, exactly as before the lift.
+static void test_lobby_can_set_rules(void) {
+    CHECK(game_lobby_can_set_rules(0, 1) && game_lobby_can_set_rules(MAX_PLAYERS - 1, 1),
+          "lobby rules: a seated player may change them while the lobby waits");
+    CHECK(!game_lobby_can_set_rules(-1, 1), "lobby rules: somebody not at the table may not");
+    CHECK(!game_lobby_can_set_rules(0, 0) && !game_lobby_can_set_rules(-1, 0), "lobby rules: nobody may once it has dealt");
+    int same = 1;
+    for (int seat = -3; seat < MAX_PLAYERS; seat++) same &= msg_lobby_can_set_rules(seat) == (seat >= 0);
+    CHECK(same, "lobby rules: the iMessage lobby's answer is still the seat's alone");
+}
+
+// The lobby as `viewer` (a seat, or -1) reads it: its envelope adopted, and the
+// display rules of that view. CLIENT_OK, or the refusal.
+static int sr_view(int viewer, ViewRules *vr) {
+    const int n = table_envelope(&tb, RS("g-7"), viewer, 3, ct_env, sizeof(ct_env));
+    int rc = n > 0 ? client_adopt_envelope(&ct, ct_env, n) : n;
+    if (rc == CLIENT_OK) rc = client_view_rules(&ct.view, 0, 0, vr);
+    return rc;
+}
+
+// The last operation's push to `viewer`, read whole, with `id` (idn bytes, 0 for
+// none) as the identity it is decoded against. CLIENT_OK, or the refusal.
+static int sr_push(int viewer, const uint8_t *id, int idn) {
+    const int pl = table_push(&tb, RS("g-7"), viewer, ct_push, sizeof(ct_push));
+    int rc = pl > 0 ? client_push_open(&ct, ct_push, pl, 1, id, idn, 4) : pl, k = 0;
+    while (rc == CLIENT_OK && (k = client_push_next(&ct)) == 1) { }
+    return rc != CLIENT_OK ? rc : k != 0 ? k : client_push_final(&ct);
+}
+
+// A transfer on the transferable position, judged by the client's own gate on a
+// view of that position whose rules are `rules`: 0 legal, or the refusal.
+static int sr_client_pass(int rules) {
+    Game probe;
+    setup_transferable(&probe);
+    for (int i = 0; i < 6; i++) probe.players[0].hand[i] = (Card){ SUIT_CLUBS, (int8_t)(6 + i) };   // real cards: a board game_validate accepts
+    probe.rules = (int8_t)rules;
+    if (client_adopt_board(&ct, &probe, 1) != CLIENT_OK) return -999;
+    AwireAction a;
+    memset(&a, 0, sizeof(a));
+    a.kind = MOVE_PASS;
+    a.n = 1;
+    a.cards[0] = (Card){ SUIT_HEARTS, 7 };
+    uint8_t w[16];
+    return client_validate(&ct, &ct.view, w, awire_encode(&a, w, sizeof(w)));
+}
+
+// THE TABLE'S RULES (table.h table_set_rules, docs/PODKIDNOY.md). Any seated
+// player sets them, either way, while the lobby waits; the change clears no
+// Ready; the game that deals plays the rules standing at the last Ready; every
+// viewer - seated or not, by envelope or by push - reads them; the row and a
+// rematch keep them.
+static void test_table_set_rules(void) {
+    ViewRules vr;
+    TableCommit c;
+    tb_seed_fill(11);
+    client_init(&ct, &ct_slot);
+
+    tb_lobby();
+    CHECK(game_pass_allowed(&tb_game), "set_rules: a new table plays the classic passing game");
+    CHECK(sr_view(0, &vr) == CLIENT_OK && ct.view.passing && vr.can_set_rules,
+          "set_rules: a seated viewer of a new lobby reads passing, and may change it");
+    CHECK(sr_view(-1, &vr) == CLIENT_OK && ct.view.passing && !vr.can_set_rules,
+          "set_rules: a spectator reads passing, and may not change it");
+
+    // Any seated player, either way - the one who is Ready included.
+    table_ready(&tb, RS("a"), tb_seed);
+    CHECK(table_set_rules(&tb, RS("b"), 0) == TABLE_OK && !game_pass_allowed(&tb_game),
+          "set_rules: a seat that is not the creator's sets podkidnoy");
+    CHECK(tb.rules_changed && tb.lobby_event && !tb.roster_changed,
+          "set_rules: a lobby edit its push announces, and not a roster change");
+    CHECK(tb_game.status == GAME_STATUS_WAITING && tb_game.players[0].status == PLAYER_STATUS_READY,
+          "set_rules: the change clears nobody's Ready");
+    CHECK(sr_view(2, &vr) == CLIENT_OK && !ct.view.passing && vr.can_set_rules,
+          "set_rules: another seat's envelope reads podkidnoy");
+    CHECK(sr_view(-1, &vr) == CLIENT_OK && !ct.view.passing && !vr.can_set_rules,
+          "set_rules: so does a spectator's - a joiner sees the variant before joining");
+    CHECK(sr_view(2, &vr) == CLIENT_OK && client_identity(&ct, ct_id, sizeof(ct_id)) > 0, "set_rules: seat 2 keeps an identity");
+    {
+        // A seat that only reads pushes: its identity was taken before the change.
+        tb_lobby();
+        const int idn = (sr_view(2, &vr), client_identity(&ct, ct_id, sizeof(ct_id)));
+        CHECK(idn > 0 && ct.view.passing, "set_rules: an identity kept from the passing lobby");
+        CHECK(table_set_rules(&tb, RS("a"), 0) == TABLE_OK, "set_rules: the creator sets podkidnoy");
+        CHECK(sr_push(2, ct_id, idn) == CLIENT_OK && !ct.view.passing,
+              "set_rules: the change's push carries the rules over a stale identity");
+        const int idn2 = client_identity(&ct, ct_id, sizeof(ct_id));
+        CHECK(table_ready(&tb, RS("c"), tb_seed) == TABLE_OK && sr_push(2, ct_id, idn2) == CLIENT_OK && !ct.view.passing,
+              "set_rules: and the identity kept from it decodes the next push, which carries no trailer, as podkidnoy");
+    }
+
+    TB_REFUSED(table_set_rules(&tb, RS("b"), 0), TABLE_MOOT, "set_rules: the rules the table already has change nothing");
+    TB_REFUSED(table_set_rules(&tb, RS("stranger"), 1), TABLE_E_NOT_SEATED, "set_rules: somebody not at the table is refused");
+    TB_REFUSED(table_set_rules(&tb, RS("a"), 2), TABLE_E_WIRE, "set_rules: a rule that is neither passing nor podkidnoy is refused");
+    CHECK(table_set_rules(&tb, RS("c"), 1) == TABLE_OK && game_pass_allowed(&tb_game),
+          "set_rules: back to passing, by a player who is Ready");
+    CHECK(table_set_rules(&tb, RS("b"), 0) == TABLE_OK && !game_pass_allowed(&tb_game), "set_rules: and podkidnoy again");
+
+    // The last Ready deals the rules standing at that moment.
+    table_ready(&tb, RS("a"), tb_seed);
+    CHECK(table_ready(&tb, RS("b"), tb_seed) == TABLE_OK && tb.dealt_now && tb_game.status == GAME_STATUS_PLAYING,
+          "set_rules: the last Ready deals");
+    CHECK(!game_pass_allowed(&tb_game), "set_rules: the dealt game is podkidnoy");
+    {
+        int any = 0;
+        for (int s = 0; s < 3; s++) any |= menu_has(&tb_game, s, MOVE_PASS);
+        Game probe;
+        setup_transferable(&probe);
+        probe.rules = tb_game.rules;
+        CHECK(!any && menu_has(&probe, 1, MOVE_COVER) && !menu_has(&probe, 1, MOVE_PASS),
+              "set_rules: no menu of the dealt game offers a transfer, not even to a defender holding the attack's rank");
+    }
+    TB_REFUSED(table_set_rules(&tb, RS("a"), 1), TABLE_E_NOT_WAITING, "set_rules: once dealt, nobody changes the rules");
+    CHECK(sr_view(0, &vr) == CLIENT_OK && !ct.view.passing && !vr.can_set_rules,
+          "set_rules: a seat of the dealt game reads podkidnoy and may no longer change it");
+    CHECK(sr_client_pass(GAME_RULE_NO_PASS) == ENGINE_REJECT_PASS_DISABLED && !ct.view.passing,
+          "set_rules: the client's own gate refuses a transfer on a podkidnoy view");
+    CHECK(sr_client_pass(0) == 0 && ct.view.passing, "set_rules: and allows it on a passing one");
+
+    // The row: the commit writes podkidnoy, and a table that loads it plays it.
+    CHECK(table_commit_products(&tb, RS("g"), 2, 0, &c, tb_arena, sizeof(tb_arena)) > 0
+          && tb_arena[c.state.off] == STATE_BLOB_FORMAT_V4 && !(tb_arena[c.state.off + 1] & STATE_BLOB_FLAG_PASSING),
+          "set_rules: the dealt commit's row is v4 with PASSING clear");
+    memcpy(tb_state, tb_arena + c.state.off, (size_t)c.state.len);
+    tb_state_len = c.state.len;
+    memcpy(tb_roster, tb_arena + c.roster.off, ROSTER_BYTES);
+    table_init(&tb, &tb_game, &tb_snaps);
+    tb_game.rules = 0;
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK && !game_pass_allowed(&tb_game),
+          "set_rules: a table that loads the row plays podkidnoy");
+
+    // Toggled back before the last Ready: the deal is the passing game.
+    tb_lobby();
+    CHECK(table_set_rules(&tb, RS("a"), 0) == TABLE_OK, "set_rules: podkidnoy in a fresh lobby");
+    table_ready(&tb, RS("a"), tb_seed);
+    table_ready(&tb, RS("b"), tb_seed);
+    CHECK(table_set_rules(&tb, RS("c"), 1) == TABLE_OK && table_ready(&tb, RS("c"), tb_seed) == TABLE_OK && tb.dealt_now
+          && game_pass_allowed(&tb_game), "set_rules: passing again before the last Ready deals the passing game");
+
+    // A REMATCH plays the rules the finished game played.
+    unsigned char seed[FOOLISH_SEED_LEN];
+    CHECK(rs_play_seeded(&tb_src, 3, 778, seed), "set_rules: a game plays out");
+    game_set_seed(1);
+    tb_src.status = GAME_STATUS_GAME_OVER;
+    tb_src.rules = GAME_RULE_NO_PASS;
+    for (int i = 0; i < 3; i++) tb_src.players[i].status = PLAYER_STATUS_IDLE;
+    tb_state_len = tb_blob(&tb_src, tb_state);
+    tb_roster_for(3, 0, "", tb_roster);
+    table_init(&tb, &tb_game, &tb_snaps);
+    CHECK(tb_state_len > 0 && table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK,
+          "set_rules: the finished podkidnoy row loads");
+    CHECK(table_continue(&tb, RS("id-1")) == TABLE_OK && tb_game.status == GAME_STATUS_WAITING && !game_pass_allowed(&tb_game),
+          "set_rules: its rematch lobby is podkidnoy");
+    CHECK(sr_view(1, &vr) == CLIENT_OK && !ct.view.passing && vr.can_set_rules,
+          "set_rules: and its seats read podkidnoy, and may change it");
+}
+
+// THE BOTS PLAY THE TABLE'S RULES (bot_drive.c, through calculate_legal_moves,
+// which gates the transfer inside calc_pass_moves): a bots-only podkidnoy table
+// plays to its end without one transfer. The same deals under the classic rules
+// are the control - they do transfer, so a zero here is the rule talking.
+static void test_table_bots_never_transfer_under_podkidnoy(void) {
+    static TbRow row;
+    static const char *const brains[] = { "random", "handwritten", "cordite" };
+    uint8_t seed[FOOLISH_SEED_LEN];
+    char hex[2 * FOOLISH_SEED_LEN + 1];
+    int transfers[2] = { 0, 0 }, games = 0, ended = 1, stayed = 1;
+    table_init(&tb, &tb_game, &tb_snaps);
+    for (int b = 0; b < 3; b++) {
+        for (int np = 2; np <= (b == 2 ? 2 : 4); np++) {
+            for (int k = 0; k < (b == 2 ? 1 : 3); k++) {
+                for (int i = 0; i < FOOLISH_SEED_LEN; i++) seed[i] = (uint8_t)(i * 7 + np * 31 + k * 5 + b);
+                tb_seed_hex_of(seed, hex);
+                for (int podk = 0; podk < 2; podk++) {
+                    if (!tb_row_deal_rules(&row, &tb, np, brains[b], seed, podk ? GAME_RULE_NO_PASS : 0)) { ended = 0; continue; }
+                    games += podk;
+                    uint32_t h = 0;
+                    for (int cyc = 0; cyc < 4000 && row.status == GAME_STATUS_PLAYING; cyc++) {
+                        const int n = tb_row_cycle(&row, &tb, hex, &h);
+                        if (n <= 0) break;
+                        for (int i = 0; i < n; i++) transfers[podk] += tb_drv.actions[i].move.type == MOVE_PASS;
+                        if (podk) stayed &= !(row.state[1] & STATE_BLOB_FLAG_PASSING) && !game_pass_allowed(&tb_game);
+                    }
+                    ended &= row.status == GAME_STATUS_GAME_OVER;
+                }
+            }
+        }
+    }
+    fprintf(stderr, "  [podkidnoy bots] %d games each way: %d transfers classic, %d podkidnoy\n", games, transfers[0], transfers[1]);
+    CHECK(ended && games == 19, "podkidnoy bots: every deal plays to its end both ways");
+    CHECK(transfers[0] > 0, "podkidnoy bots: the classic control transfers");
+    CHECK(transfers[1] == 0, "podkidnoy bots: no bot transfers at a podkidnoy table");
+    CHECK(stayed, "podkidnoy bots: every committed row of it stays podkidnoy");
 }
 
 static void test_client_push_steps_and_refusals(void) {
@@ -13357,6 +13594,9 @@ int main(void) {
     test_table_session_log_is_load_bearing_for_octogen();
     test_table_state_blob_round_trips_every_reachable_state();
     test_client_adopts_envelopes();
+    test_lobby_can_set_rules();
+    test_table_set_rules();
+    test_table_bots_never_transfer_under_podkidnoy();
     test_client_reads_every_push_of_a_game();
     test_client_push_steps_and_refusals();
     test_client_view_rules();

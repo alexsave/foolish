@@ -70,6 +70,12 @@ typedef struct {
     int16_t  deck_count, discard_pile_length;
     bool     has_flipped;
     bool     has_good_timestamp;
+    // THE TABLE'S RULES: true the classic passing game, false podkidnoy (Game.rules
+    // GAME_RULE_NO_PASS, in the boundary sense of docs/PODKIDNOY.md). The roster
+    // trailer's (roster.h, format 2), so a spectator deciding whether to join sees
+    // it too; a board with no identity (client_adopt_state) is the classic game. A
+    // board the rules read (client_validate, client_play) plays by it.
+    bool     passing;
     Card     flipped;
     uint8_t  gid_len, title_len;
     uint32_t good_mask;       // bit per seat
@@ -103,6 +109,7 @@ typedef struct {
     int8_t  first_attacker_badge;  // the seat that leads the next bout, marked on an empty table; -1 none (GAME_SEAT_NONE until the opening names it)
     int8_t  defender_badge;        // the defending seat; -1 none (GAME_SEAT_NONE until the opening names it)
     bool    can_say_good;          // the viewer may say Good and the bout could close on it
+    bool    can_set_rules;         // the viewer may change the table's rules: seated, in a lobby that has not dealt (game.h game_lobby_can_set_rules)
     bool    show_deck_pile;        // the stock has cards left to draw on screen
     bool    show_flipped_slot;     // the trump's slot, kept while a card is on its way into it
     bool    show_trump_icon;       // stock and trump are gone: the power suit stands in their place
@@ -174,6 +181,7 @@ typedef struct {
     Game     *g;          // the slot: a masked board, prefix storage (offsetof(Game, logs))
     Roster    r;
     uint32_t  ai_mask;
+    int8_t    table_rules;  // Game.rules, from the identity (the roster trailer); 0 without one
     bool      has_roster;
     uint8_t   gid_len;
     char      gid[ROSTER_GAME_ID_MAX + 1];

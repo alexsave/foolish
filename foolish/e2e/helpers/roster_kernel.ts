@@ -22,7 +22,7 @@ interface RosterExports {
     wasm_roster_trailer_ptr(): number;
     wasm_roster_encode(): number;
     wasm_roster_decode(len: number): number;
-    wasm_roster_trailer_write(rosterLen: number, gidLen: number, status: number, goodMask: number): number;
+    wasm_roster_trailer_write(rosterLen: number, gidLen: number, status: number, goodMask: number, passing: number): number;
     wasm_roster_trailer_read(len: number): number;
 }
 
@@ -44,6 +44,8 @@ const get = (n: number) => io().slice(0, n);
 export interface RosterSeatSpec { id: string; name: string; brain: string }
 export interface RosterTable {
     gid: string; title: string; status: number; goodMask: number; seats: RosterSeatSpec[];
+    /** The table's rules: 1 (the default) the classic passing game, 0 podkidnoy. */
+    passing?: number;
 }
 
 /** The table into the kernel's RosterSpec, through the generated writer. */
@@ -70,16 +72,16 @@ export function cRosterTrailer(t: RosterTable): Uint8Array | number {
     buf.set(durable, 0);
     buf.set(gid, durable.length);
     put(buf);
-    const n = kernel().wasm_roster_trailer_write(durable.length, gid.length, t.status, t.goodMask);
+    const n = kernel().wasm_roster_trailer_write(durable.length, gid.length, t.status, t.goodMask, t.passing ?? 1);
     return n < 0 ? n : get(n);
 }
 
 /** roster_trailer_read: what C read out of a trailer, or the refusal. */
 export function cRosterTrailerRead(trailer: Uint8Array):
-    { status: number; aiMask: number; consumed: number; gid: string; durable: Uint8Array } | number {
+    { status: number; aiMask: number; consumed: number; passing: number; gid: string; durable: Uint8Array } | number {
     put(trailer);
     const n = kernel().wasm_roster_trailer_read(trailer.length);
     if (n < 0) return n;
     const r = L.readRosterTrailerRead(mem(), kernel().wasm_roster_trailer_ptr());
-    return { status: r.status, aiMask: r.aiMask, consumed: r.consumed, gid: r.gid, durable: get(n) };
+    return { status: r.status, aiMask: r.aiMask, consumed: r.consumed, passing: r.passing, gid: r.gid, durable: get(n) };
 }

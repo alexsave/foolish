@@ -664,15 +664,16 @@ int wasm_roster_decode(int len) {
 }
 
 // io = ROSTER_BYTES durable roster, then gid_len bytes of game id -> the
-// envelope trailer in io. Returns its length or the ROSTER_E_* refusal.
-int wasm_roster_trailer_write(int roster_len, int gid_len, int status, unsigned int good_mask) {
+// envelope trailer of a table with those rules (`passing` 1 the classic game, 0
+// podkidnoy) in io. Returns its length or the ROSTER_E_* refusal.
+int wasm_roster_trailer_write(int roster_len, int gid_len, int status, unsigned int good_mask, int passing) {
     char gid[ROSTER_GAME_ID_MAX + 1];
     const unsigned char *io = wasm_io_ptr();
     if (gid_len < 0 || gid_len > ROSTER_GAME_ID_MAX || roster_len < 0) return ROSTER_E_GAME_ID;
     int rc = roster_decode(&g_roster, io, roster_len);
     if (rc != ROSTER_OK) return rc;
     memcpy(gid, io + roster_len, (size_t)gid_len);
-    return roster_trailer_write(&g_roster, gid, gid_len, status, good_mask, wasm_io_ptr(), wasm_io_cap());
+    return roster_trailer_write(&g_roster, gid, gid_len, status, good_mask, passing, wasm_io_ptr(), wasm_io_cap());
 }
 
 // A trailer in io -> roster_trailer_read. What it found goes into the struct at
@@ -682,11 +683,12 @@ int wasm_roster_trailer_write(int roster_len, int gid_len, int status, unsigned 
 // header a harness took apart itself.
 int wasm_roster_trailer_read(int len) {
     char gid[ROSTER_GAME_ID_MAX + 1];
-    int gid_len = 0, status = 0, consumed = 0;
+    int gid_len = 0, status = 0, consumed = 0, passing = 1;
     uint32_t ai = 0;
-    const int rc = roster_trailer_read(&g_roster, gid, &gid_len, &status, &ai, wasm_io_ptr(), len, &consumed);
+    const int rc = roster_trailer_read(&g_roster, gid, &gid_len, &status, &ai, &passing, wasm_io_ptr(), len, &consumed);
     if (rc != ROSTER_OK) return rc;
     g_roster_trailer.status = status;
+    g_roster_trailer.passing = passing;
     g_roster_trailer.ai_mask = ai;
     g_roster_trailer.consumed = consumed;
     g_roster_trailer.gid_len = (uint16_t)gid_len;
