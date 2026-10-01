@@ -10,6 +10,10 @@
  *   sweep --cells N            the same for an N x N grid
  *   sweep --match FILE.jpeg    which ImageIO quality wrote FILE (by its
  *                              quantisation table), and its chroma sampling
+ *   sweep --judge FILE [--cells N] [--colour]
+ *                              decode ANY image file (jpeg, png, heic) and judge
+ *                              it as an N x N probe pattern, as received: its
+ *                              pixel size, bytes, wrong cells, worst channel error
  *   sweep --samples DIR        pictures of what comes back: for each case, a
  *                              corner of the decoded picture magnified, beside
  *                              the same corner as it DECODES, wrong cells green
@@ -199,6 +203,26 @@ static int jpeg_tables(const uint8_t *b, long n, uint8_t dqt[64], int *hs, int *
     return have_q && have_s;
 }
 
+static int judge_file(const char *path, int n, int grey)
+{
+    CFStringRef cs = CFStringCreateWithCString(NULL, path, kCFStringEncodingUTF8);
+    CFURLRef url = CFURLCreateWithFileSystemPath(NULL, cs, kCFURLPOSIXPathStyle, false);
+    CGImageSourceRef src = CGImageSourceCreateWithURL(url, NULL);
+    CFRelease(url); CFRelease(cs);
+    if (!src) { fprintf(stderr, "sweep: cannot open %s\n", path); return 1; }
+    CGImageRef img = CGImageSourceCreateImageAtIndex(src, 0, NULL);
+    if (!img) { fprintf(stderr, "sweep: %s is not an image\n", path); return 1; }
+    const int w = (int)CGImageGetWidth(img), h = (int)CGImageGetHeight(img);
+    uint8_t *got = pixels_of(img, w, h);
+    LpVerdict v = lp_judge(got, w, h, n, grey);
+    FILE *f = fopen(path, "rb"); long bytes = 0;
+    if (f) { fseek(f, 0, SEEK_END); bytes = ftell(f); fclose(f); }
+    printf("%s\n  %d x %d px, %ld bytes, read as %d x %d cells (%s)\n  wrong %d of %d, exact %d, worst channel error %d\n",
+           path, w, h, bytes, n, n, grey ? "grey" : "colour", v.wrong, v.cells, v.exact, v.max_err);
+    free(got); CGImageRelease(img); CFRelease(src);
+    return v.wrong ? 3 : 0;
+}
+
 static int match(const char *path)
 {
     FILE *f = fopen(path, "rb");
@@ -237,13 +261,17 @@ int main(int argc, char **argv)
 {
     g_space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
     int n = 243;
-    const char *dir = NULL;
+    const char *dir = NULL, *judge = NULL;
+    int grey = 1;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--match") && i + 1 < argc) return match(argv[i + 1]);
+        else if (!strcmp(argv[i], "--judge") && i + 1 < argc) judge = argv[++i];
+        else if (!strcmp(argv[i], "--colour")) grey = 0;
         else if (!strcmp(argv[i], "--cells") && i + 1 < argc) n = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--samples") && i + 1 < argc) dir = argv[++i];
-        else { fprintf(stderr, "usage: sweep [--cells N] [--samples DIR] | --match FILE.jpeg\n"); return 2; }
+        else { fprintf(stderr, "usage: sweep [--cells N] [--samples DIR] | --match FILE.jpeg | --judge FILE [--colour]\n"); return 2; }
     }
+    if (judge) return judge_file(judge, n, grey);
     if (dir) return samples(dir, n);
     static const double qs[] = { 0.90, 0.80, 0.70, 0.60, 0.50, 0.40, 0.30, 0.20, 0.10 };
     const int nq = (int)(sizeof qs / sizeof *qs);

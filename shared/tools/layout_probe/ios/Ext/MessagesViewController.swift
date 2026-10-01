@@ -162,6 +162,13 @@ final class MessagesViewController: MSMessagesAppViewController {
         // The whole report every time, appended to what earlier processes
         // wrote: leaving a thread ends this process, and the rig reads after.
         dev.write((dev.raw("flight.txt").map { $0 + "\n" } ?? "") + s, to: "flight.txt")
+        // And in the extension's own Documents, for a phone: a free development
+        // profile has no App Group, and `devicectl device copy from` reads this.
+        if let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+            let f = docs.appendingPathComponent("flight.txt")
+            let old = (try? String(contentsOf: f, encoding: .utf8)) ?? ""
+            try? (old + s + "\n").write(to: f, atomically: true, encoding: .utf8)
+        }
     }
 
     // MARK: - reading
