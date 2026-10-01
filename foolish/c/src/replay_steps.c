@@ -2,6 +2,7 @@
 #include "snap_room.h"
 #include "card.h"
 #include "view.h"
+#include "../../../shared/c/le_bytes.h"
 #include <string.h>
 
 // Two passes, because a deck has to exist before the deal that consumes it:
@@ -551,8 +552,7 @@ int replay_steps_memory_v6(const unsigned char *code, int code_len, int step,
     RsMemoryCtx m;
     memset(&m, 0, sizeof m);
     m.rec = out + REPLAY_DEC_HDR;
-    m.n_logs = (int)((uint32_t)out[16] | ((uint32_t)out[17] << 8)
-                     | ((uint32_t)out[18] << 16) | ((uint32_t)out[19] << 24));
+    m.n_logs = (int)le_get_u32(out + 16);
     m.want = step;
     m.paired = -1;
     r = rs_play(code, code_len, VIEW_SPECTATOR, 0, rs_step_memory, &m);
@@ -572,8 +572,7 @@ int replay_steps_memory_v6(const unsigned char *code, int code_len, int step,
         dst += len;
         src += len;
     }
-    out[0] = (unsigned char)(n & 0xff);
-    out[1] = (unsigned char)((n >> 8) & 0xff);
+    le_put_u16(out, (uint16_t)n);
     return (int)(dst - out);
 }
 

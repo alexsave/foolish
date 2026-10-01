@@ -29,6 +29,7 @@
 // flag). Every other build keeps plain statics and never resolves it.
 #include "rules_overlay.h"
 #endif
+#include "../../../shared/c/le_bytes.h"
 #include <stddef.h>   // offsetof (the re-deal's short-log Game slot)
 #include <string.h>
 
@@ -1508,8 +1509,8 @@ int replay_encode_v6(const unsigned char *in, int in_len,
     if (n < 2 || n > MAX_PLAYERS) return -REPLAY_EINPUT;
     if (trump_id > 51) return -REPLAY_EINPUT;
     if (fa >= n) return -REPLAY_EINPUT;
-    int n_actions = in[3] | (in[4] << 8);
-    int n_reveals = in[5] | (in[6] << 8);
+    int n_actions = le_get_u16(in + 3);
+    int n_reveals = le_get_u16(in + 5);
     int rev_off = 7;
     if (rev_off + n_reveals > in_len) return -REPLAY_EINPUT;
     for (int i = 0; i < n_reveals; i++)
@@ -1750,15 +1751,11 @@ static int decode_impl(const unsigned char *in, int in_len,
     out[2] = (unsigned char)trump_id;
     out[3] = (unsigned char)first_attacker;
     out[4] = (unsigned char)fool;
-    out[5] = (unsigned char)(m->discard & 0xff);
-    out[6] = (unsigned char)((m->discard >> 8) & 0xff);
+    le_put_u16(out + 5, (uint16_t)m->discard);
     out[7] = (unsigned char)m->num_elim;
     for (int i = 0; i < MAX_PLAYERS; i++)
         out[8 + i] = i < m->num_elim ? (unsigned char)m->elim[i] : 0xFF;
-    out[16] = (unsigned char)(m->out_logs & 0xff);
-    out[17] = (unsigned char)((m->out_logs >> 8) & 0xff);
-    out[18] = (unsigned char)((m->out_logs >> 16) & 0xff);
-    out[19] = (unsigned char)((m->out_logs >> 24) & 0xff);
+    le_put_u32(out + 16, (uint32_t)m->out_logs);
     return m->out_pos;
 }
 

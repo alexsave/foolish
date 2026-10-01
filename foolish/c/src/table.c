@@ -9,6 +9,7 @@
 #include "replay.h"
 #include "replay_extras.h"
 #include "../wasm/wire.h"
+#include "../../../shared/c/le_bytes.h"
 #include <string.h>
 
 // ---------- the action request and response -------------------------------------
@@ -21,8 +22,7 @@ int table_request_decode(const uint8_t *p, int len, TableRequest *out) {
     if (fmt == TABLE_REQ_FORMAT_V2) {
         if (len < at + 4) return TABLE_E_WIRE;
         out->has_intent = true;
-        out->intent = (uint32_t)p[at] | ((uint32_t)p[at + 1] << 8)
-                    | ((uint32_t)p[at + 2] << 16) | ((uint32_t)p[at + 3] << 24);
+        out->intent = le_get_u32(p + at);
         at += 4;
     } else if (fmt != TABLE_REQ_FORMAT_V1) {
         return TABLE_E_WIRE;
@@ -394,8 +394,10 @@ int table_commit_products(const Table *t, const char *game_id, int gid_len, uint
     for (int i = t->log_start; i < g->num_logs; i++) {
         const GameLog *l = &g->logs[i];
         if (cap - at < TABLE_LOG_MAX) return TABLE_E_CAP;
-        int64_t ms = now_ms;
-        for (int b = 0; b < 6; b++) { arena[at + b] = (uint8_t)(ms & 0xff); ms >>= 8; }
+        // u48 LE ms (shared/c/le_bytes.h). No clamp here, unlike the blob's
+        // clocks (view.c put_clock): `now_ms` is the host's epoch clock, and the
+        // cast keeps the low 48 bits exactly as the hand-rolled loop before it did.
+        le_put_u48(arena + at, (uint64_t)now_ms);
         at += 6;
         at += log_record_put(l, 1, t->pre_has_flip, t->pre_flip, g->has_flipped, arena + at);
         if (l->log_type == LOG_GAME_START) out->logs_reset = true;
@@ -763,12 +765,6 @@ static int log_record_at(const uint8_t *log, int len, int at) {
     return at + n > len ? 0 : n;
 }
 
-static int64_t log_record_ms(const uint8_t *rec) {
-    int64_t ms = 0;
-    for (int b = 5; b >= 0; b--) ms = ms * 256 + rec[b];
-    return ms;
-}
-
 // The log's records, counted whole (never capped): the game's progress.
 // TABLE_E_WIRE for an unknown record type, a truncated tail simply ends it.
 static int log_count(const uint8_t *log, int len) {
@@ -955,7 +951,7 @@ static int gate_card(int b, int target) {
 // same seat (one the table has), the same card pairs.
 static bool replay_verify(int n_seats, const uint8_t *log, int len, const uint8_t *dec, int dec_len) {
     if (dec_len < REPLAY_DEC_HDR) return false;
-    const uint32_t n_dec = (uint32_t)dec[16] | ((uint32_t)dec[17] << 8) | ((uint32_t)dec[18] << 16) | ((uint32_t)dec[19] << 24);
+    const uint32_t n_dec = le_get_u32(dec + 16);
     int d = REPLAY_DEC_HDR, at = session_start(log, len), k = 0;
     uint32_t read = 0;
     for (;;) {
@@ -1020,7 +1016,7 @@ static int timed_next(const TimesCursor *c, int at) {
 // difference): volatile, so a -ffast-math native build cannot fold the division
 // and the subtraction into something that rounds differently.
 static double record_seconds(const uint8_t *rec) {
-    volatile double ms = (double)log_record_ms(rec);
+    volatile double ms = (double)(int64_t)le_get_u48(rec);
     volatile double s = ms / 1000;
     return s;
 }
