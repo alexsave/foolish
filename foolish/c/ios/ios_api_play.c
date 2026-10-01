@@ -147,14 +147,18 @@ int fio_awire_encode(int type,
 // on PlayBoard in legal.h.
 
 // Fill a PlayBoard from the crossing arguments. `table` is 2 bytes per battle,
-// the attack then its cover or LEGAL_WIRE_NONE.
+// the attack then its cover or LEGAL_WIRE_NONE. The seat facts cross as the
+// view states them; which seat defends and whether it is out is legal.c's to
+// decide, never the caller's.
 static PlayBoard fio_play_board(const uint8_t *menu, int menu_len,
-                                const uint8_t *table, int n_battles,
-                                int power_suit, int is_defender) {
+                                const uint8_t *table, int n_battles, int power_suit,
+                                int my_seat, int defender, int my_status, int game_status) {
     PlayBoard b;
     b.menu = menu; b.menu_len = menu_len;
     b.table = table; b.n_battles = n_battles;
-    b.power_suit = power_suit; b.is_defender = is_defender;
+    b.power_suit = power_suit;
+    b.my_seat = my_seat; b.defender = defender;
+    b.my_status = my_status; b.game_status = game_status;
     return b;
 }
 
@@ -169,13 +173,15 @@ static PlayBoard fio_play_board(const uint8_t *menu, int menu_len,
 //             MoveWire decodes it with no second format
 int fio_play_probe(const uint8_t *menu, int menu_len,
                    const uint8_t *table, int n_battles,
-                   int power_suit, int is_defender,
+                   int power_suit, int my_seat, int defender,
                    const uint8_t *sel, int n_sel, int target,
                    char *out, int cap) {
     if (!menu || menu_len < 0 || n_battles < 0 || n_sel < 0) return FIO_EBADARG;
     if (cap < FIO_PLAY_PROBE_HEAD + 4) return FIO_ECAP;
-    const PlayBoard b = fio_play_board(menu, menu_len, table, n_battles,
-                                       power_suit, is_defender);
+    // The probe asks no pill question, so the statuses play_pills reads are
+    // not crossed.
+    const PlayBoard b = fio_play_board(menu, menu_len, table, n_battles, power_suit,
+                                       my_seat, defender, -1, -1);
 
     const uint64_t mask = play_coverable_battles(&b, sel, n_sel);
     const int best = play_best_cover_target(&b, sel, n_sel);
@@ -205,9 +211,15 @@ int fio_play_probe(const uint8_t *menu, int menu_len,
     return FIO_PLAY_PROBE_HEAD + 4 + 2 + 2 * mm.n_cards;
 }
 
-// The pills a board draws: legal.h play_pills, crossed as it stands.
-unsigned fio_play_pills(unsigned answers, unsigned gates) {
-    return play_pills(answers, gates);
+// The pills a board draws: legal.h play_pills over the board as it crossed.
+unsigned fio_play_pills(const uint8_t *menu, int menu_len,
+                        const uint8_t *table, int n_battles, int power_suit,
+                        int my_seat, int defender, int my_status, int game_status,
+                        const uint8_t *sel, int n_sel, unsigned host) {
+    if (!menu || menu_len < 0 || n_battles < 0 || n_sel < 0) return 0;
+    const PlayBoard b = fio_play_board(menu, menu_len, table, n_battles, power_suit,
+                                       my_seat, defender, my_status, game_status);
+    return play_pills(&b, sel, n_sel, host);
 }
 
 // The moves a HUMAN may make on this board, as the same menu wire in.
@@ -215,7 +227,7 @@ int fio_play_human_menu(const uint8_t *menu, int menu_len,
                         const uint8_t *table, int n_battles,
                         char *out, int cap) {
     if (!menu || menu_len < 0 || n_battles < 0) return FIO_EBADARG;
-    const PlayBoard b = fio_play_board(menu, menu_len, table, n_battles, -1, 0);
+    const PlayBoard b = fio_play_board(menu, menu_len, table, n_battles, -1, -1, -1, -1, -1);
     const int n = play_human_menu(&b, (unsigned char *)out, cap);
     if (n == LEGAL_WIRE_ECAP) return FIO_ECAP;
     if (n < 0) return FIO_EPARSE;

@@ -230,13 +230,8 @@ public struct TableView<Session: GameSession>: View {
         let cards = selectedCards(view)
         // The same pills as the iMessage board and the website (legal.h
         // play_pills): one move, one button.
-        let menu = BoardActionMenu.resolve(
-            probe(view, cards, .table),
-            .init(iCanAct: !game.humanLegal.isEmpty, canSend: false,
-                  playInFlight: !game.inFlight.isEmpty, boardStill: true,
-                  superseded: false, pickupHeld: false,
-                  isDefender: view.defender == game.humanSeat, isOut: view.me?.isOut ?? false,
-                  tableIsEmpty: view.battles.isEmpty, selectionIsEmpty: cards.isEmpty))
+        let menu = BoardActionMenu(pills: PlayWire.pills(menu: game.humanLegalPacked, view: view, selection: cards,
+                                                         host: game.inFlight.isEmpty ? [] : .inFlight))
         FActionBar(
             canAttack: menu.canAttack,
             canCover: menu.canCover,
@@ -286,9 +281,7 @@ public struct TableView<Session: GameSession>: View {
     /// One kernel answer about the current selection, for every question this
     /// board asks about it.
     private func probe(_ view: GameView, _ cards: [Card], _ target: PlayTarget) -> PlayProbe {
-        PlayWire.probe(menu: game.humanLegalPacked, battles: view.battles,
-                       powerSuit: view.powerSuit, isDefender: view.defender == game.humanSeat,
-                       selection: cards, target: target)
+        PlayWire.probe(menu: game.humanLegalPacked, view: view, selection: cards, target: target)
     }
 
     private func toggle(_ card: Card) {

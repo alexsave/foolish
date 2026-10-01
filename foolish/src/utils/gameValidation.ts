@@ -11,7 +11,7 @@
 //
 // Which action buttons the board shows is the kernel's answer too: boardPills hands
 // the selection and the board to client_play, which answers with the PLAY_PILL_*
-// bits (legal.h play_board_pills) - the rule the iMessage board draws by, so a
+// bits (legal.h play_pills) - the rule the iMessage board draws by, so a
 // selection never leaves Take or Good under the finger. The Cover button's aim
 // comes back from the same call (coverGesture: play_best_cover_target, then
 // play_resolve), so a live button can never turn out to have no move.
@@ -23,27 +23,21 @@
 // e2e/validation/kernel_gate_validation.test.ts.
 
 import { clientTable, type ClientPlay } from '@sdk/ts/table/client_table.ts';
-import {
-    CLIENT_PLAY_COVER_BUTTON, MOVE_COVER, PLAY_GATE_BOARD_STILL, PLAY_GATE_I_CAN_ACT,
-} from '@sdk/ts/gen/view_layout.bots.ts';
+import { CLIENT_PLAY_COVER_BUTTON, MOVE_COVER } from '@sdk/ts/gen/view_layout.bots.ts';
 import { rejectMessage } from '../wasm/rejectMessages';
 import type { TableView, ViewCard as Card } from '../state/view';
 
 type Cards = readonly Card[];
 
-// What the website knows about its own screen, for the pills (legal.h
-// PLAY_GATE_*). A seated player always holds the kernel's live menu here - there
-// is no chain to wait on - so I_CAN_ACT is the seat itself, and the web has no
-// board that refuses a play while it moves, so BOARD_STILL always stands. The
-// web has no Send (CAN_SEND), no newer chain (SUPERSEDED) and no throw-in hold
-// (PICKUP_HELD). A press in flight is ActionButtons' pressedActions, per button,
-// rather than PLAY_IN_FLIGHT, which would take every other button down with it.
-const WEB_GATES = PLAY_GATE_I_CAN_ACT | PLAY_GATE_BOARD_STILL;
-
 // The kernel's one answer for a selection: its PLAY_PILL_* bits and, for the
 // Cover button, the move the button makes. A spectator has no pills.
+//
+// The website hands in no PLAY_HOST_* bit (legal.h): it has no Send to wait on,
+// no newer chain, no throw-in hold and no board that refuses a play while it
+// moves, and a press in flight is ActionButtons' pressedActions, per button,
+// which would take every other button down with it as a host bit.
 const gesture = (view: TableView, selected: Cards): ClientPlay | null =>
-    view.mySeat < 0 ? null : clientTable().play(view, selected, CLIENT_PLAY_COVER_BUTTON, WEB_GATES);
+    view.mySeat < 0 ? null : clientTable().play(view, selected, CLIENT_PLAY_COVER_BUTTON);
 
 /** The PLAY_PILL_* bits of the action buttons to draw for `selected` on `view`. */
 export const boardPills = (view: TableView, selected: Cards): number => gesture(view, selected)?.pills ?? 0;

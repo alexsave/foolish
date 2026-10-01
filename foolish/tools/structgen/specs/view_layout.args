@@ -21,7 +21,7 @@
 --root ClientGesture --root ClientPlay --snapshot ClientGesture --snapshot ClientPlay --writer ClientGesture
 --count ClientGesture.cards=n_cards --count ClientPlay.cards=n_cards
 --count ClientPlay.attack_cards=n_cards --count ClientPlay.coverable=n_coverable
---const PLAY_TARGET_ --const MOVE_ --const PLAY_ANSWER_ --const PLAY_GATE_ --const PLAY_PILL_
+--const PLAY_TARGET_ --const MOVE_ --const PLAY_HOST_ --const PLAY_PILL_
 --snapshot TableView --snapshot PushEvent --snapshot ViewRules --snapshot ConflictVerdicts --snapshot BoardEdit --snapshot ClientConflict --writer TableView --snapshot-only
 --writer BoardEdit --writer ClientConflict
 --count BoardEdit.cards=n_cards --count ClientConflict.events=n_events --count ClientConflict.motions=n_motions

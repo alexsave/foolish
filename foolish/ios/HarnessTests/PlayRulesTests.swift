@@ -18,7 +18,7 @@ final class PlayRulesTests: XCTestCase {
     private func probe(_ cards: [Card], _ target: PlayTarget, defender: Bool,
                        battles: [BattleView] = [], legal: [Move], trump: Int = 3) -> PlayProbe {
         PlayWire.probe(menu: MoveWire.encode(legal), battles: battles, powerSuit: trump,
-                       isDefender: defender, selection: cards, target: target)
+                       mySeat: 0, defender: defender ? 0 : 1, selection: cards, target: target)
     }
 
     func test_attacker_singleAttack() {

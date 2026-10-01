@@ -197,7 +197,9 @@ int fio_legal_from_view(int seat, char *out, int cap);
 // cell is a card that is there and cannot be named: the battle counts as
 // covered, and nothing covers it (legal.h, PlayBoard). `sel` is the selected
 // cards as card bytes. `target` is the battle index a gesture landed on, or
-// FIO_PLAY_TARGET_TABLE / _HAND.
+// FIO_PLAY_TARGET_TABLE / _HAND. `my_seat` and `defender` are the view's own
+// fields (the viewer's seat, -1 for a spectator, and the seat that defends):
+// whether this seat defends is the kernel's comparison, never the caller's.
 #define FIO_PLAY_TARGET_HAND   (-2)
 #define FIO_PLAY_TARGET_TABLE  (-1)
 
@@ -209,7 +211,7 @@ int fio_legal_from_view(int seat, char *out, int cap);
 //
 //   0   u8    the kernel's verdicts about the selection: legal.h's
 //             PLAY_ANSWER_* bits (attack, cover, pass, may say good), as
-//             play_answers writes them and fio_play_pills reads them
+//             play_answers writes them
 //   1   i8    the battle the Cover button aims at, -1 for none
 //   2   u64   bitmask of the battles this selection could cover
 //   10  ...   the move the gesture resolves to, as a ONE-ENTRY menu wire
@@ -222,7 +224,7 @@ int fio_legal_from_view(int seat, char *out, int cap);
 // uncovered attack.
 int fio_play_probe(const uint8_t *menu, int menu_len,
                    const uint8_t *table, int n_battles,
-                   int power_suit, int is_defender,
+                   int power_suit, int my_seat, int defender,
                    const uint8_t *sel, int n_sel, int target,
                    char *out, int cap);
 
@@ -236,13 +238,20 @@ int fio_play_human_menu(const uint8_t *menu, int menu_len,
                         const uint8_t *table, int n_battles,
                         char *out, int cap);
 
-// WHICH PILLS THE BOARD DRAWS (legal.h play_pills): the PLAY_PILL_* bits, from
-// the kernel's PLAY_ANSWER_* verdicts about the selection - byte 0 of the probe
-// above, passed back as it came - and the board's PLAY_GATE_* facts. Reads its
-// two arguments and nothing else, so a render pass may call it. The bit values
-// reach Swift through structgen (sdk/swift/gen/kernel.ios.swift), not through
-// this header, so there is one spelling of each.
-unsigned fio_play_pills(unsigned answers, unsigned gates);
+// WHICH PILLS THE BOARD DRAWS (legal.h play_pills): the PLAY_PILL_* bits for
+// the selection `sel` on this board, under the host's PLAY_HOST_* bits `host`.
+// The board crosses exactly as the probe's does, plus the two statuses Take
+// reads: `my_status` (PLAYER_STATUS_* of my_seat, -1 for none) and
+// `game_status` (GAME_STATUS_*). Every fact about the board and the selection
+// is read off them here; `host` carries only what a host knows about its own
+// transport and screen. Reads its arguments and nothing else, so a render pass
+// may call it. The bit values reach Swift through structgen
+// (sdk/swift/gen/kernel.ios.swift), not through this header, so there is one
+// spelling of each. 0 for an argument that is not one.
+unsigned fio_play_pills(const uint8_t *menu, int menu_len,
+                        const uint8_t *table, int n_battles, int power_suit,
+                        int my_seat, int defender, int my_status, int game_status,
+                        const uint8_t *sel, int n_sel, unsigned host);
 // A MOVE, WRITTEN - the awire action frame for one move, so no host has to
 // know what that frame looks like. The inverse of the packed menu above, and
 // the thing every producer needs: the frame fio_apply_awire takes is also the

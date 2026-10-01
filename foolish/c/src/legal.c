@@ -615,6 +615,18 @@ static int board_battles(const PlayBoard *b) {
     return b->n_battles;
 }
 
+// Does the seat this board is seen from defend the current bout? A spectator
+// (-1) defends nothing, whatever the defender field holds.
+static int board_defends(const PlayBoard *b) {
+    return b->my_seat >= 0 && b->my_seat == b->defender;
+}
+
+// Is that seat out of play: it has left, or the game is no longer running (a
+// finished game can leave its last table in view, and nobody takes it).
+static int board_is_out(const PlayBoard *b) {
+    return b->my_status == PLAYER_STATUS_OUT || b->game_status != GAME_STATUS_PLAYING;
+}
+
 // How high a card stands in Durak's own order: every trump outranks every
 // non-trump, and within a class the rank decides. Ranks run 1..13, so the 100
 // is clear of any collision between the two classes.
@@ -632,7 +644,7 @@ int play_resolve(const PlayBoard *b, const unsigned char *sel, int n_sel,
     MenuMove m;
     if (legal_menu_begin(&w, b->menu, b->menu_len) < 0) return -1;
 
-    if (!b->is_defender) {
+    if (!board_defends(b)) {
         // Attacker: the only card play is an attack with exactly this selection
         // (one card, or several of a rank - the kernel enumerates which). The
         // target is not read, which is why the hand is answered above.
@@ -725,18 +737,20 @@ unsigned play_answers(const PlayBoard *b, const unsigned char *sel, int n_sel) {
          | (play_can_say_good(b)                       ? PLAY_ANSWER_GOOD   : 0u);
 }
 
-unsigned play_pills(unsigned answers, unsigned gates) {
-#define GATE(bit) ((gates & (bit)) != 0)
-    const int acting = GATE(PLAY_GATE_I_CAN_ACT) && !GATE(PLAY_GATE_CAN_SEND)
-                    && !GATE(PLAY_GATE_PLAY_IN_FLIGHT) && GATE(PLAY_GATE_BOARD_STILL);
-    const int defender = GATE(PLAY_GATE_IS_DEFENDER);
-    const int sel_empty = GATE(PLAY_GATE_SELECTION_EMPTY);
+unsigned play_pills(const PlayBoard *b, const unsigned char *sel, int n_sel,
+                    unsigned host) {
+    if (!b) return 0;
+#define HOST(bit) ((host & (bit)) != 0)
+    const int acting = !HOST(PLAY_HOST_STAGED) && !HOST(PLAY_HOST_IN_FLIGHT)
+                    && !HOST(PLAY_HOST_MOVING) && !HOST(PLAY_HOST_SUPERSEDED);
+    // The board's own facts, never the host's: see legal.h.
+    const int defender = board_defends(b);
+    const int sel_empty = n_sel <= 0;
     // Take, the one pill that reads no answer - see the note in legal.h.
-    const int take = defender && !GATE(PLAY_GATE_TABLE_EMPTY) && sel_empty
-                  && !GATE(PLAY_GATE_IS_OUT) && !GATE(PLAY_GATE_CAN_SEND)
-                  && !GATE(PLAY_GATE_PICKUP_HELD) && !GATE(PLAY_GATE_SUPERSEDED)
-                  && !GATE(PLAY_GATE_PLAY_IN_FLIGHT) && GATE(PLAY_GATE_BOARD_STILL);
-#undef GATE
+    const int take = defender && board_battles(b) > 0 && sel_empty && !board_is_out(b)
+                  && !HOST(PLAY_HOST_PICKUP_HELD) && acting;
+#undef HOST
+    const unsigned answers = play_answers(b, sel, n_sel);
     unsigned out = 0;
     if (acting && !defender && (answers & PLAY_ANSWER_ATTACK)) out |= PLAY_PILL_ATTACK;
     if (acting && defender && (answers & PLAY_ANSWER_COVER))   out |= PLAY_PILL_COVER;
@@ -744,17 +758,6 @@ unsigned play_pills(unsigned answers, unsigned gates) {
     if (acting && sel_empty && (answers & PLAY_ANSWER_GOOD))   out |= PLAY_PILL_GOOD;
     if (take)                                                  out |= PLAY_PILL_PICKUP;
     return out;
-}
-
-unsigned play_board_pills(const PlayBoard *b, const unsigned char *sel, int n_sel,
-                          unsigned host_gates) {
-    if (!b) return 0;
-    unsigned gates = host_gates
-        & ~(PLAY_GATE_IS_DEFENDER | PLAY_GATE_TABLE_EMPTY | PLAY_GATE_SELECTION_EMPTY);
-    if (b->is_defender)    gates |= PLAY_GATE_IS_DEFENDER;
-    if (b->n_battles <= 0) gates |= PLAY_GATE_TABLE_EMPTY;
-    if (n_sel <= 0)        gates |= PLAY_GATE_SELECTION_EMPTY;
-    return play_pills(play_answers(b, sel, n_sel), gates);
 }
 
 int play_human_menu(const PlayBoard *b, unsigned char *out, int cap) {

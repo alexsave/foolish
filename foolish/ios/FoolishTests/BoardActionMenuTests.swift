@@ -4,9 +4,16 @@
 // exact spelling of an expression inside `MessageTableView.actionBar` - down to
 // the line break in the middle of Take's condition. That was not a style
 // choice: the decision lived inside a `some View`, so there was nothing to
-// call, and a scan was the only thing available. It is `BoardActionMenu` now,
-// and every one of those scans is a value here. The filmed bug each one guards
-// is named on the test that guards it, unchanged.
+// call, and a scan was the only thing available.
+//
+// THE PLAY PILLS ARE THE KERNEL'S NOW, WHOLE (legal.h play_pills): the board,
+// the selection and the host's PLAY_HOST_* bits go in, the PLAY_PILL_* bits
+// come out. Every case this file used to hold against a fake probe and a
+// hand-filled `Gates` lives in c/tests/tests.c
+// test_play_pills_one_move_one_button, marked [Swift], with the same position
+// and the same expected pills - the filmed bug each one guards is named there.
+// What is left here is the Swift boundary: the bits become the five Bools, and
+// the view crosses as its own fields, in the right order.
 //
 // WHAT IS NOT HERE, and deliberately stays a source scan in UndoGateTests: that
 // the pill column is redrawn on a timer, that `play` marks itself in flight
@@ -18,151 +25,65 @@ import XCTest
 
 final class BoardActionMenuTests: XCTestCase {
 
-    /// A kernel answer that says yes to everything it is asked, so a `false`
-    /// below can only have come from the board's own gates.
-    private let kernelSaysYes = PlayProbe(move: nil, coverable: [0], bestCover: 0,
-                                          canAttack: true, canPass: true, canSayGood: true)
-    /// …and one that lists nothing, which is what a settled or a stood-down
-    /// seat is handed.
-    private let kernelSaysNo = PlayProbe(move: nil, coverable: [], bestCover: nil,
-                                         canAttack: false, canPass: false, canSayGood: false)
+    // MARK: - the kernel's bits, as the five Bools
 
-    /// A board that is ready to act: I have a menu, nothing is staged, my last
-    /// tap has landed, the board is at rest, I am an attacker with an empty
-    /// selection over a table with cards on it.
-    private func gates(iCanAct: Bool = true, canSend: Bool = false,
-                       playInFlight: Bool = false, boardStill: Bool = true,
-                       superseded: Bool = false, pickupHeld: Bool = false,
-                       isDefender: Bool = false, isOut: Bool = false,
-                       tableIsEmpty: Bool = false,
-                       selectionIsEmpty: Bool = true) -> BoardActionMenu.Gates {
-        .init(iCanAct: iCanAct, canSend: canSend, playInFlight: playInFlight,
-              boardStill: boardStill, superseded: superseded, pickupHeld: pickupHeld,
-              isDefender: isDefender, isOut: isOut, tableIsEmpty: tableIsEmpty,
-              selectionIsEmpty: selectionIsEmpty)
-    }
-
-    // MARK: - every play pill is the kernel's answer (§17.16)
-
-    /// The whole rule in one assertion: with the kernel listing nothing, an
-    /// otherwise perfect board offers no play. Take is the one exception and it
-    /// has its own test below, so an attacker is asked here.
-    func testAPillIsNeverOfferedOverAKernelThatListsNothing() {
-        let m = BoardActionMenu.resolve(kernelSaysNo, gates())
-        XCTAssertEqual(m, .none,
-                       "a play pill was offered without the kernel listing the move")
-    }
-
-    /// And the mirror: the gates alone never conjure one either.
-    func testTheAttackersPillsAndTheDefendersDoNotMix() {
-        let attacker = BoardActionMenu.resolve(kernelSaysYes, gates(isDefender: false))
-        XCTAssertTrue(attacker.canAttack)
-        XCTAssertFalse(attacker.canCover, "an attacker was offered Cover")
-        XCTAssertFalse(attacker.canPass, "an attacker was offered Pass")
-
-        let defender = BoardActionMenu.resolve(kernelSaysYes, gates(isDefender: true))
-        XCTAssertFalse(defender.canAttack, "the defender was offered Attack")
-        XCTAssertTrue(defender.canCover)
-        XCTAssertTrue(defender.canPass)
-    }
-
-    /// Good is selection-aware: a stray tap on it mid-selection would abandon
-    /// the cards you had picked (web parity TODO).
-    func testGoodIsGoneWhileCardsAreSelected() {
-        XCTAssertTrue(BoardActionMenu.resolve(kernelSaysYes, gates()).canDone)
-        XCTAssertFalse(BoardActionMenu.resolve(kernelSaysYes,
-                                               gates(selectionIsEmpty: false)).canDone,
-                       "Good over a selection: tapping it throws the selection away")
-    }
-
-    // MARK: - the board's own gates
-
-    /// NOT BETWEEN THE TAP AND THE STAGE. Filmed frame by frame at the tap:
-    /// Attack, then ONE frame of "Good", then nothing. `play` clears the
-    /// selection synchronously and applies in a Task, so for a paint the
-    /// attacker had no selection and nothing staged - and the bar offered Good.
-    /// Owner: "you just dont show any action button between when the attack
-    /// animation starts playing and the autocollapse finishes".
-    func testNoPillBetweenTheTapAndTheStage() {
-        XCTAssertEqual(BoardActionMenu.resolve(kernelSaysYes,
-                                               gates(playInFlight: true, isDefender: true)),
-                       .none,
-                       "a pill - Take included - showed while a play was being applied")
-        XCTAssertTrue(ActionPillSlot.holdsWhilePlayingByDefault)
-    }
-
-    /// NOR WHILE AN UNDO FLIES. Filmed undoing a pickup: Pickup was back on the
-    /// plank in the very frame the undo published, with the card still flying
-    /// from the hand to the table.
-    func testNoPillWhileTheBoardIsStillMoving() {
-        XCTAssertEqual(BoardActionMenu.resolve(kernelSaysYes,
-                                               gates(boardStill: false, isDefender: true)),
-                       .none,
-                       "a pill - Take included - showed while the board was moving")
-        XCTAssertTrue(ActionPillSlot.waitsForStillByDefault)
-    }
-
-    /// Once a move is staged the only control is Undo: the extension has
-    /// dropped the human at Messages' Send.
-    func testAStagedMoveLeavesNoPlayPill() {
-        XCTAssertEqual(BoardActionMenu.resolve(kernelSaysYes,
-                                               gates(canSend: true, isDefender: true)),
-                       .none,
-                       "a play pill survived the staged bubble")
-    }
-
-    /// A seat with no published menu is a spectator on someone else's staged
-    /// bubble - read-only, whatever the probe happens to say.
-    func testASeatWithNoMenuIsOfferedNoPlay() {
-        let m = BoardActionMenu.resolve(kernelSaysYes, gates(iCanAct: false))
-        XCTAssertFalse(m.canAttack || m.canCover || m.canPass || m.canDone,
-                       "a stood-down seat was offered a play")
-    }
-
-    // MARK: - Take, the one pill that is not the kernel's menu
-
-    /// THE EXCEPTION, STATED AS A TEST. The kernel stops LISTING pickup once
-    /// every attack is covered while still ACCEPTING it, so Take reads the
-    /// web's condition (defending, cards on the table) and not the menu. Asked
-    /// here against a probe that lists NOTHING, which is exactly the covered
-    /// table the menu goes quiet on.
-    func testTakeIsOfferedOnATableTheKernelHasStoppedListing() {
-        XCTAssertTrue(BoardActionMenu.resolve(kernelSaysNo, gates(isDefender: true)).canPickup,
-                      "the defender of a fully covered table can no longer take it")
-    }
-
-    /// …and it is still only ever the defender's, over a table with cards on it.
-    func testTakeBelongsToTheDefenderOfANonEmptyTable() {
-        XCTAssertFalse(BoardActionMenu.resolve(kernelSaysYes, gates(isDefender: false)).canPickup,
-                       "an attacker was offered Take")
-        XCTAssertFalse(BoardActionMenu.resolve(kernelSaysYes,
-                                               gates(isDefender: true, tableIsEmpty: true)).canPickup,
-                       "Take was offered over an empty table")
-        XCTAssertFalse(BoardActionMenu.resolve(kernelSaysYes,
-                                               gates(isDefender: true, isOut: true)).canPickup,
-                       "a seat that is out was offered Take")
-    }
-
-    /// Everything that stands Take down, one at a time - each of them a filmed
-    /// report. `superseded` is called out in `pickup`'s own doc: because Take
-    /// does not read the menu, standing `iCanAct` down does not reach it, so a
-    /// read-only board would keep offering it.
-    func testTakeStandsDownForTheHoldTheSelectionAndTheSupersede() {
-        for (name, g) in [("the 15s throw-in hold", gates(pickupHeld: true, isDefender: true)),
-                          ("a newer chain", gates(superseded: true, pickupHeld: false, isDefender: true)),
-                          ("a staged move", gates(canSend: true, isDefender: true)),
-                          ("a live selection", gates(isDefender: true, selectionIsEmpty: false))] {
-            XCTAssertFalse(BoardActionMenu.resolve(kernelSaysNo, g).canPickup,
-                           "Take survived \(name)")
+    /// Each PLAY_PILL_* bit is its own Bool and no other, and no bits is
+    /// `.none`.
+    func testEachPillBitIsItsOwnButton() {
+        XCTAssertEqual(BoardActionMenu(pills: 0), .none)
+        let bits = [PLAY_PILL_ATTACK, PLAY_PILL_COVER, PLAY_PILL_PASS, PLAY_PILL_PICKUP, PLAY_PILL_GOOD]
+        for (i, bit) in bits.enumerated() {
+            let m = BoardActionMenu(pills: UInt32(bit))
+            XCTAssertEqual([m.canAttack, m.canCover, m.canPass, m.canPickup, m.canDone],
+                           (0..<bits.count).map { $0 == i }, "pill bit \(bit) drew the wrong button")
         }
     }
 
-    /// The stood-down board is a read-only board, and `.none` is what it is.
-    func testASupersededSeatIsOfferedNothingAtAll() {
-        XCTAssertEqual(BoardActionMenu.resolve(kernelSaysYes,
-                                               gates(iCanAct: false, superseded: true,
-                                                     isDefender: true)),
-                       .none)
+    // MARK: - the view crosses as itself
+
+    /// Seat 1 defends a 7 of spades on an open table; the menu is empty, so
+    /// the only pill the kernel can draw is Take (legal.h: Take is not the
+    /// menu's). `viewer`, `status` and the viewer's own status are the fields
+    /// the kernel reads, so a crossing that swapped two of them changes the
+    /// answer.
+    private func board(viewer: Int, defender: Int = 1, seatStatus: Int = PLAYER_STATUS_IN,
+                       gameStatus: Int = GAME_STATUS_PLAYING) -> GameView {
+        let players = (0..<2).map { s in
+            PlayerView(seat: s, name: "p\(s)", status: s == viewer ? seatStatus : PLAYER_STATUS_IN,
+                       handCount: 6, awaitingAttack: false, strategyKey: 0, hand: s == viewer ? [] : nil)
+        }
+        return GameView(status: gameStatus, numPlayers: 2, powerSuit: 3, deckCount: 10, discardCount: 0,
+                        hasFlipped: false, firstAttacker: 0, defender: defender, viewer: viewer,
+                        goodMask: 0, gameOver: -1, flipped: nil,
+                        battles: [BattleView(attack: Card(s: 0, v: 7), defense: nil)],
+                        eliminationOrder: [], players: players)
+    }
+
+    private func pills(_ view: GameView, _ host: PlayWire.Host = [],
+                       selection: [Card] = []) -> BoardActionMenu {
+        BoardActionMenu(pills: PlayWire.pills(menu: MoveWire.emptyMenu, view: view,
+                                              selection: selection, host: host))
+    }
+
+    func testTheDefenderIsTheViewsOwnComparison() {
+        XCTAssertTrue(pills(board(viewer: 1)).canPickup, "the defender of a non-empty table lost Take")
+        XCTAssertEqual(pills(board(viewer: 0)), .none, "the attacker was offered Take")
+        XCTAssertEqual(pills(board(viewer: -1)), .none, "a spectator was offered Take")
+    }
+
+    func testTheStatusesCrossWhereTheKernelReadsThem() {
+        XCTAssertEqual(pills(board(viewer: 1, seatStatus: PLAYER_STATUS_OUT)), .none,
+                       "a seat that is out was offered Take")
+        XCTAssertEqual(pills(board(viewer: 1, gameStatus: GAME_STATUS_GAME_OVER)), .none,
+                       "a finished game's table was offered to the defender")
+    }
+
+    func testTheSelectionAndTheHostCrossAsGiven() {
+        XCTAssertEqual(pills(board(viewer: 1), selection: [Card(s: 1, v: 6)]), .none,
+                       "Take survived a live selection")
+        for host: PlayWire.Host in [.staged, .inFlight, .moving, .superseded, .pickupHeld] {
+            XCTAssertEqual(pills(board(viewer: 1), host), .none, "Take survived host bit \(host.rawValue)")
+        }
     }
 
     // MARK: - the Undo pill

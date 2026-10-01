@@ -32,7 +32,7 @@ final class CoverTargetTests: XCTestCase {
     private func probe(_ cards: [Card], _ t: (battles: [BattleView], legal: [Move]),
                        trump: Suit?, target: PlayTarget = .table) -> PlayProbe {
         PlayWire.probe(menu: MoveWire.encode(t.legal), battles: t.battles,
-                       powerSuit: trump?.rawValue ?? -1, isDefender: true,
+                       powerSuit: trump?.rawValue ?? -1, mySeat: 0, defender: 0,
                        selection: cards, target: target)
     }
 

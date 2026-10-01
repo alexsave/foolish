@@ -713,7 +713,9 @@ int client_play(ClientTable *c, const TableView *v, const ClientGesture *g,
     const PlayBoard b = {
         .menu = s->wire, .menu_len = menu_len,
         .table = table, .n_battles = v->num_battles,
-        .power_suit = v->power_suit, .is_defender = seat == v->defender,
+        .power_suit = v->power_suit,
+        .my_seat = seat, .defender = v->defender,
+        .my_status = v->seats[seat].status, .game_status = v->status,
     };
 
     unsigned char sel[MAX_MOVE_CARDS];
@@ -724,12 +726,7 @@ int client_play(ClientTable *c, const TableView *v, const ClientGesture *g,
         if (mask & ((uint64_t)1 << i)) out->coverable[out->n_coverable++] = (int8_t)i;
     out->best_cover = (int8_t)play_best_cover_target(&b, sel, g->n_cards);
     out->can_say_good = play_can_say_good(&b) != 0;
-    // Out of play: this seat has left, or the game has ended (a finished game
-    // can leave its last table in view, and nobody takes it).
-    const unsigned out_gate = (v->seats[seat].status == PLAYER_STATUS_OUT
-                               || v->status != GAME_STATUS_PLAYING) ? PLAY_GATE_IS_OUT : 0u;
-    out->pills = (uint8_t)play_board_pills(&b, sel, g->n_cards,
-                                           (g->gates & ~PLAY_GATE_IS_OUT) | out_gate);
+    out->pills = (uint8_t)play_pills(&b, sel, g->n_cards, g->host);
 
     // The Cover button aims itself; every other gesture named its own target. A
     // button with nothing to aim at resolves to nothing rather than falling

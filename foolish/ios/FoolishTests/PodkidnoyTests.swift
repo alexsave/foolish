@@ -161,7 +161,7 @@ final class PodkidnoyTests: XCTestCase {
                 let passCards = classicMenu.first { $0.type == .pass }!.cards
                 func probe(_ menu: [Move]) -> PlayProbe {
                     PlayWire.probe(menu: MoveWire.encode(menu), battles: [], powerSuit: -1,
-                                   isDefender: true, selection: passCards, target: .table)
+                                   mySeat: 0, defender: 0, selection: passCards, target: .table)
                 }
                 XCTAssertTrue(probe(classicMenu).canPass)
                 XCTAssertFalse(probe(podkidnoyMenu).canPass,

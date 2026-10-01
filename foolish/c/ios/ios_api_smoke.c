@@ -2117,7 +2117,8 @@ int main(void) {
         if (at < 0) { printf("FAIL probe fixture: no attack on the opening menu\n"); return 1; }
         const int n_sel = menu[at + 1];
         unsigned char probe[512];
-        int prc = fio_play_probe(menu, lrc, 0, 0, 0, 0, menu + at + 2, n_sel,
+        // Seat 0 looking, seat 1 defending: an attacker's board.
+        int prc = fio_play_probe(menu, lrc, 0, 0, 0, 0, 1, menu + at + 2, n_sel,
                                  FIO_PLAY_TARGET_TABLE, (char *)probe, sizeof probe);
         if (prc < FIO_PLAY_PROBE_HEAD + 4) { printf("FAIL probe rc=%d\n", prc); return 1; }
         if ((probe[0] & PLAY_ANSWER_ATTACK) == 0) { printf("FAIL probe: the attack was not offered\n"); return 1; }
@@ -2127,9 +2128,19 @@ int main(void) {
         const unsigned char *mv = probe + FIO_PLAY_PROBE_HEAD;
         if (mv[0] != 1 || mv[4] != 0 || mv[5] != n_sel) { printf("FAIL probe: the move did not come back\n"); return 1; }
         // …and the hand is a rearrange, for the attacker too.
-        prc = fio_play_probe(menu, lrc, 0, 0, 0, 0, menu + at + 2, n_sel,
+        prc = fio_play_probe(menu, lrc, 0, 0, 0, 0, 1, menu + at + 2, n_sel,
                              FIO_PLAY_TARGET_HAND, (char *)probe, sizeof probe);
         if (prc < 0 || probe[FIO_PLAY_PROBE_HEAD] != 0) { printf("FAIL probe: the hand played a card\n"); return 1; }
+        // The pills cross the same board: the attack is the one pill, and a
+        // staged move takes it down.
+        if (fio_play_pills(menu, lrc, 0, 0, 0, 0, 1, PLAYER_STATUS_IN, GAME_STATUS_PLAYING,
+                           menu + at + 2, n_sel, 0) != PLAY_PILL_ATTACK) {
+            printf("FAIL pills: the attack is not the one pill\n"); return 1;
+        }
+        if (fio_play_pills(menu, lrc, 0, 0, 0, 0, 1, PLAYER_STATUS_IN, GAME_STATUS_PLAYING,
+                           menu + at + 2, n_sel, PLAY_HOST_STAGED) != 0) {
+            printf("FAIL pills: a staged move left a play pill\n"); return 1;
+        }
 
         unsigned char human[1 << 16];
         int hrc = fio_play_human_menu(menu, lrc, 0, 0, (char *)human, sizeof human);

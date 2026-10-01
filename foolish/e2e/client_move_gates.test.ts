@@ -1,5 +1,5 @@
 // Client-side move gates (src/utils/gameValidation.ts). Which action buttons a
-// selection offers is the kernel's play_board_pills (boardPills), and the
+// selection offers is the kernel's play_pills (boardPills), and the
 // optimistic pre-check is the kernel's client_validate (validateActionWire);
 // e2e/client_guards fuzzes both against the authoritative server kernel across
 // thousands of states. This file keeps hand-picked concrete cases (readable

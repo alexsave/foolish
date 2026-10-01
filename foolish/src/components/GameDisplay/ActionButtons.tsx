@@ -162,7 +162,7 @@ export const ActionButtons = () => {
     const hint = useTutorialHint();
 
     // Which buttons this selection offers is the kernel's answer (legal.h
-    // play_board_pills, the rule the iMessage board draws by): one move, one
+    // play_pills, the rule the iMessage board draws by): one move, one
     // button, so a card under the finger takes Take and Good away. The rendered
     // button additionally requires !pressedActions[name], so a press (click OR
     // keyboard) hides it immediately until the server catches up.

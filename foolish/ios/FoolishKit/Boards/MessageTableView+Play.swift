@@ -247,9 +247,7 @@ extension MessageTableView {
     /// board asks about it. `controller.legalPacked` is the PUBLISHED menu, which
     /// is deliberately empty while a bout settlement is held back.
     func probe(_ view: GameView, _ cards: [Card], _ target: PlayTarget) -> PlayProbe {
-        PlayWire.probe(menu: controller.legalPacked, battles: view.battles,
-                       powerSuit: view.powerSuit, isDefender: view.defender == controller.mySeat,
-                       selection: cards, target: target)
+        PlayWire.probe(menu: controller.legalPacked, view: view, selection: cards, target: target)
     }
 
     func toggle(_ card: Card) {

@@ -37,7 +37,7 @@ export const KeyboardInputHandler = () => {
     };
 
     // A key makes only the move whose button the board shows (gameValidation
-    // boardPills -> client_play, legal.h play_board_pills), so a stray U or G
+    // boardPills -> client_play, legal.h play_pills), so a stray U or G
     // with a card selected cannot throw the selection away. What the Cover key
     // does is the Cover button's own answer (coverGesture).
     const pills = game ? boardPills(game, selectedCards) : 0;

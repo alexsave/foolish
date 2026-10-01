@@ -123,7 +123,7 @@ final class TableWireTests: XCTestCase {
         let nine = c(0, 9)
         let table = [BattleView(attack: nine, defense: Card.hidden)]
         let menu = MoveWire.encode([Move(type: .good)])
-        let probe = PlayWire.probe(menu: menu, battles: table, powerSuit: 3, isDefender: false,
+        let probe = PlayWire.probe(menu: menu, battles: table, powerSuit: 3, mySeat: 0, defender: 1,
                                    selection: [c(1, 6)], target: .table)
         XCTAssertTrue(probe.canSayGood, "a cover the viewer cannot see was read as no cover")
         XCTAssertEqual(PlayWire.humanMoves(menu: menu, battles: table).map(\.type), [.good],
@@ -139,14 +139,14 @@ final class TableWireTests: XCTestCase {
         let nine = c(0, 9), jack = c(0, 11)
         let table = [BattleView(attack: Card.hidden, defense: nil)]
         let menu = MoveWire.encode([Move(type: .cover, cards: [jack], attackCards: [nine])])
-        let probe = PlayWire.probe(menu: menu, battles: table, powerSuit: 3, isDefender: true,
+        let probe = PlayWire.probe(menu: menu, battles: table, powerSuit: 3, mySeat: 0, defender: 0,
                                    selection: [jack], target: .battle(0))
         XCTAssertNil(probe.move)
         XCTAssertTrue(probe.coverable.isEmpty)
         XCTAssertNil(probe.bestCover)
         // …and the battle is still open: a bare cell is bare whatever it sits under.
         XCTAssertFalse(PlayWire.probe(menu: MoveWire.encode([Move(type: .good)]), battles: table,
-                                      powerSuit: 3, isDefender: false, selection: [jack],
+                                      powerSuit: 3, mySeat: 0, defender: 1, selection: [jack],
                                       target: .table).canSayGood)
     }
 
