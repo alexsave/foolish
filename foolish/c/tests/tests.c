@@ -12239,6 +12239,10 @@ static void test_table_set_rules(void) {
 // which gates the transfer inside calc_pass_moves): a bots-only podkidnoy table
 // plays to its end without one transfer. The same deals under the classic rules
 // are the control - they do transfer, so a zero here is the rule talking.
+// cordite is here because its Monte-Carlo world has its own movegen and rollout
+// policy (cordite_sim.c), and it is the one brain this file drives through a
+// LOADED table past the trump's draw: under tests-asan that is what holds
+// cordite_strategy.c cd_drawn_trump (a loaded Game holds no drawn trump).
 static void test_table_bots_never_transfer_under_podkidnoy(void) {
     static TbRow row;
     static const char *const brains[] = { "random", "handwritten", "cordite" };
