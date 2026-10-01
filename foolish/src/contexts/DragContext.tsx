@@ -78,7 +78,8 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
         setDragStartPos({ x: clientX, y: clientY });
         setHasSwapped(false);
         setIsActuallyDragging(false);
-        setTouchStartTime(Date.now());
+        // The press's own time, not the moment this handler got to run: see endCardDrag.
+        setTouchStartTime(e.timeStamp);
     };
 
 
@@ -157,7 +158,7 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
         const handleEnd = (e: MouseEvent | TouchEvent) => {
             if (isDraggingCard) {
                 e.preventDefault();
-                endCardDrag();
+                endCardDrag(e.timeStamp);
             }
         };
 
@@ -177,11 +178,18 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isDraggingCard, draggedCardIndex, localHandOrder, hasSwapped, isActuallyDragging, touchStartTime, isDraggingForGameAction, draggedCard, currentCursorPos]);
 
-    const endCardDrag = () => {
+    // A tap is judged on how long the finger was down, which the two events'
+    // timestamps say, never on Date.now() read in the handlers: the press itself
+    // re-renders the board, and while that render holds the main thread the
+    // release waits in the queue. Read off the wall clock, a 40 ms tap whose
+    // release ran 150 ms late was a long press and selected nothing. Both stamps
+    // are on the event clock, so a release stamped before its press can only be
+    // two clocks mixed, and is no tap.
+    const endCardDrag = (releasedAt: number) => {
         if (!isDraggingCard || draggedCardIndex === null) return;
 
-        const touchDuration = Date.now() - touchStartTime;
-        const wasTap = touchDuration < 150 && !hasSwapped && !isActuallyDragging;
+        const touchDuration = releasedAt - touchStartTime;
+        const wasTap = touchDuration >= 0 && touchDuration < 150 && !hasSwapped && !isActuallyDragging;
 
         // If this was a tap (not a drag), handle card selection
         if (wasTap && localHandOrder[draggedCardIndex]) {

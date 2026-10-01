@@ -538,14 +538,33 @@ function actionSlots(host: HTMLElement): string[] {
     return Array.from(col.children, (c) => c.querySelector('.btn-action-text')?.textContent ?? '_');
 }
 
-/** Taps the hand card `text` (e.g. "9h"): selects it, or deselects it. */
+/**
+ * Taps the hand card `text` (e.g. "9h"): selects it, or deselects it.
+ *
+ * The finger is down for TAP_MS by the events' own clocks, and the release is
+ * handled TAP_LATE_MS after the press - later than the 150 ms a tap may last.
+ * That is the slow machine, made the rule: the press re-renders the whole board,
+ * and under V8 coverage on a CI runner that render alone ran past 150 ms, so a
+ * page that timed the tap by Date.now() in its handlers saw a long press and
+ * selected nothing (DragContext endCardDrag). The tap must be judged on the
+ * events' timestamps, and this tap holds the page to that on every machine.
+ */
+const TAP_MS = 40;
+const TAP_LATE_MS = 200;
 async function tapCard(host: HTMLElement, text: string, wait: (ms: number) => Promise<void>): Promise<void> {
     const [c] = parseCardText(text);
     const el = host.querySelector(`[data-location="hand"][data-card="${c.suit}-${c.value}"]`);
     assert.ok(el, `${text} is in the hand`);
-    el.dispatchEvent(new dom.window.MouseEvent('mousedown', { bubbles: true, clientX: 5, clientY: 5 }));
-    await wait(12);
-    dom.window.document.dispatchEvent(new dom.window.MouseEvent('mouseup', { bubbles: true, clientX: 5, clientY: 5 }));
+    // A browser stamps events in ms since the page loaded (performance.now's
+    // clock), not since 1970 as jsdom does, so a page that mixes either stamp with
+    // Date.now() reads every tap as a press of decades.
+    const down = new dom.window.MouseEvent('mousedown', { bubbles: true, clientX: 5, clientY: 5 });
+    Object.defineProperty(down, 'timeStamp', { value: 1000 });
+    el.dispatchEvent(down);
+    await wait(TAP_LATE_MS);
+    const up = new dom.window.MouseEvent('mouseup', { bubbles: true, clientX: 5, clientY: 5 });
+    Object.defineProperty(up, 'timeStamp', { value: 1000 + TAP_MS });
+    dom.window.document.dispatchEvent(up);
     await wait(12);
 }
 
