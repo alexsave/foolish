@@ -137,6 +137,23 @@ const Glow = ({ on, children }: { on: boolean; children: React.ReactNode }) => (
     </div>
 );
 
+// The action column, top to bottom. It holds the kernel's pills and nothing
+// else: no slot is kept for a button that is not there. The kernel answers one
+// pill at a time, except a defender's card that both covers and transfers (a
+// trump of the attack's rank), which answers Cover and Pass together. The column
+// is pinned by its bottom edge, so a lone pill always stands in the same place
+// and a second one grows upward. The order is the iMessage column's (FActionBar's
+// VStack, bottom-anchored in MessageTableView): Cover above Pass, so Pass keeps
+// the slot every lone pill uses.
+type PillName = 'attack' | 'cover' | 'pass' | 'pickup' | 'good';
+const COLUMN: readonly { name: PillName; bit: number; seed: number }[] = [
+    { name: 'attack', bit: PLAY_PILL_ATTACK, seed: 0.25 },
+    { name: 'cover', bit: PLAY_PILL_COVER, seed: 0.45 },
+    { name: 'pass', bit: PLAY_PILL_PASS, seed: 0.35 },
+    { name: 'pickup', bit: PLAY_PILL_PICKUP, seed: 0.15 },
+    { name: 'good', bit: PLAY_PILL_GOOD, seed: 0.85 },
+];
+
 export const ActionButtons = () => {
     const { user_id } = useAuth();
     const { view: game } = useServer();
@@ -144,26 +161,12 @@ export const ActionButtons = () => {
     const { selectedCards, setSelectedCards, pressedActions, setActionPressed } = useGame();
     const hint = useTutorialHint();
 
-    const self_index = game?.mySeat ?? -1;
-    const isDefending = game && self_index !== -1 ? game.defender === self_index : false;
-
     // Which buttons this selection offers is the kernel's answer (legal.h
     // play_board_pills, the rule the iMessage board draws by): one move, one
     // button, so a card under the finger takes Take and Good away. The rendered
     // button additionally requires !pressedActions[name], so a press (click OR
     // keyboard) hides it immediately until the server catches up.
     const pills = game ? boardPills(game, selectedCards) : 0;
-    const rawGood = (pills & PLAY_PILL_GOOD) !== 0;
-    const rawAttack = (pills & PLAY_PILL_ATTACK) !== 0;
-    const rawPass = (pills & PLAY_PILL_PASS) !== 0;
-    const rawCover = (pills & PLAY_PILL_COVER) !== 0;
-    const rawPickup = (pills & PLAY_PILL_PICKUP) !== 0;
-
-    const shouldShowGoodButton = rawGood && !pressedActions['good'];
-    const shouldShowAttackButton = rawAttack && !pressedActions['attack'];
-    const shouldShowPassButton = rawPass && !pressedActions['pass'];
-    const shouldShowCoverButton = rawCover && !pressedActions['cover'];
-    const shouldShowPickupButton = rawPickup && !pressedActions['pickup'];
 
     // when a button becomes legitimately relevant again (a rising edge), drop
     // its stale optimistic flag so it can re-show on the next turn. The edge is
@@ -173,11 +176,8 @@ export const ActionButtons = () => {
     const rearm = pills | (game ? boardPills(game, []) : 0);
     const prevRearm = useRef(0);
     useEffect(() => {
-        const bits: Record<string, number> = {
-            good: PLAY_PILL_GOOD, attack: PLAY_PILL_ATTACK, pass: PLAY_PILL_PASS, cover: PLAY_PILL_COVER, pickup: PLAY_PILL_PICKUP,
-        };
-        for (const a of Object.keys(bits)) {
-            if (!(prevRearm.current & bits[a]) && (rearm & bits[a]) && pressedActions[a]) setActionPressed(a, false);
+        for (const { name, bit } of COLUMN) {
+            if (!(prevRearm.current & bit) && (rearm & bit) && pressedActions[name]) setActionPressed(name, false);
         }
         prevRearm.current = rearm;
     }, [rearm, pressedActions, setActionPressed]);
@@ -227,98 +227,52 @@ export const ActionButtons = () => {
         });
     };
 
-    const spacerStyle = { width: '60px', height: '40px' };
+    const handlePickupClick = () => {
+        setActionPressed('pickup', true);
+        pickup().catch((e) => {
+            console.error(e.message);
+            setActionPressed('pickup', false);
+        });
+    };
+
+    const handleGoodClick = () => {
+        setActionPressed('good', true);
+        good().catch((e) => {
+            console.error(e.message);
+            setActionPressed('good', false);
+        });
+    };
+
+    const onClick: Record<PillName, () => void> = {
+        attack: handleAttackClick, cover: handleCoverClick, pass: handlePassClick,
+        pickup: handlePickupClick, good: handleGoodClick,
+    };
 
     return (
         <div 
             data-touch-interactive
             style={{ display: 'flex', flexDirection: 'column', position: 'absolute', bottom: 'max(10px, env(safe-area-inset-bottom))', left: '0px', right: '0px', justifyContent: 'end', alignItems: 'center', height: '200px' }}
         >
-            {game && game.mySeat >= 0 && (
-                <div 
-                    data-touch-interactive
-                    style={{
-                        position: 'absolute',
-                        bottom: '90px',
-                        right: '20px',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '5px',
-                        zIndex: 999
-                    }}
-                >
-                    {isDefending ? (
-                        <>
-                            {shouldShowPassButton ? (
-                                <Glow on={hint?.action === 'pass'}>
-                                    <ActionButton seed={0.35} onClick={handlePassClick}>
-                                        <Text id="pass" />
-                                    </ActionButton>
-                                </Glow>
-                            ) : (
-                                <div style={spacerStyle} />
-                            )}
-
-                            {shouldShowPickupButton ? (
-                                <Glow on={hint?.action === 'pickup'}>
-                                    <ActionButton seed={0.15} onClick={() => {
-                                        setActionPressed('pickup', true);
-                                        pickup().catch((e) => {
-                                            console.error(e.message);
-                                            setActionPressed('pickup', false);
-                                        });
-                                    }}>
-                                        <Text id="pickup" />
-                                    </ActionButton>
-                                </Glow>
-                            ) : (
-                                // Take keeps its slot when a selection takes it
-                                // away, so Pass above it does not drop into the
-                                // place Take was a moment ago.
-                                <div style={spacerStyle} />
-                            )}
-
-                            {shouldShowCoverButton ? (
-                                <Glow on={hint?.action === 'cover'}>
-                                    <ActionButton seed={0.45} onClick={handleCoverClick}>
-                                        <Text id="cover" />
-                                    </ActionButton>
-                                </Glow>
-                            ) : (
-                                <div style={spacerStyle} />
-                            )}
-                        </>
-                    ) : (
-                        <>
-                            {shouldShowGoodButton ? (
-                                <Glow on={hint?.action === 'good'}>
-                                    <ActionButton seed={0.85} onClick={() => {
-                                        setActionPressed('good', true);
-                                        good().catch((e) => {
-                                            console.error(e.message);
-                                            setActionPressed('good', false);
-                                        });
-                                    }}>
-                                        <Text id="good" />
-                                    </ActionButton>
-                                </Glow>
-                            ) : (
-                                <div style={spacerStyle} />
-                            )}
-
-                            {shouldShowAttackButton ? (
-                                <Glow on={hint?.action === 'attack'}>
-                                    <ActionButton seed={0.25} onClick={handleAttackClick}>
-                                        <Text id="attack" />
-                                    </ActionButton>
-                                </Glow>
-                            ) : (
-                                <div style={spacerStyle} />
-                            )}
-                        </>
-                    )}
-                </div>
-            )}
+            <div 
+                data-touch-interactive
+                style={{
+                    position: 'absolute',
+                    bottom: '90px',
+                    right: '20px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '5px',
+                    zIndex: 999
+                }}
+            >
+                {COLUMN.filter(({ name, bit }) => (pills & bit) !== 0 && !pressedActions[name]).map(({ name, seed }) => (
+                    <Glow key={name} on={hint?.action === name}>
+                        <ActionButton seed={seed} onClick={onClick[name]}>
+                            <Text id={name} />
+                        </ActionButton>
+                    </Glow>
+                ))}
+            </div>
 
             {/* a signed-in watcher is told they are watching; a seat holds a hand, signed in or not (the tutorial) */}
             {(user_id || (game && game.mySeat >= 0)) && <CardDiv />}

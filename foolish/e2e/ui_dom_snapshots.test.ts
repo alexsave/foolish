@@ -524,12 +524,14 @@ test('a replay with names, at its last step', async () => {
 // card that both covers and transfers (a trump of the attack's rank). Each board
 // below is rendered for real and its cards are TAPPED, as a player selects them
 // (DragContext: a press and a release under 150 ms), and the button column is
-// read back slot by slot, so a button that left a gap, or one that moved into
-// another's place, is seen. "_" is an empty slot. Podkidnoy (GAME_RULE_NO_PASS)
+// read back child by child, top to bottom. The column holds the kernel's pills
+// and nothing else - no spacer keeps a slot for a button that is not there - so
+// a lone pill is the column's only child, and Pass and Cover stand Cover above
+// Pass, as the iMessage column does (FActionBar). Podkidnoy (GAME_RULE_NO_PASS)
 // has no row: the website's boards carry no rules variant yet (Lobby.tsx
 // TODO(podkidnoy)), and legal.c's own tests hold its pills.
 
-/** The action column, top to bottom: each slot's button label, "_" for a spacer. */
+/** The action column, top to bottom: each child's button label, "_" for a child that is no button. */
 function actionSlots(host: HTMLElement): string[] {
     const col = host.querySelector('[style*="bottom: 90px"][style*="right: 20px"]');
     assert.ok(col, 'the action column renders');
@@ -577,18 +579,18 @@ function pillBoard(table: string[], attacker: 0 | 1) {
 
 test('the attacker: Good over a covered table, gone once a throw-in is selected', async () => {
     await onBoard('pilla', pillBoard(['6h/8h'], 0), 0, ME, async (host, wait) => {
-        assert.deepEqual(actionSlots(host), ['Good', '_'], 'nothing selected over a covered table: Good');
+        assert.deepEqual(actionSlots(host), ['Good'], 'nothing selected over a covered table: Good');
         await tapCard(host, '6s', wait);
-        assert.deepEqual(actionSlots(host), ['_', 'Attack'], 'a throw-in selected: Attack, and Good is gone');
+        assert.deepEqual(actionSlots(host), ['Attack'], 'a throw-in selected: Attack, and Good is gone');
         await press('g', wait);
         assert.equal(invoked.join(','), '', 'and G does not say Good over the selected card');
         await press('ArrowDown', wait);
         assert.equal(invoked.join(','), '', 'nor does the down arrow');
         await tapCard(host, 'Qd', wait);
-        assert.deepEqual(actionSlots(host), ['_', '_'], 'a selection that is no throw-in: no button at all');
+        assert.deepEqual(actionSlots(host), [], 'a selection that is no throw-in: no button at all');
         await tapCard(host, '6s', wait);
         await tapCard(host, 'Qd', wait);
-        assert.deepEqual(actionSlots(host), ['Good', '_'], 'the selection put back: Good again');
+        assert.deepEqual(actionSlots(host), ['Good'], 'the selection put back: Good again');
         await press('ArrowDown', wait);
         assert.ok(invoked.includes('action'), `with nothing selected the down arrow says Good (${invoked.join(',')})`);
     });
@@ -596,29 +598,29 @@ test('the attacker: Good over a covered table, gone once a throw-in is selected'
 
 test('the attacker over an open bout: no Good, and Attack for a throw-in', async () => {
     await onBoard('pillb', pillBoard(['6h'], 0), 0, ME, async (host, wait) => {
-        assert.deepEqual(actionSlots(host), ['_', '_'], 'an uncovered attack: nothing to say yet');
+        assert.deepEqual(actionSlots(host), [], 'an uncovered attack: nothing to say yet');
         await tapCard(host, '6s', wait);
-        assert.deepEqual(actionSlots(host), ['_', 'Attack'], 'a throw-in selected: Attack');
+        assert.deepEqual(actionSlots(host), ['Attack'], 'a throw-in selected: Attack');
     });
 });
 
 test('the defender: Take with nothing selected; Cover, Pass, or both for the selected card, and never Take', async () => {
     await onBoard('pillc', pillBoard(['6h'], 1), 0, ME, async (host, wait) => {
-        assert.deepEqual(actionSlots(host), ['_', 'Pickup', '_'], 'nothing selected: Take alone');
+        assert.deepEqual(actionSlots(host), ['Pickup'], 'nothing selected: Take alone');
         await tapCard(host, '9h', wait);
-        assert.deepEqual(actionSlots(host), ['_', '_', 'Cover'], 'a covering card: Cover, where it always stood');
+        assert.deepEqual(actionSlots(host), ['Cover'], 'a covering card: Cover alone');
         await press('u', wait);
         assert.equal(invoked.join(','), '', 'and U does not take the table over the selected card');
         await press('ArrowDown', wait);
         assert.equal(invoked.join(','), '', 'nor does the down arrow');
         await tapCard(host, '9h', wait);
         await tapCard(host, '6d', wait);
-        assert.deepEqual(actionSlots(host), ['Pass', '_', '_'], 'a card of the attack\'s rank: Pass, where it always stood');
+        assert.deepEqual(actionSlots(host), ['Pass'], 'a card of the attack\'s rank: Pass alone');
         await tapCard(host, '6d', wait);
         await tapCard(host, '6c', wait);
-        assert.deepEqual(actionSlots(host), ['Pass', '_', 'Cover'], 'a trump of the attack\'s rank: Pass and Cover, both its own');
+        assert.deepEqual(actionSlots(host), ['Cover', 'Pass'], 'a trump of the attack\'s rank: Cover above Pass, as iMessage stacks them');
         await tapCard(host, '6c', wait);
-        assert.deepEqual(actionSlots(host), ['_', 'Pickup', '_'], 'the selection put back: Take again');
+        assert.deepEqual(actionSlots(host), ['Pickup'], 'the selection put back: Take again');
         await press('u', wait);
         assert.ok(invoked.includes('action'), `with nothing selected U takes the table (${invoked.join(',')})`);
     });
