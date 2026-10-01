@@ -9699,8 +9699,11 @@ static uint64_t dl_bytes(uint64_t h, const uint8_t *p, int n) {
 }
 
 static void test_opening_deal_bytes_are_unchanged(void) {
-    // [0] the deal's commit products; [1] game logs + replay codes.
-    static const uint64_t golden[2] = { 0xe894896b849e0765ULL, 0x3ec4d781fc36b8baULL };
+    // [0] the deal's commit products; [1] game logs + replay codes. [0] moved
+    // once, when the writer went to the v3 state blob: hashing that blob as its
+    // v2 self (format byte 2, no trailing clock) gives the v2 writer's digest
+    // back, so the clock is the whole of the change.
+    static const uint64_t golden[2] = { 0xd207116e4eee7539ULL, 0x3ec4d781fc36b8baULL };
     uint64_t hc = 1469598103934665603ULL;
     for (int np = 2; np <= MAX_PLAYERS; np++) {
         for (int seed_k = 1; seed_k <= 3; seed_k++) {
