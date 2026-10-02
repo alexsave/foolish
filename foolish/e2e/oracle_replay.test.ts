@@ -254,6 +254,37 @@ test('§12.2-1c every pass a hand can make is on the panel', async () => {
     console.log(`  §12.2-1c: ${walked} pass decisions, widest board offered ${widest} passes`);
 });
 
+test('§12.2-1d a podkidnoy replay is deliberated as podkidnoy: no transfer on the panel', async () => {
+    // THE ORACLE BUILDS ITS GAME FROM THE BOARD ALONE (replay_steps_board_v6
+    // into wasm_import_state), so the board is where the table's rules have to
+    // be. They were not: every podkidnoy decision was deliberated as the
+    // passing game, the panel listed transfers the table never had - often
+    // ranked best - and every other row's expected finish came from rollouts
+    // that transferred too. The deal is §12.2-1c's, which stages a defender
+    // holding several of the attack's rank; at a podkidnoy table that defender
+    // may only cover or take.
+    const inst = await freshInstance();
+    const played = playBotTable(PASS_BOARD, seedBytes(PASS_BOARD.length, 758), { passing: false });
+    const frames = buildReplayFrames(played.code, 'g', null);
+    let defences = 0;
+    for (let j = 1; j < frames.length; j++) {
+        if (findDecisionIndex(frames, j) !== j) continue;
+        const kind = frames[j].kind;
+        assert.notEqual(kind, REPLAY_STEP.PASS, `step ${j}: a podkidnoy game recorded a transfer`);
+        if (kind !== REPLAY_STEP.COVER && kind !== REPLAY_STEP.PICKUP) continue;
+        const job = buildOracleJob(frames, played.code, j, true, 'podkidnoy-6p');
+        if (!job) continue;
+        inst.writeEnv({ ...ENV_BASE, OG_W1: '8' });
+        const r = inst.analyzeOnce(job, 0x51d + j);
+        assert.ok('record' in r, `step ${j}: the dump parsed`);
+        const passes = (r as { record: any }).record.candidates.filter((c: any) => c.type === 'pass');
+        assert.equal(passes.length, 0, `step ${j}: the panel offered ${passes.map((c: any) => c.label).join(', ')} at a podkidnoy table`);
+        defences++;
+    }
+    assert.ok(defences >= 10, `enough defences were deliberated (${defences})`);
+    console.log(`  §12.2-1d: ${defences} podkidnoy defences, no transfer on any panel`);
+});
+
 test('§12.2-2 batching: keys stable, n increases, worlds vary across seeds', async () => {
     const inst = await freshInstance();
     const { code, frames, id } = await fixture('4p', hw(4), 42);
