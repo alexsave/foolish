@@ -4850,12 +4850,65 @@ static void ob_edges(void) {
     }
 }
 
+// E. THE MOVE THAT ENDS THE GAME, arriving on a board that showed the chain
+// before it. The arriving bubble is FINISHED and msg_replay now settles a
+// finished chain's status (game_settle_status), so this pins that the boundary
+// is still the sender's claim, that the final move is left to animate, and that
+// adopting the arrival rebuilds a game that is over.
+static void ob_game_ending(int *posed) {
+    static Game g, s0, rg;
+    static OBubble shown, arr;
+    for (int pi = 0; pi < 3; pi++) {
+        const int np = OB_SEATS[pi];
+        for (uint32_t gi = 0; gi < 60 && posed[pi] < 6; gi++) {
+            uint8_t seed[MSG_SEED_LEN];
+            seed_fill(seed, 17300u + gi * 41u + (uint32_t)np);
+            g_rng = 9900u + gi * 17u + (uint32_t)np;
+            og_start(&g, seed, np);
+            const uint64_t gid = 0xF0A0ULL + gi;
+            for (int step = 0; step < 2000 && og_live(&g); step++) {
+                game_clone(&s0, &g);
+                if (!og_random_step(&g)) break;
+                if (og_live(&g)) continue;
+                // `g` is over and `s0` is the table one move before.
+                if (!ob_seal(&shown, &s0, seed, np, gid, MSG_NO_BASE)) break;
+                if (!ob_seal(&arr, &g, seed, np, gid, shown.logs)) break;
+                CHECK(shown.e.phase == MSG_PHASE_LIVE && arr.e.phase == MSG_PHASE_FINISHED,
+                      "game end %dp: phases %d -> %d", np, shown.e.phase, arr.e.phase);
+                const int b = ob_boundary(&shown, &arr);
+                const int claim = msg_atoms_before_claim(&arr.e);
+                CHECK(b == claim, "game end %dp: boundary %d, want the sender's %d", np, b, claim);
+                CHECK(b >= 0 && b < arr.e.turn,
+                      "game end %dp: boundary %d leaves nothing of %d atoms to animate",
+                      np, b, arr.e.turn);
+                CHECK(ob_atom_kind(&arr, b) >= 0,
+                      "game end %dp: no action atom at the boundary %d", np, b);
+                // Adopting it rebuilds a game that is over; the shown chain
+                // still replays as one in play.
+                CHECK(msg_replay(&arr.e, &rg) == MSG_EOK && rg.status == GAME_STATUS_GAME_OVER,
+                      "game end %dp: the finished arrival replayed status %d", np, rg.status);
+                CHECK(msg_replay(&shown.e, &rg) == MSG_EOK && rg.status == GAME_STATUS_PLAYING,
+                      "game end %dp: the chain before the end replayed status %d", np, rg.status);
+                // A re-delivery of the finished chain animates nothing.
+                CHECK(ob_boundary(&arr, &arr) == arr.e.turn,
+                      "game end %dp: a re-delivery opened at %d of %d",
+                      np, ob_boundary(&arr, &arr), arr.e.turn);
+                posed[pi]++;
+                break;
+            }
+        }
+        CHECK(posed[pi] > 0, "game end %dp: no fixture built", np);
+    }
+}
+
 static void test_open_boundary(void) {
-    int closing[3] = { 0 }, after[3][4] = { { 0 } }, stale[6] = { 0 };
+    int closing[3] = { 0 }, after[3][4] = { { 0 } }, stale[6] = { 0 }, ending[3] = { 0 };
     ob_closing_good(closing);
     ob_after_good(after);
     ob_stale_and_siblings(stale);
     ob_edges();
+    ob_game_ending(ending);
+    printf("  open boundary: game end %d/%d/%d (2/3/4p)\n", ending[0], ending[1], ending[2]);
     printf("  open boundary: closing good %d/%d/%d (2/3/4p); after a pending good 3p "
            "attack %d cover %d pass %d pickup %d, 4p attack %d cover %d pass %d pickup %d; "
            "raced goods %d/%d (3/4p); stale %d/%d/%d, sibling %d/%d/%d\n",
