@@ -294,6 +294,22 @@ public enum CollapseTween {
     @MainActor public static var autoCollapses = 0
     @MainActor public static var isAutoCollapsing: Bool { autoCollapses > 0 }
 
+    /// WHETHER TO COLLAPSE is asked of the drawer as the host's will/did
+    /// callbacks describe it (`GateWire.DrawerStyle`, the kernel's rule), not
+    /// of Apple's `presentationStyle`, which keeps a late install
+    /// didTransition(compact) over a drawer that a first-run name screen had
+    /// already expanded - so Create game never collapsed (owner notes 1 and 7).
+    /// Ships on; `collapse.drawerstyle=0` in `dev.flags` puts back the property.
+    public static let readsDrawerFromCallbacksByDefault = true
+
+    public static var readsDrawerFromCallbacks: Bool {
+        #if DEBUG || SOLO_TESTING
+        return MessageDevBoard.flag("collapse.drawerstyle", shipping: readsDrawerFromCallbacksByDefault)
+        #else
+        return readsDrawerFromCallbacksByDefault
+        #endif
+    }
+
     /// Heights under this are the compact strip; an expanded board is far
     /// taller. The transition reports both, and only the compact ones say
     /// anything about where the collapse is going.

@@ -238,6 +238,9 @@ final class MessagesViewController: MSMessagesAppViewController {
         hostTrace("willBecomeActive", nil, conversation)
 #endif
         FlightRecorder.note("active", "\(conversation.remoteParticipantIdentifiers.count + 1)p chat")
+        // The drawer starts where this activation was handed it; every style
+        // callback after this moves it (`drawerIsExpanded`).
+        drawerStyle = GateWire.DrawerStyle(expanded: presentationStyle == .expanded)
         // A FRESH ACTIVATION OWNS ITS SELECTION. See `didSelect`.
         becameActiveAt = Date()
         // A NEW ACTIVATION IS A NEW AUDIENCE. Any just-sent marker still lying
@@ -955,6 +958,8 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func willTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
         super.willTransition(to: presentationStyle)
+        drawerStyle.note(did: false, expanded: presentationStyle == .expanded)
+        FlightRecorder.note("style-will", presentationStyle == .compact ? "compact" : "expanded")
 #if RIG_ARRIVE
         hostTrace("willTransition", nil, nil,
                   "to=\(presentationStyle == .compact ? "compact" : "expanded")")
@@ -1000,7 +1005,10 @@ final class MessagesViewController: MSMessagesAppViewController {
 #endif
         nameExpandSaw(presentationStyle)
         CollapseTween.isPresenting = false
-        FlightRecorder.note("style", presentationStyle == .compact ? "compact" : "expanded")
+        drawerStyle.note(did: true, expanded: presentationStyle == .expanded)
+        FlightRecorder.note("style", (presentationStyle == .compact ? "compact" : "expanded")
+                            + (drawerStyle.isExpanded == (presentationStyle == .expanded)
+                               ? "" : " (late - the drawer is still \(drawerStyle.isExpanded ? "expanded" : "compact"))"))
         let waiters = transitionWaiters
         transitionWaiters.removeAll()
         // In KEY order, which is why the key is a monotonic sequence number.
@@ -1208,7 +1216,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         // UNDO STAYS OUT OF SIGHT FOR ALL OF WHAT FOLLOWS - the picture being
         // baked, the rest, the collapse (CollapseTween.autoCollapses, read by
         // UndoGate). From the first line, and released on every way out.
-        let collapsing = !fromUndo && presentationStyle == .expanded
+        let collapsing = !fromUndo && drawerIsExpanded
         if collapsing { CollapseTween.autoCollapses += 1 }
         defer { if collapsing { CollapseTween.autoCollapses -= 1 } }
         // NEWEST STAGE WINS, and the losers stop where they stand.
@@ -1320,7 +1328,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         // Already in the compact drawer (an ordinary in-drawer move): no style
         // transition will run, so there is no preview flyover to avoid - stage
         // the bubble immediately, exactly the pre-round-10b timing.
-        if presentationStyle != .expanded {
+        if !drawerIsExpanded {
             insertStaged()
             return
         }
@@ -1385,6 +1393,23 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     /// Which `stage` run owns the input field - see the note at the top of it.
     private var stageGeneration = 0
+
+    /// The drawer as the host's will/did callbacks describe it - see
+    /// `drawerIsExpanded`.
+    private var drawerStyle = GateWire.DrawerStyle(expanded: false)
+
+    /// IS THE DRAWER UP, so that a staged move should put it down to Send?
+    /// Not `presentationStyle`: the framework sets that in every didTransition,
+    /// and a self-expanding cold open (a first-run name screen) gets the
+    /// install's own didTransition(compact) about half a second AFTER its
+    /// expand has landed. The property then says compact over an expanded
+    /// drawer until the next transition, and Create game staged its lobby in
+    /// the "already compact" branch below and never collapsed (owner notes 1
+    /// and 7). Which did counts is the kernel's rule (c/src/msg_expand.h,
+    /// "WHICH WAY THE DRAWER IS").
+    private var drawerIsExpanded: Bool {
+        CollapseTween.readsDrawerFromCallbacks ? drawerStyle.isExpanded : presentationStyle == .expanded
+    }
 
     /// The chain a message Messages reports actually carries. The message is the
     /// authority on its own bytes; our `pendingStage` bookkeeping is not (round
