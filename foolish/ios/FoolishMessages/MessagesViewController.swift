@@ -129,9 +129,13 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// guessing. `-[_MSMessageAppContext _didReceiveMessage:conversationState:]`
     /// is a bare dispatch to main that updates the conversation and calls
     /// `didReceiveMessage:conversation:`. There is no presentation-style, session
-    /// or selection check on the extension side at all. So the decision not to
-    /// deliver is the HOST's, its code is not on disk in the simulator runtime,
-    /// and there is no file:line here to find. Process suspension was my own
+    /// or selection check on the extension side at all (docs/
+    /// IMESSAGE_LIVE_ARRIVAL_HOST.md E1, E4). So the decision not to deliver is
+    /// the HOST's. Its code IS on disk in the simulator runtime
+    /// (MSMessageExtensionBalloonPlugin.bundle, plus ChatKit), and the same doc
+    /// reads it: exactly two host methods send the receive (M3, M4), and which
+    /// of them reaches a given drawer in practice is still open (U1, U4) until
+    /// phase 2 observes it live. Process suspension was my own
     /// theory and it is wrong: XPC messages to a suspended process QUEUE and
     /// deliver on resume, and that session demonstrably resumed twice - it
     /// rendered the diagnostic panel while her join was already in the
@@ -495,18 +499,22 @@ final class MessagesViewController: MSMessagesAppViewController {
             // extension is bound to, and the replacement is what fires didReceive.
             // Exactly two host paths send `_didReceiveMessage:conversationState:`:
             //
-            //   PATH A, and it is DEAD on iOS 26:
-            //     -[CKChatInputController _handleChatItemDidChange:]
-            //       -> notifyBrowserViewControllerOfMatchingNewMessages:
-            //          requires browserSwitcher.currentViewController to be us.
-            //     `currentViewController` is restored only by
-            //     browserTransitionCoordinator:expandedStateDidChange:withReason:,
-            //     reachable only from -[CKBrowserSwitcherViewController
-            //     setExpanded:withReason:] - which has ZERO call sites in ChatKit or
-            //     iMessageApps under the app-card model. Which is why not even our
-            //     own echo arrives.
+            //   PATH A, not observed to deliver; whether it can is OPEN:
+            //     -[CKChatController _handleChatItemDidChange:]
+            //       -> -[CKChatInputController
+            //           notifyBrowserViewControllerOfMatchingNewMessages:]
+            //          requires browserSwitcher.currentViewController to be us
+            //          (docs/IMESSAGE_LIVE_ARRIVAL_HOST.md M1, M2).
+            //     An earlier reading said `currentViewController` is restored only
+            //     through -[CKBrowserTransitionCoordinator setExpanded:withReason:],
+            //     which has no call site, so this path is dead. The binary does not
+            //     support that: -[CKBrowserSwitcherViewController
+            //     _loadBrowserForBalloonPlugin:datasource:] and
+            //     _updateVisibleBrowserView set it too (M2c). Our own echo not
+            //     arriving in the owner's logs is the observation; the reason is
+            //     U1, for phase 2 to settle on the simulator.
             //
-            //   PATH B, the live one:
+            //   PATH B, the live one (M4, M4b):
             //     -[MSMessageExtensionBrowserViewController setBalloonPluginDataSource:]
             //       sets dataSource.delegate = self
             //     -> a same-MSSession message replaces that datasource's payload
