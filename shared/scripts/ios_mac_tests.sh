@@ -218,7 +218,7 @@ trap 'if [ -n "$BACKUP_DIR" ]; then restore_entitlements; fi' EXIT
 # the tree ("cannot find 'TrumpNudge' in scope") until somebody thinks of
 # `--regen`. A deleted file was missed the same way, and no mtime can show it.
 #
-# It costs nothing: `xcodegen generate` on foolish's project.yml takes ~0.1s.
+# It costs nothing: `xcodegen generate` on a product's project.yml takes ~0.1s.
 # When the result is byte-identical to the project that was there, the old copy
 # goes back with its timestamps, so Xcode sees no change at all and keeps its
 # cached build description. `--regen` is still accepted and changes nothing.
