@@ -15,7 +15,7 @@
 
 import {
     ANIM_EVT, ANIM_LOC, animBuildPlan, animPlanAt,
-    type AnimCountsSnap, type AnimFrameSnap, type AnimPlanEventIn, type AnimPlanSnap,
+    type AnimCountsSnap, type AnimFrameSnap, type AnimPlanEventIn, type AnimPlanSnap, type AnimPlanStepSnap,
 } from '@sdk/ts/wasm/bots.ts';
 import { covered, sameCard, NO_CARD, type TableView, type ViewBattle, type ViewCard } from './view';
 
@@ -33,6 +33,23 @@ export interface AnimStep {
     to_location?: string;
     /** The board this step leaves, when it has one of its own. */
     game_state?: TableView | null;
+    /** The plan's answer, never the step's own: the trump this draw deals out
+     *  and where it leaves from (`withTrumpOut`). */
+    trump_out?: ViewCard;
+    trump_from?: 'flipped';
+}
+
+/**
+ * THE STEP AS THE PLAN DRAWS IT: `step` with the trump its draw deals out, when
+ * the kernel says it deals one (AnimPlanStep.trump_out / trump_from). The
+ * kernel reads that off the boards either side of the step, so a viewer whose
+ * draw is masked gets the trump's real identity too, and the trump leaves from
+ * its own slot rather than riding the deck cards' flight. `step` itself comes
+ * back when the plan names no trump, which is every step but one per game.
+ */
+export function withTrumpOut<S extends AnimStep>(step: S, planned: AnimPlanStepSnap | undefined): S {
+    if (!planned?.trumpOut || planned.trumpFrom !== ANIM_LOC.flipped) return step;
+    return { ...step, trump_out: planned.trumpOut, trump_from: 'flipped' };
 }
 
 const idOf = (c: ViewCard): number =>

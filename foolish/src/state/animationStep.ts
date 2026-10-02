@@ -26,6 +26,13 @@ export interface ClientAnimationEvent {
     battle_index?: number;
     message?: string;
     game_state?: TableView; // the board after this event
+    // THE KERNEL'S: the flipped trump this draw deals out, by its real identity
+    // for every viewer, and the place it leaves from (AnimPlanStep.trump_out /
+    // trump_from). It is the LAST of `cards`; the rest leave from
+    // `from_location`. Put on the step in flight by the frame loop
+    // (src/state/animPlan.ts withTrumpOut), never by a push or a prediction.
+    trump_out?: Card;
+    trump_from?: 'flipped';
     is_revert?: boolean; // CLIENT-ONLY: flag for reverted optimistic animations
     // CLIENT-ONLY: whether this step's board is still worth committing when its
     // flight lands. A predicted move's board rides its own flight (there is no

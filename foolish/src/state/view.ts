@@ -28,8 +28,9 @@ export const covered = (b: ViewBattle): boolean => isCard(b.defense);
 /** The same card. */
 export const sameCard = (a: ViewCard, b: ViewCard): boolean => a.suit === b.suit && a.value === b.value;
 
-/** What `view` shows that is a rule of the game, with `fromDeck` cards in flight out of the stock, `toFlipped` of them to the trump slot. */
-export const rulesOf = (view: TableView, fromDeck = 0, toFlipped = 0): ViewRules => clientTable().rules(view, fromDeck, toFlipped);
+/** What `view` shows that is a rule of the game, with `fromDeck` cards in flight out of the stock, `toFlipped` of them to the trump slot, and `trumpOut` while its trump is in the air to a hand. */
+export const rulesOf = (view: TableView, fromDeck = 0, toFlipped = 0, trumpOut = false): ViewRules =>
+    clientTable().rules(view, fromDeck, toFlipped, trumpOut);
 
 /**
  * The name the page gives a seat's hand and ring (data-player-id, React keys): the
