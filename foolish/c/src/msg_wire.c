@@ -576,11 +576,13 @@ int msg_seal(MsgEnvelope *e, const Game *g, int base_logs,
     e->variant = (uint8_t)(game_pass_allowed(g) ? MSG_VARIANT_PASS : 0u);
 
     // A 0-action game seals to an EMPTY body: a WAITING lobby, or the last-joiner
-    // LIVE handoff that "applies nothing" (§5.2). The v6 producer is an action-run
-    // codec keyed on the logged opening attack — it has nothing to encode and no
-    // first attacker to key on, so it (correctly) refuses. The deal alone is the
-    // state; emit no body and let msg_replay's 0-action path rebuild from the seed.
-    // "No opening attack logged" is the same fact the encoder keys on.
+    // LIVE handoff that "applies nothing" (§5.2). The deal alone is the state;
+    // emit no body and let msg_replay's 0-action path rebuild from the seed.
+    // The v6 producer CAN encode a dealt, unplayed game now (a zero-atom code,
+    // which is how a started bubble replays its deal on open), but the body is
+    // wire every shipped build reads, and an empty one is what they all expect
+    // here - so the seal does not change. "No opening attack logged" is the fact
+    // this keys on, and a lobby still has no deal to encode at all.
     if (replay_first_attacker_from_logs(g->logs, g->num_logs) < 0) {
         (void)scratch; (void)body_cap; (void)base_logs;
         e->actions     = body;   // unused (len 0), but a valid non-null buffer

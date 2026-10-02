@@ -268,7 +268,11 @@ int replay_decoded_log(const unsigned char *dec, int len, int *at, ReplayDecoded
 // order, and the trump.
 //
 //   g         a game dealt from `seed` and played; its logs are the action
-//             stream. Rejected with REPLAY_ETOOLONG if the log buffer
+//             stream. A game dealt with NO move yet (an iMessage chat right
+//             after Start) encodes too: zero atoms, opener off the game's own
+//             first_attacker, so its replay is one step - the deal. A lobby
+//             (nobody leads yet) is REPLAY_EINPUT: there is no deal to show.
+//             Rejected with REPLAY_ETOOLONG if the log buffer
 //             overflowed (num_logs >= MAX_LOGS): a truncated stream is
 //             untrusted, not encodable. Callers SKIP that one; it is the
 //             build's documented ceiling, not an encoder fault.

@@ -1621,8 +1621,21 @@ int replay_encode_v6_from_game(const Game *g, const unsigned char *seed, int see
     if (n < 2 || n > MAX_PLAYERS) return -REPLAY_EINPUT;
     if (max_atoms <= 0) return -REPLAY_EINPUT;
 
+    // THE OPENER. Once anybody has attacked it is the first logged attack. Before
+    // that it is the seat the deal named - a started game with no move yet,
+    // which is exactly what an iMessage chat opens on after Start, and whose
+    // whole replay is its deal (one step, zero atoms: the format always could
+    // say that). It is read off the game only while the game is dealt and
+    // untouched, because that is the only moment `first_attacker` still means
+    // "who opened": every bout reassigns it. A lobby names nobody
+    // (GAME_SEAT_NONE) and so still refuses - it has no deal to show.
+    // encode_v6_run proves the seat against the deal either way: an imposed
+    // opener (the fool's penalty) gets the forced bit, a derived one does not.
     int fa = replay_first_attacker_from_logs(g->logs, g->num_logs);
-    if (fa < 0 || fa >= n) return -REPLAY_EINPUT;   // no attack logged → nothing to encode
+    if (fa < 0 && g->status == GAME_STATUS_PLAYING && g->num_battles == 0
+        && count_atoms_from_logs(g->logs, g->num_logs, 1) == 0)
+        fa = g->first_attacker;
+    if (fa < 0 || fa >= n) return -REPLAY_EINPUT;   // no opener → nothing to encode
 
     unsigned char reveals[MAX_PLAYERS * CARDS_PER_PLAYER + MAX_DECK];
     int n_reveals = 0, trump_id = 0;
@@ -1645,8 +1658,9 @@ int replay_encode_v6_from_game(const Game *g, const unsigned char *seed, int see
     if (g->has_flipped && rep_wire_of(g->flipped) != (unsigned char)trump_id)
         return -REPLAY_EHEADER;
 
+    // Zero atoms is a started game's whole replay: the deal and nothing after.
     int n_actions = count_atoms_from_logs(g->logs, g->num_logs, max_atoms);
-    if (n_actions <= 0) return -REPLAY_EINPUT;
+    if (n_actions < 0) return -REPLAY_EINPUT;
 
     Src s;
     memset(&s, 0, sizeof s);

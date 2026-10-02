@@ -868,6 +868,80 @@ static int lobby_v2_reseat_check(void) {
     return 0;
 }
 
+// ---------- the started bubble plays the deal ------------------------------
+//
+// The owner, on iMessage: "Did not see card deal". Start seals a LIVE bubble at
+// turn 0, and opening it asks the kernel for that bubble's frames exactly as
+// smoke_open_bubble does: adopt, share code, last events. The deal is the one
+// thing such a chain has to show, so every seat and a spectator get one frame
+// holding players x CARDS_PER_PLAYER deal events, round-robin from seat 0 - at
+// the boundary the bubble itself claims AND at the board's floor of 0 (a cold
+// open clamps to what it has already shown, which is nothing).
+typedef struct { int n_deal, bad; int np; } SmokeDealCtx;
+static void smoke_deal_sink(void *ctx, int index, const EvwRead *ev) {
+    SmokeDealCtx *c = (SmokeDealCtx *)ctx;
+    (void)index;
+    if (ev->type != EVW_T_DEAL) return;
+    if (ev->seat != c->n_deal % c->np || ev->n_cards != 1) c->bad = 1;
+    c->n_deal++;
+}
+
+static int started_deal_check(void) {
+    static const int nps[] = { 2, 4 };
+    const SmokeJoin jspec[4] = { {0,"Ann"}, {1,"Bo"}, {2,"Cy"}, {3,"Di"} };
+    const uint8_t zero8[8] = {0};
+    for (int pi = 0; pi < 2; pi++) {
+        const int np = nps[pi];
+        unsigned char seed[32];
+        for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(i * 11 + np * 5 + 3);
+        if (fio_new_game(seed, 32, np) != FIO_EOK) { printf("FAIL started deal: new_game(%d)\n", np); return 1; }
+        unsigned char joins[128];
+        const int joins_n = pack_joins(joins, (int)sizeof joins, jspec, np);
+        unsigned char live[2048];
+        const int ln = fio_msg_encode(2 /* LIVE */, 0, 0xDEA1ULL, zero8, joins, joins_n, 0, live, sizeof live);
+        if (ln <= 0) { printf("FAIL started deal (%dp): LIVE encode %d\n", np, ln); return 1; }
+        for (int viewer = -1; viewer < np; viewer++) {
+            for (int floor_open = 0; floor_open < 2; floor_open++) {
+                if (fio_msg_decode(live, ln) != FIO_EOK) { printf("FAIL started deal (%dp): decode\n", np); return 1; }
+                const MsgHeader *h = (const MsgHeader *)fio_msg_header_ptr();
+                if (h->e.phase != 2 || h->e.turn != 0) {
+                    printf("FAIL started deal (%dp): phase %d turn %d\n", np, h->e.phase, h->e.turn); return 1;
+                }
+                const int n_new = h->e.n_new, turn = h->e.turn;
+                int atoms_before = n_new == 255 ? turn : (n_new > 0 ? turn - n_new : -1);
+                if (floor_open && atoms_before < 0) atoms_before = 0;   // MessageKernel.openChain's floor
+                char code[4096];
+                const int cl = fio_replay_share_code_b32(code, sizeof code);
+                if (cl < 0) {
+                    printf("FAIL started deal (%dp, viewer %d): the started game has no replay code (%d, detail %d)\n",
+                           np, viewer, cl, fio_last_replay_error());
+                    return 1;
+                }
+                const int fl = fio_replay_last_events_packed(code, viewer, atoms_before,
+                                                             (unsigned char *)evbuf, sizeof evbuf);
+                SmokeDealCtx c = { 0, 0, np };
+                int q = 0;
+                while (fl > 0 && q + 2 <= fl) {
+                    const unsigned char *b = (const unsigned char *)evbuf;
+                    const int flen = b[q] | (b[q + 1] << 8);
+                    q += 2;
+                    if (flen <= 0 || q + flen > fl || evwire_read(b + q, flen, 0, 0, 0, smoke_deal_sink, &c) < 0) {
+                        c.bad = 1; break;
+                    }
+                    q += flen;
+                }
+                if (fl < 0 || c.bad || c.n_deal != np * CARDS_PER_PLAYER) {
+                    printf("FAIL started deal (%dp, viewer %d, atoms_before %d): %d deal events (rc %d, order %s), want %d\n",
+                           np, viewer, atoms_before, c.n_deal, fl, c.bad ? "broken" : "ok", np * CARDS_PER_PLAYER);
+                    return 1;
+                }
+            }
+        }
+    }
+    printf("started deal OK (2p and 4p, every seat and a spectator, both boundaries)\n");
+    return 0;
+}
+
 // ---------- the lobby's rules checkbox (podkidnoy) --------------------------
 //
 // The same lobby flow, with the transfer turned off - through the API the app
@@ -2232,6 +2306,7 @@ int main(void) {
     if (chained_cover_check() != 0) return 1;
     if (lobby_v2_reseat_check() != 0) return 1;
     if (lobby_rules_check() != 0) return 1;
+    if (started_deal_check() != 0) return 1;
     if (surface_wire_check() != 0) return 1;
     if (nine_player_cap_check() != 0) return 1;
     if (beats_wire_check() != 0) return 1;
