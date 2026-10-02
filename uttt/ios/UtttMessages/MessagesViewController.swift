@@ -115,6 +115,11 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     /// AGAIN WAS TAPPED ON A BIG GAME: the rematch is a big one.
     private var bigAgain = false
+
+    /// THE MESSAGE THE DIAGNOSTICS ARE ABOUT, and how the drawer came to it:
+    /// the selection at activation, a bubble tapped while up, or an arrival.
+    private var diagMessage: MSMessage?
+    private var diagFrom = UtttBigDiag.From.none
 #endif
 
     // MARK: the conversation
@@ -161,6 +166,8 @@ final class MessagesViewController: MSMessagesAppViewController {
         arrived = nil
 #if UTTT_BIG_BOARD
         arrivedMessage = nil
+        diagMessage = conversation.selectedMessage
+        diagFrom = diagMessage == nil ? .none : .selected
 #endif
         draftIsNewGame = false
         unbound = conversation.selectedMessage == nil
@@ -328,6 +335,8 @@ final class MessagesViewController: MSMessagesAppViewController {
         arrived = nil
 #if UTTT_BIG_BOARD
         arrivedMessage = nil
+        diagMessage = message
+        diagFrom = .didSelect
 #endif
         draftIsNewGame = false
 #if DEBUG
@@ -368,6 +377,8 @@ final class MessagesViewController: MSMessagesAppViewController {
         arrived = UtttWire(url: message.url)
 #if UTTT_BIG_BOARD
         arrivedMessage = message
+        diagMessage = message
+        diagFrom = .didReceive
 #endif
         present(conversation, motion: .arrival)
     }
@@ -450,6 +461,11 @@ final class MessagesViewController: MSMessagesAppViewController {
         let wasUnbound = unbound
 #if UTTT_BIG_BOARD
         liveBig?.setPending(false)
+        /* WHAT THIS DEVICE'S OWN EXTENSION SAW AS IT WENT: the diagnostics'
+         * history, to set beside the other phone's opening. */
+        if let text = message.url?.absoluteString, isBigText(text) {
+            UtttBigDiag.recordSend(message, in: conversation)
+        }
 #endif
         if let wire { settleSent(wire, conversation) } else { present(conversation, motion: .settle) }
 
@@ -1322,6 +1338,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         UtttLog.note("show", String(String(describing: type(of: screen)).prefix(40)))
 #if UTTT_BIG_BOARD
         gridHold(screen)
+        diagHold(screen)
 #endif
         guard appeared || sized else {
             pendingScreen = screen
@@ -1676,6 +1693,25 @@ final class MessagesViewController: MSMessagesAppViewController {
         case let s as UtttBigLobby:      s.setGridHold(toggle)
         default: break
         }
+    }
+
+    /// THE PICTURE DIAGNOSTICS' DOOR (docs/BIG_BOARD.md): a 1.5 s hold on
+    /// the rulebook of any screen, acting only while the 243 mode is on
+    /// (UtttBigDiagHold fails at once otherwise, and the rulebook is the
+    /// shipped door). Where the big game is not available, no hold at all.
+    private func diagHold(_ screen: UIView) {
+        guard UtttBig.available else { return }
+        UtttBigDiagHold.install(in: screen) { [weak self] in self?.openBigDiagnostics() }
+    }
+
+    /// The report on the bubble this drawer was opened from, over the drawer.
+    private func openBigDiagnostics() {
+        guard presentedViewController == nil, let conversation = activeConversation else { return }
+        /* the message the drawer came to, if it is still the one up */
+        let message = diagMessage
+        UtttLog.note("big-diag", "open: \(diagFrom) \(message?.url?.absoluteString.count ?? 0) chars")
+        let text = UtttBigDiag.report(on: message, in: conversation, from: diagFrom)
+        present(UtttBigDiagSheet(text: text), animated: true)
     }
 
     /// THE HOLD: flip the mode and show it. On THIS DEVICE'S UNSENT
