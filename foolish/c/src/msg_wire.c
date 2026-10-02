@@ -332,6 +332,15 @@ int msg_encode(const MsgEnvelope *e, unsigned char *out, int out_cap) {
         out[MSG_NEW_OFF] = e->n_new;
     }
     if (has_rematch) {
+        // Byte 61 is format 3's n_joins and is spoken for by nothing from
+        // format 4 on (the rematch block starts at 62). It is written as 0,
+        // never left as whatever the caller's buffer held: an encoder that
+        // skipped it made the bytes - and so the digest Rule P breaks ties on -
+        // depend on the output buffer's history rather than on the envelope.
+        // Decode still ignores it, so a bubble sealed before this was fixed
+        // (the phone's buffer was always zeroed; test fixtures were not) still
+        // opens.
+        out[MSG_HEADER_LEN_CLOCK - 1] = 0;
         out[MSG_OPEN_OFF] = e->opening;
         wr32(out + MSG_CARRY_OFF, e->carry_key);
         out[MSG_FOOL_OFF] = e->carry_fool;

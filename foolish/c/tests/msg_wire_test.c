@@ -5417,6 +5417,13 @@ static void print_goldens(void) {
 // Captured with --print-goldens at origin/main 4c7e65f6, before any rematch
 // generation existed. NEVER regenerate these to make a test pass: a diff here
 // means a shipped bubble now means something else.
+//
+// ONE BYTE WAS CORRECTED, deliberately, and only one: byte 61 of goldens 2 and
+// 3 (formats 6) was captured as 0x02, which msg_encode never wrote - it left
+// that header byte as whatever its output buffer held, here stale stack. The
+// encoder now writes it as 0 (what the phone's zeroed buffer always produced)
+// and decode ignores it, so nothing a device ever sealed reads differently.
+// Every other byte of all four is as captured.
 static const char *const GOLDEN_HEX[4] = {
     "f7050002515151515151515107000103010100000000000000002bf3a623483c4f879a33932efdbeef2b"
     "36a75bc695b9e59694e15aa5764ede8f341207030004416c657801044d69726102054a6f6e6173070007"
@@ -5426,10 +5433,10 @@ static const char *const GOLDEN_HEX[4] = {
     "58d69178f6a7890a2f7d1a70187be79bd51f4d926ee8f061276f3badeab534d420564003fd55c55f7ec2"
     "823ec1e62a",
     "f706000053535353535353530000000401000000000000000000e837280bdc9b13c8521a993e5a3e8bc6"
-    "2db37329d06a35c3afb3b1a343625ea9ad0b0002ff44c9ed0102040004416c657801044d69726102054a"
+    "2db37329d06a35c3afb3b1a343625ea9ad0b0000ff44c9ed0102040004416c657801044d69726102054a"
     "6f6e6173030550726979610000",
     "f706000254545454545454540100020401000000000000000000475869fe26cb76e82e8e9dc7887ed913"
-    "29b97fda6dc3dddabd9cdca229eb9fb50d0c01020200000000ff040004416c657801044d69726102054a"
+    "29b97fda6dc3dddabd9cdca229eb9fb50d0c01000200000000ff040004416c657801044d69726102054a"
     "6f6e61730305507269796101000d37490e3be569077df74386ce7a",
 };
 
@@ -5468,6 +5475,13 @@ static void test_format56_goldens(void) {
         CHECK(msg_replay(&e, &g) == MSG_EOK, "golden %d: replay refused", w);
         CHECK(e.generation == 0, "golden %d: a format-%d chain decoded as generation %u",
               w, e.format, e.generation);
+        // THE BYTES ARE THE ENVELOPE'S, not the output buffer's: encoding into
+        // a buffer full of 0xAA must give the same bubble as into zeros.
+        static unsigned char dirty[ENV_CAP];
+        memset(dirty, 0xAA, sizeof(dirty));
+        const int nd = msg_encode(&e, dirty, sizeof(dirty));
+        CHECK(nd == nw && !memcmp(dirty, want, (size_t)nw),
+              "golden %d: the encoder leaked its output buffer into the bubble", w);
     }
 }
 
