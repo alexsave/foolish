@@ -29,7 +29,22 @@ Three places read it, and nothing else has to:
 | --- | --- |
 | `game.c handle_pass` | refuses with `ENGINE_REJECT_PASS_DISABLED`, before any card rule |
 | `legal.c calc_pass_moves` | enumerates nothing, so the transfer is not in any menu |
-| `cordite_sim.c` | the Monte-Carlo world's own movegen and rollout policy, likewise |
+| `cordite_sim.c` | the Monte-Carlo world's own movegen, rollout policy and root-move apply, likewise; the endgame book is not asked (it is a proof about the classic game, keyed without rules), and the solver's transposition key includes the rules |
+
+Those readers are only right if the bit REACHES the Game they read, and three carriers make sure it does:
+
+| carrier | how the rules ride |
+| --- | --- |
+| the board (`view.c state_put` / `state_get`) | the flags byte (`STATE_FLAGS_AT`): bit 0 the flip, the bits above it `Game.rules`; zero is the classic game, so a classic board is the byte string it always was |
+| the durable blob (`view.c state_blob_put_at` / `state_blob_load`) | the v4 flag byte; the board inside a row names no rules, so the flag is the row's one owner |
+| a replay code (`replay.c`, `replay_steps.c`) | the pass-mode bit, which `replay_deal_start` stamps onto the rebuilt game |
+
+**The board was the missing one, and the Infinite Oracle is what it broke.**
+oracle.wasm never sees a code: it is handed the board the deciding seat saw (`replay_steps_board_v6`) and builds its game from those bytes alone (`wasm_import_state`).
+Until the board carried the rules, that game was always the passing game, so at every podkidnoy decision octogen's candidate list offered transfers the table never had, often ranked best, and every other candidate's expected finish came from worlds where both sides could transfer.
+Every podkidnoy analysis the Oracle printed before this fix was of the wrong game.
+Live bots were not affected by that, because a server's bot decides on its table's own Game, which always had its rules; they were affected, rarely, by the two endgame leaks in the table above (the book and the transposition key), which are fixed with it.
+A rule a kernel does not know is refused on import (`game_validate` `GAME_INVALID_RULES`), never played as the game the kernel does know.
 
 The gate sits inside `calc_pass_moves` rather than at its two call sites, so
 the enumerator a bot searches with and the one a human's menu is built from
@@ -221,5 +236,13 @@ process that never restarts).
 | `e2e/meta_set_rules.test.ts` | the server's `set-rules`: who may send it, every viewer's envelope and push, and the deal |
 | `e2e/web_lobby_rules.test.ts` | the website's box end to end: Ana unticks it and `passing: false` is sent, Bo reads it from his stored view and follows the pushes before he readies, a spectator's box is disabled, and the deal is podkidnoy |
 | `e2e/ui_dom_snapshots.test.ts` "the defender at a podkidnoy table" | the rendered action column offers Cover and Take and never Pass, where the same board at a passing table offers Pass |
+| `c/tests/tests.c test_masked_board_carries_the_rules` | the board's rules byte for every viewer, a classic board's bytes, an unknown rule's refusal, and a durable row's rule-free board |
+| `c/tests/tests.c test_oracle_board_keeps_the_rules` | the Oracle's exact path over played podkidnoy codes: the board, the import, octogen's candidate menu, and a transfer probe across octogen's whole search |
+| `c/tests/tests.c test_podkidnoy_rollouts_never_transfer` | every bitboard playout (handwritten, leaf, per-seat policy, reply tournament) and the root-move apply, from podkidnoy worlds where the classic game would transfer |
+| `c/tests/tests.c test_podkidnoy_solver_and_book` | the exact solver's transposition key and the classic endgame book, on random endgames that are worth something different without the transfer |
+| `c/tests/tests.c test_podkidnoy_every_brain` | every brain the arena knows (`STRAT_COUNT`, held to `strategy_choose`) and every roster bot at its shipped knobs: no transfer chosen, refused, or searched |
+| `e2e/oracle_replay.test.ts` §12.2-1d | the web's Oracle panel on a played podkidnoy replay: no transfer at any defence |
+| `e2e/kernel_state_validation.test.ts` "the masked door keeps a podkidnoy board podkidnoy" | the wasm import door rebuilds a podkidnoy game from its board and refuses an unknown rule |
 
 Each was mutation-checked against the change it guards.
+The C tests read a transfer probe (`game.h GAME_PASS_PROBE_HIT`, native builds only) that counts every transfer applied, in a real game or inside any rollout or solve, because a search that plays the transfer leaves no other trace: the move it returns is still off the real menu.

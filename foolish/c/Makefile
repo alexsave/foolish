@@ -60,6 +60,11 @@ endif
 # the ~15% e2e p50 speedup. The generated book (src/leafbook_data.h) is
 # committed; regenerate it with `make leafbook` after an endgame-solver change.
 CFLAGS += -DCD_LEAFBOOK
+# The transfer probe (game.h GAME_PASS_PROBE_HIT): a counter of every transfer
+# applied, real or inside a rollout, which tests/tests.c reads to prove no
+# search plays the transfer at a podkidnoy table. Native builds only - the
+# tests, coverage and asan builds below carry it too, and no shipped module does.
+CFLAGS += -DCD_PASS_PROBE
 
 # The engine + all heuristic / Monte-Carlo bots. Linked into every binary.
 CORE_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/replay_steps.c \
@@ -78,7 +83,8 @@ CORE_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/replay_
             src/torpex_value.c src/novichok_strategy.c \
             src/bot_knobs.c src/bot_roster.c src/bot_drive.c \
             $(SHARED)/sha256.c src/msg_wire.c src/msg_expand.c src/anim_plan.c \
-            src/analyse.c src/roster.c src/table.c src/client_table.c src/card.c
+            src/analyse.c src/roster.c src/table.c src/client_table.c src/card.c \
+            src/strategy.c
 # BY BASENAME, not by stripping src/: the sources come from two directories now,
 # and the old `$(CORE_SRC:src/%.c=build/%.o)` left the shared pair as .c paths -
 # which still links, from source, silently, while the pattern rule below never
@@ -176,7 +182,8 @@ tests: build/cnitro_tests
 # for the same reason), and that check flags the intent rather than a bug.
 ASAN_CFLAGS := -fsanitize=address,undefined -fno-sanitize=object-size \
                -fno-omit-frame-pointer -fno-sanitize-recover=undefined \
-               -g -O1 -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations -Isrc -DCD_LEAFBOOK
+               -g -O1 -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations -Isrc -DCD_LEAFBOOK \
+               -DCD_PASS_PROBE
 .PHONY: tests-asan
 tests-asan:
 	@mkdir -p build
@@ -1802,7 +1809,7 @@ wasm-oracle-mt: wasm-cc-check build/layout/oracle-mt.hash
 # runtime. Objects (and their .gcno/.gcda) land in covbuild/ where gcovr finds
 # them recursively. Tune the floors with COV_LINE_MIN / COV_BRANCH_MIN.
 COV_CC         ?= gcc
-COV_FLAGS      := -O0 -g --coverage -Isrc -Wno-unused-parameter -Wno-deprecated-declarations
+COV_FLAGS      := -O0 -g --coverage -Isrc -Wno-unused-parameter -Wno-deprecated-declarations -DCD_PASS_PROBE
 COV_LINE_MIN   ?= 90
 COV_BRANCH_MIN ?= 74
 # THE WHOLE SHIPPED KERNEL, not three files of it.

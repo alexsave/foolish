@@ -34,35 +34,7 @@ static double wall_secs(void) {
 
 // Dispatch on strategy_key — seat 0 uses `protagonist`, others use `opp`.
 static int dispatch_choose(int strat, const Game *g, int pi, const LegalMoves *moves) {
-    switch (strat) {
-        case STRAT_RANDOM:      return random_strategy_choose(g, pi, moves, NULL);
-        case STRAT_ESPRESSO:    return espresso_strategy_choose(g, pi, moves, NULL);
-        case STRAT_HANDWRITTEN: return handwritten_strategy_choose(g, pi, moves, NULL);
-        case STRAT_ROBUSTA:     return robusta_strategy_choose(g, pi, moves, NULL);
-        case STRAT_FIRECRACKER: return firecracker_strategy_choose(g, pi, moves, NULL);
-        case STRAT_GUNPOWDER:   return gunpowder_strategy_choose(g, pi, moves, NULL);
-        case STRAT_BLACKPOWDER: return blackpowder_strategy_choose(g, pi, moves, NULL);
-        case STRAT_CORDITE:     return cordite_strategy_choose(g, pi, moves, NULL);
-        case STRAT_CORDITE_OLD: return cordite_old_strategy_choose(g, pi, moves, NULL);
-        case STRAT_ASTROLITE:   return astrolite_strategy_choose(g, pi, moves, NULL);
-        case STRAT_SIMPLE_HEURISTIC:
-                                return simple_heuristic_strategy_choose(g, pi, moves, NULL);
-        case STRAT_CHAMPION:    return champion_strategy_choose(g, pi, moves, NULL);
-        case STRAT_ULTIMATE_CHAMPION:
-                                return ultimate_champion_strategy_choose(g, pi, moves, NULL);
-        case STRAT_HACKER:      return hacker_strategy_choose(g, pi, moves, NULL);
-        case STRAT_FULMINATE:   return fulminate_strategy_choose(g, pi, moves, NULL);
-        case STRAT_ESPRESSO_PROD:    return espresso_prod_strategy_choose(g, pi, moves, NULL);
-        case STRAT_HANDWRITTEN_PROD: return handwritten_prod_strategy_choose(g, pi, moves, NULL);
-        case STRAT_DISTILLED:   return distilled_strategy_choose(g, pi, moves, NULL);
-        case STRAT_SEMTEX:      return semtex_strategy_choose(g, pi, moves, NULL);
-        case STRAT_SEMTEX_ORACLE: return semtex_oracle_strategy_choose(g, pi, moves, NULL);
-        case STRAT_OCTOGEN:     return octogen_strategy_choose(g, pi, moves, NULL);
-        case STRAT_OCTOGEN_ORACLE: return octogen_oracle_strategy_choose(g, pi, moves, NULL);
-        case STRAT_TORPEX:      return torpex_strategy_choose(g, pi, moves, NULL);
-        case STRAT_NOVICHOK:    return novichok_strategy_choose(g, pi, moves, NULL);
-        default:                return -1;
-    }
+    return strategy_choose(strat, g, pi, moves);
 }
 
 static const char SUIT_CHAR[4] = { 'S', 'H', 'C', 'D' };

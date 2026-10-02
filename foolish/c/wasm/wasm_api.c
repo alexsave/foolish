@@ -207,7 +207,8 @@ int wasm_reject_reason(void) { return engine_last_reject; }
 //   u8  status            u8  num_players     i8 power_suit
 //   i8  first_attacker    i8  defender
 //   u16 discard_pile_length
-//   u8  has_flipped       u8 flipped wire-card
+//   u8  flags             u8 flipped wire-card
+//       (flags: bit 0 has_flipped, bits 1-7 Game.rules - view.h STATE_FLAGS_AT)
 //   u32 good_players_mask u8 has_good_timestamp
 //   u16 deck_count,   deck_count x u8 wire-card
 //   u8  num_battles,  num_battles x (u8 attack, u8 defense; 0xFF = uncovered)

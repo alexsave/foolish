@@ -92,6 +92,9 @@ static int deal_index(int n) {
 // duration, so both sides carry the qualifier.
 _Thread_local void (*engine_snap_hook)(const Game *g, int tag, int aux) = 0;
 _Thread_local int engine_last_reject = ENGINE_REJECT_NONE;
+#ifdef CD_PASS_PROBE
+_Thread_local long game_pass_probe = 0;   // test-only; see game.h
+#endif
 
 #define SNAP(g, tag, aux) do { if (engine_snap_hook) engine_snap_hook((g), (tag), (aux)); } while (0)
 #define REJECT(code) do { engine_last_reject = (code); return false; } while (0)
@@ -241,6 +244,8 @@ int game_validate(const Game *g, int flags) {
 
     if (g->status < GAME_STATUS_WAITING || g->status > GAME_STATUS_GAME_OVER)
         return GAME_INVALID_STATUS;
+    if (g->rules & ~GAME_RULES_KNOWN)
+        return GAME_INVALID_RULES;
     if (g->deck_count < 0 || g->deck_count > MAX_DECK
         || g->num_battles < 0 || g->num_battles > MAX_BATTLES)
         return GAME_INVALID_COUNT;
@@ -1150,6 +1155,7 @@ bool handle_pass(Game *g, int player_idx, const Card *cards, int n_cards) {
     int next = get_next_player_index(g, g->defender);
     if (g->players[next].hand_count < n_cards + g->num_battles) REJECT(ENGINE_REJECT_PASS_CAPACITY);
 
+    GAME_PASS_PROBE_HIT();
     for (int i = 0; i < n_cards; i++) {
         hand_remove_card(def, cards[i]);
         Battle *b = &g->table_battles[g->num_battles++];
