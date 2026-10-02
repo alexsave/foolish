@@ -15,47 +15,26 @@
 // marks, and a seed that names a defender puts a shield up for the whole deal.
 //
 // WHAT A CHAT OPENS - a lobby, the joins, Start, and every seat opening the
-// started bubble and the first move's bubble. GREEN TODAY, and why is the point:
-// neither replays the deal. The first move's bubble replays from
-// `atomsBefore + 1` and the deal is step 0; the started bubble would take the
-// deal-only branch of fio_replay_last_events_packed (c/ios/ios_api_replay.c, "a
-// chain that IS only the deal"), but `residentReplayCode()` is nil for a chain
-// with no action yet, so no stream is ever built. The board then draws the live,
-// dealt view, whose defender is real. If a chat ever does animate the deal, the
-// stream's boards are the kernel's START_MAGIC / DEAL / FLIPPED ones, which carry
-// the lobby's `defender = 0` today (c/src/game.c), and `holdDealStream` turns
-// this red.
+// started bubble and the first move's bubble. The first move's bubble replays
+// from `atomsBefore + 1` and the deal is step 0, so it draws the live, dealt
+// view, whose defender is real. The STARTED bubble replays the deal itself: a
+// dealt game with no move encodes to a one-step code (c/src/replay.c), and it
+// takes the deal-only branch of fio_replay_last_events_packed
+// (c/ios/ios_api_replay.c, "a chain that IS only the deal"). Its stream's boards
+// are the kernel's START_MAGIC / DEAL / FLIPPED ones, and `holdDealStream` holds
+// them to the rule: nobody defends until DEFENDER_MOVE. That the deal is there
+// at all, for every seat, is OpeningDealReplayTests'.
 import XCTest
 @testable import FoolishKit
 
 @MainActor
 final class OpeningDealShieldTests: XCTestCase {
 
-    private func freshSeed(_ salt: UInt8) -> Data {
-        Data((0..<32).map { UInt8(truncatingIfNeeded: $0 &* 29 &+ Int(salt)) | 1 })
-    }
-
-    private let names = ["Alex", "Sveta", "Boris", "Dima", "Eva", "Fyodor", "Galya", "Igor"]
     private let tables = [2, 3, 6, 8]
 
     /// A started game's LIVE bubble: a lobby of `players`, every one joined, Start.
     private func startedGame(players: Int, salt: UInt8, gameId: UInt64) async throws -> Data {
-        let k = MessageKernel.shared
-        try await k.newGame(seed: freshSeed(salt), players: players)
-        var joins = [MessageJoin(seat: 0, name: names[0])]
-        var payload = try await k.seal(phase: 0, lastActorSeat: 0, gameId: gameId,
-                                       parent8: Data(repeating: 0, count: 8), joins: joins)
-        for seat in 1..<players {
-            let env = try await MessageEnvelope.decode(payload: payload, viewer: -1)
-            joins = (env.joins + [MessageJoin(seat: seat, name: names[seat])]).sorted { $0.seat < $1.seat }
-            payload = try await k.seal(phase: 0, lastActorSeat: seat, gameId: gameId,
-                                       parent8: MessageTurnController.firstEight(hex: env.digest),
-                                       joins: joins)
-        }
-        let lobby = try await MessageEnvelope.decode(payload: payload, viewer: -1)
-        return try await k.startFromLobby(lobbyPayload: payload, gameId: gameId, actingSeat: 0,
-                                          parent8: MessageTurnController.firstEight(hex: lobby.digest),
-                                          joins: lobby.joins, sentAt: 0)
+        try await StartedChat.build(players: players, salt: salt, gameId: gameId).started
     }
 
     /// The marks a board wears through `events`: the ledger seed `runEventStream`
@@ -96,10 +75,10 @@ final class OpeningDealShieldTests: XCTestCase {
         }
     }
 
-    /// WHAT A CHAT OPENS. Green today, and why is the point: no bubble a chat
-    /// opens replays step 0, so the marks come off the live view.
+    /// WHAT A CHAT OPENS. The started bubble replays the deal and is held to
+    /// the no-shield rule; the first move's bubble draws the live view's marks.
     func testOpeningAStartedChatNeverDrawsAShieldBeforeTheDefenderIsNamed() async throws {
-        var opens = 0
+        var opens = 0, dealt = 0
         for players in tables {
             for salt in UInt8(1)...UInt8(2) {
                 let gid = UInt64(7000 + players * 10 + Int(salt))
@@ -129,6 +108,16 @@ final class OpeningDealShieldTests: XCTestCase {
                         let events = c.openReplayEvents
                         opens += 1
                         if events.contains(where: { $0.kind == .deal }) {
+                            dealt += 1
+                            // THE FIRST PAINT, before the sequence has seeded anything:
+                            // the board draws `pendingRoles`, which is this seed. Read
+                            // off the live view instead, it showed the real defender's
+                            // shield and then flipped it away as the deal began.
+                            let seed = try XCTUnwrap(c.openReplaySeedState,
+                                                     "\(at): the first paint has a board to seed its marks from")
+                            let first = MessageTableView.RoleState(seed)
+                            XCTAssertFalse((0..<players).contains(first.defender),
+                                           "\(at): the first paint shows seat \(first.defender)'s shield before the deal")
                             holdDealStream(events, prior: c.openReplayPriorState, players: players,
                                            defender: view.defender, at)
                         } else {
@@ -144,5 +133,6 @@ final class OpeningDealShieldTests: XCTestCase {
             }
         }
         XCTAssertGreaterThan(opens, 0)
+        XCTAssertGreaterThan(dealt, 0, "no opened bubble replayed the deal, so the rule was never held")
     }
 }

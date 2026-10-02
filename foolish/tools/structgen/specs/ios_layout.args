@@ -70,7 +70,7 @@
 # public symbol in FoolishKit.
 --const CLIENT_ --const ANIM_EVT_ --const ANIM_LOC_ --const ANIM_DEST_ --const ANIM_CONFLICT_
 --const ANIM_SEAT_NONE --const ANIM_STEP_NONE --const ANIM_NEVER --const ANIM_TIME_MS --const ANIM_GAP_MS
---const ANIM_BOUT_END_HOLD_MS
+--const ANIM_BOUT_END_HOLD_MS --const ANIM_DEAL_CARD_MS
 --const ANIM_NO_MASK --const ANIM_BEAT_ --const ANIM_SURFACE_ --const ANIM_TABLE_NONE
 --const BOT_STOP_ --const BOT_PACE_ --const MOVE_
 --const PLAY_ANSWER_ --const PLAY_HOST_ --const PLAY_PILL_

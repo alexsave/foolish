@@ -42,6 +42,36 @@ public var beatTime: Double { boardSeconds(ANIM_TIME_MS) }
 /// The rest between one flight landing and the next taking off (ANIM_GAP_MS).
 public var flightGap: Double { boardSeconds(ANIM_GAP_MS) }
 
+/// THE PAINT BEFORE A FLIGHT IS THE PLAN'S GAP, not time on top of it.
+///
+/// `BoardAnimator.play` paints every step once at its from-position before
+/// animating it, and used to sleep a fixed 25ms for that paint and THEN the
+/// flight and the whole gap after it - so every step took the plan's
+/// `duration + gap` plus 25ms more. Filmed on the rig, the opening deal went
+/// round the table at ~415ms a card where the kernel plans 375 (350 + 25),
+/// a 4-seat deal finishing ~1s late. The paint now takes the gap's slot: the
+/// rest before a card takes off is the same rest the plan puts between two
+/// landings, so a step costs exactly what the plan says.
+/// `flight.paintgap=0` in `dev.flags` puts back the extra paint.
+public enum FlightPace {
+    public static let paintIsGapByDefault = true
+
+    public static var paintIsGap: Bool {
+        #if DEBUG || SOLO_TESTING
+        return MessageDevBoard.flag("flight.paintgap", shipping: paintIsGapByDefault)
+        #else
+        return paintIsGapByDefault
+        #endif
+    }
+
+    /// How long one step of `play` waits before it animates (the paint at the
+    /// from-position) and after (the flight, and whatever rest is left).
+    public static func waits(flying duration: Double,
+                             paintIsGap: Bool = FlightPace.paintIsGap) -> (paint: Double, after: Double) {
+        paintIsGap ? (flightGap, duration) : (0.025, duration + flightGap)
+    }
+}
+
 
 /// ROUND 16: the HOLD between a cover that ENDED THE BOUT and the sweep that
 /// clears the table (owner: "when you cover and cause the deck to discard (last
@@ -503,12 +533,14 @@ public final class BoardAnimator: ObservableObject {
             preHidden.subtract(ids)          // these are now this step's OWN hidden cards
             hidden = preHidden.union(ids)
             progress = 0
-            // One paint at from-position, then animate to-position.
-            try? await Task.sleep(nanoseconds: 25_000_000)
+            // One paint at from-position, then animate to-position. The paint
+            // is the plan's gap (`FlightPace`), so a step is the plan's length.
+            let wait = FlightPace.waits(flying: duration)
+            try? await Task.sleep(nanoseconds: UInt64(wait.paint * 1_000_000_000))
             withAnimation(.timingCurve(0.25, 0.46, 0.45, 0.94, duration: duration)) {
                 progress = 1
             }
-            try? await Task.sleep(nanoseconds: UInt64((duration + flightGap) * 1_000_000_000))
+            try? await Task.sleep(nanoseconds: UInt64(wait.after * 1_000_000_000))
             AnimLog.say("flight LAND (pop IN at dest) [\(ids.sorted().joined(separator: ","))]")
         }
         // Un-hide this call's own step ids, but leave any OTHER pending

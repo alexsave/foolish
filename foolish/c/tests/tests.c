@@ -10509,6 +10509,185 @@ static void test_opening_deal_plan_paces_card_by_card(void) {
                    first_ms, end_ms, plan.total_ms);
     }
 }
+
+// 8. A STARTED GAME HAS A REPLAY, AND IT IS THE DEAL. The owner, on iMessage:
+// "Did not see card deal". A started bubble is a game dealt with no move made
+// yet, and a bubble animates by replaying its own replay code - so a game the
+// encoder refused until its first attack had no code, no stream, and no deal.
+// The v6 format always could say "this deal, then nothing": the hands, the
+// trump, the opener and an atom count of zero. So a dealt game with no move
+// encodes, decodes to exactly ONE step (the deal), and that step carries the
+// same round-robin deal a table push does, card by card, with nobody defending
+// before the trump, for every seat and a spectator. The opener comes off the
+// game, imposed or derived, and is proven against the rebuilt deal on decode.
+// A lobby has no deal to show and still refuses.
+static Game sd_game;
+static unsigned char sd_code[1 << 14];
+static unsigned char sd_frames[1 << 17];
+
+static void sd_deal(int np, int seed_k, int open_at, unsigned char *seed) {
+    for (int i = 0; i < FOOLISH_SEED_LEN; i++) seed[i] = (unsigned char)(i * 29 + seed_k * 7 + np);
+    game_set_deal_seed_bytes(seed, FOOLISH_SEED_LEN);
+    memset(&sd_game, 0, sizeof sd_game);
+    sd_game.num_players = (int8_t)np;
+    for (int s = 0; s < np; s++) sd_game.players[s].status = PLAYER_STATUS_READY;
+    game_open_at_seat(open_at);
+    start_game(&sd_game);
+    game_open_at_seat(-1);
+}
+
+// The frames of `code` from step 0 for `viewer`, read off the wire into dl_read.
+static int sd_read_frames(int len, int viewer, int *n_frames) {
+    memset(&dl_read, 0, sizeof dl_read);
+    int next = 0;
+    const int fl = replay_steps_frames_v6(sd_code, len, viewer, 0, 0, sd_frames, sizeof sd_frames,
+                                          n_frames, &next);
+    if (fl <= 0) return -1;
+    int q = 0;
+    while (q + 2 <= fl) {
+        const int flen = sd_frames[q] | (sd_frames[q + 1] << 8);
+        q += 2;
+        if (flen <= 0 || q + flen > fl) return -1;
+        if (evwire_read(sd_frames + q, flen, 0, 0, 0, dl_read_sink, &dl_read) < 0) return -1;
+        q += flen;
+    }
+    return dl_read.overflow ? -1 : dl_read.n;
+}
+
+static void test_a_started_game_replays_its_deal(void) {
+    static const int nps[] = { 2, 3, 4, 6, 8 };
+    static AnimPlan plan;
+    int forced_seen = 0;
+    for (int pi = 0; pi < (int)(sizeof nps / sizeof nps[0]); pi++) {
+        const int np = nps[pi];
+        for (int seed_k = 1; seed_k <= 4; seed_k++) {
+            // seed 4 is a rematch: the fool's penalty imposes the opener.
+            const int open_at = seed_k == 4 ? (np - 1) : -1;
+            unsigned char seed[FOOLISH_SEED_LEN];
+            sd_deal(np, seed_k, open_at, seed);
+            DCHECK(sd_game.status == GAME_STATUS_PLAYING && sd_game.num_logs >= 0
+                   && sd_game.first_attacker >= 0,
+                   "started (%dp, seed %d): the fixture deals and names its opener", np, seed_k);
+            const int len = replay_encode_v6_from_game(&sd_game, seed, FOOLISH_SEED_LEN, 1 << 30,
+                                                       sd_code, sizeof sd_code);
+            DCHECK(len > 0, "started (%dp, seed %d): a dealt game with no move encodes, rc %d",
+                   np, seed_k, len);
+            if (len <= 0) continue;
+
+            ReplayHeader hdr;
+            const int steps = replay_steps_count_v6(sd_code, len, &hdr);
+            DCHECK(steps == 1, "started (%dp, seed %d): the code is ONE step, the deal - got %d",
+                   np, seed_k, steps);
+            DCHECK(hdr.first_attacker == sd_game.first_attacker,
+                   "started (%dp, seed %d): the code opens on seat %d, the game on %d",
+                   np, seed_k, hdr.first_attacker, sd_game.first_attacker);
+            if (hdr.forced_opening) forced_seen++;
+            const Game *re = replay_steps_last_game();
+            DCHECK(re->defender == sd_game.defender && re->num_players == np,
+                   "started (%dp, seed %d): the rebuilt deal names defender %d, the game %d",
+                   np, seed_k, re->defender, sd_game.defender);
+            // Same hands as SETS: v6 codes a hand without its order.
+            for (int s = 0; s < np; s++) {
+                uint64_t a = 0, b = 0;
+                for (int i = 0; i < sd_game.players[s].hand_count; i++) a |= 1ull << card_to_id(sd_game.players[s].hand[i]);
+                for (int i = 0; i < re->players[s].hand_count; i++) b |= 1ull << card_to_id(re->players[s].hand[i]);
+                DCHECK(a == b && re->players[s].hand_count == CARDS_PER_PLAYER,
+                       "started (%dp, seed %d): seat %d's rebuilt hand is the dealt one", np, seed_k, s);
+            }
+            static Game rebuilt;
+            memcpy(&rebuilt, re, sizeof rebuilt);
+
+            for (int viewer = -1; viewer < np; viewer++) {
+                int n_frames = 0;
+                if (sd_read_frames(len, viewer, &n_frames) < 0) {
+                    DCHECK(0, "started (%dp, seed %d): the frames read for viewer %d", np, seed_k, viewer);
+                    continue;
+                }
+                char why[200];
+                why[0] = 0;
+                if (n_frames != 1) snprintf(why, sizeof why, "%d frames, want 1 (the deal)", n_frames);
+                int k = 0, moved = -1;
+                for (int i = 0; i < dl_read.n && !why[0]; i++) {
+                    const DlEvent *e = &dl_read.ev[i];
+                    if (e->type == EVW_T_DEFENDER_MOVE && moved < 0) {
+                        moved = i;
+                        if (e->seat != sd_game.defender)
+                            snprintf(why, sizeof why, "DEFENDER_MOVE names seat %d, want %d", e->seat, sd_game.defender);
+                    }
+                    if (!e->has_board) {
+                        snprintf(why, sizeof why, "event %d (type %d) carries no readable board", i, e->type);
+                    } else if (moved < 0 && (e->defender != -1 || e->first_attacker != -1)) {
+                        snprintf(why, sizeof why, "event %d (type %d) is before DEFENDER_MOVE and names defender %d,"
+                                 " first attacker %d", i, e->type, e->defender, e->first_attacker);
+                    } else if (moved >= 0 && (e->defender != sd_game.defender
+                                              || e->first_attacker != sd_game.first_attacker)) {
+                        snprintf(why, sizeof why, "event %d names defender %d / first attacker %d, want %d / %d",
+                                 i, e->defender, e->first_attacker, sd_game.defender, sd_game.first_attacker);
+                    }
+                    if (why[0] || e->type != EVW_T_DEAL) continue;
+                    const int r = k / np, j = k % np;
+                    if (moved >= 0) {
+                        snprintf(why, sizeof why, "deal event %d comes after DEFENDER_MOVE", k);
+                    } else if (k >= np * CARDS_PER_PLAYER) {
+                        snprintf(why, sizeof why, "more than %d deal events", np * CARDS_PER_PLAYER);
+                    } else if (e->seat != j) {
+                        snprintf(why, sizeof why, "deal event %d went to seat %d, want seat %d", k, e->seat, j);
+                    } else if (e->n_cards != 1) {
+                        snprintf(why, sizeof why, "deal event %d carries %d cards, want 1", k, e->n_cards);
+                    } else {
+                        const unsigned char want = viewer == j ? wire_from_card(rebuilt.players[j].hand[r])
+                                                               : (unsigned char)WIRE_CARD_HIDDEN;
+                        if (e->cards[0] != want)
+                            snprintf(why, sizeof why, "deal event %d (seat %d): card byte %u, want %u",
+                                     k, j, e->cards[0], want);
+                    }
+                    k++;
+                }
+                if (!why[0] && k != np * CARDS_PER_PLAYER)
+                    snprintf(why, sizeof why, "%d deal events, want %d", k, np * CARDS_PER_PLAYER);
+                if (!why[0] && moved < 0) snprintf(why, sizeof why, "the deal names no defender at all");
+                DCHECK(!why[0], "started (%dp, seed %d, viewer %d): %s", np, seed_k, viewer, why);
+            }
+
+            // ON THE KERNEL'S CLOCK: the plan over the same stream deals each
+            // card as its own beat at ANIM_DEAL_CARD_MS, back to back.
+            pf_np = np;
+            pf_n = 0;
+            const int rr = replay_steps_v6(sd_code, len, 0, 0, pf_sink, 0);
+            DCHECK(rr == REPLAY_EOK, "started (%dp, seed %d): the deal replays to a sink, rc %d", np, seed_k, rr);
+            if (rr != REPLAY_EOK) continue;
+            const PfCounts after = pf_counts_of(replay_steps_last_game());
+            const int prc = anim_build_plan(pf_evs, pf_n, np, after.deck, after.discard,
+                                            after.flipped, after.hand, &plan);
+            DCHECK(prc == ANIM_EOK, "started (%dp, seed %d): the deal's plan builds, rc %d", np, seed_k, prc);
+            if (prc != ANIM_EOK) continue;
+            int dealt = 0, flying = 0, first = -1, last_end = -1;
+            for (int i = 0; i < plan.n_steps; i++) {
+                const AnimPlanStep *st = &plan.steps[i];
+                if (st->type != ANIM_EVT_DEAL) continue;
+                if (first < 0) first = st->start_ms;
+                flying += st->duration_ms;
+                last_end = st->start_ms + st->duration_ms;
+                dealt++;
+            }
+            DCHECK(dealt == np * CARDS_PER_PLAYER && flying == dealt * ANIM_DEAL_CARD_MS,
+                   "started (%dp, seed %d): %d dealt cards fly %d ms in all, want %d x %d",
+                   np, seed_k, dealt, flying, np * CARDS_PER_PLAYER, ANIM_DEAL_CARD_MS);
+            DCHECK(last_end - first == dealt * ANIM_DEAL_CARD_MS + (dealt - 1) * ANIM_GAP_MS,
+                   "started (%dp, seed %d): the deal spans %d ms, want one card after another",
+                   np, seed_k, last_end - first);
+        }
+    }
+    DCHECK(forced_seen > 0, "started: no rematch fixture imposed its opener (%d)", forced_seen);
+
+    // A LOBBY HAS NO DEAL TO SHOW: nobody leads yet, so there is no opener.
+    unsigned char seed[FOOLISH_SEED_LEN];
+    sd_deal(4, 9, -1, seed);
+    game_reset_to_lobby(&sd_game, 0);
+    DCHECK(replay_encode_v6_from_game(&sd_game, seed, FOOLISH_SEED_LEN, 1 << 30, sd_code, sizeof sd_code)
+           == -REPLAY_EINPUT, "started: a lobby still refuses to encode");
+}
+
 static void test_table_reseat_retitle_continue(void) {
     tb_seed_fill(3);
     tb_lobby();
@@ -14136,6 +14315,7 @@ int main(void) {
     test_deal_card_timing();
     test_opening_deal_bytes_are_unchanged();
     test_opening_deal_plan_paces_card_by_card();
+    test_a_started_game_replays_its_deal();
     test_table_reseat_retitle_continue();
     test_table_rearrange_and_redact();
     test_table_redact_default_title();

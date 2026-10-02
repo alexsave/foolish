@@ -85,7 +85,7 @@ def payload_and_notes(out: str, err: str):
 
 def main():
     if len(sys.argv) < 2:
-        sys.exit("usage: seed.py <fatboard|endgame|lastdefense|twocover|lastmove> [args...]")
+        sys.exit("usage: seed.py <fatboard|endgame|lastdefense|twocover|lastmove|started> [args...]")
     sim = os.environ.get("RIG_SIM") or os.environ.get("FOOLISH_SIM")
     if not sim:
         sys.exit("set RIG_SIM or FOOLISH_SIM")
