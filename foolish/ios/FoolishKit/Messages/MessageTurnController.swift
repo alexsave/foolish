@@ -894,6 +894,9 @@ public final class MessageTurnController: ObservableObject {
                 return ([], nil)
             }
             adoptBaseFacts(opened.env)
+            // A started chain (nobody has moved) opens on its deal - the one
+            // step its replay holds. Flag off, it opens quiet as it used to.
+            if opened.env.turn == 0, !OpenDeal.shows { return ([], nil) }
             return (opened.events, opened.prior)
         case .genesis(let seed, let players):
             adoptBaseFacts(nil)   // nothing sent, nothing before my moves, no boundary
