@@ -238,12 +238,14 @@ public final class UtttBigLobby: UtttSheetView {
 
     override func lay(_ size: CGSize, from: CGFloat?) {
         typealias M = UtttBigLayout
-        /* the words in the header band, the board in the rest */
+        /* the words in the header band, the board in the rest - JUST THE
+         * BOARD'S SQUARE, centred: the view's flat paper over the whole
+         * band drew a hard edge across the sheet's textured paper (rig) */
         words.frame = CGRect(x: M.pad, y: M.pad, width: max(0, size.width - M.pad - M.hintRoom),
                              height: max(0, M.header - M.pad))
         words.set(UtttBig.say(.waitingHeadline), UtttBig.say(.waitingSubline), column: false)
-        board.frame = CGRect(x: 0, y: M.header, width: size.width,
-                             height: max(0, size.height - M.header - M.pad))
+        let side = floor(max(0, min(size.width - 2 * M.pad, size.height - M.header - M.pad)))
+        board.frame = CGRect(x: floor((size.width - side) / 2), y: M.header, width: side, height: side)
     }
 }
 #endif

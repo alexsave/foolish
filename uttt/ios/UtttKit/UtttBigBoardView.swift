@@ -177,14 +177,18 @@ public final class UtttBigBoardView: UIView, UIScrollViewDelegate, UIGestureReco
 
     public override init(frame: CGRect) {
         super.init(frame: frame)
-        backgroundColor = UtttPaper.flat
+        /* CLEAR AROUND THE BOARD: the canvas paints the paper under the board
+         * itself, and a flat colour over the rest of the view drew hard
+         * edges across the sheet's textured paper (rig, 2026-10-01). */
+        backgroundColor = nil
+        isOpaque = false
         scroll.delegate = self
         scroll.bounces = true
         scroll.bouncesZoom = true
         scroll.showsVerticalScrollIndicator = false
         scroll.showsHorizontalScrollIndicator = false
         scroll.contentInsetAdjustmentBehavior = .never
-        scroll.backgroundColor = UtttPaper.flat
+        scroll.backgroundColor = nil
         addSubview(scroll)
         content.backgroundColor = nil
         content.isOpaque = false
