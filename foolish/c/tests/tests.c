@@ -13759,6 +13759,9 @@ static void test_podkidnoy_every_brain(void) {
     // brain, and the first id past it is not.
     {
         Game g; setup_transferable(&g);
+        // Real cards in the attacker's hand: a brain that reads every hand
+        // (novichok's endgame solve) must be handed a board that has them.
+        for (int i = 0; i < 6; i++) g.players[0].hand[i] = (Card){ SUIT_CLUBS, (int8_t)(6 + i) };
         calculate_legal_moves(&g, 1, &ml);
         int unknown_below = 0, known_past = 0;
         for (int s = 0; s < 64; s++) {
