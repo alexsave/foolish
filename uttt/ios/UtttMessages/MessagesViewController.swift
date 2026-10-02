@@ -93,6 +93,30 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// the bubble - binds it.
     private var unbound = true
 
+#if UTTT_BIG_BOARD
+    // MARK: the 243 board's state (docs/BIG_BOARD.md)
+
+    /// THE BOARDS OF BIG BUBBLES THIS DEVICE STAGED OR SENT, by link: a big
+    /// link carries no game, its picture does, and our own draft's picture is
+    /// not handed back to us. The newest few only (`bigKeep`).
+    private var bigBoards: [String: [UInt8]] = [:]
+    private var bigOrder: [String] = []
+    private static let bigKeep = 4
+
+    /// The message that ARRIVED (didReceive), kept beside `arrived` for its
+    /// picture: a big arrival's board is in it.
+    private var arrivedMessage: MSMessage?
+
+    /// The big board on screen, so a send or a cancel can tell it about the draft.
+    private weak var liveBig: UtttBigModel?
+
+    /// The "243" badge: the mode on, or a big game's screen up.
+    private lazy var bigBadge = UtttBigBadge()
+
+    /// AGAIN WAS TAPPED ON A BIG GAME: the rematch is a big one.
+    private var bigAgain = false
+#endif
+
     // MARK: the conversation
 
 #if DEBUG
@@ -135,6 +159,9 @@ final class MessagesViewController: MSMessagesAppViewController {
         becameActiveAt = Date()
         overlay.compact = presentationStyle == .compact
         arrived = nil
+#if UTTT_BIG_BOARD
+        arrivedMessage = nil
+#endif
         draftIsNewGame = false
         unbound = conversation.selectedMessage == nil
 #if DEBUG
@@ -227,6 +254,9 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// and the paper that waiting for viewDidAppear left.
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+#if UTTT_BIG_BOARD
+        placeBigBadge()
+#endif
         guard !appeared, !sized, drawerUp else { return }
         UtttLog.note("sized", "\(Int(view.bounds.width))x\(Int(view.bounds.height))")
         sized = true
@@ -296,6 +326,9 @@ final class MessagesViewController: MSMessagesAppViewController {
         UtttLog.note("select", "a bubble tapped while open")
         unbound = false
         arrived = nil
+#if UTTT_BIG_BOARD
+        arrivedMessage = nil
+#endif
         draftIsNewGame = false
 #if DEBUG
         /* A new bubble is a new question: whose hands is it in. */
@@ -333,6 +366,9 @@ final class MessagesViewController: MSMessagesAppViewController {
         }
         UtttLog.note("receive")
         arrived = UtttWire(url: message.url)
+#if UTTT_BIG_BOARD
+        arrivedMessage = message
+#endif
         present(conversation, motion: .arrival)
     }
 
@@ -412,6 +448,9 @@ final class MessagesViewController: MSMessagesAppViewController {
         overlay.staged = false
         overlay.door = false
         let wasUnbound = unbound
+#if UTTT_BIG_BOARD
+        liveBig?.setPending(false)
+#endif
         if let wire { settleSent(wire, conversation) } else { present(conversation, motion: .settle) }
 
         /* A SEND FROM THE EXPANDED DRAWER is somebody done with it; a send
@@ -443,6 +482,14 @@ final class MessagesViewController: MSMessagesAppViewController {
         }
         settled = wire
         hideHintNow()
+#if UTTT_BIG_BOARD
+        /* A BIG BUBBLE IS NOT A 9 x 9 ONE: it never loads as one, and its
+         * board at rest is the big path's present. */
+        if isBigText(wire.text) {
+            present(conversation, motion: .settle)
+            return
+        }
+#endif
         if let live, wire.load(), live.seed == Uttt.seed, Uttt.messageText == wire.text {
             live.sent()
         } else {
@@ -462,6 +509,16 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// board back under a move that is already in the thread.
     private func markSent(_ wire: UtttWire?) {
         guard let wire else { return }
+#if UTTT_BIG_BOARD
+        if let old = sent, isBigText(old.text) || isBigText(wire.text) {
+            if UtttBig.sameGame(old.text, wire.text), !UtttBig.prefersMine(wire.text, over: old.text) {
+                UtttLog.fault("send", "refused: older than what was already sent")
+                return
+            }
+            sent = wire
+            return
+        }
+#endif
         if let old = sent, old.isSameGame(as: wire),
            !Uttt.prefersMine(wire.text, over: old.text) {
             UtttLog.fault("send", "refused: older than what was already sent")
@@ -499,6 +556,22 @@ final class MessagesViewController: MSMessagesAppViewController {
          * gives the seat back. The draft is re-read first, because the
          * resident message is whatever was read last. */
         identify(conversation)
+#if UTTT_BIG_BOARD
+        liveBig?.setPending(false)
+        if isBigText(draft.text) {
+            /* THE BIG DRAFT, undone the same way, its board from memory. */
+            guard let cells = bigBoards[draft.text], UtttBig.read(draft.text, cells: cells),
+                  UtttBig.undoMine(), let text = UtttBig.messageText else {
+                UtttLog.note("dismiss", "the big invitation draft was cancelled")
+                dismiss()
+                return
+            }
+            keepBig(text, UtttBig.cells)
+            reverted = UtttWire(text: text)
+            present(conversation)
+            return
+        }
+#endif
         guard draft.load(), Uttt.undoMine(), let back = UtttWire.resident else {
             /* AN INVITATION NOBODY SENT, taken out of the field: there is no
              * game left to show, and staying up would stage a new one at once.
@@ -578,6 +651,9 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     private func present(_ conversation: MSConversation, motion: Uttt.Channel = .still) {
         live?.onPosition = nil
+#if UTTT_BIG_BOARD
+        liveBig?.onPosition = nil
+#endif
 
 #if DEBUG
         /* ASKED ONCE PER OPENED BUBBLE, and then never seen again. One phone
@@ -614,6 +690,12 @@ final class MessagesViewController: MSMessagesAppViewController {
             return
         }
 
+#if UTTT_BIG_BOARD
+        if isBigText(wire.text) {
+            presentBig(wire, conversation)
+            return
+        }
+#endif
         guard wire.load() else {
             UtttLog.fault("read", "unreadable bubble")
             show(UtttLobbyScreen(stance: .unreadable, slide: slide))
@@ -669,10 +751,18 @@ final class MessagesViewController: MSMessagesAppViewController {
         case .spectator:
             let model = UtttModel(you: .none)
             model.refresh()
+#if UTTT_BIG_BOARD
+            show(UtttWatchScreen(model: model, door: door, slide: slide,
+                                 onDoor: { [weak self] in self?.again(in: conversation) },
+                                 onRules: { [weak self] in self?.openRules() },
+                                 onDiagnostics: diagnosticsHold(conversation),
+                                 onLongHold: bigHold(conversation)))
+#else
             show(UtttWatchScreen(model: model, door: door, slide: slide,
                                  onDoor: { [weak self] in self?.again(in: conversation) },
                                  onRules: { [weak self] in self?.openRules() },
                                  onDiagnostics: diagnosticsHold(conversation)))
+#endif
         }
     }
 
@@ -681,6 +771,12 @@ final class MessagesViewController: MSMessagesAppViewController {
     private func newest(_ selected: UtttWire?, _ arrival: UtttWire?) -> UtttWire? {
         guard let arrival else { return selected }
         guard let selected else { return arrival }
+#if UTTT_BIG_BOARD
+        if isBigText(selected.text) || isBigText(arrival.text) {
+            guard UtttBig.sameGame(selected.text, arrival.text) else { return selected }
+            return UtttBig.prefersMine(arrival.text, over: selected.text) ? arrival : selected
+        }
+#endif
         guard selected.isSameGame(as: arrival) else { return selected }
         return Uttt.prefersMine(arrival.text, over: selected.text) ? arrival : selected
     }
@@ -700,6 +796,9 @@ final class MessagesViewController: MSMessagesAppViewController {
             /* Both dev seats are this one participant, so who sent a bubble
              * says nothing about which of them is holding it. */
             Uttt.sender(of: nil)
+#if UTTT_BIG_BOARD
+            UtttBig.sender(of: nil)
+#endif
             return
         }
 #endif
@@ -720,11 +819,24 @@ final class MessagesViewController: MSMessagesAppViewController {
     private func tellSender(_ conversation: MSConversation) {
         guard let sel = conversation.selectedMessage, let text = sel.url?.absoluteString else {
             Uttt.sender(of: nil)
+#if UTTT_BIG_BOARD
+            UtttBig.sender(of: nil)
+#endif
             return
         }
         Uttt.sender(of: text,
                     isDM: conversation.remoteParticipantIdentifiers.count == 1,
                     iSent: sel.senderParticipantIdentifier == conversation.localParticipantIdentifier)
+#if UTTT_BIG_BOARD
+        /* THE BIG GAME'S SENDER WITNESS, the same fact for its own resident. */
+        if isBigText(text) {
+            UtttBig.sender(of: text,
+                           isDM: conversation.remoteParticipantIdentifiers.count == 1,
+                           iSent: sel.senderParticipantIdentifier == conversation.localParticipantIdentifier)
+        } else {
+            UtttBig.sender(of: nil)
+        }
+#endif
     }
 
     /// This device's newest against what Messages handed over. The kernel
@@ -738,6 +850,11 @@ final class MessagesViewController: MSMessagesAppViewController {
         if draftIsNewGame, let mine = staged ?? sent { return mine }
         guard let mine = staged ?? sent else { return tapped }
         guard let tapped else { return mine }
+#if UTTT_BIG_BOARD
+        if isBigText(mine.text) || isBigText(tapped.text) {
+            return UtttBig.prefersMine(mine.text, over: tapped.text) ? mine : tapped
+        }
+#endif
         return Uttt.prefersMine(mine.text, over: tapped.text) ? mine : tapped
     }
 
@@ -753,6 +870,15 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// was still presenting the drawer, which is when the whole-window flash
     /// was at its longest (see `appeared`).
     private func start(in conversation: MSConversation, rematch: Bool = false) {
+#if UTTT_BIG_BOARD
+        /* THE MODE SAYS WHAT CREATING A GAME MAKES; Again follows the
+         * finished game's size. */
+        if rematch ? bigAgain : UtttBigMode.on {
+            bigAgain = false
+            startBig(in: conversation, rematch: rematch)
+            return
+        }
+#endif
         if rematch {
             /* the resident game is the finished one the door was on; the
              * kernel refuses anything else, and then there is no draft */
@@ -815,6 +941,9 @@ final class MessagesViewController: MSMessagesAppViewController {
     private var sessionGame: UtttWire?
 
     private func sessionFor(_ wire: UtttWire, _ conversation: MSConversation) -> MSSession {
+#if UTTT_BIG_BOARD
+        if let s = bigSession(wire, conversation) { return s }
+#endif
         if let s = session, let g = sessionGame, g.isSameGame(as: wire) { return s }
         let selected = conversation.selectedMessage
         let s: MSSession
@@ -1158,10 +1287,18 @@ final class MessagesViewController: MSMessagesAppViewController {
             }
         }
 
+#if UTTT_BIG_BOARD
+        show(UtttGameScreen(model: model, door: door, slide: slide,
+                            onDoor: { [weak self] in self?.again(in: conversation) },
+                            onRules: { [weak self] in self?.openRules() },
+                            onDiagnostics: diagnosticsHold(conversation),
+                            onLongHold: bigHold(conversation)))
+#else
         show(UtttGameScreen(model: model, door: door, slide: slide,
                             onDoor: { [weak self] in self?.again(in: conversation) },
                             onRules: { [weak self] in self?.openRules() },
                             onDiagnostics: diagnosticsHold(conversation)))
+#endif
     }
 
 #if DEBUG
@@ -1217,6 +1354,9 @@ final class MessagesViewController: MSMessagesAppViewController {
         screen.layoutIfNeeded()
         host = screen
         slide.host = screen
+#if UTTT_BIG_BOARD
+        updateBigBadge()
+#endif
     }
 
     /// THE RULES, a sheet of their own over the drawer: a swipe down closes
@@ -1324,4 +1464,262 @@ final class MessagesViewController: MSMessagesAppViewController {
         return lines.joined(separator: "\n")
     }
     #endif
+
+#if UTTT_BIG_BOARD
+    // MARK: the 243 board (docs/BIG_BOARD.md)
+    //
+    // EVERYTHING BELOW IS THE BIG GAME'S, and every line that reaches it from
+    // the 9 x 9 paths above is under the same condition: a big link is routed
+    // here, a 9 x 9 one never is, and with the condition gone none of it
+    // exists. Routed only where the big game is available (UtttBig.available):
+    // elsewhere a big bubble is one this build cannot read.
+
+    /// Is `text` a big link this build plays.
+    private func isBigText(_ text: String) -> Bool {
+        UtttBig.available && UtttBig.isBig(text)
+    }
+
+    /// Remember a big link's board, dropping all but the newest few.
+    private func keepBig(_ text: String, _ cells: [UInt8]) {
+        guard cells.count == UtttBig.cellCount else { return }
+        bigBoards[text] = cells
+        bigOrder.removeAll { $0 == text }
+        bigOrder.append(text)
+        while bigOrder.count > Self.bigKeep {
+            bigBoards[bigOrder.removeFirst()] = nil
+        }
+    }
+
+    /// The board of a big link: from memory (a bubble this device staged or
+    /// sent), else from the picture of the message it came in.
+    private func bigCells(_ wire: UtttWire, _ conversation: MSConversation) -> [UInt8]? {
+        if let c = bigBoards[wire.text] { return c }
+        for m in [conversation.selectedMessage, arrivedMessage] {
+            guard let m, m.url?.absoluteString == wire.text else { continue }
+#if DEBUG
+            UtttLog.mem("big-read")
+#endif
+            let c = UtttBigBubble.cells(from: m)
+#if DEBUG
+            UtttLog.mem("big-read done")
+#endif
+            if let c { return c }
+        }
+        return nil
+    }
+
+    /// The big counterpart of the read-and-show half of `present`.
+    private func presentBig(_ wire: UtttWire, _ conversation: MSConversation) {
+        guard let cells = bigCells(wire, conversation), UtttBig.read(wire.text, cells: cells) else {
+            UtttLog.fault("read", "unreadable big bubble")
+            show(UtttLobbyScreen(stance: .unreadable, slide: slide))
+            return
+        }
+        keepBig(wire.text, cells)
+        UtttLog.note("present", "big seed \(UtttBig.seed) by \(UtttBig.seatBy) seat \(UtttBig.seat) plies \(UtttBig.plyCount) door \(UtttBig.door)")
+        showBigSeat(conversation)
+        UtttSeats.flush()
+    }
+
+    /// The screen for the resident big game, by this device's seat.
+    private func showBigSeat(_ conversation: MSConversation) {
+        switch UtttBig.seat {
+        case .waiting:
+            liveBig = nil
+            show(UtttBigLobby())
+        case .open, .x, .o:
+            showBigBoard(mark: UtttBig.myMark, interactive: true, conversation)
+        case .spectator:
+            showBigBoard(mark: .none, interactive: false, conversation)
+        }
+    }
+
+    private func showBigBoard(mark: Uttt.Mark, interactive: Bool, _ conversation: MSConversation) {
+        let model = UtttBigModel(you: mark)
+        /* A draft on screen is a draft the player may change their mind about. */
+        if let s = staged, s.text == UtttBig.messageText, UtttBig.plyCount > 0 { model.setPending(true) }
+        liveBig = model
+        live = nil
+        model.onPosition = { [weak self] in
+            guard let self, !UtttBig.canMove, let text = UtttBig.messageText,
+                  text != self.staged?.text else { return }
+            self.stageBig(UtttWire(text: text), in: conversation)
+            /* THE END OF THE GAME re-presents, for the door: Again. */
+            if UtttBig.over != .none {
+                DispatchQueue.main.async { self.present(conversation) }
+            }
+        }
+        let screen = UtttBigGameScreen(
+            model: model, interactive: interactive,
+            onDoor: { [weak self] in
+                self?.bigAgain = true
+                self?.again(in: conversation)
+            },
+            onRules: { [weak self] in self?.openRules() },
+            onDiagnostics: diagnosticsHold(conversation),
+            onLongHold: bigHold(conversation))
+#if DEBUG
+        /* `dev.bigzoom`: the rig's way to a tappable cell without a pinch. */
+        screen.openingZoom = UtttDev.takeBigZoom().map { CGFloat($0) }
+#endif
+        show(screen)
+    }
+
+    /// A big invitation from me (or Again's, on the finished big game's
+    /// napkin): shown first, staged once the drawer is up - as `start`.
+    private func startBig(in conversation: MSConversation, rematch: Bool) {
+        if rematch {
+            guard UtttBig.openRematch() else {
+                UtttLog.fault("start", "Again on a big game that is not over")
+                return
+            }
+        } else {
+            UtttBig.openInvitation()
+        }
+        guard let text = UtttBig.messageText else {
+            UtttLog.fault("start", "the kernel wrote no big invitation")
+            return
+        }
+        let wire = UtttWire(text: text)
+        keepBig(text, UtttBig.cells)
+        UtttLog.note("start", rematch ? "big rematch" : "big")
+        staged = wire
+        present(conversation)
+        whenReady { [weak self] in
+            DispatchQueue.main.async {
+                guard let self, self.staged == wire else { return }
+                self.stageBig(wire, in: conversation)
+            }
+        }
+    }
+
+    /// Put the big `wire` into the input field: its link, and its board as
+    /// the picture (UtttBigBubble). No paint off the main thread and no
+    /// motion clock to wait for: the kit draws the picture, and a big move
+    /// draws in place. From expanded, collapse first and insert after, as
+    /// `stage` does.
+    private func stageBig(_ wire: UtttWire, in conversation: MSConversation) {
+        stageGeneration += 1
+        let generation = stageGeneration
+        overlay.staged = false
+        overlay.door = false
+        loop.reset()
+        stageInsert = nil
+
+        if UtttBig.messageText != wire.text {
+            guard let c = bigBoards[wire.text], UtttBig.read(wire.text, cells: c) else {
+                UtttLog.fault("stage", "big: no board for what is being staged")
+                return
+            }
+        }
+        let cells = UtttBig.cells
+        let message = MSMessage(session: sessionFor(wire, conversation))
+        message.url = wire.url
+        let layout = MSMessageTemplateLayout()
+#if DEBUG
+        UtttLog.mem("stage-big")
+#endif
+        do {
+            try UtttBigBubble.put(cells: cells, on: layout)
+        } catch {
+            UtttLog.fault("stage", "big: the picture refused: \(error)")
+            return
+        }
+#if DEBUG
+        UtttLog.mem("stage-big put")
+#endif
+        let caption = UtttBig.caption
+        layout.caption = caption
+        message.layout = layout
+        message.summaryText = caption
+        keepBig(wire.text, cells)
+
+        staged = wire
+        draftURL = message.url
+        liveBig?.setPending(true)
+
+        if presentationStyle == .compact {
+            insert(message, generation: generation, in: conversation)
+            return
+        }
+        UtttLog.note("stage", "big: collapsing, then inserting")
+        Task { @MainActor [weak self] in
+            guard let self, self.stageGeneration == generation else { return }
+            self.requestPresentationStyle(.compact)
+            await self.awaitTransitionSettled()
+            guard self.stageGeneration == generation else {
+                UtttLog.note("stage", "overtaken while collapsing")
+                return
+            }
+            self.insert(message, generation: generation, in: conversation)
+        }
+    }
+
+    /// `sessionFor` when any of the links it compares is big: the same rule,
+    /// with the big kernel's sameGame (a big and a 9 x 9 are different
+    /// games). Nil when none is big, and `sessionFor` goes on as it was.
+    private func bigSession(_ wire: UtttWire, _ conversation: MSConversation) -> MSSession? {
+        let selected = conversation.selectedMessage
+        let selWire = UtttWire(url: selected?.url)
+        guard isBigText(wire.text) || sessionGame.map({ isBigText($0.text) }) == true
+              || selWire.map({ isBigText($0.text) }) == true else { return nil }
+        if let s = session, let g = sessionGame, UtttBig.sameGame(g.text, wire.text) { return s }
+        let s: MSSession
+        if let sel = selected?.session,
+           draftIsNewGame || selWire.map({ UtttBig.sameGame($0.text, wire.text) }) == true {
+            s = sel
+        } else {
+            s = MSSession()
+        }
+        session = s; sessionGame = wire
+        return s
+    }
+
+    /// The rulebook's 4-second hold: the mode's switch, where the big game
+    /// is available; nil (no hold at all) elsewhere.
+    private func bigHold(_ conversation: MSConversation) -> (() -> Void)? {
+        guard UtttBig.available else { return nil }
+        return { [weak self] in self?.toggleBigMode(conversation) }
+    }
+
+    /// THE HOLD: flip the mode, show it, and - when the screen up is my own
+    /// unsent invitation and nothing else - stage it again in the other size.
+    private func toggleBigMode(_ conversation: MSConversation) {
+        let on = UtttBigMode.toggle()
+        UtttLog.note("big-mode", on ? "on" : "off")
+        updateBigBadge()
+        guard let mine = staged, sent == nil, arrived == nil,
+              conversation.selectedMessage == nil else { return }
+        let big = isBigText(mine.text)
+        guard big != on else { return }
+        let invitation: Bool
+        if big {
+            invitation = bigBoards[mine.text].map { UtttBig.read(mine.text, cells: $0) } == true
+                && UtttBig.plyCount == 0
+        } else {
+            invitation = mine.load() && Uttt.plyCount == 0 && Uttt.seat == .waiting
+        }
+        guard invitation else { return }
+        UtttLog.note("big-mode", "my unsent invitation, staged again as \(on ? "243" : "9 x 9")")
+        staged = nil
+        start(in: conversation)
+    }
+
+    /// The badge is up while the mode is on or a big game's screen is.
+    private func updateBigBadge() {
+        let bigScreen = host is UtttBigGameScreen || host is UtttBigLobby
+        guard UtttBigMode.on || bigScreen else {
+            bigBadge.removeFromSuperview()
+            return
+        }
+        /* ABOVE THE SCREENS, BELOW THE SEND OVERLAY */
+        view.insertSubview(bigBadge, belowSubview: overlay)
+        placeBigBadge()
+    }
+
+    private func placeBigBadge() {
+        guard bigBadge.superview != nil else { return }
+        bigBadge.place(in: view.bounds.inset(by: view.safeAreaInsets))
+    }
+#endif
 }
