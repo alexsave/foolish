@@ -27,7 +27,7 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "1.0"
+    MARKETING_VERSION: "1.1"
     # Every upload needs a unique build number, so Tools/ship.sh passes
     # CURRENT_PROJECT_VERSION on the archive command line (one value for all
     # targets) and this "1" is only what a local build says.
