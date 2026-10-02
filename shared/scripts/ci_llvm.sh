@@ -105,6 +105,31 @@ fetch_verified() {
   fi
 }
 
+# retry ATTEMPTS CMD... - run CMD until it succeeds, at most ATTEMPTS times,
+# pausing CI_LLVM_RETRY_PAUSE (default 15) seconds times the attempt number
+# between tries. Returns CMD's last exit code when every attempt fails.
+# It exists for llvm.sh: its reachability check of apt.llvm.org fails fast on a
+# network blip and reports it as "Distribution ... is not supported", exit 2
+# (validate, run 36955349681; a plain re-run passed). apt-get goes through it too.
+retry() {
+  local max="$1" n=1 rc; shift
+  while :; do
+    echo "retry: attempt $n/$max: $*" >&2
+    rc=0; "$@" || rc=$?
+    [ "$rc" -eq 0 ] && return 0
+    if [ "$n" -ge "$max" ]; then
+      echo "::error::attempt $n/$max exited $rc, giving up: $*" >&2
+      return "$rc"
+    fi
+    echo "::warning::attempt $n/$max exited $rc, retrying: $*" >&2
+    sleep $((n * ${CI_LLVM_RETRY_PAUSE:-15}))
+    n=$((n + 1))
+  done
+}
+
+# For the test (ci_llvm_test.sh): define the functions above and stop.
+if [ "${BASH_SOURCE[0]}" != "$0" ] && [ -n "${CI_LLVM_DEFINE_ONLY:-}" ]; then return 0; fi
+
 # Only when run, never when sourced (several workflows `. ci_llvm.sh`, and a
 # sourced $1 is the caller's).
 if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "${1:-}" = "--verify-downloads" ]; then
@@ -121,20 +146,20 @@ fi
 
 if [ ! -f "$LLVM/include/clang-c/Index.h" ] || [ ! -x "$LLVM/bin/wasm-ld" ]; then
   SUDO="$(command -v sudo || true)"
-  $SUDO apt-get update -qq
+  retry 4 $SUDO apt-get update -qq
   # gcc, for `cc`: shared/tools/structgen/Makefile builds the generator with
   # $(CC), which defaults to cc. ubuntu-latest has it; the swift:6.2.4-noble
   # image this also runs in has Swift's clang at /usr/bin/clang and no cc at
   # all, and a container that is merely `make`-equipped has neither. Name it
   # rather than inherit it. wget/gnupg/lsb-release are what llvm.sh itself
   # needs.
-  $SUDO apt-get install -y --no-install-recommends \
+  retry 4 $SUDO apt-get install -y --no-install-recommends \
       make gcc gzip wget gnupg lsb-release software-properties-common ca-certificates
   LLVM_SH="$(mktemp)"
   fetch_verified "$LLVM_SH_URL" "$LLVM_SH_SHA256" "$LLVM_SH"
-  $SUDO bash "$LLVM_SH" "$LLVM_VERSION"
+  retry 4 $SUDO bash "$LLVM_SH" "$LLVM_VERSION"
   rm -f "$LLVM_SH"
-  $SUDO apt-get install -y --no-install-recommends \
+  retry 4 $SUDO apt-get install -y --no-install-recommends \
       "clang-$LLVM_VERSION" "lld-$LLVM_VERSION" "libclang-$LLVM_VERSION-dev"
 fi
 
