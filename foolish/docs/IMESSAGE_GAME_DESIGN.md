@@ -293,6 +293,9 @@ Laggards who open stale bubbles afterwards get §7's staleness handling.
 - **One bubble per game** via `MSSession` — Messages collapses older messages
   in the same session to their `summaryText` and keeps the latest interactive
   (§11.3). The thread never fills with 60 bubbles.
+- **A rematch is the same game, in the same session.**
+  New game on a finished board seals the kernel's rematch lobby (§7.2, `msg_rematch_lobby`), which reuses the finished game's session and collapses onto its result card.
+  Only a New game that is not a rematch starts a fresh session (`docs/IMESSAGE_LOBBY_V3.md`, Session-per-game).
 - Seat-claim messages (WAITING) intentionally contain zero kernel actions, so
   join races are trivially mergeable: two simultaneous claims of seat 2 fork
   the joins list only; §7's preference rule picks one, and the loser's device
@@ -388,7 +391,12 @@ computes the same winner regardless of message delivery order:
 
 ```
 Rule P (total preference order):
-  ancestry first: a chain's own DIRECT CHILD beats the parent it names
+  generation first: for the same game_id, a higher REMATCH GENERATION wins
+                                      (msg_wire.h rule G - a rematch is the
+                                       same game dealt again; it outranks
+                                       even the ancestry rule below, which
+                                       it can never contradict)
+  ancestry next: a chain's own DIRECT CHILD beats the parent it names
                                       (msg_wire.h rule 4 - `turn` counts
                                        re-derived atoms, and a pending good
                                        stops being one when anything follows
@@ -410,6 +418,24 @@ replacement usually makes the thread's visible bubble the newest delivered —
 but Rule P deliberately does NOT trust delivery order, because two devices can
 transiently disagree about "newest". Rule P needs no clocks and no ordering
 guarantees from the transport.
+
+### 7.2.1 The rematch: the same game, the next generation
+
+A finished game is rematched by dealing the SAME `game_id` again, one generation later.
+The generation rides every bubble of the rematch as FMSG format 7 (format 6 plus a `u16` at offset 68; `n_joins` moves to 70), and a generation-0 game still seals format 5 or 6 byte for byte.
+A build that predates format 7 refuses a rematch bubble with `MSG_EFORMAT`, which the extension shows as its "Couldn't open this game" screen.
+The rematch lobby is built entirely by the kernel from the finished chain (`msg_rematch_lobby`):
+
+- the same `game_id`, generation + 1;
+- `parent8` = the finished chain's digest, so the ancestry rule and the stale-branch gate see a child;
+- seed = SHA-256("rematch" || old seed || `game_id` LE || next generation LE), from structural fields only and never from the finished bubble's digest, which covers `sent_at`;
+- the finished game's seating, unrotated, every seat taken, at the finished game's size, as the web's `table_continue` keeps its roster and seats;
+- the finished game's rules (passing or podkidnoy), as `table_continue` keeps them;
+- the fool's-penalty carry for that roster and that fool, as every rematch has carried;
+- `last_actor_seat` = the finished chain's, so it does not depend on who tapped.
+
+So every tap on the same finished table is the same lobby but for its send clock, and Rule P's digest tiebreak between two of them settles nothing that matters.
+The cost, accepted by the owner: the next deal is computable by anyone holding the finished chain.
 
 ### 7.3 Validation = replay
 
