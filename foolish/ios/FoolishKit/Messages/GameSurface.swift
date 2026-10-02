@@ -1917,7 +1917,12 @@ struct GameSurface: View {
         }
         #endif
         let gameId = UInt64.random(in: 1...UInt64.max)
-        let capacity = chatIsDM ? 2 : 8
+        var capacity = chatIsDM ? 2 : 8
+        #if DEBUG
+        // Dev hook: `dev.capacity` (rig.sh capacity N) seats N in a DM, which
+        // is all the simulator has. Compiled out of every Release build.
+        if let n = MessageDevBoard.lobbyCapacity { capacity = n }
+        #endif
         do {
             try await MessageKernel.shared.newGame(seed: seed, players: capacity)
             let joins = [MessageJoin(seat: 0, name: nickname)]

@@ -63,6 +63,7 @@
 #   rig.sh prefs [TABLE] [LANG] [APPEARANCE]      felt|wool  en|ru|..  light|dark
 #   rig.sh slowmo N | ruler [off]                 debug overlays
 #   rig.sh deal N | off                           pin the genesis deal (dev.seed)
+#   rig.sh capacity N | off                       seats a new lobby offers (dev.capacity)
 #
 #   ---- capture --------------------------------------------------------
 #   rig.sh shot NAME              one frame, flattened, size-checked
@@ -1897,6 +1898,16 @@ cmd_deal() {
   else printf '%s' "${1:-3}" > "$g/dev.seed"; echo "deal: seed ${1:-3}"; fi
 }
 
+# HOW MANY SEATS A NEW LOBBY OFFERS (dev.capacity, DEBUG builds). Both stub
+# threads are DMs, and a DM's lobby holds 2, so `lobby 4` stopped at two seats
+# and no 3+ seat lobby was reachable on a simulator. `capacity 4` before the
+# create, `capacity off` to go back to the chat's own shape.
+cmd_capacity() {
+  local g; g=$(group_dir)
+  if [ "${1:-off}" = "off" ]; then rm -f "$g/dev.capacity"; echo "capacity: the chat's own"
+  else printf '%s' "$1" > "$g/dev.capacity"; echo "capacity: $1 seats"; fi
+}
+
 cmd_ruler() {
   local g; g=$(group_dir)
   if [ "${1:-on}" = "off" ]; then rm -f "$g/dev.ruler"; echo "ruler off"
@@ -2266,7 +2277,8 @@ case "${1:-}" in
   prefs)    shift; cmd_prefs "$@" ;;
   slowmo)   shift; cmd_slowmo "$@" ;;
   deal)     shift; cmd_deal "$@" ;;
-  ruler)    shift; cmd_ruler "$@" ;;
+  capacity) shift; cmd_capacity "$@" ;;
+  ruler)   shift; cmd_ruler "$@" ;;
   stageseed) shift; cmd_stageseed "$@" ;;
   reseed)   shift; cmd_reseed "$@" ;;
   shot)     shift; cmd_shot "$@" ;;
