@@ -109,6 +109,15 @@ final class OpeningDealShieldTests: XCTestCase {
                         opens += 1
                         if events.contains(where: { $0.kind == .deal }) {
                             dealt += 1
+                            // THE FIRST PAINT, before the sequence has seeded anything:
+                            // the board draws `pendingRoles`, which is this seed. Read
+                            // off the live view instead, it showed the real defender's
+                            // shield and then flipped it away as the deal began.
+                            let seed = try XCTUnwrap(c.openReplaySeedState,
+                                                     "\(at): the first paint has a board to seed its marks from")
+                            let first = MessageTableView.RoleState(seed)
+                            XCTAssertFalse((0..<players).contains(first.defender),
+                                           "\(at): the first paint shows seat \(first.defender)'s shield before the deal")
                             holdDealStream(events, prior: c.openReplayPriorState, players: players,
                                            defender: view.defender, at)
                         } else {

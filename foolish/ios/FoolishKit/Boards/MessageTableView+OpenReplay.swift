@@ -310,7 +310,7 @@ extension MessageTableView {
         // Refused here, the replay would open against that stream's mid-state:
         // the wrong numbers and the wrong marks, silently, with no twitch to
         // give it away. See ShownLedger.swift.
-        ledger.write(.arming) { $0.seedMarks(from: controller.openReplayPriorState, outs: false) }
+        ledger.write(.arming) { $0.seedMarks(from: controller.openReplaySeedState, outs: false) }
 
         // notes 6/12: hand every real card this open moves - onto the table
         // (attacks/covers/passes) OR into my hand (my own draws/pickups) - to

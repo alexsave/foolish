@@ -123,8 +123,8 @@ extension MessageTableView {
     /// with nothing to replay - both of those draw the live view, as always.
     private var pendingRoles: RoleState? {
         guard unstartedReplay != nil,
-              let prior = controller.openReplayPriorState else { return nil }
-        return RoleState(prior)
+              let seed = controller.openReplaySeedState else { return nil }
+        return RoleState(seed)
     }
 
     /// The roles the board should DRAW right now - the frozen ones during a

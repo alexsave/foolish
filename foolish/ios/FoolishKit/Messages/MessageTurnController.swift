@@ -115,6 +115,21 @@ public final class MessageTurnController: ObservableObject {
     /// Only ever a SEED. Once the board is live its marks are advanced by what
     /// it watched happen, and this is not consulted again.
     @Published public private(set) var openReplayPriorState: GameView?
+    /// THE BOARD A COLD OPEN'S MARKS ARE SEEDED FROM before its sequence runs:
+    /// the prior board, or - when there is none - the stream's first board, which
+    /// is what `runEventStream` falls back to as well. The board's first paint
+    /// (`pendingRoles`) and the arming seed both read this, so the marks painted
+    /// before the sequence are the marks the sequence starts from.
+    ///
+    /// The started bubble is why the fallback matters: its stream is the deal,
+    /// there is no step before it, and reading the LIVE view instead put the real
+    /// defender's shield up on the first paint, flipped it away as the deal began
+    /// and flipped it back after (filmed on the rig, 4p) - the flicker the
+    /// no-shield-until-the-trump rule exists to prevent. Behind `open.deal`.
+    public var openReplaySeedState: GameView? {
+        if let prior = openReplayPriorState { return prior }
+        return OpenDeal.shows ? openReplayEvents.first?.state : nil
+    }
     /// Every REAL card identity `openReplayEvents` moves onto the table or into
     /// my hand this open (attack/cover/pass placements, my own draws/pickups) -
     /// the set `MessageTableView.replayLastMoveOnOpen` pre-hides synchronously
