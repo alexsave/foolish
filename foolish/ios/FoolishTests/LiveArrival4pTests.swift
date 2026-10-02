@@ -349,31 +349,87 @@ final class LiveArrival4pTests: XCTestCase {
         XCTAssertTrue(loserBoard.humanLegal.contains { $0.type == .good },
                       "…and it must say good again")
         XCTAssertFalse(loserBoard.superseded, "nothing marks the board; nothing tells the human")
+        // The board is the TRUE state, and nothing stale is left behind: the
+        // loser's bubble went out, so its input field is empty and owes nothing.
+        XCTAssertFalse(loserBoard.nothingBubbleOwed, "a sent bubble leaves no field to fix")
+        for board in boards.values { board.setBoardWatching(false) }
+    }
+
+    /// NOTES 4/5, THE SEND WINDOW: the same race, but the winner's good lands
+    /// between the loser's tap on Send and the rebase that follows it. An
+    /// arrival in the send window is adopted at once, so the board was on the
+    /// winner - and the rebase then moved it onto the LOSER's own bubble, a
+    /// chain every other device drops: this board showed a good the thread
+    /// does not have, and the other players waited for one that never came.
+    /// The kernel now says the sent bytes were overtaken (msg_staged_fate:
+    /// SUPERSEDED, and Rule P prefers the arrival), so the board stays on the
+    /// winner. The WINNER in the mirror race goes where the thread goes - its
+    /// own bubble - because Rule P prefers what it sent.
+    func testAGoodRacedInsideTheSendWindowLeavesBothBoardsOnTheWinner() async throws {
+        let f = try await LiveArrivalFixture.coveredTable(players: 4)
+        let (a, b, c) = (f.attackers[0], f.attackers[1], f.attackers[2])
+        let x1 = try await f.good(a, after: f.root)
+        var sealed: [Int: Data] = [:]
+        var boards: [Int: MessageTurnController] = [:]
+        for s in [b, c] {
+            let board = await f.controller(seat: s, on: x1)
+            let good = try XCTUnwrap(board.legal.first { $0.type == .good })
+            let applied = await board.apply(good)
+            XCTAssertTrue(applied)
+            sealed[s] = try await board.stagedPayload()
+            boards[s] = board
+        }
+        let sb = try XCTUnwrap(sealed[b]), sc = try XCTUnwrap(sealed[c])
+        let order = try await MessageKernel.shared.preferred(sb, sc)
+        let (winner, loser) = order < 0 ? (b, c) : (c, b)
+        let winBytes = winner == b ? sb : sc, loseBytes = loser == b ? sb : sc
+
+        for (me, mine, theirs) in [(loser, loseBytes, winBytes), (winner, winBytes, loseBytes)] {
+            let board = try XCTUnwrap(boards[me])
+            // Send pressed; before the rebase runs, the other good arrives.
+            // The surface adopts it: the board is still on x1, and the rival
+            // is a direct child of x1.
+            board.markSending()
+            let adopts = try await MessageKernel.shared.preferred(x1.payload, theirs) > 0
+            XCTAssertTrue(adopts, "fixture: the surface hands the board the rival good")
+            let env = try await MessageEnvelope.decode(payload: theirs, viewer: -1)
+            await board.offerArrival(payload: theirs, parent: env)
+            XCTAssertEqual(board.basePayload, theirs, "an arrival in the send window is adopted at once")
+            // …and now the rebase.
+            await board.markSent(payload: mine)
+            XCTAssertEqual(board.basePayload, winBytes,
+                           "seat \(me) (\(me == winner ? "winner" : "loser")): the board must end "
+                           + "on the chain the thread keeps")
+            XCTAssertEqual(board.view.map { $0.hasSaidGood(loser) }, false,
+                           "seat \(me): the losing good is shown nowhere")
+            XCTAssertEqual(board.view.map { $0.hasSaidGood(winner) }, true)
+            XCTAssertFalse(board.sending, "the send window closed")
+            XCTAssertFalse(board.nothingBubbleOwed, "the field went out with the send")
+        }
         for board in boards.values { board.setBoardWatching(false) }
     }
 
     // MARK: - a staged good, invalidated by an arrival (note 6)
 
-    /// NOTE 6, the CONTROLLER half: "Live arrival that invalidates a good
-    /// should update the staged bubble". One attacker has said good; a second
-    /// stages good too; before Send the THIRD throws in a card off the same
-    /// bubble, which re-opens the table the staged good was saying "done" to.
-    /// The controller retracts and adopts - the board is right - but the bubble
-    /// in the input field is the one it sealed BEFORE the arrival, and nothing
-    /// replaces it (the investigation found no caller that re-stages after a
-    /// retraction). The input field itself is the harness's to show; this pins
-    /// what sending the leftover bubble then does.
+    /// The note-6 table: one attacker has said good on `x1`; a second
+    /// (`stager`) stages good on it and seals the bubble into the input field;
+    /// before Send the THIRD (`thrower`) throws in a card off the same bubble
+    /// (`x2`), which re-opens the table the staged good was saying "done" to.
     ///
     /// (A CLOSING good cannot be invalidated this way: by construction every
     /// other attacker has said good, and a seat that has said good is not
-    /// offered a throw-in - the fixture search below proves it by finding none.)
-    ///
-    /// Measured: the leftover good is a SIBLING of the throw-in, carrying two
-    /// pending goods (turn N+2) against the throw-in's one atom past the
-    /// parent (N+1). Rule P prefers it on TURN, so sending it is refused
-    /// nowhere: it rebases this board onto the stale good and erases the other
-    /// attacker's throw-in for the whole thread.
-    func testSendingTheLeftoverGoodAfterAnInvalidatingArrivalOverrulesIt() async throws {
+    /// offered a throw-in - the fixture check below proves it.)
+    struct StaleGood {
+        let f: LiveArrivalFixture
+        let x1: ChainBubble
+        let x2: ChainBubble
+        let stager: Int
+        let thrower: Int
+        let board: MessageTurnController
+        let leftover: Data
+    }
+
+    static func staleGood(watching: Bool = true) async throws -> StaleGood {
         var thrower = -1
         let f = try await LiveArrivalFixture.coveredTable(players: 4) { f in
             for s in f.attackers.dropFirst() {
@@ -389,40 +445,172 @@ final class LiveArrival4pTests: XCTestCase {
         let saidGoodMenu = try await f.legal(a, on: x1)
         XCTAssertFalse(saidGoodMenu.contains { $0.type == .attack },
                        "fixture check: a seat that said good is offered no throw-in")
-
-        // The stager says good on x1 (not closing - the thrower has not) and
-        // its phone seals the bubble into the input field.
-        let board = await f.controller(seat: stager, on: x1)
+        let board = await f.controller(seat: stager, on: x1, watching: watching)
         let good = try XCTUnwrap(board.legal.first { $0.type == .good })
         let applied = await board.apply(good)
         XCTAssertTrue(applied)
         XCTAssertEqual(board.view.map { $0.hasSaidGood(stager) }, true, "my check is up")
         let leftover = try await board.stagedPayload()
-
-        // The thrower throws in off x1, and it arrives over the staged good.
         let menu = try await f.legal(thrower, on: x1)
         let attack = try XCTUnwrap(menu.first { $0.type == .attack })
         let x2 = try await f.play(thrower, attack, after: x1)
+        return StaleGood(f: f, x1: x1, x2: x2, stager: stager, thrower: thrower,
+                         board: board, leftover: leftover)
+    }
+
+    /// The NOTHING bubble an Undo-to-empty on `bubble` stages for `seat`:
+    /// a fresh controller, any move applied and undone, then the same seal
+    /// `MessageTableView.stageBaseNow` makes.
+    static func undosNothingBubble(_ f: LiveArrivalFixture, seat: Int,
+                                   on bubble: ChainBubble) async throws -> Data {
+        let c = await f.controller(seat: seat, on: bubble, watching: false)
+        let any = try XCTUnwrap(c.legal.first { $0.type != .wait }, "seat \(seat) has no move to undo")
+        let applied = await c.apply(any)
+        XCTAssertTrue(applied)
+        await c.undo()
+        XCTAssertTrue(c.pending.isEmpty)
+        return try await c.stagedPayload()
+    }
+
+    /// NOTE 6: "Live arrival that invalidates a good should update the staged
+    /// bubble", and the owner's decision on how: "make it be a 'nothing burger'
+    /// bubble, same as if you pickup and then undo. we can't unstage a bubble,
+    /// but we can make it no-op."
+    ///
+    /// Until this, the controller retracted and adopted - the board was right -
+    /// but the bubble in the input field was the one sealed BEFORE the arrival,
+    /// and nothing replaced it. That leftover good is a SIBLING of the
+    /// throw-in carrying two pending goods (turn N+2) against the throw-in's
+    /// one atom past the parent (N+1), so Rule P preferred it on TURN: sending
+    /// it rebased this board onto the stale good and erased the other
+    /// attacker's throw-in for the whole thread.
+    ///
+    /// Now the kernel says the field's bubble did not survive the arrival
+    /// (msg_staged_fate: SUPERSEDED), the controller owes the board the Undo's
+    /// NOTHING bubble, and that bubble - byte for byte the one an Undo-to-empty
+    /// on the arrival stages - keeps the board and the thread on the throw-in
+    /// when it is sent.
+    func testAnArrivalThatInvalidatesAStagedGoodOwesTheUndosNothingBubble() async throws {
+        let t = try await Self.staleGood()
+        let (f, board, x1, x2) = (t.f, t.board, t.x1, t.x2)
+        XCTAssertFalse(board.nothingBubbleOwed, "nothing is owed before the arrival")
+
         await f.arrive(x2, at: board, finishRetraction: false)
         XCTAssertTrue(board.conflictRetracting || board.basePayload == x2.payload,
                       "the arrival either retracts the staged good or has already adopted")
         if board.conflictRetracting { await board.finishConflictAdopt() }
         XCTAssertEqual(board.basePayload, x2.payload, "the arrival was adopted")
-        XCTAssertTrue(board.pending.isEmpty, "the staged good was dropped")
-        XCTAssertFalse(board.canSend, "the controller has nothing staged any more")
-        XCTAssertEqual(board.view.map { $0.hasSaidGood(stager) }, false, "my check is gone")
+        XCTAssertTrue(board.pending.isEmpty, "the staged good was dropped, not re-applied")
+        XCTAssertEqual(board.view.map { $0.hasSaidGood(t.stager) }, false, "my check is gone")
 
-        // The leftover bubble is a sibling of x2, and Rule P prefers it.
-        let pref = try await MessageKernel.shared.preferred(x2.payload, leftover)
-        XCTAssertGreaterThan(pref, 0, "the stale good outranks the throw-in")
+        // Why the leftover must not stay: it outranks the throw-in.
+        let pref = try await MessageKernel.shared.preferred(x2.payload, t.leftover)
+        XCTAssertGreaterThan(pref, 0, "fixture: the stale good outranks the throw-in")
 
-        // The human presses Send on what is still in the input field.
-        await board.markSent(payload: leftover)
-        XCTAssertEqual(board.basePayload, leftover,
-                       "the board jumps to the stale good's branch, and so does the thread")
-        let shown = try XCTUnwrap(board.view)
-        let parentTable = try await f.truth(stager, on: x1)?.battles.count
-        XCTAssertEqual(shown.battles.count, parentTable, "the throw-in is gone")
+        // THE DEBT, and the bubble that pays it - `stageBaseNow`'s seal.
+        XCTAssertTrue(board.nothingBubbleOwed,
+                      "the arrival left a stale good in the input field and owes nothing for it")
+        XCTAssertTrue(board.takeNothingBubbleOwed())
+        XCTAssertFalse(board.takeNothingBubbleOwed(), "the debt is paid exactly once")
+        let nothing = try await board.stagedPayload()
+        let env = try await MessageEnvelope.decode(payload: nothing, viewer: -1)
+        XCTAssertEqual(env.newAtoms, MessageEnvelope.newAtomsNothing, "it carries no move")
+        XCTAssertEqual(MessageTurnController.firstEight(hex: env.parent8), x2.digest8,
+                       "it is a child of the arrival")
+        XCTAssertEqual(env.turn, x2.turn, "and holds exactly the arrival's atoms")
+        let undos = try await Self.undosNothingBubble(f, seat: t.stager, on: x2)
+        XCTAssertEqual(nothing, undos, "the SAME bubble an Undo-to-empty on the arrival stages")
+
+        // The human presses Send on it: the board stays on the arrival, and the
+        // thread keeps the throw-in under Rule P.
+        await board.markSent(payload: nothing)
+        XCTAssertEqual(board.basePayload, nothing)
+        let truthX2 = try await f.truth(t.stager, on: x2)
+        XCTAssertEqual(board.view?.battles.count, truthX2?.battles.count, "the throw-in is still on the table")
+        let parentTable = try await f.truth(t.stager, on: x1)?.battles.count
+        XCTAssertEqual(board.view?.battles.count, parentTable.map { $0 + 1 }, "…one more attack than x1")
+        XCTAssertEqual(board.view.map { $0.hasSaidGood(t.stager) }, false, "and no stale good")
+        let thread = try await MessageKernel.shared.preferred(x2.payload, nothing)
+        XCTAssertGreaterThan(thread, 0, "Rule P: the no-op is the arrival's child and wins")
+        XCTAssertFalse(board.nothingBubbleOwed)
         board.setBoardWatching(false)
+    }
+
+    /// The same, with NO board mounted: the arrival adopts at once (no red
+    /// flight to wait for), and the debt waits for a board to pay it.
+    func testTheDebtIsRaisedWithNoBoardMountedToo() async throws {
+        let t = try await Self.staleGood(watching: false)
+        await t.f.arrive(t.x2, at: t.board)
+        XCTAssertEqual(t.board.basePayload, t.x2.payload)
+        XCTAssertTrue(t.board.nothingBubbleOwed)
+    }
+
+    /// NOT INVALIDATED, NOTHING CHANGES. A re-delivery of the chain the staged
+    /// good was built on is SKIPPED: the staged move stands and nothing is owed.
+    func testARedeliveryOfTheBaseOwesNothing() async throws {
+        let t = try await Self.staleGood()
+        await t.f.arrive(t.x1, at: t.board)
+        XCTAssertEqual(t.board.basePayload, t.x1.payload)
+        XCTAssertEqual(t.board.pending.count, 1, "the staged good stands")
+        XCTAssertFalse(t.board.nothingBubbleOwed)
+        t.board.setBoardWatching(false)
+    }
+
+    /// …and an arrival that already CARRIES the staged bubble (my own bubble
+    /// echoed back after a lost send signal) owes nothing: the bubble went
+    /// out, and the field is empty.
+    func testAnArrivalCarryingMyStagedBubbleOwesNothing() async throws {
+        let t = try await Self.staleGood()
+        let mine = t.f
+        let sent = ChainBubble(payload: t.leftover,
+                               env: try await MessageEnvelope.decode(payload: t.leftover, viewer: -1),
+                               actor: t.stager, move: .good)
+        await mine.arrive(sent, at: t.board)
+        XCTAssertEqual(t.board.basePayload, t.leftover)
+        XCTAssertFalse(t.board.nothingBubbleOwed, "LANDED: nothing in the field to fix")
+        t.board.setBoardWatching(false)
+    }
+
+    /// A STALE UNDO BUBBLE is overwritten too. Stage, Undo - the field now
+    /// holds the NOTHING reseal of x1 - then the throw-in arrives. That reseal
+    /// names x1 and holds x1's pending good; sent after the throw-in it is a
+    /// sibling Rule P can rank above it (the same turn: the throw-in folded the
+    /// good), so it is no safer than the move it replaced.
+    func testAnArrivalOverAStaleUndoBubbleOwesANewOne() async throws {
+        let t = try await Self.staleGood()
+        await t.board.undo()
+        let stale = try await t.board.stagedPayload()
+        await t.f.arrive(t.x2, at: t.board)
+        XCTAssertEqual(t.board.basePayload, t.x2.payload)
+        XCTAssertTrue(t.board.nothingBubbleOwed, "the Undo's bubble over x1 is stale over x2")
+        XCTAssertTrue(t.board.takeNothingBubbleOwed())
+        let fresh = try await t.board.stagedPayload()
+        XCTAssertNotEqual(fresh, stale)
+        let env = try await MessageEnvelope.decode(payload: fresh, viewer: -1)
+        XCTAssertEqual(MessageTurnController.firstEight(hex: env.parent8), t.x2.digest8)
+        t.board.setBoardWatching(false)
+    }
+
+    /// Nothing in the field (the move was never staged as a bubble, or the
+    /// human deleted it): nothing owed. And a bubble already on its way
+    /// (Send pressed) is the send's business, not the field's.
+    func testAnEmptyFieldOrASendInFlightOwesNothing() async throws {
+        let t = try await Self.staleGood()
+        _ = await t.board.cancelStage()
+        await t.f.arrive(t.x2, at: t.board)
+        XCTAssertFalse(t.board.nothingBubbleOwed, "the human deleted the bubble: the field is empty")
+        t.board.setBoardWatching(false)
+
+        let u = try await Self.staleGood()
+        u.board.markSending()
+        await u.f.arrive(u.x2, at: u.board)
+        XCTAssertEqual(u.board.basePayload, u.x2.payload)
+        XCTAssertFalse(u.board.nothingBubbleOwed, "Send was pressed: the bubble is on its way")
+        u.board.setBoardWatching(false)
+    }
+
+    func testTheNothingBubbleShipsOn() {
+        XCTAssertTrue(MessageTurnController.restagesNothingAfterArrivalByDefault)
+        XCTAssertTrue(MessageTurnController.sendRespectsArrivalsByDefault)
     }
 }

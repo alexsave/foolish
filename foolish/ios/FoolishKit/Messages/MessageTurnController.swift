@@ -859,6 +859,10 @@ public final class MessageTurnController: ObservableObject {
             AnimLog.say("adopt skipped - already on this chain")
             return
         }
+        // What the input field holds, and the state the arrival FOUND - both
+        // before anything below clears them (see `settleFieldAfterArrival`).
+        let field = fieldBubble
+        let found = chainState
         base = .continuation(payload: payload)
         // TOGETHER WITH THE BASE, and before any await. `begin` clears this too,
         // but only after it has suspended on the rebuild - and in that window
@@ -877,6 +881,86 @@ public final class MessageTurnController: ObservableObject {
         lastChangeWasUndo = false
         arrivalTick += 1
         await begin()
+        await settleFieldAfterArrival(field: field, found: found, arrived: payload)
+    }
+
+    // MARK: the input field, after an arrival (note 6)
+
+    /// THE BUBBLE THIS CONTROLLER LAST PUT IN THE INPUT FIELD and has not seen
+    /// leave it: set by every seal for staging (`stagedPayload`), cleared by
+    /// Send (`markSent`) and by the human deleting it (`cancelStage`). Not
+    /// `lastSealed`, which must outlive the send - it is how `markSent` knows a
+    /// second signal for the same bytes is its own.
+    private var fieldBubble: Data?
+
+    /// AN ARRIVAL LEFT A STALE BUBBLE IN THE INPUT FIELD, and the board owes it
+    /// the Undo's NOTHING bubble (MessageTableView.restageNothingAfterArrival,
+    /// which runs `stageBaseNow` - the very code an Undo-to-empty runs). A
+    /// flag rather than a tick so a board that mounts late still pays it.
+    @Published public private(set) var nothingBubbleOwed = false
+
+    /// The board takes the debt exactly once.
+    public func takeNothingBubbleOwed() -> Bool {
+        defer { nothingBubbleOwed = false }
+        return nothingBubbleOwed
+    }
+
+    /// NOTE 6 (owner): "Live arrival that invalidates a good should update the
+    /// staged bubble" - and, on how: "make it be a 'nothing burger' bubble,
+    /// same as if you pickup and then undo. we can't unstage a bubble, but we
+    /// can make it no-op."
+    ///
+    /// An adopt has just dropped the staged moves (the arriving chain is the
+    /// thread's truth, and nothing is re-applied). The bubble those moves were
+    /// sealed into is still in the input field, though - Messages offers no
+    /// call to remove one - and sending it was worse than a no-op: at three or
+    /// more seats a good staged before another attacker's throw-in is a SIBLING
+    /// of the throw-in with MORE atoms, so Rule P ranked it first and the send
+    /// erased the throw-in for the whole thread (LiveArrival4pTests).
+    ///
+    /// Whether the field's bubble survives the arrival is the kernel's answer
+    /// (`msg_staged_fate`, then `msg_turn_field_after_arrival`), asked of the
+    /// bytes in the field and the bytes adopted. One await, and only a field
+    /// that did not move during it is answered for: a new stage, a send or a
+    /// cancel in that window has already decided what the field holds.
+    private func settleFieldAfterArrival(field: Data?, found: TurnWire.State,
+                                         arrived: Data) async {
+        guard Self.restagesNothingAfterArrival, let field else { return }
+        let fate = (try? await kernel.stagedFate(staged: field, arrived: arrived)) ?? .superseded
+        guard fieldBubble == field else { return }
+        switch TurnWire.fieldAfterArrival(found, fieldFate: fate) {
+        case .keep:
+            break
+        case .nothing:
+            FlightRecorder.note("field-nothing", "an arrival left the staged bubble stale (\(fate))")
+            nothingBubbleOwed = true
+        }
+    }
+
+    /// Ships on; `arrival.restagenothing=0` in `dev.flags` puts back the input
+    /// field an arrival never touched.
+    public static let restagesNothingAfterArrivalByDefault = true
+
+    static var restagesNothingAfterArrival: Bool {
+        #if DEBUG || SOLO_TESTING
+        return MessageDevBoard.flag("arrival.restagenothing",
+                                    shipping: restagesNothingAfterArrivalByDefault)
+        #else
+        return restagesNothingAfterArrivalByDefault
+        #endif
+    }
+
+    /// NOTES 4/5: an arrival that raced the send keeps the board where the
+    /// kernel says (MSG_TURN_SEND_OVERTAKEN). Ships on; `arrival.sendovertaken=0`
+    /// puts back the rebase that followed the send whatever had landed.
+    public static let sendRespectsArrivalsByDefault = true
+
+    static var sendRespectsArrivals: Bool {
+        #if DEBUG || SOLO_TESTING
+        return MessageDevBoard.flag("arrival.sendovertaken", shipping: sendRespectsArrivalsByDefault)
+        #else
+        return sendRespectsArrivalsByDefault
+        #endif
     }
 
     /// Re-establish the chain underneath this board AND read the animation its
@@ -1320,6 +1404,8 @@ public final class MessageTurnController: ObservableObject {
         FlightRecorder.note("send-mark",
             "\(pending.count) staged, in=\(payload?.count ?? -1)b,"
           + " sealed=\(lastSealed?.count ?? -1)b, held=\(heldSettlement.count)")
+        // Send empties the input field, whatever is decided about the bytes.
+        fieldBubble = nil
         // WHICH BYTES WENT OUT - one rule, from two rounds that each found half
         // of it and never met.
         //
@@ -1366,15 +1452,18 @@ public final class MessageTurnController: ObservableObject {
         // once here and once after the decode below, which is the only await it
         // owes; the facts are stated in ONE place so the two asks cannot differ
         // by anything but the decode.
-        let verdictNow: (Bool?, Bool?) -> TurnWire.SendVerdict = { [lastSealed] decoded, sameGame in
+        let verdictNow: (Bool?, Bool?, TurnWire.StagedFate?, Bool?) -> TurnWire.SendVerdict = {
+            [lastSealed] decoded, sameGame, fate, sentWins in
             TurnWire.sendVerdict(staged: staged,
                                  host: payload != nil,
                                  sealed: lastSealed != nil,
                                  hostIsSealed: payload != nil && payload == lastSealed,
                                  decoded: decoded,
-                                 sameGame: sameGame)
+                                 sameGame: sameGame,
+                                 fate: fate,
+                                 sentWins: sentWins)
         }
-        var verdict = verdictNow(nil, nil)
+        var verdict = verdictNow(nil, nil, nil, nil)
         if staged {
             if let mine = lastSealed, mine != payload {
                 if let host = payload {
@@ -1510,7 +1599,34 @@ public final class MessageTurnController: ObservableObject {
             // its own game, and it lands there for everyone - including this
             // device, next time it opens that game.
             let sameGame = adopted.map { $0.gameId == gameIdString }
-            verdict = verdictNow(adopted != nil, sameGame)
+            // NOTES 4/5: AN ARRIVAL MAY HAVE RACED THE SEND. Between the tap on
+            // Send and this line the board can have adopted another chain - an
+            // arrival in the send window is adopted at once - and then these
+            // bytes are not the board's next state but a rival to the one it
+            // shows. Which of the two the board keeps is the kernel's
+            // (MSG_TURN_SEND_OVERTAKEN): the relation of the sent bytes to the
+            // chain the board stands on and, for siblings, Rule P. Both are
+            // byte comparisons that adopt nothing.
+            var fate: TurnWire.StagedFate?
+            var sentWins: Bool?
+            if Self.sendRespectsArrivals, adopted != nil, sameGame == true,
+               let shown = basePayload {
+                fate = try? await kernel.stagedFate(staged: sent, arrived: shown)
+                if fate == .superseded {
+                    sentWins = (try? await kernel.preferred(shown, sent)).map { $0 > 0 }
+                }
+            }
+            verdict = verdictNow(adopted != nil, sameGame, fate, sentWins)
+            if verdict == .overtaken {
+                FlightRecorder.note("send-overtaken",
+                    "an arrival moved the board \(fate == .landed ? "past" : "away from") the sent bytes - board unchanged")
+                AnimLog.say("markSent REFUSED - an arrival raced the send (\(String(describing: fate)))")
+                // The rebase is refused; the release is not (`releaseHoldForSend`).
+                sending = false
+                releaseHoldForSend()
+                await refresh()
+                return
+            }
             if verdict == .otherGame {
                 FlightRecorder.note("send-othergame",
                     "sent game \(adopted?.gameId ?? "?") != board \(gameIdString) - board unchanged")
@@ -1648,6 +1764,8 @@ public final class MessageTurnController: ObservableObject {
     /// staged, and X-ing THAT must not take a second move back), and what keeps
     /// a cancel out of the send window and out of a retraction already flying.
     public func cancelStage() async -> StageCancel {
+        // Whatever the game owes, the FIELD is empty: the human deleted it.
+        fieldBubble = nil
         switch TurnWire.cancel(chainState, pending: pending.count) {
         case .noop:    return .noop
         case .restage: await undo(); return .restage
@@ -1704,6 +1822,7 @@ public final class MessageTurnController: ObservableObject {
                                                    joins: sealJoins,
                                                    sentAt: sentAt)
             lastSealed = sealed
+            fieldBubble = sealed
             return sealed
         } catch {
             // The callers stage with `try?`, so a refusal is SILENT - which is
