@@ -3361,9 +3361,17 @@ static void print_lastmove_ex(int np, int kind, int live) {
                             const int before = c.num_logs;
                             if (!lastmove_apply(&c, seat, m)) break;
                             if (c.has_flipped || c.status != GAME_STATUS_PLAYING) break;
+                            // FOOLISH_TRUMP_DRAW=N: the draw that took the
+                            // trump took at least N cards, so a film shows
+                            // backs from the stock beside the trump's face.
+                            const char *min_s = getenv("FOOLISH_TRUMP_DRAW");
+                            const int min_n = min_s ? atoi(min_s) : 1;
                             for (int L = c.num_logs - 1; L >= before; L--)
                                 if (c.logs[L].log_type == LOG_DRAW) {
-                                    trump_to = c.logs[L].player_idx; want = 1; break;
+                                    if (c.logs[L].num_pairs >= min_n) {
+                                        trump_to = c.logs[L].player_idx; want = 1;
+                                    }
+                                    break;
                                 }
                             break;
                         }
