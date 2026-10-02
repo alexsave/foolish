@@ -412,6 +412,9 @@ the default has never looked at half the product) and `preroll` (play that many
 whole bouts first, the only way to reach a drained deck, a player already out,
 or a hand big enough to wrap two rows).
 
+`rig.sh seed started N` seeds the bubble a lobby's Start seals: N seats dealt, nobody has moved.
+Its whole animation is the opening deal, and a seeded board opens quiet, so film it with `REPLAY=1`.
+
 **iOS 27 simulator runs the two-sided trick the other way (2026-09-26).**
 On the iOS 27 runtime a message sent from a thread lands on the RIGHT of that thread and on the LEFT of the other stub thread, the reverse of what `chain` assumes.
 Incoming game messages show only a caption pill, never their image.

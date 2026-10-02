@@ -2609,6 +2609,44 @@ static void print_twocover(int np, int one_bubble) {
     fprintf(stderr, "no %dp deal posed two coverable throw-ins\n", np);
 }
 
+// ---------- --started: the bubble Start seals --------------------------------
+//
+// Prints the LIVE handoff a lobby's Start seals: the deal locked at create, the
+// real player count, nobody has moved (turn 0, an empty body - msg_seal's
+// 0-action path, exactly what fio_msg_encode writes for it). Opening this is
+// "the started bubble", whose whole animation is the opening deal (owner: "Did
+// not see card deal"). Seeded boards open quiet, so film it with REPLAY=1.
+//
+// Usage: msg_wire_test --started [n_players]
+static void print_started(int np) {
+    static unsigned char body[1024];
+    static Game scratch;
+    uint8_t seed[MSG_SEED_LEN];
+    seed_fill(seed, 20261001u + (uint32_t)np * 131u);
+    game_set_deal_seed_bytes(seed, MSG_SEED_LEN);
+    Game g;
+    memset(&g, 0, sizeof(g));
+    g.num_players = (int8_t)np;
+    for (int i = 0; i < np; i++) g.players[i].status = PLAYER_STATUS_READY;
+    start_game(&g);
+    MsgEnvelope e;
+    env_init(&e, seed, np);
+    e.phase = MSG_PHASE_LIVE;
+    e.last_actor_seat = 0;
+    e.sent_at = (uint16_t)((time(NULL) - 60) & 0xffff);
+    if (msg_seal(&e, &g, MSG_NO_BASE, body, sizeof(body), &scratch) != MSG_EOK) {
+        fprintf(stderr, "started: the %dp handoff did not seal\n", np);
+        return;
+    }
+    unsigned char wire[ENV_CAP];
+    const int n = msg_encode(&e, wire, sizeof(wire));
+    if (n <= 0) { fprintf(stderr, "started: encode failed (%d)\n", n); return; }
+    fprintf(stderr, "started: %dp, turn %d, first attacker seat %d, defender=seat %d\n",
+            np, e.turn, g.first_attacker, g.defender);
+    for (int i = 0; i < n; i++) printf("%02x", wire[i]);
+    printf("\n");
+}
+
 // `msg_wire_test --fixture` prints sealed envelopes as hex, one per line:
 //   <n_players> <turn> <round> <hex>
 // These are the cross-engine goldens (design §8.2): the wasm kernel and, later,
@@ -4395,6 +4433,10 @@ int main(int argc, char **argv) {
         print_fatboard(argc > 2 ? atoi(argv[2]) : 10, argc > 3 ? atoi(argv[3]) : 2,
                        argc > 4 && !strcmp(argv[4], "nopass"),
                        argc > 5 ? atoi(argv[5]) : 0);
+        return 0;
+    }
+    if (argc > 1 && !strcmp(argv[1], "--started")) {
+        print_started(argc > 2 ? atoi(argv[2]) : 2);
         return 0;
     }
     if (argc > 1 && !strcmp(argv[1], "--twocover")) {
