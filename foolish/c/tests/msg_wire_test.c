@@ -4822,6 +4822,34 @@ static void ob_edges(void) {
               "edges %dp: the opening attack over a dealt table opened at %d",
               np, ob_boundary(&dealt, &first));
 
+        // START ARRIVING ON A LOBBY ON SCREEN (#255: a started bubble's replay
+        // is its deal, one step, which the bridge plays only from atom 0). The
+        // lobby has no body and neither does the started chain, so nothing of
+        // it has been shown: the boundary is at most 0 (the claim, -1 "does not
+        // say", or the empty shared prefix), whether the lobby is the invite at
+        // capacity or the full table the last join left. The bridge
+        // (fio_replay_last_events_packed) plays a one-step chain's deal for
+        // either; anything above 0 would skip it.
+        {
+            static OBubble lobby;
+            const int caps[2] = { 8, np };
+            for (int c = 0; c < 2; c++) {
+                MsgEnvelope e;
+                env_init(&e, seed, caps[c]);
+                e.phase = MSG_PHASE_WAITING;
+                e.game_id = gid;
+                e.n_joins = (uint8_t)(c ? np : 1);
+                lobby.n = msg_encode(&e, lobby.w, sizeof(lobby.w));
+                CHECK(lobby.n > 0 && msg_decode(lobby.w, lobby.n, &lobby.e) == MSG_EOK,
+                      "edges %dp: lobby (cap %d) encode", np, caps[c]);
+                CHECK(ob_boundary(&lobby, &dealt) <= 0,
+                      "edges %dp: Start over a lobby of %d opened at %d, so its deal never plays",
+                      np, caps[c], ob_boundary(&lobby, &dealt));
+            }
+            CHECK(ob_boundary(NULL, &dealt) <= 0,
+                  "edges %dp: a started bubble opened cold at %d", np, ob_boundary(NULL, &dealt));
+        }
+
         // NOTHING: the undo-to-empty reseal of the chain on screen.
         CHECK(ob_seal(&nothing, &g, seed, np, gid, MSG_BASE_NOTHING), "edges %dp: nothing seal", np);
         CHECK(nothing.e.n_new == MSG_NEW_NOTHING, "edges %dp: the reseal is not NOTHING", np);
