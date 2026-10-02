@@ -309,17 +309,17 @@ static void test_greys_numbers(void)
     int row = o_cell / 243 + 1, col = o_cell % 243;
     long y = ((2L * row + 1) * 732) / (2L * 244), x = ((2L * col + 1) * 729) / (2L * 243);
     uint8_t *px = paint + (y * 729 + x) * 4;
-    px[0] = 20; px[1] = 21; px[2] = 22;                     /* a sum of 63, a mean of 21 */
+    /* to 15, 15, 16: a mean of 15.33, the last luminance of bucket 0 */
+    px[0] = 15; px[1] = 15; px[2] = 16;
     CHECK(ubd_luma(paint, 729, 732, 243, &l) == 0, "luma");
     CHECK(l.cls[1].mean == 133 && l.cls[1].min == 133 && l.cls[1].max == 133, "X %f", l.cls[1].mean);
-    CHECK(l.cls[2].max == 21 && l.cls[2].min == 0 && l.cls[2].sd > 0, "O max %d", l.cls[2].max);
-    CHECK(l.worst_dev3 == 63, "worst %d (21 from 0)", l.worst_dev3);
-    double n = l.cls[2].n, mean = 21.0 / n, var = (21.0 * 21.0) / n - mean * mean;
+    CHECK(l.cls[2].max == 16 && l.cls[2].min == 0 && l.cls[2].sd > 0, "O max %d", l.cls[2].max);
+    CHECK(l.worst_dev3 == 46, "worst %d (46 thirds: 15.33 from 0)", l.worst_dev3);
+    double n = l.cls[2].n, mean = 46.0 / 3 / n, var = (46.0 / 3) * (46.0 / 3) / n - mean * mean;
     CHECK(l.cls[2].sd > 0.999 * sqrt(var) && l.cls[2].sd < 1.001 * sqrt(var), "sd %f against %f", l.cls[2].sd, sqrt(var));
-    CHECK(l.hist[133 / 16] == l.cls[1].n && l.hist[1] == 1, "buckets");
+    CHECK(l.hist[133 / 16] == l.cls[1].n && l.hist[0] == l.cls[2].n && l.hist[1] == 0, "buckets: %d %d",
+          l.hist[0], l.hist[1]);
 }
-
-/* --------------------------------------------------------------- the ring */
 
 static void test_ring(void)
 {
@@ -437,7 +437,8 @@ static void test_report(void)
 
     UbdFacts f;
     memset(&f, 0, sizeof f);
-    f.app_version = "1.1"; f.app_build = "16"; f.os_version = "27.0"; f.model = "iPhone16,2";
+    f.app_version = "1.1"; f.app_build = "16"; f.os_version = "27.0";
+    f.model = "iPhone16,2 with a name far longer than any line may be";   /* cut, never wide */
     f.install = "TestFlight"; f.now = 1790001200; f.utc_offset = 3600; f.from = UBD_FROM_SELECTED;
     f.who = UBD_WHO_OTHER; f.pending = 0; f.session = "8C2A";
     f.url = url; f.seat = "O by record";
@@ -470,6 +471,8 @@ static void test_report(void)
     CHECK(line_with(text, "result BD_EOK", l, sizeof l), "result line");
     CHECK(line_with(text, "read 87.4 ms", l, sizeof l), "read time");
     CHECK(line_with(text, "sent by the other person", l, sizeof l), "who");
+    CHECK(line_with(text, "iOS 27.0, iPhone16,2 with a name far longer", l, sizeof l) &&
+          strlen(l) == UBD_LINE_MAX, "the long line is cut at %d: %s", UBD_LINE_MAX, l);
     CHECK(line_with(text, "at 2026-09-21 ", l, sizeof l), "clock");
 
     TEST("report: the greys per class, the worst deviation and the histogram");
