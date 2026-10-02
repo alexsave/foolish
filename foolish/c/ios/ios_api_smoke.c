@@ -447,6 +447,86 @@ static int fmsg_check(void) {
     return 0;
 }
 
+// THE REMATCH through the bridge the phone calls: a finished 4-seat game, two
+// taps on it (fio_msg_rematch), the lobby adopted, Start dealt
+// (fio_msg_start_rematch -> fio_reseat_game), and the live bubble sealed. What
+// can only break at this layer is the session: the generation has to survive
+// the decode, the re-deal at Start and every seal after it, or rule G ranks
+// the rematch below the game it replaced.
+static int rematch_check(void) {
+    int strat = -1;
+    for (int i = 0; i < fio_strategy_count(); i++) {
+        char nm[64];
+        if (fio_strategy_name(i, nm, sizeof(nm)) > 0 && !strcmp(nm, "handwritten")) { strat = i; break; }
+    }
+    unsigned char seed[32];
+    for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(i * 13 + 5);
+    if (fio_new_game(seed, 32, 4) != FIO_EOK) { printf("FAIL rematch new_game\n"); return 1; }
+    for (int p = 0; p < 4; p++) fio_set_seat_strategy(p, strat);
+    for (int steps = 0; fio_game_over() < 0 && steps < 5000; steps++)
+        if (fio_bot_drive(0) < 0) break;
+    const int fool = fio_game_over();
+    if (fool < 0) { printf("FAIL rematch: the game did not finish\n"); return 1; }
+
+    const SmokeJoin jspec[4] = { {0,"Sveta"}, {1,"Ann"}, {2,"Bo"}, {3,"Cy"} };
+    unsigned char joins[128];
+    const int joins_n = pack_joins(joins, (int)sizeof joins, jspec, 4);
+    static unsigned char fin[2048], a[2048], b[2048], live[2048];
+    const uint8_t zero8[8] = {0};
+    const uint64_t gid = 0x5151AA00BB11CC22ULL;
+    const int nf = fio_msg_encode(3 /* FINISHED */, 0, gid, zero8, joins, joins_n, 0x0101, fin, sizeof(fin));
+    if (nf <= 0) { printf("FAIL rematch: finished encode %d (msg_err=%d)\n", nf, fio_last_msg_error()); return 1; }
+
+    const int na = fio_msg_rematch(fin, nf, 0x0111, a, sizeof(a));
+    const int nb = fio_msg_rematch(fin, nf, 0x0222, b, sizeof(b));
+    if (na <= 0 || nb != na) { printf("FAIL rematch: taps %d / %d (msg_err=%d)\n", na, nb, fio_last_msg_error()); return 1; }
+    for (int i = 0; i < na; i++)
+        if (a[i] != b[i] && i != MSG_CLOCK_OFF && i != MSG_CLOCK_OFF + 1) {
+            printf("FAIL rematch: two taps differ at byte %d\n", i); return 1;
+        }
+    if (fio_msg_rule_p(fin, nf, a, na) <= 0) { printf("FAIL rematch: the finished game beat its rematch\n"); return 1; }
+
+    if (fio_msg_decode(a, na) != FIO_EOK) { printf("FAIL rematch: the lobby does not adopt\n"); return 1; }
+    const MsgHeader *h = (const MsgHeader *)fio_msg_header_ptr();
+    uint8_t want_seed[MSG_SEED_LEN];
+    msg_rematch_seed(seed, gid, 1, want_seed);
+    if (h->e.phase != 0 || h->e.generation != 1 || h->e.game_id != gid || h->e.n_joins != 4
+        || memcmp(h->e.seed, want_seed, MSG_SEED_LEN) != 0) {
+        printf("FAIL rematch: lobby phase %d gen %u same-id %d joins %d\n",
+               h->e.phase, h->e.generation, h->e.game_id == gid, h->e.n_joins);
+        return 1;
+    }
+    const uint32_t key = h->e.carry_key;
+    const int carry_fool = h->e.carry_fool;
+    int opening = -1;
+    if (fio_msg_start_rematch(joins, joins_n, key, carry_fool, &opening) != FIO_EOK || opening < 0) {
+        printf("FAIL rematch: Start refused or punished nobody (%d)\n", opening); return 1;
+    }
+    if ((opening + 1) % 4 != fool) { printf("FAIL rematch: opened %d, the fool was %d\n", opening, fool); return 1; }
+    uint8_t parent[8];
+    { uint8_t d[32]; msg_digest(a, na, d); memcpy(parent, d, 8); }
+    const int nl = fio_msg_encode(2 /* LIVE */, 0, gid, parent, joins, joins_n, 0x0333, live, sizeof(live));
+    if (nl <= 0) { printf("FAIL rematch: live encode %d (msg_err=%d)\n", nl, fio_last_msg_error()); return 1; }
+    if (fio_msg_decode(live, nl) != FIO_EOK) { printf("FAIL rematch: the live chain does not adopt\n"); return 1; }
+    if (h->e.generation != 1 || memcmp(h->e.seed, want_seed, MSG_SEED_LEN) != 0) {
+        printf("FAIL rematch: Start sealed generation %u (the re-deal dropped it?)\n", h->e.generation);
+        return 1;
+    }
+    if (fio_msg_rule_p(fin, nf, live, nl) <= 0) { printf("FAIL rematch: the finished game beat the rematch in play\n"); return 1; }
+    // A fresh deal is generation 0 again.
+    if (fio_new_game(seed, 32, 2) != FIO_EOK) { printf("FAIL rematch: new_game\n"); return 1; }
+    const SmokeJoin j2[2] = { {0,"Sveta"}, {1,"Ann"} };
+    const int j2n = pack_joins(joins, (int)sizeof joins, j2, 2);
+    const int n0 = fio_msg_encode(0, 0, 0x77, zero8, joins, j2n, 0x0444, a, sizeof(a));
+    if (n0 <= 0 || fio_msg_peek(a, n0) != FIO_EOK || h->e.generation != 0) {
+        printf("FAIL rematch: a fresh game inherited the rematch's generation\n"); return 1;
+    }
+    // Not a finished chain: refused, so the host starts an ordinary game.
+    if (fio_msg_rematch(a, n0, 0x0555, b, sizeof(b)) >= 0) { printf("FAIL rematch: a lobby was rematched\n"); return 1; }
+    printf("rematch OK (two taps one lobby, generation 1 through Start, fool %d defends)\n", fool);
+    return 0;
+}
+
 // ---------- the bubble delta survives being READ (round 16) ----------------
 //
 // A bubble states how many atoms it added (msg_wire.h's n_new), and its
@@ -2406,6 +2486,7 @@ int main(void) {
 
     if (replay_sweep() != 0) return 1;
     if (fmsg_check() != 0) return 1;
+    if (rematch_check() != 0) return 1;
     if (bubble_delta_check() != 0) return 1;
     if (open_boundary_check() != 0) return 1;
     if (chained_cover_check() != 0) return 1;

@@ -722,6 +722,8 @@ int msg_chain_key(const unsigned char *envelope, int len, MsgChainKey *out) {
     MsgEnvelope e;
     const int rc = msg_decode(envelope, len, &e);
     if (rc != MSG_EOK) return rc;
+    out->game_id = e.game_id;
+    out->generation = e.generation;   // rule G's input
     out->phase = e.phase;
     out->round = e.round;
     out->turn  = e.turn;
@@ -745,6 +747,15 @@ static int names_parent(const uint8_t *parent8, const uint8_t *digest) {
 }
 
 int msg_rule_p(const MsgChainKey *a, const MsgChainKey *b) {
+    // Rule G, above everything (msg_wire.h): within ONE game, the later
+    // rematch is the table. A generation never falls along a chain's ancestry,
+    // so this can only ever agree with rule 4 below where rule 4 can see; what
+    // it adds is every pair rule 4 cannot - an older bubble of the finished
+    // game against the rematch lobby, or against any bubble after it. Two
+    // different games' generations mean nothing to each other, so they are not
+    // compared at all.
+    if (a->game_id == b->game_id && a->generation != b->generation)
+        return a->generation > b->generation ? -1 : 1;
     // Rule 4, and it ranks FIRST: a chain's own DIRECT CHILD outranks it,
     // whatever the other fields say. For a parent and its descendant every
     // other comparison here can lie about which came later, because `turn`
@@ -949,7 +960,12 @@ static int open_has_body(const MsgEnvelope *e) {
 // compared at all. Anything else is another game as far as a board is
 // concerned, and shares nothing with what it showed.
 static int open_same_deal(const MsgEnvelope *a, const MsgEnvelope *b) {
+    // The generation as well as the id: a rematch is the same game_id dealt
+    // again, and its atoms share nothing with the game before it. (Its seed
+    // differs too, so this is not the only test that says so - it is the one
+    // that says why.)
     return a->game_id == b->game_id
+        && a->generation == b->generation
         && a->n_players == b->n_players
         && a->opening == b->opening
         && msg_pass_allowed(a) == msg_pass_allowed(b)
@@ -1199,6 +1215,99 @@ int msg_rematch_opening(const MsgJoin *joins, int n,
     return (fool_seat - 1 + n) % n;
 }
 
+int msg_rematch_carry(const MsgJoin *joins, int n, int fool_seat,
+                      uint32_t *carry_key, uint8_t *carry_fool) {
+    if (!joins || !carry_key || !carry_fool) return MSG_EJOINS;
+    if (fool_seat < 0 || fool_seat >= n) return MSG_ESEAT;
+    uint32_t key = 0;
+    int rot = 0;
+    const int rc = msg_roster_key(joins, n, &key, &rot);
+    if (rc != MSG_EOK) return rc;
+    *carry_key = key;
+    // Back out of the seating into the canonical rotation the key was taken
+    // over: canonical[k] == seated[(k + rot) % n], so seat s is index s - rot.
+    *carry_fool = (uint8_t)(((fool_seat - rot) % n + n) % n);
+    return MSG_EOK;
+}
+
+void msg_rematch_seed(const uint8_t old_seed[MSG_SEED_LEN], uint64_t game_id,
+                      uint16_t next_generation, uint8_t out[MSG_SEED_LEN]) {
+    static const char tag[7] = { 'r', 'e', 'm', 'a', 't', 'c', 'h' };
+    unsigned char msg[7 + MSG_SEED_LEN + 8 + 2];
+    memcpy(msg, tag, 7);
+    memcpy(msg + 7, old_seed, MSG_SEED_LEN);
+    wr64(msg + 7 + MSG_SEED_LEN, game_id);
+    wr16(msg + 7 + MSG_SEED_LEN + 8, next_generation);
+    uint8_t d[SHA256_DIGEST_LEN];
+    sha256(msg, sizeof msg, d);
+    memcpy(out, d, MSG_SEED_LEN);   // SHA256_DIGEST_LEN == MSG_SEED_LEN == 32
+}
+
+int msg_rematch_lobby(const unsigned char *finished, int finished_len, uint16_t sent_at,
+                      unsigned char *out, int out_cap, Game *scratch) {
+    if (!finished || !out || !scratch) return MSG_ESHORT;
+    MsgEnvelope f;
+    int rc = msg_decode(finished, finished_len, &f);
+    if (rc != MSG_EOK) return rc;
+    if (f.phase != MSG_PHASE_FINISHED) return MSG_EPHASE;
+    if (f.generation >= MSG_MAX_GENERATION) return MSG_EFORMAT;
+    // Validation IS replay, and the replay is also the only thing that knows
+    // who the fool was.
+    rc = msg_replay(&f, scratch);
+    if (rc != MSG_EOK) return rc;
+    const int fool = game_done(scratch);
+
+    // THE FINISHED GAME'S SEATING, every seat named. A finished chain carries
+    // every seated player (Start dealt the roster it was handed), so a seat
+    // that is missing or blank is not a table this can seat again.
+    const int n = f.n_players;
+    if (f.n_joins != n) return MSG_EJOINS;
+    MsgEnvelope e;
+    msg_envelope_init(&e);
+    for (int i = 0; i < n; i++) e.joins[i].name_len = 0xFF;   // "seat empty"
+    for (int i = 0; i < f.n_joins; i++) {
+        const MsgJoin *j = &f.joins[i];
+        if (j->name_len == 0) return MSG_EJOINS;
+        e.joins[j->seat] = *j;   // validate_fields already refused a seat >= n or a twin
+    }
+    for (int s = 0; s < n; s++) if (e.joins[s].name_len == 0xFF) return MSG_EJOINS;
+    e.n_joins = n;
+
+    e.format = MSG_FORMAT_GENERATION;   // msg_seal decides; this is what it will say
+    e.flags = 0;
+    e.phase = MSG_PHASE_WAITING;
+    e.game_id = f.game_id;
+    e.generation = (uint16_t)(f.generation + 1);
+    e.n_players = (uint8_t)n;
+    e.last_actor_seat = f.last_actor_seat;
+    e.sent_at = sent_at;
+    uint8_t digest[SHA256_DIGEST_LEN];
+    msg_digest(finished, finished_len, digest);
+    memcpy(e.parent8, digest, MSG_PARENT_LEN);
+    msg_rematch_seed(f.seed, f.game_id, e.generation, e.seed);
+    if (fool >= 0) {
+        rc = msg_rematch_carry(e.joins, n, fool, &e.carry_key, &e.carry_fool);
+        if (rc != MSG_EOK) return rc;
+    }
+
+    // THE LOBBY'S DEAL, as every lobby is: the seed dealt at the table's size
+    // under the table's rules, nothing played. msg_seal reads the rules off it
+    // (they are a claim about the game, never the caller's to state) and seals
+    // an empty body.
+    const int8_t rules = msg_pass_allowed(&f) ? 0 : (int8_t)GAME_RULE_NO_PASS;
+    game_set_deal_seed_bytes(e.seed, MSG_SEED_LEN);
+    memset(scratch, 0, sizeof(*scratch));
+    scratch->num_players = (int8_t)n;
+    scratch->rules = rules;
+    for (int i = 0; i < n; i++) scratch->players[i].status = PLAYER_STATUS_READY;
+    start_game(scratch);
+
+    unsigned char body[1];
+    rc = msg_seal(&e, scratch, 0, body, (int)sizeof body, scratch);
+    if (rc != MSG_EOK) return rc;
+    return msg_encode(&e, out, out_cap);
+}
+
 int msg_rematch_fool_seat(const MsgJoin *joins, int n,
                           uint32_t carry_key, uint8_t carry_fool) {
     const int opening = msg_rematch_opening(joins, n, carry_key, carry_fool);
@@ -1214,8 +1323,11 @@ int msg_rematch_fool_seat(const MsgJoin *joins, int n,
  * make in Swift; nothing here reads the resident game.
  * ------------------------------------------------------------------------- */
 
-int msg_chain_is_ahead(int a_phase, int a_round, int a_turn,
-                       int b_phase, int b_round, int b_turn) {
+int msg_chain_is_ahead(int a_generation, int a_phase, int a_round, int a_turn,
+                       int b_generation, int b_phase, int b_round, int b_turn) {
+    // A later rematch is ahead of every chain of the game it replaced - the
+    // same order rule G puts them in.
+    if (a_generation != b_generation) return a_generation > b_generation;
     if (a_phase != b_phase) return a_phase > b_phase;
     if (a_round != b_round) return a_round > b_round;
     return a_turn > b_turn;

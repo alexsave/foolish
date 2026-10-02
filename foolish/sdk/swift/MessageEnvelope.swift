@@ -64,6 +64,21 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
     public let carryKey: UInt32?
     public let carryFool: Int?
 
+    /// WHICH REMATCH OF THE GAME this chain belongs to (c/src/msg_wire.h
+    /// format 7): 0 for the game its lobby created, then 1, 2, ... for each
+    /// rematch of the same `gameId`. A rematch is the same game dealt again, so
+    /// `gameId` alone no longer says "the same deal" - two chains are the same
+    /// deal when both of these agree (`isSameDeal`). Rule P's rule G, which
+    /// ranks the later generation first, is the kernel's.
+    public let generation: Int
+    /// Do two chains belong to the same deal of the same game - one board's
+    /// worth of history? The id and the generation, both: a rematch keeps the
+    /// id and moves the generation, and what one deal's board did means
+    /// nothing to the next one's.
+    public func isSameDeal(_ other: MessageEnvelope) -> Bool { dealKey == other.dealKey }
+    /// The same fact as a key, for state a surface keeps per deal.
+    public var dealKey: String { "\(gameId).\(generation)" }
+
     /// THE TABLE'S RULES: may the defender transfer the attack on (perevodnoy,
     /// true - the default and what every game before this variant played), or
     /// is this the throw-in game with no transfer at all (podkidnoy, false)?
@@ -111,7 +126,7 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
         case phase, turn, round, joins, digest, parent8, passingAllowed
         case sentAt = "sent_at"
         case newAtoms = "n_new"
-        case opening, carryKey, carryFool
+        case opening, carryKey, carryFool, generation
         case nPlayers = "n_players"
         case lastActorSeat = "last_actor_seat"
         case gameId = "game_id"
@@ -230,6 +245,7 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
             opening: h.e.opening == MSG_NO_OPENING ? nil : h.e.opening,
             carryKey: h.e.carryKey == 0 ? nil : UInt32(truncatingIfNeeded: h.e.carryKey),
             carryFool: h.e.carryFool == MSG_NO_FOOL ? nil : h.e.carryFool,
+            generation: h.e.generation,
             // The rules, resolved against the envelope's format by the kernel
             // (msg_pass_allowed): Swift never learns which formats carry a
             // variant byte, which is why it does not read `variant` itself.
@@ -403,6 +419,24 @@ public actor MessageKernel {
         }
         guard rc == 0, key != 0 else { fio_msg_set_carry(0, -1); return false }
         return fio_msg_set_carry(key, idx) == 0
+    }
+
+    /// THE REMATCH LOBBY for a FINISHED chain, built wholly by the kernel
+    /// (msg_wire.h msg_rematch_lobby): the same game dealt again - same id, the
+    /// next generation, the finished chain as its parent, a seed derived from
+    /// the old one, seated as the game finished and under its rules, with the
+    /// fool's carry. Every device that taps New game on that table gets these
+    /// bytes but for `sentAt`. Adopts nothing: decode the answer to put it on
+    /// screen. Throws when the kernel refuses (not finished, an unnamed seat,
+    /// the last generation) - the caller then starts an ordinary new game.
+    public func rematch(finished: Data, sentAt: Int = MessageKernel.clockNow()) throws -> Data {
+        var out = [UInt8](repeating: 0, count: 8 * 1024)
+        let n = finished.withUnsafeBytes { raw in
+            fio_msg_rematch(raw.bindMemory(to: UInt8.self).baseAddress, Int32(finished.count),
+                            Int32(sentAt & 0xffff), &out, Int32(out.count))
+        }
+        guard n > 0 else { throw MessageEnvelope.Failure.damaged(code: Int(fio_last_msg_error())) }
+        return Data(bytes: out, count: Int(n))
     }
 
     /// SHOWING it: which seat a lobby's pending penalty would fall on - the

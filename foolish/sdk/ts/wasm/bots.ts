@@ -39,6 +39,7 @@ interface EngineExports {
     wasm_msg_seal?(): number;
     wasm_msg_header_ptr?(): number;
     wasm_msg_rule_p?(aLen: number, bLen: number): number;
+    wasm_msg_rematch?(inLen: number, sentAt: number): number;
     wasm_msg_rebase?(pendingRound: number, seat: number, wireLen: number): number;
     wasm_msg_pickup_hold?(seat: number, sentAt: number, now: number): number;
 }
@@ -398,6 +399,10 @@ export interface MsgEnvelope {
     opening: number;
     carry_key: number;
     carry_fool: number;
+    /// WHICH REMATCH of `game_id` this chain is (c/src/msg_wire.h format 7):
+    /// 0 for the game its lobby created. A term of the deal like `opening`, so
+    /// it goes both ways; a non-zero one seals format 7.
+    generation: number;
     joins: MsgJoin[];
 }
 
@@ -442,7 +447,7 @@ function readHeader(ex: EngineExports): MsgEnvelope {
         seed: Uint8Array.from(s.e.seed),
         digest: Uint8Array.from(s.digest),
         sent_at: s.e.sentAt, n_new: s.e.nNew, opening: s.e.opening,
-        carry_key: s.e.carryKey, carry_fool: s.e.carryFool,
+        carry_key: s.e.carryKey, carry_fool: s.e.carryFool, generation: s.e.generation,
         joins: s.e.joins.map((j) => ({ seat: j.seat, name: j.name })),
     };
 }
@@ -456,7 +461,7 @@ function writeHeader(ex: EngineExports, e: MsgEnvelope): void {
             parent8: Array.from(e.parent8.subarray(0, 8)),
             seed: Array.from(e.seed.subarray(0, 32)),
             sentAt: e.sent_at & 0xffff, nNew: e.n_new, opening: e.opening,
-            carryKey: e.carry_key >>> 0, carryFool: e.carry_fool,
+            carryKey: e.carry_key >>> 0, carryFool: e.carry_fool, generation: e.generation,
             joins: e.joins.map((j) => ({ seat: j.seat, name: j.name })),
         },
         digest: Array.from(e.digest.subarray(0, 32)),
@@ -728,8 +733,9 @@ export function kernelMsgPickupHold(seat: number, sentAt: number, now: number): 
 
 export function kernelMsgSeal(
     header: Omit<MsgEnvelope, 'digest' | 'turn' | 'round' | 'format' | 'sent_at' | 'n_new'
-                              | 'opening' | 'carry_key' | 'carry_fool'>
-          & { sent_at?: number; opening?: number; carry_key?: number; carry_fool?: number },
+                              | 'opening' | 'carry_key' | 'carry_fool' | 'generation'>
+          & { sent_at?: number; opening?: number; carry_key?: number; carry_fool?: number;
+              generation?: number },
 ): Uint8Array {
     const ex = bots();
     if (!ex.wasm_msg_seal) throw new Error('kernelMsgSeal: module has no FMSG support');
@@ -741,10 +747,27 @@ export function kernelMsgSeal(
                       opening: header.opening ?? MSG_NO_OPENING,
                       carry_key: header.carry_key ?? 0,
                       carry_fool: header.carry_fool ?? MSG_NO_FOOL,
+                      generation: header.generation ?? 0,
                       format: 2, turn: 0, round: 0, digest: new Uint8Array(32) });
     const r = ex.wasm_msg_seal();
     if (r < 0) throw msgError(r);
     const base = ex.wasm_replay_io_ptr();
+    return mem(ex).slice(base, base + r);
+}
+
+// THE REMATCH LOBBY for a FINISHED envelope (c/src/msg_wire.h
+// msg_rematch_lobby): the same game, the next generation, built wholly by the
+// kernel, so every device that taps New game on that table gets these bytes but
+// for `sentAt`. The same C the phone's fio_msg_rematch calls - this is how
+// e2e/msg_rematch.test.ts holds the two engines to one answer.
+export function kernelMsgRematch(finished: Uint8Array, sentAt: number): Uint8Array {
+    const ex = bots();
+    if (!ex.wasm_msg_rematch) throw new Error('kernelMsgRematch: module has no FMSG support');
+    if (finished.length > ex.wasm_replay_io_cap()) throw new Error('iMessage payload: capacity exceeded');
+    const base = ex.wasm_replay_io_ptr();
+    mem(ex).set(finished, base);
+    const r = ex.wasm_msg_rematch(finished.length, sentAt & 0xffff);
+    if (r < 0) throw msgError(r);
     return mem(ex).slice(base, base + r);
 }
 

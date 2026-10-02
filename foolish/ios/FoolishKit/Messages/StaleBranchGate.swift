@@ -73,6 +73,9 @@ public enum StaleBranchGate {
     /// the three fields msg_wire.h stamps at seal time from the game the body
     /// actually replayed to, so a device cannot claim progress it did not make.
     public struct Progress: Equatable {
+        /// Which rematch of the game (msg_wire.h format 7); 0 for the game its
+        /// lobby created. A later rematch is ahead of all of an earlier one.
+        public let generation: Int
         /// 0 WAITING, 1 ACCEPT, 2 LIVE, 3 FINISHED.
         public let phase: Int
         /// Completed-round counter.
@@ -80,12 +83,14 @@ public enum StaleBranchGate {
         /// Applied kernel actions (ATOMS, see the caveat on `isAhead`).
         public let turn: Int
 
-        public init(phase: Int, round: Int, turn: Int) {
+        public init(generation: Int = 0, phase: Int, round: Int, turn: Int) {
+            self.generation = generation
             self.phase = phase; self.round = round; self.turn = turn
         }
 
         public init(_ env: MessageEnvelope) {
-            self.init(phase: env.phase, round: env.round, turn: env.turn)
+            self.init(generation: env.generation, phase: env.phase, round: env.round,
+                      turn: env.turn)
         }
     }
 
@@ -95,8 +100,10 @@ public enum StaleBranchGate {
     /// compared above TURN, and that a TIE IS NOT AHEAD. See msg_wire.h for
     /// both, and for where it deliberately fails open.
     public static func isAhead(_ known: Progress, of mine: Progress) -> Bool {
-        GateWire.chainIsAhead(phase: known.phase, round: known.round, turn: known.turn,
-                              thanPhase: mine.phase, round: mine.round, turn: mine.turn)
+        GateWire.chainIsAhead(generation: known.generation, phase: known.phase,
+                              round: known.round, turn: known.turn,
+                              thanGeneration: mine.generation, phase: mine.phase,
+                              round: mine.round, turn: mine.turn)
     }
 
     /// The gate's answer: is this board a read-only branch, and what is the

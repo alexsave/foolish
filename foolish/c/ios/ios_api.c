@@ -267,6 +267,10 @@ int fio_new_game(const uint8_t *seed, int seed_len, int n_players) {
     g_session.msg_opening = MSG_NO_OPENING;
     g_session.msg_carry_key = 0;
     g_session.msg_carry_fool = MSG_NO_FOOL;
+    // A fresh deal is the game its lobby creates: generation 0. A rematch
+    // reaches a later generation only by decoding the lobby msg_rematch_lobby
+    // built, and the re-deal at its Start keeps it (fio_reseat_game).
+    g_session.msg_generation = 0;
     game_open_at_seat(-1);
     return FIO_EOK;
 }
@@ -296,10 +300,15 @@ int fio_reseat_game(int n_players) {
     // deliberately, for the fresh-game case it also serves).
     memcpy(seed, g_session.deal_seed, FOOLISH_SEED_LEN);
     const int8_t rules = g_session.msg_rules;
+    // …and the GENERATION: the Start of a rematch lobby deals that rematch, and
+    // every bubble of it must say so or rule G would rank it below the game it
+    // replaced.
+    const uint16_t generation = g_session.msg_generation;
     const int rc = fio_new_game(seed, FOOLISH_SEED_LEN, n_players);
     if (rc == FIO_EOK) {
         g_session.msg_rules = rules;
         g_session.game.rules = rules;
+        g_session.msg_generation = generation;
     }
     return rc;
 }

@@ -4138,13 +4138,13 @@ static void print_holdcheck(const char *hex) {
 // the order in the code is documentation rather than behaviour.
 static void test_chain_gates(void) {
     // ---- the stale-branch gate ----
-    CHECK(msg_chain_is_ahead(3, 0, 0, 2, 9, 99) == 1, "a finished chain outranks a live one");
-    CHECK(msg_chain_is_ahead(2, 2, 0, 2, 1, 99) == 1,
+    CHECK(msg_chain_is_ahead(0, 3, 0, 0, 0, 2, 9, 99) == 1, "a finished chain outranks a live one");
+    CHECK(msg_chain_is_ahead(0, 2, 2, 0, 0, 2, 1, 99) == 1,
           "ROUND is asked above TURN: a chain a whole bout further on is ahead even "
           "when the bout-closing fold left it with fewer atoms");
-    CHECK(msg_chain_is_ahead(2, 1, 99, 2, 2, 0) == 0, "…and not the other way round");
-    CHECK(msg_chain_is_ahead(2, 1, 5, 2, 1, 4) == 1, "within a round, atoms decide");
-    CHECK(msg_chain_is_ahead(2, 1, 5, 2, 1, 5) == 0,
+    CHECK(msg_chain_is_ahead(0, 2, 1, 99, 0, 2, 2, 0) == 0, "…and not the other way round");
+    CHECK(msg_chain_is_ahead(0, 2, 1, 5, 0, 2, 1, 4) == 1, "within a round, atoms decide");
+    CHECK(msg_chain_is_ahead(0, 2, 1, 5, 0, 2, 1, 5) == 0,
           "A TIE IS NOT AHEAD - the 1.0(40) report was a legal move refused as stale "
           "because two bubbles carried the same state");
 
@@ -5564,6 +5564,380 @@ static void test_format7_wire(void) {
     }
 }
 
+// ---------- the rematch: the same game, dealt again ------------------------
+//
+// The owner's report: three people tapped New game on one finished game and
+// got three games. msg_rematch_lobby is the one door now, and what is pinned
+// here is everything the design promises of it, at 2, 3 and 4 seats:
+//
+//   * every tap on the finished table builds the same lobby but for sent_at;
+//   * it is the same game: same id, generation + 1, the finished chain as its
+//     parent, the derived seed, the finished seating, the finished rules, the
+//     fool's carry;
+//   * rule G puts every one of those lobbies above the finished game, both
+//     orders, and settles them among themselves identically for every pair;
+//   * rebuilding later, from the same finished bubble, is the same lobby again;
+//   * a chain of the rematch that has moved on beats a rebuilt lobby;
+//   * the generation runs on (a rematch of a rematch), and stops at the cap;
+//   * what is not a finished, fully named table is refused.
+
+// A FINISHED n-seat chain of generation `gen`, every seat named by
+// fixture_name. Seeds are walked from `s0` until a game ends with a fool.
+// Returns the length written to `out`, or <= 0.
+static int rm_finished(int n, int nopass, uint32_t s0, uint16_t gen, uint64_t gid,
+                       unsigned char *out, int cap, uint8_t seed_out[MSG_SEED_LEN]) {
+    static unsigned char body[2048];
+    static Game g, scratch;
+    for (uint32_t s = s0; s < s0 + 400; s++) {
+        uint8_t seed[MSG_SEED_LEN];
+        seed_fill(seed, s);
+        Chain ch; memset(&ch, 0, sizeof(ch));
+        play_game_rules(seed, n, 2000, &ch, &g, -1, nopass ? (int8_t)GAME_RULE_NO_PASS : 0);
+        game_settle_status(&g);
+        if (game_done(&g) < 0) continue;
+        MsgEnvelope e;
+        env_init(&e, seed, n);
+        e.phase = MSG_PHASE_FINISHED;
+        e.game_id = gid;
+        e.generation = gen;
+        e.sent_at = (uint16_t)(0x0F00 + s);
+        e.last_actor_seat = (uint8_t)(s % (uint32_t)n);
+        if (msg_seal(&e, &g, MSG_NO_BASE, body, sizeof(body), &scratch) != MSG_EOK) continue;
+        const int w = msg_encode(&e, out, cap);
+        if (w <= 0) continue;
+        if (seed_out) memcpy(seed_out, seed, MSG_SEED_LEN);
+        return w;
+    }
+    return 0;
+}
+
+// The Start of a rematch lobby, as the phone's fio_msg_start_rematch deals it:
+// the lobby's seed at its full roster, the penalty applied when the roster
+// keys equal, then `moves` legal actions; sealed LIVE as the lobby's child.
+static int rm_live_from(const unsigned char *lobby, int lobby_len, int moves,
+                        unsigned char *out, int cap) {
+    static Game g, scratch;
+    static unsigned char body[2048];
+    static LegalMoves ml;
+    MsgEnvelope l;
+    if (msg_decode(lobby, lobby_len, &l) != MSG_EOK) return -1;
+    const int opening = msg_rematch_opening(l.joins, l.n_joins, l.carry_key, l.carry_fool);
+    game_set_deal_seed_bytes(l.seed, MSG_SEED_LEN);
+    memset(&g, 0, sizeof(g));
+    g.num_players = (int8_t)l.n_joins;
+    g.rules = msg_pass_allowed(&l) ? 0 : (int8_t)GAME_RULE_NO_PASS;
+    for (int i = 0; i < l.n_joins; i++) g.players[i].status = PLAYER_STATUS_READY;
+    if (opening >= 0) game_open_at_seat(opening);
+    start_game(&g);
+    game_open_at_seat(-1);
+    int last = 0;
+    for (int k = 0; k < moves; k++) {
+        int done = 0;
+        for (int s = 0; s < g.num_players && !done; s++) {
+            calculate_legal_moves(&g, s, &ml);
+            for (int i = 0; i < ml.n && !done; i++) {
+                const LegalMove *m = &ml.moves[i];
+                if (m->type == MOVE_WAIT || m->type == MOVE_GOOD) continue;
+                AwireAction a;
+                move_to_awire(m, &a);
+                bool ok;
+                switch (a.kind) {
+                    case AWIRE_ATTACK: ok = handle_attack(&g, s, a.cards, a.n); break;
+                    case AWIRE_COVER:  ok = handle_cover(&g, s, a.cards, a.attacks, a.n); break;
+                    case AWIRE_PASS:   ok = handle_pass(&g, s, a.cards, a.n); break;
+                    default:           ok = handle_pickup(&g, s); break;
+                }
+                if (ok) { done = 1; last = s; }
+            }
+        }
+        if (!done) break;
+    }
+    MsgEnvelope e = l;
+    e.phase = MSG_PHASE_LIVE;
+    e.carry_key = 0; e.carry_fool = MSG_NO_FOOL;
+    e.opening = opening >= 0 ? (uint8_t)opening : MSG_NO_OPENING;
+    e.last_actor_seat = (uint8_t)last;
+    e.sent_at = 0x7777;
+    uint8_t d[SHA256_DIGEST_LEN];
+    msg_digest(lobby, lobby_len, d);
+    memcpy(e.parent8, d, MSG_PARENT_LEN);
+    if (msg_seal(&e, &g, 0, body, sizeof(body), &scratch) != MSG_EOK) return -1;
+    return msg_encode(&e, out, cap);
+}
+
+static int rm_rule(const unsigned char *a, int na, const unsigned char *b, int nb) {
+    MsgChainKey ka, kb;
+    if (msg_chain_key(a, na, &ka) != MSG_EOK || msg_chain_key(b, nb, &kb) != MSG_EOK) return 99;
+    return msg_rule_p(&ka, &kb);
+}
+
+static void test_rematch_lobby(void) {
+    static Game scratch;
+    for (int n = 2; n <= 4; n++) {
+        for (int nopass = 0; nopass <= 1; nopass++) {
+            const uint64_t gid = 0x7E57000000000000ULL + (uint64_t)(n * 2 + nopass);
+            static unsigned char fin[ENV_CAP];
+            uint8_t seed0[MSG_SEED_LEN];
+            const int nf = rm_finished(n, nopass, 9100u + (uint32_t)(n * 50 + nopass * 7), 0, gid,
+                                       fin, sizeof(fin), seed0);
+            CHECK(nf > 0, "%dp: no finished game to rematch", n);
+            if (nf <= 0) continue;
+            MsgEnvelope f;
+            msg_decode(fin, nf, &f);
+            static Game fg;
+            msg_replay(&f, &fg);
+            const int fool = game_done(&fg);
+
+            // THREE TAPS, three clocks: the three devices in the report.
+            static unsigned char lob[3][ENV_CAP];
+            int nl[3];
+            for (int t = 0; t < 3; t++) {
+                nl[t] = msg_rematch_lobby(fin, nf, (uint16_t)(0x4000 + t), lob[t], ENV_CAP, &scratch);
+                CHECK(nl[t] > 0, "%dp%s tap %d: refused (%d)", n, nopass ? " podkidnoy" : "", t, nl[t]);
+            }
+            if (nl[0] <= 0 || nl[1] <= 0 || nl[2] <= 0) continue;
+
+            // ONLY THE CLOCK DIFFERS.
+            for (int t = 1; t < 3; t++) {
+                CHECK(nl[t] == nl[0], "%dp tap %d: %d bytes against %d", n, t, nl[t], nl[0]);
+                int diff_outside_clock = 0;
+                for (int i = 0; i < nl[0] && i < nl[t]; i++)
+                    if (lob[t][i] != lob[0][i] && i != MSG_CLOCK_OFF && i != MSG_CLOCK_OFF + 1)
+                        diff_outside_clock++;
+                CHECK(diff_outside_clock == 0,
+                      "%dp tap %d: %d bytes differ outside sent_at", n, t, diff_outside_clock);
+            }
+
+            // THE SAME GAME, dealt again.
+            MsgEnvelope l;
+            CHECK(msg_decode(lob[0], nl[0], &l) == MSG_EOK, "%dp: the lobby does not decode", n);
+            uint8_t fd[SHA256_DIGEST_LEN], want_seed[MSG_SEED_LEN];
+            msg_digest(fin, nf, fd);
+            msg_rematch_seed(seed0, gid, 1, want_seed);
+            CHECK(l.format == MSG_FORMAT_GENERATION, "%dp: format %d", n, l.format);
+            CHECK(l.phase == MSG_PHASE_WAITING, "%dp: phase %d", n, l.phase);
+            CHECK(l.game_id == gid, "%dp: game id changed", n);
+            CHECK(l.generation == 1, "%dp: generation %u", n, l.generation);
+            CHECK(!memcmp(l.parent8, fd, MSG_PARENT_LEN), "%dp: the parent is not the finished chain", n);
+            CHECK(!memcmp(l.seed, want_seed, MSG_SEED_LEN), "%dp: the seed is not the derived one", n);
+            CHECK(memcmp(l.seed, seed0, MSG_SEED_LEN) != 0, "%dp: the rematch re-deals the old seed", n);
+            CHECK(l.n_players == n && l.n_joins == n, "%dp: %d seats, %d joined", n, l.n_players, l.n_joins);
+            int seated_as_finished = 1;
+            for (int i = 0; i < l.n_joins; i++) {
+                const MsgJoin *j = &l.joins[i];
+                const char *want = fixture_name(j->seat);
+                if (j->name_len != strlen(want) || memcmp(j->name, want, j->name_len)) seated_as_finished = 0;
+            }
+            CHECK(seated_as_finished, "%dp: the lobby is not seated as the game finished", n);
+            CHECK(msg_pass_allowed(&l) == !nopass, "%dp: the rules did not carry over", n);
+            CHECK(l.last_actor_seat == f.last_actor_seat, "%dp: last actor %d", n, l.last_actor_seat);
+            uint32_t key = 0; uint8_t idx = 0;
+            msg_rematch_carry(l.joins, n, fool, &key, &idx);
+            CHECK(l.carry_key == key && l.carry_fool == idx, "%dp: the fool's carry is not the fool's", n);
+            CHECK(msg_rematch_fool_seat(l.joins, n, l.carry_key, l.carry_fool) == fool,
+                  "%dp: the lobby would punish seat %d, the fool was %d", n,
+                  msg_rematch_fool_seat(l.joins, n, l.carry_key, l.carry_fool), fool);
+            static Game lg;
+            CHECK(msg_replay(&l, &lg) == MSG_EOK, "%dp: the lobby does not replay", n);
+
+            // RULE G: every lobby above the finished game, both orders; and the
+            // lobbies among themselves settle the same way for every ordered pair.
+            for (int t = 0; t < 3; t++) {
+                CHECK(rm_rule(fin, nf, lob[t], nl[t]) > 0, "%dp tap %d: the finished game beat its rematch", n, t);
+                CHECK(rm_rule(lob[t], nl[t], fin, nf) < 0, "%dp tap %d: (reversed) the finished game won", n, t);
+                for (int u = 0; u < 3; u++) {
+                    if (u == t) continue;
+                    const int ab = rm_rule(lob[t], nl[t], lob[u], nl[u]);
+                    const int ba = rm_rule(lob[u], nl[u], lob[t], nl[t]);
+                    CHECK(ab != 0 && ab == -ba, "%dp taps %d/%d: %d and %d", n, t, u, ab, ba);
+                }
+            }
+            // The single winner is the same whichever lobby a device holds first.
+            int best = 0;
+            for (int t = 1; t < 3; t++) if (rm_rule(lob[t], nl[t], lob[best], nl[best]) < 0) best = t;
+            for (int t = 0; t < 3; t++)
+                CHECK(t == best || rm_rule(lob[best], nl[best], lob[t], nl[t]) < 0,
+                      "%dp: the lobbies have no single winner", n);
+
+            // LATER, FROM THE SAME BUBBLE: the same lobby again.
+            static unsigned char again[ENV_CAP];
+            const int na = msg_rematch_lobby(fin, nf, 0x4000, again, sizeof(again), &scratch);
+            CHECK(na == nl[0] && !memcmp(again, lob[0], (size_t)na), "%dp: a rebuild is a different lobby", n);
+
+            // A rematch that has MOVED ON beats a lobby rebuilt off the finished
+            // board, so a late tap cannot pull the table back to the lobby.
+            static unsigned char live[ENV_CAP];
+            const int nlive = rm_live_from(lob[best], nl[best], 3, live, sizeof(live));
+            CHECK(nlive > 0, "%dp: the rematch did not start", n);
+            if (nlive > 0) {
+                MsgEnvelope lv;
+                CHECK(msg_decode(live, nlive, &lv) == MSG_EOK && lv.generation == 1
+                      && lv.format == MSG_FORMAT_GENERATION,
+                      "%dp: the rematch's live chain lost its generation", n);
+                static Game lvg;
+                CHECK(msg_replay(&lv, &lvg) == MSG_EOK, "%dp: the rematch's live chain does not replay", n);
+                // Start dealt the derived seed: the same board a deal of it gives.
+                static Game want_g;
+                game_set_deal_seed_bytes(want_seed, MSG_SEED_LEN);
+                memset(&want_g, 0, sizeof(want_g));
+                want_g.num_players = (int8_t)n;
+                want_g.rules = nopass ? (int8_t)GAME_RULE_NO_PASS : 0;
+                for (int i = 0; i < n; i++) want_g.players[i].status = PLAYER_STATUS_READY;
+                if (lv.opening != MSG_NO_OPENING) game_open_at_seat(lv.opening);
+                start_game(&want_g);
+                game_open_at_seat(-1);
+                CHECK(want_g.flipped.suit == lvg.flipped.suit && want_g.flipped.value == lvg.flipped.value,
+                      "%dp: the rematch was not dealt from the derived seed", n);
+                // The penalty: the fool is the first defender of the rematch.
+                CHECK(lv.opening != MSG_NO_OPENING && (lv.opening + 1) % n == fool,
+                      "%dp: the rematch opened on %d, not the seat right of fool %d", n, lv.opening, fool);
+                CHECK(rm_rule(again, na, live, nlive) > 0, "%dp: a rebuilt lobby beat the rematch in play", n);
+                CHECK(rm_rule(fin, nf, live, nlive) > 0, "%dp: the finished game beat the rematch in play", n);
+            }
+
+            // A REMATCH OF THE REMATCH: generation 2, its seed derived from 1's.
+            static unsigned char fin1[ENV_CAP], lob2[ENV_CAP];
+            uint8_t s1[MSG_SEED_LEN], want2[MSG_SEED_LEN];
+            const int nf1 = rm_finished(n, nopass, 9900u + (uint32_t)n, 1, gid, fin1, sizeof(fin1), s1);
+            if (nf1 > 0) {
+                const int nl2 = msg_rematch_lobby(fin1, nf1, 0x4444, lob2, sizeof(lob2), &scratch);
+                MsgEnvelope l2;
+                msg_rematch_seed(s1, gid, 2, want2);
+                CHECK(nl2 > 0 && msg_decode(lob2, nl2, &l2) == MSG_EOK && l2.generation == 2
+                      && !memcmp(l2.seed, want2, MSG_SEED_LEN),
+                      "%dp: a rematch of a rematch is not generation 2 off generation 1's seed", n);
+                CHECK(rm_rule(lob[0], nl[0], lob2, nl2) > 0 && rm_rule(fin1, nf1, lob2, nl2) > 0,
+                      "%dp: generation 2 does not outrank generation 1", n);
+            }
+        }
+    }
+
+    // REFUSED: not finished, an unnamed seat, the last generation.
+    {
+        static unsigned char fin[ENV_CAP], out[ENV_CAP];
+        const int nf = rm_finished(3, 0, 9500u, 0, 0x1111, fin, sizeof(fin), NULL);
+        MsgEnvelope f;
+        msg_decode(fin, nf, &f);
+        // LIVE: the same chain claiming it is not over does not even replay,
+        // so make a real live one off a lobby instead.
+        static unsigned char lob[ENV_CAP], live[ENV_CAP];
+        const int nl = msg_rematch_lobby(fin, nf, 1, lob, sizeof(lob), &scratch);
+        const int nlive = rm_live_from(lob, nl, 2, live, sizeof(live));
+        CHECK(msg_rematch_lobby(live, nlive, 1, out, sizeof(out), &scratch) == MSG_EPHASE,
+              "a LIVE chain was rematched");
+        CHECK(msg_rematch_lobby(lob, nl, 1, out, sizeof(out), &scratch) == MSG_EPHASE,
+              "a WAITING lobby was rematched");
+        // An unnamed seat.
+        static unsigned char body[2048];
+        MsgEnvelope e = f;
+        e.joins[1].name_len = 0;
+        e.actions = fin + (nf - f.actions_len);
+        static unsigned char blank[ENV_CAP];
+        const int nb = msg_encode(&e, blank, sizeof(blank));
+        CHECK(nb > 0 && msg_rematch_lobby(blank, nb, 1, out, sizeof(out), &scratch) == MSG_EJOINS,
+              "a table with an unnamed seat was rematched");
+        // The last generation.
+        static unsigned char top[ENV_CAP];
+        const int nt = rm_finished(3, 0, 9500u, MSG_MAX_GENERATION, 0x1111, top, sizeof(top), NULL);
+        CHECK(nt > 0 && msg_rematch_lobby(top, nt, 1, out, sizeof(out), &scratch) == MSG_EFORMAT,
+              "a game at the last generation was rematched");
+        (void)body;
+    }
+}
+
+// Rule G against its neighbours: different games are not ordered by
+// generation; rule G outranks rule 4 even against a (forged) child; the ahead
+// gate leads with the generation; and #256's boundary, staged fate and the
+// surface delta read a generation change for what it is.
+static void test_rule_g(void) {
+    static Game scratch;
+    static unsigned char fin[ENV_CAP], lob[ENV_CAP], live[ENV_CAP];
+    const int nf = rm_finished(4, 0, 9700u, 0, 0x6060, fin, sizeof(fin), NULL);
+    const int nl = msg_rematch_lobby(fin, nf, 0x10, lob, sizeof(lob), &scratch);
+    const int nlive = rm_live_from(lob, nl, 4, live, sizeof(live));
+    CHECK(nf > 0 && nl > 0 && nlive > 0, "rule G: fixtures (%d %d %d)", nf, nl, nlive);
+    if (nf <= 0 || nl <= 0 || nlive <= 0) return;
+
+    MsgChainKey kf, kl;
+    msg_chain_key(fin, nf, &kf);
+    msg_chain_key(lob, nl, &kl);
+    CHECK(kl.generation == 1 && kf.generation == 0 && kl.game_id == kf.game_id,
+          "rule G: the chain key does not carry the game and generation");
+
+    // DIFFERENT GAMES: generation is not compared. The same two keys with the
+    // generations made equal must order the same way.
+    MsgChainKey other = kl;
+    other.game_id ^= 1;
+    memset(other.parent8, 0, MSG_PARENT_LEN);   // another game's lobby names no chain of this one
+    MsgChainKey other_eq = other;
+    other_eq.generation = kf.generation;
+    CHECK(msg_rule_p(&kf, &other) == msg_rule_p(&kf, &other_eq),
+          "rule G: two different games were ordered by generation");
+    CHECK(msg_rule_p(&kf, &other) < 0, "rule G: across games rule 0 should still keep the started chain");
+
+    // ABOVE RULE 4: a gen-0 chain that (forged) names the lobby as its parent
+    // is a "child", and still loses to the later generation.
+    MsgChainKey forged = kf;
+    memcpy(forged.parent8, kl.digest, MSG_PARENT_LEN);
+    forged.digest[0] ^= 0xFF;   // its own chain, which the lobby does not name
+    CHECK(msg_rule_p(&forged, &kl) > 0 && msg_rule_p(&kl, &forged) < 0,
+          "rule G: a forged child of an older generation outranked the rematch");
+
+    // THE AHEAD GATE leads with the generation.
+    CHECK(msg_chain_is_ahead(1, MSG_PHASE_WAITING, 0, 0, 0, MSG_PHASE_FINISHED, 40, 300) == 1,
+          "ahead: a rematch lobby is not ahead of the finished game");
+    CHECK(msg_chain_is_ahead(0, MSG_PHASE_FINISHED, 40, 300, 1, MSG_PHASE_WAITING, 0, 0) == 0,
+          "ahead: the finished game is ahead of its rematch");
+    CHECK(msg_chain_is_ahead(1, MSG_PHASE_LIVE, 1, 5, 1, MSG_PHASE_LIVE, 1, 5) == 0,
+          "ahead: a tie in the same generation is ahead");
+
+    MsgEnvelope ef, el, elive;
+    msg_decode(fin, nf, &ef);
+    msg_decode(lob, nl, &el);
+    msg_decode(live, nlive, &elive);
+
+    // #256's BOUNDARY: a board showing the finished game shares no atoms with
+    // the rematch, whatever the bytes look like. Forged to the same seed (the
+    // only other field that told them apart), the generation alone must keep
+    // the claim unclamped.
+    {
+        static unsigned char tape[MSG_OPEN_SCRATCH];
+        MsgEnvelope shown = elive;      // the rematch's own live chain...
+        shown.generation = 0;           // ...as if it were the old game
+        CHECK(msg_open_boundary(&shown, &elive, tape, sizeof(tape)) == msg_atoms_before_claim(&elive),
+              "boundary: a board of the old generation clamped the rematch's replay");
+        CHECK(msg_open_boundary(&elive, &elive, tape, sizeof(tape)) >= elive.turn,
+              "boundary: sanity - the same chain is all shown");
+    }
+
+    // #256's STAGED FATE: my staged rematch lobby against the finished chain it
+    // names is STANDS; against another device's identical lobby (a sibling with
+    // the same content) it is not SUPERSEDED - nothing of mine was lost; and a
+    // move staged on the finished game's board against the rematch is.
+    {
+        static unsigned char tape[MSG_OPEN_SCRATCH], lob2[ENV_CAP];
+        const int nl2 = msg_rematch_lobby(fin, nf, 0x20, lob2, sizeof(lob2), &scratch);
+        CHECK(msg_staged_fate(lob, nl, fin, nf, tape, sizeof(tape)) == MSG_FATE_STANDS,
+              "fate: my rematch lobby over the finished game it names");
+        CHECK(msg_staged_fate(lob, nl, lob2, nl2, tape, sizeof(tape)) != MSG_FATE_SUPERSEDED,
+              "fate: an identical rematch lobby superseded mine");
+        CHECK(msg_staged_fate(fin, nf, live, nlive, tape, sizeof(tape)) == MSG_FATE_SUPERSEDED,
+              "fate: the old game's chain was not superseded by the rematch");
+    }
+
+    // THE SURFACE: a rematch lobby arriving over the finished board is the
+    // whole surface going back to a lobby (`ended`, the fade), and the X on my
+    // own staged rematch lobby is the board coming back (`started`).
+    {
+        MsgSurfaceDelta d;
+        msg_surface_delta(&ef, &el, &d);
+        CHECK(d.ended == 1 && d.on_a_lobby == 0 && d.started == 0,
+              "surface: a rematch arriving over the result card is not a fade to the lobby");
+        msg_surface_delta(&el, &ef, &d);
+        CHECK(d.started == 1 && d.on_a_lobby == 1, "surface: the X on a rematch lobby is not a fade back");
+    }
+}
+
 // --decode <hex>: what THIS build's decoder says about a payload. Kept so a
 // binary built from an older commit can be pointed at a bubble a newer build
 // sealed - that is the only honest model of an old client.
@@ -5617,6 +5991,19 @@ int main(int argc, char **argv) {
     }
     if (argc > 2 && !strcmp(argv[1], "--holdcheck")) { print_holdcheck(argv[2]); return 0; }
     if (argc > 2 && !strcmp(argv[1], "--decode")) { print_decode(argv[2]); return 0; }
+    if (argc > 1 && !strcmp(argv[1], "--rematch-fixture")) {
+        // A finished 4-seat game and the rematch lobby the NATIVE kernel builds
+        // for it at sent_at 0x1234 - e2e/msg_rematch.test.ts holds wasm to it.
+        static unsigned char fin[ENV_CAP], lob[ENV_CAP];
+        static Game scratch;
+        static char hx[ENV_CAP * 2 + 1];
+        const int nf = rm_finished(4, 0, 9700u, 0, 0x6060, fin, sizeof(fin), NULL);
+        const int nl = nf > 0 ? msg_rematch_lobby(fin, nf, 0x1234, lob, sizeof(lob), &scratch) : -1;
+        if (nf <= 0 || nl <= 0) { printf("rematch fixture failed (%d %d)\n", nf, nl); return 1; }
+        hex(fin, nf, hx); printf("finished %s\n", hx);
+        hex(lob, nl, hx); printf("lobby %s\n", hx);
+        return 0;
+    }
     if (argc > 1 && !strcmp(argv[1], "--print-format7")) {
         test_format7_wire();
         printf("format 7 (%d B):\n%s\n", g_format7_sample_len, g_format7_sample);
@@ -5678,6 +6065,8 @@ int main(int argc, char **argv) {
     test_forced_opening_replay();
     test_format56_goldens();
     test_format7_wire();
+    test_rematch_lobby();
+    test_rule_g();
     test_size_budget(games * 4, seed0);
     { const int rb = bot_roster_find("robusta");
       probe_v6_midgame(seed0, 2, rb);

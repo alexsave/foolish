@@ -51,7 +51,7 @@
 # The MsgEnvelope fields are everything but the BORROWED BODY (actions,
 # actions_len, n_actions), which no host holds.
 --header msg_wire.h --root MsgHeader
---fields MsgEnvelope=format,flags,phase,game_id,turn,last_actor_seat,n_players,variant,round,parent8,seed,sent_at,n_new,opening,carry_key,carry_fool,n_joins,joins
+--fields MsgEnvelope=format,flags,phase,game_id,turn,last_actor_seat,n_players,variant,round,parent8,seed,sent_at,n_new,opening,carry_key,carry_fool,generation,n_joins,joins
 #
 # The replay code's extras (replay_extras.h ReplayExtras): the seat nicknames and
 # per-move timing a share link carries, as the struct the bridge crosses with.

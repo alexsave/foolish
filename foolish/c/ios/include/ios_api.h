@@ -1004,6 +1004,18 @@ int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
                    const uint8_t parent8[8], const uint8_t *joins, int joins_len,
                    int sent_at, uint8_t *out, int cap);
 
+// THE REMATCH LOBBY for the FINISHED chain `finished`: the next generation of
+// the same game, seated as it finished, built wholly by the kernel
+// (msg_wire.h msg_rematch_lobby). Every device that taps New game on that
+// table gets the same bytes but for `sent_at` (this device's clock, mod
+// 65536). Adopts nothing; decode the answer to put it on screen.
+//
+// Returns bytes written to `out`, or negative: FIO_EMSG with fio_last_msg_error
+// set when the kernel refuses (not finished, an unnamed seat, the last
+// generation) - a host then starts an ordinary new game instead.
+int fio_msg_rematch(const uint8_t *finished, int finished_len, int sent_at,
+                    uint8_t *out, int cap);
+
 // ROUND 16 — the pickup hold, asked of the RESIDENT game (the one the last
 // fio_msg_decode replayed). Seconds `seat` must still wait before it may
 // pick up: 0 when it may pick up now. `sent_at` is the clock that came back in
@@ -1067,10 +1079,11 @@ int fio_msg_start_rematch(const uint8_t *joins, int joins_len, uint32_t carry_ke
 // name is raw UTF-8 bytes with a length - never a C string, because a nickname
 // is arbitrary Unicode and a NUL is not its terminator.
 
-// Does chain `a` show more of the game than `b`? See msg_wire.h for why round
-// is compared above turn and where this deliberately fails open.
-int fio_msg_chain_is_ahead(int a_phase, int a_round, int a_turn,
-                           int b_phase, int b_round, int b_turn);
+// Does chain `a` show more of the game than `b`? See msg_wire.h for why the
+// rematch generation leads, why round is compared above turn, and where this
+// deliberately fails open.
+int fio_msg_chain_is_ahead(int a_generation, int a_phase, int a_round, int a_turn,
+                           int b_generation, int b_phase, int b_round, int b_turn);
 
 // A nickname's verdict from its TRIMMED counts, which the host takes (trimming
 // and grapheme clustering are Unicode work). Returns FIO_NAME_*.

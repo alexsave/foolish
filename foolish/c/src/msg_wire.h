@@ -655,6 +655,8 @@ int msg_replay(const MsgEnvelope *e, Game *g);
 //
 // Two chains for the same game_id are ordered by (§7.2):
 //
+//   G. a higher GENERATION wins — the rematch outranks the game it grew out
+//      of (see rule G below; it ranks above rule 4 and above everything here)
 //   0. a STARTED chain beats a pre-game one — phase >= MSG_PHASE_LIVE outranks
 //      WAITING/ACCEPT, always
 //   1. higher round wins        — a closed bout is settled history
@@ -715,6 +717,28 @@ int msg_replay(const MsgEnvelope *e, Game *g);
 // neither and fall through to rules 0..3 and the digest, which for a genuine
 // concurrency fork is the designed answer.
 //
+// Rule G ranks above EVERYTHING, rule 4 included: for two chains of the SAME
+// game_id, the higher GENERATION wins (format 7, MSG_FORMAT_GENERATION). A
+// rematch is the same game_id dealt again, so the gen k+1 lobby sits beside
+// the gen k FINISHED chain it grew out of - and rule 0 alone would keep the
+// finished board (a started chain beats a pre-game one), which is how a device
+// showing the result card used to drop an arriving rematch on the floor. The
+// generation is the one field that says which of the two is the table now.
+//
+// It cannot misorder rule 4, which it outranks: a chain's generation never
+// falls along its own ancestry (a rematch lobby names the finished chain as its
+// parent and is one generation above it; every bubble after it repeats its
+// generation), so wherever rule 4 can see a child, rule G already agrees with
+// it. What rule G adds is the case rule 4 is blind to - two chains that are
+// NOT parent and child, such as an older bubble of the finished game, or a
+// branch somebody grew off one, against any chain of the rematch. And the
+// rule-4 hole above (descent at two removes) cannot reach across a generation,
+// because rule G decides those pairs before rule 4 is asked.
+//
+// Two chains of DIFFERENT game_ids are not ordered by generation at all: the
+// numbers belong to different games and say nothing about each other, so they
+// fall through to rules 4..0 and the digest exactly as before this rule.
+//
 // Delivery order is never an input. Two devices can transiently disagree about
 // which message is "newest", so the rule needs no clocks and no ordering
 // guarantee from Messages — that is the whole point.
@@ -722,6 +746,8 @@ int msg_replay(const MsgEnvelope *e, Game *g);
 // In C, not in each client: this decides which game every player sees, so a
 // phone and a browser disagreeing here forks the game. There is nothing to port.
 typedef struct {
+    uint64_t game_id;                      // rule G: generations compare within one game only
+    uint16_t generation;                   // rule G: the later rematch wins
     uint8_t  phase;                        // MSG_PHASE_*; only "started or not" is compared
     uint8_t  round;
     uint16_t turn;
@@ -1136,6 +1162,71 @@ int msg_roster_key(const MsgJoin *joins, int n, uint32_t *hash, int *rot);
 int msg_rematch_opening(const MsgJoin *joins, int n,
                         uint32_t carry_key, uint8_t carry_fool);
 
+// THE CARRY FOR A ROSTER AND ITS FOOL: the roster key of `joins` and the
+// fool's index within that key's canonical rotation, which is what a rematch
+// lobby's carry_key / carry_fool hold. `fool_seat` is a seat number of
+// `joins`. Returns MSG_EOK, or MSG_EJOINS / MSG_ESEAT as msg_roster_key does
+// (and MSG_ESEAT for a fool outside the table).
+int msg_rematch_carry(const MsgJoin *joins, int n, int fool_seat,
+                      uint32_t *carry_key, uint8_t *carry_fool);
+
+// ---------- the rematch: the same game, dealt again --------------------------
+//
+// THE NEXT DEAL'S SEED, derived from the one before it:
+//
+//   SHA-256( "rematch" (7 ASCII bytes) || old seed (32) ||
+//            game_id (u64 LE) || next generation (u16 LE) )
+//
+// STRUCTURAL FIELDS ONLY, never the finished bubble's digest: that digest
+// covers `sent_at` and the joins as the finisher sealed them, so two devices
+// holding two re-sends of the same finished game would derive two deals. The
+// old seed, the game id and the generation are the same on every copy of every
+// bubble of that game. The cost is the one the owner accepted: anyone holding
+// the finished chain can compute the next deal before it is dealt.
+void msg_rematch_seed(const uint8_t old_seed[MSG_SEED_LEN], uint64_t game_id,
+                      uint16_t next_generation, uint8_t out[MSG_SEED_LEN]);
+
+// THE REMATCH LOBBY, built entirely from the FINISHED chain `finished` - the
+// one thing a New game tap on a result card has in hand. Writes the WAITING
+// envelope into `out` and returns its length, or a negative MSG_E*:
+//
+//   * same game_id, generation + 1 (format 7), so rule G ranks it above every
+//     chain of the game it replaces;
+//   * parent8 = the finished chain's digest, so rule 4 and the stale-branch
+//     gate see a child of it;
+//   * seed = msg_rematch_seed(...), so the next deal is the same on every
+//     device that taps;
+//   * the finished game's own seating, every seat already taken - no rotation
+//     towards whoever tapped, because a lobby that depended on the tapper
+//     would be three lobbies again - at the finished game's size, so the lobby
+//     is full (a seat frees up only when somebody leaves, as on the web's
+//     table_continue, which keeps the roster and the seats);
+//   * the finished game's RULES (passing or podkidnoy), as table_continue
+//     keeps them;
+//   * the fool's penalty carry for that roster and that fool, exactly the
+//     carry a rematch lobby has always held (none if the game ended with no
+//     fool);
+//   * last_actor_seat = the finished chain's, a structural field, so it is the
+//     same whoever taps (a full lobby offers Start to every seat whatever its
+//     value, msg_lobby_offered's full-lobby exemption);
+//   * `sent_at` is the caller's clock, and the ONLY byte that differs between
+//     two devices' taps.
+//
+// So two taps on the same finished table - or on two different bubbles of it
+// that are both FINISHED - are the same lobby, and the digest tiebreak between
+// their send clocks settles nothing that matters.
+//
+// Refused: anything that does not decode and replay (its MSG_E*), a chain that
+// is not FINISHED (MSG_EPHASE), a roster with an empty or missing seat
+// (MSG_EJOINS), and a game already at MSG_MAX_GENERATION (MSG_EFORMAT). A host
+// that is refused starts an ordinary new game instead.
+//
+// `scratch` is the caller's Game (this file keeps none): the finished chain is
+// replayed into it to find the fool, and then the lobby's deal is made in it.
+// Touches the process-wide deal RNG, like msg_replay.
+int msg_rematch_lobby(const unsigned char *finished, int finished_len, uint16_t sent_at,
+                      unsigned char *out, int out_cap, Game *scratch);
+
 // The seat the penalty falls ON - the fool, and therefore the new game's first
 // DEFENDER. Same guard and same inputs as msg_rematch_opening, and derived from
 // its answer so the two can never disagree; -1 when the rule does not apply.
@@ -1158,8 +1249,11 @@ int msg_rematch_fool_seat(const MsgJoin *joins, int n,
 // says seat identity "lives with the caller" and it still does: the caller
 // hands its own cache, its own sender signal and its own chat shape IN.
 
-// DOES `a` SHOW MORE OF THE GAME THAN `b`? Lexicographic over (phase, round,
-// turn), STRICTLY - a tie is not ahead.
+// DOES `a` SHOW MORE OF THE GAME THAN `b`? Lexicographic over (generation,
+// phase, round, turn), STRICTLY - a tie is not ahead. The generation leads for
+// rule G's reason: every chain of a rematch is past every chain of the game it
+// replaced, so an old bubble of that game opened after the rematch began is a
+// branch, and its board is read-only (with the bar's "open newest").
 //
 // ROUND is compared above TURN and not below it, because the two do not move
 // together: `turn` counts ATOMS and the atom stream is re-derived on every
@@ -1176,8 +1270,8 @@ int msg_rematch_fool_seat(const MsgJoin *joins, int n,
 // moment it ARRIVES, because Rule P ranks a child over its parent. A stale
 // BRANCH is never in that window: it has strictly fewer atoms and loses on
 // turn with nothing folded.
-int msg_chain_is_ahead(int a_phase, int a_round, int a_turn,
-                       int b_phase, int b_round, int b_turn);
+int msg_chain_is_ahead(int a_generation, int a_phase, int a_round, int a_turn,
+                       int b_generation, int b_phase, int b_round, int b_turn);
 // A NICKNAME, JUDGED. `n_chars` is the trimmed name's character count and
 // `n_bytes` its UTF-8 byte count - both counted by the host, because trimming
 // and grapheme clustering are Unicode work a C kernel has no business doing;

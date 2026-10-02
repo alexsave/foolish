@@ -850,6 +850,12 @@ int wasm_msg_rebase(int pending_round, int seat, int wire_len) {
 // bubble's atom delta, which msg_seal derives from the base turn this host
 // tracks) and the borrowed body. They are cleared here rather than trusted, so
 // the struct a caller filled in cannot assert a boundary its body does not have.
+// The one scratch Game the FMSG exports borrow for the length of a call (a
+// Game is far too big for a wasm stack): wasm_msg_seal reads its own body back
+// into it, and wasm_msg_rematch replays the finished chain and deals the lobby
+// in it. Neither holds it across a return.
+static Game g_msg_scratch;
+
 int wasm_msg_seal(void) {
     MsgEnvelope e = g_msg_header.e;
     if (e.n_joins < 1 || e.n_joins > MSG_MAX_JOINS) return MSG_EJOINS;
@@ -862,11 +868,26 @@ int wasm_msg_seal(void) {
 
     // A v6 body is tens of bytes; 512 is far above any measured game (8p ~68 B).
     static unsigned char body[512];
-    static Game scratch;
     const int src = msg_seal(&e, &g_game, msg_seal_base(&g_game, g_msg_base_logs),
-                             body, (int)sizeof body, &scratch);
+                             body, (int)sizeof body, &g_msg_scratch);
     if (src != MSG_EOK) return src;
     return msg_encode(&e, g_replay_io, REPLAY_IO_CAP);
+}
+
+// THE REMATCH LOBBY (msg_wire.h msg_rematch_lobby) for the FINISHED envelope in
+// g_replay_io[0, in_len): the same game, the next generation, written back into
+// g_replay_io. Returns its length or a negative MSG_E*. Adopts nothing - the
+// resident game is untouched; decode the answer to put it on screen. The same
+// C the phone's fio_msg_rematch calls, exported so e2e/msg_rematch.test.ts can
+// hold the two engines to one answer.
+int wasm_msg_rematch(int in_len, int sent_at) {
+    if (in_len < 0 || in_len > REPLAY_IO_CAP) return MSG_ECAP;
+    // The answer is written where the question was, so the question is copied
+    // out first: the lobby is built while the finished chain is still read.
+    static unsigned char finished[REPLAY_IO_CAP];
+    memcpy(finished, g_replay_io, (size_t)in_len);
+    return msg_rematch_lobby(finished, in_len, (uint16_t)(sent_at & 0xffff),
+                             g_replay_io, REPLAY_IO_CAP, &g_msg_scratch);
 }
 
 // ROUND 16 - the pickup hold, on the resident game (the one wasm_msg_decode

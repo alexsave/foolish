@@ -64,6 +64,7 @@ typedef struct {
     uint32_t msg_carry_key;      // the rematch carry a WAITING envelope holds
     uint8_t  msg_carry_fool;     // …and its fool, or MSG_NO_FOOL
     int8_t   msg_rules;          // the variant this table is played under
+    uint16_t msg_generation;     // which rematch of the game (msg_wire.h format 7)
 } FioSession;
 
 // The session, always. Its `game` is the storage a decode replays INTO, so this
