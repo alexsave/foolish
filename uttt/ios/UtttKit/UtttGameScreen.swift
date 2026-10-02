@@ -98,6 +98,18 @@ public final class UtttGameScreen: UtttSheetView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
+#if UTTT_BIG_BOARD
+    /// The same screen with the rulebook's 4-second hold (docs/BIG_BOARD.md):
+    /// `onLongHold` nil adds nothing, so this is the screen above exactly.
+    public convenience init(model: UtttModel, door: Uttt.Door = .none, slide: CollapseSlide?,
+                            onDoor: @escaping () -> Void = {}, onRules: @escaping () -> Void = {},
+                            onDiagnostics: (() -> Void)? = nil, onLongHold: (() -> Void)?) {
+        self.init(model: model, door: door, slide: slide, onDoor: onDoor, onRules: onRules,
+                  onDiagnostics: onDiagnostics)
+        rulebook.setLongHold(onLongHold)
+    }
+#endif
+
 #if DEBUG
     private let orange = MotionRuler.square(.orange)
     private let blue = MotionRuler.square(.blue)

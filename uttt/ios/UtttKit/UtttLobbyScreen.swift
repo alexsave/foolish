@@ -152,6 +152,18 @@ public final class UtttWatchScreen: UtttSheetView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
+#if UTTT_BIG_BOARD
+    /// The same screen with the rulebook's 4-second hold (docs/BIG_BOARD.md):
+    /// `onLongHold` nil adds nothing, so this is the screen above exactly.
+    public convenience init(model: UtttModel, door: Uttt.Door = .none, slide: CollapseSlide?,
+                            onDoor: @escaping () -> Void = {}, onRules: @escaping () -> Void = {},
+                            onDiagnostics: (() -> Void)? = nil, onLongHold: (() -> Void)?) {
+        self.init(model: model, door: door, slide: slide, onDoor: onDoor, onRules: onRules,
+                  onDiagnostics: onDiagnostics)
+        rulebook.setLongHold(onLongHold)
+    }
+#endif
+
     /// The play surface's one layout (`Uttt.sheet`), with the header line in
     /// place of the bar: the board centred and scaled with the drawer, the
     /// rulebook in the right column on the strip and beside Again at the

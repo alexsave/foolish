@@ -263,13 +263,15 @@ public final class UtttRulebookButton: UIControl {
     private let act: () -> Void
     #if DEBUG
     private let onHold: (() -> Void)?
+
+    /// How long a hold on the rulebook is before it opens the diagnostics.
+    public static let holdSeconds: TimeInterval = 1.5
+    #endif
+    #if DEBUG || UTTT_BIG_BOARD
     /// A hold that fired swallows the release that ends it (foolish's
     /// FSquareButton `holdFired`): the recogniser cancels the touch, and
     /// this is the belt to that - a hold never also opens the rules.
     private var holdFired = false
-
-    /// How long a hold on the rulebook is before it opens the diagnostics.
-    public static let holdSeconds: TimeInterval = 1.5
     #endif
 
     /// The door's size - one size at every drawer height, the kernel's
@@ -306,20 +308,89 @@ public final class UtttRulebookButton: UIControl {
     required init?(coder: NSCoder) { fatalError() }
 
     @objc private func fire() {
-        #if DEBUG
+        #if DEBUG || UTTT_BIG_BOARD
         if holdFired { holdFired = false; return }
         #endif
         act()
     }
 
-    #if DEBUG
+    #if DEBUG || UTTT_BIG_BOARD
     @objc private func held(_ g: UILongPressGestureRecognizer) {
+        #if UTTT_BIG_BOARD
+        if onLongHold != nil { heldLong(g); return }
+        #endif
+        #if DEBUG
         guard g.state == .began else { return }
         holdFired = true
         onHold?()
         /* the release may never arrive as a touchUpInside (the recogniser
          * cancels it); clear the latch once this hold is over either way */
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.holdFired = false }
+        #endif
+    }
+    #endif
+
+    #if UTTT_BIG_BOARD
+    /// THE LONG HOLD (docs/BIG_BOARD.md): the 243 board's switch, a third
+    /// action on this door, reached by holding it for `longHoldSeconds`.
+    private var onLongHold: (() -> Void)?
+    public static let longHoldSeconds: TimeInterval = 4.0
+    /// The long hold's clock, started when the recogniser recognises.
+    private var longTimer: Timer?
+    /// The long hold fired during this press: its release does nothing else.
+    private var longFired = false
+
+    /// Give this door the long hold; nil adds nothing. ONE RECOGNISER, at
+    /// the shorter of the holds that are set: with the DEBUG diagnostics
+    /// hold (1.5 s) it stays at 1.5 s and the long hold's clock starts when
+    /// it recognises - reaching 4 s fires `onLongHold` and the diagnostics
+    /// never open; letting go between 1.5 s and 4 s opens the diagnostics,
+    /// on the release instead of at 1.5 s. Alone (Release) it is one
+    /// recogniser at 4 s that fires the moment the hold is reached.
+    public func setLongHold(_ action: (() -> Void)?) {
+        guard let action else { return }
+        onLongHold = action
+        if gestureRecognizers?.contains(where: { $0 is UILongPressGestureRecognizer }) == true { return }
+        let hold = UILongPressGestureRecognizer(target: self, action: #selector(held(_:)))
+        hold.minimumPressDuration = Self.longHoldSeconds
+        addGestureRecognizer(hold)
+    }
+
+    private func heldLong(_ g: UILongPressGestureRecognizer) {
+        #if DEBUG
+        let diagnostics = onHold
+        #else
+        let diagnostics: (() -> Void)? = nil
+        #endif
+        switch g.state {
+        case .began:
+            holdFired = true
+            longFired = false
+            /* the recogniser has already held for its own minimum */
+            let left = Self.longHoldSeconds - g.minimumPressDuration
+            if left <= 0.01 { longFired = true; onLongHold?(); return }
+            longTimer?.invalidate()
+            /* .common: a tracking run loop mode must not stop the clock */
+            let t = Timer(timeInterval: left, repeats: false) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.longTimer = nil
+                    self.longFired = true
+                    self.onLongHold?()
+                }
+            }
+            RunLoop.main.add(t, forMode: .common)
+            longTimer = t
+        case .ended, .cancelled, .failed:
+            let early = longTimer != nil && !longFired
+            longTimer?.invalidate()
+            longTimer = nil
+            /* let go before the long hold: the short hold's action */
+            if early, g.state == .ended { diagnostics?() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.holdFired = false }
+        default:
+            break
+        }
     }
     #endif
 
