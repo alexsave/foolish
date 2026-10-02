@@ -1371,6 +1371,22 @@ void fio_msg_turn_publish(int state, int base_atoms_before, int staged_atoms_bef
 int fio_msg_expand_note(int event, double now,
                         int *io_pending, int *io_retries, double *io_wanted_at);
 
+// WHICH WAY THE DRAWER IS (c/src/msg_expand.h, msg_style_*): the style the
+// auto-collapse reads, from the host's will/did callbacks, because Apple's
+// `presentationStyle` keeps a late install didTransition(compact) that arrives
+// after the drawer has expanded. Same crossing as the name-entry pair: two
+// scalars the CALLER owns, flat.
+#define FIO_STYLE_COMPACT  0
+#define FIO_STYLE_EXPANDED 1
+#define FIO_STYLE_WILL     0   // willTransitionToPresentationStyle:
+#define FIO_STYLE_DID      1   // didTransitionToPresentationStyle:
+
+// A fresh activation in `style`: writes the two scalars.
+void fio_msg_style_init(int style, int *out_style, int *out_confirmed);
+// Note one callback; returns 1 when the drawer is expanded (or going there)
+// afterwards. The io_ pointers are read and written; NULL ones read as 0.
+int fio_msg_style_note(int phase, int style, int *io_style, int *io_confirmed);
+
 #ifdef __cplusplus
 }
 #endif

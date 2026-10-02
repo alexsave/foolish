@@ -510,3 +510,27 @@ int fio_msg_expand_note(int event, double now,
     if (io_wanted_at) *io_wanted_at = st.wanted_at;
     return issue;
 }
+
+/* WHICH WAY THE DRAWER IS (msg_style_*), the auto-collapse's question. */
+
+_Static_assert(FIO_STYLE_COMPACT  == MSG_STYLE_COMPACT,  "style values diverged");
+_Static_assert(FIO_STYLE_EXPANDED == MSG_STYLE_EXPANDED, "style values diverged");
+_Static_assert(FIO_STYLE_WILL     == MSG_STYLE_WILL,     "style phases diverged");
+_Static_assert(FIO_STYLE_DID      == MSG_STYLE_DID,      "style phases diverged");
+
+void fio_msg_style_init(int style, int *out_style, int *out_confirmed) {
+    MsgStyle st;
+    msg_style_init(&st, style);
+    if (out_style)     *out_style     = st.style;
+    if (out_confirmed) *out_confirmed = st.confirmed;
+}
+
+int fio_msg_style_note(int phase, int style, int *io_style, int *io_confirmed) {
+    MsgStyle st;
+    st.style     = io_style     ? *io_style     : 0;
+    st.confirmed = io_confirmed ? *io_confirmed : 0;
+    msg_style_note(&st, phase, style);
+    if (io_style)     *io_style     = st.style;
+    if (io_confirmed) *io_confirmed = st.confirmed;
+    return msg_style_expanded(&st);
+}

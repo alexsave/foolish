@@ -238,6 +238,9 @@ final class MessagesViewController: MSMessagesAppViewController {
         hostTrace("willBecomeActive", nil, conversation)
 #endif
         FlightRecorder.note("active", "\(conversation.remoteParticipantIdentifiers.count + 1)p chat")
+        // The drawer starts where this activation was handed it; every style
+        // callback after this moves it (`drawerIsExpanded`).
+        drawerStyle = GateWire.DrawerStyle(expanded: presentationStyle == .expanded)
         // A FRESH ACTIVATION OWNS ITS SELECTION. See `didSelect`.
         becameActiveAt = Date()
         // A NEW ACTIVATION IS A NEW AUDIENCE. Any just-sent marker still lying
@@ -316,6 +319,12 @@ final class MessagesViewController: MSMessagesAppViewController {
             // our bug. A blind early return cannot tell them apart, and guessing
             // between them has already cost several builds.
             FlightRecorder.note("receive-dropped", "isMine")
+            // On a bound drawer this echo IS the Send press (host doc L2), and
+            // the bubble is still leaving the field for about a second - see
+            // FieldSend for what a stage in that second looks like.
+            if Self.waitsForOwnSend, let p = Self.payload(of: message) {
+                Self.fieldSend.pressed(p, at: CACurrentMediaTime())
+            }
             return
         }
         startingNewGame = false
@@ -323,6 +332,10 @@ final class MessagesViewController: MSMessagesAppViewController {
         FlightRecorder.note("receive")
 #if RIG_ARRIVE
         let arrived = Self.payload(of: message)
+        // The door's vector into `fieldSend`: the rig pressed Send on another
+        // seat's bubble in THIS field. Not behind `stage.awaitsend`, which is
+        // the product's own vector (see FieldSend).
+        if rigIsDoor(message), let arrived { Self.fieldSend.pressed(arrived, at: CACurrentMediaTime()) }
         Task { await rigSaw(arrived) }
 #endif
         incomingURL = message.url
@@ -399,6 +412,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         get { Self.rigDoorSent }
         set { Self.rigDoorSent = newValue }
     }
+
     private var rigLastSelected: String = "-"
     private var rigClaimSeen: String?
 
@@ -683,6 +697,8 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// so commit it to the cache (§7.6). This is the ONLY place the cache learns
     /// a chain was actually sent — insert alone is not a commit.
     override func didStartSending(_ message: MSMessage, conversation: MSConversation) {
+        // Whoever pressed Send (FieldSend), this bubble has left the field.
+        Self.fieldSend.started(Self.payload(of: message))
 #if RIG_ARRIVE
         hostTrace("didStartSending", message, conversation, "door=\(rigIsDoor(message))")
         // THE DOOR'S OWN SEND REGISTERS NOTHING: it is another seat's move, and
@@ -917,6 +933,8 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func willTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
         super.willTransition(to: presentationStyle)
+        drawerStyle.note(did: false, expanded: presentationStyle == .expanded)
+        FlightRecorder.note("style-will", presentationStyle == .compact ? "compact" : "expanded")
 #if RIG_ARRIVE
         hostTrace("willTransition", nil, nil,
                   "to=\(presentationStyle == .compact ? "compact" : "expanded")")
@@ -962,7 +980,10 @@ final class MessagesViewController: MSMessagesAppViewController {
 #endif
         nameExpandSaw(presentationStyle)
         CollapseTween.isPresenting = false
-        FlightRecorder.note("style", presentationStyle == .compact ? "compact" : "expanded")
+        drawerStyle.note(did: true, expanded: presentationStyle == .expanded)
+        FlightRecorder.note("style", (presentationStyle == .compact ? "compact" : "expanded")
+                            + (drawerStyle.isExpanded == (presentationStyle == .expanded)
+                               ? "" : " (late - the drawer is still \(drawerStyle.isExpanded ? "expanded" : "compact"))"))
         let waiters = transitionWaiters
         transitionWaiters.removeAll()
         // In KEY order, which is why the key is a monotonic sequence number.
@@ -1170,7 +1191,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         // UNDO STAYS OUT OF SIGHT FOR ALL OF WHAT FOLLOWS - the picture being
         // baked, the rest, the collapse (CollapseTween.autoCollapses, read by
         // UndoGate). From the first line, and released on every way out.
-        let collapsing = !fromUndo && presentationStyle == .expanded
+        let collapsing = !fromUndo && drawerIsExpanded
         if collapsing { CollapseTween.autoCollapses += 1 }
         defer { if collapsing { CollapseTween.autoCollapses -= 1 } }
         // NEWEST STAGE WINS, and the losers stop where they stand.
@@ -1255,6 +1276,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         // gameId comes from the same decode above so didStartSending's commit
         // can persist the seat without re-decoding. "" only if the payload
         // failed to decode - the commit then skips the seat write.
+        await awaitFieldFree()
         // Superseded while the picture was being baked: a newer move is already
         // staged, and this one must not claim the input field back off it.
         guard current() else { return }
@@ -1279,7 +1301,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         // Already in the compact drawer (an ordinary in-drawer move): no style
         // transition will run, so there is no preview flyover to avoid - stage
         // the bubble immediately, exactly the pre-round-10b timing.
-        if presentationStyle != .expanded {
+        if !drawerIsExpanded {
             insertStaged()
             return
         }
@@ -1344,6 +1366,51 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     /// Which `stage` run owns the input field - see the note at the top of it.
     private var stageGeneration = 0
+
+    /// Bubbles a Send press is still carrying out of the input field (see
+    /// FieldSend). PROCESS-WIDE, like the door's bookkeeping: a Send pressed
+    /// with the drawer closed is reported to a FRESH controller (host doc L7).
+    private static var fieldSend = FieldSend()
+
+    /// The product's vector into `fieldSend` - see FieldSend.
+    private static var waitsForOwnSend: Bool {
+        #if DEBUG || SOLO_TESTING
+        return MessageDevBoard.flag("stage.awaitsend", shipping: FieldSend.waitsForOwnSendByDefault)
+        #else
+        return FieldSend.waitsForOwnSendByDefault
+        #endif
+    }
+
+    /// Hold a stage while the field is still sending a pressed bubble, so the
+    /// stage lands as a bubble rather than a zero-height entry (FieldSend).
+    @MainActor
+    private func awaitFieldFree() async {
+        let start = CACurrentMediaTime()
+        while Self.fieldSend.isBusy(now: CACurrentMediaTime()) {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let waited = CACurrentMediaTime() - start
+        if waited > 0.01 {
+            FlightRecorder.note("field-busy", "stage waited \(Int(waited * 1000))ms for a sent bubble to leave the field")
+        }
+    }
+
+    /// The drawer as the host's will/did callbacks describe it - see
+    /// `drawerIsExpanded`.
+    private var drawerStyle = GateWire.DrawerStyle(expanded: false)
+
+    /// IS THE DRAWER UP, so that a staged move should put it down to Send?
+    /// Not `presentationStyle`: the framework sets that in every didTransition,
+    /// and a self-expanding cold open (a first-run name screen) gets the
+    /// install's own didTransition(compact) about half a second AFTER its
+    /// expand has landed. The property then says compact over an expanded
+    /// drawer until the next transition, and Create game staged its lobby in
+    /// the "already compact" branch below and never collapsed (owner notes 1
+    /// and 7). Which did counts is the kernel's rule (c/src/msg_expand.h,
+    /// "WHICH WAY THE DRAWER IS").
+    private var drawerIsExpanded: Bool {
+        CollapseTween.readsDrawerFromCallbacks ? drawerStyle.isExpanded : presentationStyle == .expanded
+    }
 
     /// The chain a message Messages reports actually carries. The message is the
     /// authority on its own bytes; our `pendingStage` bookkeeping is not (round

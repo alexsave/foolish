@@ -96,4 +96,56 @@ void msg_expand_init(MsgExpand *st);
  * The host performs the effect and owns every callback; this only decides. */
 int msg_expand_note(MsgExpand *st, int event, double now);
 
+/* ---- WHICH WAY THE DRAWER IS, from the host's callbacks -------------------
+ *
+ * The question the auto-collapse asks before every staged move: is the drawer
+ * expanded, so that it should be put down to Send? Apple's own answer is the
+ * `presentationStyle` property, which the framework sets in didTransition, and
+ * that answer is WRONG after a self-expanding cold open. Measured on the
+ * iPhone 17e simulator (iOS 26.3), first-run New game, five cold opens out of
+ * five, times from the extension's launch:
+ *
+ *   0.03  willTransition -> compact, didTransition -> compact   (the stated style)
+ *   0.23  willTransition -> compact                             (the install)
+ *   0.32  willTransition -> expanded, didTransition -> expanded (our ask landed)
+ *   0.78  didTransition -> compact                              (the install's
+ *                                                                own, late, with
+ *                                                                no will of its own)
+ *
+ * The drawer is expanded from 0.32 on and stays so, yet `presentationStyle`
+ * answers compact from 0.78 until the next transition - so Create game staged
+ * its lobby in the "already compact" branch and never collapsed (owner notes 1
+ * and 7, "auto collapse possibly missed"). The device trace at the top of this
+ * file has the same late did, at 0.960.
+ *
+ * THE RULE: the newest willTransition says where the drawer is going, and a
+ * didTransition is the arrival of THAT move only. A did that disagrees with a
+ * will its own did has already confirmed is the tail of an older transition,
+ * and changes nothing. A did that disagrees with an UNconfirmed will is taken
+ * (a transition Messages started and then ran the other way, a drag let go),
+ * because then no did has yet said where the drawer came to rest.
+ *
+ * Before any callback (a fresh activation) the answer is the style the
+ * activation was handed, which the caller passes to msg_style_init. */
+#define MSG_STYLE_COMPACT  0
+#define MSG_STYLE_EXPANDED 1
+
+#define MSG_STYLE_WILL 0   /* willTransitionToPresentationStyle: */
+#define MSG_STYLE_DID  1   /* didTransitionToPresentationStyle: */
+
+typedef struct {
+    int style;      /* MSG_STYLE_*: where the drawer is, or is going */
+    int confirmed;  /* a did has arrived for the newest will */
+} MsgStyle;
+
+/* A fresh activation in `style`; anything but MSG_STYLE_EXPANDED is compact. */
+void msg_style_init(MsgStyle *st, int style);
+
+/* Note one callback. An unknown phase or style, or a NULL state, changes
+ * nothing. */
+void msg_style_note(MsgStyle *st, int phase, int style);
+
+/* 1 when the drawer is expanded, or on its way there. NULL answers 0. */
+int msg_style_expanded(const MsgStyle *st);
+
 #endif /* MSG_EXPAND_H */

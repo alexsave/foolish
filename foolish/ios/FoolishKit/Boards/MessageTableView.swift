@@ -452,6 +452,19 @@ public struct MessageTableView: View {
     /// fallback) as each claims the animator.
     @State var animSequenceToken = 0
 
+    /// The `runEventStream` that still owes the board its CLOSING BEAT - the
+    /// role hand-off it plays once its cards have landed - by its token; nil
+    /// when none does. While it is the newest sequence it owns the roles, so a
+    /// view change that starts no sequence leaves them to that beat (which
+    /// reads the live view) instead of syncing them under it. See
+    /// `closingBeatReadsLiveView`.
+    @State var closingBeatOwner: Int?
+
+    /// Does a running stream own the role hand-off for this view change?
+    var aStreamOwnsTheRoles: Bool {
+        Self.closingBeatReadsLiveView && closingBeatOwner == animSequenceToken
+    }
+
     /// CLAIM THE ANIMATOR: bump the token, and keep the number that came back.
     ///
     /// The two statements only mean anything together - the bump says
@@ -979,7 +992,11 @@ public struct MessageTableView: View {
             // its own roles at the end, once its cards have landed. Note 2: so
             // does an open-replay with nothing to play - an arriving good that
             // does not close the bout is only a role change, and it lands here.
-            if !sequenced, let v { syncRoles(to: RoleState(v), in: v, animated: true) }
+            // Item 3: unless a stream that is still playing owes its closing
+            // beat - that beat hands the roles to this same live view once its
+            // cards land, and syncing them under it let the stream's own
+            // in-flight beats (a throw-in clearing goods) turn them back.
+            if !sequenced, !aStreamOwnsTheRoles, let v { syncRoles(to: RoleState(v), in: v, animated: true) }
         }
         .fFlash($toast)
         .onChange(of: controller.rejectTick) { _ in
