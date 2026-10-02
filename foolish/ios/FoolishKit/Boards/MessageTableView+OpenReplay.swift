@@ -258,6 +258,11 @@ extension MessageTableView {
         } else {
             slot = .zero
         }
+        // …AT THE SLOT CARD'S OWN SIZE. Its first frame is the card that lay
+        // there, not a 50x70 ghost 4pt larger on top of it; it grows to the
+        // ghost's size on the way (Flight.fromSize). Only when it really
+        // leaves the slot: the last-chance flight from the deck is a ghost.
+        let slotCard: CGSize? = trumpOut != nil && slot == trumpSlot ? trumpSlot.size : nil
         if mine {
             let cards = ev.cards.compactMap { $0 }
             if cards.isEmpty { return [] }
@@ -269,7 +274,8 @@ extension MessageTableView {
             return cards.enumerated().compactMap { i, c in
                 landing(c, i, cards.count).map {
                     Flight(id: "opendraw-\(c.identity)", card: c,
-                           from: isTrump(c) ? slot : deck, to: $0) } }
+                           from: isTrump(c) ? slot : deck, to: $0,
+                           fromSize: isTrump(c) ? slotCard : nil) } }
         }
         let n = max(ev.cards.count, 1)
         // The stock's share of the draw: all of it, or all but the trump.
@@ -280,7 +286,8 @@ extension MessageTableView {
                    to: badge.offsetBy(dx: CGFloat(k) * 3, dy: 0)) }
         if let trump = trumpOut, slot != .zero {
             out.append(Flight(id: "opendraw-\(trump.identity)", card: trump, from: slot,
-                              to: badge.offsetBy(dx: CGFloat(n - 1) * 3, dy: 0)))
+                              to: badge.offsetBy(dx: CGFloat(n - 1) * 3, dy: 0),
+                              fromSize: slotCard))
         }
         return out
     }

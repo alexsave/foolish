@@ -165,6 +165,8 @@ final class TrumpFlightTests: XCTestCase {
                                                     lastChance: true) { _, _, _ in self.landed } ?? []
             XCTAssertEqual(late.first { $0.card == trump }?.from, deck,
                            "\(at): last chance - the trump still flies, from the deck")
+            XCTAssertEqual(late.first { $0.card == trump }?.ghostSize(at: 0), Flight.ghost,
+                           "\(at): from the deck it is an ordinary ghost, not slot-sized")
 
             // FLAG OFF: the plan's trump is not passed, and the draw is exactly
             // what it was before - every card from the deck, backs to a badge.
