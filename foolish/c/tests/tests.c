@@ -10187,7 +10187,7 @@ static uint64_t dl_fold_refills(uint64_t h, int np, int viewer, int *n_refill, i
     return h;
 }
 
-static uint64_t dl_refill_digest(int np, int *n_refill, int *n_steps) {
+static uint64_t dl_refill_digest(int np, int *n_refill, int *n_steps, int *n_trump) {
     static Game g;
     static LegalMoves moves;
     static AnimPlan plan;
@@ -10266,6 +10266,13 @@ static uint64_t dl_refill_digest(int np, int *n_refill, int *n_steps) {
                     h = dl_fnv(h, st->in_flight_from_deck);
                     h = dl_fnv(h, st->in_flight_to_flipped);
                     for (int b = 0; b < 64; b += 8) h = dl_fnv(h, (int)((st->reveals >> b) & 0xff));
+                    // The trump the step deals out, by identity, for EVERY
+                    // viewer (a masked one included), and where it leaves from.
+                    if (!card_is_none(st->trump_out)) {
+                        (*n_trump)++;
+                        h = dl_fnv(h, card_to_id(st->trump_out));
+                        h = dl_fnv(h, st->trump_from);
+                    }
                 }
             }
         }
@@ -10276,17 +10283,27 @@ static uint64_t dl_refill_digest(int np, int *n_refill, int *n_steps) {
 
 static void test_refill_events_and_plan_are_unchanged(void) {
     static const int nps[] = { 2, 3, 4, 6, 8 };
-    // Per np, in nps order; taken on 8cbdb81f (seat-major hooks).
+    // Per np, in nps order; taken on 8cbdb81f (seat-major hooks), and re-taken
+    // when the plan began naming the trump a refill deals out (trump_out /
+    // trump_from folded in, and in_flight_from_deck no longer counting that
+    // trump). Before re-taking them, folding in_flight_from_deck + 1 on exactly
+    // the trump steps and nothing else reproduced the 8cbdb81f digests for all
+    // five table sizes: no other byte of any refill or plan step moved.
     static const uint64_t golden[] = {
-        0xcd90a152de263054ULL, 0xb314abf40dccfb19ULL, 0xfb2c440b4a0d7bb9ULL,
-        0x413a12242d7dba47ULL, 0xb74067a0d288d61dULL,
+        0x3f5de256bd24caa2ULL, 0x852490db65708a6dULL, 0x42f2bf2819ad2519ULL,
+        0x4cd82e08d9a0f73dULL, 0xc98a0e3d112a9b29ULL,
     };
     for (int i = 0; i < (int)(sizeof nps / sizeof nps[0]); i++) {
-        int n_refill = 0, n_steps = 0;
-        const uint64_t got = dl_refill_digest(nps[i], &n_refill, &n_steps);
+        int n_refill = 0, n_steps = 0, n_trump = 0;
+        const uint64_t got = dl_refill_digest(nps[i], &n_refill, &n_steps, &n_trump);
         DCHECK(n_refill > 20 && n_steps > 20,
                "refills unchanged (%dp): the games refilled (%d events, %d plan steps)",
                nps[i], n_refill, n_steps);
+        // Every game that empties its stock deals the trump out once, and the
+        // plan names it for every viewer (np + 1 of them, the spectator too).
+        DCHECK(n_trump > 0 && n_trump % (nps[i] + 1) == 0,
+               "refills unchanged (%dp): the trump deals are named for every viewer (%d)",
+               nps[i], n_trump);
         DCHECK(got == golden[i], "refills unchanged (%dp): digest 0x%016llxULL, want 0x%016llxULL",
                nps[i], (unsigned long long)got, (unsigned long long)golden[i]);
     }
@@ -10426,6 +10443,13 @@ static void test_opening_deal_plan_paces_card_by_card(void) {
             k++;
         }
         DCHECK(k == np * CARDS_PER_PLAYER, "deal clock (%dp): %d dealt cards on the clock", np, k);
+        // The opening deal never deals the trump out: it is turned AFTER the
+        // hands are dealt (the FLIPPED step), so no step of it names one.
+        int trump_steps = 0;
+        for (int i = 0; i < plan.n_steps; i++)
+            if (!card_is_none(plan.steps[i].trump_out) || plan.steps[i].trump_from != ANIM_LOC_NONE) trump_steps++;
+        DCHECK(trump_steps == 0, "deal clock (%dp): the opening deals no trump out (%d steps say it does)",
+               np, trump_steps);
         // Read off the plan, not re-derived from the constants: the deal's first
         // start, its last card's landing, and the whole opening plan's total.
         if (np == 2 || np == MAX_PLAYERS)
@@ -12103,7 +12127,7 @@ static void test_lobby_can_set_rules(void) {
 static int sr_view(int viewer, ViewRules *vr) {
     const int n = table_envelope(&tb, RS("g-7"), viewer, 3, ct_env, sizeof(ct_env));
     int rc = n > 0 ? client_adopt_envelope(&ct, ct_env, n) : n;
-    if (rc == CLIENT_OK) rc = client_view_rules(&ct.view, 0, 0, vr);
+    if (rc == CLIENT_OK) rc = client_view_rules(&ct.view, 0, 0, 0, vr);
     return rc;
 }
 
@@ -12434,35 +12458,35 @@ static void test_client_view_rules(void) {
 
     // Good: offered to an attacker who is in and has not said it, once every attack is covered.
     cvr_board(&v, 2);
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.can_say_good, "an attacker is offered Good over a covered table");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && r.can_say_good, "an attacker is offered Good over a covered table");
     v.good_mask = 1u << 2;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.can_say_good, "not once it has said it");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && !r.can_say_good, "not once it has said it");
     v.good_mask = 1u << 0;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.can_say_good, "another seat's Good is not this one's");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && r.can_say_good, "another seat's Good is not this one's");
     cvr_board(&v, 1);
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.can_say_good, "the defender is never offered Good");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && !r.can_say_good, "the defender is never offered Good");
     cvr_board(&v, 2);
     v.battles[1] = (Battle){ .attack = { .suit = SUIT_DIAMONDS, .value = 6 }, .defense = CARD_NONE };
     v.num_battles = 2;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.can_say_good, "not while an attack stands uncovered");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && !r.can_say_good, "not while an attack stands uncovered");
     v.num_battles = 0;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.can_say_good, "not over an empty table");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && !r.can_say_good, "not over an empty table");
     cvr_board(&v, -1);
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.can_say_good, "a spectator is offered nothing");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && !r.can_say_good, "a spectator is offered nothing");
     cvr_board(&v, 2);
     v.seats[2].status = PLAYER_STATUS_OUT;
     v.seats[2].hand_count = 0;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.can_say_good, "a seat that is out says nothing (handle_good: NOT_IN_STATUS)");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && !r.can_say_good, "a seat that is out says nothing (handle_good: NOT_IN_STATUS)");
     cvr_board(&v, 2);
     v.status = GAME_STATUS_GAME_OVER;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.can_say_good, "nor on a finished game (handle_good: NOT_PLAYING)");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && !r.can_say_good, "nor on a finished game (handle_good: NOT_PLAYING)");
 
     // The sword: the next bout's lead, on an empty table once the deal has turned the trump.
     cvr_board(&v, 2);
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.first_attacker_badge == -1 && r.defender_badge == 1,
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && r.first_attacker_badge == -1 && r.defender_badge == 1,
           "mid-bout: no sword, the shield on the defender");
     v.num_battles = 0;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.first_attacker_badge == 0, "an empty table: the sword on the lead");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && r.first_attacker_badge == 0, "an empty table: the sword on the lead");
     // Mid-deal (a stock and no trump yet) the board names nobody (game.c
     // start_game_dealt), and that alone is why neither seat is marked: the rule
     // reads the seats, never "is it dealt yet".
@@ -12470,73 +12494,98 @@ static void test_client_view_rules(void) {
     v.flipped = CARD_NONE;
     v.first_attacker = GAME_SEAT_NONE;
     v.defender = GAME_SEAT_NONE;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.first_attacker_badge == -1 && r.defender_badge == -1,
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && r.first_attacker_badge == -1 && r.defender_badge == -1,
           "mid-deal (a stock and no trump yet, nobody named): neither badge");
     v.has_flipped = true;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.first_attacker_badge == -1 && r.defender_badge == -1,
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && r.first_attacker_badge == -1 && r.defender_badge == -1,
           "the trump turned, nobody named yet (FLIPPED): neither badge");
     v.has_flipped = false;
     v.first_attacker = 0;
     v.defender = 1;
     v.deck_count = 0;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.first_attacker_badge == 0 && r.defender_badge == 1,
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && r.first_attacker_badge == 0 && r.defender_badge == 1,
           "the stock and trump drawn out late in the game: both badges");
     v.defender = 3;
     v.first_attacker = -1;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.first_attacker_badge == -1 && r.defender_badge == -1,
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && r.first_attacker_badge == -1 && r.defender_badge == -1,
           "a badge names only a seat the board has");
 
     // The stock: cards in flight leave the pile first, and the ones bound for the trump still count on it.
     cvr_board(&v, 0);
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.deck_pile == 12 && r.deck_badge == 13
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && r.deck_pile == 12 && r.deck_badge == 13
           && r.show_deck_pile && r.show_flipped_slot && !r.show_trump_icon, "a dealt stock and its trump");
     v.has_flipped = false;
     v.deck_count = 7;
-    CHECK(client_view_rules(&v, 7, 1, &r) == CLIENT_OK && r.deck_pile == 0 && r.deck_badge == 1
+    CHECK(client_view_rules(&v, 7, 1, 0, &r) == CLIENT_OK && r.deck_pile == 0 && r.deck_badge == 1
           && !r.show_deck_pile && r.show_flipped_slot && !r.show_trump_icon, "the last cards in flight, one to the trump slot");
-    CHECK(client_view_rules(&v, 9, 0, &r) == CLIENT_OK && r.deck_pile == 0 && r.deck_badge == 0
+    CHECK(client_view_rules(&v, 9, 0, 0, &r) == CLIENT_OK && r.deck_pile == 0 && r.deck_badge == 0
           && !r.show_deck_pile && !r.show_flipped_slot && r.show_trump_icon, "more in flight than the stock holds shows none");
     v.deck_count = 0;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.deck_badge == 0 && r.show_trump_icon && !r.show_flipped_slot,
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && r.deck_badge == 0 && r.show_trump_icon && !r.show_flipped_slot,
           "stock and trump gone: the power suit");
+
+    // THE PLACE A FLIGHT LEAVES FROM IS ON SCREEN FOR AS LONG AS IT FLIES. The
+    // draw that takes the stock's last two cards and the trump: the pile is
+    // empty the instant it opens, and its two cards still leave from the
+    // stock's place; the trump leaves from its slot, which stays while the
+    // board still holds it, with its face lifted out (the trump is in the air).
+    cvr_board(&v, 0);
+    v.deck_count = 2;
+    CHECK(client_view_rules(&v, 2, 0, 1, &r) == CLIENT_OK && r.deck_pile == 0 && !r.show_deck_pile
+          && r.show_deck_spot && r.show_flipped_slot && !r.show_flipped_card && !r.show_trump_icon
+          && r.deck_badge == 0,
+          "the stock's last cards and the trump in the air: the stock's place and the trump's slot stay, empty");
+    CHECK(client_view_rules(&v, 2, 0, 0, &r) == CLIENT_OK && r.show_deck_spot && r.show_flipped_card
+          && r.deck_badge == 1, "the stock's last cards in the air, the trump still lying: its face shows and counts");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && r.show_deck_spot && r.show_deck_pile && r.show_flipped_card,
+          "nothing in the air: the pile is its own place");
+    v.deck_count = 0;
+    CHECK(client_view_rules(&v, 0, 0, 1, &r) == CLIENT_OK && !r.show_deck_spot && r.show_flipped_slot
+          && !r.show_flipped_card && r.deck_badge == 0,
+          "the trump alone in the air: no stock place (nothing leaves it), the slot stays, empty");
+    v.has_flipped = false;
+    v.flipped = CARD_NONE;
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && !r.show_deck_spot && !r.show_flipped_card && r.show_trump_icon,
+          "after the trump lands: the power suit, nothing else");
+    CHECK(client_view_rules(&v, 0, 0, 2, &r) == CLIENT_E_FORMAT, "a trump in the air is a flag, nothing else");
 
     // A bot to move: should_bot_act's rule, for any seat the roster marks a bot.
     cvr_board(&v, 0);
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.bot_to_move, "no bot seats, no bot to move");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && !r.bot_to_move, "no bot seats, no bot to move");
     v.seats[2].is_ai = true;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.bot_to_move, "a bot attacker that has not said good may throw in");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && r.bot_to_move, "a bot attacker that has not said good may throw in");
     v.good_mask = 1u << 2;
     v.seats[1].is_ai = true;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.bot_to_move,
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && !r.bot_to_move,
           "not once it said good, and a bot defender over a covered table waits");
     v.battles[1] = (Battle){ .attack = { .suit = SUIT_DIAMONDS, .value = 6 }, .defense = CARD_NONE };
     v.num_battles = 2;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.bot_to_move, "a bot defender with an attack to answer");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && r.bot_to_move, "a bot defender with an attack to answer");
     cvr_board(&v, 0);
     v.seats[0].is_ai = true;
     v.num_battles = 0;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.bot_to_move, "a bot first attacker on an empty table");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && r.bot_to_move, "a bot first attacker on an empty table");
     v.first_attacker = 2;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.bot_to_move, "not when a human leads");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && !r.bot_to_move, "not when a human leads");
     cvr_board(&v, 0);
     v.seats[2].is_ai = true;
     v.seats[2].status = PLAYER_STATUS_OUT;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.bot_to_move, "a bot that is out never moves");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && !r.bot_to_move, "a bot that is out never moves");
     v.seats[2].status = PLAYER_STATUS_IN;
     v.status = GAME_STATUS_GAME_OVER;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.bot_to_move, "nor on a finished game");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && !r.bot_to_move, "nor on a finished game");
 
     // Refusals: a view that is not one.
     cvr_board(&v, 0);
     v.num_players = MAX_PLAYERS + 1;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_E_FORMAT, "more seats than a table has is refused");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_E_FORMAT, "more seats than a table has is refused");
     cvr_board(&v, 3);
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_E_FORMAT, "a viewer who is not a seat is refused");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_E_FORMAT, "a viewer who is not a seat is refused");
     cvr_board(&v, 0);
     v.num_battles = -1;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_E_FORMAT, "a negative battle count is refused");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_E_FORMAT, "a negative battle count is refused");
     cvr_board(&v, 0);
-    CHECK(client_view_rules(&v, -1, 0, &r) == CLIENT_E_FORMAT && client_view_rules(&v, 0, -2, &r) == CLIENT_E_FORMAT,
+    CHECK(client_view_rules(&v, -1, 0, 0, &r) == CLIENT_E_FORMAT && client_view_rules(&v, 0, -2, 0, &r) == CLIENT_E_FORMAT,
           "a negative flight is refused");
 }
 
@@ -12875,7 +12924,7 @@ static void test_client_board_edit_undeal(void) {
             // START_MAGIC board: no seat wears a mark before the deal lands.
             ViewRules vr;
             const int nobody = cb_view.first_attacker == GAME_SEAT_NONE && cb_view.defender == GAME_SEAT_NONE
-                && client_view_rules(&cb_view, 0, 0, &vr) == CLIENT_OK && vr.first_attacker_badge == -1 && vr.defender_badge == -1;
+                && client_view_rules(&cb_view, 0, 0, 0, &vr) == CLIENT_OK && vr.first_attacker_badge == -1 && vr.defender_badge == -1;
             if (!empty && every) fprintf(stderr, "  %dp viewer %d: rc %d, deck %d of %d, hand %d\n", np, viewer, rc, cb_view.deck_count, dealt, cb_view.my_hand_count);
             if (!nobody && every_nobody)
                 fprintf(stderr, "  %dp viewer %d: the undealt board names lead %d, defender %d\n", np, viewer, cb_view.first_attacker, cb_view.defender);

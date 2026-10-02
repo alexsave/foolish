@@ -47,15 +47,17 @@ type Card = ViewCard;
 // seat's hand, the table, the flipped slot. The card is hidden at the place it
 // leaves AND the place it lands on - a confirmation or a board committed before
 // the flight lands shows it there already - so the flight is the one card the
-// page draws. A card leaving the deck may be the flipped trump, which the stock
-// shows under the deck.
+// page draws. The flipped trump a draw deals out is NOT hidden here: the stock
+// lifts it out of its slot itself, on the kernel's word that it is in the air
+// (AnimFrame.trump_flight -> ViewRules.show_flipped_card), for every viewer -
+// matching it against the flight's cards could only ever hide it from the one
+// viewer whose draw names it.
 const flightPlaces = (from: string | undefined, to: string | undefined, seat: number | undefined): (number | string)[] => {
     const places: (number | string)[] = [];
     for (const loc of [from, to]) {
         if (loc === 'hand' && seat !== undefined) places.push(seat);
         else if (loc === 'table' || loc === 'flipped') places.push(loc);
     }
-    if (from === 'deck') places.push('flipped');
     return places.filter((p, i) => places.indexOf(p) === i);
 };
 
@@ -89,6 +91,9 @@ interface AnimationContextType {
     // Subset of inFlightFromDeck that's headed to the flipped slot - these
     // are still "in the deck system" so they count toward the badge total.
     inFlightToFlipped: number;
+    /** The flipped trump in the air on its way to a hand (AnimFrame.trump_flight):
+     *  it has left its slot, which the stock draws empty. Null otherwise. */
+    trumpFlight: Card | null;
     // `owner`: the seat whose cards these are, or a place's own key ('table', 'flipped').
     getCardAnimationState: (card: Card, owner?: number | string) => {
         isAnimating: boolean;
@@ -627,7 +632,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     // that is about the game, and the loop is about time.
     const {
         isAnimating, currentAnimation, flightMs, rowMs, heldPiles, arrivingPiles,
-        inFlightFromDeck, inFlightToFlipped, animatingCards, enqueue, reset: resetRun,
+        inFlightFromDeck, inFlightToFlipped, trumpFlight, animatingCards, enqueue, reset: resetRun,
     } = useAnimationRun<ClientAnimationEvent>({
         board: () => currentGameRef.current,
         placesOf: (step) => flightPlaces(step.from_location, step.to_location, step.seat),
@@ -1301,6 +1306,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             arrivingPiles,
             inFlightFromDeck,
             inFlightToFlipped,
+            trumpFlight,
             getCardAnimationState,
             shownRoles: roleMotion.shown,
             roleHandOff: roleMotion.handOff,

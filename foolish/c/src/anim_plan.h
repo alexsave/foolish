@@ -351,6 +351,8 @@ typedef struct {
     // in-flight-from-deck bookkeeping (web inFlightFromDeck / inFlightToFlipped):
     // how many of this step's cards left the deck, and how many of those are
     // bound for the flipped (trump) slot (which does NOT reduce the deck badge).
+    // A trump the step deals out (`trump_out` below) leaves the flipped slot,
+    // not the pile, so it is not counted here: n_cards - 1 for that step.
     int in_flight_from_deck;
     int in_flight_to_flipped;
     // WHICH VEILED CARDS THIS STEP LIFTS, as dense-id bits. AnimPlan.veil_ids
@@ -359,6 +361,25 @@ typedef struct {
     // WHICH step reveals it. A caller sampling the plan per frame unions the
     // reveals of every step that has not landed (anim_plan_at).
     uint64_t reveals;
+    // THE FLIPPED TRUMP THIS STEP DEALS OUT, or CARD_NONE. Owner: "Flipped
+    // card should also have a deal animation to whoever gets it."
+    //
+    // The trump is the last card a game deals: draw_card hands it out once the
+    // deck is empty, as the LAST card of that seat's draw (game.c
+    // draw_up_to_six), so the step is one REFILL whose n_cards include it.
+    // Nothing on the event says so - the wire names the draw as deck -> hand
+    // and masks every card of it for everyone but the receiver - but the plan
+    // holds both boards either side of the step, and the one before it has a
+    // trump that the step's own board does not.
+    //
+    // THE IDENTITY IS THE TRUMP'S, FOR EVERY VIEWER. It lay face up; a masked
+    // viewer's event names backs, but its boards name the trump, and that is
+    // where this is read from. `trump_from` is where that last card leaves
+    // from: ANIM_LOC_FLIPPED when `trump_out` is a card, ANIM_LOC_NONE
+    // otherwise. The step's other n_cards - 1 still leave from `from`, and the
+    // whole step keeps its seat, its `to`, its beat and its clock.
+    Card trump_out;
+    int  trump_from;
 } AnimPlanStep;
 
 typedef struct {
@@ -453,6 +474,12 @@ int anim_step_duration_ms(int event_type);
 // the deck rather than off the top of it, which is the same blind spot that
 // makes the n-undo walk read the deck one card high.
 //
+// THE STEP THAT DEALS THE TRUMP OUT IS TOLD BY ITS BOARDS, which is where the
+// blind spot above ends. Going FORWARD the plan holds the board before a step
+// and the step's own board, and a draw whose board before had a trump and whose
+// own board does not is the draw that took it (AnimPlanStep.trump_out). A step
+// with no board of its own never says so.
+//
 // Each step's POST counts are that step's OWN board, not a forward derivation
 // of it: committing the step's snapshot as its flight lands is what every client
 // actually does (iOS GameEvent.state, the web's updateGameState). A step with no
@@ -520,7 +547,7 @@ typedef struct {
     int deck, discard;
     int hand[MAX_PLAYERS];
     int n_players;
-    Card flipped;     // the freeze's trump until a step lands one out
+    Card flipped;     // the freeze's trump until the step that deals it out opens
     // Of the step in flight: how many of its cards are out of the deck, and
     // how many of those are bound for the trump's slot.
     int in_flight_from_deck, in_flight_to_flipped;
@@ -528,6 +555,11 @@ typedef struct {
     // into being whose own step has not landed. Union of the reveals of the
     // steps still to come, which is why AnimPlanStep carries `reveals`.
     uint64_t veiled;
+    // THE TRUMP IN THE AIR: the step in flight's `trump_out`, or CARD_NONE.
+    // While it is a card, `flipped` above is CARD_NONE - the trump has left
+    // its slot and the flight is the one place it is drawn - and before that
+    // step opens `flipped` is still the freeze's trump (owner rule 1.1(55)).
+    Card trump_flight;
 } AnimFrame;
 
 // Sample `plan` at `now_ms` (from the sequence's start).
