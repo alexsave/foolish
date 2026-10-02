@@ -610,6 +610,14 @@ static void test_plan_deals_the_flipped_trump(void) {
         CHECK(t->seat == 0 && t->to == ANIM_LOC_HAND && t->n_cards == 2,
               "viewer %d: to seat 0's hand, with the stock card (seat %d to %d n %d)",
               viewer, t->seat, t->to, t->n_cards);
+        // THE PILE LOSES ONLY WHAT LAY IN IT. The trump leaves its own slot, so
+        // the draw takes one card off the pile and seat 1's took all three.
+        CHECK(t->in_flight_from_deck == 1 && t->in_flight_to_flipped == 0,
+              "viewer %d: the trump is not one of the cards out of the pile (from deck %d, to flipped %d)",
+              viewer, t->in_flight_from_deck, t->in_flight_to_flipped);
+        CHECK(plan.steps[1].in_flight_from_deck == 3,
+              "viewer %d: a draw that leaves the trump lying takes its whole count off the pile (%d)",
+              viewer, plan.steps[1].in_flight_from_deck);
 
         // THE CLOCK DOES NOT MOVE: the plan's layout is the one the server's
         // bot wait reads off types and seats alone.
@@ -645,6 +653,77 @@ static void test_plan_deals_the_flipped_trump(void) {
         CHECK(card_is_none(f.trump_flight) && card_is_none(f.flipped),
               "viewer %d: landed - nothing in the air, nothing in the slot", viewer);
     }
+}
+
+// THE TRUMP ALONE, AND A STEP THAT CANNOT SAY. The last draw of a game can be
+// the trump and nothing else: the stock is empty, so the whole draw leaves the
+// flipped slot and nothing at all leaves the pile. A draw whose board is not on
+// the event cannot be told from an ordinary one (the n-undo walk's blind spot),
+// so it names no trump; the plan says nothing rather than guess.
+static void test_plan_deals_the_trump_alone(void) {
+    const Card trump = C(2, 4);
+    const Card back = { .suit = -1, .value = -1 };
+    Card swept[2] = { C(0, 6), C(0, 7) };
+    Card backs1[1] = { back };
+    int h0[3] = { 5, 4, 6 }, h1[3] = { 6, 4, 6 };
+    int final_hand[3] = { 6, 4, 6 };
+
+    AnimPlanEvent ev[3];
+    memset(ev, 0, sizeof(ev));
+    ev[0].type = ANIM_EVT_DISCARD; ev[0].seat = ANIM_SEAT_NONE;
+    ev[0].from = ANIM_LOC_TABLE; ev[0].to = ANIM_LOC_DISCARD;
+    ev[0].cards = swept; ev[0].n_cards = 2;
+    ev[0].has_counts = 1; ev[0].deck = 0; ev[0].discard = 30; ev[0].flipped = trump;
+    ev[0].hand = h0;
+    // Seat 0 draws the trump and nothing else, masked: the viewer is seat 1.
+    ev[1].type = ANIM_EVT_REFILL; ev[1].seat = 0;
+    ev[1].from = ANIM_LOC_DECK; ev[1].to = ANIM_LOC_HAND;
+    ev[1].cards = backs1; ev[1].n_cards = 1; ev[1].mask_cards = 1;
+    ev[1].has_counts = 1; ev[1].deck = 0; ev[1].discard = 30; ev[1].flipped = CARD_NONE;
+    ev[1].hand = h1;
+    // A notice after it, so the frame is also sampled across a later step.
+    ev[2].type = ANIM_EVT_MAGIC_TRANSITION; ev[2].seat = ANIM_SEAT_NONE;
+    ev[2].from = ANIM_LOC_NONE; ev[2].to = ANIM_LOC_NONE;
+    ev[2].has_counts = 1; ev[2].deck = 0; ev[2].discard = 30; ev[2].flipped = CARD_NONE;
+    ev[2].hand = h1;
+
+    AnimPlan plan;
+    memset(&plan, 0, sizeof(plan));
+    CHECK(anim_build_plan(ev, 3, 3, 0, 30, CARD_NONE, final_hand, &plan) == ANIM_EOK,
+          "trump alone: the plan builds");
+    const AnimPlanStep *t = &plan.steps[1];
+    CHECK(same(t->trump_out, trump) && t->trump_from == ANIM_LOC_FLIPPED,
+          "trump alone: the draw names the trump from its slot (%d-%d from %d)",
+          t->trump_out.suit, t->trump_out.value, t->trump_from);
+    CHECK(t->in_flight_from_deck == 0,
+          "trump alone: nothing leaves the pile, which is empty (%d)", t->in_flight_from_deck);
+    CHECK(card_is_none(plan.steps[0].trump_out) && card_is_none(plan.steps[2].trump_out),
+          "trump alone: the sweep and the notice deal no trump");
+
+    AnimFrame f;
+    memset(&f, 0, sizeof(f));
+    CHECK(anim_plan_at(&plan, t->start_ms - 1, &f) == ANIM_EOK && f.step != 1,
+          "trump alone: sampled before the draw opens (step %d)", f.step);
+    CHECK(same(f.flipped, trump) && card_is_none(f.trump_flight),
+          "trump alone: before the draw the trump lies in its slot");
+    memset(&f, 0, sizeof(f));
+    CHECK(anim_plan_at(&plan, t->start_ms + t->duration_ms / 2, &f) == ANIM_EOK && f.step == 1
+          && card_is_none(f.flipped) && same(f.trump_flight, trump) && f.in_flight_from_deck == 0,
+          "trump alone: mid-flight the trump is in the air and out of its slot (step %d flight %d-%d)",
+          f.step, f.trump_flight.suit, f.trump_flight.value);
+    memset(&f, 0, sizeof(f));
+    CHECK(anim_plan_at(&plan, t->start_ms + t->duration_ms, &f) == ANIM_EOK && f.landed >= 2
+          && card_is_none(f.flipped) && card_is_none(f.trump_flight),
+          "trump alone: after the landing nothing comes back to the slot (landed %d)", f.landed);
+
+    // The same draw with NO BOARD on it: the plan cannot tell, so it names none.
+    ev[1].has_counts = 0; ev[1].hand = 0;
+    memset(&plan, 0, sizeof(plan));
+    CHECK(anim_build_plan(ev, 3, 3, 0, 30, CARD_NONE, final_hand, &plan) == ANIM_EOK,
+          "trump alone, boardless: the plan builds");
+    CHECK(card_is_none(plan.steps[1].trump_out) && plan.steps[1].trump_from == ANIM_LOC_NONE,
+          "trump alone, boardless: a draw with no board names no trump (%d-%d)",
+          plan.steps[1].trump_out.suit, plan.steps[1].trump_out.value);
 }
 
 // ---- the surface plan (1.1(56): "LOBBY DID NOT UPDATE LIVE!") -------------
@@ -1542,6 +1621,7 @@ int main(void) {
     test_plan_anchors_on_the_first_events_own_board();
     test_plan_freezes_the_flipped_trump();
     test_plan_deals_the_flipped_trump();
+    test_plan_deals_the_trump_alone();
     test_surface_plan();
     test_lobby_scenarios();
     test_plan_sampled_per_frame();

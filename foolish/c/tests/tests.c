@@ -10187,7 +10187,7 @@ static uint64_t dl_fold_refills(uint64_t h, int np, int viewer, int *n_refill, i
     return h;
 }
 
-static uint64_t dl_refill_digest(int np, int *n_refill, int *n_steps) {
+static uint64_t dl_refill_digest(int np, int *n_refill, int *n_steps, int *n_trump) {
     static Game g;
     static LegalMoves moves;
     static AnimPlan plan;
@@ -10266,6 +10266,13 @@ static uint64_t dl_refill_digest(int np, int *n_refill, int *n_steps) {
                     h = dl_fnv(h, st->in_flight_from_deck);
                     h = dl_fnv(h, st->in_flight_to_flipped);
                     for (int b = 0; b < 64; b += 8) h = dl_fnv(h, (int)((st->reveals >> b) & 0xff));
+                    // The trump the step deals out, by identity, for EVERY
+                    // viewer (a masked one included), and where it leaves from.
+                    if (!card_is_none(st->trump_out)) {
+                        (*n_trump)++;
+                        h = dl_fnv(h, card_to_id(st->trump_out));
+                        h = dl_fnv(h, st->trump_from);
+                    }
                 }
             }
         }
@@ -10276,17 +10283,27 @@ static uint64_t dl_refill_digest(int np, int *n_refill, int *n_steps) {
 
 static void test_refill_events_and_plan_are_unchanged(void) {
     static const int nps[] = { 2, 3, 4, 6, 8 };
-    // Per np, in nps order; taken on 8cbdb81f (seat-major hooks).
+    // Per np, in nps order; taken on 8cbdb81f (seat-major hooks), and re-taken
+    // when the plan began naming the trump a refill deals out (trump_out /
+    // trump_from folded in, and in_flight_from_deck no longer counting that
+    // trump). Before re-taking them, folding in_flight_from_deck + 1 on exactly
+    // the trump steps and nothing else reproduced the 8cbdb81f digests for all
+    // five table sizes: no other byte of any refill or plan step moved.
     static const uint64_t golden[] = {
-        0xcd90a152de263054ULL, 0xb314abf40dccfb19ULL, 0xfb2c440b4a0d7bb9ULL,
-        0x413a12242d7dba47ULL, 0xb74067a0d288d61dULL,
+        0x3f5de256bd24caa2ULL, 0x852490db65708a6dULL, 0x42f2bf2819ad2519ULL,
+        0x4cd82e08d9a0f73dULL, 0xc98a0e3d112a9b29ULL,
     };
     for (int i = 0; i < (int)(sizeof nps / sizeof nps[0]); i++) {
-        int n_refill = 0, n_steps = 0;
-        const uint64_t got = dl_refill_digest(nps[i], &n_refill, &n_steps);
+        int n_refill = 0, n_steps = 0, n_trump = 0;
+        const uint64_t got = dl_refill_digest(nps[i], &n_refill, &n_steps, &n_trump);
         DCHECK(n_refill > 20 && n_steps > 20,
                "refills unchanged (%dp): the games refilled (%d events, %d plan steps)",
                nps[i], n_refill, n_steps);
+        // Every game that empties its stock deals the trump out once, and the
+        // plan names it for every viewer (np + 1 of them, the spectator too).
+        DCHECK(n_trump > 0 && n_trump % (nps[i] + 1) == 0,
+               "refills unchanged (%dp): the trump deals are named for every viewer (%d)",
+               nps[i], n_trump);
         DCHECK(got == golden[i], "refills unchanged (%dp): digest 0x%016llxULL, want 0x%016llxULL",
                nps[i], (unsigned long long)got, (unsigned long long)golden[i]);
     }
@@ -10426,6 +10443,13 @@ static void test_opening_deal_plan_paces_card_by_card(void) {
             k++;
         }
         DCHECK(k == np * CARDS_PER_PLAYER, "deal clock (%dp): %d dealt cards on the clock", np, k);
+        // The opening deal never deals the trump out: it is turned AFTER the
+        // hands are dealt (the FLIPPED step), so no step of it names one.
+        int trump_steps = 0;
+        for (int i = 0; i < plan.n_steps; i++)
+            if (!card_is_none(plan.steps[i].trump_out) || plan.steps[i].trump_from != ANIM_LOC_NONE) trump_steps++;
+        DCHECK(trump_steps == 0, "deal clock (%dp): the opening deals no trump out (%d steps say it does)",
+               np, trump_steps);
         // Read off the plan, not re-derived from the constants: the deal's first
         // start, its last card's landing, and the whole opening plan's total.
         if (np == 2 || np == MAX_PLAYERS)

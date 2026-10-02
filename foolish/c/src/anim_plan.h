@@ -351,6 +351,8 @@ typedef struct {
     // in-flight-from-deck bookkeeping (web inFlightFromDeck / inFlightToFlipped):
     // how many of this step's cards left the deck, and how many of those are
     // bound for the flipped (trump) slot (which does NOT reduce the deck badge).
+    // A trump the step deals out (`trump_out` below) leaves the flipped slot,
+    // not the pile, so it is not counted here: n_cards - 1 for that step.
     int in_flight_from_deck;
     int in_flight_to_flipped;
     // WHICH VEILED CARDS THIS STEP LIFTS, as dense-id bits. AnimPlan.veil_ids
@@ -472,6 +474,12 @@ int anim_step_duration_ms(int event_type);
 // the deck rather than off the top of it, which is the same blind spot that
 // makes the n-undo walk read the deck one card high.
 //
+// THE STEP THAT DEALS THE TRUMP OUT IS TOLD BY ITS BOARDS, which is where the
+// blind spot above ends. Going FORWARD the plan holds the board before a step
+// and the step's own board, and a draw whose board before had a trump and whose
+// own board does not is the draw that took it (AnimPlanStep.trump_out). A step
+// with no board of its own never says so.
+//
 // Each step's POST counts are that step's OWN board, not a forward derivation
 // of it: committing the step's snapshot as its flight lands is what every client
 // actually does (iOS GameEvent.state, the web's updateGameState). A step with no
@@ -539,7 +547,7 @@ typedef struct {
     int deck, discard;
     int hand[MAX_PLAYERS];
     int n_players;
-    Card flipped;     // the freeze's trump until a step lands one out
+    Card flipped;     // the freeze's trump until the step that deals it out opens
     // Of the step in flight: how many of its cards are out of the deck, and
     // how many of those are bound for the trump's slot.
     int in_flight_from_deck, in_flight_to_flipped;
