@@ -2,12 +2,15 @@
 # Ship an iMessage app to TestFlight: kernel library, project, archive, signed
 # .ipa, release checks, upload, and wait until App Store Connect says VALID.
 #
-#   shared/tools/ship/ship.sh <product ship.env> [--build N] [--no-upload] [--dry-run]
+#   shared/tools/ship/ship.sh <product ship.env> [--build N] [--no-upload] [--dry-run] [--store]
 #
 #   --build N     the CFBundleVersion to ship. Default: one above the highest
 #                 build App Store Connect has for the app. A number can be
 #                 uploaded ONCE, ever, even if its processing fails.
 #   --no-upload   stop after the export and the .ipa checks (release strings included).
+#   --store       AN APP STORE ARCHIVE: SHIP_ARCHIVE_SETTINGS (below) are NOT
+#                 passed, so whatever they compile in for TestFlight is left
+#                 out. Without it a ship is a TestFlight build.
 #   --dry-run     print the resolved product and every command that would run,
 #                 run none of them. Needs no credentials when --build is given.
 #                 The product env file is still SOURCED (it is shell, so it
@@ -33,6 +36,12 @@
 #   SHIP_APP_GROUP     the App Group the store build is signed with; empty
 #                      means the store build must carry NONE
 #   SHIP_FORBID_FRAMEWORKS  space-separated frameworks the .ipa must not carry
+#   SHIP_ARCHIVE_SETTINGS   space-separated NAME=VALUE build settings put on the
+#                      archive command line of a TESTFLIGHT ship and dropped by
+#                      --store: how a feature compiles into TestFlight builds
+#                      only (uttt's 243 board, uttt/ios/Tools/ship.env). A
+#                      value may reference another setting, `$(NAME)`, which
+#                      xcodebuild expands; empty means none.
 #
 # Credentials come from the environment, never from a file in the repo:
 #   ASC_KEY_ID, ASC_ISSUER_ID     App Store Connect API key; the .p8 must be at
@@ -78,16 +87,24 @@ for v in SHIP_NAME SHIP_APP_ID SHIP_BUNDLE SHIP_EXT_BUNDLE SHIP_TEAM SHIP_APP_PR
 done
 SHIP_APP_GROUP="${SHIP_APP_GROUP:-}"
 SHIP_FORBID_FRAMEWORKS="${SHIP_FORBID_FRAMEWORKS:-}"
+SHIP_ARCHIVE_SETTINGS="${SHIP_ARCHIVE_SETTINGS:-}"
 
-BUILD="" UPLOAD=1 DRY=0
+BUILD="" UPLOAD=1 DRY=0 STORE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --build) BUILD="$2"; shift 2 ;;
     --no-upload) UPLOAD=0; shift ;;
     --dry-run) DRY=1; shift ;;
+    --store) STORE=1; shift ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
   esac
 done
+# The TestFlight-only settings, as an array (word split on purpose: each word
+# is one NAME=VALUE), or nothing for an App Store archive.
+EXTRA_SETTINGS=()
+if [ "$STORE" = 0 ] && [ -n "$SHIP_ARCHIVE_SETTINGS" ]; then
+  read -r -a EXTRA_SETTINGS <<<"$SHIP_ARCHIVE_SETTINGS"
+fi
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
@@ -145,6 +162,9 @@ fi
 VERSION=$(sed -n 's/^ *MARKETING_VERSION: "\(.*\)"/\1/p' "$ROOT/$SHIP_VERSION_FILE" | head -1)
 [ -n "$VERSION" ] || { echo "no MARKETING_VERSION in $SHIP_VERSION_FILE" >&2; exit 2; }
 echo "shipping $SHIP_BUNDLE $VERSION($BUILD)  [$SHIP_SCHEME, app group: ${SHIP_APP_GROUP:-none}]"
+if [ "$STORE" = 1 ]; then echo "an APP STORE archive: TestFlight-only settings left out"
+elif [ "${#EXTRA_SETTINGS[@]}" -gt 0 ]; then echo "a TESTFLIGHT archive with: ${EXTRA_SETTINGS[*]}"
+fi
 [ "$DRY" = 1 ] && echo "--dry-run: printing commands, running none"
 mkdir -p "$OUT" "$PROFILES_DIR"
 
@@ -204,7 +224,7 @@ ARCHIVE_CMD=(xcodebuild archive -project "$XCPROJ" -scheme "$SHIP_SCHEME"
   -authenticationKeyPath "$KEY_PATH" -authenticationKeyID "$ASC_KEY_ID"
   -authenticationKeyIssuerID "$ASC_ISSUER_ID"
   CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM="$SHIP_TEAM"
-  CURRENT_PROJECT_VERSION="$BUILD")
+  CURRENT_PROJECT_VERSION="$BUILD" ${EXTRA_SETTINGS[@]+"${EXTRA_SETTINGS[@]}"})
 if [ "$DRY" = 1 ]; then run "${ARCHIVE_CMD[@]}"
 else
   "${ARCHIVE_CMD[@]}" > "$ARCH.log" 2>&1 \

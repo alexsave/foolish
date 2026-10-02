@@ -526,8 +526,13 @@ cmd_build() {
   # changes, which lets a driver skip the leave/probe/re-open cycle that exists
   # only because `claimSeededPayload()` is once per process. Two gates, not one:
   # this compile-time flag, and the `dev.reseed` file at runtime.
+  # RIG_SWIFT_CONDITIONS: a product block's own conditions, appended. A setting
+  # on the command line REPLACES the project's, so a product whose project.yml
+  # adds a condition in Debug (uttt's UTTT_BIG_BOARD_CONDITION) names it here
+  # or the rig's build silently compiles that feature out.
   local cond="DEBUG"
   [ -n "${FOOLISH_RESEED:-}" ] && cond="$cond RIG_RESEED"
+  [ -n "${RIG_SWIFT_CONDITIONS:-}" ] && cond="$cond $RIG_SWIFT_CONDITIONS"
   xcodebuild -project "$XCPROJ" -scheme "$SCHEME" \
     -configuration Debug -destination "platform=iOS Simulator,id=$SIM" \
     -derivedDataPath "$DD" SWIFT_ACTIVE_COMPILATION_CONDITIONS="$cond" build | tail -3
