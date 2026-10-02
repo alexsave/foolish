@@ -135,6 +135,8 @@ final class TrumpFlightTests: XCTestCase {
                            "\(at): the trump flies face up, once (flights \(f.map(\.id)))")
             XCTAssertEqual(trumpFlights.first?.from, slot,
                            "\(at): the trump leaves from its own slot, not the deck")
+            XCTAssertEqual(trumpFlights.first?.ghostSize(at: 0), slot.size,
+                           "\(at): the trump takes off at the slot card's own size, not the ghost's")
             let rest = f.filter { $0.card != trump }
             XCTAssertEqual(rest.count, n - 1, "\(at): the rest of the draw")
             XCTAssertTrue(rest.allSatisfy { $0.from == deck },
@@ -194,6 +196,20 @@ final class TrumpFlightTests: XCTestCase {
                        CGRect(x: 8 + FDeckWell.flippedOrigin.x / 2, y: 14 + FDeckWell.flippedOrigin.y / 2,
                               width: 23, height: 33))
         XCTAssertEqual(FDeckWell.trumpSlot(inWell: .zero), .zero, "an unmeasured well publishes nothing")
+    }
+
+    /// The ghost's size runs from `fromSize` to `size` over the flight, both
+    /// defaulting to `Flight.ghost`. (The reversal's swap is held in
+    /// ConflictModelTests, beside the angles it mirrors.)
+    func testAGhostGrowsFromItsSourceSizeToItsLandingSize() {
+        let plain = Flight(id: "p", card: nil, from: deck, to: badge)
+        XCTAssertEqual(plain.ghostSize(at: 0), Flight.ghost, "an unsized flight is the ghost at take-off")
+        XCTAssertEqual(plain.ghostSize(at: 1), Flight.ghost, "…and at landing")
+        let card = Card(s: 2, v: 7)
+        let f = Flight(id: "t", card: card, from: slot, to: landed, fromSize: slot.size)
+        XCTAssertEqual(f.ghostSize(at: 0), slot.size, "take-off is the source card's size")
+        XCTAssertEqual(f.ghostSize(at: 1), Flight.ghost, "landing is the ghost's")
+        XCTAssertEqual(f.ghostSize(at: 0.5), CGSize(width: 48, height: 68), "and it grows in between")
     }
 
     func testTheTrumpFliesFromItsSlotAt2Players() async throws {
