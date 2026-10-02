@@ -319,6 +319,12 @@ final class MessagesViewController: MSMessagesAppViewController {
             // our bug. A blind early return cannot tell them apart, and guessing
             // between them has already cost several builds.
             FlightRecorder.note("receive-dropped", "isMine")
+            // On a bound drawer this echo IS the Send press (host doc L2), and
+            // the bubble is still leaving the field for about a second - see
+            // FieldSend for what a stage in that second looks like.
+            if Self.waitsForOwnSend, let p = Self.payload(of: message) {
+                Self.fieldSend.pressed(p, at: CACurrentMediaTime())
+            }
             return
         }
         startingNewGame = false
@@ -326,7 +332,10 @@ final class MessagesViewController: MSMessagesAppViewController {
         FlightRecorder.note("receive")
 #if RIG_ARRIVE
         let arrived = Self.payload(of: message)
-        if rigIsDoor(message), let arrived { rigDoorDelivered.insert(arrived) }
+        // The door's vector into `fieldSend`: the rig pressed Send on another
+        // seat's bubble in THIS field. Not behind `stage.awaitsend`, which is
+        // the product's own vector (see FieldSend).
+        if rigIsDoor(message), let arrived { Self.fieldSend.pressed(arrived, at: CACurrentMediaTime()) }
         Task { await rigSaw(arrived) }
 #endif
         incomingURL = message.url
@@ -402,42 +411,6 @@ final class MessagesViewController: MSMessagesAppViewController {
     private var rigDoorSent: Set<Data> {
         get { Self.rigDoorSent }
         set { Self.rigDoorSent = newValue }
-    }
-    /// Door bytes Messages has delivered back to us (didReceive). One that is
-    /// delivered and not yet in `rigDoorSent` is a bubble the rig's Send press
-    /// is still carrying OUT of the input field.
-    private static var rigDoorDelivered: Set<Data> = []
-    private var rigDoorDelivered: Set<Data> {
-        get { Self.rigDoorDelivered }
-        set { Self.rigDoorDelivered = newValue }
-    }
-
-    /// THE FIELD IS THE DOOR'S UNTIL ITS SEND HAS LEFT IT.
-    ///
-    /// The door delivers by pressing Send in THIS thread's input field, and
-    /// Messages calls didReceive on the press (host doc L11) but didStartSending
-    /// only about a second later (L4). A bubble the extension stages in that
-    /// second - the NOTHING bubble an arrival owes (MessageTableView.
-    /// restageNothingAfterArrival) is staged at once - lands in a field that is
-    /// still being sent from, and Messages draws it as a zero-height entry: a
-    /// divider line and a live Send arrow, no bubble. Staged two seconds later
-    /// the very same bubble is the full one an Undo leaves.
-    ///
-    /// A move from another phone never comes with a Send press in this field
-    /// (host doc N7), so that race is the door's own, and the door pays for it
-    /// here: a stage waits until every delivered door bubble has started
-    /// sending, so what the rig films is what a real arrival would leave.
-    /// Bounded, so a send callback that never comes cannot hold a stage.
-    @MainActor
-    private func rigAwaitFieldFree() async {
-        var waited = 0
-        while !rigDoorDelivered.subtracting(rigDoorSent).isEmpty, waited < 60 {
-            try? await Task.sleep(nanoseconds: 50_000_000)
-            waited += 1
-        }
-        if waited > 0 {
-            FlightRecorder.note("rig", "stage waited \(waited * 50)ms for the door's send to leave the field")
-        }
     }
 
     private var rigLastSelected: String = "-"
@@ -724,6 +697,8 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// so commit it to the cache (§7.6). This is the ONLY place the cache learns
     /// a chain was actually sent — insert alone is not a commit.
     override func didStartSending(_ message: MSMessage, conversation: MSConversation) {
+        // Whoever pressed Send (FieldSend), this bubble has left the field.
+        Self.fieldSend.started(Self.payload(of: message))
 #if RIG_ARRIVE
         hostTrace("didStartSending", message, conversation, "door=\(rigIsDoor(message))")
         // THE DOOR'S OWN SEND REGISTERS NOTHING: it is another seat's move, and
@@ -1301,9 +1276,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         // gameId comes from the same decode above so didStartSending's commit
         // can persist the seat without re-decoding. "" only if the payload
         // failed to decode - the commit then skips the seat write.
-#if RIG_ARRIVE
-        await rigAwaitFieldFree()
-#endif
+        await awaitFieldFree()
         // Superseded while the picture was being baked: a newer move is already
         // staged, and this one must not claim the input field back off it.
         guard current() else { return }
@@ -1393,6 +1366,34 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     /// Which `stage` run owns the input field - see the note at the top of it.
     private var stageGeneration = 0
+
+    /// Bubbles a Send press is still carrying out of the input field (see
+    /// FieldSend). PROCESS-WIDE, like the door's bookkeeping: a Send pressed
+    /// with the drawer closed is reported to a FRESH controller (host doc L7).
+    private static var fieldSend = FieldSend()
+
+    /// The product's vector into `fieldSend` - see FieldSend.
+    private static var waitsForOwnSend: Bool {
+        #if DEBUG || SOLO_TESTING
+        return MessageDevBoard.flag("stage.awaitsend", shipping: FieldSend.waitsForOwnSendByDefault)
+        #else
+        return FieldSend.waitsForOwnSendByDefault
+        #endif
+    }
+
+    /// Hold a stage while the field is still sending a pressed bubble, so the
+    /// stage lands as a bubble rather than a zero-height entry (FieldSend).
+    @MainActor
+    private func awaitFieldFree() async {
+        let start = CACurrentMediaTime()
+        while Self.fieldSend.isBusy(now: CACurrentMediaTime()) {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let waited = CACurrentMediaTime() - start
+        if waited > 0.01 {
+            FlightRecorder.note("field-busy", "stage waited \(Int(waited * 1000))ms for a sent bubble to leave the field")
+        }
+    }
 
     /// The drawer as the host's will/did callbacks describe it - see
     /// `drawerIsExpanded`.

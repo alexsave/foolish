@@ -136,3 +136,50 @@ public enum StagedBubbleRouting {
         return payload == pendingStage || payload == lastSentPayload
     }
 }
+
+/// THE INPUT FIELD IS STILL SENDING. A Send press on a bound drawer delivers
+/// the pressed bubble straight back to us (host doc L2: `didReceive`, which
+/// `isMine` drops), but Messages reports `didStartSending` for it only about a
+/// second later (L4). A bubble staged in that second lands as a zero-height
+/// entry - the field shows its divider and a live Send arrow and no bubble
+/// (L13) - and Send then transmits a move nobody can see. Filmed in the plain
+/// product: a defender covering, pressing Send and covering the second attack
+/// at once (2 of 2 staged ~0.45s before didStartSending were invisible).
+///
+/// So `stage` waits while a pressed bubble has not started sending. Bounded by
+/// `window`, so a didStartSending that never comes cannot hold a stage for
+/// longer than that. Two vectors feed it, one rule: the product's own Send
+/// press (the `isMine` echo) and, in RIG_ARRIVE builds only, the rig door's
+/// press of another seat's bubble (a remote arrival never comes with a Send
+/// press in this field, host doc N7, so that vector exists only on the rig).
+///
+/// Not lifted to C, for this file's reason: it is a set of byte strings and a
+/// clock comparison.
+public struct FieldSend {
+    /// How long a press may hold the field: L4 measured 1.03-1.05s.
+    public static let window: Double = 3
+
+    /// Ships on; `stage.awaitsend=0` in `dev.flags` stages at once again, as
+    /// before (the rig door's vector is not behind it).
+    public static let waitsForOwnSendByDefault = true
+
+    private var pressedAt: [Data: Double] = [:]
+
+    public init() {}
+
+    /// Send was pressed on `payload` (its echo came back) at `now`.
+    public mutating func pressed(_ payload: Data, at now: Double) {
+        pressedAt[payload] = now
+    }
+
+    /// Messages started sending `payload`: it has left the field.
+    public mutating func started(_ payload: Data?) {
+        guard let payload else { return }
+        pressedAt[payload] = nil
+    }
+
+    /// Is a pressed bubble still on its way out of the field at `now`?
+    public func isBusy(now: Double) -> Bool {
+        pressedAt.values.contains { now - $0 < Self.window }
+    }
+}
