@@ -3207,6 +3207,7 @@ static void print_lastdefense(int np) {
 #define LASTMOVE_COVER_TRUMP  8   // covers with a TRUMP, bout stays open
 #define LASTMOVE_FINAL        9   // the move that ends the game (arrival)
 #define LASTMOVE_GOOD_ANY    10   // ANY legal good, closing the bout or not
+#define LASTMOVE_REFILL_TRUMP 11  // a refill that deals the flipped trump out
 
 static bool lastmove_apply(Game *g, int seat, const LegalMove *m) {
     switch (m->type) {
@@ -3247,6 +3248,7 @@ static void print_lastmove_ex(int np, int kind, int live) {
         int last_actor = g.first_attacker;
         int found = 0;
         int pre_logs = -1;
+        int trump_to = -1;
         for (int step = 0; step < 400 && !found; step++) {
             if (game_done(&g) >= 0 || g.status != GAME_STATUS_PLAYING) break;
 
@@ -3346,6 +3348,25 @@ static void print_lastmove_ex(int np, int kind, int live) {
                                        : (c.deck_count > 0);
                             break;
                         }
+                        // The draw that takes the flipped trump from under an
+                        // empty stock: the board before still holds it, the
+                        // board after does not. Any move that refills counts,
+                        // a pickup included (the other seats draw), and the
+                        // game must still be on so the bubble opens a board.
+                        // The seat that drew it is printed (trump_to=seat N),
+                        // so a film can sit in that chair or another one.
+                        case LASTMOVE_REFILL_TRUMP: {
+                            if (!g.has_flipped) break;
+                            Game c = g;
+                            const int before = c.num_logs;
+                            if (!lastmove_apply(&c, seat, m)) break;
+                            if (c.has_flipped || c.status != GAME_STATUS_PLAYING) break;
+                            for (int L = c.num_logs - 1; L >= before; L--)
+                                if (c.logs[L].log_type == LOG_DRAW) {
+                                    trump_to = c.logs[L].player_idx; want = 1; break;
+                                }
+                            break;
+                        }
                         default: break;
                     }
                     if (!want) continue;
@@ -3404,6 +3425,7 @@ static void print_lastmove_ex(int np, int kind, int live) {
         fprintf(stderr, "lastmove: kind=%d np=%d seed#%u last_actor=seat %d deck=%d "
                         "turn=%d round=%d n_new=%d (%d bytes)\n",
                 kind, np, s, last_actor, g.deck_count, e.turn, e.round, e.n_new, n);
+        if (trump_to >= 0) fprintf(stderr, "lastmove: trump_to=seat %d\n", trump_to);
         for (int i = 0; i < n; i++) printf("%02x", wire[i]);
         printf("\n");
         return;
@@ -5290,13 +5312,14 @@ int main(int argc, char **argv) {
     if (argc > 2 && (!strcmp(argv[1], "--lastmove") || !strcmp(argv[1], "--lastmove-live"))) {
         static const char *names[] = { "attack", "cover", "pickup", "pass",
                                         "good", "out", "refill", "refillempty",
-                                        "covertrump", "final", "goodany" };
+                                        "covertrump", "final", "goodany",
+                                        "refilltrump" };
         int kind = -1;
         for (size_t k = 0; k < sizeof(names) / sizeof(names[0]); k++)
             if (!strcmp(argv[2], names[k])) { kind = (int)k; break; }
         if (kind < 0) {
             fprintf(stderr, "--lastmove: unknown kind '%s' (attack|cover|pickup|pass|"
-                            "good|goodany|out|refill|refillempty|covertrump|final)\n", argv[2]);
+                            "good|goodany|out|refill|refillempty|refilltrump|covertrump|final)\n", argv[2]);
             return 2;
         }
         print_lastmove_ex(argc > 3 ? atoi(argv[3]) : 2, kind,
