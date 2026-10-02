@@ -2933,7 +2933,14 @@ static void print_goodwait(int np) {
 // `passing` chooses the VARIANT the game is played (and sealed) under, so the
 // rig can pose "a podkidnoy game that has just ended" - the state a rematch has
 // to carry its rules out of.
-static void print_endgame(int np, int passing, int arrival) {
+typedef struct {
+    unsigned char wire[ENV_CAP];
+    int n;
+    MsgEnvelope e;              // the sealed header (its body pointer is stale)
+    int fool, out_order[8], n_out;
+} EndgameSeed;
+
+static int endgame_seal(int np, int passing, int arrival, EndgameSeed *out) {
     static unsigned char body[1024];
     static Game scratch;
     static LegalMoves ml;
@@ -2957,8 +2964,10 @@ static void print_endgame(int np, int passing, int arrival) {
 
         int last_actor = g.first_attacker;
         int out_order[8], n_out = 0;
+        int before_last = MSG_NO_BASE;   // the log mark the final move was made on
         for (int step = 0; step < 400; step++) {
             if (game_done(&g) >= 0 || g.status != GAME_STATUS_PLAYING) break;
+            before_last = g.num_logs;
             int seat = -1, pick = -1;
             const int start = (int)(rnd() % (uint32_t)np);
             for (int t = 0; t < np && seat < 0; t++) {
@@ -3000,30 +3009,69 @@ static void print_endgame(int np, int passing, int arrival) {
 
         MsgEnvelope e;
         env_init(&e, seed, np);
-        // `arrival`: seal as LIVE, not FINISHED, so a human opens this one onto
-        // a board still "playing" and watches the FINAL move replay and the
-        // game-over screen arrive after it - as opposed to --endgame's FINISHED
-        // phase, which opens straight onto the static end screen with nothing
-        // to animate. Same search, same fool, two different bubbles.
-        e.phase = arrival ? MSG_PHASE_LIVE : MSG_PHASE_FINISHED;
+        // `arrival`: the bubble the FINAL move's phone sends - FINISHED, like
+        // every finished chain, but sealed on the log mark the final move was
+        // made on, so its claim names that move and an open (REPLAY=1) watches
+        // it replay and the game-over screen arrive after it. --endgame's
+        // bubble says nothing about what it added, so it opens straight onto
+        // the static end screen. Same search, same fool, two different bubbles.
+        // (This used to seal LIVE. msg_replay refuses a finished game sealed
+        // LIVE - MSG_EPHASE - so the extension had no chain to open and showed
+        // New game; test_endgame_seeds holds it.)
+        e.phase = MSG_PHASE_FINISHED;
         e.last_actor_seat = (uint8_t)last_actor;
         if (arrival) e.sent_at = (uint16_t)(time(NULL) & 0xffff);
-        if (msg_seal(&e, &g, MSG_NO_BASE, body, sizeof(body), &scratch) != MSG_EOK) continue;
-        unsigned char wire[ENV_CAP];
-        const int n = msg_encode(&e, wire, sizeof(wire));
-        if (n <= 0) continue;
+        if (msg_seal(&e, &g, arrival ? before_last : MSG_NO_BASE, body, sizeof(body),
+                     &scratch) != MSG_EOK) continue;
+        out->n = msg_encode(&e, out->wire, sizeof(out->wire));
+        if (out->n <= 0) continue;
+        out->e = e;
+        out->fool = fool;
+        out->n_out = n_out;
+        memcpy(out->out_order, out_order, sizeof(out_order));
+        return 1;
+    }
+    return 0;
+}
 
-        for (int i = 0; i < n; i++) printf("%02x", wire[i]);
-        printf("\n");
-        fprintf(stderr, "endgame: np=%d %s fool=seat %d turn=%d round=%d (%d bytes) phase=%s",
-                np, passing ? "perevodnoy" : "podkidnoy", fool, e.turn, e.round, n,
-                arrival ? "LIVE(arrival)" : "FINISHED");
-        fprintf(stderr, " rank=");
-        for (int r = 0; r < n_out; r++) fprintf(stderr, "%s%d", r ? "," : "", out_order[r]);
-        fprintf(stderr, "\n");
+static void print_endgame(int np, int passing, int arrival) {
+    static EndgameSeed s;
+    if (!endgame_seal(np, passing, arrival, &s)) {
+        fprintf(stderr, "no %dp endgame found\n", np);
         return;
     }
-    fprintf(stderr, "no %dp endgame found\n", np);
+    for (int i = 0; i < s.n; i++) printf("%02x", s.wire[i]);
+    printf("\n");
+    fprintf(stderr, "endgame: np=%d %s fool=seat %d turn=%d round=%d (%d bytes) phase=%s",
+            np, passing ? "perevodnoy" : "podkidnoy", s.fool, s.e.turn, s.e.round, s.n,
+            arrival ? "FINISHED(arrival)" : "FINISHED");
+    fprintf(stderr, " rank=");
+    for (int r = 0; r < s.n_out; r++) fprintf(stderr, "%s%d", r ? "," : "", s.out_order[r]);
+    fprintf(stderr, "\n");
+}
+
+// The --endgame-arrival seed is a bubble a phone could have sent: it decodes,
+// it replays (msg_replay refuses a finished game sealed LIVE, MSG_EPHASE, and
+// the extension then had no chain to open and showed New game), and its claim
+// leaves the final move to animate. Same for --endgame, minus the claim.
+static void test_endgame_seeds(void) {
+    static EndgameSeed s;
+    static Game rg;
+    for (int np = 2; np <= 4; np++) {
+        for (int arrival = 0; arrival < 2; arrival++) {
+            CHECK(endgame_seal(np, 1, arrival, &s), "endgame seed %dp arrival=%d: none found", np, arrival);
+            MsgEnvelope d;
+            CHECK(msg_decode(s.wire, s.n, &d) == MSG_EOK, "endgame seed %dp arrival=%d: decode", np, arrival);
+            const int rc = msg_replay(&d, &rg);
+            CHECK(rc == MSG_EOK, "endgame seed %dp arrival=%d: the seed does not replay (%d), so "
+                  "the extension opens New game", np, arrival, rc);
+            if (!arrival) continue;
+            const int claim = msg_atoms_before_claim(&d);
+            CHECK(claim >= 0 && claim < d.turn,
+                  "endgame-arrival %dp: claim %d of %d atoms leaves no final move to animate",
+                  np, claim, d.turn);
+        }
+    }
 }
 
 // ---------- --lastdefense: the cover that ENDS the bout --------------------
@@ -5291,6 +5339,7 @@ int main(int argc, char **argv) {
     test_waiting_phase();
     test_name_length_boundary();
     test_rule_p_started_beats_lobby();
+    test_endgame_seeds();
     test_rule_p_fuller_start_wins();
     test_rule_p_child_beats_parent();
     test_surface_delta();
