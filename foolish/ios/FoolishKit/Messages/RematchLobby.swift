@@ -8,17 +8,50 @@ import Foundation
 /// the lobby IS.
 public enum RematchLobby {
 
+    /// THE SAME CHAIN (owner: "It should not start a new chain I think, it
+    /// should collapse the same game (yes, wiping out the history)"). On, a
+    /// rematch is the KERNEL's lobby for the finished chain - the same game id,
+    /// the next generation, the same bytes whoever taps - and its bubble
+    /// collapses onto the finished game's. Off, it is today's fresh chain:
+    /// rotated to the tapper, a random seed and id, its own new bubble.
+    /// `rematch.samechain=0` in `dev.flags` turns it off in a debug build.
+    public static let sameChainByDefault = true
+
+    public static var sameChain: Bool {
+        #if DEBUG || SOLO_TESTING
+        return MessageDevBoard.flag("rematch.samechain", shipping: sameChainByDefault)
+        #else
+        return sameChainByDefault
+        #endif
+    }
+
     /// What a New game tap on a FINISHED board seals, and the seat this device
     /// holds in it. nil when the finished game cannot be rematched (an unnamed
-    /// seat, no fool), and the tap is an ordinary New game instead.
+    /// seat, no fool, a chain the kernel will not rematch), and the tap is an
+    /// ordinary New game instead.
     ///
-    /// `finished` is the chain on screen, `view`/`names`/`mySeat` the board
-    /// built from it, `myName` this device's nickname, `capacity` the lobby's
-    /// size in this chat.
+    /// `finished` is the finished chain on screen, `view`/`names`/`mySeat` the
+    /// board built from it, `myName` this device's nickname, `capacity` the
+    /// lobby's size in this chat. The same-chain lobby reads none of the last
+    /// four: the kernel builds it from `finished` alone, which is what makes
+    /// every tap the same lobby, and this device keeps the seat it finished in.
     public static func build(finished: Data?, view: GameView?, names: [Int: String],
                              mySeat: Int, myName: String, passing: Bool, capacity: Int,
-                             sentAt: Int = MessageKernel.clockNow())
+                             sentAt: Int = MessageKernel.clockNow(),
+                             sameChain: Bool = RematchLobby.sameChain)
         async throws -> (payload: Data, mySeat: Int)? {
+        if sameChain {
+            guard let finished, view?.isOver == true, mySeat >= 0 else { return nil }
+            do {
+                let payload = try await MessageKernel.shared.rematch(finished: finished,
+                                                                     sentAt: sentAt)
+                AnimLog.say("rematch lobby: the kernel's, same chain, seat \(mySeat)")
+                return (payload, mySeat)
+            } catch {
+                AnimLog.say("rematch refused by the kernel (\(error)) - an ordinary New game")
+                return nil
+            }
+        }
         guard let r = rotatedRoster(view: view, names: names, mySeat: mySeat,
                                     myName: myName) else { return nil }
         let payload = try await freshChain(joins: r.joins, foolSeat: r.foolSeat,

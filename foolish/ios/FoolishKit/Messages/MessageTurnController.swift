@@ -238,6 +238,9 @@ public final class MessageTurnController: ObservableObject {
     /// the SEAT, not any one chain along it.
     private var base: Base
     private let gameId: UInt64
+    /// Which rematch of `gameId` this board is (msg_wire.h format 7). A rematch
+    /// keeps the id, so the id alone no longer says "this board's game".
+    public let generation: Int
     private var parent8: Data
     private var joins: [MessageJoin]
     /// Round-9 #5: this base is the chain THIS DEVICE just pressed Send on
@@ -258,6 +261,7 @@ public final class MessageTurnController: ObservableObject {
                 suppressOpenReplay: Bool = false) {
         self.base = .continuation(payload: parentPayload)
         self.gameId = UInt64(parent.gameId) ?? 0
+        self.generation = parent.generation
         self.parent8 = Self.firstEight(hex: parent.digest)
         self.joins = parent.joins
         self.store = store
@@ -284,6 +288,7 @@ public final class MessageTurnController: ObservableObject {
                 store: MessageGameStore = .shared) {
         self.base = .genesis(seed: seed, players: players)
         self.gameId = gameId
+        self.generation = 0
         self.parent8 = Data(repeating: 0, count: 8)   // the root has no parent
         self.joins = [MessageJoin(seat: 0, name: myNickname)]
         self.store = store
@@ -643,8 +648,13 @@ public final class MessageTurnController: ObservableObject {
     /// getting it subtly wrong is worse than the flash it exists to prevent:
     /// re-adopting across a different game would put one game's chain onto
     /// another game's measured board.
-    public func canAdopt(seat: Int, gameId: String) -> Bool {
-        ready && mySeat == seat && gameIdString == gameId && isContinuation
+    ///
+    /// The SAME GAME is the id AND the generation: a rematch keeps the id and
+    /// deals a different game, and folding its chain into the finished board's
+    /// controller would put one deal's chain onto another deal's board.
+    public func canAdopt(seat: Int, gameId: String, generation: Int = 0) -> Bool {
+        ready && mySeat == seat && gameIdString == gameId && self.generation == generation
+            && isContinuation
     }
 
     // MARK: the conflict model (docs/ANIMATION_CATALOGUE.md, decided 1.0(28))
@@ -1598,7 +1608,8 @@ public final class MessageTurnController: ObservableObject {
             // damaged and not discarded: it is still a legal, sealed move on
             // its own game, and it lands there for everyone - including this
             // device, next time it opens that game.
-            let sameGame = adopted.map { $0.gameId == gameIdString }
+            // The id AND the generation: a rematch keeps the id.
+            let sameGame = adopted.map { $0.gameId == gameIdString && $0.generation == generation }
             // NOTES 4/5: AN ARRIVAL MAY HAVE RACED THE SEND. Between the tap on
             // Send and this line the board can have adopted another chain - an
             // arrival in the send window is adopted at once - and then these

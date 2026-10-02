@@ -820,12 +820,15 @@ struct GameSurface: View {
         // phantom-seal shape (see `resealFromBase`). The arm that goes on to
         // play something decodes there, once it knows it is going to.
         var showingId: String?
+        // The DEAL, not just the game id: a rematch keeps the id and is still a
+        // different deal, so the X on a rematch lobby swaps the result card
+        // back rather than diffing one deal against another.
         if let showing, let e = try? await MessageKernel.shared.peek(payload: showing) {
-            showingId = e.gameId
+            showingId = e.dealKey
         }
         var baseId: String?
         if let base = origin.payload, let e = try? await MessageKernel.shared.peek(payload: base) {
-            baseId = e.gameId
+            baseId = e.dealKey
         }
         switch StagedRevert.route(staged: wasStaged, origin: origin,
                                   showingGameId: showingId, baseGameId: baseId) {
@@ -1131,6 +1134,16 @@ struct GameSurface: View {
                              // roster with an unnamed seat - is an ordinary new
                              // game and punishes nobody.
                              onNewGame: {
+                                 // THE SAME CHAIN: any finished board is a
+                                 // rematch, and the kernel says whether it can
+                                 // be one (createRematchLobby falls back).
+                                 if RematchLobby.sameChain {
+                                     guard controller.view?.isOver == true else {
+                                         onNewGame(); return
+                                     }
+                                     Task { await createRematchLobby(controller) }
+                                     return
+                                 }
                                  guard RematchLobby.rotatedRoster(
                                      view: controller.view, names: controller.names,
                                      mySeat: controller.mySeat,
@@ -1177,7 +1190,7 @@ struct GameSurface: View {
                           surfaceStaged = true   // round-9: the invite awaits Send
                       } },
                       onSetPassing: { on in Task { await setLobbyPassing(lob, passing: on) } },
-                      passingBaseline: passingBaseline[lob.env.gameId],
+                      passingBaseline: passingBaseline[lob.env.dealKey],
                       // nil in every shipping build: the closure only exists
                       // where `addSoloSeat` is compiled at all.
                       onAddSoloSeat: soloSeatAction(lob),
@@ -1761,14 +1774,25 @@ struct GameSurface: View {
     /// It also means no teardown: the ordinary New game path bumps
     /// `newGameToken`, which re-ids this whole view and routes through the name
     /// prompt. A rematch has nothing to ask - this device just played a game
-    /// under its name - so it goes straight to a lobby. `onFreshChain` is the
-    /// one thing it still needs from the host: start a NEW MSSession, so the
-    /// rematch's first bubble does not collapse the result card of the game it
-    /// came from.
+    /// under its name - so it goes straight to a lobby.
     ///
-    /// The lobby stays OPEN at the usual capacity, deliberately: someone else
-    /// in the chat may join a rematch, and if they do, the wire's guard sees a
-    /// roster that no longer keys equal and the penalty does not fire. That is
+    /// TWO SHAPES, behind `RematchLobby.sameChain`:
+    ///
+    ///   * THE SAME CHAIN (shipping). The kernel builds the lobby from the
+    ///     finished chain alone - same game id, the next generation, seated as
+    ///     the game finished, every seat taken - so every player who taps New
+    ///     game seals the same lobby, and it REUSES the finished game's
+    ///     MSSession, collapsing onto the result card. The owner, on three
+    ///     taps that made three games: "it should collapse the same game (yes,
+    ///     wiping out the history)". The lobby is full; a seat opens only when
+    ///     somebody leaves, as the web's table_continue keeps its seats.
+    ///   * A FRESH CHAIN (the flag off, which is how it was). Rotated to the
+    ///     tapper, a random seed and id, OPEN at the chat's capacity, and
+    ///     `onFreshChain` starts a new MSSession so its first bubble does not
+    ///     collapse the result card of the game it came from.
+    ///
+    /// Either way the wire's guard sees a roster that no longer keys equal if
+    /// the table changes before Start, and the penalty does not fire. That is
     /// the owner's "if the players do not change at all".
     ///
     /// `passing` is the finished game's own rule, carried across: `newGame`
@@ -1781,18 +1805,31 @@ struct GameSurface: View {
     /// back to an ordinary New game, which punishes nobody.
     private func createRematchLobby(_ board: MessageTurnController) async {
         let passing = board.passingAllowed
+        let sameChain = RematchLobby.sameChain
+        // THE FINISHED CHAIN the kernel rematches: the board's own base, or -
+        // when the move that ended the game is still staged on this device -
+        // that move sealed, which is the chain the result card shows.
+        var finished = board.basePayload
+        if sameChain, !board.pending.isEmpty {
+            finished = try? await board.stagedPayload()
+        }
         let built: (payload: Data, mySeat: Int)?
         do {
             built = try await RematchLobby.build(
-                finished: board.basePayload, view: board.view, names: board.names,
+                finished: finished, view: board.view, names: board.names,
                 mySeat: board.mySeat, myName: MessageGameStore.shared.nickname,
-                passing: passing, capacity: chatIsDM ? 2 : 8)
+                passing: passing, capacity: chatIsDM ? 2 : 8, sameChain: sameChain)
         } catch {
             damaged = true
             return
         }
         guard let built else { onNewGame(); return }
-        onFreshChain()
+        // THE SESSION. A same-chain rematch REUSES the finished game's
+        // MSSession, so its bubble collapses onto the result card - the same
+        // game, its history wiped (the owner's "collapse the same game"). Only
+        // the fresh-chain rematch asks the host for a new one, so that its
+        // first bubble does not fold away the game it grew out of.
+        if !sameChain { onFreshChain() }
         let payload = built.payload
         do {
             let env = try await MessageEnvelope.decode(payload: payload, viewer: -1)
@@ -1803,13 +1840,13 @@ struct GameSurface: View {
             // card, not a dead lobby - and unlike the create there IS a chain
             // for it.
             //
-            // BUT IT IS A DIFFERENT GAME, which is U2 and what 1.1(68) missed:
-            // the id above is freshly random, so the result card and this lobby
-            // share no line of continuity and `msg_surface_delta` will not diff
-            // them (it returns on the game-id mismatch, deliberately). Recording
-            // the chain is still right - that IS where the X goes - but the
-            // reversal has to play it as a whole-surface SWAP rather than as a
-            // delta, which is `StagedRevert`'s job and no longer this one's.
+            // BUT IT IS A DIFFERENT DEAL, which is U2 and what 1.1(68) missed:
+            // a fresh-chain id is freshly random, and a same-chain rematch is
+            // the next generation of the id, so either way the result card and
+            // this lobby are two deals. Recording the chain is still right -
+            // that IS where the X goes - but the reversal has to play it as a
+            // whole-surface SWAP rather than as a delta, which is
+            // `StagedRevert`'s job (it compares deal keys, id and generation).
             stagedDraft.created(from: lastShownChain.map(StagedOrigin.chain) ?? .noGame)
             let plan = await MessageKernel.shared.surfaceSwap(passing: passing)
             let began = Date()
@@ -2129,7 +2166,10 @@ struct GameSurface: View {
     ///
     /// A dictionary rather than one value because a chat can hold more than one
     /// lobby, and this view is reused across them; it is small (one Bool per
-    /// game this device has looked at) and dies with the extension.
+    /// deal - game id and rematch generation - this device has looked at) and
+    /// dies with the extension. Per DEAL because a rematch keeps the game id:
+    /// a baseline left over from the game before would read the rematch's own
+    /// rules as a change of mine and withhold my Start.
     @State private var passingBaseline: [String: Bool] = [:]
 
     /// Adopt a lobby bubble's rules as the agreed baseline - unless it is MINE,
@@ -2137,7 +2177,7 @@ struct GameSurface: View {
     /// stands. Called wherever a lobby arrives from the chain.
     private func noteRulesBaseline(_ env: MessageEnvelope) {
         guard env.lastActorSeat != lobbySeat(env) else { return }
-        passingBaseline[env.gameId] = env.passingAllowed
+        passingBaseline[env.dealKey] = env.passingAllowed
     }
 
     /// CHANGE THE TABLE'S RULES: reseal this lobby with the passing checkbox
@@ -2195,8 +2235,8 @@ struct GameSurface: View {
             // baseline is still the older, agreed value - see
             // LobbyControls.rulesChanged, and note that ticking the box back
             // must clear the gate rather than double it).
-            if passingBaseline[env.gameId] == nil {
-                passingBaseline[env.gameId] = env.passingAllowed
+            if passingBaseline[env.dealKey] == nil {
+                passingBaseline[env.dealKey] = env.passingAllowed
             }
             // Decode, set, seal - ONE actor call (round 21). Three separate
             // hops left two suspension points in which any other decode could
@@ -2352,10 +2392,12 @@ struct GameSurface: View {
         // so adopting one as a board shows a phantom 8-player game whose unjoined
         // seats read "Seat N", with a different first attacker than the real
         // game — the round-3 "some see a 5-player game, some see 8" fork, which
-        // deadlocks the thread. Rule P now ranks any started chain above a lobby
-        // (msg_rule_p rule 0), so nothing should reach here at phase 0 any more;
-        // this is the structural guarantee behind that, not a second opinion
-        // about which chain wins.
+        // deadlocks the thread. Rule P ranks any started chain above a lobby OF
+        // THE SAME GENERATION (msg_rule_p rule 0), so the one lobby that reaches
+        // here over a board is a REMATCH, which rule G ranks above the finished
+        // game it grew out of - and it goes to the lobby surface like any other.
+        // Which chain wins is still only the kernel's to say; this is the
+        // structural guarantee that a winner at phase 0 is drawn as a lobby.
         if env.phase == 0 {
             controller = nil
             noteRulesBaseline(env)
@@ -2526,7 +2568,7 @@ struct GameSurface: View {
         // A DIFFERENT game (or a different seat in one) still gets a fresh
         // controller - there the teardown is honest, because it really is a
         // different board.
-        if let live = controller, live.canAdopt(seat: seat, gameId: env.gameId) {
+        if let live = controller, live.canAdopt(seat: seat, gameId: env.gameId, generation: env.generation) {
             // Round 20: re-asked on every adopt, in BOTH directions - the newest
             // bubble arriving on a stale board is what hands it the right to
             // play again, and it must not have to be re-tapped for that.

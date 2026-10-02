@@ -121,6 +121,16 @@ final class RematchSameChainTests: XCTestCase {
         }
         XCTAssertEqual(Set(same).count, 1,
                        "\(label): \(Set(same).count) different lobbies from one finished table")
+        // NO LOSER TO TELL (Rule N, docs/IMESSAGE_SUPERSEDED_MOVES.md): the
+        // lobbies race, Rule P keeps one, and the device whose tap lost holds
+        // a lobby of exactly the same table - so the stale-branch gate, the
+        // one place a lost move is reported today, must not call it behind.
+        for a in envs {
+            for b in envs where a.digest != b.digest {
+                XCTAssertFalse(StaleBranchGate.isAhead(.init(a), of: .init(b)),
+                               "\(label): one identical rematch lobby reads as ahead of another")
+            }
+        }
         // THE TABLE CARRIES OVER: every seat, the rules, and the fool's penalty.
         for (s, e) in zip(tappers, envs) {
             XCTAssertEqual(e.joins.sorted { $0.seat < $1.seat },
@@ -129,6 +139,72 @@ final class RematchSameChainTests: XCTestCase {
             XCTAssertEqual(e.passingAllowed, passing, "\(label) seat \(s): the rules did not carry over")
             XCTAssertTrue(e.carriesPenalty, "\(label) seat \(s): the fool's penalty did not carry over")
         }
+    }
+
+    /// START ON THE REMATCH deals the next generation of the same game, with
+    /// the fool under the sword - and a board of the finished game will not
+    /// fold that chain into itself.
+    func testStartingTheRematchDealsTheNextGeneration4p() async throws {
+        let n = 4
+        let finished = try await finishedGame(players: n, passing: true, gameId: 0x5EED_4444)
+        let tapped = try await tap(finished.payload, seat: 2, players: n, sentAt: 0x4100)
+        let lobby = try XCTUnwrap(tapped)
+        let lobbyEnv = try await MessageEnvelope.decode(payload: lobby, viewer: -1)
+        let foolSeat = await k.penaltyFoolSeat(joins: lobbyEnv.joins,
+                                               carryKey: lobbyEnv.carryKey!,
+                                               carryFool: lobbyEnv.carryFool!)
+        let fool = try XCTUnwrap(foolSeat, "the rematch lobby punishes nobody")
+        let live = try await k.startFromLobby(
+            lobbyPayload: lobby, gameId: UInt64(lobbyEnv.gameId)!, actingSeat: 1,
+            parent8: MessageTurnController.firstEight(hex: lobbyEnv.digest),
+            joins: lobbyEnv.joins, sentAt: 0x4200)
+        let liveEnv = try await MessageEnvelope.decode(payload: live, viewer: -1)
+        XCTAssertEqual(liveEnv.phase, 2)
+        XCTAssertEqual(liveEnv.gameId, finished.env.gameId, "Start left the game")
+        XCTAssertEqual(liveEnv.generation, 1, "Start dropped the rematch generation")
+        XCTAssertEqual(lobbyEnv.generation, 1)
+        XCTAssertEqual(finished.env.generation, 0)
+        let view = await k.residentView(viewer: -1)
+        XCTAssertEqual(view?.defender, fool, "the fool is not the rematch's first defender")
+        let pref = try await k.preferred(finished.payload, live)
+        XCTAssertGreaterThan(pref, 0, "the finished game beat its rematch in play")
+
+        // The finished board's controller must not adopt the rematch as a
+        // continuation of itself - another deal, under the same id.
+        let board = MessageTurnController(parentPayload: finished.payload,
+                                          parent: finished.env, mySeat: 2)
+        await board.begin()
+        XCTAssertTrue(board.canAdopt(seat: 2, gameId: finished.env.gameId,
+                                     generation: finished.env.generation),
+                      "sanity: the board takes its own deal's chains")
+        XCTAssertFalse(board.canAdopt(seat: 2, gameId: liveEnv.gameId, generation: liveEnv.generation),
+                       "the finished board would fold the rematch's chain into itself")
+        XCTAssertFalse(finished.env.isSameDeal(liveEnv))
+
+        // The stale gate: an old bubble of the finished game is BEHIND the rematch.
+        XCTAssertTrue(StaleBranchGate.isAhead(.init(lobbyEnv), of: .init(finished.env)),
+                      "the rematch lobby is not ahead of the game it replaced")
+        XCTAssertFalse(StaleBranchGate.isAhead(.init(finished.env), of: .init(lobbyEnv)))
+    }
+
+    /// THE FLAG OFF is the fresh chain it always was: a new game id, rotated
+    /// to the tapper, which is what `rematch.samechain=0` puts back.
+    func testWithTheFlagOffARematchIsAFreshChain() async throws {
+        let finished = try await finishedGame(players: 3, passing: true, gameId: 0x5EED_3333)
+        let env = try await MessageEnvelope.decode(payload: finished.payload, viewer: -1)
+        let board = MessageTurnController(parentPayload: finished.payload, parent: env, mySeat: 1)
+        await board.begin()
+        let built = try await RematchLobby.build(
+            finished: board.basePayload, view: board.view, names: board.names,
+            mySeat: 1, myName: names[1], passing: true, capacity: 8, sentAt: 0x4300,
+            sameChain: false)
+        let lobby = try XCTUnwrap(built)
+        let lobbyEnv = try await MessageEnvelope.peek(payload: lobby.payload)
+        XCTAssertNotEqual(lobbyEnv.gameId, env.gameId, "the flag-off rematch kept the game id")
+        XCTAssertEqual(lobbyEnv.generation, 0)
+        XCTAssertEqual(lobbyEnv.parent8, "0000000000000000")
+        XCTAssertEqual(lobby.mySeat, 0, "the flag-off rematch seats its tapper at 0")
+        XCTAssertEqual(lobbyEnv.nPlayers, 8, "the flag-off rematch is open at the chat's capacity")
     }
 
     func testEveryTapOnAFinishedTableBuildsTheSameRematch2p() async throws {
