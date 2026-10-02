@@ -194,6 +194,15 @@ public struct FDeckWell: View {
     /// moves, so a shrinking deck drains toward this corner instead of sliding.
     public static let bottomCardOrigin = CGPoint(x: FSpace.s, y: FSpace.s)
 
+    /// The rect the flipped trump is drawn in, given the well's own frame:
+    /// `flippedOrigin` and the 46x66 card, both at `scale` - exactly where
+    /// the body draws it. Zero for a well that has not been measured.
+    public static func trumpSlot(inWell well: CGRect, scale: CGFloat = 1) -> CGRect {
+        guard well != .zero else { return .zero }
+        return CGRect(x: well.minX + flippedOrigin.x * scale, y: well.minY + flippedOrigin.y * scale,
+                      width: 46 * scale, height: 66 * scale)
+    }
+
     /// The bare trump mark's glyph size (round-5 m1 raised it from 44).
     static let markSize: CGFloat = 60
 
@@ -361,9 +370,16 @@ public struct FDeckWell: View {
             }
         }
         .frame(width: 92 * scale, height: 108 * scale, alignment: .topLeading)
-        // Publish the deck's rect so draw flights (deck→hand) have a source.
+        // Publish the deck's rect so draw flights (deck→hand) have a source,
+        // and the trump's slot beside it, so the draw that deals the trump has
+        // one too. The slot is published whatever the slot is drawing - the
+        // flight leaves from it at the very moment it stops drawing the card.
         .background(GeometryReader { g in
-            Color.clear.preference(key: DeckFrameKey.self, value: g.frame(in: .named(boardSpace)))
+            let frame = g.frame(in: .named(boardSpace))
+            Color.clear
+                .preference(key: DeckFrameKey.self, value: frame)
+                .preference(key: TrumpSlotFrameKey.self,
+                            value: Self.trumpSlot(inWell: frame, scale: scale))
         })
         .accessibilityElement(children: .ignore)
         // Round-5 m2: was a hard-coded English sentence — every visible string

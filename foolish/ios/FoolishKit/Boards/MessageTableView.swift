@@ -246,6 +246,9 @@ public struct MessageTableView: View {
         return FHandFan.height(cards: hand, availableWidth: handFrame.width)
     }
     @State var deckFrame: CGRect = .zero
+    /// Where the flipped trump lies (TrumpSlotFrameKey): the place the draw
+    /// that deals it out flies it from (`drawFlights`).
+    @State var trumpSlotFrame: CGRect = .zero
     /// MY CARDS THAT THIS OPEN-REPLAY HAS NOT FLOWN OUT OF MY HAND YET.
     ///
     /// An open replay renders the FINAL board (`controller.view`), so a bubble
@@ -891,6 +894,7 @@ public struct MessageTableView: View {
         .onPreferenceChange(HandFrameKey.self) { handFrame = $0 }
         .onPreferenceChange(DiscardFrameKey.self) { discardFrame = $0 }
         .onPreferenceChange(DeckFrameKey.self) { deckFrame = $0 }
+        .onPreferenceChange(TrumpSlotFrameKey.self) { trumpSlotFrame = $0 }
         .onPreferenceChange(SeatFramesKey.self) { seatFrames = $0 }
         .onPreferenceChange(RoleMarkFramesKey.self) { fr in
             // Merged, never replaced: my own indicator and the opponent badges
@@ -1231,7 +1235,7 @@ public struct MessageTableView: View {
                 FDeckWell(deckCount: shownDeckCount(view), flipped: trump.card,
                           hasFlipped: trump.exists, trumpSuit: view.trumpSuit,
                           markNudge: TrumpNudge.live)
-                    .collapseLayer(fraction: 0, relaying: [DeckFrameKey.self])
+                    .collapseLayer(fraction: 0, relaying: [DeckFrameKey.self, TrumpSlotFrameKey.self])
                     // FDeckWell now anchors its own content top-leading with a
                     // small symmetric inset (note 14), so no per-call-site
                     // compensation offset is needed here anymore.

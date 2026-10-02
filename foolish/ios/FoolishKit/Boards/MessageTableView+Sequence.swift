@@ -313,6 +313,14 @@ extension MessageTableView {
             let group = Array(events[beat.range])
             let ev = group[0]
             let pace = Self.pace(of: beat, in: timing)
+            // THE TRUMP EACH EVENT OF THE GROUP DEALS OUT, from the kernel's
+            // plan (AnimPlan.Step.trumpOut), index for index with `group`. All
+            // nil while `TrumpFlight.flies` is off, or when the plan does not
+            // cover the stream - and the draw then flies as it always did.
+            let trumps: [Card?] = beat.range.map { i in
+                TrumpFlight.flies && i < timing.steps.count ? timing.steps[i].trumpOut : nil
+            }
+            let dealsTrump = trumps.contains { $0 != nil }
             // Bug 9: a newer sequence has taken over (a live bout-end played on
             // top of a replay still in flight). Stop stepping the stale one
             // rather than interleaving two sets of flights through one animator
@@ -398,7 +406,15 @@ extension MessageTableView {
                     // which is not true of a card that is at this instant
                     // crossing the board. The glyph waits for the LANDING, in
                     // the per-group settle below.
-                    $0.trump = Self.trumpAtDeparture(s)
+                    //
+                    // …EXCEPT WHEN THE TRUMP FLIES ITSELF (`dealsTrump`). Then
+                    // the slot holds its card until the flight that carries it
+                    // is built, and lets go in that same breath (the builder,
+                    // below): released here, a step whose flight has to poll
+                    // for a frame would show an empty slot with nothing in the
+                    // air yet, and the face-up card would then appear out of
+                    // nowhere on top of where it had just been.
+                    if !dealsTrump { $0.trump = Self.trumpAtDeparture(s) }
                 }
             }
             // ROUND 30, and the same rule one seat over. The owner: "when the
@@ -511,12 +527,20 @@ extension MessageTableView {
                 // returns nil for the whole group, so the step retries as a
                 // unit and the pair can never split across two beats.
                 var f: [Flight] = []
-                for e in group {
-                    guard let part = self.openReplayFlights(e, view: view, lastChance: lastChance)
+                for (e, trump) in zip(group, trumps) {
+                    guard let part = self.openReplayFlights(e, view: view, trumpOut: trump,
+                                                            lastChance: lastChance)
                     else { return nil }
                     f.append(contentsOf: part)
                 }
                 groupFlights = f
+                // THE SLOT LETS GO, in the same breath its card's flight is
+                // created - the trump's twin of the hand letting go just
+                // below. `.airborne`: out of the slot, not yet the bare glyph,
+                // which waits for the landing exactly as before.
+                if dealsTrump, let s = group.last?.state ?? ev.state {
+                    self.ledger.write(.sequence) { $0.trump = Self.trumpAtDeparture(s) }
+                }
                 // THE HAND LETS GO, in the same breath the ghosts are created.
                 // The flights above were built from the slots these cards still
                 // hold, so the takeoff is already captured; dropping them now

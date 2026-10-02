@@ -151,6 +151,19 @@ final class TrumpFlightTests: XCTestCase {
                               "\(at): to that seat's badge")
             }
 
+            // A SLOT THAT HAS NOT PUBLISHED is polled for, like any frame; on
+            // the last chance the trump still flies, from the deck.
+            let mine = o.event.seat == o.seat
+            XCTAssertNil(MessageTableView.drawFlights(o.event, mine: mine, trumpOut: trump, deck: deck,
+                                                      trumpSlot: .zero, hand: hand, badge: badge,
+                                                      lastChance: false) { _, _, _ in self.landed },
+                         "\(at): no slot yet - poll again")
+            let late = MessageTableView.drawFlights(o.event, mine: mine, trumpOut: trump, deck: deck,
+                                                    trumpSlot: .zero, hand: hand, badge: badge,
+                                                    lastChance: true) { _, _, _ in self.landed } ?? []
+            XCTAssertEqual(late.first { $0.card == trump }?.from, deck,
+                           "\(at): last chance - the trump still flies, from the deck")
+
             // FLAG OFF: the plan's trump is not passed, and the draw is exactly
             // what it was before - every card from the deck, backs to a badge.
             let off = flights(o, trumpOut: nil)
@@ -162,6 +175,25 @@ final class TrumpFlightTests: XCTestCase {
         }
         XCTAssertTrue(sawReceiver, "\(players)p: the receiver's view was held")
         XCTAssertTrue(sawOther, "\(players)p: another seat's view was held")
+    }
+
+    func testTheFlagShipsOn() {
+        XCTAssertTrue(TrumpFlight.fliesByDefault, "the trump's own flight is what ships")
+        XCTAssertEqual(TrumpFlight.flies, TrumpFlight.fliesByDefault, "no dev.flags override is in play")
+    }
+
+    /// The slot the flight leaves from is the rect the well draws the trump
+    /// in: `flippedOrigin` off the well's corner, one 46x66 card, scaled with
+    /// the well.
+    func testTheSlotIsWhereTheWellDrawsTheTrump() {
+        let well = CGRect(x: 8, y: 14, width: 92, height: 108)
+        XCTAssertEqual(FDeckWell.trumpSlot(inWell: well),
+                       CGRect(x: 8 + FDeckWell.flippedOrigin.x, y: 14 + FDeckWell.flippedOrigin.y,
+                              width: 46, height: 66))
+        XCTAssertEqual(FDeckWell.trumpSlot(inWell: well, scale: 0.5),
+                       CGRect(x: 8 + FDeckWell.flippedOrigin.x / 2, y: 14 + FDeckWell.flippedOrigin.y / 2,
+                              width: 23, height: 33))
+        XCTAssertEqual(FDeckWell.trumpSlot(inWell: .zero), .zero, "an unmeasured well publishes nothing")
     }
 
     func testTheTrumpFliesFromItsSlotAt2Players() async throws {

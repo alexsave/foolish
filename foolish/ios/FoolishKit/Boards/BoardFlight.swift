@@ -121,6 +121,17 @@ public struct DeckFrameKey: PreferenceKey {
     }
 }
 
+/// The flipped trump's slot in `boardSpace`: where the trump lies under the
+/// stock, published whether or not a card is drawn there, so the draw that deals
+/// it out has a place to fly it from (`MessageTableView.drawFlights`). Not the
+/// bare glyph's place - that one is `TrumpNudge`'s.
+public struct TrumpSlotFrameKey: PreferenceKey {
+    public static let defaultValue: CGRect = .zero
+    public static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        let n = nextValue(); if n != .zero { value = n }
+    }
+}
+
 /// The discard pile's rect in `boardSpace` (cards_to_trash target).
 public struct DiscardFrameKey: PreferenceKey {
     public static let defaultValue: CGRect = .zero
