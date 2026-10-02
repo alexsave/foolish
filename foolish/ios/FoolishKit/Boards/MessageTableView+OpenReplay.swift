@@ -115,24 +115,16 @@ extension MessageTableView {
             return out
 
         case .refill, .deal:
-            // Deck -> hand (mine, real cards) or a seat's badge (backs, by count).
-            if mine {
-                let cards = ev.cards.compactMap { $0 }
-                if cards.isEmpty { return [] }
-                guard deckFrame != .zero, handFrame != .zero else { return nil }
+            let laid = mine ? laidOutHandNow(view) : []
+            return Self.drawFlights(ev, mine: mine, trumpOut: nil,
+                                    deck: deckFrame, trumpSlot: .zero,
+                                    hand: handFrame, badge: seatFrames[ev.seat] ?? .zero,
+                                    lastChance: lastChance) { c, i, n in
                 // Fly to each card's ANALYTICAL final slot so the make-room can
                 // animate at the same time (handLandingSlot); no wait for a live
                 // frame that is still mid-slide.
-                let laid = laidOutHandNow(view)
-                return cards.enumerated().compactMap { i, c in
-                    handLanding(c, laidOut: laid, index: i, of: cards.count).map {
-                        Flight(id: "opendraw-\(c.identity)", card: c, from: deckFrame, to: $0) } }
+                self.handLanding(c, laidOut: laid, index: i, of: n)
             }
-            guard let badge = seatFrames[ev.seat], badge != .zero, deckFrame != .zero else { return nil }
-            let n = max(ev.cards.count, 1)
-            return (0..<n).map { k in
-                Flight(id: "opendraw-\(ev.seat)-\(n)-\(k)", card: nil, from: deckFrame,
-                      to: badge.offsetBy(dx: CGFloat(k) * 3, dy: 0)) }
 
         case .pickup:
             // Table -> hand (mine) or a seat's badge (theirs) - FACE UP either way.
@@ -219,6 +211,33 @@ extension MessageTableView {
         default:
             return []   // out / flipped / magic-transition: no flight.
         }
+    }
+
+    /// A DEAL OR A REFILL'S FLIGHTS: deck -> my hand (real cards, to the slot
+    /// `landing` answers) or deck -> a seat's badge (backs, by count, 3pt
+    /// apart). nil asks `playStep` to poll again: a frame the flights need
+    /// has not published yet.
+    ///
+    /// Static and pure so the rule can be held against the kernel's real plans
+    /// without a board - the rects are inputs, and so is the plan's
+    /// `trumpOut`.
+    static func drawFlights(_ ev: GameEvent, mine: Bool, trumpOut: Card?,
+                            deck: CGRect, trumpSlot: CGRect,
+                            hand: CGRect, badge: CGRect, lastChance: Bool,
+                            landing: (Card, Int, Int) -> CGRect?) -> [Flight]? {
+        if mine {
+            let cards = ev.cards.compactMap { $0 }
+            if cards.isEmpty { return [] }
+            guard deck != .zero, hand != .zero else { return nil }
+            return cards.enumerated().compactMap { i, c in
+                landing(c, i, cards.count).map {
+                    Flight(id: "opendraw-\(c.identity)", card: c, from: deck, to: $0) } }
+        }
+        guard badge != .zero, deck != .zero else { return nil }
+        let n = max(ev.cards.count, 1)
+        return (0..<n).map { k in
+            Flight(id: "opendraw-\(ev.seat)-\(n)-\(k)", card: nil, from: deck,
+                   to: badge.offsetBy(dx: CGFloat(k) * 3, dy: 0)) }
     }
 
     /// On opening a delivered bubble, replay everything that happened since I
