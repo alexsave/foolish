@@ -1304,6 +1304,40 @@ int anim_finish_rows(const unsigned char *elimination, int n_elim,
                      int game_over, int n_players, int my_seat,
                      AnimFinishRow *out, int cap);
 
+// WHAT THE BOARD'S OWN CHROME DRAWS, end screen included.
+//
+// The ranked list takes the BOARD's place when the game is over and the last
+// flight has landed (`results_shown`, the host's beat - the board stays the
+// stage until then). But a host draws its chrome - my own fan, the action
+// pills, Undo, the settings and help squares, my role mark - in layers that
+// sit OVER whatever fills the board's box, so swapping the board for the list
+// does not take any of them away. Each one has to be told, and asking each
+// piece separately is how they drifted: the role mark learned it once (a lone
+// shield over an empty table), and the fool's hand did not - owner: "the last
+// players (the fools) cards are still seen in the end 'game over' screen... it
+// also blocks the 'new game' button". At four players the squares sat on the
+// fool's own row of the list as well.
+//
+// So ONE answer for all of it. On the end screen nothing of the board's draws:
+// not the hand (only the fool still holds cards, and none of them can be
+// played), not a pill or Undo (the ending move, while it is staged, is taken
+// back with the bubble's X like any staged move), not the squares (the corners
+// are the list's). Before the end screen everything draws as it did; a
+// spectator holds no seat and so wears no mark of their own.
+//
+// `rules`: ANIM_CHROME_RULE_CLEAR_ON_RESULTS is the end-screen half, so a host
+// can put the old screen back behind a flag. Without it the chrome draws over
+// the list exactly as it used to; the RESULTS bit and the role mark's gate are
+// the same either way, because those were already right.
+#define ANIM_CHROME_HAND      (1u << 0)   // my own fan
+#define ANIM_CHROME_PILLS     (1u << 1)   // the action column (Attack, Cover, Pass, Take, Good)
+#define ANIM_CHROME_UNDO      (1u << 2)   // the Undo pill's slot
+#define ANIM_CHROME_SQUARES   (1u << 3)   // settings + help
+#define ANIM_CHROME_SELF_MARK (1u << 4)   // my own shield / sword / check
+#define ANIM_CHROME_RESULTS   (1u << 5)   // the ranked list in the board's place
+#define ANIM_CHROME_RULE_CLEAR_ON_RESULTS 1
+unsigned anim_board_chrome(int is_over, int results_shown, int spectating, int rules);
+
 // ---- who may say what the badges are showing ----
 //
 // The shown deck/discard/hand counts, the out badges and the role marks belong

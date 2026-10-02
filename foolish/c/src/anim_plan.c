@@ -1574,6 +1574,17 @@ int anim_finish_rows(const unsigned char *elimination, int n_elim,
     return w;
 }
 
+unsigned anim_board_chrome(int is_over, int results_shown, int spectating, int rules) {
+    const unsigned board = ANIM_CHROME_HAND | ANIM_CHROME_PILLS | ANIM_CHROME_UNDO
+                         | ANIM_CHROME_SQUARES;
+    // The list needs BOTH: a finished game, and the beat that says its last
+    // flight has landed. `results_shown` alone is stale state between games.
+    if (is_over && results_shown)
+        return ANIM_CHROME_RESULTS
+             | ((rules & ANIM_CHROME_RULE_CLEAR_ON_RESULTS) ? 0u : board);
+    return board | (spectating ? 0u : ANIM_CHROME_SELF_MARK);
+}
+
 int anim_shown_ledger_allows(int claim, int sequencing) {
     return (claim == ANIM_CLAIM_BYSTANDER && sequencing) ? 0 : 1;
 }

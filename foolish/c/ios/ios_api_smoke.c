@@ -1470,6 +1470,12 @@ static int board_rules_check(void) {
         || fio_shown_ledger_allows(FIO_CLAIM_HAND_OFF, 1) != 1) {
         printf("FAIL ledger ownership\n"); return 1;
     }
+    // The end screen clears the board's chrome (anim_board_chrome).
+    if (fio_board_chrome(1, 1, 0, FIO_CHROME_RULE_CLEAR_ON_RESULTS) != FIO_CHROME_RESULTS
+        || (fio_board_chrome(0, 0, 0, FIO_CHROME_RULE_CLEAR_ON_RESULTS) & FIO_CHROME_HAND) == 0
+        || (fio_board_chrome(1, 1, 0, 0) & FIO_CHROME_HAND) == 0) {
+        printf("FAIL board chrome\n"); return 1;
+    }
 
     // The selection, over the whole deck both ways.
     for (int id = 0; id < 52; id++) {

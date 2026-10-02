@@ -302,19 +302,24 @@ final class RoleMotionTests: XCTestCase {
     // board... the caller never reach[es] here then"), which is why nobody
     // looked twice.
     //
-    // These test the DECISION, not a rendering: `showsSelfRoleMark` is the
-    // single predicate `selfRoleIndicator` now asks, and `showsEndScreen` is
-    // the same value the board/results branch switches on - so the two cannot
-    // hold different opinions about whether the game is over.
+    // These test the DECISION, not a rendering: `MessageTableView.chrome` is
+    // the kernel's one answer (anim_board_chrome) that `selfRoleIndicator`
+    // asks for `.selfMark` and the board/results branch asks for `.results` -
+    // so the two cannot hold different opinions about whether the game is over.
+    // `clearOnResults` is pinned to the shipping value, so a stray `dev.flags`
+    // on the test simulator cannot change what is asserted.
+
+    private func chrome(isOver: Bool, showResults: Bool, isSpectating: Bool = false) -> BoardChrome {
+        MessageTableView.chrome(isOver: isOver, showResults: showResults,
+                                isSpectating: isSpectating, clearOnResults: true)
+    }
 
     func testMyMarkGoesWithTheBoardWhenTheResultsScreenTakesOver() {
         // Live game, seated: the mark is mine to see.
-        XCTAssertTrue(MessageTableView.showsSelfRoleMark(
-            isOver: false, showResults: false, isSpectating: false))
+        XCTAssertTrue(chrome(isOver: false, showResults: false).contains(.selfMark))
         // The end screen is up. The board is gone; so is its decoration.
-        XCTAssertFalse(MessageTableView.showsSelfRoleMark(
-            isOver: true, showResults: true, isSpectating: false),
-            "a finished game drew a shield over empty felt")
+        XCTAssertFalse(chrome(isOver: true, showResults: true).contains(.selfMark),
+                       "a finished game drew a shield over empty felt")
     }
 
     func testTheMarkOutlastsGameOverUntilTheEndScreenActuallyLands() {
@@ -323,27 +328,23 @@ final class RoleMotionTests: XCTestCase {
         // that swaps it. The mark has to stay for exactly that window, or the
         // final bout-end sequence would play under a board with the roles
         // already stripped off it.
-        XCTAssertTrue(MessageTableView.showsSelfRoleMark(
-            isOver: true, showResults: false, isSpectating: false),
-            "the mark left before the final animation had played")
+        XCTAssertTrue(chrome(isOver: true, showResults: false).contains(.selfMark),
+                      "the mark left before the final animation had played")
         // ...and the same beat is what the results screen itself waits for.
-        XCTAssertFalse(MessageTableView.showsEndScreen(isOver: true, showResults: false))
-        XCTAssertTrue(MessageTableView.showsEndScreen(isOver: true, showResults: true))
-        XCTAssertFalse(MessageTableView.showsEndScreen(isOver: false, showResults: true),
+        XCTAssertFalse(chrome(isOver: true, showResults: false).contains(.results))
+        XCTAssertTrue(chrome(isOver: true, showResults: true).contains(.results))
+        XCTAssertFalse(chrome(isOver: false, showResults: true).contains(.results),
                        "`showResults` is stale state between games; only `isOver` makes it mean anything")
     }
 
     func testTheTwoGatesAgreeOnEveryInput() {
-        // The point of the shared predicate. Whenever the results screen is up,
-        // my mark is down - for every combination, not just the one that was
-        // screenshotted.
+        // Whenever the results screen is up, my mark is down - for every
+        // combination, not just the one that was screenshotted.
         for isOver in [false, true] {
             for showResults in [false, true] {
-                let end = MessageTableView.showsEndScreen(isOver: isOver, showResults: showResults)
-                let mark = MessageTableView.showsSelfRoleMark(
-                    isOver: isOver, showResults: showResults, isSpectating: false)
-                XCTAssertNotEqual(end, mark,
-                    "end screen \(end) and self mark \(mark) both drew for isOver=\(isOver) showResults=\(showResults)")
+                let c = chrome(isOver: isOver, showResults: showResults)
+                XCTAssertNotEqual(c.contains(.results), c.contains(.selfMark),
+                    "end screen and self mark disagreed for isOver=\(isOver) showResults=\(showResults)")
             }
         }
     }
@@ -351,10 +352,35 @@ final class RoleMotionTests: XCTestCase {
     func testASpectatorStillNeverWearsAMark() {
         // Round 21, unchanged by the end-screen gate: a seatless viewer holds no
         // role on a live table either.
-        XCTAssertFalse(MessageTableView.showsSelfRoleMark(
-            isOver: false, showResults: false, isSpectating: true))
-        XCTAssertFalse(MessageTableView.showsSelfRoleMark(
-            isOver: true, showResults: true, isSpectating: true))
+        XCTAssertFalse(chrome(isOver: false, showResults: false, isSpectating: true).contains(.selfMark))
+        XCTAssertFalse(chrome(isOver: true, showResults: true, isSpectating: true).contains(.selfMark))
+    }
+
+    // THE FOOL'S HAND LEFT WITH NOTHING. Owner: "the last players (the fools)
+    // cards are still seen in the end 'game over' screen. Not only is it a
+    // weird visual thing, it also blocks the 'new game' button". Same shape as
+    // the mark above - the hand, the pills, Undo and the squares are overlays
+    // on the container that wraps the swap - and filmed on the rig at 2p and
+    // 4p with the local player as the fool: a tap on New game selected a card,
+    // and at 4p the squares and a Take pill covered the fool's row of the list.
+    func testTheEndScreenTakesTheBoardsChromeWithIt() {
+        let end = chrome(isOver: true, showResults: true)
+        XCTAssertFalse(end.contains(.hand), "the fool's fan drew over New game")
+        XCTAssertFalse(end.contains(.pills), "an action pill drew over the list")
+        XCTAssertFalse(end.contains(.undo), "Undo drew over the list")
+        XCTAssertFalse(end.contains(.squares), "the squares drew over the list's corners")
+        XCTAssertEqual(end, .results, "the end screen is the list and nothing of the board's")
+        // ...and none of it leaves early: the final move plays under the whole board.
+        let hold = chrome(isOver: true, showResults: false)
+        XCTAssertTrue(hold.isSuperset(of: [.hand, .pills, .undo, .squares, .selfMark]))
+    }
+
+    func testTheFlagOffPutsTheOldEndScreenBack() {
+        // `gameover.hidehand=0`: the chrome over the list as it used to be.
+        let old = MessageTableView.chrome(isOver: true, showResults: true, isSpectating: false,
+                                          clearOnResults: false)
+        XCTAssertTrue(old.isSuperset(of: [.results, .hand, .pills, .undo, .squares]))
+        XCTAssertFalse(old.contains(.selfMark), "the mark's own fix is not behind the flag")
     }
 }
 
