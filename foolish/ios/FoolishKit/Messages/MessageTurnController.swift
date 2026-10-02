@@ -895,26 +895,28 @@ public final class MessageTurnController: ObservableObject {
             // The envelope's own clock and bubble delta come back with the
             // decode - the hold measures from the one, the open-replay groups
             // on the other, and both belong to the CHAIN, not to this device.
-            // THE FLOOR IS WHAT THIS BOARD HAS ALREADY ANIMATED. `baseTurn`
-            // still holds the PREVIOUS chain's atom count at this point -
-            // `adoptBaseFacts` overwrites it just below - so it is exactly "how
-            // far the player has already watched this game get to". A bubble
-            // claiming to start earlier than that is claiming to re-show
-            // something already on screen; see `openChain`. Zero on a cold open
-            // (nothing adopted yet), where no clamp must apply.
-            let alreadyShown = baseTurn
+            //
+            // WHAT THIS BOARD HAS ALREADY SHOWN is the chain it was on before
+            // this one: `shownPayload` still holds it here (`adoptBaseFacts`
+            // replaces it just below), nil on a cold open, where nothing has
+            // been shown and nothing may be clamped. The kernel compares the two
+            // chains and answers where the replay starts (MessageKernel.OpenFrom)
+            // - a number this side remembered cannot, because a pending good is
+            // an atom only until something follows it.
+            let from: MessageKernel.OpenFrom = Self.opensFromShownChain
+                ? .shown(shownPayload) : .legacyFloor(baseTurn)
             guard let opened = try? await kernel.openChain(payload: payload, viewer: mySeat,
-                                                           floor: alreadyShown) else {
-                adoptBaseFacts(nil)
+                                                           from: from) else {
+                adoptBaseFacts(nil, payload: nil)
                 return ([], nil)
             }
-            adoptBaseFacts(opened.env)
+            adoptBaseFacts(opened.env, payload: payload)
             // A started chain (nobody has moved) opens on its deal - the one
             // step its replay holds. Flag off, it opens quiet as it used to.
             if opened.env.turn == 0, !OpenDeal.shows { return ([], nil) }
             return (opened.events, opened.prior)
         case .genesis(let seed, let players):
-            adoptBaseFacts(nil)   // nothing sent, nothing before my moves, no boundary
+            adoptBaseFacts(nil, payload: nil)   // nothing sent, nothing before my moves, no boundary
             try? await kernel.newGame(seed: seed, players: players)
             return ([], nil)      // nothing was sent, so there is nothing to replay
         }
@@ -926,7 +928,10 @@ public final class MessageTurnController: ObservableObject {
     /// stopped closing the drawer on Send - my own bubble becoming it
     /// (`markSent`). Kept in one place because a half-updated base is not a
     /// visible bug on this device, it is a wrong boundary on somebody else's.
-    private func adoptBaseFacts(_ env: MessageEnvelope?) {
+    /// `payload` is the chain those facts were read from - the one this board
+    /// now shows, which the NEXT open measures what it has already shown by.
+    private func adoptBaseFacts(_ env: MessageEnvelope?, payload: Data?) {
+        shownPayload = env == nil ? nil : payload
         baseSentAt = env?.sentAt ?? 0
         baseTurn = env?.turn ?? 0
         baseAtomsBefore = env?.atomsBefore ?? -1
@@ -960,6 +965,27 @@ public final class MessageTurnController: ObservableObject {
     /// format-2 chain or a genesis, which means "the kernel guesses").
     private var baseTurn = 0
     private var baseAtomsBefore = -1
+    /// The chain this board is showing (nil before anything was adopted, and
+    /// on a genesis): what the next arrival's replay is measured against.
+    private var shownPayload: Data?
+
+    /// THE REPLAY OF AN ARRIVAL STARTS WHERE THE KERNEL SAYS, from the chain on
+    /// screen and the one arriving (MessageKernel.OpenFrom.shown,
+    /// c/src/msg_wire.h msg_open_boundary). Before this, the previous chain's
+    /// atom count was the floor, and after pending goods it overshot the
+    /// arriving chain: at 3+ seats a bout-closing good, or any move after a
+    /// pending good, animated nothing on any receiver (owner's 4p notes 3, 8, 9;
+    /// LiveArrival4pTests). Ships on; `arrival.openboundary=0` in `dev.flags`
+    /// puts back the old floor.
+    public static let opensFromShownChainByDefault = true
+
+    static var opensFromShownChain: Bool {
+        #if DEBUG || SOLO_TESTING
+        return MessageDevBoard.flag("arrival.openboundary", shipping: opensFromShownChainByDefault)
+        #else
+        return opensFromShownChainByDefault
+        #endif
+    }
 
     /// Where the animation now on screen STARTS, for
     /// `MessageKernel.lastMoveEvents`: the number of atoms that were on the
@@ -1540,7 +1566,7 @@ public final class MessageTurnController: ObservableObject {
             joins = env.joins
             names = Dictionary(env.joins.map { ($0.seat, $0.name) },
                                uniquingKeysWith: { a, _ in a })
-            adoptBaseFacts(env)
+            adoptBaseFacts(env, payload: sent)
             // The base MOVING is the fact the animation boundary follows, so it
             // belongs in the trail beside the stream that then runs. A send that
             // replays the bubble before it is either this note missing (the

@@ -215,10 +215,11 @@ final class ArrivalReadoptTests: XCTestCase {
         // second time, still lined up its move to be animated again and was
         // saved only by `publish` noticing the view had not moved.
         //
-        // The REPLAY FLOOR (MessageEnvelope.openChain) now stops that a layer
-        // earlier: a bubble may not ask this board to replay atoms it has
-        // already shown, so a re-seal of the turn already on screen resolves to
-        // an EMPTY stream rather than to a stream the veil guard has to catch.
+        // The OPEN BOUNDARY (MessageKernel.openChain, which asks the kernel's
+        // msg_open_boundary) now stops that a layer earlier: a bubble may not
+        // ask this board to replay atoms it has already shown, so a re-seal of
+        // the turn already on screen resolves to an EMPTY stream rather than to
+        // a stream the veil guard has to catch.
         // Both defences stand; the outer one simply gets there first, which is
         // why this is now the assertion.
         XCTAssertTrue(c.openReplayEvents.isEmpty,

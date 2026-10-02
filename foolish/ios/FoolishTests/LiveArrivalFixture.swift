@@ -22,8 +22,8 @@
 //     last actor). So the delta (`n_new`) and the Rule P link are the real
 //     ones, not a test's guess.
 //   - `controller`: a MessageTurnController for one seat on one bubble, begun
-//     (a cold open, floor -1) and optionally told a board is watching - which
-//     is the state a live arrival lands on.
+//     (a cold open: no chain shown before it) and optionally told a board is
+//     watching - which is the state a live arrival lands on.
 //   - `arrive`: hand a bubble to that controller the way GameSurface.seatOnBoard
 //     does (`offerArrival`), and finish a retraction if one was started, the
 //     way the board does when its red flight lands.

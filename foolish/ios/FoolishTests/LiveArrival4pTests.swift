@@ -16,34 +16,32 @@
 // table closes the bout at once, so no bubble ever carries a PENDING good.
 // See LiveArrivalFixture for what is built and how faithful it is.
 //
-// THE MECHANISM the reproductions below pin (H1). A board that has adopted a
-// chain remembers how far it has animated as that chain's atom count
-// (`MessageTurnController.rebuildBase`: `alreadyShown = baseTurn`) and never
-// replays behind it (`MessageKernel.openChain`'s floor). But a pending good is
-// an atom only while nothing follows it (c/src/replay.c log_atom_kind), so the
-// bubble AFTER one or more pending goods re-encodes them away: two pending
-// goods (turn N+2) followed by the closing good fold into ONE round_end atom
-// (turn N+1). The floor N+2 is then past the end of the arriving stream and the
-// kernel correctly answers "nothing to animate" for the move it was asked to
-// skip to. No discard, no refill, no roles - on every receiver, while the
-// sender plays it from its own released settlement. A cold open has no floor
-// (-1), which is why closing and reopening the bubble shows it.
+// THE MECHANISM (H1), now fixed. A board that had adopted a chain remembered
+// how far it had animated as that chain's atom count and never replayed behind
+// it (`MessageTurnController.rebuildBase` passed the previous chain's turn as a
+// floor). But a pending good is an atom only while nothing follows it
+// (c/src/replay.c log_atom_kind), so the bubble AFTER one or more pending goods
+// re-encodes them away: two pending goods (turn N+2) followed by the closing
+// good fold into ONE round_end atom (turn N+1). The floor N+2 was then past the
+// end of the arriving stream and the kernel correctly answered "nothing to
+// animate" for the move it was asked to skip to. No discard, no refill, no
+// roles - on every receiver, while the sender played it from its own released
+// settlement. A cold open had no floor, which is why closing and reopening the
+// bubble showed it.
 //
-// Reproductions of open defects are wrapped in a STRICT XCTExpectFailure that
-// names the note: they go red the moment the fix lands, and the fix removes the
-// wrapper.
+// THE FIX hands the kernel the chain the board was showing instead of a number
+// (MessageKernel.OpenFrom.shown, c/src/msg_wire.h msg_open_boundary): the
+// replay starts at the sender's claim, never behind the atoms the two chains
+// share, and the shared prefix stops at the first pending good. The tests below
+// pin it at 2, 3 and 4 seats for both shapes - the bout-closing good and a move
+// after a pending good - and `testTheFlagsOldBranchIsStillTheOldFloor` pins
+// that the `arrival.openboundary` dev flag's old branch still reproduces H1.
 
 import XCTest
 @testable import FoolishKit
 
 @MainActor
 final class LiveArrival4pTests: XCTestCase {
-
-    private func strict(_ why: String) -> XCTExpectedFailure.Options {
-        let o = XCTExpectedFailure.Options()
-        o.isStrict = true
-        return o
-    }
 
     // MARK: - the fixture's own facts
 
@@ -79,7 +77,7 @@ final class LiveArrival4pTests: XCTestCase {
                       "cold open of the closing good: [\(cold.openReplayEvents.kindNames)]")
     }
 
-    // MARK: - H1: the replay floor eats the bout end (notes 3, 8, 9)
+    // MARK: - H1: the bout end and the move after a pending good animate (notes 3, 8, 9)
 
     /// NOTE 9 (and 3, 8). Four seats; two attackers have said good; the board
     /// is open on that bubble; the third attacker's good arrives and closes the
@@ -87,8 +85,8 @@ final class LiveArrival4pTests: XCTestCase {
     /// the refills, the role hand-off - exactly as the sender did and exactly
     /// as a cold open of the same bubble does (the control above).
     ///
-    /// Measured: ZERO events, for every receiver, because the floor
-    /// (`alreadyShown` = x2's turn, N+2) is past the end of x3's stream (N+1).
+    /// Measured before the fix: ZERO events, for every receiver, because the
+    /// floor (x2's turn, N+2) was past the end of x3's stream (N+1).
     func testABoutClosingGoodArrivingOverTwoPendingGoodsAnimatesTheBoutEnd() async throws {
         let f = try await LiveArrivalFixture.coveredTable(players: 4)
         let (a, b, c) = (f.attackers[0], f.attackers[1], f.attackers[2])
@@ -103,21 +101,18 @@ final class LiveArrival4pTests: XCTestCase {
             XCTAssertEqual(board.basePayload, x3.payload, "seat \(watcher): adopted the closing good")
             XCTAssertEqual(board.view?.battles.isEmpty, true, "seat \(watcher): the table is clear")
             let evs = board.openReplayEvents
-            XCTExpectFailure("notes 3/8/9: a bout-closing good arriving over pending goods "
-                             + "animates nothing on the receiver (H1, the replay floor)",
-                             options: strict("H1")) {
-                XCTAssertTrue(evs.sweepsTheTable,
-                              "seat \(watcher): the arrival that closed the bout animated "
-                              + "[\(evs.kindNames)] - no sweep to the discard")
-            }
+            XCTAssertTrue(evs.sweepsTheTable,
+                          "seat \(watcher): the arrival that closed the bout animated "
+                          + "[\(evs.kindNames)] - no sweep to the discard")
             board.setBoardWatching(false)
         }
     }
 
-    /// NOTE 8 at THREE seats: one pending good is enough. x1 (attacker A good,
+    /// NOTE 8 at THREE seats: one pending good was enough. x1 (attacker A good,
     /// turn N+1) then x2 (attacker B good, closes, ONE round_end atom: turn
-    /// N+1) - the floor N+1 equals the arriving turn and the stream is empty.
-    func testThreeSeatsOnePendingGoodIsEnoughToEatTheBoutEnd() async throws {
+    /// N+1) - the old floor N+1 equalled the arriving turn and the stream was
+    /// empty.
+    func testThreeSeatsTheClosingGoodOverOnePendingGoodAnimatesTheBoutEnd() async throws {
         let f = try await LiveArrivalFixture.coveredTable(players: 3)
         let (a, b) = (f.attackers[0], f.attackers[1])
         let x1 = try await f.good(a, after: f.root)
@@ -128,22 +123,28 @@ final class LiveArrival4pTests: XCTestCase {
         await f.arrive(x2, at: board)
         XCTAssertEqual(board.basePayload, x2.payload)
         let evs = board.openReplayEvents
-        XCTExpectFailure("note 8 at 3p: the closing good animates nothing on the receiver (H1)",
-                         options: strict("H1")) {
-            XCTAssertTrue(evs.sweepsTheTable,
-                          "the arrival that closed the bout animated [\(evs.kindNames)]")
-        }
+        XCTAssertTrue(evs.sweepsTheTable,
+                      "the arrival that closed the bout animated [\(evs.kindNames)]")
         board.setBoardWatching(false)
     }
 
     /// NOT ONLY GOODS. Any move that follows a pending good supersedes it, so
-    /// the same floor eats an ordinary THROW-IN arriving after a good: the new
-    /// attack card appears on the table with no flight. (Same mechanism; the
+    /// the same floor ate an ordinary THROW-IN arriving after a good: the new
+    /// attack card appeared on the table with no flight. (Same mechanism; the
     /// owner's notes name goods because a good-run is where it is commonest.)
-    func testAThrowInArrivingOverAPendingGoodFliesItsCard() async throws {
+    /// Pinned at four seats and at three.
+    func testAThrowInArrivingOverAPendingGoodFliesItsCardAtFourSeats() async throws {
+        try await throwInOverAPendingGoodFlies(players: 4)
+    }
+
+    func testAThrowInArrivingOverAPendingGoodFliesItsCardAtThreeSeats() async throws {
+        try await throwInOverAPendingGoodFlies(players: 3)
+    }
+
+    private func throwInOverAPendingGoodFlies(players: Int) async throws {
         // A root where some attacker other than the first can still throw in.
         var thrower = -1
-        let f = try await LiveArrivalFixture.coveredTable(players: 4) { f in
+        let f = try await LiveArrivalFixture.coveredTable(players: players) { f in
             for s in f.attackers.dropFirst() {
                 if try await f.legal(s, on: f.root).contains(where: { $0.type == .attack }) {
                     thrower = s; return true
@@ -156,22 +157,49 @@ final class LiveArrival4pTests: XCTestCase {
         let menu1 = try await f.legal(thrower, on: x1)
         let attack = try XCTUnwrap(menu1.first { $0.type == .attack })
         let x2 = try await f.play(thrower, attack, after: x1)
-        XCTAssertEqual(x2.turn, x1.turn, "the throw-in supersedes the good: same atom count")
+        XCTAssertEqual(x2.turn, x1.turn, "\(players)p: the throw-in supersedes the good: same atom count")
         let pref = try await f.preferred(showing: x1, arriving: x2)
-        XCTAssertGreaterThan(pref, 0, "rule 4: the direct child is adopted")
+        XCTAssertGreaterThan(pref, 0, "\(players)p: rule 4: the direct child is adopted")
 
         let board = await f.controller(seat: f.defender, on: x1)
         await f.arrive(x2, at: board)
         XCTAssertEqual(board.basePayload, x2.payload)
         let before = try await f.truth(f.defender, on: x1)
         XCTAssertEqual(board.view?.battles.count, before.map { $0.battles.count + 1 },
-                       "the new attack is on the table")
+                       "\(players)p: the new attack is on the table")
         let evs = board.openReplayEvents
-        XCTExpectFailure("the throw-in after a pending good animates nothing (H1)",
-                         options: strict("H1")) {
-            XCTAssertTrue(evs.has(.attackPass),
-                          "the arriving throw-in animated [\(evs.kindNames)] - no card flight")
+        XCTAssertTrue(evs.has(.attackPass),
+                      "\(players)p: the arriving throw-in animated [\(evs.kindNames)] - no card flight")
+        board.setBoardWatching(false)
+    }
+
+    /// AND ITS DEFENDER'S ANSWER: after the throw-in, the defender covers it.
+    /// The cover arrives on a board that showed the throw-in (no good pending
+    /// any more), so this is the plain case - pinned so the fix cannot have
+    /// bought the pending-good shapes at the price of the ordinary one.
+    func testACoverArrivingAfterTheThrowInFliesAtFourSeats() async throws {
+        var thrower = -1
+        let f = try await LiveArrivalFixture.coveredTable(players: 4) { f in
+            for s in f.attackers.dropFirst() {
+                if try await f.legal(s, on: f.root).contains(where: { $0.type == .attack }) {
+                    thrower = s; return true
+                }
+            }
+            return false
         }
+        let x1 = try await f.good(f.attackers[0], after: f.root)
+        let throwMenu = try await f.legal(thrower, on: x1)
+        let attack = try XCTUnwrap(throwMenu.first { $0.type == .attack })
+        let x2 = try await f.play(thrower, attack, after: x1)
+        guard let cover = try await f.legal(f.defender, on: x2).first(where: { $0.type == .cover }) else {
+            throw XCTSkip("the defender cannot cover this throw-in")
+        }
+        let x3 = try await f.play(f.defender, cover, after: x2)
+        let board = await f.controller(seat: thrower, on: x2)
+        await f.arrive(x3, at: board)
+        XCTAssertEqual(board.basePayload, x3.payload)
+        XCTAssertEqual(board.openReplayEvents.filter { $0.kind == .cover }.count, 1,
+                       "the cover animated [\(board.openReplayEvents.kindNames)]")
         board.setBoardWatching(false)
     }
 
@@ -187,6 +215,51 @@ final class LiveArrival4pTests: XCTestCase {
         XCTAssertTrue(board.openReplayEvents.sweepsTheTable,
                       "2p closing good animated [\(board.openReplayEvents.kindNames)]")
         board.setBoardWatching(false)
+    }
+
+    /// THE 2P SIDE OF "A MOVE AFTER A GOOD": at two seats there is no pending
+    /// good to follow (the good above closes the bout at once), so the shape is
+    /// the next bout's opening attack arriving on a board that showed the
+    /// closing good. Its card must fly.
+    func testTwoSeatsTheAttackAfterTheClosingGoodFlies() async throws {
+        let f = try await LiveArrivalFixture.coveredTable(players: 2)
+        let x1 = try await f.good(f.attackers[0], after: f.root)
+        var opener = -1
+        var opening: Move?
+        for s in 0..<2 where opening == nil {
+            opening = try await f.legal(s, on: x1).first(where: { $0.type == .attack })
+            if opening != nil { opener = s }
+        }
+        guard let attack = opening else { throw XCTSkip("nobody may open the next bout") }
+        let x2 = try await f.play(opener, attack, after: x1)
+        let board = await f.controller(seat: 1 - opener, on: x1)
+        await f.arrive(x2, at: board)
+        XCTAssertEqual(board.basePayload, x2.payload)
+        XCTAssertTrue(board.openReplayEvents.has(.attackPass),
+                      "2p attack after the bout end animated [\(board.openReplayEvents.kindNames)]")
+        board.setBoardWatching(false)
+    }
+
+    /// THE FLAG'S OLD BRANCH IS THE OLD FLOOR. `arrival.openboundary=0` must
+    /// put back exactly what shipped before, so a dev build can still show the
+    /// defect side by side: the 4p closing good opened with the previous
+    /// chain's turn as the floor animates nothing, and with the shown chain it
+    /// sweeps the table.
+    func testTheFlagsOldBranchIsStillTheOldFloor() async throws {
+        let f = try await LiveArrivalFixture.coveredTable(players: 4)
+        let (a, b, c) = (f.attackers[0], f.attackers[1], f.attackers[2])
+        let x1 = try await f.good(a, after: f.root)
+        let x2 = try await f.good(b, after: x1)
+        let x3 = try await f.good(c, after: x2)
+        let k = MessageKernel.shared
+        let old = try await k.openChain(payload: x3.payload, viewer: f.defender,
+                                        from: .legacyFloor(x2.turn))
+        XCTAssertTrue(old.events.isEmpty, "the old floor: [\(old.events.kindNames)]")
+        let new = try await k.openChain(payload: x3.payload, viewer: f.defender,
+                                        from: .shown(x2.payload))
+        XCTAssertTrue(new.events.sweepsTheTable, "the shown chain: [\(new.events.kindNames)]")
+        XCTAssertTrue(MessageTurnController.opensFromShownChainByDefault,
+                      "the fix ships on")
     }
 
     // MARK: - H2: a non-closing good (note 2)
