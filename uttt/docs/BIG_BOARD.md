@@ -24,6 +24,7 @@ The rules are stated once, in `uttt/c/src/uttt_big.h`, and `tests/uttt_big_test.
 5. Hold any grid still for 4 seconds again to leave the mode (a warning haptic, and the badge goes from a 9 x 9 screen). On your own unsent invitation the field is swapped back to a 9 x 9 invitation and the 9 x 9 lobby comes back. Otherwise the mode changes only what CREATING a game does; it does not touch games already in the thread. A big game's screen keeps the badge whatever the mode, because it says what board this is.
 
 The rulebook is just the rules again: a tap opens them, and in a debug build a 1.5 s hold opens the diagnostics, exactly as on the branch base (`UtttRulebookButton` is byte for byte the base's).
+WHILE THE 243 MODE IS ON, a 1.5 s hold on the rulebook opens the picture diagnostics instead (next section).
 
 The mode persists in the extension's own defaults (`UserDefaults.standard`, key `uttt.big.mode`, as UtttSeats keeps its records) until it is toggled off, and survives an update of the app.
 It is never on where the big game is unavailable (`UtttBig.available`).
@@ -88,8 +89,50 @@ PLUS a runtime check, so a leaked condition still cannot expose the feature: `Ut
 - `uttt/ios/UtttKit/UtttBigScreens.swift`: `UtttBigModel` (the UtttModel analogue), `UtttBigGameScreen` (a 64-point header with "you are" and the kernel's headline, the board below, the rules door and Again at the bottom; it opens focused on the region when that is a 27 x 27 block or smaller, and keeps the zoom when the position changes), `UtttBigLobby` (the waiting words over the empty big board at the fit, the grid the mode's hold is on). Every number is in `UtttBigLayout`.
 - `uttt/ios/UtttKit/UtttBigBubble.swift`: the picture on and off a bubble; every read logs its risky count and smallest margin (`big-read`).
 - `uttt/ios/UtttKit/UtttBigMode.swift`: the mode, its door (`UtttModeHold`) and the badge.
+- `uttt/ios/UtttKit/UtttBigDiagnostics.swift`: the picture diagnostics' facts, its sheet, its door on the rulebook (`UtttBigDiagHold`) and the history's bytes; every rule of the report is `uttt/c/src/uttt_big_diag.c`.
 - `uttt/ios/UtttMessages/MessagesViewController.swift`, its "the 243 board" section and the `#if UTTT_BIG_BOARD` lines that reach it: a big link is routed to the big path where `UtttBig.available`; the board of a bubble this device staged or sent comes from memory (the newest four), any other from the message's picture; `current`, `newest`, `markSent` and `sessionFor` ask the big kernel when either link is big (a big and a 9 x 9 are different games, the tapped one wins).
 - DEBUG only: `dev.bigzoom` (a number, or `max`) opens the next big board at that zoom centred on the region, so the rig can tap a cell without a pinch.
+
+## The picture diagnostics (TestFlight build 1.1(16))
+
+What a real send did to a big bubble's picture, told by the app itself, because the second phone has no cable.
+
+### How to use it
+
+1. Turn the 243 mode on (a still 4 s hold on any grid; the "243" badge shows).
+2. Tap the bubble you want to know about in the thread (the received one, on the phone that received it), so the drawer opens on it.
+3. HOLD THE RULEBOOK (the book door, bottom right) for 1.5 s. A sheet titled "243 picture" opens over the drawer with the report.
+4. Tap Copy: the whole report goes on the pasteboard as plain text. Paste it into a message to us. Close (or a swipe down) puts the drawer back.
+
+The report is about the message the drawer was opened from: the selection when the drawer opened, a bubble tapped while it was up, or one that arrived while it was up.
+Opened from the + menu there is no message, and the report is the header and the history only.
+Outside the mode the hold does nothing new: the rulebook is the shipped door (a tap opens the rules; in a debug build its own 1.5 s hold opens the debug diagnostics, unchanged).
+The grid's 4 s hold is on the board and this one on the rulebook, so neither sees the other's touches.
+
+### What each line means
+
+Every line is at most 46 characters.
+A line that compares a measurement with what was expected starts with a space when they agree, `!` when they do not, and `~` when the value is shown but not judged.
+
+- **Header**: the app version and build, `debug`, `TestFlight` or `release`, the iOS version, the device model (`iPhone16,2`; a simulator says `sim`), and the time.
+- **The message**: how the drawer came to it (`selectedMessage`, `didSelect`, `didReceive`); `sent by this device` or `the other person` (`senderParticipantIdentifier` against `localParticipantIdentifier`); `pending` (`isPending`); `session`, the CRC-32 of `MSSession.hash` printed in hex, so two bubbles of one session show the same number.
+- **The link**: its length in characters and in bytes, the format byte (3 is the 243 board), `header and check` (the `UTM_E*` of reading the header and its 2-byte wire check), the seed, the flags and whether X is taken, the ply count and the last move, this device's seat in it when it is the game on screen, and the board CRC-32 the link carries.
+- **The layout**: its class, the lengths (never the text) of caption, subcaption and summary (`nil` for none), the picture's pixels (`image W x H`, expected 729 x 732) and scale, and the file at `mediaFileURL`: its extension and its bytes. The bytes are not judged, because they depend on the board: a mid-game board is about 255 KB at q0.50 and 460 KB at q0.89, a new game's about 10 KB.
+- **The jpeg, from the file's bytes** (parsed in C, `uttt/c/src/uttt_big_diag.c`): its size (expected 729 x 732; a side at 1200 is the transport's cut), components (3), chroma (`4:2:0`, from the luma component's 2x2 sampling), the frame (`baseline SOF0`), the markers, and the quality.
+- **The quality's method**: the luma quantisation table is held to ImageIO's own luma tables at every quality from 0.00 to 1.00 in steps of 0.01 (`src/uttt_jpeg_imageio.inc`, generated with `make jpeg-imageio`, held to ImageIO on every `make big-diag-imageio`). An equal table is `exact`, and its range is every step that writes that table: ImageIO writes one table for 0.89, 0.90 and 0.91, so the transport's file reads `0.89-0.91`. A table no step writes (ImageIO takes the quality as a continuous number) is interpolated on the tables' sums and marked `~`. The libjpeg scaling's quality is printed as well, for an encoder that is not ImageIO. A copy from the other person is expected at 0.89 (after the transport); this device's own at 0.50 or 0.89.
+- **The reading, at the size it came**: the kit's result (`BD_EOK` or the `BD_E*` it refused with, or `no picture`), cells sampled, risky cells (within 16 of a threshold) and the smallest margin, whether the CRC-32 of the decoded board equals the link's (`= link`: the board read is the board that was sent), the mark counts, and the read's time in ms.
+- **The greys**: the luminance, (r + g + b) / 3 at the pixel the kit samples, for the cells read as empty (painted 255), X (128) and O (0), each with its count, mean, standard deviation, minimum and maximum (rounded outward); `worst deviation from nominal`, the largest distance of any cell from its class's painted level, which is the room a 4-level picture would have to fit in; and a 16-bucket histogram of every sampled luminance, 16 levels a bucket, the darkest first, as two lines of eight counts. The sampling is the kit's `bd_sample` reproduced, and `tests/uttt_big_diag_test.c` holds the two to the same classes, risky count and margin on six picture sizes and four noise levels.
+- **History, newest first**: the last 20 reads and sends this extension knows about, two lines each: the day of the month and time, `sent` (what this device's own extension saw at `didStartSending`: the picture's size, the file's bytes and quality; not read) or `open` (a read of a bubble's picture, by the app or by this screen), the pixels, the bytes, the quality (`=` exact, `~` estimated), then the risky count, the smallest margin and the result (`crc!` when the board did not match its link). Kept in the extension's `UserDefaults.standard` under `uttt.big.diag.ring` in the kernel's fixed 404-byte little-endian layout (`uttt_big_diag.h`), so it outlives the extension and a send on one phone can be set beside the opening on the other.
+
+### What the simulator showed (2026-10-02, iOS 27.0, iPhone 17 Pro Max class, single-thread picker)
+
+The mode on by a 5 s grid hold on the 9 x 9 lobby, the big invitation sent, the bubble tapped and taken as X, one move played and sent, that bubble tapped and taken as O, a 2 s hold on the rulebook: the report said format 3, `UTM_EOK`, plies 1, the image and the file 729 x 732, 4:2:0, baseline, `! quality 0.50 (expect 0.89)` (the simulator's loopback has no transcoder, so its received copy is the sender's own 0.50 file), 10,163 bytes, `BD_EOK`, risky 0, min margin 46, `board crc 0fb05b6c = link`, X 1, read 5.1 ms, greys empty mean 255.0 (min 239), X mean 127.4 (115 to 140), O mean 3.7 (0 to 18), worst deviation 18.0, and eight history records across two extension processes and a reinstall.
+Copy put the same text on the simulator's pasteboard (`xcrun simctl pbpaste`).
+With the mode off, the same hold opened the debug diagnostics (the base's) and a tap opened the rules.
+
+On a Mac, ImageIO's two passes of a real send (`make big-diag-imageio`): a mid-game board (30% marks) at 280,680 then 507,158 bytes reads 0.50 then 0.89-0.91 exact, risky 0, min margin 30, worst deviation 34 (empty 221 to 255, X 101 to 161, O 0 to 33); a sparse one at 16,381 then 22,771 bytes, min margin 46, worst deviation 18.
+
+NOT proven: anything on a real phone. The quality the transport writes on a real send, the 1200 px cut and the history across two phones are what this screen is for, and none of them has been seen through it yet. The JPEG parser was held to Messages' own simulator file and to ImageIO and cjpeg files; the real transport's received files on this Mac (`~/Library/Messages/Attachments`) could not be read by the agent that built this (access refused), so no transcoder output is among the test files.
 
 ## The numbers behind it (2026-10-01)
 

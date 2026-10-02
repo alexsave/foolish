@@ -137,7 +137,10 @@ int  utb_msg_text_peek(const char *text, UtbHead *out);
 int  utb_msg_text_decode(const char *text, const uint8_t *cells, UtbMsg *out);
 
 /* The bytes a link's "m=" value decodes to, whatever their format: what the
- * diagnostics print the length and format byte of. Count, or UTM_ETEXT. */
+ * diagnostics print the length and format byte of. Count, or UTM_ETEXT.
+ * Hidden, as the diagnostics are (uttt_big_diag.h): its one caller is them,
+ * so an App Store build, which links none of them, keeps none of it. */
+__attribute__((visibility("hidden")))
 int  utb_msg_text_bytes(const char *text, uint8_t *out, int cap);
 
 /* Is this text a big-game message by its magic and format byte alone: the
