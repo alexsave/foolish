@@ -871,13 +871,15 @@ typedef struct {
     // THE SAME BOUNDARY, CROSSED THE OTHER WAY: the chain on screen is dealt
     // and the arriving one is that game's lobby.
     //
-    // No TEXT can be this - rule P ranks a dealt game above the invite it grew
-    // out of, so an older lobby bubble never wins its way onto a board. What IS
-    // this is the surface REVERTING: the human staged Start, saw the board, and
-    // then pressed the X on the staged bubble, which discards the draft and
-    // puts the table back as the thread still has it. Owner: "it should still
-    // 'fade back' to the lobby state it was in previously if I X on the staged
-    // bubble."
+    // Two things are this. The surface REVERTING: the human staged Start, saw
+    // the board, and then pressed the X on the staged bubble, which discards
+    // the draft and puts the table back as the thread still has it. Owner: "it
+    // should still 'fade back' to the lobby state it was in previously if I X
+    // on the staged bubble." And A REMATCH ARRIVING over the finished board:
+    // the same game_id one generation later, which rule G ranks above the
+    // result card - the one text that can win its way from a board to a lobby,
+    // and it wears the same fade. (An older lobby of the SAME generation still
+    // never wins against the dealt game it grew out of: rule 0.)
     //
     // Here rather than in the view for the reason `started` is here: whether
     // two chains are a whole-surface change is a fact about the chains, and a
