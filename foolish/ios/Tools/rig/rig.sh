@@ -63,6 +63,7 @@
 #   rig.sh prefs [TABLE] [LANG] [APPEARANCE]      felt|wool  en|ru|..  light|dark
 #   rig.sh slowmo N | ruler [off]                 debug overlays
 #   rig.sh deal N | off                           pin the genesis deal (dev.seed)
+#   rig.sh capacity N | off                       seats a new lobby offers (dev.capacity)
 #
 #   ---- capture --------------------------------------------------------
 #   rig.sh shot NAME              one frame, flattened, size-checked
@@ -526,6 +527,9 @@ cmd_build() {
   # this compile-time flag, and the `dev.reseed` file at runtime.
   local cond="DEBUG"
   [ -n "${FOOLISH_RESEED:-}" ] && cond="$cond RIG_RESEED"
+  # RIG_ARRIVE, also opt-in: the extension's host trace and the arrival door
+  # (`arrive`). Nothing else changes, and nothing that ships defines it.
+  [ -n "${FOOLISH_ARRIVE:-}" ] && cond="$cond RIG_ARRIVE"
   xcodebuild -project "$XCPROJ" -scheme "$SCHEME" \
     -configuration Debug -destination "platform=iOS Simulator,id=$SIM" \
     -derivedDataPath "$DD" SWIFT_ACTIVE_COMPILATION_CONDITIONS="$cond" build | tail -3
@@ -870,11 +874,85 @@ cmd_picker() {
 # WORD as the other side through its own didReceive lines. What WORD means is
 # the product's: Ultimate Tic-Tac-Toe takes a move (block*9+cell) or nothing
 # for its deterministic pick; Durak's RIG_ARRIVE takes join/start/rules/leave.
+#
+# Durak's door (a FOOLISH_ARRIVE=1 build) seals each item off the chain the
+# board is showing and, by default, SENDS it through real Messages:
+#
+#   rig.sh arrive "join"                       a lobby word: join|rules|leave|start
+#   rig.sh arrive "move:2:good,move:3:good"    board moves, each off the last
+#   rig.sh arrive "hold move:any:cover"        stage it and leave Send unpressed
+#   rig.sh arrive "direct move:1:pickup"       skip Messages (the old door)
+#
+# `conversation.send` only STAGES on the simulator, so each item lands in the
+# input field and this presses Send for it, one at a time (the door writes a
+# line to dev.doorstaged per staged item and waits for its send before sealing
+# the next). The send is what makes Messages deliver it back to the open
+# drawer as willSelect/didSelect/didReceive - docs/IMESSAGE_LIVE_ARRIVAL_HOST.md
+# (phase 2) says which drawers that reaches and which it does not.
 cmd_arrive() {
   need_sim
   local g; g=$(group_dir)
   case "$g" in /nonexistent/*) return 1 ;; esac
-  printf '%s' "${1:-}" > "$g/dev.arrive"; echo "arrive: '${1:-}' written"
+  local req="${1:-}"
+  rm -f "$g/dev.doorstaged"
+  printf '%s' "$req" > "$g/dev.arrive"; echo "arrive: '$req' written"
+  case " $req " in *" direct "*|*" hold "*) return 0 ;; esac
+  # A bare UTTT-style word has no items for this loop; Durak's always do.
+  local words items n i got
+  words=$(printf '%s' "$req" | tr ' ' '\n' | grep -v -e '^send$' -e '^gap=' -e '^session=' | tr '\n' ',')
+  items=$(printf '%s' "$words" | tr ',' '\n' | grep -c . || true)
+  n=0
+  while [ "$n" -lt "$items" ]; do
+    i=0; got=0
+    while [ $i -lt 100 ]; do
+      got=$(grep -c . "$g/dev.doorstaged" 2>/dev/null || true)
+      [ "${got:-0}" -gt "$n" ] && break
+      sleep 0.2; i=$((i + 1))
+    done
+    if [ "${got:-0}" -le "$n" ]; then
+      echo "arrive: item $((n + 1)) of $items was never staged (rig.sh flight says why)" >&2
+      return 1
+    fi
+    # Send is under an expanded drawer. `turn` puts one down when the finder
+    # sees its edge high up; when it does not (seen on a full-height board),
+    # the drawer is collapsed by its grabber and Send asked for again.
+    poll 10 0.2 has_send || cmd_collapse >/dev/null 2>&1 || true
+    # …and when the finder misreads the edge altogether (a full-height board
+    # whose deck sits in the top corner reads as the drawer's edge), drag from
+    # where an expanded drawer's grabber always is, just under the status bar.
+    if ! has_send; then
+      read -r W H < <(screen)
+      swipe 0.6 $((W / 2)) $((H * 7 / 100)) $((W / 2)) $((H * 66 / 100)) 1.5
+    fi
+    cmd_turn >/dev/null || { echo "arrive: no Send for item $((n + 1))" >&2; return 1; }
+    n=$((n + 1))
+  done
+  echo "arrive: $items sent"
+}
+
+# A SEEDED BOARD, BOUND, ready for `arrive`.
+#
+#   SEAT=3 rig.sh liveseed goodwait 4
+#
+# Seeds MODE (as `seed`), opens it from the + menu with dev.stage on so the
+# extension stages the seeded chain, sends it, then TAPS that bubble - so the
+# drawer is bound to the game's MSSession, the only drawer Messages delivers a
+# live arrival to (docs/IMESSAGE_LIVE_ARRIVAL_HOST.md, phase 2). dev.seat stays,
+# so a chain that arrives seats the board at the same chair; dev.fatboard goes,
+# so the tap opens the bubble's own chain rather than re-claiming the seed.
+cmd_liveseed() {
+  need_sim
+  local g; g=$(group_dir)
+  kill_appex || true
+  : > "$g/dev.stage"
+  rm -f "$g/dev.staged"
+  cmd_seed "$@" || return 1
+  cmd_open "$SHOOT_THREAD" >/dev/null 2>&1 || true
+  local hex; hex=$(tr -d '[:space:]' < "$g/dev.fatboard")
+  send_staged "$hex" || { rm -f "$g/dev.stage"; return 1; }
+  rm -f "$g/dev.stage" "$g/dev.fatboard" "$g/dev.replay"
+  cmd_tapopen "$SHOOT_THREAD" >/dev/null 2>&1 || return 1
+  echo "liveseed: bound to the seeded chain, seat $(cat "$g/dev.seat" 2>/dev/null)"
 }
 
 cmd_devgame() {
@@ -1897,6 +1975,16 @@ cmd_deal() {
   else printf '%s' "${1:-3}" > "$g/dev.seed"; echo "deal: seed ${1:-3}"; fi
 }
 
+# HOW MANY SEATS A NEW LOBBY OFFERS (dev.capacity, DEBUG builds). Both stub
+# threads are DMs, and a DM's lobby holds 2, so `lobby 4` stopped at two seats
+# and no 3+ seat lobby was reachable on a simulator. `capacity 4` before the
+# create, `capacity off` to go back to the chat's own shape.
+cmd_capacity() {
+  local g; g=$(group_dir)
+  if [ "${1:-off}" = "off" ]; then rm -f "$g/dev.capacity"; echo "capacity: the chat's own"
+  else printf '%s' "$1" > "$g/dev.capacity"; echo "capacity: $1 seats"; fi
+}
+
 cmd_ruler() {
   local g; g=$(group_dir)
   if [ "${1:-on}" = "off" ]; then rm -f "$g/dev.ruler"; echo "ruler off"
@@ -2211,7 +2299,10 @@ cmd_tween() {
 # flags. `flight` is the always-compiled FlightRecorder (on a device it is
 # reached by HOLDING THE GEAR for 5 seconds); `mem` is the memory probe, whose
 # .prev is the run before the one that crashed.
-cmd_flight() { local g; g=$(group_dir); cat "$g/flight.txt" 2>/dev/null || echo "no flight log yet"; }
+# FlightRecorder writes flight.log (and rotates the session before it to
+# flight.prev.log); this read flight.txt, a name nothing writes, and so always
+# answered "no flight log yet".
+cmd_flight() { local g; g=$(group_dir); cat "$g/flight.log" 2>/dev/null || echo "no flight log yet"; }
 cmd_mem()    { local g; g=$(group_dir); cat "$g/memprobe.txt" 2>/dev/null || echo "no memory probe yet"
                [ -f "$g/memprobe.prev.txt" ] && { echo "--- previous run ---"; cat "$g/memprobe.prev.txt"; } || true; }
 
@@ -2246,6 +2337,7 @@ case "${1:-}" in
   seat)     shift; cmd_seat "$@" ;;
   devgame)  shift; cmd_devgame "$@" ;;
   arrive)   shift; cmd_arrive "$@" ;;
+  liveseed) shift; cmd_liveseed "$@" ;;
   picker)   shift; cmd_picker "$@" ;;
   enter)    shift; cmd_enter "$@" ;;
   open)     shift; cmd_open "$@" ;;
@@ -2266,6 +2358,7 @@ case "${1:-}" in
   prefs)    shift; cmd_prefs "$@" ;;
   slowmo)   shift; cmd_slowmo "$@" ;;
   deal)     shift; cmd_deal "$@" ;;
+  capacity) shift; cmd_capacity "$@" ;;
   ruler)    shift; cmd_ruler "$@" ;;
   stageseed) shift; cmd_stageseed "$@" ;;
   reseed)   shift; cmd_reseed "$@" ;;

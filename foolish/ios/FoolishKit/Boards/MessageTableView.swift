@@ -972,7 +972,9 @@ public struct MessageTableView: View {
             // Round 16: a move with no sequence of its own still moves the
             // roles - a PASS hands the shield along mid-bout, and that is the
             // one hand-off nothing else here would animate. A sequence syncs
-            // its own roles at the end, once its cards have landed.
+            // its own roles at the end, once its cards have landed. Note 2: so
+            // does an open-replay with nothing to play - an arriving good that
+            // does not close the bout is only a role change, and it lands here.
             if !sequenced, let v { syncRoles(to: RoleState(v), in: v, animated: true) }
         }
         .fFlash($toast)
@@ -1015,6 +1017,7 @@ public struct MessageTableView: View {
             // stage the deal immediately so I can send it on. When I CAN act,
             // canStage is false until I play, so this is a no-op then.
             await stageNow()
+            restageNothingAfterArrival()
             #if DEBUG
             // FoolishHarness screenshotting only: auto-open the Settings / Help
             // sheet so it can be captured settled without a tap.
@@ -1025,6 +1028,12 @@ public struct MessageTableView: View {
             #endif
         }
         .onDisappear { controller.setBoardWatching(false) }
+        // NOTE 6: an arrival made the staged bubble stale - overwrite it with
+        // the Undo's NOTHING bubble (`restageNothingAfterArrival`). The mount
+        // `.task` above pays a debt raised before this board existed.
+        .onChange(of: controller.nothingBubbleOwed) { owed in
+            if owed { restageNothingAfterArrival() }
+        }
         // THE HUMAN DELETED THE STAGED BUBBLE (didCancelSending, via the host's
         // `cancelToken`). Routed into the SAME undo the pill runs - see
         // `cancelStagedBubble` - so the two can never drift about what a

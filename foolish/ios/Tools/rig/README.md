@@ -420,3 +420,24 @@ On the iOS 27 runtime a message sent from a thread lands on the RIGHT of that th
 Incoming game messages show only a caption pill, never their image.
 Check the direction on each new runtime with one test send before a shoot.
 A one-session chain in the photographed thread shows a single caption line with the wrong text, and staging a reply hides the opponent's newest line, so transcript frames are shot on the iOS 26 runtime.
+
+## Driving live arrivals at 4 seats (2026-10-02)
+
+A move made by another seat can be delivered to the open drawer through real Messages, on one simulator, with a `FOOLISH_ARRIVE=1 rig.sh build`.
+What Messages does on the way is in `docs/IMESSAGE_LIVE_ARRIVAL_HOST.md` (phase 2); the labels below are its.
+
+**The drawer must be BOUND.** Messages delivers only to a drawer opened by tapping a bubble, and only for a message in that bubble's `MSSession` (L2, L6); a drawer opened from the + menu gets nothing (L1).
+`SEAT=3 rig.sh liveseed goodwait 4` seeds a board, stages and sends it, and taps it, so the drawer is bound and `dev.seat` keeps the chair.
+For a lobby, `rig.sh capacity 4` before `rig.sh lobby 1` (a DM lobby otherwise holds 2), send it, then `rig.sh tapopen`.
+
+**`rig.sh arrive` seals and sends.** Items are lobby words (`join`, `rules`, `leave`, `start`) or board moves `move:SEAT:KIND[:PICK]` with KIND one of `good`, `attack`, `throwin`, `cover`, `pickup`, `pass`, SEAT a number or `any`, PICK `low`, `high` or a card like `QS`.
+Items chain off each other and the first off the chain the board is showing, so `arrive "join,join,join,start"` fills a 4-seat lobby and starts it.
+`conversation.send` only stages on the simulator (L10), so `arrive` presses Send for each item, putting an expanded drawer down first because Send is under it; every delivery is therefore observed with the drawer compact (N1).
+`arrive "hold ..."` stages without pressing Send, `arrive "session=new ..."` sends in a fresh session (which Messages does not deliver, L6), and `arrive "direct ..."` skips Messages and is not host evidence (N5).
+
+**The thread direction changed.** On this machine the iOS 26.3 stub threads are now iMessage threads and behave like the iOS 27 note above: a send lands on the RIGHT of its own thread and as a caption pill in the other one (L9), so trap 2's mirror no longer holds here either; check with one send.
+
+**What a script can assert.** `rig.sh flight` reads the extension's flight log: `host willSelect` / `host didSelect` / `host didReceive ... door=true` for the delivery, `receive`, `arrival beats=... phase=... joins=...`, `arrival-done board`, `anim-open n=... kinds=...` for what the board animated, `conflict retract` and `field-nothing` for an invalidated staged move, and `door-refused` when the kernel would not seal an item (an illegal move).
+`dev.flags` (`arrival.openboundary=0`, `arrival.emptyroles=0`, `arrival.restagenothing=0`) takes effect on the next appex process, which `liveseed` starts.
+
+**What it does not cover.** The delivered bubble is an own send on the host side (right-hand side, `isFromMe`, a staged bubble in the field until Send), two arrivals cannot be closer than one Send press, and the thread has two participants (N3, N4, N7).

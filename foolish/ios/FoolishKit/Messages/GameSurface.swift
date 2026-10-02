@@ -1917,7 +1917,12 @@ struct GameSurface: View {
         }
         #endif
         let gameId = UInt64.random(in: 1...UInt64.max)
-        let capacity = chatIsDM ? 2 : 8
+        var capacity = chatIsDM ? 2 : 8
+        #if DEBUG
+        // Dev hook: `dev.capacity` (rig.sh capacity N) seats N in a DM, which
+        // is all the simulator has. Compiled out of every Release build.
+        if let n = MessageDevBoard.lobbyCapacity { capacity = n }
+        #endif
         do {
             try await MessageKernel.shared.newGame(seed: seed, players: capacity)
             let joins = [MessageJoin(seat: 0, name: nickname)]
@@ -2413,7 +2418,20 @@ struct GameSurface: View {
         // while you ARE seat 2). In DEBUG, ask who you are so both seats are
         // playable on one sim. Release resolves automatically (real devices have
         // separate caches + distinct participant UUIDs) and never shows this.
-        if MessageDebugFlags.pickSeatOnAdopt { controller = nil; ambiguous = (env, winner); return }
+        if MessageDebugFlags.pickSeatOnAdopt {
+            // `dev.seat` (rig.sh seat N) answers the picker's question for the
+            // rig, so a Start or a move arriving LIVE seats the board straight
+            // away instead of stopping on a question nobody is there to answer.
+            if let s = MessageDevBoard.seededSeat {
+                seatOnBoard(seat: max(0, min(s, env.nPlayers - 1)), env: env, winner: winner,
+                            quietOpen: justSent)
+                return
+            }
+            // …and the picker is drawn only with the lobby gone: the surface
+            // draws a lobby before it would draw the picker, so a Start that
+            // arrived over a shown lobby used to leave the lobby on screen.
+            controller = nil; lobby = nil; ambiguous = (env, winner); return
+        }
         #endif
         // ROUND 9 (owner): the durable pending ledger and its Rule R rebase are
         // REMOVED ("caching has caused A LOT of problems... drop the pending

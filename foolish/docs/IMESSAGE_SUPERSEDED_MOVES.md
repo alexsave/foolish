@@ -2,6 +2,14 @@
 
 **Status: DESIGN. Not implemented.** Owner call, 2026-09-02.
 
+**Implemented beside it (2026-10-01): the input field after an arrival.**
+This is not the notice, and it does not change what this document says about telling.
+When a live arrival is adopted over a bubble this device staged and has not sent, the staged moves are dropped (nothing is re-applied), and the stale bubble in the Messages input field is overwritten with the Undo's NOTHING bubble over the arrival.
+The owner: "make it be a 'nothing burger' bubble, same as if you pickup and then undo. we can't unstage a bubble, but we can make it no-op."
+The kernel decides it: `msg_staged_fate` (LANDED / STANDS / SUPERSEDED) and `msg_turn_field_after_arrival` in `c/src/msg_wire.h`.
+Unlike the detection sketched below, that relation strips no trailing goods, because the strip makes "parent + my good" read as a prefix of "parent + their throw-in", which is exactly the case that must not count as landed.
+The same relation keeps a board on an arrival that raced its own Send (`MSG_TURN_SEND_OVERTAKEN`), so the loser of two goods raced off one bubble no longer shows its losing good.
+
 This settles the question the lobby has been circling since round 5 — what to
 do when two people act on the same bubble at the same moment and one of them
 loses — and it settles it the same way for every kind of move, not just joins.

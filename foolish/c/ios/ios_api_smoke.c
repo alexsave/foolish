@@ -557,6 +557,110 @@ static int bubble_delta_check(void) {
     return 0;
 }
 
+// ---------- where an arriving chain's replay starts ------------------------
+//
+// fio_msg_open_boundary is the bridge onto msg_open_boundary (msg_wire_test
+// pins its cases at 2/3/4 seats); this pins the BRIDGE: the arguments reach
+// it, a cold open is the claim, a child opens at its claim over its parent and
+// an older chain opens at its end, and nothing is adopted on the way.
+static int open_boundary_check(void) {
+    unsigned char seed[32];
+    for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(i * 11 + 3);
+    const SmokeJoin jspec[3] = { {0,"Sveta"}, {1,"Ann"}, {2,"Bo"} };
+    unsigned char joins[128];
+    const int joins_n = pack_joins(joins, (int)sizeof joins, jspec, 3);
+    const uint8_t zero8[8] = {0};
+    if (fio_new_game(seed, 32, 3) != FIO_EOK) { printf("FAIL open boundary new_game\n"); return 1; }
+
+    unsigned char parent[2048], child[2048];
+    int pn = 0, cn = 0;
+    for (int k = 0; k < 4; k++) {
+        const int mask = fio_actor_mask();
+        int seat = -1;
+        for (int s = 0; s < 3; s++) if (mask & (1 << s)) { seat = s; break; }
+        const int lrc = seat < 0 ? -1 : fio_legal_packed(seat, buf, sizeof(buf));
+        unsigned char aw[64];
+        const int al = lrc < 0 ? 0 : pick_move_awire((const unsigned char *)buf, lrc, aw);
+        if (al == 0 || fio_apply_awire(seat, aw, al) != FIO_EOK) {
+            printf("FAIL open boundary: move %d did not apply\n", k);
+            return 1;
+        }
+        if (k == 2) {
+            pn = fio_msg_encode(2, seat, 0xB0BULL, zero8, joins, joins_n, 0, parent, sizeof(parent));
+            // Adopt it, so the child's delta is measured from it as a phone's is.
+            if (pn <= 0 || fio_msg_decode(parent, pn) != FIO_EOK) { printf("FAIL open boundary parent\n"); return 1; }
+        }
+        if (k == 3) cn = fio_msg_encode(2, seat, 0xB0BULL, zero8, joins, joins_n, 0, child, sizeof(child));
+    }
+    if (cn <= 0) { printf("FAIL open boundary child encode %d\n", cn); return 1; }
+
+    const MsgHeader *hdr = (const MsgHeader *)fio_msg_header_ptr();
+    if (fio_msg_peek(child, cn) != FIO_EOK) { printf("FAIL open boundary peek\n"); return 1; }
+    const int c_turn = hdr->e.turn, c_new = hdr->e.n_new;
+    const int claim = c_new == 255 ? c_turn : (c_new > 0 ? c_turn - c_new : -1);
+    if (fio_msg_peek(parent, pn) != FIO_EOK) { printf("FAIL open boundary peek\n"); return 1; }
+    const int p_turn = hdr->e.turn;
+    const MsgHeader before = *hdr;
+
+    int ab = -9;
+    if (fio_msg_open_boundary(NULL, 0, child, cn, &ab) != FIO_EOK || ab != claim) {
+        printf("FAIL open boundary cold: %d, want the claim %d\n", ab, claim);
+        return 1;
+    }
+    if (fio_msg_open_boundary(parent, pn, child, cn, &ab) != FIO_EOK || ab != claim) {
+        printf("FAIL open boundary child over parent: %d, want the claim %d\n", ab, claim);
+        return 1;
+    }
+    if (fio_msg_open_boundary(child, cn, parent, pn, &ab) != FIO_EOK || ab != p_turn) {
+        printf("FAIL open boundary older chain: %d, want its end %d\n", ab, p_turn);
+        return 1;
+    }
+    const unsigned char junk[4] = { 1, 2, 3, 4 };
+    if (fio_msg_open_boundary(parent, pn, junk, 4, &ab) != FIO_EMSG
+        || fio_msg_open_boundary(parent, pn, NULL, 0, &ab) != FIO_EBADARG
+        || fio_msg_open_boundary(parent, pn, child, cn, NULL) != FIO_EBADARG) {
+        printf("FAIL open boundary: bad arguments were answered\n");
+        return 1;
+    }
+    if (fio_msg_open_boundary(junk, 4, child, cn, &ab) != FIO_EOK || ab != claim) {
+        printf("FAIL open boundary: an unreadable shown chain clamped to %d\n", ab);
+        return 1;
+    }
+    // fio_msg_staged_fate is the bridge onto msg_staged_fate (msg_wire_test
+    // pins its cases at 2/3/4 seats, every move kind). Here: the arguments
+    // reach it in order, junk is refused, and nothing is adopted. These two
+    // are not linked by parent8, so the atoms answer: the child holds the
+    // parent, the parent is held by the child.
+    int fate = -9;
+    if (fio_msg_staged_fate(child, cn, parent, pn, &fate) != FIO_EOK || fate != FIO_FATE_STANDS) {
+        printf("FAIL staged fate: the child over its parent is %d, want STANDS\n", fate);
+        return 1;
+    }
+    if (fio_msg_staged_fate(parent, pn, child, cn, &fate) != FIO_EOK || fate != FIO_FATE_LANDED) {
+        printf("FAIL staged fate: the parent under its child is %d, want LANDED\n", fate);
+        return 1;
+    }
+    if (fio_msg_staged_fate(parent, pn, junk, 4, &fate) != FIO_EMSG
+        || fio_msg_staged_fate(NULL, 0, child, cn, &fate) != FIO_EBADARG
+        || fio_msg_staged_fate(parent, pn, child, cn, NULL) != FIO_EBADARG) {
+        printf("FAIL staged fate: bad arguments were answered\n");
+        return 1;
+    }
+    if (fio_msg_turn_field_after_arrival(FIO_TURN_READY | FIO_TURN_STAGED, FIO_FATE_SUPERSEDED)
+            != FIO_TURN_FIELD_NOTHING
+        || fio_msg_turn_field_after_arrival(FIO_TURN_READY | FIO_TURN_STAGED, -1) != FIO_TURN_FIELD_KEEP) {
+        printf("FAIL field after arrival: the bridge does not reach the rule\n");
+        return 1;
+    }
+    if (memcmp(&before, hdr, sizeof before) != 0) {
+        printf("FAIL open boundary: asking moved the header\n");
+        return 1;
+    }
+    printf("open boundary OK (claim %d over parent turn %d; older chain opens at its end; "
+           "staged fate bridged)\n", claim, p_turn);
+    return 0;
+}
+
 // ---------- one cover per bubble animates ONE cover ------------------------
 //
 // THE SPEC SENTENCE, from ios_api.h at fio_replay_last_events_packed: "A player
@@ -2303,6 +2407,7 @@ int main(void) {
     if (replay_sweep() != 0) return 1;
     if (fmsg_check() != 0) return 1;
     if (bubble_delta_check() != 0) return 1;
+    if (open_boundary_check() != 0) return 1;
     if (chained_cover_check() != 0) return 1;
     if (lobby_v2_reseat_check() != 0) return 1;
     if (lobby_rules_check() != 0) return 1;

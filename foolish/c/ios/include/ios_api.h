@@ -942,6 +942,31 @@ int fio_msg_decode(const uint8_t *payload, int len);
 // FIO_EOK, or negative (FIO_EMSG -> fio_last_msg_error).
 int fio_msg_peek(const uint8_t *payload, int len);
 
+// WHERE THE REPLAY OF AN ARRIVING CHAIN STARTS: the `atoms_before` to hand
+// fio_replay_last_events_packed when a board that last showed `shown` opens
+// `arriving` (src/msg_wire.h msg_open_boundary, which has every case). It is
+// the sender's claim (`turn - n_new`), never behind the atoms the two chains
+// share from the start - so a board does not re-animate what it already
+// showed, and a board that showed pending goods still animates the move that
+// supersedes them. `shown` NULL / 0 is a cold open: the claim, unclamped.
+// Parses both payloads and adopts NOTHING.
+// FIO_EOK with *atoms_before set (>= -1; -1 asks the reader to guess, as the
+// claim of a bubble that does not say), FIO_EBADARG, or FIO_EMSG when
+// `arriving` is not an envelope (fio_last_msg_error says why).
+int fio_msg_open_boundary(const uint8_t *shown, int shown_len,
+                          const uint8_t *arriving, int arriving_len, int *atoms_before);
+
+// WHAT AN ADOPTED ARRIVAL LEAVES OF A BUBBLE THIS DEVICE STAGED (src/msg_wire.h
+// msg_staged_fate, which has every case): STANDS - the staged chain was built on
+// the arrived one; LANDED - the arrived chain already carries it; SUPERSEDED -
+// neither (a sibling, a fork, another game). Parses both, adopts NOTHING.
+// FIO_EOK with *fate set, FIO_EBADARG, or FIO_EMSG (fio_last_msg_error).
+#define FIO_FATE_STANDS     0
+#define FIO_FATE_LANDED     1
+#define FIO_FATE_SUPERSEDED 2
+int fio_msg_staged_fate(const uint8_t *staged, int staged_len,
+                        const uint8_t *arrived, int arrived_len, int *fate);
+
 // THE TABLE'S RULES, off that header: 1 when the defender may transfer
 // (perevodnoy), 0 for podkidnoy. Resolved against the envelope's own format, so
 // no host has to know which formats predate the rules byte and are the passing
@@ -1290,8 +1315,22 @@ int fio_msg_turn_sent_source(int staged, int have_host, int have_sealed);
 // DECODED chain's game id against the one this board plays, so it is asked on
 // the second call only - pass < 0 on the first. See msg_wire.h.
 #define FIO_TURN_SEND_OTHERGAME   6
+// AN ARRIVAL THAT RACED THE SEND: the board was handed something newer than
+// the sent bytes between Send and the rebase. `fate` is fio_msg_staged_fate(the
+// sent bytes, the chain the board stands on), `sent_wins` is Rule P of (that
+// chain, the sent bytes) > 0; pass < 0 for either when not asked.
+#define FIO_TURN_SEND_OVERTAKEN   7
 int fio_msg_turn_send_verdict(int staged, int have_host, int have_sealed,
-                              int host_is_sealed, int decoded, int same_game);
+                              int host_is_sealed, int decoded, int same_game,
+                              int fate, int sent_wins);
+
+// THE INPUT FIELD AFTER AN ADOPTED ARRIVAL. `state` is the chain state the
+// arrival found, `field_fate` fio_msg_staged_fate(the field's bubble, the
+// arrived chain) or < 0 for no bubble of mine in the field. NOTHING means:
+// stage the NOTHING reseal of the arrived chain over it (the Undo's bubble).
+#define FIO_TURN_FIELD_KEEP     0
+#define FIO_TURN_FIELD_NOTHING  1
+int fio_msg_turn_field_after_arrival(int state, int field_fate);
 
 // The step whose committed board a held settlement shows, or -1 for nothing to
 // hold. `cut` is fio_evw_frames_settlement_cut's answer; pass < 0 for no cut.

@@ -729,40 +729,62 @@ public actor MessageKernel {
     ///
     /// `prior` is the board as it stood BEFORE the bubble's move, or nil when
     /// there is nothing before it (see `lastMoveEventsWithPrior`).
-    /// `floor` is the number of atoms this board has ALREADY ANIMATED - never
-    /// replay behind it. See the note on the clamp below.
-    public func openChain(payload: Data, viewer: Int, floor: Int = -1)
+    /// `from` says what this board has already shown; see `OpenFrom`.
+    public func openChain(payload: Data, viewer: Int, from: OpenFrom = .shown(nil))
         throws -> (env: MessageEnvelope, events: [GameEvent], prior: GameView?) {
         let env = try decode(payload: payload, viewer: viewer)
-        // A BUBBLE'S OWN BOUNDARY IS THE SENDER'S CLAIM, NOT A FACT.
-        //
-        // `atomsBefore` is `turn - newAtoms`, and `newAtoms` is stamped by
-        // whoever sealed the bubble - so a sender whose own rebase failed
-        // (every early return in `markSent` used to leave the base a bubble
-        // behind, and an older build still does) stamps a boundary one move too
-        // early, and every recipient dutifully re-animates a move they have
-        // already watched. Owner, on two SEPARATE single-cover bubbles: "when
-        // they sent the J of spades cover, I saw the Q of hearts animate IN
-        // PARALLEL with the J of spades! Multi card covers / attacks in a
-        // SINGLE BUBBLE should be animated in parallel, but these were separate
-        // bubbles!"
-        //
-        // The receiver has a fact the sender's claim cannot override: how much
-        // of this chain it has already shown. Clamping to it makes the board
-        // robust against any sender - a stale build, a failed rebase, a
-        // hand-rolled bubble - instead of trusting a number computed on a phone
-        // this one cannot see. It can only ever REMOVE re-animation, never add
-        // any: `max` with a floor of -1 (the default, "no floor") is the exact
-        // behaviour every existing caller had.
-        //
-        // Deliberately NOT applied to a cold open. There the floor is -1
-        // because the controller has adopted nothing yet, which is what keeps
-        // "close the bubble I just sent and open it again" animating my own
-        // move (owner, round 22) - a clamp keyed on the chain's own turn would
-        // have silently killed that.
-        let opening = lastMoveEventsWithPrior(viewer: viewer,
-                                              atomsBefore: max(env.atomsBefore, floor))
+        let atomsBefore: Int
+        switch from {
+        case .shown(let shown):
+            atomsBefore = try openBoundary(shown: shown, arriving: payload)
+        case .legacyFloor(let floor):
+            atomsBefore = max(env.atomsBefore, floor)
+        }
+        let opening = lastMoveEventsWithPrior(viewer: viewer, atomsBefore: atomsBefore)
         return (env, opening.events, opening.prior)
+    }
+
+    /// WHERE AN OPENING STARTS: what the board opening a chain has already
+    /// shown of it.
+    ///
+    /// A bubble's own boundary (`MessageEnvelope.atomsBefore`) is the SENDER'S
+    /// claim, not a fact: a sender whose own rebase failed, or an older build,
+    /// stamps a boundary one move too early and every recipient re-animates a
+    /// move it already watched (owner, on two separate single-cover bubbles:
+    /// "I saw the Q of hearts animate IN PARALLEL with the J of spades!"). The
+    /// receiver has the fact the claim cannot override - the chain it was
+    /// showing - and the KERNEL puts the two together (fio_msg_open_boundary,
+    /// c/src/msg_wire.h msg_open_boundary, which has every case).
+    public enum OpenFrom: Sendable {
+        /// The chain this board last showed, or nil on a cold open (nothing
+        /// shown: the claim stands, which keeps "close the bubble I just sent
+        /// and open it again" animating my own move - round 22).
+        case shown(Data?)
+        /// THE RULE BEFORE 2026-10: max(the claim, an atom count the caller
+        /// remembers). Wrong after pending goods - a good stops being an atom
+        /// once anything follows it, so the previous chain's turn overshoots
+        /// the arriving chain and nothing animates (LiveArrival4pTests).
+        /// Reached only through the `arrival.openboundary` dev flag's old
+        /// branch (MessageTurnController.opensFromShownChain); nothing ships it.
+        case legacyFloor(Int)
+    }
+
+    /// The kernel's answer for `arriving` over `shown`. Parses both and adopts
+    /// nothing, so it may run between the decode above and the reads after it.
+    private func openBoundary(shown: Data?, arriving: Data) throws -> Int {
+        var out: Int32 = -1
+        let rc: Int32 = arriving.withUnsafeBytes { a in
+            let ap = a.bindMemory(to: UInt8.self).baseAddress
+            guard let shown else {
+                return fio_msg_open_boundary(nil, 0, ap, Int32(arriving.count), &out)
+            }
+            return shown.withUnsafeBytes { s in
+                fio_msg_open_boundary(s.bindMemory(to: UInt8.self).baseAddress, Int32(shown.count),
+                                      ap, Int32(arriving.count), &out)
+            }
+        }
+        guard rc == 0 else { throw MessageEnvelope.Failure.damaged(code: Int(fio_last_msg_error())) }
+        return Int(out)
     }
 
     /// EVERYTHING A BUBBLE SAYS ABOUT ITSELF - decoded once, read together.
@@ -988,6 +1010,25 @@ public actor MessageKernel {
         }
         if r < -1 { throw MessageEnvelope.Failure.damaged(code: Int(fio_last_msg_error())) }
         return Int(r)
+    }
+
+    /// WHAT AN ARRIVAL LEAVES OF A BUBBLE THIS DEVICE STAGED (c/src/msg_wire.h
+    /// msg_staged_fate, which has every case). Parses both payloads and adopts
+    /// nothing, so the resident game is untouched and this may be asked between
+    /// any two reads.
+    public func stagedFate(staged: Data, arrived: Data) throws -> TurnWire.StagedFate {
+        var out: Int32 = -1
+        let rc: Int32 = staged.withUnsafeBytes { s in
+            arrived.withUnsafeBytes { a in
+                fio_msg_staged_fate(s.bindMemory(to: UInt8.self).baseAddress, Int32(staged.count),
+                                    a.bindMemory(to: UInt8.self).baseAddress, Int32(arrived.count),
+                                    &out)
+            }
+        }
+        guard rc == 0, let fate = TurnWire.StagedFate(rawValue: out) else {
+            throw MessageEnvelope.Failure.damaged(code: Int(fio_last_msg_error()))
+        }
+        return fate
     }
 
     // ROUND 9 (owner): the Swift Rule-R binding (`rebase(pendingRound:seat:

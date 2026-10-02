@@ -205,10 +205,25 @@ extension MessageTableView {
     }
 
     private static var lastMarkTrace: [Int: String] = [:]
+
+    /// WHAT EACH SEAT'S ROLE MARK HAS DRAWN, in order, one entry per change
+    /// ("sword", "check", "shield", "-"), and the roles the board drew them from
+    /// on its latest paint. A test probe and nothing else: written only by
+    /// `traceMark`, which every seat's mark already reports through, so reading
+    /// it changes nothing the board does. It is how a test asks "what is the
+    /// board SHOWING at rest" of a mounted board whose ledger is private state
+    /// (LiveArrivalRoleMarkTests), and a mark that appears twice in one history
+    /// is a mark that animated back to where it had been.
+    static private(set) var drawnMarks: [Int: [String]] = [:]
+    static private(set) var drawnRoles: RoleState?
+    static func resetDrawnMarks() { drawnMarks = [:]; drawnRoles = nil; lastMarkTrace = [:] }
+
     static func traceMark(seat: Int, defender: Bool, attacker: Bool, good: Bool,
                           out: Bool, flying: Bool, roles: RoleState,
                           battles: Int, sweep: Int) {
         let mark = good ? "check" : defender ? "shield" : attacker ? "sword" : "-"
+        drawnRoles = roles
+        if drawnMarks[seat]?.last != mark { drawnMarks[seat, default: []].append(mark) }
         let line = "mark s\(seat)=\(mark)\(flying ? " (flying)" : "")"
             + " [def=\(defender) atk=\(attacker) good=\(good) out=\(out)]"
             + " roles=d\(roles.defender) fa\(roles.firstAttacker) g\(roles.goodMask)"

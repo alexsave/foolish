@@ -226,7 +226,14 @@ extension MessageTableView {
     /// per log entry, using the same `playStep`/`animator.play` machinery the
     /// interactive bout-end sequence uses (so HARNESS_AUTOGAME's
     /// `BoardAnimator.isSequencing` wait still covers it).
-    func replayLastMoveOnOpen(_ view: GameView) {
+    ///
+    /// Returns whether it STARTED A SEQUENCE - the kernel's stream, or the
+    /// genesis deal's fallback. That answer is what decides who owns the role
+    /// marks for this view change (a sequence syncs them as its closing beat;
+    /// otherwise the board's `onChange` must), so it has to be the truth about
+    /// what ran rather than "this was an open". See `opensEmptyWithRoleSync`.
+    @discardableResult
+    func replayLastMoveOnOpen(_ view: GameView) -> Bool {
         AnimLog.say("openReplay events=\(controller.openReplayEvents.count) genesis=\(controller.isGenesis)")
         // The whole open-replay is now the KERNEL's evwire for the last move
         // (controller.openReplayEvents, resolved in begin()). A genesis deal's
@@ -284,10 +291,13 @@ extension MessageTableView {
                         self.myDrawFlights(hand, laidOut: self.laidOutHandNow(view), lastChance: lastChance) }
                     if view.isOver, mySeq == animSequenceToken { settleResults() }
                 }
-                return
+                return true
             }
             if view.isOver { showResults = true }   // note 39c: nothing to animate
-            return
+            // NO SEQUENCE. Note 2: a good that does not close the bout (three
+            // or more seats) is a legitimately empty stream whose whole move is
+            // a role mark - so whoever called this must sync the roles itself.
+            return false
         }
 
         // ROUND 21: TAKE THE MARKS OFF `pendingRoles` AND ONTO STATE, here and
@@ -417,5 +427,6 @@ extension MessageTableView {
             guard myEpoch == arrivalEpoch else { return }
             await runEventStream(events, finalView: view, openReplay: true, veiledAt: veiledAt)
         }
+        return true
     }
 }

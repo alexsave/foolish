@@ -2933,7 +2933,14 @@ static void print_goodwait(int np) {
 // `passing` chooses the VARIANT the game is played (and sealed) under, so the
 // rig can pose "a podkidnoy game that has just ended" - the state a rematch has
 // to carry its rules out of.
-static void print_endgame(int np, int passing, int arrival) {
+typedef struct {
+    unsigned char wire[ENV_CAP];
+    int n;
+    MsgEnvelope e;              // the sealed header (its body pointer is stale)
+    int fool, out_order[8], n_out;
+} EndgameSeed;
+
+static int endgame_seal(int np, int passing, int arrival, EndgameSeed *out) {
     static unsigned char body[1024];
     static Game scratch;
     static LegalMoves ml;
@@ -2957,8 +2964,10 @@ static void print_endgame(int np, int passing, int arrival) {
 
         int last_actor = g.first_attacker;
         int out_order[8], n_out = 0;
+        int before_last = MSG_NO_BASE;   // the log mark the final move was made on
         for (int step = 0; step < 400; step++) {
             if (game_done(&g) >= 0 || g.status != GAME_STATUS_PLAYING) break;
+            before_last = g.num_logs;
             int seat = -1, pick = -1;
             const int start = (int)(rnd() % (uint32_t)np);
             for (int t = 0; t < np && seat < 0; t++) {
@@ -3000,30 +3009,69 @@ static void print_endgame(int np, int passing, int arrival) {
 
         MsgEnvelope e;
         env_init(&e, seed, np);
-        // `arrival`: seal as LIVE, not FINISHED, so a human opens this one onto
-        // a board still "playing" and watches the FINAL move replay and the
-        // game-over screen arrive after it - as opposed to --endgame's FINISHED
-        // phase, which opens straight onto the static end screen with nothing
-        // to animate. Same search, same fool, two different bubbles.
-        e.phase = arrival ? MSG_PHASE_LIVE : MSG_PHASE_FINISHED;
+        // `arrival`: the bubble the FINAL move's phone sends - FINISHED, like
+        // every finished chain, but sealed on the log mark the final move was
+        // made on, so its claim names that move and an open (REPLAY=1) watches
+        // it replay and the game-over screen arrive after it. --endgame's
+        // bubble says nothing about what it added, so it opens straight onto
+        // the static end screen. Same search, same fool, two different bubbles.
+        // (This used to seal LIVE. msg_replay refuses a finished game sealed
+        // LIVE - MSG_EPHASE - so the extension had no chain to open and showed
+        // New game; test_endgame_seeds holds it.)
+        e.phase = MSG_PHASE_FINISHED;
         e.last_actor_seat = (uint8_t)last_actor;
         if (arrival) e.sent_at = (uint16_t)(time(NULL) & 0xffff);
-        if (msg_seal(&e, &g, MSG_NO_BASE, body, sizeof(body), &scratch) != MSG_EOK) continue;
-        unsigned char wire[ENV_CAP];
-        const int n = msg_encode(&e, wire, sizeof(wire));
-        if (n <= 0) continue;
+        if (msg_seal(&e, &g, arrival ? before_last : MSG_NO_BASE, body, sizeof(body),
+                     &scratch) != MSG_EOK) continue;
+        out->n = msg_encode(&e, out->wire, sizeof(out->wire));
+        if (out->n <= 0) continue;
+        out->e = e;
+        out->fool = fool;
+        out->n_out = n_out;
+        memcpy(out->out_order, out_order, sizeof(out_order));
+        return 1;
+    }
+    return 0;
+}
 
-        for (int i = 0; i < n; i++) printf("%02x", wire[i]);
-        printf("\n");
-        fprintf(stderr, "endgame: np=%d %s fool=seat %d turn=%d round=%d (%d bytes) phase=%s",
-                np, passing ? "perevodnoy" : "podkidnoy", fool, e.turn, e.round, n,
-                arrival ? "LIVE(arrival)" : "FINISHED");
-        fprintf(stderr, " rank=");
-        for (int r = 0; r < n_out; r++) fprintf(stderr, "%s%d", r ? "," : "", out_order[r]);
-        fprintf(stderr, "\n");
+static void print_endgame(int np, int passing, int arrival) {
+    static EndgameSeed s;
+    if (!endgame_seal(np, passing, arrival, &s)) {
+        fprintf(stderr, "no %dp endgame found\n", np);
         return;
     }
-    fprintf(stderr, "no %dp endgame found\n", np);
+    for (int i = 0; i < s.n; i++) printf("%02x", s.wire[i]);
+    printf("\n");
+    fprintf(stderr, "endgame: np=%d %s fool=seat %d turn=%d round=%d (%d bytes) phase=%s",
+            np, passing ? "perevodnoy" : "podkidnoy", s.fool, s.e.turn, s.e.round, s.n,
+            arrival ? "FINISHED(arrival)" : "FINISHED");
+    fprintf(stderr, " rank=");
+    for (int r = 0; r < s.n_out; r++) fprintf(stderr, "%s%d", r ? "," : "", s.out_order[r]);
+    fprintf(stderr, "\n");
+}
+
+// The --endgame-arrival seed is a bubble a phone could have sent: it decodes,
+// it replays (msg_replay refuses a finished game sealed LIVE, MSG_EPHASE, and
+// the extension then had no chain to open and showed New game), and its claim
+// leaves the final move to animate. Same for --endgame, minus the claim.
+static void test_endgame_seeds(void) {
+    static EndgameSeed s;
+    static Game rg;
+    for (int np = 2; np <= 4; np++) {
+        for (int arrival = 0; arrival < 2; arrival++) {
+            CHECK(endgame_seal(np, 1, arrival, &s), "endgame seed %dp arrival=%d: none found", np, arrival);
+            MsgEnvelope d;
+            CHECK(msg_decode(s.wire, s.n, &d) == MSG_EOK, "endgame seed %dp arrival=%d: decode", np, arrival);
+            const int rc = msg_replay(&d, &rg);
+            CHECK(rc == MSG_EOK, "endgame seed %dp arrival=%d: the seed does not replay (%d), so "
+                  "the extension opens New game", np, arrival, rc);
+            if (!arrival) continue;
+            const int claim = msg_atoms_before_claim(&d);
+            CHECK(claim >= 0 && claim < d.turn,
+                  "endgame-arrival %dp: claim %d of %d atoms leaves no final move to animate",
+                  np, claim, d.turn);
+        }
+    }
 }
 
 // ---------- --lastdefense: the cover that ENDS the bout --------------------
@@ -4266,41 +4314,41 @@ static void test_turn_controller(void) {
     // base where it stood - that un-plays the staged move, and the board then
     // reads its own table clearing as a bout end and animates the bubble BEFORE
     // the one just sent.
-    CHECK(msg_turn_send_verdict(1, 0, 1, 0, -1, -1) == MSG_TURN_SEND_DECODE,
+    CHECK(msg_turn_send_verdict(1, 0, 1, 0, -1, -1, -1, -1) == MSG_TURN_SEND_DECODE,
           "staged, bytesless: our sealed chain is the bubble and it is ours to decode");
-    CHECK(msg_turn_send_verdict(1, 0, 1, 0, 1, 1) == MSG_TURN_SEND_REBASE, "…and to rebase onto");
+    CHECK(msg_turn_send_verdict(1, 0, 1, 0, 1, 1, -1, -1) == MSG_TURN_SEND_REBASE, "…and to rebase onto");
     // 1.0(36): the signal arrives with a STALE payload. It took the refusal
     // below instead, which stranded the withheld settlement and left the staged
     // move to be red-retracted by the next arrival ("Somehow this caused an UNDO
     // animation of the previous pickup").
-    CHECK(msg_turn_send_verdict(1, 1, 1, 0, -1, -1) == MSG_TURN_SEND_DECODE,
+    CHECK(msg_turn_send_verdict(1, 1, 1, 0, -1, -1, -1, -1) == MSG_TURN_SEND_DECODE,
           "staged with a STALE host payload is not foreign - ours substitutes");
-    CHECK(msg_turn_send_verdict(1, 1, 1, 0, 1, 1) == MSG_TURN_SEND_REBASE, "…and rebases");
-    CHECK(msg_turn_send_verdict(0, 1, 1, 0, -1, -1) == MSG_TURN_SEND_FOREIGN,
+    CHECK(msg_turn_send_verdict(1, 1, 1, 0, 1, 1, -1, -1) == MSG_TURN_SEND_REBASE, "…and rebases");
+    CHECK(msg_turn_send_verdict(0, 1, 1, 0, -1, -1, -1, -1) == MSG_TURN_SEND_FOREIGN,
           "UNSTAGED with a payload that is not the chain we sealed - a reload's chain, "
           "left alone");
-    CHECK(msg_turn_send_verdict(1, 0, 0, 0, -1, -1) == MSG_TURN_SEND_BLIND,
+    CHECK(msg_turn_send_verdict(1, 0, 0, 0, -1, -1, -1, -1) == MSG_TURN_SEND_BLIND,
           "staged with no chain at all: KEEP the moves - dropping them without a base to "
           "replace them walks the board back by the move just watched");
-    CHECK(msg_turn_send_verdict(0, 0, 0, 0, -1, -1) == MSG_TURN_SEND_NOOP,
+    CHECK(msg_turn_send_verdict(0, 0, 0, 0, -1, -1, -1, -1) == MSG_TURN_SEND_NOOP,
           "nothing staged and no bytes was not a send of ours");
-    CHECK(msg_turn_send_verdict(0, 0, 1, 0, -1, -1) == MSG_TURN_SEND_NOOP,
+    CHECK(msg_turn_send_verdict(0, 0, 1, 0, -1, -1, -1, -1) == MSG_TURN_SEND_NOOP,
           "a sealed chain nobody sent is still not a send");
-    CHECK(msg_turn_send_verdict(1, 1, 0, 0, 0, 1) == MSG_TURN_SEND_UNREADABLE,
+    CHECK(msg_turn_send_verdict(1, 1, 0, 0, 0, 1, -1, -1) == MSG_TURN_SEND_UNREADABLE,
           "bytes that will not decode leave the board on its staged move");
-    CHECK(msg_turn_send_verdict(0, 1, 0, 0, 1, 1) == MSG_TURN_SEND_REBASE,
+    CHECK(msg_turn_send_verdict(0, 1, 0, 0, 1, 1, -1, -1) == MSG_TURN_SEND_REBASE,
           "unstaged with a host payload and nothing sealed - no opinion, so adopt it");
     // 1.0(37): …and THAT is the hole another game's draft comes through. A
     // thread holds many games, a staged bubble is a draft that survives the
     // human tapping away to one of them, and the send signal for it reaches
     // whatever board is on screen. Same facts as the line above - unstaged,
     // host bytes, nothing sealed - and only the game id separates them.
-    CHECK(msg_turn_send_verdict(0, 1, 0, 0, 1, 0) == MSG_TURN_SEND_OTHERGAME,
+    CHECK(msg_turn_send_verdict(0, 1, 0, 0, 1, 0, -1, -1) == MSG_TURN_SEND_OTHERGAME,
           "a chain for a DIFFERENT GAME is never this board's to adopt - a rebase would "
           "decode it MASKED FOR THIS BOARD'S SEAT, which over there is somebody else");
-    CHECK(msg_turn_send_verdict(1, 1, 1, 1, 1, 0) == MSG_TURN_SEND_OTHERGAME,
+    CHECK(msg_turn_send_verdict(1, 1, 1, 1, 1, 0, -1, -1) == MSG_TURN_SEND_OTHERGAME,
           "…and staging our own move on this board does not make another game's chain ours");
-    CHECK(msg_turn_send_verdict(0, 1, 0, 0, 0, 0) == MSG_TURN_SEND_UNREADABLE,
+    CHECK(msg_turn_send_verdict(0, 1, 0, 0, 0, 0, -1, -1) == MSG_TURN_SEND_UNREADABLE,
           "bytes that will not decode are unreadable whoever they belong to - the game "
           "test sits UNDER the decode test, because there is no game id to compare yet");
 
@@ -4311,7 +4359,7 @@ static void test_turn_controller(void) {
     for (int host = 0; host < 2; host++)
     for (int sealed = 0; sealed < 2; sealed++)
     for (int same = 0; same < 2; same++) {
-        const int first = msg_turn_send_verdict(staged, host, sealed, same, -1, -1);
+        const int first = msg_turn_send_verdict(staged, host, sealed, same, -1, -1, -1, -1);
         const int src = msg_turn_sent_source(staged, host, sealed);
         CHECK(!(staged && first == MSG_TURN_SEND_FOREIGN),
               "FOREIGN with moves staged (%d/%d/%d/%d) - the send path can only refuse a "
@@ -4327,14 +4375,64 @@ static void test_turn_controller(void) {
               "the game is never asked about before the decode (%d/%d/%d/%d)",
               staged, host, sealed, same);
         if (first != MSG_TURN_SEND_DECODE) continue;
-        CHECK(msg_turn_send_verdict(staged, host, sealed, same, 1, 1) == MSG_TURN_SEND_REBASE,
+        CHECK(msg_turn_send_verdict(staged, host, sealed, same, 1, 1, -1, -1) == MSG_TURN_SEND_REBASE,
               "a decode that reads rebases (%d/%d/%d/%d)", staged, host, sealed, same);
-        CHECK(msg_turn_send_verdict(staged, host, sealed, same, 0, 1) == MSG_TURN_SEND_UNREADABLE,
+        CHECK(msg_turn_send_verdict(staged, host, sealed, same, 0, 1, -1, -1) == MSG_TURN_SEND_UNREADABLE,
               "a decode that fails keeps the board (%d/%d/%d/%d)", staged, host, sealed, same);
-        CHECK(msg_turn_send_verdict(staged, host, sealed, same, 1, 0) == MSG_TURN_SEND_OTHERGAME,
+        CHECK(msg_turn_send_verdict(staged, host, sealed, same, 1, 0, -1, -1) == MSG_TURN_SEND_OTHERGAME,
               "…and a decode that reads ANOTHER GAME is refused from every set of facts "
               "that owed a decode at all (%d/%d/%d/%d)", staged, host, sealed, same);
+        // An arrival that raced the send (notes 4/5). The ordinary send was
+        // built on the board's own chain and rebases; bytes the board already
+        // holds or has moved past, and a sibling Rule P ranks below the
+        // arrival, leave the board where the arrival put it.
+        CHECK(msg_turn_send_verdict(staged, host, sealed, same, 1, 1, MSG_FATE_STANDS, -1)
+              == MSG_TURN_SEND_REBASE, "the ordinary send rebases (%d/%d/%d/%d)",
+              staged, host, sealed, same);
+        CHECK(msg_turn_send_verdict(staged, host, sealed, same, 1, 1, MSG_FATE_LANDED, -1)
+              == MSG_TURN_SEND_OVERTAKEN, "the board is already past the sent bytes (%d/%d/%d/%d)",
+              staged, host, sealed, same);
+        CHECK(msg_turn_send_verdict(staged, host, sealed, same, 1, 1, MSG_FATE_SUPERSEDED, 0)
+              == MSG_TURN_SEND_OVERTAKEN, "a sibling the arrival beats is not adopted (%d/%d/%d/%d)",
+              staged, host, sealed, same);
+        CHECK(msg_turn_send_verdict(staged, host, sealed, same, 1, 1, MSG_FATE_SUPERSEDED, 1)
+              == MSG_TURN_SEND_REBASE, "a sibling that beats the arrival is where the thread "
+              "goes (%d/%d/%d/%d)", staged, host, sealed, same);
+        CHECK(msg_turn_send_verdict(staged, host, sealed, same, 1, 1, MSG_FATE_SUPERSEDED, -1)
+              == MSG_TURN_SEND_REBASE, "Rule P not asked is no refusal (%d/%d/%d/%d)",
+              staged, host, sealed, same);
+        CHECK(msg_turn_send_verdict(staged, host, sealed, same, 1, 0, MSG_FATE_LANDED, 0)
+              == MSG_TURN_SEND_OTHERGAME, "another game is refused as such, first (%d/%d/%d/%d)",
+              staged, host, sealed, same);
+        CHECK(msg_turn_send_verdict(staged, host, sealed, same, 0, 1, MSG_FATE_LANDED, 0)
+              == MSG_TURN_SEND_UNREADABLE, "unreadable bytes have no fate (%d/%d/%d/%d)",
+              staged, host, sealed, same);
     }
+    CHECK(msg_turn_send_verdict(0, 0, 0, 0, -1, -1, MSG_FATE_LANDED, 0) == MSG_TURN_SEND_NOOP,
+          "no bytes, no send, whatever an arrival did");
+
+    // ---- the input field, after an arrival was adopted ----
+    CHECK(msg_turn_field_after_arrival(watching, -1) == MSG_TURN_FIELD_KEEP,
+          "nothing of mine in the field: nothing to overwrite");
+    CHECK(msg_turn_field_after_arrival(watching | MSG_TURN_STAGED, MSG_FATE_SUPERSEDED)
+          == MSG_TURN_FIELD_NOTHING,
+          "a staged move the arrival does not carry is overwritten with the NOTHING bubble - the "
+          "field may never hold a move the board is not showing");
+    CHECK(msg_turn_field_after_arrival(watching, MSG_FATE_SUPERSEDED) == MSG_TURN_FIELD_NOTHING,
+          "…and so is a stale NOTHING bubble an Undo left there");
+    CHECK(msg_turn_field_after_arrival(live | MSG_TURN_STAGED, MSG_FATE_SUPERSEDED)
+          == MSG_TURN_FIELD_NOTHING, "with or without a board mounted");
+    CHECK(msg_turn_field_after_arrival(watching | MSG_TURN_STAGED, MSG_FATE_STANDS)
+          == MSG_TURN_FIELD_NOTHING,
+          "an arrival that adds nothing still moved the base, and the staged bubble still names "
+          "the old parent - the adopt dropped the move, so the field must too");
+    CHECK(msg_turn_field_after_arrival(watching | MSG_TURN_STAGED, MSG_FATE_LANDED)
+          == MSG_TURN_FIELD_KEEP, "the arrival carries my bubble: it went out, the field is empty");
+    CHECK(msg_turn_field_after_arrival(watching | MSG_TURN_STAGED | MSG_TURN_SENDING,
+                                       MSG_FATE_SUPERSEDED) == MSG_TURN_FIELD_KEEP,
+          "Send was pressed: the bubble is on its way, and the send verdict owns the rest");
+    CHECK(msg_turn_field_after_arrival(MSG_TURN_GENESIS | MSG_TURN_READY, MSG_FATE_SUPERSEDED)
+          == MSG_TURN_FIELD_KEEP, "a genesis has no NOTHING bubble to seal");
 
     // ---- what is withheld ----
     CHECK(msg_turn_hold_state(4, 2) == 1,
@@ -4378,6 +4476,793 @@ static void test_turn_controller(void) {
     CHECK(p.raise_veil == 0,
           "a veil nothing will take down must never go up - the board's view-change "
           "handler is its only consumer, and an unchanged board fires none");
+}
+
+// ---------- where the replay of an arriving chain starts ------------------
+//
+// msg_open_boundary, the kernel's answer to "which atoms of this arriving
+// chain has the board already shown". Each fixture is a pair of REAL bubbles,
+// sealed the way a phone seals them (msg_seal with the log mark of the bubble
+// it continues), and each case pins the boundary against the atoms themselves.
+//
+// The bug this exists for: the board used the previous chain's TURN as a floor.
+// A pending good is an atom only until something follows it, so after pending
+// goods that floor overshoots the arriving chain and nothing animates - every
+// bout-closing good and every move after a pending good, at 3+ seats.
+// `old_floor` below is that rule, kept so each case can say the old answer
+// would have animated nothing.
+
+typedef struct {
+    unsigned char w[ENV_CAP];
+    int n;
+    MsgEnvelope e;   // borrows w: an OBubble is never copied
+    int logs;        // the log mark adopting this bubble leaves
+} OBubble;
+
+static int ob_seal(OBubble *b, const Game *g, const uint8_t *seed, int np,
+                   uint64_t game_id, int base_logs) {
+    static unsigned char body[2048];
+    static Game scratch;
+    MsgEnvelope e;
+    env_init(&e, seed, np);
+    e.game_id = game_id;
+    const int over = game_done(g) >= 0 || g->status == GAME_STATUS_GAME_OVER;
+    e.phase = over ? MSG_PHASE_FINISHED : MSG_PHASE_LIVE;
+    if (msg_seal(&e, g, base_logs, body, sizeof(body), &scratch) != MSG_EOK) return 0;
+    b->n = msg_encode(&e, b->w, sizeof(b->w));
+    if (b->n <= 0) return 0;
+    if (msg_decode(b->w, b->n, &b->e) != MSG_EOK) return 0;
+    b->logs = g->num_logs;
+    return 1;
+}
+
+static int ob_boundary(const OBubble *shown, const OBubble *arriving) {
+    static unsigned char scratch[MSG_OPEN_SCRATCH];
+    return msg_open_boundary(shown ? &shown->e : NULL, &arriving->e, scratch, sizeof(scratch));
+}
+
+// The rule this replaces: max(claim, the previous chain's turn).
+static int old_floor(const OBubble *shown, const OBubble *arriving) {
+    const int claim = msg_atoms_before_claim(&arriving->e);
+    return shown->e.turn > claim ? shown->e.turn : claim;
+}
+
+// The kind of the arriving chain's action atom at `at` (-1 past the end).
+static int ob_atom_kind(const OBubble *b, int at) {
+    static DAtoms d;
+    if (datoms_of(b->e.actions, b->e.actions_len, &d) < 0) return -2;
+    return at >= 0 && at < d.n ? d.a[at].kind : -1;
+}
+
+static void og_start(Game *g, const uint8_t *seed, int np) {
+    game_set_deal_seed_bytes(seed, MSG_SEED_LEN);
+    memset(g, 0, sizeof(*g));
+    g->num_players = (int8_t)np;
+    for (int i = 0; i < np; i++) {
+        g->players[i].status = PLAYER_STATUS_READY;
+        g->players[i].strategy_key = 0;
+    }
+    start_game(g);
+}
+
+static int og_live(const Game *g) {
+    return game_done(g) < 0 && g->status == GAME_STATUS_PLAYING;
+}
+
+// Find a seat holding a legal move of `type` (single-card when `single`), the
+// scan starting at a random seat. Returns the seat, or -1.
+static int og_find(const Game *g, int type, int single, LegalMove *out) {
+    static LegalMoves ml;
+    const int np = g->num_players;
+    const int start = (int)(rnd() % (uint32_t)np);
+    for (int t = 0; t < np; t++) {
+        const int s = (start + t) % np;
+        if (g->players[s].status != PLAYER_STATUS_IN) continue;
+        calculate_legal_moves(g, s, &ml);
+        for (int i = 0; i < ml.n; i++) {
+            if (ml.moves[i].type != type) continue;
+            if (single && ml.moves[i].n_cards != 1) continue;
+            *out = ml.moves[i];
+            return s;
+        }
+    }
+    return -1;
+}
+
+// One random legal move by any seat that may act. 0 when nobody can.
+static int og_random_step(Game *g) {
+    static LegalMoves ml;
+    const int np = g->num_players;
+    const int start = (int)(rnd() % (uint32_t)np);
+    for (int t = 0; t < np; t++) {
+        const int s = (start + t) % np;
+        if (g->players[s].status != PLAYER_STATUS_IN) continue;
+        calculate_legal_moves(g, s, &ml);
+        int acts = 0;
+        for (int i = 0; i < ml.n; i++) acts += ml.moves[i].type != MOVE_WAIT;
+        if (!acts) continue;
+        int k = (int)(rnd() % (uint32_t)acts);
+        for (int i = 0; i < ml.n; i++) {
+            if (ml.moves[i].type == MOVE_WAIT) continue;
+            if (k-- == 0) return legal_move_apply(g, s, &ml.moves[i]) ? 1 : 0;
+        }
+    }
+    return 0;
+}
+
+static int og_last_log(const Game *g) {
+    return g->num_logs > 0 ? g->logs[g->num_logs - 1].log_type : -1;
+}
+
+static const int OB_SEATS[] = { 2, 3, 4 };
+
+// A. THE BOUT-CLOSING GOOD OVER PENDING GOODS. The attackers say good one
+// bubble at a time; the shown chain is the one with every good but the last
+// pending, and the arriving one closes the bout (its goods fold into one
+// round_end atom). At 2 seats the one attacker's good closes at once, so there
+// is no pending good: the case is the plain covered table, and the old floor
+// was right there - which is why every 2p test passed.
+static void ob_closing_good(int *posed) {
+    static Game g, s0;
+    static OBubble bub[MAX_PLAYERS + 1];
+    for (int pi = 0; pi < 3; pi++) {
+        const int np = OB_SEATS[pi];
+        int found = 0;
+        for (uint32_t gi = 0; gi < 400 && found < 6; gi++) {
+            uint8_t seed[MSG_SEED_LEN];
+            seed_fill(seed, 7100u + gi * 37u + (uint32_t)np);
+            g_rng = 5300u + gi * 11u + (uint32_t)np;
+            og_start(&g, seed, np);
+            const uint64_t gid = 0xB0A0ULL + gi;
+            for (int step = 0; step < 120 && og_live(&g) && found < 6; step++) {
+                // A table with something on it, every attack covered, no good
+                // pending yet: the start of a good run.
+                if (g.num_battles > 0 && uncovered_count(&g) == 0 && og_last_log(&g) != LOG_GOOD) {
+                    game_clone(&s0, &g);
+                    if (!ob_seal(&bub[0], &s0, seed, np, gid, MSG_NO_BASE)) break;
+                    int k = 0, closed = 0;
+                    while (k < np && og_live(&g)) {
+                        LegalMove m;
+                        const int seat = og_find(&g, MOVE_GOOD, 0, &m);
+                        if (seat < 0 || !legal_move_apply(&g, seat, &m)) break;
+                        k++;
+                        if (!ob_seal(&bub[k], &g, seed, np, gid, bub[k - 1].logs)) break;
+                        if (g.num_battles == 0) { closed = 1; break; }
+                    }
+                    const int pending = k - 1;   // goods on the shown chain
+                    if (closed && (np == 2 ? pending == 0 : pending >= 1)) {
+                        const OBubble *shown = &bub[k - 1], *arr = &bub[k];
+                        const int b = ob_boundary(shown, arr);
+                        const int claim = msg_atoms_before_claim(&arr->e);
+                        CHECK(b == claim,
+                              "closing good %dp (%d pending): boundary %d, want the sender's %d",
+                              np, pending, b, claim);
+                        CHECK(b < arr->e.turn,
+                              "closing good %dp (%d pending): boundary %d leaves nothing of %d atoms to animate",
+                              np, pending, b, arr->e.turn);
+                        CHECK(ob_atom_kind(arr, b) == REPLAY_ATOM_ROUND_END,
+                              "closing good %dp: the first animated atom is %d, not the round end",
+                              np, ob_atom_kind(arr, b));
+                        if (np > 2)
+                            CHECK(old_floor(shown, arr) >= arr->e.turn,
+                                  "closing good %dp: the old floor (%d) animated this too, so the fixture "
+                                  "does not pose the bug", np, old_floor(shown, arr));
+                        found++;
+                        posed[pi]++;
+                    }
+                    game_clone(&g, &s0);
+                    // Move past this table so the next look is a new one.
+                    if (!og_random_step(&g)) break;
+                    continue;
+                }
+                if (!og_random_step(&g)) break;
+            }
+        }
+        CHECK(found > 0, "closing good %dp: no fixture built", np);
+    }
+}
+
+// B. A MOVE AFTER A PENDING GOOD: a throw-in, a cover, a transfer or a pickup
+// lands while an attacker's good is pending. The good stops being an atom, so
+// the child is no longer than the chain the board showed.
+static void ob_after_good(int posed[3][4]) {
+    static Game g, s0, s1;
+    static OBubble shown, arr, earlier;
+    static const int kinds[4] = { MOVE_ATTACK, MOVE_COVER, MOVE_PASS, MOVE_PICKUP };
+    static const int atom_of[4] = { REPLAY_ATOM_ATTACK, REPLAY_ATOM_COVER,
+                                    REPLAY_ATOM_PASS, REPLAY_ATOM_PICKUP };
+    for (int pi = 1; pi < 3; pi++) {   // a pending good needs 3+ seats
+        const int np = OB_SEATS[pi];
+        for (uint32_t gi = 0; gi < 120; gi++) {
+            uint8_t seed[MSG_SEED_LEN];
+            seed_fill(seed, 9100u + gi * 53u + (uint32_t)np);
+            g_rng = 6100u + gi * 7u + (uint32_t)np;
+            og_start(&g, seed, np);
+            const uint64_t gid = 0xC0A0ULL + gi;
+            // The bubble before the good, then the good on its own bubble.
+            int prev_logs = MSG_NO_BASE;
+            for (int step = 0; step < 160 && og_live(&g); step++) {
+                game_clone(&s0, &g);
+                if (!og_random_step(&g)) break;
+                if (!(og_last_log(&g) == LOG_GOOD && g.num_battles > 0)) continue;
+                if (!ob_seal(&earlier, &s0, seed, np, gid, prev_logs)) break;
+                if (!ob_seal(&shown, &g, seed, np, gid, earlier.logs)) break;
+                for (int ki = 0; ki < 4; ki++) {
+                    game_clone(&s1, &g);
+                    LegalMove m;
+                    const int seat = og_find(&s1, kinds[ki], 0, &m);
+                    if (seat < 0 || !legal_move_apply(&s1, seat, &m)) continue;
+                    if (!ob_seal(&arr, &s1, seed, np, gid, shown.logs)) continue;
+                    const int b = ob_boundary(&shown, &arr);
+                    const int claim = msg_atoms_before_claim(&arr.e);
+                    CHECK(b == claim, "after good %dp kind %d: boundary %d, want the sender's %d",
+                          np, kinds[ki], b, claim);
+                    CHECK(b < arr.e.turn, "after good %dp kind %d: boundary %d animates nothing of %d",
+                          np, kinds[ki], b, arr.e.turn);
+                    CHECK(ob_atom_kind(&arr, b) == atom_of[ki],
+                          "after good %dp kind %d: first animated atom is %d", np, kinds[ki],
+                          ob_atom_kind(&arr, b));
+                    CHECK(old_floor(&shown, &arr) >= arr.e.turn,
+                          "after good %dp kind %d: the old floor animated this too", np, kinds[ki]);
+
+                    // The same pair the other way round is an OLDER chain
+                    // arriving on a board that is ahead of it: it is all
+                    // shown, so nothing animates. And a re-delivery of the
+                    // chain on screen animates nothing either.
+                    CHECK(ob_boundary(&arr, &shown) == shown.e.turn,
+                          "after good %dp: an older chain opened at %d of %d",
+                          np, ob_boundary(&arr, &shown), shown.e.turn);
+                    CHECK(ob_boundary(&arr, &arr) == arr.e.turn,
+                          "after good %dp: a re-delivery opened at %d of %d",
+                          np, ob_boundary(&arr, &arr), arr.e.turn);
+                    posed[pi][ki]++;
+                }
+                // TWO GOODS RACED off one parent: another attacker's good,
+                // sealed on the table the shown good was said over. The board
+                // showed the first; the second is new and must animate (its
+                // role mark), from the shared parent.
+                {
+                    static LegalMoves ml;
+                    const int first = g.logs[g.num_logs - 1].player_idx;
+                    for (int s = 0; s < np; s++) {
+                        if (s == first || s0.players[s].status != PLAYER_STATUS_IN) continue;
+                        calculate_legal_moves(&s0, s, &ml);
+                        int gi2 = -1;
+                        for (int i = 0; i < ml.n && gi2 < 0; i++)
+                            if (ml.moves[i].type == MOVE_GOOD) gi2 = i;
+                        if (gi2 < 0) continue;
+                        game_clone(&s1, &s0);
+                        if (!legal_move_apply(&s1, s, &ml.moves[gi2]) || s1.num_battles == 0) continue;
+                        if (!ob_seal(&arr, &s1, seed, np, gid, earlier.logs)) continue;
+                        const int b = ob_boundary(&shown, &arr);
+                        CHECK(b == msg_atoms_before_claim(&arr.e) && b < arr.e.turn,
+                              "raced goods %dp: boundary %d of %d (claim %d)", np, b, arr.e.turn,
+                              msg_atoms_before_claim(&arr.e));
+                        CHECK(ob_atom_kind(&arr, b) == REPLAY_ATOM_GOOD,
+                              "raced goods %dp: the raced good does not animate", np);
+                        posed[0][pi]++;
+                        break;
+                    }
+                }
+                prev_logs = shown.logs;
+                break;   // one pending good per deal is plenty
+            }
+        }
+    }
+    for (int pi = 1; pi < 3; pi++) {
+        CHECK(posed[pi][0] > 0, "after good %dp: no throw-in posed", OB_SEATS[pi]);
+        CHECK(posed[pi][1] > 0, "after good %dp: no cover posed", OB_SEATS[pi]);
+        CHECK(posed[pi][3] > 0, "after good %dp: no pickup posed", OB_SEATS[pi]);
+        CHECK(posed[0][pi] > 0, "raced goods %dp: none posed", OB_SEATS[pi]);
+    }
+}
+
+// C. THE STALE SENDER (ReplayFloorTests on the phone): the defender covers,
+// sends, covers again and sends, but the second bubble claims BOTH covers.
+// The board already showed the first, so it must not fly again. Also: two
+// covers off the same table are SIBLINGS, and a sibling's move is new to a
+// board that showed the other one. And the cold open is never clamped.
+static void ob_stale_and_siblings(int *posed) {
+    static Game g, s0, s1, s2, sx;
+    static OBubble before, one, stale, honest, sib;
+    for (int pi = 0; pi < 3; pi++) {
+        const int np = OB_SEATS[pi];
+        int found = 0;
+        for (uint32_t gi = 0; gi < 600 && found < 6; gi++) {
+            uint8_t seed[MSG_SEED_LEN];
+            seed_fill(seed, 11300u + gi * 29u + (uint32_t)np);
+            g_rng = 8800u + gi * 13u + (uint32_t)np;
+            og_start(&g, seed, np);
+            const uint64_t gid = 0xD0A0ULL + gi;
+            for (int step = 0; step < 160 && og_live(&g); step++) {
+                if (uncovered_count(&g) >= 2) {
+                    LegalMove c1, c2, cx;
+                    game_clone(&s0, &g);
+                    const int d1 = og_find(&s0, MOVE_COVER, 1, &c1);
+                    if (d1 >= 0) {
+                        game_clone(&s1, &s0);
+                        if (legal_move_apply(&s1, d1, &c1) && uncovered_count(&s1) >= 1) {
+                            game_clone(&s2, &s1);
+                            const int d2 = og_find(&s2, MOVE_COVER, 1, &c2);
+                            if (d2 >= 0 && legal_move_apply(&s2, d2, &c2)
+                                && ob_seal(&before, &s0, seed, np, gid, MSG_NO_BASE)
+                                && ob_seal(&one, &s1, seed, np, gid, before.logs)
+                                && ob_seal(&stale, &s2, seed, np, gid, before.logs)
+                                && ob_seal(&honest, &s2, seed, np, gid, one.logs)) {
+                                const int sc = msg_atoms_before_claim(&stale.e);
+                                CHECK(sc == stale.e.turn - 2,
+                                      "stale %dp: the fixture's stale claim is %d of %d", np, sc, stale.e.turn);
+                                CHECK(ob_boundary(&one, &stale) == one.e.turn,
+                                      "stale %dp: boundary %d re-animates the cover already shown (want %d)",
+                                      np, ob_boundary(&one, &stale), one.e.turn);
+                                CHECK(ob_boundary(&one, &honest) == msg_atoms_before_claim(&honest.e),
+                                      "stale %dp: an honest sender's claim was moved", np);
+                                // Cold: no chain on screen, no clamp - the
+                                // sender's claim stands, both covers fly.
+                                CHECK(ob_boundary(NULL, &stale) == sc,
+                                      "stale %dp: a cold open was clamped to %d", np, ob_boundary(NULL, &stale));
+                                // A recording cut short can only clamp LESS.
+                                static unsigned char tiny[6];
+                                const int t = msg_open_boundary(&one.e, &stale.e, tiny, sizeof(tiny));
+                                CHECK(t >= sc && t <= one.e.turn,
+                                      "stale %dp: a short scratch answered %d outside [%d, %d]",
+                                      np, t, sc, one.e.turn);
+
+                                // A SIBLING: a different single cover off the
+                                // same table, by whichever seat holds one.
+                                static LegalMoves ml;
+                                calculate_legal_moves(&s0, d1, &ml);
+                                int have_sib = 0;
+                                for (int i = 0; i < ml.n && !have_sib; i++) {
+                                    if (ml.moves[i].type != MOVE_COVER || ml.moves[i].n_cards != 1) continue;
+                                    cx = ml.moves[i];
+                                    if (!memcmp(&cx.cards[0], &c1.cards[0], 1)
+                                        && !memcmp(&cx.attack_cards[0], &c1.attack_cards[0], 1)) continue;
+                                    game_clone(&sx, &s0);
+                                    if (legal_move_apply(&sx, d1, &cx)
+                                        && ob_seal(&sib, &sx, seed, np, gid, before.logs)) have_sib = 1;
+                                }
+                                if (have_sib) {
+                                    const int sb = ob_boundary(&one, &sib);
+                                    CHECK(sb == before.e.turn,
+                                          "sibling %dp: boundary %d, want the shared parent's %d",
+                                          np, sb, before.e.turn);
+                                    CHECK(ob_atom_kind(&sib, sb) == REPLAY_ATOM_COVER,
+                                          "sibling %dp: the sibling's cover does not animate", np);
+                                    posed[3 + pi]++;
+                                }
+                                found++;
+                                posed[pi]++;
+                                break;   // next deal
+                            }
+                        }
+                    }
+                }
+                if (!og_random_step(&g)) break;
+            }
+        }
+        CHECK(found > 0, "stale %dp: no fixture built", np);
+        CHECK(posed[3 + pi] > 0, "sibling %dp: no fixture built", np);
+    }
+}
+
+// D. THE EDGES: a chain with no body on screen, another game on screen, a
+// NOTHING reseal, and a sender that does not say (format 2).
+static void ob_edges(void) {
+    static Game g, h;
+    static OBubble dealt, first, other, nothing, nobase;
+    for (int pi = 0; pi < 3; pi++) {
+        const int np = OB_SEATS[pi];
+        uint8_t seed[MSG_SEED_LEN], seed2[MSG_SEED_LEN];
+        seed_fill(seed, 13900u + (uint32_t)np);
+        seed_fill(seed2, 14900u + (uint32_t)np);
+        g_rng = 4400u + (uint32_t)np;
+        og_start(&g, seed, np);
+        const uint64_t gid = 0xE0A0ULL + (uint64_t)np;
+        // The just-dealt table: the LIVE handoff's shape, no action atoms.
+        CHECK(ob_seal(&dealt, &g, seed, np, gid, 0), "edges %dp: dealt seal", np);
+        CHECK(dealt.e.turn == 0, "edges %dp: a dealt table sealed %d atoms", np, dealt.e.turn);
+        LegalMove m;
+        const int a = og_find(&g, MOVE_ATTACK, 0, &m);
+        CHECK(a >= 0 && legal_move_apply(&g, a, &m), "edges %dp: no opening attack", np);
+        CHECK(ob_seal(&first, &g, seed, np, gid, dealt.logs), "edges %dp: first seal", np);
+        CHECK(ob_boundary(&dealt, &first) == 0,
+              "edges %dp: the opening attack over a dealt table opened at %d",
+              np, ob_boundary(&dealt, &first));
+
+        // START ARRIVING ON A LOBBY ON SCREEN (#255: a started bubble's replay
+        // is its deal, one step, which the bridge plays only from atom 0). The
+        // lobby has no body and neither does the started chain, so nothing of
+        // it has been shown: the boundary is at most 0 (the claim, -1 "does not
+        // say", or the empty shared prefix), whether the lobby is the invite at
+        // capacity or the full table the last join left. The bridge
+        // (fio_replay_last_events_packed) plays a one-step chain's deal for
+        // either; anything above 0 would skip it.
+        {
+            static OBubble lobby;
+            const int caps[2] = { 8, np };
+            for (int c = 0; c < 2; c++) {
+                MsgEnvelope e;
+                env_init(&e, seed, caps[c]);
+                e.phase = MSG_PHASE_WAITING;
+                e.game_id = gid;
+                e.n_joins = (uint8_t)(c ? np : 1);
+                lobby.n = msg_encode(&e, lobby.w, sizeof(lobby.w));
+                CHECK(lobby.n > 0 && msg_decode(lobby.w, lobby.n, &lobby.e) == MSG_EOK,
+                      "edges %dp: lobby (cap %d) encode", np, caps[c]);
+                CHECK(ob_boundary(&lobby, &dealt) <= 0,
+                      "edges %dp: Start over a lobby of %d opened at %d, so its deal never plays",
+                      np, caps[c], ob_boundary(&lobby, &dealt));
+            }
+            CHECK(ob_boundary(NULL, &dealt) <= 0,
+                  "edges %dp: a started bubble opened cold at %d", np, ob_boundary(NULL, &dealt));
+        }
+
+        // NOTHING: the undo-to-empty reseal of the chain on screen.
+        CHECK(ob_seal(&nothing, &g, seed, np, gid, MSG_BASE_NOTHING), "edges %dp: nothing seal", np);
+        CHECK(nothing.e.n_new == MSG_NEW_NOTHING, "edges %dp: the reseal is not NOTHING", np);
+        CHECK(ob_boundary(&first, &nothing) == nothing.e.turn,
+              "edges %dp: a NOTHING reseal opened at %d of %d", np,
+              ob_boundary(&first, &nothing), nothing.e.turn);
+
+        // A sender that does not say: the claim is -1 (guess), and a board
+        // that showed the parent pins it to the parent's atoms.
+        CHECK(ob_seal(&nobase, &g, seed, np, gid, MSG_NO_BASE), "edges %dp: no-base seal", np);
+        CHECK(msg_atoms_before_claim(&nobase.e) == -1, "edges %dp: a no-base claim", np);
+        CHECK(ob_boundary(NULL, &nobase) == -1, "edges %dp: a cold no-base open was clamped", np);
+        CHECK(ob_boundary(&dealt, &nobase) == 0,
+              "edges %dp: a no-base chain over its own dealt table opened at %d",
+              np, ob_boundary(&dealt, &nobase));
+
+        // ANOTHER GAME on screen shares nothing: same seed but another id, and
+        // another seed under the same id.
+        og_start(&h, seed2, np);
+        CHECK(ob_seal(&other, &h, seed2, np, gid, 0), "edges %dp: other seal", np);
+        CHECK(ob_boundary(&other, &first) == msg_atoms_before_claim(&first.e),
+              "edges %dp: another deal clamped the boundary", np);
+        CHECK(ob_seal(&other, &g, seed, np, gid + 1, MSG_NO_BASE), "edges %dp: other id seal", np);
+        CHECK(ob_boundary(&other, &nobase) == -1,
+              "edges %dp: another game id clamped the boundary to %d", np, ob_boundary(&other, &nobase));
+    }
+}
+
+// E. THE MOVE THAT ENDS THE GAME, arriving on a board that showed the chain
+// before it. The arriving bubble is FINISHED and msg_replay now settles a
+// finished chain's status (game_settle_status), so this pins that the boundary
+// is still the sender's claim, that the final move is left to animate, and that
+// adopting the arrival rebuilds a game that is over.
+static void ob_game_ending(int *posed) {
+    static Game g, s0, rg;
+    static OBubble shown, arr;
+    for (int pi = 0; pi < 3; pi++) {
+        const int np = OB_SEATS[pi];
+        for (uint32_t gi = 0; gi < 60 && posed[pi] < 6; gi++) {
+            uint8_t seed[MSG_SEED_LEN];
+            seed_fill(seed, 17300u + gi * 41u + (uint32_t)np);
+            g_rng = 9900u + gi * 17u + (uint32_t)np;
+            og_start(&g, seed, np);
+            const uint64_t gid = 0xF0A0ULL + gi;
+            for (int step = 0; step < 2000 && og_live(&g); step++) {
+                game_clone(&s0, &g);
+                if (!og_random_step(&g)) break;
+                if (og_live(&g)) continue;
+                // `g` is over and `s0` is the table one move before.
+                if (!ob_seal(&shown, &s0, seed, np, gid, MSG_NO_BASE)) break;
+                if (!ob_seal(&arr, &g, seed, np, gid, shown.logs)) break;
+                CHECK(shown.e.phase == MSG_PHASE_LIVE && arr.e.phase == MSG_PHASE_FINISHED,
+                      "game end %dp: phases %d -> %d", np, shown.e.phase, arr.e.phase);
+                const int b = ob_boundary(&shown, &arr);
+                const int claim = msg_atoms_before_claim(&arr.e);
+                CHECK(b == claim, "game end %dp: boundary %d, want the sender's %d", np, b, claim);
+                CHECK(b >= 0 && b < arr.e.turn,
+                      "game end %dp: boundary %d leaves nothing of %d atoms to animate",
+                      np, b, arr.e.turn);
+                CHECK(ob_atom_kind(&arr, b) >= 0,
+                      "game end %dp: no action atom at the boundary %d", np, b);
+                // Adopting it rebuilds a game that is over; the shown chain
+                // still replays as one in play.
+                CHECK(msg_replay(&arr.e, &rg) == MSG_EOK && rg.status == GAME_STATUS_GAME_OVER,
+                      "game end %dp: the finished arrival replayed status %d", np, rg.status);
+                CHECK(msg_replay(&shown.e, &rg) == MSG_EOK && rg.status == GAME_STATUS_PLAYING,
+                      "game end %dp: the chain before the end replayed status %d", np, rg.status);
+                // A re-delivery of the finished chain animates nothing.
+                CHECK(ob_boundary(&arr, &arr) == arr.e.turn,
+                      "game end %dp: a re-delivery opened at %d of %d",
+                      np, ob_boundary(&arr, &arr), arr.e.turn);
+                posed[pi]++;
+                break;
+            }
+        }
+        CHECK(posed[pi] > 0, "game end %dp: no fixture built", np);
+    }
+}
+
+static void test_open_boundary(void) {
+    int closing[3] = { 0 }, after[3][4] = { { 0 } }, stale[6] = { 0 }, ending[3] = { 0 };
+    ob_closing_good(closing);
+    ob_after_good(after);
+    ob_stale_and_siblings(stale);
+    ob_edges();
+    ob_game_ending(ending);
+    printf("  open boundary: game end %d/%d/%d (2/3/4p)\n", ending[0], ending[1], ending[2]);
+    printf("  open boundary: closing good %d/%d/%d (2/3/4p); after a pending good 3p "
+           "attack %d cover %d pass %d pickup %d, 4p attack %d cover %d pass %d pickup %d; "
+           "raced goods %d/%d (3/4p); stale %d/%d/%d, sibling %d/%d/%d\n",
+           closing[0], closing[1], closing[2],
+           after[1][0], after[1][1], after[1][2], after[1][3],
+           after[2][0], after[2][1], after[2][2], after[2][3],
+           after[0][1], after[0][2],
+           stale[0], stale[1], stale[2], stale[3], stale[4], stale[5]);
+}
+
+// ---------- what an arrival leaves of a staged bubble ----------------------
+//
+// msg_staged_fate, the kernel's answer to "may the bubble I put in the input
+// field still be sent, now that this chain arrived". Every fixture is real
+// bubbles sealed the way a phone seals them, AND LINKED the way a phone links
+// them (parent8 = the first eight bytes of the parent's digest), because the
+// header is half the answer: a staged good that the very next bubble folded
+// away is recognised as landed only by the child naming it.
+//
+// The matrix: 2, 3 and 4 seats; the staged move is each kind a seat can stage
+// (an opening attack, a throw-in, a cover, a pass, a pickup, a good); the
+// arrival is the staged bubble itself, a child and a grandchild of it (it went
+// out), the chain it was built on and that chain's own parent (nothing new), a
+// SIBLING off the same parent and a child of that sibling (the note-6 shape),
+// and another game.
+
+static int fb_seal(OBubble *b, const Game *g, const uint8_t *seed, int np,
+                   uint64_t game_id, int base_logs, const OBubble *parent) {
+    static unsigned char body[2048];
+    static Game scratch;
+    MsgEnvelope e;
+    env_init(&e, seed, np);
+    e.game_id = game_id;
+    const int over = game_done(g) >= 0 || g->status == GAME_STATUS_GAME_OVER;
+    e.phase = over ? MSG_PHASE_FINISHED : MSG_PHASE_LIVE;
+    if (parent) {
+        uint8_t d[SHA256_DIGEST_LEN];
+        msg_digest(parent->w, parent->n, d);
+        memcpy(e.parent8, d, MSG_PARENT_LEN);
+    }
+    if (msg_seal(&e, g, base_logs, body, sizeof(body), &scratch) != MSG_EOK) return 0;
+    b->n = msg_encode(&e, b->w, sizeof(b->w));
+    if (b->n <= 0) return 0;
+    if (msg_decode(b->w, b->n, &b->e) != MSG_EOK) return 0;
+    b->logs = g->num_logs;
+    return 1;
+}
+
+static int fb_fate(const OBubble *staged, const OBubble *arrived) {
+    static unsigned char scratch[MSG_OPEN_SCRATCH];
+    return msg_staged_fate(staged->w, staged->n, arrived->w, arrived->n, scratch, sizeof(scratch));
+}
+
+// The six kinds a human can stage, as this matrix tells them apart.
+enum { FK_OPEN, FK_THROW, FK_COVER, FK_PASS, FK_PICKUP, FK_GOOD, FK_N };
+static const char *const FK_NAME[FK_N] = { "attack", "throw-in", "cover", "pass", "pickup", "good" };
+
+static int fb_kind(const Game *g, const LegalMove *m) {
+    switch (m->type) {
+        case MOVE_ATTACK: return g->num_battles == 0 ? FK_OPEN : FK_THROW;
+        case MOVE_COVER:  return FK_COVER;
+        case MOVE_PASS:   return FK_PASS;
+        case MOVE_PICKUP: return FK_PICKUP;
+        case MOVE_GOOD:   return FK_GOOD;
+        default:          return -1;
+    }
+}
+
+// One random legal move by any seat but `not_seat`. 0 when none can.
+static int fb_step_by_another(Game *g, int not_seat) {
+    static LegalMoves ml;
+    const int np = g->num_players;
+    const int start = (int)(rnd() % (uint32_t)np);
+    for (int t = 0; t < np; t++) {
+        const int s = (start + t) % np;
+        if (s == not_seat || g->players[s].status != PLAYER_STATUS_IN) continue;
+        calculate_legal_moves(g, s, &ml);
+        for (int i = 0; i < ml.n; i++) {
+            if (ml.moves[i].type == MOVE_WAIT) continue;
+            return legal_move_apply(g, s, &ml.moves[i]) ? 1 : 0;
+        }
+    }
+    return 0;
+}
+
+// Pose one staged move `m` by `seat` on the table `g`, whose bubble is `p`
+// (built on `gp`, which may be NULL), and check every arrival against it.
+static void fb_pose(const Game *g, const OBubble *p, const Game *gpg, const OBubble *gp,
+                    int seat, const LegalMove *m, const uint8_t *seed, int np, uint64_t gid,
+                    int posed[3][FK_N + 1], int pi) {
+    static Game s, n1, c1, c2;
+    static OBubble S, N1, NC, C1, C2, NOTH, NOTH_ARR, NOTH_CHILD;
+    static LegalMoves ml;
+    const int kind = fb_kind(g, m);
+    if (kind < 0) return;
+    game_clone(&s, g);
+    if (!legal_move_apply(&s, seat, m)) return;
+    if (!fb_seal(&S, &s, seed, np, gid, p->logs, p)) return;
+
+    // A SIBLING: ANOTHER SEAT's move off the same table - two people acting on
+    // one bubble. Never this seat's: only this device makes this seat's moves,
+    // so a chain holding them came from here, and the atoms rightly say so (a
+    // two-card attack is the one-card attack plus a throw-in of the second).
+    int have_sib = 0;
+    for (int t = 1; t < np && !have_sib; t++) {
+        const int who = (seat + t) % np;
+        if (g->players[who].status != PLAYER_STATUS_IN) continue;
+        calculate_legal_moves(g, who, &ml);
+        for (int i = 0; i < ml.n && !have_sib; i++) {
+            if (ml.moves[i].type == MOVE_WAIT) continue;
+            game_clone(&n1, g);
+            if (legal_move_apply(&n1, who, &ml.moves[i])
+                && fb_seal(&N1, &n1, seed, np, gid, p->logs, p)) have_sib = 1;
+        }
+    }
+    // Nobody else may act here (an opening attack: the others wait). Then the
+    // only chain that can supersede the staged move is a FORK FURTHER BACK:
+    // another seat's move off the bubble before, which the table took instead
+    // of the one this board stood on.
+    for (int t = 1; t < np && !have_sib && gpg && gp; t++) {
+        const int who = (seat + t) % np;
+        if (gpg->players[who].status != PLAYER_STATUS_IN) continue;
+        calculate_legal_moves(gpg, who, &ml);
+        for (int i = 0; i < ml.n && !have_sib; i++) {
+            if (ml.moves[i].type == MOVE_WAIT) continue;
+            game_clone(&n1, gpg);
+            if (!legal_move_apply(&n1, who, &ml.moves[i])
+                || !fb_seal(&N1, &n1, seed, np, gid, gp->logs, gp)) continue;
+            // A real fork from where the board stood, not the same moves cut
+            // at another bubble boundary: a one-card cover off the bubble
+            // before is the first atom of the two-card cover this board saw.
+            have_sib = fb_fate(p, &N1) == MSG_FATE_SUPERSEDED;
+        }
+    }
+    if (!have_sib) return;
+
+    const char *kn = FK_NAME[kind];
+    // THE BUBBLE ITSELF, AND ITS DESCENDANTS: it went out.
+    CHECK(fb_fate(&S, &S) == MSG_FATE_LANDED, "fate %dp %s: the same bytes", np, kn);
+    game_clone(&c1, &s);
+    if (og_live(&c1) && og_random_step(&c1) && fb_seal(&C1, &c1, seed, np, gid, S.logs, &S)) {
+        CHECK(fb_fate(&S, &C1) == MSG_FATE_LANDED,
+              "fate %dp %s: a child of the staged bubble is %d, want LANDED", np, kn, fb_fate(&S, &C1));
+        // THE HEADER IS LOAD-BEARING for a good the child folded away: the
+        // same child without its parent link reads as a fork (the safe side).
+        static OBubble C1U;
+        if (ob_atom_kind(&S, S.e.turn - 1) == REPLAY_ATOM_GOOD
+            && ob_atom_kind(&C1, S.e.turn - 1) != REPLAY_ATOM_GOOD
+            && fb_seal(&C1U, &c1, seed, np, gid, S.logs, NULL)) {
+            CHECK(fb_fate(&S, &C1U) == MSG_FATE_SUPERSEDED,
+                  "fate %dp: a folded good's unlinked child is %d", np, fb_fate(&S, &C1U));
+            posed[pi][FK_N]++;
+        }
+        game_clone(&c2, &c1);
+        if (og_live(&c2) && og_random_step(&c2) && fb_seal(&C2, &c2, seed, np, gid, C1.logs, &C1)) {
+            // Two hops: the atoms decide. A staged GOOD the next move folded
+            // away is the documented conservative case.
+            const int want = ob_atom_kind(&S, S.e.turn - 1) == REPLAY_ATOM_GOOD
+                ? -1 : MSG_FATE_LANDED;
+            if (want >= 0)
+                CHECK(fb_fate(&S, &C2) == want,
+                      "fate %dp %s: a grandchild is %d, want LANDED", np, kn, fb_fate(&S, &C2));
+            else
+                CHECK(fb_fate(&S, &C2) != MSG_FATE_STANDS,
+                      "fate %dp %s: a folded good's grandchild read as the past", np, kn);
+        }
+    }
+    // WHAT IT WAS BUILT ON: nothing new.
+    CHECK(fb_fate(&S, p) == MSG_FATE_STANDS,
+          "fate %dp %s: the parent is %d, want STANDS", np, kn, fb_fate(&S, p));
+    if (gp && ob_atom_kind(p, p->e.turn - 1) != REPLAY_ATOM_GOOD
+        && ob_atom_kind(gp, gp->e.turn - 1) != REPLAY_ATOM_GOOD)
+        CHECK(fb_fate(&S, gp) == MSG_FATE_STANDS,
+              "fate %dp %s: the grandparent is %d, want STANDS", np, kn, fb_fate(&S, gp));
+    // THE NOTE-6 SHAPE: another move off the same bubble.
+    CHECK(fb_fate(&S, &N1) == MSG_FATE_SUPERSEDED,
+          "fate %dp %s: a sibling is %d, want SUPERSEDED", np, kn, fb_fate(&S, &N1));
+    CHECK(msg_turn_field_after_arrival(MSG_TURN_READY | MSG_TURN_BOARD_WATCHING | MSG_TURN_STAGED,
+                                       fb_fate(&S, &N1)) == MSG_TURN_FIELD_NOTHING,
+          "fate %dp %s: a sibling's arrival leaves the stale move in the field", np, kn);
+    game_clone(&c1, &n1);
+    if (og_live(&c1) && fb_step_by_another(&c1, seat)
+        && fb_seal(&NC, &c1, seed, np, gid, N1.logs, &N1))
+        CHECK(fb_fate(&S, &NC) == MSG_FATE_SUPERSEDED,
+              "fate %dp %s: a child of the sibling is %d, want SUPERSEDED", np, kn, fb_fate(&S, &NC));
+
+    // THE UNDO'S BUBBLE: the NOTHING reseal of the parent. It carries no move,
+    // so only the header can say it landed - and a stale one is overwritten.
+    // (A dealt table with no action yet seals no body at all, so there is no
+    // NOTHING to say: its reseal is the turn-0 handoff's shape, n_new 0.)
+    if (p->e.turn > 0 && fb_seal(&NOTH, g, seed, np, gid, MSG_BASE_NOTHING, p)) {
+        CHECK(NOTH.e.n_new == MSG_NEW_NOTHING, "fate %dp: the reseal is not NOTHING", np);
+        CHECK(fb_fate(&NOTH, p) == MSG_FATE_STANDS, "fate %dp: NOTHING over its parent", np);
+        CHECK(fb_fate(&NOTH, &NOTH) == MSG_FATE_LANDED, "fate %dp: NOTHING came back", np);
+        CHECK(fb_fate(&NOTH, &N1) == MSG_FATE_SUPERSEDED,
+              "fate %dp %s: a move off the parent left the stale NOTHING bubble standing (%d)",
+              np, kn, fb_fate(&NOTH, &N1));
+        CHECK(fb_fate(&NOTH, &S) == MSG_FATE_SUPERSEDED,
+              "fate %dp %s: a NOTHING bubble is not carried by its parent's other children", np, kn);
+        game_clone(&c1, g);
+        if (og_live(&c1) && fb_step_by_another(&c1, seat)
+            && fb_seal(&NOTH_CHILD, &c1, seed, np, gid, NOTH.logs, &NOTH))
+            CHECK(fb_fate(&NOTH, &NOTH_CHILD) == MSG_FATE_LANDED,
+                  "fate %dp: a child naming the NOTHING bubble carries it", np);
+        // …and somebody ELSE's NOTHING bubble over the chain mine was built
+        // on adds nothing: STANDS, which the turn layer still overwrites.
+        if (fb_seal(&NOTH_ARR, g, seed, np, gid, MSG_BASE_NOTHING, p)) {
+            const int f = fb_fate(&S, &NOTH_ARR);
+            CHECK(f != MSG_FATE_LANDED, "fate %dp %s: a NOTHING arrival carried my move", np, kn);
+            CHECK(msg_turn_field_after_arrival(MSG_TURN_READY | MSG_TURN_STAGED, f)
+                  == MSG_TURN_FIELD_NOTHING, "fate %dp %s: the field kept a dropped move", np, kn);
+        }
+    }
+    // The other way round: the sibling's own field, after MY move arrived.
+    CHECK(fb_fate(&N1, &S) == MSG_FATE_SUPERSEDED, "fate %dp %s: siblings are mutual", np, kn);
+    posed[pi][kind]++;
+}
+
+static void test_staged_fate(void) {
+    static Game g, prev;
+    static OBubble p, gp, other;
+    int posed[3][FK_N + 1] = { { 0 } };
+    for (int pi = 0; pi < 3; pi++) {
+        const int np = OB_SEATS[pi];
+        for (uint32_t gi = 0; gi < 40; gi++) {
+            uint8_t seed[MSG_SEED_LEN];
+            seed_fill(seed, 21700u + gi * 31u + (uint32_t)np);
+            g_rng = 9900u + gi * 17u + (uint32_t)np;
+            og_start(&g, seed, np);
+            const uint64_t gid = 0xF0A0ULL + gi;
+            int have_p = 0, have_gp = 0;
+            for (int step = 0; step < 140 && og_live(&g); step++) {
+                // The table is a bubble, linked to the bubble before it.
+                if (have_p) { gp = p; have_gp = 1; }
+                if (!fb_seal(&p, &g, seed, np, gid, have_p ? gp.logs : MSG_NO_BASE,
+                             have_p ? &gp : NULL)) break;
+                // gp borrowed p's bytes by value; re-point its envelope.
+                if (have_gp && msg_decode(gp.w, gp.n, &gp.e) != MSG_EOK) break;
+                have_p = 1;
+                static LegalMoves ml;
+                for (int seat = 0; seat < np; seat++) {
+                    if (g.players[seat].status != PLAYER_STATUS_IN) continue;
+                    calculate_legal_moves(&g, seat, &ml);
+                    for (int i = 0; i < ml.n; i++) {
+                        const int k = fb_kind(&g, &ml.moves[i]);
+                        if (k < 0 || posed[pi][k] >= 6) continue;
+                        fb_pose(&g, &p, have_gp ? &prev : NULL, have_gp ? &gp : NULL, seat,
+                                &ml.moves[i], seed, np, gid, posed, pi);
+                    }
+                }
+                game_clone(&prev, &g);
+                if (!og_random_step(&g)) break;
+            }
+            // ANOTHER GAME shares nothing, whatever its atoms.
+            if (have_p && fb_seal(&other, &prev, seed, np, gid + 1000, MSG_NO_BASE, NULL))
+                CHECK(fb_fate(&p, &other) == MSG_FATE_SUPERSEDED,
+                      "fate %dp: another game id is %d, want SUPERSEDED", np, fb_fate(&p, &other));
+        }
+        if (np > 2) CHECK(posed[pi][FK_N] > 0, "fate %dp: no folded good posed", np);
+        for (int k = 0; k < FK_N; k++) {
+            // A pending good cannot exist at two seats - the one attacker's
+            // good closes the bout - but staging the closing good can.
+            CHECK(posed[pi][k] > 0, "fate %dp: no %s posed", np, FK_NAME[k]);
+        }
+    }
+    // Junk is an error, never a fate.
+    {
+        static unsigned char junk[4] = { 1, 2, 3, 4 }, scratch[MSG_OPEN_SCRATCH];
+        CHECK(msg_staged_fate(junk, 4, p.w, p.n, scratch, sizeof(scratch)) < 0, "junk staged");
+        CHECK(msg_staged_fate(p.w, p.n, junk, 4, scratch, sizeof(scratch)) < 0, "junk arrived");
+        CHECK(msg_staged_fate(NULL, 0, p.w, p.n, scratch, sizeof(scratch)) < 0, "no staged bytes");
+    }
+    printf("  staged fate: 2p %d/%d/%d/%d/%d/%d, 3p %d/%d/%d/%d/%d/%d, 4p %d/%d/%d/%d/%d/%d "
+           "(attack/throw-in/cover/pass/pickup/good); folded goods %d/%d (3/4p)\n",
+           posed[0][0], posed[0][1], posed[0][2], posed[0][3], posed[0][4], posed[0][5],
+           posed[1][0], posed[1][1], posed[1][2], posed[1][3], posed[1][4], posed[1][5],
+           posed[2][0], posed[2][1], posed[2][2], posed[2][3], posed[2][4], posed[2][5],
+           posed[1][FK_N], posed[2][FK_N]);
 }
 
 int main(int argc, char **argv) {
@@ -4454,6 +5339,7 @@ int main(int argc, char **argv) {
     test_waiting_phase();
     test_name_length_boundary();
     test_rule_p_started_beats_lobby();
+    test_endgame_seeds();
     test_rule_p_fuller_start_wins();
     test_rule_p_child_beats_parent();
     test_surface_delta();
@@ -4464,6 +5350,8 @@ int main(int argc, char **argv) {
     test_podkidnoy_wire();
     test_bubble_delta();
     test_nothing_bubble();
+    test_open_boundary();
+    test_staged_fate();
     test_roster_key();
     test_chain_gates();
     test_turn_controller();
