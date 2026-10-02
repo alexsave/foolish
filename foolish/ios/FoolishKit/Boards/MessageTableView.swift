@@ -547,34 +547,47 @@ public struct MessageTableView: View {
     /// and those sites are left alone.
     var isSpectating: Bool { controller.mySeat < 0 }
 
-    /// THE RESULTS SCREEN HAS TAKEN THE BOARD'S PLACE.
+    /// WHAT OF THE BOARD DRAWS RIGHT NOW: the kernel's one answer
+    /// (`anim_board_chrome`) for the results list AND every piece of chrome
+    /// hung over it - my hand, the pills, Undo, the squares, my role mark.
     ///
-    /// ONE predicate with two kinds of reader, and that is the whole point of
-    /// its existing. The swap itself happens INSIDE the VStack below - the
-    /// board branch is replaced by `FGameOverList` - but the overlays that
-    /// decorate the board are hung on the VStack, OUTSIDE that branch, so they
-    /// are not swapped away with it. Anything in an overlay that belongs to the
-    /// live board has to ask this question for itself.
+    /// The swap itself happens INSIDE the VStack below - the board branch is
+    /// replaced by `FGameOverList` - but the chrome is hung on the VStack as
+    /// overlays, OUTSIDE that branch, so the swap never reaches it. It went
+    /// wrong twice for that one reason. The role mark first: a finished 4p game
+    /// showed a lone shield over empty felt (an App Store screenshot). Then the
+    /// fool's hand, which the mark's fix did not cover because it asked its own
+    /// question - owner: "the last players (the fools) cards are still seen in
+    /// the end 'game over' screen... it also blocks the 'new game' button".
+    /// Filmed at 2p and 4p: a tap on New game selected a card, and at 4p the
+    /// squares and a Take pill sat on the fool's own row of the list.
     ///
-    /// It went wrong exactly once, and instructively: `selfRoleIndicator` is an
-    /// overlay, and its doc comment asserted that the game-over screen "replaces
-    /// the whole board" so the mark could never be reached once the game ended.
-    /// It replaces the board's CONTENT, not the overlay's host - so a finished
-    /// 4p game showed a lone shield floating over empty felt, ~55% down, with no
-    /// table under it (caught in an App Store screenshot). Two sites spelling
-    /// `controller.isOver && showResults` separately is what let them drift;
-    /// reading the same property is what stops them drifting again.
-    private var showsEndScreen: Bool {
-        Self.showsEndScreen(isOver: controller.isOver, showResults: showResults)
+    /// So no overlay asks "is the game over" for itself any more; each one asks
+    /// whether ITS bit is in this set, and the branch above asks for `.results`.
+    var chrome: BoardChrome {
+        Self.chrome(isOver: controller.isOver, showResults: showResults,
+                    isSpectating: isSpectating)
     }
 
-    /// The end-screen predicate as a value, so it can be tested without a
-    /// rendered board (`MessageTableView` needs a live controller and a host to
-    /// draw at all, and a SwiftUI overlay has no assertable identity from a
-    /// test). Every reader goes through `showsEndScreen`.
-    static func showsEndScreen(isOver: Bool, showResults: Bool) -> Bool {
-        isOver && showResults
+    /// The answer as a value, so it can be tested without a rendered board
+    /// (`MessageTableView` needs a live controller and a host to draw at all).
+    static func chrome(isOver: Bool, showResults: Bool, isSpectating: Bool,
+                       clearOnResults: Bool = clearsChromeOnResults) -> BoardChrome {
+        BoardChrome.of(isOver: isOver, resultsShown: showResults, spectating: isSpectating,
+                       clearOnResults: clearOnResults)
     }
+
+    /// The end screen takes the board's chrome with it. Ships on;
+    /// `gameover.hidehand=0` in `dev.flags` draws it over the list as before.
+    static var clearsChromeOnResults: Bool {
+        #if DEBUG || SOLO_TESTING
+        return MessageDevBoard.flag("gameover.hidehand", shipping: true)
+        #else
+        return true
+        #endif
+    }
+
+    private var showsEndScreen: Bool { chrome.contains(.results) }
 
     public var body: some View {
         table
@@ -774,7 +787,14 @@ public struct MessageTableView: View {
         // minus the padding.
         .overlay {
             if let view = controller.view {
+                // Each piece asks for its own bit of `chrome`; on the end
+                // screen none of them is in it. Removed rather than hidden, so
+                // nothing invisible is left to take a tap meant for New game,
+                // and removed inside the end screen's own `withAnimation`
+                // (`settleResults`), so they fade out as the list fades in.
+                let chrome = self.chrome
                 ZStack {
+                if chrome.contains(.pills) {
                 // Redrawn on a short timer: whether the board is still is read
                 // from statics nothing publishes (see `actionHost`).
                 TimelineView(.periodic(from: .now, by: 0.1)) { _ in
@@ -828,7 +848,9 @@ public struct MessageTableView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                     .padding(.trailing, ActionPillSlot.outerInset).padding(.bottom, statusMarkLift + 4)
                     .doesNotRideTheBoardSpring(controller.view)
+                }
 
+                if chrome.contains(.undo) {
                 undoSlot
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                     // The SAME inset as every other pill - see ActionPillSlot for
@@ -836,14 +858,19 @@ public struct MessageTableView: View {
                     .padding(.trailing, ActionPillSlot.undoTrailing(aligned: ActionPillSlot.aligned))
                     .padding(.bottom, statusMarkLift + 4)
                     .doesNotRideTheBoardSpring(controller.view)
+                }
 
+                if chrome.contains(.squares) {
                 settingsHelpBar
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
                     .padding(.leading, ActionPillSlot.outerInset).padding(.bottom, statusMarkLift + 4)
                     .doesNotRideTheBoardSpring(controller.view)
+                }
 
+                if chrome.contains(.hand) {
                     hand(view, reserveNoSlot: handSlotDeferred)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                }
                 }
                 .padding(.horizontal, 8).padding(.top, 14).padding(.bottom, 4)
             }
@@ -1193,7 +1220,8 @@ public struct MessageTableView: View {
                 // held, which is 1.1(55)'s missing flipped card.
                 let trump = shownTrumpSlot(view)
                 FDeckWell(deckCount: shownDeckCount(view), flipped: trump.card,
-                          hasFlipped: trump.exists, trumpSuit: view.trumpSuit)
+                          hasFlipped: trump.exists, trumpSuit: view.trumpSuit,
+                          markNudge: TrumpNudge.live)
                     .collapseLayer(fraction: 0, relaying: [DeckFrameKey.self])
                     // FDeckWell now anchors its own content top-leading with a
                     // small symmetric inset (note 14), so no per-call-site

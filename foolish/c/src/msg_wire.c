@@ -521,6 +521,13 @@ int msg_replay(const MsgEnvelope *e, Game *g) {
     if (rounds > 255) return MSG_EROUND;               // the wire field is a u8
     if (e->round != (uint8_t)rounds) return MSG_EROUND; // header vs. reality
 
+    // THE KERNEL RECORDS ITS OWN END here too, as awire_apply does after every
+    // move: the atoms above go through handle_* (apply_one) and the round-end
+    // transition directly, so nothing on this path had settled g->status. A
+    // finished chain replayed as a game still PLAYING with a fool on its
+    // seats, and every reader that asks the status - play_pills' "not out of
+    // play" first among them - offered the fool Take on a game that was over.
+    game_settle_status(g);
     const int over = game_done(g) >= 0 || g->status == GAME_STATUS_GAME_OVER;
     if (over && e->phase != MSG_PHASE_FINISHED) return MSG_EPHASE;
     if (!over && e->phase == MSG_PHASE_FINISHED) return MSG_EPHASE;

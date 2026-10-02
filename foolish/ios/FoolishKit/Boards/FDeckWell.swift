@@ -51,9 +51,13 @@ public struct FDeckWell: View {
     /// gives its three counts ONE size (FSeatTag.countSize). nil is the live
     /// board's 17, scaled.
     public let countSize: CGFloat?
+    /// How far the bare trump glyph sits off its inset, in scale-1 points.
+    /// Zero everywhere except the live board, which passes `TrumpNudge.live`;
+    /// see there for why the public bubble keeps zero.
+    public let markNudge: CGSize
 
     public init(deckCount: Int, flipped: Card?, hasFlipped: Bool, trumpSuit: Suit?, backSeed: UInt64 = 42,
-                scale: CGFloat = 1, countSize: CGFloat? = nil) {
+                scale: CGFloat = 1, countSize: CGFloat? = nil, markNudge: CGSize = .zero) {
         self.deckCount = deckCount
         self.flipped = flipped
         self.hasFlipped = hasFlipped
@@ -61,6 +65,7 @@ public struct FDeckWell: View {
         self.backSeed = backSeed
         self.scale = scale
         self.countSize = countSize
+        self.markNudge = markNudge
     }
 
     // The badge counts the flipped card too (web badgeTotal = deck + flipped).
@@ -349,7 +354,10 @@ public struct FDeckWell: View {
                     // Round 16: inset the glyph's INK, not its text box - see
                     // `markInkOrigin`. Everything else in this corner already
                     // anchors on the ink/edge it looks like it anchors on.
-                    .offset(x: inset - ink.x, y: inset - ink.y)
+                    // Then the live board's nudge (TrumpNudge), scaled
+                    // with everything else.
+                    .offset(x: inset - ink.x + markNudge.width * scale,
+                            y: inset - ink.y + markNudge.height * scale)
             }
         }
         .frame(width: 92 * scale, height: 108 * scale, alignment: .topLeading)

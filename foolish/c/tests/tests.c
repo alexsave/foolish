@@ -7363,6 +7363,58 @@ static void test_board_finish_rows_rank_first_out_to_the_fool(void) {
     CHECK(anim_finish_rows(NULL, 0, -1, 4, 0, rows, MAX_PLAYERS) == 0, "…and an untouched game, nobody");
 }
 
+// THE END SCREEN CLEARS THE BOARD'S CHROME. Owner: "the last players (the
+// fools) cards are still seen in the end 'game over' screen... it also blocks
+// the 'new game' button." Filmed at 2p and 4p with the local player as the
+// fool: the fan sat on New game and a tap there selected a card, and at four
+// players the squares and a Take pill sat on the fool's own row of the list.
+static void test_board_end_screen_clears_the_boards_chrome(void) {
+    const int on = ANIM_CHROME_RULE_CLEAR_ON_RESULTS;
+    const unsigned board = ANIM_CHROME_HAND | ANIM_CHROME_PILLS | ANIM_CHROME_UNDO
+                         | ANIM_CHROME_SQUARES;
+
+    // A live board, seated: all of it.
+    CHECK(anim_board_chrome(0, 0, 0, on) == (board | ANIM_CHROME_SELF_MARK),
+          "a live board draws every piece of its chrome and no list");
+
+    // The end screen is up: the list, and nothing of the board's.
+    const unsigned end = anim_board_chrome(1, 1, 0, on);
+    CHECK(end & ANIM_CHROME_RESULTS, "the list takes the board's place");
+    CHECK(!(end & ANIM_CHROME_HAND), "the fool's hand leaves with the board");
+    CHECK(!(end & ANIM_CHROME_PILLS), "no action pill over the list");
+    CHECK(!(end & ANIM_CHROME_UNDO), "no Undo over the list");
+    CHECK(!(end & ANIM_CHROME_SQUARES), "the squares give the list its corners back");
+    CHECK(!(end & ANIM_CHROME_SELF_MARK), "my mark leaves with the board");
+
+    // Over, but the last flight has not landed: the board is still the stage.
+    CHECK(anim_board_chrome(1, 0, 0, on) == (board | ANIM_CHROME_SELF_MARK),
+          "the final move plays under the whole board");
+    // A stale results beat means nothing without a finished game.
+    CHECK(anim_board_chrome(0, 1, 0, on) == (board | ANIM_CHROME_SELF_MARK),
+          "results_shown alone is not an end screen");
+
+    // A spectator wears no mark, live or over.
+    CHECK(!(anim_board_chrome(0, 0, 1, on) & ANIM_CHROME_SELF_MARK), "a spectator has no mark");
+    CHECK(anim_board_chrome(1, 1, 1, on) == ANIM_CHROME_RESULTS,
+          "a spectator's end screen is the list alone");
+
+    // The flag off is the old screen, exactly: the chrome over the list, and
+    // the two gates that were already right unchanged.
+    CHECK(anim_board_chrome(1, 1, 0, 0) == (board | ANIM_CHROME_RESULTS),
+          "without the rule the end screen keeps the board's chrome");
+    CHECK(anim_board_chrome(0, 0, 0, 0) == anim_board_chrome(0, 0, 0, on),
+          "the rule changes nothing before the end screen");
+
+    // The list and the mark are never up together, for any input.
+    for (int over = 0; over < 2; over++)
+        for (int shown = 0; shown < 2; shown++)
+            for (int rules = 0; rules < 2; rules++) {
+                const unsigned c = anim_board_chrome(over, shown, 0, rules);
+                CHECK(((c & ANIM_CHROME_RESULTS) != 0) != ((c & ANIM_CHROME_SELF_MARK) != 0),
+                      "exactly one of the list and my mark draws");
+            }
+}
+
 static void test_board_degenerate_inputs(void) {
     unsigned char out[8];
     AnimFinishRow rows[MAX_PLAYERS];
@@ -14027,6 +14079,7 @@ int main(void) {
     test_board_hand_laid_out_follows_the_local_arrangement();
     test_board_the_table_under_the_sweep();
     test_board_finish_rows_rank_first_out_to_the_fool();
+    test_board_end_screen_clears_the_boards_chrome();
     test_board_degenerate_inputs();
     test_board_reads_nothing_past_what_it_was_given();
     test_board_every_card_of_the_deck_crosses_both_ways();

@@ -720,6 +720,18 @@ int fio_pass_slot_shown(int previewing, int dragging, int seen_this_drag,
 int fio_finish_rows(const uint8_t *elimination, int n_elim, int game_over,
                     int n_players, int my_seat, char *out, int cap);
 
+// Which pieces of the board's chrome draw, the end screen's list included -
+// see anim_board_chrome. Bits are FIO_CHROME_*; `rules` takes
+// FIO_CHROME_RULE_CLEAR_ON_RESULTS.
+#define FIO_CHROME_HAND      (1u << 0)
+#define FIO_CHROME_PILLS     (1u << 1)
+#define FIO_CHROME_UNDO      (1u << 2)
+#define FIO_CHROME_SQUARES   (1u << 3)
+#define FIO_CHROME_SELF_MARK (1u << 4)
+#define FIO_CHROME_RESULTS   (1u << 5)
+#define FIO_CHROME_RULE_CLEAR_ON_RESULTS 1
+unsigned fio_board_chrome(int is_over, int results_shown, int spectating, int rules);
+
 // May this caller write what the badges are showing? Only a bystander ever
 // stands down, and only while a sequence is running.
 #define FIO_CLAIM_SEQUENCE   0
