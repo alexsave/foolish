@@ -283,6 +283,8 @@ static int play_game_rules(const uint8_t *seed, int n_players, int max_actions,
 
 // ---------- 2+3. round-trip and replay fidelity ---------------------------
 
+static int g_finished_replays;   // test_roundtrip's finished games, so the status check is not vacuous
+
 static void test_roundtrip(int games, uint32_t seed0) {
     const int pcs[] = { 2, 3, 4, 8 };
     for (int pi = 0; pi < 4; pi++) {
@@ -356,6 +358,15 @@ static void test_roundtrip(int games, uint32_t seed0) {
                   rg.deck_count == played.deck_count && rg.discard_pile_length == played.discard_pile_length &&
                   rg.power_suit == played.power_suit,
                   "np=%d game=%d replayed state diverged", np, gi);
+            // A FINISHED CHAIN REPLAYS AS A FINISHED GAME. The kernel records
+            // its own end (game.c game_settle_status) on every apply path, and
+            // the board a receiver opens is this replay: left PLAYING, the
+            // fool's board still offered Take on a game that was over (filmed
+            // on the rig, 2p and 4p, under the end screen).
+            const int want = game_done(&played) >= 0 ? GAME_STATUS_GAME_OVER : GAME_STATUS_PLAYING;
+            CHECK(rg.status == want, "np=%d game=%d replayed status %d, want %d",
+                  np, gi, rg.status, want);
+            if (want == GAME_STATUS_GAME_OVER) g_finished_replays++;
             for (int s = 0; s < np; s++) {
                 CHECK(rg.players[s].hand_count == played.players[s].hand_count,
                       "np=%d game=%d seat %d hand %d vs %d", np, gi, s,
@@ -4397,6 +4408,7 @@ int main(int argc, char **argv) {
     printf("msg_wire_test: %d games/pc, seed0=%u\n", games, seed0);
     test_sha256_kat();
     test_roundtrip(games, seed0);
+    CHECK(g_finished_replays > 0, "the roundtrip replayed no finished game, so its status check proved nothing");
     test_waiting_phase();
     test_name_length_boundary();
     test_rule_p_started_beats_lobby();
