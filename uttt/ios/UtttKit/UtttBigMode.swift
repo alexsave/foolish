@@ -28,6 +28,48 @@ public enum UtttBigMode {
     }
 }
 
+/// THE MODE'S DOOR (docs/BIG_BOARD.md): a finger held STILL on a grid for
+/// `UtttBig.holdSeconds`, drifting no more than `UtttBig.holdSlop` points.
+/// It fires once, the moment the hold is reached, and the touch need not be
+/// on a playable cell.
+///
+/// IT TAKES NOTHING FROM THE BOARD'S OWN GESTURES: it cancels no touch,
+/// delays no touch, and nothing waits for it to fail - so a tap stages a move
+/// exactly as before, with no added delay. A double tap and a tap lift long
+/// before 4 s; a pan or a drag moves past the slop; a pinch is two fingers.
+/// Each makes this recogniser fail on its own. The one owner of these
+/// settings: both boards (UtttBoardView, UtttBigBoardView) add this class.
+final class UtttModeHold: UILongPressGestureRecognizer {
+    var action: () -> Void
+
+    init(_ action: @escaping () -> Void) {
+        self.action = action
+        super.init(target: nil, action: nil)
+        addTarget(self, action: #selector(held))
+        minimumPressDuration = UtttBig.holdSeconds
+        allowableMovement = UtttBig.holdSlop
+        cancelsTouchesInView = false
+        delaysTouchesBegan = false
+        delaysTouchesEnded = false
+    }
+
+    @objc private func held() {
+        guard state == .began else { return }
+        action()
+    }
+
+    /// Add the door to `view`, once; a second call only changes the action.
+    static func install(on view: UIView, _ action: @escaping () -> Void) -> UtttModeHold {
+        if let h = view.gestureRecognizers?.first(where: { $0 is UtttModeHold }) as? UtttModeHold {
+            h.action = action
+            return h
+        }
+        let h = UtttModeHold(action)
+        view.addGestureRecognizer(h)
+        return h
+    }
+}
+
 /// THE "243" BADGE: the mode's visible confirmation, and on a big game's
 /// screen what board this is, in the bottom left corner. The small label's type in the ink, on a
 /// paper-coloured pill.

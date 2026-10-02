@@ -57,6 +57,12 @@ struct PreviewRoot: View {
     /// button switches to it and back.
     @State private var big = ProcessInfo.processInfo.arguments.contains("--screen")
         && ProcessInfo.processInfo.arguments.contains("243")
+    /// The 9 x 9 screen's mode door (`setGridHold`) and its moves, counted
+    /// for UtttPreviewUITests, and a square it may play, by its VoiceOver
+    /// label, so the test can tap it.
+    @State private var holds = 0
+    @State private var moves = 0
+    @State private var legal = ""
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -84,7 +90,7 @@ struct PreviewRoot: View {
             ZStack(alignment: .bottom) {
                 Color(white: 0.07)
                 // Anchored to the bottom, which is where Messages puts it.
-                GameScreen()
+                gameScreen
                     .frame(width: geo.size.width,
                            height: size.height(screen: geo.size))
                 VStack {
@@ -94,6 +100,15 @@ struct PreviewRoot: View {
                     .pickerStyle(.segmented)
                     .frame(width: 240)
                     .padding(.top, 52)
+#if UTTT_BIG_BOARD
+                    Group {
+                        Text(verbatim: "hold fired \(holds)").accessibilityIdentifier("hold.count")
+                        Text(verbatim: "moves \(moves)").accessibilityIdentifier("small.moves")
+                        Text(verbatim: legal).accessibilityIdentifier("small.legal")
+                    }
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(Color(white: 0.85))
+#endif
                     Spacer()
                 }
             }
@@ -101,7 +116,18 @@ struct PreviewRoot: View {
         .ignoresSafeArea()
     }
 
+#if UTTT_BIG_BOARD
+    private var gameScreen: GameScreen { GameScreen(holds: $holds, moves: $moves, legal: $legal) }
+#else
+    private var gameScreen: GameScreen { GameScreen() }
+#endif
+
     struct GameScreen: UIViewRepresentable {
+#if UTTT_BIG_BOARD
+        var holds: Binding<Int>?
+        var moves: Binding<Int>?
+        var legal: Binding<String>?
+#endif
         func makeUIView(context: Context) -> UIView {
             /* `--seed S --moves a,b,c --you o` shows any game (tools/uttt_look
              * `moves CODE` prints them for a replay code), so a screenshot
@@ -134,6 +160,13 @@ struct PreviewRoot: View {
             /* a finished game stands its doors, as the end screen does */
             let v = UtttGameScreen(model: model, door: Uttt.over == .none ? .none : .again, slide: nil)
             model.refresh()
+#if UTTT_BIG_BOARD
+            let holdCount = holds, moveCount = self.moves, legalName = legal
+            v.setGridHold { holdCount?.wrappedValue += 1 }
+            model.onPosition = { moveCount?.wrappedValue += 1 }
+            let first = Uttt.legal.first.map { Uttt.sayCell(Int($0)) } ?? ""
+            DispatchQueue.main.async { legalName?.wrappedValue = first }
+#endif
             return v
         }
         func updateUIView(_ v: UIView, context: Context) {}

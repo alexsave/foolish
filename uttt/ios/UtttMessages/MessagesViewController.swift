@@ -751,18 +751,10 @@ final class MessagesViewController: MSMessagesAppViewController {
         case .spectator:
             let model = UtttModel(you: .none)
             model.refresh()
-#if UTTT_BIG_BOARD
-            show(UtttWatchScreen(model: model, door: door, slide: slide,
-                                 onDoor: { [weak self] in self?.again(in: conversation) },
-                                 onRules: { [weak self] in self?.openRules() },
-                                 onDiagnostics: diagnosticsHold(conversation),
-                                 onLongHold: bigHold(conversation)))
-#else
             show(UtttWatchScreen(model: model, door: door, slide: slide,
                                  onDoor: { [weak self] in self?.again(in: conversation) },
                                  onRules: { [weak self] in self?.openRules() },
                                  onDiagnostics: diagnosticsHold(conversation)))
-#endif
         }
     }
 
@@ -1287,18 +1279,10 @@ final class MessagesViewController: MSMessagesAppViewController {
             }
         }
 
-#if UTTT_BIG_BOARD
-        show(UtttGameScreen(model: model, door: door, slide: slide,
-                            onDoor: { [weak self] in self?.again(in: conversation) },
-                            onRules: { [weak self] in self?.openRules() },
-                            onDiagnostics: diagnosticsHold(conversation),
-                            onLongHold: bigHold(conversation)))
-#else
         show(UtttGameScreen(model: model, door: door, slide: slide,
                             onDoor: { [weak self] in self?.again(in: conversation) },
                             onRules: { [weak self] in self?.openRules() },
                             onDiagnostics: diagnosticsHold(conversation)))
-#endif
     }
 
 #if DEBUG
@@ -1336,6 +1320,9 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     private func show(_ screen: UIView) {
         UtttLog.note("show", String(String(describing: type(of: screen)).prefix(40)))
+#if UTTT_BIG_BOARD
+        gridHold(screen)
+#endif
         guard appeared || sized else {
             pendingScreen = screen
             return
@@ -1556,8 +1543,7 @@ final class MessagesViewController: MSMessagesAppViewController {
                 self?.again(in: conversation)
             },
             onRules: { [weak self] in self?.openRules() },
-            onDiagnostics: diagnosticsHold(conversation),
-            onLongHold: bigHold(conversation))
+            onDiagnostics: diagnosticsHold(conversation))
 #if DEBUG
         /* `dev.bigzoom`: the rig's way to a tappable cell without a pinch. */
         screen.openingZoom = UtttDev.takeBigZoom().map { CGFloat($0) }
@@ -1675,21 +1661,35 @@ final class MessagesViewController: MSMessagesAppViewController {
         return s
     }
 
-    /// The rulebook's 4-second hold: the mode's switch, where the big game
-    /// is available; nil (no hold at all) elsewhere.
-    private func bigHold(_ conversation: MSConversation) -> (() -> Void)? {
-        guard UtttBig.available else { return nil }
-        return { [weak self] in self?.toggleBigMode(conversation) }
+    /// THE MODE'S DOOR ON EVERY GRID (docs/BIG_BOARD.md): a still 4 s hold on
+    /// the board of any screen that has one switches the 243 mode - the
+    /// 9 x 9 waiting lobby, a game, a watched game, and every big screen.
+    /// Where the big game is not available no screen gets the hold at all.
+    private func gridHold(_ screen: UIView) {
+        guard UtttBig.available else { return }
+        let toggle: () -> Void = { [weak self] in self?.toggleBigMode() }
+        switch screen {
+        case let s as UtttLobbyScreen:   s.setGridHold(toggle)
+        case let s as UtttGameScreen:    s.setGridHold(toggle)
+        case let s as UtttWatchScreen:   s.setGridHold(toggle)
+        case let s as UtttBigGameScreen: s.setGridHold(toggle)
+        case let s as UtttBigLobby:      s.setGridHold(toggle)
+        default: break
+        }
     }
 
-    /// THE HOLD: flip the mode, show it, and - when the screen up is my own
-    /// unsent invitation and nothing else - stage it again in the other size.
-    private func toggleBigMode(_ conversation: MSConversation) {
+    /// THE HOLD: flip the mode and show it. On THIS DEVICE'S UNSENT
+    /// INVITATION - the waiting lobby up, an invitation in the field - the
+    /// field follows the mode: the draft is replaced by a fresh invitation of
+    /// the other size (`start`, which reads the mode) and the lobby with it.
+    /// A sent invitation (nothing in the field) and every other screen
+    /// change nothing but the mode and the badge.
+    private func toggleBigMode() {
         let on = UtttBigMode.toggle()
         UtttLog.note("big-mode", on ? "on" : "off")
         updateBigBadge()
-        guard let mine = staged, sent == nil, arrived == nil,
-              conversation.selectedMessage == nil else { return }
+        let lobby = host is UtttBigLobby || (host as? UtttLobbyScreen)?.stance == .waiting
+        guard lobby, draftURL != nil, let mine = staged, let conversation = activeConversation else { return }
         let big = isBigText(mine.text)
         guard big != on else { return }
         let invitation: Bool

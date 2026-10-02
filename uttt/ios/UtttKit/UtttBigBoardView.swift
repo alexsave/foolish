@@ -41,7 +41,7 @@ import UIKit
 /// index = d1*6561 + d2*729 + d3*81 + d4*9 + d5. A point maps back to the
 /// cell whose rect holds it; the far edge (exactly 1) belongs to the last
 /// cell, outside 0..1 is -1.
-public final class UtttBigBoardView: UIView, UIScrollViewDelegate {
+public final class UtttBigBoardView: UIView, UIScrollViewDelegate, UIGestureRecognizerDelegate {
     /// Cells on a side, levels below the root, and the array sizes.
     nonisolated public static let sideCells = 243
     nonisolated public static let depth = 5
@@ -324,6 +324,21 @@ public final class UtttBigBoardView: UIView, UIScrollViewDelegate {
         let p = g.location(in: content)
         let mv = Self.cell(at: CGPoint(x: p.x / side, y: p.y / side))
         if mv >= 0 { onTap?(mv) }
+    }
+
+    // MARK: the mode's door
+
+    /// THE 243 MODE'S DOOR on this board (UtttModeHold, docs/BIG_BOARD.md),
+    /// on the zooming content beside the taps, so it sees the touch before
+    /// the scroll view's pan takes it; it recognises alongside the pan and
+    /// the pinch, which it never holds up.
+    public func setModeHold(_ action: @escaping () -> Void) {
+        UtttModeHold.install(on: content, action).delegate = self
+    }
+
+    public func gestureRecognizer(_ g: UIGestureRecognizer,
+                                  shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+        g is UtttModeHold && (other === scroll.panGestureRecognizer || other === scroll.pinchGestureRecognizer)
     }
 
     // MARK: accessibility value: what a UI test reads

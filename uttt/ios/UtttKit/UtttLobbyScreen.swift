@@ -46,6 +46,15 @@ public final class UtttLobbyScreen: UtttSheetView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
+#if UTTT_BIG_BOARD
+    /// THE 243 MODE'S DOOR (docs/BIG_BOARD.md): a still hold on the empty
+    /// board of the wait; the unreadable screen has no board, and no door.
+    public func setGridHold(_ action: @escaping () -> Void) {
+        guard stance == .waiting else { return }
+        board.setModeHold(action)
+    }
+#endif
+
     /* NO MARK ON THE WAITING SCREEN: the joiner will be X, and until somebody
      * joins there is nobody to be anything. */
     private var headline: String {
@@ -153,15 +162,8 @@ public final class UtttWatchScreen: UtttSheetView {
     required init?(coder: NSCoder) { fatalError() }
 
 #if UTTT_BIG_BOARD
-    /// The same screen with the rulebook's 4-second hold (docs/BIG_BOARD.md):
-    /// `onLongHold` nil adds nothing, so this is the screen above exactly.
-    public convenience init(model: UtttModel, door: Uttt.Door = .none, slide: CollapseSlide?,
-                            onDoor: @escaping () -> Void = {}, onRules: @escaping () -> Void = {},
-                            onDiagnostics: (() -> Void)? = nil, onLongHold: (() -> Void)?) {
-        self.init(model: model, door: door, slide: slide, onDoor: onDoor, onRules: onRules,
-                  onDiagnostics: onDiagnostics)
-        rulebook.setLongHold(onLongHold)
-    }
+    /// THE 243 MODE'S DOOR (docs/BIG_BOARD.md): a still hold on the board.
+    public func setGridHold(_ action: @escaping () -> Void) { board.setModeHold(action) }
 #endif
 
     /// The play surface's one layout (`Uttt.sheet`), with the header line in

@@ -29,6 +29,11 @@ public enum UtttBig {
 #endif
     }
 
+    /// THE MODE'S DOOR: a still hold on a grid this long switches the 243
+    /// mode, and the finger may drift this many points during it.
+    public static let holdSeconds = TimeInterval(uti_big_hold_ms()) / 1000
+    public static let holdSlop = CGFloat(uti_big_hold_slop())
+
     /// Cells a side, and on the board.
     public static let side = Int(UTI_BIG_SIDE)
     public static let cellCount = Int(UTI_BIG_CELLS)

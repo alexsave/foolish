@@ -21,6 +21,14 @@ import XCTest
 /// UtttBigBoardView.layoutSubviews made to re-fit (the zoom restore skipped),
 /// it went red at "shrinking the board changed the zoom" (1.0 is not 3.0);
 /// restored, green.
+/// testGridHoldTogglesOnlyAFourSecondStill, 2026-10-01: with UtttModeHold's
+/// minimumPressDuration made 1 s it went red at "a 3 s hold fired the door"
+/// ("hold fired 2" is not "hold fired 1"); with its allowableMovement made
+/// 10,000 it went red at "a hold that drifted 40 points fired the door" (the
+/// same numbers); each restored from a copy, green.
+/// SmallBoardHoldUITests, the same day: with UtttBoardView.setModeHold made
+/// to install nothing it went red at "a 4.6 s still hold on the 9 x 9 board
+/// did not fire: hold fired 0"; restored, green.
 final class BigBoardUITests: XCTestCase {
     private struct Seen {
         var zoom: Double
@@ -160,6 +168,58 @@ final class BigBoardUITests: XCTestCase {
         XCTAssertTrue(s.whole)
     }
 
+    /// THE MODE'S DOOR (UtttModeHold, docs/BIG_BOARD.md): only a still hold
+    /// of 4 s fires it. A shorter hold, a hold that drifts 40 points, a tap,
+    /// a double tap and a pinch never do, and each of those still does its
+    /// own thing. The harness counts the door in "hold fired N".
+    func testGridHoldTogglesOnlyAFourSecondStill() {
+        let board = app.descendants(matching: .any)["big.board"]
+        XCTAssertTrue(board.waitForExistence(timeout: 15), "no board")
+        let count = app.staticTexts["hold.count"]
+        XCTAssertEqual(count.label, "hold fired 0")
+        XCTAssertEqual(settled(board).zoom, 1, accuracy: 0.01, "initial zoom")
+
+        /* 1. a still 4.6 s hold fires the door once, and taps nothing */
+        board.press(forDuration: 4.6)
+        XCTAssertTrue(app.staticTexts["hold fired 1"].waitForExistence(timeout: 3),
+                      "a 4.6 s still hold did not fire: \(count.label)")
+        XCTAssertEqual(app.staticTexts["big.tapped"].label, "tapped none", "the hold also tapped a cell")
+
+        /* 2. a 3 s hold is not one */
+        board.press(forDuration: 3.0)
+        Thread.sleep(forTimeInterval: 1.5)
+        XCTAssertEqual(count.label, "hold fired 1", "a 3 s hold fired the door")
+
+        /* 3. a press that drags 40 points and is still down at 4.6 s is not one */
+        let from = board.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        from.press(forDuration: 0.3, thenDragTo: from.withOffset(CGVector(dx: 40, dy: 0)),
+                   withVelocity: 40, thenHoldForDuration: 3.3)
+        Thread.sleep(forTimeInterval: 1.5)
+        XCTAssertEqual(count.label, "hold fired 1", "a hold that drifted 40 points fired the door")
+        _ = settled(board)
+
+        /* 4. a tap names its cell at once, and is not a hold */
+        board.tap()
+        let tapped = app.staticTexts["big.tapped"]
+        let named = NSPredicate(format: "label != %@", "tapped none")
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: named, evaluatedWith: tapped)], timeout: 3), .completed,
+                       "a tap did not reach the board")
+        XCTAssertEqual(count.label, "hold fired 1", "a tap fired the door")
+
+        /* 5. a double tap zooms, and is not a hold */
+        let before = settled(board).zoom
+        board.doubleTap()
+        let zoomed = settled(board).zoom
+        XCTAssertGreaterThan(zoomed, before * 2, "the double tap did not zoom")
+        XCTAssertEqual(count.label, "hold fired 1", "a double tap fired the door")
+
+        /* 6. a pinch zooms, and is not a hold */
+        board.pinch(withScale: 0.2, velocity: -3)
+        XCTAssertLessThan(settled(board).zoom, zoomed, "the pinch did not zoom out")
+        Thread.sleep(forTimeInterval: 1)
+        XCTAssertEqual(count.label, "hold fired 1", "a pinch fired the door")
+    }
+
     /// A drawer resize (expanded to compact and back) keeps the zoom and the
     /// cell under the centre: the board fits only on its first layout. The
     /// harness's "resize" button makes the board 340 points tall and back.
@@ -187,6 +247,42 @@ final class BigBoardUITests: XCTestCase {
         XCTAssertEqual(board.frame.height, tall, accuracy: 1, "resize did not grow the board back")
         XCTAssertEqual(s.zoom, zoom, accuracy: 0.01, "growing the board changed the zoom")
         XCTAssertEqual(s.centre, centre, "growing the board moved the centre")
+    }
+}
+/// THE MODE'S DOOR ON THE 9 x 9 BOARD (UtttBoardView.setModeHold, through
+/// UtttGameScreen.setGridHold): a 4.6 s still hold on a square I may play
+/// fires the door and plays nothing; a tap on the same square still plays it.
+final class SmallBoardHoldUITests: XCTestCase {
+    private var app: XCUIApplication!
+
+    override func setUp() {
+        continueAfterFailure = false
+        app = XCUIApplication()
+        app.launchArguments = ["--size", "expanded"]
+        app.launch()
+    }
+
+    func testGridHoldOnTheNineByNine() {
+        let legal = app.staticTexts["small.legal"]
+        XCTAssertTrue(legal.waitForExistence(timeout: 15), "no legal square named")
+        let filled = NSPredicate(format: "label != %@", "")
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: filled, evaluatedWith: legal)], timeout: 5), .completed)
+        let square = app.buttons[legal.label]
+        XCTAssertTrue(square.waitForExistence(timeout: 5), "no square '\(legal.label)'")
+        let count = app.staticTexts["hold.count"], moves = app.staticTexts["small.moves"]
+        XCTAssertEqual(count.label, "hold fired 0")
+        XCTAssertEqual(moves.label, "moves 0")
+
+        square.press(forDuration: 4.6)
+        XCTAssertTrue(app.staticTexts["hold fired 1"].waitForExistence(timeout: 3),
+                      "a 4.6 s still hold on the 9 x 9 board did not fire: \(count.label)")
+        Thread.sleep(forTimeInterval: 1)
+        XCTAssertEqual(moves.label, "moves 0", "the hold also played the square")
+
+        square.tap()
+        XCTAssertTrue(app.staticTexts["moves 1"].waitForExistence(timeout: 3),
+                      "a tap on a legal square did not play it: \(moves.label)")
+        XCTAssertEqual(count.label, "hold fired 1", "the tap fired the door")
     }
 }
 #endif

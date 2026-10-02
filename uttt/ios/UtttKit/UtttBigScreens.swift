@@ -98,14 +98,12 @@ public final class UtttBigGameScreen: UtttSheetView {
     public var openingZoom: CGFloat?
 
     public init(model: UtttBigModel, interactive: Bool, onDoor: @escaping () -> Void = {},
-                onRules: @escaping () -> Void = {}, onDiagnostics: (() -> Void)? = nil,
-                onLongHold: (() -> Void)? = nil) {
+                onRules: @escaping () -> Void = {}, onDiagnostics: (() -> Void)? = nil) {
         self.model = model
         self.interactive = interactive
         youMark = UtttInkView.mark(model.you, look: UtttBig.look)
         rulebook = UtttRulebookButton(act: onRules, onHold: onDiagnostics)
         super.init(slide: nil)
-        rulebook.setLongHold(onLongHold)
         if interactive {
             board.onTap = { [weak model] cell in model?.tap(cell) }
         }
@@ -132,6 +130,9 @@ public final class UtttBigGameScreen: UtttSheetView {
         pushBoard()
     }
     required init?(coder: NSCoder) { fatalError() }
+
+    /// THE 243 MODE'S DOOR (docs/BIG_BOARD.md): a still hold on the board.
+    public func setGridHold(_ action: @escaping () -> Void) { board.setModeHold(action) }
 
     private func changed() {
         pushBoard()
@@ -216,21 +217,33 @@ public final class UtttBigGameScreen: UtttSheetView {
     }
 }
 
-/// My own big invitation, nobody has joined: the kernel's words, no board.
+/// My own big invitation, nobody has joined: the kernel's words over THE
+/// EMPTY BIG BOARD at the fit - no wash, no last move, nobody on it (as the
+/// 9 x 9's waiting screen) - which is also the grid the mode's hold is on.
 public final class UtttBigLobby: UtttSheetView {
     private let words = UtttLobbyWords()
+    private let board = UtttBigBoardView(frame: .zero)
 
     public init() {
         super.init(slide: nil)
+        board.set(cells: UtttBig.cells, nodes: [UInt8](repeating: 0, count: UtttBigBoardView.nodeCount),
+                  regionRect: nil, last: -1, draft: -1)
+        content.addSubview(board)
         content.addSubview(words)
     }
     required init?(coder: NSCoder) { fatalError() }
 
+    /// THE 243 MODE'S DOOR (docs/BIG_BOARD.md): a still hold on the board.
+    public func setGridHold(_ action: @escaping () -> Void) { board.setModeHold(action) }
+
     override func lay(_ size: CGSize, from: CGFloat?) {
         typealias M = UtttBigLayout
+        /* the words in the header band, the board in the rest */
         words.frame = CGRect(x: M.pad, y: M.pad, width: max(0, size.width - M.pad - M.hintRoom),
-                             height: max(0, size.height - 2 * M.pad))
+                             height: max(0, M.header - M.pad))
         words.set(UtttBig.say(.waitingHeadline), UtttBig.say(.waitingSubline), column: false)
+        board.frame = CGRect(x: 0, y: M.header, width: size.width,
+                             height: max(0, size.height - M.header - M.pad))
     }
 }
 #endif

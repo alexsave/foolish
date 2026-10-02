@@ -12,6 +12,8 @@ import UtttKit
 /// `simctl launch <udid> cards.uttt.preview --screen 243` opens straight here.
 struct BigBoardPreview: View {
     @State private var tapped = -1
+    /// How many times the mode's door (`setModeHold`) fired.
+    @State private var holds = 0
     @State private var footprint = 0.0
     @State private var peak = 0.0
     /// The "resize" button's state: the board 340 points tall (Messages'
@@ -25,6 +27,8 @@ struct BigBoardPreview: View {
         VStack(spacing: 2) {
             Text(verbatim: tapped >= 0 ? "tapped \(tapped)" : "tapped none")
                 .accessibilityIdentifier("big.tapped")
+            Text(verbatim: "hold fired \(holds)")
+                .accessibilityIdentifier("hold.count")
             Text(String(format: "footprint %.1f MB peak %.1f MB", footprint, peak))
                 .accessibilityIdentifier("big.memory")
             HStack {
@@ -33,7 +37,7 @@ struct BigBoardPreview: View {
                 Button("resize") { compact.toggle() }
                     .accessibilityIdentifier("big.resize")
             }
-            BigBoard(tapped: $tapped)
+            BigBoard(tapped: $tapped, holds: $holds)
                 .frame(height: compact ? 340 : nil)
             if compact { Spacer(minLength: 0) }
         }
@@ -47,6 +51,7 @@ struct BigBoardPreview: View {
 
     struct BigBoard: UIViewRepresentable {
         @Binding var tapped: Int
+        @Binding var holds: Int
 
         func makeUIView(context: Context) -> UtttBigBoardView {
             let v = UtttBigBoardView(frame: .zero)
@@ -54,6 +59,8 @@ struct BigBoardPreview: View {
             let b = BigBoardSynthetic.board
             v.set(cells: b.cells, nodes: b.nodes, regionRect: b.region, last: b.last, draft: b.draft)
             let binding = $tapped
+            let held = $holds
+            v.setModeHold { held.wrappedValue += 1 }
             v.onTap = { [weak v] mv in
                 binding.wrappedValue = mv
                 /* a tap on an empty cell stages it, as the game will */
