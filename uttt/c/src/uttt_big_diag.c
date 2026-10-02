@@ -581,7 +581,7 @@ static void section_history(Text *t, const UbdFacts *f)
     int n = ubd_ring_count(f->ring, f->ring_n);
     line(t, "");
     line(t, "== history, newest first (%d)", n);
-    line(t, "day time, role, px, bytes, quality,");
+    line(t, "day time role px bytes quality, then");
     line(t, "  risky r, min margin m, result");
     for (int i = 0; i < n; i++) {
         UbdEvent e;
@@ -599,9 +599,12 @@ static void section_history(Text *t, const UbdFacts *f)
         else snprintf(rm, sizeof rm, "r%d m%d", e.risky, e.min_margin);
         const char *res = e.result == UBD_R_OK ? ((e.flags & UBD_EV_CRC_KNOWN) && !(e.flags & UBD_EV_CRC_SAME) ? "crc!" : "ok")
                         : e.result == UBD_R_NOT_READ ? "" : ubd_result_name(e.result);
-        char row[96];
-        int k = snprintf(row, sizeof row, "%s %s %dx%d %s %s %s %s", when,
-                         e.role == UBD_ROLE_SENT ? "sent" : "open", e.width, e.height, kb, q, rm, res);
+        /* TWO LINES A RECORD, so the widest (a 1200 px picture, a 1.4 MB
+         * file, a refusal's name) never meets the line's cut */
+        line(t, "%s %s %dx%d %s %s", when, e.role == UBD_ROLE_SENT ? "sent" : "open",
+             e.width, e.height, kb, q);
+        char row[64];
+        int k = snprintf(row, sizeof row, "  %s %s", rm, res);
         while (k > 0 && row[k - 1] == ' ') row[--k] = 0;
         line(t, "%s", row);
     }

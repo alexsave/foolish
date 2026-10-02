@@ -492,8 +492,7 @@ static void test_report(void)
 
     TEST("report: the history, newest first, with the send");
     CHECK(line_with(text, "== history, newest first (1)", l, sizeof l), "history count");
-    CHECK(line_with(text, "21 15:31:40 sent 729x732 255.3K q=0.50 -", l, sizeof l) &&
-          !strcmp(l, "21 15:31:40 sent 729x732 255.3K q=0.50 -"), "the send: %s", text);
+    CHECK(strstr(text, "\n21 15:31:40 sent 729x732 255.3K q=0.50\n  -\n"), "the send: %s", text);
 
     TEST("report: what the transport was not expected to do is marked");
     f.who = UBD_WHO_OTHER;
@@ -514,6 +513,18 @@ static void test_report(void)
     CHECK(ubd_report(&f, text, sizeof text) > 0 && line_with(text, "!= link", l, sizeof l) && l[0] == '!',
           "crc");
     sym[100] = 0;
+
+    TEST("report: the widest history record is whole");
+    {
+        UbdEvent wide = { 1790001150, UBD_ROLE_OPENED, 1200, 1200, 1435899, 893, 9999, 12, UBD_R_GEOMETRY, 0 };
+        uint8_t r2[UBD_RING_BYTES];
+        int n2 = ubd_ring_push(ring, rn, &wide, r2, sizeof r2);
+        UbdFacts g = f;
+        g.ring = r2; g.ring_n = n2;
+        CHECK(ubd_report(&g, text, sizeof text) > 0 && lines_ok(text, &count) &&
+              strstr(text, "\n21 15:32:30 open 1200x1200 1435.8K q~0.89\n  r9999 m12 BD_EGEOMETRY\n"),
+              "wide: %s", strstr(text, "== history"));
+    }
 
     TEST("report: a cap too small cuts on a whole line");
     char small[300];
