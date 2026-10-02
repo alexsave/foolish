@@ -1131,19 +1131,18 @@ struct GameSurface: View {
                              // roster with an unnamed seat - is an ordinary new
                              // game and punishes nobody.
                              onNewGame: {
-                                 guard let r = rematchRoster(from: controller) else {
+                                 guard RematchLobby.rotatedRoster(
+                                     view: controller.view, names: controller.names,
+                                     mySeat: controller.mySeat,
+                                     myName: MessageGameStore.shared.nickname) != nil else {
                                      onNewGame(); return
                                  }
-                                 onFreshChain()
-                                 // The table's RULES carry over with the table.
-                                 // A rematch is the same people playing again,
+                                 // The table's RULES carry over with the table:
+                                 // a rematch is the same people playing again,
                                  // so it starts as the game they were just
                                  // playing - and the checkbox is still there to
                                  // change it before anyone starts.
-                                 let passing = controller.passingAllowed
-                                 Task { await createRematchLobby(joins: r.joins,
-                                                                 foolSeat: r.foolSeat,
-                                                                 passing: passing) }
+                                 Task { await createRematchLobby(controller) }
                              },
                              onUnstage: onUnstage,
                              alsoStaged: surfaceStaged,
@@ -1753,41 +1752,6 @@ struct GameSurface: View {
 
     // MARK: the fool's penalty (Rule F)
 
-    /// The rematch roster, read STRAIGHT OFF the finished board: the same table,
-    /// in the same cycle, rotated so this device sits at seat 0. nil when this
-    /// is not a game a rematch can be built from.
-    ///
-    /// Rotated because seat 0 is the creator's by construction (`createWaiting`)
-    /// and whoever taps New game is the creator. Preserving the CYCLE is what
-    /// matters, not the numbers - the wire keys a roster rotation-canonically
-    /// for exactly this reason - so the same table comes back as the same
-    /// table however it is spun.
-    ///
-    /// My own name comes from the store, not from the old game's join: this
-    /// device may have been renamed since, and the name it seals now is the one
-    /// its seat will be recognised by.
-    private func rematchRoster(from controller: MessageTurnController)
-        -> (joins: [MessageJoin], foolSeat: Int)? {
-        guard let v = controller.view, v.isOver, v.gameOver >= 0 else { return nil }
-        let n = v.players.count
-        let me = controller.mySeat
-        guard n >= 2, me >= 0, me < n, v.gameOver < n else { return nil }
-
-        // Names BY SEAT. A seat with no name cannot be recognised by its owner
-        // on the other device (SeatIdentity.seatClaimedByName is what lets a
-        // prefilled lobby seat people who never tapped Join), so a roster
-        // missing one is not a rematch roster at all - the tap falls back to an
-        // ordinary new game rather than seating somebody as a blank.
-        var joins: [MessageJoin] = []
-        for s in 0..<n {
-            let old = (s + me) % n
-            let name = old == me ? MessageGameStore.shared.nickname : (controller.names[old] ?? "")
-            guard !name.isEmpty else { return nil }
-            joins.append(MessageJoin(seat: s, name: name))
-        }
-        return (joins, (v.gameOver - me + n) % n)
-    }
-
     /// "New game" on a FINISHED board: create the rematch lobby HERE, from the
     /// game still on screen, and stage it. No intent is written down and
     /// nothing is read back - the roster, the fool and my seat are all in hand
@@ -1812,25 +1776,29 @@ struct GameSurface: View {
     /// podkidnoy table would otherwise silently deal a perevodnoy one. The
     /// lobby's checkbox is still live - this sets where it STARTS, not what it
     /// must be.
-    private func createRematchLobby(joins: [MessageJoin], foolSeat: Int,
-                                    passing: Bool) async {
-        var seed = Data(count: 32)
-        for i in 0..<32 { seed[i] = UInt8.random(in: 0...UInt8.max) }
-        let gameId = UInt64.random(in: 1...UInt64.max)
-        let capacity = max(chatIsDM ? 2 : 8, joins.count)
+    ///
+    /// Anything that is not a rematch - a roster with an unnamed seat - falls
+    /// back to an ordinary New game, which punishes nobody.
+    private func createRematchLobby(_ board: MessageTurnController) async {
+        let passing = board.passingAllowed
+        let built: (payload: Data, mySeat: Int)?
         do {
-            try await MessageKernel.shared.newGame(seed: seed, players: capacity)
-            await MessageKernel.shared.setPassing(passing)
-            let armed = await MessageKernel.shared.armRematchCarry(joins: joins,
-                                                                   foolSeat: foolSeat)
-            AnimLog.say("rematch lobby: n=\(joins.count) fool@\(foolSeat) armed=\(armed)")
-            let payload = try await MessageKernel.shared.seal(
-                phase: 0, lastActorSeat: 0, gameId: gameId,
-                parent8: Data(repeating: 0, count: 8), joins: joins)
+            built = try await RematchLobby.build(
+                finished: board.basePayload, view: board.view, names: board.names,
+                mySeat: board.mySeat, myName: MessageGameStore.shared.nickname,
+                passing: passing, capacity: chatIsDM ? 2 : 8)
+        } catch {
+            damaged = true
+            return
+        }
+        guard let built else { onNewGame(); return }
+        onFreshChain()
+        let payload = built.payload
+        do {
             let env = try await MessageEnvelope.decode(payload: payload, viewer: -1)
             showSetup = false
             damaged = false
-            cache(seat: 0, env: env, payload: payload)
+            cache(seat: built.mySeat, env: env, payload: payload)
             // The finished game is what an X goes back to here - the result
             // card, not a dead lobby - and unlike the create there IS a chain
             // for it.
@@ -1850,7 +1818,7 @@ struct GameSurface: View {
                 lobby = Lobby(env: env, payload: payload); lastShownChain = payload
             }
             await holdSurface(plan, since: began)
-            await onSend(payload, 0, false)
+            await onSend(payload, built.mySeat, false)
             surfaceStaged = true
         } catch {
             damaged = true
