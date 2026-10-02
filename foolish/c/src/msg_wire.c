@@ -80,20 +80,28 @@ int msg_last_body_version = -1;
 // exactly or an envelope encodes to bytes that decode back as something else.
 static int fmt_known(uint8_t f) {
     return f == MSG_FORMAT_V6 || f == MSG_FORMAT_CLOCK || f == MSG_FORMAT_REMATCH
-        || f == MSG_FORMAT_RULES || f == MSG_FORMAT_RULES_REMATCH;
+        || f == MSG_FORMAT_RULES || f == MSG_FORMAT_RULES_REMATCH
+        || f == MSG_FORMAT_GENERATION;
 }
 static int fmt_has_clock(uint8_t f) {
     return f == MSG_FORMAT_CLOCK || f == MSG_FORMAT_REMATCH
-        || f == MSG_FORMAT_RULES || f == MSG_FORMAT_RULES_REMATCH;
+        || f == MSG_FORMAT_RULES || f == MSG_FORMAT_RULES_REMATCH
+        || f == MSG_FORMAT_GENERATION;
 }
 static int fmt_has_rematch(uint8_t f) {
-    return f == MSG_FORMAT_REMATCH || f == MSG_FORMAT_RULES_REMATCH;
+    return f == MSG_FORMAT_REMATCH || f == MSG_FORMAT_RULES_REMATCH
+        || f == MSG_FORMAT_GENERATION;
 }
 // Does this format's variant byte carry the RULES? On the formats that predate
 // it the byte is reserved and must be 0 - which is not "no rules", it is the
 // passing game, the only one those formats could describe.
 static int fmt_has_rules(uint8_t f) {
-    return f == MSG_FORMAT_RULES || f == MSG_FORMAT_RULES_REMATCH;
+    return f == MSG_FORMAT_RULES || f == MSG_FORMAT_RULES_REMATCH
+        || f == MSG_FORMAT_GENERATION;
+}
+// Format 7 is format 6 plus the rematch generation (msg_wire.h).
+static int fmt_has_generation(uint8_t f) {
+    return f == MSG_FORMAT_GENERATION;
 }
 
 int msg_pass_allowed(const MsgEnvelope *e) {
@@ -189,6 +197,11 @@ static int validate_fields(const MsgEnvelope *e) {
     // Half a carry decides nothing and would read as an ordinary lobby on one
     // device and a penalty on another, so it is refused rather than ignored.
     if ((e->carry_key != 0) != (e->carry_fool != MSG_NO_FOOL)) return MSG_EFORMAT;
+    // THE GENERATION, both directions again: an earlier format has nowhere to
+    // put one, and a format-7 header that said 0 would be a second spelling of
+    // a format-5/6 chain - two byte strings for one game, and Rule P's digest
+    // tiebreak would see two chains where there is one.
+    if (fmt_has_generation(e->format) != (e->generation != 0)) return MSG_EFORMAT;
     return MSG_EOK;
 }
 
@@ -196,6 +209,7 @@ static int validate_fields(const MsgEnvelope *e) {
 // appends; n_joins is always the last byte of it. Formats 5 and 6 add no bytes
 // to 3 and 4 - they respend one that was already there.
 static int hdr_len_for(uint8_t format) {
+    if (fmt_has_generation(format)) return MSG_HEADER_LEN_GENERATION;
     if (fmt_has_rematch(format)) return MSG_HEADER_LEN_REMATCH;
     if (fmt_has_clock(format))   return MSG_HEADER_LEN_CLOCK;
     return MSG_HEADER_LEN;
@@ -238,6 +252,8 @@ int msg_decode(const unsigned char *in, int in_len, MsgEnvelope *out) {
     out->opening    = has_rematch ? in[MSG_OPEN_OFF] : MSG_NO_OPENING;
     out->carry_key  = has_rematch ? rd32(in + MSG_CARRY_OFF) : 0u;
     out->carry_fool = has_rematch ? in[MSG_FOOL_OFF] : MSG_NO_FOOL;
+    // Every format before 7 is generation 0: the game its lobby created.
+    out->generation = fmt_has_generation(in[1]) ? rd16(in + MSG_GEN_OFF) : 0;
 
     const int n_joins = in[hdr_len - 1];
     // Bound the count BEFORE the loop writes: n_joins is attacker-controlled
@@ -320,6 +336,7 @@ int msg_encode(const MsgEnvelope *e, unsigned char *out, int out_cap) {
         wr32(out + MSG_CARRY_OFF, e->carry_key);
         out[MSG_FOOL_OFF] = e->carry_fool;
     }
+    if (fmt_has_generation(e->format)) wr16(out + MSG_GEN_OFF, e->generation);
     out[hdr_len - 1] = (unsigned char)e->n_joins;
 
     int off = hdr_len;
@@ -549,6 +566,11 @@ static uint8_t seal_format(const MsgEnvelope *e) {
     // only be inferred is exactly what this change is getting rid of. A game
     // with nothing else to say still writes 5 - same 62 bytes format 3 wrote,
     // one of them now meaning something.
+    //
+    // A REMATCH writes 7, and nothing else does: generation 0 keeps 5 and 6
+    // byte for byte, so an ordinary game is still readable by every shipped
+    // build and only a rematch asks an old build to update.
+    if (e->generation != 0) return MSG_FORMAT_GENERATION;
     if (e->opening != MSG_NO_OPENING || e->carry_key != 0
         || e->carry_fool != MSG_NO_FOOL) return MSG_FORMAT_RULES_REMATCH;
     return MSG_FORMAT_RULES;

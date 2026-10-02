@@ -16,7 +16,8 @@
 //   0    1     magic      0xF7
 //   1    1     format     2; 3 adds a send clock + a bubble delta; 4 adds the
 //                          fool's penalty; 5 and 6 are 3 and 4 with the variant
-//                          byte spent on the RULES (1 was cut before shipping)
+//                          byte spent on the RULES; 7 is 6 plus the rematch
+//                          GENERATION (1 was cut before shipping)
 //   2    1     flags      bit0 fair_deal, bit1 gzip-body,
 //                          bit2 = legacy (was passing_allowed in 1.0(3); tolerated
 //                          on decode, never set now), bits3-7 reserved=0
@@ -37,7 +38,8 @@
 //   62   1     opening    FORMAT 4 ONLY: the seat this deal opens on (0xFF = derive)
 //   63   4     carry_key  FORMAT 4 ONLY: u32 LE roster key of the game before (0 = none)
 //   67   1     carry_fool FORMAT 4 ONLY: the fool's canonical index (0xFF = none)
-//   58   1     n_joins    (61 on format 3, 68 on format 4)
+//   68   2     generation FORMAT 7 ONLY: u16 LE, which rematch of game_id
+//   58   1     n_joins    (61 on format 3, 68 on format 4/6, 70 on format 7)
 //   59   var   joins      n_joins x { u8 seat, u8 name_len<=64, name utf8 }
 //   var  2     n_actions  u16, the action count the body must yield
 //   var  var   body       the v6 replay code — see THE BODY
@@ -288,6 +290,50 @@
 #define MSG_FORMAT_RULES         5
 #define MSG_FORMAT_RULES_REMATCH 6
 
+// Format 7 = format 6 plus THE GENERATION: which rematch of this game_id the
+// chain belongs to. Owner, on a finished game three people each tapped New
+// game on: "Somehow a finished game was able to be forked into 3 games. No
+// this shouldn't be possible. It should not start a new chain I think, it
+// should collapse the same game (yes, wiping out the history)."
+//
+// A rematch is now the SAME game_id dealt again. Generation 0 is the game a
+// lobby was created as; the first rematch is generation 1, and so on. The
+// rematch lobby is built entirely in the kernel from the finished chain
+// (msg_rematch_lobby): same game_id, generation + 1, the finished chain's
+// digest as its parent, a seed derived from the old one, and the finished
+// game's own seating - so every device that taps New game on the same finished
+// table seals the same lobby, differing only in its send clock.
+//
+// THE GENERATION RIDES EVERY BUBBLE of the game, not just the lobby, for the
+// reason `opening` does: Rule P compares two chains by their bytes alone, and a
+// LIVE bubble of the rematch that forgot its generation would rank against the
+// finished game by round and turn - and lose to it.
+//
+// LAYOUT. Format 6's 69-byte header with two more bytes before n_joins:
+//
+//   68   2     generation  u16 LE, 1..65535 (a format-7 header never says 0)
+//   70   1     n_joins
+//
+// Every earlier offset is unchanged, so the decoders still share one prefix.
+// A generation-0 chain is never written as format 7: seal_format picks 5 or 6
+// exactly as before, byte for byte (c/tests/msg_wire_test.c pins both against
+// golden hex captured before this format existed), so every ordinary game stays
+// readable by every shipped build. Only a rematch pays the two bytes.
+//
+// AN OLD BUILD REFUSES IT, LOUDLY. Its msg_decode does not know format 7 and
+// returns MSG_EFORMAT before reading a field; on the phone that is the
+// surface router's `.damaged` screen ("Couldn't open this game", with a New
+// game button), and an arrival of one is ignored because Rule P cannot read
+// it. That is the same trade formats 3, 4, 5 and 6 each made: a build that
+// cannot read the generation must not guess it, because a guess is a fork.
+#define MSG_FORMAT_GENERATION    7
+#define MSG_GEN_OFF              68
+#define MSG_HEADER_LEN_GENERATION 71
+// The last generation a game_id can reach. A rematch past it is refused
+// (msg_rematch_lobby answers MSG_EFORMAT) and the host starts an ordinary new
+// game instead - 65,535 rematches of one table is not a ceiling anyone meets.
+#define MSG_MAX_GENERATION       0xFFFF
+
 #define MSG_VARIANT_PASS  0x01
 #define MSG_VARIANT_KNOWN (MSG_VARIANT_PASS)
 
@@ -463,6 +509,13 @@ typedef struct {
     // within that key's canonical rotation, or MSG_NO_FOOL.
     uint32_t carry_key;
     uint8_t  carry_fool;
+
+    // THE GENERATION, format 7 (see MSG_FORMAT_GENERATION): which rematch of
+    // `game_id` this chain belongs to. 0 on every format before 7, which is
+    // what each of them means - the game a lobby was created as. Like
+    // `opening` it is a term of the deal, set once (by msg_rematch_lobby) and
+    // repeated by every later seal of the game.
+    uint16_t generation;
 
     int      n_joins;
     MsgJoin  joins[MSG_MAX_JOINS];

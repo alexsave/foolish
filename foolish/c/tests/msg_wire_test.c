@@ -114,6 +114,7 @@ static void seed_fill(uint8_t *seed, uint32_t s) {
 // here rather than exported from msg_wire.c: if the two ever disagree, that is
 // a wire bug this file is supposed to catch, not share.
 static int env_hdr_len(uint8_t format) {
+    if (format == MSG_FORMAT_GENERATION) return MSG_HEADER_LEN_GENERATION;
     if (format == MSG_FORMAT_REMATCH || format == MSG_FORMAT_RULES_REMATCH)
         return MSG_HEADER_LEN_REMATCH;
     if (format == MSG_FORMAT_CLOCK || format == MSG_FORMAT_RULES)
@@ -1139,10 +1140,13 @@ static void test_tamper(void) {
     const int hl = env_hdr_len(e.format);
     struct { const char *what; int off; unsigned char val; int want; } cases[] = {
         { "magic",        0,  0xF6, MSG_EMAGIC },
-        // 3 is the CLOCK format, 4 the REMATCH format, and 5/6 are those two
-        // with the variant byte spent on the rules - so the first unknown byte
-        // above them is 7. (2 through 6 are the whole wire.)
-        { "format",       1,  MSG_FORMAT_RULES_REMATCH + 1, MSG_EFORMAT },
+        // 3 is the CLOCK format, 4 the REMATCH format, 5/6 are those two
+        // with the variant byte spent on the rules, and 7 is 6 plus the
+        // rematch generation - so the first unknown byte above them is 8.
+        // (2 through 7 are the whole wire.) Before format 7 existed this case
+        // stamped 7 and got MSG_EFORMAT: that IS how a shipped build reads a
+        // rematch bubble.
+        { "format",       1,  MSG_FORMAT_GENERATION + 1, MSG_EFORMAT },
         { "format:raw",   1,  1,    MSG_EFORMAT },
         { "flags:fair",   2,  MSG_FLAG_FAIR_DEAL, MSG_EFLAGS },
         { "flags:gzip",   2,  MSG_FLAG_GZIP, MSG_EFLAGS },
@@ -5429,6 +5433,11 @@ static const char *const GOLDEN_HEX[4] = {
     "6f6e61730305507269796101000d37490e3be569077df74386ce7a",
 };
 
+// A format-7 bubble as hex, kept by test_format7_wire for --print-format7, so a
+// binary built before format 7 existed can be shown one (`--decode`).
+static char g_format7_sample[ENV_CAP * 2 + 1];
+static int g_format7_sample_len;
+
 static int unhex(const char *h, unsigned char *out, int cap) {
     int n = 0;
     for (const char *p = h; p[0] && p[1] && n < cap; p += 2) {
@@ -5457,6 +5466,87 @@ static void test_format56_goldens(void) {
               "golden %d: re-encode is %d bytes and not the golden's %d", w, nr, nw);
         static Game g;
         CHECK(msg_replay(&e, &g) == MSG_EOK, "golden %d: replay refused", w);
+        CHECK(e.generation == 0, "golden %d: a format-%d chain decoded as generation %u",
+              w, e.format, e.generation);
+    }
+}
+
+// ---------- format 7: the rematch generation -------------------------------
+//
+// The layout, byte for byte: format 6's header, then the generation as a u16 LE
+// at 68, then n_joins at 70. A seal writes 7 exactly when the generation is not
+// 0, and the format and the field must agree in both directions.
+static void test_format7_wire(void) {
+    for (int w = 0; w < 4; w++) {
+        static unsigned char base[ENV_CAP];
+        const int nb = unhex(GOLDEN_HEX[w], base, sizeof(base));
+        MsgEnvelope e;
+        if (msg_decode(base, nb, &e) != MSG_EOK) { CHECK(0, "format7 %d: golden did not decode", w); continue; }
+        const int had_block = base[1] == MSG_FORMAT_RULES_REMATCH;
+        const uint16_t gen = (uint16_t)(0x0102 + w);
+        e.generation = gen;
+        e.format = MSG_FORMAT_GENERATION;
+        unsigned char wire[ENV_CAP];
+        const int n = msg_encode(&e, wire, sizeof(wire));
+        // 7 always carries the rematch block (7 bytes over format 5's 62) and
+        // then two generation bytes.
+        const int want_n = nb + 2 + (had_block ? 0 : MSG_HEADER_LEN_REMATCH - MSG_HEADER_LEN_CLOCK);
+        CHECK(n == want_n, "format7 %d: %d bytes, want %d", w, n, want_n);
+        if (n <= 0) continue;
+        CHECK(wire[1] == 7, "format7 %d: format byte %d", w, wire[1]);
+        CHECK(!memcmp(wire + 2, base + 2, MSG_CLOCK_OFF - 2), "format7 %d: the shared prefix moved", w);
+        CHECK(wire[MSG_GEN_OFF] == (gen & 0xff) && wire[MSG_GEN_OFF + 1] == (gen >> 8),
+              "format7 %d: generation bytes %02x %02x", w, wire[MSG_GEN_OFF], wire[MSG_GEN_OFF + 1]);
+        CHECK(wire[MSG_HEADER_LEN_GENERATION - 1] == e.n_joins,
+              "format7 %d: n_joins not at %d", w, MSG_HEADER_LEN_GENERATION - 1);
+        MsgEnvelope d;
+        CHECK(msg_decode(wire, n, &d) == MSG_EOK && d.generation == gen && d.game_id == e.game_id,
+              "format7 %d: did not decode back to generation %u", w, gen);
+        unsigned char again[ENV_CAP];
+        CHECK(msg_encode(&d, again, sizeof(again)) == n && !memcmp(again, wire, (size_t)n),
+              "format7 %d: re-encode is not byte-identical", w);
+        static Game g;
+        CHECK(msg_replay(&d, &g) == MSG_EOK, "format7 %d: a format-7 chain did not replay", w);
+
+        // BOTH DIRECTIONS. A format-7 header that says 0 is a second spelling
+        // of a format-5/6 chain; an earlier format with a generation cannot
+        // carry it.
+        unsigned char t[ENV_CAP];
+        memcpy(t, wire, (size_t)n);
+        t[MSG_GEN_OFF] = 0; t[MSG_GEN_OFF + 1] = 0;
+        CHECK(msg_decode(t, n, &d) == MSG_EFORMAT, "format7 %d: a generation-0 format-7 header decoded", w);
+        MsgEnvelope bad = e;
+        bad.format = MSG_FORMAT_RULES_REMATCH;
+        CHECK(msg_encode(&bad, t, sizeof(t)) == MSG_EFORMAT,
+              "format7 %d: a format-6 envelope with a generation encoded", w);
+        if (w == 2) {
+            static char hx[ENV_CAP * 2 + 1];
+            hex(wire, n, hx);
+            g_format7_sample_len = n;
+            memcpy(g_format7_sample, hx, (size_t)n * 2 + 1);
+        }
+    }
+
+    // THE SEAL CHOOSES: generation 0 seals 5 (the goldens prove those bytes),
+    // anything else seals 7.
+    {
+        uint8_t seed[MSG_SEED_LEN];
+        seed_fill(seed, 7007u);
+        game_set_deal_seed_bytes(seed, MSG_SEED_LEN);
+        static Game g, scratch;
+        memset(&g, 0, sizeof(g));
+        g.num_players = 3;
+        for (int i = 0; i < 3; i++) g.players[i].status = PLAYER_STATUS_READY;
+        start_game(&g);
+        MsgEnvelope e;
+        env_init(&e, seed, 3);
+        e.phase = MSG_PHASE_WAITING;
+        static unsigned char body[512];
+        CHECK(msg_seal(&e, &g, 0, body, sizeof(body), &scratch) == MSG_EOK
+              && e.format == MSG_FORMAT_RULES, "seal: generation 0 did not seal format 5 (%d)", e.format);
+        e.generation = 1;
+        CHECK(msg_seal(&e, &g, 0, body, sizeof(body), &scratch) == MSG_EOK
+              && e.format == MSG_FORMAT_GENERATION, "seal: generation 1 did not seal format 7 (%d)", e.format);
     }
 }
 
@@ -5513,6 +5603,11 @@ int main(int argc, char **argv) {
     }
     if (argc > 2 && !strcmp(argv[1], "--holdcheck")) { print_holdcheck(argv[2]); return 0; }
     if (argc > 2 && !strcmp(argv[1], "--decode")) { print_decode(argv[2]); return 0; }
+    if (argc > 1 && !strcmp(argv[1], "--print-format7")) {
+        test_format7_wire();
+        printf("format 7 (%d B):\n%s\n", g_format7_sample_len, g_format7_sample);
+        return g_fails ? 1 : 0;
+    }
     if (argc > 1 && !strcmp(argv[1], "--lastdefense")) {
         print_lastdefense(argc > 2 ? atoi(argv[2]) : 2);
         return 0;
@@ -5568,6 +5663,7 @@ int main(int argc, char **argv) {
     test_fool_penalty_wire();
     test_forced_opening_replay();
     test_format56_goldens();
+    test_format7_wire();
     test_size_budget(games * 4, seed0);
     { const int rb = bot_roster_find("robusta");
       probe_v6_midgame(seed0, 2, rb);
