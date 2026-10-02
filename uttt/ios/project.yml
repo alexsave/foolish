@@ -48,6 +48,11 @@ settings:
     DEVELOPMENT_TEAM: 8N2Z544SB4
     # THE 243 BOARD (docs/BIG_BOARD.md): this word is the one switch. Delete it and every build compiles the feature out.
     UTTT_BIG_BOARD_CONDITION: UTTT_BIG_BOARD
+    # THE RELEASE HALF: empty, so a Release build (an App Store archive) has
+    # no feature condition at all. A TestFlight ship sets it on the archive's
+    # command line to $(UTTT_BIG_BOARD_CONDITION) (Tools/ship.env,
+    # SHIP_ARCHIVE_SETTINGS), which is the only way Release gets the feature.
+    UTTT_TESTFLIGHT_CONDITIONS: ""
   configs:
     Debug:
       # DEBUG SPELLED OUT: xcodegen's debug preset sets this same key at this
@@ -55,6 +60,16 @@ settings:
       # inheriting from it - `$(inherited)` reaches only the SDK default, and
       # the first generate dropped DEBUG (checked with -showBuildSettings).
       SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) DEBUG $(UTTT_BIG_BOARD_CONDITION)
+    Release:
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) $(UTTT_TESTFLIGHT_CONDITIONS)
+
+# THE 243 BOARD's picture codec (docs/BIG_BOARD.md), a local SwiftPM package.
+# Linked into UtttKit ONLY: the extension imports UtttKit and never the kit,
+# so the kit's code is in one binary once. A build without the condition
+# names none of it and the linker keeps none of it.
+packages:
+  BubbleDataKit:
+    path: ../../shared/swift/BubbleDataKit
 
 configs:
   Debug: debug
@@ -211,6 +226,7 @@ targets:
       # unreferenced ships.
       - framework: vendor/Uttt.xcframework
         embed: false
+      - package: BubbleDataKit
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: cards.uttt.kit
