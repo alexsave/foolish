@@ -13509,6 +13509,32 @@ static void test_masked_board_carries_the_rules(void) {
         CHECK(!menu_has(&back, 1, MOVE_PASS), "the read-back podkidnoy board offers no transfer");
         if (viewer == VIEW_UNMASKED || viewer == 1)
             CHECK(menu_has(&back, 1, MOVE_COVER), "and the defender who sees their hand can still cover");
+
+        // A rule this kernel does not know is a board from a newer kernel, and
+        // is refused rather than played as the game this kernel knows.
+        b[STATE_FLAGS_AT] |= (unsigned char)(GAME_RULE_NO_PASS << 1) << STATE_FLAG_RULES_SHIFT;
+        memset(&back, 0, sizeof back);
+        CHECK(state_import(&back, b, nb, viewer != VIEW_UNMASKED) == GAME_INVALID_RULES,
+              "a board naming an unknown rule is refused as GAME_INVALID_RULES");
+    }
+
+    // THE ROW KEEPS ONE OWNER. A durable blob's flag byte has carried the rules
+    // since v4, so the board inside it names none: a podkidnoy row is the byte
+    // string every v4 reader already reads, and a row whose board does name
+    // rules is not one this kernel wrote.
+    {
+        static unsigned char blob[8192];
+        const BoardClock clk = { 1, 2 };
+        for (int i = 0; i < 6; i++) g.players[0].hand[i] = (Card){ SUIT_CLUBS, (int8_t)(6 + i) };
+        g.rules = GAME_RULE_NO_PASS;
+        const int n = state_blob_put_at(&g, &clk, STATE_BLOB_FORMAT_V4, blob);
+        CHECK(n > 0 && !(blob[1] & STATE_BLOB_FLAG_PASSING), "a podkidnoy row says so in its flag");
+        CHECK(n > 0 && (blob[STATE_BLOB_HEADER + STATE_FLAGS_AT] & ~STATE_FLAG_FLIPPED) == 0,
+              "and its board names no rules");
+        memset(&back, 0, sizeof back);
+        CHECK(state_blob_load(&back, blob, n, 0) == 1 && !game_pass_allowed(&back), "the row loads as podkidnoy");
+        blob[STATE_BLOB_HEADER + STATE_FLAGS_AT] |= (unsigned char)(GAME_RULE_NO_PASS << STATE_FLAG_RULES_SHIFT);
+        CHECK(state_blob_load(&back, blob, n, 0) == 0, "a row whose board names rules is refused");
     }
 }
 
@@ -13607,7 +13633,7 @@ static void test_podkidnoy_solver_and_book(void) {
 static void test_podkidnoy_rollouts_never_transfer(void) {
     static Game g;
     static LegalMoves ml;
-    int worlds = 0;
+    int worlds = 0, root_tried = 0, root_refused = 0, root_control = 0;
     long podk = 0, control = 0;
     for (int np = 2; np <= 4; np++) {
         unsigned char seed[FOOLISH_SEED_LEN];
@@ -13625,6 +13651,24 @@ static void test_podkidnoy_rollouts_never_transfer(void) {
                 worlds++;
                 SimState base;
                 cd_sim_from_game(&base, &g);
+                // A candidate's root move is applied to the world the same way
+                // (cd_sim_apply_root_move), and it refuses the transfer the
+                // classic menu would have held, as handle_pass does.
+                {
+                    static Game classic;
+                    memcpy(&classic, &g, offsetof(Game, logs));
+                    classic.num_logs = 0;
+                    classic.rules = 0;
+                    calculate_legal_moves(&classic, g.defender, &ml);
+                    for (int i = 0; i < ml.n; i++) {
+                        if (ml.moves[i].type != MOVE_PASS) continue;
+                        SimState w = base;
+                        root_refused += !cd_sim_apply_root_move(&w, g.defender, &ml.moves[i]);
+                        w = base; w.rules = 0;
+                        root_control += cd_sim_apply_root_move(&w, g.defender, &ml.moves[i]);
+                        root_tried++;
+                    }
+                }
                 for (int pass = 0; pass < 2; pass++) {
                     SimState w0 = base;
                     if (pass) w0.rules = 0;
@@ -13658,6 +13702,8 @@ static void test_podkidnoy_rollouts_never_transfer(void) {
     CHECK(control > 0, "the probe sees a rollout's transfer once the rule is off");
     if (podk) fprintf(stderr, "  %ld transfers inside podkidnoy rollouts\n", podk);
     CHECK(podk == 0, "no rollout of a podkidnoy world ever transfers");
+    CHECK(root_tried > 0 && root_control == root_tried, "a classic world takes a transfer as a root move");
+    CHECK(root_refused == root_tried, "a podkidnoy world refuses a transfer as a root move");
 }
 
 // EVERY BRAIN THE ARENA KNOWS, AND EVERY BOT THE ROSTER SHIPS, at a podkidnoy
@@ -13722,6 +13768,11 @@ static void test_podkidnoy_every_brain(void) {
         }
         CHECK(unknown_below == 0, "every id below STRAT_COUNT dispatches to a brain");
         CHECK(known_past == 0, "no id past STRAT_COUNT dispatches (bump STRAT_COUNT with a new brain)");
+        // The probe sees a real transfer too, so a struct-world search (which
+        // applies its moves through handle_pass) cannot transfer unseen.
+        Card p7h = { SUIT_HEARTS, 7 };
+        game_pass_probe = 0;
+        CHECK(handle_pass(&g, 1, &p7h, 1) && game_pass_probe == 1, "the probe counts a transfer the engine applies");
     }
     int brains = 0;
     for (int s = 0; s < STRAT_COUNT; s++) {
