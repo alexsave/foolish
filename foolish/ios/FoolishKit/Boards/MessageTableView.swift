@@ -972,7 +972,9 @@ public struct MessageTableView: View {
             // Round 16: a move with no sequence of its own still moves the
             // roles - a PASS hands the shield along mid-bout, and that is the
             // one hand-off nothing else here would animate. A sequence syncs
-            // its own roles at the end, once its cards have landed.
+            // its own roles at the end, once its cards have landed. Note 2: so
+            // does an open-replay with nothing to play - an arriving good that
+            // does not close the bout is only a role change, and it lands here.
             if !sequenced, let v { syncRoles(to: RoleState(v), in: v, animated: true) }
         }
         .fFlash($toast)

@@ -268,9 +268,8 @@ final class LiveArrival4pTests: XCTestCase {
     /// no step at all, so the arrival's stream is legitimately EMPTY - the only
     /// thing a board can be told about it is the role change, and the
     /// controller does hand that over: the view carries the new good bit and
-    /// the prior board does not. What the BOARD does with an empty arrival
-    /// (MessageTableView+OpenReplay returns before any role sync) is the
-    /// harness's to show - see HarnessScenario `arrival` kind `goodmid`.
+    /// the prior board does not. What the BOARD does with an empty arrival is
+    /// LiveArrivalRoleMarkTests', which mounts the real board on this.
     func testANonClosingGoodArrivesAsAnEmptyStreamWithTheRoleChangeInTheView() async throws {
         let f = try await LiveArrivalFixture.coveredTable(players: 4)
         let (a, b) = (f.attackers[0], f.attackers[1])
