@@ -1,11 +1,13 @@
 # What Messages does when a message arrives for an open iMessage extension
 
-**Status: PHASE 1.**
-Static evidence only, read from disassembly of the simulator runtime's binaries.
-No simulator was booted and nothing below was observed live.
-Live simulator runs (phase 2) are pending an owner decision.
-Every claim carries a stable label (E, M, F, S, N, U) so code and tests can cite it, and a confidence.
-Anything that needs a live run is in "Unknown" and must not be cited as fact.
+**Status: PHASE 2 (static + live on iOS 26.3).**
+Phase 1 read the simulator runtime's binaries.
+Phase 2 (2026-10-02) observed the real Messages app on the iPhone 17e simulator (`FC7586CF`, iOS 26.3.1, build 23D8133) with a host trace in the extension: every callback, its thread, both clocks, the payload, the session and the selection beside it.
+The trace is compiled only into `RIG_ARRIVE` builds (`FOOLISH_ARRIVE=1 rig.sh build`, `MessagesViewController.hostTrace`) and lands in the flight log and the unified log (subsystem `cards.foolish`, category `host`).
+Excerpts are in `docs/IMESSAGE_LIVE_ARRIVAL_HOST_TRACE.md`, cited below as T-R1 to T-R7.
+Every claim carries a stable label (E, M, F, L, S, N, U) so code and tests can cite it, and a confidence.
+Phase-1 claims now say **live: confirmed**, **live: refuted** or **live: not observed** where a run spoke to them.
+Anything still needing evidence is in "Unknown" and must not be cited as fact.
 
 ## Binaries read
 
@@ -46,15 +48,20 @@ Every XPC entry point below first hops to the main queue.
   All four run in one main-queue block, in that order.
   When the state's `activeMessage` equals the existing selection, only `didReceiveMessage` fires and `selectedMessage` is unchanged.
   Confidence high on the code; the host decides which case applies (M4, M3).
+  **Live: confirmed** for the new-message case: willSelect, didSelect (selection already the arrival), didReceive, all on the main thread within 1.5 ms of `CACurrentMediaTime`, same bytes in all three (T-R2, T-R3, L3).
 - E8 `-[MSMessagesAppViewController _conversation:willSelectMessage:]` (0x23dc) and `_conversation:didSelectMessage:` (0x23f8) forward to the public callbacks ONLY IF both arguments are non-nil.
   A nil `activeMessage` never produces willSelect or didSelect.
   Confidence high.
 - E9 First activation order: the `_becomeActive...` block (0xad94) sets presentation style and context, calls `updatedConversationForConversationState:` (which on a cached conversation can itself fire willSelect and didSelect BEFORE willBecomeActive), then `willBecomeActive`, `setActiveConversation:`, then `didBecomeActive`.
   Confidence high.
   This is why the VC's `freshlyActive` window exists.
+  **Live:** willBecomeActive, didBecomeActive, then willTransition/didTransition, observed on every activation; a willSelect/didSelect before willBecomeActive was **not observed** in any run (a tapped bubble arrives already selected in willBecomeActive).
+  Each activation is handed a NEW `MSConversation` object (its identity changes per activation, stable within one), so E5's reuse holds within an activation only.
 - E10 The `_resignActive` block (0xb134) calls `willResignActive`, sets `activeConversation` to nil, then `didResignActive`.
   The conversation cache is not cleared.
   Confidence high.
+  **Live: confirmed**: closing the drawer gives willResignActive, didResignActive and `activeConversation` nil 30 ms later (T-R6).
+  The process survives a resign, and the next activation can be a FRESH controller instance in the same process (T-R6, L7).
 - E11 `_presentationWillChange...` calls `willTransitionToPresentationStyle:`, and `_presentationDidChange...` sets `presentationStyle` THEN calls `didTransitionToPresentationStyle:`.
   Confidence high.
 - E12 The SDK header says `didReceiveMessage`, `willSelectMessage`, `didSelectMessage` and `didStartSending` "will not be called when presentationStyle is Transcript or presentationContext is Media" (`MSMessagesAppViewController.h` lines 143-176).
@@ -81,6 +88,8 @@ They are its only two call sites in the runtime: a scan of every binary for the 
   Our own sent bubble is also a matching inserted item, so an own send is a candidate for this path.
   This matches the `isMine` guard in `didReceive`.
   Confidence high on the code; whether it actually reaches us is U1.
+  **Live: not observed** on an unbound drawer: an own send from a drawer opened through the + menu (compact) produced didStartSending and nothing else, no didReceive, no didSelect, no selection change, for 15 s (T-R1, L1).
+  An own send on a BOUND drawer does reach `didReceive`, but in path B's shape (willSelect and didSelect first), so it is attributed to M4, not to this path (L2).
 - M2b `pluginBundleID` (0x3de780) is the handwriting plugin's id if that is visible, else `browserPlugin.identifier`, i.e. the plugin currently in the drawer.
   Confidence high.
 - M2c The gate is `browserSwitcher.currentViewController` being our browser.
@@ -105,6 +114,8 @@ They are its only two call sites in the runtime: a scan of every binary for the 
   This is the "an arrival moves the selection" behaviour observed on device in 1.1(60) and 1.1(61) (the `reload-is-arrival` branch in `GameSurface.swift`).
   It does not call `_markCurrentMessageAsPlayedIfNeeded`.
   Confidence high on the code.
+  **Live: confirmed** for a message sent into the bound bubble's own `MSSession` (T-R2, T-R3, L2).
+  A message in a NEW session over the same bound drawer is **not** delivered (T-R7, L6), which is what M4 predicts: only the bound datasource's session replaces its payload.
 - M4b The datasource delegate is set only by `setBalloonPluginDataSource:` (0x2f40), which also stores the datasource's message, sends `_conversationDidChangeWithConversationState:` (call at 0x3000) and calls `_markCurrentMessageAsPlayedIfNeeded`.
   A browser created with a nil datasource (a drawer launch) registers no delegate, so path B cannot fire for it.
   Confidence high.
@@ -118,6 +129,7 @@ They are its only two call sites in the runtime: a scan of every binary for the 
   One inserted matching item gives one `_didReceiveMessage`, and several matching items inserted in one `IMChatItemsDidChange` give several calls in index order.
   Confidence high on the code.
   XPC delivery on one connection is FIFO, and every extension entry point hops to the main queue (E1, E2), so host order is preserved onto the main thread: reasoned, not observed, confidence medium.
+  **Live:** every callback in every run arrived on the main thread (`thr=main`); two arrivals closer together than one Send press could not be produced through Messages on one simulator (U7).
 - M6 The host thread that runs `_handleChatItemDidChange:` is not established statically (U3).
 - M7 In the host, `_sendBecomeActiveMessage` is called from `_addRemoteViewControllerAndConfigureExtension` (B2 0x3d50) and `_sendResignActiveMessage` from `forceTearDownRemoteViewOverridingExceptions:` (0x378c).
   What triggers that teardown was not traced (U4).
@@ -126,78 +138,92 @@ They are its only two call sites in the runtime: a scan of every binary for the 
 
 ## Feasibility: a live arrival to an awake extension on one simulator
 
-Static verdict: probably possible, through a route the repo has not used, and NOT yet proven.
-Phase 2 decides.
+Phase 1 verdict was "probably possible, not proven".
+Phase 2 verdict: possible for a BOUND drawer, through a route other than the one phase 1 proposed.
 
-- F1 The rig README says a message sent in a thread appears in that same thread as INCOMING (and its outgoing twin in the other thread).
-  If the extension is open in thread A and sends a crafted bubble from A, that bubble becomes an incoming transcript item in A while the extension is awake, which is exactly the trigger for path A (M1, M2), with no second device.
+- F1 The rig README said a message sent in a thread appears in that same thread as INCOMING.
+  **Live: refuted** on this simulator on 2026-10-02: the stub threads are iMessage threads now, a send lands OUTGOING (right, "Delivered") in the thread it was sent from, and its incoming twin is a caption-only pill in the OTHER stub thread (L9).
+  So there is no same-thread self-echo for path A to see.
 - F2 For path B the extension must be bound, i.e. opened by tapping a bubble (M4b).
-  Whether an incoming item in the same session then replaces the datasource payload is on the IMCore side, which was not read (U2).
+  **Live: confirmed, and sufficient**: on a bound drawer, pressing Send on a bubble in the bound bubble's own session delivers that bubble back to the drawer as willSelect, didSelect, didReceive (L2), whoever sealed it.
+  That is the route the rig uses (L10).
 - F3 The product has no way to send ARBITRARY sealed bytes (a move made by a different seat) without registering them in `lastSentPayload` or `pendingStage`, which makes `StagedBubbleRouting.isMine` drop the echo.
-  A rig-only door that calls `conversation.send` with bytes the kernel sealed for another seat would provide it.
-  The existing `rigArrive` door skips Messages entirely and feeds `present()` directly, so it proves nothing about the host.
-- F4 `didStartSending` and `didCancelSending` fire for the own send as usual and record `lastSentPayload`, so a rig door has to bypass or clear that for the crafted bytes.
-- F5 Two simulator instances cannot iMessage each other: the simulator has no iMessage account (rig README), so its threads are SMS and there is no relay.
-  Confidence medium; not verified further.
+  The rig's `RIG_ARRIVE` door seals another seat's move with the shipping kernel and sends it without registering it; `isMine` then routes the delivery as an arrival (`select ... routing as an arrival`, `receive`, T-R2).
+- F4 `didStartSending` fires for the door's send too (about 1 s after the delivery, L4); the door returns early there so nothing is registered.
+  `didCancelSending` did not fire for a draft the door's bubble replaced (L8).
+- F5 Two simulator instances cannot iMessage each other.
+  Not tested; nothing in phase 2 needed it.
 - F6 The simulator has two participants.
-  A 4-seat game there is a seeded board, which exercises the real host delivery, ordering and `selectedMessage` behaviour for 4-seat payloads.
+  A 4-seat game there is a seeded board or a lobby filled by the door, which exercises the real host delivery and `selectedMessage` behaviour for 4-seat payloads.
   It does NOT exercise `senderParticipantIdentifier` across three distinct remote participants, group-thread session behaviour, or `recipientIdentifiers` ordering in `MSConversation`.
+
+## Live evidence (phase 2, iOS 26.3 simulator)
+
+Runs, numbered as the phase-1 plan had them; T-Rn is the trace excerpt, frames are under the scratchpad film directory named in the report that accompanied this change (they are not committed).
+
+| Label | Run | What happened | Confidence |
+| --- | --- | --- | --- |
+| L1 | R1 unbound (+ menu), compact | Own send: didStartSending only; no didReceive, no didSelect, no selection change in 15 s; the drawer kept the stale board while the transcript showed the new bubble. | high (T-R1) |
+| L2 | R2/R3 bound (tapped bubble), compact | Send pressed on a bubble in the bound session: willSelect, didSelect (`selectedMessage` already the arrival), didReceive, one main-thread burst within 1.5 ms; same bytes in all three. Worked for lobby joins, Start, and board moves by other seats at 4 seats. | high (T-R2, T-R3) |
+| L3 | all | Every callback on the main thread. | high |
+| L4 | R2/R3 | didStartSending for the same bubble came 1.03 to 1.05 s AFTER its didReceive, each time. | high |
+| L5 | R2/R3 | `senderParticipantIdentifier` on the delivered message was set, stable across four deliveries in one run (`2CD2C682`), and NOT the local id, though the message was sent from this device. On didStartSending it was a different id on every send. | medium: one device, own sends only |
+| L6 | R7 new session | A door bubble sent in a NEW `MSSession` over a bound drawer: didStartSending only, no delivery; the old bubble stayed a full bubble instead of collapsing to a caption. | high (T-R7) |
+| L7 | R6 drawer closed | Closing the drawer: willResignActive, didResignActive. Send pressed with the drawer closed: the host activated a FRESH controller in the same process (didBecomeActive, style expanded), sent didStartSending to it, and resigned it at once; no didReceive. Re-tapping the bubble was a cold open (willBecomeActive with the arrival already selected) that replayed the move. | high (T-R6) |
+| L8 | R5 draft in the field | A second staged bubble (the door's) REPLACED our unsent draft in the input field; no didCancelSending fired for the replaced draft. | high on the replace, medium on the missing cancel |
+| L9 | setup | Thread direction: a send lands outgoing in its own thread and as an incoming caption pill in the other stub thread (see F1). | high |
+| L10 | all | `conversation.send` from the extension does not send on the simulator: it STAGES the bubble in the input field exactly like `insert` ("Add comment or Send"), and its completion reports no error about 0.2 to 0.3 s later. A human (or the rig) presses Send. | high |
+| L11 | R8 timing (film `closing_good_4p_flagON`) | didReceive fires on the Send press: the board reacted (Pickup plank gone) in the same 60 Hz frame the bubble began leaving the input field, about 0.18 s before the bubble settled in the transcript; the board's first flight began about 0.35 s after that. | medium: frame-aligned, not clock-aligned |
+| L12 | R4 quick succession | Not producible through Messages on one simulator: each door bubble must be staged and Sent, at least one Send press apart. | n/a |
 
 ## What a harness may simulate (cite lines)
 
 A harness, a fixture or a unit test may pose these as host behaviour, citing the label.
 
-- S1 One main-queue hop per host call, in host order: E1, E2, M5.
-- S2 On a bound browser, an arrival delivers willSelect, `selectedMessage` updated, didSelect, didReceive, in one main-queue block, with the same message: E7, M4, M4a.
-- S3 On an unbound browser, or an arrival that leaves the selection unchanged, only didReceive fires and `selectedMessage` is unchanged: E7, M3.
-- S4 First activation may fire willSelect and didSelect before willBecomeActive for a cached conversation: E9.
+- S1 One main-queue hop per host call, in host order: E1, E2, M5, L3.
+- S2 On a bound browser, an arrival in the bound session delivers willSelect, `selectedMessage` updated, didSelect, didReceive, in one main-queue burst, with the same message: E7, M4, M4a, L2.
+- S3 On an unbound browser nothing is delivered for an own send: L1. (An arrival that leaves the selection unchanged giving didReceive alone is still only the static E7/M3 reading.)
+- S4 First activation may fire willSelect and didSelect before willBecomeActive for a cached conversation: E9 (static only; not observed live).
 - S5 A nil message produces no willSelect or didSelect: E8.
-- S6 The `MSConversation` object is reused and mutated, so a delegate sees it change under it: E5, E6.
+- S6 The `MSConversation` object is reused and mutated within an activation, and replaced across activations: E5, E6, E9 (live note).
+- S7 A message in another `MSSession` is not delivered to a bound drawer: L6.
+- S8 A closed drawer gets no delivery; reopening is a cold open of the selected bubble: L7.
+- S9 didStartSending for an own send comes about 1 s after that bubble's own delivery on a bound drawer: L4.
+- S10 A staged bubble replaces any draft in the input field: L8.
 
 ## What a harness must not pretend to cover
 
-- N1 That an arrival is delivered at all while the drawer is in a given state, bound or unbound, compact or expanded (U1, U4).
-- N2 Timing against the bubble appearing in the transcript (U5).
-- N3 Quick succession, a staged draft in the input field, and session replacement (U7, U8, U9).
-- N4 Multi-participant `senderParticipantIdentifier` behaviour (F6, U6).
-- N5 The `rigArrive` door and `HarnessModel.arrive` skip the host entirely, so they cannot support any claim in this report.
+- N1 Delivery to an EXPANDED drawer: every live delivery in phase 2 was observed compact, because Send is under an expanded drawer (U1).
+- N2 Timing finer than a frame, and timing for a remote arrival (L11 is an own send).
+- N3 Two arrivals closer than one Send press (L12, U7), and what an arrival from ANOTHER device does to a draft (L8 is a second staged bubble, U8).
+- N4 Multi-participant `senderParticipantIdentifier` behaviour (F6, U6); L5 is one device's own sends.
+- N5 The door's `direct` mode and `HarnessModel.arrive` skip the host entirely, so they cannot support any claim in this report.
 - N6 The controller seam in `ios/FoolishTests/LiveArrivalFixture.swift` (`arrive`, which calls `MessageTurnController.offerArrival` the way `GameSurface.seatOnBoard` does) starts AFTER the host has delivered and the surface has accepted the bubble.
-  It may cite only extension-side callback and order facts (S1 to S6) and claims nothing about host delivery.
+  It may cite only extension-side callback and order facts (S1 to S10) and claims nothing about host delivery.
   What it pins is the kernel and controller behaviour for a bubble that did arrive.
+- N7 The rig's `send` door (`rig.sh arrive`) delivers through real Messages, but the delivered bubble is an OWN send on the host side: it lands on the right of the transcript, `isFromMe` is set, and Messages had a staged bubble in the input field until the Send press. It exercises S2's callback shape and everything downstream of `didReceive`; it is not evidence about remote senders, notifications, or a recipient's input field.
 
-## Unknown (phase 1 could not establish; do not cite as fact)
+## Unknown (still not established; do not cite as fact)
 
-- U1 Whether path A actually delivers to our browser in the iOS 26.3 simulator (drawer launched unbound, compact and expanded), including our own echo.
-  An earlier `MessagesViewController.swift` comment claimed it is dead; the static read does not confirm that (M2c).
-- U2 Which IMCore event calls `pluginPayloadDidChange:` on a bound datasource (a new message in the same `MSSession`? an edit?) and what bits 0x13 mean.
+- U1 Delivery to an EXPANDED drawer, bound or unbound; and whether path A (M1, M2) ever delivers in practice, for any item, on this runtime.
+  An own send on an unbound compact drawer is not delivered (L1).
+- U2 Which IMCore event calls `pluginPayloadDidChange:` on a bound datasource and what bits 0x13 mean.
+  L2 and L6 show a new message in the bound session triggers delivery and one in another session does not; the event itself was not traced.
 - U3 The host thread that runs `_handleChatItemDidChange:`.
-- U4 What resigns the browser when the drawer is closed or the thread is left, and whether arrivals in that window are queued, dropped or delivered on the next activation.
-- U5 When the callback fires relative to the bubble appearing in the transcript.
-- U6 Whether `senderParticipantIdentifier` is set on the `MSMessage` handed to `didReceive` on path A.
-- U7 Two arrivals in quick succession: the code shows no coalescing (M5); not observed.
-- U8 An arrival while a staged unsent message sits in the input field: whether the draft is kept, and whether a later `insert` still replaces it.
-  No host code was read for it.
-- U9 Session replacement versus a new session: what the host does to the old bubble, and whether `datasourcePayloadDidChange` fires for it.
-- U10 iOS 27.0 behaviour of Messages.framework and ChatKit, which live in that runtime's dyld shared cache and were not extracted.
+- U4 Whether a REMOTE arrival while the drawer is closed is queued for the next activation; L7 shows only an own send, which was not.
+- U5 Timing of a remote arrival against the transcript (L11 is an own send).
+- U6 `senderParticipantIdentifier` for messages from distinct remote people in a group thread (L5 is one device).
+- U7 Two arrivals in quick succession through the host (L12).
+- U8 What a REMOTE arrival does to a staged, unsent draft (L8 is a second staged bubble replacing it).
+- U9 Session replacement on the host side beyond L6 (what `datasourcePayloadDidChange` does for an older bubble).
+- U10 iOS 27.0 behaviour of Messages.framework and ChatKit (not extracted, not run).
 - U11 The device runtime.
-  Nothing in this report was read from a device's binaries.
-  An older `MessagesViewController.swift` comment says its conclusions were confirmed against a device ChatKit (iOS DeviceSupport, iPhone16,2, 26.5.2); that read was not repeated here.
-
-## Phase 2 experiments wanted (iPhone 17e simulator only)
-
-1. Temporary os_log lines in `MessagesViewController` for willSelect, didSelect, didReceive, willBecomeActive, didBecomeActive, willResignActive, didResignActive, willTransition, didTransition, didStartSending and didCancelSending, each with thread, `CACurrentMediaTime`, URL prefix, session identity, `senderParticipantIdentifier`, `selectedMessage` URL prefix and `presentationStyle`.
-2. Echo test, unbound: open from the + menu, stage and send with the drawer left open, and record whether `didReceive` fires (U1, path A), compact and expanded.
-3. Echo test, bound: tap a bubble first, then send, and record the callback sequence (path B, E7).
-4. Crafted-bytes send (rig door, uncommitted): send kernel-sealed bytes for another seat from inside the extension so the echo is not `isMine` (F3), and record callbacks and the input field.
-5. Quick succession: two crafted sends 50 ms apart (U7).
-6. Draft in the input field: stage a message, trigger an arrival, and record the input field and whether a following `insert` replaces it (U8).
-7. Backgrounded: close the drawer, trigger the arrival, reopen, and record callbacks (U4).
-8. Session replacement versus a new session (U9).
-9. Timing against the transcript: film at normal speed and align the callback timestamp with the frame where the bubble appears (U5).
+  Nothing here was read from or run on a device.
+- U12 Group threads with three or more real participants: nothing in phase 2 had more than two.
 
 ## Provenance
 
-Read on 2026-10-01 on macOS 27.0 (Darwin 27.0.0) with Xcode 27.0 (27A266a).
+Read on 2026-10-01 (phase 1) and run on 2026-10-02 (phase 2) on macOS 27.0 (Darwin 27.0.0) with Xcode 27.0 (27A266a).
 
 iOS 26.3.1 simulator runtime, build 23D8133 (BuildID 03C240C6-1396-11F1-A802-E8D8889322D1), RuntimeRoot:
 `/Library/Developer/CoreSimulator/Volumes/iOS_23D8133/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.3.simruntime/Contents/Resources/RuntimeRoot`
