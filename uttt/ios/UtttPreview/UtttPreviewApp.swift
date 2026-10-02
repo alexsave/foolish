@@ -52,7 +52,34 @@ struct PreviewRoot: View {
     /// marks and a live wash rather than an empty grid.
     static let sample = [34, 67, 44, 80, 76, 43, 69, 62, 79, 63, 4, 40]
 
+#if UTTT_BIG_BOARD
+    /// `--screen 243` opens the 243 board (BigBoardPreview); the "243"
+    /// button switches to it and back.
+    @State private var big = ProcessInfo.processInfo.arguments.contains("--screen")
+        && ProcessInfo.processInfo.arguments.contains("243")
+
     var body: some View {
+        ZStack(alignment: .topTrailing) {
+            if big {
+                ZStack {
+                    Color(white: 0.07).ignoresSafeArea()
+                    BigBoardPreview()
+                }
+            } else {
+                small
+            }
+            Button(big ? "9x9" : "243") { big.toggle() }
+                .buttonStyle(.bordered)
+                .padding(.top, 4)
+                .padding(.trailing, 12)
+                .accessibilityIdentifier("screen.toggle")
+        }
+    }
+#else
+    var body: some View { small }
+#endif
+
+    private var small: some View {
         GeometryReader { geo in
             ZStack(alignment: .bottom) {
                 Color(white: 0.07)
