@@ -30,7 +30,7 @@ LANGS   := en ru ko zh vi es pt fr de it ja pl uk tr id th nl sv da no fi cs ro 
 I18N    := $(foreach l,$(LANGS),i18n/strings_$(l).c)
 SRC     := src/uttt.c src/uttt_code.c src/uttt_bots.c src/uttt_msg.c src/uttt_say.c \
            src/uttt_pen.c src/uttt_draw.c src/uttt_anim.c src/uttt_rule.c src/uttt_lang.c \
-           $(I18N) $(SHARED)/sha256.c $(SHARED)/b32.c $(SHARED)/mixrad.c $(SHARED)/text_util/text_util.c \
+           src/uttt_big.c $(I18N) $(SHARED)/sha256.c $(SHARED)/b32.c $(SHARED)/mixrad.c $(SHARED)/text_util/text_util.c \
            $(SHARED)/wire_check/wire_check.c
 
 all: build/uttt_test build/uttt_msg_test build/uttt_arena build/uttt_render build/uttt_mate
@@ -40,6 +40,11 @@ build:
 
 build/uttt_test: $(SRC) tests/uttt_test.c | build
 	$(CC) $(CFLAGS) $(SRC) tests/uttt_test.c -o $@ $(LDLIBS)
+
+# The recursive game: depth 2 against the shipped one move for move, depth 5
+# played to the end, and the relaxation, undo and adopt corners by hand.
+build/uttt_big_test: $(SRC) src/uttt_big.h tests/uttt_big_test.c | build
+	$(CC) $(CFLAGS) $(SRC) tests/uttt_big_test.c -o $@ $(LDLIBS)
 
 build/uttt_arena: $(SRC) tests/uttt_arena.c $(SHARED)/stats/stats.c $(SHARED)/stats/stats.h | build
 	$(CC) $(CFLAGS) $(SRC) $(SHARED)/stats/stats.c tests/uttt_arena.c -o $@ $(LDLIBS)
@@ -81,8 +86,9 @@ build/stats_test: $(STATS_SRC) $(STATS)/stats.h $(STATS)/seed_hash.h | build
 
 # The message: every ply of 10,000 games through bytes and text, the seat
 # truth table, two joiners, the tap map and every sentence.
-run: build/uttt_test build/uttt_msg_test build/uttt_anim_test build/msg_stage_test build/collapse_test build/text_util_test build/wire_check_test build/stats_test build/uttt_bots_test build/uttt_ink_test build/uttt_lang_test build/uttt_lang_en_test
+run: build/uttt_test build/uttt_big_test build/uttt_msg_test build/uttt_anim_test build/msg_stage_test build/collapse_test build/text_util_test build/wire_check_test build/stats_test build/uttt_bots_test build/uttt_ink_test build/uttt_lang_test build/uttt_lang_en_test
 	./build/uttt_test 1000
+	./build/uttt_big_test 2000 10
 	./build/uttt_lang_test
 	./build/uttt_lang_en_test
 	./build/uttt_bots_test 10
@@ -205,6 +211,9 @@ asan: $(SRC) tests/uttt_test.c | build
 	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
 	  $(SRC) tests/uttt_test.c -o build/uttt_asan $(LDLIBS)
 	./build/uttt_asan 400
+	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
+	  $(SRC) tests/uttt_big_test.c -o build/uttt_big_asan $(LDLIBS)
+	./build/uttt_big_asan 300 1
 	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
 	  $(SRC) tests/uttt_msg_test.c -o build/uttt_msg_asan $(LDLIBS)
 	./build/uttt_msg_asan 1000
