@@ -176,6 +176,9 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: The toolchain installer retries a network blip (no network, no root)
+        run: bash ../shared/scripts/ci_llvm_test.sh
+
       - name: Toolchain (the pinned clang and binaryen)
         run: . ../shared/scripts/ci_llvm.sh
 
