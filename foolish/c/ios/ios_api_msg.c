@@ -126,6 +126,20 @@ int fio_msg_open_boundary(const uint8_t *shown, int shown_len,
     return FIO_EOK;
 }
 
+// WHAT AN ADOPTED ARRIVAL LEAVES OF A BUBBLE THIS DEVICE PUT IN THE INPUT FIELD
+// (msg_staged_fate). Parses both and adopts NOTHING, like the boundary above.
+int fio_msg_staged_fate(const uint8_t *staged, int staged_len,
+                        const uint8_t *arrived, int arrived_len, int *fate) {
+    if (!staged || !arrived || !fate) return FIO_EBADARG;
+    g_last_msg_error = 0;
+    static unsigned char scratch[MSG_OPEN_SCRATCH];
+    const int r = msg_staged_fate(staged, staged_len, arrived, arrived_len,
+                                  scratch, sizeof(scratch));
+    if (r < 0) { g_last_msg_error = r; return FIO_EMSG; }
+    *fate = r;
+    return FIO_EOK;
+}
+
 int fio_msg_decode(const uint8_t *payload, int len) {
     if (!payload) return FIO_EBADARG;
     g_last_msg_error = 0;
@@ -404,6 +418,12 @@ _Static_assert(FIO_TURN_SEND_DECODE     == MSG_TURN_SEND_DECODE,     "send verdi
 _Static_assert(FIO_TURN_SEND_UNREADABLE == MSG_TURN_SEND_UNREADABLE, "send verdict diverged");
 _Static_assert(FIO_TURN_SEND_REBASE     == MSG_TURN_SEND_REBASE,     "send verdict diverged");
 _Static_assert(FIO_TURN_SEND_OTHERGAME  == MSG_TURN_SEND_OTHERGAME,  "send verdict diverged");
+_Static_assert(FIO_TURN_SEND_OVERTAKEN  == MSG_TURN_SEND_OVERTAKEN,  "send verdict diverged");
+_Static_assert(FIO_TURN_FIELD_KEEP      == MSG_TURN_FIELD_KEEP,      "field rule diverged");
+_Static_assert(FIO_TURN_FIELD_NOTHING   == MSG_TURN_FIELD_NOTHING,   "field rule diverged");
+_Static_assert(FIO_FATE_STANDS          == MSG_FATE_STANDS,          "staged fate diverged");
+_Static_assert(FIO_FATE_LANDED          == MSG_FATE_LANDED,          "staged fate diverged");
+_Static_assert(FIO_FATE_SUPERSEDED      == MSG_FATE_SUPERSEDED,      "staged fate diverged");
 
 int fio_msg_turn_can_send(int state) { return msg_turn_can_send(state); }
 
@@ -436,9 +456,14 @@ int fio_msg_turn_sent_source(int staged, int have_host, int have_sealed) {
 }
 
 int fio_msg_turn_send_verdict(int staged, int have_host, int have_sealed,
-                              int host_is_sealed, int decoded, int same_game) {
+                              int host_is_sealed, int decoded, int same_game,
+                              int fate, int sent_wins) {
     return msg_turn_send_verdict(staged, have_host, have_sealed, host_is_sealed,
-                                 decoded, same_game);
+                                 decoded, same_game, fate, sent_wins);
+}
+
+int fio_msg_turn_field_after_arrival(int state, int field_fate) {
+    return msg_turn_field_after_arrival(state, field_fate);
 }
 
 int fio_msg_turn_hold_state(int n_events, int cut) {

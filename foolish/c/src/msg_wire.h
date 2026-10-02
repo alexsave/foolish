@@ -884,6 +884,75 @@ int msg_atoms_before_claim(const MsgEnvelope *e);
 int msg_open_boundary(const MsgEnvelope *shown, const MsgEnvelope *arriving,
                       unsigned char *scratch, int scratch_cap);
 
+// ---------- what an arrival leaves of a staged bubble ---------------------
+//
+// A device has put a bubble in the Messages input field - a move it staged, or
+// the NOTHING reseal an Undo leaves behind - and has not sent it. Then another
+// chain ARRIVES and the board adopts it. Is the bubble still something the
+// human may send? The owner, on a good staged over a table another attacker
+// then threw in on: "make it be a 'nothing burger' bubble, same as if you
+// pickup and then undo. we can't unstage a bubble, but we can make it no-op."
+//
+// The answer is a RELATION between the two chains, by bytes only (nothing is
+// replayed, no game is touched):
+//
+//   MSG_FATE_LANDED      the arrived chain already carries the staged one: it IS
+//                        those bytes, it names them as its parent, or (for a
+//                        bubble that carries a move) the staged chain's action
+//                        atoms are a prefix of the arrived chain's. The bubble
+//                        went out; there is nothing left in the field to fix.
+//   MSG_FATE_STANDS      the staged chain was built on the arrived one: the
+//                        staged bubble names it as its parent, or the arrived
+//                        chain's atoms are a prefix of the staged chain's - it
+//                        adds nothing the staged bubble was not composed on.
+//   MSG_FATE_SUPERSEDED  neither. A sibling (another move off the same parent),
+//                        a fork further back, or another game.
+//
+// Every move kind is the same question, because it is asked of atoms (attack,
+// cover, pass, pickup, round_end, good), never of what the move was:
+//
+//   * A sibling of ANY kind is SUPERSEDED - including two goods raced off one
+//     parent, and a good raced by a throw-in, where the staged good's turn can
+//     be HIGHER than the arrival's and Rule P would let the stale bubble erase
+//     the throw-in for the whole thread (LiveArrival4pTests).
+//   * There is NO trailing-good strip here, unlike Rule N's design
+//     (docs/IMESSAGE_SUPERSEDED_MOVES.md): stripping makes "parent + my good"
+//     a prefix of "parent + their throw-in", which is exactly the case that
+//     must not read as landed. The price is one shape read conservatively: a
+//     staged good that DID go out, followed two or more bubbles later by a
+//     move that folded it, is SUPERSEDED rather than LANDED (one hop is the
+//     header test and is exact). Superseded is the safe side - the field gets
+//     a no-op it did not need; the other error would leave a stale move in it.
+//   * A NOTHING bubble's atoms are its parent's, so the prefix test cannot say
+//     it landed - every descendant of that parent "contains" it. Only the
+//     header can (the bytes, or a child naming them). Anything else is
+//     SUPERSEDED, and a stale NOTHING bubble is a real hazard at three or more
+//     seats: re-sealing a chain with a pending good holds that good's atom,
+//     and the throw-in that superseded the good can seal to the same or a
+//     lower turn, so Rule P can rank the stale reseal above it.
+//
+// "STILL VALID" IS STANDS, and the turn layer below never acts on it for an
+// arrival, which is deliberate. An arrival that is not the board's own chain
+// moves the base, and the staged moves are dropped (MessageTurnController
+// .adopt - the owner decided against re-applying them). A STANDS arrival is
+// a chain that adds nothing - a NOTHING reseal somebody else sent - and even
+// then the staged bubble names the OLD parent, so it is a sibling of the
+// arrival for Rule P, and a staged move that folds a pending good seals to a
+// turn no higher than the arrival's: sending it can still lose, or win, by the
+// digest. Only the byte-identical re-delivery is safe to leave alone, and that
+// never reaches an adopt (MSG_TURN_ARRIVE_SKIP). STANDS earns its keep on the
+// SEND side instead: it is how msg_turn_send_verdict knows the bytes going out
+// were built on the board's own chain.
+//
+// `scratch` is the caller's, exactly as for msg_open_boundary. A negative MSG_E*
+// when either payload does not parse.
+#define MSG_FATE_STANDS     0
+#define MSG_FATE_LANDED     1
+#define MSG_FATE_SUPERSEDED 2
+int msg_staged_fate(const unsigned char *staged, int staged_len,
+                    const unsigned char *arrived, int arrived_len,
+                    unsigned char *scratch, int scratch_cap);
+
 // ---------- Rule R: no legal move is silently lost ------------------------
 //
 // When a device adopts a chain that does not contain the move it staged, that
@@ -1401,6 +1470,34 @@ int msg_turn_arrival(int state, int same_chain);
 // adopt in that shape from the routing layer any more.
 int msg_turn_adopt_duplicate(int state, int same_chain);
 
+// ---- the input field, after an arrival was adopted -------------------------
+//
+// THE INPUT FIELD MAY NEVER HOLD A MOVE THE BOARD IS NOT SHOWING. An adopt drops
+// the staged moves, so a bubble of mine still sitting in the field is stale
+// unless the arrival already carries it. It is OVERWRITTEN, not left: with the
+// NOTHING reseal of the arrival, the same bubble an Undo-to-empty stages
+// (MessageTableView.stageBaseNow) and through the same code, because Messages
+// offers no call to remove an inserted bubble. Sending it re-shares the board
+// everyone is on - a direct child of the arrival, so Rule P keeps the arrival's
+// move - and nothing animates for anyone. Nothing is re-applied: whether the
+// human tries their move again is theirs to decide.
+//
+// `state` is the chain state as the arrival FOUND it (before the adopt cleared
+// it), and `field_fate` is msg_staged_fate(the field's bubble, the arrived
+// chain), or < 0 when no bubble of mine is in the field (nothing staged since
+// the last Send or cancel).
+//
+//   * Nothing in the field: nothing to fix.
+//   * SENDING: the bubble is already on its way into the thread, and what that
+//     means for the board is msg_turn_send_verdict's to say.
+//   * GENESIS: a dealt game with no move is not sealable, so there is no
+//     NOTHING bubble to put there (and an arrival never folds into one).
+//   * LANDED: the field's bubble went out; the field is empty.
+//   * Anything else - SUPERSEDED, or STANDS (see msg_staged_fate) - overwrite.
+#define MSG_TURN_FIELD_KEEP     0  // leave the input field alone
+#define MSG_TURN_FIELD_NOTHING  1  // stage the NOTHING reseal of the arrived chain over it
+int msg_turn_field_after_arrival(int state, int field_fate);
+
 // ---- what a send means -----------------------------------------------------
 //
 // WHICH BYTES WENT OUT. The host's Send signal can arrive without its payload,
@@ -1475,8 +1572,33 @@ int msg_turn_sent_source(int staged, int have_host, int have_sealed);
 // It sits under the decode tests and above every "adopt" answer, which is the
 // whole of it: bytes that will not decode are unreadable whoever they belong
 // to, and bytes that decode to another game are never this board's to take.
+//
+// AND AN ARRIVAL THAT RACED THE SEND (MSG_TURN_SEND_OVERTAKEN). Send is pressed;
+// before the rebase runs, another chain arrives and the board adopts it - an
+// arrival in the send window is adopted at once (MSG_TURN_ARRIVE_ADOPT). The
+// rebase that follows used to move the board onto the sent bytes whatever had
+// landed meanwhile: at three or more seats, two attackers saying good off one
+// bubble, the LOSER of the digest coin flip put its own good back on its board
+// while every other device dropped it - a board showing a move the thread does
+// not have (owner's notes 4/5, "Sending good live arrival does not work").
+//
+// `fate` is msg_staged_fate(the sent bytes, the chain the board stands on now),
+// < 0 when not asked (no base, or the first ask). STANDS is the ordinary send:
+// the bytes were built on this board's chain, and the rebase goes ahead. LANDED
+// means the board already holds them (a second signal for the same send) or is
+// past them - a rebase could only walk it back. SUPERSEDED is the race: the
+// arrival and the sent bytes are siblings, and which one the thread keeps is
+// Rule P's to say - `sent_wins` is msg_rule_p(board chain, sent bytes) > 0,
+// < 0 when not asked. If the arrival wins the board stays on it; if the sent
+// bytes win, the board goes where every other device is going.
+//
+// This is not FOREIGN again. FOREIGN asks "did I seal these bytes" and can only
+// refuse bytes this device did not make; OVERTAKEN refuses bytes it did make,
+// because the board has been handed something newer since it made them.
+#define MSG_TURN_SEND_OVERTAKEN   7  // an arrival moved the board past or away from them: keep it
 int msg_turn_send_verdict(int staged, int have_host, int have_sealed,
-                          int host_is_sealed, int decoded, int same_game);
+                          int host_is_sealed, int decoded, int same_game,
+                          int fate, int sent_wins);
 
 // ---- what is withheld ------------------------------------------------------
 //

@@ -1012,6 +1012,25 @@ public actor MessageKernel {
         return Int(r)
     }
 
+    /// WHAT AN ARRIVAL LEAVES OF A BUBBLE THIS DEVICE STAGED (c/src/msg_wire.h
+    /// msg_staged_fate, which has every case). Parses both payloads and adopts
+    /// nothing, so the resident game is untouched and this may be asked between
+    /// any two reads.
+    public func stagedFate(staged: Data, arrived: Data) throws -> TurnWire.StagedFate {
+        var out: Int32 = -1
+        let rc: Int32 = staged.withUnsafeBytes { s in
+            arrived.withUnsafeBytes { a in
+                fio_msg_staged_fate(s.bindMemory(to: UInt8.self).baseAddress, Int32(staged.count),
+                                    a.bindMemory(to: UInt8.self).baseAddress, Int32(arrived.count),
+                                    &out)
+            }
+        }
+        guard rc == 0, let fate = TurnWire.StagedFate(rawValue: out) else {
+            throw MessageEnvelope.Failure.damaged(code: Int(fio_last_msg_error()))
+        }
+        return fate
+    }
+
     // ROUND 9 (owner): the Swift Rule-R binding (`rebase(pendingRound:seat:
     // awire:)` over fio_msg_rebase_awire) is removed with the iOS pending
     // ledger - nothing on this platform rebases stored moves any more. The C

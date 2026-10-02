@@ -861,8 +861,9 @@ static int open_is_action(const ReplayAtom *a) {
 }
 
 // Pass 1: the shown chain's action atoms, recorded in order until the buffer
-// is full. `full` marks a recording that stopped early.
-typedef struct { unsigned char *buf; int cap, len, full; } OpenTape;
+// is full. `full` marks a recording that stopped early; `atoms` counts the
+// atoms recorded.
+typedef struct { unsigned char *buf; int cap, len, full, atoms; } OpenTape;
 
 static void open_tape_sink(void *ctx, const ReplayAtom *a) {
     OpenTape *t = (OpenTape *)ctx;
@@ -872,6 +873,7 @@ static void open_tape_sink(void *ctx, const ReplayAtom *a) {
     if (t->len + n > t->cap) { t->full = 1; return; }
     memcpy(t->buf + t->len, rec, (size_t)n);
     t->len += n;
+    t->atoms++;
 }
 
 // Pass 2: the arriving chain's action atoms against the tape, counting the
@@ -931,7 +933,7 @@ int msg_open_boundary(const MsgEnvelope *shown, const MsgEnvelope *arriving,
 
     int prefix = 0;
     if (open_has_body(shown) && open_has_body(arriving)) {
-        OpenTape tape = { scratch, scratch_cap, 0, 0 };
+        OpenTape tape = { scratch, scratch_cap, 0, 0, 0 };
         if (replay_decode_atoms_v6(shown->actions, shown->actions_len, NULL,
                                    open_tape_sink, &tape) < 0)
             return claim;   // nothing readable was shown: no clamp
@@ -954,6 +956,75 @@ int msg_open_boundary(const MsgEnvelope *shown, const MsgEnvelope *arriving,
             prefix = cmp.total;
     }
     return prefix > claim ? prefix : claim;
+}
+
+// ---------- what an arrival leaves of the bubble in the input field ---------
+
+// Does this bubble carry a move of its own? A NOTHING reseal does not, and a
+// bubble that does not say (n_new 0, format 2) cannot claim to.
+static int fate_adds(const MsgEnvelope *e) {
+    return e->n_new != 0 && e->n_new != MSG_NEW_NOTHING;
+}
+
+int msg_staged_fate(const unsigned char *staged, int staged_len,
+                    const unsigned char *arrived, int arrived_len,
+                    unsigned char *scratch, int scratch_cap) {
+    if (!staged || !arrived || staged_len <= 0 || arrived_len <= 0) return MSG_ESHORT;
+    MsgEnvelope s, a;
+    int rc = msg_decode(staged, staged_len, &s);
+    if (rc != MSG_EOK) return rc;
+    rc = msg_decode(arrived, arrived_len, &a);
+    if (rc != MSG_EOK) return rc;
+
+    // THE SAME BYTES: the bubble came back, so it is in the thread.
+    if (staged_len == arrived_len && memcmp(staged, arrived, (size_t)staged_len) == 0)
+        return MSG_FATE_LANDED;
+
+    // ONE HOP, BY THE HEADER - exact, and blind to the atom fold. A child of the
+    // staged bubble was built on it, so it went out; a parent of it is the
+    // chain it was composed on. Both hold whatever the codec did to pending
+    // goods in between, which is why they are asked before the atoms.
+    uint8_t ds[SHA256_DIGEST_LEN], da[SHA256_DIGEST_LEN];
+    msg_digest(staged, staged_len, ds);
+    msg_digest(arrived, arrived_len, da);
+    if (names_parent(a.parent8, ds)) return MSG_FATE_LANDED;
+    if (names_parent(s.parent8, da)) return MSG_FATE_STANDS;
+
+    // Another deal shares no history with this one.
+    if (!open_same_deal(&s, &a) || !scratch || scratch_cap <= 0) return MSG_FATE_SUPERSEDED;
+
+    // DEEPER, BY THE ATOMS. The staged chain on tape, the arrived one against it.
+    int matched = 0, total = 0, s_atoms = 0, s_whole = 1;
+    if (open_has_body(&s) && open_has_body(&a)) {
+        OpenTape tape = { scratch, scratch_cap, 0, 0, 0 };
+        if (replay_decode_atoms_v6(s.actions, s.actions_len, NULL, open_tape_sink, &tape) < 0)
+            return MSG_FATE_SUPERSEDED;
+        OpenCmp cmp = { &tape, 0, 0, 0, 0, 0 };
+        if (replay_decode_atoms_v6(a.actions, a.actions_len, NULL, open_cmp_sink, &cmp) < 0)
+            return MSG_FATE_SUPERSEDED;
+        matched = cmp.matched;
+        total = cmp.total;
+        s_atoms = tape.atoms;
+        s_whole = !tape.full;
+    } else if (open_has_body(&s) || open_has_body(&a)) {
+        // One side has actions and the other none: the bodyless one is the
+        // dealt table both start from, so it is the other's past.
+        if (open_has_body(&a)) {
+            total = 1;   // the arrived chain holds atoms the staged one lacks
+        } else {
+            s_atoms = 1; // the staged chain holds atoms the arrived one lacks
+        }
+    }
+    // The staged chain is all inside the arrived one, and it carries a move of
+    // its own: that move is in the thread. Not for a NOTHING bubble, whose
+    // atoms are its parent's and so sit inside every descendant of that parent.
+    // Not for a recording cut short either - what lies past it is unknown.
+    if (fate_adds(&s) && s_whole && matched == s_atoms && total >= s_atoms)
+        return MSG_FATE_LANDED;
+    // The arrived chain is all inside the staged one: it adds nothing the
+    // staged bubble was not built on.
+    if (matched == total && total <= s_atoms) return MSG_FATE_STANDS;
+    return MSG_FATE_SUPERSEDED;
 }
 
 // ---------- Rule R --------------------------------------------------------
@@ -1368,6 +1439,14 @@ int msg_turn_adopt_duplicate(int state, int same_chain) {
         && same_chain;
 }
 
+int msg_turn_field_after_arrival(int state, int field_fate) {
+    if (field_fate < 0) return MSG_TURN_FIELD_KEEP;                    // nothing of mine there
+    if (turn_has(state, MSG_TURN_SENDING)) return MSG_TURN_FIELD_KEEP; // already going out
+    if (turn_has(state, MSG_TURN_GENESIS)) return MSG_TURN_FIELD_KEEP; // no NOTHING to seal
+    if (field_fate == MSG_FATE_LANDED) return MSG_TURN_FIELD_KEEP;     // it is in the thread
+    return MSG_TURN_FIELD_NOTHING;
+}
+
 int msg_turn_sent_source(int staged, int have_host, int have_sealed) {
     if (staged && have_sealed) return MSG_TURN_BYTES_SEALED;
     if (have_host) return MSG_TURN_BYTES_HOST;
@@ -1375,7 +1454,8 @@ int msg_turn_sent_source(int staged, int have_host, int have_sealed) {
 }
 
 int msg_turn_send_verdict(int staged, int have_host, int have_sealed,
-                          int host_is_sealed, int decoded, int same_game) {
+                          int host_is_sealed, int decoded, int same_game,
+                          int fate, int sent_wins) {
     const int src = msg_turn_sent_source(staged, have_host, have_sealed);
     // DID I SEAL THESE BYTES - not Rule P, which cannot answer it: a child can
     // seal to a turn LOWER than its parent's, so ordering refused ordinary
@@ -1393,6 +1473,10 @@ int msg_turn_send_verdict(int staged, int have_host, int have_sealed,
         // the decode, which is why it is asked here and not with the rest; < 0
         // is "not asked yet" and never a refusal. See msg_wire.h.
         if (same_game == 0) return MSG_TURN_SEND_OTHERGAME;
+        // AN ARRIVAL RACED THE SEND - see msg_wire.h. < 0 is "not asked" and
+        // never a refusal, like `same_game`.
+        if (fate == MSG_FATE_LANDED) return MSG_TURN_SEND_OVERTAKEN;
+        if (fate == MSG_FATE_SUPERSEDED && sent_wins == 0) return MSG_TURN_SEND_OVERTAKEN;
     }
     if (!staged && src == MSG_TURN_BYTES_NONE) return MSG_TURN_SEND_NOOP;
     if (src == MSG_TURN_BYTES_NONE) return MSG_TURN_SEND_BLIND;

@@ -626,12 +626,38 @@ static int open_boundary_check(void) {
         printf("FAIL open boundary: an unreadable shown chain clamped to %d\n", ab);
         return 1;
     }
+    // fio_msg_staged_fate is the bridge onto msg_staged_fate (msg_wire_test
+    // pins its cases at 2/3/4 seats, every move kind). Here: the arguments
+    // reach it in order, junk is refused, and nothing is adopted. These two
+    // are not linked by parent8, so the atoms answer: the child holds the
+    // parent, the parent is held by the child.
+    int fate = -9;
+    if (fio_msg_staged_fate(child, cn, parent, pn, &fate) != FIO_EOK || fate != FIO_FATE_STANDS) {
+        printf("FAIL staged fate: the child over its parent is %d, want STANDS\n", fate);
+        return 1;
+    }
+    if (fio_msg_staged_fate(parent, pn, child, cn, &fate) != FIO_EOK || fate != FIO_FATE_LANDED) {
+        printf("FAIL staged fate: the parent under its child is %d, want LANDED\n", fate);
+        return 1;
+    }
+    if (fio_msg_staged_fate(parent, pn, junk, 4, &fate) != FIO_EMSG
+        || fio_msg_staged_fate(NULL, 0, child, cn, &fate) != FIO_EBADARG
+        || fio_msg_staged_fate(parent, pn, child, cn, NULL) != FIO_EBADARG) {
+        printf("FAIL staged fate: bad arguments were answered\n");
+        return 1;
+    }
+    if (fio_msg_turn_field_after_arrival(FIO_TURN_READY | FIO_TURN_STAGED, FIO_FATE_SUPERSEDED)
+            != FIO_TURN_FIELD_NOTHING
+        || fio_msg_turn_field_after_arrival(FIO_TURN_READY | FIO_TURN_STAGED, -1) != FIO_TURN_FIELD_KEEP) {
+        printf("FAIL field after arrival: the bridge does not reach the rule\n");
+        return 1;
+    }
     if (memcmp(&before, hdr, sizeof before) != 0) {
         printf("FAIL open boundary: asking moved the header\n");
         return 1;
     }
-    printf("open boundary OK (claim %d over parent turn %d; older chain opens at its end)\n",
-           claim, p_turn);
+    printf("open boundary OK (claim %d over parent turn %d; older chain opens at its end; "
+           "staged fate bridged)\n", claim, p_turn);
     return 0;
 }
 

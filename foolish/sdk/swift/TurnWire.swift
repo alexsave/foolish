@@ -175,6 +175,11 @@ public enum TurnWire {
         /// seat number, which over there belongs to somebody else. Refused the
         /// same way `.foreign` is - the board is left exactly as it stands.
         case otherGame = 6
+        /// An arrival raced the send and the board was handed something newer:
+        /// it already holds the sent bytes or is past them, or they are a
+        /// sibling Rule P ranks below what it now shows. Refused the way
+        /// `.foreign` is - the board stays on the arrival.
+        case overtaken = 7
     }
 
     /// What the send does to this board. Ask once with `decoded` nil; a
@@ -188,13 +193,51 @@ public enum TurnWire {
     /// `sameGame` is the host's comparison of the DECODED chain's game id
     /// against the one this board plays, so it only exists on the second ask -
     /// nil (the default) means "not known yet" and is never a refusal.
+    ///
+    /// `fate` is `StagedFate` of (the sent bytes, the chain the board stands on
+    /// now) and `sentWins` Rule P of (that chain, the sent bytes) > 0; nil for
+    /// either is "not asked" and never a refusal. See msg_wire.h's
+    /// MSG_TURN_SEND_OVERTAKEN for the race they decide.
     public static func sendVerdict(staged: Bool, host: Bool, sealed: Bool,
                                    hostIsSealed: Bool, decoded: Bool?,
-                                   sameGame: Bool? = nil) -> SendVerdict {
+                                   sameGame: Bool? = nil, fate: StagedFate? = nil,
+                                   sentWins: Bool? = nil) -> SendVerdict {
         let d: Int32 = decoded.map { $0 ? 1 : 0 } ?? -1
         let g: Int32 = sameGame.map { $0 ? 1 : 0 } ?? -1
+        let f: Int32 = fate?.rawValue ?? -1
+        let w: Int32 = sentWins.map { $0 ? 1 : 0 } ?? -1
         return SendVerdict(rawValue: fio_msg_turn_send_verdict(
-            staged ? 1 : 0, host ? 1 : 0, sealed ? 1 : 0, hostIsSealed ? 1 : 0, d, g)) ?? .noop
+            staged ? 1 : 0, host ? 1 : 0, sealed ? 1 : 0, hostIsSealed ? 1 : 0, d, g, f, w)) ?? .noop
+    }
+
+    // MARK: - what an arrival leaves of a staged bubble
+
+    /// The relation between a bubble this device staged and a chain that
+    /// arrived - the kernel's (`msg_staged_fate`), asked by bytes through
+    /// `MessageKernel.stagedFate`. Every move kind is the same question.
+    public enum StagedFate: Int32, Sendable, Equatable {
+        /// The staged chain was built on the arrived one.
+        case stands = 0
+        /// The arrived chain already carries the staged one: it went out.
+        case landed = 1
+        /// Neither: a sibling, a fork further back, or another game.
+        case superseded = 2
+    }
+
+    /// What the input field is owed once an arrival has been ADOPTED.
+    public enum FieldAfterArrival: Int32, Sendable {
+        /// Leave it alone.
+        case keep = 0
+        /// Stage the NOTHING reseal of the arrived chain over it - the bubble an
+        /// Undo-to-empty stages, through the same code.
+        case nothing = 1
+    }
+
+    /// `s` is the chain state the arrival FOUND (before the adopt cleared it);
+    /// `fieldFate` is nil when no bubble of mine is in the input field.
+    public static func fieldAfterArrival(_ s: State, fieldFate: StagedFate?) -> FieldAfterArrival {
+        FieldAfterArrival(rawValue: fio_msg_turn_field_after_arrival(
+            s.rawValue, fieldFate?.rawValue ?? -1)) ?? .keep
     }
 
     // MARK: - what is withheld
