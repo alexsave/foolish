@@ -440,4 +440,7 @@ Items chain off each other and the first off the chain the board is showing, so 
 **What a script can assert.** `rig.sh flight` reads the extension's flight log: `host willSelect` / `host didSelect` / `host didReceive ... door=true` for the delivery, `receive`, `arrival beats=... phase=... joins=...`, `arrival-done board`, `anim-open n=... kinds=...` for what the board animated, `conflict retract` and `field-nothing` for an invalidated staged move, and `door-refused` when the kernel would not seal an item (an illegal move).
 `dev.flags` (`arrival.openboundary=0`, `arrival.emptyroles=0`, `arrival.restagenothing=0`) takes effect on the next appex process, which `liveseed` starts.
 
+**The field is the door's until its send has left it.** Messages calls didReceive on the Send press and didStartSending about a second later, and a bubble inserted in between is drawn as a zero-height entry (a divider and a live Send, no bubble; host doc L13).
+So in a `FOOLISH_ARRIVE=1` build every stage waits for delivered door bubbles to start sending (`stage waited ...ms` in the flight log); a remote arrival has no Send press in this field, and the film then shows what it would leave.
+
 **What it does not cover.** The delivered bubble is an own send on the host side (right-hand side, `isFromMe`, a staged bubble in the field until Send), two arrivals cannot be closer than one Send press, and the thread has two participants (N3, N4, N7).

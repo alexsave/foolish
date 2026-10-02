@@ -175,6 +175,7 @@ Runs, numbered as the phase-1 plan had them; T-Rn is the trace excerpt, frames a
 | L10 | all | `conversation.send` from the extension does not send on the simulator: it STAGES the bubble in the input field exactly like `insert` ("Add comment or Send"), and its completion reports no error about 0.2 to 0.3 s later. A human (or the rig) presses Send. | high |
 | L11 | R8 timing (film `closing_good_4p_flagON`) | didReceive fires on the Send press: the board reacted (Pickup plank gone) in the same 60 Hz frame the bubble began leaving the input field, about 0.18 s before the bubble settled in the transcript; the board's first flight began about 0.35 s after that. | medium: frame-aligned, not clock-aligned |
 | L12 | R4 quick succession | Not producible through Messages on one simulator: each door bubble must be staged and Sent, at least one Send press apart. | n/a |
+| L13 | item-1 runs (films `r2_item1_arrival_before`, `r2_item1_exp_delay2s`, `r2_item1_after`) | A bubble the extension inserts between a Send press's didReceive and that send's didStartSending (about 1 s, L4) lands as a zero-height entry: the field shows its divider and a live Send arrow and no bubble, and stays so. The same bubble inserted after didStartSending is the full bubble an Undo leaves. The door's stages wait for its own send to leave the field (`rigAwaitFieldFree`), because a remote arrival comes with no Send press in this field (N7). | high: 1 of 1 before, 2 of 2 after a wait |
 
 ## What a harness may simulate (cite lines)
 

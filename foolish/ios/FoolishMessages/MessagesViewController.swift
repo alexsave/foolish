@@ -323,6 +323,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         FlightRecorder.note("receive")
 #if RIG_ARRIVE
         let arrived = Self.payload(of: message)
+        if rigIsDoor(message), let arrived { rigDoorDelivered.insert(arrived) }
         Task { await rigSaw(arrived) }
 #endif
         incomingURL = message.url
@@ -399,6 +400,43 @@ final class MessagesViewController: MSMessagesAppViewController {
         get { Self.rigDoorSent }
         set { Self.rigDoorSent = newValue }
     }
+    /// Door bytes Messages has delivered back to us (didReceive). One that is
+    /// delivered and not yet in `rigDoorSent` is a bubble the rig's Send press
+    /// is still carrying OUT of the input field.
+    private static var rigDoorDelivered: Set<Data> = []
+    private var rigDoorDelivered: Set<Data> {
+        get { Self.rigDoorDelivered }
+        set { Self.rigDoorDelivered = newValue }
+    }
+
+    /// THE FIELD IS THE DOOR'S UNTIL ITS SEND HAS LEFT IT.
+    ///
+    /// The door delivers by pressing Send in THIS thread's input field, and
+    /// Messages calls didReceive on the press (host doc L11) but didStartSending
+    /// only about a second later (L4). A bubble the extension stages in that
+    /// second - the NOTHING bubble an arrival owes (MessageTableView.
+    /// restageNothingAfterArrival) is staged at once - lands in a field that is
+    /// still being sent from, and Messages draws it as a zero-height entry: a
+    /// divider line and a live Send arrow, no bubble. Staged two seconds later
+    /// the very same bubble is the full one an Undo leaves.
+    ///
+    /// A move from another phone never comes with a Send press in this field
+    /// (host doc N7), so that race is the door's own, and the door pays for it
+    /// here: a stage waits until every delivered door bubble has started
+    /// sending, so what the rig films is what a real arrival would leave.
+    /// Bounded, so a send callback that never comes cannot hold a stage.
+    @MainActor
+    private func rigAwaitFieldFree() async {
+        var waited = 0
+        while !rigDoorDelivered.subtracting(rigDoorSent).isEmpty, waited < 60 {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            waited += 1
+        }
+        if waited > 0 {
+            FlightRecorder.note("rig", "stage waited \(waited * 50)ms for the door's send to leave the field")
+        }
+    }
+
     private var rigLastSelected: String = "-"
     private var rigClaimSeen: String?
 
@@ -1255,6 +1293,9 @@ final class MessagesViewController: MSMessagesAppViewController {
         // gameId comes from the same decode above so didStartSending's commit
         // can persist the seat without re-decoding. "" only if the payload
         // failed to decode - the commit then skips the seat write.
+#if RIG_ARRIVE
+        await rigAwaitFieldFree()
+#endif
         // Superseded while the picture was being baked: a newer move is already
         // staged, and this one must not claim the input field back off it.
         guard current() else { return }
