@@ -6,8 +6,9 @@ import UIKit
 /// on the 9 x 9 screens' paper (UtttSheetView, with no auto-collapse ride).
 ///
 /// The layout is NOT the kernel's `uti_sheet`: a header band (who I am, the
-/// headline, the "243" badge the host draws in its corner), the board in the
-/// rest, and the doors at the bottom. Every number is in `UtttBigLayout`.
+/// headline, room at the right for the send hint), the board in the
+/// rest, and the doors at the bottom (the host's "243" badge in the bottom
+/// left corner). Every number is in `UtttBigLayout`.
 
 /// Every number on the big screens, in one place.
 enum UtttBigLayout {
@@ -20,8 +21,9 @@ enum UtttBigLayout {
     static let markLead: CGFloat = 3
     /// Between the indicator and the headline.
     static let gap: CGFloat = 12
-    /// Room the host's badge takes in the top right corner (UtttBigBadge).
-    static let badgeRoom: CGFloat = 52
+    /// Room left at the header's right for the send hint, which points at
+    /// Messages' Send button from the top right corner while a bubble is staged.
+    static let hintRoom: CGFloat = 72
     /// The doors' side: the 9 x 9 rulebook's.
     static var door: CGFloat { UtttRulebookButton.expandedSide }
     /// The Again bar's widest.
@@ -149,7 +151,7 @@ public final class UtttBigGameScreen: UtttSheetView {
     override func lay(_ size: CGSize, from: CGFloat?) {
         typealias M = UtttBigLayout
         /* THE HEADER: "you are" over my mark at the left, the headline beside
-         * it, the badge's corner left free. */
+         * it, the send hint's corner left free. */
         let a = you1.sizeThatFits(.zero), b = you2.sizeThatFits(.zero)
         let labelW = max(a.width, b.width)
         let stackW = max(labelW, M.mark)
@@ -161,7 +163,7 @@ public final class UtttBigGameScreen: UtttSheetView {
                                width: M.mark, height: M.mark)
 
         let left = indicator.isHidden ? M.pad : indicator.frame.maxX + M.gap
-        let width = max(0, size.width - left - M.badgeRoom)
+        let width = max(0, size.width - left - M.hintRoom)
         let pre = UtttBig.say(.headlinePre), post = UtttBig.say(.headlinePost)
         let m = UtttBig.sayMark
         let said: UtttModel.Headline = m == .none ? .text(pre + post) : .mark(pre, m, post)
@@ -226,7 +228,7 @@ public final class UtttBigLobby: UtttSheetView {
 
     override func lay(_ size: CGSize, from: CGFloat?) {
         typealias M = UtttBigLayout
-        words.frame = CGRect(x: M.pad, y: M.pad, width: max(0, size.width - M.pad - M.badgeRoom),
+        words.frame = CGRect(x: M.pad, y: M.pad, width: max(0, size.width - M.pad - M.hintRoom),
                              height: max(0, size.height - 2 * M.pad))
         words.set(UtttBig.say(.waitingHeadline), UtttBig.say(.waitingSubline), column: false)
     }

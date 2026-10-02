@@ -29,7 +29,7 @@ public enum UtttBigMode {
 }
 
 /// THE "243" BADGE: the mode's visible confirmation, and on a big game's
-/// screen what board this is. The small label's type in the ink, on a
+/// screen what board this is, in the bottom left corner. The small label's type in the ink, on a
 /// paper-coloured pill.
 public final class UtttBigBadge: UIView {
     private let label = UILabel()
@@ -66,12 +66,15 @@ public final class UtttBigBadge: UIView {
                              width: s.width, height: s.height)
     }
 
-    /// The badge's place in a view of `bounds` (its safe area): the top right
-    /// corner, `inset` in.
-    public static let inset: CGFloat = 8
+    /// The badge's place in a view of `bounds` (its safe area): the BOTTOM
+    /// LEFT corner, `inset` in. Not the top right: the send hint points at
+    /// Messages' Send button from there while a bubble is staged, and the
+    /// two were drawn on top of each other (rig, 2026-10-01). The bottom left
+    /// is empty on every screen at rest; the doors stand at the bottom right.
+    public static let inset: CGFloat = 12
     public func place(in bounds: CGRect) {
         let s = intrinsicContentSize
-        frame = CGRect(x: bounds.maxX - Self.inset - s.width, y: bounds.minY + Self.inset,
+        frame = CGRect(x: bounds.minX + Self.inset, y: bounds.maxY - Self.inset - s.height,
                        width: s.width, height: s.height)
     }
 }
