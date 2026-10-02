@@ -104,6 +104,12 @@ final class MessagesViewController: MSMessagesAppViewController {
         // (anim_plan.h) and every board built below reads it.
         AnimTransport.declare(.chain)
         FlightRecorder.begin("style \(presentationStyle == .compact ? "compact" : "expanded")")
+#if RIG_ARRIVE
+        // Pinned now, before any seed is claimed: the door trusts only a claim
+        // receipt written after this (a lazy static first read at door time
+        // was later than every claim, so no seed was ever "this process's").
+        _ = Self.processStart
+#endif
         prefsSink = FPrefs.shared.objectWillChange.sink { [weak self] _ in
             // objectWillChange fires BEFORE the value lands, so read it next turn.
             DispatchQueue.main.async { self?.applyTableFallback() }
@@ -378,9 +384,21 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// another game. Never a staged, unsent bubble - that is not the thread's.
     private var rigShown: Data?
     /// Bytes the door sent, so their send callbacks register nothing.
-    private var rigDoorBytes: [Data] = []
+    /// PROCESS-WIDE, not per controller: closing the drawer resigns this
+    /// controller, and a Send pressed with the drawer closed is reported to a
+    /// FRESH one (phase 2, run 6), which would otherwise take the door's
+    /// bubble for its own send.
+    private static var rigDoorBytes: [Data] = []
+    private var rigDoorBytes: [Data] {
+        get { Self.rigDoorBytes }
+        set { Self.rigDoorBytes = newValue }
+    }
     /// Door bytes Messages has started sending (didStartSending).
-    private var rigDoorSent: Set<Data> = []
+    private static var rigDoorSent: Set<Data> = []
+    private var rigDoorSent: Set<Data> {
+        get { Self.rigDoorSent }
+        set { Self.rigDoorSent = newValue }
+    }
     private var rigLastSelected: String = "-"
     private var rigClaimSeen: String?
 

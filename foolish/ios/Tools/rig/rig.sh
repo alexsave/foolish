@@ -913,11 +913,46 @@ cmd_arrive() {
       echo "arrive: item $((n + 1)) of $items was never staged (rig.sh flight says why)" >&2
       return 1
     fi
-    # `turn` puts an expanded drawer down first: Send is under it.
+    # Send is under an expanded drawer. `turn` puts one down when the finder
+    # sees its edge high up; when it does not (seen on a full-height board),
+    # the drawer is collapsed by its grabber and Send asked for again.
+    poll 10 0.2 has_send || cmd_collapse >/dev/null 2>&1 || true
+    # …and when the finder misreads the edge altogether (a full-height board
+    # whose deck sits in the top corner reads as the drawer's edge), drag from
+    # where an expanded drawer's grabber always is, just under the status bar.
+    if ! has_send; then
+      read -r W H < <(screen)
+      swipe 0.6 $((W / 2)) $((H * 7 / 100)) $((W / 2)) $((H * 66 / 100)) 1.5
+    fi
     cmd_turn >/dev/null || { echo "arrive: no Send for item $((n + 1))" >&2; return 1; }
     n=$((n + 1))
   done
   echo "arrive: $items sent"
+}
+
+# A SEEDED BOARD, BOUND, ready for `arrive`.
+#
+#   SEAT=3 rig.sh liveseed goodwait 4
+#
+# Seeds MODE (as `seed`), opens it from the + menu with dev.stage on so the
+# extension stages the seeded chain, sends it, then TAPS that bubble - so the
+# drawer is bound to the game's MSSession, the only drawer Messages delivers a
+# live arrival to (docs/IMESSAGE_LIVE_ARRIVAL_HOST.md, phase 2). dev.seat stays,
+# so a chain that arrives seats the board at the same chair; dev.fatboard goes,
+# so the tap opens the bubble's own chain rather than re-claiming the seed.
+cmd_liveseed() {
+  need_sim
+  local g; g=$(group_dir)
+  kill_appex || true
+  : > "$g/dev.stage"
+  rm -f "$g/dev.staged"
+  cmd_seed "$@" || return 1
+  cmd_open "$SHOOT_THREAD" >/dev/null 2>&1 || true
+  local hex; hex=$(tr -d '[:space:]' < "$g/dev.fatboard")
+  send_staged "$hex" || { rm -f "$g/dev.stage"; return 1; }
+  rm -f "$g/dev.stage" "$g/dev.fatboard" "$g/dev.replay"
+  cmd_tapopen "$SHOOT_THREAD" >/dev/null 2>&1 || return 1
+  echo "liveseed: bound to the seeded chain, seat $(cat "$g/dev.seat" 2>/dev/null)"
 }
 
 cmd_devgame() {
@@ -2302,6 +2337,7 @@ case "${1:-}" in
   seat)     shift; cmd_seat "$@" ;;
   devgame)  shift; cmd_devgame "$@" ;;
   arrive)   shift; cmd_arrive "$@" ;;
+  liveseed) shift; cmd_liveseed "$@" ;;
   picker)   shift; cmd_picker "$@" ;;
   enter)    shift; cmd_enter "$@" ;;
   open)     shift; cmd_open "$@" ;;
