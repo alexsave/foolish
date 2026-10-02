@@ -142,6 +142,68 @@ final class LiveArrivalRoleMarkTests: XCTestCase {
         XCTAssertTrue(MessageTableView.opensEmptyWithRoleSyncByDefault)
     }
 
+    // MARK: - a role change landing inside an earlier stream (item 3)
+
+    func testTheClosingBeatFixShipsOn() {
+        XCTAssertTrue(MessageTableView.closingBeatReadsLiveViewByDefault)
+    }
+
+    /// A throw-in arrives (a real stream: its card flies), and while it is
+    /// still flying a non-closing good by ANOTHER attacker arrives. The good's
+    /// stream is empty, so it starts no sequence and the board's `onChange`
+    /// turns that attacker's sword into the check at once - and then the
+    /// throw-in's closing beat synced the roles to ITS OWN final view, which
+    /// predates the good, and turned the check back into a sword. The board
+    /// then drew the sword at rest over a seat that had said good.
+    ///
+    /// Layer: the controller seam (host doc N6) with the real board mounted.
+    /// Two arrivals this close cannot be produced through simulator Messages
+    /// (host doc L12, N3), so this claims nothing about host delivery, only
+    /// what the board does with two bubbles that did arrive in this order.
+    func testAGoodArrivingDuringAThrowInsFlightKeepsItsCheck() async throws {
+        var throwIn: (seat: Int, move: Move)?
+        var gooder = -1
+        let f = try await LiveArrivalFixture.coveredTable(players: 4) { f in
+            for a in f.attackers {
+                guard let m = try await f.legal(a, on: f.root).first(where: { $0.type == .attack })
+                else { continue }
+                let x1 = try await f.play(a, m, after: f.root)
+                for b in f.attackers where b != a {
+                    if try await f.legal(b, on: x1).contains(where: { $0.type == .good }) {
+                        throwIn = (a, m); gooder = b
+                        return true
+                    }
+                }
+            }
+            return false
+        }
+        let (a, m) = try XCTUnwrap(throwIn)
+        let c = try mount(f, seat: f.defender, on: f.root)
+        await settle("4p cold open")
+        let x1 = try await f.play(a, m, after: f.root)
+        let x2 = try await f.good(gooder, after: x1)
+
+        MessageTableView.resetDrawnMarks()
+        await f.arrive(x1, at: c)
+        XCTAssertFalse(c.openReplayEvents.isEmpty, "precondition: the throw-in is a real stream")
+        // Into its flight before the good lands.
+        let deadline = Date().addingTimeInterval(5)
+        while !BoardAnimator.isSequencing, Date() < deadline {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertTrue(BoardAnimator.isSequencing, "precondition: the throw-in's stream is playing")
+        await f.arrive(x2, at: c)
+        XCTAssertTrue(c.openReplayEvents.isEmpty, "precondition: a non-closing good has no step "
+                      + "[\(c.openReplayEvents.kindNames)]")
+        XCTAssertTrue(BoardAnimator.isSequencing,
+                      "precondition: the good landed while the throw-in was still playing")
+        await settle("4p throw-in then good")
+        XCTAssertEqual(MessageTableView.drawnMarks[gooder]?.last, "check",
+                       "seat \(gooder) said good during the throw-in and the board draws "
+                       + "\(MessageTableView.drawnMarks[gooder] ?? [])")
+        assertMarksAtRest(c, "4p after a good landed inside a throw-in's stream")
+    }
+
     // MARK: - controls
 
     /// THE 2P CONTROL: the closing good is a full sequence (sweep, refill, role

@@ -13,6 +13,21 @@ import Foundation
 
 extension MessageTableView {
 
+    /// A stream's CLOSING BEAT hands the roles to the board the controller is
+    /// showing now, so a role change that landed while the stream was playing
+    /// (and started no sequence of its own) is not undone by it. Ships on;
+    /// `arrival.closingroles=0` in `dev.flags` puts back the sync to the
+    /// stream's own final view (LiveArrivalRoleMarkTests).
+    static let closingBeatReadsLiveViewByDefault = true
+
+    static var closingBeatReadsLiveView: Bool {
+        #if DEBUG || SOLO_TESTING
+        return MessageDevBoard.flag("arrival.closingroles", shipping: closingBeatReadsLiveViewByDefault)
+        #else
+        return closingBeatReadsLiveViewByDefault
+        #endif
+    }
+
     /// Animate an ordered evwire stream (the kernel's events for ONE move) as
     /// sequential flights, freezing each displayed count to that step's OWN board
     /// (GameEvent.state) as its flight lands - so a count never jumps ahead of its
@@ -141,6 +156,11 @@ extension MessageTableView {
         }
         // Bug 9: claim the animator. Anything already running is now stale.
         let mySeq = claimAnimSequence()
+        // This stream owes the closing beat from here (`aStreamOwnsTheRoles`).
+        // Every way out before that beat is a supersede (the two `abandoned`
+        // guards below), and a superseded token can never equal a newer one,
+        // so the ownership needs no teardown of its own.
+        closingBeatOwner = mySeq
         // Round-7 (invisible-deal fix): every hand-card slot this sequence OPENS
         // for an incoming deal/refill/pickup (openSlots, below). clearPreHidden()
         // on teardown CANNOT rescue these — openSlots pulled them back OUT of
@@ -665,7 +685,24 @@ extension MessageTableView {
             // Every card in it has landed by now; the teardown below repeats
             // this harmlessly for the paths that never reach here.
             dropSweep()
-            if syncRoles(to: RoleState(view), in: view, animated: true) {
+            // THE ROLES AS THEY ARE NOW, not as this stream found them. A view
+            // change that starts no sequence (a pass, a non-closing good
+            // arriving) syncs the roles on the spot and leaves this stream the
+            // newest, so its own `view` can be a move behind by the time this
+            // beat runs - and syncing to it turned a fresh check back into a
+            // sword (LiveArrivalRoleMarkTests).
+            //
+            // ONE RULE IN TWO HALVES, and neither is enough alone: while this
+            // stream is the newest it owns the roles, so the board's `onChange`
+            // leaves an unsequenced change to it (`aStreamOwnsTheRoles` - else
+            // this stream's own in-flight beats, a throw-in clearing goods, turn
+            // the fresh mark back mid-flight), and this beat reads the LIVE
+            // view (else the change it was handed is lost). The ownership ends
+            // here, as the live view is read: a change landing during the
+            // hand-off's flight below syncs itself.
+            if closingBeatOwner == mySeq { closingBeatOwner = nil }
+            let closing = Self.closingBeatReadsLiveView ? (controller.view ?? view) : view
+            if syncRoles(to: RoleState(closing), in: closing, animated: true) {
                 try? await Task.sleep(nanoseconds: UInt64((roleFlightTime + 0.05) * 1_000_000_000))
             }
         }
