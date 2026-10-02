@@ -20,10 +20,18 @@ public struct BubbleDataGeometry: Hashable, Sendable {
     }
 
     /// 243 x 243 cells at one pixel each: a 243 x 244 px picture, about 72 KB
-    /// after a real send, and the one that has arrived every time.
+    /// after a real send, and the one that has arrived every time. FOR DENSE
+    /// PICTURES ONLY: a sparse board - a game's, a lone mark between empty
+    /// cells, and the header row's own count and CRC cells - does NOT survive
+    /// the two JPEGs at this size (a lone grey comes back near 200 and reads
+    /// as empty; the checksum refuses the picture rather than misread it).
+    /// Measured 2026-10-01: uttt/c/tests/uttt_big_chain.c refused 21,330 of
+    /// 40,712 positions of one game; testSparseBoardNeedsThreePixelsACell
+    /// holds it. A game board uses robust243.
     public static let board243 = BubbleDataGeometry(cells: 243, pixelsPerCell: 1)
-    /// The same board at three pixels a cell (729 x 732 px), which survives a
-    /// far harsher encoder or a resize to about 2.5 px a cell.
+    /// The same board at three pixels a cell (729 x 732 px, about 460 KB after
+    /// a real send), which carries a sparse board with a margin of about 25
+    /// and survives a far harsher encoder or a resize to about 2.5 px a cell.
     public static let robust243 = BubbleDataGeometry(cells: 243, pixelsPerCell: 3)
 
     /// A picture a send keeps whole: a side of at least 64 cells and no side
