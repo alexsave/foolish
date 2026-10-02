@@ -5297,11 +5297,11 @@ static void test_staged_fate(void) {
 
 // ---------- formats 5 and 6, pinned as bytes ------------------------------
 //
-// The rematch generation added format 7. Formats 5 and 6 are what every
-// shipped build writes for an ordinary game and for a fool's-penalty game, so
-// they must seal and decode EXACTLY as they did before format 7 existed. These
-// four envelopes are built deterministically and their bytes were captured from
-// the kernel BEFORE format 7 was added (`msg_wire_test --print-goldens`):
+// Formats 5 and 6 are what every shipped build writes for an ordinary game and
+// for a fool's-penalty game, so they must seal and decode EXACTLY as they do
+// today whatever format is added after them. These four envelopes are built
+// deterministically and their bytes are pinned in GOLDEN_HEX
+// (`msg_wire_test --print-goldens` prints them):
 //
 //   0  format 5, LIVE, 3 players, passing, a sent clock and a bubble delta
 //   1  format 5, FINISHED, 2 players, podkidnoy
@@ -5309,10 +5309,8 @@ static void test_staged_fate(void) {
 //   3  format 6, LIVE, 4 players, opening pinned to seat 2
 //
 // What is asserted (test_format56_goldens): the builder still produces the
-// same bytes (the seal and the encoder did not move), each golden decodes with
-// generation 0 and re-encodes to itself byte for byte, and a decoder that does
-// not know format 7 - modelled by stamping 7 into an old format's header -
-// refuses it as MSG_EFORMAT.
+// same bytes (the seal and the encoder did not move), and each golden decodes,
+// replays and re-encodes to itself byte for byte.
 static int golden_build(int which, unsigned char *out, int cap) {
     static unsigned char body[1024];
     static Game scratch;
@@ -5412,6 +5410,67 @@ static void print_goldens(void) {
     }
 }
 
+// Captured with --print-goldens at origin/main 4c7e65f6, before any rematch
+// generation existed. NEVER regenerate these to make a test pass: a diff here
+// means a shipped bubble now means something else.
+static const char *const GOLDEN_HEX[4] = {
+    "f7050002515151515151515107000103010100000000000000002bf3a623483c4f879a33932efdbeef2b"
+    "36a75bc695b9e59694e15aa5764ede8f341207030004416c657801044d69726102054a6f6e6173070007"
+    "35df9bd38d17730682ea37771ff4b43a",
+    "f7050003525252525252525272000002002e00000000000000008a15e717926cb1a776a796b62bfe3d79"
+    "32ad677732128daca1ca85a45cd81e9c452372020004416c657801044d69726172002464460f7b2bb8d5"
+    "58d69178f6a7890a2f7d1a70187be79bd51f4d926ee8f061276f3badeab534d420564003fd55c55f7ec2"
+    "823ec1e62a",
+    "f706000053535353535353530000000401000000000000000000e837280bdc9b13c8521a993e5a3e8bc6"
+    "2db37329d06a35c3afb3b1a343625ea9ad0b0002ff44c9ed0102040004416c657801044d69726102054a"
+    "6f6e6173030550726979610000",
+    "f706000254545454545454540100020401000000000000000000475869fe26cb76e82e8e9dc7887ed913"
+    "29b97fda6dc3dddabd9cdca229eb9fb50d0c01020200000000ff040004416c657801044d69726102054a"
+    "6f6e61730305507269796101000d37490e3be569077df74386ce7a",
+};
+
+static int unhex(const char *h, unsigned char *out, int cap) {
+    int n = 0;
+    for (const char *p = h; p[0] && p[1] && n < cap; p += 2) {
+        unsigned v = 0;
+        if (sscanf(p, "%2x", &v) != 1) return -1;
+        out[n++] = (unsigned char)v;
+    }
+    return n;
+}
+
+static void test_format56_goldens(void) {
+    for (int w = 0; w < 4; w++) {
+        unsigned char want[ENV_CAP], got[ENV_CAP], again[ENV_CAP];
+        const int nw = unhex(GOLDEN_HEX[w], want, sizeof(want));
+        const int ng = golden_build(w, got, sizeof(got));
+        CHECK(ng == nw && ng > 0 && !memcmp(got, want, (size_t)nw),
+              "golden %d: the builder now seals %d bytes, not the pinned %d - formats 5/6 moved", w, ng, nw);
+        MsgEnvelope e;
+        const int rc = msg_decode(want, nw, &e);
+        CHECK(rc == MSG_EOK, "golden %d: decode %d", w, rc);
+        if (rc != MSG_EOK) continue;
+        CHECK(e.format == (w < 2 ? MSG_FORMAT_RULES : MSG_FORMAT_RULES_REMATCH),
+              "golden %d: decoded format %d", w, e.format);
+        const int nr = msg_encode(&e, again, sizeof(again));
+        CHECK(nr == nw && !memcmp(again, want, (size_t)nw),
+              "golden %d: re-encode is %d bytes and not the golden's %d", w, nr, nw);
+        static Game g;
+        CHECK(msg_replay(&e, &g) == MSG_EOK, "golden %d: replay refused", w);
+    }
+}
+
+// --decode <hex>: what THIS build's decoder says about a payload. Kept so a
+// binary built from an older commit can be pointed at a bubble a newer build
+// sealed - that is the only honest model of an old client.
+static void print_decode(const char *h) {
+    static unsigned char wire[ENV_CAP];
+    const int n = unhex(h, wire, sizeof(wire));
+    MsgEnvelope e;
+    const int rc = n > 0 ? msg_decode(wire, n, &e) : MSG_ESHORT;
+    printf("decode: %d bytes, format byte %d, msg_decode %d\n", n, n > 1 ? wire[1] : -1, rc);
+}
+
 int main(int argc, char **argv) {
     if (argc > 1 && !strcmp(argv[1], "--print-goldens")) { print_goldens(); return 0; }
     if (argc > 1 && !strcmp(argv[1], "--fixture")) { print_fixtures(); return 0; }
@@ -5453,6 +5512,7 @@ int main(int argc, char **argv) {
         return 0;
     }
     if (argc > 2 && !strcmp(argv[1], "--holdcheck")) { print_holdcheck(argv[2]); return 0; }
+    if (argc > 2 && !strcmp(argv[1], "--decode")) { print_decode(argv[2]); return 0; }
     if (argc > 1 && !strcmp(argv[1], "--lastdefense")) {
         print_lastdefense(argc > 2 ? atoi(argv[2]) : 2);
         return 0;
@@ -5507,6 +5567,7 @@ int main(int argc, char **argv) {
     test_rematch_opening();
     test_fool_penalty_wire();
     test_forced_opening_replay();
+    test_format56_goldens();
     test_size_budget(games * 4, seed0);
     { const int rb = bot_roster_find("robusta");
       probe_v6_midgame(seed0, 2, rb);
