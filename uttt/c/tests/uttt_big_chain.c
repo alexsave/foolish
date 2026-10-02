@@ -5,8 +5,9 @@
  *
  * One random depth-5 game, and after every ply the bubble a phone would
  * stage: the URL (utb_msg_text_encode) and the picture - the cells framed
- * and painted by the kit's own C (bubble_data.c, 243 cells at 1 px: 243 x
- * 244 RGBA) - then what a send does to that picture, as the layout probe
+ * and painted by the kit's own C (bubble_data.c, 243 cells at 3 px a cell:
+ * 729 x 732 RGBA, the kit's robust243) - then what a send does to that
+ * picture, as the layout probe
  * measured it (shared/tools/layout_probe/README.md, "A real send"): the
  * extension's JPEG at quality 0.50, decoded, the transport's JPEG at 0.89,
  * decoded, both with ImageIO and both 4:2:0 (the SOF0 sampling byte 0x22,
@@ -30,10 +31,17 @@
 #include <string.h>
 #include <time.h>
 
-/* Pixels a cell: 1 is the kit's board243 (the default, the geometry the
- * design names); --px 3 is robust243. */
+/* PIXELS A CELL: 3 is the kit's robust243, THE GEOMETRY THE BUBBLE USES, and
+ * the default here. 1 is board243, and --px 1 is how it was found wanting
+ * (2026-10-01): a REAL game's board is sparse, and a lone grey X pixel in a
+ * white block comes back from the two JPEGs at about 195-212, which reads as
+ * empty - 21,330 of 40,712 positions of one game were refused (none misread;
+ * the CRC caught every one). The kit's own tests pass at 1 px because they
+ * use dense random symbols. At 3 px the whole game reads with a worst margin
+ * of 25; at 2 px it reads with a worst margin of 7, which is one more
+ * recompression from wrong. */
 #define PX_MAX 4
-static int PX = 1, W = UTB_SIDE, H = UTB_SIDE + 1;
+static int PX = 3, W = 3 * UTB_SIDE, H = 3 * (UTB_SIDE + 1);
 
 static CGColorSpaceRef g_space;
 
@@ -138,7 +146,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--px") && i + 1 < argc) PX = atoi(argv[++i]);
         else { fprintf(stderr, "usage: %s [--plies N] [--every K] [--px 1..4]\n", argv[0]); return 2; }
     }
-    if (PX < 1 || PX > PX_MAX) PX = 1;
+    if (PX < 1 || PX > PX_MAX) PX = 3;
     W = bd_width(UTB_SIDE, PX);
     H = bd_height(UTB_SIDE, PX);
     if (every < 1) every = 1;

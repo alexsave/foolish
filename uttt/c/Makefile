@@ -282,10 +282,12 @@ ios-smoke: build/ios_smoke
 .PHONY: ios-smoke ios-lib
 
 # THE BIG GAME THROUGH A REAL SEND'S PICTURE CHAIN: one random depth-5 game
-# to the end, every ply framed and painted by the kit's C, JPEG'd at q0.50
-# and q0.89 with ImageIO (both 4:2:0), read back and decoded. macOS only
+# to the end, every ply framed and painted by the kit's C at 3 px a cell (the
+# bubble's robust243), JPEG'd at q0.50 and q0.89 with ImageIO (both 4:2:0),
+# read back and decoded. About 18 minutes for a whole game. macOS only
 # (ImageIO), so NOT in run/asan/all: CI is Linux. ARGS="--plies N", "--every
-# K", "--px 3" (robust243).
+# K", "--px 1" (board243, which a real game's sparse board does NOT survive:
+# see the test's header).
 ifeq ($(shell uname),Darwin)
 build/uttt_big_chain: $(SRC) $(BUBBLE_DATA)/bubble_data.c tests/uttt_big_chain.c | build
 	$(CC) $(CFLAGS) $(SRC) $(BUBBLE_DATA)/bubble_data.c tests/uttt_big_chain.c -o $@ $(LDLIBS) \
