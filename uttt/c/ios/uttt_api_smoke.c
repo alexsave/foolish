@@ -82,6 +82,8 @@ static void big_smoke(void)
     int small_n = uti_msg_text(small, sizeof small);
     int small_plies = uti_n_plies();
     ok(small_n > 0, "big: the 9 x 9 resident has a link before the big game starts");
+    ok(uti_big_hold_ms() == 4000 && uti_big_hold_slop() == 10,
+       "big: the mode's door is a 4 s hold that may drift 10 points");
 
     /* ann opens a big game on her phone */
     be_big(5, ann);

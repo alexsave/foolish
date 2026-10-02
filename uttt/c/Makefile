@@ -273,7 +273,9 @@ ios-lib:
 	$(call IOS_XCFRAMEWORK,uttt,$(IOS_SRC),$(IOS_CFLAGS),ios/include,$(IOS_MIN_VERSION),../ios/vendor/Uttt.xcframework)
 
 
-build/ios_smoke: $(IOS_SRC) ios/uttt_api_smoke.c | build
+# The headers too: a number that lives only in a header (UTB_HOLD_MS) changed
+# and the smoke ran the old binary, green, before they were listed here.
+build/ios_smoke: $(IOS_SRC) $(wildcard src/*.h) ios/include/uttt_api.h ios/uttt_api_smoke.c | build
 	$(CC) $(CFLAGS) -Iios/include $(IOS_SRC) ios/uttt_api_smoke.c -o $@ $(LDLIBS)
 
 ios-smoke: build/ios_smoke

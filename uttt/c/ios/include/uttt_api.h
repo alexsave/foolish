@@ -304,6 +304,10 @@ UTI_UNEXPORTED int  uti_big_caption(char *out, int cap);
 UTI_UNEXPORTED const char *uti_big_say(int key);
 /* The mark the headline draws between PRE and POST, or 0 (uti_say_mark's). */
 UTI_UNEXPORTED int  uti_big_say_mark(void);
+/* THE MODE'S DOOR: how long a still hold on a grid is before it switches
+ * the 243 mode (ms), and how far the finger may move during it (points). */
+UTI_UNEXPORTED int  uti_big_hold_ms(void);
+UTI_UNEXPORTED int  uti_big_hold_slop(void);
 /* The winner's mark, or 0 (uti_say_bubble_mark's). */
 UTI_UNEXPORTED int  uti_big_say_bubble_mark(void);
 

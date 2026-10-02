@@ -66,6 +66,13 @@
 /* "?m=" + base32 + NUL */
 #define UTB_MAX_TEXT    (3 + (UTB_MAX_BYTES * 8 + 4) / 5 + 1)
 
+/* THE MODE'S DOOR (docs/BIG_BOARD.md): the 243 mode is switched on and off
+ * by holding a grid still. The hold is this long, and the finger may drift
+ * this many points before it is not a hold any more (a pan, a pinch, a
+ * drag). A tap, a double tap and a pinch never come near either number. */
+#define UTB_HOLD_MS      4000
+#define UTB_HOLD_SLOP_PT 10
+
 /* One more refusal beside uttt_msg.h's UTM_E*: the cells are not a board
  * legal play could reach, or they disagree with the header's count. */
 #define UTB_EBOARD   -10

@@ -1078,3 +1078,6 @@ int uti_big_say_bubble_mark(void)
     UtttGame g = big_shadow();
     return uttt_say_bubble_mark(&g);
 }
+
+int uti_big_hold_ms(void)   { return UTB_HOLD_MS; }
+int uti_big_hold_slop(void) { return UTB_HOLD_SLOP_PT; }
