@@ -17,6 +17,10 @@ import XCTest
 /// (zoom 1.0 is not greater than 1.5, "pinch did not zoom in"); restored,
 /// green. The footprint gate went red on its own first: the board was a
 /// CATiledLayer, which peaked at 167-183 MB during a double-tap zoom.
+/// testResizeKeepsZoom, the same day: with the size-change path in
+/// UtttBigBoardView.layoutSubviews made to re-fit (the zoom restore skipped),
+/// it went red at "shrinking the board changed the zoom" (1.0 is not 3.0);
+/// restored, green.
 final class BigBoardUITests: XCTestCase {
     private struct Seen {
         var zoom: Double
@@ -154,6 +158,35 @@ final class BigBoardUITests: XCTestCase {
         s = settled(board)
         XCTAssertEqual(s.zoom, 1, accuracy: 0.01, "double tap at the deepest zoom did not fit")
         XCTAssertTrue(s.whole)
+    }
+
+    /// A drawer resize (expanded to compact and back) keeps the zoom and the
+    /// cell under the centre: the board fits only on its first layout. The
+    /// harness's "resize" button makes the board 340 points tall and back.
+    func testResizeKeepsZoom() {
+        let board = app.descendants(matching: .any)["big.board"]
+        XCTAssertTrue(board.waitForExistence(timeout: 15), "no board")
+        var s = settled(board)
+        XCTAssertEqual(s.zoom, 1, accuracy: 0.01, "initial zoom")
+        let tall = board.frame.height
+
+        board.doubleTap()
+        s = settled(board)
+        XCTAssertEqual(s.zoom, 3, accuracy: 0.05, "double tap did not zoom in by three")
+        let zoom = s.zoom, centre = s.centre
+
+        let resize = app.buttons["big.resize"]
+        resize.tap()
+        s = settled(board)
+        XCTAssertLessThan(board.frame.height, tall - 50, "resize did not shrink the board")
+        XCTAssertEqual(s.zoom, zoom, accuracy: 0.01, "shrinking the board changed the zoom")
+        XCTAssertEqual(s.centre, centre, "shrinking the board moved the centre")
+
+        resize.tap()
+        s = settled(board)
+        XCTAssertEqual(board.frame.height, tall, accuracy: 1, "resize did not grow the board back")
+        XCTAssertEqual(s.zoom, zoom, accuracy: 0.01, "growing the board changed the zoom")
+        XCTAssertEqual(s.centre, centre, "growing the board moved the centre")
     }
 }
 #endif

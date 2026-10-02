@@ -209,11 +209,22 @@ public final class UtttBigBoardView: UIView, UIScrollViewDelegate {
     }
     required init?(coder: NSCoder) { fatalError() }
 
+    /// THE ZOOM SURVIVES A SIZE CHANGE. The board is fitted on the first
+    /// layout only; when the bounds change after that (the drawer going from
+    /// expanded to compact and back) the zoom scale and the board point under
+    /// the view's centre are kept, clamped to the new limits.
     public override func layoutSubviews() {
         super.layoutSubviews()
-        scroll.frame = bounds
         let s = floor(min(bounds.width, bounds.height))
-        if s > 0, s != side {
+        let resized = s > 0 && s != side
+        /* read before the scroll view takes the new frame: the board point
+         * under the OLD visible centre, as a fraction of the board */
+        let keepZoom = scroll.zoomScale
+        let mid = scroll.convert(CGPoint(x: scroll.bounds.midX, y: scroll.bounds.midY), to: content)
+        let keepCentre = side > 0 ? CGPoint(x: mid.x / side, y: mid.y / side) : CGPoint(x: 0.5, y: 0.5)
+        let first = side == 0
+        scroll.frame = bounds
+        if resized {
             side = s
             scroll.minimumZoomScale = 1
             scroll.maximumZoomScale = 1
@@ -221,10 +232,26 @@ public final class UtttBigBoardView: UIView, UIScrollViewDelegate {
             content.frame = CGRect(x: 0, y: 0, width: s, height: s)
             scroll.contentSize = content.frame.size
             scroll.maximumZoomScale = max(1, Self.deepCellPoints * CGFloat(Self.sideCells) / s)
+            if !first {
+                scroll.zoomScale = min(max(keepZoom, scroll.minimumZoomScale), scroll.maximumZoomScale)
+                centre()
+                place(centre: keepCentre)
+            }
             publish()
         }
         centre()
         follow()
+    }
+
+    /// Scroll so the board point `c` (a fraction of the board) is under the
+    /// view's centre, as near as the content allows.
+    private func place(centre c: CGPoint) {
+        let z = scroll.zoomScale, inset = scroll.contentInset
+        let size = scroll.bounds.size, content = scroll.contentSize
+        func clamp(_ v: CGFloat, _ lo: CGFloat, _ hi: CGFloat) -> CGFloat { min(max(v, lo), max(lo, hi)) }
+        scroll.contentOffset = CGPoint(
+            x: clamp(c.x * side * z - size.width / 2, -inset.left, content.width - size.width + inset.right),
+            y: clamp(c.y * side * z - size.height / 2, -inset.top, content.height - size.height + inset.bottom))
     }
 
     /// The board centred while it is smaller than the view.
@@ -412,23 +439,70 @@ enum UtttBigPainter {
     static let inkO = CGColor(srgbRed: 0xa8 / 255.0, green: 0x32 / 255.0, blue: 0x1f / 255.0, alpha: 1)
     static let inkGrey = CGColor(srgbRed: 0x2f / 255.0, green: 0x2b / 255.0, blue: 0x26 / 255.0, alpha: 1)
     static let wash = CGColor(srgbRed: 0xd6 / 255.0, green: 0xa8 / 255.0, blue: 0x36 / 255.0, alpha: 0.35)
+    /// The highlighter itself, at full strength: the forced target's outline.
+    static let highlighter = CGColor(srgbRed: 0xd6 / 255.0, green: 0xa8 / 255.0, blue: 0x36 / 255.0, alpha: 1)
     static let paper = UtttPaper.flat.cgColor
     /// The grid's dark ink, UtttInk.ink (#1d1b16), at each level's alpha.
     static let gridInk = UtttInk.ink.cgColor
 
-    /// A grid level shows once its pitch is this many points on screen.
-    static let gridMinPitch: CGFloat = 10
-    /// A decided node's big glyph shows from this side on screen.
-    static let glyphMinSide: CGFloat = 24
+    /// THE GRID OF GRIDS: one row per level, level 1 (the top 3 x 3) to
+    /// level 5 (the cells). `width` is in screen points (0 = a hairline,
+    /// one device pixel) and is drawn as a strip of whole pixels; `alpha` is
+    /// the line's ink at full strength. A level FADES IN WITH ITS PITCH ON
+    /// SCREEN (the distance between its lines): alpha 0 while the pitch is
+    /// under `from` points, full from `full` points, linear between.
+    /// Fitted on a phone (a cell about 1.6 pt) the pitches are 134, 45, 15,
+    /// 5 and 1.6 pt: levels 1-3 solid, level 4 faint, the cells absent. A
+    /// 27 x 27 block across the screen (zoom 9) makes level 4 solid and the
+    /// cells faint; at the deepest zoom (36 pt cells) all five are solid.
+    /// The ramps are not one multiple of the width: a level-4 line at its
+    /// full 0.8 pt every 5 pt is a fifth of the board in ink, which is the
+    /// grey static this table exists to prevent, so level 4 waits until 16.
+    struct GridLevel {
+        let width: CGFloat
+        let alpha: CGFloat
+        let from: CGFloat
+        let full: CGFloat
+    }
+    static let grid: [GridLevel] = [
+        GridLevel(width: 0, alpha: 0, from: .infinity, full: .infinity),  // level 0: the board's edge, no line
+        GridLevel(width: 3.0, alpha: 1.00, from: 8, full: 14),
+        GridLevel(width: 2.0, alpha: 0.88, from: 6, full: 12),
+        GridLevel(width: 1.2, alpha: 0.66, from: 4, full: 10),
+        GridLevel(width: 0.8, alpha: 0.60, from: 3, full: 16),
+        GridLevel(width: 0, alpha: 0.28, from: 8, full: 30),
+    ]
+
+    /// How strongly a level's lines show at `pitch` screen points: 0..1.
+    static func fade(level: Int, pitch: CGFloat) -> CGFloat {
+        let g = grid[level]
+        guard pitch > g.from else { return 0 }
+        return min(1, (pitch - g.from) / (g.full - g.from))
+    }
+
+    /// A DECIDED NODE, at the level it was decided: a tint of its rect in the
+    /// winner's ink (grey for a draw) under the cells, so the won regions
+    /// stand out of the board at the fit, and over it the winner's big mark
+    /// (as the 9 x 9 board draws over a won block) once the node is
+    /// `markMinSide` points on screen, its stroke 1 / `markStroke` of the
+    /// side (never under a point), at `markAlpha`.
+    static let tintAlpha: CGFloat = 0.26
+    static let drawTintAlpha: CGFloat = 0.20
+    static let markMinSide: CGFloat = 8
+    static let markStroke: CGFloat = 14
+    static let markAlpha: CGFloat = 0.9
+    /// The forced target's outline: this wide, never smaller than
+    /// `regionMinPoints` on screen (a level-4 block is 5 pt at the fit),
+    /// and `anywhereWidth` round the whole board when the target is anywhere.
+    static let regionWidth: CGFloat = 3
+    static let regionMinPoints: CGFloat = 12
+    static let anywhereWidth: CGFloat = 4
     /// A cell bigger than this on screen is inset; smaller ones fill solid.
     static let insetMinSide: CGFloat = 6
     /// The last move's and the draft's outline: never smaller than this on
     /// screen (at the whole board a cell is under two points), this wide.
     static let ringMinPoints: CGFloat = 10
     static let ringWidthPoints: CGFloat = 2
-    /// Grid line width (screen points) and alpha, level 1 (thickest) to 5.
-    static let gridWidth: [CGFloat] = [0, 2.0, 1.4, 1.0, 0.75, 0.5]
-    static let gridAlpha: [CGFloat] = [0, 0.80, 0.55, 0.42, 0.32, 0.22]
 
     static func ink(_ mark: UInt8) -> CGColor { mark == 2 ? inkO : inkX }
 
@@ -476,15 +550,45 @@ enum UtttBigPainter {
         ctx.setFillColor(paper)
         ctx.fill(area)
 
-        /* the highlighter first: the marks sit on it, as ink on a wash */
-        if let r = s.region {
-            ctx.setFillColor(wash)
-            ctx.fill(CGRect(x: r.minX * side, y: r.minY * side, width: r.width * side, height: r.height * side))
-        }
-
         func range(_ lo: CGFloat, _ hi: CGFloat, _ pitch: CGFloat, _ count: Int) -> ClosedRange<Int> {
             let a = max(0, Int(floor(lo / pitch))), b = min(count - 1, Int(ceil(hi / pitch)))
             return a...max(a, b)
+        }
+
+        /* the highlighter first: the marks sit on it, as ink on a wash. The
+         * whole board (anywhere) gets no wash, only its outline below. */
+        let region = s.region.map { CGRect(x: $0.minX * side, y: $0.minY * side,
+                                           width: $0.width * side, height: $0.height * side) }
+        let anywhere = s.region.map { $0.width >= 0.999 && $0.height >= 0.999 } ?? false
+        if let r = region, !anywhere {
+            ctx.setFillColor(wash)
+            ctx.fill(r)
+        }
+
+        /* THE DECIDED NODES, each at the level it was decided: the topmost
+         * decided node on every path (a node whose ancestors are all open).
+         * Their tints go under the cells, so the marks stay full ink; their
+         * big marks go over the grid. */
+        var decided: [(rect: CGRect, status: UInt8)] = []
+        if s.nodes.count == V.nodeCount {
+            for level in 0..<V.depth {
+                let pitch = side / CGFloat(V.pow3[level])
+                let count = V.pow3[level]
+                for row in range(area.minY, area.maxY, pitch, count) {
+                    for col in range(area.minX, area.maxX, pitch, count) {
+                        let p = V.prefix(level: level, col: col, row: row)
+                        let st = s.nodes[V.nodeOffset[level] + p]
+                        guard (1...3).contains(st), !ancestorDecided(s.nodes, level: level, prefix: p) else { continue }
+                        let r = CGRect(x: CGFloat(col) * pitch, y: CGFloat(row) * pitch, width: pitch, height: pitch)
+                        decided.append((r, st))
+                    }
+                }
+            }
+        }
+        for d in decided {
+            let ink = d.status == 3 ? inkGrey : ink(d.status)
+            ctx.setFillColor(ink.copy(alpha: d.status == 3 ? drawTintAlpha : tintAlpha) ?? ink)
+            ctx.fill(d.rect)
         }
 
         /* THE CELLS. Small: the picture, one pixel per cell, scaled with
@@ -525,36 +629,19 @@ enum UtttBigPainter {
             }
         }
 
-        /* DECIDED NODES: a tint over the topmost decided node on each path,
-         * and its big mark once it is big enough to read. */
-        if s.nodes.count == V.nodeCount {
-            for level in 0..<V.depth {
-                let pitch = side / CGFloat(V.pow3[level])
-                let count = V.pow3[level]
-                for row in range(area.minY, area.maxY, pitch, count) {
-                    for col in range(area.minX, area.maxX, pitch, count) {
-                        let p = V.prefix(level: level, col: col, row: row)
-                        let st = s.nodes[V.nodeOffset[level] + p]
-                        guard st != 0, !ancestorDecided(s.nodes, level: level, prefix: p) else { continue }
-                        let r = CGRect(x: CGFloat(col) * pitch, y: CGFloat(row) * pitch, width: pitch, height: pitch)
-                        ctx.setFillColor((st == 3 ? inkGrey : ink(st)).copy(alpha: st == 3 ? 0.10 : 0.15) ?? inkGrey)
-                        ctx.fill(r)
-                        if st != 3, pitch * pt >= glyphMinSide { glyph(st, in: r, ctx: ctx) }
-                    }
-                }
-            }
-        }
-
-        /* THE GRID, a level at a time as the zoom opens it, each line a strip
-         * of whole pixels so it stays sharp; a line a coarser level draws is
-         * not drawn twice. */
+        /* THE GRID OF GRIDS, a level at a time as its pitch opens on screen
+         * (`grid`): every line a strip of whole pixels so it stays sharp, the
+         * heavier levels drawn last so a coarse line is never under a finer
+         * one; a line a coarser level draws is not drawn twice. */
         ctx.setShouldAntialias(false)
-        for level in 1...V.depth {
+        for level in stride(from: V.depth, through: 1, by: -1) {
             let count = V.pow3[level]
             let pitch = side / CGFloat(count)
-            guard pitch * pt >= gridMinPitch else { continue }
-            let w = max(1, (gridWidth[level] * s.screenScale).rounded()) / px
-            ctx.setFillColor(gridInk.copy(alpha: gridAlpha[level]) ?? gridInk)
+            let a = fade(level: level, pitch: pitch * pt)
+            guard a > 0.01 else { continue }
+            let g = grid[level]
+            let w = max(1, (g.width * s.screenScale).rounded()) / px
+            ctx.setFillColor(gridInk.copy(alpha: g.alpha * a) ?? gridInk)
             var strips: [CGRect] = []
             for k in range(area.minX - w, area.maxX + w, pitch, count + 1) where level == 1 || k % 3 != 0 {
                 strips.append(CGRect(x: CGFloat(k) * pitch - w / 2, y: area.minY, width: w, height: area.height))
@@ -565,6 +652,30 @@ enum UtttBigPainter {
             ctx.fill(strips)
         }
         ctx.setShouldAntialias(true)
+
+        /* the big marks of the decided nodes big enough to read */
+        for d in decided where d.rect.width * pt >= markMinSide {
+            bigMark(d.status, in: d.rect, ctx: ctx, pt: pt)
+        }
+
+        /* THE FORCED TARGET'S OUTLINE, in the highlighter at full strength
+         * and never smaller than `regionMinPoints`, so a 3 x 3 target reads
+         * at the fit; anywhere is an outline round the whole board. */
+        if let r = region {
+            if anywhere {
+                let w = anywhereWidth / pt
+                ctx.setStrokeColor(highlighter)
+                ctx.setLineWidth(w)
+                ctx.stroke(r.insetBy(dx: w / 2, dy: w / 2))
+            } else {
+                let w = regionWidth / pt, least = regionMinPoints / pt
+                var o = r
+                if o.width < least { o = o.insetBy(dx: (o.width - least) / 2, dy: (o.height - least) / 2) }
+                ctx.setStrokeColor(highlighter)
+                ctx.setLineWidth(w)
+                ctx.stroke(o)
+            }
+        }
 
         /* the last move, solid, and the staged draft, dashed */
         ring(s.last, s, ctx: ctx, pt: pt, dashed: false)
@@ -580,17 +691,27 @@ enum UtttBigPainter {
         return false
     }
 
-    static func glyph(_ mark: UInt8, in r: CGRect, ctx: CGContext) {
-        let g = r.insetBy(dx: r.width * 0.16, dy: r.height * 0.16)
-        /* half strength: the cells under a decided block stay readable */
-        ctx.setStrokeColor(ink(mark).copy(alpha: 0.45) ?? ink(mark))
-        ctx.setLineWidth(r.width * 0.07)
+    /// A decided node's big mark over its rect `r` (board points): a bold X
+    /// (two strokes) or an O (a ring) in the winner's ink, or a grey dash
+    /// for a draw; the stroke is 1 / `markStroke` of the side on screen,
+    /// never under a point. The cells show between the strokes and through
+    /// the tint, as on the 9 x 9 board.
+    static func bigMark(_ status: UInt8, in r: CGRect, ctx: CGContext, pt: CGFloat) {
+        let g = r.insetBy(dx: r.width * 0.18, dy: r.height * 0.18)
+        let ink = status == 3 ? inkGrey : ink(status)
+        ctx.setStrokeColor(ink.copy(alpha: markAlpha) ?? ink)
+        ctx.setLineWidth(max(r.width / markStroke, 1 / pt))
         ctx.setLineCap(.round)
-        if mark == 1 {
+        switch status {
+        case 1:
             ctx.strokeLineSegments(between: [CGPoint(x: g.minX, y: g.minY), CGPoint(x: g.maxX, y: g.maxY),
                                              CGPoint(x: g.maxX, y: g.minY), CGPoint(x: g.minX, y: g.maxY)])
-        } else {
+        case 2:
             ctx.strokeEllipse(in: g)
+        default:
+            /* a draw: one short level dash across the middle */
+            let h = g.insetBy(dx: g.width * 0.12, dy: 0)
+            ctx.strokeLineSegments(between: [CGPoint(x: h.minX, y: h.midY), CGPoint(x: h.maxX, y: h.midY)])
         }
     }
 

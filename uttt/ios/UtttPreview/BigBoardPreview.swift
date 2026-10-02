@@ -14,6 +14,10 @@ struct BigBoardPreview: View {
     @State private var tapped = -1
     @State private var footprint = 0.0
     @State private var peak = 0.0
+    /// The "resize" button's state: the board 340 points tall (Messages'
+    /// compact drawer) instead of the rest of the screen, so a UI test can
+    /// change the view's bounds under a zoom.
+    @State private var compact = false
     private let geometry = BigBoardSynthetic.geometryCheck()
     private let tick = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
 
@@ -23,9 +27,15 @@ struct BigBoardPreview: View {
                 .accessibilityIdentifier("big.tapped")
             Text(String(format: "footprint %.1f MB peak %.1f MB", footprint, peak))
                 .accessibilityIdentifier("big.memory")
-            Text(geometry)
-                .accessibilityIdentifier("big.geometry")
+            HStack {
+                Text(geometry)
+                    .accessibilityIdentifier("big.geometry")
+                Button("resize") { compact.toggle() }
+                    .accessibilityIdentifier("big.resize")
+            }
             BigBoard(tapped: $tapped)
+                .frame(height: compact ? 340 : nil)
+            if compact { Spacer(minLength: 0) }
         }
         .font(.system(size: 12, design: .monospaced))
         .foregroundStyle(Color(white: 0.85))
@@ -50,8 +60,19 @@ struct BigBoardPreview: View {
                 if let v, v.cells[mv] == 0 { v.draft = mv }
             }
             /* `--focus region` / `--focus last`: open zoomed onto it, so a
-             * screenshot shows the wash, the rings and the draft */
+             * screenshot shows the wash, the rings and the draft; `--zoom Z`
+             * (a number, or `max`): open at that zoom centred on the region */
             let a = ProcessInfo.processInfo.arguments
+            if let i = a.firstIndex(of: "--zoom"), i + 1 < a.count {
+                let z = a[i + 1] == "max" ? CGFloat.infinity : CGFloat(Double(a[i + 1]) ?? 1)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak v] in
+                    guard let v, z > 1 else { return }
+                    let r = b.region ?? CGRect(x: 0, y: 0, width: 1, height: 1)
+                    /* focus fits a rect to a third of the view: the rect that zoom means */
+                    let w = z.isFinite ? 1 / (3 * z) : 1e-4
+                    v.focus(on: CGRect(x: r.midX - w / 2, y: r.midY - w / 2, width: w, height: w), animated: false)
+                }
+            }
             if let i = a.firstIndex(of: "--focus"), i + 1 < a.count {
                 let what = a[i + 1]
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak v] in
@@ -106,14 +127,27 @@ enum BigBoardSynthetic {
         return ch.allSatisfy { $0 != 0 } ? 3 : 0
     }
 
+    /// A GAME EARLY IN PLAY: a few marks scattered over the whole board,
+    /// and a few dense regions where blocks have been decided - won at
+    /// levels 2, 3 and 4 (so all three sizes of big mark show) and drawn at
+    /// level 4 - most of them round the centre, where the forced target is,
+    /// so one screenshot at each zoom shows them.
     private static func make() -> Board {
         var rng = Rng(s: 243)
         var cells = [UInt8](repeating: 0, count: UtttBigBoardView.leafCount)
-        /* a different density in each top-level block: from nearly full
-         * (decided blocks at every level) to nearly empty */
-        let density: [Double] = [0.92, 0.35, 0.15, 0.55, 0.75, 0.25, 0.08, 0.45, 0.65]
-        for i in 0..<cells.count where rng.unit() < density[i / 6561] {
-            cells[i] = rng.unit() < 0.5 ? 1 : 2
+        func mark() -> UInt8 { rng.unit() < 0.5 ? 1 : 2 }
+        /* the scatter: a mark on about one cell in fifty */
+        for i in 0..<cells.count where rng.unit() < 0.02 { cells[i] = mark() }
+
+        /* a node's leaves, by digits from the top */
+        func node(_ digits: [Int]) -> Int { digits.reduce(0) { $0 * 9 + $1 } }
+        func leaves(level: Int, prefix: Int) -> Range<Int> {
+            let span = [59_049, 6561, 729, 81, 9, 1][level]
+            return (prefix * span)..<((prefix + 1) * span)
+        }
+        /* a decided block is a played-out one: about half its cells taken */
+        func fill(level: Int, prefix: Int) {
+            for i in leaves(level: level, prefix: prefix) where rng.unit() < 0.45 { cells[i] = mark() }
         }
         /* a planted win: a diagonal of diagonals down to the cells */
         func plant(level: Int, prefix: Int, mark: UInt8) {
@@ -122,45 +156,59 @@ enum BigBoardSynthetic {
                 else { plant(level: level + 1, prefix: prefix * 9 + d, mark: mark) }
             }
         }
-        plant(level: 2, prefix: 8 * 9 + 4, mark: 1)          // a level-2 X in the bottom right
-        plant(level: 3, prefix: 2 * 81 + 0 * 9 + 4, mark: 2)  // a level-3 O in the top right
-        plant(level: 3, prefix: 6 * 81 + 4 * 9 + 4, mark: 1)  // a level-3 X in the sparse bottom left
+        func win(_ digits: [Int], _ m: UInt8) {
+            fill(level: digits.count, prefix: node(digits))
+            plant(level: digits.count, prefix: node(digits), mark: m)
+        }
+        /* a level-4 draw: nine cells, no line */
+        func draw(_ digits: [Int]) {
+            let p = node(digits)
+            for (k, m) in ([1, 2, 1, 1, 2, 2, 2, 1, 1] as [UInt8]).enumerated() { cells[p * 9 + k] = m }
+        }
+
+        win([8, 4], 1)                     // level 2: X, bottom right
+        win([0, 8], 2)                     // level 2: O, top left
+        win([4, 4, 0], 2)                  // level 3: O, beside the centre
+        win([4, 4, 8], 1)                  // level 3: X, beside the centre
+        win([2, 0, 4], 2)                  // level 3: O, top right
+        win([7, 2, 6], 1)                  // level 3: X, bottom middle
+        win([4, 4, 4, 0], 1)               // level 4, in the target's own 9 x 9
+        win([4, 4, 4, 2], 1)
+        win([4, 4, 4, 6], 2)
+        draw([4, 4, 4, 8])                 // a drawn 3 x 3 there too
+        draw([4, 1, 3, 3])
+        for _ in 0..<40 {                  // and decided 3 x 3s all over
+            let p = Int(rng.next() % 6561)
+            let digits = [p / 729, p / 81 % 9, p / 9 % 9, p % 9]
+            if rng.unit() < 0.15 { draw(digits) } else { win(digits, mark()) }
+        }
+
+        /* THE TARGET, the very centre 3 x 3 (digits 4 4 4 4): kept nearly
+         * empty, and the last move an X whose last four digits name it, in
+         * the middle-left top block (digit 3). */
+        let target = node([4, 4, 4, 4])
+        for i in leaves(level: 4, prefix: target) { cells[i] = 0 }
+        cells[target * 9 + 1] = 2
+        cells[target * 9 + 6] = 1
+        let last = 3 * 6561 + target
+        cells[last] = 1
+        let draft = (target * 9..<target * 9 + 9).first { cells[$0] == 0 } ?? -1
 
         var nodes = [UInt8](repeating: 0, count: UtttBigBoardView.nodeCount)
         let offset = [0, 1, 10, 91, 820]
         let count = [1, 9, 81, 729, 6561]
-        func statuses() {
-            for p in 0..<count[4] {
-                nodes[offset[4] + p] = status(Array(cells[(p * 9)..<(p * 9 + 9)]))
-            }
-            for level in stride(from: 3, through: 0, by: -1) {
-                for p in 0..<count[level] {
-                    let first = offset[level + 1] + p * 9
-                    nodes[offset[level] + p] = status(Array(nodes[first..<(first + 9)]))
-                }
+        for p in 0..<count[4] {
+            nodes[offset[4] + p] = status(Array(cells[(p * 9)..<(p * 9 + 9)]))
+        }
+        for level in stride(from: 3, through: 0, by: -1) {
+            for p in 0..<count[level] {
+                let first = offset[level + 1] + p * 9
+                nodes[offset[level] + p] = status(Array(nodes[first..<(first + 9)]))
             }
         }
-        statuses()
-
-        /* THE REGION AS THE GAME DERIVES IT: the last move's digits d2..d5
-         * name the level-4 block where the next mark must go. So the region
-         * is the first open level-4 block in the centre top-level block, the
-         * last move an X whose last four digits name it (in the sparse
-         * bottom-left block, prefix p + 6 * 6561), and the draft the
-         * region's first empty cell. */
-        var region: CGRect?
-        var last = -1, draft = -1
-        for p in (4 * 729)..<(5 * 729) where nodes[offset[4] + p] == 0 && !closed(nodes, level: 4, prefix: p) {
-            region = UtttBigBoardView.rect(level: 4, prefix: p)
-            draft = (p * 9..<p * 9 + 9).first { cells[$0] == 0 } ?? -1
-            last = 6 * 6561 + p
-            break
-        }
-        if last >= 0 {
-            cells[last] = 1
-            statuses()
-        }
-        return Board(cells: cells, nodes: nodes, region: region, last: last, draft: draft)
+        let open = !closed(nodes, level: 4, prefix: target)
+        return Board(cells: cells, nodes: nodes, region: open ? UtttBigBoardView.rect(level: 4, prefix: target) : nil,
+                     last: last, draft: open ? draft : -1)
     }
 
     private static func closed(_ nodes: [UInt8], level: Int, prefix: Int) -> Bool {
