@@ -5,6 +5,7 @@
 #include "../src/uttt_anim.h"
 #include "../src/uttt_msg.h"
 #include "../src/uttt_big_msg.h"
+#include "../src/uttt_big_diag.h"
 #include "../src/uttt_say.h"
 #include "../src/uttt_lang.h"
 #include <stddef.h>
@@ -1081,3 +1082,65 @@ int uti_big_say_bubble_mark(void)
 
 int uti_big_hold_ms(void)   { return UTB_HOLD_MS; }
 int uti_big_hold_slop(void) { return UTB_HOLD_SLOP_PT; }
+
+/* ------------------------------------------- the picture diagnostics */
+
+_Static_assert(UTI_BIG_DIAG_FROM_NONE == UBD_FROM_NONE, "diag from NONE");
+_Static_assert(UTI_BIG_DIAG_FROM_SELECTED == UBD_FROM_SELECTED, "diag from SELECTED");
+_Static_assert(UTI_BIG_DIAG_FROM_DID_SELECT == UBD_FROM_DID_SELECT, "diag from DID_SELECT");
+_Static_assert(UTI_BIG_DIAG_FROM_DID_RECEIVE == UBD_FROM_DID_RECEIVE, "diag from DID_RECEIVE");
+_Static_assert(UTI_BIG_DIAG_WHO_UNKNOWN == UBD_WHO_UNKNOWN, "diag who UNKNOWN");
+_Static_assert(UTI_BIG_DIAG_WHO_ME == UBD_WHO_ME, "diag who ME");
+_Static_assert(UTI_BIG_DIAG_WHO_OTHER == UBD_WHO_OTHER, "diag who OTHER");
+_Static_assert(UTI_BIG_DIAG_SENT == UBD_ROLE_SENT, "diag SENT");
+_Static_assert(UTI_BIG_DIAG_OPENED == UBD_ROLE_OPENED, "diag OPENED");
+_Static_assert(UTI_BIG_DIAG_R_OK == UBD_R_OK, "diag R_OK");
+_Static_assert(UTI_BIG_DIAG_R_GEOMETRY == UBD_R_GEOMETRY, "diag R_GEOMETRY");
+_Static_assert(UTI_BIG_DIAG_R_CAP == UBD_R_CAP, "diag R_CAP");
+_Static_assert(UTI_BIG_DIAG_R_MAGIC == UBD_R_MAGIC, "diag R_MAGIC");
+_Static_assert(UTI_BIG_DIAG_R_VERSION == UBD_R_VERSION, "diag R_VERSION");
+_Static_assert(UTI_BIG_DIAG_R_KIND == UBD_R_KIND, "diag R_KIND");
+_Static_assert(UTI_BIG_DIAG_R_LENGTH == UBD_R_LENGTH, "diag R_LENGTH");
+_Static_assert(UTI_BIG_DIAG_R_CHECK == UBD_R_CHECK, "diag R_CHECK");
+_Static_assert(UTI_BIG_DIAG_R_SYMBOL == UBD_R_SYMBOL, "diag R_SYMBOL");
+_Static_assert(UTI_BIG_DIAG_R_IMAGE == UBD_R_IMAGE, "diag R_IMAGE");
+_Static_assert(UTI_BIG_DIAG_R_NO_PICTURE == UBD_R_NO_PICTURE, "diag R_NO_PICTURE");
+_Static_assert(UTI_BIG_DIAG_R_NOT_READ == UBD_R_NOT_READ, "diag R_NOT_READ");
+_Static_assert(UTI_BIG_DIAG_RING_BYTES == UBD_RING_BYTES, "diag RING_BYTES");
+
+/* The host's facts as the module's: named field for field, so a field that
+ * is renamed or dropped on either side fails the build. */
+static UbdFacts diag_facts(const UtiBigDiag *f)
+{
+    UbdFacts u;
+    memset(&u, 0, sizeof u);
+    u.app_version = f->app_version; u.app_build = f->app_build; u.os_version = f->os_version;
+    u.model = f->model; u.install = f->install; u.now = f->now; u.utc_offset = f->utc_offset;
+    u.from = f->from; u.who = f->who; u.pending = f->pending; u.session = f->session;
+    u.url = f->url; u.seat = f->seat; u.layout = f->layout;
+    u.caption_len = f->caption_len; u.subcaption_len = f->subcaption_len; u.summary_len = f->summary_len;
+    u.has_image = f->has_image; u.image_w = f->image_w; u.image_h = f->image_h;
+    u.image_scale_pct = f->image_scale_pct; u.has_file = f->has_file; u.file_ext = f->file_ext;
+    u.file_bytes = (long)f->file_bytes; u.file = f->file; u.file_n = (long)f->file_n;
+    u.rgba = f->rgba; u.rgba_w = f->rgba_w; u.rgba_h = f->rgba_h; u.read_result = f->read_result;
+    u.read_cells = f->read_cells; u.read_risky = f->read_risky; u.read_min_margin = f->read_min_margin;
+    u.symbols = f->symbols; u.read_us = f->read_us; u.ring = f->ring; u.ring_n = f->ring_n;
+    return u;
+}
+
+int uti_big_diag_report(const UtiBigDiag *f, char *out, int cap)
+{
+    if (!f) return -1;
+    UbdFacts u = diag_facts(f);
+    return ubd_report(&u, out, cap);
+}
+
+int uti_big_diag_record(const UtiBigDiag *f, int role, const uint8_t *ring, int n, uint8_t *out, int cap)
+{
+    if (!f) return -1;
+    UbdFacts u = diag_facts(f);
+    UbdEvent e = ubd_event_of(&u, role);
+    return ubd_ring_push(ring, n, &e, out, cap);
+}
+
+int uti_big_diag_ring_count(const uint8_t *ring, int n) { return ubd_ring_count(ring, n); }

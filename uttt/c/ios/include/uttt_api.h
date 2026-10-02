@@ -311,6 +311,68 @@ UTI_UNEXPORTED int  uti_big_hold_slop(void);
 /* The winner's mark, or 0 (uti_say_bubble_mark's). */
 UTI_UNEXPORTED int  uti_big_say_bubble_mark(void);
 
+/* ---- THE PICTURE DIAGNOSTICS (src/uttt_big_diag.h, docs/BIG_BOARD.md) ----
+ * What a real send did to a big bubble's picture: a hold on the rulebook in
+ * the 243 mode opens the report, and every read and send adds to a history
+ * the host keeps (the ring's bytes, at most UTI_BIG_DIAG_RING_BYTES). The
+ * host gathers what only iOS knows into UtiBigDiag; every rule is here. */
+#define UTI_BIG_DIAG_FROM_NONE        0   /* no message: the + menu           */
+#define UTI_BIG_DIAG_FROM_SELECTED    1   /* the selection at activation      */
+#define UTI_BIG_DIAG_FROM_DID_SELECT  2
+#define UTI_BIG_DIAG_FROM_DID_RECEIVE 3
+#define UTI_BIG_DIAG_WHO_UNKNOWN      0
+#define UTI_BIG_DIAG_WHO_ME           1   /* this device sent it              */
+#define UTI_BIG_DIAG_WHO_OTHER        2
+#define UTI_BIG_DIAG_SENT             1   /* a ring record's role             */
+#define UTI_BIG_DIAG_OPENED           2
+/* A read's result: the kit's BD_E* by name, and three of ours. */
+#define UTI_BIG_DIAG_R_OK             0
+#define UTI_BIG_DIAG_R_GEOMETRY       1
+#define UTI_BIG_DIAG_R_CAP            2
+#define UTI_BIG_DIAG_R_MAGIC          3
+#define UTI_BIG_DIAG_R_VERSION        4
+#define UTI_BIG_DIAG_R_KIND           5
+#define UTI_BIG_DIAG_R_LENGTH         6
+#define UTI_BIG_DIAG_R_CHECK          7
+#define UTI_BIG_DIAG_R_SYMBOL         8
+#define UTI_BIG_DIAG_R_IMAGE          9   /* CoreGraphics could not draw it   */
+#define UTI_BIG_DIAG_R_NO_PICTURE    10
+#define UTI_BIG_DIAG_R_NOT_READ      11   /* a send: the file only            */
+#define UTI_BIG_DIAG_RING_BYTES     404
+/* A buffer this size always holds the report. */
+#define UTI_BIG_DIAG_TEXT_MAX      8192
+
+/* Field for field src/uttt_big_diag.h's UbdFacts, which says what each is. */
+typedef struct {
+    const char *app_version, *app_build, *os_version, *model, *install;
+    int64_t     now;
+    int32_t     utc_offset, from, who, pending;
+    const char *session, *url, *seat, *layout;
+    int32_t     caption_len, subcaption_len, summary_len;
+    int32_t     has_image, image_w, image_h, image_scale_pct, has_file;
+    const char *file_ext;
+    int64_t     file_bytes;
+    const uint8_t *file;
+    int64_t     file_n;
+    const uint8_t *rgba;
+    int32_t     rgba_w, rgba_h, read_result, read_cells, read_risky, read_min_margin;
+    const uint8_t *symbols;
+    int32_t     read_us;
+    const uint8_t *ring;
+    int32_t     ring_n;
+} UtiBigDiag;
+
+/* The report for `f` into `out` (UTI_BIG_DIAG_TEXT_MAX always holds it).
+ * Length, or -1 when cut. */
+UTI_UNEXPORTED int  uti_big_diag_report(const UtiBigDiag *f, char *out, int cap);
+/* `ring` (n bytes; anything not the layout is an empty ring) with the event
+ * `f` makes in front, as `role` (UTI_BIG_DIAG_SENT / _OPENED), into `out`.
+ * Bytes written, or -1. */
+UTI_UNEXPORTED int  uti_big_diag_record(const UtiBigDiag *f, int role, const uint8_t *ring, int n,
+                                        uint8_t *out, int cap);
+/* Records in a ring. */
+UTI_UNEXPORTED int  uti_big_diag_ring_count(const uint8_t *ring, int n);
+
 /* ----------------------------------------------------------- the words */
 /* Every sentence on a screen or a bubble, for the resident message as this
  * device sees it (uttt_say.h has the keys: UTTT_SAY_*). The pointer is

@@ -72,6 +72,30 @@ static int big_play_somewhere(int skip)
     return -1;
 }
 
+/* THE PICTURE DIAGNOSTICS through the bridge: a report on a big bubble's
+ * link and board says the check passed and the board is the link's, and a
+ * record grows the ring the host keeps. */
+static void diag_smoke(const BigBubble *b)
+{
+    static char text[UTI_BIG_DIAG_TEXT_MAX];
+    uint8_t ring[UTI_BIG_DIAG_RING_BYTES], ring2[UTI_BIG_DIAG_RING_BYTES];
+    UtiBigDiag f;
+    memset(&f, 0, sizeof f);
+    f.from = UTI_BIG_DIAG_FROM_SELECTED;
+    f.who = UTI_BIG_DIAG_WHO_OTHER;
+    f.url = b->text;
+    f.layout = "MSMessageTemplateLayout";
+    f.read_result = UTI_BIG_DIAG_R_OK;
+    f.symbols = b->cells;
+    int n = uti_big_diag_report(&f, text, sizeof text);
+    ok(n > 0 && strstr(text, "header and check UTM_EOK") && strstr(text, " = link"),
+       "big diag: the report holds the board to the link");
+    int r1 = uti_big_diag_record(&f, UTI_BIG_DIAG_OPENED, NULL, 0, ring, sizeof ring);
+    int r2 = uti_big_diag_record(&f, UTI_BIG_DIAG_SENT, ring, r1, ring2, sizeof ring2);
+    ok(r1 > 0 && r2 > r1 && uti_big_diag_ring_count(ring2, r2) == 2 && uti_big_diag_ring_count(ring, r1) == 1,
+       "big diag: a record grows the ring");
+}
+
 static void big_smoke(void)
 {
     static const uint8_t ann[16]  = { 0xc1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
@@ -95,6 +119,7 @@ static void big_smoke(void)
     ok(uti_big_caption(cap, sizeof cap) > 0 && !strcmp(cap, "New game?"), "big: the invitation's caption");
     ok(!strcmp(uti_big_say(UTI_SAY_WAITING_HEADLINE), "Waiting"), "big: the lobby's words");
     ok(big_bubble(&inv) && uti_big_is(inv.text) && !uti_big_is(small), "big: the invitation's link is big, the 9 x 9's is not");
+    diag_smoke(&inv);
 
     /* bob reads it on his phone and joins with a move */
     be_big(6, bob);
