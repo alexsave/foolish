@@ -4380,6 +4380,442 @@ static void test_turn_controller(void) {
           "handler is its only consumer, and an unchanged board fires none");
 }
 
+// ---------- where the replay of an arriving chain starts ------------------
+//
+// msg_open_boundary, the kernel's answer to "which atoms of this arriving
+// chain has the board already shown". Each fixture is a pair of REAL bubbles,
+// sealed the way a phone seals them (msg_seal with the log mark of the bubble
+// it continues), and each case pins the boundary against the atoms themselves.
+//
+// The bug this exists for: the board used the previous chain's TURN as a floor.
+// A pending good is an atom only until something follows it, so after pending
+// goods that floor overshoots the arriving chain and nothing animates - every
+// bout-closing good and every move after a pending good, at 3+ seats.
+// `old_floor` below is that rule, kept so each case can say the old answer
+// would have animated nothing.
+
+typedef struct {
+    unsigned char w[ENV_CAP];
+    int n;
+    MsgEnvelope e;   // borrows w: an OBubble is never copied
+    int logs;        // the log mark adopting this bubble leaves
+} OBubble;
+
+static int ob_seal(OBubble *b, const Game *g, const uint8_t *seed, int np,
+                   uint64_t game_id, int base_logs) {
+    static unsigned char body[2048];
+    static Game scratch;
+    MsgEnvelope e;
+    env_init(&e, seed, np);
+    e.game_id = game_id;
+    const int over = game_done(g) >= 0 || g->status == GAME_STATUS_GAME_OVER;
+    e.phase = over ? MSG_PHASE_FINISHED : MSG_PHASE_LIVE;
+    if (msg_seal(&e, g, base_logs, body, sizeof(body), &scratch) != MSG_EOK) return 0;
+    b->n = msg_encode(&e, b->w, sizeof(b->w));
+    if (b->n <= 0) return 0;
+    if (msg_decode(b->w, b->n, &b->e) != MSG_EOK) return 0;
+    b->logs = g->num_logs;
+    return 1;
+}
+
+static int ob_boundary(const OBubble *shown, const OBubble *arriving) {
+    static unsigned char scratch[MSG_OPEN_SCRATCH];
+    return msg_open_boundary(shown ? &shown->e : NULL, &arriving->e, scratch, sizeof(scratch));
+}
+
+// The rule this replaces: max(claim, the previous chain's turn).
+static int old_floor(const OBubble *shown, const OBubble *arriving) {
+    const int claim = msg_atoms_before_claim(&arriving->e);
+    return shown->e.turn > claim ? shown->e.turn : claim;
+}
+
+// The kind of the arriving chain's action atom at `at` (-1 past the end).
+static int ob_atom_kind(const OBubble *b, int at) {
+    static DAtoms d;
+    if (datoms_of(b->e.actions, b->e.actions_len, &d) < 0) return -2;
+    return at >= 0 && at < d.n ? d.a[at].kind : -1;
+}
+
+static void og_start(Game *g, const uint8_t *seed, int np) {
+    game_set_deal_seed_bytes(seed, MSG_SEED_LEN);
+    memset(g, 0, sizeof(*g));
+    g->num_players = (int8_t)np;
+    for (int i = 0; i < np; i++) {
+        g->players[i].status = PLAYER_STATUS_READY;
+        g->players[i].strategy_key = 0;
+    }
+    start_game(g);
+}
+
+static int og_live(const Game *g) {
+    return game_done(g) < 0 && g->status == GAME_STATUS_PLAYING;
+}
+
+// Find a seat holding a legal move of `type` (single-card when `single`), the
+// scan starting at a random seat. Returns the seat, or -1.
+static int og_find(const Game *g, int type, int single, LegalMove *out) {
+    static LegalMoves ml;
+    const int np = g->num_players;
+    const int start = (int)(rnd() % (uint32_t)np);
+    for (int t = 0; t < np; t++) {
+        const int s = (start + t) % np;
+        if (g->players[s].status != PLAYER_STATUS_IN) continue;
+        calculate_legal_moves(g, s, &ml);
+        for (int i = 0; i < ml.n; i++) {
+            if (ml.moves[i].type != type) continue;
+            if (single && ml.moves[i].n_cards != 1) continue;
+            *out = ml.moves[i];
+            return s;
+        }
+    }
+    return -1;
+}
+
+// One random legal move by any seat that may act. 0 when nobody can.
+static int og_random_step(Game *g) {
+    static LegalMoves ml;
+    const int np = g->num_players;
+    const int start = (int)(rnd() % (uint32_t)np);
+    for (int t = 0; t < np; t++) {
+        const int s = (start + t) % np;
+        if (g->players[s].status != PLAYER_STATUS_IN) continue;
+        calculate_legal_moves(g, s, &ml);
+        int acts = 0;
+        for (int i = 0; i < ml.n; i++) acts += ml.moves[i].type != MOVE_WAIT;
+        if (!acts) continue;
+        int k = (int)(rnd() % (uint32_t)acts);
+        for (int i = 0; i < ml.n; i++) {
+            if (ml.moves[i].type == MOVE_WAIT) continue;
+            if (k-- == 0) return legal_move_apply(g, s, &ml.moves[i]) ? 1 : 0;
+        }
+    }
+    return 0;
+}
+
+static int og_last_log(const Game *g) {
+    return g->num_logs > 0 ? g->logs[g->num_logs - 1].log_type : -1;
+}
+
+static const int OB_SEATS[] = { 2, 3, 4 };
+
+// A. THE BOUT-CLOSING GOOD OVER PENDING GOODS. The attackers say good one
+// bubble at a time; the shown chain is the one with every good but the last
+// pending, and the arriving one closes the bout (its goods fold into one
+// round_end atom). At 2 seats the one attacker's good closes at once, so there
+// is no pending good: the case is the plain covered table, and the old floor
+// was right there - which is why every 2p test passed.
+static void ob_closing_good(int *posed) {
+    static Game g, s0;
+    static OBubble bub[MAX_PLAYERS + 1];
+    for (int pi = 0; pi < 3; pi++) {
+        const int np = OB_SEATS[pi];
+        int found = 0;
+        for (uint32_t gi = 0; gi < 400 && found < 6; gi++) {
+            uint8_t seed[MSG_SEED_LEN];
+            seed_fill(seed, 7100u + gi * 37u + (uint32_t)np);
+            g_rng = 5300u + gi * 11u + (uint32_t)np;
+            og_start(&g, seed, np);
+            const uint64_t gid = 0xB0A0ULL + gi;
+            for (int step = 0; step < 120 && og_live(&g) && found < 6; step++) {
+                // A table with something on it, every attack covered, no good
+                // pending yet: the start of a good run.
+                if (g.num_battles > 0 && uncovered_count(&g) == 0 && og_last_log(&g) != LOG_GOOD) {
+                    game_clone(&s0, &g);
+                    if (!ob_seal(&bub[0], &s0, seed, np, gid, MSG_NO_BASE)) break;
+                    int k = 0, closed = 0;
+                    while (k < np && og_live(&g)) {
+                        LegalMove m;
+                        const int seat = og_find(&g, MOVE_GOOD, 0, &m);
+                        if (seat < 0 || !legal_move_apply(&g, seat, &m)) break;
+                        k++;
+                        if (!ob_seal(&bub[k], &g, seed, np, gid, bub[k - 1].logs)) break;
+                        if (g.num_battles == 0) { closed = 1; break; }
+                    }
+                    const int pending = k - 1;   // goods on the shown chain
+                    if (closed && (np == 2 ? pending == 0 : pending >= 1)) {
+                        const OBubble *shown = &bub[k - 1], *arr = &bub[k];
+                        const int b = ob_boundary(shown, arr);
+                        const int claim = msg_atoms_before_claim(&arr->e);
+                        CHECK(b == claim,
+                              "closing good %dp (%d pending): boundary %d, want the sender's %d",
+                              np, pending, b, claim);
+                        CHECK(b < arr->e.turn,
+                              "closing good %dp (%d pending): boundary %d leaves nothing of %d atoms to animate",
+                              np, pending, b, arr->e.turn);
+                        CHECK(ob_atom_kind(arr, b) == REPLAY_ATOM_ROUND_END,
+                              "closing good %dp: the first animated atom is %d, not the round end",
+                              np, ob_atom_kind(arr, b));
+                        if (np > 2)
+                            CHECK(old_floor(shown, arr) >= arr->e.turn,
+                                  "closing good %dp: the old floor (%d) animated this too, so the fixture "
+                                  "does not pose the bug", np, old_floor(shown, arr));
+                        found++;
+                        posed[pi]++;
+                    }
+                    game_clone(&g, &s0);
+                    // Move past this table so the next look is a new one.
+                    if (!og_random_step(&g)) break;
+                    continue;
+                }
+                if (!og_random_step(&g)) break;
+            }
+        }
+        CHECK(found > 0, "closing good %dp: no fixture built", np);
+    }
+}
+
+// B. A MOVE AFTER A PENDING GOOD: a throw-in, a cover, a transfer or a pickup
+// lands while an attacker's good is pending. The good stops being an atom, so
+// the child is no longer than the chain the board showed.
+static void ob_after_good(int posed[3][4]) {
+    static Game g, s0, s1;
+    static OBubble shown, arr, earlier;
+    static const int kinds[4] = { MOVE_ATTACK, MOVE_COVER, MOVE_PASS, MOVE_PICKUP };
+    static const int atom_of[4] = { REPLAY_ATOM_ATTACK, REPLAY_ATOM_COVER,
+                                    REPLAY_ATOM_PASS, REPLAY_ATOM_PICKUP };
+    for (int pi = 1; pi < 3; pi++) {   // a pending good needs 3+ seats
+        const int np = OB_SEATS[pi];
+        for (uint32_t gi = 0; gi < 120; gi++) {
+            uint8_t seed[MSG_SEED_LEN];
+            seed_fill(seed, 9100u + gi * 53u + (uint32_t)np);
+            g_rng = 6100u + gi * 7u + (uint32_t)np;
+            og_start(&g, seed, np);
+            const uint64_t gid = 0xC0A0ULL + gi;
+            // The bubble before the good, then the good on its own bubble.
+            int prev_logs = MSG_NO_BASE;
+            for (int step = 0; step < 160 && og_live(&g); step++) {
+                game_clone(&s0, &g);
+                if (!og_random_step(&g)) break;
+                if (!(og_last_log(&g) == LOG_GOOD && g.num_battles > 0)) continue;
+                if (!ob_seal(&earlier, &s0, seed, np, gid, prev_logs)) break;
+                if (!ob_seal(&shown, &g, seed, np, gid, earlier.logs)) break;
+                for (int ki = 0; ki < 4; ki++) {
+                    game_clone(&s1, &g);
+                    LegalMove m;
+                    const int seat = og_find(&s1, kinds[ki], 0, &m);
+                    if (seat < 0 || !legal_move_apply(&s1, seat, &m)) continue;
+                    if (!ob_seal(&arr, &s1, seed, np, gid, shown.logs)) continue;
+                    const int b = ob_boundary(&shown, &arr);
+                    const int claim = msg_atoms_before_claim(&arr.e);
+                    CHECK(b == claim, "after good %dp kind %d: boundary %d, want the sender's %d",
+                          np, kinds[ki], b, claim);
+                    CHECK(b < arr.e.turn, "after good %dp kind %d: boundary %d animates nothing of %d",
+                          np, kinds[ki], b, arr.e.turn);
+                    CHECK(ob_atom_kind(&arr, b) == atom_of[ki],
+                          "after good %dp kind %d: first animated atom is %d", np, kinds[ki],
+                          ob_atom_kind(&arr, b));
+                    CHECK(old_floor(&shown, &arr) >= arr.e.turn,
+                          "after good %dp kind %d: the old floor animated this too", np, kinds[ki]);
+
+                    // The same pair the other way round is an OLDER chain
+                    // arriving on a board that is ahead of it: it is all
+                    // shown, so nothing animates. And a re-delivery of the
+                    // chain on screen animates nothing either.
+                    CHECK(ob_boundary(&arr, &shown) == shown.e.turn,
+                          "after good %dp: an older chain opened at %d of %d",
+                          np, ob_boundary(&arr, &shown), shown.e.turn);
+                    CHECK(ob_boundary(&arr, &arr) == arr.e.turn,
+                          "after good %dp: a re-delivery opened at %d of %d",
+                          np, ob_boundary(&arr, &arr), arr.e.turn);
+                    posed[pi][ki]++;
+                }
+                // TWO GOODS RACED off one parent: another attacker's good,
+                // sealed on the table the shown good was said over. The board
+                // showed the first; the second is new and must animate (its
+                // role mark), from the shared parent.
+                {
+                    static LegalMoves ml;
+                    const int first = g.logs[g.num_logs - 1].player_idx;
+                    for (int s = 0; s < np; s++) {
+                        if (s == first || s0.players[s].status != PLAYER_STATUS_IN) continue;
+                        calculate_legal_moves(&s0, s, &ml);
+                        int gi2 = -1;
+                        for (int i = 0; i < ml.n && gi2 < 0; i++)
+                            if (ml.moves[i].type == MOVE_GOOD) gi2 = i;
+                        if (gi2 < 0) continue;
+                        game_clone(&s1, &s0);
+                        if (!legal_move_apply(&s1, s, &ml.moves[gi2]) || s1.num_battles == 0) continue;
+                        if (!ob_seal(&arr, &s1, seed, np, gid, earlier.logs)) continue;
+                        const int b = ob_boundary(&shown, &arr);
+                        CHECK(b == msg_atoms_before_claim(&arr.e) && b < arr.e.turn,
+                              "raced goods %dp: boundary %d of %d (claim %d)", np, b, arr.e.turn,
+                              msg_atoms_before_claim(&arr.e));
+                        CHECK(ob_atom_kind(&arr, b) == REPLAY_ATOM_GOOD,
+                              "raced goods %dp: the raced good does not animate", np);
+                        posed[0][pi]++;
+                        break;
+                    }
+                }
+                prev_logs = shown.logs;
+                break;   // one pending good per deal is plenty
+            }
+        }
+    }
+    for (int pi = 1; pi < 3; pi++) {
+        CHECK(posed[pi][0] > 0, "after good %dp: no throw-in posed", OB_SEATS[pi]);
+        CHECK(posed[pi][1] > 0, "after good %dp: no cover posed", OB_SEATS[pi]);
+        CHECK(posed[pi][3] > 0, "after good %dp: no pickup posed", OB_SEATS[pi]);
+        CHECK(posed[0][pi] > 0, "raced goods %dp: none posed", OB_SEATS[pi]);
+    }
+}
+
+// C. THE STALE SENDER (ReplayFloorTests on the phone): the defender covers,
+// sends, covers again and sends, but the second bubble claims BOTH covers.
+// The board already showed the first, so it must not fly again. Also: two
+// covers off the same table are SIBLINGS, and a sibling's move is new to a
+// board that showed the other one. And the cold open is never clamped.
+static void ob_stale_and_siblings(int *posed) {
+    static Game g, s0, s1, s2, sx;
+    static OBubble before, one, stale, honest, sib;
+    for (int pi = 0; pi < 3; pi++) {
+        const int np = OB_SEATS[pi];
+        int found = 0;
+        for (uint32_t gi = 0; gi < 600 && found < 6; gi++) {
+            uint8_t seed[MSG_SEED_LEN];
+            seed_fill(seed, 11300u + gi * 29u + (uint32_t)np);
+            g_rng = 8800u + gi * 13u + (uint32_t)np;
+            og_start(&g, seed, np);
+            const uint64_t gid = 0xD0A0ULL + gi;
+            for (int step = 0; step < 160 && og_live(&g); step++) {
+                if (uncovered_count(&g) >= 2) {
+                    LegalMove c1, c2, cx;
+                    game_clone(&s0, &g);
+                    const int d1 = og_find(&s0, MOVE_COVER, 1, &c1);
+                    if (d1 >= 0) {
+                        game_clone(&s1, &s0);
+                        if (legal_move_apply(&s1, d1, &c1) && uncovered_count(&s1) >= 1) {
+                            game_clone(&s2, &s1);
+                            const int d2 = og_find(&s2, MOVE_COVER, 1, &c2);
+                            if (d2 >= 0 && legal_move_apply(&s2, d2, &c2)
+                                && ob_seal(&before, &s0, seed, np, gid, MSG_NO_BASE)
+                                && ob_seal(&one, &s1, seed, np, gid, before.logs)
+                                && ob_seal(&stale, &s2, seed, np, gid, before.logs)
+                                && ob_seal(&honest, &s2, seed, np, gid, one.logs)) {
+                                const int sc = msg_atoms_before_claim(&stale.e);
+                                CHECK(sc == stale.e.turn - 2,
+                                      "stale %dp: the fixture's stale claim is %d of %d", np, sc, stale.e.turn);
+                                CHECK(ob_boundary(&one, &stale) == one.e.turn,
+                                      "stale %dp: boundary %d re-animates the cover already shown (want %d)",
+                                      np, ob_boundary(&one, &stale), one.e.turn);
+                                CHECK(ob_boundary(&one, &honest) == msg_atoms_before_claim(&honest.e),
+                                      "stale %dp: an honest sender's claim was moved", np);
+                                // Cold: no chain on screen, no clamp - the
+                                // sender's claim stands, both covers fly.
+                                CHECK(ob_boundary(NULL, &stale) == sc,
+                                      "stale %dp: a cold open was clamped to %d", np, ob_boundary(NULL, &stale));
+                                // A recording cut short can only clamp LESS.
+                                static unsigned char tiny[6];
+                                const int t = msg_open_boundary(&one.e, &stale.e, tiny, sizeof(tiny));
+                                CHECK(t >= sc && t <= one.e.turn,
+                                      "stale %dp: a short scratch answered %d outside [%d, %d]",
+                                      np, t, sc, one.e.turn);
+
+                                // A SIBLING: a different single cover off the
+                                // same table, by whichever seat holds one.
+                                static LegalMoves ml;
+                                calculate_legal_moves(&s0, d1, &ml);
+                                int have_sib = 0;
+                                for (int i = 0; i < ml.n && !have_sib; i++) {
+                                    if (ml.moves[i].type != MOVE_COVER || ml.moves[i].n_cards != 1) continue;
+                                    cx = ml.moves[i];
+                                    if (!memcmp(&cx.cards[0], &c1.cards[0], 1)
+                                        && !memcmp(&cx.attack_cards[0], &c1.attack_cards[0], 1)) continue;
+                                    game_clone(&sx, &s0);
+                                    if (legal_move_apply(&sx, d1, &cx)
+                                        && ob_seal(&sib, &sx, seed, np, gid, before.logs)) have_sib = 1;
+                                }
+                                if (have_sib) {
+                                    const int sb = ob_boundary(&one, &sib);
+                                    CHECK(sb == before.e.turn,
+                                          "sibling %dp: boundary %d, want the shared parent's %d",
+                                          np, sb, before.e.turn);
+                                    CHECK(ob_atom_kind(&sib, sb) == REPLAY_ATOM_COVER,
+                                          "sibling %dp: the sibling's cover does not animate", np);
+                                    posed[3 + pi]++;
+                                }
+                                found++;
+                                posed[pi]++;
+                                break;   // next deal
+                            }
+                        }
+                    }
+                }
+                if (!og_random_step(&g)) break;
+            }
+        }
+        CHECK(found > 0, "stale %dp: no fixture built", np);
+        CHECK(posed[3 + pi] > 0, "sibling %dp: no fixture built", np);
+    }
+}
+
+// D. THE EDGES: a chain with no body on screen, another game on screen, a
+// NOTHING reseal, and a sender that does not say (format 2).
+static void ob_edges(void) {
+    static Game g, h;
+    static OBubble dealt, first, other, nothing, nobase;
+    for (int pi = 0; pi < 3; pi++) {
+        const int np = OB_SEATS[pi];
+        uint8_t seed[MSG_SEED_LEN], seed2[MSG_SEED_LEN];
+        seed_fill(seed, 13900u + (uint32_t)np);
+        seed_fill(seed2, 14900u + (uint32_t)np);
+        g_rng = 4400u + (uint32_t)np;
+        og_start(&g, seed, np);
+        const uint64_t gid = 0xE0A0ULL + (uint64_t)np;
+        // The just-dealt table: the LIVE handoff's shape, no action atoms.
+        CHECK(ob_seal(&dealt, &g, seed, np, gid, 0), "edges %dp: dealt seal", np);
+        CHECK(dealt.e.turn == 0, "edges %dp: a dealt table sealed %d atoms", np, dealt.e.turn);
+        LegalMove m;
+        const int a = og_find(&g, MOVE_ATTACK, 0, &m);
+        CHECK(a >= 0 && legal_move_apply(&g, a, &m), "edges %dp: no opening attack", np);
+        CHECK(ob_seal(&first, &g, seed, np, gid, dealt.logs), "edges %dp: first seal", np);
+        CHECK(ob_boundary(&dealt, &first) == 0,
+              "edges %dp: the opening attack over a dealt table opened at %d",
+              np, ob_boundary(&dealt, &first));
+
+        // NOTHING: the undo-to-empty reseal of the chain on screen.
+        CHECK(ob_seal(&nothing, &g, seed, np, gid, MSG_BASE_NOTHING), "edges %dp: nothing seal", np);
+        CHECK(nothing.e.n_new == MSG_NEW_NOTHING, "edges %dp: the reseal is not NOTHING", np);
+        CHECK(ob_boundary(&first, &nothing) == nothing.e.turn,
+              "edges %dp: a NOTHING reseal opened at %d of %d", np,
+              ob_boundary(&first, &nothing), nothing.e.turn);
+
+        // A sender that does not say: the claim is -1 (guess), and a board
+        // that showed the parent pins it to the parent's atoms.
+        CHECK(ob_seal(&nobase, &g, seed, np, gid, MSG_NO_BASE), "edges %dp: no-base seal", np);
+        CHECK(msg_atoms_before_claim(&nobase.e) == -1, "edges %dp: a no-base claim", np);
+        CHECK(ob_boundary(NULL, &nobase) == -1, "edges %dp: a cold no-base open was clamped", np);
+        CHECK(ob_boundary(&dealt, &nobase) == 0,
+              "edges %dp: a no-base chain over its own dealt table opened at %d",
+              np, ob_boundary(&dealt, &nobase));
+
+        // ANOTHER GAME on screen shares nothing: same seed but another id, and
+        // another seed under the same id.
+        og_start(&h, seed2, np);
+        CHECK(ob_seal(&other, &h, seed2, np, gid, 0), "edges %dp: other seal", np);
+        CHECK(ob_boundary(&other, &first) == msg_atoms_before_claim(&first.e),
+              "edges %dp: another deal clamped the boundary", np);
+        CHECK(ob_seal(&other, &g, seed, np, gid + 1, MSG_NO_BASE), "edges %dp: other id seal", np);
+        CHECK(ob_boundary(&other, &nobase) == -1,
+              "edges %dp: another game id clamped the boundary to %d", np, ob_boundary(&other, &nobase));
+    }
+}
+
+static void test_open_boundary(void) {
+    int closing[3] = { 0 }, after[3][4] = { { 0 } }, stale[6] = { 0 };
+    ob_closing_good(closing);
+    ob_after_good(after);
+    ob_stale_and_siblings(stale);
+    ob_edges();
+    printf("  open boundary: closing good %d/%d/%d (2/3/4p); after a pending good 3p "
+           "attack %d cover %d pass %d pickup %d, 4p attack %d cover %d pass %d pickup %d; "
+           "raced goods %d/%d (3/4p); stale %d/%d/%d, sibling %d/%d/%d\n",
+           closing[0], closing[1], closing[2],
+           after[1][0], after[1][1], after[1][2], after[1][3],
+           after[2][0], after[2][1], after[2][2], after[2][3],
+           after[0][1], after[0][2],
+           stale[0], stale[1], stale[2], stale[3], stale[4], stale[5]);
+}
+
 int main(int argc, char **argv) {
     if (argc > 1 && !strcmp(argv[1], "--fixture")) { print_fixtures(); return 0; }
     if (argc > 1 && !strcmp(argv[1], "--fixture4")) { print_fixtures4(); return 0; }
@@ -4464,6 +4900,7 @@ int main(int argc, char **argv) {
     test_podkidnoy_wire();
     test_bubble_delta();
     test_nothing_bubble();
+    test_open_boundary();
     test_roster_key();
     test_chain_gates();
     test_turn_controller();

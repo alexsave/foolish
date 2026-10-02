@@ -832,6 +832,130 @@ void msg_surface_delta(const MsgEnvelope *showing, const MsgEnvelope *arriving,
         if (!same_join(a[i], b[i])) { out->roster_moved = 1; return; }
 }
 
+// ---------- where the replay of an arriving chain starts -----------------
+
+int msg_atoms_before_claim(const MsgEnvelope *e) {
+    if (!e) return -1;
+    if (e->n_new == MSG_NEW_NOTHING) return (int)e->turn;
+    return e->n_new > 0 ? (int)e->turn - (int)e->n_new : -1;
+}
+
+// One ACTION atom as bytes: kind, seat, card count, cover target, cards. A
+// Card is one byte (card.h), so the record is the atom itself, not a digest of
+// it - two atoms are equal exactly when their records are.
+#define OPEN_REC_MAX (4 + REPLAY_MAX_PAIRS)
+static int open_record(const ReplayAtom *a, unsigned char *rec) {
+    const int n = a->n_cards < 0 ? 0 : (a->n_cards > REPLAY_MAX_PAIRS ? REPLAY_MAX_PAIRS : a->n_cards);
+    rec[0] = (unsigned char)a->kind;
+    rec[1] = (unsigned char)(a->seat + 1);   // -1 (a seatless round_end) -> 0
+    rec[2] = (unsigned char)n;
+    // `target` means something on a cover only, so nothing else may differ by it.
+    if (a->kind == REPLAY_ATOM_COVER) memcpy(&rec[3], &a->target, 1);
+    else rec[3] = 0xFF;
+    for (int i = 0; i < n; i++) memcpy(&rec[4 + i], &a->cards[i], 1);
+    return 4 + n;
+}
+
+static int open_is_action(const ReplayAtom *a) {
+    return a->kind != REPLAY_ATOM_DEAL && a->kind != REPLAY_ATOM_DRAW;
+}
+
+// Pass 1: the shown chain's action atoms, recorded in order until the buffer
+// is full. `full` marks a recording that stopped early.
+typedef struct { unsigned char *buf; int cap, len, full; } OpenTape;
+
+static void open_tape_sink(void *ctx, const ReplayAtom *a) {
+    OpenTape *t = (OpenTape *)ctx;
+    if (t->full || !open_is_action(a)) return;
+    unsigned char rec[OPEN_REC_MAX];
+    const int n = open_record(a, rec);
+    if (t->len + n > t->cap) { t->full = 1; return; }
+    memcpy(t->buf + t->len, rec, (size_t)n);
+    t->len += n;
+}
+
+// Pass 2: the arriving chain's action atoms against the tape, counting the
+// ones that match from the start and stopping at the first that does not (or
+// at the end of the tape, which is the end of the shown chain or of what was
+// recorded of it - either way nothing past it is known to be shared).
+// Past the divergence it keeps counting, and notes whether anything but a
+// GOOD follows (see "goods the board moved past" below).
+typedef struct { const OpenTape *tape; int at, matched, done, total, tail_moves; } OpenCmp;
+
+static void open_cmp_sink(void *ctx, const ReplayAtom *a) {
+    OpenCmp *c = (OpenCmp *)ctx;
+    if (!open_is_action(a)) return;
+    c->total++;
+    if (!c->done) {
+        unsigned char rec[OPEN_REC_MAX];
+        const int n = open_record(a, rec);
+        if (c->at + n <= c->tape->len && memcmp(c->tape->buf + c->at, rec, (size_t)n) == 0) {
+            c->at += n;
+            c->matched++;
+            return;
+        }
+        c->done = 1;
+    }
+    if (a->kind != REPLAY_ATOM_GOOD) c->tail_moves = 1;
+}
+
+// Does the recorded chain hold anything but GOODs from record offset `at` on?
+static int open_tape_moves_from(const OpenTape *t, int at) {
+    while (at + 4 <= t->len) {
+        if (t->buf[at] != REPLAY_ATOM_GOOD) return 1;
+        at += 4 + t->buf[at + 2];
+    }
+    return 0;
+}
+
+static int open_has_body(const MsgEnvelope *e) {
+    return e->actions_len != 0 || e->n_actions != 0;
+}
+
+// Same deal, same table, same rules: the only pairs whose atom streams can be
+// compared at all. Anything else is another game as far as a board is
+// concerned, and shares nothing with what it showed.
+static int open_same_deal(const MsgEnvelope *a, const MsgEnvelope *b) {
+    return a->game_id == b->game_id
+        && a->n_players == b->n_players
+        && a->opening == b->opening
+        && msg_pass_allowed(a) == msg_pass_allowed(b)
+        && memcmp(a->seed, b->seed, MSG_SEED_LEN) == 0;
+}
+
+int msg_open_boundary(const MsgEnvelope *shown, const MsgEnvelope *arriving,
+                      unsigned char *scratch, int scratch_cap) {
+    const int claim = msg_atoms_before_claim(arriving);
+    if (!shown || !arriving || !scratch || scratch_cap <= 0) return claim;
+    if (!open_same_deal(shown, arriving)) return claim;
+
+    int prefix = 0;
+    if (open_has_body(shown) && open_has_body(arriving)) {
+        OpenTape tape = { scratch, scratch_cap, 0, 0 };
+        if (replay_decode_atoms_v6(shown->actions, shown->actions_len, NULL,
+                                   open_tape_sink, &tape) < 0)
+            return claim;   // nothing readable was shown: no clamp
+        OpenCmp cmp = { &tape, 0, 0, 0, 0, 0 };
+        if (replay_decode_atoms_v6(arriving->actions, arriving->actions_len, NULL,
+                                   open_cmp_sink, &cmp) < 0)
+            return claim;
+        prefix = cmp.matched;
+        // GOODS THE BOARD MOVED PAST. The codec drops a good the moment
+        // anything follows it, so the board's own chain cannot say it ever
+        // held one - but when the arriving chain differs only by trailing goods
+        // and the board's chain has a real move past the shared part, those
+        // goods are exactly what that move superseded: the arriving chain is
+        // the board's own past (an older chain), and every atom of it has been
+        // shown. A good raced by a concurrent move off the same parent reads
+        // the same way and is treated the same; a good draws no cards either
+        // way, and the board's role sync paints the marks. Not for a recording
+        // cut short: what lies past it is unknown, so it is not claimed.
+        if (!tape.full && cmp.done && !cmp.tail_moves && open_tape_moves_from(&tape, cmp.at))
+            prefix = cmp.total;
+    }
+    return prefix > claim ? prefix : claim;
+}
+
 // ---------- Rule R --------------------------------------------------------
 
 int msg_rebase_one(Game *adopted, int adopted_round, int pending_round,

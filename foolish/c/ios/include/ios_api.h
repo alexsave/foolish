@@ -942,6 +942,20 @@ int fio_msg_decode(const uint8_t *payload, int len);
 // FIO_EOK, or negative (FIO_EMSG -> fio_last_msg_error).
 int fio_msg_peek(const uint8_t *payload, int len);
 
+// WHERE THE REPLAY OF AN ARRIVING CHAIN STARTS: the `atoms_before` to hand
+// fio_replay_last_events_packed when a board that last showed `shown` opens
+// `arriving` (src/msg_wire.h msg_open_boundary, which has every case). It is
+// the sender's claim (`turn - n_new`), never behind the atoms the two chains
+// share from the start - so a board does not re-animate what it already
+// showed, and a board that showed pending goods still animates the move that
+// supersedes them. `shown` NULL / 0 is a cold open: the claim, unclamped.
+// Parses both payloads and adopts NOTHING.
+// FIO_EOK with *atoms_before set (>= -1; -1 asks the reader to guess, as the
+// claim of a bubble that does not say), FIO_EBADARG, or FIO_EMSG when
+// `arriving` is not an envelope (fio_last_msg_error says why).
+int fio_msg_open_boundary(const uint8_t *shown, int shown_len,
+                          const uint8_t *arriving, int arriving_len, int *atoms_before);
+
 // THE TABLE'S RULES, off that header: 1 when the defender may transfer
 // (perevodnoy), 0 for podkidnoy. Resolved against the envelope's own format, so
 // no host has to know which formats predate the rules byte and are the passing

@@ -814,6 +814,76 @@ typedef struct {
 void msg_surface_delta(const MsgEnvelope *showing, const MsgEnvelope *arriving,
                        MsgSurfaceDelta *out);
 
+// ---------- where the replay of an arriving chain starts -----------------
+//
+// A board that opens a chain animates the atoms after a boundary: the
+// `atoms_before` that fio_replay_last_events_packed takes. Two facts decide
+// it, and this is the one place they are put together.
+//
+//   THE SENDER'S CLAIM (msg_atoms_before_claim): `turn - n_new`, `turn` for a
+//   bubble that added nothing (MSG_NEW_NOTHING), -1 for one that does not say
+//   (n_new 0: the reader then guesses). It is a claim, not a fact: a sender
+//   whose own rebase failed, or an older build, stamps a boundary one move too
+//   early, and its recipient re-animates a cover it already watched (owner:
+//   "I saw the Q of hearts animate IN PARALLEL with the J of spades ... these
+//   were separate bubbles!").
+//
+//   WHAT THIS BOARD ALREADY SHOWED: the chain on screen before this one
+//   arrived. The atoms the two chains share from the start are the part of the
+//   arriving chain the human has already watched, so the boundary never sits
+//   behind them.
+//
+// Answer: max(claim, common prefix). The prefix is counted over the two
+// bodies' ACTION atoms as the codec decodes them (replay_decode_atoms_v6:
+// attack, cover, pass, pickup, round_end, good, compared by kind, seat, cards
+// and target; DEAL and DRAW are the seed's, equal whenever the deals and the
+// actions before them are). That is what makes it right where a number
+// cannot be:
+//
+//   * A PENDING GOOD IS AN ATOM ONLY UNTIL SOMETHING FOLLOWS IT (replay.c
+//     log_atom_kind). A board showing "covered table + good A + good B" holds
+//     two more atoms than its child "covered table + round_end" (the closing
+//     good folds the run into one atom), so the previous chain's TURN used as
+//     a floor overshoots the child and nothing animates at all - for every
+//     receiver of a bout-closing good, and of any move after a pending good,
+//     at 3+ seats. The prefix stops at the first good, which the child does
+//     not have, so the round_end animates.
+//   * A STALE SENDER that stamps an early boundary is still clamped: the cover
+//     this board already showed is in the common prefix.
+//   * AN OLDER CHAIN or a RE-DELIVERY is a prefix of the board's own, so the
+//     boundary is its whole length and nothing animates. An older chain that
+//     still has a pending good is NOT an atom prefix (the board's chain
+//     dropped that good when its next move superseded it), so it is
+//     recognised by its shape: it differs only by trailing goods while the
+//     board's chain holds a real move past the shared part. A good raced by a
+//     concurrent move off the same parent has that shape too and is treated
+//     alike; two goods raced off one parent do not (the board's extra atom is
+//     a good), so the arriving one animates.
+//   * A SIBLING (two moves off one parent) shares only the parent, so its own
+//     move animates from there.
+//   * A COLD OPEN (`shown` NULL), a different game (game id, seed, seat count,
+//     opening or rules differ), or a shown chain whose body does not decode:
+//     nothing of this chain has been watched, so the claim stands unclamped.
+//     That is what keeps "close the bubble I just sent and open it again"
+//     animating my own move (round 22).
+//   * A BODYLESS chain (a lobby, the turn-0 LIVE handoff) has no action atoms,
+//     so it shares none.
+//   * A NOTHING reseal already claims its whole length, and stays there.
+//
+// `scratch` holds the shown chain's atoms while the arriving one is compared
+// against them. It is the caller's, because this file keeps no static state
+// for rules.wasm's pinned memory to hold. MSG_OPEN_SCRATCH is ample for any
+// reachable game; on a smaller buffer the comparison stops where the recording
+// stopped, which can only make the prefix SHORTER - re-animating a little,
+// never hiding a move.
+//
+// Every input has an answer (>= -1), because "nothing is known" is the claim
+// itself; an `arriving` the codec cannot read gets its claim too.
+#define MSG_OPEN_SCRATCH 8192
+int msg_atoms_before_claim(const MsgEnvelope *e);
+int msg_open_boundary(const MsgEnvelope *shown, const MsgEnvelope *arriving,
+                      unsigned char *scratch, int scratch_cap);
+
 // ---------- Rule R: no legal move is silently lost ------------------------
 //
 // When a device adopts a chain that does not contain the move it staged, that

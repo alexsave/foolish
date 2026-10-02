@@ -107,6 +107,25 @@ int fio_msg_peek(const uint8_t *payload, int len) {
     return FIO_EOK;
 }
 
+// WHERE AN ARRIVING CHAIN'S REPLAY STARTS on a board that showed `shown`
+// (msg_open_boundary). Both payloads are only PARSED - nothing is replayed and
+// the resident game is untouched - because the answer is a comparison of two
+// atom streams, not a fact about whichever chain was decoded last.
+int fio_msg_open_boundary(const uint8_t *shown, int shown_len,
+                          const uint8_t *arriving, int arriving_len, int *atoms_before) {
+    if (!arriving || !atoms_before) return FIO_EBADARG;
+    g_last_msg_error = 0;
+    MsgEnvelope a, s;
+    const int rc = msg_decode(arriving, arriving_len, &a);
+    if (rc != MSG_EOK) { g_last_msg_error = rc; return FIO_EMSG; }
+    // A shown chain that will not parse was never a board this device drew
+    // from: no clamp, the same as a cold open.
+    const int have_shown = shown && shown_len > 0 && msg_decode(shown, shown_len, &s) == MSG_EOK;
+    static unsigned char scratch[MSG_OPEN_SCRATCH];
+    *atoms_before = msg_open_boundary(have_shown ? &s : NULL, &a, scratch, sizeof(scratch));
+    return FIO_EOK;
+}
+
 int fio_msg_decode(const uint8_t *payload, int len) {
     if (!payload) return FIO_EBADARG;
     g_last_msg_error = 0;
