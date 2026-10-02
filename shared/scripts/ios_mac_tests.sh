@@ -64,8 +64,6 @@
 #                   anything else LIB_CMD writes, space separated
 #   PRE_CMD         run first on every invocation, --no-lib or not (optional)
 #   PRE_LABEL       what that step prints (default: PRE_CMD)
-#   REGEN_WATCH     directories whose newer .swift files also trigger xcodegen,
-#                   for a project that lists its sources by folder (optional)
 #   SUITE_NAME      prefix of the final line (optional)
 #   HELP_FILE       the product script, whose "# Usage:" block --help prints
 #   DEST            the xcodebuild destination (optional: unset, it is the
@@ -98,16 +96,14 @@ IOS_DIR="${IOS_DIR:-$(dirname "$PROJECT")}"
 TEST_SCHEMES="${TEST_SCHEMES:-}"
 BUILD_SCHEMES="${BUILD_SCHEMES:-}"
 PRE_CMD="${PRE_CMD:-}"
-REGEN_WATCH="${REGEN_WATCH:-}"
 [ -n "$TEST_SCHEMES$BUILD_SCHEMES" ] || { echo "error: neither TEST_SCHEMES nor BUILD_SCHEMES is set" >&2; exit 2; }
 
 build_lib=1
-force_regen=0
 wanted=" "
 for arg in "$@"; do
   case "$arg" in
     --no-lib)  build_lib=0 ;;
-    --regen)   force_regen=1 ;;
+    --regen)   ;;   # regeneration is every run now; kept so old command lines work
     -h|--help) sed -n '/^# Usage:/,/^set -euo/p' "${HELP_FILE:-$0}" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
     *)
       known=0
@@ -212,30 +208,35 @@ restore_entitlements() {
 # go back.
 trap 'if [ -n "$BACKUP_DIR" ]; then restore_entitlements; fi' EXIT
 
-# Regenerate ONLY when project.yml has actually moved. This is not the fix for
-# anything - the mtime-preserving restore is - it just skips a dance that buys
-# nothing: the project is a pure function of project.yml, so regenerating on an
-# unchanged spec reproduces the same project. `--regen` forces it, for a project
-# that has been hand-edited or half-written.
+# Regenerate on EVERY run. The project is a function of project.yml AND of the
+# files in every folder it lists as sources, so no trigger short of running
+# xcodegen knows it is current. This used to regenerate only when project.yml
+# was newer than the project (plus an opt-in mtime watch of source folders),
+# and that missed exactly the case that matters: a rebase or a checkout that
+# brings in a new .swift file leaves project.yml alone, the stale project
+# silently lacks the file, and the build fails on a symbol that is plainly in
+# the tree ("cannot find 'TrumpNudge' in scope") until somebody thinks of
+# `--regen`. A deleted file was missed the same way, and no mtime can show it.
 #
-# REGEN_WATCH is for a project.yml that lists its sources by folder: xcodegen
-# only re-reads the folders when it runs, so a new .swift file is silently left
-# out of a stale project. A file newer than the project in any of them regenerates.
-regen=0
-if [ ! -d "$PROJECT" ]; then regen=1
-elif [ "$force_regen" -eq 1 ]; then regen=1
-elif [ "$IOS_DIR/project.yml" -nt "$PROJECT/project.pbxproj" ]; then regen=1
-elif [ -n "$REGEN_WATCH" ] && [ -n "$(find $REGEN_WATCH -newer "$PROJECT/project.pbxproj" -name '*.swift' -print -quit)" ]; then regen=1
-fi
-
-if [ "$regen" -eq 1 ]; then
-  say "Xcode project (xcodegen generate)"
-  backup_entitlements
-  (cd "$IOS_DIR" && xcodegen generate)
-  restore_entitlements
+# It costs nothing: `xcodegen generate` on foolish's project.yml takes ~0.1s.
+# When the result is byte-identical to the project that was there, the old copy
+# goes back with its timestamps, so Xcode sees no change at all and keeps its
+# cached build description. `--regen` is still accepted and changes nothing.
+say "Xcode project (xcodegen generate)"
+PROJ_KEEP="$(mktemp -d -t ios_xcodeproj)"
+PROJ_NAME="$(basename "$PROJECT")"
+if [ -d "$PROJECT" ]; then cp -Rp "$PROJECT" "$PROJ_KEEP/"; fi
+backup_entitlements
+(cd "$IOS_DIR" && xcodegen generate --quiet)
+restore_entitlements
+if [ -d "$PROJ_KEEP/$PROJ_NAME" ] && diff -rq "$PROJ_KEEP/$PROJ_NAME" "$PROJECT" >/dev/null 2>&1; then
+  rm -rf "$PROJECT"
+  mv "$PROJ_KEEP/$PROJ_NAME" "$PROJECT"
+  echo "  project unchanged - kept the previous one, timestamps and all"
 else
-  say "Xcode project is current (project.yml unchanged) - not regenerating"
+  echo "  project regenerated (a source file or project.yml changed)"
 fi
+rm -rf "$PROJ_KEEP"
 
 # ---- 4. the tests that need a simulator ------------------------------------
 POISON='was modified during the build'

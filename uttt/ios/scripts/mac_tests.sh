@@ -14,7 +14,6 @@
 #   uttt/ios/scripts/mac_tests.sh preview           # build UtttPreview only
 #   uttt/ios/scripts/mac_tests.sh app               # build the SHIPPING scheme only
 #   uttt/ios/scripts/mac_tests.sh --no-lib app      # skip the xcframework build
-#   uttt/ios/scripts/mac_tests.sh --regen           # force xcodegen
 #
 #   DEST='platform=iOS Simulator,id=<udid>' uttt/ios/scripts/mac_tests.sh
 #
@@ -30,7 +29,6 @@ export PROJECT="ios/Uttt.xcodeproj"
 export BUILD_SCHEMES="preview=UtttPreview app=UtttMessagesApp"
 export LIB_CMD="make -C c ios-lib"
 export XCFRAMEWORK="ios/vendor/Uttt.xcframework"
-export REGEN_WATCH="ios/UtttKit ios/UtttMessages ios/UtttMessagesApp ios/UtttPreview"
 export SUITE_NAME="UTTT"
 
 exec bash ../shared/scripts/ios_mac_tests.sh "$@"
