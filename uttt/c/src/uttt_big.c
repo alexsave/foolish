@@ -265,9 +265,18 @@ void utb_count(const UtbGame *g, int n[3])
 
 /* THE GRID IS INTEGER: a level-L node is column c, row r of a 3^L by 3^L
  * grid, built digit by digit (each digit is row-major in its 3 x 3), and its
- * rect is that grid square divided once. utb_hit reads the same grid back,
- * so the two are one piece of arithmetic in two directions rather than two
- * sums of thirds that round differently. */
+ * rect runs from grid line c / N to grid line (c + 1) / N, each line divided
+ * once. utb_hit reads the same lines back, so the two are one piece of
+ * arithmetic in two directions rather than two sums of thirds that round
+ * differently.
+ *
+ * THE WIDTH IS THE DIFFERENCE OF TWO LINES, not 1 / N: the two lines are
+ * within a factor of two of each other (or the first is 0), so the
+ * subtraction is exact and x + w lands exactly on the next cell's x. With
+ * 1 / N the rects leave one-ulp gaps and overlaps between neighbours, and a
+ * point in a gap would belong to no rect at all. */
+static float line_at(int k, int N) { return (float)k / (float)N; }
+
 static void rect_of(int L, int p, float r[4])
 {
     int col = 0, row = 0;
@@ -276,10 +285,11 @@ static void rect_of(int L, int p, float r[4])
         col = col * 3 + d % 3;
         row = row * 3 + d / 3;
     }
-    const float N = (float)POW3[L];
-    r[0] = (float)col / N;
-    r[1] = (float)row / N;
-    r[2] = r[3] = 1.f / N;
+    const int N = POW3[L];
+    r[0] = line_at(col, N);
+    r[1] = line_at(row, N);
+    r[2] = line_at(col + 1, N) - r[0];
+    r[3] = line_at(row + 1, N) - r[1];
 }
 
 int utb_node_rect(const UtbGame *g, int id, float r[4])
@@ -297,8 +307,8 @@ int utb_cell_rect(const UtbGame *g, int mv, float r[4])
     return 1;
 }
 
-/* One axis: the grid line k / N at or left of u, where k / N is computed
- * exactly as rect_of computes a rect's edge. The first guess can be one off
+/* One axis: the grid line k / N at or left of u, read through line_at as
+ * rect_of reads it. The first guess can be one off
  * at a boundary (u * N rounds), so it is nudged until the two agree; the far
  * edge (exactly 1) belongs to the last cell, as in uttt_hit. */
 static int axis(float u, int N)
@@ -306,8 +316,8 @@ static int axis(float u, int N)
     int k = (int)(u * (float)N);
     if (k > N - 1) k = N - 1;
     if (k < 0) k = 0;
-    while (k > 0 && u < (float)k / (float)N) k--;
-    while (k < N - 1 && u >= (float)(k + 1) / (float)N) k++;
+    while (k > 0 && u < line_at(k, N)) k--;
+    while (k < N - 1 && u >= line_at(k + 1, N)) k++;
     return k;
 }
 

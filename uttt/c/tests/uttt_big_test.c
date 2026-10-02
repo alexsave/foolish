@@ -3,12 +3,67 @@
  *
  *     make -C uttt/c run        (and asan)
  *     ./build/uttt_big_test [games]       depth-2 games, default 2000
- *     ./build/uttt_big_test [games] [n5]  ...and n5 depth-5 games, default 3
+ *     ./build/uttt_big_test [games] [n5]  ...and n5 depth-5 games, default 3 (run: 10)
  *
  * MUTATION CHECKS. Each rule below was broken in a copy of src/uttt_big.c and
  * the named assertion watched go red, then the file was copied back:
  *
- *  (filled in below, one line per mutation)
+ *  status: the O line never counts      -> depth 2 block/over/legal; adopt
+ *                                          both-lines; draw: root draw
+ *  status: drawn at 8 decided children  -> depth 2 block/over/legal
+ *  play settles only the bottom block   -> undo: X's move decides ... root;
+ *                                          depth 5 adopt reproduces
+ *  over not mirrored from the root      -> depth 2 over; depth 5 game ends
+ *  play does not flip turn              -> depth 2 turn (each direction
+ *                                          flips it); undo struct before
+ *  play does not count n_plies          -> depth 2 n_plies; depth 5 counts
+ *  region: target = last / 9            -> depth 2 region; every relax case
+ *  region: the decided node, not its    -> every relax case but "nothing
+ *          parent                          decided"; closed d2 anywhere
+ *  region: only the block is asked      -> relax d3/d5 ancestor cases (depth
+ *                                          2 cannot see it: its only
+ *                                          ancestor is the root)
+ *  legal walk keeps decided subtrees    -> closed: lists nothing under a
+ *                                          decided node; depth 5 no
+ *                                          decided ancestor
+ *  legal_at forgets "closed"            -> closed: not legal / play refuses;
+ *                                          depth 2 and 5 membership
+ *  legal writes cap + 1                 -> legal: only cap written
+ *  closed asks only the node itself     -> closed: utb_closed is the node
+ *                                          or any node above it
+ *  undo does not resettle the path      -> undo: every status open again;
+ *                                          depth 2/5 play then undo
+ *  undo ignores an unknown prev         -> undo: second undo refused;
+ *                                          refused straight after adopt
+ *  adopt: cell 3 skipped, not refused   -> adopt refuses a cell value over 2
+ *  adopt: counts unchecked              -> adopt refuses O ahead of X, X two
+ *                                          ahead of O
+ *  adopt: both lines read as X          -> adopt refuses ... X line and O
+ *                                          line (block and level-1 node)
+ *  adopt: last on an empty board        -> adopt refuses a last move on an
+ *                                          empty board
+ *  adopt: UTB_NONE on a non-empty board -> adopt refuses no last move ...
+ *  adopt: no upper bound on last        -> adopt refuses ... off the board
+ *  adopt: last's mark unchecked         -> adopt refuses ... empty cell /
+ *                                          the mark that did not just move
+ *  adopt: turn is the mover             -> adopt: the empty board, X then O;
+ *                                          depth 5 adopt reproduces
+ *  adopt: prev left UTB_NONE            -> undo: refused straight after adopt
+ *  adopt writes n_plies before refusing -> adopt refuses ... struct untouched
+ *  level boundary `>` for `>=`          -> tree: round-trips, boundaries
+ *  ancestor divides by 9^level          -> tree: round-trips, ancestor of
+ *                                          the last leaf
+ *  count skips the last leaf            -> depth 5: utb_count is the plies
+ *  rect: row and column swapped         -> depth 2 cell_rect and hit;
+ *                                          geometry third, hit, tiling
+ *  rect: width 1 / N                    -> geometry: neighbours share an
+ *                                          edge exactly; grid lines
+ *  hit: no nudge after the floor        -> the same two
+ *  hit: no far-edge clamp               -> geometry corners; depth 2 hit
+ *  hit: no range check                  -> geometry off the square; depth 2
+ *
+ * The depth-2 lockstep goes red on many names at once for a status or
+ * region mutation: one wrong ply and the two games part.
  */
 #include "../src/uttt_big.h"
 #include "../src/uttt_draw.h"
@@ -69,6 +124,9 @@ static void test_tree(void)
        "init: a depth outside 2..5 is refused and the struct untouched");
 
     utb_init(&G, 5);
+    LIST[5] = -99;
+    OK(utb_legal(&G, LIST, 5) == UTB_LEAVES_MAX && LIST[4] == 4 && LIST[5] == -99,
+       "legal: the count is every move, only cap of them written");
     int ok = 1;
     for (int id = 0; id < utb_nodes(5); id++) {
         int L = utb_node_level(&G, id), p = utb_node_prefix(&G, id);
@@ -144,7 +202,9 @@ static void test_depth2(int games)
             /* play, take back, play again: the take-back is exact, and the
              * replay sets prev from `last` again, so nothing is lost */
             H = G;
-            if (!utb_play(&G, mv) || !utb_undo(&G)) bad[9]++;
+            if (!utb_play(&G, mv)) bad[9]++;
+            if (G.turn == H.turn) bad[1]++;       /* each direction flips it */
+            if (!utb_undo(&G)) bad[9]++;
             H.prev = UTB_UNKNOWN;
             if (memcmp(&H, &G, sizeof G)) bad[9]++;
             uttt_play(&u, (uint8_t)mv);
@@ -443,14 +503,19 @@ static void test_adopt(void)
     refused(2, UTB_NONE, "a cell value over 2");
     CELLS[10] = 0;
 
-    CELLS[10] = UTTT_O;
-    refused(2, 10, "O ahead of X");
-    CELLS[10] = UTTT_X; CELLS[20] = UTTT_X;
-    refused(2, 20, "X two ahead of O");
-    CELLS[20] = 0;
+    /* Counts no turn order gives, each with `last` holding the mark the
+     * parity says just moved, so only the count rule can refuse them. */
+    CELLS[10] = UTTT_O; CELLS[11] = UTTT_O; CELLS[12] = UTTT_X;
+    refused(2, 12, "O ahead of X");
+    CELLS[10] = UTTT_X; CELLS[11] = 0; CELLS[12] = 0;
+    CELLS[20] = UTTT_X; CELLS[30] = UTTT_X; CELLS[40] = UTTT_O;
+    refused(2, 40, "X two ahead of O");
+    CELLS[20] = CELLS[30] = CELLS[40] = 0;
     /* one X at 10 */
     refused(2, UTB_NONE, "no last move on a non-empty board");
+    CELLS[81] = UTTT_X;   /* past the board, holding the mover's mark */
     refused(2, 81, "a last move off the board (81)");
+    CELLS[81] = 0;
     refused(2, UTB_UNKNOWN, "a last move of UTB_UNKNOWN");
     refused(2, -7, "a negative last move");
     refused(2, 11, "a last move on an empty cell");
@@ -524,16 +589,23 @@ static void test_geometry(void)
     }
     OK(third, "geometry: a child's rect is its parent's third, row-major");
     double area = 0;
-    int centre = 1, inside = 1;
+    int centre = 1, inside = 1, tile = 1;
     for (int mv = 0; mv < UTB_LEAVES_MAX; mv++) {
         utb_cell_rect(&G, mv, r);
         area += (double)r[2] * r[3];
         if (utb_hit(&G, r[0] + r[2] / 2, r[1] + r[3] / 2) != mv) centre = 0;
         utb_node_rect(&G, utb_ancestor(&G, mv, 4), c);
         if (r[0] < c[0] - 1e-6f || r[0] + r[2] > c[0] + c[2] + 1e-6f) inside = 0;
+        /* the neighbours to the right and below start exactly where this ends */
+        float e[4];
+        if (r[0] + r[2] < 1.f && (!utb_cell_rect(&G, utb_hit(&G, r[0] + r[2], r[1]), e) || e[0] != r[0] + r[2]
+                                  || e[1] != r[1])) tile = 0;
+        if (r[1] + r[3] < 1.f && (!utb_cell_rect(&G, utb_hit(&G, r[0], r[1] + r[3]), e) || e[1] != r[1] + r[3]
+                                  || e[0] != r[0])) tile = 0;
     }
     OK(fabs(area - 1.0) < 1e-4, "geometry: the 59,049 cell rects tile the square");
     OK(inside, "geometry: every cell lies in its block");
+    OK(tile, "geometry: neighbouring cells share an edge exactly, no float gap or overlap");
     OK(centre, "geometry: utb_hit of every cell's centre is that cell");
     int pts = 1;
     for (int i = 0; i < 10000; i++) {
@@ -545,6 +617,17 @@ static void test_geometry(void)
     OK(utb_hit(&G, 1.f, 1.f) == UTB_LEAVES_MAX - 1 && utb_hit(&G, 0.f, 0.f) == 0
        && utb_hit(&G, 1.f, 0.f) == 2 * (1 + 9 + 81 + 729 + 6561),
        "geometry: the corners, the far edge belonging to the last cell");
+    /* THE GRID LINES: a point exactly on line k / 243 is the left (top) edge
+     * of column k, so it is that column's; the float just below it is the
+     * column before. This is where u * 243 rounds the wrong way. */
+    int lines = 1;
+    for (int k = 1; k < 243; k++) {
+        float e = (float)k / 243.f, below = nextafterf(e, 0.f);
+        int on = utb_hit(&G, e, e), under = utb_hit(&G, below, below);
+        if (!utb_cell_rect(&G, on, r) || r[0] != e || r[1] != e) lines = 0;
+        if (!utb_cell_rect(&G, under, c) || !(below >= c[0] && below < c[0] + c[2]) || c[0] >= e) lines = 0;
+    }
+    OK(lines, "geometry: on a grid line is the cell after it, a float below is the cell before");
     OK(utb_hit(&G, -0.001f, .5f) == -1 && utb_hit(&G, .5f, 1.001f) == -1 && utb_hit(&G, NAN, .5f) == -1,
        "geometry: off the square is -1");
     OK(!utb_cell_rect(&G, -1, r) && r[2] == 0.f && !utb_cell_rect(&G, UTB_LEAVES_MAX, r)
