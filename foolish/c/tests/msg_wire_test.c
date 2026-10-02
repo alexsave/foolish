@@ -5295,7 +5295,125 @@ static void test_staged_fate(void) {
            posed[1][FK_N], posed[2][FK_N]);
 }
 
+// ---------- formats 5 and 6, pinned as bytes ------------------------------
+//
+// The rematch generation added format 7. Formats 5 and 6 are what every
+// shipped build writes for an ordinary game and for a fool's-penalty game, so
+// they must seal and decode EXACTLY as they did before format 7 existed. These
+// four envelopes are built deterministically and their bytes were captured from
+// the kernel BEFORE format 7 was added (`msg_wire_test --print-goldens`):
+//
+//   0  format 5, LIVE, 3 players, passing, a sent clock and a bubble delta
+//   1  format 5, FINISHED, 2 players, podkidnoy
+//   2  format 6, WAITING, 4 seated, with a rematch carry
+//   3  format 6, LIVE, 4 players, opening pinned to seat 2
+//
+// What is asserted (test_format56_goldens): the builder still produces the
+// same bytes (the seal and the encoder did not move), each golden decodes with
+// generation 0 and re-encodes to itself byte for byte, and a decoder that does
+// not know format 7 - modelled by stamping 7 into an old format's header -
+// refuses it as MSG_EFORMAT.
+static int golden_build(int which, unsigned char *out, int cap) {
+    static unsigned char body[1024];
+    static Game scratch;
+    Chain ch; memset(&ch, 0, sizeof(ch));
+    Game g;
+    uint8_t seed[MSG_SEED_LEN];
+    MsgEnvelope e;
+    switch (which) {
+    case 0: {
+        seed_fill(seed, 5101u);
+        play_game_rules(seed, 3, 9, &ch, &g, -1, 0);
+        env_init(&e, seed, 3);
+        e.phase = MSG_PHASE_LIVE;
+        e.game_id = 0x5151515151515151ULL;
+        e.sent_at = 0x1234;
+        e.last_actor_seat = 1;
+        if (msg_seal(&e, &g, 0, body, sizeof(body), &scratch) != MSG_EOK) return -1;
+        break;
+    }
+    case 1: {
+        // Seeds are walked until a podkidnoy game reaches a fool, so the golden
+        // is a FINISHED chain whatever the seed range happens to hold.
+        int found = 0;
+        for (uint32_t s = 5201u; s < 5301u && !found; s++) {
+            seed_fill(seed, s);
+            memset(&ch, 0, sizeof(ch));
+            play_game_rules(seed, 2, 600, &ch, &g, -1, (int8_t)GAME_RULE_NO_PASS);
+            game_settle_status(&g);
+            found = game_done(&g) >= 0;
+        }
+        if (!found) return -1;
+        env_init(&e, seed, 2);
+        e.phase = MSG_PHASE_FINISHED;
+        e.game_id = 0x5252525252525252ULL;
+        e.sent_at = 0x2345;
+        e.last_actor_seat = 0;
+        if (msg_seal(&e, &g, 0, body, sizeof(body), &scratch) != MSG_EOK) return -1;
+        break;
+    }
+    case 2: {
+        seed_fill(seed, 5301u);
+        game_set_deal_seed_bytes(seed, MSG_SEED_LEN);
+        memset(&g, 0, sizeof(g));
+        g.num_players = 4;
+        for (int i = 0; i < 4; i++) g.players[i].status = PLAYER_STATUS_READY;
+        start_game(&g);
+        env_init(&e, seed, 4);
+        e.phase = MSG_PHASE_WAITING;
+        e.game_id = 0x5353535353535353ULL;
+        e.sent_at = 0x0BAD;
+        uint32_t key = 0; int rot = 0;
+        if (msg_roster_key(e.joins, 4, &key, &rot) != MSG_EOK) return -1;
+        e.carry_key = key;
+        e.carry_fool = 2;
+        if (msg_seal(&e, &g, MSG_NO_BASE, body, sizeof(body), &scratch) != MSG_EOK) return -1;
+        break;
+    }
+    case 3: {
+        seed_fill(seed, 5401u);
+        game_set_deal_seed_bytes(seed, MSG_SEED_LEN);
+        memset(&g, 0, sizeof(g));
+        g.num_players = 4;
+        for (int i = 0; i < 4; i++) g.players[i].status = PLAYER_STATUS_READY;
+        game_open_at_seat(2);
+        start_game(&g);
+        game_open_at_seat(-1);
+        static LegalMoves ml;
+        calculate_legal_moves(&g, 2, &ml);
+        int pick = -1;
+        for (int i = 0; i < ml.n && pick < 0; i++) if (ml.moves[i].type == MOVE_ATTACK) pick = i;
+        if (pick < 0) return -1;
+        AwireAction a;
+        move_to_awire(&ml.moves[pick], &a);
+        if (!handle_attack(&g, 2, a.cards, a.n)) return -1;
+        env_init(&e, seed, 4);
+        e.phase = MSG_PHASE_LIVE;
+        e.game_id = 0x5454545454545454ULL;
+        e.sent_at = 0x0C0D;
+        e.last_actor_seat = 2;
+        e.opening = 2;
+        if (msg_seal(&e, &g, 0, body, sizeof(body), &scratch) != MSG_EOK) return -1;
+        break;
+    }
+    default: return -1;
+    }
+    return msg_encode(&e, out, cap);
+}
+
+static void print_goldens(void) {
+    for (int w = 0; w < 4; w++) {
+        unsigned char wire[ENV_CAP];
+        const int n = golden_build(w, wire, sizeof(wire));
+        if (n <= 0) { printf("golden %d: build failed (%d)\n", w, n); continue; }
+        static char hx[ENV_CAP * 2 + 1];
+        hex(wire, n, hx);
+        printf("golden %d (format %d, %d B):\n%s\n", w, wire[1], n, hx);
+    }
+}
+
 int main(int argc, char **argv) {
+    if (argc > 1 && !strcmp(argv[1], "--print-goldens")) { print_goldens(); return 0; }
     if (argc > 1 && !strcmp(argv[1], "--fixture")) { print_fixtures(); return 0; }
     if (argc > 1 && !strcmp(argv[1], "--fixture4")) { print_fixtures4(); return 0; }
     if (argc > 1 && !strcmp(argv[1], "--fixture5")) { print_fixtures5(); return 0; }
