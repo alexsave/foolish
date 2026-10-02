@@ -20,7 +20,6 @@
 #   pickemup/ios/scripts/mac_tests.sh unit            # PickemupKitTests only
 #   pickemup/ios/scripts/mac_tests.sh app             # build the SHIPPING scheme only
 #   pickemup/ios/scripts/mac_tests.sh --no-lib unit   # skip the xcframework build
-#   pickemup/ios/scripts/mac_tests.sh --regen         # force xcodegen
 #
 #   DEST='platform=iOS Simulator,id=<udid>' pickemup/ios/scripts/mac_tests.sh
 #
@@ -38,7 +37,6 @@ export BUILD_SCHEMES="app=PickemupMessagesApp"
 export LIB_CMD="make -C c ios-lib"
 export LIB_LABEL="kernel xcframework + generated readers (make -C pickemup/c ios-lib)"
 export XCFRAMEWORK="ios/vendor/Pickemup.xcframework ios/Generated/PickemupKernel.swift"
-export REGEN_WATCH="ios/PickemupKit ios/PickemupKitTests ios/PickemupMessages"
 export SUITE_NAME="Pick 'Em Up"
 
 exec bash ../shared/scripts/ios_mac_tests.sh "$@"

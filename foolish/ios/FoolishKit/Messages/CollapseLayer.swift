@@ -309,6 +309,11 @@ extension DeckFrameKey: RelayedPreference {
         v == .zero ? v : v.offsetBy(dx: o.x, dy: o.y)
     }
 }
+extension TrumpSlotFrameKey: RelayedPreference {
+    public static func rebased(_ v: CGRect, by o: CGPoint) -> CGRect {
+        v == .zero ? v : v.offsetBy(dx: o.x, dy: o.y)
+    }
+}
 extension DiscardFrameKey: RelayedPreference {
     public static func rebased(_ v: CGRect, by o: CGPoint) -> CGRect {
         v == .zero ? v : v.offsetBy(dx: o.x, dy: o.y)

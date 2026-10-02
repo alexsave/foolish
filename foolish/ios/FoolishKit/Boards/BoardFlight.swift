@@ -121,6 +121,17 @@ public struct DeckFrameKey: PreferenceKey {
     }
 }
 
+/// The flipped trump's slot in `boardSpace`: where the trump lies under the
+/// stock, published whether or not a card is drawn there, so the draw that deals
+/// it out has a place to fly it from (`MessageTableView.drawFlights`). Not the
+/// bare glyph's place - that one is `TrumpNudge`'s.
+public struct TrumpSlotFrameKey: PreferenceKey {
+    public static let defaultValue: CGRect = .zero
+    public static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        let n = nextValue(); if n != .zero { value = n }
+    }
+}
+
 /// The discard pile's rect in `boardSpace` (cards_to_trash target).
 public struct DiscardFrameKey: PreferenceKey {
     public static let defaultValue: CGRect = .zero
@@ -192,10 +203,31 @@ public struct Flight: Identifiable, Equatable {
     /// GHOST only - see FlyingCardsLayer - so a card that lands back in a hand
     /// is a normal card again the moment it lands.
     public let revert: Bool
+    /// THE GHOST'S SIZE AT EACH END, the size twin of `fromAngle`/`angle`: the
+    /// ghost starts at `fromSize` and reaches `size` as it lands, over the same
+    /// progress. nil is `Flight.ghost` (50x70), which is what every flight
+    /// flew at before either existed and what a hand slot or a badge lands as,
+    /// so only a flight whose source is a card of a DIFFERENT size on the
+    /// board sets one: the flipped trump leaving its 46x66 slot, whose first
+    /// frame must be the slot card exactly, not a card 4pt larger on top of
+    /// where it was. A reversal swaps the two, as it swaps the angles.
+    public let fromSize: CGSize?
+    public let size: CGSize?
+    /// The size a ghost flies at when nothing says otherwise.
+    public static let ghost = CGSize(width: 50, height: 70)
     public init(id: String, card: Card?, from: CGRect, to: CGRect,
-                angle: Double = 0, fromAngle: Double = 0, revert: Bool = false) {
+                angle: Double = 0, fromAngle: Double = 0, revert: Bool = false,
+                fromSize: CGSize? = nil, size: CGSize? = nil) {
         self.id = id; self.card = card; self.from = from; self.to = to
         self.angle = angle; self.fromAngle = fromAngle; self.revert = revert
+        self.fromSize = fromSize; self.size = size
+    }
+
+    /// The ghost's size at progress `p` (0 at take-off, 1 at landing).
+    public func ghostSize(at p: CGFloat) -> CGSize {
+        let a = fromSize ?? Self.ghost, b = size ?? Self.ghost
+        return CGSize(width: a.width + (b.width - a.width) * p,
+                      height: a.height + (b.height - a.height) * p)
     }
 }
 
@@ -571,7 +603,7 @@ public struct FlyingCardsLayer: View {
                 let p = animator.progress
                 let cx = f.from.midX + (f.to.midX - f.from.midX) * p
                 let cy = f.from.midY + (f.to.midY - f.from.midY) * p
-                FCard(card: f.card, size: CGSize(width: 50, height: 70))
+                FCard(card: f.card, size: f.ghostSize(at: p))
                     // THE CONFLICT MODEL's red, on the ghost only - the web's
                     // exact vocabulary for a superseded optimistic card
                     // (AnimationOverlay.tsx: border rgb(220,38,38), red drop

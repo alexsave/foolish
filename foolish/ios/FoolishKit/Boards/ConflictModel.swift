@@ -58,7 +58,7 @@ extension MessageTableView {
                 return Flight(id: "revert-\(f.id)", card: f.card,
                               from: f.to, to: f.from,
                               angle: f.fromAngle, fromAngle: f.angle,
-                              revert: true)
+                              revert: true, fromSize: f.size, size: f.fromSize)
             }
         }
     }
