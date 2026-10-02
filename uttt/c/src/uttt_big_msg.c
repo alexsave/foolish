@@ -249,6 +249,11 @@ static int text_bytes(const char *text, uint8_t *b, int cap)
     return n <= 0 ? UTM_ETEXT : n;
 }
 
+int utb_msg_text_bytes(const char *text, uint8_t *out, int cap)
+{
+    return text_bytes(text, out, cap);
+}
+
 int utb_msg_text_peek(const char *text, UtbHead *out)
 {
     uint8_t b[SPAN_BYTES];

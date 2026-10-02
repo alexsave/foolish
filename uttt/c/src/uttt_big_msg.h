@@ -136,6 +136,10 @@ int  utb_msg_text_encode(const UtbMsg *m, char *out, int cap);
 int  utb_msg_text_peek(const char *text, UtbHead *out);
 int  utb_msg_text_decode(const char *text, const uint8_t *cells, UtbMsg *out);
 
+/* The bytes a link's "m=" value decodes to, whatever their format: what the
+ * diagnostics print the length and format byte of. Count, or UTM_ETEXT. */
+int  utb_msg_text_bytes(const char *text, uint8_t *out, int cap);
+
 /* Is this text a big-game message by its magic and format byte alone: the
  * router's question, answered before any check. 1 or 0. */
 int  utb_msg_text_is(const char *text);
