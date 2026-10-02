@@ -527,6 +527,9 @@ cmd_build() {
   # this compile-time flag, and the `dev.reseed` file at runtime.
   local cond="DEBUG"
   [ -n "${FOOLISH_RESEED:-}" ] && cond="$cond RIG_RESEED"
+  # RIG_ARRIVE, also opt-in: the extension's host trace and the arrival door
+  # (`arrive`). Nothing else changes, and nothing that ships defines it.
+  [ -n "${FOOLISH_ARRIVE:-}" ] && cond="$cond RIG_ARRIVE"
   xcodebuild -project "$XCPROJ" -scheme "$SCHEME" \
     -configuration Debug -destination "platform=iOS Simulator,id=$SIM" \
     -derivedDataPath "$DD" SWIFT_ACTIVE_COMPILATION_CONDITIONS="$cond" build | tail -3
@@ -871,11 +874,50 @@ cmd_picker() {
 # WORD as the other side through its own didReceive lines. What WORD means is
 # the product's: Ultimate Tic-Tac-Toe takes a move (block*9+cell) or nothing
 # for its deterministic pick; Durak's RIG_ARRIVE takes join/start/rules/leave.
+#
+# Durak's door (a FOOLISH_ARRIVE=1 build) seals each item off the chain the
+# board is showing and, by default, SENDS it through real Messages:
+#
+#   rig.sh arrive "join"                       a lobby word: join|rules|leave|start
+#   rig.sh arrive "move:2:good,move:3:good"    board moves, each off the last
+#   rig.sh arrive "hold move:any:cover"        stage it and leave Send unpressed
+#   rig.sh arrive "direct move:1:pickup"       skip Messages (the old door)
+#
+# `conversation.send` only STAGES on the simulator, so each item lands in the
+# input field and this presses Send for it, one at a time (the door writes a
+# line to dev.doorstaged per staged item and waits for its send before sealing
+# the next). The send is what makes Messages deliver it back to the open
+# drawer as willSelect/didSelect/didReceive - docs/IMESSAGE_LIVE_ARRIVAL_HOST.md
+# (phase 2) says which drawers that reaches and which it does not.
 cmd_arrive() {
   need_sim
   local g; g=$(group_dir)
   case "$g" in /nonexistent/*) return 1 ;; esac
-  printf '%s' "${1:-}" > "$g/dev.arrive"; echo "arrive: '${1:-}' written"
+  local req="${1:-}"
+  rm -f "$g/dev.doorstaged"
+  printf '%s' "$req" > "$g/dev.arrive"; echo "arrive: '$req' written"
+  case " $req " in *" direct "*|*" hold "*) return 0 ;; esac
+  # A bare UTTT-style word has no items for this loop; Durak's always do.
+  local words items n i got
+  words=$(printf '%s' "$req" | tr ' ' '\n' | grep -v -e '^send$' -e '^gap=' -e '^session=' | tr '\n' ',')
+  items=$(printf '%s' "$words" | tr ',' '\n' | grep -c . || true)
+  n=0
+  while [ "$n" -lt "$items" ]; do
+    i=0; got=0
+    while [ $i -lt 100 ]; do
+      got=$(grep -c . "$g/dev.doorstaged" 2>/dev/null || true)
+      [ "${got:-0}" -gt "$n" ] && break
+      sleep 0.2; i=$((i + 1))
+    done
+    if [ "${got:-0}" -le "$n" ]; then
+      echo "arrive: item $((n + 1)) of $items was never staged (rig.sh flight says why)" >&2
+      return 1
+    fi
+    # `turn` puts an expanded drawer down first: Send is under it.
+    cmd_turn >/dev/null || { echo "arrive: no Send for item $((n + 1))" >&2; return 1; }
+    n=$((n + 1))
+  done
+  echo "arrive: $items sent"
 }
 
 cmd_devgame() {
@@ -2222,7 +2264,10 @@ cmd_tween() {
 # flags. `flight` is the always-compiled FlightRecorder (on a device it is
 # reached by HOLDING THE GEAR for 5 seconds); `mem` is the memory probe, whose
 # .prev is the run before the one that crashed.
-cmd_flight() { local g; g=$(group_dir); cat "$g/flight.txt" 2>/dev/null || echo "no flight log yet"; }
+# FlightRecorder writes flight.log (and rotates the session before it to
+# flight.prev.log); this read flight.txt, a name nothing writes, and so always
+# answered "no flight log yet".
+cmd_flight() { local g; g=$(group_dir); cat "$g/flight.log" 2>/dev/null || echo "no flight log yet"; }
 cmd_mem()    { local g; g=$(group_dir); cat "$g/memprobe.txt" 2>/dev/null || echo "no memory probe yet"
                [ -f "$g/memprobe.prev.txt" ] && { echo "--- previous run ---"; cat "$g/memprobe.prev.txt"; } || true; }
 
@@ -2278,7 +2323,7 @@ case "${1:-}" in
   slowmo)   shift; cmd_slowmo "$@" ;;
   deal)     shift; cmd_deal "$@" ;;
   capacity) shift; cmd_capacity "$@" ;;
-  ruler)   shift; cmd_ruler "$@" ;;
+  ruler)    shift; cmd_ruler "$@" ;;
   stageseed) shift; cmd_stageseed "$@" ;;
   reseed)   shift; cmd_reseed "$@" ;;
   shot)     shift; cmd_shot "$@" ;;
