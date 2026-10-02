@@ -131,6 +131,13 @@ final class RematchSameChainTests: XCTestCase {
                                "\(label): one identical rematch lobby reads as ahead of another")
             }
         }
+        // ITS BUBBLE SAYS REMATCH: a full table invites nobody to join, and
+        // "<name> joined" would name the finished game's last mover.
+        for (s, lobby) in zip(tappers, lobbies) {
+            let (_, _, summary) = await MessageSummary.forStagedBubble(payload: lobby, leftName: nil)
+            XCTAssertEqual(summary, FStrings.t("ios.msg.rematch"),
+                           "\(label) seat \(s): the rematch bubble reads \"\(summary)\"")
+        }
         // THE TABLE CARRIES OVER: every seat, the rules, and the fool's penalty.
         for (s, e) in zip(tappers, envs) {
             XCTAssertEqual(e.joins.sorted { $0.seat < $1.seat },

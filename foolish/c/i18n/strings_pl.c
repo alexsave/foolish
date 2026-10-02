@@ -93,6 +93,7 @@ const char *const FS_STRINGS_PL[FS_K_COUNT] = {
     [FS_K_IOS_MSG_JOINAS           ] = "Dołącz jako {name}",
     [FS_K_IOS_MSG_JOINED           ] = "{name} dołącza - dotknij, aby dołączyć",
     [FS_K_IOS_MSG_JOININVITE       ] = "Durny - dotknij, aby dołączyć",
+    [FS_K_IOS_MSG_REMATCH         ] = "Rewanż - dotknij, aby zagrać",
     [FS_K_IOS_MSG_LEFT             ] = "{name} opuszcza grę",
     [FS_K_IOS_MSG_LEFTANON         ] = "Gracz opuścił grę",
     [FS_K_IOS_MSG_LOBBYFULL        ] = "Wszystkie miejsca zajęte",

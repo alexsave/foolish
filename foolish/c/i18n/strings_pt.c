@@ -93,6 +93,7 @@ const char *const FS_STRINGS_PT[FS_K_COUNT] = {
     [FS_K_IOS_MSG_JOINAS           ] = "Entrar como {name}",
     [FS_K_IOS_MSG_JOINED           ] = "{name} entrou - toque para entrar",
     [FS_K_IOS_MSG_JOININVITE       ] = "Boboca - toque para entrar",
+    [FS_K_IOS_MSG_REMATCH         ] = "Revanche - toque para jogar",
     [FS_K_IOS_MSG_LEFT             ] = "{name} saiu da partida",
     [FS_K_IOS_MSG_LEFTANON         ] = "Um jogador saiu da partida",
     [FS_K_IOS_MSG_LOBBYFULL        ] = "Todos os lugares ocupados",

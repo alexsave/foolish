@@ -76,6 +76,14 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
     /// id and moves the generation, and what one deal's board did means
     /// nothing to the next one's.
     public func isSameDeal(_ other: MessageEnvelope) -> Bool { dealKey == other.dealKey }
+    /// A REMATCH LOBBY nobody has changed yet: the next generation of a game,
+    /// every seat of the finished table still in it. What its bubble says is
+    /// "play again", not "come and join" - nobody can join a full table, and
+    /// "<name> joined" would name whoever made the last move of the game
+    /// before (the lobby repeats that seat as its last actor).
+    public var isRematchInvite: Bool {
+        generation > 0 && phase == 0 && joins.count == nPlayers
+    }
     /// The same fact as a key, for state a surface keeps per deal.
     public var dealKey: String { "\(gameId).\(generation)" }
 

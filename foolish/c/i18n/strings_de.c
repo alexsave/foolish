@@ -93,6 +93,7 @@ const char *const FS_STRINGS_DE[FS_K_COUNT] = {
     [FS_K_IOS_MSG_JOINAS           ] = "Als {name} beitreten",
     [FS_K_IOS_MSG_JOINED           ] = "{name} ist dabei - zum Beitreten tippen",
     [FS_K_IOS_MSG_JOININVITE       ] = "Närrisch - zum Beitreten tippen",
+    [FS_K_IOS_MSG_REMATCH         ] = "Revanche - tippen zum Spielen",
     [FS_K_IOS_MSG_LEFT             ] = "{name} hat das Spiel verlassen",
     [FS_K_IOS_MSG_LEFTANON         ] = "Ein Spieler hat das Spiel verlassen",
     [FS_K_IOS_MSG_LOBBYFULL        ] = "Alle Plätze belegt",

@@ -93,6 +93,7 @@ const char *const FS_STRINGS_TR[FS_K_COUNT] = {
     [FS_K_IOS_MSG_JOINAS           ] = "{name} olarak katıl",
     [FS_K_IOS_MSG_JOINED           ] = "{name} katıldı - katılmak için dokun",
     [FS_K_IOS_MSG_JOININVITE       ] = "Aptalca - katılmak için dokun",
+    [FS_K_IOS_MSG_REMATCH         ] = "Rövanş - oynamak için dokun",
     [FS_K_IOS_MSG_LEFT             ] = "{name} oyundan ayrıldı",
     [FS_K_IOS_MSG_LEFTANON         ] = "Bir oyuncu oyundan ayrıldı",
     [FS_K_IOS_MSG_LOBBYFULL        ] = "Bütün yerler dolu",
