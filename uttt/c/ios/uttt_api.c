@@ -4,6 +4,7 @@
 #include "../src/uttt_draw.h"
 #include "../src/uttt_anim.h"
 #include "../src/uttt_msg.h"
+#include "../src/uttt_big_msg.h"
 #include "../src/uttt_say.h"
 #include "../src/uttt_lang.h"
 #include <stddef.h>
@@ -496,8 +497,11 @@ static int resolve(uint8_t tag[UTM_TAG_LEN], int *by)
 
 static void my_tag(uint8_t out[UTM_TAG_LEN]) { resolve(out, NULL); }
 
+static void big_seats_loaded(void);
+
 void uti_seats_load(const uint8_t *bytes, int n)
 {
+    big_seats_loaded();
     if (!bytes || n < 0) n = 0;
     if (n > UTM_REC_BYTES) n = UTM_REC_BYTES;
     n -= n % UTM_REC_LEN;
@@ -784,3 +788,293 @@ const char *uti_say_cell(int mv)
 }
 
 int uti_cell_rect(int mv, float r[4]) { return uttt_cell_rect(mv, r); }
+
+
+/* ------------------------------------------------------- THE 243 BOARD */
+
+_Static_assert(UTI_BIG_SIDE == UTB_SIDE, "the big board's side");
+_Static_assert(UTI_BIG_CELLS == UTB_CELLS, "the big board's cells");
+_Static_assert(UTI_BIG_TEXT_MAX >= UTB_MAX_TEXT, "the longest big link fits the host buffer");
+
+/* THE SECOND RESIDENT: one big message (66 KB of cells and nodes, zero-fill
+ * __bss, so an App Store build that never plays it never touches a page of
+ * it), its own sender fact and its own "who wrote the record" - the
+ * identity and the records themselves are S's, shared. */
+static struct {
+    UtbMsg    m;
+    uint8_t   sent_msg[UTB_MAX_BYTES];
+    int       sent_n;
+    int       sent_dm, sent_mine;
+    int       wrote_by;
+    int32_t   wrote_seed;
+    uint8_t   wrote_o[UTM_TAG_LEN];
+    char      said[160];
+} B;
+
+/* A scratch message for reads: decode lands here and is copied over B.m only
+ * when it reads, so a refused link changes nothing. */
+static UtbMsg B_read;
+
+/* Never an uninitialised board: until the host opens or reads one, the
+ * resident is an empty depth-5 board, so every accessor answers sensibly. */
+static UtbMsg *big(void)
+{
+    if (B.m.game.depth != UTB_DEPTH) {
+        static const uint8_t none[UTM_TAG_LEN];
+        utb_msg_open(&B.m, 1, 0, none);
+    }
+    return &B.m;
+}
+
+/* The sender fact, if it is about the resident big message (sent_fact's rule). */
+static int big_sent_fact(int *dm)
+{
+    uint8_t b[UTB_MAX_BYTES];
+    int n = B.sent_n ? utb_msg_encode(big(), b, sizeof b) : -1;
+    int same = n > 0 && n == B.sent_n && !memcmp(b, B.sent_msg, (size_t)n);
+    *dm = same && B.sent_dm;
+    return same ? B.sent_mine : UTM_SENT_UNKNOWN;
+}
+
+/* MY SEAT ON THE BIG RESIDENT: resolve()'s three witnesses, in its order,
+ * through the shipped functions on the message's roster - and the same
+ * writing of a seat found any way but the record. */
+static int big_resolve(uint8_t tag[UTM_TAG_LEN], int *by)
+{
+    const UtbMsg *m = big();
+    UtmMsg r = utb_msg_roster(m);
+    uint8_t h[UTM_TAG_LEN];
+    int dm, b;
+    utm_tag(m->seed, S.me, S.me_n, h);
+    int rec = utm_rec_find(S.rec, S.rec_n, &r);
+    int sent = big_sent_fact(&dm);
+    int seat = utm_resolve(&r, rec, utm_seat(&r, h), dm, sent, &b);
+    if (b != UTM_BY_RECORD && (seat == UTM_SEAT_X || seat == UTM_SEAT_O || seat == UTM_SEAT_WAITING)) {
+        S.rec_n = utm_rec_put(S.rec, S.rec_n, &r, seat);
+        S.rec_dirty = 1;
+        B.wrote_by = b;
+        B.wrote_seed = m->seed;
+        memcpy(B.wrote_o, m->o, UTM_TAG_LEN);
+    } else if (b == UTM_BY_RECORD && B.wrote_by && B.wrote_seed == m->seed
+               && !memcmp(B.wrote_o, m->o, UTM_TAG_LEN)) {
+        b = B.wrote_by;
+    }
+    if (by) *by = b;
+    if (tag) {
+        switch (seat) {
+        case UTM_SEAT_X:                        memcpy(tag, m->x, UTM_TAG_LEN); break;
+        case UTM_SEAT_O: case UTM_SEAT_WAITING: memcpy(tag, m->o, UTM_TAG_LEN); break;
+        default:                                memcpy(tag, h, UTM_TAG_LEN); break;
+        }
+    }
+    return seat;
+}
+
+/* New records are a new session for the big resident too: a record it did
+ * not write this session is "by record" (uti_seats_load). */
+static void big_seats_loaded(void) { B.wrote_by = 0; }
+
+static void big_tag(uint8_t out[UTM_TAG_LEN]) { big_resolve(out, NULL); }
+
+int uti_big_is(const char *text) { return utb_msg_text_is(text); }
+
+static int big_open_with(int64_t unix_seconds, uint8_t look)
+{
+    uint8_t me[UTM_TAG_LEN];
+    int32_t seed = utm_seed_at(unix_seconds);
+    utm_tag(seed, S.me, S.me_n, me);
+    utb_msg_open(&B.m, seed, look, me);
+    UtmMsg r = utb_msg_roster(&B.m);
+    S.rec_n = utm_rec_put(S.rec, S.rec_n, &r, UTM_SEAT_O);    /* I created it */
+    S.rec_dirty = 1;
+    return 1;
+}
+
+int uti_big_open(int64_t unix_seconds, int look) { return big_open_with(unix_seconds, (uint8_t)look); }
+
+int uti_big_open_again(int64_t unix_seconds)
+{
+    uint8_t me[UTM_TAG_LEN];
+    int32_t seed = utm_seed_at(unix_seconds);
+    utm_tag(seed, S.me, S.me_n, me);
+    /* the kernel's rule (the door, the look) on the one slot: it reads the
+     * finished game before it writes the invitation over it */
+    if (!utb_msg_again(big(), big(), seed, me)) return 0;
+    return big_open_with(unix_seconds, B.m.look);
+}
+
+int uti_big_read(const char *text, const uint8_t *cells)
+{
+    int r = utb_msg_text_decode(text, cells, &B_read);
+    if (r != UTM_EOK) return r;
+    B.m = B_read;
+    return UTM_EOK;
+}
+
+int uti_big_text(char *out, int cap) { return utb_msg_text_encode(big(), out, cap); }
+const uint8_t *uti_big_cells(void)  { return big()->game.cell; }
+
+int uti_big_seat(void)
+{
+    uint8_t me[UTM_TAG_LEN];
+    big_tag(me);
+    return utb_msg_seat(big(), me);
+}
+
+int uti_big_mark(void)     { return utm_seat_mark(uti_big_seat()); }
+int uti_big_sealed(void)   { return big()->sealed; }
+int32_t uti_big_seed(void) { return big()->seed; }
+int uti_big_look(void)     { return big()->look; }
+
+int uti_big_can_move(void)
+{
+    uint8_t me[UTM_TAG_LEN];
+    big_tag(me);
+    return utb_msg_can_move(big(), me);
+}
+
+int uti_big_play(int mv)
+{
+    uint8_t me[UTM_TAG_LEN];
+    big_tag(me);
+    int joining = !big()->sealed;
+    if (!utb_msg_play(&B.m, me, mv)) return 0;
+    if (joining) {                                      /* I took X */
+        UtmMsg r = utb_msg_roster(&B.m);
+        S.rec_n = utm_rec_put(S.rec, S.rec_n, &r, UTM_SEAT_X);
+        S.rec_dirty = 1;
+    }
+    return 1;
+}
+
+int uti_big_can_replace(int mv)
+{
+    uint8_t me[UTM_TAG_LEN];
+    big_tag(me);
+    return utb_msg_can_replace(big(), me, mv);
+}
+
+int uti_big_undo(void)
+{
+    uint8_t me[UTM_TAG_LEN];
+    big_tag(me);
+    return utb_msg_undo(&B.m, me);
+}
+
+int uti_big_door(void)    { return utb_msg_door(big()); }
+int uti_big_over(void)    { return big()->game.over; }
+int uti_big_turn(void)    { return big()->game.turn; }
+int uti_big_n_plies(void) { return big()->game.n_plies; }
+int uti_big_last(void)    { return big()->game.last; }
+int uti_big_region(void)  { return utb_region(&big()->game); }
+int uti_big_node(int id)  { return utb_node(&big()->game, id); }
+int uti_big_node_level(int id) { return utb_node_level(&big()->game, id); }
+int uti_big_node_rect(int id, float r[4]) { return utb_node_rect(&big()->game, id, r); }
+int uti_big_cell_rect(int mv, float r[4]) { return utb_cell_rect(&big()->game, mv, r); }
+int uti_big_hit(float u, float v) { return utb_hit(&big()->game, u, v); }
+
+int uti_big_prefer(const char *mine, const char *tapped)
+{
+    UtbHead a, b;
+    UtmMsg sa, sb;
+    int big_a = utb_msg_text_peek(mine, &a) == UTM_EOK;
+    int big_b = utb_msg_text_peek(tapped, &b) == UTM_EOK;
+    if (big_a && big_b) return utb_head_prefer(&a, &b);
+    int small_a = !big_a && utm_text_decode(mine, &sa) == UTM_EOK;
+    int small_b = !big_b && utm_text_decode(tapped, &sb) == UTM_EOK;
+    int ra = big_a || small_a, rb = big_b || small_b;
+    if (!ra && !rb) return 0;
+    if (!ra) return 1;                                  /* the unreadable one loses */
+    if (!rb) return -1;
+    if (small_a && small_b) return utm_prefer(&sa, &sb);
+    return 1;                           /* two formats: two games, the tapped one */
+}
+
+int uti_big_same_game(const char *a, const char *b)
+{
+    UtbHead x, y;
+    if (utb_msg_text_peek(a, &x) != UTM_EOK || utb_msg_text_peek(b, &y) != UTM_EOK) return 0;
+    return utb_head_same_game(&x, &y);
+}
+
+void uti_big_sender(const char *text, int is_dm, int i_sent)
+{
+    UtbHead h;
+    B.sent_n = 0;
+    if (!text || (i_sent != 0 && i_sent != 1) || utb_msg_text_peek(text, &h) != UTM_EOK) return;
+    /* the link's own bytes, rewritten from its checked header: the resident
+     * is held against them by its re-encode, as sent_fact does */
+    int n = utb_head_encode(&h, B.sent_msg, sizeof B.sent_msg);
+    if (n <= 0) return;
+    B.sent_n = n;
+    B.sent_dm = is_dm != 0;
+    B.sent_mine = i_sent;
+}
+
+int uti_big_record(void)
+{
+    UtmMsg r = utb_msg_roster(big());
+    return utm_rec_find(S.rec, S.rec_n, &r);
+}
+
+int uti_big_seat_by(void)
+{
+    int by;
+    big_resolve(NULL, &by);
+    return by;
+}
+
+int uti_big_caption(char *out, int cap) { return utb_msg_caption(big(), NULL, out, cap); }
+
+/* THE SCREEN'S WORDS FOR THE BIG GAME ARE THE 9 x 9's, from a SHADOW: a fresh
+ * 9 x 9 game carrying only the big game's over, turn and ply count (clipped
+ * to the 9 x 9's u8), said for my resolved seat. Read uttt_say.c for each
+ * key this answers: HEADLINE_PRE/POST, HEADLINE_SPOKEN (via
+ * uttt_say_headline_mark), WATCH_LINE/SPOKEN (uttt_say_watch_mark) read only
+ * g->over and g->turn and the seat; YOU_ARE_SPOKEN reads only the seat;
+ * WAITING_*, YOU_ARE_1/2, WATCH_LABEL, DOOR_AGAIN and DOOR_RULES read
+ * nothing of the game. (uttt_say_by computes uttt_active(g) up front for the
+ * caption; on the shadow that is a valid, unused answer.) SUBLINE names the
+ * won line of a 9 x 9 board (uttt_won_line reads the bitboards), which a
+ * shadow does not have and the big board does not name, so it is "" here;
+ * every key not listed is "" too, never a 9 x 9 board's answer. */
+static UtttGame big_shadow(void)
+{
+    const UtbGame *g = &big()->game;
+    UtttGame s;
+    uttt_init(&s);
+    s.over = g->over;
+    s.turn = g->turn;
+    s.n_plies = (uint8_t)(g->n_plies > 255 ? 255 : g->n_plies);
+    return s;
+}
+
+const char *uti_big_say(int key)
+{
+    switch (key) {
+    case UTI_SAY_HEADLINE_PRE: case UTI_SAY_HEADLINE_POST: case UTI_SAY_HEADLINE_SPOKEN:
+    case UTI_SAY_WAITING_HEADLINE: case UTI_SAY_WAITING_SUBLINE:
+    case UTI_SAY_YOU_ARE_1: case UTI_SAY_YOU_ARE_2: case UTI_SAY_YOU_ARE_SPOKEN:
+    case UTI_SAY_WATCH_LABEL: case UTI_SAY_WATCH_LINE: case UTI_SAY_WATCH_SPOKEN:
+    case UTI_SAY_DOOR_AGAIN: case UTI_SAY_DOOR_RULES: {
+        UtttGame g = big_shadow();
+        if (uttt_say(key, &g, uti_big_seat(), B.said, sizeof B.said) < 0) B.said[0] = 0;
+        return B.said;
+    }
+    default:
+        B.said[0] = 0;
+        return B.said;
+    }
+}
+
+int uti_big_say_mark(void)
+{
+    UtttGame g = big_shadow();
+    return uttt_say_headline_mark(&g, uti_big_seat());
+}
+
+int uti_big_say_bubble_mark(void)
+{
+    UtttGame g = big_shadow();
+    return uttt_say_bubble_mark(&g);
+}

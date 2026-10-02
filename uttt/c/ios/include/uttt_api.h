@@ -211,6 +211,102 @@ const char *uti_msg_seat_why(void);
 /* A touch at (u, v) in the board's 0..1 square, to block*9+cell, or -1. */
 int  uti_hit(float u, float v);
 
+/* ------------------------------------------------------- THE 243 BOARD
+ *
+ * The big game (docs/BIG_BOARD.md; src/uttt_big.h, src/uttt_big_msg.h): a
+ * 243 x 243 recursive board whose bubble carries a FORMAT-3 link and the
+ * board as its picture (shared/swift/BubbleDataKit, 59,049 cells 0/1/2).
+ *
+ * A SECOND RESIDENT, beside the 9 x 9's and never touching it: one big
+ * message in its own static slot. It shares the 9 x 9's identity (uti_me)
+ * and seat records (uti_seats_load / uti_seats_save, one dirty flag), so a
+ * host loads and saves them once for both games. Seats are resolved by the
+ * same three witnesses in the same order (record, tag, sender), through the
+ * shipped seat functions (utb_msg_roster).
+ *
+ * EVERY ENTRY HERE IS UTI_UNEXPORTED, for uti_msg_claim's reason above: the
+ * big game is TestFlight-only, compiled into Swift only under
+ * UTTT_BIG_BOARD, and one libuttt.a serves every build. Hidden, nothing here
+ * is ever exported from UtttKit, and a build whose Swift never names these
+ * entries has them dead-stripped, every one - an App Store binary carries
+ * no byte of the big game. */
+#define UTI_BIG_SIDE     243
+#define UTI_BIG_CELLS    59049
+/* A buffer of this many chars always holds uti_big_text's link. */
+#define UTI_BIG_TEXT_MAX 96
+
+/* Is `text` a big-game link (by its magic and format byte alone): the
+ * router's question. 1 or 0. */
+UTI_UNEXPORTED int  uti_big_is(const char *text);
+/* A big invitation from me, now: as uti_msg_open, recorded as mine (O). */
+UTI_UNEXPORTED int  uti_big_open(int64_t unix_seconds, int look);
+/* AGAIN after the resident finished big game, on its napkin. 1, or 0 and
+ * nothing changes while it runs. */
+UTI_UNEXPORTED int  uti_big_open_again(int64_t unix_seconds);
+/* Adopt the big message in `text` with the board its picture read back to
+ * (`cells`: UTI_BIG_CELLS symbols). 0, or a negative UTM_E* / UTB_EBOARD
+ * (-10) and nothing changes. */
+UTI_UNEXPORTED int  uti_big_read(const char *text, const uint8_t *cells);
+/* The resident big message as the link for MSMessage.url. Length, or negative. */
+UTI_UNEXPORTED int  uti_big_text(char *out, int cap);
+/* The resident board, UTI_BIG_CELLS symbols in leaf order: the picture's
+ * payload. Valid until the next uti_big_* call that changes the board. */
+UTI_UNEXPORTED const uint8_t *uti_big_cells(void);
+
+UTI_UNEXPORTED int  uti_big_seat(void);          /* UTI_SEAT_*                   */
+UTI_UNEXPORTED int  uti_big_mark(void);          /* the mark I play, or 0        */
+UTI_UNEXPORTED int  uti_big_sealed(void);
+UTI_UNEXPORTED int32_t uti_big_seed(void);
+UTI_UNEXPORTED int  uti_big_look(void);
+UTI_UNEXPORTED int  uti_big_can_move(void);
+/* Play as me (on an open invitation, TAKE THE SEAT with this move); a change
+ * of mind; take back my own last move. As the 9 x 9's. */
+UTI_UNEXPORTED int  uti_big_play(int mv);
+UTI_UNEXPORTED int  uti_big_can_replace(int mv);
+UTI_UNEXPORTED int  uti_big_undo(void);
+UTI_UNEXPORTED int  uti_big_door(void);          /* UTI_DOOR_*                   */
+UTI_UNEXPORTED int  uti_big_over(void);          /* 0, or X / O / draw           */
+UTI_UNEXPORTED int  uti_big_turn(void);
+UTI_UNEXPORTED int  uti_big_n_plies(void);
+UTI_UNEXPORTED int  uti_big_last(void);          /* the last move, or -1         */
+/* Where the next mark must go: a node id (0 = anywhere), -1 when over. */
+UTI_UNEXPORTED int  uti_big_region(void);
+/* Node `id`'s status (0 open, X, O, draw; -1 off the tree), its level (0 the
+ * root .. 4), its rectangle and a leaf's, x y w h in the board's 0..1 square.
+ * The rect calls return 1, or 0 and zeros off the board. */
+UTI_UNEXPORTED int  uti_big_node(int id);
+UTI_UNEXPORTED int  uti_big_node_level(int id);
+UTI_UNEXPORTED int  uti_big_node_rect(int id, float r[4]);
+UTI_UNEXPORTED int  uti_big_cell_rect(int mv, float r[4]);
+/* A touch at (u, v) in the board's 0..1 square, to the leaf under it, or -1. */
+UTI_UNEXPORTED int  uti_big_hit(float u, float v);
+/* Which of two links to show: <0 mine, >0 tapped, 0 the same. An unreadable
+ * one loses; a big link and a 9 x 9 one are different games, so the tapped
+ * one wins; two 9 x 9 links are uti_msg_prefer's question. */
+UTI_UNEXPORTED int  uti_big_prefer(const char *mine, const char *tapped);
+UTI_UNEXPORTED int  uti_big_same_game(const char *a, const char *b);
+/* The sender fact for the big resident: uti_msg_sender's semantics, bound to
+ * that exact message (its link), cleared by NULL or i_sent -1. */
+UTI_UNEXPORTED void uti_big_sender(const char *text, int is_dm, int i_sent);
+/* The record for the resident big game (UTI_SEAT_X, UTI_SEAT_O, or 0), and
+ * the witness that seated me (UTI_BY_*). */
+UTI_UNEXPORTED int  uti_big_record(void);
+UTI_UNEXPORTED int  uti_big_seat_by(void);
+/* The bubble's caption, the 9 x 9's words exactly: "New game?", "X to play",
+ * "X won in N moves", a draw. Length, or -1. */
+UTI_UNEXPORTED int  uti_big_caption(char *out, int cap);
+/* The screen's words for the big resident as this device sees it, for the
+ * keys that speak of whose turn and who won and nothing about the board:
+ * UTI_SAY_HEADLINE_PRE/POST, SUBLINE (always empty: there is no line to
+ * name), WAITING_HEADLINE/SUBLINE, YOU_ARE_1/2, YOU_ARE_SPOKEN,
+ * HEADLINE_SPOKEN, WATCH_LABEL/LINE/SPOKEN, DOOR_AGAIN, DOOR_RULES. Any other
+ * key is "". The pointer is valid until the next call; never NULL. */
+UTI_UNEXPORTED const char *uti_big_say(int key);
+/* The mark the headline draws between PRE and POST, or 0 (uti_say_mark's). */
+UTI_UNEXPORTED int  uti_big_say_mark(void);
+/* The winner's mark, or 0 (uti_say_bubble_mark's). */
+UTI_UNEXPORTED int  uti_big_say_bubble_mark(void);
+
 /* ----------------------------------------------------------- the words */
 /* Every sentence on a screen or a bubble, for the resident message as this
  * device sees it (uttt_say.h has the keys: UTTT_SAY_*). The pointer is

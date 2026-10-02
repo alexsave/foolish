@@ -17,8 +17,8 @@ static void ok(int cond, const char *what)
 /* ONE KERNEL, SEVERAL PHONES: each person's seat records are their own
  * device's, so switching person swaps them - and drops the sender fact,
  * which was about the other phone's screen. */
-static uint8_t recs[5][UTI_SEATS_BYTES];
-static int     recn[5];
+static uint8_t recs[8][UTI_SEATS_BYTES];
+static int     recn[8];
 static int     who = -1;
 static void be(int i, const uint8_t id[16])
 {
@@ -27,6 +27,152 @@ static void be(int i, const uint8_t id[16])
     uti_msg_sender(NULL, 0, -1);
     uti_me(id, 16);
     who = i;
+}
+
+/* ------------------------------------------------------- THE 243 BOARD */
+
+/* One phone of the big game: its records and identity (be), and no sender
+ * fact about either resident. */
+static void be_big(int i, const uint8_t id[16])
+{
+    be(i, id);
+    uti_big_sender(NULL, 0, -1);
+}
+
+/* WHAT A PHONE HOLDS OF A SENT BUBBLE: the link and the picture's cells. */
+typedef struct { char text[UTI_BIG_TEXT_MAX]; uint8_t cells[UTI_BIG_CELLS]; } BigBubble;
+
+static int big_bubble(BigBubble *b)
+{
+    if (uti_big_text(b->text, sizeof b->text) <= 0) return 0;
+    memcpy(b->cells, uti_big_cells(), UTI_BIG_CELLS);
+    return 1;
+}
+
+/* A move for me, found the way a finger finds one: the centre of each of
+ * the nine squares of the region's rectangle, through uti_big_hit; a region
+ * above the bottom level is anywhere inside it, so the first square there
+ * that plays. Returns the move played, or -1. */
+static int big_play_somewhere(int skip)
+{
+    int region = uti_big_region();
+    if (region < 0) return -1;
+    float r[4];
+    if (uti_big_node_level(region) == 4 && uti_big_node_rect(region, r)) {
+        for (int i = 0; i < 9; i++) {
+            float u = r[0] + (float)(i % 3 + 0.5) * r[2] / 3.f;
+            float v = r[1] + (float)(i / 3 + 0.5) * r[3] / 3.f;
+            int mv = uti_big_hit(u, v);
+            if (mv >= 0 && mv != skip && uti_big_play(mv)) return mv;
+        }
+        return -1;
+    }
+    for (int mv = 0; mv < UTI_BIG_CELLS; mv++)
+        if (mv != skip && uti_big_play(mv)) return mv;
+    return -1;
+}
+
+static void big_smoke(void)
+{
+    static const uint8_t ann[16]  = { 0xc1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
+    static const uint8_t bob[16]  = { 0xd2, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
+    static const uint8_t ann2[16] = { 0xc3, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
+    static BigBubble inv, sent, prev;
+    char small[UTI_MSG_TEXT_MAX], small_after[UTI_MSG_TEXT_MAX], cap[64];
+    int small_n = uti_msg_text(small, sizeof small);
+    int small_plies = uti_n_plies();
+    ok(small_n > 0, "big: the 9 x 9 resident has a link before the big game starts");
+
+    /* ann opens a big game on her phone */
+    be_big(5, ann);
+    ok(uti_big_open(1790001000, 99) == 1, "big: ann opens an invitation");
+    ok(uti_big_record() == UTI_SEAT_O && uti_seats_dirty() && uti_big_seat() == UTI_SEAT_WAITING,
+       "big: it is hers, waiting, and recorded as O");
+    ok(uti_big_look() == 99 && uti_big_seed() == 1790001000 && !uti_big_sealed() && uti_big_n_plies() == 0
+       && uti_big_last() == -1 && uti_big_region() == 0, "big: an empty board, anywhere, on look 99");
+    ok(uti_big_caption(cap, sizeof cap) > 0 && !strcmp(cap, "New game?"), "big: the invitation's caption");
+    ok(!strcmp(uti_big_say(UTI_SAY_WAITING_HEADLINE), "Waiting"), "big: the lobby's words");
+    ok(big_bubble(&inv) && uti_big_is(inv.text) && !uti_big_is(small), "big: the invitation's link is big, the 9 x 9's is not");
+
+    /* bob reads it on his phone and joins with a move */
+    be_big(6, bob);
+    ok(uti_big_read(inv.text, inv.cells) == 0, "big: bob reads the invitation with its picture");
+    ok(uti_big_seat() == UTI_SEAT_OPEN && uti_big_can_move(), "big: X is bob's to take");
+    ok(uti_big_play(30000) && uti_big_record() == UTI_SEAT_X, "big: and his phone records X as he joins");
+    ok(uti_big_sealed() && uti_big_seat() == UTI_SEAT_X && uti_big_mark() == 1,
+       "big: taking the seat is his first move, and seals it");
+    ok(!uti_big_can_move() && uti_big_turn() == 2, "big: then it is O's turn");
+    ok(uti_big_caption(cap, sizeof cap) > 0 && !strcmp(cap, "O to play"), "big: the caption says whose turn");
+    ok(!strcmp(uti_big_say(UTI_SAY_HEADLINE_PRE), "Waiting on ") && uti_big_say_mark() == 2,
+       "big: the headline waits on O's drawn mark");
+    ok(uti_big_say(UTI_SAY_SUBLINE)[0] == 0 && uti_big_say(UTI_SAY_CAPTION)[0] == 0
+       && uti_big_say(UTI_SAY_BUBBLE_PLACE)[0] == 0, "big: the subline and the keys it does not answer are empty");
+    ok(!strcmp(uti_big_say(UTI_SAY_YOU_ARE_SPOKEN), "You are X"), "big: you are X, spoken");
+    float r[4];
+    ok(uti_big_cell_rect(30000, r) && uti_big_hit(r[0] + r[2] / 2, r[1] + r[3] / 2) == 30000,
+       "big: the move's square maps back to it");
+    ok(uti_big_node(0) == 0 && uti_big_node_level(0) == 0 && uti_big_node_level(uti_big_region()) == 4,
+       "big: the root is open and the region is a block of nine");
+    ok(uti_big_can_replace(30001), "big: a change of mind may go elsewhere");
+    ok(!uti_big_can_replace(30000), "big: the same square is no change");
+    ok(big_bubble(&sent), "big: the join has a link");
+    ok(uti_big_prefer(sent.text, inv.text) < 0 && uti_big_prefer(inv.text, sent.text) > 0
+       && uti_big_prefer(sent.text, sent.text) == 0, "big: the join outranks its invitation, both ways round");
+    ok(uti_big_same_game(sent.text, inv.text) && !uti_big_same_game(sent.text, small),
+       "big: one game, and never the same as a 9 x 9 one");
+    ok(uti_big_prefer(sent.text, small) > 0 && uti_big_prefer(small, sent.text) > 0,
+       "big: two formats are two games: the tapped one");
+    ok(uti_big_prefer("?m=junk", sent.text) > 0 && uti_big_prefer(sent.text, "?m=junk") < 0,
+       "big: an unreadable link loses");
+
+    /* back and forth across the two phones, through link and picture */
+    int moves = 0, reads = 1;
+    for (int ply = 0; ply < 8; ply++) {
+        int ann_turn = ply % 2 == 0;
+        be_big(ann_turn ? 5 : 6, ann_turn ? ann : bob);
+        reads &= uti_big_read(sent.text, sent.cells) == 0;
+        prev = sent;
+        int before = uti_big_n_plies();
+        if (big_play_somewhere(-1) < 0) break;
+        moves += uti_big_n_plies() == before + 1;
+        big_bubble(&sent);
+    }
+    ok(reads && moves == 8, "big: eight moves across two phones, each read from link and picture");
+    ok(uti_big_seat() == UTI_SEAT_X && uti_big_n_plies() == 9, "big: bob, nine plies in");
+    ok(uti_big_prefer(sent.text, prev.text) < 0, "big: more plies wins");
+    ok(!uti_big_open_again(1790002000) && uti_big_n_plies() == 9 && uti_big_sealed(),
+       "big: Again is refused on a live game, nothing changes");
+
+    /* undo and a change of mind on the staged draft */
+    int last = uti_big_last();
+    ok(uti_big_undo() && uti_big_n_plies() == 8 && uti_big_cells()[last] == 0, "big: the draft comes back");
+    ok(!uti_big_undo(), "big: and only one");
+    int alt = big_play_somewhere(last);
+    ok(alt >= 0 && alt != last && uti_big_n_plies() == 9, "big: another square instead");
+    BigBubble mind;
+    ok(big_bubble(&mind) && uti_big_prefer(mind.text, sent.text) < 0 && uti_big_prefer(sent.text, mind.text) < 0,
+       "big: one roster, equal plies: the device's own draft");
+
+    /* the sender witness: ann on a new id, her records gone, in a DM */
+    be_big(7, ann2);
+    uti_big_sender(sent.text, 1, 0);
+    ok(uti_big_read(sent.text, sent.cells) == 0 && uti_big_seat() == UTI_SEAT_O
+       && uti_big_seat_by() == UTI_BY_SENDER, "big: a rotated ann is O by the sender, in a DM");
+    ok(uti_big_record() == UTI_SEAT_O, "big: and that seat is recorded");
+    uti_big_sender(NULL, 0, -1);
+    be_big(7, ann2);
+    ok(uti_big_seat() == UTI_SEAT_O && uti_big_seat_by() == UTI_BY_RECORD, "big: next time the record seats her");
+
+    /* refusals cross the bridge */
+    ok(uti_big_read(small, sent.cells) == -3, "big: a 9 x 9 link is refused as a format");
+    ok(uti_big_read(sent.text, inv.cells) == -10, "big: a link with another board's picture is refused");
+    ok(uti_big_read(sent.text, sent.cells) == 0, "big: and with its own it reads");
+
+    /* THE 9 x 9 RESIDENT WAS NOT TOUCHED by any of it */
+    int after_n = uti_msg_text(small_after, sizeof small_after);
+    ok(after_n == small_n && (small_n <= 0 || !strcmp(small, small_after)) && uti_n_plies() == small_plies,
+       "big: the 9 x 9 resident's link and board are untouched");
+    printf("  big: %d moves across two phones; link %d chars\n", moves, (int)strlen(sent.text));
 }
 
 int main(void)
@@ -778,6 +924,8 @@ int main(void)
         UtiRulesLook L = uti_rules_look();
         ok(L.art == 62.f && L.body_pt == 15.f && L.ink == 0x1d1b16ffu, "the rules: the look crosses whole");
     }
+
+    big_smoke();
 
     printf(fails ? "\n%d FAILED\n" : "\nbridge ok\n", fails);
     return fails ? 1 : 0;
