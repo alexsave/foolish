@@ -17,24 +17,34 @@ The rules are stated once, in `uttt/c/src/uttt_big.h`, and `tests/uttt_big_test.
 
 ## How to use it (TestFlight build)
 
-1. Open any Ultimate bubble whose screen has the rules door (the rulebook button, bottom right): a game, somebody's invitation, or a game you are watching.
-   The waiting screen of your own unsent or unanswered invitation has no rules door, 9 x 9 or big.
-2. HOLD THE RULES DOOR FOR 4 SECONDS. A haptic fires (success) and a "243" badge appears in the bottom left corner of the drawer: the mode is on.
-3. Open Ultimate from the + menu. The invitation it stages is a 243 x 243 game; every bubble of that chain is a 243 x 243 game, and a rematch (Again) of a big game is a big game.
+1. Open any Ultimate screen that shows a grid: the "New game?" screen of your own invitation (the 9 x 9 "Waiting" lobby from the + menu, or a sent one nobody has answered), a game in progress, a finished game, somebody else's invitation, a game you are watching, or any 243 screen.
+2. HOLD THE GRID STILL FOR 4 SECONDS, anywhere on the board, on a playable cell or not. A haptic fires (success) and a "243" badge appears in the bottom left corner of the drawer: the mode is on.
+3. If that screen was your own UNSENT invitation (it is in Messages' compose field), the invitation in the field is swapped at once for a 243 x 243 one (a white picture captioned "New game?"), and the screen becomes the big lobby: the same words over the empty big board at the fit. On any other screen nothing else changes; open Ultimate from the + menu and the invitation it stages is a 243 x 243 game. Every bubble of that chain is a 243 x 243 game, and a rematch (Again) of a big game is a big game.
 4. On the board: pinch to zoom, pan when zoomed, double-tap to zoom in by three (and back out to the whole board from the deepest zoom), tap a cell to stage a move, tap another cell to change your mind. The yellow wash is where you must play; the last move is outlined; your staged move is outlined as a draft. Messages' X on the staged bubble takes the move back, as in the 9 x 9 game.
-5. Hold the rules door for 4 seconds again to leave the mode (a warning haptic, and the badge goes from a 9 x 9 screen). The mode changes only what CREATING a game does; it does not touch games already in the thread. A big game's screen keeps the badge whatever the mode, because it says what board this is.
+5. Hold any grid still for 4 seconds again to leave the mode (a warning haptic, and the badge goes from a 9 x 9 screen). On your own unsent invitation the field is swapped back to a 9 x 9 invitation and the 9 x 9 lobby comes back. Otherwise the mode changes only what CREATING a game does; it does not touch games already in the thread. A big game's screen keeps the badge whatever the mode, because it says what board this is.
+
+The rulebook is just the rules again: a tap opens them, and in a debug build a 1.5 s hold opens the diagnostics, exactly as on the branch base (`UtttRulebookButton` is byte for byte the base's).
 
 The mode persists in the extension's own defaults (`UserDefaults.standard`, key `uttt.big.mode`, as UtttSeats keeps its records) until it is toggled off, and survives an update of the app.
 It is never on where the big game is unavailable (`UtttBig.available`).
 
 ### The hold, exactly
 
-The rulebook has ONE long-press recogniser, at the shorter of the holds it has (`UtttRulebookButton.setLongHold`, UtttKit/UtttInk.swift):
+ONE recogniser class, `UtttModeHold` (UtttKit/UtttBigMode.swift), a `UILongPressGestureRecognizer` whose numbers are the kernel's: `minimumPressDuration` is `UTB_HOLD_MS` (4000 ms) and `allowableMovement` is `UTB_HOLD_SLOP_PT` (10 points), both in `uttt/c/src/uttt_big_msg.h`, read through `uti_big_hold_ms` / `uti_big_hold_slop` as `UtttBig.holdSeconds` / `UtttBig.holdSlop`.
 
-- TestFlight (Release with the feature): only the 4-second hold. It fires the moment 4 s is reached.
-- Debug: the diagnostics hold (1.5 s) is there too. The recogniser stays at 1.5 s and the 4 s clock starts when it recognises. Reaching 4 s toggles the mode and the diagnostics never open. Letting go between 1.5 s and 4 s opens the diagnostics, on the release instead of at 1.5 s.
-- A tap opens the rules as always, and the release that ends any hold is swallowed (the `holdFired` latch), so a hold never also opens the rules.
-- Without the feature compiled in, or where it is unavailable, no long hold is added and the door is exactly the 9 x 9 one.
+- It fires once, the moment 4 s is reached.
+- It takes nothing from the board's own gestures: `cancelsTouchesInView`, `delaysTouchesBegan` and `delaysTouchesEnded` are all false, and nothing `require(toFail:)`s it. A tap stages a move exactly as before, with no added delay.
+- A tap and a double tap lift long before 4 s; a pan or a drag moves past the 10 points; a pinch is two fingers. Each makes the recogniser fail on its own, so none of them ever toggles. A hold that drifts past the slop or lets go early does nothing.
+- When it does fire, a tap still waiting on the same touch fails, so the hold never also plays the cell under it.
+- On the 9 x 9 board (`UtttBoardView.setModeHold`) it sits beside the board's one tap recogniser. The waiting lobby's board takes no touches; `setModeHold` turns them on, which is safe because that board's `onTap` is nil.
+- On the 243 board (`UtttBigBoardView.setModeHold`) it sits on the scroll view's zooming content beside the taps, so it sees the touch before the scroll view's pan takes it, and it recognises alongside the pan and the pinch, which it never holds up.
+- Each screen with a grid forwards `setGridHold` to its board (UtttLobbyScreen only in its `.waiting` stance; UtttGameScreen; UtttWatchScreen; UtttBigGameScreen; UtttBigLobby). The extension calls it in one place, `show(_:)`, and only where `UtttBig.available`.
+- Without the feature compiled in, no board has any gesture beyond the 9 x 9's tap: `setModeHold`, `setGridHold` and `UtttModeHold` are all under `UTTT_BIG_BOARD`.
+
+### The invitation in the field
+
+The toggle swaps the draft only when the screen up is the waiting lobby (9 x 9 or big) AND an invitation of no plies is in the field (`staged` set and `draftURL` set): turning the mode on calls `start`, which reads the mode, opens a big invitation (`UtttBig.openInvitation`) and stages it with its picture (`stageBig`); turning it off opens and stages a 9 x 9 one (`Uttt.openInvitation`, `stage`). The new bubble replaces the old one in the field, and the screen re-presents to match.
+A SENT invitation has nothing in the field (`draftURL` is cleared on the send), so the hold only toggles the mode.
 
 ### The badge
 
@@ -75,9 +85,9 @@ PLUS a runtime check, so a leaked condition still cannot expose the feature: `Ut
 
 ## Where it lives in the app
 
-- `uttt/ios/UtttKit/UtttBigScreens.swift`: `UtttBigModel` (the UtttModel analogue), `UtttBigGameScreen` (a 64-point header with "you are" and the kernel's headline, the board below, the rules door and Again at the bottom; it opens focused on the region when that is a 27 x 27 block or smaller, and keeps the zoom when the position changes), `UtttBigLobby` (the waiting words, no board). Every number is in `UtttBigLayout`.
+- `uttt/ios/UtttKit/UtttBigScreens.swift`: `UtttBigModel` (the UtttModel analogue), `UtttBigGameScreen` (a 64-point header with "you are" and the kernel's headline, the board below, the rules door and Again at the bottom; it opens focused on the region when that is a 27 x 27 block or smaller, and keeps the zoom when the position changes), `UtttBigLobby` (the waiting words over the empty big board at the fit, the grid the mode's hold is on). Every number is in `UtttBigLayout`.
 - `uttt/ios/UtttKit/UtttBigBubble.swift`: the picture on and off a bubble; every read logs its risky count and smallest margin (`big-read`).
-- `uttt/ios/UtttKit/UtttBigMode.swift`: the mode and the badge.
+- `uttt/ios/UtttKit/UtttBigMode.swift`: the mode, its door (`UtttModeHold`) and the badge.
 - `uttt/ios/UtttMessages/MessagesViewController.swift`, its "the 243 board" section and the `#if UTTT_BIG_BOARD` lines that reach it: a big link is routed to the big path where `UtttBig.available`; the board of a bubble this device staged or sent comes from memory (the newest four), any other from the message's picture; `current`, `newest`, `markSent` and `sessionFor` ask the big kernel when either link is big (a big and a 9 x 9 are different games, the tapped one wins).
 - DEBUG only: `dev.bigzoom` (a number, or `max`) opens the next big board at that zoom centred on the region, so the rig can tap a cell without a pinch.
 
@@ -88,9 +98,9 @@ PLUS a runtime check, so a leaked condition still cannot expose the feature: `Ut
 - The picture chain (`make big-chain`, ImageIO q0.50 then q0.89, both 4:2:0): one random game of 40,711 plies, EVERY ply, at 3 px a cell: 40,712 positions, 0 wrong, 0 refused, worst margin 25 of 64, 0 risky reads, JPEGs 255 KB then 460 KB on average, 991 s. At 1 px a cell (the kit's board243) 21,330 of the positions were refused (none misread), so the bubble is robust243 and the kit's own tests now hold a sparse board (`testSparseBoardNeedsThreePixelsACell`: 29 of 72 sparse boards refused at 1 px, all read at 3 px with a worst margin of 37).
 - `make run` 30.7 s, `make asan` 82 s, `make ios-smoke` "bridge ok", `cd foolish && npm run -s test:validate` 150 of 150.
 - The archives (`uttt/ios/Tools/ship.sh --build 14 --no-upload`, and the same with `--store`): both export and pass `release_strings.sh`. The TestFlight ipa is 2,227,149 bytes and its UtttKit carries 35 `uti_big` and 12 `bd_` symbols, 63 `UtttBig` and 15 `BubbleData` strings; the App Store ipa is 2,109,638 bytes and its UtttKit carries 0 of each (and 102 `uti_` symbols against 137).
-- The 9 x 9 game, pixel for pixel: the same seeded game (`devgame 6`) on the branch base build and on this build, same simulator, frames 8 s after opening: below Messages' own compose chrome 217 of the sheet's pixels differ by at most 1 of 255 in one channel (two frames of the base build alone differ in 83 there); the board, the words and the doors are identical. The 9 x 9 kernel files, UtttBubble.swift, UtttWire.swift, UtttBoardView.swift, UtttModel.swift and UtttKernel.swift are untouched (`git diff 1bccc75e`).
+- The 9 x 9 game, pixel for pixel: the same seeded game (`devgame 6`) on the branch base build and on this build, same simulator, frames 8 s after opening: below Messages' own compose chrome 217 of the sheet's pixels differ by at most 1 of 255 in one channel (two frames of the base build alone differ in 83 there); the board, the words and the doors are identical. The 9 x 9 kernel files, UtttBubble.swift, UtttWire.swift, UtttModel.swift and UtttKernel.swift are untouched, and UtttInk.swift (the rulebook) is byte for byte the base's; UtttBoardView.swift, UtttGameScreen.swift and UtttLobbyScreen.swift differ from the base by one `#if UTTT_BIG_BOARD` block each, the grid hold (`git diff 1bccc75e`).
 - The board at three zooms (preview app and the extension): fully out, levels 1 to 3 solid and level 4 faint, won blocks tinted with a big mark at the level they were won, the target outlined in the highlighter; mid (27 x 27 cells across), levels 2 to 4 solid and the cells faint; fully in, 36 pt cells with all five levels.
-- Through idb, a hold of 5 s toggles the mode; 4.3 s through idb did not (the recogniser's 4 s is measured from the simulated touch, which idb delivers late). A finger needs 4 s.
+- Through idb, a hold of 5 s toggles the mode; 4.3 s through idb did not (the recogniser's 4 s is measured from the simulated touch, which idb delivers late). A finger needs 4 s; XCUITest's `press(forDuration: 4.6)` fires it.
 
 ## How it was verified
 
@@ -104,6 +114,25 @@ On the rig (`foolish/ios/Tools/rig/rig.sh` with `uttt/ios/Tools/rig.env`, an iPh
 6. A 4.2 s hold on the big game's rules door: `big-mode off`; the + menu then staged the 9 x 9 invitation with no badge.
 7. Messages' X on a staged big invitation: `cancel the draft`, `dismiss the big invitation draft was cancelled`.
 
+Steps 1 and 6 were run with the first door, a 4 s hold on the rulebook, which the grid hold replaced the same day.
+
+THE GRID HOLD, on the same rig, a fresh iOS 27 simulator, every hold `idb ui tap --duration 5.0` on the grid unless it says otherwise (screenshots in ~/Downloads/foolish-shots, g01 to g19):
+
+1. The + menu with the mode off: the 9 x 9 "Waiting" lobby, its empty board, the 9 x 9 invitation ("New game?") in the field.
+2. Hold on that board: `big-mode on`, `my unsent invitation, staged again as 243`, `start big`, `show UtttBigLobby`. The field held the 243 invitation (a white picture, "New game?"), the drawer the big lobby ("Waiting / Nobody has taken it yet" over the empty big board at the fit) and the badge.
+3. Hold on the big board: `big-mode off`, `staged again as 9 x 9`, the 9 x 9 invitation back in the field and the 9 x 9 lobby back, no badge. Held again three times, 15 to 6 s apart: on, off, on, the field and the lobby following every time.
+4. Sent, `dev.picker` on, the bubble tapped, "took it up": `big-read 59049 cells, risky 0, min margin 46`, the big game screen, "Your move", you are X.
+5. A 3 s hold on that grid: nothing - no log line, the same screen, no move.
+6. A quick tap on a cell: `big played 29527`, staged at once: the bubble a dot on white captioned "O to play", the board "Waiting on O" with the draft outlined.
+7. A hold on that game's grid, on the drafted cell: `big-mode off` and nothing else; the big screen's own badge stayed, the staged move and the field untouched.
+8. A seeded 9 x 9 game (`seat a`, `devgame 6`, `open`): a hold on its grid, `big-mode on` and the badge on the 9 x 9 game. Reopened as X (`seat b`), a quick tap on a legal square of the washed block staged the 9 x 9 move at once ("O to play", the X in the bubble and on the board).
+
+The big lobby first showed its board view's flat paper as a band across the sheet's textured paper (g02): the board view and its scroll view are now clear around the board, and the lobby's board is just its square (g18, g19: one paper, edge to edge).
+
+The preview's UI tests (UtttPreviewUITests, iOS 27 simulator), all four green: `testGridHoldTogglesOnlyAFourSecondStill` on the 243 board - a still 4.6 s press fires the door once and taps nothing, a 3.0 s press does not fire, a press that drags 40 points and stays down to 4.6 s does not fire, a tap names its cell, a double tap zooms, a pinch zooms, and none of the last five fires; `testGridHoldOnTheNineByNine` on the 9 x 9 game screen - a 4.6 s press on a legal square fires and plays nothing, a tap on it plays it. Mutations, each red at its own assertion and restored from a copy: `minimumPressDuration` 1 s (red at "a 3 s hold fired the door"), `allowableMovement` 10,000 (red at "a hold that drifted 40 points fired the door"), and `UtttBoardView.setModeHold` installing nothing (red at "did not fire: hold fired 0").
+
+The kernel's numbers: `make ios-smoke` asserts 4000 ms and 10 points; `UTB_HOLD_MS` 1000 and `UTB_HOLD_SLOP_PT` 40 each turned it red (after `build/ios_smoke` was made to depend on the headers: before that the first mutation ran the stale binary, green).
+
 Memory (`mem`, physical footprint / peak, MB): staging the invitation 21.7 / 22.2 before the picture and 23.8 / 25.8 after it, 25.9 / 26.6 a second after the insert; staging a move from the expanded drawer 35.6 / 35.9 before and 37.7 / 39.7 after, 48.6 peak at the insert, 31.7 a second later; reading a picture 23.4 -> 24.5, peak 29.2.
 The first read of a sent picture took 2.2 s on the main thread (84.2 s -> 86.4 s in the log); every later read took 40 to 110 ms. Not profiled yet.
 
@@ -112,5 +141,6 @@ Mutation checks on the rig, each watched go red and then restored:
 - The router's `isBigText` made false: the + menu's big invitation showed "Can't read that".
 
 Builds: Debug UtttMessagesApp and UtttPreview with no warnings. Release for the simulator, `xcrun nm` / `strings` of UtttKit: without the feature `uti_big` 0, `bd_` 0, BubbleData 0, UtttBig 0; with `UTTT_TESTFLIGHT_CONDITIONS='$(UTTT_BIG_BOARD_CONDITION)'` `uti_big` 35, `bd_` 12, BubbleData 171, UtttBig 146. `shared/tools/release_strings.sh` is clean on both.
+With the grid hold: without the feature UtttKit has 0 `uti_big`, `UtttBig`, `UtttModeHold` and `setModeHold` symbols and 0 `uti_big`, `UtttBig`, `setModeHold` and `setGridHold` strings, and the extension 0 `setGridHold`; with it `uti_big` 37 symbols (the two hold numbers added), `UtttModeHold` 11, `setModeHold` 2, and 146 `UtttBig` strings. `release_strings.sh` clean on both.
 
-NOT proven: a real pinch (idb has none; the preview app's UI test pinches the board view), a second device, a real send between two phones (the simulator's thread is one participant), Again on a finished big game, and the re-staging of an unsent invitation when the mode is toggled (no screen of an unsent invitation has a rules door).
+NOT proven: a real pinch (idb has none; the preview app's UI test pinches the board view), a second device, a real send between two phones (the simulator's thread is one participant), Again on a finished big game, the grid hold under a real finger on a phone (only idb's simulated 5 s touch and XCUITest's press), a hold on a watched game's grid and on a SENT, unanswered invitation's lobby (each is the same `setGridHold` call; the sent case only toggles because `draftURL` is cleared on the send), and the haptic (a simulator has none).
