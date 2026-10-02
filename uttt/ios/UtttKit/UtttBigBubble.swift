@@ -1,5 +1,4 @@
 #if UTTT_BIG_BOARD
-import BubbleDataKit
 import Messages
 
 /// THE BIG GAME'S BUBBLE PICTURE (docs/BIG_BOARD.md): the 59,049 cells of the
@@ -10,8 +9,9 @@ import Messages
 /// one: the reading of an almost-empty board lost cells, measured in the
 /// kit's tests (BubbleData.swift's comment on `robust243`).
 ///
-/// This is the one place the kit is named, so UtttKit is the one binary that
-/// links it; the extension stages and reads through these two calls.
+/// The kit's two sources are compiled into UtttKit, and only when the feature
+/// is (project.yml); this is the one place they are called from, and the
+/// extension stages and reads through these two calls.
 public enum UtttBigBubble {
     /// Put `cells` (UtttBig.cells) on `layout` as its picture.
     public static func put(cells: [UInt8], on layout: MSMessageTemplateLayout) throws {

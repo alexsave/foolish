@@ -38,7 +38,7 @@ settings:
     # Swift module compiling MotionRuler.swift must find the C module it imports.
     # CMsgStage (shared/c/msg_stage), the insert-staging decisions, the same way
     # for MessagesKit/InsertStaging.swift.
-    SWIFT_INCLUDE_PATHS: $(inherited) $(SRCROOT)/../../shared/c/motion_ruler $(SRCROOT)/../../shared/c/msg_stage
+    SWIFT_INCLUDE_PATHS: $(inherited) $(SRCROOT)/../../shared/c/motion_ruler $(SRCROOT)/../../shared/c/msg_stage $(SRCROOT)/CBubbleData
     # A WARNING THAT SHIPS IS A DEFECT. Swift warns when an optional is
     # interpolated into a string, and that warning scrolled past in a build
     # log while the characters `Optional("X")` went out in a caption to
@@ -53,6 +53,17 @@ settings:
     # command line to $(UTTT_BIG_BOARD_CONDITION) (Tools/ship.env,
     # SHIP_ARCHIVE_SETTINGS), which is the only way Release gets the feature.
     UTTT_TESTFLIGHT_CONDITIONS: ""
+    # THE PICTURE CODEC GOES WITH THE CONDITION. UtttKit compiles the kit's
+    # two sources (BubbleData.swift, bubble_data.c) itself rather than linking
+    # the SwiftPM package: Xcode links a local package's targets as prelinked
+    # objects whatever the product type, and the linker then cannot drop a
+    # byte of them - a Release build without the feature carried the whole
+    # kit (measured: 12 bd_ and 187 BubbleDataKit symbols). Sources can be
+    # excluded per configuration: UTTT_BIG_WORD is the feature's word in this
+    # configuration, and the excluded list is looked up by it - the files
+    # when the word is empty, nothing when it is UTTT_BIG_BOARD.
+    UTTT_BIG_EXCLUDED_: BubbleData.swift bubble_data.c
+    UTTT_BIG_EXCLUDED_UTTT_BIG_BOARD: ""
   configs:
     Debug:
       # DEBUG SPELLED OUT: xcodegen's debug preset sets this same key at this
@@ -60,16 +71,10 @@ settings:
       # inheriting from it - `$(inherited)` reaches only the SDK default, and
       # the first generate dropped DEBUG (checked with -showBuildSettings).
       SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) DEBUG $(UTTT_BIG_BOARD_CONDITION)
+      UTTT_BIG_WORD: $(UTTT_BIG_BOARD_CONDITION)
     Release:
       SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) $(UTTT_TESTFLIGHT_CONDITIONS)
-
-# THE 243 BOARD's picture codec (docs/BIG_BOARD.md), a local SwiftPM package.
-# Linked into UtttKit ONLY: the extension imports UtttKit and never the kit,
-# so the kit's code is in one binary once. A build without the condition
-# names none of it and the linker keeps none of it.
-packages:
-  BubbleDataKit:
-    path: ../../shared/swift/BubbleDataKit
+      UTTT_BIG_WORD: $(UTTT_TESTFLIGHT_CONDITIONS)
 
 configs:
   Debug: debug
@@ -221,12 +226,17 @@ targets:
       # The auto-collapse on Core Animation layers, ported from the sister
       # product's CollapseLayer; the curve and every number are the kernel's.
       - path: ../../shared/swift/MessagesKit/CollapseSlide.swift
+      # THE 243 BOARD's picture codec (docs/BIG_BOARD.md), in UtttKit only:
+      # the extension imports UtttKit and never the codec. Compiled only when
+      # the feature is (UTTT_BIG_EXCLUDED_ above); CBubbleData's module map is
+      # CBubbleData/module.modulemap.
+      - path: ../../shared/swift/BubbleDataKit/Sources/BubbleDataKit/BubbleData.swift
+      - path: ../../shared/swift/BubbleDataKit/Sources/CBubbleData/bubble_data.c
     dependencies:
       # STATIC (embed:false), so the linker pulls it in per object and nothing
       # unreferenced ships.
       - framework: vendor/Uttt.xcframework
         embed: false
-      - package: BubbleDataKit
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: cards.uttt.kit
@@ -235,6 +245,7 @@ targets:
         # BUILT_PRODUCTS_DIR/include by the xcframework.
         HEADER_SEARCH_PATHS: $(inherited) $(BUILT_PRODUCTS_DIR)/include
         TARGETED_DEVICE_FAMILY: "1"
+        EXCLUDED_SOURCE_FILE_NAMES: $(UTTT_BIG_EXCLUDED_$(UTTT_BIG_WORD))
 
 schemes:
   UtttPreview:

@@ -205,7 +205,7 @@ public final class UtttBigGameScreen: UtttSheetView {
             let w = z.isFinite ? 1 / (3 * z) : 1 / CGFloat(3 * UtttBig.side)
             board.focus(on: CGRect(x: rect.midX - w / 2, y: rect.midY - w / 2, width: w, height: w),
                         animated: false)
-            UtttLog.note("big", "opened at dev.bigzoom \(z), zoom \(board.zoomScale)")
+            UtttLog.note("big", "opened at a set zoom \(z), zoom \(board.zoomScale)")
             return
         }
         if region >= 0, UtttBig.nodeLevel(region) >= UtttBigLayout.focusLevel {
