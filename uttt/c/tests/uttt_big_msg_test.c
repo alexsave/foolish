@@ -72,7 +72,6 @@
 #include "../src/uttt_say.h"
 #include "../../../shared/c/b32.h"
 #include "../../../shared/c/sha256.h"
-#include "../../../shared/c/wire_check/wire_check.h"
 #include "../../../shared/swift/BubbleDataKit/Sources/CBubbleData/include/bubble_data.h"
 #include <stdio.h>
 #include <stdlib.h>

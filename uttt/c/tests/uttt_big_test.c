@@ -582,10 +582,13 @@ static void test_geometry(void)
         int L = utb_node_level(&G, id), p = utb_node_prefix(&G, id);
         utb_node_rect(&G, utb_node_id(&G, L - 1, p / 9), c);
         utb_node_rect(&G, id, r);
+        /* digit d is column d % 3, row d / 3 - integer arithmetic on purpose,
+         * then floats */
         int d = p % 9;
+        float col = (float)(d % 3), row = (float)(d / 3);
         if (fabsf(r[2] - c[2] / 3) > 1e-6f || fabsf(r[3] - c[3] / 3) > 1e-6f) third = 0;
-        if (fabsf(r[0] - (c[0] + (d % 3) * c[2] / 3)) > 1e-6f) third = 0;
-        if (fabsf(r[1] - (c[1] + (d / 3) * c[3] / 3)) > 1e-6f) third = 0;
+        if (fabsf(r[0] - (c[0] + col * c[2] / 3)) > 1e-6f) third = 0;
+        if (fabsf(r[1] - (c[1] + row * c[3] / 3)) > 1e-6f) third = 0;
     }
     OK(third, "geometry: a child's rect is its parent's third, row-major");
     double area = 0;
