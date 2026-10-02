@@ -1294,6 +1294,11 @@ export interface AnimPlanStepSnap {
     deck: number; discard: number; hand: number[];
     inFlightFromDeck: number; inFlightToFlipped: number;
     reveals: bigint;
+    /** The flipped trump this step deals out, by its real identity for every
+     *  viewer, or null; it is the last of the step's cards. */
+    trumpOut: Card | null;
+    /** Where that trump leaves from (ANIM_LOC_FLIPPED), ANIM_LOC_NONE without one. */
+    trumpFrom: number;
 }
 
 /** The plan (anim_plan.h AnimPlan). */
@@ -1308,6 +1313,8 @@ export interface AnimFrameSnap {
     deck: number; discard: number; hand: number[]; nPlayers: number; flipped: Card | null;
     inFlightFromDeck: number; inFlightToFlipped: number;
     veiled: bigint;
+    /** The trump in the air: the step in flight's `trumpOut`, or null. */
+    trumpFlight: Card | null;
 }
 
 /** One event as the beat rules see it (anim_plan.h AnimBeatEvent). */
@@ -1386,6 +1393,7 @@ export function animPlanAt(nowMs: number): AnimFrameSnap {
         inFlightFromDeck: A.AnimFrame_get_in_flight_from_deck(m, at),
         inFlightToFlipped: A.AnimFrame_get_in_flight_to_flipped(m, at),
         veiled: A.AnimFrame_get_veiled(m, at),
+        trumpFlight: readAnimCard(m, A.AnimFrame_trump_flight_at(at)),
     };
 }
 
@@ -1474,6 +1482,8 @@ function readPlan(ex: BotsExports): AnimPlanSnap {
             inFlightFromDeck: A.AnimPlanStep_get_in_flight_from_deck(m, s),
             inFlightToFlipped: A.AnimPlanStep_get_in_flight_to_flipped(m, s),
             reveals: A.AnimPlanStep_get_reveals(m, s),
+            trumpOut: readAnimCard(m, A.AnimPlanStep_trump_out_at(s)),
+            trumpFrom: A.AnimPlanStep_get_trump_from(m, s),
         });
     }
     const nVeil = A.AnimPlan_get_n_veil(m, at);
