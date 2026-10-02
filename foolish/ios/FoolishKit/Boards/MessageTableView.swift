@@ -1220,7 +1220,8 @@ public struct MessageTableView: View {
                 // held, which is 1.1(55)'s missing flipped card.
                 let trump = shownTrumpSlot(view)
                 FDeckWell(deckCount: shownDeckCount(view), flipped: trump.card,
-                          hasFlipped: trump.exists, trumpSuit: view.trumpSuit)
+                          hasFlipped: trump.exists, trumpSuit: view.trumpSuit,
+                          markNudge: TrumpNudge.live)
                     .collapseLayer(fraction: 0, relaying: [DeckFrameKey.self])
                     // FDeckWell now anchors its own content top-leading with a
                     // small symmetric inset (note 14), so no per-call-site
