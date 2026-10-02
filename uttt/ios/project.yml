@@ -46,6 +46,15 @@ settings:
     SWIFT_TREAT_WARNINGS_AS_ERRORS: "YES"
     CODE_SIGN_STYLE: Automatic
     DEVELOPMENT_TEAM: 8N2Z544SB4
+    # THE 243 BOARD (docs/BIG_BOARD.md): this word is the one switch. Delete it and every build compiles the feature out.
+    UTTT_BIG_BOARD_CONDITION: UTTT_BIG_BOARD
+  configs:
+    Debug:
+      # DEBUG SPELLED OUT: xcodegen's debug preset sets this same key at this
+      # same (project) level, and a value here replaces it rather than
+      # inheriting from it - `$(inherited)` reaches only the SDK default, and
+      # the first generate dropped DEBUG (checked with -showBuildSettings).
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) DEBUG $(UTTT_BIG_BOARD_CONDITION)
 
 configs:
   Debug: debug
@@ -155,6 +164,22 @@ targets:
         INFOPLIST_KEY_UILaunchScreen_Generation: "YES"
         TARGETED_DEVICE_FAMILY: "1"
 
+  # The harness driven by a finger: the 243 board's pinch, pan, double tap
+  # and tap on a simulator (UtttPreviewUITests/BigBoardUITests.swift), the
+  # only gesture idb cannot send being the pinch.
+  UtttPreviewUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: UtttPreviewUITests
+    dependencies:
+      - target: UtttPreview
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cards.uttt.preview.uitests
+        GENERATE_INFOPLIST_FILE: "YES"
+        TARGETED_DEVICE_FAMILY: "1"
+
   UtttKit:
     type: framework
     platform: iOS
@@ -202,6 +227,10 @@ schemes:
         UtttPreview: all
     run:
       config: Debug
+    test:
+      config: Debug
+      targets:
+        - UtttPreviewUITests
   UtttMessagesApp:
     build:
       targets:
