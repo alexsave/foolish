@@ -1731,8 +1731,16 @@ static int plan_wire_check(void) {
     // Each step lands on its OWN board, and the last one is the final board.
     if (s0->deck != 1 || s0->hand[0] != 3 || s0->hand[1] != 9) { printf("FAIL plan step 0 board\n"); return 1; }
     if (s1->deck != 0 || s1->hand[0] != 5 || s1->hand[1] != 9) { printf("FAIL plan step 1 board\n"); return 1; }
-    if (s0->in_flight_from_deck != 0 || s1->in_flight_from_deck != 2 || s1->in_flight_to_flipped != 0) {
-        printf("FAIL plan in-flight from deck\n"); return 1;
+    // The refill draws the stock's last card AND the trump (card 33) from under
+    // it: the plan names the trump, from its slot, and only the stock card
+    // leaves the pile (anim_plan.h AnimPlanStep.trump_out).
+    if (s0->in_flight_from_deck != 0 || s1->in_flight_from_deck != 1 || s1->in_flight_to_flipped != 0) {
+        printf("FAIL plan in-flight from deck %d/%d\n", s0->in_flight_from_deck, s1->in_flight_from_deck); return 1;
+    }
+    if (!card_is_none(s0->trump_out) || s0->trump_from != ANIM_LOC_NONE
+        || card_to_id(s1->trump_out) != 33 || s1->trump_from != ANIM_LOC_FLIPPED) {
+        printf("FAIL plan trump out %d/%d from %d/%d\n", card_to_id(s0->trump_out), card_to_id(s1->trump_out),
+               s0->trump_from, s1->trump_from); return 1;
     }
     // Timing: ANIMATION_TIME each, staggered by TIME+GAP, and the wall time.
     if (s0->duration_ms != 500 || s1->start_ms != 525 || pl->total_ms != 1025) {
