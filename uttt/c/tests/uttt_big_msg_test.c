@@ -351,8 +351,11 @@ static void test_refusals(void)
         int from = -1, to = -1;
         for (int i = 0; i < UTB_CELLS; i++) if (CELLS[i] == UTTT_O && i != M.game.last) { from = i; break; }
         for (int i = UTB_CELLS - 1; i >= 0; i--) if (!CELLS[i]) { to = i; break; }
-        CELLS[from] = 0;
-        CELLS[to] = UTTT_O;
+        OK(from >= 0 && to >= 0, "decode fixture: an O mark to move and an empty square to move it to");
+        if (from >= 0 && to >= 0) {
+            CELLS[from] = 0;
+            CELLS[to] = UTTT_O;
+        }
         OK(from >= 0 && utb_adopt(&T3.game, UTB_DEPTH, CELLS, M.game.last) && T3.game.n_plies == M.game.n_plies,
            "decode fixture: the moved mark is a board adopt accepts");
     }
