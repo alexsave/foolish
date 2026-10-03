@@ -134,6 +134,7 @@ test('the control: setBots goes to the kernel, is clamped there, and the next mo
     const wideAt2 = c.capNode;
     a.setBots(8, arena.UA_BUDGET_SMALL);
     assert.ok(a.config().capNode < wideAt2, 'eight plies search narrower than two on one budget');
+    assert.equal(arena.UA_PLIES_MAX, 32, 'the stepper goes to 32');
     a.setBots(99, -5);
     c = a.config();
     assert.equal(c.plies, arena.UA_PLIES_MAX);
@@ -142,39 +143,64 @@ test('the control: setBots goes to the kernel, is clamped there, and the next mo
     assert.equal(a.config().plies, arena.UA_PLIES_MIN);
     assert.equal(a.config().budget, arena.UA_BUDGET_HUGE);
 
-    // the next move is searched as set, and the game goes on through changes
+    // the next move is searched as set
     a.setBots(3, arena.UA_BUDGET_LARGE);
     assert.equal(a.step(1), 1);
     assert.equal(a.status().x.searched, 3, 'X searched three plies');
-    a.setBots(1, arena.UA_BUDGET_LARGE);
     assert.equal(a.step(1), 1);
-    assert.equal(a.status().o.searched, 1, 'O, after the change, one');
-    assert.equal(a.status().plies, 2, 'the game was not restarted');
-    a.setBots(5, arena.UA_BUDGET_MED);
+    assert.equal(a.status().o.searched, 3, 'and O');
+    // the deepest setting is taken, and a move comes back on the smallest
+    // budget: the iterations it cannot finish are dropped
+    a.setBots(arena.UA_PLIES_MAX, arena.UA_BUDGET_SMALL);
+    assert.equal(a.config().plies, arena.UA_PLIES_MAX);
     assert.equal(a.step(1), 1);
-    assert.ok(a.status().x.searched >= 1 && a.status().x.searched <= 5);
-    assert.ok(a.status().x.work > 0);
+    const x = a.status().x;
+    assert.ok(x.searched >= 1 && x.searched < arena.UA_PLIES_MAX, `searched ${x.searched}`);
+    assert.ok(x.work > 0);
 });
 
-test('a game is its seed and its settings: the same changes at the same moves play the same game', async () => {
-    const play = async (schedule) => {
-        const a = await arena.instantiateArena(wasm);
-        a.start('00000000feed0001', 3);
-        const moves = [];
-        while (!a.status().over) {
-            const at = schedule[a.status().plies];
-            if (at) a.setBots(at[0], at[1]);
-            assert.equal(a.step(1), 1);
-            moves.push(a.status().last);
-        }
-        return moves;
-    };
-    const s1 = { 0: [1, 4000], 30: [4, 30000], 90: [2, 4000] };
-    const one = await play(s1), two = await play(s1);
-    assert.deepEqual(two, one);
-    const other = await play({ 0: [1, 4000], 30: [3, 30000], 90: [2, 4000] });
-    assert.notDeepEqual(other, one, 'another N from move 30 plays another game');
-    assert.deepEqual(other.slice(0, 30), one.slice(0, 30), '...but the same first 30 moves');
+/** A whole depth-3 game from the kernel's own loop: the moves, and how it ended. */
+const playOut = (a) => {
+    const moves = [];
+    while (!a.status().over) { assert.equal(a.step(1), 1); moves.push(a.status().last); }
+    return { moves, over: a.status().over };
+};
+
+test('a change of settings starts the game again: move 0, the same seed, the new settings', async () => {
+    const seed = '00000000feed0001';
+    // the reference: a fresh game set to 2 plies on Small before its first move
+    const ref = await arena.instantiateArena(wasm);
+    ref.start(seed, 3);
+    ref.setBots(2, arena.UA_BUDGET_SMALL);
+    const two = playOut(ref);
+
+    // a game 40 moves in at the defaults, then the control
+    const a = await arena.instantiateArena(wasm);
+    a.start(seed, 3);
+    assert.equal(a.step(40), 40);
+    a.setBots(2, arena.UA_BUDGET_SMALL);
+    const s = a.status();
+    assert.equal(s.plies, 0, 'back to move 0');
+    assert.equal(s.last, -1, 'no last move');
+    assert.equal(s.turn, arena.UA_X, 'X to play');
+    assert.equal(s.over, 0);
+    assert.equal(a.grid().reduce((n, c) => n + (c ? 1 : 0), 0), 0, 'the picture is empty');
+    assert.equal(a.nodes().reduce((n, c) => n + (c ? 1 : 0), 0), 0, 'every node open');
+    assert.deepEqual([a.config().plies, a.config().budget], [2, arena.UA_BUDGET_SMALL]);
+    assert.deepEqual(playOut(a), two, 'the same seed and settings play the same game, whenever they are set');
+
+    // rapid changes land on the last one: the game is the seed and THOSE
+    // settings, with nothing of the ones passed through
+    a.setBots(5, arena.UA_BUDGET_LARGE);
+    assert.equal(a.step(7), 7);
+    a.setBots(4, arena.UA_BUDGET_MED);
+    a.setBots(3, arena.UA_BUDGET_MED);
+    a.setBots(2, arena.UA_BUDGET_SMALL);
+    assert.deepEqual(playOut(a), two, 'three changes in a row, then the reference settings: the reference game');
+
+    // and other settings on the same seed play another game
+    a.setBots(1, arena.UA_BUDGET_SMALL);
+    assert.notDeepEqual(playOut(a).moves, two.moves, 'one ply plays another game');
 });
 
 test('the clock: a finished game is not timed again, and the rate is never divided by nothing', () => {
