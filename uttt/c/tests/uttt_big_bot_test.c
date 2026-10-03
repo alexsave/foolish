@@ -94,6 +94,12 @@ static void weights_rank(void)
               "plies %d: 9 x 9 %d > 3 x 3 %d > quiet %d", plies,
               utb_bot_value(&b, &g, nine, plies), utb_bot_value(&b, &g, three, plies), utb_bot_value(&b, &g, none, plies));
     }
+    /* fifty-nine open cells and room for three: the winners go first */
+    for (int s = 0; s < 8; s++) {
+        UtbBot b; utb_bot_init(&b, (uint64_t)s);
+        b.cap_root = 3;
+        CHECK(utb_bot_move(&b, &g) == nine, "seed %d, three candidates: the 9 x 9 is among them", s);
+    }
     UtbBot b; utb_bot_init(&b, 1);
     CHECK(utb_bot_value(&b, &g, nine, 2) == UTB_BOT_W3 + UTB_BOT_W9, "two plies: the reply wins nothing back");
     utb_play(&g, nine);
@@ -113,6 +119,11 @@ static void hands_over_27(void)
     won3(4, 0, 0, UTTT_O);
     won3(4, 0, 1, UTTT_O);
     cells[leaf4(4, 0, 2, 0)] = cells[leaf4(4, 0, 2, 1)] = UTTT_O;
+    /* ...and the third ply: X has two in a row in every 3 x 3 of the 9 x 9
+     * (0,3), so X's cell 3 sends O to (4,0,3), from where every O reply
+     * sends X back into (0,3) to win a 3 x 3: worth 1 at three plies and
+     * nothing at two. */
+    for (int j = 0; j < 9; j++) cells[leaf4(0, 3, j, 0)] = cells[leaf4(0, 3, j, 1)] = UTTT_X;
     int last = leaf4(8, 0, 4, 0);                   /* names (0,4,0) */
     cells[last] = UTTT_O;
     UtbGame g;
@@ -120,6 +131,9 @@ static void hands_over_27(void)
     CHECK(g.turn == UTTT_X, "X to move");
     CHECK(utb_region(&g) == utb_node_id(&g, 3, leaf4(0, 4, 0, 0) / 9), "sent into (0,4,0)");
 
+    CHECK(utb_bot_material(&g, UTTT_O) == 2 * (3 * UTB_BOT_W3 + UTB_BOT_W9) + 2 * UTB_BOT_W3,
+          "O holds two 9 x 9s and two more 3 x 3s: %d", utb_bot_material(&g, UTTT_O));
+    CHECK(utb_bot_material(&g, UTTT_X) == 0, "X holds nothing: %d", utb_bot_material(&g, UTTT_X));
     const int gift = leaf4(0, 4, 0, 2);
     const int big = UTB_BOT_W3 + UTB_BOT_W9 + UTB_BOT_W27;
     UtbBot b; utb_bot_init(&b, 3);
@@ -128,6 +142,10 @@ static void hands_over_27(void)
           "two plies: 1 - 91, not %d", utb_bot_value(&b, &g, gift, 2));
     for (int k = 3; k < 9; k++)
         CHECK(utb_bot_value(&b, &g, leaf4(0, 4, 0, k), 2) == 0, "a quiet move %d is worth nothing", k);
+    const int setup = leaf4(0, 4, 0, 3);
+    CHECK(utb_bot_value(&b, &g, setup, 3) == UTB_BOT_W3, "three plies: the set-up is worth 1, not %d", utb_bot_value(&b, &g, setup, 3));
+    CHECK(utb_bot_value(&b, &g, leaf4(0, 4, 0, 4), 3) == 0, "three plies: another quiet move is worth nothing");
+    CHECK(utb_bot_value(&b, &g, gift, 3) == UTB_BOT_W3 - big, "three plies: the gift is still 1 - 91");
 
     UtbGame h = g;
     utb_play(&h, gift);
@@ -140,9 +158,67 @@ static void hands_over_27(void)
             UtbBot two; utb_bot_init(&two, (uint64_t)s); two.plies = plies;
             int mv = utb_bot_move(&two, &g);
             CHECK(mv != gift && utb_legal_at(&g, mv), "seed %d plies %d: does not hand over the 27 x 27 (%d)", s, plies, mv);
-            CHECK(two.value <= 0 && two.value > UTB_BOT_W3 - big, "plies %d: value %d", plies, two.value);
+            if (plies == 2) CHECK(two.value == 0, "plies 2: value %d", two.value);
+            else CHECK(mv == setup && two.value == UTB_BOT_W3, "seed %d plies %d: the set-up (%d, value %d)", s, plies, mv, two.value);
         }
     }
+}
+
+/* TIES ARE THE DICE: five moves that each win a 3 x 3 for 1 and nothing
+ * else, and eight quiet moves of 0 - sixteen seeds pick many different
+ * winners at one ply, never a quiet move, and on an empty 3 x 3 many
+ * different quiet moves. */
+static void tie_break(void)
+{
+    TEST("tie_break");
+    memset(cells, 0, sizeof cells);
+    cells[leaf4(2, 2, 2, 0)] = cells[leaf4(2, 2, 2, 1)] = UTTT_X;
+    cells[leaf4(2, 2, 2, 3)] = cells[leaf4(2, 2, 2, 4)] = UTTT_X;
+    int last = leaf4(8, 2, 2, 2);                   /* names (2,2,2) */
+    cells[last] = UTTT_O;
+    UtbGame g;
+    CHECK(build(&g, last), "the position adopts");
+    unsigned seen = 0;
+    for (int s = 0; s < 16; s++) {
+        UtbBot b; utb_bot_init(&b, (uint64_t)s); b.plies = 1;
+        int mv = utb_bot_move(&b, &g);
+        CHECK(utb_bot_gain(&g, mv) == UTB_BOT_W3, "seed %d: played %d, which wins nothing", s, mv);
+        if (mv >= 0) seen |= 1u << (mv % 9);
+    }
+    int n = 0;
+    for (int k = 0; k < 9; k++) n += (seen >> k) & 1u;
+    CHECK(n >= 3, "sixteen seeds chose only %d different winners", n);
+
+    utb_init(&g, 4);
+    utb_play(&g, 0);                                /* O is sent to (0,0,0) */
+    seen = 0;
+    for (int s = 0; s < 16; s++) {
+        UtbBot b; utb_bot_init(&b, (uint64_t)s); b.plies = 1;
+        int mv = utb_bot_move(&b, &g);
+        if (mv >= 0) seen |= 1u << (mv % 9);
+    }
+    n = 0;
+    for (int k = 0; k < 9; k++) n += (seen >> k) & 1u;
+    CHECK(n >= 4, "sixteen seeds chose only %d different quiet moves", n);
+}
+
+/* A DRAW IS WORTH NOTHING: X's only move fills (3,3,3) without a line. */
+static void draw_is_nothing(void)
+{
+    TEST("draw_is_nothing");
+    memset(cells, 0, sizeof cells);
+    static const uint8_t fill[8] = { UTTT_X, UTTT_O, UTTT_X, UTTT_X, UTTT_O, UTTT_O, UTTT_O, UTTT_X };
+    for (int k = 0; k < 8; k++) cells[leaf4(3, 3, 3, k)] = fill[k];
+    int last = leaf4(8, 3, 3, 3);                   /* names (3,3,3) */
+    cells[last] = UTTT_O;
+    UtbGame g;
+    CHECK(build(&g, last), "the position adopts");
+    const int mv = leaf4(3, 3, 3, 8);
+    CHECK(utb_bot_gain(&g, mv) == 0, "drawing a 3 x 3 gains %d", utb_bot_gain(&g, mv));
+    UtbBot b; utb_bot_init(&b, 5); b.plies = 1;
+    CHECK(utb_bot_move(&b, &g) == mv && b.value == 0, "the only move, worth %d", b.value);
+    utb_play(&g, mv);
+    CHECK(utb_node(&g, utb_ancestor(&g, mv, 3)) == UTTT_DRAW, "and it is a draw");
 }
 
 /* ------------------------------------------------------------- games */
@@ -258,6 +334,8 @@ int main(int argc, char **argv)
     int games = argc > 1 ? atoi(argv[1]) : 40;
     weights_rank();
     hands_over_27();
+    tie_break();
+    draw_is_nothing();
     deterministic();
     beats_random(2, games, 2);
     beats_random(3, games, 3);
