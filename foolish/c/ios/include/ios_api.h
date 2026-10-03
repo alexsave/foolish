@@ -1200,6 +1200,10 @@ int fio_msg_lobby_offered(int my_seat, int joined, int capacity,
 int fio_msg_lobby_can_exit(int my_seat, int joined);
 int fio_msg_lobby_can_set_rules(int my_seat);
 int fio_msg_lobby_rules_changed(int have_baseline, int baseline, int current, int mine);
+// Is the newest bubble mine in a way that withholds Start: a rules change, or
+// my bubble on a REMATCH lobby (the creator's). `rematch_lobby` is the lobby's
+// carry, read off its header. See msg_wire.h msg_lobby_changer.
+int fio_msg_lobby_changer(int rules_changed, int mine, int rematch_lobby);
 
 // ONE BEAT, in milliseconds. The same ANIM_TIME_MS a card's flight takes, which
 // is the point: a lobby's beats and a board's beats keep one pulse, and a number

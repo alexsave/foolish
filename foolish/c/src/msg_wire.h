@@ -604,6 +604,8 @@ int msg_replay(const MsgEnvelope *e, Game *g);
 //
 //   0. a STARTED chain beats a pre-game one — phase >= MSG_PHASE_LIVE outranks
 //      WAITING/ACCEPT, always
+//  0F. a deal in PLAY beats a FINISHED deal of the same game — rule 0's other
+//      boundary, for a rematch (see below)
 //   1. higher round wins        — a closed bout is settled history
 //   2. else higher turn wins    — more accepted actions
 //   3. else more JOINS wins     — the fuller roster is strictly later history
@@ -639,6 +641,23 @@ int msg_replay(const MsgEnvelope *e, Game *g);
 // turn on purpose: a chain someone has actually played on must never be
 // clobbered by a stale wider Start sealed after the fact.
 //
+// RULE 0F, THE FINISHED BOUNDARY. A rematch is the same game_id dealt again
+// from a new seed (msg_rematch_lobby): New game on a finished table seals a
+// lobby naming the finished chain as its parent, in the same MSSession, and
+// nothing on the wire counts rematches. Rules 1..3 compare PROGRESS, and
+// progress is a fact about one deal: the rematch's first LIVE bubble is round 0
+// and the finished game it replaced is round 9, so rule 1 alone would keep
+// "Game over" on a device that sees the Start without having seen the lobby.
+// So, for two chains of the SAME game_id dealt from DIFFERENT seeds (both
+// non-zero), one LIVE and the other FINISHED, the LIVE one wins. A finished
+// deal is over; the only way the same game is dealt again is a rematch, so a
+// different deal still in play is the later one. It cannot misorder anything
+// within one deal (the seed is set at the lobby and repeated by every bubble),
+// and it decides nothing between two lobbies, two LIVE deals or two FINISHED
+// ones - those fall through to rules 1..3 and the digest as before. The
+// rematch LOBBY needs no help from it: it is the finished chain's direct child,
+// and rule 4 below already ranks it first.
+//
 // Rule 4 ranks ABOVE all of that: a chain's own DIRECT CHILD outranks it,
 // whatever the other fields say. Between a parent and its descendant the other
 // rules can lie about which came later, because `turn` counts ATOMS and the
@@ -658,7 +677,9 @@ int msg_replay(const MsgEnvelope *e, Game *g);
 // decides this exactly: the child names its parent's digest, the parent cannot
 // name its child's, and a child's phase, round and joins are always >= its
 // parent's, so ranking descent first can never misorder the rules it
-// overrules. Two SIBLINGS (same parent, neither an ancestor of the other) name
+// overrules. The ONE child whose phase is lower than its parent's is a REMATCH
+// LOBBY (WAITING, naming a FINISHED chain), and ranking descent first is
+// exactly what lets it win: rule 0 alone would keep the result card. Two SIBLINGS (same parent, neither an ancestor of the other) name
 // neither and fall through to rules 0..3 and the digest, which for a genuine
 // concurrency fork is the designed answer.
 //
@@ -669,7 +690,9 @@ int msg_replay(const MsgEnvelope *e, Game *g);
 // In C, not in each client: this decides which game every player sees, so a
 // phone and a browser disagreeing here forks the game. There is nothing to port.
 typedef struct {
-    uint8_t  phase;                        // MSG_PHASE_*; only "started or not" is compared
+    uint64_t game_id;                      // rule 0F: deals compare within one game only
+    uint8_t  seed[MSG_SEED_LEN];           // rule 0F: which deal of the game this is
+    uint8_t  phase;                        // MSG_PHASE_*; started or not, and rule 0F's LIVE/FINISHED
     uint8_t  round;
     uint16_t turn;
     uint8_t  n_joins;                      // rule 3: the fuller roster wins the turn-0 tie
@@ -1096,37 +1119,61 @@ int msg_rematch_carry(const MsgJoin *joins, int n, int fool_seat,
 
 // ---------- the rematch: the same game, dealt again --------------------------
 //
-// THE NEXT DEAL'S SEED, derived from the one before it:
+// Owner, on a finished game three people each tapped New game on: "Somehow a
+// finished game was able to be forked into 3 games. No this shouldn't be
+// possible. It should not start a new chain I think, it should collapse the
+// same game (yes, wiping out the history)." And on how: "can we do this whole
+// thing WITHOUT changing iMessage body format? ... just when someone hits a new
+// game, don't start a fresh chain! To randomize, just do some rng based on
+// timestamp of new game start. Then don't allow whoever creates a game to start
+// it, and we're all set. The seed is locked in."
 //
-//   SHA-256( "rematch" (7 ASCII bytes) || old seed (32) || game_id (u64 LE) )
+// So a rematch is THE SAME GAME: the same game_id, a lobby whose parent8 names
+// the finished chain, in the finished game's MSSession, sealed as an ordinary
+// format 5/6 lobby - nothing on the wire is new, and every shipped build reads
+// it. Rule P needs nothing new to put it on the table: the lobby is the
+// finished chain's DIRECT CHILD, and rule 4 outranks rule 0. Once it starts,
+// rule 0F keeps its live chain above the finished deal it replaced.
 //
-// STRUCTURAL FIELDS ONLY, never the finished bubble's digest: that digest
-// covers `sent_at`, so two devices holding two re-sends of the same finished
-// game would derive two deals.
+// Every tap is its own lobby - its own moment, its own deal - and the existing
+// tie-breaks settle which one is the game, on every device the same way: two
+// sibling lobbies by rules 3 and the digest, and a lobby someone has started
+// over every lobby that has not (rule 0). The creator of a lobby cannot start
+// it (msg_lobby_changer), so whoever chose the deal is never the one who deals
+// it.
+
+// THE NEXT DEAL'S SEED, from the moment of the tap: the finished deal's own
+// ChaCha keystream (deal_rng.h, the deal RNG, not a new mix) read at block
+// `tapped_at_ms`, the tap's unix milliseconds. Two moments are two deals; one
+// moment is one deal, whoever taps. It is not a function of the table alone,
+// on purpose: three taps must not all be the same lobby, they must be three
+// lobbies the existing rules choose between.
 void msg_rematch_seed(const uint8_t old_seed[MSG_SEED_LEN], uint64_t tapped_at_ms,
                       uint8_t out[MSG_SEED_LEN]);
 
-// THE REMATCH LOBBY, built entirely from the FINISHED chain `finished` - the
-// one thing a New game tap on a result card has in hand. Writes the WAITING
-// envelope into `out` and returns its length, or a negative MSG_E*:
+// THE REMATCH LOBBY a New game tap on the FINISHED chain `finished` creates,
+// built entirely here from that chain, the moment of the tap and the tapper's
+// seat. Writes the WAITING envelope into `out` and returns its length, or a
+// negative MSG_E*:
 //
-//   * the same game_id, and parent8 = the finished chain's digest, so rule 4
-//     ranks it above the finished chain and the stale-branch gate sees a child;
-//   * seed = msg_rematch_seed(...);
+//   * the same game_id, and parent8 = the finished chain's digest;
+//   * seed = msg_rematch_seed(finished seed, tapped_at_ms);
+//   * sent_at = the same moment in unix seconds mod 65536;
+//   * last_actor_seat = `creator_seat`, the tapper's seat at the finished
+//     table - what the lobby gate reads to keep the creator from Start;
 //   * the finished game's own seating, every seat already taken, at the
-//     finished game's size, so the lobby is full;
+//     finished game's size, so the lobby is full (a seat frees up only when
+//     somebody leaves, as the web's table_continue keeps its seats);
 //   * the finished game's RULES (passing or podkidnoy), as table_continue
 //     keeps them;
-//   * the fool's penalty carry for that roster and that fool;
-//   * last_actor_seat = the finished chain's;
-//   * `sent_at` is the caller's clock.
+//   * the fool's penalty carry for that roster and that fool.
 //
-// It seals format 5 or 6 like every other lobby: nothing in it is new to the
-// wire.
+// It seals format 6 like every rematch lobby before it.
 //
 // Refused: anything that does not decode and replay (its MSG_E*), a chain that
-// is not FINISHED (MSG_EPHASE), and a roster with an empty or missing seat
-// (MSG_EJOINS). A host that is refused starts an ordinary new game instead.
+// is not FINISHED or has no fool (MSG_EPHASE), a roster with an empty or
+// missing seat (MSG_EJOINS), and a creator seat outside the finished table
+// (MSG_ESEAT). A host that is refused starts an ordinary new game instead.
 //
 // `scratch` is the caller's Game (this file keeps none): the finished chain is
 // replayed into it to find the fool, and then the lobby's deal is made in it.
@@ -1382,6 +1429,34 @@ static inline int msg_lobby_can_set_rules(int my_seat) { return game_lobby_can_s
 // of a tap, so it survives the extension being closed and reopened mid-lobby,
 // which a flag would not.
 int msg_lobby_rules_changed(int have_baseline, int baseline, int current, int mine);
+
+// Is this lobby a REMATCH lobby - the one a New game on a finished table
+// creates? Read off what the wire already says: only that lobby carries the
+// fool's carry (format 4/6 carry_key, which msg_rematch_lobby always sets,
+// because a finished game always has a fool), and every reseal of it (a join, a
+// leave, a rules change) repeats it until Start consumes it.
+int msg_lobby_is_rematch(const MsgEnvelope *e);
+
+// THE CHANGER, which `msg_lobby_offered`'s `i_changed_the_rules` gates: the
+// newest bubble is mine AND it is one Start must not follow from the same
+// hand. Two things make one:
+//
+//   * it moved the rules (`rules_changed`, msg_lobby_rules_changed);
+//   * it is my bubble on a REMATCH lobby - the bubble that created it, whose
+//     tap chose the seed. Owner: "To randomize, just do some rng based on
+//     timestamp of new game start. Then don't allow whoever creates a game to
+//     start it, and we're all set. The seed is locked in."
+//
+// No new rule: the same gate, with the creator as the changer, and for the
+// same reason it has no full-lobby exemption. A rematch lobby is born full
+// (every seat of the finished table), so the exemption would hand Start to the
+// creator at once - the one thing the owner forbade - while it strands nobody:
+// everyone else at the table is offered Start, and the creator keeps Leave.
+// It lasts exactly as long as the creator's bubble is the newest; once anybody
+// else acts on the lobby (a rules change, a leave and a rejoin), the creator is
+// one more seated player. The same holds for a player who rejoins a rematch
+// lobby they left: their bubble is the newest, and someone else starts.
+int msg_lobby_changer(int rules_changed, int mine, int rematch_lobby);
 
 // The two above, read off a decoded envelope: capacity, roster and authorship
 // all come from `e`, so a caller supplies only what the WIRE cannot know - which

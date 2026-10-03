@@ -340,6 +340,10 @@ int fio_msg_lobby_rules_changed(int have_baseline, int baseline, int current, in
     return msg_lobby_rules_changed(have_baseline, baseline, current, mine);
 }
 
+int fio_msg_lobby_changer(int rules_changed, int mine, int rematch_lobby) {
+    return msg_lobby_changer(rules_changed, mine, rematch_lobby);
+}
+
 int fio_anim_surface_beat_ms(void) { return ANIM_TIME_MS; }
 
 // THE SURFACE PLAN ITSELF (anim_plan.h AnimSurfacePlan), where it lies. It used

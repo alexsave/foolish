@@ -476,24 +476,41 @@ static int rematch_check(void) {
     const int nf = fio_msg_encode(3 /* FINISHED */, 0, gid, zero8, joins, joins_n, 0x0101, fin, sizeof(fin));
     if (nf <= 0) { printf("FAIL rematch: finished encode %d (msg_err=%d)\n", nf, fio_last_msg_error()); return 1; }
 
+    // Two seats tap at two moments: two lobbies of the same game, two deals.
     const int na = fio_msg_rematch(fin, nf, 0x0111ull * 1000u, 1, a, sizeof(a));
-    const int nb = fio_msg_rematch(fin, nf, 0x0222ull * 1000u, 1, b, sizeof(b));
-    if (na <= 0 || nb != na) { printf("FAIL rematch: taps %d / %d (msg_err=%d)\n", na, nb, fio_last_msg_error()); return 1; }
-    for (int i = 0; i < na; i++)
-        if (a[i] != b[i] && i != MSG_CLOCK_OFF && i != MSG_CLOCK_OFF + 1) {
-            printf("FAIL rematch: two taps differ at byte %d\n", i); return 1;
+    const int nb = fio_msg_rematch(fin, nf, 0x0222ull * 1000u, 2, b, sizeof(b));
+    if (na <= 0 || nb <= 0) { printf("FAIL rematch: taps %d / %d (msg_err=%d)\n", na, nb, fio_last_msg_error()); return 1; }
+    if (fio_msg_peek(b, nb) != FIO_EOK) { printf("FAIL rematch: the second tap does not read\n"); return 1; }
+    uint8_t seed_b[MSG_SEED_LEN];
+    {
+        const MsgHeader *hb = (const MsgHeader *)fio_msg_header_ptr();
+        memcpy(seed_b, hb->e.seed, MSG_SEED_LEN);
+        if (hb->e.last_actor_seat != 2 || hb->e.game_id != gid) {
+            printf("FAIL rematch: the second tap is not seat 2's lobby of the game\n"); return 1;
         }
+    }
     if (fio_msg_rule_p(fin, nf, a, na) <= 0) { printf("FAIL rematch: the finished game beat its rematch\n"); return 1; }
+    if (fio_msg_rule_p(fin, nf, b, nb) <= 0) { printf("FAIL rematch: the finished game beat the second tap\n"); return 1; }
 
     if (fio_msg_decode(a, na) != FIO_EOK) { printf("FAIL rematch: the lobby does not adopt\n"); return 1; }
     const MsgHeader *h = (const MsgHeader *)fio_msg_header_ptr();
     uint8_t want_seed[MSG_SEED_LEN];
     msg_rematch_seed(seed, 0x0111ull * 1000u, want_seed);
-    if (h->e.phase != 0 || h->e.game_id != gid || h->e.n_joins != 4
-        || memcmp(h->e.seed, want_seed, MSG_SEED_LEN) != 0) {
+    if (h->e.phase != 0 || h->e.game_id != gid || h->e.n_joins != 4 || h->e.last_actor_seat != 1
+        || memcmp(h->e.seed, want_seed, MSG_SEED_LEN) != 0 || !memcmp(h->e.seed, seed_b, MSG_SEED_LEN)) {
         printf("FAIL rematch: lobby phase %d same-id %d joins %d\n",
                h->e.phase, h->e.game_id == gid, h->e.n_joins);
         return 1;
+    }
+    // The creator (seat 1) is held back from Start by the kernel's changer
+    // gate; seat 0, who did not tap, is offered it.
+    {
+        const int mine1 = h->e.last_actor_seat == 1, mine0 = h->e.last_actor_seat == 0;
+        const int rem = h->e.carry_key != 0;
+        if (fio_msg_lobby_offered(1, 4, 4, mine1, fio_msg_lobby_changer(0, mine1, rem)) != MSG_LOBBY_WAITING
+            || fio_msg_lobby_offered(0, 4, 4, mine0, fio_msg_lobby_changer(0, mine0, rem)) != MSG_LOBBY_START) {
+            printf("FAIL rematch: the creator may Start, or the others may not\n"); return 1;
+        }
     }
     const uint32_t key = h->e.carry_key;
     const int carry_fool = h->e.carry_fool;
@@ -511,6 +528,9 @@ static int rematch_check(void) {
         printf("FAIL rematch: Start sealed another deal (the re-deal dropped the seed?)\n");
         return 1;
     }
+    if (fio_msg_rule_p(fin, nf, live, nl) <= 0 || fio_msg_rule_p(live, nl, fin, nf) >= 0) {
+        printf("FAIL rematch: the finished game beat the rematch in play\n"); return 1;
+    }
     const SmokeJoin j2[2] = { {0,"Sveta"}, {1,"Ann"} };
     const int j2n = pack_joins(joins, (int)sizeof joins, j2, 2);
     if (fio_new_game(seed, 32, 2) != FIO_EOK) { printf("FAIL rematch: new_game\n"); return 1; }
@@ -518,7 +538,7 @@ static int rematch_check(void) {
     if (n0 <= 0) { printf("FAIL rematch: lobby encode %d\n", n0); return 1; }
     // Not a finished chain: refused, so the host starts an ordinary game.
     if (fio_msg_rematch(a, n0, 0x0555ull * 1000u, 0, b, sizeof(b)) >= 0) { printf("FAIL rematch: a lobby was rematched\n"); return 1; }
-    printf("rematch OK (two taps one lobby, the same game through Start, fool %d defends)\n", fool);
+    printf("rematch OK (two taps two deals of one game, the creator held back, the same game through Start, fool %d defends)\n", fool);
     return 0;
 }
 
