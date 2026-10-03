@@ -10,6 +10,7 @@ import { Text } from "../Text";
 import { boardPills, coverGesture } from "../../utils/gameValidation";
 import { useStyles } from "../../contexts/StyleContext";
 import { useTutorialHint } from "../../contexts/TutorialHintContext";
+import { slotBottom, useHandShape } from "./handShape";
 import { PLAYER_STATUS, seatKey } from "../../state/view";
 import {
     PLAY_PILL_ATTACK, PLAY_PILL_COVER, PLAY_PILL_GOOD, PLAY_PILL_PASS, PLAY_PILL_PICKUP,
@@ -51,6 +52,7 @@ const CardDiv = () => {
     const { draggedCardIndex, isDraggingForGameAction, startCardDrag, isActuallyDragging } = useDrag();
     const styles = useStyles();
     const hint = useTutorialHint();
+    const { layout, planeRef } = useHandShape();
 
     if (!game || game.mySeat < 0) {
         return <p style={{ color: 'var(--color-text-primary)', fontSize: '18px' }}><Text id="spectating" /></p>;
@@ -63,15 +65,16 @@ const CardDiv = () => {
             data-touch-interactive
             data-hand-container
             data-player-id={handKey}
-            style={{
-                display: 'flex',
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'center',
-                width: '100%'
-            }}
+            style={{ width: '100%' }}
         >
+            {/* THE PLANE the kernel's slots are in (handShape.tsx): as wide as
+                the row inside its gutters, as tall as the kernel says the laid-out
+                hand stands, and every card placed absolutely at its slot - one
+                row or two, the same code. */}
+            <div data-hand-plane ref={planeRef} style={{ position: 'relative', width: '100%', height: `${layout.rows.height}px` }}>
             {localHandOrder.map((card, index) => {
+                const slot = layout.slot[index];
+                if (!slot) return null;
                 const isSelected = selectedCards.some(selectedCard =>
                     selectedCard.value === card.value && selectedCard.suit === card.suit
                 );
@@ -101,11 +104,13 @@ const CardDiv = () => {
                         onTouchStart={(e) => startCardDrag(e, index)}
                         onClick={() => true}
                         style={{
-                            flex: '1 1 0',
-                            minWidth: '20px',
-                            maxWidth: '50px',
+                            position: 'absolute',
+                            left: `${slot.x}px`,
+                            bottom: `${slotBottom(layout, index)}px`,
+                            width: `${slot.w}px`,
+                            height: `${slot.h}px`,
+                            boxSizing: 'border-box',
                             zIndex: 1000,
-                            height: '70px',
                             borderRadius: styles.cardInHand.borderRadius,
                             display: 'flex',
                             justifyContent: 'center',
@@ -118,13 +123,13 @@ const CardDiv = () => {
                             transform: isHinted ? 'translateY(-10px)' : undefined,
                             cursor: 'move',
                             userSelect: 'none',
-                            margin: '0 1px',
                             border: `2px solid ${borderColor}`,
                             boxShadow: isHinted ? TUT_GLOW : styles.cardInHand.boxShadow,
                         }}
                     />
                 );
             })}
+            </div>
         </div>
     );
 };
@@ -160,6 +165,9 @@ export const ActionButtons = () => {
     const { pickup, good, attack, pass, cover } = useAnimation();
     const { selectedCards, setSelectedCards, pressedActions, setActionPressed } = useGame();
     const hint = useTutorialHint();
+    // A hand of two rows stands taller than one, and the box, the pills above
+    // it and my seat badge (PlayerRing) all rise by exactly that much.
+    const { lift } = useHandShape();
 
     // Which buttons this selection offers is the kernel's answer (legal.h
     // play_pills, the rule the iMessage board draws by): one move, one
@@ -251,13 +259,13 @@ export const ActionButtons = () => {
     return (
         <div 
             data-touch-interactive
-            style={{ display: 'flex', flexDirection: 'column', position: 'absolute', bottom: 'max(10px, env(safe-area-inset-bottom))', left: '0px', right: '0px', justifyContent: 'end', alignItems: 'center', height: '200px' }}
+            style={{ display: 'flex', flexDirection: 'column', position: 'absolute', bottom: 'max(10px, env(safe-area-inset-bottom))', left: '0px', right: '0px', justifyContent: 'end', alignItems: 'center', height: `${200 + lift}px` }}
         >
             <div 
                 data-touch-interactive
                 style={{
                     position: 'absolute',
-                    bottom: '90px',
+                    bottom: `${90 + lift}px`,
                     right: '20px',
                     display: 'flex',
                     flexDirection: 'column',

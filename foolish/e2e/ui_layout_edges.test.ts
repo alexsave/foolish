@@ -42,8 +42,9 @@ const px = (v: string) => {
 };
 
 test('my hand keeps a gutter from both edges of the screen', () => {
-    // The row as ActionButtons draws it: data-hand-container, a flex row as wide as the screen.
-    const dom = page('<div data-touch-interactive data-hand-container data-player-id="u-me" style="display: flex; flex-direction: row; align-items: center; justify-content: center; width: 100%;"></div>');
+    // The hand as ActionButtons draws it: data-hand-container as wide as the
+    // screen, around the plane the kernel's slots are placed in.
+    const dom = page('<div data-touch-interactive data-hand-container data-player-id="u-me" style="width: 100%;"><div data-hand-plane style="position: relative; width: 100%; height: 70px;"></div></div>');
     const row = dom.window.document.querySelector('[data-hand-container]')!;
     const style = dom.window.getComputedStyle(row);
     // The back button's inset (.btn-icon--left: 10px), so the outer cards line up with it.

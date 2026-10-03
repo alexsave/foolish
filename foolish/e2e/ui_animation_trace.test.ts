@@ -657,6 +657,17 @@ const handCard = (host: HTMLElement, card: string) => {
     assert.ok(el, `${card} is in my hand`);
     return el;
 };
+/** The centre of the place my hand draws `card` at: its slot (left, bottom,
+ *  width, height) inside the hand's plane. */
+const handHome = (host: HTMLElement, card: string): { x: number; y: number } => {
+    const el = handCard(host, card);
+    const plane = el.closest('[data-hand-plane]')!.getBoundingClientRect();
+    const px = (v: string) => parseFloat(v);
+    return {
+        x: plane.left + px(el.style.left) + px(el.style.width) / 2,
+        y: plane.bottom - px(el.style.bottom) - px(el.style.height) / 2,
+    };
+};
 const selectedInHand = (host: HTMLElement): string[] =>
     Array.from(host.querySelectorAll<HTMLElement>('[data-location="hand"][data-card]'))
         .filter((el) => el.style.border.includes('rgb(255, 0, 0)') || el.style.border.includes(' red'))
@@ -1336,14 +1347,17 @@ test('a rejected move whose push never arrives: the card goes home and stays the
         // The flight has landed on a table that will never show the six: it flies home from where it landed...
         assert.deepEqual(flights(s.host), [{ ...landing[0], scale: 1.8, red: true }], 'the return flight starts where and as the six landed');
         await s.advance(25);
-        // ... to its own place in my hand, which kept it (hidden) all along.
-        const home = handCard(s.host, '6s').getBoundingClientRect();
+        // ... to its own place in my hand, which kept it (hidden) all along:
+        // where the hand DRAWS it, its slot's left and bottom inside the hand's
+        // plane (handShape.tsx; jsdom's rects are made up, so the place is read
+        // off the card's own placement and not off a rect of its own).
+        const home = handHome(s.host, '6s');
         // A flight is hung by its CENTRE: `left`/`top` ARE the point the overlay
         // measured, and FlightCard's own `translate(-50%, -50%)` takes off the
         // half card. This used to subtract a half card here too, from a 70x90
         // card that does not exist - CardFace draws 50x70 - so the expectation
         // and the code were wrong by the same 10px in the same direction.
-        assert.deepEqual(flights(s.host), [{ left: home.left + home.width / 2, top: home.top + home.height / 2, scale: 1.8, red: true }],
+        assert.deepEqual(flights(s.host), [{ left: home.x, top: home.y, scale: 1.8, red: true }],
             'and lands on its own place in my hand');
         await s.advance(2500);
         const view = JSON.parse(probe.store).view;

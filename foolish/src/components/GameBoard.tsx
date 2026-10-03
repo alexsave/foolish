@@ -14,6 +14,7 @@ import { KeyboardInputHandler } from './KeyboardInputHandler';
 import { KeyboardPlayMode } from './GameDisplay/KeyboardPlayMode';
 import { Text } from './Text';
 import { useAnimation } from '../contexts/AnimationContext';
+import { HandShapeProvider } from './GameDisplay/handShape';
 
 /**
  * The one parameterized board behind every game-state source.
@@ -79,8 +80,12 @@ export const GameBoard = ({
         return <div><Text id="loading" /></div>;
     }
 
+    // My hand's shape (handShape.tsx) for the hand and what rises with it; only
+    // a board with a hand of mine has one, so the replay's seats never move.
+    const Shape = interactive ? HandShapeProvider : React.Fragment;
+
     return (
-        <>
+        <Shape>
             {showKeyboard && <KeyboardInputHandler />}
             {/* arrow-key play: navigate the hand + cover/pass targeting with a
                 red cursor. Interactive screens only (the replay uses arrows for
@@ -116,6 +121,6 @@ export const GameBoard = ({
                 a shield passing behind a badge would read as a glitch. */}
             <RoleFlights />
             {chrome}
-        </>
+        </Shape>
     );
 };
