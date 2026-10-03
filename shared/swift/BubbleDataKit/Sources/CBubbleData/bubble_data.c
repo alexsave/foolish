@@ -142,7 +142,10 @@ int bd_unpack_bytes(const uint8_t *sym, int nsym, int pad, uint8_t *out, int cap
                 if (b[k]) return BD_ESYMBOL;
     }
     for (int g = 0; g < groups; g++) {
-        uint8_t b[BD_GROUP_BYTES];
+        /* zeroed only for GCC: the loop above proved every group reads, and
+         * get_group fills b on success, but -Wmaybe-uninitialized cannot
+         * follow that across the two loops */
+        uint8_t b[BD_GROUP_BYTES] = { 0 };
         (void)get_group(sym + g * BD_GROUP_CELLS, b);
         for (int k = 0; k < BD_GROUP_BYTES; k++) {
             int at = g * BD_GROUP_BYTES + k;

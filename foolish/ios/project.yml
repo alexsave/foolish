@@ -343,12 +343,14 @@ targets:
       # it fails to compile the file that is missing, at whichever call site
       # happens to be first. PackedBytes is the byte reader every fixed-layout
       # record on this side is written with (§zero-JSON).
+      # BubbleDataKit is a SwiftPM PACKAGE under the same directory (its
+      # Package.swift, its C module and its XCTest files); a recursive source
+      # path would compile all of them into this framework and fail. A product
+      # that wants the kit links it as a package (uttt/ios/project.yml does).
       - path: ../../shared/swift
         excludes:
-          # A self-contained Swift package (Package.swift, its own C target
-          # CBubbleData, XCTest tests). Compiled as plain sources here it fails
-          # to resolve those modules and breaks the archive. Nothing in foolish
-          # uses it yet; depend on it as a package when something does.
+          # Compiled as plain sources here it fails to resolve those modules
+          # and breaks the archive. Nothing in this product uses it yet.
           - BubbleDataKit/**
       # NOTE: `- path: Entitlements` used to be here. EntitlementsService has
       # exactly one caller in the whole repo (FoolishApp/FoolishApp.swift), so

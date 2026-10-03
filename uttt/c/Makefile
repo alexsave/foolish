@@ -30,7 +30,7 @@ LANGS   := en ru ko zh vi es pt fr de it ja pl uk tr id th nl sv da no fi cs ro 
 I18N    := $(foreach l,$(LANGS),i18n/strings_$(l).c)
 SRC     := src/uttt.c src/uttt_code.c src/uttt_bots.c src/uttt_msg.c src/uttt_say.c \
            src/uttt_pen.c src/uttt_draw.c src/uttt_anim.c src/uttt_rule.c src/uttt_lang.c \
-           $(I18N) $(SHARED)/sha256.c $(SHARED)/b32.c $(SHARED)/mixrad.c $(SHARED)/text_util/text_util.c \
+           src/uttt_big.c src/uttt_big_msg.c src/uttt_big_diag.c $(I18N) $(SHARED)/sha256.c $(SHARED)/b32.c $(SHARED)/mixrad.c $(SHARED)/text_util/text_util.c \
            $(SHARED)/wire_check/wire_check.c
 
 all: build/uttt_test build/uttt_msg_test build/uttt_arena build/uttt_render build/uttt_mate
@@ -41,11 +41,29 @@ build:
 build/uttt_test: $(SRC) tests/uttt_test.c | build
 	$(CC) $(CFLAGS) $(SRC) tests/uttt_test.c -o $@ $(LDLIBS)
 
+# The recursive game: depth 2 against the shipped one move for move, depth 5
+# played to the end, and the relaxation, undo and adopt corners by hand.
+build/uttt_big_test: $(SRC) src/uttt_big.h tests/uttt_big_test.c | build
+	$(CC) $(CFLAGS) $(SRC) tests/uttt_big_test.c -o $@ $(LDLIBS)
+
 build/uttt_arena: $(SRC) tests/uttt_arena.c $(SHARED)/stats/stats.c $(SHARED)/stats/stats.h | build
 	$(CC) $(CFLAGS) $(SRC) $(SHARED)/stats/stats.c tests/uttt_arena.c -o $@ $(LDLIBS)
 
 build/uttt_msg_test: $(SRC) tests/uttt_msg_test.c | build
 	$(CC) $(CFLAGS) $(SRC) tests/uttt_msg_test.c -o $@ $(LDLIBS)
+
+# The big game's message: its bytes, board check, seats and words, and the
+# kit's picture path without the JPEG. Links the kit's C (plain C, no
+# framework) so its CRC and its picture are the ones held to.
+BUBBLE_DATA := ../../shared/swift/BubbleDataKit/Sources/CBubbleData
+build/uttt_big_msg_test: $(SRC) $(BUBBLE_DATA)/bubble_data.c tests/uttt_big_msg_test.c | build
+	$(CC) $(CFLAGS) $(SRC) $(BUBBLE_DATA)/bubble_data.c tests/uttt_big_msg_test.c -o $@ $(LDLIBS)
+
+# The 243 diagnostics (src/uttt_big_diag.h): the JPEG facts against real
+# files (tests/fixtures), the greys against the kit's own bd_sample, the
+# history ring's layout and the report's lines. Links the kit's C, as above.
+build/uttt_big_diag_test: $(SRC) src/uttt_big_diag.h src/uttt_jpeg_imageio.inc $(BUBBLE_DATA)/bubble_data.c tests/uttt_big_diag_test.c | build
+	$(CC) $(CFLAGS) $(SRC) $(BUBBLE_DATA)/bubble_data.c tests/uttt_big_diag_test.c -o $@ $(LDLIBS)
 
 # The shared insert-staging decisions (shared/c/msg_stage), header-only, so
 # its test is the only thing to build.
@@ -81,12 +99,15 @@ build/stats_test: $(STATS_SRC) $(STATS)/stats.h $(STATS)/seed_hash.h | build
 
 # The message: every ply of 10,000 games through bytes and text, the seat
 # truth table, two joiners, the tap map and every sentence.
-run: build/uttt_test build/uttt_msg_test build/uttt_anim_test build/msg_stage_test build/collapse_test build/text_util_test build/wire_check_test build/stats_test build/uttt_bots_test build/uttt_ink_test build/uttt_lang_test build/uttt_lang_en_test
+run: build/uttt_test build/uttt_big_test build/uttt_msg_test build/uttt_big_msg_test build/uttt_big_diag_test build/uttt_anim_test build/msg_stage_test build/collapse_test build/text_util_test build/wire_check_test build/stats_test build/uttt_bots_test build/uttt_ink_test build/uttt_lang_test build/uttt_lang_en_test
 	./build/uttt_test 1000
+	./build/uttt_big_test 2000 10
 	./build/uttt_lang_test
 	./build/uttt_lang_en_test
 	./build/uttt_bots_test 10
 	./build/uttt_msg_test 10000
+	./build/uttt_big_msg_test 20
+	./build/uttt_big_diag_test
 	./build/msg_stage_test
 	./build/collapse_test
 	./build/text_util_test
@@ -206,8 +227,17 @@ asan: $(SRC) tests/uttt_test.c | build
 	  $(SRC) tests/uttt_test.c -o build/uttt_asan $(LDLIBS)
 	./build/uttt_asan 400
 	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
+	  $(SRC) tests/uttt_big_test.c -o build/uttt_big_asan $(LDLIBS)
+	./build/uttt_big_asan 300 1
+	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
 	  $(SRC) tests/uttt_msg_test.c -o build/uttt_msg_asan $(LDLIBS)
 	./build/uttt_msg_asan 1000
+	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
+	  $(SRC) $(BUBBLE_DATA)/bubble_data.c tests/uttt_big_msg_test.c -o build/uttt_big_msg_asan $(LDLIBS)
+	./build/uttt_big_msg_asan 3
+	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
+	  $(SRC) $(BUBBLE_DATA)/bubble_data.c tests/uttt_big_diag_test.c -o build/uttt_big_diag_asan $(LDLIBS)
+	./build/uttt_big_diag_asan
 	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
 	  $(SRC) tests/uttt_anim_test.c -o build/uttt_anim_asan $(LDLIBS)
 	./build/uttt_anim_asan
@@ -253,13 +283,51 @@ ios-lib:
 	$(call IOS_XCFRAMEWORK,uttt,$(IOS_SRC),$(IOS_CFLAGS),ios/include,$(IOS_MIN_VERSION),../ios/vendor/Uttt.xcframework)
 
 
-build/ios_smoke: $(IOS_SRC) ios/uttt_api_smoke.c | build
+# The headers too: a number that lives only in a header (UTB_HOLD_MS) changed
+# and the smoke ran the old binary, green, before they were listed here.
+build/ios_smoke: $(IOS_SRC) $(wildcard src/*.h src/*.inc) ios/include/uttt_api.h ios/uttt_api_smoke.c | build
 	$(CC) $(CFLAGS) -Iios/include $(IOS_SRC) ios/uttt_api_smoke.c -o $@ $(LDLIBS)
 
 ios-smoke: build/ios_smoke
 	./build/ios_smoke
 
 .PHONY: ios-smoke ios-lib
+
+# THE BIG GAME THROUGH A REAL SEND'S PICTURE CHAIN: one random depth-5 game
+# to the end, every ply framed and painted by the kit's C at 3 px a cell (the
+# bubble's robust243), JPEG'd at q0.50 and q0.89 with ImageIO (both 4:2:0),
+# read back and decoded. About 18 minutes for a whole game. macOS only
+# (ImageIO), so NOT in run/asan/all: CI is Linux. ARGS="--plies N", "--every
+# K", "--px 1" (board243, which a real game's sparse board does NOT survive:
+# see the test's header).
+ifeq ($(shell uname),Darwin)
+build/uttt_big_chain: $(SRC) $(BUBBLE_DATA)/bubble_data.c tests/uttt_big_chain.c | build
+	$(CC) $(CFLAGS) $(SRC) $(BUBBLE_DATA)/bubble_data.c tests/uttt_big_chain.c -o $@ $(LDLIBS) \
+	  -framework ImageIO -framework CoreGraphics -framework CoreFoundation
+
+big-chain: build/uttt_big_chain
+	./build/uttt_big_chain $(ARGS)
+
+# THE 243 DIAGNOSTICS' QUALITY TABLES: ImageIO's luma table at every step
+# 0.00..1.00, written into src/uttt_jpeg_imageio.inc (commit what it changes).
+build/uttt_jpeg_imageio: $(SRC) tools/uttt_jpeg_imageio.c | build
+	$(CC) $(CFLAGS) $(SRC) tools/uttt_jpeg_imageio.c -o $@ $(LDLIBS) \
+	  -framework ImageIO -framework CoreGraphics -framework CoreFoundation
+
+jpeg-imageio: build/uttt_jpeg_imageio
+	./build/uttt_jpeg_imageio src/uttt_jpeg_imageio.inc
+
+# ...and the parser against JPEGs ImageIO writes NOW, at known qualities, and
+# the committed tables against what ImageIO writes today. macOS only.
+build/uttt_big_diag_imageio: $(SRC) $(BUBBLE_DATA)/bubble_data.c src/uttt_jpeg_imageio.inc tests/uttt_big_diag_imageio.c | build
+	$(CC) $(CFLAGS) $(SRC) $(BUBBLE_DATA)/bubble_data.c tests/uttt_big_diag_imageio.c -o $@ $(LDLIBS) \
+	  -framework ImageIO -framework CoreGraphics -framework CoreFoundation
+
+big-diag-imageio: build/uttt_big_diag_imageio
+	./build/uttt_big_diag_imageio
+
+.PHONY: big-chain jpeg-imageio big-diag-imageio
+endif
 
 build/uttt_ladder: $(SRC) tests/uttt_ladder.c | build
 	$(CC) $(CFLAGS) $(SRC) tests/uttt_ladder.c -o $@ $(LDLIBS)

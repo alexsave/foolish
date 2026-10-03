@@ -108,6 +108,42 @@ final class BubbleDataKitTests: XCTestCase {
     func testBoard243At1pxThroughASend() throws { try boardThroughASend(.board243) }
     func testBoard243At3pxThroughASend() throws { try boardThroughASend(.robust243) }
 
+    /// A SPARSE BOARD IS THE ONE A GAME SENDS, and dense random symbols hid
+    /// what happens to it (uttt/c/tests/uttt_big_chain.c, 2026-10-01): a lone
+    /// grey cell between white ones - in the board, or in the header row,
+    /// whose count and CRC cells are sparse too - comes back from the two
+    /// JPEGs near or over the 191 threshold and reads as empty. Over boards
+    /// of 1, 40 and 400 scattered marks from 24 streams: at 1 px a cell some
+    /// are REFUSED (never misread - the checksum catches it) and the rest read
+    /// at a margin a further recompression would not leave alone; at 3 px
+    /// every one reads whole with more than the risky margin to spare.
+    func testSparseBoardNeedsThreePixelsACell() throws {
+        var refusedAt1 = 0, worstAt1 = 64, worstAt3 = 64, boards = 0
+        for seed in 1...24 {
+            for marks in [1, 40, 400] {
+                var rng = SplitMix(state: UInt64(seed * 1000 + marks))
+                var board = [UInt8](repeating: 0, count: 243 * 243)
+                for i in 0..<marks { board[Int(rng.next() % 59049)] = UInt8(1 + i % 2) }
+                boards += 1
+                let one = try send(try BubbleData.image(symbols: board, geometry: .board243))
+                if let (back, r) = try? BubbleData.symbols(from: one, cells: 243) {
+                    XCTAssertEqual(back, board, "1 px: read, so it must be the board (never misread)")
+                    worstAt1 = min(worstAt1, r.minMargin)
+                } else {
+                    refusedAt1 += 1
+                }
+                let three = try send(try BubbleData.image(symbols: board, geometry: .robust243))
+                let (back, r) = try BubbleData.symbols(from: three, cells: 243)
+                XCTAssertEqual(back, board, "a sparse board at 3 px must read whole (seed \(seed), \(marks) marks)")
+                worstAt3 = min(worstAt3, r.minMargin)
+            }
+        }
+        print("sparse boards (\(boards)) at 1 px: \(refusedAt1) refused, worst margin of the rest \(worstAt1); " +
+              "at 3 px: all read, worst margin \(worstAt3)")
+        XCTAssertTrue(refusedAt1 > 0 || worstAt1 < Int(BD_RISKY_MARGIN), "1 px is not fit for a sparse board")
+        XCTAssertGreaterThan(worstAt3, Int(BD_RISKY_MARGIN), "3 px must leave more than the risky margin")
+    }
+
     func testBytesAtCapacityThroughASend() throws {
         for geometry in [BubbleDataGeometry.board243, .robust243] {
             var rng = SplitMix(state: 11070)

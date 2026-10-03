@@ -1,0 +1,8 @@
+// CBubbleData, the 243 board's picture codec (shared/swift/BubbleDataKit),
+// for UtttKit, which compiles the kit's two sources itself (project.yml says
+// why). Every target that imports UtttKit finds it through the project's
+// SWIFT_INCLUDE_PATHS, as it finds CMsgStage.
+module CBubbleData {
+    header "../../../shared/swift/BubbleDataKit/Sources/CBubbleData/include/bubble_data.h"
+    export *
+}

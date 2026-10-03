@@ -27,7 +27,7 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "1.0"
+    MARKETING_VERSION: "1.1"
     # Every upload needs a unique build number, so Tools/ship.sh passes
     # CURRENT_PROJECT_VERSION on the archive command line (one value for all
     # targets) and this "1" is only what a local build says.
@@ -38,7 +38,7 @@ settings:
     # Swift module compiling MotionRuler.swift must find the C module it imports.
     # CMsgStage (shared/c/msg_stage), the insert-staging decisions, the same way
     # for MessagesKit/InsertStaging.swift.
-    SWIFT_INCLUDE_PATHS: $(inherited) $(SRCROOT)/../../shared/c/motion_ruler $(SRCROOT)/../../shared/c/msg_stage
+    SWIFT_INCLUDE_PATHS: $(inherited) $(SRCROOT)/../../shared/c/motion_ruler $(SRCROOT)/../../shared/c/msg_stage $(SRCROOT)/CBubbleData
     # A WARNING THAT SHIPS IS A DEFECT. Swift warns when an optional is
     # interpolated into a string, and that warning scrolled past in a build
     # log while the characters `Optional("X")` went out in a caption to
@@ -46,6 +46,35 @@ settings:
     SWIFT_TREAT_WARNINGS_AS_ERRORS: "YES"
     CODE_SIGN_STYLE: Automatic
     DEVELOPMENT_TEAM: 8N2Z544SB4
+    # THE 243 BOARD (docs/BIG_BOARD.md): this word is the one switch. Delete it and every build compiles the feature out.
+    UTTT_BIG_BOARD_CONDITION: UTTT_BIG_BOARD
+    # THE RELEASE HALF: empty, so a Release build (an App Store archive) has
+    # no feature condition at all. A TestFlight ship sets it on the archive's
+    # command line to $(UTTT_BIG_BOARD_CONDITION) (Tools/ship.env,
+    # SHIP_ARCHIVE_SETTINGS), which is the only way Release gets the feature.
+    UTTT_TESTFLIGHT_CONDITIONS: ""
+    # THE PICTURE CODEC GOES WITH THE CONDITION. UtttKit compiles the kit's
+    # two sources (BubbleData.swift, bubble_data.c) itself rather than linking
+    # the SwiftPM package: Xcode links a local package's targets as prelinked
+    # objects whatever the product type, and the linker then cannot drop a
+    # byte of them - a Release build without the feature carried the whole
+    # kit (measured: 12 bd_ and 187 BubbleDataKit symbols). Sources can be
+    # excluded per configuration: UTTT_BIG_WORD is the feature's word in this
+    # configuration, and the excluded list is looked up by it - the files
+    # when the word is empty, nothing when it is UTTT_BIG_BOARD.
+    UTTT_BIG_EXCLUDED_: BubbleData.swift bubble_data.c
+    UTTT_BIG_EXCLUDED_UTTT_BIG_BOARD: ""
+  configs:
+    Debug:
+      # DEBUG SPELLED OUT: xcodegen's debug preset sets this same key at this
+      # same (project) level, and a value here replaces it rather than
+      # inheriting from it - `$(inherited)` reaches only the SDK default, and
+      # the first generate dropped DEBUG (checked with -showBuildSettings).
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) DEBUG $(UTTT_BIG_BOARD_CONDITION)
+      UTTT_BIG_WORD: $(UTTT_BIG_BOARD_CONDITION)
+    Release:
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) $(UTTT_TESTFLIGHT_CONDITIONS)
+      UTTT_BIG_WORD: $(UTTT_TESTFLIGHT_CONDITIONS)
 
 configs:
   Debug: debug
@@ -155,6 +184,22 @@ targets:
         INFOPLIST_KEY_UILaunchScreen_Generation: "YES"
         TARGETED_DEVICE_FAMILY: "1"
 
+  # The harness driven by a finger: the 243 board's pinch, pan, double tap
+  # and tap on a simulator (UtttPreviewUITests/BigBoardUITests.swift), the
+  # only gesture idb cannot send being the pinch.
+  UtttPreviewUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: UtttPreviewUITests
+    dependencies:
+      - target: UtttPreview
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cards.uttt.preview.uitests
+        GENERATE_INFOPLIST_FILE: "YES"
+        TARGETED_DEVICE_FAMILY: "1"
+
   UtttKit:
     type: framework
     platform: iOS
@@ -181,6 +226,12 @@ targets:
       # The auto-collapse on Core Animation layers, ported from the sister
       # product's CollapseLayer; the curve and every number are the kernel's.
       - path: ../../shared/swift/MessagesKit/CollapseSlide.swift
+      # THE 243 BOARD's picture codec (docs/BIG_BOARD.md), in UtttKit only:
+      # the extension imports UtttKit and never the codec. Compiled only when
+      # the feature is (UTTT_BIG_EXCLUDED_ above); CBubbleData's module map is
+      # CBubbleData/module.modulemap.
+      - path: ../../shared/swift/BubbleDataKit/Sources/BubbleDataKit/BubbleData.swift
+      - path: ../../shared/swift/BubbleDataKit/Sources/CBubbleData/bubble_data.c
     dependencies:
       # STATIC (embed:false), so the linker pulls it in per object and nothing
       # unreferenced ships.
@@ -194,6 +245,7 @@ targets:
         # BUILT_PRODUCTS_DIR/include by the xcframework.
         HEADER_SEARCH_PATHS: $(inherited) $(BUILT_PRODUCTS_DIR)/include
         TARGETED_DEVICE_FAMILY: "1"
+        EXCLUDED_SOURCE_FILE_NAMES: $(UTTT_BIG_EXCLUDED_$(UTTT_BIG_WORD))
 
 schemes:
   UtttPreview:
@@ -202,6 +254,10 @@ schemes:
         UtttPreview: all
     run:
       config: Debug
+    test:
+      config: Debug
+      targets:
+        - UtttPreviewUITests
   UtttMessagesApp:
     build:
       targets:
