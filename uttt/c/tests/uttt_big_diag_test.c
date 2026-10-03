@@ -285,7 +285,9 @@ static void test_greys_match_the_kit(void)
             painted(a == 3 ? 500 : 40);
             int w = sizes[s][0], h = sizes[s][1];
             uint8_t *pic = resized(paint, 729, 732, w, h, amps[a]);
-            BdReading kit;
+            /* zeroed: bd_sample fills it only on success, and GCC's LTO cannot
+             * see that the CHECK stands in for that */
+            BdReading kit = { 0, 0, 0 };
             CHECK(bd_sample(pic, w, h, 243, grid, &kit) == BD_EOK, "kit sample");
             UbdLuma l;
             CHECK(ubd_luma(pic, w, h, 243, &l) == 0, "ubd_luma");
