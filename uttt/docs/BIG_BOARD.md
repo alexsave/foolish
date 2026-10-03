@@ -61,6 +61,12 @@ It cannot be decorated, because any change to the pixels breaks the reading. In 
 The caption under it is exactly the 9 x 9 game's ("New game?", "X to play", "X won in N moves"); `summaryText` is the same line.
 That is the one honest design: the bubble is a board that only the app can read, and it says so by looking like one.
 
+## The send rule is an open question
+
+Rule (A), the full shift of the address every move, is what ships.
+The owner expected the send to climb only when a move completes a block.
+`BIG_BOARD_SEND_RULE.md` holds both rules, the precedent found, the arguments each way, and what to measure before deciding.
+
 ## The wire
 
 Format byte 3 under the 9 x 9 game's magic (`uttt/c/src/uttt_big_msg.h`): seed, flags, look, the seat tags as format 2 has them, then n_plies, the last move, a CRC-32 of the 59,049 cells, and the 2-byte wire check.
