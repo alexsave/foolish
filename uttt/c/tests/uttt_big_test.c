@@ -90,12 +90,9 @@ static float frnd(void) { return (float)(rnd() & 0xffffff) / (float)0x1000000; }
 static int32_t LIST[UTB_LEAVES_MAX];
 static UtbGame G, H, K;
 
-static double now(void)
-{
-    struct timespec t;
-    clock_gettime(CLOCK_MONOTONIC, &t);
-    return (double)t.tv_sec + (double)t.tv_nsec * 1e-9;
-}
+/* Elapsed seconds for the timings this test prints: clock() is standard C,
+ * where clock_gettime is POSIX and glibc hides it under -std=c11. */
+static double now(void) { return (double)clock() / (double)CLOCKS_PER_SEC; }
 
 static int ipow9(int e) { int r = 1; while (e-- > 0) r *= 9; return r; }
 

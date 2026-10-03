@@ -45,12 +45,9 @@ static int PX = 3, W = 3 * UTB_SIDE, H = 3 * (UTB_SIDE + 1);
 
 static CGColorSpaceRef g_space;
 
-static double now(void)
-{
-    struct timespec t;
-    clock_gettime(CLOCK_MONOTONIC, &t);
-    return (double)t.tv_sec + (double)t.tv_nsec * 1e-9;
-}
+/* Elapsed seconds for the timings this test prints: clock() is standard C,
+ * where clock_gettime is POSIX and glibc hides it under -std=c11. */
+static double now(void) { return (double)clock() / (double)CLOCKS_PER_SEC; }
 
 static uint64_t rs = 0x9e3779b97f4a7c15ull;
 static uint32_t rnd(void)

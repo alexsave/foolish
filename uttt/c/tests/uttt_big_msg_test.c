@@ -89,12 +89,9 @@ static uint32_t rnd(void)
     return (uint32_t)(rs >> 11);
 }
 
-static double now(void)
-{
-    struct timespec t;
-    clock_gettime(CLOCK_MONOTONIC, &t);
-    return (double)t.tv_sec + (double)t.tv_nsec * 1e-9;
-}
+/* Elapsed seconds for the timings this test prints: clock() is standard C,
+ * where clock_gettime is POSIX and glibc hides it under -std=c11. */
+static double now(void) { return (double)clock() / (double)CLOCKS_PER_SEC; }
 
 static void tag_of(const char *who, int32_t seed, uint8_t t[UTM_TAG_LEN])
 {
