@@ -90,7 +90,14 @@
  * tests/uttt_big_bot_test.c, which prints the speed every run. */
 #define UTB_BOT_PLIES        6
 #define UTB_BOT_BUDGET       150000
-#define UTB_BOT_PLIES_MAX    8
+/* THE DEEPEST SETTING. Any depth is safe to ask for: the budget, not the
+ * plies, bounds a move's work, and an iteration the budget cannot finish is
+ * thrown away whole, so a depth out of reach plays the deepest one that
+ * finished. 32 is past what the largest budget finishes on the 243 board
+ * in the opening and middle game, and keeps the recursion small: a level of
+ * the search holds 64 candidates and an undo record, so 32 of them are a few
+ * KB of the wasm module's 128 KB stack. */
+#define UTB_BOT_PLIES_MAX    32
 #define UTB_BOT_BUDGET_MAX   1000000
 #define UTB_BOT_CAP_ROOT     48
 #define UTB_BOT_CAP_MAX      64

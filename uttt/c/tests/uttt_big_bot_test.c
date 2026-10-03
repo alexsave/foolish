@@ -410,6 +410,45 @@ static void caps_scale(void)
     CHECK(b.plies == 3 && b.budget == UTB_BOT_BUDGET_MAX && b.cap_root >= b.cap_node, "clamped high");
 }
 
+/* THE DEEPEST SETTING IS SAFE AT EVERY BUDGET. UTB_BOT_PLIES_MAX is taken
+ * as asked, and on the depth-5 board (the opening, and after 300 one-ply
+ * moves, when regions have started to relax) a move at that depth comes back
+ * legal, within its budget plus the first ply (as full_243 bounds it), with
+ * the game handed back untouched, and the same for the same seed: an
+ * iteration the budget cannot finish is dropped and the deepest finished one
+ * plays. Not played out: one move a position is the whole claim. */
+static void deepest_setting(void)
+{
+    TEST("deepest_setting");
+    static const int budgets[] = { 4000, 30000, 150000, UTB_BOT_BUDGET_MAX };
+    UtbGame g; utb_init(&g, 5);
+    UtbBot walk; utb_bot_seat(&walk, 77, UTTT_X); utb_bot_set(&walk, 1, 0);
+    for (int stage = 0; stage < 2; stage++) {
+        if (stage) while (g.n_plies < 300 && !g.over) CHECK(utb_play(&g, utb_bot_move(&walk, &g)), "the walk");
+        for (size_t i = 0; i < sizeof budgets / sizeof budgets[0]; i++) {
+            const int bud = budgets[i];
+            UtbBot b, again;
+            utb_bot_seat(&b, 4242, g.turn);     utb_bot_set(&b, UTB_BOT_PLIES_MAX, bud);
+            utb_bot_seat(&again, 4242, g.turn); utb_bot_set(&again, UTB_BOT_PLIES_MAX, bud);
+            CHECK(b.plies == UTB_BOT_PLIES_MAX && b.budget == bud, "taken as asked: %d plies, budget %d", b.plies, b.budget);
+            const int first_ply = 6561 + 2 * UTB_LEAVES_MAX / 9 + b.cap_root * (1 + 92);
+            UtbGame before = g;
+            clock_t t0 = clock();
+            const int mv = utb_bot_move(&b, &g);
+            const double s = (double)(clock() - t0) / CLOCKS_PER_SEC;
+            CHECK(!memcmp(&g, &before, sizeof g), "ply %d budget %d: the game came back as it went", g.n_plies, bud);
+            CHECK(mv >= 0 && utb_legal_at(&g, mv), "ply %d budget %d: %d is not legal", g.n_plies, bud, mv);
+            CHECK(b.work <= bud + first_ply, "ply %d budget %d: spent %d", g.n_plies, bud, b.work);
+            CHECK(b.depth >= 1 && b.depth <= UTB_BOT_PLIES_MAX, "ply %d budget %d: finished %d plies", g.n_plies, bud, b.depth);
+            const int mv2 = utb_bot_move(&again, &g);
+            CHECK(mv2 == mv && again.depth == b.depth && again.value == b.value && again.work == b.work,
+                  "ply %d budget %d: the same seed chose %d at %d plies, then %d at %d", g.n_plies, bud, mv, b.depth, mv2, again.depth);
+            printf("%d plies at ply %d, budget %d: finished %d plies, work %d, %.3f s\n",
+                   UTB_BOT_PLIES_MAX, g.n_plies, bud, b.depth, b.work, s);
+        }
+    }
+}
+
 /* ------------------------------------------------------------- games */
 
 
@@ -566,6 +605,7 @@ int main(int argc, char **argv)
     score_is_exact();
     extension_sees_past();
     caps_scale();
+    deepest_setting();
     deterministic();
     /* at least 30 games: fewer cannot clear four standard deviations even
      * winning every one (ten straight wins is 3.2) */

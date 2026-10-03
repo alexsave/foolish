@@ -189,7 +189,7 @@ NOT proven: anything on a real phone. The corner, the outlines and the diagnosti
 ## The arena: uttt.live/243
 
 Two bots play the 243 x 243 game in the visitor's browser, spectator only (`web/app/243`, `web/components/Arena.tsx`, the kernel `c/wasm/uttt_243_web.c` built by `make wasm-243`, the bot `c/src/uttt_big_bot.{c,h}`).
-A game is its seed (`?seed=`) and the settings each move was played at.
+A game is its seed (`?seed=`) and its two settings, from the first move: changing a setting starts the game again on the same seed.
 
 ### The bot
 
@@ -202,9 +202,17 @@ The candidate cap below the root follows the plies and the budget (`utb_bot_cap_
 
 ### The control
 
-In the header: "Look ahead" (a stepper, 1 to 8 plies) and "Work a move" (Small 4,000, Medium 30,000, Large 150,000, Huge 1,000,000 work units), with the caps they give shown beside them.
-A change goes to the kernel (`ua_set_bots`) and the next move plays by it; the game goes on.
+In the header: "Look ahead" (a stepper, 1 to 32 plies) and "Work a move" (Small 4,000, Medium 30,000, Large 150,000, Huge 1,000,000 work units), with the caps they give shown beside them.
+A change RESTARTS the game: the kernel (`ua_set_bots`) clears the board and re-seats both bots on the same seed, dice and all, then takes the settings, so the game on the page is exactly its seed and the two numbers shown, and the same three play the same game whenever they are set.
+The page drops the running loop, the clock, the move count, the rate and the painted board with it and starts a new loop; each game has a number and a loop plays only while its number is current, so a frame already queued by a loop being replaced (rapid clicks on the stepper) neither plays nor paints.
+The control also works once a game is over (it starts the next one on the same seed).
+The replay link carries the settings (`&plies=`, `&work=`) when they are not the defaults; the seed is still drawn once a page load and changes only on a reload.
 The defaults are 6 plies on Large.
+
+THE LOOK-AHEAD GOES TO 32 (`UTB_BOT_PLIES_MAX`, was 8). The budget, not the plies, bounds a move: iterative deepening drops an iteration the budget cannot finish and plays the deepest one that finished, so a depth out of reach costs nothing extra.
+At 32 plies every budget hits the cap floor of 3 replies a node (`utb_bot_cap_for`), and on the depth-5 board one move natively finished (`deepest_setting` in `tests/uttt_big_bot_test.c`): from the opening 1, 8, 11 and 15 plies on Small, Medium, Large and Huge (Huge in 0.06 s), and after 300 moves 8, 11, 14 and 17, each within its budget plus the first ply, deterministic per seed.
+In Chrome, 10 plies on Large played about 120 moves a second from the opening.
+A whole game at a high look-ahead was not played out.
 
 ### The numbers (2026-10-03, this Mac)
 

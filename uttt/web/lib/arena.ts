@@ -45,8 +45,9 @@ export interface Arena {
     w: ArenaExports;
     /** A fresh game at `depth` (5 on the page) from a 16-hex-digit seed. */
     start(seed: string, depth?: number): void;
-    /** Both bots look `plies` ahead with `budget` work units a move, from the
-     *  next move on (the kernel clamps both and derives the candidate caps). */
+    /** Both bots look `plies` ahead with `budget` work units a move, and the
+     *  game starts again from move 0 on the same seed (the kernel clamps both
+     *  and derives the candidate caps). */
     setBots(plies: number, budget: number): void;
     /** Up to `n` bot moves; how many were played (fewer when the game ends). */
     step(n: number): number;

@@ -26,11 +26,12 @@ enum {
 
 /* THE CONTROL ON THE PAGE: how far each bot looks (plies) and how much work
  * a move may spend (a budget, in uttt_big_bot.h's work units), offered as
- * these four sizes. ua_set_bots takes any values and clamps them; the page
- * offers these. uttt_243_web.c holds them to uttt_big_bot.h's bounds. */
+ * these four sizes. ua_set_bots takes any values and clamps them, and starts
+ * the game again from move 0 on the same seed; the page offers these.
+ * uttt_243_web.c holds them to uttt_big_bot.h's bounds. */
 enum {
     UA_PLIES_MIN    = 1,
-    UA_PLIES_MAX    = 8,
+    UA_PLIES_MAX    = 32,
     UA_BUDGET_SMALL = 4000,         /* the first page's setting            */
     UA_BUDGET_MED   = 30000,
     UA_BUDGET_LARGE = 150000,       /* the default                          */

@@ -8,7 +8,9 @@
 // ONE SEED A PAGE LOAD. Drawn once from the browser's secure random when the
 // page loads (or read from ?seed=, to replay a game someone named), and
 // everything on the page runs from it: both bots' dice, every tie-break, the
-// whole game. Another game is a reload.
+// whole game. Another game is a reload. The replay link names the settings
+// too (&plies=, &work=) when they are not the defaults, since a game is its
+// seed and its settings.
 //
 // THE BOARD IS PAINTED, NOT BUILT: no element per cell. Cells and decided
 // nodes are forever, so they are painted once, when they appear, onto a layer
@@ -23,14 +25,19 @@
 // spend a whole chunk past the frame.
 //
 // THE CONTROL: how far the bots look (N plies) and how much work a move may
-// spend. A change goes to the kernel at once and the next move plays by it;
-// the game goes on.
+// spend. A change STARTS THE GAME AGAIN: the kernel clears the board and
+// re-seats both bots on the same seed (ua_set_bots), and the page drops the
+// running loop, the clock and the painted board and starts a new loop. So the
+// game on the page is exactly its seed and the two settings shown. Each game
+// has a number (`game`), and a loop plays only while its number is the
+// current one, so a frame already queued by a loop that is being replaced
+// (rapid clicks on the stepper) neither plays nor paints.
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
     GameClock, gameTime, loadArena, startError, parseSeed, randomSeed, UA_DRAW, UA_O, UA_X,
     UA_PLIES_MIN, UA_PLIES_MAX, UA_BUDGET_SMALL, UA_BUDGET_MED, UA_BUDGET_LARGE, UA_BUDGET_HUGE,
-    type Arena as Kernel, type Config, type Status,
+    UA_DEFAULT_PLIES, UA_DEFAULT_BUDGET, type Arena as Kernel, type Config, type Status,
 } from '../lib/arena';
 import styles from './Arena.module.css';
 
@@ -72,11 +79,16 @@ export function Arena() {
     const [replay, setReplay] = useState(false);
     const [failure, setFailure] = useState<{ lead: string; detail: string | null } | null>(null);
     const clock = useRef(new GameClock());
+    const [game, setGame] = useState(0);
+    const current = useRef(0);
 
     // open the kernel and start the one game this load plays
     useEffect(() => {
         let gone = false;
-        const named = parseSeed(new URLSearchParams(window.location.search).get('seed'));
+        const q = new URLSearchParams(window.location.search);
+        const named = parseSeed(q.get('seed'));
+        const num = (k: string) => (q.get(k) ? Number(q.get(k)) : NaN);
+        const plies = num('plies'), work = num('work');
         const s = named ?? randomSeed();
         setSeed(s);
         setReplay(named !== null);
@@ -84,6 +96,9 @@ export function Arena() {
             .then((k) => {
                 if (gone) return;
                 k.start(s, 5);
+                if (Number.isInteger(plies) || BUDGETS.some((b) => b.units === work))
+                    k.setBots(Number.isInteger(plies) ? plies : UA_DEFAULT_PLIES,
+                        BUDGETS.some((b) => b.units === work) ? work : UA_DEFAULT_BUDGET);
                 kernel.current = k;
                 setConfig(k.config());
                 setPhase('running');
@@ -101,7 +116,7 @@ export function Arena() {
         if (phase !== 'running') return;
         const k = kernel.current, cv = canvas.current;
         if (!k || !cv) return;
-        const gc = clock.current;
+        const gc = clock.current, mine = current.current;
         const first = k.status();
         // a loop started again over a game that already ended (a hidden page
         // shown again) has nothing to play and nothing to time
@@ -113,6 +128,7 @@ export function Arena() {
         let lastStats = 0, raf = 0, chunk = CHUNK0;
 
         const tick = (now: number) => {
+            if (current.current !== mine) return;     // a newer game owns the kernel
             const until = performance.now() + STEP_MS;
             for (;;) {
                 const a = performance.now(), asked = chunk;
@@ -133,7 +149,7 @@ export function Arena() {
         };
         raf = requestAnimationFrame(tick);
         return () => { cancelAnimationFrame(raf); gc.pause(); view.detach(); painter.detach(); };
-    }, [phase]);
+    }, [phase, game]);
 
     // once the game is over the loop is gone; the board still answers to
     // resizing and zooming
@@ -145,16 +161,24 @@ export function Arena() {
         const view = viewControls(cv, painter);
         painter.frame(k.status());
         return () => { view.detach(); painter.detach(); };
-    }, [phase]);
+    }, [phase, game]);
 
     const another = useCallback(() => { window.location.assign('/243'); }, []);
 
-    // the control: to the kernel now, read back from it (it clamps)
+    // the control: to the kernel, which starts the game again on the same
+    // seed; the settings are read back from it (it clamps). The old loop is
+    // retired before the kernel changes under it, and the new game gets a new
+    // clock, empty numbers and its own loop.
     const setBots = useCallback((plies: number, budget: number) => {
         const k = kernel.current;
         if (!k) return;
+        current.current++;
         k.setBots(plies, budget);
+        clock.current = new GameClock();
         setConfig(k.config());
+        setStats(null);
+        setGame(current.current);
+        setPhase('running');
     }, []);
 
     if (phase === 'bad') {
@@ -183,7 +207,7 @@ export function Arena() {
                     <Stat name="Time" value={gameTime(stats?.elapsedMs ?? 0, !!st?.over)} />
                     <Stat name="Seed" value={<span className={styles.seed}>{seed || ' '}</span>} />
                 </dl>
-                <Control config={config} disabled={phase !== 'running'} onChange={setBots} />
+                <Control config={config} disabled={phase !== 'running' && phase !== 'over'} onChange={setBots} />
                 <div className={styles.bots}>
                     <Seat side={UA_X} st={st} gameWeight={w?.[4]} />
                     <Seat side={UA_O} st={st} gameWeight={w?.[4]} />
@@ -206,10 +230,10 @@ export function Arena() {
                     9 x 9 {w?.[1] ?? 81}, a 27 x 27 {w?.[2] ?? 729}, an 81 x 81 {w?.[3] ?? 6561}, and the game more than
                     the rest of the board together; two in a row with the third still open is worth two ninths of the
                     grid it threatens ({`${t?.[0] ?? 2} in a 3 x 3, ${t?.[1] ?? 18} in a 9 x 9`}). &ldquo;Look ahead&rdquo; and
-                    &ldquo;Work a move&rdquo; change both bots from their next move. &ldquo;Sees&rdquo; is
+                    &ldquo;Work a move&rdquo; start the game again from its first move, on the same seed. &ldquo;Sees&rdquo; is
                     the value of the move it just chose; &ldquo;holds&rdquo; is everything that side has won. Ties go to
                     each bot&rsquo;s own dice, which come from the seed: the same seed and settings play the same game
-                    {seed ? <> (<a href={`/243?seed=${seed}`}>{replay ? 'this link' : 'replay this one'}</a>)</> : null}.
+                    {seed ? <> (<a href={replayLink(seed, config)}>{replay ? 'this link' : 'replay this one'}</a>)</> : null}.
                     Scroll or pinch to zoom, drag to pan, double-click to see the whole board.
                 </p>
             </div>
@@ -274,6 +298,11 @@ function Seat({ side, st, gameWeight }: { side: number; st?: Status; gameWeight?
         </p>
     );
 }
+
+/** The link that plays this game again: its seed, and its settings when they
+ *  are not the ones a page opens at. */
+const replayLink = (seed: string, c: Config | null) =>
+    `/243?seed=${seed}` + (c && (c.plies !== UA_DEFAULT_PLIES || c.budget !== UA_DEFAULT_BUDGET) ? `&plies=${c.plies}&work=${c.budget}` : '');
 
 const fmt = (n: number) => n.toLocaleString('en-US');
 const signed = (n: number) => (n > 0 ? '+' : n < 0 ? '-' : '') + fmt(Math.abs(n));

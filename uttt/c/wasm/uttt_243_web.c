@@ -6,6 +6,11 @@
  * it (utb_bot_seat), so the seed IS the game: the same seed plays the same
  * moves on any machine, because nothing here reads a clock or a float.
  *
+ * A GAME IS ITS SEED AND ITS SETTINGS, FROM THE FIRST MOVE. A change to the
+ * bots (ua_set_bots) starts the game again from move 0 on the same seed, so
+ * no game is ever played at two settings and the two numbers on the page
+ * name the game that is on it.
+ *
  * WHAT GOES OUT (uttt_243_web.h): the board as bytes - ua_grid is the board
  * as a picture, one byte a cell in row-major order, and ua_nodes every
  * internal node's status in uttt_big.h's numbering - and three structs the
@@ -31,6 +36,8 @@ static UtbBot   bot[2];                      /* [0] plays X, [1] plays O     */
 static uint8_t  grid[UTB_LEAVES_MAX];        /* the cells in picture order   */
 static int32_t  at[UTB_LEAVES_MAX];          /* leaf -> its index in grid    */
 static int      side;                        /* 3^depth: the grid's width    */
+static int      depth_now;                   /* the game's depth (0: none)   */
+static uint64_t seed_now;                    /* ...and its seed              */
 static UaStatus status;
 static UaConfig config;
 static UaBox    box;
@@ -55,12 +62,13 @@ static UaBox square(int id, int leaf)
 
 EXPORT(ua_layout_hash) uint32_t ua_layout_hash(void) { return (uint32_t)SG_LAYOUT_HASH; }
 
-/* A new game at `depth` (5 on the page; 2..5) from the seed hi:lo. 1, or 0
- * for a depth the kernel does not play. */
-EXPORT(ua_start) int ua_start(int depth, uint32_t hi, uint32_t lo)
+/* The empty board at `depth` and both seats' bots fresh from `seed` (their
+ * dice back at the start of their streams), at the bot's defaults. */
+static int begin(int depth, uint64_t seed)
 {
     if (!utb_init(&g, depth)) return 0;
-    uint64_t seed = ((uint64_t)hi << 32) | lo;
+    depth_now = depth;
+    seed_now  = seed;
     utb_bot_seat(&bot[0], seed, UTTT_X);
     utb_bot_seat(&bot[1], seed, UTTT_O);
     side = 1;
@@ -73,12 +81,23 @@ EXPORT(ua_start) int ua_start(int depth, uint32_t hi, uint32_t lo)
     return 1;
 }
 
+/* A new game at `depth` (5 on the page; 2..5) from the seed hi:lo, at the
+ * bot's defaults. 1, or 0 for a depth the kernel does not play. */
+EXPORT(ua_start) int ua_start(int depth, uint32_t hi, uint32_t lo)
+{
+    return begin(depth, ((uint64_t)hi << 32) | lo);
+}
+
 /* THE CONTROL: both bots look `plies` ahead with `budget` work units a move
  * (clamped by utb_bot_set, which derives the candidate caps from the two),
- * from the next move on. The game and the bots' dice are untouched, so a
- * game is its seed and the settings each move was played at. */
+ * and THE GAME STARTS AGAIN: the board empty, move 0, the same seed, both
+ * bots' dice back at the start. So the game on the page is exactly its seed
+ * and these settings, and the same three play the same game whenever they
+ * are set. Before any ua_start there is no game to restart, and nothing
+ * happens. */
 EXPORT(ua_set_bots) void ua_set_bots(int plies, int budget)
 {
+    if (!depth_now || !begin(depth_now, seed_now)) return;
     utb_bot_set(&bot[0], plies, budget);
     utb_bot_set(&bot[1], plies, budget);
 }
