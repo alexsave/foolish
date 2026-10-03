@@ -14203,6 +14203,37 @@ static void test_hand_layout_refuses_what_it_cannot_answer(void) {
     CHECK(hand_slots(&HAND_IOS, 3, 0, NULL, 0) == 0, "no width needs no buffer");
 }
 
+// hand_layout is hand_rows and hand_slots in one value (the web reads it out of
+// bots.wasm), so it must be exactly their answers, bit for bit, at every count
+// up to its cap; and it refuses what neither can hold.
+static void test_hand_layout_is_rows_and_slots_in_one_value(void) {
+    static const double W[] = {280, 370, 390, 1260, 0, -1, DBL_MAX};
+    static HandLayout l;
+    for (size_t i = 0; i < sizeof W / sizeof *W; i++) {
+        for (int n = 0; n <= HAND_LAYOUT_CAP; n++) {
+            char msg[160];
+            snprintf(msg, sizeof msg, "hand_layout count %d width %g", n, W[i]);
+            HandRows r;
+            HandRect s[HAND_LAYOUT_CAP];
+            hand_rows(&HAND_IOS, n, W[i], &r);
+            const int k = hand_slots(&HAND_IOS, n, W[i], s, HAND_LAYOUT_CAP);
+            memset(&l, 0xA5, sizeof l);
+            CHECK(hand_layout(&HAND_IOS, n, W[i], &l) == HAND_EOK, msg);
+            CHECK(l.n == k && l.rows.rows == r.rows && l.rows.row_n[0] == r.row_n[0]
+                  && l.rows.row_n[1] == r.row_n[1] && l.rows.card_w == r.card_w
+                  && l.rows.height == r.height, msg);
+            CHECK(memcmp(l.slot, s, sizeof s[0] * (size_t)(k > 0 ? k : 0)) == 0, msg);
+        }
+    }
+    CHECK(HAND_LAYOUT_CAP == MAX_HAND_SIZE, "hand_layout holds the most cards a hand can");
+    memset(&l, 0xA5, sizeof l);
+    CHECK(hand_layout(&HAND_IOS, HAND_LAYOUT_CAP + 1, 390, &l) == HAND_ECAP, "hand_layout refuses a hand over its cap");
+    CHECK(l.n == (int32_t)0xA5A5A5A5, "a refused hand_layout leaves out untouched");
+    CHECK(hand_layout(NULL, 3, 390, &l) == HAND_EBADARG, "hand_layout refuses no metrics");
+    CHECK(hand_layout(&HAND_IOS, 3, 390, NULL) == HAND_EBADARG, "hand_layout refuses no out");
+    CHECK(hand_layout(&HAND_IOS, -1, 390, &l) == HAND_EBADARG, "hand_layout refuses a negative count");
+}
+
 int main(void) {
 #ifdef CD_PASS_PROBE
     test_masked_board_carries_the_rules();
@@ -14466,6 +14497,8 @@ int main(void) {
     test_client_adopts_a_bare_board();
     test_hand_layout_rows_and_slots();
     test_hand_layout_refuses_what_it_cannot_answer();
+    test_hand_layout_is_rows_and_slots_in_one_value();
+    test_hand_layout_is_rows_and_slots_in_one_value();
 
     printf("\n%d passed, %d failed\n", n_pass, n_fail);
     return n_fail > 0 ? 1 : 0;

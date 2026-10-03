@@ -20,8 +20,14 @@
 // `product`, whose volatile is a barrier no optimizer may fuse across. Both
 // stay: the pragmas keep the reassociation and reciprocal rewrites out of the
 // IR, `product` keeps the backend from fusing, and neither covers the other.
+// wasm32 is the one target clang has no float_control for (it warns and
+// ignores it), and the one that needs it least: every wasm build compiles
+// without -ffast-math (c/Makefile says why) and wasm has no fused multiply-add
+// instruction, so contraction off is all that is left to say there.
 #if defined(__clang__)
+#if !defined(__wasm__)
 #pragma float_control(precise, on)
+#endif
 #pragma clang fp contract(off)
 #elif defined(__GNUC__)
 #pragma GCC optimize("no-fast-math", "fp-contract=off")
@@ -146,4 +152,14 @@ int hand_slots(const HandMetrics *m, int count, double width, HandRect *out, int
         }
     }
     return k;
+}
+
+int hand_layout(const HandMetrics *m, int count, double width, HandLayout *out) {
+    if (!m || !out || count < 0) return HAND_EBADARG;
+    if (count > HAND_LAYOUT_CAP) return HAND_ECAP;
+    HandRows r;
+    hand_rows(m, count, width, &r);
+    out->n = hand_slots(m, count, width, out->slot, HAND_LAYOUT_CAP);
+    out->rows = r;
+    return HAND_EOK;
 }

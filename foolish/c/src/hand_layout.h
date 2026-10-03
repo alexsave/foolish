@@ -75,4 +75,23 @@ int hand_rows(const HandMetrics *m, int count, double width, HandRows *out);
 // error.
 int hand_slots(const HandMetrics *m, int count, double width, HandRect *out, int cap);
 
+// THE WHOLE ANSWER IN ONE VALUE, for a host that reads it out of a struct
+// rather than handing over its own array: the web reads it out of bots.wasm
+// through a generated snapshot reader (c/wasm/wasm_table_api.c,
+// sdk/ts/table/client_table.ts handLayout), so the slots are a fixed array with
+// their count beside them. The cap is game.h's MAX_HAND_SIZE, the most cards a
+// hand can hold (wasm_table_api.c asserts the two agree).
+#define HAND_LAYOUT_CAP 64
+
+typedef struct HandLayout {
+    HandRows rows;
+    int32_t  n;                        // slots written: hand_slots' count
+    HandRect slot[HAND_LAYOUT_CAP];
+} HandLayout;
+
+// hand_rows and hand_slots for the same question, into one HandLayout.
+// HAND_EOK, HAND_EBADARG for a NULL or a negative count, HAND_ECAP for a count
+// over HAND_LAYOUT_CAP. Nothing is written on an error.
+int hand_layout(const HandMetrics *m, int count, double width, HandLayout *out);
+
 #endif
