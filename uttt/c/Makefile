@@ -375,7 +375,53 @@ $(WEB_WASM_OUT): $(WEB_WASM_SRC) $(wildcard src/*.h i18n/*.h ../../shared/c/wasm
 
 wasm-web: $(WEB_WASM_OUT)
 
-.PHONY: wasm-web
+# THE 243 PAGE (uttt.live/243): two greedy bots playing the depth-5 game
+# (wasm/uttt_243_web.c, src/uttt_big_bot.h). Its own module, so the replay
+# page does not download the big game and the big page does not download the
+# pen. A build output like uttt.wasm, never committed.
+#
+# THE PAGE NEVER LEARNS A BYTE LAYOUT. What it reads besides the byte arrays
+# (wasm/uttt_243_web.h's structs and UA_ constants) it reads through readers
+# shared/tools/structgen writes from that header, into ../web/lib/gen/ (a
+# build output, ignored), and the module is stamped with the layout's hash
+# (-DSG_LAYOUT_HASH, ua_layout_hash) which lib/arena.ts holds against the
+# generated LAYOUT_HASH at load. structgen is a libclang program: CI's
+# shared/scripts/ci_llvm.sh installs libclang; on a Mac, Homebrew's llvm.
+#
+# ALWAYS REBUILT (FORCE): generating and linking take about a second, and a
+# module and a reader that could come from two different headers - make's
+# whole-second mtimes, a checkout moving a header backwards - is the one
+# failure the hash exists to catch. Rebuilding every time is cheaper than
+# being clever about it.
+STRUCTGEN_DIR  := ../../shared/tools/structgen
+STRUCTGEN      := $(STRUCTGEN_DIR)/build/structgen
+ARENA_FLAGS    := -isystem ../../shared/c/wasm/include -Isrc
+ARENA_SG_ARGS  := --cwd . --header wasm/uttt_243_web.h \
+                  --root UaStatus --root UaConfig --root UaBox \
+                  --snapshot UaStatus --snapshot UaConfig --snapshot UaBox --snapshot-only \
+                  --const UA_ --build 'web243=$(ARENA_FLAGS)'
+ARENA_GEN      := ../web/lib/gen
+ARENA_WASM_SRC := src/uttt.c src/uttt_big.c src/uttt_big_bot.c \
+                  ../../shared/c/wasm/libc.c wasm/uttt_243_web.c
+ARENA_WASM_OUT := ../web/public/uttt243.wasm
+
+$(STRUCTGEN): $(wildcard $(STRUCTGEN_DIR)/*.c) $(wildcard $(STRUCTGEN_DIR)/*.h) \
+              $(wildcard $(STRUCTGEN_DIR)/../sgcommon/*.c) $(wildcard $(STRUCTGEN_DIR)/../sgcommon/*.h) \
+              $(STRUCTGEN_DIR)/Makefile $(STRUCTGEN_DIR)/../llvm.mk
+	$(MAKE) -C $(STRUCTGEN_DIR) build/structgen
+
+wasm-243: $(STRUCTGEN) | build
+	@mkdir -p $(ARENA_GEN) $(dir $(ARENA_WASM_OUT))
+	@$(STRUCTGEN) $(ARENA_SG_ARGS) --ts $(ARENA_GEN)/arena_layout.ts \
+	  --hash-ts $(ARENA_GEN)/arena_layout_hash.ts --print-hash > build/arena_layout.hash
+	$(WEB_WASM_CC) --target=wasm32 -O3 -nostdlib -ffreestanding -mbulk-memory \
+	  -mno-nontrapping-fptoint -std=c11 -Wall -Wextra -Werror $(ARENA_FLAGS) \
+	  -DSG_LAYOUT_HASH=$$(cat build/arena_layout.hash) \
+	  -Wl,--no-entry -Wl,--export-memory -Wl,-z,stack-size=131072 -Wl,--strip-all \
+	  $(ARENA_WASM_SRC) -o $(ARENA_WASM_OUT)
+	@echo "built $(ARENA_WASM_OUT) ($$(wc -c < $(ARENA_WASM_OUT)) B, $$(gzip -9 -c $(ARENA_WASM_OUT) | wc -c) B gz), layout $$(cat build/arena_layout.hash)"
+
+.PHONY: wasm-web wasm-243
 
 # ---- shared/c's own tests ---------------------------------------------------
 # The tests beside shared/c's primitives, run as part of `make run` (this
