@@ -579,9 +579,14 @@ struct LobbyView: View {
     /// Is solo seating compiled in AND switched on? False in every shipping
     /// build — the flag type itself does not exist there, so this is the one
     /// place the condition is spelled and the call site stays readable.
+    ///
+    /// `lobby.soloseats=0` in `dev.flags` turns it off on a debug build, so the
+    /// rig can film the lobby a shipping build shows - the Start / Waiting the
+    /// kernel's gate decides - instead of the solo row, which offers Start to
+    /// anyone once two seats are filled.
     private var soloSeatsEnabled: Bool {
         #if DEBUG || SOLO_TESTING
-        return MessageDebugFlags.soloSeats
+        return MessageDebugFlags.soloSeats && MessageDevBoard.flag("lobby.soloseats", shipping: true)
         #else
         return false
         #endif
