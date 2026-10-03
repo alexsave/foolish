@@ -6,7 +6,6 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
-#include <time.h>
 
 /* ImageIO's luma tables, quality 0.00 to 1.00 (generated; see the file). */
 #include "uttt_jpeg_imageio.inc"
@@ -332,16 +331,38 @@ static const char *mark(int ok) { return ok ? " " : "!"; }
 
 static const char *str(const char *s) { return s && *s ? s : "?"; }
 
+void ubd_civil(int64_t seconds, UbdCivil *c)
+{
+    /* Days and the time of day, with the remainder kept non-negative so a
+     * moment before 1970 breaks down the same way as one after it. */
+    int64_t days = seconds / 86400, rem = seconds % 86400;
+    if (rem < 0) { rem += 86400; days -= 1; }
+    c->hour = (int)(rem / 3600);
+    c->minute = (int)(rem % 3600 / 60);
+    c->second = (int)(rem % 60);
+    /* The proleptic Gregorian date of a day count (Howard Hinnant's
+     * days-from-civil, inverted): eras of 400 years, 146,097 days each,
+     * counted from 0000-03-01 so a leap day is the last day of a year. */
+    int64_t z = days + 719468;
+    int64_t era = (z >= 0 ? z : z - 146096) / 146097;
+    int64_t doe = z - era * 146097;
+    int64_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    int64_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    int64_t mp = (5 * doy + 2) / 153;
+    c->day = (int)(doy - (153 * mp + 2) / 5 + 1);
+    c->month = (int)(mp < 10 ? mp + 3 : mp - 9);
+    c->year = (int)(yoe + era * 400 + (c->month <= 2));
+}
+
 static void clock_of(int64_t when, int utc_offset, char *out, int cap, int with_day)
 {
-    time_t t = (time_t)(when + utc_offset);
-    struct tm tm;
-    if (!gmtime_r(&t, &tm)) { snprintf(out, (size_t)cap, "?"); return; }
+    UbdCivil c;
+    ubd_civil(when + utc_offset, &c);
     if (with_day)
-        snprintf(out, (size_t)cap, "%02d %02d:%02d:%02d", tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+        snprintf(out, (size_t)cap, "%02d %02d:%02d:%02d", c.day, c.hour, c.minute, c.second);
     else
-        snprintf(out, (size_t)cap, "%04d-%02d-%02d %02d:%02d:%02d", tm.tm_year + 1900, tm.tm_mon + 1,
-                 tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+        snprintf(out, (size_t)cap, "%04d-%02d-%02d %02d:%02d:%02d", c.year, c.month, c.day,
+                 c.hour, c.minute, c.second);
 }
 
 static void len_of(char *out, int cap, int n)

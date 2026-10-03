@@ -78,6 +78,13 @@ typedef struct {
 } UbdJpeg;
 
 /* Parse `n` bytes of a JPEG up to its first scan. Returns ubd->status. */
+/* A moment in epoch seconds as a proleptic Gregorian date and time of day,
+ * in the zone the caller already applied. Arithmetic, not the C library's
+ * gmtime: that one is a POSIX extension glibc hides under -std=c11, and the
+ * report is written on three platforms. */
+typedef struct { int year, month, day, hour, minute, second; } UbdCivil;
+UBD_HIDDEN void ubd_civil(int64_t seconds, UbdCivil *c);
+
 UBD_HIDDEN int ubd_jpeg_parse(const uint8_t *p, long n, UbdJpeg *out);
 
 /* "4:2:0", "4:4:4", "4:2:2", "4:4:0", "grey" or "other": the chroma

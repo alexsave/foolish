@@ -82,6 +82,32 @@ static const Truth truths[] = {
 
 static void test_fixtures(void)
 {
+    TEST("civil: epoch seconds break down to the calendar, leap days and all");
+    {
+        /* each row: seconds, then year month day hour minute second (UTC) */
+        static const int64_t rows[][7] = {
+            { 0,            1970,  1,  1,  0,  0,  0 },
+            { -1,           1969, 12, 31, 23, 59, 59 },
+            { 951782400,    2000,  2, 29,  0,  0,  0 },   /* the 400-year leap day */
+            { 951868799,    2000,  2, 29, 23, 59, 59 },
+            { 951868800,    2000,  3,  1,  0,  0,  0 },
+            { 1078012800,   2004,  2, 29,  0,  0,  0 },
+            { 4107456000,   2100,  2, 28,  0,  0,  0 },   /* 2100 is not a leap year: no 29th follows */
+            { 1791034605,   2026, 10,  3, 13, 36, 45 },   /* the first real device report's seed */
+            { 2147483647,   2038,  1, 19,  3, 14,  7 },
+            { 253402300799, 9999, 12, 31, 23, 59, 59 },
+        };
+        for (size_t i = 0; i < sizeof rows / sizeof *rows; i++) {
+            UbdCivil c;
+            ubd_civil(rows[i][0], &c);
+            CHECK(c.year == rows[i][1] && c.month == rows[i][2] && c.day == rows[i][3],
+                  "%lld -> %04d-%02d-%02d, want %lld-%lld-%lld", (long long)rows[i][0], c.year, c.month, c.day,
+                  (long long)rows[i][1], (long long)rows[i][2], (long long)rows[i][3]);
+            CHECK(c.hour == rows[i][4] && c.minute == rows[i][5] && c.second == rows[i][6],
+                  "%lld -> %02d:%02d:%02d", (long long)rows[i][0], c.hour, c.minute, c.second);
+        }
+    }
+
     TEST("jpeg: real files read to their known truth");
     for (size_t i = 0; i < sizeof truths / sizeof truths[0]; i++) {
         const Truth *t = &truths[i];
