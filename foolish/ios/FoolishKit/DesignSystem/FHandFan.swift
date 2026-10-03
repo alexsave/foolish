@@ -292,8 +292,7 @@ public struct FHandFan: View {
     /// Count-only form of `rowCount` - every layout question below is about
     /// POSITIONS, not identities, so the split is expressed in card COUNTS.
     public static func rowCount(count: Int, availableWidth: CGFloat) -> Int {
-        guard count > 1 else { return 1 }
-        return Self.singleRowCardWidth(count: count, availableWidth: availableWidth) < Self.twoRowThreshold ? 2 : 1
+        Self.shape(count, availableWidth).rows
     }
 
     /// How many cards each display row holds at `availableWidth`. The BOTTOM row
@@ -317,9 +316,8 @@ public struct FHandFan: View {
     /// through a shifted array already does. Moving the cut from ceil to floor
     /// changes WHERE it falls, not that it is a cut, so all of that still holds.
     public static func rowSizes(count: Int, availableWidth: CGFloat) -> [Int] {
-        guard Self.rowCount(count: count, availableWidth: availableWidth) == 2 else { return [count] }
-        let first = count / 2   // floor: the extra card goes BELOW on odd counts
-        return [first, count - first]
+        let r = Self.shape(count, availableWidth)
+        return Array(r.rowN.prefix(r.rows))
     }
 
     /// The fan's total on-screen height at `availableWidth` — one row (`rowH`)
@@ -333,8 +331,7 @@ public struct FHandFan: View {
 
     /// Count-only form, for the same reason as `rowCount(count:)`.
     public static func height(count: Int, availableWidth: CGFloat) -> CGFloat {
-        let oneRow = Self.cardH + 8
-        return Self.rowCount(count: count, availableWidth: availableWidth) == 2 ? oneRow * 2 + Self.rowGap : oneRow
+        Self.shape(count, availableWidth).height
     }
 
     /// The resting SLOT rect of every card in a hand of `cards`, laid out in a
@@ -382,32 +379,16 @@ public struct FHandFan: View {
     /// animates like every other slide in the fan, and leaves exactly one copy of
     /// the arithmetic for the flight targeting and the layout to share.
     public static func slotFrames(count: Int, width: CGFloat) -> [CGRect] {
-        guard width > 0, count > 0 else { return [] }
-        let rows = Self.rowSizes(count: count, availableWidth: width)
-        // ONE card width for BOTH rows, sized by the FULLER row - sizing each row
-        // by its own count made the shorter row's cards visibly WIDER than the
-        // other's, which read as two different decks rather than one hand that
-        // wrapped. This asks `rows.max()` rather than `rows[0]` because the odd
-        // card now lands in the SECOND row (see `rowSizes`); hard-coding row 0 as
-        // the fuller one was true only while the cut was a ceil, and would have
-        // sized an 11-card hand off 5 and then overflowed the row of 6.
-        let cardW = Self.singleRowCardWidth(count: rows.max() ?? count, availableWidth: width)
-        let cardH = Self.cardH
-        let containerH = Self.height(count: count, availableWidth: width)
-        let stackH = CGFloat(rows.count) * cardH + CGFloat(rows.count - 1) * Self.rowGap
-        let vTop = (containerH - stackH) / 2
-        var out: [CGRect] = []
-        out.reserveCapacity(count)
-        for (r, n) in rows.enumerated() {
-            let rowW = CGFloat(n) * cardW + CGFloat(max(0, n - 1)) * Self.gap
-            let rowLeft = (width - rowW) / 2
-            let y = vTop + CGFloat(r) * (cardH + Self.rowGap)
-            for c in 0..<n {
-                out.append(CGRect(x: rowLeft + CGFloat(c) * (cardW + Self.gap),
-                                  y: y, width: cardW, height: cardH))
-            }
-        }
-        return out
+        HandShape.slots(Self.metrics, count: count, width: width)
+            .map { CGRect(x: $0.x, y: $0.y, width: $0.w, height: $0.h) }
+    }
+
+    /// The fan's units, handed to the kernel's shape rule (c/src/hand_layout.h).
+    private static let metrics = HandMetricsSnap(cardWMax: maxCardW, cardWMin: 22, cardH: cardH, gap: gap,
+                                                 rowGap: rowGap, rowPad: 8, splitBelow: twoRowThreshold)
+
+    private static func shape(_ count: Int, _ width: CGFloat) -> HandRowsSnap {
+        HandShape.rows(Self.metrics, count: count, width: width)
     }
 
     /// The slot a dragged card is asking for: the one whose CENTRE is nearest
