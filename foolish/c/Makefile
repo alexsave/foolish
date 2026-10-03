@@ -1040,7 +1040,9 @@ WASM_CLIENT_EXPORTS := \
   -Wl,--export=wasm_client_optimistic_apply -Wl,--export=wasm_client_board_edit \
   -Wl,--export=wasm_client_rearrange_hand -Wl,--export=wasm_client_conflict_verdicts \
   -Wl,--export=wasm_client_gesture_ptr -Wl,--export=wasm_client_play_ptr \
-  -Wl,--export=wasm_client_play
+  -Wl,--export=wasm_client_play \
+  -Wl,--export=wasm_hand_metrics_ptr -Wl,--export=wasm_hand_layout_ptr \
+  -Wl,--export=wasm_hand_layout
 
 # A replay's recorded decision as the Oracle imports it, and a code at a glance
 # (src/replay_steps.h, wasm/wasm_bots_api.c), bots.wasm ONLY: the web page builds
@@ -1336,6 +1338,7 @@ WASM_BOT_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/rep
                 src/handwritten_prod_strategy.c \
                 src/octogen_strategy.c \
                 src/bot_knobs.c src/bot_roster.c src/bot_drive.c src/roster.c src/table.c src/client_table.c src/card.c \
+                src/hand_layout.c \
                 $(SHARED)/wasm/libc.c \
                 wasm/wasm_api.c wasm/wasm_bots_api.c wasm/wasm_msg_api.c wasm/wasm_table_api.c
 

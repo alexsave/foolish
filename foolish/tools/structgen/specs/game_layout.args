@@ -58,3 +58,6 @@
 # Its reader and writer are generated into msg_layout.bots.ts (the browser reads
 # links too); the root is here for the load-time hash.
 --header replay_extras.h --root ReplayExtras
+# The hand's shape (view_layout.args reads and writes these), so the layout hash
+# bots.wasm is checked against covers HandMetrics and HandLayout too.
+--header hand_layout.h --root HandMetrics --root HandLayout

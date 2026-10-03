@@ -27,6 +27,8 @@ export type ViewRules = V.ViewRules_Snap;
 export type BoardEdit = V.BoardEdit_Snap;
 export type ConflictQuestion = V.ClientConflict_Snap;
 export type ClientPlay = V.ClientPlay_Snap;
+export type HandMetrics = V.HandMetrics_Snap;
+export type HandLayout = V.HandLayout_Snap;
 
 /** One step of a push: what moved, and the board it left. */
 export interface PushStep { event: PushEvent; view: TableView }
@@ -67,6 +69,9 @@ export interface ClientExports {
     wasm_client_gesture_ptr(): number;
     wasm_client_play_ptr(): number;
     wasm_client_play(): number;
+    wasm_hand_metrics_ptr(): number;
+    wasm_hand_layout_ptr(): number;
+    wasm_hand_layout(count: number, width: number): number;
     wasm_can_cover(attackSuit: number, attackValue: number, defenseSuit: number, defenseValue: number, powerSuit: number): number;
 }
 
@@ -323,6 +328,18 @@ export class ClientTable {
         return p;
     }
     private readonly plays = new WeakMap<TableView, Map<string, ClientPlay>>();
+
+    /**
+     * How `count` cards sit in `width` (c/src/hand_layout.h hand_layout): the
+     * rows, one card width, the hand's height and every slot, top row first, in
+     * the host's own units. Throws when the kernel refuses the count.
+     */
+    handLayout(metrics: HandMetrics, count: number, width: number): HandLayout {
+        V.writeHandMetrics(this.m(), this.ex.wasm_hand_metrics_ptr(), metrics);
+        const rc = this.ex.wasm_hand_layout(count, width);
+        if (rc !== V.HAND_EOK) throw new Error(`hand layout: ${count} cards were refused (${rc})`);
+        return V.readHandLayout(this.m(), this.ex.wasm_hand_layout_ptr());
+    }
 }
 
 let shared: ClientTable | null = null;
