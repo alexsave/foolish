@@ -93,6 +93,7 @@ const char *const FS_STRINGS_NL[FS_K_COUNT] = {
     [FS_K_IOS_MSG_JOINAS           ] = "Meedoen als {name}",
     [FS_K_IOS_MSG_JOINED           ] = "{name} doet mee - tik om mee te doen",
     [FS_K_IOS_MSG_JOININVITE       ] = "Sukkelig - tik om mee te doen",
+    [FS_K_IOS_MSG_REMATCH         ] = "Revanche - tik om te spelen",
     [FS_K_IOS_MSG_LEFT             ] = "{name} heeft het spel verlaten",
     [FS_K_IOS_MSG_LEFTANON         ] = "Een speler heeft het spel verlaten",
     [FS_K_IOS_MSG_LOBBYFULL        ] = "Alle plekken bezet",

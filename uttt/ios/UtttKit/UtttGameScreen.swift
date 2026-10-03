@@ -98,6 +98,11 @@ public final class UtttGameScreen: UtttSheetView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
+#if UTTT_BIG_BOARD
+    /// THE 243 MODE'S DOOR (docs/BIG_BOARD.md): a still hold on the board.
+    public func setGridHold(_ action: @escaping () -> Void) { board.setModeHold(action) }
+#endif
+
 #if DEBUG
     private let orange = MotionRuler.square(.orange)
     private let blue = MotionRuler.square(.blue)

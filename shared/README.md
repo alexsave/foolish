@@ -40,6 +40,7 @@ Swift reaches a header-only C module through its `module.modulemap` on `SWIFT_IN
 | `swift/MessagesKit/SendHint*.swift` | the staged-but-unsent arrow at Messages' Send (SwiftUI and UIKit views, one set of numbers) | CARDS (`SendHint`), UTTT (`SendHintView`, `SendHintMetrics`), SHED (`SendHint`, `SendHintMetrics`) |
 | `swift/MessagesKit/CollapseSlide.swift` | the auto-collapse on Core Animation layers | UTTT, SHED |
 | `swift/Textures/` | the wool, felt, wood and fern-back generators and their palettes; CoreGraphics only, and the generator half compiles only under `-D TEXTURE_BAKE`, so a shipping target carries the palettes and resource names but never renders | CARDS (its texture loader reads the names, its `ios/Tools/regenerate_textures.sh` bakes into its own resources), SHED, LIAR, BONES (compile the palettes and names; their baked JPEGs are committed) |
+| `swift/BubbleDataKit/` | a board of three-state cells as a grey picture for a Messages bubble, and back: a Swift package whose format is all C (`CBubbleData`, `bubble_data.h`: a header row, a symbol layer and a 3-bytes-in-16-cells byte layer, a CRC-32, reading by sampling each cell's centre) with a thin Swift face (`CGImage`, `UIImage`, and `MSMessageTemplateLayout`/`MSMessage` helpers on iOS), sized to what `tools/layout_probe` measured a real send does; `make test` runs the C test and `swift test` through the measured JPEG chain, `make ios` builds it for iOS | nobody yet: no product sends a board this way |
 
 ## Tools (`tools/`)
 
@@ -56,6 +57,7 @@ Swift reaches a header-only C module through its `module.modulemap` on `SWIFT_IN
 | `tools/llvm.mk` | the one LLVM toolchain the wasm builds use | CARDS, SHED, LIAR, BONES (through structgen and datagen) |
 | `tools/wasm_cc.mk` | which clang compiles a kernel for wasm32 (the pinned Homebrew LLVM on a Mac) and `wasm-cc-check`, the guard that refuses Apple clang, which targets wasm32 but produces different bytes | SHED, LIAR, BONES (CARDS still carries its own copy of the same guard) |
 | `tools/ios_xcframework.mk` | the `ios-lib` recipe: `$(call IOS_XCFRAMEWORK,name,sources,cflags,headers,min-ios,out)` builds the device and both simulator slices and wraps them in an xcframework | CARDS, UTTT, SHED, LIAR, BONES |
+| `tools/layout_probe/` | does the extension that reads a Messages app message get its layout back: a probe app that stages a message whose picture is a known pattern and whose strings are a known length, the pattern and its judge in C (`layout_probe.h`, `CLayoutProbe`), and the recompression sweep; `README.md` is the evidence (simulator only so far), `layout_probe_test.c` the test | nobody: a measurement, and no product sends data this way |
 | `tools/tighten/` | the showcase video cutter (`media/`) | CARDS |
 | `tools/textures/` | the bake tool: `regenerate_textures.sh <out-dir>` compiles `swift/Textures` with `GenerateTextures.swift` and writes the JPEGs; a product passes its own resources folder | CARDS, SHED |
 | `tools/check_ui_doc.py` | the UI design doc checker | UTTT, SHED |

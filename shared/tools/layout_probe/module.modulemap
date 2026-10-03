@@ -1,0 +1,6 @@
+// CLayoutProbe: the probe's pattern and verdict for Swift (ios/Ext).
+// Header-only; the probe's targets add this directory to SWIFT_INCLUDE_PATHS.
+module CLayoutProbe {
+    header "layout_probe.h"
+    export *
+}

@@ -4,6 +4,7 @@
 #include "awire.h"
 #include "legal.h"   // MOVE_PICKUP, for the turn controller's admission door
 #include "replay.h"
+#include "../../../shared/c/deal_rng.h"
 #include <string.h>
 
 // ---------- little-endian readers/writers -------------------------------
@@ -316,6 +317,15 @@ int msg_encode(const MsgEnvelope *e, unsigned char *out, int out_cap) {
         out[MSG_NEW_OFF] = e->n_new;
     }
     if (has_rematch) {
+        // Byte 61 is format 3's n_joins and is spoken for by nothing from
+        // format 4 on (the rematch block starts at 62). It is written as 0,
+        // never left as whatever the caller's buffer held: an encoder that
+        // skipped it made the bytes - and so the digest Rule P breaks ties on -
+        // depend on the output buffer's history rather than on the envelope.
+        // Decode still ignores it, so a bubble sealed before this was fixed
+        // (the phone's buffer was always zeroed; test fixtures were not) still
+        // opens.
+        out[MSG_HEADER_LEN_CLOCK - 1] = 0;
         out[MSG_OPEN_OFF] = e->opening;
         wr32(out + MSG_CARRY_OFF, e->carry_key);
         out[MSG_FOOL_OFF] = e->carry_fool;
@@ -691,6 +701,8 @@ int msg_chain_key(const unsigned char *envelope, int len, MsgChainKey *out) {
     MsgEnvelope e;
     const int rc = msg_decode(envelope, len, &e);
     if (rc != MSG_EOK) return rc;
+    out->game_id = e.game_id;
+    memcpy(out->seed, e.seed, MSG_SEED_LEN);   // rule 0F's deal identity
     out->phase = e.phase;
     out->round = e.round;
     out->turn  = e.turn;
@@ -751,6 +763,15 @@ int msg_rule_p(const MsgChainKey *a, const MsgChainKey *b) {
     // those correctly, and a finished chain always has more of both.
     const int sa = a->phase >= MSG_PHASE_LIVE, sb = b->phase >= MSG_PHASE_LIVE;
     if (sa != sb) return sa ? -1 : 1;
+    // Rule 0F, the other boundary (msg_wire.h): of two DEALS of one game, the
+    // one still in play beats the one that is over - a rematch's LIVE chain
+    // against the finished game it replaced. Rounds and turns below are
+    // progress within ONE deal and say nothing across two.
+    if (a->game_id == b->game_id && !seed_is_zero(a->seed) && !seed_is_zero(b->seed)
+        && memcmp(a->seed, b->seed, MSG_SEED_LEN) != 0) {
+        if (a->phase == MSG_PHASE_LIVE && b->phase == MSG_PHASE_FINISHED) return -1;
+        if (b->phase == MSG_PHASE_LIVE && a->phase == MSG_PHASE_FINISHED) return 1;
+    }
     if (a->round != b->round) return a->round > b->round ? -1 : 1;
     if (a->turn  != b->turn)  return a->turn  > b->turn  ? -1 : 1;
     // The fuller roster wins the turn-0 tie (header rule 3): two Starts sealed
@@ -918,6 +939,8 @@ static int open_has_body(const MsgEnvelope *e) {
 // compared at all. Anything else is another game as far as a board is
 // concerned, and shares nothing with what it showed.
 static int open_same_deal(const MsgEnvelope *a, const MsgEnvelope *b) {
+    // The SEED as well as the id: a rematch is the same game_id dealt again
+    // from a new seed, and its atoms share nothing with the game before it.
     return a->game_id == b->game_id
         && a->n_players == b->n_players
         && a->opening == b->opening
@@ -1168,6 +1191,104 @@ int msg_rematch_opening(const MsgJoin *joins, int n,
     return (fool_seat - 1 + n) % n;
 }
 
+int msg_rematch_carry(const MsgJoin *joins, int n, int fool_seat,
+                      uint32_t *carry_key, uint8_t *carry_fool) {
+    if (!joins || !carry_key || !carry_fool) return MSG_EJOINS;
+    if (fool_seat < 0 || fool_seat >= n) return MSG_ESEAT;
+    uint32_t key = 0;
+    int rot = 0;
+    const int rc = msg_roster_key(joins, n, &key, &rot);
+    if (rc != MSG_EOK) return rc;
+    *carry_key = key;
+    // Back out of the seating into the canonical rotation the key was taken
+    // over: canonical[k] == seated[(k + rot) % n], so seat s is index s - rot.
+    *carry_fool = (uint8_t)(((fool_seat - rot) % n + n) % n);
+    return MSG_EOK;
+}
+
+void msg_rematch_seed(const uint8_t old_seed[MSG_SEED_LEN], uint64_t tapped_at_ms,
+                      uint8_t out[MSG_SEED_LEN]) {
+    // The deal RNG itself (deal_rng.h), not a new mix: the finished deal's own
+    // ChaCha keystream, read at the block the moment of the tap names. A block
+    // index is ChaCha's 64-bit counter, so every millisecond is its own 64
+    // bytes of keystream, and the deal that seed already dealt used the first
+    // handful of blocks, nowhere near a timestamp's.
+    DealRng r;
+    deal_rng_seed_at(&r, old_seed, tapped_at_ms);
+    for (int i = 0; i < MSG_SEED_LEN / 4; i++) wr32(out + 4 * i, deal_rng_u32(&r));
+}
+
+int msg_rematch_lobby(const unsigned char *finished, int finished_len,
+                      uint64_t tapped_at_ms, int creator_seat,
+                      unsigned char *out, int out_cap, Game *scratch) {
+    if (!finished || !out || !scratch) return MSG_ESHORT;
+    MsgEnvelope f;
+    int rc = msg_decode(finished, finished_len, &f);
+    if (rc != MSG_EOK) return rc;
+    if (f.phase != MSG_PHASE_FINISHED) return MSG_EPHASE;
+    // Validation IS replay, and the replay is also the only thing that knows
+    // who the fool was.
+    rc = msg_replay(&f, scratch);
+    if (rc != MSG_EOK) return rc;
+    const int fool = game_done(scratch);
+    // A FINISHED chain always has its fool (msg_decode refuses a header that
+    // says FINISHED over a game that is not over), so every rematch lobby
+    // carries the fool's carry - which is also how the lobby gate knows a
+    // rematch lobby when it sees one (msg_lobby_is_rematch).
+    if (fool < 0) return MSG_EPHASE;
+
+    // THE FINISHED GAME'S SEATING, every seat named. A finished chain carries
+    // every seated player (Start dealt the roster it was handed), so a seat
+    // that is missing or blank is not a table this can seat again.
+    const int n = f.n_players;
+    if (f.n_joins != n) return MSG_EJOINS;
+    if (creator_seat < 0 || creator_seat >= n) return MSG_ESEAT;
+    MsgEnvelope e;
+    msg_envelope_init(&e);
+    for (int i = 0; i < n; i++) e.joins[i].name_len = 0xFF;   // "seat empty"
+    for (int i = 0; i < f.n_joins; i++) {
+        const MsgJoin *j = &f.joins[i];
+        if (j->name_len == 0) return MSG_EJOINS;
+        e.joins[j->seat] = *j;   // validate_fields already refused a seat >= n or a twin
+    }
+    for (int s = 0; s < n; s++) if (e.joins[s].name_len == 0xFF) return MSG_EJOINS;
+    e.n_joins = n;
+
+    e.format = MSG_FORMAT_RULES_REMATCH;   // msg_seal decides; this is what it will say
+    e.flags = 0;
+    e.phase = MSG_PHASE_WAITING;
+    e.game_id = f.game_id;
+    e.n_players = (uint8_t)n;
+    // THE CREATOR seals it: the one fact the lobby gate needs to keep them
+    // from starting the deal their own tap chose (msg_lobby_changer).
+    e.last_actor_seat = (uint8_t)creator_seat;
+    // ONE MOMENT, two uses: the send clock every bubble carries, and the seed.
+    e.sent_at = (uint16_t)((tapped_at_ms / 1000u) & 0xFFFFu);
+    uint8_t digest[SHA256_DIGEST_LEN];
+    msg_digest(finished, finished_len, digest);
+    memcpy(e.parent8, digest, MSG_PARENT_LEN);
+    msg_rematch_seed(f.seed, tapped_at_ms, e.seed);
+    rc = msg_rematch_carry(e.joins, n, fool, &e.carry_key, &e.carry_fool);
+    if (rc != MSG_EOK) return rc;
+
+    // THE LOBBY'S DEAL, as every lobby is: the seed dealt at the table's size
+    // under the table's rules, nothing played. msg_seal reads the rules off it
+    // (they are a claim about the game, never the caller's to state) and seals
+    // an empty body.
+    const int8_t rules = msg_pass_allowed(&f) ? 0 : (int8_t)GAME_RULE_NO_PASS;
+    game_set_deal_seed_bytes(e.seed, MSG_SEED_LEN);
+    memset(scratch, 0, sizeof(*scratch));
+    scratch->num_players = (int8_t)n;
+    scratch->rules = rules;
+    for (int i = 0; i < n; i++) scratch->players[i].status = PLAYER_STATUS_READY;
+    start_game(scratch);
+
+    unsigned char body[1];
+    rc = msg_seal(&e, scratch, 0, body, (int)sizeof body, scratch);
+    if (rc != MSG_EOK) return rc;
+    return msg_encode(&e, out, out_cap);
+}
+
 int msg_rematch_fool_seat(const MsgJoin *joins, int n,
                           uint32_t carry_key, uint8_t carry_fool) {
     const int opening = msg_rematch_opening(joins, n, carry_key, carry_fool);
@@ -1360,19 +1481,25 @@ int msg_lobby_rules_changed(int have_baseline, int baseline, int current, int mi
     return (baseline != 0) != (current != 0);
 }
 
+int msg_lobby_is_rematch(const MsgEnvelope *e) {
+    return e && e->phase == MSG_PHASE_WAITING && e->carry_key != 0;
+}
+
+int msg_lobby_changer(int rules_changed, int mine, int rematch_lobby) {
+    return rules_changed || (mine && rematch_lobby);
+}
+
 int msg_lobby_controls(const MsgEnvelope *e, int my_seat,
                        int have_baseline, int baseline, int *can_exit_out) {
     if (can_exit_out) *can_exit_out = 0;
     if (!e) return 0;
     const int joined = e->n_joins;
-    const int changed = msg_lobby_rules_changed(have_baseline, baseline,
-                                                msg_pass_allowed(e),
-                                                my_seat >= 0
-                                                && (int)e->last_actor_seat == my_seat);
+    const int mine = my_seat >= 0 && (int)e->last_actor_seat == my_seat;
+    const int changed = msg_lobby_changer(msg_lobby_rules_changed(have_baseline, baseline,
+                                                                  msg_pass_allowed(e), mine),
+                                          mine, msg_lobby_is_rematch(e));
     if (can_exit_out) *can_exit_out = msg_lobby_can_exit(my_seat, joined);
-    return msg_lobby_offered(my_seat, joined, e->n_players,
-                             my_seat >= 0 && (int)e->last_actor_seat == my_seat,
-                             changed);
+    return msg_lobby_offered(my_seat, joined, e->n_players, mine, changed);
 }
 
 /* ---------------------------------------------------------------------------

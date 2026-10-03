@@ -218,6 +218,16 @@ final class UtttBoardView: UIView {
 
     @objc private func landed() { refresh() }
 
+#if UTTT_BIG_BOARD
+    /// THE 243 MODE'S DOOR on this board (UtttModeHold, docs/BIG_BOARD.md).
+    /// The waiting lobby's board takes no touches; it takes this one, which is
+    /// safe there because its `onTap` is nil.
+    func setModeHold(_ action: @escaping () -> Void) {
+        isUserInteractionEnabled = true
+        _ = UtttModeHold.install(on: self, action)
+    }
+#endif
+
     @objc private func tapped(_ g: UITapGestureRecognizer) {
         guard let onTap, side > 0 else { return }
         let p = g.location(in: self)

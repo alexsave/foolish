@@ -93,6 +93,7 @@ const char *const FS_STRINGS_CS[FS_K_COUNT] = {
     [FS_K_IOS_MSG_JOINAS           ] = "Připojit se jako {name}",
     [FS_K_IOS_MSG_JOINED           ] = "{name} se přidává - klepni a přidej se",
     [FS_K_IOS_MSG_JOININVITE       ] = "Hloupý - klepni a přidej se",
+    [FS_K_IOS_MSG_REMATCH         ] = "Odveta - klepni a hraj",
     [FS_K_IOS_MSG_LEFT             ] = "{name} už nehraje",
     [FS_K_IOS_MSG_LEFTANON         ] = "Jeden hráč opustil hru",
     [FS_K_IOS_MSG_LOBBYFULL        ] = "Všechna místa jsou obsazená",

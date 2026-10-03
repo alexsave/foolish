@@ -93,6 +93,7 @@ const char *const FS_STRINGS_FI[FS_K_COUNT] = {
     [FS_K_IOS_MSG_JOINAS           ] = "Liity nimellä {name}",
     [FS_K_IOS_MSG_JOINED           ] = "{name} liittyi - napauta ja liity",
     [FS_K_IOS_MSG_JOININVITE       ] = "Hölmö - napauta ja liity",
+    [FS_K_IOS_MSG_REMATCH         ] = "Uusintaottelu - napauta pelataksesi",
     [FS_K_IOS_MSG_LEFT             ] = "{name} poistui pelistä",
     [FS_K_IOS_MSG_LEFTANON         ] = "Pelaaja poistui pelistä",
     [FS_K_IOS_MSG_LOBBYFULL        ] = "Kaikki paikat on varattu",

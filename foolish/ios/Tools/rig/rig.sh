@@ -76,6 +76,8 @@
 #                                 composited frame, print the tween numerically
 #   rig.sh probe                  screen size + what the colour finder sees
 #   rig.sh flight | mem | log     the extension's own diagnostics
+#   rig.sh groupdir               the App Group's directory on the simulator, which
+#                                 is where every dev.* file is written and read
 #
 # THE ONE RULE THAT IS NOT OBVIOUS: **do not restart Messages mid-shoot.**
 # The simulator's Messages keeps its conversations IN MEMORY - there is no
@@ -525,11 +527,16 @@ cmd_build() {
   # changes, which lets a driver skip the leave/probe/re-open cycle that exists
   # only because `claimSeededPayload()` is once per process. Two gates, not one:
   # this compile-time flag, and the `dev.reseed` file at runtime.
+  # RIG_SWIFT_CONDITIONS: a product block's own conditions, appended. A setting
+  # on the command line REPLACES the project's, so a product whose project.yml
+  # adds a condition in Debug (uttt's UTTT_BIG_BOARD_CONDITION) names it here
+  # or the rig's build silently compiles that feature out.
   local cond="DEBUG"
   [ -n "${FOOLISH_RESEED:-}" ] && cond="$cond RIG_RESEED"
   # RIG_ARRIVE, also opt-in: the extension's host trace and the arrival door
   # (`arrive`). Nothing else changes, and nothing that ships defines it.
   [ -n "${FOOLISH_ARRIVE:-}" ] && cond="$cond RIG_ARRIVE"
+  [ -n "${RIG_SWIFT_CONDITIONS:-}" ] && cond="$cond $RIG_SWIFT_CONDITIONS"
   xcodebuild -project "$XCPROJ" -scheme "$SCHEME" \
     -configuration Debug -destination "platform=iOS Simulator,id=$SIM" \
     -derivedDataPath "$DD" SWIFT_ACTIVE_COMPILATION_CONDITIONS="$cond" build | tail -3
@@ -2370,6 +2377,7 @@ case "${1:-}" in
   tween)    shift; cmd_tween "$@" ;;
   probe)    shift; cmd_probe "$@" ;;
   flight)   shift; cmd_flight "$@" ;;
+  groupdir) shift; group_dir ;;
   mem)      shift; cmd_mem "$@" ;;
   log)      shift; cmd_log "$@" ;;
   lobby)    shift; cmd_lobby "$@" ;;

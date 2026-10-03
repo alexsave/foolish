@@ -237,6 +237,22 @@ int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
     return n;
 }
 
+// THE REMATCH LOBBY for a finished chain (msg_rematch_lobby): the whole lobby,
+// built by the kernel from the finished payload alone, so every device that
+// taps New game on that table seals the same bytes but for `sent_at`. Parses,
+// replays into the scratch game and adopts NOTHING - the resident game is not
+// touched; the caller decodes the answer when it puts the lobby on screen,
+// which is the adoption.
+int fio_msg_rematch(const uint8_t *finished, int finished_len, uint64_t tapped_at_ms,
+                    int creator_seat, uint8_t *out, int cap) {
+    if (!finished || !out || cap <= 0) return FIO_EBADARG;
+    g_last_msg_error = 0;
+    const int n = msg_rematch_lobby(finished, finished_len, tapped_at_ms, creator_seat,
+                                    out, cap, fio_scratch_game());
+    if (n < 0) { g_last_msg_error = n; return n == MSG_ECAP ? FIO_ECAP : FIO_EMSG; }
+    return n;
+}
+
 // Where THIS DEVICE's own staged run starts in the resident game's atom stream
 // - the same question msg_seal answers for the bubble delta, asked for the
 // animation instead of for the wire, and answered from the same log mark.
@@ -322,6 +338,10 @@ int fio_msg_lobby_can_set_rules(int my_seat) {
 
 int fio_msg_lobby_rules_changed(int have_baseline, int baseline, int current, int mine) {
     return msg_lobby_rules_changed(have_baseline, baseline, current, mine);
+}
+
+int fio_msg_lobby_changer(int rules_changed, int mine, int rematch_lobby) {
+    return msg_lobby_changer(rules_changed, mine, rematch_lobby);
 }
 
 int fio_anim_surface_beat_ms(void) { return ANIM_TIME_MS; }
