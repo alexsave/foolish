@@ -5639,7 +5639,8 @@ static void test_rematch_same_chain(void) {
         CHECK(nl > 0 && msg_rematch_lobby(lob, nl, 1000, 0, out, sizeof(out), &scratch) == MSG_EPHASE,
               "a WAITING lobby was rematched");
         CHECK(msg_rematch_lobby(fin, nf, 1000, 3, out, sizeof(out), &scratch) == MSG_ESEAT
-              && msg_rematch_lobby(fin, nf, 1000, -1, out, sizeof(out), &scratch) == MSG_ESEAT,
+              && msg_rematch_lobby(fin, nf, 1000, -1, out, sizeof(out), &scratch) == MSG_ESEAT
+              && msg_rematch_lobby(fin, nf, 1000, 256, out, sizeof(out), &scratch) == MSG_ESEAT,
               "a tap from outside the finished table was rematched");
     }
 }
@@ -5841,6 +5842,44 @@ static void test_rematch_creator_gate(void) {
     }
 }
 
+// RULE 0F'S BOUNDS, on hand-made keys: it orders two DEALS of one game and
+// nothing else. Within one deal (the same seed) a finished chain still beats
+// an older live bubble of itself; across two games (different ids) nothing
+// changes; and a pre-reveal (all-zero) seed is not a deal to compare.
+static void test_rule_0f_bounds(void) {
+    MsgChainKey fin, live;
+    memset(&fin, 0, sizeof(fin));
+    fin.game_id = 0x0F0F;
+    for (int i = 0; i < MSG_SEED_LEN; i++) fin.seed[i] = (uint8_t)(i + 1);
+    fin.phase = MSG_PHASE_FINISHED;
+    fin.round = 9; fin.turn = 120; fin.n_joins = 3;
+    fin.digest[0] = 0x10;
+    live = fin;
+    live.phase = MSG_PHASE_LIVE;
+    live.round = 0; live.turn = 4;
+    live.digest[0] = 0x20;
+    // Within ONE deal: the finished chain is that deal's later history.
+    CHECK(msg_rule_p(&fin, &live) < 0 && msg_rule_p(&live, &fin) > 0,
+          "0F: an older live bubble of the same deal beat its own finished chain");
+    // Two deals of the game: the one in play wins.
+    MsgChainKey rematch = live;
+    rematch.seed[0] ^= 0xFF;
+    CHECK(msg_rule_p(&fin, &rematch) > 0 && msg_rule_p(&rematch, &fin) < 0,
+          "0F: the rematch in play lost to the finished deal");
+    // Two GAMES: untouched, rounds decide as they always did.
+    MsgChainKey other = rematch;
+    other.game_id ^= 1;
+    CHECK(msg_rule_p(&fin, &other) < 0, "0F: reached across two different games");
+    // A zero seed is no deal.
+    MsgChainKey zero = rematch;
+    memset(zero.seed, 0, MSG_SEED_LEN);
+    CHECK(msg_rule_p(&fin, &zero) < 0, "0F: an all-zero seed was taken for another deal");
+    // Two finished deals, or two live ones: not 0F's to order.
+    MsgChainKey fin2 = fin;
+    fin2.seed[0] ^= 0xFF; fin2.round = 3; fin2.digest[0] = 0x30;
+    CHECK(msg_rule_p(&fin, &fin2) < 0 && msg_rule_p(&fin2, &fin) > 0, "0F: ordered two finished deals");
+}
+
 // --decode <hex>: what THIS build's decoder says about a payload. Kept so a
 // binary built from an older commit can be pointed at a bubble a newer build
 // sealed - that is the only honest model of an old client.
@@ -5966,6 +6005,7 @@ int main(int argc, char **argv) {
     test_rematch_same_chain();
     test_rematch_taps();
     test_rematch_creator_gate();
+    test_rule_0f_bounds();
     test_size_budget(games * 4, seed0);
     { const int rb = bot_roster_find("robusta");
       probe_v6_midgame(seed0, 2, rb);

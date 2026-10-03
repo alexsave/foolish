@@ -294,7 +294,7 @@ Laggards who open stale bubbles afterwards get §7's staleness handling.
   in the same session to their `summaryText` and keeps the latest interactive
   (§11.3). The thread never fills with 60 bubbles.
 - **A rematch is the same game, in the same session.**
-  New game on a finished board seals the kernel's rematch lobby (§7.2, `msg_rematch_lobby`), which reuses the finished game's session and collapses onto its result card.
+  New game on a finished board seals the kernel's rematch lobby (§7.2.1, `msg_rematch_lobby`), which reuses the finished game's session and collapses onto its result card.
   Only a New game that is not a rematch starts a fresh session (`docs/IMESSAGE_LOBBY_V3.md`, Session-per-game).
 - Seat-claim messages (WAITING) intentionally contain zero kernel actions, so
   join races are trivially mergeable: two simultaneous claims of seat 2 fork
@@ -391,18 +391,18 @@ computes the same winner regardless of message delivery order:
 
 ```
 Rule P (total preference order):
-  generation first: for the same game_id, a higher REMATCH GENERATION wins
-                                      (msg_wire.h rule G - a rematch is the
-                                       same game dealt again; it outranks
-                                       even the ancestry rule below, which
-                                       it can never contradict)
-  ancestry next: a chain's own DIRECT CHILD beats the parent it names
+  ancestry first: a chain's own DIRECT CHILD beats the parent it names
                                       (msg_wire.h rule 4 - `turn` counts
                                        re-derived atoms, and a pending good
                                        stops being one when anything follows
                                        it, so a child can tie with, or even
-                                       seal BELOW, its parent's turn)
+                                       seal BELOW, its parent's turn; and a
+                                       rematch lobby is the one child whose
+                                       PHASE is below its parent's)
   0. a STARTED chain (phase >= LIVE) beats a pre-game one   (msg_wire.h rule 0)
+ 0F. of two DEALS of the game (different seeds), a LIVE chain beats a
+     FINISHED one                     (msg_wire.h rule 0F - a rematch in play
+                                       beats the result card it replaced)
   1. higher round wins                (a closed round is settled history)
   2. else higher turn wins            (more accepted actions)
   3. else more joins wins             (the fuller roster is strictly later history;
@@ -419,23 +419,48 @@ but Rule P deliberately does NOT trust delivery order, because two devices can
 transiently disagree about "newest". Rule P needs no clocks and no ordering
 guarantees from the transport.
 
-### 7.2.1 The rematch: the same game, the next generation
+### 7.2.1 The rematch: the same game, dealt again
 
-A finished game is rematched by dealing the SAME `game_id` again, one generation later.
-The generation rides every bubble of the rematch as FMSG format 7 (format 6 plus a `u16` at offset 68; `n_joins` moves to 70), and a generation-0 game still seals format 5 or 6 byte for byte.
-A build that predates format 7 refuses a rematch bubble with `MSG_EFORMAT`, which the extension shows as its "Couldn't open this game" screen.
-The rematch lobby is built entirely by the kernel from the finished chain (`msg_rematch_lobby`):
+The owner, on a finished game three players each tapped New game on: "Somehow a finished game was able to be forked into 3 games. No this shouldn't be possible. It should not start a new chain I think, it should collapse the same game (yes, wiping out the history)."
+And on how, after a new wire format for it was turned down: "just when someone hits a new game, don't start a fresh chain! To randomize, just do some rng based on timestamp of new game start. Then don't allow whoever creates a game to start it, and we're all set. The seed is locked in."
 
-- the same `game_id`, generation + 1;
-- `parent8` = the finished chain's digest, so the ancestry rule and the stale-branch gate see a child;
-- seed = SHA-256("rematch" || old seed || `game_id` LE || next generation LE), from structural fields only and never from the finished bubble's digest, which covers `sent_at`;
+So a rematch is the same game, in the same chain, and nothing on the wire is new.
+New game on a finished board seals a WAITING lobby built entirely by the kernel (`msg_rematch_lobby`, `c/src/msg_wire.h`) from the finished chain, the moment of the tap and the tapper's seat:
+
+- the same `game_id`;
+- `parent8` = the finished chain's digest;
+- seed = the finished deal's own ChaCha keystream (the deal RNG, `deal_rng_seed_at`) read at the block the tap's unix milliseconds name, so two moments are two deals and one moment is one deal, whoever taps;
+- `sent_at` = the same moment in seconds mod 65536;
+- `last_actor_seat` = the tapper's seat, which is what the creator gate reads;
 - the finished game's seating, unrotated, every seat taken, at the finished game's size, as the web's `table_continue` keeps its roster and seats;
 - the finished game's rules (passing or podkidnoy), as `table_continue` keeps them;
-- the fool's-penalty carry for that roster and that fool, as every rematch has carried;
-- `last_actor_seat` = the finished chain's, so it does not depend on who tapped.
+- the fool's-penalty carry for that roster and that fool, as every rematch has carried.
 
-So every tap on the same finished table is the same lobby but for its send clock, and Rule P's digest tiebreak between two of them settles nothing that matters.
-The cost, accepted by the owner: the next deal is computable by anyone holding the finished chain.
+It seals as format 6, like every rematch lobby before it, so every shipped build reads it as an ordinary lobby.
+It reuses the finished game's `MSSession`, so its bubble collapses onto the result card.
+
+**Which chain is the table.**
+A rematch lobby is the finished chain's direct child, and rule 4 ranks a direct child above its parent before rule 0 is asked, so an arriving rematch lobby beats the "Game over" board on every device, from both argument orders.
+Nothing had to change for that: rule 4 already ranked first.
+Three taps make three sibling lobbies of the same game; rules 3 and the digest settle them identically on every device, and whichever wins is the game.
+A lobby that somebody starts beats every sibling lobby, and every later tap on the finished bubble, by rule 0.
+Once it is LIVE, its chain is round 0 against the finished game's round 9, so rule 1 alone would put a device that never saw the lobby back on the result card.
+Rule 0F closes that: of two deals of one game (the same `game_id`, different non-zero seeds), a LIVE chain beats a FINISHED one.
+It decides nothing between two lobbies, two LIVE deals or two FINISHED deals; those fall through to rules 1 to 3 and the digest as before.
+A stale tap on an older finished bubble of the same table is a lobby that names that older chain; it beats only that chain, and loses to every started chain by rule 0.
+
+**The creator cannot start it.**
+The lobby gate's changer rule ("whoever changes the checkbox value cannot start the game") holds back the creator too (`msg_lobby_changer`): the newest bubble of a rematch lobby is mine, and the lobby is told apart by the carry it already holds (`msg_lobby_is_rematch`).
+Like a rules change, it has no full-lobby exemption, because the rematch lobby is born full and the exemption would hand the creator Start at once.
+It strands nobody: everyone else at the table is offered Start, so a two-player DM is never deadlocked, and the creator keeps Leave.
+It lasts as long as the creator's bubble is the newest; once anybody else acts on the lobby, the creator is one more seated player.
+
+**What the per-deal checks key on.**
+A rematch keeps the `game_id`, so every check that meant "the same deal" now also compares the seed, which every bubble already repeats.
+In the kernel that is `open_same_deal`, which #256's `msg_open_boundary` and `msg_staged_fate` ask: a board of the finished game shares no atoms with the rematch, so no boundary is clamped across the two, and a staged rematch lobby against a sibling lobby is SUPERSEDED, which is what it is.
+A staged rematch lobby against the finished chain it names STANDS, by its parent.
+In Swift, `canAdopt`, the send path's same-game test and the per-deal `dealKey` read an eight-byte deal tag off the seed.
+`msg_surface_delta` reads a rematch lobby arriving over the finished board as `ended`, the existing fade back to a lobby, because it already keyed on the `game_id` and the phases alone.
 
 ### 7.3 Validation = replay
 

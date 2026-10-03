@@ -310,13 +310,16 @@ bubble.
 
 **Reversed for the rematch only (2026-10, `rematch.samechain`).**
 The owner, on a finished game three players each tapped New game on: "Somehow a finished game was able to be forked into 3 games. No this shouldn't be possible. It should not start a new chain I think, it should collapse the same game (yes, wiping out the history)."
+And on how: "can we do this whole thing WITHOUT changing iMessage body format? ... just when someone hits a new game, don't start a fresh chain! To randomize, just do some rng based on timestamp of new game start. Then don't allow whoever creates a game to start it, and we're all set. The seed is locked in."
 A New game tap on a FINISHED board is now a rematch of the same game, not a new chain.
-The kernel builds the lobby from the finished chain alone (`msg_rematch_lobby`, `c/src/msg_wire.h`): the same `game_id`, the next rematch generation (FMSG format 7), the finished chain's digest as its parent, a seed derived from the old one, and the finished game's own seating with every seat taken.
-Every player who taps New game on that table therefore seals the same lobby, differing only in its send clock.
+The kernel builds the lobby (`msg_rematch_lobby`, `c/src/msg_wire.h`): the same `game_id`, the finished chain's digest as its parent, a seed drawn from the deal RNG at the moment of the tap, the tapper as its last actor, and the finished game's own seating with every seat taken.
+It is an ordinary format 6 lobby; no wire format changed.
 That lobby REUSES the finished game's `MSSession`, so its bubble collapses onto the result card: the same game, with its history wiped.
-Rule P ranks it above every chain of the game it replaced (rule G: a higher generation of the same `game_id` wins), so a device still showing the result card adopts an arriving rematch instead of dropping it.
+Rule P ranks it above the finished chain because it is that chain's direct child (rule 4, which ranks above rule 0), so a device still showing the result card adopts an arriving rematch instead of dropping it.
+Three taps are three lobbies of the same game; the existing tie-breaks pick one, the same way on every device.
+Whoever tapped cannot start their own lobby: the changer gate holds back the newest sender of a rematch lobby, and everyone else at the table is offered Start.
 A New game from an empty chat, or from a board that is not finished, is unchanged: a fresh session and a fresh `game_id`.
-With the flag off (`rematch.samechain=0` in `dev.flags`, debug builds only), a rematch is the fresh chain it was before.
+With the flag off (`rematch.samechain=0` in `dev.flags`, debug builds only), a rematch is the fresh chain it was before; the creator gate still applies to it, because it is the kernel's.
 
 ### FINISHED bubble: `/m/` and the web funnel
 
