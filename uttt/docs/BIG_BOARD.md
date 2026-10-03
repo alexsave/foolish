@@ -186,6 +186,40 @@ On the simulator, after this fix, the same situation as the phone's report (a bu
 
 NOT proven: anything on a real phone. The corner, the outlines and the diagnostics were seen on an iOS 27 simulator only, with idb taps and XCUITest gestures, not a finger; the 243 badge and the rulebook overlap the zoomed board in the compact drawer (the board view spans the drawer's width there), which this round did not change.
 
+## The arena: uttt.live/243
+
+Two bots play the 243 x 243 game in the visitor's browser, spectator only (`web/app/243`, `web/components/Arena.tsx`, the kernel `c/wasm/uttt_243_web.c` built by `make wasm-243`, the bot `c/src/uttt_big_bot.{c,h}`).
+A game is its seed (`?seed=`) and the settings each move was played at.
+
+### The bot
+
+Negamax with alpha-beta and iterative deepening over a score kept incrementally: a play re-reads only the grids on its leaf's path.
+Wins are weighted in ninths, nine times per size: 3 x 3 = 9, 9 x 9 = 81, 27 x 27 = 729, 81 x 81 = 6,561, the game 2^22.
+A THREAT, two of a side's marks in an open line of a live grid with the third child still open, is worth two ninths of that grid's win (2, 18, 162, 1,458, and 13,122 in the game's grid): less than the win it threatens, more than a win one size down, and taking a win (seven ninths, after the threat it spends) beats making three threats.
+Deciding a grid takes every threat inside it off the board, both sides'.
+A move on the last ply that decides a grid is answered by the opponent's best grid-deciding reply, or nothing if it declines (a one-ply quiescence); the first ply, which always finishes, is never extended.
+The candidate cap below the root follows the plies and the budget (`utb_bot_cap_for`: the widest whose alpha-beta tree fits, 3 to 32), and the root's is four times that, at least 48.
+
+### The control
+
+In the header: "Look ahead" (a stepper, 1 to 8 plies) and "Work a move" (Small 4,000, Medium 30,000, Large 150,000, Huge 1,000,000 work units), with the caps they give shown beside them.
+A change goes to the kernel (`ua_set_bots`) and the next move plays by it; the game goes on.
+The defaults are 6 plies on Large.
+
+### The numbers (2026-10-03, this Mac)
+
+- Chrome 154 (CDP, 1100 x 1300 at 2x, `next start`), seed 4803c49362b7f7bf: at the defaults a whole game of 27,047 plies, X won, in 51.6 s, 524 moves a second over the game (about 1,000 early, 580 late). At 1 ply, 18,779 plies drawn in 0.237 s, 79,000 moves a second.
+- Natively (`-O3 -flto`), whole depth-5 games: the old setting (4 plies, 4,000) went 30,000 -> 18,500 moves/s with threats and -> 14,700 with the extension too; at the defaults about 790 moves/s, 30 to 35 s a game, 93% of moves searching all 6 plies. 7 plies on Large about 390 moves/s (85% full), 8 on Large 190 (88%); a small budget starves deep plies (8 on Small: 12% of moves finish).
+- Strength: threats alone beat the material-only bot 91-3 at depth 3; the new defaults beat the old page's bot 40-0 at depth 4. 6 plies beat 4 at depth 2 (74-18 of 120, z 5.8, in the suite) and at depth 3 (447-239 of 800, 114 drawn, z 7.9). The extension is worth about a ply at a fixed depth (3 plies with it against 4 without: 121-130 at depth 3) and nothing measurable on the tight 4,000 budget.
+- The module is built for the MVP feature set plus bulk memory and sign extension (`-mcpu=mvp -mbulk-memory -msign-ext`): `llvm-objdump -d` finds no v128 or reference-type opcodes, one memory.copy, two memory.fill, six i32.extend8_s, and every function type has at most one result. It is no slower: in node at 4 plies / 4,000, 10,344 moves/s with the default features and 12,003 with these.
+
+### Fixed with it
+
+- "MOVES / S 32,502,000" and "TIME 0:00.0" after a game: a loop started again over a finished game (React runs an effect again when a hidden page is shown) divided the whole game's moves by its own first millisecond. The clock (`GameClock`, `lib/arena.ts`) now belongs to the game, ignores frames once it is over, counts a gap over 250 ms as 250 ms, states no rate under 20 ms of play, and the time reads to the millisecond once the game is over ("51.649 s").
+- "This browser could not start the game (it needs WebAssembly)" for every failure: it now says the error's own words under the sentence (`startError`), and keeps the sentence alone only when there is no WebAssembly. One real cause found while measuring: a browser holding an older `uttt243.wasm` in its HTTP cache (served with max-age 3600) beside a newer build's readers is refused by the layout check; the module is now fetched with `cache: 'no-cache'` (a 304 when unchanged).
+
+NOT proven: the page on Safari, iOS or an in-app browser; the timings on any machine but this Mac; whether the extension pays for itself on the page's budgets.
+
 ## The numbers behind it (2026-10-01)
 
 - Kernel (`tests/uttt_big_test.c`, `make run`): 120 checks; 2,000 random depth-2 games held to the shipped 9 x 9 kernel ply for ply (legal list, turn, over, region, cells, blocks, play and undo); 10 random depth-5 games to the end at 39,561 to 40,936 plies, about 0.1 s each; 36 mutations each caught by a named assertion. `sizeof(UtbGame)` 66,448 bytes.
