@@ -45,6 +45,12 @@
 #include "uttt.h"
 #include <stdint.h>
 
+/* TESTFLIGHT ONLY (docs/BIG_BOARD.md): every function declared here is HIDDEN,
+ * so a framework that links the kernel never exports it, and a build whose
+ * Swift never reaches the big game (every uti_big_* is UTI_UNEXPORTED)
+ * dead-strips it. Exported, 43 utb_ functions stayed in the App Store build. */
+#pragma GCC visibility push(hidden)
+
 #define UTB_DEPTH_MIN   2
 #define UTB_DEPTH_MAX   5
 #define UTB_LEAVES_MAX  59049          /* 9^5                         */
@@ -147,5 +153,7 @@ int  utb_cell_rect(const UtbGame *g, int mv, float r[4]);
 /* A point in the board's 0..1 square, to the leaf under it; -1 outside. The
  * exact inverse of utb_cell_rect: every point inside a cell's rect maps to it. */
 int  utb_hit(const UtbGame *g, float u, float v);
+
+#pragma GCC visibility pop
 
 #endif

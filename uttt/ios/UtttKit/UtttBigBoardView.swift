@@ -265,7 +265,11 @@ public final class UtttBigBoardView: UIView, UIScrollViewDelegate, UIGestureReco
     /// - SMALLER THAN THE VIEW (the fit, and only the fit): the board centred,
     ///   as before - the inset is half the room left over, and the board
     ///   cannot be moved. So the fit is one position, and every way back to
-    ///   it (a pinch out, a double tap at the deepest zoom) lands there.
+    ///   it (a pinch out, a double tap at the deepest zoom) lands there:
+    ///   UIScrollView brings an offset left outside the shrunk room back
+    ///   itself (a clamp of our own at the zoom's end was tried and taken
+    ///   out: testEveryCornerCellPansToTheMiddleAndTaps, pinching out from
+    ///   past an edge, was green without it).
     /// - BIGGER: THE BOARD PANS PAST ITS EDGES, so every cell - the four
     ///   corner cells too - can be brought to the middle of the view's safe
     ///   area and tapped there, clear of the drawer's edge, the home
@@ -298,17 +302,6 @@ public final class UtttBigBoardView: UIView, UIScrollViewDelegate, UIGestureReco
         if scroll.contentInset != inset { scroll.contentInset = inset }
     }
 
-    /// The offset back inside what the insets allow, when a zoom left it
-    /// outside (a zoom out from past an edge shrinks the room under it).
-    private func settle(animated: Bool) {
-        let inset = scroll.contentInset, size = scroll.bounds.size, c = scroll.contentSize
-        func clamp(_ v: CGFloat, _ lo: CGFloat, _ hi: CGFloat) -> CGFloat { min(max(v, lo), max(lo, hi)) }
-        let o = scroll.contentOffset
-        let to = CGPoint(x: clamp(o.x, -inset.left, c.width - size.width + inset.right),
-                         y: clamp(o.y, -inset.top, c.height - size.height + inset.bottom))
-        if abs(to.x - o.x) > 0.25 || abs(to.y - o.y) > 0.25 { scroll.setContentOffset(to, animated: animated) }
-    }
-
     public override func safeAreaInsetsDidChange() {
         super.safeAreaInsetsDidChange()
         centre()
@@ -318,8 +311,6 @@ public final class UtttBigBoardView: UIView, UIScrollViewDelegate, UIGestureReco
     public func scrollViewDidZoom(_ scrollView: UIScrollView) { centre(); follow() }
     public func scrollViewDidScroll(_ scrollView: UIScrollView) { follow() }
     public func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
-        centre()
-        settle(animated: true)
         follow()
     }
 
@@ -359,6 +350,13 @@ public final class UtttBigBoardView: UIView, UIScrollViewDelegate, UIGestureReco
         let z = min(max(scale, scroll.minimumZoomScale), scroll.maximumZoomScale)
         let w = scroll.bounds.width / z, h = scroll.bounds.height / z
         scroll.zoom(to: CGRect(x: p.x - w / 2, y: p.y - h / 2, width: w, height: h), animated: animated)
+        /* the zoom was placed within the room past the edges that the OLD
+         * zoom had (none at the fit), so a block at the board's edge opened
+         * against the view's edge: with the new zoom's room, centre it */
+        if !animated, side > 0 {
+            centre()
+            place(centre: CGPoint(x: p.x / side, y: p.y / side))
+        }
         follow()
     }
 
@@ -579,9 +577,13 @@ enum UtttBigPainter {
     /// The forced target's outline: round the target block, its stroke this
     /// fraction of the block's side, never smaller than `regionMinPoints`;
     /// round the whole board when the target is anywhere, its stroke
-    /// `anywhereStroke` of the board's side.
+    /// `anywhereStroke` of the board's side. The target keeps the old
+    /// 12-point floor because at the fit a 3 x 3 target is 5 points and a
+    /// 6-point outline was not findable among a game's marks (preview and
+    /// rig screenshots, 2026-10-03); 12 with the thin stroke is a hairline
+    /// box, not the old 3-point blob.
     static let regionStroke: CGFloat = 0.03
-    static let regionMinPoints: CGFloat = 6
+    static let regionMinPoints: CGFloat = 12
     static let anywhereStroke: CGFloat = 0.0075
     /// A cell bigger than this on screen is inset; smaller ones fill solid.
     static let insetMinSide: CGFloat = 6
@@ -765,8 +767,11 @@ enum UtttBigPainter {
             }
         }
 
-        /* the last move, solid, and the staged draft, dashed */
-        ring(s.last, s, ctx: ctx, pt: pt, dashed: false)
+        /* the last move, solid, and the staged draft, dashed. A staged
+         * move IS the last move (UtttBigGameScreen hands the same cell as
+         * both), and a solid ring under the dashed one filled its gaps: the
+         * draft never read as a draft (rig, 2026-10-03) */
+        if s.last != s.draft { ring(s.last, s, ctx: ctx, pt: pt, dashed: false) }
         ring(s.draft, s, ctx: ctx, pt: pt, dashed: true)
     }
 

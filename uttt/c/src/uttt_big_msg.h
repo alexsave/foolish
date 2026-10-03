@@ -54,6 +54,12 @@
 #include "uttt_msg.h"
 #include <stdint.h>
 
+/* TESTFLIGHT ONLY (docs/BIG_BOARD.md): every function declared here is HIDDEN,
+ * so a framework that links the kernel never exports it, and a build whose
+ * Swift never reaches the big game (every uti_big_* is UTI_UNEXPORTED)
+ * dead-strips it. Exported, 43 utb_ functions stayed in the App Store build. */
+#pragma GCC visibility push(hidden)
+
 #define UTB_FORMAT      3
 #define UTB_DEPTH       5
 #define UTB_SIDE        243
@@ -187,5 +193,7 @@ int  utb_head_prefer(const UtbHead *mine, const UtbHead *tapped);
 /* THE CAPTION, the 9 x 9's words exactly (uttt_caption): "New game?" for an
  * invitation, "X to play" in play, "X won in N moves", a draw. Length, or -1. */
 int  utb_msg_caption(const UtbMsg *m, const char *who, char *out, int cap);
+
+#pragma GCC visibility pop
 
 #endif

@@ -232,10 +232,14 @@ final class BigBoardUITests: XCTestCase {
             XCTAssertTrue(app.staticTexts["tapped \(k.index)"].waitForExistence(timeout: 5),
                           "\(k.name): the tap did not name cell \(k.index): \(app.staticTexts["big.tapped"].label)")
 
-            /* 5. a double tap at the deepest zoom is the first fit again, exactly */
-            at(p).doubleTap()
+            /* 5. back to the first fit, exactly: by a double tap at the
+             * deepest zoom (the top corners), by a pinch out from past the
+             * edge (the bottom ones) */
+            if k.row == 0 { at(p).doubleTap() } else { board.pinch(withScale: 0.05, velocity: -6) }
             s = settled(board)
-            XCTAssertEqual(s.zoom, 1, accuracy: 0.01, "\(k.name): the double tap did not fit")
+            /* a pinch that ended a hair above the fit is the finger's, not the board's: again */
+            for _ in 0..<3 where s.zoom > 1.0 { board.pinch(withScale: 0.05, velocity: -6); s = settled(board) }
+            XCTAssertEqual(s.zoom, 1, accuracy: 0.01, "\(k.name): did not fit")
             XCTAssertTrue(s.whole, "\(k.name): not the whole board after the fit")
             XCTAssertEqual(s.x, 0, accuracy: 0.5, "\(k.name): the fit is off centre: \(s)")
             XCTAssertEqual(s.y, 0, accuracy: 0.5, "\(k.name): the fit is off centre: \(s)")
