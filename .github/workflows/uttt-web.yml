@@ -6,7 +6,10 @@ name: uttt-web
 # never committed, and Vercel's build image has no clang to make it.
 #
 #   build    on every pull request and push that touches the site or the
-#            kernel: the wasm, a typecheck and `next build`. No secrets.
+#            kernel: the wasm (both modules, and the readers structgen writes
+#            for the 243 page - a libclang program, which ci_llvm.sh
+#            installs), a typecheck, the module tests and `next build`. No
+#            secrets.
 #   deploy   production, on a push to main only. Previews are not deployed:
 #            Vercel's free plan's 100 deployments a day are shared with the
 #            foolish site (web.yml's scope job has the story).
@@ -24,6 +27,9 @@ on:
       - 'shared/c/mixrad.*'
       - 'shared/c/i18n/**'
       - 'shared/c/wasm/**'
+      - 'shared/tools/structgen/**'
+      - 'shared/tools/sgcommon/**'
+      - 'shared/tools/llvm.mk'
       - 'shared/scripts/ci_llvm.sh'
       - '.github/workflows/uttt-web.yml'
   pull_request:
@@ -35,6 +41,9 @@ on:
       - 'shared/c/mixrad.*'
       - 'shared/c/i18n/**'
       - 'shared/c/wasm/**'
+      - 'shared/tools/structgen/**'
+      - 'shared/tools/sgcommon/**'
+      - 'shared/tools/llvm.mk'
       - 'shared/scripts/ci_llvm.sh'
       - '.github/workflows/uttt-web.yml'
   workflow_dispatch: {}
@@ -57,13 +66,15 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: uttt/web/package-lock.json
-      - name: Toolchain (the repo's pinned clang, for the wasm)
+      - name: Toolchain (the repo's pinned clang and libclang, for the wasm and structgen)
         working-directory: .
         run: bash shared/scripts/ci_llvm.sh
       - run: npm ci
       - name: The kernel, as wasm
         run: npm run wasm
       - run: npm run typecheck
+      - name: The 243 page's module against its kernel
+        run: npm test
       - run: npm run build
 
   deploy:
