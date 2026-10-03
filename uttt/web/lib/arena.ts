@@ -16,6 +16,7 @@ import {
 export {
     UA_OPEN, UA_X, UA_O, UA_DRAW, UA_PLIES_MIN, UA_PLIES_MAX,
     UA_BUDGET_SMALL, UA_BUDGET_MED, UA_BUDGET_LARGE, UA_BUDGET_HUGE, UA_DEFAULT_PLIES, UA_DEFAULT_BUDGET,
+    UA_RULE_SHIFT, UA_RULE_CLIMB, UA_RULE_CLIMB_FREE, UA_DEFAULT_RULE,
 } from './gen/arena_layout';
 export type Box = UaBox_Snap;
 export type Status = UaStatus_Snap;
@@ -26,7 +27,7 @@ export interface ArenaExports {
     memory: WebAssembly.Memory;
     ua_layout_hash(): number;
     ua_start(depth: number, hi: number, lo: number): number;
-    ua_set_bots(plies: number, budget: number): void;
+    ua_settings(plies: number, budget: number, rule: number): void;
     ua_think(): number;
     ua_play(mv: number): number;
     ua_step(n: number): number;
@@ -45,10 +46,11 @@ export interface Arena {
     w: ArenaExports;
     /** A fresh game at `depth` (5 on the page) from a 16-hex-digit seed. */
     start(seed: string, depth?: number): void;
-    /** Both bots look `plies` ahead with `budget` work units a move, and the
-     *  game starts again from move 0 on the same seed (the kernel clamps both
-     *  and derives the candidate caps). */
-    setBots(plies: number, budget: number): void;
+    /** Both bots look `plies` ahead with `budget` work units a move, the game
+     *  plays send rule `rule` (UA_RULE_*; left out, the rule it plays now),
+     *  and the game starts again from move 0 on the same seed (the kernel
+     *  clamps all three and derives the candidate caps). */
+    settings(plies: number, budget: number, rule?: number): void;
     /** Up to `n` bot moves; how many were played (fewer when the game ends). */
     step(n: number): number;
     /** The board as a picture: side x side bytes, row-major, UA_OPEN / UA_X /
@@ -150,7 +152,9 @@ export async function instantiateArena(source: BufferSource | WebAssembly.Module
             leaves = c.leaves;
             nodes = c.nodes;
         },
-        setBots: (plies, budget) => w.ua_set_bots(plies, budget),
+        settings(plies, budget, rule) {
+            w.ua_settings(plies, budget, rule ?? readUaConfig(mem(), w.ua_config()).rule);
+        },
         step: (n) => w.ua_step(n),
         grid: () => new Uint8Array(w.memory.buffer, w.ua_grid(), leaves),
         nodes: () => new Uint8Array(w.memory.buffer, w.ua_nodes(), nodes),

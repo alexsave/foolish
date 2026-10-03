@@ -7,9 +7,9 @@
  * moves on any machine, because nothing here reads a clock or a float.
  *
  * A GAME IS ITS SEED AND ITS SETTINGS, FROM THE FIRST MOVE. A change to the
- * bots (ua_set_bots) starts the game again from move 0 on the same seed, so
- * no game is ever played at two settings and the two numbers on the page
- * name the game that is on it.
+ * bots or the send rule (ua_settings) starts the game again from move 0 on
+ * the same seed, so no game is ever played at two settings and the three
+ * settings on the page name the game that is on it.
  *
  * WHAT GOES OUT (uttt_243_web.h): the board as bytes - ua_grid is the board
  * as a picture, one byte a cell in row-major order, and ua_nodes every
@@ -48,6 +48,8 @@ _Static_assert(UA_PLIES_MAX == UTB_BOT_PLIES_MAX, "the page offers the plies the
 _Static_assert(UA_BUDGET_HUGE == UTB_BOT_BUDGET_MAX, "the largest budget is the bot's bound");
 _Static_assert(UA_DEFAULT_PLIES == UTB_BOT_PLIES && UA_DEFAULT_BUDGET == UTB_BOT_BUDGET,
                "the page opens at the bot's defaults");
+_Static_assert(UA_RULE_SHIFT == UTB_RULE_SHIFT && UA_RULE_CLIMB == UTB_RULE_CLIMB
+               && UA_RULE_CLIMB_FREE == UTB_RULE_CLIMB_FREE, "the page's rules are the kernel's");
 
 /* A node's square (or with leaf set, a cell's), from the kernel's geometry:
  * a rect's corner times the side is an exact grid line (utb_cell_rect divides
@@ -62,11 +64,12 @@ static UaBox square(int id, int leaf)
 
 EXPORT(ua_layout_hash) uint32_t ua_layout_hash(void) { return (uint32_t)SG_LAYOUT_HASH; }
 
-/* The empty board at `depth` and both seats' bots fresh from `seed` (their
- * dice back at the start of their streams), at the bot's defaults. */
-static int begin(int depth, uint64_t seed)
+/* The empty board at `depth` under send rule `rule`, and both seats' bots
+ * fresh from `seed` (their dice back at the start of their streams), at the
+ * bot's defaults. */
+static int begin(int depth, uint64_t seed, int rule)
 {
-    if (!utb_init(&g, depth)) return 0;
+    if (!utb_init_rule(&g, depth, rule)) return 0;
     depth_now = depth;
     seed_now  = seed;
     utb_bot_seat(&bot[0], seed, UTTT_X);
@@ -82,22 +85,24 @@ static int begin(int depth, uint64_t seed)
 }
 
 /* A new game at `depth` (5 on the page; 2..5) from the seed hi:lo, at the
- * bot's defaults. 1, or 0 for a depth the kernel does not play. */
+ * bot's defaults and rule A. 1, or 0 for a depth the kernel does not play. */
 EXPORT(ua_start) int ua_start(int depth, uint32_t hi, uint32_t lo)
 {
-    return begin(depth, ((uint64_t)hi << 32) | lo);
+    return begin(depth, ((uint64_t)hi << 32) | lo, UA_DEFAULT_RULE);
 }
 
 /* THE CONTROL: both bots look `plies` ahead with `budget` work units a move
  * (clamped by utb_bot_set, which derives the candidate caps from the two),
+ * the game plays send rule `rule` (one that is not a UA_RULE_ is rule A),
  * and THE GAME STARTS AGAIN: the board empty, move 0, the same seed, both
  * bots' dice back at the start. So the game on the page is exactly its seed
- * and these settings, and the same three play the same game whenever they
+ * and these settings, and the same four play the same game whenever they
  * are set. Before any ua_start there is no game to restart, and nothing
  * happens. */
-EXPORT(ua_set_bots) void ua_set_bots(int plies, int budget)
+EXPORT(ua_settings) void ua_settings(int plies, int budget, int rule)
 {
-    if (!depth_now || !begin(depth_now, seed_now)) return;
+    if (rule < UA_RULE_SHIFT || rule > UA_RULE_CLIMB_FREE) rule = UA_DEFAULT_RULE;
+    if (!depth_now || !begin(depth_now, seed_now, rule)) return;
     utb_bot_set(&bot[0], plies, budget);
     utb_bot_set(&bot[1], plies, budget);
 }
@@ -160,6 +165,7 @@ EXPORT(ua_status) const UaStatus *ua_status(void)
 EXPORT(ua_config) const UaConfig *ua_config(void)
 {
     config.depth    = g.depth;
+    config.rule     = g.rule;
     config.side     = side;
     config.leaves   = utb_leaves(g.depth);
     config.nodes    = utb_nodes(g.depth);

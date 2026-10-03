@@ -123,35 +123,35 @@ test('one seed, one game; a whole small game ends', async () => {
     assert.ok([arena.UA_X, arena.UA_O, arena.UA_DRAW].includes(one.over));
 });
 
-test('the control: setBots goes to the kernel, is clamped there, and the next move searches by it', async () => {
+test('the control: settings go to the kernel, are clamped there, and the next move searches by it', async () => {
     const a = await arena.instantiateArena(wasm);
     a.start('00000000000000aa', 5);
-    a.setBots(2, arena.UA_BUDGET_SMALL);
+    a.settings(2, arena.UA_BUDGET_SMALL);
     let c = a.config();
     assert.equal(c.plies, 2);
     assert.equal(c.budget, 4000);
     assert.ok(c.capNode >= 3 && c.capRoot >= c.capNode, `caps ${c.capNode}/${c.capRoot}`);
     const wideAt2 = c.capNode;
-    a.setBots(8, arena.UA_BUDGET_SMALL);
+    a.settings(8, arena.UA_BUDGET_SMALL);
     assert.ok(a.config().capNode < wideAt2, 'eight plies search narrower than two on one budget');
     assert.equal(arena.UA_PLIES_MAX, 32, 'the stepper goes to 32');
-    a.setBots(99, -5);
+    a.settings(99, -5);
     c = a.config();
     assert.equal(c.plies, arena.UA_PLIES_MAX);
     assert.equal(c.budget, 0);
-    a.setBots(0, 2 ** 31 - 1);
+    a.settings(0, 2 ** 31 - 1);
     assert.equal(a.config().plies, arena.UA_PLIES_MIN);
     assert.equal(a.config().budget, arena.UA_BUDGET_HUGE);
 
     // the next move is searched as set
-    a.setBots(3, arena.UA_BUDGET_LARGE);
+    a.settings(3, arena.UA_BUDGET_LARGE);
     assert.equal(a.step(1), 1);
     assert.equal(a.status().x.searched, 3, 'X searched three plies');
     assert.equal(a.step(1), 1);
     assert.equal(a.status().o.searched, 3, 'and O');
     // the deepest setting is taken, and a move comes back on the smallest
     // budget: the iterations it cannot finish are dropped
-    a.setBots(arena.UA_PLIES_MAX, arena.UA_BUDGET_SMALL);
+    a.settings(arena.UA_PLIES_MAX, arena.UA_BUDGET_SMALL);
     assert.equal(a.config().plies, arena.UA_PLIES_MAX);
     assert.equal(a.step(1), 1);
     const x = a.status().x;
@@ -171,14 +171,14 @@ test('a change of settings starts the game again: move 0, the same seed, the new
     // the reference: a fresh game set to 2 plies on Small before its first move
     const ref = await arena.instantiateArena(wasm);
     ref.start(seed, 3);
-    ref.setBots(2, arena.UA_BUDGET_SMALL);
+    ref.settings(2, arena.UA_BUDGET_SMALL);
     const two = playOut(ref);
 
     // a game 40 moves in at the defaults, then the control
     const a = await arena.instantiateArena(wasm);
     a.start(seed, 3);
     assert.equal(a.step(40), 40);
-    a.setBots(2, arena.UA_BUDGET_SMALL);
+    a.settings(2, arena.UA_BUDGET_SMALL);
     const s = a.status();
     assert.equal(s.plies, 0, 'back to move 0');
     assert.equal(s.last, -1, 'no last move');
@@ -191,16 +191,82 @@ test('a change of settings starts the game again: move 0, the same seed, the new
 
     // rapid changes land on the last one: the game is the seed and THOSE
     // settings, with nothing of the ones passed through
-    a.setBots(5, arena.UA_BUDGET_LARGE);
+    a.settings(5, arena.UA_BUDGET_LARGE);
     assert.equal(a.step(7), 7);
-    a.setBots(4, arena.UA_BUDGET_MED);
-    a.setBots(3, arena.UA_BUDGET_MED);
-    a.setBots(2, arena.UA_BUDGET_SMALL);
+    a.settings(4, arena.UA_BUDGET_MED);
+    a.settings(3, arena.UA_BUDGET_MED);
+    a.settings(2, arena.UA_BUDGET_SMALL);
     assert.deepEqual(playOut(a), two, 'three changes in a row, then the reference settings: the reference game');
 
     // and other settings on the same seed play another game
-    a.setBots(1, arena.UA_BUDGET_SMALL);
+    a.settings(1, arena.UA_BUDGET_SMALL);
     assert.notDeepEqual(playOut(a).moves, two.moves, 'one ply plays another game');
+});
+
+test('a change of send rule starts the game again, and seed, settings and rule are the game', async () => {
+    const seed = '00000000feed0002';
+    const games = {};
+    for (const rule of [arena.UA_RULE_SHIFT, arena.UA_RULE_CLIMB, arena.UA_RULE_CLIMB_FREE]) {
+        const ref = await arena.instantiateArena(wasm);
+        ref.start(seed, 3);
+        ref.settings(2, arena.UA_BUDGET_SMALL, rule);
+        games[rule] = playOut(ref);
+    }
+    assert.notDeepEqual(games[arena.UA_RULE_CLIMB].moves, games[arena.UA_RULE_SHIFT].moves, "B' plays another game than A");
+    assert.notDeepEqual(games[arena.UA_RULE_CLIMB_FREE].moves, games[arena.UA_RULE_CLIMB].moves, "B plays another game than B'");
+
+    // a game 30 moves in under A, then only the rule changes
+    const a = await arena.instantiateArena(wasm);
+    a.start(seed, 3);
+    a.settings(2, arena.UA_BUDGET_SMALL);
+    assert.equal(a.step(30), 30);
+    a.settings(2, arena.UA_BUDGET_SMALL, arena.UA_RULE_CLIMB);
+    const s = a.status();
+    assert.deepEqual([s.plies, s.last, s.turn, s.over], [0, -1, arena.UA_X, 0], 'back to move 0, X to play');
+    assert.equal(a.grid().reduce((n, c) => n + (c ? 1 : 0), 0), 0, 'the picture is empty');
+    assert.deepEqual(playOut(a), games[arena.UA_RULE_CLIMB], "the same seed, settings and rule: the reference B' game");
+    // and back: the A game again, on the same seed
+    a.settings(2, arena.UA_BUDGET_SMALL, arena.UA_RULE_SHIFT);
+    assert.deepEqual(playOut(a), games[arena.UA_RULE_SHIFT], 'back to A: the reference A game');
+    a.settings(2, arena.UA_BUDGET_SMALL, arena.UA_RULE_CLIMB_FREE);
+    assert.deepEqual(playOut(a), games[arena.UA_RULE_CLIMB_FREE], 'B: the reference B game');
+});
+
+test('the send rule: it reaches the kernel, a game opens at A, and each rule sends where it says', async () => {
+    const a = await arena.instantiateArena(wasm);
+    a.start('0000000000005e4d', 5);
+    assert.equal(a.config().rule, arena.UA_RULE_SHIFT, 'a page opens at rule A');
+    assert.equal(arena.UA_DEFAULT_RULE, arena.UA_RULE_SHIFT);
+    assert.deepEqual([arena.UA_RULE_SHIFT, arena.UA_RULE_CLIMB, arena.UA_RULE_CLIMB_FREE], [0, 1, 2]);
+    a.settings(2, arena.UA_BUDGET_SMALL, arena.UA_RULE_CLIMB);
+    assert.equal(a.config().rule, arena.UA_RULE_CLIMB);
+    a.settings(2, arena.UA_BUDGET_SMALL, 7);
+    assert.equal(a.config().rule, arena.UA_RULE_SHIFT, 'a rule that is not one is A');
+    a.settings(2, arena.UA_BUDGET_SMALL, arena.UA_RULE_CLIMB);
+    a.settings(3, arena.UA_BUDGET_SMALL);
+    assert.equal(a.config().rule, arena.UA_RULE_CLIMB, 'settings without a rule keep the one it plays');
+
+    // where play goes: the share of plies whose forced 3 x 3 lies in the 9 x 9
+    // the last move was in, and the widest region seen, over 300 plies
+    const watch = (rule) => {
+        a.settings(2, arena.UA_BUDGET_SMALL, rule);
+        let local = 0, threes = 0, nine = 0;
+        for (let i = 0; i < 300; i++) {
+            assert.equal(a.step(1), 1);
+            const s = a.status(), l = s.lastBox, r = s.regionBox;
+            if (r.size === 3) {
+                threes++;
+                if (Math.floor(r.x / 9) === Math.floor(l.x / 9) && Math.floor(r.y / 9) === Math.floor(l.y / 9)) local++;
+            }
+            if (r.size === 9) nine++;
+        }
+        return { local: local / threes, nine };
+    };
+    const A = watch(arena.UA_RULE_SHIFT), B1 = watch(arena.UA_RULE_CLIMB), B = watch(arena.UA_RULE_CLIMB_FREE);
+    assert.ok(A.local < 0.1, `rule A scatters: ${A.local} of its 3 x 3s in the last move's 9 x 9`);
+    assert.ok(B1.local > 0.8, `rule B' stays local: ${B1.local}`);
+    assert.ok(B.local > 0.8, `rule B stays local: ${B.local}`);
+    assert.ok(B.nine > 0, 'rule B opens a whole 9 x 9 after a 3 x 3 is completed');
 });
 
 test('the clock: a finished game is not timed again, and the rate is never divided by nothing', () => {

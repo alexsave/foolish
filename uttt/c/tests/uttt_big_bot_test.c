@@ -561,10 +561,12 @@ static void deeper_wins(int depth, int games, int deep, int shallow, int budget)
  * the root's candidates, their gains when winners overflow the cap, and the
  * threats re-read under a grid one of them decides: at most 820 nodes, 92
  * units), and the speed printed. */
-static void full_243(uint64_t seed, int plies, int budget, int stretch)
+static void full_243(uint64_t seed, int plies, int budget, int stretch, int rule)
 {
-    TEST("full_243");
-    UtbGame g; utb_init(&g, 5);
+    static const char *const NAME[3] = { "A", "B'", "B" };
+    TEST(rule == UTB_RULE_SHIFT ? "full_243" : rule == UTB_RULE_CLIMB ? "full_243_climb" : "full_243_climb_free");
+    UtbGame g; utb_init_rule(&g, 5, rule);
+    int wide = 0;                     /* moves made from a region over 9 cells */
     UtbBot bx, bo; utb_bot_seat(&bx, seed, UTTT_X); utb_bot_seat(&bo, seed, UTTT_O);
     utb_bot_set(&bx, plies, budget);
     utb_bot_set(&bo, plies, budget);
@@ -574,6 +576,7 @@ static void full_243(uint64_t seed, int plies, int budget, int stretch)
     clock_t t0 = clock();
     while (!g.over && (!stretch || g.n_plies < stretch)) {
         UtbBot *b = g.turn == UTTT_X ? &bx : &bo;
+        wide += utb_node_level(&g, utb_region(&g)) < 4;
         int mv = utb_bot_move(b, &g);
         if (!utb_play(&g, mv)) { CHECK(0, "illegal move %d at ply %d", mv, g.n_plies); break; }
         if (b->work > max_work) max_work = b->work;
@@ -582,14 +585,14 @@ static void full_243(uint64_t seed, int plies, int budget, int stretch)
         if (g.n_plies > UTB_LEAVES_MAX) { CHECK(0, "the game never ended"); break; }
     }
     double s = (double)(clock() - t0) / CLOCKS_PER_SEC;
-    printf("depth 5, seed %llu, %d plies, budget %d, caps %d/%d: %s after %d plies in %.2f s, %.0f moves/s; "
+    printf("depth 5 rule %s, seed %llu, %d plies, budget %d, caps %d/%d: %s after %d plies in %.2f s, %.0f moves/s; "
            "work %.0f a move, at most %d; %.0f%% of moves searched all %d plies; "
-           "material X %d O %d\n",
-           (unsigned long long)seed, plies, budget, bx.cap_node, bx.cap_root,
+           "material X %d O %d; %d moves from a region wider than a 3 x 3\n",
+           NAME[rule], (unsigned long long)seed, plies, budget, bx.cap_node, bx.cap_root,
            g.over == UTTT_DRAW ? "drawn" : g.over == UTTT_X ? "X won" : g.over == UTTT_O ? "O won" : "stopped",
            g.n_plies, s, g.n_plies / (s > 0 ? s : 1e-9), (double)work / g.n_plies, max_work,
            100.0 * deep / g.n_plies, plies,
-           utb_bot_material(&g, UTTT_X), utb_bot_material(&g, UTTT_O));
+           utb_bot_material(&g, UTTT_X), utb_bot_material(&g, UTTT_O), wide);
     CHECK(stretch ? g.n_plies == stretch : g.over != 0, "the game ended, or ran its stretch");
     CHECK(max_work <= budget + first_ply, "a move spent %d work units", max_work);
 }
@@ -614,7 +617,12 @@ int main(int argc, char **argv)
     /* 6 plies against 4 on the 9 x 9 (depth 2), where a game is 50 plies:
      * 120 games at the least: 60 cleared only 3.8 standard deviations */
     deeper_wins(2, games < 40 ? 120 : games * 3, 6, 4, UTB_BOT_BUDGET);
-    full_243(20261003, 4, 4000, 0);
-    full_243(20261003, UTB_BOT_PLIES, UTB_BOT_BUDGET, 1500);
+    full_243(20261003, 4, 4000, 0, UTB_RULE_SHIFT);
+    full_243(20261003, UTB_BOT_PLIES, UTB_BOT_BUDGET, 1500, UTB_RULE_SHIFT);
+    /* the climbing rules: the bot knows no rule, only utb_legal's moves, so
+     * the same bounds hold; under B a completion opens a whole block (81
+     * cells or more), which the caps take as they take a relaxed region */
+    full_243(20261003, UTB_BOT_PLIES, UTB_BOT_BUDGET, 1500, UTB_RULE_CLIMB);
+    full_243(20261003, UTB_BOT_PLIES, UTB_BOT_BUDGET, 1500, UTB_RULE_CLIMB_FREE);
     return report("uttt_big_bot_test");
 }

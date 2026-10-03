@@ -19,9 +19,11 @@ static int depth_ok(int depth)
 int utb_leaves(int depth) { return depth_ok(depth) ? POW9[depth] : 0; }
 int utb_nodes(int depth)  { return depth_ok(depth) ? OFF[depth] : 0; }
 
-int utb_init(UtbGame *g, int depth)
+int utb_init(UtbGame *g, int depth) { return utb_init_rule(g, depth, UTB_RULE_SHIFT); }
+
+int utb_init_rule(UtbGame *g, int depth, int rule)
 {
-    if (!depth_ok(depth)) return 0;
+    if (!depth_ok(depth) || rule < UTB_RULE_SHIFT || rule > UTB_RULE_CLIMB_FREE) return 0;
     /* The whole struct, padding included, so two games that reached one
      * position by one route compare equal with memcmp (the tests do). */
     memset(g, 0, sizeof *g);
@@ -29,6 +31,7 @@ int utb_init(UtbGame *g, int depth)
     g->turn    = UTTT_X;
     g->last    = UTB_NONE;
     g->prev    = UTB_NONE;
+    g->rule    = (uint8_t)rule;
     return 1;
 }
 
@@ -128,22 +131,50 @@ static void settle_path(UtbGame *g, int mv)
 
 /* ---------------------------------------------------------------- the rules */
 
-/* THE REGION FROM `last` ALONE, which is the whole of the forced-move rule:
- * the raw target is the bottom block named by last's digits after the first,
- * and the first decided node on the walk down to it relaxes the target to
- * that node's parent. Nothing above the region is decided, by construction,
- * which utb_legal relies on. */
+/* THE REGION FROM THE BOARD AND `last` ALONE, which is the whole of the
+ * forced-move rule (the three send rules are stated in uttt_big.h).
+ *
+ * k is the level of the largest unit the last move completed: the shallowest
+ * decided ancestor of its cell, or the depth (the cell alone) when none is.
+ * Play inside a decided unit is illegal, so a decided ancestor of the last
+ * move's cell was decided BY that move; the board and `last` are enough, and
+ * undo and adopt need nothing stored. Rule A is k = 2 on every move. A k of
+ * 1 has no level to climb to, so the cell's ordinary send stands (k = depth):
+ * at depth 2 that is the shipped game's rule; deeper, its target lies inside
+ * the decided level-1 node and relaxes to the root, "anywhere".
+ *
+ * The send drops digit k-1 of last's digits and keeps the rest (the bottom
+ * block d1..d(k-2) d(k)..dD), or under CLIMB_FREE after a completion stops at
+ * level k-1 (the block d1..d(k-2) d(k), free inside). Then the first decided
+ * node on the walk down to the target relaxes it to that node's parent.
+ * Nothing above the region is decided, by construction, which utb_legal
+ * relies on. */
 int utb_region(const UtbGame *g)
 {
     if (g->over) return -1;
     if (g->last < 0) return UTB_ROOT;
-    const int D = g->depth;
-    const int target = g->last % POW9[D - 1];          /* level D-1 prefix */
-    for (int L = 1; L <= D - 1; L++) {
-        int p = target / POW9[D - 1 - L];
+    const int D = g->depth, last = g->last;
+    int k = 2;
+    if (g->rule != UTB_RULE_SHIFT) {
+        k = D;
+        for (int L = 1; L < D; L++)
+            if (g->node[OFF[L] + last / POW9[D - L]] != UTTT_OPEN) { k = L; break; }
+    }
+    if (k == 1) k = D;
+    /* the target: level TL, prefix tp */
+    int TL, tp;
+    if (g->rule == UTB_RULE_CLIMB_FREE && k < D) {
+        TL = k - 1;
+        tp = (last / POW9[D - k + 2]) * 9 + (last / POW9[D - k]) % 9;
+    } else {
+        TL = D - 1;
+        tp = (last / POW9[D - k + 2]) * POW9[D - k + 1] + last % POW9[D - k + 1];
+    }
+    for (int L = 1; L <= TL; L++) {
+        int p = tp / POW9[TL - L];
         if (g->node[OFF[L] + p] != UTTT_OPEN) return OFF[L - 1] + p / 9;
     }
-    return OFF[D - 1] + target;
+    return OFF[TL] + tp;
 }
 
 int utb_legal_at(const UtbGame *g, int mv)
@@ -248,7 +279,7 @@ int utb_adopt(UtbGame *g, int depth, const uint8_t *cells, int last)
     g->depth   = (uint8_t)depth;
     g->turn    = (uint8_t)(mover == UTTT_X ? UTTT_O : UTTT_X);
     g->over    = node[0];
-    g->pad_    = 0;
+    g->rule    = UTB_RULE_SHIFT;          /* a picture carries no rule: the bubble's */
     g->last    = last;
     g->prev    = UTB_UNKNOWN;
     g->n_plies = plies;
