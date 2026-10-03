@@ -2,8 +2,8 @@
 
 // THE 243 ARENA: two greedy bots playing the 243 x 243 game, as fast as the
 // browser lets them. Every move, score and square is the kernel's (lib/
-// arena.ts); this component owns the seed, the clock, the canvas and one
-// button.
+// arena.ts); this component owns the seed, the clock, the canvas, the bots'
+// control and one button.
 //
 // ONE SEED A PAGE LOAD. Drawn once from the browser's secure random when the
 // page loads (or read from ?seed=, to replay a game someone named), and
@@ -17,19 +17,37 @@
 // layers, the region's wash under them and a ring round the last move.
 //
 // THE PACE: each animation frame plays moves until STEP_MS has gone, then
-// paints. The rest of the frame is the browser's, so the page stays live.
+// paints. The rest of the frame is the browser's, so the page stays live. A
+// kernel call plays `chunk` moves, and the chunk follows how long a call
+// takes, so a fast setting is not one call a move and a slow one does not
+// spend a whole chunk past the frame.
+//
+// THE CONTROL: how far the bots look (N plies) and how much work a move may
+// spend. A change goes to the kernel at once and the next move plays by it;
+// the game goes on.
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
-    loadArena, parseSeed, randomSeed, UA_DRAW, UA_O, UA_X,
+    GameClock, gameTime, loadArena, startError, parseSeed, randomSeed, UA_DRAW, UA_O, UA_X,
+    UA_PLIES_MIN, UA_PLIES_MAX, UA_BUDGET_SMALL, UA_BUDGET_MED, UA_BUDGET_LARGE, UA_BUDGET_HUGE,
     type Arena as Kernel, type Config, type Status,
 } from '../lib/arena';
 import styles from './Arena.module.css';
 
 /** How long a frame spends playing moves before it paints. */
 const STEP_MS = 11;
-/** Moves per kernel call inside that time. */
-const CHUNK = 24;
+/** A kernel call's moves: the first, the most, and the time a call aims at. */
+const CHUNK0 = 8;
+const CHUNK_MAX = 256;
+const CALL_MS = 2;
+
+/** The work a move may spend, as the control offers it. */
+const BUDGETS: readonly { name: string; units: number }[] = [
+    { name: 'Small', units: UA_BUDGET_SMALL },
+    { name: 'Medium', units: UA_BUDGET_MED },
+    { name: 'Large', units: UA_BUDGET_LARGE },
+    { name: 'Huge', units: UA_BUDGET_HUGE },
+];
 /** How often the numbers in the header are refreshed. */
 const STATS_MS = 120;
 
@@ -42,7 +60,7 @@ const GOLD = '214, 168, 54';
 
 type Phase = 'loading' | 'running' | 'over' | 'bad';
 
-interface Stats { status: Status; rate: number; elapsedMs: number }
+interface Stats { status: Status; rate: number | null; elapsedMs: number }
 
 export function Arena() {
     const canvas = useRef<HTMLCanvasElement>(null);
@@ -52,6 +70,8 @@ export function Arena() {
     const [config, setConfig] = useState<Config | null>(null);
     const [stats, setStats] = useState<Stats | null>(null);
     const [replay, setReplay] = useState(false);
+    const [failure, setFailure] = useState<{ lead: string; detail: string | null } | null>(null);
+    const clock = useRef(new GameClock());
 
     // open the kernel and start the one game this load plays
     useEffect(() => {
@@ -68,7 +88,11 @@ export function Arena() {
                 setConfig(k.config());
                 setPhase('running');
             })
-            .catch(() => !gone && setPhase('bad'));
+            .catch((e: unknown) => {
+                if (gone) return;
+                setFailure(startError(e));
+                setPhase('bad');
+            });
         return () => { gone = true; };
     }, []);
 
@@ -77,36 +101,38 @@ export function Arena() {
         if (phase !== 'running') return;
         const k = kernel.current, cv = canvas.current;
         if (!k || !cv) return;
+        const gc = clock.current;
+        const first = k.status();
+        // a loop started again over a game that already ended (a hidden page
+        // shown again) has nothing to play and nothing to time
+        if (first.over) { setPhase('over'); return; }
         const cfg = k.config();
         const painter = new Painter(cv, k, cfg);
         const view = viewControls(cv, painter);
-        const t0 = performance.now();
-        const samples: [number, number][] = [[t0, 0]];
-        let lastStats = 0, raf = 0, done = false, endMs = 0;
+        gc.frame(performance.now(), first.plies, false);
+        let lastStats = 0, raf = 0, chunk = CHUNK0;
 
         const tick = (now: number) => {
-            if (!done) {
-                const until = performance.now() + STEP_MS;
-                while (performance.now() < until) {
-                    if (k.step(CHUNK) < CHUNK) break;
-                }
+            const until = performance.now() + STEP_MS;
+            for (;;) {
+                const a = performance.now(), asked = chunk;
+                const n = k.step(asked);
+                const dt = performance.now() - a;
+                chunk = dt < CALL_MS / 2 ? Math.min(chunk * 2, CHUNK_MAX) : dt > CALL_MS * 2 ? Math.max(1, chunk >> 1) : chunk;
+                if (n < asked || performance.now() >= until) break;
             }
             const st = k.status();
-            if (!done && st.over) { done = true; endMs = performance.now() - t0; }
+            gc.frame(performance.now(), st.plies, st.over !== 0);
             painter.frame(st);
-            if (now - lastStats >= STATS_MS || done) {
+            if (now - lastStats >= STATS_MS || gc.over) {
                 lastStats = now;
-                samples.push([now, st.plies]);
-                while (samples.length > 2 && now - samples[0][0] > 1000) samples.shift();
-                const [ta, pa] = samples[0];
-                const rate = done ? (st.plies * 1000) / Math.max(endMs, 1) : ((st.plies - pa) * 1000) / Math.max(now - ta, 1);
-                setStats({ status: st, rate, elapsedMs: done ? endMs : now - t0 });
-                if (done) { setPhase('over'); return; }
+                setStats({ status: st, rate: gc.rate(), elapsedMs: gc.ms });
+                if (gc.over) { setPhase('over'); return; }
             }
             raf = requestAnimationFrame(tick);
         };
         raf = requestAnimationFrame(tick);
-        return () => { cancelAnimationFrame(raf); view.detach(); painter.detach(); };
+        return () => { cancelAnimationFrame(raf); gc.pause(); view.detach(); painter.detach(); };
     }, [phase]);
 
     // once the game is over the loop is gone; the board still answers to
@@ -123,17 +149,26 @@ export function Arena() {
 
     const another = useCallback(() => { window.location.assign('/243'); }, []);
 
+    // the control: to the kernel now, read back from it (it clamps)
+    const setBots = useCallback((plies: number, budget: number) => {
+        const k = kernel.current;
+        if (!k) return;
+        k.setBots(plies, budget);
+        setConfig(k.config());
+    }, []);
+
     if (phase === 'bad') {
         return (
             <main className={styles.page}>
                 <h1 className={styles.title}>Ultimate Tic-Tac-Toe, 243 x 243</h1>
-                <p className={styles.note}>This browser could not start the game (it needs WebAssembly).</p>
+                <p className={styles.note}>{failure?.lead ?? 'This browser could not start the game.'}</p>
+                {failure?.detail ? <p className={styles.note}><code className={styles.seed}>{failure.detail}</code></p> : null}
             </main>
         );
     }
 
     const st = stats?.status;
-    const w = config?.weight;
+    const w = config?.weight, t = config?.threat;
     return (
         <main className={styles.page}>
             <header className={styles.head}>
@@ -143,11 +178,12 @@ export function Arena() {
                 </div>
                 <dl className={styles.stats}>
                     <Stat name="Move" value={st ? fmt(st.plies) : '0'} />
-                    <Stat name="Moves / s" value={stats ? fmt(Math.round(stats.rate)) : '-'} />
+                    <Stat name="Moves / s" value={stats?.rate != null ? fmt(Math.round(stats.rate)) : '-'} />
                     <Stat name={st?.over ? 'Result' : 'To play'} value={<Turn st={st} />} />
-                    <Stat name="Time" value={stats ? clock(stats.elapsedMs) : '0:00.0'} />
+                    <Stat name="Time" value={gameTime(stats?.elapsedMs ?? 0, !!st?.over)} />
                     <Stat name="Seed" value={<span className={styles.seed}>{seed || ' '}</span>} />
                 </dl>
+                <Control config={config} disabled={phase !== 'running'} onChange={setBots} />
                 <div className={styles.bots}>
                     <Seat side={UA_X} st={st} gameWeight={w?.[4]} />
                     <Seat side={UA_O} st={st} gameWeight={w?.[4]} />
@@ -165,16 +201,47 @@ export function Arena() {
                     </p>
                 ) : null}
                 <p className={styles.note}>
-                    Each bot looks {config?.plies ?? 4} moves ahead and plays the move that wins the most, minus what it hands
-                    the other side: a 3 x 3 is worth {w?.[0] ?? 1}, a 9 x 9 {w?.[1] ?? 9}, a 27 x 27 {w?.[2] ?? 81}, an
-                    81 x 81 {w?.[3] ?? 729}, and the game more than the rest of the board together. &ldquo;Sees&rdquo; is
+                    Each bot looks {config?.plies ?? 6} moves ahead, one more after a move that decides a grid, and plays
+                    the move that gains the most, minus what it hands the other side: a 3 x 3 is worth {w?.[0] ?? 9}, a
+                    9 x 9 {w?.[1] ?? 81}, a 27 x 27 {w?.[2] ?? 729}, an 81 x 81 {w?.[3] ?? 6561}, and the game more than
+                    the rest of the board together; two in a row with the third still open is worth two ninths of the
+                    grid it threatens ({`${t?.[0] ?? 2} in a 3 x 3, ${t?.[1] ?? 18} in a 9 x 9`}). &ldquo;Look ahead&rdquo; and
+                    &ldquo;Work a move&rdquo; change both bots from their next move. &ldquo;Sees&rdquo; is
                     the value of the move it just chose; &ldquo;holds&rdquo; is everything that side has won. Ties go to
-                    each bot&rsquo;s own dice, which come from the seed: the same seed plays the same game
+                    each bot&rsquo;s own dice, which come from the seed: the same seed and settings play the same game
                     {seed ? <> (<a href={`/243?seed=${seed}`}>{replay ? 'this link' : 'replay this one'}</a>)</> : null}.
                     Scroll or pinch to zoom, drag to pan, double-click to see the whole board.
                 </p>
             </div>
         </main>
+    );
+}
+
+/** How far the bots look, and how much a move may spend. */
+function Control({ config, disabled, onChange }: { config: Config | null; disabled: boolean; onChange: (plies: number, budget: number) => void }) {
+    const plies = config?.plies ?? 0, budget = config?.budget ?? 0;
+    const off = disabled || !config;
+    return (
+        <div className={styles.control}>
+            <div className={styles.knob}>
+                <span className={styles.label} id="arena-plies">Look ahead</span>
+                <div className={styles.stepper} role="group" aria-labelledby="arena-plies">
+                    <button type="button" className={styles.step} aria-label="Look one move less"
+                        disabled={off || plies <= UA_PLIES_MIN} onClick={() => onChange(plies - 1, budget)}>&minus;</button>
+                    <output className={styles.value} aria-live="polite" data-plies={plies}>{config ? `${plies} ${plies === 1 ? 'move' : 'moves'}` : '-'}</output>
+                    <button type="button" className={styles.step} aria-label="Look one move more"
+                        disabled={off || plies >= UA_PLIES_MAX} onClick={() => onChange(plies + 1, budget)}>+</button>
+                </div>
+            </div>
+            <label className={styles.knob}>
+                <span className={styles.label}>Work a move</span>
+                <select className={styles.select} value={budget} disabled={off} data-budget={budget}
+                    onChange={(e) => onChange(plies, Number(e.target.value))}>
+                    {BUDGETS.map((b) => <option key={b.units} value={b.units}>{b.name}, {fmt(b.units)}</option>)}
+                </select>
+            </label>
+            <span className={styles.label}>{config ? `${config.capNode} replies a node, ${config.capRoot} at the root` : ''}</span>
+        </div>
     );
 }
 
@@ -210,10 +277,6 @@ function Seat({ side, st, gameWeight }: { side: number; st?: Status; gameWeight?
 
 const fmt = (n: number) => n.toLocaleString('en-US');
 const signed = (n: number) => (n > 0 ? '+' : n < 0 ? '-' : '') + fmt(Math.abs(n));
-function clock(ms: number) {
-    const s = ms / 1000, m = Math.floor(s / 60);
-    return `${m}:${(s - m * 60).toFixed(1).padStart(4, '0')}`;
-}
 
 /* ------------------------------------------------------------------ paint */
 

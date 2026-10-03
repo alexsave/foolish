@@ -68,6 +68,65 @@
   letter-spacing: 0.02em;
 }
 
+/* the bots' control: a stepper for the plies and a select for the work */
+.control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 26px;
+}
+
+.knob {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.stepper .value {
+  min-width: 5.6em;
+  text-align: center;
+}
+
+.step,
+.select {
+  font: 600 15px/1 var(--sys);
+  color: var(--ink);
+  background: transparent;
+  border: 1.5px solid rgba(29, 27, 22, 0.45);
+  cursor: pointer;
+  transition: background-color 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.step {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 999px;
+}
+
+.select {
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.step:hover:not(:disabled),
+.select:hover:not(:disabled) { background: rgba(214, 168, 54, 0.22); }
+.step:active:not(:disabled) { background: rgba(214, 168, 54, 0.38); }
+.step:focus-visible,
+.select:focus-visible { outline: 2px solid var(--highlighter); outline-offset: 3px; }
+.step:disabled,
+.select:disabled { opacity: 0.35; cursor: default; }
+
 .bots {
   display: flex;
   flex-wrap: wrap;
@@ -135,5 +194,5 @@
 .note a { color: var(--ink); }
 
 @media (prefers-reduced-motion: reduce) {
-  .again { transition: none; }
+  .again, .step, .select { transition: none; }
 }

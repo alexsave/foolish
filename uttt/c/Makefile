@@ -388,6 +388,11 @@ wasm-web: $(WEB_WASM_OUT)
 # generated LAYOUT_HASH at load. structgen is a libclang program: CI's
 # shared/scripts/ci_llvm.sh installs libclang; on a Mac, Homebrew's llvm.
 #
+# THE MVP FEATURE SET, plus bulk memory and sign extension, and nothing else
+# (-mcpu=mvp): the compiler's default wasm32 also turns on SIMD, multivalue
+# and reference types, and an older Safari or an in-app browser refuses a
+# module that carries any of them - the page then cannot start at all.
+#
 # ALWAYS REBUILT (FORCE): generating and linking take about a second, and a
 # module and a reader that could come from two different headers - make's
 # whole-second mtimes, a checkout moving a header backwards - is the one
@@ -414,7 +419,7 @@ wasm-243: $(STRUCTGEN) | build
 	@mkdir -p $(ARENA_GEN) $(dir $(ARENA_WASM_OUT))
 	@$(STRUCTGEN) $(ARENA_SG_ARGS) --ts $(ARENA_GEN)/arena_layout.ts \
 	  --hash-ts $(ARENA_GEN)/arena_layout_hash.ts --print-hash > build/arena_layout.hash
-	$(WEB_WASM_CC) --target=wasm32 -O3 -nostdlib -ffreestanding -mbulk-memory \
+	$(WEB_WASM_CC) --target=wasm32 -mcpu=mvp -mbulk-memory -msign-ext -O3 -nostdlib -ffreestanding \
 	  -mno-nontrapping-fptoint -std=c11 -Wall -Wextra -Werror $(ARENA_FLAGS) \
 	  -DSG_LAYOUT_HASH=$$(cat build/arena_layout.hash) \
 	  -Wl,--no-entry -Wl,--export-memory -Wl,-z,stack-size=131072 -Wl,--strip-all \

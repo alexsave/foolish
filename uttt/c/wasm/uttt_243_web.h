@@ -24,6 +24,21 @@ enum {
     UA_DRAW = UTTT_DRAW
 };
 
+/* THE CONTROL ON THE PAGE: how far each bot looks (plies) and how much work
+ * a move may spend (a budget, in uttt_big_bot.h's work units), offered as
+ * these four sizes. ua_set_bots takes any values and clamps them; the page
+ * offers these. uttt_243_web.c holds them to uttt_big_bot.h's bounds. */
+enum {
+    UA_PLIES_MIN    = 1,
+    UA_PLIES_MAX    = 8,
+    UA_BUDGET_SMALL = 4000,         /* the first page's setting            */
+    UA_BUDGET_MED   = 30000,
+    UA_BUDGET_LARGE = 150000,       /* the default                          */
+    UA_BUDGET_HUGE  = 1000000,      /* the most a move may spend            */
+    UA_DEFAULT_PLIES  = 6,
+    UA_DEFAULT_BUDGET = UA_BUDGET_LARGE
+};
+
 /* A square of the board in cells: column, row and side. */
 typedef struct {
     int32_t x, y, size;
@@ -57,8 +72,9 @@ typedef struct {
     int32_t nodes;          /* the internal nodes                             */
     int32_t plies;          /* the deepest search                             */
     int32_t budget;         /* work units a move may spend past its first ply */
-    int32_t cap_root, cap_node;
+    int32_t cap_root, cap_node;   /* candidates searched at the root, below it */
     int32_t weight[5];      /* a won 3 x 3, 9 x 9, 27 x 27, 81 x 81, the game */
+    int32_t threat[5];      /* one open two-in-a-row in each of those grids   */
 } UaConfig;
 
 #endif
