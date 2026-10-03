@@ -18,6 +18,7 @@
 #include "view.h"
 #include "client_table.h"  // PushEvent: the step a push walk hands back
 #include "anim_plan.h"     // AnimPlan: the plan, read where it lies
+#include "hand_layout.h"   // HandMetrics: the hand's shape, crossing as its structs
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -1696,6 +1697,27 @@ static int board_rules_check(void) {
     }
     if (fio_hand_laid_out(hand, 3, 0, order, 3, (char *)out, 1) != FIO_ECAP) {
         printf("FAIL laid out wrote past its buffer\n"); return 1;
+    }
+
+    // The hand's shape through the bridge: eleven cards at 398 points are the
+    // owner's "5 up top and 6 below", and the codes are the bridge's own.
+    {
+        const HandMetrics m = { 52, 22, 72, 4, 6, 8, 34 };
+        HandRows r;
+        HandRect slots[11];
+        if (fio_hand_rows(&m, 11, 398, &r) != FIO_EOK || r.rows != 2 || r.row_n[0] != 5
+            || r.row_n[1] != 6 || r.card_w != 52 || r.height != 166) {
+            printf("FAIL hand rows\n"); return 1;
+        }
+        n = fio_hand_slots(&m, 11, 398, slots, 11);
+        if (n != 11 || slots[0].x != 61 || slots[5].x != 33 || slots[5].y != 86) {
+            printf("FAIL hand slots rc=%d\n", n); return 1;
+        }
+        if (fio_hand_slots(&m, 11, 398, slots, 10) != FIO_ECAP
+            || fio_hand_slots(NULL, 11, 398, slots, 11) != FIO_EBADARG
+            || fio_hand_rows(&m, -1, 398, &r) != FIO_EBADARG) {
+            printf("FAIL hand shape refusals\n"); return 1;
+        }
     }
 
     // THE TABLE, WRITTEN (fio_table_encode): the one place a table byte is
