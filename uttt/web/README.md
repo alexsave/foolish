@@ -25,6 +25,19 @@ open http://localhost:3000/AJG7NYNQG4RFXXGVPGD7QR2ETSOYTWMCREAQ
 with the repo's pinned clang (`.github/workflows/uttt-web.yml`) and deploys
 the site to its own Vercel project on every push to `main` that touches it.
 
+## /243: two bots on the 243 x 243 board
+
+`uttt.live/243` (and `/234`, redirected) plays the recursive game at depth 5
+between two greedy lookahead bots (`uttt/c/src/uttt_big_bot.h`), in the
+visitor's browser, as fast as it goes. One seed per page load, from
+`crypto.getRandomValues`, drives both bots; `/243?seed=<16 hex digits>`
+replays a named game move for move. The bots are their own wasm module
+(`uttt/c/wasm/uttt_243_web.c`, `make -C uttt/c wasm-243`, written to
+`public/uttt243.wasm`); the structs the page reads come through readers
+`shared/tools/structgen` writes into `lib/gen/` (a libclang program: Homebrew's
+`llvm` on a Mac). Both are build outputs of `npm run wasm`. `npm test` loads
+`lib/arena.ts` against the built module.
+
 ## One-time setup (the owner)
 
 1. **Create the Vercel project**, from a checkout, not from the dashboard's

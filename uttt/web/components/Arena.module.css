@@ -1,0 +1,139 @@
+/* The 243 arena: the replay page's paper, ink and type (Replay.module.css),
+   wider, because the board is 243 cells across and wants every pixel. */
+.page {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: max(20px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+  max-width: 1080px;
+  margin: 0 auto;
+}
+
+.head {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.titles {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.title {
+  font: 700 21px/1.2 var(--sys);
+  letter-spacing: -0.015em;
+  color: var(--ink);
+  margin: 0;
+  text-wrap: balance;
+}
+
+.label {
+  font: 600 9.5px/1 var(--sys);
+  letter-spacing: 1.9px;
+  text-transform: uppercase;
+  color: var(--label);
+}
+
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 26px;
+  margin: 0;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.value {
+  margin: 0;
+  font: 600 17px/1.15 var(--sys);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.seed {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.bots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 26px;
+}
+
+.seat {
+  margin: 0;
+  font: 400 14px/1.4 var(--sys);
+  color: var(--ink);
+}
+
+.num { font-variant-numeric: tabular-nums; font-weight: 600; }
+
+.x { color: #25376b; font-weight: 700; }
+.o { color: #a8321f; font-weight: 700; }
+
+.board {
+  width: min(100%, calc(100dvh - 40px), 1048px);
+  aspect-ratio: 1;
+  display: block;
+  touch-action: none;
+  cursor: grab;
+}
+.board:active { cursor: grabbing; }
+
+.foot {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.result {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  font: 600 17px/1.4 var(--sys);
+  color: var(--ink);
+}
+
+.again {
+  font: 600 14px/1 var(--sys);
+  color: var(--ink);
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: transparent;
+  border: 1.5px solid rgba(29, 27, 22, 0.45);
+  cursor: pointer;
+  transition: background-color 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.again:hover { background: rgba(214, 168, 54, 0.22); }
+.again:active { background: rgba(214, 168, 54, 0.38); }
+.again:focus-visible { outline: 2px solid var(--highlighter); outline-offset: 3px; }
+
+.note {
+  margin: 0;
+  font: 400 13px/1.5 var(--sys);
+  color: var(--label);
+  max-width: 72ch;
+}
+.note a { color: var(--ink); }
+
+@media (prefers-reduced-motion: reduce) {
+  .again { transition: none; }
+}

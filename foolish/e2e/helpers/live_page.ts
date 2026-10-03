@@ -90,6 +90,25 @@ const timers = new Map<number, Timer>();
 /** The virtual time, in ms since the page was mounted. */
 export const now = (): number => clock;
 
+// The handles this clock gave out, so a clear can tell its own timers from real ones.
+const virtualHandles = new WeakSet<object>();
+
+// A clear is handed the handle of whichever clock armed the timer, and only that
+// clock can cancel it. The pg pool is why this matters: a client released before
+// mount() carries a REAL 10 s idle timer, and when the server checks that client
+// out again under the virtual clock, pg-pool cancels the timer with the virtual
+// clearTimeout. Swallowing a real handle there left the real timer armed, and
+// ten real seconds after the release pg-pool's idle callback ended the client
+// in the middle of whatever query it was running. A run that takes longer than
+// that (the -O0 coverage lane) lost the first bot commit's connection after the
+// row was written: the bot loop threw before its broadcast, and the page never
+// saw the move.
+const virtualId = (h: unknown): number | null => {
+    if (h !== null && typeof h === 'object' && virtualHandles.has(h)) return (h as { id: number }).id;
+    if (typeof h === 'number' && timers.has(h)) return h;   // a handle coerced through its Symbol.toPrimitive
+    return null;
+};
+
 function installClock(): void {
     clock = 0;
     timers.clear();
@@ -97,19 +116,28 @@ function installClock(): void {
         const id = ++timerSeq;
         timers.set(id, { id, due: clock + Math.max(0, Number(ms) || 0), fn, args, every: 0 });
         // pg and node internals call .unref()/.ref()/.hasRef() on a timer handle.
-        return { id, unref() { return this; }, ref() { return this; }, hasRef() { return true; }, refresh() { return this; }, [Symbol.toPrimitive]: () => id } as unknown as number;
+        const handle = { id, unref() { return this; }, ref() { return this; }, hasRef() { return true; }, refresh() { return this; }, [Symbol.toPrimitive]: () => id };
+        virtualHandles.add(handle);
+        return handle as unknown as number;
     };
-    const clear = (h: unknown) => { timers.delete(typeof h === 'number' ? h : (h as { id?: number })?.id ?? -1); };
-    g.clearTimeout = clear;
+    g.clearTimeout = (h: unknown) => {
+        const id = virtualId(h);
+        if (id !== null) timers.delete(id); else realClearTimeout(h as Parameters<typeof clearTimeout>[0]);
+    };
     g.setInterval = (fn: (...a: unknown[]) => void, ms?: number, ...args: unknown[]) => {
         const id = ++timerSeq;
         const every = Math.max(1, Number(ms) || 0);
         timers.set(id, { id, due: clock + every, fn, args, every });
-        return { id, unref() { return this; }, ref() { return this; }, hasRef() { return true; }, [Symbol.toPrimitive]: () => id } as unknown as number;
+        const handle = { id, unref() { return this; }, ref() { return this; }, hasRef() { return true; }, [Symbol.toPrimitive]: () => id };
+        virtualHandles.add(handle);
+        return handle as unknown as number;
     };
-    g.clearInterval = clear;
+    g.clearInterval = (h: unknown) => {
+        const id = virtualId(h);
+        if (id !== null) timers.delete(id); else realClearInterval(h as Parameters<typeof clearInterval>[0]);
+    };
     g.requestAnimationFrame = (fn: (t: number) => void) => g.setTimeout(() => fn(clock), FRAME_MS);
-    g.cancelAnimationFrame = clear;
+    g.cancelAnimationFrame = g.clearTimeout;
     Date.now = () => EPOCH + clock;
     globalThis.performance.now = () => clock;
 }
