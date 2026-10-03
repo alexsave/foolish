@@ -39,7 +39,7 @@
 
 // Swift.min / Swift.max, operand for operand: min(x, y) is `y < x ? y : x` and
 // max(x, y) is `y >= x ? y : x`. fmin/fmax are not the same function - they
-// differ on a NaN - and the sweep holds this file to Swift's.
+// differ on a NaN - and this file keeps Swift's.
 static double swift_min(double x, double y) { return y < x ? y : x; }
 static double swift_max(double x, double y) { return y >= x ? y : x; }
 
