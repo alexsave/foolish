@@ -64,6 +64,29 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
     public let carryKey: UInt32?
     public let carryFool: Int?
 
+    /// WHICH DEAL of the game this chain belongs to: the first eight bytes of
+    /// the deal seed every bubble repeats (c/src/msg_wire.h), as hex. A rematch
+    /// is the same `gameId` dealt again from a new seed, so the id alone no
+    /// longer says "the same deal". An IDENTITY TAG and nothing else: it is
+    /// compared for equality, never handed back to the kernel, which keeps the
+    /// seed itself.
+    public let dealTag: String
+    /// Do two chains belong to the same deal of the same game - one board's
+    /// worth of history? The id and the deal, both: a rematch keeps the id and
+    /// deals a new seed, and what one deal's board did means nothing to the
+    /// next one's.
+    public func isSameDeal(_ other: MessageEnvelope) -> Bool { dealKey == other.dealKey }
+    /// A REMATCH LOBBY, still full: the lobby a New game on a finished table
+    /// creates (the only lobby that carries the fool's penalty), every seat of
+    /// that table still in it. What its bubble says is "play again", not "come
+    /// and join" - nobody can join a full table, and "<name> joined" would name
+    /// whoever tapped New game as if they had just walked in.
+    public var isRematchInvite: Bool {
+        phase == 0 && carriesPenalty && joins.count == nPlayers
+    }
+    /// The same fact as a key, for state a surface keeps per deal.
+    public var dealKey: String { "\(gameId).\(dealTag)" }
+
     /// THE TABLE'S RULES: may the defender transfer the attack on (perevodnoy,
     /// true - the default and what every game before this variant played), or
     /// is this the throw-in game with no transfer at all (podkidnoy, false)?
@@ -111,7 +134,7 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
         case phase, turn, round, joins, digest, parent8, passingAllowed
         case sentAt = "sent_at"
         case newAtoms = "n_new"
-        case opening, carryKey, carryFool
+        case opening, carryKey, carryFool, dealTag
         case nPlayers = "n_players"
         case lastActorSeat = "last_actor_seat"
         case gameId = "game_id"
@@ -230,6 +253,7 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
             opening: h.e.opening == MSG_NO_OPENING ? nil : h.e.opening,
             carryKey: h.e.carryKey == 0 ? nil : UInt32(truncatingIfNeeded: h.e.carryKey),
             carryFool: h.e.carryFool == MSG_NO_FOOL ? nil : h.e.carryFool,
+            dealTag: hex(Array(h.e.seed.prefix(8))),
             // The rules, resolved against the envelope's format by the kernel
             // (msg_pass_allowed): Swift never learns which formats carry a
             // variant byte, which is why it does not read `variant` itself.
@@ -403,6 +427,27 @@ public actor MessageKernel {
         }
         guard rc == 0, key != 0 else { fio_msg_set_carry(0, -1); return false }
         return fio_msg_set_carry(key, idx) == 0
+    }
+
+    /// THE REMATCH LOBBY for a FINISHED chain, built wholly by the kernel
+    /// (msg_wire.h msg_rematch_lobby): the same game dealt again - same id, the
+    /// finished chain as its parent, seated as the game finished and under its
+    /// rules, with the fool's carry. Adopts nothing: decode the answer to put it
+    /// on screen. Throws when the kernel refuses (not finished, an unnamed seat)
+    /// - the caller then starts an ordinary new game.
+    ///
+    /// `tappedAtMs` is the moment of the tap, unix milliseconds: the kernel
+    /// derives the lobby's send clock AND its new seed from it. `creatorSeat`
+    /// is the tapper's seat at the finished table.
+    public func rematch(finished: Data, tappedAtMs: UInt64 = MessageKernel.clockNowMs(),
+                        creatorSeat: Int) throws -> Data {
+        var out = [UInt8](repeating: 0, count: 8 * 1024)
+        let n = finished.withUnsafeBytes { raw in
+            fio_msg_rematch(raw.bindMemory(to: UInt8.self).baseAddress, Int32(finished.count),
+                            tappedAtMs, Int32(creatorSeat), &out, Int32(out.count))
+        }
+        guard n > 0 else { throw MessageEnvelope.Failure.damaged(code: Int(fio_last_msg_error())) }
+        return Data(bytes: out, count: Int(n))
     }
 
     /// SHOWING it: which seat a lobby's pending penalty would fall on - the
@@ -837,6 +882,13 @@ public actor MessageKernel {
     /// stamps it as a default argument, which cannot await.
     public nonisolated static func clockNow() -> Int {
         Int(Date().timeIntervalSince1970.rounded(.down)) & 0xffff
+    }
+
+    /// The same clock at full width, in unix MILLISECONDS - what a rematch tap
+    /// hands the kernel (`rematch`), which reduces it to `clockNow`'s seconds
+    /// for the send clock itself.
+    public nonisolated static func clockNowMs() -> UInt64 {
+        UInt64((Date().timeIntervalSince1970 * 1000).rounded(.down))
     }
 
     /// ROUND 16 — how many seconds `seat` must still wait before it may pick up,

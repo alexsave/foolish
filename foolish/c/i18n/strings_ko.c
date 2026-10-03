@@ -93,6 +93,7 @@ const char *const FS_STRINGS_KO[FS_K_COUNT] = {
     [FS_K_IOS_MSG_JOINAS           ] = "{name} 님으로 참가",
     [FS_K_IOS_MSG_JOINED           ] = "{name} 참가 - 탭하여 참가",
     [FS_K_IOS_MSG_JOININVITE       ] = "바보같은 - 탭하여 참가",
+    [FS_K_IOS_MSG_REMATCH         ] = "재대결 - 탭하여 플레이",
     [FS_K_IOS_MSG_LEFT             ] = "{name} 님이 게임을 떠났습니다",
     [FS_K_IOS_MSG_LEFTANON         ] = "플레이어 한 명이 게임을 떠났습니다",
     [FS_K_IOS_MSG_LOBBYFULL        ] = "모든 자리가 찼습니다",

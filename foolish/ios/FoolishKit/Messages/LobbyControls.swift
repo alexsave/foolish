@@ -137,6 +137,27 @@ public enum LobbyControls {
         GateWire.lobbyRulesChanged(baseline: baseline, current: current, mine: mine)
     }
 
+    /// AM I THE CHANGER on this lobby - the newest sender whom the gate holds
+    /// back from Start (`offered`'s `iChangedTheRules`)? The kernel's answer
+    /// (msg_wire.h msg_lobby_changer): I moved the rules, OR this is a rematch
+    /// lobby and its newest bubble is mine - the bubble that created it, whose
+    /// tap chose the seed. Owner: "don't allow whoever creates a game to start
+    /// it, and we're all set. The seed is locked in."
+    ///
+    /// A rematch lobby is told apart by what the wire already carries: it is
+    /// the only lobby with the fool's carry (`carriesPenalty`), and every reseal
+    /// of it repeats that until Start. `wishOutstanding` is LobbyView's
+    /// optimistic tick (round 21): a rules change the reseal has not landed for
+    /// yet still counts.
+    public static func iAmTheChanger(env: MessageEnvelope, mySeat: Int?,
+                                     baseline: Bool?, wishOutstanding: Bool = false) -> Bool {
+        if wishOutstanding { return true }
+        let mine = mySeat != nil && env.lastActorSeat == mySeat
+        return GateWire.lobbyChanger(
+            rulesChanged: rulesChanged(baseline: baseline, current: env.passingAllowed, mine: mine),
+            mine: mine, rematchLobby: env.phase == 0 && env.carriesPenalty)
+    }
+
     /// May I LEAVE this lobby? A seated player may, once somebody else is
     /// seated too.
     ///

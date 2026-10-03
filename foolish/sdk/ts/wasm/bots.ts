@@ -39,6 +39,7 @@ interface EngineExports {
     wasm_msg_seal?(): number;
     wasm_msg_header_ptr?(): number;
     wasm_msg_rule_p?(aLen: number, bLen: number): number;
+    wasm_msg_rematch?(inLen: number, tappedAtMs: number, creatorSeat: number): number;
     wasm_msg_rebase?(pendingRound: number, seat: number, wireLen: number): number;
     wasm_msg_pickup_hold?(seat: number, sentAt: number, now: number): number;
 }
@@ -745,6 +746,22 @@ export function kernelMsgSeal(
     const r = ex.wasm_msg_seal();
     if (r < 0) throw msgError(r);
     const base = ex.wasm_replay_io_ptr();
+    return mem(ex).slice(base, base + r);
+}
+
+// THE REMATCH LOBBY for a FINISHED envelope (c/src/msg_wire.h
+// msg_rematch_lobby): the same game dealt again, built wholly by the kernel.
+// The same C the phone's fio_msg_rematch calls - this is how
+// e2e/msg_rematch.test.ts holds the two engines to one answer.
+export function kernelMsgRematch(finished: Uint8Array, tappedAtMs: number,
+                                 creatorSeat: number): Uint8Array {
+    const ex = bots();
+    if (!ex.wasm_msg_rematch) throw new Error('kernelMsgRematch: module has no FMSG support');
+    if (finished.length > ex.wasm_replay_io_cap()) throw new Error('iMessage payload: capacity exceeded');
+    const base = ex.wasm_replay_io_ptr();
+    mem(ex).set(finished, base);
+    const r = ex.wasm_msg_rematch(finished.length, tappedAtMs, creatorSeat);
+    if (r < 0) throw msgError(r);
     return mem(ex).slice(base, base + r);
 }
 

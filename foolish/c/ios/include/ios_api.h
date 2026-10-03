@@ -1004,6 +1004,16 @@ int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
                    const uint8_t parent8[8], const uint8_t *joins, int joins_len,
                    int sent_at, uint8_t *out, int cap);
 
+// THE REMATCH LOBBY for the FINISHED chain `finished`: the same game dealt
+// again, seated as it finished, built wholly by the kernel (msg_wire.h
+// msg_rematch_lobby). Adopts nothing; decode the answer to put it on screen.
+//
+// Returns bytes written to `out`, or negative: FIO_EMSG with fio_last_msg_error
+// set when the kernel refuses (not finished, an unnamed seat) - a host then
+// starts an ordinary new game instead.
+int fio_msg_rematch(const uint8_t *finished, int finished_len, uint64_t tapped_at_ms,
+                    int creator_seat, uint8_t *out, int cap);
+
 // ROUND 16 — the pickup hold, asked of the RESIDENT game (the one the last
 // fio_msg_decode replayed). Seconds `seat` must still wait before it may
 // pick up: 0 when it may pick up now. `sent_at` is the clock that came back in
@@ -1190,6 +1200,10 @@ int fio_msg_lobby_offered(int my_seat, int joined, int capacity,
 int fio_msg_lobby_can_exit(int my_seat, int joined);
 int fio_msg_lobby_can_set_rules(int my_seat);
 int fio_msg_lobby_rules_changed(int have_baseline, int baseline, int current, int mine);
+// Is the newest bubble mine in a way that withholds Start: a rules change, or
+// my bubble on a REMATCH lobby (the creator's). `rematch_lobby` is the lobby's
+// carry, read off its header. See msg_wire.h msg_lobby_changer.
+int fio_msg_lobby_changer(int rules_changed, int mine, int rematch_lobby);
 
 // ONE BEAT, in milliseconds. The same ANIM_TIME_MS a card's flight takes, which
 // is the point: a lobby's beats and a board's beats keep one pulse, and a number

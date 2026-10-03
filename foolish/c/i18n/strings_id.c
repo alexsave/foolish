@@ -93,6 +93,7 @@ const char *const FS_STRINGS_ID[FS_K_COUNT] = {
     [FS_K_IOS_MSG_JOINAS           ] = "Gabung sebagai {name}",
     [FS_K_IOS_MSG_JOINED           ] = "{name} bergabung - ketuk untuk gabung",
     [FS_K_IOS_MSG_JOININVITE       ] = "Bodoh - ketuk untuk gabung",
+    [FS_K_IOS_MSG_REMATCH         ] = "Tanding ulang - ketuk untuk main",
     [FS_K_IOS_MSG_LEFT             ] = "{name} keluar dari permainan",
     [FS_K_IOS_MSG_LEFTANON         ] = "Seorang pemain keluar dari permainan",
     [FS_K_IOS_MSG_LOBBYFULL        ] = "Semua tempat sudah terisi",

@@ -174,7 +174,7 @@ final class LobbyActionOrderTests: XCTestCase {
             "stageLobbyPassing": "resealLobby",
             "startGame": "startFromLobby",
             "createWaiting": "chatIsDM ? 2 : 8",
-            "createRematchLobby": "armRematchCarry",
+            "createRematchLobby": "RematchLobby.",
             "revertStagedSurface": "StagedRevert.route(",
         ]
         for (fn, landmark) in landmarks {

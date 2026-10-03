@@ -378,6 +378,11 @@ final class MessagesViewController: MSMessagesAppViewController {
     //
     //   ITEM  join | rules | leave | start          a lobby word
     //         move:SEAT:KIND[:PICK]                 a board move
+    //         rematch:SEAT                          SEAT taps New game on the
+    //                                               finished board (the kernel's
+    //                                               same-chain lobby, SEAT its creator)
+    //         rematch:fresh:SEAT                    ...as the flag-off build would:
+    //                                               SEAT's fresh-chain lobby
     //   SEAT  a number, or `any` (the first seat holding KIND)
     //   KIND  good | attack | throwin | cover | pickup | pass
     //   PICK  low (default) | high | a card like QS or 10H
@@ -396,6 +401,11 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// claim, a door delivery) replaces it when Rule P prefers it, or when it is
     /// another game. Never a staged, unsent bubble - that is not the thread's.
     private var rigShown: Data?
+    /// The last FINISHED chain this controller saw. A `rematch` item is sealed
+    /// off it rather than off `rigShown`, because every other seat taps New
+    /// game on the result card it is still looking at - three racing taps are
+    /// three lobbies off ONE finished chain, not a chain of lobbies.
+    private var rigFinished: Data?
     /// Bytes the door sent, so their send callbacks register nothing.
     /// PROCESS-WIDE, not per controller: closing the drawer resigns this
     /// controller, and a Send pressed with the drawer closed is reported to a
@@ -470,6 +480,7 @@ final class MessagesViewController: MSMessagesAppViewController {
     @MainActor
     private func rigSaw(_ p: Data?) async {
         guard let p, p != rigShown else { return }
+        if let e = try? await MessageKernel.shared.peek(payload: p), e.phase == 3 { rigFinished = p }
         guard let cur = rigShown else { rigShown = p; return }
         let a = try? await MessageKernel.shared.peek(payload: cur)
         let b = try? await MessageKernel.shared.peek(payload: p)
@@ -561,6 +572,27 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// Seal one item off `base`, by the shipping kernel's own calls.
     @MainActor
     private func rigSeal(_ item: String, on base: Data) async throws -> Data {
+        if item.hasPrefix("rematch:") {
+            guard let finished = rigFinished else { throw MessageEnvelope.Failure.damaged(code: -5) }
+            let parts = item.split(separator: ":").map(String.init)
+            // rematch:SEAT - SEAT's device taps New game on the result card, now.
+            if parts.count == 2, let seat = Int(parts[1]) {
+                return try await MessageKernel.shared.rematch(finished: finished, creatorSeat: seat)
+            }
+            // rematch:fresh:SEAT - the flag-off build's lobby, as SEAT's device
+            // would seal it off the same result card.
+            guard parts.count == 3, parts[1] == "fresh", let seat = Int(parts[2]) else {
+                throw MessageEnvelope.Failure.damaged(code: -6)
+            }
+            let fenv = try await MessageEnvelope.decode(payload: finished, viewer: -1)
+            let board = MessageTurnController(parentPayload: finished, parent: fenv, mySeat: seat)
+            await board.begin()
+            guard let built = try await RematchLobby.build(
+                finished: finished, view: board.view, names: board.names, mySeat: seat,
+                myName: board.names[seat] ?? "", passing: board.passingAllowed,
+                capacity: 8, sameChain: false) else { throw MessageEnvelope.Failure.damaged(code: -7) }
+            return built.payload
+        }
         let env = try await MessageEnvelope.decode(payload: base, viewer: -1)
         guard let gid = UInt64(env.gameId) else { throw MessageEnvelope.Failure.damaged(code: -2) }
         let parent = MessageTurnController.firstEight(hex: env.digest)

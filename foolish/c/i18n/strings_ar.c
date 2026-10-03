@@ -93,6 +93,7 @@ const char *const FS_STRINGS_AR[FS_K_COUNT] = {
     [FS_K_IOS_MSG_JOINAS           ] = "انضم باسم {name}",
     [FS_K_IOS_MSG_JOINED           ] = "انضم إلى الطاولة: {name} - انقر للانضمام",
     [FS_K_IOS_MSG_JOININVITE       ] = "أحمق - انقر للانضمام",
+    [FS_K_IOS_MSG_REMATCH         ] = "مباراة العودة - انقر للعب",
     [FS_K_IOS_MSG_LEFT             ] = "غادر اللعبة: {name}",
     [FS_K_IOS_MSG_LEFTANON         ] = "غادر أحد اللاعبين اللعبة",
     [FS_K_IOS_MSG_LOBBYFULL        ] = "كل المقاعد محجوزة",
