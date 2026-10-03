@@ -344,6 +344,12 @@ targets:
       # happens to be first. PackedBytes is the byte reader every fixed-layout
       # record on this side is written with (§zero-JSON).
       - path: ../../shared/swift
+        excludes:
+          # A self-contained Swift package (Package.swift, its own C target
+          # CBubbleData, XCTest tests). Compiled as plain sources here it fails
+          # to resolve those modules and breaks the archive. Nothing in foolish
+          # uses it yet; depend on it as a package when something does.
+          - BubbleDataKit/**
       # NOTE: `- path: Entitlements` used to be here. EntitlementsService has
       # exactly one caller in the whole repo (FoolishApp/FoolishApp.swift), so
       # it moved to FoolishApp/PhoneOnly/ with the rest of the phone-only code -
