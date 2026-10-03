@@ -26,6 +26,7 @@
 #include "../src/table.h"
 #include "../src/client_table.h"
 #include "../src/msg_wire.h"   // msg_lobby_can_set_rules, the iMessage spelling of the lobby rule
+#include "../src/hand_layout.h"
 #include "../wasm/wire.h"
 #include <stdio.h>
 #include <sys/mman.h>
@@ -34,6 +35,8 @@
 #include <stdlib.h>
 #include <stdarg.h>
 #include <stddef.h>
+#include <float.h>
+#include <math.h>   // fabs
 
 static int n_pass = 0;
 static int n_fail = 0;
@@ -14087,6 +14090,119 @@ static void test_podkidnoy_every_brain(void) {
 
 #endif  // CD_PASS_PROBE
 
+// ---------- the hand's shape (hand_layout.h) ---------------------------------
+//
+// The iMessage fan's own numbers (FHandFan.swift), in points.
+static const HandMetrics HAND_IOS = {
+    .card_w_max = 52, .card_w_min = 22, .card_h = 72, .gap = 4,
+    .row_gap = 6, .row_pad = 8, .split_below = 34,
+};
+
+// THE MATRIX: every count a hand can reach in a 36-card game, at the widths a
+// phone and a browser actually give it, plus the degenerate ones. The split
+// point is stated per width rather than re-derived: one row of n cards is
+// (w - 4(n+1))/n wide, below 34 once n > (w - 4)/38, so these are the first
+// counts that split; 346 is the width where nine sit at exactly 34. Width 0 and below splits every hand of two or more (the
+// floor width is under the threshold); DBL_MAX, the "not measured yet" width,
+// never splits.
+static void test_hand_layout_rows_and_slots(void) {
+    static const struct { double w; int first_split; } W[] = {
+        {280, 8}, {340, 9}, {346, 10}, {390, 11}, {398, 11}, {600, 16}, {1200, 32},
+        {0, 2}, {-1, 2}, {-300, 2}, {DBL_MAX, 37},
+    };
+    for (size_t i = 0; i < sizeof W / sizeof *W; i++) {
+        for (int n = 0; n <= 36; n++) {
+            HandRows r;
+            char msg[160];
+            snprintf(msg, sizeof msg, "hand_rows count %d width %g", n, W[i].w);
+            CHECK(hand_rows(&HAND_IOS, n, W[i].w, &r) == HAND_EOK, msg);
+            const int two = n >= W[i].first_split;
+            CHECK(r.rows == (two ? 2 : 1), msg);
+            // The cut is a floor: the odd card goes to the BOTTOM row.
+            CHECK(r.row_n[0] == (two ? n / 2 : n) && r.row_n[1] == (two ? n - n / 2 : 0), msg);
+            CHECK(r.height == (two ? 166.0 : 80.0), msg);
+            // One width for both rows, from the fuller (bottom) row, inside the
+            // cap and the floor.
+            const int fuller = two ? n - n / 2 : (n > 1 ? n : 1);
+            const double raw = (W[i].w - 4.0 * (fuller + 1)) / fuller;
+            const double want = raw > 52 ? 52 : raw < 22 ? 22 : raw;
+            CHECK(r.card_w == want, msg);
+
+            HandRect s[40];
+            const int k = hand_slots(&HAND_IOS, n, W[i].w, s, 40);
+            snprintf(msg, sizeof msg, "hand_slots count %d width %g", n, W[i].w);
+            CHECK(k == (W[i].w > 0 ? n : 0), msg);
+            for (int j = 0; j < k; j++) {
+                const int row = j < r.row_n[0] ? 0 : 1;
+                const int col = row ? j - r.row_n[0] : j;
+                const int in_row = r.row_n[row];
+                CHECK(s[j].w == r.card_w && s[j].h == 72, msg);
+                CHECK(s[j].y == (two ? (row ? 86.0 : 8.0) : 4.0), msg);
+                // Each row centred on its own: equal margins left and right.
+                const double left = s[j - col].x, right = W[i].w - (s[j - col + in_row - 1].x + r.card_w);
+                CHECK(fabs(left - right) < 1e-9 * (W[i].w > 1 ? W[i].w : 1), msg);
+                if (col > 0) CHECK(fabs(s[j].x - s[j - 1].x - (r.card_w + 4)) < 1e-9 * W[i].w, msg);
+            }
+        }
+    }
+
+    // Spot checks, by value. Two cards at 300 (Round5BoardTests): 52 wide, the
+    // row of 108 centred at 96, the second card 56 further, 4 down in 80.
+    HandRect s[40];
+    CHECK(hand_slots(&HAND_IOS, 2, 300, s, 40) == 2, "2 cards at 300 have two slots");
+    CHECK(s[0].x == 96 && s[1].x == 152 && s[0].y == 4 && s[1].y == 4
+          && s[0].w == 52 && s[0].h == 72, "2 cards at 300 sit at x 96 and 152, y 4, 52x72");
+    // Eleven at 398 (the owner's "5 up top and 6 below"): the bottom row of 6
+    // sets the width (still the 52 cap), the row of 5 is centred above it.
+    HandRows r;
+    CHECK(hand_rows(&HAND_IOS, 11, 398, &r) == HAND_EOK && r.rows == 2
+          && r.row_n[0] == 5 && r.row_n[1] == 6, "11 cards at 398 split 5 over 6");
+    CHECK(hand_slots(&HAND_IOS, 11, 398, s, 40) == 11, "11 cards at 398 have 11 slots");
+    CHECK(s[0].x == 61 && s[0].y == 8 && s[5].x == 33 && s[5].y == 86 && s[10].x == 313,
+          "11 cards at 398: top row from 61, bottom row from 33 at y 86");
+    // Twenty at 340 (HandRearrangeDropTests' compact drawer): 10 over 10 at
+    // (340 - 44) / 10, the one-row width of the fuller row and not of 20.
+    CHECK(hand_rows(&HAND_IOS, 20, 340, &r) == HAND_EOK && r.row_n[0] == 10 && r.row_n[1] == 10
+          && r.card_w == 296.0 / 10.0, "20 cards at 340 are 10 over 10 at 29.6");
+    // Thirty-six at 280 runs into the floor: 22 wide, and the row is allowed to
+    // be wider than the hand rather than grow a third row.
+    CHECK(hand_rows(&HAND_IOS, 36, 280, &r) == HAND_EOK && r.rows == 2 && r.card_w == 22,
+          "36 cards at 280 hold the 22 floor in two rows");
+    CHECK(hand_slots(&HAND_IOS, 36, 280, s, 40) == 36 && s[0].x < 0, "36 cards at 280 overflow the row");
+    // 346 = 38 * 9 + 4 puts nine cards at EXACTLY 34 in one row, and the split
+    // is strictly below 34: they stay in one row.
+    CHECK(hand_rows(&HAND_IOS, 9, 346, &r) == HAND_EOK && r.rows == 1 && r.card_w == 34,
+          "9 cards at 346 are exactly 34 wide and stay in one row");
+    // Nine at 340 is the first split there, and its width comes from the 5 below.
+    CHECK(hand_rows(&HAND_IOS, 9, 340, &r) == HAND_EOK && r.rows == 2 && r.card_w == 52,
+          "9 cards at 340 split and size off the row of 5");
+
+    // The unmeasured width is one row at the cap, exactly.
+    CHECK(hand_rows(&HAND_IOS, 20, DBL_MAX, &r) == HAND_EOK && r.rows == 1 && r.card_w == 52
+          && r.height == 80, "20 cards at DBL_MAX are one row of 52, 80 tall");
+
+}
+
+static void test_hand_layout_refuses_what_it_cannot_answer(void) {
+    HandRows r;
+    HandRect s[4];
+    CHECK(hand_rows(NULL, 3, 300, &r) == HAND_EBADARG, "hand_rows refuses no metrics");
+    CHECK(hand_rows(&HAND_IOS, 3, 300, NULL) == HAND_EBADARG, "hand_rows refuses no out");
+    CHECK(hand_rows(&HAND_IOS, -1, 300, &r) == HAND_EBADARG, "hand_rows refuses a negative count");
+    CHECK(hand_slots(NULL, 3, 300, s, 4) == HAND_EBADARG, "hand_slots refuses no metrics");
+    CHECK(hand_slots(&HAND_IOS, -1, 300, s, 4) == HAND_EBADARG, "hand_slots refuses a negative count");
+    CHECK(hand_slots(&HAND_IOS, 3, 300, s, -1) == HAND_EBADARG, "hand_slots refuses a negative cap");
+    CHECK(hand_slots(&HAND_IOS, 3, 300, NULL, 4) == HAND_EBADARG, "hand_slots refuses no out");
+    // A short cap writes nothing at all.
+    for (int i = 0; i < 4; i++) s[i].x = s[i].y = s[i].w = s[i].h = -7;
+    CHECK(hand_slots(&HAND_IOS, 5, 300, s, 4) == HAND_ECAP, "hand_slots refuses a short cap");
+    CHECK(s[0].x == -7 && s[3].h == -7, "a refused hand_slots leaves out untouched");
+    // An exact cap is enough, and an empty hand or no width needs no buffer.
+    CHECK(hand_slots(&HAND_IOS, 4, 300, s, 4) == 4, "hand_slots fills an exact cap");
+    CHECK(hand_slots(&HAND_IOS, 0, 300, NULL, 0) == 0, "an empty hand needs no buffer");
+    CHECK(hand_slots(&HAND_IOS, 3, 0, NULL, 0) == 0, "no width needs no buffer");
+}
+
 int main(void) {
 #ifdef CD_PASS_PROBE
     test_masked_board_carries_the_rules();
@@ -14348,6 +14464,8 @@ int main(void) {
     test_client_play_is_the_engine();
     test_client_play_refuses_what_is_not_a_gesture();
     test_client_adopts_a_bare_board();
+    test_hand_layout_rows_and_slots();
+    test_hand_layout_refuses_what_it_cannot_answer();
 
     printf("\n%d passed, %d failed\n", n_pass, n_fail);
     return n_fail > 0 ? 1 : 0;

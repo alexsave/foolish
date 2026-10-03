@@ -84,7 +84,7 @@ CORE_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/replay_
             src/bot_knobs.c src/bot_roster.c src/bot_drive.c \
             $(SHARED)/sha256.c src/msg_wire.c src/msg_expand.c src/anim_plan.c \
             src/analyse.c src/roster.c src/table.c src/client_table.c src/card.c \
-            src/strategy.c
+            src/strategy.c src/hand_layout.c
 # BY BASENAME, not by stripping src/: the sources come from two directories now,
 # and the old `$(CORE_SRC:src/%.c=build/%.o)` left the shared pair as .c paths -
 # which still links, from source, silently, while the pattern rule below never
@@ -338,7 +338,7 @@ IOS_CORE_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c \
                 src/replay_steps.c src/replay_extras.c src/view.c src/awire.c \
                 src/evwire.c $(SHARED)/sha256.c src/msg_wire.c src/msg_expand.c \
                 src/anim_plan.c src/roster.c src/card.c src/client_table.c \
-                $(IOS_BRIDGE_SRC)
+                src/hand_layout.c $(IOS_BRIDGE_SRC)
 IOS_BOTS_SRC := $(filter-out $(IOS_CORE_SRC),$(CORE_SRC)) ios/ios_bots_api.c
 
 # Everything, for the host-side smoke/golden binaries that want one link line.
@@ -1832,7 +1832,7 @@ COV_BRANCH_MIN ?= 74
 # coverage climbs; never lower one to make a red build pass.
 COV_KERNEL     := game legal replay replay_steps replay_extras view awire evwire \
                   msg_wire msg_expand anim_plan table client_table roster card \
-                  bot_drive bot_roster analyse
+                  hand_layout bot_drive bot_roster analyse
 # deal_rng and sha256 are in the SAME gate, from their new home. They left this
 # list's `src/` prefix behind when they moved to shared/, and a filter that no
 # longer matches does not fail - gcovr simply reports the file it cannot find as
