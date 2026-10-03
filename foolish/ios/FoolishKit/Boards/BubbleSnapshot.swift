@@ -85,6 +85,7 @@ public enum BubbleSnapshot {
     /// the human is actually looking at: the lobby roster, on the same wool.
     @MainActor
     public static func renderLobby(joinedNames: [String], passing: Bool = true,
+                                   rematch: Bool = false,
                                    scheme: ColorScheme = .light) -> UIImage? {
         let content = ZStack {
             FColor.fallback
@@ -108,7 +109,9 @@ public enum BubbleSnapshot {
                 // text) takes a LIGHT shadow, not a dark one — a dark shadow
                 // under dark text on a light-ish weave adds nothing. Round-6
                 // #17 added the weight `onTableText` now carries.
-                Text(FStrings.t("ios.msg.joininvite"))
+                // A rematch is the same table playing again, full: there is
+                // nobody to invite (MessageEnvelope.isRematchInvite).
+                Text(FStrings.t(rematch ? "ios.msg.rematch" : "ios.msg.joininvite"))
                     .font(.caption).onTableText()
                     .padding(.top, 2)
                 // WHICH GAME this table is playing, in the bubble (owner,
@@ -162,7 +165,8 @@ public enum BubbleSnapshot {
                               scheme: ColorScheme = .light) -> UIImage? {
         if env.phase == 0 {
             return renderLobby(joinedNames: env.joins.sorted { $0.seat < $1.seat }.map(\.name),
-                               passing: env.passingAllowed, scheme: scheme)
+                               passing: env.passingAllowed, rematch: env.isRematchInvite,
+                               scheme: scheme)
         }
         guard let publicView else { return nil }
         let names = Dictionary(env.joins.map { ($0.seat, $0.name) }, uniquingKeysWith: { a, _ in a })

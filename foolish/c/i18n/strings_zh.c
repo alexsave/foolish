@@ -93,6 +93,7 @@ const char *const FS_STRINGS_ZH[FS_K_COUNT] = {
     [FS_K_IOS_MSG_JOINAS           ] = "以 {name} 加入",
     [FS_K_IOS_MSG_JOINED           ] = "{name} 加入了 —— 点一下加入",
     [FS_K_IOS_MSG_JOININVITE       ] = "傻乎乎 —— 点一下加入",
+    [FS_K_IOS_MSG_REMATCH         ] = "再来一局 - 点一下开始",
     [FS_K_IOS_MSG_LEFT             ] = "{name} 离开了这局",
     [FS_K_IOS_MSG_LEFTANON         ] = "有玩家离开了这局",
     [FS_K_IOS_MSG_LOBBYFULL        ] = "位置已满",

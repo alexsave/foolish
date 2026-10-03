@@ -229,6 +229,31 @@ public enum ShownWrite {
     }
 }
 
+/// WHICH PIECES OF THE BOARD'S CHROME DRAW, the end screen's list included -
+/// the kernel's `anim_board_chrome`. The end screen takes the board's place,
+/// but the hand, the pills, Undo, the squares and my role mark are layers over
+/// that place, so the swap alone takes none of them away; this one answer does.
+public struct BoardChrome: OptionSet, Equatable, Sendable {
+    public let rawValue: UInt32
+    public init(rawValue: UInt32) { self.rawValue = rawValue }
+
+    public static let hand     = BoardChrome(rawValue: UInt32(FIO_CHROME_HAND))
+    public static let pills    = BoardChrome(rawValue: UInt32(FIO_CHROME_PILLS))
+    public static let undo     = BoardChrome(rawValue: UInt32(FIO_CHROME_UNDO))
+    public static let squares  = BoardChrome(rawValue: UInt32(FIO_CHROME_SQUARES))
+    public static let selfMark = BoardChrome(rawValue: UInt32(FIO_CHROME_SELF_MARK))
+    public static let results  = BoardChrome(rawValue: UInt32(FIO_CHROME_RESULTS))
+
+    /// `clearOnResults`: the end screen takes the board's chrome away with the
+    /// board. Off is the old screen, the chrome drawn over the list.
+    public static func of(isOver: Bool, resultsShown: Bool, spectating: Bool,
+                          clearOnResults: Bool) -> BoardChrome {
+        BoardChrome(rawValue: fio_board_chrome(isOver ? 1 : 0, resultsShown ? 1 : 0,
+                                               spectating ? 1 : 0,
+                                               clearOnResults ? Int32(FIO_CHROME_RULE_CLEAR_ON_RESULTS) : 0))
+    }
+}
+
 /// One line of the end screen, before a name is attached to it. The NAME is the
 /// client's: identity lives in the roster and is localized, which is the same
 /// reason no other wire in the SDK carries one.

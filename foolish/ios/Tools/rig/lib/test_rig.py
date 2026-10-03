@@ -588,5 +588,48 @@ class XcodegenKeepsTheEntitlements(unittest.TestCase):
                          "rig.sh runs `git checkout` again")
 
 
+class TheFlightLogIsTheOneTheExtensionWrites(unittest.TestCase):
+    """`rig.sh flight` read `flight.txt` while FlightRecorder writes
+    `flight.log`, so it answered "no flight log yet" on every device, and the
+    live-arrival harness asserts on that log. The name is read out of the
+    recorder's own source, so a rename on either side fails here."""
+
+    def test_flight_reads_the_recorders_file(self):
+        rec = os.path.join(RIG, "..", "..", "FoolishKit", "Messages", "FlightRecorder.swift")
+        with open(rec) as fh:
+            m = re.search(r'fileName\s*=\s*"([^"]+)"', fh.read())
+        self.assertIsNotNone(m, "FlightRecorder.swift no longer names its file")
+        with open(os.path.join(RIG, "rig.sh")) as fh:
+            flight = [l for l in fh if l.startswith("cmd_flight()")]
+        self.assertEqual(len(flight), 1, "rig.sh has no single cmd_flight")
+        self.assertIn('"$g/%s"' % m.group(1), flight[0],
+                      "rig.sh flight does not read %s" % m.group(1))
+
+
+class TheArrivalDoorKeepsItsWords(unittest.TestCase):
+    """`rig.sh arrive` presses Send once per item the door stages, so the two
+    must agree on which words are options and which are items. The door's
+    option words live in MessagesViewController.rigArrive; a word the rig
+    counts as an item that the door treats as an option (or the reverse)
+    leaves the rig waiting for a bubble that never comes."""
+
+    def test_option_words_match(self):
+        vc = os.path.join(RIG, "..", "..", "FoolishMessages", "MessagesViewController.swift")
+        with open(vc) as fh:
+            door = fh.read()
+        with open(os.path.join(RIG, "rig.sh")) as fh:
+            rig = fh.read()
+        arrive = rig[rig.index("cmd_arrive() {"):]
+        arrive = arrive[:arrive.index("\n}\n")]
+        for word in ("send", "direct", "hold"):
+            self.assertIn('w == "%s"' % word, door, "the door no longer knows `%s`" % word)
+        for prefix in ("gap=", "session="):
+            self.assertIn('w.hasPrefix("%s")' % prefix, door, "the door no longer knows `%s`" % prefix)
+            self.assertIn("'^%s'" % prefix, arrive, "rig.sh arrive counts `%s` as an item" % prefix)
+        self.assertIn("'^send$'", arrive, "rig.sh arrive counts `send` as an item")
+        self.assertIn('*" direct "*|*" hold "*', arrive,
+                      "rig.sh arrive presses Send for a direct or held request")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

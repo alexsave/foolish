@@ -13,6 +13,23 @@ import Foundation
 
 extension MessageTableView {
 
+    /// NOTE 2 ("Live arrival good take a while to show up?"): an open-replay
+    /// that starts no sequence hands the role sync back to the board's
+    /// `onChange`, so an arriving non-closing good turns its sword into the
+    /// check on a board that is already open. Ships on; `arrival.emptyroles=0`
+    /// in `dev.flags` puts back the old router, which reported every open as
+    /// sequenced and left the marks stale until a later sequence
+    /// (LiveArrivalRoleMarkTests).
+    static let opensEmptyWithRoleSyncByDefault = true
+
+    static var opensEmptyWithRoleSync: Bool {
+        #if DEBUG || SOLO_TESTING
+        return MessageDevBoard.flag("arrival.emptyroles", shipping: opensEmptyWithRoleSyncByDefault)
+        #else
+        return opensEmptyWithRoleSyncByDefault
+        #endif
+    }
+
     /// A bout closed (the table cleared): animate its end - the discard or pickup
     /// sweep, then every refill - from the KERNEL's evwire for that move, the SAME
     /// runEventStream the open-replay uses. No GameView diff decides what flies any
@@ -170,8 +187,17 @@ extension MessageTableView {
             if conflict != nil { Task { await controller.finishConflictAdopt() } }
             return false
         }
-        // First appear with a delivered game: the open-replay (same event path).
-        if prior == nil { AnimLog.say("-> openReplay"); replayLastMoveOnOpen(new); return true }
+        // First appear with a delivered game, or an arrival: the open-replay
+        // (same event path). It answers whether it started a sequence, and that
+        // answer is what this returns - the caller syncs the roles for any view
+        // change no sequence owns. Note 2: an arriving good that does not close
+        // the bout has an empty stream, and reporting it as sequenced left a
+        // warm board drawing the sword it had already said good over.
+        if prior == nil {
+            AnimLog.say("-> openReplay")
+            let sequenced = replayLastMoveOnOpen(new)
+            return sequenced || !Self.opensEmptyWithRoleSync
+        }
         // Send released the bout end this board had been withholding. `prior` is
         // the pre-settlement board the player has been looking at since they
         // staged the move, which is exactly the "board before this move" the

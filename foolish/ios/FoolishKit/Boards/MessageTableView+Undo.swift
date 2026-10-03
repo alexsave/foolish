@@ -366,6 +366,20 @@ extension MessageTableView {
         }
     }
 
+    /// NOTE 6: AN ARRIVAL LEFT A STALE BUBBLE IN THE INPUT FIELD. The
+    /// controller has adopted it and dropped the staged moves; the kernel said
+    /// the field's bubble is not in the arrived chain
+    /// (`MessageTurnController.nothingBubbleOwed`). Overwrite it the way an
+    /// Undo-to-empty does - `stageBaseNow`, the NOTHING reseal of the chain
+    /// now on screen, staged without collapsing - so the bubble the human can
+    /// send is a no-op over the arrival rather than a move that would erase it.
+    /// Owner: "make it be a 'nothing burger' bubble, same as if you pickup and
+    /// then undo."
+    func restageNothingAfterArrival() {
+        guard controller.takeNothingBubbleOwed() else { return }
+        Task { await stageBaseNow() }
+    }
+
     /// The human pressed the X on the staged bubble in Messages' input field.
     ///
     /// Owner: "X-ing the staged bubble should be the SAME as hitting the undo

@@ -42,6 +42,36 @@ public var beatTime: Double { boardSeconds(ANIM_TIME_MS) }
 /// The rest between one flight landing and the next taking off (ANIM_GAP_MS).
 public var flightGap: Double { boardSeconds(ANIM_GAP_MS) }
 
+/// THE PAINT BEFORE A FLIGHT IS THE PLAN'S GAP, not time on top of it.
+///
+/// `BoardAnimator.play` paints every step once at its from-position before
+/// animating it, and used to sleep a fixed 25ms for that paint and THEN the
+/// flight and the whole gap after it - so every step took the plan's
+/// `duration + gap` plus 25ms more. Filmed on the rig, the opening deal went
+/// round the table at ~415ms a card where the kernel plans 375 (350 + 25),
+/// a 4-seat deal finishing ~1s late. The paint now takes the gap's slot: the
+/// rest before a card takes off is the same rest the plan puts between two
+/// landings, so a step costs exactly what the plan says.
+/// `flight.paintgap=0` in `dev.flags` puts back the extra paint.
+public enum FlightPace {
+    public static let paintIsGapByDefault = true
+
+    public static var paintIsGap: Bool {
+        #if DEBUG || SOLO_TESTING
+        return MessageDevBoard.flag("flight.paintgap", shipping: paintIsGapByDefault)
+        #else
+        return paintIsGapByDefault
+        #endif
+    }
+
+    /// How long one step of `play` waits before it animates (the paint at the
+    /// from-position) and after (the flight, and whatever rest is left).
+    public static func waits(flying duration: Double,
+                             paintIsGap: Bool = FlightPace.paintIsGap) -> (paint: Double, after: Double) {
+        paintIsGap ? (flightGap, duration) : (0.025, duration + flightGap)
+    }
+}
+
 
 /// ROUND 16: the HOLD between a cover that ENDED THE BOUT and the sweep that
 /// clears the table (owner: "when you cover and cause the deck to discard (last
@@ -85,6 +115,17 @@ public var gameOverHold: Double { beatTime * 2 }
 
 /// The deck pile's rect in `boardSpace` (draw source / flip source).
 public struct DeckFrameKey: PreferenceKey {
+    public static let defaultValue: CGRect = .zero
+    public static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        let n = nextValue(); if n != .zero { value = n }
+    }
+}
+
+/// The flipped trump's slot in `boardSpace`: where the trump lies under the
+/// stock, published whether or not a card is drawn there, so the draw that deals
+/// it out has a place to fly it from (`MessageTableView.drawFlights`). Not the
+/// bare glyph's place - that one is `TrumpNudge`'s.
+public struct TrumpSlotFrameKey: PreferenceKey {
     public static let defaultValue: CGRect = .zero
     public static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
         let n = nextValue(); if n != .zero { value = n }
@@ -162,10 +203,31 @@ public struct Flight: Identifiable, Equatable {
     /// GHOST only - see FlyingCardsLayer - so a card that lands back in a hand
     /// is a normal card again the moment it lands.
     public let revert: Bool
+    /// THE GHOST'S SIZE AT EACH END, the size twin of `fromAngle`/`angle`: the
+    /// ghost starts at `fromSize` and reaches `size` as it lands, over the same
+    /// progress. nil is `Flight.ghost` (50x70), which is what every flight
+    /// flew at before either existed and what a hand slot or a badge lands as,
+    /// so only a flight whose source is a card of a DIFFERENT size on the
+    /// board sets one: the flipped trump leaving its 46x66 slot, whose first
+    /// frame must be the slot card exactly, not a card 4pt larger on top of
+    /// where it was. A reversal swaps the two, as it swaps the angles.
+    public let fromSize: CGSize?
+    public let size: CGSize?
+    /// The size a ghost flies at when nothing says otherwise.
+    public static let ghost = CGSize(width: 50, height: 70)
     public init(id: String, card: Card?, from: CGRect, to: CGRect,
-                angle: Double = 0, fromAngle: Double = 0, revert: Bool = false) {
+                angle: Double = 0, fromAngle: Double = 0, revert: Bool = false,
+                fromSize: CGSize? = nil, size: CGSize? = nil) {
         self.id = id; self.card = card; self.from = from; self.to = to
         self.angle = angle; self.fromAngle = fromAngle; self.revert = revert
+        self.fromSize = fromSize; self.size = size
+    }
+
+    /// The ghost's size at progress `p` (0 at take-off, 1 at landing).
+    public func ghostSize(at p: CGFloat) -> CGSize {
+        let a = fromSize ?? Self.ghost, b = size ?? Self.ghost
+        return CGSize(width: a.width + (b.width - a.width) * p,
+                      height: a.height + (b.height - a.height) * p)
     }
 }
 
@@ -503,12 +565,14 @@ public final class BoardAnimator: ObservableObject {
             preHidden.subtract(ids)          // these are now this step's OWN hidden cards
             hidden = preHidden.union(ids)
             progress = 0
-            // One paint at from-position, then animate to-position.
-            try? await Task.sleep(nanoseconds: 25_000_000)
+            // One paint at from-position, then animate to-position. The paint
+            // is the plan's gap (`FlightPace`), so a step is the plan's length.
+            let wait = FlightPace.waits(flying: duration)
+            try? await Task.sleep(nanoseconds: UInt64(wait.paint * 1_000_000_000))
             withAnimation(.timingCurve(0.25, 0.46, 0.45, 0.94, duration: duration)) {
                 progress = 1
             }
-            try? await Task.sleep(nanoseconds: UInt64((duration + flightGap) * 1_000_000_000))
+            try? await Task.sleep(nanoseconds: UInt64(wait.after * 1_000_000_000))
             AnimLog.say("flight LAND (pop IN at dest) [\(ids.sorted().joined(separator: ","))]")
         }
         // Un-hide this call's own step ids, but leave any OTHER pending
@@ -539,7 +603,7 @@ public struct FlyingCardsLayer: View {
                 let p = animator.progress
                 let cx = f.from.midX + (f.to.midX - f.from.midX) * p
                 let cy = f.from.midY + (f.to.midY - f.from.midY) * p
-                FCard(card: f.card, size: CGSize(width: 50, height: 70))
+                FCard(card: f.card, size: f.ghostSize(at: p))
                     // THE CONFLICT MODEL's red, on the ghost only - the web's
                     // exact vocabulary for a superseded optimistic card
                     // (AnimationOverlay.tsx: border rgb(220,38,38), red drop

@@ -31,15 +31,15 @@
 #include <stdint.h>
 #include <time.h>
 
-#define MAX_SNAPS 4096
+#define HIST_MAX 4096   // hand-size history rows (not game.h's MAX_SNAPS)
 #define MAX_TOP   64
 
 // Per-game hand-size history, filled during play: hist[t][seat].
-static int16_t g_hist[MAX_SNAPS][MAX_PLAYERS];
+static int16_t g_hist[HIST_MAX][MAX_PLAYERS];
 static int     g_T;
 
 static void snapshot(const Game *g) {
-    if (g_T >= MAX_SNAPS) return;
+    if (g_T >= HIST_MAX) return;
     for (int i = 0; i < g->num_players; i++)
         g_hist[g_T][i] = g->players[i].hand_count;
     g_T++;
@@ -47,22 +47,7 @@ static void snapshot(const Game *g) {
 
 // Dispatch a strategy id to its choose function (mirrors main_eval).
 static int dispatch_choose(int strat, const Game *g, int pi, const LegalMoves *moves) {
-    switch (strat) {
-        case STRAT_RANDOM:      return random_strategy_choose(g, pi, moves, NULL);
-        case STRAT_ESPRESSO:    return espresso_strategy_choose(g, pi, moves, NULL);
-        case STRAT_HANDWRITTEN: return handwritten_strategy_choose(g, pi, moves, NULL);
-        case STRAT_ROBUSTA:     return robusta_strategy_choose(g, pi, moves, NULL);
-        case STRAT_FIRECRACKER: return firecracker_strategy_choose(g, pi, moves, NULL);
-        case STRAT_GUNPOWDER:   return gunpowder_strategy_choose(g, pi, moves, NULL);
-        case STRAT_BLACKPOWDER: return blackpowder_strategy_choose(g, pi, moves, NULL);
-        case STRAT_CORDITE:     return cordite_strategy_choose(g, pi, moves, NULL);
-        case STRAT_ASTROLITE:   return astrolite_strategy_choose(g, pi, moves, NULL);
-        case STRAT_SEMTEX:      return semtex_strategy_choose(g, pi, moves, NULL);
-        case STRAT_OCTOGEN:     return octogen_strategy_choose(g, pi, moves, NULL);
-        case STRAT_TORPEX:      return torpex_strategy_choose(g, pi, moves, NULL);
-        case STRAT_NOVICHOK:    return novichok_strategy_choose(g, pi, moves, NULL);
-        default:                return cordite_strategy_choose(g, pi, moves, NULL);
-    }
+    return strategy_choose(strat, g, pi, moves);
 }
 
 // Play one all-`strat` game to completion, recording the hand-size history.

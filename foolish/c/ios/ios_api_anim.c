@@ -612,6 +612,17 @@ int fio_finish_rows(const uint8_t *elimination, int n_elim, int game_over,
     return w;
 }
 
+_Static_assert(FIO_CHROME_HAND == ANIM_CHROME_HAND && FIO_CHROME_PILLS == ANIM_CHROME_PILLS
+               && FIO_CHROME_UNDO == ANIM_CHROME_UNDO && FIO_CHROME_SQUARES == ANIM_CHROME_SQUARES
+               && FIO_CHROME_SELF_MARK == ANIM_CHROME_SELF_MARK
+               && FIO_CHROME_RESULTS == ANIM_CHROME_RESULTS
+               && FIO_CHROME_RULE_CLEAR_ON_RESULTS == ANIM_CHROME_RULE_CLEAR_ON_RESULTS,
+               "the bridge's chrome bits are the kernel's");
+
+unsigned fio_board_chrome(int is_over, int results_shown, int spectating, int rules) {
+    return anim_board_chrome(is_over, results_shown, spectating, rules);
+}
+
 int fio_shown_ledger_allows(int claim, int sequencing) {
     return anim_shown_ledger_allows(claim, sequencing);
 }

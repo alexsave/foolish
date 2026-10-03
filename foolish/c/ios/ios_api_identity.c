@@ -66,15 +66,13 @@ int fio_msg_carry(const uint8_t *joins_packed, int joins_len, int fool_seat,
     int n = 0;
     const int rc = fio_joins_of(joins_packed, joins_len, joins, &n);
     if (rc != FIO_EOK) return rc;
-    if (fool_seat < 0 || fool_seat >= n) return FIO_EBADARG;
-
+    // The kernel's carry (msg_rematch_carry), which the rematch lobby
+    // msg_rematch_lobby builds holds too - one rule for both doors.
     uint32_t key = 0;
-    int rot = 0;
-    if (msg_roster_key(joins, n, &key, &rot) != MSG_EOK) return FIO_EBADARG;
+    uint8_t idx = 0;
+    if (msg_rematch_carry(joins, n, fool_seat, &key, &idx) != MSG_EOK) return FIO_EBADARG;
     *key_out = key;
-    // Back out of the seating into the canonical rotation the key was taken
-    // over: canonical[k] == seated[(k + rot) % n], so seat s is index s - rot.
-    *fool_index_out = ((fool_seat - rot) % n + n) % n;
+    *fool_index_out = idx;
     return FIO_EOK;
 }
 

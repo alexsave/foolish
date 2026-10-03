@@ -259,8 +259,13 @@ final class ConflictModelTests: XCTestCase {
     /// forward-way-round would fly the reversal in the wrong direction or paint
     /// it as an ordinary move.
     func testTheReversalFliesBackTheWayItCameLastMotionFirst() throws {
-        let first = flight(c(0, 6), from: CGRect(x: 0, y: 0, width: 50, height: 70),
-                           to: CGRect(x: 200, y: 40, width: 50, height: 70), angle: 96)
+        // A ghost that took off at a source card's own size (the flipped
+        // trump's 46x66 slot - Flight.fromSize) flies back to that size.
+        let slotSize = CGSize(width: 46, height: 66)
+        let first = Flight(id: "f-\(c(0, 6).identity)", card: c(0, 6),
+                           from: CGRect(x: 0, y: 0, width: 50, height: 70),
+                           to: CGRect(x: 200, y: 40, width: 50, height: 70), angle: 96,
+                           fromSize: slotSize)
         let second = flight(c(1, 8), from: CGRect(x: 10, y: 300, width: 50, height: 70),
                             to: CGRect(x: 220, y: 60, width: 50, height: 70))
         let steps = MessageTableView.reversalSteps(
@@ -276,6 +281,8 @@ final class ConflictModelTests: XCTestCase {
         XCTAssertEqual(r.fromAngle, first.angle, "the tilt runs backwards too")
         XCTAssertEqual(r.angle, first.fromAngle)
         XCTAssertTrue(r.revert, "a reversal without the red is indistinguishable from a play")
+        XCTAssertEqual(r.ghostSize(at: 0), Flight.ghost, "the size runs backwards too: it lifts at the landing size")
+        XCTAssertEqual(r.ghostSize(at: 1), slotSize, "…and lands back at the source card's own")
     }
 
     /// The verdicts gate the flights: in one flown group, only the card the

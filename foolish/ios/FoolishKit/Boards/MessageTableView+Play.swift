@@ -229,12 +229,24 @@ extension MessageTableView {
     /// recipient replayed the PREVIOUS player's move - the owner's "you can
     /// still send a message and it will look weird for the other players.
     /// Sometimes even play a weird undo animation."
+    ///
+    /// NOTE 6: an ARRIVAL that leaves a stale bubble in the field is paid with
+    /// this same bubble, through this same function
+    /// (`restageNothingAfterArrival`) - so the two can never drift about what
+    /// a cancelled move leaves behind.
     func stageBaseNow() async {
         guard controller.isContinuation else { return }
-        // Always a consequence of undo-to-empty (the only caller is onUndo), so keep
-        // the board expanded - never collapse on an undo.
         if let payload = try? await controller.stagedPayload() {
-            await onSend(payload, controller.lastChangeWasUndo)
+            // A move staged while that seal was in flight owns the field now -
+            // its own stage is on its way - and a Send pressed in it has already
+            // taken the field's bubble. Either way a NOTHING bubble landing
+            // after it would overwrite what the human actually did.
+            guard controller.pending.isEmpty, !controller.sending else { return }
+            // Never a fresh move's stage (an undo-to-empty, or an arrival's
+            // overwrite), so keep the board expanded - never collapse on it.
+            // `true` rather than `lastChangeWasUndo`: the undo caller always
+            // has it set by now, and an arrival's adopt clears it.
+            await onSend(payload, true)
         }
     }
 

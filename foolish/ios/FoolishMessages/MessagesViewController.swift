@@ -12,6 +12,9 @@
 // whether a staged move survives — all C (msg_wire.c via MessageKernel). Seat
 // identity is the one non-kernel call, and it is SeatIdentity's pure §6 logic.
 import Combine
+#if RIG_ARRIVE
+import os
+#endif
 import QuartzCore
 import UIKit
 import Messages
@@ -101,6 +104,12 @@ final class MessagesViewController: MSMessagesAppViewController {
         // (anim_plan.h) and every board built below reads it.
         AnimTransport.declare(.chain)
         FlightRecorder.begin("style \(presentationStyle == .compact ? "compact" : "expanded")")
+#if RIG_ARRIVE
+        // Pinned now, before any seed is claimed: the door trusts only a claim
+        // receipt written after this (a lazy static first read at door time
+        // was later than every claim, so no seed was ever "this process's").
+        _ = Self.processStart
+#endif
         prefsSink = FPrefs.shared.objectWillChange.sink { [weak self] _ in
             // objectWillChange fires BEFORE the value lands, so read it next turn.
             DispatchQueue.main.async { self?.applyTableFallback() }
@@ -129,9 +138,13 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// guessing. `-[_MSMessageAppContext _didReceiveMessage:conversationState:]`
     /// is a bare dispatch to main that updates the conversation and calls
     /// `didReceiveMessage:conversation:`. There is no presentation-style, session
-    /// or selection check on the extension side at all. So the decision not to
-    /// deliver is the HOST's, its code is not on disk in the simulator runtime,
-    /// and there is no file:line here to find. Process suspension was my own
+    /// or selection check on the extension side at all (docs/
+    /// IMESSAGE_LIVE_ARRIVAL_HOST.md E1, E4). So the decision not to deliver is
+    /// the HOST's. Its code IS on disk in the simulator runtime
+    /// (MSMessageExtensionBalloonPlugin.bundle, plus ChatKit), and the same doc
+    /// reads it: exactly two host methods send the receive (M3, M4), and which
+    /// of them reaches a given drawer in practice is still open (U1, U4) until
+    /// phase 2 observes it live. Process suspension was my own
     /// theory and it is wrong: XPC messages to a suspended process QUEUE and
     /// deliver on resume, and that session demonstrably resumed twice - it
     /// rendered the diagnostic panel while her join was already in the
@@ -177,6 +190,9 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// it is already here.
     override func didSelect(_ message: MSMessage, conversation: MSConversation) {
         super.didSelect(message, conversation: conversation)
+#if RIG_ARRIVE
+        hostTrace("didSelect", message, conversation, "fresh=\(freshlyActive)")
+#endif
         let payload = Self.payload(of: message)
         if freshlyActive {
             FlightRecorder.note("select", "\(payload?.count ?? -1)b on a fresh activation - not an arrival")
@@ -218,7 +234,13 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func willBecomeActive(with conversation: MSConversation) {
         super.willBecomeActive(with: conversation)
+#if RIG_ARRIVE
+        hostTrace("willBecomeActive", nil, conversation)
+#endif
         FlightRecorder.note("active", "\(conversation.remoteParticipantIdentifiers.count + 1)p chat")
+        // The drawer starts where this activation was handed it; every style
+        // callback after this moves it (`drawerIsExpanded`).
+        drawerStyle = GateWire.DrawerStyle(expanded: presentationStyle == .expanded)
         // A FRESH ACTIVATION OWNS ITS SELECTION. See `didSelect`.
         becameActiveAt = Date()
         // A NEW ACTIVATION IS A NEW AUDIENCE. Any just-sent marker still lying
@@ -241,6 +263,9 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// killed rather than closed.
     override func didResignActive(with conversation: MSConversation) {
         super.didResignActive(with: conversation)
+#if RIG_ARRIVE
+        hostTrace("didResignActive", nil, conversation)
+#endif
         FlightRecorder.end("resigned")
     }
 
@@ -269,6 +294,9 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// and GameSurface adopts it only if it strictly out-ranks what is showing.
     /// A fresh receive cancels any half-started New game.
     override func didReceive(_ message: MSMessage, conversation: MSConversation) {
+#if RIG_ARRIVE
+        hostTrace("didReceive", message, conversation, "door=\(rigIsDoor(message))")
+#endif
         // ROUND 12 #11: an arrival that IS my own chain is not an arrival.
         // Messages delivers a sent bubble back to its sender on the simulator,
         // and to a second device on the same iCloud account for real. Threaded
@@ -291,110 +319,384 @@ final class MessagesViewController: MSMessagesAppViewController {
             // our bug. A blind early return cannot tell them apart, and guessing
             // between them has already cost several builds.
             FlightRecorder.note("receive-dropped", "isMine")
+            // On a bound drawer this echo IS the Send press (host doc L2), and
+            // the bubble is still leaving the field for about a second - see
+            // FieldSend for what a stage in that second looks like.
+            if Self.waitsForOwnSend, let p = Self.payload(of: message) {
+                Self.fieldSend.pressed(p, at: CACurrentMediaTime())
+            }
             return
         }
         startingNewGame = false
         freshSession = false
         FlightRecorder.note("receive")
+#if RIG_ARRIVE
+        let arrived = Self.payload(of: message)
+        // The door's vector into `fieldSend`: the rig pressed Send on another
+        // seat's bubble in THIS field. Not behind `stage.awaitsend`, which is
+        // the product's own vector (see FieldSend).
+        if rigIsDoor(message), let arrived { Self.fieldSend.pressed(arrived, at: CACurrentMediaTime()) }
+        Task { await rigSaw(arrived) }
+#endif
         incomingURL = message.url
         incomingToken += 1
         present(conversation, style: presentationStyle)
     }
 
 #if RIG_ARRIVE
-    /// THE FILM DOOR - 1.1(56), and it is compiled by nothing that ships.
-    ///
-    /// The five arrival cases have to be filmed in REAL Messages, not the
-    /// harness (owner: "this is the harness and the 'add debug player' build.
-    /// I'd like for you to get film from the emulator"), and the simulator has
-    /// no second device: it cannot deliver a bubble this device did not seal, so
-    /// `didReceive` can never fire with somebody else's chain there. Everything
-    /// downstream of that one fact is the shipping path and is what the film
-    /// proves - `present`, `StagedBubbleRouting`, `MessagesRootView`, the plan,
-    /// the beats. Only the door the bytes come through is the rig's.
-    ///
-    /// `RIG_ARRIVE` is set by ONE xcodebuild invocation (the film script) and by
-    /// no configuration in project.yml, so this is absent from Debug, Release
-    /// and the App Store build alike - which is also why the shoot can be a
-    /// RELEASE build with no "Add player (testing)" on the lobby.
-    ///
-    /// A file rather than a URL scheme or a socket: `dev.fatboard` already
-    /// establishes the App Group as where this repo's rig talks to the appex,
-    /// and a file can be written from the shoot script with no app running.
-    private var rigArriveTimer: Timer?
+    // MARK: - The rig's arrival door and host trace (RIG_ARRIVE builds only)
+    //
+    // COMPILED BY NOTHING THAT SHIPS. `RIG_ARRIVE` is set by `rig.sh build` when
+    // FOOLISH_ARRIVE=1 and by no configuration in project.yml, so all of this is
+    // absent from Debug, Release and the App Store build alike.
+    //
+    // TWO JOBS (docs/IMESSAGE_LIVE_ARRIVAL_HOST.md, phase 2):
+    //
+    // 1. THE HOST TRACE. Every callback Messages makes on this controller, with
+    //    its thread, both clocks, the payload it carries, the session it names
+    //    and the selection beside it - so what the host does on a live arrival
+    //    is read off a real run instead of inferred from its binaries. Lines go
+    //    to the unified log (subsystem cards.foolish, category host) AND the
+    //    flight recorder, where they sit in order beside `receive`, `arrival`
+    //    and `anim-open`.
+    //
+    // 2. THE DOOR. A move made by ANOTHER seat, sealed by the shipping kernel off
+    //    the chain this board is showing, and delivered through REAL Messages:
+    //    `conversation.send` puts it in this thread, and on the iOS 26 simulator
+    //    a message sent in a thread comes back into that same thread as an
+    //    INCOMING item (rig README point 2), which is path A's trigger (host doc
+    //    M1, M2; M2a: no isFromMe filter). Because the door's bytes are never
+    //    registered as `pendingStage` or `lastSentPayload`, `isMine` does not
+    //    drop the echo, and it reaches `didReceive` exactly as a second phone's
+    //    move would. `direct` delivery skips Messages and threads the bytes
+    //    straight into `present()` - the old door, kept for comparison only; it
+    //    proves nothing about the host (host doc N5).
+    //
+    // The file `dev.arrive` is one request, read and deleted every 0.4s:
+    //
+    //   [send|direct] [gap=MS] [session=inherit|new] ITEM[,ITEM...]
+    //
+    //   ITEM  join | rules | leave | start          a lobby word
+    //         move:SEAT:KIND[:PICK]                 a board move
+    //         rematch:SEAT                          SEAT taps New game on the
+    //                                               finished board (the kernel's
+    //                                               same-chain lobby, SEAT its creator)
+    //         rematch:fresh:SEAT                    ...as the flag-off build would:
+    //                                               SEAT's fresh-chain lobby
+    //   SEAT  a number, or `any` (the first seat holding KIND)
+    //   KIND  good | attack | throwin | cover | pickup | pass
+    //   PICK  low (default) | high | a card like QS or 10H
+    //
+    // Items chain: each is sealed off the one before it, the first off the chain
+    // the board is showing (`rigShown`). That is the defect the old door had - it
+    // sealed every arrival off `lastPayloadURL`, the bubble first opened, so the
+    // second and third `join` were the same bytes ("same chain") and `start`
+    // could not seal ("damaged").
 
-    /// Seal the text Vera would have sent, off the chain the surface is REALLY
-    /// showing, and thread it in through `didReceive`'s own lines.
-    ///
-    /// The seal is the shipping kernel's (`MessageKernel.seal` /
-    /// `.resealLobby` / `.startFromLobby` - the same three calls `joinLobby`,
-    /// `setLobbyPassing` and `startGame` make), so the bytes that arrive are
-    /// bytes a second phone would really have produced. What the rig supplies
-    /// is only the fact that a second phone exists.
+    private static let hostLog = Logger(subsystem: "cards.foolish", category: "host")
+    private var rigArriveTimer: Timer?
+    private var rigSelectTimer: Timer?
+    /// The chain this board is showing, as the surface would rank it: every
+    /// chain this controller sees (a routed present, a receive, a send, a seed
+    /// claim, a door delivery) replaces it when Rule P prefers it, or when it is
+    /// another game. Never a staged, unsent bubble - that is not the thread's.
+    private var rigShown: Data?
+    /// The last FINISHED chain this controller saw. A `rematch` item is sealed
+    /// off it rather than off `rigShown`, because every other seat taps New
+    /// game on the result card it is still looking at - three racing taps are
+    /// three lobbies off ONE finished chain, not a chain of lobbies.
+    private var rigFinished: Data?
+    /// Bytes the door sent, so their send callbacks register nothing.
+    /// PROCESS-WIDE, not per controller: closing the drawer resigns this
+    /// controller, and a Send pressed with the drawer closed is reported to a
+    /// FRESH one (phase 2, run 6), which would otherwise take the door's
+    /// bubble for its own send.
+    private static var rigDoorBytes: [Data] = []
+    private var rigDoorBytes: [Data] {
+        get { Self.rigDoorBytes }
+        set { Self.rigDoorBytes = newValue }
+    }
+    /// Door bytes Messages has started sending (didStartSending).
+    private static var rigDoorSent: Set<Data> = []
+    private var rigDoorSent: Set<Data> {
+        get { Self.rigDoorSent }
+        set { Self.rigDoorSent = newValue }
+    }
+
+    private var rigLastSelected: String = "-"
+    private var rigClaimSeen: String?
+
+    /// A short, stable name for a payload: its length and an FNV-1a of its
+    /// bytes (two chains can share a link's tail - the seed and roster sit
+    /// there - so the tail alone named a join and the Start after it alike).
+    private static func tag(_ p: Data?) -> String {
+        guard let p else { return "-" }
+        var h: UInt32 = 0x811c9dc5
+        for b in p { h = (h ^ UInt32(b)) &* 0x01000193 }
+        return "\(p.count)b:" + String(format: "%08x", h)
+    }
+
+    private static func tag(_ url: URL?) -> String {
+        guard let url else { return "-" }
+        return tag(try? MessageEnvelope.payloadBytes(url: url))
+    }
+
+    private static func sessionTag(_ s: MSSession?) -> String {
+        guard let s else { return "-" }
+        return String(format: "%08x/%llx", UInt32(truncatingIfNeeded: s.hash),
+                      UInt64(UInt(bitPattern: ObjectIdentifier(s).hashValue)) & 0xffffff)
+    }
+
+    func hostTrace(_ name: String, _ message: MSMessage? = nil,
+                   _ conversation: MSConversation? = nil, _ extra: String = "") {
+        let conv = conversation ?? activeConversation
+        let sel = conv?.selectedMessage
+        // Through KVC: a message built here (the door's) has no sender yet, and
+        // the Swift overlay's non-optional UUID traps on the nil.
+        let sender = (message?.value(forKey: "senderParticipantIdentifier") as? UUID)?
+            .uuidString.prefix(8) ?? "-"
+        let local = conv?.localParticipantIdentifier.uuidString.prefix(8) ?? "-"
+        let style: String
+        switch presentationStyle {
+        case .compact: style = "compact"
+        case .expanded: style = "expanded"
+        case .transcript: style = "transcript"
+        @unknown default: style = "other"
+        }
+        let line = "\(name) thr=\(Thread.isMainThread ? "main" : "bg")"
+            + " mt=\(String(format: "%.4f", CACurrentMediaTime()))"
+            + " wall=\(String(format: "%.4f", Date().timeIntervalSince1970))"
+            + " msg=\(Self.tag(message?.url)) sess=\(Self.sessionTag(message?.session))"
+            + " sender=\(sender) local=\(local)"
+            + " sel=\(Self.tag(sel?.url)) selsess=\(Self.sessionTag(sel?.session))"
+            + " style=\(style) conv=\(conv.map { String(UInt(bitPattern: ObjectIdentifier($0).hashValue) & 0xffffff, radix: 16) } ?? "-")"
+            + (extra.isEmpty ? "" : " " + extra)
+        Self.hostLog.log("HOST \(line, privacy: .public)")
+        FlightRecorder.note("host", line)
+    }
+
+    /// Fold a chain this controller has seen into `rigShown`, ranked the way
+    /// the surface ranks an arrival (GameSurface.maybeAdoptIncoming).
     @MainActor
-    private func rigArrive(_ kind: String) async {
-        // The chain the surface is showing. `lastPayloadURL` is it once a bubble
-        // has been opened; a lobby this device just CREATED and sent has none
-        // (StagedBubbleRouting pins the presentation to nil through a New game),
-        // and there the chain is the one that went out.
-        // Three sources, in the order they stop being true. `lastPayloadURL` is
-        // the chain once a bubble has been opened. A lobby this device just
-        // CREATED and sent has none (StagedBubbleRouting pins the presentation
-        // to nil through a New game), so the chain is the one that went out.
-        // And `lastSentPayload` is itself CLEARED the moment the presentation
-        // moves (`route.clearMarkers`), which is what left the first attempt at
-        // this door reporting "no lobby on screen" - so the last resort is the
-        // conversation's own selected bubble, which for a lobby this device
-        // inserted is that same lobby and is never nil.
-        guard let conversation = activeConversation,
-              let showing = lastPayloadURL.flatMap({ try? MessageEnvelope.payloadBytes(url: $0) })
-                            ?? lastSentPayload
-                            ?? conversation.selectedMessage?.url
-                                .flatMap({ try? MessageEnvelope.payloadBytes(url: $0) }),
-              let env = try? await MessageEnvelope.decode(payload: showing, viewer: -1),
-              let gid = UInt64(env.gameId) else {
-            FlightRecorder.note("rig", "no lobby on screen for \(kind)")
+    private func rigSaw(_ p: Data?) async {
+        guard let p, p != rigShown else { return }
+        if let e = try? await MessageKernel.shared.peek(payload: p), e.phase == 3 { rigFinished = p }
+        guard let cur = rigShown else { rigShown = p; return }
+        let a = try? await MessageKernel.shared.peek(payload: cur)
+        let b = try? await MessageKernel.shared.peek(payload: p)
+        guard let b else { return }
+        if a?.gameId != b.gameId {
+            rigShown = p
             return
         }
+        if let pref = try? await MessageKernel.shared.preferred(cur, p), pref > 0 { rigShown = p }
+    }
+
+    /// The seed the surface claimed in THIS process, if any (dev.claimed is
+    /// written by MessageDevBoard.claimSeededPayload as the board opens).
+    private func rigClaimedSeed() -> Data? {
+        guard let dir = FileManager.default.containerURL(
+                forSecurityApplicationGroupIdentifier: "group.cards.foolish.msg"),
+              let raw = try? String(contentsOf: dir.appendingPathComponent("dev.claimed"),
+                                    encoding: .utf8)
+        else { return nil }
+        let hex = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard hex != rigClaimSeen else { return nil }
+        guard let attrs = try? FileManager.default.attributesOfItem(
+                atPath: dir.appendingPathComponent("dev.claimed").path),
+              let m = attrs[.modificationDate] as? Date,
+              m >= Self.processStart else { return nil }
+        rigClaimSeen = hex
+        var out = Data(); var i = hex.startIndex
+        while i < hex.endIndex {
+            let j = hex.index(i, offsetBy: 2, limitedBy: hex.endIndex) ?? hex.endIndex
+            guard let b = UInt8(hex[i..<j], radix: 16) else { return nil }
+            out.append(b); i = j
+        }
+        return out
+    }
+    private static let processStart = Date()
+
+    /// One request from `dev.arrive`. See the block comment above.
+    @MainActor
+    private func rigArrive(_ request: String) async {
+        guard let conversation = activeConversation else { return }
+        var words = request.split(whereSeparator: { $0 == " " || $0 == "\n" }).map(String.init)
+        var delivery = "send", gapMs = 0, session = "inherit"
+        // `hold` is the rig's word (do not press Send); the door ignores it.
+        while let w = words.first, w == "send" || w == "direct" || w == "hold"
+                || w.hasPrefix("gap=") || w.hasPrefix("session=") {
+            if w == "hold" { words.removeFirst(); continue }
+            if w == "send" || w == "direct" { delivery = w }
+            else if w.hasPrefix("gap=") { gapMs = Int(w.dropFirst(4)) ?? 0 }
+            else { session = String(w.dropFirst(8)) }
+            words.removeFirst()
+        }
+        let items = words.joined(separator: ",").split(separator: ",").map(String.init)
+        await rigSaw(lastPayloadURL.flatMap { try? MessageEnvelope.payloadBytes(url: $0) })
+        await rigSaw(rigClaimedSeed())
+        guard var base = rigShown else {
+            FlightRecorder.note("rig", "nothing on screen for \(request)")
+            return
+        }
+        hostTrace("door-request", nil, conversation,
+                  "delivery=\(delivery) gap=\(gapMs) session=\(session) items=\(items.joined(separator: ",")) base=\(Self.tag(base))")
+        for (k, item) in items.enumerated() {
+            let bytes: Data
+            do {
+                bytes = try await rigSeal(item, on: base)
+            } catch {
+                FlightRecorder.note("rig", "\(item) would not seal: \(error)")
+                hostTrace("door-refused", nil, conversation, "item=\(item) error=\(error)")
+                return
+            }
+            if k > 0, gapMs > 0 { try? await Task.sleep(nanoseconds: UInt64(gapMs) * 1_000_000) }
+            await rigDeliver(bytes, item: item, delivery: delivery, session: session, conversation)
+            base = bytes
+            // `send` only STAGES on the simulator (it lands in the input field
+            // exactly like `insert`, waiting for Send), and a second stage would
+            // replace the first. So the next item waits until this one went out:
+            // the rig presses Send (`rig.sh arrive` watches dev.doorstaged).
+            if delivery == "send" {
+                for _ in 0..<400 where !rigDoorSent.contains(bytes) {
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                }
+                if !rigDoorSent.contains(bytes) {
+                    hostTrace("door-gave-up", nil, conversation, "item=\(item) never sent")
+                    return
+                }
+            }
+        }
+    }
+
+    /// Seal one item off `base`, by the shipping kernel's own calls.
+    @MainActor
+    private func rigSeal(_ item: String, on base: Data) async throws -> Data {
+        if item.hasPrefix("rematch:") {
+            guard let finished = rigFinished else { throw MessageEnvelope.Failure.damaged(code: -5) }
+            let parts = item.split(separator: ":").map(String.init)
+            // rematch:SEAT - SEAT's device taps New game on the result card, now.
+            if parts.count == 2, let seat = Int(parts[1]) {
+                return try await MessageKernel.shared.rematch(finished: finished, creatorSeat: seat)
+            }
+            // rematch:fresh:SEAT - the flag-off build's lobby, as SEAT's device
+            // would seal it off the same result card.
+            guard parts.count == 3, parts[1] == "fresh", let seat = Int(parts[2]) else {
+                throw MessageEnvelope.Failure.damaged(code: -6)
+            }
+            let fenv = try await MessageEnvelope.decode(payload: finished, viewer: -1)
+            let board = MessageTurnController(parentPayload: finished, parent: fenv, mySeat: seat)
+            await board.begin()
+            guard let built = try await RematchLobby.build(
+                finished: finished, view: board.view, names: board.names, mySeat: seat,
+                myName: board.names[seat] ?? "", passing: board.passingAllowed,
+                capacity: 8, sameChain: false) else { throw MessageEnvelope.Failure.damaged(code: -7) }
+            return built.payload
+        }
+        let env = try await MessageEnvelope.decode(payload: base, viewer: -1)
+        guard let gid = UInt64(env.gameId) else { throw MessageEnvelope.Failure.damaged(code: -2) }
         let parent = MessageTurnController.firstEight(hex: env.digest)
         let seated = env.joins.sorted { $0.seat < $1.seat }
-        let joins = kind.hasPrefix("join")
-            ? (seated + [MessageJoin(seat: seated.count, name: "Vera")]).sorted { $0.seat < $1.seat }
-            : seated
-        let after = kind == "leave" ? Array(seated.dropLast()) : joins
-        guard !after.isEmpty else { return }
-        let bytes: Data?
-        do {
-            if kind.hasSuffix("start") {
-                bytes = try await MessageKernel.shared.startFromLobby(
-                    lobbyPayload: showing, gameId: gid, actingSeat: after.count - 1,
-                    parent8: parent, joins: after)
-            } else if kind.hasSuffix("rules") {
-                bytes = try await MessageKernel.shared.resealLobby(
-                    showing, passing: !env.passingAllowed, actingSeat: after.count - 1,
-                    gameId: gid, parent8: parent, joins: after)
-            } else {
-                _ = try await MessageKernel.shared.decode(payload: showing, viewer: -1)
-                bytes = try await MessageKernel.shared.seal(
-                    phase: 0, lastActorSeat: after.count - 1, gameId: gid,
-                    parent8: parent, joins: after)
+        let cast = ["Vera", "Boris", "Dima", "Eva", "Fyodor", "Galya", "Igor", "Mira"]
+        switch item {
+        case "join":
+            let free = (0..<env.nPlayers).first { s in !seated.contains { $0.seat == s } } ?? seated.count
+            let joins = (seated + [MessageJoin(seat: free, name: cast[free % cast.count])])
+                .sorted { $0.seat < $1.seat }
+            _ = try await MessageKernel.shared.decode(payload: base, viewer: -1)
+            return try await MessageKernel.shared.seal(phase: 0, lastActorSeat: free, gameId: gid,
+                                                      parent8: parent, joins: joins)
+        case "leave":
+            let after = Array(seated.dropLast())
+            guard let last = seated.last, !after.isEmpty else { throw MessageEnvelope.Failure.damaged(code: -3) }
+            _ = try await MessageKernel.shared.decode(payload: base, viewer: -1)
+            return try await MessageKernel.shared.seal(phase: 0, lastActorSeat: last.seat, gameId: gid,
+                                                      parent8: parent, joins: after)
+        case "rules":
+            return try await MessageKernel.shared.resealLobby(
+                base, passing: !env.passingAllowed, actingSeat: seated.last?.seat ?? 0,
+                gameId: gid, parent8: parent, joins: seated)
+        case "start":
+            return try await MessageKernel.shared.startFromLobby(
+                lobbyPayload: base, gameId: gid, actingSeat: seated.last?.seat ?? 0,
+                parent8: parent, joins: seated)
+        default:
+            let parts = item.split(separator: ":").map(String.init)
+            guard parts.count >= 3, parts[0] == "move" else {
+                throw MessageEnvelope.Failure.damaged(code: -4)
             }
-        } catch {
-            FlightRecorder.note("rig", "\(kind) would not seal: \(error)")
+            return try await MessageKernel.shared.rigMove(
+                base: base, seat: parts[1], kind: parts[2], pick: parts.count > 3 ? parts[3] : "low",
+                gameId: gid, parent8: parent, joins: seated)
+        }
+    }
+
+    /// Put sealed bytes in front of this extension, the way `delivery` says.
+    @MainActor
+    private func rigDeliver(_ bytes: Data, item: String, delivery: String, session: String,
+                            _ conversation: MSConversation) async {
+        FlightRecorder.note("rig", "\(item) arrives by \(delivery), \(bytes.count)b")
+        if delivery == "direct" {
+            hostTrace("door-direct", nil, conversation, "item=\(item) bytes=\(Self.tag(bytes))")
+            await rigSaw(bytes)
+            startingNewGame = false
+            freshSession = false
+            FlightRecorder.note("receive")
+            incomingURL = MessageEnvelope.link(payload: bytes)
+            incomingToken += 1
+            present(conversation, style: presentationStyle)
             return
         }
-        guard let bytes else { return }
-        // EXACTLY what `didReceive` does with a bubble that is not mine.
-        FlightRecorder.note("rig", "\(kind) arrives, \(bytes.count)b")
-        startingNewGame = false
-        freshSession = false
-        FlightRecorder.note("receive")
-        incomingURL = MessageEnvelope.link(payload: bytes)
-        incomingToken += 1
-        present(conversation, style: presentationStyle)
+        // THE REAL ROUTE: a bubble like any other, sent into this thread.
+        let (env, publicView, summary) = await MessageSummary.forStagedBubble(payload: bytes, leftName: nil)
+        let scheme: ColorScheme = traitCollection.userInterfaceStyle == .dark ? .dark : .light
+        var image: UIImage?
+        if let env { image = BubbleSnapshot.render(env: env, publicView: publicView, scheme: scheme) }
+        let msg = MessageComposer.message(
+            url: MessageEnvelope.link(payload: bytes), snapshot: image,
+            caption: MessageSummary.caption(env: env, view: publicView), summary: summary,
+            session: session == "new" ? nil : conversation.selectedMessage?.session)
+        rigDoorBytes.append(bytes)
+        hostTrace("door-send", msg, conversation, "item=\(item) bytes=\(Self.tag(bytes))")
+        conversation.send(msg) { [weak self] error in
+            DispatchQueue.main.async {
+                self?.hostTrace("door-send-done", msg, conversation,
+                                "item=\(item) error=\(error.map { "\($0)" } ?? "none")")
+                // The rig's cue to press Send: one line per staged door bubble.
+                if let dir = FileManager.default.containerURL(
+                    forSecurityApplicationGroupIdentifier: "group.cards.foolish.msg") {
+                    let f = dir.appendingPathComponent("dev.doorstaged")
+                    let line = Data((item + "\n").utf8)
+                    if let h = try? FileHandle(forWritingTo: f) {
+                        h.seekToEndOfFile(); h.write(line); try? h.close()
+                    } else {
+                        try? line.write(to: f)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Is this a door send coming back through a send callback?
+    private func rigIsDoor(_ message: MSMessage) -> Bool {
+        guard let p = Self.payload(of: message) else { return false }
+        return rigDoorBytes.contains(p)
     }
 
     private func rigWatchForArrivals() {
+        if rigSelectTimer == nil {
+            // THE SELECTION, WATCHED. `selectedMessage` moves on host-pushed
+            // state (host doc E6), with or without a callback; 20 Hz is enough
+            // to say whether and roughly when.
+            rigSelectTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+                guard let self else { return }
+                let now = Self.tag(self.activeConversation?.selectedMessage?.url)
+                if now != self.rigLastSelected {
+                    self.rigLastSelected = now
+                    self.hostTrace("selection-moved")
+                }
+            }
+        }
         guard rigArriveTimer == nil else { return }
         rigArriveTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
             guard let self,
@@ -406,12 +708,41 @@ final class MessagesViewController: MSMessagesAppViewController {
             Task { await self.rigArrive(kind.trimmingCharacters(in: .whitespacesAndNewlines)) }
         }
     }
+
+    override func willSelect(_ message: MSMessage, conversation: MSConversation) {
+        hostTrace("willSelect", message, conversation)
+        super.willSelect(message, conversation: conversation)
+    }
+
+    override func didBecomeActive(with conversation: MSConversation) {
+        hostTrace("didBecomeActive", nil, conversation)
+        super.didBecomeActive(with: conversation)
+    }
+
+    override func willResignActive(with conversation: MSConversation) {
+        hostTrace("willResignActive", nil, conversation)
+        super.willResignActive(with: conversation)
+    }
 #endif
 
     /// The user tapped Send on our staged bubble: our chain is now the thread's,
     /// so commit it to the cache (§7.6). This is the ONLY place the cache learns
     /// a chain was actually sent — insert alone is not a commit.
     override func didStartSending(_ message: MSMessage, conversation: MSConversation) {
+        // Whoever pressed Send (FieldSend), this bubble has left the field.
+        Self.fieldSend.started(Self.payload(of: message))
+#if RIG_ARRIVE
+        hostTrace("didStartSending", message, conversation, "door=\(rigIsDoor(message))")
+        // THE DOOR'S OWN SEND REGISTERS NOTHING: it is another seat's move, and
+        // recording it as mine (lastSentPayload) is exactly what would make
+        // `isMine` drop its echo. See the door block above.
+        if rigIsDoor(message) {
+            if let p = Self.payload(of: message) { rigDoorSent.insert(p) }
+            return
+        }
+        let sentBytes = Self.payload(of: message)
+        Task { await rigSaw(sentBytes) }
+#endif
         // Captured BEFORE the `present` below, which rewrites `lastPayloadURL`.
         // The dismiss itself happens at the END of this method, once the send is
         // fully recorded - see the block there for why it happens at all.
@@ -495,18 +826,22 @@ final class MessagesViewController: MSMessagesAppViewController {
             // extension is bound to, and the replacement is what fires didReceive.
             // Exactly two host paths send `_didReceiveMessage:conversationState:`:
             //
-            //   PATH A, and it is DEAD on iOS 26:
-            //     -[CKChatInputController _handleChatItemDidChange:]
-            //       -> notifyBrowserViewControllerOfMatchingNewMessages:
-            //          requires browserSwitcher.currentViewController to be us.
-            //     `currentViewController` is restored only by
-            //     browserTransitionCoordinator:expandedStateDidChange:withReason:,
-            //     reachable only from -[CKBrowserSwitcherViewController
-            //     setExpanded:withReason:] - which has ZERO call sites in ChatKit or
-            //     iMessageApps under the app-card model. Which is why not even our
-            //     own echo arrives.
+            //   PATH A, not observed to deliver; whether it can is OPEN:
+            //     -[CKChatController _handleChatItemDidChange:]
+            //       -> -[CKChatInputController
+            //           notifyBrowserViewControllerOfMatchingNewMessages:]
+            //          requires browserSwitcher.currentViewController to be us
+            //          (docs/IMESSAGE_LIVE_ARRIVAL_HOST.md M1, M2).
+            //     An earlier reading said `currentViewController` is restored only
+            //     through -[CKBrowserTransitionCoordinator setExpanded:withReason:],
+            //     which has no call site, so this path is dead. The binary does not
+            //     support that: -[CKBrowserSwitcherViewController
+            //     _loadBrowserForBalloonPlugin:datasource:] and
+            //     _updateVisibleBrowserView set it too (M2c). Our own echo not
+            //     arriving in the owner's logs is the observation; the reason is
+            //     U1, for phase 2 to settle on the simulator.
             //
-            //   PATH B, the live one:
+            //   PATH B, the live one (M4, M4b):
             //     -[MSMessageExtensionBrowserViewController setBalloonPluginDataSource:]
             //       sets dataSource.delegate = self
             //     -> a same-MSSession message replaces that datasource's payload
@@ -585,6 +920,10 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// so the cache never claims a chain nobody will see (§17.2). ROUND 9: the
     /// durable pending ledger this used to clear is gone entirely (owner call).
     override func didCancelSending(_ message: MSMessage, conversation: MSConversation) {
+#if RIG_ARRIVE
+        hostTrace("didCancelSending", message, conversation, "door=\(rigIsDoor(message))")
+        if rigIsDoor(message) { return }
+#endif
         // ROUND 12 #11: clear the staging only if THIS is the bubble that was
         // cancelled. Staging a second move (a throw-in, a re-stage after Undo)
         // replaces the input-field bubble, and Messages reports the replaced one
@@ -626,6 +965,12 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func willTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
         super.willTransition(to: presentationStyle)
+        drawerStyle.note(did: false, expanded: presentationStyle == .expanded)
+        FlightRecorder.note("style-will", presentationStyle == .compact ? "compact" : "expanded")
+#if RIG_ARRIVE
+        hostTrace("willTransition", nil, nil,
+                  "to=\(presentationStyle == .compact ? "compact" : "expanded")")
+#endif
         // ROUND 47: the FIRST thing, because on a cold open this callback is
         // the earliest moment Messages will honour an `.expanded` request - see
         // c/src/msg_expand.h for the eight-run measurement.
@@ -662,9 +1007,15 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func didTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
         super.didTransition(to: presentationStyle)
+#if RIG_ARRIVE
+        hostTrace("didTransition")
+#endif
         nameExpandSaw(presentationStyle)
         CollapseTween.isPresenting = false
-        FlightRecorder.note("style", presentationStyle == .compact ? "compact" : "expanded")
+        drawerStyle.note(did: true, expanded: presentationStyle == .expanded)
+        FlightRecorder.note("style", (presentationStyle == .compact ? "compact" : "expanded")
+                            + (drawerStyle.isExpanded == (presentationStyle == .expanded)
+                               ? "" : " (late - the drawer is still \(drawerStyle.isExpanded ? "expanded" : "compact"))"))
         let waiters = transitionWaiters
         transitionWaiters.removeAll()
         // In KEY order, which is why the key is a monotonic sequence number.
@@ -749,6 +1100,10 @@ final class MessagesViewController: MSMessagesAppViewController {
             pendingStage = nil
         }
         lastPayloadURL = payloadURL
+#if RIG_ARRIVE
+        let routed = payloadURL.flatMap { try? MessageEnvelope.payloadBytes(url: $0) }
+        Task { await rigSaw(routed) }
+#endif
         // §6.2 S1's exact half: did THIS device send the tapped bubble? Only the
         // extension can answer — the participant UUIDs never travel in the payload.
         let senderIsLocal = selected?.senderParticipantIdentifier != nil
@@ -868,7 +1223,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         // UNDO STAYS OUT OF SIGHT FOR ALL OF WHAT FOLLOWS - the picture being
         // baked, the rest, the collapse (CollapseTween.autoCollapses, read by
         // UndoGate). From the first line, and released on every way out.
-        let collapsing = !fromUndo && presentationStyle == .expanded
+        let collapsing = !fromUndo && drawerIsExpanded
         if collapsing { CollapseTween.autoCollapses += 1 }
         defer { if collapsing { CollapseTween.autoCollapses -= 1 } }
         // NEWEST STAGE WINS, and the losers stop where they stand.
@@ -953,6 +1308,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         // gameId comes from the same decode above so didStartSending's commit
         // can persist the seat without re-decoding. "" only if the payload
         // failed to decode - the commit then skips the seat write.
+        await awaitFieldFree()
         // Superseded while the picture was being baked: a newer move is already
         // staged, and this one must not claim the input field back off it.
         guard current() else { return }
@@ -977,7 +1333,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         // Already in the compact drawer (an ordinary in-drawer move): no style
         // transition will run, so there is no preview flyover to avoid - stage
         // the bubble immediately, exactly the pre-round-10b timing.
-        if presentationStyle != .expanded {
+        if !drawerIsExpanded {
             insertStaged()
             return
         }
@@ -1042,6 +1398,51 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     /// Which `stage` run owns the input field - see the note at the top of it.
     private var stageGeneration = 0
+
+    /// Bubbles a Send press is still carrying out of the input field (see
+    /// FieldSend). PROCESS-WIDE, like the door's bookkeeping: a Send pressed
+    /// with the drawer closed is reported to a FRESH controller (host doc L7).
+    private static var fieldSend = FieldSend()
+
+    /// The product's vector into `fieldSend` - see FieldSend.
+    private static var waitsForOwnSend: Bool {
+        #if DEBUG || SOLO_TESTING
+        return MessageDevBoard.flag("stage.awaitsend", shipping: FieldSend.waitsForOwnSendByDefault)
+        #else
+        return FieldSend.waitsForOwnSendByDefault
+        #endif
+    }
+
+    /// Hold a stage while the field is still sending a pressed bubble, so the
+    /// stage lands as a bubble rather than a zero-height entry (FieldSend).
+    @MainActor
+    private func awaitFieldFree() async {
+        let start = CACurrentMediaTime()
+        while Self.fieldSend.isBusy(now: CACurrentMediaTime()) {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let waited = CACurrentMediaTime() - start
+        if waited > 0.01 {
+            FlightRecorder.note("field-busy", "stage waited \(Int(waited * 1000))ms for a sent bubble to leave the field")
+        }
+    }
+
+    /// The drawer as the host's will/did callbacks describe it - see
+    /// `drawerIsExpanded`.
+    private var drawerStyle = GateWire.DrawerStyle(expanded: false)
+
+    /// IS THE DRAWER UP, so that a staged move should put it down to Send?
+    /// Not `presentationStyle`: the framework sets that in every didTransition,
+    /// and a self-expanding cold open (a first-run name screen) gets the
+    /// install's own didTransition(compact) about half a second AFTER its
+    /// expand has landed. The property then says compact over an expanded
+    /// drawer until the next transition, and Create game staged its lobby in
+    /// the "already compact" branch below and never collapsed (owner notes 1
+    /// and 7). Which did counts is the kernel's rule (c/src/msg_expand.h,
+    /// "WHICH WAY THE DRAWER IS").
+    private var drawerIsExpanded: Bool {
+        CollapseTween.readsDrawerFromCallbacks ? drawerStyle.isExpanded : presentationStyle == .expanded
+    }
 
     /// The chain a message Messages reports actually carries. The message is the
     /// authority on its own bytes; our `pendingStage` bookkeeping is not (round
@@ -1195,3 +1596,52 @@ final class MessagesViewController: MSMessagesAppViewController {
         }
     }
 }
+
+#if RIG_ARRIVE
+/// THE DOOR'S BOARD MOVE, in one actor call: adopt the chain, read the seat's
+/// menu, pick the move, rebuild and seal. One call because the resident game
+/// is one slot and decoding IS adopting - a read and a seal split across an
+/// await would describe whichever chain landed in between.
+extension MessageKernel {
+    func rigMove(base: Data, seat: String, kind: String, pick: String,
+                 gameId: UInt64, parent8: Data, joins: [MessageJoin]) throws -> Data {
+        _ = try decode(payload: base, viewer: -1)
+        guard let view = residentView(viewer: -1) else { throw MessageEnvelope.Failure.damaged(code: -5) }
+        let type: MoveType
+        switch kind {
+        case "good": type = .good
+        case "attack", "throwin": type = .attack
+        case "cover": type = .cover
+        case "pickup": type = .pickup
+        case "pass": type = .pass
+        default: throw MessageEnvelope.Failure.damaged(code: -6)
+        }
+        let seats = seat == "any" ? Array(0..<view.players.count) : [Int(seat) ?? -1]
+        for s in seats where s >= 0 && s < view.players.count {
+            let menu = residentLegal(seat: s).filter { $0.type == type }
+            guard let move = Self.rigPick(menu, pick) else { continue }
+            return try resealFromBase(.continuation(payload: base), replaying: [move], seat: s,
+                                      gameId: gameId, parent8: parent8, joins: joins)
+        }
+        throw MessageEnvelope.Failure.rejected(reason: -1)
+    }
+
+    /// low / high by the first card (single-card moves first), or the move that
+    /// plays a named card: 2..10, J, Q, K, A then S H C D (value 1 is a two).
+    static func rigPick(_ menu: [Move], _ pick: String) -> Move? {
+        if menu.first?.cards.isEmpty ?? true { return menu.first }
+        let singles = menu.filter { $0.cards.count == 1 }
+        let pool = singles.isEmpty ? menu : singles
+        switch pick {
+        case "low": return pool.min { ($0.cards.first?.v ?? 0) < ($1.cards.first?.v ?? 0) }
+        case "high": return pool.max { ($0.cards.first?.v ?? 0) < ($1.cards.first?.v ?? 0) }
+        default:
+            let ranks = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"]
+            guard let suitChar = pick.last, let s = Array("SHCD").firstIndex(of: suitChar),
+                  let r = ranks.firstIndex(of: String(pick.dropLast())) else { return nil }
+            let card = Card(s: s, v: r + 1)
+            return pool.first { $0.cards.contains(card) }
+        }
+    }
+}
+#endif

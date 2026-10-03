@@ -165,6 +165,37 @@ test('the masked importer refuses the same values, and leaves the resident board
     assert.ok(checked >= 8, `enough families (${checked})`);
 });
 
+// ---- the board carries its rules (c/src/view.h STATE_FLAGS_AT) ----------------
+//
+// A board is what the Oracle and a client build a whole game from, so it names
+// the game's rules: a podkidnoy board read back is podkidnoy, whatever the
+// resident game played before, and a rule this kernel does not know is a board
+// from a newer kernel - refused, never played as the game this kernel knows.
+
+test('the masked door keeps a podkidnoy board podkidnoy, and refuses a rule it does not know', () => {
+    const table = fixtureTable();
+    const podkidnoy = fixture().title(GID).seats(SEATS).passing(false).build();
+    assert.equal(table.load(podkidnoy.state, podkidnoy.roster), L.TABLE_OK, 'a podkidnoy lobby loads');
+    const board = io(doors().wasm_export_state());
+
+    const classic = dealt();
+    assert.equal(table.load(classic.state, classic.roster), L.TABLE_OK, 'a classic table is resident');
+    assert.equal(L.Game_get_rules(mem(), doors().wasm_game_ptr_internal()), 0, 'and it plays the classic game');
+    mem().u8.set(board, doors().wasm_io_ptr());
+    assert.equal(doors().wasm_import_state(board.length, 1), 0, 'the podkidnoy board imports (GAME_VALID)');
+    assert.equal(L.Game_get_rules(mem(), doors().wasm_game_ptr_internal()), L.GAME_RULE_NO_PASS,
+        'and the game it rebuilt is podkidnoy');
+
+    assert.equal(table.load(classic.state, classic.roster), L.TABLE_OK);
+    const before = residentBlob();
+    L.Game_set_rules(mem(), doors().wasm_game_ptr_internal(), L.GAME_RULE_NO_PASS << 1);
+    const unknown = io(doors().wasm_export_state());
+    assert.equal(table.load(classic.state, classic.roster), L.TABLE_OK);
+    mem().u8.set(unknown, doors().wasm_io_ptr());
+    refusedAs(doors().wasm_import_state(unknown.length, 1), L.GAME_INVALID_RULES, 'masked: a rule this kernel does not know');
+    assert.deepEqual([...residentBlob()], [...before], 'the refused board was not adopted');
+});
+
 // ---- a state is only as long as the caller says it is -----------------------
 //
 // The decode walks the buffer by the counts the CONTENT carries. Before the

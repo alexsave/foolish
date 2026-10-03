@@ -53,6 +53,8 @@ export interface BotTableOptions {
     names?: string[];
     /** The commit clock: the first cycle's time; each later commit is one second on (default 1,700,000,000,000 ms). */
     startMs?: number;
+    /** The table's rules: false deals podkidnoy, the game with no transfer (default the passing game). */
+    passing?: boolean;
 }
 
 function refused(what: string, rc: number): Error {
@@ -78,7 +80,7 @@ export function dealBotTable(brains: string[], seed: Uint8Array, opts: BotTableO
     const table = opts.table ?? fixtureTable();
     const gameId = opts.gameId ?? 'g';
     const seats = brains.map((brain, i) => ({ id: `seat-${i}`, name: opts.names?.[i] ?? `P${i + 1}`, brain }));
-    const lobby = fixture().title(gameId).seats(seats).build();
+    const lobby = fixture().title(gameId).seats(seats).passing(opts.passing ?? true).build();
     let rc = table.load(lobby.state, lobby.roster);
     if (rc < 0) throw refused('lobby load', rc);
     rc = table.ready(seats[0].id, seed);

@@ -9,8 +9,8 @@
 //
 // WHAT THIS OWNS: the run, its origin, how far React has caught up to the
 // kernel's landings, the animation frame it asked for, and the state the page
-// renders from (what is flying, for how long, the deck's in-flight counts, and
-// which cards are hidden where).
+// renders from (what is flying, for how long, the deck's in-flight counts, the
+// trump in the air, and which cards are hidden where).
 //
 // WHAT IT DOES NOT: what a landing MEANS. A landed step commits a board, may
 // release some tracking, may count a sequence down - all of that is the
@@ -20,10 +20,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ANIM_STEP_NONE, type AnimPlanSnap } from '@sdk/ts/wasm/bots.ts';
 import {
-    arrivingPiles, frameAt, heldPiles, NO_ARRIVING, NO_HELD, planFor, sameArriving, sameHeld,
+    arrivingPiles, frameAt, heldPiles, NO_ARRIVING, NO_HELD, planFor, sameArriving, sameHeld, withTrumpOut,
     type AnimStep, type ArrivingPile,
 } from './animPlan';
-import type { TableView } from './view';
+import { sameCard, type TableView, type ViewCard } from './view';
 
 /** What the page draws for one card at one place while its flight is up. */
 export interface CardFlight {
@@ -77,6 +77,10 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
     const [arriving, setArriving] = useState<readonly ArrivingPile[]>(NO_ARRIVING);
     const [inFlightFromDeck, setInFlightFromDeck] = useState(0);
     const [inFlightToFlipped, setInFlightToFlipped] = useState(0);
+    // THE TRUMP IN THE AIR (AnimFrame.trump_flight): it has left its slot as
+    // the draw that deals it opened, and the flight is the one place it is
+    // drawn until that draw lands. Null whenever no such draw is flying.
+    const [trumpFlight, setTrumpFlight] = useState<ViewCard | null>(null);
     const [animatingCards, setAnimatingCards] = useState<Map<string, CardFlight>>(new Map());
 
     // THE RUN IS APPENDED TO, NEVER SPLICED. A step opens at i x (duration +
@@ -122,6 +126,9 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
     // and dropped when the run ends, because a later run's first beat has the
     // same span and different cards.
     const beatRef = useRef<{ key: string; step: S } | null>(null);
+    // The step in flight with the trump it deals put on it (animPlan.withTrumpOut),
+    // held for the same reason `beatRef` is: one object per flight, not per frame.
+    const trumpStepRef = useRef<{ step: S; drawn: S } | null>(null);
 
     // The hooks are read through a ref so the loop never holds a stale closure:
     // it is armed once per frame and the provider re-renders under it.
@@ -231,8 +238,20 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
         // grouping and the timing come from the one answer for exactly this
         // reason - a host that merged on a rule of its own could merge
         // somewhere the clock did not.
-        const flying = frame.step === ANIM_STEP_NONE ? null : beatAt(run, plan, frame.step);
+        const beat = frame.step === ANIM_STEP_NONE ? null : beatAt(run, plan, frame.step);
+        // …AND THE TRUMP IT DEALS, the kernel's answer for this step
+        // (AnimPlanStep.trump_out): the last card of the draw, leaving from the
+        // trump's own slot for every viewer.
+        let flying = beat;
+        if (beat && plan.steps[frame.step]?.trumpOut) {
+            if (trumpStepRef.current?.step !== beat) {
+                trumpStepRef.current = { step: beat, drawn: withTrumpOut(beat, plan.steps[frame.step]) };
+            }
+            flying = trumpStepRef.current.drawn;
+        }
         setCurrentAnimation((prev) => (prev === flying ? prev : flying));
+        const air = frame.trumpFlight;
+        setTrumpFlight((prev) => (prev === air || (prev && air && sameCard(prev, air)) ? prev : air));
         setFlightMs(frame.step === ANIM_STEP_NONE ? 0 : plan.steps[frame.step]?.durationMs ?? 0);
         // The stock shrinks as cards LEAVE it, not as they land, and a card bound
         // for the trump's slot never leaves it at all: both numbers are the
@@ -250,8 +269,10 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
             originRef.current = null;
             landedRef.current = 0;
             beatRef.current = null;
+            trumpStepRef.current = null;
             startedRef.current = 0;
             setCurrentAnimation(null);
+            setTrumpFlight(null);
             setFlightMs(0);
             setHeld(NO_HELD);
             setArriving(NO_ARRIVING);
@@ -307,7 +328,9 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
         startedRef.current = 0;
         rowMsRef.current = 0;
         beatRef.current = null;
+        trumpStepRef.current = null;
         setCurrentAnimation(null);
+        setTrumpFlight(null);
         setFlightMs(0);
         setRowMs(0);
         setHeld(NO_HELD);
@@ -328,6 +351,6 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
     return {
         isAnimating, currentAnimation, flightMs, rowMs, heldPiles: heldSet,
         arrivingPiles: arriving,
-        inFlightFromDeck, inFlightToFlipped, animatingCards, enqueue, reset,
+        inFlightFromDeck, inFlightToFlipped, trumpFlight, animatingCards, enqueue, reset,
     };
 }

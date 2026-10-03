@@ -207,7 +207,8 @@ int wasm_reject_reason(void) { return engine_last_reject; }
 //   u8  status            u8  num_players     i8 power_suit
 //   i8  first_attacker    i8  defender
 //   u16 discard_pile_length
-//   u8  has_flipped       u8 flipped wire-card
+//   u8  flags             u8 flipped wire-card
+//       (flags: bit 0 has_flipped, bits 1-7 Game.rules - view.h STATE_FLAGS_AT)
 //   u32 good_players_mask u8 has_good_timestamp
 //   u16 deck_count,   deck_count x u8 wire-card
 //   u8  num_battles,  num_battles x (u8 attack, u8 defense; 0xFF = uncovered)
@@ -849,6 +850,12 @@ int wasm_msg_rebase(int pending_round, int seat, int wire_len) {
 // bubble's atom delta, which msg_seal derives from the base turn this host
 // tracks) and the borrowed body. They are cleared here rather than trusted, so
 // the struct a caller filled in cannot assert a boundary its body does not have.
+// The one scratch Game the FMSG exports borrow for the length of a call (a
+// Game is far too big for a wasm stack): wasm_msg_seal reads its own body back
+// into it, and wasm_msg_rematch replays the finished chain and deals the lobby
+// in it. Neither holds it across a return.
+static Game g_msg_scratch;
+
 int wasm_msg_seal(void) {
     MsgEnvelope e = g_msg_header.e;
     if (e.n_joins < 1 || e.n_joins > MSG_MAX_JOINS) return MSG_EJOINS;
@@ -861,11 +868,30 @@ int wasm_msg_seal(void) {
 
     // A v6 body is tens of bytes; 512 is far above any measured game (8p ~68 B).
     static unsigned char body[512];
-    static Game scratch;
     const int src = msg_seal(&e, &g_game, msg_seal_base(&g_game, g_msg_base_logs),
-                             body, (int)sizeof body, &scratch);
+                             body, (int)sizeof body, &g_msg_scratch);
     if (src != MSG_EOK) return src;
     return msg_encode(&e, g_replay_io, REPLAY_IO_CAP);
+}
+
+// THE REMATCH LOBBY (msg_wire.h msg_rematch_lobby) for the FINISHED envelope in
+// g_replay_io[0, in_len): the same game dealt again, written back into
+// g_replay_io. Returns its length or a negative MSG_E*. Adopts nothing - the
+// resident game is untouched; decode the answer to put it on screen. The same
+// C the phone's fio_msg_rematch calls, exported so e2e/msg_rematch.test.ts can
+// hold the two engines to one answer.
+// `tapped_at_ms` crosses as a double: a JS number holds every millisecond
+// timestamp exactly, and wasm32 has no 64-bit integer a JS caller can pass
+// without BigInt.
+int wasm_msg_rematch(int in_len, double tapped_at_ms, int creator_seat) {
+    if (in_len < 0 || in_len > REPLAY_IO_CAP) return MSG_ECAP;
+    // The answer is written where the question was, so the question is copied
+    // out first: the lobby is built while the finished chain is still read.
+    static unsigned char finished[REPLAY_IO_CAP];
+    memcpy(finished, g_replay_io, (size_t)in_len);
+    if (!(tapped_at_ms >= 0.0) || tapped_at_ms > 9007199254740991.0) return MSG_ESHORT;
+    return msg_rematch_lobby(finished, in_len, (uint64_t)tapped_at_ms, creator_seat,
+                             g_replay_io, REPLAY_IO_CAP, &g_msg_scratch);
 }
 
 // ROUND 16 - the pickup hold, on the resident game (the one wasm_msg_decode

@@ -119,6 +119,10 @@
 // also matches the wire (msg_wire.h MSG_VARIANT_NO_PASS), which reserved a
 // variant byte whose 0 has always meant "the classic 36-card game".
 #define GAME_RULE_NO_PASS 0x01
+// Every rule this kernel knows. A Game that names any other bit came from a
+// kernel newer than this one, and is refused (game_validate GAME_INVALID_RULES)
+// rather than played as a game it is not.
+#define GAME_RULES_KNOWN GAME_RULE_NO_PASS
 
 typedef struct {
     Card attack;
@@ -225,6 +229,21 @@ typedef struct {
 static inline bool game_pass_allowed(const Game *g) {
     return (g->rules & GAME_RULE_NO_PASS) == 0;
 }
+
+// TEST-ONLY: every transfer this thread has APPLIED, wherever it was applied -
+// a real move (handle_pass) or a Monte-Carlo world's (cordite_sim.c
+// sim_apply_pass, which every bitboard rollout and solve of every brain goes
+// through). A transfer inside a rollout leaves no other trace: the move a bot
+// returns is still off the real menu, and only the values it was chosen by are
+// wrong. So a test that plays podkidnoy positions reads this to prove no
+// search anywhere assumed the transfer. Compiled into the native builds only
+// (c/Makefile CFLAGS); no shipped module carries it.
+#ifdef CD_PASS_PROBE
+extern _Thread_local long game_pass_probe;
+#define GAME_PASS_PROBE_HIT() ((void)game_pass_probe++)
+#else
+#define GAME_PASS_PROBE_HIT() ((void)0)
+#endif
 
 // ---------- RNG ---------------------------------------------------------
 
@@ -426,6 +445,7 @@ extern _Thread_local int engine_last_reject;
 #define GAME_INVALID_DUPLICATE_CARD   (-10) // one card in two places
 #define GAME_INVALID_FLIPPED          (-11) // the face-up trump is not of the power suit
 #define GAME_INVALID_LOBBY_CARDS      (-12) // a WAITING game holds a card, a battle, a flip, an out or a good
+#define GAME_INVALID_RULES            (-13) // Game.rules names a rule this kernel does not know (GAME_RULES_KNOWN)
 
 // game_validate flag: `g` came from a MASKED view (view.c state_get masked=1),
 // so the deck and the hands hold placeholders rather than real cards. Their

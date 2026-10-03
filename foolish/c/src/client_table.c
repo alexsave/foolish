@@ -330,10 +330,11 @@ int client_identity_seat(ClientTable *c, const char *id, int id_len, const char 
 
 // ---------- what a board shows ------------------------------------------------------
 
-int client_view_rules(const TableView *v, int from_deck, int to_flipped, ViewRules *out) {
+int client_view_rules(const TableView *v, int from_deck, int to_flipped, int trump_out, ViewRules *out) {
     const int n = v->num_players;
     if (n < 0 || n > MAX_PLAYERS || v->num_battles < 0 || v->num_battles > MAX_BATTLES
-        || v->my_seat < -1 || v->my_seat >= n || from_deck < 0 || to_flipped < 0) return CLIENT_E_FORMAT;
+        || v->my_seat < -1 || v->my_seat >= n || from_deck < 0 || to_flipped < 0
+        || trump_out < 0 || trump_out > 1) return CLIENT_E_FORMAT;
     memset(out, 0, sizeof(*out));
 
     // A seat is marked when the board names it. Until the trump has turned the
@@ -360,11 +361,19 @@ int client_view_rules(const TableView *v, int from_deck, int to_flipped, ViewRul
 
     // The stock: what is flying out of it has left the pile, and a card on its
     // way to the trump's slot is still the stock's, so it stays on the count.
+    // The trump on its way to a hand has left both its slot and the count.
     const int pile = v->deck_count - from_deck;
+    const bool trump_held = v->has_flipped && !trump_out;
     out->deck_pile = (int16_t)(pile > 0 ? pile : 0);
-    out->deck_badge = (int16_t)(out->deck_pile + (v->has_flipped ? 1 : 0) + to_flipped);
+    out->deck_badge = (int16_t)(out->deck_pile + (trump_held ? 1 : 0) + to_flipped);
     out->show_deck_pile = out->deck_pile > 0;
+    // THE PLACE OUTLIVES THE PILE while cards are leaving it: the draw that
+    // takes the stock's last cards empties the pile the instant it opens, and
+    // those cards still fly from where the pile lay. The slot, likewise, stays
+    // while the trump leaves it (the board keeps has_flipped until it lands).
+    out->show_deck_spot = out->show_deck_pile || from_deck > 0;
     out->show_flipped_slot = out->show_deck_pile || v->has_flipped || to_flipped > 0;
+    out->show_flipped_card = trump_held;
     out->show_trump_icon = !out->show_deck_pile && !v->has_flipped && to_flipped == 0;
     return CLIENT_OK;
 }

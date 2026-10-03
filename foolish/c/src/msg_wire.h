@@ -602,8 +602,10 @@ int msg_replay(const MsgEnvelope *e, Game *g);
 //
 // Two chains for the same game_id are ordered by (§7.2):
 //
-//   0. a STARTED chain beats a pre-game one — phase >= MSG_PHASE_LIVE outranks
+//   0. a STARTED chain beats a pre-game one - phase >= MSG_PHASE_LIVE outranks
 //      WAITING/ACCEPT, always
+//  0F. a deal in PLAY beats a FINISHED deal of the same game - rule 0's other
+//      boundary, for a rematch (see below)
 //   1. higher round wins        — a closed bout is settled history
 //   2. else higher turn wins    — more accepted actions
 //   3. else more JOINS wins     — the fuller roster is strictly later history
@@ -639,6 +641,23 @@ int msg_replay(const MsgEnvelope *e, Game *g);
 // turn on purpose: a chain someone has actually played on must never be
 // clobbered by a stale wider Start sealed after the fact.
 //
+// RULE 0F, THE FINISHED BOUNDARY. A rematch is the same game_id dealt again
+// from a new seed (msg_rematch_lobby): New game on a finished table seals a
+// lobby naming the finished chain as its parent, in the same MSSession, and
+// nothing on the wire counts rematches. Rules 1..3 compare PROGRESS, and
+// progress is a fact about one deal: the rematch's first LIVE bubble is round 0
+// and the finished game it replaced is round 9, so rule 1 alone would keep
+// "Game over" on a device that sees the Start without having seen the lobby.
+// So, for two chains of the SAME game_id dealt from DIFFERENT seeds (both
+// non-zero), one LIVE and the other FINISHED, the LIVE one wins. A finished
+// deal is over; the only way the same game is dealt again is a rematch, so a
+// different deal still in play is the later one. It cannot misorder anything
+// within one deal (the seed is set at the lobby and repeated by every bubble),
+// and it decides nothing between two lobbies, two LIVE deals or two FINISHED
+// ones - those fall through to rules 1..3 and the digest as before. The
+// rematch LOBBY needs no help from it: it is the finished chain's direct child,
+// and rule 4 below already ranks it first.
+//
 // Rule 4 ranks ABOVE all of that: a chain's own DIRECT CHILD outranks it,
 // whatever the other fields say. Between a parent and its descendant the other
 // rules can lie about which came later, because `turn` counts ATOMS and the
@@ -658,7 +677,9 @@ int msg_replay(const MsgEnvelope *e, Game *g);
 // decides this exactly: the child names its parent's digest, the parent cannot
 // name its child's, and a child's phase, round and joins are always >= its
 // parent's, so ranking descent first can never misorder the rules it
-// overrules. Two SIBLINGS (same parent, neither an ancestor of the other) name
+// overrules. The ONE child whose phase is lower than its parent's is a REMATCH
+// LOBBY (WAITING, naming a FINISHED chain), and ranking descent first is
+// exactly what lets it win: rule 0 alone would keep the result card. Two SIBLINGS (same parent, neither an ancestor of the other) name
 // neither and fall through to rules 0..3 and the digest, which for a genuine
 // concurrency fork is the designed answer.
 //
@@ -669,7 +690,9 @@ int msg_replay(const MsgEnvelope *e, Game *g);
 // In C, not in each client: this decides which game every player sees, so a
 // phone and a browser disagreeing here forks the game. There is nothing to port.
 typedef struct {
-    uint8_t  phase;                        // MSG_PHASE_*; only "started or not" is compared
+    uint64_t game_id;                      // rule 0F: deals compare within one game only
+    uint8_t  seed[MSG_SEED_LEN];           // rule 0F: which deal of the game this is
+    uint8_t  phase;                        // MSG_PHASE_*; started or not, and rule 0F's LIVE/FINISHED
     uint8_t  round;
     uint16_t turn;
     uint8_t  n_joins;                      // rule 3: the fuller roster wins the turn-0 tie
@@ -792,13 +815,16 @@ typedef struct {
     // THE SAME BOUNDARY, CROSSED THE OTHER WAY: the chain on screen is dealt
     // and the arriving one is that game's lobby.
     //
-    // No TEXT can be this - rule P ranks a dealt game above the invite it grew
-    // out of, so an older lobby bubble never wins its way onto a board. What IS
-    // this is the surface REVERTING: the human staged Start, saw the board, and
-    // then pressed the X on the staged bubble, which discards the draft and
-    // puts the table back as the thread still has it. Owner: "it should still
-    // 'fade back' to the lobby state it was in previously if I X on the staged
-    // bubble."
+    // Two things are this. The surface REVERTING: the human staged Start, saw
+    // the board, and then pressed the X on the staged bubble, which discards
+    // the draft and puts the table back as the thread still has it. Owner: "it
+    // should still 'fade back' to the lobby state it was in previously if I X
+    // on the staged bubble." And A REMATCH ARRIVING over the finished board:
+    // the same game_id dealt again, a lobby naming the finished chain as its
+    // parent, which rule 4 ranks above the result card - the one text that can
+    // win its way from a board to a lobby, and it wears the same fade. (Any
+    // other lobby of a game still never wins against the dealt game it grew
+    // out of: rule 0.)
     //
     // Here rather than in the view for the reason `started` is here: whether
     // two chains are a whole-surface change is a fact about the chains, and a
@@ -813,6 +839,145 @@ typedef struct {
 // caller with nothing to show has nothing to handle either.
 void msg_surface_delta(const MsgEnvelope *showing, const MsgEnvelope *arriving,
                        MsgSurfaceDelta *out);
+
+// ---------- where the replay of an arriving chain starts -----------------
+//
+// A board that opens a chain animates the atoms after a boundary: the
+// `atoms_before` that fio_replay_last_events_packed takes. Two facts decide
+// it, and this is the one place they are put together.
+//
+//   THE SENDER'S CLAIM (msg_atoms_before_claim): `turn - n_new`, `turn` for a
+//   bubble that added nothing (MSG_NEW_NOTHING), -1 for one that does not say
+//   (n_new 0: the reader then guesses). It is a claim, not a fact: a sender
+//   whose own rebase failed, or an older build, stamps a boundary one move too
+//   early, and its recipient re-animates a cover it already watched (owner:
+//   "I saw the Q of hearts animate IN PARALLEL with the J of spades ... these
+//   were separate bubbles!").
+//
+//   WHAT THIS BOARD ALREADY SHOWED: the chain on screen before this one
+//   arrived. The atoms the two chains share from the start are the part of the
+//   arriving chain the human has already watched, so the boundary never sits
+//   behind them.
+//
+// Answer: max(claim, common prefix). The prefix is counted over the two
+// bodies' ACTION atoms as the codec decodes them (replay_decode_atoms_v6:
+// attack, cover, pass, pickup, round_end, good, compared by kind, seat, cards
+// and target; DEAL and DRAW are the seed's, equal whenever the deals and the
+// actions before them are). That is what makes it right where a number
+// cannot be:
+//
+//   * A PENDING GOOD IS AN ATOM ONLY UNTIL SOMETHING FOLLOWS IT (replay.c
+//     log_atom_kind). A board showing "covered table + good A + good B" holds
+//     two more atoms than its child "covered table + round_end" (the closing
+//     good folds the run into one atom), so the previous chain's TURN used as
+//     a floor overshoots the child and nothing animates at all - for every
+//     receiver of a bout-closing good, and of any move after a pending good,
+//     at 3+ seats. The prefix stops at the first good, which the child does
+//     not have, so the round_end animates.
+//   * A STALE SENDER that stamps an early boundary is still clamped: the cover
+//     this board already showed is in the common prefix.
+//   * AN OLDER CHAIN or a RE-DELIVERY is a prefix of the board's own, so the
+//     boundary is its whole length and nothing animates. An older chain that
+//     still has a pending good is NOT an atom prefix (the board's chain
+//     dropped that good when its next move superseded it), so it is
+//     recognised by its shape: it differs only by trailing goods while the
+//     board's chain holds a real move past the shared part. A good raced by a
+//     concurrent move off the same parent has that shape too and is treated
+//     alike; two goods raced off one parent do not (the board's extra atom is
+//     a good), so the arriving one animates.
+//   * A SIBLING (two moves off one parent) shares only the parent, so its own
+//     move animates from there.
+//   * A COLD OPEN (`shown` NULL), a different game (game id, seed, seat count,
+//     opening or rules differ), or a shown chain whose body does not decode:
+//     nothing of this chain has been watched, so the claim stands unclamped.
+//     That is what keeps "close the bubble I just sent and open it again"
+//     animating my own move (round 22).
+//   * A BODYLESS chain (a lobby, the turn-0 LIVE handoff) has no action atoms,
+//     so it shares none.
+//   * A NOTHING reseal already claims its whole length, and stays there.
+//
+// `scratch` holds the shown chain's atoms while the arriving one is compared
+// against them. It is the caller's, because this file keeps no static state
+// for rules.wasm's pinned memory to hold. MSG_OPEN_SCRATCH is ample for any
+// reachable game; on a smaller buffer the comparison stops where the recording
+// stopped, which can only make the prefix SHORTER - re-animating a little,
+// never hiding a move.
+//
+// Every input has an answer (>= -1), because "nothing is known" is the claim
+// itself; an `arriving` the codec cannot read gets its claim too.
+#define MSG_OPEN_SCRATCH 8192
+int msg_atoms_before_claim(const MsgEnvelope *e);
+int msg_open_boundary(const MsgEnvelope *shown, const MsgEnvelope *arriving,
+                      unsigned char *scratch, int scratch_cap);
+
+// ---------- what an arrival leaves of a staged bubble ---------------------
+//
+// A device has put a bubble in the Messages input field - a move it staged, or
+// the NOTHING reseal an Undo leaves behind - and has not sent it. Then another
+// chain ARRIVES and the board adopts it. Is the bubble still something the
+// human may send? The owner, on a good staged over a table another attacker
+// then threw in on: "make it be a 'nothing burger' bubble, same as if you
+// pickup and then undo. we can't unstage a bubble, but we can make it no-op."
+//
+// The answer is a RELATION between the two chains, by bytes only (nothing is
+// replayed, no game is touched):
+//
+//   MSG_FATE_LANDED      the arrived chain already carries the staged one: it IS
+//                        those bytes, it names them as its parent, or (for a
+//                        bubble that carries a move) the staged chain's action
+//                        atoms are a prefix of the arrived chain's. The bubble
+//                        went out; there is nothing left in the field to fix.
+//   MSG_FATE_STANDS      the staged chain was built on the arrived one: the
+//                        staged bubble names it as its parent, or the arrived
+//                        chain's atoms are a prefix of the staged chain's - it
+//                        adds nothing the staged bubble was not composed on.
+//   MSG_FATE_SUPERSEDED  neither. A sibling (another move off the same parent),
+//                        a fork further back, or another game.
+//
+// Every move kind is the same question, because it is asked of atoms (attack,
+// cover, pass, pickup, round_end, good), never of what the move was:
+//
+//   * A sibling of ANY kind is SUPERSEDED - including two goods raced off one
+//     parent, and a good raced by a throw-in, where the staged good's turn can
+//     be HIGHER than the arrival's and Rule P would let the stale bubble erase
+//     the throw-in for the whole thread (LiveArrival4pTests).
+//   * There is NO trailing-good strip here, unlike Rule N's design
+//     (docs/IMESSAGE_SUPERSEDED_MOVES.md): stripping makes "parent + my good"
+//     a prefix of "parent + their throw-in", which is exactly the case that
+//     must not read as landed. The price is one shape read conservatively: a
+//     staged good that DID go out, followed two or more bubbles later by a
+//     move that folded it, is SUPERSEDED rather than LANDED (one hop is the
+//     header test and is exact). Superseded is the safe side - the field gets
+//     a no-op it did not need; the other error would leave a stale move in it.
+//   * A NOTHING bubble's atoms are its parent's, so the prefix test cannot say
+//     it landed - every descendant of that parent "contains" it. Only the
+//     header can (the bytes, or a child naming them). Anything else is
+//     SUPERSEDED, and a stale NOTHING bubble is a real hazard at three or more
+//     seats: re-sealing a chain with a pending good holds that good's atom,
+//     and the throw-in that superseded the good can seal to the same or a
+//     lower turn, so Rule P can rank the stale reseal above it.
+//
+// "STILL VALID" IS STANDS, and the turn layer below never acts on it for an
+// arrival, which is deliberate. An arrival that is not the board's own chain
+// moves the base, and the staged moves are dropped (MessageTurnController
+// .adopt - the owner decided against re-applying them). A STANDS arrival is
+// a chain that adds nothing - a NOTHING reseal somebody else sent - and even
+// then the staged bubble names the OLD parent, so it is a sibling of the
+// arrival for Rule P, and a staged move that folds a pending good seals to a
+// turn no higher than the arrival's: sending it can still lose, or win, by the
+// digest. Only the byte-identical re-delivery is safe to leave alone, and that
+// never reaches an adopt (MSG_TURN_ARRIVE_SKIP). STANDS earns its keep on the
+// SEND side instead: it is how msg_turn_send_verdict knows the bytes going out
+// were built on the board's own chain.
+//
+// `scratch` is the caller's, exactly as for msg_open_boundary. A negative MSG_E*
+// when either payload does not parse.
+#define MSG_FATE_STANDS     0
+#define MSG_FATE_LANDED     1
+#define MSG_FATE_SUPERSEDED 2
+int msg_staged_fate(const unsigned char *staged, int staged_len,
+                    const unsigned char *arrived, int arrived_len,
+                    unsigned char *scratch, int scratch_cap);
 
 // ---------- Rule R: no legal move is silently lost ------------------------
 //
@@ -943,6 +1108,79 @@ int msg_roster_key(const MsgJoin *joins, int n, uint32_t *hash, int *rot);
 // the starting roster's own rotation.
 int msg_rematch_opening(const MsgJoin *joins, int n,
                         uint32_t carry_key, uint8_t carry_fool);
+
+// THE CARRY FOR A ROSTER AND ITS FOOL: the roster key of `joins` and the
+// fool's index within that key's canonical rotation, which is what a rematch
+// lobby's carry_key / carry_fool hold. `fool_seat` is a seat number of
+// `joins`. Returns MSG_EOK, or MSG_EJOINS / MSG_ESEAT as msg_roster_key does
+// (and MSG_ESEAT for a fool outside the table).
+int msg_rematch_carry(const MsgJoin *joins, int n, int fool_seat,
+                      uint32_t *carry_key, uint8_t *carry_fool);
+
+// ---------- the rematch: the same game, dealt again --------------------------
+//
+// Owner, on a finished game three people each tapped New game on: "Somehow a
+// finished game was able to be forked into 3 games. No this shouldn't be
+// possible. It should not start a new chain I think, it should collapse the
+// same game (yes, wiping out the history)." And on how: "can we do this whole
+// thing WITHOUT changing iMessage body format? ... just when someone hits a new
+// game, don't start a fresh chain! To randomize, just do some rng based on
+// timestamp of new game start. Then don't allow whoever creates a game to start
+// it, and we're all set. The seed is locked in."
+//
+// So a rematch is THE SAME GAME: the same game_id, a lobby whose parent8 names
+// the finished chain, in the finished game's MSSession, sealed as an ordinary
+// format 5/6 lobby - nothing on the wire is new, and every shipped build reads
+// it. Rule P needs nothing new to put it on the table: the lobby is the
+// finished chain's DIRECT CHILD, and rule 4 outranks rule 0. Once it starts,
+// rule 0F keeps its live chain above the finished deal it replaced.
+//
+// Every tap is its own lobby - its own moment, its own deal - and the existing
+// tie-breaks settle which one is the game, on every device the same way: two
+// sibling lobbies by rules 3 and the digest, and a lobby someone has started
+// over every lobby that has not (rule 0). The creator of a lobby cannot start
+// it (msg_lobby_changer), so whoever chose the deal is never the one who deals
+// it.
+
+// THE NEXT DEAL'S SEED, from the moment of the tap: the finished deal's own
+// ChaCha keystream (deal_rng.h, the deal RNG, not a new mix) read at block
+// `tapped_at_ms`, the tap's unix milliseconds. Two moments are two deals; one
+// moment is one deal, whoever taps. It is not a function of the table alone,
+// on purpose: three taps must not all be the same lobby, they must be three
+// lobbies the existing rules choose between.
+void msg_rematch_seed(const uint8_t old_seed[MSG_SEED_LEN], uint64_t tapped_at_ms,
+                      uint8_t out[MSG_SEED_LEN]);
+
+// THE REMATCH LOBBY a New game tap on the FINISHED chain `finished` creates,
+// built entirely here from that chain, the moment of the tap and the tapper's
+// seat. Writes the WAITING envelope into `out` and returns its length, or a
+// negative MSG_E*:
+//
+//   * the same game_id, and parent8 = the finished chain's digest;
+//   * seed = msg_rematch_seed(finished seed, tapped_at_ms);
+//   * sent_at = the same moment in unix seconds mod 65536;
+//   * last_actor_seat = `creator_seat`, the tapper's seat at the finished
+//     table - what the lobby gate reads to keep the creator from Start;
+//   * the finished game's own seating, every seat already taken, at the
+//     finished game's size, so the lobby is full (a seat frees up only when
+//     somebody leaves, as the web's table_continue keeps its seats);
+//   * the finished game's RULES (passing or podkidnoy), as table_continue
+//     keeps them;
+//   * the fool's penalty carry for that roster and that fool.
+//
+// It seals format 6 like every rematch lobby before it.
+//
+// Refused: anything that does not decode and replay (its MSG_E*), a chain that
+// is not FINISHED or has no fool (MSG_EPHASE), a roster with an empty or
+// missing seat (MSG_EJOINS), and a creator seat outside the finished table
+// (MSG_ESEAT). A host that is refused starts an ordinary new game instead.
+//
+// `scratch` is the caller's Game (this file keeps none): the finished chain is
+// replayed into it to find the fool, and then the lobby's deal is made in it.
+// Touches the process-wide deal RNG, like msg_replay.
+int msg_rematch_lobby(const unsigned char *finished, int finished_len,
+                      uint64_t tapped_at_ms, int creator_seat,
+                      unsigned char *out, int out_cap, Game *scratch);
 
 // The seat the penalty falls ON - the fool, and therefore the new game's first
 // DEFENDER. Same guard and same inputs as msg_rematch_opening, and derived from
@@ -1192,6 +1430,34 @@ static inline int msg_lobby_can_set_rules(int my_seat) { return game_lobby_can_s
 // which a flag would not.
 int msg_lobby_rules_changed(int have_baseline, int baseline, int current, int mine);
 
+// Is this lobby a REMATCH lobby - the one a New game on a finished table
+// creates? Read off what the wire already says: only that lobby carries the
+// fool's carry (format 4/6 carry_key, which msg_rematch_lobby always sets,
+// because a finished game always has a fool), and every reseal of it (a join, a
+// leave, a rules change) repeats it until Start consumes it.
+int msg_lobby_is_rematch(const MsgEnvelope *e);
+
+// THE CHANGER, which `msg_lobby_offered`'s `i_changed_the_rules` gates: the
+// newest bubble is mine AND it is one Start must not follow from the same
+// hand. Two things make one:
+//
+//   * it moved the rules (`rules_changed`, msg_lobby_rules_changed);
+//   * it is my bubble on a REMATCH lobby - the bubble that created it, whose
+//     tap chose the seed. Owner: "To randomize, just do some rng based on
+//     timestamp of new game start. Then don't allow whoever creates a game to
+//     start it, and we're all set. The seed is locked in."
+//
+// No new rule: the same gate, with the creator as the changer, and for the
+// same reason it has no full-lobby exemption. A rematch lobby is born full
+// (every seat of the finished table), so the exemption would hand Start to the
+// creator at once - the one thing the owner forbade - while it strands nobody:
+// everyone else at the table is offered Start, and the creator keeps Leave.
+// It lasts exactly as long as the creator's bubble is the newest; once anybody
+// else acts on the lobby (a rules change, a leave and a rejoin), the creator is
+// one more seated player. The same holds for a player who rejoins a rematch
+// lobby they left: their bubble is the newest, and someone else starts.
+int msg_lobby_changer(int rules_changed, int mine, int rematch_lobby);
+
 // The two above, read off a decoded envelope: capacity, roster and authorship
 // all come from `e`, so a caller supplies only what the WIRE cannot know - which
 // seat is mine, and the baseline this device has been carrying. `can_exit_out`
@@ -1331,6 +1597,34 @@ int msg_turn_arrival(int state, int same_chain);
 // adopt in that shape from the routing layer any more.
 int msg_turn_adopt_duplicate(int state, int same_chain);
 
+// ---- the input field, after an arrival was adopted -------------------------
+//
+// THE INPUT FIELD MAY NEVER HOLD A MOVE THE BOARD IS NOT SHOWING. An adopt drops
+// the staged moves, so a bubble of mine still sitting in the field is stale
+// unless the arrival already carries it. It is OVERWRITTEN, not left: with the
+// NOTHING reseal of the arrival, the same bubble an Undo-to-empty stages
+// (MessageTableView.stageBaseNow) and through the same code, because Messages
+// offers no call to remove an inserted bubble. Sending it re-shares the board
+// everyone is on - a direct child of the arrival, so Rule P keeps the arrival's
+// move - and nothing animates for anyone. Nothing is re-applied: whether the
+// human tries their move again is theirs to decide.
+//
+// `state` is the chain state as the arrival FOUND it (before the adopt cleared
+// it), and `field_fate` is msg_staged_fate(the field's bubble, the arrived
+// chain), or < 0 when no bubble of mine is in the field (nothing staged since
+// the last Send or cancel).
+//
+//   * Nothing in the field: nothing to fix.
+//   * SENDING: the bubble is already on its way into the thread, and what that
+//     means for the board is msg_turn_send_verdict's to say.
+//   * GENESIS: a dealt game with no move is not sealable, so there is no
+//     NOTHING bubble to put there (and an arrival never folds into one).
+//   * LANDED: the field's bubble went out; the field is empty.
+//   * Anything else - SUPERSEDED, or STANDS (see msg_staged_fate) - overwrite.
+#define MSG_TURN_FIELD_KEEP     0  // leave the input field alone
+#define MSG_TURN_FIELD_NOTHING  1  // stage the NOTHING reseal of the arrived chain over it
+int msg_turn_field_after_arrival(int state, int field_fate);
+
 // ---- what a send means -----------------------------------------------------
 //
 // WHICH BYTES WENT OUT. The host's Send signal can arrive without its payload,
@@ -1405,8 +1699,33 @@ int msg_turn_sent_source(int staged, int have_host, int have_sealed);
 // It sits under the decode tests and above every "adopt" answer, which is the
 // whole of it: bytes that will not decode are unreadable whoever they belong
 // to, and bytes that decode to another game are never this board's to take.
+//
+// AND AN ARRIVAL THAT RACED THE SEND (MSG_TURN_SEND_OVERTAKEN). Send is pressed;
+// before the rebase runs, another chain arrives and the board adopts it - an
+// arrival in the send window is adopted at once (MSG_TURN_ARRIVE_ADOPT). The
+// rebase that follows used to move the board onto the sent bytes whatever had
+// landed meanwhile: at three or more seats, two attackers saying good off one
+// bubble, the LOSER of the digest coin flip put its own good back on its board
+// while every other device dropped it - a board showing a move the thread does
+// not have (owner's notes 4/5, "Sending good live arrival does not work").
+//
+// `fate` is msg_staged_fate(the sent bytes, the chain the board stands on now),
+// < 0 when not asked (no base, or the first ask). STANDS is the ordinary send:
+// the bytes were built on this board's chain, and the rebase goes ahead. LANDED
+// means the board already holds them (a second signal for the same send) or is
+// past them - a rebase could only walk it back. SUPERSEDED is the race: the
+// arrival and the sent bytes are siblings, and which one the thread keeps is
+// Rule P's to say - `sent_wins` is msg_rule_p(board chain, sent bytes) > 0,
+// < 0 when not asked. If the arrival wins the board stays on it; if the sent
+// bytes win, the board goes where every other device is going.
+//
+// This is not FOREIGN again. FOREIGN asks "did I seal these bytes" and can only
+// refuse bytes this device did not make; OVERTAKEN refuses bytes it did make,
+// because the board has been handed something newer since it made them.
+#define MSG_TURN_SEND_OVERTAKEN   7  // an arrival moved the board past or away from them: keep it
 int msg_turn_send_verdict(int staged, int have_host, int have_sealed,
-                          int host_is_sealed, int decoded, int same_game);
+                          int host_is_sealed, int decoded, int same_game,
+                          int fate, int sent_wins);
 
 // ---- what is withheld ------------------------------------------------------
 //

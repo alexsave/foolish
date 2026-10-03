@@ -287,7 +287,15 @@ export const AnimationOverlay = () => {
         return out;
     };
 
-    // Helper function to get fallback positions when elements aren't found
+    // Helper function to get fallback positions when elements aren't found.
+    //
+    // NOT FOR THE STOCK OR THE TRUMP'S SLOT. Those two had corners here
+    // ({100,120} and {100,180}), and the corner is what hid the bug that the
+    // stock's place vanished the instant its last cards left it: every such
+    // flight came out of the top-left of the window and nothing said why. Both
+    // places are now on screen for as long as a card can leave or reach them,
+    // on the kernel's word (ViewRules.show_deck_spot / show_flipped_slot), and
+    // are looked up with `stockPlace`, which has no floor at all.
     const getFallbackPosition = (location: string, playerId?: string): { x: number; y: number } => {
         const centerX = window.innerWidth / 2;
         const centerY = window.innerHeight / 2;
@@ -297,15 +305,24 @@ export const AnimationOverlay = () => {
                 return { x: centerX, y: window.innerHeight - 100 };
             case 'table':
                 return { x: centerX, y: centerY };
-            case 'deck':
-                return { x: 100, y: 120 };
-            case 'flipped':
-                return { x: 100, y: 180 }; // Slightly below the deck
             case 'discard':
                 return { x: window.innerWidth - 100, y: 120 }; // Top-right corner
             default:
                 return { x: centerX, y: centerY };
         }
+    };
+
+    // THE STOCK'S PLACE AND THE TRUMP'S SLOT, where a card leaves or lands.
+    // DeckAndFlipped draws both for as long as a flight can use them, because
+    // the kernel says to (client_view_rules), so a miss here is a bug and is
+    // said out loud: the card gets no flight - it appears where it lands, which
+    // is what it would do with no animation at all - rather than one out of a
+    // made-up corner.
+    const stockPlace = (location: 'deck' | 'flipped'): Spot | null => {
+        const el = findElementByLocation(location);
+        if (el) return centreOf(el);
+        console.error(`AnimationOverlay: no [data-location="${location}"] on screen for a card to fly from or to`);
+        return null;
     };
 
     // Built in a layout effect, before the browser paints the commit that started
@@ -325,7 +342,7 @@ export const AnimationOverlay = () => {
         // step. They are read below (`coverTarget`, `landsOnTable`); nothing in
         // this file decides a target any more except for an event that carries
         // none at all.
-        const { type, cards, from_location, to_location, seat, target_card, target_cards, battle_index, is_revert } = currentAnimation;
+        const { type, cards, from_location, to_location, seat, target_card, target_cards, battle_index, is_revert, trump_out, trump_from } = currentAnimation;
         // The page names a seat's hand by its player id (data-player-id): the id the
         // event's own board gives its seat, or the board on screen's for a flight
         // that carries none (a move of mine, a revert).
@@ -368,27 +385,44 @@ export const AnimationOverlay = () => {
             : measurePlaceholderPositions(type, cards, player_id);
         
         if (isSanitized) {
-            // Render single CardBack for sanitized refill
-            const startPos = spotFrom([() => findElementByLocation('deck')],
-                getFallbackPosition('deck'));
+            // ANOTHER SEAT'S DRAW: one stack of backs for the cards out of the
+            // stock, and - when the draw takes the flipped trump - the trump
+            // itself, face up, out of its own slot. It lay face up for
+            // everyone, so it flies face up for everyone; the kernel names it
+            // (`trump_out`, read off the boards, not off these backs) and says
+            // it is the last of the draw's cards.
             const endPos = spotFrom([() => findElementByLocation('hand', player_id)],
                 getFallbackPosition('hand', player_id));
-
-            const newAnimatedCard: AnimatedCard = {
+            const fromStock = trump_out ? cards.length - 1 : cards.length;
+            const flights: AnimatedCard[] = [];
+            const stockStart = fromStock > 0 ? stockPlace('deck') : null;
+            if (stockStart) flights.push({
                 id: `sanitized-refill-${player_id}-${Date.now()}`,
                 card: { suit: -1, value: -1 }, // Keep original sanitized card
-                startPosition: startPos,
+                startPosition: stockStart,
                 endPosition: endPos,
                 progress: 0,
                 animationType: type,
                 playerId: player_id,
                 isSanitizedRefill: true,
-                cardCount: cards.length,
+                cardCount: fromStock,
                 isRevert: is_revert,
                 flight: currentAnimation,
-            };
+            });
+            const trumpStart = trump_out && trump_from ? stockPlace(trump_from) : null;
+            if (trump_out && trumpStart) flights.push({
+                id: `${trump_out.suit}-${trump_out.value}-${player_id}-${Date.now()}-trump`,
+                card: trump_out,
+                startPosition: trumpStart,
+                endPosition: { ...endPos },
+                progress: 0,
+                animationType: type,
+                playerId: player_id,
+                isRevert: is_revert,
+                flight: currentAnimation,
+            });
 
-            setAnimatedCards([newAnimatedCard]);
+            setAnimatedCards(flights);
         } else {
             // Render individual CardFaces for normal cards
             const newAnimatedCards: AnimatedCard[] = [];
@@ -464,14 +498,24 @@ export const AnimationOverlay = () => {
                 return sameCard(battle.attack, card) ? -COVER_ROTATION_RAD : COVER_ROTATION_RAD;
             };
 
-            const liftoff = (card: Card): { spot: Spot; fromLanding: boolean; angle: number } => {
+            const liftoff = (card: Card, index: number): { spot: Spot; fromLanding: boolean; angle: number } | null => {
+                // The stock and the trump's slot have no floor (`stockPlace`).
+                // The trump a draw deals out is its LAST card and leaves from
+                // where the kernel says (`trump_from`), not from the stock.
+                if (trump_out && trump_from && index === cards.length - 1) {
+                    const spot = stockPlace(trump_from);
+                    return spot && { spot, fromLanding: false, angle: 0 };
+                }
+                if (from_location === 'deck') {
+                    const spot = stockPlace('deck');
+                    return spot && { spot, fromLanding: false, angle: 0 };
+                }
+
                 let sourceElement: HTMLElement | null = null;
                 let remembered: Spot | undefined;
 
                 if (from_location === 'hand') {
                     sourceElement = findElementByLocation('hand', player_id, card.suit, card.value);
-                } else if (from_location === 'deck') {
-                    sourceElement = findElementByLocation('deck');
                 } else if (from_location === 'table') {
                     sourceElement = document.querySelector(`[data-location="table"] [data-card="${card.suit}-${card.value}"]`) as HTMLElement | null;
                     remembered = sourceElement ? undefined : tableLandings.get(`${card.suit}-${card.value}`);
@@ -490,15 +534,9 @@ export const AnimationOverlay = () => {
             // destination is where the knowledge about it belongs. Each is
             // a chain plus a floor; none of them nests.
 
-            const landsFlipped = (): Spot => spotFrom([
-                () => findElementByLocation('flipped'),
-                // The trump sits 60px under the deck when its own element
-                // has not rendered yet.
-                () => {
-                    const deck = findElementByLocation('deck');
-                    return deck ? shifted(centreOf(deck), 0, 60) : null;
-                },
-            ], getFallbackPosition('flipped', player_id));
+            // The trump's slot is on screen while a card is on its way into
+            // it (ViewRules.show_flipped_slot), so it is measured, never guessed.
+            const landsFlipped = (): Spot | null => stockPlace('flipped');
 
             // THE ATTACK THIS COVER LANDS ON, as an element to measure.
             //
@@ -620,15 +658,24 @@ export const AnimationOverlay = () => {
                 [() => (to_location === 'discard' ? findElementByLocation('discard') : null)],
                 getFallbackPosition(to_location || 'table', player_id));
 
-            const landingFor = (card: Card, index: number): Landing =>
-                to_location === 'flipped' ? flat(landsFlipped())
-                    : to_location === 'table' ? landsOnTable(card, index)
-                        : to_location === 'hand' ? flat(landsInHand(card, index))
-                            : flat(landsElsewhere());
+            const landingFor = (card: Card, index: number): Landing | null => {
+                if (to_location === 'flipped') {
+                    const spot = landsFlipped();
+                    return spot && flat(spot);
+                }
+                return to_location === 'table' ? landsOnTable(card, index)
+                    : to_location === 'hand' ? flat(landsInHand(card, index))
+                        : flat(landsElsewhere());
+            };
 
             cards.forEach((card, index) => {
-                const { spot: startPos, fromLanding, angle: fromAngle } = liftoff(card);
-                const { spot: endPos, angle } = landingFor(card, index);
+                // A place the kernel keeps on screen that is not there has
+                // been said in the console; this card gets no flight.
+                const lift = liftoff(card, index);
+                const landing = lift && landingFor(card, index);
+                if (!lift || !landing) return;
+                const { spot: startPos, fromLanding, angle: fromAngle } = lift;
+                const { spot: endPos, angle } = landing;
 
                 // Small offset so simultaneous cards into the same UNMEASURED
                 // area don't fully overlap; measured targets (table slots, hand

@@ -13,6 +13,21 @@ import Foundation
 
 extension MessageTableView {
 
+    /// A stream's CLOSING BEAT hands the roles to the board the controller is
+    /// showing now, so a role change that landed while the stream was playing
+    /// (and started no sequence of its own) is not undone by it. Ships on;
+    /// `arrival.closingroles=0` in `dev.flags` puts back the sync to the
+    /// stream's own final view (LiveArrivalRoleMarkTests).
+    static let closingBeatReadsLiveViewByDefault = true
+
+    static var closingBeatReadsLiveView: Bool {
+        #if DEBUG || SOLO_TESTING
+        return MessageDevBoard.flag("arrival.closingroles", shipping: closingBeatReadsLiveViewByDefault)
+        #else
+        return closingBeatReadsLiveViewByDefault
+        #endif
+    }
+
     /// Animate an ordered evwire stream (the kernel's events for ONE move) as
     /// sequential flights, freezing each displayed count to that step's OWN board
     /// (GameEvent.state) as its flight lands - so a count never jumps ahead of its
@@ -141,6 +156,11 @@ extension MessageTableView {
         }
         // Bug 9: claim the animator. Anything already running is now stale.
         let mySeq = claimAnimSequence()
+        // This stream owes the closing beat from here (`aStreamOwnsTheRoles`).
+        // Every way out before that beat is a supersede (the two `abandoned`
+        // guards below), and a superseded token can never equal a newer one,
+        // so the ownership needs no teardown of its own.
+        closingBeatOwner = mySeq
         // Round-7 (invisible-deal fix): every hand-card slot this sequence OPENS
         // for an incoming deal/refill/pickup (openSlots, below). clearPreHidden()
         // on teardown CANNOT rescue these — openSlots pulled them back OUT of
@@ -313,6 +333,14 @@ extension MessageTableView {
             let group = Array(events[beat.range])
             let ev = group[0]
             let pace = Self.pace(of: beat, in: timing)
+            // THE TRUMP EACH EVENT OF THE GROUP DEALS OUT, from the kernel's
+            // plan (AnimPlan.Step.trumpOut), index for index with `group`. All
+            // nil while `TrumpFlight.flies` is off, or when the plan does not
+            // cover the stream - and the draw then flies as it always did.
+            let trumps: [Card?] = beat.range.map { i in
+                TrumpFlight.flies && i < timing.steps.count ? timing.steps[i].trumpOut : nil
+            }
+            let dealsTrump = trumps.contains { $0 != nil }
             // Bug 9: a newer sequence has taken over (a live bout-end played on
             // top of a replay still in flight). Stop stepping the stale one
             // rather than interleaving two sets of flights through one animator
@@ -398,7 +426,15 @@ extension MessageTableView {
                     // which is not true of a card that is at this instant
                     // crossing the board. The glyph waits for the LANDING, in
                     // the per-group settle below.
-                    $0.trump = Self.trumpAtDeparture(s)
+                    //
+                    // …EXCEPT WHEN THE TRUMP FLIES ITSELF (`dealsTrump`). Then
+                    // the slot holds its card until the flight that carries it
+                    // is built, and lets go in that same breath (the builder,
+                    // below): released here, a step whose flight has to poll
+                    // for a frame would show an empty slot with nothing in the
+                    // air yet, and the face-up card would then appear out of
+                    // nowhere on top of where it had just been.
+                    if !dealsTrump { $0.trump = Self.trumpAtDeparture(s) }
                 }
             }
             // ROUND 30, and the same rule one seat over. The owner: "when the
@@ -511,12 +547,20 @@ extension MessageTableView {
                 // returns nil for the whole group, so the step retries as a
                 // unit and the pair can never split across two beats.
                 var f: [Flight] = []
-                for e in group {
-                    guard let part = self.openReplayFlights(e, view: view, lastChance: lastChance)
+                for (e, trump) in zip(group, trumps) {
+                    guard let part = self.openReplayFlights(e, view: view, trumpOut: trump,
+                                                            lastChance: lastChance)
                     else { return nil }
                     f.append(contentsOf: part)
                 }
                 groupFlights = f
+                // THE SLOT LETS GO, in the same breath its card's flight is
+                // created - the trump's twin of the hand letting go just
+                // below. `.airborne`: out of the slot, not yet the bare glyph,
+                // which waits for the landing exactly as before.
+                if dealsTrump, let s = group.last?.state ?? ev.state {
+                    self.ledger.write(.sequence) { $0.trump = Self.trumpAtDeparture(s) }
+                }
                 // THE HAND LETS GO, in the same breath the ghosts are created.
                 // The flights above were built from the slots these cards still
                 // hold, so the takeoff is already captured; dropping them now
@@ -641,7 +685,24 @@ extension MessageTableView {
             // Every card in it has landed by now; the teardown below repeats
             // this harmlessly for the paths that never reach here.
             dropSweep()
-            if syncRoles(to: RoleState(view), in: view, animated: true) {
+            // THE ROLES AS THEY ARE NOW, not as this stream found them. A view
+            // change that starts no sequence (a pass, a non-closing good
+            // arriving) syncs the roles on the spot and leaves this stream the
+            // newest, so its own `view` can be a move behind by the time this
+            // beat runs - and syncing to it turned a fresh check back into a
+            // sword (LiveArrivalRoleMarkTests).
+            //
+            // ONE RULE IN TWO HALVES, and neither is enough alone: while this
+            // stream is the newest it owns the roles, so the board's `onChange`
+            // leaves an unsequenced change to it (`aStreamOwnsTheRoles` - else
+            // this stream's own in-flight beats, a throw-in clearing goods, turn
+            // the fresh mark back mid-flight), and this beat reads the LIVE
+            // view (else the change it was handed is lost). The ownership ends
+            // here, as the live view is read: a change landing during the
+            // hand-off's flight below syncs itself.
+            if closingBeatOwner == mySeq { closingBeatOwner = nil }
+            let closing = Self.closingBeatReadsLiveView ? (controller.view ?? view) : view
+            if syncRoles(to: RoleState(closing), in: closing, animated: true) {
                 try? await Task.sleep(nanoseconds: UInt64((roleFlightTime + 0.05) * 1_000_000_000))
             }
         }

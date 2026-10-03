@@ -51,9 +51,13 @@ public struct FDeckWell: View {
     /// gives its three counts ONE size (FSeatTag.countSize). nil is the live
     /// board's 17, scaled.
     public let countSize: CGFloat?
+    /// How far the bare trump glyph sits off its inset, in scale-1 points.
+    /// Zero everywhere except the live board, which passes `TrumpNudge.live`;
+    /// see there for why the public bubble keeps zero.
+    public let markNudge: CGSize
 
     public init(deckCount: Int, flipped: Card?, hasFlipped: Bool, trumpSuit: Suit?, backSeed: UInt64 = 42,
-                scale: CGFloat = 1, countSize: CGFloat? = nil) {
+                scale: CGFloat = 1, countSize: CGFloat? = nil, markNudge: CGSize = .zero) {
         self.deckCount = deckCount
         self.flipped = flipped
         self.hasFlipped = hasFlipped
@@ -61,6 +65,7 @@ public struct FDeckWell: View {
         self.backSeed = backSeed
         self.scale = scale
         self.countSize = countSize
+        self.markNudge = markNudge
     }
 
     // The badge counts the flipped card too (web badgeTotal = deck + flipped).
@@ -188,6 +193,15 @@ public struct FDeckWell: View {
     /// state. Cards above it lean up-and-left off this one fixed card; it never
     /// moves, so a shrinking deck drains toward this corner instead of sliding.
     public static let bottomCardOrigin = CGPoint(x: FSpace.s, y: FSpace.s)
+
+    /// The rect the flipped trump is drawn in, given the well's own frame:
+    /// `flippedOrigin` and the 46x66 card, both at `scale` - exactly where
+    /// the body draws it. Zero for a well that has not been measured.
+    public static func trumpSlot(inWell well: CGRect, scale: CGFloat = 1) -> CGRect {
+        guard well != .zero else { return .zero }
+        return CGRect(x: well.minX + flippedOrigin.x * scale, y: well.minY + flippedOrigin.y * scale,
+                      width: 46 * scale, height: 66 * scale)
+    }
 
     /// The bare trump mark's glyph size (round-5 m1 raised it from 44).
     static let markSize: CGFloat = 60
@@ -349,13 +363,23 @@ public struct FDeckWell: View {
                     // Round 16: inset the glyph's INK, not its text box - see
                     // `markInkOrigin`. Everything else in this corner already
                     // anchors on the ink/edge it looks like it anchors on.
-                    .offset(x: inset - ink.x, y: inset - ink.y)
+                    // Then the live board's nudge (TrumpNudge), scaled
+                    // with everything else.
+                    .offset(x: inset - ink.x + markNudge.width * scale,
+                            y: inset - ink.y + markNudge.height * scale)
             }
         }
         .frame(width: 92 * scale, height: 108 * scale, alignment: .topLeading)
-        // Publish the deck's rect so draw flights (deck→hand) have a source.
+        // Publish the deck's rect so draw flights (deck→hand) have a source,
+        // and the trump's slot beside it, so the draw that deals the trump has
+        // one too. The slot is published whatever the slot is drawing - the
+        // flight leaves from it at the very moment it stops drawing the card.
         .background(GeometryReader { g in
-            Color.clear.preference(key: DeckFrameKey.self, value: g.frame(in: .named(boardSpace)))
+            let frame = g.frame(in: .named(boardSpace))
+            Color.clear
+                .preference(key: DeckFrameKey.self, value: frame)
+                .preference(key: TrumpSlotFrameKey.self,
+                            value: Self.trumpSlot(inWell: frame, scale: scale))
         })
         .accessibilityElement(children: .ignore)
         // Round-5 m2: was a hard-coded English sentence — every visible string

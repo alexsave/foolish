@@ -214,7 +214,89 @@ static void test_hostile_inputs(void) {
     CHECK(e.pending == 0, "and neither of them armed anything");
 }
 
+// ---- which way the drawer is (msg_style_*) --------------------------------
+//
+// MUTATION-CHECKED, each killed by the named test:
+//
+//   6. a did is always taken (no `confirmed` test)   -> the_late_install_did
+//   7. a did is never taken                          -> a_drag_let_go
+//   8. a will does not clear `confirmed`             -> a_drag_let_go
+
+// The first-run New game, as the iPhone 17e simulator's flight log has it
+// (msg_expand.h, "WHICH WAY THE DRAWER IS"): Apple's property ends this
+// sequence on compact with the drawer on screen expanded.
+static void test_the_late_install_did(void) {
+    MsgStyle s;
+    msg_style_init(&s, MSG_STYLE_COMPACT);
+    CHECK(!msg_style_expanded(&s), "an activation handed compact is compact");
+    msg_style_note(&s, MSG_STYLE_WILL, MSG_STYLE_COMPACT);    // 0.03, the stated style
+    msg_style_note(&s, MSG_STYLE_DID,  MSG_STYLE_COMPACT);
+    msg_style_note(&s, MSG_STYLE_WILL, MSG_STYLE_COMPACT);    // 0.23, the install
+    msg_style_note(&s, MSG_STYLE_WILL, MSG_STYLE_EXPANDED);   // 0.32, our ask lands
+    CHECK(msg_style_expanded(&s), "the drawer is on its way up from its will");
+    msg_style_note(&s, MSG_STYLE_DID,  MSG_STYLE_EXPANDED);
+    CHECK(msg_style_expanded(&s), "and it arrived");
+    msg_style_note(&s, MSG_STYLE_DID,  MSG_STYLE_COMPACT);    // 0.78, the install's own
+    CHECK(msg_style_expanded(&s),
+          "the late install did is the tail of an older move, and the drawer is still up");
+    // The auto-collapse then asks for compact, and Messages runs it.
+    msg_style_note(&s, MSG_STYLE_WILL, MSG_STYLE_COMPACT);
+    msg_style_note(&s, MSG_STYLE_DID,  MSG_STYLE_COMPACT);
+    CHECK(!msg_style_expanded(&s), "a real collapse is compact");
+}
+
+// A transition Messages starts and runs back the other way (a drag let go
+// before the detent): its will says expanded and its only did says compact,
+// and that did is where the drawer came to rest.
+static void test_a_drag_let_go(void) {
+    MsgStyle s;
+    msg_style_init(&s, MSG_STYLE_COMPACT);
+    msg_style_note(&s, MSG_STYLE_WILL, MSG_STYLE_EXPANDED);
+    msg_style_note(&s, MSG_STYLE_DID,  MSG_STYLE_COMPACT);
+    CHECK(!msg_style_expanded(&s), "a did answering an unconfirmed will is taken");
+    // And the same from expanded.
+    msg_style_init(&s, MSG_STYLE_EXPANDED);
+    CHECK(msg_style_expanded(&s), "an activation handed expanded is expanded");
+    msg_style_note(&s, MSG_STYLE_WILL, MSG_STYLE_COMPACT);
+    msg_style_note(&s, MSG_STYLE_DID,  MSG_STYLE_EXPANDED);
+    CHECK(msg_style_expanded(&s), "the drawer that sprang back up is up");
+}
+
+// Every ordinary move: a will and its matching did, either way, any number of
+// times - the property and this rule agree on all of them.
+static void test_ordinary_moves_agree_with_the_property(void) {
+    MsgStyle s;
+    msg_style_init(&s, MSG_STYLE_COMPACT);
+    for (int i = 0; i < 4; i++) {
+        const int to = (i % 2 == 0) ? MSG_STYLE_EXPANDED : MSG_STYLE_COMPACT;
+        msg_style_note(&s, MSG_STYLE_WILL, to);
+        msg_style_note(&s, MSG_STYLE_DID, to);
+        CHECK(msg_style_expanded(&s) == (to == MSG_STYLE_EXPANDED), "move %d", i);
+    }
+    // A did with no will at all (an activation's stated style) agrees with
+    // where the activation already is.
+    msg_style_init(&s, MSG_STYLE_COMPACT);
+    msg_style_note(&s, MSG_STYLE_DID, MSG_STYLE_COMPACT);
+    CHECK(!msg_style_expanded(&s), "a bare matching did changes nothing");
+}
+
+static void test_style_hostile_inputs(void) {
+    CHECK(!msg_style_expanded(0), "a NULL state is not expanded");
+    msg_style_init(0, MSG_STYLE_EXPANDED);            // must not crash
+    msg_style_note(0, MSG_STYLE_WILL, MSG_STYLE_EXPANDED);
+    MsgStyle s;
+    msg_style_init(&s, 7);
+    CHECK(!msg_style_expanded(&s), "an unknown activation style is compact");
+    msg_style_note(&s, MSG_STYLE_WILL, 9);
+    msg_style_note(&s, 5, MSG_STYLE_EXPANDED);
+    CHECK(!msg_style_expanded(&s), "an unknown style or phase changes nothing");
+}
+
 int main(void) {
+    test_the_late_install_did();
+    test_a_drag_let_go();
+    test_ordinary_moves_agree_with_the_property();
+    test_style_hostile_inputs();
     test_the_filmed_cold_open();
     test_the_late_compact_report();
     test_mid_session_request_issues_immediately();

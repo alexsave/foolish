@@ -79,6 +79,11 @@ the shared node budget) — never by returning a wrong value.
   solver callers that never enable the gate are byte-identical.
 - `-DCD_LEAFBOOK` is in both native `CFLAGS` and `WASM_BOT_CFLAGS`, so production
   octogen (wasm) gets the speedup; the ~2.6 KiB book is memory-neutral.
+- The book is a proof about the CLASSIC game: every entry was solved with the
+  transfer available, and the key (two hands and a trump) has no room for the
+  rules. So the probe asks it only when the world's rules are zero; a podkidnoy
+  endgame is solved like any other position (docs/PODKIDNOY.md,
+  `tests.c test_podkidnoy_solver_and_book`).
 - `tools/leafbook/{enumerate,build_book,verify_book}.c` — the gate, builder, and
   value-safety verifier.
 

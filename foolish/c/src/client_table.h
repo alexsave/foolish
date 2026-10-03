@@ -111,11 +111,18 @@ typedef struct {
     bool    can_say_good;          // the viewer may say Good and the bout could close on it
     bool    can_set_rules;         // the viewer may change the table's rules: seated, in a lobby that has not dealt (game.h game_lobby_can_set_rules)
     bool    show_deck_pile;        // the stock has cards left to draw on screen
-    bool    show_flipped_slot;     // the trump's slot, kept while a card is on its way into it
+    bool    show_flipped_slot;     // the trump's slot, kept while a card is on its way into it or out of it
     bool    show_trump_icon;       // stock and trump are gone: the power suit stands in their place
     bool    bot_to_move;           // a bot seat may act (should_bot_act's rule): a stalled bot loop is worth a nudge
     int16_t deck_pile;             // cards drawn in the stock pile
     int16_t deck_badge;            // the count on the pile: the stock, the trump, and cards in flight to the trump
+    // THE STOCK'S PLACE, drawn while the pile shows OR while cards fly out of
+    // it: the last cards of the stock leave an empty pile behind them, and a
+    // flight needs the place it leaves from to still be on screen.
+    bool    show_deck_spot;
+    // The trump's face in its slot: the board has one and it is not the card
+    // in the air (AnimFrame.trump_flight), which is drawn in flight instead.
+    bool    show_flipped_card;
 } ViewRules;
 
 // An edit a client makes to a board it holds (client_board_edit): each is a
@@ -262,10 +269,12 @@ int client_identity_seat(ClientTable *c, const char *id, int id_len, const char 
 // not only the slot's: one a host changed (an optimistic move, a board between
 // two animation steps, a replay's board before its deal), written back through
 // the generated writer. `from_deck` cards are in flight out of the stock, and
-// `to_flipped` of them are on their way to the trump's slot. CLIENT_OK, or
+// `to_flipped` of them are on their way to the trump's slot. `trump_out` is 1
+// while the view's trump is in the air on its way to a hand (the plan frame's
+// trump_flight is a card): it has left its slot and the badge. CLIENT_OK, or
 // CLIENT_E_FORMAT for a view that is not one: a count past its capacity, a
 // viewer that is not a seat, a negative flight.
-int client_view_rules(const TableView *v, int from_deck, int to_flipped, ViewRules *out);
+int client_view_rules(const TableView *v, int from_deck, int to_flipped, int trump_out, ViewRules *out);
 
 // ---------- the boards a client makes (docs/C_GAME_SHAPE_MIGRATION.md Phase 6b) ----------
 //

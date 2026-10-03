@@ -93,6 +93,7 @@ const char *const FS_STRINGS_JA[FS_K_COUNT] = {
     [FS_K_IOS_MSG_JOINAS           ] = "{name} として参加",
     [FS_K_IOS_MSG_JOINED           ] = "{name} が参加しました - タップして参加",
     [FS_K_IOS_MSG_JOININVITE       ] = "おバカ - タップして参加",
+    [FS_K_IOS_MSG_REMATCH         ] = "再戦 - タップしてプレイ",
     [FS_K_IOS_MSG_LEFT             ] = "{name} がゲームから抜けました",
     [FS_K_IOS_MSG_LEFTANON         ] = "プレイヤーがゲームから抜けました",
     [FS_K_IOS_MSG_LOBBYFULL        ] = "席はすべて埋まっています",
