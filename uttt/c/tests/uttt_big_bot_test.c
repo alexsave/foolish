@@ -337,8 +337,10 @@ int main(int argc, char **argv)
     tie_break();
     draw_is_nothing();
     deterministic();
-    beats_random(2, games, 2);
-    beats_random(3, games, 3);
+    /* at least 30 games: fewer cannot clear four standard deviations even
+     * winning every one (ten straight wins is 3.2) */
+    beats_random(2, games < 30 ? 30 : games, 2);
+    beats_random(3, games < 30 ? 30 : games, 3);
     full_243(20261003);
     return report("uttt_big_bot_test");
 }
