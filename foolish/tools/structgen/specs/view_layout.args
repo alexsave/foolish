@@ -31,3 +31,9 @@
 --count TableView.game_id=gid_len --count TableView.title=title_len
 --count ViewSeat.id=id_len --count ViewSeat.name=name_len --count PushEvent.cards=n_cards
 --const GAME_STATUS_ --const PLAYER_STATUS_ --const EVW_T_ --const EVW_LOC_ --const EVW_MSG_ --const CLIENT_ --const CARD_NONE_ --const ANIM_DEST_ --const ANIM_CONFLICT_ --const ANIM_EVT_
+# The shape of my hand (hand_layout.h hand_layout): the metrics go in through
+# their writer, the rows and every slot come back through the layout's reader,
+# so the web places each card at the kernel's slot with no offset of its own.
+--header hand_layout.h --root HandMetrics --root HandLayout
+--writer HandMetrics --snapshot HandMetrics --snapshot HandLayout
+--count HandLayout.slot=n --const HAND_

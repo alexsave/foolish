@@ -29,6 +29,7 @@
 #include "card.h"
 #include "legal.h"
 #include "anim_plan.h"
+#include "hand_layout.h"
 
 // ---------- the one table layout, read ---------------------------------------
 //
@@ -524,6 +525,24 @@ int fio_hand_laid_out(const uint8_t *cards, int n_cards, uint64_t deferred,
     const int rc = anim_hand_laid_out(cards, n_cards, deferred, order, n_order,
                                       (unsigned char *)out, cap);
     if (rc == ANIM_ECAP) return FIO_ECAP;
+    return rc < 0 ? FIO_EBADARG : rc;
+}
+
+// ---------- the hand's shape -------------------------------------------------
+//
+// hand_layout.h, crossing as the structs themselves: Swift writes the metrics
+// with the generated writer (writeHandMetrics) and reads the answer with the
+// generated readers (readHandRows, readHandRect), so no field order is spelled
+// on this side of the bridge. Pure, like the fan entries above: nothing here
+// touches the resident game, so a SwiftUI body may call it on any thread.
+int fio_hand_rows(const void *metrics, int count, double width, void *out_rows) {
+    const int rc = hand_rows((const HandMetrics *)metrics, count, width, (HandRows *)out_rows);
+    return rc < 0 ? FIO_EBADARG : FIO_EOK;
+}
+
+int fio_hand_slots(const void *metrics, int count, double width, void *out_slots, int cap) {
+    const int rc = hand_slots((const HandMetrics *)metrics, count, width, (HandRect *)out_slots, cap);
+    if (rc == HAND_ECAP) return FIO_ECAP;
     return rc < 0 ? FIO_EBADARG : rc;
 }
 

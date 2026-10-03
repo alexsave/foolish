@@ -20,6 +20,7 @@
 //     exact for every integer a version or a millisecond clock reaches.
 #include "../src/table.h"
 #include "../src/client_table.h"
+#include "../src/hand_layout.h"
 #include <string.h>
 
 extern Game *wasm_game_ptr_internal(void);
@@ -494,4 +495,19 @@ int wasm_client_play(void) {
         .moves = wasm_moves_ptr_internal(), .wire = wasm_io_ptr(), .wire_cap = wasm_io_cap(),
     };
     return client_play(client(), &g_rules_view, &g_gesture, &scratch, &g_play);
+}
+
+// ---- the shape of my hand (hand_layout.h) ----
+//
+// The host's units go in through the generated HandMetrics writer, the answer
+// comes out through the generated HandLayout reader, so the web places every
+// card at the kernel's slot without knowing a byte of either struct. Same
+// rule the iMessage fan asks through fio_hand_rows / fio_hand_slots.
+_Static_assert(HAND_LAYOUT_CAP == MAX_HAND_SIZE, "a HandLayout holds every card a hand can");
+static HandMetrics g_hand_metrics;
+static HandLayout  g_hand_layout;
+HandMetrics *wasm_hand_metrics_ptr(void) { return &g_hand_metrics; }
+HandLayout *wasm_hand_layout_ptr(void)   { return &g_hand_layout; }
+int wasm_hand_layout(int count, double width) {
+    return hand_layout(&g_hand_metrics, count, width, &g_hand_layout);
 }

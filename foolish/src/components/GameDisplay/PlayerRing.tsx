@@ -10,6 +10,7 @@ import { useAnimation } from "../../contexts/AnimationContext";
 import { markWorn, shownBoardOf } from "../../state/roleLedger";
 import { SovietCardBack } from "./SovietCardBack";
 import { botDisplayName } from "../../common/botName";
+import { useHandShape } from "./handShape";
 
 // Mini stacked card back — same SVG as the full CardBack, absolutely positioned
 // to fill the stacked ring slot.
@@ -146,6 +147,7 @@ export const PlayerRing = () => {
     const { chatMessages } = useServer();
     const styles = useStyles();
     const self_index = game.mySeat;
+    const { lift } = useHandShape();
     // The marks a seat can wear, named the way FoolishKit names them.
     const markLabel: Record<RoleMarkKind, string> = {
         shield: t('ios.a11y.defending'),
@@ -221,7 +223,10 @@ export const PlayerRing = () => {
                         alignItems: 'center',
                         width: '80px',
                         height: `${SeatBadgeSize.seat}px`,
-                        transform: 'translate(-50%, -50%)'
+                        // My seat sits just above my hand, so it rises with
+                        // the hand's second row (handShape.tsx lift).
+                        transform: visual_index === 0 && lift > 0
+                            ? `translate(-50%, calc(-50% - ${lift}px))` : 'translate(-50%, -50%)'
                     }}>
                         {/* THE SEAT'S ROLE ROW (FSeatBadge.roleRow), which is a
                             COIN: it turns when the mark changes and it blanks

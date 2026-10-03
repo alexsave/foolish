@@ -95,3 +95,52 @@ public enum HandLayout {
               .flatMap { $0.cards.compactMap { $0 } }
     }
 }
+
+/// The hand's SHAPE, asked of the kernel (c/src/hand_layout.h): how many rows
+/// `count` cards take in `width`, how many sit in each, the one card width both
+/// rows share, the hand's height, and every resting slot, top row first.
+///
+/// The metrics are the host's own units (points here), so the kernel holds the
+/// rule and the host holds the numbers. A count below zero is no cards.
+public enum HandShape {
+
+    /// The rows. Total: the kernel refuses only a NULL or a negative count, and
+    /// this passes neither.
+    public static func rows(_ metrics: HandMetricsSnap, count: Int, width: Double) -> HandRowsSnap {
+        withMetrics(metrics) { m in
+            let out = UnsafeMutableRawPointer.allocate(byteCount: HandRowsSnap.cSize,
+                                                       alignment: MemoryLayout<Double>.alignment)
+            defer { out.deallocate() }
+            let rc = fio_hand_rows(m, Int32(clamping: max(count, 0)), width, out)
+            guard rc == FIO_EOK, let rows = try? readHandRows(out) else {
+                preconditionFailure("fio_hand_rows refused a hand it cannot refuse (\(rc))")
+            }
+            return rows
+        }
+    }
+
+    /// Every slot, flat: the top row left to right, then the bottom row. Empty
+    /// for no width or no cards.
+    public static func slots(_ metrics: HandMetricsSnap, count: Int, width: Double) -> [HandRectSnap] {
+        let n = max(count, 0)
+        return withMetrics(metrics) { m in
+            let out = UnsafeMutableRawPointer.allocate(byteCount: max(n, 1) * HandRectSnap.cSize,
+                                                       alignment: MemoryLayout<Double>.alignment)
+            defer { out.deallocate() }
+            let k = fio_hand_slots(m, Int32(clamping: n), width, out, Int32(clamping: n))
+            guard k >= 0 else { preconditionFailure("fio_hand_slots refused a hand it cannot refuse (\(k))") }
+            return (0..<Int(k)).compactMap { try? readHandRect(out + $0 * HandRectSnap.cSize) }
+        }
+    }
+
+    /// The metrics, written where the kernel can read them. The generated writer
+    /// throws only for an array or a string that does not fit, and HandMetrics
+    /// is seven doubles, so the `try!` cannot fire.
+    private static func withMetrics<R>(_ metrics: HandMetricsSnap, _ body: (UnsafeRawPointer) -> R) -> R {
+        let p = UnsafeMutableRawPointer.allocate(byteCount: HandMetricsSnap.cSize,
+                                                 alignment: MemoryLayout<Double>.alignment)
+        defer { p.deallocate() }
+        try! writeHandMetrics(p, metrics)
+        return body(UnsafeRawPointer(p))
+    }
+}

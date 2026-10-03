@@ -237,25 +237,15 @@ public struct FHandFan: View {
 
     private static let cardH: CGFloat = 72   // CONSTANT height — a skinny (many-card) hand stays this tall
 
-    /// How tall a slice of each card to actually reserve, for a given `crop`
-    /// fraction: `crop` 0 shows the whole card, 1 reserves only the top half
-    /// (the card is still drawn full-height and top-aligned, so its lower part
-    /// simply falls off the bottom — see `cardView`). Continuous between the two
-    /// so the compact drawer can drive it off a smooth collapse fraction and the
-    /// hand descends gradually (round-6 bugs 2/4) instead of halving in one frame.
-    private static let maxCardW: CGFloat = 52   // never wider than ~proper aspect, so cards never go "superwide"
-    private static let gap: CGFloat = 4
-    private static var rowH: CGFloat { cardH + 8 }
-    /// Vertical gap between the two rows once M6 splits the hand.
-    private static let rowGap: CGFloat = 6
-    /// Round-5 M6: below this per-card width, split into two rows rather than
-    /// keep thinning — Durak routinely leaves a defender holding 15-20 cards
-    /// after two pickups, which fell under Apple's 44pt hit-target minimum in
-    /// a single row (M6's own finding). ~34pt still reads as a proper card,
-    /// just a narrow one; the web's own answer to the same problem ("that's
-    /// what we do if we have a lot of cards in the replay on the website") is
-    /// exactly a second row, not a hard floor on width.
-    private static let twoRowThreshold: CGFloat = 34
+    /// The fan's units for the kernel's shape rule (c/src/hand_layout.h, which
+    /// carries the reasons with the arithmetic). Cards are never wider than 52pt
+    /// (about a proper aspect, so never "superwide") nor narrower than 22, with
+    /// 4pt between them and at both row ends; a row stands 8pt taller than its
+    /// cards and two rows sit 6pt apart. Round-5 M6: a one-row card below 34pt
+    /// splits the hand into two rows - a defender holding 15-20 cards after two
+    /// pickups fell under Apple's 44pt hit-target minimum in a single row.
+    private static let metrics = HandMetricsSnap(cardWMax: 52, cardWMin: 22, cardH: Double(cardH), gap: 4,
+                                                 rowGap: 6, rowPad: 8, splitBelow: 34)
     /// Round-5 drag feel ("you need to drag a bit of a distance before it
     /// actually grabs the card. Should be immediate right?"): with
     /// `DragGesture(minimumDistance: 0)` a plain tap and a real drag are both
@@ -267,19 +257,16 @@ public struct FHandFan: View {
 
     // MARK: - Row-split math (round-5 M6) — static and pure so MessageTableView
     // and Round5BoardTests share EXACTLY this arithmetic; nothing here reads
-    // `self`, so none of it can drift from what `body` actually renders.
+    // `self`, so none of it can drift from what `body` actually renders. The
+    // arithmetic itself is the kernel's (hand_rows / hand_slots), which the web
+    // hand lays out from too.
 
-    /// Per-card width if `count` cards shared `availableWidth` in ONE row — the
-    /// same formula `body` used before M6 (`min(52, max(22, avail/count))`),
-    /// pulled out so the split threshold below can reuse it without a live view.
-    private static func singleRowCardWidth(count: Int, availableWidth: CGFloat) -> CGFloat {
-        let n = max(count, 1)
-        let avail = availableWidth - Self.gap * CGFloat(n + 1)
-        return min(Self.maxCardW, max(22, avail / CGFloat(n)))
+    private static func shape(_ count: Int, _ width: CGFloat) -> HandRowsSnap {
+        HandShape.rows(Self.metrics, count: count, width: width)
     }
 
-    /// How many rows this hand needs at `availableWidth`: two once the
-    /// single-row math above would put a card below `twoRowThreshold`, else
+    /// How many rows this hand needs at `availableWidth`: two once one row
+    /// would put a card below the split width (34pt), else
     /// one — except a 0/1-card hand is ALWAYS one row no matter what the width
     /// math says, so a degenerate (zero or negative) `availableWidth` can
     /// never report a split there is nothing to actually split (`rowSizes`
@@ -292,40 +279,27 @@ public struct FHandFan: View {
     /// Count-only form of `rowCount` - every layout question below is about
     /// POSITIONS, not identities, so the split is expressed in card COUNTS.
     public static func rowCount(count: Int, availableWidth: CGFloat) -> Int {
-        guard count > 1 else { return 1 }
-        return Self.singleRowCardWidth(count: count, availableWidth: availableWidth) < Self.twoRowThreshold ? 2 : 1
+        Self.shape(count, availableWidth).rows
     }
 
     /// How many cards each display row holds at `availableWidth`. The BOTTOM row
-    /// gets the extra card on an odd count.
-    ///
-    /// WHICH ROW GETS THE ODD CARD is the owner's call, and they reversed it:
-    /// "If we have 11 cards, do 5 up top and 6 below". It used to be `ceil` -
-    /// six up top, five below - which stands the hand on its point. A hand fans
-    /// out from the hand that holds it, so the wider row belongs at the BOTTOM,
-    /// nearest the player; the narrow row reads as sitting behind it. Under the
-    /// collapsed drawer's crop it matters even more, because the bottom row is
-    /// the one whose faces are least occluded.
+    /// gets the extra card on an odd count - the owner's "If we have 11 cards,
+    /// do 5 up top and 6 below" (hand_layout.c has the whole reasoning).
     ///
     /// Round-16: this split is what makes the cross-row drag work at all. Rows
     /// are DERIVED from a flat order by cutting it at `floor(n/2)`, they are not
     /// storage - so moving a card across the boundary is an ordinary splice into
-    /// the flat array, and the cut then falls in a different place. Sliding a
-    /// bottom card up to slot 1 pushes everything from 1 onward right by one, and
-    /// the card that was last in the top row lands first in the bottom row. The
-    /// "bump" the owner asked for is not a special case; it is what a fixed cut
-    /// through a shifted array already does. Moving the cut from ceil to floor
-    /// changes WHERE it falls, not that it is a cut, so all of that still holds.
+    /// the flat array, and the cut then falls in a different place. The "bump"
+    /// the owner asked for is not a special case; it is what a fixed cut through
+    /// a shifted array already does.
     public static func rowSizes(count: Int, availableWidth: CGFloat) -> [Int] {
-        guard Self.rowCount(count: count, availableWidth: availableWidth) == 2 else { return [count] }
-        let first = count / 2   // floor: the extra card goes BELOW on odd counts
-        return [first, count - first]
+        let r = Self.shape(count, availableWidth)
+        return Array(r.rowN.prefix(r.rows))
     }
 
-    /// The fan's total on-screen height at `availableWidth` — one row (`rowH`)
-    /// normally, or two such rows stacked with `rowGap` between once M6 splits
-    /// the hand. Public
-    /// and static so MessageTableView can reserve exactly this much room above
+    /// The fan's total on-screen height at `availableWidth` — one row (80pt)
+    /// normally, or two such rows stacked 6pt apart once M6 splits the hand.
+    /// Public and static so MessageTableView can reserve exactly this much room above
     /// the hand (see its `handLift`) instead of guessing at a second constant.
     public static func height(cards: [Card], availableWidth: CGFloat) -> CGFloat {
         Self.height(count: cards.count, availableWidth: availableWidth)
@@ -333,8 +307,7 @@ public struct FHandFan: View {
 
     /// Count-only form, for the same reason as `rowCount(count:)`.
     public static func height(count: Int, availableWidth: CGFloat) -> CGFloat {
-        let oneRow = Self.cardH + 8
-        return Self.rowCount(count: count, availableWidth: availableWidth) == 2 ? oneRow * 2 + Self.rowGap : oneRow
+        Self.shape(count, availableWidth).height
     }
 
     /// The resting SLOT rect of every card in a hand of `cards`, laid out in a
@@ -382,32 +355,8 @@ public struct FHandFan: View {
     /// animates like every other slide in the fan, and leaves exactly one copy of
     /// the arithmetic for the flight targeting and the layout to share.
     public static func slotFrames(count: Int, width: CGFloat) -> [CGRect] {
-        guard width > 0, count > 0 else { return [] }
-        let rows = Self.rowSizes(count: count, availableWidth: width)
-        // ONE card width for BOTH rows, sized by the FULLER row - sizing each row
-        // by its own count made the shorter row's cards visibly WIDER than the
-        // other's, which read as two different decks rather than one hand that
-        // wrapped. This asks `rows.max()` rather than `rows[0]` because the odd
-        // card now lands in the SECOND row (see `rowSizes`); hard-coding row 0 as
-        // the fuller one was true only while the cut was a ceil, and would have
-        // sized an 11-card hand off 5 and then overflowed the row of 6.
-        let cardW = Self.singleRowCardWidth(count: rows.max() ?? count, availableWidth: width)
-        let cardH = Self.cardH
-        let containerH = Self.height(count: count, availableWidth: width)
-        let stackH = CGFloat(rows.count) * cardH + CGFloat(rows.count - 1) * Self.rowGap
-        let vTop = (containerH - stackH) / 2
-        var out: [CGRect] = []
-        out.reserveCapacity(count)
-        for (r, n) in rows.enumerated() {
-            let rowW = CGFloat(n) * cardW + CGFloat(max(0, n - 1)) * Self.gap
-            let rowLeft = (width - rowW) / 2
-            let y = vTop + CGFloat(r) * (cardH + Self.rowGap)
-            for c in 0..<n {
-                out.append(CGRect(x: rowLeft + CGFloat(c) * (cardW + Self.gap),
-                                  y: y, width: cardW, height: cardH))
-            }
-        }
-        return out
+        HandShape.slots(Self.metrics, count: count, width: width)
+            .map { CGRect(x: $0.x, y: $0.y, width: $0.w, height: $0.h) }
     }
 
     /// The slot a dragged card is asking for: the one whose CENTRE is nearest

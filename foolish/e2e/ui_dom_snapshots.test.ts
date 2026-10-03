@@ -700,3 +700,63 @@ test('the defender at a podkidnoy table: the same cards, and never Pass', async 
         assert.deepEqual(actionSlots(host), ['Cover'], 'a covering card: Cover, as at a passing table');
     });
 });
+
+// ---- my hand's shape: the kernel's rows -------------------------------------------
+// The hand stands where c/src/hand_layout.h hand_layout puts it, at the web's
+// units (src/components/GameDisplay/handShape.tsx WEB_HAND), one row or two.
+// jsdom has no layout, so the plane has no width and the hand lays out in the
+// window less its two 10px gutters: 370 at a 390 window, where one row of 11
+// would be (370 - 24) / 11 = 31.5 wide, under the 34 the hand splits below, and
+// one row of 10 is (370 - 22) / 10 = 34.8, over it.
+
+/** Every card of my hand as the page places it: left, bottom, width, height. */
+function handSlots(host: HTMLElement): { left: number; bottom: number; width: number; height: number }[] {
+    return Array.from(host.querySelectorAll<HTMLElement>('[data-hand-plane] [data-location="hand"][data-card]'), (el) => ({
+        left: parseFloat(el.style.left), bottom: parseFloat(el.style.bottom),
+        width: parseFloat(el.style.width), height: parseFloat(el.style.height),
+    }));
+}
+
+async function handAt390(cardsText: string, check: (host: HTMLElement) => void): Promise<void> {
+    const board = fixture().title('Rows').seats([seat(ME, 'Me'), seat('u-anna-0001', 'Anna')]).status(PLAYING)
+        .trump('Kc').deck('7d 8d 9d Td Jd Qd Kd Ad')
+        .hand(0, cardsText).hand(1, '6c 7c 8c 9c')
+        .table('6h').attacker(1).defender(0).build();
+    const was = Object.getOwnPropertyDescriptor(dom.window, 'innerWidth');
+    Object.defineProperty(dom.window, 'innerWidth', { value: 390, configurable: true });
+    try {
+        await onBoard('rows', board, 0, ME, async (host) => check(host));
+    } finally {
+        if (was) Object.defineProperty(dom.window, 'innerWidth', was);
+        else delete (dom.window as any).innerWidth;
+    }
+}
+
+test('my hand of 11 at 390 stands in two rows, 5 over 6, and the pills and my seat rise with it', async () => {
+    await handAt390('7s 8s 9s Ts Js 7h 8h 9h Th Jh Qh', (host) => {
+        const plane = host.querySelector<HTMLElement>('[data-hand-plane]')!;
+        assert.equal(plane.style.height, '146px', 'two rows of 70 and the 6 between them');
+        // One width for both rows, from the fuller row of 6: (370 - 14) / 6 is
+        // over the 50 cap. Each row centred in 370: 5 cards span 258, 6 span 310.
+        const top = [56, 108, 160, 212, 264].map((left) => ({ left, bottom: 76, width: 50, height: 70 }));
+        const bottom = [30, 82, 134, 186, 238, 290].map((left) => ({ left, bottom: 0, width: 50, height: 70 }));
+        assert.deepEqual(handSlots(host), [...top, ...bottom], 'the top row of 5 stands 76 up, the bottom row of 6 on the floor');
+        const pills = host.querySelector<HTMLElement>('[style*="right: 20px"][style*="bottom: 166px"]');
+        assert.ok(pills, 'the pills column rose by the second row: 90 + 76');
+        assert.equal(pills!.textContent, 'Pickup', 'and still holds Take');
+        const mine = [...host.querySelectorAll<HTMLElement>('[style*="translate(-50%, calc(-50% - 76px))"]')];
+        assert.equal(mine.length, 1, 'and my seat badge, alone of the seats, rose by it too');
+    });
+});
+
+test('my hand of 10 at 390 stays in one row, 34.8 wide', async () => {
+    await handAt390('7s 8s 9s Ts Js 7h 8h 9h Th Jh', (host) => {
+        const plane = host.querySelector<HTMLElement>('[data-hand-plane]')!;
+        assert.equal(plane.style.height, '70px', 'one row of 70');
+        const slots = handSlots(host);
+        assert.equal(slots.length, 10);
+        slots.forEach((s, i) => assert.deepEqual(s, { left: 2 + i * 36.8, bottom: 0, width: 34.8, height: 70 }, `card ${i} in the one row`));
+        assert.ok(host.querySelector('[style*="right: 20px"][style*="bottom: 90px"]'), 'the pills stay where they were');
+        assert.equal(host.querySelectorAll('[style*="calc(-50% -"]').length, 0, 'and no seat moved');
+    });
+});

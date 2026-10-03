@@ -135,7 +135,8 @@ final class Round5BoardTests: XCTestCase {
         XCTAssertEqual(r.height, 72)
     }
 
-    /// A hand that splits into two rows: the FIRST row gets the ceil, both rows
+    /// A hand that splits into two rows: the cut is a floor, so the odd card goes
+    /// to the BOTTOM row (the owner's "5 up top and 6 below"), both rows
     /// are vertically stacked (row 1 sits a full row+gap below row 0), and every
     /// card gets a slot. The container height matches `FHandFan.height` exactly.
     func testSlotRectsTwoRowsStackAndCoverEveryCard() {
@@ -145,8 +146,8 @@ final class Round5BoardTests: XCTestCase {
         let width: CGFloat = 340
         let r = FHandFan.slotRects(cards: cards, width: width)
         XCTAssertEqual(r.count, 15, "every card has a slot")
-        // 15 cards -> 8 up top, 7 below (ceil on odd). The 9th card (first of the
-        // bottom row) sits a full card-height + rowGap below the 1st.
+        // 15 cards -> 7 up top, 8 below (floor on odd). The 9th card (second of
+        // the bottom row) sits a full card-height + rowGap below the 1st.
         let topY = r[cards[0].identity]!.minY
         let botY = r[cards[8].identity]!.minY
         XCTAssertGreaterThan(botY - topY, 72, "the second row is a full row below the first")

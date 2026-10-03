@@ -66,6 +66,12 @@
 --fields MsgEnvelope=format,flags,phase,game_id,turn,last_actor_seat,n_players,variant,round,parent8,seed,sent_at,n_new,opening,carry_key,carry_fool,n_joins,joins
 --count MsgEnvelope.joins=n_joins --count MsgJoin.name=name_len
 #
+# The hand's shape (hand_layout.h): the metrics go in through their writer, in
+# the host's points, and the rows and every slot come back through readers.
+--header hand_layout.h
+--root HandMetrics --root HandRows --root HandRect
+--snapshot HandMetrics --snapshot HandRows --snapshot HandRect --writer HandMetrics
+#
 # The constants a reader of these structs needs, and no others: every one is a
 # public symbol in FoolishKit.
 --const CLIENT_ --const ANIM_EVT_ --const ANIM_LOC_ --const ANIM_DEST_ --const ANIM_CONFLICT_

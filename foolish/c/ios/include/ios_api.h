@@ -617,6 +617,18 @@ int fio_laid_count(const uint8_t *hand, int n_hand, const uint8_t *held, int n_h
 int fio_hand_laid_out(const uint8_t *cards, int n_cards, uint64_t deferred,
                       const uint8_t *order, int n_order, char *out, int cap);
 
+// THE HAND'S SHAPE (c/src/hand_layout.h): how many rows `count` cards take in
+// `width`, how many sit in each (the odd card below), the one card width both
+// rows share, the hand's height, and every slot, top row first. `metrics` is a
+// HandMetrics in the host's own units, written with the generated
+// writeHandMetrics; `out_rows` is a HandRows and `out_slots` holds `cap`
+// HandRects, read with readHandRows / readHandRect (sizes from their cSize).
+// fio_hand_rows returns FIO_EOK or FIO_EBADARG; fio_hand_slots the number of
+// slots (0 for no width or no cards), FIO_ECAP or FIO_EBADARG. A host that has
+// not measured its width yet asks at DBL_MAX, which is one row.
+int fio_hand_rows(const void *metrics, int count, double width, void *out_rows);
+int fio_hand_slots(const void *metrics, int count, double width, void *out_slots, int cap);
+
 // ---------- a table, written ------------------------------------------------
 //
 // THE ONE TABLE LAYOUT, written by the kernel. Every entry that takes a table

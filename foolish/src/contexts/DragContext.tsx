@@ -6,6 +6,7 @@ import { reorderHand } from '../state/clientReconcile';
 import { clientTable, type ClientPlay } from '@sdk/ts/table/client_table.ts';
 import { MOVE_ATTACK, MOVE_COVER, MOVE_PASS } from '@sdk/ts/gen/view_layout.bots.ts';
 import { dropTarget, gestureCards, type TableView, type ViewCard as Card } from '../state/view';
+import { WEB_HAND } from '../components/GameDisplay/handShape';
 
 const DragContext = createContext<DragContextType | null>(null);
 
@@ -37,10 +38,13 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
         };
     }, []);
 
-    // Helper function to detect if drag is in the hand area
+    // THE HAND'S AREA is the hand as it stands - one row or two - plus one card's
+    // height of slack above it, which is where the old fixed line (150px off the
+    // bottom) sat over a one-row hand. Read off the hand's real box, so a drop on
+    // the top row of a split hand is a drop in the hand (a rearrange), never a play.
     const isInHandArea = (x: number, y: number) => {
-        const handAreaTop = window.innerHeight - 150; // Hand area starts 200px from bottom
-        return y >= handAreaTop;
+        const plane = document.querySelector('[data-hand-container] [data-hand-plane]');
+        return !!plane && y >= plane.getBoundingClientRect().top - WEB_HAND.cardH;
     };
 
     // The battle the pointer is over, if any. The hit-test is the one part of a

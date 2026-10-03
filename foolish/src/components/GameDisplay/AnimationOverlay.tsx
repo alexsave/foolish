@@ -13,6 +13,7 @@ import { shownRow } from '../../state/animPlan';
 // `glideOffset` is the other half of that: while the row is still sliding to
 // make room for the pile that just landed, a cell is not yet where it is going.
 import { COVER_ROTATION_RAD, glideOffset } from './TableBattles';
+import { handLandingCentre, laidOutOnScreen } from './handShape';
 
 // Table-slot geometry cache (Stage 9). The on-table battle layout is a function of
 // only (how many battle slots there are, the viewport size) - the 4th slot in a
@@ -253,40 +254,6 @@ export const AnimationOverlay = () => {
         return positions;
     };
 
-    // Measure where cards ENTERING the local player's hand will actually land.
-    // The rendered hand appends new cards at the END (displayedHand), but the
-    // old targeting picked querySelector's FIRST hand-card match - so drawn
-    // cards flew toward the leftmost card instead of their landing slot. Same
-    // placeholder trick as the table slots: append invisible flex items with a
-    // real card's flex geometry, reflow, measure, remove - the measured spots
-    // include the squeeze the incoming cards cause. Returns [] for players
-    // without a per-card hand in the DOM (opponents' mini-hands).
-    const measureHandSlotPositions = (count: number, playerId?: string): { x: number; y: number }[] => {
-        if (!playerId) return [];
-        const container = document.querySelector(`[data-hand-container][data-player-id="${playerId}"]`) as HTMLElement | null;
-        if (!container) return [];
-
-        const placeholders: HTMLElement[] = [];
-        for (let i = 0; i < count; i++) {
-            const ph = document.createElement('div');
-            // Same flex-item geometry as a hand card (ActionButtons): the
-            // measured layout matches the hand once the drawn cards commit.
-            ph.style.cssText = 'flex:1 1 0;min-width:20px;max-width:50px;height:70px;visibility:hidden;pointer-events:none;';
-            ph.setAttribute('data-placeholder', 'true');
-            container.appendChild(ph);
-            placeholders.push(ph);
-        }
-        // Force layout and measure (intentional unused read).
-        // eslint-disable-next-line @typescript-eslint/no-unused-expressions
-        container.offsetHeight;
-        const out = placeholders.map(ph => {
-            const rect = ph.getBoundingClientRect();
-            return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-        });
-        placeholders.forEach(ph => ph.remove());
-        return out;
-    };
-
     // Helper function to get fallback positions when elements aren't found.
     //
     // NOT FOR THE STOCK OR THE TRUMP'S SLOT. Those two had corners here
@@ -427,11 +394,16 @@ export const AnimationOverlay = () => {
             // Render individual CardFaces for normal cards
             const newAnimatedCards: AnimatedCard[] = [];
 
-            // Cards entering the local hand land at its END - measure those
-            // slots once for the whole batch (deal/refill/pickup).
-            const handSlots = to_location === 'hand'
-                ? measureHandSlotPositions(cards.length, player_id)
-                : [];
+            // WHERE A CARD COMES TO REST IN MY HAND: the kernel's slot for the
+            // set the hand lays out while this flight is in the air - its own
+            // cards, then these at the end (handShape.tsx) - read off the hand's
+            // bottom edge, so a pickup that splits the hand into two rows lands
+            // every card on the slot it will rest in, while the cards already
+            // there are still sliding to theirs. iMessage's handLandingSlot is
+            // the same answer. Opponents' mini-hands have no plane: null.
+            const myLaidOut = to_location === 'hand' && player_id ? laidOutOnScreen(player_id, cards) : [];
+            const handSlot = (card: Card) => (to_location === 'hand' && player_id
+                ? handLandingCentre(player_id, myLaidOut, card) : null);
 
             // For the guess of last resort below: the attacks this batch claimed.
             const targetedAttackCards = new Set<string>();
@@ -641,16 +613,16 @@ export const AnimationOverlay = () => {
                 }], getFallbackPosition('table', player_id)));
             };
 
-            // The card's own place when the hand already holds it (a refused
-            // card never left the board's hand; a board committed before the
-            // flight shows it there), else the measured landing slot for the
-            // local hand; opponents' mini-hands fall through to their
-            // container.
-            const landsInHand = (card: Card, index: number): Spot => spotFrom([
+            // My hand's kernel slot first (above) - a card the hand already
+            // holds (a refused card never left the board's hand) has one too, at
+            // its own index, and it is the settled answer where the card's own
+            // element may still be mid-slide. Then that element, for a hand with
+            // no plane; opponents' mini-hands fall through to their container.
+            const landsInHand = (card: Card): Spot => spotFrom([
+                () => handSlot(card),
                 () => (player_id
                     ? document.querySelector(`[data-location="hand"][data-player-id="${player_id}"][data-card="${card.suit}-${card.value}"]`) as HTMLElement | null
                     : null),
-                () => handSlots[index],
                 () => findElementByLocation('hand', player_id),
             ], getFallbackPosition('hand', player_id));
 
@@ -664,7 +636,7 @@ export const AnimationOverlay = () => {
                     return spot && flat(spot);
                 }
                 return to_location === 'table' ? landsOnTable(card, index)
-                    : to_location === 'hand' ? flat(landsInHand(card, index))
+                    : to_location === 'hand' ? flat(landsInHand(card))
                         : flat(landsElsewhere());
             };
 
@@ -680,7 +652,7 @@ export const AnimationOverlay = () => {
                 // Small offset so simultaneous cards into the same UNMEASURED
                 // area don't fully overlap; measured targets (table slots, hand
                 // slots) are exact - offsetting them would re-introduce drift.
-                const preciselyMeasured = (to_location === 'hand' && handSlots[index] !== undefined) ||
+                const preciselyMeasured = (to_location === 'hand' && handSlot(card) !== null) ||
                     (type === 'attack_pass' && (allLaid || measuredPositions.get(`${index}`) !== undefined));
                 if (!preciselyMeasured) {
                     const stackOffset = index * 3;
