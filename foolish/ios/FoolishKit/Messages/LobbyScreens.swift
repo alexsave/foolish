@@ -258,11 +258,13 @@ struct LobbyView: View {
     /// moved but the reseal carrying it has not landed yet. Withholding Start
     /// for those few milliseconds is free; offering it is the exact thing the
     /// gate exists to prevent.
+    ///
+    /// And the CREATOR of a rematch lobby is the changer too, by the same gate
+    /// (`LobbyControls.iAmTheChanger`): their tap chose the deal, so somebody
+    /// else at the table deals it.
     private var iChangedTheRules: Bool {
-        if passingWish != nil { return true }
-        return LobbyControls.rulesChanged(baseline: passingBaseline,
-                                          current: env.passingAllowed,
-                                          mine: env.lastActorSeat == mySeat)
+        LobbyControls.iAmTheChanger(env: env, mySeat: mySeat, baseline: passingBaseline,
+                                    wishOutstanding: passingWish != nil)
     }
 
     /// The lobby SCROLLS when it does not fit, and is centred when it does.

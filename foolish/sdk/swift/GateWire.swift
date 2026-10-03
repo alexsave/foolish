@@ -232,6 +232,12 @@ public enum GateWire {
                                     current ? 1 : 0, mine ? 1 : 0) != 0
     }
 
+    /// Is the newest bubble mine in a way that withholds Start - a rules change,
+    /// or my bubble on a rematch lobby (msg_wire.h msg_lobby_changer)?
+    public static func lobbyChanger(rulesChanged: Bool, mine: Bool, rematchLobby: Bool) -> Bool {
+        fio_msg_lobby_changer(rulesChanged ? 1 : 0, mine ? 1 : 0, rematchLobby ? 1 : 0) != 0
+    }
+
     /// The kernel's own spelling of "no seat". A Swift caller holds `Int?`; the
     /// kernel holds a negative seat, and this is the one place that is said.
     public static let noSeat = -1

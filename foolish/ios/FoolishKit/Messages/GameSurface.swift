@@ -1779,13 +1779,17 @@ struct GameSurface: View {
     /// TWO SHAPES, behind `RematchLobby.sameChain`:
     ///
     ///   * THE SAME CHAIN (shipping). The kernel builds the lobby from the
-    ///     finished chain alone - same game id, the finished chain as its
-    ///     parent, seated as the game finished, every seat taken - and it
-    ///     REUSES the finished game's
-    ///     MSSession, collapsing onto the result card. The owner, on three
-    ///     taps that made three games: "it should collapse the same game (yes,
-    ///     wiping out the history)". The lobby is full; a seat opens only when
-    ///     somebody leaves, as the web's table_continue keeps its seats.
+    ///     finished chain, the moment of the tap and my seat - same game id,
+    ///     the finished chain as its parent, seated as the game finished, every
+    ///     seat taken, a deal drawn from the moment of the tap - and it REUSES
+    ///     the finished game's MSSession, collapsing onto the result card. The
+    ///     owner, on three taps that made three games: "it should collapse the
+    ///     same game (yes, wiping out the history)". Three taps are three
+    ///     lobbies of that one game, and Rule P picks one; I created mine, so
+    ///     the kernel's changer gate gives Start to the others and not to me
+    ///     ("don't allow whoever creates a game to start it"). The lobby is
+    ///     full; a seat opens only when somebody leaves, as the web's
+    ///     table_continue keeps its seats.
     ///   * A FRESH CHAIN (the flag off, which is how it was). Rotated to the
     ///     tapper, a random seed and id, OPEN at the chat's capacity, and
     ///     `onFreshChain` starts a new MSSession so its first bubble does not
