@@ -93,6 +93,7 @@ const char *const FS_STRINGS_RO[FS_K_COUNT] = {
     [FS_K_IOS_MSG_JOINAS           ] = "Intră ca {name}",
     [FS_K_IOS_MSG_JOINED           ] = "{name} a intrat - atinge ca să intri",
     [FS_K_IOS_MSG_JOININVITE       ] = "Prostuț - atinge ca să intri",
+    [FS_K_IOS_MSG_REMATCH         ] = "Revanșă - atinge ca să joci",
     [FS_K_IOS_MSG_LEFT             ] = "{name} a ieșit din joc",
     [FS_K_IOS_MSG_LEFTANON         ] = "Un jucător a ieșit din joc",
     [FS_K_IOS_MSG_LOBBYFULL        ] = "Toate locurile sunt ocupate",

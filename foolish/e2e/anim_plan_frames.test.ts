@@ -146,6 +146,41 @@ test('a deal out of the deck carries its in-flight counts, and the trump does no
     assert.equal(f.inFlightToFlipped, 1);
 });
 
+// ---- the trump a draw deals out ---------------------------------------------
+// Owner: "Flipped card should also have a deal animation to whoever gets it."
+// The C rule is pinned natively (c/tests/anim_plan_test.c
+// test_plan_deals_the_flipped_trump); this pins the bridge: the step's
+// trump_out and trump_from, and the frame's trump_flight, read through the
+// generated accessors for a viewer whose draw is masked.
+test('the draw that takes the trump names it, from its slot, and the frame carries it in the air', () => {
+    const BACK = C(-1, -1);
+    const draw: AnimPlanEventIn[] = [
+        {
+            type: ANIM_EVT.discard, from: ANIM_LOC.table, to: ANIM_LOC.discard, cards: [SIX_S, SEVEN_S],
+            counts: { deck: 1, discard: 20, flipped: TRUMP, hand: [4, 5] }, battles: [],
+        },
+        {
+            type: ANIM_EVT.refill, seat: 0, from: ANIM_LOC.deck, to: ANIM_LOC.hand, cards: [BACK, BACK],
+            counts: { deck: 0, discard: 20, flipped: null, hand: [6, 5] }, battles: [],
+        },
+    ];
+    const p = animBuildPlan(draw, 2, { deck: 0, discard: 20, flipped: null, hand: [6, 5] });
+    assert.equal(p.steps[0].trumpOut, null, 'the sweep deals no trump');
+    assert.equal(p.steps[0].trumpFrom, 0xff, 'and has no trump origin (ANIM_LOC_NONE)');
+    assert.deepEqual(p.steps[1].trumpOut, TRUMP, 'the masked draw names the trump by its real identity');
+    assert.equal(p.steps[1].trumpFrom, ANIM_LOC.flipped, 'leaving from the trump\'s slot');
+    assert.equal(p.steps[1].inFlightFromDeck, 1, 'and only the stock card leaves the pile');
+
+    assert.deepEqual(animPlanAt(p.steps[1].startMs - 1).flipped, TRUMP, 'before the draw opens the trump lies in its slot');
+    const f = animPlanAt(p.steps[1].startMs + 1);
+    assert.equal(f.step, 1);
+    assert.deepEqual(f.trumpFlight, TRUMP, 'while the draw flies the trump is the card in the air');
+    assert.equal(f.flipped, null, 'and out of its slot');
+    const end = animPlanAt(p.totalMs);
+    assert.equal(end.trumpFlight, null, 'landed: nothing in the air');
+    assert.equal(end.flipped, null, 'and nothing back in the slot');
+});
+
 // ---- the plan is laid out in BEATS ------------------------------------------
 // The defect this pins, measured in a browser (docs/WEB_ANIM_PARITY.md section
 // 3): a bout-ending cover landed and the sweep took the whole table away 36ms

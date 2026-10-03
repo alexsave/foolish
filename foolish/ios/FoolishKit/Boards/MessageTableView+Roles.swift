@@ -12,21 +12,6 @@ import Foundation
 
 extension MessageTableView {
 
-    /// Does MY OWN role mark - shield/check/sword, `selfRoleIndicator` - draw
-    /// right now? The two ways it can be silenced, in one place:
-    ///
-    /// - the end screen is up: the board is gone, so its decorations go too;
-    /// - I am a spectator (round 21): a seatless viewer holds no role at all.
-    ///
-    /// Note that "I am OUT of the game" is NOT here. An out player still watches
-    /// the rest of the game from their seat, and `selfRoleMark` already draws
-    /// them no mark (`isOut ? nil`) while keeping the seat's landing pad
-    /// published for role flights that are still crossing it.
-    static func showsSelfRoleMark(isOver: Bool, showResults: Bool, isSpectating: Bool) -> Bool {
-        if showsEndScreen(isOver: isOver, showResults: showResults) { return false }
-        return !isSpectating
-    }
-
     /// Does this seat wear the sword? An attacker keeps it until THEY say good,
     /// even once every attack on the table is covered — not "any uncovered
     /// battle exists", which erased every sword the instant the table filled up.
@@ -51,26 +36,22 @@ extension MessageTableView {
     /// opponents (note 3: the local player never saw their own role before, only
     /// the special-cased first-attacker sword).
     ///
-    /// WHEN IT DRAWS AT ALL is `showsSelfRoleMark`, and it is asked HERE rather
-    /// than left to the caller. This comment used to claim the opposite - that
-    /// "the game-over screen replaces the whole board, so 'game over' is already
-    /// handled by the caller never reaching here" - and that was simply false:
-    /// the caller is an `.overlay` on the container that WRAPS the board/results
-    /// branch, so the swap to `FGameOverList` never touches it and the mark drew
-    /// straight on over the finished game. A wrong comment is what kept the bug:
-    /// it answered the exact question anyone auditing this would have asked.
-    /// The predicate is a value now, so it can be tested, and so the end screen
-    /// and this mark cannot hold different opinions about whether the game is
-    /// over.
+    /// WHEN IT DRAWS AT ALL is the `.selfMark` bit of `chrome` - the kernel's
+    /// one answer for every piece of board chrome - and it is asked HERE rather
+    /// than left to the caller. The caller is an `.overlay` on the container
+    /// that WRAPS the board/results branch, so the swap to `FGameOverList` never
+    /// touches it; this comment once claimed otherwise, and the mark drew a lone
+    /// shield over a finished game. The bit is off on the end screen and for a
+    /// spectator (round 21: `showsSword` would answer true for seat -1 on any
+    /// open table, so a watcher would be shown a sword under an empty hand).
+    ///
+    /// "I am OUT of the game" is NOT in it. An out player still watches the rest
+    /// of the game from their seat, and `selfRoleMark` already draws them no
+    /// mark (`isOut ? nil`) while keeping the seat's landing pad published for
+    /// role flights that are still crossing it.
     @ViewBuilder
     func selfRoleIndicator(_ view: GameView) -> some View {
-        // Both silencing rules live in `showsSelfRoleMark`. The spectator one is
-        // round 21's: `showsSword` would answer true for seat -1 on any open
-        // table (it is not the defender, it has not said good, and there are
-        // cards down), so a watcher would be shown a sword of their own under an
-        // empty hand.
-        if Self.showsSelfRoleMark(isOver: controller.isOver, showResults: showResults,
-                                  isSpectating: isSpectating) {
+        if chrome.contains(.selfMark) {
             selfRoleMark(view)
         } else {
             EmptyView()
@@ -142,8 +123,8 @@ extension MessageTableView {
     /// with nothing to replay - both of those draw the live view, as always.
     private var pendingRoles: RoleState? {
         guard unstartedReplay != nil,
-              let prior = controller.openReplayPriorState else { return nil }
-        return RoleState(prior)
+              let seed = controller.openReplaySeedState else { return nil }
+        return RoleState(seed)
     }
 
     /// The roles the board should DRAW right now - the frozen ones during a

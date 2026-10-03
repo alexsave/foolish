@@ -32,8 +32,8 @@ final class TrumpGlyphTests: XCTestCase {
     /// pixel loss is worth a third of a point at 3x but a twentieth at 12x.
     private let scale: CGFloat = 12
 
-    private func inkBox(_ suit: Suit, _ scheme: ColorScheme) throws -> CGRect {
-        let well = FDeckWell(deckCount: 0, flipped: nil, hasFlipped: false, trumpSuit: suit)
+    private func inkBox(_ suit: Suit, _ scheme: ColorScheme, nudge: CGSize = .zero) throws -> CGRect {
+        let well = FDeckWell(deckCount: 0, flipped: nil, hasFlipped: false, trumpSuit: suit, markNudge: nudge)
         let r = ImageRenderer(content: well.environment(\.colorScheme, scheme))
         r.scale = scale
         let cg = try XCTUnwrap(r.uiImage?.cgImage, "the deck well rendered nothing")
@@ -84,6 +84,25 @@ final class TrumpGlyphTests: XCTestCase {
             let ink = try inkBox(suit, .dark)
             XCTAssertEqual(ink.minX, FDeckWell.bottomCardOrigin.x, accuracy: 0.5,
                            "\(suit.glyph) is not flush with the stock's own inset")
+        }
+    }
+
+    /// TrumpNudge: on the live board the glyph's INK sits 4pt right of and 6pt
+    /// above where the plain well draws it, for every suit, and still inside
+    /// the well; with `trump.nudge` off it is exactly the plain well's.
+    func testTheLiveBoardNudgesTheMarkUpAndRight() throws {
+        XCTAssertEqual(TrumpNudge.shift.width, 4, "the nudge is 4pt right")
+        XCTAssertEqual(TrumpNudge.shift.height, -6, "the nudge is 6pt up")
+        XCTAssertEqual(TrumpNudge.offset(on: false), .zero, "flag off restores the inset")
+        XCTAssertTrue(TrumpNudge.byDefault, "the nudge ships on")
+        for suit in Suit.allCases {
+            let plain = try inkBox(suit, .dark)
+            let on = try inkBox(suit, .dark, nudge: TrumpNudge.offset(on: true))
+            let off = try inkBox(suit, .dark, nudge: TrumpNudge.offset(on: false))
+            XCTAssertEqual(on.minX - plain.minX, 4, accuracy: 0.25, "\(suit.glyph) did not move 4pt right")
+            XCTAssertEqual(on.minY - plain.minY, -6, accuracy: 0.25, "\(suit.glyph) did not move 6pt up")
+            XCTAssertGreaterThan(on.minY, 0, "\(suit.glyph) was pushed off the top of the well")
+            XCTAssertEqual(off, plain, "\(suit.glyph) with the flag off is not the plain well")
         }
     }
 

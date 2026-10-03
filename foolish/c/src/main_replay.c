@@ -50,33 +50,6 @@ static void print_hand(const Player *p, int trump) {
     }
 }
 
-static void print_state(const Game *g) {
-    int trump = g->power_suit;
-    printf("  trump=%s  deck=%d  flip=", suit_name(trump), g->deck_count);
-    if (g->has_flipped) print_card(g->flipped, trump); else printf("-");
-    printf("  defender=p%d\n", g->defender);
-    for (int i = 0; i < g->num_players; i++) {
-        printf("  p%d (%s, %d): ", i,
-               g->players[i].status == PLAYER_STATUS_IN ? "IN" :
-               g->players[i].status == PLAYER_STATUS_OUT ? "OUT" : "?",
-               g->players[i].hand_count);
-        print_hand(&g->players[i], trump);
-        printf("\n");
-    }
-    if (g->num_battles > 0) {
-        printf("  table:");
-        for (int i = 0; i < g->num_battles; i++) {
-            printf(" ");
-            print_card(g->table_battles[i].attack, trump);
-            if (!card_is_none(g->table_battles[i].defense)) {
-                printf("/");
-                print_card(g->table_battles[i].defense, trump);
-            } else printf("/_");
-        }
-        printf("\n");
-    }
-}
-
 static void describe_move(const LegalMove *m, int trump) {
     switch (m->type) {
         case MOVE_ATTACK:

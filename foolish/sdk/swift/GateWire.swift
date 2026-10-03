@@ -173,6 +173,33 @@ public enum GateWire {
         }
     }
 
+    /// WHICH WAY THE DRAWER IS, for the auto-collapse. The rule is
+    /// c/src/msg_expand.c's (`msg_style_*`): the newest willTransition says
+    /// where the drawer is going, and a did that disagrees with a will its own
+    /// did already confirmed is the late tail of an older transition. Apple's
+    /// `presentationStyle` takes every did, so after a self-expanding cold open
+    /// (first-run New game) it answers compact over an expanded drawer. The
+    /// measurement is in msg_expand.h; c/tests/msg_expand_test.c pins the rule.
+    public struct DrawerStyle {
+        private var style: Int32 = 0
+        private var confirmed: Int32 = 1
+
+        /// A fresh activation in the style the host handed it.
+        public init(expanded: Bool) {
+            fio_msg_style_init(expanded ? FIO_STYLE_EXPANDED : FIO_STYLE_COMPACT, &style, &confirmed)
+        }
+
+        /// Is the drawer expanded, or on its way there?
+        public var isExpanded: Bool { style == FIO_STYLE_EXPANDED }
+
+        /// Note a willTransition (`did: false`) or a didTransition (`did: true`).
+        public mutating func note(did: Bool, expanded: Bool) {
+            _ = fio_msg_style_note(did ? FIO_STYLE_DID : FIO_STYLE_WILL,
+                                   expanded ? FIO_STYLE_EXPANDED : FIO_STYLE_COMPACT,
+                                   &style, &confirmed)
+        }
+    }
+
     // ---- what the lobby offers a viewer (msg_wire.h) ----------------------
 
     /// The kernel's five control names. Spelled once, HERE, because this is the
@@ -203,6 +230,12 @@ public enum GateWire {
     public static func lobbyRulesChanged(baseline: Bool?, current: Bool, mine: Bool) -> Bool {
         fio_msg_lobby_rules_changed(baseline == nil ? 0 : 1, (baseline ?? false) ? 1 : 0,
                                     current ? 1 : 0, mine ? 1 : 0) != 0
+    }
+
+    /// Is the newest bubble mine in a way that withholds Start - a rules change,
+    /// or my bubble on a rematch lobby (msg_wire.h msg_lobby_changer)?
+    public static func lobbyChanger(rulesChanged: Bool, mine: Bool, rematchLobby: Bool) -> Bool {
+        fio_msg_lobby_changer(rulesChanged ? 1 : 0, mine ? 1 : 0, rematchLobby ? 1 : 0) != 0
     }
 
     /// The kernel's own spelling of "no seat". A Swift caller holds `Int?`; the

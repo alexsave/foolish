@@ -161,6 +161,7 @@ public enum MessageSummary {
             let actorIsSeated = env?.joins.contains { $0.seat == actor } ?? false
             if let leftName { return FStrings.t("ios.msg.left", ["name": leftName]) }
             if !actorIsSeated && joinCount >= 1 { return FStrings.t("ios.msg.leftanon") }
+            if env?.isRematchInvite == true { return FStrings.t("ios.msg.rematch") }
             return joinCount > 1 ? FStrings.t("ios.msg.joined", ["name": seatName(actor)])
                                  : FStrings.t("ios.msg.joininvite")
         }

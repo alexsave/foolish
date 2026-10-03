@@ -57,6 +57,18 @@ import { clientTable } from '../sdk/ts/table/client_table.ts';
 import * as V from '../sdk/ts/gen/view_layout.bots.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; console.debug = () => {}; }
+// THE OVERLAY'S OWN WORD THAT A PLACE WAS MISSING. The stock and the trump's
+// slot have no fallback position any more: a flight that cannot find the one it
+// leaves from or lands on is not drawn, and the overlay says so on the console
+// (AnimationOverlay stockPlace). Every case holds that it never had to.
+const overlayMisses: string[] = [];
+{
+    const quiet = console.error;
+    console.error = (...a: unknown[]) => {
+        if (typeof a[0] === 'string' && a[0].startsWith('AnimationOverlay: no ')) overlayMisses.push(a[0]);
+        quiet(...a);
+    };
+}
 
 const GOLDEN_DIR = new URL('./fixtures/ui_anim/', import.meta.url);
 const UPDATE = process.env.UPDATE_UI_ANIM === '1';
@@ -382,6 +394,8 @@ class Stage {
     host!: HTMLElement;
     root: any;
     act!: (fn: () => unknown) => Promise<void>;
+    /** Asked about every frame as it is captured, for a case that reads the page itself. */
+    watch: ((label: string) => void) | null = null;
 
     async mount(gid: string): Promise<void> {
         const React = (await import('react')).default;
@@ -457,6 +471,7 @@ class Stage {
         }
         const last = this.frames[this.frames.length - 1];
         if (!last || last.html !== html) this.frames.push({ t: clock, label, html });
+        this.watch?.(label);
     }
 
     /** Moves the clock `ms` forward, firing every timer due on the way, each inside act. */
@@ -578,6 +593,7 @@ function holdToGolden(name: string, frames: Frame[]): void {
 
 async function play(name: string, seed: number, gid: string, board: TableFixture, script: (s: Stage, srv: Server) => Promise<void>): Promise<void> {
     server = new Server(gid, board);
+    overlayMisses.length = 0;
     pending = [];
     channels.clear();
     seedRandom(seed);
@@ -591,6 +607,7 @@ async function play(name: string, seed: number, gid: string, board: TableFixture
         assert.deepEqual(stage.doubled, [], `${name}: a board showed a card twice`);
         assert.deepEqual(stage.shownTwice, [], `${name}: the page showed a card twice`);
         assert.deepEqual(stage.lostOrDoubled, [], `${name}: a tracked card was not on the page exactly once`);
+        assert.deepEqual(overlayMisses, [], `${name}: a flight's stock place or trump slot was not on the page`);
         if ((server.outbox.get(ME) ?? []).length === 0) {
             const mine = clientTable().adoptEnvelope(server.envelope(ME))!;
             assert.deepEqual(settled(JSON.parse(probe.store).view), settled(mine), `${name}: the page settles on the server's board`);
@@ -694,6 +711,68 @@ const storeRow = (): string[] => (JSON.parse(probe.store).view.battles as any[])
         ? [b.attack] : [b.attack, b.defense])
         .map((c: any) => `${'23456789TJQKA'[c.value - 1] ?? '?'}${'shcd'[c.suit] ?? '?'}`).join('/'));
 
+// ---- the trump a draw deals out -----------------------------------------------------
+//
+// Owner: "Flipped card should also have a deal animation to whoever gets it."
+// The face-up trump under the stock is the last card a game deals, and the draw
+// that takes it has to fly it FROM ITS SLOT, face up, for every viewer - the
+// one whose draw names it and the ones who see only backs. Reproduced in a
+// browser before the fix: another seat's draw left the trump lying in its slot
+// for the whole flight while one back flew in from a hard-coded corner of the
+// window, and the trump vanished at the landing; my own draw emptied the slot
+// at take-off and flew the trump out of that same corner.
+//
+// Read off every frame the page draws, so it holds whatever the goldens say:
+//   - a flight of the trump's face leaves from the centre of the trump's slot
+//     (the overlay measures [data-location="flipped"], jsdom's rect for it);
+//   - while it flies, and after it has gone, the slot does not show the trump;
+//   - no flight anywhere starts at a corner the page made up ({100,120} and
+//     {100,180}, the stock's and the slot's old fallbacks).
+interface TrumpWatch { starts: { at: string; x: number; y: number; slot: { x: number; y: number } | null }[]; slotWhileFlying: string[]; slotAfter: string[]; corners: string[] }
+function watchTrump(s: Stage, trump: string): TrumpWatch {
+    const face = printed(trump);
+    const w: TrumpWatch = { starts: [], slotWhileFlying: [], slotAfter: [], corners: [] };
+    let flown = false;
+    s.watch = (label) => {
+        const slot = s.host.querySelector<HTMLElement>('[data-location="flipped"]');
+        const inSlot = !!slot && visibleFaces(slot).includes(face);
+        const overlay = Array.from(s.host.querySelectorAll<HTMLElement>('div'))
+            .filter((d) => d.style.position === 'fixed' && d.style.zIndex === '10000')
+            .flatMap((o) => Array.from(o.children) as HTMLElement[]);
+        for (const c of overlay) {
+            const x = parseFloat(c.style.left), y = parseFloat(c.style.top);
+            if (x === 100 && (y === 120 || y === 180)) w.corners.push(`${clock}ms (${label})`);
+        }
+        const flying = overlay.find((c) => visibleFaces(c).includes(face));
+        if (flying) {
+            flown = true;
+            if (inSlot) w.slotWhileFlying.push(`${clock}ms (${label})`);
+            // The frame a flight is built on, before its transition is armed, is
+            // where it starts.
+            if (flying.style.transition === 'none') {
+                const r = slot?.getBoundingClientRect();
+                w.starts.push({
+                    at: `${clock}ms (${label})`, x: parseFloat(flying.style.left), y: parseFloat(flying.style.top),
+                    slot: r ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null,
+                });
+            }
+        } else if (flown && inSlot) {
+            w.slotAfter.push(`${clock}ms (${label})`);
+        }
+    };
+    return w;
+}
+function assertTrumpDealt(name: string, w: TrumpWatch): void {
+    assert.ok(w.starts.length > 0, `${name}: the trump flies face up (no frame drew a flight of it)`);
+    for (const st of w.starts) {
+        assert.ok(st.slot, `${name}: the trump's slot is on the page as its flight starts (${st.at})`);
+        assert.deepEqual({ x: st.x, y: st.y }, st.slot, `${name}: the trump leaves from the centre of its own slot (${st.at})`);
+    }
+    assert.deepEqual(w.slotWhileFlying, [], `${name}: the slot still showed the trump while it flew`);
+    assert.deepEqual(w.slotAfter, [], `${name}: the slot showed the trump again after it had flown`);
+    assert.deepEqual(w.corners, [], `${name}: a flight started at a made-up corner of the window`);
+}
+
 // ---- the cases ------------------------------------------------------------------------------
 
 test('attack: my card flies to the table, the server confirms it', async () => {
@@ -737,13 +816,18 @@ test('a LAST DEFENCE rests before the sweep takes the table', async () => {
     // (docs/WEB_ANIM_PARITY.md section 3).
     const board = two(1).hand(0, '9c Tc Jd Qd').hand(1, '8h').table('6h')
         .attacker(0).defender(1).build();
+    // …AND THE TRUMP COMES TO ME: Anna refills first and takes 7s 8s, then I take
+    // 9s Ts and the trump Kc, the last card of my draw.
+    let trump!: TrumpWatch;
     await play('cover_ends_bout', 130, 'a-bout-end', board, async (s) => {
+        trump = watchTrump(s, 'Kc');
         await s.step('tap cover 8h on 6h', () => tap(probe.anim.cover(cards('8h'), cards('6h'))));
         await s.advance(150);
         await answer(s, 'server applies');
         await s.advance(100);
         await deliver(s, 'push: the last defence closes the bout');
     });
+    assertTrumpDealt('cover_ends_bout (the trump is mine)', trump);
 });
 
 test('the defender covers both attacks at once, and both cards fly together', async () => {
@@ -780,13 +864,18 @@ test('the `out` that ends the game costs the sequence no time of its own', async
     // are half a second shorter than they were.
     const board = two(1).hand(0, '9c Tc Jd Qd').hand(1, '8h').table('6h').deck('')
         .attacker(0).defender(1).build();
+    // …AND THE TRUMP IS ALL ANNA DRAWS: the stock is empty, so her refill is the
+    // trump alone, and it leaves from its slot with nothing leaving the stock.
+    let trump!: TrumpWatch;
     await play('out_costs_nothing', 140, 'an-out', board, async (s) => {
+        trump = watchTrump(s, 'Kc');
         await s.step('tap cover 8h on 6h', () => tap(probe.anim.cover(cards('8h'), cards('6h'))));
         await s.advance(150);
         await answer(s, 'server applies');
         await s.advance(100);
         await deliver(s, 'push: the last defence ends the game');
     });
+    assertTrumpDealt('out_costs_nothing (the trump alone, to Anna)', trump);
 });
 
 test('pass: I hand the attack on with a card of its rank', async () => {
@@ -816,13 +905,19 @@ test('pickup: I take the table', async () => {
 test('good: my good closes the bout', async () => {
     const board = threeMeFirst().hand(0, '9c Tc Jd').hand(1, 'Js Qs Ks').hand(2, 'Ad Qd 6d').table('7h/9h')
         .attacker(0).defender(1).good(2).goodTimestamp().build();
+    // …AND THE TRUMP GOES TO BORIS: I refill first and take 7s 8s 9s, then Boris
+    // takes Ts and the trump Kc. His draw reaches me as backs; the trump lay face
+    // up for everyone, so it flies face up for me too.
+    let trump!: TrumpWatch;
     await play('good', 105, 'a-good', board, async (s) => {
+        trump = watchTrump(s, 'Kc');
         await s.step('tap good', () => tap(probe.anim.good()));
         await s.advance(90);
         await answer(s, 'server applies');
         await s.advance(60);
         await deliver(s, 'push: the bout closes');
     });
+    assertTrumpDealt('good (the trump is Boris\'s)', trump);
 });
 
 test('my own good turns my badge as I tap it, and the confirmation finds nothing left to turn', async () => {
@@ -1652,6 +1747,7 @@ async function openingDeal(name: string, gid: string, ids: FixtureSeat[], wantDe
     assert.notEqual(defender, meSeat, `${name}: the real defender is not me`);
 
     server = new Server(gid, board);
+    overlayMisses.length = 0;
     pending = [];
     channels.clear();
     seedRandom(301);
@@ -1695,6 +1791,7 @@ async function openingDeal(name: string, gid: string, ids: FixtureSeat[], wantDe
         server = null;
     }
 
+    assert.deepEqual(overlayMisses, [], `${name}: a flight's stock place or trump slot was not on the page`);
     const trace = seen.map((f) => `${f.t}ms ${f.phase} board.defender=${f.boardDefender} ledger=${f.ledger} shield=[${f.shields.join(', ')}]`).join('\n    ');
     const settledAt = seen.findIndex((f) => f.phase === 'START_DEFENDER');
     assert.ok(settledAt >= 0, `${name}: the page reaches the START_DEFENDER board:\n    ${trace}`);

@@ -299,6 +299,15 @@ public enum MessageDevBoard {
     /// Read fresh on every new game.
     public static var genesisSeed: UInt8? { dev.raw("dev.seed").flatMap { UInt8($0) } }
 
+    /// `dev.capacity`: how many seats a NEW lobby offers, 2 to 8, in place of
+    /// the chat's own shape (a DM is 2, a group 8 - GameSurface.createWaiting).
+    /// The simulator's two stub threads are both DMs, so without this the
+    /// DEBUG "Add player (testing)" stopped at 2 seats and no 3+ seat lobby
+    /// could be reached there at all. Read fresh on every new game.
+    public static var lobbyCapacity: Int? {
+        dev.int("dev.capacity").map { max(2, min($0, 8)) }
+    }
+
     /// `dev.automove`: the rig asks the board to play a move by itself
     /// (MessageTableView+AutoPlay). Read fresh on every ask.
     public static var autoMove: Bool { dev.exists("dev.automove") }

@@ -93,6 +93,7 @@ const char *const FS_STRINGS_RU[FS_K_COUNT] = {
     [FS_K_IOS_MSG_JOINAS           ] = "Войти как {name}",
     [FS_K_IOS_MSG_JOINED           ] = "{name} в игре - нажмите, чтобы войти",
     [FS_K_IOS_MSG_JOININVITE       ] = "Дурацкий - нажмите, чтобы присоединиться",
+    [FS_K_IOS_MSG_REMATCH         ] = "Реванш - нажмите, чтобы играть",
     [FS_K_IOS_MSG_LEFT             ] = "{name} покидает игру",
     [FS_K_IOS_MSG_LEFTANON         ] = "Игрок вышел из игры",
     [FS_K_IOS_MSG_LOBBYFULL        ] = "Все места заняты",

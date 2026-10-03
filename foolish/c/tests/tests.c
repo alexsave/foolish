@@ -33,6 +33,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <stddef.h>
 
 static int n_pass = 0;
 static int n_fail = 0;
@@ -2292,7 +2293,13 @@ static void rs_check_conservation(const RsTestCtx *c, int np, const char *what) 
 
 // A seeded game played to the end with the handwritten bot, plus the seed that
 // dealt it (replay_encode_v6_from_game re-derives the deal from it).
+static bool rs_play_seeded_rules(Game *g, int np, int seed, unsigned char *seed_out, int8_t rules);
 static bool rs_play_seeded(Game *g, int np, int seed, unsigned char *seed_out) {
+    return rs_play_seeded_rules(g, np, seed, seed_out, 0);
+}
+
+// The same, at a table playing `rules` (game.h GAME_RULE_*).
+static bool rs_play_seeded_rules(Game *g, int np, int seed, unsigned char *seed_out, int8_t rules) {
     for (int i = 0; i < FOOLISH_SEED_LEN; i++)
         seed_out[i] = (unsigned char)(i * 31 + seed * 13 + np);
     game_set_seed((uint32_t)(seed + 1));
@@ -2301,6 +2308,7 @@ static bool rs_play_seeded(Game *g, int np, int seed, unsigned char *seed_out) {
 
     memset(g, 0, sizeof(*g));
     g->num_players = (int8_t)np;
+    g->rules = rules;
     for (int i = 0; i < np; i++) g->players[i].status = PLAYER_STATUS_READY;
     start_game(g);
 
@@ -7355,6 +7363,58 @@ static void test_board_finish_rows_rank_first_out_to_the_fool(void) {
     CHECK(anim_finish_rows(NULL, 0, -1, 4, 0, rows, MAX_PLAYERS) == 0, "…and an untouched game, nobody");
 }
 
+// THE END SCREEN CLEARS THE BOARD'S CHROME. Owner: "the last players (the
+// fools) cards are still seen in the end 'game over' screen... it also blocks
+// the 'new game' button." Filmed at 2p and 4p with the local player as the
+// fool: the fan sat on New game and a tap there selected a card, and at four
+// players the squares and a Take pill sat on the fool's own row of the list.
+static void test_board_end_screen_clears_the_boards_chrome(void) {
+    const int on = ANIM_CHROME_RULE_CLEAR_ON_RESULTS;
+    const unsigned board = ANIM_CHROME_HAND | ANIM_CHROME_PILLS | ANIM_CHROME_UNDO
+                         | ANIM_CHROME_SQUARES;
+
+    // A live board, seated: all of it.
+    CHECK(anim_board_chrome(0, 0, 0, on) == (board | ANIM_CHROME_SELF_MARK),
+          "a live board draws every piece of its chrome and no list");
+
+    // The end screen is up: the list, and nothing of the board's.
+    const unsigned end = anim_board_chrome(1, 1, 0, on);
+    CHECK(end & ANIM_CHROME_RESULTS, "the list takes the board's place");
+    CHECK(!(end & ANIM_CHROME_HAND), "the fool's hand leaves with the board");
+    CHECK(!(end & ANIM_CHROME_PILLS), "no action pill over the list");
+    CHECK(!(end & ANIM_CHROME_UNDO), "no Undo over the list");
+    CHECK(!(end & ANIM_CHROME_SQUARES), "the squares give the list its corners back");
+    CHECK(!(end & ANIM_CHROME_SELF_MARK), "my mark leaves with the board");
+
+    // Over, but the last flight has not landed: the board is still the stage.
+    CHECK(anim_board_chrome(1, 0, 0, on) == (board | ANIM_CHROME_SELF_MARK),
+          "the final move plays under the whole board");
+    // A stale results beat means nothing without a finished game.
+    CHECK(anim_board_chrome(0, 1, 0, on) == (board | ANIM_CHROME_SELF_MARK),
+          "results_shown alone is not an end screen");
+
+    // A spectator wears no mark, live or over.
+    CHECK(!(anim_board_chrome(0, 0, 1, on) & ANIM_CHROME_SELF_MARK), "a spectator has no mark");
+    CHECK(anim_board_chrome(1, 1, 1, on) == ANIM_CHROME_RESULTS,
+          "a spectator's end screen is the list alone");
+
+    // The flag off is the old screen, exactly: the chrome over the list, and
+    // the two gates that were already right unchanged.
+    CHECK(anim_board_chrome(1, 1, 0, 0) == (board | ANIM_CHROME_RESULTS),
+          "without the rule the end screen keeps the board's chrome");
+    CHECK(anim_board_chrome(0, 0, 0, 0) == anim_board_chrome(0, 0, 0, on),
+          "the rule changes nothing before the end screen");
+
+    // The list and the mark are never up together, for any input.
+    for (int over = 0; over < 2; over++)
+        for (int shown = 0; shown < 2; shown++)
+            for (int rules = 0; rules < 2; rules++) {
+                const unsigned c = anim_board_chrome(over, shown, 0, rules);
+                CHECK(((c & ANIM_CHROME_RESULTS) != 0) != ((c & ANIM_CHROME_SELF_MARK) != 0),
+                      "exactly one of the list and my mark draws");
+            }
+}
+
 static void test_board_degenerate_inputs(void) {
     unsigned char out[8];
     AnimFinishRow rows[MAX_PLAYERS];
@@ -10179,7 +10239,7 @@ static uint64_t dl_fold_refills(uint64_t h, int np, int viewer, int *n_refill, i
     return h;
 }
 
-static uint64_t dl_refill_digest(int np, int *n_refill, int *n_steps) {
+static uint64_t dl_refill_digest(int np, int *n_refill, int *n_steps, int *n_trump) {
     static Game g;
     static LegalMoves moves;
     static AnimPlan plan;
@@ -10258,6 +10318,13 @@ static uint64_t dl_refill_digest(int np, int *n_refill, int *n_steps) {
                     h = dl_fnv(h, st->in_flight_from_deck);
                     h = dl_fnv(h, st->in_flight_to_flipped);
                     for (int b = 0; b < 64; b += 8) h = dl_fnv(h, (int)((st->reveals >> b) & 0xff));
+                    // The trump the step deals out, by identity, for EVERY
+                    // viewer (a masked one included), and where it leaves from.
+                    if (!card_is_none(st->trump_out)) {
+                        (*n_trump)++;
+                        h = dl_fnv(h, card_to_id(st->trump_out));
+                        h = dl_fnv(h, st->trump_from);
+                    }
                 }
             }
         }
@@ -10268,17 +10335,27 @@ static uint64_t dl_refill_digest(int np, int *n_refill, int *n_steps) {
 
 static void test_refill_events_and_plan_are_unchanged(void) {
     static const int nps[] = { 2, 3, 4, 6, 8 };
-    // Per np, in nps order; taken on 8cbdb81f (seat-major hooks).
+    // Per np, in nps order; taken on 8cbdb81f (seat-major hooks), and re-taken
+    // when the plan began naming the trump a refill deals out (trump_out /
+    // trump_from folded in, and in_flight_from_deck no longer counting that
+    // trump). Before re-taking them, folding in_flight_from_deck + 1 on exactly
+    // the trump steps and nothing else reproduced the 8cbdb81f digests for all
+    // five table sizes: no other byte of any refill or plan step moved.
     static const uint64_t golden[] = {
-        0xcd90a152de263054ULL, 0xb314abf40dccfb19ULL, 0xfb2c440b4a0d7bb9ULL,
-        0x413a12242d7dba47ULL, 0xb74067a0d288d61dULL,
+        0x3f5de256bd24caa2ULL, 0x852490db65708a6dULL, 0x42f2bf2819ad2519ULL,
+        0x4cd82e08d9a0f73dULL, 0xc98a0e3d112a9b29ULL,
     };
     for (int i = 0; i < (int)(sizeof nps / sizeof nps[0]); i++) {
-        int n_refill = 0, n_steps = 0;
-        const uint64_t got = dl_refill_digest(nps[i], &n_refill, &n_steps);
+        int n_refill = 0, n_steps = 0, n_trump = 0;
+        const uint64_t got = dl_refill_digest(nps[i], &n_refill, &n_steps, &n_trump);
         DCHECK(n_refill > 20 && n_steps > 20,
                "refills unchanged (%dp): the games refilled (%d events, %d plan steps)",
                nps[i], n_refill, n_steps);
+        // Every game that empties its stock deals the trump out once, and the
+        // plan names it for every viewer (np + 1 of them, the spectator too).
+        DCHECK(n_trump > 0 && n_trump % (nps[i] + 1) == 0,
+               "refills unchanged (%dp): the trump deals are named for every viewer (%d)",
+               nps[i], n_trump);
         DCHECK(got == golden[i], "refills unchanged (%dp): digest 0x%016llxULL, want 0x%016llxULL",
                nps[i], (unsigned long long)got, (unsigned long long)golden[i]);
     }
@@ -10418,6 +10495,13 @@ static void test_opening_deal_plan_paces_card_by_card(void) {
             k++;
         }
         DCHECK(k == np * CARDS_PER_PLAYER, "deal clock (%dp): %d dealt cards on the clock", np, k);
+        // The opening deal never deals the trump out: it is turned AFTER the
+        // hands are dealt (the FLIPPED step), so no step of it names one.
+        int trump_steps = 0;
+        for (int i = 0; i < plan.n_steps; i++)
+            if (!card_is_none(plan.steps[i].trump_out) || plan.steps[i].trump_from != ANIM_LOC_NONE) trump_steps++;
+        DCHECK(trump_steps == 0, "deal clock (%dp): the opening deals no trump out (%d steps say it does)",
+               np, trump_steps);
         // Read off the plan, not re-derived from the constants: the deal's first
         // start, its last card's landing, and the whole opening plan's total.
         if (np == 2 || np == MAX_PLAYERS)
@@ -10425,6 +10509,185 @@ static void test_opening_deal_plan_paces_card_by_card(void) {
                    first_ms, end_ms, plan.total_ms);
     }
 }
+
+// 8. A STARTED GAME HAS A REPLAY, AND IT IS THE DEAL. The owner, on iMessage:
+// "Did not see card deal". A started bubble is a game dealt with no move made
+// yet, and a bubble animates by replaying its own replay code - so a game the
+// encoder refused until its first attack had no code, no stream, and no deal.
+// The v6 format always could say "this deal, then nothing": the hands, the
+// trump, the opener and an atom count of zero. So a dealt game with no move
+// encodes, decodes to exactly ONE step (the deal), and that step carries the
+// same round-robin deal a table push does, card by card, with nobody defending
+// before the trump, for every seat and a spectator. The opener comes off the
+// game, imposed or derived, and is proven against the rebuilt deal on decode.
+// A lobby has no deal to show and still refuses.
+static Game sd_game;
+static unsigned char sd_code[1 << 14];
+static unsigned char sd_frames[1 << 17];
+
+static void sd_deal(int np, int seed_k, int open_at, unsigned char *seed) {
+    for (int i = 0; i < FOOLISH_SEED_LEN; i++) seed[i] = (unsigned char)(i * 29 + seed_k * 7 + np);
+    game_set_deal_seed_bytes(seed, FOOLISH_SEED_LEN);
+    memset(&sd_game, 0, sizeof sd_game);
+    sd_game.num_players = (int8_t)np;
+    for (int s = 0; s < np; s++) sd_game.players[s].status = PLAYER_STATUS_READY;
+    game_open_at_seat(open_at);
+    start_game(&sd_game);
+    game_open_at_seat(-1);
+}
+
+// The frames of `code` from step 0 for `viewer`, read off the wire into dl_read.
+static int sd_read_frames(int len, int viewer, int *n_frames) {
+    memset(&dl_read, 0, sizeof dl_read);
+    int next = 0;
+    const int fl = replay_steps_frames_v6(sd_code, len, viewer, 0, 0, sd_frames, sizeof sd_frames,
+                                          n_frames, &next);
+    if (fl <= 0) return -1;
+    int q = 0;
+    while (q + 2 <= fl) {
+        const int flen = sd_frames[q] | (sd_frames[q + 1] << 8);
+        q += 2;
+        if (flen <= 0 || q + flen > fl) return -1;
+        if (evwire_read(sd_frames + q, flen, 0, 0, 0, dl_read_sink, &dl_read) < 0) return -1;
+        q += flen;
+    }
+    return dl_read.overflow ? -1 : dl_read.n;
+}
+
+static void test_a_started_game_replays_its_deal(void) {
+    static const int nps[] = { 2, 3, 4, 6, 8 };
+    static AnimPlan plan;
+    int forced_seen = 0;
+    for (int pi = 0; pi < (int)(sizeof nps / sizeof nps[0]); pi++) {
+        const int np = nps[pi];
+        for (int seed_k = 1; seed_k <= 4; seed_k++) {
+            // seed 4 is a rematch: the fool's penalty imposes the opener.
+            const int open_at = seed_k == 4 ? (np - 1) : -1;
+            unsigned char seed[FOOLISH_SEED_LEN];
+            sd_deal(np, seed_k, open_at, seed);
+            DCHECK(sd_game.status == GAME_STATUS_PLAYING && sd_game.num_logs >= 0
+                   && sd_game.first_attacker >= 0,
+                   "started (%dp, seed %d): the fixture deals and names its opener", np, seed_k);
+            const int len = replay_encode_v6_from_game(&sd_game, seed, FOOLISH_SEED_LEN, 1 << 30,
+                                                       sd_code, sizeof sd_code);
+            DCHECK(len > 0, "started (%dp, seed %d): a dealt game with no move encodes, rc %d",
+                   np, seed_k, len);
+            if (len <= 0) continue;
+
+            ReplayHeader hdr;
+            const int steps = replay_steps_count_v6(sd_code, len, &hdr);
+            DCHECK(steps == 1, "started (%dp, seed %d): the code is ONE step, the deal - got %d",
+                   np, seed_k, steps);
+            DCHECK(hdr.first_attacker == sd_game.first_attacker,
+                   "started (%dp, seed %d): the code opens on seat %d, the game on %d",
+                   np, seed_k, hdr.first_attacker, sd_game.first_attacker);
+            if (hdr.forced_opening) forced_seen++;
+            const Game *re = replay_steps_last_game();
+            DCHECK(re->defender == sd_game.defender && re->num_players == np,
+                   "started (%dp, seed %d): the rebuilt deal names defender %d, the game %d",
+                   np, seed_k, re->defender, sd_game.defender);
+            // Same hands as SETS: v6 codes a hand without its order.
+            for (int s = 0; s < np; s++) {
+                uint64_t a = 0, b = 0;
+                for (int i = 0; i < sd_game.players[s].hand_count; i++) a |= 1ull << card_to_id(sd_game.players[s].hand[i]);
+                for (int i = 0; i < re->players[s].hand_count; i++) b |= 1ull << card_to_id(re->players[s].hand[i]);
+                DCHECK(a == b && re->players[s].hand_count == CARDS_PER_PLAYER,
+                       "started (%dp, seed %d): seat %d's rebuilt hand is the dealt one", np, seed_k, s);
+            }
+            static Game rebuilt;
+            memcpy(&rebuilt, re, sizeof rebuilt);
+
+            for (int viewer = -1; viewer < np; viewer++) {
+                int n_frames = 0;
+                if (sd_read_frames(len, viewer, &n_frames) < 0) {
+                    DCHECK(0, "started (%dp, seed %d): the frames read for viewer %d", np, seed_k, viewer);
+                    continue;
+                }
+                char why[200];
+                why[0] = 0;
+                if (n_frames != 1) snprintf(why, sizeof why, "%d frames, want 1 (the deal)", n_frames);
+                int k = 0, moved = -1;
+                for (int i = 0; i < dl_read.n && !why[0]; i++) {
+                    const DlEvent *e = &dl_read.ev[i];
+                    if (e->type == EVW_T_DEFENDER_MOVE && moved < 0) {
+                        moved = i;
+                        if (e->seat != sd_game.defender)
+                            snprintf(why, sizeof why, "DEFENDER_MOVE names seat %d, want %d", e->seat, sd_game.defender);
+                    }
+                    if (!e->has_board) {
+                        snprintf(why, sizeof why, "event %d (type %d) carries no readable board", i, e->type);
+                    } else if (moved < 0 && (e->defender != -1 || e->first_attacker != -1)) {
+                        snprintf(why, sizeof why, "event %d (type %d) is before DEFENDER_MOVE and names defender %d,"
+                                 " first attacker %d", i, e->type, e->defender, e->first_attacker);
+                    } else if (moved >= 0 && (e->defender != sd_game.defender
+                                              || e->first_attacker != sd_game.first_attacker)) {
+                        snprintf(why, sizeof why, "event %d names defender %d / first attacker %d, want %d / %d",
+                                 i, e->defender, e->first_attacker, sd_game.defender, sd_game.first_attacker);
+                    }
+                    if (why[0] || e->type != EVW_T_DEAL) continue;
+                    const int r = k / np, j = k % np;
+                    if (moved >= 0) {
+                        snprintf(why, sizeof why, "deal event %d comes after DEFENDER_MOVE", k);
+                    } else if (k >= np * CARDS_PER_PLAYER) {
+                        snprintf(why, sizeof why, "more than %d deal events", np * CARDS_PER_PLAYER);
+                    } else if (e->seat != j) {
+                        snprintf(why, sizeof why, "deal event %d went to seat %d, want seat %d", k, e->seat, j);
+                    } else if (e->n_cards != 1) {
+                        snprintf(why, sizeof why, "deal event %d carries %d cards, want 1", k, e->n_cards);
+                    } else {
+                        const unsigned char want = viewer == j ? wire_from_card(rebuilt.players[j].hand[r])
+                                                               : (unsigned char)WIRE_CARD_HIDDEN;
+                        if (e->cards[0] != want)
+                            snprintf(why, sizeof why, "deal event %d (seat %d): card byte %u, want %u",
+                                     k, j, e->cards[0], want);
+                    }
+                    k++;
+                }
+                if (!why[0] && k != np * CARDS_PER_PLAYER)
+                    snprintf(why, sizeof why, "%d deal events, want %d", k, np * CARDS_PER_PLAYER);
+                if (!why[0] && moved < 0) snprintf(why, sizeof why, "the deal names no defender at all");
+                DCHECK(!why[0], "started (%dp, seed %d, viewer %d): %s", np, seed_k, viewer, why);
+            }
+
+            // ON THE KERNEL'S CLOCK: the plan over the same stream deals each
+            // card as its own beat at ANIM_DEAL_CARD_MS, back to back.
+            pf_np = np;
+            pf_n = 0;
+            const int rr = replay_steps_v6(sd_code, len, 0, 0, pf_sink, 0);
+            DCHECK(rr == REPLAY_EOK, "started (%dp, seed %d): the deal replays to a sink, rc %d", np, seed_k, rr);
+            if (rr != REPLAY_EOK) continue;
+            const PfCounts after = pf_counts_of(replay_steps_last_game());
+            const int prc = anim_build_plan(pf_evs, pf_n, np, after.deck, after.discard,
+                                            after.flipped, after.hand, &plan);
+            DCHECK(prc == ANIM_EOK, "started (%dp, seed %d): the deal's plan builds, rc %d", np, seed_k, prc);
+            if (prc != ANIM_EOK) continue;
+            int dealt = 0, flying = 0, first = -1, last_end = -1;
+            for (int i = 0; i < plan.n_steps; i++) {
+                const AnimPlanStep *st = &plan.steps[i];
+                if (st->type != ANIM_EVT_DEAL) continue;
+                if (first < 0) first = st->start_ms;
+                flying += st->duration_ms;
+                last_end = st->start_ms + st->duration_ms;
+                dealt++;
+            }
+            DCHECK(dealt == np * CARDS_PER_PLAYER && flying == dealt * ANIM_DEAL_CARD_MS,
+                   "started (%dp, seed %d): %d dealt cards fly %d ms in all, want %d x %d",
+                   np, seed_k, dealt, flying, np * CARDS_PER_PLAYER, ANIM_DEAL_CARD_MS);
+            DCHECK(last_end - first == dealt * ANIM_DEAL_CARD_MS + (dealt - 1) * ANIM_GAP_MS,
+                   "started (%dp, seed %d): the deal spans %d ms, want one card after another",
+                   np, seed_k, last_end - first);
+        }
+    }
+    DCHECK(forced_seen > 0, "started: no rematch fixture imposed its opener (%d)", forced_seen);
+
+    // A LOBBY HAS NO DEAL TO SHOW: nobody leads yet, so there is no opener.
+    unsigned char seed[FOOLISH_SEED_LEN];
+    sd_deal(4, 9, -1, seed);
+    game_reset_to_lobby(&sd_game, 0);
+    DCHECK(replay_encode_v6_from_game(&sd_game, seed, FOOLISH_SEED_LEN, 1 << 30, sd_code, sizeof sd_code)
+           == -REPLAY_EINPUT, "started: a lobby still refuses to encode");
+}
+
 static void test_table_reseat_retitle_continue(void) {
     tb_seed_fill(3);
     tb_lobby();
@@ -12095,7 +12358,7 @@ static void test_lobby_can_set_rules(void) {
 static int sr_view(int viewer, ViewRules *vr) {
     const int n = table_envelope(&tb, RS("g-7"), viewer, 3, ct_env, sizeof(ct_env));
     int rc = n > 0 ? client_adopt_envelope(&ct, ct_env, n) : n;
-    if (rc == CLIENT_OK) rc = client_view_rules(&ct.view, 0, 0, vr);
+    if (rc == CLIENT_OK) rc = client_view_rules(&ct.view, 0, 0, 0, vr);
     return rc;
 }
 
@@ -12426,35 +12689,35 @@ static void test_client_view_rules(void) {
 
     // Good: offered to an attacker who is in and has not said it, once every attack is covered.
     cvr_board(&v, 2);
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.can_say_good, "an attacker is offered Good over a covered table");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && r.can_say_good, "an attacker is offered Good over a covered table");
     v.good_mask = 1u << 2;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.can_say_good, "not once it has said it");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && !r.can_say_good, "not once it has said it");
     v.good_mask = 1u << 0;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.can_say_good, "another seat's Good is not this one's");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && r.can_say_good, "another seat's Good is not this one's");
     cvr_board(&v, 1);
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.can_say_good, "the defender is never offered Good");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && !r.can_say_good, "the defender is never offered Good");
     cvr_board(&v, 2);
     v.battles[1] = (Battle){ .attack = { .suit = SUIT_DIAMONDS, .value = 6 }, .defense = CARD_NONE };
     v.num_battles = 2;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.can_say_good, "not while an attack stands uncovered");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && !r.can_say_good, "not while an attack stands uncovered");
     v.num_battles = 0;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.can_say_good, "not over an empty table");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && !r.can_say_good, "not over an empty table");
     cvr_board(&v, -1);
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.can_say_good, "a spectator is offered nothing");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && !r.can_say_good, "a spectator is offered nothing");
     cvr_board(&v, 2);
     v.seats[2].status = PLAYER_STATUS_OUT;
     v.seats[2].hand_count = 0;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.can_say_good, "a seat that is out says nothing (handle_good: NOT_IN_STATUS)");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && !r.can_say_good, "a seat that is out says nothing (handle_good: NOT_IN_STATUS)");
     cvr_board(&v, 2);
     v.status = GAME_STATUS_GAME_OVER;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.can_say_good, "nor on a finished game (handle_good: NOT_PLAYING)");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && !r.can_say_good, "nor on a finished game (handle_good: NOT_PLAYING)");
 
     // The sword: the next bout's lead, on an empty table once the deal has turned the trump.
     cvr_board(&v, 2);
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.first_attacker_badge == -1 && r.defender_badge == 1,
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && r.first_attacker_badge == -1 && r.defender_badge == 1,
           "mid-bout: no sword, the shield on the defender");
     v.num_battles = 0;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.first_attacker_badge == 0, "an empty table: the sword on the lead");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && r.first_attacker_badge == 0, "an empty table: the sword on the lead");
     // Mid-deal (a stock and no trump yet) the board names nobody (game.c
     // start_game_dealt), and that alone is why neither seat is marked: the rule
     // reads the seats, never "is it dealt yet".
@@ -12462,73 +12725,98 @@ static void test_client_view_rules(void) {
     v.flipped = CARD_NONE;
     v.first_attacker = GAME_SEAT_NONE;
     v.defender = GAME_SEAT_NONE;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.first_attacker_badge == -1 && r.defender_badge == -1,
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && r.first_attacker_badge == -1 && r.defender_badge == -1,
           "mid-deal (a stock and no trump yet, nobody named): neither badge");
     v.has_flipped = true;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.first_attacker_badge == -1 && r.defender_badge == -1,
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && r.first_attacker_badge == -1 && r.defender_badge == -1,
           "the trump turned, nobody named yet (FLIPPED): neither badge");
     v.has_flipped = false;
     v.first_attacker = 0;
     v.defender = 1;
     v.deck_count = 0;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.first_attacker_badge == 0 && r.defender_badge == 1,
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && r.first_attacker_badge == 0 && r.defender_badge == 1,
           "the stock and trump drawn out late in the game: both badges");
     v.defender = 3;
     v.first_attacker = -1;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.first_attacker_badge == -1 && r.defender_badge == -1,
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && r.first_attacker_badge == -1 && r.defender_badge == -1,
           "a badge names only a seat the board has");
 
     // The stock: cards in flight leave the pile first, and the ones bound for the trump still count on it.
     cvr_board(&v, 0);
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.deck_pile == 12 && r.deck_badge == 13
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && r.deck_pile == 12 && r.deck_badge == 13
           && r.show_deck_pile && r.show_flipped_slot && !r.show_trump_icon, "a dealt stock and its trump");
     v.has_flipped = false;
     v.deck_count = 7;
-    CHECK(client_view_rules(&v, 7, 1, &r) == CLIENT_OK && r.deck_pile == 0 && r.deck_badge == 1
+    CHECK(client_view_rules(&v, 7, 1, 0, &r) == CLIENT_OK && r.deck_pile == 0 && r.deck_badge == 1
           && !r.show_deck_pile && r.show_flipped_slot && !r.show_trump_icon, "the last cards in flight, one to the trump slot");
-    CHECK(client_view_rules(&v, 9, 0, &r) == CLIENT_OK && r.deck_pile == 0 && r.deck_badge == 0
+    CHECK(client_view_rules(&v, 9, 0, 0, &r) == CLIENT_OK && r.deck_pile == 0 && r.deck_badge == 0
           && !r.show_deck_pile && !r.show_flipped_slot && r.show_trump_icon, "more in flight than the stock holds shows none");
     v.deck_count = 0;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.deck_badge == 0 && r.show_trump_icon && !r.show_flipped_slot,
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && r.deck_badge == 0 && r.show_trump_icon && !r.show_flipped_slot,
           "stock and trump gone: the power suit");
+
+    // THE PLACE A FLIGHT LEAVES FROM IS ON SCREEN FOR AS LONG AS IT FLIES. The
+    // draw that takes the stock's last two cards and the trump: the pile is
+    // empty the instant it opens, and its two cards still leave from the
+    // stock's place; the trump leaves from its slot, which stays while the
+    // board still holds it, with its face lifted out (the trump is in the air).
+    cvr_board(&v, 0);
+    v.deck_count = 2;
+    CHECK(client_view_rules(&v, 2, 0, 1, &r) == CLIENT_OK && r.deck_pile == 0 && !r.show_deck_pile
+          && r.show_deck_spot && r.show_flipped_slot && !r.show_flipped_card && !r.show_trump_icon
+          && r.deck_badge == 0,
+          "the stock's last cards and the trump in the air: the stock's place and the trump's slot stay, empty");
+    CHECK(client_view_rules(&v, 2, 0, 0, &r) == CLIENT_OK && r.show_deck_spot && r.show_flipped_card
+          && r.deck_badge == 1, "the stock's last cards in the air, the trump still lying: its face shows and counts");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && r.show_deck_spot && r.show_deck_pile && r.show_flipped_card,
+          "nothing in the air: the pile is its own place");
+    v.deck_count = 0;
+    CHECK(client_view_rules(&v, 0, 0, 1, &r) == CLIENT_OK && !r.show_deck_spot && r.show_flipped_slot
+          && !r.show_flipped_card && r.deck_badge == 0,
+          "the trump alone in the air: no stock place (nothing leaves it), the slot stays, empty");
+    v.has_flipped = false;
+    v.flipped = CARD_NONE;
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && !r.show_deck_spot && !r.show_flipped_card && r.show_trump_icon,
+          "after the trump lands: the power suit, nothing else");
+    CHECK(client_view_rules(&v, 0, 0, 2, &r) == CLIENT_E_FORMAT, "a trump in the air is a flag, nothing else");
 
     // A bot to move: should_bot_act's rule, for any seat the roster marks a bot.
     cvr_board(&v, 0);
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.bot_to_move, "no bot seats, no bot to move");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && !r.bot_to_move, "no bot seats, no bot to move");
     v.seats[2].is_ai = true;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.bot_to_move, "a bot attacker that has not said good may throw in");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && r.bot_to_move, "a bot attacker that has not said good may throw in");
     v.good_mask = 1u << 2;
     v.seats[1].is_ai = true;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.bot_to_move,
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && !r.bot_to_move,
           "not once it said good, and a bot defender over a covered table waits");
     v.battles[1] = (Battle){ .attack = { .suit = SUIT_DIAMONDS, .value = 6 }, .defense = CARD_NONE };
     v.num_battles = 2;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.bot_to_move, "a bot defender with an attack to answer");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && r.bot_to_move, "a bot defender with an attack to answer");
     cvr_board(&v, 0);
     v.seats[0].is_ai = true;
     v.num_battles = 0;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.bot_to_move, "a bot first attacker on an empty table");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && r.bot_to_move, "a bot first attacker on an empty table");
     v.first_attacker = 2;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.bot_to_move, "not when a human leads");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && !r.bot_to_move, "not when a human leads");
     cvr_board(&v, 0);
     v.seats[2].is_ai = true;
     v.seats[2].status = PLAYER_STATUS_OUT;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.bot_to_move, "a bot that is out never moves");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && !r.bot_to_move, "a bot that is out never moves");
     v.seats[2].status = PLAYER_STATUS_IN;
     v.status = GAME_STATUS_GAME_OVER;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.bot_to_move, "nor on a finished game");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_OK && !r.bot_to_move, "nor on a finished game");
 
     // Refusals: a view that is not one.
     cvr_board(&v, 0);
     v.num_players = MAX_PLAYERS + 1;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_E_FORMAT, "more seats than a table has is refused");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_E_FORMAT, "more seats than a table has is refused");
     cvr_board(&v, 3);
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_E_FORMAT, "a viewer who is not a seat is refused");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_E_FORMAT, "a viewer who is not a seat is refused");
     cvr_board(&v, 0);
     v.num_battles = -1;
-    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_E_FORMAT, "a negative battle count is refused");
+    CHECK(client_view_rules(&v, 0, 0, 0, &r) == CLIENT_E_FORMAT, "a negative battle count is refused");
     cvr_board(&v, 0);
-    CHECK(client_view_rules(&v, -1, 0, &r) == CLIENT_E_FORMAT && client_view_rules(&v, 0, -2, &r) == CLIENT_E_FORMAT,
+    CHECK(client_view_rules(&v, -1, 0, 0, &r) == CLIENT_E_FORMAT && client_view_rules(&v, 0, -2, 0, &r) == CLIENT_E_FORMAT,
           "a negative flight is refused");
 }
 
@@ -12867,7 +13155,7 @@ static void test_client_board_edit_undeal(void) {
             // START_MAGIC board: no seat wears a mark before the deal lands.
             ViewRules vr;
             const int nobody = cb_view.first_attacker == GAME_SEAT_NONE && cb_view.defender == GAME_SEAT_NONE
-                && client_view_rules(&cb_view, 0, 0, &vr) == CLIENT_OK && vr.first_attacker_badge == -1 && vr.defender_badge == -1;
+                && client_view_rules(&cb_view, 0, 0, 0, &vr) == CLIENT_OK && vr.first_attacker_badge == -1 && vr.defender_badge == -1;
             if (!empty && every) fprintf(stderr, "  %dp viewer %d: rc %d, deck %d of %d, hand %d\n", np, viewer, rc, cb_view.deck_count, dealt, cb_view.my_hand_count);
             if (!nobody && every_nobody)
                 fprintf(stderr, "  %dp viewer %d: the undealt board names lead %d, defender %d\n", np, viewer, cb_view.first_attacker, cb_view.defender);
@@ -13380,7 +13668,433 @@ static void test_client_adopts_a_bare_board(void) {
     CHECK(ct.open == false, "and adopting never leaves a push open behind it");
 }
 
+// ---------- podkidnoy reaches every search (docs/PODKIDNOY.md) ----------------
+//
+// The rule is one bit on the Game, and every menu reads it. What these pin is
+// that the bit REACHES every Game a search runs on: the board the Infinite
+// Oracle imports, every Monte-Carlo world and rollout, the exact solvers, the
+// endgame book, and every brain the arena knows. A search that loses the bit
+// still returns a move off the real menu, so nothing on a board looks wrong;
+// only the values the move was chosen by are, and the Oracle prints those.
+
+#ifdef CD_PASS_PROBE
+
+// Would the defender's menu hold a transfer if this board were the classic game?
+static int pk_transferable(const Game *g, int seat) {
+    static Game classic;
+    memcpy(&classic, g, offsetof(Game, logs));
+    classic.num_logs = 0;
+    classic.rules = 0;
+    return menu_has(&classic, seat, MOVE_PASS);
+}
+
+// THE ORACLE'S BOARD. oracle.wasm never sees a code: it is handed the board the
+// deciding seat saw (replay_steps_board_v6, the bytes bots.wasm writes) and
+// imports it into its resident game (wasm_import_state(masked=1), i.e.
+// state_import over a game that starts zeroed), then asks octogen over that
+// game's calculate_legal_moves (wasm_choose_move). So the board must carry the
+// rules: a masked board that drops them hands the Oracle the passing game, and
+// its candidate list offers a transfer the table never had.
+static void test_oracle_board_keeps_the_rules(void) {
+    static unsigned char code[1 << 20], board[RS_BOARD_MAX], index[8192];
+    static Game imported;
+    static LegalMoves ml;
+    int boards = 0, lost = 0, menus_with_pass = 0, transferable = 0;
+    int searched = 0, chose_pass = 0;
+    long rollout_passes = 0;
+    const int og = bot_roster_find("octogen");
+    CHECK(og >= 0, "octogen is on the roster");
+
+    for (int np = 2; np <= 4; np++) {
+        for (int k = 0; k < 2; k++) {
+            Game g;
+            unsigned char seed[FOOLISH_SEED_LEN];
+            if (!rs_play_seeded_rules(&g, np, 930 + np * 7 + k, seed, GAME_RULE_NO_PASS)) {
+                CHECK(0, "a podkidnoy game plays out"); continue;
+            }
+            CHECK(!game_pass_allowed(&g), "the played game is podkidnoy to the end");
+            const int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 20,
+                                                       code, (int)sizeof code);
+            if (enc <= 0) { CHECK(0, "the podkidnoy game encodes as v6"); continue; }
+            const int steps = replay_steps_count_v6(code, enc, 0);
+            const int ilen = replay_steps_index_v6(code, enc, 0, index, (int)sizeof index);
+            if (ilen != steps * RS_INDEX_STRIDE) { CHECK(0, "the step index covers every step"); continue; }
+
+            for (int step = 1; step < steps; step++) {
+                const int seat = index[step * RS_INDEX_STRIDE + 1];
+                if (seat == RS_SEAT_NONE) continue;
+                const int len = replay_steps_board_v6(code, enc, step, seat, board, (int)sizeof board);
+                if (len <= 0) { CHECK(0, "a decision's board is written"); continue; }
+                memset(&imported, 0, sizeof imported);
+                if (state_import(&imported, board, len, 1) != GAME_VALID) {
+                    CHECK(0, "the oracle's board imports"); continue;
+                }
+                imported.deterministic_deck = false;   // as wasm_import_state leaves it
+                boards++;
+                lost += game_pass_allowed(&imported);
+                calculate_legal_moves(&imported, seat, &ml);
+                int has_pass = 0;
+                for (int i = 0; i < ml.n; i++) has_pass |= ml.moves[i].type == MOVE_PASS;
+                menus_with_pass += has_pass;
+                if (!pk_transferable(&imported, seat)) continue;
+                transferable++;
+
+                // The deliberation itself, on a dozen of the boards where the
+                // classic game would have offered the transfer: octogen, as the
+                // Oracle runs it, must neither pick a transfer nor play one in
+                // any world it searches.
+                if (searched >= 12 || ml.n == 0) continue;
+                searched++;
+                game_pass_probe = 0;
+                const int idx = bot_roster_choose(og, &imported, seat, &ml);
+                rollout_passes += game_pass_probe;
+                if (idx >= 0 && idx < ml.n && ml.moves[idx].type == MOVE_PASS) chose_pass++;
+            }
+        }
+    }
+    CHECK(boards > 100, "the podkidnoy games gave the oracle enough boards");
+    CHECK(transferable > 0, "and some of them would have offered a transfer in the classic game");
+    if (lost) fprintf(stderr, "  %d of %d oracle boards imported as the passing game\n", lost, boards);
+    CHECK(lost == 0, "every board the oracle imports keeps its podkidnoy rules");
+    if (menus_with_pass) fprintf(stderr, "  %d oracle menus offered a transfer\n", menus_with_pass);
+    CHECK(menus_with_pass == 0, "the oracle's candidate menu never offers a transfer at a podkidnoy table");
+    CHECK(searched > 0, "octogen deliberated on transferable podkidnoy boards");
+    if (rollout_passes) fprintf(stderr, "  octogen played %ld transfers inside its search\n", rollout_passes);
+    CHECK(rollout_passes == 0, "octogen's worlds, rollouts and solves never transfer at a podkidnoy table");
+    CHECK(chose_pass == 0, "octogen never chooses a transfer at a podkidnoy table");
+}
+
+// THE BOARD ITSELF: state_put writes the rules and state_get reads them back,
+// for every viewer, and a classic board is the byte string it always was.
+static void test_masked_board_carries_the_rules(void) {
+    static unsigned char a[RS_BOARD_MAX], b[RS_BOARD_MAX];
+    static Game g, back;
+    setup_transferable(&g);
+    for (int viewer = VIEW_UNMASKED; viewer < 2; viewer++) {
+        g.rules = 0;
+        const int na = state_put(&g, viewer, a);
+        g.rules = GAME_RULE_NO_PASS;
+        const int nb = state_put(&g, viewer, b);
+        CHECK(na == nb, "podkidnoy costs the board no byte");
+        int differ = 0;
+        for (int i = 0; i < na && i < nb; i++) differ += a[i] != b[i];
+        CHECK(differ == 1, "the rules are one bit of one byte of the board");
+        memset(&back, 0, sizeof back);
+        back.rules = GAME_RULE_NO_PASS;   // a resident game that held podkidnoy before
+        CHECK(state_get(&back, a, na, viewer != VIEW_UNMASKED) == GAME_VALID && game_pass_allowed(&back),
+              "a classic board reads back as the classic game, whatever the game held before");
+        memset(&back, 0, sizeof back);
+        CHECK(state_get(&back, b, nb, viewer != VIEW_UNMASKED) == GAME_VALID && !game_pass_allowed(&back),
+              "a podkidnoy board reads back as podkidnoy");
+        CHECK(!menu_has(&back, 1, MOVE_PASS), "the read-back podkidnoy board offers no transfer");
+        if (viewer == VIEW_UNMASKED || viewer == 1)
+            CHECK(menu_has(&back, 1, MOVE_COVER), "and the defender who sees their hand can still cover");
+
+        // A rule this kernel does not know is a board from a newer kernel, and
+        // is refused rather than played as the game this kernel knows.
+        b[STATE_FLAGS_AT] |= (unsigned char)(GAME_RULE_NO_PASS << 1) << STATE_FLAG_RULES_SHIFT;
+        memset(&back, 0, sizeof back);
+        CHECK(state_import(&back, b, nb, viewer != VIEW_UNMASKED) == GAME_INVALID_RULES,
+              "a board naming an unknown rule is refused as GAME_INVALID_RULES");
+    }
+
+    // THE ROW KEEPS ONE OWNER. A durable blob's flag byte has carried the rules
+    // since v4, so the board inside it names none: a podkidnoy row is the byte
+    // string every v4 reader already reads, and a row whose board does name
+    // rules is not one this kernel wrote.
+    {
+        static unsigned char blob[8192];
+        const BoardClock clk = { 1, 2 };
+        for (int i = 0; i < 6; i++) g.players[0].hand[i] = (Card){ SUIT_CLUBS, (int8_t)(6 + i) };
+        g.rules = GAME_RULE_NO_PASS;
+        const int n = state_blob_put_at(&g, &clk, STATE_BLOB_FORMAT_V4, blob);
+        CHECK(n > 0 && !(blob[1] & STATE_BLOB_FLAG_PASSING), "a podkidnoy row says so in its flag");
+        CHECK(n > 0 && (blob[STATE_BLOB_HEADER + STATE_FLAGS_AT] & ~STATE_FLAG_FLIPPED) == 0,
+              "and its board names no rules");
+        memset(&back, 0, sizeof back);
+        CHECK(state_blob_load(&back, blob, n, 0) == 1 && !game_pass_allowed(&back), "the row loads as podkidnoy");
+        blob[STATE_BLOB_HEADER + STATE_FLAGS_AT] |= (unsigned char)(GAME_RULE_NO_PASS << STATE_FLAG_RULES_SHIFT);
+        CHECK(state_blob_load(&back, blob, n, 0) == 0, "a row whose board names rules is refused");
+    }
+}
+
+// A random two-seat endgame: deck gone, table empty, seat 0 to lead into seat 1.
+static void pk_endgame(Game *g, uint32_t *rng, int n0, int n1) {
+    memset(g, 0, offsetof(Game, logs));
+    g->status = GAME_STATUS_PLAYING;
+    g->num_players = 2;
+    *rng = *rng * 1103515245u + 12345u;
+    g->power_suit = (int8_t)((*rng >> 16) % 4);
+    g->first_attacker = 0;
+    g->defender = 1;
+    int ids[36];
+    for (int i = 0; i < 36; i++) ids[i] = i;
+    for (int i = 0; i < n0 + n1; i++) {
+        *rng = *rng * 1103515245u + 12345u;
+        const int j = i + (int)((*rng >> 16) % (uint32_t)(36 - i));
+        const int t = ids[i]; ids[i] = ids[j]; ids[j] = t;
+    }
+    for (int s = 0; s < 2; s++) {
+        Player *p = &g->players[s];
+        p->status = PLAYER_STATUS_IN;
+        p->hand_count = (int8_t)(s == 0 ? n0 : n1);
+        for (int h = 0; h < p->hand_count; h++) {
+            const int id = ids[s == 0 ? h : n0 + h];
+            p->hand[h] = (Card){ (int8_t)(id / 9), (int8_t)(5 + id % 9) };
+        }
+    }
+    g->discard_pile_length = (int16_t)(36 - n0 - n1);
+}
+
+static int pk_solve(const Game *g, int8_t rules, int book, int reset) {
+    SimState s;
+    cd_sim_from_game(&s, g);
+    s.rules = rules;
+    cd_sim_set_leafbook(book);
+    if (reset) cd_sim_solve_reset();
+    int aborted = 0;
+    const int v = cd_sim_solve(&s, 0, -1001, 1001, 2000000, &aborted);
+    cd_sim_set_leafbook(0);
+    return aborted ? 99999 : v;
+}
+
+// THE EXACT SOLVER, ITS TRANSPOSITION TABLE AND THE ENDGAME BOOK. The book
+// (c/LEAFBOOK.md) is a proof about the CLASSIC game, keyed on two hands and a
+// trump - no rules in the key - so at a podkidnoy table it must not be asked.
+// The table is shared by every solve in a process (a server holds both kinds of
+// table in one module), so its key must tell the two games apart.
+static void test_podkidnoy_solver_and_book(void) {
+    uint32_t rng = 4242u;
+    int differ = 0, book_wrong = 0, tt_wrong = 0, book_classic_hits = 0, book_classic_wrong = 0;
+    long pk_hits = 0;
+    static Game g;
+    for (int trial = 0; trial < 3000; trial++) {
+        rng = rng * 1103515245u + 12345u;
+        const int total = 2 + (int)((rng >> 16) % 6);          // 2..7 cards
+        const int n0 = 1 + (int)((rng >> 8) % (uint32_t)(total - 1));
+        pk_endgame(&g, &rng, n0, total - n0);
+        const int classic = pk_solve(&g, 0, 0, 1);
+        const int podk = pk_solve(&g, GAME_RULE_NO_PASS, 0, 1);
+        if (classic == 99999 || podk == 99999) continue;
+        if (classic != podk) differ++;
+
+        // The table, warm from the classic solve of the very same position.
+        (void)pk_solve(&g, 0, 0, 1);
+        if (pk_solve(&g, GAME_RULE_NO_PASS, 0, 0) != podk) tt_wrong++;
+
+#ifdef CD_LEAFBOOK
+        const long h0 = cd_sim_leafbook_hits();
+        if (pk_solve(&g, GAME_RULE_NO_PASS, 1, 1) != podk) book_wrong++;
+        pk_hits += cd_sim_leafbook_hits() - h0;
+        const long h1 = cd_sim_leafbook_hits();
+        if (pk_solve(&g, 0, 1, 1) != classic) book_classic_wrong++;
+        book_classic_hits += cd_sim_leafbook_hits() > h1;
+#endif
+    }
+    CHECK(differ > 0, "some endgames are worth something different without the transfer");
+    if (tt_wrong) fprintf(stderr, "  %d podkidnoy solves read the classic game's table entries\n", tt_wrong);
+    CHECK(tt_wrong == 0, "a podkidnoy solve never reads a classic solve's table entry");
+#ifdef CD_LEAFBOOK
+    CHECK(book_classic_hits > 0, "the book answers classic endgames");
+    CHECK(book_classic_wrong == 0, "and its answers are the classic solve's");
+    if (pk_hits || book_wrong) fprintf(stderr, "  the book answered %ld podkidnoy probes, %d values wrong\n", pk_hits, book_wrong);
+    CHECK(pk_hits == 0, "the classic endgame book is never asked about a podkidnoy endgame");
+    CHECK(book_wrong == 0, "a podkidnoy solve with the book on is the podkidnoy value");
+#else
+    (void)pk_hits; (void)book_wrong; (void)book_classic_hits; (void)book_classic_wrong;
+#endif
+}
+
+// EVERY ROLLOUT PATH, from real podkidnoy worlds: positions of played podkidnoy
+// games where the classic game would offer the defender a transfer, converted
+// once (cd_sim_from_game, as every MC brain does) and played out by each
+// playout the brains use. And the control, so the probe is known to see a
+// rollout's transfer at all: the same worlds with the rule taken off.
+static void test_podkidnoy_rollouts_never_transfer(void) {
+    static Game g;
+    static LegalMoves ml;
+    int worlds = 0, root_tried = 0, root_refused = 0, root_control = 0;
+    long podk = 0, control = 0;
+    for (int np = 2; np <= 4; np++) {
+        unsigned char seed[FOOLISH_SEED_LEN];
+        for (int i = 0; i < FOOLISH_SEED_LEN; i++) seed[i] = (unsigned char)(i * 7 + np);
+        game_set_seed(77u + (uint32_t)np);
+        random_strategy_set_seed(77u + (uint32_t)np);
+        game_set_deal_seed_bytes(seed, FOOLISH_SEED_LEN);
+        memset(&g, 0, sizeof g);
+        g.num_players = (int8_t)np;
+        g.rules = GAME_RULE_NO_PASS;
+        for (int i = 0; i < np; i++) g.players[i].status = PLAYER_STATUS_READY;
+        start_game(&g);
+        for (int guard = 0; guard < 4000 && game_done(&g) < 0; guard++) {
+            if (g.num_battles > 0 && pk_transferable(&g, g.defender) && worlds < 60) {
+                worlds++;
+                SimState base;
+                cd_sim_from_game(&base, &g);
+                // A candidate's root move is applied to the world the same way
+                // (cd_sim_apply_root_move), and it refuses the transfer the
+                // classic menu would have held, as handle_pass does.
+                {
+                    static Game classic;
+                    memcpy(&classic, &g, offsetof(Game, logs));
+                    classic.num_logs = 0;
+                    classic.rules = 0;
+                    calculate_legal_moves(&classic, g.defender, &ml);
+                    for (int i = 0; i < ml.n; i++) {
+                        if (ml.moves[i].type != MOVE_PASS) continue;
+                        SimState w = base;
+                        root_refused += !cd_sim_apply_root_move(&w, g.defender, &ml.moves[i]);
+                        w = base; w.rules = 0;
+                        root_control += cd_sim_apply_root_move(&w, g.defender, &ml.moves[i]);
+                        root_tried++;
+                    }
+                }
+                for (int pass = 0; pass < 2; pass++) {
+                    SimState w0 = base;
+                    if (pass) w0.rules = 0;
+                    game_pass_probe = 0;
+                    const uint8_t pol_loose[MAX_PLAYERS] = { CD_POL_LOOSE, CD_POL_LOOSE, CD_POL_LOOSE, CD_POL_LOOSE,
+                                                             CD_POL_LOOSE, CD_POL_LOOSE, CD_POL_LOOSE, CD_POL_LOOSE };
+                    const uint8_t pol_mcdef[MAX_PLAYERS] = { CD_POL_MCDEF, CD_POL_MCDEF, CD_POL_MCDEF, CD_POL_MCDEF,
+                                                             CD_POL_MCDEF, CD_POL_MCDEF, CD_POL_MCDEF, CD_POL_MCDEF };
+                    for (int r = 0; r < 20; r++) {
+                        SimState w;
+                        w = w0; (void)cd_sim_playout(&w, g.defender, 400, 0);
+                        w = w0; (void)cd_sim_playout_leaf(&w, g.defender, 400, 0, 8, 20000);
+                        w = w0; (void)cd_sim_playout_pol(&w, g.defender, 400, 0, 8, 20000, pol_loose);
+                        w = w0; (void)cd_sim_playout_pol(&w, g.defender, 400, 0, 0, 0, pol_mcdef);
+                        w = w0; (void)cd_sim_playout_reply(&w, g.defender, 400, 8, 20000, NULL, 8);
+                    }
+                    if (pass) control += game_pass_probe; else podk += game_pass_probe;
+                }
+            }
+            bool acted = false;
+            for (int pi = 0; pi < np && !acted; pi++) {
+                if (!should_bot_act(&g, pi)) continue;
+                calculate_legal_moves(&g, pi, &ml);
+                if (ml.n == 0) continue;
+                acted = legal_move_apply(&g, pi, &ml.moves[random_strategy_choose(&g, pi, &ml, 0)]);
+            }
+            if (!acted) break;
+        }
+    }
+    CHECK(worlds >= 20, "the podkidnoy games staged enough transferable worlds");
+    CHECK(control > 0, "the probe sees a rollout's transfer once the rule is off");
+    if (podk) fprintf(stderr, "  %ld transfers inside podkidnoy rollouts\n", podk);
+    CHECK(podk == 0, "no rollout of a podkidnoy world ever transfers");
+    CHECK(root_tried > 0 && root_control == root_tried, "a classic world takes a transfer as a root move");
+    CHECK(root_refused == root_tried, "a podkidnoy world refuses a transfer as a root move");
+}
+
+// EVERY BRAIN THE ARENA KNOWS, AND EVERY BOT THE ROSTER SHIPS, at a podkidnoy
+// table. The brains come off strategy_choose's ids (STRAT_COUNT, held to the
+// dispatch below so a new brain cannot be left out), the bots off bot_roster
+// with their production knobs. Each seats a whole table of itself and plays
+// short podkidnoy games: no choice may be a transfer, the engine must never
+// refuse one, and - the part no board would show - no search inside any of them
+// may play one either.
+// Actions per game: enough for several defences, and the brains' first moves
+// are their slowest (a full deck of unknowns), so this is the test's cost.
+#define PK_ACTIONS 16
+static int pk_play(int brain, int roster_idx, int np, uint32_t seed, int max_actions,
+                   long *passes, int *chose_pass, int *refused, int *transferable) {
+    static Game g;
+    static LegalMoves ml;
+    unsigned char ds[FOOLISH_SEED_LEN];
+    for (int i = 0; i < FOOLISH_SEED_LEN; i++) ds[i] = (unsigned char)(seed * 17u + (uint32_t)i * 29u);
+    game_set_seed(seed);
+    random_strategy_set_seed(seed);
+    game_set_deal_seed_bytes(ds, FOOLISH_SEED_LEN);
+    memset(&g, 0, sizeof g);
+    g.num_players = (int8_t)np;
+    g.rules = GAME_RULE_NO_PASS;
+    for (int i = 0; i < np; i++) g.players[i].status = PLAYER_STATUS_READY;
+    start_game(&g);
+    int decisions = 0;
+    for (int a = 0; a < max_actions && game_done(&g) < 0; a++) {
+        bool acted = false;
+        for (int pi = 0; pi < np && !acted; pi++) {
+            if (!should_bot_act(&g, pi)) continue;
+            calculate_legal_moves(&g, pi, &ml);
+            if (ml.n == 0) continue;
+            *transferable += pi == g.defender && pk_transferable(&g, pi);
+            game_pass_probe = 0;
+            int idx = brain >= 0 ? strategy_choose(brain, &g, pi, &ml)
+                                 : bot_roster_choose(roster_idx, &g, pi, &ml);
+            *passes += game_pass_probe;
+            decisions++;
+            if (idx < 0 || idx >= ml.n) idx = 0;
+            if (ml.moves[idx].type == MOVE_PASS) (*chose_pass)++;
+            acted = legal_move_apply(&g, pi, &ml.moves[idx]);
+            if (!acted && engine_last_reject == ENGINE_REJECT_PASS_DISABLED) (*refused)++;
+        }
+        if (!acted) break;
+    }
+    return decisions;
+}
+
+static void test_podkidnoy_every_brain(void) {
+    static LegalMoves ml;
+    // The count and the dispatch are one list: every id below STRAT_COUNT is a
+    // brain, and the first id past it is not.
+    {
+        Game g; setup_transferable(&g);
+        // Real cards in the attacker's hand: a brain that reads every hand
+        // (novichok's endgame solve) must be handed a board that has them.
+        for (int i = 0; i < 6; i++) g.players[0].hand[i] = (Card){ SUIT_CLUBS, (int8_t)(6 + i) };
+        calculate_legal_moves(&g, 1, &ml);
+        int unknown_below = 0, known_past = 0;
+        for (int s = 0; s < 64; s++) {
+            const int r = strategy_choose(s, &g, 1, &ml);
+            if (s < STRAT_COUNT && r < 0) unknown_below++;
+            if (s >= STRAT_COUNT && r >= 0) known_past++;
+        }
+        CHECK(unknown_below == 0, "every id below STRAT_COUNT dispatches to a brain");
+        CHECK(known_past == 0, "no id past STRAT_COUNT dispatches (bump STRAT_COUNT with a new brain)");
+        // The probe sees a real transfer too, so a struct-world search (which
+        // applies its moves through handle_pass) cannot transfer unseen.
+        Card p7h = { SUIT_HEARTS, 7 };
+        game_pass_probe = 0;
+        CHECK(handle_pass(&g, 1, &p7h, 1) && game_pass_probe == 1, "the probe counts a transfer the engine applies");
+    }
+    int brains = 0;
+    for (int s = 0; s < STRAT_COUNT; s++) {
+        long passes = 0; int chose = 0, refused = 0, decisions = 0, transferable = 0;
+        for (int np = 2; np <= 3; np++)
+            decisions += pk_play(s, -1, np, 500u + (uint32_t)(s * 3 + np), PK_ACTIONS, &passes, &chose, &refused, &transferable);
+        if (getenv("PK_TRACE")) fprintf(stderr, "  brain %d: %d decisions, %d transferable\n", s, decisions, transferable);
+        if (passes || chose || refused)
+            fprintf(stderr, "  brain %d: %ld transfers searched, %d chosen, %d refused\n", s, passes, chose, refused);
+        CHECK(transferable > 0 && passes == 0 && chose == 0 && refused == 0,
+              "a podkidnoy table: no brain searches, chooses or plays a transfer");
+        brains += transferable > 0;
+    }
+    CHECK(brains == STRAT_COUNT, "every brain met a defence the classic game would let it transfer");
+    int bots = 0;
+    for (int r = 0; r < bot_roster_count(); r++) {
+        if (!bot_roster_linked(r)) continue;
+        long passes = 0; int chose = 0, refused = 0, transferable = 0;
+        for (int np = 2; np <= 3; np++)
+            (void)pk_play(-1, r, np, 900u + (uint32_t)(r * 3 + np), PK_ACTIONS, &passes, &chose, &refused, &transferable);
+        if (passes || chose || refused)
+            fprintf(stderr, "  bot %s: %ld transfers searched, %d chosen, %d refused\n", bot_roster_at(r)->key, passes, chose, refused);
+        CHECK(transferable > 0 && passes == 0 && chose == 0 && refused == 0,
+              "a podkidnoy table: no shipped bot searches, chooses or plays a transfer");
+        bots += transferable > 0;
+    }
+    CHECK(bots == bot_roster_count(), "every roster bot is linked natively and met such a defence");
+}
+
+#endif  // CD_PASS_PROBE
+
 int main(void) {
+#ifdef CD_PASS_PROBE
+    test_masked_board_carries_the_rules();
+    test_oracle_board_keeps_the_rules();
+    test_podkidnoy_solver_and_book();
+    test_podkidnoy_rollouts_never_transfer();
+    test_podkidnoy_every_brain();
+#endif
     test_state_import_rejects_invalid_values();
     test_state_import_refuses_a_lobby_with_cards();
     test_state_import_refuses_a_truncated_payload();
@@ -13544,6 +14258,7 @@ int main(void) {
     test_board_hand_laid_out_follows_the_local_arrangement();
     test_board_the_table_under_the_sweep();
     test_board_finish_rows_rank_first_out_to_the_fool();
+    test_board_end_screen_clears_the_boards_chrome();
     test_board_degenerate_inputs();
     test_board_reads_nothing_past_what_it_was_given();
     test_board_every_card_of_the_deck_crosses_both_ways();
@@ -13600,6 +14315,7 @@ int main(void) {
     test_deal_card_timing();
     test_opening_deal_bytes_are_unchanged();
     test_opening_deal_plan_paces_card_by_card();
+    test_a_started_game_replays_its_deal();
     test_table_reseat_retitle_continue();
     test_table_rearrange_and_redact();
     test_table_redact_default_title();

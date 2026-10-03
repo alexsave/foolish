@@ -405,12 +405,25 @@ int anim_build_plan(const AnimPlanEvent *events, int n_events, int n_players,
     keyset_clear(veil_seen);
     for (int i = 0; i < n_events; i++) {
         const AnimPlanEvent *ev = &events[i];
+        // The trump lying in its slot as this step opens: the board before it.
+        const Card trump_before = cur.flipped;
         // A step's post counts ARE its own board; the delta only carries the
         // walk forward across a step that has none.
         if (carries_counts(ev)) adopt_counts(ev, &cur);
         else                    apply_forward(ev, &cur);
 
         AnimPlanStep *st = &out->steps[i];
+        // THE TRUMP THIS STEP DEALS OUT: a draw whose board before it had a
+        // trump and whose own board does not. Read off the BOARDS, never the
+        // cards - a masked viewer's cards are backs, and the trump lay face up
+        // for everyone. Only a step carrying its own board can say so: a
+        // boardless step's trump is carried forward unchanged (apply_forward
+        // never touches it), so such a step never reads as taking it.
+        const int deals_trump = (ev->type == ANIM_EVT_REFILL || ev->type == ANIM_EVT_DEAL)
+            && ev->n_cards > 0
+            && !card_is_none(trump_before) && card_is_none(cur.flipped);
+        st->trump_out = deals_trump ? trump_before : CARD_NONE;
+        st->trump_from = deals_trump ? ANIM_LOC_FLIPPED : ANIM_LOC_NONE;
         st->type = ev->type;
         st->seat = ev->seat;
         st->from = ev->from;
@@ -422,9 +435,10 @@ int anim_build_plan(const AnimPlanEvent *events, int n_events, int n_players,
 
         // in-flight-from-deck (web inFlightFromDeck / inFlightToFlipped): a step
         // whose cards leave the deck drops the deck badge NOW; the flipped subset
-        // does not count against the badge.
+        // does not count against the badge. A trump the step deals out never
+        // lay in the pile, so it is not one of the cards that left it.
         if (ev->from == ANIM_LOC_DECK && ev->n_cards > 0) {
-            st->in_flight_from_deck = ev->n_cards;
+            st->in_flight_from_deck = ev->n_cards - (deals_trump ? 1 : 0);
             st->in_flight_to_flipped = (ev->to == ANIM_LOC_FLIPPED) ? ev->n_cards : 0;
         } else {
             st->in_flight_from_deck = 0;
@@ -496,13 +510,16 @@ int anim_plan_at(const AnimPlan *plan, int now_ms, AnimFrame *out) {
     out->landed = 0;
     out->next_ms = ANIM_NEVER;
     out->veiled = 0;
+    out->trump_flight = CARD_NONE;
 
     for (int i = 0; i < n; i++) {
         const AnimPlanStep *st = &plan->steps[i];
         const int land = st->start_ms + st->duration_ms;
         if (now_ms >= land) {
-            // Landed: its own board is what shows, and its veil is lifted.
+            // Landed: its own board is what shows, and its veil is lifted. A
+            // trump it dealt out is in a hand now, not in its slot.
             out->landed = i + 1;
+            if (!card_is_none(st->trump_out)) out->flipped = CARD_NONE;
             out->deck = st->deck;
             out->discard = st->discard;
             for (int s = 0; s < plan->pre.n_players && s < MAX_PLAYERS; s++)
@@ -519,20 +536,25 @@ int anim_plan_at(const AnimPlan *plan, int now_ms, AnimFrame *out) {
                 out->elapsed_ms = now_ms - st->start_ms;
                 out->in_flight_from_deck = st->in_flight_from_deck;
                 out->in_flight_to_flipped = st->in_flight_to_flipped;
+                // A trump this step deals leaves its slot as the flight opens
+                // and is drawn in the air, and only there, until it lands.
+                if (!card_is_none(st->trump_out)) {
+                    out->flipped = CARD_NONE;
+                    out->trump_flight = st->trump_out;
+                }
                 out->next_ms = land;          // the landing is the next change
             } else {
                 out->next_ms = st->start_ms;  // we are in the gap before it
             }
         }
     }
-    // THE TRUMP IS THE FREEZE'S FOR THE WHOLE SEQUENCE, and deliberately not
-    // walked forward: a step carries no trump of its own (AnimPlanStep holds
-    // three scalars and a row, never the stock's other half), and the one
-    // event that hands the trump out cannot be told from an ordinary draw by
-    // anything the plan holds - the same blind spot anim_build_plan's header
-    // describes about undoing a refill. `pre.flipped` is what shows while the
-    // sequence plays, which is the rule the owner stated at 1.1(55); once
-    // `done`, the caller has the final board and reads the trump off that.
+    // THE TRUMP IS THE FREEZE'S UNTIL THE STEP THAT DEALS IT OUT OPENS, which
+    // is the rule the owner stated at 1.1(55): it lies in its slot while every
+    // step before that one plays. From that step's opening it is in the air
+    // (`trump_flight`), and from its landing it is in a hand; either way the
+    // slot is empty. The plan knows which step that is because anim_build_plan
+    // reads it off the boards either side of the step (AnimPlanStep.trump_out),
+    // never off the event, which names a draw as deck -> hand.
     out->done = (out->landed >= n) ? 1 : 0;
     return ANIM_EOK;
 }
@@ -1572,6 +1594,17 @@ int anim_finish_rows(const unsigned char *elimination, int n_elim,
         w++;
     }
     return w;
+}
+
+unsigned anim_board_chrome(int is_over, int results_shown, int spectating, int rules) {
+    const unsigned board = ANIM_CHROME_HAND | ANIM_CHROME_PILLS | ANIM_CHROME_UNDO
+                         | ANIM_CHROME_SQUARES;
+    // The list needs BOTH: a finished game, and the beat that says its last
+    // flight has landed. `results_shown` alone is stale state between games.
+    if (is_over && results_shown)
+        return ANIM_CHROME_RESULTS
+             | ((rules & ANIM_CHROME_RULE_CLEAR_ON_RESULTS) ? 0u : board);
+    return board | (spectating ? 0u : ANIM_CHROME_SELF_MARK);
 }
 
 int anim_shown_ledger_allows(int claim, int sequencing) {

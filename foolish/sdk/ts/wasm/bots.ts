@@ -39,6 +39,7 @@ interface EngineExports {
     wasm_msg_seal?(): number;
     wasm_msg_header_ptr?(): number;
     wasm_msg_rule_p?(aLen: number, bLen: number): number;
+    wasm_msg_rematch?(inLen: number, tappedAtMs: number, creatorSeat: number): number;
     wasm_msg_rebase?(pendingRound: number, seat: number, wireLen: number): number;
     wasm_msg_pickup_hold?(seat: number, sentAt: number, now: number): number;
 }
@@ -748,6 +749,22 @@ export function kernelMsgSeal(
     return mem(ex).slice(base, base + r);
 }
 
+// THE REMATCH LOBBY for a FINISHED envelope (c/src/msg_wire.h
+// msg_rematch_lobby): the same game dealt again, built wholly by the kernel.
+// The same C the phone's fio_msg_rematch calls - this is how
+// e2e/msg_rematch.test.ts holds the two engines to one answer.
+export function kernelMsgRematch(finished: Uint8Array, tappedAtMs: number,
+                                 creatorSeat: number): Uint8Array {
+    const ex = bots();
+    if (!ex.wasm_msg_rematch) throw new Error('kernelMsgRematch: module has no FMSG support');
+    if (finished.length > ex.wasm_replay_io_cap()) throw new Error('iMessage payload: capacity exceeded');
+    const base = ex.wasm_replay_io_ptr();
+    mem(ex).set(finished, base);
+    const r = ex.wasm_msg_rematch(finished.length, tappedAtMs, creatorSeat);
+    if (r < 0) throw msgError(r);
+    return mem(ex).slice(base, base + r);
+}
+
 // The best shareable REPLAY code for the game the last kernelMsgDecode
 // adopted — the TS-side twin of MessageKernel.residentReplayCode()
 // (sdk/swift/MessageEnvelope.swift), reached off the same resident g_game
@@ -1294,6 +1311,11 @@ export interface AnimPlanStepSnap {
     deck: number; discard: number; hand: number[];
     inFlightFromDeck: number; inFlightToFlipped: number;
     reveals: bigint;
+    /** The flipped trump this step deals out, by its real identity for every
+     *  viewer, or null; it is the last of the step's cards. */
+    trumpOut: Card | null;
+    /** Where that trump leaves from (ANIM_LOC_FLIPPED), ANIM_LOC_NONE without one. */
+    trumpFrom: number;
 }
 
 /** The plan (anim_plan.h AnimPlan). */
@@ -1308,6 +1330,8 @@ export interface AnimFrameSnap {
     deck: number; discard: number; hand: number[]; nPlayers: number; flipped: Card | null;
     inFlightFromDeck: number; inFlightToFlipped: number;
     veiled: bigint;
+    /** The trump in the air: the step in flight's `trumpOut`, or null. */
+    trumpFlight: Card | null;
 }
 
 /** One event as the beat rules see it (anim_plan.h AnimBeatEvent). */
@@ -1386,6 +1410,7 @@ export function animPlanAt(nowMs: number): AnimFrameSnap {
         inFlightFromDeck: A.AnimFrame_get_in_flight_from_deck(m, at),
         inFlightToFlipped: A.AnimFrame_get_in_flight_to_flipped(m, at),
         veiled: A.AnimFrame_get_veiled(m, at),
+        trumpFlight: readAnimCard(m, A.AnimFrame_trump_flight_at(at)),
     };
 }
 
@@ -1474,6 +1499,8 @@ function readPlan(ex: BotsExports): AnimPlanSnap {
             inFlightFromDeck: A.AnimPlanStep_get_in_flight_from_deck(m, s),
             inFlightToFlipped: A.AnimPlanStep_get_in_flight_to_flipped(m, s),
             reveals: A.AnimPlanStep_get_reveals(m, s),
+            trumpOut: readAnimCard(m, A.AnimPlanStep_trump_out_at(s)),
+            trumpFrom: A.AnimPlanStep_get_trump_from(m, s),
         });
     }
     const nVeil = A.AnimPlan_get_n_veil(m, at);

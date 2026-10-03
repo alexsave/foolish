@@ -19,7 +19,12 @@ extension MessageTableView {
     /// nil to ask `playStep` to retry (a needed frame isn't published yet), or a
     /// (possibly empty) flight list. `view` is the FINAL board, for locating a
     /// card still on the table.
-    func openReplayFlights(_ ev: GameEvent, view: GameView, lastChance: Bool = false) -> [Flight]? {
+    ///
+    /// `trumpOut` is the plan step's trump for this event (AnimPlan.Step
+    /// .trumpOut), already nil while `TrumpFlight.flies` is off - see
+    /// `drawFlights`.
+    func openReplayFlights(_ ev: GameEvent, view: GameView, trumpOut: Card? = nil,
+                           lastChance: Bool = false) -> [Flight]? {
         let mine = !isSpectating && ev.seat == controller.mySeat
         switch ev.kind {
         case .attackPass, .defenderMove, .cover:
@@ -115,24 +120,16 @@ extension MessageTableView {
             return out
 
         case .refill, .deal:
-            // Deck -> hand (mine, real cards) or a seat's badge (backs, by count).
-            if mine {
-                let cards = ev.cards.compactMap { $0 }
-                if cards.isEmpty { return [] }
-                guard deckFrame != .zero, handFrame != .zero else { return nil }
+            let laid = mine ? laidOutHandNow(view) : []
+            return Self.drawFlights(ev, mine: mine, trumpOut: trumpOut,
+                                    deck: deckFrame, trumpSlot: trumpSlotFrame,
+                                    hand: handFrame, badge: seatFrames[ev.seat] ?? .zero,
+                                    lastChance: lastChance) { c, i, n in
                 // Fly to each card's ANALYTICAL final slot so the make-room can
                 // animate at the same time (handLandingSlot); no wait for a live
                 // frame that is still mid-slide.
-                let laid = laidOutHandNow(view)
-                return cards.enumerated().compactMap { i, c in
-                    handLanding(c, laidOut: laid, index: i, of: cards.count).map {
-                        Flight(id: "opendraw-\(c.identity)", card: c, from: deckFrame, to: $0) } }
+                self.handLanding(c, laidOut: laid, index: i, of: n)
             }
-            guard let badge = seatFrames[ev.seat], badge != .zero, deckFrame != .zero else { return nil }
-            let n = max(ev.cards.count, 1)
-            return (0..<n).map { k in
-                Flight(id: "opendraw-\(ev.seat)-\(n)-\(k)", card: nil, from: deckFrame,
-                      to: badge.offsetBy(dx: CGFloat(k) * 3, dy: 0)) }
 
         case .pickup:
             // Table -> hand (mine) or a seat's badge (theirs) - FACE UP either way.
@@ -221,12 +218,93 @@ extension MessageTableView {
         }
     }
 
+    /// A DEAL OR A REFILL'S FLIGHTS: deck -> my hand (real cards, to the slot
+    /// `landing` answers) or deck -> a seat's badge (backs, by count, 3pt
+    /// apart). nil asks `playStep` to poll again: a frame the flights need
+    /// has not published yet.
+    ///
+    /// THE FLIPPED TRUMP FLIES TOO (`trumpOut`, the plan step's
+    /// AnimPlan.Step.trumpOut while `TrumpFlight.flies`). Owner: "the flipped
+    /// card should also have a deal animation to whoever gets it". The draw
+    /// that empties the stock takes the trump from under it as its LAST card,
+    /// and that card lay face up in its own slot a moment ago - so it leaves
+    /// from `trumpSlot`, face up, for EVERY viewer. The kernel names it from
+    /// the boards either side of the step, so a seat whose event is all backs
+    /// still gets the real card; nothing here re-derives which card it is.
+    ///
+    ///   - my draw: the card that IS the trump leaves the slot, the rest the
+    ///     deck, all face up as before;
+    ///   - another seat's: n - 1 backs from the deck, plus the trump face up
+    ///     from the slot, last in the row of cards landing on the badge.
+    ///
+    /// nil `trumpOut` is the rule as it was: every card from the deck. A deck
+    /// rect is only needed when some card actually leaves the deck - a draw of
+    /// the trump alone has nothing to do with the stock's place. A slot that
+    /// has not published is polled for like any other frame, and on the last
+    /// chance the trump leaves the deck rather than not flying at all.
+    ///
+    /// Static and pure so the rule can be held against the kernel's real plans
+    /// without a board - the rects are inputs, and so is the plan's
+    /// `trumpOut`.
+    static func drawFlights(_ ev: GameEvent, mine: Bool, trumpOut: Card?,
+                            deck: CGRect, trumpSlot: CGRect,
+                            hand: CGRect, badge: CGRect, lastChance: Bool,
+                            landing: (Card, Int, Int) -> CGRect?) -> [Flight]? {
+        let slot: CGRect
+        if trumpOut != nil {
+            if trumpSlot != .zero { slot = trumpSlot }
+            else if lastChance { slot = deck }
+            else { return nil }
+        } else {
+            slot = .zero
+        }
+        // …AT THE SLOT CARD'S OWN SIZE. Its first frame is the card that lay
+        // there, not a 50x70 ghost 4pt larger on top of it; it grows to the
+        // ghost's size on the way (Flight.fromSize). Only when it really
+        // leaves the slot: the last-chance flight from the deck is a ghost.
+        let slotCard: CGSize? = trumpOut != nil && slot == trumpSlot ? trumpSlot.size : nil
+        if mine {
+            let cards = ev.cards.compactMap { $0 }
+            if cards.isEmpty { return [] }
+            let isTrump: (Card) -> Bool = { c in trumpOut.map { $0.identity == c.identity } ?? false }
+            let fromDeck = cards.contains { !isTrump($0) }
+            let fromSlot = cards.contains(where: isTrump)
+            guard hand != .zero, !fromDeck || deck != .zero, !fromSlot || slot != .zero
+            else { return nil }
+            return cards.enumerated().compactMap { i, c in
+                landing(c, i, cards.count).map {
+                    Flight(id: "opendraw-\(c.identity)", card: c,
+                           from: isTrump(c) ? slot : deck, to: $0,
+                           fromSize: isTrump(c) ? slotCard : nil) } }
+        }
+        let n = max(ev.cards.count, 1)
+        // The stock's share of the draw: all of it, or all but the trump.
+        let backs = trumpOut == nil ? n : n - 1
+        guard badge != .zero, backs == 0 || deck != .zero else { return nil }
+        var out = (0..<backs).map { k in
+            Flight(id: "opendraw-\(ev.seat)-\(n)-\(k)", card: nil, from: deck,
+                   to: badge.offsetBy(dx: CGFloat(k) * 3, dy: 0)) }
+        if let trump = trumpOut, slot != .zero {
+            out.append(Flight(id: "opendraw-\(trump.identity)", card: trump, from: slot,
+                              to: badge.offsetBy(dx: CGFloat(n - 1) * 3, dy: 0),
+                              fromSize: slotCard))
+        }
+        return out
+    }
+
     /// On opening a delivered bubble, replay everything that happened since I
     /// last looked (notes 4/9/38), as ORDERED sequential animator steps — one
     /// per log entry, using the same `playStep`/`animator.play` machinery the
     /// interactive bout-end sequence uses (so HARNESS_AUTOGAME's
     /// `BoardAnimator.isSequencing` wait still covers it).
-    func replayLastMoveOnOpen(_ view: GameView) {
+    ///
+    /// Returns whether it STARTED A SEQUENCE - the kernel's stream, or the
+    /// genesis deal's fallback. That answer is what decides who owns the role
+    /// marks for this view change (a sequence syncs them as its closing beat;
+    /// otherwise the board's `onChange` must), so it has to be the truth about
+    /// what ran rather than "this was an open". See `opensEmptyWithRoleSync`.
+    @discardableResult
+    func replayLastMoveOnOpen(_ view: GameView) -> Bool {
         AnimLog.say("openReplay events=\(controller.openReplayEvents.count) genesis=\(controller.isGenesis)")
         // The whole open-replay is now the KERNEL's evwire for the last move
         // (controller.openReplayEvents, resolved in begin()). A genesis deal's
@@ -284,10 +362,13 @@ extension MessageTableView {
                         self.myDrawFlights(hand, laidOut: self.laidOutHandNow(view), lastChance: lastChance) }
                     if view.isOver, mySeq == animSequenceToken { settleResults() }
                 }
-                return
+                return true
             }
             if view.isOver { showResults = true }   // note 39c: nothing to animate
-            return
+            // NO SEQUENCE. Note 2: a good that does not close the bout (three
+            // or more seats) is a legitimately empty stream whose whole move is
+            // a role mark - so whoever called this must sync the roles itself.
+            return false
         }
 
         // ROUND 21: TAKE THE MARKS OFF `pendingRoles` AND ONTO STATE, here and
@@ -310,7 +391,7 @@ extension MessageTableView {
         // Refused here, the replay would open against that stream's mid-state:
         // the wrong numbers and the wrong marks, silently, with no twitch to
         // give it away. See ShownLedger.swift.
-        ledger.write(.arming) { $0.seedMarks(from: controller.openReplayPriorState, outs: false) }
+        ledger.write(.arming) { $0.seedMarks(from: controller.openReplaySeedState, outs: false) }
 
         // notes 6/12: hand every real card this open moves - onto the table
         // (attacks/covers/passes) OR into my hand (my own draws/pickups) - to
@@ -417,5 +498,6 @@ extension MessageTableView {
             guard myEpoch == arrivalEpoch else { return }
             await runEventStream(events, finalView: view, openReplay: true, veiledAt: veiledAt)
         }
+        return true
     }
 }

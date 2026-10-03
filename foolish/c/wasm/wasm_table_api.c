@@ -385,8 +385,8 @@ static TableView g_rules_view;
 static ViewRules g_rules;
 TableView *wasm_client_rules_view_ptr(void) { return &g_rules_view; }
 ViewRules *wasm_client_rules_ptr(void)      { return &g_rules; }
-int wasm_client_view_rules(int from_deck, int to_flipped) {
-    return client_view_rules(&g_rules_view, from_deck, to_flipped, &g_rules);
+int wasm_client_view_rules(int from_deck, int to_flipped, int trump_out) {
+    return client_view_rules(&g_rules_view, from_deck, to_flipped, trump_out, &g_rules);
 }
 
 // io = [envelope]

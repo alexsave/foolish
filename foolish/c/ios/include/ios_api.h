@@ -720,6 +720,18 @@ int fio_pass_slot_shown(int previewing, int dragging, int seen_this_drag,
 int fio_finish_rows(const uint8_t *elimination, int n_elim, int game_over,
                     int n_players, int my_seat, char *out, int cap);
 
+// Which pieces of the board's chrome draw, the end screen's list included -
+// see anim_board_chrome. Bits are FIO_CHROME_*; `rules` takes
+// FIO_CHROME_RULE_CLEAR_ON_RESULTS.
+#define FIO_CHROME_HAND      (1u << 0)
+#define FIO_CHROME_PILLS     (1u << 1)
+#define FIO_CHROME_UNDO      (1u << 2)
+#define FIO_CHROME_SQUARES   (1u << 3)
+#define FIO_CHROME_SELF_MARK (1u << 4)
+#define FIO_CHROME_RESULTS   (1u << 5)
+#define FIO_CHROME_RULE_CLEAR_ON_RESULTS 1
+unsigned fio_board_chrome(int is_over, int results_shown, int spectating, int rules);
+
 // May this caller write what the badges are showing? Only a bystander ever
 // stands down, and only while a sequence is running.
 #define FIO_CLAIM_SEQUENCE   0
@@ -930,6 +942,31 @@ int fio_msg_decode(const uint8_t *payload, int len);
 // FIO_EOK, or negative (FIO_EMSG -> fio_last_msg_error).
 int fio_msg_peek(const uint8_t *payload, int len);
 
+// WHERE THE REPLAY OF AN ARRIVING CHAIN STARTS: the `atoms_before` to hand
+// fio_replay_last_events_packed when a board that last showed `shown` opens
+// `arriving` (src/msg_wire.h msg_open_boundary, which has every case). It is
+// the sender's claim (`turn - n_new`), never behind the atoms the two chains
+// share from the start - so a board does not re-animate what it already
+// showed, and a board that showed pending goods still animates the move that
+// supersedes them. `shown` NULL / 0 is a cold open: the claim, unclamped.
+// Parses both payloads and adopts NOTHING.
+// FIO_EOK with *atoms_before set (>= -1; -1 asks the reader to guess, as the
+// claim of a bubble that does not say), FIO_EBADARG, or FIO_EMSG when
+// `arriving` is not an envelope (fio_last_msg_error says why).
+int fio_msg_open_boundary(const uint8_t *shown, int shown_len,
+                          const uint8_t *arriving, int arriving_len, int *atoms_before);
+
+// WHAT AN ADOPTED ARRIVAL LEAVES OF A BUBBLE THIS DEVICE STAGED (src/msg_wire.h
+// msg_staged_fate, which has every case): STANDS - the staged chain was built on
+// the arrived one; LANDED - the arrived chain already carries it; SUPERSEDED -
+// neither (a sibling, a fork, another game). Parses both, adopts NOTHING.
+// FIO_EOK with *fate set, FIO_EBADARG, or FIO_EMSG (fio_last_msg_error).
+#define FIO_FATE_STANDS     0
+#define FIO_FATE_LANDED     1
+#define FIO_FATE_SUPERSEDED 2
+int fio_msg_staged_fate(const uint8_t *staged, int staged_len,
+                        const uint8_t *arrived, int arrived_len, int *fate);
+
 // THE TABLE'S RULES, off that header: 1 when the defender may transfer
 // (perevodnoy), 0 for podkidnoy. Resolved against the envelope's own format, so
 // no host has to know which formats predate the rules byte and are the passing
@@ -966,6 +1003,16 @@ int fio_msg_last_body_version(void);
 int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
                    const uint8_t parent8[8], const uint8_t *joins, int joins_len,
                    int sent_at, uint8_t *out, int cap);
+
+// THE REMATCH LOBBY for the FINISHED chain `finished`: the same game dealt
+// again, seated as it finished, built wholly by the kernel (msg_wire.h
+// msg_rematch_lobby). Adopts nothing; decode the answer to put it on screen.
+//
+// Returns bytes written to `out`, or negative: FIO_EMSG with fio_last_msg_error
+// set when the kernel refuses (not finished, an unnamed seat) - a host then
+// starts an ordinary new game instead.
+int fio_msg_rematch(const uint8_t *finished, int finished_len, uint64_t tapped_at_ms,
+                    int creator_seat, uint8_t *out, int cap);
 
 // ROUND 16 — the pickup hold, asked of the RESIDENT game (the one the last
 // fio_msg_decode replayed). Seconds `seat` must still wait before it may
@@ -1153,6 +1200,10 @@ int fio_msg_lobby_offered(int my_seat, int joined, int capacity,
 int fio_msg_lobby_can_exit(int my_seat, int joined);
 int fio_msg_lobby_can_set_rules(int my_seat);
 int fio_msg_lobby_rules_changed(int have_baseline, int baseline, int current, int mine);
+// Is the newest bubble mine in a way that withholds Start: a rules change, or
+// my bubble on a REMATCH lobby (the creator's). `rematch_lobby` is the lobby's
+// carry, read off its header. See msg_wire.h msg_lobby_changer.
+int fio_msg_lobby_changer(int rules_changed, int mine, int rematch_lobby);
 
 // ONE BEAT, in milliseconds. The same ANIM_TIME_MS a card's flight takes, which
 // is the point: a lobby's beats and a board's beats keep one pulse, and a number
@@ -1278,8 +1329,22 @@ int fio_msg_turn_sent_source(int staged, int have_host, int have_sealed);
 // DECODED chain's game id against the one this board plays, so it is asked on
 // the second call only - pass < 0 on the first. See msg_wire.h.
 #define FIO_TURN_SEND_OTHERGAME   6
+// AN ARRIVAL THAT RACED THE SEND: the board was handed something newer than
+// the sent bytes between Send and the rebase. `fate` is fio_msg_staged_fate(the
+// sent bytes, the chain the board stands on), `sent_wins` is Rule P of (that
+// chain, the sent bytes) > 0; pass < 0 for either when not asked.
+#define FIO_TURN_SEND_OVERTAKEN   7
 int fio_msg_turn_send_verdict(int staged, int have_host, int have_sealed,
-                              int host_is_sealed, int decoded, int same_game);
+                              int host_is_sealed, int decoded, int same_game,
+                              int fate, int sent_wins);
+
+// THE INPUT FIELD AFTER AN ADOPTED ARRIVAL. `state` is the chain state the
+// arrival found, `field_fate` fio_msg_staged_fate(the field's bubble, the
+// arrived chain) or < 0 for no bubble of mine in the field. NOTHING means:
+// stage the NOTHING reseal of the arrived chain over it (the Undo's bubble).
+#define FIO_TURN_FIELD_KEEP     0
+#define FIO_TURN_FIELD_NOTHING  1
+int fio_msg_turn_field_after_arrival(int state, int field_fate);
 
 // The step whose committed board a held settlement shows, or -1 for nothing to
 // hold. `cut` is fio_evw_frames_settlement_cut's answer; pass < 0 for no cut.
@@ -1319,6 +1384,22 @@ void fio_msg_turn_publish(int state, int base_atoms_before, int staged_atoms_bef
 // is a no-op read of 0.
 int fio_msg_expand_note(int event, double now,
                         int *io_pending, int *io_retries, double *io_wanted_at);
+
+// WHICH WAY THE DRAWER IS (c/src/msg_expand.h, msg_style_*): the style the
+// auto-collapse reads, from the host's will/did callbacks, because Apple's
+// `presentationStyle` keeps a late install didTransition(compact) that arrives
+// after the drawer has expanded. Same crossing as the name-entry pair: two
+// scalars the CALLER owns, flat.
+#define FIO_STYLE_COMPACT  0
+#define FIO_STYLE_EXPANDED 1
+#define FIO_STYLE_WILL     0   // willTransitionToPresentationStyle:
+#define FIO_STYLE_DID      1   // didTransitionToPresentationStyle:
+
+// A fresh activation in `style`: writes the two scalars.
+void fio_msg_style_init(int style, int *out_style, int *out_confirmed);
+// Note one callback; returns 1 when the drawer is expanded (or going there)
+// afterwards. The io_ pointers are read and written; NULL ones read as 0.
+int fio_msg_style_note(int phase, int style, int *io_style, int *io_confirmed);
 
 #ifdef __cplusplus
 }

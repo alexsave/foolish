@@ -93,6 +93,7 @@ const char *const FS_STRINGS_NO[FS_K_COUNT] = {
     [FS_K_IOS_MSG_JOINAS           ] = "Bli med som {name}",
     [FS_K_IOS_MSG_JOINED           ] = "{name} ble med - trykk for å bli med",
     [FS_K_IOS_MSG_JOININVITE       ] = "Tåpelig - trykk for å bli med",
+    [FS_K_IOS_MSG_REMATCH         ] = "Omkamp - trykk for å spille",
     [FS_K_IOS_MSG_LEFT             ] = "{name} forlot spillet",
     [FS_K_IOS_MSG_LEFTANON         ] = "En spiller forlot spillet",
     [FS_K_IOS_MSG_LOBBYFULL        ] = "Alle plassene er tatt",

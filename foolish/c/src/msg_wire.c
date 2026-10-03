@@ -4,6 +4,7 @@
 #include "awire.h"
 #include "legal.h"   // MOVE_PICKUP, for the turn controller's admission door
 #include "replay.h"
+#include "../../../shared/c/deal_rng.h"
 #include <string.h>
 
 // ---------- little-endian readers/writers -------------------------------
@@ -316,6 +317,15 @@ int msg_encode(const MsgEnvelope *e, unsigned char *out, int out_cap) {
         out[MSG_NEW_OFF] = e->n_new;
     }
     if (has_rematch) {
+        // Byte 61 is format 3's n_joins and is spoken for by nothing from
+        // format 4 on (the rematch block starts at 62). It is written as 0,
+        // never left as whatever the caller's buffer held: an encoder that
+        // skipped it made the bytes - and so the digest Rule P breaks ties on -
+        // depend on the output buffer's history rather than on the envelope.
+        // Decode still ignores it, so a bubble sealed before this was fixed
+        // (the phone's buffer was always zeroed; test fixtures were not) still
+        // opens.
+        out[MSG_HEADER_LEN_CLOCK - 1] = 0;
         out[MSG_OPEN_OFF] = e->opening;
         wr32(out + MSG_CARRY_OFF, e->carry_key);
         out[MSG_FOOL_OFF] = e->carry_fool;
@@ -521,6 +531,13 @@ int msg_replay(const MsgEnvelope *e, Game *g) {
     if (rounds > 255) return MSG_EROUND;               // the wire field is a u8
     if (e->round != (uint8_t)rounds) return MSG_EROUND; // header vs. reality
 
+    // THE KERNEL RECORDS ITS OWN END here too, as awire_apply does after every
+    // move: the atoms above go through handle_* (apply_one) and the round-end
+    // transition directly, so nothing on this path had settled g->status. A
+    // finished chain replayed as a game still PLAYING with a fool on its
+    // seats, and every reader that asks the status - play_pills' "not out of
+    // play" first among them - offered the fool Take on a game that was over.
+    game_settle_status(g);
     const int over = game_done(g) >= 0 || g->status == GAME_STATUS_GAME_OVER;
     if (over && e->phase != MSG_PHASE_FINISHED) return MSG_EPHASE;
     if (!over && e->phase == MSG_PHASE_FINISHED) return MSG_EPHASE;
@@ -569,11 +586,13 @@ int msg_seal(MsgEnvelope *e, const Game *g, int base_logs,
     e->variant = (uint8_t)(game_pass_allowed(g) ? MSG_VARIANT_PASS : 0u);
 
     // A 0-action game seals to an EMPTY body: a WAITING lobby, or the last-joiner
-    // LIVE handoff that "applies nothing" (§5.2). The v6 producer is an action-run
-    // codec keyed on the logged opening attack — it has nothing to encode and no
-    // first attacker to key on, so it (correctly) refuses. The deal alone is the
-    // state; emit no body and let msg_replay's 0-action path rebuild from the seed.
-    // "No opening attack logged" is the same fact the encoder keys on.
+    // LIVE handoff that "applies nothing" (§5.2). The deal alone is the state;
+    // emit no body and let msg_replay's 0-action path rebuild from the seed.
+    // The v6 producer CAN encode a dealt, unplayed game now (a zero-atom code,
+    // which is how a started bubble replays its deal on open), but the body is
+    // wire every shipped build reads, and an empty one is what they all expect
+    // here - so the seal does not change. "No opening attack logged" is the fact
+    // this keys on, and a lobby still has no deal to encode at all.
     if (replay_first_attacker_from_logs(g->logs, g->num_logs) < 0) {
         (void)scratch; (void)body_cap; (void)base_logs;
         e->actions     = body;   // unused (len 0), but a valid non-null buffer
@@ -682,6 +701,8 @@ int msg_chain_key(const unsigned char *envelope, int len, MsgChainKey *out) {
     MsgEnvelope e;
     const int rc = msg_decode(envelope, len, &e);
     if (rc != MSG_EOK) return rc;
+    out->game_id = e.game_id;
+    memcpy(out->seed, e.seed, MSG_SEED_LEN);   // rule 0F's deal identity
     out->phase = e.phase;
     out->round = e.round;
     out->turn  = e.turn;
@@ -742,6 +763,15 @@ int msg_rule_p(const MsgChainKey *a, const MsgChainKey *b) {
     // those correctly, and a finished chain always has more of both.
     const int sa = a->phase >= MSG_PHASE_LIVE, sb = b->phase >= MSG_PHASE_LIVE;
     if (sa != sb) return sa ? -1 : 1;
+    // Rule 0F, the other boundary (msg_wire.h): of two DEALS of one game, the
+    // one still in play beats the one that is over - a rematch's LIVE chain
+    // against the finished game it replaced. Rounds and turns below are
+    // progress within ONE deal and say nothing across two.
+    if (a->game_id == b->game_id && !seed_is_zero(a->seed) && !seed_is_zero(b->seed)
+        && memcmp(a->seed, b->seed, MSG_SEED_LEN) != 0) {
+        if (a->phase == MSG_PHASE_LIVE && b->phase == MSG_PHASE_FINISHED) return -1;
+        if (b->phase == MSG_PHASE_LIVE && a->phase == MSG_PHASE_FINISHED) return 1;
+    }
     if (a->round != b->round) return a->round > b->round ? -1 : 1;
     if (a->turn  != b->turn)  return a->turn  > b->turn  ? -1 : 1;
     // The fuller roster wins the turn-0 tie (header rule 3): two Starts sealed
@@ -821,6 +851,203 @@ void msg_surface_delta(const MsgEnvelope *showing, const MsgEnvelope *arriving,
     if (na != nb) { out->roster_moved = 1; return; }
     for (int i = 0; i < na; i++)
         if (!same_join(a[i], b[i])) { out->roster_moved = 1; return; }
+}
+
+// ---------- where the replay of an arriving chain starts -----------------
+
+int msg_atoms_before_claim(const MsgEnvelope *e) {
+    if (!e) return -1;
+    if (e->n_new == MSG_NEW_NOTHING) return (int)e->turn;
+    return e->n_new > 0 ? (int)e->turn - (int)e->n_new : -1;
+}
+
+// One ACTION atom as bytes: kind, seat, card count, cover target, cards. A
+// Card is one byte (card.h), so the record is the atom itself, not a digest of
+// it - two atoms are equal exactly when their records are.
+#define OPEN_REC_MAX (4 + REPLAY_MAX_PAIRS)
+static int open_record(const ReplayAtom *a, unsigned char *rec) {
+    const int n = a->n_cards < 0 ? 0 : (a->n_cards > REPLAY_MAX_PAIRS ? REPLAY_MAX_PAIRS : a->n_cards);
+    rec[0] = (unsigned char)a->kind;
+    rec[1] = (unsigned char)(a->seat + 1);   // -1 (a seatless round_end) -> 0
+    rec[2] = (unsigned char)n;
+    // `target` means something on a cover only, so nothing else may differ by it.
+    if (a->kind == REPLAY_ATOM_COVER) memcpy(&rec[3], &a->target, 1);
+    else rec[3] = 0xFF;
+    for (int i = 0; i < n; i++) memcpy(&rec[4 + i], &a->cards[i], 1);
+    return 4 + n;
+}
+
+static int open_is_action(const ReplayAtom *a) {
+    return a->kind != REPLAY_ATOM_DEAL && a->kind != REPLAY_ATOM_DRAW;
+}
+
+// Pass 1: the shown chain's action atoms, recorded in order until the buffer
+// is full. `full` marks a recording that stopped early; `atoms` counts the
+// atoms recorded.
+typedef struct { unsigned char *buf; int cap, len, full, atoms; } OpenTape;
+
+static void open_tape_sink(void *ctx, const ReplayAtom *a) {
+    OpenTape *t = (OpenTape *)ctx;
+    if (t->full || !open_is_action(a)) return;
+    unsigned char rec[OPEN_REC_MAX];
+    const int n = open_record(a, rec);
+    if (t->len + n > t->cap) { t->full = 1; return; }
+    memcpy(t->buf + t->len, rec, (size_t)n);
+    t->len += n;
+    t->atoms++;
+}
+
+// Pass 2: the arriving chain's action atoms against the tape, counting the
+// ones that match from the start and stopping at the first that does not (or
+// at the end of the tape, which is the end of the shown chain or of what was
+// recorded of it - either way nothing past it is known to be shared).
+// Past the divergence it keeps counting, and notes whether anything but a
+// GOOD follows (see "goods the board moved past" below).
+typedef struct { const OpenTape *tape; int at, matched, done, total, tail_moves; } OpenCmp;
+
+static void open_cmp_sink(void *ctx, const ReplayAtom *a) {
+    OpenCmp *c = (OpenCmp *)ctx;
+    if (!open_is_action(a)) return;
+    c->total++;
+    if (!c->done) {
+        unsigned char rec[OPEN_REC_MAX];
+        const int n = open_record(a, rec);
+        if (c->at + n <= c->tape->len && memcmp(c->tape->buf + c->at, rec, (size_t)n) == 0) {
+            c->at += n;
+            c->matched++;
+            return;
+        }
+        c->done = 1;
+    }
+    if (a->kind != REPLAY_ATOM_GOOD) c->tail_moves = 1;
+}
+
+// Does the recorded chain hold anything but GOODs from record offset `at` on?
+static int open_tape_moves_from(const OpenTape *t, int at) {
+    while (at + 4 <= t->len) {
+        if (t->buf[at] != REPLAY_ATOM_GOOD) return 1;
+        at += 4 + t->buf[at + 2];
+    }
+    return 0;
+}
+
+static int open_has_body(const MsgEnvelope *e) {
+    return e->actions_len != 0 || e->n_actions != 0;
+}
+
+// Same deal, same table, same rules: the only pairs whose atom streams can be
+// compared at all. Anything else is another game as far as a board is
+// concerned, and shares nothing with what it showed.
+static int open_same_deal(const MsgEnvelope *a, const MsgEnvelope *b) {
+    // The SEED as well as the id: a rematch is the same game_id dealt again
+    // from a new seed, and its atoms share nothing with the game before it.
+    return a->game_id == b->game_id
+        && a->n_players == b->n_players
+        && a->opening == b->opening
+        && msg_pass_allowed(a) == msg_pass_allowed(b)
+        && memcmp(a->seed, b->seed, MSG_SEED_LEN) == 0;
+}
+
+int msg_open_boundary(const MsgEnvelope *shown, const MsgEnvelope *arriving,
+                      unsigned char *scratch, int scratch_cap) {
+    const int claim = msg_atoms_before_claim(arriving);
+    if (!shown || !arriving || !scratch || scratch_cap <= 0) return claim;
+    if (!open_same_deal(shown, arriving)) return claim;
+
+    int prefix = 0;
+    if (open_has_body(shown) && open_has_body(arriving)) {
+        OpenTape tape = { scratch, scratch_cap, 0, 0, 0 };
+        if (replay_decode_atoms_v6(shown->actions, shown->actions_len, NULL,
+                                   open_tape_sink, &tape) < 0)
+            return claim;   // nothing readable was shown: no clamp
+        OpenCmp cmp = { &tape, 0, 0, 0, 0, 0 };
+        if (replay_decode_atoms_v6(arriving->actions, arriving->actions_len, NULL,
+                                   open_cmp_sink, &cmp) < 0)
+            return claim;
+        prefix = cmp.matched;
+        // GOODS THE BOARD MOVED PAST. The codec drops a good the moment
+        // anything follows it, so the board's own chain cannot say it ever
+        // held one - but when the arriving chain differs only by trailing goods
+        // and the board's chain has a real move past the shared part, those
+        // goods are exactly what that move superseded: the arriving chain is
+        // the board's own past (an older chain), and every atom of it has been
+        // shown. A good raced by a concurrent move off the same parent reads
+        // the same way and is treated the same; a good draws no cards either
+        // way, and the board's role sync paints the marks. Not for a recording
+        // cut short: what lies past it is unknown, so it is not claimed.
+        if (!tape.full && cmp.done && !cmp.tail_moves && open_tape_moves_from(&tape, cmp.at))
+            prefix = cmp.total;
+    }
+    return prefix > claim ? prefix : claim;
+}
+
+// ---------- what an arrival leaves of the bubble in the input field ---------
+
+// Does this bubble carry a move of its own? A NOTHING reseal does not, and a
+// bubble that does not say (n_new 0, format 2) cannot claim to.
+static int fate_adds(const MsgEnvelope *e) {
+    return e->n_new != 0 && e->n_new != MSG_NEW_NOTHING;
+}
+
+int msg_staged_fate(const unsigned char *staged, int staged_len,
+                    const unsigned char *arrived, int arrived_len,
+                    unsigned char *scratch, int scratch_cap) {
+    if (!staged || !arrived || staged_len <= 0 || arrived_len <= 0) return MSG_ESHORT;
+    MsgEnvelope s, a;
+    int rc = msg_decode(staged, staged_len, &s);
+    if (rc != MSG_EOK) return rc;
+    rc = msg_decode(arrived, arrived_len, &a);
+    if (rc != MSG_EOK) return rc;
+
+    // THE SAME BYTES: the bubble came back, so it is in the thread.
+    if (staged_len == arrived_len && memcmp(staged, arrived, (size_t)staged_len) == 0)
+        return MSG_FATE_LANDED;
+
+    // ONE HOP, BY THE HEADER - exact, and blind to the atom fold. A child of the
+    // staged bubble was built on it, so it went out; a parent of it is the
+    // chain it was composed on. Both hold whatever the codec did to pending
+    // goods in between, which is why they are asked before the atoms.
+    uint8_t ds[SHA256_DIGEST_LEN], da[SHA256_DIGEST_LEN];
+    msg_digest(staged, staged_len, ds);
+    msg_digest(arrived, arrived_len, da);
+    if (names_parent(a.parent8, ds)) return MSG_FATE_LANDED;
+    if (names_parent(s.parent8, da)) return MSG_FATE_STANDS;
+
+    // Another deal shares no history with this one.
+    if (!open_same_deal(&s, &a) || !scratch || scratch_cap <= 0) return MSG_FATE_SUPERSEDED;
+
+    // DEEPER, BY THE ATOMS. The staged chain on tape, the arrived one against it.
+    int matched = 0, total = 0, s_atoms = 0, s_whole = 1;
+    if (open_has_body(&s) && open_has_body(&a)) {
+        OpenTape tape = { scratch, scratch_cap, 0, 0, 0 };
+        if (replay_decode_atoms_v6(s.actions, s.actions_len, NULL, open_tape_sink, &tape) < 0)
+            return MSG_FATE_SUPERSEDED;
+        OpenCmp cmp = { &tape, 0, 0, 0, 0, 0 };
+        if (replay_decode_atoms_v6(a.actions, a.actions_len, NULL, open_cmp_sink, &cmp) < 0)
+            return MSG_FATE_SUPERSEDED;
+        matched = cmp.matched;
+        total = cmp.total;
+        s_atoms = tape.atoms;
+        s_whole = !tape.full;
+    } else if (open_has_body(&s) || open_has_body(&a)) {
+        // One side has actions and the other none: the bodyless one is the
+        // dealt table both start from, so it is the other's past.
+        if (open_has_body(&a)) {
+            total = 1;   // the arrived chain holds atoms the staged one lacks
+        } else {
+            s_atoms = 1; // the staged chain holds atoms the arrived one lacks
+        }
+    }
+    // The staged chain is all inside the arrived one, and it carries a move of
+    // its own: that move is in the thread. Not for a NOTHING bubble, whose
+    // atoms are its parent's and so sit inside every descendant of that parent.
+    // Not for a recording cut short either - what lies past it is unknown.
+    if (fate_adds(&s) && s_whole && matched == s_atoms && total >= s_atoms)
+        return MSG_FATE_LANDED;
+    // The arrived chain is all inside the staged one: it adds nothing the
+    // staged bubble was not built on.
+    if (matched == total && total <= s_atoms) return MSG_FATE_STANDS;
+    return MSG_FATE_SUPERSEDED;
 }
 
 // ---------- Rule R --------------------------------------------------------
@@ -962,6 +1189,104 @@ int msg_rematch_opening(const MsgJoin *joins, int n,
     // The seat to the fool's RIGHT - the one whose attack lands on the fool,
     // because attacks travel to the attacker's left.
     return (fool_seat - 1 + n) % n;
+}
+
+int msg_rematch_carry(const MsgJoin *joins, int n, int fool_seat,
+                      uint32_t *carry_key, uint8_t *carry_fool) {
+    if (!joins || !carry_key || !carry_fool) return MSG_EJOINS;
+    if (fool_seat < 0 || fool_seat >= n) return MSG_ESEAT;
+    uint32_t key = 0;
+    int rot = 0;
+    const int rc = msg_roster_key(joins, n, &key, &rot);
+    if (rc != MSG_EOK) return rc;
+    *carry_key = key;
+    // Back out of the seating into the canonical rotation the key was taken
+    // over: canonical[k] == seated[(k + rot) % n], so seat s is index s - rot.
+    *carry_fool = (uint8_t)(((fool_seat - rot) % n + n) % n);
+    return MSG_EOK;
+}
+
+void msg_rematch_seed(const uint8_t old_seed[MSG_SEED_LEN], uint64_t tapped_at_ms,
+                      uint8_t out[MSG_SEED_LEN]) {
+    // The deal RNG itself (deal_rng.h), not a new mix: the finished deal's own
+    // ChaCha keystream, read at the block the moment of the tap names. A block
+    // index is ChaCha's 64-bit counter, so every millisecond is its own 64
+    // bytes of keystream, and the deal that seed already dealt used the first
+    // handful of blocks, nowhere near a timestamp's.
+    DealRng r;
+    deal_rng_seed_at(&r, old_seed, tapped_at_ms);
+    for (int i = 0; i < MSG_SEED_LEN / 4; i++) wr32(out + 4 * i, deal_rng_u32(&r));
+}
+
+int msg_rematch_lobby(const unsigned char *finished, int finished_len,
+                      uint64_t tapped_at_ms, int creator_seat,
+                      unsigned char *out, int out_cap, Game *scratch) {
+    if (!finished || !out || !scratch) return MSG_ESHORT;
+    MsgEnvelope f;
+    int rc = msg_decode(finished, finished_len, &f);
+    if (rc != MSG_EOK) return rc;
+    if (f.phase != MSG_PHASE_FINISHED) return MSG_EPHASE;
+    // Validation IS replay, and the replay is also the only thing that knows
+    // who the fool was.
+    rc = msg_replay(&f, scratch);
+    if (rc != MSG_EOK) return rc;
+    const int fool = game_done(scratch);
+    // A FINISHED chain always has its fool (msg_decode refuses a header that
+    // says FINISHED over a game that is not over), so every rematch lobby
+    // carries the fool's carry - which is also how the lobby gate knows a
+    // rematch lobby when it sees one (msg_lobby_is_rematch).
+    if (fool < 0) return MSG_EPHASE;
+
+    // THE FINISHED GAME'S SEATING, every seat named. A finished chain carries
+    // every seated player (Start dealt the roster it was handed), so a seat
+    // that is missing or blank is not a table this can seat again.
+    const int n = f.n_players;
+    if (f.n_joins != n) return MSG_EJOINS;
+    if (creator_seat < 0 || creator_seat >= n) return MSG_ESEAT;
+    MsgEnvelope e;
+    msg_envelope_init(&e);
+    for (int i = 0; i < n; i++) e.joins[i].name_len = 0xFF;   // "seat empty"
+    for (int i = 0; i < f.n_joins; i++) {
+        const MsgJoin *j = &f.joins[i];
+        if (j->name_len == 0) return MSG_EJOINS;
+        e.joins[j->seat] = *j;   // validate_fields already refused a seat >= n or a twin
+    }
+    for (int s = 0; s < n; s++) if (e.joins[s].name_len == 0xFF) return MSG_EJOINS;
+    e.n_joins = n;
+
+    e.format = MSG_FORMAT_RULES_REMATCH;   // msg_seal decides; this is what it will say
+    e.flags = 0;
+    e.phase = MSG_PHASE_WAITING;
+    e.game_id = f.game_id;
+    e.n_players = (uint8_t)n;
+    // THE CREATOR seals it: the one fact the lobby gate needs to keep them
+    // from starting the deal their own tap chose (msg_lobby_changer).
+    e.last_actor_seat = (uint8_t)creator_seat;
+    // ONE MOMENT, two uses: the send clock every bubble carries, and the seed.
+    e.sent_at = (uint16_t)((tapped_at_ms / 1000u) & 0xFFFFu);
+    uint8_t digest[SHA256_DIGEST_LEN];
+    msg_digest(finished, finished_len, digest);
+    memcpy(e.parent8, digest, MSG_PARENT_LEN);
+    msg_rematch_seed(f.seed, tapped_at_ms, e.seed);
+    rc = msg_rematch_carry(e.joins, n, fool, &e.carry_key, &e.carry_fool);
+    if (rc != MSG_EOK) return rc;
+
+    // THE LOBBY'S DEAL, as every lobby is: the seed dealt at the table's size
+    // under the table's rules, nothing played. msg_seal reads the rules off it
+    // (they are a claim about the game, never the caller's to state) and seals
+    // an empty body.
+    const int8_t rules = msg_pass_allowed(&f) ? 0 : (int8_t)GAME_RULE_NO_PASS;
+    game_set_deal_seed_bytes(e.seed, MSG_SEED_LEN);
+    memset(scratch, 0, sizeof(*scratch));
+    scratch->num_players = (int8_t)n;
+    scratch->rules = rules;
+    for (int i = 0; i < n; i++) scratch->players[i].status = PLAYER_STATUS_READY;
+    start_game(scratch);
+
+    unsigned char body[1];
+    rc = msg_seal(&e, scratch, 0, body, (int)sizeof body, scratch);
+    if (rc != MSG_EOK) return rc;
+    return msg_encode(&e, out, out_cap);
 }
 
 int msg_rematch_fool_seat(const MsgJoin *joins, int n,
@@ -1156,19 +1481,25 @@ int msg_lobby_rules_changed(int have_baseline, int baseline, int current, int mi
     return (baseline != 0) != (current != 0);
 }
 
+int msg_lobby_is_rematch(const MsgEnvelope *e) {
+    return e && e->phase == MSG_PHASE_WAITING && e->carry_key != 0;
+}
+
+int msg_lobby_changer(int rules_changed, int mine, int rematch_lobby) {
+    return rules_changed || (mine && rematch_lobby);
+}
+
 int msg_lobby_controls(const MsgEnvelope *e, int my_seat,
                        int have_baseline, int baseline, int *can_exit_out) {
     if (can_exit_out) *can_exit_out = 0;
     if (!e) return 0;
     const int joined = e->n_joins;
-    const int changed = msg_lobby_rules_changed(have_baseline, baseline,
-                                                msg_pass_allowed(e),
-                                                my_seat >= 0
-                                                && (int)e->last_actor_seat == my_seat);
+    const int mine = my_seat >= 0 && (int)e->last_actor_seat == my_seat;
+    const int changed = msg_lobby_changer(msg_lobby_rules_changed(have_baseline, baseline,
+                                                                  msg_pass_allowed(e), mine),
+                                          mine, msg_lobby_is_rematch(e));
     if (can_exit_out) *can_exit_out = msg_lobby_can_exit(my_seat, joined);
-    return msg_lobby_offered(my_seat, joined, e->n_players,
-                             my_seat >= 0 && (int)e->last_actor_seat == my_seat,
-                             changed);
+    return msg_lobby_offered(my_seat, joined, e->n_players, mine, changed);
 }
 
 /* ---------------------------------------------------------------------------
@@ -1235,6 +1566,14 @@ int msg_turn_adopt_duplicate(int state, int same_chain) {
         && same_chain;
 }
 
+int msg_turn_field_after_arrival(int state, int field_fate) {
+    if (field_fate < 0) return MSG_TURN_FIELD_KEEP;                    // nothing of mine there
+    if (turn_has(state, MSG_TURN_SENDING)) return MSG_TURN_FIELD_KEEP; // already going out
+    if (turn_has(state, MSG_TURN_GENESIS)) return MSG_TURN_FIELD_KEEP; // no NOTHING to seal
+    if (field_fate == MSG_FATE_LANDED) return MSG_TURN_FIELD_KEEP;     // it is in the thread
+    return MSG_TURN_FIELD_NOTHING;
+}
+
 int msg_turn_sent_source(int staged, int have_host, int have_sealed) {
     if (staged && have_sealed) return MSG_TURN_BYTES_SEALED;
     if (have_host) return MSG_TURN_BYTES_HOST;
@@ -1242,7 +1581,8 @@ int msg_turn_sent_source(int staged, int have_host, int have_sealed) {
 }
 
 int msg_turn_send_verdict(int staged, int have_host, int have_sealed,
-                          int host_is_sealed, int decoded, int same_game) {
+                          int host_is_sealed, int decoded, int same_game,
+                          int fate, int sent_wins) {
     const int src = msg_turn_sent_source(staged, have_host, have_sealed);
     // DID I SEAL THESE BYTES - not Rule P, which cannot answer it: a child can
     // seal to a turn LOWER than its parent's, so ordering refused ordinary
@@ -1260,6 +1600,10 @@ int msg_turn_send_verdict(int staged, int have_host, int have_sealed,
         // the decode, which is why it is asked here and not with the rest; < 0
         // is "not asked yet" and never a refusal. See msg_wire.h.
         if (same_game == 0) return MSG_TURN_SEND_OTHERGAME;
+        // AN ARRIVAL RACED THE SEND - see msg_wire.h. < 0 is "not asked" and
+        // never a refusal, like `same_game`.
+        if (fate == MSG_FATE_LANDED) return MSG_TURN_SEND_OVERTAKEN;
+        if (fate == MSG_FATE_SUPERSEDED && sent_wins == 0) return MSG_TURN_SEND_OVERTAKEN;
     }
     if (!staged && src == MSG_TURN_BYTES_NONE) return MSG_TURN_SEND_NOOP;
     if (src == MSG_TURN_BYTES_NONE) return MSG_TURN_SEND_BLIND;

@@ -60,3 +60,35 @@ int msg_expand_note(MsgExpand *st, int event, double now) {
         return 0;
     }
 }
+
+/* ---- which way the drawer is (msg_expand.h, "WHICH WAY THE DRAWER IS") ---- */
+
+static int style_ok(int style) {
+    return style == MSG_STYLE_COMPACT || style == MSG_STYLE_EXPANDED;
+}
+
+void msg_style_init(MsgStyle *st, int style) {
+    if (!st) return;
+    st->style = style_ok(style) ? style : MSG_STYLE_COMPACT;
+    /* The activation's style is where the drawer IS, not a move in flight. */
+    st->confirmed = 1;
+}
+
+void msg_style_note(MsgStyle *st, int phase, int style) {
+    if (!st || !style_ok(style)) return;
+    if (phase == MSG_STYLE_WILL) {
+        st->style = style;
+        st->confirmed = 0;
+        return;
+    }
+    if (phase != MSG_STYLE_DID) return;
+    /* The late tail of an older transition: the newest move has already
+     * arrived, and this did is not about it. */
+    if (st->confirmed && style != st->style) return;
+    st->style = style;
+    st->confirmed = 1;
+}
+
+int msg_style_expanded(const MsgStyle *st) {
+    return st && st->style == MSG_STYLE_EXPANDED;
+}

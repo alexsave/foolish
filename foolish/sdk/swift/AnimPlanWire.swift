@@ -118,6 +118,16 @@ public struct AnimPlan: Equatable, Sendable {
         /// bound for the flipped slot (which does not move the deck badge).
         public let inFlightFromDeck: Int
         public let inFlightToFlipped: Int
+        /// THE FLIPPED TRUMP THIS STEP DEALS OUT, or nil. The kernel names it
+        /// from the boards either side of the step, never from the step's
+        /// cards, so it is the real card for EVERY viewer - a seat whose event
+        /// carries only backs included. It is the last card of the draw, and
+        /// it leaves from `trumpFrom` (EventLoc.flipped); the rest of the
+        /// step's cards still leave from `from`. See c/src/anim_plan.h,
+        /// AnimPlanStep.trump_out.
+        public let trumpOut: Card?
+        /// EventLoc raw: `.flipped` when `trumpOut` is a card, `.none` otherwise.
+        public let trumpFrom: Int
 
         public var kind: EventType? { EventType(rawValue: type) }
     }
@@ -207,7 +217,11 @@ public struct AnimPlan: Equatable, Sendable {
                  counts: Counts(deck: st.deck, discard: st.discard,
                                 hand: Self.seatDict(st.hand, seats: np)),
                  inFlightFromDeck: st.inFlightFromDeck,
-                 inFlightToFlipped: st.inFlightToFlipped)
+                 inFlightToFlipped: st.inFlightToFlipped,
+                 // CARD_NONE when the step deals no trump, as in `Counts`.
+                 trumpOut: st.trumpOut.value > 0
+                           ? Card(s: st.trumpOut.suit, v: st.trumpOut.value) : nil,
+                 trumpFrom: st.trumpFrom)
         }
         self.veil = Set(pl.veilIds.filter { $0 < 52 }.map { Card(s: $0 / 13, v: $0 % 13 + 1).identity })
     }

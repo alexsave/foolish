@@ -36,7 +36,6 @@
 #   ios/scripts/mac_tests.sh harness         # HarnessTests only
 #   ios/scripts/mac_tests.sh app             # build the SHIPPING scheme only
 #   ios/scripts/mac_tests.sh --no-lib unit   # skip the ~2 min xcframework build
-#   ios/scripts/mac_tests.sh --regen         # force xcodegen (project.yml is the trigger)
 #
 #   DEST='platform=iOS Simulator,id=<udid>' ios/scripts/mac_tests.sh   # default: newest iPhone sim
 #

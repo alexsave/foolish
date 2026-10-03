@@ -366,6 +366,7 @@ static void sim_apply_cover(SimState *s, int p_idx,
 }
 
 static void sim_apply_pass(SimState *s, int p_idx, const uint8_t *ids, int n) {
+    GAME_PASS_PROBE_HIT();
     CD_ORC_TRUMPS(s, p_idx, ids, n);
     int next = sim_next_player(s, s->defender);
     for (int i = 0; i < n; i++) {
@@ -949,6 +950,11 @@ static uint64_t sim_fingerprint(const SimState *s, int a, int b) {
     h ^= (uint64_t)s->first_attacker << 9;
     h ^= (uint64_t)(s->good_mask & 0xff) << 17;
     h ^= (uint64_t)s->num_battles << 25;
+    // The rules: one table serves every solve in the module, and a server runs
+    // podkidnoy and classic tables side by side in it, where one position is
+    // worth two different things. Zero for the classic game, so a classic key
+    // is the key it always was.
+    h ^= (uint64_t)(uint8_t)s->rules << 33;
     h ^= 0x94D049BB133111EBull;
     h ^= h >> 31;
     return h ? h : 1;
@@ -1194,7 +1200,12 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
     // traffic, no budget. The book value is the attacker-to-move's result; flip
     // to S->me's perspective. Value-safe by the offline V-book gate (100.000%
     // over 1e6 samples). Round-boundary => actor == first_attacker (attacker).
-    if (cd_leafbook_on && b >= 0 && s->num_battles == 0 && s->good_mask == 0
+    //
+    // THE BOOK IS A PROOF ABOUT THE CLASSIC GAME: every value in it was solved
+    // with the transfer available, and its key (two hands and a trump) has no
+    // room for the rules. A podkidnoy endgame is a different game over the same
+    // key, so it is never asked - it is solved below like any other position.
+    if (cd_leafbook_on && s->rules == 0 && b >= 0 && s->num_battles == 0 && s->good_mask == 0
         && sim_no_cards_left(s)) {
         int atk = s->first_attacker, def = s->defender;
         if (atk != def && (s->in_mask >> atk & 1u) && (s->in_mask >> def & 1u)) {

@@ -247,6 +247,8 @@ transposition table was **not** pursued: rollout states rarely repeat and the
 empty-deck 2-player endgame is already solved exactly — the win is purely
 cutting per-ply enumeration, confirmed by the profile. `CD_NO_FASTROLL=1`
 restores the enumerate-then-pick path for A/B.
+(`handwritten_rollout_choose` was later deleted: the bitboard rollout in
+`cordite_sim.c` replaced it and it had no caller left.)
 
 The TS port (`cordite_core.ts`) is identical except the regular-attack branch
 defers to the slow path for hands with ≥7 valid cards: the TS enumerator caps

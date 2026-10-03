@@ -107,6 +107,39 @@ int fio_msg_peek(const uint8_t *payload, int len) {
     return FIO_EOK;
 }
 
+// WHERE AN ARRIVING CHAIN'S REPLAY STARTS on a board that showed `shown`
+// (msg_open_boundary). Both payloads are only PARSED - nothing is replayed and
+// the resident game is untouched - because the answer is a comparison of two
+// atom streams, not a fact about whichever chain was decoded last.
+int fio_msg_open_boundary(const uint8_t *shown, int shown_len,
+                          const uint8_t *arriving, int arriving_len, int *atoms_before) {
+    if (!arriving || !atoms_before) return FIO_EBADARG;
+    g_last_msg_error = 0;
+    MsgEnvelope a, s;
+    const int rc = msg_decode(arriving, arriving_len, &a);
+    if (rc != MSG_EOK) { g_last_msg_error = rc; return FIO_EMSG; }
+    // A shown chain that will not parse was never a board this device drew
+    // from: no clamp, the same as a cold open.
+    const int have_shown = shown && shown_len > 0 && msg_decode(shown, shown_len, &s) == MSG_EOK;
+    static unsigned char scratch[MSG_OPEN_SCRATCH];
+    *atoms_before = msg_open_boundary(have_shown ? &s : NULL, &a, scratch, sizeof(scratch));
+    return FIO_EOK;
+}
+
+// WHAT AN ADOPTED ARRIVAL LEAVES OF A BUBBLE THIS DEVICE PUT IN THE INPUT FIELD
+// (msg_staged_fate). Parses both and adopts NOTHING, like the boundary above.
+int fio_msg_staged_fate(const uint8_t *staged, int staged_len,
+                        const uint8_t *arrived, int arrived_len, int *fate) {
+    if (!staged || !arrived || !fate) return FIO_EBADARG;
+    g_last_msg_error = 0;
+    static unsigned char scratch[MSG_OPEN_SCRATCH];
+    const int r = msg_staged_fate(staged, staged_len, arrived, arrived_len,
+                                  scratch, sizeof(scratch));
+    if (r < 0) { g_last_msg_error = r; return FIO_EMSG; }
+    *fate = r;
+    return FIO_EOK;
+}
+
 int fio_msg_decode(const uint8_t *payload, int len) {
     if (!payload) return FIO_EBADARG;
     g_last_msg_error = 0;
@@ -204,6 +237,22 @@ int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
     return n;
 }
 
+// THE REMATCH LOBBY for a finished chain (msg_rematch_lobby): the whole lobby,
+// built by the kernel from the finished payload alone, so every device that
+// taps New game on that table seals the same bytes but for `sent_at`. Parses,
+// replays into the scratch game and adopts NOTHING - the resident game is not
+// touched; the caller decodes the answer when it puts the lobby on screen,
+// which is the adoption.
+int fio_msg_rematch(const uint8_t *finished, int finished_len, uint64_t tapped_at_ms,
+                    int creator_seat, uint8_t *out, int cap) {
+    if (!finished || !out || cap <= 0) return FIO_EBADARG;
+    g_last_msg_error = 0;
+    const int n = msg_rematch_lobby(finished, finished_len, tapped_at_ms, creator_seat,
+                                    out, cap, fio_scratch_game());
+    if (n < 0) { g_last_msg_error = n; return n == MSG_ECAP ? FIO_ECAP : FIO_EMSG; }
+    return n;
+}
+
 // Where THIS DEVICE's own staged run starts in the resident game's atom stream
 // - the same question msg_seal answers for the bubble delta, asked for the
 // animation instead of for the wire, and answered from the same log mark.
@@ -289,6 +338,10 @@ int fio_msg_lobby_can_set_rules(int my_seat) {
 
 int fio_msg_lobby_rules_changed(int have_baseline, int baseline, int current, int mine) {
     return msg_lobby_rules_changed(have_baseline, baseline, current, mine);
+}
+
+int fio_msg_lobby_changer(int rules_changed, int mine, int rematch_lobby) {
+    return msg_lobby_changer(rules_changed, mine, rematch_lobby);
 }
 
 int fio_anim_surface_beat_ms(void) { return ANIM_TIME_MS; }
@@ -385,6 +438,12 @@ _Static_assert(FIO_TURN_SEND_DECODE     == MSG_TURN_SEND_DECODE,     "send verdi
 _Static_assert(FIO_TURN_SEND_UNREADABLE == MSG_TURN_SEND_UNREADABLE, "send verdict diverged");
 _Static_assert(FIO_TURN_SEND_REBASE     == MSG_TURN_SEND_REBASE,     "send verdict diverged");
 _Static_assert(FIO_TURN_SEND_OTHERGAME  == MSG_TURN_SEND_OTHERGAME,  "send verdict diverged");
+_Static_assert(FIO_TURN_SEND_OVERTAKEN  == MSG_TURN_SEND_OVERTAKEN,  "send verdict diverged");
+_Static_assert(FIO_TURN_FIELD_KEEP      == MSG_TURN_FIELD_KEEP,      "field rule diverged");
+_Static_assert(FIO_TURN_FIELD_NOTHING   == MSG_TURN_FIELD_NOTHING,   "field rule diverged");
+_Static_assert(FIO_FATE_STANDS          == MSG_FATE_STANDS,          "staged fate diverged");
+_Static_assert(FIO_FATE_LANDED          == MSG_FATE_LANDED,          "staged fate diverged");
+_Static_assert(FIO_FATE_SUPERSEDED      == MSG_FATE_SUPERSEDED,      "staged fate diverged");
 
 int fio_msg_turn_can_send(int state) { return msg_turn_can_send(state); }
 
@@ -417,9 +476,14 @@ int fio_msg_turn_sent_source(int staged, int have_host, int have_sealed) {
 }
 
 int fio_msg_turn_send_verdict(int staged, int have_host, int have_sealed,
-                              int host_is_sealed, int decoded, int same_game) {
+                              int host_is_sealed, int decoded, int same_game,
+                              int fate, int sent_wins) {
     return msg_turn_send_verdict(staged, have_host, have_sealed, host_is_sealed,
-                                 decoded, same_game);
+                                 decoded, same_game, fate, sent_wins);
+}
+
+int fio_msg_turn_field_after_arrival(int state, int field_fate) {
+    return msg_turn_field_after_arrival(state, field_fate);
 }
 
 int fio_msg_turn_hold_state(int n_events, int cut) {
@@ -465,4 +529,28 @@ int fio_msg_expand_note(int event, double now,
     if (io_retries)   *io_retries   = st.retries;
     if (io_wanted_at) *io_wanted_at = st.wanted_at;
     return issue;
+}
+
+/* WHICH WAY THE DRAWER IS (msg_style_*), the auto-collapse's question. */
+
+_Static_assert(FIO_STYLE_COMPACT  == MSG_STYLE_COMPACT,  "style values diverged");
+_Static_assert(FIO_STYLE_EXPANDED == MSG_STYLE_EXPANDED, "style values diverged");
+_Static_assert(FIO_STYLE_WILL     == MSG_STYLE_WILL,     "style phases diverged");
+_Static_assert(FIO_STYLE_DID      == MSG_STYLE_DID,      "style phases diverged");
+
+void fio_msg_style_init(int style, int *out_style, int *out_confirmed) {
+    MsgStyle st;
+    msg_style_init(&st, style);
+    if (out_style)     *out_style     = st.style;
+    if (out_confirmed) *out_confirmed = st.confirmed;
+}
+
+int fio_msg_style_note(int phase, int style, int *io_style, int *io_confirmed) {
+    MsgStyle st;
+    st.style     = io_style     ? *io_style     : 0;
+    st.confirmed = io_confirmed ? *io_confirmed : 0;
+    msg_style_note(&st, phase, style);
+    if (io_style)     *io_style     = st.style;
+    if (io_confirmed) *io_confirmed = st.confirmed;
+    return msg_style_expanded(&st);
 }

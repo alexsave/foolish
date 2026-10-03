@@ -93,6 +93,7 @@ const char *const FS_STRINGS_HE[FS_K_COUNT] = {
     [FS_K_IOS_MSG_JOINAS           ] = "הצטרפות בשם {name}",
     [FS_K_IOS_MSG_JOINED           ] = "{name} בפנים - הקש כדי להצטרף",
     [FS_K_IOS_MSG_JOININVITE       ] = "שטותי - הקש כדי להצטרף",
+    [FS_K_IOS_MSG_REMATCH         ] = "משחק חוזר - הקש כדי לשחק",
     [FS_K_IOS_MSG_LEFT             ] = "{name} כבר לא במשחק",
     [FS_K_IOS_MSG_LEFTANON         ] = "שחקן אחד כבר לא במשחק",
     [FS_K_IOS_MSG_LOBBYFULL        ] = "כל המקומות תפוסים",

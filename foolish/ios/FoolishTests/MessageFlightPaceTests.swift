@@ -91,6 +91,23 @@ final class MessageFlightPaceTests: XCTestCase {
         }
     }
 
+    /// A STEP TAKES THE PLAN'S TIME, NOT THE PLAN'S TIME PLUS A PAINT.
+    /// `BoardAnimator.play` paints a step at its from-position before flying
+    /// it; that paint used to be 25ms on top of the flight and the gap, so the
+    /// opening deal went round at ~415ms a card on the rig against the kernel's
+    /// 375. Mutation: `flight.paintgap` off (the old waits) fails the sum.
+    func testAStepWaitsExactlyTheFlightAndTheGap() {
+        XCTAssertTrue(FlightPace.paintIsGapByDefault, "the plan's own pace is what ships")
+        XCTAssertEqual(FlightPace.paintIsGap, FlightPace.paintIsGapByDefault, "no dev.flags override is in play")
+        for ms in [Int(ANIM_DEAL_CARD_MS), Int(ANIM_TIME_MS)] {
+            let duration = Double(ms) / 1000
+            let w = FlightPace.waits(flying: duration)
+            XCTAssertGreaterThan(w.paint, 0, "\(ms)ms: the from-position still gets its paint")
+            XCTAssertEqual(w.paint + w.after, duration + flightGap, accuracy: 1e-9,
+                           "\(ms)ms: a step waits \(w.paint + w.after)s, the plan gives it \(duration + flightGap)s")
+        }
+    }
+
     /// THE SETTLE WAIT OUTLASTS THE DEAL. The extension awaits
     /// `BoardAnimator.waitForSettle` before staging a bubble, and that wait
     /// used to give up a flat 8 s after it began. An 8-seat opening deal's

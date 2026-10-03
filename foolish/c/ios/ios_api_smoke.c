@@ -447,6 +447,101 @@ static int fmsg_check(void) {
     return 0;
 }
 
+// THE REMATCH through the bridge the phone calls: a finished 4-seat game, two
+// taps on it (fio_msg_rematch), the lobby adopted, Start dealt
+// (fio_msg_start_rematch -> fio_reseat_game), and the live bubble sealed. What
+// can only break at this layer is the session: the rematch's seed and game id
+// have to survive the decode, the re-deal at Start and every seal after it.
+static int rematch_check(void) {
+    int strat = -1;
+    for (int i = 0; i < fio_strategy_count(); i++) {
+        char nm[64];
+        if (fio_strategy_name(i, nm, sizeof(nm)) > 0 && !strcmp(nm, "handwritten")) { strat = i; break; }
+    }
+    unsigned char seed[32];
+    for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(i * 13 + 5);
+    if (fio_new_game(seed, 32, 4) != FIO_EOK) { printf("FAIL rematch new_game\n"); return 1; }
+    for (int p = 0; p < 4; p++) fio_set_seat_strategy(p, strat);
+    for (int steps = 0; fio_game_over() < 0 && steps < 5000; steps++)
+        if (fio_bot_drive(0) < 0) break;
+    const int fool = fio_game_over();
+    if (fool < 0) { printf("FAIL rematch: the game did not finish\n"); return 1; }
+
+    const SmokeJoin jspec[4] = { {0,"Sveta"}, {1,"Ann"}, {2,"Bo"}, {3,"Cy"} };
+    unsigned char joins[128];
+    const int joins_n = pack_joins(joins, (int)sizeof joins, jspec, 4);
+    static unsigned char fin[2048], a[2048], b[2048], live[2048];
+    const uint8_t zero8[8] = {0};
+    const uint64_t gid = 0x5151AA00BB11CC22ULL;
+    const int nf = fio_msg_encode(3 /* FINISHED */, 0, gid, zero8, joins, joins_n, 0x0101, fin, sizeof(fin));
+    if (nf <= 0) { printf("FAIL rematch: finished encode %d (msg_err=%d)\n", nf, fio_last_msg_error()); return 1; }
+
+    // Two seats tap at two moments: two lobbies of the same game, two deals.
+    const int na = fio_msg_rematch(fin, nf, 0x0111ull * 1000u, 1, a, sizeof(a));
+    const int nb = fio_msg_rematch(fin, nf, 0x0222ull * 1000u, 2, b, sizeof(b));
+    if (na <= 0 || nb <= 0) { printf("FAIL rematch: taps %d / %d (msg_err=%d)\n", na, nb, fio_last_msg_error()); return 1; }
+    if (fio_msg_peek(b, nb) != FIO_EOK) { printf("FAIL rematch: the second tap does not read\n"); return 1; }
+    uint8_t seed_b[MSG_SEED_LEN];
+    {
+        const MsgHeader *hb = (const MsgHeader *)fio_msg_header_ptr();
+        memcpy(seed_b, hb->e.seed, MSG_SEED_LEN);
+        if (hb->e.last_actor_seat != 2 || hb->e.game_id != gid) {
+            printf("FAIL rematch: the second tap is not seat 2's lobby of the game\n"); return 1;
+        }
+    }
+    if (fio_msg_rule_p(fin, nf, a, na) <= 0) { printf("FAIL rematch: the finished game beat its rematch\n"); return 1; }
+    if (fio_msg_rule_p(fin, nf, b, nb) <= 0) { printf("FAIL rematch: the finished game beat the second tap\n"); return 1; }
+
+    if (fio_msg_decode(a, na) != FIO_EOK) { printf("FAIL rematch: the lobby does not adopt\n"); return 1; }
+    const MsgHeader *h = (const MsgHeader *)fio_msg_header_ptr();
+    uint8_t want_seed[MSG_SEED_LEN];
+    msg_rematch_seed(seed, 0x0111ull * 1000u, want_seed);
+    if (h->e.phase != 0 || h->e.game_id != gid || h->e.n_joins != 4 || h->e.last_actor_seat != 1
+        || memcmp(h->e.seed, want_seed, MSG_SEED_LEN) != 0 || !memcmp(h->e.seed, seed_b, MSG_SEED_LEN)) {
+        printf("FAIL rematch: lobby phase %d same-id %d joins %d\n",
+               h->e.phase, h->e.game_id == gid, h->e.n_joins);
+        return 1;
+    }
+    // The creator (seat 1) is held back from Start by the kernel's changer
+    // gate; seat 0, who did not tap, is offered it.
+    {
+        const int mine1 = h->e.last_actor_seat == 1, mine0 = h->e.last_actor_seat == 0;
+        const int rem = h->e.carry_key != 0;
+        if (fio_msg_lobby_offered(1, 4, 4, mine1, fio_msg_lobby_changer(0, mine1, rem)) != MSG_LOBBY_WAITING
+            || fio_msg_lobby_offered(0, 4, 4, mine0, fio_msg_lobby_changer(0, mine0, rem)) != MSG_LOBBY_START) {
+            printf("FAIL rematch: the creator may Start, or the others may not\n"); return 1;
+        }
+    }
+    const uint32_t key = h->e.carry_key;
+    const int carry_fool = h->e.carry_fool;
+    int opening = -1;
+    if (fio_msg_start_rematch(joins, joins_n, key, carry_fool, &opening) != FIO_EOK || opening < 0) {
+        printf("FAIL rematch: Start refused or punished nobody (%d)\n", opening); return 1;
+    }
+    if ((opening + 1) % 4 != fool) { printf("FAIL rematch: opened %d, the fool was %d\n", opening, fool); return 1; }
+    uint8_t parent[8];
+    { uint8_t d[32]; msg_digest(a, na, d); memcpy(parent, d, 8); }
+    const int nl = fio_msg_encode(2 /* LIVE */, 0, gid, parent, joins, joins_n, 0x0333, live, sizeof(live));
+    if (nl <= 0) { printf("FAIL rematch: live encode %d (msg_err=%d)\n", nl, fio_last_msg_error()); return 1; }
+    if (fio_msg_decode(live, nl) != FIO_EOK) { printf("FAIL rematch: the live chain does not adopt\n"); return 1; }
+    if (h->e.game_id != gid || memcmp(h->e.seed, want_seed, MSG_SEED_LEN) != 0) {
+        printf("FAIL rematch: Start sealed another deal (the re-deal dropped the seed?)\n");
+        return 1;
+    }
+    if (fio_msg_rule_p(fin, nf, live, nl) <= 0 || fio_msg_rule_p(live, nl, fin, nf) >= 0) {
+        printf("FAIL rematch: the finished game beat the rematch in play\n"); return 1;
+    }
+    const SmokeJoin j2[2] = { {0,"Sveta"}, {1,"Ann"} };
+    const int j2n = pack_joins(joins, (int)sizeof joins, j2, 2);
+    if (fio_new_game(seed, 32, 2) != FIO_EOK) { printf("FAIL rematch: new_game\n"); return 1; }
+    const int n0 = fio_msg_encode(0, 0, 0x77, zero8, joins, j2n, 0x0444, a, sizeof(a));
+    if (n0 <= 0) { printf("FAIL rematch: lobby encode %d\n", n0); return 1; }
+    // Not a finished chain: refused, so the host starts an ordinary game.
+    if (fio_msg_rematch(a, n0, 0x0555ull * 1000u, 0, b, sizeof(b)) >= 0) { printf("FAIL rematch: a lobby was rematched\n"); return 1; }
+    printf("rematch OK (two taps two deals of one game, the creator held back, the same game through Start, fool %d defends)\n", fool);
+    return 0;
+}
+
 // ---------- the bubble delta survives being READ (round 16) ----------------
 //
 // A bubble states how many atoms it added (msg_wire.h's n_new), and its
@@ -554,6 +649,110 @@ static int bubble_delta_check(void) {
     }
     printf("bubble delta OK (2 actions after %d, read in between, n_new=%d unchanged)\n",
            prelude, read_delta);
+    return 0;
+}
+
+// ---------- where an arriving chain's replay starts ------------------------
+//
+// fio_msg_open_boundary is the bridge onto msg_open_boundary (msg_wire_test
+// pins its cases at 2/3/4 seats); this pins the BRIDGE: the arguments reach
+// it, a cold open is the claim, a child opens at its claim over its parent and
+// an older chain opens at its end, and nothing is adopted on the way.
+static int open_boundary_check(void) {
+    unsigned char seed[32];
+    for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(i * 11 + 3);
+    const SmokeJoin jspec[3] = { {0,"Sveta"}, {1,"Ann"}, {2,"Bo"} };
+    unsigned char joins[128];
+    const int joins_n = pack_joins(joins, (int)sizeof joins, jspec, 3);
+    const uint8_t zero8[8] = {0};
+    if (fio_new_game(seed, 32, 3) != FIO_EOK) { printf("FAIL open boundary new_game\n"); return 1; }
+
+    unsigned char parent[2048], child[2048];
+    int pn = 0, cn = 0;
+    for (int k = 0; k < 4; k++) {
+        const int mask = fio_actor_mask();
+        int seat = -1;
+        for (int s = 0; s < 3; s++) if (mask & (1 << s)) { seat = s; break; }
+        const int lrc = seat < 0 ? -1 : fio_legal_packed(seat, buf, sizeof(buf));
+        unsigned char aw[64];
+        const int al = lrc < 0 ? 0 : pick_move_awire((const unsigned char *)buf, lrc, aw);
+        if (al == 0 || fio_apply_awire(seat, aw, al) != FIO_EOK) {
+            printf("FAIL open boundary: move %d did not apply\n", k);
+            return 1;
+        }
+        if (k == 2) {
+            pn = fio_msg_encode(2, seat, 0xB0BULL, zero8, joins, joins_n, 0, parent, sizeof(parent));
+            // Adopt it, so the child's delta is measured from it as a phone's is.
+            if (pn <= 0 || fio_msg_decode(parent, pn) != FIO_EOK) { printf("FAIL open boundary parent\n"); return 1; }
+        }
+        if (k == 3) cn = fio_msg_encode(2, seat, 0xB0BULL, zero8, joins, joins_n, 0, child, sizeof(child));
+    }
+    if (cn <= 0) { printf("FAIL open boundary child encode %d\n", cn); return 1; }
+
+    const MsgHeader *hdr = (const MsgHeader *)fio_msg_header_ptr();
+    if (fio_msg_peek(child, cn) != FIO_EOK) { printf("FAIL open boundary peek\n"); return 1; }
+    const int c_turn = hdr->e.turn, c_new = hdr->e.n_new;
+    const int claim = c_new == 255 ? c_turn : (c_new > 0 ? c_turn - c_new : -1);
+    if (fio_msg_peek(parent, pn) != FIO_EOK) { printf("FAIL open boundary peek\n"); return 1; }
+    const int p_turn = hdr->e.turn;
+    const MsgHeader before = *hdr;
+
+    int ab = -9;
+    if (fio_msg_open_boundary(NULL, 0, child, cn, &ab) != FIO_EOK || ab != claim) {
+        printf("FAIL open boundary cold: %d, want the claim %d\n", ab, claim);
+        return 1;
+    }
+    if (fio_msg_open_boundary(parent, pn, child, cn, &ab) != FIO_EOK || ab != claim) {
+        printf("FAIL open boundary child over parent: %d, want the claim %d\n", ab, claim);
+        return 1;
+    }
+    if (fio_msg_open_boundary(child, cn, parent, pn, &ab) != FIO_EOK || ab != p_turn) {
+        printf("FAIL open boundary older chain: %d, want its end %d\n", ab, p_turn);
+        return 1;
+    }
+    const unsigned char junk[4] = { 1, 2, 3, 4 };
+    if (fio_msg_open_boundary(parent, pn, junk, 4, &ab) != FIO_EMSG
+        || fio_msg_open_boundary(parent, pn, NULL, 0, &ab) != FIO_EBADARG
+        || fio_msg_open_boundary(parent, pn, child, cn, NULL) != FIO_EBADARG) {
+        printf("FAIL open boundary: bad arguments were answered\n");
+        return 1;
+    }
+    if (fio_msg_open_boundary(junk, 4, child, cn, &ab) != FIO_EOK || ab != claim) {
+        printf("FAIL open boundary: an unreadable shown chain clamped to %d\n", ab);
+        return 1;
+    }
+    // fio_msg_staged_fate is the bridge onto msg_staged_fate (msg_wire_test
+    // pins its cases at 2/3/4 seats, every move kind). Here: the arguments
+    // reach it in order, junk is refused, and nothing is adopted. These two
+    // are not linked by parent8, so the atoms answer: the child holds the
+    // parent, the parent is held by the child.
+    int fate = -9;
+    if (fio_msg_staged_fate(child, cn, parent, pn, &fate) != FIO_EOK || fate != FIO_FATE_STANDS) {
+        printf("FAIL staged fate: the child over its parent is %d, want STANDS\n", fate);
+        return 1;
+    }
+    if (fio_msg_staged_fate(parent, pn, child, cn, &fate) != FIO_EOK || fate != FIO_FATE_LANDED) {
+        printf("FAIL staged fate: the parent under its child is %d, want LANDED\n", fate);
+        return 1;
+    }
+    if (fio_msg_staged_fate(parent, pn, junk, 4, &fate) != FIO_EMSG
+        || fio_msg_staged_fate(NULL, 0, child, cn, &fate) != FIO_EBADARG
+        || fio_msg_staged_fate(parent, pn, child, cn, NULL) != FIO_EBADARG) {
+        printf("FAIL staged fate: bad arguments were answered\n");
+        return 1;
+    }
+    if (fio_msg_turn_field_after_arrival(FIO_TURN_READY | FIO_TURN_STAGED, FIO_FATE_SUPERSEDED)
+            != FIO_TURN_FIELD_NOTHING
+        || fio_msg_turn_field_after_arrival(FIO_TURN_READY | FIO_TURN_STAGED, -1) != FIO_TURN_FIELD_KEEP) {
+        printf("FAIL field after arrival: the bridge does not reach the rule\n");
+        return 1;
+    }
+    if (memcmp(&before, hdr, sizeof before) != 0) {
+        printf("FAIL open boundary: asking moved the header\n");
+        return 1;
+    }
+    printf("open boundary OK (claim %d over parent turn %d; older chain opens at its end; "
+           "staged fate bridged)\n", claim, p_turn);
     return 0;
 }
 
@@ -865,6 +1064,80 @@ static int lobby_v2_reseat_check(void) {
     if (fio_actor_mask() == 0) { printf("FAIL lobby: no seat can act after start\n"); return 1; }
 
     printf("lobby v2 OK (WAITING/8 -> 3 joins, still WAITING/8 -> reseat(3) -> LIVE/3, wire accepted)\n");
+    return 0;
+}
+
+// ---------- the started bubble plays the deal ------------------------------
+//
+// The owner, on iMessage: "Did not see card deal". Start seals a LIVE bubble at
+// turn 0, and opening it asks the kernel for that bubble's frames exactly as
+// smoke_open_bubble does: adopt, share code, last events. The deal is the one
+// thing such a chain has to show, so every seat and a spectator get one frame
+// holding players x CARDS_PER_PLAYER deal events, round-robin from seat 0 - at
+// the boundary the bubble itself claims AND at the board's floor of 0 (a cold
+// open clamps to what it has already shown, which is nothing).
+typedef struct { int n_deal, bad; int np; } SmokeDealCtx;
+static void smoke_deal_sink(void *ctx, int index, const EvwRead *ev) {
+    SmokeDealCtx *c = (SmokeDealCtx *)ctx;
+    (void)index;
+    if (ev->type != EVW_T_DEAL) return;
+    if (ev->seat != c->n_deal % c->np || ev->n_cards != 1) c->bad = 1;
+    c->n_deal++;
+}
+
+static int started_deal_check(void) {
+    static const int nps[] = { 2, 4 };
+    const SmokeJoin jspec[4] = { {0,"Ann"}, {1,"Bo"}, {2,"Cy"}, {3,"Di"} };
+    const uint8_t zero8[8] = {0};
+    for (int pi = 0; pi < 2; pi++) {
+        const int np = nps[pi];
+        unsigned char seed[32];
+        for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(i * 11 + np * 5 + 3);
+        if (fio_new_game(seed, 32, np) != FIO_EOK) { printf("FAIL started deal: new_game(%d)\n", np); return 1; }
+        unsigned char joins[128];
+        const int joins_n = pack_joins(joins, (int)sizeof joins, jspec, np);
+        unsigned char live[2048];
+        const int ln = fio_msg_encode(2 /* LIVE */, 0, 0xDEA1ULL, zero8, joins, joins_n, 0, live, sizeof live);
+        if (ln <= 0) { printf("FAIL started deal (%dp): LIVE encode %d\n", np, ln); return 1; }
+        for (int viewer = -1; viewer < np; viewer++) {
+            for (int floor_open = 0; floor_open < 2; floor_open++) {
+                if (fio_msg_decode(live, ln) != FIO_EOK) { printf("FAIL started deal (%dp): decode\n", np); return 1; }
+                const MsgHeader *h = (const MsgHeader *)fio_msg_header_ptr();
+                if (h->e.phase != 2 || h->e.turn != 0) {
+                    printf("FAIL started deal (%dp): phase %d turn %d\n", np, h->e.phase, h->e.turn); return 1;
+                }
+                const int n_new = h->e.n_new, turn = h->e.turn;
+                int atoms_before = n_new == 255 ? turn : (n_new > 0 ? turn - n_new : -1);
+                if (floor_open && atoms_before < 0) atoms_before = 0;   // MessageKernel.openChain's floor
+                char code[4096];
+                const int cl = fio_replay_share_code_b32(code, sizeof code);
+                if (cl < 0) {
+                    printf("FAIL started deal (%dp, viewer %d): the started game has no replay code (%d, detail %d)\n",
+                           np, viewer, cl, fio_last_replay_error());
+                    return 1;
+                }
+                const int fl = fio_replay_last_events_packed(code, viewer, atoms_before,
+                                                             (unsigned char *)evbuf, sizeof evbuf);
+                SmokeDealCtx c = { 0, 0, np };
+                int q = 0;
+                while (fl > 0 && q + 2 <= fl) {
+                    const unsigned char *b = (const unsigned char *)evbuf;
+                    const int flen = b[q] | (b[q + 1] << 8);
+                    q += 2;
+                    if (flen <= 0 || q + flen > fl || evwire_read(b + q, flen, 0, 0, 0, smoke_deal_sink, &c) < 0) {
+                        c.bad = 1; break;
+                    }
+                    q += flen;
+                }
+                if (fl < 0 || c.bad || c.n_deal != np * CARDS_PER_PLAYER) {
+                    printf("FAIL started deal (%dp, viewer %d, atoms_before %d): %d deal events (rc %d, order %s), want %d\n",
+                           np, viewer, atoms_before, c.n_deal, fl, c.bad ? "broken" : "ok", np * CARDS_PER_PLAYER);
+                    return 1;
+                }
+            }
+        }
+    }
+    printf("started deal OK (2p and 4p, every seat and a spectator, both boundaries)\n");
     return 0;
 }
 
@@ -1470,6 +1743,12 @@ static int board_rules_check(void) {
         || fio_shown_ledger_allows(FIO_CLAIM_HAND_OFF, 1) != 1) {
         printf("FAIL ledger ownership\n"); return 1;
     }
+    // The end screen clears the board's chrome (anim_board_chrome).
+    if (fio_board_chrome(1, 1, 0, FIO_CHROME_RULE_CLEAR_ON_RESULTS) != FIO_CHROME_RESULTS
+        || (fio_board_chrome(0, 0, 0, FIO_CHROME_RULE_CLEAR_ON_RESULTS) & FIO_CHROME_HAND) == 0
+        || (fio_board_chrome(1, 1, 0, 0) & FIO_CHROME_HAND) == 0) {
+        printf("FAIL board chrome\n"); return 1;
+    }
 
     // The selection, over the whole deck both ways.
     for (int id = 0; id < 52; id++) {
@@ -1731,8 +2010,16 @@ static int plan_wire_check(void) {
     // Each step lands on its OWN board, and the last one is the final board.
     if (s0->deck != 1 || s0->hand[0] != 3 || s0->hand[1] != 9) { printf("FAIL plan step 0 board\n"); return 1; }
     if (s1->deck != 0 || s1->hand[0] != 5 || s1->hand[1] != 9) { printf("FAIL plan step 1 board\n"); return 1; }
-    if (s0->in_flight_from_deck != 0 || s1->in_flight_from_deck != 2 || s1->in_flight_to_flipped != 0) {
-        printf("FAIL plan in-flight from deck\n"); return 1;
+    // The refill draws the stock's last card AND the trump (card 33) from under
+    // it: the plan names the trump, from its slot, and only the stock card
+    // leaves the pile (anim_plan.h AnimPlanStep.trump_out).
+    if (s0->in_flight_from_deck != 0 || s1->in_flight_from_deck != 1 || s1->in_flight_to_flipped != 0) {
+        printf("FAIL plan in-flight from deck %d/%d\n", s0->in_flight_from_deck, s1->in_flight_from_deck); return 1;
+    }
+    if (!card_is_none(s0->trump_out) || s0->trump_from != ANIM_LOC_NONE
+        || card_to_id(s1->trump_out) != 33 || s1->trump_from != ANIM_LOC_FLIPPED) {
+        printf("FAIL plan trump out %d/%d from %d/%d\n", card_to_id(s0->trump_out), card_to_id(s1->trump_out),
+               s0->trump_from, s1->trump_from); return 1;
     }
     // Timing: ANIMATION_TIME each, staggered by TIME+GAP, and the wall time.
     if (s0->duration_ms != 500 || s1->start_ms != 525 || pl->total_ms != 1025) {
@@ -2214,10 +2501,13 @@ int main(void) {
 
     if (replay_sweep() != 0) return 1;
     if (fmsg_check() != 0) return 1;
+    if (rematch_check() != 0) return 1;
     if (bubble_delta_check() != 0) return 1;
+    if (open_boundary_check() != 0) return 1;
     if (chained_cover_check() != 0) return 1;
     if (lobby_v2_reseat_check() != 0) return 1;
     if (lobby_rules_check() != 0) return 1;
+    if (started_deal_check() != 0) return 1;
     if (surface_wire_check() != 0) return 1;
     if (nine_player_cap_check() != 0) return 1;
     if (beats_wire_check() != 0) return 1;

@@ -60,12 +60,12 @@ final class ReplayFloorTests: XCTestCase {
         let k = MessageKernel.shared
 
         let first = try await k.openChain(payload: oneCover, viewer: 0)
-        let alreadyShown = first.env.turn
         XCTAssertFalse(first.events.isEmpty, "the first bubble animates its own cover")
 
         // Unclamped: the second bubble drags the first cover back in.
         let loose = try await k.openChain(payload: bothCovers, viewer: 0)
-        let clamped = try await k.openChain(payload: bothCovers, viewer: 0, floor: alreadyShown)
+        // The board that showed the first bubble hands the kernel that chain.
+        let clamped = try await k.openChain(payload: bothCovers, viewer: 0, from: .shown(oneCover))
 
         let covers = { (evs: [GameEvent]) in evs.filter { $0.kind == .cover }.count }
         XCTAssertEqual(covers(loose.events), 2,
@@ -74,16 +74,36 @@ final class ReplayFloorTests: XCTestCase {
                        "the board re-animated a cover it had already shown")
     }
 
-    /// AND THE FLOOR MUST NOT EAT A COLD OPEN. A board that has adopted nothing
-    /// has a floor of -1, and must still animate the whole bubble - that is
-    /// "close the bubble I just sent and open it again" (owner, round 22).
+    /// The same, through the CONTROLLER a live board holds: open on the first
+    /// bubble, then the stale second one arrives. What `rebuildBase` hands the
+    /// kernel as "already shown" is the chain the board was on.
+    func testALiveBoardDoesNotReanimateTheCoverItShowed() async throws {
+        let (oneCover, bothCovers) = try await twoCoversInARow()
+        let env1 = try await MessageEnvelope.decode(payload: oneCover, viewer: -1)
+        let board = MessageTurnController(parentPayload: oneCover, parent: env1, mySeat: 0)
+        await board.begin()
+        board.setBoardWatching(true)
+        let env2 = try await MessageEnvelope.decode(payload: bothCovers, viewer: -1)
+        await board.offerArrival(payload: bothCovers, parent: env2)
+        if board.conflictRetracting { await board.finishConflictAdopt() }
+        XCTAssertEqual(board.basePayload, bothCovers, "the second bubble was adopted")
+        XCTAssertEqual(board.openReplayEvents.filter { $0.kind == .cover }.count, 1,
+                       "the live board re-animated the cover it had already shown")
+        board.setBoardWatching(false)
+    }
+
+    /// AND THE CLAMP MUST NOT EAT A COLD OPEN. A board that has shown nothing
+    /// hands the kernel no chain, and must still animate the whole bubble -
+    /// that is "close the bubble I just sent and open it again" (owner, round
+    /// 22).
     func testAColdOpenIsUnclamped() async throws {
         let (_, bothCovers) = try await twoCoversInARow()
         let k = MessageKernel.shared
-        let cold = try await k.openChain(payload: bothCovers, viewer: 0, floor: -1)
+        let cold = try await k.openChain(payload: bothCovers, viewer: 0, from: .shown(nil))
         let bare = try await k.openChain(payload: bothCovers, viewer: 0)
         XCTAssertEqual(cold.events.count, bare.events.count,
-                       "the default floor changed what a cold open animates")
-        XCTAssertFalse(cold.events.isEmpty, "a cold open must still animate the bubble")
+                       "the default changed what a cold open animates")
+        XCTAssertEqual(cold.events.filter { $0.kind == .cover }.count, 2,
+                       "a cold open must animate the whole bubble, both covers")
     }
 }

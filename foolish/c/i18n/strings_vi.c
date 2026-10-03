@@ -93,6 +93,7 @@ const char *const FS_STRINGS_VI[FS_K_COUNT] = {
     [FS_K_IOS_MSG_JOINAS           ] = "Vào với tên {name}",
     [FS_K_IOS_MSG_JOINED           ] = "{name} đã vào - chạm để vào",
     [FS_K_IOS_MSG_JOININVITE       ] = "Ngốc - chạm để vào",
+    [FS_K_IOS_MSG_REMATCH         ] = "Tái đấu - chạm để chơi",
     [FS_K_IOS_MSG_LEFT             ] = "{name} đã rời ván",
     [FS_K_IOS_MSG_LEFTANON         ] = "Một người chơi đã rời ván",
     [FS_K_IOS_MSG_LOBBYFULL        ] = "Hết chỗ",
