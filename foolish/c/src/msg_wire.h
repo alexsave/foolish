@@ -602,9 +602,9 @@ int msg_replay(const MsgEnvelope *e, Game *g);
 //
 // Two chains for the same game_id are ordered by (§7.2):
 //
-//   0. a STARTED chain beats a pre-game one — phase >= MSG_PHASE_LIVE outranks
+//   0. a STARTED chain beats a pre-game one - phase >= MSG_PHASE_LIVE outranks
 //      WAITING/ACCEPT, always
-//  0F. a deal in PLAY beats a FINISHED deal of the same game — rule 0's other
+//  0F. a deal in PLAY beats a FINISHED deal of the same game - rule 0's other
 //      boundary, for a rematch (see below)
 //   1. higher round wins        — a closed bout is settled history
 //   2. else higher turn wins    — more accepted actions
