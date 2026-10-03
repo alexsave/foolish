@@ -3,13 +3,14 @@
   "private": true,
   "//": "uttt.live: a finished game's replay link opens here. The board is drawn by the uttt kernel compiled to wasm (../c, `make wasm-web`), a build output the pre-hooks make, never committed.",
   "scripts": {
-    "wasm": "make -s -C ../c wasm-web",
+    "wasm": "make -s -C ../c wasm-web wasm-243",
     "predev": "npm run wasm",
     "dev": "next dev",
     "prebuild": "npm run wasm",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/"
   },
   "dependencies": {
     "next": "16.2.6",

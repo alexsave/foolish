@@ -6,3 +6,7 @@ next-env.d.ts
 # the kernel, a build output (../c Makefile, wasm-web): built by the pre-hooks
 # and by .github/workflows/uttt-web.yml, never committed
 public/uttt.wasm
+# the 243 page: its kernel and the readers structgen writes for it (../c
+# Makefile, wasm-243), build outputs like uttt.wasm
+public/uttt243.wasm
+lib/gen/
