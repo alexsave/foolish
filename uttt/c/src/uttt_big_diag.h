@@ -12,7 +12,8 @@
  *   - THE GREYS, sampled where the kit samples them (bd_sample's cell
  *     centres and thresholds, reproduced here and held to the kit's own by
  *     tests/uttt_big_diag_test.c): per read class the mean, minimum, maximum
- *     and spread of the luminance, and a 16-bucket histogram (ubd_luma).
+ *     and spread of the BOARD's luminance, a 16-bucket histogram of it, and
+ *     the header row's counts apart (ubd_luma).
  *   - THE HISTORY, a ring of the last UBD_RING_MAX reads and sends in a fixed
  *     little-endian layout, so a send on one phone can be set beside the
  *     opening on the other afterwards (ubd_ring_*).
@@ -99,18 +100,42 @@ typedef struct {
     int    min, max;
 } UbdClass;
 
+/* The kit's header: BD_HEADER_CELLS (bubble_data.h) cells at the start of
+ * row 0; the rest of row 0 is painted empty. tests/uttt_big_diag_test.c
+ * holds the two numbers equal. */
+#define UBD_HEADER_CELLS 64
+
+/* A part of the picture that is not the board: how many of its cells read
+ * as each class, and its worst deviation from nominal (thirds, as below). */
+typedef struct {
+    int cells;
+    int n[3];                  /* UBD_CLASS_*                                 */
+    int worst_dev3;
+} UbdPart;
+
+/* THE PICTURE IS n x (n + 1) CELLS: row 0 is the kit's header (UBD_HEADER_CELLS
+ * cells, then empty to the row's end) and rows 1..n are the board. The
+ * classes and the histogram are THE BOARD'S CELLS ONLY, so "X: 1 cell" means
+ * one X on the board; row 0 is counted apart (header, rest), and risky, the
+ * margin and the worst deviation are also kept over every cell, as the kit
+ * reads every cell. */
 typedef struct {
     int      cells;            /* sampled, header row included: n * (n + 1)   */
     int      risky;            /* within UBD_RISKY of a threshold, the kit's  */
     int      min_margin;       /* 0..64                                        */
-    UbdClass cls[3];           /* UBD_CLASS_*: how each class's greys came back */
-    int      hist[UBD_BUCKETS];/* every sampled luminance, 16 wide a bucket   */
-    /* THE WORST DEVIATION FROM NOMINAL: the largest distance of any cell's
+    int      board_cells;      /* rows 1..n: n * n                            */
+    UbdClass cls[3];           /* UBD_CLASS_*: the board's greys, by class    */
+    int      hist[UBD_BUCKETS];/* the board's luminances, 16 wide a bucket    */
+    UbdPart  header;           /* row 0's first UBD_HEADER_CELLS cells        */
+    UbdPart  rest;             /* the rest of row 0                           */
+    /* THE WORST DEVIATION FROM NOMINAL: the largest distance of a cell's
      * luminance from its class's painted level (255, 128, 0), in thirds of a
      * level (a sum of r, g and b against 3 x the level), so it is exact. How
      * much room a fourth level would have is this number against the
-     * spacing such a palette would leave. */
+     * spacing such a palette would leave. Over every cell, and over the
+     * board's alone (header.worst_dev3 and rest.worst_dev3 are row 0's). */
     int      worst_dev3;
+    int      board_worst_dev3;
 } UbdLuma;
 
 /* The painted level of a class: 255 empty, 128 X, 0 O (bubble_data.c). */
@@ -195,6 +220,12 @@ UBD_HIDDEN int ubd_ring_push(const uint8_t *ring, int n, const UbdEvent *e, uint
 #define UBD_FROM_DID_SELECT 2
 #define UBD_FROM_DID_RECEIVE 3
 
+/* The witness that seated this device (uttt_api.h's UTI_BY_*). */
+#define UBD_BY_NONE    0
+#define UBD_BY_RECORD  1
+#define UBD_BY_TAG     2
+#define UBD_BY_SENDER  3
+
 #define UBD_WHO_UNKNOWN 0
 #define UBD_WHO_ME      1      /* senderParticipantIdentifier == local         */
 #define UBD_WHO_OTHER   2
@@ -212,7 +243,14 @@ typedef struct {
     const char *session;       /* the session's identity; printed as its CRC-32 */
     /* 2. the URL */
     const char *url;           /* the message's link, NULL for none           */
-    const char *seat;          /* this device's seat in it, as the app says   */
+    /* THE BIG GAME THE KERNEL HOLDS: one at a time, the last the drawer
+     * read, staged or played, which need not be this message's. Its link
+     * (NULL for none), this device's seat in it (UTM_SEAT_*), the witness
+     * that seated it (UBD_BY_*) and its plies. "seat here" is said from
+     * these (ubd_report). */
+    const char *resident;
+    int         resident_seat, resident_by;
+    long        resident_plies;
     /* 3. the layout */
     const char *layout;        /* its class name                              */
     int         caption_len, subcaption_len, summary_len;

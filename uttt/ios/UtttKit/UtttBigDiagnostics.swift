@@ -60,7 +60,6 @@ public enum UtttBigDiag {
         var pending = false
         var session: String?
         var url: String?
-        var seat: String?
         var layout: String?
         var caption: Int32 = -1, subcaption: Int32 = -1, summary: Int32 = -1
         var imageSize: (w: Int32, h: Int32, scalePct: Int32)?
@@ -75,7 +74,7 @@ public enum UtttBigDiag {
             let strings: [String?] = [
                 info["CFBundleShortVersionString"] as? String, info["CFBundleVersion"] as? String,
                 UIDevice.current.systemVersion, UtttBigDiag.model, UtttBigDiag.install,
-                session, url, seat, layout, fileExt,
+                session, url, layout, fileExt,
             ]
             /* strdup'd for the call, so no pointer outlives its string */
             let c = strings.map { $0.map { strdup($0) } ?? nil }
@@ -92,8 +91,8 @@ public enum UtttBigDiag {
                             f.app_version = UnsafePointer(c[0]); f.app_build = UnsafePointer(c[1])
                             f.os_version = UnsafePointer(c[2]); f.model = UnsafePointer(c[3])
                             f.install = UnsafePointer(c[4]); f.session = UnsafePointer(c[5])
-                            f.url = UnsafePointer(c[6]); f.seat = UnsafePointer(c[7])
-                            f.layout = UnsafePointer(c[8]); f.file_ext = UnsafePointer(c[9])
+                            f.url = UnsafePointer(c[6])
+                            f.layout = UnsafePointer(c[7]); f.file_ext = UnsafePointer(c[8])
                             f.now = Int64(Date().timeIntervalSince1970)
                             f.utc_offset = Int32(TimeZone.current.secondsFromGMT())
                             f.from = from.rawValue
@@ -143,11 +142,6 @@ public enum UtttBigDiag {
         f.pending = message.isPending
         f.session = message.session.map { "\($0.hash)" }
         f.url = message.url?.absoluteString
-        if let text = f.url, UtttBig.messageText == text {
-            f.seat = "\(UtttBig.seat) by \(UtttBig.seatBy)"
-        } else {
-            f.seat = "not the game on screen"
-        }
         if let layout = message.layout {
             f.layout = String(describing: type(of: layout))
         }

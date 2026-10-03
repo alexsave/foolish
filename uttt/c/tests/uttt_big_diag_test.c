@@ -263,19 +263,45 @@ static void test_greys_match_the_kit(void)
             CHECK(bd_sample(pic, w, h, 243, grid, &kit) == BD_EOK, "kit sample");
             UbdLuma l;
             CHECK(ubd_luma(pic, w, h, 243, &l) == 0, "ubd_luma");
-            int count[3] = { 0, 0, 0 };
-            for (int i = 0; i < 243 * 244; i++) count[grid[i]]++;
+            /* the kit's grid: row 0 is the header (its first 64 cells) and
+             * the rest of the row; rows 1..243 are the board */
+            int count[3] = { 0, 0, 0 }, head[3] = { 0, 0, 0 }, rest[3] = { 0, 0, 0 };
+            for (int i = 0; i < 243 * 244; i++) {
+                if (i < BD_HEADER_CELLS) head[grid[i]]++;
+                else if (i < 243) rest[grid[i]]++;
+                else count[grid[i]]++;
+            }
             CHECK(l.cells == kit.cells && l.risky == kit.risky && l.min_margin == kit.min_margin,
                   "%dx%d amp %d: cells %d/%d risky %d/%d margin %d/%d", w, h, amps[a],
                   l.cells, kit.cells, l.risky, kit.risky, l.min_margin, kit.min_margin);
+            TEST("greys: the classes are the board's cells, rows 1..243, and only those");
+            CHECK(l.board_cells == 243 * 243, "board cells %d", l.board_cells);
             CHECK(l.cls[UBD_CLASS_EMPTY].n == count[0] && l.cls[UBD_CLASS_X].n == count[1] &&
-                  l.cls[UBD_CLASS_O].n == count[2], "%dx%d amp %d: classes %d %d %d against %d %d %d",
+                  l.cls[UBD_CLASS_O].n == count[2], "%dx%d amp %d: board classes %d %d %d against %d %d %d",
                   w, h, amps[a], l.cls[0].n, l.cls[1].n, l.cls[2].n, count[0], count[1], count[2]);
+            TEST("greys: row 0 is counted apart, the header and the rest");
+            CHECK(l.header.cells == BD_HEADER_CELLS && l.rest.cells == 243 - BD_HEADER_CELLS,
+                  "header %d rest %d", l.header.cells, l.rest.cells);
+            CHECK(l.header.n[0] == head[0] && l.header.n[1] == head[1] && l.header.n[2] == head[2],
+                  "%dx%d amp %d: header %d %d %d against %d %d %d", w, h, amps[a],
+                  l.header.n[0], l.header.n[1], l.header.n[2], head[0], head[1], head[2]);
+            CHECK(l.rest.n[0] == rest[0] && l.rest.n[1] == rest[1] && l.rest.n[2] == rest[2],
+                  "%dx%d amp %d: rest %d %d %d against %d %d %d", w, h, amps[a],
+                  l.rest.n[0], l.rest.n[1], l.rest.n[2], rest[0], rest[1], rest[2]);
+            int worst = l.board_worst_dev3;
+            if (l.header.worst_dev3 > worst) worst = l.header.worst_dev3;
+            if (l.rest.worst_dev3 > worst) worst = l.rest.worst_dev3;
+            CHECK(l.worst_dev3 == worst, "worst %d is not the parts' %d", l.worst_dev3, worst);
+            TEST("greys: the histogram holds the board's cells");
             int hist = 0;
             for (int b = 0; b < UBD_BUCKETS; b++) hist += l.hist[b];
-            CHECK(hist == l.cells, "histogram holds %d of %d", hist, l.cells);
+            CHECK(hist == l.board_cells, "histogram holds %d of the board's %d", hist, l.board_cells);
+            TEST("greys: the classes, risky and margin are the kit's own");
             free(pic);
         }
+
+    TEST("greys: the diagnostics' header is the kit's");
+    CHECK(UBD_HEADER_CELLS == BD_HEADER_CELLS, "%d against %d", UBD_HEADER_CELLS, BD_HEADER_CELLS);
 
     TEST("greys: a size the kit refuses is refused");
     UbdLuma l;
@@ -319,6 +345,24 @@ static void test_greys_numbers(void)
     CHECK(l.cls[2].sd > 0.999 * sqrt(var) && l.cls[2].sd < 1.001 * sqrt(var), "sd %f against %f", l.cls[2].sd, sqrt(var));
     CHECK(l.hist[133 / 16] == l.cls[1].n && l.hist[0] == l.cls[2].n && l.hist[1] == 0, "buckets: %d %d",
           l.hist[0], l.hist[1]);
+    CHECK(l.board_worst_dev3 == 46 && l.header.worst_dev3 == 15 && l.rest.worst_dev3 == 0,
+          "board %d header %d rest %d (the header's X at 133 is 15 thirds)", l.board_worst_dev3,
+          l.header.worst_dev3, l.rest.worst_dev3);
+
+    TEST("greys: a header cell's deviation is the header's, not the board's");
+    int h_cell = -1;
+    for (int i = 0; i < BD_HEADER_CELLS && h_cell < 0; i++) if (cells[i] == 2) h_cell = i;
+    CHECK(h_cell >= 0, "no black cell in the header");
+    y = ((2L * 0 + 1) * 732) / (2L * 244);
+    x = ((2L * h_cell + 1) * 729) / (2L * 243);
+    px = paint + (y * 729 + x) * 4;
+    px[0] = px[1] = px[2] = 30;                      /* 90 thirds from 0, still an O */
+    UbdLuma m;
+    CHECK(ubd_luma(paint, 729, 732, 243, &m) == 0, "luma");
+    CHECK(m.header.worst_dev3 == 90 && m.worst_dev3 == 90 && m.board_worst_dev3 == 46,
+          "header %d all %d board %d", m.header.worst_dev3, m.worst_dev3, m.board_worst_dev3);
+    CHECK(m.cls[2].n == l.cls[2].n && m.cls[2].max == l.cls[2].max && !memcmp(m.hist, l.hist, sizeof m.hist),
+          "a header cell moved the board's numbers");
 }
 
 static void test_ring(void)
@@ -409,6 +453,9 @@ static const char *line_with(const char *s, const char *what, char *out, int cap
 
 static char text[16384];
 
+/* holds any link utb_msg_text_encode writes (uttt_api.h UTI_BIG_TEXT_MAX is 96) */
+#define UTB_MSG_TEXT_TEST 160
+
 static void test_report(void)
 {
     /* A received big bubble: a real link, its board, the picture as painted,
@@ -416,6 +463,8 @@ static void test_report(void)
     UtbMsg m;
     uint8_t me[UTM_TAG_LEN] = { 1, 2, 3, 4, 5, 6, 7, 8, 9 }, you[UTM_TAG_LEN] = { 9, 8, 7, 6, 5, 4, 3, 2, 1 };
     utb_msg_open(&m, 1790001000, 7, me);
+    char invitation[UTB_MSG_TEXT_TEST];
+    utb_msg_text_encode(&m, invitation, (int)sizeof invitation);   /* ply 0 of the same game */
     CHECK(utb_msg_play(&m, you, 29527), "a first move");
     char url[160] = "data:,?";
     utb_msg_text_encode(&m, url + 6, (int)sizeof url - 6);
@@ -441,7 +490,8 @@ static void test_report(void)
     f.model = "iPhone16,2 with a name far longer than any line may be";   /* cut, never wide */
     f.install = "TestFlight"; f.now = 1790001200; f.utc_offset = 3600; f.from = UBD_FROM_SELECTED;
     f.who = UBD_WHO_OTHER; f.pending = 0; f.session = "8C2A";
-    f.url = url; f.seat = "O by record";
+    f.url = url;
+    f.resident = url; f.resident_seat = UTM_SEAT_O; f.resident_by = UBD_BY_RECORD; f.resident_plies = 1;
     f.layout = "MSMessageTemplateLayout"; f.caption_len = 9; f.subcaption_len = -1; f.summary_len = 9;
     f.has_image = 1; f.image_w = 729; f.image_h = 732; f.image_scale_pct = 100;
     f.has_file = 1; f.file_ext = "jpeg"; f.file_bytes = n89; f.file = j89; f.file_n = n89;
@@ -475,20 +525,65 @@ static void test_report(void)
           strlen(l) == UBD_LINE_MAX, "the long line is cut at %d: %s", UBD_LINE_MAX, l);
     CHECK(line_with(text, "at 2026-09-21 ", l, sizeof l), "clock");
 
-    TEST("report: the greys per class, the worst deviation and the histogram");
-    /* every sampled cell, the header row's included */
-    int lv[3] = { 0, 0, 0 };
-    for (int i = 0; i < 243 * 244; i++) lv[cells[i]]++;
-    char want[64];
-    snprintf(want, sizeof want, "empty (painted 255): %d cells", lv[0]);
-    CHECK(line_with(text, want, l, sizeof l), "%s", want);
-    snprintf(want, sizeof want, "X (painted 128): %d cells", lv[1]);
-    CHECK(line_with(text, want, l, sizeof l), "%s", want);
-    snprintf(want, sizeof want, "O (painted 0): %d cells", lv[2]);
-    CHECK(line_with(text, want, l, sizeof l), "%s", want);
+    TEST("report: the greys per class are the board's: one X is 1 cell");
+    /* THE BOARD'S CELLS, rows 1..243: the one move, and nothing of row 0 */
+    CHECK(line_with(text, "the board, rows 1-243: 59049 cells", l, sizeof l), "board line");
+    CHECK(line_with(text, "empty (painted 255): 59048 cells", l, sizeof l), "empty: %s",
+          line_with(text, "empty (painted", l, sizeof l));
+    CHECK(strstr(text, "\nX (painted 128): 1 cell\n"), "X: %s",
+          line_with(text, "X (painted", l, sizeof l));
+    CHECK(line_with(text, "O (painted 0): 0 cells", l, sizeof l), "O: %s",
+          line_with(text, "O (painted", l, sizeof l));
     CHECK(line_with(text, "mean 128.0 sd 0.00 min 128 max 128", l, sizeof l), "X stats");
+    CHECK(line_with(text, "board worst deviation 0.0", l, sizeof l), "board worst");
+    CHECK(line_with(text, "board histogram, 16 levels a bucket", l, sizeof l), "histogram");
+    /* the histogram's two rows: 59048 white in the last bucket, 1 grey at 128 */
+    CHECK(strstr(text, "\n  0 0 0 0 0 0 0 0\n  1 0 0 0 0 0 0 59048\n"), "histogram rows: %s",
+          strstr(text, "board histogram"));
+
+    TEST("report: row 0 is its own group, the header's 64 cells apart");
+    int hv[3] = { 0, 0, 0 }, rv[3] = { 0, 0, 0 };
+    for (int i = 0; i < 243; i++) (i < BD_HEADER_CELLS ? hv : rv)[cells[i]]++;
+    CHECK(hv[1] + hv[2] > 10, "the header has marks-coloured cells: %d %d", hv[1], hv[2]);
+    char want[128];
+    CHECK(line_with(text, "header 64 cells, worst deviation 0.0", l, sizeof l), "header line");
+    snprintf(want, sizeof want, "  read empty %d, X %d, O %d", hv[0], hv[1], hv[2]);
+    CHECK(strstr(text, "header 64 cells, worst deviation 0.0\n") &&
+          !strncmp(strstr(text, "header 64 cells, worst deviation 0.0\n") + 37, want, strlen(want)),
+          "header counts, want '%s'", want);
+    snprintf(want, sizeof want, "rest of row 0 %d cells, worst deviation 0.0\n  read empty %d, X %d, O %d\n",
+             243 - BD_HEADER_CELLS, rv[0], rv[1], rv[2]);
+    CHECK(strstr(text, want), "rest counts, want '%s'", want);
     CHECK(line_with(text, "worst deviation from nominal: 0.0", l, sizeof l), "worst");
-    CHECK(line_with(text, "histogram, 16 levels a bucket", l, sizeof l), "histogram");
+
+    TEST("report: seat here, when the app holds this very link");
+    CHECK(strstr(text, "\nseat here O, by record\n"), "seat: %s", line_with(text, "seat here", l, sizeof l));
+
+    TEST("report: seat here, when the app holds the same game at another ply");
+    {
+        UbdFacts g = f;
+        g.resident = invitation; g.resident_seat = UTM_SEAT_WAITING; g.resident_plies = 0;
+        CHECK(ubd_report(&g, text, sizeof text) > 0 && lines_ok(text, &count) &&
+              strstr(text, "\nseat here waiting (my invitation), by record\n~ as at ply 0, which the app holds\n"),
+              "same game: %s", strstr(text, "seat here"));
+        TEST("report: seat here, when the app holds another game, or none");
+        UtbMsg other;
+        char elsewhere[UTB_MSG_TEXT_TEST];
+        utb_msg_open(&other, 1790009000, 7, me);
+        utb_msg_text_encode(&other, elsewhere, (int)sizeof elsewhere);
+        g.resident = elsewhere;
+        CHECK(ubd_report(&g, text, sizeof text) > 0 && strstr(text, "\nseat here ? - the app holds another game\n") &&
+              !strstr(text, "as at ply"), "another: %s", strstr(text, "seat here"));
+        g.resident = NULL;
+        CHECK(ubd_report(&g, text, sizeof text) > 0 && strstr(text, "\nseat here ? - the app holds no 243 game\n"),
+              "none: %s", strstr(text, "seat here"));
+        TEST("report: seat here, when the app holds this position spelled another way");
+        g = f;
+        g.resident = url + 6;                       /* no "data:," - the same head */
+        CHECK(ubd_report(&g, text, sizeof text) > 0 && strstr(text, "\nseat here O, by record\n") &&
+              !strstr(text, "as at ply"), "respelled: %s", strstr(text, "seat here"));
+        CHECK(ubd_report(&f, text, sizeof text) > 0, "the report again");
+    }
 
     TEST("report: the history, newest first, with the send");
     CHECK(line_with(text, "== history, newest first (1)", l, sizeof l), "history count");

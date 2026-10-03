@@ -36,6 +36,8 @@ final class BigBoardUITests: XCTestCase {
         var y: Double
         var whole: Bool
         var centre: Int
+        /// The board's rect in the board view's own points.
+        var board: CGRect
     }
 
     private var app: XCUIApplication!
@@ -52,9 +54,11 @@ final class BigBoardUITests: XCTestCase {
         let w = v.split(separator: " ").map(String.init)
         func after(_ k: String) -> String { (w.firstIndex(of: k).map { $0 + 1 < w.count ? w[$0 + 1] : "" }) ?? "" }
         let off = after("offset").split(separator: ",").compactMap { Double($0) }
+        let b = after("board").split(separator: ",").compactMap { Double($0) }
         return Seen(zoom: Double(after("zoom")) ?? -1,
                     x: off.first ?? .nan, y: off.count > 1 ? off[1] : .nan,
-                    whole: after("whole") == "1", centre: Int(after("centre")) ?? -2)
+                    whole: after("whole") == "1", centre: Int(after("centre")) ?? -2,
+                    board: b.count == 4 ? CGRect(x: b[0], y: b[1], width: b[2], height: b[3]) : .null)
     }
 
     /// The value once it stops changing (a zoom animates, a pan decelerates).
@@ -166,6 +170,83 @@ final class BigBoardUITests: XCTestCase {
         s = settled(board)
         XCTAssertEqual(s.zoom, 1, accuracy: 0.01, "double tap at the deepest zoom did not fit")
         XCTAssertTrue(s.whole)
+    }
+
+    /// THE BOARD PANS PAST ITS EDGES (docs/BIG_BOARD.md; owner, build
+    /// 1.1(16): "the very bottom left corner is hard to pan to"). For each
+    /// corner: from the fit, three double taps on the corner zoom to the
+    /// deepest zoom there; swipes toward the corner until the board stops;
+    /// the corner cell is then in the middle half of the view, a tap on it
+    /// names it, and a double tap goes back to exactly the first fit.
+    func testEveryCornerCellPansToTheMiddleAndTaps() {
+        let board = app.descendants(matching: .any)["big.board"]
+        XCTAssertTrue(board.waitForExistence(timeout: 15), "no board")
+        let fit = settled(board)
+        XCTAssertEqual(fit.zoom, 1, accuracy: 0.01, "initial zoom")
+        XCTAssertTrue(fit.whole && !fit.board.isNull, "the fit: \(fit)")
+        let view = board.frame
+        /* a point of the board view's own coordinates, as a tap */
+        func at(_ p: CGPoint) -> XCUICoordinate {
+            board.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: p.x, dy: p.y))
+        }
+        /* the centre of cell (col, row) in the board view's points */
+        func cell(_ s: Seen, _ col: Int, _ row: Int) -> CGPoint {
+            let c = s.board.width / 243
+            return CGPoint(x: s.board.minX + (CGFloat(col) + 0.5) * c, y: s.board.minY + (CGFloat(row) + 0.5) * c)
+        }
+        let corners: [(name: String, col: Int, row: Int, index: Int)] = [
+            ("top left", 0, 0, 0), ("top right", 242, 0, 14_762),
+            ("bottom left", 0, 242, 44_286), ("bottom right", 242, 242, 59_048),
+        ]
+        for k in corners {
+            /* 1. in on the corner, three double taps; a point off screen
+             * is pulled in to the nearest one 20 points inside */
+            for _ in 0..<3 {
+                let p = cell(settled(board), k.col, k.row)
+                at(CGPoint(x: min(max(p.x, 20), view.width - 20),
+                           y: min(max(p.y, 20), view.height - 20))).doubleTap()
+            }
+            var s = settled(board)
+            XCTAssertGreaterThan(s.zoom, 15, "\(k.name): three double taps did not reach the deepest zoom")
+
+            /* 2. swipe the board toward the corner until it stops */
+            for _ in 0..<12 {
+                let before = s
+                if k.col == 0 { board.swipeRight() } else { board.swipeLeft() }
+                if k.row == 0 { board.swipeDown() } else { board.swipeUp() }
+                s = settled(board)
+                if abs(s.x - before.x) < 1 && abs(s.y - before.y) < 1 { break }
+            }
+            let p = cell(s, k.col, k.row)
+            print("BIGBOARD CORNER \(k.name): zoom \(s.zoom) cell centre \(p) in a view \(view.size), board \(s.board)")
+            Thread.sleep(forTimeInterval: 0.5)
+            shot("corner-\(k.name)")
+
+            /* 3. past the edge: the corner cell is in the middle half of the view */
+            XCTAssertTrue(p.x > view.width / 4 && p.x < view.width * 3 / 4 &&
+                          p.y > view.height / 4 && p.y < view.height * 3 / 4,
+                          "\(k.name): the corner cell stopped at \(p), not in the middle of \(view.size)")
+
+            /* 4. a tap on it names it */
+            at(p).tap()
+            XCTAssertTrue(app.staticTexts["tapped \(k.index)"].waitForExistence(timeout: 5),
+                          "\(k.name): the tap did not name cell \(k.index): \(app.staticTexts["big.tapped"].label)")
+
+            /* 5. a double tap at the deepest zoom is the first fit again, exactly */
+            at(p).doubleTap()
+            s = settled(board)
+            XCTAssertEqual(s.zoom, 1, accuracy: 0.01, "\(k.name): the double tap did not fit")
+            XCTAssertTrue(s.whole, "\(k.name): not the whole board after the fit")
+            XCTAssertEqual(s.x, 0, accuracy: 0.5, "\(k.name): the fit is off centre: \(s)")
+            XCTAssertEqual(s.y, 0, accuracy: 0.5, "\(k.name): the fit is off centre: \(s)")
+            XCTAssertEqual(s.board.minX, fit.board.minX, accuracy: 0.5, "\(k.name): not the first fit: \(s.board)")
+            XCTAssertEqual(s.board.minY, fit.board.minY, accuracy: 0.5, "\(k.name): not the first fit: \(s.board)")
+            XCTAssertEqual(s.board.width, fit.board.width, accuracy: 0.5, "\(k.name): not the first fit: \(s.board)")
+        }
+        memory("corners")
+        let words = app.staticTexts["big.memory"].label.split(separator: " ")
+        let peak = words.firstIndex(of: "peak").flatMap { Double(words[$0 + 1]) } ?? -1
+        XCTAssertTrue(peak > 0 && peak < 120, "footprint over the corners: \(app.staticTexts["big.memory"].label)")
     }
 
     /// THE MODE'S DOOR (UtttModeHold, docs/BIG_BOARD.md): only a still hold

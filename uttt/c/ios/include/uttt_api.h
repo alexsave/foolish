@@ -347,7 +347,7 @@ typedef struct {
     const char *app_version, *app_build, *os_version, *model, *install;
     int64_t     now;
     int32_t     utc_offset, from, who, pending;
-    const char *session, *url, *seat, *layout;
+    const char *session, *url, *layout;
     int32_t     caption_len, subcaption_len, summary_len;
     int32_t     has_image, image_w, image_h, image_scale_pct, has_file;
     const char *file_ext;

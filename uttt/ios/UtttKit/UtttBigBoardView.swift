@@ -258,18 +258,68 @@ public final class UtttBigBoardView: UIView, UIScrollViewDelegate, UIGestureReco
             y: clamp(c.y * side * z - size.height / 2, -inset.top, content.height - size.height + inset.bottom))
     }
 
-    /// The board centred while it is smaller than the view.
+    /// THE SCROLL VIEW'S INSETS, on each axis, from how much the board
+    /// overflows the view there (`excess`, the board's on-screen side minus
+    /// the view's):
+    ///
+    /// - SMALLER THAN THE VIEW (the fit, and only the fit): the board centred,
+    ///   as before - the inset is half the room left over, and the board
+    ///   cannot be moved. So the fit is one position, and every way back to
+    ///   it (a pinch out, a double tap at the deepest zoom) lands there.
+    /// - BIGGER: THE BOARD PANS PAST ITS EDGES, so every cell - the four
+    ///   corner cells too - can be brought to the middle of the view's safe
+    ///   area and tapped there, clear of the drawer's edge, the home
+    ///   indicator and Messages' chrome (owner, build 1.1(16): "the very
+    ///   bottom left corner is hard to pan to"). The most an edge can come
+    ///   in is the distance from the view's edge to the safe area's middle,
+    ///   less half a cell (`reach`), and it grows with the overflow - never
+    ///   more than the overflow itself - so the insets change continuously
+    ///   with the zoom: no jump as a pinch leaves the fit, and none as it
+    ///   comes back to it.
+    private func insets(zoom z: CGFloat) -> (inset: UIEdgeInsets, centring: CGPoint) {
+        let w = side * z, h = side * z
+        let cell = w / CGFloat(Self.sideCells)
+        let safe = bounds.inset(by: safeAreaInsets)
+        func axis(_ board: CGFloat, _ view: CGFloat, _ lo: CGFloat, _ hi: CGFloat) -> (CGFloat, CGFloat, CGFloat) {
+            let excess = board - view
+            if excess <= 0 { return (-excess / 2, -excess / 2, -excess / 2) }
+            return (min(excess, max(0, lo - cell / 2)), min(excess, max(0, hi - cell / 2)), 0)
+        }
+        let (l, r, cx) = axis(w, bounds.width, safe.midX - bounds.minX, bounds.maxX - safe.midX)
+        let (t, b, cy) = axis(h, bounds.height, safe.midY - bounds.minY, bounds.maxY - safe.midY)
+        return (UIEdgeInsets(top: t, left: l, bottom: b, right: r), CGPoint(x: cx, y: cy))
+    }
+
+    /// The board centred while it is smaller than the view, and panning past
+    /// its edges while it is not (`insets`).
     private func centre() {
-        let w = content.frame.width, h = content.frame.height
-        let x = max(0, (bounds.width - w) / 2), y = max(0, (bounds.height - h) / 2)
-        let inset = UIEdgeInsets(top: y, left: x, bottom: y, right: x)
+        guard side > 0 else { return }
+        let inset = insets(zoom: scroll.zoomScale).inset
         if scroll.contentInset != inset { scroll.contentInset = inset }
+    }
+
+    /// The offset back inside what the insets allow, when a zoom left it
+    /// outside (a zoom out from past an edge shrinks the room under it).
+    private func settle(animated: Bool) {
+        let inset = scroll.contentInset, size = scroll.bounds.size, c = scroll.contentSize
+        func clamp(_ v: CGFloat, _ lo: CGFloat, _ hi: CGFloat) -> CGFloat { min(max(v, lo), max(lo, hi)) }
+        let o = scroll.contentOffset
+        let to = CGPoint(x: clamp(o.x, -inset.left, c.width - size.width + inset.right),
+                         y: clamp(o.y, -inset.top, c.height - size.height + inset.bottom))
+        if abs(to.x - o.x) > 0.25 || abs(to.y - o.y) > 0.25 { scroll.setContentOffset(to, animated: animated) }
+    }
+
+    public override func safeAreaInsetsDidChange() {
+        super.safeAreaInsetsDidChange()
+        centre()
     }
 
     public func viewForZooming(in scrollView: UIScrollView) -> UIView? { content }
     public func scrollViewDidZoom(_ scrollView: UIScrollView) { centre(); follow() }
     public func scrollViewDidScroll(_ scrollView: UIScrollView) { follow() }
     public func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
+        centre()
+        settle(animated: true)
         follow()
     }
 
@@ -347,20 +397,23 @@ public final class UtttBigBoardView: UIView, UIScrollViewDelegate, UIGestureReco
 
     // MARK: accessibility value: what a UI test reads
 
-    /// "zoom Z offset X,Y whole W centre C": the zoom (1 = fitted), the
-    /// visible top left in points, whether the whole board is on screen, and
-    /// the cell under the view's centre.
+    /// "zoom Z offset X,Y whole W centre C board X,Y,W,H": the zoom (1 =
+    /// fitted), the visible top left in points (0,0 at the fit, negative
+    /// past the board's top left edge), whether the whole board is on
+    /// screen, the cell under the view's centre, and the board's rect in
+    /// this view's points (where a corner cell is, for a UI test's tap).
     public override var accessibilityValue: String? {
         get {
-            let off = CGPoint(x: scroll.contentOffset.x + scroll.contentInset.left,
-                              y: scroll.contentOffset.y + scroll.contentInset.top)
+            let centring = insets(zoom: scroll.zoomScale).centring
+            let off = CGPoint(x: scroll.contentOffset.x + centring.x, y: scroll.contentOffset.y + centring.y)
             let seen = convert(bounds, to: content)
             let board = content.bounds.insetBy(dx: 0.5, dy: 0.5)
             let whole = side > 0 && seen.contains(board)
             let mid = convert(CGPoint(x: bounds.midX, y: bounds.midY), to: content)
             let c = side > 0 ? Self.cell(at: CGPoint(x: mid.x / side, y: mid.y / side)) : -1
-            return String(format: "zoom %.2f offset %.0f,%.0f whole %d centre %d",
-                          scroll.zoomScale, off.x, off.y, whole ? 1 : 0, c)
+            let r = content.convert(content.bounds, to: self)
+            return String(format: "zoom %.2f offset %.0f,%.0f whole %d centre %d board %.1f,%.1f,%.1f,%.1f",
+                          scroll.zoomScale, off.x, off.y, whole ? 1 : 0, c, r.minX, r.minY, r.width, r.height)
         }
         set { _ = newValue }
     }
@@ -510,18 +563,34 @@ enum UtttBigPainter {
     static let markMinSide: CGFloat = 8
     static let markStroke: CGFloat = 14
     static let markAlpha: CGFloat = 0.9
-    /// The forced target's outline: this wide, never smaller than
-    /// `regionMinPoints` on screen (a level-4 block is 5 pt at the fit),
-    /// and `anywhereWidth` round the whole board when the target is anywhere.
-    static let regionWidth: CGFloat = 3
-    static let regionMinPoints: CGFloat = 12
-    static let anywhereWidth: CGFloat = 4
+    /// THE OUTLINES SCALE WITH WHAT THEY OUTLINE (owner, build 1.1(16): "the
+    /// outlines should scale down accordingly as you zoom out"). Each is
+    /// the size of its cell, block or board on screen, and its stroke is a
+    /// fraction of that side, in screen points never thinner than
+    /// `strokeFloor` nor wider than `strokeCeiling` (`stroke`). The only
+    /// minimum size is a small floor, so the outline still marks its place
+    /// at the fit, where a cell is 1.6 points and a 3 x 3 block 5.
+    static let strokeFloor: CGFloat = 0.75
+    static let strokeCeiling: CGFloat = 3
+    /// The last move's and the draft's ring: round the cell, its stroke this
+    /// fraction of the cell's side, never smaller than `ringMinPoints`.
+    static let ringStroke: CGFloat = 0.08
+    static let ringMinPoints: CGFloat = 4
+    /// The forced target's outline: round the target block, its stroke this
+    /// fraction of the block's side, never smaller than `regionMinPoints`;
+    /// round the whole board when the target is anywhere, its stroke
+    /// `anywhereStroke` of the board's side.
+    static let regionStroke: CGFloat = 0.03
+    static let regionMinPoints: CGFloat = 6
+    static let anywhereStroke: CGFloat = 0.0075
     /// A cell bigger than this on screen is inset; smaller ones fill solid.
     static let insetMinSide: CGFloat = 6
-    /// The last move's and the draft's outline: never smaller than this on
-    /// screen (at the whole board a cell is under two points), this wide.
-    static let ringMinPoints: CGFloat = 10
-    static let ringWidthPoints: CGFloat = 2
+
+    /// An outline's stroke in screen points for something `sidePoints`
+    /// across on screen: `fraction` of it, clamped to the floor and ceiling.
+    static func stroke(_ sidePoints: CGFloat, _ fraction: CGFloat) -> CGFloat {
+        min(max(sidePoints * fraction, strokeFloor), strokeCeiling)
+    }
 
     static func ink(_ mark: UInt8) -> CGColor { mark == 2 ? inkO : inkX }
 
@@ -677,20 +746,20 @@ enum UtttBigPainter {
             bigMark(d.status, in: d.rect, ctx: ctx, pt: pt)
         }
 
-        /* THE FORCED TARGET'S OUTLINE, in the highlighter at full strength
-         * and never smaller than `regionMinPoints`, so a 3 x 3 target reads
-         * at the fit; anywhere is an outline round the whole board. */
+        /* THE FORCED TARGET'S OUTLINE, in the highlighter at full strength,
+         * the target block's size with a stroke in proportion to it
+         * (`stroke`), so zoomed out it is a thin line round a small block;
+         * anywhere is an outline just inside the whole board. */
         if let r = region {
+            ctx.setStrokeColor(highlighter)
             if anywhere {
-                let w = anywhereWidth / pt
-                ctx.setStrokeColor(highlighter)
+                let w = stroke(r.width * pt, anywhereStroke) / pt
                 ctx.setLineWidth(w)
                 ctx.stroke(r.insetBy(dx: w / 2, dy: w / 2))
             } else {
-                let w = regionWidth / pt, least = regionMinPoints / pt
+                let w = stroke(r.width * pt, regionStroke) / pt, least = regionMinPoints / pt
                 var o = r
                 if o.width < least { o = o.insetBy(dx: (o.width - least) / 2, dy: (o.height - least) / 2) }
-                ctx.setStrokeColor(highlighter)
                 ctx.setLineWidth(w)
                 ctx.stroke(o)
             }
@@ -734,17 +803,20 @@ enum UtttBigPainter {
         }
     }
 
+    /// The last move's ring (solid) or the draft's (dashed): round the cell,
+    /// just outside it so the mark keeps its ink, in the mark's colour; its
+    /// stroke and its dashes in proportion to the cell (`stroke`).
     static func ring(_ mv: Int, _ s: UtttBigSnap, ctx: CGContext, pt: CGFloat, dashed: Bool) {
         guard mv >= 0, mv < UtttBigBoardView.leafCount else { return }
         let u = UtttBigBoardView.rect(level: UtttBigBoardView.depth, prefix: mv)
         var r = CGRect(x: u.minX * s.side, y: u.minY * s.side, width: u.width * s.side, height: u.height * s.side)
-        let least = ringMinPoints / pt
+        let screen = stroke(r.width * pt, ringStroke)
+        let w = screen / pt, least = ringMinPoints / pt
         if r.width < least { r = r.insetBy(dx: (r.width - least) / 2, dy: (r.height - least) / 2) }
         let mark = s.cells.count == UtttBigBoardView.leafCount ? s.cells[mv] : 0
-        let w = ringWidthPoints / pt
         ctx.setStrokeColor(mark == 1 || mark == 2 ? ink(mark) : inkGrey)
         ctx.setLineWidth(w)
-        ctx.setLineDash(phase: 0, lengths: dashed ? [4 / pt, 3 / pt] : [])
+        ctx.setLineDash(phase: 0, lengths: dashed ? [2 * w, 1.5 * w] : [])
         ctx.stroke(r.insetBy(dx: -w / 2, dy: -w / 2))
         ctx.setLineDash(phase: 0, lengths: [])
     }

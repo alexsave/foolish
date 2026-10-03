@@ -183,6 +183,15 @@ int ubd_luma(const uint8_t *rgba, int w, int h, int n, UbdLuma *out)
             int dev = s - 3 * UBD_NOMINAL(c);
             if (dev < 0) dev = -dev;
             if (dev > out->worst_dev3) out->worst_dev3 = dev;
+            /* ROW 0 IS NOT THE BOARD: the kit's header, then empty */
+            if (cy == 0) {
+                UbdPart *part = cx < UBD_HEADER_CELLS ? &out->header : &out->rest;
+                part->cells++;
+                part->n[c]++;
+                if (dev > part->worst_dev3) part->worst_dev3 = dev;
+                continue;
+            }
+            if (dev > out->board_worst_dev3) out->board_worst_dev3 = dev;
             out->cls[c].n++;
             sum[c] += s;
             sq[c] += (double)s * s;
@@ -192,6 +201,7 @@ int ubd_luma(const uint8_t *rgba, int w, int h, int n, UbdLuma *out)
         }
     }
     out->cells = rows * n;
+    out->board_cells = n * n;
     out->min_margin = min_margin;
     for (int c = 0; c < 3; c++) {
         UbdClass *k = &out->cls[c];
@@ -432,6 +442,38 @@ static void section_message(Text *t, const UbdFacts *f)
     else line(t, "session none");
 }
 
+/* "SEAT HERE": this device's seat, which only the kernel's one resident big
+ * game can say, and only when that game is this link's. The resident is the
+ * last big game the drawer read, staged or played - often not the bubble the
+ * report is on: my own reply staged over the bubble I opened, or a newer
+ * bubble of the game shown instead. So: the same link, the seat; the same
+ * game at another ply, the seat and that ply; another game or none, "?" and
+ * which. (Build 1.1(16) said "not the game on screen" for all of the last
+ * three, which read as if the drawer showed a different game.) */
+static void seat_lines(Text *t, const UbdFacts *f, const UtbHead *link)
+{
+    static const char *seats[] = { "spectator", "X", "O", "waiting (my invitation)", "open (X is mine to take)" };
+    static const char *bys[] = { "nothing", "record", "tag", "sender" };
+    UtbHead r;
+    if (!f->resident || utb_msg_text_peek(f->resident, &r) != UTM_EOK) {
+        line(t, "seat here ? - the app holds no 243 game");
+        return;
+    }
+    /* the same position, by the links' heads rather than their spelling, so
+     * a link Messages re-spelled is still this one */
+    int game = utb_head_same_game(&r, link);
+    int same = !strcmp(f->resident, f->url) ||
+               (game && r.n_plies == link->n_plies && r.board_check == link->board_check);
+    if (!same && !game) {
+        line(t, "seat here ? - the app holds another game");
+        return;
+    }
+    int s = f->resident_seat, b = f->resident_by;
+    line(t, "seat here %s, by %s", s >= 0 && s <= 4 ? seats[s] : "?", b >= 0 && b <= 3 ? bys[b] : "?");
+    if (!same)
+        line(t, "~ as at ply %ld, which the app holds", f->resident_plies);
+}
+
 /* Returns the URL's board check, and *known = 1, when the link is a big
  * game's that peeks. */
 static uint32_t section_url(Text *t, const UbdFacts *f, int *known)
@@ -458,7 +500,7 @@ static uint32_t section_url(Text *t, const UbdFacts *f, int *known)
     line(t, "flags 0x%02x, %s", nb >= 7 ? b[6] : 0, h.sealed ? "sealed (X taken)" : "open (X free)");
     if (h.last < 0) line(t, "plies %ld, last none", (long)h.n_plies);
     else line(t, "plies %ld, last %ld", (long)h.n_plies, (long)h.last);
-    line(t, "seat here %s", str(f->seat));
+    seat_lines(t, f, &h);
     line(t, "board crc %08x", (unsigned)h.board_check);
     *known = 1;
     return h.board_check;
@@ -529,6 +571,21 @@ static void section_layout(Text *t, const UbdFacts *f, UbdJpeg *j)
     line(t, "  libjpeg's scaling would say q%d.%d", j->q_ijg / 10, j->q_ijg % 10);
 }
 
+/* A deviation in thirds of a level as "18.0" (one decimal, exact thirds). */
+static void dev_of(char *out, int cap, int dev3)
+{
+    snprintf(out, (size_t)cap, "%d.%d", dev3 / 3, (dev3 % 3) * 10 / 3);
+}
+
+/* Two lines for a part of row 0: its cells and how they read, its worst. */
+static void part_lines(Text *t, const char *name, const UbdPart *p)
+{
+    char d[16];
+    dev_of(d, sizeof d, p->worst_dev3);
+    line(t, "%s %d cells, worst deviation %s", name, p->cells, d);
+    line(t, "  read empty %d, X %d, O %d", p->n[UBD_CLASS_EMPTY], p->n[UBD_CLASS_X], p->n[UBD_CLASS_O]);
+}
+
 static void section_reading(Text *t, const UbdFacts *f, int url_known, uint32_t url_crc)
 {
     line(t, "");
@@ -556,24 +613,37 @@ static void section_reading(Text *t, const UbdFacts *f, int url_known, uint32_t 
         line(t, "! greys: a size the kit cannot sample");
         return;
     }
+    /* THE BOARD'S CELLS (rows 1..243) by class, then row 0 apart: the
+     * header's 64 cells are greys and blacks that are not marks, and
+     * counting them as X and O put 20 marks on a board of one (phone,
+     * build 1.1(16)). */
+    char d[16];
     line(t, "");
     line(t, "== the greys, sampled where the kit reads");
-    line(t, "luminance (r+g+b)/3 by class as read:");
+    line(t, "luminance (r+g+b)/3 by class as read");
+    line(t, "the board, rows 1-%d: %d cells", UTB_SIDE, l.board_cells);
     static const char *names[3] = { "empty", "X", "O" };
     for (int c = 0; c < 3; c++) {
         const UbdClass *k = &l.cls[c];
-        line(t, "%s (painted %d): %d cells", names[c], UBD_NOMINAL(c), k->n);
+        line(t, "%s (painted %d): %d cell%s", names[c], UBD_NOMINAL(c), k->n, k->n == 1 ? "" : "s");
         if (!k->n) continue;
         line(t, "  mean %.1f sd %.2f min %d max %d", k->mean, k->sd, k->min, k->max);
     }
-    line(t, "worst deviation from nominal: %d.%d", l.worst_dev3 / 3, (l.worst_dev3 % 3) * 10 / 3);
-    line(t, "histogram, 16 levels a bucket, 0 first:");
+    dev_of(d, sizeof d, l.board_worst_dev3);
+    line(t, "  board worst deviation %s", d);
+    line(t, "board histogram, 16 levels a bucket, 0 first:");
     char row[128];
     int at = 0;
     for (int b = 0; b < UBD_BUCKETS; b++) {
         at += snprintf(row + at, sizeof row - (size_t)at, "%s%d", at ? " " : "", l.hist[b]);
         if (b == 7 || b == 15) { line(t, "  %s", row); at = 0; }
     }
+    line(t, "row 0, the kit's header and CRC, not marks:");
+    part_lines(t, "header", &l.header);
+    part_lines(t, "rest of row 0", &l.rest);
+    dev_of(d, sizeof d, l.worst_dev3);
+    line(t, "worst deviation from nominal: %s", d);
+    line(t, "  (every cell, row 0 and the board)");
 }
 
 static void section_history(Text *t, const UbdFacts *f)

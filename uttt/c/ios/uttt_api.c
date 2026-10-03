@@ -1108,16 +1108,26 @@ _Static_assert(UTI_BIG_DIAG_R_NO_PICTURE == UBD_R_NO_PICTURE, "diag R_NO_PICTURE
 _Static_assert(UTI_BIG_DIAG_R_NOT_READ == UBD_R_NOT_READ, "diag R_NOT_READ");
 _Static_assert(UTI_BIG_DIAG_RING_BYTES == UBD_RING_BYTES, "diag RING_BYTES");
 
+_Static_assert(UTI_BY_NONE == UBD_BY_NONE && UTI_BY_RECORD == UBD_BY_RECORD && UTI_BY_TAG == UBD_BY_TAG &&
+               UTI_BY_SENDER == UBD_BY_SENDER, "diag witnesses");
+
 /* The host's facts as the module's: named field for field, so a field that
- * is renamed or dropped on either side fails the build. */
-static UbdFacts diag_facts(const UtiBigDiag *f)
+ * is renamed or dropped on either side fails the build. The resident big
+ * game (for "seat here") is the kernel's own, written into `resident`. */
+static UbdFacts diag_facts(const UtiBigDiag *f, char *resident, int cap)
 {
     UbdFacts u;
     memset(&u, 0, sizeof u);
+    if (B.m.game.depth == UTB_DEPTH && uti_big_text(resident, cap) > 0) {
+        u.resident = resident;
+        u.resident_seat = uti_big_seat();
+        u.resident_by = uti_big_seat_by();
+        u.resident_plies = (long)B.m.game.n_plies;
+    }
     u.app_version = f->app_version; u.app_build = f->app_build; u.os_version = f->os_version;
     u.model = f->model; u.install = f->install; u.now = f->now; u.utc_offset = f->utc_offset;
     u.from = f->from; u.who = f->who; u.pending = f->pending; u.session = f->session;
-    u.url = f->url; u.seat = f->seat; u.layout = f->layout;
+    u.url = f->url; u.layout = f->layout;
     u.caption_len = f->caption_len; u.subcaption_len = f->subcaption_len; u.summary_len = f->summary_len;
     u.has_image = f->has_image; u.image_w = f->image_w; u.image_h = f->image_h;
     u.image_scale_pct = f->image_scale_pct; u.has_file = f->has_file; u.file_ext = f->file_ext;
@@ -1131,14 +1141,16 @@ static UbdFacts diag_facts(const UtiBigDiag *f)
 int uti_big_diag_report(const UtiBigDiag *f, char *out, int cap)
 {
     if (!f) return -1;
-    UbdFacts u = diag_facts(f);
+    char resident[UTI_BIG_TEXT_MAX];
+    UbdFacts u = diag_facts(f, resident, (int)sizeof resident);
     return ubd_report(&u, out, cap);
 }
 
 int uti_big_diag_record(const UtiBigDiag *f, int role, const uint8_t *ring, int n, uint8_t *out, int cap)
 {
     if (!f) return -1;
-    UbdFacts u = diag_facts(f);
+    char resident[UTI_BIG_TEXT_MAX];
+    UbdFacts u = diag_facts(f, resident, (int)sizeof resident);
     UbdEvent e = ubd_event_of(&u, role);
     return ubd_ring_push(ring, n, &e, out, cap);
 }
