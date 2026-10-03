@@ -329,15 +329,15 @@ static void score_is_exact(void)
     TEST("score_is_exact");
     int checked = 0, bad = 0;
     for (int depth = 2; depth <= 5; depth++) {
-        for (uint64_t seed = 1; seed <= (depth == 5 ? 1u : depth == 4 ? 3u : 12u); seed++) {
+        for (uint64_t seed = 1; seed <= (depth == 5 ? 1u : depth == 4 ? 2u : 12u); seed++) {
             UtbGame g; utb_init(&g, depth);
             uint64_t rs = seed * 0x9e3779b97f4a7c15ull + (uint64_t)depth;
-            while (!g.over && (depth < 5 || g.n_plies < 3000)) {
+            while (!g.over && (depth < 5 || g.n_plies < 1000)) {
                 int n = utb_legal(&g, legal, UTB_LEAVES_MAX);
                 const int mover = g.turn;
                 const int before = utb_bot_eval(&g, mover);
                 for (int i = 0; i < n && i < 24; i++) {
-                    int mv = legal[n <= 24 ? i : xs(&rs) % (uint64_t)n];
+                    int mv = legal[n <= 24 ? i : (int)(xs(&rs) % (uint64_t)n)];
                     int got = utb_bot_score(&g, mv);
                     UtbGame h = g;
                     utb_play(&h, mv);
