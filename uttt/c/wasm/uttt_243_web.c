@@ -37,6 +37,11 @@ static UaBox    box;
 
 static UtbBot *seat(int s) { return &bot[s == UTTT_O]; }
 
+_Static_assert(UA_PLIES_MAX == UTB_BOT_PLIES_MAX, "the page offers the plies the bot takes");
+_Static_assert(UA_BUDGET_HUGE == UTB_BOT_BUDGET_MAX, "the largest budget is the bot's bound");
+_Static_assert(UA_DEFAULT_PLIES == UTB_BOT_PLIES && UA_DEFAULT_BUDGET == UTB_BOT_BUDGET,
+               "the page opens at the bot's defaults");
+
 /* A node's square (or with leaf set, a cell's), from the kernel's geometry:
  * a rect's corner times the side is an exact grid line (utb_cell_rect divides
  * integers), so rounding only removes the float. Zeros off the board. */
@@ -66,6 +71,16 @@ EXPORT(ua_start) int ua_start(int depth, uint32_t hi, uint32_t lo)
         grid[mv] = UTTT_OPEN;
     }
     return 1;
+}
+
+/* THE CONTROL: both bots look `plies` ahead with `budget` work units a move
+ * (clamped by utb_bot_set, which derives the candidate caps from the two),
+ * from the next move on. The game and the bots' dice are untouched, so a
+ * game is its seed and the settings each move was played at. */
+EXPORT(ua_set_bots) void ua_set_bots(int plies, int budget)
+{
+    utb_bot_set(&bot[0], plies, budget);
+    utb_bot_set(&bot[1], plies, budget);
 }
 
 /* The bot to move's choice, not played: -1 when the game is over. */
@@ -138,6 +153,12 @@ EXPORT(ua_config) const UaConfig *ua_config(void)
     config.weight[2] = UTB_BOT_W27;
     config.weight[3] = UTB_BOT_W81;
     config.weight[4] = UTB_BOT_WGAME;
+    /* a threat in each size of grid, read off the bot's own weights: the
+     * node ids of the bottom 3 x 3 up to the root, one per level */
+    for (int i = 0; i < 5; i++) {
+        int level = g.depth - 1 - i;
+        config.threat[i] = level >= 0 ? utb_bot_threat_weight(&g, utb_node_id(&g, level, 0)) : 0;
+    }
     return &config;
 }
 

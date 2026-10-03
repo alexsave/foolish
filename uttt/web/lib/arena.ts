@@ -13,7 +13,10 @@ import {
     type UaBox_Snap, type UaConfig_Snap, type UaStatus_Snap,
 } from './gen/arena_layout';
 
-export { UA_OPEN, UA_X, UA_O, UA_DRAW } from './gen/arena_layout';
+export {
+    UA_OPEN, UA_X, UA_O, UA_DRAW, UA_PLIES_MIN, UA_PLIES_MAX,
+    UA_BUDGET_SMALL, UA_BUDGET_MED, UA_BUDGET_LARGE, UA_BUDGET_HUGE, UA_DEFAULT_PLIES, UA_DEFAULT_BUDGET,
+} from './gen/arena_layout';
 export type Box = UaBox_Snap;
 export type Status = UaStatus_Snap;
 export type Config = UaConfig_Snap;
@@ -23,6 +26,7 @@ export interface ArenaExports {
     memory: WebAssembly.Memory;
     ua_layout_hash(): number;
     ua_start(depth: number, hi: number, lo: number): number;
+    ua_set_bots(plies: number, budget: number): void;
     ua_think(): number;
     ua_play(mv: number): number;
     ua_step(n: number): number;
@@ -41,6 +45,9 @@ export interface Arena {
     w: ArenaExports;
     /** A fresh game at `depth` (5 on the page) from a 16-hex-digit seed. */
     start(seed: string, depth?: number): void;
+    /** Both bots look `plies` ahead with `budget` work units a move, from the
+     *  next move on (the kernel clamps both and derives the candidate caps). */
+    setBots(plies: number, budget: number): void;
     /** Up to `n` bot moves; how many were played (fewer when the game ends). */
     step(n: number): number;
     /** The board as a picture: side x side bytes, row-major, UA_OPEN / UA_X /
@@ -71,6 +78,52 @@ export function randomSeed(): string {
     return Array.from(v, (x) => x.toString(16).padStart(8, '0')).join('');
 }
 
+/** THE GAME'S CLOCK: wall time while the bots are playing, from the first
+ *  frame that plays to the frame that sees the game end, and the moves those
+ *  frames played. It belongs to the game, not to the loop that drives it, so
+ *  a loop started again over a finished game (React runs an effect again
+ *  when a hidden page is shown) adds nothing - the first page divided a
+ *  whole game's moves by the new loop's first millisecond and read
+ *  32,502,000 moves a second. A gap between frames longer than MAX_GAP_MS
+ *  (a hidden tab, a stalled machine) counts as MAX_GAP_MS. */
+export class GameClock {
+    static readonly MAX_GAP_MS = 250;
+    /** Below this much play the rate is not stated: a game the fastest
+     *  setting finishes in a few frames still has a few frames of time. */
+    static readonly MIN_RATE_MS = 20;
+    ms = 0;
+    plies = 0;
+    over = false;
+    private prev = -1;
+
+    /** A frame at `now` (performance.now()) that left the game at `plies`. */
+    frame(now: number, plies: number, over: boolean) {
+        if (this.over) return;
+        if (this.prev >= 0) this.ms += Math.min(Math.max(now - this.prev, 0), GameClock.MAX_GAP_MS);
+        this.prev = now;
+        this.plies = plies;
+        this.over = over;
+    }
+
+    /** The loop stopped (an effect's cleanup): the next frame starts a new
+     *  span, so the pause is not counted. */
+    pause() { this.prev = -1; }
+
+    /** Moves a second over the whole game so far, or null before there is
+     *  enough time to divide by. */
+    rate(): number | null {
+        return this.ms >= GameClock.MIN_RATE_MS ? (this.plies * 1000) / this.ms : null;
+    }
+}
+
+/** A game's time: "0:42.5" while it runs, to the millisecond once it is over
+ *  ("2.143 s", "1:07.250"). */
+export function gameTime(ms: number, over: boolean): string {
+    const s = Math.max(ms, 0) / 1000, m = Math.floor(s / 60);
+    if (!over) return `${m}:${(s - m * 60).toFixed(1).padStart(4, '0')}`;
+    return m ? `${m}:${(s - m * 60).toFixed(3).padStart(6, '0')}` : `${s.toFixed(3)} s`;
+}
+
 const hex = (h: number) => `0x${(h >>> 0).toString(16).padStart(8, '0')}`;
 
 export async function instantiateArena(source: BufferSource | WebAssembly.Module): Promise<Arena> {
@@ -96,6 +149,7 @@ export async function instantiateArena(source: BufferSource | WebAssembly.Module
             leaves = c.leaves;
             nodes = c.nodes;
         },
+        setBots: (plies, budget) => w.ua_set_bots(plies, budget),
         step: (n) => w.ua_step(n),
         grid: () => new Uint8Array(w.memory.buffer, w.ua_grid(), leaves),
         nodes: () => new Uint8Array(w.memory.buffer, w.ua_nodes(), nodes),
@@ -106,9 +160,23 @@ export async function instantiateArena(source: BufferSource | WebAssembly.Module
     };
 }
 
-/** The page's arena: /uttt243.wasm. */
+/** WHY THE PAGE COULD NOT START, for the page to say: no WebAssembly at all
+ *  is the one sentence; anything else is that sentence and the error's own
+ *  words (a fetch status, the layout refusal, an instantiate error such as an
+ *  unsupported opcode), so a report from a visitor names what failed. */
+export function startError(e: unknown, hasWasm = typeof WebAssembly !== 'undefined'): { lead: string; detail: string | null } {
+    const lead = 'This browser could not start the game';
+    if (!hasWasm) return { lead: `${lead} (it needs WebAssembly).`, detail: null };
+    const msg = e instanceof Error ? `${e.name === 'Error' ? '' : `${e.name}: `}${e.message}` : String(e);
+    return { lead: `${lead}.`, detail: msg.trim() || 'an unknown error' };
+}
+
+/** The page's arena: /uttt243.wasm, revalidated on every load (a 304 when it
+ *  has not changed): a cached module from an older build beside this build's
+ *  readers is refused by the layout check, and the page would not start. */
 export async function loadArena(): Promise<Arena> {
-    const res = await fetch('/uttt243.wasm');
+    if (typeof WebAssembly === 'undefined') throw new Error('no WebAssembly');
+    const res = await fetch('/uttt243.wasm', { cache: 'no-cache' });
     if (!res.ok) throw new Error(`uttt243.wasm: ${res.status}`);
     return instantiateArena(await res.arrayBuffer());
 }
