@@ -1011,8 +1011,8 @@ int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
 // Returns bytes written to `out`, or negative: FIO_EMSG with fio_last_msg_error
 // set when the kernel refuses (not finished, an unnamed seat) - a host then
 // starts an ordinary new game instead.
-int fio_msg_rematch(const uint8_t *finished, int finished_len, int sent_at,
-                    uint8_t *out, int cap);
+int fio_msg_rematch(const uint8_t *finished, int finished_len, uint64_t tapped_at_ms,
+                    int creator_seat, uint8_t *out, int cap);
 
 // ROUND 16 — the pickup hold, asked of the RESIDENT game (the one the last
 // fio_msg_decode replayed). Seconds `seat` must still wait before it may

@@ -435,11 +435,16 @@ public actor MessageKernel {
     /// rules, with the fool's carry. Adopts nothing: decode the answer to put it
     /// on screen. Throws when the kernel refuses (not finished, an unnamed seat)
     /// - the caller then starts an ordinary new game.
-    public func rematch(finished: Data, sentAt: Int = MessageKernel.clockNow()) throws -> Data {
+    ///
+    /// `tappedAtMs` is the moment of the tap, unix milliseconds: the kernel
+    /// derives the lobby's send clock AND its new seed from it. `creatorSeat`
+    /// is the tapper's seat at the finished table.
+    public func rematch(finished: Data, tappedAtMs: UInt64 = MessageKernel.clockNowMs(),
+                        creatorSeat: Int) throws -> Data {
         var out = [UInt8](repeating: 0, count: 8 * 1024)
         let n = finished.withUnsafeBytes { raw in
             fio_msg_rematch(raw.bindMemory(to: UInt8.self).baseAddress, Int32(finished.count),
-                            Int32(sentAt & 0xffff), &out, Int32(out.count))
+                            tappedAtMs, Int32(creatorSeat), &out, Int32(out.count))
         }
         guard n > 0 else { throw MessageEnvelope.Failure.damaged(code: Int(fio_last_msg_error())) }
         return Data(bytes: out, count: Int(n))
@@ -877,6 +882,13 @@ public actor MessageKernel {
     /// stamps it as a default argument, which cannot await.
     public nonisolated static func clockNow() -> Int {
         Int(Date().timeIntervalSince1970.rounded(.down)) & 0xffff
+    }
+
+    /// The same clock at full width, in unix MILLISECONDS - what a rematch tap
+    /// hands the kernel (`rematch`), which reduces it to `clockNow`'s seconds
+    /// for the send clock itself.
+    public nonisolated static func clockNowMs() -> UInt64 {
+        UInt64((Date().timeIntervalSince1970 * 1000).rounded(.down))
     }
 
     /// ROUND 16 — how many seconds `seat` must still wait before it may pick up,

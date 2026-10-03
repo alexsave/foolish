@@ -1103,7 +1103,7 @@ int msg_rematch_carry(const MsgJoin *joins, int n, int fool_seat,
 // STRUCTURAL FIELDS ONLY, never the finished bubble's digest: that digest
 // covers `sent_at`, so two devices holding two re-sends of the same finished
 // game would derive two deals.
-void msg_rematch_seed(const uint8_t old_seed[MSG_SEED_LEN], uint64_t game_id,
+void msg_rematch_seed(const uint8_t old_seed[MSG_SEED_LEN], uint64_t tapped_at_ms,
                       uint8_t out[MSG_SEED_LEN]);
 
 // THE REMATCH LOBBY, built entirely from the FINISHED chain `finished` - the
@@ -1131,7 +1131,8 @@ void msg_rematch_seed(const uint8_t old_seed[MSG_SEED_LEN], uint64_t game_id,
 // `scratch` is the caller's Game (this file keeps none): the finished chain is
 // replayed into it to find the fool, and then the lobby's deal is made in it.
 // Touches the process-wide deal RNG, like msg_replay.
-int msg_rematch_lobby(const unsigned char *finished, int finished_len, uint16_t sent_at,
+int msg_rematch_lobby(const unsigned char *finished, int finished_len,
+                      uint64_t tapped_at_ms, int creator_seat,
                       unsigned char *out, int out_cap, Game *scratch);
 
 // The seat the penalty falls ON - the fool, and therefore the new game's first

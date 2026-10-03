@@ -880,13 +880,17 @@ int wasm_msg_seal(void) {
 // resident game is untouched; decode the answer to put it on screen. The same
 // C the phone's fio_msg_rematch calls, exported so e2e/msg_rematch.test.ts can
 // hold the two engines to one answer.
-int wasm_msg_rematch(int in_len, int sent_at) {
+// `tapped_at_ms` crosses as a double: a JS number holds every millisecond
+// timestamp exactly, and wasm32 has no 64-bit integer a JS caller can pass
+// without BigInt.
+int wasm_msg_rematch(int in_len, double tapped_at_ms, int creator_seat) {
     if (in_len < 0 || in_len > REPLAY_IO_CAP) return MSG_ECAP;
     // The answer is written where the question was, so the question is copied
     // out first: the lobby is built while the finished chain is still read.
     static unsigned char finished[REPLAY_IO_CAP];
     memcpy(finished, g_replay_io, (size_t)in_len);
-    return msg_rematch_lobby(finished, in_len, (uint16_t)(sent_at & 0xffff),
+    if (!(tapped_at_ms >= 0.0) || tapped_at_ms > 9007199254740991.0) return MSG_ESHORT;
+    return msg_rematch_lobby(finished, in_len, (uint64_t)tapped_at_ms, creator_seat,
                              g_replay_io, REPLAY_IO_CAP, &g_msg_scratch);
 }
 

@@ -32,19 +32,21 @@ public enum RematchLobby {
     ///
     /// `finished` is the finished chain on screen, `view`/`names`/`mySeat` the
     /// board built from it, `myName` this device's nickname, `capacity` the
-    /// lobby's size in this chat. The same-chain lobby reads none of the last
-    /// four: the kernel builds it from `finished` alone, which is what makes
-    /// every tap the same lobby, and this device keeps the seat it finished in.
+    /// lobby's size in this chat, `tappedAtMs` the moment of the tap. The
+    /// same-chain lobby reads only `finished`, `mySeat` and the tap's time:
+    /// the kernel builds it from the finished chain, seats this device where
+    /// it finished, and derives the new deal from the moment of the tap.
     public static func build(finished: Data?, view: GameView?, names: [Int: String],
                              mySeat: Int, myName: String, passing: Bool, capacity: Int,
-                             sentAt: Int = MessageKernel.clockNow(),
+                             tappedAtMs: UInt64 = MessageKernel.clockNowMs(),
                              sameChain: Bool = RematchLobby.sameChain)
         async throws -> (payload: Data, mySeat: Int)? {
         if sameChain {
             guard let finished, view?.isOver == true, mySeat >= 0 else { return nil }
             do {
                 let payload = try await MessageKernel.shared.rematch(finished: finished,
-                                                                     sentAt: sentAt)
+                                                                     tappedAtMs: tappedAtMs,
+                                                                     creatorSeat: mySeat)
                 AnimLog.say("rematch lobby: the kernel's, same chain, seat \(mySeat)")
                 return (payload, mySeat)
             } catch {
@@ -57,7 +59,7 @@ public enum RematchLobby {
         let payload = try await freshChain(joins: r.joins, foolSeat: r.foolSeat,
                                            passing: passing,
                                            capacity: max(capacity, r.joins.count),
-                                           sentAt: sentAt)
+                                           sentAt: Int(tappedAtMs / 1000) & 0xffff)
         return (payload, 0)
     }
 

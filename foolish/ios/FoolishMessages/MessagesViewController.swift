@@ -378,9 +378,9 @@ final class MessagesViewController: MSMessagesAppViewController {
     //
     //   ITEM  join | rules | leave | start          a lobby word
     //         move:SEAT:KIND[:PICK]                 a board move
-    //         rematch                               another seat taps New game on
-    //                                               the finished board (the kernel's
-    //                                               same-chain lobby)
+    //         rematch:SEAT                          SEAT taps New game on the
+    //                                               finished board (the kernel's
+    //                                               same-chain lobby, SEAT its creator)
     //         rematch:fresh:SEAT                    ...as the flag-off build would:
     //                                               SEAT's fresh-chain lobby
     //   SEAT  a number, or `any` (the first seat holding KIND)
@@ -572,14 +572,15 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// Seal one item off `base`, by the shipping kernel's own calls.
     @MainActor
     private func rigSeal(_ item: String, on base: Data) async throws -> Data {
-        if item == "rematch" || item.hasPrefix("rematch:") {
+        if item.hasPrefix("rematch:") {
             guard let finished = rigFinished else { throw MessageEnvelope.Failure.damaged(code: -5) }
-            if item == "rematch" {
-                return try await MessageKernel.shared.rematch(finished: finished)
+            let parts = item.split(separator: ":").map(String.init)
+            // rematch:SEAT - SEAT's device taps New game on the result card, now.
+            if parts.count == 2, let seat = Int(parts[1]) {
+                return try await MessageKernel.shared.rematch(finished: finished, creatorSeat: seat)
             }
             // rematch:fresh:SEAT - the flag-off build's lobby, as SEAT's device
             // would seal it off the same result card.
-            let parts = item.split(separator: ":").map(String.init)
             guard parts.count == 3, parts[1] == "fresh", let seat = Int(parts[2]) else {
                 throw MessageEnvelope.Failure.damaged(code: -6)
             }

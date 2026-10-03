@@ -1194,19 +1194,20 @@ int msg_rematch_carry(const MsgJoin *joins, int n, int fool_seat,
     return MSG_EOK;
 }
 
-void msg_rematch_seed(const uint8_t old_seed[MSG_SEED_LEN], uint64_t game_id,
+void msg_rematch_seed(const uint8_t old_seed[MSG_SEED_LEN], uint64_t tapped_at_ms,
                       uint8_t out[MSG_SEED_LEN]) {
+    (void)tapped_at_ms;
     static const char tag[7] = { 'r', 'e', 'm', 'a', 't', 'c', 'h' };
-    unsigned char msg[7 + MSG_SEED_LEN + 8];
+    unsigned char msg[7 + MSG_SEED_LEN];
     memcpy(msg, tag, 7);
     memcpy(msg + 7, old_seed, MSG_SEED_LEN);
-    wr64(msg + 7 + MSG_SEED_LEN, game_id);
     uint8_t d[SHA256_DIGEST_LEN];
     sha256(msg, sizeof msg, d);
     memcpy(out, d, MSG_SEED_LEN);   // SHA256_DIGEST_LEN == MSG_SEED_LEN == 32
 }
 
-int msg_rematch_lobby(const unsigned char *finished, int finished_len, uint16_t sent_at,
+int msg_rematch_lobby(const unsigned char *finished, int finished_len,
+                      uint64_t tapped_at_ms, int creator_seat,
                       unsigned char *out, int out_cap, Game *scratch) {
     if (!finished || !out || !scratch) return MSG_ESHORT;
     MsgEnvelope f;
@@ -1224,6 +1225,7 @@ int msg_rematch_lobby(const unsigned char *finished, int finished_len, uint16_t 
     // that is missing or blank is not a table this can seat again.
     const int n = f.n_players;
     if (f.n_joins != n) return MSG_EJOINS;
+    if (creator_seat < 0 || creator_seat >= n) return MSG_ESEAT;
     MsgEnvelope e;
     msg_envelope_init(&e);
     for (int i = 0; i < n; i++) e.joins[i].name_len = 0xFF;   // "seat empty"
@@ -1241,11 +1243,11 @@ int msg_rematch_lobby(const unsigned char *finished, int finished_len, uint16_t 
     e.game_id = f.game_id;
     e.n_players = (uint8_t)n;
     e.last_actor_seat = f.last_actor_seat;
-    e.sent_at = sent_at;
+    e.sent_at = (uint16_t)((tapped_at_ms / 1000u) & 0xFFFFu);
     uint8_t digest[SHA256_DIGEST_LEN];
     msg_digest(finished, finished_len, digest);
     memcpy(e.parent8, digest, MSG_PARENT_LEN);
-    msg_rematch_seed(f.seed, f.game_id, e.seed);
+    msg_rematch_seed(f.seed, tapped_at_ms, e.seed);
     if (fool >= 0) {
         rc = msg_rematch_carry(e.joins, n, fool, &e.carry_key, &e.carry_fool);
         if (rc != MSG_EOK) return rc;

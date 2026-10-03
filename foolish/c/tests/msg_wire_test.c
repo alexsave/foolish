@@ -5589,7 +5589,7 @@ static void test_rematch_same_chain(void) {
             static Game fg;
             msg_replay(&f, &fg);
             const int fool = game_done(&fg);
-            const int nl = msg_rematch_lobby(fin, nf, 0x4000, lob, sizeof(lob), &scratch);
+            const int nl = msg_rematch_lobby(fin, nf, 0x4000ull * 1000u, 0, lob, sizeof(lob), &scratch);
             CHECK(nl > 0, "%dp: the rematch was refused (%d)", n, nl);
             if (nl <= 0) continue;
             MsgEnvelope l;
@@ -5635,9 +5635,209 @@ static void test_rematch_same_chain(void) {
     {
         static unsigned char fin[ENV_CAP], lob[ENV_CAP], out[ENV_CAP];
         const int nf = rm_finished(3, 0, 9500u, 0x1111, fin, sizeof(fin), NULL);
-        const int nl = msg_rematch_lobby(fin, nf, 1, lob, sizeof(lob), &scratch);
-        CHECK(nl > 0 && msg_rematch_lobby(lob, nl, 1, out, sizeof(out), &scratch) == MSG_EPHASE,
+        const int nl = msg_rematch_lobby(fin, nf, 1000, 0, lob, sizeof(lob), &scratch);
+        CHECK(nl > 0 && msg_rematch_lobby(lob, nl, 1000, 0, out, sizeof(out), &scratch) == MSG_EPHASE,
               "a WAITING lobby was rematched");
+        CHECK(msg_rematch_lobby(fin, nf, 1000, 3, out, sizeof(out), &scratch) == MSG_ESEAT
+              && msg_rematch_lobby(fin, nf, 1000, -1, out, sizeof(out), &scratch) == MSG_ESEAT,
+              "a tap from outside the finished table was rematched");
+    }
+}
+
+// THE TAP: every New game on a finished table is its own lobby. Owner: "just
+// when someone hits a new game, don't start a fresh chain! To randomize, just do
+// some rng based on timestamp of new game start. Then don't allow whoever
+// creates a game to start it, and we're all set. The seed is locked in."
+//
+// So, at 2, 3 and 4 seats, three seats tap at three moments and each lobby:
+//   * continues the SAME game (id) and names the finished chain as its parent;
+//   * is sealed by its tapper (last_actor_seat), the one fact the creator gate
+//     reads;
+//   * deals a seed drawn from the moment of the tap: two moments are two
+//     deals, one moment is one deal, whoever taps;
+// and Rule P settles everything that follows the tap with no generation:
+//   * every lobby beats the finished chain, both argument orders (rule 4);
+//   * the siblings are a total order with one winner (rules 0..3, digest);
+//   * the winner's Start beats the finished chain, both orders (the finished
+//     boundary: rounds and turns are not compared across two deals);
+//   * the winner's Start beats every sibling lobby and every late tap (rule 0).
+static void test_rematch_taps(void) {
+    static Game scratch;
+    for (int n = 2; n <= 4; n++) {
+        const uint64_t gid = 0x7A9000000000000ULL + (uint64_t)n;
+        static unsigned char fin[ENV_CAP];
+        uint8_t seed0[MSG_SEED_LEN];
+        const int nf = rm_finished(n, 0, 9300u + (uint32_t)(n * 31), gid, fin, sizeof(fin), seed0);
+        CHECK(nf > 0, "taps %dp: no finished game", n);
+        if (nf <= 0) continue;
+        uint8_t fd[SHA256_DIGEST_LEN];
+        msg_digest(fin, nf, fd);
+
+        static unsigned char lob[3][ENV_CAP];
+        int nl[3];
+        MsgEnvelope l[3];
+        const int taps = n < 3 ? n : 3;
+        const uint64_t t0 = 1790000000000ull;   // 2026-09, in unix ms
+        for (int t = 0; t < taps; t++) {
+            const uint64_t at = t0 + (uint64_t)t * 1337u + (uint64_t)t;   // three moments
+            nl[t] = msg_rematch_lobby(fin, nf, at, t, lob[t], ENV_CAP, &scratch);
+            CHECK(nl[t] > 0 && msg_decode(lob[t], nl[t], &l[t]) == MSG_EOK,
+                  "taps %dp seat %d: refused (%d)", n, t, nl[t]);
+            if (nl[t] <= 0) return;
+            CHECK(l[t].game_id == gid, "taps %dp seat %d: the tap left the game", n, t);
+            CHECK(!memcmp(l[t].parent8, fd, MSG_PARENT_LEN),
+                  "taps %dp seat %d: the lobby does not name the finished chain", n, t);
+            CHECK(lob[t][1] == MSG_FORMAT_RULES_REMATCH, "taps %dp seat %d: format %d", n, t, lob[t][1]);
+            CHECK(l[t].last_actor_seat == t,
+                  "taps %dp seat %d: the lobby says seat %d sealed it, not its tapper", n, t,
+                  l[t].last_actor_seat);
+            CHECK(l[t].sent_at == (uint16_t)((at / 1000u) & 0xFFFFu),
+                  "taps %dp seat %d: send clock %u is not the tap's", n, t, l[t].sent_at);
+            uint8_t want[MSG_SEED_LEN];
+            msg_rematch_seed(seed0, at, want);
+            CHECK(!memcmp(l[t].seed, want, MSG_SEED_LEN),
+                  "taps %dp seat %d: the seed is not the one drawn for the tap's moment", n, t);
+            CHECK(memcmp(l[t].seed, seed0, MSG_SEED_LEN) != 0,
+                  "taps %dp seat %d: the rematch re-deals the finished deal", n, t);
+        }
+        for (int t = 0; t < taps; t++)
+            for (int u = t + 1; u < taps; u++)
+                CHECK(memcmp(l[t].seed, l[u].seed, MSG_SEED_LEN) != 0,
+                      "taps %dp: seats %d and %d tapped at different moments and got one deal", n, t, u);
+
+        // ONE MOMENT, ONE DEAL, whoever taps; and the same tap twice is the
+        // same bubble.
+        {
+            static unsigned char a[ENV_CAP], b[ENV_CAP], c[ENV_CAP];
+            const uint64_t at = t0 + 4242u;
+            const int na = msg_rematch_lobby(fin, nf, at, 0, a, sizeof(a), &scratch);
+            const int nb = msg_rematch_lobby(fin, nf, at, 0, b, sizeof(b), &scratch);
+            const int nc = msg_rematch_lobby(fin, nf, at, n - 1, c, sizeof(c), &scratch);
+            MsgEnvelope ea, ec;
+            CHECK(na > 0 && na == nb && !memcmp(a, b, (size_t)na),
+                  "taps %dp: one tap built twice is two bubbles", n);
+            CHECK(nc > 0 && msg_decode(a, na, &ea) == MSG_EOK && msg_decode(c, nc, &ec) == MSG_EOK
+                  && !memcmp(ea.seed, ec.seed, MSG_SEED_LEN),
+                  "taps %dp: two seats tapping at one moment got two deals", n);
+        }
+        // The seed is the moment's, to the millisecond.
+        {
+            uint8_t s1[MSG_SEED_LEN], s2[MSG_SEED_LEN], s3[MSG_SEED_LEN];
+            msg_rematch_seed(seed0, t0, s1);
+            msg_rematch_seed(seed0, t0 + 1, s2);
+            msg_rematch_seed(seed0, t0, s3);
+            CHECK(memcmp(s1, s2, MSG_SEED_LEN) != 0, "seed: one millisecond apart is one deal");
+            CHECK(!memcmp(s1, s3, MSG_SEED_LEN), "seed: one moment drew two deals");
+        }
+
+        // RULE P, with no generation.
+        for (int t = 0; t < taps; t++) {
+            CHECK(rm_rule(fin, nf, lob[t], nl[t]) > 0,
+                  "taps %dp seat %d: Rule P kept the finished game over the rematch", n, t);
+            CHECK(rm_rule(lob[t], nl[t], fin, nf) < 0,
+                  "taps %dp seat %d: (reversed) Rule P kept the finished game", n, t);
+            for (int u = 0; u < taps; u++) {
+                if (u == t) continue;
+                const int ab = rm_rule(lob[t], nl[t], lob[u], nl[u]);
+                const int ba = rm_rule(lob[u], nl[u], lob[t], nl[t]);
+                CHECK(ab != 0 && ab == -ba, "taps %dp seats %d/%d: %d and %d", n, t, u, ab, ba);
+            }
+        }
+        int best = 0;
+        for (int t = 1; t < taps; t++) if (rm_rule(lob[t], nl[t], lob[best], nl[best]) < 0) best = t;
+        for (int t = 0; t < taps; t++)
+            CHECK(t == best || rm_rule(lob[best], nl[best], lob[t], nl[t]) < 0,
+                  "taps %dp: the lobbies have no single winner", n);
+
+        // THE WINNER STARTS. Its live chain is the table: above the finished
+        // game it replaced (both orders - the finished boundary), above every
+        // sibling lobby, and above a tap that comes in after it (rule 0).
+        static unsigned char live[ENV_CAP], late[ENV_CAP];
+        const int nlive = rm_live_from(lob[best], nl[best], 6, live, sizeof(live));
+        CHECK(nlive > 0, "taps %dp: the winning lobby did not start", n);
+        if (nlive <= 0) continue;
+        CHECK(rm_rule(fin, nf, live, nlive) > 0,
+              "taps %dp: the finished game outranked the rematch in play", n);
+        CHECK(rm_rule(live, nlive, fin, nf) < 0,
+              "taps %dp: (reversed) the finished game outranked the rematch in play", n);
+        for (int t = 0; t < taps; t++)
+            CHECK(rm_rule(lob[t], nl[t], live, nlive) > 0 && rm_rule(live, nlive, lob[t], nl[t]) < 0,
+                  "taps %dp: lobby %d outranked the started rematch", n, t);
+        const int nlate = msg_rematch_lobby(fin, nf, t0 + 99999u, n - 1, late, sizeof(late), &scratch);
+        CHECK(nlate > 0 && rm_rule(late, nlate, live, nlive) > 0 && rm_rule(live, nlive, late, nlate) < 0,
+              "taps %dp: a late tap on the finished bubble outranked the started rematch", n);
+    }
+}
+
+// THE CREATOR CANNOT START IT. The existing changer gate - "whoever changes the
+// checkbox value cannot start the game" - with the tapper as the changer: the
+// lobby's newest bubble is the creator's own, and in a rematch lobby that is
+// the bubble that chose the seed. No full-lobby exemption, exactly as for a
+// rules change: everyone else at the table can Start, so nothing is stranded.
+static void test_rematch_creator_gate(void) {
+    static Game scratch;
+    for (int n = 2; n <= 4; n++) {
+        static unsigned char fin[ENV_CAP], lob[ENV_CAP];
+        const int nf = rm_finished(n, 0, 9400u + (uint32_t)(n * 17), 0x6A7E00u + (uint64_t)n,
+                                   fin, sizeof(fin), NULL);
+        CHECK(nf > 0, "gate %dp: no finished game", n);
+        if (nf <= 0) continue;
+        for (int creator = 0; creator < n; creator++) {
+            const int nl = msg_rematch_lobby(fin, nf, 1790000000000ull + (uint64_t)creator, creator,
+                                             lob, sizeof(lob), &scratch);
+            MsgEnvelope l;
+            CHECK(nl > 0 && msg_decode(lob, nl, &l) == MSG_EOK, "gate %dp: no lobby", n);
+            if (nl <= 0) continue;
+            for (int s = 0; s < n; s++) {
+                int can_exit = -1;
+                // No baseline: nobody has touched the checkbox, so a refusal
+                // can only be the creator gate.
+                const int got = msg_lobby_controls(&l, s, 0, 0, &can_exit);
+                if (s == creator) {
+                    CHECK(got == MSG_LOBBY_WAITING,
+                          "gate %dp: the creator (seat %d) is offered %d, not Waiting", n, s, got);
+                    CHECK(can_exit == 1, "gate %dp: the creator cannot Leave either - stranded", n);
+                } else {
+                    CHECK(got == MSG_LOBBY_START,
+                          "gate %dp: seat %d, not the creator, is offered %d, not Start", n, s, got);
+                }
+            }
+            // Somebody else's bubble on the lobby (a rules change, a leave and
+            // rejoin) makes them the newest sender, and the creator may then
+            // Start like anyone else at the table.
+            MsgEnvelope after = l;
+            after.last_actor_seat = (uint8_t)((creator + 1) % n);
+            CHECK(msg_lobby_controls(&after, creator, 0, 0, NULL) == MSG_LOBBY_START,
+                  "gate %dp: the creator stays gated after someone else acted", n);
+            // THE CREATOR LEAVES: the reseal without them. Whoever is left is
+            // not stranded, and the creator is a spectator who may Join again.
+            MsgEnvelope left = l;
+            left.n_joins = 0;
+            for (int i = 0; i < l.n_joins; i++)
+                if (l.joins[i].seat != creator) left.joins[left.n_joins++] = l.joins[i];
+            const int other = (creator + 1) % n;
+            const int want_other = n == 2 ? MSG_LOBBY_INVITE : MSG_LOBBY_START;
+            CHECK(msg_lobby_controls(&left, other, 0, 0, NULL) == want_other,
+                  "gate %dp: after the creator left, seat %d is offered %d", n, other,
+                  msg_lobby_controls(&left, other, 0, 0, NULL));
+            CHECK(msg_lobby_controls(&left, -1, 0, 0, NULL) == MSG_LOBBY_JOIN,
+                  "gate %dp: the creator who left cannot join back", n);
+        }
+    }
+    // THE ORDINARY LOBBY IS UNTOUCHED: a lobby with no rematch carry whose
+    // newest bubble is the join that filled it still offers that joiner Start
+    // (the full-lobby exemption - "Vera joins and starts in one text").
+    {
+        uint8_t seed[MSG_SEED_LEN];
+        seed_fill(seed, 4711u);
+        MsgEnvelope e;
+        env_init(&e, seed, 2);
+        e.phase = MSG_PHASE_WAITING;
+        e.last_actor_seat = 1;
+        CHECK(msg_lobby_controls(&e, 1, 0, 0, NULL) == MSG_LOBBY_START,
+              "gate: an ordinary 1:1 joiner can no longer join and start");
+        CHECK(msg_lobby_controls(&e, 0, 0, 0, NULL) == MSG_LOBBY_START,
+              "gate: an ordinary 1:1 creator lost Start once the other joined");
     }
 }
 
@@ -5696,12 +5896,13 @@ int main(int argc, char **argv) {
     if (argc > 2 && !strcmp(argv[1], "--decode")) { print_decode(argv[2]); return 0; }
     if (argc > 1 && !strcmp(argv[1], "--rematch-fixture")) {
         // A finished 4-seat game and the rematch lobby the NATIVE kernel builds
-        // for it at sent_at 0x1234 - e2e/msg_rematch.test.ts holds wasm to it.
+        // for it when seat 2 taps at 0x1234 seconds and 567 ms -
+        // e2e/msg_rematch.test.ts holds wasm to it.
         static unsigned char fin[ENV_CAP], lob[ENV_CAP];
         static Game scratch;
         static char hx[ENV_CAP * 2 + 1];
         const int nf = rm_finished(4, 0, 9700u, 0x6060, fin, sizeof(fin), NULL);
-        const int nl = nf > 0 ? msg_rematch_lobby(fin, nf, 0x1234, lob, sizeof(lob), &scratch) : -1;
+        const int nl = nf > 0 ? msg_rematch_lobby(fin, nf, 0x1234ull * 1000u + 567u, 2, lob, sizeof(lob), &scratch) : -1;
         if (nf <= 0 || nl <= 0) { printf("rematch fixture failed (%d %d)\n", nf, nl); return 1; }
         hex(fin, nf, hx); printf("finished %s\n", hx);
         hex(lob, nl, hx); printf("lobby %s\n", hx);
@@ -5763,6 +5964,8 @@ int main(int argc, char **argv) {
     test_forced_opening_replay();
     test_format56_goldens();
     test_rematch_same_chain();
+    test_rematch_taps();
+    test_rematch_creator_gate();
     test_size_budget(games * 4, seed0);
     { const int rb = bot_roster_find("robusta");
       probe_v6_midgame(seed0, 2, rb);

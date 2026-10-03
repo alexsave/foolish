@@ -476,8 +476,8 @@ static int rematch_check(void) {
     const int nf = fio_msg_encode(3 /* FINISHED */, 0, gid, zero8, joins, joins_n, 0x0101, fin, sizeof(fin));
     if (nf <= 0) { printf("FAIL rematch: finished encode %d (msg_err=%d)\n", nf, fio_last_msg_error()); return 1; }
 
-    const int na = fio_msg_rematch(fin, nf, 0x0111, a, sizeof(a));
-    const int nb = fio_msg_rematch(fin, nf, 0x0222, b, sizeof(b));
+    const int na = fio_msg_rematch(fin, nf, 0x0111ull * 1000u, 1, a, sizeof(a));
+    const int nb = fio_msg_rematch(fin, nf, 0x0222ull * 1000u, 1, b, sizeof(b));
     if (na <= 0 || nb != na) { printf("FAIL rematch: taps %d / %d (msg_err=%d)\n", na, nb, fio_last_msg_error()); return 1; }
     for (int i = 0; i < na; i++)
         if (a[i] != b[i] && i != MSG_CLOCK_OFF && i != MSG_CLOCK_OFF + 1) {
@@ -488,7 +488,7 @@ static int rematch_check(void) {
     if (fio_msg_decode(a, na) != FIO_EOK) { printf("FAIL rematch: the lobby does not adopt\n"); return 1; }
     const MsgHeader *h = (const MsgHeader *)fio_msg_header_ptr();
     uint8_t want_seed[MSG_SEED_LEN];
-    msg_rematch_seed(seed, gid, want_seed);
+    msg_rematch_seed(seed, 0x0111ull * 1000u, want_seed);
     if (h->e.phase != 0 || h->e.game_id != gid || h->e.n_joins != 4
         || memcmp(h->e.seed, want_seed, MSG_SEED_LEN) != 0) {
         printf("FAIL rematch: lobby phase %d same-id %d joins %d\n",
@@ -517,7 +517,7 @@ static int rematch_check(void) {
     const int n0 = fio_msg_encode(0, 0, 0x77, zero8, joins, j2n, 0x0444, a, sizeof(a));
     if (n0 <= 0) { printf("FAIL rematch: lobby encode %d\n", n0); return 1; }
     // Not a finished chain: refused, so the host starts an ordinary game.
-    if (fio_msg_rematch(a, n0, 0x0555, b, sizeof(b)) >= 0) { printf("FAIL rematch: a lobby was rematched\n"); return 1; }
+    if (fio_msg_rematch(a, n0, 0x0555ull * 1000u, 0, b, sizeof(b)) >= 0) { printf("FAIL rematch: a lobby was rematched\n"); return 1; }
     printf("rematch OK (two taps one lobby, the same game through Start, fool %d defends)\n", fool);
     return 0;
 }

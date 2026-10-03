@@ -243,11 +243,11 @@ int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
 // replays into the scratch game and adopts NOTHING - the resident game is not
 // touched; the caller decodes the answer when it puts the lobby on screen,
 // which is the adoption.
-int fio_msg_rematch(const uint8_t *finished, int finished_len, int sent_at,
-                    uint8_t *out, int cap) {
+int fio_msg_rematch(const uint8_t *finished, int finished_len, uint64_t tapped_at_ms,
+                    int creator_seat, uint8_t *out, int cap) {
     if (!finished || !out || cap <= 0) return FIO_EBADARG;
     g_last_msg_error = 0;
-    const int n = msg_rematch_lobby(finished, finished_len, (uint16_t)(sent_at & 0xffff),
+    const int n = msg_rematch_lobby(finished, finished_len, tapped_at_ms, creator_seat,
                                     out, cap, fio_scratch_game());
     if (n < 0) { g_last_msg_error = n; return n == MSG_ECAP ? FIO_ECAP : FIO_EMSG; }
     return n;
