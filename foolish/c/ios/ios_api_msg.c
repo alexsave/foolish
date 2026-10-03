@@ -170,8 +170,6 @@ int fio_msg_decode(const uint8_t *payload, int len) {
     s->msg_opening = e.opening;
     s->msg_carry_key = e.carry_key;
     s->msg_carry_fool = e.carry_fool;
-    // …and its GENERATION, a term of the deal like the opening seat.
-    s->msg_generation = e.generation;
     // …and so are its RULES: msg_replay has already stamped them onto the game
     // it dealt, and this is the copy that survives the re-deal at Start.
     s->msg_rules = msg_pass_allowed(&e) ? 0 : (int8_t)GAME_RULE_NO_PASS;
@@ -220,9 +218,6 @@ int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
     e.opening = s->msg_opening;
     e.carry_key = s->msg_carry_key;
     e.carry_fool = s->msg_carry_fool;
-    // Repeated like the opening: the resident game's generation, never the
-    // caller's to choose per bubble.
-    e.generation = s->msg_generation;
     if (parent8) memcpy(e.parent8, parent8, MSG_PARENT_LEN);
     memcpy(e.seed, s->deal_seed, FOOLISH_SEED_LEN);
 
@@ -284,10 +279,9 @@ int fio_msg_staged_atoms_before(void) {
 // arguments. The gates that need a ROSTER to answer are in ios_api_identity.c,
 // reading it through the same fio_read_joins this file seals with.
 
-int fio_msg_chain_is_ahead(int a_generation, int a_phase, int a_round, int a_turn,
-                           int b_generation, int b_phase, int b_round, int b_turn) {
-    return msg_chain_is_ahead(a_generation, a_phase, a_round, a_turn,
-                              b_generation, b_phase, b_round, b_turn);
+int fio_msg_chain_is_ahead(int a_phase, int a_round, int a_turn,
+                           int b_phase, int b_round, int b_turn) {
+    return msg_chain_is_ahead(a_phase, a_round, a_turn, b_phase, b_round, b_turn);
 }
 
 // ROUND 16 — the pickup hold, on the resident game. Pure relay: the rule is

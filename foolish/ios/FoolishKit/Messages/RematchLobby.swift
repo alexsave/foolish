@@ -11,7 +11,7 @@ public enum RematchLobby {
     /// THE SAME CHAIN (owner: "It should not start a new chain I think, it
     /// should collapse the same game (yes, wiping out the history)"). On, a
     /// rematch is the KERNEL's lobby for the finished chain - the same game id,
-    /// the next generation, the same bytes whoever taps - and its bubble
+    /// the finished chain as its parent, seated as it finished - and its bubble
     /// collapses onto the finished game's. Off, it is today's fresh chain:
     /// rotated to the tapper, a random seed and id, its own new bubble.
     /// `rematch.samechain=0` in `dev.flags` turns it off in a debug build.

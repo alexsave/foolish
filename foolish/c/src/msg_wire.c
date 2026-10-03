@@ -80,28 +80,20 @@ int msg_last_body_version = -1;
 // exactly or an envelope encodes to bytes that decode back as something else.
 static int fmt_known(uint8_t f) {
     return f == MSG_FORMAT_V6 || f == MSG_FORMAT_CLOCK || f == MSG_FORMAT_REMATCH
-        || f == MSG_FORMAT_RULES || f == MSG_FORMAT_RULES_REMATCH
-        || f == MSG_FORMAT_GENERATION;
+        || f == MSG_FORMAT_RULES || f == MSG_FORMAT_RULES_REMATCH;
 }
 static int fmt_has_clock(uint8_t f) {
     return f == MSG_FORMAT_CLOCK || f == MSG_FORMAT_REMATCH
-        || f == MSG_FORMAT_RULES || f == MSG_FORMAT_RULES_REMATCH
-        || f == MSG_FORMAT_GENERATION;
+        || f == MSG_FORMAT_RULES || f == MSG_FORMAT_RULES_REMATCH;
 }
 static int fmt_has_rematch(uint8_t f) {
-    return f == MSG_FORMAT_REMATCH || f == MSG_FORMAT_RULES_REMATCH
-        || f == MSG_FORMAT_GENERATION;
+    return f == MSG_FORMAT_REMATCH || f == MSG_FORMAT_RULES_REMATCH;
 }
 // Does this format's variant byte carry the RULES? On the formats that predate
 // it the byte is reserved and must be 0 - which is not "no rules", it is the
 // passing game, the only one those formats could describe.
 static int fmt_has_rules(uint8_t f) {
-    return f == MSG_FORMAT_RULES || f == MSG_FORMAT_RULES_REMATCH
-        || f == MSG_FORMAT_GENERATION;
-}
-// Format 7 is format 6 plus the rematch generation (msg_wire.h).
-static int fmt_has_generation(uint8_t f) {
-    return f == MSG_FORMAT_GENERATION;
+    return f == MSG_FORMAT_RULES || f == MSG_FORMAT_RULES_REMATCH;
 }
 
 int msg_pass_allowed(const MsgEnvelope *e) {
@@ -197,11 +189,6 @@ static int validate_fields(const MsgEnvelope *e) {
     // Half a carry decides nothing and would read as an ordinary lobby on one
     // device and a penalty on another, so it is refused rather than ignored.
     if ((e->carry_key != 0) != (e->carry_fool != MSG_NO_FOOL)) return MSG_EFORMAT;
-    // THE GENERATION, both directions again: an earlier format has nowhere to
-    // put one, and a format-7 header that said 0 would be a second spelling of
-    // a format-5/6 chain - two byte strings for one game, and Rule P's digest
-    // tiebreak would see two chains where there is one.
-    if (fmt_has_generation(e->format) != (e->generation != 0)) return MSG_EFORMAT;
     return MSG_EOK;
 }
 
@@ -209,7 +196,6 @@ static int validate_fields(const MsgEnvelope *e) {
 // appends; n_joins is always the last byte of it. Formats 5 and 6 add no bytes
 // to 3 and 4 - they respend one that was already there.
 static int hdr_len_for(uint8_t format) {
-    if (fmt_has_generation(format)) return MSG_HEADER_LEN_GENERATION;
     if (fmt_has_rematch(format)) return MSG_HEADER_LEN_REMATCH;
     if (fmt_has_clock(format))   return MSG_HEADER_LEN_CLOCK;
     return MSG_HEADER_LEN;
@@ -252,8 +238,6 @@ int msg_decode(const unsigned char *in, int in_len, MsgEnvelope *out) {
     out->opening    = has_rematch ? in[MSG_OPEN_OFF] : MSG_NO_OPENING;
     out->carry_key  = has_rematch ? rd32(in + MSG_CARRY_OFF) : 0u;
     out->carry_fool = has_rematch ? in[MSG_FOOL_OFF] : MSG_NO_FOOL;
-    // Every format before 7 is generation 0: the game its lobby created.
-    out->generation = fmt_has_generation(in[1]) ? rd16(in + MSG_GEN_OFF) : 0;
 
     const int n_joins = in[hdr_len - 1];
     // Bound the count BEFORE the loop writes: n_joins is attacker-controlled
@@ -345,7 +329,6 @@ int msg_encode(const MsgEnvelope *e, unsigned char *out, int out_cap) {
         wr32(out + MSG_CARRY_OFF, e->carry_key);
         out[MSG_FOOL_OFF] = e->carry_fool;
     }
-    if (fmt_has_generation(e->format)) wr16(out + MSG_GEN_OFF, e->generation);
     out[hdr_len - 1] = (unsigned char)e->n_joins;
 
     int off = hdr_len;
@@ -575,11 +558,6 @@ static uint8_t seal_format(const MsgEnvelope *e) {
     // only be inferred is exactly what this change is getting rid of. A game
     // with nothing else to say still writes 5 - same 62 bytes format 3 wrote,
     // one of them now meaning something.
-    //
-    // A REMATCH writes 7, and nothing else does: generation 0 keeps 5 and 6
-    // byte for byte, so an ordinary game is still readable by every shipped
-    // build and only a rematch asks an old build to update.
-    if (e->generation != 0) return MSG_FORMAT_GENERATION;
     if (e->opening != MSG_NO_OPENING || e->carry_key != 0
         || e->carry_fool != MSG_NO_FOOL) return MSG_FORMAT_RULES_REMATCH;
     return MSG_FORMAT_RULES;
@@ -722,8 +700,6 @@ int msg_chain_key(const unsigned char *envelope, int len, MsgChainKey *out) {
     MsgEnvelope e;
     const int rc = msg_decode(envelope, len, &e);
     if (rc != MSG_EOK) return rc;
-    out->game_id = e.game_id;
-    out->generation = e.generation;   // rule G's input
     out->phase = e.phase;
     out->round = e.round;
     out->turn  = e.turn;
@@ -747,15 +723,6 @@ static int names_parent(const uint8_t *parent8, const uint8_t *digest) {
 }
 
 int msg_rule_p(const MsgChainKey *a, const MsgChainKey *b) {
-    // Rule G, above everything (msg_wire.h): within ONE game, the later
-    // rematch is the table. A generation never falls along a chain's ancestry,
-    // so this can only ever agree with rule 4 below where rule 4 can see; what
-    // it adds is every pair rule 4 cannot - an older bubble of the finished
-    // game against the rematch lobby, or against any bubble after it. Two
-    // different games' generations mean nothing to each other, so they are not
-    // compared at all.
-    if (a->game_id == b->game_id && a->generation != b->generation)
-        return a->generation > b->generation ? -1 : 1;
     // Rule 4, and it ranks FIRST: a chain's own DIRECT CHILD outranks it,
     // whatever the other fields say. For a parent and its descendant every
     // other comparison here can lie about which came later, because `turn`
@@ -960,12 +927,9 @@ static int open_has_body(const MsgEnvelope *e) {
 // compared at all. Anything else is another game as far as a board is
 // concerned, and shares nothing with what it showed.
 static int open_same_deal(const MsgEnvelope *a, const MsgEnvelope *b) {
-    // The generation as well as the id: a rematch is the same game_id dealt
-    // again, and its atoms share nothing with the game before it. (Its seed
-    // differs too, so this is not the only test that says so - it is the one
-    // that says why.)
+    // The SEED as well as the id: a rematch is the same game_id dealt again
+    // from a new seed, and its atoms share nothing with the game before it.
     return a->game_id == b->game_id
-        && a->generation == b->generation
         && a->n_players == b->n_players
         && a->opening == b->opening
         && msg_pass_allowed(a) == msg_pass_allowed(b)
@@ -1231,13 +1195,12 @@ int msg_rematch_carry(const MsgJoin *joins, int n, int fool_seat,
 }
 
 void msg_rematch_seed(const uint8_t old_seed[MSG_SEED_LEN], uint64_t game_id,
-                      uint16_t next_generation, uint8_t out[MSG_SEED_LEN]) {
+                      uint8_t out[MSG_SEED_LEN]) {
     static const char tag[7] = { 'r', 'e', 'm', 'a', 't', 'c', 'h' };
-    unsigned char msg[7 + MSG_SEED_LEN + 8 + 2];
+    unsigned char msg[7 + MSG_SEED_LEN + 8];
     memcpy(msg, tag, 7);
     memcpy(msg + 7, old_seed, MSG_SEED_LEN);
     wr64(msg + 7 + MSG_SEED_LEN, game_id);
-    wr16(msg + 7 + MSG_SEED_LEN + 8, next_generation);
     uint8_t d[SHA256_DIGEST_LEN];
     sha256(msg, sizeof msg, d);
     memcpy(out, d, MSG_SEED_LEN);   // SHA256_DIGEST_LEN == MSG_SEED_LEN == 32
@@ -1250,7 +1213,6 @@ int msg_rematch_lobby(const unsigned char *finished, int finished_len, uint16_t 
     int rc = msg_decode(finished, finished_len, &f);
     if (rc != MSG_EOK) return rc;
     if (f.phase != MSG_PHASE_FINISHED) return MSG_EPHASE;
-    if (f.generation >= MSG_MAX_GENERATION) return MSG_EFORMAT;
     // Validation IS replay, and the replay is also the only thing that knows
     // who the fool was.
     rc = msg_replay(&f, scratch);
@@ -1273,18 +1235,17 @@ int msg_rematch_lobby(const unsigned char *finished, int finished_len, uint16_t 
     for (int s = 0; s < n; s++) if (e.joins[s].name_len == 0xFF) return MSG_EJOINS;
     e.n_joins = n;
 
-    e.format = MSG_FORMAT_GENERATION;   // msg_seal decides; this is what it will say
+    e.format = MSG_FORMAT_RULES_REMATCH;   // msg_seal decides; this is what it will say
     e.flags = 0;
     e.phase = MSG_PHASE_WAITING;
     e.game_id = f.game_id;
-    e.generation = (uint16_t)(f.generation + 1);
     e.n_players = (uint8_t)n;
     e.last_actor_seat = f.last_actor_seat;
     e.sent_at = sent_at;
     uint8_t digest[SHA256_DIGEST_LEN];
     msg_digest(finished, finished_len, digest);
     memcpy(e.parent8, digest, MSG_PARENT_LEN);
-    msg_rematch_seed(f.seed, f.game_id, e.generation, e.seed);
+    msg_rematch_seed(f.seed, f.game_id, e.seed);
     if (fool >= 0) {
         rc = msg_rematch_carry(e.joins, n, fool, &e.carry_key, &e.carry_fool);
         if (rc != MSG_EOK) return rc;
@@ -1323,11 +1284,8 @@ int msg_rematch_fool_seat(const MsgJoin *joins, int n,
  * make in Swift; nothing here reads the resident game.
  * ------------------------------------------------------------------------- */
 
-int msg_chain_is_ahead(int a_generation, int a_phase, int a_round, int a_turn,
-                       int b_generation, int b_phase, int b_round, int b_turn) {
-    // A later rematch is ahead of every chain of the game it replaced - the
-    // same order rule G puts them in.
-    if (a_generation != b_generation) return a_generation > b_generation;
+int msg_chain_is_ahead(int a_phase, int a_round, int a_turn,
+                       int b_phase, int b_round, int b_turn) {
     if (a_phase != b_phase) return a_phase > b_phase;
     if (a_round != b_round) return a_round > b_round;
     return a_turn > b_turn;

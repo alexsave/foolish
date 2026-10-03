@@ -51,10 +51,13 @@ export async function generateMetadata(
             // also why this is safe to unfurl.
             const names = env.joins.map(j => j.name).filter(Boolean);
             const who = names.length >= 2 ? names.join(' vs ') : `${env.n_players} players`;
-            // A REMATCH LOBBY (format 7, generation > 0) is the same table about
-            // to play again, not "turn 0" of a game nobody has started.
+            // A REMATCH LOBBY is the same table about to play again, not "turn 0"
+            // of a game nobody has started. It is an ordinary format 5/6 lobby,
+            // told apart by what the wire already says: only the lobby a New
+            // game on a finished table creates carries the fool's penalty
+            // (c/src/msg_wire.h, carry_key).
             title = env.phase === 3 ? `${who} - a finished Durak game`
-                : env.phase === 0 && env.generation > 0 ? `${who} - a rematch, waiting to start`
+                : env.phase === 0 && env.carry_key !== 0 ? `${who} - a rematch, waiting to start`
                 : `${who} - turn ${env.turn}`;
             description = `A Durak game in iMessage. ${BLURB}`;
         }

@@ -168,9 +168,8 @@ final class RematchSameChainTests: XCTestCase {
         let liveEnv = try await MessageEnvelope.decode(payload: live, viewer: -1)
         XCTAssertEqual(liveEnv.phase, 2)
         XCTAssertEqual(liveEnv.gameId, finished.env.gameId, "Start left the game")
-        XCTAssertEqual(liveEnv.generation, 1, "Start dropped the rematch generation")
-        XCTAssertEqual(lobbyEnv.generation, 1)
-        XCTAssertEqual(finished.env.generation, 0)
+        XCTAssertEqual(liveEnv.dealTag, lobbyEnv.dealTag, "Start dealt another deal than the lobby's")
+        XCTAssertNotEqual(lobbyEnv.dealTag, finished.env.dealTag, "the rematch re-deals the finished deal")
         let view = await k.residentView(viewer: -1)
         XCTAssertEqual(view?.defender, fool, "the fool is not the rematch's first defender")
         let pref = try await k.preferred(finished.payload, live)
@@ -182,16 +181,11 @@ final class RematchSameChainTests: XCTestCase {
                                           parent: finished.env, mySeat: 2)
         await board.begin()
         XCTAssertTrue(board.canAdopt(seat: 2, gameId: finished.env.gameId,
-                                     generation: finished.env.generation),
+                                     dealTag: finished.env.dealTag),
                       "sanity: the board takes its own deal's chains")
-        XCTAssertFalse(board.canAdopt(seat: 2, gameId: liveEnv.gameId, generation: liveEnv.generation),
+        XCTAssertFalse(board.canAdopt(seat: 2, gameId: liveEnv.gameId, dealTag: liveEnv.dealTag),
                        "the finished board would fold the rematch's chain into itself")
         XCTAssertFalse(finished.env.isSameDeal(liveEnv))
-
-        // The stale gate: an old bubble of the finished game is BEHIND the rematch.
-        XCTAssertTrue(StaleBranchGate.isAhead(.init(lobbyEnv), of: .init(finished.env)),
-                      "the rematch lobby is not ahead of the game it replaced")
-        XCTAssertFalse(StaleBranchGate.isAhead(.init(finished.env), of: .init(lobbyEnv)))
     }
 
     /// THE FLAG OFF is the fresh chain it always was: a new game id, rotated
@@ -208,7 +202,6 @@ final class RematchSameChainTests: XCTestCase {
         let lobby = try XCTUnwrap(built)
         let lobbyEnv = try await MessageEnvelope.peek(payload: lobby.payload)
         XCTAssertNotEqual(lobbyEnv.gameId, env.gameId, "the flag-off rematch kept the game id")
-        XCTAssertEqual(lobbyEnv.generation, 0)
         XCTAssertEqual(lobbyEnv.parent8, "0000000000000000")
         XCTAssertEqual(lobby.mySeat, 0, "the flag-off rematch seats its tapper at 0")
         XCTAssertEqual(lobbyEnv.nPlayers, 8, "the flag-off rematch is open at the chat's capacity")

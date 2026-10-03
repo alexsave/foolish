@@ -875,7 +875,7 @@ int wasm_msg_seal(void) {
 }
 
 // THE REMATCH LOBBY (msg_wire.h msg_rematch_lobby) for the FINISHED envelope in
-// g_replay_io[0, in_len): the same game, the next generation, written back into
+// g_replay_io[0, in_len): the same game dealt again, written back into
 // g_replay_io. Returns its length or a negative MSG_E*. Adopts nothing - the
 // resident game is untouched; decode the answer to put it on screen. The same
 // C the phone's fio_msg_rematch calls, exported so e2e/msg_rematch.test.ts can

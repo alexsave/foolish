@@ -64,28 +64,28 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
     public let carryKey: UInt32?
     public let carryFool: Int?
 
-    /// WHICH REMATCH OF THE GAME this chain belongs to (c/src/msg_wire.h
-    /// format 7): 0 for the game its lobby created, then 1, 2, ... for each
-    /// rematch of the same `gameId`. A rematch is the same game dealt again, so
-    /// `gameId` alone no longer says "the same deal" - two chains are the same
-    /// deal when both of these agree (`isSameDeal`). Rule P's rule G, which
-    /// ranks the later generation first, is the kernel's.
-    public let generation: Int
+    /// WHICH DEAL of the game this chain belongs to: the first eight bytes of
+    /// the deal seed every bubble repeats (c/src/msg_wire.h), as hex. A rematch
+    /// is the same `gameId` dealt again from a new seed, so the id alone no
+    /// longer says "the same deal". An IDENTITY TAG and nothing else: it is
+    /// compared for equality, never handed back to the kernel, which keeps the
+    /// seed itself.
+    public let dealTag: String
     /// Do two chains belong to the same deal of the same game - one board's
-    /// worth of history? The id and the generation, both: a rematch keeps the
-    /// id and moves the generation, and what one deal's board did means
-    /// nothing to the next one's.
+    /// worth of history? The id and the deal, both: a rematch keeps the id and
+    /// deals a new seed, and what one deal's board did means nothing to the
+    /// next one's.
     public func isSameDeal(_ other: MessageEnvelope) -> Bool { dealKey == other.dealKey }
-    /// A REMATCH LOBBY nobody has changed yet: the next generation of a game,
-    /// every seat of the finished table still in it. What its bubble says is
-    /// "play again", not "come and join" - nobody can join a full table, and
-    /// "<name> joined" would name whoever made the last move of the game
-    /// before (the lobby repeats that seat as its last actor).
+    /// A REMATCH LOBBY, still full: the lobby a New game on a finished table
+    /// creates (the only lobby that carries the fool's penalty), every seat of
+    /// that table still in it. What its bubble says is "play again", not "come
+    /// and join" - nobody can join a full table, and "<name> joined" would name
+    /// whoever tapped New game as if they had just walked in.
     public var isRematchInvite: Bool {
-        generation > 0 && phase == 0 && joins.count == nPlayers
+        phase == 0 && carriesPenalty && joins.count == nPlayers
     }
     /// The same fact as a key, for state a surface keeps per deal.
-    public var dealKey: String { "\(gameId).\(generation)" }
+    public var dealKey: String { "\(gameId).\(dealTag)" }
 
     /// THE TABLE'S RULES: may the defender transfer the attack on (perevodnoy,
     /// true - the default and what every game before this variant played), or
@@ -134,7 +134,7 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
         case phase, turn, round, joins, digest, parent8, passingAllowed
         case sentAt = "sent_at"
         case newAtoms = "n_new"
-        case opening, carryKey, carryFool, generation
+        case opening, carryKey, carryFool, dealTag
         case nPlayers = "n_players"
         case lastActorSeat = "last_actor_seat"
         case gameId = "game_id"
@@ -253,7 +253,7 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
             opening: h.e.opening == MSG_NO_OPENING ? nil : h.e.opening,
             carryKey: h.e.carryKey == 0 ? nil : UInt32(truncatingIfNeeded: h.e.carryKey),
             carryFool: h.e.carryFool == MSG_NO_FOOL ? nil : h.e.carryFool,
-            generation: h.e.generation,
+            dealTag: hex(Array(h.e.seed.prefix(8))),
             // The rules, resolved against the envelope's format by the kernel
             // (msg_pass_allowed): Swift never learns which formats carry a
             // variant byte, which is why it does not read `variant` itself.
@@ -431,12 +431,10 @@ public actor MessageKernel {
 
     /// THE REMATCH LOBBY for a FINISHED chain, built wholly by the kernel
     /// (msg_wire.h msg_rematch_lobby): the same game dealt again - same id, the
-    /// next generation, the finished chain as its parent, a seed derived from
-    /// the old one, seated as the game finished and under its rules, with the
-    /// fool's carry. Every device that taps New game on that table gets these
-    /// bytes but for `sentAt`. Adopts nothing: decode the answer to put it on
-    /// screen. Throws when the kernel refuses (not finished, an unnamed seat,
-    /// the last generation) - the caller then starts an ordinary new game.
+    /// finished chain as its parent, seated as the game finished and under its
+    /// rules, with the fool's carry. Adopts nothing: decode the answer to put it
+    /// on screen. Throws when the kernel refuses (not finished, an unnamed seat)
+    /// - the caller then starts an ordinary new game.
     public func rematch(finished: Data, sentAt: Int = MessageKernel.clockNow()) throws -> Data {
         var out = [UInt8](repeating: 0, count: 8 * 1024)
         let n = finished.withUnsafeBytes { raw in

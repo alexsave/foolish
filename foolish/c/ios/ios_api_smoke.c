@@ -450,9 +450,8 @@ static int fmsg_check(void) {
 // THE REMATCH through the bridge the phone calls: a finished 4-seat game, two
 // taps on it (fio_msg_rematch), the lobby adopted, Start dealt
 // (fio_msg_start_rematch -> fio_reseat_game), and the live bubble sealed. What
-// can only break at this layer is the session: the generation has to survive
-// the decode, the re-deal at Start and every seal after it, or rule G ranks
-// the rematch below the game it replaced.
+// can only break at this layer is the session: the rematch's seed and game id
+// have to survive the decode, the re-deal at Start and every seal after it.
 static int rematch_check(void) {
     int strat = -1;
     for (int i = 0; i < fio_strategy_count(); i++) {
@@ -489,11 +488,11 @@ static int rematch_check(void) {
     if (fio_msg_decode(a, na) != FIO_EOK) { printf("FAIL rematch: the lobby does not adopt\n"); return 1; }
     const MsgHeader *h = (const MsgHeader *)fio_msg_header_ptr();
     uint8_t want_seed[MSG_SEED_LEN];
-    msg_rematch_seed(seed, gid, 1, want_seed);
-    if (h->e.phase != 0 || h->e.generation != 1 || h->e.game_id != gid || h->e.n_joins != 4
+    msg_rematch_seed(seed, gid, want_seed);
+    if (h->e.phase != 0 || h->e.game_id != gid || h->e.n_joins != 4
         || memcmp(h->e.seed, want_seed, MSG_SEED_LEN) != 0) {
-        printf("FAIL rematch: lobby phase %d gen %u same-id %d joins %d\n",
-               h->e.phase, h->e.generation, h->e.game_id == gid, h->e.n_joins);
+        printf("FAIL rematch: lobby phase %d same-id %d joins %d\n",
+               h->e.phase, h->e.game_id == gid, h->e.n_joins);
         return 1;
     }
     const uint32_t key = h->e.carry_key;
@@ -508,22 +507,18 @@ static int rematch_check(void) {
     const int nl = fio_msg_encode(2 /* LIVE */, 0, gid, parent, joins, joins_n, 0x0333, live, sizeof(live));
     if (nl <= 0) { printf("FAIL rematch: live encode %d (msg_err=%d)\n", nl, fio_last_msg_error()); return 1; }
     if (fio_msg_decode(live, nl) != FIO_EOK) { printf("FAIL rematch: the live chain does not adopt\n"); return 1; }
-    if (h->e.generation != 1 || memcmp(h->e.seed, want_seed, MSG_SEED_LEN) != 0) {
-        printf("FAIL rematch: Start sealed generation %u (the re-deal dropped it?)\n", h->e.generation);
+    if (h->e.game_id != gid || memcmp(h->e.seed, want_seed, MSG_SEED_LEN) != 0) {
+        printf("FAIL rematch: Start sealed another deal (the re-deal dropped the seed?)\n");
         return 1;
     }
-    if (fio_msg_rule_p(fin, nf, live, nl) <= 0) { printf("FAIL rematch: the finished game beat the rematch in play\n"); return 1; }
-    // A fresh deal is generation 0 again.
-    if (fio_new_game(seed, 32, 2) != FIO_EOK) { printf("FAIL rematch: new_game\n"); return 1; }
     const SmokeJoin j2[2] = { {0,"Sveta"}, {1,"Ann"} };
     const int j2n = pack_joins(joins, (int)sizeof joins, j2, 2);
+    if (fio_new_game(seed, 32, 2) != FIO_EOK) { printf("FAIL rematch: new_game\n"); return 1; }
     const int n0 = fio_msg_encode(0, 0, 0x77, zero8, joins, j2n, 0x0444, a, sizeof(a));
-    if (n0 <= 0 || fio_msg_peek(a, n0) != FIO_EOK || h->e.generation != 0) {
-        printf("FAIL rematch: a fresh game inherited the rematch's generation\n"); return 1;
-    }
+    if (n0 <= 0) { printf("FAIL rematch: lobby encode %d\n", n0); return 1; }
     // Not a finished chain: refused, so the host starts an ordinary game.
     if (fio_msg_rematch(a, n0, 0x0555, b, sizeof(b)) >= 0) { printf("FAIL rematch: a lobby was rematched\n"); return 1; }
-    printf("rematch OK (two taps one lobby, generation 1 through Start, fool %d defends)\n", fool);
+    printf("rematch OK (two taps one lobby, the same game through Start, fool %d defends)\n", fool);
     return 0;
 }
 

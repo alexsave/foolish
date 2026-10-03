@@ -54,15 +54,13 @@ test('the envelope is rejected before it can be replayed: magic, format, seed', 
     };
     bad(b => { b[0] = 0xf6; }, /not an FMSG envelope/);
     bad(b => { b[1] = 1; }, /unsupported format/);      // the raw format was cut
-    // 3 is the CLOCK format, 4 the REMATCH format, 5/6 are those two with the
-    // variant byte spent on the RULES (podkidnoy, docs/PODKIDNOY.md), and 7 is 6
-    // plus the rematch GENERATION - all five decode, so the first byte above the
-    // wire is 8. (Flipping this buffer to any of them shifts n_joins along, so
-    // they fail as bad-joins/truncated payloads rather than as unknown formats -
-    // which the truncation test below covers.) Until format 7 existed this
-    // stamped 7 and got "unsupported format": that is how a build before 7 reads
-    // a rematch bubble.
-    bad(b => { b[1] = 8; }, /unsupported format/);
+    // 3 is the CLOCK format, 4 the REMATCH format, and 5/6 are those two with
+    // the variant byte spent on the RULES (podkidnoy, docs/PODKIDNOY.md) - all
+    // four decode, so the first byte above the wire is 7. (Flipping this buffer
+    // to any of them shifts n_joins along, so they fail as bad-joins/truncated
+    // payloads rather than as unknown formats - which the truncation test below
+    // covers.)
+    bad(b => { b[1] = 7; }, /unsupported format/);
     bad(b => { b[2] = 0x01; }, /unsupported flags/);    // fair-deal: spec'd, unbuilt
     bad(b => { b[2] = 0x08; }, /unsupported flags/);    // reserved bit (0x04 = legacy passing-allowed, tolerated for 1.0(3) msgs)
     bad(b => { b[15] = 1; }, /bad player count/);

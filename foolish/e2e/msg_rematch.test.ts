@@ -1,6 +1,6 @@
 // The rematch through the SAME wasm kernel the web reads with: a finished game
-// is rematched as the same game, one generation later (c/src/msg_wire.h
-// msg_rematch_lobby, FMSG format 7).
+// is rematched as the same game dealt again (c/src/msg_wire.h
+// msg_rematch_lobby), sealed as an ordinary format 6 lobby.
 //
 // The fixtures were sealed by the NATIVE kernel (`msg_wire_test
 // --rematch-fixture`), so the first test holds the two engines to one answer:
@@ -15,7 +15,7 @@ import {
 
 const hex = (h: string) => Uint8Array.from(h.match(/../g)!.map((b) => parseInt(b, 16)));
 
-// A finished 4-seat game (format 5, generation 0)...
+// A finished 4-seat game (format 5)...
 const FINISHED = hex(
     'f7050003606000000000000064000004011100000000000000006d380f1cae7638124850ee2cbae14e7f'
     + 'c19e018780f568cd99f0b18252d0fe21e43400040004416c657801044d69726102054a6f6e6173030550'
@@ -23,9 +23,9 @@ const FINISHED = hex(
     + '0cdca05a1cc4661a827ad6cfc3e8d7bafa');
 // ...and the rematch lobby the native kernel built for it at sent_at 0x1234.
 const NATIVE_LOBBY = hex(
-    'f70700006060000000000000000000040100f887535ca3ce410d5dd5769a50eae90b60d3ba711243637b'
-    + '5d988b7dded02450702aada89905216b34120000ff44c9ed01000100040004416c657801044d69726102'
-    + '054a6f6e6173030550726979610000');
+    'f70600006060000000000000000000040100f887535ca3ce410d4c6221b3f1f8523435d2ba568b0261ea'
+    + 'dba97adc530f5e4b78e7f56d1ddda9bd34120000ff44c9ed0100040004416c657801044d69726102054a'
+    + '6f6e6173030550726979610000');
 
 const SENT_AT_OFF = 58;   // msg_wire.h MSG_CLOCK_OFF
 
@@ -34,15 +34,13 @@ test('wasm builds the rematch lobby the native kernel built, byte for byte', () 
     assert.deepEqual(Array.from(lobby), Array.from(NATIVE_LOBBY));
 });
 
-test('the rematch is the same game, the next generation, seated as it finished', () => {
+test('the rematch is the same game, dealt again, seated as it finished', () => {
     const fin = kernelMsgDecode(FINISHED);
     const lob = kernelMsgDecode(kernelMsgRematch(FINISHED, 0x1234));
     assert.equal(fin.phase, 3);
-    assert.equal(fin.generation, 0);
-    assert.equal(lob.format, 7, 'a rematch is a format-7 envelope');
+    assert.equal(lob.format, 6, 'a rematch is an ordinary format-6 lobby');
     assert.equal(lob.phase, 0, 'a rematch is a lobby');
     assert.equal(lob.game_id, fin.game_id, 'the rematch left the game');
-    assert.equal(lob.generation, 1);
     assert.deepEqual(Array.from(lob.parent8), Array.from(fin.digest.subarray(0, 8)),
         'the rematch does not descend from the finished chain');
     assert.notDeepEqual(Array.from(lob.seed), Array.from(fin.seed), 'the rematch re-deals the old deal');
@@ -67,13 +65,6 @@ test('every tap is the same lobby but for its send clock, and every one outranks
         if (a === b) continue;
         assert.equal(kernelMsgRuleP(a, b), -kernelMsgRuleP(b, a), 'two lobbies order differently by who asks');
     }
-});
-
-test('a decoder that does not know the next format refuses it loudly', () => {
-    const lobby = kernelMsgRematch(FINISHED, 0x1234);
-    const next = lobby.slice();
-    next[1] = 8;   // the first format byte this build does not know - how a build before 7 saw 7
-    assert.throws(() => kernelMsgDecode(next), /unsupported format/);
 });
 
 test('only a finished game can be rematched', () => {

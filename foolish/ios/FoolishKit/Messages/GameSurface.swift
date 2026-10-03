@@ -1779,9 +1779,9 @@ struct GameSurface: View {
     /// TWO SHAPES, behind `RematchLobby.sameChain`:
     ///
     ///   * THE SAME CHAIN (shipping). The kernel builds the lobby from the
-    ///     finished chain alone - same game id, the next generation, seated as
-    ///     the game finished, every seat taken - so every player who taps New
-    ///     game seals the same lobby, and it REUSES the finished game's
+    ///     finished chain alone - same game id, the finished chain as its
+    ///     parent, seated as the game finished, every seat taken - and it
+    ///     REUSES the finished game's
     ///     MSSession, collapsing onto the result card. The owner, on three
     ///     taps that made three games: "it should collapse the same game (yes,
     ///     wiping out the history)". The lobby is full; a seat opens only when
@@ -1842,11 +1842,11 @@ struct GameSurface: View {
             //
             // BUT IT IS A DIFFERENT DEAL, which is U2 and what 1.1(68) missed:
             // a fresh-chain id is freshly random, and a same-chain rematch is
-            // the next generation of the id, so either way the result card and
+            // the same id dealt from a new seed, so either way the result card and
             // this lobby are two deals. Recording the chain is still right -
             // that IS where the X goes - but the reversal has to play it as a
             // whole-surface SWAP rather than as a delta, which is
-            // `StagedRevert`'s job (it compares deal keys, id and generation).
+            // `StagedRevert`'s job (it compares deal keys, id and deal seed).
             stagedDraft.created(from: lastShownChain.map(StagedOrigin.chain) ?? .noGame)
             let plan = await MessageKernel.shared.surfaceSwap(passing: passing)
             let began = Date()
@@ -2166,8 +2166,8 @@ struct GameSurface: View {
     ///
     /// A dictionary rather than one value because a chat can hold more than one
     /// lobby, and this view is reused across them; it is small (one Bool per
-    /// deal - game id and rematch generation - this device has looked at) and
-    /// dies with the extension. Per DEAL because a rematch keeps the game id:
+    /// deal - game id and deal seed - this device has looked at) and dies
+    /// with the extension. Per DEAL because a rematch keeps the game id:
     /// a baseline left over from the game before would read the rematch's own
     /// rules as a change of mine and withhold my Start.
     @State private var passingBaseline: [String: Bool] = [:]
@@ -2392,10 +2392,11 @@ struct GameSurface: View {
         // so adopting one as a board shows a phantom 8-player game whose unjoined
         // seats read "Seat N", with a different first attacker than the real
         // game — the round-3 "some see a 5-player game, some see 8" fork, which
-        // deadlocks the thread. Rule P ranks any started chain above a lobby OF
-        // THE SAME GENERATION (msg_rule_p rule 0), so the one lobby that reaches
-        // here over a board is a REMATCH, which rule G ranks above the finished
-        // game it grew out of - and it goes to the lobby surface like any other.
+        // deadlocks the thread. Rule P ranks any started chain above a lobby
+        // (msg_rule_p rule 0) unless the lobby is that chain's own DIRECT CHILD
+        // (rule 4, above rule 0), so the one lobby that reaches here over a
+        // board is a REMATCH naming the finished chain as its parent - and it
+        // goes to the lobby surface like any other.
         // Which chain wins is still only the kernel's to say; this is the
         // structural guarantee that a winner at phase 0 is drawn as a lobby.
         if env.phase == 0 {
@@ -2568,7 +2569,7 @@ struct GameSurface: View {
         // A DIFFERENT game (or a different seat in one) still gets a fresh
         // controller - there the teardown is honest, because it really is a
         // different board.
-        if let live = controller, live.canAdopt(seat: seat, gameId: env.gameId, generation: env.generation) {
+        if let live = controller, live.canAdopt(seat: seat, gameId: env.gameId, dealTag: env.dealTag) {
             // Round 20: re-asked on every adopt, in BOTH directions - the newest
             // bubble arriving on a stale board is what hands it the right to
             // play again, and it must not have to be re-tapped for that.

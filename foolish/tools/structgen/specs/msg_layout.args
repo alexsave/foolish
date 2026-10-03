@@ -11,7 +11,7 @@
 # why it is not in game_layout.bots.ts - that one holds accessors over the
 # unmasked Game and e2e/security_client_boundary keeps it out of the bundle.
 --header msg_wire.h --root MsgHeader --snapshot MsgHeader --writer MsgHeader --snapshot-only
---fields MsgEnvelope=format,flags,phase,game_id,turn,last_actor_seat,n_players,variant,round,parent8,seed,sent_at,n_new,opening,carry_key,carry_fool,generation,n_joins,joins
+--fields MsgEnvelope=format,flags,phase,game_id,turn,last_actor_seat,n_players,variant,round,parent8,seed,sent_at,n_new,opening,carry_key,carry_fool,n_joins,joins
 --count MsgEnvelope.joins=n_joins --count MsgJoin.name=name_len
 #
 # And the replay code's extras (replay_extras.h ReplayExtras) - the nicknames and

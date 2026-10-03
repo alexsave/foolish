@@ -57,12 +57,11 @@ public enum GateWire {
 
     /// Does `a` show MORE of the game than `b`? Round is compared above turn
     /// and a TIE IS NOT AHEAD; msg_wire.h says why, and where it fails open.
-    public static func chainIsAhead(generation a_gen: Int = 0, phase a_phase: Int,
-                                    round a_round: Int, turn a_turn: Int,
-                                    thanGeneration b_gen: Int = 0, phase b_phase: Int,
-                                    round b_round: Int, turn b_turn: Int) -> Bool {
-        fio_msg_chain_is_ahead(Int32(a_gen), Int32(a_phase), Int32(a_round), Int32(a_turn),
-                               Int32(b_gen), Int32(b_phase), Int32(b_round), Int32(b_turn)) != 0
+    public static func chainIsAhead(phase a_phase: Int, round a_round: Int, turn a_turn: Int,
+                                    thanPhase b_phase: Int, round b_round: Int,
+                                    turn b_turn: Int) -> Bool {
+        fio_msg_chain_is_ahead(Int32(a_phase), Int32(a_round), Int32(a_turn),
+                               Int32(b_phase), Int32(b_round), Int32(b_turn)) != 0
     }
 
     // MARK: - the seat
