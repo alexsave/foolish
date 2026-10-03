@@ -46,6 +46,13 @@ build/uttt_test: $(SRC) tests/uttt_test.c | build
 build/uttt_big_test: $(SRC) src/uttt_big.h tests/uttt_big_test.c | build
 	$(CC) $(CFLAGS) $(SRC) tests/uttt_big_test.c -o $@ $(LDLIBS)
 
+# The 243 page's bot (src/uttt_big_bot.h): the weights on hand-built
+# positions, a game as its seed, a player against random play, and a whole
+# depth-5 game at the page's settings, timed. NOT in SRC: no app links it.
+BIG_BOT_SRC := src/uttt_big_bot.c
+build/uttt_big_bot_test: $(SRC) $(BIG_BOT_SRC) src/uttt_big_bot.h src/uttt_big.h tests/uttt_big_bot_test.c | build
+	$(CC) $(CFLAGS) $(SRC) $(BIG_BOT_SRC) tests/uttt_big_bot_test.c -o $@ $(LDLIBS)
+
 build/uttt_arena: $(SRC) tests/uttt_arena.c $(SHARED)/stats/stats.c $(SHARED)/stats/stats.h | build
 	$(CC) $(CFLAGS) $(SRC) $(SHARED)/stats/stats.c tests/uttt_arena.c -o $@ $(LDLIBS)
 
@@ -99,9 +106,10 @@ build/stats_test: $(STATS_SRC) $(STATS)/stats.h $(STATS)/seed_hash.h | build
 
 # The message: every ply of 10,000 games through bytes and text, the seat
 # truth table, two joiners, the tap map and every sentence.
-run: build/uttt_test build/uttt_big_test build/uttt_msg_test build/uttt_big_msg_test build/uttt_big_diag_test build/uttt_anim_test build/msg_stage_test build/collapse_test build/text_util_test build/wire_check_test build/stats_test build/uttt_bots_test build/uttt_ink_test build/uttt_lang_test build/uttt_lang_en_test
+run: build/uttt_test build/uttt_big_test build/uttt_msg_test build/uttt_big_msg_test build/uttt_big_diag_test build/uttt_anim_test build/msg_stage_test build/collapse_test build/text_util_test build/wire_check_test build/stats_test build/uttt_bots_test build/uttt_ink_test build/uttt_lang_test build/uttt_lang_en_test build/uttt_big_bot_test
 	./build/uttt_test 1000
 	./build/uttt_big_test 2000 10
+	./build/uttt_big_bot_test 40
 	./build/uttt_lang_test
 	./build/uttt_lang_en_test
 	./build/uttt_bots_test 10
@@ -229,6 +237,9 @@ asan: $(SRC) tests/uttt_test.c | build
 	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
 	  $(SRC) tests/uttt_big_test.c -o build/uttt_big_asan $(LDLIBS)
 	./build/uttt_big_asan 300 1
+	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
+	  $(SRC) $(BIG_BOT_SRC) tests/uttt_big_bot_test.c -o build/uttt_big_bot_asan $(LDLIBS)
+	./build/uttt_big_bot_asan 20
 	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
 	  $(SRC) tests/uttt_msg_test.c -o build/uttt_msg_asan $(LDLIBS)
 	./build/uttt_msg_asan 1000
