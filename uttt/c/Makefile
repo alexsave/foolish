@@ -304,6 +304,18 @@ ios-smoke: build/ios_smoke
 
 .PHONY: ios-smoke ios-lib
 
+# THE SEND RULES SIDE BY SIDE (docs/BIG_BOARD_SEND_RULE.md): whole depth-5
+# games under one rule, random and greedy bots, and what they decided. A
+# measurement, not a test, so not in run. ARGS="<rule 0|1|2> <random games>
+# <bot games> [seed]".
+build/uttt_big_rules_sim: $(SRC) $(BIG_BOT_SRC) src/uttt_big_bot.h src/uttt_big.h tests/uttt_big_rules_sim.c | build
+	$(CC) $(CFLAGS) $(SRC) $(BIG_BOT_SRC) tests/uttt_big_rules_sim.c -o $@ $(LDLIBS)
+
+big-rules-sim: build/uttt_big_rules_sim
+	./build/uttt_big_rules_sim $(ARGS)
+
+.PHONY: big-rules-sim
+
 # THE BIG GAME THROUGH A REAL SEND'S PICTURE CHAIN: one random depth-5 game
 # to the end, every ply framed and painted by the kit's C at 3 px a cell (the
 # bubble's robust243), JPEG'd at q0.50 and q0.89 with ImageIO (both 4:2:0),

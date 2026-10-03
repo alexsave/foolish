@@ -10,7 +10,16 @@ Recursive Ultimate Tic-Tac-Toe: a 9-ary tree of depth 5 where the shipped game i
 9^5 = 59,049 leaf cells.
 A node is won by three of its nine children in a line held by one mark, drawn when all nine children are decided without a line; decided is forever and closes every leaf below it.
 The root decides the game.
-A move is a leaf index whose five base-9 digits run from the top block to the cell; the next move must go into the leaf-level block named by the last four digits, and when that block or anything above it is decided the target relaxes to the parent of the first decided node on its path from the root (the root means anywhere).
+A move is a leaf index whose five base-9 digits d1 d2 d3 d4 d5 run from the top block to the cell.
+Where it sends the opponent is the game's SEND RULE, one of three (`UtbGame.rule`, set by `utb_init_rule`; the debate is `BIG_BOARD_SEND_RULE.md`):
+
+- **(A), `UTB_RULE_SHIFT`, the default and the only rule the iMessage game plays**: the next move goes into the leaf-level block named by the last four digits, d2 d3 d4 d5, on every move.
+- **(B'), `UTB_RULE_CLIMB`**: let k be the largest unit the move completed (5 the cell alone, 4 its 3 x 3, 3 its 9 x 9, 2 its 27 x 27, 1 its 81 x 81). The send drops the digit above k and keeps the rest: d1 d2 d3 d5 for an ordinary move (the 9 x 9 game's rule inside the same 9 x 9), d1 d2 d4 d5 after a 3 x 3 is completed, d1 d3 d4 d5 after a 9 x 9, d2 d3 d4 d5 after a 27 x 27. Every ply is still one 3 x 3.
+- **(B), `UTB_RULE_CLIMB_FREE`**: an ordinary move as (B'). After a completion the target is the WHOLE block one level above the completed unit, at the position the completed unit held, any open cell in it: the 9 x 9 d1 d2 d4 after a 3 x 3, the 27 x 27 d1 d3 after a 9 x 9, the 81 x 81 d2 after a 27 x 27.
+- For both climbs, completing an 81 x 81 (k = 1) has no level to climb to, so the cell's ordinary send stands; that target lies inside the decided 81 x 81, so it relaxes to anywhere. At depth 2 the same clause makes all three rules the 9 x 9 game exactly (a completed 3 x 3 there is a child of the root), which `tests/uttt_big_test.c` holds over 2,000 random games.
+
+Under every rule, when the target or anything above it is decided, the target relaxes to the parent of the first decided node on its path from the root (the root means anywhere).
+The rule is derived from the board and the last move alone (a decided unit containing the last move's cell was completed by that move, since play inside a decided unit is illegal), so undo and the picture need nothing more.
 A first move is anywhere.
 X moves first and X is the joiner, as in the 9 x 9 game.
 The rules are stated once, in `uttt/c/src/uttt_big.h`, and `tests/uttt_big_test.c` holds depth 2 of the new module to the shipped kernel move for move.
@@ -63,9 +72,10 @@ That is the one honest design: the bubble is a board that only the app can read,
 
 ## The send rule is an open question
 
-Rule (A), the full shift of the address every move, is what ships.
+Rule (A), the full shift of the address every move, is what the iMessage game plays.
 The owner expected the send to climb only when a move completes a block.
-`BIG_BOARD_SEND_RULE.md` holds both rules, the precedent found, the arguments each way, and what to measure before deciding.
+The kernel now carries all three rules, (A), (B') and (B), as a property of a game, and the arena (uttt.live/243) lets a visitor pick one; the iMessage game, its codec and its wire are unchanged and play (A).
+`BIG_BOARD_SEND_RULE.md` holds the rules, the precedent found, the arguments each way, and the first simulation of all three.
 
 ## The wire
 
@@ -189,7 +199,7 @@ NOT proven: anything on a real phone. The corner, the outlines and the diagnosti
 ## The arena: uttt.live/243
 
 Two bots play the 243 x 243 game in the visitor's browser, spectator only (`web/app/243`, `web/components/Arena.tsx`, the kernel `c/wasm/uttt_243_web.c` built by `make wasm-243`, the bot `c/src/uttt_big_bot.{c,h}`).
-A game is its seed (`?seed=`) and its two settings, from the first move: changing a setting starts the game again on the same seed.
+A game is its seed (`?seed=`) and its three settings, from the first move: changing a setting starts the game again on the same seed.
 
 ### The bot
 
@@ -202,12 +212,14 @@ The candidate cap below the root follows the plies and the budget (`utb_bot_cap_
 
 ### The control
 
-In the header: "Look ahead" (a stepper, 1 to 32 plies) and "Work a move" (Small 4,000, Medium 30,000, Large 150,000, Huge 1,000,000 work units), with the caps they give shown beside them.
-A change RESTARTS the game: the kernel (`ua_set_bots`) clears the board and re-seats both bots on the same seed, dice and all, then takes the settings, so the game on the page is exactly its seed and the two numbers shown, and the same three play the same game whenever they are set.
+In the header: "Look ahead" (a stepper, 1 to 32 plies), "Work a move" (Small 4,000, Medium 30,000, Large 150,000, Huge 1,000,000 work units), with the caps they give shown beside them, and "Send", the send rule: "Across the board (A)", "Stay local, land in a 3 x 3 (B')" and "Stay local, free in the block (B)".
+A change RESTARTS the game: the kernel (`ua_settings`) clears the board under the chosen rule and re-seats both bots on the same seed, dice and all, then takes the settings, so the game on the page is exactly its seed and the three settings shown, and the same four play the same game whenever they are set.
 The page drops the running loop, the clock, the move count, the rate and the painted board with it and starts a new loop; each game has a number and a loop plays only while its number is current, so a frame already queued by a loop being replaced (rapid clicks on the stepper) neither plays nor paints.
 The control also works once a game is over (it starts the next one on the same seed).
-The replay link carries the settings (`&plies=`, `&work=`) when they are not the defaults; the seed is still drawn once a page load and changes only on a reload.
-The defaults are 6 plies on Large.
+The replay link carries the settings (`&plies=`, `&work=`, and `&send=climb` or `&send=free`) when they are not the defaults; the seed is still drawn once a page load and changes only on a reload.
+The defaults are 6 plies on Large, rule (A).
+The bots know no rule: they search `utb_legal`'s moves, so the climbs needed nothing of them; under (B) a completion opens a whole block (81 cells or more), which the candidate caps take as they take a relaxed region (`full_243` in `tests/uttt_big_bot_test.c` plays 1,500 plies at the defaults under each rule, every move legal and within its budget).
+In Chrome on the same seed after about 6 s at the defaults: (A) had scattered about 5,700 marks evenly over all nine 81 x 81s with no grid decided yet; (B') had filled most of one 81 x 81 (the bottom right) with about 3,300 marks, dozens of 3 x 3s and several 9 x 9s already won, and nothing anywhere else; (B) the same corner, about 2,000 marks at a lower rate, with more of its 9 x 9s still part filled.
 
 THE LOOK-AHEAD GOES TO 32 (`UTB_BOT_PLIES_MAX`, was 8). The budget, not the plies, bounds a move: iterative deepening drops an iteration the budget cannot finish and plays the deepest one that finished, so a depth out of reach costs nothing extra.
 At 32 plies every budget hits the cap floor of 3 replies a node (`utb_bot_cap_for`), and on the depth-5 board one move natively finished (`deepest_setting` in `tests/uttt_big_bot_test.c`): from the opening 1, 8, 11 and 15 plies on Small, Medium, Large and Huge (Huge in 0.06 s), and after 300 moves 8, 11, 14 and 17, each within its budget plus the first ply, deterministic per seed.

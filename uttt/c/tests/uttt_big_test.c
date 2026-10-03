@@ -1,5 +1,6 @@
-/* The recursive game: depth 2 held to the shipped 9 x 9 move for move, depth 5
- * played to the end, and every rule's corner built by hand.
+/* The recursive game: depth 2 held to the shipped 9 x 9 move for move (under
+ * all three send rules), depth 5 played to the end under each, and every
+ * rule's corner built by hand.
  *
  *     make -C uttt/c run        (and asan)
  *     ./build/uttt_big_test [games]       depth-2 games, default 2000
@@ -61,6 +62,24 @@
  *  hit: no nudge after the floor        -> the same two
  *  hit: no far-edge clamp               -> geometry corners; depth 2 hit
  *  hit: no range check                  -> geometry off the square; depth 2
+ *
+ * THE SEND RULES (2026-10-03), each broken in a copy and restored:
+ *  climbs read as rule A (k = 2 always) -> rules: every k (region and the
+ *                                          9 / 81 / 729 / 6,561 counts)
+ *  k = 1 sends anywhere outright        -> depth 2: B' and B are the shipped
+ *                                          game (the clause that keeps them so)
+ *  k = 1 read as k = 2 (A's formula)    -> rules: k = 1 anywhere, and its count
+ *  B read as B'                         -> rules: k = 4, 3, 2 regions, counts
+ *  B keeps the wrong digit              -> rules: k = 4, 3, 2; B relax cases
+ *  no relaxation above the bottom level -> rules relax: B's 9 x 9 decided;
+ *                                          depth 5 rule B never ends
+ *  k is the deepest decided, not the    -> rules: k = 3, k = 2
+ *          largest
+ *  init_rule ignores the rule           -> rules: init_rule sets the rule;
+ *                                          depth 5 B'/B adopt reproduces
+ *  init_rule takes any rule             -> rules: not one is refused
+ *  undo clears the rule                 -> rules: undo under B'; depth 5
+ *                                          B'/B play then undo, every ply
  *
  * The depth-2 lockstep goes red on many names at once for a status or
  * region mutation: one wrong ply and the two games part.
@@ -176,14 +195,21 @@ static void same_as_uttt(const UtttGame *u, const UtbGame *b, int *bad)
         if (utb_legal_at(b, mv) != (mv >= 0 && mv < 81 && in_list(LIST, bn, mv))) { bad[7]++; break; }
 }
 
+/* The climbing rules, played beside G in the same random games: at depth 2 a
+ * completed 3 x 3 is a child of the root, with no level to climb to, so the
+ * cell's ordinary send stands and both ARE the shipped game (uttt_big.h). */
+static UtbGame CL[2];
+
 static void test_depth2(int games)
 {
-    int bad[10] = { 0 };
-    int won_x = 0, won_o = 0, drawn = 0;
+    int bad[10] = { 0 }, bad_cl[2][10] = { { 0 } };
+    int won_x = 0, won_o = 0, drawn = 0, climbed = 0;
     for (int n = 0; n < games; n++) {
         UtttGame u;
         uttt_init(&u);
         utb_init(&G, 2);
+        utb_init_rule(&CL[0], 2, UTB_RULE_CLIMB);
+        utb_init_rule(&CL[1], 2, UTB_RULE_CLIMB_FREE);
         same_as_uttt(&u, &G, bad);
         while (!u.over) {
             uint8_t ul[81];
@@ -207,6 +233,13 @@ static void test_depth2(int games)
             uttt_play(&u, (uint8_t)mv);
             if (!utb_play(&G, mv)) bad[9]++;
             same_as_uttt(&u, &G, bad);
+            for (int r = 0; r < 2; r++) {
+                if (!utb_play(&CL[r], mv)) bad_cl[r][9]++;
+                same_as_uttt(&u, &CL[r], bad_cl[r]);
+            }
+            /* a move that decided its 3 x 3 while the game runs: the case
+             * where a climb would have had somewhere to go */
+            if (!u.over && G.node[1 + mv / 9] != UTTT_OPEN) climbed++;
         }
         if (u.over == UTTT_X) won_x++;
         else if (u.over == UTTT_O) won_o++;
@@ -224,6 +257,13 @@ static void test_depth2(int games)
     OK(!bad[9], "depth 2: play then undo is the struct before, prev aside");
     OK(won_x && won_o && drawn, "depth 2: the random games include X wins, O wins and draws");
     printf("  depth 2: %d games (X %d, O %d, drawn %d)\n", games, won_x, won_o, drawn);
+    for (int r = 0; r < 2; r++) {
+        int any = 0;
+        for (int i = 0; i < 10; i++) any |= bad_cl[r][i];
+        OK(!any, r ? "depth 2: rule B (CLIMB_FREE) is the shipped game move for move: legal list, region, turn, cells, blocks"
+                   : "depth 2: rule B' (CLIMB) is the shipped game move for move: legal list, region, turn, cells, blocks");
+    }
+    OK(climbed > games, "depth 2: the games complete 3 x 3s mid-game, so the rules had the chance to part");
 
     /* the geometry, against the shipped board's */
     utb_init(&G, 2);
@@ -256,13 +296,21 @@ static int same_position(const UtbGame *a, const UtbGame *b)
         && a->last == b->last && utb_region(a) == utb_region(b);
 }
 
-static void test_depth5(int games)
+/* Under rule A (every 97th ply taken back, as it always was) or a climbing
+ * rule (every ply taken back: the climbs read the board for k, so undo must
+ * restore exactly the state the region is read from). */
+static void test_depth5(int games, int rule)
 {
+    static const char *const NAME[3] = { "A", "B'", "B" };
+    const int every = rule == UTB_RULE_SHIFT ? 97 : 1;
+    char what[160];
+#define OKR(c, msg) do { if (rule == UTB_RULE_SHIFT) OK(c, msg); \
+        else { snprintf(what, sizeof what, "%s (rule %s)", msg, NAME[rule]); OK(c, what); } } while (0)
     int bad[8] = { 0 };
     double total = 0;
     for (int n = 0; n < games; n++) {
         double t0 = now();
-        utb_init(&G, 5);
+        utb_init_rule(&G, 5, rule);
         int plies = 0;
         for (;;) {
             int m = utb_legal(&G, LIST, UTB_LEAVES_MAX);
@@ -278,7 +326,7 @@ static void test_depth5(int games)
             int first = utb_node_first(&G, r), span = utb_node_span(&G, r);
             if (mv < first || mv >= first + span) bad[3]++;
             if (utb_closed(&G, utb_ancestor(&G, mv, 4))) bad[4]++;
-            if (plies % 97 == 0) {
+            if (plies % every == 0) {
                 H = G;
                 if (!utb_play(&G, mv) || !utb_undo(&G)) bad[6]++;
                 H.prev = UTB_UNKNOWN;
@@ -287,27 +335,32 @@ static void test_depth5(int games)
             if (!utb_play(&G, mv)) { bad[0]++; break; }
             plies++;
             if (plies % 97 == 0 || G.over) {
-                if (!utb_adopt(&K, 5, G.cell, G.last) || !same_position(&K, &G)) bad[5]++;
+                /* a picture carries no rule: the adopter sets it */
+                int took = utb_adopt(&K, 5, G.cell, G.last);
+                K.rule = (uint8_t)rule;
+                if (!took || !same_position(&K, &G)) bad[5]++;
             }
         }
         double dt = now() - t0;
         total += dt;
-        printf("  depth 5: game %d, %d plies, result %c, %.3f s\n", n, plies,
+        printf("  depth 5 rule %s: game %d, %d plies, result %c, %.3f s\n", NAME[rule], n, plies,
                G.over == UTTT_X ? 'X' : G.over == UTTT_O ? 'O' : 'D', dt);
-        OK(G.over != 0 && G.n_plies == plies, "depth 5: the game ends and counts its plies");
+        OKR(G.over != 0 && G.n_plies == plies, "depth 5: the game ends and counts its plies");
         int c[3];
         utb_count(&G, c);
-        OK(c[1] + c[2] == plies && c[0] + c[1] + c[2] == UTB_LEAVES_MAX && (c[1] == c[2] || c[1] == c[2] + 1),
+        OKR(c[1] + c[2] == plies && c[0] + c[1] + c[2] == UTB_LEAVES_MAX && (c[1] == c[2] || c[1] == c[2] + 1),
            "depth 5: utb_count is the plies, X first");
     }
-    OK(!bad[0], "depth 5: a running game always has a legal move and a finished one none");
-    OK(!bad[1], "depth 5: the legal list is ascending");
-    OK(!bad[2], "depth 5: utb_legal_at is membership of utb_legal for 20 random leaves a ply");
-    OK(!bad[3], "depth 5: every legal move lies in utb_region's span");
-    OK(!bad[4], "depth 5: no legal move has a decided ancestor");
-    OK(!bad[5], "depth 5: utb_adopt of the cells and last reproduces the position every 97th ply and at the end");
-    OK(!bad[6], "depth 5: play then undo is the struct before, prev aside");
-    if (games) printf("  depth 5: %.3f s a game on average\n", total / games);
+    OKR(!bad[0], "depth 5: a running game always has a legal move and a finished one none");
+    OKR(!bad[1], "depth 5: the legal list is ascending");
+    OKR(!bad[2], "depth 5: utb_legal_at is membership of utb_legal for 20 random leaves a ply");
+    OKR(!bad[3], "depth 5: every legal move lies in utb_region's span");
+    OKR(!bad[4], "depth 5: no legal move has a decided ancestor");
+    OKR(!bad[5], "depth 5: utb_adopt of the cells and last reproduces the position every 97th ply and at the end");
+    OKR(!bad[6], rule == UTB_RULE_SHIFT ? "depth 5: play then undo is the struct before, prev aside"
+                             : "depth 5: play then undo is the struct before, prev aside, at every ply");
+    if (games) printf("  depth 5 rule %s: %.3f s a game on average\n", NAME[rule], total / games);
+#undef OKR
 }
 
 /* -------------------------------------------- hand-built positions */
@@ -428,6 +481,131 @@ static void test_relaxation(void)
     OK(utb_play(&G, 2 * 9 + 4) && utb_region(&G) == UTB_ROOT, "closed d2: sent to a won block -> anywhere");
     OK(!utb_legal_at(&G, 4 * 9 + 8) && !utb_play(&G, 4 * 9 + 8) && G.cell[4 * 9 + 8] == UTTT_OPEN,
        "closed d2: an empty cell of the won block is refused though the region is anywhere");
+}
+
+/* ------------------------------------------------- the climbing rules */
+
+/* The leaf (or, with fewer digits, the node prefix) d1 d2 ... */
+static int digits(const int *d, int n)
+{
+    int p = 0;
+    for (int i = 0; i < n; i++) p = p * 9 + d[i];
+    return p;
+}
+
+/* Give `mark` the level-L ancestor of leaf `last` (depth 5) THROUGH last's
+ * cell: at each level the row holding last's digit, the off-path children won
+ * by win(). So the last cell is one of the marks that decided it. */
+static void win_via(int L, int p, int last, uint8_t mark)
+{
+    if (L == 5) { CELLS[p] = mark; return; }
+    int path = last / ipow9(5 - L - 1), row = (path % 9) / 3;
+    for (int k = 0; k < 3; k++) {
+        int c = p * 9 + row * 3 + k;
+        if (c == path) win_via(L + 1, c, last, mark);
+        else win(5, L + 1, c, 0, mark);
+    }
+}
+
+/* The board in CELLS, O's `last` on it, X and O balanced by single marks in
+ * top-level subtree 8 (X in block centres, O in block corners: two marks
+ * never decide a block), adopted, under `rule`. */
+static int position(int last, int rule)
+{
+    int n[3] = { 0, 0, 0 };
+    CELLS[last] = UTTT_O;
+    for (int i = 0; i < UTB_LEAVES_MAX; i++) n[CELLS[i]]++;
+    const int first_block = 8 * 729;
+    for (int i = 0; n[1] < n[2]; i++, n[1]++) CELLS[(first_block + i) * 9 + 4] = UTTT_X;
+    for (int i = 0; n[2] < n[1]; i++, n[2]++) CELLS[(first_block + i) * 9 + 0] = UTTT_O;
+    if (!utb_adopt(&G, 5, CELLS, last)) return 0;
+    G.rule = (uint8_t)rule;
+    return 1;
+}
+
+static void test_rules(void)
+{
+    /* the last move, O's: digits 6 1 3 5 7, all different, so a wrong digit
+     * dropped names another block */
+    static const int D[5] = { 6, 1, 3, 5, 7 };
+    const int last = digits(D, 5);
+    const int A_target = 820 + digits((const int[]){ 1, 3, 5, 7 }, 4);
+    const int OFFS[5] = { 0, 1, 10, 91, 820 };
+    #define NODE(L, ...) (OFFS[L] + digits((const int[]){ __VA_ARGS__ }, L))
+
+    OK(utb_init_rule(&H, 5, UTB_RULE_CLIMB) && H.rule == UTB_RULE_CLIMB && utb_region(&H) == UTB_ROOT,
+       "rules: init_rule sets the rule; the first move is anywhere");
+    K = H;
+    OK(!utb_init_rule(&H, 5, 3) && !utb_init_rule(&H, 5, -1) && !memcmp(&H, &K, sizeof H),
+       "rules: a rule that is not one is refused, the struct untouched");
+    utb_init(&H, 5);
+    OK(H.rule == UTB_RULE_SHIFT, "rules: utb_init is rule A");
+
+    /* each k: the unit laid, then the region under A, B' and B, and B's
+     * free choice against B''s 3 x 3 */
+    struct { int k; int climb, free_; int free_n; const char *what; } C[] = {
+        { 5, NODE(4, 6, 1, 3, 7), NODE(4, 6, 1, 3, 7), 9,
+          "k = 5, an ordinary move: B' and B stay in the 9 x 9, the 3 x 3 named by d5 (6 1 3 7)" },
+        { 4, NODE(4, 6, 1, 5, 7), NODE(3, 6, 1, 5), 81,
+          "k = 4, a 3 x 3 completed: B' to the 9 x 9 named by d4 in the same 27 x 27, its 3 x 3 d5 (6 1 5 7); B the whole 9 x 9 (6 1 5)" },
+        { 3, NODE(4, 6, 3, 5, 7), NODE(2, 6, 3), 729,
+          "k = 3, a 9 x 9 completed: B' to (6 3 5 7); B the whole 27 x 27 (6 3)" },
+        { 2, NODE(4, 1, 3, 5, 7), NODE(1, 1), 6561,
+          "k = 2, a 27 x 27 completed: B' is rule A's (1 3 5 7); B the whole 81 x 81 (1)" },
+        { 1, UTB_ROOT, UTB_ROOT, -1,
+          "k = 1, an 81 x 81 completed: B' and B anywhere (no level to climb to; the cell's send lies in the decided 81 x 81)" },
+    };
+    for (int i = 0; i < 5; i++) {
+        memset(CELLS, 0, sizeof CELLS);
+        if (C[i].k < 5) win_via(C[i].k, last / ipow9(5 - C[i].k), last, UTTT_O);
+        int ok = position(last, UTB_RULE_SHIFT);
+        /* the move completed exactly levels k..4 */
+        for (int L = 1; L < 5; L++)
+            ok &= (utb_node(&G, utb_ancestor(&G, last, L)) != UTTT_OPEN) == (L >= C[i].k);
+        int a = utb_region(&G);
+        G.rule = UTB_RULE_CLIMB;
+        int b1 = utb_region(&G), n1 = utb_legal(&G, LIST, UTB_LEAVES_MAX);
+        G.rule = UTB_RULE_CLIMB_FREE;
+        int b = utb_region(&G), n = utb_legal(&G, LIST, UTB_LEAVES_MAX);
+        char what[256];
+        snprintf(what, sizeof what, "rules: %s", C[i].what);
+        OK(ok && a == A_target && b1 == C[i].climb && b == C[i].free_, what);
+        if (C[i].free_n > 0) {
+            snprintf(what, sizeof what, "rules k = %d: B' offers 9 moves, B %d", C[i].k, C[i].free_n);
+            OK(n1 == 9 && n == C[i].free_n, what);
+        } else {
+            OK(n1 == n && n1 == UTB_LEAVES_MAX - 6561 - 81, "rules k = 1: anywhere outside the decided 81 x 81 and the balancing marks");
+        }
+    }
+
+    /* RELAXATION under the climbs: a 3 x 3 completed (k = 4) whose B' target
+     * (6 1 5 7) is already X's -> its 9 x 9 (6 1 5); that 9 x 9 X's as well
+     * -> the 27 x 27 (6 1), for both rules (B's target IS that 9 x 9). */
+    memset(CELLS, 0, sizeof CELLS);
+    win(5, 4, digits((const int[]){ 6, 1, 5, 7 }, 4), 0, UTTT_X);
+    win_via(4, last / 9, last, UTTT_O);
+    OK(position(last, UTB_RULE_CLIMB) && utb_region(&G) == NODE(3, 6, 1, 5),
+       "rules relax: B''s target 3 x 3 decided -> its 9 x 9");
+    G.rule = UTB_RULE_CLIMB_FREE;
+    OK(utb_region(&G) == NODE(3, 6, 1, 5), "rules relax: the same 9 x 9 under B, whose target it is");
+    memset(CELLS, 0, sizeof CELLS);
+    win(5, 3, digits((const int[]){ 6, 1, 5 }, 3), 0, UTTT_X);
+    win_via(4, last / 9, last, UTTT_O);
+    OK(position(last, UTB_RULE_CLIMB) && utb_region(&G) == NODE(2, 6, 1),
+       "rules relax: B''s target and its 9 x 9 decided -> the 27 x 27");
+    G.rule = UTB_RULE_CLIMB_FREE;
+    OK(utb_region(&G) == NODE(2, 6, 1), "rules relax: B's target 9 x 9 decided -> the 27 x 27");
+    /* and the region is derived after undo: play an ordinary O move under
+     * B', take it back, and the 3 x 3-completing region returns */
+    memset(CELLS, 0, sizeof CELLS);
+    win_via(4, last / 9, last, UTTT_O);
+    position(last, UTB_RULE_CLIMB);
+    int before = utb_region(&G);
+    utb_legal(&G, LIST, UTB_LEAVES_MAX);
+    OK(before == NODE(4, 6, 1, 5, 7) && utb_play(&G, LIST[0]) && utb_region(&G) != before
+       && utb_undo(&G) && utb_region(&G) == before && G.rule == UTB_RULE_CLIMB,
+       "rules: undo under B' brings back the region the completion set, rule kept");
+    #undef NODE
 }
 
 /* ------------------------------------------------------------ undo */
@@ -642,11 +820,14 @@ int main(int argc, char **argv)
     test_tree();
     test_depth2(games);
     test_relaxation();
+    test_rules();
     test_undo();
     test_adopt();
     test_draw();
     test_geometry();
-    test_depth5(big);
+    test_depth5(big, UTB_RULE_SHIFT);
+    test_depth5(big, UTB_RULE_CLIMB);
+    test_depth5(big, UTB_RULE_CLIMB_FREE);
     printf("uttt_big: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

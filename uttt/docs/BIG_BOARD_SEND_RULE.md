@@ -1,9 +1,13 @@
 # The 243 board's send rule: an open question (2026-10-03)
 
-The 243 x 243 game ships with rule (A) below.
+The 243 x 243 game in iMessage plays rule (A) below.
 The owner expected rule (B).
 The two cannot be told apart in the 9 x 9 game, which is why the question only appeared at depth 5.
 Nothing is decided; this file is the debate, so it is not re-argued from scratch.
+
+Since 2026-10-03 the kernel (`uttt/c/src/uttt_big.{c,h}`) carries all three rules below, (A), (B') and (B), as a property of a game (`UtbGame.rule`: `UTB_RULE_SHIFT`, `UTB_RULE_CLIMB`, `UTB_RULE_CLIMB_FREE`), and the arena at uttt.live/243 lets a visitor pick one ("Send" in its header; `&send=` in its replay link).
+The iMessage app still plays (A): `utb_init` and `utb_adopt` give (A), and the codec, the wire and the picture are unchanged.
+The first simulation of all three is at the end of this file.
 
 ## The two rules, precisely
 
@@ -20,9 +24,12 @@ Let k be the largest unit the move completes (k = 5 is the cell alone).
 The send drops the digit above k and keeps the rest: k = 5 gives `d1 d2 d3 d5`, k = 4 gives `d1 d2 d4 d5`, k = 2 gives `d2 d3 d4 d5`, which is (A).
 So (A) is (B) with the completion test deleted: every move is treated as if it had completed its whole 27 x 27.
 At depth 2 a cell is the only thing a move can complete that has a level above it, so the 9 x 9 game is silent on the question.
+As built, a completed unit with no level above it (k = 1: an 81 x 81 at depth 5, a 3 x 3 at depth 2) leaves the cell's ordinary send standing.
+At depth 5 that target lies inside the decided 81 x 81 and relaxes to anywhere; at depth 2 it is the 9 x 9 game's own send, so all three rules are the 9 x 9 game there, which `uttt/c/tests/uttt_big_test.c` holds over 2,000 random games.
 
 (B) has two sub-variants.
-After a climb the opponent is either free inside the target 9 x 9 (**B**, up to 81 choices) or still held to the 3 x 3 named by `d5` inside it (**B'**, 9 choices; the formula above).
+After a climb the opponent is either free inside the target block (**B**: the 9 x 9 `d1 d2 d4` after a 3 x 3, the 27 x 27 `d1 d3` after a 9 x 9, the 81 x 81 `d2` after a 27 x 27; up to 81, 729 or 6,561 choices) or still held to one 3 x 3 inside it (**B'**, 9 choices; the formula above).
+Both are built.
 
 ## What exists in the wild
 
@@ -85,3 +92,31 @@ Before committing to anything:
    The kernel already plays random depth-5 games (`uttt/c/tests/uttt_big_test.c`); a region-rule switch and a comparison of plies, draw rate, and how many 3 x 3s and 9 x 9s get decided is a small job.
 2. Make it a per-game bit.
    The URL's flags byte has reserved bits (`uttt/c/src/uttt_big_msg.h`); a flag for "escalation rule" lets (A) games already in threads keep working while new games use (B'), with no transport change and no refusal of old bubbles.
+   The kernel half of this is done (the rule is a field of the game); the codec half is not: a bubble carries no rule and is always (A).
+
+## The first simulation (2026-10-03)
+
+Whole depth-5 games under each rule, by uniform random play (20 games a rule) and by the arena's two greedy bots at the page's defaults (6 plies, budget 150,000; 4 games a rule), natively on this Mac.
+`make -C uttt/c big-rules-sim ARGS="<rule 0|1|2> <random games> <bot games> [seed]"` (`uttt/c/tests/uttt_big_rules_sim.c`), seed 20261003.
+"Decided" counts a grid that became won or drawn in its own right (one closed only because a grid above it was decided is not counted), averaged over the games; "jumps" is the share of plies whose 81 x 81 is not the previous ply's.
+
+| | plies a game | X / O / drawn | 3 x 3 decided (won) | 9 x 9 | 27 x 27 | 81 x 81 | jumps |
+|---|---|---|---|---|---|---|---|
+| (A) random | 40,302 | 5 / 4 / 11 | 4,507 (4,379) | 529 (481) | 64.0 (50.8) | 8.0 (5.2) | 88.6% |
+| (B') random | 42,225 | 0 / 2 / 18 | 5,132 (4,894) | 585 (485) | 71.1 (45.8) | 8.7 (3.0) | 0.1% |
+| (B) random | 42,486 | 1 / 1 / 18 | 5,220 (4,977) | 604 (497) | 72.8 (45.2) | 8.7 (2.9) | 0.2% |
+| (A) bots | 26,380 | 4 / 0 / 0 | 2,471 (2,470) | 425 (424) | 50.5 (49.0) | 7.0 (6.8) | 88.8% |
+| (B') bots | 36,535 | 1 / 1 / 2 | 4,473 (4,368) | 495 (450) | 62.0 (50.0) | 8.2 (5.5) | 0.2% |
+| (B) bots | 32,752 | 0 / 1 / 3 | 4,022 (3,962) | 490 (465) | 63.0 (54.8) | 8.2 (5.0) | 0.2% |
+
+The bots' games took about 38 s each under (A), 57 s under (B') and 100 s under (B) (a completion under (B) hands the searcher a whole block, so more of its moves are the wide, capped kind).
+
+What this suggests, and no more:
+
+- LOCALITY IS REAL. Under both climbs play leaves its 81 x 81 on about 1 ply in 500 against 9 in 10 under (A); the arena's screenshots show the same thing (one corner of the board worked to completion while the rest stays empty, against an even scatter).
+- NEITHER CLIMB SHORTENS A GAME. Every rule runs to roughly the whole board: random play fills about 40,000 to 42,500 cells under all three, and the bots took more plies under the climbs (33,000 to 36,500) than under (A) (26,000). The debate's estimate that (B) games "finish" in a few thousand plies is wrong for these players: winning the root still takes winning three 81 x 81s in a line, and the climbs do not make that cheaper.
+- DRAWS. Random play draws most games under every rule, more under the climbs (18 of 20) than under (A) (11 of 20). The bots never drew under (A) in four games (X won all four) and drew 2 and 3 of 4 under (B') and (B). Four games is far too few to read a rate; the direction (more draws with locality) agrees with random play.
+- UNDER (A) THE BOTS ALMOST NEVER DRAW A GRID (2,470 of 2,471 decided 3 x 3s won), and under the climbs more grids are drawn at every size: a local fight fills a grid before either side can line it up more often than a scattered one.
+- Under (A) X won all four bot games; whether the first player's edge is structural under (A) is not known from four games.
+
+NOT measured: humans; any bot but this one (it was tuned under (A)); a game-length or draw rate with more than 4 bot games a rule; whether (B)'s free choice is better or worse play than (B')'s 9-cell one.

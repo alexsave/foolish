@@ -9,8 +9,8 @@
 // page loads (or read from ?seed=, to replay a game someone named), and
 // everything on the page runs from it: both bots' dice, every tie-break, the
 // whole game. Another game is a reload. The replay link names the settings
-// too (&plies=, &work=) when they are not the defaults, since a game is its
-// seed and its settings.
+// too (&plies=, &work=, &send=) when they are not the defaults, since a game
+// is its seed and its settings.
 //
 // THE BOARD IS PAINTED, NOT BUILT: no element per cell. Cells and decided
 // nodes are forever, so they are painted once, when they appear, onto a layer
@@ -24,11 +24,13 @@
 // takes, so a fast setting is not one call a move and a slow one does not
 // spend a whole chunk past the frame.
 //
-// THE CONTROL: how far the bots look (N plies) and how much work a move may
-// spend. A change STARTS THE GAME AGAIN: the kernel clears the board and
-// re-seats both bots on the same seed (ua_set_bots), and the page drops the
-// running loop, the clock and the painted board and starts a new loop. So the
-// game on the page is exactly its seed and the two settings shown. Each game
+// THE CONTROL: how far the bots look (N plies), how much work a move may
+// spend, and the send rule (where a move sends the opponent: the three rules
+// of docs/BIG_BOARD_SEND_RULE.md, rule A by default). A change STARTS THE GAME
+// AGAIN: the kernel clears the board and re-seats both bots on the same seed
+// (ua_settings), and the page drops the running loop, the clock and the
+// painted board and starts a new loop. So the game on the page is exactly its
+// seed and the three settings shown. Each game
 // has a number (`game`), and a loop plays only while its number is the
 // current one, so a frame already queued by a loop that is being replaced
 // (rapid clicks on the stepper) neither plays nor paints.
@@ -37,7 +39,8 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
     GameClock, gameTime, loadArena, startError, parseSeed, randomSeed, UA_DRAW, UA_O, UA_X,
     UA_PLIES_MIN, UA_PLIES_MAX, UA_BUDGET_SMALL, UA_BUDGET_MED, UA_BUDGET_LARGE, UA_BUDGET_HUGE,
-    UA_DEFAULT_PLIES, UA_DEFAULT_BUDGET, type Arena as Kernel, type Config, type Status,
+    UA_DEFAULT_PLIES, UA_DEFAULT_BUDGET, UA_RULE_SHIFT, UA_RULE_CLIMB, UA_RULE_CLIMB_FREE, UA_DEFAULT_RULE,
+    type Arena as Kernel, type Config, type Status,
 } from '../lib/arena';
 import styles from './Arena.module.css';
 
@@ -54,6 +57,13 @@ const BUDGETS: readonly { name: string; units: number }[] = [
     { name: 'Medium', units: UA_BUDGET_MED },
     { name: 'Large', units: UA_BUDGET_LARGE },
     { name: 'Huge', units: UA_BUDGET_HUGE },
+];
+/** The send rules, as the control offers them: the words a visitor reads,
+ *  and the name the replay link carries (&send=). */
+const RULES: readonly { rule: number; name: string; key: string }[] = [
+    { rule: UA_RULE_SHIFT, name: 'Across the board (A)', key: 'shift' },
+    { rule: UA_RULE_CLIMB, name: 'Stay local, land in a 3 x 3 (B\')', key: 'climb' },
+    { rule: UA_RULE_CLIMB_FREE, name: 'Stay local, free in the block (B)', key: 'free' },
 ];
 /** How often the numbers in the header are refreshed. */
 const STATS_MS = 120;
@@ -89,6 +99,7 @@ export function Arena() {
         const named = parseSeed(q.get('seed'));
         const num = (k: string) => (q.get(k) ? Number(q.get(k)) : NaN);
         const plies = num('plies'), work = num('work');
+        const send = RULES.find((r) => r.key === q.get('send'));
         const s = named ?? randomSeed();
         setSeed(s);
         setReplay(named !== null);
@@ -96,9 +107,10 @@ export function Arena() {
             .then((k) => {
                 if (gone) return;
                 k.start(s, 5);
-                if (Number.isInteger(plies) || BUDGETS.some((b) => b.units === work))
-                    k.setBots(Number.isInteger(plies) ? plies : UA_DEFAULT_PLIES,
-                        BUDGETS.some((b) => b.units === work) ? work : UA_DEFAULT_BUDGET);
+                if (Number.isInteger(plies) || BUDGETS.some((b) => b.units === work) || send)
+                    k.settings(Number.isInteger(plies) ? plies : UA_DEFAULT_PLIES,
+                        BUDGETS.some((b) => b.units === work) ? work : UA_DEFAULT_BUDGET,
+                        send ? send.rule : UA_DEFAULT_RULE);
                 kernel.current = k;
                 setConfig(k.config());
                 setPhase('running');
@@ -169,11 +181,11 @@ export function Arena() {
     // seed; the settings are read back from it (it clamps). The old loop is
     // retired before the kernel changes under it, and the new game gets a new
     // clock, empty numbers and its own loop.
-    const setBots = useCallback((plies: number, budget: number) => {
+    const settings = useCallback((plies: number, budget: number, rule: number) => {
         const k = kernel.current;
         if (!k) return;
         current.current++;
-        k.setBots(plies, budget);
+        k.settings(plies, budget, rule);
         clock.current = new GameClock();
         setConfig(k.config());
         setStats(null);
@@ -207,7 +219,7 @@ export function Arena() {
                     <Stat name="Time" value={gameTime(stats?.elapsedMs ?? 0, !!st?.over)} />
                     <Stat name="Seed" value={<span className={styles.seed}>{seed || ' '}</span>} />
                 </dl>
-                <Control config={config} disabled={phase !== 'running' && phase !== 'over'} onChange={setBots} />
+                <Control config={config} disabled={phase !== 'running' && phase !== 'over'} onChange={settings} />
                 <div className={styles.bots}>
                     <Seat side={UA_X} st={st} gameWeight={w?.[4]} />
                     <Seat side={UA_O} st={st} gameWeight={w?.[4]} />
@@ -229,8 +241,12 @@ export function Arena() {
                     the move that gains the most, minus what it hands the other side: a 3 x 3 is worth {w?.[0] ?? 9}, a
                     9 x 9 {w?.[1] ?? 81}, a 27 x 27 {w?.[2] ?? 729}, an 81 x 81 {w?.[3] ?? 6561}, and the game more than
                     the rest of the board together; two in a row with the third still open is worth two ninths of the
-                    grid it threatens ({`${t?.[0] ?? 2} in a 3 x 3, ${t?.[1] ?? 18} in a 9 x 9`}). &ldquo;Look ahead&rdquo; and
-                    &ldquo;Work a move&rdquo; start the game again from its first move, on the same seed. &ldquo;Sees&rdquo; is
+                    grid it threatens ({`${t?.[0] ?? 2} in a 3 x 3, ${t?.[1] ?? 18} in a 9 x 9`}). &ldquo;Send&rdquo; is where a
+                    move sends the other side: across the board, every digit of the cell&rsquo;s place moving up one
+                    size; or kept in the same 9 x 9, as in the 9 x 9 game, until a move completes a grid, which sends
+                    play one size up, to the block where the completed grid sat, landing in one 3 x 3 (B&apos;) or
+                    anywhere inside it (B). &ldquo;Look ahead&rdquo;, &ldquo;Work a move&rdquo; and &ldquo;Send&rdquo;
+                    start the game again from its first move, on the same seed. &ldquo;Sees&rdquo; is
                     the value of the move it just chose; &ldquo;holds&rdquo; is everything that side has won. Ties go to
                     each bot&rsquo;s own dice, which come from the seed: the same seed and settings play the same game
                     {seed ? <> (<a href={replayLink(seed, config)}>{replay ? 'this link' : 'replay this one'}</a>)</> : null}.
@@ -241,9 +257,9 @@ export function Arena() {
     );
 }
 
-/** How far the bots look, and how much a move may spend. */
-function Control({ config, disabled, onChange }: { config: Config | null; disabled: boolean; onChange: (plies: number, budget: number) => void }) {
-    const plies = config?.plies ?? 0, budget = config?.budget ?? 0;
+/** How far the bots look, how much a move may spend, and the send rule. */
+function Control({ config, disabled, onChange }: { config: Config | null; disabled: boolean; onChange: (plies: number, budget: number, rule: number) => void }) {
+    const plies = config?.plies ?? 0, budget = config?.budget ?? 0, rule = config?.rule ?? UA_DEFAULT_RULE;
     const off = disabled || !config;
     return (
         <div className={styles.control}>
@@ -251,17 +267,24 @@ function Control({ config, disabled, onChange }: { config: Config | null; disabl
                 <span className={styles.label} id="arena-plies">Look ahead</span>
                 <div className={styles.stepper} role="group" aria-labelledby="arena-plies">
                     <button type="button" className={styles.step} aria-label="Look one move less"
-                        disabled={off || plies <= UA_PLIES_MIN} onClick={() => onChange(plies - 1, budget)}>&minus;</button>
+                        disabled={off || plies <= UA_PLIES_MIN} onClick={() => onChange(plies - 1, budget, rule)}>&minus;</button>
                     <output className={styles.value} aria-live="polite" data-plies={plies}>{config ? `${plies} ${plies === 1 ? 'move' : 'moves'}` : '-'}</output>
                     <button type="button" className={styles.step} aria-label="Look one move more"
-                        disabled={off || plies >= UA_PLIES_MAX} onClick={() => onChange(plies + 1, budget)}>+</button>
+                        disabled={off || plies >= UA_PLIES_MAX} onClick={() => onChange(plies + 1, budget, rule)}>+</button>
                 </div>
             </div>
             <label className={styles.knob}>
                 <span className={styles.label}>Work a move</span>
                 <select className={styles.select} value={budget} disabled={off} data-budget={budget}
-                    onChange={(e) => onChange(plies, Number(e.target.value))}>
+                    onChange={(e) => onChange(plies, Number(e.target.value), rule)}>
                     {BUDGETS.map((b) => <option key={b.units} value={b.units}>{b.name}, {fmt(b.units)}</option>)}
+                </select>
+            </label>
+            <label className={styles.knob}>
+                <span className={styles.label}>Send</span>
+                <select className={styles.select} value={rule} disabled={off} data-rule={rule}
+                    onChange={(e) => onChange(plies, budget, Number(e.target.value))}>
+                    {RULES.map((r) => <option key={r.rule} value={r.rule}>{r.name}</option>)}
                 </select>
             </label>
             <span className={styles.label}>{config ? `${config.capNode} replies a node, ${config.capRoot} at the root` : ''}</span>
@@ -302,7 +325,8 @@ function Seat({ side, st, gameWeight }: { side: number; st?: Status; gameWeight?
 /** The link that plays this game again: its seed, and its settings when they
  *  are not the ones a page opens at. */
 const replayLink = (seed: string, c: Config | null) =>
-    `/243?seed=${seed}` + (c && (c.plies !== UA_DEFAULT_PLIES || c.budget !== UA_DEFAULT_BUDGET) ? `&plies=${c.plies}&work=${c.budget}` : '');
+    `/243?seed=${seed}` + (c && (c.plies !== UA_DEFAULT_PLIES || c.budget !== UA_DEFAULT_BUDGET) ? `&plies=${c.plies}&work=${c.budget}` : '')
+    + (c && c.rule !== UA_DEFAULT_RULE ? `&send=${RULES.find((r) => r.rule === c.rule)?.key ?? 'shift'}` : '');
 
 const fmt = (n: number) => n.toLocaleString('en-US');
 const signed = (n: number) => (n > 0 ? '+' : n < 0 ? '-' : '') + fmt(Math.abs(n));

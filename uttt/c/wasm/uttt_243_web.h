@@ -26,8 +26,9 @@ enum {
 
 /* THE CONTROL ON THE PAGE: how far each bot looks (plies) and how much work
  * a move may spend (a budget, in uttt_big_bot.h's work units), offered as
- * these four sizes. ua_set_bots takes any values and clamps them, and starts
- * the game again from move 0 on the same seed; the page offers these.
+ * these four sizes, and the send rule (below). ua_settings takes any values
+ * and clamps them, and starts the game again from move 0 on the same seed;
+ * the page offers these.
  * uttt_243_web.c holds them to uttt_big_bot.h's bounds. */
 enum {
     UA_PLIES_MIN    = 1,
@@ -38,6 +39,17 @@ enum {
     UA_BUDGET_HUGE  = 1000000,      /* the most a move may spend            */
     UA_DEFAULT_PLIES  = 6,
     UA_DEFAULT_BUDGET = UA_BUDGET_LARGE
+};
+
+/* THE SEND RULE (uttt_big.h, docs/BIG_BOARD_SEND_RULE.md), the page's third
+ * setting: A, the default and the iMessage game's, shifts every digit up on
+ * every move; B' climbs one level when a move completes a grid and still
+ * lands in one 3 x 3; B climbs and leaves the whole block free. */
+enum {
+    UA_RULE_SHIFT      = 0,
+    UA_RULE_CLIMB      = 1,
+    UA_RULE_CLIMB_FREE = 2,
+    UA_DEFAULT_RULE    = UA_RULE_SHIFT
 };
 
 /* A square of the board in cells: column, row and side. */
@@ -68,6 +80,7 @@ typedef struct {
 /* The game's shape and the bots' settings, for the page to state. */
 typedef struct {
     int32_t depth;          /* 5 on the page                                  */
+    int32_t rule;           /* UA_RULE_*: the send rule                       */
     int32_t side;           /* 3^depth cells across                           */
     int32_t leaves;         /* side * side                                    */
     int32_t nodes;          /* the internal nodes                             */

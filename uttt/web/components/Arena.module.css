@@ -68,7 +68,7 @@
   letter-spacing: 0.02em;
 }
 
-/* the bots' control: a stepper for the plies and a select for the work */
+/* the control: a stepper for the plies, a select for the work and one for the send rule */
 .control {
   display: flex;
   flex-wrap: wrap;
