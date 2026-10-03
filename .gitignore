@@ -102,3 +102,15 @@ serve.log
 
 # shared/tools/ship/ship.sh writes every product's archive and .ipa under <repo root>/build/ship/.
 /build/
+
+# The layout probe (shared/tools/layout_probe): its C build, and ios/build,
+# which holds the project xcodegen writes and its derived data.
+shared/tools/layout_probe/build/
+shared/tools/layout_probe/ios/build/
+
+# BubbleDataKit (shared/swift/BubbleDataKit): its Makefile builds everything
+# under build/ (the C test, `swift test --scratch-path`, xcodebuild's derived
+# data); .build/ and .swiftpm/ are where a bare `swift build` or Xcode put theirs.
+shared/swift/BubbleDataKit/build/
+shared/swift/BubbleDataKit/.build/
+shared/swift/BubbleDataKit/.swiftpm/

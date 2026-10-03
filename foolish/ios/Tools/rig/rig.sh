@@ -76,6 +76,8 @@
 #                                 composited frame, print the tween numerically
 #   rig.sh probe                  screen size + what the colour finder sees
 #   rig.sh flight | mem | log     the extension's own diagnostics
+#   rig.sh groupdir               the App Group's directory on the simulator, which
+#                                 is where every dev.* file is written and read
 #
 # THE ONE RULE THAT IS NOT OBVIOUS: **do not restart Messages mid-shoot.**
 # The simulator's Messages keeps its conversations IN MEMORY - there is no
@@ -2370,6 +2372,7 @@ case "${1:-}" in
   tween)    shift; cmd_tween "$@" ;;
   probe)    shift; cmd_probe "$@" ;;
   flight)   shift; cmd_flight "$@" ;;
+  groupdir) shift; group_dir ;;
   mem)      shift; cmd_mem "$@" ;;
   log)      shift; cmd_log "$@" ;;
   lobby)    shift; cmd_lobby "$@" ;;

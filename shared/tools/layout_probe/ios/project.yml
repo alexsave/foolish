@@ -1,0 +1,96 @@
+# XcodeGen spec for the layout probe: a Messages app that measures what a
+# message's layout hands back to the extension that reads it (../README.md).
+#
+# The project xcodegen writes from this file is a BUILD ARTIFACT - never
+# hand-edit it, never commit it. `make -C .. app` generates and builds.
+#
+# IT IS WRITTEN INTO build/, not beside this file: the repository's validation
+# lane reads every file under shared/ that is not in a build directory, and a
+# generated project names things that lane refuses. So SRCROOT is ios/build,
+# and every path in a SETTING below is written from there (the `sources` paths
+# are xcodegen's and stay relative to this file).
+#
+# TWO TARGETS, because an app extension cannot be installed on its own: a
+# codeless container, and the extension that is the whole tool.
+#
+# NEVER SHIPPED, and DEBUG in both configurations: the dev-file reader it is
+# driven through compiles out of a build that does not define DEBUG, so the
+# condition is set for the whole project and not left to a configuration.
+name: LayoutProbe
+options:
+  bundleIdPrefix: tools.layoutprobe
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+
+configs:
+  Debug: debug
+  Release: release
+
+settings:
+  base:
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.9"
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: "YES"
+    SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+    # CLayoutProbe (the pattern and the judge, layout_probe.h one folder up from this file) and CMsgStage
+    # (is the view a drawer yet), each through its module.modulemap.
+    SWIFT_INCLUDE_PATHS: $(inherited) $(SRCROOT)/../.. $(SRCROOT)/../../../../c/msg_stage
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: 8N2Z544SB4
+    # An app with no entitlements does not register on a simulator: installd
+    # says "Install successful" and every later simctl command cannot find it.
+    # The group is also where the report and the variant file live.
+    CODE_SIGN_ENTITLEMENTS: ../LayoutProbe.entitlements
+    TARGETED_DEVICE_FAMILY: "1"
+    # A hand-written Info.plist is not a whole one; Xcode merges the generated
+    # keys (bundle id, executable, version) into the file each target names.
+    GENERATE_INFOPLIST_FILE: "YES"
+
+targets:
+  LayoutProbeApp:
+    type: application.messages
+    platform: iOS
+    sources:
+      # The Info.plist is named by a setting (from SRCROOT, so with a ../), and
+      # xcodegen only keeps a plist out of the bundle's resources when the two
+      # spellings match - so say it here, or it is copied in twice.
+      - path: App
+        excludes: [Info.plist]
+    dependencies:
+      - target: LayoutProbeExt
+        embed: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: tools.layoutprobe.msg
+        INFOPLIST_FILE: ../App/Info.plist
+        # The container needs an icon too, or LaunchServices will not register it.
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+
+  LayoutProbeExt:
+    type: app-extension.messages
+    platform: iOS
+    sources:
+      - path: Ext
+        excludes: [Info.plist]
+      # The DEBUG dev-file reader: the App Group's directory, and files in it.
+      - path: ../../../swift/MessagesKit/DevFlags.swift
+      # Is the extension's view a drawer yet (an insert before it is, is dropped).
+      - path: ../../../swift/MessagesKit/InsertStaging.swift
+    settings:
+      base:
+        # Prefixed by its container: an extension's bundle id must extend the
+        # app that embeds it.
+        PRODUCT_BUNDLE_IDENTIFIER: tools.layoutprobe.msg.Ext
+        INFOPLIST_FILE: ../Ext/Info.plist
+        # A Messages app without this icon set installs and registers nothing.
+        ASSETCATALOG_COMPILER_APPICON_NAME: "iMessage App Icon"
+
+schemes:
+  LayoutProbeApp:
+    build:
+      targets:
+        LayoutProbeApp: all
+    run:
+      config: Debug
