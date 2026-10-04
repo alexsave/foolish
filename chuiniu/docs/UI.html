@@ -489,7 +489,7 @@ Two views: from the side, as the roll and the reveal show it, and from above, as
 <!-- ============================================================ 6b -->
 <section id="table" data-tab="table">
 <h2>The table</h2>
-<p class="lede">What the dice land on. Thirteen surfaces. The woods are built the way foolish builds its wood: the chaotic cosine streak march from <code>WoodTexture.swift</code>, ported line for line, laid down first; then the stone generator’s passes over it (planks laid in a running bond, alternate boards offset by half a length, each board on its own band of the march; the gaps and ends between them; rot; a wet sheen). The deck from the first proposal stays as it was; the wooden deck is in the deck’s own colour, deep green-blue and almost black, with four more dark woods beside it (pitch, bog oak, drowned grey, deep blue) to compare. Then rotting wet wood, a barnacled hull, drowned sailcloth, the sea floor, cursed iron, wet slate, and the old green baize gone to the sea.
+<p class="lede">What the dice land on. Fourteen surfaces. The woods are built the way foolish builds its wood: the chaotic cosine streak march from <code>WoodTexture.swift</code>, ported line for line, laid down first; then the stone generator’s passes over it (planks laid in a running bond, alternate boards offset by half a length, each board on its own band of the march; the gaps and ends between them; rot; a wet sheen). The deck from the first proposal stays as it was; the wooden deck is in the deck’s own colour, deep green-blue and almost black, with the drowned grey and the pitch beside it (round nine kept those three) and each of the three a stop darker. Then rotting wet wood, a barnacled hull, drowned sailcloth, the sea floor, cursed iron, wet slate, and the old green baize gone to the sea.
 Then what runs round the table’s edge, and what is driven into it. The stage is a phone’s width with the die and the cup already decided, so a surface is judged by whether they still read on it.</p>
 
 <h3>The mixer</h3>
@@ -1046,11 +1046,12 @@ const TEX = (() => {
 
   // the woods: the march's palette (the board, the streak gains, the pass alpha), five of them, all in the dark
   const WOODS = {
-    hold:  { name: 'Wooden deck, hold',  why: 'the deck\u2019s own colour: deep green-blue, almost black, the grain just showing', base: [11, 19, 17], gain: [8, 13, 12], alpha: .08, stain: [6, 14, 13], sheen: [30, 46, 44] },
-    pitch: { name: 'Wooden deck, pitch', why: 'tarred: black-brown, the pitch wet in patches', base: [12, 11, 9], gain: [10, 8, 6], alpha: .08, stain: [6, 10, 9], sheen: [40, 42, 38] },
-    bog:   { name: 'Wooden deck, bog oak', why: 'oak that lay in a bog: black with warm streaks', base: [16, 12, 8], gain: [15, 10, 6], alpha: .09, stain: [8, 10, 8], sheen: [44, 36, 26] },
-    grey:  { name: 'Wooden deck, drowned', why: 'silvered like driftwood, but wet and dark', base: [13, 15, 14], gain: [12, 13, 12], alpha: .08, stain: [8, 12, 12], sheen: [46, 52, 52] },
-    blue:  { name: 'Wooden deck, deep', why: 'further down: blue-black, the green gone', base: [8, 12, 18], gain: [6, 10, 15], alpha: .08, stain: [4, 8, 14], sheen: [28, 40, 54] },
+    hold:      { name: 'Wooden deck, hold',          why: 'the deck\u2019s own colour: deep green-blue, almost black, the grain just showing', base: [11, 19, 17], gain: [8, 13, 12], alpha: .08, stain: [6, 14, 13], sheen: [30, 46, 44] },
+    holdDark:  { name: 'Wooden deck, hold, darker',  why: 'the same, a stop down', base: [7, 13, 12], gain: [6, 10, 9], alpha: .08, stain: [4, 9, 8], sheen: [22, 36, 34] },
+    grey:      { name: 'Wooden deck, drowned',       why: 'silvered like driftwood, but wet and dark', base: [13, 15, 14], gain: [12, 13, 12], alpha: .08, stain: [8, 12, 12], sheen: [46, 52, 52] },
+    greyDark:  { name: 'Wooden deck, drowned, darker', why: 'the same, a stop down', base: [9, 10, 10], gain: [8, 9, 9], alpha: .08, stain: [5, 8, 8], sheen: [34, 40, 40] },
+    pitch:     { name: 'Wooden deck, pitch',         why: 'tarred: black-brown, the pitch wet in patches', base: [12, 11, 9], gain: [10, 8, 6], alpha: .08, stain: [6, 10, 9], sheen: [40, 42, 38] },
+    pitchDark: { name: 'Wooden deck, pitch, darker', why: 'the same, a stop down', base: [8, 7, 6], gain: [7, 6, 4], alpha: .08, stain: [4, 7, 6], sheen: [30, 32, 28] },
   };
   const WOOD_DECK = WOODS.hold, WOOD_ROT = { base: [40, 32, 22], gain: [66, 54, 36], alpha: .1 };
   const woodDeck = W => ({ name: W.name, why: W.why, wood: W, cloud: 5, tilt: [.8, 1, .9], grain: 3, vein: [4, 6, 5], veinX: 36, veinY: 2, veinLo: .9, veinAmt: .3,
@@ -1059,10 +1060,11 @@ const TEX = (() => {
   const TABLE_MATS = {
     deck:      { name: 'The deck',          why: 'the first proposal: the crusted floor of the hold, no planks', hold: true },
     wooddeck:  woodDeck(WOODS.hold),
-    woodpitch: woodDeck(WOODS.pitch),
-    woodbog:   woodDeck(WOODS.bog),
+    wooddeck2: woodDeck(WOODS.holdDark),
     woodgrey:  woodDeck(WOODS.grey),
-    woodblue:  woodDeck(WOODS.blue),
+    woodgrey2: woodDeck(WOODS.greyDark),
+    woodpitch: woodDeck(WOODS.pitch),
+    woodpitch2: woodDeck(WOODS.pitchDark),
     rotwood:   { name: 'Rotting wet wood',  why: 'waterlogged planks, the grain open, rot blooming black-green, wet where the light finds it',
                  wood: WOOD_ROT, cloud: 8, tilt: [1, .9, .75], grain: 6, vein: [26, 20, 12], veinX: 36, veinY: 2, veinLo: .9, veinAmt: .4,
                  stain: [26, 36, 28], stainLo: .5, stainHi: .8, stainCells: 4, stainAmt: .55, pore: 30, poreCells: 70, poreLo: .86, poreHi: .93, sheen: [70, 86, 86], sheenAmt: .25, planks: 5, seed: 71 },
