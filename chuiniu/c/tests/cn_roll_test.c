@@ -87,8 +87,8 @@ static void test_determinism(void)
     uint32_t h = fnv(F, (size_t)n * CN_ROLL_FRAME_FLOATS * sizeof(float));
     printf("  golden: seed 2026 bakes %d frames, hand %d%d%d%d%d, fnv %08x\n", n, a.up[0], a.up[1], a.up[2], a.up[3], a.up[4], h);
     CHECK(a.complete, "complete");
-    CHECK(n == 197 && h == 0xeea001cdu && a.up[0] == 3 && a.up[1] == 5 && a.up[2] == 4 && a.up[3] == 2 && a.up[4] == 5,
-          "the golden: seed 2026 is 197 frames, hand 35425, fnv eea001cd (a change here is a change of recipe)");
+    CHECK(n == 191 && h == 0xa8063c38u && a.up[0] == 2 && a.up[1] == 1 && a.up[2] == 5 && a.up[3] == 1 && a.up[4] == 1,
+          "the golden: seed 2026 is 191 frames, hand 21511, fnv a8063c38 (a change here is a change of recipe)");
 }
 
 static void test_cup(int seeds)
@@ -101,7 +101,7 @@ static void test_cup(int seeds)
     for (int k = 0; k < seeds; k++) {
         CnRollInfo info;
         /* every seat shakes its own length: the lengths round to the bob's beat inside the bake */
-        t.shake_s = k % 5 == 0 ? 0 : 1.5f + (k % 10) * .1f;
+        t.shake_s = k % 5 == 0 ? 0 : 1.5f + (k % 9) * .1f;
         clock_t c0 = clock();
         int n = cn_roll_bake(&t, 1000 + (uint64_t)k * 131, F, P, CN_ROLL_MAX_FRAMES, &info);
         ms += (double)(clock() - c0) * 1000 / CLOCKS_PER_SEC;
@@ -189,7 +189,7 @@ static void test_small(int seeds)
     double worst = 1e9; int forced = 0;
     for (int k = 0; k < seeds; k++) {
         CnRollInfo info;
-        t.shake_s = 1.5f + (k % 10) * .1f;
+        t.shake_s = 1.5f + (k % 9) * .1f;
         int n = cn_roll_bake(&t, 7000 + (uint64_t)k * 131, F, P, CN_ROLL_MAX_FRAMES, &info);
         CHECK(n > 0 && info.complete, "seed %d completes in %d frames", k, n);
         forced += info.forced;

@@ -386,6 +386,9 @@ static int emit(Out *o, V3 cupO, const M3 *cupR, const Body *b, int nd, int ph)
 #ifndef SHAKE_TILT
 #define SHAKE_TILT 1.5
 #endif
+#ifndef HOLD_TILT
+#define HOLD_TILT .38   /* radians the held cup leans toward my face, so I see in from a seat; the turn starts from it */
+#endif
 
 
 typedef struct {
@@ -411,7 +414,7 @@ static void cupPose(const CupPath *c, double T, M3 *R, V3 *o)
      * would move the cup by a tilt's worth in one step, and that jolt alone throws the dice out */
     if (T < c->tFlip) {
         piv = v3(c->grip0[0] + dx, c->grip0[1] + dy, c->grip0[2] + dz); pv = c->pz;
-        M3 a = rotX(PI); M = mulM(&a, &S);
+        M3 a = rotX(PI - HOLD_TILT); M = mulM(&a, &S);   /* mouth up, leaned toward me */
     } else {
         double w = T - c->tFlip, k = w / FLIP; if (k > 1) k = 1;
         double td = w - c->dropAt; if (td < 0) td = 0;
@@ -421,7 +424,7 @@ static void cupPose(const CupPath *c, double T, M3 *R, V3 *o)
         double ex = kx * rsqrt(kx);   /* kx^1.5: slow at first, fastest at the end */
         piv = v3(c->grip0[0] + (c->home[0] - c->grip0[0]) * ex + dx, c->grip0[1] + (c->home[1] - c->grip0[1]) * ex + dy, z + dz); pv = c->pz;
         /* the wrist: the turn gathers speed the whole way and stops dead at the end of its travel */
-        if (k < 1) { M3 a = rotX(PI + PI * powk(k)); M = mulM(&a, &S); } else M = ident();
+        if (k < 1) { M3 a = rotX(PI - HOLD_TILT + (PI + HOLD_TILT) * powk(k)); M = mulM(&a, &S); } else M = ident();
         /* the slam's shiver: the cup sits a hair up and settles */
         if (T > c->tSlam && T < c->tSlam + .14) { double sw = (T - c->tSlam) / .14; piv.z += 2.5 * c->sc * rsin(sw * PI) * (1 - sw); }
     }
@@ -457,13 +460,13 @@ static int bakeCup(const CnThrow *t, uint64_t seed, Out *o)
     /* five dice in the held cup: three on its floor, two on top of them, every one turned its own way */
     uint64_t rs = seed ^ 0x636e2e726f6c6c01ull;        /* "cn.roll" + the recipe's version */
     M3 R0; V3 o0; cupPose(&c, 0, &R0, &o0);
-    double floorW = o0.z - hf;
     Body b[CN_ROLL_DICE];
     for (int k = 0; k < nd; k++) {
         double u1 = unit(&rs), u2 = unit(&rs), u3 = unit(&rs), ua = unit(&rs), w1 = unit(&rs), w2 = unit(&rs), w3 = unit(&rs);
         double an = k * 2 * PI / 3 + ua * .5, rr = (k < 3 ? 17 : 10) * sc;
-        b[k] = make(d, v3(o0.x + rr * rcos(an), o0.y + rr * rsin(an), floorW + s + 1 + (k < 3 ? 0 : d + 2)),
-                    v3(0, 0, 0), v3((w1 - .5) * 6, (w2 - .5) * 6, (w3 - .5) * 6), randRot(u1, u2, u3));
+        /* on the cup's floor in the cup's own frame (the held cup leans): three down, two on top */
+        V3 lp = v3(rr * rcos(an), rr * rsin(an), hf - dome - s - 1 - (k < 3 ? 0 : d + 2));
+        b[k] = make(d, add(o0, apply(&R0, lp)), v3(0, 0, 0), v3((w1 - .5) * 6, (w2 - .5) * 6, (w3 - .5) * 6), randRot(u1, u2, u3));
     }
     double stx[CN_ROLL_DICE], sty[CN_ROLL_DICE];
     for (int k = 0; k < CN_ROLL_DICE; k++) { double an = -PI / 2 + k * 2 * PI / 5; stx[k] = t->cup_x + t->ring * rcos(an); sty[k] = t->cup_y + t->ring * rsin(an); }
