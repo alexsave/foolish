@@ -164,7 +164,7 @@ td code{white-space:nowrap}
 /* ---- a plate, a plank, a band, a chip ------------------------------- */
 .plate{position:relative;display:inline-flex;align-items:center;justify-content:center;gap:10px;
   min-width:160px;height:56px;padding:0 16px;border-radius:5px;isolation:isolate;overflow:hidden;
-  background-color:var(--bronze2);background-image:var(--tex-verd);background-size:128px 128px;
+  background-color:var(--bronze2);background-image:var(--tex-verd);background-size:128px 128px;background-position:var(--ox,0px) var(--oy,0px);
   box-shadow:inset 0 1px 0 rgba(255,240,200,.22),inset 0 -2px 0 rgba(0,0,0,.55),
              inset 0 0 0 1px rgba(0,0,0,.5),0 6px 14px rgba(0,0,0,.5)}
 .plate::before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;
@@ -182,26 +182,34 @@ td code{white-space:nowrap}
 .plate .rivet:nth-child(3){left:6px;bottom:6px}.plate .rivet:nth-child(4){right:6px;bottom:6px}
 
 .plank{position:relative;display:inline-flex;align-items:center;justify-content:center;
-  height:40px;padding:0 18px;min-width:120px;isolation:isolate;overflow:hidden;cursor:pointer;
+  height:40px;padding:0 18px;min-width:120px;isolation:isolate;overflow:hidden;cursor:pointer;border-radius:5px;
   font:400 18px/1 var(--sc);letter-spacing:.08em;color:var(--bone2);
   text-shadow:0 1px 0 #000,0 1px 3px rgba(0,0,0,.8);
-  background-color:var(--bronze2);background-image:var(--tex-verd);background-size:128px 128px;
-  box-shadow:inset 0 1px 0 rgba(255,240,200,.22),inset 0 -2px 0 rgba(0,0,0,.6),
-             inset 0 0 0 1px rgba(0,0,0,.55),0 4px 10px rgba(0,0,0,.45);
+  --tint:linear-gradient(180deg,rgba(255,236,190,.14),transparent 42%,rgba(0,0,0,.38));
+  --rv:radial-gradient(circle at 7px 7px,#9a8c66 0,#2a2416 1.5px,rgba(0,0,0,.55) 2.4px,transparent 3.2px);
+  --rv2:radial-gradient(circle at calc(100% - 7px) 7px,#9a8c66 0,#2a2416 1.5px,rgba(0,0,0,.55) 2.4px,transparent 3.2px);
+  --rv3:radial-gradient(circle at 7px calc(100% - 7px),#9a8c66 0,#2a2416 1.5px,rgba(0,0,0,.55) 2.4px,transparent 3.2px);
+  --rv4:radial-gradient(circle at calc(100% - 7px) calc(100% - 7px),#9a8c66 0,#2a2416 1.5px,rgba(0,0,0,.55) 2.4px,transparent 3.2px);
+  background-color:var(--bronze2);
+  background-image:var(--rv),var(--rv2),var(--rv3),var(--rv4),var(--tint),var(--tex-verd);
+  background-size:auto,auto,auto,auto,auto,128px 128px;
+  background-position:0 0,0 0,0 0,0 0,0 0,var(--ox,0px) var(--oy,0px);
+  box-shadow:inset 0 1px 0 rgba(255,240,200,.22),inset 0 -2px 0 rgba(0,0,0,.55),
+             inset 0 0 0 1px rgba(0,0,0,.5),0 6px 14px rgba(0,0,0,.5);
   transition:transform .08s ease-out}
-.plank::before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;
-  background:linear-gradient(180deg,rgba(255,236,190,.16),transparent 45%,rgba(0,0,0,.35))}
+.plank::before{content:"";position:absolute;inset:3px;border-radius:3px;pointer-events:none;
+  border:1px solid rgba(0,0,0,.45);box-shadow:inset 0 0 0 1px rgba(255,236,190,.08)}
 .plank:active{transform:scale(.96)}
-.plank.sq{min-width:40px;width:40px;padding:0;font-size:22px}
+.plank.sq{min-width:40px;width:40px;padding:0;font-size:22px;--rv:none;--rv2:none;--rv3:none;--rv4:none}
+.plank.sq::before{inset:2px}
 .plank.wide{flex:1 1 0;min-width:0}
-.plank.quiet{color:var(--ink)} .plank.quiet::before{background:linear-gradient(180deg,rgba(255,236,190,.06),transparent 45%,rgba(0,0,0,.5))}
-.plank.call{color:#f3ddcf;background-color:#3a1a12}
-.plank.call::before{background:linear-gradient(180deg,rgba(120,40,24,.65),rgba(80,22,12,.55) 45%,rgba(30,6,2,.75))}
-.plank.call::after{content:"";position:absolute;inset:0;pointer-events:none;box-shadow:inset 0 0 18px rgba(140,30,16,.55)}
+.plank.quiet{color:var(--ink);--tint:linear-gradient(180deg,rgba(255,236,190,.06),transparent 45%,rgba(0,0,0,.5))}
+.plank.call{color:#f3ddcf;background-color:#3a1a12;--tint:linear-gradient(180deg,rgba(120,40,24,.68),rgba(80,22,12,.6) 45%,rgba(30,6,2,.78))}
+.plank.call::after{content:"";position:absolute;inset:0;pointer-events:none;border-radius:5px;box-shadow:inset 0 0 18px rgba(140,30,16,.55)}
 .plank.glow{color:#f1fff8;text-shadow:0 1px 0 #000,0 0 10px rgba(143,251,224,.7)}
-.plank.glow::after{content:"";position:absolute;inset:0;pointer-events:none;box-shadow:inset 0 0 0 1px rgba(143,251,224,.35),inset 0 0 14px rgba(143,251,224,.25)}
+.plank.glow::after{content:"";position:absolute;inset:0;pointer-events:none;border-radius:5px;box-shadow:inset 0 0 0 1px rgba(143,251,224,.35),inset 0 0 14px rgba(143,251,224,.25)}
 .plank.sunk{color:rgba(190,205,195,.5);cursor:default;text-shadow:0 1px 0 rgba(0,0,0,.6)}
-.plank.sunk::after{content:"";position:absolute;inset:0;pointer-events:none;background:rgba(6,36,38,.62)}
+.plank.sunk::after{content:"";position:absolute;inset:0;pointer-events:none;border-radius:5px;background:rgba(6,36,38,.62)}
 
 .seatband{display:flex;align-items:center;gap:10px;height:48px;padding:0 12px;border-radius:4px;
   background:rgba(2,10,10,.58);box-shadow:inset 0 1px 0 rgba(143,251,224,.08),inset 0 -1px 0 rgba(0,0,0,.6),0 1px 0 rgba(143,251,224,.04)}
@@ -374,7 +382,7 @@ needs a "yes" colour and a "blood" colour the film's grading never had to show a
   <div><i style="background:#9fb094"></i><b>bone, shadow</b><small>#9fb094 &middot; a die's far edge, a chip</small></div>
   <div><i style="background:#000406"></i><b>pip</b><small>#000406 &middot; the bottom of a drilled hole</small></div>
   <div><i style="background:#8a241c"></i><b>wild</b><small>#8a241c &middot; the 1's pip, blood in the dark</small></div>
-  <div><i style="background:#c04a33"></i><b>blood, lit</b><small>#c04a33 &middot; loses a die, Call</small></div>
+  <div><i style="background:#c04a33"></i><b>blood, lit</b><small>#c04a33 &middot; loses a die, Liar</small></div>
   <div><i style="background:#544b35"></i><b>bronze</b><small>#544b35 &middot; the cup, the plates</small></div>
   <div><i style="background:#2f4c46"></i><b>verdigris</b><small>#2f4c46 &middot; the bloom on the bronze</small></div>
   <div><i style="background:#8ea39a"></i><b>ink, dim</b><small>#8ea39a &middot; captions, the other seats</small></div>
@@ -384,7 +392,7 @@ needs a "yes" colour and a "blood" colour the film's grading never had to show a
   <p>The old table had brass for the turn, amber for the catch ring, red for Caught, gold for selection. In the dark all four fight. Here <b>glow</b> is the one bright
   thing and it means exactly "this is the live one": the seat whose turn it is, the dice that count at a reveal, the face chip you chose, Raise when it is legal.
   It is the light of something alive down there. <b>Blood</b> is the only other saturated colour and it means loss: the wild pip (a 1 counts against you as much as for you),
-  Call, and the stamp. Everything else is bone, bronze and water.</p>
+  Liar, and the stamp. Everything else is bone, bronze and water.</p>
 </div>
 </section>
 
@@ -505,7 +513,7 @@ Two views: from the side, as the roll and the reveal show it, and from above, as
 <h2>The table</h2>
 <p class="lede">Settled in round ten. <b>Locked:</b> the drowned wood, a stop darker: foolish’s streak march (<code>WoodTexture.swift</code> ported line for line, transposed so the grain runs along the board) in a wet silver-grey gone almost black, under the stone generator’s passes (planks in a running bond, each board on its own band of the march, the gaps and ends between them, a stain, a wet sheen, the hold’s crust in the seams); and the nails that hold the planks, forged rose heads in beam rows just inside each board’s edges, a stop darker too.
 <b>No edge:</b> the planks run to the frame; the owner’s call, round eleven. Nine surfaces and six edges were offered; the surfaces are kept as palettes in the page’s source.
-The bake is one 430 by 830 tile, the Pro Max’s expanded drawer, so no phone at any size shows a plank twice.</p>
+The bake is one 430 by 830 tile, the Pro Max’s expanded drawer, so no phone at any size shows a plank twice; it is laid 46 up and 58 left of the frame, so no seam runs along an edge.</p>
 
 <div class="mixer" id="table-mixer"></div>
 <div class="row">
@@ -536,7 +544,7 @@ What is new is the view: the table is seen <b>from above</b>. Every seat is its 
   <div class="col w">
     <div class="h4">What to look for <span class="pill n">real size</span></div>
     <p class="why" style="max-width:60ch">The screen on the left is the size the drawer really is. Collapsed is the one the game is mostly played at: 340pt, of which the picker takes 100 when it is my turn (the stepper and the face chips on one row, the two verbs on the next), so the board is a short one and the other seats go in a row along the top with the plate beside them. Expanded gives the ellipse.</p>
-    <p class="why" style="max-width:60ch">The seat rule is the app’s: the other seats go left to right in seat order starting after mine, round the upper half of an ellipse whose centre is above my band; a board too short for a badge, the plate and my band stacked becomes the short board. Nothing is locked here: the mixer and the arrangements bank below hold five ways to seat the others on a tall board (the app’s ring, which on a tall board puts the lowest seats on the plate; the ring capped at 1.05 of its half-width; a round table with me at the bottom; the short board’s row at every height; two columns), and the galleries follow whichever is chosen.</p>
+    <p class="why" style="max-width:60ch">The seat rule is the app’s: the other seats go left to right in seat order starting after mine, round the upper half of an ellipse whose centre is above my band; a board too short for a badge, the plate and my band stacked becomes the short board. Nothing is locked here: the mixer and the arrangements bank below hold six ways to seat the others on a tall board and four ways to make a bid, and the galleries follow whichever is chosen. The ring the owner liked is now spaced as foolish spaces it: every seat, mine included, at an equal angle round one ellipse, 0.42 of the width by 0.35 of the height, which is <code>MessageTableView.ringPoint</code>.</p>
     <p class="why" style="max-width:60ch">From above a cup’s count sits on its crown, which is why the crown had to carry a numeral at 32. The name goes under the cup in the small caps, and the live seat gets the turn light under its name.</p>
     <div class="kv" id="lay-spec"></div>
   </div>
@@ -547,8 +555,12 @@ What is new is the view: the table is seen <b>from above</b>. Every seat is its 
 <div class="row" id="lay-three"></div>
 
 <h3>The arrangements</h3>
-<p class="why" style="max-width:73ch">Five ways to seat the others on a tall board, at half size, with the mixer’s seats and view: the app’s ring, the ring capped, a round table, a row at the top, two columns. A short board (collapsed, my turn) is always the row, which is the app’s rule. Click one to send it to the mixer.</p>
+<p class="why" style="max-width:73ch">Six ways to seat the others on a tall board, at half size, with the mixer’s seats and view: foolish’s ring (every seat at an equal angle, mine included), the app’s half-ring, the half-ring capped, a round table, a row at the top, two columns. A short board (collapsed, my turn) is always the row, which is the app’s rule. Click one to send it to the mixer.</p>
 <div class="bank" id="lay-arr"></div>
+
+<h3>The pickers</h3>
+<p class="why" style="max-width:73ch">Four ways to make a bid, each on the collapsed drawer (the size that is hardest on it) at 60%: the app’s two rows; the plate as the control; one line then Liar; strips. Click one to send it to the mixer.</p>
+<div class="bank bank-w" id="lay-pick"></div>
 
 <h3>Two seats to six</h3>
 <p class="why" style="max-width:73ch">The expanded table at every seat count, at half size. The ellipse holds six badges on a 390-wide phone with room between them; the short board holds four other seats and the plate, five without it (the app’s rule, I17).</p>
@@ -562,7 +574,7 @@ What is new is the view: the table is seen <b>from above</b>. Every seat is its 
   <h4>Decided here, pending the owner’s veto</h4>
   <p><b>From above, proposed.</b> The whole screen is the table seen from above: the planks, the cups’ crowns, the dice face up. It is the one view where a cup, a die and the table are all the same object seen the same way. The seated view is in the mixer.</p>
   <p><b>No two alike.</b> Every die takes its own slice of the bone bake, every cup its own slice of the verdigris, and every plank its own band of the wood march, all by seed, so nothing on the table is a copy of its neighbour.</p>
-  <p><b>The picker is a plank shelf.</b> The stepper, the face chips and the two verbs sit on the board’s lower edge as they did, in the bronze and the glow already decided; the board above them is the table.</p>
+  <p><b>The picker is open.</b> Four shelves are offered in the mixer and the pickers bank; every button on them is the plate, and the call is <b>Liar</b>.</p>
   <p><b>The reveal is a list on the table.</b> Every seat’s band in seat order, the counting dice ringed, the loser’s band ringed in blood with the stamp at its end, the outcome line under the list, Next round on the shelf. Collapsed, the dice drop to 22 and the bands to 30 so six seats still fit.</p>
   <p><b>The lobby is the deep.</b> The one screen on open water rather than the table: the name over the roster, the field and Join, Start lit when two are seated.</p>
 </div>
@@ -637,14 +649,14 @@ What is new is the view: the table is seen <b>from above</b>. Every seat is its 
 <!-- ============================================================ 9 -->
 <section id="controls" data-tab="controls">
 <h2>Controls</h2>
-<p class="lede">Planks of the same bronze as the plate, square-cornered like foolish's wood, 40 tall. The verb is in small caps. Three looks: the bronze plank for a move, the blood plank for Call, and the sunk plank for a move the kernel does not allow.</p>
+<p class="lede">Every button is the bid plate’s plate (round twelve): the verdigris at its own offset, four rivets, the bevel ring, 40 tall. The verb is in small caps. Three looks: the bronze plate for a move, the blood plate for Liar (the owner’s word for the call), and the sunk plate for a move the kernel does not allow.</p>
 <div class="row">
   <div class="col">
-    <div class="h4">Raise and Call <span class="pill">bid picker</span></div>
-    <p class="why">Raise glows when the chosen quantity reaches the kernel's least for that face; sunk when it does not. Call is always blood when it is legal: it is the move that ends a round.</p>
+    <div class="h4">Raise and Liar <span class="pill">bid picker</span></div>
+    <p class="why">Raise glows when the chosen quantity reaches the kernel's least for that face; sunk when it does not. Liar is always blood when it is legal: it is the move that ends a round.</p>
     <div class="stage short" style="gap:10px">
-      <div class="band"><button class="plank wide glow">Raise</button><button class="plank wide call">Call</button></div>
-      <div class="band"><button class="plank wide sunk">Raise</button><button class="plank wide sunk">Call</button></div>
+      <div class="band"><button class="plank wide glow">Raise</button><button class="plank wide call">Liar</button></div>
+      <div class="band"><button class="plank wide sunk">Raise</button><button class="plank wide sunk">Liar</button></div>
       <div class="cap" style="text-align:center">lit, and sunk</div>
     </div>
   </div>
@@ -669,7 +681,7 @@ What is new is the view: the table is seen <b>from above</b>. Every seat is its 
   <div class="col">
     <div class="h4">Press <span class="pill n">motion</span></div>
     <p class="why">foolish's press, unchanged: .96 for 80ms, no system decoration. Hold a plank here to see it. Haptics stay as mapped in <code>Buttons.swift</code>.</p>
-    <div class="stage short"><div class="band c"><button class="plank glow">Raise</button><button class="plank call">Call</button><button class="plank quiet">Next round</button></div></div>
+    <div class="stage short"><div class="band c"><button class="plank glow">Raise</button><button class="plank call">Liar</button><button class="plank quiet">Next round</button></div></div>
   </div>
 </div>
 </section>
@@ -1539,8 +1551,8 @@ const SHAPE = (() => {
     const n = 5, pw = 430 / n, inset = 7;
     let m = '';
     for (let y = 22 + Hh(1, 9, seed) * 40; y < H - 8; y += 92 + Hh(y | 0, 10, seed) * 24) {
-      for (let i = 0; i < n; i++) {
-        for (const x of [i * pw + inset, (i + 1) * pw - inset]) m += nail(x + (Hh(i, y | 0, seed) - .5) * 2.5, y + (Hh(y | 0, i + x | 0, seed) - .5) * 5, 2.9, (i * 97 + y + x) | 0, kind === 'rust');
+      for (let i = -1; i < n; i++) {
+        for (const x of [i * pw + inset - 46, (i + 1) * pw - inset - 46]) m += nail(x + (Hh(i, y | 0, seed) - .5) * 2.5, y + (Hh(y | 0, i + x | 0, seed) - .5) * 5, 2.9, (i * 97 + y + x) | 0, kind === 'rust');
       }
     }
     return m;
@@ -1555,7 +1567,7 @@ const SHAPE = (() => {
     const pieces = o.pieces === false ? '' : o.small
       ? `<div class="tb-pieces" style="justify-content:center;gap:10px;bottom:12px">${C(32, { count: 5, seed: 20 })}${D(5, 32, { seed: 61 })}${D(1, 32, { seed: 62 })}</div>`
       : `<div class="tb-pieces" style="top:36px;justify-content:space-evenly">${C(44, { count: 5, seed: 20 })}${SHAPE.cupTop(44, { count: 4, seed: 10 })}${C(44, { count: 3, seed: 30 })}</div><div class="tb-pieces" style="bottom:70px;justify-content:center;gap:2px">${[1, 1, 3, 5, 6].map((f, i) => D(f, 44, { seed: 60 + i })).join('')}</div><div class="tb-pieces" style="bottom:18px;justify-content:center"><span class="t-ask">Bo bid three 3s, <b>your turn</b></span></div>`;
-    return `<div class="stage tstage" style="width:${W}px;height:${H}px;background-image:var(--tex-t-${key});background-size:430px 830px;background-position:0 0">${ov}${pieces}</div>`;
+    return `<div class="stage tstage" style="width:${W}px;height:${H}px;background-image:var(--tex-t-${key});background-size:430px 830px;background-position:-46px -58px">${ov}${pieces}</div>`;
   }
   function drawTable() {
     const S = TABLE;
@@ -1593,19 +1605,26 @@ const SHAPE = (() => {
   }
 
   /* ---- the layout ----------------------------------------------------- */
-  const LAY = { seats: 6, state: 'table', view: 'top', size: 'expanded', arrange: 'capped' };
+  const LAY = { seats: 6, state: 'table', view: 'top', size: 'expanded', arrange: 'foolish', picker: 'rows' };
   const SIZES = { collapsed: { name: 'Collapsed, 340', w: 390, h: 340 }, expanded: { name: 'Expanded, 390 by 718', w: 390, h: 718 }, se: { name: 'SE, 375 by 541', w: 375, h: 541 }, max: { name: 'Pro Max, 430 by 830', w: 430, h: 830 } };
   const STATES = { table: { name: 'Bidding, my turn' }, wait: { name: 'Bidding, their turn' }, reveal: { name: 'The reveal' }, lobby: { name: 'The lobby' }, end: { name: 'The end' } };
   const VIEWS = { top: { name: 'From above' }, side: { name: 'Seated' } };
   // the arrangements: where the other seats go on a tall board (a short board is always the row)
   const ARRANGES = {
-    capped: { name: 'Ring, capped', why: 'the app\u2019s ellipse with its height capped at 1.05 of its half-width' },
-    app:    { name: 'Ring, the app\u2019s', why: 'the ellipse as DiceTableLayout draws it' },
+    foolish: { name: 'Ring, foolish\u2019s', why: 'every seat at an equal angle round one ellipse, 0.42 of the width by 0.35 of the height, mine at the bottom: MessageTableView.ringPoint' },
+    capped: { name: 'Ring, capped', why: 'the app\u2019s half-ellipse with its height capped at 1.05 of its half-width' },
+    app:    { name: 'Ring, the app\u2019s', why: 'the half-ellipse as DiceTableLayout draws it, the others spaced over the top half only' },
     round:  { name: 'Round table', why: 'every seat on one circle, mine at the bottom, the plate at the centre' },
     row:    { name: 'Row at the top', why: 'the short board\u2019s row at every height, the plate under it' },
     sides:  { name: 'Two columns', why: 'the others down the left and right edges, the plate between' },
   };
-  const LAY_FIELDS = { seats: ['Seats', { 2: 'Two', 3: 'Three', 4: 'Four', 5: 'Five', 6: 'Six' }], state: ['State', names(STATES)], view: ['View', names(VIEWS)], size: ['Size', names(SIZES)], arrange: ['Arrangement', names(ARRANGES)] };
+  const PICKERS = {
+    rows:   { name: 'Two rows', why: 'the app\u2019s: the stepper and the face chips on one row, Raise and Liar on the next', h: 90 },
+    plate:  { name: 'The plate is the control', why: 'the bid plate itself: the quantity stepped on its left, the face on its right; Raise and Liar under it', h: 106 },
+    inline: { name: 'One line, then Liar', why: 'the stepper, the face with its own stepper, and Raise on one line; Liar alone and full width under it', h: 90 },
+    strip:  { name: 'Strips', why: 'every legal quantity in a strip and every face in a strip, one tap each; the verbs under them', h: 128 },
+  };
+  const LAY_FIELDS = { seats: ['Seats', { 2: 'Two', 3: 'Three', 4: 'Four', 5: 'Five', 6: 'Six' }], state: ['State', names(STATES)], view: ['View', names(VIEWS)], size: ['Size', names(SIZES)], arrange: ['Arrangement', names(ARRANGES)], picker: ['Picker', names(PICKERS)] };
   loadSpec('cn.lay', LAY, LAY_FIELDS);
   const NAMES = ['Alex', 'Bo', 'Cy', 'Dee', 'Eve', 'Fay'];
   const COUNTS = [5, 4, 5, 3, 5, 2];
@@ -1613,7 +1632,7 @@ const SHAPE = (() => {
   // DiceTableLayout, ported: badge 72, my band 120 (64 short), plate 160 by 56, margin 8
   const L = { badge: [72, 72], myBand: 120, shortBand: 64, plate: [160, 56], plateMin: 100, margin: 8 };
   const isShort = H => H < L.badge[1] + L.plate[1] + L.myBand + 4 * L.margin;
-  let ARC = 'capped';
+  let ARC = 'foolish';
   const radii = (c, W) => { const rx = (W - L.badge[0]) / 2 - L.margin; let ry = c[1] - L.badge[1] / 2 - L.margin; if (ARC === 'capped') ry = Math.min(ry, rx * 1.05); return [rx, ry]; };
   function seatFrames(count, me, W, H) {
     const band = isShort(H) ? L.shortBand : L.myBand, bandTop = H - band, frames = [];
@@ -1634,6 +1653,14 @@ const SHAPE = (() => {
       for (let j = 0; j < others; j++) {
         const left = j % 2 === 0, k = Math.floor(j / 2), m = left ? nl : nr, y = top + (m > 1 ? span * k / (m - 1) : span / 2);
         frames[(me + 1 + j) % count] = [left ? L.margin : W - L.margin - L.badge[0], y, L.badge[0], L.badge[1]];
+      }
+      return frames;
+    }
+    if (ARC === 'foolish') {
+      // the web's PlayerRing, as foolish ports it: me at visual 0 (the bottom), the others clockwise
+      for (let j = 0; j < others; j++) {
+        const rad = Math.PI * 2 * (j + 1) / count, x = (-Math.sin(rad) * .42 + .5) * W, y = (Math.cos(rad) * .35 + .5) * H;
+        frames[(me + 1 + j) % count] = [x - L.badge[0] / 2, y - L.badge[1] / 2, L.badge[0], L.badge[1]];
       }
       return frames;
     }
@@ -1659,6 +1686,7 @@ const SHAPE = (() => {
       return [W - L.margin - w, Math.max(0, (H - L.shortBand - L.plate[1]) / 2), w, L.plate[1]];
     }
     const bandTop = H - L.myBand;
+    if (ARC === 'foolish') return [W / 2 - L.plate[0] / 2, H / 2 - L.plate[1] / 2 - 10, L.plate[0], L.plate[1]];
     if (ARC === 'row') return [W / 2 - L.plate[0] / 2, Math.min(L.margin + 20 + L.badge[1] + 16, (bandTop - L.plate[1]) / 2), L.plate[0], L.plate[1]];
     if (ARC === 'sides') return [W / 2 - L.plate[0] / 2, (bandTop - L.plate[1]) / 2, L.plate[0], L.plate[1]];
     if (ARC === 'round') return [W / 2 - L.plate[0] / 2, (bandTop + 20) / 2 - L.plate[1] / 2, L.plate[0], L.plate[1]];
@@ -1672,17 +1700,35 @@ const SHAPE = (() => {
     const cup = out ? (view === 'top' ? SHAPE.cupTop(44, { out: true, seed: i * 7 }) : C(44, { out: true, seed: i * 7 })) : cupAt(view, 44, COUNTS[i], i * 7);
     return `<div class="seat">${cup}<div class="t-name${turn ? '' : ' dim'}" style="margin-top:-6px">${NAMES[i]}</div>${turn ? '<span class="turn" style="width:36px;margin-top:3px"></span>' : ''}</div>`;
   }
-  const PICKER_H = 90, CAPTION_H = 22;
-  function picker(W, lit) {
-    const chip = W >= 430 ? 30 : 26;
-    return `<div class="shelf" style="width:${px(W)}">
-      <div class="band" style="gap:8px;justify-content:space-between;flex-wrap:nowrap"><div class="band" style="gap:8px;flex-wrap:nowrap">${'<button class="plank sq quiet">&minus;</button>'}<span class="t-num" style="font-size:28px;min-width:34px">3</span>${'<button class="plank sq">+</button>'}</div><div class="band" style="gap:0;flex-wrap:nowrap">${[2, 3, 4, 5, 6].map(f => D(f, chip, { counts: f === 3, seed: 70 + f })).join('')}</div></div>
-      <div class="band" style="gap:10px;flex-wrap:nowrap"><button class="plank wide ${lit ? 'glow' : 'sunk'}">Raise</button><button class="plank wide call">Call</button></div></div>`;
+  const CAPTION_H = 22;
+  function picker(W, kind) {
+    const chip = W >= 430 ? 30 : 26, verbs = `<div class="band" style="gap:10px;flex-wrap:nowrap"><button class="plank wide glow">Raise</button><button class="plank wide call">Liar</button></div>`;
+    const sq = (t, cls = '', sz = 40) => `<button class="plank sq ${cls}" style="width:${sz}px;min-width:${sz}px;height:${sz}px;font-size:${sz * .5}px">${t}</button>`;
+    let rows;
+    switch (kind) {
+      case 'plate':
+        rows = `<div class="plate" style="min-width:0;width:100%;height:56px;padding:0 8px;gap:8px;justify-content:space-between"><i class="rivet"></i><i class="rivet"></i><i class="rivet"></i><i class="rivet"></i>
+          <div class="band" style="gap:4px;flex-wrap:nowrap">${sq('&minus;', 'quiet', 32)}${sq('+', '', 32)}</div>
+          <span class="t-bid" style="font-size:24px;white-space:nowrap">three 3s</span>
+          <div class="band" style="gap:4px;flex-wrap:nowrap">${D(3, 26, { seed: 73 })}${sq('&lsaquo;', 'quiet', 32)}${sq('&rsaquo;', '', 32)}</div></div>${verbs}`;
+        break;
+      case 'inline':
+        rows = `<div class="band" style="gap:6px;flex-wrap:nowrap">${sq('&minus;', 'quiet', 36)}<span class="t-num" style="font-size:26px;min-width:30px">3</span>${sq('+', '', 36)}<span style="width:6px"></span>${sq('&lsaquo;', 'quiet', 36)}${D(3, 26, { seed: 73 })}${sq('&rsaquo;', '', 36)}<button class="plank wide glow" style="height:36px;font-size:16px">Raise</button></div>
+          <div class="band" style="flex-wrap:nowrap"><button class="plank wide call">Liar</button></div>`;
+        break;
+      case 'strip':
+        rows = `<div class="band" style="gap:4px;flex-wrap:nowrap;overflow:hidden">${[3, 4, 5, 6, 7, 8, 9, 10, 11].map(q => `<button class="plank sq ${q === 3 ? 'glow' : 'quiet'}" style="width:34px;min-width:34px;height:30px;font-size:17px;font-family:var(--serif)">${q}</button>`).join('')}</div>
+          <div class="band" style="gap:4px;flex-wrap:nowrap;justify-content:center">${[2, 3, 4, 5, 6].map(f => D(f, 28, { counts: f === 3, seed: 70 + f })).join('')}</div>${verbs}`;
+        break;
+      default:
+        rows = `<div class="band" style="gap:8px;justify-content:space-between;flex-wrap:nowrap"><div class="band" style="gap:8px;flex-wrap:nowrap">${sq('&minus;', 'quiet')}<span class="t-num" style="font-size:28px;min-width:34px">3</span>${sq('+')}</div><div class="band" style="gap:0;flex-wrap:nowrap">${[2, 3, 4, 5, 6].map(f => D(f, chip, { counts: f === 3, seed: 70 + f })).join('')}</div></div>${verbs}`;
+    }
+    return `<div class="shelf" style="width:${px(W)}">${rows}</div>`;
   }
   // one screen of the game, at real size: W by H points
   function screen(spec, W, H, o = {}) {
     const n = +spec.seats, me = 0, view = spec.view, inner = W - 32;
-    ARC = spec.arrange || 'capped';
+    ARC = spec.arrange || 'foolish';
     let ui = '';
     if (spec.state === 'lobby') {
       const seated = Math.min(n, 2), tall = H > 400;
@@ -1711,6 +1757,7 @@ const SHAPE = (() => {
     }
     // the table, bidding
     const mine = spec.state === 'table', turnSeat = mine ? 0 : 1;
+    const PICKER_H = (PICKERS[spec.picker] || PICKERS.rows).h;
     const boardH = H - 8 - 10 - CAPTION_H - 12 - (mine ? PICKER_H + 10 : 0), short = isShort(boardH);
     const frames = seatFrames(n, me, inner, boardH), pf = plateFrame(n, inner, boardH);
     let board = '';
@@ -1721,7 +1768,7 @@ const SHAPE = (() => {
     if (!short) board += `<div class="abs t-hdr" style="left:0;top:12px;width:100%;text-align:center">Round four &middot; ${COUNTS.slice(0, n).reduce((a, b) => a + b, 0) - (n === 6 ? 2 : 0)} dice</div>`;
     ui += `<div class="abs" style="left:16px;top:8px;width:${px(inner)};height:${px(boardH)}">${board}</div>`;
     ui += `<div class="abs t-ask" style="left:16px;top:${px(8 + boardH + 10)};width:${px(inner)};text-align:center;font-size:${short ? 15 : 17}px">${mine ? 'Bo bid three 3s, <b>your turn</b>' : 'Alex bid three 3s, Bo’s turn'}</div>`;
-    if (mine) ui += picker(W, true);
+    if (mine) ui += picker(W, spec.picker);
     return `<div class="scr" style="width:${px(W)};height:${px(H)}">${tableStage(W, H, TABLE, { pieces: false, seed: 5 })}<div class="scr-ui">${ui}</div></div>`;
   }
   // the bubble: the picture in the transcript, 300 by 195, the same table seen from above
@@ -1740,16 +1787,25 @@ const SHAPE = (() => {
   function drawLayout() {
     const S = LAY, sz = SIZES[S.size];
     put('lay-main', screen(S, sz.w, sz.h));
-    put('lay-spec', `<b>layout</b> &middot; ${specLine(S)}<br><b>board</b>: ${isShort(sz.h - 8 - 10 - CAPTION_H - 12 - (S.state === 'table' ? PICKER_H + 10 : 0)) ? 'short (one row of seats, the plate beside)' : 'tall (the ellipse)'}`);
+    put('lay-spec', `<b>layout</b> &middot; ${specLine(S)}<br><b>board</b>: ${isShort(sz.h - 8 - 10 - CAPTION_H - 12 - (S.state === 'table' ? (PICKERS[S.picker] || PICKERS.rows).h + 10 : 0)) ? 'short (one row of seats, the plate beside)' : 'tall'}`);
     put('lay-three', `<div class="col"><div class="h4">The bubble <span class="pill n">300 by 195</span></div>${bubble(S)}</div><div class="col"><div class="h4">Collapsed <span class="pill n">340</span></div>${screen(S, 390, 340)}</div><div class="col"><div class="h4">Expanded <span class="pill n">718</span></div>${screen(S, 390, 718)}</div>`);
     renderBank('lay-arr', ARRANGES, k => `<div class="scaled" style="width:195px;height:359px"><div style="transform:scale(.5);transform-origin:0 0">${screen(Object.assign({}, S, { arrange: k, state: S.state === 'lobby' ? 'table' : S.state }), 390, 718)}</div></div>`, S.arrange, 'style="padding:6px"');
+    renderBank('lay-pick', PICKERS, k => `<div class="scaled" style="width:234px;height:204px"><div style="transform:scale(.6);transform-origin:0 0">${screen(Object.assign({}, S, { picker: k, state: 'table' }), 390, 340)}</div></div>`, S.picker, 'style="padding:6px"');
     put('lay-seats', [2, 3, 4, 5, 6].map(k => `<div class="half"><div class="scaled" style="width:195px;height:359px"><div style="transform:scale(.5);transform-origin:0 0">${screen(Object.assign({}, S, { seats: k, state: S.state === 'lobby' ? 'table' : S.state }), 390, 718)}</div></div><div class="cap" style="text-align:center">${k} seats</div></div>`).join(''));
     put('lay-phones', [['se', 375, 541], ['expanded', 390, 718], ['max', 430, 830], ['collapsed', 390, 340]].map(([k, w, h]) => `<div class="half"><div class="scaled" style="width:${px(w * .55)};height:${px(h * .55)}"><div style="transform:scale(.55);transform-origin:0 0">${screen(S, w, h)}</div></div><div class="cap" style="text-align:center">${SIZES[k].name}</div></div>`).join(''));
     saveSpec('cn.lay', S);
   }
   const syncLay = mixer('lay-mixer', LAY_FIELDS, LAY, drawLayout);
   wire('lay-arr', k => { LAY.arrange = k; syncLay(); drawLayout(); });
+  wire('lay-pick', k => { LAY.picker = k; syncLay(); drawLayout(); });
   drawLayout();
+
+  // no two plates alike: every plank and plate takes its own offset of the verdigris tile
+  function varyPlates() {
+    document.querySelectorAll('.plank, .plate').forEach((el, i) => { el.style.setProperty('--ox', (TEX.hash(i, 61, 977) * 128).toFixed(0) + 'px'); el.style.setProperty('--oy', (TEX.hash(i, 62, 977) * 128).toFixed(0) + 'px'); });
+  }
+  varyPlates();
+  new MutationObserver(() => varyPlates()).observe(document.querySelector('main'), { childList: true, subtree: true });
 
   /* ---- tabs: one section at a time, deep-linked by a bare hash ------- */
   const sections = [...document.querySelectorAll('section[data-tab]')];
