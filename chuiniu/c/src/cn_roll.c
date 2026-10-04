@@ -78,13 +78,20 @@ static M3 ident(void) { M3 m = { { { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } } }; re
 static M3 rotX(double a) { double c = rcos(a), s = rsin(a); M3 m = { { { 1, 0, 0 }, { 0, c, s }, { 0, -s, c } } }; return m; }
 static M3 rotY(double a) { double c = rcos(a), s = rsin(a); M3 m = { { { c, 0, -s }, { 0, 1, 0 }, { s, 0, c } } }; return m; }
 static M3 rotZ(double a) { double c = rcos(a), s = rsin(a); M3 m = { { { c, s, 0 }, { -s, c, 0 }, { 0, 0, 1 } } }; return m; }
-/* re-orthonormalise after an integration step */
+/* re-orthonormalise after an integration step, treating the three axes alike: one Newton step
+ * toward R^T R = I (R - R (R^T R - I) / 2), then each column to unit length. Gram-Schmidt from the
+ * x axis would hand all the step's error to the z axis, and over a throw that favoured the x and y
+ * faces (measured: 285 / 286 against 208 / 212 of 250 expected over 1,500 dice). */
 static M3 orth(const M3 *R)
 {
+    double e[3][3];
+    for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) e[i][j] = dot(R->c[i], R->c[j]) - (i == j ? 1 : 0);
     M3 m;
-    m.c[0] = norm(R->c[0]);
-    m.c[1] = norm(sub(R->c[1], mul(m.c[0], dot(R->c[1], m.c[0]))));
-    m.c[2] = cross(m.c[0], m.c[1]);
+    for (int j = 0; j < 3; j++) {
+        V3 v = R->c[j];
+        for (int i = 0; i < 3; i++) v = sub(v, mul(R->c[i], e[i][j] / 2));
+        m.c[j] = norm(v);
+    }
     return m;
 }
 /* a rotation drawn evenly over every orientation, from three numbers in [0, 1) (Shoemake) */
@@ -351,9 +358,11 @@ static int emit(Out *o, V3 cupO, const M3 *cupR, const Body *b, int nd, int ph)
  * not the slam, is what randomises them: the test checks that the six
  * faces come up evenly, and reports how often the pre-flip face recurs. */
 #define HOLD     .3
-#define SHAKE    1.25
+#ifndef SHAKE
+#define SHAKE    2.0
+#endif
 #ifndef FLIP
-#define FLIP     .5     /* the slowest half turn that keeps the dice in: .55 leaves a 3-point margin, .6 spills */
+#define FLIP     .4     /* the half turn; the slowest that keeps the dice in is about .5 (.55 leaves a 3-point margin, .6 spills) */
 #endif
 #ifndef FLIP_POW
 #define FLIP_POW 2      /* the turn gathers speed as k^2: a wrist, not a whip */
@@ -365,7 +374,7 @@ static int emit(Out *o, V3 cupO, const M3 *cupR, const Body *b, int nd, int ph)
 #define DOME     .35    /* the floor's dome, a fraction of a die */
 /* the shake's reach: sideways, and up and down (into and out of the screen) */
 #ifndef SHAKE_XY
-#define SHAKE_XY 1.3
+#define SHAKE_XY 1.6
 #endif
 #ifndef SHAKE_Z
 #define SHAKE_Z  3.0    /* 21 points up and down: the most that keeps the dice in at this beat */
@@ -374,8 +383,9 @@ static int emit(Out *o, V3 cupO, const M3 *cupR, const Body *b, int nd, int ph)
 #define SHAKE_ZF 4.0    /* the up-and-down's beat, a second */
 #endif
 #ifndef SHAKE_TILT
-#define SHAKE_TILT 1.2
+#define SHAKE_TILT 1.5
 #endif
+
 
 typedef struct {
     double held[3], grip0[3], home[3], pz, a, tDrop, dropAt, tFlip, tSlam, h;
@@ -386,27 +396,33 @@ typedef struct {
 static double powk(double k) { double r = k; for (int i = 1; i < FLIP_POW; i++) r *= k; return r; }
 static void cupPose(const CupPath *c, double T, M3 *R, V3 *o)
 {
+    /* the shake: a jiggle, a twist, a tilt and a bob, each its own rhythm, in from the hold, and carried
+     * on through the turn until the drop, over which it fades, so the cup lands flat */
+    double u = T - HOLD; if (u < 0) u = 0;
+    double env;
+    if (T < c->tFlip) { env = u / .15; if (env > 1) env = 1; }
+    else { double td = T - c->tFlip - c->dropAt; env = td <= 0 ? 1 : 1 - td / c->tDrop; if (env < 0) env = 0; }
+    double dx = 13 * SHAKE_XY * rsin(2 * PI * 4.6 * u) * env, dy = 8 * SHAKE_XY * rsin(2 * PI * 3.1 * u + 1) * env, dz = 7 * SHAKE_Z * rsin(2 * PI * SHAKE_ZF * u) * env;
+    double yaw = .55 * rsin(2 * PI * 2.3 * u + .7) * env, tx = .2 * SHAKE_TILT * rsin(2 * PI * 3.7 * u) * env, ty = .2 * SHAKE_TILT * rsin(2 * PI * 2.9 * u + 2) * env;
+    M3 b = rotY(ty), d = rotX(tx), e = rotZ(yaw), de = mulM(&d, &e), S = mulM(&b, &de);
     V3 piv; M3 M; double pv;
+    /* ONE PIVOT, the grip, for the hold, the shake and the turn: a pivot that moved at the turn's start
+     * would move the cup by a tilt's worth in one step, and that jolt alone throws the dice out */
     if (T < c->tFlip) {
-        double u = T - HOLD; if (u < 0) u = 0;
-        double env = u / .15; if ((SHAKE - u) / .12 < env) env = (SHAKE - u) / .12; if (env > 1) env = 1; if (env < 0) env = 0;
-        double dx = 13 * SHAKE_XY * rsin(2 * PI * 4.6 * u) * env, dy = 8 * SHAKE_XY * rsin(2 * PI * 3.1 * u + 1) * env, dz = 7 * SHAKE_Z * rsin(2 * PI * SHAKE_ZF * u) * env;
-        double yaw = .55 * rsin(2 * PI * 2.3 * u + .7) * env, tx = .2 * SHAKE_TILT * rsin(2 * PI * 3.7 * u) * env, ty = .2 * SHAKE_TILT * rsin(2 * PI * 2.9 * u + 2) * env;
-        piv = v3(c->held[0] + dx, c->held[1] + dy, c->held[2] + dz); pv = c->h / 2;
-        M3 a = rotX(PI), b = rotY(ty), d = rotX(tx), e = rotZ(yaw), de = mulM(&d, &e), bde = mulM(&b, &de);
-        M = mulM(&a, &bde);
+        piv = v3(c->grip0[0] + dx, c->grip0[1] + dy, c->grip0[2] + dz); pv = c->pz;
+        M3 a = rotX(PI); M = mulM(&a, &S);
     } else {
-        double u = T - c->tFlip, k = u / FLIP; if (k > 1) k = 1;
-        double td = u - c->dropAt; if (td < 0) td = 0;
+        double w = T - c->tFlip, k = w / FLIP; if (k > 1) k = 1;
+        double td = w - c->dropAt; if (td < 0) td = 0;
         double z = c->grip0[2] - .5 * c->a * td * td; if (z < c->home[2]) z = c->home[2];
         /* the cup comes toward me as it comes down, fastest at the end, and stops dead at the slam: the dice do not */
-        double kx = u / (c->tSlam - c->tFlip); if (kx > 1) kx = 1;
-        double e = kx * rsqrt(kx);   /* kx^1.5: slow at first, fastest at the end */
-        piv = v3(c->grip0[0] + (c->home[0] - c->grip0[0]) * e, c->grip0[1] + (c->home[1] - c->grip0[1]) * e, z); pv = c->pz;
+        double kx = w / (c->tSlam - c->tFlip); if (kx > 1) kx = 1;
+        double ex = kx * rsqrt(kx);   /* kx^1.5: slow at first, fastest at the end */
+        piv = v3(c->grip0[0] + (c->home[0] - c->grip0[0]) * ex + dx, c->grip0[1] + (c->home[1] - c->grip0[1]) * ex + dy, z + dz); pv = c->pz;
         /* the wrist: the turn gathers speed the whole way and stops dead at the end of its travel */
-        M = k < 1 ? rotX(PI + PI * powk(k)) : ident();
+        if (k < 1) { M3 a = rotX(PI + PI * powk(k)); M = mulM(&a, &S); } else M = ident();
         /* the slam's shiver: the cup sits a hair up and settles */
-        if (T > c->tSlam && T < c->tSlam + .14) { double w = (T - c->tSlam) / .14; piv.z += 2.5 * rsin(w * PI) * (1 - w); }
+        if (T > c->tSlam && T < c->tSlam + .14) { double sw = (T - c->tSlam) / .14; piv.z += 2.5 * rsin(sw * PI) * (1 - sw); }
     }
     *R = M; *o = sub(piv, apply(&M, v3(0, 0, pv)));
 }
@@ -599,7 +615,7 @@ void cn_throw_default(CnThrow *t, int kind, float cup_x, float cup_y, float cup_
 {
     memset(t, 0, sizeof *t);
     t->kind = (uint8_t)kind; t->dice = CN_ROLL_DICE;
-    t->cup_x = cup_x; t->cup_y = cup_y; t->cup_r = cup_r; t->cup_rc = cup_r * .72f; t->cup_h = cup_r * 1.8f; t->cup_t = cup_r * .06f;
+    t->cup_x = cup_x; t->cup_y = cup_y; t->cup_r = cup_r; t->cup_rc = cup_r * .72f; t->cup_h = cup_r * CN_CUP_TALL; t->cup_t = cup_r * .06f;
     t->die = die; t->ring = ring;
     t->band_x0 = cup_x - 160; t->band_x1 = cup_x + 160; t->band_y0 = cup_y - 120; t->band_y1 = cup_y + 60;
 }

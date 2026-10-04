@@ -87,8 +87,8 @@ static void test_determinism(void)
     uint32_t h = fnv(F, (size_t)n * CN_ROLL_FRAME_FLOATS * sizeof(float));
     printf("  golden: seed 2026 bakes %d frames, hand %d%d%d%d%d, fnv %08x\n", n, a.up[0], a.up[1], a.up[2], a.up[3], a.up[4], h);
     CHECK(a.complete, "complete");
-    CHECK(n == 187 && h == 0x7700aa8fu && a.up[0] == 1 && a.up[1] == 1 && a.up[2] == 4 && a.up[3] == 2 && a.up[4] == 3,
-          "the golden: seed 2026 is 187 frames, hand 11423, fnv 7700aa8f (a change here is a change of recipe)");
+    CHECK(n == 197 && h == 0xeea001cdu && a.up[0] == 3 && a.up[1] == 5 && a.up[2] == 4 && a.up[3] == 2 && a.up[4] == 5,
+          "the golden: seed 2026 is 197 frames, hand 35425, fnv eea001cd (a change here is a change of recipe)");
 }
 
 static void test_cup(int seeds)

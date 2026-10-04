@@ -88,8 +88,14 @@ typedef struct {
  * throw's length leaves info->complete 0. */
 int cn_roll_bake(const CnThrow *t, uint64_t seed, float *frames, uint8_t *phase, int cap, CnRollInfo *info);
 
-/* The cup roll's throw at a given table, filled with the study's numbers:
- * the mouth 1.8 of its radius tall, the crown .72 of it, the wall .06. */
+/* The cup's shape, as the study draws it: its height as a multiple of the mouth's
+ * radius (made taller so a harder shake keeps the dice in), the crown .72 of the
+ * radius, the wall .06. */
+#ifndef CN_CUP_TALL
+#define CN_CUP_TALL 2.1f
+#endif
+
+/* The cup roll's throw at a given table, filled with the study's numbers. */
 void cn_throw_default(CnThrow *t, int kind, float cup_x, float cup_y, float cup_r, float die, float ring);
 
 #endif
