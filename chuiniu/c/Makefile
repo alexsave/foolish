@@ -4,6 +4,8 @@
 #   make -C chuiniu/c run         every test and the bridge smoke, built and run
 #   make -C chuiniu/c asan        the same under ASan + UBSan
 #   make -C chuiniu/c wasm        prove the kernel builds for wasm32, freestanding
+#   make -C chuiniu/c wasm-roll   the throw (cn_roll.c) as a browser module, build/wasm/cn_roll.wasm
+#   make -C chuiniu/c docs-roll   embed that module in ../docs/UI.html (the study plays it)
 #   make -C chuiniu/c ios-smoke   every bridge entry point, host compiler, no Mac
 #   make -C chuiniu/c structgen   the Swift readers  -> ../ios/Generated/ (needs libclang)
 #   make -C chuiniu/c datagen     the Swift strings  -> ../ios/Generated/i18n/
@@ -11,12 +13,14 @@
 #   make -C chuiniu/c swift-smoke the bridge driven from Swift through the readers (a Mac)
 #   make -C chuiniu/c clean
 CC      ?= cc
-# THE WARNINGS ARE ONE LIST for every build below.
-WARN    := -Wall -Wextra -Werror -std=c11
+# THE WARNINGS ARE ONE LIST for every build below. -ffp-contract=off is in it
+# because cn_roll.c's floating point must come out the same on every machine
+# (a fused multiply-add rounds once where two operations round twice).
+WARN    := -Wall -Wextra -Werror -std=c11 -ffp-contract=off
 CFLAGS  ?= -O2 $(WARN)
 SHARED  := ../../shared/c
 SRC     := src/cn.c src/cn_dice.c src/cn_plan.c src/cn_view.c src/cn_lobby.c src/cn_say.c \
-           src/cn_code.c src/cn_msg.c src/cn_beats.c i18n/strings_en.c \
+           src/cn_code.c src/cn_msg.c src/cn_beats.c src/cn_roll.c i18n/strings_en.c \
            $(SHARED)/deal_rng.c $(SHARED)/sha256.c $(SHARED)/b32.c $(SHARED)/mixrad.c \
            $(SHARED)/text_util/text_util.c $(SHARED)/wire_check/wire_check.c \
            $(SHARED)/msg_seat_tag/msg_seat_tag.c $(SHARED)/msg_lobby_roster/msg_lobby_roster.c
@@ -27,7 +31,7 @@ HDR     := $(wildcard src/*.h) i18n/keys.h tests/cn_check.h \
            $(SHARED)/msg_seat_tag/msg_seat_tag.h $(SHARED)/msg_lobby_roster/msg_lobby_roster.h
 
 # One binary per test file; each takes an optional scale argument.
-TESTS   := cn_test cn_dice_test cn_plan_test cn_say_test cn_fuzz cn_msg_test cn_twophone_test
+TESTS   := cn_test cn_dice_test cn_plan_test cn_say_test cn_fuzz cn_msg_test cn_twophone_test cn_roll_test
 FUZZ_GAMES ?= 3000
 WIRE_GAMES ?= 40
 
@@ -41,7 +45,7 @@ build:
 	@mkdir -p build
 
 build/%: tests/%.c $(SRC) $(HDR) | build
-	$(CC) $(CFLAGS) $(SRC) $< -o $@
+	$(CC) $(CFLAGS) $(SRC) $< -lm -o $@
 
 # The shared harness's own test (shared/c/test): TEST, CHECK, report, STEP, OK.
 CHECK_TEST := $(SHARED)/test/check_test.c $(SHARED)/test/check.h $(SHARED)/test/twophone.h
@@ -99,12 +103,13 @@ run: $(addprefix build/,$(TESTS)) build/check_test build/text_util_test build/wi
 	./build/cn_fuzz $(FUZZ_GAMES)
 	./build/cn_msg_test $(WIRE_GAMES)
 	./build/cn_twophone_test
+	./build/cn_roll_test
 	./build/ios_smoke
 
 ASAN_FLAGS := -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined $(WARN)
 
 build/asan_%: tests/%.c $(SRC) $(HDR) | build
-	$(CC) $(ASAN_FLAGS) $(SRC) $< -o $@
+	$(CC) $(ASAN_FLAGS) $(SRC) $< -lm -o $@
 
 build/asan_check_test: $(CHECK_TEST) | build
 	$(CC) $(ASAN_FLAGS) $(SHARED)/test/check_test.c -o $@
@@ -138,6 +143,7 @@ asan: $(addprefix build/asan_,$(TESTS)) build/asan_check_test build/asan_text_ut
 	./build/asan_cn_fuzz 600
 	./build/asan_cn_msg_test 6
 	./build/asan_cn_twophone_test
+	./build/asan_cn_roll_test 60
 	./build/asan_ios_smoke
 
 # THE SAME FILES FOR wasm32, freestanding (-nostdlib, shared/c/wasm's libc):
@@ -154,6 +160,33 @@ wasm: wasm-cc-check | build
 	done
 	@echo "wasm32 objects in build/wasm/"
 
+# THE THROW AS A MODULE (K14): cn_roll.c and its scalar wrapper (wasm/cn_roll_web.c)
+# linked for a browser, in uttt's web shape: freestanding, no entry, the memory
+# exported, MVP plus bulk memory and sign extension so an in-app browser takes it.
+# A build output, never committed as a file. docs-roll embeds it in docs/UI.html
+# as base64 between two markers, so the one-file study still opens from disk;
+# THAT embed is committed, and goes stale when cn_roll.c changes until docs-roll
+# is run again (docs-roll-check says whether it has).
+ROLL_WASM_SRC := src/cn_roll.c wasm/cn_roll_web.c $(SHARED)/wasm/libc.c
+ROLL_WASM_OUT := build/wasm/cn_roll.wasm
+$(ROLL_WASM_OUT): $(ROLL_WASM_SRC) src/cn_roll.h wasm/cn_roll_web.c Makefile | build
+	@mkdir -p build/wasm
+	$(WASM_CC) --target=wasm32 -mcpu=mvp -mbulk-memory -msign-ext -O2 -nostdlib -ffreestanding \
+	  -mno-nontrapping-fptoint $(WARN) -isystem $(SHARED)/wasm/include -Isrc \
+	  -Wl,--no-entry -Wl,--export-memory -Wl,-z,stack-size=65536 -Wl,--strip-all \
+	  $(ROLL_WASM_SRC) -o $@
+	@echo "built $@ ($$(wc -c < $@) B, $$(gzip -9 -c $@ | wc -c) B gz)"
+wasm-roll: wasm-cc-check $(ROLL_WASM_OUT)
+
+DOC := ../docs/UI.html
+docs-roll: $(ROLL_WASM_OUT)
+	@b64=$$(base64 -w0 $(ROLL_WASM_OUT) 2>/dev/null || base64 $(ROLL_WASM_OUT) | tr -d '\n'); \
+	 awk -v b="$$b64" 'BEGIN{skip=0} /<!-- cn_roll.wasm begin/{print; print "<script>window.CN_ROLL_WASM_B64 = \"" b "\";</script>"; skip=1; next} /<!-- cn_roll.wasm end/{skip=0} skip==0{print}' $(DOC) > $(DOC).new \
+	 && mv $(DOC).new $(DOC) && echo "embedded $(ROLL_WASM_OUT) in $(DOC)"
+docs-roll-check: $(ROLL_WASM_OUT)
+	@b64=$$(base64 -w0 $(ROLL_WASM_OUT) 2>/dev/null || base64 $(ROLL_WASM_OUT) | tr -d '\n'); \
+	 grep -q "CN_ROLL_WASM_B64 = \"$$b64\"" $(DOC) && echo "docs/UI.html carries this build of cn_roll.wasm" || { echo "docs/UI.html's embedded cn_roll.wasm differs from this build: make docs-roll (a different clang also differs)"; exit 1; }
+
 # ---- the iOS bridge -----------------------------------------------------------
 # ios-smoke runs the identical bridge with the host compiler, so every
 # invariant on it is testable WITHOUT a Mac; ios-lib needs Xcode.
@@ -163,10 +196,10 @@ IOS_HDR    := $(HDR) ios/include/cn_api.h ios/cn_api_layout.h
 IOS_CFLAGS := -O2 -Isrc -Iios -Iios/include $(WARN)
 
 build/ios_smoke: $(IOS_SRC) $(IOS_HDR) ios/cn_api_smoke.c | build
-	$(CC) $(CFLAGS) -Iios/include $(IOS_SRC) ios/cn_api_smoke.c -o $@
+	$(CC) $(CFLAGS) -Iios/include $(IOS_SRC) ios/cn_api_smoke.c -lm -o $@
 
 build/asan_ios_smoke: $(IOS_SRC) $(IOS_HDR) ios/cn_api_smoke.c | build
-	$(CC) $(ASAN_FLAGS) -Iios/include $(IOS_SRC) ios/cn_api_smoke.c -o $@
+	$(CC) $(ASAN_FLAGS) -Iios/include $(IOS_SRC) ios/cn_api_smoke.c -lm -o $@
 
 ios-smoke: build/ios_smoke
 	./build/ios_smoke
@@ -245,6 +278,6 @@ ios-lib: build/layout/ios.hash datagen
 clean:
 	rm -rf build
 
-.PHONY: all run asan wasm ios-smoke swift-smoke structgen datagen ios-lib clean FORCE
+.PHONY: all run asan wasm wasm-roll docs-roll docs-roll-check ios-smoke swift-smoke structgen datagen ios-lib clean FORCE
 FORCE:
 .SECONDARY:

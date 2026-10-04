@@ -65,6 +65,11 @@ K12: the motion is one beat per plan event on a fixed clock (a reveal is a LIFT 
 
 K13: hidden dice are grade B (`docs/IMESSAGE_APP_IDEAS.md` 1.3): every die is derivable from the link by anyone with a decoder, and only the honest client masks them.
 
+K14: the roll is a baked rigid-body throw, the kernel's (`c/src/cn_roll.c`): five rounded cubes in a cup that is held mouth up, shaken, flipped about the grip and slammed (`CN_THROW_CUP`), or poured out of a tipped cup onto the planks (`CN_THROW_TABLE`, kept for other dice games), simulated once at 240 Hz with contact impulses, Coulomb friction and the dice against each other, and handed to the host as every 60 Hz frame (a position and a unit quaternion for the cup and each die) plus which face of each die is up.
+A host plays the frames on its display clock and integrates nothing; the dice stay in the cup by the throw's own speed, not by a barrier, and `cn_roll_test` measures that over 300 seeds along with the hand's independence from the pre-flip faces.
+The bake is deterministic to the bit across compilers and wasm (its own trig series, `-ffp-contract=off`, one random draw per statement) and a pinned golden holds the recipe; the bake knows no pip values, so whether the hand is the physics' own or K2's dice painted onto the up faces is the owner's call, and the bubble carries the hand, never the throw.
+`make -C c wasm-roll` links it as a browser module and `make -C c docs-roll` embeds that in `docs/UI.html`, which plays it.
+
 ## iOS and rendering (owner: the iOS worker; I1 onward)
 
 I1: SwiftUI, in `pickemup/`'s shape: `ChuiniuKit`, `ChuiniuMessages`, `ChuiniuMessagesApp`, project `chuiniu/ios/Chuiniu.xcodeproj` from `chuiniu/ios/project.yml`, module `CChuiniu`, `chuiniu/ios/vendor/Chuiniu.xcframework` from `make -C c ios-lib`.

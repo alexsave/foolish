@@ -6,6 +6,8 @@ make -C chuiniu/c run          every test: rules, dice, plan and view, words, 3,
 make -C chuiniu/c asan         the same under ASan + UBSan
 make -C chuiniu/c wasm         the kernel as wasm32 objects, freestanding
                                (WASM_CC=/opt/homebrew/opt/llvm/bin/clang on this Mac)
+make -C chuiniu/c wasm-roll    the throw (cn_roll.c) as a browser module, build/wasm/cn_roll.wasm
+make -C chuiniu/c docs-roll    embed that module in ../docs/UI.html, which plays it
 make -C chuiniu/c ios-smoke    every bridge entry point, host compiler, no Mac
 make -C chuiniu/c structgen    the Swift readers   -> chuiniu/ios/Generated/ChuiniuKernel.swift
 make -C chuiniu/c datagen      the Swift strings   -> chuiniu/ios/Generated/i18n/
@@ -17,6 +19,7 @@ make -C chuiniu/c swift-smoke  the bridge driven from Swift through the generate
 
 The shape is `pickemup/c`'s, cut to a dice game: one move is one bubble, and there is no draft of several actions, no undo and no layout file.
 The kernel is plain C11 with fixed-size structs and no allocation; it reaches `memcpy`, `memset`, `memcmp`, `strlen` and `strncmp` and nothing else, so the same files build for wasm32 and into the xcframework.
+`cn_roll.c` is the first three-dimensional thing in a kernel here: a rigid-body throw with its own `sqrt`, `sin` and `cos`, compiled `-ffp-contract=off` (in `WARN`, so every build), and measured bit-identical between gcc, clang and the wasm module over 60 seeds; the host links `-lm` only for the builtins' error path.
 `shared/c` (deal_rng, sha256, b32, mixrad) is reached by relative `#include`, as pickemup does, and nothing under `shared/` was changed.
 
 ## The file map
@@ -32,6 +35,8 @@ The kernel is plain C11 with fixed-size structs and no allocation; it reaches `m
 | `src/cn_code.h`, `src/cn_code.c` | the body: every move as one mixed-radix number (K4) |
 | `src/cn_msg.h`, `src/cn_msg.c` | the envelope: header, roster, check, Rule P, the seat resolver and its records (K4 to K6) |
 | `src/cn_beats.h`, `src/cn_beats.c` | the plan on a clock and the board at any millisecond (K12) |
+| `src/cn_roll.h`, `src/cn_roll.c` | the throw, baked: the cup roll and the table roll as rigid-body frames (K14) |
+| `wasm/cn_roll_web.c` | the throw behind scalar exports for a browser (`make wasm-roll`, `make docs-roll`) |
 | `src/cn_internal.h` | the sink `cn.c` shares with `cn_plan.c` |
 | `i18n/keys.h`, `i18n/strings_en.c` | every word, one key list, in the shape `shared/tools/datagen` reads |
 | `ios/include/cn_api.h`, `module.modulemap` | the one header Swift sees (module `CChuiniu`), every entry point documented |
@@ -46,6 +51,7 @@ The kernel is plain C11 with fixed-size structs and no allocation; it reaches `m
 | `tests/cn_fuzz.c` | random games to the end at 2 to 6 seats against every invariant |
 | `tests/cn_msg_test.c` | round trips, the worst case, the every-byte hostile sweep, tampering, lobby, Rule P, seats |
 | `tests/cn_twophone_test.c` | a three-seat game phone to phone through `cn_api.h` only |
+| `tests/cn_roll_test.c` | the throw over 300 seeds: the mouth, the settle, the hand's fairness, the table roll, the golden |
 | `tests/MUTATIONS.md` | the mutation each test was seen to fail on |
 
 ## Measured
@@ -56,4 +62,5 @@ The 3,000 fuzz games (600 a size) play about 72 moves and 18 calls a game, the l
 The link, over 40 games a size (every bubble): median 131 characters at two seats and 274 at six, p99 152 and 349, max 370.
 The longest game there can be (every rank bid in every round, six 48-byte names) is 471 characters at two seats and 3,058 at six, against a compile-time bound of 4,391 and the 5,000 of `MSMessage.url`.
 The hostile sweep turns every byte of eight real bubbles to every other value (284,070 corruptions): all but 2 are refused, and those 2 are whole messages that write back to their own bytes.
+`cn_roll_test` (added 2026-10-04): 14,116 assertions, 0 failed; a cup roll bakes in about 1.2 ms natively and 1.4 ms as wasm, 130 to 320 frames; over 300 seeds no die corner comes within 11 points of the mouth, none is placed by the last resort, the slowest settle is 3 s, and the face up after is 12% the face up before the flip and 11% its opposite (χ² 13 over five degrees for the six faces).
 `make run` takes about 20 seconds, `make asan` about 12.
