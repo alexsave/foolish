@@ -588,7 +588,8 @@ What is new is the view: the table is seen <b>from above</b>. Every seat is its 
   <div class="col"><div class="h4">Expanded <span class="pill n">718</span></div><div id="roll-main"></div></div>
   <div class="col"><div class="h4">Collapsed <span class="pill n">340</span></div><div id="roll-coll"></div>
     <div class="h4" style="margin-top:22px">The physics <span class="pill n">a rigid cube</span></div>
-    <p class="why" style="max-width:60ch">Position, velocity, a rotation matrix whose columns are the cube’s axes in the world, and an angular velocity; a cube’s inertia is the same about every axis (m d² / 6), which is what keeps this short. Each step of a 240th of a second: gravity; integrate; for each of the eight corners under the table, a contact impulse with restitution 0.42 and Coulomb friction 0.55, and the corner pushed back up; for each pair of dice closer than their bounding spheres, an impulse between them; soft walls at the band’s edges; a little damping. A die has settled when it is slow and a face is within a few degrees of flat, and is then snapped flat keeping its yaw. Then each die takes the ring station nearest its angle round the group, in order, so none cross.</p>
+    <p class="why" style="max-width:60ch">Position, velocity, a rotation matrix whose columns are the cube’s axes in the world, and an angular velocity; a cube’s inertia is the same about every axis (m d² / 6), which is what keeps this short. Each step of a 240th of a second: gravity, 12,000 points a second squared, which is near the real 9.8 m/s² at this scale (a die is 24 points for 16 mm); integrate; for each of the eight corners under the table, a contact impulse with restitution 0.38 and Coulomb friction 0.6, and the corner pushed back up; for each pair of dice closer than their bounding spheres, an impulse between them; soft walls at the band’s edges; a little damping. A die has settled when it is slow and a face is within a few degrees of flat, and is then snapped flat keeping its yaw. Then each die takes the ring station nearest its angle round the group, in order, so none cross.</p>
+    <p class="why" style="max-width:60ch"><b>The renderer</b> is a scanline rasterizer now, what an engine does: every triangle is scanned pixel by pixel inside its edges, the texture coordinate interpolated in 1/w so it is right under perspective, the texel read with bilinear filtering, the normal interpolated from the vertices and bent by a <b>normal map</b> (the pips are drilled holes with a soft rim, the bevel falls away at the edge, the bone’s grain and the verdigris’s crust stand in faint relief) before the one light shades it, and a depth buffer decides what is in front. No clips, no overlaps, no seams; the framebuffer is up to three device pixels a point and the browser filters it down.</p>
     <p class="why" style="max-width:60ch">The sim runs on its own fixed clock, so it is the same on every screen, and from a seed every phone would see the same throw. The kernel keeps owning the dice (K2, they are derived); the roll only decides where each lands and which way it turns. It is doubles and nine vector operations, and it ports as it stands.</p>
   </div>
 </div>
@@ -1700,36 +1701,72 @@ const SHAPE = (() => {
     }
     const setDieTop = (mesh, top) => setDieUp(mesh, 2, 1, top);
 
-    // ---- one textured triangle: clip to it (grown a hair so neighbours meet), map the texture by the affine
-    //      that sends the three uv corners to the three screen corners, draw, shade
-    function tri(ctx, img, P, T, shade) {
-      const [p0, p1, p2] = P, [t0, t1, t2] = T;
-      const cx = P.reduce((a, p) => a + p[0], 0) / P.length, cy = P.reduce((a, p) => a + p[1], 0) / P.length;
-      // grown by half a device pixel so neighbours meet with no hairline between them
-      const gr = .5 / DPR, grow = p => [p[0] + Math.sign(p[0] - cx) * gr, p[1] + Math.sign(p[1] - cy) * gr];
-      ctx.save(); ctx.beginPath(); P.forEach((p, i) => { const g = grow(p); if (i) ctx.lineTo(g[0], g[1]); else ctx.moveTo(g[0], g[1]); }); ctx.closePath(); ctx.clip();
-      const W = img.width, Hh = img.height;
-      const u0 = t0[0] * W, v0 = t0[1] * Hh, u1 = t1[0] * W, v1 = t1[1] * Hh, u2 = t2[0] * W, v2 = t2[1] * Hh;
-      const det = (u1 - u0) * (v2 - v0) - (u2 - u0) * (v1 - v0);
-      if (Math.abs(det) > 1e-6) {
-        const a = ((p1[0] - p0[0]) * (v2 - v0) - (p2[0] - p0[0]) * (v1 - v0)) / det;
-        const b = ((p1[1] - p0[1]) * (v2 - v0) - (p2[1] - p0[1]) * (v1 - v0)) / det;
-        const c = ((p2[0] - p0[0]) * (u1 - u0) - (p1[0] - p0[0]) * (u2 - u0)) / det;
-        const d = ((p2[1] - p0[1]) * (u1 - u0) - (p1[1] - p0[1]) * (u2 - u0)) / det;
-        const e = p0[0] - a * u0 - c * v0, f = p0[1] - b * u0 - d * v0;
-        ctx.transform(a, b, c, d, e, f); ctx.drawImage(img, 0, 0); ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-      }
-      if (shade) { ctx.fillStyle = shade; ctx.fill(); }
-      ctx.restore();
-    }
+    // ---- THE RASTERIZER. What an engine does: every triangle is scanned pixel by pixel inside its
+    //      edges; at each pixel the texture coordinate is interpolated in 1/w so it is correct under
+    //      perspective, the texel is read with bilinear filtering, the shade is interpolated from the
+    //      vertices (Gouraud), and a depth buffer decides what is in front. No clips, no overlaps, no
+    //      seams: two triangles that share an edge are sampled from the same map. The framebuffer is a
+    //      few device pixels a point and the browser filters it down, which is the edge antialiasing.
     let DPR = 1;
+    const texCache = new WeakMap();
+    function texOf(c) { let t = texCache.get(c); if (!t) { t = { d: c.getContext('2d').getImageData(0, 0, c.width, c.height).data, w: c.width, h: c.height }; texCache.set(c, t); } return t; }
+    // V: three vertices {x, y, iw, uw, vw, nx, ny, nz}: screen position, 1/w, texture coordinates over w,
+    // and the world normal. TB: the triangle's tangent frame [T, B] (the directions u and v run in the
+    // world), for the bump map. tint: the colour the shade pulls toward.
+    const LX = LIGHT[0], LY = LIGHT[1], LZ = LIGHT[2];
+    function raster(fb, tex, bump, V, TB, tint, kmul) {
+      let [a, b, c] = V;
+      let area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+      if (area === 0) return;
+      if (area < 0) { const t = b; b = c; c = t; area = -area; }
+      const inv = 1 / area, FW = fb.w, FH = fb.h, px = fb.img.data, zb = fb.z, td = tex.d, tw = tex.w, th = tex.h;
+      const x0 = Math.max(0, Math.floor(Math.min(a.x, b.x, c.x))), x1 = Math.min(FW - 1, Math.ceil(Math.max(a.x, b.x, c.x)));
+      const y0 = Math.max(0, Math.floor(Math.min(a.y, b.y, c.y))), y1 = Math.min(FH - 1, Math.ceil(Math.max(a.y, b.y, c.y)));
+      const e0x = (b.y - c.y) * inv, e1x = (c.y - a.y) * inv;
+      const tr = tint[0], tg = tint[1], tb = tint[2], km = kmul[0], ka = kmul[1];
+      const bn = bump ? bump.n : null, bw = bump ? bump.w : 0, bh = bump ? bump.h : 0;
+      const Tx = TB ? TB[0][0] : 0, Ty = TB ? TB[0][1] : 0, Tz = TB ? TB[0][2] : 0, Bx = TB ? TB[1][0] : 0, By = TB ? TB[1][1] : 0, Bz = TB ? TB[1][2] : 0;
+      for (let y = y0; y <= y1; y++) {
+        const sy = y + .5;
+        let w0 = ((b.x - (x0 + .5)) * (c.y - sy) - (b.y - sy) * (c.x - (x0 + .5))) * inv;
+        let w1 = ((c.x - (x0 + .5)) * (a.y - sy) - (c.y - sy) * (a.x - (x0 + .5))) * inv;
+        for (let x = x0; x <= x1; x++, w0 += e0x, w1 += e1x) {
+          const w2 = 1 - w0 - w1;
+          if (w0 < -1e-4 || w1 < -1e-4 || w2 < -1e-4) continue;
+          const iw = w0 * a.iw + w1 * b.iw + w2 * c.iw, depth = 1 / iw, idx = y * FW + x;
+          if (depth >= zb[idx]) continue;
+          zb[idx] = depth;
+          const u = (w0 * a.uw + w1 * b.uw + w2 * c.uw) * depth, v = (w0 * a.vw + w1 * b.vw + w2 * c.vw) * depth;
+          let tx = u * tw - .5, ty = v * th - .5;
+          if (tx < 0) tx = 0; else if (tx > tw - 1.001) tx = tw - 1.001;
+          if (ty < 0) ty = 0; else if (ty > th - 1.001) ty = th - 1.001;
+          const ix = tx | 0, iy = ty | 0, fx = tx - ix, fy = ty - iy;
+          const i00 = (iy * tw + ix) * 4, i10 = i00 + 4, i01 = i00 + tw * 4, i11 = i01 + 4;
+          const g00 = (1 - fx) * (1 - fy), g10 = fx * (1 - fy), g01 = (1 - fx) * fy, g11 = fx * fy;
+          const r = td[i00] * g00 + td[i10] * g10 + td[i01] * g01 + td[i11] * g11;
+          const g = td[i00 + 1] * g00 + td[i10 + 1] * g10 + td[i01 + 1] * g01 + td[i11 + 1] * g11;
+          const bl = td[i00 + 2] * g00 + td[i10 + 2] * g10 + td[i01 + 2] * g01 + td[i11 + 2] * g11;
+          // the normal: interpolated from the vertices, then bent by the bump map along the tangent frame
+          let nx = w0 * a.nx + w1 * b.nx + w2 * c.nx, ny = w0 * a.ny + w1 * b.ny + w2 * c.ny, nz = w0 * a.nz + w1 * b.nz + w2 * c.nz;
+          if (bn) {
+            const bi = (((v * bh) | 0) * bw + ((u * bw) | 0)) * 2, dx = bn[bi], dy = bn[bi + 1];
+            nx += Tx * dx + Bx * dy; ny += Ty * dx + By * dy; nz += Tz * dx + Bz * dy;
+          }
+          const nl = 1 / Math.sqrt(nx * nx + ny * ny + nz * nz), lit = (nx * LX + ny * LY + nz * LZ) * nl;
+          let k = .5 - .46 * lit; if (k < 0) k = 0; else if (k > .82) k = .82;
+          k = k * km + ka;
+          const o = idx * 4;
+          px[o] = r + (tr - r) * k; px[o + 1] = g + (tg - g) * k; px[o + 2] = bl + (tb - bl) * k; px[o + 3] = 255;
+        }
+      }
+    }
 
     // ---- a scene: objects placed on the board, rendered into a canvas the board's size
     //      obj: { mesh, pos:[x,y], yaw, tilt:{angle, hingeY}, tint, lift }
     function render(canvas, W, H, objs, dpr) {
-      // a 2D canvas does not antialias a clip, so the scene is drawn at up to three device pixels a point and
-      // the browser filters it down to the screen; CoreGraphics antialiases its clips and needs none of this
-      DPR = Math.min(3, Math.max(2, (dpr || 1) * 1.5));
+      // the framebuffer is up to three device pixels a point and the browser filters it down, which antialiases the edges
+      DPR = canvas._fast ? Math.max(1.5, dpr || 1) : Math.min(3, Math.max(2, (dpr || 1) * 1.5));
+      canvas._dpr = DPR;
       canvas.width = Math.round(W * DPR); canvas.height = Math.round(H * DPR); canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
       const ctx = canvas.getContext('2d'); ctx.setTransform(DPR, 0, 0, DPR, 0, 0); ctx.clearRect(0, 0, W, H); ctx.imageSmoothingQuality = 'high';
       const C = [W / 2, H / 2], eye = [C[0], C[1], HC];
@@ -1757,31 +1794,35 @@ const SHAPE = (() => {
         g.addColorStop(0, `rgba(0,3,2,${o.tilt && o.tilt.angle ? .3 : .5})`); g.addColorStop(1, 'rgba(0,3,2,0)');
         ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(sx, sy, r * 1.25, r * 1.15, 0, 0, Math.PI * 2); ctx.fill();
       }
+      // the framebuffer: colour with alpha, and depth; cleared each frame
+      const PW = canvas.width, PH = canvas.height;
+      let fb = canvas._fb;
+      if (!fb || fb.w !== PW || fb.h !== PH) { fb = canvas._fb = { w: PW, h: PH, img: new ImageData(PW, PH), z: new Float32Array(PW * PH), off: document.createElement('canvas') }; fb.off.width = PW; fb.off.height = PH; }
+      fb.img.data.fill(0); fb.z.fill(1e9);
       for (const pl of placed) {
         const o = pl.o, V = pl.verts, turn = pl.turn;
-        const faces = o.mesh.faces.map(f => {
+        const tint = o.tint ? o.tint.split(',').map(Number) : [0, 4, 3], kmul = o.tint ? [.5, .35] : [1, 0];
+        for (const f of o.mesh.faces) {
           const P = f.idx.map(i => V[i]);
           const n = norm(cross(sub(P[1], P[0]), sub(P[2], P[0])));
-          const centre = P.reduce((a, p) => [a[0] + p[0] / P.length, a[1] + p[1] / P.length, a[2] + p[2] / P.length], [0, 0, 0]);
-          const toEye = norm(sub(eye, centre));
-          return { f, P, n, centre, facing: dot(n, toEye) };
-        }).filter(x => x.facing > 0).sort((a, b) => a.centre[2] - b.centre[2]);
-        const shadeOf = n => { const lit = dot(n, LIGHT), k = Math.max(0, Math.min(.82, .5 - .46 * lit)); return o.tint ? `rgba(${o.tint},${(.35 + k * .5).toFixed(2)})` : `rgba(0,4,3,${k.toFixed(2)})`; };
-        for (const x of faces) {
-          const S = x.P.map(project);
-          let shade = shadeOf(x.n);
-          if (x.f.nrm && x.P.length === 4) {
-            // smooth: the shade at corner 0 to the shade at corner 2, across the quad's diagonal
-            const g = ctx.createLinearGradient(S[0][0], S[0][1], S[2][0], S[2][1]);
-            g.addColorStop(0, shadeOf(norm(turn(x.f.nrm[0])))); g.addColorStop(1, shadeOf(norm(turn(x.f.nrm[2])))); shade = g;
+          const centre = [(P[0][0] + P[1][0] + P[2][0]) / 3, (P[0][1] + P[1][1] + P[2][1]) / 3, (P[0][2] + P[1][2] + P[2][2]) / 3];
+          if (dot(n, sub(eye, centre)) <= 0) continue;
+          const tex = texOf(f.tex), bump = f.tex._bump || null;
+          // the vertices in screen space, with 1/w, the texture coordinates over w, and the world normal
+          const vs = P.map((p, i) => { const w = HC - p[2], iw = 1 / w, S = project(p), vn = f.nrm ? norm(turn(f.nrm[i])) : n; return { x: S[0] * DPR, y: S[1] * DPR, iw, uw: f.uv[i][0] * iw, vw: f.uv[i][1] * iw, nx: vn[0], ny: vn[1], nz: vn[2] }; });
+          // the tangent frame: where u and v run in the world, from the first three corners
+          let TB = null;
+          if (bump) {
+            const e1 = sub(P[1], P[0]), e2 = sub(P[2], P[0]), du1 = f.uv[1][0] - f.uv[0][0], dv1 = f.uv[1][1] - f.uv[0][1], du2 = f.uv[2][0] - f.uv[0][0], dv2 = f.uv[2][1] - f.uv[0][1];
+            const rr = 1 / ((du1 * dv2 - du2 * dv1) || 1e-9);
+            TB = [norm([(e1[0] * dv2 - e2[0] * dv1) * rr, (e1[1] * dv2 - e2[1] * dv1) * rr, (e1[2] * dv2 - e2[2] * dv1) * rr]), norm([(e2[0] * du1 - e1[0] * du2) * rr, (e2[1] * du1 - e1[1] * du2) * rr, (e2[2] * du1 - e1[2] * du2) * rr])];
           }
-          if (x.f.poly) tri(ctx, x.f.tex, S, x.f.uv, shade);
-          else if (x.P.length === 4) {
-            tri(ctx, x.f.tex, [S[0], S[1], S[2]], [x.f.uv[0], x.f.uv[1], x.f.uv[2]], null); tri(ctx, x.f.tex, [S[0], S[2], S[3]], [x.f.uv[0], x.f.uv[2], x.f.uv[3]], null);
-            ctx.beginPath(); ctx.moveTo(S[0][0], S[0][1]); ctx.lineTo(S[1][0], S[1][1]); ctx.lineTo(S[2][0], S[2][1]); ctx.lineTo(S[3][0], S[3][1]); ctx.closePath(); ctx.fillStyle = shade; ctx.fill();
-          } else tri(ctx, x.f.tex, S, x.f.uv, shade);
+          // a polygon is a fan from its first corner (every face here is convex)
+          for (let i = 1; i + 1 < vs.length; i++) raster(fb, tex, bump, [vs[0], vs[i], vs[i + 1]], TB, tint, kmul);
         }
       }
+      fb.off.getContext('2d').putImageData(fb.img, 0, 0);
+      ctx.drawImage(fb.off, 0, 0, W, H);
       return ctx;
     }
     return { cup, die, setDieUp, setDieTop, render, HC };
@@ -1799,6 +1840,7 @@ const SHAPE = (() => {
       // the rim: a dark band at the mouth (v = 1), a lit line at the crown's edge (v = 0)
       const gr = g.createLinearGradient(0, 0, 0, 512); gr.addColorStop(0, 'rgba(255,240,200,.14)'); gr.addColorStop(.06, 'rgba(0,0,0,0)'); gr.addColorStop(.9, 'rgba(0,0,0,0)'); gr.addColorStop(1, 'rgba(0,0,0,.6)');
       g.fillStyle = gr; g.fillRect(0, 0, 1024, 512);
+      c._bump = reliefOf(c, 1.6);
       return cache[k] = c;
     }
     // the crown: the verdigris at its own offset, the one light's highlight, and the count stamped on it
@@ -1816,6 +1858,7 @@ const SHAPE = (() => {
         g.font = `${112}px 'IM Fell English', serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
         g.fillStyle = 'rgba(10,13,11,.85)'; g.fillText(count, 130, 140); g.fillStyle = 'rgba(232,236,216,.92)'; g.fillText(count, 128, 136);
       }
+      c._bump = reliefOf(c, 1.2);
       return cache[k] = c;
     }
     // a die's atlas: six faces side by side, each the bone at its own offset, the bevel, the strike wear and the pips
@@ -1859,9 +1902,51 @@ const SHAPE = (() => {
         }
         g.restore();
       }
+      c._bump = dieHeight(seed, c);
       return cache[k] = c;
     }
-    return { cupSide, cupCrown, dieAtlas, reset: () => { for (const k in cache) delete cache[k]; } };
+    // a height canvas (its red channel) becomes a normal map: the slope of the height at each texel, scaled
+    function normalMap(hc, strength) {
+      const w = hc.width, h = hc.height, d = hc.getContext('2d').getImageData(0, 0, w, h).data, n = new Float32Array(w * h * 2);
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const l = d[(y * w + Math.max(0, x - 1)) * 4], r = d[(y * w + Math.min(w - 1, x + 1)) * 4], u = d[(Math.max(0, y - 1) * w + x) * 4], dn = d[(Math.min(h - 1, y + 1) * w + x) * 4];
+        n[(y * w + x) * 2] = -(r - l) / 255 * strength; n[(y * w + x) * 2 + 1] = -(dn - u) / 255 * strength;
+      }
+      return { n, w, h };
+    }
+    // the die's height map: the face flat at mid-grey, the pips drilled (a hole with a soft rim), a
+    // shallow bevel at the edge, and a trace of the bone's own grain
+    function dieHeight(seed, atlas) {
+      const S = atlas.height, c = document.createElement('canvas'); c.width = atlas.width; c.height = S;
+      const g = c.getContext('2d'), H = TEX.hash;
+      g.fillStyle = '#808080'; g.fillRect(0, 0, c.width, S);
+      // grain: the bone bake's own light and dark, faintly
+      g.globalAlpha = .12; g.drawImage(atlas, 0, 0); g.globalAlpha = 1;
+      for (let f = 1; f <= 6; f++) {
+        const x0 = (f - 1) * S;
+        // the bevel: the outer tenth falls away
+        for (const [gx0, gy0, gx1, gy1, rx, ry, rw, rh] of [[x0, 0, x0, S * .1, x0, 0, S, S * .1], [x0, S, x0, S * .9, x0, S * .9, S, S * .1], [x0, 0, x0 + S * .1, 0, x0, 0, S * .1, S], [x0 + S, 0, x0 + S * .9, 0, x0 + S * .9, 0, S * .1, S]]) {
+          const gr = g.createLinearGradient(gx0, gy0, gx1, gy1); gr.addColorStop(0, 'rgba(70,70,70,1)'); gr.addColorStop(1, 'rgba(128,128,128,0)');
+          g.fillStyle = gr; g.fillRect(rx, ry, rw, rh);
+        }
+        const dia = S * SHAPE.PIPSIZE[SHAPE.DIE.pipSize][f === 1 ? 1 : 0], jit = S * .012;
+        for (const [px, py] of SHAPE.pips(f)) {
+          const jx = (H(px * 100 | 0, py * 100 | 0, seed + f) - .5) * 2 * jit, jy = (H(py * 100 | 0, px * 100 | 0, seed + f + 1) - .5) * 2 * jit;
+          const cx = x0 + px * S + jx, cy = py * S + jy, r = dia / 2;
+          const gr = g.createRadialGradient(cx, cy, 0, cx, cy, r * 1.12);
+          gr.addColorStop(0, '#303030'); gr.addColorStop(.55, '#343434'); gr.addColorStop(.9, '#6a6a6a'); gr.addColorStop(.97, '#8a8a8a'); gr.addColorStop(1, '#808080');
+          g.fillStyle = gr; g.beginPath(); g.arc(cx, cy, r * 1.12, 0, Math.PI * 2); g.fill();
+        }
+      }
+      return normalMap(c, 5.5);
+    }
+    // the verdigris in relief: its own light and dark as height, faintly
+    function reliefOf(canvas, strength) {
+      const c = document.createElement('canvas'); c.width = canvas.width; c.height = canvas.height;
+      const g = c.getContext('2d'); g.fillStyle = '#808080'; g.fillRect(0, 0, c.width, c.height); g.globalAlpha = .5; g.drawImage(canvas, 0, 0);
+      return normalMap(c, strength);
+    }
+    return { cupSide, cupCrown, dieAtlas, dieHeight, reliefOf, reset: () => { for (const k in cache) delete cache[k]; } };
   })();
 
   // a scene canvas inside a screen: the cups at their seats and my dice, in three dimensions.
@@ -1924,7 +2009,7 @@ const SHAPE = (() => {
      so it ports as it stands.
      ===================================================================== */
   const PHYS = (() => {
-    const G = -980, E_TABLE = .42, MU = .55, E_DIE = .35, LIN_DAMP = .995, ANG_DAMP = .985;
+    const G = -12000, E_TABLE = .38, MU = .6, E_DIE = .3, LIN_DAMP = .996, ANG_DAMP = .988;
     const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]], sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
     const mul = (a, k) => [a[0] * k, a[1] * k, a[2] * k], dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
     const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
@@ -1996,7 +2081,7 @@ const SHAPE = (() => {
       [[0, 1], [0, -1], [1, 1], [1, -1], [2, 1], [2, -1]].forEach(([ax, sg], i) => { const z = b.R[ax][2] * sg; if (z > best) { best = z; bi = ax; bs = sg; } });
       return { axis: bi, sign: bs, tilt: Math.acos(Math.min(1, best)) };
     }
-    const atRest = b => len(b.v) < 14 && len(b.w) < 1.2 && upFace(b).tilt < .2 && b.p[2] < b.s * 1.08;
+    const atRest = b => len(b.v) < 40 && len(b.w) < 3 && upFace(b).tilt < .22 && b.p[2] < b.s * 1.08;
     // snap flat: the up face exactly up, the yaw kept
     function snap(b) {
       const uf = upFace(b), up = mul(b.R[uf.axis], uf.sign);
@@ -2023,15 +2108,15 @@ const SHAPE = (() => {
     const H3 = TEX.hash, seed = seedBase + (canvas._rolls = (canvas._rolls || 0) + 1) * 131;
     const bodies = dice.map((o, k) => {
       const a = H3(k, 1, seed) * Math.PI * 2, spread = 26 + H3(k, 2, seed) * 30;
-      return PHYS.make(d, [mcx + Math.cos(a) * spread, mcy - 30 + Math.sin(a) * spread * .6, 150 + H3(k, 3, seed) * 60],
-        [(H3(k, 4, seed) - .5) * 160, (H3(k, 5, seed) - .3) * 140, -60], [(H3(k, 6, seed) - .5) * 24, (H3(k, 7, seed) - .5) * 24, (H3(k, 8, seed) - .5) * 24],
+      return PHYS.make(d, [mcx + Math.cos(a) * spread, mcy - 40 + Math.sin(a) * spread * .6, 300 + H3(k, 3, seed) * 120],
+        [(H3(k, 4, seed) - .5) * 320, (H3(k, 5, seed) - .3) * 260, -260], [(H3(k, 6, seed) - .5) * 50, (H3(k, 7, seed) - .5) * 50, (H3(k, 8, seed) - .5) * 50],
         PHYS.rotZ(H3(k, 9, seed) * 6.28));
     });
     const walls = [[Math.max(20, mcx - 160), Math.min(W - 20, mcx + 160)], [Math.max(20, mcy - 120), Math.min(H - 10, mcy + 60)]];
     const token = canvas._token = (canvas._token || 0) + 1;
     canvas._rolling = true; canvas._locked = false; canvas._frames = 0;
     // the cup is held up and back, out of the throw, until the dice are in their ring
-    const cupUp = [mcx, mcy - myRof(cup) * 2.3], cupLift = 26;
+    const cupUp = [mcx, mcy - myRof(cup) * 2.3], cupLift = 40;
     cup.tilt = null; cup.lift = cupLift; cup.pos = cupUp.slice();
     let phase = 'fall', T = 0, phaseT = 0, faceT = 0, slideFrom = null, slots = null;
     const render = () => R3.render(canvas, W, H, objs, Math.min(2, window.devicePixelRatio || 1));
@@ -2042,8 +2127,8 @@ const SHAPE = (() => {
         T += STEP; phaseT += STEP;
         if (phase === 'fall') {
           PHYS.step(bodies, STEP, walls);
-          if (T > .7) bodies.forEach(b => { if (!b.settled && PHYS.atRest(b)) PHYS.snap(b); });
-          if (T > 3.2) bodies.forEach(b => { if (!b.settled) PHYS.snap(b); });
+          if (T > .35) bodies.forEach(b => { if (!b.settled && PHYS.atRest(b)) PHYS.snap(b); });
+          if (T > 2.2) bodies.forEach(b => { if (!b.settled) PHYS.snap(b); });
           if (bodies.every(b => b.settled)) {
             phase = 'slide'; phaseT = 0;
             const cx = bodies.reduce((a, b) => a + b.p[0], 0) / 5, cy = bodies.reduce((a, b) => a + b.p[1], 0) / 5;
@@ -2054,16 +2139,16 @@ const SHAPE = (() => {
             slideFrom = bodies.map(b => [b.p[0], b.p[1]]);
           }
         } else if (phase === 'slide') {
-          const k = Math.min(1, phaseT / .55), e = 1 - Math.pow(1 - k, 3);
+          const k = Math.min(1, phaseT / .4), e = 1 - Math.pow(1 - k, 3);
           bodies.forEach((b, i) => { const sl = slots[i]; b.p = [slideFrom[i][0] + (sl.x - slideFrom[i][0]) * e, slideFrom[i][1] + (sl.y - slideFrom[i][1]) * e, b.s]; });
           if (k >= 1) { phase = 'cover'; phaseT = 0; }
         } else if (phase === 'cover') {
-          const k = Math.min(1, phaseT / .45), e = 1 - Math.pow(1 - k, 2);
+          const k = Math.min(1, phaseT / .32), e = 1 - Math.pow(1 - k, 2);
           cup.lift = cupLift * (1 - e); cup.pos = [mcx, cupUp[1] + (mcy - cupUp[1]) * e];
           if (k >= 1) phase = 'idle';
         }
         // the faces change the whole time until the bubble is sent
-        if (!canvas._locked && T - faceT > .09) { faceT = T; dice.forEach(o => R3.setDieTop(o.mesh, 1 + Math.floor(Math.random() * 6))); }
+        if (!canvas._locked && T - faceT > .07) { faceT = T; dice.forEach(o => R3.setDieTop(o.mesh, 1 + Math.floor(Math.random() * 6))); }
       }
       dice.forEach((o, i) => { const b = bodies[i]; o.pos = [b.p[0], b.p[1]]; o.lift = b.p[2]; o.rot = b.R; o.shadowH = b.p[2] + b.s; o.shadowR = b.s * (1.4 - Math.min(.5, b.p[2] / 300)); });
       render();
@@ -2074,7 +2159,7 @@ const SHAPE = (() => {
       if (canvas._token !== token) return;
       canvas._frames++;
       const dt = Math.max(0, Math.min(.05, (now - last) / 1000)); last = now;
-      advance(dt);
+      canvas._fast = phase !== 'idle'; advance(dt); if (phase === 'idle' && canvas._fast !== false) { canvas._fast = false; render(); }
       if (phase !== 'idle' || !canvas._locked) { if (canvas._rolling) requestAnimationFrame(frame); }
     };
     canvas._bodies = bodies;
