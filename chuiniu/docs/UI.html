@@ -2310,18 +2310,18 @@ const SHAPE = (() => {
     const d = dice[0].d, mcx = cup.home ? cup.home[0] : cup.pos[0], mcy = cup.home ? cup.home[1] : cup.pos[1], ring = cup.ring;
     cup.home = [mcx, mcy];
     const H3 = TEX.hash, seed = seedBase + (canvas._rolls = (canvas._rolls || 0) + 1) * 131;
-    // the cup is held up and back, mouth down, and the dice drop out of its mouth
-    const cupUp = [mcx, mcy - cup.R * 1.6], cupLift = 150;
+    // the cup is held up at the side and tipped toward the band, and the dice pour out of its mouth
+    const POUR = .7, cupUp = [mcx + 96, mcy - 50], cupLift = 150, cupRot = PHYS.rotY(POUR);
     const bodies = dice.map((o, k) => {
-      const a = H3(k, 1, seed) * Math.PI * 2, spread = 6 + H3(k, 2, seed) * 16;
-      return PHYS.make(d, [cupUp[0] + Math.cos(a) * spread, cupUp[1] + Math.sin(a) * spread, cupLift - d / 2 - 2 - k * 7],
-        [(H3(k, 4, seed) - .5) * 160, (H3(k, 5, seed) - .25) * 160, -120], [(H3(k, 6, seed) - .5) * 40, (H3(k, 7, seed) - .5) * 40, (H3(k, 8, seed) - .5) * 40],
+      const a = H3(k, 1, seed) * Math.PI * 2, spread = 4 + H3(k, 2, seed) * 14, m = PHYS.apply(cupRot, [Math.cos(a) * spread, Math.sin(a) * spread, -d / 2 - 2 - k * 6]);
+      return PHYS.make(d, [cupUp[0] + m[0], cupUp[1] + m[1], cupLift + m[2]],
+        [-300 + (H3(k, 4, seed) - .5) * 120, 60 + (H3(k, 5, seed) - .5) * 120, -140], [(H3(k, 6, seed) - .5) * 40, (H3(k, 7, seed) - .5) * 40, (H3(k, 8, seed) - .5) * 40],
         PHYS.rotZ(H3(k, 9, seed) * 6.28));
     });
     const walls = [[Math.max(20, mcx - 160), Math.min(W - 20, mcx + 160)], [Math.max(20, mcy - 120), Math.min(H - 10, mcy + 60)]];
     const token = canvas._token = (canvas._token || 0) + 1;
     canvas._rolling = true; canvas._locked = false; canvas._frames = 0; canvas._open = false;
-    cup.tilt = null; cup.rot = null; cup.lift = cupLift; cup.pos = cupUp.slice(); cup.shadowH = cupLift + cup.h * .5;
+    cup.tilt = null; cup.rot = cupRot; cup.lift = cupLift; cup.pos = cupUp.slice(); cup.shadowH = cupLift + cup.h * .5;
     let phase = 'fall', T = 0, phaseT = 0, faceT = 0, slideFrom = null, slots = null;
     const render = () => R3.render(canvas, W, H, objs, Math.min(2, window.devicePixelRatio || 1));
     const STEP = 1 / 240;
@@ -2350,8 +2350,8 @@ const SHAPE = (() => {
           if (k >= 1) { phase = 'cover'; phaseT = 0; }
         } else if (phase === 'cover') {
           const k = Math.min(1, phaseT / .4), e = 1 - Math.pow(1 - k, 2);
-          cup.lift = cupLift * (1 - e); cup.pos = [mcx, cupUp[1] + (mcy - cupUp[1]) * e]; cup.shadowH = cup.lift + cup.h * .5;
-          if (k >= 1) { phase = 'idle'; cup.lift = 0; cup.pos = [mcx, mcy]; cup.shadowH = cup.h; }
+          cup.lift = cupLift * (1 - e); cup.pos = [cupUp[0] + (mcx - cupUp[0]) * e, cupUp[1] + (mcy - cupUp[1]) * e]; cup.rot = PHYS.rotY(POUR * (1 - e)); cup.shadowH = cup.lift + cup.h * .5;
+          if (k >= 1) { phase = 'idle'; cup.lift = 0; cup.pos = [mcx, mcy]; cup.rot = null; cup.shadowH = cup.h; }
         }
         // the faces change the whole time until the bubble is sent
         if (!canvas._locked && T - faceT > .07) { faceT = T; dice.forEach(o => R3.setDieTop(o.mesh, 1 + Math.floor(Math.random() * 6))); }
