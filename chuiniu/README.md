@@ -15,7 +15,7 @@ Commands below run from inside `chuiniu/`.
 |---|---|
 | `c/` | the C kernel (`c/src/cn_*`), its tests (`c/tests/`) and the iOS bridge (`c/ios/`, header `cn_api.h`, module `CChuiniu`) (K1) |
 | `ios/` | `ChuiniuKit`, `ChuiniuMessages` (the extension) and `ChuiniuMessagesApp` (the container), from `ios/project.yml` (I1) |
-| `docs/` | `DECISIONS.md`, the one decisions doc |
+| `docs/` | `DECISIONS.md`, the one decisions doc; `UI.html`, the element study for the drowned-table look (open it in a browser: it bakes its own textures) |
 | `LEGAL.md` | what is safe to clone here, what is avoided, and what was not checked |
 
 ## Build and test
