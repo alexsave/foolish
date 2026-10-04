@@ -1841,7 +1841,8 @@ const SHAPE = (() => {
       placed.sort((a, b) => a.zc - b.zc);
       // shadows first: each object's footprint, pushed away from the light, soft
       for (const pl of placed) {
-        const o = pl.o, p = project([o.pos[0] + (o.shadowDX || 0), o.pos[1] + (o.shadowDY || 0), 0]), r = o.shadowR || 20, h = o.shadowH || 20;
+        const o = pl.o; if (o.noShadow) continue;   /* a die in a cup, or under one, casts nothing on the table */
+        const p = project([o.pos[0] + (o.shadowDX || 0), o.pos[1] + (o.shadowDY || 0), 0]), r = o.shadowR || 20, h = o.shadowH || 20;
         const sx = p[0] + h * .22, sy = p[1] + h * .26;
         const g = ctx.createRadialGradient(sx, sy, r * .3, sx, sy, r * 1.25);
         g.addColorStop(0, `rgba(0,3,2,${o.tilt && o.tilt.angle ? .3 : .5})`); g.addColorStop(1, 'rgba(0,3,2,0)');
@@ -2051,7 +2052,8 @@ const SHAPE = (() => {
     return cup;
   }
   function dieObj(d, face, seed, x, y, yaw) {
-    return { mesh: R3.die(d, face, TEX3.dieAtlas(seed)), pos: [x, y], yaw, lift: d / 2, shadowR: d * .7, shadowH: d, die: true, d, value: face };
+    // no shadow of its own: a die is in a cup or under one; only the table roll, with the dice in the open, turns it on
+    return { mesh: R3.die(d, face, TEX3.dieAtlas(seed)), pos: [x, y], yaw, lift: d / 2, shadowR: d * .7, shadowH: d, die: true, d, value: face, noShadow: true };
   }
   // the peek's pose at an angle: the hinge is the far edge of the mouth; as the cup turns it also slides back
   // along the table by up to a radius and comes up a little, the way a hand lifts a cup, so the dice come
@@ -2212,6 +2214,7 @@ const SHAPE = (() => {
           th.dice.forEach((o, i) => {
             const q = ROLL.poseAt(th.bake, Tt, 1 + i), d = o.d;
             o.pos = [q.p[0], q.p[1]]; o.lift = q.p[2]; o.rot = q.R; o.shadowH = q.p[2] + d / 2; o.shadowR = d / 2 * (1.4 - Math.min(.5, q.p[2] / 300));
+            o.noShadow = th.kind === 1 || ph === 'cover' || ph === 'idle';
             // the hand: what came up, read off the face the kernel says is up
             if (ph === 'idle' && th.kind === 1) { const up = th.bake.up[i]; o.value = R3.dieValue(o.mesh, up >> 1, up & 1 ? -1 : 1); }
           });
