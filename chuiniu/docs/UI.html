@@ -107,7 +107,7 @@ td code{white-space:nowrap}
 .stage{width:390px;max-width:100%;position:relative;isolation:isolate;overflow:hidden;
   border-radius:6px;border:1px solid #0a1412;box-shadow:0 20px 50px rgba(0,0,0,.45);
   background-color:var(--hold);
-  background-image:var(--tex-deck);background-size:397px 397px;background-position:center bottom;
+  background-image:var(--tex-deck);background-size:390px 390px;background-position:center bottom;
   color:var(--ink);font-family:var(--serif);padding:22px 18px;display:flex;flex-direction:column;gap:14px}
 .stage::after{content:"";position:absolute;inset:0;pointer-events:none;z-index:1;
   background:
@@ -381,7 +381,7 @@ are the open water behind it: something you look <i>into</i>, with light moving 
 <div class="row">
   <div class="col">
     <div class="h4">The deck <span class="pill">table</span></div>
-    <p class="why">The baked deck tile (section 4) under three gradients: a cold pool of light at the top centre, a vignette whose radii are fractions of the diagonal, and a floor that goes to black. The same rig as <code>FeltBackground</code>, with the pool added.</p>
+    <p class="why">The table tab’s chosen surface under three gradients: a cold pool of light at the top centre, a vignette whose radii are fractions of the diagonal, and a floor that goes to black. The same rig as <code>FeltBackground</code>, with the pool added.</p>
     <div class="stage" style="min-height:300px"><div class="chrome"><i></i></div>
       <div class="t-hdr" style="margin-top:8px">Round four &middot; nineteen dice</div>
       <div style="flex:1"></div>
@@ -488,7 +488,7 @@ Two views: from the side, as the roll and the reveal show it, and from above, as
 <!-- ============================================================ 6b -->
 <section id="table" data-tab="table">
 <h2>The table</h2>
-<p class="lede">What the dice land on. Nine surfaces, all baked by the one stone generator with three new passes (planks, a weave, a wet sheen): the deck from the first proposal, then rotting wet wood, tarred planks, a barnacled hull, drowned sailcloth, the sea floor, cursed iron, wet slate, and the old green baize gone to the sea.
+<p class="lede">What the dice land on. Eight surfaces. The two woods are built the way foolish builds its wood: the chaotic cosine streak march from <code>WoodTexture.swift</code>, ported line for line, laid down first; then the stone generator’s passes over it (planks that each take their own rows of the march, the gaps and ends between them, rot, a wet sheen). The deck is now the tarred planks and the hold floor’s crust combined, as asked. Then rotting wet wood, a barnacled hull, drowned sailcloth, the sea floor, cursed iron, wet slate, and the old green baize gone to the sea.
 Then what runs round the table’s edge, and what is driven into it. The stage is a phone’s width with the die and the cup already decided, so a surface is judged by whether they still read on it.</p>
 
 <h3>The mixer</h3>
@@ -507,7 +507,7 @@ Then what runs round the table’s edge, and what is driven into it. The stage i
 </div>
 
 <h3>Surfaces</h3>
-<p class="why" style="max-width:73ch">Each at the phone’s magnification (one point per texel), with a die and a cup on it. Click to send to the mixer.</p>
+<p class="why" style="max-width:73ch">Each at the phone’s magnification (one point per texel), with a die and a cup on it. Click to send to the mixer; every dark stage on the other tabs follows it, so the chosen table is seen under the plate, the bands and the controls too.</p>
 <div class="bank bank-w" id="table-mats"></div>
 
 <h3>Edges</h3>
@@ -517,7 +517,7 @@ Then what runs round the table’s edge, and what is driven into it. The stage i
 <h3>Fixings</h3>
 <p class="why" style="max-width:73ch">What holds the planks down: nothing, hand-forged nails in pairs along each plank, or those nails with the rust running from them.</p>
 <div class="bank bank-w" id="table-fix"></div>
-<div class="note" style="max-width:73ch"><b>Port.</b> Surfaces: the one generator, a <code>Palette</code> each, baked as the felt is and drawn by <code>FeltBackground</code> at one point per texel, bottom-anchored. Edges: an overlay <code>Canvas</code> (or a <code>Shape</code> per kind) inset from the frame: nail heads are seven-point <code>Path</code>s with a <code>RadialGradient</code>, the rope is three strokes (a body, a dashed twist, a shadow), the binding is the verdigris paint in a 10pt frame with rivets, the coaming is the wood paint in a 12pt frame with an inner shadow, the crust is the crust bake under an edge mask. Fixings: the same nail heads at seeded positions along the plank centres.</div>
+<div class="note" style="max-width:73ch"><b>Port.</b> Surfaces: the woods are <code>WoodTexture.renderCGImage</code> with a drowned <code>Palette</code> (linear gains in place of the railing red) handed to the stone generator as its base; the rest are the stone generator alone, a <code>Palette</code> each; all baked as the felt is and drawn by <code>FeltBackground</code> at one point per texel, bottom-anchored. Edges: an overlay <code>Canvas</code> (or a <code>Shape</code> per kind) inset from the frame: nail heads are seven-point <code>Path</code>s with a <code>RadialGradient</code>, the rope is three strokes (a body, a dashed twist, a shadow), the binding is the verdigris paint in a 10pt frame with rivets, the coaming is the wood paint in a 12pt frame with an inner shadow, the crust is the crust bake under an edge mask. Fixings: the same nail heads at seeded positions along the plank centres.</div>
 </section>
 
 <!-- ============================================================ 7 -->
@@ -812,12 +812,14 @@ const TEX = (() => {
   function stone(P) {
     return (u0, v0) => {
       // planks: each plank is a strip across u with its own slice of the grain (v shifted by the plank's hash)
-      let u = u0, v = v0, pi = 0;
-      if (P.planks) { pi = Math.floor(u0 * P.planks); v = (v0 + hash(pi, 0, P.seed + 3) * .61) % 1; }
+      let u = u0, v = v0, pi = 0, shift = 0;
+      if (P.planks) { pi = Math.floor(u0 * P.planks); shift = hash(pi, 0, P.seed + 3) * .61; v = (v0 + shift) % 1; }
       const cl = (fbm(u, v, P.cloudX || 4, P.cloudY || 4, 4, P.seed) - .5) * 2 * (P.cloud || 0);
       const gr = (fbm(u, v, P.grainX || 64, P.grainY || 64, 2, P.seed + 7) - .5) * 2 * (P.grain || 0);
       const t = P.tilt || [1, 1, 1];
-      let r = P.base[0] + cl * t[0] + gr, g = P.base[1] + cl * t[1] + gr, b = P.base[2] + cl * t[2] + gr;
+      let r, g, b;
+      if (P.under) { [r, g, b] = P.under(u0, v0, pi, shift); r += cl * t[0] + gr; g += cl * t[1] + gr; b += cl * t[2] + gr; }
+      else { r = P.base[0] + cl * t[0] + gr; g = P.base[1] + cl * t[1] + gr; b = P.base[2] + cl * t[2] + gr; }
       if (P.vein) {
         const ridge = 1 - Math.abs(2 * fbm(u, v, P.veinX || 3, P.veinY || 12, 4, P.seed + 13) - 1);
         const k = sstep(P.veinLo || .9, 1, ridge) * (P.veinAmt || .3);
@@ -853,6 +855,13 @@ const TEX = (() => {
         const k = sstep(.9, 1, d) * 46 + sstep(.8, .9, d) * 10;
         r -= k; g -= k; b -= k;
       }
+      if (P.patch) {  // the hold floor's crust: slow patches of pale growth, and grit densest inside them
+        const pa = sstep(P.patchLo || .58, P.patchHi || .78, fbm(u0, v0, P.patchCells || 7, P.patchCells || 7, 4, P.seed + 17)) * (P.patchAmt || .6);
+        const fl = sstep(P.fleckLo2 || .70, P.fleckHi2 || .86, fbm(u0, v0, 140, 140, 2, P.seed + 13)) * (P.fleckAmt2 || .7) * (.45 + .9 * pa);
+        r = mix(r, P.patch[0], pa); g = mix(g, P.patch[1], pa); b = mix(b, P.patch[2], pa);
+        const fc = P.fleck2 || [96, 112, 92];
+        r = mix(r, fc[0], fl); g = mix(g, fc[1], fl); b = mix(b, fc[2], fl);
+      }
       if (P.weave) {  // weft and warp: two fine noises, each stretched the other way
         const w1 = fbm(u, v, 96, 3, 2, P.seed + 43), w2 = fbm(u, v, 3, 96, 2, P.seed + 47);
         const k = ((w1 - .5) + (w2 - .5)) * P.weave; r += k; g += k; b += k;
@@ -866,10 +875,54 @@ const TEX = (() => {
         const f = (((u0 * P.planks + warp) % 1) + 1) % 1, d = Math.abs(f - .5) * 2;
         const gap = sstep(.9, .985, d), lit = sstep(.78, .9, d) * (1 - gap) * 9;
         r = mix(r, 6, gap) + lit; g = mix(g, 8, gap) + lit; b = mix(b, 6, gap) + lit;
-        const e = hash(pi, 2, P.seed + 5), de = Math.abs(((((v0 - e) % 1) + 1.5) % 1) - .5);
+        const e = 1 - shift, de = Math.abs(((((v0 - e) % 1) + 1.5) % 1) - .5);
         if (de < .006) { r -= 52; g -= 52; b -= 50; } else if (de < .014) { r += 10; g += 9; b += 6; }
       }
       return [r, g, b];
+    };
+  }
+
+  /* ---- WOOD, the foolish way: a march of streaks from a chaotic cosine map.
+     A faithful port of shared/swift/Textures/WoodTexture.swift: 576 streaks,
+     each a 40-texel band whose left edge advances 200/60 texels, blended at
+     streakAlpha per pass; per row the band's brightness b comes from 25 turns
+     of  b = cos(I*.001 + cos(b*b/2)*b + 4)*b - 2.8,  which is what gives the
+     grain its long, organic, un-noise-like features. The swatch is cut from
+     the middle of the march so every column gets the same number of passes
+     (the Swift file explains the measurement). What differs here: the streak
+     colour is three linear gains (the foolish palette rails its red to make
+     orange; a drowned wood must not), and the result is a BUFFER the plank
+     pass reads, shifting each plank to its own rows and hiding the march's
+     one non-periodic seam under the plank's end.                            */
+  function streakWood(w, h, P) {
+    const S = new Float32Array(w * h * 3);
+    for (let i = 0; i < w * h; i++) { S[i * 3] = P.base[0]; S[i * 3 + 1] = P.base[1]; S[i * 3 + 2] = P.base[2]; }
+    const rectW = 40, streaks = 576, tDiv = 60, stepPx = 200 / tDiv, travel = streaks * stepPx;
+    const cropX = Math.max(rectW, Math.floor((travel - w) / 2));
+    const alphas = [], inv = [];
+    for (let dx = 0; dx < rectW; dx++) { const dist = Math.abs(dx - rectW / 2) / (rectW / 2); const a = P.alpha * Math.max(.3, 1 - dist * .5); alphas.push(a); inv.push(1 - a); }
+    for (let n = 0; n < streaks; n++) {
+      const T = n / tDiv, start = Math.floor(T * 200) - cropX;
+      if (start >= w || start + rectW <= 0) continue;
+      const kLo = Math.max(0, -start), kHi = Math.min(rectW, w - start);
+      for (let I = h - 1; I >= 0; I--) {
+        const iF = I * .001; let b = T / 24;
+        for (let k = 24; k >= 0; k--) {
+          b = Math.cos(iF + Math.cos(b * b * .5) * b + 4) * b - 2.8;
+          if (b > 0) {
+            const cr = b * P.gain[0], cg = b * P.gain[1], cb = b * P.gain[2];
+            for (let dx = kLo; dx < kHi; dx++) {
+              const idx = (I * w + start + dx) * 3, a = alphas[dx], ia = inv[dx];
+              S[idx] = cr * a + S[idx] * ia; S[idx + 1] = cg * a + S[idx + 1] * ia; S[idx + 2] = cb * a + S[idx + 2] * ia;
+            }
+          }
+        }
+      }
+    }
+    // the reader the stone generator calls as `under`: the plank's own rows, wrapped at its end
+    return (u, v, pi, shift) => {
+      const x = Math.min(w - 1, Math.floor(u * w)), y = Math.min(h - 1, Math.floor((((v + shift) % 1) + 1) % 1 * h)), i = (y * w + x) * 3;
+      return [S[i], S[i + 1], S[i + 2]];
     };
   }
 
@@ -983,13 +1036,17 @@ const TEX = (() => {
     verdigris: { name: 'Verdigris', why: 'bronze gone green in patches, rust where it has not', verd: VERD },
   };
 
+  // the two woods: the march's palette (the board, the streak gains, the pass alpha) and the stone passes over it
+  const WOOD_DECK = { base: [14, 14, 11], gain: [27, 26, 19], alpha: .08 };
+  const WOOD_ROT = { base: [40, 32, 22], gain: [66, 54, 36], alpha: .1 };
   const TABLE_MATS = {
-    deck:      { name: 'The deck',          why: 'the first proposal: the crusted floor of the hold, lit from above', deck: true },
+    deck:      { name: 'The deck',          why: 'tarred planks on the floor of the hold: black pitch, wet where the light finds it, the crust growing in the seams',
+                 wood: WOOD_DECK, cloud: 6, tilt: [.8, 1, .9], grain: 4, vein: [8, 8, 6], veinX: 36, veinY: 2, veinLo: .9, veinAmt: .35,
+                 stain: [12, 24, 20], stainLo: .45, stainHi: .8, stainCells: 4, stainAmt: .45, sheen: [56, 66, 64], sheenLo: .62, sheenHi: .92, sheenAmt: .45,
+                 patch: [36, 56, 46], patchAmt: .4, fleck2: [92, 108, 88], fleckAmt2: .6, planks: 5, seed: 73 },
     rotwood:   { name: 'Rotting wet wood',  why: 'waterlogged planks, the grain open, rot blooming black-green, wet where the light finds it',
-                 base: [62, 50, 38], cloud: 12, tilt: [1, .9, .75], grain: 12, grainX: 40, grainY: 3, vein: [30, 22, 14], veinX: 36, veinY: 2, veinLo: .88, veinAmt: .5,
+                 wood: WOOD_ROT, cloud: 8, tilt: [1, .9, .75], grain: 6, vein: [26, 20, 12], veinX: 36, veinY: 2, veinLo: .9, veinAmt: .4,
                  stain: [26, 36, 28], stainLo: .5, stainHi: .8, stainCells: 4, stainAmt: .55, pore: 30, poreCells: 70, poreLo: .86, poreHi: .93, sheen: [70, 86, 86], sheenAmt: .25, planks: 5, seed: 71 },
-    tar:       { name: 'Tarred planks',     why: 'pitch over the wood: black, and wet where the light finds it',
-                 base: [26, 24, 20], cloud: 8, grain: 6, grainX: 40, grainY: 3, vein: [12, 10, 8], veinX: 36, veinY: 2, veinLo: .9, veinAmt: .4, sheen: [64, 70, 68], sheenLo: .6, sheenHi: .9, sheenAmt: .5, planks: 5, seed: 73 },
     hull:      { name: 'Barnacled hull',    why: 'the rotting planks under a colony of growth', like: 'rotwood', crust: true },
     sailcloth: { name: 'Drowned sailcloth', why: 'a sail spread for a table, the weave gone grey, stained in brown rings',
                  base: [112, 108, 88], cloud: 12, tilt: [1, .95, .8], grain: 4, weave: 16, stain: [64, 54, 36], stainLo: .5, stainHi: .8, stainCells: 3, stainAmt: .45, sheen: [90, 100, 96], sheenAmt: .15, pore: 12, poreCells: 80, poreLo: .88, seed: 79 },
@@ -1002,7 +1059,12 @@ const TEX = (() => {
     baize:     { name: 'Drowned baize',     why: 'the old casino green, rotted bald in patches and silted over',
                  base: [34, 58, 44], cloud: 8, tilt: [.85, 1, .72], grain: 4, grainX: 64, grainY: 48, stain: [62, 52, 38], stainLo: .55, stainHi: .8, stainCells: 3, stainAmt: .6, pore: 26, poreCells: 50, poreLo: .84, poreHi: .92, fleck: [110, 116, 98], fleckLo: .9, fleckAmt: .3, seed: 97 },
   };
-  return { bake, deck, verd, verdWith, stone, sea, crust, bakes, hash, DECK, VERD, SEA, CRUST, DIE_MATS, CUP_MATS, TABLE_MATS };
+  // a table surface: the march first when the palette names a wood, then the stone passes over it
+  function tableFn(P, w, h) {
+    if (!P.wood) return stone(P);
+    return stone(Object.assign({}, P, { under: streakWood(w, h, P.wood) }));
+  }
+  return { bake, deck, verd, verdWith, stone, streakWood, tableFn, sea, crust, bakes, hash, DECK, VERD, SEA, CRUST, DIE_MATS, CUP_MATS, TABLE_MATS, WOOD_DECK, WOOD_ROT };
 })();
 
 /* =====================================================================
@@ -1266,7 +1328,6 @@ const SHAPE = (() => {
    mixers, then draw everything from the current specs.
    ===================================================================== */
 (function main() {
-  const deck = TEX.bake('deck', 512, 512, TEX.deck);
   const verd = TEX.bake('verdigris', 256, 256, TEX.verd);
   const sea = TEX.bake('sea', 512, 512, TEX.sea);
   const crust = TEX.crust('crust', 512, 128);
@@ -1279,9 +1340,9 @@ const SHAPE = (() => {
     const i = document.createElementNS(SVGNS, 'image'); i.setAttribute('width', w); i.setAttribute('height', h); i.setAttribute('href', c.toDataURL('image/png'));
     p.appendChild(i); defs.appendChild(p);
   }
-  root.setProperty('--tex-deck', url(deck)); root.setProperty('--tex-verd', url(verd));
+  root.setProperty('--tex-verd', url(verd));
   root.setProperty('--tex-sea', url(sea)); root.setProperty('--tex-crust', url(crust));
-  pattern('p-verd', verd, 128, 128); pattern('p-crust', crust, 192, 48); pattern('p-crust-l', crust, 288, 72); pattern('p-crust-xl', crust, 384, 96); pattern('p-deck', deck, 256, 256);
+  pattern('p-verd', verd, 128, 128); pattern('p-crust', crust, 192, 48); pattern('p-crust-l', crust, 288, 72); pattern('p-crust-xl', crust, 384, 96);
   // the material banks, one bake each, at half a point per texel
   const matCanvas = {};
   for (const [k, P] of Object.entries(TEX.DIE_MATS)) {
@@ -1293,29 +1354,6 @@ const SHAPE = (() => {
     matCanvas['c-' + k] = c; pattern('p-m-c-' + k, c, c.width / 2, c.height / 2);
   }
   root.setProperty('--tex-bone', url(matCanvas['m-fresh']));
-
-  // the materials tab: the five base tiles with their numbers
-  const row = document.getElementById('texrow');
-  const descr = {
-    deck: ['The deck', 'table', `512 texels at 0.775pt each (397pt, one phone). ${JSON.stringify(TEX.DECK)}`],
-    'die.yellowed': ['Bone', 'die &middot; badge', `128 texels at 0.5pt; the stone generator, yellowed palette. ${JSON.stringify(TEX.DIE_MATS.yellowed)}`],
-    verdigris: ['Verdigris', 'cup &middot; plate &middot; plank', `256 texels at 0.5pt. ${JSON.stringify(TEX.VERD)}`],
-    sea: ['The sea', 'lobby &middot; reveal &middot; icon', `512 texels, screen-blended over the depth gradient. ${JSON.stringify(TEX.SEA)}`],
-    crust: ['The crust', 'cup &middot; plate', `512 by 128, alpha; colonies of shells on their cement. ${JSON.stringify(TEX.CRUST)}`],
-  };
-  for (const b of TEX.bakes) {
-    if (!descr[b.name]) continue;
-    const [t, pill, kv] = descr[b.name];
-    const el = document.createElement('div'); el.className = 'tex' + (b.name === 'crust' ? ' wide' : '');
-    el.innerHTML = `<div class="h4">${t} <span class="pill n">${pill}</span></div>`;
-    const c = b.canvas.cloneNode(); c.getContext('2d').drawImage(b.canvas, 0, 0);
-    if (b.name === 'crust') c.style.background = '#0e1916';
-    el.insertBefore(c, el.firstChild);
-    const k = document.createElement('div'); k.className = 'kv';
-    k.innerHTML = `${kv.replace(/"(\w+)":/g, '<b>$1</b>: ').replace(/,(?=\S)/g, ', ').replace(/[{}"]/g, '')}<br><b>bake</b>: ${b.w}&times;${b.h}, ${b.ms.toFixed(0)} ms in this browser`;
-    el.appendChild(k);
-    row.appendChild(el);
-  }
 
   /* ---- the mixers ----------------------------------------------------- */
   const D = SHAPE.die, C = SHAPE.cup, put = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
@@ -1399,12 +1437,11 @@ const SHAPE = (() => {
   /* ---- the table ------------------------------------------------------ */
   const tableCanvas = {};
   for (const [k, P] of Object.entries(TEX.TABLE_MATS)) {
-    if (P.deck) { tableCanvas[k] = deck; continue; }
     if (P.like) { tableCanvas[k] = tableCanvas[P.like]; continue; }
-    tableCanvas[k] = TEX.bake('table.' + k, 390, 390, TEX.stone(P));
+    tableCanvas[k] = TEX.bake('table.' + k, 390, 390, TEX.tableFn(P, 390, 390));
   }
-  for (const [k, c] of Object.entries(tableCanvas)) { root.setProperty('--tex-t-' + k, url(c)); if (k === 'rotwood' || k === 'tar') pattern('p-t-' + k, c, 390, 390); }
-  const TABLE = { surface: 'rotwood', edge: 'nails', fix: 'nails' };
+  for (const [k, c] of Object.entries(tableCanvas)) { root.setProperty('--tex-t-' + k, url(c)); if (k === 'rotwood' || k === 'deck') pattern('p-t-' + k, c, 390, 390); }
+  const TABLE = { surface: 'deck', edge: 'nails', fix: 'nails' };
   const EDGES = {
     none:    { name: 'None', why: 'the surface runs to the frame' },
     nails:   { name: 'Iron nails', why: 'hand-forged heads along the edge, each a little off' },
@@ -1457,7 +1494,7 @@ const SHAPE = (() => {
         [[8, 8], [W / 2, 8], [W - 8, 8], [8, H / 2], [W - 8, H / 2], [8, H - 8], [W / 2, H - 8], [W - 8, H - 8]].forEach(([x, y], i) => { m += nail(x, y, 3.2, i + 40 + seed, false); });
         break; }
       case 'coaming': {
-        m += frame(0, 13, 'url(#p-t-rotwood)');
+        m += frame(0, 13, `url(#p-t-${TABLE.surface === 'deck' ? 'deck' : 'rotwood'})`);
         m += `<path d="M0,0 H${W} V${H} H0 Z M13,13 V${H - 13} H${W - 13} V13 Z" fill="url(#g-cupv)"/>`;
         m += `<rect x="12.5" y="12.5" width="${W - 25}" height="${H - 25}" fill="none" stroke="rgba(255,240,200,.16)" stroke-width="1"/>`;
         m += `<rect x="13" y="13" width="${W - 26}" height="${H - 26}" fill="none" stroke="rgba(0,0,0,.5)" stroke-width="6" opacity=".4" clip-path="inset(13px)"/>`;
@@ -1502,6 +1539,8 @@ const SHAPE = (() => {
     const S = TABLE;
     document.getElementById('tb-stage').outerHTML = tableStage(390, 400, S, { seed: 11 }).replace('class="stage tstage"', 'class="stage tstage" id="tb-stage"');
     put('tb-spec', `<b>table</b> &middot; ${specLine(S)}`);
+    // every deck-coloured stage on the page sits on the chosen surface
+    root.setProperty('--tex-deck', `var(--tex-t-${TEX.TABLE_MATS[S.surface].like || S.surface})`);
     renderBank('table-mats', TEX.TABLE_MATS, k => tableStage(300, 120, Object.assign({}, S, { surface: k }), { seed: 21, small: true }), S.surface, 'style="padding:0"');
     renderBank('table-edges', EDGES, k => tableStage(300, 120, Object.assign({}, S, { edge: k }), { seed: 31, small: true }), S.edge, 'style="padding:0"');
     renderBank('table-fix', FIXES, k => tableStage(300, 120, Object.assign({}, S, { fix: k }), { seed: 41, small: true }), S.fix, 'style="padding:0"');
@@ -1510,6 +1549,29 @@ const SHAPE = (() => {
   const syncTable = mixer('table-mixer', TABLE_FIELDS, TABLE, drawTable);
   for (const [id, key] of [['table-mats', 'surface'], ['table-edges', 'edge'], ['table-fix', 'fix']]) wire(id, k => { TABLE[key] = k; syncTable(); drawTable(); });
   drawTable();
+
+  // the materials tab: the five base tiles with their numbers
+  const row = document.getElementById('texrow');
+  const descr = {
+    'table.deck': ['The deck', 'table', `390 texels at one point each: the wood march ${JSON.stringify(TEX.WOOD_DECK)} under the stone passes ${JSON.stringify(Object.assign({}, TEX.TABLE_MATS.deck, { wood: undefined, name: undefined, why: undefined }))}`],
+    'die.yellowed': ['Bone', 'die &middot; badge', `128 texels at 0.5pt; the stone generator, yellowed palette. ${JSON.stringify(TEX.DIE_MATS.yellowed)}`],
+    verdigris: ['Verdigris', 'cup &middot; plate &middot; plank', `256 texels at 0.5pt. ${JSON.stringify(TEX.VERD)}`],
+    sea: ['The sea', 'lobby &middot; reveal &middot; icon', `512 texels, screen-blended over the depth gradient. ${JSON.stringify(TEX.SEA)}`],
+    crust: ['The crust', 'cup &middot; plate', `512 by 128, alpha; colonies of shells on their cement. ${JSON.stringify(TEX.CRUST)}`],
+  };
+  for (const b of TEX.bakes) {
+    if (!descr[b.name]) continue;
+    const [t, pill, kv] = descr[b.name];
+    const el = document.createElement('div'); el.className = 'tex' + (b.name === 'crust' ? ' wide' : '');
+    el.innerHTML = `<div class="h4">${t} <span class="pill n">${pill}</span></div>`;
+    const c = b.canvas.cloneNode(); c.getContext('2d').drawImage(b.canvas, 0, 0);
+    if (b.name === 'crust') c.style.background = '#0e1916';
+    el.insertBefore(c, el.firstChild);
+    const k = document.createElement('div'); k.className = 'kv';
+    k.innerHTML = `${kv.replace(/"(\w+)":/g, '<b>$1</b>: ').replace(/,(?=\S)/g, ', ').replace(/[{}"]/g, '')}<br><b>bake</b>: ${b.w}&times;${b.h}, ${b.ms.toFixed(0)} ms in this browser`;
+    el.appendChild(k);
+    row.appendChild(el);
+  }
 
   /* ---- tabs: one section at a time, deep-linked by a bare hash ------- */
   const sections = [...document.querySelectorAll('section[data-tab]')];
