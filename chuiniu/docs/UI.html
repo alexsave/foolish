@@ -277,6 +277,9 @@ section[hidden]{display:none}
 .scr-ui{position:absolute;inset:0;z-index:4}
 /* peek B: the head leans in, and the planks, the badges, the plate and the shelf all zoom about my cup together */
 .scr.peekB{background:#050807}
+/* a screen that can tilt (peek B) carries more table than it shows, so the tilt uncovers planks, not a gap */
+.scr .stagewrap{position:absolute;inset:0}
+.scr .stagewrap .tstage.over{width:190%!important;max-width:none;height:220%!important;inset:auto;left:-45%;top:-60%}
 .scr.peekB > *{transform:var(--pkt,none);transform-origin:var(--pkx,50%) var(--pko,50%);will-change:transform}
 canvas.scene3d{position:absolute;left:0;top:0;cursor:pointer;-webkit-tap-highlight-color:transparent}
 .abs{position:absolute}
@@ -2088,6 +2091,15 @@ const SHAPE = (() => {
       scr.style.setProperty('--pkx', origin[0] + 'px'); scr.style.setProperty('--pko', origin[1] + 'px');
     }
   }
+  // for captures: the peek at a fraction t of its travel, A or B by the canvas's data-peek
+  window.CN_peekSeek = (canvas, t) => {
+    const objs = canvas._objs, cup = objs.find(o => o.peekable), dice = objs.filter(o => o.die), B = canvas.dataset.peek === 'B';
+    const target = peekAngleFor(cup, dice, canvas._W, canvas._H, B ? VIEW_B : null);
+    cup.tilt = peekTilt(cup.R, target * t, target);
+    if (B) applyPeekB(canvas, t, canvas._origin || [0, 0]);
+    canvas._open = t > 0;
+    R3.render(canvas, canvas._W, canvas._H, objs, Math.min(2, window.devicePixelRatio || 1));
+  };
   function animatePeek(canvas, open) {
     const objs = canvas._objs, cup = objs.find(o => o.peekable), dice = objs.filter(o => o.die); if (!cup) return;
     const B = canvas.dataset.peek === 'B', W = canvas._W, H = canvas._H, origin = canvas._origin || [0, 0];
@@ -2410,7 +2422,8 @@ const SHAPE = (() => {
     ui += `<div class="abs t-ask" style="left:16px;top:${px(8 + boardH + 10)};width:${px(inner)};text-align:center;font-size:${short ? 15 : 17}px">${roll ? 'Round four. <b>Your dice are rolling</b>' : mine ? 'Bo bid three 3s, <b>your turn</b>' : 'Alex bid three 3s, Bo’s turn'}</div>`;
     if (roll) ui += `<div class="shelf" style="width:${px(W)}"><div class="band" style="gap:10px;flex-wrap:nowrap"><button class="plank wide quiet" data-roll="again">Roll again</button><button class="plank wide glow" data-roll="send">Send</button></div></div>`;
     else if (mine) ui += picker(W, spec.picker);
-    return `<div class="scr" style="width:${px(W)};height:${px(H)}">${tableStage(W, H, TABLE, { pieces: false, seed: 5 })}<div class="scr-ui">${ui}</div></div>`;
+    const stage = peekB ? `<div class="stagewrap">${tableStage(Math.round(W * 1.9), Math.round(H * 2.2), TABLE, { pieces: false, seed: 5 }).replace('class="stage tstage"', 'class="stage tstage over"')}</div>` : tableStage(W, H, TABLE, { pieces: false, seed: 5 });
+    return `<div class="scr" style="width:${px(W)};height:${px(H)}">${stage}<div class="scr-ui">${ui}</div></div>`;
   }
   // the bubble: the picture in the transcript, 300 by 195, the same table seen from above
   function bubble(spec) {
