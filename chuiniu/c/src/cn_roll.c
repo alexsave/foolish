@@ -340,45 +340,71 @@ static int emit(Out *o, V3 cupO, const M3 *cupR, const Body *b, int nd, int ph)
 /* ---- the cup roll ----------------------------------------------------------------- */
 
 /* The cup's pose is a function of the clock: held mouth up for HOLD, shaken
- * for SHAKE (a jiggle, a twist, a tilt, each its own rhythm), then the flip,
- * half a turn about the grip in FLIP seconds gathering speed as k^FLIP_POW
- * and stopping dead, and from DROP_AT of the way round the cup is driven
- * down at DROP_G g until the mouth meets the planks. */
+ * for SHAKE (a jiggle, a twist, a tilt, and up and down, each its own
+ * rhythm), then the flip, half a turn about the grip in FLIP seconds
+ * gathering speed as k^FLIP_POW and stopping dead, and the cup is driven
+ * down at DROP_G g, timed so the mouth meets the planks the moment the turn
+ * ends. Every number here was searched (the #ifndefs are for that: compile
+ * the test with -DFLIP=.6 and read its margin): the slowest turn and the
+ * hardest shake that never put a die corner past the mouth over 300 seeds.
+ * A slow turn sets the dice down on the face they rode on, so the shake,
+ * not the slam, is what randomises them: the test checks that the six
+ * faces come up evenly, and reports how often the pre-flip face recurs. */
 #define HOLD     .3
 #define SHAKE    1.25
-#define FLIP     .2
-#define FLIP_POW 3
-#define DROP_AT  .5
-#define DROP_G   2.2
+#ifndef FLIP
+#define FLIP     .5     /* the slowest half turn that keeps the dice in: .55 leaves a 3-point margin, .6 spills */
+#endif
+#ifndef FLIP_POW
+#define FLIP_POW 2      /* the turn gathers speed as k^2: a wrist, not a whip */
+#endif
+#ifndef DROP_G
+#define DROP_G   1.8
+#endif
 #define GRIP     .15    /* the pivot, a fraction of the height in from the mouth */
 #define DOME     .35    /* the floor's dome, a fraction of a die */
+/* the shake's reach: sideways, and up and down (into and out of the screen) */
+#ifndef SHAKE_XY
+#define SHAKE_XY 1.3
+#endif
+#ifndef SHAKE_Z
+#define SHAKE_Z  3.0    /* 21 points up and down: the most that keeps the dice in at this beat */
+#endif
+#ifndef SHAKE_ZF
+#define SHAKE_ZF 4.0    /* the up-and-down's beat, a second */
+#endif
+#ifndef SHAKE_TILT
+#define SHAKE_TILT 1.2
+#endif
 
 typedef struct {
-    double held[3], grip0[3], home[3], pz, a, tDrop, tFlip, tSlam, h;
+    double held[3], grip0[3], home[3], pz, a, tDrop, dropAt, tFlip, tSlam, h;
 } CupPath;
 
 
+/* k^FLIP_POW for the turn's profile, by repeated multiplication (no pow); FLIP_POW is 1, 2 or 3 */
+static double powk(double k) { double r = k; for (int i = 1; i < FLIP_POW; i++) r *= k; return r; }
 static void cupPose(const CupPath *c, double T, M3 *R, V3 *o)
 {
     V3 piv; M3 M; double pv;
     if (T < c->tFlip) {
         double u = T - HOLD; if (u < 0) u = 0;
         double env = u / .15; if ((SHAKE - u) / .12 < env) env = (SHAKE - u) / .12; if (env > 1) env = 1; if (env < 0) env = 0;
-        double dx = 13 * rsin(2 * PI * 4.6 * u) * env, dy = 8 * rsin(2 * PI * 3.1 * u + 1) * env, dz = 7 * rsin(2 * PI * 9.2 * u) * env;
-        double yaw = .55 * rsin(2 * PI * 2.3 * u + .7) * env, tx = .2 * rsin(2 * PI * 3.7 * u) * env, ty = .2 * rsin(2 * PI * 2.9 * u + 2) * env;
+        double dx = 13 * SHAKE_XY * rsin(2 * PI * 4.6 * u) * env, dy = 8 * SHAKE_XY * rsin(2 * PI * 3.1 * u + 1) * env, dz = 7 * SHAKE_Z * rsin(2 * PI * SHAKE_ZF * u) * env;
+        double yaw = .55 * rsin(2 * PI * 2.3 * u + .7) * env, tx = .2 * SHAKE_TILT * rsin(2 * PI * 3.7 * u) * env, ty = .2 * SHAKE_TILT * rsin(2 * PI * 2.9 * u + 2) * env;
         piv = v3(c->held[0] + dx, c->held[1] + dy, c->held[2] + dz); pv = c->h / 2;
         M3 a = rotX(PI), b = rotY(ty), d = rotX(tx), e = rotZ(yaw), de = mulM(&d, &e), bde = mulM(&b, &de);
         M = mulM(&a, &bde);
     } else {
         double u = T - c->tFlip, k = u / FLIP; if (k > 1) k = 1;
-        double td = u - FLIP * DROP_AT; if (td < 0) td = 0;
+        double td = u - c->dropAt; if (td < 0) td = 0;
         double z = c->grip0[2] - .5 * c->a * td * td; if (z < c->home[2]) z = c->home[2];
         /* the cup comes toward me as it comes down, fastest at the end, and stops dead at the slam: the dice do not */
         double kx = u / (c->tSlam - c->tFlip); if (kx > 1) kx = 1;
         double e = kx * rsqrt(kx);   /* kx^1.5: slow at first, fastest at the end */
         piv = v3(c->grip0[0] + (c->home[0] - c->grip0[0]) * e, c->grip0[1] + (c->home[1] - c->grip0[1]) * e, z); pv = c->pz;
         /* the wrist: the turn gathers speed the whole way and stops dead at the end of its travel */
-        M = k < 1 ? rotX(PI + PI * k * k * k) : ident();
+        M = k < 1 ? rotX(PI + PI * powk(k)) : ident();
         /* the slam's shiver: the cup sits a hair up and settles */
         if (T > c->tSlam && T < c->tSlam + .14) { double w = (T - c->tSlam) / .14; piv.z += 2.5 * rsin(w * PI) * (1 - w); }
     }
@@ -394,8 +420,10 @@ static int bakeCup(const CnThrow *t, uint64_t seed, Out *o)
     c.held[0] = t->cup_x; c.held[1] = t->cup_y - 60; c.held[2] = 110;
     c.grip0[0] = c.held[0]; c.grip0[1] = c.held[1]; c.grip0[2] = c.held[2] + h / 2 - c.pz;
     c.home[0] = t->cup_x; c.home[1] = t->cup_y; c.home[2] = c.pz;
+    /* the drop is timed to end as the turn does, so the mouth meets the planks the moment it faces them */
     c.a = DROP_G * -G; c.tDrop = rsqrt(2 * (c.grip0[2] - c.home[2]) / c.a);
-    c.tFlip = HOLD + SHAKE; c.tSlam = c.tFlip + FLIP * DROP_AT + c.tDrop;
+    c.dropAt = FLIP > c.tDrop ? FLIP - c.tDrop : 0;
+    c.tFlip = HOLD + SHAKE; c.tSlam = c.tFlip + c.dropAt + c.tDrop;
 
     /* five dice in the held cup: three on its floor, two on top of them, every one turned its own way */
     uint64_t rs = seed ^ 0x636e2e726f6c6c01ull;        /* "cn.roll" + the recipe's version */
