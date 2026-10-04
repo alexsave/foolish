@@ -489,10 +489,9 @@ Two views: from the side, as the roll and the reveal show it, and from above, as
 <!-- ============================================================ 6b -->
 <section id="table" data-tab="table">
 <h2>The table</h2>
-<p class="lede">What the dice land on. Fourteen surfaces. The woods are built the way foolish builds its wood: the chaotic cosine streak march from <code>WoodTexture.swift</code>, ported line for line, laid down first; then the stone generator’s passes over it (planks laid in a running bond, alternate boards offset by half a length, each board on its own band of the march; the gaps and ends between them; rot; a wet sheen). The deck from the first proposal stays as it was; the wooden deck is in the deck’s own colour, deep green-blue and almost black, with the drowned grey and the pitch beside it (round nine kept those three) and each of the three a stop darker. Then rotting wet wood, a barnacled hull, drowned sailcloth, the sea floor, cursed iron, wet slate, and the old green baize gone to the sea.
-Then what runs round the table’s edge, and what is driven into it. The stage is a phone’s width with the die and the cup already decided, so a surface is judged by whether they still read on it.</p>
+<p class="lede">Settled in round ten. <b>Locked:</b> the drowned wood, a stop darker: foolish’s streak march (<code>WoodTexture.swift</code> ported line for line, transposed so the grain runs along the board) in a wet silver-grey gone almost black, under the stone generator’s passes (planks in a running bond, each board on its own band of the march, the gaps and ends between them, a stain, a wet sheen, the hold’s crust in the seams); and the nails that hold the planks, forged rose heads in beam rows just inside each board’s edges, a stop darker too.
+<b>Open:</b> what runs round the edge. Nine surfaces were offered and are kept as palettes in the page’s source.</p>
 
-<h3>The mixer</h3>
 <div class="mixer" id="table-mixer"></div>
 <div class="row">
   <div class="col">
@@ -500,25 +499,17 @@ Then what runs round the table’s edge, and what is driven into it. The stage i
     <div class="kv" id="tb-spec"></div>
   </div>
   <div class="col w">
-    <div class="h4">What to look for <span class="pill n">contrast, then character</span></div>
-    <p class="why" style="max-width:60ch">The die is pale and the cup is dark, so the surface has to sit between them: darker than bone, lighter than the verdigris’s shadow side. A surface that swallows the cup is out, however good it looks alone. Wood grain running one way helps: it gives the eye a direction, and the dice sit across it.</p>
+    <div class="h4">What was decided, and why it holds <span class="pill n">surface and fixings done</span></div>
+    <p class="why" style="max-width:60ch">The board is darker than bone and lighter than the verdigris’s shadow side, so the die and the cup both read on it. The grain runs one way and the dice sit across it. The nails are the colour of the gaps, so they are found and not seen.</p>
     <p class="why" style="max-width:60ch">An edge is a frame. Nails and bronze binding say the table was built; rope and crust say where it has been; a coaming says it is a deck. One of them, not two.</p>
-    <p class="why" style="max-width:60ch">Fixings go into the planks, so they only show on the wooden surfaces; on stone or cloth they are left out.</p>
   </div>
 </div>
-
-<h3>Surfaces</h3>
-<p class="why" style="max-width:73ch">Each at the phone’s magnification (one point per texel), with a die and a cup on it. Click to send to the mixer; every dark stage on the other tabs follows it, so the chosen table is seen under the plate, the bands and the controls too.</p>
-<div class="bank bank-w" id="table-mats"></div>
 
 <h3>Edges</h3>
 <p class="why" style="max-width:73ch">Six, each on the mixer’s surface: nothing; iron nails; a twisted rope; a strip of bronze binding with its own rivets; a coaming, the raised plank lip of a deck; and a crust of barnacles grown along the edge.</p>
 <div class="bank bank-w" id="table-edges"></div>
 
-<h3>Fixings</h3>
-<p class="why" style="max-width:73ch">What holds the planks down: nothing, hand-forged nails driven into the beams below (so they sit in rows across the planks, one just inside each edge of every board), or those nails with the rust running from them. A head is a forged rose: the four facets the hammer left, each shaded to the one light, meeting at an apex that is never quite centred; no outline anywhere, a dent in the wood around it and a grey-brown bleed.</p>
-<div class="bank bank-w" id="table-fix"></div>
-<div class="note" style="max-width:73ch"><b>Port.</b> Surfaces: the woods are <code>WoodTexture.renderCGImage</code> with a drowned <code>Palette</code> (linear gains in place of the railing red) handed to the stone generator as its base; the rest are the stone generator alone, a <code>Palette</code> each; all baked as the felt is and drawn by <code>FeltBackground</code> at one point per texel, bottom-anchored. Edges: an overlay <code>Canvas</code> (or a <code>Shape</code> per kind) inset from the frame: a nail head is four facet <code>Path</code>s in four flat shades under two soft <code>RadialGradient</code>s, the rope is three strokes (a body, a dashed twist, a shadow), the binding is the verdigris paint in a 10pt frame with rivets, the coaming is the wood paint in a 12pt frame with an inner shadow, the crust is the crust bake under an edge mask. Fixings: the same nail heads at seeded positions along the plank centres.</div>
+<div class="note" style="max-width:73ch"><b>Port.</b> The surface: <code>WoodTexture.renderCGImage</code> with the drowned-darker <code>Palette</code> (linear gains in place of the railing red), transposed, handed to the stone generator as its base; baked as the felt is and drawn by <code>FeltBackground</code> at one point per texel, bottom-anchored. Edges: an overlay <code>Canvas</code> (or a <code>Shape</code> per kind) inset from the frame: a nail head is four facet <code>Path</code>s in four flat shades under two soft <code>RadialGradient</code>s, the rope is three strokes (a body, a dashed twist, a shadow), the binding is the verdigris paint in a 10pt frame with rivets, the coaming is the wood paint in a 12pt frame with an inner shadow, the crust is the crust bake under an edge mask. Fixings: the same nail heads at seeded positions along the plank centres.</div>
 </section>
 
 <!-- ============================================================ 7 -->
@@ -1057,28 +1048,10 @@ const TEX = (() => {
   const woodDeck = W => ({ name: W.name, why: W.why, wood: W, cloud: 5, tilt: [.8, 1, .9], grain: 3, vein: [4, 6, 5], veinX: 36, veinY: 2, veinLo: .9, veinAmt: .3,
     stain: W.stain, stainLo: .45, stainHi: .8, stainCells: 4, stainAmt: .3, sheen: W.sheen, sheenLo: .64, sheenHi: .94, sheenAmt: .3,
     patch: [30, 48, 40], patchAmt: .3, fleck2: [80, 96, 80], fleckAmt2: .45, planks: 5, seed: 73 });
+  // the surfaces that were offered (round ten) are kept as palettes above and in `OFFERED`; only the chosen one is baked
+  const OFFERED = ['deck', 'wooden deck (hold, drowned, pitch, each with a darker twin)', 'rotting wet wood', 'barnacled hull', 'drowned sailcloth', 'sea floor', 'cursed iron', 'wet slate', 'drowned baize'];
   const TABLE_MATS = {
-    deck:      { name: 'The deck',          why: 'the first proposal: the crusted floor of the hold, no planks', hold: true },
-    wooddeck:  woodDeck(WOODS.hold),
-    wooddeck2: woodDeck(WOODS.holdDark),
-    woodgrey:  woodDeck(WOODS.grey),
     woodgrey2: woodDeck(WOODS.greyDark),
-    woodpitch: woodDeck(WOODS.pitch),
-    woodpitch2: woodDeck(WOODS.pitchDark),
-    rotwood:   { name: 'Rotting wet wood',  why: 'waterlogged planks, the grain open, rot blooming black-green, wet where the light finds it',
-                 wood: WOOD_ROT, cloud: 8, tilt: [1, .9, .75], grain: 6, vein: [26, 20, 12], veinX: 36, veinY: 2, veinLo: .9, veinAmt: .4,
-                 stain: [26, 36, 28], stainLo: .5, stainHi: .8, stainCells: 4, stainAmt: .55, pore: 30, poreCells: 70, poreLo: .86, poreHi: .93, sheen: [70, 86, 86], sheenAmt: .25, planks: 5, seed: 71 },
-    hull:      { name: 'Barnacled hull',    why: 'the rotting planks under a colony of growth', like: 'rotwood', crust: true },
-    sailcloth: { name: 'Drowned sailcloth', why: 'a sail spread for a table, the weave gone grey, stained in brown rings',
-                 base: [112, 108, 88], cloud: 12, tilt: [1, .95, .8], grain: 4, weave: 16, stain: [64, 54, 36], stainLo: .5, stainHi: .8, stainCells: 3, stainAmt: .45, sheen: [90, 100, 96], sheenAmt: .15, pore: 12, poreCells: 80, poreLo: .88, seed: 79 },
-    seafloor:  { name: 'Sea floor',         why: 'silt and sand in ripples, shell grit, nothing to grip',
-                 base: [66, 74, 62], cloud: 12, tilt: [.9, 1, .8], grain: 8, grainX: 90, grainY: 90, growth: [96, 104, 86], growthX: 0, growthY: 16, growthWarp: 1.4, growthAmt: .35, growthLo: .72, fleck: [160, 166, 140], fleckLo: .9, fleckAmt: .5, stain: [40, 50, 42], stainAmt: .3, seed: 83 },
-    iron:      { name: 'Cursed iron',       why: 'black plate, the rust blooming through',
-                 base: [40, 40, 38], cloud: 10, grain: 6, grainX: 3, grainY: 120, stain: [112, 60, 30], stainLo: .55, stainHi: .85, stainCells: 4, stainAmt: .6, fleck: [150, 90, 50], fleckLo: .9, fleckAmt: .35, sheen: [70, 76, 78], sheenAmt: .2, seed: 67 },
-    slate:     { name: 'Wet slate',         why: 'riven stone, blue-grey, the cleavage lines pale, wet in patches',
-                 base: [48, 54, 58], cloud: 10, tilt: [.9, 1, 1.05], grain: 6, vein: [92, 100, 104], veinX: 14, veinY: 2, veinLo: .9, veinAmt: .35, crack: [22, 26, 28], crackLo: .965, crackCells: 5, crackOct: 4, crackAmt: .8, sheen: [80, 92, 96], sheenAmt: .3, seed: 89 },
-    baize:     { name: 'Drowned baize',     why: 'the old casino green, rotted bald in patches and silted over',
-                 base: [34, 58, 44], cloud: 8, tilt: [.85, 1, .72], grain: 4, grainX: 64, grainY: 48, stain: [62, 52, 38], stainLo: .55, stainHi: .8, stainCells: 3, stainAmt: .6, pore: 26, poreCells: 50, poreLo: .84, poreHi: .92, fleck: [110, 116, 98], fleckLo: .9, fleckAmt: .3, seed: 97 },
   };
   // a table surface: the march first when the palette names a wood, then the stone passes over it
   function tableFn(P, w, h) {
@@ -1086,7 +1059,7 @@ const TEX = (() => {
     if (!P.wood) return stone(P);
     return stone(Object.assign({}, P, { under: streakWood(w, h, P.wood) }));
   }
-  return { bake, deck, verd, verdWith, stone, streakWood, tableFn, sea, crust, bakes, hash, DECK, VERD, SEA, CRUST, DIE_MATS, CUP_MATS, TABLE_MATS, WOODS, WOOD_DECK, WOOD_ROT };
+  return { bake, deck, verd, verdWith, stone, streakWood, tableFn, sea, crust, bakes, hash, DECK, VERD, SEA, CRUST, DIE_MATS, CUP_MATS, TABLE_MATS, OFFERED, WOODS, WOOD_DECK, WOOD_ROT };
 })();
 
 /* =====================================================================
@@ -1463,7 +1436,8 @@ const SHAPE = (() => {
     tableCanvas[k] = TEX.bake('table.' + k, 390, 390, TEX.tableFn(P, 390, 390));
   }
   for (const [k, c] of Object.entries(tableCanvas)) { root.setProperty('--tex-t-' + k, url(c)); if (k === 'rotwood' || k.startsWith('wood')) pattern('p-t-' + k, c, 390, 390); }
-  const TABLE = { surface: 'wooddeck', edge: 'nails', fix: 'nails' };
+  const TABLE = { surface: 'woodgrey2', edge: 'nails', fix: 'nails' };
+  const TABLE_LOCKED = { surface: 'woodgrey2', fix: 'nails' };
   const EDGES = {
     none:    { name: 'None', why: 'the surface runs to the frame' },
     nails:   { name: 'Iron nails', why: 'hand-forged heads along the edge, each a little off' },
@@ -1473,7 +1447,7 @@ const SHAPE = (() => {
     crust:   { name: 'Crust', why: 'barnacles grown along the edge' },
   };
   const FIXES = { none: { name: 'None' }, nails: { name: 'Nails', why: 'in beam rows, one inside each edge of every plank' }, rust: { name: 'Nails, rusting', why: 'the rust running down the grain' } };
-  const TABLE_FIELDS = { surface: ['Surface', names(TEX.TABLE_MATS)], edge: ['Edge', names(EDGES)], fix: ['Fixings', names(FIXES)] };
+  const TABLE_FIELDS = { edge: ['Edge', names(EDGES)] };
   loadSpec('cn.table', TABLE, TABLE_FIELDS);
   const Hh = TEX.hash;
   // A hand-forged nail, the way the wood is made: not a disc with an outline but a ROSE HEAD, the
@@ -1488,7 +1462,7 @@ const SHAPE = (() => {
     const pts = [];
     for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI * 2 + rot + J(10 + i, .12), rr = r * (.84 + .3 * Hh(20 + i, seed, 601)); pts.push([Math.cos(a) * rr, Math.sin(a) * rr]); }
     // the facets: each quarter of the outline closed through the apex; its shade is how much it faces the light
-    const shade = ['#56534d', '#3b3935', '#34322e', '#232220'], tint = Hh(seed, 8, 601);
+    const shade = ['#3a3833', '#282723', '#222120', '#141413'], tint = Hh(seed, 8, 601);
     let m = `<g transform="translate(${x.toFixed(1)},${y.toFixed(1)})">`;
     m += `<circle r="${(r * 2.1).toFixed(1)}" fill="url(#g-nailhalo)" opacity="${(.45 + .25 * Hh(seed, 9, 601)).toFixed(2)}"/>`;
     if (rust) m += `<ellipse cy="${(r * 2.4).toFixed(1)}" rx="${(r * 2).toFixed(1)}" ry="${(r * 4.8).toFixed(1)}" fill="url(#g-rust)" opacity="${(.55 + .3 * Hh(seed, 2, 601)).toFixed(2)}"/>`;
@@ -1502,7 +1476,7 @@ const SHAPE = (() => {
       m += `<polygon points="${ax.toFixed(1)},${ay.toFixed(1)} ${a[0].toFixed(1)},${a[1].toFixed(1)} ${b[0].toFixed(1)},${b[1].toFixed(1)} ${c[0].toFixed(1)},${c[1].toFixed(1)}" fill="${shade[k]}"/>`;
     }
     // the apex, worn bright by thumbs and dice
-    m += `<circle cx="${ax.toFixed(1)}" cy="${ay.toFixed(1)}" r="${(r * .28).toFixed(1)}" fill="#6e6a63" opacity=".55"/>`;
+    m += `<circle cx="${ax.toFixed(1)}" cy="${ay.toFixed(1)}" r="${(r * .28).toFixed(1)}" fill="#4a4842" opacity=".5"/>`;
     return m + `</g>`;
   }
   function edgeSVG(kind, W, H, seed) {
@@ -1534,7 +1508,7 @@ const SHAPE = (() => {
         [[8, 8], [W / 2, 8], [W - 8, 8], [8, H / 2], [W - 8, H / 2], [8, H - 8], [W / 2, H - 8], [W - 8, H - 8]].forEach(([x, y], i) => { m += nail(x, y, 3.2, i + 40 + seed, false); });
         break; }
       case 'coaming': {
-        m += frame(0, 13, `url(#p-t-${TABLE.surface.startsWith('wood') ? TABLE.surface : 'rotwood'})`);
+        m += frame(0, 13, `url(#p-t-${TABLE.surface})`);
         m += `<path d="M0,0 H${W} V${H} H0 Z M13,13 V${H - 13} H${W - 13} V13 Z" fill="url(#g-cupv)"/>`;
         m += `<rect x="12.5" y="12.5" width="${W - 25}" height="${H - 25}" fill="none" stroke="rgba(255,240,200,.16)" stroke-width="1"/>`;
         m += `<rect x="13" y="13" width="${W - 26}" height="${H - 26}" fill="none" stroke="rgba(0,0,0,.5)" stroke-width="6" opacity=".4" clip-path="inset(13px)"/>`;
@@ -1551,7 +1525,7 @@ const SHAPE = (() => {
     return m;
   }
   function fixSVG(kind, mat, W, H, seed) {
-    if (kind === 'none' || !(TEX.TABLE_MATS[mat].planks || (TEX.TABLE_MATS[mat].like && TEX.TABLE_MATS[TEX.TABLE_MATS[mat].like].planks))) return '';
+    if (kind === 'none' || !TEX.TABLE_MATS[mat].planks) return '';
     // the nails go into the beams under the planks, so they sit in rows across every plank, one just
     // inside each edge of each board; the row's height and each nail's seat are a little off by seed
     const n = 5, pw = 390 / n, inset = 7;
@@ -1565,7 +1539,7 @@ const SHAPE = (() => {
   }
   // a slab of table: the surface tile at one point per texel, the growth if the surface has it, the fixings, the edge, and the pieces on it
   function tableStage(W, H, spec, o = {}) {
-    const P = TEX.TABLE_MATS[spec.surface], key = P.like || spec.surface, seed = o.seed || 0;
+    const P = TEX.TABLE_MATS[spec.surface] || TEX.TABLE_MATS.woodgrey2, key = P.like || spec.surface, seed = o.seed || 0;
     let ov = `<svg class="tb-ov" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`;
     if (P.crust) ov += `<defs><radialGradient id="hm${seed}" cx=".5" cy=".5" r=".55"><stop offset=".2" stop-color="#fff" stop-opacity="0"/><stop offset=".7" stop-color="#fff" stop-opacity=".45"/><stop offset="1" stop-color="#fff" stop-opacity=".95"/></radialGradient><mask id="hk${seed}"><rect width="${W}" height="${H}" fill="url(#hm${seed})"/><ellipse cx="${W * .3}" cy="${H * .3}" rx="${W * .14}" ry="${H * .2}" fill="#fff" opacity=".8"/><ellipse cx="${W * .75}" cy="${H * .7}" rx="${W * .12}" ry="${H * .16}" fill="#fff" opacity=".7"/></mask></defs><g mask="url(#hk${seed})"><rect width="${W}" height="${H}" fill="url(#p-crust-xl)" transform="translate(${seed % 40},${seed % 60})"/></g>`;
     ov += fixSVG(spec.fix, spec.surface, W, H, seed + 7);
@@ -1579,23 +1553,20 @@ const SHAPE = (() => {
   function drawTable() {
     const S = TABLE;
     document.getElementById('tb-stage').outerHTML = tableStage(390, 400, S, { seed: 11 }).replace('class="stage tstage"', 'class="stage tstage" id="tb-stage"');
-    put('tb-spec', `<b>table</b> &middot; ${specLine(S)}`);
+    put('tb-spec', `<b>table</b> &middot; ${specLine(S, TABLE_LOCKED)}`);
     // every deck-coloured stage on the page sits on the chosen surface
     root.setProperty('--tex-deck', `var(--tex-t-${TEX.TABLE_MATS[S.surface].like || S.surface})`);
-    renderBank('table-mats', TEX.TABLE_MATS, k => tableStage(300, 120, Object.assign({}, S, { surface: k }), { seed: 21, small: true }), S.surface, 'style="padding:0"');
     renderBank('table-edges', EDGES, k => tableStage(300, 120, Object.assign({}, S, { edge: k }), { seed: 31, small: true }), S.edge, 'style="padding:0"');
-    renderBank('table-fix', FIXES, k => tableStage(300, 120, Object.assign({}, S, { fix: k }), { seed: 41, small: true }), S.fix, 'style="padding:0"');
     saveSpec('cn.table', S);
   }
   const syncTable = mixer('table-mixer', TABLE_FIELDS, TABLE, drawTable);
-  for (const [id, key] of [['table-mats', 'surface'], ['table-edges', 'edge'], ['table-fix', 'fix']]) wire(id, k => { TABLE[key] = k; syncTable(); drawTable(); });
+  wire('table-edges', k => { TABLE.edge = k; syncTable(); drawTable(); });
   drawTable();
 
   // the materials tab: the five base tiles with their numbers
   const row = document.getElementById('texrow');
   const descr = {
-    'table.deck': ['The deck', 'table', `390 texels at one point each. ${JSON.stringify(TEX.DECK)}`],
-    'table.wooddeck': ['Wooden deck', 'table', `the wood march ${JSON.stringify(TEX.WOOD_DECK)}, transposed, under the stone passes ${JSON.stringify(Object.assign({}, TEX.TABLE_MATS.wooddeck, { wood: undefined, name: undefined, why: undefined }))}`],
+    'table.woodgrey2': ['The table', 'table', `390 texels at one point each: the wood march ${JSON.stringify(TEX.WOODS.greyDark)}, transposed, under the stone passes ${JSON.stringify(Object.assign({}, TEX.TABLE_MATS.woodgrey2, { wood: undefined, name: undefined, why: undefined }))}`],
     'die.yellowed': ['Bone', 'die &middot; badge', `128 texels at 0.5pt; the stone generator, yellowed palette. ${JSON.stringify(TEX.DIE_MATS.yellowed)}`],
     verdigris: ['Verdigris', 'cup &middot; plate &middot; plank', `256 texels at 0.5pt. ${JSON.stringify(TEX.VERD)}`],
     sea: ['The sea', 'lobby &middot; reveal &middot; icon', `512 texels, screen-blended over the depth gradient. ${JSON.stringify(TEX.SEA)}`],
