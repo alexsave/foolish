@@ -87,8 +87,8 @@ static void test_determinism(void)
     uint32_t h = fnv(F, (size_t)n * CN_ROLL_FRAME_FLOATS * sizeof(float));
     printf("  golden: seed 2026 bakes %d frames, hand %d%d%d%d%d, fnv %08x\n", n, a.up[0], a.up[1], a.up[2], a.up[3], a.up[4], h);
     CHECK(a.complete, "complete");
-    CHECK(n == 191 && h == 0xa8063c38u && a.up[0] == 2 && a.up[1] == 1 && a.up[2] == 5 && a.up[3] == 1 && a.up[4] == 1,
-          "the golden: seed 2026 is 191 frames, hand 21511, fnv a8063c38 (a change here is a change of recipe)");
+    CHECK(n == 227 && h == 0xcf6066b3u && a.up[0] == 5 && a.up[1] == 2 && a.up[2] == 0 && a.up[3] == 0 && a.up[4] == 1,
+          "the golden: seed 2026 is 227 frames, hand 52001, fnv cf6066b3 (a change here is a change of recipe)");
 }
 
 static void test_cup(int seeds)
@@ -175,7 +175,7 @@ static void test_table(int seeds)
         /* while falling, every die is below the cup's mouth and above the table */
         for (int f = 1; f < 4; f++) for (int d = 0; d < 5; d++) {
             double p[3], c[3][3]; poseOf(F + f * CN_ROLL_FRAME_FLOATS + (1 + d) * CN_ROLL_POSE_FLOATS, p, c);
-            CHECK(p[2] > 0 && p[2] < 160, "seed %d frame %d die %d is in the air (%.0f)", k, f, d, p[2]);
+            CHECK(p[2] > 0 && p[2] < 175, "seed %d frame %d die %d is in the air (%.0f)", k, f, d, p[2]);
         }
     }
 }
@@ -195,7 +195,7 @@ static void test_small(int seeds)
         forced += info.forced;
         for (int f = 0; f + 1 < info.slam; f++) { double m = mouthMargin(F + f * CN_ROLL_FRAME_FLOATS, 5, s); if (m < worst) worst = m; }
         int flipAt = 0; while (flipAt < n && P[flipAt] != CN_RP_FLIP) flipAt++;
-        CHECK(fabs(flipAt / (double)CN_ROLL_HZ - (.3 + floor(t.shake_s * 4 + .5) / 4)) < .05, "seed %d: the turn starts after the hold and its own shake, rounded to the bob's beat (%.2f s)", k, flipAt / (double)CN_ROLL_HZ);
+        CHECK(fabs(flipAt / (double)CN_ROLL_HZ - (.5 + floor(t.shake_s * 4 + .5) / 4)) < .05, "seed %d: the turn starts after the lift, the hold and its own shake, rounded to the bob's beat (%.2f s)", k, flipAt / (double)CN_ROLL_HZ);
         const float *last = F + (n - 1) * CN_ROLL_FRAME_FLOATS;
         for (int d = 0; d < 5; d++) {
             double p[3], c[3][3]; poseOf(last + (1 + d) * CN_ROLL_POSE_FLOATS, p, c);
@@ -205,6 +205,25 @@ static void test_small(int seeds)
     CHECK(worst > 2, "no die corner comes within two points of the small mouth (closest %.1f)", worst);
     CHECK(forced * 100 <= seeds * 5 * 2, "the last resort placed %d dice", forced);
     printf("  small cup: %d seeds, closest to the mouth %.1f pt, forced %d\n", seeds, worst, forced);
+}
+
+/* the first frame: the cup starts low and rises; the dice are already at rest on its floor (settled unseen) */
+static void test_start(void)
+{
+    TEST("K14 the start: the cup rises, the dice are at rest");
+    CnThrow t; CnRollInfo info; cn_throw_default(&t, CN_THROW_CUP, CUP_X, CUP_Y, CUP_R, DIE, RING);
+    int n = cn_roll_bake(&t, 31, F, P, CN_ROLL_MAX_FRAMES, &info);
+    CHECK(n > 30, "a throw");
+    double c0[3], cc[3][3], c1[3], cc1[3][3]; poseOf(F, c0, cc); poseOf(F + 24 * CN_ROLL_FRAME_FLOATS, c1, cc1);
+    CHECK(c1[2] - c0[2] > 40, "the cup rises in the first .4 s (%.0f points)", c1[2] - c0[2]);
+    /* the dice ride up with the cup; in the cup's frame they are at rest */
+    double c2[3], cc2[3][3]; poseOf(F + 2 * CN_ROLL_FRAME_FLOATS, c2, cc2);
+    for (int d = 0; d < 5; d++) {
+        double p0[3], r0[3][3], p1[3], r1[3][3];
+        poseOf(F + (1 + d) * CN_ROLL_POSE_FLOATS, p0, r0); poseOf(F + 2 * CN_ROLL_FRAME_FLOATS + (1 + d) * CN_ROLL_POSE_FLOATS, p1, r1);
+        double mz = (p1[2] - c2[2]) - (p0[2] - c0[2]), mx = (p1[0] - c2[0]) - (p0[0] - c0[0]);
+        CHECK(fabs(mz) < 3 && fabs(mx) < 3, "die %d is at rest in the cup over the first frames (moved %.1f)", d, hypot(mx, mz));
+    }
 }
 
 static void test_edges(void)
@@ -233,6 +252,7 @@ int main(int argc, char **argv)
     test_cup(seeds);
     test_table(seeds / 3 > 20 ? seeds / 3 : 20);
     test_small(seeds > 20 ? seeds : 20);
+    test_start();
     test_edges();
     return report("cn_roll_test");
 }

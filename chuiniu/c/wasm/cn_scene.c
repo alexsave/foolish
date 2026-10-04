@@ -48,7 +48,7 @@
 #endif
 
 /* ---- the arena ------------------------------------------------------------------- */
-#define ARENA_BYTES (128u << 20)
+#define ARENA_BYTES (256u << 20)
 static uint8_t arena[ARENA_BYTES] __attribute__((aligned(16)));
 static uint32_t frame_top = 0, tex_bottom = ARENA_BYTES;
 static void *take(uint32_t n) { n = (n + 15u) & ~15u; if (frame_top + n > tex_bottom) return 0; void *p = arena + frame_top; frame_top += n; return p; }
@@ -56,7 +56,12 @@ static void *take_tex(uint32_t n) { n = (n + 15u) & ~15u; if (tex_bottom < n || 
 
 /* ---- textures ---------------------------------------------------------------------- */
 #define MAX_TEX 512
-typedef struct { uint8_t *rgba; int8_t *bump; int w, h; } Tex;
+/* A texture and its smaller copies (each half the last, down to 8 texels a side, made the first time the
+ * texture is drawn): a face is drawn from the copy nearest its size on the screen, so a cup's side at a tenth
+ * of its texture's width reads a tenth of the texels, which is what makes it fast (the fetches then stay in
+ * the cache) and what keeps it from sparkling. */
+#define MAX_LV 8
+typedef struct { uint8_t *rgba; int8_t *bump; int w, h; int nlv; uint8_t *lrgba[MAX_LV]; int8_t *lbump[MAX_LV]; int lw[MAX_LV], lh[MAX_LV]; } Tex;
 static Tex texs[MAX_TEX]; static int ntex = 0;
 static uint8_t *fb;                                      /* the frame's picture; 0 until a frame begins */
 
@@ -68,8 +73,26 @@ EXPORT(scene_tex_new) int scene_tex_new(int w, int h, int has_bump)
     Tex *t = &texs[ntex];
     t->rgba = take_tex((uint32_t)w * h * 4); if (!t->rgba) return -1;
     t->bump = has_bump ? take_tex((uint32_t)w * h * 2) : 0; if (has_bump && !t->bump) return -1;
-    t->w = w; t->h = h;
+    t->w = w; t->h = h; t->nlv = 0;
     return ntex++;
+}
+/* the smaller copies, 2-by-2 means; a failure to find room leaves the chain as long as it got */
+static void mips_of(Tex *t)
+{
+    t->lrgba[0] = t->rgba; t->lbump[0] = t->bump; t->lw[0] = t->w; t->lh[0] = t->h; t->nlv = 1;
+    while (t->nlv < MAX_LV) {
+        int l = t->nlv, pw = t->lw[l - 1], ph = t->lh[l - 1], w = pw / 2, h = ph / 2;
+        if (w < 8 || h < 8) break;
+        uint8_t *rg = take_tex((uint32_t)w * h * 4); if (!rg) break;
+        int8_t *bm = 0; if (t->bump) { bm = take_tex((uint32_t)w * h * 2); if (!bm) break; }
+        const uint8_t *pr = t->lrgba[l - 1]; const int8_t *pb = t->lbump[l - 1];
+        for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) {
+            int i00 = ((2 * y) * pw + 2 * x), i10 = i00 + 1, i01 = i00 + pw, i11 = i01 + 1, o = y * w + x;
+            for (int c = 0; c < 4; c++) rg[o * 4 + c] = (uint8_t)((pr[i00 * 4 + c] + pr[i10 * 4 + c] + pr[i01 * 4 + c] + pr[i11 * 4 + c] + 2) >> 2);
+            if (bm) for (int c = 0; c < 2; c++) bm[o * 2 + c] = (int8_t)((pb[i00 * 2 + c] + pb[i10 * 2 + c] + pb[i01 * 2 + c] + pb[i11 * 2 + c]) / 4);
+        }
+        t->lrgba[l] = rg; t->lbump[l] = bm; t->lw[l] = w; t->lh[l] = h; t->nlv++;
+    }
 }
 EXPORT(scene_tex_rgba) uint8_t *scene_tex_rgba(int id) { return id >= 0 && id < ntex ? texs[id].rgba : 0; }
 EXPORT(scene_tex_bump) int8_t *scene_tex_bump(int id) { return id >= 0 && id < ntex ? texs[id].bump : 0; }
@@ -89,6 +112,7 @@ static float *zb; static int FW, FH;
  * shade (gk, 0..255), the pixel's place in the light's frame (gu, gv at a 64th of a map texel; gd), and
  * what it is (gf: 0 nothing, 1 a body, 2 the table) */
 static uint8_t *gt, *gk, *gf; static uint16_t *gu, *gv; static float *gd;
+static int32_t *order;                                   /* pass 2's faces, nearest first */
 static float *smap; static int SR;                       /* the shadow map, SR by SR, depth along the light */
 static float eyeX, eyeY, HC, DPR, PAD;
 static float LX, LY, LZ, UX, UY, UZ, VX, VY, VZ;        /* the light, and the map's axes across it */
@@ -96,6 +120,8 @@ static float su0, sv0, sus, svs;                         /* the map's window: or
 static float SH_DARK;                                    /* how much of the light a shadow takes    */
 static uint32_t prof[4];                                 /* the last frame: fragments shaded, box pixels walked, map texels, map box pixels */
 EXPORT(scene_prof) uint32_t scene_prof(int i) { return i >= 0 && i < 4 ? prof[i] : 0; }
+static int skip;                                          /* for profiling only: passes to leave out (1 shadow map, 2 picture, 4 shading) */
+EXPORT(scene_skip) void scene_skip(int mask) { skip = mask; }
 
 static float fsqrt(float x) { return __builtin_sqrtf(x); }
 static float fclamp(float v, float lo, float hi) { return v < lo ? lo : v > hi ? hi : v; }
@@ -112,7 +138,7 @@ EXPORT(scene_begin) int scene_begin(int W, int H, int pad, float dpr, float ex, 
     uint32_t npx = (uint32_t)FW * FH;
     fb = take(npx * 4); zb = take(npx * 4); smap = take((uint32_t)SR * SR * 4);
     gt = take(npx * 3); gk = take(npx); gf = take(npx); gu = take(npx * 2); gv = take(npx * 2); gd = take(npx * 4);
-    verts = take((uint32_t)vcapacity * VF * 4); faces = take((uint32_t)fcapacity * FF * 4);
+    verts = take((uint32_t)vcapacity * VF * 4); faces = take((uint32_t)fcapacity * FF * 4); order = take((uint32_t)fcapacity * 4);
     if (!fb || !zb || !smap || !gt || !gk || !gf || !gu || !gv || !gd || !verts || !faces) { fb = 0; return 0; }
     vcap = vcapacity; fcap = fcapacity;
     /* the light's frame: L toward the light, U and V across it */
@@ -196,12 +222,16 @@ static void shadow_tri(SV a, SV b, SV c)
 /* ---- pass 2: the picture --------------------------------------------------------------- */
 typedef struct { float x, y, iw, uw, vw, nx, ny, nz, pxw, pyw, pzw; } PV;
 
-/* a pixel's place in the light's frame, kept for pass 3 */
-static void keep_light(int idx, float x, float y, float z)
+/* a pixel's place in the light's frame, kept for pass 3. ndl: the surface's cosine to the light; a surface
+ * the light grazes is pushed further toward the light (a slope-scaled bias, by the map's texel), or the
+ * map's steps would stripe it with its own shadow */
+static void keep_light(int idx, float x, float y, float z, float ndl)
 {
     float u = (x * UX + y * UY + z * UZ - su0) * sus, v = (x * VX + y * VY + z * VZ - sv0) * svs;
     u = fclamp(u, 0, SR - 1.01f) * 64; v = fclamp(v, 0, SR - 1.01f) * 64;
-    gu[idx] = (uint16_t)u; gv[idx] = (uint16_t)v; gd[idx] = -(x * LX + y * LY + z * LZ) - 1.6f;
+    if (ndl < .15f) ndl = .15f;
+    float g = 1 - ndl, texel = 1 / (sus < svs ? sus : svs), bias = 1.6f + 2.5f * texel * g * (2 + 4 * g);   /* g (2 + 4 g): near the tangent, without the divide */
+    gu[idx] = (uint16_t)u; gv[idx] = (uint16_t)v; gd[idx] = -(x * LX + y * LY + z * LZ) - bias;
 }
 /* how much of the light a kept pixel gets: 1 lit, 0 in shadow; the four map texels round it, weighted */
 static float lit_of(int idx)
@@ -213,7 +243,7 @@ static float lit_of(int idx)
     return (l00 * (1 - fu) + l10 * fu) * (1 - fv) + (l01 * (1 - fu) + l11 * fu) * fv;
 }
 
-static void tri(const Tex *tex, PV a, PV b, PV c, float Tx, float Ty, float Tz, float Bx, float By, float Bz,
+static void tri(const uint8_t *td, const int8_t *bn, int tw, int th, PV a, PV b, PV c, float Tx, float Ty, float Tz, float Bx, float By, float Bz,
                 float tr, float tg, float tb, float km, float ka, int flags)
 {
     float area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
@@ -225,7 +255,6 @@ static void tri(const Tex *tex, PV a, PV b, PV c, float Tx, float Ty, float Tz, 
     int y0 = (int)fclamp(__builtin_floorf(a.y < b.y ? (a.y < c.y ? a.y : c.y) : (b.y < c.y ? b.y : c.y)), 0, FH - 1);
     int y1 = (int)fclamp(__builtin_ceilf(a.y > b.y ? (a.y > c.y ? a.y : c.y) : (b.y > c.y ? b.y : c.y)), 0, FH - 1);
     float e0x = (b.y - c.y) * inv, e1x = (c.y - a.y) * inv;
-    const uint8_t *td = tex ? tex->rgba : 0; const int8_t *bn = tex ? tex->bump : 0; int tw = tex ? tex->w : 1, th = tex ? tex->h : 1;
     int receiver = flags & F_RECEIVER, receives = flags & F_RECEIVE;
     (void)x0; (void)x1;
     for (int y = y0; y <= y1; y++) {
@@ -242,7 +271,7 @@ static void tri(const Tex *tex, PV a, PV b, PV c, float Tx, float Ty, float Tz, 
             zb[idx] = depth; prof[0]++;
             float wx = (w0 * a.pxw + w1 * b.pxw + w2 * c.pxw) * depth, wy = (w0 * a.pyw + w1 * b.pyw + w2 * c.pyw) * depth, wz = (w0 * a.pzw + w1 * b.pzw + w2 * c.pzw) * depth;
             uint8_t *o = &fb[idx * 4];
-            if (receiver) { gf[idx] = 2; keep_light(idx, wx, wy, wz); continue; }   /* the table: pass 3 writes its shadow */
+            if (receiver) { gf[idx] = 2; keep_light(idx, wx, wy, wz, 1); continue; }   /* the table: pass 3 writes its shadow */
             float u = (w0 * a.uw + w1 * b.uw + w2 * c.uw) * depth, v = (w0 * a.vw + w1 * b.vw + w2 * c.vw) * depth;
             float tx = u * tw - .5f, ty = v * th - .5f;
             if (tx < 0) tx = 0; else if (tx > tw - 1.001f) tx = tw - 1.001f;
@@ -260,13 +289,14 @@ static void tri(const Tex *tex, PV a, PV b, PV c, float Tx, float Ty, float Tz, 
                 float dx = bn[bi] * (1.f / 20), dy = bn[bi + 1] * (1.f / 20);
                 nx += Tx * dx + Bx * dy; ny += Ty * dx + By * dy; nz += Tz * dx + Bz * dy;
             }
-            float nl = 1 / fsqrt(nx * nx + ny * ny + nz * nz), lit = (nx * LX + ny * LY + nz * LZ) * nl;
+            /* the normal's length is near 1 (unit normals, a small bend): one Newton step from 1 for its inverse */
+            float nn = nx * nx + ny * ny + nz * nz, nl = 1.5f - .5f * nn, lit = (nx * LX + ny * LY + nz * LZ) * nl;
             float k = .5f - .46f * lit; if (k < 0) k = 0; else if (k > .82f) k = .82f;
             k = k * km + ka; if (k > 1) k = 1;
             /* kept for pass 3: the texel, the tint, the shade, the place in the light */
             o[0] = (uint8_t)r; o[1] = (uint8_t)g; o[2] = (uint8_t)bl; o[3] = 255;
             gt[idx * 3] = (uint8_t)tr; gt[idx * 3 + 1] = (uint8_t)tg; gt[idx * 3 + 2] = (uint8_t)tb; gk[idx] = (uint8_t)(k * 255 + .5f);
-            gf[idx] = receives ? 1 : 3; if (receives) keep_light(idx, wx, wy, wz);
+            gf[idx] = receives ? 1 : 3; if (receives) keep_light(idx, wx, wy, wz, lit);
         }
     }
 }
@@ -279,7 +309,7 @@ EXPORT(scene_render) int scene_render(int nverts, int nfaces)
     for (int i = 0; i < FW * FH; i++) zb[i] = 1e30f;
     for (int i = 0; i < SR * SR; i++) smap[i] = 1e30f;
     /* pass 1 */
-    for (int f = 0; f < nfaces; f++) {
+    for (int f = 0; f < nfaces && !(skip & 1); f++) {
         const float *F = &faces[f * FF]; int flags = (int)F[15];
         if (!(flags & F_CAST)) continue;
         SV s[3];
@@ -289,9 +319,23 @@ EXPORT(scene_render) int scene_render(int nverts, int nfaces)
         }
         shadow_tri(s[0], s[1], s[2]);
     }
-    /* pass 2 */
+    /* pass 2: the faces nearest the eye first (the eye is over the table, so a face's nearness is its height),
+     * sorted into buckets by height, so a fragment a nearer face covers is mostly never shaded at all */
     int drawn = 0;
-    for (int f = 0; f < nfaces; f++) {
+    enum { NB = 1024 };
+    static int32_t head[NB]; static int32_t next[1 << 16];
+    for (int i = 0; i < NB; i++) head[i] = -1;
+    for (int f = 0; f < nfaces && f < (1 << 16); f++) {
+        const float *F = &faces[f * FF];
+        float z0 = verts[(int)F[0] * VF + 2], z1 = verts[(int)F[1] * VF + 2], z2 = verts[(int)F[2] * VF + 2];
+        float z = z0 > z1 ? (z0 > z2 ? z0 : z2) : (z1 > z2 ? z1 : z2);
+        int b = (int)((z + 100) * 2); if (b < 0) b = 0; if (b >= NB) b = NB - 1;
+        next[f] = head[b]; head[b] = f;
+    }
+    int no = 0;
+    for (int b = NB - 1; b >= 0; b--) for (int f = head[b]; f >= 0; f = next[f]) order[no++] = f;
+    for (int oi = 0; oi < no && !(skip & 2); oi++) {
+        int f = order[oi];
         const float *F = &faces[f * FF]; int flags = (int)F[15], ti = (int)F[9];
         const float *V0 = &verts[(int)F[0] * VF], *V1 = &verts[(int)F[1] * VF], *V2 = &verts[(int)F[2] * VF];
         if (flags & F_CULL) {
@@ -324,16 +368,26 @@ EXPORT(scene_render) int scene_render(int nverts, int nfaces)
             if (tn > 0) { Tx /= tn; Ty /= tn; Tz /= tn; }
             if (bn > 0) { Bx /= bn; By /= bn; Bz /= bn; }
         }
-        tri(tex, p[0], p[1], p[2], Tx, Ty, Tz, Bx, By, Bz, F[10], F[11], F[12], F[13], F[14], flags);
+        /* the copy of the texture nearest the face's size on the screen: at most two texels a pixel, each way */
+        int lv = 0; const uint8_t *td = 0; const int8_t *bn = 0; int tw = 1, th = 1;
+        if (tex) {
+            if (!tex->nlv) mips_of((Tex *)tex);
+            float sa = (p[1].x - p[0].x) * (p[2].y - p[0].y) - (p[2].x - p[0].x) * (p[1].y - p[0].y); if (sa < 0) sa = -sa;
+            float ta = ((F[5] - F[3]) * (F[8] - F[4]) - (F[7] - F[3]) * (F[6] - F[4])) * tex->w * tex->h; if (ta < 0) ta = -ta;
+            while (lv + 1 < tex->nlv && ta > 4 * sa) { ta *= .25f; lv++; }
+            td = tex->lrgba[lv]; bn = tex->lbump[lv]; tw = tex->lw[lv]; th = tex->lh[lv];
+        }
+        tri(td, bn, tw, th, p[0], p[1], p[2], Tx, Ty, Tz, Bx, By, Bz, F[10], F[11], F[12], F[13], F[14], flags);
         drawn++;
     }
     /* pass 3: the shadow, once a pixel. A pixel nothing was drawn on is the table (the lens is shifted, so
      * the table maps 1:1: its world point is the pixel's), and takes the shadow that falls there. */
     /* the open table first, in 4-by-4 blocks: one lookup each (its shadow is soft anyway) */
+    if (skip & 4) return drawn;
     for (int by = 0; by < FH; by += 4) for (int bx = 0; bx < FW; bx += 4) {
         int i = by * FW + bx;
         if (gf[i] && gf[i + (bx + 3 < FW ? 3 : 0)] && gf[i + (by + 3 < FH ? 3 * FW : 0)]) continue;   /* a block some body covers is done below */
-        keep_light(i, (bx + 1.5f) / DPR, (by + 1.5f) / DPR - PAD, 0);
+        keep_light(i, (bx + 1.5f) / DPR, (by + 1.5f) / DPR - PAD, 0, 1);
         float sh = 1 - lit_of(i); uint8_t al = (uint8_t)(sh * SH_DARK * 255 + .5f);
         for (int y = by; y < by + 4 && y < FH; y++) for (int x = bx; x < bx + 4 && x < FW; x++) {
             int j = y * FW + x; if (gf[j]) continue;
@@ -343,7 +397,7 @@ EXPORT(scene_render) int scene_render(int nverts, int nfaces)
     for (int i = 0, n = FW * FH; i < n; i++) {
         int f = gf[i]; if (f == 4) continue;
         uint8_t *o = &fb[i * 4];
-        if (!f) { float x = (i % FW) / DPR, y = (i / FW) / DPR - PAD; keep_light(i, x, y, 0); f = 2; }
+        if (!f) { float x = (i % FW) / DPR, y = (i / FW) / DPR - PAD; keep_light(i, x, y, 0, 1); f = 2; }
         if (f == 2) { float sh = 1 - lit_of(i); o[0] = 0; o[1] = 3; o[2] = 2; o[3] = (uint8_t)(sh * SH_DARK * 255 + .5f); continue; }
         float k = gk[i] * (1.f / 255);
         if (f == 1) { float sh = 1 - lit_of(i); k += (1 - k) * SH_DARK * sh; }

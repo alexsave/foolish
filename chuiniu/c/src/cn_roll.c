@@ -188,10 +188,17 @@ static void contact(Body *b, V3 r, V3 n, V3 uc, double e)
     }
 }
 
-static void step(Body *bodies, int n, const Cup *cup, const double *walls, double g)
+/* tick: the step's count, which varies the order the corners are taken in. The
+ * contacts are resolved one corner after another, and a corner taken first
+ * takes the most of a landing; taken in one fixed order, that favoured the +x
+ * and +y faces by a seventh over thousands of throws. Flipping the order's
+ * axes with the step and the die (an xor over the corner's bits) takes every
+ * order as often. */
+static void step(Body *bodies, int n, const Cup *cup, const double *walls, double g, int tick)
 {
     for (int bi = 0; bi < n; bi++) {
         Body *b = &bodies[bi];
+        int mask = (tick * 5 + bi * 3) & 7;
         /* a settled die keeps its rest, but a nudge from another die (below) can have moved it into the
          * wall; it is pushed back out along the table, and nothing else happens to it */
         if (b->settled) {
@@ -215,7 +222,8 @@ static void step(Body *bodies, int n, const Cup *cup, const double *walls, doubl
         b->p = add(b->p, mul(b->v, DT));
         { M3 R; for (int i = 0; i < 3; i++) R.c[i] = add(b->R.c[i], mul(cross(b->w, b->R.c[i]), DT)); b->R = orth(&R); }
         double deepest = 0, cupDeep = 0; V3 cupPush = v3(0, 0, 0);
-        for (int ci = 0; ci < 8; ci++) {
+        for (int cj = 0; cj < 8; cj++) {
+            int ci = cj ^ mask;
             V3 r = apply(&b->R, corner(b, ci)), pw = add(b->p, r);
             /* the table: every corner below it */
             if (pw.z < 0) { if (pw.z < deepest) deepest = pw.z; contact(b, r, v3(0, 0, 1), v3(0, 0, 0), E_TABLE); }
@@ -358,7 +366,9 @@ static int emit(Out *o, V3 cupO, const M3 *cupR, const Body *b, int nd, int ph)
  * A slow turn sets the dice down on the face they rode on, so the shake,
  * not the slam, is what randomises them: the test checks that the six
  * faces come up evenly, and reports how often the pre-flip face recurs. */
-#define HOLD     .3
+#define HOLD     .5     /* the first LIFT of it the cup rises from low over the table to where it is held */
+#define LIFT     .35
+#define LOW      60     /* how far below the held height the cup starts (times the reach) */
 #ifndef SHAKE
 #define SHAKE    2.0
 #endif
@@ -413,7 +423,10 @@ static void cupPose(const CupPath *c, double T, M3 *R, V3 *o)
     /* ONE PIVOT, the grip, for the hold, the shake and the turn: a pivot that moved at the turn's start
      * would move the cup by a tilt's worth in one step, and that jolt alone throws the dice out */
     if (T < c->tFlip) {
-        piv = v3(c->grip0[0] + dx, c->grip0[1] + dy, c->grip0[2] + dz); pv = c->pz;
+        /* the lift: from low over the table to the held height, easing in and out, in the hold's first LIFT seconds */
+        double lk = T / LIFT; if (lk > 1) lk = 1; if (lk < 0) lk = 0;
+        double low = LOW * c->sc * (1 - lk * lk * (3 - 2 * lk));   /* smooth: no jolt to the dice at the start or the top */
+        piv = v3(c->grip0[0] + dx, c->grip0[1] + dy, c->grip0[2] + dz - low); pv = c->pz;
         M3 a = rotX(PI - HOLD_TILT); M = mulM(&a, &S);   /* mouth up, leaned toward me */
     } else {
         double w = T - c->tFlip, k = w / FLIP; if (k > 1) k = 1;
@@ -474,6 +487,10 @@ static int bakeCup(const CnThrow *t, uint64_t seed, Out *o)
     double T = 0, kickT = 0; int ph = CN_RP_HOLD, steps = 0, forced = 0;
     M3 prevR = R0; V3 prevO = o0;
     o->info->slam = 0;
+    /* the dice settle on the floor before the first frame (half a second unseen, the cup still), so a
+     * throw that waits its turn shows dice at rest, as gravity has them, not dice in the air */
+    { Cup still; still.R = R0; still.o = o0; still.v = v3(0, 0, 0); still.w = v3(0, 0, 0); still.ri0 = R - wt; still.ric = rc - wt; still.h = h; still.hf = hf; still.dome = dome; still.nz = (R - rc) / h;
+      for (int i = 0; i < CN_ROLL_SIM_HZ / 2; i++) step(b, nd, &still, 0, g, i); }
     emit(o, o0, &R0, b, nd, ph);
     while (ph != CN_RP_IDLE) {
         T += DT; steps++;
@@ -482,7 +499,7 @@ static int bakeCup(const CnThrow *t, uint64_t seed, Out *o)
         cup.R = curR; cup.o = curO; cup.v = mul(sub(curO, prevO), 1 / DT);
         { V3 w = v3(0, 0, 0); for (int i = 0; i < 3; i++) w = add(w, cross(prevR.c[i], mul(sub(curR.c[i], prevR.c[i]), 1 / DT))); cup.w = mul(w, .5); }
         cup.ri0 = R - wt; cup.ric = rc - wt; cup.h = h; cup.hf = hf; cup.dome = dome; cup.nz = (R - rc) / h;
-        step(b, nd, &cup, 0, g);
+        step(b, nd, &cup, 0, g, steps);
         prevR = curR; prevO = curO;
         if (T < HOLD) ph = CN_RP_HOLD; else if (T < c.tFlip) ph = CN_RP_SHAKE; else if (T < c.tSlam) ph = CN_RP_FLIP;
         else {
@@ -572,7 +589,7 @@ static int bakeTable(const CnThrow *t, uint64_t seed, Out *o)
     while (ph != CN_RP_IDLE) {
         T += DT; phaseT += DT; steps++;
         if (ph == CN_RP_FALL) {
-            step(b, nd, 0, walls, G);
+            step(b, nd, 0, walls, G, steps);
             if (T > .35) for (int k = 0; k < nd; k++) if (!b[k].settled && atRest(&b[k], 1)) snap(&b[k]);
             if (T > 2.6) for (int k = 0; k < nd; k++) if (!b[k].settled) snap(&b[k]);
             int all = 1; for (int k = 0; k < nd; k++) if (!b[k].settled || !clear(b, nd, k)) all = 0;
