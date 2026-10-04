@@ -583,15 +583,22 @@ What is new is the view: the table is seen <b>from above</b>. Every seat is its 
 <!-- ============================================================ 6d -->
 <section id="roll" data-tab="roll">
 <h2>The roll</h2>
-<p class="lede">A new round opens and my five dice fall out of the raised cup as rounded cubes, bounce on the planks, knock each other, tumble and come to rest wherever they land; then they slide into the ring and the cup comes down over them. Their faces change the whole time, every ninety milliseconds, because in this game the dice are not known until the bubble is sent: <b>Send</b> stops them with the hand on the up faces; <b>Roll again</b> throws them again. It plays as the tab opens, at real size, on the layout tab’s seats.</p>
+<p class="lede">As it goes in life. My cup is held up, mouth to the ceiling, and I look down into it at my five dice. It shakes, turns this way and that, and the dice knock about inside. Then it turns over in a fifth of a second and slams down on the planks, and the dice are under it where they fell. Nothing is revealed, so nothing has to be hidden: the faces never change, because the throw <i>is</i> the roll. The physics decides what came up, and it is read off the up faces under the cup. <b>Send</b> sends that hand; <b>Roll again</b> throws again; a tap on the landed cup peeks. It plays as the tab opens, at real size, on the layout tab’s seats.</p>
 <div class="row">
   <div class="col"><div class="h4">Expanded <span class="pill n">718</span></div><div id="roll-main"></div></div>
   <div class="col"><div class="h4">Collapsed <span class="pill n">340</span></div><div id="roll-coll"></div>
-    <div class="h4" style="margin-top:22px">The physics <span class="pill n">a rigid cube</span></div>
-    <p class="why" style="max-width:60ch">Position, velocity, a rotation matrix whose columns are the cube’s axes in the world, and an angular velocity; a cube’s inertia is the same about every axis (m d² / 6), which is what keeps this short. Each step of a 240th of a second: gravity, 12,000 points a second squared, which is near the real 9.8 m/s² at this scale (a die is 24 points for 16 mm); integrate; for each of the eight corners under the table, a contact impulse with restitution 0.38 and Coulomb friction 0.6, and the corner pushed back up; for each pair of dice closer than their bounding spheres, an impulse between them; soft walls at the band’s edges; a little damping. A die has settled when it is slow and a face is within a few degrees of flat, and is then snapped flat keeping its yaw. Then each die takes the ring station nearest its angle round the group, in order, so none cross.</p>
-    <p class="why" style="max-width:60ch"><b>The renderer</b> is a scanline rasterizer now, what an engine does: every triangle is scanned pixel by pixel inside its edges, the texture coordinate interpolated in 1/w so it is right under perspective, the texel read with bilinear filtering, the normal interpolated from the vertices and bent by a <b>normal map</b> (the pips are drilled holes with a soft rim, the bevel falls away at the edge, the bone’s grain and the verdigris’s crust stand in faint relief) before the one light shades it, and a depth buffer decides what is in front. No clips, no overlaps, no seams; the framebuffer is up to three device pixels a point and the browser filters it down.</p>
-    <p class="why" style="max-width:60ch">The sim runs on its own fixed clock, so it is the same on every screen, and from a seed every phone would see the same throw. The kernel keeps owning the dice (K2, they are derived); the roll only decides where each lands and which way it turns. It is doubles and nine vector operations, and it ports as it stands.</p>
+    <div class="h4" style="margin-top:22px">The physics <span class="pill n">a cup that moves, five cubes that answer</span></div>
+    <p class="why" style="max-width:60ch">The cup is kinematic: its pose is a function of the clock, and its speed and spin are read from the pose a step earlier. The dice are the rigid cubes of before, but each corner is now tested against three surfaces: the table, the cup’s floor (a shallow dome, as a cup’s bottom is) and the cup’s wall (a cone, tested in the cup’s own frame). A contact impulse is taken against the surface’s own velocity, so a wall coming at a die hits it and a floor pulling away lets it fall. The cup has a real inside now: the wall’s thickness at the rim, the inner wall darker the deeper it goes, the domed floor; the peek shows it too.</p>
+    <p class="why" style="max-width:60ch">Keeping them in is the throw, not a rule. The flip turns about a point a sixth of the way in from the mouth, where a hand grips a cup, so the floor swings on a long arm and the dice are pressed to it the whole way over; the turn gathers speed to the end of its travel and stops dead, as a wrist does, and from halfway round the cup is driven down at 2.2 g until the mouth meets the planks, faster than the dice can fall. At the stop the dice keep the speed and the spin the floor gave them and go into the wall; at the slam the cup stops and they do not, and they bounce about under it until they settle. A die that lies on another is shivered loose after a second, as a knuckle on the cup would.</p>
+    <p class="why" style="max-width:60ch">Measured, in node, from this text: over 300 seeds no die corner ever comes within 9 points of the mouth; the median settle is half a second after the slam, nine in ten within 1.6 s; and the face that comes up is 13% the face that was up before the flip and 12% its opposite, against a fair 17% each, so the throw is not setting the dice. The sim runs on its own fixed clock, so from a seed it is the same throw on every phone; but only the thrower’s phone need run it: the hand goes in the bubble (K2 still: the kernel owns the dice; this is one way for it to draw them).</p>
   </div>
+</div>
+
+<h3>The table roll, kept</h3>
+<p class="why" style="max-width:73ch">The earlier throw, kept because a tumble on open planks is the roll of other dice games: the dice drop out of the raised cup’s mouth, bounce, knock each other, come to rest wherever they land, sit a second as they fell, then slide into the ring and the cup comes down over them. Here their faces do change the whole time until <b>Send</b>, because they are in the open.</p>
+<div class="row">
+  <div class="col"><div class="h4">Expanded <span class="pill n">718</span></div><div id="roll-table"></div></div>
+  <div class="col w"><p class="why" style="max-width:60ch">The same cubes and the same table; no cup contacts, soft walls at the band’s edges instead. Each die then takes the ring station nearest its angle round the group, in order, so none cross.</p></div>
 </div>
 </section>
 
@@ -1642,27 +1649,43 @@ const SHAPE = (() => {
     const norm = v => { const n = Math.hypot(...v) || 1; return [v[0] / n, v[1] / n, v[2] / n]; };
 
     // ---- meshes: verts in object space (z up), faces as index lists with uv per corner and a texture
-    function cup(R, rc, h, segs, texSide, texCrown) {
+    function cup(R, rc, h, segs, texSide, texCrown, inner) {
       const verts = [], faces = [], nz = (R - rc) / h;
       const nAt = a => norm([Math.cos(a), Math.sin(a), nz]);
-      // three rings of vertices (mouth, middle, crown): two rows of facets, so the affine texture map of each
-      // facet strays less from the true perspective one and the facets meet without a visible line
-      const ROWS = 2;
-      for (let i = 0; i < segs; i++) {
-        const a = i / segs * Math.PI * 2;
-        for (let r = 0; r <= ROWS; r++) { const t = r / ROWS, rr = R + (rc - R) * t; verts.push([rr * Math.cos(a), rr * Math.sin(a), h * t]); }
-      }
-      const V = ROWS + 1;
-      for (let i = 0; i < segs; i++) {
-        const j = (i + 1) % segs, u0 = i / segs, u1 = (i + 1) / segs, a0 = i / segs * Math.PI * 2, a1 = (i + 1) / segs * Math.PI * 2;
-        for (let r = 0; r < ROWS; r++) {
-          const v0 = 1 - r / ROWS, v1 = 1 - (r + 1) / ROWS;
-          faces.push({ idx: [i * V + r, j * V + r, j * V + r + 1, i * V + r + 1], uv: [[u0, v0], [u1, v0], [u1, v1], [u0, v1]], nrm: [nAt(a0), nAt(a1), nAt(a1), nAt(a0)], tex: texSide });
+      // two rows of facets, so the facets meet without a visible line; flip winds a wall inward, for the inside of the cup
+      const ROWS = 2, V = ROWS + 1;
+      const wall = (rad0, rad1, z0, z1, tex, flip) => {
+        const base = verts.length;
+        for (let i = 0; i < segs; i++) { const a = i / segs * Math.PI * 2; for (let r = 0; r <= ROWS; r++) { const t = r / ROWS, rr = rad0 + (rad1 - rad0) * t; verts.push([rr * Math.cos(a), rr * Math.sin(a), z0 + (z1 - z0) * t]); } }
+        for (let i = 0; i < segs; i++) {
+          const j = (i + 1) % segs, u0 = i / segs, u1 = (i + 1) / segs, a0 = i / segs * Math.PI * 2, a1 = (i + 1) / segs * Math.PI * 2;
+          for (let r = 0; r < ROWS; r++) {
+            const v0 = 1 - r / ROWS, v1 = 1 - (r + 1) / ROWS;
+            const idx = [base + i * V + r, base + j * V + r, base + j * V + r + 1, base + i * V + r + 1], uv = [[u0, v0], [u1, v0], [u1, v1], [u0, v1]], nrm = [nAt(a0), nAt(a1), nAt(a1), nAt(a0)];
+            if (flip) { idx.reverse(); uv.reverse(); nrm.reverse(); nrm.forEach(n => { n[0] = -n[0]; n[1] = -n[1]; n[2] = -n[2]; }); }
+            faces.push({ idx, uv, nrm, tex });
+          }
         }
+      };
+      // a disc: one polygon, or a fan about a centre raised by dome (the floor's shallow dome)
+      const disc = (rad, z, tex, flip, dome) => {
+        const base = verts.length, idx = [], uv = [];
+        for (let i = 0; i < segs; i++) { const a = i / segs * Math.PI * 2; verts.push([rad * Math.cos(a), rad * Math.sin(a), z]); idx.push(base + i); uv.push([.5 + .5 * Math.cos(a), .5 + .5 * Math.sin(a)]); }
+        if (!dome) { if (flip) { idx.reverse(); uv.reverse(); } faces.push({ idx, uv, tex, poly: true }); return; }
+        const c = verts.length; verts.push([0, 0, z - dome]);
+        for (let i = 0; i < segs; i++) { const j = (i + 1) % segs, f = { idx: [c, idx[i], idx[j]], uv: [[.5, .5], uv[i], uv[j]], tex }; if (flip) { f.idx.reverse(); f.uv.reverse(); } faces.push(f); }
+      };
+      wall(R, rc, 0, h, texSide, false);
+      disc(rc, h, texCrown, false, 0);
+      if (inner) {
+        const t = inner.t, hf = h - t;
+        wall(R - t, rc - t, 0, hf, inner.side, true);
+        disc(rc - t, hf, inner.floor, true, inner.dome || 0);
+        // the rim: the wall's thickness at the mouth, facing out of it
+        const base = verts.length;
+        for (let i = 0; i < segs; i++) { const a = i / segs * Math.PI * 2; verts.push([R * Math.cos(a), R * Math.sin(a), 0], [(R - t) * Math.cos(a), (R - t) * Math.sin(a), 0]); }
+        for (let i = 0; i < segs; i++) { const j = (i + 1) % segs, u0 = i / segs, u1 = (i + 1) / segs; faces.push({ idx: [base + i * 2, base + i * 2 + 1, base + j * 2 + 1, base + j * 2], uv: [[u0, .52], [u0, .48], [u1, .48], [u1, .52]], tex: inner.side }); }
       }
-      const idx = [], uv = [];
-      for (let i = 0; i < segs; i++) { const a = i / segs * Math.PI * 2; idx.push(i * V + ROWS); uv.push([.5 + .5 * Math.cos(a), .5 + .5 * Math.sin(a)]); }
-      faces.push({ idx, uv, tex: texCrown, poly: true });
       return { verts, faces };
     }
     // a die: a cube of side d about its centre; each face knows its axis and sign so the up face can be
@@ -1698,7 +1721,9 @@ const SHAPE = (() => {
       const rest = [1, 2, 3, 4, 5, 6].filter(f => f !== value && f !== OPP[value]), cells = {};
       [[2, 1], [2, -1], [1, -1], [0, 1], [1, 1], [0, -1]].forEach(([ax, sg]) => { cells[ax + ':' + sg] = ax === axis && sg === sign ? value : ax === axis ? OPP[value] : rest.shift(); });
       for (const f of mesh.faces) { const c = cells[f.axis + ':' + f.sign] - 1; f.uv = f.uvl.map(([u, v]) => [(c + u) / 6, v]); }
+      mesh.cells = cells;
     }
+    const dieValue = (mesh, axis, sign) => mesh.cells[axis + ':' + sign];
     const setDieTop = (mesh, top) => setDieUp(mesh, 2, 1, top);
 
     // ---- THE RASTERIZER. What an engine does: every triangle is scanned pixel by pixel inside its
@@ -1825,7 +1850,7 @@ const SHAPE = (() => {
       ctx.drawImage(fb.off, 0, 0, W, H);
       return ctx;
     }
-    return { cup, die, setDieUp, setDieTop, render, HC };
+    return { cup, die, setDieUp, setDieTop, dieValue, render, HC };
   })();
 
   /* ---- the textures the meshes wear ------------------------------------ */
@@ -1858,6 +1883,27 @@ const SHAPE = (() => {
         g.font = `${112}px 'IM Fell English', serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
         g.fillStyle = 'rgba(10,13,11,.85)'; g.fillText(count, 130, 140); g.fillStyle = 'rgba(232,236,216,.92)'; g.fillText(count, 128, 136);
       }
+      c._bump = reliefOf(c, 1.2);
+      return cache[k] = c;
+    }
+    // the inside of the cup: the verdigris, darker the deeper it goes, for the inner wall; and its floor
+    function cupInner(seed) {
+      const k = 'inner' + seed; if (cache[k]) return cache[k];
+      const src = matCanvas['c-verdigris'], c = document.createElement('canvas'); c.width = 1024; c.height = 512;
+      const x = TEX.hash(seed, 95, 977) * 256 | 0, y = TEX.hash(seed, 96, 977) * 256 | 0, g = c.getContext('2d');
+      for (let i = -1; i < 5; i++) for (let j = -1; j < 3; j++) g.drawImage(src, i * 256 - x, j * 256 - y);
+      const gr = g.createLinearGradient(0, 0, 0, 512); gr.addColorStop(0, 'rgba(0,4,3,.72)'); gr.addColorStop(.7, 'rgba(0,4,3,.38)'); gr.addColorStop(1, 'rgba(0,4,3,.12)');
+      g.fillStyle = gr; g.fillRect(0, 0, 1024, 512);
+      c._bump = reliefOf(c, 1.2);
+      return cache[k] = c;
+    }
+    function cupFloor(seed) {
+      const k = 'floor' + seed; if (cache[k]) return cache[k];
+      const src = matCanvas['c-verdigris'], c = document.createElement('canvas'); c.width = 256; c.height = 256;
+      const x = TEX.hash(seed, 97, 977) * 128 | 0, y = TEX.hash(seed, 98, 977) * 128 | 0, g = c.getContext('2d');
+      for (let i = -1; i < 2; i++) for (let j = -1; j < 2; j++) g.drawImage(src, i * 256 - x, j * 256 - y);
+      const gr = g.createRadialGradient(128, 128, 20, 128, 128, 130); gr.addColorStop(0, 'rgba(0,4,3,.32)'); gr.addColorStop(1, 'rgba(0,4,3,.72)');
+      g.fillStyle = gr; g.fillRect(0, 0, 256, 256);
       c._bump = reliefOf(c, 1.2);
       return cache[k] = c;
     }
@@ -1946,7 +1992,7 @@ const SHAPE = (() => {
       const g = c.getContext('2d'); g.fillStyle = '#808080'; g.fillRect(0, 0, c.width, c.height); g.globalAlpha = .5; g.drawImage(canvas, 0, 0);
       return normalMap(c, strength);
     }
-    return { cupSide, cupCrown, dieAtlas, dieHeight, reliefOf, reset: () => { for (const k in cache) delete cache[k]; } };
+    return { cupSide, cupCrown, cupInner, cupFloor, dieAtlas, dieHeight, reliefOf, reset: () => { for (const k in cache) delete cache[k]; } };
   })();
 
   // a scene canvas inside a screen: the cups at their seats and my dice, in three dimensions.
@@ -1959,12 +2005,14 @@ const SHAPE = (() => {
   }
   function flushScenes() {
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    for (const sp of scenes.splice(0)) { const c = document.getElementById(sp.id); if (c) { c._objs = sp.objs; c._W = sp.W; c._H = sp.H; R3.render(c, sp.W, sp.H, sp.objs, dpr); if (c.dataset.key === 'roll') startRoll(c, 7); } }
+    for (const sp of scenes.splice(0)) { const c = document.getElementById(sp.id); if (c) { c._objs = sp.objs; c._W = sp.W; c._H = sp.H; R3.render(c, sp.W, sp.H, sp.objs, dpr); if (c.dataset.key === 'roll' || c.dataset.key === 'troll') startRoll(c, 7); } }
   }
   // a cup object at a seat: R the mouth radius, standing on the table
   function cupObj(R, count, seed, x, y, o = {}) {
     const rc = R * .72, h = R * 1.8;
-    return Object.assign({ mesh: R3.cup(R, rc, h, 36, TEX3.cupSide(seed), TEX3.cupCrown(seed, count, o.out)), pos: [x, y], yaw: 0, shadowR: R, shadowH: h, tint: o.out ? '11,46,50' : null, R, h }, o);
+    // my cup has an inside (its wall's thickness, the inner wall, the domed floor): it is looked into and peeked under
+    const inner = o.inner ? { t: R * .06, side: TEX3.cupInner(seed), floor: TEX3.cupFloor(seed), dome: o.inner.dome || 0 } : null;
+    return Object.assign({ mesh: R3.cup(R, rc, h, 36, TEX3.cupSide(seed), TEX3.cupCrown(seed, count, o.out), inner), pos: [x, y], yaw: 0, shadowR: R, shadowH: h, tint: o.out ? '11,46,50' : null, R, h }, o);
   }
   function dieObj(d, face, seed, x, y, yaw) {
     return { mesh: R3.die(d, face, TEX3.dieAtlas(seed)), pos: [x, y], yaw, lift: d / 2, shadowR: d * .7, shadowH: d, die: true, d, value: face };
@@ -1991,64 +2039,100 @@ const SHAPE = (() => {
   }
 
   /* =====================================================================
-     THE ROLL. Five cubes fall out of the cup, bounce, tumble and come to
-     rest, then slide into the ring and the cup comes down over them. Their
-     faces change the whole time, because the dice are not known until the
-     bubble is sent; Send locks them to the hand.
+     THE ROLL. As it goes in life. The cup is held up, mouth to the ceiling,
+     and I look down into it at my dice; it shakes and turns this way and
+     that, the dice knock about inside; then it turns over in a quarter of
+     a second and slams down on the planks, and the dice are under it where
+     they fell. Nothing has to be hidden, so nothing changes: the throw is
+     the roll, and what came up is read off the up faces.
 
      The physics is a rigid cube: position, velocity, a rotation matrix
      (its columns the cube's axes in the world) and an angular velocity.
      A cube's inertia is the same about every axis (m d^2 / 6), which is
      what makes this short. Each step: gravity; integrate; for each of the
-     eight corners under the table, a contact impulse with restitution and
-     Coulomb friction (and the corner pushed back up); for each pair closer
-     than their bounding spheres, an impulse between them; soft walls at
-     the band's edges; damping. A die has settled when it is slow and one
-     face is within a few degrees of flat; it is then snapped flat, keeping
-     its yaw. The whole thing is doubles and nine lines of vector algebra,
-     so it ports as it stands.
+     eight corners, a contact with whatever it is in: the table, the cup's
+     floor, the cup's wall (a cone, tested in the cup's own frame), each a
+     contact impulse with restitution and Coulomb friction taken against
+     the surface's own velocity, and the corner pushed back out; for each
+     pair of dice closer than their bounding spheres, an impulse between
+     them; damping. The cup is kinematic: its pose is a function of the
+     clock, and its speed and spin are read from the pose a step earlier.
+     A die has settled when it is slow and one face is within a few
+     degrees of flat; it is then snapped flat, keeping its yaw.
+
+     The table roll (the dice tumbling on open planks) is kept below; it is
+     the roll of other dice games.
      ===================================================================== */
+  // ==== PHYS begin (DOM-free: the tests run this text in node)
   const PHYS = (() => {
-    const G = -12000, E_TABLE = .38, MU = .6, E_DIE = .3, LIN_DAMP = .996, ANG_DAMP = .988;
+    const G = -12000, E_TABLE = .38, E_CUP = .22, MU = .6, E_DIE = .3, LIN_DAMP = .996, ANG_DAMP = .988;
     const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]], sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
     const mul = (a, k) => [a[0] * k, a[1] * k, a[2] * k], dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
     const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
     const len = a => Math.hypot(a[0], a[1], a[2]), norm = a => { const l = len(a) || 1; return mul(a, 1 / l); };
-    // R is [col0, col1, col2]: the cube's local x, y, z in the world
+    // R is [col0, col1, col2]: the body's local x, y, z in the world
     const apply = (R, p) => [R[0][0] * p[0] + R[1][0] * p[1] + R[2][0] * p[2], R[0][1] * p[0] + R[1][1] * p[1] + R[2][1] * p[2], R[0][2] * p[0] + R[1][2] * p[1] + R[2][2] * p[2]];
     const orth = R => { const x = norm(R[0]); let y = sub(R[1], mul(x, dot(R[1], x))); y = norm(y); return [x, y, cross(x, y)]; };
     const rotZ = a => [[Math.cos(a), Math.sin(a), 0], [-Math.sin(a), Math.cos(a), 0], [0, 0, 1]];
+    const rotX = a => [[1, 0, 0], [0, Math.cos(a), Math.sin(a)], [0, -Math.sin(a), Math.cos(a)]];
+    const rotY = a => [[Math.cos(a), 0, -Math.sin(a)], [0, 1, 0], [Math.sin(a), 0, Math.cos(a)]];
+    const ident = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+    const mulM = (A, B) => [apply(A, B[0]), apply(A, B[1]), apply(A, B[2])];
+    // a rotation drawn evenly over every orientation, from three numbers in [0, 1) (Shoemake's quaternion)
+    function randRot(u1, u2, u3) {
+      const a = Math.sqrt(1 - u1), b = Math.sqrt(u1), x = a * Math.sin(2 * Math.PI * u2), y = a * Math.cos(2 * Math.PI * u2), z = b * Math.sin(2 * Math.PI * u3), w = b * Math.cos(2 * Math.PI * u3);
+      return [[1 - 2 * (y * y + z * z), 2 * (x * y + z * w), 2 * (x * z - y * w)], [2 * (x * y - z * w), 1 - 2 * (x * x + z * z), 2 * (y * z + x * w)], [2 * (x * z + y * w), 2 * (y * z - x * w), 1 - 2 * (x * x + y * y)]];
+    }
+    const transp = R => [[R[0][0], R[1][0], R[2][0]], [R[0][1], R[1][1], R[2][1]], [R[0][2], R[1][2], R[2][2]]];
     function make(d, pos, vel, w, R) { return { d, s: d / 2, p: pos, v: vel, w, R, m: 1, I: d * d / 6, settled: false }; }
     const corners = b => { const s = b.s, out = []; for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) out.push([sx * s, sy * s, sz * s]); return out; };
-    function step(bodies, dt, walls) {
+    // one contact at a corner: r the corner from the body's centre, n the surface's normal (into the body),
+    // uc the surface's own velocity at that point, e the restitution. If the corner is closing on the
+    // surface, an impulse along n, then Coulomb friction against the slip, capped by mu times the impulse.
+    function contact(b, r, n, uc, e) {
+      const u = sub(add(b.v, cross(b.w, r)), uc), un = dot(u, n);
+      if (un >= 0) return 0;
+      const rn = cross(r, n), k = 1 / b.m + dot(cross(mul(rn, 1 / b.I), r), n), j = -(1 + e) * un / k;
+      b.v = add(b.v, mul(n, j / b.m)); b.w = add(b.w, mul(cross(r, mul(n, j)), 1 / b.I));
+      const u2 = sub(add(b.v, cross(b.w, r)), uc), t = sub(u2, mul(n, dot(u2, n))), tl = len(t);
+      if (tl > 1e-3) {
+        const td = mul(t, 1 / tl), rt = cross(r, td), kt = 1 / b.m + dot(cross(mul(rt, 1 / b.I), r), td), jt = Math.min(tl / kt, MU * j);
+        b.v = sub(b.v, mul(td, jt / b.m)); b.w = sub(b.w, mul(cross(r, mul(td, jt)), 1 / b.I));
+      }
+      return j;
+    }
+    // cup: { R, Rt, o, v, w, ri0, ric, h, hf, dome, nz }: its pose (R, and o the mouth's centre), its velocity
+    // and spin, the inner radius at the mouth and at the floor, its height, the floor's depth and its dome, the wall's slope
+    function step(bodies, dt, walls, cup) {
       for (const b of bodies) {
         if (b.settled) continue;
         b.v = add(b.v, [0, 0, G * dt]);
         b.p = add(b.p, mul(b.v, dt));
         // integrate the orientation: each axis turns by w x axis
         b.R = orth(b.R.map(ax => add(ax, mul(cross(b.w, ax), dt))));
-        // the table: every corner below it gets an impulse
-        let deepest = 0;
+        let deepest = 0, cupPush = null, cupDeep = 0;
         for (const c of corners(b)) {
-          const r = apply(b.R, c), z = b.p[2] + r[2];
-          if (z < 0) {
-            deepest = Math.min(deepest, z);
-            const u = add(b.v, cross(b.w, r)), un = u[2];
-            if (un < 0) {
-              const n = [0, 0, 1], rn = cross(r, n), k = 1 / b.m + dot(cross(mul(rn, 1 / b.I), r), n);
-              const j = -(1 + E_TABLE) * un / k;
-              b.v = add(b.v, mul(n, j / b.m)); b.w = add(b.w, mul(cross(r, mul(n, j)), 1 / b.I));
-              // friction: against the tangential slip at the corner, capped by mu j
-              const u2 = add(b.v, cross(b.w, r)), t = [u2[0], u2[1], 0], tl = len(t);
-              if (tl > 1e-3) {
-                const td = mul(t, 1 / tl), rt = cross(r, td), kt = 1 / b.m + dot(cross(mul(rt, 1 / b.I), r), td);
-                const jt = Math.min(tl / kt, MU * j);
-                b.v = sub(b.v, mul(td, jt / b.m)); b.w = sub(b.w, mul(cross(r, mul(td, jt)), 1 / b.I));
+          const r = apply(b.R, c), pw = add(b.p, r);
+          // the table: every corner below it
+          if (pw[2] < 0) { deepest = Math.min(deepest, pw[2]); contact(b, r, [0, 0, 1], [0, 0, 0], E_TABLE); }
+          if (cup) {
+            // the corner in the cup's frame: z runs from the mouth (0) to the floor (hf); the wall is the cone between
+            const q = apply(cup.Rt, sub(pw, cup.o));
+            if (q[2] > -b.s * .6 && q[2] < cup.hf + b.s) {
+              const uc = add(cup.v, cross(cup.w, sub(pw, cup.o)));
+              // the floor is a shallow dome, as a cup's bottom is, so a die cannot lie flat on it and is tipped as it leaves
+              const rr = Math.hypot(q[0], q[1]), zs = cup.hf - cup.dome * Math.max(0, 1 - rr * rr / (cup.ric * cup.ric));
+              if (q[2] > zs) { const sl = 2 * cup.dome * rr / (cup.ric * cup.ric), nl = norm([rr > 1e-6 ? sl * q[0] / rr : 0, rr > 1e-6 ? sl * q[1] / rr : 0, -1]), n = apply(cup.R, nl), dp = (q[2] - zs) * -nl[2]; contact(b, r, n, uc, E_CUP); if (dp > cupDeep) { cupDeep = dp; cupPush = n; } }
+              const zz = Math.max(0, Math.min(cup.h, q[2])), ri = cup.ri0 + (cup.ric - cup.ri0) * zz / cup.h;
+              if (rr > ri && rr > 1e-6) {
+                const nl = norm([-q[0] / rr, -q[1] / rr, -cup.nz]), n = apply(cup.R, nl), dp = (rr - ri) * Math.hypot(nl[0], nl[1]);
+                contact(b, r, n, uc, E_CUP); if (dp > cupDeep) { cupDeep = dp; cupPush = n; }
               }
             }
           }
         }
         if (deepest < 0) b.p[2] -= deepest;
+        if (cupPush) b.p = add(b.p, mul(cupPush, cupDeep));
         // soft walls round the band: a bounce
         if (walls) {
           for (const ax of [0, 1]) {
@@ -2095,32 +2179,151 @@ const SHAPE = (() => {
       b.R = R; b.p = [b.p[0], b.p[1], b.s]; b.v = [0, 0, 0]; b.w = [0, 0, 0]; b.settled = true;
       return uf;
     }
-    return { make, step, atRest, snap, upFace, rotZ, apply };
+    return { G, make, step, atRest, snap, upFace, rotX, rotY, rotZ, randRot, ident, mulM, transp, apply, add, sub, mul, cross, corners };
   })();
 
-  // the roll on one scene canvas: the other cups stand still; my cup is up; my dice fall, settle, slide, are covered
-  const myRof = cup => cup.R;
-  function startRoll(canvas, seedBase) {
+  // THE CUP ROLL. The cup's pose is a function of the clock: held mouth up for a third of a second,
+  // shaken for a second and a quarter (a jiggle, a twist, a tilt, each its own rhythm), then the flip,
+  // half a turn about the wrist in .22 s, and from six tenths of the way round the cup is driven down
+  // at 1.6 g until the mouth meets the planks. The dice are kept in by the throw, not by a rule: while
+  // the flip is fast they are pressed to the floor, and while the cup falls faster than they do they
+  // ride it down; at the slam the cup stops and they do not, and they bounce about under it until they
+  // settle. DOM-free, so the tests run it in node over hundreds of seeds.
+  const CUPROLL = (() => {
+    // the flip turns about a point a sixth of the way in from the mouth, where a hand grips a cup: the floor,
+    // where the dice are, then swings on a long arm and is pressed on them the whole way over
+    const HOLD = .3, SHAKE = 1.25, FLIP = .2, DROP_AT = .5, DROP_G = 2.2, GRIP = .15, DOME = .35, FLIP_POW = 3, STEP = 1 / 240, PI = Math.PI;
+    const sm = k => k * k * (3 - 2 * k);
+    function make(spec, seed, hash) {
+      const { mcx, mcy, R, rc, h, d, ring } = spec, t = R * .06, hf = h - t, s = d / 2, pz = h * GRIP, dome = DOME * d;
+      const held = [mcx, mcy - 60, 110], grip0 = [held[0], held[1], held[2] + h / 2 - pz], home = [mcx, mcy, pz];
+      const a = DROP_G * -PHYS.G, tDrop = Math.sqrt(2 * (grip0[2] - home[2]) / a);
+      const T_FLIP = HOLD + SHAKE, T_SLAM = T_FLIP + FLIP * DROP_AT + tDrop;
+      // the pose at a time: a pivot and a rotation about it; the mesh's origin is the mouth's centre
+      function pose(T) {
+        let piv, M, pv;
+        if (T < T_FLIP) {
+          const u = Math.max(0, T - HOLD), env = Math.max(0, Math.min(1, u / .15, (SHAKE - u) / .12));
+          const dx = 13 * Math.sin(2 * PI * 4.6 * u) * env, dy = 8 * Math.sin(2 * PI * 3.1 * u + 1) * env, dz = 7 * Math.sin(2 * PI * 9.2 * u) * env;
+          const yaw = .55 * Math.sin(2 * PI * 2.3 * u + .7) * env, tx = .2 * Math.sin(2 * PI * 3.7 * u) * env, ty = .2 * Math.sin(2 * PI * 2.9 * u + 2) * env;
+          piv = [held[0] + dx, held[1] + dy, held[2] + dz]; pv = h / 2;
+          M = PHYS.mulM(PHYS.rotX(PI), PHYS.mulM(PHYS.rotY(ty), PHYS.mulM(PHYS.rotX(tx), PHYS.rotZ(yaw))));
+        } else {
+          const u = T - T_FLIP, k = Math.min(1, u / FLIP), td = Math.max(0, u - FLIP * DROP_AT);
+          // the cup comes toward me as it comes down, fastest at the end, and stops dead at the slam: the dice do not
+          const z = Math.max(home[2], grip0[2] - .5 * a * td * td), kx = Math.min(1, u / (T_SLAM - T_FLIP)), e = Math.pow(kx, 1.6);
+          piv = [grip0[0] + (home[0] - grip0[0]) * e, grip0[1] + (home[1] - grip0[1]) * e, z]; pv = pz;
+          // the wrist: the turn gathers speed the whole way and stops dead at the end of its travel, as a wrist does;
+          // the dice keep the speed and the spin the floor gave them and go into the wall
+          M = k < 1 ? PHYS.rotX(PI + PI * Math.pow(k, FLIP_POW)) : PHYS.ident;
+          // the slam's shiver: the cup sits a hair up and settles
+          if (T > T_SLAM && T < T_SLAM + .14) { const w = (T - T_SLAM) / .14; piv[2] += 2.5 * Math.sin(w * PI) * (1 - w); }
+        }
+        return { R: M, o: PHYS.sub(piv, PHYS.apply(M, [0, 0, pv])) };
+      }
+      const H = (i, j) => hash(i, j, seed);
+      const randR = k => PHYS.randRot(H(k, 11), H(k, 12), H(k, 13));
+      const p0 = pose(0), floorW = p0.o[2] - hf;
+      // five dice in the held cup: three on its floor, two on top of them, every one turned its own way
+      const bodies = [0, 1, 2, 3, 4].map(k => {
+        const an = k * 2 * PI / 3 + H(k, 14) * .5, rr = k < 3 ? 17 : 10;
+        return PHYS.make(d, [p0.o[0] + rr * Math.cos(an), p0.o[1] + rr * Math.sin(an), floorW + s + 1 + (k < 3 ? 0 : d + 2)], [0, 0, 0],
+          [(H(k, 15) - .5) * 6, (H(k, 16) - .5) * 6, (H(k, 17) - .5) * 6], randR(k));
+      });
+      const stations = [0, 1, 2, 3, 4].map(k => { const an = -PI / 2 + k * 2 * PI / 5; return [mcx + ring * Math.cos(an), mcy + ring * Math.sin(an)]; });
+      let T = 0, prev = p0, phase = 'hold', kickT = 0;
+      // the cup as the contacts see it: its pose, and its speed and spin read from the pose a step earlier
+      const cupOf = cur => {
+        const v = PHYS.mul(PHYS.sub(cur.o, prev.o), 1 / STEP);
+        let w = [0, 0, 0]; for (let i = 0; i < 3; i++) w = PHYS.add(w, PHYS.cross(prev.R[i], PHYS.mul(PHYS.sub(cur.R[i], prev.R[i]), 1 / STEP)));
+        return { R: cur.R, Rt: PHYS.transp(cur.R), o: cur.o, v, w: PHYS.mul(w, .5), ri0: R - t, ric: rc - t, h, hf, dome, nz: (R - rc) / h };
+      };
+      function advance(dt) {
+        for (let n = Math.round(dt / STEP); n > 0; n--) {
+          T += STEP; const cur = pose(T);
+          PHYS.step(bodies, STEP, null, cupOf(cur)); prev = cur;
+          if (T < HOLD) phase = 'hold'; else if (T < T_FLIP) phase = 'shake'; else if (T < T_SLAM) phase = 'flip';
+          else if (phase !== 'idle') {
+            phase = 'settle'; const u = T - T_SLAM;
+            if (u > .45) bodies.forEach(b => { if (!b.settled && PHYS.atRest(b)) PHYS.snap(b); });
+            // a die that lies on another, or stands on an edge, is shivered loose, as a knuckle on the cup would
+            if (u > .9 && T - kickT > .25) {
+              kickT = T; const q = T * 1000 | 0;
+              bodies.forEach((b, k) => { if (!b.settled) { b.v = PHYS.add(b.v, [(hash(k, 21, q) - .5) * 480, (hash(k, 22, q) - .5) * 480, 180]); b.w = PHYS.add(b.w, [(hash(k, 23, q) - .5) * 40, (hash(k, 24, q) - .5) * 40, 0]); } });
+            }
+            // the last resort, never seen under the cup: the station farthest from the settled dice
+            if (u > 3) bodies.forEach(b => { if (!b.settled) { const free = stations.map(st => bodies.filter(o => o.settled).reduce((m, o) => Math.min(m, Math.hypot(o.p[0] - st[0], o.p[1] - st[1])), 1e9)); const k = free.indexOf(Math.max(...free)); b.p = [stations[k][0], stations[k][1], b.s]; PHYS.snap(b); } });
+            if (bodies.every(b => b.settled)) phase = 'idle';
+          }
+        }
+        return prev;
+      }
+      // how far a die corner is from leaving the mouth, in the cup's frame (the tests watch this; it never goes below 0)
+      const mouthMargin = () => { let m = 1e9; const Rt = PHYS.transp(prev.R); for (const b of bodies) for (const c of PHYS.corners(b)) { const q = PHYS.apply(Rt, PHYS.sub(PHYS.add(b.p, PHYS.apply(b.R, c)), prev.o)); if (q[2] < m) m = q[2]; } return m; };
+      return { advance, bodies, pose, T: () => T, phase: () => phase, times: { T_FLIP, T_SLAM }, hf, t, dome, home, held, mouthMargin };
+    }
+    return { make, STEP, HOLD, SHAKE, FLIP, DOME };
+  })();
+  // ==== PHYS end
+
+  // the cup roll on one scene canvas: the other cups stand still; my cup and my dice are the sim's
+  function startCupRoll(canvas, seedBase) {
+    const objs = canvas._objs, cup = objs.find(o => o.peekable), dice = objs.filter(o => o.die), W = canvas._W, H = canvas._H;
+    if (!cup || !dice.length) return;
+    const d = dice[0].d, home = cup.home || (cup.home = cup.pos.slice()), mcx = home[0], mcy = home[1];
+    const seed = seedBase + (canvas._rolls = (canvas._rolls || 0) + 1) * 131;
+    const sim = CUPROLL.make({ mcx, mcy, R: cup.R, rc: cup.R * .72, h: cup.h, d, ring: cup.ring }, seed, TEX.hash);
+    const token = canvas._token = (canvas._token || 0) + 1;
+    canvas._rolling = true; canvas._locked = false; canvas._frames = 0; canvas._open = false;
+    cup.tilt = null;
+    const render = () => R3.render(canvas, W, H, objs, Math.min(2, window.devicePixelRatio || 1));
+    const place = pose => {
+      if (sim.phase() === 'idle') { cup.rot = null; cup.yaw = 0; cup.pos = [mcx, mcy]; cup.lift = 0; cup.shadowH = cup.h; }
+      else { cup.rot = pose.R; cup.pos = [pose.o[0], pose.o[1]]; cup.lift = pose.o[2]; cup.shadowH = Math.max(cup.h, pose.o[2] + cup.h * .5); }
+      dice.forEach((o, i) => {
+        const b = sim.bodies[i]; o.pos = [b.p[0], b.p[1]]; o.lift = b.p[2]; o.rot = b.R; o.shadowH = b.p[2] + b.s; o.shadowR = b.s * (1.4 - Math.min(.5, b.p[2] / 300));
+        if (b.settled) { const uf = PHYS.upFace(b); o.value = R3.dieValue(o.mesh, uf.axis, uf.sign); }
+      });
+    };
+    const advance = dt => { place(sim.advance(dt)); render(); };
+    canvas._advance = advance; canvas._phase = sim.phase; canvas._sim = sim; canvas._bodies = sim.bodies;
+    canvas._hand = () => dice.map(o => o.value);
+    place(sim.pose(0));
+    let last = performance.now();
+    const frame = now => {
+      if (canvas._token !== token) return;
+      canvas._frames++;
+      const dt = Math.max(0, Math.min(.05, (now - last) / 1000)); last = now;
+      canvas._fast = true; advance(dt);
+      if (sim.phase() === 'idle') { canvas._fast = false; render(); return; }
+      if (canvas._rolling) requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+  }
+
+  // THE TABLE ROLL, kept. The dice fall out of the raised cup's mouth onto the planks, bounce, tumble
+  // and come to rest wherever they land, sit a second, then slide into the ring and the cup comes down
+  // over them. Their faces change the whole time until Send, because here they are not hidden.
+  function startTableRoll(canvas, seedBase) {
     const objs = canvas._objs, cup = objs.find(o => o.peekable), dice = objs.filter(o => o.die), W = canvas._W, H = canvas._H;
     if (!cup || !dice.length) return;
     const d = dice[0].d, mcx = cup.home ? cup.home[0] : cup.pos[0], mcy = cup.home ? cup.home[1] : cup.pos[1], ring = cup.ring;
     cup.home = [mcx, mcy];
     const H3 = TEX.hash, seed = seedBase + (canvas._rolls = (canvas._rolls || 0) + 1) * 131;
+    // the cup is held up and back, mouth down, and the dice drop out of its mouth
+    const cupUp = [mcx, mcy - cup.R * 1.6], cupLift = 150;
     const bodies = dice.map((o, k) => {
-      const a = H3(k, 1, seed) * Math.PI * 2, spread = 26 + H3(k, 2, seed) * 30;
-      return PHYS.make(d, [mcx + Math.cos(a) * spread, mcy - 40 + Math.sin(a) * spread * .6, 300 + H3(k, 3, seed) * 120],
-        [(H3(k, 4, seed) - .5) * 320, (H3(k, 5, seed) - .3) * 260, -260], [(H3(k, 6, seed) - .5) * 50, (H3(k, 7, seed) - .5) * 50, (H3(k, 8, seed) - .5) * 50],
+      const a = H3(k, 1, seed) * Math.PI * 2, spread = 6 + H3(k, 2, seed) * 16;
+      return PHYS.make(d, [cupUp[0] + Math.cos(a) * spread, cupUp[1] + Math.sin(a) * spread, cupLift - d / 2 - 2 - k * 7],
+        [(H3(k, 4, seed) - .5) * 160, (H3(k, 5, seed) - .25) * 160, -120], [(H3(k, 6, seed) - .5) * 40, (H3(k, 7, seed) - .5) * 40, (H3(k, 8, seed) - .5) * 40],
         PHYS.rotZ(H3(k, 9, seed) * 6.28));
     });
     const walls = [[Math.max(20, mcx - 160), Math.min(W - 20, mcx + 160)], [Math.max(20, mcy - 120), Math.min(H - 10, mcy + 60)]];
     const token = canvas._token = (canvas._token || 0) + 1;
-    canvas._rolling = true; canvas._locked = false; canvas._frames = 0;
-    // the cup is held up and back, out of the throw, until the dice are in their ring
-    const cupUp = [mcx, mcy - myRof(cup) * 2.3], cupLift = 40;
-    cup.tilt = null; cup.lift = cupLift; cup.pos = cupUp.slice();
+    canvas._rolling = true; canvas._locked = false; canvas._frames = 0; canvas._open = false;
+    cup.tilt = null; cup.rot = null; cup.lift = cupLift; cup.pos = cupUp.slice(); cup.shadowH = cupLift + cup.h * .5;
     let phase = 'fall', T = 0, phaseT = 0, faceT = 0, slideFrom = null, slots = null;
     const render = () => R3.render(canvas, W, H, objs, Math.min(2, window.devicePixelRatio || 1));
-    // the sim runs on its own clock in fixed steps, so it is the same on every screen and can be seeked
     const STEP = 1 / 240;
     const advance = dt => {
       for (let n = Math.round(dt / STEP); n > 0; n--) {
@@ -2128,8 +2331,11 @@ const SHAPE = (() => {
         if (phase === 'fall') {
           PHYS.step(bodies, STEP, walls);
           if (T > .35) bodies.forEach(b => { if (!b.settled && PHYS.atRest(b)) PHYS.snap(b); });
-          if (T > 2.2) bodies.forEach(b => { if (!b.settled) PHYS.snap(b); });
-          if (bodies.every(b => b.settled)) {
+          if (T > 2.6) bodies.forEach(b => { if (!b.settled) PHYS.snap(b); });
+          if (bodies.every(b => b.settled)) { phase = 'sit'; phaseT = 0; }
+        } else if (phase === 'sit') {
+          // a second on the planks, as they fell
+          if (phaseT >= 1) {
             phase = 'slide'; phaseT = 0;
             const cx = bodies.reduce((a, b) => a + b.p[0], 0) / 5, cy = bodies.reduce((a, b) => a + b.p[1], 0) / 5;
             const order = bodies.map((b, i) => ({ i, a: Math.atan2(b.p[1] - cy, b.p[0] - cx) })).sort((p, q) => p.a - q.a);
@@ -2143,9 +2349,9 @@ const SHAPE = (() => {
           bodies.forEach((b, i) => { const sl = slots[i]; b.p = [slideFrom[i][0] + (sl.x - slideFrom[i][0]) * e, slideFrom[i][1] + (sl.y - slideFrom[i][1]) * e, b.s]; });
           if (k >= 1) { phase = 'cover'; phaseT = 0; }
         } else if (phase === 'cover') {
-          const k = Math.min(1, phaseT / .32), e = 1 - Math.pow(1 - k, 2);
-          cup.lift = cupLift * (1 - e); cup.pos = [mcx, cupUp[1] + (mcy - cupUp[1]) * e];
-          if (k >= 1) phase = 'idle';
+          const k = Math.min(1, phaseT / .4), e = 1 - Math.pow(1 - k, 2);
+          cup.lift = cupLift * (1 - e); cup.pos = [mcx, cupUp[1] + (mcy - cupUp[1]) * e]; cup.shadowH = cup.lift + cup.h * .5;
+          if (k >= 1) { phase = 'idle'; cup.lift = 0; cup.pos = [mcx, mcy]; cup.shadowH = cup.h; }
         }
         // the faces change the whole time until the bubble is sent
         if (!canvas._locked && T - faceT > .07) { faceT = T; dice.forEach(o => R3.setDieTop(o.mesh, 1 + Math.floor(Math.random() * 6))); }
@@ -2153,7 +2359,7 @@ const SHAPE = (() => {
       dice.forEach((o, i) => { const b = bodies[i]; o.pos = [b.p[0], b.p[1]]; o.lift = b.p[2]; o.rot = b.R; o.shadowH = b.p[2] + b.s; o.shadowR = b.s * (1.4 - Math.min(.5, b.p[2] / 300)); });
       render();
     };
-    canvas._advance = advance; canvas._phase = () => phase;
+    canvas._advance = advance; canvas._phase = () => phase; canvas._bodies = bodies; canvas._sim = null;
     let last = performance.now();
     const frame = now => {
       if (canvas._token !== token) return;
@@ -2162,16 +2368,20 @@ const SHAPE = (() => {
       canvas._fast = phase !== 'idle'; advance(dt); if (phase === 'idle' && canvas._fast !== false) { canvas._fast = false; render(); }
       if (phase !== 'idle' || !canvas._locked) { if (canvas._rolling) requestAnimationFrame(frame); }
     };
-    canvas._bodies = bodies;
     requestAnimationFrame(frame);
   }
+  const startRoll = (canvas, seed) => canvas.dataset.key === 'troll' ? startTableRoll(canvas, seed) : startCupRoll(canvas, seed);
   window.CN_rollSeek = (canvas, seconds) => { canvas._rolling = false; canvas._advance(seconds); };
   window.CN_rollStart = (canvas, seed) => { canvas._rolling = false; startRoll(canvas, seed); canvas._rolling = false; };
-  // Send: the faces stop changing and the hand is on the up faces
+  // Send. The cup roll: the throw is finished if it is not already (a Send mid-shake is not a real
+  // state; the shelf is sunk until the cup is down) and the hand is the up faces. The table roll:
+  // the faces stop changing and the hand is on the up faces.
   function lockRoll(canvas) {
     const dice = canvas._objs.filter(o => o.die), bodies = canvas._bodies; if (!bodies) return;
     canvas._locked = true;
-    dice.forEach((o, i) => { const uf = PHYS.upFace(bodies[i]); R3.setDieUp(o.mesh, uf.axis, uf.sign, o.value); });
+    if (canvas._sim) { let guard = 80; while (canvas._sim.phase() !== 'idle' && guard-- > 0) canvas._advance(.1); canvas._rolling = false; }
+    else dice.forEach((o, i) => { const uf = PHYS.upFace(bodies[i]); R3.setDieUp(o.mesh, uf.axis, uf.sign, o.value); });
+    canvas._fast = false;
     R3.render(canvas, canvas._W, canvas._H, canvas._objs, Math.min(2, window.devicePixelRatio || 1));
   }
 
@@ -2345,8 +2555,8 @@ const SHAPE = (() => {
     for (let i = 1; i < n; i++) { const f = frames[i]; objs.push(cupObj(22, COUNTS[i], i * 7, f[0] + f[2] / 2, f[1] + 26, { out: i === 5 && n === 6 })); }
     const mcx = my[0] + my[2] / 2, mcy = my[1] + (short ? 30 : 34);
     HANDS[0].forEach((f, k) => { const a = -Math.PI / 2 + k * Math.PI * 2 / 5 + (Hh(k, 71, 977) - .5) * .18, rr = ring * (1 + (Hh(k, 72, 977) - .5) * .1); objs.push(dieObj(d, f, 60 + k, mcx + rr * Math.cos(a), mcy + rr * Math.sin(a), (Hh(k, 73, 977) - .5) * .5)); });
-    objs.push(cupObj(myR, 5, 3, mcx, mcy, { peekable: true, ring, tilt: o.peek && !roll ? peekTilt(myR, PEEK_ANGLE) : null }));
-    board += scene3d(inner, boardH, objs, roll ? 'roll' : 'table');
+    objs.push(cupObj(myR, 5, 3, mcx, mcy, { peekable: true, inner: { dome: CUPROLL.DOME * d }, ring, tilt: o.peek && !roll ? peekTilt(myR, PEEK_ANGLE) : null }));
+    board += scene3d(inner, boardH, objs, roll ? (o.tableRoll ? 'troll' : 'roll') : 'table');
     const nameBlock = `<div class="t-name" style="font-size:${short ? 12 : 14}px">${NAMES[0]}</div>${turnSeat === 0 ? '<span class="turn" style="width:44px"></span>' : '<span class="turn" style="visibility:hidden;width:44px"></span>'}`;
     board += short ? at(my, `<div class="abs" style="left:calc(50% - ${(myR + 64).toFixed(0)}px);top:50%;transform:translateY(-50%);display:flex;flex-direction:column;align-items:center;gap:4px">${nameBlock}</div>`) : at(my, `<div class="myband" style="justify-content:flex-end;padding-bottom:4px">${nameBlock}</div>`);
     for (let i = 1; i < n; i++) board += at(frames[i], seatBadge(view, i, turnSeat === i, 72, i === 5 && n === 6));
@@ -2381,13 +2591,14 @@ const SHAPE = (() => {
     put('lay-phones', [['se', 375, 541], ['expanded', 390, 718], ['max', 430, 830], ['collapsed', 390, 340]].map(([k, w, h]) => `<div class="half"><div class="scaled" style="width:${px(w * .55)};height:${px(h * .55)}"><div style="transform:scale(.55);transform-origin:0 0">${screen(Object.assign({}, S, { state: S.state === 'roll' ? 'table' : S.state }), w, h)}</div></div><div class="cap" style="text-align:center">${SIZES[k].name}</div></div>`).join(''));
     put('roll-main', screen(Object.assign({}, S, { state: 'roll' }), 390, 718));
     put('roll-coll', screen(Object.assign({}, S, { state: 'roll' }), 390, 340));
+    put('roll-table', screen(Object.assign({}, S, { state: 'roll' }), 390, 718, { tableRoll: true }));
     saveSpec('cn.lay', S);
     flushScenes();
   }
   document.addEventListener('click', e => {
     const b = e.target.closest('[data-roll]');
     if (b) { const c = b.closest('.scr').querySelector('canvas.scene3d'); if (!c) return; if (b.dataset.roll === 'send') lockRoll(c); else { c._rolling = false; setTimeout(() => startRoll(c, 7 + Math.floor(Math.random() * 1000)), 40); } return; }
-    const c = e.target.closest('canvas.scene3d'); if (c && c._objs && c._objs.some(o => o.peekable) && c.dataset.key !== 'roll') { c._open = !c._open; animatePeek(c, c._open); }
+    const c = e.target.closest('canvas.scene3d'); if (c && c._objs && c._objs.some(o => o.peekable) && (c.dataset.key === 'table' || (c._phase && c._phase() === 'idle'))) { c._open = !c._open; animatePeek(c, c._open); }
   });
   const syncLay = mixer('lay-mixer', LAY_FIELDS, LAY, drawLayout);
   drawLayout();
