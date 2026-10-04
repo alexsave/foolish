@@ -258,6 +258,11 @@ td code{white-space:nowrap}
 canvas.mat{width:56px;height:56px;border-radius:6px;border:1px solid rgba(0,0,0,.5);box-shadow:0 2px 6px rgba(0,0,0,.5);flex:none}
 .cands{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;margin-top:16px}
 section[hidden]{display:none}
+.tstage{padding:0;display:block;max-width:100%}
+.tstage .tb-ov{position:absolute;inset:0;z-index:2;pointer-events:none;display:block}
+.tstage .tb-pieces{position:absolute;left:0;right:0;z-index:3;display:flex;align-items:flex-end}
+.bank-w{grid-template-columns:repeat(auto-fill,minmax(316px,1fr))}
+.bk .tstage{border-radius:6px;box-shadow:none;margin:0}
 </style>
 </head>
 <body>
@@ -288,6 +293,9 @@ section[hidden]{display:none}
   <radialGradient id="g-topcrown" cx=".5" cy=".5" r=".5" fx=".36" fy=".32"><stop offset="0" stop-color="#fff" stop-opacity=".28"/><stop offset=".55" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".38"/></radialGradient>
   <!-- strike wear: grime at a corner, feathered into the face -->
   <radialGradient id="g-wear"><stop offset="0" stop-color="#4e3f26"/><stop offset=".45" stop-color="#4e3f26" stop-opacity=".55"/><stop offset="1" stop-color="#4e3f26" stop-opacity="0"/></radialGradient>
+  <!-- iron: a nail head lit top-left, and the rust that runs from it -->
+  <radialGradient id="g-nail" cx=".4" cy=".38" r=".7"><stop offset="0" stop-color="#8e8a80"/><stop offset=".5" stop-color="#4a4844"/><stop offset="1" stop-color="#1c1b19"/></radialGradient>
+  <radialGradient id="g-rust" cx=".5" cy=".28" r=".62"><stop offset="0" stop-color="#8a4a1c" stop-opacity=".95"/><stop offset=".5" stop-color="#6a3614" stop-opacity=".55"/><stop offset="1" stop-color="#4a2a12" stop-opacity="0"/></radialGradient>
   <radialGradient id="g-badge" cx=".35" cy=".30" r=".8">
     <stop offset="0" stop-color="#fff" stop-opacity=".30"/><stop offset=".6" stop-color="#fff" stop-opacity="0"/>
     <stop offset="1" stop-color="#000" stop-opacity=".35"/></radialGradient>
@@ -301,7 +309,7 @@ section[hidden]{display:none}
 </svg>
 
 <nav class="tabs" role="tablist">
-  <button data-tab="dice" role="tab">Dice</button><button data-tab="cup" role="tab">Cup</button>
+  <button data-tab="dice" role="tab">Dice</button><button data-tab="cup" role="tab">Cup</button><button data-tab="table" role="tab">Table</button>
   <button data-tab="frames" role="tab">Frames</button><button data-tab="palette" role="tab">Palette</button>
   <button data-tab="light" role="tab">Light and water</button><button data-tab="materials" role="tab">Materials</button>
   <button data-tab="plates" role="tab">Plates and bands</button><button data-tab="type" role="tab">Type</button>
@@ -454,13 +462,8 @@ The bake times are measured live, below each tile.</p>
 <!-- ============================================================ 6 -->
 <section id="cup" data-tab="cup">
 <h2>The cup</h2>
-<p class="lede">A cup is what it is made of, the line of its side, how much the sea has grown on it, and how it tells you how many dice are under it. Round two settled some of it.
-<b>Locked:</b> a round crown, no lip (the side runs to the mouth), and the count stamped on the cup itself.
-<b>Open:</b> the material, verdigris, dark bronze or reef; the side, squat, bell or straight; and the growth.
-Two views of every cup: from the side, as the roll and the reveal show it, and from above, as a table seen top-down would.</p>
-
-<h3>The mixer</h3>
-<div class="mixer" id="cup-mixer"></div>
+<p class="lede">Settled in round three. <b>Locked:</b> verdigris, a squat side (wider than tall, the shaker), a round crown, no lip, no growth, and the count stamped on the cup itself.
+Two views: from the side, as the roll and the reveal show it, and from above, as a table seen top-down would.</p>
 <div class="row">
   <div class="col">
     <div class="stage short" style="gap:12px">
@@ -473,29 +476,48 @@ Two views of every cup: from the side, as the roll and the reveal show it, and f
     <div class="kv" id="cx-spec"></div>
   </div>
   <div class="col w">
-    <div class="h4">What to look for <span class="pill n">from above</span></div>
-    <p class="why" style="max-width:60ch">From above a cup is two circles: the crown, and the ring of side around it that falls away from the light. A squat cup has a wide ring and a small crown; a straight one is almost all crown. The count sits on the crown, so the crown has to be big enough to carry a numeral at 32.</p>
-    <p class="why" style="max-width:60ch">The growth is rebuilt: barnacles come in colonies now, a chalky patch of cement with the old shells at its middle and the young ones round the edge, each shell a cone with its plates, its dark opening and a lit rim. From above the growth lives on the ring; from the side, at the mouth.</p>
-    <p class="why" style="max-width:60ch">Reef is the verdigris under heavy growth whatever the growth setting says, because that is what reef means.</p>
+    <div class="h4">What was decided, and why it holds <span class="pill n">done</span></div>
+    <p class="why" style="max-width:60ch">From above a squat cup is a wide ring of side around a crown just big enough to carry the count at 32. From the side it is the darkest shape on the deck, and the bloom of verdigris is what keeps it from being a hole in the picture.</p>
+    <p class="why" style="max-width:60ch">No growth on the cup: the crust belongs to the table and its edges (the table tab), so the cups read clean against it. The barnacle bake stays for the plate and the table.</p>
+    <p class="why" style="max-width:60ch">The Fell face’s 5 looks like a long s at 32; the fallback is on the Open tab.</p>
+  </div>
+</div>
+<div class="note" style="max-width:73ch"><b>Port.</b> <code>CupShape</code> with the squat side (crown inset 18%, height 0.9 of the width, a round crown); an <code>ImagePaint</code> of the verdigris bake under two <code>LinearGradient</code>s; the count is <code>Text</code> on the cup. The top view is two <code>Circle</code>s with two <code>RadialGradient</code>s.</div>
+</section>
+
+<!-- ============================================================ 6b -->
+<section id="table" data-tab="table">
+<h2>The table</h2>
+<p class="lede">What the dice land on. Nine surfaces, all baked by the one stone generator with three new passes (planks, a weave, a wet sheen): the deck from the first proposal, then rotting wet wood, tarred planks, a barnacled hull, drowned sailcloth, the sea floor, cursed iron, wet slate, and the old green baize gone to the sea.
+Then what runs round the table’s edge, and what is driven into it. The stage is a phone’s width with the die and the cup already decided, so a surface is judged by whether they still read on it.</p>
+
+<h3>The mixer</h3>
+<div class="mixer" id="table-mixer"></div>
+<div class="row">
+  <div class="col">
+    <div class="stage tstage" id="tb-stage"></div>
+    <div class="kv" id="tb-spec"></div>
+  </div>
+  <div class="col w">
+    <div class="h4">What to look for <span class="pill n">contrast, then character</span></div>
+    <p class="why" style="max-width:60ch">The die is pale and the cup is dark, so the surface has to sit between them: darker than bone, lighter than the verdigris’s shadow side. A surface that swallows the cup is out, however good it looks alone. Wood grain running one way helps: it gives the eye a direction, and the dice sit across it.</p>
+    <p class="why" style="max-width:60ch">An edge is a frame. Nails and bronze binding say the table was built; rope and crust say where it has been; a coaming says it is a deck. One of them, not two.</p>
+    <p class="why" style="max-width:60ch">Fixings go into the planks, so they only show on the wooden surfaces; on stone or cloth they are left out.</p>
   </div>
 </div>
 
-<h3>Materials</h3>
-<p class="why" style="max-width:73ch">Three bakes, all the plate’s generator: verdigris as it is, dark bronze with the bloom held back, and reef with the bloom and chalk at full. Each shown from the side and from above. Click to send to the mixer.</p>
-<div class="bank" id="cup-mats"></div>
+<h3>Surfaces</h3>
+<p class="why" style="max-width:73ch">Each at the phone’s magnification (one point per texel), with a die and a cup on it. Click to send to the mixer.</p>
+<div class="bank bank-w" id="table-mats"></div>
 
-<h3>Sides</h3>
-<p class="why" style="max-width:73ch">Squat (wider than tall, the shaker), bell (convex) and straight (a cylinder, near enough), each from the side and from above at 44 and 32.</p>
-<div class="bank" id="cup-shapes"></div>
+<h3>Edges</h3>
+<p class="why" style="max-width:73ch">Six, each on the mixer’s surface: nothing; iron nails; a twisted rope; a strip of bronze binding with its own rivets; a coaming, the raised plank lip of a deck; and a crust of barnacles grown along the edge.</p>
+<div class="bank bank-w" id="table-edges"></div>
 
-<h3>Growth</h3>
-<p class="why" style="max-width:73ch">None, light (the mouth and the lower third) or heavy (the whole cup), each from the side, from above, and lifted.</p>
-<div class="bank" id="cup-crusts"></div>
-
-<h3>Candidates</h3>
-<p class="why" style="max-width:73ch">Everything still on the table: the three materials by the three sides, in the mixer’s growth. Click one to load it into the mixer.</p>
-<div class="cands" id="cup-cands"></div>
-<div class="note" style="max-width:73ch"><b>Port.</b> One <code>CupShape</code> whose <code>path(in:)</code> takes the side; the material is an <code>ImagePaint</code> of its bake under two <code>LinearGradient</code>s; the crust is the crust bake (baked to PNG for its alpha) under a <code>.mask</code> and clipped; the count is <code>Text</code> on the cup. The top view is two <code>Circle</code>s with two <code>RadialGradient</code>s and the same crust under a radial mask.</div>
+<h3>Fixings</h3>
+<p class="why" style="max-width:73ch">What holds the planks down: nothing, hand-forged nails in pairs along each plank, or those nails with the rust running from them.</p>
+<div class="bank bank-w" id="table-fix"></div>
+<div class="note" style="max-width:73ch"><b>Port.</b> Surfaces: the one generator, a <code>Palette</code> each, baked as the felt is and drawn by <code>FeltBackground</code> at one point per texel, bottom-anchored. Edges: an overlay <code>Canvas</code> (or a <code>Shape</code> per kind) inset from the frame: nail heads are seven-point <code>Path</code>s with a <code>RadialGradient</code>, the rope is three strokes (a body, a dashed twist, a shadow), the binding is the verdigris paint in a 10pt frame with rivets, the coaming is the wood paint in a 12pt frame with an inner shadow, the crust is the crust bake under an edge mask. Fixings: the same nail heads at seeded positions along the plank centres.</div>
 </section>
 
 <!-- ============================================================ 7 -->
@@ -788,7 +810,10 @@ const TEX = (() => {
        staves  a sawtooth across u: the boundaries between planks
      Port: one Swift generator, one Palette struct with optionals.         */
   function stone(P) {
-    return (u, v) => {
+    return (u0, v0) => {
+      // planks: each plank is a strip across u with its own slice of the grain (v shifted by the plank's hash)
+      let u = u0, v = v0, pi = 0;
+      if (P.planks) { pi = Math.floor(u0 * P.planks); v = (v0 + hash(pi, 0, P.seed + 3) * .61) % 1; }
       const cl = (fbm(u, v, P.cloudX || 4, P.cloudY || 4, 4, P.seed) - .5) * 2 * (P.cloud || 0);
       const gr = (fbm(u, v, P.grainX || 64, P.grainY || 64, 2, P.seed + 7) - .5) * 2 * (P.grain || 0);
       const t = P.tilt || [1, 1, 1];
@@ -827,6 +852,22 @@ const TEX = (() => {
         const f = (u * P.staves) % 1, d = Math.abs(f - .5) * 2;
         const k = sstep(.9, 1, d) * 46 + sstep(.8, .9, d) * 10;
         r -= k; g -= k; b -= k;
+      }
+      if (P.weave) {  // weft and warp: two fine noises, each stretched the other way
+        const w1 = fbm(u, v, 96, 3, 2, P.seed + 43), w2 = fbm(u, v, 3, 96, 2, P.seed + 47);
+        const k = ((w1 - .5) + (w2 - .5)) * P.weave; r += k; g += k; b += k;
+      }
+      if (P.sheen) {  // wet: a slow patch that reflects the one light
+        const k = sstep(P.sheenLo || .55, P.sheenHi || .85, fbm(u, v, 3, 3, 3, P.seed + 53)) * (P.sheenAmt || .3);
+        r = mix(r, P.sheen[0], k); g = mix(g, P.sheen[1], k); b = mix(b, P.sheen[2], k);
+      }
+      if (P.planks) {  // the gap between planks (warped a little, no saw is straight), the lit edge beside it, and the plank's end
+        const warp = (fbm(u0, v0, 2, 12, 2, P.seed + 59) - .5) * .02;
+        const f = (((u0 * P.planks + warp) % 1) + 1) % 1, d = Math.abs(f - .5) * 2;
+        const gap = sstep(.9, .985, d), lit = sstep(.78, .9, d) * (1 - gap) * 9;
+        r = mix(r, 6, gap) + lit; g = mix(g, 8, gap) + lit; b = mix(b, 6, gap) + lit;
+        const e = hash(pi, 2, P.seed + 5), de = Math.abs(((((v0 - e) % 1) + 1.5) % 1) - .5);
+        if (de < .006) { r -= 52; g -= 52; b -= 50; } else if (de < .014) { r += 10; g += 9; b += 6; }
       }
       return [r, g, b];
     };
@@ -939,12 +980,29 @@ const TEX = (() => {
                  base: [206, 196, 176], cloud: 10, tilt: [1, .9, .7], grain: 6, pore: 42, poreCells: 40, poreLo: .62, poreHi: .78, stain: [154, 134, 112], stainAmt: .25, seed: 43 },
   };
   const CUP_MATS = {
-    verdigris: { name: 'Verdigris',   why: 'bronze gone green in patches, rust where it has not', verd: VERD },
-    bronze:    { name: 'Dark bronze', why: 'the same bronze with the bloom held back', verd: Object.assign({}, VERD, { bloomAmt: .35, chalkAmt: .3, rustAmt: .5, seed: 38 }) },
-    reef:      { name: 'Reef',        why: 'the verdigris under a thick coat of growth', verd: Object.assign({}, VERD, { bloomAmt: 1, chalkAmt: 1, chalkLo: .5, seed: 40 }), heavy: true },
+    verdigris: { name: 'Verdigris', why: 'bronze gone green in patches, rust where it has not', verd: VERD },
   };
 
-  return { bake, deck, verd, verdWith, stone, sea, crust, bakes, hash, DECK, VERD, SEA, CRUST, DIE_MATS, CUP_MATS };
+  const TABLE_MATS = {
+    deck:      { name: 'The deck',          why: 'the first proposal: the crusted floor of the hold, lit from above', deck: true },
+    rotwood:   { name: 'Rotting wet wood',  why: 'waterlogged planks, the grain open, rot blooming black-green, wet where the light finds it',
+                 base: [62, 50, 38], cloud: 12, tilt: [1, .9, .75], grain: 12, grainX: 40, grainY: 3, vein: [30, 22, 14], veinX: 36, veinY: 2, veinLo: .88, veinAmt: .5,
+                 stain: [26, 36, 28], stainLo: .5, stainHi: .8, stainCells: 4, stainAmt: .55, pore: 30, poreCells: 70, poreLo: .86, poreHi: .93, sheen: [70, 86, 86], sheenAmt: .25, planks: 5, seed: 71 },
+    tar:       { name: 'Tarred planks',     why: 'pitch over the wood: black, and wet where the light finds it',
+                 base: [26, 24, 20], cloud: 8, grain: 6, grainX: 40, grainY: 3, vein: [12, 10, 8], veinX: 36, veinY: 2, veinLo: .9, veinAmt: .4, sheen: [64, 70, 68], sheenLo: .6, sheenHi: .9, sheenAmt: .5, planks: 5, seed: 73 },
+    hull:      { name: 'Barnacled hull',    why: 'the rotting planks under a colony of growth', like: 'rotwood', crust: true },
+    sailcloth: { name: 'Drowned sailcloth', why: 'a sail spread for a table, the weave gone grey, stained in brown rings',
+                 base: [112, 108, 88], cloud: 12, tilt: [1, .95, .8], grain: 4, weave: 16, stain: [64, 54, 36], stainLo: .5, stainHi: .8, stainCells: 3, stainAmt: .45, sheen: [90, 100, 96], sheenAmt: .15, pore: 12, poreCells: 80, poreLo: .88, seed: 79 },
+    seafloor:  { name: 'Sea floor',         why: 'silt and sand in ripples, shell grit, nothing to grip',
+                 base: [66, 74, 62], cloud: 12, tilt: [.9, 1, .8], grain: 8, grainX: 90, grainY: 90, growth: [96, 104, 86], growthX: 0, growthY: 16, growthWarp: 1.4, growthAmt: .35, growthLo: .72, fleck: [160, 166, 140], fleckLo: .9, fleckAmt: .5, stain: [40, 50, 42], stainAmt: .3, seed: 83 },
+    iron:      { name: 'Cursed iron',       why: 'black plate, the rust blooming through',
+                 base: [40, 40, 38], cloud: 10, grain: 6, grainX: 3, grainY: 120, stain: [112, 60, 30], stainLo: .55, stainHi: .85, stainCells: 4, stainAmt: .6, fleck: [150, 90, 50], fleckLo: .9, fleckAmt: .35, sheen: [70, 76, 78], sheenAmt: .2, seed: 67 },
+    slate:     { name: 'Wet slate',         why: 'riven stone, blue-grey, the cleavage lines pale, wet in patches',
+                 base: [48, 54, 58], cloud: 10, tilt: [.9, 1, 1.05], grain: 6, vein: [92, 100, 104], veinX: 14, veinY: 2, veinLo: .9, veinAmt: .35, crack: [22, 26, 28], crackLo: .965, crackCells: 5, crackOct: 4, crackAmt: .8, sheen: [80, 92, 96], sheenAmt: .3, seed: 89 },
+    baize:     { name: 'Drowned baize',     why: 'the old casino green, rotted bald in patches and silted over',
+                 base: [34, 58, 44], cloud: 8, tilt: [.85, 1, .72], grain: 4, grainX: 64, grainY: 48, stain: [62, 52, 38], stainLo: .55, stainHi: .8, stainCells: 3, stainAmt: .6, pore: 26, poreCells: 50, poreLo: .84, poreHi: .92, fleck: [110, 116, 98], fleckLo: .9, fleckAmt: .3, seed: 97 },
+  };
+  return { bake, deck, verd, verdWith, stone, sea, crust, bakes, hash, DECK, VERD, SEA, CRUST, DIE_MATS, CUP_MATS, TABLE_MATS };
 })();
 
 /* =====================================================================
@@ -990,6 +1048,7 @@ const SHAPE = (() => {
     const j = (i, amt) => (H(i, seed * 7 + 3, 977) - .5) * 2 * amt * s;
     let pts, r;
     switch (kind) {
+      case 'sharp': return `M0,0 L${s},0 L${s},${s} L0,${s} Z`;
       case 'stone': pts = [[0, 0], [s, 0], [s, s], [0, s]]; r = s * .5; break;
       case 'chamfer': { const c = s * .2; pts = [[c, 0], [s - c, 0], [s, c], [s, s - c], [s - c, s], [c, s], [0, s - c], [0, c]]; r = s * .02; break; }
       case 'hand': pts = [[j(1, .07), j(2, .07)], [s + j(3, .07), j(4, .07)], [s + j(5, .07), s + j(6, .07)], [j(7, .07), s + j(8, .07)]]; r = s * .12; break;
@@ -1019,7 +1078,7 @@ const SHAPE = (() => {
   // the face alone, in a 0..s box (no outer svg): used by die() and by the tumble
   function faceBody(face, s, o = {}) {
     const S = Object.assign({}, DIE, o, DIE_LOCKED), seed = (o.seed || 0) + 1, uid = 'u' + (uidN++);
-    const d = diePath(S.shape, s, seed), r = s * .18;
+    const d = diePath(o.sharp ? 'sharp' : S.shape, s, seed), r = o.sharp ? 0 : s * .18;
     let m = `<clipPath id="c${uid}"><path d="${d}"/></clipPath><g clip-path="url(#c${uid})">`;
     m += `<path d="${d}" fill="url(#p-m-${S.material})"/><path d="${d}" fill="url(#g-face)"/>`;
     // STRIKE WEAR. A die hits the table on its corners and edges, so that is where the bone
@@ -1038,8 +1097,10 @@ const SHAPE = (() => {
         m += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#3d3120" stroke-width="${s * .045}" stroke-linecap="round" opacity="${(op * 1.2).toFixed(2)}"/>`;
       });
     }
-    m += `<path d="${d}" fill="none" stroke="url(#g-bevel)" stroke-width="${s * .1}"/>`;
-    m += `<path d="${d}" fill="none" stroke="rgba(0,0,0,.4)" stroke-width="${Math.max(.6, s * .03) * 2}"/>`;
+    if (!o.sharp) {
+      m += `<path d="${d}" fill="none" stroke="url(#g-bevel)" stroke-width="${s * .1}"/>`;
+      m += `<path d="${d}" fill="none" stroke="rgba(0,0,0,.4)" stroke-width="${Math.max(.6, s * .03) * 2}"/>`;
+    }
     m += `</g>`;
     const dia = s * PIPSIZE[S.pipSize][face === 1 ? 1 : 0], jit = s * JITTER[S.jitter];
     for (const [x, y] of pips(face)) {
@@ -1061,29 +1122,40 @@ const SHAPE = (() => {
     }
     return m + `</svg>`;
   }
-  // one frame of the roll: three faces of a cube, lit from the top-left
+  // one frame of the roll: a cube. The three faces are drawn sharp so they meet along the
+  // cube's edges with no gap, the whole is clipped to a rounded hexagon so the cube's own corners
+  // are soft, and the three edges that meet at the near corner are drawn as a lit ridge (top and
+  // left, toward the light) and a dark crease (right, away from it).
   function tumble(top, left, right, s = 44, rot = -14, o = {}) {
-    const W = s * 2.6, k = .866, sd = o.seed || 0;
+    const W = s * 2.6, k = .866, sd = o.seed || 0, uid = 'u' + (uidN++);
+    const hex = [[0, -s], [k * s, -s / 2], [k * s, s / 2], [0, s], [-k * s, s / 2], [-k * s, -s / 2]];
     let m = `<svg class="die" width="${W}" height="${W}" viewBox="${-W / 2} ${-W / 2} ${W} ${W}">`;
-    m += `<g transform="rotate(${rot})" filter="url(#f-shadow)">`;
-    m += `<g transform="matrix(${k},.5,${-k},.5,0,${-s})">${faceBody(top, s, Object.assign({}, o, { seed: 101 + sd }))}</g>`;
-    m += `<g transform="matrix(${k},.5,0,1,${-k * s},${-s / 2})">${faceBody(left, s, Object.assign({}, o, { seed: 102 + sd }))}<path d="${diePath('square', s, 103)}" fill="#06181a" opacity=".32"/></g>`;
-    m += `<g transform="matrix(${k},-.5,0,1,0,0)">${faceBody(right, s, Object.assign({}, o, { seed: 103 + sd }))}<path d="${diePath('square', s, 104)}" fill="#03090a" opacity=".55"/></g>`;
-    return m + `</g></svg>`;
+    m += `<defs><clipPath id="h${uid}"><path d="${roundedPoly(hex, s * .13)}"/></clipPath></defs>`;
+    m += `<g transform="rotate(${rot})" filter="url(#f-shadow)"><g clip-path="url(#h${uid})">`;
+    m += `<g transform="matrix(${k},.5,${-k},.5,0,${-s})">${faceBody(top, s, Object.assign({}, o, { seed: 101 + sd, sharp: true }))}</g>`;
+    m += `<g transform="matrix(${k},.5,0,1,${-k * s},${-s / 2})">${faceBody(left, s, Object.assign({}, o, { seed: 102 + sd, sharp: true }))}<rect width="${s}" height="${s}" fill="#06181a" opacity=".3"/></g>`;
+    m += `<g transform="matrix(${k},-.5,0,1,0,0)">${faceBody(right, s, Object.assign({}, o, { seed: 103 + sd, sharp: true }))}<rect width="${s}" height="${s}" fill="#03090a" opacity=".5"/></g>`;
+    // the edges: a rounded die catches the light along the edges toward the lamp
+    const lw = s * .05;
+    m += `<path d="M0,0 L0,${s}" stroke="rgba(255,250,232,.5)" stroke-width="${lw}" stroke-linecap="round"/>`;
+    m += `<path d="M0,0 L${-k * s},${-s / 2}" stroke="rgba(255,250,232,.42)" stroke-width="${lw}" stroke-linecap="round"/>`;
+    m += `<path d="M0,0 L${k * s},${-s / 2}" stroke="rgba(0,6,4,.45)" stroke-width="${lw * .8}" stroke-linecap="round"/>`;
+    m += `<path d="M${-k * s},${-s / 2} L0,${-s} L${k * s},${-s / 2}" fill="none" stroke="rgba(255,250,232,.28)" stroke-width="${lw * .8}" stroke-linecap="round"/>`;
+    m += `<path d="M${-k * s},${-s / 2} L${-k * s},${s / 2} L0,${s} L${k * s},${s / 2} L${k * s},${-s / 2}" fill="none" stroke="rgba(0,6,4,.5)" stroke-width="${lw}" stroke-linecap="round"/>`;
+    m += `</g><path d="${roundedPoly(hex, s * .13)}" fill="none" stroke="rgba(0,0,0,.5)" stroke-width="${Math.max(.6, s * .025)}"/></g>`;
+    return m + `</svg>`;
   }
 
   /* ---- the cup ------------------------------------------------------- */
   const CUP_SHAPES = {
-    squat:    { name: 'Squat',    why: 'wider than tall: a shaker, not a tumbler', ti: .18, aspect: .9, side: 'line', crown: .72 },
-    bell:     { name: 'Bell',     why: 'the sides convex, a bellied cup', ti: .24, aspect: 1.1, side: 'out', crown: .62 },
-    straight: { name: 'Straight', why: 'a cylinder, near enough', ti: .03, aspect: 1.1, side: 'line', crown: .92 },
+    squat: { name: 'Squat', why: 'wider than tall: a shaker, not a tumbler', ti: .18, aspect: .9, side: 'line', crown: .72 },
   };
   const CROWNS = { round: { name: 'Round', why: 'a soft dome: takes the highlight' } };
   const LIPS = { none: { name: 'None', why: 'the side runs to the mouth' } };
-  const CRUSTS = { none: { name: 'None' }, light: { name: 'Light', why: 'the lower third' }, heavy: { name: 'Heavy', why: 'the whole cup' } };
+  const CRUSTS = { none: { name: 'None' } };
   const BADGES = { stamp: { name: 'Stamped', why: 'the numeral on the cup itself' } };
-  const CUP = { material: 'verdigris', shape: 'squat', crown: 'round', lip: 'none', crust: 'light', badge: 'stamp' };
-  const CUP_LOCKED = { crown: 'round', lip: 'none', badge: 'stamp' };
+  const CUP = { material: 'verdigris', shape: 'squat', crown: 'round', lip: 'none', crust: 'none', badge: 'stamp' };
+  const CUP_LOCKED = { material: 'verdigris', shape: 'squat', crown: 'round', lip: 'none', crust: 'none', badge: 'stamp' };
   function cupPath(S, w, h) {
     const sh = CUP_SHAPES[S.shape], ti = w * sh.ti, cr = h * .12;
     // the left side runs from the mouth up to the crown (dir +1), the right side from the crown down to the mouth (dir -1)
@@ -1108,12 +1180,6 @@ const SHAPE = (() => {
   function badge(n, s = 20, kind = 'disc') {
     const pad = 3, W = s + pad * 2;
     let m = `<svg class="die" width="${W}" height="${W}" viewBox="${-pad} ${-pad} ${W} ${W}"><g filter="url(#f-shadow)">`;
-    if (kind === 'tag') {
-      m += `<rect x="${s * .08}" y="${s * .14}" width="${s * .84}" height="${s * .78}" rx="${s * .08}" fill="url(#p-m-c-bronze)"/><rect x="${s * .08}" y="${s * .14}" width="${s * .84}" height="${s * .78}" rx="${s * .08}" fill="url(#g-face)"/><rect x="${s * .08}" y="${s * .14}" width="${s * .84}" height="${s * .78}" rx="${s * .08}" fill="none" stroke="rgba(0,0,0,.55)"/>`;
-      m += `<circle cx="${s / 2}" cy="${s * .06}" r="${s * .07}" fill="#2a2416" stroke="#9a8c66" stroke-width=".6"/>`;
-      m += `<text x="${s / 2}" y="${s * .8}" text-anchor="middle" font-family="'IM Fell English',serif" font-size="${s * .66}" fill="#e6ead8">${n}</text></g></svg>`;
-      return m;
-    }
     m += `<circle cx="${s / 2}" cy="${s / 2}" r="${s / 2}" fill="url(#p-m-fresh)"/><circle cx="${s / 2}" cy="${s / 2}" r="${s / 2}" fill="url(#g-badge)"/>`;
     m += `<circle cx="${s / 2}" cy="${s / 2}" r="${s / 2 - .5}" fill="none" stroke="rgba(0,0,0,.5)" stroke-width="1"/>`;
     m += `<text x="${s / 2}" y="${s * .74}" text-anchor="middle" font-family="'IM Fell English',serif" font-size="${s * .78}" fill="#141a16">${n}</text></g></svg>`;
@@ -1259,7 +1325,7 @@ const SHAPE = (() => {
     wear: ['Strike wear', { light: 'Light', marked: 'Marked', none: 'None' }],
   };
   const CUP_FIELDS = {
-    material: ['Material', names(TEX.CUP_MATS)], shape: ['Side', names(SHAPE.CUP_SHAPES)], crust: ['Growth', names(SHAPE.CRUSTS)],
+
   };
   function mixer(id, fields, spec, onchange) {
     const el = document.getElementById(id);
@@ -1271,10 +1337,10 @@ const SHAPE = (() => {
   const specLine = (spec, locked = {}) => Object.entries(spec).map(([k, v]) => `<b>${k}</b>: ${v}${locked[k] != null ? ' <i>(locked)</i>' : ''}`).join(' &middot; ');
   const saveSpec = (key, spec) => { try { localStorage.setItem(key, JSON.stringify(spec)); } catch (e) {} };
   const loadSpec = (key, spec, fields) => { try { const s = JSON.parse(localStorage.getItem(key)); if (s) for (const k of Object.keys(fields)) if (s[k] != null && fields[k][1][s[k]]) spec[k] = s[k]; } catch (e) {} };
-  loadSpec('cn.die', SHAPE.DIE, DIE_FIELDS); loadSpec('cn.cup', SHAPE.CUP, CUP_FIELDS);
+  loadSpec('cn.die', SHAPE.DIE, DIE_FIELDS);
 
   // a bank: a grid of picks; render it from the current spec, wire it once
-  const card = (k, v, inner, picked, extra = '') => `<div class="bk${picked ? ' picked' : ''}" data-k="${k}" tabindex="0" role="button"><div class="stage short bkst"><div class="band c" ${extra}>${inner}</div></div><div class="bkn">${v.name}</div>${v.why ? `<div class="bkw">${v.why}</div>` : ''}</div>`;
+  const card = (k, v, inner, picked, extra = '') => `<div class="bk${picked ? ' picked' : ''}" data-k="${k}" tabindex="0" role="button">${inner.startsWith('<div class="stage tstage"') ? inner : `<div class="stage short bkst"><div class="band c" ${extra}>${inner}</div></div>`}<div class="bkn">${v.name}</div>${v.why ? `<div class="bkw">${v.why}</div>` : ''}</div>`;
   function renderBank(id, items, draw, picked, extra) { put(id, Object.entries(items).map(([k, v]) => card(k, v, draw(k, v), picked === k, extra)).join('')); }
   function wire(id, onpick, sel = '.bk') {
     const el = document.getElementById(id);
@@ -1287,9 +1353,6 @@ const SHAPE = (() => {
 
   const DIE_CANDS = [];
   for (const [mk, mv] of Object.entries(TEX.DIE_MATS)) DIE_CANDS.push([mv.name, mv.why, { material: mk }]);
-  const CUP_CANDS = [];
-  for (const [mk, mv] of Object.entries(TEX.CUP_MATS)) for (const [sk, sv] of Object.entries(SHAPE.CUP_SHAPES))
-    CUP_CANDS.push([`${mv.name}, ${sv.name.toLowerCase()}`, mv.why, { material: mk, shape: sk }]);
   function renderCands(id, list, draw) {
     put(id, list.map(([n, why, spec], i) => `<div class="cand" data-i="${i}" tabindex="0" role="button"><div class="stage short bkst"><div class="band c" style="gap:1px">${draw(spec)}</div></div><div class="bkn">${n}</div><div class="bkw">${why}</div></div>`).join(''));
   }
@@ -1326,22 +1389,127 @@ const SHAPE = (() => {
       '<div style="text-align:center">' + C(44, { out: true, seed: 50 }) + '<div style="margin-top:-6px"><span class="stamp out">out</span></div></div>', '<div style="width:14px"></div>',
       '<div style="text-align:center">' + T(44, { out: true, seed: 50 }) + '<div style="margin-top:-2px"><span class="stamp out">out</span></div></div>'].join(''));
     put('cx-spec', `<b>cup</b> &middot; ${specLine(S, SHAPE.CUP_LOCKED)}`);
-    renderBank('cup-mats', TEX.CUP_MATS, k => matTile('c-' + k) + C(44, { material: k, count: 5, seed: 20 }) + T(44, { material: k, count: 5, seed: 20 }), S.material, 'style="align-items:center"');
-    copyMats('cup-mats');
-    renderBank('cup-shapes', SHAPE.CUP_SHAPES, k => C(44, { shape: k, count: 5, seed: 20 }) + T(44, { shape: k, count: 5, seed: 20 }) + C(32, { shape: k, count: 3, seed: 10 }) + T(32, { shape: k, count: 3, seed: 10 }), S.shape, 'style="align-items:center;gap:6px"');
-    renderBank('cup-crusts', SHAPE.CRUSTS, k => C(44, { crust: k, count: 5, seed: 20 }) + T(44, { crust: k, count: 5, seed: 20 }) + C(44, { crust: k, lift: true, seed: 40 }), S.crust, 'style="align-items:center"');
-    renderCands('cup-cands', CUP_CANDS, spec => C(44, Object.assign({ count: 5, seed: 20 }, spec)) + T(44, Object.assign({ count: 5, seed: 20 }, spec)) + C(44, Object.assign({ lift: true, seed: 40 }, spec)));
-    saveSpec('cn.cup', S);
   }
   const syncDie = mixer('dice-mixer', DIE_FIELDS, SHAPE.DIE, drawDice);
-  const syncCup = mixer('cup-mixer', CUP_FIELDS, SHAPE.CUP, drawCups);
   const setDie = (key, v) => { SHAPE.DIE[key] = v; syncDie(); drawDice(); };
-  const setCup = (key, v) => { SHAPE.CUP[key] = v; syncCup(); drawCups(); };
   wire('dice-mats', k => setDie('material', k));
   wire('dice-cands', i => { Object.assign(SHAPE.DIE, DIE_CANDS[+i][2]); syncDie(); drawDice(); }, '.cand');
-  for (const [id, key] of [['cup-mats', 'material'], ['cup-shapes', 'shape'], ['cup-crusts', 'crust']]) wire(id, k => setCup(key, k));
-  wire('cup-cands', i => { Object.assign(SHAPE.CUP, CUP_CANDS[+i][2]); syncCup(); drawCups(); }, '.cand');
   drawDice(); drawCups();
+
+  /* ---- the table ------------------------------------------------------ */
+  const tableCanvas = {};
+  for (const [k, P] of Object.entries(TEX.TABLE_MATS)) {
+    if (P.deck) { tableCanvas[k] = deck; continue; }
+    if (P.like) { tableCanvas[k] = tableCanvas[P.like]; continue; }
+    tableCanvas[k] = TEX.bake('table.' + k, 390, 390, TEX.stone(P));
+  }
+  for (const [k, c] of Object.entries(tableCanvas)) { root.setProperty('--tex-t-' + k, url(c)); if (k === 'rotwood' || k === 'tar') pattern('p-t-' + k, c, 390, 390); }
+  const TABLE = { surface: 'rotwood', edge: 'nails', fix: 'nails' };
+  const EDGES = {
+    none:    { name: 'None', why: 'the surface runs to the frame' },
+    nails:   { name: 'Iron nails', why: 'hand-forged heads along the edge, each a little off' },
+    rope:    { name: 'Rope', why: 'a twisted line laid round the table' },
+    binding: { name: 'Bronze binding', why: 'a strip of the cup’s verdigris, riveted' },
+    coaming: { name: 'Coaming', why: 'the raised plank lip of a deck, with its shadow' },
+    crust:   { name: 'Crust', why: 'barnacles grown along the edge' },
+  };
+  const FIXES = { none: { name: 'None' }, nails: { name: 'Nails', why: 'pairs along each plank' }, rust: { name: 'Nails, rusting', why: 'the rust running down the grain' } };
+  const TABLE_FIELDS = { surface: ['Surface', names(TEX.TABLE_MATS)], edge: ['Edge', names(EDGES)], fix: ['Fixings', names(FIXES)] };
+  loadSpec('cn.table', TABLE, TABLE_FIELDS);
+  const Hh = TEX.hash;
+  // a hand-forged nail head: a seven-point head, lit top-left, with or without its rust
+  function nail(x, y, r, seed, rust) {
+    let pts = '';
+    for (let i = 0; i < 7; i++) { const a = i / 7 * Math.PI * 2 + Hh(seed, 1, 601) * 6, rr = r * (.86 + .28 * Hh(i, seed, 601)); pts += `${(x + Math.cos(a) * rr).toFixed(1)},${(y + Math.sin(a) * rr).toFixed(1)} `; }
+    let m = '';
+    if (rust) m += `<ellipse cx="${x}" cy="${y + r * 2.2}" rx="${r * 2.1}" ry="${r * 4.6}" fill="url(#g-rust)" opacity="${(.7 + .3 * Hh(seed, 2, 601)).toFixed(2)}"/>`;
+    m += `<ellipse cx="${x + r * .3}" cy="${y + r * .45}" rx="${r * 1.05}" ry="${r * .95}" fill="rgba(0,0,0,.45)"/>`;
+    m += `<polygon points="${pts}" fill="url(#g-nail)" stroke="rgba(0,0,0,.65)" stroke-width="${Math.max(.6, r * .14)}" stroke-linejoin="round"/>`;
+    m += `<circle cx="${x - r * .3}" cy="${y - r * .3}" r="${r * .22}" fill="rgba(255,250,235,.35)"/>`;
+    return m;
+  }
+  function edgeSVG(kind, W, H, seed) {
+    let m = '';
+    const frame = (o, i, fill, extra = '') => `<path d="M${o},${o} H${W - o} V${H - o} H${o} Z M${i},${i} V${H - i} H${W - i} V${i} Z" fill="${fill}" ${extra}/>`;
+    switch (kind) {
+      case 'nails': {
+        const inset = 11, step = 30;
+        const pts = [];
+        for (let x = inset + 8; x < W - inset; x += step) { pts.push([x, inset]); pts.push([x + step / 2, H - inset]); }
+        for (let y = inset + step * .7; y < H - inset - 8; y += step) { pts.push([inset, y]); pts.push([W - inset, y + step / 3]); }
+        pts.forEach(([x, y], i) => { m += nail(x + (Hh(i, 3, seed) - .5) * 3, y + (Hh(i, 4, seed) - .5) * 3, 4.2, i + seed, false); });
+        break; }
+      case 'rope': {
+        const o = 8, rr = 7;
+        const d = `M${o + rr},${o} H${W - o - rr} Q${W - o},${o} ${W - o},${o + rr} V${H - o - rr} Q${W - o},${H - o} ${W - o - rr},${H - o} H${o + rr} Q${o},${H - o} ${o},${H - o - rr} V${o + rr} Q${o},${o} ${o + rr},${o} Z`;
+        m += `<path d="${d}" fill="none" stroke="rgba(0,0,0,.5)" stroke-width="11" transform="translate(1,2)"/>`;
+        m += `<path d="${d}" fill="none" stroke="#6b5838" stroke-width="9"/>`;
+        m += `<path d="${d}" fill="none" stroke="#9a8458" stroke-width="9" stroke-dasharray="6 7" opacity=".55"/>`;
+        m += `<path d="${d}" fill="none" stroke="#2a2014" stroke-width="9" stroke-dasharray="2 11" stroke-dashoffset="5" opacity=".6"/>`;
+        m += `<path d="${d}" fill="none" stroke="rgba(255,240,200,.18)" stroke-width="3" transform="translate(-1,-2)"/>`;
+        m += `<path d="${d}" fill="none" stroke="rgba(0,0,0,.55)" stroke-width="1"/>`;
+        break; }
+      case 'binding': {
+        m += frame(3, 13, 'url(#p-m-c-verdigris)');
+        m += frame(3, 13, 'url(#g-face)');
+        m += `<rect x="3.5" y="3.5" width="${W - 7}" height="${H - 7}" fill="none" stroke="rgba(255,240,200,.22)"/><rect x="12.5" y="12.5" width="${W - 25}" height="${H - 25}" fill="none" stroke="rgba(0,0,0,.6)"/>`;
+        m += `<rect x="13" y="13" width="${W - 26}" height="${H - 26}" fill="none" stroke="rgba(0,0,0,.35)" stroke-width="4" style="filter:none"/>`;
+        [[8, 8], [W / 2, 8], [W - 8, 8], [8, H / 2], [W - 8, H / 2], [8, H - 8], [W / 2, H - 8], [W - 8, H - 8]].forEach(([x, y], i) => { m += nail(x, y, 3.2, i + 40 + seed, false); });
+        break; }
+      case 'coaming': {
+        m += frame(0, 13, 'url(#p-t-rotwood)');
+        m += `<path d="M0,0 H${W} V${H} H0 Z M13,13 V${H - 13} H${W - 13} V13 Z" fill="url(#g-cupv)"/>`;
+        m += `<rect x="12.5" y="12.5" width="${W - 25}" height="${H - 25}" fill="none" stroke="rgba(255,240,200,.16)" stroke-width="1"/>`;
+        m += `<rect x="13" y="13" width="${W - 26}" height="${H - 26}" fill="none" stroke="rgba(0,0,0,.5)" stroke-width="6" opacity=".4" clip-path="inset(13px)"/>`;
+        m += `<clipPath id="co${seed}"><rect x="13" y="13" width="${W - 26}" height="${H - 26}"/></clipPath><g clip-path="url(#co${seed})"><rect x="13" y="13" width="${W - 26}" height="${H - 26}" fill="none" stroke="rgba(0,0,0,.55)" stroke-width="14"/><rect x="13" y="13" width="${W - 26}" height="${H - 26}" fill="none" stroke="rgba(0,0,0,.4)" stroke-width="6"/></g>`;
+        break; }
+      case 'crust': {
+        const b = 34;
+        const lg = (id, x2, y2, rev) => `<linearGradient id="${id}" x1="0" y1="0" x2="${x2}" y2="${y2}"><stop offset="0" stop-color="#fff" stop-opacity="${rev ? 0 : 1}"/><stop offset="1" stop-color="#fff" stop-opacity="${rev ? 1 : 0}"/></linearGradient>`;
+        m += `<defs>${lg('cg' + seed + 't', 0, 1, false)}${lg('cg' + seed + 'b', 0, 1, true)}${lg('cg' + seed + 'l', 1, 0, false)}${lg('cg' + seed + 'r', 1, 0, true)}`;
+        m += `<mask id="cm${seed}"><rect width="${W}" height="${b}" fill="url(#cg${seed}t)"/><rect y="${H - b}" width="${W}" height="${b}" fill="url(#cg${seed}b)"/><rect width="${b}" height="${H}" fill="url(#cg${seed}l)"/><rect x="${W - b}" width="${b}" height="${H}" fill="url(#cg${seed}r)"/></mask></defs>`;
+        m += `<g mask="url(#cm${seed})"><rect width="${W}" height="${H}" fill="url(#p-crust-xl)" transform="translate(${seed % 50},${seed % 30})"/><rect width="${W}" height="${H}" fill="url(#p-crust-l)" transform="translate(${seed % 70 + 20},${seed % 40 + 11})"/></g>`;
+        break; }
+    }
+    return m;
+  }
+  function fixSVG(kind, mat, W, H, seed) {
+    if (kind === 'none' || !(TEX.TABLE_MATS[mat].planks || (TEX.TABLE_MATS[mat].like && TEX.TABLE_MATS[TEX.TABLE_MATS[mat].like].planks))) return '';
+    const n = 5, pw = 390 / n;
+    let m = '';
+    for (let i = 0; i < n; i++) {
+      const cx = (i + .5) * pw;
+      for (let y = 26 + Hh(i, 9, seed) * 60; y < H - 10; y += 96 + Hh(i, 10, seed) * 30) {
+        for (const dx of [-pw * .22, pw * .22]) m += nail(cx + dx + (Hh(i, y | 0, seed) - .5) * 4, y + (Hh(y | 0, i, seed) - .5) * 4, 3.6, (i * 97 + y) | 0, kind === 'rust');
+      }
+    }
+    return m;
+  }
+  // a slab of table: the surface tile at one point per texel, the growth if the surface has it, the fixings, the edge, and the pieces on it
+  function tableStage(W, H, spec, o = {}) {
+    const P = TEX.TABLE_MATS[spec.surface], key = P.like || spec.surface, seed = o.seed || 0;
+    let ov = `<svg class="tb-ov" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`;
+    if (P.crust) ov += `<defs><radialGradient id="hm${seed}" cx=".5" cy=".5" r=".55"><stop offset=".2" stop-color="#fff" stop-opacity="0"/><stop offset=".7" stop-color="#fff" stop-opacity=".45"/><stop offset="1" stop-color="#fff" stop-opacity=".95"/></radialGradient><mask id="hk${seed}"><rect width="${W}" height="${H}" fill="url(#hm${seed})"/><ellipse cx="${W * .3}" cy="${H * .3}" rx="${W * .14}" ry="${H * .2}" fill="#fff" opacity=".8"/><ellipse cx="${W * .75}" cy="${H * .7}" rx="${W * .12}" ry="${H * .16}" fill="#fff" opacity=".7"/></mask></defs><g mask="url(#hk${seed})"><rect width="${W}" height="${H}" fill="url(#p-crust-xl)" transform="translate(${seed % 40},${seed % 60})"/></g>`;
+    ov += fixSVG(spec.fix, spec.surface, W, H, seed + 7);
+    ov += edgeSVG(spec.edge, W, H, seed + 3);
+    ov += `</svg>`;
+    const pieces = o.pieces === false ? '' : o.small
+      ? `<div class="tb-pieces" style="justify-content:center;gap:10px;bottom:12px">${C(32, { count: 5, seed: 20 })}${D(5, 32, { seed: 61 })}${D(1, 32, { seed: 62 })}</div>`
+      : `<div class="tb-pieces" style="top:36px;justify-content:space-evenly">${C(44, { count: 5, seed: 20 })}${SHAPE.cupTop(44, { count: 4, seed: 10 })}${C(44, { count: 3, seed: 30 })}</div><div class="tb-pieces" style="bottom:70px;justify-content:center;gap:2px">${[1, 1, 3, 5, 6].map((f, i) => D(f, 44, { seed: 60 + i })).join('')}</div><div class="tb-pieces" style="bottom:18px;justify-content:center"><span class="t-ask">Bo bid three 3s, <b>your turn</b></span></div>`;
+    return `<div class="stage tstage" style="width:${W}px;height:${H}px;background-image:var(--tex-t-${key});background-size:390px 390px;background-position:0 0">${ov}${pieces}</div>`;
+  }
+  function drawTable() {
+    const S = TABLE;
+    document.getElementById('tb-stage').outerHTML = tableStage(390, 400, S, { seed: 11 }).replace('class="stage tstage"', 'class="stage tstage" id="tb-stage"');
+    put('tb-spec', `<b>table</b> &middot; ${specLine(S)}`);
+    renderBank('table-mats', TEX.TABLE_MATS, k => tableStage(300, 120, Object.assign({}, S, { surface: k }), { seed: 21, small: true }), S.surface, 'style="padding:0"');
+    renderBank('table-edges', EDGES, k => tableStage(300, 120, Object.assign({}, S, { edge: k }), { seed: 31, small: true }), S.edge, 'style="padding:0"');
+    renderBank('table-fix', FIXES, k => tableStage(300, 120, Object.assign({}, S, { fix: k }), { seed: 41, small: true }), S.fix, 'style="padding:0"');
+    saveSpec('cn.table', S);
+  }
+  const syncTable = mixer('table-mixer', TABLE_FIELDS, TABLE, drawTable);
+  for (const [id, key] of [['table-mats', 'surface'], ['table-edges', 'edge'], ['table-fix', 'fix']]) wire(id, k => { TABLE[key] = k; syncTable(); drawTable(); });
+  drawTable();
 
   /* ---- tabs: one section at a time, deep-linked by a bare hash ------- */
   const sections = [...document.querySelectorAll('section[data-tab]')];
