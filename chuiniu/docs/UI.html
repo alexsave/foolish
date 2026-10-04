@@ -488,7 +488,7 @@ Two views: from the side, as the roll and the reveal show it, and from above, as
 <!-- ============================================================ 6b -->
 <section id="table" data-tab="table">
 <h2>The table</h2>
-<p class="lede">What the dice land on. Nine surfaces. The woods are built the way foolish builds its wood: the chaotic cosine streak march from <code>WoodTexture.swift</code>, ported line for line, laid down first; then the stone generator’s passes over it (planks that each take their own rows of the march, the gaps and ends between them, rot, a wet sheen). The deck from the first proposal stays as it was; the wooden deck is the same black-green as tarred planks, the grain just showing and the crust in the seams. Then rotting wet wood, a barnacled hull, drowned sailcloth, the sea floor, cursed iron, wet slate, and the old green baize gone to the sea.
+<p class="lede">What the dice land on. Thirteen surfaces. The woods are built the way foolish builds its wood: the chaotic cosine streak march from <code>WoodTexture.swift</code>, ported line for line, laid down first; then the stone generator’s passes over it (planks laid in a running bond, alternate boards offset by half a length, each board on its own band of the march; the gaps and ends between them; rot; a wet sheen). The deck from the first proposal stays as it was; the wooden deck is in the deck’s own colour, deep green-blue and almost black, with four more dark woods beside it (pitch, bog oak, drowned grey, deep blue) to compare. Then rotting wet wood, a barnacled hull, drowned sailcloth, the sea floor, cursed iron, wet slate, and the old green baize gone to the sea.
 Then what runs round the table’s edge, and what is driven into it. The stage is a phone’s width with the die and the cup already decided, so a surface is judged by whether they still read on it.</p>
 
 <h3>The mixer</h3>
@@ -813,12 +813,12 @@ const TEX = (() => {
     return (u0, v0) => {
       // planks: each plank is a strip across u with its own slice of the grain (v shifted by the plank's hash)
       let u = u0, v = v0, pi = 0, shift = 0;
-      if (P.planks) { pi = Math.floor(u0 * P.planks); shift = hash(pi, 0, P.seed + 3) * .61; v = (v0 + shift) % 1; }
+      if (P.planks) { pi = Math.floor(u0 * P.planks); shift = (pi % 2) * .5; v = (v0 + shift) % 1; }
       const cl = (fbm(u, v, P.cloudX || 4, P.cloudY || 4, 4, P.seed) - .5) * 2 * (P.cloud || 0);
       const gr = (fbm(u, v, P.grainX || 64, P.grainY || 64, 2, P.seed + 7) - .5) * 2 * (P.grain || 0);
       const t = P.tilt || [1, 1, 1];
       let r, g, b;
-      if (P.under) { [r, g, b] = P.under(u0, v0, pi, shift); r += cl * t[0] + gr; g += cl * t[1] + gr; b += cl * t[2] + gr; }
+      if (P.under) { [r, g, b] = P.under(u0, v0, pi, shift, P.planks || 1); r += cl * t[0] + gr; g += cl * t[1] + gr; b += cl * t[2] + gr; }
       else { r = P.base[0] + cl * t[0] + gr; g = P.base[1] + cl * t[1] + gr; b = P.base[2] + cl * t[2] + gr; }
       if (P.vein) {
         const ridge = 1 - Math.abs(2 * fbm(u, v, P.veinX || 3, P.veinY || 12, 4, P.seed + 13) - 1);
@@ -923,8 +923,12 @@ const TEX = (() => {
     // across the swatch, and a plank's grain runs along it, so the march's x is the plank's length.
     // Each plank takes its own stretch of the march (shift), and the march's one non-periodic seam
     // lands under the plank's end.
-    return (u, v, pi, shift) => {
-      const x = Math.min(w - 1, Math.floor((((v + shift) % 1) + 1) % 1 * w)), y = Math.min(h - 1, Math.floor(u * h)), i = (y * w + x) * 3;
+    // Each board takes its own BAND of the march's rows (the march is not periodic across rows either,
+    // and a board never wraps its band: it is a fifth of the swatch, placed by the board's hash), so
+    // the boards differ while their ends keep the bond.
+    return (u, v, pi, shift, n) => {
+      const band = h / n, off = hash(pi, 4, 509) * (h - band);
+      const x = Math.min(w - 1, Math.floor((((v + shift) % 1) + 1) % 1 * w)), y = Math.min(h - 1, Math.floor((u * n - pi) * band + off)), i = (y * w + x) * 3;
       return [S[i], S[i + 1], S[i + 2]];
     };
   }
@@ -1039,15 +1043,25 @@ const TEX = (() => {
     verdigris: { name: 'Verdigris', why: 'bronze gone green in patches, rust where it has not', verd: VERD },
   };
 
-  // the two woods: the march's palette (the board, the streak gains, the pass alpha) and the stone passes over it
-  const WOOD_DECK = { base: [10, 12, 10], gain: [23, 25, 21], alpha: .08 };
-  const WOOD_ROT = { base: [40, 32, 22], gain: [66, 54, 36], alpha: .1 };
+  // the woods: the march's palette (the board, the streak gains, the pass alpha), five of them, all in the dark
+  const WOODS = {
+    hold:  { name: 'Wooden deck, hold',  why: 'the deck\u2019s own colour: deep green-blue, almost black, the grain just showing', base: [11, 19, 17], gain: [8, 13, 12], alpha: .08, stain: [6, 14, 13], sheen: [30, 46, 44] },
+    pitch: { name: 'Wooden deck, pitch', why: 'tarred: black-brown, the pitch wet in patches', base: [12, 11, 9], gain: [10, 8, 6], alpha: .08, stain: [6, 10, 9], sheen: [40, 42, 38] },
+    bog:   { name: 'Wooden deck, bog oak', why: 'oak that lay in a bog: black with warm streaks', base: [16, 12, 8], gain: [15, 10, 6], alpha: .09, stain: [8, 10, 8], sheen: [44, 36, 26] },
+    grey:  { name: 'Wooden deck, drowned', why: 'silvered like driftwood, but wet and dark', base: [13, 15, 14], gain: [12, 13, 12], alpha: .08, stain: [8, 12, 12], sheen: [46, 52, 52] },
+    blue:  { name: 'Wooden deck, deep', why: 'further down: blue-black, the green gone', base: [8, 12, 18], gain: [6, 10, 15], alpha: .08, stain: [4, 8, 14], sheen: [28, 40, 54] },
+  };
+  const WOOD_DECK = WOODS.hold, WOOD_ROT = { base: [40, 32, 22], gain: [66, 54, 36], alpha: .1 };
+  const woodDeck = W => ({ name: W.name, why: W.why, wood: W, cloud: 5, tilt: [.8, 1, .9], grain: 3, vein: [4, 6, 5], veinX: 36, veinY: 2, veinLo: .9, veinAmt: .3,
+    stain: W.stain, stainLo: .45, stainHi: .8, stainCells: 4, stainAmt: .3, sheen: W.sheen, sheenLo: .64, sheenHi: .94, sheenAmt: .3,
+    patch: [30, 48, 40], patchAmt: .3, fleck2: [80, 96, 80], fleckAmt2: .45, planks: 5, seed: 73 });
   const TABLE_MATS = {
     deck:      { name: 'The deck',          why: 'the first proposal: the crusted floor of the hold, no planks', hold: true },
-    wooddeck:  { name: 'Wooden deck',       why: 'the hold floor as tarred planks: the same black-green, the grain just showing, the crust in the seams',
-                 wood: WOOD_DECK, cloud: 5, tilt: [.8, 1, .9], grain: 3, vein: [5, 7, 5], veinX: 36, veinY: 2, veinLo: .9, veinAmt: .3,
-                 stain: [8, 16, 14], stainLo: .45, stainHi: .8, stainCells: 4, stainAmt: .35, sheen: [38, 50, 48], sheenLo: .62, sheenHi: .92, sheenAmt: .35,
-                 patch: [30, 48, 40], patchAmt: .35, fleck2: [80, 96, 80], fleckAmt2: .5, planks: 5, seed: 73 },
+    wooddeck:  woodDeck(WOODS.hold),
+    woodpitch: woodDeck(WOODS.pitch),
+    woodbog:   woodDeck(WOODS.bog),
+    woodgrey:  woodDeck(WOODS.grey),
+    woodblue:  woodDeck(WOODS.blue),
     rotwood:   { name: 'Rotting wet wood',  why: 'waterlogged planks, the grain open, rot blooming black-green, wet where the light finds it',
                  wood: WOOD_ROT, cloud: 8, tilt: [1, .9, .75], grain: 6, vein: [26, 20, 12], veinX: 36, veinY: 2, veinLo: .9, veinAmt: .4,
                  stain: [26, 36, 28], stainLo: .5, stainHi: .8, stainCells: 4, stainAmt: .55, pore: 30, poreCells: 70, poreLo: .86, poreHi: .93, sheen: [70, 86, 86], sheenAmt: .25, planks: 5, seed: 71 },
@@ -1069,7 +1083,7 @@ const TEX = (() => {
     if (!P.wood) return stone(P);
     return stone(Object.assign({}, P, { under: streakWood(w, h, P.wood) }));
   }
-  return { bake, deck, verd, verdWith, stone, streakWood, tableFn, sea, crust, bakes, hash, DECK, VERD, SEA, CRUST, DIE_MATS, CUP_MATS, TABLE_MATS, WOOD_DECK, WOOD_ROT };
+  return { bake, deck, verd, verdWith, stone, streakWood, tableFn, sea, crust, bakes, hash, DECK, VERD, SEA, CRUST, DIE_MATS, CUP_MATS, TABLE_MATS, WOODS, WOOD_DECK, WOOD_ROT };
 })();
 
 /* =====================================================================
@@ -1445,7 +1459,7 @@ const SHAPE = (() => {
     if (P.like) { tableCanvas[k] = tableCanvas[P.like]; continue; }
     tableCanvas[k] = TEX.bake('table.' + k, 390, 390, TEX.tableFn(P, 390, 390));
   }
-  for (const [k, c] of Object.entries(tableCanvas)) { root.setProperty('--tex-t-' + k, url(c)); if (k === 'rotwood' || k === 'wooddeck') pattern('p-t-' + k, c, 390, 390); }
+  for (const [k, c] of Object.entries(tableCanvas)) { root.setProperty('--tex-t-' + k, url(c)); if (k === 'rotwood' || k.startsWith('wood')) pattern('p-t-' + k, c, 390, 390); }
   const TABLE = { surface: 'wooddeck', edge: 'nails', fix: 'nails' };
   const EDGES = {
     none:    { name: 'None', why: 'the surface runs to the frame' },
@@ -1499,7 +1513,7 @@ const SHAPE = (() => {
         [[8, 8], [W / 2, 8], [W - 8, 8], [8, H / 2], [W - 8, H / 2], [8, H - 8], [W / 2, H - 8], [W - 8, H - 8]].forEach(([x, y], i) => { m += nail(x, y, 3.2, i + 40 + seed, false); });
         break; }
       case 'coaming': {
-        m += frame(0, 13, `url(#p-t-${TABLE.surface === 'wooddeck' ? 'wooddeck' : 'rotwood'})`);
+        m += frame(0, 13, `url(#p-t-${TABLE.surface.startsWith('wood') ? TABLE.surface : 'rotwood'})`);
         m += `<path d="M0,0 H${W} V${H} H0 Z M13,13 V${H - 13} H${W - 13} V13 Z" fill="url(#g-cupv)"/>`;
         m += `<rect x="12.5" y="12.5" width="${W - 25}" height="${H - 25}" fill="none" stroke="rgba(255,240,200,.16)" stroke-width="1"/>`;
         m += `<rect x="13" y="13" width="${W - 26}" height="${H - 26}" fill="none" stroke="rgba(0,0,0,.5)" stroke-width="6" opacity=".4" clip-path="inset(13px)"/>`;
