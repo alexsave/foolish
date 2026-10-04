@@ -283,24 +283,6 @@ section[hidden]{display:none}
   <linearGradient id="g-bevel" x1="0" y1="0" x2="1" y2="1">
     <stop offset="0" stop-color="#fff" stop-opacity=".42"/><stop offset=".5" stop-color="#fff" stop-opacity=".04"/>
     <stop offset=".55" stop-color="#000" stop-opacity=".08"/><stop offset="1" stop-color="#000" stop-opacity=".5"/></linearGradient>
-  <radialGradient id="g-pip-pale" cx=".42" cy=".40" r=".62" fx=".4" fy=".36">
-    <stop offset="0" stop-color="#eef0e2"/><stop offset=".6" stop-color="#d2d8c4"/><stop offset="1" stop-color="#8f9c88"/></radialGradient>
-  <radialGradient id="g-wild-rust" cx=".42" cy=".40" r=".62" fx=".60" fy=".64">
-    <stop offset="0" stop-color="#2a1006"/><stop offset=".55" stop-color="#6e3a1a"/><stop offset="1" stop-color="#a86a3a"/></radialGradient>
-  <radialGradient id="g-wild-ember" cx=".42" cy=".40" r=".62" fx=".60" fy=".64">
-    <stop offset="0" stop-color="#4a0c04"/><stop offset=".5" stop-color="#b8402a"/><stop offset="1" stop-color="#e07a4a"/></radialGradient>
-  <!-- ink in a dimple: solid at the centre, feathered at the rim -->
-  <radialGradient id="g-ink"><stop offset="0" stop-color="#070a08"/><stop offset=".7" stop-color="#121914"/><stop offset=".86" stop-color="#1a241e" stop-opacity=".9"/><stop offset="1" stop-color="#1a241e" stop-opacity="0"/></radialGradient>
-  <radialGradient id="g-ink-wild"><stop offset="0" stop-color="#3a0906"/><stop offset=".7" stop-color="#7a1d14"/><stop offset=".86" stop-color="#8f2a1e" stop-opacity=".9"/><stop offset="1" stop-color="#8f2a1e" stop-opacity="0"/></radialGradient>
-  <radialGradient id="g-ink-pale"><stop offset="0" stop-color="#f0f2e6"/><stop offset=".7" stop-color="#d6dcc6"/><stop offset=".86" stop-color="#c0c8b0" stop-opacity=".9"/><stop offset="1" stop-color="#c0c8b0" stop-opacity="0"/></radialGradient>
-  <radialGradient id="g-scorch"><stop offset=".55" stop-color="#2a1608" stop-opacity=".7"/><stop offset=".8" stop-color="#5a3414" stop-opacity=".35"/><stop offset="1" stop-color="#5a3414" stop-opacity="0"/></radialGradient>
-  <!-- a bead of jet set in: a glossy sphere with its own highlight -->
-  <radialGradient id="g-inlay" cx=".38" cy=".32" r=".75" fx=".32" fy=".26">
-    <stop offset="0" stop-color="#5a6660"/><stop offset=".22" stop-color="#121816"/><stop offset=".8" stop-color="#030504"/><stop offset="1" stop-color="#1c2420"/></radialGradient>
-  <radialGradient id="g-inlay-wild" cx=".38" cy=".32" r=".75" fx=".32" fy=".26">
-    <stop offset="0" stop-color="#e0907a"/><stop offset=".22" stop-color="#8a241c"/><stop offset=".8" stop-color="#3a0906"/><stop offset="1" stop-color="#6a1a12"/></radialGradient>
-  <radialGradient id="g-inlay-pale" cx=".38" cy=".32" r=".75" fx=".32" fy=".26">
-    <stop offset="0" stop-color="#ffffff"/><stop offset=".3" stop-color="#e2e6d4"/><stop offset=".85" stop-color="#9aa692"/><stop offset="1" stop-color="#6f7c6a"/></radialGradient>
   <radialGradient id="g-badge" cx=".35" cy=".30" r=".8">
     <stop offset="0" stop-color="#fff" stop-opacity=".30"/><stop offset=".6" stop-color="#fff" stop-opacity="0"/>
     <stop offset="1" stop-color="#000" stop-opacity=".35"/></radialGradient>
@@ -424,11 +406,12 @@ The bake times are measured live, below each tile.</p>
 <!-- ============================================================ 5 -->
 <section id="dice" data-tab="dice">
 <h2>The die</h2>
-<p class="lede">A die is three decisions: what it is cut from, what silhouette the cutter left, and what the pips are. Each bank below is one of those decisions on its own; the mixer combines them; the candidates at the end are named combinations worth arguing over.
-Every material is a seeded per-texel bake, every silhouette is one path, every pip is one gradient, so whatever is picked ports as it stands.</p>
+<p class="lede">A die is three decisions: what it is cut from, what silhouette the cutter left, and what the pips are. Round two settled most of them.
+<b>Locked:</b> the machined silhouette (a rounded square, radius 18%), the bevel, medium pips at 21% of the side, pips placed a little off exact (1.2% of the side, between exact and hand-drilled), and the wild 1 in blood.
+<b>Open:</b> the material, six bakes, with the yellowed and the crazed bone combined into one as asked; the pip, drilled or ragged; and whether some dice are chipped.</p>
 
 <h3>The mixer</h3>
-<p class="why" style="max-width:73ch">Pick one of each. Everything on this page that draws a die (the chips, the bands, the plate, the icon) follows the mixer, so the choice is seen in company and not alone. The spec line under the stage is what gets written into <code>DECISIONS.md</code>.</p>
+<p class="why" style="max-width:73ch">Pick the three that are open. Everything on this page that draws a die (the chips, the bands, the plate, the icon) follows the mixer, so the choice is seen in company and not alone. The spec line under the stage is what gets written into <code>DECISIONS.md</code>; the locked keys are marked.</p>
 <div class="mixer" id="dice-mixer"></div>
 <div class="row">
   <div class="col">
@@ -437,34 +420,30 @@ Every material is a seeded per-texel bake, every silhouette is one path, every p
       <div class="band c" id="mx-faces22"></div>
       <div class="rule-bronze"></div>
       <div class="band c" id="mx-states"></div>
-      <div class="cap" style="text-align:center">counting, drowned, worn, unknown, and one frame of the roll</div>
+      <div class="cap" style="text-align:center">counting, drowned, chipped at a corner, chipped on an edge, unknown, and one frame of the roll</div>
     </div>
     <div class="kv" id="mx-spec"></div>
   </div>
   <div class="col w">
     <div class="h4">What to look for <span class="pill n">at 22, not at 44</span></div>
     <p class="why" style="max-width:60ch">The 44 row is the one you will stare at; the 22 row is the one the game shows most, under another seat's name on a short board. A material that reads at 44 and turns to mud at 22 is out. A pip style whose hole still reads at 22 is in.</p>
-    <p class="why" style="max-width:60ch">The six faces are the real test of a silhouette: an irregular cut that is charming on a 3 can make a 6 look like it has a crooked row. Hand-cut and crude shapes jitter per die by seed, so re-pick the shape to see a new cut.</p>
-    <p class="why" style="max-width:60ch">The wild 1 is the only pip with a colour. "None" makes it the same black as the rest, which is the honest folk-game look; the red is a reading aid the table otherwise lacks.</p>
+    <p class="why" style="max-width:60ch">A chip is now a bite, not a line: a jagged piece of the silhouette is gone, and behind it is a ledge of paler bone with a dark step along its inner edge. A third of dice carry one, by seed, at a corner or along an edge; a few carry two. The same die is chipped the same way for a whole game.</p>
+    <p class="why" style="max-width:60ch">The wild 1 is the only pip with a colour, and it is blood.</p>
   </div>
 </div>
 
 <h3>Materials</h3>
-<p class="why" style="max-width:73ch">Ten bakes from one generator with ten palettes (a cloud, a grain, and up to five optional passes: veins, pores, stains, cracks, growth lines, flecks, staves). The tile is at half a point per texel, the magnification a 44pt die gets. Click a tile to send it to the mixer.</p>
+<p class="why" style="max-width:73ch">Six bakes from one generator (a cloud, a grain, and the optional passes: veins, pores, stains, cracks). The first is the combination asked for: the yellowed palette with the crazed palette’s crack pass over it, the cracks tinted toward the stain so they read as dirt in the crazing and not as ink. Ivory, jet, pewter, verdigris and driftwood are dropped. The tile is at half a point per texel, the magnification a 44pt die gets. Click a tile to send it to the mixer.</p>
 <div class="bank" id="dice-mats"></div>
 
-<h3>Silhouettes</h3>
-<p class="why" style="max-width:73ch">Six cuts. Machined and stone are one rounded square at two radii. Chamfer is an octagon. Hand-cut and crude jitter their corners (and crude its edges) by the die's seed, so no two dice on a table are the same cut. Pillow bows the sides out. Each is shown flat, bevelled, and as a block with a visible side.</p>
-<div class="bank" id="dice-shapes"></div>
-
 <h3>Pips, the little black holes</h3>
-<p class="why" style="max-width:73ch">Eight ways to make a hole. Each shown as a 5 and a wild 1 at 44, then the same at 22, in the mixer's material and silhouette. Drilled is a radial gradient offset so the far wall is lit; bore adds a countersunk rim; ink is paint pooled in a dimple; scorch is burned in; ragged is gouged; inlay is a bead of jet set in; ring is the old annular pip; crusted is drilled with grit left in the hole.</p>
+<p class="why" style="max-width:73ch">The two that survived. Each shown as a 5 and a wild 1 at 44, then the same at 22, in the mixer’s material. Drilled is a radial gradient offset so the far wall is lit; ragged is the same hole with a gouged, ten-point edge that differs per pip by seed.</p>
 <div class="bank" id="dice-pips"></div>
 
 <h3>Candidates</h3>
-<p class="why" style="max-width:73ch">Ten named combinations. Click one to load it into the mixer and see it everywhere.</p>
+<p class="why" style="max-width:73ch">Everything still on the table: the six materials by the two pips, twelve dice. Click one to load it into the mixer and see it everywhere.</p>
 <div class="cands" id="dice-cands"></div>
-<div class="note" style="max-width:73ch"><b>Port.</b> Material: one <code>Texture</code> generator with a <code>Palette</code> per material, baked as the felt is, painted with <code>ImagePaint</code>. Silhouette: one <code>Shape</code> whose <code>path(in:)</code> takes the cut and a seed. Depth: a gradient <code>strokeBorder</code> (bevel) or the same shape offset and darkened beneath (block). Pip: a <code>Circle</code> or small <code>Path</code> with a <code>RadialGradient</code>; the eight styles are eight gradient-and-geometry pairs, no filters.</div>
+<div class="note" style="max-width:73ch"><b>Port.</b> Material: one <code>Texture</code> generator with a <code>Palette</code> per material, baked as the felt is, painted with <code>ImagePaint</code>. Silhouette: <code>RoundedRectangle(cornerRadius: side * 0.18, style: .continuous)</code>. Bevel: a gradient <code>strokeBorder</code>. Chip: a seeded <code>Path</code> subtracted from the face with <code>.mask</code>, and the ledge drawn behind it. Pip: a <code>Circle</code> (drilled) or a ten-point <code>Path</code> (ragged) with the one <code>RadialGradient</code>; the wild 1 swaps the gradient for the blood one.</div>
 </section>
 
 <!-- ============================================================ 6 -->
@@ -909,25 +888,18 @@ const TEX = (() => {
 
   /* ---- THE MATERIAL BANKS: one palette each -------------------------- */
   const DIE_MATS = {
+    tallow:    { name: 'Tallow, crazed', why: 'yellowed bone with the crazing: the two the owner asked to combine',
+                 base: [214, 206, 168], cloud: 12, tilt: [1, .85, .3], grain: 5, vein: [132, 118, 84], veinLo: .9, veinAmt: .35, pore: 14, crack: [96, 76, 46], crackLo: .958, seed: 34 },
+    yellowed:  { name: 'Yellowed bone', why: 'the frames\u2019 dice: ivory gone to tallow, stained in the veins',
+                 base: [214, 206, 168], cloud: 12, tilt: [1, .85, .3], grain: 5, vein: [132, 118, 84], veinLo: .9, veinAmt: .35, pore: 14, seed: 29 },
+    crazed:    { name: 'Crazed bone',   why: 'paler, and crazed: a crack network like old scrimshaw',
+                 base: [216, 206, 170], cloud: 10, tilt: [1, .85, .3], grain: 5, vein: [140, 126, 92], veinLo: .92, veinAmt: .25, pore: 10, crack: [78, 66, 44], crackLo: .955, seed: 33 },
     fresh:     { name: 'Fresh bone',    why: 'cut this year: pale, cold, a fine grain and faint veins',
                  base: [222, 226, 206], cloud: 6, tilt: [.6, .7, .4], grain: 5, vein: [150, 160, 138], veinLo: .92, veinAmt: .2, pore: 8, seed: 23 },
-    yellowed:  { name: 'Yellowed bone', why: 'the frames’ dice: ivory gone to tallow, stained in the veins',
-                 base: [214, 206, 168], cloud: 12, tilt: [1, .85, .3], grain: 5, vein: [132, 118, 84], veinLo: .9, veinAmt: .35, pore: 14, seed: 29 },
     brined:    { name: 'Brined bone',   why: 'bone that has been in the sea: a green-grey cast and damp stains',
                  base: [198, 206, 182], cloud: 12, tilt: [.5, .9, .7], grain: 6, vein: [96, 116, 96], veinLo: .9, veinAmt: .4, pore: 16, stain: [70, 92, 78], stainAmt: .4, seed: 31 },
-    crazed:    { name: 'Crazed bone',   why: 'yellowed and crazed: a crack network like old scrimshaw',
-                 base: [216, 206, 170], cloud: 10, tilt: [1, .85, .3], grain: 5, vein: [140, 126, 92], veinLo: .92, veinAmt: .25, pore: 10, crack: [78, 66, 44], crackLo: .955, seed: 33 },
-    ivory:     { name: 'Ivory',         why: 'warm and dense, with the curved growth lines of a tusk',
-                 base: [230, 222, 198], cloud: 6, tilt: [1, .8, .4], grain: 4, growth: [196, 184, 150], growthX: 7, growthY: 3, growthWarp: .9, growthAmt: .45, growthLo: .78, seed: 35 },
-    driftwood: { name: 'Driftwood',     why: 'grey, dry, the grain open: a die whittled from a spar',
-                 base: [148, 142, 126], cloud: 10, tilt: [1, .95, .8], grain: 12, grainX: 2, grainY: 48, vein: [92, 86, 72], veinX: 2, veinY: 30, veinLo: .88, veinAmt: .5, stain: [104, 100, 88], stainAmt: .3, seed: 39 },
     coral:     { name: 'Coral stone',   why: 'porous and chalky, pitted all over: cut from the reef',
                  base: [206, 196, 176], cloud: 10, tilt: [1, .9, .7], grain: 6, pore: 42, poreCells: 40, poreLo: .62, poreHi: .78, stain: [154, 134, 112], stainAmt: .25, seed: 43 },
-    jet:       { name: 'Jet',           why: 'black horn or jet, the cursed die; takes pale pips',
-                 base: [26, 29, 27], cloud: 6, grain: 4, fleck: [74, 80, 74], fleckLo: .86, fleckAmt: .5, vein: [48, 52, 48], veinLo: .93, veinAmt: .3, seed: 47 },
-    bronze:    { name: 'Verdigris',     why: 'the plate’s bronze, cast as a die', verd: true },
-    pewter:    { name: 'Pewter',        why: 'dull grey metal, brushed, a cold weight in the hand',
-                 base: [142, 146, 142], cloud: 8, grain: 10, grainX: 3, grainY: 120, stain: [92, 98, 96], stainAmt: .3, fleck: [190, 194, 190], fleckLo: .9, fleckAmt: .3, seed: 51 },
   };
   const CUP_MATS = {
     verdigris: { name: 'Verdigris',  why: 'bronze gone green in patches, rust where it has not', verd: VERD },
@@ -1001,58 +973,73 @@ const SHAPE = (() => {
   }
   const PIPS = {
     drilled: { name: 'Drilled', why: 'a radial hole, the far wall lit' },
-    bore:    { name: 'Bore',    why: 'deeper, with a countersunk rim' },
-    ink:     { name: 'Ink',     why: 'paint pooled in a shallow dimple, soft-edged' },
-    scorch:  { name: 'Scorch',  why: 'burned in with an iron: a brown halo' },
     ragged:  { name: 'Ragged',  why: 'gouged, the edge uneven' },
-    inlay:   { name: 'Inlay',   why: 'a bead of jet set in, with its own highlight' },
-    ring:    { name: 'Ring',    why: 'the old annular pip, a ring and a dot' },
-    crusted: { name: 'Crusted', why: 'drilled, with grit left in the bottom' },
   };
-  const WILDS = { blood: 'g-wild', rust: 'g-wild-rust', ember: 'g-wild-ember', none: null };
-  function pip(cx, cy, d, style, wildId, pale, seed) {
-    const fill = wildId ? `url(#${wildId})` : `url(#${pale ? 'g-pip-pale' : 'g-pip'})`;
-    const solid = wildId ? (wildId === 'g-wild-ember' ? '#b8402a' : wildId === 'g-wild-rust' ? '#8a4a24' : '#7f1f17') : (pale ? '#d8dcc8' : '#0a0f0d');
+  function pip(cx, cy, d, style, wild, seed) {
+    const fill = wild ? 'url(#g-wild)' : 'url(#g-pip)';
     const edge = `stroke="rgba(0,0,0,.45)" stroke-width="${Math.max(.4, d * .06)}"`;
-    switch (style) {
-      case 'bore': return `<circle cx="${cx}" cy="${cy}" r="${d / 2}" fill="${fill}"/><circle cx="${cx}" cy="${cy}" r="${d * .28}" fill="${wildId ? '#2a0604' : pale ? '#f2f4e8' : '#000'}" opacity=".85"/><circle cx="${cx + d * .05}" cy="${cy + d * .05}" r="${d / 2}" fill="none" stroke="rgba(255,255,255,.22)" stroke-width="${d * .09}"/><circle cx="${cx}" cy="${cy}" r="${d / 2}" fill="none" ${edge}/>`;
-      case 'ink': return `<circle cx="${cx}" cy="${cy}" r="${d * .58}" fill="url(#${wildId ? 'g-ink-wild' : pale ? 'g-ink-pale' : 'g-ink'})"/>`;
-      case 'scorch': return `<circle cx="${cx}" cy="${cy}" r="${d * .8}" fill="url(#g-scorch)"/><circle cx="${cx}" cy="${cy}" r="${d / 2}" fill="${fill}"/>`;
-      case 'ragged': { let pts = ''; for (let i = 0; i < 10; i++) { const a = i / 10 * Math.PI * 2, rr = d / 2 * (.8 + .4 * H(i, seed, 313)); pts += `${(cx + Math.cos(a) * rr).toFixed(2)},${(cy + Math.sin(a) * rr).toFixed(2)} `; }
-        return `<polygon points="${pts}" fill="${fill}" stroke="rgba(0,0,0,.5)" stroke-width="${Math.max(.4, d * .05)}" stroke-linejoin="round"/>`; }
-      case 'inlay': return `<circle cx="${cx}" cy="${cy}" r="${d / 2}" fill="url(#${wildId ? 'g-inlay-wild' : pale ? 'g-inlay-pale' : 'g-inlay'})"/><circle cx="${cx}" cy="${cy}" r="${d / 2}" fill="none" ${edge}/>`;
-      case 'ring': return `<circle cx="${cx}" cy="${cy}" r="${d * .38}" fill="none" stroke="${solid}" stroke-width="${d * .24}"/><circle cx="${cx}" cy="${cy}" r="${d * .11}" fill="${solid}"/>`;
-      case 'crusted': return `<circle cx="${cx}" cy="${cy}" r="${d / 2}" fill="${fill}"/><circle cx="${cx}" cy="${cy}" r="${d / 2}" fill="none" ${edge}/><circle cx="${cx + d * .16}" cy="${cy + d * .2}" r="${d * .1}" fill="#a9b39a" opacity=".85"/>`;
-      default: return `<circle cx="${cx}" cy="${cy}" r="${d / 2}" fill="${fill}"/><circle cx="${cx}" cy="${cy}" r="${d / 2}" fill="none" ${edge}/>`;
+    if (style === 'ragged') {
+      let pts = ''; for (let i = 0; i < 10; i++) { const a = i / 10 * Math.PI * 2, rr = d / 2 * (.8 + .4 * H(i, seed, 313)); pts += `${(cx + Math.cos(a) * rr).toFixed(2)},${(cy + Math.sin(a) * rr).toFixed(2)} `; }
+      return `<polygon points="${pts}" fill="${fill}" stroke="rgba(0,0,0,.5)" stroke-width="${Math.max(.4, d * .05)}" stroke-linejoin="round"/>`;
     }
+    return `<circle cx="${cx}" cy="${cy}" r="${d / 2}" fill="${fill}"/><circle cx="${cx}" cy="${cy}" r="${d / 2}" fill="none" ${edge}/>`;
   }
   const PIPSIZE = { s: [.17, .22], m: [.21, .26], l: [.25, .3] };
+  const JITTER = { off: 0, slight: .012, on: .025 };
   // the current die spec; the mixer writes it, everything reads it
   let uidN = 0;
-  const DIE = { material: 'yellowed', shape: 'hand', depth: 'bevel', pip: 'drilled', pipSize: 'm', jitter: 'on', wild: 'blood', ink: 'dark', chips: 'some' };
+  // the current die spec; the mixer writes the open keys, the locked ones hold
+  const DIE = { material: 'tallow', shape: 'square', depth: 'bevel', pip: 'drilled', pipSize: 'm', jitter: 'slight', wild: 'blood', chips: 'some' };
+  const DIE_LOCKED = { shape: 'square', depth: 'bevel', pipSize: 'm', jitter: 'slight', wild: 'blood' };
+  // a chip: a jagged bite at a corner (kind 0-3) or along an edge (kind 4-7), in die space.
+  // Returns the break surface (the pale ledge), the point it bites from, and a point outside the die.
+  function chip(s, kind, seed) {
+    const J = (i, a) => (H(i, seed, 733) - .5) * 2 * a * s;
+    if (kind < 4) {
+      const k = s * (.28 + H(9, seed, 733) * .16);
+      const surf = [[k + J(1, .03), 0], [k * .82 + J(2, .05), k * .2 + J(3, .05)], [k * .62 + J(12, .06), k * .36 + J(13, .06)], [k * .48 + J(4, .06), k * .52 + J(5, .06)], [k * .34 + J(14, .06), k * .64 + J(15, .06)], [k * .2 + J(6, .05), k * .82 + J(7, .05)], [0, k + J(8, .03)]];
+      const map = ([x, y]) => [kind & 1 ? s - x : x, kind & 2 ? s - y : y];
+      return { surf: surf.map(map), corner: map([0, 0]), out: map([-s * .3, -s * .3]) };
+    }
+    const x0 = s * (.3 + H(10, seed, 733) * .4), k = s * (.16 + H(11, seed, 733) * .1);
+    const surf = [[x0 - k, 0], [x0 - k * .7 + J(1, .03), k * .45 + J(2, .03)], [x0 - k * .3 + J(12, .04), k * .62 + J(13, .04)], [x0 + J(3, .04), k * .85 + J(4, .04)], [x0 + k * .35 + J(14, .04), k * .55 + J(15, .04)], [x0 + k * .7 + J(5, .03), k * .4 + J(6, .03)], [x0 + k, 0]];
+    const e = kind - 4, map = ([x, y]) => e === 0 ? [x, y] : e === 1 ? [s - y, x] : e === 2 ? [s - x, s - y] : [y, s - x];
+    return { surf: surf.map(map), corner: map([x0, 0]), out: map([x0, -s * .3]) };
+  }
+  const J2 = (i, a, s, seed) => (H(i, seed, 737) - .5) * 2 * a * s;
   // the face alone, in a 0..s box (no outer svg): used by die() and by the tumble
   function faceBody(face, s, o = {}) {
-    const S = Object.assign({}, DIE, o), seed = (o.seed || 0) + 1, uid = 'u' + (uidN++);
+    const S = Object.assign({}, DIE, o, DIE_LOCKED), seed = (o.seed || 0) + 1, uid = 'u' + (uidN++);
     const d = diePath(S.shape, s, seed);
-    const pale = S.ink === 'pale';
-    let m = '';
-    if (S.depth === 'block') m += `<path d="${d}" transform="translate(${s * .04},${s * .1})" fill="${pale ? '#0b0d0b' : '#5a5f4e'}"/><path d="${d}" transform="translate(${s * .02},${s * .05})" fill="${pale ? '#121513' : '#8d937d'}"/>`;
-    m += `<path d="${d}" fill="url(#p-m-${S.material})"/><path d="${d}" fill="url(#g-face)"/>`;
-    if (S.chips === 'some' && (o.chip != null || H(seed, 5, 41) < .3)) {
-      const c = o.chip != null ? o.chip : Math.floor(H(seed, 6, 41) * 4), k = s * .26;
-      const pts = [[0, k], [k, 0], [0, 0]].map(([x, y]) => [c & 1 ? s - x : x, c & 2 ? s - y : y]);
-      m += `<clipPath id="k${uid}"><path d="${d}"/></clipPath><g clip-path="url(#k${uid})"><polygon points="${pts.map(p => p.join(',')).join(' ')}" fill="${pale ? '#3a403a' : '#bcc7ad'}"/>`;
-      m += `<line x1="${pts[0][0]}" y1="${pts[0][1]}" x2="${pts[1][0]}" y2="${pts[1][1]}" stroke="${pale ? '#000' : '#3f4a3c'}" stroke-width="${Math.max(.7, s * .022)}" stroke-linecap="round"/></g>`;
+    // chips: by seed, a third of dice carry one, a few of those two
+    const chips = [];
+    if (S.chips === 'some') {
+      if (o.chip != null) chips.push(chip(s, o.chip, seed));
+      else if (H(seed, 5, 41) < .34) { chips.push(chip(s, Math.floor(H(seed, 6, 41) * 8), seed)); if (H(seed, 7, 41) < .3) chips.push(chip(s, Math.floor(H(seed, 8, 41) * 8), seed + 50)); }
     }
-    if (S.depth === 'bevel') m += `<clipPath id="b${uid}"><path d="${d}"/></clipPath><path d="${d}" clip-path="url(#b${uid})" fill="none" stroke="url(#g-bevel)" stroke-width="${s * .1}"/>`;
+    const poly = pts => pts.map(p => p.map(v => v.toFixed(2)).join(',')).join(' ');
+    const towards = (pts, c, t) => pts.map(([x, y]) => [c[0] + (x - c[0]) * t, c[1] + (y - c[1]) * t]);
+    let m = `<mask id="m${uid}"><path d="${d}" fill="#fff"/>`;
+    for (const c of chips) m += `<polygon points="${poly([...towards(c.surf, c.corner, .58), c.out])}" fill="#000"/>`;
+    m += `</mask><g mask="url(#m${uid})">`;
+    m += `<path d="${d}" fill="url(#p-m-${S.material})"/><path d="${d}" fill="url(#g-face)"/>`;
+    m += `<clipPath id="b${uid}"><path d="${d}"/></clipPath><path d="${d}" clip-path="url(#b${uid})" fill="none" stroke="url(#g-bevel)" stroke-width="${s * .1}"/>`;
     m += `<path d="${d}" fill="none" stroke="rgba(0,0,0,.4)" stroke-width="${Math.max(.6, s * .03)}"/>`;
-    if (S.depth === 'flat') m += `<path d="${d}" transform="translate(${s * .02},${s * .02}) scale(.96)" fill="none" stroke="rgba(255,255,255,.16)" stroke-width="${Math.max(.5, s * .018)}"/>`;
-    const dia = s * PIPSIZE[S.pipSize][face === 1 ? 1 : 0];
-    const wildId = face === 1 ? WILDS[S.wild] : null;
+    // the break surface: paler bone, a dark step along its inner edge, a darker one at the bite
+    for (const c of chips) {
+      m += `<polygon points="${poly([...c.surf, c.out])}" fill="#e3e7d0"/>`;
+      m += `<polygon points="${poly([...towards(c.surf, c.corner, .78), c.out])}" fill="#c6cdb0"/>`;
+      m += `<polyline points="${poly(c.surf)}" fill="none" stroke="#4a5244" stroke-width="${Math.max(.6, s * .026)}" stroke-linejoin="round" stroke-linecap="round"/>`;
+      m += `<polyline points="${poly(towards(c.surf, c.corner, .58))}" fill="none" stroke="#232a22" stroke-width="${Math.max(.7, s * .03)}" stroke-linejoin="round" stroke-linecap="round"/>`;
+      // hairline cracks from two points of the ledge into the face
+      for (const i of [1, 4]) { const a = c.surf[i], b = towards([c.surf[i]], c.corner, 1.55)[0]; const mid = [(a[0] + b[0]) / 2 + J2(i, .03, s, seed), (a[1] + b[1]) / 2 + J2(i + 7, .03, s, seed)];
+        m += `<path d="M${a[0].toFixed(2)},${a[1].toFixed(2)} Q${mid[0].toFixed(2)},${mid[1].toFixed(2)} ${b[0].toFixed(2)},${b[1].toFixed(2)}" fill="none" stroke="#4a5244" stroke-width="${Math.max(.5, s * .016)}" stroke-linecap="round" opacity=".85"/>`; }
+    }
+    m += `</g>`;
+    const dia = s * PIPSIZE[S.pipSize][face === 1 ? 1 : 0], jit = s * JITTER[S.jitter];
     for (const [x, y] of pips(face)) {
-      const jit = S.jitter === 'on' ? s * .025 : 0;
       const jx = (H(x * 100 | 0, y * 100 | 0, seed + face) - .5) * 2 * jit, jy = (H(y * 100 | 0, x * 100 | 0, seed + face + 1) - .5) * 2 * jit;
-      m += pip(x * s + jx, y * s + jy, dia, S.pip, wildId, pale, seed + face);
+      m += pip(x * s + jx, y * s + jy, dia, S.pip, face === 1, seed + face);
     }
     return m;
   }
@@ -1060,23 +1047,23 @@ const SHAPE = (() => {
     const pad = s * .16, W = s + pad * 2;
     let m = `<svg class="die" width="${W}" height="${W}" viewBox="${-pad} ${-pad} ${W} ${W}" style="${o.style || ''}">`;
     m += `<g filter="url(#f-shadow)"><g${o.drowned ? ' opacity=".7"' : ''}>${faceBody(face, s, o)}`;
-    if (o.drowned) m += `<path d="${diePath((o.shape || DIE.shape), s, (o.seed || 0) + 1)}" fill="#0b2e32" opacity=".55"/>`;
+    if (o.drowned) m += `<path d="${diePath('square', s, (o.seed || 0) + 1)}" fill="#0b2e32" opacity=".55"/>`;
     m += `</g></g>`;
     if (o.counts) {
       const g = s * .07, sw = Math.max(1.5, s * .07);
-      const ring = `<path d="${diePath((o.shape || DIE.shape), s, (o.seed || 0) + 1)}" transform="translate(${-g},${-g}) scale(${(s + 2 * g) / s})" fill="none"`;
+      const ring = `<path d="${diePath('square', s, (o.seed || 0) + 1)}" transform="translate(${-g},${-g}) scale(${(s + 2 * g) / s})" fill="none"`;
       m += `${ring} stroke="#8ffbe0" stroke-width="${sw}" filter="url(#${s < 30 ? 'f-glow-s' : 'f-glow'})"/>${ring} stroke="#e9fff7" stroke-width="${sw * .35}" opacity=".9"/>`;
     }
     return m + `</svg>`;
   }
   // one frame of the roll: three faces of a cube, lit from the top-left
   function tumble(top, left, right, s = 44, rot = -14, o = {}) {
-    const W = s * 2.6, k = .866, sh = (o.ink || DIE.ink) === 'pale';
+    const W = s * 2.6, k = .866;
     let m = `<svg class="die" width="${W}" height="${W}" viewBox="${-W / 2} ${-W / 2} ${W} ${W}">`;
     m += `<g transform="rotate(${rot})" filter="url(#f-shadow)">`;
     m += `<g transform="matrix(${k},.5,${-k},.5,0,${-s})">${faceBody(top, s, Object.assign({ seed: 101, depth: 'flat' }, o))}</g>`;
-    m += `<g transform="matrix(${k},.5,0,1,${-k * s},${-s / 2})">${faceBody(left, s, Object.assign({ seed: 102, depth: 'flat' }, o))}<path d="${diePath(o.shape || DIE.shape, s, 103)}" fill="#06181a" opacity=".32"/></g>`;
-    m += `<g transform="matrix(${k},-.5,0,1,0,0)">${faceBody(right, s, Object.assign({ seed: 103, depth: 'flat' }, o))}<path d="${diePath(o.shape || DIE.shape, s, 104)}" fill="#03090a" opacity=".55"/></g>`;
+    m += `<g transform="matrix(${k},.5,0,1,${-k * s},${-s / 2})">${faceBody(left, s, Object.assign({ seed: 102, depth: 'flat' }, o))}<path d="${diePath('square', s, 103)}" fill="#06181a" opacity=".32"/></g>`;
+    m += `<g transform="matrix(${k},-.5,0,1,0,0)">${faceBody(right, s, Object.assign({ seed: 103, depth: 'flat' }, o))}<path d="${diePath('square', s, 104)}" fill="#03090a" opacity=".55"/></g>`;
     return m + `</g></svg>`;
   }
 
@@ -1182,7 +1169,7 @@ const SHAPE = (() => {
     m += `<g transform="translate(${s * .52},${s * .30}) rotate(9)">${faceBody(1, d, { seed: 202 })}</g>`;
     return m + `</svg>`;
   }
-  return { die, faceBody, tumble, badge, cup, icon, pips, diePath, DIE, CUP, SHAPES, PIPS, PIPSIZE, WILDS, CUP_SHAPES, CROWNS, LIPS, CRUSTS, BADGES };
+  return { die, faceBody, tumble, badge, cup, icon, pips, diePath, DIE, DIE_LOCKED, CUP, SHAPES, PIPS, PIPSIZE, CUP_SHAPES, CROWNS, LIPS, CRUSTS, BADGES };
 })();
 
 /* =====================================================================
@@ -1245,10 +1232,7 @@ const SHAPE = (() => {
   const D = SHAPE.die, C = SHAPE.cup, put = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
   const names = o => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, v.name]));
   const DIE_FIELDS = {
-    material: ['Material', names(TEX.DIE_MATS)], shape: ['Silhouette', names(SHAPE.SHAPES)],
-    depth: ['Depth', { flat: 'Flat', bevel: 'Bevel', block: 'Block' }], pip: ['Pip', names(SHAPE.PIPS)],
-    pipSize: ['Pip size', { s: 'Small 17%', m: 'Medium 21%', l: 'Large 25%' }], jitter: ['Pip placing', { on: 'Hand-drilled', off: 'Exact' }],
-    wild: ['The wild 1', { blood: 'Blood', rust: 'Rust', ember: 'Ember', none: 'Same as the rest' }], ink: ['Pip ink', { dark: 'Dark', pale: 'Pale (for jet)' }],
+    material: ['Material', names(TEX.DIE_MATS)], pip: ['Pip', names(SHAPE.PIPS)],
     chips: ['Wear', { some: 'Some chipped', none: 'None' }],
   };
   const CUP_FIELDS = {
@@ -1262,10 +1246,10 @@ const SHAPE = (() => {
     const sync = () => { for (const k of Object.keys(fields)) { const s = document.getElementById(`${id}-${k}`); if (s) s.value = spec[k]; } };
     sync(); return sync;
   }
-  const specLine = spec => Object.entries(spec).map(([k, v]) => `<b>${k}</b>: ${v}`).join(' &middot; ');
+  const specLine = (spec, locked = {}) => Object.entries(spec).map(([k, v]) => `<b>${k}</b>: ${v}${locked[k] != null ? ' <i>(locked)</i>' : ''}`).join(' &middot; ');
   const saveSpec = (key, spec) => { try { localStorage.setItem(key, JSON.stringify(spec)); } catch (e) {} };
-  const loadSpec = (key, spec) => { try { const s = JSON.parse(localStorage.getItem(key)); if (s) for (const k of Object.keys(spec)) if (s[k] != null) spec[k] = s[k]; } catch (e) {} };
-  loadSpec('cn.die', SHAPE.DIE); loadSpec('cn.cup', SHAPE.CUP);
+  const loadSpec = (key, spec, fields) => { try { const s = JSON.parse(localStorage.getItem(key)); if (s) for (const k of Object.keys(fields)) if (s[k] != null && fields[k][1][s[k]]) spec[k] = s[k]; } catch (e) {} };
+  loadSpec('cn.die', SHAPE.DIE, DIE_FIELDS); loadSpec('cn.cup', SHAPE.CUP, CUP_FIELDS);
 
   // a bank: a grid of picks; render it from the current spec, wire it once
   const card = (k, v, inner, picked, extra = '') => `<div class="bk${picked ? ' picked' : ''}" data-k="${k}" tabindex="0" role="button"><div class="stage short bkst"><div class="band c" ${extra}>${inner}</div></div><div class="bkn">${v.name}</div>${v.why ? `<div class="bkw">${v.why}</div>` : ''}</div>`;
@@ -1279,18 +1263,9 @@ const SHAPE = (() => {
   function copyMats(id) { document.querySelectorAll(`#${id} canvas.mat`).forEach(c => c.getContext('2d').drawImage(matCanvas[c.dataset.m], 0, 0)); }
   const matTile = key => { const c = matCanvas[key]; return `<canvas class="mat" data-m="${key}" width="${c.width}" height="${c.height}"></canvas>`; };
 
-  const DIE_CANDS = [
-    ['The hold\u2019s die', 'what the frames show: tallow bone, hand-cut, drilled', { material: 'yellowed', shape: 'hand', depth: 'bevel', pip: 'drilled', pipSize: 'm', jitter: 'on', wild: 'blood', ink: 'dark', chips: 'some' }],
-    ['Fresh cut', 'newer bone, bored deep; the clean one', { material: 'fresh', shape: 'hand', depth: 'flat', pip: 'bore', pipSize: 'm', jitter: 'on', wild: 'blood', ink: 'dark', chips: 'none' }],
-    ['River stone', 'brined and worn round, the pips inked in dimples', { material: 'brined', shape: 'stone', depth: 'flat', pip: 'ink', pipSize: 'l', jitter: 'off', wild: 'rust', ink: 'dark', chips: 'none' }],
-    ['Scrimshaw', 'crazed bone with the old ring pip, exact', { material: 'crazed', shape: 'square', depth: 'bevel', pip: 'ring', pipSize: 'm', jitter: 'off', wild: 'blood', ink: 'dark', chips: 'some' }],
-    ['Cursed jet', 'black horn, chamfered, bone beads set in; the 1 an ember', { material: 'jet', shape: 'chamfer', depth: 'bevel', pip: 'inlay', pipSize: 'm', jitter: 'off', wild: 'ember', ink: 'pale', chips: 'none' }],
-    ['Spar', 'driftwood, whittled crude, pips burned in with a nail', { material: 'driftwood', shape: 'crude', depth: 'block', pip: 'scorch', pipSize: 'm', jitter: 'on', wild: 'rust', ink: 'dark', chips: 'some' }],
-    ['Reef', 'coral stone, pillowed, the pips gouged', { material: 'coral', shape: 'pillow', depth: 'flat', pip: 'ragged', pipSize: 'l', jitter: 'on', wild: 'blood', ink: 'dark', chips: 'none' }],
-    ['Cast', 'the plate\u2019s verdigris as a die', { material: 'bronze', shape: 'chamfer', depth: 'bevel', pip: 'drilled', pipSize: 'm', jitter: 'off', wild: 'ember', ink: 'dark', chips: 'none' }],
-    ['Pewter', 'grey metal, machined, small bored pips', { material: 'pewter', shape: 'square', depth: 'bevel', pip: 'bore', pipSize: 's', jitter: 'off', wild: 'blood', ink: 'dark', chips: 'none' }],
-    ['Tusk', 'ivory with growth lines, worn, grit in the holes', { material: 'ivory', shape: 'stone', depth: 'bevel', pip: 'crusted', pipSize: 'm', jitter: 'on', wild: 'blood', ink: 'dark', chips: 'some' }],
-  ];
+  const DIE_CANDS = [];
+  for (const [mk, mv] of Object.entries(TEX.DIE_MATS)) for (const [pk, pv] of Object.entries(SHAPE.PIPS))
+    DIE_CANDS.push([`${mv.name}, ${pv.name.toLowerCase()}`, mv.why, { material: mk, pip: pk, chips: 'some' }]);
   const CUP_CANDS = [
     ['The drowned cup', 'the first proposal: verdigris, a rolled lip, light growth', { material: 'verdigris', shape: 'taper', crown: 'round', lip: 'band', crust: 'light', badge: 'disc' }],
     ['Cask', 'tarred staves and two hoops, a tag on a nail', { material: 'staves', shape: 'straight', crown: 'flat', lip: 'hoops', crust: 'light', badge: 'tag' }],
@@ -1310,11 +1285,10 @@ const SHAPE = (() => {
     const S = SHAPE.DIE;
     put('mx-faces44', [1, 2, 3, 4, 5, 6].map(f => D(f, 44, { seed: f })).join(''));
     put('mx-faces22', [1, 2, 3, 4, 5, 6].map(f => D(f, 22, { seed: f })).join(''));
-    put('mx-states', [D(3, 44, { counts: true, seed: 11 }), D(5, 44, { drowned: true, seed: 12 }), D(4, 44, { chip: 1, seed: 13, chips: 'some' }), D(0, 44, { seed: 14 }), SHAPE.tumble(5, 3, 1, 36)].join(''));
-    put('mx-spec', `<b>die</b> &middot; ${specLine(S)}`);
-    renderBank('dice-mats', TEX.DIE_MATS, k => matTile('m-' + k) + D(5, 44, { material: k, seed: 15, ink: k === 'jet' ? 'pale' : S.ink === 'pale' ? 'dark' : S.ink }) + D(1, 22, { material: k, seed: 16, ink: k === 'jet' ? 'pale' : S.ink === 'pale' ? 'dark' : S.ink }), S.material);
+    put('mx-states', [D(3, 44, { counts: true, seed: 11 }), D(5, 44, { drowned: true, seed: 12 }), D(4, 44, { chip: 1, seed: 13, chips: 'some' }), D(6, 44, { chip: 5, seed: 17, chips: 'some' }), D(0, 44, { seed: 14 }), SHAPE.tumble(5, 3, 1, 36)].join(''));
+    put('mx-spec', `<b>die</b> &middot; ${specLine(S, SHAPE.DIE_LOCKED)}`);
+    renderBank('dice-mats', TEX.DIE_MATS, k => matTile('m-' + k) + D(5, 44, { material: k, seed: 15 }) + D(1, 22, { material: k, seed: 16 }), S.material);
     copyMats('dice-mats');
-    renderBank('dice-shapes', SHAPE.SHAPES, k => D(3, 36, { shape: k, depth: 'flat', seed: 21 }) + D(6, 36, { shape: k, depth: 'bevel', seed: 22 }) + D(5, 36, { shape: k, depth: 'block', seed: 23 }) + D(2, 22, { shape: k, seed: 24 }), S.shape, 'style="gap:2px"');
     renderBank('dice-pips', SHAPE.PIPS, k => D(5, 44, { pip: k, seed: 31 }) + D(1, 44, { pip: k, seed: 32 }) + D(5, 22, { pip: k, seed: 33 }) + D(1, 22, { pip: k, seed: 34 }), S.pip, 'style="gap:2px"');
     renderCands('dice-cands', DIE_CANDS, spec => [1, 2, 3, 4, 5, 6].map(f => D(f, 32, Object.assign({ seed: f + 7 }, spec))).join(''));
     // the rest of the page's dice
@@ -1349,9 +1323,9 @@ const SHAPE = (() => {
   }
   const syncDie = mixer('dice-mixer', DIE_FIELDS, SHAPE.DIE, drawDice);
   const syncCup = mixer('cup-mixer', CUP_FIELDS, SHAPE.CUP, drawCups);
-  const setDie = (key, v) => { SHAPE.DIE[key] = v; if (key === 'material') SHAPE.DIE.ink = v === 'jet' ? 'pale' : SHAPE.DIE.ink === 'pale' ? 'dark' : SHAPE.DIE.ink; syncDie(); drawDice(); };
+  const setDie = (key, v) => { SHAPE.DIE[key] = v; syncDie(); drawDice(); };
   const setCup = (key, v) => { SHAPE.CUP[key] = v; syncCup(); drawCups(); };
-  wire('dice-mats', k => setDie('material', k)); wire('dice-shapes', k => setDie('shape', k)); wire('dice-pips', k => setDie('pip', k));
+  wire('dice-mats', k => setDie('material', k)); wire('dice-pips', k => setDie('pip', k));
   wire('dice-cands', i => { Object.assign(SHAPE.DIE, DIE_CANDS[+i][2]); syncDie(); drawDice(); }, '.cand');
   for (const [id, key] of [['cup-mats', 'material'], ['cup-shapes', 'shape'], ['cup-crowns', 'crown'], ['cup-lips', 'lip'], ['cup-crusts', 'crust'], ['cup-badges', 'badge']]) wire(id, k => setCup(key, k));
   wire('cup-cands', i => { Object.assign(SHAPE.CUP, CUP_CANDS[+i][2]); syncCup(); drawCups(); }, '.cand');
