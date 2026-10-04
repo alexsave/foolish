@@ -275,26 +275,13 @@ section[hidden]{display:none}
 .scr{position:relative;overflow:hidden;border-radius:6px;isolation:isolate;box-shadow:0 20px 50px rgba(0,0,0,.45);font-family:var(--serif);color:var(--ink);flex:none}
 .scr .tstage{position:absolute;inset:0;border-radius:0;box-shadow:none;border:0;width:100%!important;height:100%!important}
 .scr-ui{position:absolute;inset:0;z-index:4}
+canvas.scene3d{position:absolute;left:0;top:0;cursor:pointer;-webkit-tap-highlight-color:transparent}
 .abs{position:absolute}
 .seat{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-start}
 .seatf{display:flex;flex-direction:column;align-items:center}
 .myband{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px}
 .myband.short{gap:1px}
-.peek{position:relative;width:100%;cursor:pointer;-webkit-tap-highlight-color:transparent}
-.cupv{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:2;perspective:700px;perspective-origin:50% 50%}
-.peek-dice{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:1}
-.peek-dice .pd{position:absolute}
-.peek-shadow{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);border-radius:50%;z-index:0;
-  background:radial-gradient(closest-side,rgba(0,0,0,.55),rgba(0,0,0,.25) 70%,transparent);transition:transform .42s cubic-bezier(.3,.9,.3,1.06),opacity .42s}
-.cup3d{position:absolute;left:0;top:0;width:var(--d);height:var(--d);
-  transform-style:preserve-3d;transform-origin:50% 0 0;transform:rotateX(0deg);transition:transform .42s cubic-bezier(.3,.9,.3,1.06)}
-.cup3d>*{position:absolute;left:50%;top:50%;transform-origin:0 0 0;backface-visibility:hidden;-webkit-backface-visibility:hidden}
-.cup3d .cf{background-size:auto,128px 128px;border-bottom:1.5px solid rgba(0,0,0,.6)}
-.cup3d .crown{border-radius:50%;background-image:radial-gradient(circle at 36% 32%,rgba(255,255,255,.28),transparent 55%,rgba(0,0,0,.4)),var(--tex-verd);background-size:auto,128px 128px;
-  box-shadow:inset 0 0 0 1px rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;font-family:var(--serif);color:#e8ecd8;text-shadow:0 .8px 0 #0a0d0b,0 0 2px rgba(0,0,0,.6)}
-.peek[data-peek="1"] .cup3d{transform:rotateX(78deg)}
-.peek[data-peek="1"] .peek-shadow{transform:translate(-50%,-50%) translateY(-18%) scale(1.15,.7);opacity:.6}
-@media (prefers-reduced-motion:reduce){.cup3d,.peek-shadow{transition:none}}
+
 .shelf{position:absolute;left:0;bottom:0;padding:0 16px 12px;display:flex;flex-direction:column;gap:10px}
 .lobby{position:absolute;inset:0;display:flex;flex-direction:column}
 .bub-cap{width:300px;background:#e9e9eb;color:#111;font:17px/1.3 var(--ui);padding:10px 14px 12px;border-radius:0 0 18px 18px}
@@ -560,7 +547,8 @@ What is new is the view: the table is seen <b>from above</b>. Every seat is its 
     <div class="h4">What to look for <span class="pill n">real size</span></div>
     <p class="why" style="max-width:60ch">The screen on the left is the size the drawer really is. Collapsed is the one the game is mostly played at: 340pt, of which the picker takes 100 when it is my turn (the stepper and the face chips on one row, the two verbs on the next), so the board is a short one and the other seats go in a row along the top with the plate beside them. Expanded gives the ellipse.</p>
     <p class="why" style="max-width:60ch">The seat rule is the app’s: the other seats go left to right in seat order starting after mine, round the upper half of an ellipse whose centre is above my band; a board too short for a badge, the plate and my band stacked becomes the short board. <b>Locked:</b> foolish’s ring, every seat, mine included, at an equal angle round one ellipse, 0.42 of the width by 0.35 of the height, which is <code>MessageTableView.ringPoint</code>; a short board stays the row. <b>Locked too:</b> the two-row picker, Liar on the left and Raise on the right. The other three pickers stay in the page’s source.</p>
-    <p class="why" style="max-width:60ch"><b>The peek.</b> My dice are under my own cup, as at a real table: the cup sits in my band with my count on its crown. Tap it (click it here, in any screen on this tab) and it turns about the far edge of its mouth, the near rim rising off the table toward you (from the right-hand side of the table that is a clockwise turn), and the dice are seen under it; tap again and it turns back down. It is a real turn of a real body: my cup is built as a crown and eighteen facets of side with a dark inside, so it looks a little different from the other seats’ drawn cups, which the owner accepted. The dice are not in a row: five dice under a cup sit in a rough ring, each a little off its station and turned a little by seed, none touching, and the cup’s crown is just big enough to cover the ring. The other seats’ cups never tip.</p>
+    <p class="why" style="max-width:60ch"><b>In three dimensions.</b> Round fourteen: the owner asked for real bodies, projected. Every cup on the table and every one of my dice is now a mesh (a cup is a truncated cone of twenty-four facets under a crown disc; a die is a cube) wearing its texture from the bakes, placed on the board and projected to the screen by a camera over the board’s centre, a true perspective projection: the table plane is drawn 1:1 and everything above it grows toward the eye and leans away from the centre, so the cups at the edges show the side that faces you. One light; each face is shaded by how much it faces it; each body throws a soft shadow away from the light.</p>
+    <p class="why" style="max-width:60ch"><b>The peek.</b> My dice are under my own cup, in a rough ring, as at a real table. Tap my cup (click it here, in any screen on this tab) and it turns about the far edge of its mouth, which stays on the table: the near rim rises toward you, the body swings up the screen, from the right-hand side of the table a clockwise turn, and the dice are seen under it; tap again and it turns back down. The turn is re-projected every frame; nothing is faked. The dice are not in a row: five dice under a cup sit in a rough ring, each a little off its station and turned a little by seed, none touching, and the cup’s crown is just big enough to cover the ring. The other seats’ cups never tip.</p>
     <p class="why" style="max-width:60ch">From above a cup’s count sits on its crown, which is why the crown had to carry a numeral at 32. The name goes under the cup in the small caps, and the live seat gets the turn light under its name.</p>
     <div class="kv" id="lay-spec"></div>
   </div>
@@ -583,12 +571,12 @@ What is new is the view: the table is seen <b>from above</b>. Every seat is its 
   <p><b>From above, proposed.</b> The whole screen is the table seen from above: the planks, the cups’ crowns, the dice face up. It is the one view where a cup, a die and the table are all the same object seen the same way. The seated view is in the mixer.</p>
   <p><b>No two alike.</b> Every die takes its own slice of the bone bake, every cup its own slice of the verdigris, and every plank its own band of the wood march, all by seed, so nothing on the table is a copy of its neighbour.</p>
   <p><b>Foolish’s ring, decided.</b> The other arrangements are gone from the bank; their code stays in the page for the record.</p>
-  <p><b>The peek, proposed.</b> One tap turns my cup up about the far edge of its mouth, one tap turns it down; nothing else on the table is touched by it. In Swift a flat view cannot be a cup, so there are two honest ports: the facets as here, each a <code>Rectangle</code> with its own <code>rotation3DEffect</code> in a <code>ZStack</code> under one more about the hinge (about forty views, fine on a phone), or a sprite strip of the cup at twelve angles baked at build time like the textures and scrubbed with <code>FMotion.card</code>. The strip is the one I’d ship: an iMessage extension is watchdog-capped and a baked image costs nothing at runtime.</p>
+  <p><b>The table is rendered, proposed.</b> One small renderer (<code>R3</code> in this page’s source, about a hundred lines) draws every cup and die on the board as a textured body under a perspective camera. It is arithmetic on doubles and, per triangle, a clip, an affine transform and a draw, which is exactly <code>CGContext.clip</code>, <code>concatenate</code> and <code>draw(_:in:)</code>; the port is <code>Canvas</code> in SwiftUI or a <code>CGContext</code> into a cached image, redrawn when the table changes and at the card spring’s frame rate during a peek. Measured here: a six-seat table is about four hundred triangles and draws in a few milliseconds at 2x.</p>
   <p><b>The picker, decided.</b> Two rows: the stepper and the face chips, then <b>Liar</b> on the left and Raise on the right; every button is the plate.</p>
   <p><b>The reveal is a list on the table.</b> Every seat’s band in seat order, the counting dice ringed, the loser’s band ringed in blood with the stamp at its end, the outcome line under the list, Next round on the shelf. Collapsed, the dice drop to 22 and the bands to 30 so six seats still fit.</p>
   <p><b>The lobby is the deep.</b> The one screen on open water rather than the table: the name over the roster, the field and Join, Start lit when two are seated.</p>
 </div>
-<div class="note" style="max-width:73ch"><b>Port.</b> <code>DiceTableLayout.seatFrames</code> becomes foolish’s <code>ringPoint</code> on a tall board and keeps the row on a short one; the dice under my cup are five seeded offsets on a ring (centre spacing 1.55 of a side), one function with a test that no two overlap; the peek is the sprite strip above. Seat badge: <code>cupTop</code> (or <code>Cup</code>) over the name in the small caps, the turn light a <code>Capsule</code>. The screen’s background is <code>FeltBackground</code> with the table bake and the nail overlay drawn once into it. The bubble is <code>BubbleSnapshot</code> drawing the same top-down table at 300 by 195.</div>
+<div class="note" style="max-width:73ch"><b>Port.</b> <code>DiceTableLayout.seatFrames</code> becomes foolish’s <code>ringPoint</code> on a tall board and keeps the row on a short one; the dice under my cup are five seeded offsets on a ring (centre spacing 1.55 of a side), one function with a test that no two overlap; the cups and dice are <code>R3</code> as above, the meshes built once, the textures the bakes. Seat badge: <code>cupTop</code> (or <code>Cup</code>) over the name in the small caps, the turn light a <code>Capsule</code>. The screen’s background is <code>FeltBackground</code> with the table bake and the nail overlay drawn once into it. The bubble is <code>BubbleSnapshot</code> drawing the same top-down table at 300 by 195.</div>
 </section>
 
 <!-- ============================================================ 7 -->
@@ -1614,6 +1602,254 @@ const SHAPE = (() => {
     row.appendChild(el);
   }
 
+  /* =====================================================================
+     R3: the table in three dimensions, projected to the screen.
+     A cup is a truncated cone (24 facets) under a crown disc; a die is a
+     cube; both are textured from the bakes. The camera hangs over the
+     board's centre at height HC looking straight down, and a point at
+     height z projects by the perspective rule  s = c + (p - c) * HC/(HC-z),
+     so the table plane is drawn 1:1 and everything above it grows toward
+     the eye and leans away from the centre. One light, above and to the
+     upper left; each face is shaded by how much it faces it. Faces are
+     drawn back to front (the objects are convex, so culling the faces that
+     look away is most of the sort), each as a clipped drawImage under an
+     affine map from texture to screen. Everything here is arithmetic on
+     doubles and seven CoreGraphics calls, so it ports as it stands.
+     ===================================================================== */
+  const R3 = (() => {
+    const HC = 720, LIGHT = (() => { const l = [-.45, -.55, 1]; const n = Math.hypot(...l); return l.map(v => v / n); })();
+    const rotZ = (p, a) => { const c = Math.cos(a), s = Math.sin(a); return [p[0] * c - p[1] * s, p[0] * s + p[1] * c, p[2]]; };
+    const rotX = (p, a) => { const c = Math.cos(a), s = Math.sin(a); return [p[0], p[1] * c - p[2] * s, p[1] * s + p[2] * c]; };
+    const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const norm = v => { const n = Math.hypot(...v) || 1; return [v[0] / n, v[1] / n, v[2] / n]; };
+
+    // ---- meshes: verts in object space (z up), faces as index lists with uv per corner and a texture
+    function cup(R, rc, h, segs, texSide, texCrown) {
+      const verts = [], faces = [];
+      for (let i = 0; i < segs; i++) {
+        const a = i / segs * Math.PI * 2;
+        verts.push([R * Math.cos(a), R * Math.sin(a), 0], [rc * Math.cos(a), rc * Math.sin(a), h]);
+      }
+      for (let i = 0; i < segs; i++) {
+        const j = (i + 1) % segs, u0 = i / segs, u1 = (i + 1) / segs;
+        // outward winding: mouth i, mouth j, crown j, crown i
+        faces.push({ idx: [2 * i, 2 * j, 2 * j + 1, 2 * i + 1], uv: [[u0, 1], [u1, 1], [u1, 0], [u0, 0]], tex: texSide, wrap: true });
+      }
+      const c = verts.length; verts.push([0, 0, h]);
+      for (let i = 0; i < segs; i++) {
+        const j = (i + 1) % segs, a0 = i / segs * Math.PI * 2, a1 = (j) / segs * Math.PI * 2;
+        faces.push({ idx: [c, 2 * i + 1, 2 * j + 1], uv: [[.5, .5], [.5 + .5 * Math.cos(a0), .5 + .5 * Math.sin(a0)], [.5 + .5 * Math.cos(a1), .5 + .5 * Math.sin(a1)]], tex: texCrown });
+      }
+      return { verts, faces };
+    }
+    // a die: the cube of side d standing on the table, face f of the atlas on each side so the top shows `top`
+    function die(d, top, atlas) {
+      const s = d / 2, verts = [[-s, -s, 0], [s, -s, 0], [s, s, 0], [-s, s, 0], [-s, -s, d], [s, -s, d], [s, s, d], [-s, s, d]];
+      // the standard die: 1 opposite 6, 2 opposite 5, 3 opposite 4. The sides are chosen so the top is `top`.
+      const opp = { 1: 6, 2: 5, 3: 4, 4: 3, 5: 2, 6: 1 }, sides = [1, 2, 3, 4, 5, 6].filter(f => f !== top && f !== opp[top]);
+      const uvq = f => [[(f - 1) / 6, 0], [f / 6, 0], [f / 6, 1], [(f - 1) / 6, 1]];
+      const faces = [
+        { idx: [4, 5, 6, 7], uv: uvq(top), tex: atlas },           // top, z = d
+        { idx: [0, 3, 2, 1], uv: uvq(opp[top]), tex: atlas },       // bottom
+        { idx: [0, 1, 5, 4], uv: uvq(sides[0]), tex: atlas },       // y = -s
+        { idx: [1, 2, 6, 5], uv: uvq(sides[1]), tex: atlas },       // x = +s
+        { idx: [2, 3, 7, 6], uv: uvq(sides[2]), tex: atlas },       // y = +s
+        { idx: [3, 0, 4, 7], uv: uvq(sides[3]), tex: atlas },       // x = -s
+      ];
+      return { verts, faces };
+    }
+
+    // ---- one textured triangle: clip to it (grown a hair so neighbours meet), map the texture by the affine
+    //      that sends the three uv corners to the three screen corners, draw, shade
+    function tri(ctx, img, P, T, shade) {
+      const [p0, p1, p2] = P, [t0, t1, t2] = T;
+      const cx = (p0[0] + p1[0] + p2[0]) / 3, cy = (p0[1] + p1[1] + p2[1]) / 3;
+      const grow = p => [p[0] + Math.sign(p[0] - cx) * .35, p[1] + Math.sign(p[1] - cy) * .35];
+      const g0 = grow(p0), g1 = grow(p1), g2 = grow(p2);
+      ctx.save(); ctx.beginPath(); ctx.moveTo(g0[0], g0[1]); ctx.lineTo(g1[0], g1[1]); ctx.lineTo(g2[0], g2[1]); ctx.closePath(); ctx.clip();
+      const W = img.width, Hh = img.height;
+      const u0 = t0[0] * W, v0 = t0[1] * Hh, u1 = t1[0] * W, v1 = t1[1] * Hh, u2 = t2[0] * W, v2 = t2[1] * Hh;
+      const det = (u1 - u0) * (v2 - v0) - (u2 - u0) * (v1 - v0);
+      if (Math.abs(det) > 1e-6) {
+        const a = ((p1[0] - p0[0]) * (v2 - v0) - (p2[0] - p0[0]) * (v1 - v0)) / det;
+        const b = ((p1[1] - p0[1]) * (v2 - v0) - (p2[1] - p0[1]) * (v1 - v0)) / det;
+        const c = ((p2[0] - p0[0]) * (u1 - u0) - (p1[0] - p0[0]) * (u2 - u0)) / det;
+        const d = ((p2[1] - p0[1]) * (u1 - u0) - (p1[1] - p0[1]) * (u2 - u0)) / det;
+        const e = p0[0] - a * u0 - c * v0, f = p0[1] - b * u0 - d * v0;
+        ctx.transform(a, b, c, d, e, f); ctx.drawImage(img, 0, 0); ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      }
+      if (shade) { ctx.fillStyle = shade; ctx.fill(); }
+      ctx.restore();
+    }
+    let DPR = 1;
+
+    // ---- a scene: objects placed on the board, rendered into a canvas the board's size
+    //      obj: { mesh, pos:[x,y], yaw, tilt:{angle, hingeY}, tint, lift }
+    function render(canvas, W, H, objs, dpr) {
+      DPR = dpr || 1;
+      canvas.width = W * DPR; canvas.height = H * DPR; canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+      const ctx = canvas.getContext('2d'); ctx.setTransform(DPR, 0, 0, DPR, 0, 0); ctx.clearRect(0, 0, W, H);
+      const C = [W / 2, H / 2], eye = [C[0], C[1], HC];
+      const project = p => { const k = HC / (HC - p[2]); return [C[0] + (p[0] - C[0]) * k, C[1] + (p[1] - C[1]) * k]; };
+      const placed = objs.map(o => {
+        const verts = o.mesh.verts.map(p => {
+          let q = rotZ(p, o.yaw || 0);
+          if (o.tilt && o.tilt.angle) { q = [q[0], q[1] - o.tilt.hingeY, q[2]]; q = rotX(q, o.tilt.angle); q = [q[0], q[1] + o.tilt.hingeY - (o.tilt.back || 0), q[2] + (o.tilt.lift || 0)]; }
+          return [q[0] + o.pos[0], q[1] + o.pos[1], q[2] + (o.lift || 0)];
+        });
+        const zc = verts.reduce((a, v) => a + v[2], 0) / verts.length;
+        return { o, verts, zc };
+      });
+      placed.sort((a, b) => a.zc - b.zc);
+      // shadows first: each object's footprint, pushed away from the light, soft
+      for (const pl of placed) {
+        const o = pl.o, p = project([o.pos[0], o.pos[1], 0]), r = o.shadowR || 20, h = o.shadowH || 20;
+        const sx = p[0] + h * .22, sy = p[1] + h * .26;
+        const g = ctx.createRadialGradient(sx, sy, r * .3, sx, sy, r * 1.25);
+        g.addColorStop(0, `rgba(0,3,2,${o.tilt && o.tilt.angle ? .3 : .5})`); g.addColorStop(1, 'rgba(0,3,2,0)');
+        ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(sx, sy, r * 1.25, r * 1.15, 0, 0, Math.PI * 2); ctx.fill();
+      }
+      for (const pl of placed) {
+        const o = pl.o, V = pl.verts;
+        const faces = o.mesh.faces.map(f => {
+          const P = f.idx.map(i => V[i]);
+          const n = norm(cross(sub(P[1], P[0]), sub(P[2], P[0])));
+          const centre = P.reduce((a, p) => [a[0] + p[0] / P.length, a[1] + p[1] / P.length, a[2] + p[2] / P.length], [0, 0, 0]);
+          const toEye = norm(sub(eye, centre));
+          return { f, P, n, centre, facing: dot(n, toEye) };
+        }).filter(x => x.facing > 0).sort((a, b) => a.centre[2] - b.centre[2]);
+        for (const x of faces) {
+          const lit = dot(x.n, LIGHT), k = Math.max(0, Math.min(.82, .5 - .46 * lit));
+          const shade = o.tint ? `rgba(${o.tint},${(.35 + k * .5).toFixed(2)})` : `rgba(0,4,3,${k.toFixed(2)})`;
+          const S = x.P.map(project);
+          if (x.P.length === 4) { tri(ctx, x.f.tex, [S[0], S[1], S[2]], [x.f.uv[0], x.f.uv[1], x.f.uv[2]], shade); tri(ctx, x.f.tex, [S[0], S[2], S[3]], [x.f.uv[0], x.f.uv[2], x.f.uv[3]], shade); }
+          else tri(ctx, x.f.tex, S, x.f.uv, shade);
+        }
+      }
+      return ctx;
+    }
+    return { cup, die, render, HC };
+  })();
+
+  /* ---- the textures the meshes wear ------------------------------------ */
+  const TEX3 = (() => {
+    const cache = {};
+    // the cup's side: the verdigris tile laid twice across so a facet never straddles the seam, at its own offset
+    function cupSide(seed) {
+      const k = 'side' + seed; if (cache[k]) return cache[k];
+      const src = matCanvas['c-verdigris'], c = document.createElement('canvas'); c.width = 512; c.height = 256;
+      const x = TEX.hash(seed, 91, 977) * 256 | 0, y = TEX.hash(seed, 92, 977) * 256 | 0, g = c.getContext('2d');
+      for (let i = -1; i < 3; i++) for (let j = -1; j < 2; j++) g.drawImage(src, i * 256 - x, j * 256 - y);
+      // the rim: a dark band at the mouth (v = 1), a lit line at the crown's edge (v = 0)
+      const gr = g.createLinearGradient(0, 0, 0, 256); gr.addColorStop(0, 'rgba(255,240,200,.14)'); gr.addColorStop(.06, 'rgba(0,0,0,0)'); gr.addColorStop(.9, 'rgba(0,0,0,0)'); gr.addColorStop(1, 'rgba(0,0,0,.6)');
+      g.fillStyle = gr; g.fillRect(0, 0, 512, 256);
+      return cache[k] = c;
+    }
+    // the crown: the verdigris at its own offset, the one light's highlight, and the count stamped on it
+    function cupCrown(seed, count, out) {
+      const k = 'crown' + seed + ':' + count + (out ? 'o' : ''); if (cache[k]) return cache[k];
+      const src = matCanvas['c-verdigris'], c = document.createElement('canvas'); c.width = 128; c.height = 128;
+      const x = TEX.hash(seed, 93, 977) * 128 | 0, y = TEX.hash(seed, 94, 977) * 128 | 0, g = c.getContext('2d');
+      for (let i = -1; i < 2; i++) for (let j = -1; j < 2; j++) g.drawImage(src, i * 256 - x, j * 256 - y);
+      let gr = g.createRadialGradient(46, 42, 4, 64, 64, 70); gr.addColorStop(0, 'rgba(255,255,255,.26)'); gr.addColorStop(.55, 'rgba(255,255,255,0)'); gr.addColorStop(1, 'rgba(0,0,0,.4)');
+      g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+      if (out) {
+        g.fillStyle = 'rgba(11,46,50,.55)'; g.fillRect(0, 0, 128, 128);
+        g.strokeStyle = '#050a09'; g.lineWidth = 3; g.lineCap = 'round'; g.beginPath(); g.moveTo(58, 14); g.quadraticCurveTo(80, 50, 60, 76); g.quadraticCurveTo(84, 98, 70, 118); g.stroke();
+      } else if (count != null) {
+        g.font = `${56}px 'IM Fell English', serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
+        g.fillStyle = 'rgba(10,13,11,.85)'; g.fillText(count, 65, 70); g.fillStyle = 'rgba(232,236,216,.92)'; g.fillText(count, 64, 68);
+      }
+      return cache[k] = c;
+    }
+    // a die's atlas: six faces side by side, each the bone at its own offset, the bevel, the strike wear and the pips
+    function dieAtlas(seed) {
+      const k = 'die' + seed; if (cache[k]) return cache[k];
+      const S = 64, src = matCanvas['m-' + SHAPE.DIE.material], c = document.createElement('canvas'); c.width = 6 * S; c.height = S;
+      const g = c.getContext('2d'), H = TEX.hash;
+      for (let f = 1; f <= 6; f++) {
+        const x0 = (f - 1) * S, ox = H(seed, 30 + f, 977) * 64 | 0, oy = H(seed, 40 + f, 977) * 64 | 0;
+        g.save(); g.beginPath(); g.rect(x0, 0, S, S); g.clip();
+        for (let i = -1; i < 2; i++) for (let j = -1; j < 2; j++) g.drawImage(src, x0 + i * 128 - ox, j * 128 - oy);
+        // strike wear: the corners and edges, each its own depth
+        if (SHAPE.DIE.wear !== 'none') {
+          const amt = SHAPE.DIE.wear === 'marked' ? 1.7 : 1;
+          for (let cn = 0; cn < 4; cn++) {
+            const cx = x0 + (cn & 1 ? S : 0), cy = cn & 2 ? S : 0, rr = S * (.16 + .18 * H(cn, seed + f, 911)), op = amt * (.2 + .24 * H(cn + 4, seed + f, 911));
+            const gr = g.createRadialGradient(cx, cy, 0, cx, cy, rr); gr.addColorStop(0, `rgba(78,63,38,${op})`); gr.addColorStop(.45, `rgba(78,63,38,${op * .55})`); gr.addColorStop(1, 'rgba(78,63,38,0)');
+            g.fillStyle = gr; g.fillRect(x0, 0, S, S);
+          }
+          g.lineCap = 'round';
+          [[x0 + 10, 0, x0 + S - 10, 0], [x0 + S, 10, x0 + S, S - 10], [x0 + 10, S, x0 + S - 10, S], [x0, 10, x0, S - 10]].forEach(([a, b, cc, d], e) => {
+            const op = amt * (.08 + .18 * H(e + 8, seed + f, 911));
+            g.strokeStyle = `rgba(78,63,38,${op})`; g.lineWidth = S * .11; g.beginPath(); g.moveTo(a, b); g.lineTo(cc, d); g.stroke();
+          });
+        }
+        // the bevel: a lit edge top-left, a dark one bottom-right, inside the face
+        let gr = g.createLinearGradient(x0, 0, x0 + S, S); gr.addColorStop(0, 'rgba(255,255,255,.3)'); gr.addColorStop(.45, 'rgba(255,255,255,.04)'); gr.addColorStop(.55, 'rgba(0,0,0,.06)'); gr.addColorStop(1, 'rgba(0,0,0,.4)');
+        g.strokeStyle = gr; g.lineWidth = S * .1; g.strokeRect(x0 + S * .05, S * .05, S * .9, S * .9);
+        g.strokeStyle = 'rgba(0,0,0,.35)'; g.lineWidth = 1.5; g.strokeRect(x0 + .75, .75, S - 1.5, S - 1.5);
+        // the pips: drilled, the far wall lit; the 1 in blood
+        const dia = S * SHAPE.PIPSIZE[SHAPE.DIE.pipSize][f === 1 ? 1 : 0], jit = S * .012;
+        for (const [px, py] of SHAPE.pips(f)) {
+          const jx = (H(px * 100 | 0, py * 100 | 0, seed + f) - .5) * 2 * jit, jy = (H(py * 100 | 0, px * 100 | 0, seed + f + 1) - .5) * 2 * jit;
+          const cx = x0 + px * S + jx, cy = py * S + jy, r = dia / 2;
+          gr = g.createRadialGradient(cx + r * .2, cy + r * .25, 0, cx, cy, r);
+          if (f === 1) { gr.addColorStop(0, '#3a0906'); gr.addColorStop(.55, '#7f1f17'); gr.addColorStop(1, '#b2503f'); }
+          else { gr.addColorStop(0, '#000406'); gr.addColorStop(.62, '#0a1210'); gr.addColorStop(1, '#36463d'); }
+          g.fillStyle = gr; g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.fill();
+          g.strokeStyle = 'rgba(0,0,0,.45)'; g.lineWidth = Math.max(.5, r * .12); g.stroke();
+        }
+        g.restore();
+      }
+      return cache[k] = c;
+    }
+    return { cupSide, cupCrown, dieAtlas, reset: () => { for (const k in cache) delete cache[k]; } };
+  })();
+
+  // a scene canvas inside a screen: the cups at their seats and my dice, in three dimensions.
+  // Returns the <canvas> markup and queues the render for after the markup is in the DOM.
+  const scenes = [];
+  function scene3d(W, H, objs, key) {
+    const id = 's3' + (scenes.length), spec = { id, W, H, objs };
+    scenes.push(spec);
+    return `<canvas class="scene3d" id="${id}" data-key="${key || ''}"></canvas>`;
+  }
+  function flushScenes() {
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    for (const sp of scenes.splice(0)) { const c = document.getElementById(sp.id); if (c) { c._objs = sp.objs; c._W = sp.W; c._H = sp.H; R3.render(c, sp.W, sp.H, sp.objs, dpr); } }
+  }
+  // a cup object at a seat: R the mouth radius, standing on the table
+  function cupObj(R, count, seed, x, y, o = {}) {
+    const rc = R * .72, h = R * 1.8;
+    return Object.assign({ mesh: R3.cup(R, rc, h, 24, TEX3.cupSide(seed), TEX3.cupCrown(seed, count, o.out)), pos: [x, y], yaw: 0, shadowR: R, shadowH: h, tint: o.out ? '11,46,50' : null, R, h }, o);
+  }
+  function dieObj(d, face, seed, x, y, yaw) {
+    return { mesh: R3.die(d, face, TEX3.dieAtlas(seed)), pos: [x, y], yaw, shadowR: d * .7, shadowH: d };
+  }
+  // the peek's pose at an angle: the hinge is the far edge of the mouth; as the cup turns it also slides back
+  // along the table by up to a radius and comes up a little, the way a hand lifts a cup, so the dice come
+  // out from under the near rim and the camera over the board's centre sees them
+  const PEEK_ANGLE = 70 * Math.PI / 180;
+  const peekTilt = (R, a) => ({ angle: a, hingeY: -R, back: R * 1.05 * a / PEEK_ANGLE, lift: R * .12 * a / PEEK_ANGLE });
+  // the peek: the one tap. The cup's hinge is the far edge of its mouth (local y = -R: toward the board's
+  // centre, which from my seat is up the screen); the angle runs 0 -> 78 degrees on FMotion.card's curve.
+  function animatePeek(canvas, open) {
+    const objs = canvas._objs, cup = objs.find(o => o.peekable); if (!cup) return;
+    const from = cup.tilt ? cup.tilt.angle : 0, to = open ? PEEK_ANGLE : 0, t0 = performance.now(), dur = 420;
+    const ease = t => 1 - Math.pow(1 - t, 3) * (1 - Math.sin(t * Math.PI) * .12);
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const step = now => {
+      const t = reduce ? 1 : Math.min(1, (now - t0) / dur);
+      cup.tilt = peekTilt(cup.R, from + (to - from) * ease(t));
+      R3.render(canvas, canvas._W, canvas._H, objs, Math.min(2, window.devicePixelRatio || 1));
+      if (t < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
   /* ---- the layout ----------------------------------------------------- */
   const LAY = { seats: 6, state: 'table', view: 'top', size: 'expanded', arrange: 'foolish', picker: 'rows' };
   const LAY_LOCKED = { arrange: 'foolish', picker: 'rows' };
@@ -1708,8 +1944,7 @@ const SHAPE = (() => {
   const at = (f, inner, cls = '') => `<div class="abs ${cls}" style="left:${px(f[0])};top:${px(f[1])};width:${px(f[2])};height:${px(f[3])}">${inner}</div>`;
   const cupAt = (view, s, count, seed) => view === 'top' ? SHAPE.cupTop(s, { count, seed }) : C(s, { count, seed });
   function seatBadge(view, i, turn, w, out) {
-    const cup = out ? (view === 'top' ? SHAPE.cupTop(44, { out: true, seed: i * 7 }) : C(44, { out: true, seed: i * 7 })) : cupAt(view, 44, COUNTS[i], i * 7);
-    return `<div class="seat">${cup}<div class="t-name${turn ? '' : ' dim'}" style="margin-top:-6px">${NAMES[i]}</div>${turn ? '<span class="turn" style="width:36px;margin-top:3px"></span>' : ''}</div>`;
+    return `<div class="seat"><div style="height:52px"></div><div class="t-name${turn ? '' : ' dim'}">${NAMES[i]}</div>${turn ? '<span class="turn" style="width:36px;margin-top:3px"></span>' : ''}</div>`;
   }
   const CAPTION_H = 22;
   function picker(W, kind) {
@@ -1772,19 +2007,24 @@ const SHAPE = (() => {
     const boardH = H - 8 - 10 - CAPTION_H - 12 - (mine ? PICKER_H + 10 : 0), short = isShort(boardH);
     const frames = seatFrames(n, me, inner, boardH), pf = plateFrame(n, inner, boardH);
     let board = '';
-    for (let i = 1; i < n; i++) board += at(frames[i], seatBadge(view, i, turnSeat === i, 72, i === 5 && n === 6));
     if (pf) board += at(pf, `<div class="plate" style="min-width:0;width:100%;height:100%;padding:0 10px"><i class="rivet"></i><i class="rivet"></i><i class="rivet"></i><i class="rivet"></i><span class="crust"></span><span class="t-bid" style="font-size:${pf[2] < 140 ? 20 : 26}px">three 3s</span>${D(3, pf[2] < 140 ? 24 : 30, { seed: 80 })}</div>`);
-    const my = frames[me], dsz = short ? 32 : 44;
-    // MY CUP. My dice are under my own cup, as they are at a real table; the cup sits in my band with
-    // my count on its crown. A tap tips it up on its far edge (a 3D turn about the top of the disc,
-    // lifted a little) and the dice are seen under it; a second tap sets it back down. On the page
-    // the tap is a click, on the phone it is FMotion.card.
-    // Five dice under a cup do not sit in a row; they sit in a rough ring. Each die is at 72 degrees
-    // from the next on a ring whose radius keeps rotated dice from touching (centre spacing 1.55 of a
-    // side, the diagonal is 1.41), each a little off its station and turned a little, by seed; the
-    // cup's crown is just the ring's outer radius plus a rim.
-    const d = short ? 18 : 24, ring = 1.55 * d / (2 * Math.sin(Math.PI / 5)), cupSz = Math.round(2 * (ring + d * .8) + 10), peekDice = d;
-    board += at(my, `<div class="myband${short ? ' short' : ''}"><div class="peek" data-peek="${o.peek ? 1 : 0}" title="tap the cup to peek" style="height:${cupSz}px"><div class="peek-dice" style="width:${cupSz}px;height:${cupSz}px">${HANDS[0].map((f, k) => { const a = -Math.PI / 2 + k * Math.PI * 2 / 5 + (Hh(k, 71, 977) - .5) * .18, rr = ring * (1 + (Hh(k, 72, 977) - .5) * .1), rot = (Hh(k, 73, 977) - .5) * 28; return `<div class="pd" style="left:${(cupSz / 2 + rr * Math.cos(a)).toFixed(1)}px;top:${(cupSz / 2 + rr * Math.sin(a)).toFixed(1)}px;transform:translate(-50%,-50%) rotate(${rot.toFixed(1)}deg)">${D(f, peekDice, { seed: 60 + k })}</div>`; }).join('')}</div><div class="peek-shadow" style="width:${cupSz}px;height:${cupSz}px"></div><div class="cupv" style="width:${cupSz}px;height:${cupSz}px">${cup3d(cupSz, 5, 3)}</div></div><div class="t-name" style="font-size:${short ? 12 : 14}px">${NAMES[0]}</div>${turnSeat === 0 ? '<span class="turn" style="width:44px"></span>' : '<span class="turn" style="visibility:hidden;width:44px"></span>'}</div>`);
+    const my = frames[me];
+    // THE SCENE. Every cup and my dice are bodies on the board, projected by R3 from a camera over its
+    // centre. The other seats' cups stand at their badges (mouth radius 22); mine stands in my band over
+    // my five dice, which sit in a rough ring (72 degrees apart on a ring that keeps turned dice from
+    // touching: centre spacing 1.7 of a side, the diagonal is 1.41; each a little off its station and
+    // turned a little, by seed), under a cup whose mouth just covers the ring. A tap on my cup turns it
+    // about the far edge of its mouth, which stays on the table, and the dice are seen under it.
+    const d = short ? 16 : 24, ring = 1.7 * d / (2 * Math.sin(Math.PI / 5)), myR = ring + d * .8 + 5;
+    const objs = [];
+    for (let i = 1; i < n; i++) { const f = frames[i]; objs.push(cupObj(22, COUNTS[i], i * 7, f[0] + f[2] / 2, f[1] + 26, { out: i === 5 && n === 6 })); }
+    const mcx = my[0] + my[2] / 2, mcy = my[1] + (short ? 30 : 40);
+    HANDS[0].forEach((f, k) => { const a = -Math.PI / 2 + k * Math.PI * 2 / 5 + (Hh(k, 71, 977) - .5) * .18, rr = ring * (1 + (Hh(k, 72, 977) - .5) * .1); objs.push(dieObj(d, f, 60 + k, mcx + rr * Math.cos(a), mcy + rr * Math.sin(a), (Hh(k, 73, 977) - .5) * .5)); });
+    objs.push(cupObj(myR, 5, 3, mcx, mcy, { peekable: true, tilt: o.peek ? peekTilt(myR, PEEK_ANGLE) : null }));
+    board += scene3d(inner, boardH, objs, 'table');
+    const nameBlock = `<div class="t-name" style="font-size:${short ? 12 : 14}px">${NAMES[0]}</div>${turnSeat === 0 ? '<span class="turn" style="width:44px"></span>' : '<span class="turn" style="visibility:hidden;width:44px"></span>'}`;
+    board += short ? at(my, `<div class="abs" style="left:calc(50% - ${(myR + 64).toFixed(0)}px);top:50%;transform:translateY(-50%);display:flex;flex-direction:column;align-items:center;gap:4px">${nameBlock}</div>`) : at(my, `<div class="myband" style="justify-content:flex-end;padding-bottom:4px">${nameBlock}</div>`);
+    for (let i = 1; i < n; i++) board += at(frames[i], seatBadge(view, i, turnSeat === i, 72, i === 5 && n === 6));
     if (!short) board += `<div class="abs t-hdr" style="left:0;top:12px;width:100%;text-align:center">Round four &middot; ${COUNTS.slice(0, n).reduce((a, b) => a + b, 0) - (n === 6 ? 2 : 0)} dice</div>`;
     ui += `<div class="abs" style="left:16px;top:8px;width:${px(inner)};height:${px(boardH)}">${board}</div>`;
     ui += `<div class="abs t-ask" style="left:16px;top:${px(8 + boardH + 10)};width:${px(inner)};text-align:center;font-size:${short ? 15 : 17}px">${mine ? 'Bo bid three 3s, <b>your turn</b>' : 'Alex bid three 3s, Bo’s turn'}</div>`;
@@ -1798,33 +2038,12 @@ const SHAPE = (() => {
       return `<div class="scr sea" style="width:300px;height:195px;padding:0;border-radius:14px 14px 0 0"><div class="scr-ui" style="padding:22px 20px;display:flex;flex-direction:column;justify-content:space-between"><div class="t-title" style="font-size:36px">吹牛<small style="font-size:11px">Chui Niu</small></div><div class="t-said">Alex is at the table. ${n - 1} more may sit.</div></div></div><div class="bub-cap">Alex invites you to Chui Niu</div>`;
     }
     const cap = spec.state === 'reveal' ? 'Bo calls three 3s' : spec.state === 'end' ? 'Bo calls three 3s. Alex wins' : 'Bo bid three 3s';
-    const cs = n > 4 ? 28 : 34;
-    let ui = `<div class="abs" style="left:0;top:14px;width:300px;display:flex;justify-content:center;gap:${n > 4 ? 4 : 14}px">`;
-    for (let i = 0; i < n; i++) ui += `<div class="seatf">${cupAt(spec.view, cs, COUNTS[i], i * 7)}<div class="t-name${i === 1 ? '' : ' dim'}" style="font-size:11px;margin-top:-5px">${NAMES[i]}</div></div>`;
+    const cs = n > 4 ? 16 : 19, step = n > 4 ? 46 : 60, x0 = 150 - (n - 1) * step / 2, objs = [];
+    for (let i = 0; i < n; i++) objs.push(cupObj(cs, COUNTS[i], i * 7, x0 + i * step, 34, { out: i === 5 && n === 6 }));
+    let ui = scene3d(300, 195, objs, 'bubble') + `<div class="abs" style="left:0;top:58px;width:300px;display:flex;justify-content:center;gap:${step - 30}px">`;
+    for (let i = 0; i < n; i++) ui += `<div class="seatf" style="width:30px"><div class="t-name${i === 1 ? '' : ' dim'}" style="font-size:11px">${NAMES[i]}</div></div>`;
     ui += `</div><div class="abs" style="left:70px;top:116px;width:160px"><div class="plate" style="min-width:0;width:160px;height:56px;padding:0 10px"><i class="rivet"></i><i class="rivet"></i><i class="rivet"></i><i class="rivet"></i><span class="crust"></span><span class="t-bid" style="font-size:26px">three 3s</span>${D(3, 30, { seed: 80 })}</div></div>`;
     return `<div class="scr" style="width:300px;height:195px;border-radius:14px 14px 0 0">${tableStage(W, H, Object.assign({}, TABLE, { edge: 'none' }), { pieces: false, seed: 9 })}<div class="scr-ui">${ui}</div></div><div class="bub-cap">${cap}</div>`;
-  }
-  // MY CUP IN THREE DIMENSIONS. The other seats' cups are drawings; mine has to turn, so it is a body:
-  // a crown disc at the cup's height, eighteen facets of tapered side round it, each shaded by how much
-  // it faces the one light. No inside: the mouth faces away from the viewer at every tilt a peek uses.
-  // It hinges on the FAR edge of its mouth (transform-origin at the top of its box, on the table), and
-  // the peek is one rotation about that edge, rotateX(+68deg): the near rim comes up off the table
-  // toward you, so from the right-hand side of the table the cup turns clockwise. Perspective is on
-  // the band. Each facet takes its own slice of the verdigris, like every other piece.
-  function cup3d(dia, count, seed) {
-    const R = dia / 2, rc = R * .72, h = dia * .9, N = 18, slant = Math.hypot(h, R - rc), alpha = Math.atan2(R - rc, h) * 180 / Math.PI;
-    const wb = 2 * R * Math.sin(Math.PI / N) * 1.08, wt = 2 * rc * Math.sin(Math.PI / N) * 1.08, mid = (R + rc) / 2;
-    let m = `<div class="cup3d" style="--d:${dia}px">`;
-    for (let i = 0; i < N; i++) {
-      const phi = i * 360 / N, rad = phi * Math.PI / 180;
-      const lit = .57 * Math.sin(rad) - .57 * Math.cos(rad) + .2, k = (.5 - .4 * lit).toFixed(2);
-      const ox = (Hh(i, 81, seed) * 128).toFixed(0), oy = (Hh(i, 82, seed) * 128).toFixed(0);
-      const clip = `clip-path:polygon(${((wb - wt) / 2).toFixed(1)}px 0,${((wb + wt) / 2).toFixed(1)}px 0,${wb.toFixed(1)}px 100%,0 100%)`;
-      m += `<div class="cf" style="width:${wb.toFixed(1)}px;height:${slant.toFixed(1)}px;${clip};transform:rotateZ(${phi}deg) translate3d(0,${mid.toFixed(1)}px,${(h / 2).toFixed(1)}px) rotateX(${(alpha - 90).toFixed(1)}deg) translate(-50%,-50%);background-image:linear-gradient(rgba(0,0,0,${k}),rgba(0,0,0,${k})),var(--tex-verd);background-position:0 0,${ox}px ${oy}px"></div>`;
-    }
-    const ox = (Hh(9, 83, seed) * 128).toFixed(0), oy = (Hh(9, 84, seed) * 128).toFixed(0);
-    m += `<div class="crown" style="width:${(2 * rc).toFixed(1)}px;height:${(2 * rc).toFixed(1)}px;transform:translateZ(${h.toFixed(1)}px) translate(-50%,-50%);background-position:0 0,${ox}px ${oy}px;font-size:${(rc * 1.05).toFixed(1)}px">${count}</div>`;
-    return m + `</div>`;
   }
   function drawLayout() {
     const S = LAY, sz = SIZES[S.size];
@@ -1835,8 +2054,9 @@ const SHAPE = (() => {
     put('lay-seats', [2, 3, 4, 5, 6].map(k => `<div class="half"><div class="scaled" style="width:195px;height:359px"><div style="transform:scale(.5);transform-origin:0 0">${screen(Object.assign({}, S, { seats: k, state: S.state === 'lobby' ? 'table' : S.state }), 390, 718, { peek: true })}</div></div><div class="cap" style="text-align:center">${k} seats</div></div>`).join(''));
     put('lay-phones', [['se', 375, 541], ['expanded', 390, 718], ['max', 430, 830], ['collapsed', 390, 340]].map(([k, w, h]) => `<div class="half"><div class="scaled" style="width:${px(w * .55)};height:${px(h * .55)}"><div style="transform:scale(.55);transform-origin:0 0">${screen(S, w, h)}</div></div><div class="cap" style="text-align:center">${SIZES[k].name}</div></div>`).join(''));
     saveSpec('cn.lay', S);
+    flushScenes();
   }
-  document.addEventListener('click', e => { const pk = e.target.closest('.peek'); if (pk) pk.dataset.peek = pk.dataset.peek === '1' ? '0' : '1'; });
+  document.addEventListener('click', e => { const c = e.target.closest('canvas.scene3d'); if (c && c._objs && c._objs.some(o => o.peekable)) { c._open = !c._open; animatePeek(c, c._open); } });
   const syncLay = mixer('lay-mixer', LAY_FIELDS, LAY, drawLayout);
   drawLayout();
 
