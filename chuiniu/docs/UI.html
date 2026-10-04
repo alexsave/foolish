@@ -286,6 +286,8 @@ section[hidden]{display:none}
   <!-- the cup from above: the side falls away toward the outer edge; the crown takes the light top-left -->
   <radialGradient id="g-topside"><stop offset=".55" stop-color="#000" stop-opacity=".1"/><stop offset=".85" stop-color="#000" stop-opacity=".4"/><stop offset="1" stop-color="#000" stop-opacity=".7"/></radialGradient>
   <radialGradient id="g-topcrown" cx=".5" cy=".5" r=".5" fx=".36" fy=".32"><stop offset="0" stop-color="#fff" stop-opacity=".28"/><stop offset=".55" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".38"/></radialGradient>
+  <!-- strike wear: grime at a corner, feathered into the face -->
+  <radialGradient id="g-wear"><stop offset="0" stop-color="#4e3f26"/><stop offset=".45" stop-color="#4e3f26" stop-opacity=".55"/><stop offset="1" stop-color="#4e3f26" stop-opacity="0"/></radialGradient>
   <radialGradient id="g-badge" cx=".35" cy=".30" r=".8">
     <stop offset="0" stop-color="#fff" stop-opacity=".30"/><stop offset=".6" stop-color="#fff" stop-opacity="0"/>
     <stop offset="1" stop-color="#000" stop-opacity=".35"/></radialGradient>
@@ -411,7 +413,8 @@ The bake times are measured live, below each tile.</p>
 <h2>The die</h2>
 <p class="lede">A die is three decisions: what it is cut from, what silhouette the cutter left, and what the pips are. Round two settled most of them.
 <b>Locked:</b> the machined silhouette (a rounded square, radius 18%), the bevel, the drilled pip, medium at 21% of the side, placed a little off exact (1.2% of the side, between exact and hand-drilled), and the wild 1 in blood.
-<b>Open:</b> the material, six bakes, with the yellowed and the crazed bone combined into one as asked (round three made the crazing lighter, thinner and sparser); and whether some dice are chipped (round three made the chips smaller, rarer and quieter).</p>
+<b>Open:</b> the material, six bakes, with the yellowed and the crazed bone combined into one as asked (and the crazing lighter, thinner and sparser); and the strike wear.
+<b>Dropped:</b> chips. In their place, the owner’s idea: a die hits the table on its corners and edges, so that is where it discolours.</p>
 
 <h3>The mixer</h3>
 <p class="why" style="max-width:73ch">Pick the two that are open. Everything on this page that draws a die (the chips, the bands, the plate, the icon) follows the mixer, so the choice is seen in company and not alone. The spec line under the stage is what gets written into <code>DECISIONS.md</code>; the locked keys are marked.</p>
@@ -423,14 +426,17 @@ The bake times are measured live, below each tile.</p>
       <div class="band c" id="mx-faces22"></div>
       <div class="rule-bronze"></div>
       <div class="band c" id="mx-states"></div>
-      <div class="cap" style="text-align:center">counting, drowned, chipped at a corner, chipped on an edge, unknown, and one frame of the roll</div>
+      <div class="cap" style="text-align:center">counting, drowned, unknown</div>
+      <div class="rule-bronze"></div>
+      <div class="band c" id="mx-iso" style="gap:0"></div>
+      <div class="cap" style="text-align:center">three dice mid-roll: the strike wear where the faces meet</div>
     </div>
     <div class="kv" id="mx-spec"></div>
   </div>
   <div class="col w">
     <div class="h4">What to look for <span class="pill n">at 22, not at 44</span></div>
     <p class="why" style="max-width:60ch">The 44 row is the one you will stare at; the 22 row is the one the game shows most, under another seat's name on a short board. A material that reads at 44 and turns to mud at 22 is out. A pip style whose hole still reads at 22 is in.</p>
-    <p class="why" style="max-width:60ch">A chip is now a bite, not a line: a jagged piece of the silhouette is gone, and behind it is a ledge of paler bone with a dark step along its inner edge. One die in five carries one, by seed, at a corner or along an edge. The same die is chipped the same way for a whole game.</p>
+    <p class="why" style="max-width:60ch">Strike wear: a warm grime feathered in from each corner and along each edge, the corners deepest because they hit first. Every corner has its own size and depth and every edge its own depth, by seed, so no two dice are worn alike, and the same die is worn the same way for a whole game. The isometric row is where it shows: the wear of three faces meets along the cube’s edges and gathers at its corners. "Marked" is the same at 1.7 times the depth, for comparison.</p>
     <p class="why" style="max-width:60ch">The wild 1 is the only pip with a colour, and it is blood.</p>
   </div>
 </div>
@@ -442,7 +448,7 @@ The bake times are measured live, below each tile.</p>
 <h3>Candidates</h3>
 <p class="why" style="max-width:73ch">Everything still on the table: the six materials, each with the drilled pip. Click one to load it into the mixer and see it everywhere.</p>
 <div class="cands" id="dice-cands"></div>
-<div class="note" style="max-width:73ch"><b>Port.</b> Material: one <code>Texture</code> generator with a <code>Palette</code> per material, baked as the felt is, painted with <code>ImagePaint</code>. Silhouette: <code>RoundedRectangle(cornerRadius: side * 0.18, style: .continuous)</code>. Bevel: a gradient <code>strokeBorder</code>. Chip: a seeded <code>Path</code> subtracted from the face with <code>.mask</code>, and the ledge drawn behind it. Pip: a <code>Circle</code> with the one <code>RadialGradient</code>; the wild 1 swaps the gradient for the blood one.</div>
+<div class="note" style="max-width:73ch"><b>Port.</b> Material: one <code>Texture</code> generator with a <code>Palette</code> per material, baked as the felt is, painted with <code>ImagePaint</code>. Silhouette: <code>RoundedRectangle(cornerRadius: side * 0.18, style: .continuous)</code>. Bevel: a gradient <code>strokeBorder</code>. Strike wear: four <code>Circle</code>s with a <code>RadialGradient</code> at the corners and four round-capped lines along the edges, all clipped to the face, their radii and opacities from the die’s seed. Pip: a <code>Circle</code> with the one <code>RadialGradient</code>; the wild 1 swaps the gradient for the blood one.</div>
 </section>
 
 <!-- ============================================================ 6 -->
@@ -1008,52 +1014,32 @@ const SHAPE = (() => {
   // the current die spec; the mixer writes it, everything reads it
   let uidN = 0;
   // the current die spec; the mixer writes the open keys, the locked ones hold
-  const DIE = { material: 'tallow', shape: 'square', depth: 'bevel', pip: 'drilled', pipSize: 'm', jitter: 'slight', wild: 'blood', chips: 'some' };
+  const DIE = { material: 'tallow', shape: 'square', depth: 'bevel', pip: 'drilled', pipSize: 'm', jitter: 'slight', wild: 'blood', wear: 'light' };
   const DIE_LOCKED = { shape: 'square', depth: 'bevel', pip: 'drilled', pipSize: 'm', jitter: 'slight', wild: 'blood' };
-  // a chip: a jagged bite at a corner (kind 0-3) or along an edge (kind 4-7), in die space.
-  // Returns the break surface (the pale ledge), the point it bites from, and a point outside the die.
-  function chip(s, kind, seed) {
-    const J = (i, a) => (H(i, seed, 733) - .5) * 2 * a * s;
-    if (kind < 4) {
-      const k = s * (.18 + H(9, seed, 733) * .1);
-      const surf = [[k + J(1, .03), 0], [k * .82 + J(2, .05), k * .2 + J(3, .05)], [k * .62 + J(12, .06), k * .36 + J(13, .06)], [k * .48 + J(4, .06), k * .52 + J(5, .06)], [k * .34 + J(14, .06), k * .64 + J(15, .06)], [k * .2 + J(6, .05), k * .82 + J(7, .05)], [0, k + J(8, .03)]];
-      const map = ([x, y]) => [kind & 1 ? s - x : x, kind & 2 ? s - y : y];
-      return { surf: surf.map(map), corner: map([0, 0]), out: map([-s * .3, -s * .3]) };
-    }
-    const x0 = s * (.3 + H(10, seed, 733) * .4), k = s * (.11 + H(11, seed, 733) * .06);
-    const surf = [[x0 - k, 0], [x0 - k * .7 + J(1, .03), k * .45 + J(2, .03)], [x0 - k * .3 + J(12, .04), k * .62 + J(13, .04)], [x0 + J(3, .04), k * .85 + J(4, .04)], [x0 + k * .35 + J(14, .04), k * .55 + J(15, .04)], [x0 + k * .7 + J(5, .03), k * .4 + J(6, .03)], [x0 + k, 0]];
-    const e = kind - 4, map = ([x, y]) => e === 0 ? [x, y] : e === 1 ? [s - y, x] : e === 2 ? [s - x, s - y] : [y, s - x];
-    return { surf: surf.map(map), corner: map([x0, 0]), out: map([x0, -s * .3]) };
-  }
-  const J2 = (i, a, s, seed) => (H(i, seed, 737) - .5) * 2 * a * s;
   // the face alone, in a 0..s box (no outer svg): used by die() and by the tumble
   function faceBody(face, s, o = {}) {
     const S = Object.assign({}, DIE, o, DIE_LOCKED), seed = (o.seed || 0) + 1, uid = 'u' + (uidN++);
-    const d = diePath(S.shape, s, seed);
-    // chips: by seed, a third of dice carry one, a few of those two
-    const chips = [];
-    if (S.chips === 'some') {
-      if (o.chip != null) chips.push(chip(s, o.chip, seed));
-      else if (H(seed, 5, 41) < .22) chips.push(chip(s, Math.floor(H(seed, 6, 41) * 8), seed));
-    }
-    const poly = pts => pts.map(p => p.map(v => v.toFixed(2)).join(',')).join(' ');
-    const towards = (pts, c, t) => pts.map(([x, y]) => [c[0] + (x - c[0]) * t, c[1] + (y - c[1]) * t]);
-    let m = `<mask id="m${uid}"><path d="${d}" fill="#fff"/>`;
-    for (const c of chips) m += `<polygon points="${poly([...towards(c.surf, c.corner, .58), c.out])}" fill="#000"/>`;
-    m += `</mask><g mask="url(#m${uid})">`;
+    const d = diePath(S.shape, s, seed), r = s * .18;
+    let m = `<clipPath id="c${uid}"><path d="${d}"/></clipPath><g clip-path="url(#c${uid})">`;
     m += `<path d="${d}" fill="url(#p-m-${S.material})"/><path d="${d}" fill="url(#g-face)"/>`;
-    m += `<clipPath id="b${uid}"><path d="${d}"/></clipPath><path d="${d}" clip-path="url(#b${uid})" fill="none" stroke="url(#g-bevel)" stroke-width="${s * .1}"/>`;
-    m += `<path d="${d}" fill="none" stroke="rgba(0,0,0,.4)" stroke-width="${Math.max(.6, s * .03)}"/>`;
-    // the break surface: paler bone, a dark step along its inner edge, a darker one at the bite
-    for (const c of chips) {
-      m += `<polygon points="${poly([...c.surf, c.out])}" fill="#e3e7d0"/>`;
-      m += `<polygon points="${poly([...towards(c.surf, c.corner, .78), c.out])}" fill="#c6cdb0"/>`;
-      m += `<polyline points="${poly(c.surf)}" fill="none" stroke="#5a6354" stroke-width="${Math.max(.5, s * .018)}" stroke-linejoin="round" stroke-linecap="round"/>`;
-      m += `<polyline points="${poly(towards(c.surf, c.corner, .58))}" fill="none" stroke="#2c342b" stroke-width="${Math.max(.6, s * .022)}" stroke-linejoin="round" stroke-linecap="round"/>`;
-      // hairline cracks from two points of the ledge into the face
-      for (const i of [1, 4]) { const a = c.surf[i], b = towards([c.surf[i]], c.corner, 1.55)[0]; const mid = [(a[0] + b[0]) / 2 + J2(i, .03, s, seed), (a[1] + b[1]) / 2 + J2(i + 7, .03, s, seed)];
-        m += `<path d="M${a[0].toFixed(2)},${a[1].toFixed(2)} Q${mid[0].toFixed(2)},${mid[1].toFixed(2)} ${b[0].toFixed(2)},${b[1].toFixed(2)}" fill="none" stroke="#5a6354" stroke-width="${Math.max(.4, s * .012)}" stroke-linecap="round" opacity=".7"/>`; }
+    // STRIKE WEAR. A die hits the table on its corners and edges, so that is where the bone
+    // darkens: grime in the grain, a little tallow, the polish gone. Four corners, each its own
+    // size and depth by seed, and four edges, each its own depth, so no two dice wear alike.
+    if (S.wear !== 'none') {
+      const amt = S.wear === 'marked' ? 1.7 : 1;
+      for (let c = 0; c < 4; c++) {
+        const cx = c & 1 ? s : 0, cy = c & 2 ? s : 0, rr = s * (.16 + .18 * H(c, seed, 911)), op = amt * (.2 + .24 * H(c + 4, seed, 911));
+        m += `<circle cx="${cx}" cy="${cy}" r="${rr.toFixed(2)}" fill="url(#g-wear)" opacity="${op.toFixed(2)}"/>`;
+      }
+      const edges = [[r, 0, s - r, 0], [s, r, s, s - r], [r, s, s - r, s], [0, r, 0, s - r]];
+      edges.forEach(([x1, y1, x2, y2], e) => {
+        const op = amt * (.08 + .18 * H(e + 8, seed, 911));
+        m += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#4e3f26" stroke-width="${s * .11}" stroke-linecap="round" opacity="${op.toFixed(2)}"/>`;
+        m += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#3d3120" stroke-width="${s * .045}" stroke-linecap="round" opacity="${(op * 1.2).toFixed(2)}"/>`;
+      });
     }
+    m += `<path d="${d}" fill="none" stroke="url(#g-bevel)" stroke-width="${s * .1}"/>`;
+    m += `<path d="${d}" fill="none" stroke="rgba(0,0,0,.4)" stroke-width="${Math.max(.6, s * .03) * 2}"/>`;
     m += `</g>`;
     const dia = s * PIPSIZE[S.pipSize][face === 1 ? 1 : 0], jit = s * JITTER[S.jitter];
     for (const [x, y] of pips(face)) {
@@ -1077,12 +1063,12 @@ const SHAPE = (() => {
   }
   // one frame of the roll: three faces of a cube, lit from the top-left
   function tumble(top, left, right, s = 44, rot = -14, o = {}) {
-    const W = s * 2.6, k = .866;
+    const W = s * 2.6, k = .866, sd = o.seed || 0;
     let m = `<svg class="die" width="${W}" height="${W}" viewBox="${-W / 2} ${-W / 2} ${W} ${W}">`;
     m += `<g transform="rotate(${rot})" filter="url(#f-shadow)">`;
-    m += `<g transform="matrix(${k},.5,${-k},.5,0,${-s})">${faceBody(top, s, Object.assign({ seed: 101, depth: 'flat' }, o))}</g>`;
-    m += `<g transform="matrix(${k},.5,0,1,${-k * s},${-s / 2})">${faceBody(left, s, Object.assign({ seed: 102, depth: 'flat' }, o))}<path d="${diePath('square', s, 103)}" fill="#06181a" opacity=".32"/></g>`;
-    m += `<g transform="matrix(${k},-.5,0,1,0,0)">${faceBody(right, s, Object.assign({ seed: 103, depth: 'flat' }, o))}<path d="${diePath('square', s, 104)}" fill="#03090a" opacity=".55"/></g>`;
+    m += `<g transform="matrix(${k},.5,${-k},.5,0,${-s})">${faceBody(top, s, Object.assign({}, o, { seed: 101 + sd }))}</g>`;
+    m += `<g transform="matrix(${k},.5,0,1,${-k * s},${-s / 2})">${faceBody(left, s, Object.assign({}, o, { seed: 102 + sd }))}<path d="${diePath('square', s, 103)}" fill="#06181a" opacity=".32"/></g>`;
+    m += `<g transform="matrix(${k},-.5,0,1,0,0)">${faceBody(right, s, Object.assign({}, o, { seed: 103 + sd }))}<path d="${diePath('square', s, 104)}" fill="#03090a" opacity=".55"/></g>`;
     return m + `</g></svg>`;
   }
 
@@ -1270,7 +1256,7 @@ const SHAPE = (() => {
   const names = o => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, v.name]));
   const DIE_FIELDS = {
     material: ['Material', names(TEX.DIE_MATS)],
-    chips: ['Wear', { some: 'Some chipped', none: 'None' }],
+    wear: ['Strike wear', { light: 'Light', marked: 'Marked', none: 'None' }],
   };
   const CUP_FIELDS = {
     material: ['Material', names(TEX.CUP_MATS)], shape: ['Side', names(SHAPE.CUP_SHAPES)], crust: ['Growth', names(SHAPE.CRUSTS)],
@@ -1300,7 +1286,7 @@ const SHAPE = (() => {
   const matTile = key => { const c = matCanvas[key]; return `<canvas class="mat" data-m="${key}" width="${c.width}" height="${c.height}"></canvas>`; };
 
   const DIE_CANDS = [];
-  for (const [mk, mv] of Object.entries(TEX.DIE_MATS)) DIE_CANDS.push([mv.name, mv.why, { material: mk, chips: 'some' }]);
+  for (const [mk, mv] of Object.entries(TEX.DIE_MATS)) DIE_CANDS.push([mv.name, mv.why, { material: mk }]);
   const CUP_CANDS = [];
   for (const [mk, mv] of Object.entries(TEX.CUP_MATS)) for (const [sk, sv] of Object.entries(SHAPE.CUP_SHAPES))
     CUP_CANDS.push([`${mv.name}, ${sv.name.toLowerCase()}`, mv.why, { material: mk, shape: sk }]);
@@ -1313,7 +1299,8 @@ const SHAPE = (() => {
     const S = SHAPE.DIE;
     put('mx-faces44', [1, 2, 3, 4, 5, 6].map(f => D(f, 44, { seed: f })).join(''));
     put('mx-faces22', [1, 2, 3, 4, 5, 6].map(f => D(f, 22, { seed: f })).join(''));
-    put('mx-states', [D(3, 44, { counts: true, seed: 11 }), D(5, 44, { drowned: true, seed: 12 }), D(4, 44, { chip: 1, seed: 13, chips: 'some' }), D(6, 44, { chip: 5, seed: 17, chips: 'some' }), D(0, 44, { seed: 14 }), SHAPE.tumble(5, 3, 1, 36)].join(''));
+    put('mx-states', [D(3, 44, { counts: true, seed: 11 }), D(5, 44, { drowned: true, seed: 12 }), D(0, 44, { seed: 14 })].join(''));
+    put('mx-iso', [SHAPE.tumble(5, 3, 1, 42, -14, { seed: 0 }), SHAPE.tumble(6, 2, 4, 42, 8, { seed: 10 }), SHAPE.tumble(1, 5, 3, 42, -4, { seed: 20 })].join(''));
     put('mx-spec', `<b>die</b> &middot; ${specLine(S, SHAPE.DIE_LOCKED)}`);
     renderBank('dice-mats', TEX.DIE_MATS, k => matTile('m-' + k) + D(5, 44, { material: k, seed: 15 }) + D(1, 22, { material: k, seed: 16 }), S.material);
     copyMats('dice-mats');
