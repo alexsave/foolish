@@ -919,9 +919,12 @@ const TEX = (() => {
         }
       }
     }
-    // the reader the stone generator calls as `under`: the plank's own rows, wrapped at its end
+    // the reader the stone generator calls as `under`. The march is TRANSPOSED: its streaks ran
+    // across the swatch, and a plank's grain runs along it, so the march's x is the plank's length.
+    // Each plank takes its own stretch of the march (shift), and the march's one non-periodic seam
+    // lands under the plank's end.
     return (u, v, pi, shift) => {
-      const x = Math.min(w - 1, Math.floor(u * w)), y = Math.min(h - 1, Math.floor((((v + shift) % 1) + 1) % 1 * h)), i = (y * w + x) * 3;
+      const x = Math.min(w - 1, Math.floor((((v + shift) % 1) + 1) % 1 * w)), y = Math.min(h - 1, Math.floor(u * h)), i = (y * w + x) * 3;
       return [S[i], S[i + 1], S[i + 2]];
     };
   }
