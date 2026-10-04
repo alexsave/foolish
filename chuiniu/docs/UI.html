@@ -1760,7 +1760,7 @@ const SHAPE = (() => {
     // and the world normal. TB: the triangle's tangent frame [T, B] (the directions u and v run in the
     // world), for the bump map. tint: the colour the shade pulls toward.
     const LX = LIGHT[0], LY = LIGHT[1], LZ = LIGHT[2];
-    function raster(fb, tex, bump, V, TB, tint, kmul) {
+    function raster(fb, tex, bump, V, TB, tint, kmul, decal) {
       let [a, b, c] = V;
       let area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
       if (area === 0) return;
@@ -1780,8 +1780,8 @@ const SHAPE = (() => {
           const w2 = 1 - w0 - w1;
           if (w0 < -1e-4 || w1 < -1e-4 || w2 < -1e-4) continue;
           const iw = w0 * a.iw + w1 * b.iw + w2 * c.iw, depth = 1 / iw, idx = y * FW + x;
-          if (depth >= zb[idx]) continue;
-          zb[idx] = depth;
+          if (decal) { if (depth > zb[idx] + 2.5) continue; }   /* on the surface it lies on (a little depth bias), never written */
+          else { if (depth >= zb[idx]) continue; zb[idx] = depth; }
           const u = (w0 * a.uw + w1 * b.uw + w2 * c.uw) * depth, v = (w0 * a.vw + w1 * b.vw + w2 * c.vw) * depth;
           let tx = u * tw - .5, ty = v * th - .5;
           if (tx < 0) tx = 0; else if (tx > tw - 1.001) tx = tw - 1.001;
@@ -1792,6 +1792,7 @@ const SHAPE = (() => {
           const r = td[i00] * g00 + td[i10] * g10 + td[i01] * g01 + td[i11] * g11;
           const g = td[i00 + 1] * g00 + td[i10 + 1] * g10 + td[i01 + 1] * g01 + td[i11 + 1] * g11;
           const bl = td[i00 + 2] * g00 + td[i10 + 2] * g10 + td[i01 + 2] * g01 + td[i11 + 2] * g11;
+          if (decal) { const al = 1 - (td[i00 + 3] * g00 + td[i10 + 3] * g10 + td[i01 + 3] * g01 + td[i11 + 3] * g11) / 255 * .62, o2 = idx * 4; px[o2] *= al; px[o2 + 1] *= al; px[o2 + 2] *= al; continue; }
           // the normal: interpolated from the vertices, then bent by the bump map along the tangent frame
           let nx = w0 * a.nx + w1 * b.nx + w2 * c.nx, ny = w0 * a.ny + w1 * b.ny + w2 * c.ny, nz = w0 * a.nz + w1 * b.nz + w2 * c.nz;
           if (bn) {
@@ -1838,7 +1839,7 @@ const SHAPE = (() => {
         const zc = verts.reduce((a, v) => a + v[2], 0) / verts.length;
         return { o, verts, zc, turn };
       });
-      placed.sort((a, b) => a.zc - b.zc);
+      placed.sort((a, b) => (a.o.decal ? 1 : 0) - (b.o.decal ? 1 : 0) || a.zc - b.zc);   /* decals after everything they lie on */
       // shadows first: each object's footprint, pushed away from the light, soft
       for (const pl of placed) {
         const o = pl.o; if (o.noShadow) continue;   /* a die in a cup, or under one, casts nothing on the table */
@@ -1857,11 +1858,12 @@ const SHAPE = (() => {
         const o = pl.o, V = pl.verts, turn = pl.turn;
         const tint = o.tint ? o.tint.split(',').map(Number) : [0, 4, 3], kmul = o.kmul || (o.tint ? [.5, .35] : [1, 0]);
         for (const f of o.mesh.faces) {
+          if (f.hidden) continue;
           const P = f.idx.map(i => V[i]);
           const n = norm(cross(sub(P[1], P[0]), sub(P[2], P[0])));
           const centre = [(P[0][0] + P[1][0] + P[2][0]) / 3, (P[0][1] + P[1][1] + P[2][1]) / 3, (P[0][2] + P[1][2] + P[2][2]) / 3];
-          if (dot(n, sub(eye, centre)) <= 0) continue;
-          const tex = texOf(f.tex), bump = f.tex._bump || null;
+          if (!o.decal && dot(n, sub(eye, centre)) <= 0) continue;
+          const tex = texOf(f.tex), bump = o.decal ? null : (f.tex._bump || null);
           // the vertices in screen space, with 1/w, the texture coordinates over w, and the world normal
           const vs = P.map((p, i) => { const w = HCv - p[2], iw = 1 / w, S = project(p), vn = f.nrm ? norm(turn(f.nrm[i])) : n; return { x: S[0] * DPR, y: (S[1] + pad) * DPR, iw, uw: f.uv[i][0] * iw, vw: f.uv[i][1] * iw, nx: vn[0], ny: vn[1], nz: vn[2] }; });
           // the tangent frame: where u and v run in the world, from the first three corners
@@ -1872,15 +1874,23 @@ const SHAPE = (() => {
             TB = [norm([(e1[0] * dv2 - e2[0] * dv1) * rr, (e1[1] * dv2 - e2[1] * dv1) * rr, (e1[2] * dv2 - e2[2] * dv1) * rr]), norm([(e2[0] * du1 - e1[0] * du2) * rr, (e2[1] * du1 - e1[1] * du2) * rr, (e2[2] * du1 - e1[2] * du2) * rr])];
           }
           // a polygon is a fan from its first corner (every face here is convex)
-          for (let i = 1; i + 1 < vs.length; i++) raster(fb, tex, bump, [vs[0], vs[i], vs[i + 1]], TB, tint, kmul);
+          for (let i = 1; i + 1 < vs.length; i++) raster(fb, tex, bump, [vs[0], vs[i], vs[i + 1]], TB, tint, kmul, !!o.decal);
         }
       }
       fb.off.getContext('2d').putImageData(fb.img, 0, 0);
       ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(fb.off, 0, 0, PW, PH);
       return ctx;
     }
+    // a set of n shadow discs for one cup: quads in the cup's own frame (the object takes the cup's pose),
+    // each set on the floor under a die or hidden
+    function decals(n, size, tex) {
+      const verts = [], faces = [];
+      for (let k = 0; k < n; k++) { for (let i = 0; i < 4; i++) verts.push([0, 0, -1e4]); faces.push({ idx: [k * 4, k * 4 + 1, k * 4 + 2, k * 4 + 3], uv: [[0, 0], [1, 0], [1, 1], [0, 1]], tex, hidden: true }); }
+      const m = { verts, faces, set(k, x, y, z, sz) { const h = (sz || size) / 2, b = k * 4; verts[b] = [x - h, y - h, z]; verts[b + 1] = [x + h, y - h, z]; verts[b + 2] = [x + h, y + h, z]; verts[b + 3] = [x - h, y + h, z]; faces[k].hidden = false; }, hide(k) { faces[k].hidden = true; } };
+      return m;
+    }
     const eyeOf = (W, H, view) => ({ x: W / 2, y: H / 2 + (view && view.down != null ? view.down : EYE_DOWN) * H, hc: view && view.hc || HC });
-    return { cup, die, setDieUp, setDieTop, dieValue, render, eyeOf, HC, EYE_DOWN };
+    return { cup, die, setDieUp, setDieTop, dieValue, decals, render, eyeOf, HC, EYE_DOWN };
   })();
 
   /* ---- the textures the meshes wear ------------------------------------ */
@@ -1935,6 +1945,14 @@ const SHAPE = (() => {
       g.fillStyle = gr; g.fillRect(0, 0, 256, 256);
       c._bump = reliefOf(c, 1.2);
       return cache[k] = c;
+    }
+    // a shadow disc: black, soft to the edge, in its alpha
+    function shadowDisc() {
+      if (cache.shadow) return cache.shadow;
+      const c = document.createElement('canvas'); c.width = 64; c.height = 64; const g = c.getContext('2d');
+      const gr = g.createRadialGradient(32, 32, 4, 32, 32, 32); gr.addColorStop(0, 'rgba(0,0,0,1)'); gr.addColorStop(.55, 'rgba(0,0,0,.75)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+      return cache.shadow = c;
     }
     // a die's atlas: six faces side by side, each the bone at its own offset, the bevel, the strike wear and the pips
     function dieAtlas(seed) {
@@ -2015,7 +2033,7 @@ const SHAPE = (() => {
       const g = c.getContext('2d'); g.fillStyle = '#808080'; g.fillRect(0, 0, c.width, c.height); g.globalAlpha = .5; g.drawImage(canvas, 0, 0);
       return normalMap(c, strength);
     }
-    return { cupSide, cupCrown, cupInner, cupFloor, dieAtlas, dieHeight, reliefOf, reset: () => { for (const k in cache) delete cache[k]; } };
+    return { cupSide, cupCrown, cupInner, cupFloor, shadowDisc, dieAtlas, dieHeight, reliefOf, reset: () => { for (const k in cache) delete cache[k]; } };
   })();
 
   // a scene canvas inside a screen: the cups at their seats and my dice, in three dimensions.
@@ -2052,8 +2070,7 @@ const SHAPE = (() => {
     return cup;
   }
   function dieObj(d, face, seed, x, y, yaw) {
-    // no shadow of its own: a die is in a cup or under one; only the table roll, with the dice in the open, turns it on
-    return { mesh: R3.die(d, face, TEX3.dieAtlas(seed)), pos: [x, y], yaw, lift: d / 2, shadowR: d * .7, shadowH: d, die: true, d, value: face, noShadow: true };
+    return { mesh: R3.die(d, face, TEX3.dieAtlas(seed)), pos: [x, y], yaw, lift: d / 2, shadowR: d * .7, shadowH: d, die: true, d, value: face };
   }
   // the peek's pose at an angle: the hinge is the far edge of the mouth; as the cup turns it also slides back
   // along the table by up to a radius and comes up a little, the way a hand lifts a cup, so the dice come
@@ -2099,7 +2116,7 @@ const SHAPE = (() => {
   }
   // for captures: the peek at a fraction t of its travel, A or B by the canvas's data-peek
   window.CN_peekSeek = (canvas, t) => {
-    const objs = canvas._objs, cup = objs.find(o => o.peekable), dice = objs.filter(o => o.die), B = canvas.dataset.peek === 'B';
+    const objs = canvas._objs, cup = objs.find(o => o.peekable), dice = objs.filter(o => o.die && o.seat == null), B = canvas.dataset.peek === 'B';
     const target = peekAngleFor(cup, dice, canvas._W, canvas._H, B ? VIEW_B : null);
     cup.tilt = peekTilt(cup.R, target * t, target);
     if (B) applyPeekB(canvas, t, canvas._origin || [0, 0]);
@@ -2107,7 +2124,7 @@ const SHAPE = (() => {
     R3.render(canvas, canvas._W, canvas._H, objs, Math.min(2, window.devicePixelRatio || 1));
   };
   function animatePeek(canvas, open) {
-    const objs = canvas._objs, cup = objs.find(o => o.peekable), dice = objs.filter(o => o.die); if (!cup) return;
+    const objs = canvas._objs, cup = objs.find(o => o.peekable), dice = objs.filter(o => o.die && o.seat == null); if (!cup) return;   /* my dice decide the angle, not the far seats' */
     const B = canvas.dataset.peek === 'B', W = canvas._W, H = canvas._H, origin = canvas._origin || [0, 0];
     const target = peekAngleFor(cup, dice, W, H, B ? VIEW_B : null);
     const from = cup.tilt ? cup.tilt.angle : 0, to = open ? target : 0, t0 = performance.now(), dur = 420;
@@ -2205,16 +2222,32 @@ const SHAPE = (() => {
       const st = canvas.closest('.col') && canvas.closest('.col').querySelector('.roll-stats');
       if (st) st.innerHTML = `<b>Baked by the kernel</b> in ${ms.toFixed(1)} ms: ${throws.length} throw${throws.length > 1 ? 's' : ''}, ${frames} frames at ${bake.hz} Hz, ${(bytes / 1024).toFixed(1)} KB of poses, ${(bake.n / bake.hz).toFixed(2)} s for mine${bake.forced ? ', ' + bake.forced + ' placed by the last resort' : ''}; the module is ${(ROLL.size / 1024).toFixed(1)} KB.`;
       let T = 0, faceT = 0, phase = ROLL.PH[bake.phase[0]];
+      // a cup's shadow discs: one per die, in the cup's frame, made once and kept with the cup
+      for (const th of throws) { if (!th.cup._decal) { th.cup._decal = { decal: true, mesh: R3.decals(5, th.dice[0].d * 1.3, TEX3.shadowDisc()), pos: [0, 0], lift: 0, rot: null }; objs.push(th.cup._decal); } }
       const place = () => {
         for (const th of throws) {
-          const Tt = Math.max(0, T - th.delay), c = ROLL.poseAt(th.bake, Tt, 0), ph = ROLL.PH[c.phase], cp = th.cup;
+          const Tt = Math.max(0, T - th.delay), c = ROLL.poseAt(th.bake, Tt, 0), ph = ROLL.PH[c.phase], cp = th.cup, dc = cp._decal;
           if (th === throws[0]) phase = ph;
-          if (ph === 'idle') { cp.rot = null; cp.yaw = 0; cp.pos = [th.mcx, th.mcy]; cp.lift = 0; cp.shadowH = cp.h; }
-          else { cp.rot = c.R; cp.pos = [c.p[0], c.p[1]]; cp.lift = c.p[2]; cp.shadowH = Math.max(cp.h, c.p[2] + cp.h * .5); }
+          const idle = ph === 'idle', R = c.R, o3 = c.p;
+          if (idle) { cp.rot = null; cp.yaw = 0; cp.pos = [th.mcx, th.mcy]; cp.lift = 0; cp.shadowH = cp.h; }
+          else { cp.rot = R; cp.pos = [o3[0], o3[1]]; cp.lift = o3[2]; cp.shadowH = Math.max(cp.h, o3[2] + cp.h * .5); }
+          dc.rot = cp.rot; dc.pos = cp.pos; dc.lift = cp.lift;
+          // the cup's inside, in its own frame: the wall's thickness, the floor's depth and its dome
+          const t = cp.R * .06, hf = cp.h - t, ri0 = cp.R - t, ric = cp.R * .72 - t, dome = ROLL_DOME * th.dice[0].d;
+          const org = idle ? [th.mcx, th.mcy, 0] : o3, M = idle ? null : R;
           th.dice.forEach((o, i) => {
-            const q = ROLL.poseAt(th.bake, Tt, 1 + i), d = o.d;
-            o.pos = [q.p[0], q.p[1]]; o.lift = q.p[2]; o.rot = q.R; o.shadowH = q.p[2] + d / 2; o.shadowR = d / 2 * (1.4 - Math.min(.5, q.p[2] / 300));
-            o.noShadow = th.kind === 1 || ph === 'cover' || ph === 'idle';
+            const q = ROLL.poseAt(th.bake, Tt, 1 + i), d = o.d, p = q.p;
+            o.pos = [p[0], p[1]]; o.lift = p[2]; o.rot = q.R; o.shadowH = p[2] + d / 2; o.shadowR = d / 2 * (1.4 - Math.min(.5, p[2] / 300));
+            // where is the die? In the cup's frame: z from the mouth to the floor, r inside the wall
+            const v = [p[0] - org[0], p[1] - org[1], p[2] - org[2]];
+            const lx = M ? M[0][0] * v[0] + M[0][1] * v[1] + M[0][2] * v[2] : v[0], ly = M ? M[1][0] * v[0] + M[1][1] * v[1] + M[1][2] * v[2] : v[1], lz = M ? M[2][0] * v[0] + M[2][1] * v[1] + M[2][2] * v[2] : v[2];
+            const rr = Math.hypot(lx, ly), inside = lz > -d * .3 && lz < hf && rr < ri0 + (ric - ri0) * Math.max(0, Math.min(1, lz / cp.h));
+            if (inside) {
+              // in the cup: its shadow is on the cup's floor (the ceiling, once the cup is down, where no one sees it), not the table
+              o.noShadow = true;
+              const f = 1 - rr * rr / (ric * ric), zf = hf - dome * Math.max(0, f);
+              dc.mesh.set(i, lx, ly, zf - .4, d * (1.1 + .5 * Math.min(1, Math.max(0, (zf - lz - d / 2) / (d * 2)))));
+            } else { o.noShadow = false; dc.mesh.hide(i); }
             // the hand: what came up, read off the face the kernel says is up
             if (ph === 'idle' && th.kind === 1) { const up = th.bake.up[i]; o.value = R3.dieValue(o.mesh, up >> 1, up & 1 ? -1 : 1); }
           });
@@ -2438,7 +2471,7 @@ const SHAPE = (() => {
     objs.push(myCup);
     // the peek is B (the head moves) on every screen; a screen drawn already peeking tips the cup from the leaning head's eye
     const peekB = true;
-    if (o.peek && !roll) { const a = peekAngleFor(myCup, objs.filter(x => x.die), inner, boardH, VIEW_B); myCup.tilt = peekTilt(myR, a, a); }
+    if (o.peek && !roll) { const a = peekAngleFor(myCup, objs.filter(x => x.die && x.seat == null), inner, boardH, VIEW_B); myCup.tilt = peekTilt(myR, a, a); }
     board += scene3d(inner, boardH, objs, roll ? (o.tableRoll ? 'troll' : 'roll') : 'table', { peek: 'B', open: !!o.peek && !roll, origin: [16 + mcx, topM + mcy], pad: SCENE_PAD });
     const nameBlock = `<div class="t-name" style="font-size:${short ? 12 : 14}px">${NAMES[0]}</div>${turnSeat === 0 ? '<span class="turn" style="width:44px"></span>' : '<span class="turn" style="visibility:hidden;width:44px"></span>'}`;
     board += short ? at(my, `<div class="abs" style="left:calc(50% - ${(myR + 64).toFixed(0)}px);top:50%;transform:translateY(-50%);display:flex;flex-direction:column;align-items:center;gap:4px">${nameBlock}</div>`) : at(my, `<div class="myband" style="justify-content:flex-end;padding-bottom:4px">${nameBlock}</div>`);
