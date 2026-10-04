@@ -188,7 +188,7 @@ static void contact(Body *b, V3 r, V3 n, V3 uc, double e)
     }
 }
 
-static void step(Body *bodies, int n, const Cup *cup, const double *walls)
+static void step(Body *bodies, int n, const Cup *cup, const double *walls, double g)
 {
     for (int bi = 0; bi < n; bi++) {
         Body *b = &bodies[bi];
@@ -211,7 +211,7 @@ static void step(Body *bodies, int n, const Cup *cup, const double *walls)
             }
             continue;
         }
-        b->v = add(b->v, v3(0, 0, G * DT));
+        b->v = add(b->v, v3(0, 0, g * DT));
         b->p = add(b->p, mul(b->v, DT));
         { M3 R; for (int i = 0; i < 3; i++) R.c[i] = add(b->R.c[i], mul(cross(b->w, b->R.c[i]), DT)); b->R = orth(&R); }
         double deepest = 0, cupDeep = 0; V3 cupPush = v3(0, 0, 0);
@@ -289,10 +289,11 @@ static int upFace(const Body *b, double *cosv)
     return bi;
 }
 
-static int atRest(const Body *b)
+/* sc: the throw's scale; a speed scales with it, a spin does not */
+static int atRest(const Body *b, double sc)
 {
     double c; upFace(b, &c);
-    return len(b->v) < 40 && len(b->w) < 3 && c > .9759 /* within 12.6 degrees */ && b->p.z < b->s * 1.08;
+    return len(b->v) < 40 * sc && len(b->w) < 3 && c > .9759 /* within 12.6 degrees */ && b->p.z < b->s * 1.08;
 }
 /* is a die clear of every other's bounding sphere? (the sphere's push moves
  * a pair apart a few hundredths of a point a step until it is) */
@@ -388,7 +389,7 @@ static int emit(Out *o, V3 cupO, const M3 *cupR, const Body *b, int nd, int ph)
 
 
 typedef struct {
-    double held[3], grip0[3], home[3], pz, a, tDrop, dropAt, tFlip, tSlam, h;
+    double held[3], grip0[3], home[3], pz, a, tDrop, dropAt, tFlip, tSlam, h, sc, shake;
 } CupPath;
 
 
@@ -402,7 +403,7 @@ static void cupPose(const CupPath *c, double T, M3 *R, V3 *o)
     double env;
     if (T < c->tFlip) { env = u / .15; if (env > 1) env = 1; }
     else { double td = T - c->tFlip - c->dropAt; env = td <= 0 ? 1 : 1 - td / c->tDrop; if (env < 0) env = 0; }
-    double dx = 13 * SHAKE_XY * rsin(2 * PI * 4.6 * u) * env, dy = 8 * SHAKE_XY * rsin(2 * PI * 3.1 * u + 1) * env, dz = 7 * SHAKE_Z * rsin(2 * PI * SHAKE_ZF * u) * env;
+    double dx = 13 * SHAKE_XY * c->sc * rsin(2 * PI * 4.6 * u) * env, dy = 8 * SHAKE_XY * c->sc * rsin(2 * PI * 3.1 * u + 1) * env, dz = 7 * SHAKE_Z * c->sc * rsin(2 * PI * SHAKE_ZF * u) * env;
     double yaw = .55 * rsin(2 * PI * 2.3 * u + .7) * env, tx = .2 * SHAKE_TILT * rsin(2 * PI * 3.7 * u) * env, ty = .2 * SHAKE_TILT * rsin(2 * PI * 2.9 * u + 2) * env;
     M3 b = rotY(ty), d = rotX(tx), e = rotZ(yaw), de = mulM(&d, &e), S = mulM(&b, &de);
     V3 piv; M3 M; double pv;
@@ -422,7 +423,7 @@ static void cupPose(const CupPath *c, double T, M3 *R, V3 *o)
         /* the wrist: the turn gathers speed the whole way and stops dead at the end of its travel */
         if (k < 1) { M3 a = rotX(PI + PI * powk(k)); M = mulM(&a, &S); } else M = ident();
         /* the slam's shiver: the cup sits a hair up and settles */
-        if (T > c->tSlam && T < c->tSlam + .14) { double sw = (T - c->tSlam) / .14; piv.z += 2.5 * rsin(sw * PI) * (1 - sw); }
+        if (T > c->tSlam && T < c->tSlam + .14) { double sw = (T - c->tSlam) / .14; piv.z += 2.5 * c->sc * rsin(sw * PI) * (1 - sw); }
     }
     *R = M; *o = sub(piv, apply(&M, v3(0, 0, pv)));
 }
@@ -431,15 +432,27 @@ static int bakeCup(const CnThrow *t, uint64_t seed, Out *o)
 {
     const double R = t->cup_r, rc = t->cup_rc, h = t->cup_h, wt = t->cup_t, hf = h - wt, d = t->die, s = d / 2, dome = DOME * d;
     const int nd = t->dice;
+    /* the reach: a small cup (a far seat's) is held lower and shaken less, in proportion; the clock and gravity are not scaled */
+    const double sc = t->scale > 0 ? t->scale : t->cup_r / CN_THROW_REF_R;
+    /* THE TURN STARTS ON THE BOB'S BEAT. Whether the dice stay in depends on where the up-and-down is in its
+     * cycle when the turn begins: a shake of 2.0 s keeps a 12-point margin, 1.6 s or 1.9 s spills (measured
+     * over 60 seeds a length). So a shake length rounds to a whole number of bobs (1/SHAKE_ZF), and every
+     * length is as safe as the one that was searched. */
+    double shakeS = t->shake_s > 0 ? t->shake_s : SHAKE;
+    shakeS = __builtin_floor(shakeS * SHAKE_ZF + .5) / SHAKE_ZF;
+    if (shakeS < .5) shakeS = .5;
     CupPath c;
-    c.h = h; c.pz = h * GRIP;
-    c.held[0] = t->cup_x; c.held[1] = t->cup_y - 60; c.held[2] = 110;
+    c.h = h; c.pz = h * GRIP; c.sc = sc; c.shake = shakeS;
+    c.held[0] = t->cup_x; c.held[1] = t->cup_y - 60 * sc; c.held[2] = 110 * sc;
     c.grip0[0] = c.held[0]; c.grip0[1] = c.held[1]; c.grip0[2] = c.held[2] + h / 2 - c.pz;
     c.home[0] = t->cup_x; c.home[1] = t->cup_y; c.home[2] = c.pz;
     /* the drop is timed to end as the turn does, so the mouth meets the planks the moment it faces them */
-    c.a = DROP_G * -G; c.tDrop = rsqrt(2 * (c.grip0[2] - c.home[2]) / c.a);
+    /* GRAVITY SCALES WITH THE THROW: lengths and g by sc, the clock as it is, so a far seat's small cup throws
+     * exactly my cup's throw in miniature (dynamic similarity), and every margin measured for mine holds for it */
+    const double g = G * sc;
+    c.a = DROP_G * -g; c.tDrop = rsqrt(2 * (c.grip0[2] - c.home[2]) / c.a);
     c.dropAt = FLIP > c.tDrop ? FLIP - c.tDrop : 0;
-    c.tFlip = HOLD + SHAKE; c.tSlam = c.tFlip + c.dropAt + c.tDrop;
+    c.tFlip = HOLD + shakeS; c.tSlam = c.tFlip + c.dropAt + c.tDrop;
 
     /* five dice in the held cup: three on its floor, two on top of them, every one turned its own way */
     uint64_t rs = seed ^ 0x636e2e726f6c6c01ull;        /* "cn.roll" + the recipe's version */
@@ -448,7 +461,7 @@ static int bakeCup(const CnThrow *t, uint64_t seed, Out *o)
     Body b[CN_ROLL_DICE];
     for (int k = 0; k < nd; k++) {
         double u1 = unit(&rs), u2 = unit(&rs), u3 = unit(&rs), ua = unit(&rs), w1 = unit(&rs), w2 = unit(&rs), w3 = unit(&rs);
-        double an = k * 2 * PI / 3 + ua * .5, rr = k < 3 ? 17 : 10;
+        double an = k * 2 * PI / 3 + ua * .5, rr = (k < 3 ? 17 : 10) * sc;
         b[k] = make(d, v3(o0.x + rr * rcos(an), o0.y + rr * rsin(an), floorW + s + 1 + (k < 3 ? 0 : d + 2)),
                     v3(0, 0, 0), v3((w1 - .5) * 6, (w2 - .5) * 6, (w3 - .5) * 6), randRot(u1, u2, u3));
     }
@@ -466,14 +479,14 @@ static int bakeCup(const CnThrow *t, uint64_t seed, Out *o)
         cup.R = curR; cup.o = curO; cup.v = mul(sub(curO, prevO), 1 / DT);
         { V3 w = v3(0, 0, 0); for (int i = 0; i < 3; i++) w = add(w, cross(prevR.c[i], mul(sub(curR.c[i], prevR.c[i]), 1 / DT))); cup.w = mul(w, .5); }
         cup.ri0 = R - wt; cup.ric = rc - wt; cup.h = h; cup.hf = hf; cup.dome = dome; cup.nz = (R - rc) / h;
-        step(b, nd, &cup, 0);
+        step(b, nd, &cup, 0, g);
         prevR = curR; prevO = curO;
         if (T < HOLD) ph = CN_RP_HOLD; else if (T < c.tFlip) ph = CN_RP_SHAKE; else if (T < c.tSlam) ph = CN_RP_FLIP;
         else {
             if (ph != CN_RP_SETTLE && !o->info->slam) o->info->slam = (uint16_t)o->n;
             ph = CN_RP_SETTLE;
             double u = T - c.tSlam;
-            if (u > .45) for (int k = 0; k < nd; k++) if (!b[k].settled && atRest(&b[k])) snap(&b[k]);
+            if (u > .45) for (int k = 0; k < nd; k++) if (!b[k].settled && atRest(&b[k], sc)) snap(&b[k]);
             /* a die that lies on another, or stands on an edge, is shivered loose, as a knuckle on the cup would */
             if (u > .9 && T - kickT > .25) {
                 kickT = T;
@@ -481,7 +494,7 @@ static int bakeCup(const CnThrow *t, uint64_t seed, Out *o)
                     /* one draw per statement: C leaves the order of two calls in one expression to the
                      * compiler, and gcc and clang chose differently (seen as a native/wasm split) */
                     double kx = unit(&rs), ky = unit(&rs), wx = unit(&rs), wy = unit(&rs);
-                    b[k].v = add(b[k].v, v3((kx - .5) * 480, (ky - .5) * 480, 180));
+                    b[k].v = add(b[k].v, v3((kx - .5) * 480 * sc, (ky - .5) * 480 * sc, 180 * sc));
                     b[k].w = add(b[k].w, v3((wx - .5) * 40, (wy - .5) * 40, 0));
                 }
             }
@@ -556,8 +569,8 @@ static int bakeTable(const CnThrow *t, uint64_t seed, Out *o)
     while (ph != CN_RP_IDLE) {
         T += DT; phaseT += DT; steps++;
         if (ph == CN_RP_FALL) {
-            step(b, nd, 0, walls);
-            if (T > .35) for (int k = 0; k < nd; k++) if (!b[k].settled && atRest(&b[k])) snap(&b[k]);
+            step(b, nd, 0, walls, G);
+            if (T > .35) for (int k = 0; k < nd; k++) if (!b[k].settled && atRest(&b[k], 1)) snap(&b[k]);
             if (T > 2.6) for (int k = 0; k < nd; k++) if (!b[k].settled) snap(&b[k]);
             int all = 1; for (int k = 0; k < nd; k++) if (!b[k].settled || !clear(b, nd, k)) all = 0;
             if (all || T > 3) { ph = CN_RP_SIT; phaseT = 0; }
@@ -616,6 +629,6 @@ void cn_throw_default(CnThrow *t, int kind, float cup_x, float cup_y, float cup_
     memset(t, 0, sizeof *t);
     t->kind = (uint8_t)kind; t->dice = CN_ROLL_DICE;
     t->cup_x = cup_x; t->cup_y = cup_y; t->cup_r = cup_r; t->cup_rc = cup_r * .72f; t->cup_h = cup_r * CN_CUP_TALL; t->cup_t = cup_r * .06f;
-    t->die = die; t->ring = ring;
+    t->die = die; t->ring = ring; t->shake_s = 0; t->scale = cup_r / CN_THROW_REF_R;
     t->band_x0 = cup_x - 160; t->band_x1 = cup_x + 160; t->band_y0 = cup_y - 120; t->band_y1 = cup_y + 60;
 }

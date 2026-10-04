@@ -72,6 +72,7 @@ The peek is the head moving: the eye drops to 560 points and comes forward to 1.
 The table screen carries no headline and no ask line (the board is the whole screen above the shelf); every screen is centred on a plank and the tile is six planks wide so the running bond survives its seams; the far seats' counts are set at 184 of 256 on their crowns.
 The eye is a seat's, not a lamp's: 720 points up and half the board's height past its centre toward me, with a shifted lens so the table and the layout on it stay 1:1 while every upright piece leans away from me (of my cup the side that faces me, of the others the side that faces the table).
 The bake is deterministic to the bit across compilers and wasm (its own trig series, `-ffp-contract=off`, one random draw per statement) and a pinned golden holds the recipe; the bake knows no pip values, so whether the hand is the physics' own or K2's dice painted onto the up faces is the owner's call, and the bubble carries the hand, never the throw.
+Every seat throws at a roll: a far cup's throw is the same bake with its own seed, shake length and start, its reach and gravity scaled to its size (dynamic similarity, the clock unchanged), and every shake length rounds to the bob's beat, since where the bob is when the turn starts is what decides whether the dice stay in.
 `make -C c wasm-roll` links it as a browser module and `make -C c docs-roll` embeds that in `docs/UI.html`, which plays it.
 
 ## iOS and rendering (owner: the iOS worker; I1 onward)

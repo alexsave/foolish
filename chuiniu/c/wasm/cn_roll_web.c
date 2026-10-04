@@ -12,11 +12,11 @@ static uint8_t    phase[CN_ROLL_MAX_FRAMES];
 static CnRollInfo info;
 
 EXPORT(cn_roll_run) int cn_roll_run(int kind, int dice, float cup_x, float cup_y, float cup_r, float die, float ring,
-                                     float band_x0, float band_x1, float band_y0, float band_y1, uint32_t seed_lo, uint32_t seed_hi)
+                                     float band_x0, float band_x1, float band_y0, float band_y1, float shake_s, uint32_t seed_lo, uint32_t seed_hi)
 {
     CnThrow t;
     cn_throw_default(&t, kind, cup_x, cup_y, cup_r, die, ring);
-    t.dice = (uint8_t)dice;
+    t.dice = (uint8_t)dice; t.shake_s = shake_s;
     t.band_x0 = band_x0; t.band_x1 = band_x1; t.band_y0 = band_y0; t.band_y1 = band_y1;
     return cn_roll_bake(&t, ((uint64_t)seed_hi << 32) | seed_lo, frames, phase, CN_ROLL_MAX_FRAMES, &info);
 }

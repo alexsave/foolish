@@ -100,6 +100,8 @@ static void test_cup(int seeds)
     double ms = 0;
     for (int k = 0; k < seeds; k++) {
         CnRollInfo info;
+        /* every seat shakes its own length: the lengths round to the bob's beat inside the bake */
+        t.shake_s = k % 5 == 0 ? 0 : 1.5f + (k % 10) * .1f;
         clock_t c0 = clock();
         int n = cn_roll_bake(&t, 1000 + (uint64_t)k * 131, F, P, CN_ROLL_MAX_FRAMES, &info);
         ms += (double)(clock() - c0) * 1000 / CLOCKS_PER_SEC;
@@ -178,6 +180,33 @@ static void test_table(int seeds)
     }
 }
 
+/* a far seat's cup: a third the size, thrown with the reach scaled, its own shake length; the dice stay in */
+static void test_small(int seeds)
+{
+    TEST("K14 a far seat's small cup");
+    CnThrow t; cn_throw_default(&t, CN_THROW_CUP, 60, 80, 22, 9, 13);
+    const double s = 4.5;
+    double worst = 1e9; int forced = 0;
+    for (int k = 0; k < seeds; k++) {
+        CnRollInfo info;
+        t.shake_s = 1.5f + (k % 10) * .1f;
+        int n = cn_roll_bake(&t, 7000 + (uint64_t)k * 131, F, P, CN_ROLL_MAX_FRAMES, &info);
+        CHECK(n > 0 && info.complete, "seed %d completes in %d frames", k, n);
+        forced += info.forced;
+        for (int f = 0; f + 1 < info.slam; f++) { double m = mouthMargin(F + f * CN_ROLL_FRAME_FLOATS, 5, s); if (m < worst) worst = m; }
+        int flipAt = 0; while (flipAt < n && P[flipAt] != CN_RP_FLIP) flipAt++;
+        CHECK(fabs(flipAt / (double)CN_ROLL_HZ - (.3 + floor(t.shake_s * 4 + .5) / 4)) < .05, "seed %d: the turn starts after the hold and its own shake, rounded to the bob's beat (%.2f s)", k, flipAt / (double)CN_ROLL_HZ);
+        const float *last = F + (n - 1) * CN_ROLL_FRAME_FLOATS;
+        for (int d = 0; d < 5; d++) {
+            double p[3], c[3][3]; poseOf(last + (1 + d) * CN_ROLL_POSE_FLOATS, p, c);
+            CHECK(fabs(p[2] - s) < 1e-3 && hypot(p[0] - 60, p[1] - 80) + s * 1.4143 <= 22 - 22 * .06 + 1.5, "seed %d die %d rests under the small cup", k, d);
+        }
+    }
+    CHECK(worst > 2, "no die corner comes within two points of the small mouth (closest %.1f)", worst);
+    CHECK(forced * 100 <= seeds * 5 * 2, "the last resort placed %d dice", forced);
+    printf("  small cup: %d seeds, closest to the mouth %.1f pt, forced %d\n", seeds, worst, forced);
+}
+
 static void test_edges(void)
 {
     TEST("K14 the cap and a bad throw");
@@ -203,6 +232,7 @@ int main(int argc, char **argv)
     test_determinism();
     test_cup(seeds);
     test_table(seeds / 3 > 20 ? seeds / 3 : 20);
+    test_small(seeds > 20 ? seeds : 20);
     test_edges();
     return report("cn_roll_test");
 }

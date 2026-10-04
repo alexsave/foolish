@@ -12,7 +12,7 @@ const e = instance.exports, N = +(process.argv[2] || 300), FF = e.cn_roll_frame_
 let frames = 0, ms = 0, forced = 0, incomplete = 0; const faces = [0, 0, 0, 0, 0, 0];
 for (let s = 0; s < N; s++) {
   const t0 = performance.now();
-  const n = e.cn_roll_run(1, 5, 179, 540, 59, 24, 34.7, 19, 339, 420, 600, (1000 + s * 131) >>> 0, 0);
+  const n = e.cn_roll_run(1, 5, 179, 540, 59, 24, 34.7, 19, 339, 420, 600, 0, (1000 + s * 131) >>> 0, 0);
   ms += performance.now() - t0; frames += n; forced += e.cn_roll_forced(); if (!e.cn_roll_complete()) incomplete++;
   for (let d = 0; d < 5; d++) faces[e.cn_roll_up(d)]++;
 }

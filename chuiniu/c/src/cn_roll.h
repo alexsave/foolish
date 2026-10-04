@@ -64,10 +64,17 @@ typedef struct {
                               * stations; the cup roll's last resort)           */
     float   band_x0, band_x1;/* the table roll's soft walls, x                  */
     float   band_y0, band_y1;/* and y                                           */
+    float   shake_s;         /* the cup roll's shake, seconds; 0 for the default */
+    float   scale;           /* the throw's reach (the held height, the shake's
+                              * amplitudes, the kicks) as a fraction of the
+                              * study's cup, mouth radius CN_THROW_REF_R; 0 for
+                              * cup_r / CN_THROW_REF_R. Gravity never scales.  */
     uint8_t kind;            /* CN_THROW_*                                      */
     uint8_t dice;            /* 1..CN_ROLL_DICE                                 */
     uint8_t pad0[2];
 } CnThrow;
+
+#define CN_THROW_REF_R 59.0f   /* the mouth radius the throw's numbers were searched at */
 
 /* What the bake found. */
 typedef struct {
@@ -95,7 +102,8 @@ int cn_roll_bake(const CnThrow *t, uint64_t seed, float *frames, uint8_t *phase,
 #define CN_CUP_TALL 2.1f
 #endif
 
-/* The cup roll's throw at a given table, filled with the study's numbers. */
+/* The cup roll's throw at a given table, filled with the study's numbers; the
+ * reach scales with the cup (every seat throws: a far seat's cup is small). */
 void cn_throw_default(CnThrow *t, int kind, float cup_x, float cup_y, float cup_r, float die, float ring);
 
 #endif
