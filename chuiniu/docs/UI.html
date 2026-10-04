@@ -294,7 +294,8 @@ section[hidden]{display:none}
   <!-- strike wear: grime at a corner, feathered into the face -->
   <radialGradient id="g-wear"><stop offset="0" stop-color="#4e3f26"/><stop offset=".45" stop-color="#4e3f26" stop-opacity=".55"/><stop offset="1" stop-color="#4e3f26" stop-opacity="0"/></radialGradient>
   <!-- iron: a nail head lit top-left, and the rust that runs from it -->
-  <radialGradient id="g-nail" cx=".42" cy=".4" r=".7"><stop offset="0" stop-color="#5a5953"/><stop offset=".6" stop-color="#34332f"/><stop offset="1" stop-color="#1a1917"/></radialGradient>
+  <radialGradient id="g-nailhalo"><stop offset=".45" stop-color="#000" stop-opacity=".5"/><stop offset="1" stop-color="#000" stop-opacity="0"/></radialGradient>
+  <radialGradient id="g-nailbleed"><stop offset=".6" stop-color="#2a2420" stop-opacity=".9"/><stop offset="1" stop-color="#2a2420" stop-opacity="0"/></radialGradient>
   <radialGradient id="g-rust" cx=".5" cy=".28" r=".62"><stop offset="0" stop-color="#8a4a1c" stop-opacity=".95"/><stop offset=".5" stop-color="#6a3614" stop-opacity=".55"/><stop offset="1" stop-color="#4a2a12" stop-opacity="0"/></radialGradient>
   <radialGradient id="g-badge" cx=".35" cy=".30" r=".8">
     <stop offset="0" stop-color="#fff" stop-opacity=".30"/><stop offset=".6" stop-color="#fff" stop-opacity="0"/>
@@ -515,9 +516,9 @@ Then what runs round the table’s edge, and what is driven into it. The stage i
 <div class="bank bank-w" id="table-edges"></div>
 
 <h3>Fixings</h3>
-<p class="why" style="max-width:73ch">What holds the planks down: nothing, hand-forged nails driven into the beams below (so they sit in rows across the planks, one just inside each edge of every board), or those nails with the rust running from them. The heads are dull iron, flat to the board, no shadow and no glint.</p>
+<p class="why" style="max-width:73ch">What holds the planks down: nothing, hand-forged nails driven into the beams below (so they sit in rows across the planks, one just inside each edge of every board), or those nails with the rust running from them. A head is a forged rose: the four facets the hammer left, each shaded to the one light, meeting at an apex that is never quite centred; no outline anywhere, a dent in the wood around it and a grey-brown bleed.</p>
 <div class="bank bank-w" id="table-fix"></div>
-<div class="note" style="max-width:73ch"><b>Port.</b> Surfaces: the woods are <code>WoodTexture.renderCGImage</code> with a drowned <code>Palette</code> (linear gains in place of the railing red) handed to the stone generator as its base; the rest are the stone generator alone, a <code>Palette</code> each; all baked as the felt is and drawn by <code>FeltBackground</code> at one point per texel, bottom-anchored. Edges: an overlay <code>Canvas</code> (or a <code>Shape</code> per kind) inset from the frame: nail heads are seven-point <code>Path</code>s with a <code>RadialGradient</code>, the rope is three strokes (a body, a dashed twist, a shadow), the binding is the verdigris paint in a 10pt frame with rivets, the coaming is the wood paint in a 12pt frame with an inner shadow, the crust is the crust bake under an edge mask. Fixings: the same nail heads at seeded positions along the plank centres.</div>
+<div class="note" style="max-width:73ch"><b>Port.</b> Surfaces: the woods are <code>WoodTexture.renderCGImage</code> with a drowned <code>Palette</code> (linear gains in place of the railing red) handed to the stone generator as its base; the rest are the stone generator alone, a <code>Palette</code> each; all baked as the felt is and drawn by <code>FeltBackground</code> at one point per texel, bottom-anchored. Edges: an overlay <code>Canvas</code> (or a <code>Shape</code> per kind) inset from the frame: a nail head is four facet <code>Path</code>s in four flat shades under two soft <code>RadialGradient</code>s, the rope is three strokes (a body, a dashed twist, a shadow), the binding is the verdigris paint in a 10pt frame with rivets, the coaming is the wood paint in a 12pt frame with an inner shadow, the crust is the crust bake under an edge mask. Fixings: the same nail heads at seeded positions along the plank centres.</div>
 </section>
 
 <!-- ============================================================ 7 -->
@@ -1473,16 +1474,34 @@ const SHAPE = (() => {
   const TABLE_FIELDS = { surface: ['Surface', names(TEX.TABLE_MATS)], edge: ['Edge', names(EDGES)], fix: ['Fixings', names(FIXES)] };
   loadSpec('cn.table', TABLE, TABLE_FIELDS);
   const Hh = TEX.hash;
-  // a hand-forged nail head: a seven-point head of dull iron, flat to the board, a shade lighter
-  // toward the lamp and no more; no cast shadow and no glint, because a nail driven home sits in
-  // the wood, not on it. With or without its rust.
+  // A hand-forged nail, the way the wood is made: not a disc with an outline but a ROSE HEAD, the
+  // four facets the hammer left, meeting at an apex that is never quite at the centre. Each facet
+  // takes its own shade from the one light (top-left), the outline wanders by seed, there is no
+  // stroke anywhere, and the wood around it is dented a little darker where the head was driven
+  // home. Most old iron bleeds grey-brown into wet wood; the rust variant lets it run.
   function nail(x, y, r, seed, rust) {
-    let pts = '';
-    for (let i = 0; i < 7; i++) { const a = i / 7 * Math.PI * 2 + Hh(seed, 1, 601) * 6, rr = r * (.86 + .28 * Hh(i, seed, 601)); pts += `${(x + Math.cos(a) * rr).toFixed(1)},${(y + Math.sin(a) * rr).toFixed(1)} `; }
-    let m = '';
-    if (rust) m += `<ellipse cx="${x}" cy="${y + r * 2.2}" rx="${r * 2.1}" ry="${r * 4.6}" fill="url(#g-rust)" opacity="${(.6 + .3 * Hh(seed, 2, 601)).toFixed(2)}"/>`;
-    m += `<polygon points="${pts}" fill="url(#g-nail)" stroke="rgba(0,0,0,.5)" stroke-width="${Math.max(.5, r * .12)}" stroke-linejoin="round"/>`;
-    return m;
+    const J = (i, a) => (Hh(i, seed, 601) - .5) * 2 * a;
+    const rot = Hh(seed, 7, 601) * Math.PI, ax = J(1, .18) * r, ay = J(2, .18) * r;
+    // eight outline points, the hammer never leaving a true circle
+    const pts = [];
+    for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI * 2 + rot + J(10 + i, .12), rr = r * (.84 + .3 * Hh(20 + i, seed, 601)); pts.push([Math.cos(a) * rr, Math.sin(a) * rr]); }
+    // the facets: each quarter of the outline closed through the apex; its shade is how much it faces the light
+    const shade = ['#56534d', '#3b3935', '#34322e', '#232220'], tint = Hh(seed, 8, 601);
+    let m = `<g transform="translate(${x.toFixed(1)},${y.toFixed(1)})">`;
+    m += `<circle r="${(r * 2.1).toFixed(1)}" fill="url(#g-nailhalo)" opacity="${(.45 + .25 * Hh(seed, 9, 601)).toFixed(2)}"/>`;
+    if (rust) m += `<ellipse cy="${(r * 2.4).toFixed(1)}" rx="${(r * 2).toFixed(1)}" ry="${(r * 4.8).toFixed(1)}" fill="url(#g-rust)" opacity="${(.55 + .3 * Hh(seed, 2, 601)).toFixed(2)}"/>`;
+    m += `<circle r="${(r * 1.3).toFixed(1)}" fill="url(#g-nailbleed)" opacity="${(.5 + .3 * Hh(seed, 3, 601)).toFixed(2)}"/>`;
+    for (let f = 0; f < 4; f++) {
+      const a = pts[(f * 2) % 8], b = pts[(f * 2 + 1) % 8], c = pts[(f * 2 + 2) % 8];
+      // which facet is which shade depends on where the light falls after the head's rotation
+      const mid = Math.atan2((a[1] + c[1]) / 2 - ay, (a[0] + c[0]) / 2 - ax);
+      const toward = Math.cos(mid - (-3 * Math.PI / 4)); // 1 facing the lamp at top-left, -1 away
+      const k = toward > .5 ? 0 : toward > -.2 ? (tint > .5 ? 1 : 2) : 3;
+      m += `<polygon points="${ax.toFixed(1)},${ay.toFixed(1)} ${a[0].toFixed(1)},${a[1].toFixed(1)} ${b[0].toFixed(1)},${b[1].toFixed(1)} ${c[0].toFixed(1)},${c[1].toFixed(1)}" fill="${shade[k]}"/>`;
+    }
+    // the apex, worn bright by thumbs and dice
+    m += `<circle cx="${ax.toFixed(1)}" cy="${ay.toFixed(1)}" r="${(r * .28).toFixed(1)}" fill="#6e6a63" opacity=".55"/>`;
+    return m + `</g>`;
   }
   function edgeSVG(kind, W, H, seed) {
     let m = '';
