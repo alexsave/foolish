@@ -216,7 +216,7 @@ td code{white-space:nowrap}
 .field.empty{color:#5f7a72;font-style:italic}
 @keyframes blink{to{opacity:0}}
 
-.stamp{display:inline-block;font:400 12px/1 var(--sc);letter-spacing:.22em;text-transform:uppercase;
+.stamp{display:inline-block;white-space:nowrap;font:400 12px/1 var(--sc);letter-spacing:.22em;text-transform:uppercase;
   color:var(--blood);padding:7px 10px 6px;border:1.5px solid rgba(192,74,51,.85);
   background:rgba(60,12,8,.35);transform:rotate(-5deg);text-shadow:0 0 6px rgba(192,74,51,.4);
   clip-path:polygon(0 8%,3% 0,97% 2%,100% 10%,99% 92%,96% 100%,4% 98%,1% 90%);
@@ -263,6 +263,20 @@ section[hidden]{display:none}
 .tstage .tb-pieces{position:absolute;left:0;right:0;z-index:3;display:flex;align-items:flex-end}
 .bank-w{grid-template-columns:repeat(auto-fill,minmax(316px,1fr))}
 .bk .tstage{border-radius:6px;box-shadow:none;margin:0}
+/* ---- the layout's screens ---- */
+.scr{position:relative;overflow:hidden;border-radius:6px;isolation:isolate;box-shadow:0 20px 50px rgba(0,0,0,.45);font-family:var(--serif);color:var(--ink);flex:none}
+.scr .tstage{position:absolute;inset:0;border-radius:0;box-shadow:none;border:0;width:100%!important;height:100%!important}
+.scr-ui{position:absolute;inset:0;z-index:4}
+.abs{position:absolute}
+.seat{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-start}
+.seatf{display:flex;flex-direction:column;align-items:center}
+.myband{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px}
+.myband.short{gap:1px}
+.shelf{position:absolute;left:0;bottom:0;padding:0 16px 12px;display:flex;flex-direction:column;gap:10px}
+.lobby{position:absolute;inset:0;display:flex;flex-direction:column}
+.bub-cap{width:300px;background:#e9e9eb;color:#111;font:17px/1.3 var(--ui);padding:10px 14px 12px;border-radius:0 0 18px 18px}
+.half{flex:0 0 auto}
+.scaled{overflow:hidden;border-radius:4px}
 </style>
 </head>
 <body>
@@ -310,7 +324,7 @@ section[hidden]{display:none}
 </svg>
 
 <nav class="tabs" role="tablist">
-  <button data-tab="dice" role="tab">Dice</button><button data-tab="cup" role="tab">Cup</button><button data-tab="table" role="tab">Table</button>
+  <button data-tab="dice" role="tab">Dice</button><button data-tab="cup" role="tab">Cup</button><button data-tab="table" role="tab">Table</button><button data-tab="layout" role="tab">Layout</button>
   <button data-tab="frames" role="tab">Frames</button><button data-tab="palette" role="tab">Palette</button>
   <button data-tab="light" role="tab">Light and water</button><button data-tab="materials" role="tab">Materials</button>
   <button data-tab="plates" role="tab">Plates and bands</button><button data-tab="type" role="tab">Type</button>
@@ -510,6 +524,47 @@ Two views: from the side, as the roll and the reveal show it, and from above, as
 <div class="bank bank-w" id="table-edges"></div>
 
 <div class="note" style="max-width:73ch"><b>Port.</b> The surface: <code>WoodTexture.renderCGImage</code> with the drowned-darker <code>Palette</code> (linear gains in place of the railing red), transposed, handed to the stone generator as its base; baked as the felt is and drawn by <code>FeltBackground</code> at one point per texel, bottom-anchored. Edges: an overlay <code>Canvas</code> (or a <code>Shape</code> per kind) inset from the frame: a nail head is four facet <code>Path</code>s in four flat shades under two soft <code>RadialGradient</code>s, the rope is three strokes (a body, a dashed twist, a shadow), the binding is the verdigris paint in a 10pt frame with rivets, the coaming is the wood paint in a 12pt frame with an inner shadow, the crust is the crust bake under an edge mask. Fixings: the same nail heads at seeded positions along the plank centres.</div>
+</section>
+
+<!-- ============================================================ 6c -->
+<section id="layout" data-tab="layout">
+<h2>The layout</h2>
+<p class="lede">The pieces are decided; this is where they go. Messages gives the game three sizes and the app one rule for placing seats, and both are kept: the drawer is 340pt tall collapsed on every phone and the screen less about 126pt expanded (541 on an SE, 718 on a 390-wide phone, 830 on a Pro Max); and <code>DiceTableLayout</code> is ported here as it stands, so a seat is where the app would put it.
+What is new is the view: the table is seen <b>from above</b>. Every seat is its cup’s crown with the count on it, the bid plate lies on the planks between them, and my dice are face up at the bottom where my hands would be. The seated view (cups from the side) is kept in the mixer to compare.</p>
+
+<h3>The mixer</h3>
+<div class="mixer" id="lay-mixer"></div>
+<div class="row">
+  <div class="col" id="lay-main"></div>
+  <div class="col w">
+    <div class="h4">What to look for <span class="pill n">real size</span></div>
+    <p class="why" style="max-width:60ch">The screen on the left is the size the drawer really is. Collapsed is the one the game is mostly played at: 340pt, of which the picker takes 100 when it is my turn (the stepper and the face chips on one row, the two verbs on the next), so the board is a short one and the other seats go in a row along the top with the plate beside them. Expanded gives the ellipse.</p>
+    <p class="why" style="max-width:60ch">The seat rule is the app’s: the other seats go left to right in seat order starting after mine, round the upper half of an ellipse whose centre is above my band; a board too short for a badge, the plate and my band stacked becomes the short board. One change is proposed and can be switched off in the mixer: the ellipse’s height is <b>capped</b> at 1.05 of its half-width. On a tall board the app’s ellipse grows until the lowest seats sit on the plate and a dead zone opens above my dice (the phones row shows it); capped, the seats gather round the plate and the board’s top is left to the planks.</p>
+    <p class="why" style="max-width:60ch">From above a cup’s count sits on its crown, which is why the crown had to carry a numeral at 32. The name goes under the cup in the small caps, and the live seat gets the turn light under its name.</p>
+    <div class="kv" id="lay-spec"></div>
+  </div>
+</div>
+
+<h3>The three states Messages gives you</h3>
+<p class="why" style="max-width:73ch">The bubble in the transcript (a picture, 300 by 195, that the game draws itself), the collapsed drawer under the compose field, and the expanded drawer. One game, one look, three sizes; the mixer’s seats, state and view apply to all three.</p>
+<div class="row" id="lay-three"></div>
+
+<h3>Two seats to six</h3>
+<p class="why" style="max-width:73ch">The expanded table at every seat count, at half size. The ellipse holds six badges on a 390-wide phone with room between them; the short board holds four other seats and the plate, five without it (the app’s rule, I17).</p>
+<div class="band" id="lay-seats" style="align-items:flex-start;gap:12px"></div>
+
+<h3>On four real phones</h3>
+<p class="why" style="max-width:73ch">An SE (375 by 541 expanded), a 390-wide phone (718), a Pro Max (430 by 830), and the collapsed 340 that is the same on all of them, at 55%. Width moves the ellipse’s radius; height moves its centre; nothing else moves.</p>
+<div class="band" id="lay-phones" style="align-items:flex-start;gap:12px"></div>
+
+<div class="callout">
+  <h4>Decided here, pending the owner’s veto</h4>
+  <p><b>From above.</b> The whole screen is the table seen from above: the planks, the cups’ crowns, the dice face up. It is the one view where a cup, a die and the table are all the same object seen the same way, and it is the view that makes the count on the crown and the nails in the planks worth having drawn.</p>
+  <p><b>The picker is a plank shelf.</b> The stepper, the face chips and the two verbs sit on the board’s lower edge as they did, in the bronze and the glow already decided; the board above them is the table.</p>
+  <p><b>The reveal is a list on the table.</b> Every seat’s band in seat order, the counting dice ringed, the loser’s band ringed in blood with the stamp at its end, the outcome line under the list, Next round on the shelf. Collapsed, the dice drop to 22 and the bands to 30 so six seats still fit.</p>
+  <p><b>The lobby is the deep.</b> The one screen on open water rather than the table: the name over the roster, the field and Join, Start lit when two are seated.</p>
+</div>
+<div class="note" style="max-width:73ch"><b>Port.</b> <code>DiceTableLayout</code> unchanged but for the cap: one line in <code>radii</code>, <code>ry = min(ry, rx * 1.05)</code>, and its test. Seat badge: <code>cupTop</code> (or <code>Cup</code>) over the name in the small caps, the turn light a <code>Capsule</code>. The screen’s background is <code>FeltBackground</code> with the table bake and the nail overlay drawn once into it. The bubble is <code>BubbleSnapshot</code> drawing the same top-down table at 300 by 195.</div>
 </section>
 
 <!-- ============================================================ 7 -->
@@ -1585,6 +1640,131 @@ const SHAPE = (() => {
     el.appendChild(k);
     row.appendChild(el);
   }
+
+  /* ---- the layout ----------------------------------------------------- */
+  const LAY = { seats: 6, state: 'table', view: 'top', size: 'collapsed', arc: 'capped' };
+  const SIZES = { collapsed: { name: 'Collapsed, 340', w: 390, h: 340 }, expanded: { name: 'Expanded, 390 by 718', w: 390, h: 718 }, se: { name: 'SE, 375 by 541', w: 375, h: 541 }, max: { name: 'Pro Max, 430 by 830', w: 430, h: 830 } };
+  const STATES = { table: { name: 'Bidding, my turn' }, wait: { name: 'Bidding, their turn' }, reveal: { name: 'The reveal' }, lobby: { name: 'The lobby' }, end: { name: 'The end' } };
+  const VIEWS = { top: { name: 'From above' }, side: { name: 'Seated' } };
+  const LAY_FIELDS = { seats: ['Seats', { 2: 'Two', 3: 'Three', 4: 'Four', 5: 'Five', 6: 'Six' }], state: ['State', names(STATES)], view: ['View', names(VIEWS)], size: ['Size', names(SIZES)], arc: ['Ellipse', { capped: 'Capped (proposed)', app: 'The app\u2019s' }] };
+  loadSpec('cn.lay', LAY, LAY_FIELDS);
+  const NAMES = ['Alex', 'Bo', 'Cy', 'Dee', 'Eve', 'Fay'];
+  const COUNTS = [5, 4, 5, 3, 5, 2];
+  const HANDS = [[1, 1, 3, 5, 6], [2, 3, 4, 4], [1, 2, 3, 3, 6], [3, 5, 6], [2, 2, 3, 4, 5], [1, 3]];
+  // DiceTableLayout, ported: badge 72, my band 120 (64 short), plate 160 by 56, margin 8
+  const L = { badge: [72, 72], myBand: 120, shortBand: 64, plate: [160, 56], plateMin: 100, margin: 8 };
+  const isShort = H => H < L.badge[1] + L.plate[1] + L.myBand + 4 * L.margin;
+  // the arc: the app's ellipse, or the same capped so its height is at most 1.05 of its half-width
+  let ARC = 'capped';
+  const radii = (c, W) => { const rx = (W - L.badge[0]) / 2 - L.margin; let ry = c[1] - L.badge[1] / 2 - L.margin; if (ARC === 'capped') ry = Math.min(ry, rx * 1.05); return [rx, ry]; };
+  function seatFrames(count, me, W, H) {
+    const band = isShort(H) ? L.shortBand : L.myBand, bandTop = H - band, frames = [];
+    frames[me] = [L.margin, bandTop, W - 2 * L.margin, band];
+    const others = count - 1;
+    if (isShort(H)) {
+      const step = Math.min(L.badge[0] + L.margin, (W - 2 * L.margin) / others), w = Math.min(L.badge[0], step), y = Math.max(0, (bandTop - L.badge[1]) / 2);
+      for (let j = 0; j < others; j++) frames[(me + 1 + j) % count] = [L.margin + j * step, y, w, L.badge[1]];
+      return frames;
+    }
+    const c = [W / 2, H - L.myBand - L.margin], [rx, ry] = radii(c, W);
+    for (let j = 0; j < others; j++) {
+      const th = Math.PI - (j + .5) * Math.PI / others, x = c[0] + rx * Math.cos(th), y = c[1] - ry * Math.sin(th);
+      frames[(me + 1 + j) % count] = [x - L.badge[0] / 2, y - L.badge[1] / 2, L.badge[0], L.badge[1]];
+    }
+    return frames;
+  }
+  function plateFrame(count, W, H) {
+    if (isShort(H)) {
+      const others = count - 1, rowEnd = L.margin + others * (L.badge[0] + L.margin), w = Math.min(L.plate[0], W - L.margin - rowEnd);
+      if (w < L.plateMin) return null;
+      return [W - L.margin - w, Math.max(0, (H - L.shortBand - L.plate[1]) / 2), w, L.plate[1]];
+    }
+    const c = [W / 2, H - L.myBand - L.margin], [, ry] = radii(c, W), y = c[1] - ry * .3;
+    return [W / 2 - L.plate[0] / 2, y - L.plate[1] / 2, L.plate[0], L.plate[1]];
+  }
+  const px = v => `${v.toFixed(1)}px`;
+  const at = (f, inner, cls = '') => `<div class="abs ${cls}" style="left:${px(f[0])};top:${px(f[1])};width:${px(f[2])};height:${px(f[3])}">${inner}</div>`;
+  const cupAt = (view, s, count, seed) => view === 'top' ? SHAPE.cupTop(s, { count, seed }) : C(s, { count, seed });
+  function seatBadge(view, i, turn, w, out) {
+    const cup = out ? (view === 'top' ? SHAPE.cupTop(44, { out: true, seed: i * 7 }) : C(44, { out: true, seed: i * 7 })) : cupAt(view, 44, COUNTS[i], i * 7);
+    return `<div class="seat">${cup}<div class="t-name${turn ? '' : ' dim'}" style="margin-top:-6px">${NAMES[i]}</div>${turn ? '<span class="turn" style="width:36px;margin-top:3px"></span>' : ''}</div>`;
+  }
+  const PICKER_H = 90, CAPTION_H = 22;
+  function picker(W, lit) {
+    const chip = W >= 430 ? 30 : 26;
+    return `<div class="shelf" style="width:${px(W)}">
+      <div class="band" style="gap:8px;justify-content:space-between;flex-wrap:nowrap"><div class="band" style="gap:8px;flex-wrap:nowrap">${'<button class="plank sq quiet">&minus;</button>'}<span class="t-num" style="font-size:28px;min-width:34px">3</span>${'<button class="plank sq">+</button>'}</div><div class="band" style="gap:0;flex-wrap:nowrap">${[2, 3, 4, 5, 6].map(f => D(f, chip, { counts: f === 3, seed: 70 + f })).join('')}</div></div>
+      <div class="band" style="gap:10px;flex-wrap:nowrap"><button class="plank wide ${lit ? 'glow' : 'sunk'}">Raise</button><button class="plank wide call">Call</button></div></div>`;
+  }
+  // one screen of the game, at real size: W by H points
+  function screen(spec, W, H, o = {}) {
+    const n = +spec.seats, me = 0, view = spec.view, inner = W - 32;
+    ARC = spec.arc || 'capped';
+    let ui = '';
+    if (spec.state === 'lobby') {
+      const seated = Math.min(n, 2), tall = H > 400;
+      ui += `<div class="lobby" style="padding:${tall ? 26 : 14}px 18px 14px">
+        <div class="t-title" style="font-size:${tall ? 44 : 30}px">吹牛<small>Chui Niu</small></div>
+        <div class="rule-water" style="margin:${tall ? 16 : 8}px 0"></div>
+        ${[...Array(seated)].map((_, i) => `<div class="seatband" style="height:40px"><span class="t-name" style="width:auto">${NAMES[i]}${i === me ? ' <span style="color:#6f8a81;letter-spacing:.06em">(you)</span>' : ''}</span><span class="dice">${cupAt(view, 28, 5, i * 7)}</span></div>`).join('')}
+        ${n > seated ? `<div class="t-said" style="margin:6px 0 0">Waiting for ${n - seated} more</div>` : ''}
+        <div style="flex:1"></div>
+        <div class="band" style="gap:10px"><div class="field">Alex<span class="caret"></span></div><button class="plank glow">Join</button></div>
+        <div class="band" style="gap:10px;margin-top:10px"><button class="plank wide ${seated >= 2 ? 'glow' : 'sunk'}">Start</button><button class="plank quiet">Leave</button></div></div>`;
+      return `<div class="scr sea" style="width:${px(W)};height:${px(H)};padding:0"><div class="scr-ui">${ui}</div></div>`;
+    }
+    if (spec.state === 'reveal' || spec.state === 'end') {
+      const short = H <= 400, dsz = short ? 22 : 32, bh = short ? 30 : 48, gap = short ? 4 : 8;
+      const loser = 1, winner = 0, end = spec.state === 'end';
+      ui += `<div class="abs" style="left:16px;top:10px;width:${px(inner)}">`;
+      for (let i = 0; i < n; i++) {
+        const dice = HANDS[i].map((f, k) => D(f, dsz, { counts: f === 3 || f === 1, drowned: !(f === 3 || f === 1), seed: 90 + i * 9 + k })).join('');
+        const stamp = end && i === winner ? '<span class="stamp wins" style="font-size:9px;padding:4px 6px 3px">wins</span>' : !end && i === loser ? '<span class="stamp" style="font-size:9px;padding:4px 6px 3px">loses a die</span>' : '';
+        ui += `<div class="seatband${!end && i === loser ? ' lost' : ''}" style="height:${bh}px;margin-bottom:${gap}px;gap:6px"><span class="t-name${i === me ? '' : ' dim'}" style="width:${short ? 44 : 56}px;font-size:${short ? 12 : 14}px">${NAMES[i]}</span><span class="dice" style="gap:${short ? 2 : 4}px;margin-left:auto">${dice}</span>${stamp}</div>`;
+      }
+      ui += `<div class="t-out" style="text-align:center;font-size:${short ? 13.5 : 15.5}px;margin-top:${short ? 2 : 6}px">${end ? 'Bo calls. Three 3s was true, <b>Bo loses a die</b>, Bo is out, <b style="color:#8ffbe0">Alex wins</b>' : 'Bo calls. Three 3s was true, <b>Bo loses a die</b>'}</div></div>`;
+      ui += `<div class="shelf" style="width:${px(W)};bottom:0"><div class="band" style="gap:10px"><button class="plank wide ${end ? 'glow' : 'quiet'}">${end ? 'New game' : 'Next round'}</button></div></div>`;
+      return `<div class="scr" style="width:${px(W)};height:${px(H)}">${tableStage(W, H, TABLE, { pieces: false, seed: 5 })}<div class="scr-ui">${ui}</div></div>`;
+    }
+    // the table, bidding
+    const mine = spec.state === 'table', turnSeat = mine ? 0 : 1;
+    const boardH = H - 8 - 10 - CAPTION_H - 12 - (mine ? PICKER_H + 10 : 0), short = isShort(boardH);
+    const frames = seatFrames(n, me, inner, boardH), pf = plateFrame(n, inner, boardH);
+    let board = '';
+    for (let i = 1; i < n; i++) board += at(frames[i], seatBadge(view, i, turnSeat === i, 72, i === 5 && n === 6));
+    if (pf) board += at(pf, `<div class="plate" style="min-width:0;width:100%;height:100%;padding:0 10px"><i class="rivet"></i><i class="rivet"></i><i class="rivet"></i><i class="rivet"></i><span class="crust"></span><span class="t-bid" style="font-size:${pf[2] < 140 ? 20 : 26}px">three 3s</span>${D(3, pf[2] < 140 ? 24 : 30, { seed: 80 })}</div>`);
+    const my = frames[me], dsz = short ? 32 : 44;
+    board += at(my, `<div class="myband${short ? ' short' : ''}"><div class="band c" style="gap:${short ? 2 : 4}px">${HANDS[0].map((f, k) => D(f, dsz, { seed: 60 + k })).join('')}</div><div class="t-name" style="font-size:${short ? 12 : 14}px">${NAMES[0]}</div>${turnSeat === 0 ? '<span class="turn" style="width:44px"></span>' : '<span class="turn" style="visibility:hidden;width:44px"></span>'}</div>`);
+    if (!short) board += `<div class="abs t-hdr" style="left:0;top:12px;width:100%;text-align:center">Round four &middot; ${COUNTS.slice(0, n).reduce((a, b) => a + b, 0) - (n === 6 ? 2 : 0)} dice on the table</div>`;
+    ui += `<div class="abs" style="left:16px;top:8px;width:${px(inner)};height:${px(boardH)}">${board}</div>`;
+    ui += `<div class="abs t-ask" style="left:16px;top:${px(8 + boardH + 10)};width:${px(inner)};text-align:center;font-size:${short ? 15 : 17}px">${mine ? 'Bo bid three 3s, <b>your turn</b>' : 'Alex bid three 3s, Bo’s turn'}</div>`;
+    if (mine) ui += picker(W, true);
+    return `<div class="scr" style="width:${px(W)};height:${px(H)}">${tableStage(W, H, TABLE, { pieces: false, seed: 5 })}<div class="scr-ui">${ui}</div></div>`;
+  }
+  // the bubble: the picture in the transcript, 300 by 195, the same table seen from above
+  function bubble(spec) {
+    const n = +spec.seats, W = 300, H = 195;
+    if (spec.state === 'lobby') {
+      return `<div class="scr sea" style="width:300px;height:195px;padding:0;border-radius:14px 14px 0 0"><div class="scr-ui" style="padding:22px 20px;display:flex;flex-direction:column;justify-content:space-between"><div class="t-title" style="font-size:36px">吹牛<small style="font-size:11px">Chui Niu</small></div><div class="t-said">Alex is at the table. ${n - 1} more may sit.</div></div></div><div class="bub-cap">Alex invites you to Chui Niu</div>`;
+    }
+    const cap = spec.state === 'reveal' ? 'Bo calls three 3s' : spec.state === 'end' ? 'Bo calls three 3s. Alex wins' : 'Bo bid three 3s';
+    const cs = n > 4 ? 28 : 34;
+    let ui = `<div class="abs" style="left:0;top:14px;width:300px;display:flex;justify-content:center;gap:${n > 4 ? 4 : 14}px">`;
+    for (let i = 0; i < n; i++) ui += `<div class="seatf">${cupAt(spec.view, cs, COUNTS[i], i * 7)}<div class="t-name${i === 1 ? '' : ' dim'}" style="font-size:11px;margin-top:-5px">${NAMES[i]}</div></div>`;
+    ui += `</div><div class="abs" style="left:70px;top:116px;width:160px"><div class="plate" style="min-width:0;width:160px;height:56px;padding:0 10px"><i class="rivet"></i><i class="rivet"></i><i class="rivet"></i><i class="rivet"></i><span class="crust"></span><span class="t-bid" style="font-size:26px">three 3s</span>${D(3, 30, { seed: 80 })}</div></div>`;
+    return `<div class="scr" style="width:300px;height:195px;border-radius:14px 14px 0 0">${tableStage(W, H, Object.assign({}, TABLE, { edge: 'none' }), { pieces: false, seed: 9 })}<div class="scr-ui">${ui}</div></div><div class="bub-cap">${cap}</div>`;
+  }
+  function drawLayout() {
+    const S = LAY, sz = SIZES[S.size];
+    put('lay-main', screen(S, sz.w, sz.h));
+    put('lay-spec', `<b>layout</b> &middot; ${specLine(S)}<br><b>board</b>: ${isShort(sz.h - 8 - 10 - CAPTION_H - 12 - (S.state === 'table' ? PICKER_H + 10 : 0)) ? 'short (one row of seats, the plate beside)' : 'tall (the ellipse)'}`);
+    put('lay-three', `<div class="col"><div class="h4">The bubble <span class="pill n">300 by 195</span></div>${bubble(S)}</div><div class="col"><div class="h4">Collapsed <span class="pill n">340</span></div>${screen(S, 390, 340)}</div><div class="col"><div class="h4">Expanded <span class="pill n">718</span></div>${screen(S, 390, 718)}</div>`);
+    put('lay-seats', [2, 3, 4, 5, 6].map(k => `<div class="half"><div class="scaled" style="width:195px;height:359px"><div style="transform:scale(.5);transform-origin:0 0">${screen(Object.assign({}, S, { seats: k, state: S.state === 'lobby' ? 'table' : S.state }), 390, 718)}</div></div><div class="cap" style="text-align:center">${k} seats</div></div>`).join(''));
+    put('lay-phones', [['se', 375, 541], ['expanded', 390, 718], ['max', 430, 830], ['collapsed', 390, 340]].map(([k, w, h]) => `<div class="half"><div class="scaled" style="width:${px(w * .55)};height:${px(h * .55)}"><div style="transform:scale(.55);transform-origin:0 0">${screen(S, w, h)}</div></div><div class="cap" style="text-align:center">${SIZES[k].name}</div></div>`).join(''));
+    saveSpec('cn.lay', S);
+  }
+  const syncLay = mixer('lay-mixer', LAY_FIELDS, LAY, drawLayout);
+  drawLayout();
 
   /* ---- tabs: one section at a time, deep-linked by a bare hash ------- */
   const sections = [...document.querySelectorAll('section[data-tab]')];
