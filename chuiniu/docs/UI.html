@@ -1741,7 +1741,7 @@ const SHAPE = (() => {
     function setDieUp(mesh, axis, sign, value) {
       const rest = [1, 2, 3, 4, 5, 6].filter(f => f !== value && f !== OPP[value]), cells = {};
       [[2, 1], [2, -1], [1, -1], [0, 1], [1, 1], [0, -1]].forEach(([ax, sg]) => { cells[ax + ':' + sg] = ax === axis && sg === sign ? value : ax === axis ? OPP[value] : rest.shift(); });
-      for (const f of mesh.faces) { const c = cells[f.axis + ':' + f.sign] - 1; f.uv = f.uvl.map(([u, v]) => [(c + u) / 6, v]); }
+      for (const f of mesh.faces) { const c = cells[f.axis + ':' + f.sign] - 1; f.uv = f.uvl.map(([u, v]) => [(c + .5 / 128 + u * (1 - 1 / 128)) / 6, v]); }
       mesh.cells = cells;
     }
     const dieValue = (mesh, axis, sign) => mesh.cells[axis + ':' + sign];
@@ -1959,10 +1959,9 @@ const SHAPE = (() => {
             g.strokeStyle = `rgba(78,63,38,${op})`; g.lineWidth = S * .11; g.beginPath(); g.moveTo(a, b); g.lineTo(cc, d); g.stroke();
           });
         }
-        // the bevel: a lit edge top-left, a dark one bottom-right, inside the face
-        let gr = g.createLinearGradient(x0, 0, x0 + S, S); gr.addColorStop(0, 'rgba(255,255,255,.3)'); gr.addColorStop(.45, 'rgba(255,255,255,.04)'); gr.addColorStop(.55, 'rgba(0,0,0,.06)'); gr.addColorStop(1, 'rgba(0,0,0,.4)');
-        g.strokeStyle = gr; g.lineWidth = S * .1; g.strokeRect(x0 + S * .05, S * .05, S * .9, S * .9);
-        g.strokeStyle = 'rgba(0,0,0,.35)'; g.lineWidth = S * .024; g.strokeRect(x0 + S * .012, S * .012, S * .976, S * .976);
+        // no drawn bevel and no edge line: a die is one material throughout, and its edge is the mesh's
+        // rounding and the light on it (round eighteen's lines read as a frame on every face)
+        let gr;
         // the pips: drilled, the far wall lit; the 1 in blood
         const dia = S * SHAPE.PIPSIZE[SHAPE.DIE.pipSize][f === 1 ? 1 : 0], jit = S * .012;
         for (const [px, py] of SHAPE.pips(f)) {
@@ -1998,11 +1997,6 @@ const SHAPE = (() => {
       g.globalAlpha = .12; g.drawImage(atlas, 0, 0); g.globalAlpha = 1;
       for (let f = 1; f <= 6; f++) {
         const x0 = (f - 1) * S;
-        // the bevel: the outer tenth falls away
-        for (const [gx0, gy0, gx1, gy1, rx, ry, rw, rh] of [[x0, 0, x0, S * .1, x0, 0, S, S * .1], [x0, S, x0, S * .9, x0, S * .9, S, S * .1], [x0, 0, x0 + S * .1, 0, x0, 0, S * .1, S], [x0 + S, 0, x0 + S * .9, 0, x0 + S * .9, 0, S * .1, S]]) {
-          const gr = g.createLinearGradient(gx0, gy0, gx1, gy1); gr.addColorStop(0, 'rgba(70,70,70,1)'); gr.addColorStop(1, 'rgba(128,128,128,0)');
-          g.fillStyle = gr; g.fillRect(rx, ry, rw, rh);
-        }
         const dia = S * SHAPE.PIPSIZE[SHAPE.DIE.pipSize][f === 1 ? 1 : 0], jit = S * .012;
         for (const [px, py] of SHAPE.pips(f)) {
           const jx = (H(px * 100 | 0, py * 100 | 0, seed + f) - .5) * 2 * jit, jy = (H(py * 100 | 0, px * 100 | 0, seed + f + 1) - .5) * 2 * jit;
@@ -2071,7 +2065,7 @@ const SHAPE = (() => {
   // that is what the CSS 3D transform on the screen's layers is: the planks, the badges, the plate, the shelf
   // and the canvas all tilt away together, exactly as a leaning head would see them. From that eye the cup
   // tips only as far as it then must.
-  const VIEW_B = { hc: 560, down: .85 }, ZOOM_B = 1.06;
+  const VIEW_B = { hc: 560, down: .85 }, ZOOM_B = 1.06, PEEK_EXTRA = 7 * Math.PI / 180;   /* a little past the least tip that shows the dice */
   const peekTilt = (R, a, full) => ({ angle: a, hingeY: -R, back: R * .2 * a / (full || a || 1), lift: R * .12 * a / (full || a || 1) });
   // the smallest tip that shows every die from this eye: the near rim's shadow (its projection down onto the
   // table from the eye) must fall beyond the far edge of the farthest die, with a few points to spare
@@ -2082,7 +2076,7 @@ const SHAPE = (() => {
       const a = deg * Math.PI / 180, t = peekTilt(R, a, a);
       const yr = mcy - R - t.back + 2 * R * Math.cos(a), zr = 2 * R * Math.sin(a) + t.lift;
       const yp = e.y + (yr - e.y) * e.hc / (e.hc - zr);
-      if (yp <= farEdge - 4) return a;
+      if (yp <= farEdge - 4) return Math.min(Math.PI / 2, a + PEEK_EXTRA);
     }
     return Math.PI / 2;
   }
