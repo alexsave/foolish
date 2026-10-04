@@ -37,6 +37,7 @@ The kernel is plain C11 with fixed-size structs and no allocation; it reaches `m
 | `src/cn_beats.h`, `src/cn_beats.c` | the plan on a clock and the board at any millisecond (K12) |
 | `src/cn_roll.h`, `src/cn_roll.c` | the throw, baked: the cup roll and the table roll as rigid-body frames (K14) |
 | `wasm/cn_roll_web.c` | the throw behind scalar exports for a browser (`make wasm-roll`, `make docs-roll`) |
+| `wasm/cn_scene.c` | the study's renderer, browser-only: a rasterizer with a shadow map, in the same module |
 | `src/cn_internal.h` | the sink `cn.c` shares with `cn_plan.c` |
 | `i18n/keys.h`, `i18n/strings_en.c` | every word, one key list, in the shape `shared/tools/datagen` reads |
 | `ios/include/cn_api.h`, `module.modulemap` | the one header Swift sees (module `CChuiniu`), every entry point documented |
@@ -52,6 +53,7 @@ The kernel is plain C11 with fixed-size structs and no allocation; it reaches `m
 | `tests/cn_msg_test.c` | round trips, the worst case, the every-byte hostile sweep, tampering, lobby, Rule P, seats |
 | `tests/cn_twophone_test.c` | a three-seat game phone to phone through `cn_api.h` only |
 | `tests/cn_roll_test.c` | the throw over 300 seeds: the mouth, the settle, the hand's fairness, the table roll, the golden |
+| `tests/cn_scene_test.c` | the renderer on the host: a lit quad, its shadow where the light says, the open table clear |
 | `tests/MUTATIONS.md` | the mutation each test was seen to fail on |
 
 ## Measured
@@ -62,5 +64,6 @@ The 3,000 fuzz games (600 a size) play about 72 moves and 18 calls a game, the l
 The link, over 40 games a size (every bubble): median 131 characters at two seats and 274 at six, p99 152 and 349, max 370.
 The longest game there can be (every rank bid in every round, six 48-byte names) is 471 characters at two seats and 3,058 at six, against a compile-time bound of 4,391 and the 5,000 of `MSMessage.url`.
 The hostile sweep turns every byte of eight real bubbles to every other value (284,070 corruptions): all but 2 are refused, and those 2 are whole messages that write back to their own bytes.
+`cn_scene_test` (added 2026-10-04): 10 assertions, 0 failed; in the study the module draws a six-throw frame at 2x in about 23 ms (a shadow map, scanline spans, the open table's shadow in 4-by-4 blocks; the box walk it replaced cost 65).
 `cn_roll_test` (added 2026-10-04): 16,217 assertions, 0 failed (the big cup across shake lengths, and a far seat's small cup at 4 points' margin); a cup roll bakes in about 2 ms natively and as wasm, 200 to 320 frames; over 300 seeds no die corner comes within 12 points of the mouth, none is placed by the last resort, the slowest settle is 2 s, the face up before the turn recurs 17% and its opposite 19%, and the six faces come up evenly (χ² 8 over five degrees at 1,500 dice, 10 at 4,500; the first integrator favoured two faces by a sixth, and this number is what caught it).
 `make run` takes about 20 seconds, `make asan` about 12.

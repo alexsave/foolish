@@ -1,4 +1,5 @@
-/* The throw for a browser: cn_roll.c behind scalar exports and static
+/* The throw for a browser (the scene renderer is beside it, cn_scene.c, in the
+ * same module): cn_roll.c behind scalar exports and static
  * buffers, so a page never learns a byte layout. The page calls
  * cn_roll_run with the throw's numbers, then reads cn_roll_frames_ptr()
  * as a Float32Array of frames x CN_ROLL_FRAME_FLOATS (cn_roll_frame_floats()),

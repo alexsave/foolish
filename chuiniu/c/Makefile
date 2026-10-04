@@ -31,7 +31,7 @@ HDR     := $(wildcard src/*.h) i18n/keys.h tests/cn_check.h \
            $(SHARED)/msg_seat_tag/msg_seat_tag.h $(SHARED)/msg_lobby_roster/msg_lobby_roster.h
 
 # One binary per test file; each takes an optional scale argument.
-TESTS   := cn_test cn_dice_test cn_plan_test cn_say_test cn_fuzz cn_msg_test cn_twophone_test cn_roll_test
+TESTS   := cn_test cn_dice_test cn_plan_test cn_say_test cn_fuzz cn_msg_test cn_twophone_test cn_roll_test cn_scene_test
 FUZZ_GAMES ?= 3000
 WIRE_GAMES ?= 40
 
@@ -44,7 +44,7 @@ $(addprefix build/,$(BRIDGE_TESTS)) $(addprefix build/asan_,$(BRIDGE_TESTS)): io
 build:
 	@mkdir -p build
 
-build/%: tests/%.c $(SRC) $(HDR) | build
+build/%: tests/%.c $(SRC) $(HDR) wasm/cn_scene.c | build
 	$(CC) $(CFLAGS) $(SRC) $< -lm -o $@
 
 # The shared harness's own test (shared/c/test): TEST, CHECK, report, STEP, OK.
@@ -104,6 +104,7 @@ run: $(addprefix build/,$(TESTS)) build/check_test build/text_util_test build/wi
 	./build/cn_msg_test $(WIRE_GAMES)
 	./build/cn_twophone_test
 	./build/cn_roll_test
+	./build/cn_scene_test
 	./build/ios_smoke
 
 ASAN_FLAGS := -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined $(WARN)
@@ -144,6 +145,7 @@ asan: $(addprefix build/asan_,$(TESTS)) build/asan_check_test build/asan_text_ut
 	./build/asan_cn_msg_test 6
 	./build/asan_cn_twophone_test
 	./build/asan_cn_roll_test 60
+	./build/asan_cn_scene_test
 	./build/asan_ios_smoke
 
 # THE SAME FILES FOR wasm32, freestanding (-nostdlib, shared/c/wasm's libc):
@@ -162,17 +164,21 @@ wasm: wasm-cc-check | build
 
 # THE THROW AS A MODULE (K14): cn_roll.c and its scalar wrapper (wasm/cn_roll_web.c)
 # linked for a browser, in uttt's web shape: freestanding, no entry, the memory
-# exported, MVP plus bulk memory and sign extension so an in-app browser takes it.
+# exported, MVP plus bulk memory, sign extension and non-trapping float-to-int
+# (every browser since 2020; the renderer's inner loop casts on every pixel, and
+# the trapping form costs it a third), at -O3 for the same reason.
 # A build output, never committed as a file. docs-roll embeds it in docs/UI.html
 # as base64 between two markers, so the one-file study still opens from disk;
 # THAT embed is committed, and goes stale when cn_roll.c changes until docs-roll
 # is run again (docs-roll-check says whether it has).
-ROLL_WASM_SRC := src/cn_roll.c wasm/cn_roll_web.c $(SHARED)/wasm/libc.c
+# The module carries the scene renderer too (wasm/cn_scene.c: a rasterizer with a
+# shadow map, browser-only, in C for speed); its host smoke test is cn_scene_test.
+ROLL_WASM_SRC := src/cn_roll.c wasm/cn_roll_web.c wasm/cn_scene.c $(SHARED)/wasm/libc.c
 ROLL_WASM_OUT := build/wasm/cn_roll.wasm
-$(ROLL_WASM_OUT): $(ROLL_WASM_SRC) src/cn_roll.h wasm/cn_roll_web.c Makefile | build
+$(ROLL_WASM_OUT): $(ROLL_WASM_SRC) src/cn_roll.h Makefile | build
 	@mkdir -p build/wasm
-	$(WASM_CC) --target=wasm32 -mcpu=mvp -mbulk-memory -msign-ext -O2 -nostdlib -ffreestanding \
-	  -mno-nontrapping-fptoint $(WARN) -isystem $(SHARED)/wasm/include -Isrc \
+	$(WASM_CC) --target=wasm32 -mcpu=mvp -mbulk-memory -msign-ext -mnontrapping-fptoint -O3 -nostdlib -ffreestanding \
+	  $(WARN) -isystem $(SHARED)/wasm/include -Isrc \
 	  -Wl,--no-entry -Wl,--export-memory -Wl,-z,stack-size=65536 -Wl,--strip-all \
 	  $(ROLL_WASM_SRC) -o $@
 	@echo "built $@ ($$(wc -c < $@) B, $$(gzip -9 -c $@ | wc -c) B gz)"
