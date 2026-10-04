@@ -275,6 +275,9 @@ section[hidden]{display:none}
 .scr{position:relative;overflow:hidden;border-radius:6px;isolation:isolate;box-shadow:0 20px 50px rgba(0,0,0,.45);font-family:var(--serif);color:var(--ink);flex:none}
 .scr .tstage{position:absolute;inset:0;border-radius:0;box-shadow:none;border:0;width:100%!important;height:100%!important}
 .scr-ui{position:absolute;inset:0;z-index:4}
+/* peek B: the head leans in, and the planks, the badges, the plate and the shelf all zoom about my cup together */
+.scr.peekB{background:#050807}
+.scr.peekB > *{transform:var(--pkt,none);transform-origin:var(--pkx,50%) var(--pko,50%);will-change:transform}
 canvas.scene3d{position:absolute;left:0;top:0;cursor:pointer;-webkit-tap-highlight-color:transparent}
 .abs{position:absolute}
 .seat{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-start}
@@ -548,7 +551,7 @@ What is new is the view: the table is seen <b>from above, from my seat</b>: the 
     <p class="why" style="max-width:60ch">The screen on the left is the size the drawer really is. Collapsed is the one the game is mostly played at: 340pt, of which the picker takes 100 when it is my turn (the stepper and the face chips on one row, the two verbs on the next), so the board is a short one and the other seats go in a row along the top with the plate beside them. Expanded gives the ellipse.</p>
     <p class="why" style="max-width:60ch">The seat rule is the app’s: the other seats go left to right in seat order starting after mine, round the upper half of an ellipse whose centre is above my band; a board too short for a badge, the plate and my band stacked becomes the short board. <b>Locked:</b> foolish’s ring, every seat, mine included, at an equal angle round one ellipse, 0.42 of the width by 0.35 of the height, which is <code>MessageTableView.ringPoint</code>; a short board stays the row. <b>Locked too:</b> the two-row picker, Liar on the left and Raise on the right. The other three pickers stay in the page’s source.</p>
     <p class="why" style="max-width:60ch"><b>In three dimensions.</b> Round fourteen: the owner asked for real bodies, projected. Every cup on the table and every one of my dice is now a mesh (a cup is a truncated cone of thirty-six facets under a crown disc, shaded smoothly round so it reads as one turned body; a die is a rounded box, each face a five-by-five grid whose outer rows bend round a corner radius of 18% of the side, so the bevel wraps the rounding) wearing its texture from the bakes, placed on the board and projected to the screen by a camera over the table’s near edge (half the board’s height past its centre, toward me, 720 points up, with a shifted lens so the table itself stays where the layout put it), a true perspective projection: the table plane is drawn 1:1 and everything above it grows toward the eye and leans away from the centre, so the cups at the edges show the side that faces you. One light; each face is shaded by how much it faces it; each body throws a soft shadow away from the light.</p>
-    <p class="why" style="max-width:60ch"><b>The peek.</b> My dice are under my own cup, in a rough ring, as at a real table. Tap my cup (click it here, in any screen on this tab) and it turns about the far edge of its mouth, which stays on the table: the near rim rises toward you, the body swings up the screen, from the right-hand side of the table a clockwise turn, and the dice are seen under it; tap again and it turns back down. From my seat the eye is steep, so the dice show only once the body has swung off them, and a cup tipped on its far rim lies along the table as long as it is tall: while it is tipped its crown lies over the plate’s lower edge. That is the layout’s to solve if it matters (the plate could give way upward while my cup is tipped); a sideways tip would lie over a side seat at six. The turn is re-projected every frame; nothing is faked. The dice are not in a row: five dice under a cup sit in a rough ring, each a little off its station and turned a little by seed, none touching, and the cup’s crown is just big enough to cover the ring. The other seats’ cups never tip.</p>
+    <p class="why" style="max-width:60ch"><b>The peek, two ways, to compare.</b> My dice are under my own cup, in a rough ring, as at a real table. Tap my cup (click it here, in any screen on this tab) and it turns about the far edge of its mouth, which stays on the table; tap again and it turns back down. <b>A, just enough:</b> the eye stays at the seat and the cup tips only as far as it must for every die to show, with the hand drawing it back a fifth of a radius. That angle is found per screen, not fixed: the near rim’s shadow on the table, cast from the eye, has to clear the far edge of the farthest die. From the seat’s eye, which is steep, that is about 74° on the expanded board, and the tipped body still lies over the plate’s lower edge. <b>B, the head moves:</b> the eye drops from 720 to 560 points and comes forward to 1.35 boards past the centre, as a head leaning in to look, and the camera turns to keep my cup in the middle of its look. The renderer still draws the table-plane image from that eye; turning the camera is only a change of image plane, a homography of the picture, and that is what the 3D transform on the screen’s layers is, so the planks, the badges, the plate, the shelf and the canvas tilt away together, the far side smaller, which is what a leaning head sees. From that eye the cup needs to tip twenty degrees less (50° against 70° on this board), and the table’s far side, the badges and the plate shrink away while the shelf comes forward; the band the tilt uncovers above the planks is the screen’s own dark. Both are live here; neither is decided. The turn is re-projected every frame; nothing is faked. The dice are not in a row: five dice under a cup sit in a rough ring, each a little off its station and turned a little by seed, none touching, and the cup’s crown is just big enough to cover the ring. The other seats’ cups never tip.</p>
     <p class="why" style="max-width:60ch">From above a cup’s count sits on its crown, which is why the crown had to carry a numeral at 32. The name goes under the cup in the small caps, and the live seat gets the turn light under its name.</p>
     <div class="kv" id="lay-spec"></div>
   </div>
@@ -1805,8 +1808,9 @@ const SHAPE = (() => {
       // layout places on it keep their 2D positions, and every upright thing leans toward the seat: of my
       // cup I see the side that faces me, of a far cup the side that faces the table. A point at height z
       // projects along its line to the eye down onto the table.
-      const C = [W / 2, H / 2 + EYE_DOWN * H], eye = [C[0], C[1], HC];
-      const project = p => { const k = HC / (HC - p[2]); return [C[0] + (p[0] - C[0]) * k, C[1] + (p[1] - C[1]) * k]; };
+      const V = canvas._view || {}, HCv = V.hc || HC, downv = V.down == null ? EYE_DOWN : V.down;
+      const C = [W / 2, H / 2 + downv * H], eye = [C[0], C[1], HCv];
+      const project = p => { const k = HCv / (HCv - p[2]); return [C[0] + (p[0] - C[0]) * k, C[1] + (p[1] - C[1]) * k]; };
       const placed = objs.map(o => {
         const turn = p => {
           let q = o.rot ? [o.rot[0][0] * p[0] + o.rot[1][0] * p[1] + o.rot[2][0] * p[2], o.rot[0][1] * p[0] + o.rot[1][1] * p[1] + o.rot[2][1] * p[2], o.rot[0][2] * p[0] + o.rot[1][2] * p[1] + o.rot[2][2] * p[2]] : rotZ(p, o.yaw || 0);
@@ -1845,7 +1849,7 @@ const SHAPE = (() => {
           if (dot(n, sub(eye, centre)) <= 0) continue;
           const tex = texOf(f.tex), bump = f.tex._bump || null;
           // the vertices in screen space, with 1/w, the texture coordinates over w, and the world normal
-          const vs = P.map((p, i) => { const w = HC - p[2], iw = 1 / w, S = project(p), vn = f.nrm ? norm(turn(f.nrm[i])) : n; return { x: S[0] * DPR, y: S[1] * DPR, iw, uw: f.uv[i][0] * iw, vw: f.uv[i][1] * iw, nx: vn[0], ny: vn[1], nz: vn[2] }; });
+          const vs = P.map((p, i) => { const w = HCv - p[2], iw = 1 / w, S = project(p), vn = f.nrm ? norm(turn(f.nrm[i])) : n; return { x: S[0] * DPR, y: S[1] * DPR, iw, uw: f.uv[i][0] * iw, vw: f.uv[i][1] * iw, nx: vn[0], ny: vn[1], nz: vn[2] }; });
           // the tangent frame: where u and v run in the world, from the first three corners
           let TB = null;
           if (bump) {
@@ -1861,7 +1865,8 @@ const SHAPE = (() => {
       ctx.drawImage(fb.off, 0, 0, W, H);
       return ctx;
     }
-    return { cup, die, setDieUp, setDieTop, dieValue, render, HC };
+    const eyeOf = (W, H, view) => ({ x: W / 2, y: H / 2 + (view && view.down != null ? view.down : EYE_DOWN) * H, hc: view && view.hc || HC });
+    return { cup, die, setDieUp, setDieTop, dieValue, render, eyeOf, HC, EYE_DOWN };
   })();
 
   /* ---- the textures the meshes wear ------------------------------------ */
@@ -2008,14 +2013,14 @@ const SHAPE = (() => {
   // a scene canvas inside a screen: the cups at their seats and my dice, in three dimensions.
   // Returns the <canvas> markup and queues the render for after the markup is in the DOM.
   const scenes = [];
-  function scene3d(W, H, objs, key) {
-    const id = 's3' + (scenes.length), spec = { id, W, H, objs };
+  function scene3d(W, H, objs, key, opts) {
+    const id = 's3' + (scenes.length), spec = Object.assign({ id, W, H, objs }, opts || {});
     scenes.push(spec);
-    return `<canvas class="scene3d" id="${id}" data-key="${key || ''}"></canvas>`;
+    return `<canvas class="scene3d" id="${id}" data-key="${key || ''}"${spec.peek ? ` data-peek="${spec.peek}"` : ''}></canvas>`;
   }
   function flushScenes() {
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    for (const sp of scenes.splice(0)) { const c = document.getElementById(sp.id); if (c) { c._objs = sp.objs; c._W = sp.W; c._H = sp.H; R3.render(c, sp.W, sp.H, sp.objs, dpr); if (c.dataset.key === 'roll' || c.dataset.key === 'troll') startRoll(c, 7); } }
+    for (const sp of scenes.splice(0)) { const c = document.getElementById(sp.id); if (c) { c._objs = sp.objs; c._W = sp.W; c._H = sp.H; c._origin = sp.origin; c._open = !!sp.open; if (sp.peek === 'B' && sp.open) applyPeekB(c, 1, sp.origin); R3.render(c, sp.W, sp.H, sp.objs, dpr); if (c.dataset.key === 'roll' || c.dataset.key === 'troll') startRoll(c, 7); } }
   }
   // a cup object at a seat: R the mouth radius, standing on the table
   const CUP_TALL = 2.1;  /* the cup's height as a multiple of its mouth's radius: cn_roll.h's CN_CUP_TALL, drawn to match */
@@ -2044,23 +2049,58 @@ const SHAPE = (() => {
   // the peek's pose at an angle: the hinge is the far edge of the mouth; as the cup turns it also slides back
   // along the table by up to a radius and comes up a little, the way a hand lifts a cup, so the dice come
   // out from under the near rim and the camera over the board's centre sees them
-  const PEEK_ANGLE = 70 * Math.PI / 180;
-  // From my seat the eye is steep, so a tipped cup shows the dice only once its body has swung off them: the
-  // tip is 70 degrees about the far rim and the hand draws it back a radius. A cup tipped that way lies along
-  // the table as long as it is tall, and the plate sits 115 points beyond my cup's far rim, so while it is
-  // tipped the crown lies over the plate's lower edge (a sideways tip would lie over a side seat at six).
-  const peekTilt = (R, a) => ({ angle: a, hingeY: -R, back: R * 1.05 * a / PEEK_ANGLE, lift: R * .12 * a / PEEK_ANGLE });
-  // the peek: the one tap. The cup's hinge is the far edge of its mouth (local y = -R: toward the board's
-  // centre, which from my seat is up the screen); the angle runs 0 -> 70 degrees on FMotion.card's curve.
+  // THE PEEK, two ways. A: the eye stays where it is and the cup tips about the far edge of its mouth JUST far
+  // enough that every die shows, with the hand drawing it back a fifth of a radius; the angle is found per
+  // screen (peekAngleFor), since it depends on where the eye is. B, to compare: the head moves. The eye drops
+  // from 720 to 560 points and comes forward to 1.35 boards past the centre, and the camera turns to keep my
+  // cup in the middle of its look. The renderer still draws the table-plane image from that eye (a shifted
+  // lens); turning the camera is only a change of image plane, which is a homography of the picture, and
+  // that is what the CSS 3D transform on the screen's layers is: the planks, the badges, the plate, the shelf
+  // and the canvas all tilt away together, exactly as a leaning head would see them. From that eye the cup
+  // tips only as far as it then must.
+  const VIEW_B = { hc: 560, down: .85 }, ZOOM_B = 1.06;
+  const peekTilt = (R, a, full) => ({ angle: a, hingeY: -R, back: R * .2 * a / (full || a || 1), lift: R * .12 * a / (full || a || 1) });
+  // the smallest tip that shows every die from this eye: the near rim's shadow (its projection down onto the
+  // table from the eye) must fall beyond the far edge of the farthest die, with a few points to spare
+  function peekAngleFor(cup, dice, W, H, view) {
+    const e = R3.eyeOf(W, H, view), R = cup.R, mcy = cup.home ? cup.home[1] : cup.pos[1];
+    const farEdge = Math.min(...dice.map(o => o.pos[1] - o.d * .6));
+    for (let deg = 10; deg <= 90; deg++) {
+      const a = deg * Math.PI / 180, t = peekTilt(R, a, a);
+      const yr = mcy - R - t.back + 2 * R * Math.cos(a), zr = 2 * R * Math.sin(a) + t.lift;
+      const yp = e.y + (yr - e.y) * e.hc / (e.hc - zr);
+      if (yp <= farEdge - 4) return a;
+    }
+    return Math.PI / 2;
+  }
+  // peek B at a fraction t: the eye between the seat's and the leaning head's, the screen zoomed about my cup
+  function applyPeekB(canvas, t, origin) {
+    const W = canvas._W, H = canvas._H;
+    canvas._view = { hc: R3.HC + (VIEW_B.hc - R3.HC) * t, down: R3.EYE_DOWN + (VIEW_B.down - R3.EYE_DOWN) * t };
+    // the camera's turn: the angle between straight down and the line from the eye to my cup, less the seat's
+    // own (the seat's picture is shown untilted), and the eye's distance along that line for the perspective
+    const e0 = R3.eyeOf(W, H, null), e = R3.eyeOf(W, H, canvas._view), py = origin[1] - 8;
+    const phi0 = Math.atan2(e0.y - py, e0.hc), phi = Math.atan2(e.y - py, e.hc), D = Math.hypot(e.hc, e.y - py);
+    const scr = canvas.closest('.scr');
+    if (scr) {
+      scr.classList.toggle('peekB', t > 0);
+      scr.style.setProperty('--pkt', `perspective(${D.toFixed(0)}px) rotateX(${(phi - phi0).toFixed(4)}rad) scale(${(1 + (ZOOM_B - 1) * t).toFixed(3)})`);
+      scr.style.setProperty('--pkx', origin[0] + 'px'); scr.style.setProperty('--pko', origin[1] + 'px');
+    }
+  }
   function animatePeek(canvas, open) {
-    const objs = canvas._objs, cup = objs.find(o => o.peekable); if (!cup) return;
-    const from = cup.tilt ? cup.tilt.angle : 0, to = open ? PEEK_ANGLE : 0, t0 = performance.now(), dur = 420;
+    const objs = canvas._objs, cup = objs.find(o => o.peekable), dice = objs.filter(o => o.die); if (!cup) return;
+    const B = canvas.dataset.peek === 'B', W = canvas._W, H = canvas._H, origin = canvas._origin || [0, 0];
+    const target = peekAngleFor(cup, dice, W, H, B ? VIEW_B : null);
+    const from = cup.tilt ? cup.tilt.angle : 0, to = open ? target : 0, t0 = performance.now(), dur = 420;
     const ease = t => 1 - Math.pow(1 - t, 3) * (1 - Math.sin(t * Math.PI) * .12);
     const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const fromB = B ? (canvas._view ? (canvas._view.hc - R3.HC) / (VIEW_B.hc - R3.HC) : 0) : 0, toB = open ? 1 : 0;
     const step = now => {
-      const t = reduce ? 1 : Math.min(1, (now - t0) / dur);
-      cup.tilt = peekTilt(cup.R, from + (to - from) * ease(t));
-      R3.render(canvas, canvas._W, canvas._H, objs, Math.min(2, window.devicePixelRatio || 1));
+      const t = reduce ? 1 : Math.min(1, (now - t0) / dur), e = ease(t);
+      cup.tilt = peekTilt(cup.R, from + (to - from) * e, target);
+      if (B) applyPeekB(canvas, fromB + (toB - fromB) * e, origin);
+      R3.render(canvas, W, H, objs, Math.min(2, window.devicePixelRatio || 1));
       if (t < 1) requestAnimationFrame(step);
     };
     requestAnimationFrame(step);
@@ -2356,8 +2396,12 @@ const SHAPE = (() => {
     for (let i = 1; i < n; i++) { const f = frames[i]; objs.push(cupObj(22, COUNTS[i], i * 7, f[0] + f[2] / 2, f[1] + 26, { out: i === 5 && n === 6, toward: [inner / 2, boardH / 2] })); }
     const mcx = my[0] + my[2] / 2, mcy = my[1] + (short ? 30 : 34);
     HANDS[0].forEach((f, k) => { const a = -Math.PI / 2 + k * Math.PI * 2 / 5 + (Hh(k, 71, 977) - .5) * .18, rr = ring * (1 + (Hh(k, 72, 977) - .5) * .1); objs.push(dieObj(d, f, 60 + k, mcx + rr * Math.cos(a), mcy + rr * Math.sin(a), (Hh(k, 73, 977) - .5) * .5)); });
-    objs.push(cupObj(myR, 5, 3, mcx, mcy, { peekable: true, inner: { dome: ROLL_DOME * d }, ring, tilt: o.peek && !roll ? peekTilt(myR, PEEK_ANGLE) : null }));
-    board += scene3d(inner, boardH, objs, roll ? (o.tableRoll ? 'troll' : 'roll') : 'table');
+    const myCup = cupObj(myR, 5, 3, mcx, mcy, { peekable: true, inner: { dome: ROLL_DOME * d }, ring });
+    objs.push(myCup);
+    // a screen drawn already peeking: A tips the cup just enough from the seat's eye; B from the leaning head's
+    const peekB = o.peek === 'B';
+    if (o.peek && !roll) { const a = peekAngleFor(myCup, objs.filter(x => x.die), inner, boardH, peekB ? VIEW_B : null); myCup.tilt = peekTilt(myR, a, a); }
+    board += scene3d(inner, boardH, objs, roll ? (o.tableRoll ? 'troll' : 'roll') : 'table', { peek: peekB ? 'B' : 'A', open: !!o.peek && !roll, origin: [16 + mcx, 8 + mcy] });
     const nameBlock = `<div class="t-name" style="font-size:${short ? 12 : 14}px">${NAMES[0]}</div>${turnSeat === 0 ? '<span class="turn" style="width:44px"></span>' : '<span class="turn" style="visibility:hidden;width:44px"></span>'}`;
     board += short ? at(my, `<div class="abs" style="left:calc(50% - ${(myR + 64).toFixed(0)}px);top:50%;transform:translateY(-50%);display:flex;flex-direction:column;align-items:center;gap:4px">${nameBlock}</div>`) : at(my, `<div class="myband" style="justify-content:flex-end;padding-bottom:4px">${nameBlock}</div>`);
     for (let i = 1; i < n; i++) board += at(frames[i], seatBadge(view, i, turnSeat === i, 72, i === 5 && n === 6));
@@ -2387,7 +2431,7 @@ const SHAPE = (() => {
     put('lay-main', screen(S, sz.w, sz.h));
     S.arrange = 'foolish'; S.picker = 'rows';
     put('lay-spec', `<b>layout</b> &middot; ${specLine(S, LAY_LOCKED)}<br><b>board</b>: ${isShort(sz.h - 8 - 10 - CAPTION_H - 12 - (S.state === 'table' ? (PICKERS[S.picker] || PICKERS.rows).h + 10 : 0)) ? 'short (one row of seats, the plate beside)' : 'tall'}`);
-    put('lay-three', `<div class="col"><div class="h4">The bubble <span class="pill n">300 by 195</span></div>${bubble(S)}</div><div class="col"><div class="h4">Collapsed <span class="pill n">340</span></div>${screen(Object.assign({}, S, { state: S.state === 'roll' ? 'table' : S.state }), 390, 340)}</div><div class="col"><div class="h4">Expanded, peeking <span class="pill n">718</span></div>${screen(Object.assign({}, S, { state: S.state === 'roll' ? 'table' : S.state }), 390, 718, { peek: true })}</div>`);
+    put('lay-three', `<div class="col"><div class="h4">The bubble <span class="pill n">300 by 195</span></div>${bubble(S)}</div><div class="col"><div class="h4">Collapsed <span class="pill n">340</span></div>${screen(Object.assign({}, S, { state: S.state === 'roll' ? 'table' : S.state }), 390, 340)}</div><div class="col"><div class="h4">Expanded, peeking <span class="pill n">A: just enough</span></div>${screen(Object.assign({}, S, { state: S.state === 'roll' ? 'table' : S.state }), 390, 718, { peek: 'A' })}</div><div class="col"><div class="h4">Expanded, peeking <span class="pill n">B: the head moves</span></div>${screen(Object.assign({}, S, { state: S.state === 'roll' ? 'table' : S.state }), 390, 718, { peek: 'B' })}</div>`);
     put('lay-seats', [2, 3, 4, 5, 6].map(k => `<div class="half"><div class="scaled" style="width:195px;height:359px"><div style="transform:scale(.5);transform-origin:0 0">${screen(Object.assign({}, S, { seats: k, state: S.state === 'lobby' || S.state === 'roll' ? 'table' : S.state }), 390, 718, { peek: true })}</div></div><div class="cap" style="text-align:center">${k} seats</div></div>`).join(''));
     put('lay-phones', [['se', 375, 541], ['expanded', 390, 718], ['max', 430, 830], ['collapsed', 390, 340]].map(([k, w, h]) => `<div class="half"><div class="scaled" style="width:${px(w * .55)};height:${px(h * .55)}"><div style="transform:scale(.55);transform-origin:0 0">${screen(Object.assign({}, S, { state: S.state === 'roll' ? 'table' : S.state }), w, h)}</div></div><div class="cap" style="text-align:center">${SIZES[k].name}</div></div>`).join(''));
     put('roll-main', screen(Object.assign({}, S, { state: 'roll' }), 390, 718));
