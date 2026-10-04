@@ -107,7 +107,7 @@ td code{white-space:nowrap}
 .stage{width:390px;max-width:100%;position:relative;isolation:isolate;overflow:hidden;
   border-radius:6px;border:1px solid #0a1412;box-shadow:0 20px 50px rgba(0,0,0,.45);
   background-color:var(--hold);
-  background-image:var(--tex-deck);background-size:430px 830px;background-position:center bottom;
+  background-image:var(--tex-deck);background-size:516px 830px;background-position:center bottom;
   color:var(--ink);font-family:var(--serif);padding:22px 18px;display:flex;flex-direction:column;gap:14px}
 .stage::after{content:"";position:absolute;inset:0;pointer-events:none;z-index:1;
   background:
@@ -282,6 +282,7 @@ section[hidden]{display:none}
 .scr .stagewrap .tstage.over{width:190%!important;max-width:none;height:220%!important;inset:auto;left:-45%;top:-60%}
 .scr.peekB > *{transform:var(--pkt,none);transform-origin:var(--pkx,50%) var(--pko,50%);will-change:transform}
 canvas.scene3d{position:absolute;left:0;top:0;cursor:pointer;-webkit-tap-highlight-color:transparent}
+/* the canvas reaches SCENE_PAD above its board: a far cup leans away from the eye, up the screen, past the board's top */
 .abs{position:absolute}
 .seat{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-start}
 .seatf{display:flex;flex-direction:column;align-items:center}
@@ -543,7 +544,7 @@ The bake is one 430 by 830 tile, the Pro Max’s expanded drawer, so no phone at
 <section id="layout" data-tab="layout">
 <h2>The layout</h2>
 <p class="lede">The pieces are decided; this is where they go. Messages gives the game three sizes and the app one rule for placing seats, and both are kept: the drawer is 340pt tall collapsed on every phone and the screen less about 126pt expanded (541 on an SE, 718 on a 390-wide phone, 830 on a Pro Max); and <code>DiceTableLayout</code> is ported here as it stands, so a seat is where the app would put it.
-What is new is the view: the table is seen <b>from above, from my seat</b>: the eye is over the table’s near edge, not its centre, so of my cup I see the side that faces me and of the others the side that faces the table. Every seat is its cup’s crown with the count on it, the bid plate lies on the planks between them, and my dice are face up at the bottom where my hands would be. The seated view (cups from the side) is kept in the mixer to compare.</p>
+What is new is the view: the table is seen <b>from above, from my seat</b>: the eye is over the table’s near edge, not its centre, so of my cup I see the side that faces me and of the others the side that faces the table. The headline and the ask line are gone (round nineteen): the board is the whole screen above the shelf, and the table says what a table says. Every screen is centred on a plank, the tile is six planks wide so the running bond survives its seams, and the far seats’ counts are set larger on their crowns. Every seat is its cup’s crown with the count on it, the bid plate lies on the planks between them, and my dice are face up at the bottom where my hands would be. The seated view (cups from the side) is kept in the mixer to compare.</p>
 
 <h3>The mixer</h3>
 <div class="mixer" id="lay-mixer"></div>
@@ -554,7 +555,7 @@ What is new is the view: the table is seen <b>from above, from my seat</b>: the 
     <p class="why" style="max-width:60ch">The screen on the left is the size the drawer really is. Collapsed is the one the game is mostly played at: 340pt, of which the picker takes 100 when it is my turn (the stepper and the face chips on one row, the two verbs on the next), so the board is a short one and the other seats go in a row along the top with the plate beside them. Expanded gives the ellipse.</p>
     <p class="why" style="max-width:60ch">The seat rule is the app’s: the other seats go left to right in seat order starting after mine, round the upper half of an ellipse whose centre is above my band; a board too short for a badge, the plate and my band stacked becomes the short board. <b>Locked:</b> foolish’s ring, every seat, mine included, at an equal angle round one ellipse, 0.42 of the width by 0.35 of the height, which is <code>MessageTableView.ringPoint</code>; a short board stays the row. <b>Locked too:</b> the two-row picker, Liar on the left and Raise on the right. The other three pickers stay in the page’s source.</p>
     <p class="why" style="max-width:60ch"><b>In three dimensions.</b> Round fourteen: the owner asked for real bodies, projected. Every cup on the table and every one of my dice is now a mesh (a cup is a truncated cone of thirty-six facets under a crown disc, shaded smoothly round so it reads as one turned body; a die is a rounded box, each face a five-by-five grid whose outer rows bend round a corner radius of 18% of the side, so the bevel wraps the rounding) wearing its texture from the bakes, placed on the board and projected to the screen by a camera over the table’s near edge (half the board’s height past its centre, toward me, 720 points up, with a shifted lens so the table itself stays where the layout put it), a true perspective projection: the table plane is drawn 1:1 and everything above it grows toward the eye and leans away from the centre, so the cups at the edges show the side that faces you. One light; each face is shaded by how much it faces it; each body throws a soft shadow away from the light.</p>
-    <p class="why" style="max-width:60ch"><b>The peek, two ways, to compare.</b> My dice are under my own cup, in a rough ring, as at a real table. Tap my cup (click it here, in any screen on this tab) and it turns about the far edge of its mouth, which stays on the table; tap again and it turns back down. <b>A, just enough:</b> the eye stays at the seat and the cup tips only as far as it must for every die to show, with the hand drawing it back a fifth of a radius. That angle is found per screen, not fixed: the near rim’s shadow on the table, cast from the eye, has to clear the far edge of the farthest die. From the seat’s eye, which is steep, that is about 74° on the expanded board, and the tipped body still lies over the plate’s lower edge. <b>B, the head moves:</b> the eye drops from 720 to 560 points and comes forward to 1.35 boards past the centre, as a head leaning in to look, and the camera turns to keep my cup in the middle of its look. The renderer still draws the table-plane image from that eye; turning the camera is only a change of image plane, a homography of the picture, and that is what the 3D transform on the screen’s layers is, so the planks, the badges, the plate, the shelf and the canvas tilt away together, the far side smaller, which is what a leaning head sees. From that eye the cup needs to tip twenty degrees less (50° against 70° on this board), and the table’s far side, the badges and the plate shrink away while the shelf comes forward; the band the tilt uncovers above the planks is the screen’s own dark. Both are live here; neither is decided. The turn is re-projected every frame; nothing is faked. The dice are not in a row: five dice under a cup sit in a rough ring, each a little off its station and turned a little by seed, none touching, and the cup’s crown is just big enough to cover the ring. The other seats’ cups never tip.</p>
+    <p class="why" style="max-width:60ch"><b>The peek: the head moves.</b> My dice are under my own cup, in a rough ring, as at a real table. Tap my cup (click it here, in any screen on this tab) and it turns about the far edge of its mouth, which stays on the table; tap again and it turns back down. <b>Locked, round nineteen:</b> the cup tips only as far as it must for every die to show, with the hand drawing it back a fifth of a radius; that angle is found per screen, not fixed (the near rim’s shadow on the table, cast from the eye, has to clear the far edge of the farthest die), and the eye moves with it. The eye drops from 720 to 560 points and comes forward to 1.35 boards past the centre, as a head leaning in to look, and the camera turns to keep my cup in the middle of its look. The renderer still draws the table-plane image from that eye; turning the camera is only a change of image plane, a homography of the picture, and that is what the 3D transform on the screen’s layers is, so the planks, the badges, the plate, the shelf and the canvas tilt away together, the far side smaller, which is what a leaning head sees. From that eye the cup needs to tip twenty degrees less (50° against 70° on this board), and the table’s far side, the badges and the plate shrink away while the shelf comes forward; the screen carries more table than it shows (1.9 by 2.2 of itself), so the tilt uncovers planks. The other way, the eye staying put and the cup tipping 70°, was tried beside it and dropped. The turn is re-projected every frame; nothing is faked. The dice are not in a row: five dice under a cup sit in a rough ring, each a little off its station and turned a little by seed, none touching, and the cup’s crown is just big enough to cover the ring. The other seats’ cups never tip.</p>
     <p class="why" style="max-width:60ch">From above a cup’s count sits on its crown, which is why the crown had to carry a numeral at 32. The name goes under the cup in the small caps, and the live seat gets the turn light under its name.</p>
     <div class="kv" id="lay-spec"></div>
   </div>
@@ -825,6 +826,7 @@ What is new is the view: the table is seen <b>from above, from my seat</b>: the 
    THE TEXTURE KERNEL. Read it as the Swift it will become: every function
    is integer hashes and doubles, no library, no DOM until the very end.
    ===================================================================== */
+const PLANK_W_ = 86, PLANKS_ = 6, TILE_W = PLANK_W_ * PLANKS_;
 const TEX = (() => {
   // integer hash -> [0,1). Port: the same arithmetic on UInt32 (&* and >>).
   function hash(ix, iy, seed) {
@@ -1149,7 +1151,7 @@ const TEX = (() => {
   const WOOD_DECK = WOODS.hold, WOOD_ROT = { base: [40, 32, 22], gain: [66, 54, 36], alpha: .1 };
   const woodDeck = W => ({ name: W.name, why: W.why, wood: W, cloud: 5, tilt: [.8, 1, .9], grain: 3, vein: [4, 6, 5], veinX: 36, veinY: 2, veinLo: .9, veinAmt: .3,
     stain: W.stain, stainLo: .45, stainHi: .8, stainCells: 4, stainAmt: .3, sheen: W.sheen, sheenLo: .64, sheenHi: .94, sheenAmt: .3,
-    patch: [30, 48, 40], patchAmt: .3, fleck2: [80, 96, 80], fleckAmt2: .45, planks: 5, seed: 73 });
+    patch: [30, 48, 40], patchAmt: .3, fleck2: [80, 96, 80], fleckAmt2: .45, planks: 6, seed: 73 });
   // the surfaces that were offered (round ten) are kept as palettes above and in `OFFERED`; only the chosen one is baked
   const OFFERED = ['deck', 'wooden deck (hold, drowned, pitch, each with a darker twin)', 'rotting wet wood', 'barnacled hull', 'drowned sailcloth', 'sea floor', 'cursed iron', 'wet slate', 'drowned baize'];
   const TABLE_MATS = {
@@ -1541,9 +1543,12 @@ const SHAPE = (() => {
   const tableCanvas = {};
   for (const [k, P] of Object.entries(TEX.TABLE_MATS)) {
     if (P.like) { tableCanvas[k] = tableCanvas[P.like]; continue; }
-    tableCanvas[k] = TEX.bake('table.' + k, 430, 830, TEX.tableFn(P, 830, 430));
+    // the tile is six planks wide (an even count: a running bond repeats every two planks, so the seam between
+    // tiles is just another plank edge; five put two same-offset planks side by side at every seam)
+    tableCanvas[k] = TEX.bake('table.' + k, TILE_W, 830, TEX.tableFn(P, 830, TILE_W));
   }
   for (const [k, c] of Object.entries(tableCanvas)) { root.setProperty('--tex-t-' + k, url(c)); }
+  const PLANKS = PLANKS_, PLANK_W = PLANK_W_;   /* the tile is TILE_W = 516: six planks of 86, the width they were at five */
   const TABLE = { surface: 'woodgrey2', edge: 'none', fix: 'nails' };
   const TABLE_LOCKED = { surface: 'woodgrey2', edge: 'none', fix: 'nails' };
   const FIXES = { none: { name: 'None' }, nails: { name: 'Nails', why: 'in beam rows, one inside each edge of every plank' }, rust: { name: 'Nails, rusting', why: 'the rust running down the grain' } };
@@ -1577,30 +1582,34 @@ const SHAPE = (() => {
     m += `<circle cx="${ax.toFixed(1)}" cy="${ay.toFixed(1)}" r="${(r * .28).toFixed(1)}" fill="#4a4842" opacity=".5"/>`;
     return m + `</g>`;
   }
-  function fixSVG(kind, mat, W, H, seed) {
+  function fixSVG(kind, mat, W, H, seed, bgx) {
     if (kind === 'none' || !TEX.TABLE_MATS[mat].planks) return '';
     // the nails go into the beams under the planks, so they sit in rows across every plank, one just
-    // inside each edge of each board; the row's height and each nail's seat are a little off by seed
-    const n = 5, pw = 430 / n, inset = 7;
+    // inside each edge of each board; the row's height and each nail's seat are a little off by seed.
+    // The plank edges are where the tile's are: every PLANK_W from the tile's left, which is at bgx.
+    const pw = PLANK_W, inset = 7, i0 = Math.floor(-bgx / pw) - 1, i1 = Math.ceil((W - bgx) / pw) + 1;
     let m = '';
     for (let y = 22 + Hh(1, 9, seed) * 40; y < H - 8; y += 92 + Hh(y | 0, 10, seed) * 24) {
-      for (let i = -1; i < n; i++) {
-        for (const x of [i * pw + inset - 46, (i + 1) * pw - inset - 46]) m += nail(x + (Hh(i, y | 0, seed) - .5) * 2.5, y + (Hh(y | 0, i + x | 0, seed) - .5) * 5, 2.9, (i * 97 + y + x) | 0, kind === 'rust');
+      for (let i = i0; i < i1; i++) {
+        for (const x of [i * pw + inset + bgx, (i + 1) * pw - inset + bgx]) m += nail(x + (Hh(i, y | 0, seed) - .5) * 2.5, y + (Hh(y | 0, i + x | 0, seed) - .5) * 5, 2.9, (i * 97 + y + x) | 0, kind === 'rust');
       }
     }
     return m;
   }
+  // where the tile starts so that a plank's middle runs down x = cx (the screen's centre line)
+  function plankCentred(cx) { let bgx = cx - PLANK_W / 2; while (bgx > 0) bgx -= PLANK_W; return Math.round(bgx); }
   // a slab of table: the surface tile at one point per texel, the growth if the surface has it, the fixings, the edge, and the pieces on it
   function tableStage(W, H, spec, o = {}) {
     const P = TEX.TABLE_MATS[spec.surface] || TEX.TABLE_MATS.woodgrey2, key = P.like || spec.surface, seed = o.seed || 0;
+    const bgx = plankCentred(o.cx == null ? W / 2 : o.cx);
     let ov = `<svg class="tb-ov" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`;
     if (P.crust) ov += `<defs><radialGradient id="hm${seed}" cx=".5" cy=".5" r=".55"><stop offset=".2" stop-color="#fff" stop-opacity="0"/><stop offset=".7" stop-color="#fff" stop-opacity=".45"/><stop offset="1" stop-color="#fff" stop-opacity=".95"/></radialGradient><mask id="hk${seed}"><rect width="${W}" height="${H}" fill="url(#hm${seed})"/><ellipse cx="${W * .3}" cy="${H * .3}" rx="${W * .14}" ry="${H * .2}" fill="#fff" opacity=".8"/><ellipse cx="${W * .75}" cy="${H * .7}" rx="${W * .12}" ry="${H * .16}" fill="#fff" opacity=".7"/></mask></defs><g mask="url(#hk${seed})"><rect width="${W}" height="${H}" fill="url(#p-crust-xl)" transform="translate(${seed % 40},${seed % 60})"/></g>`;
-    ov += fixSVG(spec.fix, spec.surface, W, H, seed + 7);
+    ov += fixSVG(spec.fix, spec.surface, W, H, seed + 7, bgx);
     ov += `</svg>`;
     const pieces = o.pieces === false ? '' : o.small
       ? `<div class="tb-pieces" style="justify-content:center;gap:10px;bottom:12px">${C(32, { count: 5, seed: 20 })}${D(5, 32, { seed: 61 })}${D(1, 32, { seed: 62 })}</div>`
       : `<div class="tb-pieces" style="top:36px;justify-content:space-evenly">${C(44, { count: 5, seed: 20 })}${SHAPE.cupTop(44, { count: 4, seed: 10 })}${C(44, { count: 3, seed: 30 })}</div><div class="tb-pieces" style="bottom:70px;justify-content:center;gap:2px">${[1, 1, 3, 5, 6].map((f, i) => D(f, 44, { seed: 60 + i })).join('')}</div><div class="tb-pieces" style="bottom:18px;justify-content:center"><span class="t-ask">Bo bid three 3s, <b>your turn</b></span></div>`;
-    return `<div class="stage tstage" style="width:${W}px;height:${H}px;background-image:var(--tex-t-${key});background-size:430px 830px;background-position:-46px -58px">${ov}${pieces}</div>`;
+    return `<div class="stage tstage" style="width:${W}px;height:${H}px;background-image:var(--tex-t-${key});background-size:${TILE_W}px 830px;background-position:${bgx}px -58px">${ov}${pieces}</div>`;
   }
   function drawTable() {
     const S = TABLE;
@@ -1804,8 +1813,9 @@ const SHAPE = (() => {
       // the framebuffer is up to three device pixels a point and the browser filters it down, which antialiases the edges
       DPR = canvas._fast ? Math.max(1.5, dpr || 1) : Math.min(3, Math.max(2, (dpr || 1) * 1.5));
       canvas._dpr = DPR;
-      canvas.width = Math.round(W * DPR); canvas.height = Math.round(H * DPR); canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
-      const ctx = canvas.getContext('2d'); ctx.setTransform(DPR, 0, 0, DPR, 0, 0); ctx.clearRect(0, 0, W, H); ctx.imageSmoothingQuality = 'high';
+      const pad = canvas._pad || 0;   /* headroom above the board, in points: the canvas is taller by it and sits that much higher */
+      canvas.width = Math.round(W * DPR); canvas.height = Math.round((H + pad) * DPR); canvas.style.width = W + 'px'; canvas.style.height = (H + pad) + 'px'; canvas.style.top = -pad + 'px';
+      const ctx = canvas.getContext('2d'); ctx.setTransform(DPR, 0, 0, DPR, 0, pad * DPR); ctx.clearRect(0, -pad, W, H + pad); ctx.imageSmoothingQuality = 'high';
       // THE EYE is HC above the table and EYE_DOWN of the board's height past its centre, toward me: a seat,
       // not a lamp. The lens is shifted (the image plane stays the table), so the table and everything the
       // layout places on it keep their 2D positions, and every upright thing leans toward the seat: of my
@@ -1852,7 +1862,7 @@ const SHAPE = (() => {
           if (dot(n, sub(eye, centre)) <= 0) continue;
           const tex = texOf(f.tex), bump = f.tex._bump || null;
           // the vertices in screen space, with 1/w, the texture coordinates over w, and the world normal
-          const vs = P.map((p, i) => { const w = HCv - p[2], iw = 1 / w, S = project(p), vn = f.nrm ? norm(turn(f.nrm[i])) : n; return { x: S[0] * DPR, y: S[1] * DPR, iw, uw: f.uv[i][0] * iw, vw: f.uv[i][1] * iw, nx: vn[0], ny: vn[1], nz: vn[2] }; });
+          const vs = P.map((p, i) => { const w = HCv - p[2], iw = 1 / w, S = project(p), vn = f.nrm ? norm(turn(f.nrm[i])) : n; return { x: S[0] * DPR, y: (S[1] + pad) * DPR, iw, uw: f.uv[i][0] * iw, vw: f.uv[i][1] * iw, nx: vn[0], ny: vn[1], nz: vn[2] }; });
           // the tangent frame: where u and v run in the world, from the first three corners
           let TB = null;
           if (bump) {
@@ -1865,7 +1875,7 @@ const SHAPE = (() => {
         }
       }
       fb.off.getContext('2d').putImageData(fb.img, 0, 0);
-      ctx.drawImage(fb.off, 0, 0, W, H);
+      ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(fb.off, 0, 0, PW, PH);
       return ctx;
     }
     const eyeOf = (W, H, view) => ({ x: W / 2, y: H / 2 + (view && view.down != null ? view.down : EYE_DOWN) * H, hc: view && view.hc || HC });
@@ -1888,8 +1898,8 @@ const SHAPE = (() => {
       return cache[k] = c;
     }
     // the crown: the verdigris at its own offset, the one light's highlight, and the count stamped on it
-    function cupCrown(seed, count, out) {
-      const k = 'crown' + seed + ':' + count + (out ? 'o' : ''); if (cache[k]) return cache[k];
+    function cupCrown(seed, count, out, numeral = 112) {
+      const k = 'crown' + seed + ':' + count + (out ? 'o' : '') + ':' + numeral; if (cache[k]) return cache[k];
       const src = matCanvas['c-verdigris'], c = document.createElement('canvas'); c.width = 256; c.height = 256;
       const x = TEX.hash(seed, 93, 977) * 128 | 0, y = TEX.hash(seed, 94, 977) * 128 | 0, g = c.getContext('2d');
       for (let i = -1; i < 2; i++) for (let j = -1; j < 2; j++) g.drawImage(src, i * 256 - x, j * 256 - y);
@@ -1898,7 +1908,7 @@ const SHAPE = (() => {
       if (out) {
         g.fillStyle = 'rgba(4,14,15,.6)'; g.fillRect(0, 0, 256, 256);
       } else if (count != null) {
-        g.font = `${112}px 'IM Fell English', serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
+        g.font = `${numeral}px 'IM Fell English', serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
         g.fillStyle = 'rgba(10,13,11,.85)'; g.fillText(count, 130, 140); g.fillStyle = 'rgba(232,236,216,.92)'; g.fillText(count, 128, 136);
       }
       c._bump = reliefOf(c, 1.2);
@@ -2023,7 +2033,7 @@ const SHAPE = (() => {
   }
   function flushScenes() {
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    for (const sp of scenes.splice(0)) { const c = document.getElementById(sp.id); if (c) { c._objs = sp.objs; c._W = sp.W; c._H = sp.H; c._origin = sp.origin; c._open = !!sp.open; if (sp.peek === 'B' && sp.open) applyPeekB(c, 1, sp.origin); R3.render(c, sp.W, sp.H, sp.objs, dpr); if (c.dataset.key === 'roll' || c.dataset.key === 'troll') startRoll(c, 7); } }
+    for (const sp of scenes.splice(0)) { const c = document.getElementById(sp.id); if (c) { c._objs = sp.objs; c._W = sp.W; c._H = sp.H; c._origin = sp.origin; c._pad = sp.pad || 0; c._open = !!sp.open; if (sp.peek === 'B' && sp.open) applyPeekB(c, 1, sp.origin); R3.render(c, sp.W, sp.H, sp.objs, dpr); if (c.dataset.key === 'roll' || c.dataset.key === 'troll') startRoll(c, 7); } }
   }
   // a cup object at a seat: R the mouth radius, standing on the table
   const CUP_TALL = 2.1;  /* the cup's height as a multiple of its mouth's radius: cn_roll.h's CN_CUP_TALL, drawn to match */
@@ -2032,7 +2042,7 @@ const SHAPE = (() => {
     // my cup has an inside (its wall's thickness, the inner wall, the domed floor): it is looked into and peeked under
     if (o.out && !o.inner) o.inner = {};
     const inner = o.inner ? { t: R * .06, side: TEX3.cupInner(seed), floor: TEX3.cupFloor(seed), dome: o.inner.dome || 0 } : null;
-    const cup = Object.assign({ mesh: R3.cup(R, rc, h, 36, TEX3.cupSide(seed), TEX3.cupCrown(seed, count, o.out), inner), pos: [x, y], yaw: 0, shadowR: R, shadowH: h, tint: o.out ? '4,14,15' : null, kmul: o.out ? [.45, .5] : null, R, h }, o);
+    const cup = Object.assign({ mesh: R3.cup(R, rc, h, 36, TEX3.cupSide(seed), TEX3.cupCrown(seed, count, o.out, R < 40 ? 184 : 112), inner), pos: [x, y], yaw: 0, shadowR: R, shadowH: h, tint: o.out ? '4,14,15' : null, kmul: o.out ? [.45, .5] : null, R, h }, o);
     if (o.out) {
       // a seat with no dice: its cup lies on its side across the seat, dim, the way a cup is left when the game has
       // passed it. Both rims touch the table (the cup is a cone, so its axis dips toward the crown), the body is
@@ -2334,7 +2344,7 @@ const SHAPE = (() => {
   function seatBadge(view, i, turn, w, out) {
     return `<div class="seat"><div style="height:52px"></div><div class="t-name${turn ? '' : ' dim'}">${NAMES[i]}</div>${turn ? '<span class="turn" style="width:36px;margin-top:3px"></span>' : ''}</div>`;
   }
-  const CAPTION_H = 22;
+  const SCENE_PAD = 40;   /* the scene canvas's headroom above the board */
   function picker(W, kind) {
     const chip = W >= 430 ? 30 : 26, verbs = `<div class="band" style="gap:10px;flex-wrap:nowrap"><button class="plank wide call">Liar</button><button class="plank wide glow">Raise</button></div>`;
     const sq = (t, cls = '', sz = 40) => `<button class="plank sq ${cls}" style="width:${sz}px;min-width:${sz}px;height:${sz}px;font-size:${sz * .5}px">${t}</button>`;
@@ -2392,7 +2402,8 @@ const SHAPE = (() => {
     // the table, bidding
     const roll = spec.state === 'roll', mine = spec.state === 'table' || roll, turnSeat = mine ? 0 : 1;
     const PICKER_H = roll ? 50 : (PICKERS[spec.picker] || PICKERS.rows).h;
-    const boardH = H - 8 - 10 - CAPTION_H - 12 - (mine ? PICKER_H + 10 : 0), short = isShort(boardH);
+    // the board is the whole screen above the shelf, less a top margin that gives the far seats' cups room to lean
+    const topM = H > 400 ? 30 : 8, boardH = H - topM - 12 - (mine ? PICKER_H + 10 : 0), short = isShort(boardH);
     const frames = seatFrames(n, me, inner, boardH), pf = plateFrame(n, inner, boardH);
     let board = '';
     if (pf) board += at(pf, `<div class="plate" style="min-width:0;width:100%;height:100%;padding:0 10px"><i class="rivet"></i><i class="rivet"></i><i class="rivet"></i><i class="rivet"></i><span class="crust"></span><span class="t-bid" style="font-size:${pf[2] < 140 ? 20 : 26}px">three 3s</span>${D(3, pf[2] < 140 ? 24 : 30, { seed: 80 })}</div>`);
@@ -2410,19 +2421,17 @@ const SHAPE = (() => {
     HANDS[0].forEach((f, k) => { const a = -Math.PI / 2 + k * Math.PI * 2 / 5 + (Hh(k, 71, 977) - .5) * .18, rr = ring * (1 + (Hh(k, 72, 977) - .5) * .1); objs.push(dieObj(d, f, 60 + k, mcx + rr * Math.cos(a), mcy + rr * Math.sin(a), (Hh(k, 73, 977) - .5) * .5)); });
     const myCup = cupObj(myR, 5, 3, mcx, mcy, { peekable: true, inner: { dome: ROLL_DOME * d }, ring });
     objs.push(myCup);
-    // a screen drawn already peeking: A tips the cup just enough from the seat's eye; B from the leaning head's
-    const peekB = o.peek === 'B';
-    if (o.peek && !roll) { const a = peekAngleFor(myCup, objs.filter(x => x.die), inner, boardH, peekB ? VIEW_B : null); myCup.tilt = peekTilt(myR, a, a); }
-    board += scene3d(inner, boardH, objs, roll ? (o.tableRoll ? 'troll' : 'roll') : 'table', { peek: peekB ? 'B' : 'A', open: !!o.peek && !roll, origin: [16 + mcx, 8 + mcy] });
+    // the peek is B (the head moves) on every screen; a screen drawn already peeking tips the cup from the leaning head's eye
+    const peekB = true;
+    if (o.peek && !roll) { const a = peekAngleFor(myCup, objs.filter(x => x.die), inner, boardH, VIEW_B); myCup.tilt = peekTilt(myR, a, a); }
+    board += scene3d(inner, boardH, objs, roll ? (o.tableRoll ? 'troll' : 'roll') : 'table', { peek: 'B', open: !!o.peek && !roll, origin: [16 + mcx, topM + mcy], pad: SCENE_PAD });
     const nameBlock = `<div class="t-name" style="font-size:${short ? 12 : 14}px">${NAMES[0]}</div>${turnSeat === 0 ? '<span class="turn" style="width:44px"></span>' : '<span class="turn" style="visibility:hidden;width:44px"></span>'}`;
     board += short ? at(my, `<div class="abs" style="left:calc(50% - ${(myR + 64).toFixed(0)}px);top:50%;transform:translateY(-50%);display:flex;flex-direction:column;align-items:center;gap:4px">${nameBlock}</div>`) : at(my, `<div class="myband" style="justify-content:flex-end;padding-bottom:4px">${nameBlock}</div>`);
     for (let i = 1; i < n; i++) board += at(frames[i], seatBadge(view, i, turnSeat === i, 72, i === 5 && n === 6));
-    if (!short) board += `<div class="abs t-hdr" style="left:0;top:12px;width:100%;text-align:center">Round four &middot; ${COUNTS.slice(0, n).reduce((a, b) => a + b, 0) - (n === 6 ? 2 : 0)} dice</div>`;
-    ui += `<div class="abs" style="left:16px;top:8px;width:${px(inner)};height:${px(boardH)}">${board}</div>`;
-    ui += `<div class="abs t-ask" style="left:16px;top:${px(8 + boardH + 10)};width:${px(inner)};text-align:center;font-size:${short ? 15 : 17}px">${roll ? 'Round four. <b>Your dice are rolling</b>' : mine ? 'Bo bid three 3s, <b>your turn</b>' : 'Alex bid three 3s, Bo’s turn'}</div>`;
+    ui += `<div class="abs" style="left:16px;top:${px(topM)};width:${px(inner)};height:${px(boardH)}">${board}</div>`;
     if (roll) ui += `<div class="shelf" style="width:${px(W)}"><div class="band" style="gap:10px;flex-wrap:nowrap"><button class="plank wide quiet" data-roll="again">Roll again</button><button class="plank wide glow" data-roll="send">Send</button></div></div>`;
     else if (mine) ui += picker(W, spec.picker);
-    const stage = peekB ? `<div class="stagewrap">${tableStage(Math.round(W * 1.9), Math.round(H * 2.2), TABLE, { pieces: false, seed: 5 }).replace('class="stage tstage"', 'class="stage tstage over"')}</div>` : tableStage(W, H, TABLE, { pieces: false, seed: 5 });
+    const stage = peekB ? `<div class="stagewrap">${tableStage(Math.round(W * 1.9), Math.round(H * 2.2), TABLE, { pieces: false, seed: 5, cx: W * .45 + W / 2 }).replace('class="stage tstage"', 'class="stage tstage over"')}</div>` : tableStage(W, H, TABLE, { pieces: false, seed: 5 });
     return `<div class="scr" style="width:${px(W)};height:${px(H)}">${stage}<div class="scr-ui">${ui}</div></div>`;
   }
   // the bubble: the picture in the transcript, 300 by 195, the same table seen from above
@@ -2443,8 +2452,8 @@ const SHAPE = (() => {
     const S = LAY, sz = SIZES[S.size];
     put('lay-main', screen(S, sz.w, sz.h));
     S.arrange = 'foolish'; S.picker = 'rows';
-    put('lay-spec', `<b>layout</b> &middot; ${specLine(S, LAY_LOCKED)}<br><b>board</b>: ${isShort(sz.h - 8 - 10 - CAPTION_H - 12 - (S.state === 'table' ? (PICKERS[S.picker] || PICKERS.rows).h + 10 : 0)) ? 'short (one row of seats, the plate beside)' : 'tall'}`);
-    put('lay-three', `<div class="col"><div class="h4">The bubble <span class="pill n">300 by 195</span></div>${bubble(S)}</div><div class="col"><div class="h4">Collapsed <span class="pill n">340</span></div>${screen(Object.assign({}, S, { state: S.state === 'roll' ? 'table' : S.state }), 390, 340)}</div><div class="col"><div class="h4">Expanded, peeking <span class="pill n">A: just enough</span></div>${screen(Object.assign({}, S, { state: S.state === 'roll' ? 'table' : S.state }), 390, 718, { peek: 'A' })}</div><div class="col"><div class="h4">Expanded, peeking <span class="pill n">B: the head moves</span></div>${screen(Object.assign({}, S, { state: S.state === 'roll' ? 'table' : S.state }), 390, 718, { peek: 'B' })}</div>`);
+    put('lay-spec', `<b>layout</b> &middot; ${specLine(S, LAY_LOCKED)}<br><b>board</b>: ${isShort(sz.h - (sz.h > 400 ? 30 : 8) - 12 - (S.state === 'table' ? (PICKERS[S.picker] || PICKERS.rows).h + 10 : 0)) ? 'short (one row of seats, the plate beside)' : 'tall'}`);
+    put('lay-three', `<div class="col"><div class="h4">The bubble <span class="pill n">300 by 195</span></div>${bubble(S)}</div><div class="col"><div class="h4">Collapsed <span class="pill n">340</span></div>${screen(Object.assign({}, S, { state: S.state === 'roll' ? 'table' : S.state }), 390, 340)}</div><div class="col"><div class="h4">Expanded, peeking <span class="pill n">718</span></div>${screen(Object.assign({}, S, { state: S.state === 'roll' ? 'table' : S.state }), 390, 718, { peek: 'B' })}</div>`);
     put('lay-seats', [2, 3, 4, 5, 6].map(k => `<div class="half"><div class="scaled" style="width:195px;height:359px"><div style="transform:scale(.5);transform-origin:0 0">${screen(Object.assign({}, S, { seats: k, state: S.state === 'lobby' || S.state === 'roll' ? 'table' : S.state }), 390, 718, { peek: true })}</div></div><div class="cap" style="text-align:center">${k} seats</div></div>`).join(''));
     put('lay-phones', [['se', 375, 541], ['expanded', 390, 718], ['max', 430, 830], ['collapsed', 390, 340]].map(([k, w, h]) => `<div class="half"><div class="scaled" style="width:${px(w * .55)};height:${px(h * .55)}"><div style="transform:scale(.55);transform-origin:0 0">${screen(Object.assign({}, S, { state: S.state === 'roll' ? 'table' : S.state }), w, h)}</div></div><div class="cap" style="text-align:center">${SIZES[k].name}</div></div>`).join(''));
     put('roll-main', screen(Object.assign({}, S, { state: 'roll' }), 390, 718));
