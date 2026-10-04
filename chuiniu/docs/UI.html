@@ -284,10 +284,11 @@ section[hidden]{display:none}
 .peek>*{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:flex;align-items:center;white-space:nowrap}
 .peek-cup{z-index:2;transition:transform .36s cubic-bezier(.2,.9,.3,1.08),opacity .2s ease-in .1s}
 .peek-side{z-index:3;opacity:0;pointer-events:none;transform:translate(-50%,-50%) translateY(6px) scale(.8) rotate(0deg);transition:transform .38s cubic-bezier(.2,.9,.3,1.1),opacity .18s ease-out .1s;filter:drop-shadow(0 14px 10px rgba(0,0,0,.6))}
-.peek-dice{z-index:1;opacity:0;transform:translate(-50%,-50%) translateY(4px) scale(.9);transition:opacity .22s ease-out .12s,transform .36s cubic-bezier(.2,.9,.3,1.08)}
+.peek-dice{z-index:1;opacity:0;transform:translate(-50%,-50%) scale(.92);transition:opacity .22s ease-out .12s,transform .36s cubic-bezier(.2,.9,.3,1.08)}
+.peek-dice .pd{position:absolute}
 .peek[data-peek="1"] .peek-cup{opacity:0;transform:translate(-50%,-50%) perspective(420px) rotateX(-70deg) translateY(-12px)}
-.peek[data-peek="1"] .peek-side{opacity:1;transform:translate(-50%,-50%) translateY(var(--lift,-40px)) scale(1) rotate(16deg)}
-.peek[data-peek="1"] .peek-dice{opacity:1;transform:translate(-50%,-50%) translateY(6px) scale(1)}
+.peek[data-peek="1"] .peek-side{opacity:1;transform:translate(-50%,-50%) translateY(var(--lift,-40px)) translateX(40%) scale(1) rotate(20deg)}
+.peek[data-peek="1"] .peek-dice{opacity:1;transform:translate(-50%,-50%) scale(1)}
 @media (prefers-reduced-motion:reduce){.peek-cup,.peek-dice,.peek-side{transition:none}}
 .shelf{position:absolute;left:0;bottom:0;padding:0 16px 12px;display:flex;flex-direction:column;gap:10px}
 .lobby{position:absolute;inset:0;display:flex;flex-direction:column}
@@ -553,8 +554,8 @@ What is new is the view: the table is seen <b>from above</b>. Every seat is its 
   <div class="col w">
     <div class="h4">What to look for <span class="pill n">real size</span></div>
     <p class="why" style="max-width:60ch">The screen on the left is the size the drawer really is. Collapsed is the one the game is mostly played at: 340pt, of which the picker takes 100 when it is my turn (the stepper and the face chips on one row, the two verbs on the next), so the board is a short one and the other seats go in a row along the top with the plate beside them. Expanded gives the ellipse.</p>
-    <p class="why" style="max-width:60ch">The seat rule is the app’s: the other seats go left to right in seat order starting after mine, round the upper half of an ellipse whose centre is above my band; a board too short for a badge, the plate and my band stacked becomes the short board. <b>Locked:</b> foolish’s ring, every seat, mine included, at an equal angle round one ellipse, 0.42 of the width by 0.35 of the height, which is <code>MessageTableView.ringPoint</code>; a short board stays the row. <b>Open:</b> the picker, four in the mixer and the bank.</p>
-    <p class="why" style="max-width:60ch"><b>The peek.</b> My dice are under my own cup, as at a real table: the cup sits in my band with my count on its crown. Tap it (click it here, in any screen on this tab) and it tips up on its far edge to show the dice under it; tap again and it comes down. The dice never leave the cup’s shadow, and the other seats’ cups never tip.</p>
+    <p class="why" style="max-width:60ch">The seat rule is the app’s: the other seats go left to right in seat order starting after mine, round the upper half of an ellipse whose centre is above my band; a board too short for a badge, the plate and my band stacked becomes the short board. <b>Locked:</b> foolish’s ring, every seat, mine included, at an equal angle round one ellipse, 0.42 of the width by 0.35 of the height, which is <code>MessageTableView.ringPoint</code>; a short board stays the row. <b>Locked too:</b> the two-row picker, Liar on the left and Raise on the right. The other three pickers stay in the page’s source.</p>
+    <p class="why" style="max-width:60ch"><b>The peek.</b> My dice are under my own cup, as at a real table: the cup sits in my band with my count on its crown. Tap it (click it here, in any screen on this tab) and it tips up on its far edge to show the dice under it; tap again and it comes down. The dice are not in a row: five dice under a cup sit in a rough ring, each a little off its station and turned a little by seed, none touching, and the cup’s crown is just big enough to cover the ring. The other seats’ cups never tip.</p>
     <p class="why" style="max-width:60ch">From above a cup’s count sits on its crown, which is why the crown had to carry a numeral at 32. The name goes under the cup in the small caps, and the live seat gets the turn light under its name.</p>
     <div class="kv" id="lay-spec"></div>
   </div>
@@ -563,10 +564,6 @@ What is new is the view: the table is seen <b>from above</b>. Every seat is its 
 <h3>The three states Messages gives you</h3>
 <p class="why" style="max-width:73ch">The bubble in the transcript (a picture, 300 by 195, that the game draws itself), the collapsed drawer under the compose field, and the expanded drawer. One game, one look, three sizes; the mixer’s seats, state and view apply to all three.</p>
 <div class="row" id="lay-three"></div>
-
-<h3>The pickers</h3>
-<p class="why" style="max-width:73ch">Four ways to make a bid, each on the collapsed drawer (the size that is hardest on it) at 60%: the app’s two rows; the plate as the control; one line then Liar; strips. Click one to send it to the mixer.</p>
-<div class="bank bank-w" id="lay-pick"></div>
 
 <h3>Two seats to six</h3>
 <p class="why" style="max-width:73ch">The expanded table at every seat count, at half size, the cup tipped so the dice show. The ellipse holds six badges on a 390-wide phone with room between them; the short board holds four other seats and the plate, five without it (the app’s rule, I17).</p>
@@ -582,7 +579,7 @@ What is new is the view: the table is seen <b>from above</b>. Every seat is its 
   <p><b>No two alike.</b> Every die takes its own slice of the bone bake, every cup its own slice of the verdigris, and every plank its own band of the wood march, all by seed, so nothing on the table is a copy of its neighbour.</p>
   <p><b>Foolish’s ring, decided.</b> The other arrangements are gone from the bank; their code stays in the page for the record.</p>
   <p><b>The peek, proposed.</b> One tap tips my cup, one tap sets it down; nothing else on the table is touched by it. In Swift it is a <code>rotation3DEffect</code> about the x axis anchored at the cup’s far edge, with <code>FMotion.card</code>, and the dice under it fade in a beat later.</p>
-  <p><b>The picker is open.</b> Four shelves are offered in the mixer and the pickers bank; every button on them is the plate, and the call is <b>Liar</b>.</p>
+  <p><b>The picker, decided.</b> Two rows: the stepper and the face chips, then <b>Liar</b> on the left and Raise on the right; every button is the plate.</p>
   <p><b>The reveal is a list on the table.</b> Every seat’s band in seat order, the counting dice ringed, the loser’s band ringed in blood with the stamp at its end, the outcome line under the list, Next round on the shelf. Collapsed, the dice drop to 22 and the bands to 30 so six seats still fit.</p>
   <p><b>The lobby is the deep.</b> The one screen on open water rather than the table: the name over the roster, the field and Join, Start lit when two are seated.</p>
 </div>
@@ -660,11 +657,11 @@ What is new is the view: the table is seen <b>from above</b>. Every seat is its 
 <p class="lede">Every button is the bid plate’s plate (round twelve): the verdigris at its own offset, four rivets, the bevel ring, 40 tall. The verb is in small caps. Three looks: the bronze plate for a move, the blood plate for Liar (the owner’s word for the call), and the sunk plate for a move the kernel does not allow.</p>
 <div class="row">
   <div class="col">
-    <div class="h4">Raise and Liar <span class="pill">bid picker</span></div>
+    <div class="h4">Liar and Raise <span class="pill">bid picker</span></div>
     <p class="why">Raise glows when the chosen quantity reaches the kernel's least for that face; sunk when it does not. Liar is always blood when it is legal: it is the move that ends a round.</p>
     <div class="stage short" style="gap:10px">
-      <div class="band"><button class="plank wide glow">Raise</button><button class="plank wide call">Liar</button></div>
-      <div class="band"><button class="plank wide sunk">Raise</button><button class="plank wide sunk">Liar</button></div>
+      <div class="band"><button class="plank wide call">Liar</button><button class="plank wide glow">Raise</button></div>
+      <div class="band"><button class="plank wide sunk">Liar</button><button class="plank wide sunk">Raise</button></div>
       <div class="cap" style="text-align:center">lit, and sunk</div>
     </div>
   </div>
@@ -689,7 +686,7 @@ What is new is the view: the table is seen <b>from above</b>. Every seat is its 
   <div class="col">
     <div class="h4">Press <span class="pill n">motion</span></div>
     <p class="why">foolish's press, unchanged: .96 for 80ms, no system decoration. Hold a plank here to see it. Haptics stay as mapped in <code>Buttons.swift</code>.</p>
-    <div class="stage short"><div class="band c"><button class="plank glow">Raise</button><button class="plank call">Liar</button><button class="plank quiet">Next round</button></div></div>
+    <div class="stage short"><div class="band c"><button class="plank call">Liar</button><button class="plank glow">Raise</button><button class="plank quiet">Next round</button></div></div>
   </div>
 </div>
 </section>
@@ -1614,7 +1611,7 @@ const SHAPE = (() => {
 
   /* ---- the layout ----------------------------------------------------- */
   const LAY = { seats: 6, state: 'table', view: 'top', size: 'expanded', arrange: 'foolish', picker: 'rows' };
-  const LAY_LOCKED = { arrange: 'foolish' };
+  const LAY_LOCKED = { arrange: 'foolish', picker: 'rows' };
   const SIZES = { collapsed: { name: 'Collapsed, 340', w: 390, h: 340 }, expanded: { name: 'Expanded, 390 by 718', w: 390, h: 718 }, se: { name: 'SE, 375 by 541', w: 375, h: 541 }, max: { name: 'Pro Max, 430 by 830', w: 430, h: 830 } };
   const STATES = { table: { name: 'Bidding, my turn' }, wait: { name: 'Bidding, their turn' }, reveal: { name: 'The reveal' }, lobby: { name: 'The lobby' }, end: { name: 'The end' } };
   const VIEWS = { top: { name: 'From above' }, side: { name: 'Seated' } };
@@ -1633,7 +1630,7 @@ const SHAPE = (() => {
     inline: { name: 'One line, then Liar', why: 'the stepper, the face with its own stepper, and Raise on one line; Liar alone and full width under it', h: 90 },
     strip:  { name: 'Strips', why: 'every legal quantity in a strip and every face in a strip, one tap each; the verbs under them', h: 128 },
   };
-  const LAY_FIELDS = { seats: ['Seats', { 2: 'Two', 3: 'Three', 4: 'Four', 5: 'Five', 6: 'Six' }], state: ['State', names(STATES)], view: ['View', names(VIEWS)], size: ['Size', names(SIZES)], picker: ['Picker', names(PICKERS)] };
+  const LAY_FIELDS = { seats: ['Seats', { 2: 'Two', 3: 'Three', 4: 'Four', 5: 'Five', 6: 'Six' }], state: ['State', names(STATES)], view: ['View', names(VIEWS)], size: ['Size', names(SIZES)] };
   loadSpec('cn.lay', LAY, LAY_FIELDS);
   const NAMES = ['Alex', 'Bo', 'Cy', 'Dee', 'Eve', 'Fay'];
   const COUNTS = [5, 4, 5, 3, 5, 2];
@@ -1711,7 +1708,7 @@ const SHAPE = (() => {
   }
   const CAPTION_H = 22;
   function picker(W, kind) {
-    const chip = W >= 430 ? 30 : 26, verbs = `<div class="band" style="gap:10px;flex-wrap:nowrap"><button class="plank wide glow">Raise</button><button class="plank wide call">Liar</button></div>`;
+    const chip = W >= 430 ? 30 : 26, verbs = `<div class="band" style="gap:10px;flex-wrap:nowrap"><button class="plank wide call">Liar</button><button class="plank wide glow">Raise</button></div>`;
     const sq = (t, cls = '', sz = 40) => `<button class="plank sq ${cls}" style="width:${sz}px;min-width:${sz}px;height:${sz}px;font-size:${sz * .5}px">${t}</button>`;
     let rows;
     switch (kind) {
@@ -1777,8 +1774,12 @@ const SHAPE = (() => {
     // my count on its crown. A tap tips it up on its far edge (a 3D turn about the top of the disc,
     // lifted a little) and the dice are seen under it; a second tap sets it back down. On the page
     // the tap is a click, on the phone it is FMotion.card.
-    const cupSz = short ? 46 : 88, peekDice = short ? 28 : 40;
-    board += at(my, `<div class="myband${short ? ' short' : ''}"><div class="peek" data-peek="${o.peek ? 1 : 0}" title="tap the cup to peek" style="height:${cupSz}px;--lift:${-cupSz * .5}px"><div class="peek-dice" style="gap:${short ? 2 : 3}px">${HANDS[0].map((f, k) => D(f, peekDice, { seed: 60 + k })).join('')}</div><div class="peek-cup">${cupAt(view, cupSz, 5, 3)}</div><div class="peek-side">${C(cupSz * .8, { seed: 3 })}</div></div><div class="t-name" style="font-size:${short ? 12 : 14}px">${NAMES[0]}</div>${turnSeat === 0 ? '<span class="turn" style="width:44px"></span>' : '<span class="turn" style="visibility:hidden;width:44px"></span>'}</div>`);
+    // Five dice under a cup do not sit in a row; they sit in a rough ring. Each die is at 72 degrees
+    // from the next on a ring whose radius keeps rotated dice from touching (centre spacing 1.55 of a
+    // side, the diagonal is 1.41), each a little off its station and turned a little, by seed; the
+    // cup's crown is just the ring's outer radius plus a rim.
+    const d = short ? 18 : 24, ring = 1.55 * d / (2 * Math.sin(Math.PI / 5)), cupSz = Math.round(2 * (ring + d * .72) + 6), peekDice = d;
+    board += at(my, `<div class="myband${short ? ' short' : ''}"><div class="peek" data-peek="${o.peek ? 1 : 0}" title="tap the cup to peek" style="height:${cupSz}px;--lift:${-cupSz * .82}px"><div class="peek-dice" style="width:${cupSz}px;height:${cupSz}px">${HANDS[0].map((f, k) => { const a = -Math.PI / 2 + k * Math.PI * 2 / 5 + (Hh(k, 71, 977) - .5) * .18, rr = ring * (1 + (Hh(k, 72, 977) - .5) * .1), rot = (Hh(k, 73, 977) - .5) * 28; return `<div class="pd" style="left:${(cupSz / 2 + rr * Math.cos(a)).toFixed(1)}px;top:${(cupSz / 2 + rr * Math.sin(a)).toFixed(1)}px;transform:translate(-50%,-50%) rotate(${rot.toFixed(1)}deg)">${D(f, peekDice, { seed: 60 + k })}</div>`; }).join('')}</div><div class="peek-cup">${cupAt(view, cupSz, 5, 3)}</div><div class="peek-side">${C(cupSz * .68, { seed: 3 })}</div></div><div class="t-name" style="font-size:${short ? 12 : 14}px">${NAMES[0]}</div>${turnSeat === 0 ? '<span class="turn" style="width:44px"></span>' : '<span class="turn" style="visibility:hidden;width:44px"></span>'}</div>`);
     if (!short) board += `<div class="abs t-hdr" style="left:0;top:12px;width:100%;text-align:center">Round four &middot; ${COUNTS.slice(0, n).reduce((a, b) => a + b, 0) - (n === 6 ? 2 : 0)} dice</div>`;
     ui += `<div class="abs" style="left:16px;top:8px;width:${px(inner)};height:${px(boardH)}">${board}</div>`;
     ui += `<div class="abs t-ask" style="left:16px;top:${px(8 + boardH + 10)};width:${px(inner)};text-align:center;font-size:${short ? 15 : 17}px">${mine ? 'Bo bid three 3s, <b>your turn</b>' : 'Alex bid three 3s, Bo’s turn'}</div>`;
@@ -1801,17 +1802,15 @@ const SHAPE = (() => {
   function drawLayout() {
     const S = LAY, sz = SIZES[S.size];
     put('lay-main', screen(S, sz.w, sz.h));
-    S.arrange = 'foolish';
+    S.arrange = 'foolish'; S.picker = 'rows';
     put('lay-spec', `<b>layout</b> &middot; ${specLine(S, LAY_LOCKED)}<br><b>board</b>: ${isShort(sz.h - 8 - 10 - CAPTION_H - 12 - (S.state === 'table' ? (PICKERS[S.picker] || PICKERS.rows).h + 10 : 0)) ? 'short (one row of seats, the plate beside)' : 'tall'}`);
     put('lay-three', `<div class="col"><div class="h4">The bubble <span class="pill n">300 by 195</span></div>${bubble(S)}</div><div class="col"><div class="h4">Collapsed <span class="pill n">340</span></div>${screen(S, 390, 340)}</div><div class="col"><div class="h4">Expanded, peeking <span class="pill n">718</span></div>${screen(S, 390, 718, { peek: true })}</div>`);
-    renderBank('lay-pick', PICKERS, k => `<div class="scaled" style="width:234px;height:204px"><div style="transform:scale(.6);transform-origin:0 0">${screen(Object.assign({}, S, { picker: k, state: 'table' }), 390, 340)}</div></div>`, S.picker, 'style="padding:6px"');
     put('lay-seats', [2, 3, 4, 5, 6].map(k => `<div class="half"><div class="scaled" style="width:195px;height:359px"><div style="transform:scale(.5);transform-origin:0 0">${screen(Object.assign({}, S, { seats: k, state: S.state === 'lobby' ? 'table' : S.state }), 390, 718, { peek: true })}</div></div><div class="cap" style="text-align:center">${k} seats</div></div>`).join(''));
     put('lay-phones', [['se', 375, 541], ['expanded', 390, 718], ['max', 430, 830], ['collapsed', 390, 340]].map(([k, w, h]) => `<div class="half"><div class="scaled" style="width:${px(w * .55)};height:${px(h * .55)}"><div style="transform:scale(.55);transform-origin:0 0">${screen(S, w, h)}</div></div><div class="cap" style="text-align:center">${SIZES[k].name}</div></div>`).join(''));
     saveSpec('cn.lay', S);
   }
   document.addEventListener('click', e => { const pk = e.target.closest('.peek'); if (pk) pk.dataset.peek = pk.dataset.peek === '1' ? '0' : '1'; });
   const syncLay = mixer('lay-mixer', LAY_FIELDS, LAY, drawLayout);
-  wire('lay-pick', k => { LAY.picker = k; syncLay(); drawLayout(); });
   drawLayout();
 
   // no two plates alike: every plank and plate takes its own offset of the verdigris tile
