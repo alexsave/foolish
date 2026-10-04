@@ -537,7 +537,7 @@ The bake is one 430 by 830 tile, the Pro Max’s expanded drawer, so no phone at
 <section id="layout" data-tab="layout">
 <h2>The layout</h2>
 <p class="lede">The pieces are decided; this is where they go. Messages gives the game three sizes and the app one rule for placing seats, and both are kept: the drawer is 340pt tall collapsed on every phone and the screen less about 126pt expanded (541 on an SE, 718 on a 390-wide phone, 830 on a Pro Max); and <code>DiceTableLayout</code> is ported here as it stands, so a seat is where the app would put it.
-What is new is the view: the table is seen <b>from above</b>. Every seat is its cup’s crown with the count on it, the bid plate lies on the planks between them, and my dice are face up at the bottom where my hands would be. The seated view (cups from the side) is kept in the mixer to compare.</p>
+What is new is the view: the table is seen <b>from above, from my seat</b>: the eye is over the table’s near edge, not its centre, so of my cup I see the side that faces me and of the others the side that faces the table. Every seat is its cup’s crown with the count on it, the bid plate lies on the planks between them, and my dice are face up at the bottom where my hands would be. The seated view (cups from the side) is kept in the mixer to compare.</p>
 
 <h3>The mixer</h3>
 <div class="mixer" id="lay-mixer"></div>
@@ -547,8 +547,8 @@ What is new is the view: the table is seen <b>from above</b>. Every seat is its 
     <div class="h4">What to look for <span class="pill n">real size</span></div>
     <p class="why" style="max-width:60ch">The screen on the left is the size the drawer really is. Collapsed is the one the game is mostly played at: 340pt, of which the picker takes 100 when it is my turn (the stepper and the face chips on one row, the two verbs on the next), so the board is a short one and the other seats go in a row along the top with the plate beside them. Expanded gives the ellipse.</p>
     <p class="why" style="max-width:60ch">The seat rule is the app’s: the other seats go left to right in seat order starting after mine, round the upper half of an ellipse whose centre is above my band; a board too short for a badge, the plate and my band stacked becomes the short board. <b>Locked:</b> foolish’s ring, every seat, mine included, at an equal angle round one ellipse, 0.42 of the width by 0.35 of the height, which is <code>MessageTableView.ringPoint</code>; a short board stays the row. <b>Locked too:</b> the two-row picker, Liar on the left and Raise on the right. The other three pickers stay in the page’s source.</p>
-    <p class="why" style="max-width:60ch"><b>In three dimensions.</b> Round fourteen: the owner asked for real bodies, projected. Every cup on the table and every one of my dice is now a mesh (a cup is a truncated cone of thirty-six facets under a crown disc, shaded smoothly round so it reads as one turned body; a die is a rounded box, each face a five-by-five grid whose outer rows bend round a corner radius of 18% of the side, so the bevel wraps the rounding) wearing its texture from the bakes, placed on the board and projected to the screen by a camera over the board’s centre, a true perspective projection: the table plane is drawn 1:1 and everything above it grows toward the eye and leans away from the centre, so the cups at the edges show the side that faces you. One light; each face is shaded by how much it faces it; each body throws a soft shadow away from the light.</p>
-    <p class="why" style="max-width:60ch"><b>The peek.</b> My dice are under my own cup, in a rough ring, as at a real table. Tap my cup (click it here, in any screen on this tab) and it turns about the far edge of its mouth, which stays on the table: the near rim rises toward you, the body swings up the screen, from the right-hand side of the table a clockwise turn, and the dice are seen under it; tap again and it turns back down. The turn is re-projected every frame; nothing is faked. The dice are not in a row: five dice under a cup sit in a rough ring, each a little off its station and turned a little by seed, none touching, and the cup’s crown is just big enough to cover the ring. The other seats’ cups never tip.</p>
+    <p class="why" style="max-width:60ch"><b>In three dimensions.</b> Round fourteen: the owner asked for real bodies, projected. Every cup on the table and every one of my dice is now a mesh (a cup is a truncated cone of thirty-six facets under a crown disc, shaded smoothly round so it reads as one turned body; a die is a rounded box, each face a five-by-five grid whose outer rows bend round a corner radius of 18% of the side, so the bevel wraps the rounding) wearing its texture from the bakes, placed on the board and projected to the screen by a camera over the table’s near edge (half the board’s height past its centre, toward me, 720 points up, with a shifted lens so the table itself stays where the layout put it), a true perspective projection: the table plane is drawn 1:1 and everything above it grows toward the eye and leans away from the centre, so the cups at the edges show the side that faces you. One light; each face is shaded by how much it faces it; each body throws a soft shadow away from the light.</p>
+    <p class="why" style="max-width:60ch"><b>The peek.</b> My dice are under my own cup, in a rough ring, as at a real table. Tap my cup (click it here, in any screen on this tab) and it turns about the far edge of its mouth, which stays on the table: the near rim rises toward you, the body swings up the screen, from the right-hand side of the table a clockwise turn, and the dice are seen under it; tap again and it turns back down. From my seat the eye is steep, so the dice show only once the body has swung off them, and a cup tipped on its far rim lies along the table as long as it is tall: while it is tipped its crown lies over the plate’s lower edge. That is the layout’s to solve if it matters (the plate could give way upward while my cup is tipped); a sideways tip would lie over a side seat at six. The turn is re-projected every frame; nothing is faked. The dice are not in a row: five dice under a cup sit in a rough ring, each a little off its station and turned a little by seed, none touching, and the cup’s crown is just big enough to cover the ring. The other seats’ cups never tip.</p>
     <p class="why" style="max-width:60ch">From above a cup’s count sits on its crown, which is why the crown had to carry a numeral at 32. The name goes under the cup in the small caps, and the live seat gets the turn light under its name.</p>
     <div class="kv" id="lay-spec"></div>
   </div>
@@ -1646,7 +1646,7 @@ const SHAPE = (() => {
      doubles and seven CoreGraphics calls, so it ports as it stands.
      ===================================================================== */
   const R3 = (() => {
-    const HC = 720, LIGHT = (() => { const l = [-.45, -.55, 1]; const n = Math.hypot(...l); return l.map(v => v / n); })();
+    const HC = 720, EYE_DOWN = .5, LIGHT = (() => { const l = [-.45, -.55, 1]; const n = Math.hypot(...l); return l.map(v => v / n); })();
     const rotZ = (p, a) => { const c = Math.cos(a), s = Math.sin(a); return [p[0] * c - p[1] * s, p[0] * s + p[1] * c, p[2]]; };
     const rotX = (p, a) => { const c = Math.cos(a), s = Math.sin(a); return [p[0], p[1] * c - p[2] * s, p[1] * s + p[2] * c]; };
     const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -1800,7 +1800,12 @@ const SHAPE = (() => {
       canvas._dpr = DPR;
       canvas.width = Math.round(W * DPR); canvas.height = Math.round(H * DPR); canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
       const ctx = canvas.getContext('2d'); ctx.setTransform(DPR, 0, 0, DPR, 0, 0); ctx.clearRect(0, 0, W, H); ctx.imageSmoothingQuality = 'high';
-      const C = [W / 2, H / 2], eye = [C[0], C[1], HC];
+      // THE EYE is HC above the table and EYE_DOWN of the board's height past its centre, toward me: a seat,
+      // not a lamp. The lens is shifted (the image plane stays the table), so the table and everything the
+      // layout places on it keep their 2D positions, and every upright thing leans toward the seat: of my
+      // cup I see the side that faces me, of a far cup the side that faces the table. A point at height z
+      // projects along its line to the eye down onto the table.
+      const C = [W / 2, H / 2 + EYE_DOWN * H], eye = [C[0], C[1], HC];
       const project = p => { const k = HC / (HC - p[2]); return [C[0] + (p[0] - C[0]) * k, C[1] + (p[1] - C[1]) * k]; };
       const placed = objs.map(o => {
         const turn = p => {
@@ -2040,9 +2045,13 @@ const SHAPE = (() => {
   // along the table by up to a radius and comes up a little, the way a hand lifts a cup, so the dice come
   // out from under the near rim and the camera over the board's centre sees them
   const PEEK_ANGLE = 70 * Math.PI / 180;
+  // From my seat the eye is steep, so a tipped cup shows the dice only once its body has swung off them: the
+  // tip is 70 degrees about the far rim and the hand draws it back a radius. A cup tipped that way lies along
+  // the table as long as it is tall, and the plate sits 115 points beyond my cup's far rim, so while it is
+  // tipped the crown lies over the plate's lower edge (a sideways tip would lie over a side seat at six).
   const peekTilt = (R, a) => ({ angle: a, hingeY: -R, back: R * 1.05 * a / PEEK_ANGLE, lift: R * .12 * a / PEEK_ANGLE });
   // the peek: the one tap. The cup's hinge is the far edge of its mouth (local y = -R: toward the board's
-  // centre, which from my seat is up the screen); the angle runs 0 -> 78 degrees on FMotion.card's curve.
+  // centre, which from my seat is up the screen); the angle runs 0 -> 70 degrees on FMotion.card's curve.
   function animatePeek(canvas, open) {
     const objs = canvas._objs, cup = objs.find(o => o.peekable); if (!cup) return;
     const from = cup.tilt ? cup.tilt.angle : 0, to = open ? PEEK_ANGLE : 0, t0 = performance.now(), dur = 420;
@@ -2336,7 +2345,7 @@ const SHAPE = (() => {
     let board = '';
     if (pf) board += at(pf, `<div class="plate" style="min-width:0;width:100%;height:100%;padding:0 10px"><i class="rivet"></i><i class="rivet"></i><i class="rivet"></i><i class="rivet"></i><span class="crust"></span><span class="t-bid" style="font-size:${pf[2] < 140 ? 20 : 26}px">three 3s</span>${D(3, pf[2] < 140 ? 24 : 30, { seed: 80 })}</div>`);
     const my = frames[me];
-    // THE SCENE. Every cup and my dice are bodies on the board, projected by R3 from a camera over its
+    // THE SCENE. Every cup and my dice are bodies on the board, projected by R3 from a camera over the near edge (EYE_DOWN) of its
     // centre. The other seats' cups stand at their badges (mouth radius 22); mine stands in my band over
     // my five dice, which sit in a rough ring (72 degrees apart on a ring that keeps turned dice from
     // touching: centre spacing 1.7 of a side, the diagonal is 1.41; each a little off its station and
