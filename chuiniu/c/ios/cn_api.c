@@ -614,10 +614,17 @@ static float lift_at(uint32_t now_ms)
     return f.prog[b];
 }
 
-int cn_api_stage_prepare(uint32_t now_ms, float peek)
+float cn_api_stage_lift(uint32_t now_ms) { return lift_at(now_ms); }
+
+int cn_api_stage_prepare_at(uint32_t now_ms, float peek, float lift)
 {
-    return stage_inited && cn_stage_prepare(&STAGE, now_ms, peek, lift_at(now_ms));
+    return stage_inited && cn_stage_prepare(&STAGE, now_ms, peek, lift);
 }
+
+int cn_api_stage_prepare(uint32_t now_ms, float peek) { return cn_api_stage_prepare_at(now_ms, peek, lift_at(now_ms)); }
+
+_Static_assert(CN_API_STAGE_RGBA == CN_SCENE_OUT_RGBA && CN_API_STAGE_CA == CN_SCENE_OUT_PREMUL_BGRA, "the forms");
+void cn_api_stage_output(int form) { cn_scene_output(form); }
 
 void cn_api_stage_band(int pass, int band, int nbands) { if (stage_inited) cn_stage_band(&STAGE, pass, band, nbands); }
 

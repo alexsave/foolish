@@ -96,6 +96,24 @@ static void stage(const char *pack_path)
     const uint32_t banded = px ? fnv(px, (size_t)sh->w * sh->h * 4) : 0;
     px = cn_api_stage_frame(h->roll_at_ms + 900, 0);
     OK(px && fnv(px, (size_t)sh->w * sh->h * 4) == banded, "16 bands are the one thread's bytes");
+    /* off the main thread: the lift sampled with the clock, the frame prepared with it, the same bytes */
+    OK(cn_api_stage_lift(lift0) == 0 && cn_api_stage_lift(lift1) == 1, "the lift: down at the LIFT beat's start, up at its end");
+    OK(cn_api_stage_prepare_at(h->roll_at_ms + 900, 0, cn_api_stage_lift(h->roll_at_ms + 900)) == 1, "prepared with the lift given");
+    for (int pass = 0; pass < CN_STAGE_PASSES; pass++)
+        for (int i = 0; i < CN_STAGE_BANDS; i++) cn_api_stage_band(pass, i, CN_STAGE_BANDS);
+    px = cn_api_stage_pixels();
+    OK(px && fnv(px, (size_t)sh->w * sh->h * 4) == banded, "the same bytes as prepare");
+    /* Core Animation's form: every pixel's colour at most its alpha */
+    cn_api_stage_output(CN_API_STAGE_CA);
+    px = cn_api_stage_frame(h->roll_at_ms + 900, 0);
+    int over = 0, partial = 0;
+    for (size_t i = 0; px && i < (size_t)sh->w * sh->h; i++) {
+        const uint8_t *q = &px[i * 4];
+        over += q[0] > q[3] || q[1] > q[3] || q[2] > q[3];
+        partial += q[3] > 0 && q[3] < 255;
+    }
+    OK(px && over == 0 && partial > 0, "premultiplied: no colour past its alpha, and some pixels part-covered");
+    cn_api_stage_output(CN_API_STAGE_RGBA);
 
     /* purge, free, a new arena: the same bytes */
     cn_api_stage_purge();

@@ -413,14 +413,20 @@ public final class BridgeKernel: Kernel {
 /// a begin only bakes the layout and the throws into the bridge's handle, so
 /// no begin, the first of a process included, takes the arena; the first
 /// frame attaches it (cn_api_stage_attach) and a purge frees it.
+///
+/// THE STAGE'S OWN QUEUE. Every call that touches the renderer (a begin, a
+/// frame, the arena, a purge, the bubble) runs on one serial queue
+/// (`StageWorker`), so no two run at once and the arena has one owner. A
+/// frame drawn for the display (`submit`) runs there while the main thread
+/// goes on; a begin, a purge or a frame asked for at once (`frame`) waits
+/// there for the one in flight. What a frame reads of the resident game (the
+/// reveal's lift, from the current plan) is sampled on the main thread with
+/// the clock, at the submit: the queue reads nothing of the resident.
 @MainActor
 public final class BridgeStage: TableStage {
     public static let shared = BridgeStage()
 
-    private var arena: UnsafeMutableRawPointer?
-    private var pack: UnsafeMutablePointer<UInt8>?
-    private var packCount = 0
-    private var inited = false
+    private let worker = StageWorker()
     /// The table or reveal on show, to begin again after a bubble.
     private var onShow: (screen: StageScreen, drawer: CGSize, scale: CGFloat, roll: Bool)?
 
@@ -431,37 +437,19 @@ public final class BridgeStage: TableStage {
         return try? reader(p)
     }
 
-    /// The pack and the stage's init (once a process: the stage keeps
-    /// pointing into the pack); with `arena`, an arena too, the first frame
-    /// and the first after a purge.
-    private func ready(arena need: Bool) -> Bool {
-        guard BridgeKernel.layoutMatches else { return false }
-        if pack == nil {
-            guard let url = Bundle(for: BridgeStage.self).url(forResource: "cn_tex", withExtension: "pack"),
-                  let data = try? Data(contentsOf: url) else { return false }
-            let p = UnsafeMutablePointer<UInt8>.allocate(capacity: data.count)
-            data.copyBytes(to: p, count: data.count)
-            pack = p; packCount = data.count
-        }
-        if !inited {
-            guard cn_api_stage_init(pack, packCount) == 0 else { return false }
-            inited = true
-        }
-        if arena == nil && need {
-            let a = UnsafeMutableRawPointer.allocate(byteCount: CN_STAGE_ARENA, alignment: 16)
-            guard cn_api_stage_attach(a, CN_STAGE_ARENA) == 0 else { a.deallocate(); return false }
-            arena = a
-        }
-        return true
-    }
-
-    public var holdsArena: Bool { arena != nil }
+    public var holdsArena: Bool { worker.queue.sync { worker.arena != nil } }
     public var drawer: CGSize? { onShow?.drawer }
 
     public func begin(_ screen: StageScreen, drawer: CGSize, scale: CGFloat, roll: Bool) -> CnStageHudSnap? {
-        guard ready(arena: false) else { return nil }
+        guard BridgeKernel.layoutMatches else { return nil }
         if screen != .bubble { onShow = (screen, drawer, scale, roll) }
-        return Self.snap(cn_api_stage_begin(Int32(screen.rawValue), Float(drawer.width), Float(drawer.height), Float(scale), roll ? 1 : 0), readCnStageHud)
+        // on the queue, after any frame in flight; the main thread waits, so
+        // the resident the begin reads cannot change under it
+        let w = worker
+        return w.queue.sync { () -> CnStageHudSnap? in
+            guard w.ready(arena: false) else { return nil }
+            return Self.snap(cn_api_stage_begin(Int32(screen.rawValue), Float(drawer.width), Float(drawer.height), Float(scale), roll ? 1 : 0), readCnStageHud)
+        }
     }
 
     public func bubble(scale: CGFloat) -> BubbleFrame? {
@@ -480,8 +468,93 @@ public final class BridgeStage: TableStage {
     }
 
     public func frame(atMs ms: Int, peek: Double) -> StageFrame? {
-        guard ready(arena: true), cn_api_stage_prepare(UInt32(max(ms, 0)), Float(peek)) == 1 else { return nil }
-        let bands = CN_STAGE_BANDS
+        guard BridgeKernel.layoutMatches else { return nil }
+        let t = UInt32(max(ms, 0)), lift = cn_api_stage_lift(t), w = worker
+        return w.queue.sync { w.draw(t, Float(peek), lift, banded: true) }
+    }
+
+    public func submit(atMs ms: Int, peek: Double, then done: @escaping @MainActor (StageFrame?) -> Void) {
+        guard BridgeKernel.layoutMatches else { done(nil); return }
+        // the clock, the peek and the lift sampled now, on the main thread
+        let t = UInt32(max(ms, 0)), lift = cn_api_stage_lift(t), w = worker
+        w.queue.async {
+            let f = w.draw(t, Float(peek), lift, banded: true)
+            DispatchQueue.main.async { MainActor.assumeIsolated { done(f) } }
+        }
+    }
+
+    public func frameOnOneThread(atMs ms: Int, peek: Double) -> StageFrame? {
+        guard BridgeKernel.layoutMatches else { return nil }
+        let t = UInt32(max(ms, 0)), lift = cn_api_stage_lift(t), w = worker
+        return w.queue.sync { w.draw(t, Float(peek), lift, banded: false) }
+    }
+
+    public func peekEase(_ t: Double) -> Double { Double(cn_api_peek_ease(Float(t))) }
+
+    public func done(atMs ms: Int) -> Bool { worker.queue.sync { cn_api_stage_done(UInt32(max(ms, 0))) == 1 } }
+
+    public func purge() {
+        let w = worker
+        w.queue.sync { w.purge() }
+    }
+
+    /// How many frames drew at once at most since the last ask (the tests':
+    /// the queue is serial, so 1).
+    public var drawsAtOnce: Int { worker.queue.sync { worker.takeMostAtOnce() } }
+}
+
+/// The stage's queue and what only it touches: the pack, the stage's init,
+/// the arena. Not on the main actor: every method here runs on `queue`.
+final class StageWorker: @unchecked Sendable {
+    let queue = DispatchQueue(label: "chuiniu.stage", qos: .userInteractive)
+    private(set) var arena: UnsafeMutableRawPointer?
+    private var pack: UnsafeMutablePointer<UInt8>?
+    private var packCount = 0
+    private var inited = false
+    /// frames drawing now, and the most at once (guarded by its own lock: a
+    /// count that a queue that was not serial would push past 1)
+    private let counting = NSLock()
+    private var drawing = 0, mostAtOnce = 0
+
+    /// The pack and the stage's init (once a process: the stage keeps
+    /// pointing into the pack; its frames are Core Animation's own form,
+    /// premultiplied BGRA, which it draws without redrawing them first); with
+    /// `arena`, an arena too, the first frame and the first after a purge.
+    func ready(arena need: Bool) -> Bool {
+        dispatchPrecondition(condition: .onQueue(queue))
+        if pack == nil {
+            guard let url = Bundle(for: StageWorker.self).url(forResource: "cn_tex", withExtension: "pack"),
+                  let data = try? Data(contentsOf: url) else { return false }
+            let p = UnsafeMutablePointer<UInt8>.allocate(capacity: data.count)
+            data.copyBytes(to: p, count: data.count)
+            pack = p; packCount = data.count
+        }
+        if !inited {
+            guard cn_api_stage_init(pack, packCount) == 0 else { return false }
+            #if DEBUG
+            cn_api_stage_output(ChuiniuDev.straightFrames ? CN_API_STAGE_RGBA : CN_API_STAGE_CA)
+            #else
+            cn_api_stage_output(CN_API_STAGE_CA)
+            #endif
+            inited = true
+        }
+        if arena == nil && need {
+            let a = UnsafeMutableRawPointer.allocate(byteCount: CN_STAGE_ARENA, alignment: 16)
+            guard cn_api_stage_attach(a, CN_STAGE_ARENA) == 0 else { a.deallocate(); return false }
+            arena = a
+        }
+        return true
+    }
+
+    /// The frame at `t`: prepared with the lift sampled at the submit, its
+    /// passes in CN_STAGE_BANDS bands over the cores (or on this thread), the
+    /// picture copied out.
+    func draw(_ t: UInt32, _ peek: Float, _ lift: Float, banded: Bool) -> StageFrame? {
+        dispatchPrecondition(condition: .onQueue(queue))
+        counting.lock(); drawing += 1; mostAtOnce = max(mostAtOnce, drawing); counting.unlock()
+        defer { counting.lock(); drawing -= 1; counting.unlock() }
+        guard ready(arena: true), cn_api_stage_prepare_at(t, peek, lift) == 1 else { return nil }
+        let bands = banded ? CN_STAGE_BANDS : 1
         for pass in 0..<CN_STAGE_PASSES {
             DispatchQueue.concurrentPerform(iterations: bands) { i in
                 cn_api_stage_band(Int32(pass), Int32(i), Int32(bands))
@@ -490,33 +563,44 @@ public final class BridgeStage: TableStage {
         return Self.drawn()
     }
 
-    public func frameOnOneThread(atMs ms: Int, peek: Double) -> StageFrame? {
-        guard ready(arena: true), cn_api_stage_frame(UInt32(max(ms, 0)), Float(peek)) != nil else { return nil }
-        return Self.drawn()
+    func purge() {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard let a = arena else { return }
+        cn_api_stage_purge()
+        a.deallocate()
+        arena = nil
     }
 
-    public func peekEase(_ t: Double) -> Double { Double(cn_api_peek_ease(Float(t))) }
+    func takeMostAtOnce() -> Int {
+        counting.lock(); defer { counting.unlock() }
+        let m = mostAtOnce
+        mostAtOnce = 0
+        return m
+    }
 
-    /// The picture the kernel has just drawn, copied out.
+    /// Core Animation's own form (in a Debug build `dev.straight` asks for the old straight RGBA)
+    private static var form: CGBitmapInfo {
+        #if DEBUG
+        if ChuiniuDev.straightFrames { return CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue) }
+        #endif
+        return CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+    }
+
+    /// The picture the kernel has just drawn, copied out: premultiplied BGRA,
+    /// alpha first in a little-endian word, so Core Animation draws it as it
+    /// is (premultiplied RGBA it still redrew into an image of its own on the
+    /// main thread every frame: `sample`'s CA::Render::prepare_image).
     private static func drawn() -> StageFrame? {
-        guard let shot = Self.snap(cn_api_stage_shot(), readCnStageShot), shot.ok == 1,
+        guard let p = cn_api_stage_shot(), let shot = try? readCnStageShot(p), shot.ok == 1,
               let px = cn_api_stage_pixels() else { return nil }
         // the pixels are the kernel's until the next prepare: copied out here
         let bytes = Data(bytes: px, count: shot.w * shot.h * 4)
         guard let provider = CGDataProvider(data: bytes as CFData),
               let image = CGImage(width: shot.w, height: shot.h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: shot.w * 4,
-                                  space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue),
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: Self.form,
                                   provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)
         else { return nil }
         return StageFrame(shot: shot, image: image)
-    }
-
-    public func done(atMs ms: Int) -> Bool { cn_api_stage_done(UInt32(max(ms, 0))) == 1 }
-
-    public func purge() {
-        guard let a = arena else { return }
-        cn_api_stage_purge()
-        a.deallocate()
-        arena = nil
     }
 }

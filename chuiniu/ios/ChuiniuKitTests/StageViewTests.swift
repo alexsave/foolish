@@ -144,6 +144,10 @@ final class StageViewTests: XCTestCase {
             return real.begin(screen, drawer: drawer, scale: scale, roll: roll)
         }
         func frame(atMs ms: Int, peek: Double) -> StageFrame? { frames += 1; return real.frame(atMs: ms, peek: peek) }
+        func submit(atMs ms: Int, peek: Double, then done: @escaping @MainActor (StageFrame?) -> Void) {
+            frames += 1
+            real.submit(atMs: ms, peek: peek, then: done)
+        }
         func frameOnOneThread(atMs ms: Int, peek: Double) -> StageFrame? { real.frameOnOneThread(atMs: ms, peek: peek) }
         func peekEase(_ t: Double) -> Double { real.peekEase(t) }
         func done(atMs ms: Int) -> Bool { real.done(atMs: ms) }
@@ -168,7 +172,7 @@ final class StageViewTests: XCTestCase {
         view.layoutIfNeeded()
         view.wake()
         director.advance(0.016)
-        _ = director.frame()
+        director.requestFrame()
         XCTAssertEqual(spy.begins, 0, "nothing begun for a drawer with no size")
         XCTAssertEqual(spy.frames, 0, "no frame for a view with no size")
 
@@ -179,6 +183,8 @@ final class StageViewTests: XCTestCase {
         view.wake()
         XCTAssertEqual(spy.begins, 1)
         XCTAssertEqual(spy.frames, 1, "one still frame, drawn once")
+        drain(director)
+        XCTAssertNotNil(director.last, "it landed")
         XCTAssertEqual(view.canvas.frame.width, CGFloat(director.last?.shot.canvas[2] ?? 0), "at the shot's canvas")
 
         // shrunk to nothing: the link stops and nothing more is asked
@@ -186,9 +192,19 @@ final class StageViewTests: XCTestCase {
         view.layoutIfNeeded()
         director.setPeek(open: true, animated: true)
         view.wake()
+        drain(director)
         XCTAssertEqual(spy.frames, 1, "a view shrunk to nothing asks for no frame")
         window.isHidden = true
     }
+
+    /// The main run loop turned until the director's frame in flight has
+    /// landed (a frame lands on the main queue).
+    private func drain(_ d: StageDirector, file: StaticString = #filePath, line: UInt = #line) {
+        let until = Date().addingTimeInterval(20)
+        while d.inFlight, Date() < until { RunLoop.main.run(until: Date().addingTimeInterval(0.002)) }
+        XCTAssertFalse(d.inFlight, "the frame landed", file: file, line: line)
+    }
+    private static func bytes(_ f: StageFrame?) -> Data { (f?.image.dataProvider?.data as Data?) ?? Data() }
 
     // MARK: the tap
 
@@ -274,5 +290,127 @@ final class StageViewTests: XCTestCase {
             XCTAssertTrue(a == b, "at \(ms) ms, peek \(peek): the bands' bytes are one thread's")
         }
         stage.purge()
+    }
+
+    // MARK: off the main thread
+
+    /// THE STAGE'S QUEUE: a submitted frame is drawn off the main thread (the
+    /// submit returns before it lands, and it lands on the main thread), one
+    /// at a time, in the order asked, each the bytes `frame` draws at once at
+    /// the same clock; and the picture is Core Animation's own form,
+    /// premultiplied BGRA, tagged so.
+    func testSubmittedFramesAreDrawnOffTheMainThreadOneAtATimeInOrder() throws {
+        try started(seats: 6)
+        let stage = try XCTUnwrap(KernelSeam.stage() as? BridgeStage)
+        let hud = try XCTUnwrap(stage.begin(.table, drawer: CGSize(width: 375, height: 541), scale: 3, roll: true))
+        _ = stage.drawsAtOnce
+        let asked = (0..<4).map { hud.rollAtMs + 150 * $0 }
+        var landed: [(ms: Int, frame: StageFrame?, onMain: Bool)] = []
+        for ms in asked {
+            stage.submit(atMs: ms, peek: 0) { f in landed.append((ms, f, Thread.isMainThread)) }
+        }
+        XCTAssertTrue(landed.isEmpty, "the submits returned before any frame was drawn")
+        let until = Date().addingTimeInterval(20)
+        while landed.count < asked.count, Date() < until { RunLoop.main.run(until: Date().addingTimeInterval(0.002)) }
+        XCTAssertEqual(landed.map(\.ms), asked, "landed in the order asked")
+        XCTAssertTrue(landed.allSatisfy(\.onMain), "each lands on the main thread")
+        XCTAssertEqual(stage.drawsAtOnce, 1, "never two frames drawing at once")
+        for l in landed {
+            let now = try XCTUnwrap(stage.frame(atMs: l.ms, peek: 0))
+            XCTAssertTrue(Self.bytes(l.frame) == Self.bytes(now) && !Self.bytes(now).isEmpty, "at \(l.ms) ms: the queue's bytes are the bytes drawn at once")
+        }
+        // premultiplied: tagged so, and no colour past its pixel's alpha
+        let f = try XCTUnwrap(landed.last?.frame)
+        XCTAssertEqual(f.image.alphaInfo, .premultipliedFirst)
+        XCTAssertEqual(f.image.byteOrderInfo, .order32Little)
+        let px = [UInt8](Self.bytes(f))
+        var over = 0, partial = 0
+        for i in stride(from: 0, to: px.count, by: 4) {
+            let a = px[i + 3]
+            if px[i] > a || px[i + 1] > a || px[i + 2] > a { over += 1 }
+            if a > 0 && a < 255 { partial += 1 }
+        }
+        XCTAssertEqual(over, 0, "premultiplied: no colour past its alpha")
+        XCTAssertGreaterThan(partial, 1000, "the table's shadow and the edges are part-covered")
+        stage.purge()
+    }
+
+    /// A PURGE WHILE A FRAME DRAWS waits for it: the frame lands whole, the
+    /// arena is gone after, and the next frame (a new arena) draws the same
+    /// bytes.
+    func testAPurgeDuringADrawWaitsForItAndTheNextFrameIsTheSame() throws {
+        try started(seats: 6)
+        let stage = KernelSeam.stage()
+        let hud = try XCTUnwrap(stage.begin(.table, drawer: CGSize(width: 430, height: 830), scale: 3, roll: true))
+        let ms = hud.rollAtMs + 600
+        var landed: StageFrame??
+        stage.submit(atMs: ms, peek: 0) { landed = .some($0) }
+        stage.purge()
+        XCTAssertFalse(stage.holdsArena, "purged")
+        let until = Date().addingTimeInterval(20)
+        while landed == nil, Date() < until { RunLoop.main.run(until: Date().addingTimeInterval(0.002)) }
+        let drawn = try XCTUnwrap(landed ?? nil, "the frame in flight was drawn before the arena went")
+        let again = try XCTUnwrap(stage.frame(atMs: ms, peek: 0))
+        XCTAssertTrue(stage.holdsArena, "the next frame took a new arena")
+        XCTAssertEqual(Self.bytes(drawn), Self.bytes(again), "the same bytes")
+        stage.purge()
+    }
+
+    /// THE DIRECTOR KEEPS ONE FRAME IN FLIGHT, at the clock it asked: a second
+    /// ask while one draws asks nothing, the frame that lands is the one asked
+    /// at the clock as it was then (however far the clock has run since), and
+    /// it is the bytes the stage draws on one thread at that clock, for a
+    /// throw and for a still, peeking frame.
+    func testTheDirectorKeepsOneFrameInFlightAtTheClockItAsked() throws {
+        let me = try started(seats: 4)
+        let director = StageDirector(stage: KernelSeam.stage())
+        director.begin(request(CGSize(width: 390, height: 718), roll: true, table: me.table), planMs: nil)
+        let hud = try XCTUnwrap(director.hud)
+        while director.clockMs < Double(hud.rollAtMs) + 400 { director.advance(0.016) }
+        XCTAssertTrue(director.requestFrame(), "a frame is asked")
+        let asked = Int(director.clockMs.rounded(.down))
+        director.advance(0.016)
+        XCTAssertTrue(director.needsFrame, "the clock moved: another frame is due")
+        XCTAssertFalse(director.requestFrame(), "but not while one is in flight")
+        XCTAssertEqual(director.framesAsked, 1)
+        director.advance(0.016)
+        drain(director)
+        XCTAssertEqual(director.landedMs, [asked], "the frame landed is the one asked, at the clock it was asked at")
+        let throwFrame = try XCTUnwrap(director.last)
+        XCTAssertEqual(Self.bytes(throwFrame), Self.bytes(director.stage.frameOnOneThread(atMs: asked, peek: 0)), "the throw frame's bytes")
+        XCTAssertTrue(director.requestFrame(), "landed: the next one may be asked")
+        drain(director)
+
+        // the still frame, peeking
+        while director.live { director.advance(0.016) }
+        director.setPeek(open: true, animated: false)
+        XCTAssertTrue(director.requestFrame())
+        let still = Int(director.clockMs.rounded(.down))
+        drain(director)
+        XCTAssertEqual(director.landedMs.last, still)
+        XCTAssertEqual(Self.bytes(director.last), Self.bytes(director.stage.frameOnOneThread(atMs: still, peek: 1)), "the still frame's bytes")
+        director.stage.purge()
+    }
+
+    /// A FRAME OF AN OLDER BEGIN IS DROPPED: begun again (the drawer changed)
+    /// while a frame draws, the frame that lands is not put up; the new
+    /// screen's is.
+    func testAFrameAskedBeforeABeginIsDropped() throws {
+        let me = try started(seats: 3)
+        let director = StageDirector(stage: KernelSeam.stage())
+        var shown: [StageFrame] = []
+        director.onFrame = { shown.append($0) }
+        director.begin(request(CGSize(width: 390, height: 718), table: me.table), planMs: nil)
+        XCTAssertTrue(director.requestFrame())
+        director.begin(request(CGSize(width: 375, height: 541), table: me.table), planMs: nil)
+        drain(director)
+        XCTAssertTrue(shown.isEmpty, "the 390 by 718 frame landed after the begin and was not put up")
+        XCTAssertNil(director.last)
+        XCTAssertTrue(director.requestFrame(), "the new screen's frame")
+        drain(director)
+        XCTAssertEqual(shown.count, 1)
+        let f = try XCTUnwrap(director.last)
+        XCTAssertEqual(Self.bytes(f), Self.bytes(director.stage.frameOnOneThread(atMs: 0, peek: 0)), "it is the 375 by 541 table's")
+        director.stage.purge()
     }
 }

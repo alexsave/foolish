@@ -70,7 +70,7 @@ enum {
 #define CN_STAGE_BUBBLE_H     195
 #define CN_STAGE_SHADOW_RES   1024          /* the study's SHADOW_RES and SHADOW_DARK               */
 #define CN_STAGE_SHADOW_DARK  .55f
-#define CN_STAGE_PASSES       3             /* cn_scene's CN_SCENE_PASSES                           */
+#define CN_STAGE_PASSES       4             /* cn_scene's CN_SCENE_PASSES                           */
 #define CN_STAGE_BANDS        16            /* the bands a pass is cut into (package A: 6.8 ms at 2x) */
 #define CN_STAGE_CROWNS       CN_STAGE_SEATS
 #define CN_STAGE_ARENA        50331648      /* the arena a host hands over: CN_SCENE_ARENA_IOS, 48 MB */

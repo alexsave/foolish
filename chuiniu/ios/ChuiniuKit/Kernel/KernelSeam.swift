@@ -278,6 +278,8 @@ public enum StageScreen: Int {
 
 /// One frame: the picture and where it goes. The image goes at
 /// `shot.canvas` (flat points: it turns with the planks by the HUD's `ca`).
+/// The image is premultiplied BGRA, Core Animation's own form (it draws it
+/// without redrawing it first).
 public struct StageFrame {
     public let shot: CnStageShotSnap
     public let image: CGImage
@@ -310,9 +312,16 @@ public protocol TableStage: AnyObject {
     /// a constant: the kernel lays the table out for it (cn_lay).
     func begin(_ screen: StageScreen, drawer: CGSize, scale: CGFloat, roll: Bool) -> CnStageHudSnap?
     /// The frame `ms` into the plan's clock, my cup tipped `peek` of its full
-    /// tip; drawn in CN_STAGE_BANDS bands over the cores. nil when nothing
-    /// could be drawn.
+    /// tip; drawn in CN_STAGE_BANDS bands over the cores, now (the caller
+    /// waits, behind any frame in flight). nil when nothing could be drawn.
     func frame(atMs ms: Int, peek: Double) -> StageFrame?
+    /// THE DISPLAY'S FRAME, OFF THE MAIN THREAD: the same frame, its clock,
+    /// peek and the resident's lift sampled now, drawn on the stage's own
+    /// queue while the main thread goes on; `done` on the main actor with it
+    /// (nil when nothing could be drawn). Frames are drawn one at a time, in
+    /// the order asked; a begin, a purge or `frame` waits for the one in
+    /// flight. The same `ms` and `peek` draw the same bytes either way.
+    func submit(atMs ms: Int, peek: Double, then done: @escaping @MainActor (StageFrame?) -> Void)
     /// The same frame drawn on one thread, the reference the banded frame must
     /// equal byte for byte (the tests ask; no screen does).
     func frameOnOneThread(atMs ms: Int, peek: Double) -> StageFrame?

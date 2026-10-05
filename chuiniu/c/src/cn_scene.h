@@ -11,14 +11,18 @@
  *   cn_scene_occluder(...)           each body's footprint on the table
  *   write cn_scene_verts() / cn_scene_faces()
  *   cn_scene_render(nverts, nfaces)
- *   read cn_scene_fb(): cn_scene_fb_w() by cn_scene_fb_h() RGBA, premultiplied
- *   by nothing (the table's pixels are black-ish with alpha; bodies are opaque)
+ *   read cn_scene_fb(): cn_scene_fb_w() by cn_scene_fb_h() RGBA, straight alpha
+ *   (the table's pixels are black-ish with alpha; bodies are opaque but at their
+ *   smoothed edges), or another form after cn_scene_output
  *
  * MEMORY is the caller's block: textures (and their half-size copies, made the
  * first time a texture is drawn) grow down from its top, a frame's buffers up
  * from its bottom, and a frame that would meet the textures fails cleanly
  * (cn_scene_begin returns 0). Nothing is allocated; the caller may free the
- * block whenever no call is running, after which cn_scene_init must come first. */
+ * block whenever no call is running, after which cn_scene_init must come first.
+ * A frame keeps whole only its picture (4 bytes a pixel) and each pixel's
+ * surface (2 bytes); the depth and the rest of what the shade reads live in a
+ * strip of CN_SCENE_STRIP rows a band, drawn and shaded strip by strip. */
 #ifndef CN_SCENE_H
 #define CN_SCENE_H
 
@@ -36,6 +40,12 @@
 #define CN_SCENE_F_CAST     2   /* casts a shadow                                      */
 #define CN_SCENE_F_RECEIVE  4   /* takes the shadow (every lit thing does)             */
 #define CN_SCENE_F_RECEIVER 8   /* the table: writes only the shadow that falls on it  */
+/* THE SURFACE a face belongs to, in the flags' bits from 8 up: a body's number
+ * (1 to 65535; 0 is every unnumbered face). Where a pixel's surface (its body
+ * and its texture) differs from a neighbour's, the edges pass draws the pixel
+ * from four samples, so a silhouette is smooth; the facets of one surface are
+ * never an edge. */
+#define CN_SCENE_F_ID(n)    ((n) << 8)
 
 /* the largest shadow map: a pixel keeps its place on the map at a 64th of a texel in 16 bits */
 #define CN_SCENE_SHADOW_MAX 1024
@@ -80,28 +90,45 @@ void cn_scene_occluder(float x, float y, float r, float lift, float strength);
 int cn_scene_render(int nverts, int nfaces);
 
 /* THE SAME FRAME ON SEVERAL THREADS. cn_scene_prepare does the frame's serial
- * work (the faces' order, which are drawn, the textures' half-size copies, the
- * contact dark) and returns what cn_scene_render would. Then each pass, in order,
- * is cut into nbands horizontal bands (1 to CN_SCENE_MAX_BANDS) which may run at
- * once on any threads, every band of a pass finishing before the next pass starts
- * (on iOS: DispatchQueue.concurrentPerform(iterations: nbands) per pass). A band
- * writes only its own rows, so the picture is the same bits for any nbands.
- * Occluders are given before cn_scene_prepare. */
+ * work (the faces' order, which are drawn and each one's setup, the textures'
+ * half-size copies, the contact dark) and returns what cn_scene_render would.
+ * Then each pass, in order, is cut into nbands horizontal bands (1 to
+ * CN_SCENE_MAX_BANDS) which may run at once on any threads, every band of a pass
+ * finishing before the next pass starts (on iOS: DispatchQueue.concurrentPerform
+ * (iterations: nbands) per pass). A band writes only its own rows, so the picture
+ * is the same bits for any nbands. Occluders are given before cn_scene_prepare.
+ * Band b's working memory is its own (the strip, its faces, its edge samples):
+ * two calls with the same band never run at once. */
 #define CN_SCENE_MAX_BANDS 16
+#define CN_SCENE_STRIP     16   /* the rows a band draws and shades at a time       */
 #define CN_SCENE_PASS_SHADOW  0   /* the shadow map's rows                          */
-#define CN_SCENE_PASS_PICTURE 1   /* the picture's rows: depth, texel, normal, light */
-#define CN_SCENE_PASS_SHADE   2   /* the picture's rows again: the shadow, the shade */
-#define CN_SCENE_PASSES       3
+#define CN_SCENE_PASS_PICTURE 1   /* the picture's rows, a strip at a time: depth,
+                                     texel, normal, light, then the shadow and the shade */
+#define CN_SCENE_PASS_EDGES   2   /* the picture's rows again: each pixel on a surface's
+                                     edge drawn again from four samples           */
+#define CN_SCENE_PASS_COMMIT  3   /* each band's first and last rows' edges, held back
+                                     while the bands beside it read them          */
+#define CN_SCENE_PASSES       4
 int cn_scene_prepare(int nverts, int nfaces);
 void cn_scene_band(int pass, int band, int nbands);
 uint8_t *cn_scene_fb(void);
 int cn_scene_fb_w(void);
 int cn_scene_fb_h(void);
 
+/* THE PICTURE'S FORM from the next frame on: a pixel's four bytes in order */
+#define CN_SCENE_OUT_RGBA         0   /* R G B A, straight alpha: the default (a browser's putImageData wants it) */
+#define CN_SCENE_OUT_PREMUL_RGBA  1   /* R G B A, the colour times the alpha                                      */
+#define CN_SCENE_OUT_PREMUL_BGRA  2   /* B G R A premultiplied: Core Animation's own (alpha first, 32 bits little-
+                                         endian), which it draws as it is, where any other form it draws into a
+                                         new image of its own first, on the main thread, every frame             */
+void cn_scene_output(int form);
+
 /* profiling: the last frame's fragments shaded, box pixels walked, map texels,
- * map box pixels; and passes to leave out (1 shadow map, 2 picture, 4 shading).
- * 8 is a test's: the open table lit pixel by pixel everywhere, which must draw
- * the same bytes as the blocks it settles whole. */
+ * map box pixels, edge pixels, edge samples shaded; and passes to leave out (1
+ * shadow map, 2 picture, 4 shading, 16 the edges). 8 is a test's: the open
+ * table lit pixel by pixel everywhere, which must draw the same bytes as the
+ * blocks it settles whole. */
+#define CN_SCENE_PROFS 6
 uint32_t cn_scene_prof(int i);
 void cn_scene_skip(int mask);
 

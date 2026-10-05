@@ -538,6 +538,8 @@ int cn_stage_prepare(CnStage *st, uint32_t t_ms, float peek, float lift)
         if (o->kind == CN_OBJ_CUP) { int c = crown_of(st, o); ids[CN_TEX_CUP_CROWN] = c >= 0 ? st->crown[c].id : -1; }
         const CnMesh *m = &st->mesh[st->obj_mesh[i]];
         cn_geom_emit(m, o, st->pad_x, ids, V, vb, F, fb);
+        /* the body's number on its faces: the edges pass smooths where one body meets another (cn_scene.h) */
+        for (int f = fb; f < fb + m->ntri; f++) F[f * CN_GEOM_FF + 15] += (float)CN_SCENE_F_ID(i + 1);
         vb += m->ncorner; fb += m->ntri;
     }
     if (cn_scene_prepare(vb, fb) < 0) return 0;

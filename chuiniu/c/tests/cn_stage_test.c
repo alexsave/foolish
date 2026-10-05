@@ -267,12 +267,23 @@ static void test_memory(void)
     CHECK(cn_stage_attach(&ST, 0, 0) == CN_STAGE_E_ARENA, "a null arena is refused");
     free(small);
 
-    /* the full arena: a 2x still frame of the six-seat table on 375 by 541; on 390 by 718
-     * the frame alone is 36 MB at 2x and it is drawn at 1.5 (docs_pkgD.md has the table) */
+    /* the full arena: a 2x still frame of the six-seat table on every drawer. The frame keeps whole only its picture
+     * and each pixel's surface and face (8 bytes a pixel; package V1): 390 by 718 was 36 MB at 2x and drawn at 1.5,
+     * and 430 by 830 on their turn (its far cups lean 361 points above the board) was drawn at 1 */
     void *A = arena_new(ARENA);
     CHECK(cn_stage_attach(&ST, A, ARENA) == 0, "a 48 MB arena is taken");
     const uint8_t *fb = cn_stage_frame(&ST, 0, 0, 0, &w, &h);
-    CHECK(fb && cn_stage_shot(&ST)->scale == 1.5f, "390 by 718 at 2x does not fit 48 MB: 1.5 (scale %.1f)", cn_stage_shot(&ST)->scale);
+    CHECK(fb && cn_stage_shot(&ST)->scale == 2, "390 by 718 at 2x fits 48 MB (scale %.1f)", cn_stage_shot(&ST)->scale);
+    for (int mine = 0; mine < 2; mine++) {
+        CnStageIn tall = table_in(430, 830, 6, mine, 0, CN_STAGE_TABLE);
+        tall.scale = 2;
+        cn_stage_begin(&ST, &tall);
+        fb = cn_stage_frame(&ST, 0, 0, 0, &w, &h);
+        CHECK(fb && cn_stage_shot(&ST)->scale == 2, "430 by 830 on %s turn at 2x fits 48 MB (scale %.1f, %d by %d, %d above)", mine ? "my" : "their",
+              cn_stage_shot(&ST)->scale, w, h, ST.pad);
+        printf("  2x six seats 430x830, %s turn: %dx%d pixels, textures %.1f MB, the frame %.1f MB, of %.0f MB\n", mine ? "my" : "their", w, h,
+               (ARENA - cn_scene_room()) / 1048576.0, cn_scene_frame_bytes(ST.W, ST.H, ST.pad, 2, CN_STAGE_SHADOW_RES, 25344, 12864) / 1048576.0, ARENA / 1048576.0);
+    }
     in = table_in(375, 541, 6, 1, 0, CN_STAGE_TABLE);
     in.scale = 2;
     cn_stage_begin(&ST, &in);
@@ -348,9 +359,12 @@ static void test_bands_and_determinism(void)
     CHECK(banded(&ST, mid, 0, 4, 0) == one_mid && banded(&ST, still, .6f, 4, 0) == one_still, "begun again: the same frames");
     printf("  frames: throw at 1.2 s %08x, still peeking %08x\n", one_mid, one_still);
     /* moved in package V2: the lift starts over the table, and at 375 by 541 the far seats' cups stay down
-     * (their held cups left the drawer), so their dice lie at their stations (docs_pkgV2.md) */
-    CHECK(one_mid == 0xe41c2ebfu, "the throw frame's golden");
-    CHECK(one_still == 0x33a371c9u, "the still frame's golden");
+     * (their held cups left the drawer), so their dice lie at their stations (docs_pkgV2.md); re-pinned for
+     * package V1: the edges pass draws each pixel on a surface's edge from four samples (every other pixel is
+     * the old picture's byte for byte: cn_scene_test holds that), and every body numbers its faces; the pair is
+     * the merge of both, the same under clang, gcc 16 and ASan/UBSan */
+    CHECK(one_mid == 0x563a3970u, "the throw frame's golden");
+    CHECK(one_still == 0x50980f05u, "the still frame's golden");
     cn_stage_purge(&ST);
     free(A);
 }

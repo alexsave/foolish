@@ -9,7 +9,8 @@
  * Shared by cn_scene_test (its golden) and cn_scene_bench (its speed).
  *
  * Every number here is made with its own float arithmetic (a sine series, no libm),
- * so the frame, and the golden hash over it, is the same on every compiler. */
+ * so the frame, and the golden hash over it, is the same on every compiler. Every body (a cup, a die) numbers its
+ * faces (CN_SCENE_F_ID, 1 up), as cn_stage numbers the stage's, so the edges pass tells two bodies apart. */
 #ifndef CN_SCENE_FRAME_H
 #define CN_SCENE_FRAME_H
 
@@ -33,7 +34,7 @@ static inline float cnf_sin(float x)
 static inline float cnf_cos(float x) { return cnf_sin(x + CNF_PI / 2); }
 
 /* the builder's state: the arrays it writes and how far it has got */
-typedef struct { float *V; float *F; int nv, nf, vcap, fcap; } CnfOut;
+typedef struct { float *V; float *F; int nv, nf, vcap, fcap, body; } CnfOut;   /* body: the number its faces carry (CN_SCENE_F_ID) */
 typedef struct { float m[3][3]; float px, py, pz; } CnfPose;   /* world = m * p + pos */
 
 static inline void cnf_xf(const CnfPose *P, const float p[3], float o[3])
@@ -66,7 +67,7 @@ static inline void cnf_poly(CnfOut *o, const CnfPose *P, int k, const float (*p)
         f[0] = (float)base; f[1] = (float)(base + i); f[2] = (float)(base + i + 1);
         f[3] = uv[0][0]; f[4] = uv[0][1]; f[5] = uv[i][0]; f[6] = uv[i][1]; f[7] = uv[i + 1][0]; f[8] = uv[i + 1][1];
         f[9] = (float)tex; f[10] = 0; f[11] = 4; f[12] = 3; f[13] = 1; f[14] = 0;
-        f[15] = CN_SCENE_F_CULL | CN_SCENE_F_CAST | CN_SCENE_F_RECEIVE;
+        f[15] = (float)(CN_SCENE_F_CULL | CN_SCENE_F_CAST | CN_SCENE_F_RECEIVE | CN_SCENE_F_ID(o->body));
         o->nf++;
     }
 }
@@ -226,7 +227,7 @@ static inline int cnf_build(const CnfTex *t, int W, int H, int pad, float dpr, i
     const float L[3] = { -.45f, -.55f, 1 };
     const float eyeX = W / 2.f, eyeY = H / 2.f + .85f * H, hc = 560;
     if (!cn_scene_begin(W, H, pad, dpr, eyeX, eyeY, hc, L[0], L[1], L[2], sr, .55f, CNF_VCAP, CNF_FCAP)) return -1;
-    CnfOut o = { cn_scene_verts(), cn_scene_faces(), 0, 0, CNF_VCAP, CNF_FCAP };
+    CnfOut o = { cn_scene_verts(), cn_scene_faces(), 0, 0, CNF_VCAP, CNF_FCAP, 0 };
     const float R = 44, d_me = 24, d_far = 18;
     float seat[CNF_SEATS][2];
     seat[0][0] = W / 2.f; seat[0][1] = H * .78f;
@@ -240,14 +241,14 @@ static inline int cnf_build(const CnfTex *t, int W, int H, int pad, float dpr, i
         float yaw = .3f * s, tilt = shake * (.25f + .05f * s), lift = shake * (R * .8f);
         float cyw = cnf_cos(yaw), syw = cnf_sin(yaw), ct = cnf_cos(tilt), st = cnf_sin(tilt);
         CnfPose P = { { { cyw, -syw * ct, syw * st }, { syw, cyw * ct, -cyw * st }, { 0, st, ct } }, cx, cy, lift };
-        cnf_cup(&o, &P, R, t->side[s], t->crown[s], t->inner[s], t->floor_[s]);
+        o.body++; cnf_cup(&o, &P, R, t->side[s], t->crown[s], t->inner[s], t->floor_[s]);
         cn_scene_occluder(cx, cy, R, lift, .55f);
         /* the dice: a ring in front of the cup, toward me */
         for (int k = 0; k < CNF_DICE; k++) {
             float a = 2 * CNF_PI * k / CNF_DICE + .4f * s, dx = cx + cnf_cos(a) * dd * 1.1f, dy = cy + R + dd * 1.6f + cnf_sin(a) * dd * 1.1f, dyaw = .7f * k + .2f * s;
             float c = cnf_cos(dyaw), sn = cnf_sin(dyaw);
             CnfPose D = { { { c, -sn, 0 }, { sn, c, 0 }, { 0, 0, 1 } }, dx, dy, dd / 2 };
-            cnf_die(&o, &D, dd, t->atlas[s]);
+            o.body++; cnf_die(&o, &D, dd, t->atlas[s]);
             cn_scene_occluder(dx, dy, dd * .62f, 0, .5f);
         }
     }
