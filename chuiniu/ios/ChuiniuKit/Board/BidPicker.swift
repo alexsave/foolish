@@ -1,5 +1,6 @@
-// BidPicker.swift - the bid control: a quantity stepper, face chips 2 to 6,
-// Raise and Call.
+// BidPicker.swift - the bid control on the stage's shelf (flat, never
+// turned): a quantity stepper, face chips 2 to 6, then Call and Raise (the
+// study's order: Liar left, Raise right).
 //
 // A PURE COMPONENT. It is handed the kernel's `Menu` and two closures; it
 // never ranks one bid against another. Raise is lit exactly when the chosen
@@ -7,6 +8,9 @@
 // (`Menu.minQuantityByFace`), and Call exactly when the kernel says
 // `callAllowed`. Both verdicts are the static functions below, so the view
 // and the tests read the same two lines.
+//
+// NOTHING IS STAGED BEFORE MY DICE REST (DECISIONS I21): `ready` is the
+// stage's verdict (StageDirector.atRest); until it, both verbs are sunk.
 
 import SwiftUI
 
@@ -16,12 +20,15 @@ public struct BidPicker: View {
     public let callTitle: String
     public let onRaise: (Bid) -> Void
     public let onCall: () -> Void
+    /// My dice are at rest: a move may be staged.
+    public let ready: Bool
 
     @State private var quantity: Int
     @State private var face: Int
 
     public init(menu: Menu, raiseTitle: String, callTitle: String,
-                onRaise: @escaping (Bid) -> Void, onCall: @escaping () -> Void) {
+                ready: Bool = true, onRaise: @escaping (Bid) -> Void, onCall: @escaping () -> Void) {
+        self.ready = ready
         self.menu = menu
         self.raiseTitle = raiseTitle
         self.callTitle = callTitle
@@ -55,11 +62,11 @@ public struct BidPicker: View {
 
     public var body: some View {
         let range = Self.quantityRange(menu: menu)
-        VStack(spacing: 10) {
+        VStack(spacing: 8) {
             HStack(spacing: 10) {
                 stepButton("minus", enabled: quantity > range.lowerBound) { quantity -= 1 }
                 Text(verbatim: "\(quantity)")
-                    .font(.system(size: 26, weight: .heavy).monospacedDigit())
+                    .font(.system(size: 24, weight: .heavy).monospacedDigit())
                     .onFeltText()
                     .frame(minWidth: 40)
                 stepButton("plus", enabled: quantity < range.upperBound) { quantity += 1 }
@@ -70,12 +77,12 @@ public struct BidPicker: View {
                     }
                 }
             }
-            HStack(spacing: 12) {
-                WoodButton(title: raiseTitle, height: 44,
-                           enabled: Self.raiseEnabled(quantity: quantity, face: face, menu: menu)) {
+            HStack(spacing: 10) {
+                WoodButton(title: callTitle, height: 40, enabled: ready && Self.callEnabled(menu: menu)) { onCall() }
+                WoodButton(title: raiseTitle, height: 40,
+                           enabled: ready && Self.raiseEnabled(quantity: quantity, face: face, menu: menu)) {
                     onRaise(Bid(quantity: quantity, face: face))
                 }
-                WoodButton(title: callTitle, height: 44, enabled: Self.callEnabled(menu: menu)) { onCall() }
             }
         }
         .onChange(of: menu) { _, m in
@@ -85,7 +92,7 @@ public struct BidPicker: View {
     }
 
     private func stepButton(_ symbol: String, enabled: Bool, _ action: @escaping () -> Void) -> some View {
-        SquareButton(systemImage: symbol, side: 36, accessibility: symbol, action: action)
+        SquareButton(systemImage: symbol, side: 34, accessibility: symbol, action: action)
             .disabled(!enabled)
             .opacity(enabled ? 1 : 0.45)
     }
