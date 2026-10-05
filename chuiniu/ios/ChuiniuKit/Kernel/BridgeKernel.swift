@@ -375,6 +375,12 @@ public final class BridgeKernel: Kernel {
 /// texture pack is ChuiniuKit's cn_tex.pack, copied once into memory that
 /// outlives the stage. Every struct is read through the generated readers,
 /// and a stale pair (BridgeKernel.layoutMatches) reads nothing.
+///
+/// THE ARENA IS TAKEN BY A FRAME. A begin only bakes the layout and the
+/// throws into the bridge's handle, so after a purge it takes no memory; the
+/// very first begin of a process is the exception, because cn_api_stage_init
+/// opens the pack and takes the arena in one call (a C request is out to
+/// split them).
 @MainActor
 public final class BridgeStage: TableStage {
     public static let shared = BridgeStage()
@@ -383,6 +389,8 @@ public final class BridgeStage: TableStage {
     private var pack: UnsafeMutablePointer<UInt8>?
     private var packCount = 0
     private var inited = false
+    /// The table or reveal on show, to begin again after a bubble.
+    private var onShow: (screen: StageScreen, drawer: CGSize, scale: CGFloat, roll: Bool)?
 
     private init() {}
 
@@ -391,8 +399,10 @@ public final class BridgeStage: TableStage {
         return try? reader(p)
     }
 
-    /// The arena and the pack, the first time and after a purge.
-    private func ready() -> Bool {
+    /// The pack (once a process: the stage keeps pointing into it) and the
+    /// stage's init; with `arena`, an arena too, the first time and after a
+    /// purge.
+    private func ready(arena need: Bool) -> Bool {
         guard BridgeKernel.layoutMatches else { return false }
         if pack == nil {
             guard let url = Bundle(for: BridgeStage.self).url(forResource: "cn_tex", withExtension: "pack"),
@@ -401,7 +411,7 @@ public final class BridgeStage: TableStage {
             data.copyBytes(to: p, count: data.count)
             pack = p; packCount = data.count
         }
-        if arena == nil {
+        if arena == nil && (need || !inited) {
             let a = UnsafeMutableRawPointer.allocate(byteCount: CN_STAGE_ARENA, alignment: 16)
             let rc = inited ? cn_api_stage_attach(a, CN_STAGE_ARENA) : cn_api_stage_init(a, CN_STAGE_ARENA, pack, packCount)
             guard rc == 0 else { a.deallocate(); return false }
@@ -410,13 +420,32 @@ public final class BridgeStage: TableStage {
         return true
     }
 
+    public var holdsArena: Bool { arena != nil }
+    public var drawer: CGSize? { onShow?.drawer }
+
     public func begin(_ screen: StageScreen, drawer: CGSize, scale: CGFloat, roll: Bool) -> CnStageHudSnap? {
-        guard ready() else { return nil }
+        guard ready(arena: false) else { return nil }
+        if screen != .bubble { onShow = (screen, drawer, scale, roll) }
         return Self.snap(cn_api_stage_begin(Int32(screen.rawValue), Float(drawer.width), Float(drawer.height), Float(scale), roll ? 1 : 0), readCnStageHud)
     }
 
+    public func bubble(scale: CGFloat) -> BubbleFrame? {
+        let back = onShow
+        defer {
+            // ONE ARENA, AND NONE AFTER THE BUBBLE: the picture is copied out,
+            // so the arena goes; the screen on show is begun again as it was
+            // (a begin takes no arena), and its next frame takes one
+            purge()
+            if let b = back { _ = begin(b.screen, drawer: b.drawer, scale: b.scale, roll: b.roll) }
+        }
+        let size = CGSize(width: CN_STAGE_BUBBLE_W, height: CN_STAGE_BUBBLE_H)
+        guard let hud = begin(.bubble, drawer: size, scale: scale, roll: false),
+              let frame = frame(atMs: 0, peek: 0) else { return nil }
+        return BubbleFrame(hud: hud, frame: frame)
+    }
+
     public func frame(atMs ms: Int, peek: Double) -> StageFrame? {
-        guard ready(), cn_api_stage_prepare(UInt32(max(ms, 0)), Float(peek)) == 1 else { return nil }
+        guard ready(arena: true), cn_api_stage_prepare(UInt32(max(ms, 0)), Float(peek)) == 1 else { return nil }
         let bands = CN_STAGE_BANDS
         for pass in 0..<CN_STAGE_PASSES {
             DispatchQueue.concurrentPerform(iterations: bands) { i in

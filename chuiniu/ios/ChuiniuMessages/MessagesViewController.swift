@@ -60,6 +60,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         if ChuiniuDev.empty { return }
 #endif
         view.backgroundColor = .clear
+        watchHostBackground()
         host.onStage = { [weak self] caption, collapse in self?.stageResident(caption: caption, collapse: collapse) }
         let h = UIHostingController(rootView: ChuiniuRoot(host: host))
         h.view.backgroundColor = .clear
@@ -87,6 +88,15 @@ final class MessagesViewController: MSMessagesAppViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         if drawerUp { hosting?.view.isHidden = false }
+#if DEBUG
+        // THE DRAWER IS MEASURED: the hosting view fills these bounds, the
+        // table screen begins the stage with the size it is given, and every
+        // collapse, expand or rotation lays it out again. The rig reads this
+        // line to check the two agree (chuiniu/docs/SIM_VERIFICATION.md).
+        let b = view.bounds.size
+        let s = KernelSeam.stage().drawer
+        ChuiniuDev.log.info("drawer \(Int(b.width), privacy: .public)x\(Int(b.height), privacy: .public) stage \(s.map { "\(Int($0.width))x\(Int($0.height))" } ?? "none", privacy: .public) \(self.presentationStyle == .expanded ? "expanded" : "compact", privacy: .public)")
+#endif
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -143,6 +153,7 @@ final class MessagesViewController: MSMessagesAppViewController {
     override func willResignActive(with conversation: MSConversation) {
         super.willResignActive(with: conversation)
         conversationActive = false
+        letGo("resigning active")
     }
 
     override func didSelect(_ message: MSMessage, conversation: MSConversation) {
@@ -307,8 +318,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         let message = MSMessage(session: sessionFor(url, conversation))
         message.url = url
         let layout = MSMessageTemplateLayout()
-        layout.image = BubbleSnapshot.render(table: host.table, title: host.word(.gameTitle),
-                                             scheme: traitCollection.userInterfaceStyle == .dark ? .dark : .light)
+        layout.image = bubbleImage(for: url)
         layout.caption = caption
         message.layout = layout
         message.summaryText = caption
@@ -334,6 +344,55 @@ final class MessagesViewController: MSMessagesAppViewController {
             guard self.stageGeneration == generation else { return }
             self.insert(message, generation: generation, in: conversation)
         }
+    }
+
+    /// The staged link's picture, drawn once a state: the same link staged
+    /// again (an insert retried, a cancel and a re-stage) reuses it. Drawn
+    /// from the resident at this moment, at this screen's scale; the stage's
+    /// arena is freed again before this returns (TableStage.bubble).
+    private var bubble: (url: URL, image: UIImage)?
+
+    private func bubbleImage(for url: URL) -> UIImage? {
+        if let b = bubble, b.url == url { return b.image }
+        let image = BubbleSnapshot.render(table: host.table, title: host.word(.gameTitle),
+                                          scheme: traitCollection.userInterfaceStyle == .dark ? .dark : .light,
+                                          scale: traitCollection.displayScale)
+        bubble = image.map { (url, $0) }
+        return image
+    }
+
+    // MARK: memory
+
+    /// AN EXTENSION HAS A HARD MEMORY LIMIT AND A WATCHDOG (foolish's
+    /// procedural wood took one down on a real phone: shared/swift/Textures/
+    /// WoodTexture.swift). The stage's arena is the one big block (48 MB), so
+    /// it goes whenever the system asks or the extension leaves the screen:
+    /// the next frame takes it again and draws the same picture (I20). The
+    /// bubble picture kept for a re-stage goes too; it is drawn again if
+    /// asked.
+    override func didReceiveMemoryWarning() {
+        super.didReceiveMemoryWarning()
+        letGo("memory warning")
+    }
+
+    private func letGo(_ why: String) {
+        KernelSeam.stage().purge()
+        bubble = nil
+#if DEBUG
+        ChuiniuDev.log.info("let go of the arena: \(why, privacy: .public)")
+#endif
+    }
+
+    private var hostBackground: NSObjectProtocol?
+
+    /// The host app (Messages) going to the background is the extension
+    /// going away from the screen.
+    private func watchHostBackground() {
+        guard hostBackground == nil else { return }
+        hostBackground = NotificationCenter.default.addObserver(
+            forName: .NSExtensionHostDidEnterBackground, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.letGo("host in the background") }
+            }
     }
 
     /// Every waiter of the stage in progress sees a newer generation and

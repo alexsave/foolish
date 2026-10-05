@@ -283,16 +283,31 @@ public struct StageFrame {
     public let image: CGImage
 }
 
+/// The transcript picture: the stage's bubble frame and the HUD that places
+/// the names and the plate on it (CN_STAGE_BUBBLE, 300 by 195 points).
+public struct BubbleFrame {
+    public let hud: CnStageHudSnap
+    public let frame: StageFrame
+}
+
 /// THE TABLE'S PICTURE IS THE KERNEL'S. A host begins a screen of the resident
 /// game and asks for frames on the clock it samples the beats on; every place
 /// on the screen (cups, names, plate, shelf, my cup's tap target, the camera's
 /// turn) is in the HUD, read through the generated reader. There is one stage
 /// a process (the renderer is one).
+///
+/// MEMORY. The arena (CN_STAGE_ARENA, 48 MB) is taken by the first FRAME, not
+/// by a begin, and given back by `purge` (a memory warning, the extension
+/// going away) and after every bubble; the next frame takes it again and
+/// draws the same picture. One stage, so one arena: the bubble and the live
+/// table never hold two.
 @MainActor
 public protocol TableStage: AnyObject {
     /// Begin `screen` for a drawer of `drawer` points on a `scale` device;
     /// `roll` throws the round from the current plan's SHAKE beat. nil when
-    /// the kernel has nothing to draw (or the readers are stale).
+    /// the kernel has nothing to draw (or the readers are stale). `drawer` is
+    /// the drawer as the host measured it (the hosting view's bounds), never
+    /// a constant: the kernel lays the table out for it (cn_lay).
     func begin(_ screen: StageScreen, drawer: CGSize, scale: CGFloat, roll: Bool) -> CnStageHudSnap?
     /// The frame `ms` into the plan's clock, my cup tipped `peek` of its full
     /// tip; drawn in CN_STAGE_BANDS bands over the cores. nil when nothing
@@ -303,6 +318,18 @@ public protocol TableStage: AnyObject {
     /// A memory warning: the arena is freed; the next frame takes a new one
     /// and draws the same picture.
     func purge()
+    /// THE BUBBLE: the resident game's transcript picture, drawn once at
+    /// `scale` (the kernel clamps it: 2 at most), the arena freed after it.
+    /// A table or reveal begun before is begun again exactly as it was (the
+    /// same HUD, the same frame at the same time on its clock), so a screen
+    /// on show never draws the bubble's table. nil when there is nothing to
+    /// draw (a lobby: no dice yet).
+    func bubble(scale: CGFloat) -> BubbleFrame?
+    /// The arena is allocated now.
+    var holdsArena: Bool { get }
+    /// The drawer the table or reveal on show was begun for, nil before one
+    /// is: what the host measured, for a Debug check against its bounds.
+    var drawer: CGSize? { get }
 }
 
 public enum KernelSeam {

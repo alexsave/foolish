@@ -4,8 +4,12 @@
 
 #if DEBUG || SOLO_TESTING
 import Foundation
+import os
 
 public enum ChuiniuDev {
+    /// The Debug log the rig reads (RIG_LOG_SUBSYSTEM in Tools/rig.env).
+    public static let log = Logger(subsystem: "cards.chuiniu", category: "dev")
+
     /// The group the rig writes into (RIG_APP_GROUP in Tools/rig.env).
     public static let group = (Bundle.main.object(forInfoDictionaryKey: "ChuiniuAppGroup") as? String)
         ?? "group.cards.chuiniu"
