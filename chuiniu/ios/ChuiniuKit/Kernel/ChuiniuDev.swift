@@ -37,6 +37,15 @@ public enum ChuiniuDev {
     /// word's, exactly as cn_twophone_test.c's `be()` switches phone. Read
     /// fresh on every open, never cached, because it changes between two
     /// openings a second apart.
+    /// `dev.fill` (`echo 6 > dev.fill`), ONE-SHOT: the next game this
+    /// extension makes from the + menu is a group lobby filled to that many
+    /// seats (2 to 6) by made-up people and started, so the rig gets a table
+    /// of six in one opening (BridgeKernel.devFill). The rig can play two
+    /// people on one simulator (`dev.seat`), but six would be five rounds of
+    /// kill, switch, tap and join just to sit down; the memory and bubble
+    /// checks need the table, not the sitting down. Taken (deleted) on read.
+    public static func takeFill() -> Int? { files.take("dev.fill").flatMap { Int($0) } }
+
     public static var person: String? {
         guard let w = files.string("dev.seat")?.trimmingCharacters(in: .whitespacesAndNewlines), !w.isEmpty
         else { return nil }

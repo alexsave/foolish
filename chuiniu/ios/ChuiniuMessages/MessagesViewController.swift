@@ -274,6 +274,17 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// is up.
     private func create(in conversation: MSConversation) {
         identify(conversation)
+#if DEBUG
+        // the rig's full table (dev.fill): made, joined and started at once
+        if let seats = ChuiniuDev.takeFill(), let bridge = host.kernel as? BridgeKernel {
+            ChuiniuDev.log.info("dev.fill \(seats, privacy: .public): \(bridge.devFill(seats: seats), privacy: .public)")
+            session = nil
+            sessionGame = nil
+            host.refresh()
+            stageResident(caption: host.table.bubbleCaption, collapse: false)
+            return
+        }
+#endif
         guard host.kernel.newGame(dm: conversation.remoteParticipantIdentifiers.count == 1) else { return }
         session = nil
         sessionGame = nil

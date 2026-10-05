@@ -103,7 +103,11 @@ public final class BridgeKernel: Kernel {
         b.withUnsafeBufferPointer { cn_api_nickname($0.baseAddress, Int32(b.count)) }
     }
 
+    /// The participant bytes last handed over (devFill puts them back).
+    private var meBytes: Data?
+
     public func me(_ participant: Data) {
+        meBytes = participant
         loadPerson()
         let id = person.isEmpty ? [UInt8](participant) : Array("dev.seat:\(person)".utf8)
         cn_api_me(id, Int32(id.count))
@@ -160,6 +164,35 @@ public final class BridgeKernel: Kernel {
     public func errorText(_ code: Int) -> String { Self.line(CN_API_W_ERROR, code) }
 
 #if DEBUG
+    /// THE RIG'S FULL TABLE (ChuiniuDev.takeFill): a new group lobby with this
+    /// device in seat 0, joined by `seats - 1` made-up people exactly as their
+    /// phones would join (each its own identity, nickname and records, in a
+    /// defaults suite of its own, adopting the newest link, joining, sending),
+    /// then started by this device. Every step is a kernel call; the resident
+    /// ends as the start, staged. Debug only.
+    public func devFill(seats: Int) -> Bool {
+        let names = ["Bo", "Cy", "Di", "Ed", "Fay"]
+        guard (2...6).contains(seats), let mine = meBytes, newGame(dm: false), var link = stagedURL() else { return false }
+        for k in 1..<seats {
+            let suite = "chuiniu.dev.fill.\(k)"
+            guard let d = UserDefaults(suiteName: suite) else { return false }
+            d.removePersistentDomain(forName: suite)
+            let p = BridgeKernel(store: d, devPerson: false)
+            p.me(Data("dev.fill:\(k)".utf8))
+            p.sender(nil, isDM: false, iSent: false)
+            guard p.adoptBubble(link) == 0, p.join(name: names[k - 1]), let u = p.stagedURL() else { return false }
+            p.sent(u)
+            link = u
+        }
+        // this device again: its own records, nickname and identity
+        loadedFor = nil
+        loadPerson()
+        me(mine)
+        sender(nil, isDM: false, iSent: false)
+        guard adoptBubble(link) == 0 else { return false }
+        return table.phase != .lobby || start()
+    }
+
     /// TESTS ONLY: the kernel's tests-only CN_API_ALL view (every seat's dice),
     /// so a test reaches it through the bridge and never imports CChuiniu
     /// (scripts/lint_architecture.sh). Not in a Release build.
