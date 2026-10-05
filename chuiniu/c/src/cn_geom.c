@@ -267,7 +267,7 @@ int cn_geom_die_mesh(CnMesh *m, double d)
             double uv[4][2];
             V nrm[4];
             for (int c = 0; c < 4; c++) { uv[c][0] = (T[g[c][0]] + s) / d; uv[c][1] = (T[g[c][1]] + s) / d; nrm[c] = grid[idx[c] - base]; }
-            if (!poly_add(m, 4, idx, (const double (*)[2])uv, nrm, CN_TEX_DIE, fs)) return 0;
+            if (!poly_add(m, 4, idx, (const double (*)[2])uv, nrm, CN_TEX_DIE_ATLAS, fs)) return 0;
         }
     }
     return 1;

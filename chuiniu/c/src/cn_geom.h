@@ -53,7 +53,7 @@ double cn_geom_hash(int32_t ix, int32_t iy, int32_t seed);
 
 /* The texture a face wears, as a slot; the host maps each slot of a body to
  * its own texture (the study's TEX3.cupSide(seed) and so on). */
-enum { CN_TEX_CUP_SIDE, CN_TEX_CUP_CROWN, CN_TEX_CUP_INNER, CN_TEX_CUP_FLOOR, CN_TEX_DIE, CN_TEX_SLOTS };
+enum { CN_TEX_CUP_SIDE, CN_TEX_CUP_CROWN, CN_TEX_CUP_INNER, CN_TEX_CUP_FLOOR, CN_TEX_DIE_ATLAS, CN_TEX_SLOTS };
 
 /* ---- meshes --------------------------------------------------------------------- */
 #define CN_CUP_SEGS        36     /* facets round a cup                              */

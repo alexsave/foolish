@@ -116,6 +116,37 @@ struct Smoke {
             check(plan.ev[1].diceN[0] == 5 && plan.ev[1].dice.count == Int(CN_MAX_DICE), "the reveal carries the dice")
             check(words(CN_API_W_OUTCOME).hasPrefix("Bo calls. Three 4s was "), "the outcome")
 
+            // THE STAGE, through the generated readers: Bo's phone after his call
+            let packPath = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "build/cn_tex.pack"
+            let packData = try Data(contentsOf: URL(fileURLWithPath: packPath))
+            let pack = UnsafeMutablePointer<UInt8>.allocate(capacity: packData.count)   // outlives the stage
+            packData.copyBytes(to: pack, count: packData.count)
+            let arenaBytes = CN_STAGE_ARENA
+            let arena = UnsafeMutableRawPointer.allocate(byteCount: arenaBytes, alignment: 16)
+            check(cn_api_stage_init(arena, arenaBytes, pack, packData.count) == 0, "the stage takes the arena and the pack")
+            var hud = try readCnStageHud(cn_api_stage_begin(Int32(CN_STAGE_REVEAL), 390, 718, 2, 0)!)
+            check(hud.ok == 1 && hud.kind == CN_STAGE_REVEAL && hud.me == 1 && hud.rolls == 0, "the reveal, read in Swift")
+            check(hud.cupX.count == 6 && hud.ca.count == 16 && hud.dieX.count == 30 && hud.hit[2] > 0, "the HUD's arrays and my cup's tap target")
+            _ = cn_api_beats(1, 2)   // the call's plan, as the other phone's adopt lays it out: CALL .. SHAKE
+            hud = try readCnStageHud(cn_api_stage_begin(Int32(CN_STAGE_TABLE), 390, 718, 2, 1)!)
+            let shake = try readCnBeats(cn_api_beats_now()!).beat.first { $0.kind == CN_BK_SHAKE }!
+            check(hud.rolls == 1 && hud.rollAtMs == shake.startMs && hud.restMs > hud.rollAtMs, "the roll starts with the SHAKE beat")
+            check(cn_api_stage_prepare(UInt32(hud.rollAtMs + 900), 0) == 1, "prepared")
+            for pass in 0..<CN_STAGE_PASSES {
+                DispatchQueue.concurrentPerform(iterations: CN_STAGE_BANDS) { i in cn_api_stage_band(Int32(pass), Int32(i), Int32(CN_STAGE_BANDS)) }
+            }
+            let shot = try readCnStageShot(cn_api_stage_shot()!)
+            check(shot.ok == 1 && shot.rolling == 1 && shot.scale == 1.5 && cn_api_stage_pixels() != nil, "a throw frame on sixteen threads, at 1.5")
+            func fnv(_ p: UnsafePointer<UInt8>, _ n: Int) -> UInt32 {
+                var h: UInt32 = 2166136261
+                for i in 0..<n { h ^= UInt32(p[i]); h = h &* 16777619 }
+                return h
+            }
+            let threaded = fnv(cn_api_stage_pixels()!, shot.w * shot.h * 4)
+            check(fnv(cn_api_stage_frame(UInt32(hud.rollAtMs + 900), 0)!, shot.w * shot.h * 4) == threaded, "the threads drew the one thread's bytes")
+            cn_api_stage_purge()
+            arena.deallocate()
+
             var line = [CChar](repeating: 0, count: 256)
             check(cn_api_string(0, &line, 256) > 0 && String(cString: line) == ChuiniuStringsEn["GAME_NAME"], "GAME_NAME by key")
             check(ChuiniuStringKeys[0] == "GAME_NAME", "the generated key list")

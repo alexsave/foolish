@@ -4,3 +4,6 @@
 /vendor/
 /Generated/
 /*.xcodeproj
+# The texture pack (`make -C chuiniu/c tex-ios`, run by ios-lib): a build output
+# of tools/cn_texgen.c, read by the stage.
+/ChuiniuKit/Resources/cn_tex.pack

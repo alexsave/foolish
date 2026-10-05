@@ -33,12 +33,8 @@
  * PNGs are written with zlib (RGB, opaque: the App Store refuses an icon with
  * alpha), deterministic for a given pack and compiler. */
 #include "../src/cn_scene.h"
-/* cn_geom.h's face slot and cn_tex.h's texture kind are both named CN_TEX_DIE, so
- * the two headers cannot share a file; the slot is renamed here, for this file
- * only, until the headers stop colliding (reported to their owners, docs/ICON.md). */
-#define CN_TEX_DIE CN_TEX_SLOT_DIE
 #include "../src/cn_geom.h"
-#undef CN_TEX_DIE
+#include "../src/cn_cam.h"
 #include "../src/cn_tex.h"
 #include <math.h>
 #include <stdio.h>
@@ -319,8 +315,8 @@ static int draw(int W, int H, uint8_t *rgb)
     CnTexSink sink = { 0, sink_alloc };
     for (int k = 0; k < NDICE; k++) {
         for (int i = 0; i < CN_TEX_SLOTS; i++) tex[k][i] = -1;
-        tex[k][CN_TEX_SLOT_DIE] = cn_tex_upload(&PACK, &sink, &(CnTexSpec){ CN_TEX_DIE, DICE[k].seed, 0, 0, 0, 1 });
-        if (tex[k][CN_TEX_SLOT_DIE] < 0) { fprintf(stderr, "cn_icon: no room for a die's texture\n"); return 0; }
+        tex[k][CN_TEX_DIE_ATLAS] = cn_tex_upload(&PACK, &sink, &(CnTexSpec){ CN_TEX_DIE, DICE[k].seed, 0, 0, 0, 1 });
+        if (tex[k][CN_TEX_DIE_ATLAS] < 0) { fprintf(stderr, "cn_icon: no room for a die's texture\n"); return 0; }
     }
     if (!cn_scene_begin(bw, bh, 0, dpr, (float)(eye.x - bx0), (float)(eye.y - by0), (float)eye.z,
                         (float)L.x, (float)L.y, (float)L.z, CN_SCENE_SHADOW_MAX, SHADOW_DARK, nv, nf)) {

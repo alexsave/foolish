@@ -21,7 +21,7 @@ WARN    := -Wall -Wextra -Werror -std=c11 -ffp-contract=off
 CFLAGS  ?= -O2 $(WARN)
 SHARED  := ../../shared/c
 SRC     := src/cn.c src/cn_dice.c src/cn_plan.c src/cn_view.c src/cn_lobby.c src/cn_say.c \
-           src/cn_code.c src/cn_msg.c src/cn_beats.c src/cn_roll.c src/cn_scene.c src/cn_geom.c src/cn_cam.c src/cn_lay.c i18n/strings_en.c \
+           src/cn_code.c src/cn_msg.c src/cn_beats.c src/cn_roll.c src/cn_scene.c src/cn_geom.c src/cn_cam.c src/cn_lay.c src/cn_tex.c src/cn_stage.c i18n/strings_en.c \
            $(SHARED)/deal_rng.c $(SHARED)/sha256.c $(SHARED)/b32.c $(SHARED)/mixrad.c \
            $(SHARED)/text_util/text_util.c $(SHARED)/wire_check/wire_check.c \
            $(SHARED)/msg_seat_tag/msg_seat_tag.c $(SHARED)/msg_lobby_roster/msg_lobby_roster.c
@@ -32,7 +32,7 @@ HDR     := $(wildcard src/*.h) i18n/keys.h tests/cn_check.h \
            $(SHARED)/msg_seat_tag/msg_seat_tag.h $(SHARED)/msg_lobby_roster/msg_lobby_roster.h
 
 # One binary per test file; each takes an optional scale argument.
-TESTS   := cn_test cn_dice_test cn_plan_test cn_say_test cn_fuzz cn_msg_test cn_twophone_test cn_roll_test cn_scene_test cn_geom_test cn_cam_test cn_lay_test
+TESTS   := cn_test cn_dice_test cn_plan_test cn_say_test cn_fuzz cn_msg_test cn_twophone_test cn_roll_test cn_scene_test cn_geom_test cn_cam_test cn_lay_test cn_stage_test
 FUZZ_GAMES ?= 3000
 WIRE_GAMES ?= 40
 
@@ -106,7 +106,11 @@ run: $(addprefix build/,$(TESTS)) build/check_test build/text_util_test build/wi
 	./build/cn_twophone_test
 	./build/cn_roll_test
 	./build/cn_scene_test
-	./build/ios_smoke
+	./build/cn_geom_test
+	./build/cn_cam_test
+	./build/cn_lay_test
+	./build/cn_stage_test $(TEX_PACK)
+	./build/ios_smoke build/cn_tex.pack
 
 # THE RENDERER'S SPEED (not a test, not in `run`): a six-seat frame at 1x, 2x
 # and 3x, at -O2 as the iOS library builds it; `./build/cn_scene_bench loop 2 20`
@@ -155,7 +159,11 @@ asan: $(addprefix build/asan_,$(TESTS)) build/asan_check_test build/asan_text_ut
 	./build/asan_cn_twophone_test
 	./build/asan_cn_roll_test 60
 	./build/asan_cn_scene_test
-	./build/asan_ios_smoke
+	./build/asan_cn_geom_test
+	./build/asan_cn_cam_test
+	./build/asan_cn_lay_test
+	./build/asan_cn_stage_test $(TEX_PACK)
+	./build/asan_ios_smoke build/cn_tex.pack
 
 # THE SAME FILES FOR wasm32, freestanding (-nostdlib, shared/c/wasm's libc):
 # the proof that nothing here reaches past memcpy / memset / memcmp / strlen /
@@ -223,8 +231,8 @@ build/ios_smoke: $(IOS_SRC) $(IOS_HDR) ios/cn_api_smoke.c | build
 build/asan_ios_smoke: $(IOS_SRC) $(IOS_HDR) ios/cn_api_smoke.c | build
 	$(CC) $(ASAN_FLAGS) -Iios/include $(IOS_SRC) ios/cn_api_smoke.c -lm -o $@
 
-ios-smoke: build/ios_smoke
-	./build/ios_smoke
+ios-smoke: build/ios_smoke tex
+	./build/ios_smoke build/cn_tex.pack
 
 # THE GENERATED SWIFT. Swift never learns a byte layout: every struct
 # cn_api.h hands over is read through readers shared/tools/structgen writes
@@ -277,7 +285,7 @@ datagen: $(DATAGEN) i18n/keys.h i18n/strings_en.c | build
 # triple, the kernel compiled for it and stamped with that layout's hash, and
 # a Swift program that drives the bridge through them (ios/cn_api_smoke.swift).
 SWIFT_TRIPLE = $(shell swiftc -print-target-info 2>/dev/null | sed -n 's/.*"unversionedTriple": *"\([^"]*\)".*/\1/p' | head -1)
-swift-smoke: $(STRUCTGEN) datagen | build
+swift-smoke: $(STRUCTGEN) datagen tex | build
 	@rm -rf build/swift && mkdir -p build/swift/obj
 	@$(STRUCTGEN) --cwd . $(SG_ARGS) --build 'host=$(strip $(IOS_CFLAGS))' --target $(SWIFT_TRIPLE) \
 	  --swift build/swift/ChuiniuKernel.swift --print-hash > build/swift/hash
@@ -286,7 +294,7 @@ swift-smoke: $(STRUCTGEN) datagen | build
 	done
 	swiftc -parse-as-library -import-objc-header ios/include/cn_api.h build/swift/ChuiniuKernel.swift \
 	  $(GEN)/i18n/*.swift ios/cn_api_smoke.swift build/swift/obj/*.o -o build/swift/smoke
-	./build/swift/smoke
+	./build/swift/smoke build/cn_tex.pack
 
 include ../../shared/tools/ios_xcframework.mk
 
@@ -301,7 +309,7 @@ IOS_HEADERS := build/ios/include
 IOS_SCENE_SYMBOLS := cn_scene_init cn_scene_reset cn_scene_tex_new cn_scene_begin cn_scene_occluder \
                      cn_scene_render cn_scene_prepare cn_scene_band cn_scene_fb cn_scene_frame_bytes
 ios-lib: IOS_CFLAGS += -DSG_LAYOUT_HASH=$$(cat build/layout/ios.hash)
-ios-lib: build/layout/ios.hash datagen
+ios-lib: build/layout/ios.hash datagen tex-ios
 	@rm -rf $(IOS_HEADERS) && mkdir -p $(IOS_HEADERS) && cp ios/include/* src/cn_scene.h $(IOS_HEADERS)/
 	$(call IOS_XCFRAMEWORK,chuiniu,$(IOS_SRC),$(IOS_CFLAGS),$(IOS_HEADERS),$(IOS_MIN_VERSION),../ios/vendor/Chuiniu.xcframework)
 	@for a in build/ios/device/libchuiniu.a build/ios/sim-arm64/libchuiniu.a build/ios/sim-x86_64/libchuiniu.a; do \
@@ -381,7 +389,7 @@ ICON_EXT := ../ios/ChuiniuMessages/Assets.xcassets/iMessage App Icon.stickersico
 ICON_APP := ../ios/ChuiniuMessagesApp/Assets.xcassets/AppIcon.appiconset
 
 build/cn_icon: tools/cn_icon.c $(SRC) $(HDR) $(TEX_SRC) | build
-	$(CC) $(CFLAGS) $(SRC) src/cn_tex.c tools/cn_icon.c -lz -lm -o $@
+	$(CC) $(CFLAGS) $(SRC) tools/cn_icon.c -lz -lm -o $@
 
 icons: build/cn_icon $(TEX_PACK)
 	./build/cn_icon --pack $(TEX_PACK) --ext "$(ICON_EXT)" --app "$(ICON_APP)" --sheet build/cn_icon_sheet.png

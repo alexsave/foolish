@@ -113,3 +113,7 @@ Run 2026-09-27 on the kernel as of this commit, with `cn_fuzz 100` to `500`, `cn
 | Swift smoke | the same cold adopt | "the start's cups shake", "the frame at 0", "the frame at the end" |
 | Swift smoke | `cn_api_view` shows the staged move | "nothing lifts while staged" |
 | Swift smoke | `cn_min_quantity` takes `f >= bid_f` | "above three 4s: four 2s to four 4s, three 5s and 6s" |
+
+## cn_stage_test.c and the stage through the bridge
+
+Package D's rows (the stage, its C and Swift smokes, the Swift stage test) are in `chuiniu/c/docs_pkgD.md`, "Mutation checks": every test function of `cn_stage_test.c` went red at least once, and the smokes' stage checks named there did.

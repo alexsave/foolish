@@ -130,6 +130,46 @@ The first run inside Messages showed the ellipse's seat and the plate drawn over
 
 I18: the bubble's picture shows my staged raise (`TableModel.stagedBid`), because the committed table does not hold it until it is sent, and every name on it is the seat's bare name, since a bubble is seen by every phone and "(You)" belongs to the lobby screen's own row (`SeatModel.lobbyRow`).
 
+### The table drawn by the kernel (packages A to D, folded in by D)
+
+What the four packages built, in one place; the package reports (`chuiniu/c/docs_pkgA.md` to `docs_pkgD.md`) keep the measurements and the mutation tables.
+
+- The renderer (A): `c/src/cn_scene.c`, a software rasterizer with a shadow map, one a process, drawing into a caller-owned arena (`CN_SCENE_ARENA_IOS` 48 MB, the study's 256 MB); a frame that does not fit fails cleanly; a frame is prepared once and then drawn in up to 16 horizontal bands a pass on any threads, the same bits for any band count; on an M1, 16 bands draw a 2x six-seat frame in 6.8 ms against 21 on one thread.
+  196 frames captured from the study replay natively byte for byte, and clang, gcc and wasm draw the same hashes.
+- The bodies, the camera and the layout (B): `cn_geom` (the cup and die meshes, a standard right-handed die with opposite faces summing to 7, a lying cup resting on both rims, the pose of a bake at any instant), `cn_cam` (the fixed leaning-head eye, the screen's turn as a CATransform3D and a homography, the peek's least tip), `cn_lay` (the study's screen: short or tall on the board's height, the ring fitted to the camera, the names, the throws, any seat may be me), pinned to the study's own numbers from headless Chromium at five sizes, 2 to 6 seats.
+- The textures (C): a 345 KB pack baked at build time (`make tex`: the verdigris and bone tiles, the numerals 0 to 9 in IM Fell English at 112 and 184 texels), from which every cup's side, inside, floor and crown and every die's atlas is derived at upload, within 0.4 of 255 of the study's canvas textures; nothing is rendered procedurally at launch.
+
+I19 (the hand): the dice are the kernel's fair deal (K2); the physics bake only decides which face of each die ends up, and the dealt value is painted on that face (`cn_die_cells` about the bake's up face), the other five faces a standard die round it.
+The labelling is the die's own from the throw's first frame, so nothing changes face when the dice come to rest, and the stage has no hand to report: `cn_stage_test` reads the up face off every resting die's pose (not off the bake's own answer) and finds the dealt value on 300-odd dice over 40 throws, tables and reveals, with every opposite pair summing to 7.
+A seat whose dice this phone may not know (another seat at the table) throws a die with the plain labelling, under its cup.
+
+I20 (memory): one texture set a stage: one cup side, inside and floor (my cup's seed), one die atlas, and a crown a seat (its own seed, count and lie), 12.2 MB with the half-size copies; per-seat full sets (58 MB) never fit.
+The set is a pure function of the begun table and goes up into an emptied renderer whenever the crowns change, followed by one throwaway frame that makes every half-size copy before a real frame's buffers are taken, so a picture never depends on what was drawn before (the purge test draws the same bytes from a new arena at another address).
+Each frame's canvas is cut at the top to the highest point any body's picture reaches in it, never above the study's (which reaches to the glass's top, untilted: 258 to 903 points above the board), because the study's canvas made a 2x frame 42 MB on its own.
+A frame that does not fit the arena at the scale asked is drawn at the next scale down (2, 1.5, 1) and the shot says which; throw frames are asked at 1.5, still frames at 2, never 3.
+Measured at 48 MB, six seats, Fay out: 390 by 340 and 375 by 541 draw still frames at 2x; 390 by 718 and 430 by 830 on my turn at 1.5x (the 390 by 718 frame is 36.1 MB at 2x beside 12.2 of textures); 430 by 830 on their turn at 1x (its far cups lean 361 points above the board).
+2x everywhere needs either a larger arena or a renderer with fewer bytes a pixel (24 now); that is the renderer's to decide, not the stage's.
+
+I21 (the clock): the stage's clock is the host's display clock from the moment it began the stage, the same clock it samples `cn_api_beats_frame` on.
+A table begun with `roll` throws from the current plan's SHAKE beat's start (from 0 when the plan has none), so every beat before it (the call, the lift, the count, the drop) plays uncut; every seat's throw runs its own length from there (its delay, shake and settle are the bake's).
+`total_ms` is when every throw is idle and never before the SHAKE beat's end, and a compile-time assert holds the kernel's `CN_T_SHAKE` (760 ms) under the shortest shake a throw has (1.5 s), so the beat lies inside the roll.
+`rest_ms` is when my own dice are at rest: nothing is staged before it (I12's settle comes after it), and `cn_stage_done` is the display link's stop.
+
+I22 (the stage's input is the kernel's): the host names the screen, the drawer's size and its scale; the bridge fills the table from the resident game (counts, outs, whose turn, my dice as the view sorts them, so the HUD's die places line up with `CnView.my_dice` and `shown`; a reveal's dice are the newest call's).
+A round's throw seed is `cn_stage_round_seed(game seed, round)` (FNV-1a over a tag, the seed and the round), the same on every phone; a reveal throws the called round again (the round before the current one, or the current one when the game is over), so its dice lie where they landed.
+A table of a finished game, a reveal before any call and a spectator begin nothing.
+
+I23 (the reveal): every standing cup tips about the far edge of its mouth, as my cup does for the peek, to the least tip that shows its own resting dice from the eye (`cn_cam_peek_angle` per cup), by the current plan's LIFT beat's progress (all cups together, as the kernel lifts them; with no LIFT in the plan they are up).
+The study's reveal is a flat list of dice; the stage draws the dice where they lie and the HUD gives each one's place on the glass for the counting rings (I4).
+The reveal's shelf is one row (Next round or New game), the roll shelf's height.
+
+I24 (the bubble): 300 by 195 points exactly, no canvas past it (the cups' crowns stay inside), the study's row of cups at 46 (radius 19, 16 past four seats), a lying cup with an inside and a standing one without, from the camera the study turns about (150, 150); the plate and the names are the host's, at the HUD's places.
+
+I25 (the HUD): FLAT places are the drawer's points before the camera's turn (the planks, the names, the board, the picture's canvas, all turned together by the HUD's `ca` about the origin); the plate and the shelf are never turned; GLASS places (my cup's tap ellipse, the dice) are after the turn.
+The HUD and each frame's shot are read in Swift through structgen's readers only; the HUD says `rolls` rather than carrying a sentinel, because structgen writes `0xFFFFFFFFu` as -1 while the reader returns the u32.
+
+I26: `cn_geom.h`'s die texture slot is `CN_TEX_DIE_ATLAS`; it was `CN_TEX_DIE`, which `cn_tex.h` also declares, so no file could include both (the icon tool had worked round it).
+
 ## Orchestration (owner: the orchestrator; O1 onward)
 
 O1: the proof of concept is built in three parallel packages (kernel and wire; iOS scaffold with the dice and cup primitive; legal, README and CI) and one tie-together package that wires the screens to the bridge and proves it on a simulator inside Messages.
