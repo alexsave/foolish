@@ -176,7 +176,7 @@ int  cn_api_string(int key, char *out, int cap);       /* one table entry by CN_
 #define CN_API_W_STAGED_CAPTION  1   /* the caption of the bubble cn_api_text writes now:
                                         my staged move, else the newest move; in a lobby
                                         the invite, joined or left line of its sender     */
-#define CN_API_W_HEADLINE        2   /* for me: "Your turn: raise or call", "Bo's turn",
+#define CN_API_W_HEADLINE        2   /* for me: "Your turn: raise or call Liar", "Bo's turn",
                                         "Send to bid four 3s" while staged, "You win"      */
 #define CN_API_W_SUBLINE         3   /* "Bid to beat: four 3s by Alex", "No bid yet"       */
 #define CN_API_W_OUTCOME         4   /* the newest call, once sent: "Bo calls. Four 3s was

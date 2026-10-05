@@ -122,7 +122,7 @@ final class BridgeKernelTests: XCTestCase {
         XCTAssertTrue(bo.call())
         m = bo.table
         XCTAssertNil(m.reveal, "a staged call reveals nothing")
-        XCTAssertEqual(m.caption, "Send to call two 4s")
+        XCTAssertEqual(m.caption, "Send to call Liar on two 4s")
         XCTAssertEqual(m.bubbleCaption, "Bo calls two 4s")
         let call = try XCTUnwrap(bo.stagedURL())
         bo.sent(call)
