@@ -99,6 +99,7 @@
 #define CN_LAY_MY_D_MIN   10.0    /* nor my dice on a short board                   */
 #define CN_LAY_BRASS      .75   /* a die's brass ring at the reveal, of its side: past its corners (.71), inside half the spacing (.85) */
 #define CN_LAY_PLATE_REVEAL_W 240.0 /* the plate at the reveal: the tally ("There were twelve") is longer than a bid */
+#define CN_LAY_STAMP_FOOT 40.0    /* the loser's stamp under a name at the reveal: its foot this far under the anchor */
 #define CN_LAY_OUTCOME_H  48.0    /* the reveal's outcome line (two lines of the roman on a band) over the shelf */
 
 typedef struct {

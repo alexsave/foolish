@@ -441,13 +441,14 @@ static void row_fit(const CnLayIn *in, const CnLay *L, double W, double H, doubl
                     double *R_out, double *cy_out, Reach *ext)
 {
     const int n = in->seats, me = in->me;
-    const double below = CN_LAY_NAME_H - CN_LAY_NAME_UP + 14;   /* a name's box under its mouth */
+    /* under each mouth its name and the loser's stamp, all over the outcome line over the shelf */
+    const double below = 14 + CN_LAY_STAMP_FOOT, foot = dmin(H, L->shelf[1] - 6 - CN_LAY_OUTCOME_H - L->board_y);
     double R = dmin(myR0, step / 2 - 4), cy = R + 2;
     Reach r;
     for (;; R -= 1) {
         const double sd = d0 * R / myR0, sring = ring_of(sd);
         int ok = 0;
-        for (cy = R + 2; cy + R + below <= H; cy += 1) {
+        for (cy = R + 2; cy + R + below <= foot; cy += 1) {
             r = reach_none();
             for (int v = 0; v < n; v++) {
                 const int i = (me + v) % n, out = in->out_mask >> i & 1;
@@ -459,14 +460,14 @@ static void row_fit(const CnLayIn *in, const CnLay *L, double W, double H, doubl
         }
         if (ok || R - 1 < CN_LAY_ROW_MIN_R) break;
     }
-    if (cy + R + below > H) cy = R + 2;
+    if (cy + R + below > foot) cy = R + 2;
     *R_out = R; *cy_out = cy; *ext = r;
 }
 
 static void one_row(const CnLayIn *in, CnLay *L, double W, double H, double d0, double myR0)
 {
     const int n = in->seats, me = in->me;
-    const double step = dmin(CN_LAY_BADGE + CN_LAY_MARGIN, (W - 2 * CN_LAY_MARGIN) / n), below = CN_LAY_NAME_H - CN_LAY_NAME_UP + 14;
+    const double step = dmin(CN_LAY_BADGE + CN_LAY_MARGIN, (W - 2 * CN_LAY_MARGIN) / n), below = 14 + CN_LAY_STAMP_FOOT;
     const double right = CN_LAY_SIDE + W - CN_LAY_MARGIN, lowest = L->shelf[1] - 6 - CN_LAY_OUTCOME_H;
     double R, cy, w = 0;
     Reach ext;

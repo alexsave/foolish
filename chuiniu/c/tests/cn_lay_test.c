@@ -1477,6 +1477,15 @@ static void test_short_or_tall(void)
     int row = 1;
     for (int s = 0; s < 5; s++) row &= L.cup_y[s] == L.cup_y[0] && L.name_how[s] == CN_NAME_BOX && (s == 0 || L.cup_x[s] > L.cup_x[s - 1]);
     CHECK(row && L.my_r == L.cup_r && L.d == L.sd, "every seat in the row, mine first, one size");
+    /* the names and the loser's stamp under them all over the outcome line, at every compact height and seat count */
+    int clear = 1;
+    for (int H = 281; H <= 399; H++) for (int n = 2; n <= 6; n++) {
+        CnLayIn r1 = input(390, H, n, 0, 0); r1.reveal = 1;
+        CnLay R1;
+        if (!cn_lay_make(&r1, &R1)) { clear = 0; continue; }
+        for (int s = 0; s < n; s++) clear &= R1.board_y + R1.name_y[s] + CN_LAY_STAMP_FOOT <= R1.shelf[1] - 6 - CN_LAY_OUTCOME_H + 1e-3;
+    }
+    CHECK(clear, "the reveal's row leaves its names, the stamp and the outcome line their room");
     CnLayThrow T[CN_LAY_SEATS];
     CHECK(cn_lay_throws(&in, &L, CN_THROW_CUP, T, CN_LAY_SEATS) == 0, "and no cup throws at the reveal");
     /* the reveal's plate carries the tally ("There were five" wrapped on the bid's 160): wider, centred */
