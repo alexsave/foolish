@@ -11,6 +11,7 @@
 // (Generated/ChuiniuKernel.swift) into a TableModel. The scaffold's scripted
 // FakeKernel is gone; a test builds real positions by driving the bridge.
 
+import CoreGraphics
 import Foundation
 
 // MARK: - the model the screens draw
@@ -268,8 +269,47 @@ public protocol Kernel: AnyObject {
     func isNewer(_ a: URL, than b: URL) -> Bool
 }
 
+// MARK: the stage: the table's pixels, drawn by the kernel (cn_stage.h)
+
+/// Which screen the stage draws (the kernel's CN_STAGE_*).
+public enum StageScreen: Int {
+    case table = 1, reveal = 2, bubble = 3
+}
+
+/// One frame: the picture and where it goes. The image goes at
+/// `shot.canvas` (flat points: it turns with the planks by the HUD's `ca`).
+public struct StageFrame {
+    public let shot: CnStageShotSnap
+    public let image: CGImage
+}
+
+/// THE TABLE'S PICTURE IS THE KERNEL'S. A host begins a screen of the resident
+/// game and asks for frames on the clock it samples the beats on; every place
+/// on the screen (cups, names, plate, shelf, my cup's tap target, the camera's
+/// turn) is in the HUD, read through the generated reader. There is one stage
+/// a process (the renderer is one).
+@MainActor
+public protocol TableStage: AnyObject {
+    /// Begin `screen` for a drawer of `drawer` points on a `scale` device;
+    /// `roll` throws the round from the current plan's SHAKE beat. nil when
+    /// the kernel has nothing to draw (or the readers are stale).
+    func begin(_ screen: StageScreen, drawer: CGSize, scale: CGFloat, roll: Bool) -> CnStageHudSnap?
+    /// The frame `ms` into the plan's clock, my cup tipped `peek` of its full
+    /// tip; drawn in CN_STAGE_BANDS bands over the cores. nil when nothing
+    /// could be drawn.
+    func frame(atMs ms: Int, peek: Double) -> StageFrame?
+    /// Everything at rest at `ms`: the display link may stop.
+    func done(atMs ms: Int) -> Bool
+    /// A memory warning: the arena is freed; the next frame takes a new one
+    /// and draws the same picture.
+    func purge()
+}
+
 public enum KernelSeam {
     /// The kernel the extension runs on: the bridge.
     @MainActor
     public static func make() -> Kernel { BridgeKernel() }
+    /// The stage that draws the table: the bridge's one.
+    @MainActor
+    public static func stage() -> TableStage { BridgeStage.shared }
 }

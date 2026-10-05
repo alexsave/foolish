@@ -177,4 +177,64 @@ final class BridgeKernelTests: XCTestCase {
         XCTAssertTrue(BidPicker.raiseEnabled(quantity: 10, face: 6, menu: menu), "ten 6s is")
         XCTAssertTrue(menu.callAllowed)
     }
+
+    /// THE STAGE: the kernel draws the table. Ann's phone gets Ben's call: the
+    /// reveal (the cups lift on the plan's LIFT beat), then the next round
+    /// thrown from the plan's SHAKE beat; a purge frees the arena and the next
+    /// frame draws the same picture; the bubble is 300 by 195 points.
+    func testTheStageDrawsTheRevealTheRollAndTheBubble() throws {
+        var ann = phone("Ann")
+        XCTAssertTrue(ann.newGame(dm: true, seed: Self.seed))
+        let lobby = try XCTUnwrap(ann.stagedURL())
+        var ben = phone("Ben")
+        XCTAssertEqual(ben.adoptBubble(lobby), 0)
+        XCTAssertTrue(ben.join(name: "Ben"))
+        let start = try XCTUnwrap(ben.stagedURL())
+        ann = phone("Ann")
+        XCTAssertEqual(ann.adoptBubble(start), 0)
+        XCTAssertTrue(ann.raise(quantity: 2, face: 4))
+        let raise = try XCTUnwrap(ann.stagedURL())
+        ann.sent(raise)
+        ben = phone("Ben")
+        XCTAssertEqual(ben.adoptBubble(raise), 0)
+        XCTAssertTrue(ben.call())
+        let call = try XCTUnwrap(ben.stagedURL())
+        // sent: the call's own plan plays on Ben's phone, CALL, LIFT, COUNT, DROP, SHAKE
+        ben.sent(call)
+
+        let stage = KernelSeam.stage()
+        let drawer = CGSize(width: 390, height: 718)
+        let reveal = try XCTUnwrap(stage.begin(.reveal, drawer: drawer, scale: 3, roll: false), "the reveal begins")
+        XCTAssertEqual(reveal.kind, CN_STAGE_REVEAL)
+        XCTAssertEqual(reveal.me, 1)
+        XCTAssertEqual(reveal.rolls, 0)
+        XCTAssertEqual(reveal.dieX.filter { $0 != 0 }.count, 10, "every shown die has its place on the glass")
+        let down = try XCTUnwrap(stage.frame(atMs: 0, peek: 0))
+        let up = try XCTUnwrap(stage.frame(atMs: 60_000, peek: 0))
+        XCTAssertEqual(up.image.width, up.shot.w)
+        XCTAssertNotEqual(Self.bytes(down.image), Self.bytes(up.image), "the cups lift with the LIFT beat")
+
+        let table = try XCTUnwrap(stage.begin(.table, drawer: drawer, scale: 3, roll: true), "the next round's table")
+        XCTAssertEqual(table.rolls, 1)
+        XCTAssertGreaterThan(table.rollAtMs, 0, "the roll waits for the SHAKE beat")
+        XCTAssertGreaterThan(table.restMs, table.rollAtMs)
+        let rolling = try XCTUnwrap(stage.frame(atMs: table.rollAtMs + 900, peek: 0))
+        XCTAssertEqual(rolling.shot.rolling, 1)
+        XCTAssertEqual(rolling.shot.scale, 1.5, "a throw frame at 1.5 a point")
+        XCTAssertFalse(stage.done(atMs: table.totalMs - 1))
+        XCTAssertTrue(stage.done(atMs: table.totalMs))
+        let still = try XCTUnwrap(stage.frame(atMs: table.totalMs, peek: 1))
+        XCTAssertEqual(still.shot.rolling, 0)
+
+        stage.purge()
+        let again = try XCTUnwrap(stage.frame(atMs: table.totalMs, peek: 1), "a purged stage draws again")
+        XCTAssertEqual(Self.bytes(again.image), Self.bytes(still.image), "the same picture after a purge")
+
+        _ = try XCTUnwrap(stage.begin(.bubble, drawer: .zero, scale: 3, roll: false))
+        let bubble = try XCTUnwrap(stage.frame(atMs: 0, peek: 0))
+        XCTAssertEqual([bubble.shot.w, bubble.shot.h], [600, 390], "300 by 195 points at 2x")
+        stage.purge()
+    }
+
+    private static func bytes(_ image: CGImage) -> Data { (image.dataProvider?.data as Data?) ?? Data() }
 }

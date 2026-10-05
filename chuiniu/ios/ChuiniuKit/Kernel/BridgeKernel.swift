@@ -19,6 +19,7 @@
 // switches the whole person (ChuiniuDev.person).
 
 import CChuiniu
+import CoreGraphics
 import Foundation
 import Security
 
@@ -363,5 +364,82 @@ public final class BridgeKernel: Kernel {
         guard ms < end, let f = Self.snap(cn_api_beats_frame(UInt32(max(ms, 0))), readCnBeatFrame)
         else { return RevealMotion(cupsUp: true, lit: Int.max, done: true) }
         return RevealMotion(cupsUp: f.cupsUp != 0, lit: f.highlightN, done: false)
+    }
+}
+
+// MARK: - the stage
+
+/// The bridge's stage (cn_api_stage_*): one a process, as the renderer is.
+/// The arena is CN_STAGE_ARENA bytes this class allocates and frees; the
+/// texture pack is ChuiniuKit's cn_tex.pack, copied once into memory that
+/// outlives the stage. Every struct is read through the generated readers,
+/// and a stale pair (BridgeKernel.layoutMatches) reads nothing.
+@MainActor
+public final class BridgeStage: TableStage {
+    public static let shared = BridgeStage()
+
+    private var arena: UnsafeMutableRawPointer?
+    private var pack: UnsafeMutablePointer<UInt8>?
+    private var packCount = 0
+    private var inited = false
+
+    private init() {}
+
+    private static func snap<T>(_ p: UnsafeRawPointer?, _ reader: (UnsafeRawPointer) throws -> T) -> T? {
+        guard BridgeKernel.layoutMatches, let p else { return nil }
+        return try? reader(p)
+    }
+
+    /// The arena and the pack, the first time and after a purge.
+    private func ready() -> Bool {
+        guard BridgeKernel.layoutMatches else { return false }
+        if pack == nil {
+            guard let url = Bundle(for: BridgeStage.self).url(forResource: "cn_tex", withExtension: "pack"),
+                  let data = try? Data(contentsOf: url) else { return false }
+            let p = UnsafeMutablePointer<UInt8>.allocate(capacity: data.count)
+            data.copyBytes(to: p, count: data.count)
+            pack = p; packCount = data.count
+        }
+        if arena == nil {
+            let a = UnsafeMutableRawPointer.allocate(byteCount: CN_STAGE_ARENA, alignment: 16)
+            let rc = inited ? cn_api_stage_attach(a, CN_STAGE_ARENA) : cn_api_stage_init(a, CN_STAGE_ARENA, pack, packCount)
+            guard rc == 0 else { a.deallocate(); return false }
+            arena = a; inited = true
+        }
+        return true
+    }
+
+    public func begin(_ screen: StageScreen, drawer: CGSize, scale: CGFloat, roll: Bool) -> CnStageHudSnap? {
+        guard ready() else { return nil }
+        return Self.snap(cn_api_stage_begin(Int32(screen.rawValue), Float(drawer.width), Float(drawer.height), Float(scale), roll ? 1 : 0), readCnStageHud)
+    }
+
+    public func frame(atMs ms: Int, peek: Double) -> StageFrame? {
+        guard ready(), cn_api_stage_prepare(UInt32(max(ms, 0)), Float(peek)) == 1 else { return nil }
+        let bands = CN_STAGE_BANDS
+        for pass in 0..<CN_STAGE_PASSES {
+            DispatchQueue.concurrentPerform(iterations: bands) { i in
+                cn_api_stage_band(Int32(pass), Int32(i), Int32(bands))
+            }
+        }
+        guard let shot = Self.snap(cn_api_stage_shot(), readCnStageShot), shot.ok == 1,
+              let px = cn_api_stage_pixels() else { return nil }
+        // the pixels are the kernel's until the next prepare: copied out here
+        let bytes = Data(bytes: px, count: shot.w * shot.h * 4)
+        guard let provider = CGDataProvider(data: bytes as CFData),
+              let image = CGImage(width: shot.w, height: shot.h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: shot.w * 4,
+                                  space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue),
+                                  provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)
+        else { return nil }
+        return StageFrame(shot: shot, image: image)
+    }
+
+    public func done(atMs ms: Int) -> Bool { cn_api_stage_done(UInt32(max(ms, 0))) == 1 }
+
+    public func purge() {
+        guard let a = arena else { return }
+        cn_api_stage_purge()
+        a.deallocate()
+        arena = nil
     }
 }

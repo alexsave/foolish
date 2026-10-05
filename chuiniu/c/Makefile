@@ -309,7 +309,7 @@ IOS_HEADERS := build/ios/include
 IOS_SCENE_SYMBOLS := cn_scene_init cn_scene_reset cn_scene_tex_new cn_scene_begin cn_scene_occluder \
                      cn_scene_render cn_scene_prepare cn_scene_band cn_scene_fb cn_scene_frame_bytes
 ios-lib: IOS_CFLAGS += -DSG_LAYOUT_HASH=$$(cat build/layout/ios.hash)
-ios-lib: build/layout/ios.hash datagen
+ios-lib: build/layout/ios.hash datagen tex-ios
 	@rm -rf $(IOS_HEADERS) && mkdir -p $(IOS_HEADERS) && cp ios/include/* src/cn_scene.h $(IOS_HEADERS)/
 	$(call IOS_XCFRAMEWORK,chuiniu,$(IOS_SRC),$(IOS_CFLAGS),$(IOS_HEADERS),$(IOS_MIN_VERSION),../ios/vendor/Chuiniu.xcframework)
 	@for a in build/ios/device/libchuiniu.a build/ios/sim-arm64/libchuiniu.a build/ios/sim-x86_64/libchuiniu.a; do \
