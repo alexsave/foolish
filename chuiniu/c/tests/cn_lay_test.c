@@ -1696,13 +1696,16 @@ static void test_reach(void)
             under &= hypot(p[0] - t.cup_x, p[1] - t.cup_y) + t.die * .71 <= t.cup_r - t.cup_t + 1.5;
         }
     }
-    /* ...and its crown stays on the table's side of it once the cup is up (the first .35 s, cn_roll.c's LIFT, rises
-     * from under the table at any reach: docs_pkgU.md) */
-    for (int sh = 0; sh < 4; sh++) {
+    /* ...and the cup never passes under the table, from the throw's first frame (the lift once started 60 under the
+     * held height and put the crown 14 points into the planks at full reach, 21 at .8: docs_pkgU.md), at the
+     * study's reach, a far seat's small cup and the least reach */
+    for (int sh = 0; sh < 12; sh++) {
         CnThrow t = T[0].t;
-        t.scale = (float)CN_LAY_REACH_MIN * t.cup_r / CN_THROW_REF_R; t.shake_s = 1.5f + sh * .25f;
+        const double k = sh % 3 == 0 ? 1 : sh % 3 == 1 ? .9 : CN_LAY_REACH_MIN;
+        if (sh >= 8) { t.cup_r = 24; t.cup_rc = 24 * .72f; t.cup_h = 24 * CN_CUP_TALL; t.cup_t = 24 * .06f; }
+        t.scale = (float)(k * t.cup_r / CN_THROW_REF_R); t.shake_s = 1.5f + (sh % 4) * .25f;
         double low = 1e9;
-        for (int f = 21; f <= cn_roll_cup_span(&t) * CN_ROLL_HZ; f++) {
+        for (int f = 0; f <= cn_roll_cup_span(&t) * CN_ROLL_HZ; f++) {
             float fr[CN_ROLL_FRAME_FLOATS];
             memset(fr, 0, sizeof fr);
             cn_roll_cup_pose(&t, (double)f / CN_ROLL_HZ, fr);
@@ -1713,7 +1716,7 @@ static void test_reach(void)
                 low = fmin(low, p.p[2] + p.rot[2] * r * cos(a) + p.rot[5] * r * sin(a) + p.rot[8] * (top ? t.cup_h : 0));
             }
         }
-        CHECK(low > -.5, "shake %.2f s at the least reach: the cup's lowest point %.2f, not into the table", t.shake_s, low);
+        CHECK(low >= 0, "cup %g, reach %.2f, shake %.2f s: the cup's lowest point %.2f, never into the table", t.cup_r, k, t.shake_s, low);
     }
     CHECK(done && under && forced == 0,"forty throws held at the least reach, %.2f, complete with every die under my cup (forced %d)", CN_LAY_REACH_MIN, forced);
 }

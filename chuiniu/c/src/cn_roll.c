@@ -368,7 +368,10 @@ static int emit(Out *o, V3 cupO, const M3 *cupR, const Body *b, int nd, int ph)
  * faces come up evenly, and reports how often the pre-flip face recurs. */
 #define HOLD     .5     /* the first LIFT of it the cup rises from low over the table to where it is held */
 #define LIFT     .35
-#define LOW      60     /* how far below the held height the cup starts (times the reach) */
+#define LOW      60     /* how far below the held height the cup starts (times the reach), at most: */
+#define CLEAR    1      /* the start's lowest point is this far over the planks (times the reach), never under
+                         * them: the held cup's crown hangs low, and from LOW under its held height it began
+                         * 14 points into the table at full reach, 21 at .8 (docs_pkgU.md, docs_pkgV2.md) */
 #ifndef SHAKE
 #define SHAKE    2.0
 #endif
@@ -403,7 +406,7 @@ static int emit(Out *o, V3 cupO, const M3 *cupR, const Body *b, int nd, int ph)
 
 
 typedef struct {
-    double held[3], grip0[3], home[3], pz, a, tDrop, dropAt, tFlip, tSlam, h, sc, shake;
+    double held[3], grip0[3], home[3], pz, a, tDrop, dropAt, tFlip, tSlam, h, sc, shake, low;
 } CupPath;
 
 
@@ -426,7 +429,7 @@ static void cupPose(const CupPath *c, double T, M3 *R, V3 *o)
     if (T < c->tFlip) {
         /* the lift: from low over the table to the held height, easing in and out, in the hold's first LIFT seconds */
         double lk = T / LIFT; if (lk > 1) lk = 1; if (lk < 0) lk = 0;
-        double low = LOW * c->sc * (1 - lk * lk * (3 - 2 * lk));   /* smooth: no jolt to the dice at the start or the top */
+        double low = c->low * (1 - lk * lk * (3 - 2 * lk));   /* smooth: no jolt to the dice at the start or the top */
         piv = v3(c->grip0[0] + dx, c->grip0[1] + dy, c->grip0[2] + dz - low); pv = c->pz;
         M3 a = rotX(PI - HOLD_TILT); M = mulM(&a, &S);   /* mouth up, leaned toward me */
     } else {
@@ -469,6 +472,18 @@ static void cupPath(const CnThrow *t, CupPath *c)
     c->a = DROP_G * -g; c->tDrop = rsqrt(2 * (c->grip0[2] - c->home[2]) / c->a);
     c->dropAt = FLIP > c->tDrop ? FLIP - c->tDrop : 0;
     c->tFlip = HOLD + shakeS; c->tSlam = c->tFlip + c->dropAt + c->tDrop;
+    /* THE LIFT STARTS OVER THE TABLE. The held cup (mouth up, the shake not begun) hangs its crown lowest; the
+     * lift rises the whole pose by `low`, so the start is the held pose lowered by it, and it is lowered no
+     * further than leaves the lowest point of either rim CLEAR over the planks. A rim of radius r at height zl
+     * in the cup's frame reaches down to o.z + c2.z zl - r |(c0.z, c1.z)| (the mesh's corners lie on it). */
+    c->low = 0;
+    M3 R; V3 o; cupPose(c, LIFT, &R, &o);
+    const double tz = rsqrt(R.c[0].z * R.c[0].z + R.c[1].z * R.c[1].z);
+    double lowest = o.z - t->cup_r * tz, crown = o.z + R.c[2].z * h - t->cup_rc * tz;
+    if (crown < lowest) lowest = crown;
+    double room = lowest - CLEAR * sc;
+    if (room < 0) room = 0;
+    c->low = LOW * sc < room ? LOW * sc : room;
 }
 
 static int bakeCup(const CnThrow *t, uint64_t seed, Out *o)

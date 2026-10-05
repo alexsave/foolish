@@ -87,8 +87,8 @@ static void test_determinism(void)
     uint32_t h = fnv(F, (size_t)n * CN_ROLL_FRAME_FLOATS * sizeof(float));
     printf("  golden: seed 2026 bakes %d frames, hand %d%d%d%d%d, fnv %08x\n", n, a.up[0], a.up[1], a.up[2], a.up[3], a.up[4], h);
     CHECK(a.complete, "complete");
-    CHECK(n == 227 && h == 0xcf6066b3u && a.up[0] == 5 && a.up[1] == 2 && a.up[2] == 0 && a.up[3] == 0 && a.up[4] == 1,
-          "the golden: seed 2026 is 227 frames, hand 52001, fnv cf6066b3 (a change here is a change of recipe)");
+    CHECK(n == 233 && h == 0x0a4c45d8u && a.up[0] == 3 && a.up[1] == 4 && a.up[2] == 2 && a.up[3] == 1 && a.up[4] == 5,
+          "the golden: seed 2026 is 233 frames, hand 34215, fnv 0a4c45d8 (a change here is a change of recipe; it moved when the lift stopped starting under the table, docs_pkgV2.md)");
 }
 
 static void test_cup(int seeds)
@@ -215,7 +215,7 @@ static void test_start(void)
     int n = cn_roll_bake(&t, 31, F, P, CN_ROLL_MAX_FRAMES, &info);
     CHECK(n > 30, "a throw");
     double c0[3], cc[3][3], c1[3], cc1[3][3]; poseOf(F, c0, cc); poseOf(F + 24 * CN_ROLL_FRAME_FLOATS, c1, cc1);
-    CHECK(c1[2] - c0[2] > 40, "the cup rises in the first .4 s (%.0f points)", c1[2] - c0[2]);
+    CHECK(c1[2] - c0[2] > 30, "the cup rises in the first .4 s from just over the table (%.0f points)", c1[2] - c0[2]);
     /* the dice ride up with the cup; in the cup's frame they are at rest */
     double c2[3], cc2[3][3]; poseOf(F + 2 * CN_ROLL_FRAME_FLOATS, c2, cc2);
     for (int d = 0; d < 5; d++) {
