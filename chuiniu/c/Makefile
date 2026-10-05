@@ -370,3 +370,20 @@ tex-compare: build/cn_texgen
 	./build/cn_texgen --font $(TEX_FONT) --compare $(REF) --sheet build/cn_tex_sheet.png
 
 .PHONY: tex tex-ios tex-test tex-asan tex-wasm tex-compare
+
+# ---- THE ICONS (package F) -----------------------------------------------------------
+# The app's icons, drawn by the table's own renderer (tools/cn_icon.c: the cup and die
+# meshes, the baked verdigris and bone, cn_scene.c's rasterizer and shadow map), each
+# size at its own size, straight into both asset catalogues; commit what it changes.
+# A host-only tool (zlib for the PNGs), never in the app. Notes: ../docs/ICON.md.
+#   make -C chuiniu/c icons        every catalogue PNG, and build/cn_icon_sheet.png
+ICON_EXT := ../ios/ChuiniuMessages/Assets.xcassets/iMessage App Icon.stickersiconset
+ICON_APP := ../ios/ChuiniuMessagesApp/Assets.xcassets/AppIcon.appiconset
+
+build/cn_icon: tools/cn_icon.c $(SRC) $(HDR) $(TEX_SRC) | build
+	$(CC) $(CFLAGS) $(SRC) src/cn_tex.c tools/cn_icon.c -lz -lm -o $@
+
+icons: build/cn_icon $(TEX_PACK)
+	./build/cn_icon --pack $(TEX_PACK) --ext "$(ICON_EXT)" --app "$(ICON_APP)" --sheet build/cn_icon_sheet.png
+
+.PHONY: icons
