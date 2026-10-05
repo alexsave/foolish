@@ -5,27 +5,27 @@
  *
  * A BUILD-TIME TOOL, host only, never in the app: the PNGs live in the asset
  * catalogues and Apple reads them out of the bundle. It exists so the icon is the
- * game's own cup and die (cn_geom.c's meshes, cn_tex.c's verdigris and bone, from
- * the same baked pack, through cn_scene.c's rasterizer and shadow map) rather than
- * a drawing that drifts from the table the moment the table changes. The shape is
- * uttt's (uttt/c/tools/uttt_icon.c): one tool, every size drawn at ITS OWN size.
+ * game's own dice (cn_geom.c's mesh, cn_tex.c's bone and pips from the same baked
+ * pack, through cn_scene.c's rasterizer and shadow map) rather than a drawing that
+ * drifts from the table the moment the table changes. The shape is uttt's
+ * (uttt/c/tools/uttt_icon.c): one tool, every size drawn at ITS OWN size.
  *
- * THE PICTURE. One verdigris cup, mouth down, tipped a little toward us about the
- * far edge of its mouth (the peek's own turn, cn_cam_peek_tilt), and one bone die
- * in front of it and to the left with a 5 up, on the drowned table (the deep's
- * teal, a pool of cold light behind the cup) under one light high on the left, the
- * shadows falling to the right and softened (soften() below). No pirate anything,
- * no published product's cup or box (chuiniu/LEGAL.md).
+ * THE PICTURE is the study's locked one (docs/UI.html, the Icon tab): two bone dice
+ * in the deep, a 5 and a wild 1, with the caustic over them. No cup, because at 29pt
+ * a cup is a thimble. The 1 is the icon's one drop of blood: its pip is the atlas's
+ * own deep red (cn_tex.c, the 1 "in blood"). The deep is the study's .icon gradient
+ * and its sea tile (TEX.sea, ported below), screen-blended and faded down the frame.
+ * No pirate anything, no published product's dice or box (chuiniu/LEGAL.md).
  *
  * THE CAMERA. cn_scene.c draws what an eye over the table sees ON THE TABLE'S
  * PLANE (a shifted lens: every point lands where the ray from the eye through it
- * meets z = 0). A hero shot wants an eye that looks AT the cup, low and in front.
- * Both are the same rays from the same eye, so the oblique camera's picture is the
- * table-plane picture re-sampled along those rays: a homography, exactly what the
- * game's leaning head does to its screen (cn_cam.h). So: put the eye where the
- * camera is, render the table-plane picture of the part of the table the camera's
- * frame sees, and for every output pixel follow its ray down to z = 0 and read the
- * picture there. Nothing is faked; a body's pixel is where its ray says.
+ * meets z = 0). The icon wants an eye that looks AT the dice, from above and in
+ * front. Both are the same rays from the same eye, so the oblique camera's picture
+ * is the table-plane picture re-sampled along those rays: a homography, exactly
+ * what the game's leaning head does to its screen (cn_cam.h). So: put the eye where
+ * the camera is, render the table-plane picture of the part of the table the frame
+ * sees, and for every output pixel follow its ray down to z = 0 and read the picture
+ * there. A body's pixel is where its ray says.
  *
  * SIZES. Each catalogue size is drawn at its own pixel size, supersampled
  * (SUB by SUB rays a pixel, bilinear reads of a table-plane picture of at least
@@ -39,7 +39,6 @@
 #define CN_TEX_DIE CN_TEX_SLOT_DIE
 #include "../src/cn_geom.h"
 #undef CN_TEX_DIE
-#include "../src/cn_cam.h"
 #include "../src/cn_tex.h"
 #include <math.h>
 #include <stdio.h>
@@ -48,34 +47,31 @@
 #include <zlib.h>
 
 /* ---- the scene, in board points (z up, y toward the viewer) ------------------------- */
-#define CUP_R      40.0      /* the cup's mouth radius                                   */
-#define DIE_D      31.0      /* the die's side: big beside the cup, so a face reads at 29pt */
-#define DIE_VALUE  5
-#define DIE_YAW    (-0.30)   /* radians, turned so two side faces show                   */
-#define CUP_TIP    (0.20)    /* radians the cup is tipped toward us (about 11 degrees)   */
-#define CUP_SEED   1u        /* the verdigris's offset (a seat's texture seed)          */
-#define DIE_SEED   11u
-#define DIE_X      (-38.0)   /* the die's centre from the cup's                          */
-#define DIE_Y      54.0
-/* the camera: above and in front, looking at a point between the cup and the die */
-#define CAM_EL     (0.95)    /* elevation, radians (about 54 degrees)                    */
-#define CAM_AZ     (0.25)    /* turned a little to the right of straight on              */
+#define DIE_D      30.0      /* a die's side                                             */
+#define NDICE      2
+/* the study's icon(): the 5 low on the left turned -12 degrees, the 1 higher on the right turned 9 */
+static const struct { int value; uint32_t seed; double x, y, yaw; } DICE[NDICE] = {
+    { 5, 201, -19.0,  9.0, -0.21 },
+    { 1, 202,  19.0, -9.0,  0.16 },
+};
+/* the camera: high and in front, so the up faces read; a little from the right */
+#define CAM_EL     (1.12)    /* elevation, radians (about 64 degrees)                    */
+#define CAM_AZ     (0.18)
 #define CAM_DIST   340.0     /* points from the eye to the target                        */
-#define MARGIN     0.10      /* of the frame clear round the bodies, at the tighter edges */
-/* where the camera looks; the frame is then fitted to the bodies, so this sets the angle only */
-#define TARGET_X   (-8.0)
-#define TARGET_Y   12.0
-#define TARGET_Z   30.0
-#define LIGHT_X    (-0.6)    /* toward the light, z = 1: high, on the left, a little behind */
-#define LIGHT_Y    (-0.2)
-/* the table: a pool of the cold light behind the cup and to its right, so the cup's
- * shaded side stands against the brightest of it */
-#define POOL_X     (-50.0)   /* the pool's centre is at (-POOL_X, -POOL_Y) from the cup's */
-#define POOL_Y     90.0
-#define POOL_R     240.0
+#define MARGIN     0.13      /* of the frame clear round the bodies, at the tighter edges */
+#define TARGET_Z   12.0      /* where the camera looks; the frame is then fitted to the bodies */
+#define LIGHT_X    (-0.45)   /* toward the light, z = 1: the study's LIGHT, up and to the left */
+#define LIGHT_Y    (-0.55)
 #define SHADOW_DARK .62f
-#define VIGNETTE   .55
-#define SOFT_PT    2.5f      /* the shadow's extra softness, a box radius in points (3 passes) */
+#define SOFT_PT    2.0f      /* the shadow's extra softness, a box radius in points (3 passes) */
+/* the deep (UI.html .icon): a gradient down the frame, and the sea tile screen-blended
+ * over it at CAUSTIC, faded out by CAUSTIC_FADE of the height; the tile spans
+ * CAUSTIC_TILE of the frame's width (the study's 160px tile on a 60px icon); the dice
+ * take it at CAUSTIC_BODY of that, the light on them from the same water */
+#define CAUSTIC      .8
+#define CAUSTIC_FADE .8
+#define CAUSTIC_TILE (160.0 / 60.0)
+#define CAUSTIC_BODY .35
 
 #define SUB   4              /* rays a pixel, per axis                                   */
 #define TEXEL 1.25           /* table-plane device pixels a ray step, at the nearest ray */
@@ -98,16 +94,64 @@ static int sink_alloc(void *ctx, int w, int h, int has_bump, CnTexImage *img)
     return id;
 }
 
-/* ---- the table under everything: the deep's colours, a pool of the light behind the cup --- */
-static void table_rgb(double x, double y, double out[3])
+/* ---- the sea: the study's TEX.sea, one ridged fbm, warped, raised to a power ------------
+ * (UI.html: SEA = { light [46 120 112], cells 5, warp .06, warpCells 3, power 4, seed 41 }),
+ * its hash cn_tex.c's port of the study's, baked once to a wrapping tile */
+#define SEA_N 512
+static float SEA[SEA_N * SEA_N];
+static double sea_hash(int ix, int iy, int seed) { return cn_tex_hash((uint32_t)ix, (uint32_t)iy, (uint32_t)seed) / 4294967296.0; }
+static int wrapi(int i, int p) { return ((i % p) + p) % p; }
+static double vnoise(double x, double y, int px, int py, int seed)
 {
-    /* x, y relative to the cup's centre, points */
-    const double px = x + POOL_X, py = y + POOL_Y;
-    double r = sqrt(px * px * .8 + py * py) / POOL_R;
-    double t = r > 1 ? 1 : r;
-    t = t * t * (3 - 2 * t);
-    static const double lit[3] = { 0x25, 0x72, 0x72 }, deep[3] = { 0x03, 0x0f, 0x10 };
-    for (int c = 0; c < 3; c++) out[c] = (lit[c] + (deep[c] - lit[c]) * t) / 255;
+    const int x0 = (int)floor(x), y0 = (int)floor(y);
+    const double fx = x - x0, fy = y - y0, sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+    const double a = sea_hash(wrapi(x0, px), wrapi(y0, py), seed), b = sea_hash(wrapi(x0 + 1, px), wrapi(y0, py), seed);
+    const double c = sea_hash(wrapi(x0, px), wrapi(y0 + 1, py), seed), d = sea_hash(wrapi(x0 + 1, px), wrapi(y0 + 1, py), seed);
+    const double top = a + (b - a) * sx, bot = c + (d - c) * sx;
+    return top + (bot - top) * sy;
+}
+static double fbm(double u, double v, int cx, int cy, int octaves, int seed)
+{
+    double sum = 0, amp = 1, norm = 0;
+    for (int o = 0; o < octaves; o++) {
+        sum += amp * vnoise(u * cx, v * cy, cx, cy, seed + o * 101);
+        norm += amp; amp *= .5; cx *= 2; cy *= 2;
+    }
+    return sum / norm;
+}
+static void sea_bake(void)
+{
+    for (int j = 0; j < SEA_N; j++)
+        for (int i = 0; i < SEA_N; i++) {
+            const double u = (i + .5) / SEA_N, v = (j + .5) / SEA_N;
+            const double wu = u + (fbm(u, v, 3, 3, 2, 41 + 7) - .5) * .06, wv = v + (fbm(u, v, 3, 3, 2, 41 + 11) - .5) * .06;
+            const double ridge = 1 - fabs(2 * fbm(wu, wv, 5, 5, 3, 41) - 1);
+            SEA[j * SEA_N + i] = (float)pow(ridge, 4);
+        }
+}
+/* the caustic's strength at a frame point (fractions of the width and height), bilinear, wrapping */
+static double sea_at(double fx, double fy, double aspect)
+{
+    const double u = fx / CAUSTIC_TILE * SEA_N, v = fy / aspect / CAUSTIC_TILE * SEA_N;
+    const int x0 = (int)floor(u - .5), y0 = (int)floor(v - .5);
+    const double ax = u - .5 - x0, ay = v - .5 - y0;
+    const double a = SEA[wrapi(y0, SEA_N) * SEA_N + wrapi(x0, SEA_N)], b = SEA[wrapi(y0, SEA_N) * SEA_N + wrapi(x0 + 1, SEA_N)];
+    const double c = SEA[wrapi(y0 + 1, SEA_N) * SEA_N + wrapi(x0, SEA_N)], d = SEA[wrapi(y0 + 1, SEA_N) * SEA_N + wrapi(x0 + 1, SEA_N)];
+    return (a + (b - a) * ax) + ((c + (d - c) * ax) - (a + (b - a) * ax)) * ay;
+}
+/* the deep under the dice at a frame point: #134a4e, #0a2a2e at 55%, #04100f */
+static void deep_rgb(double fy, double out[3])
+{
+    static const double s[3][3] = { { 0x13, 0x4a, 0x4e }, { 0x0a, 0x2a, 0x2e }, { 0x04, 0x10, 0x0f } };
+    const int k = fy < .55 ? 0 : 1;
+    const double t = k == 0 ? fy / .55 : (fy - .55) / .45;
+    for (int c = 0; c < 3; c++) out[c] = (s[k][c] + (s[k + 1][c] - s[k][c]) * fmin(1, fmax(0, t))) / 255;
+}
+/* screen-blend the caustic (the study's light [46 120 112]) at strength k */
+static void caustic(double rgb[3], double c, double k)
+{
+    static const double light[3] = { 46 / 255.0, 120 / 255.0, 112 / 255.0 };
+    for (int i = 0; i < 3; i++) rgb[i] = 1 - (1 - rgb[i]) * (1 - light[i] * c * k);
 }
 
 /* ---- PNG through zlib --------------------------------------------------------------------- */
@@ -155,8 +199,8 @@ static int write_png(const char *path, const uint8_t *rgb, int w, int h)
 static uint8_t *ARENA;
 static size_t ARENA_BYTES = (size_t)1536 << 20;
 static CnTexPack PACK;
-static CnMesh CUP_MESH, DIE_MESH;
-static float VB[2 * CN_MESH_MAX_CORNER * CN_GEOM_VF], FB[2 * CN_MESH_MAX_CORNER * CN_GEOM_FF];
+static CnMesh DIE_MESH;
+static float VB[NDICE * CN_MESH_MAX_CORNER * CN_GEOM_VF], FB[NDICE * CN_MESH_MAX_CORNER * CN_GEOM_FF];
 
 /* THE SOFT SHADOW. The renderer's shadow on the table softens over two map texels,
  * a lamp's edge; a hero shot wants a wider penumbra. The table's pixels (alpha below
@@ -201,28 +245,26 @@ static V3 lens_ray(const Lens *l, double sx, double sy)
 
 static int draw(int W, int H, uint8_t *rgb)
 {
-    /* the camera, about the cup's centre at the origin */
+    /* the camera, about the dice's middle at the origin */
     const double aspect = (double)W / H;
-    const double el = CAM_EL, az = CAM_AZ;
-    const V3 target = v3(TARGET_X, TARGET_Y, TARGET_Z);
-    const V3 eye = vadd(target, vmul(v3(sin(az) * cos(el), cos(az) * cos(el), sin(el)), CAM_DIST));
+    const V3 target = v3(0, 0, TARGET_Z);
+    const V3 eye = vadd(target, vmul(v3(sin(CAM_AZ) * cos(CAM_EL), cos(CAM_AZ) * cos(CAM_EL), sin(CAM_EL)), CAM_DIST));
     const V3 fwd = vnorm(vsub(target, eye)), right = vnorm(vcross(v3(0, 0, 1), fwd)), up = vcross(fwd, right);
     const V3 L = vnorm(v3(LIGHT_X, LIGHT_Y, 1));
 
-    /* the bodies, emitted once where they stand: their picture on the table sizes the board */
-    CnObj cup, die;
-    cn_geom_cup_obj(&cup, (float)CUP_R, -1, CUP_SEED, 0, 0, 0, 0);
-    CnPeek pk = cn_cam_peek_tilt((float)CUP_R, (float)CUP_TIP, (float)CUP_TIP);
-    cup.tilt_angle = pk.angle; cup.tilt_hinge_y = pk.hinge_y;
-    cn_geom_die_obj(&die, (float)DIE_D, DIE_VALUE, DIE_SEED, (float)DIE_X, (float)DIE_Y, (float)DIE_YAW);
-    const int nv = CUP_MESH.ncorner + DIE_MESH.ncorner, nf = CUP_MESH.ntri + DIE_MESH.ntri;
-    int tex[CN_TEX_SLOTS] = { 0 };
-    cn_geom_emit(&CUP_MESH, &cup, 0, tex, VB, 0, FB, 0);
-    cn_geom_emit(&DIE_MESH, &die, 0, tex, VB, CUP_MESH.ncorner, FB, CUP_MESH.ntri);
+    /* the dice, emitted once where they stand: their picture on the table sizes the board */
+    CnObj die[NDICE];
+    int tex[NDICE][CN_TEX_SLOTS];
+    memset(tex, 0, sizeof tex);
+    const int nv = NDICE * DIE_MESH.ncorner, nf = NDICE * DIE_MESH.ntri;
+    for (int k = 0; k < NDICE; k++) {
+        cn_geom_die_obj(&die[k], (float)DIE_D, DICE[k].value, DICE[k].seed, (float)DICE[k].x, (float)DICE[k].y, (float)DICE[k].yaw);
+        cn_geom_emit(&DIE_MESH, &die[k], 0, tex[k], VB, k * DIE_MESH.ncorner, FB, k * DIE_MESH.ntri);
+    }
 
-    /* THE FRAME: the bodies' extent as the camera sees it (u right, v down, as tangents),
-     * fitted to the picture's shape with MARGIN of its height clear at the tighter pair
-     * of edges, so every aspect the catalogues ask for holds the same subject */
+    /* THE FRAME: the dice's extent as the camera sees it (u right, v down, as tangents),
+     * fitted to the picture's shape with MARGIN of it clear at the tighter pair of edges,
+     * so every aspect the catalogues ask for holds the same subject */
     double u0 = 1e30, u1 = -1e30, w0 = 1e30, w1 = -1e30;
     for (int i = 0; i < nv; i++) {
         const float *v = VB + (size_t)i * CN_GEOM_VF;
@@ -259,8 +301,7 @@ static int draw(int W, int H, uint8_t *rgb)
         fx0 = fmin(fx0, eye.x + d.x * t); fx1 = fmax(fx1, eye.x + d.x * t);
         fy0 = fmin(fy0, eye.y + d.y * t); fy1 = fmax(fy1, eye.y + d.y * t);
     }
-    bx0 = fmax(bx0, fx0); by0 = fmax(by0, fy0); bx1 = fmin(bx1, fx1); by1 = fmin(by1, fy1);
-    bx0 = floor(bx0); by0 = floor(by0);
+    bx0 = floor(fmax(bx0, fx0)); by0 = floor(fmax(by0, fy0)); bx1 = fmin(bx1, fx1); by1 = fmin(by1, fy1);
     const int bw = (int)ceil(bx1 - bx0), bh = (int)ceil(by1 - by0);
     /* the picture's density: TEXEL device pixels for the smallest step between two rays on
      * the table, which is at the frame's foot (the nearest table) */
@@ -276,70 +317,66 @@ static int draw(int W, int H, uint8_t *rgb)
 
     cn_scene_init(ARENA, ARENA_BYTES);
     CnTexSink sink = { 0, sink_alloc };
-    tex[CN_TEX_CUP_SIDE] = cn_tex_upload(&PACK, &sink, &(CnTexSpec){ CN_TEX_SIDE, CUP_SEED, -1, 0, 0, 1 });
-    tex[CN_TEX_CUP_CROWN] = cn_tex_upload(&PACK, &sink, &(CnTexSpec){ CN_TEX_CROWN_T, CUP_SEED, -1, 0, CN_TEX_NUMERAL_SMALL, 1 });
-    tex[CN_TEX_CUP_INNER] = cn_tex_upload(&PACK, &sink, &(CnTexSpec){ CN_TEX_INNER, CUP_SEED, -1, 0, 0, 1 });
-    tex[CN_TEX_CUP_FLOOR] = cn_tex_upload(&PACK, &sink, &(CnTexSpec){ CN_TEX_FLOOR, CUP_SEED, -1, 0, 0, 1 });
-    tex[CN_TEX_SLOT_DIE] = cn_tex_upload(&PACK, &sink, &(CnTexSpec){ CN_TEX_DIE, DIE_SEED, 0, 0, 0, 1 });
-    for (int i = 0; i < CN_TEX_SLOTS; i++)
-        if (tex[i] < 0) { fprintf(stderr, "cn_icon: no room for a texture\n"); return 0; }
+    for (int k = 0; k < NDICE; k++) {
+        for (int i = 0; i < CN_TEX_SLOTS; i++) tex[k][i] = -1;
+        tex[k][CN_TEX_SLOT_DIE] = cn_tex_upload(&PACK, &sink, &(CnTexSpec){ CN_TEX_DIE, DICE[k].seed, 0, 0, 0, 1 });
+        if (tex[k][CN_TEX_SLOT_DIE] < 0) { fprintf(stderr, "cn_icon: no room for a die's texture\n"); return 0; }
+    }
     if (!cn_scene_begin(bw, bh, 0, dpr, (float)(eye.x - bx0), (float)(eye.y - by0), (float)eye.z,
                         (float)L.x, (float)L.y, (float)L.z, CN_SCENE_SHADOW_MAX, SHADOW_DARK, nv, nf)) {
         fprintf(stderr, "cn_icon: the frame does not fit (%dx%d points at %.2f)\n", bw, bh, dpr); return 0;
     }
     /* now onto the board, its corner at (bx0, by0), with the textures' ids */
-    CnObj *body[2] = { &cup, &die };
-    for (int b = 0; b < 2; b++) {
+    for (int k = 0; k < NDICE; k++) {
         float occ[5];
-        body[b]->x -= (float)bx0; body[b]->y -= (float)by0;
-        cn_geom_occluder(body[b], 0, occ);
+        die[k].x -= (float)bx0; die[k].y -= (float)by0;
+        cn_geom_occluder(&die[k], 0, occ);
         cn_scene_occluder(occ[0], occ[1], occ[2], occ[3], occ[4]);
+        cn_geom_emit(&DIE_MESH, &die[k], 0, tex[k], cn_scene_verts(), k * DIE_MESH.ncorner, cn_scene_faces(), k * DIE_MESH.ntri);
     }
-    cn_geom_emit(&CUP_MESH, &cup, 0, tex, cn_scene_verts(), 0, cn_scene_faces(), 0);
-    cn_geom_emit(&DIE_MESH, &die, 0, tex, cn_scene_verts(), CUP_MESH.ncorner, cn_scene_faces(), CUP_MESH.ntri);
     if (cn_scene_render(nv, nf) < 0) { fprintf(stderr, "cn_icon: render failed\n"); return 0; }
     uint8_t *fb = cn_scene_fb();
     const int fw = cn_scene_fb_w(), fh = cn_scene_fb_h();
     soften(fb, fw, fh, (int)(SOFT_PT * dpr + .5f));
 
     /* every pixel: SUB by SUB rays down to the table, the picture read there (bilinear)
-     * over the table's own colour */
+     * over the deep, the caustic screen-blended over both */
     for (int py = 0; py < H; py++)
         for (int px = 0; px < W; px++) {
             double acc[3] = { 0, 0, 0 };
             for (int j = 0; j < SUB; j++)
                 for (int i = 0; i < SUB; i++) {
-                    const double sx = (px + (i + .5) / SUB) / W * 2 - 1, sy = (py + (j + .5) / SUB) / H * 2 - 1;
-                    const V3 d = lens_ray(&lens, sx, sy);
+                    const double ffx = (px + (i + .5) / SUB) / W, ffy = (py + (j + .5) / SUB) / H;
+                    const V3 d = lens_ray(&lens, ffx * 2 - 1, ffy * 2 - 1);
                     const double t = -eye.z / d.z, x = eye.x + d.x * t, y = eye.y + d.y * t;
+                    const double c = sea_at(ffx, ffy, aspect), mask = fmax(0, 1 - ffy / CAUSTIC_FADE);
                     double tb[3];
-                    table_rgb(x, y, tb);
+                    deep_rgb(ffy, tb);
+                    caustic(tb, c, CAUSTIC * mask);
                     const double fx = (x - bx0) * dpr - .5, fy = (y - by0) * dpr - .5;
                     const int x0 = (int)floor(fx), y0 = (int)floor(fy);
                     const double ax = fx - x0, ay = fy - y0;
                     for (int q = 0; q < 4; q++) {
                         const int xx = x0 + (q & 1), yy = y0 + (q >> 1);
                         const double wq = (q & 1 ? ax : 1 - ax) * (q >> 1 ? ay : 1 - ay);
-                        if (xx < 0 || yy < 0 || xx >= fw || yy >= fh) {   /* off the board: bare table */
-                            for (int c = 0; c < 3; c++) acc[c] += wq * tb[c];
+                        if (xx < 0 || yy < 0 || xx >= fw || yy >= fh) {   /* off the board: bare deep */
+                            for (int k = 0; k < 3; k++) acc[k] += wq * tb[k];
                             continue;
                         }
                         const uint8_t *p = fb + ((size_t)yy * fw + xx) * 4;
                         const double a = p[3] / 255.0;
-                        for (int c = 0; c < 3; c++) acc[c] += wq * (tb[c] * (1 - a) + p[c] / 255.0 * a);
+                        double s[3] = { p[0] / 255.0, p[1] / 255.0, p[2] / 255.0 };
+                        if (p[3] == 255) caustic(s, c, CAUSTIC * CAUSTIC_BODY * mask);   /* a die, in the same water */
+                        for (int k = 0; k < 3; k++) acc[k] += wq * (tb[k] * (1 - a) + s[k] * a);
                     }
                 }
-            /* the deck's vignette (UI.html .stage::after), in the frame */
-            const double vx = ((px + .5) / W - .5) * 2, vy = ((py + .5) / H - .45) * 2;
-            const double vr = sqrt((vx * vx + vy * vy) * .7), vt = fmin(1, fmax(0, (vr - .55) / .75));
-            for (int c = 0; c < 3; c++) {
-                const double v = fmin(1, fmax(0, acc[c] / (SUB * SUB) * (1 - VIGNETTE * vt)));
-                rgb[((size_t)py * W + px) * 3 + c] = (uint8_t)(v * 255 + .5);
+            for (int k = 0; k < 3; k++) {
+                const double v = fmin(1, fmax(0, acc[k] / (SUB * SUB)));
+                rgb[((size_t)py * W + px) * 3 + k] = (uint8_t)(v * 255 + .5);
             }
         }
     return 1;
 }
-
 
 static int draw_to(int W, int H, const char *path, uint8_t **keep)
 {
@@ -394,8 +431,8 @@ int main(int argc, char **argv)
     if (!bytes || fread(bytes, 1, (size_t)n, fp) != (size_t)n) { fclose(fp); return 1; }
     fclose(fp);
     if (cn_tex_pack_open(&PACK, bytes, (uint32_t)n) != CN_TEX_OK) { fprintf(stderr, "cn_icon: %s is not a texture pack\n", pack); return 1; }
-    if (!cn_geom_cup_mesh(&CUP_MESH, CUP_R, CUP_R * CN_CUP_RC, CUP_R * CN_CUP_TALL, CN_CUP_SEGS, CUP_R * CN_CUP_WALL, DIE_D * CN_DOME)
-        || !cn_geom_die_mesh(&DIE_MESH, DIE_D)) { fprintf(stderr, "cn_icon: a mesh does not fit\n"); return 1; }
+    if (!cn_geom_die_mesh(&DIE_MESH, DIE_D)) { fprintf(stderr, "cn_icon: the die mesh does not fit\n"); return 1; }
+    sea_bake();
     ARENA = aligned_alloc(16, ARENA_BYTES);
     if (!ARENA) return 1;
 
