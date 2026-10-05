@@ -116,4 +116,4 @@ Run 2026-09-27 on the kernel as of this commit, with `cn_fuzz 100` to `500`, `cn
 
 ## cn_stage_test.c and the stage through the bridge
 
-Package D's rows (the stage, its C and Swift smokes, the Swift stage test) are in `chuiniu/c/docs_pkgD.md`, "Mutation checks": every test function of `cn_stage_test.c` and every stage check of the smokes went red at least once.
+Package D's rows (the stage, its C and Swift smokes, the Swift stage test) are in `chuiniu/c/docs_pkgD.md`, "Mutation checks": every test function of `cn_stage_test.c` went red at least once, and the smokes' stage checks named there did.
