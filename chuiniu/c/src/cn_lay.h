@@ -77,10 +77,10 @@
 #define CN_LAY_NAME_H     30.0
 #define CN_LAY_NAME_UP    8.0     /* the box's top is this far above the anchor */
 #define CN_LAY_EDGE       4.0     /* no body nearer the drawer's edge than this, on the glass */
-#define CN_LAY_REACH_MIN  .7      /* the least reach a throw is held at: lower, the shaken cup's crown dips into the table */
+#define CN_LAY_REACH_MIN  .8    /* the least reach a throw is held at: lower, the shaken cup's crown dips into the table */
 #define CN_LAY_ROW_MIN_R  12.0    /* the row's cups are never made smaller than this */
 #define CN_LAY_MY_D_MIN   10.0    /* nor my dice on a short board                   */
-#define CN_LAY_BRASS      .75     /* a die's brass ring at the reveal, of its side: past its corners (.71), inside half the spacing (.85) */
+#define CN_LAY_BRASS      .75   /* a die's brass ring at the reveal, of its side: past its corners (.71), inside half the spacing (.85) */
 
 typedef struct {
     uint8_t  seats;                 /* 2..6                                        */

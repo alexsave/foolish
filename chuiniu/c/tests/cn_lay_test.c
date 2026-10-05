@@ -1618,26 +1618,29 @@ static void test_inside_the_drawer(void)
             CnLayThrow T[CN_LAY_SEATS];
             const int nt = cn_lay_throws(&in, &L, CN_THROW_CUP, T, CN_LAY_SEATS);
             CHECK(nt == 1 && T[0].seat == in.me, "%dx%d n %d: a short board, my throw alone (%d)", W, H, n, nt);
-            if (seen.cup_r != 0) { CHECK(!memcmp(&seen, &T[0].t, sizeof seen), "%dx%d n %d: the same throw on every screen", W, H, n); continue; }
-            seen = T[0].t;
-            CnRollInfo info;
-            const int nf = cn_roll_bake(&T[0].t, T[0].seed, FR, PH, CN_ROLL_MAX_FRAMES, &info);
-            Box r = box_none();
-            for (int h2 = 0; h2 < 2 * nf; h2++) {   /* every frame, and half way to the next (the host's in-between) */
-                memcpy(o, base, sizeof(CnObj) * (size_t)nb);
-                int k = 0;
-                for (int i = 0; i < nb; i++) {
-                    if (o[i].seat != T[0].seat) continue;
-                    CnPose p;
-                    cn_geom_pose_at(FR, PH, nf, h2 / (2.0 * CN_ROLL_HZ), o[i].kind == CN_OBJ_CUP ? 0 : 1 + k++, &p);
-                    cn_geom_place(&o[i], &p, -1);
-                    if (o[i].kind == CN_OBJ_CUP && o[i].has_rot) o[i].tilt_angle = 0;   /* a cup in its throw is the throw's */
-                    drawn(&L, &o[i], &r);
+            for (int j = 0; j < nt; j++) {
+                /* mine is one throw on every screen of the drawer: drawn once, then only compared */
+                if (j == 0 && seen.cup_r != 0) { CHECK(!memcmp(&seen, &T[0].t, sizeof seen), "%dx%d n %d: the same throw on every screen", W, H, n); continue; }
+                if (j == 0) seen = T[0].t;
+                CnRollInfo info;
+                const int nf = cn_roll_bake(&T[j].t, T[j].seed, FR, PH, CN_ROLL_MAX_FRAMES, &info);
+                Box r = box_none();
+                for (int h2 = 0; h2 < 2 * nf; h2++) {   /* every frame, and half way to the next (the host's in-between) */
+                    memcpy(o, base, sizeof(CnObj) * (size_t)nb);
+                    int k = 0;
+                    for (int i = 0; i < nb; i++) {
+                        if (o[i].seat != T[j].seat || (o[i].kind == CN_OBJ_DIE && k >= T[j].t.dice)) continue;
+                        CnPose p;
+                        cn_geom_pose_at(FR, PH, nf, h2 / (2.0 * CN_ROLL_HZ), o[i].kind == CN_OBJ_CUP ? 0 : 1 + k++, &p);
+                        cn_geom_place(&o[i], &p, -1);
+                        if (o[i].kind == CN_OBJ_CUP && o[i].has_rot) o[i].tilt_angle = 0;   /* a cup in its throw is the throw's */
+                        drawn(&L, &o[i], &r);
+                    }
+                    frames++;
                 }
-                frames++;
+                worst = fmin(worst, fmin(fmin(r.x0, r.y0), fmin(W - r.x1, H - r.y1)));
+                CHECK(inside(&r, W, H), "%dx%d n %d: seat %d's throw, every frame inside (reach %.3f: x %.1f..%.1f y %.1f..%.1f)", W, H, n, T[j].seat, L.my_reach, r.x0, r.x1, r.y0, r.y1);
             }
-            worst = fmin(worst, fmin(fmin(r.x0, r.y0), fmin(W - r.x1, H - r.y1)));
-            CHECK(inside(&r, W, H), "%dx%d: my throw, every frame inside (reach %.3f: x %.1f..%.1f y %.1f..%.1f)", W, H, L.my_reach, r.x0, r.x1, r.y0, r.y1);
         }
     }
     printf("  %d throw frames and every still: the nearest any body comes to the drawer's edge is %.2f points\n", frames, worst);
@@ -1693,7 +1696,26 @@ static void test_reach(void)
             under &= hypot(p[0] - t.cup_x, p[1] - t.cup_y) + t.die * .71 <= t.cup_r - t.cup_t + 1.5;
         }
     }
-    CHECK(done && under && forced == 0, "forty throws held at the least reach, %.2f, complete with every die under my cup (forced %d)", CN_LAY_REACH_MIN, forced);
+    /* ...and its crown stays on the table's side of it once the cup is up (the first .35 s, cn_roll.c's LIFT, rises
+     * from under the table at any reach: docs_pkgU.md) */
+    for (int sh = 0; sh < 4; sh++) {
+        CnThrow t = T[0].t;
+        t.scale = (float)CN_LAY_REACH_MIN * t.cup_r / CN_THROW_REF_R; t.shake_s = 1.5f + sh * .25f;
+        double low = 1e9;
+        for (int f = 21; f <= cn_roll_cup_span(&t) * CN_ROLL_HZ; f++) {
+            float fr[CN_ROLL_FRAME_FLOATS];
+            memset(fr, 0, sizeof fr);
+            cn_roll_cup_pose(&t, (double)f / CN_ROLL_HZ, fr);
+            CnPose p;
+            cn_geom_pose_at(fr, 0, 1, 0, 0, &p);
+            for (int top = 0; top < 2; top++) for (int i = 0; i < CN_CUP_SEGS; i++) {
+                const double a = i * 2 * CN_PI / CN_CUP_SEGS, r = top ? t.cup_rc : t.cup_r;
+                low = fmin(low, p.p[2] + p.rot[2] * r * cos(a) + p.rot[5] * r * sin(a) + p.rot[8] * (top ? t.cup_h : 0));
+            }
+        }
+        CHECK(low > -.5, "shake %.2f s at the least reach: the cup's lowest point %.2f, not into the table", t.shake_s, low);
+    }
+    CHECK(done && under && forced == 0,"forty throws held at the least reach, %.2f, complete with every die under my cup (forced %d)", CN_LAY_REACH_MIN, forced);
 }
 
 static void test_brass(void)
