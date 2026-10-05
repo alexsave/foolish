@@ -268,7 +268,8 @@ const CnStageHud *cn_stage_begin(CnStage *st, const CnStageIn *in);
 int  cn_stage_name(CnStage *st, int seat, const uint8_t *rgba, int w, int h, float w_pt, float h_pt);
 /* Where seat's name lies on the begun table: x0 y0 x1 y1 in the canvas's points
  * (the bodies' frame: x from the canvas's left, y from the board's top), the
- * halo included. 0 with no name or no table. */
+ * halo included. 0 when the last frame drew no name there (none given, no
+ * room, a bubble, no table). */
 int  cn_stage_name_rect(const CnStage *st, int seat, float out[4]);
 
 /* The bodies at t (the renderer's input): my cup tipped by `peek` (0 shut ..

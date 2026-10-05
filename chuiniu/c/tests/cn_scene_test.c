@@ -516,14 +516,18 @@ int main(void)
         decal_texture(late);
         const CnSceneMark m2 = cn_scene_tex_mark();
         const size_t r2 = cn_scene_room();
-        decal_frame(2, 1, 1, 1, 0);   /* draws the name: its copies made now, after the mark */
-        CHECK(cn_scene_room() < r2 && cnf_hash() == h, "drawn: the copies took room after the mark");
+        /* drawn at a quarter of a point a pixel, the name reads its half-size copies, made now, after the mark */
+        decal_frame(.25f, 1, 1, 1, 0);
+        const uint64_t small = cnf_hash();
+        CHECK(cn_scene_room() < r2, "drawn small: the copies took room after the mark");
         cn_scene_tex_drop(m2);
         CHECK(cn_scene_room() == r2, "dropped: their room is back");
         CHECK(cn_scene_tex_new(256, 64, 0) == m2.n, "a texture where the copies were");
         memset(cn_scene_tex_rgba(m2.n), 7, 256 * 64 * 4);
+        decal_frame(.25f, 1, 1, 1, 0);
+        CHECK(cnf_hash() == small, "the name made its copies again, not read from the new texture's bytes");
         decal_frame(2, 1, 1, 1, 0);
-        CHECK(cnf_hash() == h, "the name made its copies again, not read from the new texture's bytes");
+        CHECK(cnf_hash() == h, "and at 2x it is the name frame");
     }
 
     TEST("the memory: a frame keeps its picture whole and a strip a band");

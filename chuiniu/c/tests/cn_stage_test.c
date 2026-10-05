@@ -790,6 +790,18 @@ static void test_names(void)
         if (!room) CHECK(fb && ST.shot.scale == 2 && fnv(fb, (size_t)w * h * 4) == bare && k == 0, "no room for a name: none drawn, the bare frame at 2x (%d names, scale %.1f)", k, ST.shot.scale);
         else CHECK(fb && ST.shot.scale == 2 && k == 2 && first == 2, "room for two: seats 0 and 1 drawn, the frame at 2x (%d names, scale %.1f)", k, ST.shot.scale);
     }
+    /* the reserve is the table's: a small table in the same arena holds all six, and the tall one begun again two */
+    CnStageIn small = table_in(375, 541, 6, 0, 0, CN_STAGE_TABLE);
+    small.scale = 2;
+    cn_stage_begin(&ST, &small);
+    fb = cn_stage_frame(&ST, 0, 0, 0, &w, &h);
+    int k6 = 0;
+    for (int s = 0; s < 6; s++) k6 += ST.name[s].id >= 0;
+    cn_stage_begin(&ST, &in);
+    fb = cn_stage_frame(&ST, 0, 0, 0, &w, &h);
+    int k2 = 0;
+    for (int s = 0; s < 6; s++) k2 += ST.name[s].id >= 0;
+    CHECK(k6 == 6 && fb && ST.shot.scale == 2 && k2 == 2, "375 by 541 in it: six names; 430 by 830 begun again: two, and the frame at 2x (%d, %d, scale %.1f)", k6, k2, ST.shot.scale);
     /* a purge and a new arena: the names come back from the stage's own copy, the same bytes */
     cn_stage_purge(&ST);
     cn_stage_attach(&ST, A, ARENA);

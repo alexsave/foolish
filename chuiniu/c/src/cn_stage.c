@@ -92,18 +92,19 @@ static void counts(const CnStage *st, int *nv, int *nf)
     *nv = 0; *nf = 0;
     for (int i = 0; i < st->nobj; i++) { *nv += st->mesh[st->obj_mesh[i]].ncorner; *nf += st->mesh[st->obj_mesh[i]].ntri; }
 }
-/* the names a frame draws (a quad each: 4 vertices, 2 faces) */
+/* the names a frame draws (a quad each: 4 vertices, 2 faces): those with a texture, which names_upload alone decides */
 static int names_drawn(const CnStage *st)
 {
     int n = 0;
-    if (st->in.kind != CN_STAGE_BUBBLE) for (int s = 0; s < st->in.seats; s++) n += st->name[s].id >= 0;
+    for (int s = 0; s < st->in.seats; s++) n += st->name[s].id >= 0;
     return n;
 }
 
 /* THE NAMES' TEXTURES, after the set (name_mark): each name the host gave, in seat order, with its half-size
  * copies made now, kept only while the arena still holds the still frame at the scale it would get without any
- * name (a name never costs the picture its scale; one that does not fit is not drawn). A pure function of the
- * begun table and the names, like the set. */
+ * name (a name never costs the picture its scale; one that does not fit is not drawn), and none in a bubble. A
+ * pure function of the begun table and the names, like the set; the one place that decides which names a frame
+ * draws (a name is drawn exactly when it has a texture). */
 static void names_upload(CnStage *st)
 {
     cn_scene_tex_drop(st->name_mark);
@@ -159,7 +160,7 @@ int cn_stage_name(CnStage *st, int seat, const uint8_t *rgba, int w, int h, floa
  * foot on y; mine on a short board its left edge on x, centred on y), then the halo round it */
 int cn_stage_name_rect(const CnStage *st, int seat, float out[4])
 {
-    if (!st->begun || st->in.kind == CN_STAGE_BUBBLE || seat < 0 || seat >= st->in.seats || !st->name[seat].w) return 0;
+    if (!st->begun || seat < 0 || seat >= st->in.seats || st->name[seat].id < 0) return 0;
     const CnStageName *n = &st->name[seat];
     const float halo = CN_STAGE_NAME_HALO, cw = n->w_pt - 2 * halo, ch = n->h_pt - 2 * halo;
     const float x = st->lay.name_x[seat] + st->pad_x, y = st->lay.name_y[seat];
@@ -629,7 +630,7 @@ int cn_stage_prepare(CnStage *st, uint32_t t_ms, float peek, float lift)
     }
     /* THE NAMES: a quad each, flat on the table at CN_STAGE_NAME_Z, its own body's number (an edge where it meets
      * the table or a cup), taking the shadows; a cup in front of one hides it by the depth test, as anything would */
-    for (int s = 0; s < st->in.seats && st->in.kind != CN_STAGE_BUBBLE; s++) {
+    for (int s = 0; s < st->in.seats; s++) {
         float r[4];
         if (st->name[s].id < 0 || !cn_stage_name_rect(st, s, r)) continue;
         static const float U[4] = { 0, 1, 1, 0 }, Vv[4] = { 0, 0, 1, 1 };
