@@ -49,10 +49,11 @@ int cn_say_dice_n(int n, char *out, int cap);                    /* "4 dice" */
  * side, and a longer caption wraps or is cut. The kernel knows no font, so it
  * counts every caption in CN_CAP_UNIT-ths of a point by cn_cap_width, an
  * UPPER BOUND on the system font's advance at 17 points, regular or
- * semibold: a table for ASCII measured with Core Text, and a class for every
- * other code point that is the widest glyph of that class (W and % are 16.5,
- * a Latin letter 19, Greek and Cyrillic 22, a CJK ideograph 19, an emoji 24,
- * anything else 46, U+FDFD 61, cuneiform 80; a combining mark 0).
+ * semibold: a table for ASCII measured with Core Text on the phone, and a
+ * class for every other code point that is the widest glyph of that class
+ * there (W and % are 16.5, a Latin letter 19, Greek and Cyrillic 24, a CJK
+ * ideograph 19, an emoji 24, anything else 46, U+FDFD 73, cuneiform 80; a
+ * combining mark 0).
  *
  * Every caption this file writes is at most CN_CAP_BUDGET by that count, by
  * construction: it says the study's sentence when that fits (the usual

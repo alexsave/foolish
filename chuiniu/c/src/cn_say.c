@@ -87,14 +87,14 @@ static int cp_width(unsigned c)
     if (text_cp_cols(c) == 0) return 0;                       /* a combining mark, a joiner */
     if ((c >= 0x01C4 && c <= 0x01CC) || (c >= 0x01F1 && c <= 0x01F3)) return 46 * CN_CAP_UNIT;  /* "DŽ" */
     if ((c >= 0x00A0 && c <= 0x024F) || (c >= 0x1E00 && c <= 0x1EFF)) return 19 * CN_CAP_UNIT;  /* Latin */
-    if (c >= 0x0370 && c <= 0x04FF) return 22 * CN_CAP_UNIT;                                     /* Greek, Cyrillic */
+    if (c >= 0x0370 && c <= 0x04FF) return 24 * CN_CAP_UNIT;                                     /* Greek, Cyrillic */
     if ((c >= 0x3040 && c <= 0x30FF) || (c >= 0x3400 && c <= 0x4DBF) || (c >= 0x4E00 && c <= 0x9FFF)
         || (c >= 0xAC00 && c <= 0xD7A3) || (c >= 0xF900 && c <= 0xFAFF) || (c >= 0xFF01 && c <= 0xFF60)
         || (c >= 0x20000 && c <= 0x3FFFD))
         return 19 * CN_CAP_UNIT;                                                                 /* CJK, kana, Hangul */
     if ((c >= 0x1F000 && c <= 0x1FAFF) || (c >= 0x2600 && c <= 0x27BF)) return 24 * CN_CAP_UNIT;  /* emoji */
     if (c >= 0x12000 && c <= 0x1254F) return 80 * CN_CAP_UNIT;                                   /* cuneiform */
-    if (c == 0xFDFD) return 61 * CN_CAP_UNIT;                                                    /* the bismillah */
+    if (c == 0xFDFD) return 73 * CN_CAP_UNIT;                                                    /* the bismillah */
     return 46 * CN_CAP_UNIT;                                                                     /* the rest */
 }
 
