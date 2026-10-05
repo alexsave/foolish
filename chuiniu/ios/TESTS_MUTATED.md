@@ -143,3 +143,6 @@ The screens and the conversation were played inside Messages on the real kernel,
 ## Package Z (the planks cover the whole view)
 
 `testThePlanksTurnedCoverTheWholeViewAtEveryDrawer` and the C cover tests (`cn_cam_test.c` test_planks_cover, the planks check in `cn_stage_test.c` test_layout): the rows are in `chuiniu/c/docs_pkgZ.md`, "Tests seen red" (S1 to S3 Swift, on the booted simulator cnverify, `-only-testing`; M1 to M4 C).
+## Package Y (every bubble is one line)
+
+Its rows are in `chuiniu/c/docs_pkgY.md`, "Mutation checks": every test of `BubbleLineTests.swift` and the new `cn_say_test.c` test went red for its own assertion.

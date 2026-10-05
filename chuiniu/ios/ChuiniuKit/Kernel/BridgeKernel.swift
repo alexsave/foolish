@@ -145,6 +145,31 @@ public final class BridgeKernel: Kernel {
         return n >= 0 ? String(cString: buf) : ""
     }
 
+    /// The bubble's one line, for BubbleLineTests: the kernel's caption for
+    /// one act (`CaptionAct`), its width bound in points, and its budget.
+    /// (`plateBid` and `tally` are the bubble plate's words, also one line.)
+    enum CaptionAct: CaseIterable { case start, bid, call, invite, joined, left, plateBid, tally }
+    static func caption(_ act: CaptionAct, who: String, quantity: Int = 0, face: Int = 0) -> String? {
+        let what: Int32
+        switch act {
+        case .start: what = CN_API_P_START
+        case .bid: what = CN_API_P_BID
+        case .call: what = CN_API_P_CALL
+        case .invite: what = CN_API_P_INVITE
+        case .joined: what = CN_API_P_JOINED
+        case .left: what = CN_API_P_LEFT
+        case .plateBid: what = CN_API_P_PLATE_BID
+        case .tally: what = CN_API_P_TALLY
+        }
+        var buf = [CChar](repeating: 0, count: 512)
+        let n = cn_api_caption_probe(what, who, Int32(quantity), Int32(face), &buf, Int32(buf.count))
+        return n >= 0 ? String(cString: buf) : nil
+    }
+    static func captionBound(_ line: String) -> Double {
+        Double(cn_api_caption_width(line)) / Double(cn_api_caption_unit())
+    }
+    static var captionBudget: Double { Double(cn_api_caption_budget()) / Double(cn_api_caption_unit()) }
+
     public func word(_ w: Word) -> String {
         switch w {
         case .gameTitle, .lobbyTitle: return Self.string("GAME_NAME")
