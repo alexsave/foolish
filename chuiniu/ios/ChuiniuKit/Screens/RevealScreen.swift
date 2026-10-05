@@ -1,6 +1,6 @@
 // RevealScreen.swift - the call: the kernel's table with every standing cup
 // tipped up to show the dice where they lie (DECISIONS I23), the dice that
-// count for the called bid ringed in brass at the places the stage's HUD
+// count for the called bid ringed in the glow at the places the stage's HUD
 // gives (the kernel's `Reveal.counts`, which covers the bid's face and the
 // wild 1s), the tally on the plate, the outcome line, the loser's stamp under
 // its name, and Next round on the shelf when the kernel offers it. At the end
@@ -99,39 +99,27 @@ public struct RevealScreen: View {
         if motion.done {
             let shelf = hud.shelfRect ?? CGRect(x: 0, y: hud.h - 50, width: hud.w, height: 50)
             if let p = hud.plateRect, hud.shortBoard == 0 {
-                // a tall board: the tally and the outcome together at the
-                // plate's place, as wide as the glass (my name sits just over
-                // the shelf, where a line there would cover it)
-                VStack(spacing: 2) {
-                    HStack(spacing: 8) {
-                        Text(r.tally).font(.system(size: 20, weight: .heavy)).onFeltText()
-                            .lineLimit(1).minimumScaleFactor(0.5)
-                        Die(face: r.bid.face, size: 22)
-                    }
-                    outcome(t, r)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.black.opacity(0.55)))
-                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(FColor.win.opacity(0.55), lineWidth: 1))
-                .frame(maxWidth: max(0, hud.w - 32))
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(width: hud.w, height: 200, alignment: .top)
-                .position(x: hud.w / 2, y: p.minY + 100)
+                // a tall board: the tally on the plate at the plate's place,
+                // the outcome line under it on the planks (my name sits just
+                // over the shelf, where a line there would cover it)
+                BidPlate(text: r.tally, face: r.bid.face).at(p)
+                outcome(t, r)
+                    .frame(maxWidth: max(0, hud.w - 32))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(width: hud.w, height: 120, alignment: .top)
+                    .position(x: hud.w / 2, y: p.maxY + 8 + 60)
             } else {
                 if let p = hud.plateRect { BidPlate(text: r.tally, face: r.bid.face).at(p) }
                 let above = max(0, shelf.minY - 6)
                 outcome(t, r)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.black.opacity(0.55)))
                     .frame(maxWidth: max(0, hud.w - 32))
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(width: hud.w, height: above, alignment: .bottom)
                     .position(x: hud.w / 2, y: above / 2)
             }
             if t.phase == .revealed, r.nextAllowed {
-                WoodButton(title: host.word(.nextRound), height: 40, fontSize: 16) { host.nextRound() }
+                // Next round is a step on, not a move: the quiet plate (the study's reveal)
+                PlankButton(title: host.word(.nextRound), kind: .quiet, seed: 9) { host.nextRound() }
                     .padding(.horizontal, 16)
                     .frame(width: shelf.width, height: shelf.height, alignment: .top)
                     .position(x: shelf.midX, y: shelf.midY)
@@ -139,24 +127,27 @@ public struct RevealScreen: View {
         }
     }
 
-    /// The kernel's outcome line, and at the end its headline ("You win").
+    /// The kernel's outcome line (`.t-out`: the roman at 15.5 on the planks),
+    /// and at the end its line for the winner, in the glow.
     private func outcome(_ t: TableModel, _ r: Reveal) -> some View {
         VStack(spacing: 4) {
-                Text(r.outcome)
-                    .font(.system(size: 14, weight: .heavy))
-                    .onFeltText()
-                if !t.caption.isEmpty, t.phase == .over {
-                    Text(t.caption)
-                        .font(.system(size: 12, weight: .semibold))
-                        .onFeltText(FColor.textDim)
-                }
+            Text(r.outcome)
+                .font(FType.serif(15.5))
+                .onPlanks()
+            if !t.caption.isEmpty, t.phase == .over {
+                Text(t.caption)
+                    .font(FType.serif(15.5))
+                    .onPlanks(Ink.glow)
             }
+        }
         .multilineTextAlignment(.center)
         .lineLimit(3)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
     }
 }
 
-/// The counting dice's brass rings, at each shown die's place on the glass
+/// The counting dice's rings in the glow, at each shown die's place on the glass
 /// (the HUD's `die_x`, `die_y`: seat s at s * stride, in `Reveal.dice` order),
 /// lit one by one in seat order as the kernel's COUNT beat says.
 struct Rings: View {
@@ -180,9 +171,14 @@ struct Rings: View {
                 for (k, p) in pts.enumerated() where counts.indices.contains(k) && counts[k] {
                     defer { ordinal += 1 }
                     guard ordinal < lit else { continue }
+                    // the study's counting ring: the glow blurred, the glow, a pale core
                     let ring = Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r))
-                    ctx.stroke(ring, with: .color(FColor.win.opacity(0.45)), lineWidth: 5)
-                    ctx.stroke(ring, with: .color(FColor.win), lineWidth: 2)
+                    ctx.drawLayer { g in
+                        g.addFilter(.blur(radius: 2.2))
+                        g.stroke(ring, with: .color(Ink.glow), lineWidth: 3)
+                    }
+                    ctx.stroke(ring, with: .color(Ink.glow), lineWidth: 2.2)
+                    ctx.stroke(ring, with: .color(Color(hex: 0xE9FFF7).opacity(0.9)), lineWidth: 0.8)
                 }
             }
         }
@@ -203,7 +199,9 @@ struct Rings: View {
     }
 }
 
-/// The reveal as rows, settled, for a stage that drew nothing.
+/// The reveal as rows, settled, for a stage that drew nothing: the study's
+/// reveal (`.seatband`s on the planks, the counting dice ringed, the rest
+/// drowned, the loser's band edged in blood with its stamp).
 struct RevealList: View {
     @ObservedObject var host: ChuiniuHost
 
@@ -213,13 +211,13 @@ struct RevealList: View {
             if let r = t.reveal {
                 HStack(spacing: 10) {
                     Text(r.tally)
-                        .font(.system(size: 22, weight: .heavy))
-                        .onFeltText()
+                        .font(FType.serif(26))
+                        .bidInk()
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)
-                    Die(face: r.bid.face, size: 26)
+                    Die(face: r.bid.face, size: 30, seed: 80)
                 }
-                VStack(spacing: 6) {
+                VStack(spacing: 8) {
                     ForEach(t.seats) { seat in
                         RevealRow(seat: seat,
                                   dice: r.dice.indices.contains(seat.id) ? r.dice[seat.id] : [],
@@ -230,30 +228,26 @@ struct RevealList: View {
                     }
                 }
                 Text(r.outcome)
-                    .font(.system(size: 14, weight: .heavy))
-                    .onFeltText()
+                    .font(FType.serif(15.5))
+                    .onPlanks()
                     .multilineTextAlignment(.center)
                     .lineLimit(3)
             }
-            Text(t.caption)
-                .font(.system(size: 13, weight: .semibold))
-                .onFeltText(FColor.textDim)
-                .multilineTextAlignment(.center)
-                .lineLimit(2)
             if t.phase == .revealed, t.reveal?.nextAllowed == true {
-                WoodButton(title: host.word(.nextRound), height: 44, fontSize: 16) { host.nextRound() }
+                PlankButton(title: host.word(.nextRound), kind: .quiet, seed: 9) { host.nextRound() }
             }
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 16)
         .padding(.top, 10)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(FeltBackground())
+        .background(PlanksBackground().ignoresSafeArea())
     }
 }
 
-/// One seat at the reveal, settled: name, its dice (the counting ones ringed,
-/// the rest dimmed), and the loser's stamp.
+/// One seat at the reveal, settled (`.seatband`): the name in small caps,
+/// its dice (the counting ones ringed, the rest drowned), and the loser's
+/// stamp.
 struct RevealRow: View {
     let seat: SeatModel
     let dice: [Int]
@@ -263,33 +257,58 @@ struct RevealRow: View {
     let losesWord: String
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             Text(seat.name)
-                .font(.system(size: 13, weight: .semibold))
-                .onFeltText(winner ? FColor.win : FColor.textPrimary)
+                .font(FType.sc(14))
+                .tracking(FType.nameTracking(14))
+                .onPlanks(winner ? Ink.glow : (seat.isMe ? Ink.ink : Ink.inkdim))
                 .lineLimit(1)
-                .frame(width: 84, alignment: .leading)
-                // the name keeps its size when the loser's stamp takes room
+                .frame(width: 64, alignment: .leading)
                 .layoutPriority(1)
-            HStack(spacing: 6) {
+            Spacer(minLength: 0)
+            HStack(spacing: 4) {
                 ForEach(Array(dice.enumerated()), id: \.offset) { i, v in
                     let counted = counts.indices.contains(i) && counts[i]
-                    Die(face: v, size: 28, highlight: counted, dimmed: !counted)
+                    Die(face: v, size: 28, counts: counted, drowned: !counted, seed: 90 + seat.id * 9 + i)
                 }
             }
-            Spacer(minLength: 0)
-            if loser {
-                Text(losesWord)
-                    .font(.system(size: 11, weight: .heavy))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 8).padding(.vertical, 5)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(FColor.red))
-                    .fixedSize()
-            }
+            if loser { Stamp(word: losesWord) }
         }
-        .padding(.vertical, 4)
-        .padding(.horizontal, 8)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color.black.opacity(loser ? 0.28 : 0.14)))
+        .frame(height: 44)
+        .padding(.horizontal, 12)
+        .background(SeatBand(lost: loser))
         .opacity(seat.alive || !dice.isEmpty ? 1 : 0.5)
+    }
+}
+
+/// `.seatband`: a dark wash on the planks with a cold hairline on top; edged
+/// in blood for the seat that lost.
+struct SeatBand: View {
+    var lost = false
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 4, style: .circular)
+        shape.fill(Color(.sRGB, red: 2 / 255, green: 10 / 255, blue: 10 / 255, opacity: 0.58))
+            .overlay(alignment: .top) { Rectangle().fill(lost ? Ink.blood.opacity(0.18) : Ink.glow.opacity(0.08)).frame(height: 1) }
+            .overlay(alignment: .bottom) { Rectangle().fill(Color.black.opacity(0.6)).frame(height: 1) }
+            .overlay { if lost { shape.strokeBorder(Ink.blood.opacity(0.28), lineWidth: 1) } }
+            .clipShape(shape)
+    }
+}
+
+/// `.stamp`: a word stamped in blood, capitals tracked wide, turned 5 degrees.
+struct Stamp: View {
+    let word: String
+    var size: CGFloat = 9
+    var body: some View {
+        Text(word.uppercased())
+            .font(FType.sc(size))
+            .tracking(size * 0.22)
+            .foregroundStyle(Ink.blood)
+            .shadow(color: Ink.blood.opacity(0.4), radius: 3)
+            .padding(.horizontal, 6).padding(.vertical, 4)
+            .background(Color(.sRGB, red: 60 / 255, green: 12 / 255, blue: 8 / 255, opacity: 0.35))
+            .overlay(Rectangle().strokeBorder(Color(.sRGB, red: 192 / 255, green: 74 / 255, blue: 51 / 255, opacity: 0.85), lineWidth: 1.5))
+            .rotationEffect(.degrees(-5))
+            .fixedSize()
     }
 }

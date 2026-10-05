@@ -44,7 +44,7 @@ public struct TableScreen: View {
     }
 
     /// Under the planks, where nothing is drawn (the study's `.scr.peekB`).
-    static let glassBackground = Color(hex: 0x050807)
+    static let glassBackground = Ink.glass
 
     private func begin(_ r: StageRequest) {
         director.reduceMotion = reduceMotion
@@ -56,12 +56,11 @@ public struct TableScreen: View {
     }
 
     @ViewBuilder private func hudLayer(_ t: TableModel, _ hud: CnStageHudSnap) -> some View {
-        if let p = hud.plateRect {
-            if !t.bidText.isEmpty {
-                BidPlate(text: t.bidText, face: t.bid?.face).at(p)
-            } else if !t.caption.isEmpty {
-                BidPlate(text: t.caption, face: nil, quiet: true).at(p)
-            }
+        // the plate carries the bid on the table and nothing else: no headline,
+        // no ask line (the study dropped both, round nineteen; DECISIONS I28).
+        // Whose turn it is is the glow under a name, on the planks.
+        if let p = hud.plateRect, !t.bidText.isEmpty {
+            BidPlate(text: t.bidText, face: t.bid?.face).at(p)
         }
         if let menu = t.menu {
             let s = hud.shelfRect ?? CGRect(x: 0, y: hud.h - 90, width: hud.w, height: 90)

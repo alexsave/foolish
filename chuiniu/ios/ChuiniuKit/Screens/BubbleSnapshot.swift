@@ -5,8 +5,10 @@
 // bubble (CN_STAGE_BUBBLE, DECISIONS I24): the fixed camera the study turns
 // about (150, 150), every seat's cup in a row with its count on the crown, a
 // seat that is out lying on its side. Swift paints only what the HUD leaves
-// to the host: the felt under the picture, each seat's name in its box and
-// the bid plate, at the HUD's places. Nobody's dice are in it, not even
+// to the host: the planks under the picture (the study's bubble: the stage's
+// overdraw, a plank's middle down the bubble's centre), each seat's name in
+// its box in the small caps, and the verdigris bid plate, at the HUD's places
+// (DECISIONS I27). Nobody's dice are in it, not even
 // after a call (the kernel's bubble draws none).
 //
 // I18: the plate carries my staged raise while it is staged (the committed
@@ -42,7 +44,7 @@ public enum BubbleSnapshot {
     @MainActor
     private static func image(_ picture: some View, scheme: ColorScheme, scale: CGFloat) -> UIImage? {
         let content = ZStack {
-            FeltBackground()
+            PlanksBackground(overdraw: true)
             picture
         }
         .frame(width: size.width, height: size.height)
@@ -61,10 +63,11 @@ private struct LobbyPicture: View {
 
     var body: some View {
         VStack(spacing: 6) {
-            Text(title).font(.system(size: 15, weight: .heavy)).onFeltText()
-            VStack(alignment: .leading, spacing: 2) {
+            Text(title).font(FType.serif(28)).bidInk()
+            WaterRule().padding(.horizontal, 40)
+            VStack(alignment: .leading, spacing: 4) {
                 ForEach(table.seats) { seat in
-                    Text(seat.name).font(.system(size: 12.5, weight: .heavy)).onFeltText().lineLimit(1)
+                    Text(seat.name).font(FType.sc(14)).tracking(FType.nameTracking(14)).onPlanks().lineLimit(1)
                 }
             }
         }
@@ -93,16 +96,16 @@ private struct StagePicture: View {
                 .offset(x: shot.canvas[0], y: shot.canvas[1])
             ForEach(table.seats.filter { $0.id < hud.seats }) { seat in
                 Text(seat.name)
-                    .font(.system(size: 11, weight: .semibold).smallCaps())
-                    .tracking(1.2)
-                    .onFeltText(lit(seat) ? FColor.textPrimary : FColor.textDim)
+                    .font(FType.sc(11))
+                    .tracking(FType.nameTracking(11))
+                    .onPlanks(lit(seat) ? Ink.ink : Ink.inkdim)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                     .frame(width: Self.nameBox.width, height: Self.nameBox.height)
                     .offset(x: hud.nameX[seat.id] - Self.nameBox.width / 2, y: hud.nameY[seat.id] - Self.nameUp)
             }
             if hud.hasPlate != 0, let p = plate {
-                BubblePlate(text: p.text, face: p.face)
+                BidPlate(text: p.text, face: p.face)
                     .frame(width: hud.plate[2], height: hud.plate[3])
                     .offset(x: hud.plate[0], y: hud.plate[1])
             }
@@ -125,40 +128,5 @@ private struct StagePicture: View {
         if table.stagedBid != nil { return seat.isMe }
         if table.reveal != nil { return true }      // a reveal: every seat still in
         return seat.id == table.bidder
-    }
-}
-
-/// The bid plate, as the study's bubble draws it at 160 by 56: a dark plate
-/// with a brass bevel and four rivets, the words and the face beside them.
-private struct BubblePlate: View {
-    let text: String
-    let face: Int?
-
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(LinearGradient(colors: [Color(hex: 0x2F4A40), Color(hex: 0x1C2E28)],
-                                     startPoint: .top, endPoint: .bottom))
-            RoundedRectangle(cornerRadius: 4)
-                .strokeBorder(FColor.win.opacity(0.55), lineWidth: 1)
-                .padding(3)
-            GeometryReader { g in
-                ForEach(0..<4, id: \.self) { i in
-                    Circle().fill(FColor.win.opacity(0.8))
-                        .frame(width: 5, height: 5)
-                        .position(x: i % 2 == 0 ? 8.5 : g.size.width - 8.5, y: i < 2 ? 8.5 : g.size.height - 8.5)
-                }
-            }
-            HStack(spacing: 8) {
-                Text(text)
-                    .font(.system(size: 24, weight: .heavy, design: .serif))
-                    .onFeltText()
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.5)
-                if let face { Die(face: face, size: 28) }
-            }
-            .padding(.horizontal, 14)
-        }
-        .shadow(color: .black.opacity(0.45), radius: 3, y: 2)
     }
 }
