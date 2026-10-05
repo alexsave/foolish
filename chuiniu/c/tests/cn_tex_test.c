@@ -232,5 +232,81 @@ int main(int argc, char **argv)
     }
 
     free(pk); free(pk2);
+
+    /* THE PLANKS (cn_planks.jpg). No golden here: the march runs libm's cos 25 times a row through a
+     * chaotic map, so two C libraries may part in the last bits; the capture comparison
+     * (`cn_texgen --compare-planks`, MAD 0.38 of 255 against the study's canvas) is the oracle for the
+     * look, and these pin the structure the screen relies on. */
+    TEST("planks: six planks, seamless, a running bond, nails, the deep palette");
+    {
+        enum { S = CN_TEXGEN_PLANK_SCALE, W = TG_TILE_W * S, H = TG_TILE_H * S };
+        uint8_t *pl = malloc((size_t)W * H * 3), *bare = malloc((size_t)W * H * 3), *again = malloc((size_t)W * H * 3);
+        cn_texgen_planks(S, 1, pl); cn_texgen_planks(S, 0, bare); cn_texgen_planks(S, 1, again);
+        CHECK(!memcmp(pl, again, (size_t)W * H * 3), "two bakes of the planks differ");
+#define LUM(img, x, y) ((img)[((size_t)(y) * W + (x)) * 3] + (img)[((size_t)(y) * W + (x)) * 3 + 1] + (img)[((size_t)(y) * W + (x)) * 3 + 2])
+        /* the column's mean brightness over the whole height */
+        double col[W];
+        for (int x = 0; x < W; x++) { long s = 0; for (int y = 0; y < H; y++) s += LUM(bare, x, y); col[x] = (double)s / H; }
+        /* a gap at every plank edge, the tile's two edges included, and none down a plank's middle */
+        for (int k = 0; k <= TG_PLANKS; k++) {
+            int xe = k * TG_PLANK_W * S; if (xe >= W) xe = W - 1;
+            double mid = col[((k < TG_PLANKS ? k : k - 1) * TG_PLANK_W + TG_PLANK_W / 2) * S];
+            CHECK(col[xe] < mid - 8, "plank edge %d (x %d) is not a gap: %.1f against the middle's %.1f", k, xe, col[xe], mid);
+        }
+        for (int k = 0; k < TG_PLANKS; k++) {
+            int xm = (k * TG_PLANK_W + TG_PLANK_W / 2) * S;
+            CHECK(col[xm] > col[xm - 20 * S] - 6 && col[xm] > 30, "plank %d's middle is dark: %.1f", k, col[xm]);
+        }
+        /* seamless: the step across each wrap is no bigger than the steps inside the tile */
+        double adjx = 0, adjy = 0, wrapx = 0, wrapy = 0;
+        for (int y = 0; y < H; y++) { for (int x = 1; x < W; x++) adjx += abs(LUM(bare, x, y) - LUM(bare, x - 1, y)); wrapx += abs(LUM(bare, 0, y) - LUM(bare, W - 1, y)); }
+        for (int x = 0; x < W; x++) { for (int y = 1; y < H; y++) adjy += abs(LUM(bare, x, y) - LUM(bare, x, y - 1)); wrapy += abs(LUM(bare, x, 0) - LUM(bare, x, H - 1)); }
+        adjx /= (double)(W - 1) * H; adjy /= (double)(H - 1) * W; wrapx /= H; wrapy /= W;
+        CHECK(wrapx < 2 * adjx + 1, "the left and right edges part: %.2f a texel against %.2f inside", wrapx, adjx);
+        CHECK(wrapy < 2 * adjy + 1, "the top and bottom edges part: %.2f a texel against %.2f inside", wrapy, adjy);
+        /* the running bond: an even plank ends at the tile's top, an odd one halfway down */
+        for (int k = 0; k < TG_PLANKS; k++) {
+            int x0 = (k * TG_PLANK_W + 20) * S, x1 = ((k + 1) * TG_PLANK_W - 20) * S, darkest = -1; double low = 1e9;
+            for (int y = 0; y < H; y++) { long s = 0; for (int x = x0; x < x1; x++) s += LUM(bare, x, y); if (s < low) { low = (double)s; darkest = y; } }
+            int want = k % 2 ? H / 2 : 0, d = abs(darkest - want); if (d > H / 2) d = H - d;
+            CHECK(d <= 6 * S, "plank %d ends at row %d, not %d", k, darkest, want);
+        }
+        /* the deep palette: dark, and green-blue rather than brown (no foolish walnut) */
+        {
+            double r = 0, g = 0, b = 0;
+            for (size_t i = 0; i < (size_t)W * H; i++) { r += bare[i * 3]; g += bare[i * 3 + 1]; b += bare[i * 3 + 2]; }
+            r /= (double)W * H; g /= (double)W * H; b /= (double)W * H;
+            CHECK(r + g + b > 3 * 8 && r + g + b < 3 * 32, "the planks' mean is %.1f %.1f %.1f", r, g, b);
+            CHECK(r < g && r < b, "the planks lean warm: %.1f %.1f %.1f", r, g, b);
+        }
+        /* the nails: a dark rose head at every place the rows put one, twelve to a row */
+        {
+            double ys[16]; int rows = tg_nail_rows(ys, 16);
+            CHECK(rows >= 7 && rows <= 9, "%d rows of nails in 830 points", rows);
+            for (int i = 1; i < rows; i++) CHECK(ys[i] - ys[i - 1] >= 92 && ys[i] - ys[i - 1] <= 116, "rows %d and %d are %.1f apart", i - 1, i, ys[i] - ys[i - 1]);
+            CHECK(TG_TILE_H + ys[0] - ys[rows - 1] >= 92, "the seam crowds the rows: %.1f", TG_TILE_H + ys[0] - ys[rows - 1]);
+            int heads = 0, missed = 0;
+            for (int ri = 0; ri < rows; ri++) for (int i = 0; i < TG_PLANKS; i++) for (int e = 0; e < 2; e++) {
+                double x = e ? (i + 1) * TG_PLANK_W - 7.0 : i * TG_PLANK_W + 7.0, y = ys[ri];
+                double nx = x + (tg_hh(i, (int)y, 12) - .5) * 2.5, ny = y + (tg_hh((int)y, (int)(i + x), 12) - .5) * 5;
+                int cx = (int)(nx * S), cy = (int)(ny * S), changed = 0;
+                for (int dy = -2 * S; dy <= 2 * S; dy++) for (int dx = -2 * S; dx <= 2 * S; dx++) {
+                    int px = ((cx + dx) % W + W) % W, py = ((cy + dy) % H + H) % H;
+                    changed += memcmp(pl + ((size_t)py * W + px) * 3, bare + ((size_t)py * W + px) * 3, 3) != 0;
+                }
+                if (changed > 8 * S * S) heads++; else missed++;
+            }
+            CHECK(missed == 0 && heads == rows * 12, "%d nail heads, %d missing", heads, missed);
+            /* and nowhere else: far from every head the two bakes agree */
+            long stray = 0;
+            for (int y = 0; y < H; y++) {
+                int near = 0; for (int ri = 0; ri < rows; ri++) { double d = y / (double)S - ys[ri]; if (d > -12 && d < 12) near = 1; }
+                if (!near) stray += memcmp(pl + (size_t)y * W * 3, bare + (size_t)y * W * 3, (size_t)W * 3) != 0;
+            }
+            CHECK(stray == 0, "%ld rows away from the nails changed", stray);
+        }
+#undef LUM
+        free(pl); free(bare); free(again);
+    }
     return report("cn_tex_test");
 }

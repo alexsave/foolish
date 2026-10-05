@@ -1,8 +1,16 @@
-/* cn_texgen: bakes build/cn_tex.pack (the layout is in src/cn_tex.h). Host-only:
- * libc and stdio, nothing else (no CoreGraphics, no libm).
+/* cn_texgen: bakes build/cn_tex.pack (the layout is in src/cn_tex.h) and the
+ * flat images the Swift host paints with. Host-only: libc, stdio and libm
+ * (the planks' march), nothing else (no CoreGraphics).
  *
  *   cn_texgen --font tools/fonts/IMFeENrm28P.ttf --pack build/cn_tex.pack
  *   cn_texgen --font ... --compare REFDIR [--sheet OUT.png]
+ *   cn_texgen --font ... --images DIR      the planks (2 texels a point, nails in), the verdigris
+ *                                          and the bone tiles, as uncompressed PNGs (the Makefile's
+ *                                          tex-ios recompresses them with sips for the bundle)
+ *   cn_texgen --font ... --compare-planks STUDY_516x830.rgba [--sheet OUT.png]
+ *                                          the planks at the study's own scale, without the nails
+ *                                          (the study lays its nails over the tile as SVG), against
+ *                                          the study's canvas captured by tools/cn_tex_capture.mjs
  *
  * THE TILES are the study's own generators (docs/UI.html, TEX): the integer
  * hash, value noise on a wrapping lattice, fbm, and the verdigris (verdWith
@@ -107,6 +115,216 @@ static void tg_bake(int w, int h, void (*fn)(double, double, double *), uint8_t 
         double c[3]; fn((x + .5) / w, (y + .5) / h, c);
         for (int k = 0; k < 3; k++) rgb[(y * w + x) * 3 + k] = tg_store(c[k]);
     }
+}
+
+/* ---- THE PLANKS: the study's table (TABLE_MATS.woodgrey2) ------------------------------------
+ * TEX.tableFn(woodDeck(WOODS.greyDark)): foolish's streak march (streakWood, its palette a drowned
+ * grey-teal, three linear gains, no orange), read plank by plank, under the stone passes the study
+ * names for it (a cloud, a grain, veins, a stain, the crust's pale patches and their grit, a wet
+ * sheen), then the gaps between the six planks and each plank's end in a running bond. The tile is
+ * TG_PLANK_W * TG_PLANKS wide (516 points) and 830 tall, and it is seamless both ways: the gaps
+ * fall on the tile's left and right edges, every noise wraps, and the march's one non-periodic
+ * seam lands under each plank's end.
+ *
+ * THE NAILS (tableStage's fixSVG 'nails', which the study draws as SVG over the tile per stage)
+ * are baked INTO the tile here: rows across every plank, one rose head just inside each edge,
+ * the head's four hammered facets lit from the top-left, a dark halo and an iron bleed. The rows
+ * are the study's rule (22 + up to 40 down, then every 92 to 116) with a row that would crowd the
+ * tile's seam left out, so they repeat with the tile.
+ *
+ * `scale` is texels a point: 1 is the study's own canvas (and, without nails, its texels: the
+ * capture comparison); 2 is what ships (cn_planks.jpg). At 2 the march (texel-sized by nature) is
+ * read bilinearly, as a browser shows the study's canvas on a 2x screen, and every other pass is
+ * evaluated at the finer texel. Uses libm's cos (the march's chaotic map) and atan2 (the nail). */
+#include <math.h>
+enum { TG_PLANK_W = 86, TG_PLANKS = 6, TG_TILE_W = TG_PLANK_W * TG_PLANKS, TG_TILE_H = 830 };
+/* the shipped tile's texels a point (cn_planks.jpg is 1032 by 1660) */
+#define CN_TEXGEN_PLANK_SCALE 2
+
+/* streakWood(830, 516, WOODS.greyDark): the march, RGB floats, w across (a plank's length) */
+static float *tg_streaks(void)
+{
+    enum { W = TG_TILE_H, H = TG_TILE_W, RECT = 40, STREAKS = 576, TDIV = 60 };
+    static const double base[3] = { 9, 10, 10 }, gain[3] = { 8, 9, 9 }, alpha = .08;
+    float *S = malloc(sizeof(float) * W * H * 3);
+    for (int i = 0; i < W * H; i++) for (int k = 0; k < 3; k++) S[i * 3 + k] = (float)base[k];
+    double step = 200.0 / TDIV, travel = STREAKS * step;
+    int cropX = (int)tg_floor((travel - W) / 2); if (cropX < RECT) cropX = RECT;
+    double al[RECT], ia[RECT];
+    for (int dx = 0; dx < RECT; dx++) { double dist = tg_abs(dx - RECT / 2.0) / (RECT / 2.0), m = 1 - dist * .5; al[dx] = alpha * (m > .3 ? m : .3); ia[dx] = 1 - al[dx]; }
+    /* JavaScript's Float32Array stores each blend rounded to float, so the buffer is float here too */
+    for (int n = 0; n < STREAKS; n++) {
+        double T = (double)n / TDIV; int start = (int)tg_floor(T * 200) - cropX;
+        if (start >= W || start + RECT <= 0) continue;
+        int kLo = start < 0 ? -start : 0, kHi = W - start < RECT ? W - start : RECT;
+        for (int I = H - 1; I >= 0; I--) {
+            double iF = I * .001, b = T / 24;
+            for (int k = 24; k >= 0; k--) {
+                b = cos(iF + cos(b * b * .5) * b + 4) * b - 2.8;
+                if (b > 0) {
+                    double c0 = b * gain[0], c1 = b * gain[1], c2 = b * gain[2];
+                    for (int dx = kLo; dx < kHi; dx++) {
+                        float *p = S + ((size_t)I * W + start + dx) * 3;
+                        p[0] = (float)(c0 * al[dx] + p[0] * ia[dx]); p[1] = (float)(c1 * al[dx] + p[1] * ia[dx]); p[2] = (float)(c2 * al[dx] + p[2] * ia[dx]);
+                    }
+                }
+            }
+        }
+    }
+    return S;
+}
+
+/* the march as the plank pass reads it: plank pi takes its own band of rows, shifted along by `shift` */
+static void tg_under(const float *S, double u, double v, int pi, double shift, int scale, double *o)
+{
+    enum { W = TG_TILE_H, H = TG_TILE_W };
+    double band = (double)H / TG_PLANKS, off = tg_hash((uint32_t)pi, 4, 509) * (H - band);
+    double fx = fmod(fmod(v + shift, 1) + 1, 1) * W, fy = (u * TG_PLANKS - pi) * band + off;
+    if (scale == 1) {
+        int x = (int)tg_floor(fx), y = (int)tg_floor(fy);
+        if (x > W - 1) x = W - 1;
+        if (y > H - 1) y = H - 1;
+        for (int k = 0; k < 3; k++) o[k] = S[((size_t)y * W + x) * 3 + k];
+        return;
+    }
+    fx -= .5; fy -= .5;
+    int x0 = (int)tg_floor(fx), y0 = (int)tg_floor(fy); double tx = fx - x0, ty = fy - y0;
+    int xa = x0 < 0 ? 0 : x0 > W - 1 ? W - 1 : x0, xb = x0 + 1 > W - 1 ? W - 1 : x0 + 1 < 0 ? 0 : x0 + 1;
+    int ya = y0 < 0 ? 0 : y0 > H - 1 ? H - 1 : y0, yb = y0 + 1 > H - 1 ? H - 1 : y0 + 1 < 0 ? 0 : y0 + 1;
+    for (int k = 0; k < 3; k++) {
+        double a = S[((size_t)ya * W + xa) * 3 + k], b = S[((size_t)ya * W + xb) * 3 + k];
+        double c = S[((size_t)yb * W + xa) * 3 + k], d = S[((size_t)yb * W + xb) * 3 + k];
+        double top = a + (b - a) * tx, bot = c + (d - c) * tx;
+        o[k] = top + (bot - top) * ty;
+    }
+}
+
+/* TEX.stone(woodDeck(WOODS.greyDark)) at one texel */
+static void tg_plank_texel(const float *S, double u0, double v0, int scale, double *o)
+{
+    const uint32_t seed = 73;
+    static const double tilt[3] = { .8, 1, .9 }, vein[3] = { 4, 6, 5 }, stain[3] = { 5, 8, 8 }, sheen[3] = { 34, 40, 40 };
+    static const double patch[3] = { 30, 48, 40 }, fleck[3] = { 80, 96, 80 };
+    int pi = (int)tg_floor(u0 * TG_PLANKS); double shift = (pi % 2) * .5, u = u0, v = fmod(v0 + shift, 1);
+    double cl = (tg_fbm(u, v, 4, 4, 4, seed) - .5) * 2 * 5;
+    double gr = (tg_fbm(u, v, 64, 64, 2, seed + 7) - .5) * 2 * 3;
+    double c[3]; tg_under(S, u0, v0, pi, shift, scale, c);
+    for (int k = 0; k < 3; k++) c[k] += cl * tilt[k] + gr;
+    double ridge = 1 - tg_abs(2 * tg_fbm(u, v, 36, 2, 4, seed + 13) - 1), kv = tg_sstep(.9, 1, ridge) * .3;
+    for (int k = 0; k < 3; k++) c[k] = tg_mix(c[k], vein[k], kv);
+    double ks = tg_sstep(.45, .8, tg_fbm(u, v, 4, 4, 3, seed + 23)) * .3;
+    for (int k = 0; k < 3; k++) c[k] = tg_mix(c[k], stain[k], ks);
+    double pa = tg_sstep(.58, .78, tg_fbm(u0, v0, 7, 7, 4, seed + 17)) * .3;
+    double fl = tg_sstep(.70, .86, tg_fbm(u0, v0, 140, 140, 2, seed + 13)) * .45 * (.45 + .9 * pa);
+    for (int k = 0; k < 3; k++) { c[k] = tg_mix(c[k], patch[k], pa); c[k] = tg_mix(c[k], fleck[k], fl); }
+    double kh = tg_sstep(.64, .94, tg_fbm(u, v, 3, 3, 3, seed + 53)) * .3;
+    for (int k = 0; k < 3; k++) c[k] = tg_mix(c[k], sheen[k], kh);
+    /* the gap between planks (warped a little: no saw is straight), the lit edge beside it, the plank's end */
+    double warp = (tg_fbm(u0, v0, 2, 12, 2, seed + 59) - .5) * .02;
+    double f = fmod(fmod(u0 * TG_PLANKS + warp, 1) + 1, 1), d = tg_abs(f - .5) * 2;
+    double gap = tg_sstep(.9, .985, d), lit = tg_sstep(.78, .9, d) * (1 - gap) * 9;
+    c[0] = tg_mix(c[0], 6, gap) + lit; c[1] = tg_mix(c[1], 8, gap) + lit; c[2] = tg_mix(c[2], 6, gap) + lit;
+    double e = 1 - shift, de = tg_abs(fmod(fmod(v0 - e, 1) + 1.5, 1) - .5);
+    if (de < .006) { c[0] -= 52; c[1] -= 52; c[2] -= 50; } else if (de < .014) { c[0] += 10; c[1] += 9; c[2] += 6; }
+    for (int k = 0; k < 3; k++) o[k] = c[k];
+}
+
+/* ---- the nails: the study's rose head, rasterized with 4 by 4 samples a texel ---- */
+typedef struct { double x, y; } TgPt;
+static int tg_in_poly(const TgPt *p, int n, double x, double y)
+{
+    int in = 0;
+    for (int i = 0, j = n - 1; i < n; j = i++)
+        if ((p[i].y > y) != (p[j].y > y) && x < (p[j].x - p[i].x) * (y - p[i].y) / (p[j].y - p[i].y) + p[i].x) in = !in;
+    return in;
+}
+/* source-over a colour at alpha a on one texel of a float RGB image */
+static void tg_over(double *px, const double *rgb, double a) { for (int k = 0; k < 3; k++) px[k] = px[k] * (1 - a) + rgb[k] * a; }
+static double tg_hh(int ix, int iy, int seed) { return tg_hash((uint32_t)ix, (uint32_t)iy, (uint32_t)seed); }
+/* one nail at (x, y) points, radius r points, into a W by H float image at `scale` texels a point, wrapping */
+static void tg_nail(double *img, int W, int H, int scale, double x, double y, double r, int seed)
+{
+    const double PI = 3.14159265358979323846;
+#define J(i, a) ((tg_hh((i), seed, 601) - .5) * 2 * (a))
+    double rot = tg_hh(seed, 7, 601) * PI, ax = J(1, .18) * r, ay = J(2, .18) * r;
+    TgPt pts[8];
+    for (int i = 0; i < 8; i++) { double a = i / 8.0 * PI * 2 + rot + J(10 + i, .12), rr = r * (.84 + .3 * tg_hh(20 + i, seed, 601)); pts[i].x = cos(a) * rr; pts[i].y = sin(a) * rr; }
+#undef J
+    static const double shade[4][3] = { { 0x3a, 0x38, 0x33 }, { 0x28, 0x27, 0x23 }, { 0x22, 0x21, 0x20 }, { 0x14, 0x14, 0x13 } };
+    static const double black[3] = { 0, 0, 0 }, bleed[3] = { 0x2a, 0x24, 0x20 }, apexc[3] = { 0x4a, 0x48, 0x42 };
+    double tint = tg_hh(seed, 8, 601), haloOp = .45 + .25 * tg_hh(seed, 9, 601), bleedOp = .5 + .3 * tg_hh(seed, 3, 601);
+    TgPt facet[4][4]; int fk[4];
+    for (int f = 0; f < 4; f++) {
+        TgPt a = pts[(f * 2) % 8], b = pts[(f * 2 + 1) % 8], c = pts[(f * 2 + 2) % 8];
+        double mid = atan2((a.y + c.y) / 2 - ay, (a.x + c.x) / 2 - ax), toward = cos(mid - (-3 * PI / 4));
+        fk[f] = toward > .5 ? 0 : toward > -.2 ? (tint > .5 ? 1 : 2) : 3;
+        facet[f][0].x = ax; facet[f][0].y = ay; facet[f][1] = a; facet[f][2] = b; facet[f][3] = c;
+    }
+    double R = r * 2.1;
+    for (int oy = -1; oy <= 1; oy++) for (int ox = -1; ox <= 1; ox++) {
+        double cx = (x + ox * (double)W / scale) * scale, cy = (y + oy * (double)H / scale) * scale, Rs = R * scale;
+        int x0 = (int)tg_floor(cx - Rs) - 1, x1 = (int)tg_floor(cx + Rs) + 1, y0 = (int)tg_floor(cy - Rs) - 1, y1 = (int)tg_floor(cy + Rs) + 1;
+        if (x1 < 0 || y1 < 0 || x0 >= W || y0 >= H) continue;
+        for (int py = y0 < 0 ? 0 : y0; py <= y1 && py < H; py++) for (int px = x0 < 0 ? 0 : x0; px <= x1 && px < W; px++) {
+            double halo = 0, bl = 0, fac[4] = { 0 }, ap = 0;
+            for (int sy = 0; sy < 4; sy++) for (int sx = 0; sx < 4; sx++) {
+                double lx = ((px + (sx + .5) / 4) - cx) / scale, ly = ((py + (sy + .5) / 4) - cy) / scale, dist = sqrt(lx * lx + ly * ly);
+                double t = dist / R;            /* g-nailhalo: black .5 to .45, then to 0 */
+                if (t < 1) halo += t < .45 ? .5 : .5 * (1 - (t - .45) / .55);
+                t = dist / (r * 1.3);           /* g-nailbleed: .9 to .6, then to 0 */
+                if (t < 1) bl += t < .6 ? .9 : .9 * (1 - (t - .6) / .4);
+                for (int f = 0; f < 4; f++) if (tg_in_poly(facet[f], 4, lx, ly)) { fac[f] += 1; break; }
+                if ((lx - ax) * (lx - ax) + (ly - ay) * (ly - ay) < (r * .28) * (r * .28)) ap += 1;
+            }
+            double *p = img + ((size_t)py * W + px) * 3;
+            if (halo > 0) tg_over(p, black, halo / 16 * haloOp);
+            if (bl > 0) tg_over(p, bleed, bl / 16 * bleedOp);
+            for (int f = 0; f < 4; f++) if (fac[f] > 0) tg_over(p, shade[fk[f]], fac[f] / 16);
+            if (ap > 0) tg_over(p, apexc, ap / 16 * .5);
+        }
+    }
+}
+
+/* The nail rows down the tile, in points: the study's rule from its stage seed (tableStage's seed 5,
+ * fixSVG's + 7), stopping where a row would come within a short gap of the next tile's first row.
+ * Writes up to `cap` and returns the count. */
+static int tg_nail_rows(double *ys, int cap)
+{
+    const int seed = 5 + 7; int n = 0;
+    double first = 22 + tg_hh(1, 9, seed) * 40;
+    for (double y = first; y < TG_TILE_H - 8 && n < cap; y += 92 + tg_hh((int)y, 10, seed) * 24) {
+        if (TG_TILE_H + first - y < 92) break;
+        ys[n++] = y;
+    }
+    return n;
+}
+
+/* The whole tile, TG_TILE_W * scale by TG_TILE_H * scale, RGB, into rgb; nails when `nails`. */
+void cn_texgen_planks(int scale, int nails, uint8_t *rgb)
+{
+    int W = TG_TILE_W * scale, H = TG_TILE_H * scale;
+    float *S = tg_streaks();
+    double *img = malloc(sizeof(double) * (size_t)W * H * 3);
+    for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) tg_plank_texel(S, (x + .5) / W, (y + .5) / H, scale, img + ((size_t)y * W + x) * 3);
+    free(S);
+    if (nails) {
+        /* the canvas's own rounding first: the tile is an 8-bit image the nails' SVG is laid over */
+        for (size_t i = 0; i < (size_t)W * H * 3; i++) img[i] = tg_store(img[i]);
+        const int seed = 5 + 7; double ys[16]; int rows = tg_nail_rows(ys, 16);
+        for (int ri = 0; ri < rows; ri++) {
+            double y = ys[ri];
+            for (int i = 0; i < TG_PLANKS; i++) {
+                double xs[2] = { i * TG_PLANK_W + 7.0, (i + 1) * TG_PLANK_W - 7.0 };
+                for (int k = 0; k < 2; k++) {
+                    double x = xs[k];
+                    double nx = x + (tg_hh(i, (int)y, seed) - .5) * 2.5, ny = y + (tg_hh((int)y, (int)(i + x), seed) - .5) * 5;
+                    tg_nail(img, W, H, scale, nx, ny, 2.9, (int)(i * 97 + y + x));
+                }
+            }
+        }
+    }
+    for (size_t i = 0; i < (size_t)W * H * 3; i++) rgb[i] = tg_store(img[i]);
+    free(img);
 }
 
 /* ---- TrueType: the few tables a digit needs ---------------------------------------------- */
@@ -445,15 +663,42 @@ static int compare(const CnTexPack *p, const char *dir, const char *sheet_path)
     return worst_fail;
 }
 
+/* the planks at the study's scale, no nails, against the study's canvas; a sheet: study | C | difference x4 */
+static int compare_planks(const char *ref_path, const char *sheet_path)
+{
+    enum { W = TG_TILE_W, H = TG_TILE_H };
+    size_t n; uint8_t *ref = read_file(ref_path, &n);
+    if (!ref || n != (size_t)W * H * 4) { fprintf(stderr, "cn_texgen: %s is not a %dx%d RGBA capture\n", ref_path, W, H); free(ref); return 1; }
+    uint8_t *mine = malloc((size_t)W * H * 3); cn_texgen_planks(1, 0, mine);
+    uint8_t *m4 = malloc((size_t)W * H * 4);
+    for (int i = 0; i < W * H; i++) { memcpy(m4 + i * 4, mine + i * 3, 3); m4[i * 4 + 3] = 255; }
+    int mx; double m = mad(ref, m4, (size_t)W * H, 4, 3, &mx);
+    size_t same = 0; for (int i = 0; i < W * H; i++) same += !memcmp(ref + i * 4, m4 + i * 4, 3);
+    printf("planks %dx%d  MAD %.4f  max %d  texels identical %.2f%%\n", W, H, m, mx, 100.0 * same / (W * H));
+    if (sheet_path) {
+        Sheet sh = { 0, 3 * W + 32, H };
+        sh.rgb = calloc((size_t)sh.w * sh.h * 3, 1);
+        uint8_t *diff = malloc((size_t)W * H * 4);
+        for (int i = 0; i < W * H * 4; i++) { int d = (int)ref[i] - m4[i]; d = (d < 0 ? -d : d) * 4; diff[i] = (uint8_t)(d > 255 ? 255 : d); }
+        sheet_put(&sh, ref, W, H, 0, 0, 1); sheet_put(&sh, m4, W, H, W + 16, 0, 1); sheet_put(&sh, diff, W, H, 2 * (W + 16), 0, 1);
+        if (!write_png(sheet_path, sh.rgb, sh.w, sh.h)) return 1;
+        printf("wrote %s\n", sheet_path); free(diff); free(sh.rgb);
+    }
+    free(ref); free(mine); free(m4);
+    return m > 1.0;
+}
+
 int main(int argc, char **argv)
 {
-    const char *font = 0, *pack = 0, *ref = 0, *sheet = 0;
+    const char *font = 0, *pack = 0, *ref = 0, *sheet = 0, *images = 0, *planks_ref = 0;
     for (int i = 1; i + 1 < argc; i += 2) {
         if (!strcmp(argv[i], "--font")) font = argv[i + 1]; else if (!strcmp(argv[i], "--pack")) pack = argv[i + 1];
         else if (!strcmp(argv[i], "--compare")) ref = argv[i + 1]; else if (!strcmp(argv[i], "--sheet")) sheet = argv[i + 1];
+        else if (!strcmp(argv[i], "--images")) images = argv[i + 1]; else if (!strcmp(argv[i], "--compare-planks")) planks_ref = argv[i + 1];
         else { fprintf(stderr, "cn_texgen: unknown %s\n", argv[i]); return 2; }
     }
-    if (!font || (!pack && !ref)) { fprintf(stderr, "usage: cn_texgen --font F.ttf (--pack OUT | --compare REFDIR [--sheet OUT.png])\n"); return 2; }
+    if (planks_ref) return compare_planks(planks_ref, sheet);
+    if (!font || (!pack && !ref && !images)) { fprintf(stderr, "usage: cn_texgen --font F.ttf (--pack OUT | --images DIR | --compare REFDIR [--sheet OUT.png]) | --compare-planks REF.rgba [--sheet OUT.png]\n"); return 2; }
     uint32_t len; uint8_t *b = cn_texgen_pack(font, &len);
     if (!b) return 1;
     CnTexPack p; int rc = cn_tex_pack_open(&p, b, len);
@@ -463,6 +708,21 @@ int main(int argc, char **argv)
         if (!fp || fwrite(b, 1, len, fp) != len) { fprintf(stderr, "cn_texgen: cannot write %s\n", pack); return 1; }
         fclose(fp);
         printf("wrote %s (%u B, fnv1a %08x)\n", pack, len, cn_tex_fnv1a(b, len));
+    }
+    if (images) {
+        char path[1024];
+        enum { S = CN_TEXGEN_PLANK_SCALE };
+        uint8_t *pl = malloc((size_t)TG_TILE_W * S * TG_TILE_H * S * 3);
+        cn_texgen_planks(S, 1, pl);
+        snprintf(path, sizeof path, "%s/cn_planks.png", images);
+        if (!write_png(path, pl, TG_TILE_W * S, TG_TILE_H * S)) { fprintf(stderr, "cn_texgen: cannot write %s\n", path); return 1; }
+        printf("wrote %s (%dx%d)\n", path, TG_TILE_W * S, TG_TILE_H * S);
+        free(pl);
+        snprintf(path, sizeof path, "%s/cn_verd.png", images);
+        if (!write_png(path, p.verd, CN_TEX_VERD, CN_TEX_VERD)) return 1;
+        snprintf(path, sizeof path, "%s/cn_bone.png", images);
+        if (!write_png(path, p.bone, CN_TEX_BONE, CN_TEX_BONE)) return 1;
+        printf("wrote %s/cn_verd.png and cn_bone.png\n", images);
     }
     if (ref) rc = compare(&p, ref, sheet);
     free(b);
