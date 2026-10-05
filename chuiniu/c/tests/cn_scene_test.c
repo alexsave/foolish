@@ -143,7 +143,7 @@ static void decal_texture(int id)
 }
 static int decal_frame(float dpr, int wall, int roof, int decal, int nbands)
 {
-    if (!cn_scene_begin(120, 120, 0, dpr, 60, 200, 300, -.45f, -.55f, 1, 512, .55f, 12, 6)) return -1;
+    if (!cn_scene_begin(120, 120, 0, dpr, 60, 200, 300, -.45f, -.55f, 1, 512, .55f, 16, 8)) return -1;
     float *V = cn_scene_verts(), *F = cn_scene_faces();
     int nv = 0, nf = 0;
     if (decal) {
@@ -151,6 +151,13 @@ static int decal_frame(float dpr, int wall, int roof, int decal, int nbands)
         const float fl = (float)(CN_SCENE_F_DECAL | CN_SCENE_F_RECEIVE | CN_SCENE_F_ID(3));
         const float f[] = { 0, 1, 2, 0, 0, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0, fl,   0, 2, 3, 0, 0, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, fl };
         memcpy(V, v, sizeof v); memcpy(F, f, sizeof f); nv += 4; nf += 2;
+    }
+    if (decal == 2) {   /* a second name over the first's right end, x 50 to 110: nothing where u < .25 (x < 65), its own colour past it */
+        const float b = (float)nv;
+        const float v[] = { 50, 20, .3f, 0, 0, 1,  110, 20, .3f, 0, 0, 1,  110, 60, .3f, 0, 0, 1,  50, 60, .3f, 0, 0, 1 };
+        const float fl = (float)(CN_SCENE_F_DECAL | CN_SCENE_F_RECEIVE | CN_SCENE_F_ID(4));
+        const float f[] = { b, b + 1, b + 2, 0, 0, 1, 0, 1, 1, 2, 0, 0, 0, 0, 0, fl,   b, b + 2, b + 3, 0, 0, 1, 1, 0, 1, 2, 0, 0, 0, 0, 0, fl };
+        memcpy(V + nv * 6, v, sizeof v); memcpy(F + nf * 16, f, sizeof f); nv += 4; nf += 2;
     }
     if (wall) {
         const float b = (float)nv;
@@ -489,6 +496,15 @@ int main(void)
             partial += s[3] > 0 && s[3] < 255;
         }
         CHECK(bad == 0 && swapped == DW * DW && partial > 100, "straight, premultiplied and BGRA agree at every pixel (%d off, %d swapped, %d partly covered)", bad, swapped, partial);
+        /* (8) TWO NAMES THAT MEET: the second's empty halo over the first's letters hides nothing, and its letters show
+         * over the first's empty texels, whichever pass 2 draws first */
+        const int d2 = cn_scene_tex_new(16, 16, 0);
+        uint8_t *t2 = cn_scene_tex_rgba(d2);
+        for (int i = 0; i < 16 * 16; i++) { const int a = i % 16 >= 4 ? 255 : 0; t2[i * 4] = (uint8_t)(50 * a / 255); t2[i * 4 + 1] = (uint8_t)(100 * a / 255); t2[i * 4 + 2] = (uint8_t)(150 * a / 255); t2[i * 4 + 3] = (uint8_t)a; }
+        CHECK(decal_frame(dpr, 1, 1, 2, 0) == 8, "two names, the cup's side and the roof");
+        const uint8_t *u = decal_px(dpr, 55, 25), *o2 = decal_px(dpr, 69, 25);
+        CHECK(u[0] == DEC_INK_R && u[1] == DEC_INK_G && u[2] == DEC_INK_B && u[3] == 255, "the first's letter under the second's empty halo (%d %d %d a%d)", u[0], u[1], u[2], u[3]);
+        CHECK(o2[0] == 50 && o2[1] == 100 && o2[2] == 150 && o2[3] == 255, "the second's letter over the first's empty texels (%d %d %d a%d)", o2[0], o2[1], o2[2], o2[3]);
     }
 
     TEST("textures that change: a mark, textures after it, dropped, the room given back and the frame the same");

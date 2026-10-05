@@ -135,6 +135,7 @@ void cn_scene_tex_drop(CnSceneMark m)
 #define F_RECEIVE  CN_SCENE_F_RECEIVE
 #define F_RECEIVER CN_SCENE_F_RECEIVER
 #define F_DECAL    CN_SCENE_F_DECAL
+#define DECAL_PLANE .05f   /* two decals' depths this close at a pixel are one plane (the table's): neither hides the other */
 #define VF CN_SCENE_VF
 #define FF CN_SCENE_FF
 #define STRIP CN_SCENE_STRIP
@@ -746,7 +747,30 @@ static void tri(const Light *Lp, const Bufs *Bp, int r0, int r1, uint32_t *walke
             f4 zold = vf(0);
             if (whole) memcpy(&zold, &B.zb[gi], sizeof zold);
             else for (int k = 0; x + k < W; k++) zold[k] = B.zb[gi + k];
-            const i4 m = ((lane + x) <= xr) & ~(depth >= zold);
+            const i4 span4 = (lane + x) <= xr, m = span4 & ~(depth >= zold);
+            if (decal) {
+                /* DECALS DO NOT HIDE DECALS: where an earlier decal holds the pixel in the same plane (two names' halos
+                 * that meet, a glow over a letter), this one is laid under it (the earlier in pass 2's order on top),
+                 * premultiplied; anywhere else the depth test, as for any face */
+                i4 mb = { 0, 0, 0, 0 };
+                for (int k = 0; k < 4 && x + k < W; k++)
+                    if (span4[k] && !m[k] && B.gf[gi + k] >= 5 && depth[k] - zold[k] < DECAL_PLANE && zold[k] - depth[k] < DECAL_PLANE) mb[k] = -1;
+                if (!vany(m | mb)) continue;
+                for (int k = 0; k < 4; k++) if (m[k]) B.zb[gi + k] = depth[k];
+                nshade -= (uint32_t)(m[0] + m[1] + m[2] + m[3] + mb[0] + mb[1] + mb[2] + mb[3]);
+                Frag F; frag4(&L, &S, w0v, w1v, w2v, depth, m | mb, &F);
+                for (int k = 0; k < 4; k++) {
+                    const int j = gi + k;
+                    if (m[k]) {   /* the texel, kept for the shade, and its place in the light */
+                        int32_t px = F.rgba[k]; memcpy(&B.fb[(idx + k) * 4], &px, 4);
+                        B.gf[j] = kind; B.gu[j] = (uint16_t)F.gu[k]; B.gv[j] = (uint16_t)F.gv[k]; B.gd[j] = F.gd[k]; B.kb[idx + k] = key; B.kf[idx + k] = kface;
+                    } else if (mb[k]) {   /* under the earlier decal's texel: e + t (1 - e's alpha) */
+                        uint8_t *e = &B.fb[(idx + k) * 4], t[4]; int32_t px = F.rgba[k]; memcpy(t, &px, 4);
+                        for (int c = 0; c < 4; c++) e[c] = (uint8_t)(e[c] + (t[c] * (255 - e[3]) + 127) / 255);
+                    }
+                }
+                continue;
+            }
             if (!vany(m)) continue;
             if (whole) { f4 znew = vsel(m, depth, zold); memcpy(&B.zb[gi], &znew, sizeof znew); }
             else for (int k = 0; k < 4; k++) if (m[k]) B.zb[gi + k] = depth[k];
@@ -754,13 +778,6 @@ static void tri(const Light *Lp, const Bufs *Bp, int r0, int r1, uint32_t *walke
             Frag F; frag4(&L, &S, w0v, w1v, w2v, depth, m, &F);
             if (receiver) {
                 for (int k = 0; k < 4; k++) if (m[k]) { int j = gi + k; B.gf[j] = 2; B.gu[j] = (uint16_t)F.gu[k]; B.gv[j] = (uint16_t)F.gv[k]; B.gd[j] = F.gd[k]; B.kb[idx + k] = key; B.kf[idx + k] = kface; }
-                continue;
-            }
-            if (decal) {   /* the texel, kept for the shade, and its place in the light */
-                for (int k = 0; k < 4; k++) if (m[k]) {
-                    int j = gi + k; int32_t px = F.rgba[k]; memcpy(&B.fb[(idx + k) * 4], &px, 4);
-                    B.gf[j] = kind; B.gu[j] = (uint16_t)F.gu[k]; B.gv[j] = (uint16_t)F.gv[k]; B.gd[j] = F.gd[k]; B.kb[idx + k] = key; B.kf[idx + k] = kface;
-                }
                 continue;
             }
             if (m[0] & m[1] & m[2] & m[3]) {

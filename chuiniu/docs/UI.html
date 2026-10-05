@@ -2027,16 +2027,18 @@ const SHAPE = (() => {
   // (canvas text, three texels a point, with a halo for its shadow and glow) and laid in the scene as a decal where the
   // page laid it out (measured untilted), so a cup in front of a name hides it and a shadow falls on it, as on iOS
   // (cn_stage_name). The page's own element keeps its place, unseen.
-  const DECAL_HALO = 10, DECAL_K = 3, decalCanvases = new Map();
+  const DECAL_K = 3, decalCanvases = new Map();
+  const decalHalo = el => el.classList.contains('turn') ? 24 : 6;   /* room for the glow's 18px blur, the letters' shadow */
   function decalCanvas(el, w, h) {
     const cs = getComputedStyle(el), bar = el.classList.contains('turn'), text = bar ? '' : el.textContent;
     const fonts = document.fonts ? document.fonts.status : '';
     const key = [bar, text, cs.fontStyle, cs.fontWeight, cs.fontSize, cs.fontFamily, cs.letterSpacing, cs.color, cs.textShadow, cs.backgroundColor, w.toFixed(2), h.toFixed(2), fonts].join('|');
     let c = decalCanvases.get(key); if (c) return c;
     c = document.createElement('canvas');
-    c.width = Math.ceil((w + 2 * DECAL_HALO) * DECAL_K); c.height = Math.ceil((h + 2 * DECAL_HALO) * DECAL_K);
+    const halo = decalHalo(el);
+    c.width = Math.ceil((w + 2 * halo) * DECAL_K); c.height = Math.ceil((h + 2 * halo) * DECAL_K);
     const g = c.getContext('2d');
-    g.scale(DECAL_K, DECAL_K); g.translate(DECAL_HALO, DECAL_HALO);
+    g.scale(DECAL_K, DECAL_K); g.translate(halo, halo);
     if (bar) {
       // `.turn`: the glow, 2 tall, haloed (0 0 2px #fff, 0 0 8px at .9, 0 0 18px at .5); a shadow's blur is in the canvas's pixels
       const r = Math.min(2, h / 2), fill = () => { g.beginPath(); g.roundRect(0, 0, w, h, r); g.fill(); };
@@ -2060,12 +2062,23 @@ const SHAPE = (() => {
   function nameDecals(canvas) {
     const board = canvas.parentElement, scr = canvas.closest('.scr'), tilted = scr && scr.classList.contains('peekB'), out = [];
     if (!board) return out;
+    if (!board.offsetWidth) {   /* not laid out (a tab not shown): measured, and the scene drawn again, once it is */
+      const ro = new ResizeObserver(() => {
+        if (!board.offsetWidth) return;
+        ro.disconnect();
+        canvas._decals = nameDecals(canvas);
+        if (canvas._objs) R3.render(canvas, canvas._W, canvas._H, canvas._objs, Math.min(2, window.devicePixelRatio || 1));
+      });
+      ro.observe(board);
+      return out;
+    }
     if (tilted) scr.classList.remove('peekB');
     const b = board.getBoundingClientRect(), k = b.width / (board.offsetWidth || 1) || 1;
     board.querySelectorAll('[data-decal]').forEach(el => {
       if (getComputedStyle(el).visibility === 'hidden') return;   /* a turn bar kept for its room */
       const r = el.getBoundingClientRect(), x = (r.left - b.left) / k, y = (r.top - b.top) / k, w = r.width / k, h = r.height / k;
-      out.push({ el, w, h, rect: [x - DECAL_HALO, y - DECAL_HALO, x + w + DECAL_HALO, y + h + DECAL_HALO], canvas: decalCanvas(el, w, h) });
+      const halo = decalHalo(el), cv = decalCanvas(el, w, h);
+      out.push({ el, w, h, rect: [x - halo, y - halo, x - halo + cv.width / DECAL_K, y - halo + cv.height / DECAL_K], canvas: cv });
     });
     for (const d of out) d.el.style.visibility = 'hidden';
     if (tilted) scr.classList.add('peekB');
