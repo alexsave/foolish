@@ -108,6 +108,10 @@ static void test_layout(void)
         }
         CHECK(seats_ok, "%dx%d mine %d: every seat where the study puts it", g->W, g->H, g->mine);
         CHECK(names_ok, "%dx%d mine %d: every name where the study puts it", g->W, g->H, g->mine);
+        /* the reveal's brass rings: each seat's die side on the glass and its ring, the layout's (package U) */
+        int brass_ok = 1;
+        for (int s = 0; s < 6; s++) brass_ok &= h->die_d[s] > 0 && h->die_d[s] == ST.lay.die_g[s] && h->brass_r[s] == ST.lay.brass_r[s];
+        CHECK(brass_ok && h->die_d[0] > h->die_d[1], "%dx%d mine %d: a die's side and its brass ring at every seat (%.2f, %.2f)", g->W, g->H, g->mine, h->die_d[0], h->brass_r[0]);
         /* the canvas is the board less pad above, pad_x either side, pad_below under it */
         CHECK(near(h->canvas[0], bx - g->padX, .01) && h->canvas[1] >= by - g->pad && h->canvas[1] <= by
               && near(h->canvas[1] + h->canvas[3], by + g->boardH + CN_LAY_PAD_BELOW, .01), "%dx%d mine %d: the canvas (top %.0f above the board, the study %.0f)",
