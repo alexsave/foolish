@@ -111,7 +111,7 @@ static float *zb; static int FW, FH;
 /* the deferred shadow: for the fragment that won each pixel, its texel colour (in fb), its tint (gt), its
  * shade (gk, 0..255), the pixel's place in the light's frame (gu, gv at a 64th of a map texel; gd), and
  * what it is (gf: 0 nothing, 1 a body, 2 the table) */
-static uint8_t *gt, *gk, *gf; static uint16_t *gu, *gv; static float *gd;
+static uint8_t *gt, *gk, *gf, *gm, *ga, *gc; static uint16_t *gu, *gv; static float *gd;   /* gk: the direct light's cosine; gm, ga: the tint's scale and floor; gc: the crease */
 static int32_t *order;                                   /* pass 2's faces, nearest first */
 static float *smap; static int SR;                       /* the shadow map, SR by SR, depth along the light */
 static float eyeX, eyeY, HC, DPR, PAD;
@@ -154,7 +154,7 @@ EXPORT(scene_begin) int scene_begin(int W, int H, int pad, float dpr, float ex, 
     uint32_t npx = (uint32_t)FW * FH;
     nocc = 0; AW = (FW + 3) / 4; AH = (FH + 3) / 4;
     fb = take(npx * 4); zb = take(npx * 4); smap = take((uint32_t)SR * SR * 4); ao = take((uint32_t)AW * AH * 4);
-    gt = take(npx * 3); gk = take(npx); gf = take(npx); gu = take(npx * 2); gv = take(npx * 2); gd = take(npx * 4);
+    gt = take(npx * 3); gk = take(npx); gf = take(npx); gu = take(npx * 2); gv = take(npx * 2); gd = take(npx * 4); gm = take(npx); ga = take(npx); gc = take(npx);
     if (!ao) return 0;
     verts = take((uint32_t)vcapacity * VF * 4); faces = take((uint32_t)fcapacity * FF * 4); order = take((uint32_t)fcapacity * 4);
     if (!fb || !zb || !smap || !gt || !gk || !gf || !gu || !gv || !gd || !verts || !faces) { fb = 0; return 0; }
@@ -240,16 +240,19 @@ static void shadow_tri(SV a, SV b, SV c)
 /* ---- pass 2: the picture --------------------------------------------------------------- */
 typedef struct { float x, y, iw, uw, vw, nx, ny, nz, pxw, pyw, pzw; } PV;
 
-/* a pixel's place in the light's frame, kept for pass 3. ndl: the surface's cosine to the light; a surface
- * the light grazes is pushed further toward the light (a slope-scaled bias, by the map's texel), or the
- * map's steps would stripe it with its own shadow */
-static void keep_light(int idx, float x, float y, float z, float ndl)
+/* a pixel's place in the light's frame, kept for pass 3. (nx, ny, nz) the unit normal, ndl its cosine to
+ * the light: the point is first moved out along its normal by a texel and a half times the sine (a normal
+ * offset: the map's steps would otherwise stripe a surface the light grazes with its own shadow), then a
+ * small constant bias toward the light. A depth bias that grew with the slope was tried first and pushed
+ * the top of a cup's shaded side clean out of the cup's shadow: a lit band under the crown. */
+static void keep_light(int idx, float x, float y, float z, float nx, float ny, float nz, float ndl)
 {
+    float sn = 1 - ndl * ndl; if (sn < 0) sn = 0; sn = fsqrt(sn);
+    float off = 1.5f * sn / (sus < svs ? sus : svs);
+    x += nx * off; y += ny * off; z += nz * off;
     float u = (x * UX + y * UY + z * UZ - su0) * sus, v = (x * VX + y * VY + z * VZ - sv0) * svs;
     u = fclamp(u, 0, SR - 1.01f) * 64; v = fclamp(v, 0, SR - 1.01f) * 64;
-    if (ndl < .15f) ndl = .15f;
-    float g = 1 - ndl, texel = 1 / (sus < svs ? sus : svs), bias = 1.6f + 2.5f * texel * g * (2 + 4 * g);   /* g (2 + 4 g): near the tangent, without the divide */
-    gu[idx] = (uint16_t)u; gv[idx] = (uint16_t)v; gd[idx] = -(x * LX + y * LY + z * LZ) - bias;
+    gu[idx] = (uint16_t)u; gv[idx] = (uint16_t)v; gd[idx] = -(x * LX + y * LY + z * LZ) - 1.6f;
 }
 /* the contact dark at a pixel, read between the blocks' centres */
 static float ao_at(int x, int y)
@@ -300,7 +303,7 @@ static void tri(const uint8_t *td, const int8_t *bn, int tw, int th, PV a, PV b,
             zb[idx] = depth; prof[0]++;
             float wx = (w0 * a.pxw + w1 * b.pxw + w2 * c.pxw) * depth, wy = (w0 * a.pyw + w1 * b.pyw + w2 * c.pyw) * depth, wz = (w0 * a.pzw + w1 * b.pzw + w2 * c.pzw) * depth;
             uint8_t *o = &fb[idx * 4];
-            if (receiver) { gf[idx] = 2; keep_light(idx, wx, wy, wz, 1); continue; }   /* the table: pass 3 writes its shadow */
+            if (receiver) { gf[idx] = 2; keep_light(idx, wx, wy, wz, 0, 0, 1, LZ); continue; }   /* the table: pass 3 writes its shadow */
             float u = (w0 * a.uw + w1 * b.uw + w2 * c.uw) * depth, v = (w0 * a.vw + w1 * b.vw + w2 * c.vw) * depth;
             float tx = u * tw - .5f, ty = v * th - .5f;
             if (tx < 0) tx = 0; else if (tx > tw - 1.001f) tx = tw - 1.001f;
@@ -320,14 +323,13 @@ static void tri(const uint8_t *td, const int8_t *bn, int tw, int th, PV a, PV b,
             }
             /* the normal's length is near 1 (unit normals, a small bend): one Newton step from 1 for its inverse */
             float nn = nx * nx + ny * ny + nz * nz, nl = 1.5f - .5f * nn, lit = (nx * LX + ny * LY + nz * LZ) * nl;
-            float k = .5f - .46f * lit; if (k < 0) k = 0; else if (k > .82f) k = .82f;
-            k = k * km + ka;
-            if (wz < 10) { float cr = (1 - wz * .1f); if (cr < 0) cr = 0; k += (1 - k) * .4f * cr * cr; }   /* the crease at the foot */
-            if (k > 1) k = 1;
-            /* kept for pass 3: the texel, the tint, the shade, the place in the light */
+            if (lit < 0) lit = 0; else if (lit > 1) lit = 1;
+            float cr = wz < 10 ? 1 - wz * .1f : 0; if (cr < 0) cr = 0;   /* the crease at the foot */
+            /* kept for pass 3: the texel, the tint and its scale and floor, the direct light's cosine, the crease, the place in the light */
             o[0] = (uint8_t)r; o[1] = (uint8_t)g; o[2] = (uint8_t)bl; o[3] = 255;
-            gt[idx * 3] = (uint8_t)tr; gt[idx * 3 + 1] = (uint8_t)tg; gt[idx * 3 + 2] = (uint8_t)tb; gk[idx] = (uint8_t)(k * 255 + .5f);
-            gf[idx] = receives ? 1 : 3; if (receives) keep_light(idx, wx, wy, wz, lit);
+            gt[idx * 3] = (uint8_t)tr; gt[idx * 3 + 1] = (uint8_t)tg; gt[idx * 3 + 2] = (uint8_t)tb; gk[idx] = (uint8_t)(lit * 255 + .5f);
+            gm[idx] = (uint8_t)(fclamp(km, 0, 1) * 255 + .5f); ga[idx] = (uint8_t)(fclamp(ka, 0, 1) * 255 + .5f); gc[idx] = (uint8_t)(cr * cr * 255 + .5f);
+            gf[idx] = receives ? 1 : 3; if (receives && lit > 0) keep_light(idx, wx, wy, wz, nx * nl, ny * nl, nz * nl, lit);
         }
     }
 }
@@ -433,7 +435,7 @@ EXPORT(scene_render) int scene_render(int nverts, int nfaces)
     for (int by = 0; by < FH; by += 4) for (int bx = 0; bx < FW; bx += 4) {
         int i = by * FW + bx;
         if (gf[i] && gf[i + (bx + 3 < FW ? 3 : 0)] && gf[i + (by + 3 < FH ? 3 * FW : 0)]) continue;   /* a block some body covers is done below */
-        keep_light(i, (bx + 1.5f) / DPR, (by + 1.5f) / DPR - PAD, 0, 1);
+        keep_light(i, (bx + 1.5f) / DPR, (by + 1.5f) / DPR - PAD, 0, 0, 0, 1, LZ);
         float lit = 1 - (1 - lit_of(i)) * SH_DARK;
         /* most blocks are under no footprint: one alpha for the block */
         int ab = (by / 4) * AW + bx / 4, near = ao[ab] > 0 || (bx / 4 + 1 < AW && ao[ab + 1] > 0) || (by / 4 + 1 < AH && (ao[ab + AW] > 0 || (bx / 4 + 1 < AW && ao[ab + AW + 1] > 0))) || (bx >= 4 && ao[ab - 1] > 0) || (by >= 4 && ao[ab - AW] > 0);
@@ -446,10 +448,14 @@ EXPORT(scene_render) int scene_render(int nverts, int nfaces)
     for (int i = 0, n = FW * FH; i < n; i++) {
         int f = gf[i]; if (f == 4) continue;
         uint8_t *o = &fb[i * 4];
-        if (!f) { float x = (i % FW) / DPR, y = (i / FW) / DPR - PAD; keep_light(i, x, y, 0, 1); f = 2; }
+        if (!f) { float x = (i % FW) / DPR, y = (i / FW) / DPR - PAD; keep_light(i, x, y, 0, 0, 0, 1, LZ); f = 2; }
         if (f == 2) { float lit = 1 - (1 - lit_of(i)) * SH_DARK; o[0] = 0; o[1] = 3; o[2] = 2; o[3] = (uint8_t)((1 - lit * (1 - ao_at(i % FW, i / FW))) * 255 + .5f); continue; }
-        float k = gk[i] * (1.f / 255);
-        if (f == 1) { float sh = 1 - lit_of(i); k += (1 - k) * SH_DARK * sh; }
+        /* a body's light is the lamp's, by the cosine, less the shadow on it (a face turned from the lamp and a face
+         * in its shadow look alike: neither sees it), on an ambient floor; the tint's scale and floor, then the crease */
+        float dl = gk[i] * (1.f / 255);
+        if (f == 1 && dl > 0) { float sh = 1 - lit_of(i); dl *= 1 - .9f * sh; }
+        float k = (.74f - .7f * dl) * (gm[i] * (1.f / 255)) + ga[i] * (1.f / 255), cr = gc[i] * (1.f / 255);
+        k += (1 - k) * .4f * cr; if (k > 1) k = 1;
         const uint8_t *t = &gt[i * 3];
         o[0] = (uint8_t)(o[0] + (t[0] - o[0]) * k); o[1] = (uint8_t)(o[1] + (t[1] - o[1]) * k); o[2] = (uint8_t)(o[2] + (t[2] - o[2]) * k);
     }
