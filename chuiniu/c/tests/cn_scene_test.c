@@ -176,7 +176,8 @@ int main(void)
         CHECK(cn_scene_begin(9000, 1, 0, 1, 0, 0, 720, 0, 0, 1, 256, .5f, 1, 1) == 0, "a framebuffer past 8,192 a side");
         CHECK(cn_scene_begin(0, 100, 0, 1, 0, 0, 720, 0, 0, 1, 256, .5f, 1, 1) == 0, "a board of no width");
         CHECK(cn_scene_begin(1, 100, 0, .1f, 0, 0, 720, 0, 0, 1, 256, .5f, 1, 1) == 0, "a board and scale that round to no pixel");
-        CHECK(cn_scene_begin(100, 100, 0, __builtin_nanf(""), 0, 0, 720, 0, 0, 1, 256, .5f, 1, 1) == 0, "a scale that is not a number");        CHECK(cn_scene_begin(100, 100, 0, 1, 0, 0, 720, 0, 0, 0, 256, .5f, 1, 1) == 0, "no light");
+        CHECK(cn_scene_begin(100, 100, 0, __builtin_nanf(""), 0, 0, 720, 0, 0, 1, 256, .5f, 1, 1) == 0, "a scale that is not a number");
+        CHECK(cn_scene_begin(100, 100, 0, 1, 0, 0, 720, 0, 0, 0, 256, .5f, 1, 1) == 0, "no light");
         CHECK(cn_scene_begin(100, 100, 0, 1, 0, 0, 720, 0, 0, 1, 256, .5f, -1, 1) == 0, "a negative capacity");
         CHECK(cn_scene_begin(100, 100, 0, 1, 0, 0, 720, 0, 0, 1, CN_SCENE_SHADOW_MAX + 1, .5f, 1, 1) == 0, "a shadow map past 1,024: a place on it would not fit 16 bits");
         CHECK(cn_scene_begin(100, 100, 0, 1, 0, 0, 720, 0, 0, 1, CN_SCENE_SHADOW_MAX, .5f, 1, 1) > 0, "1,024 itself is drawable");

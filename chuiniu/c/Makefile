@@ -6,6 +6,7 @@
 #   make -C chuiniu/c wasm        prove the kernel builds for wasm32, freestanding
 #   make -C chuiniu/c wasm-roll   the throw (cn_roll.c) as a browser module, build/wasm/cn_roll.wasm
 #   make -C chuiniu/c docs-roll   embed that module in ../docs/UI.html (the study plays it)
+#   make -C chuiniu/c bench       the renderer's speed and memory (cn_scene_bench; not a test)
 #   make -C chuiniu/c ios-smoke   every bridge entry point, host compiler, no Mac
 #   make -C chuiniu/c structgen   the Swift readers  -> ../ios/Generated/ (needs libclang)
 #   make -C chuiniu/c datagen     the Swift strings  -> ../ios/Generated/i18n/
