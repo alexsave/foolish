@@ -221,7 +221,13 @@ int  cn_api_common(const char *a, const char *b);
  * A FRAME ON SEVERAL THREADS: cn_api_stage_prepare, then for each pass 0 ..
  * CN_STAGE_PASSES - 1 in order, cn_api_stage_band(pass, i, CN_STAGE_BANDS) for
  * every i at once (DispatchQueue.concurrentPerform), then cn_api_stage_pixels:
- * the shot's w by h RGBA, straight alpha, valid until the next prepare. The
+ * the shot's w by h RGBA, straight alpha (premultiplied after
+ * cn_api_stage_premultiply(1)), valid until the next prepare.
+ *
+ * A FRAME OFF THE HOST'S MAIN THREAD: the lift is the resident plan's, which
+ * only the thread that adopts may read, so the host samples it with the clock
+ * (cn_api_stage_lift) and draws with cn_api_stage_prepare_at anywhere else; no
+ * other stage call (begin, attach, purge, another frame) may run meanwhile. The
  * picture goes at the shot's canvas (flat points, turned with the planks by the
  * HUD's ca); the plate and the shelf stay flat.
  *
@@ -254,6 +260,15 @@ void cn_api_stage_band(int pass, int band, int nbands);
 const uint8_t *cn_api_stage_pixels(void);
 /* prepare, every band on this thread, the pixels */
 const uint8_t *cn_api_stage_frame(uint32_t now_ms, float peek);
+/* The reveal's cups' lift at now_ms (the current plan's LIFT beat; 1 with
+ * none): what cn_api_stage_prepare reads from the resident. */
+float cn_api_stage_lift(uint32_t now_ms);
+/* cn_api_stage_prepare with the lift given: reads nothing of the resident.
+ * cn_api_stage_prepare(t, p) is cn_api_stage_prepare_at(t, p, cn_api_stage_lift(t)). */
+int  cn_api_stage_prepare_at(uint32_t now_ms, float peek, float lift);
+/* The pixels' alpha from the next frame on: 1 premultiplied (what Core
+ * Animation draws without converting), 0 straight (the default). */
+void cn_api_stage_premultiply(int on);
 /* CnStageShot of the last frame. */
 const void *cn_api_stage_shot(void);
 /* Everything at rest at now_ms (every throw, the SHAKE beat)? */

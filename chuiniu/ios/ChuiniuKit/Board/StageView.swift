@@ -30,6 +30,14 @@
 // cups lift; then one still frame, and the display link stops. A view with
 // no size never asks for a frame. A purge (memory warning) keeps the last
 // picture on screen; a frame the stage cannot draw keeps the previous one.
+//
+// OFF THE MAIN THREAD: a display frame asks the stage for the next picture
+// (`TableStage.submit`: the clock and the peek sampled then) and goes on; the
+// stage draws it on its own queue and the picture is put up when it lands, so
+// the main thread only presents. One frame is in flight at a time: while it
+// draws, the screen shows the one before, and the next display frame after it
+// lands asks again with the clock as it is then. A frame of a screen begun
+// since it was asked is dropped.
 
 import QuartzCore
 import SwiftUI
@@ -113,6 +121,14 @@ public final class StageDirector: ObservableObject {
     private var wasLive = false
     /// How many frames this director asked the stage for (tests).
     private(set) var framesAsked = 0
+    /// A frame asked of the stage has not landed yet.
+    private(set) var inFlight = false
+    /// Each begin's number: a frame asked before the latest begin is dropped.
+    private var generation = 0
+    /// A frame landed: the view puts it up.
+    var onFrame: ((StageFrame) -> Void)?
+    /// The clock each landed frame was asked at, newest last (tests).
+    private(set) var landedMs: [Int] = []
 
     /// ONE STAGE A PROCESS (the renderer is one): the director that began it
     /// last owns it, and another never draws from it until it begins again.
@@ -148,6 +164,7 @@ public final class StageDirector: ObservableObject {
         request = r
         Self.owner = self
         dirty = true
+        generation += 1
         let h = stage.begin(r.screen, drawer: r.drawer, scale: r.scale, roll: r.roll)
         hud = h
         guard let h else { atRest = true; return }
@@ -219,14 +236,30 @@ public final class StageDirector: ObservableObject {
         }
     }
 
-    /// The picture now, drawn if anything changed; the last one otherwise (and
-    /// when the stage could not draw).
-    func frame() -> StageFrame? {
-        guard dirty, owns, let r = request, r.drawer.width >= 1, r.drawer.height >= 1, hud != nil else { return last }
+    /// Ask the stage for the picture now (the clock and the peek as they are),
+    /// drawn off the main thread, when anything changed and no frame is in
+    /// flight; it lands in `onFrame`. Whether a frame was asked.
+    @discardableResult
+    func requestFrame() -> Bool {
+        guard dirty, !inFlight, owns, let r = request, r.drawer.width >= 1, r.drawer.height >= 1, hud != nil else { return false }
         dirty = false
         framesAsked += 1
-        if let f = stage.frame(atMs: Int(clockMs.rounded(.down)), peek: peekValue(CACurrentMediaTime())) { last = f }
-        return last
+        inFlight = true
+        let gen = generation, ms = Int(clockMs.rounded(.down))
+        stage.submit(atMs: ms, peek: peekValue(CACurrentMediaTime())) { [weak self] f in self?.landed(f, gen: gen, ms: ms) }
+        return true
+    }
+
+    /// A frame drawn: kept and put up, unless a begin came since it was asked
+    /// (or another director took the stage); then the next one if due.
+    private func landed(_ f: StageFrame?, gen: Int, ms: Int) {
+        inFlight = false
+        if gen == generation, owns, let f {
+            last = f
+            landedMs.append(ms)
+            onFrame?(f)
+        }
+        if needsFrame { onWake?() }
     }
 
     var needsFrame: Bool { dirty && owns && hud != nil }
@@ -407,6 +440,7 @@ public final class StageUIView: UIView {
         canvas.magnificationFilter = .linear
         addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tapped(_:))))
         director.onWake = { [weak self] in self?.wake() }
+        director.onFrame = { [weak self] f in self?.present(f) }
     }
 
     @available(*, unavailable)
@@ -628,7 +662,7 @@ public final class StageUIView: UIView {
 
     func wake() {
         guard window != nil, hasSize else { return }
-        if director.needsFrame { draw() }
+        if director.needsFrame { director.requestFrame() }
         guard director.live, link == nil else { return }
         let l = CADisplayLink(target: Ticker(self), selector: #selector(Ticker.tick(_:)))
         l.add(to: .main, forMode: .common)
@@ -646,13 +680,12 @@ public final class StageUIView: UIView {
         let dt = lastStamp.map { l.timestamp - $0 } ?? 0
         lastStamp = l.timestamp
         guard hasSize else { stop(); return }
-        if director.advance(dt) { draw() }
-        if !director.live, !director.needsFrame { stop() }
+        if director.advance(dt) { director.requestFrame() }
+        if !director.live, !director.needsFrame, !director.inFlight { stop() }
     }
 
-    /// Only from wake() and tick(), which both hold a view with no size back.
-    private func draw() {
-        guard let f = director.frame() else { return }
+    /// A frame landed (the stage drew it off the main thread): up it goes.
+    private func present(_ f: StageFrame) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         place(f)

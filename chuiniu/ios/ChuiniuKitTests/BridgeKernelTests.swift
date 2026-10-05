@@ -299,6 +299,7 @@ private final class SpyStage: TableStage {
         real.begin(screen, drawer: drawer, scale: scale, roll: roll)
     }
     func frame(atMs ms: Int, peek: Double) -> StageFrame? { real.frame(atMs: ms, peek: peek) }
+    func submit(atMs ms: Int, peek: Double, then done: @escaping @MainActor (StageFrame?) -> Void) { real.submit(atMs: ms, peek: peek, then: done) }
     func frameOnOneThread(atMs ms: Int, peek: Double) -> StageFrame? { real.frameOnOneThread(atMs: ms, peek: peek) }
     func peekEase(_ t: Double) -> Double { real.peekEase(t) }
     func done(atMs ms: Int) -> Bool { real.done(atMs: ms) }
