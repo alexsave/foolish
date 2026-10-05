@@ -209,6 +209,9 @@ int  cn_api_words(int what, int arg, char *out, int cap);
 #define CN_API_P_INVITE  3   /* "Alex wants a game of Chui Niu"                    */
 #define CN_API_P_JOINED  4
 #define CN_API_P_LEFT    5
+/* and the words the bubble's PLATE carries, one line too (`who` unread) */
+#define CN_API_P_PLATE_BID 6 /* the bid on the plate: "four 3s"                    */
+#define CN_API_P_TALLY   7   /* q: the count at a reveal. "There were twelve"      */
 int  cn_api_caption_probe(int what, const char *who, int q, int f, char *out, int cap);
 int  cn_api_caption_width(const char *line);
 int  cn_api_caption_budget(void);

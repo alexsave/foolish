@@ -371,8 +371,14 @@ int cn_say_table(const CnGame *g, char *out, int cap)
 int cn_say_reveal_count(const CnGame *g, char *out, int cap)
 {
     if (!g->call_at) return text_put(out, cap, "");
+    return cn_say_tally(g->call_count, out, cap);
+}
+
+int cn_say_tally(int count, char *out, int cap)
+{
+    if (count < 0 || count > CN_MAX_DICE) return -1;
     char qty[16];
-    if (qty_word(g->call_count, 0, qty, sizeof qty) < 0) return -1;
+    if (qty_word(count, 0, qty, sizeof qty) < 0) return -1;
     const char *kv[] = { "qty", qty, 0 };
     return cn_fill(out, cap, T(REVEAL_COUNT), kv);
 }

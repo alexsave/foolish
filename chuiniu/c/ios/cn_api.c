@@ -528,6 +528,8 @@ int cn_api_caption_probe(int what, const char *who, int q, int f, char *out, int
     case CN_API_P_INVITE: return cn_say_lobby_caption(CN_SAY_INVITE, who, out, cap);
     case CN_API_P_JOINED: return cn_say_lobby_caption(CN_SAY_JOINED, who, out, cap);
     case CN_API_P_LEFT:   return cn_say_lobby_caption(CN_SAY_LEFT, who, out, cap);
+    case CN_API_P_PLATE_BID: return cn_say_bid(q, f, 0, out, cap);
+    case CN_API_P_TALLY:  return cn_say_tally(q, out, cap);
     default:              return -1;
     }
     if (ev.kind != CN_EV_ROUND && (q < 1 || q > CN_MAX_DICE || f < 1 || f > CN_FACES)) return -1;

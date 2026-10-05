@@ -96,6 +96,8 @@ int cn_say_staged(const CnGame *g, CnMove m, char *out, int cap);
 int cn_say_table(const CnGame *g, char *out, int cap);
 /* The newest call's count: "There were five"; "" before the first call. */
 int cn_say_reveal_count(const CnGame *g, char *out, int cap);
+/* The same for any count 0..CN_MAX_DICE: "There were twelve", "There were 30". */
+int cn_say_tally(int count, char *out, int cap);
 /* A lobby row: "2. Bo", or "2. Bo (You)" when `mine`. */
 int cn_say_lobby_row(const char *const *names, int seat, int mine, char *out, int cap);
 /* Why a link did not read, from a negative CN_E* (cn_msg.h): a newer

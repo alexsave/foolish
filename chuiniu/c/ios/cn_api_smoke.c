@@ -230,6 +230,8 @@ int main(int argc, char **argv)
        && cn_api_caption_width(line) <= cn_api_caption_budget() && cn_api_caption_unit() == 8, line);
     OK(cn_api_caption_probe(CN_API_P_CALL, "Bo", 0, 3, line, sizeof line) == -1
        && cn_api_caption_probe(99, "Bo", 1, 3, line, sizeof line) == -1, "a probe off the table");
+    OK(cn_api_caption_probe(CN_API_P_TALLY, "", 12, 0, line, sizeof line) > 0 && !strcmp(line, "There were twelve"), line);
+    OK(cn_api_caption_probe(CN_API_P_PLATE_BID, "", 13, 5, line, sizeof line) > 0 && !strcmp(line, "13 5s"), line);
 
     /* the records */
     uint8_t saved[CN_API_REC_BYTES];
