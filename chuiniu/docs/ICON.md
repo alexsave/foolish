@@ -75,5 +75,5 @@ If the owner prefers the study's two dice, the tool draws them by changing the b
 ## Found on the way
 
 `cn_geom.h`'s face slot enum and `cn_tex.h`'s texture kind enum both define `CN_TEX_DIE`, so no file can include both headers.
-`cn_icon.c` renames the slot for itself (`#define CN_TEX_DIE CN_TEX_SLOT_DIE` around the `cn_geom.h` include); the first host that wires the pack to the renderer (the iOS bridge) will hit the same wall, so one of the two names should change in the headers.
+`cn_geom.h`'s die slot is now `CN_TEX_DIE_ATLAS` (package D renamed it so the stage could include both headers), and `cn_icon.c` includes `cn_geom.h` plainly; the icons came out byte for byte the same.
 DECISIONS I7 still describes the placeholder icons; its icon half should point here.

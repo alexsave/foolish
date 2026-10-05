@@ -381,7 +381,7 @@ ICON_EXT := ../ios/ChuiniuMessages/Assets.xcassets/iMessage App Icon.stickersico
 ICON_APP := ../ios/ChuiniuMessagesApp/Assets.xcassets/AppIcon.appiconset
 
 build/cn_icon: tools/cn_icon.c $(SRC) $(HDR) $(TEX_SRC) | build
-	$(CC) $(CFLAGS) $(SRC) src/cn_tex.c tools/cn_icon.c -lz -lm -o $@
+	$(CC) $(CFLAGS) $(SRC) tools/cn_icon.c -lz -lm -o $@
 
 icons: build/cn_icon $(TEX_PACK)
 	./build/cn_icon --pack $(TEX_PACK) --ext "$(ICON_EXT)" --app "$(ICON_APP)" --sheet build/cn_icon_sheet.png
