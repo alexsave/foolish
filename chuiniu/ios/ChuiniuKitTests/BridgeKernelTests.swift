@@ -208,6 +208,12 @@ final class BridgeKernelTests: XCTestCase {
         XCTAssertEqual(reveal.me, 1)
         XCTAssertEqual(reveal.rolls, 0)
         XCTAssertEqual(reveal.dieX.filter { $0 != 0 }.count, 10, "every shown die has its place on the glass")
+        // the counting rings are the HUD's brass rings: past a die's corners, inside half the dice's spacing
+        for s in 0..<reveal.seats {
+            XCTAssertEqual(Rings.radius(reveal, seat: s), reveal.brassR[s], "seat \(s): the ring is the kernel's")
+            XCTAssertGreaterThan(Rings.radius(reveal, seat: s), reveal.dieD[s] * 0.71, "seat \(s): past the die's corners")
+            XCTAssertLessThan(Rings.radius(reveal, seat: s), reveal.dieD[s] * 0.85, "seat \(s): inside half the spacing")
+        }
         let down = try XCTUnwrap(stage.frame(atMs: 0, peek: 0))
         let up = try XCTUnwrap(stage.frame(atMs: 60_000, peek: 0))
         XCTAssertEqual(up.image.width, up.shot.w)

@@ -11,7 +11,7 @@
  * bodies stand on) is a rectangle inset 16 from each side, top_m from the top,
  * ending 12 above the shelf when the shelf is up (the picker on my turn, or
  * the roll's Roll again and Send), at the drawer's foot less 12 otherwise:
- *     top_m   = h > 400 ? 30 : 8
+ *     top_m   = h <= 400 ? 8 : min(30, h - 392)     (the study's stepped at 400)
  *     board_h = h - top_m - 12 - (shelf ? shelf_h + 10 : 0)
  * A SHORT board puts the other seats in one row along its top, the plate
  * beside the row; a tall one puts them on the ring fitted to the camera
@@ -22,7 +22,10 @@
  * table stays a row on their turn too rather than turning into a ring each
  * time the picker goes down (the study read the board left after the shelf,
  * and a 340 drawer flipped between the two). Never a named drawer size, so
- * whatever height the host measures lands on the right side of it.
+ * whatever height the host measures lands on the right side of it; the top
+ * margin grows a point a point, so the threshold is one (a drawer under 400 is
+ * short, and every one from 400 up tall) and the board never shrinks as the
+ * drawer grows (package V2).
  *
  * NOTHING LEAVES THE DRAWER (package U). Everything the eye sees stands up
  * off the table and leans up the screen from the eye's foot, and a held cup
@@ -40,8 +43,20 @@
  *   one); their dice are hidden under them anyway;
  *   my throw is held at the largest reach (of the study's, never under
  *   CN_LAY_REACH_MIN) at which my held cup stays CN_LAY_EDGE inside the
- *   drawer, fitted on this drawer's picker-up board (the tightest), so the
- *   throw is the same throw on my turn, on theirs and at the reveal.
+ *   drawer on every screen of it (the least of each screen's fit), so the
+ *   reach is one on my turn, on theirs and at the reveal.
+ * AND ON A TALL BOARD AND AT THE REVEAL (package V2):
+ *   my dice fit my peek on a tall board too (24, then half a point smaller:
+ *   from 400 to about 450 the study's cup tipped past the top), and on a short
+ *   board my cup standing stays off the row's names (CN_LAY_NAME_TEXT_*);
+ *   the ring is fitted to the painted glass and kept off the plate (the
+ *   study's fit uses its own map, up to 36 points off far up a tall drawer);
+ *   a far seat throws (throw_mask) only when its held cup, at the study's
+ *   reach, stays CN_LAY_EDGE inside the whole throw; else its cup stays down;
+ *   at the reveal (in->reveal) every standing cup tips (DECISIONS I23): the
+ *   ring is fitted with each far cup tipped the whole way up, and a short
+ *   board lays every seat in one row (one_row, DECISIONS I29) since its row
+ *   has no room above it; cn_lay_lift_fit is the stage's last word.
  * The fit reads the throw's own path (cn_roll_cup_pose), never a copy of it.
  *
  *
@@ -148,11 +163,12 @@ int cn_lay_make(const CnLayIn *in, CnLay *L);
 int cn_lay_objects(const CnLayIn *in, const CnLay *L, CnObj *objs, int cap);
 
 /* The throws at a roll. The cup roll (CN_THROW_CUP): mine, held at
- * L->my_reach, and on a tall board every other seat's that still has dice,
- * each with its own seed (in->seed + 1000 per seat round from me), shake
+ * L->my_reach, and on a tall board every other seat's that still has dice and
+ * whose held cup stays inside (L->throw_mask), each with its own seed (in->seed + 1000 per seat round from me), shake
  * length (1.5 + .8 hash s) and start (.1 + .5 hash s), so no two shake alike
  * or land together; mine starts at once with the default shake. On a short
- * board mine only. The table roll (CN_THROW_TABLE): mine only. A throw's walls
+ * board mine only, at the reveal on a short board none. The table roll
+ * (CN_THROW_TABLE): mine only. A throw's walls
  * are a box round its cup, kept 20 off the board's sides and top and 10 off
  * its foot. Returns the count. A throw's frame at the host's clock T is
  * cn_geom_pose_at(..., T - delay, ...). */

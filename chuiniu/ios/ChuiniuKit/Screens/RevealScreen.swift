@@ -151,7 +151,9 @@ public struct RevealScreen: View {
 
 /// The counting dice's rings in the glow, at each shown die's place on the glass
 /// (the HUD's `die_x`, `die_y`: seat s at s * stride, in `Reveal.dice` order),
-/// lit one by one in seat order as the kernel's COUNT beat says.
+/// each the HUD's brass ring for its seat (`brass_r`: past the die's corners,
+/// inside half the dice's spacing, the kernel's), lit one by one in seat order
+/// as the kernel's COUNT beat says.
 struct Rings: View {
     let reveal: Reveal
     let hud: CnStageHudSnap
@@ -169,10 +171,10 @@ struct Rings: View {
                     guard k < stride, hud.dieX.indices.contains(i), hud.dieX[i] != 0 || hud.dieY[i] != 0 else { return nil }
                     return CGPoint(x: hud.dieX[i], y: hud.dieY[i])
                 }
-                let r = Self.radius(pts, fallback: (s == hud.me ? hud.myR : hud.cupR) * 0.3)
+                let r = Self.radius(hud, seat: s)
                 for (k, p) in pts.enumerated() where counts.indices.contains(k) && counts[k] {
                     defer { ordinal += 1 }
-                    guard ordinal < lit else { continue }
+                    guard ordinal < lit, r > 0 else { continue }
                     // the study's counting ring: the glow blurred, the glow, a pale core
                     let ring = Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r))
                     ctx.drawLayer { g in
@@ -188,16 +190,10 @@ struct Rings: View {
         .accessibilityHidden(true)
     }
 
-    /// A ring round a die: a little under half the nearest neighbour's
-    /// distance, so two rings never cross (a painting choice, no game number).
-    static func radius(_ pts: [CGPoint], fallback: Double) -> Double {
-        var best = Double.infinity
-        for i in pts.indices {
-            for j in pts.indices where j > i {
-                best = min(best, hypot(pts[i].x - pts[j].x, pts[i].y - pts[j].y))
-            }
-        }
-        return best.isFinite ? best * 0.47 : fallback
+    /// A ring round one of seat s's dice: the HUD's brass ring radius (0 where
+    /// the HUD has none, and no ring is drawn).
+    static func radius(_ hud: CnStageHudSnap, seat s: Int) -> Double {
+        hud.brassR.indices.contains(s) ? hud.brassR[s] : 0
     }
 }
 
