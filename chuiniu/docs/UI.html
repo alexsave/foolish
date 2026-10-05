@@ -1701,22 +1701,41 @@ const SHAPE = (() => {
         const c = verts.length; verts.push([0, 0, z - dome]);
         for (let i = 0; i < segs; i++) { const j = (i + 1) % segs, f = { idx: [c, idx[i], idx[j]], uv: [[.5, .5], uv[i], uv[j]], tex }; if (flip) { f.idx.reverse(); f.uv.reverse(); } faces.push(f); }
       };
-      // the crown's edge is rounded: a fillet of radius f between the wall and the top, with its own normals, so
-      // the light rolls off it on the lit side and it goes dark on the other, as a real cup's shoulder does
-      const f = R * .09, rcf = rc + (R - rc) * f / h, cr = rcf - f, cz = h - f;
+      // THE CROWN IS A DOME (the locked cup's round crown): a spherical cap whose slope at its rim is THE, so the
+      // light rolls over it from the lit side to shade on the other; and the edge between the wall and the dome is
+      // a fillet of radius f, from the wall's slope to the dome's, with its own normals. (A flat crown had no shade
+      // anywhere under one lamp, and a lit line baked into the side read as a bright ring all round.)
+      const f = R * .09, THE = 30 * Math.PI / 180, rcf = rc + (R - rc) * f / h, ccx = rcf - f, cz = h - f, phEnd = Math.PI / 2 - THE;
       wall(R, rcf, 0, cz, texSide, false);
+      const nn = (a, ph) => [Math.cos(ph) * Math.cos(a), Math.cos(ph) * Math.sin(a), Math.sin(ph)];   /* ph: the normal's rise from level */
       {
-        const FR = 3, V1 = FR + 1, base = verts.length, nn = (a, ph) => [Math.cos(ph) * Math.cos(a), Math.cos(ph) * Math.sin(a), Math.sin(ph)];
-        for (let i = 0; i < segs; i++) { const a = i / segs * Math.PI * 2; for (let r = 0; r <= FR; r++) { const ph = r / FR * Math.PI / 2, rr = cr + f * Math.cos(ph); verts.push([rr * Math.cos(a), rr * Math.sin(a), cz + f * Math.sin(ph)]); } }
+        const FR = 3, V1 = FR + 1, base = verts.length;
+        for (let i = 0; i < segs; i++) { const a = i / segs * Math.PI * 2; for (let r = 0; r <= FR; r++) { const ph = phEnd * r / FR, rr = ccx + f * Math.cos(ph); verts.push([rr * Math.cos(a), rr * Math.sin(a), cz + f * Math.sin(ph)]); } }
         for (let i = 0; i < segs; i++) {
           const j = (i + 1) % segs, u0 = i / segs, u1 = (i + 1) / segs, a0 = i / segs * Math.PI * 2, a1 = (i + 1) / segs * Math.PI * 2;
           for (let r = 0; r < FR; r++) {
-            const p0 = r / FR * Math.PI / 2, p1 = (r + 1) / FR * Math.PI / 2, v0 = .05 - r / FR * .05, v1 = .05 - (r + 1) / FR * .05;
+            const p0 = phEnd * r / FR, p1 = phEnd * (r + 1) / FR, v0 = .05 - r / FR * .05, v1 = .05 - (r + 1) / FR * .05;
             faces.push({ idx: [base + i * V1 + r, base + j * V1 + r, base + j * V1 + r + 1, base + i * V1 + r + 1], uv: [[u0, v0], [u1, v0], [u1, v1], [u0, v1]], nrm: [nn(a0, p0), nn(a1, p0), nn(a1, p1), nn(a0, p1)], tex: texSide });
           }
         }
       }
-      disc(cr, h, texCrown, false, 0);
+      {
+        // the dome: rings from its rim (where the fillet ends) up to the apex, on a sphere of radius rho about the axis
+        const r0 = ccx + f * Math.cos(phEnd), z0 = cz + f * Math.sin(phEnd), rho = r0 / Math.sin(THE), zc = z0 - rho * Math.cos(THE);
+        const DR = 4, base = verts.length, ringAt = k => THE * (DR - k) / DR;
+        for (let i = 0; i < segs; i++) { const a = i / segs * Math.PI * 2; for (let k = 0; k < DR; k++) { const ps = ringAt(k), rr = rho * Math.sin(ps); verts.push([rr * Math.cos(a), rr * Math.sin(a), zc + rho * Math.cos(ps)]); } }
+        const apex = verts.length; verts.push([0, 0, zc + rho]);
+        const uvAt = (a, ps) => [.5 + .5 * (rho * Math.sin(ps) / r0) * Math.cos(a), .5 + .5 * (rho * Math.sin(ps) / r0) * Math.sin(a)];
+        for (let i = 0; i < segs; i++) {
+          const j = (i + 1) % segs, a0 = i / segs * Math.PI * 2, a1 = (i + 1) / segs * Math.PI * 2;
+          for (let k = 0; k + 1 < DR; k++) {
+            const p0 = ringAt(k), p1 = ringAt(k + 1);
+            faces.push({ idx: [base + i * DR + k, base + j * DR + k, base + j * DR + k + 1, base + i * DR + k + 1], uv: [uvAt(a0, p0), uvAt(a1, p0), uvAt(a1, p1), uvAt(a0, p1)], nrm: [nn(a0, Math.PI / 2 - p0), nn(a1, Math.PI / 2 - p0), nn(a1, Math.PI / 2 - p1), nn(a0, Math.PI / 2 - p1)], tex: texCrown });
+          }
+          const pl = ringAt(DR - 1);
+          faces.push({ idx: [base + i * DR + DR - 1, base + j * DR + DR - 1, apex], uv: [uvAt(a0, pl), uvAt(a1, pl), [.5, .5]], nrm: [nn(a0, Math.PI / 2 - pl), nn(a1, Math.PI / 2 - pl), [0, 0, 1]], tex: texCrown });
+        }
+      }
       if (inner) {
         const t = inner.t, hf = h - t;
         wall(R - t, rc - t, 0, hf, inner.side, true);
@@ -2450,7 +2469,7 @@ const SHAPE = (() => {
       const h = R * CUP_TALL, Lf = hc / (hc - h), f = Lf - 1, crown = .72 * R * Lf;   /* a point h up projects Lf times as far from the eye's foot; the crown's screen radius */
       const lean = y => (ey - y) * f;
       // the top seat: the untilted board y whose crown top lands at the HUD's foot, then the table y whose crown that is
-      const yc = mcy + tilt.fromScreen(hudB + 6), yTop = (yc + ey * f + crown) / (1 + f);
+      const yc = mcy + tilt.fromScreen(hudB + 6 + .25 * crown), yTop = (yc + ey * f + crown) / (1 + f);   /* .25 crown: the dome's rise */
       let ry = Math.max(R, (mcy - yTop) / stretch);
       let ys = angles.map(a => mcy - ry * (1 - Math.cos(a)));
       // the width: no crown and no mouth past the screen's side after the tilt, for any seat
