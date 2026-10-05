@@ -37,7 +37,10 @@
 #define CN_SCENE_F_RECEIVE  4   /* takes the shadow (every lit thing does)             */
 #define CN_SCENE_F_RECEIVER 8   /* the table: writes only the shadow that falls on it  */
 
-#define CN_SCENE_VF 6   /* floats a vertex: x y z nx ny nz                                   */
+/* the largest shadow map: a pixel keeps its place on the map at a 64th of a texel in 16 bits */
+#define CN_SCENE_SHADOW_MAX 1024
+
+#define CN_SCENE_VF 6  /* floats a vertex: x y z nx ny nz                                   */
 #define CN_SCENE_FF 16  /* floats a face: i0 i1 i2 u0 v0 u1 v1 u2 v2 tex r g b km ka flags */
 
 /* the arena: 16-byte aligned memory of `bytes`; drops every texture and frame.
@@ -70,10 +73,27 @@ float *cn_scene_faces(void);
  * and its strength when down */
 void cn_scene_occluder(float x, float y, float r, float lift, float strength);
 
-/* the shadow pass, the picture, the shade. The faces drawn, or -1 when no frame
- * has begun or the counts exceed its capacities. A face naming a vertex past
- * nverts is skipped. */
+/* the shadow pass, the picture, the shade, on the calling thread. The faces drawn,
+ * or -1 when no frame has begun or the counts exceed its capacities. A face naming
+ * a vertex past nverts is skipped. Exactly cn_scene_prepare, then every pass as
+ * one band. */
 int cn_scene_render(int nverts, int nfaces);
+
+/* THE SAME FRAME ON SEVERAL THREADS. cn_scene_prepare does the frame's serial
+ * work (the faces' order, which are drawn, the textures' half-size copies, the
+ * contact dark) and returns what cn_scene_render would. Then each pass, in order,
+ * is cut into nbands horizontal bands (1 to CN_SCENE_MAX_BANDS) which may run at
+ * once on any threads, every band of a pass finishing before the next pass starts
+ * (on iOS: DispatchQueue.concurrentPerform(iterations: nbands) per pass). A band
+ * writes only its own rows, so the picture is the same bits for any nbands.
+ * Occluders are given before cn_scene_prepare. */
+#define CN_SCENE_MAX_BANDS 16
+#define CN_SCENE_PASS_SHADOW  0   /* the shadow map's rows                          */
+#define CN_SCENE_PASS_PICTURE 1   /* the picture's rows: depth, texel, normal, light */
+#define CN_SCENE_PASS_SHADE   2   /* the picture's rows again: the shadow, the shade */
+#define CN_SCENE_PASSES       3
+int cn_scene_prepare(int nverts, int nfaces);
+void cn_scene_band(int pass, int band, int nbands);
 uint8_t *cn_scene_fb(void);
 int cn_scene_fb_w(void);
 int cn_scene_fb_h(void);

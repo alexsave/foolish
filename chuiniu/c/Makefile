@@ -174,7 +174,12 @@ wasm: wasm-cc-check | build
 # linked for a browser, in uttt's web shape: freestanding, no entry, the memory
 # exported, MVP plus bulk memory, sign extension and non-trapping float-to-int
 # (every browser since 2020; the renderer's inner loop casts on every pixel, and
-# the trapping form costs it a third), at -O3 for the same reason.
+# the trapping form costs it a third), at -O3 for the same reason. And SIMD128
+# (Chrome 91, Firefox 89, Safari 16.4): the renderer draws four pixels at a time in
+# the compilers' vector types, which without it are cut back to scalar code and
+# made the study's throw frames a third slower than the old scalar renderer (26.5
+# ms against 20 in Chrome); with it they take 18, and draw the same bits as one
+# pixel at a time (cn_scene_test's golden, built as wasm, hashes alike).
 # A build output, never committed as a file. docs-roll embeds it in docs/UI.html
 # as base64 between two markers, so the one-file study still opens from disk;
 # THAT embed is committed, and goes stale when cn_roll.c changes until docs-roll
@@ -187,7 +192,7 @@ ROLL_WASM_SRC := src/cn_roll.c wasm/cn_roll_web.c src/cn_scene.c wasm/cn_scene_w
 ROLL_WASM_OUT := build/wasm/cn_roll.wasm
 $(ROLL_WASM_OUT): $(ROLL_WASM_SRC) src/cn_roll.h src/cn_scene.h Makefile | build
 	@mkdir -p build/wasm
-	$(WASM_CC) --target=wasm32 -mcpu=mvp -mbulk-memory -msign-ext -mnontrapping-fptoint -O3 -nostdlib -ffreestanding \
+	$(WASM_CC) --target=wasm32 -mcpu=mvp -mbulk-memory -msign-ext -mnontrapping-fptoint -msimd128 -O3 -nostdlib -ffreestanding \
 	  $(WARN) -isystem $(SHARED)/wasm/include -Isrc \
 	  -Wl,--no-entry -Wl,--export-memory -Wl,-z,stack-size=65536 -Wl,--strip-all \
 	  $(ROLL_WASM_SRC) -o $@

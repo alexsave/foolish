@@ -172,15 +172,28 @@ static inline void cnf_die(CnfOut *o, const CnfPose *P, float d, int atlas)
 /* xorshift32 noise for the textures, one draw a statement */
 static uint32_t cnf_rs = 2463534242u;
 static inline uint32_t cnf_rnd(void) { cnf_rs ^= cnf_rs << 13; cnf_rs ^= cnf_rs >> 17; cnf_rs ^= cnf_rs << 5; return cnf_rs; }
-static inline int cnf_tex(int w, int h)
+/* a texture of noise with the study's statistics (measured from its uploads): the cup's green-black
+ * verdigris (red about 55) whose normal map is flat but for one texel in twenty at +-1 or 2, or the die's
+ * ivory (red about 178) whose map is flat at seven texels in ten, +-1 to 3 elsewhere and +-12 at one in a
+ * hundred (a pip's rim). A rougher map than that makes the light's branches random, which no real map does. */
+static inline int8_t cnf_bump(uint32_t r, int die)
+{
+    uint32_t p = r & 1023, s = (r >> 10) & 1, m = (r >> 11) & 3;
+    int v = die ? (p < 717 ? 0 : p < 1013 ? 1 + (int)(m % 3) : 12) : (p < 970 ? 0 : 1 + (int)(m & 1));
+    return (int8_t)(s ? -v : v);
+}
+static inline int cnf_tex(int w, int h, int die)
 {
     int id = cn_scene_tex_new(w, h, 1);
     if (id < 0) return -1;
     uint8_t *p = cn_scene_tex_rgba(id); int8_t *b = cn_scene_tex_bump(id);
+    const int base = die ? 160 : 40;
     for (int i = 0; i < w * h; i++) {
         uint32_t r = cnf_rnd();
-        p[i * 4] = (uint8_t)(60 + (r & 63)); p[i * 4 + 1] = (uint8_t)(90 + ((r >> 6) & 63)); p[i * 4 + 2] = (uint8_t)(80 + ((r >> 12) & 63)); p[i * 4 + 3] = 255;
-        b[i * 2] = (int8_t)((int)((r >> 18) & 31) - 16); b[i * 2 + 1] = (int8_t)((int)((r >> 23) & 31) - 16);
+        p[i * 4] = (uint8_t)(base + (r & 31)); p[i * 4 + 1] = (uint8_t)(base + 20 + ((r >> 5) & 31)); p[i * 4 + 2] = (uint8_t)(base + 10 + ((r >> 10) & 31)); p[i * 4 + 3] = 255;
+        uint32_t q = cnf_rnd();
+        b[i * 2] = cnf_bump(q, die);
+        b[i * 2 + 1] = cnf_bump(q >> 13, die);
     }
     return id;
 }
@@ -194,21 +207,21 @@ static inline int cnf_textures(CnfTex *t, int shared)
     cnf_rs = 2463534242u;
     for (int s = 0; s < CNF_SEATS; s++) {
         if (shared && s) { t->side[s] = t->side[0]; t->crown[s] = t->crown[0]; t->inner[s] = t->inner[0]; t->floor_[s] = t->floor_[0]; t->atlas[s] = t->atlas[0]; continue; }
-        if ((t->side[s] = cnf_tex(1024, 512)) < 0 || (t->crown[s] = cnf_tex(256, 256)) < 0 || (t->inner[s] = cnf_tex(1024, 512)) < 0 ||
-            (t->floor_[s] = cnf_tex(256, 256)) < 0 || (t->atlas[s] = cnf_tex(768, 128)) < 0) return -1;
+        if ((t->side[s] = cnf_tex(1024, 512, 0)) < 0 || (t->crown[s] = cnf_tex(256, 256, 0)) < 0 || (t->inner[s] = cnf_tex(1024, 512, 0)) < 0 ||
+            (t->floor_[s] = cnf_tex(256, 256, 0)) < 0 || (t->atlas[s] = cnf_tex(768, 128, 1)) < 0) return -1;
     }
     return 0;
 }
 
 /* THE FRAME on a board W by H points at dpr, the shadow map sr: my seat at the bottom, the five others
  * round an ellipse above, each seat's dice in a ring in front of its cup. shake (0..1) lifts and tilts
- * every cup as a throw would (0: standing on the table). The faces drawn (cn_scene_render's answer; the
- * vertices and faces written are cnf_nv and cnf_nf), or -1 when the frame does not fit (cn_scene_begin
- * refused it). */
+ * every cup as a throw would (0: standing on the table). cnf_build begins the frame and writes it (the
+ * faces written, also cnf_nf, and the vertices cnf_nv), or -1 when it does not fit (cn_scene_begin refused
+ * it); cnf_frame also renders it on this thread and returns the faces drawn. */
 #define CNF_VCAP 40000
 #define CNF_FCAP 20000
 static int cnf_nv, cnf_nf;
-static inline int cnf_frame(const CnfTex *t, int W, int H, int pad, float dpr, int sr, float shake)
+static inline int cnf_build(const CnfTex *t, int W, int H, int pad, float dpr, int sr, float shake)
 {
     const float L[3] = { -.45f, -.55f, 1 };
     const float eyeX = W / 2.f, eyeY = H / 2.f + .85f * H, hc = 560;
@@ -239,7 +252,12 @@ static inline int cnf_frame(const CnfTex *t, int W, int H, int pad, float dpr, i
         }
     }
     cnf_nv = o.nv; cnf_nf = o.nf;
-    return cn_scene_render(o.nv, o.nf);
+    return o.nf;
+}
+static inline int cnf_frame(const CnfTex *t, int W, int H, int pad, float dpr, int sr, float shake)
+{
+    if (cnf_build(t, W, H, pad, dpr, sr, shake) < 0) return -1;
+    return cn_scene_render(cnf_nv, cnf_nf);
 }
 
 /* FNV-1a over the framebuffer */

@@ -98,13 +98,44 @@ int main(void)
         int d = cnf_frame(&t, 390, 718, 40, 1, 1024, 0);
         CHECK(cnf_nf == 12864 && d > 6000 && d < cnf_nf, "six cups and thirty dice: %d faces, %d drawn (the rest turned away)", cnf_nf, d);
         uint64_t h = cnf_hash();
-        CHECK(h == 0xd20d0196d4dc5fd5ull, "the still table at 1x: %016llx", (unsigned long long)h);
+        CHECK(h == 0x7c136d3580720f13ull, "the still table at 1x: %016llx", (unsigned long long)h);
         d = cnf_frame(&t, 390, 718, 40, 1.5f, 1024, .6f);
         h = cnf_hash();
-        CHECK(h == 0xf2032832fbd480feull, "a throw's frame at 1.5x: %016llx", (unsigned long long)h);
+        CHECK(h == 0xd79fc9ffeecb40ddull, "a throw's frame at 1.5x: %016llx", (unsigned long long)h);
         /* drawing it again draws it the same: nothing carries from one frame to the next */
         cnf_frame(&t, 390, 718, 40, 1.5f, 1024, .6f);
         CHECK(cnf_hash() == h, "the same frame twice, the same picture");
+    }
+
+    TEST("in bands, any number, in any order: the same picture and the same work");
+    {
+        cn_scene_init(mem, ios);
+        CnfTex t;
+        cnf_textures(&t, 1);
+        cnf_frame(&t, 390, 718, 40, 1.5f, 1024, .6f);
+        const uint64_t h = cnf_hash();
+        const uint32_t shaded = cn_scene_prof(0), walked = cn_scene_prof(1), texels = cn_scene_prof(2);
+        const int counts[5] = { 2, 3, 7, 13, CN_SCENE_MAX_BANDS };
+        for (int c = 0; c < 5; c++) {
+            const int nb = counts[c];
+            cnf_build(&t, 390, 718, 40, 1.5f, 1024, .6f);
+            int d = cn_scene_prepare(cnf_nv, cnf_nf);
+            /* the bands of a pass last to first: a band may not lean on a band before it */
+            for (int pass = 0; pass < CN_SCENE_PASSES; pass++) for (int b = nb - 1; b >= 0; b--) cn_scene_band(pass, b, nb);
+            CHECK(d > 6000 && cnf_hash() == h, "%d bands draw the one-thread picture (%016llx)", nb, (unsigned long long)cnf_hash());
+            /* every row is walked once: bands that overlapped would walk the shared rows twice */
+            CHECK(cn_scene_prof(0) == shaded && cn_scene_prof(1) == walked && cn_scene_prof(2) == texels,
+                  "%d bands: %u fragments, %u walked, %u texels (one thread: %u, %u, %u)", nb, cn_scene_prof(0), cn_scene_prof(1), cn_scene_prof(2), shaded, walked, texels);
+        }
+        /* a band out of range, or before cn_scene_prepare, draws nothing */
+        cnf_build(&t, 390, 718, 40, 1.5f, 1024, .6f);
+        cn_scene_band(CN_SCENE_PASS_PICTURE, 0, 1);
+        CHECK(cn_scene_prof(1) == walked, "a band before cn_scene_prepare draws nothing (the last frame's %u walked stand, not %u)", walked, cn_scene_prof(1));
+        cn_scene_prepare(cnf_nv, cnf_nf);
+        cn_scene_band(CN_SCENE_PASS_PICTURE, 0, CN_SCENE_MAX_BANDS + 1);
+        cn_scene_band(CN_SCENE_PASS_PICTURE, 3, 3);
+        cn_scene_band(CN_SCENE_PASS_PICTURE, -1, 3);
+        CHECK(cn_scene_prof(1) == 0, "bands out of range draw nothing (%u walked)", cn_scene_prof(1));
     }
 
     TEST("a frame that does not fit fails cleanly");
@@ -135,12 +166,15 @@ int main(void)
         CHECK(cn_scene_tex_new(2048, 2048, 1) == -1 && cn_scene_room() == room, "a third with bumps is refused whole (room %zu)", cn_scene_room());
         CHECK(cn_scene_tex_new(2048, 2048, 0) == 2, "a third without them fills the 48 MB exactly");
         CHECK(cn_scene_tex_new(2, 2, 0) == -1 && cn_scene_begin(1, 1, 0, 1, 0, 0, 720, 0, 0, 1, 4, .5f, 1, 1) == 0, "and nothing more fits");
-        /* out of range numbers */
+        /* out of range numbers, in an empty arena (each refusal is the numbers', not the memory's) */
+        CHECK(cn_scene_init(mem, ios) == 1 && cn_scene_begin(100, 100, 0, 1, 0, 0, 720, 0, 0, 1, 256, .5f, 1, 1) > 0, "the control: these numbers begin");
         CHECK(cn_scene_begin(0, 100, 0, 1, 0, 0, 720, 0, 0, 1, 256, .5f, 1, 1) == 0, "a board of no width");
         CHECK(cn_scene_begin(100, 100, 0, __builtin_nanf(""), 0, 0, 720, 0, 0, 1, 256, .5f, 1, 1) == 0, "a scale that is not a number");
         CHECK(cn_scene_begin(100, 100, 0, 1000, 0, 0, 720, 0, 0, 1, 256, .5f, 1, 1) == 0, "a framebuffer past 8,192 a side");
         CHECK(cn_scene_begin(100, 100, 0, 1, 0, 0, 720, 0, 0, 0, 256, .5f, 1, 1) == 0, "no light");
         CHECK(cn_scene_begin(100, 100, 0, 1, 0, 0, 720, 0, 0, 1, 256, .5f, -1, 1) == 0, "a negative capacity");
+        CHECK(cn_scene_begin(100, 100, 0, 1, 0, 0, 720, 0, 0, 1, CN_SCENE_SHADOW_MAX + 1, .5f, 1, 1) == 0, "a shadow map past 1,024: a place on it would not fit 16 bits");
+        CHECK(cn_scene_begin(100, 100, 0, 1, 0, 0, 720, 0, 0, 1, CN_SCENE_SHADOW_MAX, .5f, 1, 1) > 0, "1,024 itself is drawable");
         CHECK(cn_scene_init(0, ios) == 0 && cn_scene_tex_new(4, 4, 0) == -1 && cn_scene_room() == 0, "no arena: no texture");
         CHECK(cn_scene_begin(100, 100, 0, 1, 0, 0, 720, 0, 0, 1, 256, .5f, 1, 1) == 0, "no arena: no frame");
     }
