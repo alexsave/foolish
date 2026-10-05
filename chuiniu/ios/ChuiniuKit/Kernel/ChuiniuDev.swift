@@ -46,6 +46,17 @@ public enum ChuiniuDev {
     /// checks need the table, not the sitting down. Taken (deleted) on read.
     public static func takeFill() -> Int? { files.take("dev.fill").flatMap { Int($0) } }
 
+    /// `dev.syncframes`: draw every stage frame on the main thread, as before
+    /// package V1 (the measurement's "before"; the frame log says which).
+    /// Read once a process (every opening of the drawer is a new one), so the
+    /// frames it times read no file.
+    public static let syncFrames: Bool = files.exists("dev.syncframes")
+
+    /// `dev.straight`: the stage's pixels straight RGBA, as before package V1,
+    /// which Core Animation redraws into its own form on every commit (the
+    /// measurement's "before"). Read once a process.
+    public static let straightFrames: Bool = files.exists("dev.straight")
+
     public static var person: String? {
         guard let w = files.string("dev.seat")?.trimmingCharacters(in: .whitespacesAndNewlines), !w.isEmpty
         else { return nil }

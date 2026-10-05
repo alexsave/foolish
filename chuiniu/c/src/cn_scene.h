@@ -13,7 +13,7 @@
  *   cn_scene_render(nverts, nfaces)
  *   read cn_scene_fb(): cn_scene_fb_w() by cn_scene_fb_h() RGBA, straight alpha
  *   (the table's pixels are black-ish with alpha; bodies are opaque but at their
- *   smoothed edges), or premultiplied after cn_scene_premultiply(1)
+ *   smoothed edges), or another form after cn_scene_output
  *
  * MEMORY is the caller's block: textures (and their half-size copies, made the
  * first time a texture is drawn) grow down from its top, a frame's buffers up
@@ -115,10 +115,13 @@ uint8_t *cn_scene_fb(void);
 int cn_scene_fb_w(void);
 int cn_scene_fb_h(void);
 
-/* the output's alpha from the next frame on: 0 straight (the default; a
- * browser's putImageData wants it), 1 premultiplied (what Core Animation draws
- * without converting) */
-void cn_scene_premultiply(int on);
+/* THE PICTURE'S FORM from the next frame on: a pixel's four bytes in order */
+#define CN_SCENE_OUT_RGBA         0   /* R G B A, straight alpha: the default (a browser's putImageData wants it) */
+#define CN_SCENE_OUT_PREMUL_RGBA  1   /* R G B A, the colour times the alpha                                      */
+#define CN_SCENE_OUT_PREMUL_BGRA  2   /* B G R A premultiplied: Core Animation's own (alpha first, 32 bits little-
+                                         endian), which it draws as it is, where any other form it draws into a
+                                         new image of its own first, on the main thread, every frame             */
+void cn_scene_output(int form);
 
 /* profiling: the last frame's fragments shaded, box pixels walked, map texels,
  * map box pixels, edge pixels, edge samples shaded; and passes to leave out (1

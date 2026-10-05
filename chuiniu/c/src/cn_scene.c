@@ -177,8 +177,8 @@ static float eyeX, eyeY, HC, DPR, PAD;
 static float LX, LY, LZ, UX, UY, UZ, VX, VY, VZ;        /* the light, and the map's axes across it */
 static float su0, sv0, sus, svs;                         /* the map's window: origin and scale      */
 static float SH_DARK;                                    /* how much of the light a shadow takes    */
-static int premul;                                       /* the output's alpha: 0 straight, 1 premultiplied */
-void cn_scene_premultiply(int on) { premul = on ? 1 : 0; }
+static int outform;                                      /* the picture's form: CN_SCENE_OUT_* */
+void cn_scene_output(int form) { outform = form == CN_SCENE_OUT_PREMUL_RGBA || form == CN_SCENE_OUT_PREMUL_BGRA ? form : CN_SCENE_OUT_RGBA; }
 /* CONTACT. The map gives the light's shadow; it does not give the dark where a body meets the table, which
  * is what sets a thing down on it. Each body is given to the frame as a disc (its footprint) at a height:
  * the table under and just past the disc is darkened, most at the rim and fading out over .6 of the
@@ -365,7 +365,7 @@ typedef struct { float LX, LY, LZ, UX, UY, UZ, VX, VY, VZ, su0, sv0, sus, svs; i
 typedef struct {
     uint8_t *fb, *kb; uint16_t *kf; int32_t *rext;
     uint8_t *gt, *gk, *gf, *gm, *ga, *gc; uint16_t *gu, *gv; float *gd, *zb;
-    float *smap, *ao; int FW, FH, SR, AW, AH, sW, premul;
+    float *smap, *ao; int FW, FH, SR, AW, AH, sW, premul, bgra;   /* the picture's form: premultiplied, and B and R swapped */
 } Bufs;
 static Light light_now(void)
 {
@@ -376,7 +376,7 @@ static Light light_now(void)
 static Bufs bufs_now(const Slot *s, int s0)
 {
     Bufs B = { .fb = fb, .kb = kb, .kf = kf, .rext = rext, .gt = s->gt, .gk = s->gk, .gf = s->gf, .gm = s->gm, .ga = s->ga, .gc = s->gc, .gu = s->gu, .gv = s->gv,
-               .gd = s->gd, .zb = s->zb, .smap = smap, .ao = ao, .FW = FW, .FH = FH, .SR = SR, .AW = AW, .AH = AH, .sW = s0 * FW, .premul = premul };
+               .gd = s->gd, .zb = s->zb, .smap = smap, .ao = ao, .FW = FW, .FH = FH, .SR = SR, .AW = AW, .AH = AH, .sW = s0 * FW, .premul = outform != CN_SCENE_OUT_RGBA, .bgra = outform == CN_SCENE_OUT_PREMUL_BGRA };
     return B;
 }
 
@@ -750,11 +750,12 @@ static void tri(const Light *Lp, const Bufs *Bp, int r0, int r1, uint32_t *walke
 }
 
 /* ---- pass 3's arithmetic, once a pixel (or a sample) ---------------------------------------------- */
-/* the table's pixel at alpha a: the dark (0, 3, 2), straight or premultiplied */
-static inline __attribute__((always_inline)) uint32_t table_word(uint32_t a, int pm)
+/* the table's pixel at alpha a: the dark (0, 3, 2), straight or premultiplied (pm), its B and R swapped (bgra) */
+static inline __attribute__((always_inline)) uint32_t table_word(uint32_t a, int pm, int bgra)
 {
     if (!pm) return 0x00020300u | a << 24;
-    return (uint32_t)((3 * a + 127) / 255) << 8 | (uint32_t)((2 * a + 127) / 255) << 16 | a << 24;
+    const uint32_t g = (3 * a + 127) / 255, b = (2 * a + 127) / 255;
+    return bgra ? b | g << 8 | a << 24 : g << 8 | b << 16 | a << 24;
 }
 /* the table's alpha under light lit (1 lit .. 0 in shadow, the shadow's dark already in it) and contact dark c */
 static inline __attribute__((always_inline)) uint8_t table_alpha(float lit, float c) { return (uint8_t)((1 - lit * (1 - c)) * 255 + .5f); }
@@ -779,7 +780,7 @@ static inline __attribute__((always_inline)) void body_px(const Bufs *B, uint8_t
 __attribute__((noinline)) static void shade(const Light *Lp, const Bufs *Bp, int r0, int r1)
 {
     const Light L = *Lp; const Bufs B = *Bp;
-    const int W = B.FW, H = B.FH, AW_ = B.AW, AH_ = B.AH, sW = B.sW, pm = B.premul;
+    const int W = B.FW, H = B.FH, AW_ = B.AW, AH_ = B.AH, sW = B.sW, pm = B.premul, bgra = B.bgra;
     const float dpr = DPR, pad = PAD, dark = SH_DARK;
     const float *const aob = B.ao; uint8_t *const gfb = B.gf, *const fbb = B.fb;
     const TPlane TP = table_plane(&L, dpr, pad);
@@ -798,7 +799,7 @@ __attribute__((noinline)) static void shade(const Light *Lp, const Bufs *Bp, int
         /* most blocks are under no footprint: one alpha for the block */
         int ab = (by / 4) * AW_ + bx / 4, near = aob[ab] > 0 || (bx / 4 + 1 < AW_ && aob[ab + 1] > 0) || (by / 4 + 1 < AH_ && (aob[ab + AW_] > 0 || (bx / 4 + 1 < AW_ && aob[ab + AW_ + 1] > 0))) || (bx >= 4 && aob[ab - 1] > 0) || (by >= 4 && aob[ab - AW_] > 0);
         uint8_t al = (uint8_t)((1 - lit) * 255 + .5f);
-        const uint32_t open4 = table_word(al, pm);   /* the table's dark */
+        const uint32_t open4 = table_word(al, pm, bgra);   /* the table's dark */
         for (int y = by; y < by + bh; y++) {
             const int j0 = y * W + bx, g0 = j0 - sW;
             if (whole >= 0 && !near && bw == 4) {
@@ -814,7 +815,7 @@ __attribute__((noinline)) static void shade(const Light *Lp, const Bufs *Bp, int
             for (int k = 0; k < bw; k++) {
                 const int j = j0 + k, x = bx + k; if (gfb[g0 + k]) continue;
                 const float lk = lit4[k];
-                const uint32_t px = table_word(near ? table_alpha(lk, ao_at(&B, x, y)) : whole >= 0 ? al : (uint8_t)((1 - lk) * 255 + .5f), pm);
+                const uint32_t px = table_word(near ? table_alpha(lk, ao_at(&B, x, y)) : whole >= 0 ? al : (uint8_t)((1 - lk) * 255 + .5f), pm, bgra);
                 memcpy(&fbb[j * 4], &px, 4);
                 gfb[g0 + k] = 4;
             }
@@ -828,13 +829,14 @@ __attribute__((noinline)) static void shade(const Light *Lp, const Bufs *Bp, int
             /* the table at a body's edge: the pixel's own place, as table4 gives a block's */
             i4 gu4, gv4; f4 gd4; table4(&L, dpr, pad, x, y, &gu4, &gv4, &gd4);
             float lit = 1 - (1 - lit_q(&B, (uint16_t)gu4[0], (uint16_t)gv4[0], gd4[0])) * dark;
-            const uint32_t px = table_word(table_alpha(lit, ao_at(&B, x, y)), pm); memcpy(o, &px, 4); continue;
+            const uint32_t px = table_word(table_alpha(lit, ao_at(&B, x, y)), pm, bgra); memcpy(o, &px, 4); continue;
         }
         if (f == 2) {
             float lit = 1 - (1 - lit_q(&B, B.gu[g], B.gv[g], B.gd[g])) * dark;
-            const uint32_t px = table_word(table_alpha(lit, ao_at(&B, x, y)), pm); memcpy(o, &px, 4); continue;
+            const uint32_t px = table_word(table_alpha(lit, ao_at(&B, x, y)), pm, bgra); memcpy(o, &px, 4); continue;
         }
         body_px(&B, o, &B.gt[g * 3], f, B.gk[g], B.gm[g], B.ga[g], B.gc[g], B.gu[g], B.gv[g], B.gd[g]);
+        if (bgra) { const uint8_t r = o[0]; o[0] = o[2]; o[2] = r; }   /* opaque: premultiplied is the same bytes */
     }
 }
 
@@ -913,6 +915,7 @@ __attribute__((noinline, cold)) static uint32_t edge_shade(const Light *Lp, cons
         }
     }
     if (B.premul) for (int ch = 0; ch < 3; ch++) o[ch] = (uint8_t)((o[ch] * o[3] + 127) / 255);
+    if (B.bgra) { const uint8_t r = o[0]; o[0] = o[2]; o[2] = r; }
     uint32_t w; memcpy(&w, o, 4);
     return w;
 }

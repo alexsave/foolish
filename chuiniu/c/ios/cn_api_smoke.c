@@ -103,8 +103,8 @@ static void stage(const char *pack_path)
         for (int i = 0; i < CN_STAGE_BANDS; i++) cn_api_stage_band(pass, i, CN_STAGE_BANDS);
     px = cn_api_stage_pixels();
     OK(px && fnv(px, (size_t)sh->w * sh->h * 4) == banded, "the same bytes as prepare");
-    /* premultiplied: every pixel's colour at most its alpha, the opaque ones as before */
-    cn_api_stage_premultiply(1);
+    /* Core Animation's form: every pixel's colour at most its alpha */
+    cn_api_stage_output(CN_API_STAGE_CA);
     px = cn_api_stage_frame(h->roll_at_ms + 900, 0);
     int over = 0, partial = 0;
     for (size_t i = 0; px && i < (size_t)sh->w * sh->h; i++) {
@@ -113,7 +113,7 @@ static void stage(const char *pack_path)
         partial += q[3] > 0 && q[3] < 255;
     }
     OK(px && over == 0 && partial > 0, "premultiplied: no colour past its alpha, and some pixels part-covered");
-    cn_api_stage_premultiply(0);
+    cn_api_stage_output(CN_API_STAGE_RGBA);
 
     /* purge, free, a new arena: the same bytes */
     cn_api_stage_purge();

@@ -623,7 +623,8 @@ int cn_api_stage_prepare_at(uint32_t now_ms, float peek, float lift)
 
 int cn_api_stage_prepare(uint32_t now_ms, float peek) { return cn_api_stage_prepare_at(now_ms, peek, lift_at(now_ms)); }
 
-void cn_api_stage_premultiply(int on) { cn_scene_premultiply(on); }
+_Static_assert(CN_API_STAGE_RGBA == CN_SCENE_OUT_RGBA && CN_API_STAGE_CA == CN_SCENE_OUT_PREMUL_BGRA, "the forms");
+void cn_api_stage_output(int form) { cn_scene_output(form); }
 
 void cn_api_stage_band(int pass, int band, int nbands) { if (stage_inited) cn_stage_band(&STAGE, pass, band, nbands); }
 

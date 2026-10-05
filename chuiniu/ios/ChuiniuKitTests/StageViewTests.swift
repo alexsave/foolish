@@ -294,7 +294,8 @@ final class StageViewTests: XCTestCase {
     /// THE STAGE'S QUEUE: a submitted frame is drawn off the main thread (the
     /// submit returns before it lands, and it lands on the main thread), one
     /// at a time, in the order asked, each the bytes `frame` draws at once at
-    /// the same clock; and the picture is premultiplied, tagged so.
+    /// the same clock; and the picture is Core Animation's own form,
+    /// premultiplied BGRA, tagged so.
     func testSubmittedFramesAreDrawnOffTheMainThreadOneAtATimeInOrder() throws {
         try started(seats: 6)
         let stage = try XCTUnwrap(KernelSeam.stage() as? BridgeStage)
@@ -317,7 +318,8 @@ final class StageViewTests: XCTestCase {
         }
         // premultiplied: tagged so, and no colour past its pixel's alpha
         let f = try XCTUnwrap(landed.last?.frame)
-        XCTAssertEqual(f.image.alphaInfo, .premultipliedLast)
+        XCTAssertEqual(f.image.alphaInfo, .premultipliedFirst)
+        XCTAssertEqual(f.image.byteOrderInfo, .order32Little)
         let px = [UInt8](Self.bytes(f))
         var over = 0, partial = 0
         for i in stride(from: 0, to: px.count, by: 4) {

@@ -221,8 +221,8 @@ int  cn_api_common(const char *a, const char *b);
  * A FRAME ON SEVERAL THREADS: cn_api_stage_prepare, then for each pass 0 ..
  * CN_STAGE_PASSES - 1 in order, cn_api_stage_band(pass, i, CN_STAGE_BANDS) for
  * every i at once (DispatchQueue.concurrentPerform), then cn_api_stage_pixels:
- * the shot's w by h RGBA, straight alpha (premultiplied after
- * cn_api_stage_premultiply(1)), valid until the next prepare.
+ * the shot's w by h RGBA, straight alpha (or Core Animation's own form after
+ * cn_api_stage_output(CN_API_STAGE_CA)), valid until the next prepare.
  *
  * A FRAME OFF THE HOST'S MAIN THREAD: the lift is the resident plan's, which
  * only the thread that adopts may read, so the host samples it with the clock
@@ -266,9 +266,14 @@ float cn_api_stage_lift(uint32_t now_ms);
 /* cn_api_stage_prepare with the lift given: reads nothing of the resident.
  * cn_api_stage_prepare(t, p) is cn_api_stage_prepare_at(t, p, cn_api_stage_lift(t)). */
 int  cn_api_stage_prepare_at(uint32_t now_ms, float peek, float lift);
-/* The pixels' alpha from the next frame on: 1 premultiplied (what Core
- * Animation draws without converting), 0 straight (the default). */
-void cn_api_stage_premultiply(int on);
+/* The pixels' form from the next frame on: CN_API_STAGE_RGBA (R G B A,
+ * straight alpha: the default) or CN_API_STAGE_CA (B G R A premultiplied,
+ * alpha first and 32 bits little-endian: Core Animation's own, which it draws
+ * as it is; any other form it redraws into an image of its own first, on the
+ * main thread, every frame). */
+#define CN_API_STAGE_RGBA 0
+#define CN_API_STAGE_CA   2
+void cn_api_stage_output(int form);
 /* CnStageShot of the last frame. */
 const void *cn_api_stage_shot(void);
 /* Everything at rest at now_ms (every throw, the SHAKE beat)? */

@@ -278,7 +278,8 @@ public enum StageScreen: Int {
 
 /// One frame: the picture and where it goes. The image goes at
 /// `shot.canvas` (flat points: it turns with the planks by the HUD's `ca`).
-/// The image is premultiplied RGBA (Core Animation draws it unconverted).
+/// The image is premultiplied BGRA, Core Animation's own form (it draws it
+/// without redrawing it first).
 public struct StageFrame {
     public let shot: CnStageShotSnap
     public let image: CGImage

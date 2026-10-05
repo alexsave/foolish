@@ -322,7 +322,7 @@ int main(void)
         CHECK(edge[0] > edge[1] + 40, "where the upper square crosses the lower: %u edge pixels numbered apart, %u numbered alike", edge[0], edge[1]);
     }
 
-    TEST("premultiplied: the straight picture times its alpha");
+    TEST("premultiplied: the straight picture times its alpha; Core Animation's form, the same with B and R swapped");
     {
         cn_scene_init(mem, ios);
         CnfTex t;
@@ -332,10 +332,17 @@ int main(void)
         const int npx = cn_scene_fb_w() * cn_scene_fb_h();
         CHECK(npx <= 585 * 1137, "the frame fits the copy");
         memcpy(st, cn_scene_fb(), (size_t)npx * 4);
-        cn_scene_premultiply(1);
+        static uint8_t ca[585 * 1137 * 4];
+        cn_scene_output(CN_SCENE_OUT_PREMUL_BGRA);
         cnf_frame(&t, 390, 718, 40, 1.5f, 1024, .6f);
-        cn_scene_premultiply(0);
+        memcpy(ca, cn_scene_fb(), (size_t)npx * 4);
+        cn_scene_output(CN_SCENE_OUT_PREMUL_RGBA);
+        cnf_frame(&t, 390, 718, 40, 1.5f, 1024, .6f);
+        cn_scene_output(CN_SCENE_OUT_RGBA);
         const uint8_t *pm = cn_scene_fb();
+        int swapped = 0;
+        for (int i = 0; i < npx; i++) swapped += ca[i * 4] == pm[i * 4 + 2] && ca[i * 4 + 1] == pm[i * 4 + 1] && ca[i * 4 + 2] == pm[i * 4] && ca[i * 4 + 3] == pm[i * 4 + 3];
+        CHECK(swapped == npx, "Core Animation's form is the premultiplied picture with B and R swapped, at every pixel (%d of %d)", swapped, npx);
         /* every pixel's alpha is the straight one's, and each colour is the straight one's times it, rounded (an edge
          * pixel's mean is taken in each form, so it may round a step the other way) */
         int bad = 0, opaque = 0, same = 0, worst = 0;

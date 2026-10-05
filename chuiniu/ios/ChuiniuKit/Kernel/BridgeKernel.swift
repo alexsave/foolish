@@ -517,9 +517,9 @@ final class StageWorker: @unchecked Sendable {
     private var drawing = 0, mostAtOnce = 0
 
     /// The pack and the stage's init (once a process: the stage keeps
-    /// pointing into the pack; its frames are premultiplied, what Core
-    /// Animation draws without converting); with `arena`, an arena too, the
-    /// first frame and the first after a purge.
+    /// pointing into the pack; its frames are Core Animation's own form,
+    /// premultiplied BGRA, which it draws without redrawing them first); with
+    /// `arena`, an arena too, the first frame and the first after a purge.
     func ready(arena need: Bool) -> Bool {
         dispatchPrecondition(condition: .onQueue(queue))
         if pack == nil {
@@ -531,7 +531,11 @@ final class StageWorker: @unchecked Sendable {
         }
         if !inited {
             guard cn_api_stage_init(pack, packCount) == 0 else { return false }
-            cn_api_stage_premultiply(1)
+            #if DEBUG
+            cn_api_stage_output(ChuiniuDev.straightFrames ? CN_API_STAGE_RGBA : CN_API_STAGE_CA)
+            #else
+            cn_api_stage_output(CN_API_STAGE_CA)
+            #endif
             inited = true
         }
         if arena == nil && need {
@@ -574,8 +578,18 @@ final class StageWorker: @unchecked Sendable {
         return m
     }
 
-    /// The picture the kernel has just drawn, copied out: premultiplied RGBA,
-    /// so Core Animation draws it as it is.
+    /// Core Animation's own form (in a Debug build `dev.straight` asks for the old straight RGBA)
+    private static var form: CGBitmapInfo {
+        #if DEBUG
+        if ChuiniuDev.straightFrames { return CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue) }
+        #endif
+        return CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+    }
+
+    /// The picture the kernel has just drawn, copied out: premultiplied BGRA,
+    /// alpha first in a little-endian word, so Core Animation draws it as it
+    /// is (premultiplied RGBA it still redrew into an image of its own on the
+    /// main thread every frame: `sample`'s CA::Render::prepare_image).
     private static func drawn() -> StageFrame? {
         guard let p = cn_api_stage_shot(), let shot = try? readCnStageShot(p), shot.ok == 1,
               let px = cn_api_stage_pixels() else { return nil }
@@ -584,7 +598,7 @@ final class StageWorker: @unchecked Sendable {
         guard let provider = CGDataProvider(data: bytes as CFData),
               let image = CGImage(width: shot.w, height: shot.h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: shot.w * 4,
                                   space: CGColorSpaceCreateDeviceRGB(),
-                                  bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                                  bitmapInfo: Self.form,
                                   provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)
         else { return nil }
         return StageFrame(shot: shot, image: image)

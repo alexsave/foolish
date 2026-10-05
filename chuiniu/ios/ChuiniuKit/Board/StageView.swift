@@ -245,20 +245,37 @@ public final class StageDirector: ObservableObject {
         dirty = false
         framesAsked += 1
         inFlight = true
-        let gen = generation, ms = Int(clockMs.rounded(.down))
-        stage.submit(atMs: ms, peek: peekValue(CACurrentMediaTime())) { [weak self] f in self?.landed(f, gen: gen, ms: ms) }
+        let gen = generation, ms = Int(clockMs.rounded(.down)), peek = peekValue(CACurrentMediaTime())
+        #if DEBUG
+        asked = CACurrentMediaTime()
+        if ChuiniuDev.syncFrames { landed(stage.frame(atMs: ms, peek: peek), gen: gen, ms: ms); return true }
+        #endif
+        stage.submit(atMs: ms, peek: peek) { [weak self] f in self?.landed(f, gen: gen, ms: ms) }
         return true
     }
+    #if DEBUG
+    /// When the frame in flight was asked (the frame log's submit-to-land time).
+    private var asked: CFTimeInterval = 0
+    #endif
 
     /// A frame drawn: kept and put up, unless a begin came since it was asked
     /// (or another director took the stage); then the next one if due.
     private func landed(_ f: StageFrame?, gen: Int, ms: Int) {
         inFlight = false
+        #if DEBUG
+        let landedAt = CACurrentMediaTime()
+        #endif
         if gen == generation, owns, let f {
             last = f
             landedMs.append(ms)
             onFrame?(f)
         }
+        #if DEBUG
+        // the rig's frame log: how long from the ask to the picture, how long putting it up took the main thread (Core
+        // Animation's commit), on which thread it was drawn, at what scale
+        let now = CACurrentMediaTime()
+        ChuiniuDev.log.debug("stage frame ms=\(ms, privacy: .public) land=\(String(format: "%.2f", (landedAt - self.asked) * 1000), privacy: .public) present=\(String(format: "%.2f", (now - landedAt) * 1000), privacy: .public) sync=\(ChuiniuDev.syncFrames ? 1 : 0, privacy: .public) rolling=\(Int(f?.shot.rolling ?? 0), privacy: .public) scale=\(f?.shot.scale ?? 0, privacy: .public) w=\(f?.shot.w ?? 0, privacy: .public)")
+        #endif
         if needsFrame { onWake?() }
     }
 
@@ -677,6 +694,10 @@ public final class StageUIView: UIView {
     }
 
     fileprivate func tick(_ l: CADisplayLink) {
+        #if DEBUG
+        let t0 = CACurrentMediaTime()
+        defer { ChuiniuDev.log.debug("stage tick main=\(String(format: "%.2f", (CACurrentMediaTime() - t0) * 1000), privacy: .public)") }
+        #endif
         let dt = lastStamp.map { l.timestamp - $0 } ?? 0
         lastStamp = l.timestamp
         guard hasSize else { stop(); return }
