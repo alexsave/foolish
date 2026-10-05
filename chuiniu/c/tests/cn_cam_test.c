@@ -10,7 +10,9 @@
 #include <math.h>
 
 typedef struct { int W, H, mine; double boardH, ox, oy, theta, D, zoom; double ts[4][3]; double fs[3][2]; } GoldCam;
-/* W H mine boardH origin x y | theta D zoom | toScreen dy -> y scale x4 | fromScreen y -> dy x3: one per distinct camera */
+/* W H mine boardH origin x y | theta D zoom | toScreen dy -> y scale x4 | fromScreen y -> dy x3: one per distinct camera.
+ * 390 by 340 on their turn is the study's camera before package U, when the short board grew to 320 on their turn; the
+ * board no longer does (cn_lay.h), but this is still the camera over a 358 by 320 board, so it stays pinned. */
 static const GoldCam GOLD_CAM[] = {
     { 390, 340, 1, 220, 195, 194, 0.148491, 570.8949, 1.06,
       { { -400, -185.949, 0.960442 }, { -150, 42.6336, 1.020337 }, { -40, 152.4968, 1.049125 }, { 30, 225.6965, 1.068305 } },

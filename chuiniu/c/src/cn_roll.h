@@ -95,6 +95,17 @@ typedef struct {
  * throw's length leaves info->complete 0. */
 int cn_roll_bake(const CnThrow *t, uint64_t seed, float *frames, uint8_t *phase, int cap, CnRollInfo *info);
 
+/* THE CUP ROLL'S CUP WITHOUT A BAKE. The cup is never pushed by the dice: its
+ * path is a function of the throw and the clock alone, so a layout can ask
+ * where a cup goes (how high it is held, how far it leans) without baking.
+ * cn_roll_cup_span is the seconds from the start until the cup is home and
+ * still (the slam and its shiver; 0 for a throw that is not a cup roll), and
+ * cn_roll_cup_pose writes the cup's pose at T seconds in a frame's layout
+ * (x y z, qx qy qz qw): the pose a bake writes for the frame at T, home from
+ * the span on, the first pose before 0. */
+double cn_roll_cup_span(const CnThrow *t);
+void   cn_roll_cup_pose(const CnThrow *t, double T, float out[CN_ROLL_POSE_FLOATS]);
+
 /* The cup's shape, as the study draws it: its height as a multiple of the mouth's
  * radius (made taller so a harder shake keeps the dice in), the crown .72 of the
  * radius, the wall .06. */

@@ -399,6 +399,7 @@ static int emit(Out *o, V3 cupO, const M3 *cupR, const Body *b, int nd, int ph)
 #ifndef HOLD_TILT
 #define HOLD_TILT .38   /* radians the held cup leans toward my face, so I see in from a seat; the turn starts from it */
 #endif
+#define SHIVER   .14    /* the slam's shiver: from its end the cup is home and still */
 
 
 typedef struct {
@@ -439,15 +440,15 @@ static void cupPose(const CupPath *c, double T, M3 *R, V3 *o)
         /* the wrist: the turn gathers speed the whole way and stops dead at the end of its travel */
         if (k < 1) { M3 a = rotX(PI - HOLD_TILT + (PI + HOLD_TILT) * powk(k)); M = mulM(&a, &S); } else M = ident();
         /* the slam's shiver: the cup sits a hair up and settles */
-        if (T > c->tSlam && T < c->tSlam + .14) { double sw = (T - c->tSlam) / .14; piv.z += 2.5 * c->sc * rsin(sw * PI) * (1 - sw); }
+        if (T > c->tSlam && T < c->tSlam + SHIVER) { double sw = (T - c->tSlam) / SHIVER; piv.z += 2.5 * c->sc * rsin(sw * PI) * (1 - sw); }
     }
     *R = M; *o = sub(piv, apply(&M, v3(0, 0, pv)));
 }
 
-static int bakeCup(const CnThrow *t, uint64_t seed, Out *o)
+/* the cup's path for a throw: where it is held, how it drops, when it turns and lands */
+static void cupPath(const CnThrow *t, CupPath *c)
 {
-    const double R = t->cup_r, rc = t->cup_rc, h = t->cup_h, wt = t->cup_t, hf = h - wt, d = t->die, s = d / 2, dome = DOME * d;
-    const int nd = t->dice;
+    const double h = t->cup_h;
     /* the reach: a small cup (a far seat's) is held lower and shaken less, in proportion; the clock and gravity are not scaled */
     const double sc = t->scale > 0 ? t->scale : t->cup_r / CN_THROW_REF_R;
     /* THE TURN STARTS ON THE BOB'S BEAT. Whether the dice stay in depends on where the up-and-down is in its
@@ -457,18 +458,26 @@ static int bakeCup(const CnThrow *t, uint64_t seed, Out *o)
     double shakeS = t->shake_s > 0 ? t->shake_s : SHAKE;
     shakeS = __builtin_floor(shakeS * SHAKE_ZF + .5) / SHAKE_ZF;
     if (shakeS < .5) shakeS = .5;
-    CupPath c;
-    c.h = h; c.pz = h * GRIP; c.sc = sc; c.shake = shakeS;
-    c.held[0] = t->cup_x; c.held[1] = t->cup_y - 60 * sc; c.held[2] = 110 * sc;
-    c.grip0[0] = c.held[0]; c.grip0[1] = c.held[1]; c.grip0[2] = c.held[2] + h / 2 - c.pz;
-    c.home[0] = t->cup_x; c.home[1] = t->cup_y; c.home[2] = c.pz;
+    c->h = h; c->pz = h * GRIP; c->sc = sc; c->shake = shakeS;
+    c->held[0] = t->cup_x; c->held[1] = t->cup_y - 60 * sc; c->held[2] = 110 * sc;
+    c->grip0[0] = c->held[0]; c->grip0[1] = c->held[1]; c->grip0[2] = c->held[2] + h / 2 - c->pz;
+    c->home[0] = t->cup_x; c->home[1] = t->cup_y; c->home[2] = c->pz;
     /* the drop is timed to end as the turn does, so the mouth meets the planks the moment it faces them */
     /* GRAVITY SCALES WITH THE THROW: lengths and g by sc, the clock as it is, so a far seat's small cup throws
      * exactly my cup's throw in miniature (dynamic similarity), and every margin measured for mine holds for it */
     const double g = G * sc;
-    c.a = DROP_G * -g; c.tDrop = rsqrt(2 * (c.grip0[2] - c.home[2]) / c.a);
-    c.dropAt = FLIP > c.tDrop ? FLIP - c.tDrop : 0;
-    c.tFlip = HOLD + shakeS; c.tSlam = c.tFlip + c.dropAt + c.tDrop;
+    c->a = DROP_G * -g; c->tDrop = rsqrt(2 * (c->grip0[2] - c->home[2]) / c->a);
+    c->dropAt = FLIP > c->tDrop ? FLIP - c->tDrop : 0;
+    c->tFlip = HOLD + shakeS; c->tSlam = c->tFlip + c->dropAt + c->tDrop;
+}
+
+static int bakeCup(const CnThrow *t, uint64_t seed, Out *o)
+{
+    const double R = t->cup_r, rc = t->cup_rc, h = t->cup_h, wt = t->cup_t, hf = h - wt, d = t->die, s = d / 2, dome = DOME * d;
+    const int nd = t->dice;
+    CupPath c;
+    cupPath(t, &c);
+    const double sc = c.sc, g = G * sc;
 
     /* five dice in the held cup: three on its floor, two on top of them, every one turned its own way */
     uint64_t rs = seed ^ 0x636e2e726f6c6c01ull;        /* "cn.roll" + the recipe's version */
@@ -642,6 +651,24 @@ int cn_roll_bake(const CnThrow *t, uint64_t seed, float *frames, uint8_t *phase,
     int n = t->kind == CN_THROW_CUP ? bakeCup(t, seed, &o) : bakeTable(t, seed, &o);
     info->frames = (uint16_t)n;
     return n;
+}
+
+double cn_roll_cup_span(const CnThrow *t)
+{
+    if (!t || t->kind != CN_THROW_CUP || !(t->cup_r > 0) || !(t->cup_h > t->cup_t)) return 0;
+    CupPath c;
+    cupPath(t, &c);
+    return c.tSlam + SHIVER;
+}
+
+void cn_roll_cup_pose(const CnThrow *t, double T, float out[CN_ROLL_POSE_FLOATS])
+{
+    CupPath c;
+    cupPath(t, &c);
+    M3 R; V3 o;
+    if (T >= c.tSlam + SHIVER) { o = v3(t->cup_x, t->cup_y, 0); R = ident(); }
+    else cupPose(&c, T < 0 ? 0 : T, &R, &o);
+    pose(out, o, &R);
 }
 
 void cn_throw_default(CnThrow *t, int kind, float cup_x, float cup_y, float cup_r, float die, float ring)
