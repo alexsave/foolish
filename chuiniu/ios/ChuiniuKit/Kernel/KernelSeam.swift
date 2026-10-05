@@ -339,6 +339,11 @@ public protocol TableStage: AnyObject {
     /// on show never draws the bubble's table. nil when there is nothing to
     /// draw (a lobby: no dice yet).
     func bubble(scale: CGFloat) -> BubbleFrame?
+    /// A SEAT'S NAME ON THE TABLE (cn_api_stage_name): its picture, drawn by
+    /// the host (`NameDecal`), laid flat on the planks by the kernel in every
+    /// frame of a table or a reveal from the next one on, so a cup in front of
+    /// it hides it; nil takes it away. Hand it over only when it changes.
+    func name(seat: Int, bitmap: NameBitmap?)
     /// The arena is allocated now.
     var holdsArena: Bool { get }
     /// The drawer the table or reveal on show was begun for, nil before one

@@ -138,7 +138,7 @@ final class StageViewTests: XCTestCase {
     /// A stage spy: the real stage, counted.
     private final class Counting: TableStage {
         let real = KernelSeam.stage()
-        var begins = 0, frames = 0
+        var begins = 0, frames = 0, named = 0
         func begin(_ screen: StageScreen, drawer: CGSize, scale: CGFloat, roll: Bool) -> CnStageHudSnap? {
             begins += 1
             return real.begin(screen, drawer: drawer, scale: scale, roll: roll)
@@ -153,6 +153,7 @@ final class StageViewTests: XCTestCase {
         func done(atMs ms: Int) -> Bool { real.done(atMs: ms) }
         func purge() { real.purge() }
         func bubble(scale: CGFloat) -> BubbleFrame? { real.bubble(scale: scale) }
+        func name(seat: Int, bitmap: NameBitmap?) { named += 1; real.name(seat: seat, bitmap: bitmap) }
         var holdsArena: Bool { real.holdsArena }
         var drawer: CGSize? { real.drawer }
     }
@@ -412,5 +413,93 @@ final class StageViewTests: XCTestCase {
         let f = try XCTUnwrap(director.last)
         XCTAssertEqual(Self.bytes(f), Self.bytes(director.stage.frameOnOneThread(atMs: 0, peek: 0)), "it is the 375 by 541 table's")
         director.stage.purge()
+    }
+
+    // MARK: the names on the table (package N)
+
+    /// A NAME'S PICTURE (NameDecal.render): the block the old layers laid out
+    /// (the letters' box, a 3-point gap, the 2-point bar) with the halo round
+    /// it, three texels a point, inside the stage's maxima, premultiplied, not
+    /// empty; the turn's (bright, with its bar) is not the same name dim, and
+    /// only the turn's has the bar's glow under the letters.
+    func testANamesPictureIsItsLettersAndItsBar() throws {
+        func look(_ turn: Bool, _ name: String = "Alex", short: Bool = false) -> NameDecal.Look {
+            NameDecal.look(StageName(seat: SeatModel(id: 1, name: name, dice: 5, alive: true, isTurn: turn, isMe: false)), short: short, how: CN_NAME_BOX)
+        }
+        let halo = CGFloat(CN_STAGE_NAME_HALO)
+        let bright = try XCTUnwrap(NameDecal.render(look(true))), dim = try XCTUnwrap(NameDecal.render(look(false)))
+        let (textW, textH) = NameDecal.block("Alex", short: false)
+        XCTAssertEqual(bright.wPt, textW + 2 * halo, "the letters' box and the halo either side")
+        XCTAssertEqual(bright.hPt, textH + NameDecal.gap + NameDecal.barH + 2 * halo, "the letters, the gap, the bar and the halo")
+        XCTAssertEqual(bright.w, Int((bright.wPt * 3).rounded(.up)), "three texels a point")
+        XCTAssertEqual(bright.h, Int((bright.hPt * 3).rounded(.up)))
+        XCTAssertEqual(bright.rgba.count, bright.w * bright.h * 4)
+        XCTAssertEqual(dim.w, bright.w, "the same block bright or dim")
+        func stats(_ b: NameBitmap, rows: Range<Int>) -> (lit: Int, over: Int) {
+            var lit = 0, over = 0
+            for y in rows { for x in 0..<b.w {
+                let i = (y * b.w + x) * 4, a = b.rgba[i + 3]
+                if a > 0 { lit += 1 }
+                if b.rgba[i] > a || b.rgba[i + 1] > a || b.rgba[i + 2] > a { over += 1 }
+            } }
+            return (lit, over)
+        }
+        let all = stats(bright, rows: 0..<bright.h)
+        XCTAssertGreaterThan(all.lit, 500, "the letters are drawn (\(all.lit) texels)")
+        XCTAssertEqual(all.over, 0, "premultiplied: no colour past its alpha")
+        XCTAssertNotEqual(bright.rgba, dim.rgba, "the turn's name is not the dim one")
+        // the bar's rows: under the letters, between the gap and the halo
+        let k = CGFloat(bright.h) / bright.hPt
+        let barRows = Int(((halo + textH + NameDecal.gap) * k).rounded(.down))..<Int(((halo + textH + NameDecal.gap + NameDecal.barH) * k).rounded(.up))
+        XCTAssertGreaterThan(stats(bright, rows: barRows).lit, 60, "the turn's bar")
+        XCTAssertEqual(stats(dim, rows: barRows).lit, 0, "no bar off the turn")
+        // a short board's 12 is a smaller block; a long name keeps inside the maxima
+        XCTAssertLessThan(try XCTUnwrap(NameDecal.render(look(true, short: true))).hPt, bright.hPt, "12 on a short board")
+        let long = try XCTUnwrap(NameDecal.render(look(true, String(repeating: "Maximilian", count: 4))))
+        XCTAssertLessThanOrEqual(long.w, CN_STAGE_NAME_W_MAX)
+        XCTAssertLessThanOrEqual(long.h, CN_STAGE_NAME_H_MAX)
+        XCTAssertEqual(long.wPt, 150 + 2 * halo, "a long name's box is 150 at most, as the old layer's")
+        // for the eye: the bright name as a picture
+        if let provider = CGDataProvider(data: Data(bright.rgba) as CFData),
+           let image = CGImage(width: bright.w, height: bright.h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: bright.w * 4,
+                               space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                               provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent),
+           let png = UIImage(cgImage: image).pngData() {
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("chuiniu_name_bright.png")
+            try? png.write(to: url)
+            print("the bright name: \(url.path)")
+        }
+    }
+
+    /// THE SEAM: each seat's name is handed to the stage once, and again only
+    /// when its look changes (the turn moves: two seats); a seat that goes is
+    /// taken away; the same names again hand over nothing. And through the
+    /// real stage the name is in the frame, and taken away the frame is the
+    /// one before it.
+    func testANameIsHandedToTheStageOnlyWhenItChanges() throws {
+        let me = try started(seats: 3)
+        let spy = Counting()
+        let director = StageDirector(stage: spy)
+        let view = StageUIView(director: director)
+        director.begin(request(CGSize(width: 390, height: 718), table: me.table), planMs: nil)
+        let hud = try XCTUnwrap(director.hud)
+        let before = Self.bytes(spy.frameOnOneThread(atMs: 0, peek: 0))
+        var names = me.table.seats.map { StageName(seat: $0) }
+        view.update(names: names, outWord: "out", hud: hud)
+        XCTAssertEqual(spy.named, 3, "three names handed over")
+        view.update(names: names, outWord: "out", hud: hud)
+        XCTAssertFalse(view.decals.update(names, hud: hud, stage: spy), "the same names: nothing to hand over")
+        XCTAssertEqual(spy.named, 3, "the same names again: none")
+        let named = Self.bytes(spy.frameOnOneThread(atMs: 0, peek: 0))
+        XCTAssertNotEqual(named, before, "the names are in the frame")
+        names[0].isTurn = false
+        names[1].isTurn = true
+        view.update(names: names, outWord: "out", hud: hud)
+        XCTAssertEqual(spy.named, 5, "the turn moved: the two seats' names again")
+        view.update(names: Array(names.prefix(2)), outWord: "out", hud: hud)
+        XCTAssertEqual(spy.named, 6, "a seat gone: its name taken away")
+        for s in 0..<2 { spy.name(seat: s, bitmap: nil) }
+        XCTAssertEqual(Self.bytes(spy.frameOnOneThread(atMs: 0, peek: 0)), before, "every name taken away: the frame before them")
+        spy.purge()
     }
 }

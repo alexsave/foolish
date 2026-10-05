@@ -16,8 +16,10 @@
 // and under the tilt, flat, the same planks in deeper shade: the turned plane
 // runs out at its horizon just above the drawer's top, and the strip under
 // Messages' grabber (the top safe area) is past it
-//   canvas   the kernel's frame at the shot's canvas (flat points)
-//   names    on the planks under the cups (tilted with them)
+//   canvas   the kernel's frame at the shot's canvas (flat points); the
+//            names are in it, lying on the table in the kernel's scene, so a
+//            cup in front of one hides it (NameDecal.swift draws their letters)
+//   stamps   the reveal's loser stamp under a name (tilted with them)
 // The HUD (the plate, the picker, Next round) is SwiftUI over this view and
 // is never turned.
 //
@@ -281,6 +283,13 @@ public final class StageDirector: ObservableObject {
 
     var needsFrame: Bool { dirty && owns && hud != nil }
 
+    /// Something the frame is drawn from changed outside the clock (a name
+    /// handed to the stage): the next display frame draws it.
+    func redraw() {
+        dirty = true
+        onWake?()
+    }
+
     // MARK: the peek
 
     /// The tap on the glass: my cup's ellipse toggles the peek, nothing else
@@ -421,7 +430,9 @@ public final class StageUIView: UIView {
     /// layers by depth, and the turned plane's far half lies behind z 0, so
     /// without a parent that flattens it the flat wood was drawn over it.
     let flat = CALayer()
-    private var nameLayers: [Int: (text: CATextLayer, bar: CALayer, stamp: CATextLayer)] = [:]
+    private var stampLayers: [Int: CATextLayer] = [:]
+    /// The names handed to the stage (it draws them on the table).
+    let decals = NameDecals()
     private var names: [StageName] = []
     private var outWord = ""
     private var hud: CnStageHudSnap?
@@ -473,6 +484,7 @@ public final class StageUIView: UIView {
             self.hud = hud
             setNeedsLayout()
             accessibilityElements = nil
+            if decals.update(names, hud: hud, stage: director.stage) { director.redraw() }
         }
         if changedHud { wake() }
     }
@@ -493,7 +505,7 @@ public final class StageUIView: UIView {
         flat.frame = bounds
         backShade.frame = back.bounds
         paintPlanks(size)
-        layoutNames()
+        layoutStamps()
         if let f = director.last, director.owns { place(f) }
         CATransaction.commit()
         if hasSize { wake() }
@@ -566,46 +578,31 @@ public final class StageUIView: UIView {
         backShade.zPosition = 1
     }
 
-    // MARK: the names, on the planks
+    // MARK: the stamps, under the names on the planks
 
-    /// `.t-name`: the small caps at 14, 12 on a short board; tracked .14em.
-    static func nameFont(short: Bool) -> UIFont { FType.uiSC(short ? 12 : 14) }
     /// `.stamp`: the small caps at 12, capitals, tracked .22em.
     private static let stampFont = FType.uiSC(12)
 
-    /// A name's ink (`.t-name`, `.t-name.dim`): bright on its turn, dim
-    /// otherwise, the glow for the winner, dimmer still once out.
-    static func nameInk(_ n: StageName) -> UIColor {
-        let ink = n.won ? Ink.glow : (n.isTurn ? Ink.ink : Ink.inkdim)
-        return UIColor(ink.opacity(n.alive ? 1 : 0.6))
-    }
-
-    private func layoutNames() {
+    private func layoutStamps() {
         let shown = Set(names.map(\.seat))
-        for (s, l) in nameLayers where !shown.contains(s) {
-            l.text.removeFromSuperlayer(); l.bar.removeFromSuperlayer(); l.stamp.removeFromSuperlayer()
-            nameLayers[s] = nil
+        for (s, l) in stampLayers where !shown.contains(s) {
+            l.removeFromSuperlayer()
+            stampLayers[s] = nil
         }
         guard let h = hud else {
-            for l in nameLayers.values { l.text.isHidden = true; l.bar.isHidden = true; l.stamp.isHidden = true }
+            for l in stampLayers.values { l.isHidden = true }
             return
         }
         let scale = window?.screen.scale ?? UIScreen.main.scale
         for n in names {
-            let l = nameLayers[n.seat] ?? makeName(scale)
-            nameLayers[n.seat] = l
+            let l = stampLayers[n.seat] ?? makeStamp(scale)
+            stampLayers[n.seat] = l
             let visible = n.seat < h.seats && h.nameX.indices.contains(n.seat)
-            l.text.isHidden = !visible
-            l.bar.isHidden = !visible || !n.isTurn
-            l.stamp.isHidden = !visible || n.stamp.isEmpty
-            guard visible else { continue }
-            let font = Self.nameFont(short: h.shortBoard != 0)
-            let attrs: [NSAttributedString.Key: Any] = [.font: font, .kern: FType.nameTracking(font.pointSize)]
-            var lit = attrs
-            lit[.foregroundColor] = Self.nameInk(n)
-            l.text.string = NSAttributedString(string: n.name, attributes: lit)
-            let textW = min(150, ceil((n.name as NSString).size(withAttributes: attrs).width) + 8)
-            let textH: CGFloat = ceil(font.lineHeight), barH: CGFloat = 2, gap: CGFloat = 3
+            l.isHidden = !visible || n.stamp.isEmpty
+            guard visible, !n.stamp.isEmpty else { continue }
+            // the name's block as the kernel lays it (NameDecal.block on the anchor), the stamp under it
+            let (textW, textH) = NameDecal.block(n.name, short: h.shortBoard != 0)
+            let barH = NameDecal.barH, gap = NameDecal.gap
             let x = h.nameX[n.seat], y = h.nameY[n.seat]
             var top: CGFloat
             var left: CGFloat
@@ -617,37 +614,19 @@ public final class StageUIView: UIView {
             default:                      // a far seat: centred on x, its top 8 above y
                 top = y - 8; left = x - textW / 2
             }
-            l.text.frame = CGRect(x: left, y: top, width: textW, height: textH)
-            let barW: CGFloat = h.nameHow[n.seat] == CN_NAME_BOX ? 36 : 44
-            l.bar.frame = CGRect(x: l.text.frame.midX - barW / 2, y: top + textH + gap, width: barW, height: barH)
+            let midX = left + textW / 2
             let stampAttrs: [NSAttributedString.Key: Any] = [.font: Self.stampFont, .kern: 12 * 0.22,
                                                              .foregroundColor: UIColor(Ink.blood)]
             let word = n.stamp.uppercased()
-            l.stamp.string = NSAttributedString(string: word, attributes: stampAttrs)
+            l.string = NSAttributedString(string: word, attributes: stampAttrs)
             let stampW = ceil((word as NSString).size(withAttributes: stampAttrs).width) + 20
-            l.stamp.setAffineTransform(.identity)
-            l.stamp.frame = CGRect(x: l.text.frame.midX - stampW / 2, y: top + textH + gap + barH + 4, width: stampW, height: 22)
-            l.stamp.setAffineTransform(CGAffineTransform(rotationAngle: -5 * .pi / 180))
+            l.setAffineTransform(.identity)
+            l.frame = CGRect(x: midX - stampW / 2, y: top + textH + gap + barH + 4, width: stampW, height: 22)
+            l.setAffineTransform(CGAffineTransform(rotationAngle: -5 * .pi / 180))
         }
     }
 
-    private func makeName(_ scale: CGFloat) -> (text: CATextLayer, bar: CALayer, stamp: CATextLayer) {
-        let text = CATextLayer()
-        text.contentsScale = scale
-        text.alignmentMode = .center
-        text.truncationMode = .end
-        text.shadowColor = UIColor.black.cgColor
-        text.shadowOpacity = 1
-        text.shadowRadius = 1
-        text.shadowOffset = CGSize(width: 0, height: 1)
-        // `.turn`: the glow, 2 tall, haloed (0 0 8px at .9, 0 0 18px at .5)
-        let bar = CALayer()
-        bar.backgroundColor = UIColor(Ink.glow).cgColor
-        bar.cornerRadius = 1
-        bar.shadowColor = UIColor(Ink.glow).cgColor
-        bar.shadowOpacity = 0.9
-        bar.shadowRadius = 5
-        bar.shadowOffset = .zero
+    private func makeStamp(_ scale: CGFloat) -> CATextLayer {
         // `.stamp`: blood small caps in a blood frame on a dark wash, turned 5 degrees
         let stamp = CATextLayer()
         stamp.contentsScale = scale
@@ -659,10 +638,8 @@ public final class StageUIView: UIView {
         stamp.shadowOpacity = 0.25
         stamp.shadowRadius = 5
         stamp.shadowOffset = .zero
-        tilt.addSublayer(text)
-        tilt.addSublayer(bar)
         tilt.addSublayer(stamp)
-        return (text, bar, stamp)
+        return stamp
     }
 
     // MARK: the display link

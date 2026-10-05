@@ -491,6 +491,19 @@ public final class BridgeStage: TableStage {
 
     public func peekEase(_ t: Double) -> Double { Double(cn_api_peek_ease(Float(t))) }
 
+    public func name(seat: Int, bitmap: NameBitmap?) {
+        // on the queue, in order with the frames: the next frame asked draws it (the bytes are copied in)
+        let w = worker
+        w.queue.async {
+            guard w.ready(arena: false) else { return }
+            if let b = bitmap {
+                _ = cn_api_stage_name(Int32(seat), b.rgba, Int32(b.w), Int32(b.h), Float(b.wPt), Float(b.hPt))
+            } else {
+                _ = cn_api_stage_name(Int32(seat), nil, 0, 0, 0, 0)
+            }
+        }
+    }
+
     public func done(atMs ms: Int) -> Bool { worker.queue.sync { cn_api_stage_done(UInt32(max(ms, 0))) == 1 } }
 
     public func purge() {

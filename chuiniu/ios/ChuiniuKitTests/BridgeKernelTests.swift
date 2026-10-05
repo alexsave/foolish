@@ -311,6 +311,7 @@ private final class SpyStage: TableStage {
     func done(atMs ms: Int) -> Bool { real.done(atMs: ms) }
     func purge() { real.purge() }
     func bubble(scale: CGFloat) -> BubbleFrame? { bubbles += 1; return real.bubble(scale: scale) }
+    func name(seat: Int, bitmap: NameBitmap?) { real.name(seat: seat, bitmap: bitmap) }
     var holdsArena: Bool { real.holdsArena }
     var drawer: CGSize? { real.drawer }
 }
