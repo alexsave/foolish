@@ -8,9 +8,12 @@
 //   tilt     the planks, the names and the picture's canvas, turned together
 //            by the HUD's `ca_screen` about the drawer's (0, 0): the study's
 //            `perspective(D) rotateX(theta) scale(zoom)` about my cup
-//   planks   the baked wood under it all, 1.9 by 2.2 of the drawer (the
-//            study's overdraw), so the turn uncovers planks and never a gap
-// and under the tilt, flat, the same wood in deeper shade: the turned plane
+//   planks   the study's planks (cn_planks.jpg, baked by chuiniu/c's
+//            cn_texgen: six planks, a running bond, nails; seamless, so
+//            laid as plain tiles) under the stage's light, 1.9 by 2.2 of the
+//            drawer (the study's overdraw), so the turn uncovers planks and
+//            never a gap; a plank's middle runs down the drawer's centre
+// and under the tilt, flat, the same planks in deeper shade: the turned plane
 // runs out at its horizon just above the drawer's top, and the strip under
 // Messages' grabber (the top safe area) is past it
 //   canvas   the kernel's frame at the shot's canvas (flat points)
@@ -358,8 +361,10 @@ public final class StageUIView: UIView {
     let tilt = CALayer()
     let planks = CALayer()
     let canvas = CALayer()
-    let shade = CALayer()
-    /// Flat wood past the turned plane's horizon.
+    /// The stage's light over the planks (`.stage::after`): the cold glow from
+    /// above, the vignette, the foot.
+    let light = CALayer()
+    /// Flat planks past the turned plane's horizon.
     let back = CALayer()
     let backShade = CALayer()
     /// The turned layer's own flat parent: Core Animation sorts sibling
@@ -372,7 +377,7 @@ public final class StageUIView: UIView {
     private var hud: CnStageHudSnap?
     private var link: CADisplayLink?
     private var lastStamp: CFTimeInterval?
-    private var woodStyle: UIUserInterfaceStyle?
+    private var paintedFor: [CGFloat]?
     /// The safe areas round the drawer, inside this view.
     var inset: UIEdgeInsets = .zero {
         didSet { if inset != oldValue { setNeedsLayout() } }
@@ -391,18 +396,17 @@ public final class StageUIView: UIView {
         tilt.position = .zero
         layer.addSublayer(back)
         back.addSublayer(backShade)
+        back.masksToBounds = true
         layer.addSublayer(flat)
         flat.addSublayer(tilt)
         tilt.addSublayer(planks)
-        planks.addSublayer(shade)
+        planks.masksToBounds = true
+        planks.addSublayer(light)
         tilt.addSublayer(canvas)
         canvas.contentsGravity = .resize
         canvas.magnificationFilter = .linear
         addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tapped(_:))))
         director.onWake = { [weak self] in self?.wake() }
-        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (v: StageUIView, _: UITraitCollection) in
-            v.setNeedsLayout()
-        }
     }
 
     @available(*, unavailable)
@@ -433,61 +437,97 @@ public final class StageUIView: UIView {
         tilt.bounds = CGRect(origin: .zero, size: size)
         tilt.transform = hud.map(StageDirector.tilt) ?? CATransform3DIdentity
         // the study's overdraw: 190% by 220%, from -45% and -60%
-        planks.frame = CGRect(x: -0.45 * size.width, y: -0.6 * size.height, width: 1.9 * size.width, height: 2.2 * size.height)
-        shade.frame = planks.bounds
+        planks.frame = Self.overdraw(size)
         back.frame = bounds
         flat.frame = bounds
         backShade.frame = back.bounds
-        paintWood()
+        paintPlanks(size)
         layoutNames()
         if let f = director.last, director.owns { place(f) }
         CATransaction.commit()
         if hasSize { wake() }
     }
 
-    private func paintWood() {
-        let style = traitCollection.userInterfaceStyle
-        guard style != woodStyle else { return }
-        woodStyle = style
-        // the study's planks are a drowned, near-black wood: the baked walnut
-        // in either appearance, a stop or two further down under a shade
-        if let img = Self.mirroredWood {
-            planks.backgroundColor = UIColor(patternImage: img).cgColor
-        } else {
-            planks.backgroundColor = UIColor(Color(hex: WoodTexture.Palette.dark.fallbackHex)).cgColor
-        }
-        back.backgroundColor = planks.backgroundColor
-        backShade.backgroundColor = UIColor.black.withAlphaComponent(style == .dark ? 0.72 : 0.62).cgColor
-        shade.backgroundColor = UIColor.black.withAlphaComponent(style == .dark ? 0.5 : 0.35).cgColor
+    /// The study's overdraw: 190% by 220% of the drawer, from -45% and -60%.
+    static func overdraw(_ size: CGSize) -> CGRect {
+        CGRect(x: -0.45 * size.width, y: -0.6 * size.height, width: 1.9 * size.width, height: 2.2 * size.height)
     }
 
+    /// Where the planks' first tile goes inside the overdraw (`tableStage`'s
+    /// background-position): a plank's middle down the drawer's centre line,
+    /// which is x = .95 of the drawer's width in the overdraw, and 58 up.
+    static func tileOrigin(_ size: CGSize) -> CGPoint { PlankTile.origin(centredOn: 0.45 * size.width + size.width / 2) }
 
-    /// The baked walnut swatch (448 by 288, made not to tile) laid out as a
-    /// 2 by 2 of itself mirrored, so the pattern's seams meet grain to grain:
-    /// tiled plainly, the drawer showed a hard line every 448 points. One
-    /// image, drawn once a process from the JPEG; nothing is generated.
-    private static let mirroredWood: UIImage? = {
-        guard let img = CnTextures.wood(.dark), let cg = img.cgImage else { return nil }
-        let w = CGFloat(cg.width), h = CGFloat(cg.height)
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        format.opaque = true
-        return UIGraphicsImageRenderer(size: CGSize(width: 2 * w, height: 2 * h), format: format).image { ctx in
-            let c = ctx.cgContext
-            for (fx, fy) in [(false, false), (true, false), (false, true), (true, true)] {
-                c.saveGState()
-                c.translateBy(x: fx ? 2 * w : 0, y: fy ? 2 * h : 0)
-                c.scaleBy(x: fx ? -1 : 1, y: fy ? -1 : 1)
-                img.draw(in: CGRect(x: 0, y: 0, width: w, height: h))
-                c.restoreGState()
+    /// The planks laid as tiles from `origin` over `size`: one layer a tile,
+    /// all sharing the one decoded image (one texture).
+    static func tile(_ host: CALayer, size: CGSize, origin: CGPoint, image: CGImage?) {
+        host.sublayers?.filter { $0.name == "tile" }.forEach { $0.removeFromSuperlayer() }
+        guard let image else { return }
+        let t = PlankTile.size
+        var y = origin.y
+        var at: UInt32 = 0
+        while y < size.height {
+            var x = origin.x
+            while x < size.width {
+                let l = CALayer()
+                l.name = "tile"
+                l.contents = image
+                l.contentsScale = 2
+                l.frame = CGRect(x: x, y: y, width: t.width, height: t.height)
+                host.insertSublayer(l, at: at)
+                at += 1
+                x += t.width
             }
+            y += t.height
         }
-    }()
+    }
+
+    private func paintPlanks(_ size: CGSize) {
+        let key = [size.width, size.height, bounds.width, bounds.height]
+        guard key != paintedFor, size.width >= 1, size.height >= 1 else { return }
+        paintedFor = key
+        let image = CnTextures.planks?.cgImage
+        planks.backgroundColor = UIColor(Ink.hold).cgColor
+        Self.tile(planks, size: planks.bounds.size, origin: Self.tileOrigin(size), image: image)
+        // the stage's light over the whole overdraw, as the study's ::after is on the over-sized stage
+        light.frame = planks.bounds
+        light.sublayers?.forEach { $0.removeFromSuperlayer() }
+        for g in StageLight.gradients(planks.bounds.size) {
+            let r = CAGradientLayer()
+            r.type = .radial
+            r.frame = light.bounds
+            let w = light.bounds.width, h = light.bounds.height
+            r.startPoint = CGPoint(x: g.center.x / w, y: g.center.y / h)
+            r.endPoint = CGPoint(x: (g.center.x + g.rx) / w, y: (g.center.y + g.ry) / h)
+            r.colors = g.stops.map { UIColor(red: $0.rgb.0, green: $0.rgb.1, blue: $0.rgb.2, alpha: $0.a).cgColor }
+            r.locations = g.stops.map { NSNumber(value: $0.t) }
+            light.addSublayer(r)
+        }
+        let foot = CAGradientLayer()
+        foot.frame = light.bounds
+        foot.colors = [UIColor.clear.cgColor, UIColor(red: 0, green: 3 / 255, blue: 3 / 255, alpha: 0.35).cgColor]
+        foot.locations = [0.6, 1]
+        light.addSublayer(foot)
+        // past the horizon: the same planks, flat, a stop or two down
+        back.backgroundColor = UIColor(Ink.glass).cgColor
+        Self.tile(back, size: bounds.size, origin: PlankTile.origin(centredOn: bounds.width / 2), image: image)
+        backShade.backgroundColor = UIColor.black.withAlphaComponent(0.62).cgColor
+        backShade.zPosition = 1
+    }
 
     // MARK: the names, on the planks
 
-    private static let nameFont = UIFont.systemFont(ofSize: 14, weight: .semibold)
-    private static let stampFont = UIFont.systemFont(ofSize: 10, weight: .heavy)
+    /// `.t-name`: the small caps at 14, 12 on a short board; tracked .14em.
+    static func nameFont(short: Bool) -> UIFont { FType.uiSC(short ? 12 : 14) }
+    /// `.stamp`: the small caps at 12, capitals, tracked .22em.
+    private static let stampFont = FType.uiSC(12)
+
+    /// A name's ink (`.t-name`, `.t-name.dim`): bright on its turn, dim
+    /// otherwise, the glow for the winner, dimmer still once out.
+    static func nameInk(_ n: StageName) -> UIColor {
+        let ink = n.won ? Ink.glow : (n.isTurn ? Ink.ink : Ink.inkdim)
+        return UIColor(ink.opacity(n.alive ? 1 : 0.6))
+    }
 
     private func layoutNames() {
         let shown = Set(names.map(\.seat))
@@ -508,14 +548,13 @@ public final class StageUIView: UIView {
             l.bar.isHidden = !visible || !n.isTurn
             l.stamp.isHidden = !visible || n.stamp.isEmpty
             guard visible else { continue }
-            // the study's ink, and its dimmer ink for a seat not on turn (still read on the planks)
-            let ink = n.won ? FColor.win : (n.isTurn ? FColor.textPrimary : FColor.textPrimary.opacity(0.72))
-            l.text.string = NSAttributedString(string: n.name, attributes: [
-                .font: Self.nameFont, .foregroundColor: UIColor(ink.opacity(n.alive ? 1 : 0.6)),
-                .kern: 0.6,
-            ])
-            let textW = min(150, ceil((n.name as NSString).size(withAttributes: [.font: Self.nameFont]).width) + 8)
-            let textH: CGFloat = 17, barH: CGFloat = 2, gap: CGFloat = 3
+            let font = Self.nameFont(short: h.shortBoard != 0)
+            let attrs: [NSAttributedString.Key: Any] = [.font: font, .kern: FType.nameTracking(font.pointSize)]
+            var lit = attrs
+            lit[.foregroundColor] = Self.nameInk(n)
+            l.text.string = NSAttributedString(string: n.name, attributes: lit)
+            let textW = min(150, ceil((n.name as NSString).size(withAttributes: attrs).width) + 8)
+            let textH: CGFloat = ceil(font.lineHeight), barH: CGFloat = 2, gap: CGFloat = 3
             let x = h.nameX[n.seat], y = h.nameY[n.seat]
             var top: CGFloat
             var left: CGFloat
@@ -530,11 +569,14 @@ public final class StageUIView: UIView {
             l.text.frame = CGRect(x: left, y: top, width: textW, height: textH)
             let barW: CGFloat = h.nameHow[n.seat] == CN_NAME_BOX ? 36 : 44
             l.bar.frame = CGRect(x: l.text.frame.midX - barW / 2, y: top + textH + gap, width: barW, height: barH)
-            l.stamp.string = NSAttributedString(string: n.stamp, attributes: [
-                .font: Self.stampFont, .foregroundColor: UIColor.white,
-            ])
-            let stampW = ceil((n.stamp as NSString).size(withAttributes: [.font: Self.stampFont]).width) + 12
-            l.stamp.frame = CGRect(x: l.text.frame.midX - stampW / 2, y: top + textH + gap + barH + 3, width: stampW, height: 16)
+            let stampAttrs: [NSAttributedString.Key: Any] = [.font: Self.stampFont, .kern: 12 * 0.22,
+                                                             .foregroundColor: UIColor(Ink.blood)]
+            let word = n.stamp.uppercased()
+            l.stamp.string = NSAttributedString(string: word, attributes: stampAttrs)
+            let stampW = ceil((word as NSString).size(withAttributes: stampAttrs).width) + 20
+            l.stamp.setAffineTransform(.identity)
+            l.stamp.frame = CGRect(x: l.text.frame.midX - stampW / 2, y: top + textH + gap + barH + 4, width: stampW, height: 22)
+            l.stamp.setAffineTransform(CGAffineTransform(rotationAngle: -5 * .pi / 180))
         }
     }
 
@@ -544,22 +586,28 @@ public final class StageUIView: UIView {
         text.alignmentMode = .center
         text.truncationMode = .end
         text.shadowColor = UIColor.black.cgColor
-        text.shadowOpacity = 0.9
-        text.shadowRadius = 1.5
+        text.shadowOpacity = 1
+        text.shadowRadius = 1
         text.shadowOffset = CGSize(width: 0, height: 1)
+        // `.turn`: the glow, 2 tall, haloed (0 0 8px at .9, 0 0 18px at .5)
         let bar = CALayer()
-        bar.backgroundColor = UIColor(FColor.win).cgColor
+        bar.backgroundColor = UIColor(Ink.glow).cgColor
         bar.cornerRadius = 1
-        bar.shadowColor = UIColor(FColor.win).cgColor
-        bar.shadowOpacity = 0.7
-        bar.shadowRadius = 4
+        bar.shadowColor = UIColor(Ink.glow).cgColor
+        bar.shadowOpacity = 0.9
+        bar.shadowRadius = 5
         bar.shadowOffset = .zero
+        // `.stamp`: blood small caps in a blood frame on a dark wash, turned 5 degrees
         let stamp = CATextLayer()
         stamp.contentsScale = scale
         stamp.alignmentMode = .center
-        stamp.backgroundColor = UIColor(FColor.red).cgColor
-        stamp.cornerRadius = 4
-        stamp.masksToBounds = true
+        stamp.backgroundColor = UIColor(red: 60 / 255, green: 12 / 255, blue: 8 / 255, alpha: 0.35).cgColor
+        stamp.borderColor = UIColor(red: 192 / 255, green: 74 / 255, blue: 51 / 255, alpha: 0.85).cgColor
+        stamp.borderWidth = 1.5
+        stamp.shadowColor = UIColor(Ink.blood).cgColor
+        stamp.shadowOpacity = 0.25
+        stamp.shadowRadius = 5
+        stamp.shadowOffset = .zero
         tilt.addSublayer(text)
         tilt.addSublayer(bar)
         tilt.addSublayer(stamp)

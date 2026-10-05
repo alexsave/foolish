@@ -346,22 +346,55 @@ TEX_PACK := build/cn_tex.pack
 TEX_IOS  := ../ios/ChuiniuKit/Resources/cn_tex.pack
 
 build/cn_texgen: tools/cn_texgen.c $(TEX_SRC) | build
-	$(CC) $(CFLAGS) tools/cn_texgen.c src/cn_tex.c -o $@
+	$(CC) $(CFLAGS) tools/cn_texgen.c src/cn_tex.c -lm -o $@
 
 $(TEX_PACK): build/cn_texgen $(TEX_FONT)
 	./build/cn_texgen --font $(TEX_FONT) --pack $@
 
 tex: $(TEX_PACK)
 
+# THE FLAT IMAGES the Swift host paints with (DECISIONS I27): the planks (the
+# study's six-plank tile, nails baked in, 2 texels a point, 1032 by 1660), the
+# verdigris tile (the plates and the buttons), the barnacle crust a plate wears
+# in its corner (RGBA, 512 by 128) and the bone tile (the flat dice),
+# baked by the same tool as uncompressed PNGs, recompressed by macOS's own sips
+# (the planks to a JPEG at quality 80, about 185 KB; the tiles to deflated PNGs).
+# And the two faces of IM Fell English (roman and small caps, SIL OFL 1.1, from
+# google/fonts ofl/imfellenglish and ofl/imfellenglishsc; the licence is
+# tools/fonts/OFL.txt, the same text for both), which ChuiniuKit registers at
+# run time from its own bundle. All git-ignored copies, made here.
+TEX_IMG   := build/img/cn_planks.png
+TEX_FONTS := tools/fonts/IMFeENrm28P.ttf tools/fonts/IMFeENsc28P.ttf tools/fonts/OFL.txt
+IOS_RES   := ../ios/ChuiniuKit/Resources
+$(TEX_IMG): build/cn_texgen $(TEX_FONT)
+	@mkdir -p build/img && ./build/cn_texgen --font $(TEX_FONT) --images build/img
+build/img/cn_planks.jpg: $(TEX_IMG)
+	sips -s format jpeg -s formatOptions 80 $< --out $@ >/dev/null
+build/img/cn_verd_z.png: $(TEX_IMG)
+	sips -s format png build/img/cn_verd.png --out $@ >/dev/null
+build/img/cn_bone_z.png: $(TEX_IMG)
+	sips -s format png build/img/cn_bone.png --out $@ >/dev/null
+build/img/cn_crust_z.png: $(TEX_IMG)
+	sips -s format png build/img/cn_crust.png --out $@ >/dev/null
+
 # cmp-then-copy, so the resource's mtime moves only when its bytes do
-tex-ios: $(TEX_PACK)
-	@mkdir -p $(dir $(TEX_IOS)) && { cmp -s $(TEX_PACK) $(TEX_IOS) && echo "$(TEX_IOS) is current" || { cp $(TEX_PACK) $(TEX_IOS); echo "wrote $(TEX_IOS)"; }; }
+cmpcp = { cmp -s $(1) $(2) && echo "$(2) is current" || { cp $(1) $(2); echo "wrote $(2)"; }; }
+tex-ios: $(TEX_PACK) build/img/cn_planks.jpg build/img/cn_verd_z.png build/img/cn_bone_z.png build/img/cn_crust_z.png $(TEX_FONTS)
+	@mkdir -p $(IOS_RES)
+	@$(call cmpcp,$(TEX_PACK),$(TEX_IOS))
+	@$(call cmpcp,build/img/cn_planks.jpg,$(IOS_RES)/cn_planks.jpg)
+	@$(call cmpcp,build/img/cn_verd_z.png,$(IOS_RES)/cn_verd.png)
+	@$(call cmpcp,build/img/cn_bone_z.png,$(IOS_RES)/cn_bone.png)
+	@$(call cmpcp,build/img/cn_crust_z.png,$(IOS_RES)/cn_crust.png)
+	@$(call cmpcp,tools/fonts/IMFeENrm28P.ttf,$(IOS_RES)/IMFeENrm28P.ttf)
+	@$(call cmpcp,tools/fonts/IMFeENsc28P.ttf,$(IOS_RES)/IMFeENsc28P.ttf)
+	@$(call cmpcp,tools/fonts/OFL.txt,$(IOS_RES)/OFL-IMFellEnglish.txt)
 
 build/cn_tex_test: tests/cn_tex_test.c tools/cn_texgen.c $(TEX_SRC) | build
-	$(CC) $(CFLAGS) tests/cn_tex_test.c src/cn_tex.c -o $@
+	$(CC) $(CFLAGS) tests/cn_tex_test.c src/cn_tex.c -lm -o $@
 
 build/asan_cn_tex_test: tests/cn_tex_test.c tools/cn_texgen.c $(TEX_SRC) | build
-	$(CC) $(ASAN_FLAGS) tests/cn_tex_test.c src/cn_tex.c -o $@
+	$(CC) $(ASAN_FLAGS) tests/cn_tex_test.c src/cn_tex.c -lm -o $@
 
 tex-test: build/cn_tex_test $(TEX_PACK)
 	./build/cn_tex_test $(TEX_FONT) $(TEX_PACK)

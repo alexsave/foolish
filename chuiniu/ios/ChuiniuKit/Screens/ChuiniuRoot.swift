@@ -98,12 +98,12 @@ public struct UnreadableScreen: View {
 
     public var body: some View {
         VStack(spacing: 8) {
-            Text(title).font(.system(size: 17, weight: .heavy)).onFeltText()
-            Text(reason).font(.system(size: 13, weight: .semibold)).onFeltText(FColor.textDim)
+            Text(title).font(FType.serif(26)).bidInk()
+            Text(reason).font(FType.serif(15.5)).onPlanks(Ink.inkdim).multilineTextAlignment(.center)
             Spacer(minLength: 0)
         }
         .padding(22)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(FeltBackground())
+        .background(PlanksBackground().ignoresSafeArea())
     }
 }

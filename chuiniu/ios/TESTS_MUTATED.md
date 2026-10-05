@@ -95,6 +95,35 @@ Each mutant was one edit by hand to a product file or to the lint, the lint run,
 
 Before the lint went in it found three hand byte reads, all removed: `BridgeKernel.swift` handed the seat records and the participant id to C through `withUnsafeBytes` and `bindMemory` (now a `[UInt8]` argument), `MessagesViewController.swift` read the participant UUID with `withUnsafeBytes(of:)` (now its sixteen bytes spelled out), and `BridgeKernelTests.swift` imported `CChuiniu` for the tests-only view (now `BridgeKernel.everyonesView()`, Debug only).
 
+## The baked planks (package T, 2026-10-05)
+
+`chuiniu/c/tests/cn_tex_test.c`, "planks: six planks, seamless, a running bond, nails, the deep palette", run by `make -C chuiniu/c tex-test` (402 assertions green before and after).
+Each mutant was one edit by hand to `tools/cn_texgen.c`, the test run, the edit taken back by re-editing, and the test green again.
+
+| # | Mutation | Assertion that went red |
+|---|---|---|
+| T1 | the gap pass reads `u0 * 5`, not six planks | `:254` "plank edge 1 (x 172) is not a gap" (and edges 4 and 5), `:258` "plank 1's middle is dark" |
+| T2 | no running bond: `shift = (pi % 2) * .0` | `:272` "plank 1 ends at row 0, not 830" (and 3 and 5) |
+| T3 | the texel's v is `(y + .5) / (H - 40)` (the tile no longer wraps) | `:266` "the top and bottom edges part: 32.25 a texel against 1.07 inside", and `:272` |
+| T4 | the march's palette warm (base 16 10 6, gains 14 9 5: foolish's walnut direction) | `:280` "the planks lean warm: 26.5 19.1 12.1" |
+| T5 | one nail a plank, not one inside each edge | `:299` "48 nail heads, 48 missing" |
+| T6 | the crust draws no wrapped copies (`w < 1` for the patches and the shells) | `:333` "left and right edges part more than the study's: 111.66 against 5.31", `:334` "top and bottom edges part: 114.62 against 5.38" |
+| T7 | no shells (`per = 0`) | `:323` "only 0 solid texels: the shells are missing", and `:333` |
+
+## DesignTests (package T, 2026-10-05)
+
+`ChuiniuKitTests/DesignTests.swift`, on the private simulator TChuiniu (`5FD5777D`, iPhone 6.9", iOS 27.0), `-only-testing:ChuiniuKitTests/DesignTests` (6 tests executed every run, none a compile error).
+Each mutant was one edit to a product file by a script that read the file, replaced one line, ran the tests and wrote the line back; `git status` showed the sources unchanged afterwards.
+
+| # | Mutation | Assertion that went red |
+|---|---|---|
+| D1 | `PlankTile.left` starts the tile at the centre line (no `- plank / 2`) | `:38` "300.0: a plank's middle is on the centre line" (193 against 150), every width, and `:43` on the stage |
+| D2 | `FType.registered` registers no file | `:50` "IM Fell English roman and small caps resolve by name", `:51` ".SFUI-Regular is not IM_FELL_English_Roman", `:52` |
+| D3 | `nameInk` gives every seat the bright ink | `:63` "every other name is the dim ink" |
+| D4 | `callKind(enabled: true)` is `.bronze` | `:69` "Liar is the blood plate" (bronze against call) |
+| D5 | the planks open at 1 texel a point | `:15` "the planks are the study's 516 by 830 tile" (1032 by 1660), `:16` "two texels a point" |
+| D6 | the narrow plate steps down to 14 | `:80` "nothing under 15.5 in the roman" (14 against 15.5) |
+
 ## Not tested
 
 The conversation (`ChuiniuMessages/MessagesViewController.swift`) has no test target, as pickemup's has none.
