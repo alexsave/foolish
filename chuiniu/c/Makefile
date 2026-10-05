@@ -213,9 +213,12 @@ docs-roll: $(ROLL_WASM_OUT)
 	@b64=$$(base64 < $(ROLL_WASM_OUT) | tr -d '\n'); \
 	 awk -v b="$$b64" 'BEGIN{skip=0} /<!-- cn_roll.wasm begin/{print; print "<script>window.CN_ROLL_WASM_B64 = \"" b "\";</script>"; skip=1; next} /<!-- cn_roll.wasm end/{skip=0} skip==0{print}' $(DOC) > $(DOC).new \
 	 && mv $(DOC).new $(DOC) && echo "embedded $(ROLL_WASM_OUT) in $(DOC)"
+# (the embed is cut out of the page and compared whole: grep with the module's
+# 70 KB of base64 as its pattern runs out of memory, and its failure read as "differs")
 docs-roll-check: $(ROLL_WASM_OUT)
 	@b64=$$(base64 < $(ROLL_WASM_OUT) | tr -d '\n'); \
-	 grep -q "CN_ROLL_WASM_B64 = \"$$b64\"" $(DOC) && echo "docs/UI.html carries this build of cn_roll.wasm" || { echo "docs/UI.html's embedded cn_roll.wasm differs from this build: make docs-roll (a different clang also differs)"; exit 1; }
+	 have=$$(sed -n 's/.*CN_ROLL_WASM_B64 = "\([A-Za-z0-9+/=]*\)".*/\1/p' $(DOC)); \
+	 [ -n "$$have" ] && [ "$$have" = "$$b64" ] && echo "docs/UI.html carries this build of cn_roll.wasm" || { echo "docs/UI.html's embedded cn_roll.wasm differs from this build: make docs-roll (a different clang also differs)"; exit 1; }
 
 # ---- the iOS bridge -----------------------------------------------------------
 # ios-smoke runs the identical bridge with the host compiler, so every
