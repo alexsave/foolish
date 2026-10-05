@@ -62,6 +62,66 @@ static float open_edge_steps(float dpr)
     return (float)worst;
 }
 
+/* A SQUARE OVER THE BARE TABLE (no shadow: dark 0, so every table pixel is alpha 0 and a pixel's alpha is how much
+ * of it the square covers): side 30 points, 40 up, turned by deg about (60, 60), its faces numbered id (0: none) and
+ * cut into `fan` triangles about its middle (2: one diagonal). The faces drawn, or -1. */
+static int square_frame(float dpr, float deg, int id, int fan, int skip_mask)
+{
+    if (!cn_scene_begin(120, 120, 0, dpr, 60, 60, 720, -.45f, -.55f, 1, 256, 0, 8, 8)) return -1;
+    float *V = cn_scene_verts(), *F = cn_scene_faces();
+    const float a = deg * 3.14159265f / 180, c = __builtin_cosf(a), s = __builtin_sinf(a), h = 15;
+    const float k[5][2] = { { -h, -h }, { h, -h }, { h, h }, { -h, h }, { 0, 0 } };
+    for (int i = 0; i < 5; i++) {
+        float v[6] = { 60 + c * k[i][0] - s * k[i][1], 60 + s * k[i][0] + c * k[i][1], 40, 0, 0, 1 };
+        memcpy(V + i * 6, v, sizeof v);
+    }
+    const float fl = (float)(CN_SCENE_F_CULL | CN_SCENE_F_CAST | CN_SCENE_F_RECEIVE | CN_SCENE_F_ID(id));
+    int nf = 0;
+    if (fan == 2) {
+        const float f2[] = { 0, 1, 2, 0, 0, 1, 0, 1, 1, 0, 0, 4, 3, 1, 0, fl,   0, 2, 3, 0, 0, 1, 1, 0, 1, 0, 0, 4, 3, 1, 0, fl };
+        memcpy(F, f2, sizeof f2); nf = 2;
+    } else {
+        for (int i = 0; i < 4; i++) {
+            const float f1[] = { 4, (float)i, (float)((i + 1) % 4), .5f, .5f, 0, 0, 1, 1, 0, 0, 4, 3, 1, 0, fl };
+            memcpy(F + i * CN_SCENE_FF, f1, sizeof f1); nf++;
+        }
+    }
+    cn_scene_skip(skip_mask);
+    const int d = cn_scene_render(5, nf);
+    cn_scene_skip(0);
+    return d;
+}
+/* The square's left side (turned 17 degrees it runs from (50.0, 41.3) to (41.3, 70.0) points, and is the square's
+ * left edge on every row between), row by row: where its coverage crosses, from the alphas (a row's pixels from the
+ * first one it touches, summed: the side's place to a fraction of a pixel). The worst distance of any row's crossing
+ * from the rows' least-squares line, in device pixels: a staircase is half a pixel; four samples, a quarter at most. */
+static float square_steps(float dpr)
+{
+    const uint8_t *fb = cn_scene_fb(); const int W = cn_scene_fb_w();
+    float xs[512], ys[512]; int n = 0;
+    for (int y = (int)(45 * dpr); y < (int)(66 * dpr) && n < 512; y++) {
+        int x = 0;
+        while (x < W && fb[(y * W + x) * 4 + 3] == 0) x++;
+        if (x >= W - 4) continue;
+        float cover = 0;
+        for (int i = 0; i < 4; i++) cover += fb[(y * W + x + i) * 4 + 3] / 255.f;
+        xs[n] = x + 4 - cover; ys[n] = (float)y; n++;
+    }
+    if (n < 8) return 1e9f;
+    double sy = 0, sx = 0, syy = 0, sxy = 0;
+    for (int i = 0; i < n; i++) { sy += ys[i]; sx += xs[i]; syy += (double)ys[i] * ys[i]; sxy += (double)ys[i] * xs[i]; }
+    double b = (n * sxy - sy * sx) / (n * syy - sy * sy), a = (sx - b * sy) / n, worst = 0;
+    for (int i = 0; i < n; i++) { double r = xs[i] - (a + b * ys[i]); if (r < 0) r = -r; if (r > worst) worst = r; }
+    return (float)worst;
+}
+/* the pixels where two pictures differ */
+static int differ(const uint8_t *a, const uint8_t *b, int npx)
+{
+    int n = 0;
+    for (int i = 0; i < npx; i++) n += memcmp(a + i * 4, b + i * 4, 4) != 0;
+    return n;
+}
+
 int main(void)
 {
     size_t ios = CN_SCENE_ARENA_IOS;
@@ -126,7 +186,7 @@ int main(void)
         cnf_textures(&t, 1);
         const float scales[3] = { 1, 2, 3 };
         for (int i = 0; i < 3; i++) for (int roll = 0; roll < 2; roll++) {
-            if (cnf_frame(&t, 390, 718, 40, scales[i], 1024, roll ? .6f : 0) < 0) continue;   /* 3x does not fit 48 MB */
+            if (cnf_frame(&t, 390, 718, 40, scales[i], 1024, roll ? .6f : 0) < 0) continue;   /* 3x does not fit 48 MB beside these textures */
             const uint64_t h = cnf_hash();
             cn_scene_skip(8); cnf_frame(&t, 390, 718, 40, scales[i], 1024, roll ? .6f : 0); cn_scene_skip(0);
             CHECK(cnf_hash() == h, "%.0fx %s: the blocks settled whole are the pixels' own light (%016llx, pixel by pixel %016llx)",
@@ -162,10 +222,19 @@ int main(void)
         int d = cnf_frame(&t, 390, 718, 40, 1, 1024, 0);
         CHECK(cnf_nf == 12864 && d > 6000 && d < cnf_nf, "six cups and thirty dice: %d faces, %d drawn (the rest turned away)", cnf_nf, d);
         uint64_t h = cnf_hash();
-        CHECK(h == 0x78fcf817e8be90f8ull, "the still table at 1x: %016llx", (unsigned long long)h);
+        /* re-pinned for package V1: the picture is the same bytes but at the pixels on a surface's edge, which the
+         * edges pass draws from four samples (the frame with the edges left out is the old golden, 78fcf817e8be90f8,
+         * and 0xb65b95f13c6d841a below; checked when the pin moved) */
+        CHECK(h == 0x658558ffc67caa06ull, "the still table at 1x: %016llx", (unsigned long long)h);
         d = cnf_frame(&t, 390, 718, 40, 1.5f, 1024, .6f);
         h = cnf_hash();
-        CHECK(h == 0xb65b95f13c6d841aull, "a throw's frame at 1.5x: %016llx", (unsigned long long)h);
+        CHECK(h == 0x2ffa90346b8d21d5ull, "a throw's frame at 1.5x: %016llx", (unsigned long long)h);
+        /* the edges left out: the old renderer's picture, byte for byte (the strips change no pixel) */
+        cn_scene_skip(16); cnf_frame(&t, 390, 718, 40, 1, 1024, 0); cn_scene_skip(0);
+        CHECK(cnf_hash() == 0x78fcf817e8be90f8ull, "the still table at 1x without the edges: the old golden (%016llx)", (unsigned long long)cnf_hash());
+        cn_scene_skip(16); cnf_frame(&t, 390, 718, 40, 1.5f, 1024, .6f); cn_scene_skip(0);
+        CHECK(cnf_hash() == 0xb65b95f13c6d841aull, "a throw's frame at 1.5x without the edges: the old golden (%016llx)", (unsigned long long)cnf_hash());
+        cnf_frame(&t, 390, 718, 40, 1.5f, 1024, .6f);
         /* drawing it again draws it the same: nothing carries from one frame to the next */
         cnf_frame(&t, 390, 718, 40, 1.5f, 1024, .6f);
         CHECK(cnf_hash() == h, "the same frame twice, the same picture");
@@ -178,7 +247,7 @@ int main(void)
         cnf_textures(&t, 1);
         cnf_frame(&t, 390, 718, 40, 1.5f, 1024, .6f);
         const uint64_t h = cnf_hash();
-        const uint32_t shaded = cn_scene_prof(0), walked = cn_scene_prof(1), texels = cn_scene_prof(2);
+        const uint32_t shaded = cn_scene_prof(0), walked = cn_scene_prof(1), texels = cn_scene_prof(2), edged = cn_scene_prof(4);
         const int counts[5] = { 2, 3, 7, 13, CN_SCENE_MAX_BANDS };
         for (int c = 0; c < 5; c++) {
             const int nb = counts[c];
@@ -188,8 +257,9 @@ int main(void)
             for (int pass = 0; pass < CN_SCENE_PASSES; pass++) for (int b = nb - 1; b >= 0; b--) cn_scene_band(pass, b, nb);
             CHECK(d > 6000 && cnf_hash() == h, "%d bands draw the one-thread picture (%016llx)", nb, (unsigned long long)cnf_hash());
             /* every row is walked once: bands that overlapped would walk the shared rows twice */
-            CHECK(cn_scene_prof(0) == shaded && cn_scene_prof(1) == walked && cn_scene_prof(2) == texels,
-                  "%d bands: %u fragments, %u walked, %u texels (one thread: %u, %u, %u)", nb, cn_scene_prof(0), cn_scene_prof(1), cn_scene_prof(2), shaded, walked, texels);
+            CHECK(cn_scene_prof(0) == shaded && cn_scene_prof(1) == walked && cn_scene_prof(2) == texels && cn_scene_prof(4) == edged && edged > 0,
+                  "%d bands: %u fragments, %u walked, %u texels, %u edge pixels (one thread: %u, %u, %u, %u)", nb, cn_scene_prof(0), cn_scene_prof(1), cn_scene_prof(2),
+                  cn_scene_prof(4), shaded, walked, texels, edged);
         }
         /* a band out of range, or before cn_scene_prepare, draws nothing */
         cnf_build(&t, 390, 718, 40, 1.5f, 1024, .6f);
@@ -202,14 +272,118 @@ int main(void)
         CHECK(cn_scene_prof(1) == 0, "bands out of range draw nothing (%u walked)", cn_scene_prof(1));
     }
 
+    TEST("the edges: a body's silhouette is smooth, and only its edge pixels change");
+    {
+        cn_scene_init(mem, ios); tx = cn_scene_tex_new(4, 4, 0); memset(cn_scene_tex_rgba(tx), 255, 4 * 4 * 4);
+        static uint8_t off[400 * 400 * 4];
+        const float scales[3] = { 1, 1.5f, 2 };
+        for (int i = 0; i < 3; i++) {
+            const float dpr = scales[i];
+            CHECK(square_frame(dpr, 17, 1, 2, 16) == 2, "%.1fx: the square, the edges left out", dpr);
+            const int npx = cn_scene_fb_w() * cn_scene_fb_h();
+            const float stair = square_steps(dpr);
+            memcpy(off, cn_scene_fb(), (size_t)npx * 4);
+            CHECK(square_frame(dpr, 17, 1, 2, 0) == 2, "%.1fx: the square, its edges drawn", dpr);
+            const float smooth = square_steps(dpr);
+            /* the side, turned 17 degrees, steps a pixel every three or so rows: drawn from the centres alone it strays
+             * up to half a pixel from its line; from four samples (coverage in quarters) under a quarter */
+            CHECK(stair > .4f && smooth < .25f, "%.1fx: the slanted side strays %.2f pixels from a line (centres alone %.2f)", dpr, smooth, stair);
+            const int changed = differ(off, cn_scene_fb(), npx);
+            CHECK(changed > 0 && (uint32_t)changed <= cn_scene_prof(4), "%.1fx: %d pixels changed, each an edge pixel (%u)", dpr, changed, cn_scene_prof(4));
+        }
+    }
+
+    TEST("the surfaces: one body's facets are never an edge; two bodies are");
+    {
+        cn_scene_init(mem, ios); tx = cn_scene_tex_new(4, 4, 0); memset(cn_scene_tex_rgba(tx), 255, 4 * 4 * 4);
+        /* the square as two triangles and as four (a fan from its middle): the same silhouette, the same edge pixels,
+         * however its inside is cut */
+        square_frame(2, 17, 1, 2, 0); const uint32_t two = cn_scene_prof(4);
+        square_frame(2, 17, 1, 4, 0); const uint32_t four = cn_scene_prof(4);
+        CHECK(two > 0 && two == four, "two facets or four: %u and %u edge pixels", two, four);
+        /* two squares of one texture, the second 10 up and over the first's corner: numbered apart, the line where the
+         * upper one crosses the lower is an edge too; numbered alike, it is one surface and it is not */
+        int ids[2][2] = { { 1, 2 }, { 1, 1 } };
+        uint32_t edge[2];
+        for (int k = 0; k < 2; k++) {
+            CHECK(cn_scene_begin(120, 120, 0, 2, 60, 60, 720, -.45f, -.55f, 1, 256, 0, 8, 4) > 0, "two squares begin");
+            float *V = cn_scene_verts(), *F = cn_scene_faces();
+            const float v[] = { 30, 30, 30, 0, 0, 1,  70, 30, 30, 0, 0, 1,  70, 70, 30, 0, 0, 1,  30, 70, 30, 0, 0, 1,
+                                50, 52, 40, 0, 0, 1,  90, 52, 40, 0, 0, 1,  90, 92, 40, 0, 0, 1,  50, 92, 40, 0, 0, 1 };
+            memcpy(V, v, sizeof v);
+            for (int q = 0; q < 2; q++) {
+                const float fl = (float)(CN_SCENE_F_CULL | CN_SCENE_F_CAST | CN_SCENE_F_RECEIVE | CN_SCENE_F_ID(ids[k][q])), b = (float)(q * 4);
+                const float f2[] = { b, b + 1, b + 2, 0, 0, 1, 0, 1, 1, 0, 0, 4, 3, 1, 0, fl,   b, b + 2, b + 3, 0, 0, 1, 1, 0, 1, 0, 0, 4, 3, 1, 0, fl };
+                memcpy(F + q * 2 * CN_SCENE_FF, f2, sizeof f2);
+            }
+            cn_scene_render(8, 4);
+            edge[k] = cn_scene_prof(4);
+        }
+        CHECK(edge[0] > edge[1] + 40, "where the upper square crosses the lower: %u edge pixels numbered apart, %u numbered alike", edge[0], edge[1]);
+    }
+
+    TEST("premultiplied: the straight picture times its alpha");
+    {
+        cn_scene_init(mem, ios);
+        CnfTex t;
+        cnf_textures(&t, 1);
+        static uint8_t st[585 * 1137 * 4];
+        cnf_frame(&t, 390, 718, 40, 1.5f, 1024, .6f);
+        const int npx = cn_scene_fb_w() * cn_scene_fb_h();
+        CHECK(npx <= 585 * 1137, "the frame fits the copy");
+        memcpy(st, cn_scene_fb(), (size_t)npx * 4);
+        cn_scene_premultiply(1);
+        cnf_frame(&t, 390, 718, 40, 1.5f, 1024, .6f);
+        cn_scene_premultiply(0);
+        const uint8_t *pm = cn_scene_fb();
+        /* every pixel's alpha is the straight one's, and each colour is the straight one's times it, rounded (an edge
+         * pixel's mean is taken in each form, so it may round a step the other way) */
+        int bad = 0, opaque = 0, same = 0, worst = 0;
+        for (int i = 0; i < npx; i++) {
+            const uint8_t *s = &st[i * 4], *p = &pm[i * 4];
+            if (s[3] != p[3]) { bad++; continue; }
+            for (int c = 0; c < 3; c++) {
+                int want = (s[c] * s[3] + 127) / 255, d = p[c] - want; if (d < 0) d = -d;
+                if (d > worst) worst = d;
+                bad += d > 1;
+            }
+            if (s[3] == 255) { opaque++; same += !memcmp(s, p, 4); }
+        }
+        CHECK(bad == 0 && worst <= 1, "%d pixels' alpha or colour not the straight one's times its alpha (worst %d)", bad, worst);
+        CHECK(opaque > 10000 && same == opaque, "an opaque pixel is the same bytes either way (%d of %d)", same, opaque);
+        cnf_frame(&t, 390, 718, 40, 1.5f, 1024, .6f);
+        CHECK(!memcmp(st, cn_scene_fb(), (size_t)npx * 4), "straight again: the straight picture");
+    }
+
+    TEST("the memory: a frame keeps its picture whole and a strip a band");
+    {
+        /* the stage's tallest drawer: 430 by 830 points and the 361 above it the far cups reach, beside the 12.2 MB
+         * texture set (DECISIONS I20); and the bench's six seats on 390 by 718 */
+        const size_t tex = (size_t)12800000;   /* 12.2 MB with the half-size copies */
+        const struct { int W, H, pad; } d[2] = { { 430, 830, 361 }, { 390, 718, 40 } };
+        const float scales[4] = { 1, 1.5f, 2, 3 };
+        for (int i = 0; i < 2; i++) for (int k = 0; k < 4; k++) {
+            const size_t b = cn_scene_frame_bytes(d[i].W, d[i].H, d[i].pad, scales[k], 1024, CNF_VCAP, CNF_FCAP);
+            printf("  %d by %d, %d above, at %.1fx: the frame %.1f MB, with the textures %.1f of 48 MB\n", d[i].W, d[i].H, d[i].pad, scales[k],
+                   b / 1048576.0, (b + tex) / 1048576.0);
+        }
+        const size_t tall2 = cn_scene_frame_bytes(430, 830, 361, 2, 1024, CNF_VCAP, CNF_FCAP);
+        CHECK(tall2 + tex <= CN_SCENE_ARENA_IOS, "430 by 830 and 361 above at 2x fits 48 MB beside the textures (%.1f MB)", (tall2 + tex) / 1048576.0);
+        /* a picture's bytes a pixel: the picture's 4, its surface's 1, its face's 2 and the contact dark's quarter; the
+         * strips and the faces do not grow with its height: a million pixels more is 7.25 MB more and a row's 8 (the
+         * renderer before package V1 kept 25 a pixel whole) */
+        const size_t a = cn_scene_frame_bytes(1000, 1000, 0, 1, 1024, 64, 64), b = cn_scene_frame_bytes(1000, 2000, 0, 1, 1024, 64, 64);
+        CHECK(b - a >= (size_t)7250000 && b - a < (size_t)7270000, "a million pixels more: %zu bytes more", b - a);
+    }
+
     TEST("a frame that does not fit fails cleanly");
     {
         cn_scene_init(mem, ios);
         CnfTex t;
         cnf_textures(&t, 1);
-        size_t need3 = cn_scene_frame_bytes(390, 718, 40, 3, 1024, CNF_VCAP, CNF_FCAP);
-        CHECK(need3 > cn_scene_room(), "3x with the textures is past 48 MB (%zu > %zu)", need3, cn_scene_room());
-        CHECK(cnf_frame(&t, 390, 718, 40, 3, 1024, 0) == -1, "3x does not begin");
+        size_t need3 = cn_scene_frame_bytes(430, 830, 361, 3, 1024, CNF_VCAP, CNF_FCAP);
+        CHECK(need3 > cn_scene_room(), "430 by 830 and 361 above at 3x is past 48 MB with the textures (%zu > %zu)", need3, cn_scene_room());
+        CHECK(cnf_frame(&t, 430, 830, 361, 3, 1024, 0) == -1, "it does not begin");
         CHECK(cn_scene_fb() == 0 && cn_scene_verts() == 0 && cn_scene_faces() == 0 && cn_scene_fb_w() == 0, "nothing of a frame is handed out");
         CHECK(cn_scene_render(10, 10) == -1, "and nothing renders");
         CHECK(cnf_frame(&t, 390, 718, 40, 1, 1024, 0) > 0, "a 1x frame still draws after it");

@@ -11,8 +11,10 @@
  * seat's own textures and with one set shared.
  *
  *   ./build/cn_scene_bench                    the tables above
- *   ./build/cn_scene_bench loop 2 20 [bands]  2x frames for 20 seconds, for `sample`
+ *   ./build/cn_scene_bench loop 2 20 [bands] [skip]  2x frames for 20 seconds, for `sample` (skip: cn_scene_skip's mask)
  *   ./build/cn_scene_bench passes 2           each pass's share of a 2x frame, one thread
+ *   ./build/cn_scene_bench cpu 2 200 [skip]   the thread's CPU time a 2x frame: least and median of 200
+ *   ./build/cn_scene_bench split 2 200        the same, each part of the frame (prepare, each pass) apart
  *   ./build/cn_scene_bench ppm 2 out.ppm      one 2x frame as a picture (over brown)
  *
  * Not a test: it asserts nothing and is not in `make run` (make bench). */
@@ -32,6 +34,7 @@
 
 static double now_ms(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec * 1e3 + t.tv_nsec / 1e6; }
 static int cmp_d(const void *a, const void *b) { double x = *(const double *)a, y = *(const double *)b; return x < y ? -1 : x > y; }
+static double cpu_ms(void) { struct timespec t; clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t); return t.tv_sec * 1e3 + t.tv_nsec / 1e6; }
 
 /* the frame in nbands bands, each pass's bands at once; one band is cn_scene_render */
 static int g_pass, g_bands;
@@ -75,22 +78,64 @@ int main(int argc, char **argv)
     CnfTex t;
     if (cnf_textures(&t, 0)) { printf("no room for the textures\n"); return 1; }
     size_t tex_own = big - cn_scene_room();
+    if (argc > 3 && !strcmp(argv[1], "cpu")) {
+        /* the thread's CPU time a frame, one thread, still and thrown frames alternating: the least and the median
+         * of n (the least is what a loaded machine leaves alone) */
+        float dpr = (float)atof(argv[2]); int n = atoi(argv[3]); if (n > 1000) n = 1000;
+        if (argc > 4) cn_scene_skip(atoi(argv[4]));
+        static double ms[1000];
+        for (int i = 0; i < n; i++) {
+            double t0 = cpu_ms();
+            cnf_build(&t, BOARD_W, BOARD_H, BOARD_PAD, dpr, SHADOW_RES, (float)(i % 2) * .5f); render_bands(1);
+            ms[i] = cpu_ms() - t0;
+        }
+        qsort(ms, (size_t)n, sizeof ms[0], cmp_d);
+        printf("%.1fx, %d frames, thread CPU: least %.2f ms, median %.2f ms\n", dpr, n, ms[0], ms[n / 2]);
+        return 0;
+    }
+    if (argc > 3 && !strcmp(argv[1], "split")) {
+        /* the thread's CPU time of each part of a frame, the frame drawn as cn_scene_render draws it (the shadow map
+         * as one band, every other pass in CN_SCENE_MAX_BANDS bands in turn): the build, cn_scene_prepare, then each pass; the least of n each */
+        float dpr = (float)atof(argv[2]); int n = atoi(argv[3]); if (n > 1000) n = 1000;
+        enum { NP = 2 + CN_SCENE_PASSES };
+        static double ms[NP][1000];
+        for (int i = 0; i < n; i++) {
+            double t0 = cpu_ms();
+            cnf_build(&t, BOARD_W, BOARD_H, BOARD_PAD, dpr, SHADOW_RES, (float)(i % 2) * .5f);
+            double t1 = cpu_ms(); cn_scene_prepare(cnf_nv, cnf_nf); double t2 = cpu_ms();
+            ms[0][i] = t1 - t0; ms[1][i] = t2 - t1;
+            for (int p = 0; p < CN_SCENE_PASSES; p++) {
+                double a = cpu_ms();
+                if (p == CN_SCENE_PASS_SHADOW) cn_scene_band(p, 0, 1);
+                else for (int b = 0; b < CN_SCENE_MAX_BANDS; b++) cn_scene_band(p, b, CN_SCENE_MAX_BANDS);
+                ms[2 + p][i] = cpu_ms() - a;
+            }
+        }
+        static const char *name[NP] = { "build", "prepare", "shadow map", "picture and shade", "edges", "commit" };
+        printf("%.1fx, %d frames, thread CPU, least:", dpr, n);
+        for (int p = 0; p < NP; p++) { qsort(ms[p], (size_t)n, sizeof ms[p][0], cmp_d); printf(" %s %.2f ms%s", name[p], ms[p][0], p + 1 < NP ? ";" : "\n"); }
+        printf("  edge pixels %u, edge samples shaded where they lie %u\n", cn_scene_prof(4), cn_scene_prof(5));
+        return 0;
+    }
     if (argc > 3 && !strcmp(argv[1], "loop")) {
         float dpr = (float)atof(argv[2]); double secs = atof(argv[3]), t0 = now_ms(); int n = 0, nb = argc > 4 ? atoi(argv[4]) : 1;
+        if (argc > 5) cn_scene_skip(atoi(argv[5]));
         while (now_ms() - t0 < secs * 1000) { cnf_build(&t, BOARD_W, BOARD_H, BOARD_PAD, dpr, SHADOW_RES, (float)(n % 10) / 10.f); render_bands(nb); n++; }
         printf("%d frames at %.1fx in %d bands in %.1f s: %.2f ms a frame\n", n, dpr, nb, secs, (now_ms() - t0) / n);
         return 0;
     }
     if (argc > 2 && !strcmp(argv[1], "passes")) {
-        /* each pass's share, by leaving passes out (cn_scene_skip): 1 the shadow map, 2 the picture, 4 the shade */
-        float dpr = (float)atof(argv[2]); double m[8], p;
+        /* each pass's share, by leaving passes out (cn_scene_skip): 1 the shadow map, 2 the picture, 4 the shade,
+         * 16 the edges (the picture's share is with the edges left out: without a picture there are no edges) */
+        float dpr = (float)atof(argv[2]); double m[32], p;
         cnf_frame(&t, BOARD_W, BOARD_H, BOARD_PAD, dpr, SHADOW_RES, 0);
-        const int masks[5] = { 0, 1, 2, 4, 7 };
-        for (int k = 0; k < 5; k++) { cn_scene_skip(masks[k]); run(&t, dpr, 60, 0, 1, &m[masks[k]], &p); }
+        const int masks[6] = { 0, 1, 16, 18, 20, 23 };
+        for (int k = 0; k < 6; k++) { cn_scene_skip(masks[k]); run(&t, dpr, 60, 0, 1, &m[masks[k]], &p); }
         cn_scene_skip(0); cnf_frame(&t, BOARD_W, BOARD_H, BOARD_PAD, dpr, SHADOW_RES, 0);
-        printf("%.1fx: whole %.2f ms; the clears and the build %.2f; the shadow map %.2f; the picture %.2f; the shade %.2f\n", dpr,
-               m[0], m[7], m[0] - m[1], m[0] - m[2], m[0] - m[4]);
-        printf("  fragments shaded %u, span pixels walked %u, map texels %u\n", cn_scene_prof(0), cn_scene_prof(1), cn_scene_prof(2));
+        printf("%.1fx: whole %.2f ms; the clears and the build %.2f; the shadow map %.2f; the picture %.2f; the shade %.2f; the edges %.2f\n", dpr,
+               m[0], m[23], m[0] - m[1], m[16] - m[18], m[16] - m[20], m[0] - m[16]);
+        printf("  fragments shaded %u, span pixels walked %u, map texels %u, edge pixels %u, edge samples shaded %u\n", cn_scene_prof(0), cn_scene_prof(1), cn_scene_prof(2),
+               cn_scene_prof(4), cn_scene_prof(5));
         return 0;
     }
     if (argc > 3 && !strcmp(argv[1], "ppm")) {
