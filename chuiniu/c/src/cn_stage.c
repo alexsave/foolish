@@ -6,6 +6,7 @@
 
 /* the renderer's format is cn_geom's, written there as numbers */
 _Static_assert(CN_GEOM_VF == CN_SCENE_VF && CN_GEOM_FF == CN_SCENE_FF, "one vertex and face format");
+_Static_assert(CN_STAGE_ARENA == CN_SCENE_ARENA_IOS, "the host's arena is the renderer's budget");
 _Static_assert(CN_STAGE_PASSES == CN_SCENE_PASSES && CN_STAGE_BANDS <= CN_SCENE_MAX_BANDS, "the bands");
 /* THE SHAKE BEAT LIES INSIDE THE ROLL (I21): the kernel's SHAKE beat is shorter
  * than the shortest shake a throw has (cn_lay_throws: 1.5 s for a far seat; mine
@@ -274,9 +275,10 @@ static void hud_cam(CnStageHud *h, const CnCam *c)
 static void timeline(CnStage *st)
 {
     CnStageHud *h = &st->hud;
-    h->roll_at_ms = st->in.roll_at_ms;
     h->rest_ms = h->total_ms = 0;
-    if (st->in.roll_at_ms == CN_STAGE_NO_ROLL || !st->nthrow) { h->roll_at_ms = CN_STAGE_NO_ROLL; return; }
+    h->rolls = 0; h->roll_at_ms = 0;
+    if (st->in.roll_at_ms == CN_STAGE_NO_ROLL || !st->nthrow) { st->in.roll_at_ms = CN_STAGE_NO_ROLL; return; }
+    h->rolls = 1; h->roll_at_ms = st->in.roll_at_ms;
     uint32_t total = st->in.roll_at_ms + CN_T_SHAKE;
     for (int j = 0; j < st->nthrow; j++) {
         const CnStageThrow *T = &st->thr[j];
@@ -485,15 +487,15 @@ const CnObj *cn_stage_objects(CnStage *st, uint32_t t_ms, float peek, float lift
 
 static int rolling_at(const CnStage *st, uint32_t t)
 {
-    return st->hud.roll_at_ms != CN_STAGE_NO_ROLL && t >= st->hud.roll_at_ms && t < st->hud.total_ms;
+    return st->hud.rolls && t >= st->hud.roll_at_ms && t < st->hud.total_ms;
 }
 
 int cn_stage_done(const CnStage *st, uint32_t t_ms)
 {
-    return st->begun && (st->hud.roll_at_ms == CN_STAGE_NO_ROLL || t_ms >= st->hud.total_ms);
+    return st->begun && (!st->hud.rolls || t_ms >= st->hud.total_ms);
 }
 
-uint32_t cn_stage_total_ms(const CnStage *st) { return st->begun && st->hud.roll_at_ms != CN_STAGE_NO_ROLL ? st->hud.total_ms : 0; }
+uint32_t cn_stage_total_ms(const CnStage *st) { return st->begun && st->hud.rolls ? st->hud.total_ms : 0; }
 
 /* ---- the frame ----------------------------------------------------------------------------- */
 

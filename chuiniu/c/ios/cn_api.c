@@ -7,6 +7,8 @@
 #include "../src/cn_say.h"
 #include "../src/cn_view.h"
 #include "../src/cn_beats.h"
+#include "../src/cn_stage.h"
+#include "../src/cn_scene.h"
 #include "../i18n/keys.h"
 #include <stddef.h>
 #include <string.h>
@@ -533,3 +535,102 @@ int cn_api_common(const char *a, const char *b)
     if (cn_msg_text_decode(a, &S.other) || cn_msg_text_decode(b, &S.other2)) return -1;
     return cn_common_moves(&S.other, &S.other2);
 }
+
+/* ---- the stage ------------------------------------------------------------------------- */
+
+/* ONE STAGE A PROCESS: the renderer is one (cn_scene.h), so its handle is too */
+static CnStage STAGE;
+static int stage_inited;
+
+int cn_api_stage_init(void *arena, size_t bytes, const uint8_t *pack, size_t pack_len)
+{
+    int e = cn_stage_init(&STAGE, arena, bytes, pack, pack_len);
+    stage_inited = e == 0;
+    return e;
+}
+
+void cn_api_stage_purge(void) { if (stage_inited) cn_stage_purge(&STAGE); }
+
+int cn_api_stage_attach(void *arena, size_t bytes) { return stage_inited ? cn_stage_attach(&STAGE, arena, bytes) : CN_STAGE_E_ARENA; }
+
+/* the current plan's beat of `kind`, or -1 */
+static int beat_of(int kind)
+{
+    if (!S.beats_ok) return -1;
+    for (int i = 0; i < S.beats.n; i++) if (S.beats.beat[i].kind == kind) return i;
+    return -1;
+}
+
+/* THE STAGE'S INPUT IS THE RESIDENT GAME'S (I22): the host names the screen,
+ * the kernel fills the table. My dice are the view's (sorted, so the HUD's die
+ * places line up with CnView.my_dice and shown), a reveal's are the newest
+ * call's, and the throw's seed is the round's. */
+const void *cn_api_stage_begin(int kind, float w, float h, float scale, int roll)
+{
+    if (!stage_inited || !started() || S.me < 0) return 0;
+    const CnGame *g = &S.m.game;
+    CnView v;
+    cn_view(g, S.me, &v);
+    CnStageIn in;
+    memset(&in, 0, sizeof in);
+    in.kind = (uint8_t)kind; in.seats = g->n; in.me = (uint8_t)S.me;
+    in.turn = g->turn != CN_SEAT_NONE ? g->turn : (uint8_t)((S.me + 1) % g->n);
+    in.w = w; in.h = h; in.scale = scale;
+    in.roll_at_ms = CN_STAGE_NO_ROLL;
+    int round = g->round;
+    if (kind == CN_STAGE_REVEAL) {
+        if (!v.revealed) return 0;
+        in.turn = (uint8_t)((S.me + 1) % g->n);
+        for (int s = 0; s < g->n; s++) {
+            in.dice[s] = v.shown_n[s];
+            if (!v.shown_n[s]) in.out_mask |= (uint8_t)(1 << s);
+            memcpy(&in.faces[s * CN_STAGE_DICE], &v.shown[s * CN_START_DICE], v.shown_n[s]);
+        }
+        in.known_mask = (uint8_t)((1 << g->n) - 1);
+        round = g->phase == CN_PH_OVER ? g->round : g->round - 1;
+    } else {
+        if (kind == CN_STAGE_TABLE && g->phase == CN_PH_OVER) return 0;
+        for (int s = 0; s < g->n; s++) {
+            in.dice[s] = g->dice_n[s];
+            if (!g->dice_n[s]) in.out_mask |= (uint8_t)(1 << s);
+        }
+        if (kind == CN_STAGE_TABLE) {
+            memcpy(&in.faces[S.me * CN_STAGE_DICE], v.my_dice, v.my_n);
+            in.known_mask = (uint8_t)(1 << S.me);
+            if (roll) { int b = beat_of(CN_BK_SHAKE); in.roll_at_ms = b >= 0 ? S.beats.beat[b].start_ms : 0; }
+        }
+    }
+    in.seed = cn_stage_round_seed(g->seed, round < 0 ? 0 : round);
+    return cn_stage_begin(&STAGE, &in);
+}
+
+/* a reveal's cups lift with the current plan's LIFT beat; with none, they are up */
+static float lift_at(uint32_t now_ms)
+{
+    int b = beat_of(CN_BK_LIFT);
+    if (b < 0) return 1;
+    CnBeatFrame f;
+    cn_beats_frame(&S.beats, now_ms, &f);
+    return f.prog[b];
+}
+
+int cn_api_stage_prepare(uint32_t now_ms, float peek)
+{
+    return stage_inited && cn_stage_prepare(&STAGE, now_ms, peek, lift_at(now_ms));
+}
+
+void cn_api_stage_band(int pass, int band, int nbands) { if (stage_inited) cn_stage_band(&STAGE, pass, band, nbands); }
+
+const uint8_t *cn_api_stage_pixels(void) { return stage_inited ? cn_stage_finish(&STAGE) : 0; }
+
+const uint8_t *cn_api_stage_frame(uint32_t now_ms, float peek)
+{
+    if (!stage_inited) return 0;
+    return cn_stage_frame(&STAGE, now_ms, peek, lift_at(now_ms), 0, 0);
+}
+
+const void *cn_api_stage_shot(void) { return stage_inited ? (const void *)cn_stage_shot(&STAGE) : 0; }
+
+int cn_api_stage_done(uint32_t now_ms) { return stage_inited && cn_stage_done(&STAGE, now_ms); }
+
+float cn_api_peek_ease(float t) { return cn_cam_peek_ease(t); }

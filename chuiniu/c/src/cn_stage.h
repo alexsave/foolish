@@ -70,6 +70,7 @@ enum {
 #define CN_STAGE_PASSES       3             /* cn_scene's CN_SCENE_PASSES                           */
 #define CN_STAGE_BANDS        16            /* the bands a pass is cut into (package A: 6.8 ms at 2x) */
 #define CN_STAGE_CROWNS       CN_STAGE_SEATS
+#define CN_STAGE_ARENA        50331648      /* the arena a host hands over: CN_SCENE_ARENA_IOS, 48 MB */
 
 /* THE INPUT: the table as the kernel holds it (the bridge fills it from the
  * resident game; a test fills it by hand). */
@@ -104,7 +105,9 @@ typedef struct {
     uint8_t  has_plate, has_shelf;
     uint8_t  out_mask;
     uint8_t  name_how[CN_STAGE_SEATS];  /* CN_NAME_* (cn_lay.h)                               */
-    uint8_t  pad0[2];
+    uint8_t  rolls;                     /* 1: a roll plays (roll_at_ms .. total_ms); 0: still,
+                                           and the three times are 0                         */
+    uint8_t  pad0;
     float    w, h;                      /* the drawer (300 by 195 for a bubble)               */
     float    board[4];                  /* x y w h, flat                                      */
     float    canvas[4];                 /* where the still picture goes, x y w h, flat (a frame
@@ -128,7 +131,7 @@ typedef struct {
     float    hom[9];                    /* the homography, row-major                          */
     float    peek_target;               /* my cup's full tip, radians                         */
     float    scale_still, scale_roll;   /* the scales asked for, clamped                      */
-    uint32_t roll_at_ms;                /* CN_STAGE_NO_ROLL when nothing throws               */
+    uint32_t roll_at_ms;                /* when the roll starts                               */
     uint32_t rest_ms;                   /* my dice at rest: no move is staged before it        */
     uint32_t total_ms;                  /* every throw at rest and the SHAKE beat over         */
 } CnStageHud;

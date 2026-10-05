@@ -11,6 +11,7 @@
 #include "cn_api_layout.h"
 #include "../i18n/keys.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static int fails, checks;
@@ -43,7 +44,74 @@ static void send(void)
     cn_api_commit();
 }
 
-int main(void)
+static uint32_t fnv(const uint8_t *b, size_t n)
+{
+    uint32_t h = 2166136261u;
+    for (size_t i = 0; i < n; i++) { h ^= b[i]; h *= 16777619u; }
+    return h;
+}
+
+/* THE STAGE through the bridge: Bo's phone right after his call (the resident's
+ * plan is CALL, LIFT, COUNT, DROP, SHAKE) */
+static void stage(const char *pack_path)
+{
+    OK(cn_api_stage_begin(CN_STAGE_TABLE, 390, 718, 2, 0) == 0 && cn_api_stage_frame(0, 0) == 0, "no stage before init");
+    FILE *f = pack_path ? fopen(pack_path, "rb") : 0;
+    OK(f != 0, "the texture pack (make tex)");
+    if (!f) return;
+    static uint8_t pack[1 << 20];
+    size_t pn = fread(pack, 1, sizeof pack, f);
+    fclose(f);
+    const size_t AN = (size_t)48 << 20;
+    uint8_t *arena = malloc(AN);
+    OK(cn_api_stage_init(arena, AN, pack, 7) < 0, "a cut pack is refused");
+    OK(cn_api_stage_init(arena, AN, pack, pn) == 0, "the stage takes the arena and the pack");
+
+    const CnStageHud *h = (const CnStageHud *)cn_api_stage_begin(CN_STAGE_REVEAL, 390, 718, 2, 0);
+    OK(h && h->ok && h->kind == CN_STAGE_REVEAL && h->me == 1 && h->has_shelf, "the reveal begins for Bo");
+    const CnView *v = (const CnView *)cn_api_view(CN_API_ME);
+    int placed = 0;
+    for (int i = 0; h && i < 10; i++) placed += h->die_x[i] != 0 && h->die_y[i] != 0;
+    OK(placed == v->shown_n[0] + v->shown_n[1], "every shown die has its place on the glass");
+    const CnBeats *b = (const CnBeats *)cn_api_beats_now();
+    const uint32_t lift0 = b->beat[1].start_ms, lift1 = lift0 + b->beat[1].dur_ms;
+    const uint8_t *px = cn_api_stage_frame(lift0, 0);
+    const CnStageShot *sh = (const CnStageShot *)cn_api_stage_shot();
+    const uint32_t down = px ? fnv(px, (size_t)sh->w * sh->h * 4) : 0;
+    px = cn_api_stage_frame(lift1, 0);
+    OK(px && fnv(px, (size_t)sh->w * sh->h * 4) != down, "the cups lift with the LIFT beat");
+
+    /* the next round's table, thrown from the plan's SHAKE beat */
+    h = (const CnStageHud *)cn_api_stage_begin(CN_STAGE_TABLE, 390, 718, 2, 1);
+    OK(h && h->rolls && h->roll_at_ms == b->beat[4].start_ms && h->rest_ms > h->roll_at_ms && h->total_ms >= h->rest_ms, "the roll starts with the SHAKE beat");
+    OK(h && !cn_api_stage_done(h->total_ms - 1) && cn_api_stage_done(h->total_ms), "done at the total");
+    OK(cn_api_stage_prepare(h->roll_at_ms + 900, 0) == 1, "prepared");
+    for (int pass = 0; pass < CN_STAGE_PASSES; pass++)
+        for (int i = CN_STAGE_BANDS - 1; i >= 0; i--) cn_api_stage_band(pass, i, CN_STAGE_BANDS);
+    px = cn_api_stage_pixels();
+    OK(sh->ok && sh->rolling && sh->scale == 1.5f, "a throw frame at 1.5");
+    const uint32_t banded = px ? fnv(px, (size_t)sh->w * sh->h * 4) : 0;
+    px = cn_api_stage_frame(h->roll_at_ms + 900, 0);
+    OK(px && fnv(px, (size_t)sh->w * sh->h * 4) == banded, "16 bands are the one thread's bytes");
+
+    /* purge, free, a new arena: the same bytes */
+    cn_api_stage_purge();
+    OK(cn_api_stage_frame(h->roll_at_ms + 900, 0) == 0, "purged: nothing drawn");
+    free(arena);
+    arena = malloc(AN);
+    OK(cn_api_stage_attach(arena, AN) == 0, "attached again");
+    px = cn_api_stage_frame(h->roll_at_ms + 900, 0);
+    OK(px && fnv(px, (size_t)sh->w * sh->h * 4) == banded, "the same bytes after a purge");
+
+    h = (const CnStageHud *)cn_api_stage_begin(CN_STAGE_BUBBLE, 0, 0, 3, 0);
+    px = cn_api_stage_frame(0, 0);
+    OK(h && px && sh->w == 600 && sh->h == 390 && h->w == CN_STAGE_BUBBLE_W, "the bubble, 300 by 195 at 2x");
+    OK(cn_api_peek_ease(0) == 0 && cn_api_peek_ease(1) == 1, "the peek's ease");
+    cn_api_stage_purge();
+    free(arena);
+}
+
+int main(int argc, char **argv)
 {
     OK(cn_api_layout_hash() == 0, "an unstamped build reports hash 0");
     OK(cn_api_name_verdict((const uint8_t *)"Alex", 4) == CN_NAME_OK, "a name");
@@ -114,6 +182,7 @@ int main(void)
     b = (const CnBeats *)cn_api_beats(1, 2);
     OK(b && b->n == 5 && b->beat[4].kind == CN_BK_SHAKE, "CALL, LIFT, COUNT, DROP, SHAKE");
     OK(cn_api_plan(-1, 99) == 0, "a bad range");
+    stage(argc > 1 ? argv[1] : 0);
 
     /* two messages */
     OK(cn_api_prefer(prev, link) > 0 && cn_api_prefer(link, prev) < 0 && cn_api_prefer(link, link) == 0, "prefer");

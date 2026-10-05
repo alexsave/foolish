@@ -187,7 +187,7 @@ static void test_hand(void)
         const CnStageHud *h = cn_stage_begin(&ST, &in);
         if (!h) { bad++; continue; }
         int n;
-        const CnObj *o = cn_stage_objects(&ST, h->roll_at_ms == CN_STAGE_NO_ROLL ? 0 : h->total_ms, 0, 0, &n);
+        const CnObj *o = cn_stage_objects(&ST, h->rolls ? h->total_ms : 0, 0, 0, &n);
         int k[6] = { 0 };
         for (int i = 0; i < n; i++) {
             if (o[i].kind != CN_OBJ_DIE) continue;
@@ -356,7 +356,7 @@ static void test_clock(void)
     CnStageIn in = table_in(390, 718, 4, 1, 0, CN_STAGE_TABLE);
     in.roll_at_ms = 1500;
     const CnStageHud *h = cn_stage_begin(&ST, &in);
-    CHECK(h && h->roll_at_ms == 1500 && h->total_ms >= 1500 + CN_T_SHAKE, "total %u is past the SHAKE beat", h ? h->total_ms : 0);
+    CHECK(h && h->rolls && h->roll_at_ms == 1500 && h->total_ms >= 1500 + CN_T_SHAKE, "total %u is past the SHAKE beat", h ? h->total_ms : 0);
     CHECK(h && h->rest_ms > 1500 + CN_T_SHAKE && h->rest_ms <= h->total_ms, "my dice rest at %u, inside the roll", h ? h->rest_ms : 0);
     CHECK(h && cn_stage_total_ms(&ST) == h->total_ms, "cn_stage_total_ms");
     CHECK(h && !cn_stage_done(&ST, h->total_ms - 1) && cn_stage_done(&ST, h->total_ms), "done exactly at the total");
@@ -373,7 +373,7 @@ static void test_clock(void)
     /* no roll: the dice at rest from the first instant, done at once */
     in.roll_at_ms = CN_STAGE_NO_ROLL;
     h = cn_stage_begin(&ST, &in);
-    CHECK(h && h->roll_at_ms == CN_STAGE_NO_ROLL && cn_stage_done(&ST, 0) && cn_stage_total_ms(&ST) == 0, "no roll: done at 0");
+    CHECK(h && !h->rolls && h->roll_at_ms == 0 && h->total_ms == 0 && cn_stage_done(&ST, 0) && cn_stage_total_ms(&ST) == 0, "no roll: done at 0");
     /* the refusals */
     CnStageIn bad = in;
     bad.seats = 7;

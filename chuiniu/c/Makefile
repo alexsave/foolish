@@ -110,7 +110,7 @@ run: $(addprefix build/,$(TESTS)) build/check_test build/text_util_test build/wi
 	./build/cn_cam_test
 	./build/cn_lay_test
 	./build/cn_stage_test $(TEX_PACK)
-	./build/ios_smoke
+	./build/ios_smoke build/cn_tex.pack
 
 # THE RENDERER'S SPEED (not a test, not in `run`): a six-seat frame at 1x, 2x
 # and 3x, at -O2 as the iOS library builds it; `./build/cn_scene_bench loop 2 20`
@@ -163,7 +163,7 @@ asan: $(addprefix build/asan_,$(TESTS)) build/asan_check_test build/asan_text_ut
 	./build/asan_cn_cam_test
 	./build/asan_cn_lay_test
 	./build/asan_cn_stage_test $(TEX_PACK)
-	./build/asan_ios_smoke
+	./build/asan_ios_smoke build/cn_tex.pack
 
 # THE SAME FILES FOR wasm32, freestanding (-nostdlib, shared/c/wasm's libc):
 # the proof that nothing here reaches past memcpy / memset / memcmp / strlen /
@@ -231,8 +231,8 @@ build/ios_smoke: $(IOS_SRC) $(IOS_HDR) ios/cn_api_smoke.c | build
 build/asan_ios_smoke: $(IOS_SRC) $(IOS_HDR) ios/cn_api_smoke.c | build
 	$(CC) $(ASAN_FLAGS) -Iios/include $(IOS_SRC) ios/cn_api_smoke.c -lm -o $@
 
-ios-smoke: build/ios_smoke
-	./build/ios_smoke
+ios-smoke: build/ios_smoke tex
+	./build/ios_smoke build/cn_tex.pack
 
 # THE GENERATED SWIFT. Swift never learns a byte layout: every struct
 # cn_api.h hands over is read through readers shared/tools/structgen writes
@@ -285,7 +285,7 @@ datagen: $(DATAGEN) i18n/keys.h i18n/strings_en.c | build
 # triple, the kernel compiled for it and stamped with that layout's hash, and
 # a Swift program that drives the bridge through them (ios/cn_api_smoke.swift).
 SWIFT_TRIPLE = $(shell swiftc -print-target-info 2>/dev/null | sed -n 's/.*"unversionedTriple": *"\([^"]*\)".*/\1/p' | head -1)
-swift-smoke: $(STRUCTGEN) datagen | build
+swift-smoke: $(STRUCTGEN) datagen tex | build
 	@rm -rf build/swift && mkdir -p build/swift/obj
 	@$(STRUCTGEN) --cwd . $(SG_ARGS) --build 'host=$(strip $(IOS_CFLAGS))' --target $(SWIFT_TRIPLE) \
 	  --swift build/swift/ChuiniuKernel.swift --print-hash > build/swift/hash
@@ -294,7 +294,7 @@ swift-smoke: $(STRUCTGEN) datagen | build
 	done
 	swiftc -parse-as-library -import-objc-header ios/include/cn_api.h build/swift/ChuiniuKernel.swift \
 	  $(GEN)/i18n/*.swift ios/cn_api_smoke.swift build/swift/obj/*.o -o build/swift/smoke
-	./build/swift/smoke
+	./build/swift/smoke build/cn_tex.pack
 
 include ../../shared/tools/ios_xcframework.mk
 

@@ -39,6 +39,7 @@
 #ifndef CN_API_H
 #define CN_API_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 /* The layout the generated readers must have been generated for: equal to
@@ -204,5 +205,57 @@ int  cn_api_prefer(const char *mine, const char *tapped);
 int  cn_api_same_game(const char *a, const char *b);
 /* How many moves two chains of one game share. -1 if either does not read. */
 int  cn_api_common(const char *a, const char *b);
+
+/* ---- the stage: the table's pixels (cn_stage.h) ---------------------------------
+ *
+ * THE KERNEL DRAWS THE TABLE. The host hands over one block of memory (the
+ * renderer's arena: CN_SCENE_ARENA_IOS, 48 MB) and the texture pack's bytes
+ * (cn_tex.pack, which must outlive the stage), begins a screen, and asks for
+ * frames; every place on it (the cups, the names, the plate, the shelf, my
+ * cup's tap target, the camera's turn) comes back in a CnStageHud read through
+ * the generated reader (readCnStageHud), and every frame's size in a
+ * CnStageShot (readCnStageShot). ONE STAGE A PROCESS, static here.
+ *
+ * A FRAME ON SEVERAL THREADS: cn_api_stage_prepare, then for each pass 0 ..
+ * CN_STAGE_PASSES - 1 in order, cn_api_stage_band(pass, i, CN_STAGE_BANDS) for
+ * every i at once (DispatchQueue.concurrentPerform), then cn_api_stage_pixels:
+ * the shot's w by h RGBA, straight alpha, valid until the next prepare. The
+ * picture goes at the shot's canvas (flat points, turned with the planks by the
+ * HUD's ca); the plate and the shelf stay flat.
+ *
+ * THE CLOCK is the one cn_api_beats_frame is sampled on: a reveal's cups lift
+ * with the current plan's LIFT beat, and a table begun with `roll` throws from
+ * the plan's SHAKE beat (from 0 when the plan has none). Stage nothing before
+ * the HUD's rest_ms (my dice at rest). */
+
+/* The arena and the pack. 0, a negative CN_TEX_E* (the pack), or
+ * CN_STAGE_E_ARENA. */
+int  cn_api_stage_init(void *arena, size_t bytes, const uint8_t *pack, size_t pack_len);
+/* A memory warning: the stage lets go of the arena (free it after this);
+ * frames draw nothing until cn_api_stage_attach gives one back, and then the
+ * same bytes as before. */
+void cn_api_stage_purge(void);
+int  cn_api_stage_attach(void *arena, size_t bytes);
+/* Begin a screen of the resident game for me: CN_STAGE_TABLE (the committed
+ * round; `roll` 1 throws it), CN_STAGE_REVEAL (the newest call's dice where
+ * that round's throw left them) or CN_STAGE_BUBBLE (300 by 195). The drawer is
+ * w by h points, the device `scale` pixels a point (clamped: 1.5 while a throw
+ * moves, 2 still). CnStageHud, or NULL (no game, no seat, no call to reveal, a
+ * finished game's table). */
+const void *cn_api_stage_begin(int kind, float w, float h, float scale, int roll);
+/* The frame at now_ms with my cup tipped `peek` (0 shut .. 1 the HUD's
+ * peek_target; ease it with cn_api_peek_ease over CN_PEEK_MS). 1, or 0 when
+ * nothing can be drawn. */
+int  cn_api_stage_prepare(uint32_t now_ms, float peek);
+void cn_api_stage_band(int pass, int band, int nbands);
+const uint8_t *cn_api_stage_pixels(void);
+/* prepare, every band on this thread, the pixels */
+const uint8_t *cn_api_stage_frame(uint32_t now_ms, float peek);
+/* CnStageShot of the last frame. */
+const void *cn_api_stage_shot(void);
+/* Everything at rest at now_ms (every throw, the SHAKE beat)? */
+int  cn_api_stage_done(uint32_t now_ms);
+/* The peek's tween: the fraction of the tip at t (0..1 of CN_PEEK_MS). */
+float cn_api_peek_ease(float t);
 
 #endif
