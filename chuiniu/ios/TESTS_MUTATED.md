@@ -130,3 +130,7 @@ The conversation (`ChuiniuMessages/MessagesViewController.swift`) has no test ta
 The screens and the conversation were played inside Messages on the real kernel, a round and a call step by step and a whole game to a winner (`chuiniu/docs/SIM_VERIFICATION.md`); that is looked at, not asserted.
 `RevealScreen`'s use of the kernel's frame (I10) has no test of its own; `revealMotion` is asserted only at 0 ms (cups down) and at 60 s (done).
 `StageUIView`'s paint (the planks, the names, the canvas layer) is looked at on the simulator, not asserted, beyond the canvas frame in `testAViewWithNoSizeNeverAsksForAFrame`.
+
+## Package Y (every bubble is one line)
+
+Its rows are in `chuiniu/c/docs_pkgY.md`, "Mutation checks": every test of `BubbleLineTests.swift` and the new `cn_say_test.c` test went red for its own assertion.
