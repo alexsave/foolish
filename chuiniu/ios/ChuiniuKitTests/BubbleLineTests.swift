@@ -146,7 +146,7 @@ final class BubbleLineTests: XCTestCase {
         XCTAssertEqual(me.adoptBubble(start), 0)
         let stage = KernelSeam.stage()
         defer { stage.purge() }
-        let hud = try XCTUnwrap(stage.begin(.bubble, drawer: BubbleSnapshot.size, scale: 1, roll: false))
+        let hud = try XCTUnwrap(stage.begin(.bubble, drawer: BubbleSnapshot.size, scale: 1))
         return hud.plateRect
     }
 
