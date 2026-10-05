@@ -115,6 +115,20 @@ static void test_layout(void)
         /* the hit ellipse is round my cup on the glass: its centre maps from near my cup's flat place */
         CHECK(h->hit[2] > h->my_r * .8 && h->hit[3] > h->my_r * .8 && near(h->hit[0], h->origin_x, 1), "%dx%d mine %d: the hit ellipse (%.1f %.1f %.1f %.1f)",
               g->W, g->H, g->mine, h->hit[0], h->hit[1], h->hit[2], h->hit[3]);
+        /* ...and on the glass: the crown's top edge, where a finger sees it after the turn, is
+         * inside it, and a point a quarter radius past it is not */
+        {
+            const CnCam *c = &ST.lay.cam;
+            float px, py, gx, gy, gx2, gy2;
+            const float mx = h->cup_x[0] - (float)bx, my = h->cup_y[0] - (float)by, R = h->my_r;
+            cn_cam_project(c, mx, my - R * (float)CN_CUP_RC, R * CN_CUP_TALL, &px, &py);
+            cn_cam_map(c, (float)bx + px, (float)by + py, &gx, &gy);
+            cn_cam_project(c, mx, my - R * (float)CN_CUP_RC - R * .25f, R * CN_CUP_TALL, &px, &py);
+            cn_cam_map(c, (float)bx + px, (float)by + py, &gx2, &gy2);
+            const double in1 = pow((gx - h->hit[0]) / h->hit[2], 2) + pow((gy - h->hit[1]) / h->hit[3], 2);
+            const double in2 = pow((gx2 - h->hit[0]) / h->hit[2], 2) + pow((gy2 - h->hit[1]) / h->hit[3], 2);
+            CHECK(in1 <= 1.02 && in2 > 1, "%dx%d mine %d: the crown's top is on the ellipse's edge on the glass (%.3f, past it %.3f)", g->W, g->H, g->mine, in1, in2);
+        }
     }
     cn_stage_purge(&ST);
     free(A);
@@ -252,6 +266,22 @@ static void test_memory(void)
     CHECK(cn_stage_attach(&ST, (uint8_t *)B + 48, ARENA) == 0, "attached again");
     fb = cn_stage_frame(&ST, 0, 0, 0, &w, &h);
     CHECK(fb && fnv(fb, (size_t)w * h * 4) == one, "the rebuilt textures draw the same bytes (%08x %08x)", fb ? fnv(fb, (size_t)w * h * 4) : 0, one);
+
+    /* A FRAME DOES NOT DEPEND ON THE FRAMES BEFORE IT: on 390 by 718 a still frame drawn
+     * first, and the same still frame drawn after a throw frame, are the same bytes (the
+     * textures' half-size copies are made before any frame, never by whichever came first) */
+    in = table_in(390, 718, 6, 1, 0, CN_STAGE_TABLE);
+    in.scale = 2; in.roll_at_ms = 0;
+    cn_stage_purge(&ST);
+    cn_stage_attach(&ST, B, ARENA);
+    const CnStageHud *hr = cn_stage_begin(&ST, &in);
+    fb = cn_stage_frame(&ST, hr->total_ms, 0, 0, &w, &h);
+    const uint32_t first = fb ? fnv(fb, (size_t)w * h * 4) : 0;
+    cn_stage_purge(&ST);
+    cn_stage_attach(&ST, B, ARENA);
+    cn_stage_frame(&ST, 1000, 0, 0, &w, &h);
+    fb = cn_stage_frame(&ST, hr->total_ms, 0, 0, &w, &h);
+    CHECK(fb && first && fnv(fb, (size_t)w * h * 4) == first, "a still frame is the same after a throw frame as first (%08x %08x)", fb ? fnv(fb, (size_t)w * h * 4) : 0, first);
 
     /* an arena with room for the textures and a 1x frame but not 2x: the frame steps down */
     cn_stage_purge(&ST);

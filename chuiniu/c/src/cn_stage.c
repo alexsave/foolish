@@ -8,11 +8,6 @@
 _Static_assert(CN_GEOM_VF == CN_SCENE_VF && CN_GEOM_FF == CN_SCENE_FF, "one vertex and face format");
 _Static_assert(CN_STAGE_ARENA == CN_SCENE_ARENA_IOS, "the host's arena is the renderer's budget");
 _Static_assert(CN_STAGE_PASSES == CN_SCENE_PASSES && CN_STAGE_BANDS <= CN_SCENE_MAX_BANDS, "the bands");
-/* THE SHAKE BEAT LIES INSIDE THE ROLL (I21): the kernel's SHAKE beat is shorter
- * than the shortest shake a throw has (cn_lay_throws: 1.5 s for a far seat; mine
- * is cn_roll.c's two seconds), so the roll never ends while the beat says the
- * cups shake; total_ms is still held to the beat's end. */
-_Static_assert(CN_T_SHAKE < 1500, "the SHAKE beat ends inside every throw's shake");
 
 #define BIG_T 1.0e6        /* seconds: past the end of every bake (a still table) */
 
@@ -54,7 +49,7 @@ int cn_stage_init(CnStage *st, void *arena, size_t bytes, const uint8_t *pack, s
 void cn_stage_purge(CnStage *st)
 {
     if (st->arena) cn_scene_init(0, 0);
-    st->arena = 0; st->arena_bytes = 0; st->uploaded = 0;
+    st->arena = 0; st->arena_bytes = 0;   /* the textures went with it: cn_stage_attach uploads again */
     st->shot.ok = 0;
 }
 
@@ -279,6 +274,9 @@ static void timeline(CnStage *st)
     h->rolls = 0; h->roll_at_ms = 0;
     if (st->in.roll_at_ms == CN_STAGE_NO_ROLL || !st->nthrow) { st->in.roll_at_ms = CN_STAGE_NO_ROLL; return; }
     h->rolls = 1; h->roll_at_ms = st->in.roll_at_ms;
+    /* THE SHAKE BEAT IS NEVER CUT OFF (I21): everything is at rest no sooner than the
+     * kernel's SHAKE beat ends. Every throw outlasts it today (the shortest shake is
+     * 1.5 s, the beat .76), so this floor cannot go red alone; it states the rule. */
     uint32_t total = st->in.roll_at_ms + CN_T_SHAKE;
     for (int j = 0; j < st->nthrow; j++) {
         const CnStageThrow *T = &st->thr[j];
@@ -354,7 +352,7 @@ const CnStageHud *cn_stage_begin(CnStage *st, const CnStageIn *in_)
         in->roll_at_ms = CN_STAGE_NO_ROLL;
         in->w = CN_STAGE_BUBBLE_W; in->h = CN_STAGE_BUBBLE_H;
         cn_cam_make(&L->cam, CN_STAGE_BUBBLE_W, CN_STAGE_BUBBLE_H, CN_STAGE_BUBBLE_W / 2, 150, 1);
-        st->W = CN_STAGE_BUBBLE_W; st->H = CN_STAGE_BUBBLE_H; st->pad = st->pad_max = 0; st->below = 0; st->pad_x = 0;
+        st->W = CN_STAGE_BUBBLE_W; st->H = CN_STAGE_BUBBLE_H; st->pad = st->pad_max = 0; st->pad_x = 0;
         h->w = in->w; h->h = in->h;
         h->board[2] = h->canvas[2] = CN_STAGE_BUBBLE_W; h->board[3] = h->canvas[3] = CN_STAGE_BUBBLE_H;
         /* the plate under the row, drawn by the host, and each name under its cup */
@@ -370,7 +368,7 @@ const CnStageHud *cn_stage_begin(CnStage *st, const CnStageIn *in_)
         li->w = in->w; li->h = in->h; li->peek = 0; li->seed = in->seed;
         if (!cn_lay_make(li, L)) return 0;
         st->W = (int)(L->board_w + 2 * L->pad_x + .5f); st->H = (int)(L->board_h + L->pad_below + .5f);
-        st->pad = st->pad_max = (int)(L->pad + .5f); st->below = (int)(L->pad_below + .5f); st->pad_x = L->pad_x;
+        st->pad = st->pad_max = (int)(L->pad + .5f); st->pad_x = L->pad_x;
         h->w = L->w; h->h = L->h;
         h->board[0] = L->board_x; h->board[1] = L->board_y; h->board[2] = L->board_w; h->board[3] = L->board_h;
         h->short_board = L->short_board; h->has_plate = L->has_plate; h->has_shelf = L->has_shelf;

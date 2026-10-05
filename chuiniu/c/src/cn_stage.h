@@ -191,7 +191,7 @@ typedef struct {
     CnStageHud    hud;
     CnStageShot   shot;
     float         eye[3];               /* the renderer's eye, canvas points                  */
-    int           W, H, pad, below;     /* the canvas in points (pad: this frame's)            */
+    int           W, H, pad;            /* the canvas in points: W wide, H from the board top down, pad above it (this frame's) */
     int           pad_max;              /* the study's pad, the most a frame takes            */
     float         pad_x;
     float         lift_angle[CN_STAGE_SEATS];  /* the reveal's full tip of each cup             */
