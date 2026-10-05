@@ -55,7 +55,7 @@ final class BridgeKernelTests: XCTestCase {
         XCTAssertEqual(m.seats.map(\.name), ["Alex"], "the name a bubble shows never says You")
         XCTAssertEqual(m.me, 0)
         XCTAssertEqual(m.offered, .waiting, "seated alone, and the newest bubble is mine")
-        XCTAssertEqual(m.bubbleCaption, "Alex wants a game of Chui Niu. Tap to join")
+        XCTAssertEqual(m.bubbleCaption, "Alex wants a game of Chui Niu")
         let lobby = try XCTUnwrap(alex.stagedURL())
 
         // Bo taps it and joins, which fills a DM table and starts it

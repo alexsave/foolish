@@ -147,7 +147,7 @@ int main(int argc, char **argv)
     for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(200 - i);
     OK(cn_api_new(seed, 1) == CN_EOK && table()->me == 0 && table()->dm, "a DM lobby");
     OK(cn_api_seats_dirty() == 1, "the seat is recorded");
-    OK(cn_api_words(CN_API_W_STAGED_CAPTION, 0, line, sizeof line) > 0 && !strcmp(line, "Alex wants a game of Chui Niu. Tap to join"), line);
+    OK(cn_api_words(CN_API_W_STAGED_CAPTION, 0, line, sizeof line) > 0 && !strcmp(line, "Alex wants a game of Chui Niu"), line);
     OK(cn_api_words(CN_API_W_HEADLINE, 0, line, sizeof line) > 0 && !strcmp(line, "Waiting for players"), line);
     send();
     be(1);

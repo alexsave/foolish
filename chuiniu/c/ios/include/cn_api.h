@@ -188,7 +188,7 @@ int  cn_api_string(int key, char *out, int cap);       /* one table entry by CN_
 #define CN_API_W_TABLE           8   /* "14 dice on the table"                             */
 #define CN_API_W_REVEAL_COUNT    9   /* the newest call's count: "There were five"         */
 #define CN_API_W_LOBBY_ROW      10   /* arg: seat. "2. Bo", or "2. Bo (You)" for mine      */
-#define CN_API_W_INVITE         11   /* arg: seat. "Alex wants a game of Chui Niu. Tap to join" */
+#define CN_API_W_INVITE         11   /* arg: seat. "Alex wants a game of Chui Niu" */
 #define CN_API_W_JOINED         12   /* arg: seat. "Bo joined"                             */
 #define CN_API_W_LEFT           13   /* arg: seat. "Bo left" (before cn_api_leave)          */
 #define CN_API_W_ERROR          14   /* arg: a negative CN_E*. Why a link did not read     */
