@@ -485,6 +485,18 @@ public final class BridgeStage: TableStage {
                 cn_api_stage_band(Int32(pass), Int32(i), Int32(bands))
             }
         }
+        return Self.drawn()
+    }
+
+    public func frameOnOneThread(atMs ms: Int, peek: Double) -> StageFrame? {
+        guard ready(arena: true), cn_api_stage_frame(UInt32(max(ms, 0)), Float(peek)) != nil else { return nil }
+        return Self.drawn()
+    }
+
+    public func peekEase(_ t: Double) -> Double { Double(cn_api_peek_ease(Float(t))) }
+
+    /// The picture the kernel has just drawn, copied out.
+    private static func drawn() -> StageFrame? {
         guard let shot = Self.snap(cn_api_stage_shot(), readCnStageShot), shot.ok == 1,
               let px = cn_api_stage_pixels() else { return nil }
         // the pixels are the kernel's until the next prepare: copied out here

@@ -313,6 +313,11 @@ public protocol TableStage: AnyObject {
     /// tip; drawn in CN_STAGE_BANDS bands over the cores. nil when nothing
     /// could be drawn.
     func frame(atMs ms: Int, peek: Double) -> StageFrame?
+    /// The same frame drawn on one thread, the reference the banded frame must
+    /// equal byte for byte (the tests ask; no screen does).
+    func frameOnOneThread(atMs ms: Int, peek: Double) -> StageFrame?
+    /// The peek's tween at `t` (0 to 1 through CN_PEEK_MS): the kernel's ease.
+    func peekEase(_ t: Double) -> Double
     /// Everything at rest at `ms`: the display link may stop.
     func done(atMs ms: Int) -> Bool
     /// A memory warning: the arena is freed; the next frame takes a new one

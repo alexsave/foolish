@@ -7,7 +7,6 @@
 // Every table here is a real one: a group game played into the bridge by
 // phones, as BridgeKernelTests does, and begun on the one stage.
 
-import CChuiniu
 import QuartzCore
 import UIKit
 import XCTest
@@ -145,8 +144,13 @@ final class StageViewTests: XCTestCase {
             return real.begin(screen, drawer: drawer, scale: scale, roll: roll)
         }
         func frame(atMs ms: Int, peek: Double) -> StageFrame? { frames += 1; return real.frame(atMs: ms, peek: peek) }
+        func frameOnOneThread(atMs ms: Int, peek: Double) -> StageFrame? { real.frameOnOneThread(atMs: ms, peek: peek) }
+        func peekEase(_ t: Double) -> Double { real.peekEase(t) }
         func done(atMs ms: Int) -> Bool { real.done(atMs: ms) }
         func purge() { real.purge() }
+        func bubble(scale: CGFloat) -> BubbleFrame? { real.bubble(scale: scale) }
+        var holdsArena: Bool { real.holdsArena }
+        var drawer: CGSize? { real.drawer }
     }
 
     func testAViewWithNoSizeNeverAsksForAFrame() throws {
@@ -213,7 +217,7 @@ final class StageViewTests: XCTestCase {
         director.setPeek(open: true, animated: true)
         let now = CACurrentMediaTime()
         let half = director.peekValue(now + Double(CN_PEEK_MS) / 2000)
-        XCTAssertEqual(half, Double(cn_api_peek_ease(0.5)), accuracy: 0.02, "halfway, the kernel's ease")
+        XCTAssertEqual(half, director.stage.peekEase(0.5), accuracy: 0.02, "halfway, the kernel's ease")
         XCTAssertEqual(director.peekValue(now + Double(CN_PEEK_MS) / 1000 + 0.01), 1, "then all the way")
     }
 
@@ -261,8 +265,8 @@ final class StageViewTests: XCTestCase {
             let banded = try XCTUnwrap(stage.frame(atMs: ms, peek: peek))
             let bytes = banded.shot.w * banded.shot.h * 4
             let a = try XCTUnwrap(banded.image.dataProvider?.data as Data?)
-            let px = try XCTUnwrap(cn_api_stage_frame(UInt32(ms), Float(peek)))
-            let b = Data(bytes: px, count: bytes)
+            let one = try XCTUnwrap(stage.frameOnOneThread(atMs: ms, peek: peek))
+            let b = try XCTUnwrap(one.image.dataProvider?.data as Data?)
             XCTAssertEqual(a.count, bytes)
             XCTAssertTrue(a == b, "at \(ms) ms, peek \(peek): the bands' bytes are one thread's")
         }

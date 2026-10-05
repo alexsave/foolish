@@ -28,10 +28,6 @@
 // no size never asks for a frame. A purge (memory warning) keeps the last
 // picture on screen; a frame the stage cannot draw keeps the previous one.
 
-// SEAM REQUEST (package E1): cn_api_peek_ease is the one C call here, the
-// peek's tween; it belongs on `TableStage` (as `peekEase(_:)`) and this import
-// goes when it is there.
-import CChuiniu
 import QuartzCore
 import SwiftUI
 import UIKit
@@ -275,7 +271,7 @@ public final class StageDirector: ObservableObject {
         guard let s = peekStart else { return peekTo }
         let t = min(1, max(0, (now - s) / Self.peekSeconds))
         if t >= 1 { return peekTo }
-        return peekFrom + (peekTo - peekFrom) * Double(cn_api_peek_ease(Float(t)))
+        return peekFrom + (peekTo - peekFrom) * stage.peekEase(t)
     }
 
     // MARK: memory
