@@ -10,6 +10,9 @@
 //            `perspective(D) rotateX(theta) scale(zoom)` about my cup
 //   planks   the baked wood under it all, 1.9 by 2.2 of the drawer (the
 //            study's overdraw), so the turn uncovers planks and never a gap
+// and under the tilt, flat, the same wood in deeper shade: the turned plane
+// runs out at its horizon just above the drawer's top, and the strip under
+// Messages' grabber (the top safe area) is past it
 //   canvas   the kernel's frame at the shot's canvas (flat points)
 //   names    on the planks under the cups (tilted with them)
 // The HUD (the plate, the picker, Next round) is SwiftUI over this view and
@@ -335,8 +338,12 @@ public struct StageView: UIViewRepresentable {
     @ObservedObject var director: StageDirector
     var names: [StageName]
     var outWord: String
+    /// The safe areas this view reaches under: the planks run on there, and
+    /// the drawer (the stage's points) starts inside them.
+    var inset: EdgeInsets
 
-    public init(director: StageDirector, names: [StageName], outWord: String) {
+    public init(director: StageDirector, names: [StageName], outWord: String, inset: EdgeInsets = EdgeInsets()) {
+        self.inset = inset
         self.director = director
         self.names = names
         self.outWord = outWord
@@ -345,6 +352,7 @@ public struct StageView: UIViewRepresentable {
     public func makeUIView(context: Context) -> StageUIView { StageUIView(director: director) }
 
     public func updateUIView(_ v: StageUIView, context: Context) {
+        v.inset = UIEdgeInsets(top: inset.top, left: inset.leading, bottom: inset.bottom, right: inset.trailing)
         v.update(names: names, outWord: outWord, hud: director.hud)
     }
 }
@@ -354,6 +362,14 @@ public final class StageUIView: UIView {
     let tilt = CALayer()
     let planks = CALayer()
     let canvas = CALayer()
+    let shade = CALayer()
+    /// Flat wood past the turned plane's horizon.
+    let back = CALayer()
+    let backShade = CALayer()
+    /// The turned layer's own flat parent: Core Animation sorts sibling
+    /// layers by depth, and the turned plane's far half lies behind z 0, so
+    /// without a parent that flattens it the flat wood was drawn over it.
+    let flat = CALayer()
     private var nameLayers: [Int: (text: CATextLayer, bar: CALayer, stamp: CATextLayer)] = [:]
     private var names: [StageName] = []
     private var outWord = ""
@@ -361,6 +377,13 @@ public final class StageUIView: UIView {
     private var link: CADisplayLink?
     private var lastStamp: CFTimeInterval?
     private var woodStyle: UIUserInterfaceStyle?
+    /// The safe areas round the drawer, inside this view.
+    var inset: UIEdgeInsets = .zero {
+        didSet { if inset != oldValue { setNeedsLayout() } }
+    }
+    /// The drawer: the stage's (0, 0) and its size, in this view.
+    var drawer: CGRect { bounds.inset(by: inset) }
+    private var hasSize: Bool { drawer.width >= 1 && drawer.height >= 1 }
 
     init(director: StageDirector) {
         self.director = director
@@ -370,8 +393,12 @@ public final class StageUIView: UIView {
         isAccessibilityElement = false
         tilt.anchorPoint = .zero
         tilt.position = .zero
-        layer.addSublayer(tilt)
+        layer.addSublayer(back)
+        back.addSublayer(backShade)
+        layer.addSublayer(flat)
+        flat.addSublayer(tilt)
         tilt.addSublayer(planks)
+        planks.addSublayer(shade)
         tilt.addSublayer(canvas)
         canvas.contentsGravity = .resize
         canvas.magnificationFilter = .linear
@@ -403,36 +430,67 @@ public final class StageUIView: UIView {
 
     public override func layoutSubviews() {
         super.layoutSubviews()
-        let size = bounds.size
+        let size = drawer.size
         CATransaction.begin()
         CATransaction.setDisableActions(true)
+        tilt.position = drawer.origin
         tilt.bounds = CGRect(origin: .zero, size: size)
         tilt.transform = hud.map(StageDirector.tilt) ?? CATransform3DIdentity
         // the study's overdraw: 190% by 220%, from -45% and -60%
         planks.frame = CGRect(x: -0.45 * size.width, y: -0.6 * size.height, width: 1.9 * size.width, height: 2.2 * size.height)
+        shade.frame = planks.bounds
+        back.frame = bounds
+        flat.frame = bounds
+        backShade.frame = back.bounds
         paintWood()
         layoutNames()
         if let f = director.last, director.owns { place(f) }
         CATransaction.commit()
-        if size.width >= 1, size.height >= 1 { wake() }
+        if hasSize { wake() }
     }
 
     private func paintWood() {
         let style = traitCollection.userInterfaceStyle
         guard style != woodStyle else { return }
         woodStyle = style
-        let scheme: ColorScheme = style == .dark ? .dark : .light
-        if let img = CnTextures.wood(scheme) {
+        // the study's planks are a drowned, near-black wood: the baked walnut
+        // in either appearance, a stop or two further down under a shade
+        if let img = Self.mirroredWood {
             planks.backgroundColor = UIColor(patternImage: img).cgColor
         } else {
-            planks.backgroundColor = UIColor(Color(hex: (style == .dark ? WoodTexture.Palette.dark : WoodTexture.Palette.classic).fallbackHex)).cgColor
+            planks.backgroundColor = UIColor(Color(hex: WoodTexture.Palette.dark.fallbackHex)).cgColor
         }
+        back.backgroundColor = planks.backgroundColor
+        backShade.backgroundColor = UIColor.black.withAlphaComponent(style == .dark ? 0.72 : 0.62).cgColor
+        shade.backgroundColor = UIColor.black.withAlphaComponent(style == .dark ? 0.5 : 0.35).cgColor
     }
 
 
+    /// The baked walnut swatch (448 by 288, made not to tile) laid out as a
+    /// 2 by 2 of itself mirrored, so the pattern's seams meet grain to grain:
+    /// tiled plainly, the drawer showed a hard line every 448 points. One
+    /// image, drawn once a process from the JPEG; nothing is generated.
+    private static let mirroredWood: UIImage? = {
+        guard let img = CnTextures.wood(.dark), let cg = img.cgImage else { return nil }
+        let w = CGFloat(cg.width), h = CGFloat(cg.height)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        return UIGraphicsImageRenderer(size: CGSize(width: 2 * w, height: 2 * h), format: format).image { ctx in
+            let c = ctx.cgContext
+            for (fx, fy) in [(false, false), (true, false), (false, true), (true, true)] {
+                c.saveGState()
+                c.translateBy(x: fx ? 2 * w : 0, y: fy ? 2 * h : 0)
+                c.scaleBy(x: fx ? -1 : 1, y: fy ? -1 : 1)
+                img.draw(in: CGRect(x: 0, y: 0, width: w, height: h))
+                c.restoreGState()
+            }
+        }
+    }()
+
     // MARK: the names, on the planks
 
-    private static let nameFont = UIFont.systemFont(ofSize: 13, weight: .semibold)
+    private static let nameFont = UIFont.systemFont(ofSize: 14, weight: .semibold)
     private static let stampFont = UIFont.systemFont(ofSize: 10, weight: .heavy)
 
     private func layoutNames() {
@@ -454,13 +512,14 @@ public final class StageUIView: UIView {
             l.bar.isHidden = !visible || !n.isTurn
             l.stamp.isHidden = !visible || n.stamp.isEmpty
             guard visible else { continue }
-            let ink = n.won ? FColor.win : (n.isTurn ? FColor.textPrimary : FColor.textDim)
+            // the study's ink, and its dimmer ink for a seat not on turn (still read on the planks)
+            let ink = n.won ? FColor.win : (n.isTurn ? FColor.textPrimary : FColor.textPrimary.opacity(0.72))
             l.text.string = NSAttributedString(string: n.name, attributes: [
                 .font: Self.nameFont, .foregroundColor: UIColor(ink.opacity(n.alive ? 1 : 0.6)),
                 .kern: 0.6,
             ])
             let textW = min(150, ceil((n.name as NSString).size(withAttributes: [.font: Self.nameFont]).width) + 8)
-            let textH: CGFloat = 16, barH: CGFloat = 2, gap: CGFloat = 3
+            let textH: CGFloat = 17, barH: CGFloat = 2, gap: CGFloat = 3
             let x = h.nameX[n.seat], y = h.nameY[n.seat]
             var top: CGFloat
             var left: CGFloat
@@ -524,7 +583,7 @@ public final class StageUIView: UIView {
     }
 
     func wake() {
-        guard window != nil, bounds.width >= 1, bounds.height >= 1 else { return }
+        guard window != nil, hasSize else { return }
         if director.needsFrame { draw() }
         guard director.live, link == nil else { return }
         let l = CADisplayLink(target: Ticker(self), selector: #selector(Ticker.tick(_:)))
@@ -542,7 +601,7 @@ public final class StageUIView: UIView {
     fileprivate func tick(_ l: CADisplayLink) {
         let dt = lastStamp.map { l.timestamp - $0 } ?? 0
         lastStamp = l.timestamp
-        guard bounds.width >= 1, bounds.height >= 1 else { stop(); return }
+        guard hasSize else { stop(); return }
         if director.advance(dt) { draw() }
         if !director.live, !director.needsFrame { stop() }
     }
@@ -566,7 +625,8 @@ public final class StageUIView: UIView {
     // MARK: touch
 
     @objc private func tapped(_ g: UITapGestureRecognizer) {
-        if director.tap(at: g.location(in: self)) { Haptics.fire(.pickUp) }
+        let p = g.location(in: self)
+        if director.tap(at: CGPoint(x: p.x - drawer.minX, y: p.y - drawer.minY)) { Haptics.fire(.pickUp) }
     }
 
     // MARK: accessibility: one element a seat, the kernel's names
@@ -588,7 +648,8 @@ public final class StageUIView: UIView {
                 } else {
                     centre = StageDirector.glass(CGPoint(x: h.cupX[n.seat], y: h.cupY[n.seat]), h); r = h.cupR
                 }
-                e.accessibilityFrameInContainerSpace = CGRect(x: centre.x - r, y: centre.y - r, width: 2 * r, height: 2 * r)
+                e.accessibilityFrameInContainerSpace = CGRect(x: drawer.minX + centre.x - r, y: drawer.minY + centre.y - r,
+                                                              width: 2 * r, height: 2 * r)
                 if let m = e as? MyCupElement {
                     m.accessibilityTraits = .button
                     m.activate = { [weak self] in

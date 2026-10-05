@@ -39,7 +39,8 @@ struct BidPlate: View {
                     .onFeltText(quiet ? FColor.textDim : FColor.textPrimary)
                     .lineLimit(quiet ? 2 : 1)
                     .multilineTextAlignment(.center)
-                    .minimumScaleFactor(0.5)
+                    .minimumScaleFactor(0.4)
+                    .layoutPriority(1)
                 if let face { Die(face: face, size: narrow ? 24 : 30) }
             }
             .padding(.horizontal, 10)

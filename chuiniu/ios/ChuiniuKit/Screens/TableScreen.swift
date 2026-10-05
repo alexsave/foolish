@@ -20,7 +20,7 @@ public struct TableScreen: View {
                                        roll: t.rollID != host.playedRoll, rollID: t.rollID,
                                        table: StageTableKey(t))
             ZStack(alignment: .topLeading) {
-                StageView(director: director, names: t.seats.map { StageName(seat: $0) }, outWord: host.word(.out))
+                Color.clear
                 if let hud = director.hud {
                     hudLayer(t, hud)
                 } else if let menu = t.menu {
@@ -30,6 +30,12 @@ public struct TableScreen: View {
                         picker(menu).padding(.horizontal, 16).padding(.bottom, 12)
                     }
                 }
+            }
+            // the table runs on under the safe areas; the HUD keeps to them
+            .background(alignment: .topLeading) {
+                StageView(director: director, names: t.seats.map { StageName(seat: $0) }, outWord: host.word(.out),
+                          inset: geo.safeAreaInsets)
+                    .ignoresSafeArea()
             }
             .onAppear { begin(request) }
             .onChange(of: request) { _, r in begin(r) }

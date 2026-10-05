@@ -32,7 +32,7 @@ public struct RevealScreen: View {
             let request = StageRequest(screen: .reveal, drawer: geo.size, scale: displayScale, roll: false,
                                        rollID: t.rollID, table: StageTableKey(t))
             ZStack(alignment: .topLeading) {
-                StageView(director: director, names: names(t, settled: !playing), outWord: host.word(.out))
+                Color.clear
                 if let hud = director.hud, let r = t.reveal {
                     // ONCE THE KERNEL SAYS DONE, THE SETTLED REVEAL, not the
                     // timeline's last frame: a paused TimelineView keeps the
@@ -49,6 +49,12 @@ public struct RevealScreen: View {
                 } else if director.hud == nil {
                     RevealList(host: host)
                 }
+            }
+            // the table runs on under the safe areas; the HUD keeps to them
+            .background(alignment: .topLeading) {
+                StageView(director: director, names: names(t, settled: !playing), outWord: host.word(.out),
+                          inset: geo.safeAreaInsets)
+                    .ignoresSafeArea()
             }
             .onAppear { begin(request) }
             .onChange(of: request) { _, r in begin(r) }
@@ -91,12 +97,51 @@ public struct RevealScreen: View {
             Rings(reveal: r, hud: hud, lit: motion.lit)
         }
         if motion.done {
-            if let p = hud.plateRect {
-                BidPlate(text: r.tally, face: r.bid.face).at(p)
-            }
             let shelf = hud.shelfRect ?? CGRect(x: 0, y: hud.h - 50, width: hud.w, height: 50)
-            let above = max(0, shelf.minY - 6)
-            VStack(spacing: 4) {
+            if let p = hud.plateRect, hud.shortBoard == 0 {
+                // a tall board: the tally and the outcome together at the
+                // plate's place, as wide as the glass (my name sits just over
+                // the shelf, where a line there would cover it)
+                VStack(spacing: 2) {
+                    HStack(spacing: 8) {
+                        Text(r.tally).font(.system(size: 20, weight: .heavy)).onFeltText()
+                            .lineLimit(1).minimumScaleFactor(0.5)
+                        Die(face: r.bid.face, size: 22)
+                    }
+                    outcome(t, r)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.black.opacity(0.55)))
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(FColor.win.opacity(0.55), lineWidth: 1))
+                .frame(maxWidth: max(0, hud.w - 32))
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(width: hud.w, height: 200, alignment: .top)
+                .position(x: hud.w / 2, y: p.minY + 100)
+            } else {
+                if let p = hud.plateRect { BidPlate(text: r.tally, face: r.bid.face).at(p) }
+                let above = max(0, shelf.minY - 6)
+                outcome(t, r)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.black.opacity(0.55)))
+                    .frame(maxWidth: max(0, hud.w - 32))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(width: hud.w, height: above, alignment: .bottom)
+                    .position(x: hud.w / 2, y: above / 2)
+            }
+            if t.phase == .revealed, r.nextAllowed {
+                WoodButton(title: host.word(.nextRound), height: 40, fontSize: 16) { host.nextRound() }
+                    .padding(.horizontal, 16)
+                    .frame(width: shelf.width, height: shelf.height, alignment: .top)
+                    .position(x: shelf.midX, y: shelf.midY)
+            }
+        }
+    }
+
+    /// The kernel's outcome line, and at the end its headline ("You win").
+    private func outcome(_ t: TableModel, _ r: Reveal) -> some View {
+        VStack(spacing: 4) {
                 Text(r.outcome)
                     .font(.system(size: 14, weight: .heavy))
                     .onFeltText()
@@ -106,22 +151,8 @@ public struct RevealScreen: View {
                         .onFeltText(FColor.textDim)
                 }
             }
-            .multilineTextAlignment(.center)
-            .lineLimit(3)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.black.opacity(0.55)))
-            .frame(maxWidth: max(0, hud.w - 32))
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(width: hud.w, height: above, alignment: .bottom)
-            .position(x: hud.w / 2, y: above / 2)
-            if t.phase == .revealed, r.nextAllowed {
-                WoodButton(title: host.word(.nextRound), height: 40, fontSize: 16) { host.nextRound() }
-                    .padding(.horizontal, 16)
-                    .frame(width: shelf.width, height: shelf.height, alignment: .top)
-                    .position(x: shelf.midX, y: shelf.midY)
-            }
-        }
+        .multilineTextAlignment(.center)
+        .lineLimit(3)
     }
 }
 

@@ -78,6 +78,16 @@ public struct ChuiniuRoot: View {
             }
         }
         .animation(FMotion.chrome, value: host.table.phase)
+#if DEBUG
+        .task {
+            // StageHarness: a table of any size, once per extension process,
+            // after the conversation's own first read has landed
+            guard !Harness.ran, let spec = Harness.spec else { return }
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            Harness.ran = true
+            if Harness.play(spec) { host.unreadable = nil; host.refresh() }
+        }
+#endif
     }
 }
 
