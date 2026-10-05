@@ -26,6 +26,42 @@ static int quad_frame(int extra_faces, const float *extra)
     return cn_scene_render(8, 4 + extra_faces);
 }
 
+/* THE OPEN TABLE'S SHADOW EDGE. A square 40 up, turned by 30 degrees, centred on (45, 45), and no table face:
+ * its shadow falls on the open table (pass 3's blocks), centred on (63, 67), its lower right side running
+ * from (83.5, 61.5) to (68.5, 87.5). On each device row through that side, the column where the shadow's
+ * alpha crosses half its depth (between pixels, linearly); a straight edge drawn smoothly puts those on a
+ * straight line. The worst distance of any row's crossing from the rows' least-squares line, in device
+ * pixels: the edge's steps. */
+static float open_edge_steps(float dpr)
+{
+    if (!cn_scene_begin(120, 120, 0, dpr, 60, 60, 720, -.45f, -.55f, 1, 256, .55f, 4, 2)) return 1e9f;
+    float *V = cn_scene_verts(), *F = cn_scene_faces();
+    const float c = .8660254f, s = .5f, h = 15;
+    const float k[4][2] = { { -h, -h }, { h, -h }, { h, h }, { -h, h } };
+    for (int i = 0; i < 4; i++) {
+        float v[6] = { 45 + c * k[i][0] - s * k[i][1], 45 + s * k[i][0] + c * k[i][1], 40, 0, 0, 1 };
+        memcpy(V + i * 6, v, sizeof v);
+    }
+    const float faces[] = { 0, 1, 2, 0, 0, 1, 0, 1, 1, 0, 0, 4, 3, 1, 0, 7,   0, 2, 3, 0, 0, 1, 1, 0, 1, 0, 0, 4, 3, 1, 0, 7 };
+    memcpy(F, faces, sizeof faces);
+    if (cn_scene_render(4, 2) != 2) return 1e9f;
+    const uint8_t *fb = cn_scene_fb(); const int W = cn_scene_fb_w();
+    const float half = .55f * 255 / 2;
+    float xs[256], ys[256]; int n = 0;
+    for (int y = (int)(66 * dpr); y <= (int)(84 * dpr) && n < 256; y++) {
+        int x = W - 2;
+        while (x >= 0 && fb[(y * W + x) * 4 + 3] < half) x--;
+        if (x < 0) return 1e9f;
+        float a0 = fb[(y * W + x) * 4 + 3], a1 = fb[(y * W + x + 1) * 4 + 3];
+        xs[n] = x + (a0 - half) / (a0 - a1); ys[n] = (float)y; n++;
+    }
+    double sy = 0, sx = 0, syy = 0, sxy = 0;
+    for (int i = 0; i < n; i++) { sy += ys[i]; sx += xs[i]; syy += (double)ys[i] * ys[i]; sxy += (double)ys[i] * xs[i]; }
+    double b = (n * sxy - sy * sx) / (n * syy - sy * sy), a = (sx - b * sy) / n, worst = 0;
+    for (int i = 0; i < n; i++) { double r = xs[i] - (a + b * ys[i]); if (r < 0) r = -r; if (r > worst) worst = r; }
+    return (float)worst;
+}
+
 int main(void)
 {
     size_t ios = CN_SCENE_ARENA_IOS;
@@ -70,6 +106,34 @@ int main(void)
         CHECK(cnf_hash() == quad_hash, "the picture is the quad's alone");
     }
 
+    TEST("the open table's shadow edge is smooth at every scale");
+    {
+        cn_scene_init(mem, ios); tx = cn_scene_tex_new(4, 4, 0); memset(cn_scene_tex_rgba(tx), 255, 4 * 4 * 4);
+        /* a map texel is about 1.1 points here. The map's own staircase, through the filter, leaves about a
+         * third of a texel; a 4-by-4 block lit as one, or a filter that skips every other texel, leaves more
+         * than a texel (the old renderer: 3.1 to 3.9 device pixels at 1.5x to 3x) */
+        const float scales[4] = { 1, 2, 3, 1.5f };
+        for (int i = 0; i < 4; i++) {
+            float steps = open_edge_steps(scales[i]);
+            CHECK(steps < .42f * scales[i], "%.1fx: the slanted edge's crossings stray %.2f device pixels from a line (at most %.2f)", scales[i], steps, .42f * scales[i]);
+        }
+    }
+
+    TEST("the open table's blocks taken whole draw what every pixel lit alone draws");
+    {
+        cn_scene_init(mem, ios);
+        CnfTex t;
+        cnf_textures(&t, 1);
+        const float scales[3] = { 1, 2, 3 };
+        for (int i = 0; i < 3; i++) for (int roll = 0; roll < 2; roll++) {
+            if (cnf_frame(&t, 390, 718, 40, scales[i], 1024, roll ? .6f : 0) < 0) continue;   /* 3x does not fit 48 MB */
+            const uint64_t h = cnf_hash();
+            cn_scene_skip(8); cnf_frame(&t, 390, 718, 40, scales[i], 1024, roll ? .6f : 0); cn_scene_skip(0);
+            CHECK(cnf_hash() == h, "%.0fx %s: the blocks settled whole are the pixels' own light (%016llx, pixel by pixel %016llx)",
+                  scales[i], roll ? "in a throw" : "still", (unsigned long long)h, (unsigned long long)cnf_hash());
+        }
+    }
+
     TEST("past 65,536 faces every face is still ordered and drawn");
     {
         /* 70,000 faces: the quad's two last, everything before them a sliver far off the board (casting
@@ -98,10 +162,10 @@ int main(void)
         int d = cnf_frame(&t, 390, 718, 40, 1, 1024, 0);
         CHECK(cnf_nf == 12864 && d > 6000 && d < cnf_nf, "six cups and thirty dice: %d faces, %d drawn (the rest turned away)", cnf_nf, d);
         uint64_t h = cnf_hash();
-        CHECK(h == 0x7c136d3580720f13ull, "the still table at 1x: %016llx", (unsigned long long)h);
+        CHECK(h == 0x78fcf817e8be90f8ull, "the still table at 1x: %016llx", (unsigned long long)h);
         d = cnf_frame(&t, 390, 718, 40, 1.5f, 1024, .6f);
         h = cnf_hash();
-        CHECK(h == 0xd79fc9ffeecb40ddull, "a throw's frame at 1.5x: %016llx", (unsigned long long)h);
+        CHECK(h == 0xb65b95f13c6d841aull, "a throw's frame at 1.5x: %016llx", (unsigned long long)h);
         /* drawing it again draws it the same: nothing carries from one frame to the next */
         cnf_frame(&t, 390, 718, 40, 1.5f, 1024, .6f);
         CHECK(cnf_hash() == h, "the same frame twice, the same picture");

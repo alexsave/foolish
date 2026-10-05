@@ -99,7 +99,9 @@ int cn_scene_fb_w(void);
 int cn_scene_fb_h(void);
 
 /* profiling: the last frame's fragments shaded, box pixels walked, map texels,
- * map box pixels; and passes to leave out (1 shadow map, 2 picture, 4 shading) */
+ * map box pixels; and passes to leave out (1 shadow map, 2 picture, 4 shading).
+ * 8 is a test's: the open table lit pixel by pixel everywhere, which must draw
+ * the same bytes as the blocks it settles whole. */
 uint32_t cn_scene_prof(int i);
 void cn_scene_skip(int mask);
 

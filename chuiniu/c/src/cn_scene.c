@@ -121,6 +121,12 @@ static int prepared, prep_nfaces, prep_ndraw;               /* cn_scene_prepare 
 static int32_t *rows, *srows;                            /* each drawn face's rows on the picture (by its place in order),
                                                             each casting face's on the map (by its index): first, last */
 static float *smap; static int SR;                       /* the shadow map, SR by SR, depth along the light */
+/* THE MAP'S TOUCHED TILES: one byte an 8-by-8 tile of the map, 1 when any casting face wrote into it. A tile
+ * left at 0 holds only the clear depth (1e30), so every point under it is lit; the open table asks this
+ * first (table_block), and reads texels only where something cast. Pass 1's bands are cut on tile rows, so
+ * each band clears and marks only its own. */
+#define ST_SHIFT 3
+static uint8_t *stile; static int ST;
 static float eyeX, eyeY, HC, DPR, PAD;
 static float LX, LY, LZ, UX, UY, UZ, VX, VY, VZ;        /* the light, and the map's axes across it */
 static float su0, sv0, sus, svs;                         /* the map's window: origin and scale      */
@@ -150,7 +156,8 @@ uint32_t cn_scene_prof(int i)
     if (i >= 0 && i < 4) for (int b = 0; b < CN_SCENE_MAX_BANDS; b++) n += prof[b][i];
     return n;
 }
-static int skip;                                          /* for profiling only: passes to leave out (1 shadow map, 2 picture, 4 shading) */
+static int skip;                                          /* for profiling only: passes to leave out (1 shadow map, 2 picture, 4 shading);
+                                                            for a test, 8: no block of the open table taken whole */
 void cn_scene_skip(int mask) { skip = mask; }
 
 static float fsqrt(float x) { return __builtin_sqrtf(x); }
@@ -159,7 +166,7 @@ static float fclamp(float v, float lo, float hi) { return v < lo ? lo : v > hi ?
 /* THE FRAME'S BUFFERS, in the order they are taken; cn_scene_begin and cn_scene_frame_bytes both read this
  * one list, so the bytes a host is told a frame needs are the bytes it takes */
 #define MAX_FRAME_PX 8192
-enum { B_FB, B_ZB, B_SMAP, B_AO, B_GT, B_GK, B_GF, B_GU, B_GV, B_GD, B_GM, B_GA, B_GC, B_VERTS, B_FACES, B_ORDER, B_CHAIN, B_ROWS, B_SROWS, NBUF };
+enum { B_FB, B_ZB, B_SMAP, B_STILE, B_AO, B_GT, B_GK, B_GF, B_GU, B_GV, B_GD, B_GM, B_GA, B_GC, B_VERTS, B_FACES, B_ORDER, B_CHAIN, B_ROWS, B_SROWS, NBUF };
 /* 0 when the numbers are out of range */
 static int frame_sizes(int W, int H, int pad, float dpr, int shadow_res, int vcapacity, int fcapacity, size_t sz[NBUF], int *fw, int *fh)
 {
@@ -175,7 +182,9 @@ static int frame_sizes(int W, int H, int pad, float dpr, int shadow_res, int vca
     if (!(fwf >= 1 && fwf < MAX_FRAME_PX) || !(fhf >= 1 && fhf < MAX_FRAME_PX)) return 0;
     int w = (int)fwf, h = (int)fhf;
     size_t npx = (size_t)w * h, aw = (size_t)(w + 3) / 4, ah = (size_t)(h + 3) / 4;
-    sz[B_FB] = npx * 4; sz[B_ZB] = npx * 4; sz[B_SMAP] = (size_t)shadow_res * shadow_res * 4; sz[B_AO] = aw * ah * 4;
+    sz[B_FB] = npx * 4; sz[B_ZB] = npx * 4; sz[B_SMAP] = (size_t)shadow_res * shadow_res * 4;
+    { size_t st = ((size_t)shadow_res + (1u << ST_SHIFT) - 1) >> ST_SHIFT; sz[B_STILE] = st * st; }
+    sz[B_AO] = aw * ah * 4;
     sz[B_GT] = npx * 3; sz[B_GK] = npx; sz[B_GF] = npx; sz[B_GU] = npx * 2; sz[B_GV] = npx * 2; sz[B_GD] = npx * 4;
     sz[B_GM] = npx; sz[B_GA] = npx; sz[B_GC] = npx;
     sz[B_VERTS] = (size_t)vcapacity * VF * 4; sz[B_FACES] = (size_t)fcapacity * FF * 4; sz[B_ORDER] = (size_t)fcapacity * 4; sz[B_CHAIN] = (size_t)fcapacity * 4;
@@ -208,7 +217,8 @@ int cn_scene_begin(int W, int H, int pad, float dpr, float ex, float ey, float h
     FW = fw; FH = fh;
     DPR = dpr; PAD = (float)pad; eyeX = ex; eyeY = ey; HC = hc; SR = shadow_res; SH_DARK = dark;
     AW = (FW + 3) / 4; AH = (FH + 3) / 4;
-    fb = buf[B_FB]; zb = buf[B_ZB]; smap = buf[B_SMAP]; ao = buf[B_AO];
+    fb = buf[B_FB]; zb = buf[B_ZB]; smap = buf[B_SMAP]; stile = buf[B_STILE]; ao = buf[B_AO];
+    ST = (shadow_res + (1 << ST_SHIFT) - 1) >> ST_SHIFT;
     gt = buf[B_GT]; gk = buf[B_GK]; gf = buf[B_GF]; gu = buf[B_GU]; gv = buf[B_GV]; gd = buf[B_GD]; gm = buf[B_GM]; ga = buf[B_GA]; gc = buf[B_GC];
     verts = buf[B_VERTS]; faces = buf[B_FACES]; order = buf[B_ORDER]; chain = buf[B_CHAIN]; rows = buf[B_ROWS]; srows = buf[B_SROWS]; prepared = 0;
     vcap = vcapacity; fcap = fcapacity;
@@ -301,7 +311,7 @@ static void rows_of(float ay, float by, float cy, int lim, int *y0, int *y1)
 /* ---- pass 1: the shadow map ---------------------------------------------------------- */
 typedef struct { float x, y, d; } SV;
 /* a casting triangle into the map's rows [r0, r1) */
-static void shadow_tri(SV a, SV b, SV c, float *smap_, int SR_, int r0, int r1, uint32_t *texels)
+static void shadow_tri(SV a, SV b, SV c, float *smap_, int SR_, uint8_t *stile_, int ST_, int r0, int r1, uint32_t *texels)
 {
     float area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
     if (!(area != 0)) return;
@@ -314,6 +324,7 @@ static void shadow_tri(SV a, SV b, SV c, float *smap_, int SR_, int r0, int r1, 
     float e0x = (by - cy) * inv, e1x = (cy - ay) * inv;
     const Edges E = edges_of(ax, ay, bx, by, cx, cy);
     uint32_t n = 0;
+    int lo = SR_, hi = -1, ylo = SR_, yhi = -1;   /* the texels written: their columns' and rows' extremes */
     for (int y = y0; y <= y1; y++) {
         float sy = y + .5f; int xl, xr;
         if (!span(&E, sy, SR_, &xl, &xr)) continue;
@@ -322,12 +333,19 @@ static void shadow_tri(SV a, SV b, SV c, float *smap_, int SR_, int r0, int r1, 
         float w1 = ((cx - px) * (ay - sy) - (cy - sy) * (ax - px)) * inv;
         float *row = &smap_[y * SR_];
         n += (uint32_t)(xr - xl + 1);
+        if (xl < lo) lo = xl;
+        if (xr > hi) hi = xr;
+        if (y < ylo) ylo = y;
+        yhi = y;
         for (int x = xl; x <= xr; x++, w0 += e0x, w1 += e1x) {
             float w2 = 1 - w0 - w1;
             float d = w0 * ad + w1 * bd + w2 * cd;
             if (d < row[x]) row[x] = d;
         }
     }
+    /* the tiles under the box of the texels it wrote (a few more than it touched: a tile marked in vain costs
+     * the open table a read of its texels, never a pixel) */
+    for (int ty = ylo >> ST_SHIFT; ty <= yhi >> ST_SHIFT && hi >= 0; ty++) memset(&stile_[ty * ST_ + (lo >> ST_SHIFT)], 1, (size_t)((hi >> ST_SHIFT) - (lo >> ST_SHIFT) + 1));
     *texels += n;
 }
 
@@ -373,13 +391,6 @@ static inline __attribute__((always_inline)) void light4(const Light *L, f4 x, f
     u = vsel(u == u, u, vf(0)); v = vsel(v == v, v, vf(0));   /* a host's NaN reads texel 0, never converts out of range */
     *gu4 = vint(u); *gv4 = vint(v); *gd4 = -(x * L->LX + y * L->LY + z * L->LZ) - 1.6f;
 }
-/* one pixel's, through the same four-wide arithmetic (pass 3's table) */
-static inline __attribute__((always_inline)) void keep_light(const Light *L, const Bufs *B, int idx, float x, float y, float z, float nx, float ny, float nz, float ndl)
-{
-    i4 u, v; f4 d;
-    light4(L, vf(x), vf(y), vf(z), vf(nx), vf(ny), vf(nz), vf(ndl), &u, &v, &d);
-    B->gu[idx] = (uint16_t)u[0]; B->gv[idx] = (uint16_t)v[0]; B->gd[idx] = d[0];
-}
 /* the contact dark at a pixel, read between the blocks' centres */
 static inline __attribute__((always_inline)) float ao_at(const Bufs *B, int x, int y)
 {
@@ -390,16 +401,108 @@ static inline __attribute__((always_inline)) float ao_at(const Bufs *B, int x, i
     const float *m = &B->ao[iy * B->AW + ix]; int dx = ux > 0 ? 1 : 0, dy = uy > 0 ? B->AW : 0;
     return (m[0] * (1 - ux) + m[dx] * ux) * (1 - uy) + (m[dy] * (1 - ux) + m[dy + dx] * ux) * uy;
 }
-/* how much of the light a kept pixel gets: 1 lit, 0 in shadow; the four map texels round it, weighted */
-static inline __attribute__((always_inline)) float lit_of(const Bufs *B, int idx)
+/* how much of the light a place on the map gets (gu, gv at a 64th of a texel, gd its depth along the light):
+ * 1 lit, 0 in shadow. THE FILTER. Each texel says yes or no at its centre (u = i + 1/2); the light is the
+ * mean of three bilinear readings one texel apart, which is four texels each way weighted (1 - t) / 3, 1/3,
+ * 1/3, t / 3, with i - 1 the first and t how far past texel i's centre the point is. The edge softens over
+ * about two texels (a lamp's penumbra, roughly, and the study's old softness), every texel counts, and the
+ * light runs on without a crease from one texel to the next. The four texels two apart that this replaced
+ * read only the even texels: a shadow's slanted edge came out in steps two texels long. The four texels of
+ * a row are one load (four lanes; the weights are kept whole, so every sum is exact and the light of a point
+ * all lit is exactly 1, which is what lets the open table settle a block whole); at the
+ * map's edge they are read one by one, held to it. */
+static inline __attribute__((always_inline)) float lit_q(const Bufs *B, uint16_t gu, uint16_t gv, float d)
 {
-    /* the four texels round the point, two apart, so the edge softens over two texels (a lamp's penumbra, roughly) */
     const int S = B->SR; const float *sm = B->smap;
-    float u = B->gu[idx] * (1.f / 128), v = B->gv[idx] * (1.f / 128), d = B->gd[idx];
-    int iu = (int)u, iv = (int)v; float fu = u - iu, fv = v - iv; iu *= 2; iv *= 2;
-    int i1 = iu + 2 < S ? iu + 2 : iu, j1 = iv + 2 < S ? iv + 2 : iv;
-    float l00 = d <= sm[iv * S + iu], l10 = d <= sm[iv * S + i1], l01 = d <= sm[j1 * S + iu], l11 = d <= sm[j1 * S + i1];
-    return (l00 * (1 - fu) + l10 * fu) * (1 - fv) + (l01 * (1 - fu) + l11 * fu) * fv;
+    const int a = ((gu + 32) >> 6) - 1, b = ((gv + 32) >> 6) - 1;   /* texel i: the centre at or before (-1 before the first) */
+    const float t = ((gu + 32) & 63) * (1.f / 64), s = ((gv + 32) & 63) * (1.f / 64);
+    const f4 wu = { 1 - t, 1, 1, t };   /* times 3 each way: every product and sum below is a whole number of 4096ths, so exact */
+    const float wv[4] = { 1 - s, 1, 1, s };
+    const int inside = a >= 1 && a + 2 <= S - 1;
+    f4 acc = vf(0);
+    for (int j = 0; j < 4; j++) {
+        int r = b - 1 + j; r = r < 0 ? 0 : r > S - 1 ? S - 1 : r;
+        const float *row = &sm[r * S];
+        f4 m;
+        if (inside) memcpy(&m, row + a - 1, sizeof m);
+        else for (int i = 0; i < 4; i++) { int c = a - 1 + i; m[i] = row[c < 0 ? 0 : c > S - 1 ? S - 1 : c]; }
+        acc += vsel(vf(d) <= m, wu, vf(0)) * wv[j];
+    }
+    return ((acc[0] + acc[1]) + (acc[2] + acc[3])) / 9;   /* all lit is exactly 1, all in shadow exactly 0 */
+}
+/* a kept pixel's */
+static inline __attribute__((always_inline)) float lit_of(const Bufs *B, int idx) { return lit_q(B, B->gu[idx], B->gv[idx], B->gd[idx]); }
+
+/* THE OPEN TABLE, PER PIXEL AND STILL CHEAP. A pixel nothing was drawn on is the table at (x / dpr, y / dpr -
+ * pad, 0), its normal straight up: its place on the map is light4's of that point, the same arithmetic a
+ * pixel at a body's edge gets. Four neighbouring pixels of a row at once. */
+static inline __attribute__((always_inline)) void table4(const Light *L, float dpr, float pad, int x, int y, i4 *gu4, i4 *gv4, f4 *gd4)
+{
+    const i4 xs = { x, x + 1, x + 2, x + 3 };
+    light4(L, vflt(xs) / dpr, vf((float)y / dpr - pad), vf(0), vf(0), vf(0), vf(1), vf(L->LZ), gu4, gv4, gd4);
+}
+/* THE OPEN TABLE AS A PLANE. The table is flat and the light one direction, so a table pixel's place on the
+ * map and its depth (light4's arithmetic, before its clamp and truncation) are linear in the pixel: at (x, y),
+ * u0 + ux x + uy y in 64ths of a texel, and alike v and d. Only table_block's bounds are read off it; every
+ * pixel's own light is light4's. */
+typedef struct { float u0, ux, uy, v0, vx, vy, d0, dx, dy; const uint8_t *stile; int ST; } TPlane;
+static TPlane table_plane(const Light *L, float dpr, float pad)
+{
+    float sn = 1 - L->LZ * L->LZ; if (sn < 0) sn = 0;
+    const float off = 1.5f * fsqrt(sn) / (L->sus < L->svs ? L->sus : L->svs);   /* light4's normal offset, straight up */
+    TPlane P;
+    P.ux = L->UX / dpr * L->sus * 64; P.uy = L->UY / dpr * L->sus * 64; P.u0 = (-pad * L->UY + off * L->UZ - L->su0) * L->sus * 64;
+    P.vx = L->VX / dpr * L->svs * 64; P.vy = L->VY / dpr * L->svs * 64; P.v0 = (-pad * L->VY + off * L->VZ - L->sv0) * L->svs * 64;
+    P.dx = -L->LX / dpr; P.dy = -L->LY / dpr; P.d0 = pad * L->LY - off * L->LZ - 1.6f;
+    P.stile = stile; P.ST = ST;
+    return P;
+}
+/* the least and the most of a + bx x + by y over the block's columns [x0, x1] and rows [y0, y1] */
+static inline __attribute__((always_inline)) void plane_range(float a, float bx, float by, float x0, float x1, float y0, float y1, float *lo, float *hi)
+{
+    float p = bx * x0, q = bx * x1, r = by * y0, t = by * y1;
+    *lo = a + (p < q ? p : q) + (r < t ? r : t); *hi = a + (p < q ? q : p) + (r < t ? t : r);
+}
+/* A BLOCK OF THE OPEN TABLE THAT IS ALL ONE THING. Over a block the map's place and depth move linearly, so
+ * the plane bounds every pixel's; every texel any of its pixels can read is then known, and when all of them
+ * say lit for the deepest pixel (or shadow for the shallowest), every pixel's taps agree and its light is
+ * exactly 1 (0). Most of the table is under tiles nothing cast into (stile), which settles it in a byte or
+ * four; a block a shadow's edge crosses is read pixel by pixel, so the edge is the map's own soft line at
+ * every scale, never a step of the block's size. The bounds are widened well past any rounding (four 64ths
+ * of a texel; a hundredth of a point of depth and a hundred-thousandth of it): a block wrongly called mixed
+ * costs time, never a pixel. 1 lit, 0 shadow, -1 mixed (or, with tiles_only, not settled by the tiles). */
+static inline __attribute__((always_inline)) int table_block(const TPlane *P, const Bufs *B, int bx, int by, int bw, int bh, int tiles_only)
+{
+    const float x0 = (float)bx, x1 = (float)(bx + bw - 1), y0 = (float)by, y1 = (float)(by + bh - 1);
+    float ulo, uhi, vlo, vhi, dmin, dmax;
+    plane_range(P->u0, P->ux, P->uy, x0, x1, y0, y1, &ulo, &uhi);
+    plane_range(P->v0, P->vx, P->vy, x0, x1, y0, y1, &vlo, &vhi);
+    plane_range(P->d0, P->dx, P->dy, x0, x1, y0, y1, &dmin, &dmax);
+    if (!(ulo == ulo && uhi == uhi && vlo == vlo && vhi == vhi && dmin == dmin && dmax == dmax)) return -1;
+    const float gmax = (B->SR - 1.01f) * 64;   /* light4's clamp */
+    const int umin = (int)fclamp(ulo - 4, 0, gmax), umax = (int)fclamp(uhi + 4, 0, gmax) + 1;
+    const int vmin = (int)fclamp(vlo - 4, 0, gmax), vmax = (int)fclamp(vhi + 4, 0, gmax) + 1;
+    const int S = B->SR; const float *sm = B->smap;
+    /* the texels lit_q reads for any gu in [umin, umax]: i - 1 to i + 2, held to the map */
+    int k0 = ((umin + 32) >> 6) - 2, k1 = ((umax + 32) >> 6) + 1, m0 = ((vmin + 32) >> 6) - 2, m1 = ((vmax + 32) >> 6) + 1;
+    if (k0 < 0) k0 = 0;
+    if (m0 < 0) m0 = 0;
+    if (k1 > S - 1) k1 = S - 1;
+    if (m1 > S - 1) m1 = S - 1;
+    const float eps = .01f + ((dmin < 0 ? -dmin : dmin) + (dmax < 0 ? -dmax : dmax)) * 1e-5f, dlo = dmin - eps, dhi = dmax + eps;
+    if (dhi <= 1e30f) {   /* no casting face wrote a texel it reads: lit */
+        int touched = 0;
+        for (int tm = m0 >> ST_SHIFT; tm <= m1 >> ST_SHIFT; tm++) for (int tk = k0 >> ST_SHIFT; tk <= k1 >> ST_SHIFT; tk++) touched |= P->stile[tm * P->ST + tk];
+        if (!touched) return 1;
+    }
+    if (tiles_only) return -1;
+    int notlit = 0, notdark = 0;   /* some texel may shade some pixel; some texel may light some pixel */
+    for (int m = m0; m <= m1; m++) {
+        const float *row = &sm[m * S];
+        for (int k = k0; k <= k1; k++) { float s = row[k]; notlit |= !(dhi <= s); notdark |= !(dlo > s); }
+        if (notlit && notdark) return -1;
+    }
+    return !notlit ? 1 : !notdark ? 0 : -1;
 }
 
 static void tri(const Light *Lp, const Bufs *Bp, int r0, int r1, uint32_t *walked, uint32_t *shaded,
@@ -543,26 +646,41 @@ static void shade(const Light *Lp, const Bufs *Bp, int r0, int r1)
     const int W = B.FW, H = B.FH, AW_ = B.AW, AH_ = B.AH;
     const float dpr = DPR, pad = PAD, dark = SH_DARK;
     const float *const aob = B.ao; uint8_t *const gfb = B.gf, *const fbb = B.fb;
-    /* the open table first, in 4-by-4 blocks: one lookup each (its shadow is soft anyway) */
-    for (int by = r0; by < r1; by += 4) for (int bx = 0; bx < W; bx += 4) {
+    const TPlane TP = table_plane(&L, dpr, pad);
+    const int slow = skip & 8;   /* a test's: every block of the open table read pixel by pixel */
+    /* the open table first, in 4-by-4 blocks: a block all lit or all in shadow is one alpha (table_block);
+     * a block a shadow's edge crosses is lit pixel by pixel, four at a time. Four blocks in a row are first
+     * asked at once whether nothing cast near them: most of the table is settled by that one question. */
+    for (int by = r0; by < r1; by += 4) for (int bx = 0, strip = 0; bx < W; bx += 4) {
+        const int bh = by + 4 <= H ? 4 : H - by;
+        if (!(bx & 15)) strip = slow ? -1 : table_block(&TP, &B, bx, by, bx + 16 <= W ? 16 : W - bx, bh, 1);
         int i = by * W + bx;
         if (gfb[i] && gfb[i + (bx + 3 < W ? 3 : 0)] && gfb[i + (by + 3 < H ? 3 * W : 0)]) continue;   /* a block some body covers is done below */
-        keep_light(&L, &B, i, (bx + 1.5f) / dpr, (by + 1.5f) / dpr - pad, 0, 0, 0, 1, L.LZ);
-        float lit = 1 - (1 - lit_of(&B, i)) * dark;
+        const int bw = bx + 4 <= W ? 4 : W - bx;
+        const int whole = strip == 1 ? 1 : slow ? -1 : table_block(&TP, &B, bx, by, bw, bh, 0);
+        const float lit = whole < 0 ? 0 : 1 - (1 - (float)whole) * dark;
         /* most blocks are under no footprint: one alpha for the block */
         int ab = (by / 4) * AW_ + bx / 4, near = aob[ab] > 0 || (bx / 4 + 1 < AW_ && aob[ab + 1] > 0) || (by / 4 + 1 < AH_ && (aob[ab + AW_] > 0 || (bx / 4 + 1 < AW_ && aob[ab + AW_ + 1] > 0))) || (bx >= 4 && aob[ab - 1] > 0) || (by >= 4 && aob[ab - AW_] > 0);
         uint8_t al = (uint8_t)((1 - lit) * 255 + .5f);
         const uint32_t open4 = 0x00020300u | (uint32_t)al << 24;   /* the bytes 0, 3, 2, al: the table's dark */
-        for (int y = by; y < by + 4 && y < H; y++) {
+        for (int y = by; y < by + bh; y++) {
             const int j0 = y * W + bx;
-            if (!near && bx + 4 <= W) {
+            if (whole >= 0 && !near && bw == 4) {
                 /* a block row nothing is drawn on and no footprint reaches: its four pixels at once */
                 uint32_t g4; memcpy(&g4, &gfb[j0], 4);
                 if (!g4) { for (int k = 0; k < 4; k++) memcpy(&fbb[(j0 + k) * 4], &open4, 4); memset(&gfb[j0], 4, 4); continue; }
             }
-            for (int x = bx; x < bx + 4 && x < W; x++) {
-                int j = y * W + x; if (gfb[j]) continue;
-                uint8_t *o = &fbb[j * 4]; o[0] = 0; o[1] = 3; o[2] = 2; o[3] = near ? (uint8_t)((1 - lit * (1 - ao_at(&B, x, y))) * 255 + .5f) : al; gfb[j] = 4;
+            float lit4[4] = { lit, lit, lit, lit };
+            if (whole < 0) {
+                i4 gu4, gv4; f4 gd4; table4(&L, dpr, pad, bx, y, &gu4, &gv4, &gd4);
+                for (int k = 0; k < bw; k++) if (!gfb[j0 + k]) lit4[k] = 1 - (1 - lit_q(&B, (uint16_t)gu4[k], (uint16_t)gv4[k], gd4[k])) * dark;
+            }
+            for (int k = 0; k < bw; k++) {
+                const int j = j0 + k, x = bx + k; if (gfb[j]) continue;
+                const float lk = lit4[k];
+                uint8_t *o = &fbb[j * 4]; o[0] = 0; o[1] = 3; o[2] = 2;
+                o[3] = near ? (uint8_t)((1 - lk * (1 - ao_at(&B, x, y))) * 255 + .5f) : whole >= 0 ? al : (uint8_t)((1 - lk) * 255 + .5f);
+                gfb[j] = 4;
             }
         }
     }
@@ -570,7 +688,12 @@ static void shade(const Light *Lp, const Bufs *Bp, int r0, int r1)
     for (int y = r0; y < r1; y++) for (int x = 0; x < W; x++) {
         int i = y * W + x, f = gfb[i]; if (f == 4) continue;
         uint8_t *o = &fbb[i * 4];
-        if (!f) { float wx = x / dpr, wy = y / dpr - pad; keep_light(&L, &B, i, wx, wy, 0, 0, 0, 1, L.LZ); f = 2; }
+        if (!f) {
+            /* the table at a body's edge: the pixel's own place, as table4 gives a block's */
+            i4 gu4, gv4; f4 gd4; table4(&L, dpr, pad, x, y, &gu4, &gv4, &gd4);
+            float lit = 1 - (1 - lit_q(&B, (uint16_t)gu4[0], (uint16_t)gv4[0], gd4[0])) * dark;
+            o[0] = 0; o[1] = 3; o[2] = 2; o[3] = (uint8_t)((1 - lit * (1 - ao_at(&B, x, y))) * 255 + .5f); continue;
+        }
         if (f == 2) { float lit = 1 - (1 - lit_of(&B, i)) * dark; o[0] = 0; o[1] = 3; o[2] = 2; o[3] = (uint8_t)((1 - lit * (1 - ao_at(&B, x, y))) * 255 + .5f); continue; }
         /* a body's light is the lamp's, by the cosine, less the shadow on it (a face turned from the lamp and a face
          * in its shadow look alike: neither sees it), on an ambient floor; the tint's scale and floor, then the crease */
@@ -692,7 +815,10 @@ int cn_scene_prepare(int nverts, int nfaces)
 /* the rows of pass's band: the map's for the shadow, the picture's for the picture, four-aligned for the shade */
 static void band_rows(int pass, int band, int nbands, int *r0, int *r1)
 {
-    if (pass == CN_SCENE_PASS_SHADOW) { *r0 = (int)((int64_t)SR * band / nbands); *r1 = (int)((int64_t)SR * (band + 1) / nbands); return; }
+    if (pass == CN_SCENE_PASS_SHADOW) {   /* on tile rows: a band marks only its own tiles */
+        int t0 = (int)((int64_t)ST * band / nbands), t1 = (int)((int64_t)ST * (band + 1) / nbands);
+        *r0 = t0 << ST_SHIFT; *r1 = t1 << ST_SHIFT < SR ? t1 << ST_SHIFT : SR; return;
+    }
     if (pass == CN_SCENE_PASS_PICTURE) { *r0 = (int)((int64_t)FH * band / nbands); *r1 = (int)((int64_t)FH * (band + 1) / nbands); return; }
     int b0 = (int)((int64_t)AH * band / nbands), b1 = (int)((int64_t)AH * (band + 1) / nbands);
     *r0 = b0 * 4; *r1 = b1 * 4 < FH ? b1 * 4 : FH;
@@ -708,12 +834,13 @@ void cn_scene_band(int pass, int band, int nbands)
     if (pass == CN_SCENE_PASS_SHADOW) {
         /* pass 1, the map's rows of this band: cleared, then every casting face that reaches them */
         for (int i = r0 * B.SR, n = r1 * B.SR; i < n; i++) B.smap[i] = 1e30f;
+        memset(stile + (size_t)(r0 >> ST_SHIFT) * ST, 0, (size_t)(((r1 + (1 << ST_SHIFT) - 1) >> ST_SHIFT) - (r0 >> ST_SHIFT)) * ST);
         if (skip & 1) return;
         uint32_t texels = 0;
         for (int f = 0; f < prep_nfaces; f++) {
             if (srows[f * 2 + 1] < r0 || srows[f * 2] >= r1) continue;
             SV s[3]; corners_light(&L, &faces[f * FF], s);
-            shadow_tri(s[0], s[1], s[2], B.smap, B.SR, r0, r1, &texels);
+            shadow_tri(s[0], s[1], s[2], B.smap, B.SR, stile, ST, r0, r1, &texels);
         }
         P[2] += texels; P[3] += texels;
         return;

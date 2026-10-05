@@ -323,8 +323,8 @@ static void test_bands_and_determinism(void)
     cn_stage_begin(&ST, &in);
     CHECK(banded(&ST, mid, 0, 4, 0) == one_mid && banded(&ST, still, .6f, 4, 0) == one_still, "begun again: the same frames");
     printf("  frames: throw at 1.2 s %08x, still peeking %08x\n", one_mid, one_still);
-    CHECK(one_mid == 0xc83b39dcu, "the throw frame's golden");
-    CHECK(one_still == 0xbc77a1a7u, "the still frame's golden");
+    CHECK(one_mid == 0x18318e6bu, "the throw frame's golden");
+    CHECK(one_still == 0xe41ce178u, "the still frame's golden");
     cn_stage_purge(&ST);
     free(A);
 }
