@@ -165,15 +165,15 @@ static int frame_sizes(int W, int H, int pad, float dpr, int shadow_res, int vca
 {
     /* each refusal has its own case (cn_scene_test holds one number to each):
      *   H < 1, pad < 0      a board of no height (the pad alone would still give it rows), a pad upward
-     *   !(dpr > 0)          a scale of zero or less, which times a negative width would make a positive one
-     *   !(... < MAX)        a framebuffer past 8,192 a side, or not a number (a NaN scale lands here too)
-     *   w < 1, h < 1        a board and scale that round to no pixel, a board of no width among them
+     *   1 <= size < MAX     the framebuffer's sides, before they become integers: past 8,192, or rounding
+     *                       to no pixel (a board of no width; and, the height being at least 1, every
+     *                       scale of zero or less), or not a number (a NaN scale); held before the
+     *                       conversion, so no float outside int's range is ever converted
      *   shadow_res          a map too small to window, or past what 16 bits place (CN_SCENE_SHADOW_MAX) */
-    if (H < 1 || pad < 0 || !(dpr > 0) || shadow_res < 4 || shadow_res > CN_SCENE_SHADOW_MAX || vcapacity < 0 || fcapacity < 0) return 0;
+    if (H < 1 || pad < 0 || shadow_res < 4 || shadow_res > CN_SCENE_SHADOW_MAX || vcapacity < 0 || fcapacity < 0) return 0;
     float fwf = W * dpr + .5f, fhf = (H + pad) * dpr + .5f;
-    if (!(fwf < MAX_FRAME_PX) || !(fhf < MAX_FRAME_PX)) return 0;
+    if (!(fwf >= 1 && fwf < MAX_FRAME_PX) || !(fhf >= 1 && fhf < MAX_FRAME_PX)) return 0;
     int w = (int)fwf, h = (int)fhf;
-    if (w < 1 || h < 1) return 0;
     size_t npx = (size_t)w * h, aw = (size_t)(w + 3) / 4, ah = (size_t)(h + 3) / 4;
     sz[B_FB] = npx * 4; sz[B_ZB] = npx * 4; sz[B_SMAP] = (size_t)shadow_res * shadow_res * 4; sz[B_AO] = aw * ah * 4;
     sz[B_GT] = npx * 3; sz[B_GK] = npx; sz[B_GF] = npx; sz[B_GU] = npx * 2; sz[B_GV] = npx * 2; sz[B_GD] = npx * 4;
