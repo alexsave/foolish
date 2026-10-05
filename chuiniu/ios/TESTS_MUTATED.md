@@ -107,6 +107,8 @@ Each mutant was one edit by hand to `tools/cn_texgen.c`, the test run, the edit 
 | T3 | the texel's v is `(y + .5) / (H - 40)` (the tile no longer wraps) | `:266` "the top and bottom edges part: 32.25 a texel against 1.07 inside", and `:272` |
 | T4 | the march's palette warm (base 16 10 6, gains 14 9 5: foolish's walnut direction) | `:280` "the planks lean warm: 26.5 19.1 12.1" |
 | T5 | one nail a plank, not one inside each edge | `:299` "48 nail heads, 48 missing" |
+| T6 | the crust draws no wrapped copies (`w < 1` for the patches and the shells) | `:333` "left and right edges part more than the study's: 111.66 against 5.31", `:334` "top and bottom edges part: 114.62 against 5.38" |
+| T7 | no shells (`per = 0`) | `:323` "only 0 solid texels: the shells are missing", and `:333` |
 
 ## Not tested
 

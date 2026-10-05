@@ -11,6 +11,8 @@
  *                                          the planks at the study's own scale, without the nails
  *                                          (the study lays its nails over the tile as SVG), against
  *                                          the study's canvas captured by tools/cn_tex_capture.mjs
+ *   cn_texgen --compare-crust STUDY_512x128.rgba [--sheet OUT.png]
+ *                                          the barnacle crust the plates wear, the same way
  *
  * THE TILES are the study's own generators (docs/UI.html, TEX): the integer
  * hash, value noise on a wrapping lattice, fbm, and the verdigris (verdWith
@@ -327,6 +329,148 @@ void cn_texgen_planks(int scale, int nails, uint8_t *rgb)
     free(img);
 }
 
+/* ---- THE CRUST: TEX.crust, the barnacle colonies on every plate ---------------------------
+ * The study draws it with canvas 2D (gradients, arcs, strokes) into 512 by 128, transparent, wrapping
+ * both ways, and lays a corner of it on each plate (.plate .crust). Here the same draw list is
+ * rasterized at 4 by 4 samples a texel, premultiplied, source-over in the canvas's order: each
+ * colony's chalk patch, then every shell biggest first (its cast shadow, the cone lit from the
+ * top-left, the plates, the opening and its lit far wall, the lit rim). RGBA out, straight alpha. */
+enum { TG_CRUST_W = 512, TG_CRUST_H = 128, TG_SS = 4 };
+typedef struct { float *px; int w, h; } TgCanvas;     /* premultiplied RGBA at TG_SS samples a texel */
+typedef struct { double x, y, r, rot, sq; } TgDisc;
+/* the local frame of an op: translate(tx, ty) rotate(rot) scale(1, sq); a sample's point in it */
+typedef struct { double tx, ty, c, s, sq; } TgXf;
+static void tg_local(const TgXf *f, double X, double Y, double *lx, double *ly)
+{
+    double dx = X - f->tx, dy = Y - f->ty;
+    *lx = f->c * dx + f->s * dy; *ly = (-f->s * dx + f->c * dy) / f->sq;
+}
+static void tg_put(TgCanvas *cv, int i, const double *rgb, double a)
+{
+    if (a <= 0) return;
+    float *p = cv->px + (size_t)i * 4; double k = 1 - a;
+    for (int c = 0; c < 3; c++) p[c] = (float)(rgb[c] / 255 * a + p[c] * k);
+    p[3] = (float)(a + p[3] * k);
+}
+/* a gradient's stops: positions and RGBA, linear between */
+typedef struct { int n; double t[4], c[4][4]; } TgStops;
+static void tg_stop(const TgStops *g, double t, double *rgb, double *a)
+{
+    if (t <= g->t[0]) { for (int k = 0; k < 3; k++) rgb[k] = g->c[0][k]; *a = g->c[0][3]; return; }
+    for (int i = 1; i < g->n; i++) if (t <= g->t[i]) {
+        double u = (t - g->t[i - 1]) / (g->t[i] - g->t[i - 1]);
+        /* canvas interpolates premultiplied */
+        double a0 = g->c[i - 1][3], a1 = g->c[i][3], A = a0 + (a1 - a0) * u;
+        for (int k = 0; k < 3; k++) rgb[k] = A > 0 ? (g->c[i - 1][k] * a0 + (g->c[i][k] * a1 - g->c[i - 1][k] * a0) * u) / A : g->c[i][k];
+        *a = A; return;
+    }
+    for (int k = 0; k < 3; k++) rgb[k] = g->c[g->n - 1][k]; *a = g->c[g->n - 1][3];
+}
+/* createRadialGradient(x0, y0, 0, x1, y1, r1): the largest t >= 0 whose circle passes through q */
+static double tg_conic(double qx, double qy, double x0, double y0, double x1, double y1, double r1)
+{
+    double ax = x1 - x0, ay = y1 - y0, px = qx - x0, py = qy - y0;
+    double a = ax * ax + ay * ay - r1 * r1, b = px * ax + py * ay, c = px * px + py * py;
+    if (tg_abs(a) < 1e-12) return b > 0 ? c / (2 * b) : 0;
+    double disc = b * b - a * c; if (disc < 0) return 0;
+    double t1 = (b + sqrt(disc)) / a, t2 = (b - sqrt(disc)) / a, t = t1 > t2 ? t1 : t2;
+    return t < 0 ? 0 : t;
+}
+static double tg_seg_dist(double x, double y, double ax, double ay, double bx, double by)
+{
+    double dx = bx - ax, dy = by - ay, l = dx * dx + dy * dy, t = l > 0 ? ((x - ax) * dx + (y - ay) * dy) / l : 0;
+    t = t < 0 ? 0 : t > 1 ? 1 : t; double ex = ax + t * dx - x, ey = ay + t * dy - y;
+    return sqrt(ex * ex + ey * ey);
+}
+/* the samples an op can touch: a box round (cx, cy) of radius R texels, wrapped onto the canvas */
+#define TG_EACH(cv, cx, cy, R, ...) do { \
+    int x0_ = (int)tg_floor(((cx) - (R)) * TG_SS), x1_ = (int)tg_floor(((cx) + (R)) * TG_SS) + 1; \
+    int y0_ = (int)tg_floor(((cy) - (R)) * TG_SS), y1_ = (int)tg_floor(((cy) + (R)) * TG_SS) + 1; \
+    for (int sy_ = y0_; sy_ <= y1_; sy_++) { if (sy_ < 0 || sy_ >= (cv)->h) continue; \
+        for (int sx_ = x0_; sx_ <= x1_; sx_++) { if (sx_ < 0 || sx_ >= (cv)->w) continue; \
+            double X = (sx_ + .5) / TG_SS, Y = (sy_ + .5) / TG_SS; int I = sy_ * (cv)->w + sx_; __VA_ARGS__ } } } while (0)
+
+void cn_texgen_crust(uint8_t *rgba)
+{
+    const uint32_t seed = 53; const double PI = 3.14159265358979323846;
+    const int W = TG_CRUST_W, H = TG_CRUST_H, clusters = 20, per = 12; const double spread = 32, rMin = 3, rMax = 14;
+    static const double shell[3] = { 172, 180, 154 }, shellMid[3] = { 112, 124, 104 }, shellDark[3] = { 58, 70, 60 }, rim[3] = { 26, 36, 30 }, hole[3] = { 5, 9, 7 }, chalk[3] = { 128, 146, 122 };
+    TgCanvas cv = { calloc((size_t)W * TG_SS * H * TG_SS * 4, sizeof(float)), W * TG_SS, H * TG_SS };
+    double pX[20], pY[20], pR[20], pSq[20]; TgDisc d[20 * 12]; int nd = 0;
+    for (int k = 0; k < clusters; k++) {
+        double cx = tg_hash((uint32_t)k, 1, seed) * W, cy = tg_hash((uint32_t)k, 2, seed) * H, sp = spread * (.6 + tg_hash((uint32_t)k, 3, seed) * .8);
+        pX[k] = cx; pY[k] = cy; pR[k] = sp * 1.5; pSq[k] = .7 + tg_hash((uint32_t)k, 4, seed) * .3;
+        for (int i = 0; i < per; i++) {
+            uint32_t id = (uint32_t)(k * 100 + i);
+            double a = tg_hash(id, 5, seed) * PI * 2, dist = sp * pow(tg_hash(id, 6, seed), .6);
+            double r = rMin + (rMax - rMin) * pow(tg_hash(id, 7, seed), 1.5);
+            r *= 1.25 - .7 * dist / sp;
+            d[nd].x = cx + cos(a) * dist; d[nd].y = cy + sin(a) * dist * .8; d[nd].r = r;
+            d[nd].rot = tg_hash(id, 8, seed) * PI; d[nd].sq = .78 + tg_hash(id, 9, seed) * .22; nd++;
+        }
+    }
+    static const double wraps[5][2] = { { 0, 0 }, { TG_CRUST_W, 0 }, { -TG_CRUST_W, 0 }, { 0, TG_CRUST_H }, { 0, -TG_CRUST_H } };
+    /* the chalk patches */
+    TgStops gp = { 3, { 0, .6, 1 }, { { chalk[0], chalk[1], chalk[2], .6 }, { chalk[0], chalk[1], chalk[2], .3 }, { chalk[0], chalk[1], chalk[2], 0 } } };
+    for (int k = 0; k < clusters; k++) for (int w = 0; w < 5; w++) {
+        TgXf f = { pX[k] + wraps[w][0], pY[k] + wraps[w][1], 1, 0, pSq[k] }; double R = pR[k];
+        TG_EACH(&cv, f.tx, f.ty, R, { double lx, ly; tg_local(&f, X, Y, &lx, &ly); double t = sqrt(lx * lx + ly * ly) / R;
+            if (t <= 1) { double c[3], a; tg_stop(&gp, t, c, &a); tg_put(&cv, I, c, a); } });
+    }
+    /* the shells, biggest first (a stable sort, as the study's) */
+    for (int i = 1; i < nd; i++) { TgDisc t = d[i]; int j = i - 1; while (j >= 0 && d[j].r < t.r) { d[j + 1] = d[j]; j--; } d[j + 1] = t; }
+    static const double shadowc[3] = { 0, 4, 3 }, wallc[3] = { 210, 220, 190 }, litc[3] = { 236, 240, 222 };
+    for (int n = 0; n < nd; n++) for (int w = 0; w < 5; w++) {
+        const TgDisc *D = &d[n]; double x = D->x + wraps[w][0], y = D->y + wraps[w][1], r = D->r;
+        if (x < -rMax || x > W + rMax || y < -rMax || y > H + rMax) continue;
+        TgXf f = { x, y, cos(D->rot), sin(D->rot), D->sq };
+        double R = r * 1.4;
+        TgStops cone = { 4, { 0, .45, .85, 1 }, { { shell[0], shell[1], shell[2], 1 }, { shellMid[0], shellMid[1], shellMid[2], 1 }, { shellDark[0], shellDark[1], shellDark[2], 1 }, { rim[0], rim[1], rim[2], 1 } } };
+        TgStops open = { 3, { 0, .75, 1 }, { { hole[0], hole[1], hole[2], 1 }, { hole[0], hole[1], hole[2], 1 }, { shellDark[0], shellDark[1], shellDark[2], .6 } } };
+        int plates = 6 + (int)tg_floor(r / 3 + .5); double pw = r * .08 > .5 ? r * .08 : .5, ww = r * .09 > .5 ? r * .09 : .5, lw = r * .1 > .5 ? r * .1 : .5;
+        TG_EACH(&cv, x, y, R, {
+            double lx, ly; tg_local(&f, X, Y, &lx, &ly); double c[3], a;
+            /* the cast shadow */
+            double sx = lx - r * .25, sy = ly - r * .35;
+            if (sx * sx + sy * sy <= (r * .95) * (r * .95)) tg_put(&cv, I, shadowc, .4);
+            if (lx * lx + ly * ly <= r * r) {
+                /* the cone */
+                tg_stop(&cone, tg_conic(lx, ly, -r * .35, -r * .35, 0, 0, r), c, &a); tg_put(&cv, I, c, a);
+                /* the plates */
+                for (int k = 0; k < plates; k++) {
+                    double an = k * PI * 2 / plates + .3;
+                    if (tg_seg_dist(lx, ly, cos(an) * r * .36, sin(an) * r * .36, cos(an) * r * .98, sin(an) * r * .98) <= pw / 2) { tg_put(&cv, I, rim, .55); break; }
+                }
+            }
+            /* the opening, and its far wall catching the light */
+            double ex = lx / (r * .36), ey = ly / (r * .3);
+            if (ex * ex + ey * ey <= 1) { tg_stop(&open, tg_conic(lx, ly, r * .08, r * .1, 0, 0, r * .36), c, &a); tg_put(&cv, I, c, a); }
+            {
+                /* the wall: an arc of the ellipse .34r by .28r from .2 to 1.6 rad, stroked */
+                double best = 1e9;
+                for (int k = 0; k <= 24; k++) { double an = .2 + (1.6 - .2) * k / 24.0, px = cos(an) * r * .34 - lx, py = sin(an) * r * .28 - ly, dd = px * px + py * py; if (dd < best) best = dd; }
+                if (sqrt(best) <= ww / 2) tg_put(&cv, I, wallc, .35);
+            }
+            {
+                /* the lit rim: an arc of radius .9r from 1.05 pi to 1.75 pi */
+                double an = atan2(ly, lx); if (an < 0) an += 2 * PI;
+                double rr = sqrt(lx * lx + ly * ly);
+                if (an >= 1.05 * PI && an <= 1.75 * PI && tg_abs(rr - r * .9) <= lw / 2) tg_put(&cv, I, litc, .45);
+            }
+        });
+    }
+    /* down to texels: the mean of the samples, premultiplied, then straight alpha */
+    for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) {
+        double s[4] = { 0 };
+        for (int j = 0; j < TG_SS; j++) for (int i = 0; i < TG_SS; i++) { const float *p = cv.px + ((size_t)(y * TG_SS + j) * cv.w + x * TG_SS + i) * 4; for (int k = 0; k < 4; k++) s[k] += p[k]; }
+        for (int k = 0; k < 4; k++) s[k] /= TG_SS * TG_SS;
+        uint8_t *o = rgba + ((size_t)y * W + x) * 4;
+        for (int k = 0; k < 3; k++) o[k] = s[3] > 0 ? tg_store(s[k] / s[3] * 255) : 0;
+        o[3] = tg_store(s[3] * 255);
+    }
+    free(cv.px);
+}
+
 /* ---- TrueType: the few tables a digit needs ---------------------------------------------- */
 typedef struct { const uint8_t *b; size_t n; size_t glyf, loca, head, hhea, hmtx, cmap, os2, maxp; } Font;
 static unsigned be16(const uint8_t *p) { return (unsigned)(p[0] << 8 | p[1]); }
@@ -545,11 +689,12 @@ static void chunk(FILE *fp, const char *tag, const uint8_t *d, size_t n)
     fwrite(h, 1, 8, fp); if (n) fwrite(d, 1, n, fp);
     uint32_t c = crc(crc(0, h + 4, 4), d, n); uint8_t t[4] = { (uint8_t)(c >> 24), (uint8_t)(c >> 16), (uint8_t)(c >> 8), (uint8_t)c }; fwrite(t, 1, 4, fp);
 }
-static int write_png(const char *path, const uint8_t *rgb, int w, int h)
+/* chans 3 (RGB) or 4 (RGBA, straight alpha) */
+static int write_png_n(const char *path, const uint8_t *rgb, int w, int h, int chans)
 {
-    size_t raw = (size_t)h * (1 + (size_t)w * 3), nblk = (raw + 65534) / 65535;
+    size_t row = (size_t)w * chans, raw = (size_t)h * (1 + row), nblk = (raw + 65534) / 65535;
     uint8_t *z = malloc(2 + raw + nblk * 5 + 4), *r = malloc(raw); size_t o = 0;
-    for (int y = 0; y < h; y++) { r[y * (1 + (size_t)w * 3)] = 0; memcpy(r + y * (1 + (size_t)w * 3) + 1, rgb + (size_t)y * w * 3, (size_t)w * 3); }
+    for (int y = 0; y < h; y++) { r[y * (1 + row)] = 0; memcpy(r + y * (1 + row) + 1, rgb + (size_t)y * row, row); }
     z[o++] = 0x78; z[o++] = 1;
     uint32_t a = 1, b = 0;
     for (size_t i = 0; i < raw; i++) { a = (a + r[i]) % 65521; b = (b + a) % 65521; }
@@ -562,10 +707,11 @@ static int write_png(const char *path, const uint8_t *rgb, int w, int h)
     FILE *fp = fopen(path, "wb"); if (!fp) { free(z); free(r); return 0; }
     static const uint8_t sig[8] = { 137, 80, 78, 71, 13, 10, 26, 10 }; fwrite(sig, 1, 8, fp);
     uint8_t ih[13] = { 0 }; ih[0] = (uint8_t)(w >> 24); ih[1] = (uint8_t)(w >> 16); ih[2] = (uint8_t)(w >> 8); ih[3] = (uint8_t)w;
-    ih[4] = (uint8_t)(h >> 24); ih[5] = (uint8_t)(h >> 16); ih[6] = (uint8_t)(h >> 8); ih[7] = (uint8_t)h; ih[8] = 8; ih[9] = 2;
+    ih[4] = (uint8_t)(h >> 24); ih[5] = (uint8_t)(h >> 16); ih[6] = (uint8_t)(h >> 8); ih[7] = (uint8_t)h; ih[8] = 8; ih[9] = chans == 4 ? 6 : 2;
     chunk(fp, "IHDR", ih, 13); chunk(fp, "IDAT", z, o); chunk(fp, "IEND", 0, 0);
     fclose(fp); free(z); free(r); return 1;
 }
+static int write_png(const char *path, const uint8_t *rgb, int w, int h) { return write_png_n(path, rgb, w, h, 3); }
 
 /* ---- --compare: the study's captures against the pack's derivations -------------------------- */
 typedef struct { uint8_t *rgb; int w, h; } Sheet;
@@ -688,16 +834,44 @@ static int compare_planks(const char *ref_path, const char *sheet_path)
     return m > 1.0;
 }
 
+/* the crust against the study's canvas, both laid over the plate's bronze (#433b22) as the plate shows it */
+static int compare_crust(const char *ref_path, const char *sheet_path)
+{
+    enum { W = TG_CRUST_W, H = TG_CRUST_H };
+    size_t n; uint8_t *ref = read_file(ref_path, &n);
+    if (!ref || n != (size_t)W * H * 4) { fprintf(stderr, "cn_texgen: %s is not a %dx%d RGBA capture\n", ref_path, W, H); free(ref); return 1; }
+    uint8_t *mine = malloc((size_t)W * H * 4); cn_texgen_crust(mine);
+    static const int bg[3] = { 0x43, 0x3b, 0x22 };
+    for (int i = 0; i < W * H; i++) for (uint8_t *q = ref; q; q = q == ref ? mine : 0) {
+        int a = q[i * 4 + 3]; for (int k = 0; k < 3; k++) q[i * 4 + k] = (uint8_t)((q[i * 4 + k] * a + bg[k] * (255 - a) + 127) / 255); q[i * 4 + 3] = 255;
+    }
+    int mx; double m = mad(ref, mine, (size_t)W * H, 4, 3, &mx);
+    printf("crust %dx%d over bronze  MAD %.4f  max %d\n", W, H, m, mx);
+    if (sheet_path) {
+        Sheet sh = { 0, W, 3 * H + 32 };
+        sh.rgb = calloc((size_t)sh.w * sh.h * 3, 1);
+        uint8_t *diff = malloc((size_t)W * H * 4);
+        for (int i = 0; i < W * H * 4; i++) { int d = (int)ref[i] - mine[i]; d = (d < 0 ? -d : d) * 4; diff[i] = (uint8_t)(d > 255 ? 255 : d); }
+        sheet_put(&sh, ref, W, H, 0, 0, 1); sheet_put(&sh, mine, W, H, 0, H + 16, 1); sheet_put(&sh, diff, W, H, 0, 2 * (H + 16), 1);
+        if (!write_png(sheet_path, sh.rgb, sh.w, sh.h)) return 1;
+        printf("wrote %s\n", sheet_path); free(diff); free(sh.rgb);
+    }
+    free(ref); free(mine);
+    return m > 4.0;
+}
+
 int main(int argc, char **argv)
 {
-    const char *font = 0, *pack = 0, *ref = 0, *sheet = 0, *images = 0, *planks_ref = 0;
+    const char *font = 0, *pack = 0, *ref = 0, *sheet = 0, *images = 0, *planks_ref = 0, *crust_ref = 0;
     for (int i = 1; i + 1 < argc; i += 2) {
         if (!strcmp(argv[i], "--font")) font = argv[i + 1]; else if (!strcmp(argv[i], "--pack")) pack = argv[i + 1];
         else if (!strcmp(argv[i], "--compare")) ref = argv[i + 1]; else if (!strcmp(argv[i], "--sheet")) sheet = argv[i + 1];
         else if (!strcmp(argv[i], "--images")) images = argv[i + 1]; else if (!strcmp(argv[i], "--compare-planks")) planks_ref = argv[i + 1];
+        else if (!strcmp(argv[i], "--compare-crust")) crust_ref = argv[i + 1];
         else { fprintf(stderr, "cn_texgen: unknown %s\n", argv[i]); return 2; }
     }
     if (planks_ref) return compare_planks(planks_ref, sheet);
+    if (crust_ref) return compare_crust(crust_ref, sheet);
     if (!font || (!pack && !ref && !images)) { fprintf(stderr, "usage: cn_texgen --font F.ttf (--pack OUT | --images DIR | --compare REFDIR [--sheet OUT.png]) | --compare-planks REF.rgba [--sheet OUT.png]\n"); return 2; }
     uint32_t len; uint8_t *b = cn_texgen_pack(font, &len);
     if (!b) return 1;
@@ -723,6 +897,11 @@ int main(int argc, char **argv)
         snprintf(path, sizeof path, "%s/cn_bone.png", images);
         if (!write_png(path, p.bone, CN_TEX_BONE, CN_TEX_BONE)) return 1;
         printf("wrote %s/cn_verd.png and cn_bone.png\n", images);
+        uint8_t *cr = malloc((size_t)TG_CRUST_W * TG_CRUST_H * 4); cn_texgen_crust(cr);
+        snprintf(path, sizeof path, "%s/cn_crust.png", images);
+        if (!write_png_n(path, cr, TG_CRUST_W, TG_CRUST_H, 4)) return 1;
+        printf("wrote %s (%dx%d RGBA)\n", path, TG_CRUST_W, TG_CRUST_H);
+        free(cr);
     }
     if (ref) rc = compare(&p, ref, sheet);
     free(b);

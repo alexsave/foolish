@@ -308,5 +308,31 @@ int main(int argc, char **argv)
 #undef LUM
         free(pl); free(bare); free(again);
     }
+
+    /* THE CRUST (cn_crust.png): the study's TEX.crust; `cn_texgen --compare-crust` holds it to the
+     * study's canvas (MAD 1.66 of 255 over the plate's bronze, the shells' anti-aliased edges) */
+    TEST("crust: colonies on clear ground, wrapping both ways");
+    {
+        enum { W = TG_CRUST_W, H = TG_CRUST_H };
+        uint8_t *c = malloc((size_t)W * H * 4), *c2 = malloc((size_t)W * H * 4);
+        cn_texgen_crust(c); cn_texgen_crust(c2);
+        CHECK(!memcmp(c, c2, (size_t)W * H * 4), "two bakes of the crust differ");
+        long clear = 0, solid = 0;
+        for (int i = 0; i < W * H; i++) { clear += c[i * 4 + 3] == 0; solid += c[i * 4 + 3] == 255; }
+        CHECK(clear > W * H / 20 && clear < W * H / 2, "%ld of %d texels clear", clear, W * H);
+        CHECK(solid > W * H / 10, "only %ld solid texels: the shells are missing", solid);
+#define AL(x, y) ((int)c[((size_t)(y) * W + (x)) * 4 + 3])
+        double adjx = 0, adjy = 0, wrapx = 0, wrapy = 0;
+        for (int y = 0; y < H; y++) { for (int x = 1; x < W; x++) adjx += abs(AL(x, y) - AL(x - 1, y)); wrapx += abs(AL(0, y) - AL(W - 1, y)); }
+        for (int x = 0; x < W; x++) { for (int y = 1; y < H; y++) adjy += abs(AL(x, y) - AL(x, y - 1)); wrapy += abs(AL(x, 0) - AL(x, H - 1)); }
+#undef AL
+        adjx /= (double)(W - 1) * H; adjy /= (double)(H - 1) * W; wrapx /= H; wrapy /= W;
+        /* across x the study's own crust parts (15.9 a texel against 5.7 inside, measured on its canvas):
+         * it skips a shell more than rMax past an edge while a shell can be 1.25 rMax wide. Kept, since a
+         * plate shows 120 of the tile's 192 points and the seam never reaches it; only pinned near. */
+        CHECK(wrapx < 4 * adjx, "the crust's left and right edges part more than the study's: %.2f against %.2f", wrapx, adjx);
+        CHECK(wrapy < 2 * adjy + 1, "the crust's top and bottom edges part: %.2f against %.2f", wrapy, adjy);
+        free(c); free(c2);
+    }
     return report("cn_tex_test");
 }

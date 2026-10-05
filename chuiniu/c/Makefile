@@ -352,7 +352,8 @@ tex: $(TEX_PACK)
 
 # THE FLAT IMAGES the Swift host paints with (DECISIONS I27): the planks (the
 # study's six-plank tile, nails baked in, 2 texels a point, 1032 by 1660), the
-# verdigris tile (the plates and the buttons) and the bone tile (the flat dice),
+# verdigris tile (the plates and the buttons), the barnacle crust a plate wears
+# in its corner (RGBA, 512 by 128) and the bone tile (the flat dice),
 # baked by the same tool as uncompressed PNGs, recompressed by macOS's own sips
 # (the planks to a JPEG at quality 80, about 185 KB; the tiles to deflated PNGs).
 # And the two faces of IM Fell English (roman and small caps, SIL OFL 1.1, from
@@ -370,15 +371,18 @@ build/img/cn_verd_z.png: $(TEX_IMG)
 	sips -s format png build/img/cn_verd.png --out $@ >/dev/null
 build/img/cn_bone_z.png: $(TEX_IMG)
 	sips -s format png build/img/cn_bone.png --out $@ >/dev/null
+build/img/cn_crust_z.png: $(TEX_IMG)
+	sips -s format png build/img/cn_crust.png --out $@ >/dev/null
 
 # cmp-then-copy, so the resource's mtime moves only when its bytes do
 cmpcp = { cmp -s $(1) $(2) && echo "$(2) is current" || { cp $(1) $(2); echo "wrote $(2)"; }; }
-tex-ios: $(TEX_PACK) build/img/cn_planks.jpg build/img/cn_verd_z.png build/img/cn_bone_z.png $(TEX_FONTS)
+tex-ios: $(TEX_PACK) build/img/cn_planks.jpg build/img/cn_verd_z.png build/img/cn_bone_z.png build/img/cn_crust_z.png $(TEX_FONTS)
 	@mkdir -p $(IOS_RES)
 	@$(call cmpcp,$(TEX_PACK),$(TEX_IOS))
 	@$(call cmpcp,build/img/cn_planks.jpg,$(IOS_RES)/cn_planks.jpg)
 	@$(call cmpcp,build/img/cn_verd_z.png,$(IOS_RES)/cn_verd.png)
 	@$(call cmpcp,build/img/cn_bone_z.png,$(IOS_RES)/cn_bone.png)
+	@$(call cmpcp,build/img/cn_crust_z.png,$(IOS_RES)/cn_crust.png)
 	@$(call cmpcp,tools/fonts/IMFeENrm28P.ttf,$(IOS_RES)/IMFeENrm28P.ttf)
 	@$(call cmpcp,tools/fonts/IMFeENsc28P.ttf,$(IOS_RES)/IMFeENsc28P.ttf)
 	@$(call cmpcp,tools/fonts/OFL.txt,$(IOS_RES)/OFL-IMFellEnglish.txt)
