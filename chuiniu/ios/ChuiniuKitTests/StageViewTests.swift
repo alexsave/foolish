@@ -224,13 +224,16 @@ final class StageViewTests: XCTestCase {
     // MARK: the clock
 
     func testTheThrowsClockIsTheStudysAndNothingIsStagedBeforeMyDiceRest() throws {
-        let me = try started(seats: 3)
+        // six seats on a tall drawer: the far cups whose held cup stays inside throw too (package V2), so
+        // everything comes to rest after my dice do
+        let me = try started(seats: 6)
         let director = StageDirector(stage: KernelSeam.stage())
         var done = 0
         director.onRollDone = { done += 1 }
-        director.begin(request(CGSize(width: 390, height: 718), roll: true, table: me.table), planMs: nil)
+        director.begin(request(CGSize(width: 375, height: 900), roll: true, table: me.table), planMs: nil)
         let hud = try XCTUnwrap(director.hud)
         XCTAssertEqual(hud.rolls, 1)
+        XCTAssertGreaterThan(hud.totalMs, hud.restMs, "far cups throw at 375 by 900 and outlast mine")
         XCTAssertEqual(director.clockMs, Double(hud.rollAtMs), "the throw starts at the HUD's roll_at")
         XCTAssertFalse(director.atRest, "my dice are in the air")
         XCTAssertFalse(director.tap(at: CGPoint(x: hud.hit[0], y: hud.hit[1])), "no peek while they are")

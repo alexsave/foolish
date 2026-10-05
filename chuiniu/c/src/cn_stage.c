@@ -364,8 +364,9 @@ const CnStageHud *cn_stage_begin(CnStage *st, const CnStageIn *in_)
         li->seats = in->seats; li->me = in->me; li->turn = in->turn; li->out_mask = in->out_mask;
         memcpy(li->dice, in->dice, sizeof li->dice);
         for (int k = 0; k < CN_STAGE_DICE; k++) { uint8_t f = in->faces[in->me * CN_STAGE_DICE + k]; li->my_faces[k] = f ? f : 1; }
-        /* a reveal's shelf is one row (Next round), the roll's shelf's height */
-        li->rolling = in->kind == CN_STAGE_REVEAL;
+        /* a reveal's shelf is one row (Next round), the roll's shelf's height; on a short board its
+         * seats are one row (cn_lay.c's one_row, DECISIONS I29) */
+        li->reveal = in->kind == CN_STAGE_REVEAL;
         if (in->kind == CN_STAGE_REVEAL) in->roll_at_ms = CN_STAGE_NO_ROLL;
         li->w = in->w; li->h = in->h; li->peek = 0; li->seed = in->seed;
         if (!cn_lay_make(li, L)) return 0;
@@ -433,7 +434,9 @@ const CnStageHud *cn_stage_begin(CnStage *st, const CnStageIn *in_)
     for (int i = 0; i < st->nobj && in->kind != CN_STAGE_BUBBLE; i++) {
         const CnObj *o = &rest[i];
         if (o->kind != CN_OBJ_CUP || o->out || !nd[o->seat]) continue;
-        st->lift_angle[o->seat] = cn_cam_peek_angle(&L->cam, o->R, o->home_y, dy[o->seat], dd[o->seat], nd[o->seat]);
+        /* the least tip that shows its dice, as far as the cup stays inside the drawer and off the plate */
+        const float full = cn_cam_peek_angle(&L->cam, o->R, o->home_y, dy[o->seat], dd[o->seat], nd[o->seat]);
+        st->lift_angle[o->seat] = in->kind == CN_STAGE_REVEAL ? cn_lay_lift_fit(L, o, full) : full;
     }
     h->peek_target = st->lift_angle[in->me];
     /* my cup's picture on the glass, standing: the box round its mouth and crown */

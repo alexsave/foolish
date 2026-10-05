@@ -100,13 +100,15 @@ static void test_captions(void)
     cn_say_caption(&G, 1, NAMES, out, sizeof out);
     CHECK(!strcmp(out, "Alex bid four 3s"), "%s", out);
     cn_say_headline(&G, 1, NAMES, out, sizeof out);
-    CHECK(!strcmp(out, "Your turn: raise or call"), "%s", out);
+    CHECK(!strcmp(out, "Your turn: raise or call Liar"), "%s", out);
+    /* the owner's word for the call is Liar: the blood plate says it, and the lines that name the button do */
+    CHECK(!strcmp(cn_text(CN_K_BTN_CALL), "Liar"), "the call's button: %s", cn_text(CN_K_BTN_CALL));
     cn_say_subline(&G, NAMES, out, sizeof out);
     CHECK(!strcmp(out, "Bid to beat: four 3s by Alex"), "%s", out);
     cn_say_staged(&G, bid(5, 2), out, sizeof out);
     CHECK(!strcmp(out, "Send to bid five 2s"), "%s", out);
     cn_say_staged(&G, call_move(), out, sizeof out);
-    CHECK(!strcmp(out, "Send to call four 3s"), "%s", out);
+    CHECK(!strcmp(out, "Send to call Liar on four 3s"), "%s", out);
 
     /* THE CALL: its caption names the call only (K8), the outcome the rest */
     CnEvent ev[8];
@@ -173,7 +175,7 @@ static void test_screen_end(void)
     cn_new(&G, seed, 2);
     cn_apply(&G, 0, bid(10, 6));
     cn_say_headline(&G, 1, NAMES, out, sizeof out);
-    CHECK(!strcmp(out, "Your turn: call it"), "%s", out);
+    CHECK(!strcmp(out, "Your turn: call Liar"), "%s", out);
     cn_say_table(&G, out, sizeof out);
     CHECK(!strcmp(out, "10 dice on the table"), "%s", out);
     cn_apply(&G, 1, call_move());

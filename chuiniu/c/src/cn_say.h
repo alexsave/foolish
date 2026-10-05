@@ -63,11 +63,11 @@ int cn_say_lobby_caption(int which, const char *who, char *out, int cap);
 
 /* ---- the screen, for one viewer --------------------------------------------- */
 
-/* "Your turn: raise or call", "Bo's turn", "You win", "Alex wins". */
+/* "Your turn: raise or call Liar", "Bo's turn", "You win", "Alex wins". */
 int cn_say_headline(const CnGame *g, int viewer, const char *const *names, char *out, int cap);
 /* "Bid to beat: four 3s by Alex", "No bid yet". */
 int cn_say_subline(const CnGame *g, const char *const *names, char *out, int cap);
-/* "Send to bid four 3s" / "Send to call four 3s": a staged move of mine. */
+/* "Send to bid four 3s" / "Send to call Liar on four 3s": a staged move of mine. */
 int cn_say_staged(const CnGame *g, CnMove m, char *out, int cap);
 
 /* "14 dice on the table". */

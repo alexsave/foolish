@@ -187,6 +187,17 @@ I28 (no headline on the table): the caption plate that said "Your turn: open the
 The plate carries the bid on the table and nothing else, so before the first bid there is no plate; whose turn it is is the glow bar under a name, the name bright on its turn and dim otherwise (`.t-name`, `.t-name.dim`), in the small caps at 14 (12 on a short board), tracked .14em.
 The reveal's tally steps down from the study's 26 through 22 and 18 to the roman's floor of 15.5 to fit the plate, then takes two lines, and is never cut; its outcome line sits on a `.seatband`'s dark wash so it reads over a cup the stage put under it.
 
+I29 (nothing leaves the drawer, package V2): the kernel keeps every body CN_LAY_EDGE inside the drawer on every screen, at rest, through every throw frame and through every frame of the reveal's lift, 281 to 900 points tall and 2 to 6 seats (`cn_lay_test`, `cn_stage_test`).
+The top margin grows a point a point from 8 to 30 over the 22 points above 400, where the study stepped it, so short and tall is one threshold (a drawer under 400 is short) and the board never shrinks as the drawer grows.
+The ring is fitted to the glass as painted and kept off the plate (the study's own map is up to 36 points off far up a tall drawer); where the study's ring fitted, nothing moved, and 430 by 830 on their turn at four to six seats drew its side seats in by 3 to 9 points.
+A far seat throws only where its held cup stays inside for its whole throw at the study's reach; elsewhere its cup stays down, as on a short board (on a tall drawer a top or side seat's throw left by 25 to 110 points; about one far seat in ten still throws, on drawers of 750 and up).
+My throw's reach is the least that fits each of the drawer's screens, so it stays one reach; my dice fit my peek on a tall board too, and on a short board my standing cup stays off the row's names.
+The reveal on a short board is one row of every seat, mine first, as the study's reveal lists them: the short table's row has no room above it for the lift (I23 swung its crowns 42 to 69 points past the top) and my tipped cup covered the middle seat; the row is as big and as high as lets every cup tip in full with its name, the loser's stamp and the outcome line under it, the tally's plate beside it where there is room, else under the names, else none.
+The reveal's plate is 240 wide (the tally, "There were twelve", is longer than a bid), and the stage's lift is fitted to the drawer and the plate as the last word (`cn_lay_lift_fit`); 93% of cups over the tested drawers lift in full, every one on a short board.
+The throw's lift starts with the cup's lowest rim 1 point (times the reach) over the planks, never under them.
+
+I30 (the word): the call's button is Liar, the owner's word and the study's blood plate; the lines that name the button say it ("Your turn: raise or call Liar", "Send to call Liar on four 3s", the fourth rule), and the captions keep the study's verb ("Bo calls three 3s", "Bo calls. Three 3s was true, Bo loses a die").
+
 ## Orchestration (owner: the orchestrator; O1 onward)
 
 O1: the proof of concept is built in three parallel packages (kernel and wire; iOS scaffold with the dice and cup primitive; legal, README and CI) and one tie-together package that wires the screens to the bridge and proves it on a simulator inside Messages.

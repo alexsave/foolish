@@ -2185,6 +2185,17 @@ const SHAPE = (() => {
       if (canvas._token !== token) return;
       let ms = 0, bytes = 0, frames = 0;
       for (const th of throws) { th.bake = ROLL.bake(th.kind, th.spec, th.seed); if (!th.bake) return; ms += th.bake.ms; bytes += th.bake.bytes; frames += th.bake.n; }
+      // WHO THROWS (package V2, cn_lay.c): a far cup held as a throw holds it rises about four of its radii up the
+      // screen, and a top or side seat's left it by 25 to 110 points; such a seat's cup stays down, as on a short board
+      if (canvas._origin) {
+        const origin = canvas._origin, topM = origin[1] - throws[0].mcy, tilt = tiltOf(W, H, origin, 1);
+        for (let k = throws.length - 1; k > 0; k--) {
+          const th = throws[k];
+          let inside = true;
+          for (let f = 0; f < th.bake.n && inside; f++) inside = reachInside(cupReach(th.cup.R, 0, 0, false, 0, 0, W, H, topM, tilt, origin, ROLL.poseAt(th.bake, f / th.bake.hz, 0)), W);
+          if (!inside) throws.splice(k, 1);
+        }
+      }
       const bake = throws[0].bake;
       canvas._bake = bake; canvas._throws = throws;
       const st = canvas.closest('.col') && canvas.closest('.col').querySelector('.roll-stats');
@@ -2271,6 +2282,9 @@ const SHAPE = (() => {
   // DiceTableLayout, ported: badge 72, my band 120 (64 short), plate 160 by 56, margin 8
   const L = { badge: [72, 72], myBand: 120, shortBand: 64, plate: [160, 56], plateMin: 100, margin: 8 };
   const isShort = H => H < L.badge[1] + L.plate[1] + L.myBand + 4 * L.margin;
+  // THE TOP MARGIN grows from 8 to 30 a point a point over the 22 points above 400 (package V2, cn_lay.c's top_margin):
+  // stepped at 400, a 400 screen was tall and 401 to 421 short again; grown, short is one threshold (under 400)
+  const topMargin = H => H <= 400 ? 8 : Math.min(30, H - 392);
   let ARC = 'foolish';
   const radii = (c, W) => { const rx = (W - L.badge[0]) / 2 - L.margin; let ry = c[1] - L.badge[1] / 2 - L.margin; if (ARC === 'capped') ry = Math.min(ry, rx * 1.05); return [rx, ry]; };
   function seatFrames(count, me, W, H) {
@@ -2402,7 +2416,7 @@ const SHAPE = (() => {
     // every screen, so nothing on it moves as the turn comes round (this page once read the board left after the
     // shelf, and a 340 drawer flipped between the row and the ring every turn), and on their turn the picker's room
     // is the room my cup's throw comes down through
-    const topM = H > 400 ? 30 : 8, pickerBoard = H - topM - 12 - ((PICKERS[spec.picker] || PICKERS.rows).h + 10), short = isShort(pickerBoard);
+    const topM = topMargin(H), pickerBoard = H - topM - 12 - ((PICKERS[spec.picker] || PICKERS.rows).h + 10), short = isShort(pickerBoard);
     const boardH = short ? pickerBoard : H - topM - 12 - (mine ? PICKER_H + 10 : 0);
     // THE SCENE. Every cup and every seat's dice are bodies on the board, projected by R3 from the leaning head's eye
     // (VIEW_B) over my cup. My five dice sit in a rough ring (72 degrees apart on a ring that keeps turned dice from
@@ -2471,12 +2485,38 @@ const SHAPE = (() => {
         rx = Math.min(rx, (half / sc - crown) / (sn * Lf), (half / sm - R) / sn);
       });
       // a ring is at most twice as tall as it is wide (three seats would otherwise go to the top corners, a bare board between)
-      if (ry > 2 * rx) { ry = 2 * rx; ys = angles.map(a => mcy - ry * (1 - Math.cos(a))); }
-      const seats = []; angles.forEach((a, j) => { seats[(1 + j) % n] = [mcx - Math.sin(a) * rx, ys[j]]; });
-      // a seat that is out has its cup lying across it, its height along the table, leaning from the eye's foot at a
-      // radius up: it is drawn in toward the ring's centre as far as it must to stay on the screen
-      const Ll = hc / (hc - R);
-      outs.forEach(i => { if (!seats[i]) return; const [x, y] = seats[i], sm = tilt.toScreen(y - mcy).scale, over = (Math.abs(x - mcx) + h / 2 + .72 * R) * Ll - (half / sm - 4); if (over > 0) seats[i][0] = x - Math.sign(x - mcx) * over / Ll; });
+      if (ry > 2 * rx) ry = 2 * rx;
+      const seats = [], Ll = hc / (hc - R), origin = [16 + mcx, topM + mcy], plate = [(W + 32) / 2 - L.plate[0] / 2, 8, L.plate[0], L.plate[1]];
+      const place = () => {
+        ys = angles.map(a => mcy - ry * (1 - Math.cos(a)));
+        angles.forEach((a, j) => { seats[(1 + j) % n] = [mcx - Math.sin(a) * rx, ys[j]]; });
+        // a seat that is out has its cup lying across it, its height along the table, leaning from the eye's foot at a
+        // radius up: it is drawn in toward the ring's centre as far as it must to stay on the screen
+        outs.forEach(i => { if (!seats[i]) return; const [x, y] = seats[i], sm = tilt.toScreen(y - mcy).scale, over = (Math.abs(x - mcx) + h / 2 + .72 * R) * Ll - (half / sm - 4); if (over > 0) seats[i][0] = x - Math.sign(x - mcx) * over / Ll; });
+      };
+      // FITTED TO THE GLASS (package V2, cn_lay.c's ring_seats): this page fits the ring with toScreen (the zoom
+      // after the divide), up to 36 points off what the CSS paints far up a tall screen, so a side crown left the
+      // screen above 760. Each cup as painted is kept EDGE inside and off the plate: the ring a point shorter while
+      // one is past the top or over the plate, a point narrower while one is past a side, its cups two points
+      // smaller when it would be shorter or narrower than a cup. Where the ring fitted, nothing moves.
+      let fits = false;
+      for (let it = 0; it < 2000; it++) {
+        place();
+        // how far past, the top (or into the plate) and a side: a step is half of it, a point at least
+        let top = 0, side = 0;
+        angles.forEach((a, j) => {
+          const i = (1 + j) % n, b = cupReach(R, seats[i][0], seats[i][1], outs.includes(i), W / 2, i * 7, W, H, topM, tilt, origin);
+          if (b.y0 < EDGE) top = Math.max(top, EDGE - b.y0);
+          if (overRect(b, plate, 2)) top = Math.max(top, plate[1] + plate[3] + 2 - b.y0);
+          if (b.x0 < EDGE) side = Math.max(side, EDGE - b.x0);
+          if (b.x1 > W + 32 - EDGE) side = Math.max(side, b.x1 - (W + 32 - EDGE));
+        });
+        if (!(top > 0) && !(side > 0)) { fits = true; break; }
+        if (top > 0) ry -= Math.max(1, Math.floor(top / 2));
+        if (side > 0) rx -= Math.max(1, Math.floor(side / 2));
+        if (ry < R || rx < R) break;
+      }
+      if (!fits && R - 2 >= 12) continue;
       // apart: no cup's picture (its mouth on the table, its crown leaning up and out from the eye's foot, and the
       // body between, as discs along the axis) within a few points of another's
       const pillar = (x, y, r) => { const xc = mcx + (x - mcx) * Lf, yc2 = y - lean(y), rc = .72 * r * Lf, out = []; for (let k = 0; k <= 6; k++) { const u = k / 6; out.push([x + (xc - x) * u, y + (yc2 - y) * u, r + (rc - r) * u]); } return out; };
@@ -2500,27 +2540,33 @@ const SHAPE = (() => {
   // what the eye sees of a cup, on the glass (cn_lay.c's cup_reach): its mouth's rim and its crown's, from the leaning
   // head's eye onto the board's place in the screen, through the turn as the CSS paints it (the zoom before the divide)
   const EDGE = 4;   /* no body nearer the screen's edge than this: cn_lay.h's CN_LAY_EDGE */
-  function cupInside(R, x, y, out, toward, seed, W, H, topM, tilt, origin) {
+  // the box a cup's picture reaches on the screen: x0 x1 y0 y1. `pose` ({ p, R }: a throw's cup, ROLL.poseAt's) places
+  // it held, else it stands at (x, y), or lies there when `out`
+  function cupReach(R, x, y, out, toward, seed, W, H, topM, tilt, origin, pose) {
     const rc = R * .72, h = R * CUP_TALL, e = R3.eyeOf(W, H, VIEW_B);
     // a lying cup as cupObj lays it
     let rot = null, lift = 0, px = x, py = y;
-    if (out) {
+    if (pose) { rot = pose.R; px = pose.p[0]; py = pose.p[1]; lift = pose.p[2]; }
+    else if (out) {
       const hh = Math.sqrt(h * h - (R - rc) * (R - rc)), side = toward < x ? 1 : -1, yaw = side * Math.PI / 2 + (TEX.hash(seed, 77, 977) - .5) * .5;
       const cy = Math.cos(yaw), sy = Math.sin(yaw), rz = v => [v[0] * cy - v[1] * sy, v[0] * sy + v[1] * cy, v[2]];
       rot = [rz([1, 0, 0]), rz([0, (rc - R) / h, hh / h]), rz([0, -hh / h, (rc - R) / h])]; lift = R;
       const ax = rot[2]; px = x - ax[0] * hh / 2; py = y - ax[1] * hh / 2;
     }
-    const sn = Math.sin(tilt.theta), cs = Math.cos(tilt.theta);
+    const sn = Math.sin(tilt.theta), cs = Math.cos(tilt.theta), b = { x0: Infinity, x1: -Infinity, y0: Infinity, y1: -Infinity };
     for (let i = 0; i < 36; i++) for (const [r, z] of [[R, 0], [rc, h]]) {
       const a = i / 36 * Math.PI * 2, p = [r * Math.cos(a), r * Math.sin(a), z];
       const q = rot ? [0, 1, 2].map(k => rot[0][k] * p[0] + rot[1][k] * p[1] + rot[2][k] * p[2]) : p;
       const X = px + q[0], Y = py + q[1], Z = lift + q[2], k = e.hc / (e.hc - Z);
       const dx = 16 + e.x + (X - e.x) * k - origin[0], dy = topM + e.y + (Y - e.y) * k - origin[1];
       const s = tilt.D / (tilt.D - tilt.zoom * dy * sn), gx = origin[0] + tilt.zoom * dx * s, gy = origin[1] + tilt.zoom * dy * cs * s;
-      if (gy < EDGE || gx < EDGE || gx > W + 32 - EDGE) return false;
+      b.x0 = Math.min(b.x0, gx); b.x1 = Math.max(b.x1, gx); b.y0 = Math.min(b.y0, gy); b.y1 = Math.max(b.y1, gy);
     }
-    return true;
+    return b;
   }
+  const reachInside = (b, W) => b.y0 >= EDGE && b.x0 >= EDGE && b.x1 <= W + 32 - EDGE;
+  const overRect = (b, r, g) => b.x0 < r[0] + r[2] + g && b.x1 > r[0] - g && b.y0 < r[1] + r[3] + g && b.y1 > r[1] - g;
+  function cupInside(R, x, y, out, toward, seed, W, H, topM, tilt, origin) { return reachInside(cupReach(R, x, y, out, toward, seed, W, H, topM, tilt, origin), W); }
   // a short board: the other seats in a row along the top, their cups as big as the row allows (my cup's size at most),
   // then a point smaller at a time until every crown in the row, standing or lying, is EDGE inside the screen (this
   // page's row leaned its crowns past the top of a drawer under 323)
@@ -2557,7 +2603,7 @@ const SHAPE = (() => {
     const S = LAY, sz = SIZES[S.size];
     put('lay-main', screen(S, sz.w, sz.h));
     S.arrange = 'foolish'; S.picker = 'rows';
-    put('lay-spec', `<b>layout</b> &middot; ${specLine(S, LAY_LOCKED)}<br><b>board</b>: ${isShort(sz.h - (sz.h > 400 ? 30 : 8) - 12 - ((PICKERS[S.picker] || PICKERS.rows).h + 10)) ? 'short (one row of seats, the plate beside)' : 'tall'}`);
+    put('lay-spec', `<b>layout</b> &middot; ${specLine(S, LAY_LOCKED)}<br><b>board</b>: ${isShort(sz.h - topMargin(sz.h) - 12 - ((PICKERS[S.picker] || PICKERS.rows).h + 10)) ? 'short (one row of seats, the plate beside)' : 'tall'}`);
     put('lay-three', `<div class="col"><div class="h4">The bubble <span class="pill n">300 by 195</span></div>${bubble(S)}</div><div class="col"><div class="h4">Collapsed <span class="pill n">340</span></div>${screen(Object.assign({}, S, { state: S.state === 'roll' ? 'table' : S.state }), 390, 340)}</div><div class="col"><div class="h4">Expanded, peeking <span class="pill n">718</span></div>${screen(Object.assign({}, S, { state: S.state === 'roll' ? 'table' : S.state }), 390, 718, { peek: 'B' })}</div>`);
     put('lay-seats', [2, 3, 4, 5, 6].map(k => `<div class="half"><div class="scaled" style="width:195px;height:359px"><div style="transform:scale(.5);transform-origin:0 0">${screen(Object.assign({}, S, { seats: k, state: S.state === 'lobby' || S.state === 'roll' ? 'table' : S.state }), 390, 718, { peek: true })}</div></div><div class="cap" style="text-align:center">${k} seats</div></div>`).join(''));
     put('lay-phones', [['se', 375, 541], ['expanded', 390, 718], ['max', 430, 830], ['collapsed', 390, 340]].map(([k, w, h]) => `<div class="half"><div class="scaled" style="width:${px(w * .55)};height:${px(h * .55)}"><div style="transform:scale(.55);transform-origin:0 0">${screen(Object.assign({}, S, { state: S.state === 'roll' ? 'table' : S.state }), w, h)}</div></div><div class="cap" style="text-align:center">${SIZES[k].name}</div></div>`).join(''));

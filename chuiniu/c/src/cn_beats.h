@@ -10,7 +10,7 @@
  *
  *   ROUND  -> SHAKE  the cups come down and shake; new dice under them
  *   BID    -> BID    the bid pops up at its seat and becomes the bid to beat
- *   CALL   -> CALL   the caller's "Call" stamp
+ *   CALL   -> CALL   the caller's "Liar" stamp
  *   REVEAL -> LIFT   every cup lifts (the dice are cn_view's shown_*)
  *          -> COUNT  the dice showing the face or a 1 light up one by one
  *   LOSE   -> DROP   the loser's cup drops a die; its count goes down at the end

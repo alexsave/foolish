@@ -167,7 +167,7 @@ static void check_phone(int p)
         int can = min_raise(&q, &f);
         OK(v->my_turn && v->can_call == (bid_q > 0) && v->can_raise == can, "the menu");
         if (can) OK(v->min_q == q && v->min_f == f, "the lowest raise %d %d (%d %d)", q, f, v->min_q, v->min_f);
-        const char *h = !bid_q ? "Your turn: open the bidding" : can ? "Your turn: raise or call" : "Your turn: call it";
+        const char *h = !bid_q ? "Your turn: open the bidding" : can ? "Your turn: raise or call Liar" : "Your turn: call Liar";
         OK(!strcmp(words(CN_API_W_HEADLINE, 0), h), "%s: %s", NICK[p], line);
     } else {
         OK(!v->my_turn && !v->can_call && !v->can_raise, "no menu off turn");
@@ -210,7 +210,7 @@ static int play(void)
             say_bid(b, bid_q, bid_f, 0);
             snprintf(want, sizeof want, "%s calls %s", NICK[turn], b);
             OK(!strcmp(words(CN_API_W_STAGED_CAPTION, 0), want), "%s", line);
-            snprintf(want, sizeof want, "Send to call %s", b);
+            snprintf(want, sizeof want, "Send to call Liar on %s", b);
             OK(!strcmp(words(CN_API_W_HEADLINE, 0), want), "%s", line);
             OK(!me_view()->revealed, "nothing lifts before it is sent");
             send();

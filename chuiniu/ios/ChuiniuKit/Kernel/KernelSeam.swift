@@ -143,7 +143,7 @@ public struct TableModel: Equatable, Sendable {
     /// Every seat's dice, once the bid is called (and at the end).
     public var reveal: Reveal?
     /// The kernel's headline for this phone, under the table ("Your turn:
-    /// raise or call", "Send to bid four 3s").
+    /// raise or call Liar", "Send to bid four 3s").
     public var caption: String
     /// The kernel's caption of the bubble the resident would stage now,
     /// shown in the transcript on every phone ("Alex bid four 3s").

@@ -77,9 +77,9 @@ static const Gold GOLD[] = {
     { 430, 830, 1, 30, 688, 52.9066, 501, 63,
       { { 52.2507, 449.3985 }, { 52.2507, 144.1955 }, { 199, -8.406 }, { 345.7493, 144.1955 }, { 297.301, 449.3985 } },
       { { 52.2507, 516.3051 }, { 52.2507, 211.1021 }, { 199, 58.5006 }, { 345.7493, 211.1021 }, { 297.301, 516.3051 } } },
-    { 430, 830, 0, 30, 788, 56.9066, 903, 79,
-      { { 44.9507, 524.1192 }, { 44.9507, 168.3576 }, { 199, -9.5232 }, { 353.0493, 168.3576 }, { 293.0299, 524.1192 } },
-      { { 44.9507, 595.0257 }, { 44.9507, 239.2641 }, { 199, 61.3833 }, { 353.0493, 239.2641 }, { 293.0299, 595.0257 } } },
+    { 430, 830, 0, 30, 788, 56.9066, 903, 76,   /* the side seats drawn in 2.6 points: the study's crowns left the glass (package V2) */
+      { { 47.5488, 524.1192 }, { 47.5488, 168.3576 }, { 199, -9.5232 }, { 350.4512, 168.3576 }, { 293.0299, 524.1192 } },
+      { { 47.5488, 595.0257 }, { 47.5488, 239.2641 }, { 199, 61.3833 }, { 350.4512, 239.2641 }, { 293.0299, 595.0257 } } },
 };
 static int near(double a, double b, double eps) { return fabs(a - b) <= eps; }
 
@@ -347,8 +347,10 @@ static void test_bands_and_determinism(void)
     cn_stage_begin(&ST, &in);
     CHECK(banded(&ST, mid, 0, 4, 0) == one_mid && banded(&ST, still, .6f, 4, 0) == one_still, "begun again: the same frames");
     printf("  frames: throw at 1.2 s %08x, still peeking %08x\n", one_mid, one_still);
-    CHECK(one_mid == 0x18318e6bu, "the throw frame's golden");
-    CHECK(one_still == 0xe41ce178u, "the still frame's golden");
+    /* moved in package V2: the lift starts over the table, and at 375 by 541 the far seats' cups stay down
+     * (their held cups left the drawer), so their dice lie at their stations (docs_pkgV2.md) */
+    CHECK(one_mid == 0xe41c2ebfu, "the throw frame's golden");
+    CHECK(one_still == 0x33a371c9u, "the still frame's golden");
     cn_stage_purge(&ST);
     free(A);
 }
@@ -392,7 +394,9 @@ static void test_out(void)
     CHECK(cup && cup->kmul[0] < 1, "dim");
     int thrown = 0;
     for (int j = 0; j < ST.nthrow; j++) thrown |= ST.thr[j].t.seat == 5;
-    CHECK(!thrown && ST.nthrow == 5, "five throws, none of them seat 5's (%d)", ST.nthrow);
+    int mask = 0;
+    for (int s = 0; s < 6; s++) mask += ST.lay.throw_mask >> s & 1;
+    CHECK(!thrown && !(ST.lay.throw_mask >> 5 & 1) && ST.nthrow == mask, "a throw a seat the layout lets throw (%d), none of them seat 5's", ST.nthrow);
     /* drawn: the lying cup's body is on the picture */
     int w, hh;
     const uint8_t *fb = cn_stage_frame(&ST, 900, 0, 0, &w, &hh);
@@ -440,6 +444,175 @@ static void test_clock(void)
     free(A);
 }
 
+/* ---- the reveal and the HUD stay clear (package V2) --------------------------------------------- */
+
+/* a body as the stage draws it: every corner of its mesh placed (cn_geom_emit), seen from the eye
+ * (cn_cam_project), on the board's place in the drawer, through the turn (cn_cam_map) */
+static float VB[CN_MESH_MAX_CORNER * CN_GEOM_VF], FB[CN_MESH_MAX_CORNER * CN_GEOM_FF];
+typedef struct { int n; double x[CN_MESH_MAX_CORNER], y[CN_MESH_MAX_CORNER]; } Pic;
+static void picture(const CnStage *st, int i, const CnObj *o, Pic *p)
+{
+    static const int tex[CN_TEX_SLOTS] = { 0 };
+    const CnMesh *m = &st->mesh[st->obj_mesh[i]];
+    cn_geom_emit(m, o, 0, tex, VB, 0, FB, 0);
+    p->n = 0;
+    for (int v = 0; v < m->ncorner; v++) {
+        float px, py, gx, gy;
+        cn_cam_project(&st->lay.cam, VB[v * CN_GEOM_VF], VB[v * CN_GEOM_VF + 1], VB[v * CN_GEOM_VF + 2], &px, &py);
+        cn_cam_map(&st->lay.cam, st->lay.board_x + px, st->lay.board_y + py, &gx, &gy);
+        p->x[p->n] = gx; p->y[p->n] = gy; p->n++;
+    }
+}
+/* the convex hull of a picture (monotone chain), in place */
+static int cmp_pt(const void *a, const void *b)
+{
+    const double *p = a, *q = b;
+    return p[0] < q[0] ? -1 : p[0] > q[0] ? 1 : p[1] < q[1] ? -1 : p[1] > q[1];
+}
+static double PTS[CN_MESH_MAX_CORNER][2];
+static void hull(Pic *p)
+{
+    const int n = p->n;
+    for (int i = 0; i < n; i++) { PTS[i][0] = p->x[i]; PTS[i][1] = p->y[i]; }
+    qsort(PTS, (size_t)n, sizeof PTS[0], cmp_pt);
+    static int st[2 * CN_MESH_MAX_CORNER];
+    int k = 0;
+    #define CR(o, a, b) ((PTS[a][0] - PTS[o][0]) * (PTS[b][1] - PTS[o][1]) - (PTS[a][1] - PTS[o][1]) * (PTS[b][0] - PTS[o][0]))
+    for (int i = 0; i < n; i++) { while (k >= 2 && CR(st[k - 2], st[k - 1], i) <= 0) k--; st[k++] = i; }
+    for (int i = n - 2, t = k + 1; i >= 0; i--) { while (k >= t && CR(st[k - 2], st[k - 1], i) <= 0) k--; st[k++] = i; }
+    #undef CR
+    p->n = k - 1;
+    for (int i = 0; i < p->n; i++) { p->x[i] = PTS[st[i]][0]; p->y[i] = PTS[st[i]][1]; }
+}
+/* a convex picture and a box (x0 y0 x1 y1) overlap: no separating axis among the box's two and the hull's edges' normals */
+static int meets(const Pic *h, const double b[4])
+{
+    double x0 = 1e30, x1 = -1e30, y0 = 1e30, y1 = -1e30;
+    for (int i = 0; i < h->n; i++) { x0 = fmin(x0, h->x[i]); x1 = fmax(x1, h->x[i]); y0 = fmin(y0, h->y[i]); y1 = fmax(y1, h->y[i]); }
+    if (x1 <= b[0] || x0 >= b[2] || y1 <= b[1] || y0 >= b[3]) return 0;
+    for (int i = 0; i < h->n; i++) {
+        const int j = (i + 1) % h->n;
+        const double nx = h->y[j] - h->y[i], ny = h->x[i] - h->x[j];
+        double hmin = 1e30, hmax = -1e30, bmin = 1e30, bmax = -1e30;
+        for (int q = 0; q < h->n; q++) { const double v = nx * h->x[q] + ny * h->y[q]; hmin = fmin(hmin, v); hmax = fmax(hmax, v); }
+        for (int q = 0; q < 4; q++) { const double v = nx * b[q & 1 ? 2 : 0] + ny * b[q & 2 ? 3 : 1]; bmin = fmin(bmin, v); bmax = fmax(bmax, v); }
+        if (bmin >= hmax || bmax <= hmin) return 0;
+    }
+    return 1;
+}
+static int boxes_meet(const double a[4], const double b[4]) { return a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1]; }
+/* a name's box on the glass (flat, turned with the planks): w by h placed on its anchor by how (cn_lay.h's CN_NAME_*) */
+static void name_rect(const CnStage *st, int s, double w, double h, double out[4])
+{
+    const CnStageHud *H = &st->hud;
+    const double x = H->name_x[s], y = H->name_y[s];
+    double l, t;
+    switch (H->name_how[s]) {
+    case CN_NAME_FOOT: l = x - w / 2; t = y - h; break;
+    case CN_NAME_LEFT: l = x; t = y - h / 2; break;
+    default:           l = x - w / 2; t = y - CN_LAY_NAME_UP; break;
+    }
+    out[0] = out[1] = 1e30; out[2] = out[3] = -1e30;
+    for (int c = 0; c < 4; c++) {
+        float gx, gy;
+        cn_cam_map(&st->lay.cam, (float)(l + (c & 1) * w), (float)(t + (c >> 1) * h), &gx, &gy);
+        out[0] = fmin(out[0], gx); out[1] = fmin(out[1], gy); out[2] = fmax(out[2], gx); out[3] = fmax(out[3], gy);
+    }
+}
+static void rect_box(const float r[4], double out[4]) { out[0] = r[0]; out[1] = r[1]; out[2] = r[0] + r[2]; out[3] = r[1] + r[3]; }
+
+static const int SIZES_W[] = { 375, 390, 430 };
+static const int SIZES_H[] = { 281, 290, 300, 310, 323, 328, 334, 340, 360, 399, 400, 401, 410, 421, 422, 450, 480, 541, 584, 650, 718, 760, 830, 900 };
+#define NW ((int)(sizeof SIZES_W / sizeof SIZES_W[0]))
+#define NH ((int)(sizeof SIZES_H / sizeof SIZES_H[0]))
+
+static void test_reveal_inside(void)
+{
+    TEST("the reveal: every frame of the lift inside the drawer, 281 to 900, 2 to 6 seats; the compact row lifts every cup in full");
+    cn_stage_init(&ST, PACK, PACK_N);
+    double worst = 1e9;
+    int frames = 0, cups = 0, full = 0, short_full = 1;
+    for (int wi = 0; wi < NW; wi++) for (int hi = 0; hi < NH; hi++) for (int n = 2; n <= 6; n++) {
+        const int W = SIZES_W[wi], H = SIZES_H[hi];
+        CnStageIn in = table_in(W, H, n, 0, 0, CN_STAGE_REVEAL);
+        const CnStageHud *h = cn_stage_begin(&ST, &in);
+        if (!h) { CHECK(0, "%dx%d n %d: the reveal begins", W, H, n); continue; }
+        double b[4] = { 1e30, 1e30, -1e30, -1e30 };
+        for (int k = 0; k <= 24; k++) {   /* the lift's every 24th: it is a tip that only grows */
+            int no;
+            const CnObj *o = cn_stage_objects(&ST, CN_STAGE_NO_ROLL - 1, 0, k / 24.0f, &no);
+            for (int i = 0; i < no; i++) {
+                Pic p; picture(&ST, i, &o[i], &p);
+                for (int v = 0; v < p.n; v++) { b[0] = fmin(b[0], p.x[v]); b[1] = fmin(b[1], p.y[v]); b[2] = fmax(b[2], p.x[v]); b[3] = fmax(b[3], p.y[v]); }
+            }
+            frames++;
+        }
+        worst = fmin(worst, fmin(fmin(b[0], b[1]), fmin(W - b[2], H - b[3])));
+        /* CN_LAY_EDGE inside, as the layout fits it (half a point for the float projection) */
+        const double e = CN_LAY_EDGE - .5;
+        CHECK(b[0] >= e && b[1] >= e && b[2] <= W - e && b[3] <= H, "%dx%d n %d: every frame of the lift CN_LAY_EDGE inside (x %.1f..%.1f y %.1f..%.1f)", W, H, n, b[0], b[2], b[1], b[3]);
+        /* each standing cup's tip against the least that shows its dice */
+        int no;
+        const CnObj *o = cn_stage_objects(&ST, CN_STAGE_NO_ROLL - 1, 0, 0, &no);
+        for (int i = 0; i < no; i++) {
+            if (o[i].kind != CN_OBJ_CUP || o[i].out || !in.dice[o[i].seat]) continue;
+            float dy[5], dd[5];
+            int nd = 0;
+            for (int j = 0; j < no; j++) if (o[j].kind == CN_OBJ_DIE && o[j].seat == o[i].seat) { dy[nd] = o[j].y; dd[nd] = o[j].d; nd++; }
+            const float least = cn_cam_peek_angle(&ST.lay.cam, o[i].R, o[i].home_y, dy, dd, nd);
+            const int whole = ST.lift_angle[o[i].seat] >= least - 1e-6f;
+            cups++; full += whole;
+            if (h->short_board) short_full &= whole;
+        }
+    }
+    CHECK(short_full, "on a short board every cup lifts as far as shows its dice");
+    CHECK(full * 100 >= cups * 90, "nine cups in ten lift in full anywhere (%d of %d)", full, cups);
+    printf("  %d reveal frames: the nearest any body comes to the drawer's edge is %.2f points; %d of %d cups lift in full\n", frames, worst, full, cups);
+}
+
+static void test_hud_clear(void)
+{
+    TEST("the HUD clears every cup and name, and on a short board no cup covers a name, 281 to 900, 2 to 6 seats, every screen");
+    cn_stage_init(&ST, PACK, PACK_N);
+    int checked = 0, tall_cover = 0, tall_cover_rest = 0;
+    for (int wi = 0; wi < NW; wi++) for (int hi = 0; hi < NH; hi++) for (int n = 2; n <= 6; n++) for (int screen = 0; screen < 3; screen++) {
+        const int W = SIZES_W[wi], H = SIZES_H[hi];
+        CnStageIn in = table_in(W, H, n, screen == 0, 0, screen == 2 ? CN_STAGE_REVEAL : CN_STAGE_TABLE);
+        const CnStageHud *h = cn_stage_begin(&ST, &in);
+        if (!h) { CHECK(0, "%dx%d n %d: begins", W, H, n); continue; }
+        const char *what = screen == 0 ? "mine" : screen == 1 ? "theirs" : "reveal";
+        double hud[2][4];
+        const char *hud_name[2];
+        int nh = 0;
+        if (h->has_plate) { rect_box(h->plate, hud[nh]); hud_name[nh++] = "plate"; }
+        if (h->has_shelf) { rect_box(h->shelf, hud[nh]); hud_name[nh++] = "shelf"; }
+        /* every name's letters: a short name's width, its line and the turn's glow bar under it (CN_LAY_NAME_H) */
+        double names[CN_STAGE_SEATS][4], letters[CN_STAGE_SEATS][4];
+        for (int s = 0; s < n; s++) {
+            name_rect(&ST, s, CN_LAY_NAME_TEXT_W, CN_LAY_NAME_H, names[s]);
+            name_rect(&ST, s, CN_LAY_NAME_TEXT_W, CN_LAY_NAME_TEXT_H, letters[s]);
+        }
+        /* the cups as they stand (my cup shut), and at the reveal tipped in full */
+        int no;
+        const CnObj *o = cn_stage_objects(&ST, CN_STAGE_NO_ROLL - 1, 0, screen == 2 ? 1 : 0, &no);
+        for (int i = 0; i < no; i++) {
+            if (o[i].kind != CN_OBJ_CUP) continue;
+            Pic p; picture(&ST, i, &o[i], &p); hull(&p);
+            for (int k = 0; k < nh; k++)
+                CHECK(!meets(&p, hud[k]), "%dx%d n %d %s: seat %d's cup clear of the %s", W, H, n, what, o[i].seat, hud_name[k]);
+            for (int s = 0; s < n; s++) {
+                const int covers = meets(&p, letters[s]);
+                if (h->short_board) CHECK(!covers, "%dx%d n %d %s: seat %d's cup clear of seat %d's name", W, H, n, what, o[i].seat, s);
+                else { tall_cover += covers; tall_cover_rest += covers && screen != 2; }
+            }
+            checked++;
+        }
+        for (int s = 0; s < n; s++)
+            for (int k = 0; k < nh; k++) CHECK(!boxes_meet(names[s], hud[k]), "%dx%d n %d %s: seat %d's name clear of the %s", W, H, n, what, s, hud_name[k]);
+    }
+    printf("  %d cups against the plate, the shelf and every name; on tall boards a cup covers a name %d times (%d of them standing: the ring's names are the study's, docs_pkgV2.md)\n", checked, tall_cover, tall_cover_rest);
+}
+
 int main(int argc, char **argv)
 {
     const char *path = argc > 1 ? argv[1] : "build/cn_tex.pack";
@@ -459,6 +632,8 @@ int main(int argc, char **argv)
     test_bubble();
     test_out();
     test_clock();
+    test_reveal_inside();
+    test_hud_clear();
     free(PACK);
     return report("cn_stage_test");
 }

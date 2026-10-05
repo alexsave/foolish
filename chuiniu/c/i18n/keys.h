@@ -81,13 +81,13 @@
     X(HEAD_WINS,           0, 0)                                                 \
     X(HEAD_YOU_OUT,       36, 0)                                                 \
     X(HEAD_STAGED_BID,     0, 0)  /* "Send to bid four 3s"                    */ \
-    X(HEAD_STAGED_CALL,    0, 0)  /* "Send to call four 3s"                   */ \
+    X(HEAD_STAGED_CALL,    0, 0)  /* "Send to call Liar on four 3s"           */ \
     X(SUB_STANDING,        0, 0)  /* "Bid to beat: four 3s by Alex"           */ \
     X(SUB_NONE,           36, 0)                                                 \
     X(SUB_TABLE,          36, 0)  /* "14 dice on the table"                   */ \
     X(REVEAL_COUNT,        0, 0)  /* "There were five"                        */ \
     X(BTN_RAISE,          12, 0)                                                 \
-    X(BTN_CALL,           12, 0)                                                 \
+    X(BTN_CALL,           12, 0)  /* "Liar": the owner's word for the call     */ \
     X(BTN_JOIN,           12, 0)                                                 \
     X(BTN_START,          12, 0)                                                 \
     /* the lobby                                                            */ \

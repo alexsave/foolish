@@ -209,19 +209,19 @@ static const Gold GOLD[] = {
       { { -39.6939, -51.9532 }, { 437.6939, -51.9532 }, { 0, 0 }, { 0, 0 }, { 0, 0 } },
       { 0, 0, 0, 0 }, { 0.9076, -58.9066, 11.7813, 7.0688 } },
     { 430, 830, 0, 4, 30, 788, 0, 24, 34.7066, 58.9066, 199, 702,
-      58.9066, 341.4941, 180.253, 360.5059, 903, 109,
-      { { 18.747, 341.4941 }, { 199, -19.0119 }, { 379.253, 341.4941 }, { 0, 0 }, { 0, 0 } },
-      { { 18.747, 414.4006 }, { 199, 53.8947 }, { 379.253, 414.4006 }, { 0, 0 }, { 0, 0 } },
+      58.9066, 341.4941, 174.253, 360.5059, 903, 103,
+      { { 24.747, 341.4941 }, { 199, -19.0119 }, { 373.253, 341.4941 }, { 0, 0 }, { 0, 0 } },
+      { { 24.747, 414.4006 }, { 199, 53.8947 }, { 373.253, 414.4006 }, { 0, 0 }, { 0, 0 } },
       { 0, 0, 0, 0 }, { 0.9076, -58.9066, 11.7813, 7.0688 } },
     { 430, 830, 0, 5, 30, 788, 0, 24, 34.7066, 58.9066, 199, 702,
-      58.9066, 351.9536, 175.0232, 350.0464, 903, 96,
-      { { 32.5431, 460.1239 }, { 96.1239, 68.7601 }, { 301.8761, 68.7601 }, { 365.457, 460.1239 }, { 0, 0 } },
-      { { 32.5431, 533.0304 }, { 96.1239, 141.6667 }, { 301.8761, 141.6667 }, { 365.457, 533.0304 }, { 0, 0 } },
+      58.9066, 351.9536, 166.0232, 350.0464, 903, 87,
+      { { 41.1026, 460.1239 }, { 101.414, 68.7601 }, { 296.586, 68.7601 }, { 356.8974, 460.1239 }, { 0, 0 } },
+      { { 41.1026, 533.0304 }, { 101.414, 141.6667 }, { 296.586, 141.6667 }, { 356.8974, 533.0304 }, { 0, 0 } },
       { 0, 0, 0, 0 }, { 0.9076, -58.9066, 11.7813, 7.0688 } },
     { 430, 830, 0, 6, 30, 788, 0, 24, 34.7066, 58.9066, 199, 702,
-      56.9066, 346.2384, 177.8808, 355.7616, 903, 79,
-      { { 44.9507, 524.1192 }, { 44.9507, 168.3576 }, { 199, -9.5232 }, { 353.0493, 168.3576 }, { 293.0299, 524.1192 } },
-      { { 44.9507, 595.0257 }, { 44.9507, 239.2641 }, { 199, 61.3833 }, { 353.0493, 239.2641 }, { 293.0299, 595.0257 } },
+      56.9066, 346.2384, 174.8808, 355.7616, 903, 76,
+      { { 47.5488, 524.1192 }, { 47.5488, 168.3576 }, { 199, -9.5232 }, { 350.4512, 168.3576 }, { 293.0299, 524.1192 } },
+      { { 47.5488, 595.0257 }, { 47.5488, 239.2641 }, { 199, 61.3833 }, { 350.4512, 239.2641 }, { 293.0299, 595.0257 } },
       { 0, 0, 0, 0 }, { 0.9076, -58.9066, 11.7813, 7.0688 } },
     { 390, 584, 1, 2, 30, 442, 0, 24, 34.7066, 58.9066, 179, 356,
       56.9066, 262.5606, 358, 93.4394, 113, 0,
@@ -887,62 +887,62 @@ static const GoldDie GOLD_DICE[] = {
     { 36, 0, 220.3497, 727.8136, 0.1106, 24 },
     { 36, 0, 180.6371, 730.9764, -0.0379, 24 },
     { 36, 0, 166.9412, 689.1047, 0.0393, 24 },
-    { 37, 1, 16.0737, 306.1308, 0.2173, 24 },
-    { 37, 1, 49.6637, 329.9741, 0.2003, 24 },
-    { 37, 1, 38.5482, 369.4952, -0.238, 24 },
-    { 37, 1, -3.7783, 369.9604, -0.0101, 24 },
+    { 37, 1, 22.0737, 306.1308, 0.2173, 24 },
+    { 37, 1, 55.6637, 329.9741, 0.2003, 24 },
+    { 37, 1, 44.5482, 369.4952, -0.238, 24 },
+    { 37, 1, 2.2217, 369.9604, -0.0101, 24 },
     { 37, 2, 199.7245, -53.4953, 0.1417, 24 },
     { 37, 2, 233.2052, -29.3938, -0.0748, 24 },
     { 37, 2, 217.7454, 8.2321, 0.1995, 24 },
     { 37, 2, 177.8437, 7.8123, -0.1257, 24 },
     { 37, 2, 165.7014, -28.8455, -0.1618, 24 },
-    { 37, 3, 376.4938, 306.3714, -0.0265, 24 },
-    { 37, 3, 414.0124, 332.898, 0.1524, 24 },
-    { 37, 3, 398.6465, 368.9926, -0.0462, 24 },
+    { 37, 3, 370.4938, 306.3714, -0.0265, 24 },
+    { 37, 3, 408.0124, 332.898, 0.1524, 24 },
+    { 37, 3, 392.6465, 368.9926, -0.0462, 24 },
     { 37, 0, 196.9448, 667.5326, 0.1369, 24 },
     { 37, 0, 233.9699, 693.7524, -0.1804, 24 },
     { 37, 0, 220.3497, 727.8136, 0.1106, 24 },
     { 37, 0, 180.6371, 730.9764, -0.0379, 24 },
     { 37, 0, 166.9412, 689.1047, 0.0393, 24 },
-    { 38, 1, 29.8697, 424.7607, 0.2173, 24 },
-    { 38, 1, 63.4597, 448.6039, 0.2003, 24 },
-    { 38, 1, 52.3443, 488.125, -0.238, 24 },
-    { 38, 1, 10.0177, 488.5903, -0.0101, 24 },
-    { 38, 2, 96.8484, 34.2767, 0.1417, 24 },
-    { 38, 2, 130.3292, 58.3782, -0.0748, 24 },
-    { 38, 2, 114.8694, 96.0041, 0.1995, 24 },
-    { 38, 2, 74.9676, 95.5843, -0.1257, 24 },
-    { 38, 2, 62.8254, 58.9265, -0.1618, 24 },
-    { 38, 3, 299.1169, 33.6375, -0.0265, 24 },
-    { 38, 3, 336.6355, 60.1641, 0.1524, 24 },
-    { 38, 3, 321.2696, 96.2587, -0.0462, 24 },
-    { 38, 4, 366.472, 425.6093, -0.1999, 24 },
-    { 38, 4, 398.1354, 450.3501, -0.1119, 24 },
-    { 38, 4, 384.1134, 487.924, 0.0183, 24 },
-    { 38, 4, 346.2234, 488.8495, -0.1218, 24 },
-    { 38, 4, 334.2697, 448.2261, 0.0239, 24 },
+    { 38, 1, 38.4292, 424.7607, 0.2173, 24 },
+    { 38, 1, 72.0192, 448.6039, 0.2003, 24 },
+    { 38, 1, 60.9038, 488.125, -0.238, 24 },
+    { 38, 1, 18.5772, 488.5903, -0.0101, 24 },
+    { 38, 2, 102.1385, 34.2767, 0.1417, 24 },
+    { 38, 2, 135.6193, 58.3782, -0.0748, 24 },
+    { 38, 2, 120.1594, 96.0041, 0.1995, 24 },
+    { 38, 2, 80.2577, 95.5843, -0.1257, 24 },
+    { 38, 2, 68.1155, 58.9265, -0.1618, 24 },
+    { 38, 3, 293.8268, 33.6375, -0.0265, 24 },
+    { 38, 3, 331.3454, 60.1641, 0.1524, 24 },
+    { 38, 3, 315.9795, 96.2587, -0.0462, 24 },
+    { 38, 4, 357.9125, 425.6093, -0.1999, 24 },
+    { 38, 4, 389.5759, 450.3501, -0.1119, 24 },
+    { 38, 4, 375.5539, 487.924, 0.0183, 24 },
+    { 38, 4, 337.6639, 488.8495, -0.1218, 24 },
+    { 38, 4, 325.7102, 448.2261, 0.0239, 24 },
     { 38, 0, 196.9448, 667.5326, 0.1369, 24 },
     { 38, 0, 233.9699, 693.7524, -0.1804, 24 },
     { 38, 0, 220.3497, 727.8136, 0.1106, 24 },
     { 38, 0, 180.6371, 730.9764, -0.0379, 24 },
     { 38, 0, 166.9412, 689.1047, 0.0393, 24 },
-    { 39, 1, 42.3681, 489.9566, 0.2173, 23.1852 },
-    { 39, 1, 74.8177, 512.9903, 0.2003, 23.1852 },
-    { 39, 1, 64.0796, 551.1696, -0.238, 23.1852 },
-    { 39, 1, 23.1901, 551.6191, -0.0101, 23.1852 },
-    { 39, 2, 45.6506, 135.0449, 0.1417, 23.1852 },
-    { 39, 2, 77.9946, 158.3282, -0.0748, 23.1852 },
-    { 39, 2, 63.0597, 194.6766, 0.1995, 23.1852 },
-    { 39, 2, 24.5127, 194.271, -0.1257, 23.1852 },
-    { 39, 2, 12.7827, 158.8578, -0.1618, 23.1852 },
+    { 39, 1, 44.9662, 489.9566, 0.2173, 23.1852 },
+    { 39, 1, 77.4157, 512.9903, 0.2003, 23.1852 },
+    { 39, 1, 66.6777, 551.1696, -0.238, 23.1852 },
+    { 39, 1, 25.7882, 551.6191, -0.0101, 23.1852 },
+    { 39, 2, 48.2487, 135.0449, 0.1417, 23.1852 },
+    { 39, 2, 80.5927, 158.3282, -0.0748, 23.1852 },
+    { 39, 2, 65.6578, 194.6766, 0.1995, 23.1852 },
+    { 39, 2, 27.1108, 194.271, -0.1257, 23.1852 },
+    { 39, 2, 15.3808, 158.8578, -0.1618, 23.1852 },
     { 39, 3, 196.3345, -43.4534, -0.0265, 23.1852 },
     { 39, 3, 232.5793, -17.8275, 0.1524, 23.1852 },
     { 39, 3, 217.7351, 17.0417, -0.0462, 23.1852 },
-    { 39, 4, 354.0299, 135.0148, -0.1999, 23.1852 },
-    { 39, 4, 384.6183, 158.9156, -0.1119, 23.1852 },
-    { 39, 4, 371.0724, 195.2138, 0.0183, 23.1852 },
-    { 39, 4, 334.4688, 196.1079, -0.1218, 23.1852 },
-    { 39, 4, 322.921, 156.8638, 0.0239, 23.1852 },
+    { 39, 4, 351.4319, 135.0148, -0.1999, 23.1852 },
+    { 39, 4, 382.0202, 158.9156, -0.1119, 23.1852 },
+    { 39, 4, 368.4743, 195.2138, 0.0183, 23.1852 },
+    { 39, 4, 331.8707, 196.1079, -0.1218, 23.1852 },
+    { 39, 4, 320.3229, 156.8638, 0.0239, 23.1852 },
     { 39, 0, 196.9448, 667.5326, 0.1369, 24 },
     { 39, 0, 233.9699, 693.7524, -0.1804, 24 },
     { 39, 0, 220.3497, 727.8136, 0.1106, 24 },
@@ -1264,19 +1264,19 @@ static const GoldCup GOLD_CUPS[] = {
     { 36, 1, -39.6939, -124.8598, 0, 58.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 58.9066, 0, 0 } },
     { 36, 2, 437.6939, -124.8598, 0, 58.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 58.9066, 0, 0 } },
     { 36, 0, 199, 702, 0, 58.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 58.9066, 0, 0 } },
-    { 37, 1, 18.747, 341.4941, 0, 58.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 58.9066, 0, 0 } },
+    { 37, 1, 24.747, 341.4941, 0, 58.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 58.9066, 0, 0 } },
     { 37, 2, 199, -19.0119, 0, 58.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 58.9066, 0, 0 } },
-    { 37, 3, 379.253, 341.4941, 0, 58.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 58.9066, 0, 0 } },
+    { 37, 3, 373.253, 341.4941, 0, 58.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 58.9066, 0, 0 } },
     { 37, 0, 199, 702, 0, 58.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 58.9066, 0, 0 } },
-    { 38, 1, 32.5431, 460.1239, 0, 58.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 58.9066, 0, 0 } },
-    { 38, 2, 96.1239, 68.7601, 0, 58.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 58.9066, 0, 0 } },
-    { 38, 3, 301.8761, 68.7601, 0, 58.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 58.9066, 0, 0 } },
-    { 38, 4, 365.457, 460.1239, 0, 58.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 58.9066, 0, 0 } },
+    { 38, 1, 41.1026, 460.1239, 0, 58.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 58.9066, 0, 0 } },
+    { 38, 2, 101.414, 68.7601, 0, 58.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 58.9066, 0, 0 } },
+    { 38, 3, 296.586, 68.7601, 0, 58.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 58.9066, 0, 0 } },
+    { 38, 4, 356.8974, 460.1239, 0, 58.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 58.9066, 0, 0 } },
     { 38, 0, 199, 702, 0, 58.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 58.9066, 0, 0 } },
-    { 39, 1, 44.9507, 524.1192, 0, 56.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 56.9066, 0, 0 } },
-    { 39, 2, 44.9507, 168.3576, 0, 56.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 56.9066, 0, 0 } },
+    { 39, 1, 47.5488, 524.1192, 0, 56.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 56.9066, 0, 0 } },
+    { 39, 2, 47.5488, 168.3576, 0, 56.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 56.9066, 0, 0 } },
     { 39, 3, 199, -9.5232, 0, 56.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 56.9066, 0, 0 } },
-    { 39, 4, 353.0493, 168.3576, 0, 56.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 56.9066, 0, 0 } },
+    { 39, 4, 350.4512, 168.3576, 0, 56.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 56.9066, 0, 0 } },
     { 39, 5, 234.3863, 521.7955, 56.9066, 56.9066, 1, { -0.0396, 0.9992, 0, 0.1332, 0.0053, 0.9911, 0.9903, 0.0392, -0.1333 }, { 65.1402, 58.6436, 2.3237 } },
     { 39, 0, 199, 702, 0, 58.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 58.9066, 0, 0 } },
     { 40, 1, 179, 169.1212, 0, 56.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 56.9066, 0, 0 } },
@@ -1449,11 +1449,57 @@ static void test_short_or_tall(void)
     CHECK(cn_lay_make(&in, &L) && !L.short_board && L.board_h == 280, "a 280 board is tall");
     in = input(390, 400, 2, 1, 0); in.h = 399.5f;
     CHECK(cn_lay_make(&in, &L) && L.short_board, "279.5 is short");
+    in = input(390, 410, 2, 1, 0);
+    CHECK(cn_lay_make(&in, &L) && !L.short_board && L.top_m == 18 && L.board_h == 280, "410: tall, its top margin grown to 18 (the study's 30 made it short again)");
+    /* ONE THRESHOLD (package V2): over every drawer from the 17e's 281 to 900, short below 400 and never again,
+     * and the picker-up board never shrinks as the drawer grows (the study stepped its top margin at 400) */
+    for (int wi = 0; wi < 2; wi++) {
+        int flips = 0, shrinks = 0, at = -1, was = 1;
+        double last = 0;
+        for (int H = 281; H <= 900; H++) {
+            CnLayIn t = input(wi ? 375 : 390, H, 4, 1, 0);
+            if (!cn_lay_make(&t, &L)) { CHECK(0, "%d lays out", H); continue; }
+            if (L.short_board != was) { flips++; at = H; was = L.short_board; }
+            if (L.board_h < last) shrinks++;
+            last = L.board_h;
+        }
+        CHECK(flips == 1 && at == 400, "%d wide: short below 400 and tall from 400 on (%d flips, the last at %d)", wi ? 375 : 390, flips, at);
+        CHECK(!shrinks, "%d wide: the picker-up board never shrinks as the drawer grows (%d times)", wi ? 375 : 390, shrinks);
+    }
     CHECK(CN_LAY_SHORT_H == 280, "badge 72 + plate 56 + band 120 + four margins of 8");
     in = input(390, 718, 2, 0, 0); in.rolling = 1;
     CHECK(cn_lay_make(&in, &L) && L.has_shelf && L.shelf[3] == 50 && L.board_h == 718 - 30 - 12 - 60, "the roll's shelf is 50 high");
     in = input(390, 120, 2, 1, 0);
     CHECK(!cn_lay_make(&in, &L), "a drawer with no room for a board is refused");
+    /* the reveal on a short board: every seat in one row on the board the reveal's shelf leaves, mine first, no throw */
+    in = input(390, 340, 5, 0, 0); in.reveal = 1;
+    CHECK(cn_lay_make(&in, &L) && L.short_board && L.one_row && L.board_h == 340 - 8 - 12 - 60 && L.shelf[3] == 50, "340's reveal: one row, the reveal's board (%g)", L.board_h);
+    int row = 1;
+    for (int s = 0; s < 5; s++) row &= L.cup_y[s] == L.cup_y[0] && L.name_how[s] == CN_NAME_BOX && (s == 0 || L.cup_x[s] > L.cup_x[s - 1]);
+    CHECK(row && L.my_r == L.cup_r && L.d == L.sd, "every seat in the row, mine first, one size");
+    /* the names and the loser's stamp under them all over the outcome line, at every compact height and seat count */
+    int clear = 1;
+    for (int H = 281; H <= 399; H++) for (int n = 2; n <= 6; n++) {
+        CnLayIn r1 = input(390, H, n, 0, 0); r1.reveal = 1;
+        CnLay R1;
+        if (!cn_lay_make(&r1, &R1)) { clear = 0; continue; }
+        for (int s = 0; s < n; s++) clear &= R1.board_y + R1.name_y[s] + CN_LAY_STAMP_FOOT <= R1.shelf[1] - 6 - CN_LAY_OUTCOME_H + 1e-3;
+    }
+    CHECK(clear, "the reveal's row leaves its names, the stamp and the outcome line their room");
+    CnLayThrow T[CN_LAY_SEATS];
+    CHECK(cn_lay_throws(&in, &L, CN_THROW_CUP, T, CN_LAY_SEATS) == 0, "and no cup throws at the reveal");
+    /* the reveal's plate carries the tally ("There were five" wrapped on the bid's 160): wider, centred */
+    in = input(390, 718, 4, 0, 0); in.reveal = 1;
+    CHECK(cn_lay_make(&in, &L) && L.has_plate && L.plate[2] == CN_LAY_PLATE_REVEAL_W && L.plate[0] == 195 - CN_LAY_PLATE_REVEAL_W / 2, "718's reveal: the plate %g wide", L.plate[2]);
+    /* on a short board beside the row while there is room right of it (two seats at 390), else under the names */
+    for (int n = 2; n <= 6; n++) {
+        in = input(390, 340, n, 0, 0); in.reveal = 1;
+        cn_lay_make(&in, &L);
+        if (n == 2) CHECK(L.has_plate && L.plate[2] >= CN_LAY_PLATE_MIN && L.plate[0] + L.plate[2] == 16 + L.board_w - 8 && L.plate[0] > L.board_x + L.cup_x[1] + L.cup_r,
+                          "340's reveal, two seats: the plate beside the row (%g wide at %g)", L.plate[2], L.plate[0]);
+        else CHECK(!L.has_plate || (L.plate[1] > L.board_y + L.name_y[0] && L.plate[1] + L.plate[3] <= L.shelf[1] - 6 - CN_LAY_OUTCOME_H),
+                   "340's reveal, %d seats: a plate only under the names, over the outcome line", n);
+    }
     /* the short board's own pieces */
     in = input(390, 340, 3, 1, 0);
     cn_lay_make(&in, &L);
@@ -1488,16 +1534,18 @@ static void test_any_me(void)
 static void test_throws(void)
 {
     TEST("the throws: who throws, each its own seed, shake and start, inside its walls");
-    CnLayIn in = input(390, 718, 6, 1, 0);
+    /* 375 by 900 on their turn, six seats (Fay out): the far seats whose held cup stays inside throw (package V2) */
+    CnLayIn in = input(375, 900, 6, 0, 0);
     CnLay L; cn_lay_make(&in, &L);
     CnLayThrow T[CN_LAY_SEATS];
-    int k = cn_lay_throws(&in, &L, CN_THROW_CUP, T, CN_LAY_SEATS);
-    CHECK(k == 5, "six seats, one out: five throws (%d)", k);
+    int k = cn_lay_throws(&in, &L, CN_THROW_CUP, T, CN_LAY_SEATS), want = 0;
+    for (int s = 0; s < 6; s++) want += L.throw_mask >> s & 1;
+    CHECK(k == want && k >= 3 && (L.throw_mask & 1), "mine and the far seats that fit throw (%d of %d)", k, want);
     CHECK(T[0].seat == 0 && T[0].delay == 0 && T[0].t.shake_s == 0 && T[0].seed == 7 && T[0].t.cup_r == L.my_r && T[0].t.dice == 5, "mine first, at once, the default shake, the seed as given");
     for (int i = 1; i < k; i++) {
         const CnLayThrow *t = &T[i];
         const int v = t->seat;   /* me is 0 */
-        CHECK(t->seat != 5, "the out seat does not throw");
+        CHECK(t->seat != 5 && (L.throw_mask >> v & 1), "seat %d throws by the mask; the out seat does not", v);
         CHECK(near(t->t.shake_s, 1.5 + cn_geom_hash(v, 81, 7) * .8, 1e-6) && near(t->delay, .1 + cn_geom_hash(v, 82, 7) * .5, 1e-6), "seat %d: its shake %g and start %g", v, t->t.shake_s, t->delay);
         CHECK(t->t.shake_s >= 1.5f && t->t.shake_s <= 2.3f && t->delay >= .1f && t->delay <= .6f, "seat %d: in the study's ranges", v);
         CHECK(t->seed == 7 + 1000u * v && t->t.cup_r == L.cup_r && near(t->t.die, L.sd, 1e-6) && near(t->t.ring, L.sring, 1e-6), "seat %d: its seed, its cup, its dice", v);
@@ -1508,16 +1556,20 @@ static void test_throws(void)
     CHECK(T[1].t.shake_s != T[2].t.shake_s && T[1].delay != T[2].delay, "no two shake alike");
     CHECK(cn_lay_throws(&in, &L, CN_THROW_TABLE, T, CN_LAY_SEATS) == 1 && T[0].t.kind == CN_THROW_TABLE, "the table roll: mine only");
     CHECK(cn_lay_throws(&in, &L, CN_THROW_CUP, T, 2) == -1, "a short array is refused");
+    /* a top seat's study throw leaves a tall drawer, so it stays down: 390 by 718, two seats */
+    CnLayIn two = input(390, 718, 2, 0, 0);
+    CnLay M; cn_lay_make(&two, &M);
+    CHECK(cn_lay_throws(&two, &M, CN_THROW_CUP, T, CN_LAY_SEATS) == 1 && M.throw_mask == 1, "718, two seats: the top seat's cup stays down");
     /* a real bake from a throw this file wrote */
     static float frames[CN_ROLL_MAX_FRAMES * CN_ROLL_FRAME_FLOATS];
     static uint8_t ph[CN_ROLL_MAX_FRAMES];
     k = cn_lay_throws(&in, &L, CN_THROW_CUP, T, CN_LAY_SEATS);
     CnRollInfo info;
-    int nf = cn_roll_bake(&T[3].t, T[3].seed, frames, ph, CN_ROLL_MAX_FRAMES, &info);
-    CHECK(nf > 0 && info.complete, "seat %d's throw bakes to rest (%d frames)", T[3].seat, nf);
+    int nf = cn_roll_bake(&T[k - 1].t, T[k - 1].seed, frames, ph, CN_ROLL_MAX_FRAMES, &info);
+    CHECK(nf > 0 && info.complete, "seat %d's throw bakes to rest (%d frames)", T[k - 1].seat, nf);
     CnPose p;
     cn_geom_pose_at(frames, ph, nf, 99, 0, &p);
-    CHECK(p.phase == CN_RP_IDLE && near(p.p[0], L.cup_x[T[3].seat], .5) && near(p.p[1], L.cup_y[T[3].seat], .5), "and its cup comes down on its seat (%g, %g)", p.p[0], p.p[1]);
+    CHECK(p.phase == CN_RP_IDLE && near(p.p[0], L.cup_x[T[k - 1].seat], .5) && near(p.p[1], L.cup_y[T[k - 1].seat], .5), "and its cup comes down on its seat (%g, %g)", p.p[0], p.p[1]);
 }
 
 /* ---- nothing leaves the drawer (package U) --------------------------------------------------- */
@@ -1592,54 +1644,71 @@ static void test_cup_path(void)
 
 static void test_inside_the_drawer(void)
 {
-    TEST("nothing leaves the drawer: 281 to 340, 2 to 6 seats, every throw frame and the peek, on every screen");
-    static const int HS[] = { 281, 290, 300, 310, 323, 328, 334, 340 }, WS[] = { 390, 375 };
+    TEST("nothing leaves the drawer: 281 to 900, 2 to 6 seats, every throw frame and the peek, on every screen");
+    /* every compact height measured (U's), the threshold either side, and tall drawers to 900; 430 wide at five */
+    static const int HS[] = { 281, 290, 300, 310, 323, 328, 334, 340, 399, 400, 401, 410, 421, 450, 480, 541, 584, 650, 718, 760, 830, 900 }, WS[] = { 390, 375, 430 };
+    static const int H430[] = { 281, 340, 400, 541, 830 };
+    const int nhs = (int)(sizeof HS / sizeof HS[0]);
     double worst = 1e9;
     int frames = 0;
-    for (int wi = 0; wi < 2; wi++) for (int hi = 0; hi < 8; hi++) {
-        const int W = WS[wi], H = HS[hi];
-        CnThrow seen; memset(&seen, 0, sizeof seen);
-        for (int n = 2; n <= 6; n++) for (int screen = 0; screen < 3; screen++) {
-            CnLayIn in = input(W, H, n, screen == 0, 0);   /* my turn, theirs, the reveal */
-            if (screen == 2) in.rolling = 1;
-            CnLay L;
-            if (!cn_lay_make(&in, &L)) { CHECK(0, "%dx%d n %d: lays out", W, H, n); continue; }
-            meshes(&L);
-            CnObj base[CN_LAY_MAX_OBJS], o[CN_LAY_MAX_OBJS];
-            const int nb = cn_lay_objects(&in, &L, base, CN_LAY_MAX_OBJS);
-            /* still: my cup at its full peek (in.peek is 1); the reveal's shelf (its lift is the stage's, docs_pkgU.md) */
-            Box b = box_none();
-            memcpy(o, base, sizeof(CnObj) * (size_t)nb);
-            for (int i = 0; i < nb; i++) drawn(&L, &o[i], &b);
-            worst = fmin(worst, fmin(fmin(b.x0, b.y0), fmin(W - b.x1, H - b.y1)));
-            CHECK(inside(&b, W, H), "%dx%d n %d %s: at rest every body inside (x %.1f..%.1f y %.1f..%.1f)", W, H, n,
-                  screen == 0 ? "mine" : screen == 1 ? "theirs" : "reveal", b.x0, b.x1, b.y0, b.y1);
-            /* the throws: on a short board mine only, one throw on every screen of the drawer */
-            CnLayThrow T[CN_LAY_SEATS];
-            const int nt = cn_lay_throws(&in, &L, CN_THROW_CUP, T, CN_LAY_SEATS);
-            CHECK(nt == 1 && T[0].seat == in.me, "%dx%d n %d: a short board, my throw alone (%d)", W, H, n, nt);
-            for (int j = 0; j < nt; j++) {
-                /* mine is one throw on every screen of the drawer: drawn once, then only compared */
-                if (j == 0 && seen.cup_r != 0) { CHECK(!memcmp(&seen, &T[0].t, sizeof seen), "%dx%d n %d: the same throw on every screen", W, H, n); continue; }
-                if (j == 0) seen = T[0].t;
-                CnRollInfo info;
-                const int nf = cn_roll_bake(&T[j].t, T[j].seed, FR, PH, CN_ROLL_MAX_FRAMES, &info);
-                Box r = box_none();
-                for (int h2 = 0; h2 < 2 * nf; h2++) {   /* every frame, and half way to the next (the host's in-between) */
-                    memcpy(o, base, sizeof(CnObj) * (size_t)nb);
-                    int k = 0;
-                    for (int i = 0; i < nb; i++) {
-                        if (o[i].seat != T[j].seat || (o[i].kind == CN_OBJ_DIE && k >= T[j].t.dice)) continue;
-                        CnPose p;
-                        cn_geom_pose_at(FR, PH, nf, h2 / (2.0 * CN_ROLL_HZ), o[i].kind == CN_OBJ_CUP ? 0 : 1 + k++, &p);
-                        cn_geom_place(&o[i], &p, -1);
-                        if (o[i].kind == CN_OBJ_CUP && o[i].has_rot) o[i].tilt_angle = 0;   /* a cup in its throw is the throw's */
-                        drawn(&L, &o[i], &r);
+    for (int wi = 0; wi < 3; wi++) for (int hi = 0; hi < (wi == 2 ? 5 : nhs); hi++) {
+        const int W = WS[wi], H = wi == 2 ? H430[hi] : HS[hi];
+        /* a throw already drawn over this drawer's same board (the seat count moves no throw of mine on a tall
+         * board) is not drawn again */
+        static struct { CnThrow t; uint64_t seed; float board_h, board_y; } done[96];
+        int ndone = 0;
+        for (int n = 2; n <= 6; n++) {
+            CnThrow seen; memset(&seen, 0, sizeof seen);
+            for (int screen = 0; screen < 3; screen++) {
+                CnLayIn in = input(W, H, n, screen == 0, 0);   /* my turn, theirs, the reveal */
+                if (screen == 2) in.reveal = 1;
+                CnLay L;
+                if (!cn_lay_make(&in, &L)) { CHECK(0, "%dx%d n %d: lays out", W, H, n); continue; }
+                meshes(&L);
+                CnObj base[CN_LAY_MAX_OBJS], o[CN_LAY_MAX_OBJS];
+                const int nb = cn_lay_objects(&in, &L, base, CN_LAY_MAX_OBJS);
+                /* still: my cup at its full peek (in.peek is 1); the reveal's lift is the stage's (cn_stage_test) */
+                Box b = box_none();
+                memcpy(o, base, sizeof(CnObj) * (size_t)nb);
+                for (int i = 0; i < nb; i++) drawn(&L, &o[i], &b);
+                worst = fmin(worst, fmin(fmin(b.x0, b.y0), fmin(W - b.x1, H - b.y1)));
+                CHECK(inside(&b, W, H), "%dx%d n %d %s: at rest every body inside (x %.1f..%.1f y %.1f..%.1f)", W, H, n,
+                      screen == 0 ? "mine" : screen == 1 ? "theirs" : "reveal", b.x0, b.x1, b.y0, b.y1);
+                /* the throws: who throws is the layout's; on a short board mine alone, one throw on every table screen */
+                CnLayThrow T[CN_LAY_SEATS];
+                const int nt = cn_lay_throws(&in, &L, CN_THROW_CUP, T, CN_LAY_SEATS);
+                if (L.one_row) { CHECK(nt == 0, "%dx%d n %d: the reveal's row throws nothing (%d)", W, H, n, nt); continue; }
+                if (L.short_board) CHECK(nt == 1 && T[0].seat == in.me, "%dx%d n %d: a short board, my throw alone (%d)", W, H, n, nt);
+                for (int j = 0; j < nt; j++) {
+                    if (j == 0 && L.short_board) {
+                        /* mine is one throw on every table screen of a short drawer: drawn once, then only compared */
+                        if (seen.cup_r != 0) { CHECK(!memcmp(&seen, &T[0].t, sizeof seen), "%dx%d n %d: the same throw on every screen", W, H, n); continue; }
+                        seen = T[0].t;
                     }
-                    frames++;
+                    int again = 0;
+                    for (int q = 0; q < ndone && !again; q++)
+                        again = !memcmp(&done[q].t, &T[j].t, sizeof T[j].t) && done[q].seed == T[j].seed && done[q].board_h == L.board_h && done[q].board_y == L.board_y;
+                    if (again) continue;
+                    if (ndone < 96) { done[ndone].t = T[j].t; done[ndone].seed = T[j].seed; done[ndone].board_h = L.board_h; done[ndone].board_y = L.board_y; ndone++; }
+                    CnRollInfo info;
+                    const int nf = cn_roll_bake(&T[j].t, T[j].seed, FR, PH, CN_ROLL_MAX_FRAMES, &info);
+                    Box r = box_none();
+                    for (int h2 = 0; h2 < 2 * nf; h2++) {   /* every frame, and half way to the next (the host's in-between) */
+                        memcpy(o, base, sizeof(CnObj) * (size_t)nb);
+                        int k = 0;
+                        for (int i = 0; i < nb; i++) {
+                            if (o[i].seat != T[j].seat || (o[i].kind == CN_OBJ_DIE && k >= T[j].t.dice)) continue;
+                            CnPose p;
+                            cn_geom_pose_at(FR, PH, nf, h2 / (2.0 * CN_ROLL_HZ), o[i].kind == CN_OBJ_CUP ? 0 : 1 + k++, &p);
+                            cn_geom_place(&o[i], &p, -1);
+                            if (o[i].kind == CN_OBJ_CUP && o[i].has_rot) o[i].tilt_angle = 0;   /* a cup in its throw is the throw's */
+                            drawn(&L, &o[i], &r);
+                        }
+                        frames++;
+                    }
+                    worst = fmin(worst, fmin(fmin(r.x0, r.y0), fmin(W - r.x1, H - r.y1)));
+                    CHECK(inside(&r, W, H), "%dx%d n %d: seat %d's throw, every frame inside (reach %.3f: x %.1f..%.1f y %.1f..%.1f)", W, H, n, T[j].seat, L.my_reach, r.x0, r.x1, r.y0, r.y1);
                 }
-                worst = fmin(worst, fmin(fmin(r.x0, r.y0), fmin(W - r.x1, H - r.y1)));
-                CHECK(inside(&r, W, H), "%dx%d n %d: seat %d's throw, every frame inside (reach %.3f: x %.1f..%.1f y %.1f..%.1f)", W, H, n, T[j].seat, L.my_reach, r.x0, r.x1, r.y0, r.y1);
             }
         }
     }
@@ -1674,10 +1743,10 @@ static void test_reach(void)
     tall.turn = 0;
     CnLay N;
     CHECK(cn_lay_make(&tall, &N) && N.my_reach == M.my_reach && N.board_h < M.board_h, "and the same on mine");
-    /* a tall board's far seats throw as the study's did, at their own reach */
+    /* a tall board's far seats throw at the study's reach where they fit (test_throws) */
     in = input(390, 718, 6, 0, 0);
     cn_lay_make(&in, &L);
-    CHECK(cn_lay_throws(&in, &L, CN_THROW_CUP, T, CN_LAY_SEATS) == 5 && L.my_reach == 1, "718: five throws (one seat out), mine at the study's reach");
+    CHECK(cn_lay_throws(&in, &L, CN_THROW_CUP, T, CN_LAY_SEATS) >= 1 && L.my_reach == 1, "718: mine at the study's reach");
     /* held as low as a throw ever is, the dice still land under my cup, over seeds and shakes */
     in = input(390, 340, 4, 1, 0);
     cn_lay_make(&in, &L);
@@ -1696,13 +1765,16 @@ static void test_reach(void)
             under &= hypot(p[0] - t.cup_x, p[1] - t.cup_y) + t.die * .71 <= t.cup_r - t.cup_t + 1.5;
         }
     }
-    /* ...and its crown stays on the table's side of it once the cup is up (the first .35 s, cn_roll.c's LIFT, rises
-     * from under the table at any reach: docs_pkgU.md) */
-    for (int sh = 0; sh < 4; sh++) {
+    /* ...and the cup never passes under the table, from the throw's first frame (the lift once started 60 under the
+     * held height and put the crown 14 points into the planks at full reach, 21 at .8: docs_pkgU.md), at the
+     * study's reach, a far seat's small cup and the least reach */
+    for (int sh = 0; sh < 12; sh++) {
         CnThrow t = T[0].t;
-        t.scale = (float)CN_LAY_REACH_MIN * t.cup_r / CN_THROW_REF_R; t.shake_s = 1.5f + sh * .25f;
+        const double k = sh % 3 == 0 ? 1 : sh % 3 == 1 ? .9 : CN_LAY_REACH_MIN;
+        if (sh >= 8) { t.cup_r = 24; t.cup_rc = 24 * .72f; t.cup_h = 24 * CN_CUP_TALL; t.cup_t = 24 * .06f; }
+        t.scale = (float)(k * t.cup_r / CN_THROW_REF_R); t.shake_s = 1.5f + (sh % 4) * .25f;
         double low = 1e9;
-        for (int f = 21; f <= cn_roll_cup_span(&t) * CN_ROLL_HZ; f++) {
+        for (int f = 0; f <= cn_roll_cup_span(&t) * CN_ROLL_HZ; f++) {
             float fr[CN_ROLL_FRAME_FLOATS];
             memset(fr, 0, sizeof fr);
             cn_roll_cup_pose(&t, (double)f / CN_ROLL_HZ, fr);
@@ -1713,7 +1785,7 @@ static void test_reach(void)
                 low = fmin(low, p.p[2] + p.rot[2] * r * cos(a) + p.rot[5] * r * sin(a) + p.rot[8] * (top ? t.cup_h : 0));
             }
         }
-        CHECK(low > -.5, "shake %.2f s at the least reach: the cup's lowest point %.2f, not into the table", t.shake_s, low);
+        CHECK(low >= 0, "cup %g, reach %.2f, shake %.2f s: the cup's lowest point %.2f, never into the table", t.cup_r, k, t.shake_s, low);
     }
     CHECK(done && under && forced == 0,"forty throws held at the least reach, %.2f, complete with every die under my cup (forced %d)", CN_LAY_REACH_MIN, forced);
 }
