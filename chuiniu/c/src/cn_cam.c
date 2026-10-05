@@ -77,6 +77,58 @@ void cn_cam_project(const CnCam *c, float x, float y, float z, float *px, float 
     *py = (float)(c->eye_y + (y - (double)c->eye_y) * k);
 }
 
+int cn_cam_cover(const CnCam *c, float x0, float y0, float x1, float y1, float out[4])
+{
+    out[0] = out[1] = out[2] = out[3] = 0;
+    double h[9];
+    for (int i = 0; i < 9; i++) h[i] = c->h[i];
+    /* the inverse, as the adjugate (its scale is the homography's own business) */
+    const double a[9] = {
+        h[4] * h[8] - h[5] * h[7], h[2] * h[7] - h[1] * h[8], h[1] * h[5] - h[2] * h[4],
+        h[5] * h[6] - h[3] * h[8], h[0] * h[8] - h[2] * h[6], h[2] * h[3] - h[0] * h[5],
+        h[3] * h[7] - h[4] * h[6], h[1] * h[6] - h[0] * h[7], h[0] * h[4] - h[1] * h[3] };
+    const double det = h[0] * a[0] + h[1] * a[3] + h[2] * a[6];
+    if (!(det > 1e-12 || det < -1e-12)) return 0;
+    const double s = CN_CAM_COVER_SPARE;
+    const double sx[4] = { x0 - s, x1 + s, x1 + s, x0 - s }, sy[4] = { y0 - s, y0 - s, y1 + s, y1 + s };
+    double lx = 1e30, ly = 1e30, hx = -1e30, hy = -1e30;
+    for (int k = 0; k < 4; k++) {
+        const double X = a[0] * sx[k] + a[1] * sy[k] + a[2], Y = a[3] * sx[k] + a[4] * sy[k] + a[5], Wd = a[6] * sx[k] + a[7] * sy[k] + a[8];
+        if (!(Wd > 1e-12 || Wd < -1e-12)) return 0;
+        const double fx = X / Wd, fy = Y / Wd;
+        /* the flat point must turn onto the screen in front of the eye (w > 0); a
+         * screen point past the horizon has its preimage behind it */
+        if (!(h[6] * fx + h[7] * fy + h[8] > 0)) return 0;
+        if (fx < lx) lx = fx;
+        if (fx > hx) hx = fx;
+        if (fy < ly) ly = fy;
+        if (fy > hy) hy = fy;
+    }
+    lx = cn_m_floor(lx); ly = cn_m_floor(ly); hx = cn_m_ceil(hx); hy = cn_m_ceil(hy);
+    /* the box's corners on the near side too (w is affine, so then all of it is) */
+    const double bx[4] = { lx, hx, hx, lx }, by[4] = { ly, ly, hy, hy };
+    for (int k = 0; k < 4; k++) if (!(h[6] * bx[k] + h[7] * by[k] + h[8] > 0)) return 0;
+    out[0] = (float)lx; out[1] = (float)ly; out[2] = (float)(hx - lx); out[3] = (float)(hy - ly);
+    return 1;
+}
+
+int cn_cam_planks(const CnCam *c, float w, float h, float out[4])
+{
+    const float r = (float)CN_CAM_REACH;
+    if (!cn_cam_cover(c, -r, -r, w + r, h + r, out)) return 0;
+    /* a drawer whose top nears the horizon would want a rect miles long: held to
+     * CN_CAM_COVER_FAR past the drawer, the last few points under the horizon are
+     * the flat wood's (never inside the measured sizes: cn_cam_test) */
+    const float far = (float)CN_CAM_COVER_FAR;
+    float x0 = out[0], y0 = out[1], x1 = out[0] + out[2], y1 = out[1] + out[3];
+    if (x0 < -far) x0 = -far;
+    if (y0 < -far) y0 = -far;
+    if (x1 > w + far) x1 = w + far;
+    if (y1 > h + far) y1 = h + far;
+    out[0] = x0; out[1] = y0; out[2] = x1 - x0; out[3] = y1 - y0;
+    return 1;
+}
+
 CnPeek cn_cam_peek_tilt(float R, float angle, float full)
 {
     const double f = full != 0 ? full : angle != 0 ? angle : 1;

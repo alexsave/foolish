@@ -10,12 +10,20 @@
 //            `perspective(D) rotateX(theta) scale(zoom)` about my cup
 //   planks   the study's planks (cn_planks.jpg, baked by chuiniu/c's
 //            cn_texgen: six planks, a running bond, nails; seamless, so
-//            laid as plain tiles) under the stage's light, 1.9 by 2.2 of the
-//            drawer (the study's overdraw), so the turn uncovers planks and
-//            never a gap; a plank's middle runs down the drawer's centre
-// and under the tilt, flat, the same planks in deeper shade: the turned plane
-// runs out at its horizon just above the drawer's top, and the strip under
-// Messages' grabber (the top safe area) is past it
+//            laid as plain tiles) under the stage's light, over the HUD's
+//            `planks` rect: the kernel's cover (cn_cam_planks), the flat
+//            rect whose turn holds the whole view (the drawer and
+//            CN_CAM_REACH past each side, the safe areas this view reaches
+//            under) with room to spare at every drawer size. The study's
+//            overdraw (1.9 by 2.2 of the drawer) was not enough: the turn
+//            brings a flat rect's top down the screen, 227 points under the
+//            top of a 440 by 956 drawer, and the strip above showed bare
+//            (package Z). The tiles keep the study's phase and the light the
+//            study's stage, so what the drawer showed before is unchanged; a
+//            plank's middle runs down the drawer's centre
+// and under the tilt, flat, the same planks (not a shade: a rounding gap at the
+// turned layer's edge, or the sky past the horizon of a drawer taller than any
+// phone's, shows wood, never black)
 //   canvas   the kernel's frame at the shot's canvas (flat points)
 //   names    on the planks under the cups (tilted with them)
 // The HUD (the plate, the picker, Next round) is SwiftUI over this view and
@@ -415,9 +423,9 @@ public final class StageUIView: UIView {
     /// The stage's light over the planks (`.stage::after`): the cold glow from
     /// above, the vignette, the foot.
     let light = CALayer()
-    /// Flat planks past the turned plane's horizon.
+    /// Flat planks under the turned layer: the same wood wherever the turned
+    /// layer does not reach (it covers the view on every measured drawer).
     let back = CALayer()
-    let backShade = CALayer()
     /// The turned layer's own flat parent: Core Animation sorts sibling
     /// layers by depth, and the turned plane's far half lies behind z 0, so
     /// without a parent that flattens it the flat wood was drawn over it.
@@ -446,7 +454,6 @@ public final class StageUIView: UIView {
         tilt.anchorPoint = .zero
         tilt.position = .zero
         layer.addSublayer(back)
-        back.addSublayer(backShade)
         back.masksToBounds = true
         layer.addSublayer(flat)
         flat.addSublayer(tilt)
@@ -488,11 +495,10 @@ public final class StageUIView: UIView {
         tilt.position = drawer.origin
         tilt.bounds = CGRect(origin: .zero, size: size)
         tilt.transform = hud.map(StageDirector.tilt) ?? CATransform3DIdentity
-        // the study's overdraw: 190% by 220%, from -45% and -60%
-        planks.frame = Self.overdraw(size)
+        // the kernel's cover: its turn holds the drawer and the reach past it
+        planks.frame = Self.plankRect(hud, size)
         back.frame = bounds
         flat.frame = bounds
-        backShade.frame = back.bounds
         paintPlanks(size)
         layoutNames()
         if let f = director.last, director.owns { place(f) }
@@ -501,8 +507,18 @@ public final class StageUIView: UIView {
     }
 
     /// The study's overdraw: 190% by 220% of the drawer, from -45% and -60%.
+    /// The stage the tiles' phase and the light are placed in, as the study
+    /// placed them; the planks' layer itself is the kernel's cover.
     static func overdraw(_ size: CGSize) -> CGRect {
         CGRect(x: -0.45 * size.width, y: -0.6 * size.height, width: 1.9 * size.width, height: 2.2 * size.height)
+    }
+
+    /// The planks' layer in the drawer's flat points: the HUD's `planks` (the
+    /// kernel's cover, cn_cam_planks), or the study's overdraw before any HUD
+    /// or when the kernel has no cover (the flat wood under it shows there).
+    static func plankRect(_ hud: CnStageHudSnap?, _ size: CGSize) -> CGRect {
+        if let p = hud?.planks, p.count == 4, p[2] > 0, p[3] > 0 { return CGRect(x: CGFloat(p[0]), y: CGFloat(p[1]), width: CGFloat(p[2]), height: CGFloat(p[3])) }
+        return overdraw(size)
     }
 
     /// Where the planks' first tile goes inside the overdraw (`tableStage`'s
@@ -510,16 +526,19 @@ public final class StageUIView: UIView {
     /// which is x = .95 of the drawer's width in the overdraw, and 58 up.
     static func tileOrigin(_ size: CGSize) -> CGPoint { PlankTile.origin(centredOn: 0.45 * size.width + size.width / 2) }
 
-    /// The planks laid as tiles from `origin` over `size`: one layer a tile,
-    /// all sharing the one decoded image (one texture).
+    /// The planks laid as tiles in phase with `origin` over `size`: one layer
+    /// a tile, all sharing the one decoded image (one texture; no tile and no
+    /// host has a backing store of its own). The phase is pulled back by
+    /// whole tiles to at or above-left of (0, 0).
     static func tile(_ host: CALayer, size: CGSize, origin: CGPoint, image: CGImage?) {
         host.sublayers?.filter { $0.name == "tile" }.forEach { $0.removeFromSuperlayer() }
         guard let image else { return }
         let t = PlankTile.size
-        var y = origin.y
+        let x0 = origin.x - (origin.x / t.width).rounded(.up) * t.width
+        var y = origin.y - (origin.y / t.height).rounded(.up) * t.height
         var at: UInt32 = 0
         while y < size.height {
-            var x = origin.x
+            var x = x0
             while x < size.width {
                 let l = CALayer()
                 l.name = "tile"
@@ -535,36 +554,42 @@ public final class StageUIView: UIView {
     }
 
     private func paintPlanks(_ size: CGSize) {
-        let key = [size.width, size.height, bounds.width, bounds.height]
+        let p = planks.frame
+        let key = [size.width, size.height, bounds.width, bounds.height, p.minX, p.minY, p.width, p.height]
         guard key != paintedFor, size.width >= 1, size.height >= 1 else { return }
         paintedFor = key
         let image = CnTextures.planks?.cgImage
         planks.backgroundColor = UIColor(Ink.hold).cgColor
-        Self.tile(planks, size: planks.bounds.size, origin: Self.tileOrigin(size), image: image)
-        // the stage's light over the whole overdraw, as the study's ::after is on the over-sized stage
+        // the study's stage inside the planks' layer: the tiles keep its phase, the light its geometry
+        let stage = Self.overdraw(size).offsetBy(dx: -p.minX, dy: -p.minY)
+        let phase = Self.tileOrigin(size)
+        Self.tile(planks, size: p.size, origin: CGPoint(x: stage.minX + phase.x, y: stage.minY + phase.y), image: image)
+        // the stage's light, as the study's ::after is on the over-sized stage: each gradient placed in
+        // that stage and run on past it to the layer's edge (a gradient holds its end stops beyond its ends)
         light.frame = planks.bounds
         light.sublayers?.forEach { $0.removeFromSuperlayer() }
-        for g in StageLight.gradients(planks.bounds.size) {
+        let w = light.bounds.width, h = light.bounds.height
+        for g in StageLight.gradients(stage.size) {
             let r = CAGradientLayer()
             r.type = .radial
             r.frame = light.bounds
-            let w = light.bounds.width, h = light.bounds.height
-            r.startPoint = CGPoint(x: g.center.x / w, y: g.center.y / h)
-            r.endPoint = CGPoint(x: (g.center.x + g.rx) / w, y: (g.center.y + g.ry) / h)
+            let c = CGPoint(x: stage.minX + g.center.x, y: stage.minY + g.center.y)
+            r.startPoint = CGPoint(x: c.x / w, y: c.y / h)
+            r.endPoint = CGPoint(x: (c.x + g.rx) / w, y: (c.y + g.ry) / h)
             r.colors = g.stops.map { UIColor(red: $0.rgb.0, green: $0.rgb.1, blue: $0.rgb.2, alpha: $0.a).cgColor }
             r.locations = g.stops.map { NSNumber(value: $0.t) }
             light.addSublayer(r)
         }
         let foot = CAGradientLayer()
         foot.frame = light.bounds
+        foot.startPoint = CGPoint(x: 0.5, y: stage.minY / h)
+        foot.endPoint = CGPoint(x: 0.5, y: stage.maxY / h)
         foot.colors = [UIColor.clear.cgColor, UIColor(red: 0, green: 3 / 255, blue: 3 / 255, alpha: 0.35).cgColor]
         foot.locations = [0.6, 1]
         light.addSublayer(foot)
-        // past the horizon: the same planks, flat, a stop or two down
-        back.backgroundColor = UIColor(Ink.glass).cgColor
+        // under the turned layer: the same planks, flat, so a gap is never black
+        back.backgroundColor = UIColor(Ink.hold).cgColor
         Self.tile(back, size: bounds.size, origin: PlankTile.origin(centredOn: bounds.width / 2), image: image)
-        backShade.backgroundColor = UIColor.black.withAlphaComponent(0.62).cgColor
-        backShade.zPosition = 1
     }
 
     // MARK: the names, on the planks
