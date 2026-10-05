@@ -126,11 +126,13 @@ static void stage(const char *pack_path)
 
     /* THE THROW ONCE A PHONE: watched, the round's table is still, at its rest */
     const int round = ((const CnView *)cn_api_view(CN_API_ME))->round;
+    px = cn_api_stage_frame(h->total_ms, 0);
+    const uint32_t thrown = px ? fnv(px, (size_t)sh->w * sh->h * 4) : 0;
     OK(cn_api_roll_pending() && cn_api_roll_seen(round) == 1 && !cn_api_roll_pending(), "Bo watched the round's throw");
     const CnStageHud *still = (const CnStageHud *)cn_api_stage_begin(CN_STAGE_TABLE, 390, 718, 2);
     OK(still && !still->rolls && still->rest_ms == 0, "and its table begins still");
     px = cn_api_stage_frame(0, 0);
-    OK(px && sh->ok && !sh->rolling, "a still frame");
+    OK(px && sh->ok && !sh->rolling && fnv(px, (size_t)sh->w * sh->h * 4) == thrown, "the still table is the throw's last frame, byte for byte");
 
     h = (const CnStageHud *)cn_api_stage_begin(CN_STAGE_BUBBLE, 0, 0, 3);
     px = cn_api_stage_frame(0, 0);
