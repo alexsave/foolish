@@ -634,22 +634,13 @@ static int make(const CnLayIn *in, CnLay *L, int fit)
         d = fit_dice(in, L, 1, mcx, mcy, &ring, &myR);
         if (L->cup_r > myR) row_seats(in, L, inner, boardH, myR, mcy);
         L->d = (float)d; L->ring = (float)ring; L->my_r = (float)myR;
-        /* the plate beside the row (not drawn when the room left is under 100), clear of the row's crowns */
+        /* the plate beside the row (not drawn when the room left is under 100); cn_stage_test's HUD test
+         * finds it clear of every cup and name at every height and seat count (package V2) */
         const double rowEnd = CN_LAY_MARGIN + (in->seats - 1) * (CN_LAY_BADGE + CN_LAY_MARGIN);
-        Reach r = reach_none();
-        for (int s = 0; s < in->seats; s++) {
-            if (s == me) continue;
-            CnObj o;
-            cn_geom_cup_obj(&o, L->cup_r, 0, (uint32_t)(s * 7), L->cup_x[s], L->cup_y[s], in->out_mask >> s & 1, (float)(inner / 2));
-            cup_reach(L, &o, &r);
-            const Reach nb = name_box(L, s, CN_LAY_NAME_TEXT_W, CN_LAY_NAME_H);
-            r.x1 = dmax(r.x1, nb.x1);
-        }
-        const double right = CN_LAY_SIDE + inner - CN_LAY_MARGIN;
-        const double w = dmin(dmin(CN_LAY_PLATE_W, inner - CN_LAY_MARGIN - rowEnd), right - (r.x1 + 2));
+        const double w = dmin(CN_LAY_PLATE_W, inner - CN_LAY_MARGIN - rowEnd);
         if (w >= CN_LAY_PLATE_MIN) {
             L->has_plate = 1;
-            L->plate[0] = (float)(right - w);
+            L->plate[0] = (float)(CN_LAY_SIDE + inner - CN_LAY_MARGIN - w);
             L->plate[1] = (float)(topM + dmax(0, (boardH - CN_LAY_SHORT_BAND - CN_LAY_PLATE_H) / 2));
             L->plate[2] = (float)w; L->plate[3] = CN_LAY_PLATE_H;
         }

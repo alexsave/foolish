@@ -548,7 +548,9 @@ static void test_reveal_inside(void)
             frames++;
         }
         worst = fmin(worst, fmin(fmin(b[0], b[1]), fmin(W - b[2], H - b[3])));
-        CHECK(b[0] >= 0 && b[1] >= 0 && b[2] <= W && b[3] <= H, "%dx%d n %d: every frame of the lift inside (x %.1f..%.1f y %.1f..%.1f)", W, H, n, b[0], b[2], b[1], b[3]);
+        /* CN_LAY_EDGE inside, as the layout fits it (half a point for the float projection) */
+        const double e = CN_LAY_EDGE - .5;
+        CHECK(b[0] >= e && b[1] >= e && b[2] <= W - e && b[3] <= H, "%dx%d n %d: every frame of the lift CN_LAY_EDGE inside (x %.1f..%.1f y %.1f..%.1f)", W, H, n, b[0], b[2], b[1], b[3]);
         /* each standing cup's tip against the least that shows its dice */
         int no;
         const CnObj *o = cn_stage_objects(&ST, CN_STAGE_NO_ROLL - 1, 0, 0, &no);
