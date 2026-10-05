@@ -40,6 +40,13 @@
 #define CN_SCENE_F_CAST     2   /* casts a shadow                                      */
 #define CN_SCENE_F_RECEIVE  4   /* takes the shadow (every lit thing does)             */
 #define CN_SCENE_F_RECEIVER 8   /* the table: writes only the shadow that falls on it  */
+/* A DECAL: a picture lying on the table (a seat's name), its texture PREMULTIPLIED
+ * RGBA whose alpha is respected. It is depth tested like any face, so a body in
+ * front of it hides it; with CN_SCENE_F_RECEIVE it takes the shadows and the
+ * contact dark the table under it would, and a pixel of it is the texel over the
+ * table's own dark (alpha 0 where the texel has none: the planks show through).
+ * It never casts, and is never lit by the lamp's cosine: it is the table's light. */
+#define CN_SCENE_F_DECAL    16
 /* THE SURFACE a face belongs to, in the flags' bits from 8 up: a body's number
  * (1 to 65535; 0 is every unnumbered face). Where a pixel's surface (its body
  * and its texture) differs from a neighbour's, the edges pass draws the pixel
@@ -64,6 +71,15 @@ void cn_scene_reset(void);
 int cn_scene_tex_new(int w, int h, int has_bump);
 uint8_t *cn_scene_tex_rgba(int id);
 int8_t *cn_scene_tex_bump(int id);
+/* its half-size copies, now, once its pixels are written (else the first frame
+ * that draws it makes them, inside that frame); 0 when none fit */
+int cn_scene_tex_mips(int id);
+/* TEXTURES THAT CHANGE (a name's): a mark is the texture count now; dropping to
+ * it gives back every texture made since, and the frame (whose buffers may lie
+ * where the next textures go: begin another). A texture made before the mark
+ * whose half-size copies were made after it loses them, and remakes them. */
+int cn_scene_tex_mark(void);
+void cn_scene_tex_drop(int mark);
 
 /* the bytes a frame of these numbers takes from the arena, and the bytes a frame
  * has (the arena less the textures and their copies) */
