@@ -197,6 +197,23 @@ int  cn_api_string(int key, char *out, int cap);       /* one table entry by CN_
 #define CN_API_W_COUNT          17
 int  cn_api_words(int what, int arg, char *out, int cap);
 
+/* THE BUBBLE'S ONE LINE (cn_say.h, docs_pkgY.md), for a host test that holds
+ * the kernel's captions against the real font: the caption a seat named
+ * `who` gets for one act, from the composer every staged caption comes
+ * from, with the bid (q, f) where the act has one; the kernel's width bound
+ * of a line, in units (cn_api_caption_unit() a point); and the budget no
+ * caption passes. */
+#define CN_API_P_START   0   /* "Dice rolled. Alex bids first"                     */
+#define CN_API_P_BID     1   /* "Alex bid four 3s"                                 */
+#define CN_API_P_CALL    2   /* "Bo calls four 3s"                                 */
+#define CN_API_P_INVITE  3   /* "Alex wants a game of Chui Niu"                    */
+#define CN_API_P_JOINED  4
+#define CN_API_P_LEFT    5
+int  cn_api_caption_probe(int what, const char *who, int q, int f, char *out, int cap);
+int  cn_api_caption_width(const char *line);
+int  cn_api_caption_budget(void);
+int  cn_api_caption_unit(void);
+
 /* ---- two messages -------------------------------------------------------------- */
 
 /* Which to show: <0 mine (the device's own newest), >0 the tapped one, 0 the

@@ -222,6 +222,15 @@ int main(int argc, char **argv)
     OK(cn_api_words(CN_API_W_BID, 4 * 8 + 3, line, sizeof line) > 0 && !strcmp(line, "four 3s"), line);
     OK(cn_api_words(CN_API_W_COUNT, 0, line, sizeof line) == -1, "past the list");
 
+    /* the bubble's one line: the probe says what a staged caption says */
+    OK(cn_api_caption_probe(CN_API_P_BID, "Alex", 4, 3, line, sizeof line) > 0 && !strcmp(line, "Alex bid four 3s"), line);
+    OK(cn_api_caption_probe(CN_API_P_START, "Alex", 0, 0, line, sizeof line) > 0
+       && !strcmp(line, "Dice rolled. Alex bids first"), line);
+    OK(cn_api_caption_probe(CN_API_P_INVITE, "WWWWWWWWWWWWWWWW", 0, 0, line, sizeof line) > 0
+       && cn_api_caption_width(line) <= cn_api_caption_budget() && cn_api_caption_unit() == 8, line);
+    OK(cn_api_caption_probe(CN_API_P_CALL, "Bo", 0, 3, line, sizeof line) == -1
+       && cn_api_caption_probe(99, "Bo", 1, 3, line, sizeof line) == -1, "a probe off the table");
+
     /* the records */
     uint8_t saved[CN_API_REC_BYTES];
     int n = cn_api_seats_save(saved, sizeof saved);

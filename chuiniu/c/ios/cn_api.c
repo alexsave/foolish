@@ -515,6 +515,29 @@ int cn_api_words(int what, int arg, char *out, int cap)
     }
 }
 
+int cn_api_caption_probe(int what, const char *who, int q, int f, char *out, int cap)
+{
+    if (!out || cap < 1 || !who) return -1;
+    const char *names[CN_MAX_SEATS] = { who };
+    CnEvent ev;
+    memset(&ev, 0, sizeof ev);
+    switch (what) {
+    case CN_API_P_START:  ev.kind = CN_EV_ROUND; break;
+    case CN_API_P_BID:    ev.kind = CN_EV_BID;  ev.q = (uint8_t)q; ev.f = (uint8_t)f; ev.move = 1; break;
+    case CN_API_P_CALL:   ev.kind = CN_EV_CALL; ev.q = (uint8_t)q; ev.f = (uint8_t)f; ev.move = 1; break;
+    case CN_API_P_INVITE: return cn_say_lobby_caption(CN_SAY_INVITE, who, out, cap);
+    case CN_API_P_JOINED: return cn_say_lobby_caption(CN_SAY_JOINED, who, out, cap);
+    case CN_API_P_LEFT:   return cn_say_lobby_caption(CN_SAY_LEFT, who, out, cap);
+    default:              return -1;
+    }
+    if (ev.kind != CN_EV_ROUND && (q < 1 || q > CN_MAX_DICE || f < 1 || f > CN_FACES)) return -1;
+    return cn_say_caption_of(&ev, 1, names, out, cap);
+}
+
+int cn_api_caption_width(const char *line) { return cn_cap_width(line); }
+int cn_api_caption_budget(void) { return CN_CAP_BUDGET; }
+int cn_api_caption_unit(void) { return CN_CAP_UNIT; }
+
 /* ---- two messages ------------------------------------------------------------------------ */
 
 int cn_api_prefer(const char *mine, const char *tapped)
