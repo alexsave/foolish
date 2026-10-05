@@ -37,13 +37,15 @@ int cn_stage_attach(CnStage *st, void *arena, size_t bytes)
     return 0;
 }
 
-int cn_stage_init(CnStage *st, void *arena, size_t bytes, const uint8_t *pack, size_t pack_len)
+/* the pack only: a begin needs nothing else (the layout, the meshes and the bakes are the handle's), and
+ * the arena is a frame's, attached when the host is about to draw */
+int cn_stage_init(CnStage *st, const uint8_t *pack, size_t pack_len)
 {
     memset(st, 0, sizeof *st);
     int e = pack && pack_len <= 0xFFFFFFFFu ? cn_tex_pack_open(&st->pack, pack, (uint32_t)pack_len) : CN_TEX_E_SHORT;
     if (e != CN_TEX_OK) return e;
     st->pack_ok = 1;
-    return cn_stage_attach(st, arena, bytes);
+    return 0;
 }
 
 void cn_stage_purge(CnStage *st)

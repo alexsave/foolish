@@ -208,10 +208,12 @@ int  cn_api_common(const char *a, const char *b);
 
 /* ---- the stage: the table's pixels (cn_stage.h) ---------------------------------
  *
- * THE KERNEL DRAWS THE TABLE. The host hands over one block of memory (the
- * renderer's arena: CN_SCENE_ARENA_IOS, 48 MB) and the texture pack's bytes
- * (cn_tex.pack, which must outlive the stage), begins a screen, and asks for
- * frames; every place on it (the cups, the names, the plate, the shelf, my
+ * THE KERNEL DRAWS THE TABLE. The host hands over the texture pack's bytes
+ * (cn_tex.pack, which must outlive the stage), begins a screen, and, only
+ * when it is about to draw, one block of memory (the renderer's arena:
+ * CN_STAGE_ARENA, 48 MB, cn_api_stage_attach); then it asks for frames.
+ * A begin takes no arena, so an extension can lay a screen out and free
+ * nothing it never took. Every place on it (the cups, the names, the plate, the shelf, my
  * cup's tap target, the camera's turn) comes back in a CnStageHud read through
  * the generated reader (readCnStageHud), and every frame's size in a
  * CnStageShot (readCnStageShot). ONE STAGE A PROCESS, static here.
@@ -228,14 +230,15 @@ int  cn_api_common(const char *a, const char *b);
  * the plan's SHAKE beat (from 0 when the plan has none). Stage nothing before
  * the HUD's rest_ms (my dice at rest). */
 
-/* The arena and the pack. 0, a negative CN_TEX_E* (the pack), or
- * CN_STAGE_E_ARENA. */
-int  cn_api_stage_init(void *arena, size_t bytes, const uint8_t *pack, size_t pack_len);
+/* The pack, no memory. 0, or a negative CN_TEX_E*. */
+int  cn_api_stage_init(const uint8_t *pack, size_t pack_len);
+/* The arena, before the first frame and again after a purge. 0, or
+ * CN_STAGE_E_ARENA (none, too small, or no init yet). */
+int  cn_api_stage_attach(void *arena, size_t bytes);
 /* A memory warning: the stage lets go of the arena (free it after this);
  * frames draw nothing until cn_api_stage_attach gives one back, and then the
  * same bytes as before. */
 void cn_api_stage_purge(void);
-int  cn_api_stage_attach(void *arena, size_t bytes);
 /* Begin a screen of the resident game for me: CN_STAGE_TABLE (the committed
  * round; `roll` 1 throws it), CN_STAGE_REVEAL (the newest call's dice where
  * that round's throw left them) or CN_STAGE_BUBBLE (300 by 195). The drawer is

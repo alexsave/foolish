@@ -5,7 +5,7 @@
  * and decides nothing about where a cup goes or which face a die shows.
  *
  * THE FLOW.
- *   cn_stage_init(st, arena, bytes, pack, len)   once; the arena is the renderer's
+ *   cn_stage_init(st, pack, len)                 once: the texture pack, no memory
  *   cn_stage_begin(st, &in)                      a table, a reveal or a bubble: the
  *                                                layout, the meshes and every seat's
  *                                                throw, baked; returns the HUD
@@ -15,6 +15,9 @@
  *                                                order, a pass's bands on any threads
  *                                                at once (GCD concurrentPerform), then
  *   cn_stage_finish(st)                          the picture (RGBA, cn_stage_shot's size)
+ *   cn_stage_attach(st, arena, bytes)            the renderer's arena, before the first
+ *                                                frame (a begin needs none: the HUD and
+ *                                                the throws come without it)
  *   cn_stage_purge(st)                           a memory warning: drop the arena;
  *   cn_stage_attach(st, arena, bytes)            ...and take one again: the next frame
  *                                                rebuilds the textures, the same bytes
@@ -204,16 +207,19 @@ typedef struct {
     CnMesh        mesh[CN_STAGE_MESHES];
 } CnStage;
 
-/* The handle, the renderer's arena and the texture pack (cn_tex.h; the bytes
- * must outlive the stage). 0, or a negative CN_TEX_E* for a pack that does
- * not open, or -100 for an arena too small to be of use. */
+/* The handle and the texture pack (cn_tex.h; the bytes must outlive the
+ * stage), and no arena: begins lay out and bake without one, frames draw
+ * nothing until cn_stage_attach. 0, or a negative CN_TEX_E* for a pack that
+ * does not open. */
 #define CN_STAGE_E_ARENA (-100)
-int  cn_stage_init(CnStage *st, void *arena, size_t bytes, const uint8_t *pack, size_t pack_len);
+int  cn_stage_init(CnStage *st, const uint8_t *pack, size_t pack_len);
 /* A memory warning: the renderer forgets the arena, which the host may then
  * free. The begun table stays; the next frame draws nothing until an arena is
  * attached, and then rebuilds the textures. */
 void cn_stage_purge(CnStage *st);
-/* An arena again (after cn_stage_purge). 0, or CN_STAGE_E_ARENA. */
+/* The renderer's arena (CN_STAGE_ARENA), the first time or again after
+ * cn_stage_purge. 0, or CN_STAGE_E_ARENA for none or one too small to be of
+ * use. */
 int  cn_stage_attach(CnStage *st, void *arena, size_t bytes);
 
 /* Begin a table: the layout, the meshes, every throw baked. The HUD, or 0 for
