@@ -20,7 +20,7 @@ WARN    := -Wall -Wextra -Werror -std=c11 -ffp-contract=off
 CFLAGS  ?= -O2 $(WARN)
 SHARED  := ../../shared/c
 SRC     := src/cn.c src/cn_dice.c src/cn_plan.c src/cn_view.c src/cn_lobby.c src/cn_say.c \
-           src/cn_code.c src/cn_msg.c src/cn_beats.c src/cn_roll.c i18n/strings_en.c \
+           src/cn_code.c src/cn_msg.c src/cn_beats.c src/cn_roll.c src/cn_scene.c i18n/strings_en.c \
            $(SHARED)/deal_rng.c $(SHARED)/sha256.c $(SHARED)/b32.c $(SHARED)/mixrad.c \
            $(SHARED)/text_util/text_util.c $(SHARED)/wire_check/wire_check.c \
            $(SHARED)/msg_seat_tag/msg_seat_tag.c $(SHARED)/msg_lobby_roster/msg_lobby_roster.c
@@ -44,7 +44,7 @@ $(addprefix build/,$(BRIDGE_TESTS)) $(addprefix build/asan_,$(BRIDGE_TESTS)): io
 build:
 	@mkdir -p build
 
-build/%: tests/%.c $(SRC) $(HDR) wasm/cn_scene.c | build
+build/%: tests/%.c $(SRC) $(HDR) | build
 	$(CC) $(CFLAGS) $(SRC) $< -lm -o $@
 
 # The shared harness's own test (shared/c/test): TEST, CHECK, report, STEP, OK.
@@ -106,6 +106,14 @@ run: $(addprefix build/,$(TESTS)) build/check_test build/text_util_test build/wi
 	./build/cn_roll_test
 	./build/cn_scene_test
 	./build/ios_smoke
+
+# THE RENDERER'S SPEED (not a test, not in `run`): a six-seat frame at 1x, 2x
+# and 3x, at -O2 as the iOS library builds it; `./build/cn_scene_bench loop 2 20`
+# is the long loop to point `sample` at.
+build/cn_scene_bench: tests/cn_scene_bench.c tests/cn_scene_frame.h src/cn_scene.c src/cn_scene.h | build
+	$(CC) -O2 $(WARN) tests/cn_scene_bench.c src/cn_scene.c -o $@
+bench: build/cn_scene_bench
+	./build/cn_scene_bench
 
 ASAN_FLAGS := -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined $(WARN)
 
@@ -171,11 +179,13 @@ wasm: wasm-cc-check | build
 # as base64 between two markers, so the one-file study still opens from disk;
 # THAT embed is committed, and goes stale when cn_roll.c changes until docs-roll
 # is run again (docs-roll-check says whether it has).
-# The module carries the scene renderer too (wasm/cn_scene.c: a rasterizer with a
-# shadow map, browser-only, in C for speed); its host smoke test is cn_scene_test.
-ROLL_WASM_SRC := src/cn_roll.c wasm/cn_roll_web.c wasm/cn_scene.c $(SHARED)/wasm/libc.c
+# The module carries the scene renderer too (src/cn_scene.c: a rasterizer with a
+# shadow map, in C for speed, the same file the iOS library links; wasm/cn_scene_web.c
+# gives it its 256 MB static arena and the names the page calls). Its test is
+# cn_scene_test; its speed is cn_scene_bench (make bench).
+ROLL_WASM_SRC := src/cn_roll.c wasm/cn_roll_web.c src/cn_scene.c wasm/cn_scene_web.c $(SHARED)/wasm/libc.c
 ROLL_WASM_OUT := build/wasm/cn_roll.wasm
-$(ROLL_WASM_OUT): $(ROLL_WASM_SRC) src/cn_roll.h Makefile | build
+$(ROLL_WASM_OUT): $(ROLL_WASM_SRC) src/cn_roll.h src/cn_scene.h Makefile | build
 	@mkdir -p build/wasm
 	$(WASM_CC) --target=wasm32 -mcpu=mvp -mbulk-memory -msign-ext -mnontrapping-fptoint -O3 -nostdlib -ffreestanding \
 	  $(WARN) -isystem $(SHARED)/wasm/include -Isrc \
@@ -186,11 +196,11 @@ wasm-roll: wasm-cc-check $(ROLL_WASM_OUT)
 
 DOC := ../docs/UI.html
 docs-roll: $(ROLL_WASM_OUT)
-	@b64=$$(base64 -w0 $(ROLL_WASM_OUT) 2>/dev/null || base64 $(ROLL_WASM_OUT) | tr -d '\n'); \
+	@b64=$$(base64 < $(ROLL_WASM_OUT) | tr -d '\n'); \
 	 awk -v b="$$b64" 'BEGIN{skip=0} /<!-- cn_roll.wasm begin/{print; print "<script>window.CN_ROLL_WASM_B64 = \"" b "\";</script>"; skip=1; next} /<!-- cn_roll.wasm end/{skip=0} skip==0{print}' $(DOC) > $(DOC).new \
 	 && mv $(DOC).new $(DOC) && echo "embedded $(ROLL_WASM_OUT) in $(DOC)"
 docs-roll-check: $(ROLL_WASM_OUT)
-	@b64=$$(base64 -w0 $(ROLL_WASM_OUT) 2>/dev/null || base64 $(ROLL_WASM_OUT) | tr -d '\n'); \
+	@b64=$$(base64 < $(ROLL_WASM_OUT) | tr -d '\n'); \
 	 grep -q "CN_ROLL_WASM_B64 = \"$$b64\"" $(DOC) && echo "docs/UI.html carries this build of cn_roll.wasm" || { echo "docs/UI.html's embedded cn_roll.wasm differs from this build: make docs-roll (a different clang also differs)"; exit 1; }
 
 # ---- the iOS bridge -----------------------------------------------------------
@@ -284,6 +294,6 @@ ios-lib: build/layout/ios.hash datagen
 clean:
 	rm -rf build
 
-.PHONY: all run asan wasm wasm-roll docs-roll docs-roll-check ios-smoke swift-smoke structgen datagen ios-lib clean FORCE
+.PHONY: all run bench asan wasm wasm-roll docs-roll docs-roll-check ios-smoke swift-smoke structgen datagen ios-lib clean FORCE
 FORCE:
 .SECONDARY:

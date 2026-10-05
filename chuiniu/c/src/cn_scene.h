@@ -1,0 +1,86 @@
+/* The scene renderer: a software rasterizer with a shadow map, freestanding C.
+ * The study (docs/UI.html) runs it as wasm through wasm/cn_scene_web.c; the
+ * iOS host links it natively and draws the framebuffer (a CGImage on a layer).
+ * One renderer a process: the state is the module's, the memory the caller's.
+ *
+ * A FRAME, in order:
+ *   cn_scene_init(mem, bytes)        once, or again after freeing the memory
+ *   cn_scene_tex_new(...)            any time between frames; write its pixels
+ *                                    through cn_scene_tex_rgba / _bump
+ *   cn_scene_begin(...)              0 when the frame does not fit: draw nothing
+ *   cn_scene_occluder(...)           each body's footprint on the table
+ *   write cn_scene_verts() / cn_scene_faces()
+ *   cn_scene_render(nverts, nfaces)
+ *   read cn_scene_fb(): cn_scene_fb_w() by cn_scene_fb_h() RGBA, premultiplied
+ *   by nothing (the table's pixels are black-ish with alpha; bodies are opaque)
+ *
+ * MEMORY is the caller's block: textures (and their half-size copies, made the
+ * first time a texture is drawn) grow down from its top, a frame's buffers up
+ * from its bottom, and a frame that would meet the textures fails cleanly
+ * (cn_scene_begin returns 0). Nothing is allocated; the caller may free the
+ * block whenever no call is running, after which cn_scene_init must come first. */
+#ifndef CN_SCENE_H
+#define CN_SCENE_H
+
+#include <stddef.h>
+#include <stdint.h>
+
+/* the default budgets: the browser's static arena, and what the iOS host hands
+ * over (the Messages extension is killed past its memory limit, so the frame
+ * must fit a fixed block rather than grow) */
+#define CN_SCENE_ARENA_WEB  ((size_t)256 << 20)
+#define CN_SCENE_ARENA_IOS  ((size_t)48 << 20)
+
+/* face flags */
+#define CN_SCENE_F_CULL     1   /* a closed body: faces turned away are skipped       */
+#define CN_SCENE_F_CAST     2   /* casts a shadow                                      */
+#define CN_SCENE_F_RECEIVE  4   /* takes the shadow (every lit thing does)             */
+#define CN_SCENE_F_RECEIVER 8   /* the table: writes only the shadow that falls on it  */
+
+#define CN_SCENE_VF 6   /* floats a vertex: x y z nx ny nz                                   */
+#define CN_SCENE_FF 16  /* floats a face: i0 i1 i2 u0 v0 u1 v1 u2 v2 tex r g b km ka flags */
+
+/* the arena: 16-byte aligned memory of `bytes`; drops every texture and frame.
+ * 0 when mem is null or too small to be of use. */
+int cn_scene_init(void *mem, size_t bytes);
+/* drop every texture and the frame, keep the arena */
+void cn_scene_reset(void);
+
+/* a texture: w by h RGBA, and a normal map of (dx, dy) as signed bytes at a 20th
+ * each, or none. Its id, or -1 when there is no room. */
+int cn_scene_tex_new(int w, int h, int has_bump);
+uint8_t *cn_scene_tex_rgba(int id);
+int8_t *cn_scene_tex_bump(int id);
+
+/* the bytes a frame of these numbers takes from the arena, and the bytes a frame
+ * has (the arena less the textures and their copies) */
+size_t cn_scene_frame_bytes(int W, int H, int pad, float dpr, int shadow_res, int vcapacity, int fcapacity);
+size_t cn_scene_room(void);
+
+/* a frame: the board W by H points (plus pad above it), dpr device pixels a
+ * point, the eye over (ex, ey) at height hc, the light's direction (toward the
+ * light), the shadow map's resolution, how dark a shadow is (0..1), and room for
+ * vcapacity vertices and fcapacity faces. vcapacity + fcapacity, or 0 when the
+ * frame does not fit or the numbers are out of range (no frame is then drawable). */
+int cn_scene_begin(int W, int H, int pad, float dpr, float ex, float ey, float hc,
+                   float lx, float ly, float lz, int shadow_res, float dark, int vcapacity, int fcapacity);
+float *cn_scene_verts(void);
+float *cn_scene_faces(void);
+/* a body's footprint: its centre and radius (points), its height above the table,
+ * and its strength when down */
+void cn_scene_occluder(float x, float y, float r, float lift, float strength);
+
+/* the shadow pass, the picture, the shade. The faces drawn, or -1 when no frame
+ * has begun or the counts exceed its capacities. A face naming a vertex past
+ * nverts is skipped. */
+int cn_scene_render(int nverts, int nfaces);
+uint8_t *cn_scene_fb(void);
+int cn_scene_fb_w(void);
+int cn_scene_fb_h(void);
+
+/* profiling: the last frame's fragments shaded, box pixels walked, map texels,
+ * map box pixels; and passes to leave out (1 shadow map, 2 picture, 4 shading) */
+uint32_t cn_scene_prof(int i);
+void cn_scene_skip(int mask);
+
+#endif

@@ -1,8 +1,9 @@
-/* The scene renderer for the study, in C for speed. Browser-only (a Swift host
- * would hand the same meshes to Metal); freestanding, no libc beyond memset.
+/* The scene renderer, in C for speed: the study runs it as wasm (wasm/cn_scene_web.c
+ * exports it under the names the page calls) and the iOS host links it natively and
+ * draws the framebuffer. Freestanding, no libc beyond memset. The API is cn_scene.h.
  *
  * WHAT IT IS. A software rasterizer with a shadow map, the way a small engine
- * does it. The page hands over, each frame, a vertex array (world position and
+ * does it. The host hands over, each frame, a vertex array (world position and
  * normal) and a face array (three vertex indices, texture coordinates, the
  * texture, the tint and the shade's multiplier, and flags), and reads back an
  * RGBA framebuffer.
@@ -16,12 +17,11 @@
  *           interpolated in 1/w so they are right under perspective; the texel
  *           is read with bilinear filtering; the normal is bent by the normal
  *           map along the triangle's tangent frame; the pixel's world position
- *           is carried into the light's frame and compared with the shadow map
- *           (nine taps round it, so the edge is soft) to decide how much of the
- *           light reaches it; the one light shades it; a depth buffer decides
+ *           is carried into the light's frame and kept; a depth buffer decides
  *           what is in front.
+ *   pass 3  THE SHADE, once a pixel (below).
  *
- * The table itself is not a mesh (the page draws the planks): a RECEIVER face
+ * The table itself is not a mesh (the host draws the planks): a RECEIVER face
  * writes only the shadow that falls on it, as dark pixels with alpha, so the
  * canvas composes over the planks. That is what a cup's shadow on the table is,
  * and a die's, and a cup's on a die. A die in a shaken cup shadows the cup's
@@ -34,25 +34,19 @@
  * weighted taps on the map for each pixel. Nine taps on every drawn fragment,
  * overdraw included, cost three times the whole picture.
  *
- * MEMORY is one static arena: textures grow down from its top (uploaded
- * whenever a page first needs them), the frame's buffers grow up from its
- * bottom (sized by scene_begin), and a frame that would meet the textures
+ * MEMORY is the caller's arena (cn_scene_init): textures grow down from its top
+ * (uploaded whenever a host first needs them), the frame's buffers grow up from
+ * its bottom (sized by cn_scene_begin), and a frame that would meet the textures
  * fails. Fixed caps, no libc. */
-#include <stdint.h>
+#include "cn_scene.h"
 #include <string.h>
 
-#ifdef __wasm__
-#define EXPORT(name) __attribute__((export_name(#name)))
-#else
-#define EXPORT(name)   /* the host test includes this file */
-#endif
-
 /* ---- the arena ------------------------------------------------------------------- */
-#define ARENA_BYTES (256u << 20)
-static uint8_t arena[ARENA_BYTES] __attribute__((aligned(16)));
-static uint32_t frame_top = 0, tex_bottom = ARENA_BYTES;
-static void *take(uint32_t n) { n = (n + 15u) & ~15u; if (frame_top + n > tex_bottom) return 0; void *p = arena + frame_top; frame_top += n; return p; }
-static void *take_tex(uint32_t n) { n = (n + 15u) & ~15u; if (tex_bottom < n || tex_bottom - n < frame_top) return 0; tex_bottom -= n; return arena + tex_bottom; }
+static uint8_t *arena;
+static size_t arena_n, frame_top, tex_bottom;
+static size_t rup16(size_t n) { return (n + 15u) & ~(size_t)15u; }
+static void *take(size_t n) { n = rup16(n); if (!arena || n > tex_bottom - frame_top) return 0; void *p = arena + frame_top; frame_top += n; return p; }
+static void *take_tex(size_t n) { n = rup16(n); if (!arena || n > tex_bottom - frame_top) return 0; tex_bottom -= n; return arena + tex_bottom; }
 
 /* ---- textures ---------------------------------------------------------------------- */
 #define MAX_TEX 512
@@ -65,14 +59,25 @@ typedef struct { uint8_t *rgba; int8_t *bump; int w, h; int nlv; uint8_t *lrgba[
 static Tex texs[MAX_TEX]; static int ntex = 0;
 static uint8_t *fb;                                      /* the frame's picture; 0 until a frame begins */
 
-EXPORT(scene_reset) void scene_reset(void) { frame_top = 0; tex_bottom = ARENA_BYTES; ntex = 0; fb = 0; }
-/* a texture: w by h RGBA, and a normal map of (dx, dy) as signed bytes at a 20th each, or none. -1 when full. */
-EXPORT(scene_tex_new) int scene_tex_new(int w, int h, int has_bump)
+void cn_scene_reset(void) { frame_top = 0; tex_bottom = arena_n; ntex = 0; fb = 0; }
+int cn_scene_init(void *mem, size_t bytes)
 {
-    if (ntex >= MAX_TEX || w < 2 || h < 2) return -1;
+    /* the block's start rounded up to 16 and its length down: every buffer is 16-aligned */
+    uintptr_t a = ((uintptr_t)mem + 15u) & ~(uintptr_t)15u;
+    size_t lost = mem ? (size_t)(a - (uintptr_t)mem) : 0;
+    if (!mem || bytes < lost + 4096) { arena = 0; arena_n = 0; cn_scene_reset(); return 0; }
+    arena = (uint8_t *)a; arena_n = (bytes - lost) & ~(size_t)15u;
+    cn_scene_reset();
+    return 1;
+}
+/* a texture: w by h RGBA, and a normal map of (dx, dy) as signed bytes at a 20th each, or none. -1 when full. */
+int cn_scene_tex_new(int w, int h, int has_bump)
+{
+    if (ntex >= MAX_TEX || w < 2 || h < 2 || w > 8192 || h > 8192) return -1;
     Tex *t = &texs[ntex];
-    t->rgba = take_tex((uint32_t)w * h * 4); if (!t->rgba) return -1;
-    t->bump = has_bump ? take_tex((uint32_t)w * h * 2) : 0; if (has_bump && !t->bump) return -1;
+    size_t top = tex_bottom;
+    t->rgba = take_tex((size_t)w * h * 4); if (!t->rgba) return -1;
+    t->bump = has_bump ? take_tex((size_t)w * h * 2) : 0; if (has_bump && !t->bump) { tex_bottom = top; return -1; }
     t->w = w; t->h = h; t->nlv = 0;
     return ntex++;
 }
@@ -83,8 +88,8 @@ static void mips_of(Tex *t)
     while (t->nlv < MAX_LV) {
         int l = t->nlv, pw = t->lw[l - 1], ph = t->lh[l - 1], w = pw / 2, h = ph / 2;
         if (w < 8 || h < 8) break;
-        uint8_t *rg = take_tex((uint32_t)w * h * 4); if (!rg) break;
-        int8_t *bm = 0; if (t->bump) { bm = take_tex((uint32_t)w * h * 2); if (!bm) break; }
+        uint8_t *rg = take_tex((size_t)w * h * 4); if (!rg) break;
+        int8_t *bm = 0; if (t->bump) { bm = take_tex((size_t)w * h * 2); if (!bm) break; }
         const uint8_t *pr = t->lrgba[l - 1]; const int8_t *pb = t->lbump[l - 1];
         for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) {
             int i00 = ((2 * y) * pw + 2 * x), i10 = i00 + 1, i01 = i00 + pw, i11 = i01 + 1, o = y * w + x;
@@ -94,17 +99,16 @@ static void mips_of(Tex *t)
         t->lrgba[l] = rg; t->lbump[l] = bm; t->lw[l] = w; t->lh[l] = h; t->nlv++;
     }
 }
-EXPORT(scene_tex_rgba) uint8_t *scene_tex_rgba(int id) { return id >= 0 && id < ntex ? texs[id].rgba : 0; }
-EXPORT(scene_tex_bump) int8_t *scene_tex_bump(int id) { return id >= 0 && id < ntex ? texs[id].bump : 0; }
+uint8_t *cn_scene_tex_rgba(int id) { return id >= 0 && id < ntex ? texs[id].rgba : 0; }
+int8_t *cn_scene_tex_bump(int id) { return id >= 0 && id < ntex ? texs[id].bump : 0; }
 
 /* ---- the frame ---------------------------------------------------------------------- */
-#define F_CULL     1    /* a closed body: faces turned away are skipped       */
-#define F_CAST     2    /* casts a shadow                                      */
-#define F_RECEIVE  4    /* takes the shadow (every lit thing does)             */
-#define F_RECEIVER 8    /* the table: writes only the shadow that falls on it  */
-
-#define VF 6            /* floats a vertex: x y z nx ny nz                     */
-#define FF 16           /* floats a face: i0 i1 i2 u0 v0 u1 v1 u2 v2 tex r g b km ka flags */
+#define F_CULL     CN_SCENE_F_CULL
+#define F_CAST     CN_SCENE_F_CAST
+#define F_RECEIVE  CN_SCENE_F_RECEIVE
+#define F_RECEIVER CN_SCENE_F_RECEIVER
+#define VF CN_SCENE_VF
+#define FF CN_SCENE_FF
 
 static float *verts, *faces; static int vcap, fcap;
 static float *zb; static int FW, FH;
@@ -112,7 +116,7 @@ static float *zb; static int FW, FH;
  * shade (gk, 0..255), the pixel's place in the light's frame (gu, gv at a 64th of a map texel; gd), and
  * what it is (gf: 0 nothing, 1 a body, 2 the table) */
 static uint8_t *gt, *gk, *gf, *gm, *ga, *gc; static uint16_t *gu, *gv; static float *gd;   /* gk: the direct light's cosine; gm, ga: the tint's scale and floor; gc: the crease */
-static int32_t *order;                                   /* pass 2's faces, nearest first */
+static int32_t *order, *chain;                           /* pass 2's faces, nearest first; the height buckets' chains */
 static float *smap; static int SR;                       /* the shadow map, SR by SR, depth along the light */
 static float eyeX, eyeY, HC, DPR, PAD;
 static float LX, LY, LZ, UX, UY, UZ, VX, VY, VZ;        /* the light, and the map's axes across it */
@@ -128,39 +132,71 @@ typedef struct { float x, y, r, s, out; } Occ;
 static Occ occ[MAX_OCC]; static int nocc;
 static float *ao; static int AW, AH;                      /* the contact dark, one a 4-by-4 block */
 /* a footprint: its centre and radius (points), its height above the table, and its strength when down */
-EXPORT(scene_occluder) void scene_occluder(float x, float y, float r, float lift, float strength)
+void cn_scene_occluder(float x, float y, float r, float lift, float strength)
 {
-    if (nocc >= MAX_OCC || r <= 0) return;
-    float s = strength * (1 - lift / r); if (s <= 0) return;
+    if (nocc >= MAX_OCC || !(r > 0)) return;
+    float s = strength * (1 - lift / r); if (!(s > 0)) return;
     occ[nocc].x = x; occ[nocc].y = y; occ[nocc].r = r; occ[nocc].s = s; occ[nocc].out = r * .6f + lift * .5f; nocc++;
 }
 static uint32_t prof[4];                                 /* the last frame: fragments shaded, box pixels walked, map texels, map box pixels */
-EXPORT(scene_prof) uint32_t scene_prof(int i) { return i >= 0 && i < 4 ? prof[i] : 0; }
+uint32_t cn_scene_prof(int i) { return i >= 0 && i < 4 ? prof[i] : 0; }
 static int skip;                                          /* for profiling only: passes to leave out (1 shadow map, 2 picture, 4 shading) */
-EXPORT(scene_skip) void scene_skip(int mask) { skip = mask; }
+void cn_scene_skip(int mask) { skip = mask; }
 
 static float fsqrt(float x) { return __builtin_sqrtf(x); }
 static float fclamp(float v, float lo, float hi) { return v < lo ? lo : v > hi ? hi : v; }
 
+/* THE FRAME'S BUFFERS, in the order they are taken; cn_scene_begin and cn_scene_frame_bytes both read this
+ * one list, so the bytes a host is told a frame needs are the bytes it takes */
+#define MAX_FRAME_PX 8192
+enum { B_FB, B_ZB, B_SMAP, B_AO, B_GT, B_GK, B_GF, B_GU, B_GV, B_GD, B_GM, B_GA, B_GC, B_VERTS, B_FACES, B_ORDER, B_CHAIN, NBUF };
+/* 0 when the numbers are out of range */
+static int frame_sizes(int W, int H, int pad, float dpr, int shadow_res, int vcapacity, int fcapacity, size_t sz[NBUF], int *fw, int *fh)
+{
+    if (W < 1 || H < 1 || pad < 0 || !(dpr > 0) || shadow_res < 4 || shadow_res > 8192 || vcapacity < 0 || fcapacity < 0) return 0;
+    float fwf = W * dpr + .5f, fhf = (H + pad) * dpr + .5f;
+    if (!(fwf < MAX_FRAME_PX) || !(fhf < MAX_FRAME_PX)) return 0;
+    int w = (int)fwf, h = (int)fhf;
+    if (w < 1 || h < 1) return 0;
+    size_t npx = (size_t)w * h, aw = (size_t)(w + 3) / 4, ah = (size_t)(h + 3) / 4;
+    sz[B_FB] = npx * 4; sz[B_ZB] = npx * 4; sz[B_SMAP] = (size_t)shadow_res * shadow_res * 4; sz[B_AO] = aw * ah * 4;
+    sz[B_GT] = npx * 3; sz[B_GK] = npx; sz[B_GF] = npx; sz[B_GU] = npx * 2; sz[B_GV] = npx * 2; sz[B_GD] = npx * 4;
+    sz[B_GM] = npx; sz[B_GA] = npx; sz[B_GC] = npx;
+    sz[B_VERTS] = (size_t)vcapacity * VF * 4; sz[B_FACES] = (size_t)fcapacity * FF * 4; sz[B_ORDER] = (size_t)fcapacity * 4; sz[B_CHAIN] = (size_t)fcapacity * 4;
+    *fw = w; *fh = h;
+    return 1;
+}
+size_t cn_scene_frame_bytes(int W, int H, int pad, float dpr, int shadow_res, int vcapacity, int fcapacity)
+{
+    size_t sz[NBUF], n = 0; int w, h;
+    if (!frame_sizes(W, H, pad, dpr, shadow_res, vcapacity, fcapacity, sz, &w, &h)) return 0;
+    for (int i = 0; i < NBUF; i++) n += rup16(sz[i]);
+    return n;
+}
+size_t cn_scene_room(void) { return arena ? tex_bottom : 0; }
+
 /* a frame: the board W by H points (plus pad above it), DPR device pixels a point, the eye over
  * (eyeX, eyeY) at height hc, the light's direction (toward the light), the map's resolution, and how
  * dark a shadow is (0..1). Returns the vertex and face capacities' sum, 0 when memory runs out. */
-EXPORT(scene_begin) int scene_begin(int W, int H, int pad, float dpr, float ex, float ey, float hc,
-                                    float lx, float ly, float lz, int shadow_res, float dark, int vcapacity, int fcapacity)
+int cn_scene_begin(int W, int H, int pad, float dpr, float ex, float ey, float hc,
+                   float lx, float ly, float lz, int shadow_res, float dark, int vcapacity, int fcapacity)
 {
-    frame_top = 0;
-    FW = (int)(W * dpr + .5f); FH = (int)((H + pad) * dpr + .5f);
+    frame_top = 0; fb = 0; nocc = 0;
+    size_t sz[NBUF]; int fw, fh;
+    if (!frame_sizes(W, H, pad, dpr, shadow_res, vcapacity, fcapacity, sz, &fw, &fh)) return 0;
+    void *buf[NBUF];
+    for (int i = 0; i < NBUF; i++) if (!(buf[i] = take(sz[i]))) { frame_top = 0; return 0; }
+    float ln = fsqrt(lx * lx + ly * ly + lz * lz);
+    if (!(ln > 0)) { frame_top = 0; return 0; }
+    FW = fw; FH = fh;
     DPR = dpr; PAD = (float)pad; eyeX = ex; eyeY = ey; HC = hc; SR = shadow_res; SH_DARK = dark;
-    uint32_t npx = (uint32_t)FW * FH;
-    nocc = 0; AW = (FW + 3) / 4; AH = (FH + 3) / 4;
-    fb = take(npx * 4); zb = take(npx * 4); smap = take((uint32_t)SR * SR * 4); ao = take((uint32_t)AW * AH * 4);
-    gt = take(npx * 3); gk = take(npx); gf = take(npx); gu = take(npx * 2); gv = take(npx * 2); gd = take(npx * 4); gm = take(npx); ga = take(npx); gc = take(npx);
-    if (!ao) return 0;
-    verts = take((uint32_t)vcapacity * VF * 4); faces = take((uint32_t)fcapacity * FF * 4); order = take((uint32_t)fcapacity * 4);
-    if (!fb || !zb || !smap || !gt || !gk || !gf || !gu || !gv || !gd || !verts || !faces) { fb = 0; return 0; }
+    AW = (FW + 3) / 4; AH = (FH + 3) / 4;
+    fb = buf[B_FB]; zb = buf[B_ZB]; smap = buf[B_SMAP]; ao = buf[B_AO];
+    gt = buf[B_GT]; gk = buf[B_GK]; gf = buf[B_GF]; gu = buf[B_GU]; gv = buf[B_GV]; gd = buf[B_GD]; gm = buf[B_GM]; ga = buf[B_GA]; gc = buf[B_GC];
+    verts = buf[B_VERTS]; faces = buf[B_FACES]; order = buf[B_ORDER]; chain = buf[B_CHAIN];
     vcap = vcapacity; fcap = fcapacity;
     /* the light's frame: L toward the light, U and V across it */
-    float ln = fsqrt(lx * lx + ly * ly + lz * lz); LX = lx / ln; LY = ly / ln; LZ = lz / ln;
+    LX = lx / ln; LY = ly / ln; LZ = lz / ln;
     /* U = L x Y, V = U x L */
     UX = LY * 0 - LZ * 1; UY = LZ * 0 - LX * 0; UZ = LX * 1 - LY * 0;
     { float n = fsqrt(UX * UX + UY * UY + UZ * UZ); UX /= n; UY /= n; UZ /= n; }
@@ -178,11 +214,11 @@ EXPORT(scene_begin) int scene_begin(int W, int H, int pad, float dpr, float ex, 
     su0 = mnu; sv0 = mnv; sus = (SR - 2) / (mxu - mnu); svs = (SR - 2) / (mxv - mnv);
     return vcapacity + fcapacity;
 }
-EXPORT(scene_verts) float *scene_verts(void) { return verts; }
-EXPORT(scene_faces) float *scene_faces(void) { return faces; }
-EXPORT(scene_fb) uint8_t *scene_fb(void) { return fb; }
-EXPORT(scene_fb_w) int scene_fb_w(void) { return FW; }
-EXPORT(scene_fb_h) int scene_fb_h(void) { return FH; }
+float *cn_scene_verts(void) { return fb ? verts : 0; }
+float *cn_scene_faces(void) { return fb ? faces : 0; }
+uint8_t *cn_scene_fb(void) { return fb; }
+int cn_scene_fb_w(void) { return fb ? FW : 0; }
+int cn_scene_fb_h(void) { return fb ? FH : 0; }
 
 /* ---- the scanline: a triangle covers, on the row through sy, the columns between the two edges that
  *      cross it. Walking only those (instead of the bounding box with a test at every pixel) is what
@@ -199,7 +235,10 @@ static int span(float ax, float ay, float bx, float by, float cx, float cy, floa
         if (x < lo) lo = x;
         if (x > hi) hi = x;
     }
-    if (lo > hi) return 0;
+    if (!(lo <= hi)) return 0;
+    /* held to the screen before the conversion (a corner near the eye's plane lands far off it); the
+     * clamps below give the same columns */
+    lo = fclamp(lo, -1, (float)lim + 1); hi = fclamp(hi, -1, (float)lim + 1);
     int l = (int)__builtin_ceilf(lo - .5f), r = (int)__builtin_floorf(hi - .5f);
     if (l < 0) l = 0;
     if (r > lim - 1) r = lim - 1;
@@ -213,15 +252,12 @@ typedef struct { float x, y, d; } SV;
 static void shadow_tri(SV a, SV b, SV c)
 {
     float area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
-    if (area == 0) return;
+    if (!(area != 0)) return;
     if (area < 0) { SV t = b; b = c; c = t; area = -area; }
     float inv = 1 / area;
-    int x0 = (int)fclamp(__builtin_floorf(a.x < b.x ? (a.x < c.x ? a.x : c.x) : (b.x < c.x ? b.x : c.x)), 0, SR - 1);
-    int x1 = (int)fclamp(__builtin_ceilf(a.x > b.x ? (a.x > c.x ? a.x : c.x) : (b.x > c.x ? b.x : c.x)), 0, SR - 1);
     int y0 = (int)fclamp(__builtin_floorf(a.y < b.y ? (a.y < c.y ? a.y : c.y) : (b.y < c.y ? b.y : c.y)), 0, SR - 1);
     int y1 = (int)fclamp(__builtin_ceilf(a.y > b.y ? (a.y > c.y ? a.y : c.y) : (b.y > c.y ? b.y : c.y)), 0, SR - 1);
     float e0x = (b.y - c.y) * inv, e1x = (c.y - a.y) * inv;
-    (void)x0; (void)x1;
     for (int y = y0; y <= y1; y++) {
         float sy = y + .5f; int xl, xr;
         if (!span(a.x, a.y, b.x, b.y, c.x, c.y, sy, SR, &xl, &xr)) continue;
@@ -279,16 +315,13 @@ static void tri(const uint8_t *td, const int8_t *bn, int tw, int th, PV a, PV b,
                 float tr, float tg, float tb, float km, float ka, int flags)
 {
     float area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
-    if (area == 0) return;
+    if (!(area != 0)) return;
     if (area < 0) { PV t = b; b = c; c = t; area = -area; }
     float inv = 1 / area;
-    int x0 = (int)fclamp(__builtin_floorf(a.x < b.x ? (a.x < c.x ? a.x : c.x) : (b.x < c.x ? b.x : c.x)), 0, FW - 1);
-    int x1 = (int)fclamp(__builtin_ceilf(a.x > b.x ? (a.x > c.x ? a.x : c.x) : (b.x > c.x ? b.x : c.x)), 0, FW - 1);
     int y0 = (int)fclamp(__builtin_floorf(a.y < b.y ? (a.y < c.y ? a.y : c.y) : (b.y < c.y ? b.y : c.y)), 0, FH - 1);
     int y1 = (int)fclamp(__builtin_ceilf(a.y > b.y ? (a.y > c.y ? a.y : c.y) : (b.y > c.y ? b.y : c.y)), 0, FH - 1);
     float e0x = (b.y - c.y) * inv, e1x = (c.y - a.y) * inv;
     int receiver = flags & F_RECEIVER, receives = flags & F_RECEIVE;
-    (void)x0; (void)x1;
     for (int y = y0; y <= y1; y++) {
         float sy = y + .5f; int xl, xr;
         if (!span(a.x, a.y, b.x, b.y, c.x, c.y, sy, FW, &xl, &xr)) continue;
@@ -334,17 +367,24 @@ static void tri(const uint8_t *td, const int8_t *bn, int tw, int th, PV a, PV b,
     }
 }
 
-/* render nverts and nfaces of the arrays: the shadow pass, then the picture. Returns the faces drawn. */
-EXPORT(scene_render) int scene_render(int nverts, int nfaces)
+/* a face whose three corners are vertices of this frame (a host's stray index skips the face, never reads
+ * past the array) */
+static int face_ok(const float *F, int nverts)
 {
-    if (!fb || nverts > vcap || nfaces > fcap) return -1;
-    memset(fb, 0, (uint32_t)FW * FH * 4); memset(gf, 0, (uint32_t)FW * FH); prof[0] = prof[1] = prof[2] = prof[3] = 0;
+    return F[0] >= 0 && F[0] < nverts && F[1] >= 0 && F[1] < nverts && F[2] >= 0 && F[2] < nverts;
+}
+
+/* render nverts and nfaces of the arrays: the shadow pass, then the picture. Returns the faces drawn. */
+int cn_scene_render(int nverts, int nfaces)
+{
+    if (!fb || nverts < 0 || nfaces < 0 || nverts > vcap || nfaces > fcap) return -1;
+    memset(fb, 0, (size_t)FW * FH * 4); memset(gf, 0, (size_t)FW * FH); prof[0] = prof[1] = prof[2] = prof[3] = 0;
     for (int i = 0; i < FW * FH; i++) zb[i] = 1e30f;
     for (int i = 0; i < SR * SR; i++) smap[i] = 1e30f;
     /* pass 1 */
     for (int f = 0; f < nfaces && !(skip & 1); f++) {
         const float *F = &faces[f * FF]; int flags = (int)F[15];
-        if (!(flags & F_CAST)) continue;
+        if (!(flags & F_CAST) || !face_ok(F, nverts)) continue;
         SV s[3];
         for (int k = 0; k < 3; k++) {
             const float *V = &verts[(int)F[k] * VF];
@@ -356,17 +396,18 @@ EXPORT(scene_render) int scene_render(int nverts, int nfaces)
      * sorted into buckets by height, so a fragment a nearer face covers is mostly never shaded at all */
     int drawn = 0;
     enum { NB = 1024 };
-    static int32_t head[NB]; static int32_t next[1 << 16];
+    static int32_t head[NB];
     for (int i = 0; i < NB; i++) head[i] = -1;
-    for (int f = 0; f < nfaces && f < (1 << 16); f++) {
+    for (int f = 0; f < nfaces; f++) {
         const float *F = &faces[f * FF];
+        if (!face_ok(F, nverts)) continue;
         float z0 = verts[(int)F[0] * VF + 2], z1 = verts[(int)F[1] * VF + 2], z2 = verts[(int)F[2] * VF + 2];
         float z = z0 > z1 ? (z0 > z2 ? z0 : z2) : (z1 > z2 ? z1 : z2);
-        int b = (int)((z + 100) * 2); if (b < 0) b = 0; if (b >= NB) b = NB - 1;
-        next[f] = head[b]; head[b] = f;
+        int b = (int)fclamp((z + 100) * 2, 0, NB - 1);
+        chain[f] = head[b]; head[b] = f;
     }
     int no = 0;
-    for (int b = NB - 1; b >= 0; b--) for (int f = head[b]; f >= 0; f = next[f]) order[no++] = f;
+    for (int b = NB - 1; b >= 0; b--) for (int f = head[b]; f >= 0; f = chain[f]) order[no++] = f;
     for (int oi = 0; oi < no && !(skip & 2); oi++) {
         int f = order[oi];
         const float *F = &faces[f * FF]; int flags = (int)F[15], ti = (int)F[9];
@@ -418,10 +459,14 @@ EXPORT(scene_render) int scene_render(int nverts, int nfaces)
     /* the open table first, in 4-by-4 blocks: one lookup each (its shadow is soft anyway) */
     if (skip & 4) return drawn;
     /* the contact dark, a block at a time, over each footprint's reach */
-    memset(ao, 0, (uint32_t)AW * AH * 4);
+    memset(ao, 0, (size_t)AW * AH * 4);
     for (int oi = 0; oi < nocc; oi++) {
         const Occ *c = &occ[oi]; float reach = c->r + c->out;
-        int bx0 = (int)((c->x - reach) * DPR / 4), bx1 = (int)((c->x + reach) * DPR / 4) + 1, by0 = (int)((c->y - reach + PAD) * DPR / 4), by1 = (int)((c->y + reach + PAD) * DPR / 4) + 1;
+        /* held near the map before the conversion (a host's far footprint must not overflow it); -2 and one past
+         * the end give the blocks the unheld numbers would */
+        float fbx0 = fclamp((c->x - reach) * DPR / 4, -2, (float)AW + 1), fbx1 = fclamp((c->x + reach) * DPR / 4, -2, (float)AW + 1);
+        float fby0 = fclamp((c->y - reach + PAD) * DPR / 4, -2, (float)AH + 1), fby1 = fclamp((c->y + reach + PAD) * DPR / 4, -2, (float)AH + 1);
+        int bx0 = (int)fbx0, bx1 = (int)fbx1 + 1, by0 = (int)fby0, by1 = (int)fby1 + 1;
         if (bx0 < 0) bx0 = 0;
         if (by0 < 0) by0 = 0;
         if (bx1 >= AW) bx1 = AW - 1;
