@@ -11,8 +11,8 @@ public final class ChuiniuHost: ObservableObject {
     @Published public private(set) var table: TableModel = .empty
     /// A link the kernel refused, with its error; the unreadable screen.
     @Published public var unreadable: Int?
-    /// The newest roll this phone has played, so a screen change does not
-    /// replay it (DiceRoll).
+    /// The newest round whose throw this phone has played to its end, so a
+    /// screen change does not throw it again (the stage's roll).
     @Published public var playedRoll = 0
     /// A touch left a bubble to stage, captioned with the kernel's caption;
     /// `collapse` for a move (the drawer goes down once it has rested), not
@@ -25,6 +25,10 @@ public final class ChuiniuHost: ObservableObject {
     }
 
     public func word(_ w: Word) -> String { kernel.word(w) }
+
+    /// How far the kernel's newest plan has run, ms (the clock the stage and
+    /// the beats share, I21); nil when no plan is playing.
+    public var planMs: Int? { kernel.motionStart.map { max(0, Int(Date().timeIntervalSince($0) * 1000)) } }
 
     /// Read the resident again.
     public func refresh() { table = kernel.table }
@@ -74,6 +78,16 @@ public struct ChuiniuRoot: View {
             }
         }
         .animation(FMotion.chrome, value: host.table.phase)
+#if DEBUG
+        .task {
+            // StageHarness: a table of any size, once per extension process,
+            // after the conversation's own first read has landed
+            guard !Harness.ran, let spec = Harness.spec else { return }
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            Harness.ran = true
+            if Harness.play(spec) { host.unreadable = nil; host.refresh() }
+        }
+#endif
     }
 }
 

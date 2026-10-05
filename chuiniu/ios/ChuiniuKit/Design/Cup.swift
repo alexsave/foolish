@@ -56,6 +56,21 @@ public struct CupShape: Shape {
     }
 }
 
+/// The dice count on a cup: a bone disc with the number (the bubble's
+/// picture; on the table the crowns carry the kernel's own).
+struct CountBadge: View {
+    let n: Int
+    var body: some View {
+        Text(verbatim: "\(n)")
+            .font(.system(size: 12, weight: .heavy).monospacedDigit())
+            .foregroundColor(FColor.ink)
+            .frame(width: 20, height: 20)
+            .background(Circle().fill(FColor.card))
+            .overlay(Circle().strokeBorder(Color.black.opacity(0.3), lineWidth: 1))
+            .shadow(color: .black.opacity(0.4), radius: 1.5, y: 1)
+    }
+}
+
 /// The lip band at the mouth.
 struct LipShape: Shape {
     func path(in r: CGRect) -> Path {
