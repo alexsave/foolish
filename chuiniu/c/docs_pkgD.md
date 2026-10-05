@@ -20,7 +20,7 @@ Measured 2026-10-05 on an Apple M1.
 ## API
 
 ```
-cn_stage_init(st, arena, bytes, pack, len)      cn_stage_purge(st)   cn_stage_attach(st, arena, bytes)
+cn_stage_init(st, pack, len)   cn_stage_attach(st, arena, bytes)   cn_stage_purge(st)   (package G: init takes no arena)
 const CnStageHud *cn_stage_begin(st, &in)       kind TABLE / REVEAL / BUBBLE
 cn_stage_frame(st, t_ms, peek, lift, &w, &h)    one thread
 cn_stage_prepare(st, t, peek, lift)  cn_stage_band(st, pass, band, n)  cn_stage_finish(st)
@@ -53,7 +53,7 @@ Cutting each frame's top to its bodies' reach is what brought 375x541 and the co
 
 ## Determinism
 
-The pinned hashes are `0xc83b39dc` for the throw frame at 1.2 s (1.5x) and `0xbc77a1a7` for the still frame peeking (2x), both 375x541 with six seats.
+The pinned hashes are `0x18318e6b` for the throw frame at 1.2 s (1.5x) and `0xe41ce178` for the still frame peeking (2x), both 375x541 with six seats (re-pinned by package G for the smooth shadow; they were `0xc83b39dc` and `0xbc77a1a7`).
 Apple clang -O2, GCC 16 -O2 and ASan/UBSan all give these hashes.
 `make wasm` builds the stage freestanding.
 Sixteen bands, seven bands and reverse band order give the single thread's bytes.
