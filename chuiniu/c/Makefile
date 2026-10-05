@@ -287,3 +287,56 @@ clean:
 .PHONY: all run asan wasm wasm-roll docs-roll docs-roll-check ios-smoke swift-smoke structgen datagen ios-lib clean FORCE
 FORCE:
 .SECONDARY:
+
+# ---- THE TEXTURE PACK (package C) ----------------------------------------------
+# The cups' and dice's textures are baked at BUILD time (a procedural texture made
+# at launch once took the iMessage extension down on a device): tools/cn_texgen.c
+# bakes the verdigris and bone tiles and the numerals 0-9 (IM Fell English, OFL,
+# tools/fonts/) into build/cn_tex.pack, and src/cn_tex.c derives every seat's and
+# die's texture from it at upload. Layout in src/cn_tex.h; notes in docs_pkgC.md.
+#   make -C chuiniu/c tex          build/cn_tex.pack
+#   make -C chuiniu/c tex-ios      ...and its copy in ../ios/ChuiniuKit/Resources/
+#   make -C chuiniu/c tex-test     the pack's and the textures' tests (in `run`; tex-asan in `asan`)
+#   make -C chuiniu/c tex-wasm     cn_tex.c for wasm32, freestanding (an object only)
+#   make -C chuiniu/c tex-compare REF=dir   MAD against the study's captures, and a contact sheet
+TEX_FONT := tools/fonts/IMFeENrm28P.ttf
+TEX_SRC  := src/cn_tex.c src/cn_tex.h
+TEX_PACK := build/cn_tex.pack
+TEX_IOS  := ../ios/ChuiniuKit/Resources/cn_tex.pack
+
+build/cn_texgen: tools/cn_texgen.c $(TEX_SRC) | build
+	$(CC) $(CFLAGS) tools/cn_texgen.c src/cn_tex.c -o $@
+
+$(TEX_PACK): build/cn_texgen $(TEX_FONT)
+	./build/cn_texgen --font $(TEX_FONT) --pack $@
+
+tex: $(TEX_PACK)
+
+# cmp-then-copy, so the resource's mtime moves only when its bytes do
+tex-ios: $(TEX_PACK)
+	@mkdir -p $(dir $(TEX_IOS)) && { cmp -s $(TEX_PACK) $(TEX_IOS) && echo "$(TEX_IOS) is current" || { cp $(TEX_PACK) $(TEX_IOS); echo "wrote $(TEX_IOS)"; }; }
+
+build/cn_tex_test: tests/cn_tex_test.c tools/cn_texgen.c $(TEX_SRC) | build
+	$(CC) $(CFLAGS) tests/cn_tex_test.c src/cn_tex.c -o $@
+
+build/asan_cn_tex_test: tests/cn_tex_test.c tools/cn_texgen.c $(TEX_SRC) | build
+	$(CC) $(ASAN_FLAGS) tests/cn_tex_test.c src/cn_tex.c -o $@
+
+tex-test: build/cn_tex_test $(TEX_PACK)
+	./build/cn_tex_test $(TEX_FONT) $(TEX_PACK)
+
+tex-asan: build/asan_cn_tex_test $(TEX_PACK)
+	./build/asan_cn_tex_test $(TEX_FONT) $(TEX_PACK)
+
+run: tex-test
+asan: tex-asan
+
+tex-wasm: wasm-cc-check | build
+	@mkdir -p build/wasm
+	$(WASM_CC) --target=wasm32 -Oz -nostdlib -ffreestanding $(WARN) -isystem $(SHARED)/wasm/include -c src/cn_tex.c -o build/wasm/cn_tex.o
+
+tex-compare: build/cn_texgen
+	@[ -n "$(REF)" ] || { echo "tex-compare: REF=the directory of the study's captures (docs_pkgC.md)"; exit 2; }
+	./build/cn_texgen --font $(TEX_FONT) --compare $(REF) --sheet build/cn_tex_sheet.png
+
+.PHONY: tex tex-ios tex-test tex-asan tex-wasm tex-compare
