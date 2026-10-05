@@ -48,10 +48,11 @@ How a whole game was played this way is `chuiniu/docs/SIM_VERIFICATION.md`.
 |---|---|
 | `ChuiniuKit/Kernel/KernelSeam.swift` | the model the screens draw and the `Kernel` protocol |
 | `ChuiniuKit/Kernel/BridgeKernel.swift` | the kernel: `cn_api_*` read into the model, the seat records and the nickname |
-| `ChuiniuKit/Design/Die.swift`, `Cup.swift` | a die face 1 to 6 at any size, a plain cup (product-neutral) |
-| `ChuiniuKit/Board/DiceRoll.swift` | one seat's roll: shake, lift, tumble, settle; timing in `RollBeats` |
+| `ChuiniuKit/Design/Die.swift`, `Cup.swift` | a die face 1 to 6 at any size (the picker's chips, the plate), a plain cup and its count badge (the lobby and the bubble picture) |
+| `ChuiniuKit/Board/StageView.swift` | the kernel's table on screen: the clamped clock, the display link, the turned planks, names and canvas, my cup's tap |
+| `ChuiniuKit/Board/StageHUD.swift` | the flat plate at the HUD's frames |
+| `ChuiniuKit/Board/StageHarness.swift` | DEBUG only: `dev.harness` (`6`, `4 call`) plays a group table of that size into the drawer, for the simulator |
 | `ChuiniuKit/Board/BidPicker.swift` | quantity stepper, face chips, Raise and Call, lit from the kernel's menu |
-| `ChuiniuKit/Board/DiceTable.swift` | the felt table, the seats round it, my dice, the bid; `DiceTableLayout` |
 | `ChuiniuKit/Screens/` | lobby, table, reveal, the root and its host, the bubble picture |
 | `ChuiniuKit/Design/Tokens.swift`, `Materials.swift`, `Buttons.swift` | copied from pickemup |
 | `ChuiniuMessages/MessagesViewController.swift` | the conversation: adopt, keep a staged move, the sender fact, stage after the move rests, send, cancel |
