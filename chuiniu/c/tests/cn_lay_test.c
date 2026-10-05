@@ -1479,6 +1479,18 @@ static void test_short_or_tall(void)
     CHECK(row && L.my_r == L.cup_r && L.d == L.sd, "every seat in the row, mine first, one size");
     CnLayThrow T[CN_LAY_SEATS];
     CHECK(cn_lay_throws(&in, &L, CN_THROW_CUP, T, CN_LAY_SEATS) == 0, "and no cup throws at the reveal");
+    /* the reveal's plate carries the tally ("There were five" wrapped on the bid's 160): wider, centred */
+    in = input(390, 718, 4, 0, 0); in.reveal = 1;
+    CHECK(cn_lay_make(&in, &L) && L.has_plate && L.plate[2] == CN_LAY_PLATE_REVEAL_W && L.plate[0] == 195 - CN_LAY_PLATE_REVEAL_W / 2, "718's reveal: the plate %g wide", L.plate[2]);
+    /* on a short board beside the row while there is room right of it (two seats at 390), else under the names */
+    for (int n = 2; n <= 6; n++) {
+        in = input(390, 340, n, 0, 0); in.reveal = 1;
+        cn_lay_make(&in, &L);
+        if (n == 2) CHECK(L.has_plate && L.plate[2] >= CN_LAY_PLATE_MIN && L.plate[0] + L.plate[2] == 16 + L.board_w - 8 && L.plate[0] > L.board_x + L.cup_x[1] + L.cup_r,
+                          "340's reveal, two seats: the plate beside the row (%g wide at %g)", L.plate[2], L.plate[0]);
+        else CHECK(!L.has_plate || (L.plate[1] > L.board_y + L.name_y[0] && L.plate[1] + L.plate[3] <= L.shelf[1] - 6 - CN_LAY_OUTCOME_H),
+                   "340's reveal, %d seats: a plate only under the names, over the outcome line", n);
+    }
     /* the short board's own pieces */
     in = input(390, 340, 3, 1, 0);
     cn_lay_make(&in, &L);

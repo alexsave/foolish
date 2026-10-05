@@ -427,35 +427,62 @@ static void row_seats(const CnLayIn *in, CnLay *L, double W, double H, double my
  * points. And my cup, tipped, swung up over the middle seat's name and dice. So
  * the reveal lays the short board as the study's own reveal lists the seats: one
  * row, mine first and the others after it in seat order, on the board the
- * reveal's shelf leaves, centred across it. Its cups are as big as the row
- * allows (my table cup's size at most) and then a point smaller at a time until
- * the row, as high as it can go, has every cup tipped to its full lift
- * CN_LAY_EDGE inside the drawer with every name on the board. Every seat's dice
- * are its own ring under its cup, one size; no cup throws (the reveal is still).
- * The tally's plate goes under the names when it and the outcome line fit there
- * over the shelf, else there is none (as a short board's row of five has none). */
-static void one_row(const CnLayIn *in, CnLay *L, double W, double H, double d0, double myR0)
+ * reveal's shelf leaves. Its cups are as big as the row allows (my table cup's
+ * size at most) and then a point smaller at a time until the row, as high as it
+ * can go, has every cup tipped to its full lift CN_LAY_EDGE inside the drawer
+ * with every name on the board. Every seat's dice are its own ring under its
+ * cup, one size; no cup throws (the reveal is still).
+ * The tally's plate (CN_LAY_PLATE_REVEAL_W at most, CN_LAY_PLATE_MIN at least) goes
+ * beside the row, the row from the left as the table's is, when there is room
+ * right of every lifted cup and name; else the row is centred and the plate goes
+ * under the names when it and the outcome line fit over the shelf; else there is
+ * none (as a short board's row of five has none). */
+static void row_fit(const CnLayIn *in, const CnLay *L, double W, double H, double d0, double myR0, double x0, double step,
+                    double *R_out, double *cy_out, Reach *ext)
 {
     const int n = in->seats, me = in->me;
-    const double step = dmin(CN_LAY_BADGE + CN_LAY_MARGIN, (W - 2 * CN_LAY_MARGIN) / n), x0 = (W - n * step) / 2 + step / 2;
     const double below = CN_LAY_NAME_H - CN_LAY_NAME_UP + 14;   /* a name's box under its mouth */
-    double R = dmin(myR0, step / 2 - 4), cy = R + 2, sd = d0, sring = ring_of(d0);
+    double R = dmin(myR0, step / 2 - 4), cy = R + 2;
+    Reach r;
     for (;; R -= 1) {
-        sd = d0 * R / myR0; sring = ring_of(sd);
+        const double sd = d0 * R / myR0, sring = ring_of(sd);
         int ok = 0;
-        for (cy = R + 2; cy + R + below <= H && !ok; cy += 1) {
-            Reach r = reach_none();
+        for (cy = R + 2; cy + R + below <= H; cy += 1) {
+            r = reach_none();
             for (int v = 0; v < n; v++) {
                 const int i = (me + v) % n, out = in->out_mask >> i & 1;
                 CnObj o;
                 cn_geom_cup_obj(&o, (float)R, 0, (uint32_t)(i * 7), (float)(x0 + v * step), (float)cy, out, (float)(W / 2));
                 lift_reach(L, &o, i, in->dice[i], sring, sd, &r);
             }
-            ok = reach_inside(&r, L->w);
+            if ((ok = reach_inside(&r, L->w))) break;
         }
-        if (ok) { cy -= 1; break; }
-        if (R - 1 < CN_LAY_ROW_MIN_R) { cy = R + 2; break; }
+        if (ok || R - 1 < CN_LAY_ROW_MIN_R) break;
     }
+    if (cy + R + below > H) cy = R + 2;
+    *R_out = R; *cy_out = cy; *ext = r;
+}
+
+static void one_row(const CnLayIn *in, CnLay *L, double W, double H, double d0, double myR0)
+{
+    const int n = in->seats, me = in->me;
+    const double step = dmin(CN_LAY_BADGE + CN_LAY_MARGIN, (W - 2 * CN_LAY_MARGIN) / n), below = CN_LAY_NAME_H - CN_LAY_NAME_UP + 14;
+    const double right = CN_LAY_SIDE + W - CN_LAY_MARGIN, lowest = L->shelf[1] - 6 - CN_LAY_OUTCOME_H;
+    double R, cy, w = 0;
+    Reach ext;
+    /* from the left, the plate beside: right of every lifted cup and every name's letters */
+    double x0 = CN_LAY_MARGIN + step / 2;
+    row_fit(in, L, W, H, d0, myR0, x0, step, &R, &cy, &ext);
+    for (int v = 0; v < n; v++) {
+        const int i = (me + v) % n;
+        L->name_x[i] = (float)(x0 + v * step); L->name_y[i] = (float)(cy + R + 14);
+        const Reach nb = name_box(L, i, CN_LAY_NAME_TEXT_W, CN_LAY_NAME_H);
+        ext.x1 = dmax(ext.x1, nb.x1);
+    }
+    w = dmin(CN_LAY_PLATE_REVEAL_W, right - (ext.x1 + 2));
+    const int beside = w >= CN_LAY_PLATE_MIN;
+    if (!beside) { x0 = (W - n * step) / 2 + step / 2; row_fit(in, L, W, H, d0, myR0, x0, step, &R, &cy, &ext); }
+    const double sd = d0 * R / myR0, sring = ring_of(sd);
     for (int v = 0; v < n; v++) {
         const int i = (me + v) % n;
         L->cup_x[i] = (float)(x0 + v * step); L->cup_y[i] = (float)cy;
@@ -466,9 +493,16 @@ static void one_row(const CnLayIn *in, CnLay *L, double W, double H, double d0, 
     L->ring_cy = (float)cy; L->ring_rx = 0; L->ring_ry = 0;
     L->pad = (float)dmax(40, cn_m_ceil(-(L->cam.origin_y - L->board_y + cn_cam_from_screen(&L->cam, 0)) + 8));
     L->pad_x = 40;
-    /* the plate under the names, when it and the outcome line both fit over the shelf */
-    const double top = L->board_y + cy + R + below + 4, w = dmin(CN_LAY_PLATE_REVEAL_W, W);
-    if (top + CN_LAY_PLATE_H <= L->shelf[1] - 6 - CN_LAY_OUTCOME_H) {
+    if (beside) {
+        /* level with the row's mouths, never over the outcome line */
+        const double y = dmax(CN_LAY_EDGE, dmin(L->board_y + cy - CN_LAY_PLATE_H / 2, lowest - CN_LAY_PLATE_H));
+        L->has_plate = 1;
+        L->plate[0] = (float)(right - w); L->plate[1] = (float)y; L->plate[2] = (float)w; L->plate[3] = CN_LAY_PLATE_H;
+        return;
+    }
+    const double top = L->board_y + cy + R + below + 4;
+    w = dmin(CN_LAY_PLATE_REVEAL_W, W);
+    if (top + CN_LAY_PLATE_H <= lowest) {
         L->has_plate = 1;
         L->plate[0] = (float)(L->w / 2 - w / 2); L->plate[1] = (float)top; L->plate[2] = (float)w; L->plate[3] = CN_LAY_PLATE_H;
     }
