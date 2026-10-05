@@ -11,7 +11,6 @@
 // tests-only CN_API_ALL view, and from them this file works out which dice
 // count, who loses and what the outcome line says. The model must agree.
 
-import CChuiniu
 import XCTest
 @testable import ChuiniuKit
 
@@ -36,7 +35,7 @@ final class BridgeKernelTests: XCTestCase {
 
     /// Every seat's dice this round, sorted, as the tests-only view has them.
     private func allDice(seats: Int) throws -> [[Int]] {
-        let v = try readCnView(XCTUnwrap(cn_api_view(CN_API_ALL)))
+        let v = try XCTUnwrap(BridgeKernel.everyonesView())
         return (0..<seats).map { s in v.all[(s * CN_START_DICE)..<((s + 1) * CN_START_DICE)].filter { $0 != 0 } }
     }
 
@@ -236,5 +235,73 @@ final class BridgeKernelTests: XCTestCase {
         stage.purge()
     }
 
+    /// THE BUBBLE IS THE STAGE'S, AND LEAVES NO ARENA. Ann's raise is staged
+    /// over a table on show: a begin takes no arena, a frame does; the bubble
+    /// picture is the stage's one frame (asked once, 300 by 195 points at the
+    /// scale the stage drew), the arena is gone after it, and the table on
+    /// show is put back, its next frame the same picture as before. A lobby's
+    /// bubble never touches the stage.
+    func testTheBubbleIsTheStagesFreesTheArenaAndPutsTheTableBack() throws {
+        var ann = phone("Ann")
+        XCTAssertTrue(ann.newGame(dm: true, seed: Self.seed))
+        let lobby = try XCTUnwrap(ann.stagedURL())
+        let stage = SpyStage(KernelSeam.stage())
+        stage.purge()
+        XCTAssertNotNil(BubbleSnapshot.render(table: ann.table, title: "Chui Niu", scheme: .light, scale: 3, stage: stage))
+        XCTAssertEqual(stage.bubbles, 0, "a lobby has no dice: its bubble is the roster")
+        XCTAssertFalse(stage.holdsArena)
+
+        let ben = phone("Ben")
+        XCTAssertEqual(ben.adoptBubble(lobby), 0)
+        XCTAssertTrue(ben.join(name: "Ben"))
+        let start = try XCTUnwrap(ben.stagedURL())
+        ann = phone("Ann")
+        XCTAssertEqual(ann.adoptBubble(start), 0)
+
+        let drawer = CGSize(width: 390, height: 340)
+        _ = try XCTUnwrap(stage.begin(.table, drawer: drawer, scale: 3, roll: false))
+        _ = try XCTUnwrap(stage.frame(atMs: 0, peek: 0), "the stage is up")
+        stage.purge()
+        let hud = try XCTUnwrap(stage.begin(.table, drawer: drawer, scale: 3, roll: false))
+        XCTAssertFalse(stage.holdsArena, "a begin takes no arena")
+        let before = try XCTUnwrap(stage.frame(atMs: hud.totalMs, peek: 0.5))
+        XCTAssertTrue(stage.holdsArena, "a frame does")
+
+        XCTAssertTrue(ann.raise(quantity: 2, face: 4))
+        let m = ann.table
+        XCTAssertEqual(m.stagedBid, Bid(quantity: 2, face: 4))
+        let image = try XCTUnwrap(BubbleSnapshot.render(table: m, title: "Chui Niu", scheme: .light, scale: 3, stage: stage))
+        XCTAssertEqual(stage.bubbles, 1, "the stage drew the picture, once")
+        XCTAssertEqual(image.size, BubbleSnapshot.size)
+        XCTAssertEqual(image.scale, 2, "made at the scale the stage drew at (3 asked, 2 at most)")
+        XCTAssertFalse(stage.holdsArena, "no arena after the bubble")
+        XCTAssertEqual(stage.drawer, drawer, "the table on show is still the one begun")
+        let after = try XCTUnwrap(stage.frame(atMs: hud.totalMs, peek: 0.5))
+        XCTAssertEqual(Self.bytes(after.image), Self.bytes(before.image), "the table on show draws its own picture again")
+
+        let one = try XCTUnwrap(stage.bubble(scale: 1), "any scale the extension gives")
+        XCTAssertEqual([one.frame.shot.w, one.frame.shot.h], [300, 195])
+        XCTAssertEqual(one.hud.seats, 2)
+        XCTAssertFalse(stage.holdsArena)
+        stage.purge()
+    }
+
     private static func bytes(_ image: CGImage) -> Data { (image.dataProvider?.data as Data?) ?? Data() }
+}
+
+/// The bridge's stage, counting the bubbles asked of it.
+@MainActor
+private final class SpyStage: TableStage {
+    private let real: TableStage
+    private(set) var bubbles = 0
+    init(_ real: TableStage) { self.real = real }
+    func begin(_ screen: StageScreen, drawer: CGSize, scale: CGFloat, roll: Bool) -> CnStageHudSnap? {
+        real.begin(screen, drawer: drawer, scale: scale, roll: roll)
+    }
+    func frame(atMs ms: Int, peek: Double) -> StageFrame? { real.frame(atMs: ms, peek: peek) }
+    func done(atMs ms: Int) -> Bool { real.done(atMs: ms) }
+    func purge() { real.purge() }
+    func bubble(scale: CGFloat) -> BubbleFrame? { bubbles += 1; return real.bubble(scale: scale) }
+    var holdsArena: Bool { real.holdsArena }
+    var drawer: CGSize? { real.drawer }
 }

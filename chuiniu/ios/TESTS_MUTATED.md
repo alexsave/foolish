@@ -60,6 +60,33 @@ The compact drawer's boards (358 x 140, 358 x 150, 398 x 160) were added after t
 | M18 | testSeatsNeverOverlapEachOtherOrThePlate | the short band is 120pt, as tall as the expanded one | "seats 0 and 1 do not overlap", "seat 0 clears the bid plate" (358 x 140), 291 in all |
 | M19 | testSeatsNeverOverlapEachOtherOrThePlate | the plate is drawn at any width beside the row | "a drawn plate is wide enough to read" (22 at five seats); survived until that assertion was added |
 
+## The bubble and the arena (package E2, 2026-10-05)
+
+`testTheBubbleIsTheStagesFreesTheArenaAndPutsTheTableBack`, on a private iPhone 17e (iOS 27.0, `C6058B4C`), `-only-testing:ChuiniuKitTests/BridgeKernelTests` (5 tests executed every run, none a compile error).
+Each mutant was one edit by hand, run, then edited back; `git diff` showed the source unchanged afterwards.
+
+| # | Mutation | Assertion that went red |
+|---|---|---|
+| E1 | `BridgeStage.bubble` does not begin the table on show again | `:280` "the table on show draws its own picture again" (936000 bytes against 2312640) |
+| E2 | `BridgeStage.bubble` does not purge | `:277` "no arena after the bubble", `:285` |
+| E3 | `BridgeStage.begin` takes an arena (`ready(arena: true)`) | `:266` "a begin takes no arena", then `:277`, `:285` |
+| E4 | `BubbleSnapshot.render` asks the stage only when the game is over | `:274` "the stage drew the picture, once" (0 against 1), `:276` the scale (3 against 2), `:277` |
+
+## lint_architecture.sh (package E2, 2026-10-05)
+
+Each mutant was one edit by hand to a product file or to the lint, the lint run, the edit taken back, and the lint clean again.
+
+| # | Mutation | What the lint said |
+|---|---|---|
+| L1 | `MessagesViewController.swift` gains `d.withUnsafeBytes { $0.load(fromByteOffset: 2, as: UInt16.self) }` | `ChuiniuMessages/MessagesViewController.swift:39: withUnsafeBytes` and `: load(fromByteOffset` |
+| L2 | `KernelSeam.swift` imports `CChuiniu` | `ChuiniuKit/Kernel/KernelSeam.swift:16: import CChuiniu (only BridgeKernel.swift may)` |
+| L3 | `KernelSeam.swift` declares `struct MutantView { var bidQ: Int; let bidF: Int }` | `ChuiniuKit/Kernel/KernelSeam.swift:18: struct MutantView declares bidQ, bidF` |
+| L4 | `BridgeKernel.swift` spells a bid `b.quantity << 8 \| b.face` | first SURVIVED: `grep -q` closed the pipe early and `pipefail` read the SIGPIPE as "this file does not reach the kernel". The detector now reads a here-string; then `ChuiniuKit/Kernel/BridgeKernel.swift:238: shift << 8 on a file that reaches the kernel` |
+| L5 | `ALLOWED` gains `ChuiniuKit/Kernel/BridgeKernel.swift\|bytes` (with L4 in place) | the shift was let through and `ALLOWED has 1 entries; it only shrinks, and it is empty: fix the code` |
+| L6 | the detector loses `withUnsafeBytes` from its tokens | `detector self-test: four byte reads (found 3, want 4)` |
+
+Before the lint went in it found three hand byte reads, all removed: `BridgeKernel.swift` handed the seat records and the participant id to C through `withUnsafeBytes` and `bindMemory` (now a `[UInt8]` argument), `MessagesViewController.swift` read the participant UUID with `withUnsafeBytes(of:)` (now its sixteen bytes spelled out), and `BridgeKernelTests.swift` imported `CChuiniu` for the tests-only view (now `BridgeKernel.everyonesView()`, Debug only).
+
 ## Not tested
 
 The conversation (`ChuiniuMessages/MessagesViewController.swift`) has no test target, as pickemup's has none.

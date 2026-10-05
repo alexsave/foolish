@@ -78,11 +78,9 @@ public final class BridgeKernel: Kernel {
     private func loadPerson() {
         let p = person
         guard loadedFor != p else { return }
-        let rec = store.data(forKey: key("chuiniu.seats.v1")) ?? Data()
-        rec.withUnsafeBytes { raw in
-            let b = raw.bindMemory(to: UInt8.self)
-            cn_api_seats_load(b.baseAddress, Int32(b.count))
-        }
+        // handed over as a Swift array: the bytes are the kernel's to read
+        let rec = [UInt8](store.data(forKey: key("chuiniu.seats.v1")) ?? Data())
+        cn_api_seats_load(rec, Int32(rec.count))
         loadedFor = p
         var n = store.string(forKey: key("chuiniu.nickname")) ?? ""
 #if DEBUG
@@ -105,14 +103,14 @@ public final class BridgeKernel: Kernel {
         b.withUnsafeBufferPointer { cn_api_nickname($0.baseAddress, Int32(b.count)) }
     }
 
+    /// The participant bytes last handed over (devFill puts them back).
+    private var meBytes: Data?
+
     public func me(_ participant: Data) {
+        meBytes = participant
         loadPerson()
-        var id = participant
-        if !person.isEmpty { id = Data("dev.seat:\(person)".utf8) }
-        id.withUnsafeBytes { raw in
-            let b = raw.bindMemory(to: UInt8.self)
-            cn_api_me(b.baseAddress, Int32(b.count))
-        }
+        let id = person.isEmpty ? [UInt8](participant) : Array("dev.seat:\(person)".utf8)
+        cn_api_me(id, Int32(id.count))
     }
 
     public func nickname(_ name: String) {
@@ -164,6 +162,42 @@ public final class BridgeKernel: Kernel {
     }
 
     public func errorText(_ code: Int) -> String { Self.line(CN_API_W_ERROR, code) }
+
+#if DEBUG
+    /// THE RIG'S FULL TABLE (ChuiniuDev.takeFill): a new group lobby with this
+    /// device in seat 0, joined by `seats - 1` made-up people exactly as their
+    /// phones would join (each its own identity, nickname and records, in a
+    /// defaults suite of its own, adopting the newest link, joining, sending),
+    /// then started by this device. Every step is a kernel call; the resident
+    /// ends as the start, staged. Debug only.
+    public func devFill(seats: Int) -> Bool {
+        let names = ["Bo", "Cy", "Di", "Ed", "Fay"]
+        guard (2...6).contains(seats), let mine = meBytes, newGame(dm: false), var link = stagedURL() else { return false }
+        for k in 1..<seats {
+            let suite = "chuiniu.dev.fill.\(k)"
+            guard let d = UserDefaults(suiteName: suite) else { return false }
+            d.removePersistentDomain(forName: suite)
+            let p = BridgeKernel(store: d, devPerson: false)
+            p.me(Data("dev.fill:\(k)".utf8))
+            p.sender(nil, isDM: false, iSent: false)
+            guard p.adoptBubble(link) == 0, p.join(name: names[k - 1]), let u = p.stagedURL() else { return false }
+            p.sent(u)
+            link = u
+        }
+        // this device again: its own records, nickname and identity
+        loadedFor = nil
+        loadPerson()
+        me(mine)
+        sender(nil, isDM: false, iSent: false)
+        guard adoptBubble(link) == 0 else { return false }
+        return table.phase != .lobby || start()
+    }
+
+    /// TESTS ONLY: the kernel's tests-only CN_API_ALL view (every seat's dice),
+    /// so a test reaches it through the bridge and never imports CChuiniu
+    /// (scripts/lint_architecture.sh). Not in a Release build.
+    static func everyonesView() -> CnViewSnap? { snap(cn_api_view(CN_API_ALL), readCnView) }
+#endif
 
     // MARK: the model
 
@@ -374,6 +408,12 @@ public final class BridgeKernel: Kernel {
 /// texture pack is ChuiniuKit's cn_tex.pack, copied once into memory that
 /// outlives the stage. Every struct is read through the generated readers,
 /// and a stale pair (BridgeKernel.layoutMatches) reads nothing.
+///
+/// THE ARENA IS TAKEN BY A FRAME. A begin only bakes the layout and the
+/// throws into the bridge's handle, so after a purge it takes no memory; the
+/// very first begin of a process is the exception, because cn_api_stage_init
+/// opens the pack and takes the arena in one call (a C request is out to
+/// split them).
 @MainActor
 public final class BridgeStage: TableStage {
     public static let shared = BridgeStage()
@@ -382,6 +422,8 @@ public final class BridgeStage: TableStage {
     private var pack: UnsafeMutablePointer<UInt8>?
     private var packCount = 0
     private var inited = false
+    /// The table or reveal on show, to begin again after a bubble.
+    private var onShow: (screen: StageScreen, drawer: CGSize, scale: CGFloat, roll: Bool)?
 
     private init() {}
 
@@ -390,8 +432,10 @@ public final class BridgeStage: TableStage {
         return try? reader(p)
     }
 
-    /// The arena and the pack, the first time and after a purge.
-    private func ready() -> Bool {
+    /// The pack (once a process: the stage keeps pointing into it) and the
+    /// stage's init; with `arena`, an arena too, the first time and after a
+    /// purge.
+    private func ready(arena need: Bool) -> Bool {
         guard BridgeKernel.layoutMatches else { return false }
         if pack == nil {
             guard let url = Bundle(for: BridgeStage.self).url(forResource: "cn_tex", withExtension: "pack"),
@@ -400,7 +444,7 @@ public final class BridgeStage: TableStage {
             data.copyBytes(to: p, count: data.count)
             pack = p; packCount = data.count
         }
-        if arena == nil {
+        if arena == nil && (need || !inited) {
             let a = UnsafeMutableRawPointer.allocate(byteCount: CN_STAGE_ARENA, alignment: 16)
             let rc = inited ? cn_api_stage_attach(a, CN_STAGE_ARENA) : cn_api_stage_init(a, CN_STAGE_ARENA, pack, packCount)
             guard rc == 0 else { a.deallocate(); return false }
@@ -409,13 +453,32 @@ public final class BridgeStage: TableStage {
         return true
     }
 
+    public var holdsArena: Bool { arena != nil }
+    public var drawer: CGSize? { onShow?.drawer }
+
     public func begin(_ screen: StageScreen, drawer: CGSize, scale: CGFloat, roll: Bool) -> CnStageHudSnap? {
-        guard ready() else { return nil }
+        guard ready(arena: false) else { return nil }
+        if screen != .bubble { onShow = (screen, drawer, scale, roll) }
         return Self.snap(cn_api_stage_begin(Int32(screen.rawValue), Float(drawer.width), Float(drawer.height), Float(scale), roll ? 1 : 0), readCnStageHud)
     }
 
+    public func bubble(scale: CGFloat) -> BubbleFrame? {
+        let back = onShow
+        defer {
+            // ONE ARENA, AND NONE AFTER THE BUBBLE: the picture is copied out,
+            // so the arena goes; the screen on show is begun again as it was
+            // (a begin takes no arena), and its next frame takes one
+            purge()
+            if let b = back { _ = begin(b.screen, drawer: b.drawer, scale: b.scale, roll: b.roll) }
+        }
+        let size = CGSize(width: CN_STAGE_BUBBLE_W, height: CN_STAGE_BUBBLE_H)
+        guard let hud = begin(.bubble, drawer: size, scale: scale, roll: false),
+              let frame = frame(atMs: 0, peek: 0) else { return nil }
+        return BubbleFrame(hud: hud, frame: frame)
+    }
+
     public func frame(atMs ms: Int, peek: Double) -> StageFrame? {
-        guard ready(), cn_api_stage_prepare(UInt32(max(ms, 0)), Float(peek)) == 1 else { return nil }
+        guard ready(arena: true), cn_api_stage_prepare(UInt32(max(ms, 0)), Float(peek)) == 1 else { return nil }
         let bands = CN_STAGE_BANDS
         for pass in 0..<CN_STAGE_PASSES {
             DispatchQueue.concurrentPerform(iterations: bands) { i in
