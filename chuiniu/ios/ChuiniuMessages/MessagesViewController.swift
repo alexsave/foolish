@@ -248,8 +248,9 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// Who this device is: its participant id, and who sent the tapped
     /// bubble.
     private func identify(_ conversation: MSConversation) {
-        let id = withUnsafeBytes(of: conversation.localParticipantIdentifier.uuid) { Data($0) }
-        host.kernel.me(id)
+        // the participant's sixteen bytes, spelled out (no raw memory read)
+        let u = conversation.localParticipantIdentifier.uuid
+        host.kernel.me(Data([u.0, u.1, u.2, u.3, u.4, u.5, u.6, u.7, u.8, u.9, u.10, u.11, u.12, u.13, u.14, u.15]))
         if let sel = conversation.selectedMessage, let url = sel.url {
             host.kernel.sender(url, isDM: conversation.remoteParticipantIdentifiers.count == 1,
                                iSent: sel.senderParticipantIdentifier == conversation.localParticipantIdentifier)

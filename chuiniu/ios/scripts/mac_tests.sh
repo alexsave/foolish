@@ -13,6 +13,9 @@
 #   1. rebuild the kernel's xcframework AND the generated readers and string
 #      tables beside it (`make -C chuiniu/c ios-lib`), so the tests run
 #      against the kernel in this tree and readers of its layout;
+#   1b. run scripts/lint_architecture.sh, which reads the readers just made
+#      (no Swift imports the kernel outside BridgeKernel.swift or reads its
+#      bytes by hand);
 #   2. regenerate Chuiniu.xcodeproj from project.yml (a git-ignored build
 #      artifact, like uttt's);
 #   3. put every tracked entitlements file back, BYTES AND MTIME (`cp -p`),
@@ -85,6 +88,11 @@ else
   [ -d chuiniu/ios/vendor/Chuiniu.xcframework ] && [ -f chuiniu/ios/Generated/ChuiniuKernel.swift ] || {
     echo "error: --no-lib but chuiniu/ios/vendor or chuiniu/ios/Generated is missing" >&2; exit 1; }
 fi
+
+# ---- 1b. no Swift knows the kernel's shape or a kernel byte ------------------
+# After the readers exist: the lint reads the kernel's field names from them.
+say "architecture lint (scripts/lint_architecture.sh)"
+chuiniu/ios/scripts/lint_architecture.sh
 
 # ---- 2. the project, and 3. the entitlements it may eat --------------------
 ENT_FILES=$(git -C "$ROOT" ls-files -- 'chuiniu/ios/*.entitlements')

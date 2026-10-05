@@ -11,7 +11,6 @@
 // tests-only CN_API_ALL view, and from them this file works out which dice
 // count, who loses and what the outcome line says. The model must agree.
 
-import CChuiniu
 import XCTest
 @testable import ChuiniuKit
 
@@ -36,7 +35,7 @@ final class BridgeKernelTests: XCTestCase {
 
     /// Every seat's dice this round, sorted, as the tests-only view has them.
     private func allDice(seats: Int) throws -> [[Int]] {
-        let v = try readCnView(XCTUnwrap(cn_api_view(CN_API_ALL)))
+        let v = try XCTUnwrap(BridgeKernel.everyonesView())
         return (0..<seats).map { s in v.all[(s * CN_START_DICE)..<((s + 1) * CN_START_DICE)].filter { $0 != 0 } }
     }
 

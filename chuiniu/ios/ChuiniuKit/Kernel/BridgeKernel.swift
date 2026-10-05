@@ -78,11 +78,9 @@ public final class BridgeKernel: Kernel {
     private func loadPerson() {
         let p = person
         guard loadedFor != p else { return }
-        let rec = store.data(forKey: key("chuiniu.seats.v1")) ?? Data()
-        rec.withUnsafeBytes { raw in
-            let b = raw.bindMemory(to: UInt8.self)
-            cn_api_seats_load(b.baseAddress, Int32(b.count))
-        }
+        // handed over as a Swift array: the bytes are the kernel's to read
+        let rec = [UInt8](store.data(forKey: key("chuiniu.seats.v1")) ?? Data())
+        cn_api_seats_load(rec, Int32(rec.count))
         loadedFor = p
         var n = store.string(forKey: key("chuiniu.nickname")) ?? ""
 #if DEBUG
@@ -107,12 +105,8 @@ public final class BridgeKernel: Kernel {
 
     public func me(_ participant: Data) {
         loadPerson()
-        var id = participant
-        if !person.isEmpty { id = Data("dev.seat:\(person)".utf8) }
-        id.withUnsafeBytes { raw in
-            let b = raw.bindMemory(to: UInt8.self)
-            cn_api_me(b.baseAddress, Int32(b.count))
-        }
+        let id = person.isEmpty ? [UInt8](participant) : Array("dev.seat:\(person)".utf8)
+        cn_api_me(id, Int32(id.count))
     }
 
     public func nickname(_ name: String) {
@@ -164,6 +158,13 @@ public final class BridgeKernel: Kernel {
     }
 
     public func errorText(_ code: Int) -> String { Self.line(CN_API_W_ERROR, code) }
+
+#if DEBUG
+    /// TESTS ONLY: the kernel's tests-only CN_API_ALL view (every seat's dice),
+    /// so a test reaches it through the bridge and never imports CChuiniu
+    /// (scripts/lint_architecture.sh). Not in a Release build.
+    static func everyonesView() -> CnViewSnap? { snap(cn_api_view(CN_API_ALL), readCnView) }
+#endif
 
     // MARK: the model
 
