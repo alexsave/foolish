@@ -118,6 +118,22 @@ static float eyeX, eyeY, HC, DPR, PAD;
 static float LX, LY, LZ, UX, UY, UZ, VX, VY, VZ;        /* the light, and the map's axes across it */
 static float su0, sv0, sus, svs;                         /* the map's window: origin and scale      */
 static float SH_DARK;                                    /* how much of the light a shadow takes    */
+/* CONTACT. The map gives the light's shadow; it does not give the dark where a body meets the table, which
+ * is what sets a thing down on it. Each body is given to the frame as a disc (its footprint) at a height:
+ * the table under and just past the disc is darkened, most at the rim and fading out over .6 of the
+ * radius, less the higher the body is held; and a body's own fragments within a few points of the table
+ * are darkened too, the crease at a wall's foot. */
+#define MAX_OCC 256
+typedef struct { float x, y, r, s, out; } Occ;
+static Occ occ[MAX_OCC]; static int nocc;
+static float *ao; static int AW, AH;                      /* the contact dark, one a 4-by-4 block */
+/* a footprint: its centre and radius (points), its height above the table, and its strength when down */
+EXPORT(scene_occluder) void scene_occluder(float x, float y, float r, float lift, float strength)
+{
+    if (nocc >= MAX_OCC || r <= 0) return;
+    float s = strength * (1 - lift / r); if (s <= 0) return;
+    occ[nocc].x = x; occ[nocc].y = y; occ[nocc].r = r; occ[nocc].s = s; occ[nocc].out = r * .6f + lift * .5f; nocc++;
+}
 static uint32_t prof[4];                                 /* the last frame: fragments shaded, box pixels walked, map texels, map box pixels */
 EXPORT(scene_prof) uint32_t scene_prof(int i) { return i >= 0 && i < 4 ? prof[i] : 0; }
 static int skip;                                          /* for profiling only: passes to leave out (1 shadow map, 2 picture, 4 shading) */
@@ -136,8 +152,10 @@ EXPORT(scene_begin) int scene_begin(int W, int H, int pad, float dpr, float ex, 
     FW = (int)(W * dpr + .5f); FH = (int)((H + pad) * dpr + .5f);
     DPR = dpr; PAD = (float)pad; eyeX = ex; eyeY = ey; HC = hc; SR = shadow_res; SH_DARK = dark;
     uint32_t npx = (uint32_t)FW * FH;
-    fb = take(npx * 4); zb = take(npx * 4); smap = take((uint32_t)SR * SR * 4);
+    nocc = 0; AW = (FW + 3) / 4; AH = (FH + 3) / 4;
+    fb = take(npx * 4); zb = take(npx * 4); smap = take((uint32_t)SR * SR * 4); ao = take((uint32_t)AW * AH * 4);
     gt = take(npx * 3); gk = take(npx); gf = take(npx); gu = take(npx * 2); gv = take(npx * 2); gd = take(npx * 4);
+    if (!ao) return 0;
     verts = take((uint32_t)vcapacity * VF * 4); faces = take((uint32_t)fcapacity * FF * 4); order = take((uint32_t)fcapacity * 4);
     if (!fb || !zb || !smap || !gt || !gk || !gf || !gu || !gv || !gd || !verts || !faces) { fb = 0; return 0; }
     vcap = vcapacity; fcap = fcapacity;
@@ -233,12 +251,23 @@ static void keep_light(int idx, float x, float y, float z, float ndl)
     float g = 1 - ndl, texel = 1 / (sus < svs ? sus : svs), bias = 1.6f + 2.5f * texel * g * (2 + 4 * g);   /* g (2 + 4 g): near the tangent, without the divide */
     gu[idx] = (uint16_t)u; gv[idx] = (uint16_t)v; gd[idx] = -(x * LX + y * LY + z * LZ) - bias;
 }
+/* the contact dark at a pixel, read between the blocks' centres */
+static float ao_at(int x, int y)
+{
+    float fx = (x - 2) * .25f, fy = (y - 2) * .25f; if (fx < 0) fx = 0; if (fy < 0) fy = 0;
+    int ix = (int)fx, iy = (int)fy; float ux = fx - ix, uy = fy - iy;
+    if (ix >= AW - 1) { ix = AW - 1; ux = 0; }
+    if (iy >= AH - 1) { iy = AH - 1; uy = 0; }
+    const float *m = &ao[iy * AW + ix]; int dx = ux > 0 ? 1 : 0, dy = uy > 0 ? AW : 0;
+    return (m[0] * (1 - ux) + m[dx] * ux) * (1 - uy) + (m[dy] * (1 - ux) + m[dy + dx] * ux) * uy;
+}
 /* how much of the light a kept pixel gets: 1 lit, 0 in shadow; the four map texels round it, weighted */
 static float lit_of(int idx)
 {
-    float u = gu[idx] * (1.f / 64), v = gv[idx] * (1.f / 64), d = gd[idx];
-    int iu = (int)u, iv = (int)v; float fu = u - iu, fv = v - iv;
-    int i1 = iu + 1 < SR ? iu + 1 : iu, j1 = iv + 1 < SR ? iv + 1 : iv;
+    /* the four texels round the point, two apart, so the edge softens over two texels (a lamp's penumbra, roughly) */
+    float u = gu[idx] * (1.f / 128), v = gv[idx] * (1.f / 128), d = gd[idx];
+    int iu = (int)u, iv = (int)v; float fu = u - iu, fv = v - iv; iu *= 2; iv *= 2;
+    int i1 = iu + 2 < SR ? iu + 2 : iu, j1 = iv + 2 < SR ? iv + 2 : iv;
     float l00 = d <= smap[iv * SR + iu], l10 = d <= smap[iv * SR + i1], l01 = d <= smap[j1 * SR + iu], l11 = d <= smap[j1 * SR + i1];
     return (l00 * (1 - fu) + l10 * fu) * (1 - fv) + (l01 * (1 - fu) + l11 * fu) * fv;
 }
@@ -292,7 +321,9 @@ static void tri(const uint8_t *td, const int8_t *bn, int tw, int th, PV a, PV b,
             /* the normal's length is near 1 (unit normals, a small bend): one Newton step from 1 for its inverse */
             float nn = nx * nx + ny * ny + nz * nz, nl = 1.5f - .5f * nn, lit = (nx * LX + ny * LY + nz * LZ) * nl;
             float k = .5f - .46f * lit; if (k < 0) k = 0; else if (k > .82f) k = .82f;
-            k = k * km + ka; if (k > 1) k = 1;
+            k = k * km + ka;
+            if (wz < 10) { float cr = (1 - wz * .1f); if (cr < 0) cr = 0; k += (1 - k) * .4f * cr * cr; }   /* the crease at the foot */
+            if (k > 1) k = 1;
             /* kept for pass 3: the texel, the tint, the shade, the place in the light */
             o[0] = (uint8_t)r; o[1] = (uint8_t)g; o[2] = (uint8_t)bl; o[3] = 255;
             gt[idx * 3] = (uint8_t)tr; gt[idx * 3 + 1] = (uint8_t)tg; gt[idx * 3 + 2] = (uint8_t)tb; gk[idx] = (uint8_t)(k * 255 + .5f);
@@ -384,21 +415,39 @@ EXPORT(scene_render) int scene_render(int nverts, int nfaces)
      * the table maps 1:1: its world point is the pixel's), and takes the shadow that falls there. */
     /* the open table first, in 4-by-4 blocks: one lookup each (its shadow is soft anyway) */
     if (skip & 4) return drawn;
+    /* the contact dark, a block at a time, over each footprint's reach */
+    memset(ao, 0, (uint32_t)AW * AH * 4);
+    for (int oi = 0; oi < nocc; oi++) {
+        const Occ *c = &occ[oi]; float reach = c->r + c->out;
+        int bx0 = (int)((c->x - reach) * DPR / 4), bx1 = (int)((c->x + reach) * DPR / 4) + 1, by0 = (int)((c->y - reach + PAD) * DPR / 4), by1 = (int)((c->y + reach + PAD) * DPR / 4) + 1;
+        if (bx0 < 0) bx0 = 0;
+        if (by0 < 0) by0 = 0;
+        if (bx1 >= AW) bx1 = AW - 1;
+        if (by1 >= AH) by1 = AH - 1;
+        for (int by = by0; by <= by1; by++) for (int bx = bx0; bx <= bx1; bx++) {
+            float px = (bx * 4 + 2) / DPR - c->x, py = (by * 4 + 2) / DPR - PAD - c->y, d = fsqrt(px * px + py * py) - c->r;
+            float t = d <= 0 ? 1 : d >= c->out ? 0 : 1 - d / c->out, a = c->s * t * t;
+            float *m = &ao[by * AW + bx]; *m = 1 - (1 - *m) * (1 - a);
+        }
+    }
     for (int by = 0; by < FH; by += 4) for (int bx = 0; bx < FW; bx += 4) {
         int i = by * FW + bx;
         if (gf[i] && gf[i + (bx + 3 < FW ? 3 : 0)] && gf[i + (by + 3 < FH ? 3 * FW : 0)]) continue;   /* a block some body covers is done below */
         keep_light(i, (bx + 1.5f) / DPR, (by + 1.5f) / DPR - PAD, 0, 1);
-        float sh = 1 - lit_of(i); uint8_t al = (uint8_t)(sh * SH_DARK * 255 + .5f);
+        float lit = 1 - (1 - lit_of(i)) * SH_DARK;
+        /* most blocks are under no footprint: one alpha for the block */
+        int ab = (by / 4) * AW + bx / 4, near = ao[ab] > 0 || (bx / 4 + 1 < AW && ao[ab + 1] > 0) || (by / 4 + 1 < AH && (ao[ab + AW] > 0 || (bx / 4 + 1 < AW && ao[ab + AW + 1] > 0))) || (bx >= 4 && ao[ab - 1] > 0) || (by >= 4 && ao[ab - AW] > 0);
+        uint8_t al = (uint8_t)((1 - lit) * 255 + .5f);
         for (int y = by; y < by + 4 && y < FH; y++) for (int x = bx; x < bx + 4 && x < FW; x++) {
             int j = y * FW + x; if (gf[j]) continue;
-            uint8_t *o = &fb[j * 4]; o[0] = 0; o[1] = 3; o[2] = 2; o[3] = al; gf[j] = 4;
+            uint8_t *o = &fb[j * 4]; o[0] = 0; o[1] = 3; o[2] = 2; o[3] = near ? (uint8_t)((1 - lit * (1 - ao_at(x, y))) * 255 + .5f) : al; gf[j] = 4;
         }
     }
     for (int i = 0, n = FW * FH; i < n; i++) {
         int f = gf[i]; if (f == 4) continue;
         uint8_t *o = &fb[i * 4];
         if (!f) { float x = (i % FW) / DPR, y = (i / FW) / DPR - PAD; keep_light(i, x, y, 0, 1); f = 2; }
-        if (f == 2) { float sh = 1 - lit_of(i); o[0] = 0; o[1] = 3; o[2] = 2; o[3] = (uint8_t)(sh * SH_DARK * 255 + .5f); continue; }
+        if (f == 2) { float lit = 1 - (1 - lit_of(i)) * SH_DARK; o[0] = 0; o[1] = 3; o[2] = 2; o[3] = (uint8_t)((1 - lit * (1 - ao_at(i % FW, i / FW))) * 255 + .5f); continue; }
         float k = gk[i] * (1.f / 255);
         if (f == 1) { float sh = 1 - lit_of(i); k += (1 - k) * SH_DARK * sh; }
         const uint8_t *t = &gt[i * 3];
