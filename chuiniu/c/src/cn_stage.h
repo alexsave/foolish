@@ -107,14 +107,16 @@ typedef struct {
     uint8_t  pad0[2];
     float    w, h;                      /* the drawer (300 by 195 for a bubble)               */
     float    board[4];                  /* x y w h, flat                                      */
-    float    canvas[4];                 /* where the picture goes, x y w h, flat              */
+    float    canvas[4];                 /* where the still picture goes, x y w h, flat (a frame
+                                           says its own: cn_stage_shot's canvas)             */
     float    plate[4];                  /* the bid plate, x y w h, never turned               */
     float    shelf[4];                  /* the picker's or the reveal's shelf, never turned    */
     float    my_band[4];                /* my band, flat                                      */
     float    cup_x[CN_STAGE_SEATS], cup_y[CN_STAGE_SEATS];     /* every cup's mouth, flat    */
     float    name_x[CN_STAGE_SEATS], name_y[CN_STAGE_SEATS];   /* every name's anchor, flat  */
     float    cup_r, my_r;               /* the far cups' mouth radius and mine                */
-    float    pad, pad_x, pad_below;     /* the canvas's room past the board                   */
+    float    pad, pad_x, pad_below;     /* the canvas's room past the board: pad is the most
+                                           any frame takes above it (the study's)            */
     float    hit[4];                    /* my cup on the glass: centre x y, radii x y (the peek's tap) */
     float    die_x[CN_STAGE_ALL_DICE], die_y[CN_STAGE_ALL_DICE];   /* each shown die at rest, glass,
                                            seat s at s*5 in faces[] order (CnView's shown /
@@ -135,6 +137,8 @@ typedef struct {
 typedef struct {
     uint16_t w, h;                      /* the picture, pixels                                */
     float    scale;                     /* pixels a point it was drawn at                     */
+    float    canvas[4];                 /* where it goes, x y w h, flat: its top is cut to the
+                                           highest point any body reaches in it (I20)         */
     uint32_t t_ms;
     uint8_t  ok;                        /* 0: nothing was drawn (no arena, no room, not begun) */
     uint8_t  rolling;                   /* a throw moved at t: the next frame differs          */
@@ -184,7 +188,8 @@ typedef struct {
     CnStageHud    hud;
     CnStageShot   shot;
     float         eye[3];               /* the renderer's eye, canvas points                  */
-    int           W, H, pad, below;     /* the canvas in points                               */
+    int           W, H, pad, below;     /* the canvas in points (pad: this frame's)            */
+    int           pad_max;              /* the study's pad, the most a frame takes            */
     float         pad_x;
     float         lift_angle[CN_STAGE_SEATS];  /* the reveal's full tip of each cup             */
     int8_t        obj_throw[CN_LAY_MAX_OBJS];  /* the throw an object rides, -1 none           */

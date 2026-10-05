@@ -32,7 +32,7 @@ HDR     := $(wildcard src/*.h) i18n/keys.h tests/cn_check.h \
            $(SHARED)/msg_seat_tag/msg_seat_tag.h $(SHARED)/msg_lobby_roster/msg_lobby_roster.h
 
 # One binary per test file; each takes an optional scale argument.
-TESTS   := cn_test cn_dice_test cn_plan_test cn_say_test cn_fuzz cn_msg_test cn_twophone_test cn_roll_test cn_scene_test cn_geom_test cn_cam_test cn_lay_test
+TESTS   := cn_test cn_dice_test cn_plan_test cn_say_test cn_fuzz cn_msg_test cn_twophone_test cn_roll_test cn_scene_test cn_geom_test cn_cam_test cn_lay_test cn_stage_test
 FUZZ_GAMES ?= 3000
 WIRE_GAMES ?= 40
 
@@ -106,6 +106,10 @@ run: $(addprefix build/,$(TESTS)) build/check_test build/text_util_test build/wi
 	./build/cn_twophone_test
 	./build/cn_roll_test
 	./build/cn_scene_test
+	./build/cn_geom_test
+	./build/cn_cam_test
+	./build/cn_lay_test
+	./build/cn_stage_test $(TEX_PACK)
 	./build/ios_smoke
 
 # THE RENDERER'S SPEED (not a test, not in `run`): a six-seat frame at 1x, 2x
@@ -155,6 +159,10 @@ asan: $(addprefix build/asan_,$(TESTS)) build/asan_check_test build/asan_text_ut
 	./build/asan_cn_twophone_test
 	./build/asan_cn_roll_test 60
 	./build/asan_cn_scene_test
+	./build/asan_cn_geom_test
+	./build/asan_cn_cam_test
+	./build/asan_cn_lay_test
+	./build/asan_cn_stage_test $(TEX_PACK)
 	./build/asan_ios_smoke
 
 # THE SAME FILES FOR wasm32, freestanding (-nostdlib, shared/c/wasm's libc):

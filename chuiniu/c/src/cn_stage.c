@@ -288,6 +288,50 @@ static void timeline(CnStage *st)
     h->total_ms = total;
 }
 
+/* THE CANVAS'S TOP (I20): the highest any body's picture reaches, as the eye
+ * sees it, and 8 points more, never more than the study's pad (the glass's top,
+ * untilted). Each body is bounded by a sphere round its centre (a cup's mouth
+ * and crown are within sqrt(R^2 + h^2) of its mouth's centre, and a cup tipped
+ * about its rim within one radius more; a die within .87 of its side of its
+ * centre; a cup standing untipped is its mouth's and its crown's far points
+ * exactly), and a sphere's picture reaches no higher than its top point pushed
+ * up by its nearest edge. The light falls from the upper left, so no shadow
+ * falls above the bodies that cast it. */
+static int reach_pad(const CnStage *st, const CnObj *o, int n)
+{
+    if (!st->pad_max) return 0;
+    const CnCam *c = &st->lay.cam;
+    double top = 0;
+    for (int i = 0; i < n; i++) {
+        double e, cz;
+        if (o[i].kind == CN_OBJ_CUP && !o[i].has_rot && o[i].tilt_angle == 0) {
+            /* a cup standing untipped: its mouth's far point on the table, its crown's far point at h */
+            const double rc = o[i].R * CN_CUP_RC, z = o[i].lift + o[i].h;
+            const double ym = o[i].y - o[i].R, yc = c->eye_y + (o[i].y - rc - c->eye_y) * c->eye_z / (c->eye_z - z);
+            if (ym < top) top = ym;
+            if (yc < top) top = yc;
+            continue;
+        }
+        if (o[i].kind == CN_OBJ_DIE) { e = o[i].d * .87; cz = o[i].lift; }
+        else {
+            e = cn_m_sqrt((double)o[i].R * o[i].R + (double)o[i].h * o[i].h) + (o[i].tilt_angle != 0 ? o[i].R : 0);
+            cz = o[i].lift + o[i].tilt_lift;
+        }
+        const double y = o[i].y - o[i].tilt_back - e, z = cz + e;
+        if (!(z < c->eye_z - 1)) return st->pad_max;
+        const double yp = c->eye_y + (y - c->eye_y) * c->eye_z / (c->eye_z - z);
+        if (yp < top) top = yp;
+    }
+    const int pad = (int)cn_m_ceil(-top + 8);
+    return pad < st->pad_max ? pad : st->pad_max;
+}
+
+static void canvas_of(const CnStage *st, int pad, float out[4])
+{
+    out[0] = st->hud.board[0] - st->pad_x; out[1] = st->hud.board[1] - (float)pad;
+    out[2] = (float)st->W; out[3] = (float)(st->H + pad);
+}
+
 const CnStageHud *cn_stage_begin(CnStage *st, const CnStageIn *in_)
 {
     st->begun = 0; st->nobj = 0; st->nthrow = 0;
@@ -308,7 +352,7 @@ const CnStageHud *cn_stage_begin(CnStage *st, const CnStageIn *in_)
         in->roll_at_ms = CN_STAGE_NO_ROLL;
         in->w = CN_STAGE_BUBBLE_W; in->h = CN_STAGE_BUBBLE_H;
         cn_cam_make(&L->cam, CN_STAGE_BUBBLE_W, CN_STAGE_BUBBLE_H, CN_STAGE_BUBBLE_W / 2, 150, 1);
-        st->W = CN_STAGE_BUBBLE_W; st->H = CN_STAGE_BUBBLE_H; st->pad = 0; st->below = 0; st->pad_x = 0;
+        st->W = CN_STAGE_BUBBLE_W; st->H = CN_STAGE_BUBBLE_H; st->pad = st->pad_max = 0; st->below = 0; st->pad_x = 0;
         h->w = in->w; h->h = in->h;
         h->board[2] = h->canvas[2] = CN_STAGE_BUBBLE_W; h->board[3] = h->canvas[3] = CN_STAGE_BUBBLE_H;
         /* the plate under the row, drawn by the host, and each name under its cup */
@@ -324,11 +368,9 @@ const CnStageHud *cn_stage_begin(CnStage *st, const CnStageIn *in_)
         li->w = in->w; li->h = in->h; li->peek = 0; li->seed = in->seed;
         if (!cn_lay_make(li, L)) return 0;
         st->W = (int)(L->board_w + 2 * L->pad_x + .5f); st->H = (int)(L->board_h + L->pad_below + .5f);
-        st->pad = (int)(L->pad + .5f); st->below = (int)(L->pad_below + .5f); st->pad_x = L->pad_x;
+        st->pad = st->pad_max = (int)(L->pad + .5f); st->below = (int)(L->pad_below + .5f); st->pad_x = L->pad_x;
         h->w = L->w; h->h = L->h;
         h->board[0] = L->board_x; h->board[1] = L->board_y; h->board[2] = L->board_w; h->board[3] = L->board_h;
-        h->canvas[0] = L->board_x - L->pad_x; h->canvas[1] = L->board_y - L->pad;
-        h->canvas[2] = L->board_w + 2 * L->pad_x; h->canvas[3] = L->board_h + L->pad + L->pad_below;
         h->short_board = L->short_board; h->has_plate = L->has_plate; h->has_shelf = L->has_shelf;
         memcpy(h->plate, L->plate, sizeof h->plate); memcpy(h->shelf, L->shelf, sizeof h->shelf);
         h->my_band[0] = L->board_x + L->my_band[0]; h->my_band[1] = L->board_y + L->my_band[1];
@@ -409,8 +451,10 @@ const CnStageHud *cn_stage_begin(CnStage *st, const CnStageIn *in_)
         h->hit[0] = (x0 + x1) / 2; h->hit[1] = (y0 + y1) / 2; h->hit[2] = (x1 - x0) / 2; h->hit[3] = (y1 - y0) / 2;
     }
     timeline(st);
-    h->ok = 1;
+    /* the still picture's place: the bodies at rest, the cups down */
     st->begun = 1;
+    { int n; const CnObj *o = cn_stage_objects(st, CN_STAGE_NO_ROLL - 1, 0, 0, &n); canvas_of(st, reach_pad(st, o, n), h->canvas); }
+    h->ok = 1;
     return h;
 }
 
@@ -463,6 +507,7 @@ int cn_stage_prepare(CnStage *st, uint32_t t_ms, float peek, float lift)
     int nv = 0, nf = 0;
     for (int i = 0; i < n; i++) { nv += st->mesh[st->obj_mesh[i]].ncorner; nf += st->mesh[st->obj_mesh[i]].ntri; }
     const int moving = rolling_at(st, t_ms);
+    st->pad = reach_pad(st, obj, n);
     /* the scale asked for, then each smaller one, until the frame fits */
     static const float steps[] = { CN_STAGE_SCALE_STILL, CN_STAGE_SCALE_ROLL, CN_STAGE_SCALE_MIN };
     const float want = moving ? st->hud.scale_roll : st->hud.scale_still;
@@ -493,6 +538,7 @@ int cn_stage_prepare(CnStage *st, uint32_t t_ms, float peek, float lift)
     st->shot.ok = 1;
     st->shot.w = (uint16_t)cn_scene_fb_w(); st->shot.h = (uint16_t)cn_scene_fb_h();
     st->shot.scale = used;
+    canvas_of(st, st->pad, st->shot.canvas);
     st->shot.rolling = (uint8_t)moving;
     st->shot.done = (uint8_t)cn_stage_done(st, t_ms);
     return 1;
