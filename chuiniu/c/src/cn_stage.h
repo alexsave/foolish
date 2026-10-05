@@ -50,6 +50,7 @@
 #include <stdint.h>
 #include "cn_lay.h"
 #include "cn_tex.h"
+#include "cn_scene.h"
 
 #define CN_STAGE_SEATS   CN_LAY_SEATS
 #define CN_STAGE_DICE    CN_LAY_DICE
@@ -233,7 +234,7 @@ typedef struct {
     CnStageName   name[CN_STAGE_SEATS];
     uint8_t       names_up;
     uint8_t       pad2[3];
-    int           name_mark;
+    CnSceneMark   name_mark;
     int           name_pad;             /* the still frame's pad, the lift up at a reveal: the names' reserve */
     uint8_t       name_px[CN_STAGE_SEATS][CN_STAGE_NAME_W_MAX * CN_STAGE_NAME_H_MAX * 4];
 } CnStage;

@@ -74,12 +74,15 @@ int8_t *cn_scene_tex_bump(int id);
 /* its half-size copies, now, once its pixels are written (else the first frame
  * that draws it makes them, inside that frame); 0 when none fit */
 int cn_scene_tex_mips(int id);
-/* TEXTURES THAT CHANGE (a name's): a mark is the texture count now; dropping to
- * it gives back every texture made since, and the frame (whose buffers may lie
- * where the next textures go: begin another). A texture made before the mark
- * whose half-size copies were made after it loses them, and remakes them. */
-int cn_scene_tex_mark(void);
-void cn_scene_tex_drop(int mark);
+/* TEXTURES THAT CHANGE (a name's): a mark is the textures now (their count and
+ * where they end); dropping to it gives back every texture made since, and the
+ * frame (whose buffers may lie where the next textures go: begin another). A
+ * texture made before the mark whose half-size copies were made after it loses
+ * them, and remakes them when next drawn. A mark from before cn_scene_init or
+ * cn_scene_reset, or one already passed by a deeper drop, does nothing. */
+typedef struct { int n; size_t end; } CnSceneMark;
+CnSceneMark cn_scene_tex_mark(void);
+void cn_scene_tex_drop(CnSceneMark mark);
 
 /* the bytes a frame of these numbers takes from the arena, and the bytes a frame
  * has (the arena less the textures and their copies) */

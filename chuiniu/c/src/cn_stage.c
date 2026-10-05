@@ -126,7 +126,8 @@ static void names_upload(CnStage *st)
     for (int s = 0; s < st->in.seats; s++) {
         CnStageName *n = &st->name[s];
         if (!n->w) continue;
-        const int m = cn_scene_tex_mark(), id = cn_scene_tex_new(n->w, n->h, 0);
+        const CnSceneMark m = cn_scene_tex_mark();
+        const int id = cn_scene_tex_new(n->w, n->h, 0);
         if (id < 0) continue;
         memcpy(cn_scene_tex_rgba(id), st->name_px[s], (size_t)n->w * n->h * 4);
         cn_scene_tex_mips(id);

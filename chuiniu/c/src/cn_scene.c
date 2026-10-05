@@ -65,7 +65,7 @@ static void *take_tex(size_t n) { n = rup16(n); if (!arena || n > tex_bottom - f
 #define MAX_LV 8
 typedef struct {
     uint8_t *rgba; int8_t *bump; int w, h; int nlv; uint8_t *lrgba[MAX_LV]; int8_t *lbump[MAX_LV]; int lw[MAX_LV], lh[MAX_LV];
-    size_t top, low;   /* the arena's texture end before it was made, and after its copies were (cn_scene_tex_drop) */
+    size_t low;        /* the arena's texture end after its copies were made (cn_scene_tex_drop) */
 } Tex;
 static Tex texs[MAX_TEX]; static int ntex = 0;
 static uint8_t *fb;                                      /* the frame's picture; 0 until a frame begins */
@@ -90,7 +90,7 @@ int cn_scene_tex_new(int w, int h, int has_bump)
     size_t top = tex_bottom;
     t->rgba = take_tex((size_t)w * h * 4); if (!t->rgba) return -1;
     t->bump = has_bump ? take_tex((size_t)w * h * 2) : 0; if (has_bump && !t->bump) { tex_bottom = top; return -1; }
-    t->w = w; t->h = h; t->nlv = 0; t->top = top; t->low = tex_bottom;
+    t->w = w; t->h = h; t->nlv = 0; t->low = tex_bottom;
     return ntex++;
 }
 /* the smaller copies, 2-by-2 means; a failure to find room leaves the chain as long as it got */
@@ -120,13 +120,12 @@ int cn_scene_tex_mips(int id)
     if (!texs[id].nlv) mips_of(&texs[id]);
     return texs[id].nlv > 1;
 }
-int cn_scene_tex_mark(void) { return ntex; }
-void cn_scene_tex_drop(int mark)
+CnSceneMark cn_scene_tex_mark(void) { CnSceneMark m = { ntex, tex_bottom }; return m; }
+void cn_scene_tex_drop(CnSceneMark m)
 {
-    if (mark < 0 || mark > ntex) return;
+    if (!arena || m.n < 0 || m.n > ntex || m.end < tex_bottom || m.end > arena_n) return;
     frame_top = 0; fb = 0; prepared = 0;   /* the frame's buffers may lie where the next textures go */
-    if (mark == ntex) return;
-    tex_bottom = texs[mark].top; ntex = mark;
+    tex_bottom = m.end; ntex = m.n;
     for (int i = 0; i < ntex; i++) if (texs[i].nlv && texs[i].low < tex_bottom) texs[i].nlv = 0;   /* copies made after the mark */
 }
 
@@ -647,7 +646,8 @@ static inline __attribute__((always_inline)) void frag4(const Light *Lp, const S
         /* a decal: the texel with its alpha (premultiplied, so the filter is right), and its place in the light
          * as the table's (its normal straight up): the shade lays it over the table's dark */
         f4 al = vflt((p00 >> 24) & 255) * g00 + vflt((p10 >> 24) & 255) * g10 + vflt((p01 >> 24) & 255) * g01 + vflt((p11 >> 24) & 255) * g11;
-        o->rgba = (vint(r) & 255) | ((vint(g) & 255) << 8) | ((vint(bl) & 255) << 16) | ((vint(al) & 255) << 24);
+        /* rounded (the four weights' sum is a hair under 1: an opaque texel truncated would come out 254) */
+        o->rgba = (vint(r + .5f) & 255) | ((vint(g + .5f) & 255) << 8) | ((vint(bl + .5f) & 255) << 16) | ((vint(al + .5f) & 255) << 24);
         o->gk = o->gc = (i4){ 0, 0, 0, 0 };
         o->gu = (i4){ 0, 0, 0, 0 }; o->gv = (i4){ 0, 0, 0, 0 }; o->gd = vf(0);
         o->keep = m;
