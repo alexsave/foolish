@@ -1701,8 +1701,22 @@ const SHAPE = (() => {
         const c = verts.length; verts.push([0, 0, z - dome]);
         for (let i = 0; i < segs; i++) { const j = (i + 1) % segs, f = { idx: [c, idx[i], idx[j]], uv: [[.5, .5], uv[i], uv[j]], tex }; if (flip) { f.idx.reverse(); f.uv.reverse(); } faces.push(f); }
       };
-      wall(R, rc, 0, h, texSide, false);
-      disc(rc, h, texCrown, false, 0);
+      // the crown's edge is rounded: a fillet of radius f between the wall and the top, with its own normals, so
+      // the light rolls off it on the lit side and it goes dark on the other, as a real cup's shoulder does
+      const f = R * .09, rcf = rc + (R - rc) * f / h, cr = rcf - f, cz = h - f;
+      wall(R, rcf, 0, cz, texSide, false);
+      {
+        const FR = 3, V1 = FR + 1, base = verts.length, nn = (a, ph) => [Math.cos(ph) * Math.cos(a), Math.cos(ph) * Math.sin(a), Math.sin(ph)];
+        for (let i = 0; i < segs; i++) { const a = i / segs * Math.PI * 2; for (let r = 0; r <= FR; r++) { const ph = r / FR * Math.PI / 2, rr = cr + f * Math.cos(ph); verts.push([rr * Math.cos(a), rr * Math.sin(a), cz + f * Math.sin(ph)]); } }
+        for (let i = 0; i < segs; i++) {
+          const j = (i + 1) % segs, u0 = i / segs, u1 = (i + 1) / segs, a0 = i / segs * Math.PI * 2, a1 = (i + 1) / segs * Math.PI * 2;
+          for (let r = 0; r < FR; r++) {
+            const p0 = r / FR * Math.PI / 2, p1 = (r + 1) / FR * Math.PI / 2, v0 = .05 - r / FR * .05, v1 = .05 - (r + 1) / FR * .05;
+            faces.push({ idx: [base + i * V1 + r, base + j * V1 + r, base + j * V1 + r + 1, base + i * V1 + r + 1], uv: [[u0, v0], [u1, v0], [u1, v1], [u0, v1]], nrm: [nn(a0, p0), nn(a1, p0), nn(a1, p1), nn(a0, p1)], tex: texSide });
+          }
+        }
+      }
+      disc(cr, h, texCrown, false, 0);
       if (inner) {
         const t = inner.t, hf = h - t;
         wall(R - t, rc - t, 0, hf, inner.side, true);
@@ -1851,20 +1865,19 @@ const SHAPE = (() => {
       const src = matCanvas['c-verdigris'], c = document.createElement('canvas'); c.width = 1024; c.height = 512;
       const x = TEX.hash(seed, 91, 977) * 256 | 0, y = TEX.hash(seed, 92, 977) * 256 | 0, g = c.getContext('2d');
       for (let i = -1; i < 5; i++) for (let j = -1; j < 3; j++) g.drawImage(src, i * 256 - x, j * 256 - y);
-      // the rim: a dark band at the mouth (v = 1), a lit line at the crown's edge (v = 0)
-      const gr = g.createLinearGradient(0, 0, 0, 512); gr.addColorStop(0, 'rgba(255,240,200,.14)'); gr.addColorStop(.06, 'rgba(0,0,0,0)'); gr.addColorStop(.9, 'rgba(0,0,0,0)'); gr.addColorStop(1, 'rgba(0,0,0,.6)');
+      // no light is baked in (round twenty-two: a baked lit line at the crown's edge read as a bright ring all round,
+      // whatever side the light was on; the renderer lights the rounded edge now); only a little grime toward the mouth
+      const gr = g.createLinearGradient(0, 0, 0, 512); gr.addColorStop(0, 'rgba(0,0,0,0)'); gr.addColorStop(.9, 'rgba(0,0,0,0)'); gr.addColorStop(1, 'rgba(0,0,0,.3)');
       g.fillStyle = gr; g.fillRect(0, 0, 1024, 512);
       c._bump = reliefOf(c, 1.6);
       return cache[k] = c;
     }
-    // the crown: the verdigris at its own offset, the one light's highlight, and the count stamped on it
+    // the crown: the verdigris at its own offset and the count stamped on it (no baked highlight or vignette: the light is the renderer's)
     function cupCrown(seed, count, out, numeral = 112) {
       const k = 'crown' + seed + ':' + count + (out ? 'o' : '') + ':' + numeral; if (cache[k]) return cache[k];
       const src = matCanvas['c-verdigris'], c = document.createElement('canvas'); c.width = 256; c.height = 256;
       const x = TEX.hash(seed, 93, 977) * 128 | 0, y = TEX.hash(seed, 94, 977) * 128 | 0, g = c.getContext('2d');
       for (let i = -1; i < 2; i++) for (let j = -1; j < 2; j++) g.drawImage(src, i * 256 - x, j * 256 - y);
-      let gr = g.createRadialGradient(92, 84, 8, 128, 128, 140); gr.addColorStop(0, 'rgba(255,255,255,.26)'); gr.addColorStop(.55, 'rgba(255,255,255,0)'); gr.addColorStop(1, 'rgba(0,0,0,.4)');
-      g.fillStyle = gr; g.fillRect(0, 0, 256, 256);
       if (out) {
         g.fillStyle = 'rgba(4,14,15,.6)'; g.fillRect(0, 0, 256, 256);
       } else if (count != null) {
