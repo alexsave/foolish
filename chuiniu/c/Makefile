@@ -332,15 +332,16 @@ FORCE:
 # ---- THE TEXTURE PACK (package C) ----------------------------------------------
 # The cups' and dice's textures are baked at BUILD time (a procedural texture made
 # at launch once took the iMessage extension down on a device): tools/cn_texgen.c
-# bakes the verdigris and bone tiles and the numerals 0-9 (IM Fell English, OFL,
-# tools/fonts/) into build/cn_tex.pack, and src/cn_tex.c derives every seat's and
+# bakes the verdigris and bone tiles and the numerals 0-9 (Libre Caslon Text's
+# lining figures, SIL OFL 1.1, tools/fonts/LibreCaslonText-wght.ttf with its licence
+# OFL-LibreCaslonText.txt; Fell's old-style 5 read as a long s, docs_pkgQ.md) into build/cn_tex.pack, and src/cn_tex.c derives every seat's and
 # die's texture from it at upload. Layout in src/cn_tex.h; notes in docs_pkgC.md.
 #   make -C chuiniu/c tex          build/cn_tex.pack
 #   make -C chuiniu/c tex-ios      ...and its copy in ../ios/ChuiniuKit/Resources/
 #   make -C chuiniu/c tex-test     the pack's and the textures' tests (in `run`; tex-asan in `asan`)
 #   make -C chuiniu/c tex-wasm     cn_tex.c for wasm32, freestanding (an object only)
 #   make -C chuiniu/c tex-compare REF=dir   MAD against the study's captures, and a contact sheet
-TEX_FONT := tools/fonts/IMFeENrm28P.ttf
+TEX_FONT := tools/fonts/LibreCaslonText-wght.ttf
 TEX_SRC  := src/cn_tex.c src/cn_tex.h
 TEX_PACK := build/cn_tex.pack
 TEX_IOS  := ../ios/ChuiniuKit/Resources/cn_tex.pack

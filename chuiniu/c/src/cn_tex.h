@@ -9,7 +9,7 @@
  * noise is baked by tools/cn_texgen.c (`make tex`) into build/cn_tex.pack and
  * the runtime only reads it: two source tiles (the verdigris, 256 square, and
  * the bone, 128 square) and the count numerals 0-9 as coverage masks at the
- * two sizes the crown stamps (112 and 184 texels, IM Fell English).
+ * two sizes the crown stamps (112 and 184 texels, Libre Caslon Text's lining figures).
  *
  * WHAT THE RUNTIME DOES. Every per-seat and per-die texture is DERIVED here
  * from the shared tiles when it is uploaded, never stored: a cup's side,
