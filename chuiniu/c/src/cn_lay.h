@@ -76,11 +76,15 @@
 #define CN_LAY_NAME_W     80.0    /* a far seat's name box, centred on its anchor */
 #define CN_LAY_NAME_H     30.0
 #define CN_LAY_NAME_UP    8.0     /* the box's top is this far above the anchor */
+#define CN_LAY_NAME_TEXT_W 44.0   /* the letters of a short name in the box (four small capitals at 12 to 14), */
+#define CN_LAY_NAME_TEXT_H 18.0   /* one line: what my standing cup must not cover on a short board           */
 #define CN_LAY_EDGE       4.0     /* no body nearer the drawer's edge than this, on the glass */
 #define CN_LAY_REACH_MIN  .8    /* the least reach a throw is held at: lower, the shaken cup's crown dips into the table */
 #define CN_LAY_ROW_MIN_R  12.0    /* the row's cups are never made smaller than this */
 #define CN_LAY_MY_D_MIN   10.0    /* nor my dice on a short board                   */
 #define CN_LAY_BRASS      .75   /* a die's brass ring at the reveal, of its side: past its corners (.71), inside half the spacing (.85) */
+#define CN_LAY_PLATE_REVEAL_W 240.0 /* the plate at the reveal: the tally ("There were twelve") is longer than a bid */
+#define CN_LAY_OUTCOME_H  48.0    /* the reveal's outcome line (two lines of the roman on a band) over the shelf */
 
 typedef struct {
     uint8_t  seats;                 /* 2..6                                        */
@@ -90,6 +94,7 @@ typedef struct {
     uint8_t  dice[CN_LAY_SEATS];    /* each seat's dice                            */
     uint8_t  my_faces[CN_LAY_DICE]; /* my dice, 1..6                               */
     uint8_t  rolling;               /* the roll's screen: its shelf, not the picker */
+    uint8_t  reveal;                /* the reveal's screen: the roll's shelf, every cup lifts (cn_stage) */
     float    w, h;                  /* the drawer, points                          */
     float    peek;                  /* the peek's tip, 0 shut .. 1 open, already eased */
     uint32_t seed;                  /* the throw's (cn_lay_throws)                 */
@@ -117,7 +122,8 @@ typedef struct {
     float    cup_x[CN_LAY_SEATS], cup_y[CN_LAY_SEATS];     /* every cup, mine too    */
     float    name_x[CN_LAY_SEATS], name_y[CN_LAY_SEATS];   /* every name's anchor    */
     uint8_t  name_how[CN_LAY_SEATS];                       /* CN_NAME_*              */
-    uint8_t  pad1[2];
+    uint8_t  throw_mask;            /* bit s: seat s's cup throws (cn_lay_throws)     */
+    uint8_t  one_row;               /* the reveal on a short board: every seat in one row */
     float    ring_cy, ring_rx, ring_ry;   /* the ring's centre y and radii (0 on a short board) */
     float    pad, pad_x, pad_below;       /* the canvas's room past the board        */
     float    peek_target;           /* my cup's full tip                            */
@@ -126,6 +132,7 @@ typedef struct {
     float    die_g[CN_LAY_SEATS];   /* each seat's die side on the glass, at its cup */
     float    brass_r[CN_LAY_SEATS]; /* the radius of a brass ring round one, on the glass */
     CnCam    cam;
+    double   seg_c[CN_CUP_SEGS], seg_s[CN_CUP_SEGS];   /* a cup's rim corners round the circle: the fits' table */
 } CnLay;
 
 /* Lay out the table. 0 for an input out of range (seats, me, a count over 5,
@@ -157,5 +164,13 @@ typedef struct {
     uint8_t  pad0[3];
 } CnLayThrow;
 int cn_lay_throws(const CnLayIn *in, const CnLay *L, int kind, CnLayThrow *out, int cap);
+
+/* THE REVEAL'S LIFT, FITTED. A standing cup (as it rests on this screen) tipped
+ * about the far edge of its mouth by `full` (cn_cam_peek_tilt's tip, the least
+ * that shows its dice) when it stays CN_LAY_EDGE inside the drawer and off the
+ * plate; else the largest tip under it that does. The layout makes room for the
+ * full tip (the ring and the reveal's row are fitted to the dice die_spot puts
+ * down); this is the stage's guarantee for dice a throw put elsewhere. */
+float cn_lay_lift_fit(const CnLay *L, const CnObj *cup, float full);
 
 #endif
