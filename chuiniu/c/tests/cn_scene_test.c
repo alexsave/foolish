@@ -122,63 +122,6 @@ static int differ(const uint8_t *a, const uint8_t *b, int npx)
     return n;
 }
 
-/* A NAME ON THE TABLE (CN_SCENE_F_DECAL): a decal 80 by 40 lying .3 up from (20, 20), its 64 by 32 texture
- * premultiplied: opaque ink where u < .5 and where u >= .875, half covered (alpha 128) where .625 <= u < .75, and
- * nothing (alpha 0) elsewhere. With `wall`, a cup's side standing in front of it: an upright quad at y 65, x 30 to
- * 60, 50 tall, facing the eye (which is over (60, 200), 300 up: the wall's picture reaches up the screen to y 38, over
- * the decal's lower half). With `roof`, a square 40 up over x 60 to 90, y 0 to 30, whose shadow falls on the decal's
- * right end (about x 78 to 108, y 22 to 52) and whose picture stays above y 4. nbands 0 renders on this thread.
- * The faces drawn, or -1. Texture 0 is white, 1 the decal's. */
-#define DEC_INK_R 200
-#define DEC_INK_G 180
-#define DEC_INK_B 160
-static void decal_texture(int id)
-{
-    uint8_t *p = cn_scene_tex_rgba(id);
-    for (int y = 0; y < 32; y++) for (int x = 0; x < 64; x++) {
-        uint8_t *t = &p[(y * 64 + x) * 4];
-        const int a = x < 32 || x >= 56 ? 255 : x >= 40 && x < 48 ? 128 : 0;
-        t[0] = (uint8_t)(DEC_INK_R * a / 255); t[1] = (uint8_t)(DEC_INK_G * a / 255); t[2] = (uint8_t)(DEC_INK_B * a / 255); t[3] = (uint8_t)a;
-    }
-}
-static int decal_frame(float dpr, int wall, int roof, int decal, int nbands)
-{
-    if (!cn_scene_begin(120, 120, 0, dpr, 60, 200, 300, -.45f, -.55f, 1, 512, .55f, 16, 8)) return -1;
-    float *V = cn_scene_verts(), *F = cn_scene_faces();
-    int nv = 0, nf = 0;
-    if (decal) {
-        const float v[] = { 20, 20, .3f, 0, 0, 1,  100, 20, .3f, 0, 0, 1,  100, 60, .3f, 0, 0, 1,  20, 60, .3f, 0, 0, 1 };
-        const float fl = (float)(CN_SCENE_F_DECAL | CN_SCENE_F_RECEIVE | CN_SCENE_F_ID(3));
-        const float f[] = { 0, 1, 2, 0, 0, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0, fl,   0, 2, 3, 0, 0, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, fl };
-        memcpy(V, v, sizeof v); memcpy(F, f, sizeof f); nv += 4; nf += 2;
-    }
-    if (decal == 2) {   /* a second name over the first's right end, x 50 to 110: nothing where u < .25 (x < 65), its own colour past it */
-        const float b = (float)nv;
-        const float v[] = { 50, 20, .3f, 0, 0, 1,  110, 20, .3f, 0, 0, 1,  110, 60, .3f, 0, 0, 1,  50, 60, .3f, 0, 0, 1 };
-        const float fl = (float)(CN_SCENE_F_DECAL | CN_SCENE_F_RECEIVE | CN_SCENE_F_ID(4));
-        const float f[] = { b, b + 1, b + 2, 0, 0, 1, 0, 1, 1, 2, 0, 0, 0, 0, 0, fl,   b, b + 2, b + 3, 0, 0, 1, 1, 0, 1, 2, 0, 0, 0, 0, 0, fl };
-        memcpy(V + nv * 6, v, sizeof v); memcpy(F + nf * 16, f, sizeof f); nv += 4; nf += 2;
-    }
-    if (wall) {
-        const float b = (float)nv;
-        const float v[] = { 30, 65, 0, 0, 1, 0,  60, 65, 0, 0, 1, 0,  60, 65, 50, 0, 1, 0,  30, 65, 50, 0, 1, 0 };
-        const float fl = (float)(CN_SCENE_F_CAST | CN_SCENE_F_RECEIVE | CN_SCENE_F_ID(1));
-        const float f[] = { b, b + 1, b + 2, 0, 1, 1, 1, 1, 0, 0, 0, 4, 3, 1, 0, fl,   b, b + 2, b + 3, 0, 1, 1, 0, 0, 0, 0, 0, 4, 3, 1, 0, fl };
-        memcpy(V + nv * 6, v, sizeof v); memcpy(F + nf * 16, f, sizeof f); nv += 4; nf += 2;
-    }
-    if (roof) {
-        const float b = (float)nv;
-        const float v[] = { 60, 0, 40, 0, 0, 1,  90, 0, 40, 0, 0, 1,  90, 30, 40, 0, 0, 1,  60, 30, 40, 0, 0, 1 };
-        const float fl = (float)(CN_SCENE_F_CULL | CN_SCENE_F_CAST | CN_SCENE_F_RECEIVE | CN_SCENE_F_ID(2));
-        const float f[] = { b, b + 1, b + 2, 0, 0, 1, 0, 1, 1, 0, 0, 4, 3, 1, 0, fl,   b, b + 2, b + 3, 0, 0, 1, 1, 0, 1, 0, 0, 4, 3, 1, 0, fl };
-        memcpy(V + nv * 6, v, sizeof v); memcpy(F + nf * 16, f, sizeof f); nv += 4; nf += 2;
-    }
-    if (!nbands) return cn_scene_render(nv, nf);
-    const int d = cn_scene_prepare(nv, nf);
-    for (int pass = 0; pass < CN_SCENE_PASSES; pass++) for (int b = nbands - 1; b >= 0; b--) cn_scene_band(pass, b, nbands);
-    return d;
-}
-/* the pixel under a point on the table (z .3: the decal's), at dpr */
 static const uint8_t *decal_px(float dpr, float x, float y)
 {
     const float k = 300.f / (300 - .3f);

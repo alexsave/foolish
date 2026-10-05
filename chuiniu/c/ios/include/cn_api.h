@@ -276,6 +276,15 @@ int  cn_api_stage_prepare_at(uint32_t now_ms, float peek, float lift);
 void cn_api_stage_output(int form);
 /* CnStageShot of the last frame. */
 const void *cn_api_stage_shot(void);
+/* A SEAT'S NAME ON THE TABLE (cn_stage_name): the host draws the name and its
+ * turn bar (its font, any script) into a premultiplied RGBA bitmap, w by h
+ * texels and w_pt by h_pt points, the block CN_STAGE_NAME_HALO points inside
+ * its edges, and hands it over when it changes; the stage lays it flat on the
+ * planks at the seat's name anchor, in the scene (a cup in front hides it, a
+ * shadow falls on it), on every frame of a table or a reveal until the next
+ * call for that seat. rgba NULL takes the name away. 1 changed, 0 the same,
+ * -1 refused (cn_stage.h's maxima). The bytes are copied. */
+int  cn_api_stage_name(int seat, const uint8_t *rgba, int w, int h, float w_pt, float h_pt);
 /* Everything at rest at now_ms (every throw, the SHAKE beat)? */
 int  cn_api_stage_done(uint32_t now_ms);
 /* The peek's tween: the fraction of the tip at t (0..1 of CN_PEEK_MS). */

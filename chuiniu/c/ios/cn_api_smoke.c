@@ -115,6 +115,21 @@ static void stage(const char *pack_path)
     OK(px && over == 0 && partial > 0, "premultiplied: no colour past its alpha, and some pixels part-covered");
     cn_api_stage_output(CN_API_STAGE_RGBA);
 
+    /* a name on the table: handed over once, drawn into the frame; the same again changes nothing; taken away,
+     * the frame before it */
+    {
+        static uint8_t name[60 * 30 * 4];
+        for (int i = 0; i < 60 * 30; i++) { const int a = (i % 60) / 6 % 2 ? 255 : 0; name[i * 4] = name[i * 4 + 1] = name[i * 4 + 2] = (uint8_t)(220 * a / 255); name[i * 4 + 3] = (uint8_t)a; }
+        const uint32_t before = fnv(cn_api_stage_frame(h->total_ms, 0), (size_t)sh->w * sh->h * 4);
+        OK(cn_api_stage_name(0, name, 60, 30, 40, 20) == 1 && cn_api_stage_name(0, name, 60, 30, 40, 20) == 0, "a name handed over, then the same again: no change");
+        OK(cn_api_stage_name(9, name, 60, 30, 40, 20) == -1, "a seat past six is refused");
+        px = cn_api_stage_frame(h->total_ms, 0);
+        OK(px && fnv(px, (size_t)sh->w * sh->h * 4) != before, "the name is in the picture");
+        OK(cn_api_stage_name(0, 0, 0, 0, 0, 0) == 1, "taken away");
+        px = cn_api_stage_frame(h->total_ms, 0);
+        OK(px && fnv(px, (size_t)sh->w * sh->h * 4) == before, "and the picture is the one before it");
+    }
+
     /* purge, free, a new arena: the same bytes */
     cn_api_stage_purge();
     OK(cn_api_stage_frame(h->roll_at_ms + 900, 0) == 0, "purged: nothing drawn");
