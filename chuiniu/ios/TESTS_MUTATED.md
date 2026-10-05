@@ -124,6 +124,15 @@ Each mutant was one edit to a product file by a script that read the file, repla
 | D5 | the planks open at 1 texel a point | `:15` "the planks are the study's 516 by 830 tile" (1032 by 1660), `:16` "two texels a point" |
 | D6 | the narrow plate steps down to 14 | `:80` "nothing under 15.5 in the roman" (14 against 15.5) |
 
+## The throw once a phone (package X, 2026-10-05)
+
+| Test | Mutation | Assertion that went red |
+|---|---|---|
+| `testARoundsThrowPlaysOncePerPhoneAcrossLaunches` | `BridgeKernel.rollSeen` without its flush | "launched again: the store kept it", "the bid: no throw", "watched, and kept" |
+| same | `rollSeen` passes `rollID`, not `rollID - 1` | "watched: the host's model reads it back", "launched again: the store kept it", "the past round's report watches nothing new" (and the still-table StageViewTests: "no throw: at rest") |
+| same | the model's `rollPending` always true | "watched: the host's model reads it back", "launched again: the store kept it", "the bid: no throw", "watched, and kept" |
+| `testUnderReduceMotionTheThrowIsReportedWatchedAtTheBegin` | the director's Reduce Motion clock jump removed | "reported from the begin", "once" |
+
 ## Not tested
 
 The conversation (`ChuiniuMessages/MessagesViewController.swift`) has no test target, as pickemup's has none.

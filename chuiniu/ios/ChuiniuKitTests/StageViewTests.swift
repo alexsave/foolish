@@ -65,8 +65,8 @@ final class StageViewTests: XCTestCase {
         return me
     }
 
-    private func request(_ drawer: CGSize, roll: Bool = false, table: TableModel) -> StageRequest {
-        StageRequest(screen: .table, drawer: drawer, scale: 3, roll: roll, rollID: table.rollID, table: StageTableKey(table))
+    private func request(_ drawer: CGSize, table: TableModel) -> StageRequest {
+        StageRequest(screen: .table, drawer: drawer, scale: 3, roll: table.rollPending, rollID: table.rollID, table: StageTableKey(table))
     }
 
     // MARK: the camera
@@ -80,7 +80,7 @@ final class StageViewTests: XCTestCase {
         try started(seats: 6)
         let stage = KernelSeam.stage()
         for size in Self.sizes {
-            let hud = try XCTUnwrap(stage.begin(.table, drawer: size, scale: 3, roll: false), "\(size)")
+            let hud = try XCTUnwrap(stage.begin(.table, drawer: size, scale: 3), "\(size)")
             let tag = "\(Int(size.width))x\(Int(size.height))"
             XCTAssertGreaterThan(abs(hud.theta), 0.01, "\(tag): the camera turns")
 
@@ -139,9 +139,9 @@ final class StageViewTests: XCTestCase {
     private final class Counting: TableStage {
         let real = KernelSeam.stage()
         var begins = 0, frames = 0
-        func begin(_ screen: StageScreen, drawer: CGSize, scale: CGFloat, roll: Bool) -> CnStageHudSnap? {
+        func begin(_ screen: StageScreen, drawer: CGSize, scale: CGFloat) -> CnStageHudSnap? {
             begins += 1
-            return real.begin(screen, drawer: drawer, scale: scale, roll: roll)
+            return real.begin(screen, drawer: drawer, scale: scale)
         }
         func frame(atMs ms: Int, peek: Double) -> StageFrame? { frames += 1; return real.frame(atMs: ms, peek: peek) }
         func submit(atMs ms: Int, peek: Double, then done: @escaping @MainActor (StageFrame?) -> Void) {
@@ -159,6 +159,7 @@ final class StageViewTests: XCTestCase {
 
     func testAViewWithNoSizeNeverAsksForAFrame() throws {
         let me = try started(seats: 2)
+        me.rollSeen(rollID: me.table.rollID)            // the round's throw already watched: a still table
         let spy = Counting()
         let director = StageDirector(stage: spy)
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 718))
@@ -167,7 +168,7 @@ final class StageViewTests: XCTestCase {
         window.addSubview(view)
         window.isHidden = false
 
-        director.begin(request(.zero, roll: true, table: me.table), planMs: nil)
+        director.begin(request(.zero, table: me.table), planMs: nil)
         director.begin(request(CGSize(width: 390, height: 0), table: me.table), planMs: nil)
         view.layoutIfNeeded()
         view.wake()
@@ -210,6 +211,7 @@ final class StageViewTests: XCTestCase {
 
     func testMyCupsEllipseIsTheOneTapAndItTipsTheCupByTheKernelsEase() throws {
         let me = try started(seats: 4)
+        me.rollSeen(rollID: me.table.rollID)            // the round's throw already watched
         let director = StageDirector(stage: KernelSeam.stage())
         director.begin(request(CGSize(width: 390, height: 718), table: me.table), planMs: nil)
         let hud = try XCTUnwrap(director.hud)
@@ -246,7 +248,7 @@ final class StageViewTests: XCTestCase {
         let director = StageDirector(stage: KernelSeam.stage())
         var done = 0
         director.onRollDone = { done += 1 }
-        director.begin(request(CGSize(width: 375, height: 900), roll: true, table: me.table), planMs: nil)
+        director.begin(request(CGSize(width: 375, height: 900), table: me.table), planMs: nil)
         let hud = try XCTUnwrap(director.hud)
         XCTAssertEqual(hud.rolls, 1)
         XCTAssertGreaterThan(hud.totalMs, hud.restMs, "far cups throw at 375 by 900 and outlast mine")
@@ -271,6 +273,26 @@ final class StageViewTests: XCTestCase {
         XCTAssertEqual(done, 1)
     }
 
+    /// REDUCE MOTION: the throw is at its end from the begin, so the director
+    /// reports it watched there (TableScreen hands that to the kernel; there
+    /// is no second report of its own), once.
+    func testUnderReduceMotionTheThrowIsReportedWatchedAtTheBegin() throws {
+        let me = try started(seats: 2)
+        let director = StageDirector(stage: KernelSeam.stage())
+        director.reduceMotion = true
+        var done = 0
+        director.onRollDone = { done += 1 }
+        let r = request(CGSize(width: 390, height: 718), table: me.table)
+        XCTAssertTrue(r.roll, "the round is pending")
+        director.begin(r, planMs: nil)
+        XCTAssertEqual(try XCTUnwrap(director.hud).rolls, 1)
+        XCTAssertEqual(done, 1, "reported from the begin")
+        XCTAssertTrue(director.atRest)
+        director.advance(0.016)
+        XCTAssertEqual(done, 1, "once")
+        director.stage.purge()
+    }
+
     // MARK: the bands
 
     /// The frame drawn in CN_STAGE_BANDS bands with concurrentPerform (the
@@ -279,7 +301,7 @@ final class StageViewTests: XCTestCase {
     func testTheFrameInBandsIsTheFrameOnOneThread() throws {
         try started(seats: 6)
         let stage = KernelSeam.stage()
-        let hud = try XCTUnwrap(stage.begin(.table, drawer: CGSize(width: 375, height: 541), scale: 3, roll: true))
+        let hud = try XCTUnwrap(stage.begin(.table, drawer: CGSize(width: 375, height: 541), scale: 3))
         for (ms, peek) in [(hud.rollAtMs + 1200, 0.0), (hud.totalMs, 1.0)] {
             let banded = try XCTUnwrap(stage.frame(atMs: ms, peek: peek))
             let bytes = banded.shot.w * banded.shot.h * 4
@@ -302,7 +324,7 @@ final class StageViewTests: XCTestCase {
     func testSubmittedFramesAreDrawnOffTheMainThreadOneAtATimeInOrder() throws {
         try started(seats: 6)
         let stage = try XCTUnwrap(KernelSeam.stage() as? BridgeStage)
-        let hud = try XCTUnwrap(stage.begin(.table, drawer: CGSize(width: 375, height: 541), scale: 3, roll: true))
+        let hud = try XCTUnwrap(stage.begin(.table, drawer: CGSize(width: 375, height: 541), scale: 3))
         _ = stage.drawsAtOnce
         let asked = (0..<4).map { hud.rollAtMs + 150 * $0 }
         var landed: [(ms: Int, frame: StageFrame?, onMain: Bool)] = []
@@ -341,7 +363,7 @@ final class StageViewTests: XCTestCase {
     func testAPurgeDuringADrawWaitsForItAndTheNextFrameIsTheSame() throws {
         try started(seats: 6)
         let stage = KernelSeam.stage()
-        let hud = try XCTUnwrap(stage.begin(.table, drawer: CGSize(width: 430, height: 830), scale: 3, roll: true))
+        let hud = try XCTUnwrap(stage.begin(.table, drawer: CGSize(width: 430, height: 830), scale: 3))
         let ms = hud.rollAtMs + 600
         var landed: StageFrame??
         stage.submit(atMs: ms, peek: 0) { landed = .some($0) }
@@ -364,7 +386,7 @@ final class StageViewTests: XCTestCase {
     func testTheDirectorKeepsOneFrameInFlightAtTheClockItAsked() throws {
         let me = try started(seats: 4)
         let director = StageDirector(stage: KernelSeam.stage())
-        director.begin(request(CGSize(width: 390, height: 718), roll: true, table: me.table), planMs: nil)
+        director.begin(request(CGSize(width: 390, height: 718), table: me.table), planMs: nil)
         let hud = try XCTUnwrap(director.hud)
         while director.clockMs < Double(hud.rollAtMs) + 400 { director.advance(0.016) }
         XCTAssertTrue(director.requestFrame(), "a frame is asked")
@@ -397,6 +419,7 @@ final class StageViewTests: XCTestCase {
     /// screen's is.
     func testAFrameAskedBeforeABeginIsDropped() throws {
         let me = try started(seats: 3)
+        me.rollSeen(rollID: me.table.rollID)            // the round's throw already watched: still frames
         let director = StageDirector(stage: KernelSeam.stage())
         var shown: [StageFrame] = []
         director.onFrame = { shown.append($0) }

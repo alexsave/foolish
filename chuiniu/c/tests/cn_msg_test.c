@@ -380,6 +380,60 @@ static void test_resolve(void)
     CHECK(rn == 0 && cn_rec_find(recs, rn, &M) == -1, "forgotten");
 }
 
+/* THE SEEN BYTE and the stored form: the newest round whose throw this phone
+ * watched rides in the game's record, survives a save and a load, survives
+ * the game being recorded again, and the first form (17-byte records, no
+ * mark) loads with every seat kept and nothing seen. */
+static void test_records(void)
+{
+    static uint8_t recs[CN_REC_BYTES], back[CN_REC_BYTES], file[CN_REC_FILE_BYTES];
+    CnMsg a, b;
+    table(&a, 701, 3, 0, 0);
+    table(&b, 702, 2, 0, 0);
+    int rn = cn_rec_put(recs, 0, &a, 1);
+    rn = cn_rec_put(recs, rn, &b, 0);
+    CHECK(cn_rec_seen(recs, rn, &a) == 0 && cn_rec_seen(recs, rn, &b) == 0, "a new record has seen nothing");
+    CHECK(cn_rec_see(recs, rn, &a, 3) == 1 && cn_rec_seen(recs, rn, &a) == 3, "round 2 watched");
+    CHECK(cn_rec_seen(recs, rn, &b) == 0, "the other game's record is its own");
+    CHECK(cn_rec_see(recs, rn, &a, 2) == 0 && cn_rec_seen(recs, rn, &a) == 3, "never lowered");
+    CHECK(cn_rec_see(recs, rn, &a, 3) == 0, "the same again changes nothing");
+    CnMsg c;
+    table(&c, 703, 2, 0, 0);
+    CHECK(cn_rec_see(recs, rn, &c, 1) == 0 && cn_rec_seen(recs, rn, &c) == 0, "no record: nothing to keep");
+    rn = cn_rec_put(recs, rn, &a, 2);
+    CHECK(cn_rec_find(recs, rn, &a) == 2 && cn_rec_seen(recs, rn, &a) == 3, "recorded again (a new seat): the seen round stays");
+
+    int fn = cn_rec_save(recs, rn, file, sizeof file);
+    CHECK(fn == CN_REC_MAGIC_LEN + rn && !memcmp(file, CN_REC_MAGIC, CN_REC_MAGIC_LEN), "saved behind the mark");
+    CHECK(cn_rec_save(recs, rn, file, fn - 1) == -1, "a short buffer");
+    memset(back, 0xEE, sizeof back);
+    int bn = cn_rec_load(back, file, fn);
+    CHECK(bn == rn && !memcmp(back, recs, (size_t)rn), "a round trip");
+    CHECK(cn_rec_seen(back, bn, &a) == 3 && cn_rec_find(back, bn, &a) == 2 && cn_rec_find(back, bn, &b) == 0, "loaded: the seats and the seen round");
+    CHECK(cn_rec_load(back, file, fn - 5) == rn - CN_REC_LEN, "a cut store drops its partial record");
+    CHECK(cn_rec_save(recs, 0, file, sizeof file) == CN_REC_MAGIC_LEN && cn_rec_load(back, file, CN_REC_MAGIC_LEN) == 0, "no records: the mark alone");
+
+    /* the first form: id and tag, 17 bytes a game */
+    static uint8_t v1[CN_REC_LEN_V1 * CN_REC_MAX + 3];
+    for (int i = 0; i < CN_REC_MAX; i++) {
+        CnMsg g;
+        table(&g, 800 + i, 2, 0, 0);
+        cn_game_id(g.seed, v1 + i * CN_REC_LEN_V1);
+        memcpy(v1 + i * CN_REC_LEN_V1 + 8, g.seat[i % 2].tag, CN_TAG_LEN);
+    }
+    bn = cn_rec_load(back, v1, (int)sizeof v1);
+    CHECK(bn == CN_REC_BYTES, "a full first-form store loads every game");
+    int kept = 1;
+    for (int i = 0; i < CN_REC_MAX; i += 37) {
+        CnMsg g;
+        table(&g, 800 + i, 2, 0, 0);
+        kept &= cn_rec_find(back, bn, &g) == i % 2 && cn_rec_seen(back, bn, &g) == 0;
+    }
+    CHECK(kept, "first form: every seat kept, every round unwatched");
+    CHECK(cn_rec_load(back, v1, CN_REC_LEN_V1 * 2 + 5) == 2 * CN_REC_LEN, "a first-form store's partial record dropped");
+    CHECK(cn_rec_load(back, 0, 40) == 0 && cn_rec_load(back, v1, -1) == 0, "nothing to load");
+}
+
 int main(int argc, char **argv)
 {
     int per = argc > 1 ? atoi(argv[1]) : 40;
@@ -391,5 +445,6 @@ int main(int argc, char **argv)
     test_lobby();
     test_prefer();
     test_resolve();
+    test_records();
     return report("cn_msg_test");
 }

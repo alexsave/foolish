@@ -48,7 +48,8 @@ public struct StageRequest: Equatable {
     public var screen: StageScreen
     public var drawer: CGSize
     public var scale: CGFloat
-    /// Throw the round (the screen has not played this round's roll yet).
+    /// The round's throw is pending on this phone (`TableModel.rollPending`;
+    /// the stage throws by the kernel's own word, this is when to ask again).
     public var roll: Bool
     /// The round, so the same roll re-begun (a drawer that changed size
     /// mid-throw) keeps its clock.
@@ -165,7 +166,7 @@ public final class StageDirector: ObservableObject {
         Self.owner = self
         dirty = true
         generation += 1
-        let h = stage.begin(r.screen, drawer: r.drawer, scale: r.scale, roll: r.roll)
+        let h = stage.begin(r.screen, drawer: r.drawer, scale: r.scale)
         hud = h
         guard let h else { atRest = true; return }
 

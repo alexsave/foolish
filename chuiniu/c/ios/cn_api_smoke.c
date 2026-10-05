@@ -55,7 +55,7 @@ static uint32_t fnv(const uint8_t *b, size_t n)
  * plan is CALL, LIFT, COUNT, DROP, SHAKE) */
 static void stage(const char *pack_path)
 {
-    OK(cn_api_stage_begin(CN_STAGE_TABLE, 390, 718, 2, 0) == 0 && cn_api_stage_frame(0, 0) == 0, "no stage before init");
+    OK(cn_api_stage_begin(CN_STAGE_TABLE, 390, 718, 2) == 0 && cn_api_stage_frame(0, 0) == 0, "no stage before init");
     FILE *f = pack_path ? fopen(pack_path, "rb") : 0;
     OK(f != 0, "the texture pack (make tex)");
     if (!f) return;
@@ -67,7 +67,7 @@ static void stage(const char *pack_path)
     OK(cn_api_stage_init(pack, pn) == 0, "the stage takes the pack, and no memory");
 
     /* a begin before any arena: the whole HUD; a frame waits for the arena */
-    const CnStageHud *h = (const CnStageHud *)cn_api_stage_begin(CN_STAGE_REVEAL, 390, 718, 2, 0);
+    const CnStageHud *h = (const CnStageHud *)cn_api_stage_begin(CN_STAGE_REVEAL, 390, 718, 2);
     OK(h && h->ok && h->kind == CN_STAGE_REVEAL && h->me == 1 && h->has_shelf, "the reveal begins for Bo, with no arena");
     OK(cn_api_stage_frame(0, 0) == 0 && cn_api_stage_prepare(0, 0) == 0, "and draws nothing until one is attached");
     uint8_t *arena = malloc(AN);
@@ -85,7 +85,7 @@ static void stage(const char *pack_path)
     OK(px && fnv(px, (size_t)sh->w * sh->h * 4) != down, "the cups lift with the LIFT beat");
 
     /* the next round's table, thrown from the plan's SHAKE beat */
-    h = (const CnStageHud *)cn_api_stage_begin(CN_STAGE_TABLE, 390, 718, 2, 1);
+    h = (const CnStageHud *)cn_api_stage_begin(CN_STAGE_TABLE, 390, 718, 2);
     OK(h && h->rolls && h->roll_at_ms == b->beat[4].start_ms && h->rest_ms > h->roll_at_ms && h->total_ms >= h->rest_ms, "the roll starts with the SHAKE beat");
     OK(h && !cn_api_stage_done(h->total_ms - 1) && cn_api_stage_done(h->total_ms), "done at the total");
     OK(cn_api_stage_prepare(h->roll_at_ms + 900, 0) == 1, "prepared");
@@ -124,7 +124,17 @@ static void stage(const char *pack_path)
     px = cn_api_stage_frame(h->roll_at_ms + 900, 0);
     OK(px && fnv(px, (size_t)sh->w * sh->h * 4) == banded, "the same bytes after a purge");
 
-    h = (const CnStageHud *)cn_api_stage_begin(CN_STAGE_BUBBLE, 0, 0, 3, 0);
+    /* THE THROW ONCE A PHONE: watched, the round's table is still, at its rest */
+    const int round = ((const CnView *)cn_api_view(CN_API_ME))->round;
+    px = cn_api_stage_frame(h->total_ms, 0);
+    const uint32_t thrown = px ? fnv(px, (size_t)sh->w * sh->h * 4) : 0;
+    OK(cn_api_roll_pending() && cn_api_roll_seen(round) == 1 && !cn_api_roll_pending(), "Bo watched the round's throw");
+    const CnStageHud *still = (const CnStageHud *)cn_api_stage_begin(CN_STAGE_TABLE, 390, 718, 2);
+    OK(still && !still->rolls && still->rest_ms == 0, "and its table begins still");
+    px = cn_api_stage_frame(0, 0);
+    OK(px && sh->ok && !sh->rolling && fnv(px, (size_t)sh->w * sh->h * 4) == thrown, "the still table is the throw's last frame, byte for byte");
+
+    h = (const CnStageHud *)cn_api_stage_begin(CN_STAGE_BUBBLE, 0, 0, 3);
     px = cn_api_stage_frame(0, 0);
     OK(h && px && sh->w == 600 && sh->h == 390 && h->w == CN_STAGE_BUBBLE_W, "the bubble, 300 by 195 at 2x");
     OK(cn_api_peek_ease(0) == 0 && cn_api_peek_ease(1) == 1, "the peek's ease");
@@ -225,7 +235,7 @@ int main(int argc, char **argv)
     /* the records */
     uint8_t saved[CN_API_REC_BYTES];
     int n = cn_api_seats_save(saved, sizeof saved);
-    OK(n > 0 && n % 17 == 0 && !cn_api_seats_dirty(), "saved");
+    OK(n > 8 && (n - 8) % 18 == 0 && !cn_api_seats_dirty(), "saved");
     OK(cn_api_seats_save(saved, 3) == -1, "a small buffer");
 
     /* a leave in a new group lobby */

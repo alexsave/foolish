@@ -56,10 +56,14 @@ void cn_api_nickname(const uint8_t *name, int n);
 /* CN_NAME_OK 0, EMPTY 1, TOO_LONG 2 (16 characters, 48 bytes), BAD 3. */
 int  cn_api_name_verdict(const uint8_t *name, int n);
 
-/* THIS DEVICE'S SEAT RECORDS: fixed-layout bytes the host keeps in the App
- * Group and hands back unread. Load once at launch, save whenever dirty. At
- * most CN_API_REC_BYTES (17 bytes a game, the newest 256 games). */
-#define CN_API_REC_BYTES 4352
+/* THIS DEVICE'S SEAT RECORDS: fixed-layout bytes the host keeps in the
+ * extension's defaults and hands back unread. Load once at launch, save
+ * whenever dirty (after every call that can dirty them: a read, an adopt, a
+ * lobby action, cn_api_roll_seen). At most CN_API_REC_BYTES: an 8-byte mark,
+ * then 18 bytes a game for the newest 256 games (the seat's tag, and the
+ * newest round whose throw this phone has watched). The first form, with no
+ * mark and 17 bytes a game, still loads, every round in it unwatched. */
+#define CN_API_REC_BYTES 4616
 void cn_api_seats_load(const uint8_t *bytes, int n);
 int  cn_api_seats_dirty(void);
 int  cn_api_seats_save(uint8_t *out, int cap);    /* length, or -1; clears dirty */
@@ -232,8 +236,8 @@ int  cn_api_common(const char *a, const char *b);
  * HUD's ca); the plate and the shelf stay flat.
  *
  * THE CLOCK is the one cn_api_beats_frame is sampled on: a reveal's cups lift
- * with the current plan's LIFT beat, and a table begun with `roll` throws from
- * the plan's SHAKE beat (from 0 when the plan has none). Stage nothing before
+ * with the current plan's LIFT beat, and a table whose round is pending
+ * throws from the plan's SHAKE beat (from 0 when the plan has none). Stage nothing before
  * the HUD's rest_ms (my dice at rest). */
 
 /* The pack, no memory. 0, or a negative CN_TEX_E*. */
@@ -245,13 +249,28 @@ int  cn_api_stage_attach(void *arena, size_t bytes);
  * frames draw nothing until cn_api_stage_attach gives one back, and then the
  * same bytes as before. */
 void cn_api_stage_purge(void);
+/* THE THROW PLAYS ONCE A PHONE A ROUND: a table throws its round while the
+ * round is pending on this phone, that is until the host reports the throw
+ * watched to its end with cn_api_roll_seen(round), `round` being the
+ * CnView.round it was begun for. The report is kept in the game's seat
+ * record, so it outlives the extension: a new launch, a bid arriving, the
+ * drawer resized or the bubble drawn never throw a watched round again. A
+ * throw cut off before its end (the drawer closed mid-throw) was not watched
+ * and plays again, from its start. A reveal throws nothing (its dice lie
+ * where the called round's throw left them).
+ * 1 pending, 0 not (no game, no seat, a finished game, watched). */
+int  cn_api_roll_pending(void);
+/* Round `round`'s throw ran to its end on this phone (under Reduce Motion:
+ * it was shown at rest). 1 if the record changed (the records are dirty:
+ * save them), 0 if not (already watched, a round not dealt yet, no seat). */
+int  cn_api_roll_seen(int round);
 /* Begin a screen of the resident game for me: CN_STAGE_TABLE (the committed
- * round; `roll` 1 throws it), CN_STAGE_REVEAL (the newest call's dice where
+ * round, thrown while cn_api_roll_pending), CN_STAGE_REVEAL (the newest call's dice where
  * that round's throw left them) or CN_STAGE_BUBBLE (300 by 195). The drawer is
  * w by h points, the device `scale` pixels a point (clamped: 1.5 while a throw
  * moves, 2 still). CnStageHud, or NULL (no game, no seat, no call to reveal, a
  * finished game's table). */
-const void *cn_api_stage_begin(int kind, float w, float h, float scale, int roll);
+const void *cn_api_stage_begin(int kind, float w, float h, float scale);
 /* The frame at now_ms with my cup tipped `peek` (0 shut .. 1 the HUD's
  * peek_target; ease it with cn_api_peek_ease over CN_PEEK_MS). 1, or 0 when
  * nothing can be drawn. */

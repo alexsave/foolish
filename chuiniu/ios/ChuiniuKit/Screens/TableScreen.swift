@@ -1,7 +1,8 @@
 // TableScreen.swift - a round being bid: the kernel's table (StageView), the
 // bid plate and, on my turn, the picker, both flat over it at the HUD's
-// frames (DECISIONS I25). A round's first look throws every seat's cup
-// (I19, I21); the picker's verbs wake when my dice are at rest.
+// frames (DECISIONS I25). A round's first look on this phone throws every
+// seat's cup (I19, I21), once: the kernel keeps the rounds watched; the
+// picker's verbs wake when my dice are at rest.
 
 import SwiftUI
 
@@ -17,7 +18,7 @@ public struct TableScreen: View {
         let t = host.table
         GeometryReader { geo in
             let request = StageRequest(screen: .table, drawer: geo.size, scale: displayScale,
-                                       roll: t.rollID != host.playedRoll, rollID: t.rollID,
+                                       roll: t.rollPending, rollID: t.rollID,
                                        table: StageTableKey(t))
             ZStack(alignment: .topLeading) {
                 Color.clear
@@ -48,11 +49,13 @@ public struct TableScreen: View {
 
     private func begin(_ r: StageRequest) {
         director.reduceMotion = reduceMotion
+        // THE THROW ONCE A PHONE: the kernel decides whether the round throws
+        // (cn_api_roll_pending) and is told when it ran to its end. Reduce
+        // Motion is that end at once: the director starts the clock at the
+        // throw's total and reports it from the begin.
         let rollID = r.rollID
-        director.onRollDone = { [weak host] in host?.playedRoll = rollID }
+        director.onRollDone = { [weak host] in host?.rollSeen(rollID) }
         director.begin(r, planMs: host.planMs)
-        // Reduce Motion plays no throw: the round counts as played at once
-        if reduceMotion, r.roll { host.playedRoll = rollID }
     }
 
     @ViewBuilder private func hudLayer(_ t: TableModel, _ hud: CnStageHudSnap) -> some View {
