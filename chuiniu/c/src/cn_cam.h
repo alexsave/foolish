@@ -82,6 +82,36 @@ void  cn_cam_map(const CnCam *c, float x, float y, float *sx, float *sy);
 /* A board point (x, y, z) as the eye sees it, on the table plane. */
 void  cn_cam_project(const CnCam *c, float x, float y, float z, float *px, float *py);
 
+/* ---- the planks' cover (package Z) ---------------------------------------------- */
+/* The turned layer's far edge comes DOWN the screen: the tilt pulls a flat rect's
+ * top toward the horizon, and the more the camera turns (a taller drawer turns it
+ * more: theta .11 at 281 points, .53 at 1000) the further. The study's overdraw
+ * (1.9 by 2.2 of the drawer, from -45% and -60%) comes down to 227 points BELOW the
+ * drawer's top on a 440 by 956 drawer, so a plank layer of that size left a bare
+ * band above the planks. The cover is the other way round: the flat rect whose
+ * turn covers a given screen rect, the preimage of that rect's corners through the
+ * homography (the inverse of cn_cam_map), boxed. A rect's preimage is a convex
+ * quad when all of it is on the near side of the horizon, and the box of that
+ * quad, all of it on the near side too, turns into a convex quad holding the rect.
+ *
+ * CN_CAM_REACH is how far past the drawer, on every side, a host's view may
+ * reach (StageView reaches under the safe areas: Messages' grabber strip, the
+ * home indicator, a landscape notch at 62); CN_CAM_COVER_SPARE is the turned
+ * cover's room past that, so a rounding never shows the flat wood under it. */
+#define CN_CAM_REACH        80.0
+#define CN_CAM_COVER_SPARE  8.0
+#define CN_CAM_COVER_FAR    8192.0  /* the most the planks' layer runs past the drawer (cn_cam_planks) */
+/* The flat rect (x y w h, whole points, the drawer's flat points) whose turn
+ * through cn_cam_map covers the screen rect x0 y0 .. x1 y1 grown by
+ * CN_CAM_COVER_SPARE. 0 (and out zeroed) when that rect reaches the horizon:
+ * no flat rect covers it. */
+int   cn_cam_cover(const CnCam *c, float x0, float y0, float x1, float y1, float out[4]);
+/* The planks' layer for a drawer of w by h: the cover of the drawer and
+ * CN_CAM_REACH past each side, held to CN_CAM_COVER_FAR past the drawer. 0 when
+ * the horizon comes down inside that reach (a drawer over about 1150 points on
+ * their turn, 1250 on mine: no 440-wide phone's): the flat wood shows there. */
+int   cn_cam_planks(const CnCam *c, float w, float h, float out[4]);
+
 /* ---- the peek ------------------------------------------------------------------- */
 /* The cup turns about the far edge of its mouth (hinge_y = -R in the cup's
  * frame), and as it turns the hand draws it back and up, in proportion to how

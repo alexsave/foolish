@@ -6,8 +6,11 @@
  * the peek's tip and tween are the study's. */
 #include "../src/cn_cam.h"
 #include "../src/cn_geom.h"
+#include "../src/cn_lay.h"
 #include "cn_check.h"
 #include <math.h>
+#include <stdio.h>
+#include <string.h>
 
 typedef struct { int W, H, mine; double boardH, ox, oy, theta, D, zoom; double ts[4][3]; double fs[3][2]; } GoldCam;
 /* W H mine boardH origin x y | theta D zoom | toScreen dy -> y scale x4 | fromScreen y -> dy x3: one per distinct camera.
@@ -158,11 +161,117 @@ static void test_peek(void)
     CHECK(near(cn_cam_peek_ease(.5f), 1 - .125 * (1 - .12), 1e-6), "half way: 1 - (1/2)^3 (1 - .12)");
 }
 
+/* How far p lies inside the turned quad q (corners in turn order), the least of
+ * its distances to the four edges; negative outside. */
+static double inside_by(const double q[4][2], double px, double py)
+{
+    double area = 0;
+    for (int k = 0; k < 4; k++) area += q[k][0] * q[(k + 1) & 3][1] - q[(k + 1) & 3][0] * q[k][1];
+    const double sgn = area > 0 ? 1 : -1;
+    double least = 1e30;
+    for (int k = 0; k < 4; k++) {
+        const double ax = q[k][0], ay = q[k][1], bx = q[(k + 1) & 3][0], by = q[(k + 1) & 3][1];
+        const double len = sqrt((bx - ax) * (bx - ax) + (by - ay) * (by - ay));
+        const double d = sgn * ((bx - ax) * (py - ay) - (by - ay) * (px - ax)) / len;
+        if (d < least) least = d;
+    }
+    return least;
+}
+
+/* The planks' cover on one camera: the turn of the four corners of the rect is
+ * a quad that holds the drawer and CN_CAM_REACH past each side, every corner of
+ * that by at least `spare`. The least room, or -1e30 for no cover. */
+static double cover_room(const CnCam *c, float w, float h, float out[4])
+{
+    if (!cn_cam_planks(c, w, h, out)) return -1e30;
+    const double x0 = out[0], y0 = out[1], x1 = out[0] + out[2], y1 = out[1] + out[3];
+    const double fx[4] = { x0, x1, x1, x0 }, fy[4] = { y0, y0, y1, y1 };
+    double q[4][2];
+    for (int k = 0; k < 4; k++) {
+        /* in front of the eye, so the quad is the turned rect and not a wrap past the horizon */
+        if (!(c->h[6] * fx[k] + c->h[7] * fy[k] + c->h[8] > 0)) return -1e30;
+        float sx, sy;
+        cn_cam_map(c, (float)fx[k], (float)fy[k], &sx, &sy);
+        q[k][0] = sx; q[k][1] = sy;
+    }
+    const double r = CN_CAM_REACH, px[4] = { -r, w + r, w + r, -r }, py[4] = { -r, -r, h + r, h + r };
+    double least = 1e30;
+    for (int k = 0; k < 4; k++) { const double d = inside_by(q, px[k], py[k]); if (d < least) least = d; }
+    return least;
+}
+
+static void test_planks_cover(void)
+{
+    TEST("the planks' turn covers the drawer and CN_CAM_REACH past it: every width 360..440, height 281..1000, screen");
+    /* every camera the layout makes (cn_lay_cam, which cn_lay_make's own camera is, checked below on a
+     * sample of every seat count): my turn (the picker's shelf), theirs, the roll's shelf, the reveal */
+    long cams = 0, fails = 0, same = 0, samples = 0;
+    double least = 1e30, most_w = 0, most_h = 0, most_tiles = 0;
+    int lw = 0, lh = 0;
+    for (int w = 360; w <= 440; w++)
+        for (int hh = 281; hh <= 1000; hh++)
+            for (int kind = 0; kind < 4; kind++) {
+                CnLayIn in;
+                memset(&in, 0, sizeof in);
+                in.seats = 2; in.me = 0; in.turn = kind == 0 ? 0 : 1;
+                in.rolling = kind == 2; in.reveal = kind == 3;
+                for (int s = 0; s < 6; s++) in.dice[s] = 5;
+                for (int k = 0; k < 5; k++) in.my_faces[k] = (uint8_t)(1 + k);
+                in.w = (float)w; in.h = (float)hh;
+                CnCam c;
+                if (!cn_lay_cam(&in, &c)) continue;
+                cams++;
+                float r[4];
+                const double room = cover_room(&c, (float)w, (float)hh, r);
+                if (room < 4) { if (fails++ < 5) CHECK(0, "%dx%d kind %d: the cover holds the drawer by %.2f", w, hh, kind, room); }
+                if (room < least) { least = room; lw = w; lh = hh; }
+                if (r[2] > most_w) most_w = r[2];
+                if (r[3] > most_h) most_h = r[3];
+                /* the tiles a host lays (516 by 830, one a step, one more each way for the phase) */
+                const double tiles = (floor(r[2] / 516) + 2) * (floor(r[3] / 830) + 2);
+                if (tiles > most_tiles) most_tiles = tiles;
+                /* the layout's own camera is this one, at every seat count (a sample: the fits are slow) */
+                if (w % 40 == 0 && hh % 73 == 0)
+                    for (int seats = 2; seats <= 6; seats++) {
+                        in.seats = (uint8_t)seats;
+                        CnLay L;
+                        samples++;
+                        if (cn_lay_make(&in, &L) && memcmp(&L.cam, &c, sizeof c) == 0) same++;
+                    }
+            }
+    CHECK(samples > 400 && same == samples, "cn_lay_cam is cn_lay_make's camera (%ld of %ld)", same, samples);
+    CHECK(cams > 200000, "every camera ran (%ld)", cams);
+    CHECK(fails == 0, "%ld cameras left the drawer bare", fails);
+    CHECK(least >= 4, "the least room past the reach is %.2f points (%dx%d)", least, lw, lh);
+    printf("    planks cover: %ld cameras, least room %.2f pt at %dx%d, widest %.0f, tallest %.0f, at most %.0f tiles\n",
+           cams, least, lw, lh, most_w, most_h, most_tiles);
+    /* the study's overdraw does not cover a tall drawer: the bug (s03_six_expanded.png) */
+    CnLayIn in;
+    memset(&in, 0, sizeof in);
+    in.seats = 6; in.me = 0; in.turn = 0; in.w = 440; in.h = 956;
+    for (int s = 0; s < 6; s++) in.dice[s] = 5;
+    for (int k = 0; k < 5; k++) in.my_faces[k] = (uint8_t)(1 + k);
+    CnLay L;
+    CHECK(cn_lay_make(&in, &L), "440 by 956 lays out");
+    float sx, sy;
+    cn_cam_map(&L.cam, -.45f * 440, -.6f * 956, &sx, &sy);
+    CHECK(sy > 100, "the study's overdraw's top turns down to %.1f, under the drawer's top", sy);
+    /* the bubble's camera too */
+    CnCam b;
+    float r[4];
+    cn_cam_make(&b, 300, 195, 150, 150, 1);
+    CHECK(cover_room(&b, 300, 195, r) >= 4, "the bubble's");
+    /* a rect past the horizon has no cover */
+    const float hy = L.cam.h[4] / L.cam.h[7];
+    CHECK(!cn_cam_cover(&L.cam, 0, hy - 50, 440, 956, r) && r[2] == 0 && r[3] == 0, "a rect over the horizon (%.0f) has none", hy);
+}
+
 int main(void)
 {
     test_golden();
     test_transform();
     test_project();
     test_peek();
+    test_planks_cover();
     return report("cn_cam_test");
 }

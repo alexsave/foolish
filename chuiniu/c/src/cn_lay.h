@@ -154,6 +154,9 @@ typedef struct {
 /* Lay out the table. 0 for an input out of range (seats, me, a count over 5,
  * a face out of 1..6 among my dice, a drawer too small to hold a board). */
 int cn_lay_make(const CnLayIn *in, CnLay *L);
+/* The camera cn_lay_make makes for `in` (its L->cam), without the layout's fits:
+ * 0 (and c zeroed) when cn_lay_make would refuse for the board alone. */
+int cn_lay_cam(const CnLayIn *in, CnCam *c);
 
 /* The bodies on the board, as the study placed them: each other seat's dice
  * in a rough ring under its cup (hidden faces drawn 1 up until a reveal sets
