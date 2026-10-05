@@ -409,11 +409,10 @@ public final class BridgeKernel: Kernel {
 /// outlives the stage. Every struct is read through the generated readers,
 /// and a stale pair (BridgeKernel.layoutMatches) reads nothing.
 ///
-/// THE ARENA IS TAKEN BY A FRAME. A begin only bakes the layout and the
-/// throws into the bridge's handle, so after a purge it takes no memory; the
-/// very first begin of a process is the exception, because cn_api_stage_init
-/// opens the pack and takes the arena in one call (a C request is out to
-/// split them).
+/// THE ARENA IS TAKEN BY A FRAME. cn_api_stage_init opens the pack alone and
+/// a begin only bakes the layout and the throws into the bridge's handle, so
+/// no begin, the first of a process included, takes the arena; the first
+/// frame attaches it (cn_api_stage_attach) and a purge frees it.
 @MainActor
 public final class BridgeStage: TableStage {
     public static let shared = BridgeStage()
@@ -432,9 +431,9 @@ public final class BridgeStage: TableStage {
         return try? reader(p)
     }
 
-    /// The pack (once a process: the stage keeps pointing into it) and the
-    /// stage's init; with `arena`, an arena too, the first time and after a
-    /// purge.
+    /// The pack and the stage's init (once a process: the stage keeps
+    /// pointing into the pack); with `arena`, an arena too, the first frame
+    /// and the first after a purge.
     private func ready(arena need: Bool) -> Bool {
         guard BridgeKernel.layoutMatches else { return false }
         if pack == nil {
@@ -444,11 +443,14 @@ public final class BridgeStage: TableStage {
             data.copyBytes(to: p, count: data.count)
             pack = p; packCount = data.count
         }
-        if arena == nil && (need || !inited) {
+        if !inited {
+            guard cn_api_stage_init(pack, packCount) == 0 else { return false }
+            inited = true
+        }
+        if arena == nil && need {
             let a = UnsafeMutableRawPointer.allocate(byteCount: CN_STAGE_ARENA, alignment: 16)
-            let rc = inited ? cn_api_stage_attach(a, CN_STAGE_ARENA) : cn_api_stage_init(a, CN_STAGE_ARENA, pack, packCount)
-            guard rc == 0 else { a.deallocate(); return false }
-            arena = a; inited = true
+            guard cn_api_stage_attach(a, CN_STAGE_ARENA) == 0 else { a.deallocate(); return false }
+            arena = a
         }
         return true
     }

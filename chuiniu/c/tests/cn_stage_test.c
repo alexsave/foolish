@@ -87,7 +87,7 @@ static void test_layout(void)
 {
     TEST("the layout through the stage is the study's at four sizes, my turn and theirs");
     void *A = arena_new(ARENA);
-    CHECK(cn_stage_init(&ST, A, ARENA, PACK, PACK_N) == 0, "the stage opens the pack and takes the arena");
+    CHECK(cn_stage_init(&ST, PACK, PACK_N) == 0 && cn_stage_attach(&ST, A, ARENA) == 0, "the stage opens the pack, then takes the arena");
     for (size_t i = 0; i < sizeof GOLD / sizeof GOLD[0]; i++) {
         const Gold *g = &GOLD[i];
         CnStageIn in = table_in(g->W, g->H, 6, g->mine, 0, CN_STAGE_TABLE);
@@ -151,7 +151,7 @@ static void test_frame(void)
 {
     TEST("a still frame draws every standing cup's crown where the HUD puts the cup, and table round them");
     void *A = arena_new(ARENA);
-    cn_stage_init(&ST, A, ARENA, PACK, PACK_N);
+    cn_stage_init(&ST, PACK, PACK_N); cn_stage_attach(&ST, A, ARENA);
     CnStageIn in = table_in(390, 718, 6, 1, 0, CN_STAGE_TABLE);
     const CnStageHud *h = cn_stage_begin(&ST, &in);
     int w, hh;
@@ -192,7 +192,7 @@ static void test_hand(void)
 {
     TEST("the dealt dice are painted on the faces the throw left up, on a standard die (I19)");
     void *A = arena_new(ARENA);
-    cn_stage_init(&ST, A, ARENA, PACK, PACK_N);
+    cn_stage_init(&ST, PACK, PACK_N); cn_stage_attach(&ST, A, ARENA);
     int bad = 0, opp = 0, tried = 0, nonstd = 0;
     for (int seed = 1; seed <= 40; seed++) {
         CnStageIn in = table_in(390, 718, 2 + seed % 5, seed & 1, 0, seed % 3 ? CN_STAGE_TABLE : CN_STAGE_REVEAL);
@@ -230,13 +230,33 @@ static void test_hand(void)
 static void test_memory(void)
 {
     TEST("a small arena fails cleanly, a frame that does not fit steps its scale down, purge and attach rebuild the same bytes");
+    /* NO ARENA AT ALL: the pack opens, a table begins and lays out (the HUD is the whole
+     * layout), and only a frame needs the arena; what began before one is attached is what
+     * begins after */
+    CHECK(cn_stage_init(&ST, PACK, PACK_N) == 0 && ST.arena == 0, "the stage opens the pack and takes no arena");
+    CnStageIn in = table_in(390, 718, 6, 1, 0, CN_STAGE_TABLE);
+    in.scale = 2; in.roll_at_ms = 0;
+    const CnStageHud *h0 = cn_stage_begin(&ST, &in);
+    CnStageHud bare;
+    memset(&bare, 0, sizeof bare);
+    if (h0) bare = *h0;
+    int w = -1, h = -1;
+    CHECK(h0 && h0->ok && h0->rolls && h0->total_ms > 0, "begin with no arena: the layout and the throws (total %u ms)", h0 ? h0->total_ms : 0);
+    CHECK(cn_stage_frame(&ST, 0, 0, 0, &w, &h) == 0 && w == 0 && h == 0 && !cn_stage_prepare(&ST, 0, 0, 0), "and no frame");
+    {
+        void *A0 = arena_new(ARENA);
+        CHECK(cn_stage_attach(&ST, A0, ARENA) == 0 && cn_stage_frame(&ST, 0, 0, 0, &w, &h) != 0, "an arena attached: the begun table draws");
+        const CnStageHud *h1 = cn_stage_begin(&ST, &in);
+        CHECK(h1 && memcmp(h1, &bare, sizeof bare) == 0, "begun with an arena: the very HUD begun without one");
+        cn_stage_purge(&ST);
+        free(A0);
+    }
+    in.roll_at_ms = CN_STAGE_NO_ROLL;
+
     /* an arena that holds no texture set: nothing is drawn, nothing breaks */
     void *small = arena_new((size_t)4 << 20);
-    CHECK(cn_stage_init(&ST, small, (size_t)4 << 20, PACK, PACK_N) == 0, "a 4 MB arena is taken");
-    CnStageIn in = table_in(390, 718, 6, 1, 0, CN_STAGE_TABLE);
-    in.scale = 2;
+    CHECK(cn_stage_attach(&ST, small, (size_t)4 << 20) == 0, "a 4 MB arena is taken");
     CHECK(cn_stage_begin(&ST, &in) != 0, "begin needs no arena");
-    int w = -1, h = -1;
     CHECK(cn_stage_frame(&ST, 0, 0, 0, &w, &h) == 0 && w == 0 && h == 0, "no frame in 4 MB");
     CHECK(!cn_stage_shot(&ST)->ok && cn_stage_finish(&ST) == 0, "the shot says nothing was drawn");
     cn_stage_band(&ST, 1, 0, 1);    /* a band after a failed prepare does nothing */
@@ -307,7 +327,7 @@ static void test_bands_and_determinism(void)
 {
     TEST("16 bands draw the single thread's bytes; the same input, the same bytes (pinned)");
     void *A = arena_new(ARENA);
-    cn_stage_init(&ST, A, ARENA, PACK, PACK_N);
+    cn_stage_init(&ST, PACK, PACK_N); cn_stage_attach(&ST, A, ARENA);
     CnStageIn in = table_in(375, 541, 6, 1, 0, CN_STAGE_TABLE);
     in.roll_at_ms = 0; in.scale = 3;
     const CnStageHud *h = cn_stage_begin(&ST, &in);
@@ -333,7 +353,7 @@ static void test_bubble(void)
 {
     TEST("the bubble is 300 by 195 points exactly, its cups in a row, the out cup lying");
     void *A = arena_new(ARENA);
-    cn_stage_init(&ST, A, ARENA, PACK, PACK_N);
+    cn_stage_init(&ST, PACK, PACK_N); cn_stage_attach(&ST, A, ARENA);
     for (int n = 2; n <= 6; n++) {
         CnStageIn in = table_in(390, 718, n, 0, 1 % n, CN_STAGE_BUBBLE);
         in.scale = 3;
@@ -355,7 +375,7 @@ static void test_out(void)
 {
     TEST("a seat with no dice: its cup lies dim on its side, no dice, no throw");
     void *A = arena_new(ARENA);
-    cn_stage_init(&ST, A, ARENA, PACK, PACK_N);
+    cn_stage_init(&ST, PACK, PACK_N); cn_stage_attach(&ST, A, ARENA);
     CnStageIn in = table_in(390, 718, 6, 0, 0, CN_STAGE_TABLE);
     in.roll_at_ms = 0;
     const CnStageHud *h = cn_stage_begin(&ST, &in);
@@ -382,7 +402,7 @@ static void test_clock(void)
 {
     TEST("the roll starts at roll_at, outlasts the SHAKE beat, and my dice rest before everything does (I21)");
     void *A = arena_new(ARENA);
-    cn_stage_init(&ST, A, ARENA, PACK, PACK_N);
+    cn_stage_init(&ST, PACK, PACK_N); cn_stage_attach(&ST, A, ARENA);
     CnStageIn in = table_in(390, 718, 4, 1, 0, CN_STAGE_TABLE);
     in.roll_at_ms = 1500;
     const CnStageHud *h = cn_stage_begin(&ST, &in);

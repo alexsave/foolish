@@ -63,12 +63,15 @@ static void stage(const char *pack_path)
     size_t pn = fread(pack, 1, sizeof pack, f);
     fclose(f);
     const size_t AN = (size_t)48 << 20;
-    uint8_t *arena = malloc(AN);
-    OK(cn_api_stage_init(arena, AN, pack, 7) < 0, "a cut pack is refused");
-    OK(cn_api_stage_init(arena, AN, pack, pn) == 0, "the stage takes the arena and the pack");
+    OK(cn_api_stage_init(pack, 7) < 0, "a cut pack is refused");
+    OK(cn_api_stage_init(pack, pn) == 0, "the stage takes the pack, and no memory");
 
+    /* a begin before any arena: the whole HUD; a frame waits for the arena */
     const CnStageHud *h = (const CnStageHud *)cn_api_stage_begin(CN_STAGE_REVEAL, 390, 718, 2, 0);
-    OK(h && h->ok && h->kind == CN_STAGE_REVEAL && h->me == 1 && h->has_shelf, "the reveal begins for Bo");
+    OK(h && h->ok && h->kind == CN_STAGE_REVEAL && h->me == 1 && h->has_shelf, "the reveal begins for Bo, with no arena");
+    OK(cn_api_stage_frame(0, 0) == 0 && cn_api_stage_prepare(0, 0) == 0, "and draws nothing until one is attached");
+    uint8_t *arena = malloc(AN);
+    OK(cn_api_stage_attach(arena, AN) == 0, "the first frame's arena");
     const CnView *v = (const CnView *)cn_api_view(CN_API_ME);
     int placed = 0;
     for (int i = 0; h && i < 10; i++) placed += h->die_x[i] != 0 && h->die_y[i] != 0;

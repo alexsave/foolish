@@ -542,9 +542,9 @@ int cn_api_common(const char *a, const char *b)
 static CnStage STAGE;
 static int stage_inited;
 
-int cn_api_stage_init(void *arena, size_t bytes, const uint8_t *pack, size_t pack_len)
+int cn_api_stage_init(const uint8_t *pack, size_t pack_len)
 {
-    int e = cn_stage_init(&STAGE, arena, bytes, pack, pack_len);
+    int e = cn_stage_init(&STAGE, pack, pack_len);
     stage_inited = e == 0;
     return e;
 }
