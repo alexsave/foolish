@@ -476,10 +476,64 @@ int cn_rec_put(uint8_t *recs, int n, const CnMsg *m, int seat)
 {
     n = rec_n(n);
     if (seat < 0 || seat >= m->n_seats) return n;
+    const int seen = cn_rec_seen(recs, n, m);
     n = cn_rec_forget(recs, n, m);
     if (n == CN_REC_BYTES) n -= CN_REC_LEN;             /* the oldest falls off */
     for (int i = n - 1; i >= 0; i--) recs[i + CN_REC_LEN] = recs[i];   /* one record down */
     cn_game_id(m->seed, recs);
     memcpy(recs + 8, m->seat[seat].tag, CN_TAG_LEN);
+    recs[CN_REC_SEEN] = (uint8_t)seen;
     return n + CN_REC_LEN;
+}
+
+/* m's game's record, or -1 (one record a game: cn_rec_put forgets first) */
+static int rec_at(const uint8_t *recs, int n, const CnMsg *m)
+{
+    uint8_t id[8];
+    cn_game_id(m->seed, id);
+    n = recs ? rec_n(n) : 0;
+    for (int i = 0; i < n; i += CN_REC_LEN)
+        if (!memcmp(recs + i, id, 8)) return i;
+    return -1;
+}
+
+int cn_rec_seen(const uint8_t *recs, int n, const CnMsg *m)
+{
+    int i = rec_at(recs, n, m);
+    return i < 0 ? 0 : recs[i + CN_REC_SEEN];
+}
+
+int cn_rec_see(uint8_t *recs, int n, const CnMsg *m, int seen)
+{
+    int i = rec_at(recs, n, m);
+    if (i < 0 || seen < 1 || seen > 255 || recs[i + CN_REC_SEEN] >= seen) return 0;
+    recs[i + CN_REC_SEEN] = (uint8_t)seen;
+    return 1;
+}
+
+int cn_rec_load(uint8_t *recs, const uint8_t *bytes, int n)
+{
+    if (!bytes || n < 0) return 0;
+    if (n >= CN_REC_MAGIC_LEN && !memcmp(bytes, CN_REC_MAGIC, CN_REC_MAGIC_LEN)) {
+        n = rec_n(n - CN_REC_MAGIC_LEN);
+        if (n) memcpy(recs, bytes + CN_REC_MAGIC_LEN, (size_t)n);
+        return n;
+    }
+    /* THE FIRST FORM: id and tag, no seen byte; every round reads unseen */
+    int w = 0;
+    for (int i = 0; i + CN_REC_LEN_V1 <= n && w < CN_REC_BYTES; i += CN_REC_LEN_V1) {
+        memcpy(recs + w, bytes + i, CN_REC_LEN_V1);
+        recs[w + CN_REC_SEEN] = 0;
+        w += CN_REC_LEN;
+    }
+    return w;
+}
+
+int cn_rec_save(const uint8_t *recs, int n, uint8_t *out, int cap)
+{
+    n = rec_n(n);
+    if (!out || cap < CN_REC_MAGIC_LEN + n) return -1;
+    memcpy(out, CN_REC_MAGIC, CN_REC_MAGIC_LEN);
+    if (n) memcpy(out + CN_REC_MAGIC_LEN, recs, (size_t)n);
+    return CN_REC_MAGIC_LEN + n;
 }
