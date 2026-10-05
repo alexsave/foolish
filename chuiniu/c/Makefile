@@ -291,9 +291,23 @@ include ../../shared/tools/ios_xcframework.mk
 
 # THE LIBRARY CARRIES THE LAYOUT IT WAS COMPILED FOR, and the readers are
 # written beside it in the same run, so the pair cannot come apart.
+# THE SCENE RENDERER (src/cn_scene.c, in SRC) is in the library too, and its
+# header goes into the xcframework beside cn_api.h, so the bridge can include it
+# and Swift reach it through module CChuiniu; after the build every slice is
+# asked for its entry points, so a library without the renderer fails here, not
+# in an app's link.
+IOS_HEADERS := build/ios/include
+IOS_SCENE_SYMBOLS := cn_scene_init cn_scene_reset cn_scene_tex_new cn_scene_begin cn_scene_occluder \
+                     cn_scene_render cn_scene_prepare cn_scene_band cn_scene_fb cn_scene_frame_bytes
 ios-lib: IOS_CFLAGS += -DSG_LAYOUT_HASH=$$(cat build/layout/ios.hash)
 ios-lib: build/layout/ios.hash datagen
-	$(call IOS_XCFRAMEWORK,chuiniu,$(IOS_SRC),$(IOS_CFLAGS),ios/include,$(IOS_MIN_VERSION),../ios/vendor/Chuiniu.xcframework)
+	@rm -rf $(IOS_HEADERS) && mkdir -p $(IOS_HEADERS) && cp ios/include/* src/cn_scene.h $(IOS_HEADERS)/
+	$(call IOS_XCFRAMEWORK,chuiniu,$(IOS_SRC),$(IOS_CFLAGS),$(IOS_HEADERS),$(IOS_MIN_VERSION),../ios/vendor/Chuiniu.xcframework)
+	@for a in build/ios/device/libchuiniu.a build/ios/sim-arm64/libchuiniu.a build/ios/sim-x86_64/libchuiniu.a; do \
+	  for s in $(IOS_SCENE_SYMBOLS); do \
+	    nm -g $$a 2>/dev/null | grep -q " T _$$s$$" || { echo "ios-lib: $$a does not define $$s"; exit 1; }; \
+	  done; \
+	done; echo "the scene renderer is in every slice ($(words $(IOS_SCENE_SYMBOLS)) entry points)"
 	@echo "layout $$(cat build/layout/ios.hash)"
 
 clean:

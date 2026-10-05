@@ -163,7 +163,13 @@ enum { B_FB, B_ZB, B_SMAP, B_AO, B_GT, B_GK, B_GF, B_GU, B_GV, B_GD, B_GM, B_GA,
 /* 0 when the numbers are out of range */
 static int frame_sizes(int W, int H, int pad, float dpr, int shadow_res, int vcapacity, int fcapacity, size_t sz[NBUF], int *fw, int *fh)
 {
-    if (W < 1 || H < 1 || pad < 0 || !(dpr > 0) || shadow_res < 4 || shadow_res > CN_SCENE_SHADOW_MAX || vcapacity < 0 || fcapacity < 0) return 0;
+    /* each refusal has its own case (cn_scene_test holds one number to each):
+     *   H < 1, pad < 0      a board of no height (the pad alone would still give it rows), a pad upward
+     *   !(dpr > 0)          a scale of zero or less, which times a negative width would make a positive one
+     *   !(... < MAX)        a framebuffer past 8,192 a side, or not a number (a NaN scale lands here too)
+     *   w < 1, h < 1        a board and scale that round to no pixel, a board of no width among them
+     *   shadow_res          a map too small to window, or past what 16 bits place (CN_SCENE_SHADOW_MAX) */
+    if (H < 1 || pad < 0 || !(dpr > 0) || shadow_res < 4 || shadow_res > CN_SCENE_SHADOW_MAX || vcapacity < 0 || fcapacity < 0) return 0;
     float fwf = W * dpr + .5f, fhf = (H + pad) * dpr + .5f;
     if (!(fwf < MAX_FRAME_PX) || !(fhf < MAX_FRAME_PX)) return 0;
     int w = (int)fwf, h = (int)fhf;
