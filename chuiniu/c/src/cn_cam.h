@@ -98,7 +98,7 @@ void  cn_cam_project(const CnCam *c, float x, float y, float z, float *px, float
  * reach (StageView reaches under the safe areas: Messages' grabber strip, the
  * home indicator, a landscape notch at 62); CN_CAM_COVER_SPARE is the turned
  * cover's room past that, so a rounding never shows the flat wood under it. */
-#define CN_CAM_REACH        80.0
+#define CN_CAM_REACH        80      /* an integer: structgen hands it to Swift */
 #define CN_CAM_COVER_SPARE  8.0
 #define CN_CAM_COVER_FAR    8192.0  /* the most the planks' layer runs past the drawer (cn_cam_planks) */
 /* The flat rect (x y w h, whole points, the drawer's flat points) whose turn

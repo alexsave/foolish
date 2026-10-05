@@ -133,6 +133,95 @@ final class StageViewTests: XCTestCase {
         }
     }
 
+    // MARK: the planks cover the view
+
+    /// How far `p` lies inside the quad `q` (corners in turn order): the least
+    /// of its distances to the four edges, negative outside.
+    private static func insideBy(_ q: [CGPoint], _ p: CGPoint) -> CGFloat {
+        var area: CGFloat = 0
+        for k in 0..<4 { area += q[k].x * q[(k + 1) % 4].y - q[(k + 1) % 4].x * q[k].y }
+        let sgn: CGFloat = area > 0 ? 1 : -1
+        var least = CGFloat.greatestFiniteMagnitude
+        for k in 0..<4 {
+            let a = q[k], b = q[(k + 1) % 4]
+            let len = hypot(b.x - a.x, b.y - a.y)
+            least = min(least, sgn * ((b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x)) / len)
+        }
+        return least
+    }
+
+    /// THE BAND ABOVE THE PLANKS (s03_six_expanded.png: a bare strip between
+    /// the drawer's rounded top and the first planks on a 440 by 956 phone).
+    /// The view built as the table builds it, at the study's drawers and the
+    /// shortest and tallest, with Messages' insets and with the kernel's whole
+    /// reach as insets: the planks' layer, turned, holds every corner of the
+    /// view (the drawer and the safe areas it reaches under) with room to
+    /// spare. The planks are tiles of the one image and nothing has a bitmap
+    /// of its own.
+    func testThePlanksTurnedCoverTheWholeViewAtEveryDrawer() throws {
+        let me = try started(seats: 6)
+        let sizes = Self.sizes + [CGSize(width: 440, height: 281), CGSize(width: 375, height: 340),
+                                  CGSize(width: 440, height: 718), CGSize(width: 440, height: 956)]
+        let reach = CGFloat(CN_CAM_REACH)
+        let insets = [UIEdgeInsets(top: 32, left: 0, bottom: 34, right: 0),
+                      UIEdgeInsets(top: reach, left: reach, bottom: reach, right: reach)]
+        let image = try XCTUnwrap(CnTextures.planks?.cgImage)
+        for size in sizes {
+            for inset in insets {
+                let tag = "\(Int(size.width))x\(Int(size.height)) inset \(Int(inset.top))"
+                let director = StageDirector(stage: KernelSeam.stage())
+                let full = CGRect(x: 0, y: 0, width: size.width + inset.left + inset.right, height: size.height + inset.top + inset.bottom)
+                let window = UIWindow(frame: full)
+                let view = StageUIView(director: director)
+                view.frame = full
+                view.inset = inset
+                window.addSubview(view)
+                director.begin(request(size, table: me.table), planMs: nil)
+                let hud = try XCTUnwrap(director.hud, tag)
+                view.update(names: [], outWord: "", hud: hud)
+                view.layoutIfNeeded()
+                XCTAssertEqual(view.drawer.size, size, tag)
+
+                // the layer is the kernel's rect; on a tall drawer it runs up past the study's overdraw (on a
+                // short one it is smaller than the overdraw: the camera hardly turns there)
+                XCTAssertEqual(view.planks.frame, StageUIView.plankRect(hud, size), tag)
+                if size.height >= 718 {
+                    XCTAssertLessThan(view.planks.frame.minY, StageUIView.overdraw(size).minY, "\(tag): the planks run up past the study's overdraw")
+                }
+
+                // its four corners, turned, hold the whole view by room to spare
+                let b = view.planks.bounds
+                let quad = [CGPoint(x: b.minX, y: b.minY), CGPoint(x: b.maxX, y: b.minY),
+                            CGPoint(x: b.maxX, y: b.maxY), CGPoint(x: b.minX, y: b.maxY)].map { view.planks.convert($0, to: view.layer) }
+                let v = view.bounds
+                for c in [CGPoint(x: v.minX, y: v.minY), CGPoint(x: v.maxX, y: v.minY), CGPoint(x: v.maxX, y: v.maxY), CGPoint(x: v.minX, y: v.maxY)] {
+                    XCTAssertGreaterThanOrEqual(Self.insideBy(quad, c), 4, "\(tag): the view's corner \(c) is under the turned planks (quad \(quad))")
+                }
+
+                // memory: tiles of the one image, no bitmap of the layer's own
+                let tiles = view.planks.sublayers?.filter { $0.name == "tile" } ?? []
+                XCTAssertNil(view.planks.contents, "\(tag): the planks' layer has no bitmap")
+                XCTAssertGreaterThan(tiles.count, 0, tag)
+                XCTAssertLessThanOrEqual(tiles.count, 90, "\(tag): \(tiles.count) tiles")
+                XCTAssertTrue(tiles.allSatisfy { ($0.contents as! CGImage) === image && $0.bounds.size == PlankTile.size }, "\(tag): every tile is the one image")
+                // the tiles cover the layer: the first at or above-left of its corner, the last past its far one
+                let union = tiles.reduce(CGRect.null) { $0.union($1.frame) }
+                XCTAssertTrue(union.contains(b), "\(tag): the tiles cover the layer (\(union) of \(b))")
+                // and they keep the study's phase in the drawer: a tile corner where the study put one
+                let phase = StageUIView.overdraw(size).origin
+                let o = StageUIView.tileOrigin(size)
+                let corner = view.planks.convert(tiles[0].frame.origin, to: view.tilt)
+                let dx = (corner.x - (phase.x + o.x)) / PlankTile.size.width, dy = (corner.y - (phase.y + o.y)) / PlankTile.size.height
+                XCTAssertEqual(dx, dx.rounded(), accuracy: 1e-6, "\(tag): the tiles' phase across is the study's")
+                XCTAssertEqual(dy, dy.rounded(), accuracy: 1e-6, "\(tag): the tiles' phase down is the study's")
+                // under it, the same wood, never black
+                XCTAssertGreaterThan(view.back.sublayers?.filter { $0.name == "tile" }.count ?? 0, 0, "\(tag): planks under the turned layer")
+                XCTAssertTrue(view.back.sublayers?.allSatisfy { $0.name == "tile" } ?? false, "\(tag): and nothing over them")
+                window.isHidden = true
+            }
+        }
+    }
+
     // MARK: no size, no frame
 
     /// A stage spy: the real stage, counted.
