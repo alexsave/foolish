@@ -234,15 +234,24 @@ int cn_scene_fb_h(void) { return fb ? FH : 0; }
 /* ---- the scanline: a triangle covers, on the row through sy, the columns between the two edges that
  *      cross it. Walking only those (instead of the bounding box with a test at every pixel) is what
  *      makes a thin diagonal facet cheap: measured, the box walked seven pixels for every one drawn. */
-static int span(float ax, float ay, float bx, float by, float cx, float cy, float sy, int lim, int *xl, int *xr)
+/* the three edges a to b, b to c, c to a: where each starts and how far it runs, worked out once a triangle */
+typedef struct { float x0[3], y0[3], y1[3], dx[3], dy[3]; } Edges;
+static inline __attribute__((always_inline)) Edges edges_of(float ax, float ay, float bx, float by, float cx, float cy)
 {
-    float lo = 1e30f, hi = -1e30f;
     const float px[3] = { ax, bx, cx }, py[3] = { ay, by, cy };
+    Edges E;
     for (int i = 0; i < 3; i++) {
         int j = i == 2 ? 0 : i + 1;
-        float y0 = py[i], y1 = py[j];
-        if ((sy < y0) == (sy < y1)) continue;             /* the row is not between this edge's ends */
-        float x = px[i] + (sy - y0) * (px[j] - px[i]) / (y1 - y0);
+        E.x0[i] = px[i]; E.y0[i] = py[i]; E.y1[i] = py[j]; E.dx[i] = px[j] - px[i]; E.dy[i] = py[j] - py[i];
+    }
+    return E;
+}
+static inline __attribute__((always_inline)) int span(const Edges *E, float sy, int lim, int *xl, int *xr)
+{
+    float lo = 1e30f, hi = -1e30f;
+    for (int i = 0; i < 3; i++) {
+        if ((sy < E->y0[i]) == (sy < E->y1[i])) continue;   /* the row is not between this edge's ends */
+        float x = E->x0[i] + (sy - E->y0[i]) * E->dx[i] / E->dy[i];
         if (x < lo) lo = x;
         if (x > hi) hi = x;
     }
@@ -297,10 +306,11 @@ static void shadow_tri(SV a, SV b, SV c, float *smap_, int SR_, int r0, int r1, 
     if (y0 < r0) y0 = r0;
     if (y1 > r1 - 1) y1 = r1 - 1;
     float e0x = (by - cy) * inv, e1x = (cy - ay) * inv;
+    const Edges E = edges_of(ax, ay, bx, by, cx, cy);
     uint32_t n = 0;
     for (int y = y0; y <= y1; y++) {
         float sy = y + .5f; int xl, xr;
-        if (!span(ax, ay, bx, by, cx, cy, sy, SR_, &xl, &xr)) continue;
+        if (!span(&E, sy, SR_, &xl, &xr)) continue;
         float px = xl + .5f;
         float w0 = ((bx - px) * (cy - sy) - (by - sy) * (cx - px)) * inv;
         float w1 = ((cx - px) * (ay - sy) - (cy - sy) * (ax - px)) * inv;
@@ -325,6 +335,7 @@ typedef struct { float x, y, iw, uw, vw, nx, ny, nz, pxw, pyw, pzw; } PV;
  * a time; a lane past the span's end or behind the depth buffer is computed and thrown away. */
 typedef float f4 __attribute__((vector_size(16)));
 typedef int32_t i4 __attribute__((vector_size(16)));
+typedef uint32_t u4 __attribute__((vector_size(16)));
 typedef uint8_t u8x4 __attribute__((vector_size(4)));
 typedef uint16_t u16x4 __attribute__((vector_size(8)));
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
@@ -332,6 +343,7 @@ typedef uint16_t u16x4 __attribute__((vector_size(8)));
 #endif
 static inline __attribute__((always_inline)) f4 vf(float s) { f4 v = { s, s, s, s }; return v; }
 static inline __attribute__((always_inline)) f4 vsel(i4 m, f4 a, f4 b) { return (f4)(((i4)a & m) | ((i4)b & ~m)); }
+static inline __attribute__((always_inline)) i4 vsel_i(i4 m, i4 a, i4 b) { return (a & m) | (b & ~m); }
 /* v < lo ? lo : v > hi ? hi : v, as fclamp */
 static inline __attribute__((always_inline)) f4 vclamp(f4 v, float lo, float hi) { return vsel(v < lo, vf(lo), vsel(v > hi, vf(hi), v)); }
 static inline __attribute__((always_inline)) i4 vint(f4 v) { return __builtin_convertvector(v, i4); }
@@ -407,6 +419,7 @@ static void tri(const Light *Lp, const Bufs *Bp, int r0, int r1, uint32_t *walke
     if (y0 < r0) y0 = r0;
     if (y1 > r1 - 1) y1 = r1 - 1;
     float e0x = (by_ - cy) * inv, e1x = (cy - ay) * inv;
+    const Edges E = edges_of(ax, ay, bx_, by_, cx, cy);
     const int receiver = flags & F_RECEIVER, receives = flags & F_RECEIVE;
     const uint8_t kind = receives ? 1 : 3;
     const float twf = (float)tw, thf = (float)th, txmax = tw - 1.001f, tymax = th - 1.001f;
@@ -415,7 +428,7 @@ static void tri(const Light *Lp, const Bufs *Bp, int r0, int r1, uint32_t *walke
     uint32_t nwalk = 0, nshade = 0;
     for (int y = y0; y <= y1; y++) {
         float sy = y + .5f; int xl, xr;
-        if (!span(ax, ay, bx_, by_, cx, cy, sy, W, &xl, &xr)) continue;
+        if (!span(&E, sy, W, &xl, &xr)) continue;
         float px0 = xl + .5f;
         float w0 = ((bx_ - px0) * (cy - sy) - (by_ - sy) * (cx - px0)) * inv;
         float w1 = ((cx - px0) * (ay - sy) - (cy - sy) * (ax - px0)) * inv;
@@ -471,9 +484,11 @@ static void tri(const Light *Lp, const Bufs *Bp, int r0, int r1, uint32_t *walke
                 f4 vt = v * thf, ut = u * twf;
                 vt = vsel(vt == vt, vclamp(vt, -65536, 65536), vf(0)); ut = vsel(ut == ut, vclamp(ut, -65536, 65536), vf(0));
                 i4 bi = (vint(vt) * tw + vint(ut)) * 2;
-                f4 dx, dy;
-                for (int k = 0; k < 4; k++) { int b = bi[k]; if (b < 0) b = 0; if (b > bmax) b = bmax; dx[k] = bn[b]; dy[k] = bn[b + 1]; }
-                dx = dx * (1.f / 20); dy = dy * (1.f / 20);
+                bi = vsel_i(bi < 0, (i4){ 0, 0, 0, 0 }, bi); bi = vsel_i(bi > bmax, (i4){ bmax, bmax, bmax, bmax }, bi);
+                /* a texel's two signed bytes in one load, then both split out of all four at once */
+                i4 q;
+                for (int k = 0; k < 4; k++) { uint16_t two; memcpy(&two, bn + bi[k], 2); q[k] = two; }
+                f4 dx = vflt((i4)((u4)q << 24) >> 24) * (1.f / 20), dy = vflt((i4)((u4)q << 16) >> 24) * (1.f / 20);
                 nx += Tx * dx + Bx * dy; ny += Ty * dx + By * dy; nz += Tz * dx + Bz * dy;
             }
             /* the normal's length is near 1 (unit normals, a small bend): one Newton step from 1 for its inverse */
@@ -531,9 +546,18 @@ static void shade(const Light *Lp, const Bufs *Bp, int r0, int r1)
         /* most blocks are under no footprint: one alpha for the block */
         int ab = (by / 4) * AW_ + bx / 4, near = aob[ab] > 0 || (bx / 4 + 1 < AW_ && aob[ab + 1] > 0) || (by / 4 + 1 < AH_ && (aob[ab + AW_] > 0 || (bx / 4 + 1 < AW_ && aob[ab + AW_ + 1] > 0))) || (bx >= 4 && aob[ab - 1] > 0) || (by >= 4 && aob[ab - AW_] > 0);
         uint8_t al = (uint8_t)((1 - lit) * 255 + .5f);
-        for (int y = by; y < by + 4 && y < H; y++) for (int x = bx; x < bx + 4 && x < W; x++) {
-            int j = y * W + x; if (gfb[j]) continue;
-            uint8_t *o = &fbb[j * 4]; o[0] = 0; o[1] = 3; o[2] = 2; o[3] = near ? (uint8_t)((1 - lit * (1 - ao_at(&B, x, y))) * 255 + .5f) : al; gfb[j] = 4;
+        const uint32_t open4 = 0x00020300u | (uint32_t)al << 24;   /* the bytes 0, 3, 2, al: the table's dark */
+        for (int y = by; y < by + 4 && y < H; y++) {
+            const int j0 = y * W + bx;
+            if (!near && bx + 4 <= W) {
+                /* a block row nothing is drawn on and no footprint reaches: its four pixels at once */
+                uint32_t g4; memcpy(&g4, &gfb[j0], 4);
+                if (!g4) { for (int k = 0; k < 4; k++) memcpy(&fbb[(j0 + k) * 4], &open4, 4); memset(&gfb[j0], 4, 4); continue; }
+            }
+            for (int x = bx; x < bx + 4 && x < W; x++) {
+                int j = y * W + x; if (gfb[j]) continue;
+                uint8_t *o = &fbb[j * 4]; o[0] = 0; o[1] = 3; o[2] = 2; o[3] = near ? (uint8_t)((1 - lit * (1 - ao_at(&B, x, y))) * 255 + .5f) : al; gfb[j] = 4;
+            }
         }
     }
     /* then every pixel the blocks left: the table's at a body's edge, and the bodies' */
