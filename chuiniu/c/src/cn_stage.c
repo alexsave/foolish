@@ -383,6 +383,7 @@ const CnStageHud *cn_stage_begin(CnStage *st, const CnStageIn *in_)
             h->cup_x[s] = L->board_x + L->cup_x[s]; h->cup_y[s] = L->board_y + L->cup_y[s];
             h->name_x[s] = L->board_x + L->name_x[s]; h->name_y[s] = L->board_y + L->name_y[s];
             h->name_how[s] = L->name_how[s];
+            h->die_d[s] = L->die_g[s]; h->brass_r[s] = L->brass_r[s];
         }
     }
     hud_cam(h, &L->cam);

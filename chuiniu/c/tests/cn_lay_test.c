@@ -4,7 +4,11 @@
  * point: the board, the ring fitted to the camera, the short board's row, the
  * names, the plate, the canvas's room, the peek, every die and cup. Then the
  * short-or-tall rule on the drawer's measured height (340, 584 and the edge),
- * the seats turned round to any `me`, the throws, and the refusals. */
+ * the seats turned round to any `me`, the throws, and the refusals. Then
+ * (package U) nothing leaves the drawer: every vertex of every body, at rest,
+ * peeked, and in every frame of the throw, through cn_geom and cn_cam, from
+ * 281 to 340 points tall; the throw's cup without a bake; my throw's reach;
+ * the reveal's brass rings. */
 #include "../src/cn_lay.h"
 #include "cn_check.h"
 #include <math.h>
@@ -44,31 +48,31 @@ static const Gold GOLD[] = {
       { { 42.2, 66 }, { 110.6, 66 }, { 179, 66 }, { 247.4, 66 }, { 315.8, 66 } },
       { { 42.2, 110.2 }, { 110.6, 110.2 }, { 179, 110.2 }, { 247.4, 110.2 }, { 315.8, 110.2 } },
       { 0, 0, 0, 0 }, { 1.2741, -40.9377, 8.1875, 4.9125 } },
-    { 390, 340, 0, 2, 8, 320, 0, 24, 34.7066, 58.9066, 179, 234,
-      28.9066, 179.0793, 358, 54.9207, 40, 0,
-      { { 179, 124.1587 }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 } },
-      { { 179, 167.0652 }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 } },
-      { 0, 0, 0, 0 }, { 1.117, -58.9066, 11.7813, 7.0688 } },
-    { 390, 340, 0, 3, 8, 320, 0, 24, 34.7066, 58.9066, 179, 234,
-      54.9066, 179.0934, 127.1995, 54.9066, 40, 51,
-      { { 68.842, 151.6402 }, { 289.158, 151.6402 }, { 0, 0 }, { 0, 0 }, { 0, 0 } },
-      { { 68.842, 220.5467 }, { 289.158, 220.5467 }, { 0, 0 }, { 0, 0 }, { 0, 0 } },
-      { 0, 0, 0, 0 }, { 1.117, -58.9066, 11.7813, 7.0688 } },
-    { 390, 340, 0, 4, 8, 320, 0, 24, 34.7066, 58.9066, 179, 234,
-      28.9066, 179.0793, 143.1869, 54.9207, 40, 29,
-      { { 35.8131, 179.0793 }, { 179, 124.1587 }, { 322.1869, 179.0793 }, { 0, 0 }, { 0, 0 } },
-      { { 35.8131, 221.9859 }, { 179, 167.0652 }, { 322.1869, 221.9859 }, { 0, 0 }, { 0, 0 } },
-      { 0, 0, 0, 0 }, { 1.117, -58.9066, 11.7813, 7.0688 } },
-    { 390, 340, 0, 5, 8, 320, 0, 24, 34.7066, 58.9066, 179, 234,
-      34.9066, 180.2539, 140.873, 53.7461, 40, 33,
-      { { 45.0218, 196.8624 }, { 96.1969, 136.7724 }, { 261.8031, 136.7724 }, { 312.9782, 196.8624 }, { 0, 0 } },
-      { { 45.0218, 245.7689 }, { 161.1035, 136.7724 }, { 196.8965, 136.7724 }, { 312.9782, 245.7689 }, { 0, 0 } },
-      { 0, 0, 0, 0 }, { 1.117, -58.9066, 11.7813, 7.0688 } },
-    { 390, 340, 0, 6, 8, 320, 0, 24, 34.7066, 58.9066, 179, 234,
-      28.9066, 179.0793, 163.2518, 54.9207, 40, 28,
-      { { 37.6198, 206.5397 }, { 37.6198, 151.619 }, { 179, 124.1587 }, { 320.3802, 151.619 }, { 294.8535, 206.5397 } },
-      { { 37.6198, 249.4462 }, { 96.5264, 151.619 }, { 179, 167.0652 }, { 261.4736, 151.619 }, { 294.8535, 249.4462 } },
-      { 0, 0, 0, 0 }, { 1.117, -58.9066, 11.7813, 7.0688 } },
+    { 390, 340, 0, 2, 8, 220, 1, 16, 23.1377, 40.9377, 179, 186,
+      36, 66, 0, 0, 40, 40,
+      { { 48, 66 }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 } },
+      { { 48, 116 }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 } },
+      { 190, 50, 160, 56 }, { 1.2741, -40.9377, 8.1875, 4.9125 } },
+    { 390, 340, 0, 3, 8, 220, 1, 16, 23.1377, 40.9377, 179, 186,
+      36, 66, 0, 0, 40, 40,
+      { { 48, 66 }, { 128, 66 }, { 0, 0 }, { 0, 0 }, { 0, 0 } },
+      { { 48, 116 }, { 128, 116 }, { 0, 0 }, { 0, 0 }, { 0, 0 } },
+      { 190, 50, 160, 56 }, { 1.2741, -40.9377, 8.1875, 4.9125 } },
+    { 390, 340, 0, 4, 8, 220, 1, 16, 23.1377, 40.9377, 179, 186,
+      36, 66, 0, 0, 40, 40,
+      { { 48, 66 }, { 128, 66 }, { 208, 66 }, { 0, 0 }, { 0, 0 } },
+      { { 48, 116 }, { 128, 116 }, { 208, 116 }, { 0, 0 }, { 0, 0 } },
+      { 248, 50, 102, 56 }, { 1.2741, -40.9377, 8.1875, 4.9125 } },
+    { 390, 340, 0, 5, 8, 220, 1, 16, 23.1377, 40.9377, 179, 186,
+      36, 66, 0, 0, 40, 40,
+      { { 48, 66 }, { 128, 66 }, { 208, 66 }, { 288, 66 }, { 0, 0 } },
+      { { 48, 116 }, { 128, 116 }, { 208, 116 }, { 288, 116 }, { 0, 0 } },
+      { 0, 0, 0, 0 }, { 1.2741, -40.9377, 8.1875, 4.9125 } },
+    { 390, 340, 0, 6, 8, 220, 1, 16, 23.1377, 40.9377, 179, 186,
+      30.2, 66, 0, 0, 40, 40,
+      { { 42.2, 66 }, { 110.6, 66 }, { 179, 66 }, { 247.4, 66 }, { 315.8, 66 } },
+      { { 42.2, 110.2 }, { 110.6, 110.2 }, { 179, 110.2 }, { 247.4, 110.2 }, { 315.8, 110.2 } },
+      { 0, 0, 0, 0 }, { 1.2741, -40.9377, 8.1875, 4.9125 } },
     { 390, 718, 1, 2, 30, 576, 0, 24, 34.7066, 58.9066, 179, 490,
       58.9066, 311.0358, 358, 178.9642, 258, 0,
       { { 179, 132.0717 }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 } },
@@ -356,90 +360,90 @@ static const GoldDie GOLD_DICE[] = {
     { 4, 0, 193.2331, 203.209, 0.1106, 16 },
     { 4, 0, 166.7581, 205.3176, -0.0379, 16 },
     { 4, 0, 157.6275, 177.4031, 0.0393, 16 },
-    { 5, 1, 177.6882, 106.8053, 0.2173, 11.7773 },
-    { 5, 1, 194.1714, 118.5056, 0.2003, 11.7773 },
-    { 5, 1, 188.7168, 137.8994, -0.238, 11.7773 },
-    { 5, 1, 167.9464, 138.1277, -0.0101, 11.7773 },
-    { 5, 0, 176.9448, 199.5326, 0.1369, 24 },
-    { 5, 0, 213.9699, 225.7524, -0.1804, 24 },
-    { 5, 0, 200.3497, 259.8136, 0.1106, 24 },
-    { 5, 0, 160.6371, 262.9764, -0.0379, 24 },
-    { 5, 0, 146.9412, 221.1047, 0.0393, 24 },
-    { 6, 1, 66.3503, 118.6782, 0.2173, 22.3703 },
-    { 6, 1, 97.6593, 140.9024, 0.2003, 22.3703 },
-    { 6, 1, 87.2987, 177.7399, -0.238, 22.3703 },
-    { 6, 1, 47.8462, 178.1736, -0.0101, 22.3703 },
-    { 6, 2, 289.8333, 119.4983, 0.1417, 22.3703 },
-    { 6, 2, 321.0405, 141.9633, -0.0748, 22.3703 },
-    { 6, 2, 306.6305, 177.0342, 0.1995, 22.3703 },
-    { 6, 2, 269.4382, 176.6428, -0.1257, 22.3703 },
-    { 6, 2, 258.1205, 142.4743, -0.1618, 22.3703 },
-    { 6, 0, 176.9448, 199.5326, 0.1369, 24 },
-    { 6, 0, 213.9699, 225.7524, -0.1804, 24 },
-    { 6, 0, 200.3497, 259.8136, 0.1106, 24 },
-    { 6, 0, 160.6371, 262.9764, -0.0379, 24 },
-    { 6, 0, 146.9412, 221.1047, 0.0393, 24 },
-    { 7, 1, 34.5012, 161.7259, 0.2173, 11.7773 },
-    { 7, 1, 50.9845, 173.4263, 0.2003, 11.7773 },
-    { 7, 1, 45.5299, 192.82, -0.238, 11.7773 },
-    { 7, 1, 24.7595, 193.0483, -0.0101, 11.7773 },
-    { 7, 2, 179.3555, 107.237, 0.1417, 11.7773 },
-    { 7, 2, 195.7852, 119.0641, -0.0748, 11.7773 },
-    { 7, 2, 188.1987, 137.5278, 0.1995, 11.7773 },
-    { 7, 2, 168.6182, 137.3218, -0.1257, 11.7773 },
-    { 7, 2, 162.6598, 119.3331, -0.1618, 11.7773 },
-    { 7, 3, 320.8329, 161.844, -0.0265, 11.7773 },
-    { 7, 3, 339.244, 174.8611, 0.1524, 11.7773 },
-    { 7, 3, 331.7037, 192.5734, -0.0462, 11.7773 },
-    { 7, 0, 176.9448, 199.5326, 0.1369, 24 },
-    { 7, 0, 213.9699, 225.7524, -0.1804, 24 },
-    { 7, 0, 200.3497, 259.8136, 0.1106, 24 },
-    { 7, 0, 160.6371, 262.9764, -0.0379, 24 },
-    { 7, 0, 146.9412, 221.1047, 0.0393, 24 },
-    { 8, 1, 43.4376, 175.907, 0.2173, 14.2218 },
-    { 8, 1, 63.3422, 190.0359, 0.2003, 14.2218 },
-    { 8, 1, 56.7555, 213.4551, -0.238, 14.2218 },
-    { 8, 1, 31.6738, 213.7308, -0.0101, 14.2218 },
-    { 8, 2, 96.6262, 116.3384, 0.1417, 14.2218 },
-    { 8, 2, 116.4661, 130.6204, -0.0748, 14.2218 },
-    { 8, 2, 107.305, 152.9165, 0.1995, 14.2218 },
-    { 8, 2, 83.6602, 152.6677, -0.1257, 14.2218 },
-    { 8, 2, 76.465, 130.9453, -0.1618, 14.2218 },
-    { 8, 3, 260.1681, 115.9596, -0.0265, 14.2218 },
-    { 8, 3, 282.4007, 131.6786, 0.1524, 14.2218 },
-    { 8, 3, 273.2952, 153.0674, -0.0462, 14.2218 },
-    { 8, 4, 313.5797, 176.4099, -0.1999, 14.2218 },
-    { 8, 4, 332.3427, 191.0706, -0.1119, 14.2218 },
-    { 8, 4, 324.0336, 213.336, 0.0183, 14.2218 },
-    { 8, 4, 301.5809, 213.8844, -0.1218, 14.2218 },
-    { 8, 4, 294.4974, 189.8121, 0.0239, 14.2218 },
-    { 8, 0, 176.9448, 199.5326, 0.1369, 24 },
-    { 8, 0, 213.9699, 225.7524, -0.1804, 24 },
-    { 8, 0, 200.3497, 259.8136, 0.1106, 24 },
-    { 8, 0, 160.6371, 262.9764, -0.0379, 24 },
-    { 8, 0, 146.9412, 221.1047, 0.0393, 24 },
-    { 9, 1, 36.308, 189.1863, 0.2173, 11.7773 },
-    { 9, 1, 52.7912, 200.8866, 0.2003, 11.7773 },
-    { 9, 1, 47.3366, 220.2804, -0.238, 11.7773 },
-    { 9, 1, 26.5662, 220.5087, -0.0101, 11.7773 },
-    { 9, 2, 37.9753, 134.6973, 0.1417, 11.7773 },
-    { 9, 2, 54.405, 146.5244, -0.0748, 11.7773 },
-    { 9, 2, 46.8185, 164.9881, 0.1995, 11.7773 },
-    { 9, 2, 27.238, 164.7821, -0.1257, 11.7773 },
-    { 9, 2, 21.2796, 146.7935, -0.1618, 11.7773 },
-    { 9, 3, 177.646, 106.9233, -0.0265, 11.7773 },
-    { 9, 3, 196.0571, 119.9404, 0.1524, 11.7773 },
-    { 9, 3, 188.5168, 137.6527, -0.0462, 11.7773 },
-    { 9, 4, 320.8783, 134.6821, -0.1999, 11.7773 },
-    { 9, 4, 336.4161, 146.8228, -0.1119, 11.7773 },
-    { 9, 4, 329.5353, 165.261, 0.0183, 11.7773 },
-    { 9, 4, 310.9419, 165.7152, -0.1218, 11.7773 },
-    { 9, 4, 305.076, 145.7806, 0.0239, 11.7773 },
-    { 9, 0, 176.9448, 199.5326, 0.1369, 24 },
-    { 9, 0, 213.9699, 225.7524, -0.1804, 24 },
-    { 9, 0, 200.3497, 259.8136, 0.1106, 24 },
-    { 9, 0, 160.6371, 262.9764, -0.0379, 24 },
-    { 9, 0, 146.9412, 221.1047, 0.0393, 24 },
+    { 5, 1, 46.4327, 45.2681, 0.2173, 14.0702 },
+    { 5, 1, 66.1251, 59.2463, 0.2003, 14.0702 },
+    { 5, 1, 59.6086, 82.4159, -0.238, 14.0702 },
+    { 5, 1, 34.7943, 82.6886, -0.0101, 14.0702 },
+    { 5, 0, 177.6299, 163.0218, 0.1369, 16 },
+    { 5, 0, 202.3133, 180.5016, -0.1804, 16 },
+    { 5, 0, 193.2331, 203.209, 0.1106, 16 },
+    { 5, 0, 166.7581, 205.3176, -0.0379, 16 },
+    { 5, 0, 157.6275, 177.4031, 0.0393, 16 },
+    { 6, 1, 46.4327, 45.2681, 0.2173, 14.0702 },
+    { 6, 1, 66.1251, 59.2463, 0.2003, 14.0702 },
+    { 6, 1, 59.6086, 82.4159, -0.238, 14.0702 },
+    { 6, 1, 34.7943, 82.6886, -0.0101, 14.0702 },
+    { 6, 2, 128.4247, 45.7839, 0.1417, 14.0702 },
+    { 6, 2, 148.053, 59.9135, -0.0748, 14.0702 },
+    { 6, 2, 138.9896, 81.972, 0.1995, 14.0702 },
+    { 6, 2, 115.597, 81.7258, -0.1257, 14.0702 },
+    { 6, 2, 108.4785, 60.235, -0.1618, 14.0702 },
+    { 6, 0, 177.6299, 163.0218, 0.1369, 16 },
+    { 6, 0, 202.3133, 180.5016, -0.1804, 16 },
+    { 6, 0, 193.2331, 203.209, 0.1106, 16 },
+    { 6, 0, 166.7581, 205.3176, -0.0379, 16 },
+    { 6, 0, 157.6275, 177.4031, 0.0393, 16 },
+    { 7, 1, 46.4327, 45.2681, 0.2173, 14.0702 },
+    { 7, 1, 66.1251, 59.2463, 0.2003, 14.0702 },
+    { 7, 1, 59.6086, 82.4159, -0.238, 14.0702 },
+    { 7, 1, 34.7943, 82.6886, -0.0101, 14.0702 },
+    { 7, 2, 128.4247, 45.7839, 0.1417, 14.0702 },
+    { 7, 2, 148.053, 59.9135, -0.0748, 14.0702 },
+    { 7, 2, 138.9896, 81.972, 0.1995, 14.0702 },
+    { 7, 2, 115.597, 81.7258, -0.1257, 14.0702 },
+    { 7, 2, 108.4785, 60.235, -0.1618, 14.0702 },
+    { 7, 3, 206.3824, 45.4091, -0.0265, 14.0702 },
+    { 7, 3, 228.378, 60.9605, 0.1524, 14.0702 },
+    { 7, 3, 219.3696, 82.1212, -0.0462, 14.0702 },
+    { 7, 0, 177.6299, 163.0218, 0.1369, 16 },
+    { 7, 0, 202.3133, 180.5016, -0.1804, 16 },
+    { 7, 0, 193.2331, 203.209, 0.1106, 16 },
+    { 7, 0, 166.7581, 205.3176, -0.0379, 16 },
+    { 7, 0, 157.6275, 177.4031, 0.0393, 16 },
+    { 8, 1, 46.4327, 45.2681, 0.2173, 14.0702 },
+    { 8, 1, 66.1251, 59.2463, 0.2003, 14.0702 },
+    { 8, 1, 59.6086, 82.4159, -0.238, 14.0702 },
+    { 8, 1, 34.7943, 82.6886, -0.0101, 14.0702 },
+    { 8, 2, 128.4247, 45.7839, 0.1417, 14.0702 },
+    { 8, 2, 148.053, 59.9135, -0.0748, 14.0702 },
+    { 8, 2, 138.9896, 81.972, 0.1995, 14.0702 },
+    { 8, 2, 115.597, 81.7258, -0.1257, 14.0702 },
+    { 8, 2, 108.4785, 60.235, -0.1618, 14.0702 },
+    { 8, 3, 206.3824, 45.4091, -0.0265, 14.0702 },
+    { 8, 3, 228.378, 60.9605, 0.1524, 14.0702 },
+    { 8, 3, 219.3696, 82.1212, -0.0462, 14.0702 },
+    { 8, 4, 288.5951, 45.7656, -0.1999, 14.0702 },
+    { 8, 4, 307.158, 60.27, -0.1119, 14.0702 },
+    { 8, 4, 298.9375, 82.298, 0.0183, 14.0702 },
+    { 8, 4, 276.7242, 82.8406, -0.1218, 14.0702 },
+    { 8, 4, 269.7163, 59.0249, 0.0239, 14.0702 },
+    { 8, 0, 177.6299, 163.0218, 0.1369, 16 },
+    { 8, 0, 202.3133, 180.5016, -0.1804, 16 },
+    { 8, 0, 193.2331, 203.209, 0.1106, 16 },
+    { 8, 0, 166.7581, 205.3176, -0.0379, 16 },
+    { 8, 0, 157.6275, 177.4031, 0.0393, 16 },
+    { 9, 1, 40.8853, 48.6082, 0.2173, 11.8033 },
+    { 9, 1, 57.4049, 60.3344, 0.2003, 11.8033 },
+    { 9, 1, 51.9383, 79.7711, -0.238, 11.8033 },
+    { 9, 1, 31.1219, 79.9999, -0.0101, 11.8033 },
+    { 9, 2, 110.9563, 49.0409, 0.1417, 11.8033 },
+    { 9, 2, 127.4223, 60.8941, -0.0748, 11.8033 },
+    { 9, 2, 119.8191, 79.3987, 0.1995, 11.8033 },
+    { 9, 2, 100.1952, 79.1922, -0.1257, 11.8033 },
+    { 9, 2, 94.2236, 61.1638, -0.1618, 11.8033 },
+    { 9, 3, 177.643, 48.7265, -0.0265, 11.8033 },
+    { 9, 3, 196.0949, 61.7724, 0.1524, 11.8033 },
+    { 9, 3, 188.5378, 79.5239, -0.0462, 11.8033 },
+    { 9, 4, 247.8992, 49.0256, -0.1999, 11.8033 },
+    { 9, 4, 263.4714, 61.1932, -0.1119, 11.8033 },
+    { 9, 4, 256.5753, 79.6722, 0.0183, 11.8033 },
+    { 9, 4, 237.9409, 80.1274, -0.1218, 11.8033 },
+    { 9, 4, 232.062, 60.1486, 0.0239, 11.8033 },
+    { 9, 0, 177.6299, 163.0218, 0.1369, 16 },
+    { 9, 0, 202.3133, 180.5016, -0.1804, 16 },
+    { 9, 0, 193.2331, 203.209, 0.1106, 16 },
+    { 9, 0, 166.7581, 205.3176, -0.0379, 16 },
+    { 9, 0, 157.6275, 177.4031, 0.0393, 16 },
     { 10, 1, 176.3267, 96.7084, 0.2173, 24 },
     { 10, 1, 209.9166, 120.5517, 0.2003, 24 },
     { 10, 1, 198.8012, 160.0728, -0.238, 24 },
@@ -1135,26 +1139,26 @@ static const GoldCup GOLD_CUPS[] = {
     { 4, 4, 247.4, 66, 0, 30.2, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 30.2, 0, 0 } },
     { 4, 5, 284.6782, 64.7668, 30.2, 30.2, 1, { -0.0396, 0.9992, 0, 0.1332, 0.0053, 0.9911, 0.9903, 0.0392, -0.1333 }, { 34.5696, 31.1218, 1.2332 } },
     { 4, 0, 179, 186, 0, 40.9377, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 40.9377, 0, 0 } },
-    { 5, 1, 179, 124.1587, 0, 28.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 28.9066, 0, 0 } },
-    { 5, 0, 179, 234, 0, 58.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 58.9066, 0, 0 } },
-    { 6, 1, 68.842, 151.6402, 0, 54.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 54.9066, 0, 0 } },
-    { 6, 2, 289.158, 151.6402, 0, 54.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 54.9066, 0, 0 } },
-    { 6, 0, 179, 234, 0, 58.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 58.9066, 0, 0 } },
-    { 7, 1, 35.8131, 179.0793, 0, 28.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 28.9066, 0, 0 } },
-    { 7, 2, 179, 124.1587, 0, 28.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 28.9066, 0, 0 } },
-    { 7, 3, 322.1869, 179.0793, 0, 28.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 28.9066, 0, 0 } },
-    { 7, 0, 179, 234, 0, 58.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 58.9066, 0, 0 } },
-    { 8, 1, 45.0218, 196.8624, 0, 34.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 34.9066, 0, 0 } },
-    { 8, 2, 96.1969, 136.7724, 0, 34.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 34.9066, 0, 0 } },
-    { 8, 3, 261.8031, 136.7724, 0, 34.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 34.9066, 0, 0 } },
-    { 8, 4, 312.9782, 196.8624, 0, 34.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 34.9066, 0, 0 } },
-    { 8, 0, 179, 234, 0, 58.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 58.9066, 0, 0 } },
-    { 9, 1, 37.6198, 206.5397, 0, 28.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 28.9066, 0, 0 } },
-    { 9, 2, 37.6198, 151.619, 0, 28.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 28.9066, 0, 0 } },
-    { 9, 3, 179, 124.1587, 0, 28.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 28.9066, 0, 0 } },
-    { 9, 4, 320.3802, 151.619, 0, 28.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 28.9066, 0, 0 } },
-    { 9, 5, 265.0646, 205.3593, 28.9066, 28.9066, 1, { -0.0396, 0.9992, 0, 0.1332, 0.0053, 0.9911, 0.9903, 0.0392, -0.1333 }, { 33.089, 29.7889, 1.1804 } },
-    { 9, 0, 179, 234, 0, 58.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 58.9066, 0, 0 } },
+    { 5, 1, 48, 66, 0, 36, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 36, 0, 0 } },
+    { 5, 0, 179, 186, 0, 40.9377, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 40.9377, 0, 0 } },
+    { 6, 1, 48, 66, 0, 36, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 36, 0, 0 } },
+    { 6, 2, 128, 66, 0, 36, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 36, 0, 0 } },
+    { 6, 0, 179, 186, 0, 40.9377, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 40.9377, 0, 0 } },
+    { 7, 1, 48, 66, 0, 36, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 36, 0, 0 } },
+    { 7, 2, 128, 66, 0, 36, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 36, 0, 0 } },
+    { 7, 3, 208, 66, 0, 36, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 36, 0, 0 } },
+    { 7, 0, 179, 186, 0, 40.9377, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 40.9377, 0, 0 } },
+    { 8, 1, 48, 66, 0, 36, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 36, 0, 0 } },
+    { 8, 2, 128, 66, 0, 36, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 36, 0, 0 } },
+    { 8, 3, 208, 66, 0, 36, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 36, 0, 0 } },
+    { 8, 4, 288, 66, 0, 36, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 36, 0, 0 } },
+    { 8, 0, 179, 186, 0, 40.9377, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 40.9377, 0, 0 } },
+    { 9, 1, 42.2, 66, 0, 30.2, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 30.2, 0, 0 } },
+    { 9, 2, 110.6, 66, 0, 30.2, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 30.2, 0, 0 } },
+    { 9, 3, 179, 66, 0, 30.2, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 30.2, 0, 0 } },
+    { 9, 4, 247.4, 66, 0, 30.2, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 30.2, 0, 0 } },
+    { 9, 5, 284.6782, 64.7668, 30.2, 30.2, 1, { -0.0396, 0.9992, 0, 0.1332, 0.0053, 0.9911, 0.9903, 0.0392, -0.1333 }, { 34.5696, 31.1218, 1.2332 } },
+    { 9, 0, 179, 186, 0, 40.9377, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 40.9377, 0, 0 } },
     { 10, 1, 179, 132.0717, 0, 58.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 58.9066, 0, 0 } },
     { 10, 0, 179, 490, 0, 58.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 58.9066, 0, 0 } },
     { 11, 1, 40.4439, 132.0717, 0, 58.9066, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 58.9066, 0, 0 } },
@@ -1426,12 +1430,17 @@ static void test_objects(void)
 
 static void test_short_or_tall(void)
 {
-    TEST("short or tall: the study's rule on the board left of whatever drawer the host measures");
-    CnLay L;
+    TEST("short or tall: the study's rule on the board this drawer has with the picker up");
+    CnLay L, M;
     CnLayIn in = input(390, 340, 4, 1, 0);
     CHECK(cn_lay_make(&in, &L) && L.short_board && L.board_h == 220, "340 on my turn: a short board (220)");
     in = input(390, 340, 4, 0, 0);
-    CHECK(cn_lay_make(&in, &L) && !L.short_board && L.board_h == 320, "340 on theirs: no picker, a tall board (320)");
+    CHECK(cn_lay_make(&in, &M) && M.short_board && M.board_h == 220 && !M.has_shelf, "340 on theirs: the same short board (220), no shelf");
+    int same = 1;
+    for (int s = 0; s < 4; s++) same &= L.cup_x[s] == M.cup_x[s] && L.cup_y[s] == M.cup_y[s] && L.name_x[s] == M.name_x[s] && L.name_y[s] == M.name_y[s];
+    CHECK(same && L.cup_r == M.cup_r && L.plate[1] == M.plate[1], "nothing on a short board moves when the turn comes round");
+    in = input(390, 340, 4, 0, 0); in.rolling = 1;
+    CHECK(cn_lay_make(&in, &M) && M.short_board && M.board_h == 220 && M.has_shelf && M.shelf[3] == 50, "340 at the reveal: the same board, the roll's shelf");
     in = input(390, 584, 4, 1, 0);
     CHECK(cn_lay_make(&in, &L) && !L.short_board && L.top_m == 30 && L.board_h == 442, "584 on my turn: tall (442)");
     in = input(375, 281, 4, 1, 0);   /* pickemup's measured iPhone 17e drawer */
@@ -1511,6 +1520,218 @@ static void test_throws(void)
     CHECK(p.phase == CN_RP_IDLE && near(p.p[0], L.cup_x[T[3].seat], .5) && near(p.p[1], L.cup_y[T[3].seat], .5), "and its cup comes down on its seat (%g, %g)", p.p[0], p.p[1]);
 }
 
+/* ---- nothing leaves the drawer (package U) --------------------------------------------------- */
+
+static CnMesh MESH[4];   /* my cup, theirs, my die, theirs */
+static float VB[CN_MESH_MAX_CORNER * CN_GEOM_VF], FB[CN_MESH_MAX_CORNER * CN_GEOM_FF];
+static float FR[CN_ROLL_MAX_FRAMES * CN_ROLL_FRAME_FLOATS];
+static uint8_t PH[CN_ROLL_MAX_FRAMES];
+
+typedef struct { double x0, y0, x1, y1; } Box;
+static Box box_none(void) { Box b = { 1e30, 1e30, -1e30, -1e30 }; return b; }
+
+static void meshes(const CnLay *L)
+{
+    cn_geom_cup_mesh(&MESH[0], L->my_r, L->my_r * CN_CUP_RC, L->my_r * CN_CUP_TALL, CN_CUP_SEGS, L->my_r * CN_CUP_WALL, CN_DOME * L->d);
+    cn_geom_cup_mesh(&MESH[1], L->cup_r, L->cup_r * CN_CUP_RC, L->cup_r * CN_CUP_TALL, CN_CUP_SEGS, L->cup_r * CN_CUP_WALL, CN_DOME * L->sd);
+    cn_geom_die_mesh(&MESH[2], L->d);
+    cn_geom_die_mesh(&MESH[3], L->sd);
+}
+
+/* every vertex of a body as the stage draws it: the mesh placed (cn_geom_emit), seen from the eye
+ * (cn_cam_project), on the board's place in the drawer, through the turn (cn_cam_map) */
+static void drawn(const CnLay *L, const CnObj *o, Box *b)
+{
+    static const int tex[CN_TEX_SLOTS] = { 0 };
+    const CnMesh *m = &MESH[o->kind == CN_OBJ_DIE ? (o->mine ? 2 : 3) : (o->mine ? 0 : 1)];
+    cn_geom_emit(m, o, 0, tex, VB, 0, FB, 0);
+    for (int v = 0; v < m->ncorner; v++) {
+        float px, py, gx, gy;
+        cn_cam_project(&L->cam, VB[v * CN_GEOM_VF], VB[v * CN_GEOM_VF + 1], VB[v * CN_GEOM_VF + 2], &px, &py);
+        cn_cam_map(&L->cam, L->board_x + px, L->board_y + py, &gx, &gy);
+        if (gx < b->x0) b->x0 = gx;
+        if (gx > b->x1) b->x1 = gx;
+        if (gy < b->y0) b->y0 = gy;
+        if (gy > b->y1) b->y1 = gy;
+    }
+}
+
+static int inside(const Box *b, double w, double h) { return b->x0 >= 0 && b->y0 >= 0 && b->x1 <= w && b->y1 <= h; }
+
+static void test_cup_path(void)
+{
+    TEST("the throw's cup without a bake: cn_roll_cup_pose is the bake's cup, frame by frame");
+    CnLayIn in = input(390, 340, 4, 1, 0);
+    CnLay L; cn_lay_make(&in, &L);
+    CnLayThrow T[CN_LAY_SEATS];
+    cn_lay_throws(&in, &L, CN_THROW_CUP, T, CN_LAY_SEATS);
+    for (int pass = 0; pass < 2; pass++) {
+        CnThrow t = T[0].t;
+        if (pass) { t.scale = .8f * t.cup_r / CN_THROW_REF_R; t.shake_s = 1.7f; }
+        CnRollInfo info;
+        const int nf = cn_roll_bake(&t, 99, FR, PH, CN_ROLL_MAX_FRAMES, &info);
+        double worst = 0;
+        for (int f = 0; f < nf; f++) {
+            float p[CN_ROLL_POSE_FLOATS];
+            cn_roll_cup_pose(&t, (double)f / CN_ROLL_HZ, p);
+            const float *q = FR + (size_t)f * CN_ROLL_FRAME_FLOATS;
+            double dq = fabs(p[3] * q[3] + p[4] * q[4] + p[5] * q[5] + p[6] * q[6]);   /* q and -q are one turn */
+            for (int k = 0; k < 3; k++) worst = fmax(worst, fabs(p[k] - q[k]));
+            worst = fmax(worst, fabs(1 - dq) * 100);
+        }
+        CHECK(nf > 0 && worst < 1e-3, "%s: every one of %d frames, worst %.2g", pass ? "a held-lower throw, its own shake" : "my throw", nf, worst);
+        const double span = cn_roll_cup_span(&t);
+        CHECK(span > 2 && span * CN_ROLL_HZ < info.slam + 10 && span * CN_ROLL_HZ > info.slam, "the span %.2f s ends just past the slam (frame %d)", span, info.slam);
+        float p[CN_ROLL_POSE_FLOATS];
+        cn_roll_cup_pose(&t, span + .5, p);
+        CHECK(p[0] == t.cup_x && p[1] == t.cup_y && p[2] == 0 && p[6] == 1, "after the span the cup is home and still");
+    }
+    CnThrow table; cn_throw_default(&table, CN_THROW_TABLE, 100, 100, 40, 16, 20);
+    CHECK(cn_roll_cup_span(&table) == 0, "the table roll's cup is not a cup roll's: no span");
+}
+
+static void test_inside_the_drawer(void)
+{
+    TEST("nothing leaves the drawer: 281 to 340, 2 to 6 seats, every throw frame and the peek, on every screen");
+    static const int HS[] = { 281, 290, 300, 310, 323, 328, 334, 340 }, WS[] = { 390, 375 };
+    double worst = 1e9;
+    int frames = 0;
+    for (int wi = 0; wi < 2; wi++) for (int hi = 0; hi < 8; hi++) {
+        const int W = WS[wi], H = HS[hi];
+        CnThrow seen; memset(&seen, 0, sizeof seen);
+        for (int n = 2; n <= 6; n++) for (int screen = 0; screen < 3; screen++) {
+            CnLayIn in = input(W, H, n, screen == 0, 0);   /* my turn, theirs, the reveal */
+            if (screen == 2) in.rolling = 1;
+            CnLay L;
+            if (!cn_lay_make(&in, &L)) { CHECK(0, "%dx%d n %d: lays out", W, H, n); continue; }
+            meshes(&L);
+            CnObj base[CN_LAY_MAX_OBJS], o[CN_LAY_MAX_OBJS];
+            const int nb = cn_lay_objects(&in, &L, base, CN_LAY_MAX_OBJS);
+            /* still: my cup at its full peek (in.peek is 1); the reveal's shelf (its lift is the stage's, docs_pkgU.md) */
+            Box b = box_none();
+            memcpy(o, base, sizeof(CnObj) * (size_t)nb);
+            for (int i = 0; i < nb; i++) drawn(&L, &o[i], &b);
+            worst = fmin(worst, fmin(fmin(b.x0, b.y0), fmin(W - b.x1, H - b.y1)));
+            CHECK(inside(&b, W, H), "%dx%d n %d %s: at rest every body inside (x %.1f..%.1f y %.1f..%.1f)", W, H, n,
+                  screen == 0 ? "mine" : screen == 1 ? "theirs" : "reveal", b.x0, b.x1, b.y0, b.y1);
+            /* the throws: on a short board mine only, one throw on every screen of the drawer */
+            CnLayThrow T[CN_LAY_SEATS];
+            const int nt = cn_lay_throws(&in, &L, CN_THROW_CUP, T, CN_LAY_SEATS);
+            CHECK(nt == 1 && T[0].seat == in.me, "%dx%d n %d: a short board, my throw alone (%d)", W, H, n, nt);
+            for (int j = 0; j < nt; j++) {
+                /* mine is one throw on every screen of the drawer: drawn once, then only compared */
+                if (j == 0 && seen.cup_r != 0) { CHECK(!memcmp(&seen, &T[0].t, sizeof seen), "%dx%d n %d: the same throw on every screen", W, H, n); continue; }
+                if (j == 0) seen = T[0].t;
+                CnRollInfo info;
+                const int nf = cn_roll_bake(&T[j].t, T[j].seed, FR, PH, CN_ROLL_MAX_FRAMES, &info);
+                Box r = box_none();
+                for (int h2 = 0; h2 < 2 * nf; h2++) {   /* every frame, and half way to the next (the host's in-between) */
+                    memcpy(o, base, sizeof(CnObj) * (size_t)nb);
+                    int k = 0;
+                    for (int i = 0; i < nb; i++) {
+                        if (o[i].seat != T[j].seat || (o[i].kind == CN_OBJ_DIE && k >= T[j].t.dice)) continue;
+                        CnPose p;
+                        cn_geom_pose_at(FR, PH, nf, h2 / (2.0 * CN_ROLL_HZ), o[i].kind == CN_OBJ_CUP ? 0 : 1 + k++, &p);
+                        cn_geom_place(&o[i], &p, -1);
+                        if (o[i].kind == CN_OBJ_CUP && o[i].has_rot) o[i].tilt_angle = 0;   /* a cup in its throw is the throw's */
+                        drawn(&L, &o[i], &r);
+                    }
+                    frames++;
+                }
+                worst = fmin(worst, fmin(fmin(r.x0, r.y0), fmin(W - r.x1, H - r.y1)));
+                CHECK(inside(&r, W, H), "%dx%d n %d: seat %d's throw, every frame inside (reach %.3f: x %.1f..%.1f y %.1f..%.1f)", W, H, n, T[j].seat, L.my_reach, r.x0, r.x1, r.y0, r.y1);
+            }
+        }
+    }
+    printf("  %d throw frames and every still: the nearest any body comes to the drawer's edge is %.2f points\n", frames, worst);
+}
+
+static void test_reach(void)
+{
+    TEST("my throw's reach: the study's where it fits, held lower where it would not, the dice still in");
+    CnLay L;
+    CnLayIn in = input(390, 340, 4, 1, 0);
+    cn_lay_make(&in, &L);
+    CnLayThrow T[CN_LAY_SEATS];
+    cn_lay_throws(&in, &L, CN_THROW_CUP, T, CN_LAY_SEATS);
+    CHECK(L.my_reach == 1 && T[0].t.scale == L.my_r / CN_THROW_REF_R, "340: the study's reach (%.3f)", L.my_reach);
+    in = input(390, 281, 4, 1, 0);
+    cn_lay_make(&in, &L);
+    CHECK(L.my_reach == 1 && L.d < 16, "281: the study's reach, my dice made smaller for the peek instead (%.1f)", L.d);
+    /* a drawer too short for the study's reach (no phone measured has one): held lower, as high as fits */
+    in = input(390, 240, 4, 1, 0);
+    cn_lay_make(&in, &L);
+    cn_lay_throws(&in, &L, CN_THROW_CUP, T, CN_LAY_SEATS);
+    CHECK(L.my_reach < 1 && L.my_reach > CN_LAY_REACH_MIN && T[0].t.scale == L.my_reach * L.my_r / CN_THROW_REF_R, "240: held lower (%.3f)", L.my_reach);
+    /* the same reach on every screen of a drawer: the reveal finds my dice where my throw left them */
+    CnLay M;
+    CnLayIn th = input(390, 240, 4, 0, 0), rv = th;
+    rv.rolling = 1;
+    CHECK(cn_lay_make(&th, &M) && M.my_reach == L.my_reach && cn_lay_make(&rv, &M) && M.my_reach == L.my_reach, "240: one reach on my turn, theirs and the reveal");
+    /* a tall board's turns differ: the reach is fitted on the picker-up one (the tightest) */
+    CnLayIn tall = input(390, 460, 4, 0, 0);
+    CHECK(cn_lay_make(&tall, &M) && !M.short_board && M.my_reach < 1, "460 on theirs: the reach of 460 on mine (%.3f)", M.my_reach);
+    tall.turn = 0;
+    CnLay N;
+    CHECK(cn_lay_make(&tall, &N) && N.my_reach == M.my_reach && N.board_h < M.board_h, "and the same on mine");
+    /* a tall board's far seats throw as the study's did, at their own reach */
+    in = input(390, 718, 6, 0, 0);
+    cn_lay_make(&in, &L);
+    CHECK(cn_lay_throws(&in, &L, CN_THROW_CUP, T, CN_LAY_SEATS) == 5 && L.my_reach == 1, "718: five throws (one seat out), mine at the study's reach");
+    /* held as low as a throw ever is, the dice still land under my cup, over seeds and shakes */
+    in = input(390, 340, 4, 1, 0);
+    cn_lay_make(&in, &L);
+    cn_lay_throws(&in, &L, CN_THROW_CUP, T, CN_LAY_SEATS);
+    int under = 1, done = 1, forced = 0;
+    for (int s = 0; s < 40; s++) {
+        CnThrow t = T[0].t;
+        t.scale = (float)CN_LAY_REACH_MIN * t.cup_r / CN_THROW_REF_R;
+        t.shake_s = s % 5 ? 1.5f + (s % 9) * .1f : 0;
+        CnRollInfo info;
+        const int nf = cn_roll_bake(&t, 4000 + (uint64_t)s * 131, FR, PH, CN_ROLL_MAX_FRAMES, &info);
+        done &= nf > 0 && info.complete;
+        forced += info.forced;
+        for (int d = 0; d < t.dice; d++) {
+            const float *p = FR + (size_t)(nf - 1) * CN_ROLL_FRAME_FLOATS + (1 + d) * CN_ROLL_POSE_FLOATS;
+            under &= hypot(p[0] - t.cup_x, p[1] - t.cup_y) + t.die * .71 <= t.cup_r - t.cup_t + 1.5;
+        }
+    }
+    /* ...and its crown stays on the table's side of it once the cup is up (the first .35 s, cn_roll.c's LIFT, rises
+     * from under the table at any reach: docs_pkgU.md) */
+    for (int sh = 0; sh < 4; sh++) {
+        CnThrow t = T[0].t;
+        t.scale = (float)CN_LAY_REACH_MIN * t.cup_r / CN_THROW_REF_R; t.shake_s = 1.5f + sh * .25f;
+        double low = 1e9;
+        for (int f = 21; f <= cn_roll_cup_span(&t) * CN_ROLL_HZ; f++) {
+            float fr[CN_ROLL_FRAME_FLOATS];
+            memset(fr, 0, sizeof fr);
+            cn_roll_cup_pose(&t, (double)f / CN_ROLL_HZ, fr);
+            CnPose p;
+            cn_geom_pose_at(fr, 0, 1, 0, 0, &p);
+            for (int top = 0; top < 2; top++) for (int i = 0; i < CN_CUP_SEGS; i++) {
+                const double a = i * 2 * CN_PI / CN_CUP_SEGS, r = top ? t.cup_rc : t.cup_r;
+                low = fmin(low, p.p[2] + p.rot[2] * r * cos(a) + p.rot[5] * r * sin(a) + p.rot[8] * (top ? t.cup_h : 0));
+            }
+        }
+        CHECK(low > -.5, "shake %.2f s at the least reach: the cup's lowest point %.2f, not into the table", t.shake_s, low);
+    }
+    CHECK(done && under && forced == 0,"forty throws held at the least reach, %.2f, complete with every die under my cup (forced %d)", CN_LAY_REACH_MIN, forced);
+}
+
+static void test_brass(void)
+{
+    TEST("the reveal's brass rings: a die's side on the glass and a ring round it, from the kernel");
+    CnLayIn in = input(390, 340, 6, 0, 0);
+    CnLay L; cn_lay_make(&in, &L);
+    for (int s = 0; s < 6; s++) {
+        const double side = s == 0 ? L.d : L.sd;
+        float sc; cn_cam_to_screen(&L.cam, L.cup_y[s] - L.cup_y[0], &sc);
+        CHECK(near(L.die_g[s], side * sc, side * .05), "seat %d: the die's side on the glass %.2f (the study's scale there %.2f)", s, L.die_g[s], side * sc);
+        CHECK(L.brass_r[s] > L.die_g[s] * .71 && 2 * L.brass_r[s] < L.die_g[s] * 1.7, "seat %d: the ring %.2f clears the die's corners and not its neighbours'", s, L.brass_r[s]);
+    }
+    CHECK(L.die_g[0] > L.die_g[1], "mine are bigger than theirs");
+}
+
 int main(void)
 {
     test_golden();
@@ -1518,5 +1739,9 @@ int main(void)
     test_short_or_tall();
     test_any_me();
     test_throws();
+    test_cup_path();
+    test_inside_the_drawer();
+    test_reach();
+    test_brass();
     return report("cn_lay_test");
 }

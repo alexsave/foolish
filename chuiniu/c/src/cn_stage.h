@@ -127,6 +127,8 @@ typedef struct {
     float    die_x[CN_STAGE_ALL_DICE], die_y[CN_STAGE_ALL_DICE];   /* each shown die at rest, glass,
                                            seat s at s*5 in faces[] order (CnView's shown /
                                            my_dice order); 0 0 for none                      */
+    float    die_d[CN_STAGE_SEATS];     /* a seat's die's side on the glass, at its cup (0 in a bubble) */
+    float    brass_r[CN_STAGE_SEATS];   /* the radius of the reveal's brass ring round one of its dice  */
     float    origin_x, origin_y;        /* the turn's centre, flat                            */
     float    theta, cam_d, zoom;        /* rotateX(theta) with perspective cam_d, scale(zoom)  */
     float    ca[16];                    /* CATransform3D about the origin, m11 .. m44          */

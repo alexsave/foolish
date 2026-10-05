@@ -13,12 +13,37 @@
  * the roll's Roll again and Send), at the drawer's foot less 12 otherwise:
  *     top_m   = h > 400 ? 30 : 8
  *     board_h = h - top_m - 12 - (shelf ? shelf_h + 10 : 0)
- * A SHORT board (board_h < CN_LAY_SHORT_H = badge 72 + plate 56 + band 120 + 4
- * margins of 8 = 280, the study's isShort and DECISIONS I17) puts the other
- * seats in one row along its top, the plate beside the row; a tall one puts
- * them on the ring fitted to the camera (DECISIONS K14, round twenty-two).
- * The rule reads board_h, never a named drawer size, so whatever height the
- * host measures for the collapsed drawer lands on the right side of it.
+ * A SHORT board puts the other seats in one row along its top, the plate
+ * beside the row; a tall one puts them on the ring fitted to the camera
+ * (DECISIONS K14, round twenty-two). The board is short when the board this
+ * drawer has WITH THE PICKER UP is under CN_LAY_SHORT_H = badge 72 + plate 56
+ * + band 120 + 4 margins of 8 = 280 (the study's isShort; DECISIONS I17, "the
+ * compact drawer's table is a short board"): the rule reads the drawer, so the
+ * table stays a row on their turn too rather than turning into a ring each
+ * time the picker goes down (the study read the board left after the shelf,
+ * and a 340 drawer flipped between the two). Never a named drawer size, so
+ * whatever height the host measures lands on the right side of it.
+ *
+ * NOTHING LEAVES THE DRAWER (package U). Everything the eye sees stands up
+ * off the table and leans up the screen from the eye's foot, and a held cup
+ * is held high: on a short board the study's row put its crowns past the
+ * drawer's top below a 323 drawer, and every seat's held cup far past it. So:
+ *   the row's cups are as big as the row allows (the study's) and then made
+ *   smaller, a point at a time, until every crown, standing or lying, is
+ *   CN_LAY_EDGE inside the drawer;
+ *   on a short board my dice are the study's 16 and then half a point
+ *   smaller at a time until my cup, tipped as far as a peek tips it, stays
+ *   CN_LAY_EDGE inside (its crown swings up the screen; under a 310 drawer
+ *   the study's cup went past the top);
+ *   on a short board the other seats' cups do not throw (a far cup held as a
+ *   throw holds it rises four of its radii up the screen, and the row has
+ *   one); their dice are hidden under them anyway;
+ *   my throw is held at the largest reach (of the study's, never under
+ *   CN_LAY_REACH_MIN) at which my held cup stays CN_LAY_EDGE inside the
+ *   drawer, fitted on this drawer's picker-up board (the tightest), so the
+ *   throw is the same throw on my turn, on theirs and at the reveal.
+ * The fit reads the throw's own path (cn_roll_cup_pose), never a copy of it.
+ *
  *
  * COORDINATES. Board points (origin the board's top-left, x right, y down,
  * z up off the table) for every body, name and the band; screen points for
@@ -51,6 +76,11 @@
 #define CN_LAY_NAME_W     80.0    /* a far seat's name box, centred on its anchor */
 #define CN_LAY_NAME_H     30.0
 #define CN_LAY_NAME_UP    8.0     /* the box's top is this far above the anchor */
+#define CN_LAY_EDGE       4.0     /* no body nearer the drawer's edge than this, on the glass */
+#define CN_LAY_REACH_MIN  .8    /* the least reach a throw is held at: lower, the shaken cup's crown dips into the table */
+#define CN_LAY_ROW_MIN_R  12.0    /* the row's cups are never made smaller than this */
+#define CN_LAY_MY_D_MIN   10.0    /* nor my dice on a short board                   */
+#define CN_LAY_BRASS      .75   /* a die's brass ring at the reveal, of its side: past its corners (.71), inside half the spacing (.85) */
 
 typedef struct {
     uint8_t  seats;                 /* 2..6                                        */
@@ -92,6 +122,9 @@ typedef struct {
     float    pad, pad_x, pad_below;       /* the canvas's room past the board        */
     float    peek_target;           /* my cup's full tip                            */
     CnPeek   peek;                  /* its tip at in->peek                          */
+    float    my_reach;              /* my throw's reach, of the study's (1 when it fits the drawer) */
+    float    die_g[CN_LAY_SEATS];   /* each seat's die side on the glass, at its cup */
+    float    brass_r[CN_LAY_SEATS]; /* the radius of a brass ring round one, on the glass */
     CnCam    cam;
 } CnLay;
 
@@ -107,11 +140,12 @@ int cn_lay_make(const CnLayIn *in, CnLay *L);
 #define CN_LAY_MAX_OBJS (CN_LAY_SEATS * (CN_LAY_DICE + 1))
 int cn_lay_objects(const CnLayIn *in, const CnLay *L, CnObj *objs, int cap);
 
-/* The throws at a roll. The cup roll (CN_THROW_CUP): mine, and every other
- * seat's that still has dice, each with its own seed (in->seed + 1000 per
- * seat round from me), shake length (1.5 + .8 hash s) and start (.1 + .5 hash
- * s), so no two shake alike or land together; mine starts at once with the
- * default shake. The table roll (CN_THROW_TABLE): mine only. A throw's walls
+/* The throws at a roll. The cup roll (CN_THROW_CUP): mine, held at
+ * L->my_reach, and on a tall board every other seat's that still has dice,
+ * each with its own seed (in->seed + 1000 per seat round from me), shake
+ * length (1.5 + .8 hash s) and start (.1 + .5 hash s), so no two shake alike
+ * or land together; mine starts at once with the default shake. On a short
+ * board mine only. The table roll (CN_THROW_TABLE): mine only. A throw's walls
  * are a box round its cup, kept 20 off the board's sides and top and 10 off
  * its foot. Returns the count. A throw's frame at the host's clock T is
  * cn_geom_pose_at(..., T - delay, ...). */

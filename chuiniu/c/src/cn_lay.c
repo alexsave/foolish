@@ -25,6 +25,82 @@ static void die_spot(int seat, int k, double cx, double cy, double ring, double 
     *yaw = (cn_geom_hash(k, 73, s) - .5) * .5;
 }
 
+/* ---- what the eye sees of a cup, on the glass ------------------------------------- */
+
+/* the drawer's points a picture reaches: its top, its left and its right */
+typedef struct { double y0, x0, x1; } Reach;
+static Reach reach_none(void) { Reach r = { 1e30, 1e30, -1e30 }; return r; }
+static int reach_inside(const Reach *r, double w) { return r->y0 >= CN_LAY_EDGE && r->x0 >= CN_LAY_EDGE && r->x1 <= w - CN_LAY_EDGE; }
+
+/* A cup placed as o, as cn_geom_emit places its mesh: the mouth's rim and the
+ * crown's (the mesh's own corners; the fillet and the inside lie within them),
+ * through the eye, onto the board's place in the drawer, through the turn. */
+static void cup_reach(const CnLay *L, const CnObj *o, Reach *r)
+{
+    const double R = o->R, rc = R * CN_CUP_RC, h = o->h, ta = o->tilt_angle;
+    const double ct = cn_m_cos(ta), st = cn_m_sin(ta), cy = cn_m_cos(o->yaw), sy = cn_m_sin(o->yaw);
+    for (int i = 0; i < CN_CUP_SEGS; i++) {
+        const double a = (double)i / CN_CUP_SEGS * CN_PI * 2, ca = cn_m_cos(a), sa = cn_m_sin(a);
+        for (int top = 0; top < 2; top++) {
+            const double rr = top ? rc : R, p[3] = { rr * ca, rr * sa, top ? h : 0 };
+            double q[3];
+            if (o->has_rot) for (int k = 0; k < 3; k++) q[k] = o->rot[k] * p[0] + o->rot[3 + k] * p[1] + o->rot[6 + k] * p[2];
+            else { q[0] = p[0] * cy - p[1] * sy; q[1] = p[0] * sy + p[1] * cy; q[2] = p[2]; }
+            if (ta != 0) {
+                const double y = q[1] - o->tilt_hinge_y, z = q[2];
+                q[1] = y * ct - z * st + o->tilt_hinge_y - o->tilt_back; q[2] = y * st + z * ct + o->tilt_lift;
+            }
+            float px, py, gx, gy;
+            cn_cam_project(&L->cam, (float)(q[0] + o->x), (float)(q[1] + o->y), (float)(q[2] + o->lift), &px, &py);
+            cn_cam_map(&L->cam, L->board_x + px, L->board_y + py, &gx, &gy);
+            if (gy < r->y0) r->y0 = gy;
+            if (gx < r->x0) r->x0 = gx;
+            if (gx > r->x1) r->x1 = gx;
+        }
+    }
+}
+
+/* The throw a seat's cup at (x, y) makes, held at reach k of the study's: its
+ * cup at every 60 Hz frame from the start until it is home (the frames a bake
+ * writes; the host's in-between poses are within a hair of them). */
+static void throw_reach(const CnLay *L, const CnThrow *t0, double k, Reach *r)
+{
+    CnThrow t = *t0;
+    const float kf = (float)k;
+    t.scale = kf * t.cup_r / CN_THROW_REF_R;   /* in floats, as cn_lay_throws writes it */
+    const double span = cn_roll_cup_span(&t);
+    float fr[CN_ROLL_FRAME_FLOATS];
+    memset(fr, 0, sizeof fr);
+    CnObj o;
+    cn_geom_cup_obj(&o, t.cup_r, 0, 0, t.cup_x, t.cup_y, 0, 0);
+    for (int f = 0; f <= (int)cn_m_ceil(span * CN_ROLL_HZ); f++) {
+        CnPose p;
+        cn_roll_cup_pose(&t, (double)f / CN_ROLL_HZ, fr);
+        cn_geom_pose_at(fr, 0, 1, 0, 0, &p);
+        o.has_rot = 1; memcpy(o.rot, p.rot, sizeof o.rot);
+        o.x = p.p[0]; o.y = p.p[1]; o.lift = p.p[2];
+        cup_reach(L, &o, r);
+    }
+}
+
+/* my throw's reach: the study's when my held cup stays inside the drawer, else
+ * the largest that keeps it there, never under CN_LAY_REACH_MIN */
+static double fit_reach(const CnLay *L, const CnThrow *t)
+{
+    Reach r = reach_none();
+    throw_reach(L, t, 1, &r);
+    if (reach_inside(&r, L->w)) return 1;
+    double lo = CN_LAY_REACH_MIN, hi = 1;
+    r = reach_none(); throw_reach(L, t, lo, &r);
+    if (!reach_inside(&r, L->w)) return lo;
+    for (int i = 0; i < 10; i++) {
+        const double m = (lo + hi) / 2;
+        r = reach_none(); throw_reach(L, t, m, &r);
+        if (reach_inside(&r, L->w)) lo = m; else hi = m;
+    }
+    return lo;
+}
+
 /* a cup's picture as seven discs from its mouth (on the table) to its crown
  * (leaning up and out from the eye's foot), for the apart test */
 typedef struct { double x, y, r; } Disc;
@@ -136,12 +212,26 @@ static void ring_seats(const CnLayIn *in, CnLay *L, double W, double H, double m
 }
 
 /* a short board: the other seats in a row along the top, their cups as big as
- * the row allows (my cup's size at most) */
+ * the row allows (my cup's size at most), then a point smaller at a time until
+ * every crown in the row, standing or lying, is inside the drawer (the study's
+ * row is; below a 323 drawer the study's crowns lean past its top) */
 static void row_seats(const CnLayIn *in, CnLay *L, double W, double H, double myR, double mcy)
 {
     const int n = in->seats, me = in->me, others = n - 1;
-    const double step = dmin(CN_LAY_BADGE + CN_LAY_MARGIN, (W - 2 * CN_LAY_MARGIN) / others), R = dmin(myR, step / 2 - 4);
-    const double bandTop = H - CN_LAY_SHORT_BAND, cy = dmax(R + 2, (bandTop - (2 * R + 24)) / 2 + R);
+    const double step = dmin(CN_LAY_BADGE + CN_LAY_MARGIN, (W - 2 * CN_LAY_MARGIN) / others), bandTop = H - CN_LAY_SHORT_BAND;
+    double R = dmin(myR, step / 2 - 4), cy;
+    for (;; R -= 1) {
+        cy = dmax(R + 2, (bandTop - (2 * R + 24)) / 2 + R);
+        if (R - 1 < CN_LAY_ROW_MIN_R) break;
+        Reach r = reach_none();
+        for (int j = 0; j < others; j++) {
+            const int i = (me + 1 + j) % n;
+            CnObj o;
+            cn_geom_cup_obj(&o, (float)R, 0, (uint32_t)(i * 7), (float)(CN_LAY_MARGIN + j * step + step / 2), (float)cy, in->out_mask >> i & 1, (float)(W / 2));
+            cup_reach(L, &o, &r);
+        }
+        if (reach_inside(&r, L->w)) break;
+    }
     for (int j = 0; j < others; j++) {
         const int i = (me + 1 + j) % n;
         L->cup_x[i] = (float)(CN_LAY_MARGIN + j * step + step / 2); L->cup_y[i] = (float)cy;
@@ -162,20 +252,33 @@ static int valid(const CnLayIn *in)
     return 1;
 }
 
-int cn_lay_make(const CnLayIn *in, CnLay *L)
+/* my throw as cn_lay_throws writes it, before its reach */
+static void my_throw(const CnLayIn *in, const CnLay *L, int kind, CnThrow *t)
+{
+    const int me = in->me;
+    cn_throw_default(t, kind, L->cup_x[me], L->cup_y[me], L->my_r, L->d, L->ring);
+    t->dice = in->dice[me];
+}
+
+static int make(const CnLayIn *in, CnLay *L, int fit);
+
+int cn_lay_make(const CnLayIn *in, CnLay *L) { return make(in, L, 1); }
+
+static int make(const CnLayIn *in, CnLay *L, int fit)
 {
     memset(L, 0, sizeof *L);
     if (!in || !valid(in)) return 0;
     const double W = in->w, H = in->h, inner = W - 2 * CN_LAY_SIDE;
     const int shelf = in->turn == in->me || in->rolling;
     const double shelf_h = in->rolling ? CN_LAY_ROLL_H : CN_LAY_PICKER_H;
-    const double topM = H > 400 ? 30 : 8, boardH = H - topM - 12 - (shelf ? shelf_h + 10 : 0);
+    /* short or tall reads the drawer: the board it has with the picker up. A
+     * short board IS that board on every screen, so nothing on it moves when
+     * the turn comes round, and the room the picker takes on my turn is the
+     * room my cup's throw comes down through on theirs. */
+    const double topM = H > 400 ? 30 : 8, pickerBoard = H - topM - 12 - (CN_LAY_PICKER_H + 10);
+    const int shrt = pickerBoard < CN_LAY_SHORT_H;
+    const double boardH = shrt ? pickerBoard : H - topM - 12 - (shelf ? shelf_h + 10 : 0);
     if (!(boardH > CN_LAY_SHORT_BAND)) return 0;
-    const int shrt = boardH < CN_LAY_SHORT_H;
-    /* my five sit in a ring that keeps turned dice from touching (centre
-     * spacing 1.7 of a side; the diagonal is 1.41), under a cup whose mouth
-     * just covers the ring */
-    const double d = shrt ? 16 : 24, ring = 1.7 * d / (2 * cn_m_sin(CN_PI / 5)), myR = ring + d * .8 + 5;
     const double band = shrt ? CN_LAY_SHORT_BAND : CN_LAY_MY_BAND;
     const double mcx = inner / 2, mcy = boardH - band + (shrt ? 30 : 34);
     const double hudB = shrt ? 0 : CN_LAY_HUD_TOP + CN_LAY_PLATE_H + 6;
@@ -184,9 +287,31 @@ int cn_lay_make(const CnLayIn *in, CnLay *L)
     L->board_x = CN_LAY_SIDE; L->board_y = (float)topM; L->board_w = (float)inner; L->board_h = (float)boardH;
     L->top_m = (float)topM; L->seats = in->seats; L->me = in->me; L->short_board = (uint8_t)shrt;
     L->my_band[0] = CN_LAY_MARGIN; L->my_band[1] = (float)(boardH - band); L->my_band[2] = (float)(inner - 2 * CN_LAY_MARGIN); L->my_band[3] = (float)band;
-    L->d = (float)d; L->ring = (float)ring; L->my_r = (float)myR;
     L->pad_below = CN_LAY_PAD_BELOW;
     cn_cam_make(&L->cam, (float)inner, (float)boardH, (float)(CN_LAY_SIDE + mcx), (float)(topM + mcy), 1);
+
+    /* my five sit in a ring that keeps turned dice from touching (centre
+     * spacing 1.7 of a side; the diagonal is 1.41), under a cup whose mouth
+     * just covers the ring. On a short board the dice are the study's 16, then
+     * half a point smaller at a time until my cup, tipped as far as any peek
+     * tips it (its farthest die at the ring's top, pushed out by the most the
+     * jitter does), stays inside the drawer: tipped about the far edge of its
+     * mouth, its crown swings up the screen, past the top under a 310 drawer. */
+    double d = shrt ? 16 : 24, ring, myR;
+    for (;; d -= .5) {
+        ring = 1.7 * d / (2 * cn_m_sin(CN_PI / 5)); myR = ring + d * .8 + 5;
+        if (!shrt || d - .5 < CN_LAY_MY_D_MIN) break;
+        const float fy = (float)(mcy - ring * 1.05), fd = (float)d;
+        const float a = cn_cam_peek_angle(&L->cam, (float)myR, (float)mcy, &fy, &fd, 1);
+        const CnPeek p = cn_cam_peek_tilt((float)myR, a, a);
+        CnObj o;
+        cn_geom_cup_obj(&o, (float)myR, 0, 3, (float)mcx, (float)mcy, 0, 0);
+        o.tilt_angle = p.angle; o.tilt_hinge_y = p.hinge_y; o.tilt_back = p.back; o.tilt_lift = p.lift;
+        Reach r = reach_none();
+        cup_reach(L, &o, &r);
+        if (reach_inside(&r, W)) break;
+    }
+    L->d = (float)d; L->ring = (float)ring; L->my_r = (float)myR;
 
     /* the HUD: the plate at the top of the glass on a tall board, beside the row
      * on a short one (not drawn when the row leaves it under 100); the shelf at
@@ -226,6 +351,31 @@ int cn_lay_make(const CnLayIn *in, CnLay *L)
     L->peek_target = nd ? cn_cam_peek_angle(&L->cam, (float)myR, (float)mcy, dy, dd, nd) : 0;
     float pk = in->peek < 0 ? 0 : in->peek > 1 ? 1 : in->peek;
     L->peek = cn_cam_peek_tilt((float)myR, L->peek_target * pk, L->peek_target);
+
+    /* a die's side on the glass at each seat (the turn's own scale there), and its brass ring at the reveal */
+    for (int s = 0; s < in->seats; s++) {
+        const double side = s == me ? d : L->sd, x = L->board_x + L->cup_x[s], y = L->board_y + L->cup_y[s];
+        float ax, ay, bx, by;
+        cn_cam_map(&L->cam, (float)(x - side / 2), (float)y, &ax, &ay);
+        cn_cam_map(&L->cam, (float)(x + side / 2), (float)y, &bx, &by);
+        L->die_g[s] = (float)hyp(bx - ax, by - ay);
+        L->brass_r[s] = (float)(L->die_g[s] * CN_LAY_BRASS);
+    }
+
+    /* my throw's reach, fitted on this drawer's picker-up board (the tightest), so it is one throw on every screen */
+    L->my_reach = 1;
+    if (fit && nd) {
+        CnLayIn p = *in;
+        p.turn = p.me; p.rolling = 0;
+        CnLay P;
+        const int same = shelf && !in->rolling;
+        const CnLayIn *fi = same ? in : &p;
+        const CnLay *fl = same ? L : (make(&p, &P, 0) ? &P : L);
+        if (fl == L) fi = in;
+        CnThrow t;
+        my_throw(fi, fl, CN_THROW_CUP, &t);
+        L->my_reach = (float)fit_reach(fl, &t);
+    }
     return 1;
 }
 
@@ -270,7 +420,8 @@ int cn_lay_throws(const CnLayIn *in, const CnLay *L, int kind, CnLayThrow *out, 
     int k = 0;
     for (int v = 0; v < n; v++) {
         const int i = (me + v) % n;
-        if (v > 0 && (kind != CN_THROW_CUP || (in->out_mask >> i & 1) || !in->dice[i])) continue;
+        /* on a short board the other seats' cups stay down: no room above the row for a held cup */
+        if (v > 0 && (kind != CN_THROW_CUP || L->short_board || (in->out_mask >> i & 1) || !in->dice[i])) continue;
         if (v == 0 && !in->dice[i]) continue;
         if (k >= cap) return -1;
         CnLayThrow *t = &out[k++];
@@ -281,6 +432,8 @@ int cn_lay_throws(const CnLayIn *in, const CnLay *L, int kind, CnLayThrow *out, 
         /* the dice the seat holds: the study baked five for every seat and drew
          * only the seat's; a die nobody draws must not knock the others about */
         t->t.dice = in->dice[i];
+        /* mine held as high as the drawer allows (the default, R / CN_THROW_REF_R, when the study's fits) */
+        if (v == 0 && kind == CN_THROW_CUP && L->my_reach < 1) t->t.scale = L->my_reach * R / CN_THROW_REF_R;
         t->t.band_x0 = (float)dmax(20, mcx - 160); t->t.band_x1 = (float)dmin(W - 20, mcx + 160);
         t->t.band_y0 = (float)dmax(20, mcy - 120); t->t.band_y1 = (float)dmin(H - 10, mcy + 60);
         t->t.shake_s = v ? (float)(1.5 + cn_geom_hash(v, 81, (int32_t)seed) * .8) : 0;
