@@ -170,6 +170,23 @@ The HUD and each frame's shot are read in Swift through structgen's readers only
 
 I26: `cn_geom.h`'s die texture slot is `CN_TEX_DIE_ATLAS`; it was `CN_TEX_DIE`, which `cn_tex.h` also declares, so no file could include both (the icon tool had worked round it).
 
+I27 (the study's materials on iOS, package T): the owner's verdict on the first stage build was that its wood "is closer to that of a foolish wooden table rather than the dark aquatic theme we worked so hard to design", so every surface Swift paints is now the study's, and nothing of foolish's (its walnut and felt JPEGs, its orange plank buttons, its brass, its sans) is left in chuiniu.
+The table is the study's planks (`TABLE_MATS.woodgrey2`: foolish's streak march in a drowned grey-teal palette under the stone passes, six planks of 86 points in a running bond, the nails baked in), made by `chuiniu/c/tools/cn_texgen.c` at build time as one seamless tile, 516 by 830 points at 2 texels a point (`cn_planks.jpg`, 1032 by 1660, JPEG at quality 80 through macOS's `sips`, about 185 KB); at the study's own scale and without nails it is the study's canvas to a mean of 0.38 of 255 (`cn_texgen --compare-planks`).
+2 texels a point, not the study's 1: the stage turns the plane toward the eye and magnifies its near edge, and the nails (SVG in the study, sharp at any scale) are baked into the tile; the march itself is texel-sized and is read bilinearly at 2, as a browser shows the 1x canvas on a 2x screen.
+The nail rows are the study's rule from its stage seed, with a row that would crowd the tile's seam left out, so they repeat with the tile; in the study they were drawn per stage and did not repeat.
+Being seamless, the tile is laid as plain tiles and the walnut's mirrored 2 by 2 workaround is deleted; a plank's middle runs down the drawer's centre (`plankCentred`) and the tile's top is 58 points up, on the stage's 190% by 220% overdraw, the flat screens and the bubble alike.
+The plates and every button are the study's verdigris (`cn_verd.png`, the pack's own tile, 128 points), with the plate's barnacle crust (`cn_crust.png`, `TEX.crust` ported to the same tool, 512 by 128 RGBA, a mean of 1.66 of 255 from the study's canvas) and the bone tile for the flat dice (`cn_bone.png`); all four are git-ignored build outputs of `make tex-ios`, as the pack is.
+The faces are IM Fell English and IM Fell English SC (SIL OFL 1.1, google/fonts; the SC file was added to `chuiniu/c/tools/fonts`, the licence text is the same for both).
+They live in ChuiniuKit's bundle, so they are registered for the process with Core Text at first use (`FType.registered`), not with `UIAppFonts`, which reads only the extension's main bundle.
+A button is the study's `.plank` including the frame the browser drew round it: every plank in the study is a `<button>`, and its default 2 px outset border (#a8a8a8 top and left, #545454 bottom and right, measured on the capture) is part of what was signed off, so it is drawn.
+Liar is the blood plate when the kernel offers the call, Raise the lit bronze plate when the kernel would take the bid, either sunk when not allowed; the stepper's minus is quiet, its plus bronze, Next round quiet, Start and Join lit.
+The stepper's numeral alone is the system serif's lining figures, the fallback the study itself names (its Open tab): Fell's old-style 1 is a small capital I, and on the phone "1" read as "I".
+The lobby is on the planks, like every screen, where the study put it on open water (`.sea`, whose caustic tile is not baked); the CJK lockup is not drawn (no Noto Serif TC in the bundle) and the kernel's title is set in the roman.
+
+I28 (no headline on the table): the caption plate that said "Your turn: open the bidding" is gone; the study dropped the headline and the ask line in round nineteen.
+The plate carries the bid on the table and nothing else, so before the first bid there is no plate; whose turn it is is the glow bar under a name, the name bright on its turn and dim otherwise (`.t-name`, `.t-name.dim`), in the small caps at 14 (12 on a short board), tracked .14em.
+The reveal's tally steps down from the study's 26 through 22 and 18 to the roman's floor of 15.5 to fit the plate, then takes two lines, and is never cut; its outcome line sits on a `.seatband`'s dark wash so it reads over a cup the stage put under it.
+
 ## Orchestration (owner: the orchestrator; O1 onward)
 
 O1: the proof of concept is built in three parallel packages (kernel and wire; iOS scaffold with the dice and cup primitive; legal, README and CI) and one tie-together package that wires the screens to the bridge and proves it on a simulator inside Messages.

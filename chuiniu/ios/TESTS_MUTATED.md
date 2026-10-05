@@ -110,6 +110,20 @@ Each mutant was one edit by hand to `tools/cn_texgen.c`, the test run, the edit 
 | T6 | the crust draws no wrapped copies (`w < 1` for the patches and the shells) | `:333` "left and right edges part more than the study's: 111.66 against 5.31", `:334` "top and bottom edges part: 114.62 against 5.38" |
 | T7 | no shells (`per = 0`) | `:323` "only 0 solid texels: the shells are missing", and `:333` |
 
+## DesignTests (package T, 2026-10-05)
+
+`ChuiniuKitTests/DesignTests.swift`, on the private simulator TChuiniu (`5FD5777D`, iPhone 6.9", iOS 27.0), `-only-testing:ChuiniuKitTests/DesignTests` (6 tests executed every run, none a compile error).
+Each mutant was one edit to a product file by a script that read the file, replaced one line, ran the tests and wrote the line back; `git status` showed the sources unchanged afterwards.
+
+| # | Mutation | Assertion that went red |
+|---|---|---|
+| D1 | `PlankTile.left` starts the tile at the centre line (no `- plank / 2`) | `:38` "300.0: a plank's middle is on the centre line" (193 against 150), every width, and `:43` on the stage |
+| D2 | `FType.registered` registers no file | `:50` "IM Fell English roman and small caps resolve by name", `:51` ".SFUI-Regular is not IM_FELL_English_Roman", `:52` |
+| D3 | `nameInk` gives every seat the bright ink | `:63` "every other name is the dim ink" |
+| D4 | `callKind(enabled: true)` is `.bronze` | `:69` "Liar is the blood plate" (bronze against call) |
+| D5 | the planks open at 1 texel a point | `:15` "the planks are the study's 516 by 830 tile" (1032 by 1660), `:16` "two texels a point" |
+| D6 | the narrow plate steps down to 14 | `:80` "nothing under 15.5 in the roman" (14 against 15.5) |
+
 ## Not tested
 
 The conversation (`ChuiniuMessages/MessagesViewController.swift`) has no test target, as pickemup's has none.
