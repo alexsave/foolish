@@ -142,8 +142,10 @@ public struct RevealScreen: View {
         }
         .multilineTextAlignment(.center)
         .lineLimit(3)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 4)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        // on a `.seatband`'s dark wash, so the line reads over a cup the stage put under it
+        .background(SeatBand())
     }
 }
 

@@ -31,6 +31,10 @@ struct BidPlate: View {
     let face: Int?
     var seed = 7
 
+    /// The one-line sizes tried in turn: the study's 26 (20 on a narrow plate)
+    /// and two steps down, none under the roman's 15.5 floor (the Type tab).
+    static func sizes(narrow: Bool) -> [CGFloat] { narrow ? [20, 17.5, 15.5] : [26, 22, 18, 15.5] }
+
     var body: some View {
         GeometryReader { geo in
             let narrow = geo.size.width < 140
@@ -44,16 +48,19 @@ struct BidPlate: View {
                     Rivet().position(x: i % 2 == 0 ? 8.5 : geo.size.width - 8.5, y: i < 2 ? 8.5 : geo.size.height - 8.5)
                 }
                 HStack(spacing: 10) {
-                    Text(text)
-                        .font(FType.serif(narrow ? 20 : 26))
-                        .bidInk()
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                        .minimumScaleFactor(0.5)
-                        .layoutPriority(1)
+                    // the study's size when the words fit on one line (a bid
+                    // always does); a longer line (the reveal's tally) steps
+                    // down, then takes two lines, never cut
+                    ViewThatFits(in: .horizontal) {
+                        ForEach(Self.sizes(narrow: narrow), id: \.self) { s in
+                            Text(text).font(FType.serif(s)).bidInk().lineLimit(1).fixedSize()
+                        }
+                        Text(text).font(FType.serif(15.5)).bidInk().lineLimit(2).minimumScaleFactor(0.8)
+                    }
+                    .layoutPriority(1)
                     if let face { Die(face: face, size: narrow ? 24 : 30, seed: 80) }
                 }
-                .padding(.horizontal, 10)
+                .padding(.horizontal, 12)
             }
             .frame(width: geo.size.width, height: geo.size.height)
         }

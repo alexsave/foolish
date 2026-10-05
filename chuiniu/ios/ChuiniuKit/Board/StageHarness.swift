@@ -6,7 +6,8 @@
 // `6 call`, ...) the drawer instead plays a group game of that many seats into
 // the kernel, as the tests' phones do (each its own throwaway defaults and
 // identity), and opens on seat 0's table; `call` plays one raise and a call
-// so the reveal is on screen. Nothing here exists in a Release build, and the
+// so the reveal is on screen; `bid` has every seat raise once round the
+// table, so it is my turn again with a bid on the plate. Nothing here exists in a Release build, and the
 // links it makes are never staged on purpose (a stage already waiting may
 // still pick the harness game up; it is a Debug build's toy).
 
@@ -18,11 +19,11 @@ enum Harness {
     static var ran = false
 
     /// The file's words, or nil (no harness).
-    static var spec: (seats: Int, call: Bool)? {
+    static var spec: (seats: Int, call: Bool, bid: Bool)? {
         guard let s = DevFlags(group: ChuiniuDev.group).string("dev.harness") else { return nil }
         let words = s.split(whereSeparator: \.isWhitespace)
         guard let n = words.first.flatMap({ Int($0) }), (2...6).contains(n) else { return nil }
-        return (n, words.contains("call"))
+        return (n, words.contains("call"), words.contains("bid"))
     }
 
     private static let names = ["Alex", "Bo", "Cy", "Di", "Ed", "Fay"]
@@ -40,7 +41,7 @@ enum Harness {
 
     /// Play the game into the kernel; the resident is then seat 0's table
     /// (or the reveal). Whether it worked.
-    static func play(_ spec: (seats: Int, call: Bool)) -> Bool {
+    static func play(_ spec: (seats: Int, call: Bool, bid: Bool)) -> Bool {
         let seed: [UInt8] = (0..<32).map { UInt8(($0 * 29 + spec.seats) & 0xFF) }
         let alex = phone("Alex")
         guard alex.newGame(dm: false, seed: seed), var link = alex.stagedURL() else { return false }
@@ -56,7 +57,22 @@ enum Harness {
         }
         var me = phone("Alex")
         guard me.adoptBubble(link) == 0 else { return false }
-        if spec.call {
+        if spec.bid {
+            // round the table once: three 3s from me, then each seat the least raise
+            var cur = link
+            for s in 0..<spec.seats {
+                let p = s == 0 ? me : phone(names[s])
+                if s > 0 { guard p.adoptBubble(cur) == 0 else { return false } }
+                guard let m = p.table.menu else { return false }
+                let q = s == 0 ? max(3, m.minimumRaise.quantity) : m.minimumRaise.quantity
+                let f = s == 0 ? 3 : m.minimumRaise.face
+                guard p.raise(quantity: q, face: f), let l = p.stagedURL() else { return false }
+                p.sent(l)
+                cur = l
+            }
+            me = phone("Alex")
+            guard me.adoptBubble(cur) == 0 else { return false }
+        } else if spec.call {
             guard let m = me.table.menu, me.raise(quantity: m.minimumRaise.quantity + 1, face: 3),
                   let raise = me.stagedURL() else { return false }
             me.sent(raise)

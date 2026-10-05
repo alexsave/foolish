@@ -63,9 +63,22 @@ struct PlankFace: View {
     var rivets = true
     var ring: CGFloat = 3
 
+    /// The rim: the study's planks are <button>s, and the button's own 2px
+    /// outset border (#a8a8a8 top and left, #545454 bottom and right, measured
+    /// on its capture) frames every one of them; the plate sits inside it.
+    static let rim: CGFloat = 2
+
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: 5, style: .circular)
-        PlateMetal(seed: seed, ring: ring, base: kind == .call ? Color(hex: 0x3A1A12) : Ink.bronze2) {
+        ZStack {
+            PlankRim(width: Self.rim)
+            inner.padding(Self.rim)
+        }
+        .shadow(color: .black.opacity(0.5), radius: 7, y: 6)
+    }
+
+    private var inner: some View {
+        let shape = RoundedRectangle(cornerRadius: 5 - Self.rim, style: .circular)
+        return PlateMetal(seed: seed, corner: 5 - Self.rim, ring: ring, base: kind == .call ? Color(hex: 0x3A1A12) : Ink.bronze2, shadow: false) {
             switch kind {
             case .call:
                 LinearGradient(stops: [.init(color: Color(.sRGB, red: 120 / 255, green: 40 / 255, blue: 24 / 255, opacity: 0.68), location: 0),
@@ -107,6 +120,31 @@ struct PlankFace: View {
     }
 }
 
+/// A button's outset border: light on the top and left edges, dark on the
+/// bottom and right, the corners mitred, round at radius 5.
+struct PlankRim: View {
+    var width: CGFloat
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 5, style: .circular)
+        ZStack {
+            shape.strokeBorder(Color(hex: 0x545454), lineWidth: width)
+            shape.strokeBorder(Color(hex: 0xA8A8A8), lineWidth: width)
+                .mask {
+                    GeometryReader { g in
+                        let w = g.size.width, h = g.size.height
+                        Path { p in
+                            p.move(to: .zero); p.addLine(to: CGPoint(x: w, y: 0)); p.addLine(to: CGPoint(x: w - width, y: width))
+                            p.addLine(to: CGPoint(x: width, y: width)); p.addLine(to: CGPoint(x: width, y: h - width))
+                            p.addLine(to: CGPoint(x: 0, y: h)); p.closeSubpath()
+                        }
+                        .fill(Color.black)
+                    }
+                }
+        }
+        .allowsHitTesting(false)
+    }
+}
+
 /// The plank's rivet (`--rv`): a radial dot 7 points in from the corner,
 /// bright at its middle, dark at 1.5, a shadow to 2.4, gone at 3.2.
 struct PlankRivet: View {
@@ -126,7 +164,7 @@ struct InnerGlow: View {
     var color: Color
     var radius: CGFloat
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: 5, style: .circular)
+        let shape = RoundedRectangle(cornerRadius: 5 - PlankFace.rim, style: .circular)
         shape.stroke(color, lineWidth: radius * 2)
             .blur(radius: radius / 2)
             .clipShape(shape)

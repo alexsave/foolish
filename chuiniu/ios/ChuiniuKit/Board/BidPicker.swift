@@ -78,13 +78,16 @@ public struct BidPicker: View {
             VStack(spacing: 10) {
                 HStack(spacing: 10) {
                     HStack(spacing: 8) {
-                        SquarePlank(glyph: "\u{2212}", kind: quantity > range.lowerBound ? .quiet : .sunk, seed: 3,
+                        SquarePlank(glyph: "\u{2212}", kind: quantity > range.lowerBound ? .quiet : .sunk, seed: 2,
                                     accessibility: "minus") { quantity -= 1 }
                         Text(verbatim: "\(quantity)")
-                            .font(FType.serif(28))
+                            // the study's own fallback (its Open tab): Fell's old-style 1 is a
+                            // small capital I, and "1" read as "I" on the phone, so the
+                            // stepper's numeral alone is the system serif's lining figures
+                            .font(.system(size: 26, design: .serif).monospacedDigit())
                             .bidInk()
                             .frame(minWidth: 34)
-                        SquarePlank(glyph: "+", kind: quantity < range.upperBound ? .bronze : .sunk, seed: 4,
+                        SquarePlank(glyph: "+", kind: quantity < range.upperBound ? .bronze : .sunk, seed: 10,
                                     accessibility: "plus") { quantity += 1 }
                     }
                     .frame(maxWidth: .infinity)
