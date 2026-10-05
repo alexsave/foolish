@@ -547,8 +547,9 @@ public final class StageUIView: UIView {
         if !director.live, !director.needsFrame { stop() }
     }
 
+    /// Only from wake() and tick(), which both hold a view with no size back.
     private func draw() {
-        guard bounds.width >= 1, bounds.height >= 1, let f = director.frame() else { return }
+        guard let f = director.frame() else { return }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         place(f)

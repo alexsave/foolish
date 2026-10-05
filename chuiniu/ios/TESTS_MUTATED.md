@@ -25,14 +25,10 @@ The badge is now 72pt wide and the plate 160pt, and that run is what M8, M9 and 
 | M6 | testCallFollowsTheMenu | `callEnabled` always true | "nothing to call before the opening bid" |
 | M7 | testTheStepperSpansTheLeastQuantityToEveryDie | `quantityRange` takes the `max` of the faces | "least of the faces to the table" (5...20 against 4...20) |
 
-## DiceTableLayoutTests
+## DiceTableLayoutTests (retired 2026-10-05, package E1)
 
-| # | Test | Mutation | Assertion that went red |
-|---|---|---|---|
-| M8 | testSeatsNeverOverlapEachOtherOrThePlate | the arc's step divides by `others + 3` | "seats 2 and 3 do not overlap" (4 seats), "seat 2 clears the bid plate" (6 seats), 65 in all |
-| M9 | testSeatsNeverOverlapEachOtherOrThePlate | the horizontal radius halved | "seats 2 and 3 do not overlap" (5 seats), "seat 1 clears the bid plate", 112 in all |
-| M10 | testMySeatIsTheBottomBand | the others run right to left | "the seat after mine is the leftmost" (295.9 against 179) |
-| M11 | testSeatsNeverOverlapEachOtherOrThePlate | the plate sits at `0.7` of the radius instead of `0.3` | "seat 1 clears the bid plate" (2 seats), 71 in all |
+`DiceTableLayout` and its test are deleted: the seats, the plate, the shelf and the short board are the kernel's (`cn_lay`, pinned by `cn_lay_test.c` to the study's own numbers), and Swift places nothing.
+Rows M8 to M11, M18 and M19 recorded mutants of a function that no longer exists.
 
 ## BridgeKernelTests (the tie-together, 2026-09-27)
 
@@ -51,17 +47,30 @@ The unmutated suite is 12 tests, 0 failures.
 
 `testTheLayoutOfTheReadersIsTheLibrarys` is a startup check (`cn_api_layout_hash` against `SG_LAYOUT_HASH`); it was not mutated, because a mismatched pair is a rebuilt library or a regenerated reader, not a source edit.
 
-## DiceTableLayoutTests on the short board (the tie-together, 2026-09-27)
+## StageViewTests (package E1, 2026-10-05)
 
-The compact drawer's boards (358 x 140, 358 x 150, 398 x 160) were added after the first run inside Messages showed a seat drawn over the plate there.
+The host side of the kernel's stage, on real group games played into the bridge.
+Each mutant was applied by `~/.claude/skills/ios-sim-verify/mutation_check.sh` (exact replacement, restored and verified byte for byte), `-only-testing:ChuiniuKitTests/StageViewTests`, on a private iPhone 17e simulator (`EA27629F`, iOS 27.0); the driver was a Python script, never a shell loop.
+The unmutated suite is 16 tests, 0 failures.
+These tests were written after the code, so the mutants are their red runs.
 
 | # | Test | Mutation | Assertion that went red |
 |---|---|---|---|
-| M18 | testSeatsNeverOverlapEachOtherOrThePlate | the short band is 120pt, as tall as the expanded one | "seats 0 and 1 do not overlap", "seat 0 clears the bid plate" (358 x 140), 291 in all |
-| M19 | testSeatsNeverOverlapEachOtherOrThePlate | the plate is drawn at any width beside the row | "a drawn plate is wide enough to read" (22 at five seats); survived until that assertion was added |
+| M21 | testTheTurnedLayerMapsEveryPointAsTheKernelsCamera | `tilt` reads `ca` (about the origin) instead of `ca_screen` | "390x340: (0.0, 0.0) lands at x the kernel's camera says" (0 against -1.24), every size |
+| M22 | testTheTurnedLayerMapsEveryPointAsTheKernelsCamera | `m23` and `m32` swapped | SURVIVED: they act on z only, and every painted point is flat (z 0); replaced by M22b |
+| M22b | testTheTurnedLayerMapsEveryPointAsTheKernelsCamera | `m24` negated (the turn's sign on the y-to-w term, what a wrong rotation sign does to a flat point) | "390x718: (0.0, 718.0) lands at x" (-19.95 against -39.21), every size |
+| M23 | testAViewWithNoSizeNeverAsksForAFrame | `begin` drops its no-size guard | "nothing begun for a drawer with no size" (2 against 0) |
+| M24 | testAViewWithNoSizeNeverAsksForAFrame | `wake` drops its no-size guard | "a view shrunk to nothing asks for no frame" (2 against 1) |
+| M25 | testMyCupsEllipseIsTheOneTapAndItTipsTheCupByTheKernelsEase | the ellipse test is `<= 1.2` | "just past its edge", "just above it" |
+| M26 | testMyCupsEllipseIsTheOneTapAndItTipsTheCupByTheKernelsEase | the peek tween is linear, not `cn_api_peek_ease` | "halfway, the kernel's ease" (0.50 against 0.89) |
+| M27 | testTheThrowsClockIsTheStudysAndNothingIsStagedBeforeMyDiceRest | dt clamped to 0.1 | "dt clamped to .05" (100 against 50) |
+| M28 | testTheThrowsClockIsTheStudysAndNothingIsStagedBeforeMyDiceRest | at rest from `roll_at_ms`, not `rest_ms` | "my dice are in the air", "just before rest_ms nothing may be staged" |
+| M29 | testTheThrowsClockIsTheStudysAndNothingIsStagedBeforeMyDiceRest | the tap ignores `atRest` | "no peek while they are" |
+| M30 | testTheFrameInBandsIsTheFrameOnOneThread | `BridgeStage.frame` draws `bands - 1` bands (a Kernel file, mutated for the check only and restored) | "at 1200 ms, peek 0.0: the bands' bytes are one thread's", and at 4052 ms peeking |
 
 ## Not tested
 
 The conversation (`ChuiniuMessages/MessagesViewController.swift`) has no test target, as pickemup's has none.
 The screens and the conversation were played inside Messages on the real kernel, a round and a call step by step and a whole game to a winner (`chuiniu/docs/SIM_VERIFICATION.md`); that is looked at, not asserted.
 `RevealScreen`'s use of the kernel's frame (I10) has no test of its own; `revealMotion` is asserted only at 0 ms (cups down) and at 60 s (done).
+`StageUIView`'s paint (the planks, the names, the canvas layer) is looked at on the simulator, not asserted, beyond the canvas frame in `testAViewWithNoSizeNeverAsksForAFrame`.
