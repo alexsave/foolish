@@ -1406,7 +1406,8 @@ static void test_objects(void)
                     double dr = 0;
                     for (int r = 0; r < 9; r++) dr = fmax(dr, fabs(b->rot[r] - u->rot[r]));
                     CHECK(dr < .01, "%dx%d n %d: the lying cup's turn within %.4f of the study's", g->W, g->H, g->n, dr);
-                    CHECK(b->lift < u->lift && b->lift > u->lift - .5, "%dx%d n %d: lowered %.3f onto the table", g->W, g->H, g->n, u->lift - b->lift);
+                    const double ca = CN_CUP_TALL / sqrt(CN_CUP_TALL * CN_CUP_TALL + (1 - CN_CUP_RC) * (1 - CN_CUP_RC));
+                    CHECK(near(b->lift, u->R * ca, 1e-3) && u->lift - b->lift > .2, "%dx%d n %d: lowered %.3f onto the table", g->W, g->H, g->n, u->lift - b->lift);
                 }
             }
         }
