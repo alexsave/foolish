@@ -122,6 +122,13 @@ static int differ(const uint8_t *a, const uint8_t *b, int npx)
     return n;
 }
 
+static const uint8_t *decal_px(float dpr, float x, float y)
+{
+    const float k = 300.f / (300 - .3f);
+    const float sx = 60 + (x - 60) * k, sy = 200 + (y - 200) * k;
+    return &cn_scene_fb()[((int)(sy * dpr) * cn_scene_fb_w() + (int)(sx * dpr)) * 4];
+}
+
 int main(void)
 {
     size_t ios = CN_SCENE_ARENA_IOS;
@@ -360,6 +367,126 @@ int main(void)
         CHECK(opaque > 10000 && same == opaque, "an opaque pixel is the same bytes either way (%d of %d)", same, opaque);
         cnf_frame(&t, 390, 718, 40, 1.5f, 1024, .6f);
         CHECK(!memcmp(st, cn_scene_fb(), (size_t)npx * 4), "straight again: the straight picture");
+    }
+
+    TEST("a name on the table: a cup in front hides it, a shadow darkens it, the planks show round its letters");
+    {
+        enum { DW = 240, DN = DW * DW * 4 };
+        static uint8_t A[DN], noname[DN], nowall[DN], noroof[DN];
+        cn_scene_init(mem, ios);
+        tx = cn_scene_tex_new(4, 4, 0); memset(cn_scene_tex_rgba(tx), 255, 4 * 4 * 4);
+        const int dt = cn_scene_tex_new(64, 32, 0);
+        decal_texture(dt);
+        const float dpr = 2;
+        CHECK(decal_frame(dpr, 1, 1, 1, 0) == 6 && cn_scene_fb_w() == DW && cn_scene_fb_h() == DW, "the name, the cup's side and the roof: six faces drawn");
+        memcpy(A, cn_scene_fb(), DN);
+        decal_frame(dpr, 1, 1, 0, 0); memcpy(noname, cn_scene_fb(), DN);
+        decal_frame(dpr, 0, 1, 1, 0); memcpy(nowall, cn_scene_fb(), DN);
+        decal_frame(dpr, 1, 0, 1, 0); memcpy(noroof, cn_scene_fb(), DN);
+        /* (1) THE CUP IN FRONT HIDES IT: inside the wall's picture over the name's letters, every pixel is the wall's own
+         * (the frame without the name, byte for byte); the same pixels without the wall are the name's ink */
+        int hid = 0, shown = 0, n = 0;
+        for (int sy = 42 * 2; sy < 58 * 2; sy++) for (int sx = 34 * 2; sx < 56 * 2; sx++) {
+            const int i = (sy * DW + sx) * 4;
+            n++;
+            hid += !memcmp(&A[i], &noname[i], 4);
+            shown += nowall[i] == DEC_INK_R && nowall[i + 1] == DEC_INK_G && nowall[i + 2] == DEC_INK_B && nowall[i + 3] == 255;
+        }
+        CHECK(n > 1000 && hid == n, "the cup's side covers the name: %d of %d pixels are the cup's own", hid, n);
+        CHECK(shown == n, "and without the cup those %d pixels are the name's ink (%d)", n, shown);
+        /* (2) uncovered, lit, the letters: the ink itself, opaque */
+        const uint8_t *p = decal_px(dpr, 25, 25);
+        CHECK(p[0] == DEC_INK_R && p[1] == DEC_INK_G && p[2] == DEC_INK_B && p[3] == 255, "a letter out in the light is the ink (%d %d %d a%d)", p[0], p[1], p[2], p[3]);
+        /* (3) where the texel has no alpha, the table's own pixel: alpha 0 in the light, the shadow's alpha in the shadow */
+        const int i25 = (int)(decal_px(dpr, 65, 25) - cn_scene_fb()), i85 = (int)(decal_px(dpr, 85, 30) - cn_scene_fb());
+        CHECK(A[i25 + 3] == 0 && !memcmp(&A[i25], &noname[i25], 4), "between the letters in the light: alpha 0, the bare table's bytes (a%d)", A[i25 + 3]);
+        CHECK(A[i85 + 3] > 100 && !memcmp(&A[i85], &noname[i85], 4), "between the letters in the shadow: the table's shadow, byte for byte (a%d, bare %d)", A[i85 + 3], noname[i85 + 3]);
+        /* (4) half covered: half the alpha, the ink's colour (straight) */
+        const int ih = (int)(decal_px(dpr, 74, 30) - cn_scene_fb());
+        CHECK(A[ih + 3] >= 126 && A[ih + 3] <= 130 && abs(A[ih] - DEC_INK_R) <= 2 && abs(A[ih + 1] - DEC_INK_G) <= 2 && abs(A[ih + 2] - DEC_INK_B) <= 2,
+              "a half-covered texel: alpha %d, colour %d %d %d", A[ih + 3], A[ih], A[ih + 1], A[ih + 2]);
+        /* (5) THE ROOF'S SHADOW ON A LETTER: darker, still opaque; without the roof, the ink */
+        const int is = (int)(decal_px(dpr, 95, 40) - cn_scene_fb());
+        CHECK(noroof[is] == DEC_INK_R && noroof[is + 3] == 255, "the letter without the roof: the ink (%d a%d)", noroof[is], noroof[is + 3]);
+        CHECK(A[is + 3] == 255 && A[is] < DEC_INK_R * .6f && A[is + 1] < DEC_INK_G * .6f && A[is + 2] < DEC_INK_B * .6f,
+              "in the roof's shadow the letter is darker and its alpha the same (%d %d %d a%d)", A[is], A[is + 1], A[is + 2], A[is + 3]);
+        decal_frame(dpr, 1, 1, 1, 0);
+        const uint64_t single = cnf_hash();
+        /* pinned (package N): the same under clang, gcc 16, ASan/UBSan and wasm */
+        CHECK(single == 0x51c7e76864cdb7ebull, "the name frame at 2x: %016llx", (unsigned long long)single);
+        /* (6) THE BANDS: any count, last to first, the one-thread bytes */
+        const int counts[4] = { 2, 3, 7, CN_SCENE_MAX_BANDS };
+        for (int c = 0; c < 4; c++) {
+            decal_frame(dpr, 1, 1, 1, counts[c]);
+            CHECK(cnf_hash() == single, "%d bands draw the one-thread picture of the name (%016llx)", counts[c], (unsigned long long)cnf_hash());
+        }
+        /* (7) PREMULTIPLIED AND CORE ANIMATION'S FORM agree with the straight picture: the alpha the same, each colour the
+         * straight one times it */
+        cn_scene_output(CN_SCENE_OUT_PREMUL_RGBA);
+        decal_frame(dpr, 1, 1, 1, 0);
+        static uint8_t pm[DN];
+        memcpy(pm, cn_scene_fb(), DN);
+        cn_scene_output(CN_SCENE_OUT_PREMUL_BGRA);
+        decal_frame(dpr, 1, 1, 1, 0);
+        const uint8_t *ca = cn_scene_fb();
+        cn_scene_output(CN_SCENE_OUT_RGBA);
+        int bad = 0, swapped = 0, partial = 0;
+        for (int k = 0; k < DW * DW; k++) {
+            const uint8_t *s = &A[k * 4], *q = &pm[k * 4], *c = &ca[k * 4];
+            swapped += c[0] == q[2] && c[1] == q[1] && c[2] == q[0] && c[3] == q[3];
+            if (s[3] != q[3]) { bad++; continue; }
+            for (int ch = 0; ch < 3; ch++) bad += abs(q[ch] - (s[ch] * s[3] + 127) / 255) > 1;
+            partial += s[3] > 0 && s[3] < 255;
+        }
+        CHECK(bad == 0 && swapped == DW * DW && partial > 100, "straight, premultiplied and BGRA agree at every pixel (%d off, %d swapped, %d partly covered)", bad, swapped, partial);
+        /* (8) TWO NAMES THAT MEET: the second's empty halo over the first's letters hides nothing, and its letters show
+         * over the first's empty texels, whichever pass 2 draws first */
+        const int d2 = cn_scene_tex_new(16, 16, 0);
+        uint8_t *t2 = cn_scene_tex_rgba(d2);
+        for (int i = 0; i < 16 * 16; i++) { const int a = i % 16 >= 4 ? 255 : 0; t2[i * 4] = (uint8_t)(50 * a / 255); t2[i * 4 + 1] = (uint8_t)(100 * a / 255); t2[i * 4 + 2] = (uint8_t)(150 * a / 255); t2[i * 4 + 3] = (uint8_t)a; }
+        CHECK(decal_frame(dpr, 1, 1, 2, 0) == 8, "two names, the cup's side and the roof");
+        const uint8_t *u = decal_px(dpr, 55, 25), *o2 = decal_px(dpr, 69, 25);
+        CHECK(u[0] == DEC_INK_R && u[1] == DEC_INK_G && u[2] == DEC_INK_B && u[3] == 255, "the first's letter under the second's empty halo (%d %d %d a%d)", u[0], u[1], u[2], u[3]);
+        CHECK(o2[0] == 50 && o2[1] == 100 && o2[2] == 150 && o2[3] == 255, "the second's letter over the first's empty texels (%d %d %d a%d)", o2[0], o2[1], o2[2], o2[3]);
+    }
+
+    TEST("textures that change: a mark, textures after it, dropped, the room given back and the frame the same");
+    {
+        cn_scene_init(mem, ios);
+        tx = cn_scene_tex_new(4, 4, 0); memset(cn_scene_tex_rgba(tx), 255, 4 * 4 * 4);
+        const int dt = cn_scene_tex_new(64, 32, 0);
+        decal_texture(dt);
+        CHECK(cn_scene_tex_mips(dt) == 1, "the name's half-size copies made at once");
+        const CnSceneMark mark = cn_scene_tex_mark();
+        const size_t room = cn_scene_room();
+        decal_frame(2, 1, 1, 1, 0);
+        const uint64_t h = cnf_hash();
+        /* a 4-by-4 texture made before the mark gets its copies only when drawn (none: under 8 a side), and two
+         * textures after it */
+        CHECK(cn_scene_tex_new(256, 64, 0) == mark.n && cn_scene_tex_new(128, 32, 0) == mark.n + 1 && cn_scene_room() < room, "two textures after the mark");
+        cn_scene_tex_drop(mark);
+        CHECK(cn_scene_room() == room && cn_scene_tex_mark().n == mark.n && cn_scene_fb() == 0, "dropped: the room is back, the count is the mark's, the frame is gone");
+        decal_frame(2, 1, 1, 1, 0);
+        CHECK(cnf_hash() == h, "and the frame is the same bytes");
+        /* a texture before the mark whose copies were made after it: dropping loses them and the next frame makes them again */
+        cn_scene_init(mem, ios);
+        tx = cn_scene_tex_new(4, 4, 0); memset(cn_scene_tex_rgba(tx), 255, 4 * 4 * 4);
+        const int late = cn_scene_tex_new(64, 32, 0);
+        decal_texture(late);
+        const CnSceneMark m2 = cn_scene_tex_mark();
+        const size_t r2 = cn_scene_room();
+        /* drawn at a quarter of a point a pixel, the name reads its half-size copies, made now, after the mark */
+        decal_frame(.25f, 1, 1, 1, 0);
+        const uint64_t small = cnf_hash();
+        CHECK(cn_scene_room() < r2, "drawn small: the copies took room after the mark");
+        cn_scene_tex_drop(m2);
+        CHECK(cn_scene_room() == r2, "dropped: their room is back");
+        CHECK(cn_scene_tex_new(256, 64, 0) == m2.n, "a texture where the copies were");
+        memset(cn_scene_tex_rgba(m2.n), 7, 256 * 64 * 4);
+        decal_frame(.25f, 1, 1, 1, 0);
+        CHECK(cnf_hash() == small, "the name made its copies again, not read from the new texture's bytes");
+        decal_frame(2, 1, 1, 1, 0);
+        CHECK(cnf_hash() == h, "and at 2x it is the name frame");
     }
 
     TEST("the memory: a frame keeps its picture whole and a strip a band");

@@ -635,6 +635,210 @@ static void test_hud_clear(void)
     printf("  %d cups against the plate, the shelf and every name; on tall boards a cup covers a name %d times (%d of them standing: the ring's names are the study's, docs_pkgV2.md)\n", checked, tall_cover, tall_cover_rest);
 }
 
+/* ---- the names on the table (package N) --------------------------------------------------------- */
+
+/* A NAME'S BITMAP as a host would hand it over, 3 texels a point: the block is the letters (blocks of ink five points
+ * wide, two apart, over a row of 17 points; a seat's name is 40 + 8 seat points wide) and, when bright, the turn's bar
+ * under them (36 points, 2 tall, 3 below) with a soft glow round it; the halo empty. Premultiplied RGBA. The texels,
+ * and its size in points in *wpt, *hpt. */
+static uint8_t NAME_PX[CN_STAGE_NAME_W_MAX * CN_STAGE_NAME_H_MAX * 4];
+static void name_bitmap(int seat, int bright, int *w, int *h, float *wpt, float *hpt)
+{
+    const int halo = CN_STAGE_NAME_HALO, tw = 40 + 8 * seat, th = 17, bw = (tw + 2 * halo), bh = (th + 5 + 2 * halo);
+    *wpt = (float)bw; *hpt = (float)bh; *w = bw * 3; *h = bh * 3;
+    memset(NAME_PX, 0, (size_t)*w * *h * 4);
+    const uint8_t ink[3] = { bright ? 230 : 128, bright ? 240 : 152, bright ? 235 : 144 }, glow[3] = { 143, 251, 224 };
+    for (int y = 0; y < *h; y++) for (int x = 0; x < *w; x++) {
+        const float px = (x + .5f) / 3 - halo, py = (y + .5f) / 3 - halo;   /* points in the block */
+        uint8_t *o = &NAME_PX[((size_t)y * *w + x) * 4];
+        if (px >= 4 && px < tw - 4 && py >= 3 && py < th - 3 && (int)(px - 4) % 7 < 5) { o[0] = ink[0]; o[1] = ink[1]; o[2] = ink[2]; o[3] = 255; continue; }
+        if (!bright) continue;
+        const float bx = px < tw / 2.f - 18 ? tw / 2.f - 18 - px : px > tw / 2.f + 18 ? px - tw / 2.f - 18 : 0;
+        const float by = py < th + 3 ? th + 3 - py : py > th + 5 ? py - th - 5 : 0, d = bx > by ? bx : by;
+        const float a = d <= 0 ? 1 : d < 5 ? .6f * (1 - d / 5) : 0;
+        for (int c = 0; c < 3; c++) o[c] = (uint8_t)(glow[c] * a + .5f);
+        o[3] = (uint8_t)(255 * a + .5f);
+    }
+}
+/* every seat's name, the turn's bright; the bitmaps of the last call are NAME_PX's no more (each is copied in) */
+static int give_names(CnStage *st, int n, int turn)
+{
+    int changed = 0;
+    for (int s = 0; s < n; s++) {
+        int w, h; float wpt, hpt;
+        name_bitmap(s, s == turn, &w, &h, &wpt, &hpt);
+        changed += cn_stage_name(st, s, NAME_PX, w, h, wpt, hpt) == 1;
+    }
+    return changed;
+}
+/* two frames to compare, as large as the largest asked for */
+static uint8_t *FB_NAMED, *FB_BARE;
+static size_t FB_CAP;
+static void fb_room(size_t n)
+{
+    if (n <= FB_CAP) return;
+    free(FB_NAMED); free(FB_BARE);
+    FB_NAMED = arena_new(n); FB_BARE = arena_new(n); FB_CAP = n;
+}
+
+/* name s's rect on the frame, inset by `in` points, in pixels: x0 y0 x1 y1 */
+static int name_px_box(const CnStage *st, int s, float in, int box[4])
+{
+    float r[4];
+    if (!cn_stage_name_rect(st, s, r)) return 0;
+    const float sc = st->shot.scale;
+    box[0] = (int)((r[0] + in) * sc); box[2] = (int)((r[2] - in) * sc);
+    box[1] = (int)((r[1] + in + st->pad) * sc); box[3] = (int)((r[3] - in + st->pad) * sc);
+    if (box[0] < 0) box[0] = 0;
+    if (box[1] < 0) box[1] = 0;
+    if (box[2] > st->shot.w) box[2] = st->shot.w;
+    if (box[3] > st->shot.h) box[3] = st->shot.h;
+    return 1;
+}
+
+static void test_names(void)
+{
+    TEST("the names lie on the table: a cup in front hides one, the frame without them is the old one, and they fit 48 MB");
+    void *A = arena_new(ARENA);
+    cn_stage_init(&ST, PACK, PACK_N); cn_stage_attach(&ST, A, ARENA);
+
+    /* THE WORST MEMORY: 430 by 830 on their turn at 2x, six names (the turn's with its bar) */
+    CnStageIn in = table_in(430, 830, 6, 0, 0, CN_STAGE_TABLE);
+    in.scale = 2;
+    cn_stage_begin(&ST, &in);
+    int w, h;
+    const uint8_t *fb = cn_stage_frame(&ST, 0, 0, 0, &w, &h);
+    const uint32_t bare = fb ? fnv(fb, (size_t)w * h * 4) : 0;
+    const size_t tex_bare = ARENA - cn_scene_room();
+    CHECK(give_names(&ST, 6, in.turn) == 6, "six names given");
+    fb = cn_stage_frame(&ST, 0, 0, 0, &w, &h);
+    int drawn = 0;
+    for (int s = 0; s < 6; s++) drawn += ST.name[s].id >= 0;
+    const size_t tex_named = ARENA - cn_scene_room();
+    CHECK(fb && ST.shot.scale == 2 && drawn == 6, "430 by 830, their turn: every name drawn and the frame still 2x (%d names, scale %.1f)", drawn, ST.shot.scale);
+    printf("  430x830 their turn at 2x: the set %.2f MB, six names %.2f MB with their copies, the frame %.2f MB: %.2f of %.0f MB\n", tex_bare / 1048576.0,
+           (tex_named - tex_bare) / 1048576.0, cn_scene_frame_bytes(ST.W, ST.H, ST.pad, 2, CN_STAGE_SHADOW_RES, 25344 + 24, 12864 + 12) / 1048576.0,
+           (tex_named + cn_scene_frame_bytes(ST.W, ST.H, ST.pad, 2, CN_STAGE_SHADOW_RES, 25344 + 24, 12864 + 12)) / 1048576.0, ARENA / 1048576.0);
+    CHECK(tex_named - tex_bare < (size_t)1 << 20, "six names and their copies are under 1 MB (%zu bytes)", tex_named - tex_bare);
+    const uint32_t named = fb ? fnv(fb, (size_t)w * h * 4) : 0;
+    CHECK(named != bare, "the names are in the picture");
+    /* the same names again change nothing and upload nothing; taking them all away is the bare frame, byte for byte */
+    CHECK(give_names(&ST, 6, in.turn) == 0 && ST.names_up, "the same names again: nothing changed");
+    for (int s = 0; s < 6; s++) cn_stage_name(&ST, s, 0, 0, 0, 0, 0);
+    fb = cn_stage_frame(&ST, 0, 0, 0, &w, &h);
+    CHECK(fb && fnv(fb, (size_t)w * h * 4) == bare, "names taken away: the frame drawn before any name (%08x %08x)", fb ? fnv(fb, (size_t)w * h * 4) : 0, bare);
+    CHECK(ARENA - cn_scene_room() == tex_bare, "and their room given back");
+    give_names(&ST, 6, in.turn);
+    fb = cn_stage_frame(&ST, 0, 0, 0, &w, &h);
+    CHECK(fb && fnv(fb, (size_t)w * h * 4) == named, "given again: the named frame again");
+    /* refused: past the maxima, a seat past six, no size */
+    CHECK(cn_stage_name(&ST, 6, NAME_PX, 4, 4, 10, 10) == -1 && cn_stage_name(&ST, 0, NAME_PX, CN_STAGE_NAME_W_MAX + 1, 4, 10, 10) == -1 &&
+          cn_stage_name(&ST, 0, NAME_PX, 4, CN_STAGE_NAME_H_MAX + 1, 10, 10) == -1 && cn_stage_name(&ST, 0, NAME_PX, 4, 4, 0, 10) == -1, "a name past the maxima is refused");
+
+    /* A CUP IN FRONT HIDES A NAME. Over tall drawers, both turns and the reveal (every cup up): at every pixel of a name's
+     * rect where the bare frame shows a cup (opaque, and opaque all round: inside it, not at its edge), the named frame
+     * is the bare one's, byte for byte; and somewhere a name is half hidden: some of its pixels a cup's, some its own */
+    static const int SW[] = { 390, 430, 375 }, SH[] = { 718, 830, 541 };
+    long covered = 0, wrong = 0, half = 0;
+    for (int z = 0; z < 3; z++) for (int kind = CN_STAGE_TABLE; kind <= CN_STAGE_REVEAL; kind++) for (int mine = 0; mine < 2; mine++) for (int n = 4; n <= 6; n++) {
+        if (kind == CN_STAGE_REVEAL && mine) continue;
+        CnStageIn t = table_in(SW[z], SH[z], n, mine, 0, kind);
+        t.scale = 2;
+        cn_stage_begin(&ST, &t);
+        for (int s = 0; s < 6; s++) cn_stage_name(&ST, s, 0, 0, 0, 0, 0);
+        fb = cn_stage_frame(&ST, 0, 0, 1, &w, &h);
+        if (!fb) { CHECK(0, "%dx%d: a frame", SW[z], SH[z]); continue; }
+        fb_room((size_t)w * h * 4);
+        memcpy(FB_BARE, fb, (size_t)w * h * 4);
+        give_names(&ST, n, t.turn);
+        const int w0 = w, h0 = h;
+        fb = cn_stage_frame(&ST, 0, 0, 1, &w, &h);
+        if (!fb || w != w0 || h != h0) { CHECK(0, "%dx%d: the named frame, the bare one's size", SW[z], SH[z]); continue; }
+        memcpy(FB_NAMED, fb, (size_t)w * h * 4);
+        for (int s = 0; s < n; s++) {
+            int b[4];
+            if (!name_px_box(&ST, s, 2, b)) continue;
+            long cov = 0, own = 0;
+            for (int y = b[1] + 1; y < b[3] - 1; y++) for (int x = b[0] + 1; x < b[2] - 1; x++) {
+                const size_t i = ((size_t)y * w + x) * 4;
+                int body = 1;
+                for (int dy = -1; dy <= 1 && body; dy++) for (int dx = -1; dx <= 1; dx++) body &= FB_BARE[i + ((long)dy * w + dx) * 4 + 3] == 255;
+                if (body) { cov++; wrong += memcmp(&FB_BARE[i], &FB_NAMED[i], 4) != 0; }
+                else own += memcmp(&FB_BARE[i], &FB_NAMED[i], 4) != 0;
+            }
+            covered += cov;
+            if (cov > 50 && own > 50) {
+                if (!half) printf("  %dx%d %s, %s turn, %d seats: seat %d's name half under a cup (%ld pixels the cup's, %ld its own)\n", SW[z], SH[z],
+                                  kind == CN_STAGE_REVEAL ? "the reveal" : "the table", mine ? "my" : "their", n, s, cov, own);
+                half++;
+            }
+        }
+    }
+    CHECK(covered > 1000 && wrong == 0, "every pixel of a name under a cup is the cup's (%ld of %ld differ)", wrong, covered);
+    CHECK(half > 0, "and %ld names are half hidden, half shown", half);
+
+    /* THE ARENA'S FAILURE PATH: an arena that holds the set and the still frame but not the names draws the frame at
+     * its scale and skips the names; with room for two, the first two seats' */
+    in = table_in(430, 830, 6, 0, 0, CN_STAGE_TABLE);
+    in.scale = 2;
+    cn_stage_begin(&ST, &in);
+    for (int s = 0; s < 6; s++) cn_stage_name(&ST, s, 0, 0, 0, 0, 0);
+    fb = cn_stage_frame(&ST, 0, 0, 0, &w, &h);
+    int nv = 4 * 6, nf = 2 * 6;   /* the bodies' and six names' */
+    for (int i = 0; i < ST.nobj; i++) { nv += ST.mesh[ST.obj_mesh[i]].ncorner; nf += ST.mesh[ST.obj_mesh[i]].ntri; }
+    const size_t need = ARENA - cn_scene_room() + cn_scene_frame_bytes(ST.W, ST.H, ST.name_pad, 2, CN_STAGE_SHADOW_RES, nv, nf);
+    for (int room = 0; room < 2; room++) {
+        cn_stage_purge(&ST);
+        const size_t bytes = need + (room ? (size_t)300 << 10 : 0);
+        CHECK(cn_stage_attach(&ST, A, bytes) == 0, "an arena of %.2f MB", bytes / 1048576.0);
+        give_names(&ST, 6, in.turn);
+        fb = cn_stage_frame(&ST, 0, 0, 0, &w, &h);
+        int k = 0, first = 0;
+        for (int s = 0; s < 6; s++) { k += ST.name[s].id >= 0; first += s < 2 && ST.name[s].id >= 0; }
+        if (!room) CHECK(fb && ST.shot.scale == 2 && fnv(fb, (size_t)w * h * 4) == bare && k == 0, "no room for a name: none drawn, the bare frame at 2x (%d names, scale %.1f)", k, ST.shot.scale);
+        else CHECK(fb && ST.shot.scale == 2 && k == 2 && first == 2, "room for two: seats 0 and 1 drawn, the frame at 2x (%d names, scale %.1f)", k, ST.shot.scale);
+    }
+    /* the reserve is the table's: a small table in the same arena holds all six, and the tall one begun again two */
+    CnStageIn small = table_in(375, 541, 6, 0, 0, CN_STAGE_TABLE);
+    small.scale = 2;
+    cn_stage_begin(&ST, &small);
+    fb = cn_stage_frame(&ST, 0, 0, 0, &w, &h);
+    int k6 = 0;
+    for (int s = 0; s < 6; s++) k6 += ST.name[s].id >= 0;
+    cn_stage_begin(&ST, &in);
+    fb = cn_stage_frame(&ST, 0, 0, 0, &w, &h);
+    int k2 = 0;
+    for (int s = 0; s < 6; s++) k2 += ST.name[s].id >= 0;
+    CHECK(k6 == 6 && fb && ST.shot.scale == 2 && k2 == 2, "375 by 541 in it: six names; 430 by 830 begun again: two, and the frame at 2x (%d, %d, scale %.1f)", k6, k2, ST.shot.scale);
+    /* a purge and a new arena: the names come back from the stage's own copy, the same bytes */
+    cn_stage_purge(&ST);
+    cn_stage_attach(&ST, A, ARENA);
+    fb = cn_stage_frame(&ST, 0, 0, 0, &w, &h);
+    CHECK(fb && fnv(fb, (size_t)w * h * 4) == named, "purged and attached again: the named frame, nothing asked of the host (%08x %08x)", fb ? fnv(fb, (size_t)w * h * 4) : 0, named);
+
+    /* bands, and the pin: the six-seat table of the bands test (375 by 541, a throw and a still frame peeking) with
+     * names; and the bubble draws none */
+    in = table_in(375, 541, 6, 1, 0, CN_STAGE_TABLE);
+    in.roll_at_ms = 0; in.scale = 3;
+    const CnStageHud *hh = cn_stage_begin(&ST, &in);
+    give_names(&ST, 6, in.turn);
+    const uint32_t mid = banded(&ST, 1200, 0, 1, 0), still = banded(&ST, hh->total_ms, .6f, 1, 0);
+    CHECK(mid && banded(&ST, 1200, 0, CN_STAGE_BANDS, 1) == mid && still && banded(&ST, hh->total_ms, .6f, 7, 0) == still, "with names: 16 and 7 bands draw the one thread's bytes");
+    printf("  frames with names: throw at 1.2 s %08x, still peeking %08x\n", mid, still);
+    /* pinned (package N): the same under clang, gcc 16 and ASan/UBSan */
+    CHECK(mid == 0xa48f41f0u, "the throw frame with names' golden");
+    CHECK(still == 0x44078389u, "the still frame with names' golden");
+    CnStageIn bub = table_in(300, 195, 4, 0, 0, CN_STAGE_BUBBLE);
+    cn_stage_begin(&ST, &bub);
+    fb = cn_stage_frame(&ST, 0, 0, 0, &w, &h);
+    const uint32_t with = fb ? fnv(fb, (size_t)w * h * 4) : 0;
+    for (int s = 0; s < 6; s++) cn_stage_name(&ST, s, 0, 0, 0, 0, 0);
+    fb = cn_stage_frame(&ST, 0, 0, 0, &w, &h);
+    CHECK(with && fb && fnv(fb, (size_t)w * h * 4) == with, "the bubble draws no names");
+    cn_stage_purge(&ST);
+    free(A);
+}
+
 int main(int argc, char **argv)
 {
     const char *path = argc > 1 ? argv[1] : "build/cn_tex.pack";
@@ -656,6 +860,7 @@ int main(int argc, char **argv)
     test_clock();
     test_reveal_inside();
     test_hud_clear();
+    test_names();
     free(PACK);
     return report("cn_stage_test");
 }

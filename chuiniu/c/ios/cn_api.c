@@ -681,6 +681,11 @@ const uint8_t *cn_api_stage_frame(uint32_t now_ms, float peek)
 
 const void *cn_api_stage_shot(void) { return stage_inited ? (const void *)cn_stage_shot(&STAGE) : 0; }
 
+int cn_api_stage_name(int seat, const uint8_t *rgba, int w, int h, float w_pt, float h_pt)
+{
+    return stage_inited ? cn_stage_name(&STAGE, seat, rgba, w, h, w_pt, h_pt) : -1;
+}
+
 int cn_api_stage_done(uint32_t now_ms) { return stage_inited && cn_stage_done(&STAGE, now_ms); }
 
 float cn_api_peek_ease(float t) { return cn_cam_peek_ease(t); }

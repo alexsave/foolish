@@ -2,6 +2,7 @@
 #include "cn_stage.h"
 #include "cn_scene.h"
 #include "cn_beats.h"
+#include <stddef.h>
 #include <string.h>
 
 /* the renderer's format is cn_geom's, written there as numbers */
@@ -41,7 +42,9 @@ int cn_stage_attach(CnStage *st, void *arena, size_t bytes)
  * the arena is a frame's, attached when the host is about to draw */
 int cn_stage_init(CnStage *st, const uint8_t *pack, size_t pack_len)
 {
-    memset(st, 0, sizeof *st);
+    /* all but the names' pixels, which are read only as far as a name says (zeroing them would touch 1.5 MB) */
+    memset(st, 0, offsetof(CnStage, name_px));
+    for (int s = 0; s < CN_STAGE_SEATS; s++) st->name[s].id = -1;
     int e = pack && pack_len <= 0xFFFFFFFFu ? cn_tex_pack_open(&st->pack, pack, (uint32_t)pack_len) : CN_TEX_E_SHORT;
     if (e != CN_TEX_OK) return e;
     st->pack_ok = 1;
@@ -83,16 +86,108 @@ static int crown_of(const CnStage *st, const CnObj *o)
     return -1;
 }
 
+/* the bodies' vertices and faces on the begun table */
+static void counts(const CnStage *st, int *nv, int *nf)
+{
+    *nv = 0; *nf = 0;
+    for (int i = 0; i < st->nobj; i++) { *nv += st->mesh[st->obj_mesh[i]].ncorner; *nf += st->mesh[st->obj_mesh[i]].ntri; }
+}
+/* the names a frame draws (a quad each: 4 vertices, 2 faces): those with a texture, which names_upload alone decides */
+static int names_drawn(const CnStage *st)
+{
+    int n = 0;
+    for (int s = 0; s < st->in.seats; s++) n += st->name[s].id >= 0;
+    return n;
+}
+
+/* THE NAMES' TEXTURES, after the set (name_mark): each name the host gave, in seat order, with its half-size
+ * copies made now, kept only while the arena still holds the still frame at the scale it would get without any
+ * name (a name never costs the picture its scale; one that does not fit is not drawn), and none in a bubble. A
+ * pure function of the begun table and the names, like the set; the one place that decides which names a frame
+ * draws (a name is drawn exactly when it has a texture). */
+static void names_upload(CnStage *st)
+{
+    cn_scene_tex_drop(st->name_mark);
+    for (int s = 0; s < CN_STAGE_SEATS; s++) st->name[s].id = -1;
+    st->names_up = 1;
+    if (!st->begun || st->in.kind == CN_STAGE_BUBBLE) return;
+    int nv, nf, nn = 0;
+    counts(st, &nv, &nf);
+    for (int s = 0; s < st->in.seats; s++) nn += st->name[s].w != 0;
+    nv += 4 * nn; nf += 2 * nn;
+    static const float steps[] = { CN_STAGE_SCALE_STILL, CN_STAGE_SCALE_ROLL, CN_STAGE_SCALE_MIN };
+    size_t reserve = 0;
+    const size_t room = cn_scene_room();
+    for (int k = -1; k < 3; k++) {
+        const float sc = k < 0 ? st->hud.scale_still : steps[k];
+        if (k >= 0 && !(sc < st->hud.scale_still)) continue;
+        const size_t b = cn_scene_frame_bytes(st->W, st->H, st->name_pad, sc, CN_STAGE_SHADOW_RES, nv, nf);
+        if (b && b <= room) { reserve = b; break; }
+    }
+    for (int s = 0; s < st->in.seats; s++) {
+        CnStageName *n = &st->name[s];
+        if (!n->w) continue;
+        const CnSceneMark m = cn_scene_tex_mark();
+        const int id = cn_scene_tex_new(n->w, n->h, 0);
+        if (id < 0) continue;
+        memcpy(cn_scene_tex_rgba(id), st->name_px[s], (size_t)n->w * n->h * 4);
+        cn_scene_tex_mips(id);
+        if (cn_scene_room() < reserve) { cn_scene_tex_drop(m); continue; }
+        n->id = id;
+    }
+}
+
+int cn_stage_name(CnStage *st, int seat, const uint8_t *rgba, int w, int h, float w_pt, float h_pt)
+{
+    if (seat < 0 || seat >= CN_STAGE_SEATS) return -1;
+    CnStageName *n = &st->name[seat];
+    if (!rgba || w <= 0 || h <= 0) {
+        if (!n->w) return 0;
+        n->w = n->h = 0; st->names_up = 0;
+        return 1;
+    }
+    if (w < 2 || h < 2 || w > CN_STAGE_NAME_W_MAX || h > CN_STAGE_NAME_H_MAX || !(w_pt >= 1 && w_pt <= 1000) || !(h_pt >= 1 && h_pt <= 1000)) return -1;
+    const size_t bytes = (size_t)w * h * 4;
+    if (n->w == w && n->h == h && n->w_pt == w_pt && n->h_pt == h_pt && !memcmp(st->name_px[seat], rgba, bytes)) return 0;
+    memcpy(st->name_px[seat], rgba, bytes);
+    n->w = (uint16_t)w; n->h = (uint16_t)h; n->w_pt = w_pt; n->h_pt = h_pt;
+    st->names_up = 0;
+    return 1;
+}
+
+/* the name's place: the block (the bitmap less its halo) set on the anchor as name_how says (the host's old
+ * layers' rule: a far seat's centred on x, its top CN_LAY_NAME_UP above y; mine on a tall board centred on x, its
+ * foot on y; mine on a short board its left edge on x, centred on y), then the halo round it */
+int cn_stage_name_rect(const CnStage *st, int seat, float out[4])
+{
+    if (!st->begun || seat < 0 || seat >= st->in.seats || st->name[seat].id < 0) return 0;
+    const CnStageName *n = &st->name[seat];
+    const float halo = CN_STAGE_NAME_HALO, cw = n->w_pt - 2 * halo, ch = n->h_pt - 2 * halo;
+    const float x = st->lay.name_x[seat] + st->pad_x, y = st->lay.name_y[seat];
+    float left, top;
+    switch (st->lay.name_how[seat]) {
+    case CN_NAME_FOOT: left = x - cw / 2; top = y - ch; break;
+    case CN_NAME_LEFT: left = x; top = y - ch / 2; break;
+    default:           left = x - cw / 2; top = y - (float)CN_LAY_NAME_UP; break;
+    }
+    out[0] = left - halo; out[1] = top - halo; out[2] = left + cw + halo; out[3] = top + ch + halo;
+    return 1;
+}
+
 /* THE TEXTURE SET IS A PURE FUNCTION OF THE BEGUN TABLE (I20): the shared side,
  * inside and floor (my cup's seed, 3), the shared die atlas (my first die's,
  * 60), and the crowns in the order begin listed them, uploaded into an emptied
- * renderer; then one throwaway frame draws a face of each so the renderer makes
- * every half-size copy now, before any real frame's buffers are taken (made on
- * first use inside a frame, a copy that found no room would leave the chain
- * short, and the picture would depend on what was drawn before). */
+ * renderer, every half-size copy made at once, before any frame's buffers are
+ * taken (made on first use inside a frame, a copy that found no room would
+ * leave the chain short, and the picture would depend on what was drawn
+ * before). Then the names (names_upload), and again whenever they or the
+ * table change. */
 static int textures(CnStage *st)
 {
-    if (st->uploaded && st->scene_gen == scene_gen_now) return 1;
+    if (st->uploaded && st->scene_gen == scene_gen_now) {
+        if (!st->names_up) names_upload(st);
+        return 1;
+    }
     st->uploaded = 0;
     if (!st->arena || !st->pack_ok) return 0;
     cn_scene_reset();
@@ -107,26 +202,13 @@ static int textures(CnStage *st)
         ok = c->id >= 0;
     }
     if (!ok) { cn_scene_reset(); return 0; }
-    /* the warm frame: a triangle a texture, facing the eye, never culled */
-    const int nt = 4 + st->ncrown;
-    if (!cn_scene_begin(8, 8, 0, 1, 4, 4, 100, 0, 0, 1, 4, 0, 3 * nt, nt)) { cn_scene_reset(); return 0; }
-    float *V = cn_scene_verts(), *F = cn_scene_faces();
-    for (int i = 0; i < nt; i++) {
-        const float tri[3][2] = { { 1, 1 }, { 7, 1 }, { 1, 7 } };
-        for (int k = 0; k < 3; k++) {
-            float *v = V + (size_t)(i * 3 + k) * CN_SCENE_VF;
-            v[0] = tri[k][0]; v[1] = tri[k][1]; v[2] = 1; v[3] = 0; v[4] = 0; v[5] = 1;
-        }
-        float *f = F + (size_t)i * CN_SCENE_FF;
-        memset(f, 0, CN_SCENE_FF * sizeof *f);
-        f[0] = (float)(i * 3); f[1] = (float)(i * 3 + 1); f[2] = (float)(i * 3 + 2);
-        f[5] = 1; f[8] = 1;
-        f[9] = (float)(i < 4 ? (i == 0 ? st->tex_side : i == 1 ? st->tex_inner : i == 2 ? st->tex_floor : st->tex_die) : st->crown[i - 4].id);
-        f[13] = 1; f[15] = CN_SCENE_F_RECEIVE;
-    }
-    if (cn_scene_render(3 * nt, nt) < 0) { cn_scene_reset(); return 0; }
+    const int set[4] = { st->tex_side, st->tex_inner, st->tex_floor, st->tex_die };
+    for (int i = 0; i < 4; i++) cn_scene_tex_mips(set[i]);
+    for (int i = 0; i < st->ncrown; i++) cn_scene_tex_mips(st->crown[i].id);
     st->uploaded = 1;
     st->scene_gen = ++scene_gen_now;
+    st->name_mark = cn_scene_tex_mark();
+    names_upload(st);
     return 1;
 }
 
@@ -461,6 +543,9 @@ const CnStageHud *cn_stage_begin(CnStage *st, const CnStageIn *in_)
     /* the still picture's place: the bodies at rest, the cups down */
     st->begun = 1;
     { int n; const CnObj *o = cn_stage_objects(st, CN_STAGE_NO_ROLL - 1, 0, 0, &n); canvas_of(st, reach_pad(st, o, n), h->canvas); }
+    /* the names' reserve: the still frame, a reveal's with every cup up */
+    { int n; const CnObj *o = cn_stage_objects(st, CN_STAGE_NO_ROLL - 1, 0, 1, &n); st->name_pad = reach_pad(st, o, n); }
+    st->names_up = 0;
     h->ok = 1;
     return h;
 }
@@ -511,8 +596,9 @@ int cn_stage_prepare(CnStage *st, uint32_t t_ms, float peek, float lift)
     if (!st->begun || !textures(st)) return 0;
     int n;
     const CnObj *obj = cn_stage_objects(st, t_ms, peek, lift, &n);
-    int nv = 0, nf = 0;
-    for (int i = 0; i < n; i++) { nv += st->mesh[st->obj_mesh[i]].ncorner; nf += st->mesh[st->obj_mesh[i]].ntri; }
+    int nv, nf;
+    counts(st, &nv, &nf);
+    nv += 4 * names_drawn(st); nf += 2 * names_drawn(st);
     const int moving = rolling_at(st, t_ms);
     st->pad = reach_pad(st, obj, n);
     /* the scale asked for, then each smaller one, until the frame fits */
@@ -542,6 +628,25 @@ int cn_stage_prepare(CnStage *st, uint32_t t_ms, float peek, float lift)
         /* the body's number on its faces: the edges pass smooths where one body meets another (cn_scene.h) */
         for (int f = fb; f < fb + m->ntri; f++) F[f * CN_GEOM_FF + 15] += (float)CN_SCENE_F_ID(i + 1);
         vb += m->ncorner; fb += m->ntri;
+    }
+    /* THE NAMES: a quad each, flat on the table at CN_STAGE_NAME_Z, its own body's number (an edge where it meets
+     * the table or a cup), taking the shadows; a cup in front of one hides it by the depth test, as anything would */
+    for (int s = 0; s < st->in.seats; s++) {
+        float r[4];
+        if (st->name[s].id < 0 || !cn_stage_name_rect(st, s, r)) continue;
+        static const float U[4] = { 0, 1, 1, 0 }, Vv[4] = { 0, 0, 1, 1 };
+        for (int k = 0; k < 4; k++) {
+            float *v = V + (size_t)(vb + k) * CN_SCENE_VF;
+            v[0] = U[k] ? r[2] : r[0]; v[1] = Vv[k] ? r[3] : r[1]; v[2] = CN_STAGE_NAME_Z; v[3] = 0; v[4] = 0; v[5] = 1;
+        }
+        for (int t = 0; t < 2; t++) {
+            float *f = F + (size_t)(fb + t) * CN_SCENE_FF;
+            const int c[3] = { 0, t ? 2 : 1, t ? 3 : 2 };
+            for (int k = 0; k < 3; k++) { f[k] = (float)(vb + c[k]); f[3 + 2 * k] = U[c[k]]; f[4 + 2 * k] = Vv[c[k]]; }
+            f[9] = (float)st->name[s].id; f[10] = f[11] = f[12] = 0; f[13] = f[14] = 0;
+            f[15] = (float)(CN_SCENE_F_DECAL | CN_SCENE_F_RECEIVE | CN_SCENE_F_ID(st->nobj + 1 + s));
+        }
+        vb += 4; fb += 2;
     }
     if (cn_scene_prepare(vb, fb) < 0) return 0;
     st->shot.ok = 1;

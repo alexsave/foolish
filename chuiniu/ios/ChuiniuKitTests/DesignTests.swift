@@ -50,8 +50,8 @@ final class DesignTests: XCTestCase {
         XCTAssertTrue(FType.registered, "IM Fell English roman and small caps resolve by name")
         XCTAssertEqual(FType.uiSerif(14).fontName, FType.serifName, "the roman is Fell, not the system face")
         XCTAssertEqual(FType.uiSC(14).fontName, FType.scName, "the small caps are Fell SC")
-        XCTAssertEqual(StageUIView.nameFont(short: false).pointSize, 14, "a name is 14")
-        XCTAssertEqual(StageUIView.nameFont(short: true).pointSize, 12, "and 12 on a short board")
+        XCTAssertEqual(NameDecal.nameFont(short: false).pointSize, 14, "a name is 14")
+        XCTAssertEqual(NameDecal.nameFont(short: true).pointSize, 12, "and 12 on a short board")
         XCTAssertEqual(FType.nameTracking(14), 14 * 0.14, accuracy: 1e-9, "tracked .14em")
     }
 
@@ -59,10 +59,10 @@ final class DesignTests: XCTestCase {
         func seat(_ turn: Bool, alive: Bool = true) -> StageName {
             StageName(seat: SeatModel(id: 1, name: "Bo", dice: 5, alive: alive, isTurn: turn, isMe: false))
         }
-        XCTAssertTrue(Self.same(StageUIView.nameInk(seat(true)), Ink.ink), "the turn's name is the bright ink")
-        XCTAssertTrue(Self.same(StageUIView.nameInk(seat(false)), Ink.inkdim), "every other name is the dim ink")
+        XCTAssertTrue(Self.same(NameDecal.nameInk(seat(true)), Ink.ink), "the turn's name is the bright ink")
+        XCTAssertTrue(Self.same(NameDecal.nameInk(seat(false)), Ink.inkdim), "every other name is the dim ink")
         var won = seat(false); won.won = true
-        XCTAssertTrue(Self.same(StageUIView.nameInk(won), Ink.glow), "the winner's name is the glow")
+        XCTAssertTrue(Self.same(NameDecal.nameInk(won), Ink.glow), "the winner's name is the glow")
     }
 
     func testEachVerbWearsTheStudysPlate() {

@@ -50,6 +50,7 @@
 #include <stdint.h>
 #include "cn_lay.h"
 #include "cn_tex.h"
+#include "cn_scene.h"
 
 #define CN_STAGE_SEATS   CN_LAY_SEATS
 #define CN_STAGE_DICE    CN_LAY_DICE
@@ -74,6 +75,19 @@ enum {
 #define CN_STAGE_BANDS        16            /* the bands a pass is cut into (package A: 6.8 ms at 2x) */
 #define CN_STAGE_CROWNS       CN_STAGE_SEATS
 #define CN_STAGE_ARENA        50331648      /* the arena a host hands over: CN_SCENE_ARENA_IOS, 48 MB */
+/* THE NAMES ARE ON THE TABLE (package N): each seat's name and its turn bar is a
+ * picture the host draws (the letters are the host's: any script, its font) and
+ * hands over with cn_stage_name; the stage lays it flat on the planks at the
+ * name's anchor (cn_lay's name_x, name_y, name_how), just above the table, in
+ * the scene, so a cup in front of it hides it and a shadow falls on it. The
+ * bitmap is the block (the letters and the bar under them, laid out as the
+ * name_how says) with CN_STAGE_NAME_HALO points of room on every side for the
+ * glow and the shadow; its size in points is the host's, its texels at most
+ * CN_STAGE_NAME_W_MAX by CN_STAGE_NAME_H_MAX, PREMULTIPLIED RGBA. */
+#define CN_STAGE_NAME_HALO    8
+#define CN_STAGE_NAME_W_MAX   512
+#define CN_STAGE_NAME_H_MAX   128
+#define CN_STAGE_NAME_Z       .3f           /* how far above the table a name lies, points            */
 
 /* THE INPUT: the table as the kernel holds it (the bridge fills it from the
  * resident game; a test fills it by hand). */
@@ -177,6 +191,14 @@ typedef struct {
     int      id;
 } CnStageCrown;
 
+/* a seat's name as the host gave it: its bitmap's texels (0 0: none) and points,
+ * and its texture in the renderer (-1: none, or it did not fit) */
+typedef struct {
+    uint16_t w, h;
+    float    w_pt, h_pt;
+    int      id;
+} CnStageName;
+
 typedef struct {
     /* the textures and the arena */
     CnTexPack     pack;
@@ -210,6 +232,14 @@ typedef struct {
     CnObj         obj[CN_LAY_MAX_OBJS];        /* the last frame's bodies                      */
     CnStageThrow  thr[CN_STAGE_SEATS];
     CnMesh        mesh[CN_STAGE_MESHES];
+    /* the names: the host's bitmaps (kept, so a purge's rebuild needs nothing of the host), their textures
+     * made after name_mark, again whenever names_up is 0 */
+    CnStageName   name[CN_STAGE_SEATS];
+    uint8_t       names_up;
+    uint8_t       pad2[3];
+    CnSceneMark   name_mark;
+    int           name_pad;             /* the still frame's pad, the lift up at a reveal: the names' reserve */
+    uint8_t       name_px[CN_STAGE_SEATS][CN_STAGE_NAME_W_MAX * CN_STAGE_NAME_H_MAX * 4];
 } CnStage;
 
 /* The handle and the texture pack (cn_tex.h; the bytes must outlive the
@@ -230,6 +260,20 @@ int  cn_stage_attach(CnStage *st, void *arena, size_t bytes);
 /* Begin a table: the layout, the meshes, every throw baked. The HUD, or 0 for
  * an input out of range (the HUD's `ok` is then 0 and frames draw nothing). */
 const CnStageHud *cn_stage_begin(CnStage *st, const CnStageIn *in);
+
+/* A seat's name (above): the bitmap's w by h texels, premultiplied RGBA, w_pt by
+ * h_pt points; rgba 0 (or w or h 0) takes the seat's name away. Kept until the
+ * next call for the seat, across begins, purges and bubbles (a bubble draws no
+ * names). 1 when it changed what is drawn, 0 when it is what the stage has,
+ * -1 refused (a seat past CN_STAGE_SEATS, a bitmap past the maxima, a size in
+ * points not inside 1..1000). A name that does not fit the arena beside the
+ * still frame at the scale the frame gets without names is not drawn. */
+int  cn_stage_name(CnStage *st, int seat, const uint8_t *rgba, int w, int h, float w_pt, float h_pt);
+/* Where seat's name lies on the begun table: x0 y0 x1 y1 in the canvas's points
+ * (the bodies' frame: x from the canvas's left, y from the board's top), the
+ * halo included. 0 when the last frame drew no name there (none given, no
+ * room, a bubble, no table). */
+int  cn_stage_name_rect(const CnStage *st, int seat, float out[4]);
 
 /* The bodies at t (the renderer's input): my cup tipped by `peek` (0 shut ..
  * 1 my cup's full tip, already eased: cn_cam_peek_ease), in a reveal every

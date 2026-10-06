@@ -1788,6 +1788,18 @@ const SHAPE = (() => {
       texIds.set(c, id); return id;
     }
     const SHADOW_RES = 1024, SHADOW_DARK = .55;
+    // A DECAL (cn_scene.h CN_SCENE_F_DECAL): a picture lying on the table, .3 up (a seat's name), depth tested like any
+    // face, taking the shadows; its texture premultiplied, uploaded once a canvas
+    const F_DECAL = 16, F_RECEIVE = 4, DECAL_Z = .3;
+    const decalIds = new WeakMap();
+    function decalTexOf(c) {
+      let id = decalIds.get(c); if (id != null) return id;
+      const e = MOD.exports, w = c.width, h = c.height;
+      id = e.scene_tex_new(w, h, 0); if (id < 0) { console.error('scene: out of texture room'); return -1; }
+      const px = c.getContext('2d').getImageData(0, 0, w, h).data, out = new Uint8Array(MEM.buffer, e.scene_tex_rgba(id), w * h * 4);
+      for (let i = 0; i < px.length; i += 4) { const a = px[i + 3]; out[i] = Math.round(px[i] * a / 255); out[i + 1] = Math.round(px[i + 1] * a / 255); out[i + 2] = Math.round(px[i + 2] * a / 255); out[i + 3] = a; }
+      decalIds.set(c, id); return id;
+    }
     const F_BODY = 1 | 2 | 4;
 
     // ---- a scene: objects placed on the board, rendered into a canvas the board's size
@@ -1806,6 +1818,8 @@ const SHAPE = (() => {
       // count what the frame needs: a vertex a corner (normals are per corner), a triangle a fan step, the table
       let nv = 0, nf = 0;
       for (const o of objs) for (const f of o.mesh.faces) { if (f.hidden) continue; nv += f.idx.length; nf += f.idx.length - 2; }
+      const decals = canvas._decals || [];
+      nv += 4 * decals.length; nf += 2 * decals.length;
       const e = MOD.exports, _t0 = performance.now();
       if (!e.scene_begin(WW, H + below, pad, DPR, C[0], C[1], HCv, LIGHT[0], LIGHT[1], LIGHT[2], SHADOW_RES, SHADOW_DARK, nv, nf)) { console.error('scene: out of memory'); return; }
       const VA = new Float32Array(MEM.buffer, e.scene_verts(), nv * 6), FA = new Float32Array(MEM.buffer, e.scene_faces(), nf * 16);
@@ -1846,6 +1860,18 @@ const SHAPE = (() => {
             FA[b + 3] = f.uv[0][0]; FA[b + 4] = f.uv[0][1]; FA[b + 5] = f.uv[k][0]; FA[b + 6] = f.uv[k][1]; FA[b + 7] = f.uv[k + 1][0]; FA[b + 8] = f.uv[k + 1][1];
             FA[b + 9] = tex; FA[b + 10] = tint[0]; FA[b + 11] = tint[1]; FA[b + 12] = tint[2]; FA[b + 13] = kmul[0]; FA[b + 14] = kmul[1]; FA[b + 15] = flags; fi++;
           }
+        }
+      }
+      // the names: a quad each, flat on the table where the page laid the name out
+      for (const d of decals) {
+        const tex = decalTexOf(d.canvas), flags = F_DECAL + F_RECEIVE + 256 * ++body, base = vi, [x0, y0, x1, y1] = d.rect;
+        const UV = [[0, 0], [1, 0], [1, 1], [0, 1]];
+        for (const [u, v] of UV) { const b = vi * 6; VA[b] = (u ? x1 : x0) + padX; VA[b + 1] = v ? y1 : y0; VA[b + 2] = DECAL_Z; VA[b + 3] = 0; VA[b + 4] = 0; VA[b + 5] = 1; vi++; }
+        for (const k of [1, 2]) {
+          const b = fi * 16;
+          FA[b] = base; FA[b + 1] = base + k; FA[b + 2] = base + k + 1;
+          FA[b + 3] = UV[0][0]; FA[b + 4] = UV[0][1]; FA[b + 5] = UV[k][0]; FA[b + 6] = UV[k][1]; FA[b + 7] = UV[k + 1][0]; FA[b + 8] = UV[k + 1][1];
+          FA[b + 9] = tex; FA[b + 10] = 0; FA[b + 11] = 0; FA[b + 12] = 0; FA[b + 13] = 0; FA[b + 14] = 0; FA[b + 15] = flags; fi++;
         }
       }
       const _t1 = performance.now();
@@ -1997,6 +2023,72 @@ const SHAPE = (() => {
   // a scene canvas inside a screen: the cups at their seats and my dice, in three dimensions.
   // Returns the <canvas> markup and queues the render for after the markup is in the DOM.
   const scenes = [];
+  // THE NAMES LIE ON THE TABLE (package N): each name and turn bar on the planks ([data-decal]) is drawn into a texture
+  // (canvas text, three texels a point, with a halo for its shadow and glow) and laid in the scene as a decal where the
+  // page laid it out (measured untilted), so a cup in front of a name hides it and a shadow falls on it, as on iOS
+  // (cn_stage_name). The page's own element keeps its place, unseen.
+  const DECAL_K = 3, decalCanvases = new Map();
+  const decalHalo = el => el.classList.contains('turn') ? 24 : 6;   /* room for the glow's 18px blur, the letters' shadow */
+  function decalCanvas(el, w, h) {
+    const cs = getComputedStyle(el), bar = el.classList.contains('turn'), text = bar ? '' : el.textContent;
+    const fonts = document.fonts ? document.fonts.status : '';
+    const key = [bar, text, cs.fontStyle, cs.fontWeight, cs.fontSize, cs.fontFamily, cs.letterSpacing, cs.color, cs.textShadow, cs.backgroundColor, w.toFixed(2), h.toFixed(2), fonts].join('|');
+    let c = decalCanvases.get(key); if (c) return c;
+    c = document.createElement('canvas');
+    const halo = decalHalo(el);
+    c.width = Math.ceil((w + 2 * halo) * DECAL_K); c.height = Math.ceil((h + 2 * halo) * DECAL_K);
+    const g = c.getContext('2d');
+    g.scale(DECAL_K, DECAL_K); g.translate(halo, halo);
+    if (bar) {
+      // `.turn`: the glow, 2 tall, haloed (0 0 2px #fff, 0 0 8px at .9, 0 0 18px at .5); a shadow's blur is in the canvas's pixels
+      const r = Math.min(2, h / 2), fill = () => { g.beginPath(); g.roundRect(0, 0, w, h, r); g.fill(); };
+      g.fillStyle = cs.backgroundColor;
+      for (const [blur, col] of [[18, 'rgba(143,251,224,.5)'], [8, 'rgba(143,251,224,.9)'], [2, '#fff']]) { g.shadowColor = col; g.shadowBlur = blur * DECAL_K; fill(); }
+      g.shadowColor = 'transparent'; fill();
+    } else {
+      g.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+      if ('letterSpacing' in g) g.letterSpacing = cs.letterSpacing;
+      g.textBaseline = 'alphabetic';
+      const m = g.measureText(text), asc = m.fontBoundingBoxAscent, desc = m.fontBoundingBoxDescent, base = (h - (asc + desc)) / 2 + asc;
+      // text-shadow: "rgb(0, 0, 0) 0px 1px 2px" (offsets and blur in the canvas's pixels)
+      const sh = /^(rgba?\([^)]*\)|#\w+)\s+(-?[\d.]+)px\s+(-?[\d.]+)px\s+([\d.]+)px/.exec(cs.textShadow || '');
+      if (sh) { g.shadowColor = sh[1]; g.shadowOffsetX = +sh[2] * DECAL_K; g.shadowOffsetY = +sh[3] * DECAL_K; g.shadowBlur = +sh[4] * DECAL_K; }
+      g.fillStyle = cs.color;
+      g.fillText(text, 0, base);
+    }
+    decalCanvases.set(key, c);
+    return c;
+  }
+  function nameDecals(canvas) {
+    const board = canvas.parentElement, scr = canvas.closest('.scr'), tilted = scr && scr.classList.contains('peekB'), out = [];
+    if (!board) return out;
+    if (!board.offsetWidth) {   /* not laid out (a tab not shown): measured, and the scene drawn again, once it is */
+      const ro = new ResizeObserver(() => {
+        if (!board.offsetWidth) return;
+        ro.disconnect();
+        canvas._decals = nameDecals(canvas);
+        if (canvas._objs) R3.render(canvas, canvas._W, canvas._H, canvas._objs, Math.min(2, window.devicePixelRatio || 1));
+      });
+      ro.observe(board);
+      return out;
+    }
+    if (tilted) scr.classList.remove('peekB');
+    const b = board.getBoundingClientRect(), k = b.width / (board.offsetWidth || 1) || 1;
+    board.querySelectorAll('[data-decal]').forEach(el => {
+      if (getComputedStyle(el).visibility === 'hidden') return;   /* a turn bar kept for its room */
+      const r = el.getBoundingClientRect(), x = (r.left - b.left) / k, y = (r.top - b.top) / k, w = r.width / k, h = r.height / k;
+      const halo = decalHalo(el), cv = decalCanvas(el, w, h);
+      out.push({ el, w, h, rect: [x - halo, y - halo, x - halo + cv.width / DECAL_K, y - halo + cv.height / DECAL_K], canvas: cv });
+    });
+    for (const d of out) d.el.style.visibility = 'hidden';
+    if (tilted) scr.classList.add('peekB');
+    // the font may come after the first frame: the names drawn again in it
+    if (out.length && document.fonts && document.fonts.status !== 'loaded') document.fonts.ready.then(() => {
+      for (const d of out) d.canvas = decalCanvas(d.el, d.w, d.h);
+      if (canvas.isConnected) R3.render(canvas, canvas._W, canvas._H, canvas._objs, Math.min(2, window.devicePixelRatio || 1));
+    });
+    return out;
+  }
   function scene3d(W, H, objs, key, opts) {
     const id = 's3' + (scenes.length), spec = Object.assign({ id, W, H, objs }, opts || {});
     scenes.push(spec);
@@ -2004,7 +2096,7 @@ const SHAPE = (() => {
   }
   function flushScenes() {
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    for (const sp of scenes.splice(0)) { const c = document.getElementById(sp.id); if (c) { c._objs = sp.objs; c._W = sp.W; c._H = sp.H; c._origin = sp.origin; c._pad = sp.pad || 0; c._padBelow = sp.padBelow || 0; c._padX = sp.padX || 0; c._open = !!sp.open; c._short = !!sp.short; if (sp.origin) applyPeekB(c, 1, sp.origin); R3.render(c, sp.W, sp.H, sp.objs, dpr); if (c.dataset.key === 'roll' || c.dataset.key === 'troll') startRoll(c, 7); } }
+    for (const sp of scenes.splice(0)) { const c = document.getElementById(sp.id); if (c) { c._decals = nameDecals(c); c._objs = sp.objs; c._W = sp.W; c._H = sp.H; c._origin = sp.origin; c._pad = sp.pad || 0; c._padBelow = sp.padBelow || 0; c._padX = sp.padX || 0; c._open = !!sp.open; c._short = !!sp.short; if (sp.origin) applyPeekB(c, 1, sp.origin); R3.render(c, sp.W, sp.H, sp.objs, dpr); if (c.dataset.key === 'roll' || c.dataset.key === 'troll') startRoll(c, 7); } }
   }
   // a cup object at a seat: R the mouth radius, standing on the table
   const CUP_TALL = 2.1;  /* the cup's height as a multiple of its mouth's radius: cn_roll.h's CN_CUP_TALL, drawn to match */
@@ -2354,7 +2446,7 @@ const SHAPE = (() => {
   const cupAt = (view, s, count, seed) => view === 'top' ? SHAPE.cupTop(s, { count, seed }) : C(s, { count, seed });
   // the seat's name, on the planks at the spot the layout found for it (under the cup's mouth, or beside it)
   function seatBadge(view, i, turn, R, out) {
-    return `<div class="seat"><div class="t-name${turn ? '' : ' dim'}">${NAMES[i]}</div>${turn ? '<span class="turn" style="width:36px;margin-top:3px"></span>' : ''}</div>`;
+    return `<div class="seat"><div class="t-name${turn ? '' : ' dim'}" data-decal>${NAMES[i]}</div>${turn ? '<span class="turn" data-decal style="width:36px;margin-top:3px"></span>' : ''}</div>`;
   }
   const SCENE_BELOW = 70;   /* the scene canvas's room below the board, for my cup's shadow */
   function picker(W, kind) {
@@ -2454,7 +2546,7 @@ const SHAPE = (() => {
     const peekB = true;
     if (o.peek && !roll) { const a = peekAngleFor(myCup, objs.filter(x => x.die && x.seat == null), inner, boardH, VIEW_B); myCup.tilt = peekTilt(myR, a, a); }
     board += scene3d(inner, boardH, objs, roll ? (o.tableRoll ? 'troll' : 'roll') : 'table', { peek: 'B', open: !!o.peek && !roll, origin, pad: lay.pad, padX: lay.padX, padBelow: SCENE_BELOW, short });
-    const nameBlock = `<div class="t-name" style="font-size:${short ? 12 : 14}px">${NAMES[0]}</div>${turnSeat === 0 ? '<span class="turn" style="width:44px"></span>' : '<span class="turn" style="visibility:hidden;width:44px"></span>'}`;
+    const nameBlock = `<div class="t-name" data-decal style="font-size:${short ? 12 : 14}px">${NAMES[0]}</div>${turnSeat === 0 ? '<span class="turn" data-decal style="width:44px"></span>' : '<span class="turn" style="visibility:hidden;width:44px"></span>'}`;
     board += short ? at(my, `<div class="abs" style="left:calc(50% - ${(myR + 64).toFixed(0)}px);top:50%;transform:translateY(-50%);display:flex;flex-direction:column;align-items:center;gap:4px">${nameBlock}</div>`) : at(my, `<div class="myband" style="justify-content:flex-end;padding-bottom:4px">${nameBlock}</div>`);
     for (let i = 1; i < n; i++) { const [nx, ny] = lay.names[i]; board += at([nx - 40, ny - 8, 80, 30], seatBadge(view, i, turnSeat === i, R, i === 5 && n === 6)); }
     ui += `<div class="abs" style="left:16px;top:${px(topM)};width:${px(inner)};height:${px(boardH)}">${board}</div>`;

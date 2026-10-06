@@ -63,9 +63,13 @@ static void *take_tex(size_t n) { n = rup16(n); if (!arena || n > tex_bottom - f
  * of its texture's width reads a tenth of the texels, which is what makes it fast (the fetches then stay in
  * the cache) and what keeps it from sparkling. */
 #define MAX_LV 8
-typedef struct { uint8_t *rgba; int8_t *bump; int w, h; int nlv; uint8_t *lrgba[MAX_LV]; int8_t *lbump[MAX_LV]; int lw[MAX_LV], lh[MAX_LV]; } Tex;
+typedef struct {
+    uint8_t *rgba; int8_t *bump; int w, h; int nlv; uint8_t *lrgba[MAX_LV]; int8_t *lbump[MAX_LV]; int lw[MAX_LV], lh[MAX_LV];
+    size_t low;        /* the arena's texture end after its copies were made (cn_scene_tex_drop) */
+} Tex;
 static Tex texs[MAX_TEX]; static int ntex = 0;
 static uint8_t *fb;                                      /* the frame's picture; 0 until a frame begins */
+static int prepared;                                     /* cn_scene_prepare has run on this frame (below) */
 
 void cn_scene_reset(void) { frame_top = 0; tex_bottom = arena_n; ntex = 0; fb = 0; }
 int cn_scene_init(void *mem, size_t bytes)
@@ -86,7 +90,7 @@ int cn_scene_tex_new(int w, int h, int has_bump)
     size_t top = tex_bottom;
     t->rgba = take_tex((size_t)w * h * 4); if (!t->rgba) return -1;
     t->bump = has_bump ? take_tex((size_t)w * h * 2) : 0; if (has_bump && !t->bump) { tex_bottom = top; return -1; }
-    t->w = w; t->h = h; t->nlv = 0;
+    t->w = w; t->h = h; t->nlv = 0; t->low = tex_bottom;
     return ntex++;
 }
 /* the smaller copies, 2-by-2 means; a failure to find room leaves the chain as long as it got */
@@ -106,15 +110,32 @@ static void mips_of(Tex *t)
         }
         t->lrgba[l] = rg; t->lbump[l] = bm; t->lw[l] = w; t->lh[l] = h; t->nlv++;
     }
+    t->low = tex_bottom;
 }
 uint8_t *cn_scene_tex_rgba(int id) { return id >= 0 && id < ntex ? texs[id].rgba : 0; }
 int8_t *cn_scene_tex_bump(int id) { return id >= 0 && id < ntex ? texs[id].bump : 0; }
+int cn_scene_tex_mips(int id)
+{
+    if (id < 0 || id >= ntex) return 0;
+    if (!texs[id].nlv) mips_of(&texs[id]);
+    return texs[id].nlv > 1;
+}
+CnSceneMark cn_scene_tex_mark(void) { CnSceneMark m = { ntex, tex_bottom }; return m; }
+void cn_scene_tex_drop(CnSceneMark m)
+{
+    if (!arena || m.n < 0 || m.n > ntex || m.end < tex_bottom || m.end > arena_n) return;
+    frame_top = 0; fb = 0; prepared = 0;   /* the frame's buffers may lie where the next textures go */
+    tex_bottom = m.end; ntex = m.n;
+    for (int i = 0; i < ntex; i++) if (texs[i].nlv && texs[i].low < tex_bottom) texs[i].nlv = 0;   /* copies made after the mark */
+}
 
 /* ---- the frame ---------------------------------------------------------------------- */
 #define F_CULL     CN_SCENE_F_CULL
 #define F_CAST     CN_SCENE_F_CAST
 #define F_RECEIVE  CN_SCENE_F_RECEIVE
 #define F_RECEIVER CN_SCENE_F_RECEIVER
+#define F_DECAL    CN_SCENE_F_DECAL
+#define DECAL_PLANE .05f   /* two decals' depths this close at a pixel are one plane (the table's): neither hides the other */
 #define VF CN_SCENE_VF
 #define FF CN_SCENE_FF
 #define STRIP CN_SCENE_STRIP
@@ -153,7 +174,8 @@ static Cov *covs;
 /* THE STRIP: what pass 2 keeps for the fragment that won each pixel, for pass 3, a strip of STRIP rows a band:
  * the depth (zb), its tint (gt), the direct light's cosine (gk, 0..255), the tint's scale and floor (gm, ga), the
  * crease (gc), the pixel's place in the light's frame (gu, gv at a 64th of a map texel; gd) and what it is (gf: 0
- * nothing, 1 a body, 2 the table, 3 a body that takes no shadow, 4 done). Its texel colour is written straight
+ * nothing, 1 a body, 2 the table, 3 a body that takes no shadow, 4 done, 5 a decal, 6 a decal that takes no shadow).
+ * A decal's texel (premultiplied, its alpha kept) is in fb until the shade puts it over the table's dark. Its texel colour is written straight
  * into fb, whose rows are the band's own. And the band's own list of the drawn faces that reach its rows, and
  * the edges' results held back (four rows: two in turn, the band's first and its last; see edges). */
 typedef struct {
@@ -586,7 +608,7 @@ static inline __attribute__((always_inline)) int table_block(const TPlane *P, co
 typedef struct {
     float apx, bpx, cpx, apy, bpy, cpy, apz, bpz, cpz, auw, buw, cuw, avw, bvw, cvw, anx, bnx, cnx, any_, bny, cny, anz, bnz, cnz;
     float Tx, Ty, Tz, Bx, By, Bz, twf, thf, txmax, tymax;
-    const uint8_t *td; const int8_t *bn; int tw, bmax, receiver, receives;
+    const uint8_t *td; const int8_t *bn; int tw, bmax, receiver, receives, decal;
 } Shape;
 /* four fragments' kept values: the texel (alpha 255), the light's cosine and the crease as bytes, the lanes
  * whose place in the light was taken (keep), and that place */
@@ -621,6 +643,18 @@ static inline __attribute__((always_inline)) void frag4(const Light *Lp, const S
     f4 r = vflt(p00 & 255) * g00 + vflt(p10 & 255) * g10 + vflt(p01 & 255) * g01 + vflt(p11 & 255) * g11;
     f4 g = vflt((p00 >> 8) & 255) * g00 + vflt((p10 >> 8) & 255) * g10 + vflt((p01 >> 8) & 255) * g01 + vflt((p11 >> 8) & 255) * g11;
     f4 bl = vflt((p00 >> 16) & 255) * g00 + vflt((p10 >> 16) & 255) * g10 + vflt((p01 >> 16) & 255) * g01 + vflt((p11 >> 16) & 255) * g11;
+    if (S->decal) {
+        /* a decal: the texel with its alpha (premultiplied, so the filter is right), and its place in the light
+         * as the table's (its normal straight up): the shade lays it over the table's dark */
+        f4 al = vflt((p00 >> 24) & 255) * g00 + vflt((p10 >> 24) & 255) * g10 + vflt((p01 >> 24) & 255) * g01 + vflt((p11 >> 24) & 255) * g11;
+        /* rounded (the four weights' sum is a hair under 1: an opaque texel truncated would come out 254) */
+        o->rgba = (vint(r + .5f) & 255) | ((vint(g + .5f) & 255) << 8) | ((vint(bl + .5f) & 255) << 16) | ((vint(al + .5f) & 255) << 24);
+        o->gk = o->gc = (i4){ 0, 0, 0, 0 };
+        o->gu = (i4){ 0, 0, 0, 0 }; o->gv = (i4){ 0, 0, 0, 0 }; o->gd = vf(0);
+        o->keep = m;
+        if (S->receives) light4(&L, wx, wy, wz, vf(0), vf(0), vf(1), vf(L.LZ), &o->gu, &o->gv, &o->gd);
+        return;
+    }
     /* the normal: interpolated from the vertices, then bent by the normal map along the tangent frame */
     f4 nx = w0v * S->anx + w1v * S->bnx + w2v * S->cnx, ny = w0v * S->any_ + w1v * S->bny + w2v * S->cny, nz = w0v * S->anz + w1v * S->bnz + w2v * S->cnz;
     if (S->bn) {
@@ -661,7 +695,7 @@ static inline __attribute__((always_inline)) int shape_of(const Tri *t, PV *a, P
     *S = (Shape){ a->pxw, b->pxw, c->pxw, a->pyw, b->pyw, c->pyw, a->pzw, b->pzw, c->pzw, a->uw, b->uw, c->uw, a->vw, b->vw, c->vw,
                   a->nx, b->nx, c->nx, a->ny, b->ny, c->ny, a->nz, b->nz, c->nz,
                   t->Tx, t->Ty, t->Tz, t->Bx, t->By, t->Bz, (float)tw, (float)th, tw - 1.001f, th - 1.001f,
-                  t->td, t->bn, tw, (tw * th - 1) * 2, t->flags & F_RECEIVER, t->flags & F_RECEIVE };
+                  t->td, t->bn, tw, (tw * th - 1) * 2, t->flags & F_RECEIVER, t->flags & F_RECEIVE, t->flags & F_DECAL };
     return 1;
 }
 
@@ -686,8 +720,8 @@ static void tri(const Light *Lp, const Bufs *Bp, int r0, int r1, uint32_t *walke
     if (y1 > r1 - 1) y1 = r1 - 1;
     float e0x = (by_ - cy) * inv, e1x = (cy - ay) * inv;
     const Edges E = edges_of(ax, ay, bx_, by_, cx, cy);
-    const int receiver = S.receiver, receives = S.receives;
-    const uint8_t kind = receives ? 1 : 3;
+    const int receiver = S.receiver, receives = S.receives, decal = S.decal;
+    const uint8_t kind = decal ? (receives ? 5 : 6) : receives ? 1 : 3;
     const i4 lane = { 0, 1, 2, 3 };
     uint32_t nwalk = 0, nshade = 0;
     for (int y = y0; y <= y1; y++) {
@@ -713,7 +747,30 @@ static void tri(const Light *Lp, const Bufs *Bp, int r0, int r1, uint32_t *walke
             f4 zold = vf(0);
             if (whole) memcpy(&zold, &B.zb[gi], sizeof zold);
             else for (int k = 0; x + k < W; k++) zold[k] = B.zb[gi + k];
-            const i4 m = ((lane + x) <= xr) & ~(depth >= zold);
+            const i4 span4 = (lane + x) <= xr, m = span4 & ~(depth >= zold);
+            if (decal) {
+                /* DECALS DO NOT HIDE DECALS: where an earlier decal holds the pixel in the same plane (two names' halos
+                 * that meet, a glow over a letter), this one is laid under it (the earlier in pass 2's order on top),
+                 * premultiplied; anywhere else the depth test, as for any face */
+                i4 mb = { 0, 0, 0, 0 };
+                for (int k = 0; k < 4 && x + k < W; k++)
+                    if (span4[k] && !m[k] && B.gf[gi + k] >= 5 && depth[k] - zold[k] < DECAL_PLANE && zold[k] - depth[k] < DECAL_PLANE) mb[k] = -1;
+                if (!vany(m | mb)) continue;
+                for (int k = 0; k < 4; k++) if (m[k]) B.zb[gi + k] = depth[k];
+                nshade -= (uint32_t)(m[0] + m[1] + m[2] + m[3] + mb[0] + mb[1] + mb[2] + mb[3]);
+                Frag F; frag4(&L, &S, w0v, w1v, w2v, depth, m | mb, &F);
+                for (int k = 0; k < 4; k++) {
+                    const int j = gi + k;
+                    if (m[k]) {   /* the texel, kept for the shade, and its place in the light */
+                        int32_t px = F.rgba[k]; memcpy(&B.fb[(idx + k) * 4], &px, 4);
+                        B.gf[j] = kind; B.gu[j] = (uint16_t)F.gu[k]; B.gv[j] = (uint16_t)F.gv[k]; B.gd[j] = F.gd[k]; B.kb[idx + k] = key; B.kf[idx + k] = kface;
+                    } else if (mb[k]) {   /* under the earlier decal's texel: e + t (1 - e's alpha) */
+                        uint8_t *e = &B.fb[(idx + k) * 4], t[4]; int32_t px = F.rgba[k]; memcpy(t, &px, 4);
+                        for (int c = 0; c < 4; c++) e[c] = (uint8_t)(e[c] + (t[c] * (255 - e[3]) + 127) / 255);
+                    }
+                }
+                continue;
+            }
             if (!vany(m)) continue;
             if (whole) { f4 znew = vsel(m, depth, zold); memcpy(&B.zb[gi], &znew, sizeof znew); }
             else for (int k = 0; k < 4; k++) if (m[k]) B.zb[gi + k] = depth[k];
@@ -759,6 +816,24 @@ static inline __attribute__((always_inline)) uint32_t table_word(uint32_t a, int
 }
 /* the table's alpha under light lit (1 lit .. 0 in shadow, the shadow's dark already in it) and contact dark c */
 static inline __attribute__((always_inline)) uint8_t table_alpha(float lit, float c) { return (uint8_t)((1 - lit * (1 - c)) * 255 + .5f); }
+/* A DECAL'S PIXEL: its texel t (premultiplied: c, alpha d) painted on the table, under the table's dark at alpha a
+ * (the shadow and the contact dark, table_alpha's). The planks under it and the decal both get the light f = 1 - a,
+ * and the dark (0, 3, 2) takes the rest: over the planks P that is f d C + a K + f (1 - d) P, so the layer is
+ * premultiplied f c + a K at alpha a + f d. A texel with no alpha is the table's own pixel, the very bytes; an opaque
+ * one is opaque whatever the shadow (the shadow darkens it). In the output's form. */
+static inline __attribute__((always_inline)) uint32_t decal_word(const uint8_t t[4], uint32_t a, int pm, int bgra)
+{
+    if (!t[3]) return table_word(a, pm, bgra);
+    const float fa = a * (1.f / 255), f = 1 - fa, A = fa * 255 + f * t[3];
+    const float K[3] = { 0, 3, 2 };
+    float c[3]; uint8_t o[4];
+    for (int ch = 0; ch < 3; ch++) { c[ch] = f * t[ch] + fa * K[ch]; if (c[ch] > A) c[ch] = A; }
+    o[3] = (uint8_t)(A + .5f);
+    for (int ch = 0; ch < 3; ch++) o[ch] = (uint8_t)((pm ? c[ch] : c[ch] * 255 / A) + .5f);
+    if (bgra) { const uint8_t r = o[0]; o[0] = o[2]; o[2] = r; }
+    uint32_t w; memcpy(&w, o, 4);
+    return w;
+}
 /* A BODY'S LIGHT: the lamp's, by the cosine, less the shadow on it (a face turned from the lamp and a face in its
  * shadow look alike: neither sees it), on an ambient floor; the tint's scale and floor, then the crease. o is the
  * texel in, the shaded colour out (its alpha untouched); f the kind (1 takes the shadow); the light's place
@@ -835,6 +910,10 @@ __attribute__((noinline)) static void shade(const Light *Lp, const Bufs *Bp, int
             float lit = 1 - (1 - lit_q(&B, B.gu[g], B.gv[g], B.gd[g])) * dark;
             const uint32_t px = table_word(table_alpha(lit, ao_at(&B, x, y)), pm, bgra); memcpy(o, &px, 4); continue;
         }
+        if (f >= 5) {   /* a decal: its texel over the table's dark */
+            float lit = f == 5 ? 1 - (1 - lit_q(&B, B.gu[g], B.gv[g], B.gd[g])) * dark : 1;
+            const uint32_t px = decal_word(o, table_alpha(lit, ao_at(&B, x, y)), pm, bgra); memcpy(o, &px, 4); continue;
+        }
         body_px(&B, o, &B.gt[g * 3], f, B.gk[g], B.gm[g], B.ga[g], B.gc[g], B.gu[g], B.gv[g], B.gd[g]);
         if (bgra) { const uint8_t r = o[0]; o[0] = o[2]; o[2] = r; }   /* opaque: premultiplied is the same bytes */
     }
@@ -906,6 +985,10 @@ __attribute__((noinline, cold)) static uint32_t edge_shade(const Light *Lp, cons
         if (S.receiver) {
             const float lit = 1 - (1 - lit_q(&B, (uint16_t)F.gu[s], (uint16_t)F.gv[s], F.gd[s])) * SH_DARK;
             o[0] = 0; o[1] = 3; o[2] = 2; o[3] = table_alpha(lit, ao_at(&B, x, y));
+        } else if (S.decal) {
+            const float lit = S.receives ? 1 - (1 - lit_q(&B, (uint16_t)F.gu[s], (uint16_t)F.gv[s], F.gd[s])) * SH_DARK : 1;
+            int32_t w = F.rgba[s]; memcpy(o, &w, 4);
+            return decal_word(o, table_alpha(lit, ao_at(&B, x, y)), B.premul, B.bgra);
         } else {
             const uint8_t tint[3] = { (uint8_t)t->tr, (uint8_t)t->tg, (uint8_t)t->tb };
             const uint8_t mk = (uint8_t)(fclamp(t->km, 0, 1) * 255 + .5f), mka = (uint8_t)(fclamp(t->ka, 0, 1) * 255 + .5f);
