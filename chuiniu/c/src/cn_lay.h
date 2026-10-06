@@ -144,6 +144,8 @@ typedef struct {
     uint8_t  throw_mask;            /* bit s: seat s's cup throws (cn_lay_throws)     */
     uint8_t  one_row;               /* the reveal on a short board: every seat in one row */
     uint8_t  list_rows;             /* the reveal on a tall board: the study's list in this many rows (0: none) */
+    uint8_t  plate_throw;           /* my throw's held cup passes over the plate: the host stands the plate down
+                                       until my dice rest (package S: two seats, compact, the plate hid half my cup) */
     float    ring_cy, ring_rx, ring_ry;   /* the ring's centre y and radii (0 on a short board) */
     float    pad, pad_x, pad_below;       /* the canvas's room past the board        */
     float    peek_target;           /* my cup's full tip                            */

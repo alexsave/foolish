@@ -664,6 +664,42 @@ static void test_reveal_dice_seen(void)
     printf("  %d dice at the reveal, each face seen past every cup (the most hidden on one table: %d, %dx%d n %d)\n", dice, hidden, worst_w, worst_h, worst_n);
 }
 
+/* THE PLATE AND MY THROW (package S): the plate is flat over the picture; where my held cup's picture meets it in
+ * any frame of my throw the HUD says so (plate_throw) and the host stands the plate down until my dice rest. Read
+ * here off the pictures of the frames themselves, every 30 ms. */
+static void test_plate_throw(void)
+{
+    TEST("the plate stands down for my throw exactly where my held cup passes under it (plate_throw), every drawer, 2 to 6 seats");
+    cn_stage_init(&ST, PACK, PACK_N);
+    int tables = 0, under = 0, missed = 0, loose = 0;
+    for (int wi = 0; wi < NW; wi++) for (int hi = 0; hi < NH; hi += 2) for (int n = 2; n <= 6; n++) for (int mine = 0; mine < 2; mine++) {
+        const int W = SIZES_W[wi], H = SIZES_H[hi];
+        CnStageIn in = table_in(W, H, n, mine, 0, CN_STAGE_TABLE);
+        in.roll_at_ms = 0;
+        const CnStageHud *h = cn_stage_begin(&ST, &in);
+        if (!h || !h->has_plate || !h->rolls) continue;
+        tables++;
+        double plate[4];
+        rect_box(h->plate, plate);
+        int hit = 0;
+        for (uint32_t t = 0; t <= h->total_ms && !hit; t += 30) {
+            int no;
+            const CnObj *o = cn_stage_objects(&ST, t, 0, 0, &no);
+            for (int i = 0; i < no && !hit; i++) {
+                if (o[i].kind != CN_OBJ_CUP || !o[i].mine) continue;
+                Pic p; picture(&ST, i, &o[i], &p); hull(&p);
+                hit = meets(&p, plate);
+            }
+        }
+        under += hit;
+        if (hit && !h->plate_throw) { missed++; CHECK(0, "%dx%d n %d mine %d: my cup passes under the plate, the HUD says not", W, H, n, mine); }
+        loose += !hit && h->plate_throw;
+    }
+    CHECK(tables > 100 && under > 0, "my held cup meets the plate on %d of %d tables with one (two seats, compact)", under, tables);
+    CHECK(loose * 10 <= tables, "the plate stands down needlessly on at most one table in ten (%d)", loose);
+    printf("  %d tables with a plate and my throw: the cup passes under it on %d (%d missed), the plate stands down on %d more (a box's corner)\n", tables, under, missed, loose);
+}
+
 static void test_reveal_faces(void)
 {
     TEST("the reveal: each die's face on the glass for the glow (die_q), and the dice that do not count drowned as the cups lift");
@@ -1009,6 +1045,7 @@ int main(int argc, char **argv)
     test_reveal_inside();
     test_reveal_dice_seen();
     test_reveal_faces();
+    test_plate_throw();
     test_hud_clear();
     test_names();
     free(PACK);

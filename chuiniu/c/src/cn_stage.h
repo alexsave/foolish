@@ -132,7 +132,8 @@ typedef struct {
     uint8_t  name_how[CN_STAGE_SEATS];  /* CN_NAME_* (cn_lay.h)                               */
     uint8_t  rolls;                     /* 1: a roll plays (roll_at_ms .. total_ms); 0: still,
                                            and the three times are 0                         */
-    uint8_t  pad0;
+    uint8_t  plate_throw;               /* 1: my throw's held cup passes under the plate: the
+                                           host stands the plate down until rest_ms (package S) */
     float    w, h;                      /* the drawer (300 by 195 for a bubble)               */
     float    board[4];                  /* x y w h, flat                                      */
     float    canvas[4];                 /* where the still picture goes, x y w h, flat (a frame

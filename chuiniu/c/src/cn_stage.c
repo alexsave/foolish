@@ -488,6 +488,7 @@ const CnStageHud *cn_stage_begin(CnStage *st, const CnStageIn *in_)
         h->w = L->w; h->h = L->h;
         h->board[0] = L->board_x; h->board[1] = L->board_y; h->board[2] = L->board_w; h->board[3] = L->board_h;
         h->short_board = L->short_board; h->has_plate = L->has_plate; h->has_shelf = L->has_shelf;
+        h->plate_throw = L->plate_throw;
         memcpy(h->plate, L->plate, sizeof h->plate); memcpy(h->shelf, L->shelf, sizeof h->shelf);
         memcpy(h->outcome, L->outcome, sizeof h->outcome);
         h->my_band[0] = L->board_x + L->my_band[0]; h->my_band[1] = L->board_y + L->my_band[1];

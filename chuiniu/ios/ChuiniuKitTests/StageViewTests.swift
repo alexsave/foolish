@@ -646,6 +646,19 @@ final class StageViewTests: XCTestCase {
         }
     }
 
+    /// Two seats, compact: my held cup passes under the plate (the kernel's
+    /// `plate_throw`), so the plate stands down until my dice rest.
+    func testThePlateStandsDownWhileMyThrowPassesUnderIt() throws {
+        let me = try started(seats: 2)
+        let director = StageDirector(stage: KernelSeam.stage())
+        director.begin(request(CGSize(width: 390, height: 340), table: me.table), planMs: nil)
+        let hud = try XCTUnwrap(director.hud)
+        XCTAssertEqual(hud.rolls, 1, "the round's throw plays")
+        XCTAssertEqual(hud.plateThrow, 1, "my held cup passes under the plate")
+        XCTAssertFalse(TableScreen.plateShown(hud, atRest: false), "the plate stands down while my throw is in the air")
+        XCTAssertTrue(TableScreen.plateShown(hud, atRest: true), "and is back once my dice rest")
+    }
+
     // MARK: the loser's stamp (package S)
 
     func testTheStampStaysInsideTheDrawerAndOffTheOtherNames() {

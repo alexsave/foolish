@@ -894,6 +894,16 @@ static int make(const CnLayIn *in, CnLay *L, int fit)
         }
         L->my_reach = (float)k;
     }
+    /* THE PLATE AND MY THROW (package S): the plate is flat on the glass, over the picture, so my held cup
+     * passing under it is hidden by it; where my throw's cup, at its reach, comes within a point of the plate,
+     * the host stands the plate down while my throw is in the air */
+    if (fit && nd && !row1 && !list && L->has_plate) {
+        CnLayThrow t;
+        seat_throw(in, L, 0, CN_THROW_CUP, &t);
+        Reach r = reach_none();
+        throw_reach(L, &t.t, L->my_reach, &r);
+        L->plate_throw = (uint8_t)over_rect(&r, L->plate, 1);
+    }
     /* WHO THROWS (package V2). Mine, unless it is the reveal (one row or the list). On a tall board
      * each other seat's whose held cup stays CN_LAY_EDGE inside the drawer at the
      * study's reach, through the whole of its own throw (its seat, size and shake on
