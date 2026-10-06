@@ -99,7 +99,6 @@
 #define CN_LAY_REACH_MIN  .8    /* the least reach a throw is held at: lower, the shaken cup's crown dips into the table */
 #define CN_LAY_ROW_MIN_R  12.0    /* the row's cups are never made smaller than this */
 #define CN_LAY_MY_D_MIN   10.0    /* nor my dice on a short board                   */
-#define CN_LAY_BRASS      .75   /* a die's brass ring at the reveal, of its side: past its corners (.71), inside half the spacing (.85) */
 #define CN_LAY_PLATE_REVEAL_W 240.0 /* the plate at the reveal: the tally ("There were twelve") is longer than a bid */
 #define CN_LAY_STAMP_FOOT 40.0    /* the loser's stamp under a name at the reveal: its foot this far under the anchor */
 #define CN_LAY_OUTCOME_H  48.0    /* the reveal's outcome line (two lines of the roman on a band) over the shelf */
@@ -149,7 +148,6 @@ typedef struct {
     CnPeek   peek;                  /* its tip at in->peek                          */
     float    my_reach;              /* my throw's reach, of the study's (1 when it fits the drawer) */
     float    die_g[CN_LAY_SEATS];   /* each seat's die side on the glass, at its cup */
-    float    brass_r[CN_LAY_SEATS]; /* the radius of a brass ring round one, on the glass */
     float    outcome[4];            /* the reveal's outcome line, x y w h, screen (0 0 0 0 off the reveal) */
     CnCam    cam;
     double   seg_c[CN_CUP_SEGS], seg_s[CN_CUP_SEGS];   /* a cup's rim corners round the circle: the fits' table */

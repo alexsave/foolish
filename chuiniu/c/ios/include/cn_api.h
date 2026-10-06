@@ -198,7 +198,10 @@ int  cn_api_string(int key, char *out, int cap);       /* one table entry by CN_
 #define CN_API_W_ERROR          14   /* arg: a negative CN_E*. Why a link did not read     */
 #define CN_API_W_RULES_TITLE    15
 #define CN_API_W_RULE           16   /* arg: 0..5                                          */
-#define CN_API_W_COUNT          17
+#define CN_API_W_OUTCOME_LOSS   17   /* the loser's clause of CN_API_W_OUTCOME, as it says it:
+                                        "Bo loses a die" (the host sets it in blood)       */
+#define CN_API_W_OUTCOME_WIN    18   /* its winner's clause: "Alex wins" (in the glow); "" */
+#define CN_API_W_COUNT          19
 int  cn_api_words(int what, int arg, char *out, int cap);
 
 /* THE BUBBLE'S ONE LINE (cn_say.h, docs_pkgY.md), for a host test that holds

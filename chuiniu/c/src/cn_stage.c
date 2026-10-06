@@ -11,6 +11,9 @@ _Static_assert(CN_STAGE_ARENA == CN_SCENE_ARENA_IOS, "the host's arena is the re
 _Static_assert(CN_STAGE_PASSES == CN_SCENE_PASSES && CN_STAGE_BANDS <= CN_SCENE_MAX_BANDS, "the bands");
 
 #define BIG_T 1.0e6        /* seconds: past the end of every bake (a still table) */
+#define CN_STAGE_DROWN_KM .45f   /* a drowned die's shade scale and floor (a lying cup's .45, the study's wash .55) */
+#define CN_STAGE_DROWN_KA .55f
+static float absf(float a) { return a < 0 ? -a : a; }
 
 static float clampf(float v, float lo, float hi) { return v < lo ? lo : v > hi ? hi : v; }
 
@@ -305,8 +308,10 @@ static void paint(CnStage *st)
         CnObj *o = &st->base[i];
         if (o->kind != CN_OBJ_DIE) continue;
         const int s = o->seat, idx = k[s]++;
+        st->obj_drown[i] = 0;
         if (!(in->known_mask >> s & 1) || idx >= in->dice[s]) continue;
         const int value = in->faces[s * CN_STAGE_DICE + idx];
+        st->obj_drown[i] = in->kind == CN_STAGE_REVEAL && !(in->count_mask >> (s * CN_STAGE_DICE + idx) & 1);
         int up = 4;                                  /* +z: a die nobody threw lies as placed */
         if (st->obj_throw[i] >= 0) up = st->thr[(int)st->obj_throw[i]].info.up[st->obj_pose[i] - 1];
         cn_die_cells(up >> 1, up & 1 ? -1 : 1, value, o->cells);
@@ -341,6 +346,31 @@ static void glass(const CnStage *st, const CnCam *c, float x, float y, float z, 
     float px, py;
     cn_cam_project(c, x, y, z, &px, &py);
     cn_cam_map(c, st->hud.board[0] + px, st->hud.board[1] + py, gx, gy);
+}
+
+/* THE FACE A DIE SHOWS, ON THE GLASS (package S). The study rings a counting die's square (UI.html die():
+ * the face's own outline grown by .07 of its side each way); a die on the table shows its up face, so the HUD
+ * gives that face's four corners, grown the same, through the eye and the turn: the body's axis most nearly
+ * up, the face on it, the other two axes its sides (a yaw alone when the die was placed, not thrown). */
+#define CN_STAGE_FACE_GAP .07f
+static void up_face(const CnStage *st, const CnObj *o, float q[8])
+{
+    float ax[3][3];
+    if (o->has_rot) for (int c = 0; c < 3; c++) for (int r = 0; r < 3; r++) ax[c][r] = o->rot[c * 3 + r];
+    else {
+        const float cy = (float)cn_m_cos(o->yaw), sy = (float)cn_m_sin(o->yaw);
+        ax[0][0] = cy; ax[0][1] = sy; ax[0][2] = 0; ax[1][0] = -sy; ax[1][1] = cy; ax[1][2] = 0; ax[2][0] = 0; ax[2][1] = 0; ax[2][2] = 1;
+    }
+    int up = 0;
+    for (int c = 1; c < 3; c++) if (absf(ax[c][2]) > absf(ax[up][2])) up = c;
+    const float sg = ax[up][2] < 0 ? -1.f : 1.f, half = o->d / 2, g = half + CN_STAGE_FACE_GAP * o->d;
+    const int a = (up + 1) % 3, b = (up + 2) % 3;
+    static const float U[4] = { -1, 1, 1, -1 }, V[4] = { -1, -1, 1, 1 };
+    for (int k = 0; k < 4; k++) {
+        float p[3];
+        for (int r = 0; r < 3; r++) p[r] = sg * half * ax[up][r] + g * (U[k] * ax[a][r] + V[k] * ax[b][r]);
+        glass(st, &st->lay.cam, o->x + p[0], o->y + p[1], o->lift + p[2], &q[2 * k], &q[2 * k + 1]);
+    }
 }
 
 static void hud_cam(CnStageHud *h, const CnCam *c)
@@ -459,6 +489,7 @@ const CnStageHud *cn_stage_begin(CnStage *st, const CnStageIn *in_)
         h->board[0] = L->board_x; h->board[1] = L->board_y; h->board[2] = L->board_w; h->board[3] = L->board_h;
         h->short_board = L->short_board; h->has_plate = L->has_plate; h->has_shelf = L->has_shelf;
         memcpy(h->plate, L->plate, sizeof h->plate); memcpy(h->shelf, L->shelf, sizeof h->shelf);
+        memcpy(h->outcome, L->outcome, sizeof h->outcome);
         h->my_band[0] = L->board_x + L->my_band[0]; h->my_band[1] = L->board_y + L->my_band[1];
         h->my_band[2] = L->my_band[2]; h->my_band[3] = L->my_band[3];
         h->cup_r = L->cup_r; h->my_r = L->my_r;
@@ -467,7 +498,7 @@ const CnStageHud *cn_stage_begin(CnStage *st, const CnStageIn *in_)
             h->cup_x[s] = L->board_x + L->cup_x[s]; h->cup_y[s] = L->board_y + L->cup_y[s];
             h->name_x[s] = L->board_x + L->name_x[s]; h->name_y[s] = L->board_y + L->name_y[s];
             h->name_how[s] = L->name_how[s];
-            h->die_d[s] = L->die_g[s]; h->brass_r[s] = L->brass_r[s];
+            h->die_d[s] = L->die_g[s];
         }
     }
     hud_cam(h, &L->cam);
@@ -512,6 +543,7 @@ const CnStageHud *cn_stage_begin(CnStage *st, const CnStageIn *in_)
         float gx, gy;
         glass(st, &L->cam, o->x, o->y, o->lift, &gx, &gy);
         h->die_x[s * CN_STAGE_DICE + k] = gx; h->die_y[s * CN_STAGE_DICE + k] = gy;
+        up_face(st, o, &h->die_q[(s * CN_STAGE_DICE + k) * 8]);
     }
     memset(st->lift_angle, 0, sizeof st->lift_angle);
     for (int i = 0; i < st->nobj && in->kind != CN_STAGE_BUBBLE; i++) {
@@ -570,6 +602,17 @@ const CnObj *cn_stage_objects(CnStage *st, uint32_t t_ms, float peek, float lift
         if (!(a > 0)) continue;
         const CnPeek p = cn_cam_peek_tilt(o->R, a, full);
         o->tilt_angle = p.angle; o->tilt_hinge_y = p.hinge_y; o->tilt_back = p.back; o->tilt_lift = p.lift;
+    }
+    /* THE DROWNED DICE (package S): at the reveal a die that does not count for the call goes down into the
+     * study's drowned look as the cups lift (UI.html die(): .7 opacity under a #0b2e32 wash at .55), the
+     * renderer's tint, its shade's scale and floor moved toward a lying cup's dim */
+    for (int i = 0; i < st->nobj && lift > 0; i++) {
+        CnObj *o = &st->obj[i];
+        if (!st->obj_drown[i]) continue;
+        static const float T[3] = { 8, 32, 35 };   /* #0b2e32 at .7 */
+        for (int c = 0; c < 3; c++) o->tint[c] += (T[c] - o->tint[c]) * lift;
+        o->kmul[0] += (CN_STAGE_DROWN_KM - o->kmul[0]) * lift;
+        o->kmul[1] += (CN_STAGE_DROWN_KA - o->kmul[1]) * lift;
     }
     if (n) *n = st->nobj;
     return st->obj;

@@ -8,7 +8,8 @@
  * (package U) nothing leaves the drawer: every vertex of every body, at rest,
  * peeked, and in every frame of the throw, through cn_geom and cn_cam, from
  * 281 to 340 points tall; the throw's cup without a bake; my throw's reach;
- * the reveal's brass rings. */
+ * a die's side on the glass (the brass rings it once sized are gone: the
+ * reveal glows each counting die's face, cn_stage's die_q, package S). */
 #include "../src/cn_lay.h"
 #include "cn_check.h"
 #include <math.h>
@@ -1790,16 +1791,15 @@ static void test_reach(void)
     CHECK(done && under && forced == 0,"forty throws held at the least reach, %.2f, complete with every die under my cup (forced %d)", CN_LAY_REACH_MIN, forced);
 }
 
-static void test_brass(void)
+static void test_die_side(void)
 {
-    TEST("the reveal's brass rings: a die's side on the glass and a ring round it, from the kernel");
+    TEST("a die's side on the glass at each seat, from the kernel");
     CnLayIn in = input(390, 340, 6, 0, 0);
     CnLay L; cn_lay_make(&in, &L);
     for (int s = 0; s < 6; s++) {
         const double side = s == 0 ? L.d : L.sd;
         float sc; cn_cam_to_screen(&L.cam, L.cup_y[s] - L.cup_y[0], &sc);
         CHECK(near(L.die_g[s], side * sc, side * .05), "seat %d: the die's side on the glass %.2f (the study's scale there %.2f)", s, L.die_g[s], side * sc);
-        CHECK(L.brass_r[s] > L.die_g[s] * .71 && 2 * L.brass_r[s] < L.die_g[s] * 1.7, "seat %d: the ring %.2f clears the die's corners and not its neighbours'", s, L.brass_r[s]);
     }
     CHECK(L.die_g[0] > L.die_g[1], "mine are bigger than theirs");
 }
@@ -1814,6 +1814,6 @@ int main(void)
     test_cup_path();
     test_inside_the_drawer();
     test_reach();
-    test_brass();
+    test_die_side();
     return report("cn_lay_test");
 }

@@ -105,6 +105,9 @@ typedef struct {
     float    scale;                     /* the device's pixels a point; clamped (shot.scale)   */
     uint32_t seed;                      /* the round's throw (cn_stage_round_seed)             */
     uint32_t roll_at_ms;                /* when the roll starts, or CN_STAGE_NO_ROLL           */
+    uint32_t count_mask;                /* a reveal: bit s*5+k, faces[s*5+k] counts for the call
+                                           (its face or a wild 1, CnView.shown_counts); the rest
+                                           are drowned as the cups lift (package S)            */
 } CnStageIn;
 
 /* THE HUD: everything a host lays over or under the picture, in points. FLAT
@@ -131,6 +134,8 @@ typedef struct {
                                            says its own: cn_stage_shot's canvas)             */
     float    plate[4];                  /* the bid plate, x y w h, never turned               */
     float    shelf[4];                  /* the picker's or the reveal's shelf, never turned    */
+    float    outcome[4];                /* the reveal's outcome line, x y w h, never turned: its
+                                           room, the line set at its top (0s off the reveal)   */
     float    my_band[4];                /* my band, flat                                      */
     float    cup_x[CN_STAGE_SEATS], cup_y[CN_STAGE_SEATS];     /* every cup's mouth, flat    */
     float    name_x[CN_STAGE_SEATS], name_y[CN_STAGE_SEATS];   /* every name's anchor, flat  */
@@ -141,8 +146,11 @@ typedef struct {
     float    die_x[CN_STAGE_ALL_DICE], die_y[CN_STAGE_ALL_DICE];   /* each shown die at rest, glass,
                                            seat s at s*5 in faces[] order (CnView's shown /
                                            my_dice order); 0 0 for none                      */
+    float    die_q[CN_STAGE_ALL_DICE * 8];   /* each shown die's up face on the glass, grown by the study's
+                                           counting ring's gap (.07 of a side): its four corners
+                                           x y in turn round it, seat s's die k at (s*5+k)*8;
+                                           0s for none (package S: the reveal glows the face)  */
     float    die_d[CN_STAGE_SEATS];     /* a seat's die's side on the glass, at its cup (0 in a bubble) */
-    float    brass_r[CN_STAGE_SEATS];   /* the radius of the reveal's brass ring round one of its dice  */
     float    origin_x, origin_y;        /* the turn's centre, flat                            */
     float    theta, cam_d, zoom;        /* rotateX(theta) with perspective cam_d, scale(zoom)  */
     float    ca[16];                    /* CATransform3D about the origin, m11 .. m44          */
@@ -227,6 +235,7 @@ typedef struct {
     float         lift_angle[CN_STAGE_SEATS];  /* the reveal's full tip of each cup             */
     int8_t        obj_throw[CN_LAY_MAX_OBJS];  /* the throw an object rides, -1 none           */
     int8_t        obj_pose[CN_LAY_MAX_OBJS];   /* and its pose in it                           */
+    uint8_t       obj_drown[CN_LAY_MAX_OBJS];  /* a reveal's die that does not count: drowned by the lift */
     uint8_t       obj_mesh[CN_LAY_MAX_OBJS];
     CnObj         base[CN_LAY_MAX_OBJS];       /* where everything stands before the clock     */
     CnObj         obj[CN_LAY_MAX_OBJS];        /* the last frame's bodies                      */

@@ -20,7 +20,7 @@ static int has_dash(const char *s)
 static void test_table(void)
 {
     TEST("the table");
-    static const char *known[] = { "who", "loser", "bid", "qty", "face", "n", "game", 0 };
+    static const char *known[] = { "who", "loser", "bid", "qty", "face", "n", "game", "loss", 0 };
     for (int k = 0; k < CN_K_COUNT; k++) {
         const char *s = cn_text(k);
         CHECK(s[0] || cn_key_may_be_empty(k), "%s is empty", cn_key_name(k));
@@ -117,6 +117,11 @@ static void test_captions(void)
     CHECK(!strcmp(out, "Bo calls four 3s"), "a call's caption: %s", out);
     cn_say_outcome_of(ev, n, NAMES, out, sizeof out);
     CHECK(!strcmp(out, "Bo calls. Four 3s was true, Bo loses a die"), "true: %s", out);
+    /* the clauses a host sets apart, each as the line says it (package S: the loser's in blood) */
+    cn_say_outcome_part_of(ev, n, NAMES, CN_SAY_PART_LOSS, out, sizeof out);
+    CHECK(!strcmp(out, "Bo loses a die"), "the loser's clause: %s", out);
+    cn_say_outcome_part_of(ev, n, NAMES, CN_SAY_PART_WIN, out, sizeof out);
+    CHECK(!strcmp(out, ""), "no winner's clause before the end: '%s'", out);
 
     /* THE OUTCOME: false, out, and the end, built from events */
     CnEvent e2[5];
@@ -133,6 +138,12 @@ static void test_captions(void)
     e2[4].kind = CN_EV_OVER; e2[4].seat = 1;
     cn_say_outcome_of(e2, 5, NAMES, out, sizeof out);
     CHECK(!strcmp(out, "Bo calls. Seven 5s was false, Alex loses a die. Bo wins"), "the end: %s", out);
+    char whole[160];
+    snprintf(whole, sizeof whole, "%s", out);
+    cn_say_outcome_part_of(e2, 5, NAMES, CN_SAY_PART_LOSS, out, sizeof out);
+    CHECK(!strcmp(out, "Alex loses a die") && strstr(whole, out), "the loser's clause, in the line: %s", out);
+    cn_say_outcome_part_of(e2, 5, NAMES, CN_SAY_PART_WIN, out, sizeof out);
+    CHECK(!strcmp(out, "Bo wins") && strstr(whole, out), "the winner's clause, in the line: %s", out);
 }
 
 static void test_screen_end(void)

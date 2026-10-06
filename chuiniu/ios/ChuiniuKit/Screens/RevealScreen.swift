@@ -149,40 +149,37 @@ public struct RevealScreen: View {
     }
 }
 
-/// The counting dice's rings in the glow, at each shown die's place on the glass
-/// (the HUD's `die_x`, `die_y`: seat s at s * stride, in `Reveal.dice` order),
-/// each the HUD's brass ring for its seat (`brass_r`: past the die's corners,
-/// inside half the dice's spacing, the kernel's), lit one by one in seat order
-/// as the kernel's COUNT beat says.
+/// The counting dice's glow: each counting die's FACE on the glass (the HUD's
+/// `die_q`: the die's up face, grown by the study's ring gap, its four
+/// corners through the eye and the turn, seat s's die k at (s * 5 + k) * 8,
+/// in `Reveal.dice` order), outlined as the study's `die()` outlines a
+/// counting die's square: the glow blurred, the glow, a pale core, the
+/// corners rounded. Lit one by one in seat order as the kernel's COUNT beat
+/// says. The dice that do not count are drowned in the picture itself (the
+/// kernel's, by the lift).
 struct Rings: View {
     let reveal: Reveal
     let hud: CnStageHudSnap
     let lit: Int
 
     var body: some View {
-        let stride = hud.cupX.isEmpty ? 0 : hud.dieX.count / hud.cupX.count
         Canvas { ctx, _ in
-            guard stride > 0 else { return }
             var ordinal = 0
             for s in reveal.dice.indices where s < hud.seats {
                 let counts = reveal.counts.indices.contains(s) ? reveal.counts[s] : []
-                let pts = reveal.dice[s].indices.compactMap { k -> CGPoint? in
-                    let i = s * stride + k
-                    guard k < stride, hud.dieX.indices.contains(i), hud.dieX[i] != 0 || hud.dieY[i] != 0 else { return nil }
-                    return CGPoint(x: hud.dieX[i], y: hud.dieY[i])
-                }
-                let r = Self.radius(hud, seat: s)
-                for (k, p) in pts.enumerated() where counts.indices.contains(k) && counts[k] {
+                for k in reveal.dice[s].indices where counts.indices.contains(k) && counts[k] {
                     defer { ordinal += 1 }
-                    guard ordinal < lit, r > 0 else { continue }
-                    // the study's counting ring: the glow blurred, the glow, a pale core
-                    let ring = Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r))
+                    guard ordinal < lit, let q = Self.face(hud, seat: s, die: k) else { continue }
+                    let path = Self.rounded(q)
+                    // the study's stroke: .07 of the side, never under 1.5, its core .35 of that
+                    let side = hud.dieD.indices.contains(s) ? hud.dieD[s] : 10
+                    let sw = max(1.5, side * 0.07)
                     ctx.drawLayer { g in
-                        g.addFilter(.blur(radius: 2.2))
-                        g.stroke(ring, with: .color(Ink.glow), lineWidth: 3)
+                        g.addFilter(.blur(radius: max(1.5, side * 0.09)))
+                        g.stroke(path, with: .color(Ink.glow), lineWidth: sw * 1.6)
                     }
-                    ctx.stroke(ring, with: .color(Ink.glow), lineWidth: 2.2)
-                    ctx.stroke(ring, with: .color(Color(hex: 0xE9FFF7).opacity(0.9)), lineWidth: 0.8)
+                    ctx.stroke(path, with: .color(Ink.glow), lineWidth: sw)
+                    ctx.stroke(path, with: .color(Color(hex: 0xE9FFF7).opacity(0.9)), lineWidth: sw * 0.35)
                 }
             }
         }
@@ -190,10 +187,25 @@ struct Rings: View {
         .accessibilityHidden(true)
     }
 
-    /// A ring round one of seat s's dice: the HUD's brass ring radius (0 where
-    /// the HUD has none, and no ring is drawn).
-    static func radius(_ hud: CnStageHudSnap, seat s: Int) -> Double {
-        hud.brassR.indices.contains(s) ? hud.brassR[s] : 0
+    /// Seat s's die k's face on the glass: its four corners in turn, or nil
+    /// where the HUD has none.
+    static func face(_ hud: CnStageHudSnap, seat s: Int, die k: Int) -> [CGPoint]? {
+        let i = (s * Int(CN_STAGE_DICE) + k) * 8
+        guard k < Int(CN_STAGE_DICE), hud.dieQ.count >= i + 8 else { return nil }
+        let q = (0..<4).map { CGPoint(x: hud.dieQ[i + 2 * $0], y: hud.dieQ[i + 2 * $0 + 1]) }
+        return q.allSatisfy({ $0 == .zero }) ? nil : q
+    }
+
+    /// A quad with its corners rounded (the study's die square's corners, a
+    /// sixth of the shorter side).
+    static func rounded(_ q: [CGPoint]) -> Path {
+        func mid(_ a: CGPoint, _ b: CGPoint) -> CGPoint { CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2) }
+        let short = (0..<4).map { hypot(q[($0 + 1) % 4].x - q[$0].x, q[($0 + 1) % 4].y - q[$0].y) }.min() ?? 0
+        return Path { p in
+            p.move(to: mid(q[3], q[0]))
+            for c in 0..<4 { p.addArc(tangent1End: q[c], tangent2End: mid(q[c], q[(c + 1) % 4]), radius: short / 6) }
+            p.closeSubpath()
+        }
     }
 }
 

@@ -849,14 +849,13 @@ static int make(const CnLayIn *in, CnLay *L, int fit)
     float pk = in->peek < 0 ? 0 : in->peek > 1 ? 1 : in->peek;
     L->peek = cn_cam_peek_tilt((float)myR, L->peek_target * pk, L->peek_target);
 
-    /* a die's side on the glass at each seat (the turn's own scale there), and its brass ring at the reveal */
+    /* a die's side on the glass at each seat (the turn's own scale there) */
     for (int s = 0; s < in->seats; s++) {
         const double side = s == me ? d : L->sd, x = L->board_x + L->cup_x[s], y = L->board_y + L->cup_y[s];
         float ax, ay, bx, by;
         cn_cam_map(&L->cam, (float)(x - side / 2), (float)y, &ax, &ay);
         cn_cam_map(&L->cam, (float)(x + side / 2), (float)y, &bx, &by);
         L->die_g[s] = (float)hyp(bx - ax, by - ay);
-        L->brass_r[s] = (float)(L->die_g[s] * CN_LAY_BRASS);
     }
 
     /* MY THROW'S REACH is one on every screen of the drawer: the least of the reach that fits each screen's own

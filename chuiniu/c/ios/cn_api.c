@@ -493,6 +493,8 @@ int cn_api_words(int what, int arg, char *out, int cap)
         return cn_say_headline(g, S.me, S.names, out, cap);
     case CN_API_W_SUBLINE:        return g ? cn_say_subline(g, S.names, out, cap) : -1;
     case CN_API_W_OUTCOME:        return g ? cn_say_outcome(g, S.names, out, cap) : -1;
+    case CN_API_W_OUTCOME_LOSS:   return g ? cn_say_outcome_part(g, S.names, CN_SAY_PART_LOSS, out, cap) : -1;
+    case CN_API_W_OUTCOME_WIN:    return g ? cn_say_outcome_part(g, S.names, CN_SAY_PART_WIN, out, cap) : -1;
     case CN_API_W_SEAT:           return S.have && arg >= 0 && arg < S.m.n_seats ? cn_say_seat(S.names, arg, out, cap) : -1;
     case CN_API_W_BID:            return cn_say_bid(arg / 8, arg % 8, 0, out, cap);
     case CN_API_W_DICE_N:         return cn_say_dice_n(arg, out, cap);
@@ -628,6 +630,8 @@ const void *cn_api_stage_begin(int kind, float w, float h, float scale)
             in.dice[s] = v.shown_n[s];
             if (!v.shown_n[s]) in.out_mask |= (uint8_t)(1 << s);
             memcpy(&in.faces[s * CN_STAGE_DICE], &v.shown[s * CN_START_DICE], v.shown_n[s]);
+            for (int k = 0; k < v.shown_n[s]; k++)
+                if (v.shown_counts[s * CN_START_DICE + k]) in.count_mask |= 1u << (s * CN_STAGE_DICE + k);
         }
         in.known_mask = (uint8_t)((1 << g->n) - 1);
         round = g->phase == CN_PH_OVER ? g->round : g->round - 1;

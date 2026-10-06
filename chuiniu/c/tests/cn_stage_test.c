@@ -108,10 +108,10 @@ static void test_layout(void)
         }
         CHECK(seats_ok, "%dx%d mine %d: every seat where the study puts it", g->W, g->H, g->mine);
         CHECK(names_ok, "%dx%d mine %d: every name where the study puts it", g->W, g->H, g->mine);
-        /* the reveal's brass rings: each seat's die side on the glass and its ring, the layout's (package U) */
-        int brass_ok = 1;
-        for (int s = 0; s < 6; s++) brass_ok &= h->die_d[s] > 0 && h->die_d[s] == ST.lay.die_g[s] && h->brass_r[s] == ST.lay.brass_r[s];
-        CHECK(brass_ok && h->die_d[0] > h->die_d[1], "%dx%d mine %d: a die's side and its brass ring at every seat (%.2f, %.2f)", g->W, g->H, g->mine, h->die_d[0], h->brass_r[0]);
+        /* each seat's die side on the glass, the layout's (package U) */
+        int side_ok = 1;
+        for (int s = 0; s < 6; s++) side_ok &= h->die_d[s] > 0 && h->die_d[s] == ST.lay.die_g[s];
+        CHECK(side_ok && h->die_d[0] > h->die_d[1], "%dx%d mine %d: a die's side on the glass at every seat (%.2f)", g->W, g->H, g->mine, h->die_d[0]);
         /* the canvas is the board less pad above, pad_x either side, pad_below under it */
         CHECK(near(h->canvas[0], bx - g->padX, .01) && h->canvas[1] >= by - g->pad && h->canvas[1] <= by
               && near(h->canvas[1] + h->canvas[3], by + g->boardH + CN_LAY_PAD_BELOW, .01), "%dx%d mine %d: the canvas (top %.0f above the board, the study %.0f)",
@@ -611,7 +611,8 @@ static int in_cup(const CnObj *o, double x, double y, double z)
 }
 /* is the top face of die d seen from the eye past every standing cup: its centre and its four corners (a tenth of
  * the side in, turned by its yaw), each segment from the eye sampled every quarter point; the seat of the cup in the
- * way of any, or -1 */
+ * way of any, or -1. Its own cup is asked of the centre alone: the lift is the least tip that shows the dice
+ * (I23), so the far corner of the farthest die may stay under the rim. */
 static int die_hidden_by(const CnStage *st, const CnObj *o, int n, const CnObj *d)
 {
     const CnCam *c = &st->lay.cam;
@@ -622,7 +623,7 @@ static int die_hidden_by(const CnStage *st, const CnObj *o, int n, const CnObj *
         const double len = sqrt((px - ex) * (px - ex) + (py - ey) * (py - ey) + (pz - ez) * (pz - ez));
         const int steps = (int)(len * 4);
         for (int i = 0; i < n; i++) {
-            if (o[i].kind != CN_OBJ_CUP || o[i].has_rot) continue;
+            if (o[i].kind != CN_OBJ_CUP || o[i].has_rot || (q && o[i].seat == d->seat)) continue;
             for (int k = 1; k < steps; k++) {
                 const double t = (double)k / steps;
                 if (in_cup(&o[i], ex + (px - ex) * t, ey + (py - ey) * t, ez + (pz - ez) * t)) return o[i].seat;
@@ -661,6 +662,81 @@ static void test_reveal_dice_seen(void)
         if (here > hidden) { hidden = here; worst_w = W; worst_h = H; worst_n = n; }
     }
     printf("  %d dice at the reveal, each face seen past every cup (the most hidden on one table: %d, %dx%d n %d)\n", dice, hidden, worst_w, worst_h, worst_n);
+}
+
+static void test_reveal_faces(void)
+{
+    TEST("the reveal: each die's face on the glass for the glow (die_q), and the dice that do not count drowned as the cups lift");
+    cn_stage_init(&ST, PACK, PACK_N);
+    void *A = arena_new(ARENA);
+    cn_stage_attach(&ST, A, ARENA);
+    int faces = 0, bad_centre = 0, bad_side = 0, bad_turn = 0;
+    for (int wi = 0; wi < NW; wi++) for (int hi = 0; hi < NH; hi += 3) for (int n = 2; n <= 6; n += 2) for (int kind = CN_STAGE_TABLE; kind <= CN_STAGE_REVEAL; kind++) {
+        const int W = SIZES_W[wi], H = SIZES_H[hi];
+        CnStageIn in = table_in(W, H, n, 1, 0, kind);
+        const CnStageHud *h = cn_stage_begin(&ST, &in);
+        if (!h) continue;
+        int no, k[CN_STAGE_SEATS] = { 0 };
+        const CnObj *o = cn_stage_objects(&ST, CN_STAGE_NO_ROLL - 1, 0, 0, &no);
+        for (int i = 0; i < no; i++) {
+            if (o[i].kind != CN_OBJ_DIE) continue;
+            const int s = o[i].seat;
+            const float *q = &h->die_q[(s * CN_STAGE_DICE + k[s]++) * 8];
+            /* the face's centre: the die's top, through the eye and the turn, the quad's centre */
+            float px, py, gx, gy;
+            cn_cam_project(&ST.lay.cam, o[i].x, o[i].y, o[i].lift + o[i].d / 2, &px, &py);
+            cn_cam_map(&ST.lay.cam, h->board[0] + px, h->board[1] + py, &gx, &gy);
+            const double cx = (q[0] + q[2] + q[4] + q[6]) / 4, cy = (q[1] + q[3] + q[5] + q[7]) / 4, side = h->die_d[s];
+            bad_centre += hypot(cx - gx, cy - gy) > side * .1;
+            /* its longest side the die's side and the gap each way (a side across the eye's view is seen whole; one
+             * along it is foreshortened, never to nothing) */
+            double lmax = 0, lmin = 1e30;
+            for (int e = 0; e < 4; e++) {
+                const double len = hypot(q[(2 * e + 2) % 8] - q[2 * e], q[(2 * e + 3) % 8] - q[2 * e + 1]);
+                lmax = fmax(lmax, len); lmin = fmin(lmin, len);
+            }
+            bad_side += lmax < side * 1.14 * .85 || lmax > side * 1.14 * 1.2 || lmin < side * .3;
+            /* the corners in turn round it, one way (a convex quad, no bow tie) */
+            double sg = 0;
+            for (int e = 0; e < 4; e++) {
+                const double ax = q[(2 * e + 2) % 8] - q[2 * e], ay = q[(2 * e + 3) % 8] - q[2 * e + 1];
+                const double bx = q[(2 * e + 4) % 8] - q[(2 * e + 2) % 8], by = q[(2 * e + 5) % 8] - q[(2 * e + 3) % 8];
+                const double c = ax * by - ay * bx;
+                if (e == 0) sg = c; else bad_turn += (c > 0) != (sg > 0);
+            }
+            faces++;
+        }
+    }
+    CHECK(faces > 1000 && bad_centre == 0, "every die's face quad is centred on its top (%d of %d off)", bad_centre, faces);
+    CHECK(bad_side == 0, "its sides a die's side and the gap (%d faces off)", bad_side);
+    CHECK(bad_turn == 0, "its corners in turn round it (%d not)", bad_turn);
+    /* the drowned: none at lift 0, every die that does not count at lift 1, and the picture darker for it */
+    CnStageIn in = table_in(390, 718, 6, 0, 0, CN_STAGE_REVEAL);
+    in.scale = 1;
+    int counting = 0, drowned_ok = 1, still_ok = 1;
+    for (int s = 0; s < 6; s++) for (int d = 0; d < in.dice[s]; d++) if (in.faces[s * 5 + d] == 3 || in.faces[s * 5 + d] == 1) { in.count_mask |= 1u << (s * 5 + d); counting++; }
+    cn_stage_begin(&ST, &in);
+    int no, k[CN_STAGE_SEATS] = { 0 };
+    const CnObj *o = cn_stage_objects(&ST, CN_STAGE_NO_ROLL - 1, 0, 0, &no);
+    for (int i = 0; i < no; i++) if (o[i].kind == CN_OBJ_DIE) still_ok &= o[i].kmul[1] == 0;
+    o = cn_stage_objects(&ST, CN_STAGE_NO_ROLL - 1, 0, 1, &no);
+    for (int i = 0; i < no; i++) {
+        if (o[i].kind != CN_OBJ_DIE) continue;
+        const int s = o[i].seat, counts = in.count_mask >> (s * 5 + k[s]++) & 1;
+        drowned_ok &= counts ? o[i].kmul[1] == 0 : o[i].kmul[1] > .5f;
+    }
+    CHECK(still_ok, "the cups down: no die drowned yet");
+    CHECK(counting > 0 && drowned_ok, "the cups up: every die that does not count drowned, the %d that count bright", counting);
+    int w, hh;
+    const uint8_t *fb = cn_stage_frame(&ST, 0, 0, 1, &w, &hh);
+    double lit = 0, dark = 0;
+    if (fb) for (size_t i = 0; i < (size_t)w * hh * 4; i += 4) lit += fb[i] + fb[i + 1] + fb[i + 2];
+    in.count_mask = 0;
+    cn_stage_begin(&ST, &in);
+    fb = cn_stage_frame(&ST, 0, 0, 1, &w, &hh);
+    if (fb) for (size_t i = 0; i < (size_t)w * hh * 4; i += 4) dark += fb[i] + fb[i + 1] + fb[i + 2];
+    CHECK(fb && dark < lit * .99, "no die counting, the picture is darker (%.0f against %.0f)", dark, lit);
+    free(A);
 }
 
 static void test_hud_clear(void)
@@ -932,6 +1008,7 @@ int main(int argc, char **argv)
     test_clock();
     test_reveal_inside();
     test_reveal_dice_seen();
+    test_reveal_faces();
     test_hud_clear();
     test_names();
     free(PACK);
