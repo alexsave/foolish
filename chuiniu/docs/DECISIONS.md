@@ -198,6 +198,14 @@ The throw's lift starts with the cup's lowest rim 1 point (times the reach) over
 
 I30 (the word): the call's button is Liar, the owner's word and the study's blood plate; the lines that name the button say it ("Your turn: raise or call Liar", "Send to call Liar on four 3s", the fourth rule), and the captions keep the study's verb ("Bo calls three 3s", "Bo calls. Three 3s was true, Bo loses a die").
 
+I31 (the reveal on a tall board is the study's list, package S): on the ring a tipped cup covered the dice of the seat behind it, so a tall board's reveal lays the seats in rows, mine first, the fewest rows that give the biggest cups, each row kept off every die, name and stamp of the rows behind; no cup throws at the reveal on any board (`cn_lay` `list_rows`, `cn_stage_test` casts a ray to every die's face).
+
+I32 (the counting glow is the die's face): the HUD gives each die's up face on the glass (`die_q`) and the host glows that quad as the study glows a counting die's square; the dice that do not count are drowned in the picture by the lift (`count_mask`); the brass ring radius is gone.
+
+I33 (the loser's stamp is on the glass): placed by the host under its name inside the drawer and off the other names (`stampFrame`); the layout leaves it 52 under the anchor, and everything the reveal compares with the HUD (the outcome line, the compact plate) is compared on the glass.
+
+I34 (the HUD keeps clear of the throw and the planks): the plate stands down while my held cup passes under it (`plate_throw`); the compact plate is never under 140 up to four seats (the row narrows, `row_step`, the study's too); the planks' tile is laid at the kernel's phase (`planks_y`), the study's moved the least that keeps every plank's end off the shelf; the outcome's loser and winner clauses are kernel words set in blood and the glow.
+
 ## Orchestration (owner: the orchestrator; O1 onward)
 
 O1: the proof of concept is built in three parallel packages (kernel and wire; iOS scaffold with the dice and cup primitive; legal, README and CI) and one tie-together package that wires the screens to the bridge and proves it on a simulator inside Messages.

@@ -165,3 +165,7 @@ Each mutant was one edit to a product file by a script that read the file, repla
 | P6 | the roster fixed to its content height (no scroll) | "start/leave/name/join at (.., 306, .., 44) leaves the (390 or 320, 328) drawer" |
 | P7 | Start 40 tall | "start is 40.0 tall" at every drawer |
 | P8 | the leave caption worded after the row is gone | `bo.leave()` is "" not "Bo left" |
+
+## Package S (the verifier's findings) and package N's Swift tests
+
+Their rows, package N's two Swift tests among them (seen red at last; the one-ink mutant survived and the picture test gained the letters' check), are in `chuiniu/c/docs_pkgS.md`, "Tests, each seen red".
