@@ -312,18 +312,20 @@ public enum StageScreen: Int {
 /// `dev.straight` build draws through the old copy and has no surface.
 public struct StageFrame {
     public let shot: CnStageShotSnap
-    /// The surface the kernel drew into, or nil for a copied picture.
-    public let surface: IOSurface?
+    /// The surface the kernel drew into (while a frame holds it, the stage
+    /// draws into no other frame's), or nil for a copied picture.
+    let held: StageSurface?
     let copied: CGImage?
+    public var surface: IOSurface? { held?.surface }
     /// The surface's rows: the picture is the top `shot.h` of them.
-    let rows: Int
+    var rows: Int { held?.surface.height ?? shot.h }
 
-    init(shot: CnStageShotSnap, surface: IOSurface, rows: Int) {
-        self.shot = shot; self.surface = surface; self.rows = rows; copied = nil
+    init(shot: CnStageShotSnap, surface: StageSurface) {
+        self.shot = shot; held = surface; copied = nil
     }
 
     init(shot: CnStageShotSnap, image: CGImage) {
-        self.shot = shot; surface = nil; copied = image; rows = shot.h
+        self.shot = shot; held = nil; copied = image
     }
 
     /// What a layer shows: the surface, or the copied image.
@@ -337,6 +339,14 @@ public struct StageFrame {
         if let copied { return copied }
         return StageFrame.copy(surface, w: shot.w, h: shot.h) ?? StageFrame.blank
     }
+}
+
+/// One picture surface the stage drew into, owned by the frames that hold it
+/// and by the stage's pool: the stage draws into it again only when the pool
+/// alone holds it (a class, so that is a reference count the pool can ask).
+final class StageSurface {
+    let surface: IOSurface
+    init(_ surface: IOSurface) { self.surface = surface }
 }
 
 /// The transcript picture: the stage's bubble frame and the HUD that places

@@ -621,11 +621,13 @@ public final class BridgeStage: TableStage {
 /// IOSurface (cn_api_stage_external, cn_api_stage_target), which the layer
 /// shows as it is: no Data copy, no CGImage, and no copy of Core
 /// Animation's own (`prepare_image`'s memmove). A surface a frame was drawn
-/// into is that frame's; the next frame goes into another (`spare`), never
-/// the one handed out last (on show, or about to be) and never one the
-/// render server still reads (`isInUse`). So at most two pictures live: the
-/// one on show and the one being drawn (a third only while the render server
-/// holds an old one a moment longer).
+/// into is that frame's (`StageSurface`): the stage draws into a pooled one
+/// only when nothing else holds it (no frame: not the director's last, not a
+/// test's, not a bubble's) and the render server no longer reads it
+/// (`isInUse`). The director keeps one frame, the one on show, and asks for
+/// the next only after it landed, so at most two pictures live: the one on
+/// show and the one being drawn (a third only while the render server holds
+/// an old one a moment longer).
 ///
 /// THE ARENA AT REST. The arena is the stage's own mapping (mmap), so at rest
 /// (`rest`) the pages of the frame's buffers go back to the system
@@ -642,11 +644,9 @@ final class StageWorker: @unchecked Sendable {
     private var external = false
     /// Bytes from the arena's start given back at rest, to take again.
     private(set) var rested = 0
-    /// Surfaces the next frame may draw into (the one handed out last too:
-    /// it is skipped while it is `shown`).
-    private(set) var pool: [IOSurface] = []
-    /// The surface of the newest frame handed out.
-    private weak var shown: IOSurface?
+    /// Surfaces made for this screen's pictures; one a frame still holds is
+    /// skipped (it is not uniquely the pool's).
+    private(set) var pool: [StageSurface] = []
     /// The begun screen's largest picture (cn_api_stage_target_most).
     private var most = (w: 0, h: 0)
     /// frames drawing now, and the most at once (guarded by its own lock: a
@@ -733,7 +733,7 @@ final class StageWorker: @unchecked Sendable {
             bands(banded)
             return Self.drawn(shot)
         }
-        guard let s = surface(w: shot.w, h: shot.h) else {
+        guard let held = surface(w: shot.w, h: shot.h) else {
             // a surface whose row is not the picture's (never seen): the arena's picture, copied, from now on
             #if DEBUG
             ChuiniuDev.log.error("stage: no surface with \(shot.w * 4) bytes a row; frames are copied from now on")
@@ -742,12 +742,12 @@ final class StageWorker: @unchecked Sendable {
             cn_api_stage_external(0)
             return draw(t, peek, lift, banded: banded)
         }
+        let s = held.surface
         s.lock(options: [], seed: nil)
         defer { s.unlock(options: [], seed: nil) }
         guard cn_api_stage_target(s.baseAddress, s.allocationSize) == 1 else { return nil }
         bands(banded)
-        shown = s
-        return StageFrame(shot: shot, surface: s, rows: s.height)
+        return StageFrame(shot: shot, surface: held)
     }
 
     private func bands(_ banded: Bool) {
@@ -759,24 +759,32 @@ final class StageWorker: @unchecked Sendable {
         }
     }
 
-    /// A surface for a w by h picture: a spare of that row, tall enough, not
-    /// the one handed out last and not one the render server still reads;
-    /// else a new one, as tall as the begun screen's tallest picture at this
-    /// row (so the throw's changing pad never asks for another).
-    private func surface(w: Int, h: Int) -> IOSurface? {
+    /// A surface for a w by h picture: a pooled one of that row, tall enough,
+    /// that no frame holds and the render server no longer reads; else a new
+    /// one, as tall as the begun screen's tallest picture at this row (so the
+    /// throw's changing pad never asks for another).
+    private func surface(w: Int, h: Int) -> StageSurface? {
         let row = w * 4
-        if let s = pool.first(where: { $0.bytesPerRow == row && $0.height >= h && $0 !== shown && !$0.isInUse }) { return s }
-        // another row or too short: of no more use (one on show lives on in its frame and its layer)
-        pool.removeAll { $0.bytesPerRow != row || $0.height < h }
+        var keep: [StageSurface] = []
+        var found: StageSurface?
+        for i in pool.indices {
+            let free = isKnownUniquelyReferenced(&pool[i]) && !pool[i].surface.isInUse
+            let fits = pool[i].surface.bytesPerRow == row && pool[i].surface.height >= h
+            if found == nil, free, fits { found = pool[i]; keep.append(pool[i]); continue }
+            // another row or too short, and free: of no more use
+            if !fits && free { continue }
+            keep.append(pool[i])
+        }
+        pool = keep
+        if let found { return found }
         let tall = most.w > 0 ? Int((Double(most.h) * Double(w) / Double(most.w)).rounded(.up)) + 2 : h
         let rows = max(h, tall)
         guard let s = IOSurface(properties: [.width: w, .height: rows, .bytesPerElement: 4, .bytesPerRow: row,
                                              .allocSize: row * rows, .pixelFormat: Self.bgra]),
               s.bytesPerRow == row else { return nil }
-        pool.append(s)
-        // the one on show, the one being drawn, and one the render server held a moment longer
-        if pool.count > 3, let i = pool.firstIndex(where: { $0 !== shown && $0 !== s }) { pool.remove(at: i) }
-        return s
+        let made = StageSurface(s)
+        pool.append(made)
+        return made
     }
 
     /// 'BGRA': premultiplied, alpha first in a little-endian word (kCVPixelFormatType_32BGRA)
@@ -786,7 +794,7 @@ final class StageWorker: @unchecked Sendable {
     /// surface but the one on show let go.
     func rest() {
         dispatchPrecondition(condition: .onQueue(queue))
-        pool.removeAll { $0 !== shown }
+        dropFree()
         guard let a = arena else { return }
         let r = Int(cn_api_stage_rest()) / Int(vm_page_size) * Int(vm_page_size)
         guard r > 0 else { return }
@@ -794,9 +802,17 @@ final class StageWorker: @unchecked Sendable {
         rested = r
     }
 
+    /// Let go of every pooled surface no frame holds (the one on show stays,
+    /// held by its frame and its layer).
+    private func dropFree() {
+        var keep: [StageSurface] = []
+        for i in pool.indices where !isKnownUniquelyReferenced(&pool[i]) { keep.append(pool[i]) }
+        pool = keep
+    }
+
     func purge() {
         dispatchPrecondition(condition: .onQueue(queue))
-        pool.removeAll()
+        dropFree()
         guard let a = arena else { return }
         cn_api_stage_purge()
         munmap(a, CN_STAGE_ARENA)
