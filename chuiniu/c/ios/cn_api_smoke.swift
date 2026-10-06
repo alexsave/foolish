@@ -61,7 +61,7 @@ struct Smoke {
             check(cn_api_new(&seed, 1) == Int32(CN_EOK), "Alex makes a DM lobby")
             var t = try readCnApiTable(cn_api_table()!)
             check(t.phase == CN_PHASE_WAITING && t.seat.map(\.name) == ["Alex"], "one named seat, waiting")
-            check(words(CN_API_W_STAGED_CAPTION) == "Alex wants a game of Chui Niu. Tap to join", "the invite")
+            check(words(CN_API_W_STAGED_CAPTION) == "Alex wants a game of Chui Niu", "the invite")
             let lobby = text()
 
             be(2, "Bo")

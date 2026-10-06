@@ -125,3 +125,6 @@ Its rows are in `chuiniu/c/docs_pkgG.md`, "Tests added, each seen red".
 ## Package X (the throw once a phone)
 
 Its rows are in `chuiniu/c/docs_pkgX.md`, "Tests, each seen red": `cn_msg_test` `test_records`, `cn_twophone_test` `throw_once`, the C smoke's still table, and the Swift tests.
+## Package Y (every bubble is one line)
+
+Its rows are in `chuiniu/c/docs_pkgY.md`, "Mutation checks".
