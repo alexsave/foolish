@@ -138,7 +138,7 @@ static void test_captions(void)
     e2[4].kind = CN_EV_OVER; e2[4].seat = 1;
     cn_say_outcome_of(e2, 5, NAMES, out, sizeof out);
     CHECK(!strcmp(out, "Bo calls. Seven 5s was false, Alex loses a die. Bo wins"), "the end: %s", out);
-    char whole[160];
+    char whole[sizeof out];
     snprintf(whole, sizeof whole, "%s", out);
     cn_say_outcome_part_of(e2, 5, NAMES, CN_SAY_PART_LOSS, out, sizeof out);
     CHECK(!strcmp(out, "Alex loses a die") && strstr(whole, out), "the loser's clause, in the line: %s", out);
