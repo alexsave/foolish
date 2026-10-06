@@ -827,6 +827,15 @@ What is new is the view: the table is seen <b>from above, from my seat</b>: the 
 <!-- cn_roll.wasm end -->
 
 <script>
+// THE COUNT'S FACE (chuiniu/c/docs_pkgQ.md): Libre Caslon Text's lining figures, the face the app's
+// texture pack bakes the crown from. Fell's old-style figures are kept for words; its 5 read as a long s
+// on a cup and its 1 as a small capital I. Loaded here (one name for the whole page, every scope below reads it), not in the page's head, and the 3D crowns are
+// redrawn once it lands (a canvas draws with whatever face is loaded at that moment; until then the
+// system serif's lining figures stand in, as they always have).
+const NUMERAL_FACE = "'Libre Caslon Text', serif";
+{ const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = 'https://fonts.googleapis.com/css2?family=Libre+Caslon+Text&display=swap'; document.head.appendChild(l); }
+</script>
+<script>
 /* =====================================================================
    THE TEXTURE KERNEL. Read it as the Swift it will become: every function
    is integer hashes and doubles, no library, no DOM until the very end.
@@ -1324,13 +1333,6 @@ const SHAPE = (() => {
   const LIPS = { none: { name: 'None', why: 'the side runs to the mouth' } };
   const CRUSTS = { none: { name: 'None' } };
   const BADGES = { stamp: { name: 'Stamped', why: 'the numeral on the cup itself' } };
-  // THE COUNT'S FACE (chuiniu/c/docs_pkgQ.md): Libre Caslon Text's lining figures, the face the app's
-  // texture pack bakes the crown from. Fell's old-style figures are kept for words; its 5 read as a long s
-  // on a cup and its 1 as a small capital I. Loaded here, not in the page's head, and the 3D crowns are
-  // redrawn once it lands (a canvas draws with whatever face is loaded at that moment; until then the
-  // system serif's lining figures stand in, as they always have).
-  const NUMERAL_FACE = "'Libre Caslon Text', serif";
-  { const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = 'https://fonts.googleapis.com/css2?family=Libre+Caslon+Text&display=swap'; document.head.appendChild(l); }
   const CUP = { material: 'verdigris', shape: 'squat', crown: 'round', lip: 'none', crust: 'none', badge: 'stamp' };
   const CUP_LOCKED = { material: 'verdigris', shape: 'squat', crown: 'round', lip: 'none', crust: 'none', badge: 'stamp' };
   function cupPath(S, w, h) {
