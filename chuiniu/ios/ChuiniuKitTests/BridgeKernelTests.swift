@@ -51,8 +51,8 @@ final class BridgeKernelTests: XCTestCase {
         XCTAssertTrue(alex.newGame(dm: true, seed: Self.seed))
         var m = alex.table
         XCTAssertEqual(m.phase, .lobby)
-        XCTAssertEqual(m.seats.map(\.lobbyRow), ["1. Alex (You)"], "the lobby row is the kernel's")
         XCTAssertEqual(m.seats.map(\.name), ["Alex"], "the name a bubble shows never says You")
+        XCTAssertEqual(m.seats.map(\.isMe), [true], "the roster marks my row with the kernel's LOBBY_YOU")
         XCTAssertEqual(m.me, 0)
         XCTAssertEqual(m.offered, .waiting, "seated alone, and the newest bubble is mine")
         XCTAssertEqual(m.bubbleCaption, "Alex wants a game of Chui Niu")

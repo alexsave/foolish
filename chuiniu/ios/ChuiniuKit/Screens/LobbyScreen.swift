@@ -4,7 +4,7 @@
 // caps and its cup seen from above, the foot line, then the controls: the
 // name field with Join for a phone that is not seated, Start and Leave for
 // one that is. Which is shown, and lit or sunk, is the kernel's verdict for
-// this phone (`TableModel.offered`, `canExit`, `Kernel.nameAccepted`), read
+// this phone (`TableModel.offered`, `mayLeave`, `Kernel.nameAccepted`), read
 // by `LobbyControls`; nothing here decides a rule. On the planks, like every
 // screen.
 //
@@ -28,7 +28,7 @@ struct LobbyControls: Equatable {
     /// Start: lit when the kernel offers this phone START, sunk while it is
     /// seated and may not.
     var start: PlankKind?
-    /// Leave: quiet when the kernel says I may get up (`canExit`), sunk
+    /// Leave: quiet when the kernel says I may get up (`mayLeave`), sunk
     /// while I am seated and may not (alone at the table).
     var leave: PlankKind?
     /// The line under the roster.
@@ -38,7 +38,7 @@ struct LobbyControls: Equatable {
     static func of(_ t: TableModel, nameAccepted: Bool) -> LobbyControls? {
         guard t.phase == .lobby else { return nil }
         let seated = t.me != nil
-        let leave: PlankKind? = seated ? (t.canExit ? .quiet : .sunk) : nil
+        let leave: PlankKind? = seated ? (t.mayLeave ? .quiet : .sunk) : nil
         switch t.offered {
         case .join:
             return LobbyControls(join: nameAccepted ? .glow : .sunk, start: nil, leave: nil, foot: nil)

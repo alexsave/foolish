@@ -262,7 +262,7 @@ public final class BridgeKernel: Kernel {
             }
             return TableModel(phase: .lobby, seats: seats, me: me, myDice: [], bid: nil, bidText: "", bidder: nil,
                               reveal: nil, caption: caption, bubbleCaption: bubble, menu: nil,
-                              offered: offer(t.offered), canExit: t.canExit != 0, rollID: 0, winner: nil)
+                              offered: offer(t.offered), mayLeave: t.canExit != 0, rollID: 0, winner: nil)
         }
 
         let phase: Phase

@@ -150,7 +150,7 @@ public struct TableModel: Equatable, Sendable {
     public var offered: LobbyOffer
     /// I may get up from this lobby's seat (msg_lobby_roster_can_exit:
     /// seated, not started, and somebody else is seated).
-    public var canExit: Bool
+    public var mayLeave: Bool
     /// Changes when the round's dice change: which round's throw a table
     /// shows, handed back in `Kernel.rollSeen`. An identity, not a number
     /// anything is computed from.
@@ -165,7 +165,7 @@ public struct TableModel: Equatable, Sendable {
 
     public init(phase: Phase, seats: [SeatModel], me: Int?, myDice: [Int], bid: Bid?, bidText: String,
                 bidder: Int?, stagedBid: Bid? = nil, stagedBidText: String = "", reveal: Reveal?,
-                caption: String, bubbleCaption: String, menu: Menu?, offered: LobbyOffer, canExit: Bool = false,
+                caption: String, bubbleCaption: String, menu: Menu?, offered: LobbyOffer, mayLeave: Bool = false,
                 rollID: Int, rollPending: Bool = false, winner: Int?) {
         self.phase = phase
         self.seats = seats
@@ -181,7 +181,7 @@ public struct TableModel: Equatable, Sendable {
         self.bubbleCaption = bubbleCaption
         self.menu = menu
         self.offered = offered
-        self.canExit = canExit
+        self.mayLeave = mayLeave
         self.rollID = rollID
         self.rollPending = rollPending
         self.winner = winner
