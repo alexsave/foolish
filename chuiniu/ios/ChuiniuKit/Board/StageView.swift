@@ -284,6 +284,9 @@ public final class StageDirector: ObservableObject {
             last = f
             landedMs.append(ms)
             onFrame?(f)
+            #if DEBUG
+            if !ChuiniuDev.firstFrameLogged { ChuiniuDev.firstFrameLogged = true; ChuiniuDev.launch("first frame") }
+            #endif
         }
         #if DEBUG
         // the rig's frame log: how long from the ask to the picture, how long putting it up took the main thread (Core

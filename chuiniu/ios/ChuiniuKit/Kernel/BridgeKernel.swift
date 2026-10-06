@@ -22,6 +22,7 @@ import CChuiniu
 import CoreGraphics
 import Foundation
 import IOSurface
+import QuartzCore
 import Security
 
 @MainActor
@@ -511,6 +512,14 @@ public final class BridgeStage: TableStage {
     }
 
     public var holdsArena: Bool { worker.queue.sync { worker.arena != nil } }
+
+    /// THE COLD OPEN: the pack read and the stage opened on its own queue
+    /// while the drawer opens, so the first begin finds it ready (a begin or
+    /// a frame meanwhile waits there for it).
+    public func warm() {
+        let w = worker
+        w.queue.async { _ = w.ready(arena: false) }
+    }
     public var drawer: CGSize? { onShow?.drawer }
 
     public func begin(_ screen: StageScreen, drawer: CGSize, scale: CGFloat) -> CnStageHudSnap? {
@@ -519,6 +528,10 @@ public final class BridgeStage: TableStage {
         // on the queue, after any frame in flight; the main thread waits, so
         // the resident the begin reads cannot change under it
         let w = worker
+        #if DEBUG
+        ChuiniuDev.launch("stage begin \(screen)")
+        defer { ChuiniuDev.launch("stage begin done") }
+        #endif
         return w.queue.sync { () -> CnStageHudSnap? in
             guard w.ready(arena: false) else { return nil }
             let hud = Self.snap(cn_api_stage_begin(Int32(screen.rawValue), Float(drawer.width), Float(drawer.height), Float(scale)), readCnStageHud)
@@ -698,8 +711,24 @@ final class StageWorker: @unchecked Sendable {
         dispatchPrecondition(condition: .onQueue(queue))
         counting.lock(); drawing += 1; mostAtOnce = max(mostAtOnce, drawing); counting.unlock()
         defer { counting.lock(); drawing -= 1; counting.unlock() }
+        #if DEBUG
+        // the frame log's split: taking the arena (and its pages after a rest), the serial prepare (the
+        // textures' upload and copies on a first frame), the bands
+        let t0 = CACurrentMediaTime()
+        guard ready(arena: true) else { return nil }
+        let t1 = CACurrentMediaTime()
+        let ok = cn_api_stage_prepare_at(t, peek, lift) == 1
+        let t2 = CACurrentMediaTime()
+        defer {
+            let t3 = CACurrentMediaTime()
+            ChuiniuDev.log.debug("stage draw ready=\(String(format: "%.2f", (t1 - t0) * 1000), privacy: .public) prepare=\(String(format: "%.2f", (t2 - t1) * 1000), privacy: .public) bands=\(String(format: "%.2f", (t3 - t2) * 1000), privacy: .public)")
+        }
+        guard ok,
+              let p = cn_api_stage_shot(), let shot = try? readCnStageShot(p), shot.ok == 1 else { return nil }
+        #else
         guard ready(arena: true), cn_api_stage_prepare_at(t, peek, lift) == 1,
               let p = cn_api_stage_shot(), let shot = try? readCnStageShot(p), shot.ok == 1 else { return nil }
+        #endif
         guard external else {
             bands(banded)
             return Self.drawn(shot)

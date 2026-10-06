@@ -14,6 +14,7 @@
 //   cn_crust.png   512 x 128 RGBA, shown at 192 by 48 (`.plate .crust`)
 //   cn_bone.png    128 square, shown at 64 points (`p-m-tallow`)
 
+import ImageIO
 import SwiftUI
 import UIKit
 
@@ -28,11 +29,21 @@ public enum CnTextures {
         lock.lock(); defer { lock.unlock() }
         if let hit = cache[name] { return hit }
         let bundle = Bundle(for: BundleToken.self)
+        // decoded here, once, on whatever thread asks (`preload`: not the main
+        // thread), never lazily inside a Core Animation commit
         guard let url = bundle.url(forResource: name, withExtension: ext),
-              let data = try? Data(contentsOf: url),
-              let img = UIImage(data: data, scale: scale) else { return nil }
+              let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let cg = CGImageSourceCreateImageAtIndex(src, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
+        else { return nil }
+        let img = UIImage(cgImage: cg, scale: scale, orientation: .up)
         cache[name] = img
         return img
+    }
+
+    /// Decode the planks off the main thread while the drawer opens: the
+    /// table's first layout then only lays the tiles.
+    public static func preload() {
+        DispatchQueue.global(qos: .userInitiated).async { _ = planks }
     }
 
     /// The planks: 516 by 830 points.

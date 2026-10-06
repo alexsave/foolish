@@ -422,4 +422,11 @@ public enum KernelSeam {
     /// The stage that draws the table: the bridge's one.
     @MainActor
     public static func stage() -> TableStage { BridgeStage.shared }
+    /// The cold open: the stage's pack and the planks made ready off the main
+    /// thread while the drawer opens.
+    @MainActor
+    public static func warm() {
+        BridgeStage.shared.warm()
+        CnTextures.preload()
+    }
 }
