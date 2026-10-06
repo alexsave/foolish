@@ -560,6 +560,9 @@ final class StageViewTests: XCTestCase {
         XCTAssertGreaterThan(all.lit, 500, "the letters are drawn (\(all.lit) texels)")
         XCTAssertEqual(all.over, 0, "premultiplied: no colour past its alpha")
         XCTAssertNotEqual(bright.rgba, dim.rgba, "the turn's name is not the dim one")
+        // the letters themselves in another ink, not the bar alone (package S: a mutant with one ink survived)
+        let letters = Int((halo * CGFloat(bright.h) / bright.hPt).rounded(.up)) * bright.w * 4..<Int(((halo + textH - 4) * CGFloat(bright.h) / bright.hPt).rounded(.down)) * bright.w * 4
+        XCTAssertNotEqual(Array(bright.rgba[letters]), Array(dim.rgba[letters]), "the turn's letters are brighter than the dim ones")
         // the bar's rows: under the letters, between the gap and the halo
         let k = CGFloat(bright.h) / bright.hPt
         let barRows = Int(((halo + textH + NameDecal.gap) * k).rounded(.down))..<Int(((halo + textH + NameDecal.gap + NameDecal.barH) * k).rounded(.up))
@@ -613,6 +616,34 @@ final class StageViewTests: XCTestCase {
         for s in 0..<2 { spy.name(seat: s, bitmap: nil) }
         XCTAssertEqual(Self.bytes(spy.frameOnOneThread(atMs: 0, peek: 0)), before, "every name taken away: the frame before them")
         spy.purge()
+    }
+
+    // MARK: the short board's plate (package S)
+
+    /// At four seats the compact plate was 102 wide and "three 6s" beside its
+    /// die took two lines. Every bid four seats can make (1 to 20, faces 2 to
+    /// 6) is one line at one of the plate's sizes on the kernel's plate, at
+    /// three compact drawers.
+    func testEveryBidAtFourSeatsIsOneLineOnTheCompactPlate() throws {
+        let me = try started(seats: 4)
+        func width(_ s: String, _ font: UIFont) -> CGFloat {
+            let line = CTLineCreateWithAttributedString(NSAttributedString(string: s, attributes: [.font: font]))
+            return CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
+        }
+        for drawer in [CGSize(width: 390, height: 340), CGSize(width: 375, height: 300), CGSize(width: 430, height: 330)] {
+            let director = StageDirector(stage: KernelSeam.stage())
+            director.begin(request(drawer, table: me.table), planMs: nil)
+            let hud = try XCTUnwrap(director.hud)
+            XCTAssertEqual(hud.shortBoard, 1, "\(drawer): a short board")
+            let plate = try XCTUnwrap(hud.plateRect, "\(drawer): four seats have a plate")
+            let room = BidPlate.textRoom(width: plate.width, face: true), sizes = BidPlate.sizes(narrow: plate.width < BidPlate.narrowBelow)
+            var two: [String] = []
+            for q in 1...20 { for f in 2...6 {
+                let text = BridgeKernel.caption(.plateBid, who: "", quantity: q, face: f) ?? ""
+                if !sizes.contains(where: { width(text, FType.uiSerif($0)) <= room }) { two.append(text) }
+            } }
+            XCTAssertEqual(two, [], "\(drawer): the plate \(plate.width) wide, every bid one line")
+        }
     }
 
     // MARK: the loser's stamp (package S)
