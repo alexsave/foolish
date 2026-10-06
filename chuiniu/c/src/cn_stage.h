@@ -291,6 +291,18 @@ const uint8_t *cn_stage_finish(CnStage *st);
 /* The last frame's size, scale and state. */
 const CnStageShot *cn_stage_shot(const CnStage *st);
 
+/* THE PICTURE IN THE HOST'S BUFFER (cn_scene_external, cn_scene_target): the
+ * largest picture any frame of the begun screen draws there, w by h pixels
+ * (the still scale's or the throw's, whichever is more, with the most pad), so
+ * a host sizes its buffers once a begin. 1, or 0 with nothing begun. */
+int  cn_stage_target_most(const CnStage *st, int *w, int *h);
+/* THE TABLE AT REST: the frame is done and the next one is not soon. The
+ * renderer keeps its textures (a later frame draws at once, uploading nothing)
+ * and forgets the frame's buffers: the bytes from the arena's start it keeps
+ * nothing in, whose pages the host may give back until the next frame
+ * (cn_scene_rest). 0 with no arena. */
+size_t cn_stage_rest(CnStage *st);
+
 /* Is everything at rest at t (every throw, the SHAKE beat)? */
 int      cn_stage_done(const CnStage *st, uint32_t t_ms);
 uint32_t cn_stage_total_ms(const CnStage *st);

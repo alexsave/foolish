@@ -142,6 +142,31 @@ int cn_scene_fb_h(void);
                                          new image of its own first, on the main thread, every frame             */
 void cn_scene_output(int form);
 
+/* THE PICTURE IN THE HOST'S OWN BUFFER. External (from the next
+ * cn_scene_begin on), a frame's picture is not in the arena (a frame takes 4
+ * bytes a pixel less of it) and its width is rounded up to
+ * CN_SCENE_TARGET_ALIGN pixels (64-byte rows, which any surface a host may draw
+ * from accepts), the extra columns more of the same view to the right. Once a
+ * frame has begun (its size is cn_scene_fb_w by cn_scene_fb_h), the host hands
+ * over the picture's buffer with cn_scene_target, rows of exactly
+ * cn_scene_fb_w() * 4 bytes, top first (an IOSurface Core Animation shows as it
+ * is: the picture is never copied); the passes draw nothing without one. 1
+ * taken, 0 refused (no frame begun, not external, too small). The buffer must
+ * outlive the frame's passes; what it held before is not read. */
+#define CN_SCENE_TARGET_ALIGN 16
+void cn_scene_external(int on);
+int  cn_scene_target(void *px, size_t bytes);
+/* the picture's sides in pixels a frame of these numbers would have with a
+ * target: 0 when out of range */
+int cn_scene_target_size(int W, int H, int pad, float dpr, int *w, int *h);
+/* THE ARENA AT REST: the bytes from the start of the block handed to
+ * cn_scene_init that hold no texture. The frame's
+ * buffers lie there and nothing in them outlives a frame, so after this a host
+ * may give their pages back (madvise MADV_FREE_REUSABLE) and take them again
+ * before the next frame; the frame begun is forgotten (no band may run until
+ * the next cn_scene_begin). 0 with no arena. */
+size_t cn_scene_rest(void);
+
 /* profiling: the last frame's fragments shaded, box pixels walked, map texels,
  * map box pixels, edge pixels, edge samples shaded; and passes to leave out (1
  * shadow map, 2 picture, 4 shading, 16 the edges). 8 is a test's: the open

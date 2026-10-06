@@ -681,6 +681,19 @@ const uint8_t *cn_api_stage_frame(uint32_t now_ms, float peek)
 
 const void *cn_api_stage_shot(void) { return stage_inited ? (const void *)cn_stage_shot(&STAGE) : 0; }
 
+void cn_api_stage_external(int on) { cn_scene_external(on); }
+
+int cn_api_stage_target(uint8_t *px, size_t bytes) { return stage_inited && STAGE.shot.ok && cn_scene_target(px, bytes); }
+
+int cn_api_stage_target_most(int *w, int *h)
+{
+    if (w) *w = 0;
+    if (h) *h = 0;
+    return stage_inited && cn_stage_target_most(&STAGE, w, h);
+}
+
+size_t cn_api_stage_rest(void) { return stage_inited ? cn_stage_rest(&STAGE) : 0; }
+
 int cn_api_stage_name(int seat, const uint8_t *rgba, int w, int h, float w_pt, float h_pt)
 {
     return stage_inited ? cn_stage_name(&STAGE, seat, rgba, w, h, w_pt, h_pt) : -1;

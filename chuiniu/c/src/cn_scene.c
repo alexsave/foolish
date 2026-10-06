@@ -51,7 +51,8 @@
 
 /* ---- the arena ------------------------------------------------------------------- */
 static uint8_t *arena;
-static size_t arena_n, frame_top, tex_bottom;
+static size_t arena_n, arena_lost, frame_top, tex_bottom;
+static int external;                                     /* the picture goes in the host's buffer (cn_scene_external) */
 static size_t rup16(size_t n) { return (n + 15u) & ~(size_t)15u; }
 static void *take(size_t n) { n = rup16(n); if (!arena || n > tex_bottom - frame_top) return 0; void *p = arena + frame_top; frame_top += n; return p; }
 static void *take_tex(size_t n) { n = rup16(n); if (!arena || n > tex_bottom - frame_top) return 0; tex_bottom -= n; return arena + tex_bottom; }
@@ -68,17 +69,19 @@ typedef struct {
     size_t low;        /* the arena's texture end after its copies were made (cn_scene_tex_drop) */
 } Tex;
 static Tex texs[MAX_TEX]; static int ntex = 0;
-static uint8_t *fb;                                      /* the frame's picture; 0 until a frame begins */
+static uint8_t *fb;                                      /* the frame's picture; 0 until a frame begins (and, external,
+                                                            until the host's buffer is given) */
+static int frame_on;                                     /* a frame has begun: its buffers are taken */
 static int prepared;                                     /* cn_scene_prepare has run on this frame (below) */
 
-void cn_scene_reset(void) { frame_top = 0; tex_bottom = arena_n; ntex = 0; fb = 0; }
+void cn_scene_reset(void) { frame_top = 0; tex_bottom = arena_n; ntex = 0; fb = 0; frame_on = 0; }
 int cn_scene_init(void *mem, size_t bytes)
 {
     /* the block's start rounded up to 16 and its length down: every buffer is 16-aligned */
     uintptr_t a = ((uintptr_t)mem + 15u) & ~(uintptr_t)15u;
     size_t lost = mem ? (size_t)(a - (uintptr_t)mem) : 0;
-    if (!mem || bytes < lost + 4096) { arena = 0; arena_n = 0; cn_scene_reset(); return 0; }
-    arena = (uint8_t *)a; arena_n = (bytes - lost) & ~(size_t)15u;
+    if (!mem || bytes < lost + 4096) { arena = 0; arena_n = 0; arena_lost = 0; cn_scene_reset(); return 0; }
+    arena = (uint8_t *)a; arena_n = (bytes - lost) & ~(size_t)15u; arena_lost = lost;
     cn_scene_reset();
     return 1;
 }
@@ -124,7 +127,7 @@ CnSceneMark cn_scene_tex_mark(void) { CnSceneMark m = { ntex, tex_bottom }; retu
 void cn_scene_tex_drop(CnSceneMark m)
 {
     if (!arena || m.n < 0 || m.n > ntex || m.end < tex_bottom || m.end > arena_n) return;
-    frame_top = 0; fb = 0; prepared = 0;   /* the frame's buffers may lie where the next textures go */
+    frame_top = 0; fb = 0; frame_on = 0; prepared = 0;   /* the frame's buffers may lie where the next textures go */
     tex_bottom = m.end; ntex = m.n;
     for (int i = 0; i < ntex; i++) if (texs[i].nlv && texs[i].low < tex_bottom) texs[i].nlv = 0;   /* copies made after the mark */
 }
@@ -250,6 +253,37 @@ static size_t slot_sizes(int w, int fcapacity, size_t sz[NSLOT])
     for (int i = 0; i < NSLOT; i++) t += rup16(sz[i]);
     return t;
 }
+/* the picture's sides, 0 when out of range (frame_sizes says which case is which); `aligned`: a host's
+ * buffer's, its width in whole CN_SCENE_TARGET_ALIGN pixels (64-byte rows) */
+static int pic_size(int W, int H, int pad, float dpr, int aligned, int *w, int *h)
+{
+    if (H < 1 || pad < 0) return 0;
+    float fwf = W * dpr + .5f, fhf = (H + pad) * dpr + .5f;
+    if (!(fwf >= 1 && fwf < MAX_FRAME_PX) || !(fhf >= 1 && fhf < MAX_FRAME_PX)) return 0;
+    *w = (int)fwf; *h = (int)fhf;
+    if (aligned) *w = (*w + CN_SCENE_TARGET_ALIGN - 1) & ~(CN_SCENE_TARGET_ALIGN - 1);
+    return 1;
+}
+int cn_scene_target_size(int W, int H, int pad, float dpr, int *w, int *h)
+{
+    int a = 0, b = 0, ok = pic_size(W, H, pad, dpr, 1, &a, &b);
+    if (w) *w = ok ? a : 0;
+    if (h) *h = ok ? b : 0;
+    return ok;
+}
+void cn_scene_external(int on) { external = on != 0; }
+int cn_scene_target(void *px, size_t bytes)
+{
+    if (!frame_on || !external || !px || (size_t)FW * FH * 4 > bytes) return 0;
+    fb = (uint8_t *)px;
+    return 1;
+}
+size_t cn_scene_rest(void)
+{
+    if (!arena) return 0;
+    frame_top = 0; fb = 0; frame_on = 0; prepared = 0;   /* the frame's buffers are the host's to give back */
+    return arena_lost + tex_bottom;
+}
 /* 0 when the numbers are out of range */
 static int frame_sizes(int W, int H, int pad, float dpr, int shadow_res, int vcapacity, int fcapacity, size_t sz[NBUF], int *fw, int *fh)
 {
@@ -260,12 +294,11 @@ static int frame_sizes(int W, int H, int pad, float dpr, int shadow_res, int vca
      *                       scale of zero or less), or not a number (a NaN scale); held before the
      *                       conversion, so no float outside int's range is ever converted
      *   shadow_res          a map too small to window, or past what 16 bits place (CN_SCENE_SHADOW_MAX) */
-    if (H < 1 || pad < 0 || shadow_res < 4 || shadow_res > CN_SCENE_SHADOW_MAX || vcapacity < 0 || fcapacity < 0) return 0;
-    float fwf = W * dpr + .5f, fhf = (H + pad) * dpr + .5f;
-    if (!(fwf >= 1 && fwf < MAX_FRAME_PX) || !(fhf >= 1 && fhf < MAX_FRAME_PX)) return 0;
-    int w = (int)fwf, h = (int)fhf;
+    if (shadow_res < 4 || shadow_res > CN_SCENE_SHADOW_MAX || vcapacity < 0 || fcapacity < 0) return 0;
+    int w, h;
+    if (!pic_size(W, H, pad, dpr, external, &w, &h)) return 0;
     size_t npx = (size_t)w * h, aw = (size_t)(w + 3) / 4, ah = (size_t)(h + 3) / 4, ssz[NSLOT];
-    sz[B_FB] = npx * 4; sz[B_KB] = npx; sz[B_KF] = npx * 2; sz[B_REXT] = (size_t)h * 8; sz[B_SMAP] = (size_t)shadow_res * shadow_res * 4;
+    sz[B_FB] = external ? 0 : npx * 4; sz[B_KB] = npx; sz[B_KF] = npx * 2; sz[B_REXT] = (size_t)h * 8; sz[B_SMAP] = (size_t)shadow_res * shadow_res * 4;
     { size_t st = ((size_t)shadow_res + (1u << ST_SHIFT) - 1) >> ST_SHIFT; sz[B_STILE] = st * st; }
     sz[B_AO] = aw * ah * 4;
     sz[B_VERTS] = (size_t)vcapacity * VF * 4; sz[B_FACES] = (size_t)fcapacity * FF * 4; sz[B_ORDER] = (size_t)fcapacity * 4; sz[B_CHAIN] = (size_t)fcapacity * 4;
@@ -289,7 +322,7 @@ size_t cn_scene_room(void) { return arena ? tex_bottom : 0; }
 int cn_scene_begin(int W, int H, int pad, float dpr, float ex, float ey, float hc,
                    float lx, float ly, float lz, int shadow_res, float dark, int vcapacity, int fcapacity)
 {
-    frame_top = 0; fb = 0; nocc = 0; prepared = 0;
+    frame_top = 0; fb = 0; frame_on = 0; nocc = 0; prepared = 0;
     size_t sz[NBUF]; int fw, fh;
     if (!frame_sizes(W, H, pad, dpr, shadow_res, vcapacity, fcapacity, sz, &fw, &fh)) return 0;
     void *buf[NBUF];
@@ -299,7 +332,7 @@ int cn_scene_begin(int W, int H, int pad, float dpr, float ex, float ey, float h
     FW = fw; FH = fh;
     DPR = dpr; PAD = (float)pad; eyeX = ex; eyeY = ey; HC = hc; SR = shadow_res; SH_DARK = dark;
     AW = (FW + 3) / 4; AH = (FH + 3) / 4;
-    fb = buf[B_FB]; kb = buf[B_KB]; kf = buf[B_KF]; rext = buf[B_REXT]; smap = buf[B_SMAP]; stile = buf[B_STILE]; ao = buf[B_AO];
+    fb = external ? 0 : buf[B_FB]; frame_on = 1; kb = buf[B_KB]; kf = buf[B_KF]; rext = buf[B_REXT]; smap = buf[B_SMAP]; stile = buf[B_STILE]; ao = buf[B_AO];
     ST = (shadow_res + (1 << ST_SHIFT) - 1) >> ST_SHIFT;
     verts = buf[B_VERTS]; faces = buf[B_FACES]; order = buf[B_ORDER]; chain = buf[B_CHAIN]; rows = buf[B_ROWS]; srows = buf[B_SROWS]; tris = buf[B_TRIS]; covs = buf[B_COVS];
     {
@@ -334,11 +367,11 @@ int cn_scene_begin(int W, int H, int pad, float dpr, float ex, float ey, float h
     su0 = mnu; sv0 = mnv; sus = (SR - 2) / (mxu - mnu); svs = (SR - 2) / (mxv - mnv);
     return vcapacity + fcapacity;
 }
-float *cn_scene_verts(void) { return fb ? verts : 0; }
-float *cn_scene_faces(void) { return fb ? faces : 0; }
+float *cn_scene_verts(void) { return frame_on ? verts : 0; }
+float *cn_scene_faces(void) { return frame_on ? faces : 0; }
 uint8_t *cn_scene_fb(void) { return fb; }
-int cn_scene_fb_w(void) { return fb ? FW : 0; }
-int cn_scene_fb_h(void) { return fb ? FH : 0; }
+int cn_scene_fb_w(void) { return frame_on ? FW : 0; }
+int cn_scene_fb_h(void) { return frame_on ? FH : 0; }
 
 
 /* ---- the scanline: a triangle covers, on the row through sy, the columns between the two edges that
@@ -1206,7 +1239,7 @@ static uint8_t surface_of(int flags, int ti)
 int cn_scene_prepare(int nverts, int nfaces)
 {
     prepared = 0;
-    if (!fb || nverts < 0 || nfaces < 0 || nverts > vcap || nfaces > fcap) return -1;
+    if (!frame_on || nverts < 0 || nfaces < 0 || nverts > vcap || nfaces > fcap) return -1;
     const Light L = light_now();
     memset(prof, 0, sizeof prof);
     /* the map's rows of every casting face, by its index (-1: it casts nothing) */

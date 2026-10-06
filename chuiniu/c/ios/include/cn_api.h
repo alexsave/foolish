@@ -315,6 +315,26 @@ int  cn_api_stage_prepare_at(uint32_t now_ms, float peek, float lift);
 void cn_api_stage_output(int form);
 /* CnStageShot of the last frame. */
 const void *cn_api_stage_shot(void);
+/* THE PICTURE IN THE HOST'S BUFFER, never copied (cn_scene.h's target). With
+ * cn_api_stage_external(1) (once, after init) a frame's picture is not in the
+ * arena: after cn_api_stage_prepare_at the host reads the shot's w and h (w
+ * a multiple of 16 pixels) and hands over a buffer of rows of exactly w * 4
+ * bytes, at least h of them (an IOSurface of that row, which Core Animation
+ * shows as it is), with cn_api_stage_target: 1 taken, 0 refused (no frame
+ * prepared, not external, too small), and then no band draws anything. The
+ * bands draw into it, and cn_api_stage_pixels is its start. The buffer must
+ * outlive the passes. cn_api_stage_target_most: the most pixels w by h any
+ * frame of the begun screen has (1, or 0 with nothing begun), to size the
+ * buffers once a begin. */
+void cn_api_stage_external(int on);
+int  cn_api_stage_target(uint8_t *px, size_t bytes);
+int  cn_api_stage_target_most(int *w, int *h);
+/* THE TABLE AT REST: nothing moves and no frame is due soon. The stage keeps
+ * its textures (the next frame uploads nothing) and forgets the frame's
+ * buffers: the bytes from the arena's start it keeps nothing in, whose pages
+ * the host may give back (madvise MADV_FREE_REUSABLE) and must take again
+ * (MADV_FREE_REUSE) before the next frame. 0 with no arena. */
+size_t cn_api_stage_rest(void);
 /* A SEAT'S NAME ON THE TABLE (cn_stage_name): the host draws the name and its
  * turn bar (its font, any script) into a premultiplied RGBA bitmap, w by h
  * texels and w_pt by h_pt points, the block CN_STAGE_NAME_HALO points inside
