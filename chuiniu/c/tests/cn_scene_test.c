@@ -336,8 +336,10 @@ int main(void)
         cnf_textures(&t, 1);
         static uint8_t st[585 * 1137 * 4];
         cnf_frame(&t, 390, 718, 40, 1.5f, 1024, .6f);
-        const int npx = cn_scene_fb_w() * cn_scene_fb_h();
-        CHECK(npx <= 585 * 1137, "the frame fits the copy");
+        const int full = cn_scene_fb_w() * cn_scene_fb_h();
+        CHECK(full <= 585 * 1137, "the frame fits the copy");
+        /* the copy is clamped to the buffers whatever the check says: a failed check must not become an overflow */
+        const int npx = full < 585 * 1137 ? full : 585 * 1137;
         memcpy(st, cn_scene_fb(), (size_t)npx * 4);
         static uint8_t ca[585 * 1137 * 4];
         cn_scene_output(CN_SCENE_OUT_PREMUL_BGRA);
