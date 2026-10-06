@@ -56,7 +56,9 @@
  *   at the reveal (in->reveal) every standing cup tips (DECISIONS I23): the
  *   ring is fitted with each far cup tipped the whole way up, and a short
  *   board lays every seat in one row (one_row, DECISIONS I29) since its row
- *   has no room above it; cn_lay_lift_fit is the stage's last word.
+ *   has no room above it, and a tall board lays them as the study's list, in
+ *   rows (list_rows, package S), since on the ring a tipped cup covers the
+ *   dice of the seat behind it; cn_lay_lift_fit is the stage's last word.
  * The fit reads the throw's own path (cn_roll_cup_pose), never a copy of it.
  *
  *
@@ -140,6 +142,7 @@ typedef struct {
     uint8_t  name_how[CN_LAY_SEATS];                       /* CN_NAME_*              */
     uint8_t  throw_mask;            /* bit s: seat s's cup throws (cn_lay_throws)     */
     uint8_t  one_row;               /* the reveal on a short board: every seat in one row */
+    uint8_t  list_rows;             /* the reveal on a tall board: the study's list in this many rows (0: none) */
     float    ring_cy, ring_rx, ring_ry;   /* the ring's centre y and radii (0 on a short board) */
     float    pad, pad_x, pad_below;       /* the canvas's room past the board        */
     float    peek_target;           /* my cup's full tip                            */
@@ -147,6 +150,7 @@ typedef struct {
     float    my_reach;              /* my throw's reach, of the study's (1 when it fits the drawer) */
     float    die_g[CN_LAY_SEATS];   /* each seat's die side on the glass, at its cup */
     float    brass_r[CN_LAY_SEATS]; /* the radius of a brass ring round one, on the glass */
+    float    outcome[4];            /* the reveal's outcome line, x y w h, screen (0 0 0 0 off the reveal) */
     CnCam    cam;
     double   seg_c[CN_CUP_SEGS], seg_s[CN_CUP_SEGS];   /* a cup's rim corners round the circle: the fits' table */
 } CnLay;

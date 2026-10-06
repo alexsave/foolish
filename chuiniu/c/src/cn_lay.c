@@ -494,6 +494,7 @@ static void one_row(const CnLayIn *in, CnLay *L, double W, double H, double d0, 
     L->ring_cy = (float)cy; L->ring_rx = 0; L->ring_ry = 0;
     L->pad = (float)dmax(40, cn_m_ceil(-(L->cam.origin_y - L->board_y + cn_cam_from_screen(&L->cam, 0)) + 8));
     L->pad_x = 40;
+    L->outcome[0] = 0; L->outcome[1] = (float)lowest; L->outcome[2] = (float)L->w; L->outcome[3] = CN_LAY_OUTCOME_H;
     if (beside) {
         /* level with the row's mouths, never over the outcome line */
         const double y = dmax(CN_LAY_EDGE, dmin(L->board_y + cy - CN_LAY_PLATE_H / 2, lowest - CN_LAY_PLATE_H));
@@ -507,6 +508,145 @@ static void one_row(const CnLayIn *in, CnLay *L, double W, double H, double d0, 
         L->has_plate = 1;
         L->plate[0] = (float)(L->w / 2 - w / 2); L->plate[1] = (float)top; L->plate[2] = (float)w; L->plate[3] = CN_LAY_PLATE_H;
     }
+}
+
+/* THE REVEAL ON A TALL BOARD: THE STUDY'S LIST, IN ROWS (package S). The ring
+ * puts a seat behind another (six seats: Cy behind Bo, Ed behind Fay; four: the
+ * top seat behind my cup), and a cup tipped up to show its own dice swings its
+ * crown up the screen over the dice of the seat behind it: the verifier saw a
+ * counting die under another seat's cup at four and six seats. The study's
+ * reveal (UI.html, `spec.state === 'reveal'`) is a list of the seats, mine
+ * first, every die in sight. So a tall board's reveal lays the seats as that
+ * list: rows of `per` seats, mine first, each row centred, each seat's dice
+ * its ring under its cup at the stations (no cup throws: the reveal is still,
+ * as one_row's is). The rows go down the board, the first as high as lets its
+ * cups tip in full off the plate, each next one as high as keeps its tipped
+ * cups off every die, name and stamp of the rows behind it; the outcome line
+ * under the last row's stamps. Every cup the same size, the largest any count
+ * of rows allows (fewer rows on a tie): six seats at 390 by 718 are two rows of
+ * three. */
+#define LIST_STAMP_W 120.0   /* the loser's stamp ("LOSES A DIE" in the small caps at 12, tracked, its frame) */
+/* a die's picture at a station: the box round its eight corners on the glass */
+static Reach die_box(const CnLay *L, double x, double y, double d)
+{
+    Reach r = reach_none();
+    const double e = d * .71;
+    for (int c = 0; c < 8; c++) {
+        float px, py, gx, gy;
+        cn_cam_project(&L->cam, (float)(x + (c & 1 ? e : -e)), (float)(y + (c & 2 ? e : -e)), (float)(c & 4 ? d : 0), &px, &py);
+        cn_cam_map(&L->cam, L->board_x + px, L->board_y + py, &gx, &gy);
+        r.x0 = dmin(r.x0, gx); r.x1 = dmax(r.x1, gx); r.y0 = dmin(r.y0, gy); r.y1 = dmax(r.y1, gy);
+    }
+    return r;
+}
+/* the flat box under a name's anchor a stamp takes (centred, CN_LAY_STAMP_FOOT down), on the glass */
+static Reach stamp_box(const CnLay *L, double x, double y)
+{
+    Reach r = reach_none();
+    for (int c = 0; c < 4; c++) {
+        float gx, gy;
+        cn_cam_map(&L->cam, (float)(L->board_x + x + (c & 1 ? 1 : -1) * LIST_STAMP_W / 2), (float)(L->board_y + y + (c & 2 ? CN_LAY_STAMP_FOOT : 14)), &gx, &gy);
+        r.x0 = dmin(r.x0, gx); r.x1 = dmax(r.x1, gx); r.y0 = dmin(r.y0, gy); r.y1 = dmax(r.y1, gy);
+    }
+    return r;
+}
+/* a seat's cup at (x, y) tipped to the full lift that shows its dice at their stations */
+static void list_cup(const CnLayIn *in, const CnLay *L, int i, double R, double x, double y, double sd, double sring, CnObj *o)
+{
+    cn_geom_cup_obj(o, (float)R, 0, (uint32_t)(i * 7), (float)x, (float)y, in->out_mask >> i & 1, (float)(L->board_w / 2));
+    if (o->out || !in->dice[i]) return;
+    float dy[CN_LAY_DICE], dd[CN_LAY_DICE];
+    for (int k = 0; k < in->dice[i]; k++) { double dx, ddy, yaw; die_spot(i, k, x, y, sring, &dx, &ddy, &yaw); dy[k] = (float)ddy; dd[k] = (float)sd; }
+    const float full = cn_cam_peek_angle(&L->cam, (float)R, (float)y, dy, dd, in->dice[i]);
+    tip(o, full, full);
+}
+
+typedef struct { double R, cy[CN_LAY_SEATS], x[CN_LAY_SEATS], y[CN_LAY_SEATS]; int per, rows; } List;
+
+/* the list with `per` seats a row and cups of radius R: 1 when it fits over the outcome line */
+static int list_try(const CnLayIn *in, const CnLay *L, double W, double d0, double myR0, int per, double R, List *out)
+{
+    const int n = in->seats, me = in->me, rows = (n + per - 1) / per;
+    const double step = (W - 2 * CN_LAY_MARGIN) / per, sd = d0 * R / myR0, sring = ring_of(sd);
+    const double below = 14 + CN_LAY_STAMP_FOOT, foot = L->shelf[1] - 6 - CN_LAY_OUTCOME_H - L->board_y;
+    Reach behind[CN_LAY_SEATS * (CN_LAY_DICE + 2)];
+    int nb = 0;
+    double cy = R + 2;
+    int fail = 0;
+    out->R = R; out->per = per; out->rows = rows;
+    for (int r = 0; r < rows; r++) {
+        const int first = r * per, m = n - first < per ? n - first : per;
+        const double x0 = (W - m * step) / 2 + step / 2;
+        int ok = 0;
+        for (; cy + R + below <= foot; cy += 1) {
+            Reach ext = reach_none();
+            ok = 1;
+            for (int c = 0; c < m && ok; c++) {
+                const int i = (me + first + c) % n;
+                CnObj o;
+                cn_geom_cup_obj(&o, (float)R, 0, (uint32_t)(i * 7), (float)(x0 + c * step), (float)cy, in->out_mask >> i & 1, (float)(W / 2));
+                lift_reach(L, &o, i, in->dice[i], sring, sd, &ext);
+                if (!nb) continue;
+                /* the rows behind: no die, name or stamp of theirs under this row's tipped cups */
+                list_cup(in, L, i, R, x0 + c * step, cy, sd, sring, &o);
+                Hull Hh;
+                cup_hull(L, &o, &Hh);
+                for (int b = 0; b < nb && ok; b++) ok = !hull_meets(&Hh, &behind[b], 1);
+            }
+            if (ok) ok = reach_inside(&ext, L->w) && !(L->has_plate && over_rect(&ext, L->plate, 2));
+            if (ok) break;
+        }
+        if (!ok) { fail = 1; cy = dmax(R + 2, dmin(cy, foot - R - below)); }   /* placed anyway: the fallback's */
+        out->cy[r] = cy;
+        for (int c = 0; c < m; c++) {
+            const int i = (me + first + c) % n;
+            const double x = x0 + c * step;
+            out->x[i] = x; out->y[i] = cy;
+            if (!(in->out_mask >> i & 1))
+                for (int k = 0; k < in->dice[i]; k++) { double dx, dy, yaw; die_spot(i, k, x, cy, sring, &dx, &dy, &yaw); behind[nb++] = die_box(L, dx, dy, sd); }
+            Reach nbx = reach_none();
+            for (int q = 0; q < 4; q++) {
+                float gx, gy;
+                cn_cam_map(&L->cam, (float)(L->board_x + x + (q & 1 ? 1 : -1) * CN_LAY_NAME_TEXT_W / 2), (float)(L->board_y + cy + R + 14 - CN_LAY_NAME_UP + (q & 2 ? CN_LAY_NAME_H : 0)), &gx, &gy);
+                nbx.x0 = dmin(nbx.x0, gx); nbx.x1 = dmax(nbx.x1, gx); nbx.y0 = dmin(nbx.y0, gy); nbx.y1 = dmax(nbx.y1, gy);
+            }
+            behind[nb++] = nbx;
+            behind[nb++] = stamp_box(L, x, cy + R + 14);
+        }
+        cy += 2 * R;   /* the next row's mouths at least a cup's width under these */
+    }
+    return !fail;
+}
+
+static void list_rows(const CnLayIn *in, CnLay *L, double W, double d0, double myR0)
+{
+    const int n = in->seats;
+    List best, t;
+    best.R = 0;
+    for (int per = n; per >= 1; per--) {
+        if (per > 1 && (n + per - 1) / per == (n + per - 2) / (per - 1)) continue;   /* as many rows as one fewer a row, which is wider */
+        const double step = (W - 2 * CN_LAY_MARGIN) / per;
+        for (double R = cn_m_floor(dmin(myR0, step / 2 - 4)); R >= CN_LAY_ROW_MIN_R && R > best.R; R -= 1)
+            if (list_try(in, L, W, d0, myR0, per, R, &t)) { best = t; break; }
+    }
+    if (!(best.R > 0)) list_try(in, L, W, d0, myR0, (n + 1) / 2, CN_LAY_ROW_MIN_R, &best);
+    const double R = best.R, sd = d0 * R / myR0, sring = ring_of(sd);
+    double last = 0;
+    for (int i = 0; i < n; i++) {
+        L->cup_x[i] = (float)best.x[i]; L->cup_y[i] = (float)best.y[i];
+        L->name_x[i] = L->cup_x[i]; L->name_y[i] = (float)(best.y[i] + R + 14); L->name_how[i] = CN_NAME_BOX;
+        last = dmax(last, best.y[i]);
+    }
+    L->list_rows = (uint8_t)best.rows;
+    L->cup_r = L->my_r = (float)R;
+    L->d = L->sd = (float)sd; L->ring = L->sring = (float)sring;
+    L->ring_cy = (float)best.y[in->me]; L->ring_rx = 0; L->ring_ry = 0;
+    L->pad = (float)dmax(40, cn_m_ceil(-(L->cam.origin_y - L->board_y + cn_cam_from_screen(&L->cam, 0)) + 8));
+    L->pad_x = 40;
+    /* the outcome line under the last row's stamps */
+    const double lowest = L->shelf[1] - 6 - CN_LAY_OUTCOME_H;
+    L->outcome[0] = 0; L->outcome[1] = (float)dmin(lowest, L->board_y + last + R + 14 + CN_LAY_STAMP_FOOT + 4);
+    L->outcome[2] = (float)L->w; L->outcome[3] = CN_LAY_OUTCOME_H;
 }
 
 static int valid(const CnLayIn *in)
@@ -635,7 +775,7 @@ static int make(const CnLayIn *in, CnLay *L, int fit)
     Board b;
     if (!in || !valid(in) || !board_of(in, &b)) return 0;
     const double W = b.W, H = b.H, inner = b.inner;
-    const int shelf = b.shelf, shrt = b.shrt, row1 = b.row1;
+    const int shelf = b.shelf, shrt = b.shrt, row1 = b.row1, list = !shrt && in->reveal;
     const double shelf_h = b.shelf_h, topM = b.topM, boardH = b.boardH;
     const double band = b.band, mcx = b.mcx, mcy = b.mcy;
     const double hudB = shrt ? 0 : CN_LAY_HUD_TOP + CN_LAY_PLATE_H + 6;
@@ -676,18 +816,24 @@ static int make(const CnLayIn *in, CnLay *L, int fit)
             L->plate[1] = (float)(topM + dmax(0, (boardH - CN_LAY_SHORT_BAND - CN_LAY_PLATE_H) / 2));
             L->plate[2] = (float)w; L->plate[3] = CN_LAY_PLATE_H;
         }
-    } else {
-        /* the plate at the top of the glass (wider at the reveal, for the tally), then my dice, then the ring */
-        const double pw = in->reveal ? CN_LAY_PLATE_REVEAL_W : CN_LAY_PLATE_W;
+    } else if (list) {
+        /* the plate at the top of the glass, the tally's width, then the list under it at the tall table's dice */
         L->has_plate = 1;
-        L->plate[0] = (float)(W / 2 - pw / 2); L->plate[1] = CN_LAY_HUD_TOP;
-        L->plate[2] = (float)pw; L->plate[3] = CN_LAY_PLATE_H;
+        L->plate[0] = (float)(W / 2 - CN_LAY_PLATE_REVEAL_W / 2); L->plate[1] = CN_LAY_HUD_TOP;
+        L->plate[2] = CN_LAY_PLATE_REVEAL_W; L->plate[3] = CN_LAY_PLATE_H;
+        d = 24; ring = ring_of(d); myR = ring + d * .8 + 5;
+        list_rows(in, L, inner, d, myR);
+    } else {
+        /* the plate at the top of the glass, then my dice, then the ring */
+        L->has_plate = 1;
+        L->plate[0] = (float)(W / 2 - CN_LAY_PLATE_W / 2); L->plate[1] = CN_LAY_HUD_TOP;
+        L->plate[2] = CN_LAY_PLATE_W; L->plate[3] = CN_LAY_PLATE_H;
         d = fit_dice(in, L, 0, mcx, mcy, &ring, &myR);
         L->d = (float)d; L->ring = (float)ring; L->my_r = (float)myR;
         if (fit) ring_seats(in, L, inner, boardH, myR, mcx, mcy, hudB);   /* (a reach fit wants my cup and the camera only) */
     }
     d = L->d; ring = L->ring; myR = L->my_r;
-    if (!row1) {
+    if (!row1 && !list) {
         L->cup_x[me] = (float)mcx; L->cup_y[me] = (float)mcy;
         if (shrt) { L->name_x[me] = (float)(mcx - (myR + 64)); L->name_y[me] = (float)(boardH - band / 2); L->name_how[me] = CN_NAME_LEFT; }
         else { L->name_x[me] = (float)mcx; L->name_y[me] = (float)(boardH - 4); L->name_how[me] = CN_NAME_FOOT; }
@@ -713,16 +859,16 @@ static int make(const CnLayIn *in, CnLay *L, int fit)
         L->brass_r[s] = (float)(L->die_g[s] * CN_LAY_BRASS);
     }
 
-    /* MY THROW'S REACH is one on every screen of the drawer, so the reveal finds my dice where my throw left them:
-     * the least of the reach that fits each screen's own board (a short board is one board on every screen, the
-     * picker-up one; a tall one is another board on my turn, on theirs and at the reveal, and a reach fitted on the
-     * picker-up board alone left 400 to 420 on their turn by 11 points, package V2) */
+    /* MY THROW'S REACH is one on every screen of the drawer: the least of the reach that fits each screen's own
+     * board (a short board is one board on every screen, the picker-up one; a tall one is another board on my turn
+     * and on theirs, and a reach fitted on the picker-up board alone left 400 to 420 on their turn by 11 points,
+     * package V2). The reveal throws nothing (its list lays the dice at their stations, package S). */
     L->my_reach = 1;
-    if (fit && nd && !row1) {
+    if (fit && nd && !row1 && !list) {
         double k = 1;
-        for (int sc = 0; sc < (shrt ? 1 : 3); sc++) {
+        for (int sc = 0; sc < (shrt ? 1 : 2); sc++) {
             CnLayIn p = *in;
-            p.turn = sc == 1 ? (uint8_t)((p.me + 1) % p.seats) : p.me; p.rolling = 0; p.reveal = sc == 2;
+            p.turn = sc == 1 ? (uint8_t)((p.me + 1) % p.seats) : p.me; p.rolling = 0; p.reveal = 0;
             CnLay P;
             if (!make(&p, &P, 0)) continue;
             CnLayThrow t;
@@ -731,15 +877,15 @@ static int make(const CnLayIn *in, CnLay *L, int fit)
         }
         L->my_reach = (float)k;
     }
-    /* WHO THROWS (package V2). Mine, unless the reveal lays one row. On a tall board
+    /* WHO THROWS (package V2). Mine, unless it is the reveal (one row or the list). On a tall board
      * each other seat's whose held cup stays CN_LAY_EDGE inside the drawer at the
      * study's reach, through the whole of its own throw (its seat, size and shake on
      * this screen); a far cup held as a throw holds it rises about four of its radii
      * up the screen, and on a tall board a top or side seat's study throw left the
      * drawer by 25 to 110 points, so it stays down, as every far cup does on a short
      * board (a cup that stays down hides its dice as a thrown one does). */
-    if (nd && !row1) L->throw_mask = (uint8_t)(1 << me);
-    if (fit && !shrt)
+    if (nd && !row1 && !list) L->throw_mask = (uint8_t)(1 << me);
+    if (fit && !shrt && !list)
         for (int v = 1; v < in->seats; v++) {
             const int i = (me + v) % in->seats;
             if ((in->out_mask >> i & 1) || !in->dice[i]) continue;
