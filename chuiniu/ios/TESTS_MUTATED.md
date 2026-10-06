@@ -146,3 +146,19 @@ The screens and the conversation were played inside Messages on the real kernel,
 ## Package Y (every bubble is one line)
 
 Its rows are in `chuiniu/c/docs_pkgY.md`, "Mutation checks": every test of `BubbleLineTests.swift` and the new `cn_say_test.c` test went red for its own assertion.
+
+## The lobby's controls (package P, 2026-10-05)
+
+`ChuiniuKitTests/LobbyTests.swift`, on the private simulator TChuiniu (`5FD5777D`), `-only-testing:ChuiniuKitTests/LobbyTests` (3 tests executed every run, none a compile error).
+Each mutant was one edit to a product file by a script that read the file, replaced one string, ran the tests and wrote the file back; `git status` showed the sources unchanged afterwards.
+
+| # | Mutation | Assertion that went red |
+|---|---|---|
+| P1 | `LobbyControls` shows nothing for WAITING and INVITE (the old screen) | "alone: Start and Leave are there, sunk", "the newest joiner with room left may not start, but may leave", "alone again: sunk", and the unnamed creator's last check |
+| P2 | Leave always quiet, ignoring `mayLeave` | "alone: Start and Leave are there, sunk", "alone again: sunk" |
+| P3 | the bridge's `mayLeave` always false | "the newest joiner ... may leave", the creator with two (Leave quiet) |
+| P4 | the lobby's seats carry `dice: 0` | "the cup carries the dice a seat sits down with" |
+| P5 | the bridge never remembers a create refused for want of a name | "the name field with Join", the join, `me`, the seats, the caption, "the invitation is staged" |
+| P6 | the roster fixed to its content height (no scroll) | "start/leave/name/join at (.., 306, .., 44) leaves the (390 or 320, 328) drawer" |
+| P7 | Start 40 tall | "start is 40.0 tall" at every drawer |
+| P8 | the leave caption worded after the row is gone | `bo.leave()` is "" not "Bo left" |
