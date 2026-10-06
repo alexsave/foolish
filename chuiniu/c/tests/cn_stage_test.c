@@ -589,8 +589,78 @@ static void test_reveal_inside(void)
         }
     }
     CHECK(short_full, "on a short board every cup lifts as far as shows its dice");
-    CHECK(full * 100 >= cups * 90, "nine cups in ten lift in full anywhere (%d of %d)", full, cups);
+    CHECK(full == cups, "every cup lifts in full on every board, the tall list's too (%d of %d)", full, cups);
     printf("  %d reveal frames: the nearest any body comes to the drawer's edge is %.2f points; %d of %d cups lift in full\n", frames, worst, full, cups);
+}
+
+/* THE DICE IN SIGHT (package S). Is the point p (board points, z up) inside cup o's solid, as cn_geom_emit places
+ * it: the mouth R at z 0, the crown CN_CUP_RC R at h, tipped about its hinge (cn_cam_peek_tilt's pose)? An
+ * independent inverse of the placement, not the layout's own hull. A lying cup (has_rot) is not asked. */
+static int in_cup(const CnObj *o, double x, double y, double z)
+{
+    double qx = x - o->x, qy = y - o->y, qz = z - o->lift;
+    if (o->tilt_angle != 0) {
+        const double ct = cos(o->tilt_angle), st = sin(o->tilt_angle);
+        const double yp = qy - o->tilt_hinge_y + o->tilt_back, zp = qz - o->tilt_lift;   /* undo the shift, then the turn */
+        qy = yp * ct + zp * st + o->tilt_hinge_y; qz = -yp * st + zp * ct;
+    }
+    if (qz < 0 || qz > o->h) return 0;
+    /* a shell: the wall and the crown, a point and a half thick (a sight line in through the mouth sees in) */
+    const double r = o->R + (o->R * CN_CUP_RC - o->R) * qz / o->h, rr = sqrt(qx * qx + qy * qy);
+    return rr <= r && (rr >= r - 1.5 || qz >= o->h - 1.5);
+}
+/* is the top face of die d seen from the eye past every standing cup: its centre and its four corners (a tenth of
+ * the side in, turned by its yaw), each segment from the eye sampled every quarter point; the seat of the cup in the
+ * way of any, or -1 */
+static int die_hidden_by(const CnStage *st, const CnObj *o, int n, const CnObj *d)
+{
+    const CnCam *c = &st->lay.cam;
+    const double ex = c->eye_x, ey = c->eye_y, ez = c->eye_z, e = d->d * .4, cy = cos(d->yaw), sy = sin(d->yaw);
+    for (int q = 0; q < 5; q++) {
+        const double ux = q ? (q & 1 ? e : -e) : 0, uy = q ? (q & 2 ? e : -e) : 0;
+        const double px = d->x + ux * cy - uy * sy, py = d->y + ux * sy + uy * cy, pz = d->lift + d->d / 2;
+        const double len = sqrt((px - ex) * (px - ex) + (py - ey) * (py - ey) + (pz - ez) * (pz - ez));
+        const int steps = (int)(len * 4);
+        for (int i = 0; i < n; i++) {
+            if (o[i].kind != CN_OBJ_CUP || o[i].has_rot) continue;
+            for (int k = 1; k < steps; k++) {
+                const double t = (double)k / steps;
+                if (in_cup(&o[i], ex + (px - ex) * t, ey + (py - ey) * t, ez + (pz - ez) * t)) return o[i].seat;
+            }
+        }
+    }
+    return -1;
+}
+
+static void test_reveal_dice_seen(void)
+{
+    TEST("the reveal: every die's whole face seen from the eye past every cup, lifted, 281 to 900, 2 to 6 seats (the list, package S)");
+    cn_stage_init(&ST, PACK, PACK_N);
+    int dice = 0, hidden = 0, worst_w = 0, worst_h = 0, worst_n = 0;
+    /* the check itself: a cup set down on its dice hides them (the test sees a cup) */
+    {
+        CnStageIn in = table_in(390, 718, 4, 0, 0, CN_STAGE_REVEAL);
+        cn_stage_begin(&ST, &in);
+        int no, seen = 0, under = 0;
+        const CnObj *o = cn_stage_objects(&ST, CN_STAGE_NO_ROLL - 1, 0, 0, &no);
+        for (int i = 0; i < no; i++) if (o[i].kind == CN_OBJ_DIE) { seen++; under += die_hidden_by(&ST, o, no, &o[i]) >= 0; }
+        CHECK(seen > 0 && under == seen, "the cups down: every die under a cup (%d of %d)", under, seen);
+    }
+    for (int wi = 0; wi < NW; wi++) for (int hi = 0; hi < NH; hi++) for (int n = 2; n <= 6; n++) {
+        const int W = SIZES_W[wi], H = SIZES_H[hi];
+        CnStageIn in = table_in(W, H, n, 0, 0, CN_STAGE_REVEAL);
+        if (!cn_stage_begin(&ST, &in)) { CHECK(0, "%dx%d n %d: the reveal begins", W, H, n); continue; }
+        int no, here = 0;
+        const CnObj *o = cn_stage_objects(&ST, CN_STAGE_NO_ROLL - 1, 0, 1, &no);
+        for (int i = 0; i < no; i++) {
+            if (o[i].kind != CN_OBJ_DIE) continue;
+            dice++;
+            const int by = die_hidden_by(&ST, o, no, &o[i]);
+            if (by >= 0) { here++; CHECK(0, "%dx%d n %d: seat %d's die %d hidden by seat %d's cup", W, H, n, o[i].seat, i, by); }
+        }
+        if (here > hidden) { hidden = here; worst_w = W; worst_h = H; worst_n = n; }
+    }
+    printf("  %d dice at the reveal, each face seen past every cup (the most hidden on one table: %d, %dx%d n %d)\n", dice, hidden, worst_w, worst_h, worst_n);
 }
 
 static void test_hud_clear(void)
@@ -625,7 +695,8 @@ static void test_hud_clear(void)
                 CHECK(!meets(&p, hud[k]), "%dx%d n %d %s: seat %d's cup clear of the %s", W, H, n, what, o[i].seat, hud_name[k]);
             for (int s = 0; s < n; s++) {
                 const int covers = meets(&p, letters[s]);
-                if (h->short_board) CHECK(!covers, "%dx%d n %d %s: seat %d's cup clear of seat %d's name", W, H, n, what, o[i].seat, s);
+                /* a short board on every screen; the reveal on every board (the tall reveal is the list, package S) */
+                if (h->short_board || screen == 2) CHECK(!covers, "%dx%d n %d %s: seat %d's cup clear of seat %d's name", W, H, n, what, o[i].seat, s);
                 else { tall_cover += covers; tall_cover_rest += covers && screen != 2; }
             }
             checked++;
@@ -860,6 +931,7 @@ int main(int argc, char **argv)
     test_out();
     test_clock();
     test_reveal_inside();
+    test_reveal_dice_seen();
     test_hud_clear();
     test_names();
     free(PACK);
