@@ -100,6 +100,8 @@
     X(LOBBY_ROW_YOU,       0, 0)  /* "2. Bo (You)"                            */ \
     X(LOBBY_WAITING,      36, 0)                                                 \
     X(LOBBY_FULL,         36, 0)                                                 \
+    X(LOBBY_YOU,           8, 0)  /* "(you)", dim after my own name's row      */ \
+    X(BTN_LEAVE,          12, 0)  /* get up from a lobby's seat (can_exit)    */ \
     /* errors                                                               */ \
     X(ERR_UNREADABLE,     36, 0)                                                 \
     X(ERR_NEWER,           0, 0)                                                 \

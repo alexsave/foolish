@@ -177,6 +177,8 @@ public final class BridgeKernel: Kernel {
         case .lobbyFull: return Self.string("LOBBY_FULL")
         case .join: return Self.string("BTN_JOIN")
         case .start: return Self.string("BTN_START")
+        case .leave: return Self.string("BTN_LEAVE")
+        case .lobbyYou: return Self.string("LOBBY_YOU")
         case .raise: return Self.string("BTN_RAISE")
         case .call: return Self.string("BTN_CALL")
         case .nextRound: return Self.string("BTN_NEXT")
@@ -226,7 +228,20 @@ public final class BridgeKernel: Kernel {
 
     // MARK: the model
 
+    /// A new lobby the kernel refused for want of a name (cn_api_new seats
+    /// me under my nickname, and an unaccepted one is none): whether it was
+    /// to be a DM. Until a join names me, or another game is adopted or
+    /// made, the table is that lobby still to make.
+    private var unnamedNew: Bool?
+
+    /// The lobby still to make: nobody seated, and this phone offered Join
+    /// with the name field.
+    static let unnamedLobby = TableModel(phase: .lobby, seats: [], me: nil, myDice: [], bid: nil, bidText: "",
+                                         bidder: nil, reveal: nil, caption: "", bubbleCaption: "", menu: nil,
+                                         offered: .join, rollID: 0, winner: nil)
+
     public var table: TableModel {
+        if unnamedNew != nil { return Self.unnamedLobby }
         guard let t = Self.snap(cn_api_table(), readCnApiTable), t.readable != 0 else { return .empty }
         return Self.model(t, Self.snap(cn_api_view(CN_API_ME), readCnView), lookedAhead: lookedAhead)
     }
@@ -239,13 +254,15 @@ public final class BridgeKernel: Kernel {
         let bubble = line(CN_API_W_STAGED_CAPTION)
 
         guard t.phase != CN_PHASE_WAITING, let v = view else {
+            // a lobby's cup carries the dice every seat sits down with (the
+            // kernel's CN_START_DICE), as the study's roster does
             let seats = t.seat.indices.map { s in
-                SeatModel(id: s, name: line(CN_API_W_SEAT, s), dice: 0, alive: true, isTurn: false,
-                          isMe: s == me, lobbyRow: line(CN_API_W_LOBBY_ROW, s))
+                SeatModel(id: s, name: line(CN_API_W_SEAT, s), dice: CN_START_DICE, alive: true, isTurn: false,
+                          isMe: s == me)
             }
             return TableModel(phase: .lobby, seats: seats, me: me, myDice: [], bid: nil, bidText: "", bidder: nil,
                               reveal: nil, caption: caption, bubbleCaption: bubble, menu: nil,
-                              offered: offer(t.offered), rollID: 0, winner: nil)
+                              offered: offer(t.offered), mayLeave: t.canExit != 0, rollID: 0, winner: nil)
         }
 
         let phase: Phase
@@ -319,6 +336,9 @@ public final class BridgeKernel: Kernel {
         guard seed.count == 32 else { return false }
         var s = seed
         let ok = cn_api_new(&s, dm ? 1 : 0) == Int32(CN_EOK)
+        // refused with no name the kernel accepts: the lobby waits for one
+        unnamedNew = ok || nameAccepted(nick) ? nil : dm
+        pendingSeed = unnamedNew == nil ? nil : seed
         settled()
         flush()
         return ok
@@ -329,13 +349,29 @@ public final class BridgeKernel: Kernel {
         return b.withUnsafeBufferPointer { cn_api_name_verdict($0.baseAddress, Int32(b.count)) } == Int32(CN_NAME_OK)
     }
 
+    /// The seed of the lobby still to make (`unnamedNew`).
+    private var pendingSeed: [UInt8]?
+
     public func join(name: String) -> Bool {
         if !name.isEmpty { nickname(name) }
+        if let dm = unnamedNew, let seed = pendingSeed {
+            // the new lobby, now that I have a name
+            return newGame(dm: dm, seed: seed)
+        }
         guard let t = Self.snap(cn_api_table(), readCnApiTable) else { return false }
         // the kernel's verdict: a join that fills the table starts it too
         let seat = t.canJoinStart != 0 ? cn_api_join_start() : cn_api_join()
         flush()
         return seat >= 0
+    }
+
+    public func leave() -> String? {
+        guard let t = Self.snap(cn_api_table(), readCnApiTable), t.me != CN_SEAT_NONE else { return nil }
+        // captioned while my row is still there (CN_API_W_LEFT)
+        let caption = Self.line(CN_API_W_LEFT, t.me)
+        let ok = cn_api_leave() == Int32(CN_EOK)
+        flush()
+        return ok ? caption : nil
     }
 
     public func start() -> Bool {
@@ -358,7 +394,7 @@ public final class BridgeKernel: Kernel {
     public func adoptBubble(_ url: URL) -> Int {
         guard Self.layoutMatches else { return Int(CN_EFORMAT) }
         let e = Int(cn_api_adopt(url.absoluteString))
-        if e == 0 { lookedAhead = nil; began(Self.snap(cn_api_beats_now(), readCnBeats)) }
+        if e == 0 { lookedAhead = nil; unnamedNew = nil; began(Self.snap(cn_api_beats_now(), readCnBeats)) }
         flush()
         return e
     }

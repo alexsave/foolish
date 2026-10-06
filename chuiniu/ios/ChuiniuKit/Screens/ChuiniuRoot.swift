@@ -39,6 +39,13 @@ public final class ChuiniuHost: ObservableObject {
 
     public func join(name: String) { act(kernel.join(name: name), collapse: false) }
     public func start() { act(kernel.start(), collapse: false) }
+    /// Get up from my lobby seat: the bubble is captioned with my leaving,
+    /// which the kernel words before the row is gone.
+    public func leave() {
+        let caption = kernel.leave()
+        refresh()
+        if let caption { onStage?(caption, false) }
+    }
     public func raise(_ bid: Bid) { act(kernel.raise(quantity: bid.quantity, face: bid.face), collapse: true) }
     public func call() { act(kernel.call(), collapse: true) }
     public func nextRound() { act(kernel.nextRound(), collapse: false) }

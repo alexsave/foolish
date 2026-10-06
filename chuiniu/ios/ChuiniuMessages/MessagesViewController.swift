@@ -285,7 +285,15 @@ final class MessagesViewController: MSMessagesAppViewController {
             return
         }
 #endif
-        guard host.kernel.newGame(dm: conversation.remoteParticipantIdentifiers.count == 1) else { return }
+        guard host.kernel.newGame(dm: conversation.remoteParticipantIdentifiers.count == 1) else {
+            // refused (no nickname yet): the lobby asks for a name, and its
+            // Join makes the lobby and stages the invitation (Kernel.newGame)
+            session = nil
+            sessionGame = nil
+            host.unreadable = nil
+            host.refresh()
+            return
+        }
         session = nil
         sessionGame = nil
         host.refresh()

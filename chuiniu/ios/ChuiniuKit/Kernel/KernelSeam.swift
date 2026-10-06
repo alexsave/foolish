@@ -46,13 +46,9 @@ public struct SeatModel: Equatable, Sendable, Identifiable {
     public var alive: Bool
     public var isTurn: Bool
     public var isMe: Bool
-    /// The kernel's lobby row for this phone ("2. Bo (You)"); the name alone
-    /// is what a bubble every phone sees may show.
-    public var lobbyRow: String
-    public init(id: Int, name: String, dice: Int, alive: Bool, isTurn: Bool, isMe: Bool, lobbyRow: String = "") {
+    public init(id: Int, name: String, dice: Int, alive: Bool, isTurn: Bool, isMe: Bool) {
         self.id = id
         self.name = name
-        self.lobbyRow = lobbyRow
         self.dice = dice
         self.alive = alive
         self.isTurn = isTurn
@@ -152,6 +148,9 @@ public struct TableModel: Equatable, Sendable {
     public var menu: Menu?
     /// The lobby's control for this phone.
     public var offered: LobbyOffer
+    /// I may get up from this lobby's seat (msg_lobby_roster_can_exit:
+    /// seated, not started, and somebody else is seated).
+    public var mayLeave: Bool
     /// Changes when the round's dice change: which round's throw a table
     /// shows, handed back in `Kernel.rollSeen`. An identity, not a number
     /// anything is computed from.
@@ -166,8 +165,8 @@ public struct TableModel: Equatable, Sendable {
 
     public init(phase: Phase, seats: [SeatModel], me: Int?, myDice: [Int], bid: Bid?, bidText: String,
                 bidder: Int?, stagedBid: Bid? = nil, stagedBidText: String = "", reveal: Reveal?,
-                caption: String, bubbleCaption: String, menu: Menu?, offered: LobbyOffer, rollID: Int,
-                rollPending: Bool = false, winner: Int?) {
+                caption: String, bubbleCaption: String, menu: Menu?, offered: LobbyOffer, mayLeave: Bool = false,
+                rollID: Int, rollPending: Bool = false, winner: Int?) {
         self.phase = phase
         self.seats = seats
         self.me = me
@@ -182,6 +181,7 @@ public struct TableModel: Equatable, Sendable {
         self.bubbleCaption = bubbleCaption
         self.menu = menu
         self.offered = offered
+        self.mayLeave = mayLeave
         self.rollID = rollID
         self.rollPending = rollPending
         self.winner = winner
@@ -197,7 +197,9 @@ public struct TableModel: Equatable, Sendable {
 public enum Word: CaseIterable, Sendable {
     case gameTitle
     case lobbyTitle, lobbyWaiting, lobbyFull
-    case join, start
+    case join, start, leave
+    /// "(you)", after my own name on the lobby's roster
+    case lobbyYou
     case raise, call, nextRound
     case loses, out
     case namePrompt
@@ -240,12 +242,20 @@ public protocol Kernel: AnyObject {
     func sender(_ url: URL?, isDM: Bool, iSent: Bool)
     /// The kernel's words for a refused link's error.
     func errorText(_ code: Int) -> String
-    /// A new lobby with me in seat 0.
+    /// A new lobby with me in seat 0. False when the kernel refused it; for
+    /// want of a nickname (cn_api_new seats me under it) the table is then
+    /// that lobby still to make: no seats, Join with the name field.
     func newGame(dm: Bool) -> Bool
     /// The kernel's verdict on a nickname typed into the lobby.
     func nameAccepted(_ name: String) -> Bool
+    /// Take a seat under `name` (the nickname too). With a new lobby the
+    /// kernel refused for want of a name (`newGame`), this is that lobby
+    /// made, me in seat 0 under `name`.
     func join(name: String) -> Bool
     func start() -> Bool
+    /// Get up from my lobby seat: the kernel's caption of the bubble that
+    /// says so ("Bo left"), or nil when it refused.
+    func leave() -> String?
     func raise(quantity: Int, face: Int) -> Bool
     func call() -> Bool
     func nextRound() -> Bool
