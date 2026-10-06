@@ -133,6 +133,14 @@ static void test_layout(void)
             const double in2 = pow((gx2 - h->hit[0]) / h->hit[2], 2) + pow((gy2 - h->hit[1]) / h->hit[3], 2);
             CHECK(in1 <= 1.02 && in2 > 1, "%dx%d mine %d: the crown's top is on the ellipse's edge on the glass (%.3f, past it %.3f)", g->W, g->H, g->mine, in1, in2);
         }
+        /* the planks' layer the host lays is the camera's cover of the drawer and the reach past it
+         * (cn_cam_test proves the cover at every size); its top runs up past the study's overdraw */
+        {
+            float want[4];
+            CHECK(cn_cam_planks(&ST.lay.cam, (float)g->W, (float)g->H, want) && memcmp(want, h->planks, sizeof want) == 0
+                  && h->planks[1] < -CN_CAM_REACH && h->planks[0] < -CN_CAM_REACH && h->planks[2] > g->W + 2 * CN_CAM_REACH,
+                  "%dx%d mine %d: the planks' layer %.0f %.0f %.0f %.0f", g->W, g->H, g->mine, h->planks[0], h->planks[1], h->planks[2], h->planks[3]);
+        }
     }
     cn_stage_purge(&ST);
     free(A);

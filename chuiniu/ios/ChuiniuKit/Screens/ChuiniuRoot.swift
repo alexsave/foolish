@@ -11,9 +11,6 @@ public final class ChuiniuHost: ObservableObject {
     @Published public private(set) var table: TableModel = .empty
     /// A link the kernel refused, with its error; the unreadable screen.
     @Published public var unreadable: Int?
-    /// The newest round whose throw this phone has played to its end, so a
-    /// screen change does not throw it again (the stage's roll).
-    @Published public var playedRoll = 0
     /// A touch left a bubble to stage, captioned with the kernel's caption;
     /// `collapse` for a move (the drawer goes down once it has rested), not
     /// for a lobby bubble.
@@ -45,6 +42,14 @@ public final class ChuiniuHost: ObservableObject {
     public func raise(_ bid: Bid) { act(kernel.raise(quantity: bid.quantity, face: bid.face), collapse: true) }
     public func call() { act(kernel.call(), collapse: true) }
     public func nextRound() { act(kernel.nextRound(), collapse: false) }
+
+    /// The table's throw of `rollID` ran to its end: the kernel keeps it (a
+    /// round's throw plays once a phone, however often the extension is
+    /// launched), and the model reads it back as no longer pending.
+    public func rollSeen(_ rollID: Int) {
+        kernel.rollSeen(rollID: rollID)
+        refresh()
+    }
 
     /// Adopt a bubble's link: 0, or the kernel's error (and the unreadable
     /// screen).

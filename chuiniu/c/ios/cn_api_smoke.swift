@@ -61,7 +61,7 @@ struct Smoke {
             check(cn_api_new(&seed, 1) == Int32(CN_EOK), "Alex makes a DM lobby")
             var t = try readCnApiTable(cn_api_table()!)
             check(t.phase == CN_PHASE_WAITING && t.seat.map(\.name) == ["Alex"], "one named seat, waiting")
-            check(words(CN_API_W_STAGED_CAPTION) == "Alex wants a game of Chui Niu. Tap to join", "the invite")
+            check(words(CN_API_W_STAGED_CAPTION) == "Alex wants a game of Chui Niu", "the invite")
             let lobby = text()
 
             be(2, "Bo")
@@ -122,7 +122,7 @@ struct Smoke {
             let pack = UnsafeMutablePointer<UInt8>.allocate(capacity: packData.count)   // outlives the stage
             packData.copyBytes(to: pack, count: packData.count)
             check(cn_api_stage_init(pack, packData.count) == 0, "the stage takes the pack, and no memory")
-            var hud = try readCnStageHud(cn_api_stage_begin(Int32(CN_STAGE_REVEAL), 390, 718, 2, 0)!)
+            var hud = try readCnStageHud(cn_api_stage_begin(Int32(CN_STAGE_REVEAL), 390, 718, 2)!)
             check(hud.ok == 1 && hud.kind == CN_STAGE_REVEAL && hud.me == 1 && hud.rolls == 0, "the reveal, read in Swift, begun with no arena")
             check(cn_api_stage_frame(0, 0) == nil, "no arena: no frame")
             let arenaBytes = CN_STAGE_ARENA
@@ -130,7 +130,7 @@ struct Smoke {
             check(cn_api_stage_attach(arena, arenaBytes) == 0, "the first frame's arena")
             check(hud.cupX.count == 6 && hud.ca.count == 16 && hud.dieX.count == 30 && hud.hit[2] > 0, "the HUD's arrays and my cup's tap target")
             _ = cn_api_beats(1, 2)   // the call's plan, as the other phone's adopt lays it out: CALL .. SHAKE
-            hud = try readCnStageHud(cn_api_stage_begin(Int32(CN_STAGE_TABLE), 390, 718, 2, 1)!)
+            hud = try readCnStageHud(cn_api_stage_begin(Int32(CN_STAGE_TABLE), 390, 718, 2)!)
             let shake = try readCnBeats(cn_api_beats_now()!).beat.first { $0.kind == CN_BK_SHAKE }!
             check(hud.rolls == 1 && hud.rollAtMs == shake.startMs && hud.restMs > hud.rollAtMs, "the roll starts with the SHAKE beat")
             check(cn_api_stage_prepare(UInt32(hud.rollAtMs + 900), 0) == 1, "prepared")

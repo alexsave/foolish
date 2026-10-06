@@ -348,6 +348,7 @@ static void hud_cam(CnStageHud *h, const CnCam *c)
     h->origin_x = c->origin_x; h->origin_y = c->origin_y;
     h->theta = c->theta; h->cam_d = c->D; h->zoom = c->zoom;
     memcpy(h->ca, c->ca, sizeof h->ca); memcpy(h->ca_screen, c->ca_screen, sizeof h->ca_screen); memcpy(h->hom, c->h, sizeof h->hom);
+    cn_cam_planks(c, h->w, h->h, h->planks);
 }
 
 /* the timeline (I21): when my dice and everything are at rest */

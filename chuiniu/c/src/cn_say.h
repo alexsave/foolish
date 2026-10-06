@@ -42,6 +42,29 @@ int cn_say_bid(int q, int f, int initial, char *out, int cap);
 int cn_say_seat(const char *const *names, int seat, char *out, int cap);
 int cn_say_dice_n(int n, char *out, int cap);                    /* "4 dice" */
 
+/* ---- the bubble's one line (docs_pkgY.md) ------------------------------------- *
+ *
+ * A BUBBLE'S CAPTION IS ONE LINE (the owner's rule): Messages sets it in the
+ * system font at 17 points across a 300-point bubble with 14 points each
+ * side, and a longer caption wraps or is cut. The kernel knows no font, so it
+ * counts every caption in CN_CAP_UNIT-ths of a point by cn_cap_width, an
+ * UPPER BOUND on the system font's advance at 17 points, regular or
+ * semibold: a table for ASCII measured with Core Text on the phone, and a
+ * class for every other code point that is the widest glyph of that class
+ * there (W and % are 16.5, a Latin letter 19, Greek and Cyrillic 24, a CJK
+ * ideograph 19, an emoji 24, anything else 46, U+FDFD 73, cuneiform 80; a
+ * combining mark 0).
+ *
+ * Every caption this file writes is at most CN_CAP_BUDGET by that count, by
+ * construction: it says the study's sentence when that fits (the usual
+ * case), else the same sentence in steps, never cutting a word and never
+ * losing who or what: the template's shorter form (CAP_START_SHORT,
+ * CAP_INVITE_SHORT), then the bid in digits ("12 3s"), and last the name
+ * clipped to the room left with CAP_CLIP ("Maximilia… bids first"). */
+#define CN_CAP_UNIT      8                    /* width units a point              */
+#define CN_CAP_BUDGET    (272 * CN_CAP_UNIT)  /* 300 less 14 a side, in units     */
+int cn_cap_width(const char *s);              /* in units; NULL is 0              */
+
 /* ---- the bubble -------------------------------------------------------------- */
 
 /* The caption of move `move` (1..hist_n), or of the start for 0: "Dice
@@ -74,6 +97,8 @@ int cn_say_staged(const CnGame *g, CnMove m, char *out, int cap);
 int cn_say_table(const CnGame *g, char *out, int cap);
 /* The newest call's count: "There were five"; "" before the first call. */
 int cn_say_reveal_count(const CnGame *g, char *out, int cap);
+/* The same for any count 0..CN_MAX_DICE: "There were twelve", "There were 30". */
+int cn_say_tally(int count, char *out, int cap);
 /* A lobby row: "2. Bo", or "2. Bo (You)" when `mine`. */
 int cn_say_lobby_row(const char *const *names, int seat, int mine, char *out, int cap);
 /* Why a link did not read, from a negative CN_E* (cn_msg.h): a newer

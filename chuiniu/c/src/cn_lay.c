@@ -588,25 +588,56 @@ int cn_lay_make(const CnLayIn *in, CnLay *L) { return make(in, L, 1); }
  * drawer grows (package V2). */
 static double top_margin(double H) { return H <= 400 ? 8 : dmin(30, H - 392); }
 
-static int make(const CnLayIn *in, CnLay *L, int fit)
+/* The board and my cup's centre on it: what the camera is made from (cn_lay_cam)
+ * and what the layout starts from (make), one derivation for both. */
+typedef struct {
+    double W, H, inner, shelf_h, topM, pickerBoard, boardH, band, mcx, mcy;
+    int rolling, shelf, shrt, row1;
+} Board;
+
+static int board_of(const CnLayIn *in, Board *b)
 {
-    memset(L, 0, sizeof *L);
-    if (!in || !valid(in)) return 0;
-    const double W = in->w, H = in->h, inner = W - 2 * CN_LAY_SIDE;
-    const int rolling = in->rolling || in->reveal;
-    const int shelf = in->turn == in->me || rolling;
-    const double shelf_h = rolling ? CN_LAY_ROLL_H : CN_LAY_PICKER_H;
+    b->W = in->w; b->H = in->h; b->inner = b->W - 2 * CN_LAY_SIDE;
+    b->rolling = in->rolling || in->reveal;
+    b->shelf = in->turn == in->me || b->rolling;
+    b->shelf_h = b->rolling ? CN_LAY_ROLL_H : CN_LAY_PICKER_H;
     /* short or tall reads the drawer: the board it has with the picker up. A
      * short board IS that board on every screen, so nothing on it moves when
      * the turn comes round, and the room the picker takes on my turn is the
      * room my cup's throw comes down through on theirs. The reveal on a short
      * board is the one exception: one row on the board its shelf leaves. */
-    const double topM = top_margin(H), pickerBoard = H - topM - 12 - (CN_LAY_PICKER_H + 10);
-    const int shrt = pickerBoard < CN_LAY_SHORT_H, row1 = shrt && in->reveal;
-    const double boardH = shrt && !row1 ? pickerBoard : H - topM - 12 - (shelf ? shelf_h + 10 : 0);
-    if (!(boardH > CN_LAY_SHORT_BAND)) return 0;
-    const double band = shrt ? CN_LAY_SHORT_BAND : CN_LAY_MY_BAND;
-    const double mcx = inner / 2, mcy = (row1 ? pickerBoard : boardH) - band + (shrt ? 30 : 34);
+    b->topM = top_margin(b->H); b->pickerBoard = b->H - b->topM - 12 - (CN_LAY_PICKER_H + 10);
+    b->shrt = b->pickerBoard < CN_LAY_SHORT_H; b->row1 = b->shrt && in->reveal;
+    b->boardH = b->shrt && !b->row1 ? b->pickerBoard : b->H - b->topM - 12 - (b->shelf ? b->shelf_h + 10 : 0);
+    if (!(b->boardH > CN_LAY_SHORT_BAND)) return 0;
+    b->band = b->shrt ? CN_LAY_SHORT_BAND : CN_LAY_MY_BAND;
+    b->mcx = b->inner / 2; b->mcy = (b->row1 ? b->pickerBoard : b->boardH) - b->band + (b->shrt ? 30 : 34);
+    return 1;
+}
+
+static void board_cam(const Board *b, CnCam *c)
+{
+    cn_cam_make(c, (float)b->inner, (float)b->boardH, (float)(CN_LAY_SIDE + b->mcx), (float)(b->topM + b->mcy), 1);
+}
+
+int cn_lay_cam(const CnLayIn *in, CnCam *c)
+{
+    memset(c, 0, sizeof *c);
+    Board b;
+    if (!in || !valid(in) || !board_of(in, &b)) return 0;
+    board_cam(&b, c);
+    return 1;
+}
+
+static int make(const CnLayIn *in, CnLay *L, int fit)
+{
+    memset(L, 0, sizeof *L);
+    Board b;
+    if (!in || !valid(in) || !board_of(in, &b)) return 0;
+    const double W = b.W, H = b.H, inner = b.inner;
+    const int shelf = b.shelf, shrt = b.shrt, row1 = b.row1;
+    const double shelf_h = b.shelf_h, topM = b.topM, boardH = b.boardH;
+    const double band = b.band, mcx = b.mcx, mcy = b.mcy;
     const double hudB = shrt ? 0 : CN_LAY_HUD_TOP + CN_LAY_PLATE_H + 6;
 
     L->w = (float)W; L->h = (float)H;
@@ -615,7 +646,7 @@ static int make(const CnLayIn *in, CnLay *L, int fit)
     L->top_m = (float)topM; L->seats = in->seats; L->me = in->me; L->short_board = (uint8_t)shrt; L->one_row = (uint8_t)row1;
     L->my_band[0] = CN_LAY_MARGIN; L->my_band[1] = (float)(boardH - band); L->my_band[2] = (float)(inner - 2 * CN_LAY_MARGIN); L->my_band[3] = (float)band;
     L->pad_below = CN_LAY_PAD_BELOW;
-    cn_cam_make(&L->cam, (float)inner, (float)boardH, (float)(CN_LAY_SIDE + mcx), (float)(topM + mcy), 1);
+    board_cam(&b, &L->cam);
     if (shelf) {
         L->has_shelf = 1;
         L->shelf[0] = 0; L->shelf[1] = (float)(H - shelf_h); L->shelf[2] = (float)W; L->shelf[3] = (float)shelf_h;

@@ -127,7 +127,7 @@ static void lobby(void)
     for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(i * 7 + 11);
     be(0);
     OK(cn_api_new(seed, 0) == CN_EOK, "Alex makes a lobby in a group");
-    OK(!strcmp(words(CN_API_W_STAGED_CAPTION, 0), "Alex wants a game of Chui Niu. Tap to join"), "%s", line);
+    OK(!strcmp(words(CN_API_W_STAGED_CAPTION, 0), "Alex wants a game of Chui Niu"), "%s", line);
     send();
     for (int p = 1; p < PHONES; p++) {
         open_as(p);
@@ -279,6 +279,7 @@ static int play(void)
         else snprintf(want, sizeof want, "%s wins", NICK[winner]);
         OK(!strcmp(words(CN_API_W_HEADLINE, 0), want), "%s: %s", NICK[p], line);
         OK(cn_api_raise(1, 2) == 0 && cn_api_call() == 0, "nothing more to play");
+        OK(!cn_api_roll_pending(), "and no throw to play");
         int m = table()->moves;
         const CnBeats *b = (const CnBeats *)cn_api_beats(m - 1, m);
         OK(b && b->n > 0 && b->beat[b->n - 1].kind == CN_BK_WIN, "the last move's motion ends on the win");
@@ -343,10 +344,125 @@ static void lobby_rules(void)
     }
 }
 
+/* ---- THE THROW ONCE A PHONE (docs_pkgX.md): each phone sees each round's
+ * throw at most once, kept in its seat records, so a relaunch of the
+ * extension, a bid arriving or the bubble opened again never throws a
+ * watched round again; a throw cut off before its end plays again; a new
+ * round is pending again; a phone that first looks in a later round throws
+ * that round once; and a store in the first record form still loads. */
+
+/* A new extension process on phone i: nothing of the last one but its
+ * stored records (the bridge's static state starts zeroed, me = -1). */
+static void relaunch(int i)
+{
+    if (who >= 0) recn[who] = cn_api_seats_save(recs[who], CN_API_REC_BYTES);
+    memset(&S, 0, sizeof S);
+    S.me = -1;
+    who = -1;
+    open_as(i);
+}
+
+static int round_now(void) { return me_view()->round; }
+
+/* The phone on turn, opened. */
+static int open_turn(void)
+{
+    for (int p = 0; p < PHONES; p++) {
+        open_as(p);
+        if (me_view()->my_turn) return p;
+    }
+    return -1;
+}
+
+static void throw_once(void)
+{
+    uint8_t seed[32];
+    for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(i * 5 + 77);
+    for (int p = 0; p < PHONES; p++) recn[p] = 0;    /* three fresh phones */
+    who = -1;
+
+    STEP("the throw: a group of three, started");
+    be(0);
+    OK(cn_api_new(seed, 0) == CN_EOK, "Alex makes a lobby");
+    OK(!cn_api_roll_pending() && cn_api_roll_seen(0) == 0, "a lobby throws nothing");
+    send();
+    for (int p = 1; p < PHONES; p++) { open_as(p); OK(cn_api_join() == p, "%s joins", NICK[p]); send(); }
+    open_as(0);
+    OK(cn_api_start() == CN_EOK, "Alex starts");
+    send();
+
+    STEP("the throw: once, and never again for the round");
+    open_as(0);
+    OK(round_now() == 0 && cn_api_roll_pending(), "the game starts: round 0's throw is pending on Alex's phone");
+    relaunch(0);
+    OK(cn_api_roll_pending(), "the drawer closed mid-throw: it was not watched, and plays again");
+    OK(cn_api_roll_seen(1) == 0 && cn_api_roll_pending(), "a round not dealt yet cannot be watched");
+    OK(!cn_api_seats_dirty() && cn_api_roll_seen(0) == 1 && cn_api_seats_dirty(), "watched to its end: the records are dirty");
+    OK(!cn_api_roll_pending(), "and the round is no longer pending");
+    OK(cn_api_roll_seen(0) == 0, "watched again changes nothing");
+    relaunch(0);
+    OK(!cn_api_roll_pending(), "a new launch of the extension: still watched");
+    OK(cn_api_adopt(link) == CN_EOK && !cn_api_roll_pending(), "the bubble opened again: still watched");
+
+    STEP("the throw: each phone its own");
+    open_as(1);
+    OK(cn_api_roll_pending(), "Bo has not watched round 0 on his phone");
+    OK(cn_api_roll_seen(0) == 1 && !cn_api_roll_pending(), "Bo watches it");
+    open_as(0);
+    OK(!cn_api_roll_pending() && table()->by == CN_BY_RECORD, "Alex's phone is still Alex's, still watched");
+    /* Cy never opens round 0: the late arrival below */
+
+    STEP("the throw: a bid mid-round throws nothing");
+    int p = open_turn();
+    OK(p == 0 || p == 1, "Alex or Bo is on turn (%d)", p);
+    const CnView *v = me_view();
+    OK(cn_api_raise(v->min_q, v->min_f) == 1, "%s opens the bidding", NICK[p]);
+    send();
+    for (int q = 0; q < 2; q++) {
+        relaunch(q);
+        OK(!cn_api_roll_pending(), "%s opens the bid in a new launch: no throw", NICK[q]);
+    }
+
+    STEP("the throw: a call starts a new round, pending again");
+    p = open_turn();
+    OK(p >= 0 && cn_api_call() == 1, "%s calls", NICK[p]);
+    send();
+    open_as(0);
+    OK(me_view()->revealed && round_now() == 1, "the reveal, and round 1 dealt");
+    OK(cn_api_roll_pending(), "round 1's throw is pending on Alex's phone");
+    OK(cn_api_roll_seen(1) == 1 && !cn_api_roll_pending(), "Alex watches it");
+    relaunch(0);
+    OK(!cn_api_roll_pending() && me_view()->revealed, "relaunched on the reveal: round 1 stays watched");
+
+    STEP("the throw: a late arrival throws the running round once");
+    relaunch(2);
+    OK(table()->me == 2 && round_now() == 1 && cn_api_roll_pending(), "Cy looks in first in round 1: pending");
+    OK(cn_api_roll_seen(1) == 1, "Cy watches it");
+    relaunch(2);
+    OK(!cn_api_roll_pending() && cn_api_roll_seen(0) == 0, "once: a relaunch throws nothing, and round 0 is past");
+
+    STEP("the throw: the first record form loads, seat kept, nothing watched");
+    relaunch(0);
+    uint8_t v2[CN_API_REC_BYTES], v1[CN_API_REC_BYTES];
+    int n = cn_api_seats_save(v2, sizeof v2), k = 0;
+    OK(n > CN_REC_MAGIC_LEN && !memcmp(v2, CN_REC_MAGIC, CN_REC_MAGIC_LEN), "Alex's store carries the mark");
+    for (int i = CN_REC_MAGIC_LEN; i + CN_REC_LEN <= n; i += CN_REC_LEN, k += CN_REC_LEN_V1)
+        memcpy(v1 + k, v2 + i, CN_REC_LEN_V1);
+    recn[0] = k;
+    memcpy(recs[0], v1, (size_t)k);
+    who = -1;
+    relaunch(0);
+    OK(table()->me == 0 && table()->by == CN_BY_RECORD, "the first form: Alex's seat by its record");
+    OK(cn_api_roll_pending() && cn_api_roll_seen(1) == 1 && !cn_api_roll_pending(), "nothing watched in it: pending once");
+    n = cn_api_seats_save(v2, sizeof v2);
+    OK(n == CN_REC_MAGIC_LEN + k / CN_REC_LEN_V1 * CN_REC_LEN, "saved again in the new form");
+}
+
 int main(void)
 {
     lobby();
     play();
     lobby_rules();
+    throw_once();
     return report("cn_twophone_test");
 }

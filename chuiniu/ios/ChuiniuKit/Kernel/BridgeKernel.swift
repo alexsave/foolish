@@ -145,6 +145,31 @@ public final class BridgeKernel: Kernel {
         return n >= 0 ? String(cString: buf) : ""
     }
 
+    /// The bubble's one line, for BubbleLineTests: the kernel's caption for
+    /// one act (`CaptionAct`), its width bound in points, and its budget.
+    /// (`plateBid` and `tally` are the bubble plate's words, also one line.)
+    enum CaptionAct: CaseIterable { case start, bid, call, invite, joined, left, plateBid, tally }
+    static func caption(_ act: CaptionAct, who: String, quantity: Int = 0, face: Int = 0) -> String? {
+        let what: Int32
+        switch act {
+        case .start: what = CN_API_P_START
+        case .bid: what = CN_API_P_BID
+        case .call: what = CN_API_P_CALL
+        case .invite: what = CN_API_P_INVITE
+        case .joined: what = CN_API_P_JOINED
+        case .left: what = CN_API_P_LEFT
+        case .plateBid: what = CN_API_P_PLATE_BID
+        case .tally: what = CN_API_P_TALLY
+        }
+        var buf = [CChar](repeating: 0, count: 512)
+        let n = cn_api_caption_probe(what, who, Int32(quantity), Int32(face), &buf, Int32(buf.count))
+        return n >= 0 ? String(cString: buf) : nil
+    }
+    static func captionBound(_ line: String) -> Double {
+        Double(cn_api_caption_width(line)) / Double(cn_api_caption_unit())
+    }
+    static var captionBudget: Double { Double(cn_api_caption_budget()) / Double(cn_api_caption_unit()) }
+
     public func word(_ w: Word) -> String {
         switch w {
         case .gameTitle, .lobbyTitle: return Self.string("GAME_NAME")
@@ -265,6 +290,7 @@ public final class BridgeKernel: Kernel {
                           bidder: bid == nil ? nil : v.bidder, stagedBid: staged,
                           stagedBidText: staged.map(bidWords) ?? "", reveal: reveal, caption: caption,
                           bubbleCaption: bubble, menu: menu, offered: .waiting, rollID: v.round + 1,
+                          rollPending: cn_api_roll_pending() == 1,
                           winner: v.phase == CN_PH_OVER ? v.winner : nil)
     }
 
@@ -378,6 +404,15 @@ public final class BridgeKernel: Kernel {
 
     public var stagedSettleMs: Int { Self.snap(cn_api_beats_staged(), readCnBeats)?.totalMs ?? 0 }
 
+    /// The model's rollID is CnView.round + 1 (the mapping above); the kernel
+    /// takes the round. Its record changed: stored now, so a launch that
+    /// ends before any other flush still knows.
+    public func rollSeen(rollID: Int) {
+        guard rollID >= 1 else { return }
+        _ = cn_api_roll_seen(Int32(rollID - 1))
+        flush()
+    }
+
     private func settled() {
         revealEndMs = nil
         motionStart = nil
@@ -428,7 +463,7 @@ public final class BridgeStage: TableStage {
 
     private let worker = StageWorker()
     /// The table or reveal on show, to begin again after a bubble.
-    private var onShow: (screen: StageScreen, drawer: CGSize, scale: CGFloat, roll: Bool)?
+    private var onShow: (screen: StageScreen, drawer: CGSize, scale: CGFloat)?
 
     private init() {}
 
@@ -440,15 +475,15 @@ public final class BridgeStage: TableStage {
     public var holdsArena: Bool { worker.queue.sync { worker.arena != nil } }
     public var drawer: CGSize? { onShow?.drawer }
 
-    public func begin(_ screen: StageScreen, drawer: CGSize, scale: CGFloat, roll: Bool) -> CnStageHudSnap? {
+    public func begin(_ screen: StageScreen, drawer: CGSize, scale: CGFloat) -> CnStageHudSnap? {
         guard BridgeKernel.layoutMatches else { return nil }
-        if screen != .bubble { onShow = (screen, drawer, scale, roll) }
+        if screen != .bubble { onShow = (screen, drawer, scale) }
         // on the queue, after any frame in flight; the main thread waits, so
         // the resident the begin reads cannot change under it
         let w = worker
         return w.queue.sync { () -> CnStageHudSnap? in
             guard w.ready(arena: false) else { return nil }
-            return Self.snap(cn_api_stage_begin(Int32(screen.rawValue), Float(drawer.width), Float(drawer.height), Float(scale), roll ? 1 : 0), readCnStageHud)
+            return Self.snap(cn_api_stage_begin(Int32(screen.rawValue), Float(drawer.width), Float(drawer.height), Float(scale)), readCnStageHud)
         }
     }
 
@@ -459,10 +494,10 @@ public final class BridgeStage: TableStage {
             // so the arena goes; the screen on show is begun again as it was
             // (a begin takes no arena), and its next frame takes one
             purge()
-            if let b = back { _ = begin(b.screen, drawer: b.drawer, scale: b.scale, roll: b.roll) }
+            if let b = back { _ = begin(b.screen, drawer: b.drawer, scale: b.scale) }
         }
         let size = CGSize(width: CN_STAGE_BUBBLE_W, height: CN_STAGE_BUBBLE_H)
-        guard let hud = begin(.bubble, drawer: size, scale: scale, roll: false),
+        guard let hud = begin(.bubble, drawer: size, scale: scale),
               let frame = frame(atMs: 0, peek: 0) else { return nil }
         return BubbleFrame(hud: hud, frame: frame)
     }

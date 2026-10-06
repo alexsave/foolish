@@ -55,7 +55,7 @@ final class BridgeKernelTests: XCTestCase {
         XCTAssertEqual(m.seats.map(\.name), ["Alex"], "the name a bubble shows never says You")
         XCTAssertEqual(m.me, 0)
         XCTAssertEqual(m.offered, .waiting, "seated alone, and the newest bubble is mine")
-        XCTAssertEqual(m.bubbleCaption, "Alex wants a game of Chui Niu. Tap to join")
+        XCTAssertEqual(m.bubbleCaption, "Alex wants a game of Chui Niu")
         let lobby = try XCTUnwrap(alex.stagedURL())
 
         // Bo taps it and joins, which fills a DM table and starts it
@@ -203,7 +203,7 @@ final class BridgeKernelTests: XCTestCase {
 
         let stage = KernelSeam.stage()
         let drawer = CGSize(width: 390, height: 718)
-        let reveal = try XCTUnwrap(stage.begin(.reveal, drawer: drawer, scale: 3, roll: false), "the reveal begins")
+        let reveal = try XCTUnwrap(stage.begin(.reveal, drawer: drawer, scale: 3), "the reveal begins")
         XCTAssertEqual(reveal.kind, CN_STAGE_REVEAL)
         XCTAssertEqual(reveal.me, 1)
         XCTAssertEqual(reveal.rolls, 0)
@@ -219,7 +219,7 @@ final class BridgeKernelTests: XCTestCase {
         XCTAssertEqual(up.image.width, up.shot.w)
         XCTAssertNotEqual(Self.bytes(down.image), Self.bytes(up.image), "the cups lift with the LIFT beat")
 
-        let table = try XCTUnwrap(stage.begin(.table, drawer: drawer, scale: 3, roll: true), "the next round's table")
+        let table = try XCTUnwrap(stage.begin(.table, drawer: drawer, scale: 3), "the next round's table")
         XCTAssertEqual(table.rolls, 1)
         XCTAssertGreaterThan(table.rollAtMs, 0, "the roll waits for the SHAKE beat")
         XCTAssertGreaterThan(table.restMs, table.rollAtMs)
@@ -235,7 +235,7 @@ final class BridgeKernelTests: XCTestCase {
         let again = try XCTUnwrap(stage.frame(atMs: table.totalMs, peek: 1), "a purged stage draws again")
         XCTAssertEqual(Self.bytes(again.image), Self.bytes(still.image), "the same picture after a purge")
 
-        _ = try XCTUnwrap(stage.begin(.bubble, drawer: .zero, scale: 3, roll: false))
+        _ = try XCTUnwrap(stage.begin(.bubble, drawer: .zero, scale: 3))
         let bubble = try XCTUnwrap(stage.frame(atMs: 0, peek: 0))
         XCTAssertEqual([bubble.shot.w, bubble.shot.h], [600, 390], "300 by 195 points at 2x")
         stage.purge()
@@ -265,10 +265,10 @@ final class BridgeKernelTests: XCTestCase {
         XCTAssertEqual(ann.adoptBubble(start), 0)
 
         let drawer = CGSize(width: 390, height: 340)
-        _ = try XCTUnwrap(stage.begin(.table, drawer: drawer, scale: 3, roll: false))
+        _ = try XCTUnwrap(stage.begin(.table, drawer: drawer, scale: 3))
         _ = try XCTUnwrap(stage.frame(atMs: 0, peek: 0), "the stage is up")
         stage.purge()
-        let hud = try XCTUnwrap(stage.begin(.table, drawer: drawer, scale: 3, roll: false))
+        let hud = try XCTUnwrap(stage.begin(.table, drawer: drawer, scale: 3))
         XCTAssertFalse(stage.holdsArena, "a begin takes no arena")
         let before = try XCTUnwrap(stage.frame(atMs: hud.totalMs, peek: 0.5))
         XCTAssertTrue(stage.holdsArena, "a frame does")
@@ -292,6 +292,94 @@ final class BridgeKernelTests: XCTestCase {
         stage.purge()
     }
 
+    /// THE THROW ONCE A PHONE (chuiniu/c/docs_pkgX.md): each phone sees each
+    /// round's throw at most once, and the kernel keeps what it watched in the
+    /// phone's stored seat records. A new BridgeKernel on the phone's store is
+    /// the extension launched again (it loads only what was stored).
+    func testARoundsThrowPlaysOncePerPhoneAcrossLaunches() throws {
+        var ann = phone("Ann")
+        XCTAssertTrue(ann.newGame(dm: true, seed: Self.seed))
+        XCTAssertFalse(ann.table.rollPending, "a lobby throws nothing")
+        let lobby = try XCTUnwrap(ann.stagedURL())
+        var ben = phone("Ben")
+        XCTAssertEqual(ben.adoptBubble(lobby), 0)
+        XCTAssertTrue(ben.join(name: "Ben"))
+        let start = try XCTUnwrap(ben.stagedURL())
+        let stage = KernelSeam.stage()
+        let drawer = CGSize(width: 390, height: 718)
+
+        // the game starts: Ann's first look throws
+        ann = phone("Ann")
+        XCTAssertEqual(ann.adoptBubble(start), 0)
+        XCTAssertTrue(ann.table.rollPending, "the start's round is pending on Ann's phone")
+        XCTAssertEqual(try XCTUnwrap(stage.begin(.table, drawer: drawer, scale: 3)).rolls, 1, "the kernel throws it")
+
+        // the drawer closed mid-throw: never reported, so it plays again
+        ann = phone("Ann")
+        XCTAssertEqual(ann.adoptBubble(start), 0)
+        XCTAssertTrue(ann.table.rollPending, "a throw cut off plays again")
+
+        // watched to its end: never again, in this launch or the next
+        let host = ChuiniuHost(kernel: ann)
+        host.rollSeen(host.table.rollID)
+        XCTAssertFalse(host.table.rollPending, "watched: the host's model reads it back")
+        XCTAssertEqual(try XCTUnwrap(stage.begin(.table, drawer: drawer, scale: 3)).rolls, 0, "and the table begins still")
+        ann = phone("Ann")
+        XCTAssertEqual(ann.adoptBubble(start), 0)
+        XCTAssertFalse(ann.table.rollPending, "launched again: the store kept it")
+        XCTAssertEqual(try XCTUnwrap(stage.begin(.table, drawer: drawer, scale: 3)).rolls, 0)
+
+        // Ben's phone keeps its own
+        ben = phone("Ben")
+        XCTAssertEqual(ben.adoptBubble(start), 0)
+        XCTAssertTrue(ben.table.rollPending, "Ben has not watched it")
+        ben.rollSeen(rollID: ben.table.rollID)
+
+        // a bid arriving mid-round throws nothing
+        ann = phone("Ann")
+        XCTAssertEqual(ann.adoptBubble(start), 0)
+        XCTAssertTrue(ann.raise(quantity: 2, face: 4))
+        let raise = try XCTUnwrap(ann.stagedURL())
+        ann.sent(raise)
+        ben = phone("Ben")
+        XCTAssertEqual(ben.adoptBubble(raise), 0)
+        XCTAssertFalse(ben.table.rollPending, "the bid: no throw")
+
+        // a call starts a new round: pending again, on each phone
+        XCTAssertTrue(ben.call())
+        let call = try XCTUnwrap(ben.stagedURL())
+        ben.sent(call)
+        XCTAssertEqual(ben.table.phase, .revealed)
+        XCTAssertTrue(ben.table.rollPending, "the next round's throw is pending")
+        XCTAssertEqual(try XCTUnwrap(stage.begin(.reveal, drawer: drawer, scale: 3)).rolls, 0, "the reveal throws nothing")
+        ann = phone("Ann")
+        XCTAssertEqual(ann.adoptBubble(call), 0)
+        XCTAssertTrue(ann.table.rollPending, "and on Ann's")
+        let round2 = ann.table.rollID
+        ann.rollSeen(rollID: round2 - 1)
+        XCTAssertTrue(ann.table.rollPending, "the past round's report watches nothing new")
+        ann.rollSeen(rollID: round2)
+        ann = phone("Ann")
+        XCTAssertEqual(ann.adoptBubble(call), 0)
+        XCTAssertFalse(ann.table.rollPending, "watched, and kept")
+
+        // the first form of the store (no mark, 17 bytes a game): Ann's seat is
+        // still hers and nothing in it is watched. The layout is cn_msg.h's
+        // (CN_REC_MAGIC_LEN 8, CN_REC_LEN 18, CN_REC_LEN_V1 17).
+        let store = try XCTUnwrap(stores["Ann"])
+        let key = "chuiniu.seats.v1"
+        let now = [UInt8](try XCTUnwrap(store.data(forKey: key)))
+        XCTAssertEqual((now.count - 8) % 18, 0, "the stored form")
+        var first: [UInt8] = []
+        for i in stride(from: 8, to: now.count, by: 18) { first += now[i..<(i + 17)] }
+        store.set(Data(first), forKey: key)
+        ann = phone("Ann")
+        XCTAssertEqual(ann.adoptBubble(call), 0)
+        XCTAssertEqual(ann.table.me, 0, "the first form keeps Ann's seat")
+        XCTAssertTrue(ann.table.rollPending, "and has watched nothing")
+        stage.purge()
+    }
+
     private static func bytes(_ image: CGImage) -> Data { (image.dataProvider?.data as Data?) ?? Data() }
 }
 
@@ -301,8 +389,8 @@ private final class SpyStage: TableStage {
     private let real: TableStage
     private(set) var bubbles = 0
     init(_ real: TableStage) { self.real = real }
-    func begin(_ screen: StageScreen, drawer: CGSize, scale: CGFloat, roll: Bool) -> CnStageHudSnap? {
-        real.begin(screen, drawer: drawer, scale: scale, roll: roll)
+    func begin(_ screen: StageScreen, drawer: CGSize, scale: CGFloat) -> CnStageHudSnap? {
+        real.begin(screen, drawer: drawer, scale: scale)
     }
     func frame(atMs ms: Int, peek: Double) -> StageFrame? { real.frame(atMs: ms, peek: peek) }
     func submit(atMs ms: Int, peek: Double, then done: @escaping @MainActor (StageFrame?) -> Void) { real.submit(atMs: ms, peek: peek, then: done) }

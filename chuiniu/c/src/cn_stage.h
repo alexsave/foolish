@@ -148,6 +148,9 @@ typedef struct {
     float    ca[16];                    /* CATransform3D about the origin, m11 .. m44          */
     float    ca_screen[16];             /* the same about the drawer's (0, 0)                  */
     float    hom[9];                    /* the homography, row-major                          */
+    float    planks[4];                 /* the planks' layer, flat, x y w h: its turn covers the
+                                           drawer and CN_CAM_REACH past each side (cn_cam_planks;
+                                           0 0 0 0 for none)                                  */
     float    peek_target;               /* my cup's full tip, radians                         */
     float    scale_still, scale_roll;   /* the scales asked for, clamped                      */
     uint32_t roll_at_ms;                /* when the roll starts                               */

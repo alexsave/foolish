@@ -56,10 +56,14 @@ void cn_api_nickname(const uint8_t *name, int n);
 /* CN_NAME_OK 0, EMPTY 1, TOO_LONG 2 (16 characters, 48 bytes), BAD 3. */
 int  cn_api_name_verdict(const uint8_t *name, int n);
 
-/* THIS DEVICE'S SEAT RECORDS: fixed-layout bytes the host keeps in the App
- * Group and hands back unread. Load once at launch, save whenever dirty. At
- * most CN_API_REC_BYTES (17 bytes a game, the newest 256 games). */
-#define CN_API_REC_BYTES 4352
+/* THIS DEVICE'S SEAT RECORDS: fixed-layout bytes the host keeps in the
+ * extension's defaults and hands back unread. Load once at launch, save
+ * whenever dirty (after every call that can dirty them: a read, an adopt, a
+ * lobby action, cn_api_roll_seen). At most CN_API_REC_BYTES: an 8-byte mark,
+ * then 18 bytes a game for the newest 256 games (the seat's tag, and the
+ * newest round whose throw this phone has watched). The first form, with no
+ * mark and 17 bytes a game, still loads, every round in it unwatched. */
+#define CN_API_REC_BYTES 4616
 void cn_api_seats_load(const uint8_t *bytes, int n);
 int  cn_api_seats_dirty(void);
 int  cn_api_seats_save(uint8_t *out, int cap);    /* length, or -1; clears dirty */
@@ -188,7 +192,7 @@ int  cn_api_string(int key, char *out, int cap);       /* one table entry by CN_
 #define CN_API_W_TABLE           8   /* "14 dice on the table"                             */
 #define CN_API_W_REVEAL_COUNT    9   /* the newest call's count: "There were five"         */
 #define CN_API_W_LOBBY_ROW      10   /* arg: seat. "2. Bo", or "2. Bo (You)" for mine      */
-#define CN_API_W_INVITE         11   /* arg: seat. "Alex wants a game of Chui Niu. Tap to join" */
+#define CN_API_W_INVITE         11   /* arg: seat. "Alex wants a game of Chui Niu" */
 #define CN_API_W_JOINED         12   /* arg: seat. "Bo joined"                             */
 #define CN_API_W_LEFT           13   /* arg: seat. "Bo left" (before cn_api_leave)          */
 #define CN_API_W_ERROR          14   /* arg: a negative CN_E*. Why a link did not read     */
@@ -196,6 +200,26 @@ int  cn_api_string(int key, char *out, int cap);       /* one table entry by CN_
 #define CN_API_W_RULE           16   /* arg: 0..5                                          */
 #define CN_API_W_COUNT          17
 int  cn_api_words(int what, int arg, char *out, int cap);
+
+/* THE BUBBLE'S ONE LINE (cn_say.h, docs_pkgY.md), for a host test that holds
+ * the kernel's captions against the real font: the caption a seat named
+ * `who` gets for one act, from the composer every staged caption comes
+ * from, with the bid (q, f) where the act has one; the kernel's width bound
+ * of a line, in units (cn_api_caption_unit() a point); and the budget no
+ * caption passes. */
+#define CN_API_P_START   0   /* "Dice rolled. Alex bids first"                     */
+#define CN_API_P_BID     1   /* "Alex bid four 3s"                                 */
+#define CN_API_P_CALL    2   /* "Bo calls four 3s"                                 */
+#define CN_API_P_INVITE  3   /* "Alex wants a game of Chui Niu"                    */
+#define CN_API_P_JOINED  4
+#define CN_API_P_LEFT    5
+/* and the words the bubble's PLATE carries, one line too (`who` unread) */
+#define CN_API_P_PLATE_BID 6 /* the bid on the plate: "four 3s"                    */
+#define CN_API_P_TALLY   7   /* q: the count at a reveal. "There were twelve"      */
+int  cn_api_caption_probe(int what, const char *who, int q, int f, char *out, int cap);
+int  cn_api_caption_width(const char *line);
+int  cn_api_caption_budget(void);
+int  cn_api_caption_unit(void);
 
 /* ---- two messages -------------------------------------------------------------- */
 
@@ -232,8 +256,8 @@ int  cn_api_common(const char *a, const char *b);
  * HUD's ca); the plate and the shelf stay flat.
  *
  * THE CLOCK is the one cn_api_beats_frame is sampled on: a reveal's cups lift
- * with the current plan's LIFT beat, and a table begun with `roll` throws from
- * the plan's SHAKE beat (from 0 when the plan has none). Stage nothing before
+ * with the current plan's LIFT beat, and a table whose round is pending
+ * throws from the plan's SHAKE beat (from 0 when the plan has none). Stage nothing before
  * the HUD's rest_ms (my dice at rest). */
 
 /* The pack, no memory. 0, or a negative CN_TEX_E*. */
@@ -245,13 +269,28 @@ int  cn_api_stage_attach(void *arena, size_t bytes);
  * frames draw nothing until cn_api_stage_attach gives one back, and then the
  * same bytes as before. */
 void cn_api_stage_purge(void);
+/* THE THROW PLAYS ONCE A PHONE A ROUND: a table throws its round while the
+ * round is pending on this phone, that is until the host reports the throw
+ * watched to its end with cn_api_roll_seen(round), `round` being the
+ * CnView.round it was begun for. The report is kept in the game's seat
+ * record, so it outlives the extension: a new launch, a bid arriving, the
+ * drawer resized or the bubble drawn never throw a watched round again. A
+ * throw cut off before its end (the drawer closed mid-throw) was not watched
+ * and plays again, from its start. A reveal throws nothing (its dice lie
+ * where the called round's throw left them).
+ * 1 pending, 0 not (no game, no seat, a finished game, watched). */
+int  cn_api_roll_pending(void);
+/* Round `round`'s throw ran to its end on this phone (under Reduce Motion:
+ * it was shown at rest). 1 if the record changed (the records are dirty:
+ * save them), 0 if not (already watched, a round not dealt yet, no seat). */
+int  cn_api_roll_seen(int round);
 /* Begin a screen of the resident game for me: CN_STAGE_TABLE (the committed
- * round; `roll` 1 throws it), CN_STAGE_REVEAL (the newest call's dice where
+ * round, thrown while cn_api_roll_pending), CN_STAGE_REVEAL (the newest call's dice where
  * that round's throw left them) or CN_STAGE_BUBBLE (300 by 195). The drawer is
  * w by h points, the device `scale` pixels a point (clamped: 1.5 while a throw
  * moves, 2 still). CnStageHud, or NULL (no game, no seat, no call to reveal, a
  * finished game's table). */
-const void *cn_api_stage_begin(int kind, float w, float h, float scale, int roll);
+const void *cn_api_stage_begin(int kind, float w, float h, float scale);
 /* The frame at now_ms with my cup tipped `peek` (0 shut .. 1 the HUD's
  * peek_target; ease it with cn_api_peek_ease over CN_PEEK_MS). 1, or 0 when
  * nothing can be drawn. */

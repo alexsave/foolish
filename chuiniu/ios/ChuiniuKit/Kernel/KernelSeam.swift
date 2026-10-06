@@ -152,16 +152,22 @@ public struct TableModel: Equatable, Sendable {
     public var menu: Menu?
     /// The lobby's control for this phone.
     public var offered: LobbyOffer
-    /// Changes when the round's dice change, so the roll plays once per
-    /// round. An identity, not a number anything is computed from.
+    /// Changes when the round's dice change: which round's throw a table
+    /// shows, handed back in `Kernel.rollSeen`. An identity, not a number
+    /// anything is computed from.
     public var rollID: Int
+    /// This round's throw has not been watched to its end on this phone
+    /// (cn_api_roll_pending): the table throws it. The kernel keeps what each
+    /// phone watched in its seat records, so a new launch of the extension
+    /// never throws a watched round again.
+    public var rollPending: Bool
     /// The winner, when over.
     public var winner: Int?
 
     public init(phase: Phase, seats: [SeatModel], me: Int?, myDice: [Int], bid: Bid?, bidText: String,
                 bidder: Int?, stagedBid: Bid? = nil, stagedBidText: String = "", reveal: Reveal?,
                 caption: String, bubbleCaption: String, menu: Menu?, offered: LobbyOffer, rollID: Int,
-                winner: Int?) {
+                rollPending: Bool = false, winner: Int?) {
         self.phase = phase
         self.seats = seats
         self.me = me
@@ -177,6 +183,7 @@ public struct TableModel: Equatable, Sendable {
         self.menu = menu
         self.offered = offered
         self.rollID = rollID
+        self.rollPending = rollPending
         self.winner = winner
     }
 
@@ -267,6 +274,11 @@ public protocol Kernel: AnyObject {
     func sameGame(_ a: URL, _ b: URL) -> Bool
     /// `a` is later in the game than `b` (the kernel's ranking).
     func isNewer(_ a: URL, than b: URL) -> Bool
+    /// The throw of the round `rollID` names (`TableModel.rollID`) ran to its
+    /// end on this phone (or was shown at rest under Reduce Motion): the
+    /// kernel records it in the game's seat record, stored at once, and the
+    /// round is no longer `rollPending`, in this launch or any later one.
+    func rollSeen(rollID: Int)
 }
 
 // MARK: the stage: the table's pixels, drawn by the kernel (cn_stage.h)
@@ -305,12 +317,14 @@ public struct BubbleFrame {
 /// table never hold two.
 @MainActor
 public protocol TableStage: AnyObject {
-    /// Begin `screen` for a drawer of `drawer` points on a `scale` device;
-    /// `roll` throws the round from the current plan's SHAKE beat. nil when
-    /// the kernel has nothing to draw (or the readers are stale). `drawer` is
+    /// Begin `screen` for a drawer of `drawer` points on a `scale` device. A
+    /// table throws its round from the current plan's SHAKE beat when the
+    /// kernel says the round's throw is pending on this phone
+    /// (`TableModel.rollPending`); the host never decides it. nil when the
+    /// kernel has nothing to draw (or the readers are stale). `drawer` is
     /// the drawer as the host measured it (the hosting view's bounds), never
     /// a constant: the kernel lays the table out for it (cn_lay).
-    func begin(_ screen: StageScreen, drawer: CGSize, scale: CGFloat, roll: Bool) -> CnStageHudSnap?
+    func begin(_ screen: StageScreen, drawer: CGSize, scale: CGFloat) -> CnStageHudSnap?
     /// The frame `ms` into the plan's clock, my cup tipped `peek` of its full
     /// tip; drawn in CN_STAGE_BANDS bands over the cores, now (the caller
     /// waits, behind any frame in flight). nil when nothing could be drawn.

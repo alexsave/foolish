@@ -15,7 +15,7 @@
 
 /* The host's numbers against the kernel's, held together by the compiler. */
 _Static_assert(CN_API_TEXT_MAX >= CN_MSG_MAX_TEXT, "the longest link fits the host buffer");
-_Static_assert(CN_API_REC_BYTES == CN_REC_BYTES, "the seat records");
+_Static_assert(CN_API_REC_BYTES == CN_REC_FILE_BYTES, "the seat records, stored");
 _Static_assert(CN_API_SPECTATOR == CN_VIEW_SPECTATOR && CN_API_ALL == CN_VIEW_ALL, "viewers");
 _Static_assert(CN_API_ME != CN_VIEW_SPECTATOR && CN_API_ME != CN_VIEW_ALL && CN_API_ME < 0, "CN_API_ME is its own viewer");
 _Static_assert(CN_API_EVENTS >= CN_EVENTS_PER_MOVE + 1, "one move's plan fits");
@@ -84,11 +84,7 @@ int cn_api_name_verdict(const uint8_t *name, int n) { return msg_seat_name_verdi
 
 void cn_api_seats_load(const uint8_t *bytes, int n)
 {
-    if (!bytes || n < 0) n = 0;
-    if (n > CN_REC_BYTES) n = CN_REC_BYTES;
-    n -= n % CN_REC_LEN;
-    if (n) memcpy(S.rec, bytes, (size_t)n);
-    S.rec_n = n;
+    S.rec_n = cn_rec_load(S.rec, bytes, n);
     S.rec_dirty = 0;
 }
 
@@ -96,10 +92,9 @@ int cn_api_seats_dirty(void) { return S.rec_dirty; }
 
 int cn_api_seats_save(uint8_t *out, int cap)
 {
-    if (!out || cap < S.rec_n) return -1;
-    memcpy(out, S.rec, (size_t)S.rec_n);
-    S.rec_dirty = 0;
-    return S.rec_n;
+    int n = cn_rec_save(S.rec, S.rec_n, out, cap);
+    if (n >= 0) S.rec_dirty = 0;
+    return n;
 }
 
 /* ---- the resident ----------------------------------------------------------- */
@@ -515,6 +510,31 @@ int cn_api_words(int what, int arg, char *out, int cap)
     }
 }
 
+int cn_api_caption_probe(int what, const char *who, int q, int f, char *out, int cap)
+{
+    if (!out || cap < 1 || !who) return -1;
+    const char *names[CN_MAX_SEATS] = { who };
+    CnEvent ev;
+    memset(&ev, 0, sizeof ev);
+    switch (what) {
+    case CN_API_P_START:  ev.kind = CN_EV_ROUND; break;
+    case CN_API_P_BID:    ev.kind = CN_EV_BID;  ev.q = (uint8_t)q; ev.f = (uint8_t)f; ev.move = 1; break;
+    case CN_API_P_CALL:   ev.kind = CN_EV_CALL; ev.q = (uint8_t)q; ev.f = (uint8_t)f; ev.move = 1; break;
+    case CN_API_P_INVITE: return cn_say_lobby_caption(CN_SAY_INVITE, who, out, cap);
+    case CN_API_P_JOINED: return cn_say_lobby_caption(CN_SAY_JOINED, who, out, cap);
+    case CN_API_P_LEFT:   return cn_say_lobby_caption(CN_SAY_LEFT, who, out, cap);
+    case CN_API_P_PLATE_BID: return cn_say_bid(q, f, 0, out, cap);
+    case CN_API_P_TALLY:  return cn_say_tally(q, out, cap);
+    default:              return -1;
+    }
+    if (ev.kind != CN_EV_ROUND && (q < 1 || q > CN_MAX_DICE || f < 1 || f > CN_FACES)) return -1;
+    return cn_say_caption_of(&ev, 1, names, out, cap);
+}
+
+int cn_api_caption_width(const char *line) { return cn_cap_width(line); }
+int cn_api_caption_budget(void) { return CN_CAP_BUDGET; }
+int cn_api_caption_unit(void) { return CN_CAP_UNIT; }
+
 /* ---- two messages ------------------------------------------------------------------------ */
 
 int cn_api_prefer(const char *mine, const char *tapped)
@@ -561,11 +581,34 @@ static int beat_of(int kind)
     return -1;
 }
 
+/* ---- the throw: once a phone a round ------------------------------------------------
+ *
+ * A round's throw plays on this phone until it has been watched to its end,
+ * and never again: the game's record keeps the newest round watched, so a new
+ * launch of the extension, a bid arriving or the drawer changing size does
+ * not throw it again. A throw cut off before its end was not watched. */
+static int roll_pending(void)
+{
+    if (!started() || S.me < 0 || S.m.game.phase == CN_PH_OVER) return 0;
+    return cn_rec_seen(S.rec, S.rec_n, &S.m) <= S.m.game.round;
+}
+
+int cn_api_roll_pending(void) { return roll_pending(); }
+
+int cn_api_roll_seen(int round)
+{
+    if (!started() || S.me < 0 || round < 0 || round > S.m.game.round) return 0;
+    if (!cn_rec_see(S.rec, S.rec_n, &S.m, round + 1)) return 0;
+    S.rec_dirty = 1;
+    return 1;
+}
+
 /* THE STAGE'S INPUT IS THE RESIDENT GAME'S (I22): the host names the screen,
  * the kernel fills the table. My dice are the view's (sorted, so the HUD's die
  * places line up with CnView.my_dice and shown), a reveal's are the newest
- * call's, and the throw's seed is the round's. */
-const void *cn_api_stage_begin(int kind, float w, float h, float scale, int roll)
+ * call's, and the throw's seed is the round's. A table throws while its round
+ * is pending (cn_api_roll_pending): the kernel's call, never the host's. */
+const void *cn_api_stage_begin(int kind, float w, float h, float scale)
 {
     if (!stage_inited || !started() || S.me < 0) return 0;
     const CnGame *g = &S.m.game;
@@ -597,7 +640,7 @@ const void *cn_api_stage_begin(int kind, float w, float h, float scale, int roll
         if (kind == CN_STAGE_TABLE) {
             memcpy(&in.faces[S.me * CN_STAGE_DICE], v.my_dice, v.my_n);
             in.known_mask = (uint8_t)(1 << S.me);
-            if (roll) { int b = beat_of(CN_BK_SHAKE); in.roll_at_ms = b >= 0 ? S.beats.beat[b].start_ms : 0; }
+            if (roll_pending()) { int b = beat_of(CN_BK_SHAKE); in.roll_at_ms = b >= 0 ? S.beats.beat[b].start_ms : 0; }
         }
     }
     in.seed = cn_stage_round_seed(g->seed, round < 0 ? 0 : round);
