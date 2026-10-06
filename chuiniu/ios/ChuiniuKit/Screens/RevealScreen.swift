@@ -74,6 +74,17 @@ public struct RevealScreen: View {
 
     static let settled = RevealMotion(cupsUp: true, lit: .max, done: true)
 
+    /// The outcome line with the kernel's clauses set apart where the line
+    /// says them (the last place each is found): the loser's in blood, the
+    /// winner's in the glow. A clause the line does not hold is left alone.
+    static func styled(_ line: String, loss: String, win: String) -> AttributedString {
+        var a = AttributedString(line)
+        for (clause, ink) in [(loss, Ink.blood), (win, Ink.glow)] where !clause.isEmpty {
+            if let r = a.range(of: clause, options: .backwards) { a[r].foregroundColor = ink }
+        }
+        return a
+    }
+
     private func begin(_ r: StageRequest) {
         director.reduceMotion = reduceMotion
         let kernel = host.kernel
@@ -98,25 +109,16 @@ public struct RevealScreen: View {
         }
         if motion.done {
             let shelf = hud.shelfRect ?? CGRect(x: 0, y: hud.h - 50, width: hud.w, height: 50)
-            if let p = hud.plateRect, hud.shortBoard == 0 {
-                // a tall board: the tally on the plate at the plate's place,
-                // the outcome line under it on the planks (my name sits just
-                // over the shelf, where a line there would cover it)
-                BidPlate(text: r.tally, face: r.bid.face).at(p)
-                outcome(t, r)
-                    .frame(maxWidth: max(0, hud.w - 32))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(width: hud.w, height: 120, alignment: .top)
-                    .position(x: hud.w / 2, y: p.maxY + 8 + 60)
-            } else {
-                if let p = hud.plateRect { BidPlate(text: r.tally, face: r.bid.face).at(p) }
-                let above = max(0, shelf.minY - 6)
-                outcome(t, r)
-                    .frame(maxWidth: max(0, hud.w - 32))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(width: hud.w, height: above, alignment: .bottom)
-                    .position(x: hud.w / 2, y: above / 2)
-            }
+            // the tally on the plate, the outcome line at the top of its room
+            // (the kernel's: under the tall list's last row, over the shelf on
+            // a short board), the seats' rows clear of both
+            if let p = hud.plateRect { BidPlate(text: r.tally, face: r.bid.face).at(p) }
+            let o = hud.outcomeRect ?? CGRect(x: 0, y: max(0, shelf.minY - 54), width: hud.w, height: 48)
+            outcome(r)
+                .frame(maxWidth: max(0, o.width - 32))
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(width: o.width, height: o.height, alignment: .top)
+                .position(x: o.midX, y: o.midY)
             if t.phase == .revealed, r.nextAllowed {
                 // Next round is a step on, not a move: the quiet plate (the study's reveal)
                 PlankButton(title: host.word(.nextRound), kind: .quiet, seed: 9) { host.nextRound() }
@@ -128,18 +130,12 @@ public struct RevealScreen: View {
     }
 
     /// The kernel's outcome line (`.t-out`: the roman at 15.5 on the planks),
-    /// and at the end its line for the winner, in the glow.
-    private func outcome(_ t: TableModel, _ r: Reveal) -> some View {
-        VStack(spacing: 4) {
-            Text(r.outcome)
-                .font(FType.serif(15.5))
-                .onPlanks()
-            if !t.caption.isEmpty, t.phase == .over {
-                Text(t.caption)
-                    .font(FType.serif(15.5))
-                    .onPlanks(Ink.glow)
-            }
-        }
+    /// the loser's clause in blood and at the end the winner's in the glow,
+    /// as the study sets them (`.t-out b`).
+    private func outcome(_ r: Reveal) -> some View {
+        Text(Self.styled(r.outcome, loss: r.outcomeLoss, win: r.outcomeWin))
+            .font(FType.serif(15.5))
+            .onPlanks()
         .multilineTextAlignment(.center)
         .lineLimit(3)
         .padding(.horizontal, 12)

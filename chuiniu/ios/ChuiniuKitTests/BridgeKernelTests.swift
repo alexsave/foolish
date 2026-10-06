@@ -208,12 +208,27 @@ final class BridgeKernelTests: XCTestCase {
         XCTAssertEqual(reveal.me, 1)
         XCTAssertEqual(reveal.rolls, 0)
         XCTAssertEqual(reveal.dieX.filter { $0 != 0 }.count, 10, "every shown die has its place on the glass")
-        // the counting rings are the HUD's brass rings: past a die's corners, inside half the dice's spacing
-        for s in 0..<reveal.seats {
-            XCTAssertEqual(Rings.radius(reveal, seat: s), reveal.brassR[s], "seat \(s): the ring is the kernel's")
-            XCTAssertGreaterThan(Rings.radius(reveal, seat: s), reveal.dieD[s] * 0.71, "seat \(s): past the die's corners")
-            XCTAssertLessThan(Rings.radius(reveal, seat: s), reveal.dieD[s] * 0.85, "seat \(s): inside half the spacing")
+        // the counting glow is each die's face, the HUD's: four corners round the die's place on the glass
+        for s in 0..<Int(reveal.seats) {
+            let shown = reveal.dieX[(s * Int(CN_STAGE_DICE))..<(s * Int(CN_STAGE_DICE) + Int(CN_STAGE_DICE))].filter { $0 != 0 }.count
+            for k in 0..<Int(CN_STAGE_DICE) {
+                let q = Rings.face(reveal, seat: s, die: k)
+                XCTAssertEqual(q != nil, k < shown, "seat \(s) die \(k): a face exactly where a die is shown")
+                guard let q else { continue }
+                let i = s * Int(CN_STAGE_DICE) + k
+                let c = CGPoint(x: q.map(\.x).reduce(0, +) / 4, y: q.map(\.y).reduce(0, +) / 4)
+                XCTAssertLessThan(hypot(c.x - reveal.dieX[i], c.y - reveal.dieY[i]), reveal.dieD[s], "seat \(s) die \(k): the face is the die's")
+                let w = q.indices.map { hypot(q[($0 + 1) % 4].x - q[$0].x, q[($0 + 1) % 4].y - q[$0].y) }.max() ?? 0
+                XCTAssertGreaterThan(w, reveal.dieD[s], "seat \(s) die \(k): the face grown past the die's side")
+            }
         }
+        // the outcome's loser's clause is in the line, set in blood there
+        let r = try XCTUnwrap(ben.table.reveal)
+        XCTAssertFalse(r.outcomeLoss.isEmpty)
+        XCTAssertTrue(r.outcome.hasSuffix(r.outcomeLoss), "\(r.outcome) ends with \(r.outcomeLoss)")
+        let styled = RevealScreen.styled(r.outcome, loss: r.outcomeLoss, win: r.outcomeWin)
+        let blood = styled.runs.filter { $0.foregroundColor == Ink.blood }.map { String(styled[$0.range].characters) }
+        XCTAssertEqual(blood, [r.outcomeLoss], "the loser's clause alone in blood")
         let down = try XCTUnwrap(stage.frame(atMs: 0, peek: 0))
         let up = try XCTUnwrap(stage.frame(atMs: 60_000, peek: 0))
         XCTAssertEqual(up.image.width, up.shot.w)

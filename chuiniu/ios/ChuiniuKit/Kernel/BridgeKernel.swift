@@ -298,7 +298,8 @@ public final class BridgeKernel: Kernel {
             reveal = Reveal(dice: dice, counts: counts, bid: Bid(quantity: v.callQ, face: v.callF),
                             tally: line(CN_API_W_REVEAL_COUNT), outcome: line(CN_API_W_OUTCOME),
                             loser: v.callLoser,
-                            nextAllowed: v.phase == CN_PH_REVEALED && me != nil && v.myDice.count > 0)
+                            nextAllowed: v.phase == CN_PH_REVEALED && me != nil && v.myDice.count > 0,
+                            outcomeLoss: line(CN_API_W_OUTCOME_LOSS), outcomeWin: line(CN_API_W_OUTCOME_WIN))
         }
 
         let staged = t.staged == CN_API_STAGED_BID ? Bid(quantity: t.stagedQ, face: t.stagedF) : nil

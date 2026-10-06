@@ -96,6 +96,11 @@ public struct Reveal: Equatable, Sendable {
     /// The kernel's outcome line, once the call is sent (K8): "Bo calls. Four
     /// 3s was true, Bo loses a die".
     public var outcome: String
+    /// The outcome's loser's clause as the line says it ("Bo loses a die"),
+    /// set in blood where it is found in the line; and its winner's ("Alex
+    /// wins", "" before the end), in the glow (the study's `.t-out b`).
+    public var outcomeLoss: String
+    public var outcomeWin: String
     /// The seat that loses a die.
     public var loser: Int
     /// This phone may go on to the next round's table (its own new dice,
@@ -103,12 +108,14 @@ public struct Reveal: Equatable, Sendable {
     public var nextAllowed: Bool
 
     public init(dice: [[Int]], counts: [[Bool]], bid: Bid, tally: String, outcome: String, loser: Int,
-                nextAllowed: Bool) {
+                nextAllowed: Bool, outcomeLoss: String = "", outcomeWin: String = "") {
         self.dice = dice
         self.counts = counts
         self.bid = bid
         self.tally = tally
         self.outcome = outcome
+        self.outcomeLoss = outcomeLoss
+        self.outcomeWin = outcomeWin
         self.loser = loser
         self.nextAllowed = nextAllowed
     }
