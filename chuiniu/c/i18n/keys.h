@@ -19,7 +19,7 @@
  * PLACEHOLDERS: {who} {loser} a seat's name from the roster; {bid} a
  * BID_ONE / BID_MANY phrase (sentence-initial where the template starts
  * with it); {qty} a NUM_ word or a number; {face} a face digit; {n} a
- * number; {game} GAME_NAME.
+ * number; {game} GAME_NAME; {loss} CAP_LOSES composed.
  *
  * No em dashes or en dashes, and no line ends in a full stop
  * (tests/cn_say_test.c refuses both). */
@@ -66,6 +66,8 @@
     /* the outcome of a call, a screen line once it is sent (K8)            */ \
     X(CAP_CALL_TRUE,       0, 0)  /* the bid stood; the caller loses a die    */ \
     X(CAP_CALL_FALSE,      0, 0)  /* the bid fell; the bidder loses a die     */ \
+    X(CAP_LOSES,           0, 0)  /* "Bo loses a die": {loss} in the two above,
+                                     set apart on the screen (in blood)     */ \
     X(CAP_OUT,             0, 0)  /* "Bo is out"                              */ \
     X(CAP_WINS,            0, 0)  /* "Alex wins"                              */ \
     X(CAP_JOIN,            4, 0)  /* ". " between two clauses                 */ \

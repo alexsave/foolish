@@ -135,3 +135,7 @@ Its rows are in `chuiniu/c/docs_pkgN.md`, "Tests, each seen red".
 ## Package Q (the crown count in lining figures)
 
 Its rows are in `chuiniu/c/docs_pkgQ.md`, "Tests, each seen red".
+
+## Package S (the verifier's findings)
+
+Its rows are in `chuiniu/c/docs_pkgS.md`, "Tests, each seen red".

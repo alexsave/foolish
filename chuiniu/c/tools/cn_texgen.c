@@ -142,7 +142,8 @@ static void tg_bake(int w, int h, void (*fn)(double, double, double *), uint8_t 
  * read bilinearly, as a browser shows the study's canvas on a 2x screen, and every other pass is
  * evaluated at the finer texel. Uses libm's cos (the march's chaotic map) and atan2 (the nail). */
 #include <math.h>
-enum { TG_PLANK_W = 86, TG_PLANKS = 6, TG_TILE_W = TG_PLANK_W * TG_PLANKS, TG_TILE_H = 830 };
+enum { TG_PLANK_W = CN_TEX_PLANK_W, TG_PLANKS = 6, TG_TILE_W = TG_PLANK_W * TG_PLANKS, TG_TILE_H = CN_TEX_PLANK_TILE_H };
+_Static_assert(CN_TEX_PLANK_END_HALF >= .014 * TG_TILE_H, "the end's band, its lit lip with it (tg_planks_px's de < .014)");
 /* the shipped tile's texels a point (cn_planks.jpg is 1032 by 1660) */
 #define CN_TEXGEN_PLANK_SCALE 2
 

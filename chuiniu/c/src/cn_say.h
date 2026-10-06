@@ -80,6 +80,13 @@ int cn_say_caption_of(const CnEvent *ev, int n, const char *const *names, char *
  * every clause, the most important first (K9). "" before the first call. */
 int cn_say_outcome(const CnGame *g, const char *const *names, char *out, int cap);
 int cn_say_outcome_of(const CnEvent *ev, int n, const char *const *names, char *out, int cap);
+/* One clause of that line, as the line says it, for a host to set apart where
+ * it finds it (the study's outcome sets the loser's clause in blood and the
+ * winner's in the glow): CN_SAY_PART_LOSS "Bo loses a die", CN_SAY_PART_WIN
+ * "Alex wins"; "" when the line has none. CN_SAY_PART_ALL is the whole line. */
+enum { CN_SAY_PART_ALL = 0, CN_SAY_PART_LOSS, CN_SAY_PART_WIN };
+int cn_say_outcome_part(const CnGame *g, const char *const *names, int part, char *out, int cap);
+int cn_say_outcome_part_of(const CnEvent *ev, int n, const char *const *names, int part, char *out, int cap);
 
 enum { CN_SAY_INVITE = 0, CN_SAY_JOINED, CN_SAY_LEFT };
 int cn_say_lobby_caption(int which, const char *who, char *out, int cap);

@@ -74,6 +74,17 @@ public struct RevealScreen: View {
 
     static let settled = RevealMotion(cupsUp: true, lit: .max, done: true)
 
+    /// The outcome line with the kernel's clauses set apart where the line
+    /// says them (the last place each is found): the loser's in blood, the
+    /// winner's in the glow. A clause the line does not hold is left alone.
+    static func styled(_ line: String, loss: String, win: String) -> AttributedString {
+        var a = AttributedString(line)
+        for (clause, ink) in [(loss, Ink.blood), (win, Ink.glow)] where !clause.isEmpty {
+            if let r = a.range(of: clause, options: .backwards) { a[r].foregroundColor = ink }
+        }
+        return a
+    }
+
     private func begin(_ r: StageRequest) {
         director.reduceMotion = reduceMotion
         let kernel = host.kernel
@@ -98,25 +109,16 @@ public struct RevealScreen: View {
         }
         if motion.done {
             let shelf = hud.shelfRect ?? CGRect(x: 0, y: hud.h - 50, width: hud.w, height: 50)
-            if let p = hud.plateRect, hud.shortBoard == 0 {
-                // a tall board: the tally on the plate at the plate's place,
-                // the outcome line under it on the planks (my name sits just
-                // over the shelf, where a line there would cover it)
-                BidPlate(text: r.tally, face: r.bid.face).at(p)
-                outcome(t, r)
-                    .frame(maxWidth: max(0, hud.w - 32))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(width: hud.w, height: 120, alignment: .top)
-                    .position(x: hud.w / 2, y: p.maxY + 8 + 60)
-            } else {
-                if let p = hud.plateRect { BidPlate(text: r.tally, face: r.bid.face).at(p) }
-                let above = max(0, shelf.minY - 6)
-                outcome(t, r)
-                    .frame(maxWidth: max(0, hud.w - 32))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(width: hud.w, height: above, alignment: .bottom)
-                    .position(x: hud.w / 2, y: above / 2)
-            }
+            // the tally on the plate, the outcome line at the top of its room
+            // (the kernel's: under the tall list's last row, over the shelf on
+            // a short board), the seats' rows clear of both
+            if let p = hud.plateRect { BidPlate(text: r.tally, face: r.bid.face).at(p) }
+            let o = hud.outcomeRect ?? CGRect(x: 0, y: max(0, shelf.minY - 54), width: hud.w, height: 48)
+            outcome(r)
+                .frame(maxWidth: max(0, o.width - 32))
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(width: o.width, height: o.height, alignment: .top)
+                .position(x: o.midX, y: o.midY)
             if t.phase == .revealed, r.nextAllowed {
                 // Next round is a step on, not a move: the quiet plate (the study's reveal)
                 PlankButton(title: host.word(.nextRound), kind: .quiet, seed: 9) { host.nextRound() }
@@ -128,18 +130,12 @@ public struct RevealScreen: View {
     }
 
     /// The kernel's outcome line (`.t-out`: the roman at 15.5 on the planks),
-    /// and at the end its line for the winner, in the glow.
-    private func outcome(_ t: TableModel, _ r: Reveal) -> some View {
-        VStack(spacing: 4) {
-            Text(r.outcome)
-                .font(FType.serif(15.5))
-                .onPlanks()
-            if !t.caption.isEmpty, t.phase == .over {
-                Text(t.caption)
-                    .font(FType.serif(15.5))
-                    .onPlanks(Ink.glow)
-            }
-        }
+    /// the loser's clause in blood and at the end the winner's in the glow,
+    /// as the study sets them (`.t-out b`).
+    private func outcome(_ r: Reveal) -> some View {
+        Text(Self.styled(r.outcome, loss: r.outcomeLoss, win: r.outcomeWin))
+            .font(FType.serif(15.5))
+            .onPlanks()
         .multilineTextAlignment(.center)
         .lineLimit(3)
         .padding(.horizontal, 12)
@@ -149,40 +145,37 @@ public struct RevealScreen: View {
     }
 }
 
-/// The counting dice's rings in the glow, at each shown die's place on the glass
-/// (the HUD's `die_x`, `die_y`: seat s at s * stride, in `Reveal.dice` order),
-/// each the HUD's brass ring for its seat (`brass_r`: past the die's corners,
-/// inside half the dice's spacing, the kernel's), lit one by one in seat order
-/// as the kernel's COUNT beat says.
+/// The counting dice's glow: each counting die's FACE on the glass (the HUD's
+/// `die_q`: the die's up face, grown by the study's ring gap, its four
+/// corners through the eye and the turn, seat s's die k at (s * 5 + k) * 8,
+/// in `Reveal.dice` order), outlined as the study's `die()` outlines a
+/// counting die's square: the glow blurred, the glow, a pale core, the
+/// corners rounded. Lit one by one in seat order as the kernel's COUNT beat
+/// says. The dice that do not count are drowned in the picture itself (the
+/// kernel's, by the lift).
 struct Rings: View {
     let reveal: Reveal
     let hud: CnStageHudSnap
     let lit: Int
 
     var body: some View {
-        let stride = hud.cupX.isEmpty ? 0 : hud.dieX.count / hud.cupX.count
         Canvas { ctx, _ in
-            guard stride > 0 else { return }
             var ordinal = 0
             for s in reveal.dice.indices where s < hud.seats {
                 let counts = reveal.counts.indices.contains(s) ? reveal.counts[s] : []
-                let pts = reveal.dice[s].indices.compactMap { k -> CGPoint? in
-                    let i = s * stride + k
-                    guard k < stride, hud.dieX.indices.contains(i), hud.dieX[i] != 0 || hud.dieY[i] != 0 else { return nil }
-                    return CGPoint(x: hud.dieX[i], y: hud.dieY[i])
-                }
-                let r = Self.radius(hud, seat: s)
-                for (k, p) in pts.enumerated() where counts.indices.contains(k) && counts[k] {
+                for k in reveal.dice[s].indices where counts.indices.contains(k) && counts[k] {
                     defer { ordinal += 1 }
-                    guard ordinal < lit, r > 0 else { continue }
-                    // the study's counting ring: the glow blurred, the glow, a pale core
-                    let ring = Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r))
+                    guard ordinal < lit, let q = Self.face(hud, seat: s, die: k) else { continue }
+                    let path = Self.rounded(q)
+                    // the study's stroke: .07 of the side, never under 1.5, its core .35 of that
+                    let side = hud.dieD.indices.contains(s) ? hud.dieD[s] : 10
+                    let sw = max(1.5, side * 0.07)
                     ctx.drawLayer { g in
-                        g.addFilter(.blur(radius: 2.2))
-                        g.stroke(ring, with: .color(Ink.glow), lineWidth: 3)
+                        g.addFilter(.blur(radius: max(1.5, side * 0.09)))
+                        g.stroke(path, with: .color(Ink.glow), lineWidth: sw * 1.6)
                     }
-                    ctx.stroke(ring, with: .color(Ink.glow), lineWidth: 2.2)
-                    ctx.stroke(ring, with: .color(Color(hex: 0xE9FFF7).opacity(0.9)), lineWidth: 0.8)
+                    ctx.stroke(path, with: .color(Ink.glow), lineWidth: sw)
+                    ctx.stroke(path, with: .color(Color(hex: 0xE9FFF7).opacity(0.9)), lineWidth: sw * 0.35)
                 }
             }
         }
@@ -190,10 +183,29 @@ struct Rings: View {
         .accessibilityHidden(true)
     }
 
-    /// A ring round one of seat s's dice: the HUD's brass ring radius (0 where
-    /// the HUD has none, and no ring is drawn).
-    static func radius(_ hud: CnStageHudSnap, seat s: Int) -> Double {
-        hud.brassR.indices.contains(s) ? hud.brassR[s] : 0
+    /// Seat s's die k's face on the glass: its four corners in turn, or nil
+    /// where the HUD has none.
+    static func face(_ hud: CnStageHudSnap, seat s: Int, die k: Int) -> [CGPoint]? {
+        let i = (s * Int(CN_STAGE_DICE) + k) * 8
+        guard k < Int(CN_STAGE_DICE), hud.dieQ.count >= i + 8 else { return nil }
+        let q = (0..<4).map { CGPoint(x: hud.dieQ[i + 2 * $0], y: hud.dieQ[i + 2 * $0 + 1]) }
+        return q.allSatisfy({ $0 == .zero }) ? nil : q
+    }
+
+    /// A quad with its corners rounded (the study's die square's corners, a
+    /// sixth of the shorter side).
+    static func rounded(_ q: [CGPoint]) -> Path {
+        func mid(_ a: CGPoint, _ b: CGPoint) -> CGPoint { CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2) }
+        var short = CGFloat.greatestFiniteMagnitude
+        for e in 0..<4 {
+            let a = q[e], b = q[(e + 1) % 4]
+            short = min(short, hypot(b.x - a.x, b.y - a.y))
+        }
+        return Path { p in
+            p.move(to: mid(q[3], q[0]))
+            for c in 0..<4 { p.addArc(tangent1End: q[c], tangent2End: mid(q[c], q[(c + 1) % 4]), radius: short / 6) }
+            p.closeSubpath()
+        }
     }
 }
 

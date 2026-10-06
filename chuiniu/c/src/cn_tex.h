@@ -46,6 +46,14 @@
 #define CN_TEX_HEAD_BYTES   24
 #define CN_TEX_ENTRY_BYTES  20
 
+/* THE PLANKS' TILE (tools/cn_texgen.c bakes it, the host lays it, the stage places its phase): six planks of
+ * CN_TEX_PLANK_W points in a running bond, CN_TEX_PLANK_TILE_H tall; the even planks end at the tile's top, the
+ * odd ones half way down, so a plank's end (a dark bar, CN_TEX_PLANK_END_HALF points either side, its lit lip
+ * with it) crosses the table every half tile, alternate planks (package S: one fell behind the picker) */
+#define CN_TEX_PLANK_W        86
+#define CN_TEX_PLANK_TILE_H   830
+#define CN_TEX_PLANK_END_HALF 12     /* .014 of the tile, 11.6 points, rounded up */
+
 enum {
     CN_TEXK_VERD = 1,       /* the verdigris tile, RGB                       */
     CN_TEXK_BONE = 2,       /* the bone (the study's 'tallow'), RGB          */

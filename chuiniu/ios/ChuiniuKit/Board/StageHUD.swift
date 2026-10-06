@@ -13,6 +13,9 @@ extension CnStageHudSnap {
 
     var plateRect: CGRect? { hasPlate == 1 ? Self.rect(plate) : nil }
     var shelfRect: CGRect? { hasShelf == 1 ? Self.rect(shelf) : nil }
+    /// The reveal's outcome line's room (the kernel's: under the list's last
+    /// row, or over the shelf), nil off the reveal.
+    var outcomeRect: CGRect? { outcome.count == 4 && outcome[3] > 0 ? Self.rect(outcome) : nil }
 }
 
 extension View {

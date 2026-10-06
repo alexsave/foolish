@@ -56,7 +56,9 @@
  *   at the reveal (in->reveal) every standing cup tips (DECISIONS I23): the
  *   ring is fitted with each far cup tipped the whole way up, and a short
  *   board lays every seat in one row (one_row, DECISIONS I29) since its row
- *   has no room above it; cn_lay_lift_fit is the stage's last word.
+ *   has no room above it, and a tall board lays them as the study's list, in
+ *   rows (list_rows, package S), since on the ring a tipped cup covers the
+ *   dice of the seat behind it; cn_lay_lift_fit is the stage's last word.
  * The fit reads the throw's own path (cn_roll_cup_pose), never a copy of it.
  *
  *
@@ -81,6 +83,8 @@
 #define CN_LAY_PLATE_W    160.0
 #define CN_LAY_PLATE_H    56.0
 #define CN_LAY_PLATE_MIN  100.0
+#define CN_LAY_PLATE_SHORT_W 140.0 /* the short board's plate at the least: a bid at four seats on one line (package S) */
+#define CN_LAY_ROW_STEP_MIN  60.0  /* the row's step is never narrowed under this to give the plate room */
 #define CN_LAY_MARGIN     8.0
 #define CN_LAY_SIDE       16.0    /* the board's inset from the drawer's sides */
 #define CN_LAY_SHORT_H    (CN_LAY_BADGE + CN_LAY_PLATE_H + CN_LAY_MY_BAND + 4 * CN_LAY_MARGIN)
@@ -97,9 +101,10 @@
 #define CN_LAY_REACH_MIN  .8    /* the least reach a throw is held at: lower, the shaken cup's crown dips into the table */
 #define CN_LAY_ROW_MIN_R  12.0    /* the row's cups are never made smaller than this */
 #define CN_LAY_MY_D_MIN   10.0    /* nor my dice on a short board                   */
-#define CN_LAY_BRASS      .75   /* a die's brass ring at the reveal, of its side: past its corners (.71), inside half the spacing (.85) */
 #define CN_LAY_PLATE_REVEAL_W 240.0 /* the plate at the reveal: the tally ("There were twelve") is longer than a bid */
-#define CN_LAY_STAMP_FOOT 40.0    /* the loser's stamp under a name at the reveal: its foot this far under the anchor */
+#define CN_LAY_STAMP_FOOT 52.0    /* the loser's stamp under a name at the reveal: its foot this far under the anchor
+                                     (the host sets it on the glass 4 under the name's block, 22 tall, turned 5 degrees,
+                                     6 more at an end; 40 left it over the next row's crown and the outcome line, package S) */
 #define CN_LAY_OUTCOME_H  48.0    /* the reveal's outcome line (two lines of the roman on a band) over the shelf */
 
 typedef struct {
@@ -140,13 +145,16 @@ typedef struct {
     uint8_t  name_how[CN_LAY_SEATS];                       /* CN_NAME_*              */
     uint8_t  throw_mask;            /* bit s: seat s's cup throws (cn_lay_throws)     */
     uint8_t  one_row;               /* the reveal on a short board: every seat in one row */
+    uint8_t  list_rows;             /* the reveal on a tall board: the study's list in this many rows (0: none) */
+    uint8_t  plate_throw;           /* my throw's held cup passes over the plate: the host stands the plate down
+                                       until my dice rest (package S: two seats, compact, the plate hid half my cup) */
     float    ring_cy, ring_rx, ring_ry;   /* the ring's centre y and radii (0 on a short board) */
     float    pad, pad_x, pad_below;       /* the canvas's room past the board        */
     float    peek_target;           /* my cup's full tip                            */
     CnPeek   peek;                  /* its tip at in->peek                          */
     float    my_reach;              /* my throw's reach, of the study's (1 when it fits the drawer) */
     float    die_g[CN_LAY_SEATS];   /* each seat's die side on the glass, at its cup */
-    float    brass_r[CN_LAY_SEATS]; /* the radius of a brass ring round one, on the glass */
+    float    outcome[4];            /* the reveal's outcome line, x y w h, screen (0 0 0 0 off the reveal) */
     CnCam    cam;
     double   seg_c[CN_CUP_SEGS], seg_s[CN_CUP_SEGS];   /* a cup's rim corners round the circle: the fits' table */
 } CnLay;

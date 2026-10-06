@@ -207,13 +207,15 @@ final class StageViewTests: XCTestCase {
                 // the tiles cover the layer: the first at or above-left of its corner, the last past its far one
                 let union = tiles.reduce(CGRect.null) { $0.union($1.frame) }
                 XCTAssertTrue(union.contains(b), "\(tag): the tiles cover the layer (\(union) of \(b))")
-                // and they keep the study's phase in the drawer: a tile corner where the study put one
+                // and they keep the study's phase across and the kernel's down (the study's, moved off the shelf's
+                // planks' ends, package S): a tile corner where those put one
                 let phase = StageUIView.overdraw(size).origin
                 let o = StageUIView.tileOrigin(size)
                 let corner = view.planks.convert(tiles[0].frame.origin, to: view.tilt)
-                let dx = (corner.x - (phase.x + o.x)) / PlankTile.size.width, dy = (corner.y - (phase.y + o.y)) / PlankTile.size.height
+                let dx = (corner.x - (phase.x + o.x)) / PlankTile.size.width
+                let dy = (corner.y - StageUIView.tileTop(hud, size)) / PlankTile.size.height
                 XCTAssertEqual(dx, dx.rounded(), accuracy: 1e-6, "\(tag): the tiles' phase across is the study's")
-                XCTAssertEqual(dy, dy.rounded(), accuracy: 1e-6, "\(tag): the tiles' phase down is the study's")
+                XCTAssertEqual(dy, dy.rounded(), accuracy: 1e-6, "\(tag): the tiles' phase down is the kernel's")
                 // under it, the same wood, never black
                 XCTAssertGreaterThan(view.back.sublayers?.filter { $0.name == "tile" }.count ?? 0, 0, "\(tag): planks under the turned layer")
                 XCTAssertTrue(view.back.sublayers?.allSatisfy { $0.name == "tile" } ?? false, "\(tag): and nothing over them")
@@ -602,6 +604,9 @@ final class StageViewTests: XCTestCase {
         XCTAssertGreaterThan(all.lit, 500, "the letters are drawn (\(all.lit) texels)")
         XCTAssertEqual(all.over, 0, "premultiplied: no colour past its alpha")
         XCTAssertNotEqual(bright.rgba, dim.rgba, "the turn's name is not the dim one")
+        // the letters themselves in another ink, not the bar alone (package S: a mutant with one ink survived)
+        let letters = Int((halo * CGFloat(bright.h) / bright.hPt).rounded(.up)) * bright.w * 4..<Int(((halo + textH - 4) * CGFloat(bright.h) / bright.hPt).rounded(.down)) * bright.w * 4
+        XCTAssertNotEqual(Array(bright.rgba[letters]), Array(dim.rgba[letters]), "the turn's letters are brighter than the dim ones")
         // the bar's rows: under the letters, between the gap and the halo
         let k = CGFloat(bright.h) / bright.hPt
         let barRows = Int(((halo + textH + NameDecal.gap) * k).rounded(.down))..<Int(((halo + textH + NameDecal.gap + NameDecal.barH) * k).rounded(.up))
@@ -655,5 +660,81 @@ final class StageViewTests: XCTestCase {
         for s in 0..<2 { spy.name(seat: s, bitmap: nil) }
         XCTAssertEqual(Self.bytes(spy.frameOnOneThread(atMs: 0, peek: 0)), before, "every name taken away: the frame before them")
         spy.purge()
+    }
+
+    // MARK: the short board's plate (package S)
+
+    /// At four seats the compact plate was 102 wide and "three 6s" beside its
+    /// die took two lines. Every bid four seats can make (1 to 20, faces 2 to
+    /// 6) is one line at one of the plate's sizes on the kernel's plate, at
+    /// three compact drawers.
+    func testEveryBidAtFourSeatsIsOneLineOnTheCompactPlate() throws {
+        let me = try started(seats: 4)
+        func width(_ s: String, _ font: UIFont) -> CGFloat {
+            let line = CTLineCreateWithAttributedString(NSAttributedString(string: s, attributes: [.font: font]))
+            return CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
+        }
+        for drawer in [CGSize(width: 390, height: 340), CGSize(width: 375, height: 300), CGSize(width: 430, height: 330)] {
+            let director = StageDirector(stage: KernelSeam.stage())
+            director.begin(request(drawer, table: me.table), planMs: nil)
+            let hud = try XCTUnwrap(director.hud)
+            XCTAssertEqual(hud.shortBoard, 1, "\(drawer): a short board")
+            let plate = try XCTUnwrap(hud.plateRect, "\(drawer): four seats have a plate")
+            let room = BidPlate.textRoom(width: plate.width, face: true), sizes = BidPlate.sizes(narrow: plate.width < BidPlate.narrowBelow)
+            var two: [String] = []
+            for q in 1...20 { for f in 2...6 {
+                let text = BridgeKernel.caption(.plateBid, who: "", quantity: q, face: f) ?? ""
+                if !sizes.contains(where: { width(text, FType.uiSerif($0)) <= room }) { two.append(text) }
+            } }
+            XCTAssertEqual(two, [], "\(drawer): the plate \(plate.width) wide, every bid one line")
+        }
+    }
+
+    /// Two seats, compact: my held cup passes under the plate (the kernel's
+    /// `plate_throw`), so the plate stands down until my dice rest.
+    func testThePlateStandsDownWhileMyThrowPassesUnderIt() throws {
+        let me = try started(seats: 2)
+        let director = StageDirector(stage: KernelSeam.stage())
+        director.begin(request(CGSize(width: 390, height: 340), table: me.table), planMs: nil)
+        let hud = try XCTUnwrap(director.hud)
+        XCTAssertEqual(hud.rolls, 1, "the round's throw plays")
+        XCTAssertEqual(hud.plateThrow, 1, "my held cup passes under the plate")
+        XCTAssertFalse(TableScreen.plateShown(hud, atRest: false), "the plate stands down while my throw is in the air")
+        XCTAssertTrue(TableScreen.plateShown(hud, atRest: true), "and is back once my dice rest")
+    }
+
+    /// The planks' tile is laid at the kernel's phase (`planks_y`), which at
+    /// 375 by 541 on my turn moves a plank's end out from behind the picker.
+    func testThePlanksAreLaidAtTheKernelsPhase() throws {
+        let me = try started(seats: 4)
+        let size = CGSize(width: 375, height: 541)
+        let director = StageDirector(stage: KernelSeam.stage())
+        director.begin(request(size, table: me.table), planMs: nil)
+        let hud = try XCTUnwrap(director.hud)
+        let study = StageUIView.overdraw(size).minY + PlankTile.top
+        XCTAssertNotEqual(hud.planksY, Double(study), accuracy: 0.5, "the kernel moved the tile here")
+        XCTAssertEqual(Double(StageUIView.tileTop(hud, size)), hud.planksY, "laid where the kernel says")
+        XCTAssertEqual(StageUIView.tileTop(nil, size), study, "the study's place before any HUD")
+    }
+
+    // MARK: the loser's stamp (package S)
+
+    func testTheStampStaysInsideTheDrawerAndOffTheOtherNames() {
+        let bounds = CGRect(x: 0, y: 0, width: 390, height: 340)
+        let size = CGSize(width: 120, height: 22)
+        let edge = CGFloat(CN_STAGE_EDGE)
+        // a seat at the left: centred under its name it would start at -30
+        let left = StageUIView.stampFrame(under: CGRect(x: 10, y: 100, width: 40, height: 20), size: size, bounds: bounds, avoid: [])
+        XCTAssertEqual(left.minX, edge, "pushed right to lie inside the drawer's left edge")
+        XCTAssertEqual(left.minY, 124, "still 4 under its name")
+        // and at the right
+        let right = StageUIView.stampFrame(under: CGRect(x: 350, y: 100, width: 40, height: 20), size: size, bounds: bounds, avoid: [])
+        XCTAssertEqual(right.maxX, bounds.maxX - edge, "pushed left to lie inside the drawer's right edge")
+        // under it, a name in the way: the stamp goes under that one
+        let other = CGRect(x: 120, y: 118, width: 40, height: 20)
+        let mid = StageUIView.stampFrame(under: CGRect(x: 160, y: 96, width: 40, height: 20), size: size, bounds: bounds, avoid: [other])
+        XCTAssertFalse(mid.intersects(other), "off the other name (\(mid))")
+        XCTAssertEqual(mid.minY, other.maxY + 2)
+        XCTAssertEqual(mid.midX, 180, "still centred under its own name")
     }
 }

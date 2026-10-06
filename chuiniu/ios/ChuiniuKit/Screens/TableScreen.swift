@@ -62,8 +62,12 @@ public struct TableScreen: View {
         // the plate carries the bid on the table and nothing else: no headline,
         // no ask line (the study dropped both, round nineteen; DECISIONS I28).
         // Whose turn it is is the glow under a name, on the planks.
-        if let p = hud.plateRect, !t.bidText.isEmpty {
+        // where my throw's held cup passes under the plate (the kernel's
+        // `plate_throw`) the plate stands down until my dice rest: it is flat
+        // on the glass, over the picture, and hid half my cup
+        if let p = hud.plateRect, !t.bidText.isEmpty, Self.plateShown(hud, atRest: director.atRest) {
             BidPlate(text: t.bidText, face: t.bid?.face).at(p)
+                .transition(.opacity)
         }
         if let menu = t.menu {
             let s = hud.shelfRect ?? CGRect(x: 0, y: hud.h - 90, width: hud.w, height: 90)
@@ -74,6 +78,9 @@ public struct TableScreen: View {
                 .transition(.opacity)
         }
     }
+
+    /// The plate is up unless my throw is in the air and passes under it.
+    static func plateShown(_ hud: CnStageHudSnap, atRest: Bool) -> Bool { atRest || hud.plateThrow == 0 }
 
     private func picker(_ menu: Menu) -> some View {
         BidPicker(menu: menu, raiseTitle: host.word(.raise), callTitle: host.word(.call),

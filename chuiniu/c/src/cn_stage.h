@@ -89,6 +89,13 @@ enum {
 #define CN_STAGE_NAME_H_MAX   128
 #define CN_STAGE_NAME_Z       .3f           /* how far above the table a name lies, points            */
 
+/* how near the drawer's edge a host's own overlay on the glass may come (the loser's stamp): CN_LAY_EDGE, an
+ * integer so structgen hands it to Swift */
+#define CN_STAGE_EDGE    4
+/* the study's planks: the tile's top this far above its stage's (UI.html tableStage, `-58px`) */
+#define CN_STAGE_PLANKS_TOP 58
+_Static_assert(CN_STAGE_EDGE == (int)CN_LAY_EDGE, "the stage's edge is the layout's");
+
 /* THE INPUT: the table as the kernel holds it (the bridge fills it from the
  * resident game; a test fills it by hand). */
 typedef struct {
@@ -105,6 +112,9 @@ typedef struct {
     float    scale;                     /* the device's pixels a point; clamped (shot.scale)   */
     uint32_t seed;                      /* the round's throw (cn_stage_round_seed)             */
     uint32_t roll_at_ms;                /* when the roll starts, or CN_STAGE_NO_ROLL           */
+    uint32_t count_mask;                /* a reveal: bit s*5+k, faces[s*5+k] counts for the call
+                                           (its face or a wild 1, CnView.shown_counts); the rest
+                                           are drowned as the cups lift (package S)            */
 } CnStageIn;
 
 /* THE HUD: everything a host lays over or under the picture, in points. FLAT
@@ -124,13 +134,16 @@ typedef struct {
     uint8_t  name_how[CN_STAGE_SEATS];  /* CN_NAME_* (cn_lay.h)                               */
     uint8_t  rolls;                     /* 1: a roll plays (roll_at_ms .. total_ms); 0: still,
                                            and the three times are 0                         */
-    uint8_t  pad0;
+    uint8_t  plate_throw;               /* 1: my throw's held cup passes under the plate: the
+                                           host stands the plate down until rest_ms (package S) */
     float    w, h;                      /* the drawer (300 by 195 for a bubble)               */
     float    board[4];                  /* x y w h, flat                                      */
     float    canvas[4];                 /* where the still picture goes, x y w h, flat (a frame
                                            says its own: cn_stage_shot's canvas)             */
     float    plate[4];                  /* the bid plate, x y w h, never turned               */
     float    shelf[4];                  /* the picker's or the reveal's shelf, never turned    */
+    float    outcome[4];                /* the reveal's outcome line, x y w h, never turned: its
+                                           room, the line set at its top (0s off the reveal)   */
     float    my_band[4];                /* my band, flat                                      */
     float    cup_x[CN_STAGE_SEATS], cup_y[CN_STAGE_SEATS];     /* every cup's mouth, flat    */
     float    name_x[CN_STAGE_SEATS], name_y[CN_STAGE_SEATS];   /* every name's anchor, flat  */
@@ -141,8 +154,11 @@ typedef struct {
     float    die_x[CN_STAGE_ALL_DICE], die_y[CN_STAGE_ALL_DICE];   /* each shown die at rest, glass,
                                            seat s at s*5 in faces[] order (CnView's shown /
                                            my_dice order); 0 0 for none                      */
+    float    die_q[CN_STAGE_ALL_DICE * 8];   /* each shown die's up face on the glass, grown by the study's
+                                           counting ring's gap (.07 of a side): its four corners
+                                           x y in turn round it, seat s's die k at (s*5+k)*8;
+                                           0s for none (package S: the reveal glows the face)  */
     float    die_d[CN_STAGE_SEATS];     /* a seat's die's side on the glass, at its cup (0 in a bubble) */
-    float    brass_r[CN_STAGE_SEATS];   /* the radius of the reveal's brass ring round one of its dice  */
     float    origin_x, origin_y;        /* the turn's centre, flat                            */
     float    theta, cam_d, zoom;        /* rotateX(theta) with perspective cam_d, scale(zoom)  */
     float    ca[16];                    /* CATransform3D about the origin, m11 .. m44          */
@@ -151,6 +167,10 @@ typedef struct {
     float    planks[4];                 /* the planks' layer, flat, x y w h: its turn covers the
                                            drawer and CN_CAM_REACH past each side (cn_cam_planks;
                                            0 0 0 0 for none)                                  */
+    float    planks_y;                  /* the planks' tile's top, flat (any whole tile up or down):
+                                           the study's (the overdraw's top, -.6 of the drawer, less
+                                           58), moved the least that keeps every plank's end off
+                                           the shelf (package S)                               */
     float    peek_target;               /* my cup's full tip, radians                         */
     float    scale_still, scale_roll;   /* the scales asked for, clamped                      */
     uint32_t roll_at_ms;                /* when the roll starts                               */
@@ -227,6 +247,7 @@ typedef struct {
     float         lift_angle[CN_STAGE_SEATS];  /* the reveal's full tip of each cup             */
     int8_t        obj_throw[CN_LAY_MAX_OBJS];  /* the throw an object rides, -1 none           */
     int8_t        obj_pose[CN_LAY_MAX_OBJS];   /* and its pose in it                           */
+    uint8_t       obj_drown[CN_LAY_MAX_OBJS];  /* a reveal's die that does not count: drowned by the lift */
     uint8_t       obj_mesh[CN_LAY_MAX_OBJS];
     CnObj         base[CN_LAY_MAX_OBJS];       /* where everything stands before the clock     */
     CnObj         obj[CN_LAY_MAX_OBJS];        /* the last frame's bodies                      */

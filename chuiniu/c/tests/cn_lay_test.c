@@ -8,7 +8,8 @@
  * (package U) nothing leaves the drawer: every vertex of every body, at rest,
  * peeked, and in every frame of the throw, through cn_geom and cn_cam, from
  * 281 to 340 points tall; the throw's cup without a bake; my throw's reach;
- * the reveal's brass rings. */
+ * a die's side on the glass (the brass rings it once sized are gone: the
+ * reveal glows each counting die's face, cn_stage's die_q, package S). */
 #include "../src/cn_lay.h"
 #include "cn_check.h"
 #include <math.h>
@@ -33,11 +34,11 @@ static const Gold GOLD[] = {
       { { 48, 66 }, { 128, 66 }, { 0, 0 }, { 0, 0 }, { 0, 0 } },
       { { 48, 116 }, { 128, 116 }, { 0, 0 }, { 0, 0 }, { 0, 0 } },
       { 190, 50, 160, 56 }, { 1.2741, -40.9377, 8.1875, 4.9125 } },
-    { 390, 340, 1, 4, 8, 220, 1, 16, 23.1377, 40.9377, 179, 186,
-      36, 66, 0, 0, 40, 40,
-      { { 48, 66 }, { 128, 66 }, { 208, 66 }, { 0, 0 }, { 0, 0 } },
-      { { 48, 116 }, { 128, 116 }, { 208, 116 }, { 0, 0 }, { 0, 0 } },
-      { 248, 50, 102, 56 }, { 1.2741, -40.9377, 8.1875, 4.9125 } },
+    { 390, 340, 1, 4, 8, 220, 1, 16, 23.1377, 40.9377, 179, 186,   /* the row narrowed for a 140 plate (package S) */
+      29.6667, 66, 0, 0, 40, 40,
+      { { 41.6667, 66 }, { 109, 66 }, { 176.3333, 66 }, { 0, 0 }, { 0, 0 } },
+      { { 41.6667, 109.6667 }, { 109, 109.6667 }, { 176.3333, 109.6667 }, { 0, 0 }, { 0, 0 } },
+      { 210, 50, 140, 56 }, { 1.2741, -40.9377, 8.1875, 4.9125 } },
     { 390, 340, 1, 5, 8, 220, 1, 16, 23.1377, 40.9377, 179, 186,
       36, 66, 0, 0, 40, 40,
       { { 48, 66 }, { 128, 66 }, { 208, 66 }, { 288, 66 }, { 0, 0 } },
@@ -58,11 +59,11 @@ static const Gold GOLD[] = {
       { { 48, 66 }, { 128, 66 }, { 0, 0 }, { 0, 0 }, { 0, 0 } },
       { { 48, 116 }, { 128, 116 }, { 0, 0 }, { 0, 0 }, { 0, 0 } },
       { 190, 50, 160, 56 }, { 1.2741, -40.9377, 8.1875, 4.9125 } },
-    { 390, 340, 0, 4, 8, 220, 1, 16, 23.1377, 40.9377, 179, 186,
-      36, 66, 0, 0, 40, 40,
-      { { 48, 66 }, { 128, 66 }, { 208, 66 }, { 0, 0 }, { 0, 0 } },
-      { { 48, 116 }, { 128, 116 }, { 208, 116 }, { 0, 0 }, { 0, 0 } },
-      { 248, 50, 102, 56 }, { 1.2741, -40.9377, 8.1875, 4.9125 } },
+    { 390, 340, 0, 4, 8, 220, 1, 16, 23.1377, 40.9377, 179, 186,   /* the row narrowed for a 140 plate (package S) */
+      29.6667, 66, 0, 0, 40, 40,
+      { { 41.6667, 66 }, { 109, 66 }, { 176.3333, 66 }, { 0, 0 }, { 0, 0 } },
+      { { 41.6667, 109.6667 }, { 109, 109.6667 }, { 176.3333, 109.6667 }, { 0, 0 }, { 0, 0 } },
+      { 210, 50, 140, 56 }, { 1.2741, -40.9377, 8.1875, 4.9125 } },
     { 390, 340, 0, 5, 8, 220, 1, 16, 23.1377, 40.9377, 179, 186,
       36, 66, 0, 0, 40, 40,
       { { 48, 66 }, { 128, 66 }, { 208, 66 }, { 288, 66 }, { 0, 0 } },
@@ -299,18 +300,18 @@ static const GoldDie GOLD_DICE[] = {
     { 1, 0, 193.2331, 203.209, 0.1106, 16 },
     { 1, 0, 166.7581, 205.3176, -0.0379, 16 },
     { 1, 0, 157.6275, 177.4031, 0.0393, 16 },
-    { 2, 1, 46.4327, 45.2681, 0.2173, 14.0702 },
-    { 2, 1, 66.1251, 59.2463, 0.2003, 14.0702 },
-    { 2, 1, 59.6086, 82.4159, -0.238, 14.0702 },
-    { 2, 1, 34.7943, 82.6886, -0.0101, 14.0702 },
-    { 2, 2, 128.4247, 45.7839, 0.1417, 14.0702 },
-    { 2, 2, 148.053, 59.9135, -0.0748, 14.0702 },
-    { 2, 2, 138.9896, 81.972, 0.1995, 14.0702 },
-    { 2, 2, 115.597, 81.7258, -0.1257, 14.0702 },
-    { 2, 2, 108.4785, 60.235, -0.1618, 14.0702 },
-    { 2, 3, 206.3824, 45.4091, -0.0265, 14.0702 },
-    { 2, 3, 228.378, 60.9605, 0.1524, 14.0702 },
-    { 2, 3, 219.3696, 82.1212, -0.0462, 14.0702 },
+    { 2, 1, 40.3751, 48.9154, 0.2173, 11.5949 },
+    { 2, 1, 56.6031, 60.4345, 0.2003, 11.5949 },
+    { 2, 1, 51.233, 79.5279, -0.238, 11.5949 },
+    { 2, 1, 30.7842, 79.7526, -0.0101, 11.5949 },
+    { 2, 2, 109.35, 49.3404, 0.1417, 11.5949 },
+    { 2, 2, 125.5252, 60.9843, -0.0748, 11.5949 },
+    { 2, 2, 118.0563, 79.1621, 0.1995, 11.5949 },
+    { 2, 2, 98.779, 78.9592, -0.1257, 11.5949 },
+    { 2, 2, 92.9128, 61.2492, -0.1618, 11.5949 },
+    { 2, 3, 175.0003, 49.0316, -0.0265, 11.5949 },
+    { 2, 3, 193.1263, 61.8471, 0.1524, 11.5949 },
+    { 2, 3, 185.7027, 79.2851, -0.0462, 11.5949 },
     { 2, 0, 177.6299, 163.0218, 0.1369, 16 },
     { 2, 0, 202.3133, 180.5016, -0.1804, 16 },
     { 2, 0, 193.2331, 203.209, 0.1106, 16 },
@@ -383,18 +384,18 @@ static const GoldDie GOLD_DICE[] = {
     { 6, 0, 193.2331, 203.209, 0.1106, 16 },
     { 6, 0, 166.7581, 205.3176, -0.0379, 16 },
     { 6, 0, 157.6275, 177.4031, 0.0393, 16 },
-    { 7, 1, 46.4327, 45.2681, 0.2173, 14.0702 },
-    { 7, 1, 66.1251, 59.2463, 0.2003, 14.0702 },
-    { 7, 1, 59.6086, 82.4159, -0.238, 14.0702 },
-    { 7, 1, 34.7943, 82.6886, -0.0101, 14.0702 },
-    { 7, 2, 128.4247, 45.7839, 0.1417, 14.0702 },
-    { 7, 2, 148.053, 59.9135, -0.0748, 14.0702 },
-    { 7, 2, 138.9896, 81.972, 0.1995, 14.0702 },
-    { 7, 2, 115.597, 81.7258, -0.1257, 14.0702 },
-    { 7, 2, 108.4785, 60.235, -0.1618, 14.0702 },
-    { 7, 3, 206.3824, 45.4091, -0.0265, 14.0702 },
-    { 7, 3, 228.378, 60.9605, 0.1524, 14.0702 },
-    { 7, 3, 219.3696, 82.1212, -0.0462, 14.0702 },
+    { 7, 1, 40.3751, 48.9154, 0.2173, 11.5949 },
+    { 7, 1, 56.6031, 60.4345, 0.2003, 11.5949 },
+    { 7, 1, 51.233, 79.5279, -0.238, 11.5949 },
+    { 7, 1, 30.7842, 79.7526, -0.0101, 11.5949 },
+    { 7, 2, 109.35, 49.3404, 0.1417, 11.5949 },
+    { 7, 2, 125.5252, 60.9843, -0.0748, 11.5949 },
+    { 7, 2, 118.0563, 79.1621, 0.1995, 11.5949 },
+    { 7, 2, 98.779, 78.9592, -0.1257, 11.5949 },
+    { 7, 2, 92.9128, 61.2492, -0.1618, 11.5949 },
+    { 7, 3, 175.0003, 49.0316, -0.0265, 11.5949 },
+    { 7, 3, 193.1263, 61.8471, 0.1524, 11.5949 },
+    { 7, 3, 185.7027, 79.2851, -0.0462, 11.5949 },
     { 7, 0, 177.6299, 163.0218, 0.1369, 16 },
     { 7, 0, 202.3133, 180.5016, -0.1804, 16 },
     { 7, 0, 193.2331, 203.209, 0.1106, 16 },
@@ -1124,9 +1125,9 @@ static const GoldCup GOLD_CUPS[] = {
     { 1, 1, 48, 66, 0, 36, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 36, 0, 0 } },
     { 1, 2, 128, 66, 0, 36, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 36, 0, 0 } },
     { 1, 0, 179, 186, 0, 40.9377, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 40.9377, 0, 0 } },
-    { 2, 1, 48, 66, 0, 36, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 36, 0, 0 } },
-    { 2, 2, 128, 66, 0, 36, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 36, 0, 0 } },
-    { 2, 3, 208, 66, 0, 36, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 36, 0, 0 } },
+    { 2, 1, 41.6667, 66, 0, 29.6667, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 29.6667, 0, 0 } },
+    { 2, 2, 109, 66, 0, 29.6667, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 29.6667, 0, 0 } },
+    { 2, 3, 176.3333, 66, 0, 29.6667, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 29.6667, 0, 0 } },
     { 2, 0, 179, 186, 0, 40.9377, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 40.9377, 0, 0 } },
     { 3, 1, 48, 66, 0, 36, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 36, 0, 0 } },
     { 3, 2, 128, 66, 0, 36, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 36, 0, 0 } },
@@ -1144,9 +1145,9 @@ static const GoldCup GOLD_CUPS[] = {
     { 6, 1, 48, 66, 0, 36, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 36, 0, 0 } },
     { 6, 2, 128, 66, 0, 36, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 36, 0, 0 } },
     { 6, 0, 179, 186, 0, 40.9377, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 40.9377, 0, 0 } },
-    { 7, 1, 48, 66, 0, 36, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 36, 0, 0 } },
-    { 7, 2, 128, 66, 0, 36, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 36, 0, 0 } },
-    { 7, 3, 208, 66, 0, 36, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 36, 0, 0 } },
+    { 7, 1, 41.6667, 66, 0, 29.6667, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 29.6667, 0, 0 } },
+    { 7, 2, 109, 66, 0, 29.6667, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 29.6667, 0, 0 } },
+    { 7, 3, 176.3333, 66, 0, 29.6667, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 29.6667, 0, 0 } },
     { 7, 0, 179, 186, 0, 40.9377, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 40.9377, 0, 0 } },
     { 8, 1, 48, 66, 0, 36, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 36, 0, 0 } },
     { 8, 2, 128, 66, 0, 36, 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0 }, { 36, 0, 0 } },
@@ -1483,7 +1484,11 @@ static void test_short_or_tall(void)
         CnLayIn r1 = input(390, H, n, 0, 0); r1.reveal = 1;
         CnLay R1;
         if (!cn_lay_make(&r1, &R1)) { clear = 0; continue; }
-        for (int s = 0; s < n; s++) clear &= R1.board_y + R1.name_y[s] + CN_LAY_STAMP_FOOT <= R1.shelf[1] - 6 - CN_LAY_OUTCOME_H + 1e-3;
+        for (int s = 0; s < n; s++) {   /* the stamp's foot is flat (turned with the names), the outcome line on the glass */
+            float gx, gy;
+            cn_cam_map(&R1.cam, R1.board_x + R1.name_x[s], R1.board_y + R1.name_y[s] + CN_LAY_STAMP_FOOT, &gx, &gy);
+            clear &= gy <= R1.shelf[1] - 6 - CN_LAY_OUTCOME_H + .5;
+        }
     }
     CHECK(clear, "the reveal's row leaves its names, the stamp and the outcome line their room");
     CnLayThrow T[CN_LAY_SEATS];
@@ -1497,8 +1502,16 @@ static void test_short_or_tall(void)
         cn_lay_make(&in, &L);
         if (n == 2) CHECK(L.has_plate && L.plate[2] >= CN_LAY_PLATE_MIN && L.plate[0] + L.plate[2] == 16 + L.board_w - 8 && L.plate[0] > L.board_x + L.cup_x[1] + L.cup_r,
                           "340's reveal, two seats: the plate beside the row (%g wide at %g)", L.plate[2], L.plate[0]);
-        else CHECK(!L.has_plate || (L.plate[1] > L.board_y + L.name_y[0] && L.plate[1] + L.plate[3] <= L.shelf[1] - 6 - CN_LAY_OUTCOME_H),
-                   "340's reveal, %d seats: a plate only under the names, over the outcome line", n);
+        else {
+            float gx, gy;   /* the plate is on the glass, the names flat: the name's anchor through the turn */
+            cn_cam_map(&L.cam, L.board_x + L.name_x[0], L.board_y + L.name_y[0], &gx, &gy);
+            /* beside the row when the row leaves it room (three seats, since the stamp's room shrank the row's cups,
+             * package S), else under the names; over the outcome line either way */
+            const int beside = L.has_plate && L.plate[0] > L.board_x + L.cup_x[(n - 1)] + L.cup_r;
+            CHECK(!L.has_plate || ((beside || L.plate[1] > gy) && L.plate[1] + L.plate[3] <= L.shelf[1] - 6 - CN_LAY_OUTCOME_H),
+                  "340's reveal, %d seats: a plate beside the row or under the names, over the outcome line (plate %.1f..%.1f, name %.1f, outcome %.1f)",
+                  n, L.plate[1], L.plate[1] + L.plate[3], gy, L.shelf[1] - 6 - CN_LAY_OUTCOME_H);
+        }
     }
     /* the short board's own pieces */
     in = input(390, 340, 3, 1, 0);
@@ -1790,18 +1803,39 @@ static void test_reach(void)
     CHECK(done && under && forced == 0,"forty throws held at the least reach, %.2f, complete with every die under my cup (forced %d)", CN_LAY_REACH_MIN, forced);
 }
 
-static void test_brass(void)
+static void test_die_side(void)
 {
-    TEST("the reveal's brass rings: a die's side on the glass and a ring round it, from the kernel");
+    TEST("a die's side on the glass at each seat, from the kernel");
     CnLayIn in = input(390, 340, 6, 0, 0);
     CnLay L; cn_lay_make(&in, &L);
     for (int s = 0; s < 6; s++) {
         const double side = s == 0 ? L.d : L.sd;
         float sc; cn_cam_to_screen(&L.cam, L.cup_y[s] - L.cup_y[0], &sc);
         CHECK(near(L.die_g[s], side * sc, side * .05), "seat %d: the die's side on the glass %.2f (the study's scale there %.2f)", s, L.die_g[s], side * sc);
-        CHECK(L.brass_r[s] > L.die_g[s] * .71 && 2 * L.brass_r[s] < L.die_g[s] * 1.7, "seat %d: the ring %.2f clears the die's corners and not its neighbours'", s, L.brass_r[s]);
     }
     CHECK(L.die_g[0] > L.die_g[1], "mine are bigger than theirs");
+}
+
+/* THE SHORT PLATE (package S): at four seats the plate beside the row was 102 and a bid beside its die took two
+ * lines; the row narrows to leave it CN_LAY_PLATE_SHORT_W, while five and six seats keep the study's row (none) */
+static void test_short_plate(void)
+{
+    TEST("the short board's plate: always up to four seats, never under 140, the row never under its step floor");
+    static const int WS[] = { 375, 390, 430 };
+    int checked = 0;
+    for (int wi = 0; wi < 3; wi++) for (int H = 281; H < 400; H += 7) for (int n = 2; n <= 6; n++) for (int mine = 0; mine < 2; mine++) {
+        CnLayIn in = input(WS[wi], H, n, mine, 0);
+        CnLay L;
+        if (!cn_lay_make(&in, &L) || !L.short_board) continue;
+        checked++;
+        if (n <= 4) CHECK(L.has_plate, "%dx%d n %d: a plate up to four seats", WS[wi], H, n);
+        if (L.has_plate) CHECK(L.plate[2] >= CN_LAY_PLATE_SHORT_W, "%dx%d n %d: the plate %.1f wide", WS[wi], H, n, L.plate[2]);
+        /* the row's step: the gap between two seats' cups */
+        if (n >= 3) CHECK(L.cup_x[2] - L.cup_x[1] >= CN_LAY_ROW_STEP_MIN - 1e-3, "%dx%d n %d: the row's step %.1f", WS[wi], H, n, L.cup_x[2] - L.cup_x[1]);
+        /* the plate right of the row's last mouth */
+        if (L.has_plate) CHECK(L.plate[0] >= L.board_x + L.cup_x[n - 1] + L.cup_r, "%dx%d n %d: the plate right of the row", WS[wi], H, n);
+    }
+    CHECK(checked > 300, "%d short boards", checked);
 }
 
 int main(void)
@@ -1814,6 +1848,7 @@ int main(void)
     test_cup_path();
     test_inside_the_drawer();
     test_reach();
-    test_brass();
+    test_die_side();
+    test_short_plate();
     return report("cn_lay_test");
 }

@@ -224,16 +224,19 @@ static int caption(const CnEvent *ev, int n, const char *const *names, char *out
 
 /* THE OUTCOME says what the call found, who went out and who won: a screen
  * line, every clause, so it is not held to the caption's one line. */
-static int outcome_line(const CnEvent *ev, int n, const char *const *names, char *out, int cap)
+/* the whole line (part CN_SAY_PART_ALL), or one clause of it as the line says it: the loser's (CN_SAY_PART_LOSS,
+ * "Bo loses a die") or the winner's (CN_SAY_PART_WIN, "Alex wins"), "" when the line has none; a host sets the
+ * clause apart where it finds it in the line (the study's blood and glow, package S) */
+static int outcome_line(const CnEvent *ev, int n, const char *const *names, int part, char *out, int cap)
 {
     if (!out || cap < 1 || n < 0) return -1;
     out[0] = 0;
     int len = 0;
-    char who[NAME_CAP] = "", other[NAME_CAP] = "", bid[PHRASE_CAP] = "", line[LINE_CAP];
+    char who[NAME_CAP] = "", other[NAME_CAP] = "", bid[PHRASE_CAP] = "", loss[LINE_CAP] = "", line[LINE_CAP];
     const CnEvent *call = 0;
     for (int i = 0; i < n; i++) {
         const CnEvent *e = &ev[i];
-        const char *kv[] = { "who", who, "loser", other, "bid", bid, 0 };
+        const char *kv[] = { "who", who, "loser", other, "bid", bid, "loss", loss, 0 };
         int w = 0;
         switch (e->kind) {
         case CN_EV_CALL:
@@ -246,6 +249,8 @@ static int outcome_line(const CnEvent *ev, int n, const char *const *names, char
                 || cn_say_seat(names, e->seat, other, sizeof other) < 0
                 || cn_say_bid(call->q, call->f, 1, bid, sizeof bid) < 0)
                 return -1;
+            if (cn_fill(loss, sizeof loss, T(CAP_LOSES), kv) < 0) return -1;
+            if (part == CN_SAY_PART_LOSS) return cn_fill(out, cap, T(CAP_LOSES), kv);
             w = cn_fill(line, sizeof line, e->seat == call->seat ? T(CAP_CALL_TRUE) : T(CAP_CALL_FALSE), kv);
             if (w < 0 || append(out, cap, &len, line) < 0) return -1;
             break;
@@ -261,6 +266,7 @@ static int outcome_line(const CnEvent *ev, int n, const char *const *names, char
         }
         case CN_EV_OVER:
             if (cn_say_seat(names, e->seat, who, sizeof who) < 0) return -1;
+            if (part == CN_SAY_PART_WIN) return cn_fill(out, cap, T(CAP_WINS), kv);
             w = cn_fill(line, sizeof line, T(CAP_WINS), kv);
             if (w < 0 || append(out, cap, &len, line) < 0) return -1;
             break;
@@ -268,6 +274,7 @@ static int outcome_line(const CnEvent *ev, int n, const char *const *names, char
             break;
         }
     }
+    if (part != CN_SAY_PART_ALL) { out[0] = 0; return 0; }   /* the line has no such clause */
     return len;
 }
 
@@ -278,17 +285,27 @@ int cn_say_caption_of(const CnEvent *ev, int n, const char *const *names, char *
 
 int cn_say_outcome_of(const CnEvent *ev, int n, const char *const *names, char *out, int cap)
 {
-    return outcome_line(ev, n, names, out, cap);
+    return outcome_line(ev, n, names, CN_SAY_PART_ALL, out, cap);
+}
+
+int cn_say_outcome_part_of(const CnEvent *ev, int n, const char *const *names, int part, char *out, int cap)
+{
+    return outcome_line(ev, n, names, part, out, cap);
 }
 
 int cn_say_outcome(const CnGame *g, const char *const *names, char *out, int cap)
+{
+    return cn_say_outcome_part(g, names, CN_SAY_PART_ALL, out, cap);
+}
+
+int cn_say_outcome_part(const CnGame *g, const char *const *names, int part, char *out, int cap)
 {
     CnEvent ev[CN_EVENTS_PER_MOVE + 1];
     if (!g || !out || cap < 1) return -1;
     if (!g->call_at) { out[0] = 0; return 0; }
     int n = cn_plan(g, g->call_at - 1, g->call_at, ev, (int)(sizeof ev / sizeof ev[0]));
     if (n < 0) return -1;
-    return outcome_line(ev, n, names, out, cap);
+    return outcome_line(ev, n, names, part, out, cap);
 }
 
 int cn_say_caption(const CnGame *g, int move, const char *const *names, char *out, int cap)

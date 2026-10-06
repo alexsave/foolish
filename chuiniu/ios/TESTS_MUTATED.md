@@ -179,3 +179,6 @@ Each mutant was one edit to a product file, restored by editing it back.
 | S4 | the director never rests | "half a second after the last frame: rested, once", "and not again" |
 
 A first S3 (the asked frame no longer bumps the ticket) stayed green: the landing of the same frame bumps it, so that bump was a second band-aid and is gone.
+## Package S (the verifier's findings) and package N's Swift tests
+
+Their rows, package N's two Swift tests among them (seen red at last; the one-ink mutant survived and the picture test gained the letters' check), are in `chuiniu/c/docs_pkgS.md`, "Tests, each seen red".

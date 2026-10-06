@@ -27,7 +27,8 @@
 //   canvas   the kernel's frame at the shot's canvas (flat points); the
 //            names are in it, lying on the table in the kernel's scene, so a
 //            cup in front of one hides it (NameDecal.swift draws their letters)
-//   stamps   the reveal's loser stamp under a name (tilted with them)
+// and over it, on the glass (not turned), the reveal's loser stamp under its
+// name, kept inside the drawer and off the other names (stampFrame)
 // The HUD (the plate, the picker, Next round) is SwiftUI over this view and
 // is never turned.
 //
@@ -572,6 +573,14 @@ public final class StageUIView: UIView {
     /// which is x = .95 of the drawer's width in the overdraw, and 58 up.
     static func tileOrigin(_ size: CGSize) -> CGPoint { PlankTile.origin(centredOn: 0.45 * size.width + size.width / 2) }
 
+    /// The tile's top in the drawer's flat points: the kernel's (`planks_y`:
+    /// the study's place, moved the least that keeps every plank's end off
+    /// the shelf), or the study's own before any HUD.
+    static func tileTop(_ hud: CnStageHudSnap?, _ size: CGSize) -> CGFloat {
+        if let h = hud, h.kind != StageScreen.bubble.rawValue { return CGFloat(h.planksY) }
+        return overdraw(size).minY + PlankTile.top
+    }
+
     /// The planks laid as tiles in phase with `origin` over `size`: one layer
     /// a tile, all sharing the one decoded image (one texture; no tile and no
     /// host has a backing store of its own). The phase is pulled back by
@@ -601,7 +610,8 @@ public final class StageUIView: UIView {
 
     private func paintPlanks(_ size: CGSize) {
         let p = planks.frame
-        let key = [size.width, size.height, bounds.width, bounds.height, p.minX, p.minY, p.width, p.height]
+        let top = Self.tileTop(hud, size)
+        let key = [size.width, size.height, bounds.width, bounds.height, p.minX, p.minY, p.width, p.height, top]
         guard key != paintedFor, size.width >= 1, size.height >= 1 else { return }
         paintedFor = key
         let image = CnTextures.planks?.cgImage
@@ -609,7 +619,7 @@ public final class StageUIView: UIView {
         // the study's stage inside the planks' layer: the tiles keep its phase, the light its geometry
         let stage = Self.overdraw(size).offsetBy(dx: -p.minX, dy: -p.minY)
         let phase = Self.tileOrigin(size)
-        Self.tile(planks, size: p.size, origin: CGPoint(x: stage.minX + phase.x, y: stage.minY + phase.y), image: image)
+        Self.tile(planks, size: p.size, origin: CGPoint(x: stage.minX + phase.x, y: top - p.minY), image: image)
         // the stage's light, as the study's ::after is on the over-sized stage: each gradient placed in
         // that stage and run on past it to the layer's edge (a gradient holds its end stops beyond its ends)
         light.frame = planks.bounds
@@ -654,36 +664,64 @@ public final class StageUIView: UIView {
             return
         }
         let scale = window?.screen.scale ?? UIScreen.main.scale
+        // every name's block on the glass: a stamp keeps off the others
+        let blocks = Dictionary(uniqueKeysWithValues: names.compactMap { n -> (Int, CGRect)? in
+            guard n.seat < h.seats, h.nameX.indices.contains(n.seat) else { return nil }
+            return (n.seat, Self.glassRect(Self.nameBlock(n, h), h))
+        })
         for n in names {
             let l = stampLayers[n.seat] ?? makeStamp(scale)
             stampLayers[n.seat] = l
-            let visible = n.seat < h.seats && h.nameX.indices.contains(n.seat)
-            l.isHidden = !visible || n.stamp.isEmpty
-            guard visible, !n.stamp.isEmpty else { continue }
-            // the name's block as the kernel lays it (NameDecal.block on the anchor), the stamp under it
-            let (textW, textH) = NameDecal.block(n.name, short: h.shortBoard != 0)
-            let barH = NameDecal.barH, gap = NameDecal.gap
-            let x = h.nameX[n.seat], y = h.nameY[n.seat]
-            var top: CGFloat
-            var left: CGFloat
-            switch h.nameHow[n.seat] {
-            case CN_NAME_FOOT:            // mine, tall: centred on x, the block's foot on y
-                top = y - (textH + gap + barH); left = x - textW / 2
-            case CN_NAME_LEFT:            // mine, short: its left edge on x, centred on y
-                top = y - (textH + gap + barH) / 2; left = x
-            default:                      // a far seat: centred on x, its top 8 above y
-                top = y - 8; left = x - textW / 2
-            }
-            let midX = left + textW / 2
+            l.isHidden = blocks[n.seat] == nil || n.stamp.isEmpty
+            guard let block = blocks[n.seat], !n.stamp.isEmpty else { continue }
             let stampAttrs: [NSAttributedString.Key: Any] = [.font: Self.stampFont, .kern: 12 * 0.22,
                                                              .foregroundColor: UIColor(Ink.blood)]
             let word = n.stamp.uppercased()
             l.string = NSAttributedString(string: word, attributes: stampAttrs)
-            let stampW = ceil((word as NSString).size(withAttributes: stampAttrs).width) + 20
+            let size = CGSize(width: ceil((word as NSString).size(withAttributes: stampAttrs).width) + 20, height: 22)
+            // ON THE GLASS, NOT TURNED WITH THE PLANKS: under its name's block, inside the drawer, off every other name
+            let f = Self.stampFrame(under: block, size: size, bounds: CGRect(origin: .zero, size: drawer.size),
+                                    avoid: blocks.filter { $0.key != n.seat }.map(\.value))
             l.setAffineTransform(.identity)
-            l.frame = CGRect(x: midX - stampW / 2, y: top + textH + gap + barH + 4, width: stampW, height: 22)
+            l.frame = f.offsetBy(dx: drawer.minX, dy: drawer.minY)
             l.setAffineTransform(CGAffineTransform(rotationAngle: -5 * .pi / 180))
         }
+    }
+
+    /// A name's block in the drawer's flat points as the kernel lays it
+    /// (NameDecal.block on the HUD's anchor by `name_how`).
+    static func nameBlock(_ n: StageName, _ h: CnStageHudSnap) -> CGRect {
+        let (textW, textH) = NameDecal.block(n.name, short: h.shortBoard != 0)
+        let blockH = textH + NameDecal.gap + NameDecal.barH
+        let x = h.nameX[n.seat], y = h.nameY[n.seat]
+        switch h.nameHow[n.seat] {
+        case CN_NAME_FOOT: return CGRect(x: x - textW / 2, y: y - blockH, width: textW, height: blockH)       // mine, tall
+        case CN_NAME_LEFT: return CGRect(x: x, y: y - blockH / 2, width: textW, height: blockH)              // mine, short
+        default:           return CGRect(x: x - textW / 2, y: y - 8, width: textW, height: blockH)           // a far seat
+        }
+    }
+
+    /// A flat rect's box on the glass (its corners through the HUD's turn).
+    static func glassRect(_ r: CGRect, _ h: CnStageHudSnap) -> CGRect {
+        let c = [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY), CGPoint(x: r.minX, y: r.maxY), CGPoint(x: r.maxX, y: r.maxY)]
+            .map { StageDirector.glass($0, h) }
+        let xs = c.map(\.x), ys = c.map(\.y)
+        return CGRect(x: xs.min()!, y: ys.min()!, width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!)
+    }
+
+    /// THE STAMP'S PLACE (the verifier saw it run off the left edge under a
+    /// seat at the left, and over the next name on the compact row): centred
+    /// 4 under its name's block, then moved sideways to lie `CN_STAGE_EDGE`
+    /// inside the drawer, then down under any other name it would cover.
+    static func stampFrame(under block: CGRect, size: CGSize, bounds: CGRect, avoid: [CGRect]) -> CGRect {
+        let edge = CGFloat(CN_STAGE_EDGE)
+        var f = CGRect(x: block.midX - size.width / 2, y: block.maxY + 4, width: size.width, height: size.height)
+        f.origin.x = min(max(f.minX, bounds.minX + edge), bounds.maxX - edge - f.width)
+        for _ in 0..<avoid.count {
+            guard let hit = avoid.first(where: { $0.intersects(f) }) else { break }
+            f.origin.y = hit.maxY + 2
+        }
+        return f
     }
 
     private func makeStamp(_ scale: CGFloat) -> CATextLayer {
@@ -698,7 +736,7 @@ public final class StageUIView: UIView {
         stamp.shadowOpacity = 0.25
         stamp.shadowRadius = 5
         stamp.shadowOffset = .zero
-        tilt.addSublayer(stamp)
+        layer.addSublayer(stamp)
         return stamp
     }
 

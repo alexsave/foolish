@@ -128,6 +128,13 @@ build/cn_names_shot: tools/cn_names_shot.c tools/cn_texgen.c $(SRC) $(HDR) | bui
 names-shot: build/cn_names_shot $(TEX_PACK)
 	./build/cn_names_shot $(TEX_PACK) tools/fonts/IMFeENsc28P.ttf build/names_shot.png build/names_shot_zoom.png
 
+# THE HUD OVER THE PICTURE, ON THE GLASS (package S; not a test, not in `run`): a frame turned as the host turns it,
+# each counting die's face, the plate and the outcome line drawn over it. tools/cn_glass_shot.c.
+build/cn_glass_shot: tools/cn_glass_shot.c tools/cn_texgen.c $(SRC) $(HDR) | build
+	$(CC) -O2 $(WARN) $(SRC) tools/cn_glass_shot.c -lm -o $@
+glass-shot: build/cn_glass_shot $(TEX_PACK)
+	for n in 2 4 6; do ./build/cn_glass_shot $(TEX_PACK) 390 718 $$n 2 build/glass_718_$$n.png; ./build/cn_glass_shot $(TEX_PACK) 390 340 $$n 2 build/glass_340_$$n.png; done
+
 ASAN_FLAGS := -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined $(WARN)
 
 build/asan_%: tests/%.c $(SRC) $(HDR) | build
@@ -333,7 +340,7 @@ ios-lib: build/layout/ios.hash datagen tex-ios
 clean:
 	rm -rf build
 
-.PHONY: all run bench names-shot asan wasm wasm-roll docs-roll docs-roll-check ios-smoke swift-smoke structgen datagen ios-lib clean FORCE
+.PHONY: all run bench names-shot glass-shot asan wasm wasm-roll docs-roll docs-roll-check ios-smoke swift-smoke structgen datagen ios-lib clean FORCE
 FORCE:
 .SECONDARY:
 
