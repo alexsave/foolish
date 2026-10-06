@@ -120,7 +120,10 @@ static void stage(const char *pack_path)
     {
         static uint8_t name[60 * 30 * 4];
         for (int i = 0; i < 60 * 30; i++) { const int a = (i % 60) / 6 % 2 ? 255 : 0; name[i * 4] = name[i * 4 + 1] = name[i * 4 + 2] = (uint8_t)(220 * a / 255); name[i * 4 + 3] = (uint8_t)a; }
-        const uint32_t before = fnv(cn_api_stage_frame(h->total_ms, 0), (size_t)sh->w * sh->h * 4);
+        /* the frame is drawn in its own statement: its size is read after it. In one argument list C leaves the order
+         * open, and GCC on x86_64 read the size of the frame before this one (a different canvas) */
+        const uint8_t *p0 = cn_api_stage_frame(h->total_ms, 0);
+        const uint32_t before = fnv(p0, (size_t)sh->w * sh->h * 4);
         OK(cn_api_stage_name(0, name, 60, 30, 40, 20) == 1 && cn_api_stage_name(0, name, 60, 30, 40, 20) == 0, "a name handed over, then the same again: no change");
         OK(cn_api_stage_name(9, name, 60, 30, 40, 20) == -1, "a seat past six is refused");
         px = cn_api_stage_frame(h->total_ms, 0);
