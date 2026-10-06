@@ -683,7 +683,7 @@ const void *cn_api_stage_shot(void) { return stage_inited ? (const void *)cn_sta
 
 void cn_api_stage_external(int on) { cn_scene_external(on); }
 
-int cn_api_stage_target(uint8_t *px, size_t bytes) { return stage_inited && STAGE.shot.ok && cn_scene_target(px, bytes); }
+int cn_api_stage_target(void *px, size_t bytes) { return stage_inited && STAGE.shot.ok && cn_scene_target(px, bytes); }
 
 int cn_api_stage_target_most(int *w, int *h)
 {

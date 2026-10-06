@@ -13,6 +13,7 @@
 
 import CoreGraphics
 import Foundation
+import IOSurface
 
 // MARK: - the model the screens draw
 
@@ -298,13 +299,44 @@ public enum StageScreen: Int {
     case table = 1, reveal = 2, bubble = 3
 }
 
-/// One frame: the picture and where it goes. The image goes at
+/// One frame: the picture and where it goes. The picture goes at
 /// `shot.canvas` (flat points: it turns with the planks by the HUD's `ca`).
-/// The image is premultiplied BGRA, Core Animation's own form (it draws it
-/// without redrawing it first).
+/// It is premultiplied BGRA, Core Animation's own form (it draws it without
+/// redrawing it first).
+///
+/// THE PICTURE IS NEVER COPIED (package M): the kernel draws it straight into
+/// an IOSurface (`surface`), which a layer shows as it is (`contents`, the top
+/// `contentsRect` of it). The surface is the frame's: while a layer or this
+/// frame holds it, the stage draws the next picture into another. `image` is
+/// a copy, made when asked (the bubble's picture, the tests); a Debug
+/// `dev.straight` build draws through the old copy and has no surface.
 public struct StageFrame {
     public let shot: CnStageShotSnap
-    public let image: CGImage
+    /// The surface the kernel drew into, or nil for a copied picture.
+    public let surface: IOSurface?
+    let copied: CGImage?
+    /// The surface's rows: the picture is the top `shot.h` of them.
+    let rows: Int
+
+    init(shot: CnStageShotSnap, surface: IOSurface, rows: Int) {
+        self.shot = shot; self.surface = surface; self.rows = rows; copied = nil
+    }
+
+    init(shot: CnStageShotSnap, image: CGImage) {
+        self.shot = shot; surface = nil; copied = image; rows = shot.h
+    }
+
+    /// What a layer shows: the surface, or the copied image.
+    public var contents: Any? { surface ?? copied }
+    /// The part of `contents` that is the picture (unit rect).
+    public var contentsRect: CGRect {
+        rows > 0 ? CGRect(x: 0, y: 0, width: 1, height: CGFloat(shot.h) / CGFloat(rows)) : CGRect(x: 0, y: 0, width: 1, height: 1)
+    }
+    /// The picture as an image of its own (a copy of the surface's rows).
+    public var image: CGImage {
+        if let copied { return copied }
+        return StageFrame.copy(surface, w: shot.w, h: shot.h) ?? StageFrame.blank
+    }
 }
 
 /// The transcript picture: the stage's bubble frame and the HUD that places
@@ -324,7 +356,9 @@ public struct BubbleFrame {
 /// by a begin, and given back by `purge` (a memory warning, the extension
 /// going away) and after every bubble; the next frame takes it again and
 /// draws the same picture. One stage, so one arena: the bubble and the live
-/// table never hold two.
+/// table never hold two. At rest (`rest`) only the textures stay resident.
+/// The pictures: the one on show and, while a frame draws, the one being
+/// drawn; never a copy of either.
 @MainActor
 public protocol TableStage: AnyObject {
     /// Begin `screen` for a drawer of `drawer` points on a `scale` device. A
@@ -356,6 +390,12 @@ public protocol TableStage: AnyObject {
     /// A memory warning: the arena is freed; the next frame takes a new one
     /// and draws the same picture.
     func purge()
+    /// THE TABLE AT REST (nothing moves, no frame due): the stage keeps its
+    /// textures and the picture on show, and gives back the rest of the arena
+    /// (the frame's buffers, about two thirds of it) and every spare picture
+    /// surface; the next frame takes the pages again and draws at once, with
+    /// nothing uploaded (cn_api_stage_rest).
+    func rest()
     /// THE BUBBLE: the resident game's transcript picture, drawn once at
     /// `scale` (the kernel clamps it: 2 at most), the arena freed after it.
     /// A table or reveal begun before is begun again exactly as it was (the

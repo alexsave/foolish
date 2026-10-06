@@ -40,6 +40,9 @@
 // cups lift; then one still frame, and the display link stops. A view with
 // no size never asks for a frame. A purge (memory warning) keeps the last
 // picture on screen; a frame the stage cannot draw keeps the previous one.
+// Half a second after the last frame, with nothing moving, the stage rests:
+// it gives back the arena's frame pages and its spare surfaces, keeping the
+// textures and the picture on show (TableStage.rest).
 //
 // OFF THE MAIN THREAD: a display frame asks the stage for the next picture
 // (`TableStage.submit`: the clock and the peek sampled then) and goes on; the
@@ -254,6 +257,7 @@ public final class StageDirector: ObservableObject {
     func requestFrame() -> Bool {
         guard dirty, !inFlight, owns, let r = request, r.drawer.width >= 1, r.drawer.height >= 1, hud != nil else { return false }
         dirty = false
+        restAsked += 1                                  // a frame: the table is not at rest
         framesAsked += 1
         inFlight = true
         let gen = generation, ms = Int(clockMs.rounded(.down)), peek = peekValue(CACurrentMediaTime())
@@ -287,10 +291,37 @@ public final class StageDirector: ObservableObject {
         let now = CACurrentMediaTime()
         ChuiniuDev.log.debug("stage frame ms=\(ms, privacy: .public) land=\(String(format: "%.2f", (landedAt - self.asked) * 1000), privacy: .public) present=\(String(format: "%.2f", (now - landedAt) * 1000), privacy: .public) sync=\(ChuiniuDev.syncFrames ? 1 : 0, privacy: .public) rolling=\(Int(f?.shot.rolling ?? 0), privacy: .public) scale=\(f?.shot.scale ?? 0, privacy: .public) w=\(f?.shot.w ?? 0, privacy: .public)")
         #endif
-        if needsFrame { onWake?() }
+        if needsFrame { onWake?() } else if !live { atRestSoon() }
     }
 
     var needsFrame: Bool { dirty && owns && hud != nil }
+
+    // MARK: at rest
+
+    /// How long the table stays still before the stage gives its frame
+    /// memory back: long enough that a tap's peek or the next arrival
+    /// (which draw at once either way) does not make it give and take the
+    /// pages on every frame.
+    static let restDelay: TimeInterval = 0.5
+    /// Each frame asked and each wait for rest bumps it: a wait that finds it
+    /// changed was overtaken.
+    private var restAsked = 0
+    /// The stage gave its frame memory back (tests).
+    private(set) var rested = 0
+
+    /// The last frame landed and nothing moves: in `restDelay`, unless a
+    /// frame is asked meanwhile, the stage rests (TableStage.rest).
+    private func atRestSoon() {
+        restAsked += 1
+        let ticket = restAsked
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.restDelay) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.restAsked == ticket, self.owns, !self.inFlight, !self.dirty, !self.live else { return }
+                self.stage.rest()
+                self.rested += 1
+            }
+        }
+    }
 
     /// Something the frame is drawn from changed outside the clock (a name
     /// handed to the stage): the next display frame draws it.
@@ -720,7 +751,9 @@ public final class StageUIView: UIView {
         let c = f.shot.canvas
         guard c.count == 4 else { return }
         canvas.frame = CGRect(x: c[0], y: c[1], width: c[2], height: c[3])
-        canvas.contents = f.image
+        // the kernel's own surface, shown as it is (the top of it is the picture): never a copy
+        canvas.contents = f.contents
+        canvas.contentsRect = f.contentsRect
     }
 
     // MARK: touch

@@ -327,7 +327,7 @@ const void *cn_api_stage_shot(void);
  * frame of the begun screen has (1, or 0 with nothing begun), to size the
  * buffers once a begin. */
 void cn_api_stage_external(int on);
-int  cn_api_stage_target(uint8_t *px, size_t bytes);
+int  cn_api_stage_target(void *px, size_t bytes);
 int  cn_api_stage_target_most(int *w, int *h);
 /* THE TABLE AT REST: nothing moves and no frame is due soon. The stage keeps
  * its textures (the next frame uploads nothing) and forgets the frame's

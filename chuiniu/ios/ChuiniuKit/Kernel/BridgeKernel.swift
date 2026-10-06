@@ -21,6 +21,7 @@
 import CChuiniu
 import CoreGraphics
 import Foundation
+import IOSurface
 import Security
 
 @MainActor
@@ -483,7 +484,8 @@ public final class BridgeKernel: Kernel {
 /// THE ARENA IS TAKEN BY A FRAME. cn_api_stage_init opens the pack alone and
 /// a begin only bakes the layout and the throws into the bridge's handle, so
 /// no begin, the first of a process included, takes the arena; the first
-/// frame attaches it (cn_api_stage_attach) and a purge frees it.
+/// frame attaches it (cn_api_stage_attach) and a purge frees it. At rest
+/// (`rest`) the pages of its frame buffers go back and the textures stay.
 ///
 /// THE STAGE'S OWN QUEUE. Every call that touches the renderer (a begin, a
 /// frame, the arena, a purge, the bubble) runs on one serial queue
@@ -519,7 +521,9 @@ public final class BridgeStage: TableStage {
         let w = worker
         return w.queue.sync { () -> CnStageHudSnap? in
             guard w.ready(arena: false) else { return nil }
-            return Self.snap(cn_api_stage_begin(Int32(screen.rawValue), Float(drawer.width), Float(drawer.height), Float(scale)), readCnStageHud)
+            let hud = Self.snap(cn_api_stage_begin(Int32(screen.rawValue), Float(drawer.width), Float(drawer.height), Float(scale)), readCnStageHud)
+            w.begun()
+            return hud
         }
     }
 
@@ -582,19 +586,56 @@ public final class BridgeStage: TableStage {
         w.queue.sync { w.purge() }
     }
 
+    public func rest() {
+        // after any frame in flight; the main thread does not wait
+        let w = worker
+        w.queue.async { w.rest() }
+    }
+
+    /// Bytes of the arena given back at rest, and the surfaces kept (tests).
+    var resting: (bytes: Int, surfaces: Int) { worker.queue.sync { (worker.rested, worker.pool.count) } }
+
     /// How many frames drew at once at most since the last ask (the tests':
     /// the queue is serial, so 1).
     public var drawsAtOnce: Int { worker.queue.sync { worker.takeMostAtOnce() } }
 }
 
 /// The stage's queue and what only it touches: the pack, the stage's init,
-/// the arena. Not on the main actor: every method here runs on `queue`.
+/// the arena, the picture surfaces. Not on the main actor: every method here
+/// runs on `queue`.
+///
+/// THE PICTURES (package M). The kernel draws each frame straight into an
+/// IOSurface (cn_api_stage_external, cn_api_stage_target), which the layer
+/// shows as it is: no Data copy, no CGImage, and no copy of Core
+/// Animation's own (`prepare_image`'s memmove). A surface a frame was drawn
+/// into is that frame's; the next frame goes into another (`spare`), never
+/// the one handed out last (on show, or about to be) and never one the
+/// render server still reads (`isInUse`). So at most two pictures live: the
+/// one on show and the one being drawn (a third only while the render server
+/// holds an old one a moment longer).
+///
+/// THE ARENA AT REST. The arena is the stage's own mapping (mmap), so at rest
+/// (`rest`) the pages of the frame's buffers go back to the system
+/// (MADV_FREE_REUSABLE) while the textures stay; the next frame takes them
+/// again (MADV_FREE_REUSE) and uploads nothing.
 final class StageWorker: @unchecked Sendable {
     let queue = DispatchQueue(label: "chuiniu.stage", qos: .userInteractive)
     private(set) var arena: UnsafeMutableRawPointer?
     private var pack: UnsafeMutablePointer<UInt8>?
     private var packCount = 0
     private var inited = false
+    /// The kernel draws into surfaces (else, Debug `dev.straight` or a
+    /// surface whose row is not the picture's, into the arena, copied out).
+    private var external = false
+    /// Bytes from the arena's start given back at rest, to take again.
+    private(set) var rested = 0
+    /// Surfaces the next frame may draw into (the one handed out last too:
+    /// it is skipped while it is `shown`).
+    private(set) var pool: [IOSurface] = []
+    /// The surface of the newest frame handed out.
+    private weak var shown: IOSurface?
+    /// The begun screen's largest picture (cn_api_stage_target_most).
+    private var most = (w: 0, h: 0)
     /// frames drawing now, and the most at once (guarded by its own lock: a
     /// count that a queue that was not serial would push past 1)
     private let counting = NSLock()
@@ -602,8 +643,9 @@ final class StageWorker: @unchecked Sendable {
 
     /// The pack and the stage's init (once a process: the stage keeps
     /// pointing into the pack; its frames are Core Animation's own form,
-    /// premultiplied BGRA, which it draws without redrawing them first); with
-    /// `arena`, an arena too, the first frame and the first after a purge.
+    /// premultiplied BGRA, drawn into surfaces); with `arena`, an arena too,
+    /// the first frame and the first after a purge, and its pages taken
+    /// again after a rest.
     func ready(arena need: Bool) -> Bool {
         dispatchPrecondition(condition: .onQueue(queue))
         if pack == nil {
@@ -616,43 +658,121 @@ final class StageWorker: @unchecked Sendable {
         if !inited {
             guard cn_api_stage_init(pack, packCount) == 0 else { return false }
             #if DEBUG
+            external = !ChuiniuDev.straightFrames
             cn_api_stage_output(ChuiniuDev.straightFrames ? CN_API_STAGE_RGBA : CN_API_STAGE_CA)
             #else
+            external = true
             cn_api_stage_output(CN_API_STAGE_CA)
             #endif
+            cn_api_stage_external(external ? 1 : 0)
             inited = true
         }
-        if arena == nil && need {
-            let a = UnsafeMutableRawPointer.allocate(byteCount: CN_STAGE_ARENA, alignment: 16)
-            guard cn_api_stage_attach(a, CN_STAGE_ARENA) == 0 else { a.deallocate(); return false }
+        guard need else { return true }
+        if arena == nil {
+            // the stage's own mapping, so its pages can be given back at rest
+            guard let a = mmap(nil, CN_STAGE_ARENA, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0),
+                  a != MAP_FAILED else { return false }
+            guard cn_api_stage_attach(a, CN_STAGE_ARENA) == 0 else { munmap(a, CN_STAGE_ARENA); return false }
             arena = a
+            rested = 0
+        }
+        if rested > 0, let a = arena {
+            madvise(a, rested, MADV_FREE_REUSE)
+            rested = 0
         }
         return true
     }
 
+    /// A screen was begun: its largest picture, which sizes the surfaces.
+    func begun() {
+        dispatchPrecondition(condition: .onQueue(queue))
+        var w: Int32 = 0, h: Int32 = 0
+        _ = cn_api_stage_target_most(&w, &h)
+        most = (Int(w), Int(h))
+    }
+
     /// The frame at `t`: prepared with the lift sampled at the submit, its
-    /// passes in CN_STAGE_BANDS bands over the cores (or on this thread), the
-    /// picture copied out.
+    /// passes in CN_STAGE_BANDS bands over the cores (or on this thread),
+    /// drawn into a surface of its own.
     func draw(_ t: UInt32, _ peek: Float, _ lift: Float, banded: Bool) -> StageFrame? {
         dispatchPrecondition(condition: .onQueue(queue))
         counting.lock(); drawing += 1; mostAtOnce = max(mostAtOnce, drawing); counting.unlock()
         defer { counting.lock(); drawing -= 1; counting.unlock() }
-        guard ready(arena: true), cn_api_stage_prepare_at(t, peek, lift) == 1 else { return nil }
+        guard ready(arena: true), cn_api_stage_prepare_at(t, peek, lift) == 1,
+              let p = cn_api_stage_shot(), let shot = try? readCnStageShot(p), shot.ok == 1 else { return nil }
+        guard external else {
+            bands(banded)
+            return Self.drawn(shot)
+        }
+        guard let s = surface(w: shot.w, h: shot.h) else {
+            // a surface whose row is not the picture's (never seen): the arena's picture, copied, from now on
+            #if DEBUG
+            ChuiniuDev.log.error("stage: no surface with \(shot.w * 4) bytes a row; frames are copied from now on")
+            #endif
+            external = false
+            cn_api_stage_external(0)
+            return draw(t, peek, lift, banded: banded)
+        }
+        s.lock(options: [], seed: nil)
+        defer { s.unlock(options: [], seed: nil) }
+        guard cn_api_stage_target(s.baseAddress, s.allocationSize) == 1 else { return nil }
+        bands(banded)
+        shown = s
+        return StageFrame(shot: shot, surface: s, rows: s.height)
+    }
+
+    private func bands(_ banded: Bool) {
         let bands = banded ? CN_STAGE_BANDS : 1
         for pass in 0..<CN_STAGE_PASSES {
             DispatchQueue.concurrentPerform(iterations: bands) { i in
                 cn_api_stage_band(Int32(pass), Int32(i), Int32(bands))
             }
         }
-        return Self.drawn()
+    }
+
+    /// A surface for a w by h picture: a spare of that row, tall enough, not
+    /// the one handed out last and not one the render server still reads;
+    /// else a new one, as tall as the begun screen's tallest picture at this
+    /// row (so the throw's changing pad never asks for another).
+    private func surface(w: Int, h: Int) -> IOSurface? {
+        let row = w * 4
+        if let s = pool.first(where: { $0.bytesPerRow == row && $0.height >= h && $0 !== shown && !$0.isInUse }) { return s }
+        // another row or too short: of no more use (one on show lives on in its frame and its layer)
+        pool.removeAll { $0.bytesPerRow != row || $0.height < h }
+        let tall = most.w > 0 ? Int((Double(most.h) * Double(w) / Double(most.w)).rounded(.up)) + 2 : h
+        let rows = max(h, tall)
+        guard let s = IOSurface(properties: [.width: w, .height: rows, .bytesPerElement: 4, .bytesPerRow: row,
+                                             .allocSize: row * rows, .pixelFormat: Self.bgra]),
+              s.bytesPerRow == row else { return nil }
+        pool.append(s)
+        // the one on show, the one being drawn, and one the render server held a moment longer
+        if pool.count > 3, let i = pool.firstIndex(where: { $0 !== shown && $0 !== s }) { pool.remove(at: i) }
+        return s
+    }
+
+    /// 'BGRA': premultiplied, alpha first in a little-endian word (kCVPixelFormatType_32BGRA)
+    private static let bgra: UInt32 = 0x4247_5241
+
+    /// At rest: the frame's pages back to the system, the textures kept; every
+    /// surface but the one on show let go.
+    func rest() {
+        dispatchPrecondition(condition: .onQueue(queue))
+        pool.removeAll { $0 !== shown }
+        guard let a = arena else { return }
+        let r = Int(cn_api_stage_rest()) / Int(vm_page_size) * Int(vm_page_size)
+        guard r > 0 else { return }
+        madvise(a, r, MADV_FREE_REUSABLE)
+        rested = r
     }
 
     func purge() {
         dispatchPrecondition(condition: .onQueue(queue))
+        pool.removeAll()
         guard let a = arena else { return }
         cn_api_stage_purge()
-        a.deallocate()
+        munmap(a, CN_STAGE_ARENA)
         arena = nil
+        rested = 0
     }
 
     func takeMostAtOnce() -> Int {
@@ -663,28 +783,40 @@ final class StageWorker: @unchecked Sendable {
     }
 
     /// Core Animation's own form (in a Debug build `dev.straight` asks for the old straight RGBA)
-    private static var form: CGBitmapInfo {
+    fileprivate static var form: CGBitmapInfo {
         #if DEBUG
         if ChuiniuDev.straightFrames { return CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue) }
         #endif
         return CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
     }
 
-    /// The picture the kernel has just drawn, copied out: premultiplied BGRA,
-    /// alpha first in a little-endian word, so Core Animation draws it as it
-    /// is (premultiplied RGBA it still redrew into an image of its own on the
-    /// main thread every frame: `sample`'s CA::Render::prepare_image).
-    private static func drawn() -> StageFrame? {
-        guard let p = cn_api_stage_shot(), let shot = try? readCnStageShot(p), shot.ok == 1,
-              let px = cn_api_stage_pixels() else { return nil }
+    /// The picture the kernel has just drawn into the arena, copied out (Debug
+    /// `dev.straight`, and the fallback above).
+    private static func drawn(_ shot: CnStageShotSnap) -> StageFrame? {
+        guard let px = cn_api_stage_pixels() else { return nil }
         // the pixels are the kernel's until the next prepare: copied out here
-        let bytes = Data(bytes: px, count: shot.w * shot.h * 4)
-        guard let provider = CGDataProvider(data: bytes as CFData),
-              let image = CGImage(width: shot.w, height: shot.h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: shot.w * 4,
-                                  space: CGColorSpaceCreateDeviceRGB(),
-                                  bitmapInfo: Self.form,
-                                  provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)
-        else { return nil }
+        guard let image = StageFrame.image(Data(bytes: px, count: shot.w * shot.h * 4), w: shot.w, h: shot.h) else { return nil }
         return StageFrame(shot: shot, image: image)
     }
+}
+
+extension StageFrame {
+    /// w by h pixels of Core Animation's form (or Debug's straight RGBA) as an image.
+    static func image(_ bytes: Data, w: Int, h: Int) -> CGImage? {
+        guard let provider = CGDataProvider(data: bytes as CFData) else { return nil }
+        return CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4,
+                       space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: StageWorker.form,
+                       provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)
+    }
+
+    /// The top h rows of a surface whose row is w pixels, copied.
+    static func copy(_ s: IOSurface?, w: Int, h: Int) -> CGImage? {
+        guard let s, s.bytesPerRow == w * 4, s.height >= h else { return nil }
+        s.lock(options: .readOnly, seed: nil)
+        defer { s.unlock(options: .readOnly, seed: nil) }
+        return image(Data(bytes: s.baseAddress, count: w * h * 4), w: w, h: h)
+    }
+
+    /// One clear pixel: what `image` is when nothing could be copied.
+    static let blank: CGImage = image(Data(count: 4), w: 1, h: 1)!
 }
