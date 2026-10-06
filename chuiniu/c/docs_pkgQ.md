@@ -70,7 +70,17 @@ It stays under a tenth of the 4 MiB budget.
 | `GOLD_CROWN7` | 0x65aa86fd | 0xb9737bbe |
 
 The reason for each is the new figures; the side and the die goldens did not move.
-`cn_scene_test` and `cn_stage_test` hold no crown hash and passed unchanged.
+
+`cn_stage_test`'s two frame goldens draw the six cups' crowns, so they move too:
+
+| Golden | Before | After |
+|---|---|---|
+| the throw frame at 1.2 s | 0x563a3970 | 0x4fd65ada |
+| the still frame, peeking | 0x50980f05 | 0x1b8cf9c5 |
+
+Run against the old pack the test still gives the old pair, so the pack is the only cause; with the new pins the old pack is red on exactly those two assertions.
+The new pair is the same under Apple clang and GCC 16.
+`cn_scene_test` holds no crown hash and passed unchanged.
 The new pack and goldens are the same under Apple clang -O2 and -O0 and GCC 16 (`gcc-16`), and the GCC 16 test holds the pack clang's `make tex` wrote.
 GCC 16 also flagged a misleading indentation in `tg_stop` (two statements after a one-line `for`), fixed by splitting the line.
 
