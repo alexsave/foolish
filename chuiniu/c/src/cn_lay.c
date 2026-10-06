@@ -455,18 +455,30 @@ static void row_seats(const CnLayIn *in, CnLay *L, double W, double H, double my
  * right of every lifted cup and name; else the row is centred and the plate goes
  * under the names when it and the outcome line fit over the shelf; else there is
  * none (as a short board's row of five has none). */
+/* a flat board y on the glass: the deeper of the board's two sides there (the HUD is on the glass, the names and
+ * the stamps under them are flat, turned with the planks) */
+static double foot_glass(const CnLay *L, double W, double y)
+{
+    float ax, ay, bx, by;
+    cn_cam_map(&L->cam, L->board_x, (float)(L->board_y + y), &ax, &ay);
+    cn_cam_map(&L->cam, (float)(L->board_x + W), (float)(L->board_y + y), &bx, &by);
+    (void)ax; (void)bx;
+    return dmax(ay, by);
+}
+
 static void row_fit(const CnLayIn *in, const CnLay *L, double W, double H, double d0, double myR0, double x0, double step,
                     double *R_out, double *cy_out, Reach *ext)
 {
     const int n = in->seats, me = in->me;
-    /* under each mouth its name and the loser's stamp, all over the outcome line over the shelf */
-    const double below = 14 + CN_LAY_STAMP_FOOT, foot = dmin(H, L->shelf[1] - 6 - CN_LAY_OUTCOME_H - L->board_y);
+    /* under each mouth its name and the loser's stamp, all over the outcome line over the shelf (on the glass) */
+    const double below = 14 + CN_LAY_STAMP_FOOT, lowest = L->shelf[1] - 6 - CN_LAY_OUTCOME_H;
+    (void)H;
     double R = dmin(myR0, step / 2 - 4), cy = R + 2;
     Reach r;
     for (;; R -= 1) {
         const double sd = d0 * R / myR0, sring = ring_of(sd);
         int ok = 0;
-        for (cy = R + 2; cy + R + below <= foot; cy += 1) {
+        for (cy = R + 2; foot_glass(L, W, cy + R + below) <= lowest; cy += 1) {
             r = reach_none();
             for (int v = 0; v < n; v++) {
                 const int i = (me + v) % n, out = in->out_mask >> i & 1;
@@ -478,7 +490,7 @@ static void row_fit(const CnLayIn *in, const CnLay *L, double W, double H, doubl
         }
         if (ok || R - 1 < CN_LAY_ROW_MIN_R) break;
     }
-    if (cy + R + below > foot) cy = R + 2;
+    if (foot_glass(L, W, cy + R + below) > lowest) cy = R + 2;
     *R_out = R; *cy_out = cy; *ext = r;
 }
 
@@ -520,9 +532,9 @@ static void one_row(const CnLayIn *in, CnLay *L, double W, double H, double d0, 
         L->plate[0] = (float)(right - w); L->plate[1] = (float)y; L->plate[2] = (float)w; L->plate[3] = CN_LAY_PLATE_H;
         return;
     }
-    const double top = L->board_y + cy + R + below + 4;
+    const double top = foot_glass(L, W, cy + R + below) + 4;
     w = dmin(CN_LAY_PLATE_REVEAL_W, W);
-    if (top + CN_LAY_PLATE_H <= lowest) {
+    if (top + CN_LAY_PLATE_H <= lowest - .5) {   /* a half point: the plate is kept in floats */
         L->has_plate = 1;
         L->plate[0] = (float)(L->w / 2 - w / 2); L->plate[1] = (float)top; L->plate[2] = (float)w; L->plate[3] = CN_LAY_PLATE_H;
     }
@@ -544,9 +556,6 @@ static void one_row(const CnLayIn *in, CnLay *L, double W, double H, double d0, 
  * of rows allows (fewer rows on a tie): six seats at 390 by 718 are two rows of
  * three. */
 #define LIST_STAMP_W 130.0   /* the loser's stamp ("LOSES A DIE" in the small caps at 12, tracked, its frame: 121) */
-#define LIST_STAMP_FOOT (CN_LAY_STAMP_FOOT + 12)   /* its foot: the host sets it on the glass 4 under the name's block,
-                                                       22 tall, turned 5 degrees (6 more at an end); seen on the
-                                                       simulator over the next row's crown at 40 */
 /* a die's picture at a station: the box round its eight corners on the glass */
 static Reach die_box(const CnLay *L, double x, double y, double d)
 {
@@ -566,7 +575,7 @@ static Reach stamp_box(const CnLay *L, double x, double y)
     Reach r = reach_none();
     for (int c = 0; c < 4; c++) {
         float gx, gy;
-        cn_cam_map(&L->cam, (float)(L->board_x + x + (c & 1 ? 1 : -1) * LIST_STAMP_W / 2), (float)(L->board_y + y + (c & 2 ? LIST_STAMP_FOOT : 14)), &gx, &gy);
+        cn_cam_map(&L->cam, (float)(L->board_x + x + (c & 1 ? 1 : -1) * LIST_STAMP_W / 2), (float)(L->board_y + y + (c & 2 ? CN_LAY_STAMP_FOOT : 14)), &gx, &gy);
         r.x0 = dmin(r.x0, gx); r.x1 = dmax(r.x1, gx); r.y0 = dmin(r.y0, gy); r.y1 = dmax(r.y1, gy);
     }
     return r;
@@ -589,7 +598,7 @@ static int list_try(const CnLayIn *in, const CnLay *L, double W, double d0, doub
 {
     const int n = in->seats, me = in->me, rows = (n + per - 1) / per;
     const double step = (W - 2 * CN_LAY_MARGIN) / per, sd = d0 * R / myR0, sring = ring_of(sd);
-    const double below = 14 + LIST_STAMP_FOOT, foot = L->shelf[1] - 6 - CN_LAY_OUTCOME_H - L->board_y;
+    const double below = 14 + CN_LAY_STAMP_FOOT, lowest = L->shelf[1] - 6 - CN_LAY_OUTCOME_H;
     Reach behind[CN_LAY_SEATS * (CN_LAY_DICE + 2)];
     int nb = 0;
     double cy = R + 2;
@@ -599,7 +608,7 @@ static int list_try(const CnLayIn *in, const CnLay *L, double W, double d0, doub
         const int first = r * per, m = n - first < per ? n - first : per;
         const double x0 = (W - m * step) / 2 + step / 2;
         int ok = 0;
-        for (; cy + R + below <= foot; cy += 1) {
+        for (; foot_glass(L, W, cy + R + below) <= lowest; cy += 1) {
             Reach ext = reach_none();
             ok = 1;
             for (int c = 0; c < m && ok; c++) {
@@ -617,7 +626,7 @@ static int list_try(const CnLayIn *in, const CnLay *L, double W, double d0, doub
             if (ok) ok = reach_inside(&ext, L->w) && !(L->has_plate && over_rect(&ext, L->plate, 2));
             if (ok) break;
         }
-        if (!ok) { fail = 1; cy = dmax(R + 2, dmin(cy, foot - R - below)); }   /* placed anyway: the fallback's */
+        if (!ok) { fail = 1; cy = dmax(R + 2, cy - 1); }   /* placed anyway: the fallback's */
         out->cy[r] = cy;
         for (int c = 0; c < m; c++) {
             const int i = (me + first + c) % n;
@@ -664,9 +673,10 @@ static void list_rows(const CnLayIn *in, CnLay *L, double W, double d0, double m
     L->ring_cy = (float)best.y[in->me]; L->ring_rx = 0; L->ring_ry = 0;
     L->pad = (float)dmax(40, cn_m_ceil(-(L->cam.origin_y - L->board_y + cn_cam_from_screen(&L->cam, 0)) + 8));
     L->pad_x = 40;
-    /* the outcome line under the last row's stamps */
+    /* the outcome line under the last row's stamps: their foot is flat, turned with the planks, and the line is
+     * on the glass, so the foot goes through the turn (the deepest of the row's, at its sides) */
     const double lowest = L->shelf[1] - 6 - CN_LAY_OUTCOME_H;
-    L->outcome[0] = 0; L->outcome[1] = (float)dmin(lowest, L->board_y + last + R + 14 + LIST_STAMP_FOOT + 4);
+    L->outcome[0] = 0; L->outcome[1] = (float)dmin(lowest, foot_glass(L, W, last + R + 14 + CN_LAY_STAMP_FOOT) + 4);
     L->outcome[2] = (float)L->w; L->outcome[3] = CN_LAY_OUTCOME_H;
 }
 

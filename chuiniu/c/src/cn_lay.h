@@ -102,7 +102,9 @@
 #define CN_LAY_ROW_MIN_R  12.0    /* the row's cups are never made smaller than this */
 #define CN_LAY_MY_D_MIN   10.0    /* nor my dice on a short board                   */
 #define CN_LAY_PLATE_REVEAL_W 240.0 /* the plate at the reveal: the tally ("There were twelve") is longer than a bid */
-#define CN_LAY_STAMP_FOOT 40.0    /* the loser's stamp under a name at the reveal: its foot this far under the anchor */
+#define CN_LAY_STAMP_FOOT 52.0    /* the loser's stamp under a name at the reveal: its foot this far under the anchor
+                                     (the host sets it on the glass 4 under the name's block, 22 tall, turned 5 degrees,
+                                     6 more at an end; 40 left it over the next row's crown and the outcome line, package S) */
 #define CN_LAY_OUTCOME_H  48.0    /* the reveal's outcome line (two lines of the roman on a band) over the shelf */
 
 typedef struct {

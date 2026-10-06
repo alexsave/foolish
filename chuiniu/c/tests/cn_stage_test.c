@@ -831,11 +831,17 @@ static void test_hud_clear(void)
         const CnStageHud *h = cn_stage_begin(&ST, &in);
         if (!h) { CHECK(0, "%dx%d n %d: begins", W, H, n); continue; }
         const char *what = screen == 0 ? "mine" : screen == 1 ? "theirs" : "reveal";
-        double hud[2][4];
-        const char *hud_name[2];
+        double hud[3][4];
+        const char *hud_name[3];
         int nh = 0;
         if (h->has_plate) { rect_box(h->plate, hud[nh]); hud_name[nh++] = "plate"; }
         if (h->has_shelf) { rect_box(h->shelf, hud[nh]); hud_name[nh++] = "shelf"; }
+        /* the reveal's outcome line, in its room (package S: on the tall list it lay over the names) */
+        if (screen == 2) {
+            CHECK(h->outcome[3] > 0 && h->outcome[1] + h->outcome[3] <= h->shelf[1], "%dx%d n %d: the outcome line over the shelf", W, H, n);
+            rect_box(h->outcome, hud[nh]); hud_name[nh++] = "outcome line";
+            for (int s = 0; s < n; s++) { double sb[4]; stamp_rect(&ST, s, sb); CHECK(!boxes_meet(sb, hud[nh - 1]), "%dx%d n %d: seat %d's stamp clear of the outcome line", W, H, n, s); }
+        }
         /* every name's letters: a short name's width, its line and the turn's glow bar under it (CN_LAY_NAME_H) */
         double names[CN_STAGE_SEATS][4], letters[CN_STAGE_SEATS][4];
         for (int s = 0; s < n; s++) {

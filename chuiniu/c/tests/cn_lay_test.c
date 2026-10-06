@@ -1484,7 +1484,11 @@ static void test_short_or_tall(void)
         CnLayIn r1 = input(390, H, n, 0, 0); r1.reveal = 1;
         CnLay R1;
         if (!cn_lay_make(&r1, &R1)) { clear = 0; continue; }
-        for (int s = 0; s < n; s++) clear &= R1.board_y + R1.name_y[s] + CN_LAY_STAMP_FOOT <= R1.shelf[1] - 6 - CN_LAY_OUTCOME_H + 1e-3;
+        for (int s = 0; s < n; s++) {   /* the stamp's foot is flat (turned with the names), the outcome line on the glass */
+            float gx, gy;
+            cn_cam_map(&R1.cam, R1.board_x + R1.name_x[s], R1.board_y + R1.name_y[s] + CN_LAY_STAMP_FOOT, &gx, &gy);
+            clear &= gy <= R1.shelf[1] - 6 - CN_LAY_OUTCOME_H + .5;
+        }
     }
     CHECK(clear, "the reveal's row leaves its names, the stamp and the outcome line their room");
     CnLayThrow T[CN_LAY_SEATS];
@@ -1498,8 +1502,16 @@ static void test_short_or_tall(void)
         cn_lay_make(&in, &L);
         if (n == 2) CHECK(L.has_plate && L.plate[2] >= CN_LAY_PLATE_MIN && L.plate[0] + L.plate[2] == 16 + L.board_w - 8 && L.plate[0] > L.board_x + L.cup_x[1] + L.cup_r,
                           "340's reveal, two seats: the plate beside the row (%g wide at %g)", L.plate[2], L.plate[0]);
-        else CHECK(!L.has_plate || (L.plate[1] > L.board_y + L.name_y[0] && L.plate[1] + L.plate[3] <= L.shelf[1] - 6 - CN_LAY_OUTCOME_H),
-                   "340's reveal, %d seats: a plate only under the names, over the outcome line", n);
+        else {
+            float gx, gy;   /* the plate is on the glass, the names flat: the name's anchor through the turn */
+            cn_cam_map(&L.cam, L.board_x + L.name_x[0], L.board_y + L.name_y[0], &gx, &gy);
+            /* beside the row when the row leaves it room (three seats, since the stamp's room shrank the row's cups,
+             * package S), else under the names; over the outcome line either way */
+            const int beside = L.has_plate && L.plate[0] > L.board_x + L.cup_x[(n - 1)] + L.cup_r;
+            CHECK(!L.has_plate || ((beside || L.plate[1] > gy) && L.plate[1] + L.plate[3] <= L.shelf[1] - 6 - CN_LAY_OUTCOME_H),
+                  "340's reveal, %d seats: a plate beside the row or under the names, over the outcome line (plate %.1f..%.1f, name %.1f, outcome %.1f)",
+                  n, L.plate[1], L.plate[1] + L.plate[3], gy, L.shelf[1] - 6 - CN_LAY_OUTCOME_H);
+        }
     }
     /* the short board's own pieces */
     in = input(390, 340, 3, 1, 0);

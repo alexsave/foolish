@@ -98,6 +98,10 @@ int main(int argc, char **argv)
     if (h->has_plate) rect(h->plate, S, PLATE);
     if (h->outcome[3] > 0) rect(h->outcome, S, OUT);
     if (!write_png(argv[6], IMG, IW, IH)) return 1;
+    for (int s = 0; s < n; s++) printf("seat %d: cup %.1f %.1f, name %.1f %.1f (glass y %.1f)\n", s, h->cup_x[s], h->cup_y[s], h->name_x[s], h->name_y[s],
+                                        (double)0);
+    printf("outcome %.1f %.1f %.1f %.1f, shelf %.1f %.1f %.1f %.1f, plate %.1f %.1f %.1f %.1f, R %.1f\n", h->outcome[0], h->outcome[1], h->outcome[2], h->outcome[3],
+           h->shelf[0], h->shelf[1], h->shelf[2], h->shelf[3], h->plate[0], h->plate[1], h->plate[2], h->plate[3], h->cup_r);
     printf("%dx%d n %d kind %d: short %d, canvas %.0f %.0f %.0f %.0f at %.1fx\n", W, H, n, kind, h->short_board,
            sh->canvas[0], sh->canvas[1], sh->canvas[2], sh->canvas[3], sh->scale);
     return 0;
