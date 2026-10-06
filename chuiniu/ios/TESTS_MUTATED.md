@@ -146,3 +146,7 @@ The screens and the conversation were played inside Messages on the real kernel,
 ## Package Y (every bubble is one line)
 
 Its rows are in `chuiniu/c/docs_pkgY.md`, "Mutation checks": every test of `BubbleLineTests.swift` and the new `cn_say_test.c` test went red for its own assertion.
+
+## Package N (the names on the table)
+
+`StageViewTests` testANamesPictureIsItsLettersAndItsBar and testANameIsHandedToTheStageOnlyWhenItChanges: see `chuiniu/c/docs_pkgN.md` (their mutation runs were cut off; not yet seen red).
