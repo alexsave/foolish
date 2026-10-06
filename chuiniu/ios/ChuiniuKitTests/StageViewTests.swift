@@ -614,4 +614,25 @@ final class StageViewTests: XCTestCase {
         XCTAssertEqual(Self.bytes(spy.frameOnOneThread(atMs: 0, peek: 0)), before, "every name taken away: the frame before them")
         spy.purge()
     }
+
+    // MARK: the loser's stamp (package S)
+
+    func testTheStampStaysInsideTheDrawerAndOffTheOtherNames() {
+        let bounds = CGRect(x: 0, y: 0, width: 390, height: 340)
+        let size = CGSize(width: 120, height: 22)
+        let edge = CGFloat(CN_STAGE_EDGE)
+        // a seat at the left: centred under its name it would start at -30
+        let left = StageUIView.stampFrame(under: CGRect(x: 10, y: 100, width: 40, height: 20), size: size, bounds: bounds, avoid: [])
+        XCTAssertEqual(left.minX, edge, "pushed right to lie inside the drawer's left edge")
+        XCTAssertEqual(left.minY, 124, "still 4 under its name")
+        // and at the right
+        let right = StageUIView.stampFrame(under: CGRect(x: 350, y: 100, width: 40, height: 20), size: size, bounds: bounds, avoid: [])
+        XCTAssertEqual(right.maxX, bounds.maxX - edge, "pushed left to lie inside the drawer's right edge")
+        // under it, a name in the way: the stamp goes under that one
+        let other = CGRect(x: 120, y: 118, width: 40, height: 20)
+        let mid = StageUIView.stampFrame(under: CGRect(x: 160, y: 96, width: 40, height: 20), size: size, bounds: bounds, avoid: [other])
+        XCTAssertFalse(mid.intersects(other), "off the other name (\(mid))")
+        XCTAssertEqual(mid.minY, other.maxY + 2)
+        XCTAssertEqual(mid.midX, 180, "still centred under its own name")
+    }
 }

@@ -89,6 +89,11 @@ enum {
 #define CN_STAGE_NAME_H_MAX   128
 #define CN_STAGE_NAME_Z       .3f           /* how far above the table a name lies, points            */
 
+/* how near the drawer's edge a host's own overlay on the glass may come (the loser's stamp): CN_LAY_EDGE, an
+ * integer so structgen hands it to Swift */
+#define CN_STAGE_EDGE    4
+_Static_assert(CN_STAGE_EDGE == (int)CN_LAY_EDGE, "the stage's edge is the layout's");
+
 /* THE INPUT: the table as the kernel holds it (the bridge fills it from the
  * resident game; a test fills it by hand). */
 typedef struct {
