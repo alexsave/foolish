@@ -105,7 +105,7 @@ private struct StagePicture: View {
                     .offset(x: hud.nameX[seat.id] - Self.nameBox.width / 2, y: hud.nameY[seat.id] - Self.nameUp)
             }
             if hud.hasPlate != 0, let p = plate {
-                BidPlate(text: p.text, face: p.face)
+                BidPlate(text: p.text, face: p.face, oneLine: true)
                     .frame(width: hud.plate[2], height: hud.plate[3])
                     .offset(x: hud.plate[0], y: hud.plate[1])
             }

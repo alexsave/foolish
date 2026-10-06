@@ -72,6 +72,11 @@
     X(CAP_INVITE,          0, 0)                                                 \
     X(CAP_JOINED,          0, 0)                                                 \
     X(CAP_LEFT,            0, 0)                                                 \
+    /* a caption's shorter forms, said only when the long one is past       */ \
+    /* CN_CAP_BUDGET (cn_say.h): the same sentence, its filler dropped      */ \
+    X(CAP_START_SHORT,     0, 0)  /* "Alex bids first"                        */ \
+    X(CAP_INVITE_SHORT,    0, 0)  /* "Alex wants a game": the picture names it*/ \
+    X(CAP_CLIP,            1, 0)  /* the mark a clipped name ends in          */ \
     /* screen lines, drawn for one phone, so they may say "you"             */ \
     X(HEAD_OPEN,          36, 0)  /* my turn, no bid yet                      */ \
     X(HEAD_RAISE_OR_CALL, 36, 0)                                                 \

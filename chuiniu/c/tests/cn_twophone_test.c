@@ -127,7 +127,7 @@ static void lobby(void)
     for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(i * 7 + 11);
     be(0);
     OK(cn_api_new(seed, 0) == CN_EOK, "Alex makes a lobby in a group");
-    OK(!strcmp(words(CN_API_W_STAGED_CAPTION, 0), "Alex wants a game of Chui Niu. Tap to join"), "%s", line);
+    OK(!strcmp(words(CN_API_W_STAGED_CAPTION, 0), "Alex wants a game of Chui Niu"), "%s", line);
     send();
     for (int p = 1; p < PHONES; p++) {
         open_as(p);

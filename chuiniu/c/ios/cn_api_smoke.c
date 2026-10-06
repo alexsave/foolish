@@ -157,7 +157,7 @@ int main(int argc, char **argv)
     for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(200 - i);
     OK(cn_api_new(seed, 1) == CN_EOK && table()->me == 0 && table()->dm, "a DM lobby");
     OK(cn_api_seats_dirty() == 1, "the seat is recorded");
-    OK(cn_api_words(CN_API_W_STAGED_CAPTION, 0, line, sizeof line) > 0 && !strcmp(line, "Alex wants a game of Chui Niu. Tap to join"), line);
+    OK(cn_api_words(CN_API_W_STAGED_CAPTION, 0, line, sizeof line) > 0 && !strcmp(line, "Alex wants a game of Chui Niu"), line);
     OK(cn_api_words(CN_API_W_HEADLINE, 0, line, sizeof line) > 0 && !strcmp(line, "Waiting for players"), line);
     send();
     be(1);
@@ -231,6 +231,17 @@ int main(int argc, char **argv)
     }
     OK(cn_api_words(CN_API_W_BID, 4 * 8 + 3, line, sizeof line) > 0 && !strcmp(line, "four 3s"), line);
     OK(cn_api_words(CN_API_W_COUNT, 0, line, sizeof line) == -1, "past the list");
+
+    /* the bubble's one line: the probe says what a staged caption says */
+    OK(cn_api_caption_probe(CN_API_P_BID, "Alex", 4, 3, line, sizeof line) > 0 && !strcmp(line, "Alex bid four 3s"), line);
+    OK(cn_api_caption_probe(CN_API_P_START, "Alex", 0, 0, line, sizeof line) > 0
+       && !strcmp(line, "Dice rolled. Alex bids first"), line);
+    OK(cn_api_caption_probe(CN_API_P_INVITE, "WWWWWWWWWWWWWWWW", 0, 0, line, sizeof line) > 0
+       && cn_api_caption_width(line) <= cn_api_caption_budget() && cn_api_caption_unit() == 8, line);
+    OK(cn_api_caption_probe(CN_API_P_CALL, "Bo", 0, 3, line, sizeof line) == -1
+       && cn_api_caption_probe(99, "Bo", 1, 3, line, sizeof line) == -1, "a probe off the table");
+    OK(cn_api_caption_probe(CN_API_P_TALLY, "", 12, 0, line, sizeof line) > 0 && !strcmp(line, "There were twelve"), line);
+    OK(cn_api_caption_probe(CN_API_P_PLATE_BID, "", 13, 5, line, sizeof line) > 0 && !strcmp(line, "13 5s"), line);
 
     /* the records */
     uint8_t saved[CN_API_REC_BYTES];
