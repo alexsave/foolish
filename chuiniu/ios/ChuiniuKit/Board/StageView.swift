@@ -539,6 +539,14 @@ public final class StageUIView: UIView {
     /// which is x = .95 of the drawer's width in the overdraw, and 58 up.
     static func tileOrigin(_ size: CGSize) -> CGPoint { PlankTile.origin(centredOn: 0.45 * size.width + size.width / 2) }
 
+    /// The tile's top in the drawer's flat points: the kernel's (`planks_y`:
+    /// the study's place, moved the least that keeps every plank's end off
+    /// the shelf), or the study's own before any HUD.
+    static func tileTop(_ hud: CnStageHudSnap?, _ size: CGSize) -> CGFloat {
+        if let h = hud, h.kind != StageScreen.bubble.rawValue { return CGFloat(h.planksY) }
+        return overdraw(size).minY + PlankTile.top
+    }
+
     /// The planks laid as tiles in phase with `origin` over `size`: one layer
     /// a tile, all sharing the one decoded image (one texture; no tile and no
     /// host has a backing store of its own). The phase is pulled back by
@@ -568,7 +576,8 @@ public final class StageUIView: UIView {
 
     private func paintPlanks(_ size: CGSize) {
         let p = planks.frame
-        let key = [size.width, size.height, bounds.width, bounds.height, p.minX, p.minY, p.width, p.height]
+        let top = Self.tileTop(hud, size)
+        let key = [size.width, size.height, bounds.width, bounds.height, p.minX, p.minY, p.width, p.height, top]
         guard key != paintedFor, size.width >= 1, size.height >= 1 else { return }
         paintedFor = key
         let image = CnTextures.planks?.cgImage
@@ -576,7 +585,7 @@ public final class StageUIView: UIView {
         // the study's stage inside the planks' layer: the tiles keep its phase, the light its geometry
         let stage = Self.overdraw(size).offsetBy(dx: -p.minX, dy: -p.minY)
         let phase = Self.tileOrigin(size)
-        Self.tile(planks, size: p.size, origin: CGPoint(x: stage.minX + phase.x, y: stage.minY + phase.y), image: image)
+        Self.tile(planks, size: p.size, origin: CGPoint(x: stage.minX + phase.x, y: top - p.minY), image: image)
         // the stage's light, as the study's ::after is on the over-sized stage: each gradient placed in
         // that stage and run on past it to the layer's edge (a gradient holds its end stops beyond its ends)
         light.frame = planks.bounds

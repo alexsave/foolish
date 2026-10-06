@@ -373,6 +373,38 @@ static void up_face(const CnStage *st, const CnObj *o, float q[8])
     }
 }
 
+/* THE PLANKS' PHASE (package S). The host lays the planks' tile from the study's place (its stage 1.9 by 2.2 of
+ * the drawer from -45% and -60%, the tile's top 58 above that), so a plank's end, a dark bar across a plank,
+ * could fall behind the picker's stepper and chips, which stand on the bare planks (the verifier). The shelf is
+ * flat on the glass and the planks are turned, so the shelf goes back through the turn to the planks' points;
+ * the ends come every half tile; when one meets the shelf the tile moves the least that takes it past the
+ * shelf's top or foot. */
+static float planks_phase(const CnStageHud *h)
+{
+    const double base = -.6 * h->h - CN_STAGE_PLANKS_TOP, half = CN_TEX_PLANK_TILE_H / 2.0, e = CN_TEX_PLANK_END_HALF;
+    if (!h->has_shelf) return (float)base;
+    /* the shelf's corners through the inverse of the turn (the homography's adjugate) */
+    const float *m = h->hom;
+    const double a = m[0], b = m[1], c = m[2], d = m[3], f = m[4], g = m[5], p = m[6], q = m[7], r = m[8];
+    const double i3 = g * p - d * r, i4 = a * r - c * p, i5 = c * d - a * g;     /* the adjugate's second row */
+    const double i6 = d * q - f * p, i7 = b * p - a * q, i8 = a * f - b * d;     /* and its third */
+    double y0 = 1e30, y1 = -1e30;
+    for (int k = 0; k < 4; k++) {
+        const double x = h->shelf[0] + (k & 1) * h->shelf[2], y = h->shelf[1] + (k >> 1) * h->shelf[3];
+        const double w = i6 * x + i7 * y + i8, fy = (i3 * x + i4 * y + i5) / w;
+        if (fy < y0) y0 = fy;
+        if (fy > y1) y1 = fy;
+    }
+    /* the end nearest the shelf: base + n * half */
+    const double n = cn_m_floor((y0 - e - base) / half) + 1, yj = base + n * half;
+    if (yj - e >= y1) return (float)base;        /* the next end is under the shelf's foot already */
+    const double up = (y0 - e) - yj, down = (y1 + e) - yj;   /* move it over the top, or under the foot */
+    double dy = -up < down ? up : down;
+    /* the end before it must not come down onto the shelf, nor the one after up onto it (the shelf is under half a tile) */
+    if (yj - half + dy + e > y0 && dy > 0) dy = up;
+    return (float)(base + dy);
+}
+
 static void hud_cam(CnStageHud *h, const CnCam *c)
 {
     h->origin_x = c->origin_x; h->origin_y = c->origin_y;
@@ -503,6 +535,7 @@ const CnStageHud *cn_stage_begin(CnStage *st, const CnStageIn *in_)
         }
     }
     hud_cam(h, &L->cam);
+    h->planks_y = in->kind == CN_STAGE_BUBBLE ? 0 : planks_phase(h);
     st->eye[0] = L->cam.eye_x + st->pad_x; st->eye[1] = L->cam.eye_y; st->eye[2] = L->cam.eye_z;
 
     if (!bodies(st) || !throws(st)) return 0;

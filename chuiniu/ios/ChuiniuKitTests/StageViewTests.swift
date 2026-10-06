@@ -207,13 +207,15 @@ final class StageViewTests: XCTestCase {
                 // the tiles cover the layer: the first at or above-left of its corner, the last past its far one
                 let union = tiles.reduce(CGRect.null) { $0.union($1.frame) }
                 XCTAssertTrue(union.contains(b), "\(tag): the tiles cover the layer (\(union) of \(b))")
-                // and they keep the study's phase in the drawer: a tile corner where the study put one
+                // and they keep the study's phase across and the kernel's down (the study's, moved off the shelf's
+                // planks' ends, package S): a tile corner where those put one
                 let phase = StageUIView.overdraw(size).origin
                 let o = StageUIView.tileOrigin(size)
                 let corner = view.planks.convert(tiles[0].frame.origin, to: view.tilt)
-                let dx = (corner.x - (phase.x + o.x)) / PlankTile.size.width, dy = (corner.y - (phase.y + o.y)) / PlankTile.size.height
+                let dx = (corner.x - (phase.x + o.x)) / PlankTile.size.width
+                let dy = (corner.y - StageUIView.tileTop(hud, size)) / PlankTile.size.height
                 XCTAssertEqual(dx, dx.rounded(), accuracy: 1e-6, "\(tag): the tiles' phase across is the study's")
-                XCTAssertEqual(dy, dy.rounded(), accuracy: 1e-6, "\(tag): the tiles' phase down is the study's")
+                XCTAssertEqual(dy, dy.rounded(), accuracy: 1e-6, "\(tag): the tiles' phase down is the kernel's")
                 // under it, the same wood, never black
                 XCTAssertGreaterThan(view.back.sublayers?.filter { $0.name == "tile" }.count ?? 0, 0, "\(tag): planks under the turned layer")
                 XCTAssertTrue(view.back.sublayers?.allSatisfy { $0.name == "tile" } ?? false, "\(tag): and nothing over them")
@@ -657,6 +659,20 @@ final class StageViewTests: XCTestCase {
         XCTAssertEqual(hud.plateThrow, 1, "my held cup passes under the plate")
         XCTAssertFalse(TableScreen.plateShown(hud, atRest: false), "the plate stands down while my throw is in the air")
         XCTAssertTrue(TableScreen.plateShown(hud, atRest: true), "and is back once my dice rest")
+    }
+
+    /// The planks' tile is laid at the kernel's phase (`planks_y`), which at
+    /// 375 by 541 on my turn moves a plank's end out from behind the picker.
+    func testThePlanksAreLaidAtTheKernelsPhase() throws {
+        let me = try started(seats: 4)
+        let size = CGSize(width: 375, height: 541)
+        let director = StageDirector(stage: KernelSeam.stage())
+        director.begin(request(size, table: me.table), planMs: nil)
+        let hud = try XCTUnwrap(director.hud)
+        let study = StageUIView.overdraw(size).minY + PlankTile.top
+        XCTAssertNotEqual(hud.planksY, Double(study), accuracy: 0.5, "the kernel moved the tile here")
+        XCTAssertEqual(Double(StageUIView.tileTop(hud, size)), hud.planksY, "laid where the kernel says")
+        XCTAssertEqual(StageUIView.tileTop(nil, size), study, "the study's place before any HUD")
     }
 
     // MARK: the loser's stamp (package S)

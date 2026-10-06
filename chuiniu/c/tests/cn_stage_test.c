@@ -700,6 +700,39 @@ static void test_plate_throw(void)
     printf("  %d tables with a plate and my throw: the cup passes under it on %d (%d missed), the plate stands down on %d more (a box's corner)\n", tables, under, missed, loose);
 }
 
+/* THE PLANKS' ENDS OFF THE SHELF (package S): a plank's end (a dark bar) fell behind the picker's stepper and chips.
+ * Every end the tile lays (planks_y and every half tile), the bar and its lip, across the drawer, through the turn,
+ * stays out of the shelf; the tile moves at most half a tile from the study's place, and not at all without a shelf. */
+static void test_planks_phase(void)
+{
+    TEST("the planks' ends stay off the shelf: every end through the turn, every drawer, every screen");
+    cn_stage_init(&ST, PACK, PACK_N);
+    int tables = 0, moved = 0, bad = 0;
+    for (int wi = 0; wi < NW; wi++) for (int hi = 0; hi < NH; hi++) for (int screen = 0; screen < 3; screen++) {
+        const int W = SIZES_W[wi], H = SIZES_H[hi];
+        CnStageIn in = table_in(W, H, 4, screen == 0, 0, screen == 2 ? CN_STAGE_REVEAL : CN_STAGE_TABLE);
+        const CnStageHud *h = cn_stage_begin(&ST, &in);
+        if (!h) continue;
+        tables++;
+        const double base = -.6 * H - CN_STAGE_PLANKS_TOP, half = CN_TEX_PLANK_TILE_H / 2.0;
+        moved += fabs(h->planks_y - base) > .01;
+        CHECK(fabs(h->planks_y - base) <= half / 2 + CN_TEX_PLANK_END_HALF + 1, "%dx%d %d: the tile moved %.1f", W, H, screen, h->planks_y - base);
+        if (!h->has_shelf) { CHECK(fabs(h->planks_y - base) < .01, "%dx%d %d: no shelf, the study's place", W, H, screen); continue; }
+        int hit = 0;
+        for (int m = -6; m <= 6; m++) for (int k = -1; k <= 1; k++) {
+            const double y = h->planks_y + m * half + k * CN_TEX_PLANK_END_HALF;
+            for (double x = -120; x <= W + 120; x += 3) {
+                float gx, gy;
+                cn_cam_map(&ST.lay.cam, (float)x, (float)y, &gx, &gy);
+                hit |= gx > h->shelf[0] && gx < h->shelf[0] + h->shelf[2] && gy > h->shelf[1] && gy < h->shelf[1] + h->shelf[3];
+            }
+        }
+        bad += hit;
+        CHECK(!hit, "%dx%d screen %d: a plank's end under the shelf (the tile at %.1f)", W, H, screen, h->planks_y);
+    }
+    printf("  %d tables: the tile moved off the study's place on %d, a plank's end under the shelf on %d\n", tables, moved, bad);
+}
+
 static void test_reveal_faces(void)
 {
     TEST("the reveal: each die's face on the glass for the glow (die_q), and the dice that do not count drowned as the cups lift");
@@ -1046,6 +1079,7 @@ int main(int argc, char **argv)
     test_reveal_dice_seen();
     test_reveal_faces();
     test_plate_throw();
+    test_planks_phase();
     test_hud_clear();
     test_names();
     free(PACK);

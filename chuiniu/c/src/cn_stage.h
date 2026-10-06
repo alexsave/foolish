@@ -92,6 +92,8 @@ enum {
 /* how near the drawer's edge a host's own overlay on the glass may come (the loser's stamp): CN_LAY_EDGE, an
  * integer so structgen hands it to Swift */
 #define CN_STAGE_EDGE    4
+/* the study's planks: the tile's top this far above its stage's (UI.html tableStage, `-58px`) */
+#define CN_STAGE_PLANKS_TOP 58
 _Static_assert(CN_STAGE_EDGE == (int)CN_LAY_EDGE, "the stage's edge is the layout's");
 
 /* THE INPUT: the table as the kernel holds it (the bridge fills it from the
@@ -165,6 +167,10 @@ typedef struct {
     float    planks[4];                 /* the planks' layer, flat, x y w h: its turn covers the
                                            drawer and CN_CAM_REACH past each side (cn_cam_planks;
                                            0 0 0 0 for none)                                  */
+    float    planks_y;                  /* the planks' tile's top, flat (any whole tile up or down):
+                                           the study's (the overdraw's top, -.6 of the drawer, less
+                                           58), moved the least that keeps every plank's end off
+                                           the shelf (package S)                               */
     float    peek_target;               /* my cup's full tip, radians                         */
     float    scale_still, scale_roll;   /* the scales asked for, clamped                      */
     uint32_t roll_at_ms;                /* when the roll starts                               */
