@@ -542,6 +542,18 @@ static void name_rect(const CnStage *st, int s, double w, double h, double out[4
         out[0] = fmin(out[0], gx); out[1] = fmin(out[1], gy); out[2] = fmax(out[2], gx); out[3] = fmax(out[3], gy);
     }
 }
+/* the loser's stamp under seat s's name on the glass, as the host lays it (StageUIView.stampFrame): 121 wide, its
+ * frame 22 tall 4 under the name's block, turned 5 degrees; flat from 14 to 46 under the anchor covers it */
+static void stamp_rect(const CnStage *st, int s, double out[4])
+{
+    const CnStageHud *H = &st->hud;
+    out[0] = out[1] = 1e30; out[2] = out[3] = -1e30;
+    for (int c = 0; c < 4; c++) {
+        float gx, gy;
+        cn_cam_map(&st->lay.cam, (float)(H->name_x[s] + (c & 1 ? 60.5 : -60.5)), (float)(H->name_y[s] + (c >> 1 ? 46 : 14)), &gx, &gy);
+        out[0] = fmin(out[0], gx); out[1] = fmin(out[1], gy); out[2] = fmax(out[2], gx); out[3] = fmax(out[3], gy);
+    }
+}
 static void rect_box(const float r[4], double out[4]) { out[0] = r[0]; out[1] = r[1]; out[2] = r[0] + r[2]; out[3] = r[1] + r[3]; }
 
 static const int SIZES_W[] = { 375, 390, 430 };
@@ -838,6 +850,13 @@ static void test_hud_clear(void)
             Pic p; picture(&ST, i, &o[i], &p); hull(&p);
             for (int k = 0; k < nh; k++)
                 CHECK(!meets(&p, hud[k]), "%dx%d n %d %s: seat %d's cup clear of the %s", W, H, n, what, o[i].seat, hud_name[k]);
+            /* at the reveal, every seat's stamp (the host's: 121 wide, from 14 to 46 under the name's anchor, its
+             * turn included) clear of every cup (package S: seen over the next row's crown on the tall list) */
+            if (screen == 2) for (int s = 0; s < n; s++) {
+                double sb[4];
+                stamp_rect(&ST, s, sb);
+                CHECK(!meets(&p, sb), "%dx%d n %d reveal: seat %d's cup clear of seat %d's stamp", W, H, n, o[i].seat, s);
+            }
             for (int s = 0; s < n; s++) {
                 const int covers = meets(&p, letters[s]);
                 /* a short board on every screen; the reveal on every board (the tall reveal is the list, package S) */

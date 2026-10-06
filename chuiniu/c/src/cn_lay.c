@@ -543,7 +543,10 @@ static void one_row(const CnLayIn *in, CnLay *L, double W, double H, double d0, 
  * under the last row's stamps. Every cup the same size, the largest any count
  * of rows allows (fewer rows on a tie): six seats at 390 by 718 are two rows of
  * three. */
-#define LIST_STAMP_W 120.0   /* the loser's stamp ("LOSES A DIE" in the small caps at 12, tracked, its frame) */
+#define LIST_STAMP_W 130.0   /* the loser's stamp ("LOSES A DIE" in the small caps at 12, tracked, its frame: 121) */
+#define LIST_STAMP_FOOT (CN_LAY_STAMP_FOOT + 12)   /* its foot: the host sets it on the glass 4 under the name's block,
+                                                       22 tall, turned 5 degrees (6 more at an end); seen on the
+                                                       simulator over the next row's crown at 40 */
 /* a die's picture at a station: the box round its eight corners on the glass */
 static Reach die_box(const CnLay *L, double x, double y, double d)
 {
@@ -563,7 +566,7 @@ static Reach stamp_box(const CnLay *L, double x, double y)
     Reach r = reach_none();
     for (int c = 0; c < 4; c++) {
         float gx, gy;
-        cn_cam_map(&L->cam, (float)(L->board_x + x + (c & 1 ? 1 : -1) * LIST_STAMP_W / 2), (float)(L->board_y + y + (c & 2 ? CN_LAY_STAMP_FOOT : 14)), &gx, &gy);
+        cn_cam_map(&L->cam, (float)(L->board_x + x + (c & 1 ? 1 : -1) * LIST_STAMP_W / 2), (float)(L->board_y + y + (c & 2 ? LIST_STAMP_FOOT : 14)), &gx, &gy);
         r.x0 = dmin(r.x0, gx); r.x1 = dmax(r.x1, gx); r.y0 = dmin(r.y0, gy); r.y1 = dmax(r.y1, gy);
     }
     return r;
@@ -586,7 +589,7 @@ static int list_try(const CnLayIn *in, const CnLay *L, double W, double d0, doub
 {
     const int n = in->seats, me = in->me, rows = (n + per - 1) / per;
     const double step = (W - 2 * CN_LAY_MARGIN) / per, sd = d0 * R / myR0, sring = ring_of(sd);
-    const double below = 14 + CN_LAY_STAMP_FOOT, foot = L->shelf[1] - 6 - CN_LAY_OUTCOME_H - L->board_y;
+    const double below = 14 + LIST_STAMP_FOOT, foot = L->shelf[1] - 6 - CN_LAY_OUTCOME_H - L->board_y;
     Reach behind[CN_LAY_SEATS * (CN_LAY_DICE + 2)];
     int nb = 0;
     double cy = R + 2;
@@ -663,7 +666,7 @@ static void list_rows(const CnLayIn *in, CnLay *L, double W, double d0, double m
     L->pad_x = 40;
     /* the outcome line under the last row's stamps */
     const double lowest = L->shelf[1] - 6 - CN_LAY_OUTCOME_H;
-    L->outcome[0] = 0; L->outcome[1] = (float)dmin(lowest, L->board_y + last + R + 14 + CN_LAY_STAMP_FOOT + 4);
+    L->outcome[0] = 0; L->outcome[1] = (float)dmin(lowest, L->board_y + last + R + 14 + LIST_STAMP_FOOT + 4);
     L->outcome[2] = (float)L->w; L->outcome[3] = CN_LAY_OUTCOME_H;
 }
 
