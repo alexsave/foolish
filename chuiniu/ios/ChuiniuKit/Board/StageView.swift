@@ -257,7 +257,6 @@ public final class StageDirector: ObservableObject {
     func requestFrame() -> Bool {
         guard dirty, !inFlight, owns, let r = request, r.drawer.width >= 1, r.drawer.height >= 1, hud != nil else { return false }
         dirty = false
-        restAsked += 1                                  // a frame: the table is not at rest
         framesAsked += 1
         inFlight = true
         let gen = generation, ms = Int(clockMs.rounded(.down)), peek = peekValue(CACurrentMediaTime())
@@ -306,8 +305,9 @@ public final class StageDirector: ObservableObject {
     /// (which draw at once either way) does not make it give and take the
     /// pages on every frame.
     static let restDelay: TimeInterval = 0.5
-    /// Each frame asked and each wait for rest bumps it: a wait that finds it
-    /// changed was overtaken.
+    /// Each wait for rest bumps it, and every frame that lands still starts
+    /// one: a wait that finds it changed was overtaken by a later frame. (A
+    /// frame in flight, asked or moving when a wait ends is the guard's.)
     private var restAsked = 0
     /// The stage gave its frame memory back (tests).
     private(set) var rested = 0
