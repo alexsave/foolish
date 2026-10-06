@@ -367,7 +367,8 @@ static void tg_stop(const TgStops *g, double t, double *rgb, double *a)
         for (int k = 0; k < 3; k++) rgb[k] = A > 0 ? (g->c[i - 1][k] * a0 + (g->c[i][k] * a1 - g->c[i - 1][k] * a0) * u) / A : g->c[i][k];
         *a = A; return;
     }
-    for (int k = 0; k < 3; k++) rgb[k] = g->c[g->n - 1][k]; *a = g->c[g->n - 1][3];
+    for (int k = 0; k < 3; k++) rgb[k] = g->c[g->n - 1][k];
+    *a = g->c[g->n - 1][3];
 }
 /* createRadialGradient(x0, y0, 0, x1, y1, r1): the largest t >= 0 whose circle passes through q */
 static double tg_conic(double qx, double qy, double x0, double y0, double x1, double y1, double r1)

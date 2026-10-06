@@ -128,3 +128,7 @@ Its rows are in `chuiniu/c/docs_pkgX.md`, "Tests, each seen red": `cn_msg_test` 
 ## Package Y (every bubble is one line)
 
 Its rows are in `chuiniu/c/docs_pkgY.md`, "Mutation checks".
+
+## Package Q (the crown count in lining figures)
+
+Its rows are in `chuiniu/c/docs_pkgQ.md`, "Tests, each seen red".
