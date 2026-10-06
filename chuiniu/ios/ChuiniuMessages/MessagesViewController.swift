@@ -57,9 +57,17 @@ final class MessagesViewController: MSMessagesAppViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
 #if DEBUG
+        ChuiniuDev.launch("viewDidLoad")
+        defer { ChuiniuDev.launch("viewDidLoad done") }
         if ChuiniuDev.empty { return }
 #endif
-        view.backgroundColor = .clear
+        // NEVER A BLANK DRAWER: the planks' own dark from the first commit, so
+        // the drawer Messages opens while the table is still being made (the
+        // conversation, the stage's first frame) is the table's colour, not
+        // Messages' white; every screen paints its planks over it
+        view.backgroundColor = UIColor(Ink.hold)
+        KernelSeam.warm()
+        watchHostBackground()
         host.onStage = { [weak self] caption, collapse in self?.stageResident(caption: caption, collapse: collapse) }
         let h = UIHostingController(rootView: ChuiniuRoot(host: host))
         h.view.backgroundColor = .clear
@@ -87,10 +95,22 @@ final class MessagesViewController: MSMessagesAppViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         if drawerUp { hosting?.view.isHidden = false }
+#if DEBUG
+        // THE DRAWER IS MEASURED: the hosting view fills these bounds, the
+        // table screen begins the stage with the size it is given, and every
+        // collapse, expand or rotation lays it out again. The rig reads this
+        // line to check the two agree (chuiniu/docs/SIM_VERIFICATION.md).
+        let b = view.bounds.size
+        let s = KernelSeam.stage().drawer
+        ChuiniuDev.log.info("drawer \(Int(b.width), privacy: .public)x\(Int(b.height), privacy: .public) stage \(s.map { "\(Int($0.width))x\(Int($0.height))" } ?? "none", privacy: .public) \(self.presentationStyle == .expanded ? "expanded" : "compact", privacy: .public)")
+#endif
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+#if DEBUG
+        ChuiniuDev.launch("viewDidAppear")
+#endif
         if drawerUp {
             appeared = true
             hosting?.view.isHidden = false
@@ -120,6 +140,10 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func willBecomeActive(with conversation: MSConversation) {
         super.willBecomeActive(with: conversation)
+#if DEBUG
+        ChuiniuDev.launch("willBecomeActive")
+        defer { ChuiniuDev.launch("willBecomeActive done") }
+#endif
         arrived = nil
         unbound = conversation.selectedMessage == nil
         present(conversation)
@@ -136,6 +160,9 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func didBecomeActive(with conversation: MSConversation) {
         super.didBecomeActive(with: conversation)
+#if DEBUG
+        ChuiniuDev.launch("didBecomeActive")
+#endif
         conversationActive = true
         becameReady()
     }
@@ -143,6 +170,7 @@ final class MessagesViewController: MSMessagesAppViewController {
     override func willResignActive(with conversation: MSConversation) {
         super.willResignActive(with: conversation)
         conversationActive = false
+        letGo("resigning active")
     }
 
     override func didSelect(_ message: MSMessage, conversation: MSConversation) {
@@ -248,8 +276,9 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// Who this device is: its participant id, and who sent the tapped
     /// bubble.
     private func identify(_ conversation: MSConversation) {
-        let id = withUnsafeBytes(of: conversation.localParticipantIdentifier.uuid) { Data($0) }
-        host.kernel.me(id)
+        // the participant's sixteen bytes, spelled out (no raw memory read)
+        let u = conversation.localParticipantIdentifier.uuid
+        host.kernel.me(Data([u.0, u.1, u.2, u.3, u.4, u.5, u.6, u.7, u.8, u.9, u.10, u.11, u.12, u.13, u.14, u.15]))
         if let sel = conversation.selectedMessage, let url = sel.url {
             host.kernel.sender(url, isDM: conversation.remoteParticipantIdentifiers.count == 1,
                                iSent: sel.senderParticipantIdentifier == conversation.localParticipantIdentifier)
@@ -262,7 +291,26 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// is up.
     private func create(in conversation: MSConversation) {
         identify(conversation)
-        guard host.kernel.newGame(dm: conversation.remoteParticipantIdentifiers.count == 1) else { return }
+#if DEBUG
+        // the rig's full table (dev.fill): made, joined and started at once
+        if let seats = ChuiniuDev.takeFill(), let bridge = host.kernel as? BridgeKernel {
+            ChuiniuDev.log.info("dev.fill \(seats, privacy: .public): \(bridge.devFill(seats: seats), privacy: .public)")
+            session = nil
+            sessionGame = nil
+            host.refresh()
+            stageResident(caption: host.table.bubbleCaption, collapse: false)
+            return
+        }
+#endif
+        guard host.kernel.newGame(dm: conversation.remoteParticipantIdentifiers.count == 1) else {
+            // refused (no nickname yet): the lobby asks for a name, and its
+            // Join makes the lobby and stages the invitation (Kernel.newGame)
+            session = nil
+            sessionGame = nil
+            host.unreadable = nil
+            host.refresh()
+            return
+        }
         session = nil
         sessionGame = nil
         host.refresh()
@@ -306,8 +354,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         let message = MSMessage(session: sessionFor(url, conversation))
         message.url = url
         let layout = MSMessageTemplateLayout()
-        layout.image = BubbleSnapshot.render(table: host.table, title: host.word(.gameTitle),
-                                             scheme: traitCollection.userInterfaceStyle == .dark ? .dark : .light)
+        layout.image = bubbleImage(for: url)
         layout.caption = caption
         message.layout = layout
         message.summaryText = caption
@@ -333,6 +380,55 @@ final class MessagesViewController: MSMessagesAppViewController {
             guard self.stageGeneration == generation else { return }
             self.insert(message, generation: generation, in: conversation)
         }
+    }
+
+    /// The staged link's picture, drawn once a state: the same link staged
+    /// again (an insert retried, a cancel and a re-stage) reuses it. Drawn
+    /// from the resident at this moment, at this screen's scale; the stage's
+    /// arena is freed again before this returns (TableStage.bubble).
+    private var bubble: (url: URL, image: UIImage)?
+
+    private func bubbleImage(for url: URL) -> UIImage? {
+        if let b = bubble, b.url == url { return b.image }
+        let image = BubbleSnapshot.render(table: host.table, title: host.word(.gameTitle),
+                                          scheme: traitCollection.userInterfaceStyle == .dark ? .dark : .light,
+                                          scale: traitCollection.displayScale)
+        bubble = image.map { (url, $0) }
+        return image
+    }
+
+    // MARK: memory
+
+    /// AN EXTENSION HAS A HARD MEMORY LIMIT AND A WATCHDOG (foolish's
+    /// procedural wood took one down on a real phone: shared/swift/Textures/
+    /// WoodTexture.swift). The stage's arena is the one big block (48 MB), so
+    /// it goes whenever the system asks or the extension leaves the screen:
+    /// the next frame takes it again and draws the same picture (I20). The
+    /// bubble picture kept for a re-stage goes too; it is drawn again if
+    /// asked.
+    override func didReceiveMemoryWarning() {
+        super.didReceiveMemoryWarning()
+        letGo("memory warning")
+    }
+
+    private func letGo(_ why: String) {
+        KernelSeam.stage().purge()
+        bubble = nil
+#if DEBUG
+        ChuiniuDev.log.info("let go of the arena: \(why, privacy: .public)")
+#endif
+    }
+
+    private var hostBackground: NSObjectProtocol?
+
+    /// The host app (Messages) going to the background is the extension
+    /// going away from the screen.
+    private func watchHostBackground() {
+        guard hostBackground == nil else { return }
+        hostBackground = NotificationCenter.default.addObserver(
+            forName: .NSExtensionHostDidEnterBackground, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.letGo("host in the background") }
+            }
     }
 
     /// Every waiter of the stage in progress sees a newer generation and

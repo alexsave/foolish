@@ -4,3 +4,16 @@
 /vendor/
 /Generated/
 /*.xcodeproj
+# The texture pack (`make -C chuiniu/c tex-ios`, run by ios-lib): a build output
+# of tools/cn_texgen.c, read by the stage.
+/ChuiniuKit/Resources/cn_tex.pack
+# The flat images and the fonts (the same `tex-ios`): the planks, the verdigris
+# and the bone baked by the same tool, and IM Fell English's two OFL faces with
+# their licence, copied from chuiniu/c/tools/fonts.
+/ChuiniuKit/Resources/cn_planks.jpg
+/ChuiniuKit/Resources/cn_verd.png
+/ChuiniuKit/Resources/cn_bone.png
+/ChuiniuKit/Resources/cn_crust.png
+/ChuiniuKit/Resources/IMFeENrm28P.ttf
+/ChuiniuKit/Resources/IMFeENsc28P.ttf
+/ChuiniuKit/Resources/OFL-IMFellEnglish.txt

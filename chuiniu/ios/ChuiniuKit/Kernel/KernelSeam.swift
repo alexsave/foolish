@@ -11,7 +11,9 @@
 // (Generated/ChuiniuKernel.swift) into a TableModel. The scaffold's scripted
 // FakeKernel is gone; a test builds real positions by driving the bridge.
 
+import CoreGraphics
 import Foundation
+import IOSurface
 
 // MARK: - the model the screens draw
 
@@ -45,13 +47,9 @@ public struct SeatModel: Equatable, Sendable, Identifiable {
     public var alive: Bool
     public var isTurn: Bool
     public var isMe: Bool
-    /// The kernel's lobby row for this phone ("2. Bo (You)"); the name alone
-    /// is what a bubble every phone sees may show.
-    public var lobbyRow: String
-    public init(id: Int, name: String, dice: Int, alive: Bool, isTurn: Bool, isMe: Bool, lobbyRow: String = "") {
+    public init(id: Int, name: String, dice: Int, alive: Bool, isTurn: Bool, isMe: Bool) {
         self.id = id
         self.name = name
-        self.lobbyRow = lobbyRow
         self.dice = dice
         self.alive = alive
         self.isTurn = isTurn
@@ -99,6 +97,11 @@ public struct Reveal: Equatable, Sendable {
     /// The kernel's outcome line, once the call is sent (K8): "Bo calls. Four
     /// 3s was true, Bo loses a die".
     public var outcome: String
+    /// The outcome's loser's clause as the line says it ("Bo loses a die"),
+    /// set in blood where it is found in the line; and its winner's ("Alex
+    /// wins", "" before the end), in the glow (the study's `.t-out b`).
+    public var outcomeLoss: String
+    public var outcomeWin: String
     /// The seat that loses a die.
     public var loser: Int
     /// This phone may go on to the next round's table (its own new dice,
@@ -106,12 +109,14 @@ public struct Reveal: Equatable, Sendable {
     public var nextAllowed: Bool
 
     public init(dice: [[Int]], counts: [[Bool]], bid: Bid, tally: String, outcome: String, loser: Int,
-                nextAllowed: Bool) {
+                nextAllowed: Bool, outcomeLoss: String = "", outcomeWin: String = "") {
         self.dice = dice
         self.counts = counts
         self.bid = bid
         self.tally = tally
         self.outcome = outcome
+        self.outcomeLoss = outcomeLoss
+        self.outcomeWin = outcomeWin
         self.loser = loser
         self.nextAllowed = nextAllowed
     }
@@ -142,7 +147,7 @@ public struct TableModel: Equatable, Sendable {
     /// Every seat's dice, once the bid is called (and at the end).
     public var reveal: Reveal?
     /// The kernel's headline for this phone, under the table ("Your turn:
-    /// raise or call", "Send to bid four 3s").
+    /// raise or call Liar", "Send to bid four 3s").
     public var caption: String
     /// The kernel's caption of the bubble the resident would stage now,
     /// shown in the transcript on every phone ("Alex bid four 3s").
@@ -151,16 +156,25 @@ public struct TableModel: Equatable, Sendable {
     public var menu: Menu?
     /// The lobby's control for this phone.
     public var offered: LobbyOffer
-    /// Changes when the round's dice change, so the roll plays once per
-    /// round. An identity, not a number anything is computed from.
+    /// I may get up from this lobby's seat (msg_lobby_roster_can_exit:
+    /// seated, not started, and somebody else is seated).
+    public var mayLeave: Bool
+    /// Changes when the round's dice change: which round's throw a table
+    /// shows, handed back in `Kernel.rollSeen`. An identity, not a number
+    /// anything is computed from.
     public var rollID: Int
+    /// This round's throw has not been watched to its end on this phone
+    /// (cn_api_roll_pending): the table throws it. The kernel keeps what each
+    /// phone watched in its seat records, so a new launch of the extension
+    /// never throws a watched round again.
+    public var rollPending: Bool
     /// The winner, when over.
     public var winner: Int?
 
     public init(phase: Phase, seats: [SeatModel], me: Int?, myDice: [Int], bid: Bid?, bidText: String,
                 bidder: Int?, stagedBid: Bid? = nil, stagedBidText: String = "", reveal: Reveal?,
-                caption: String, bubbleCaption: String, menu: Menu?, offered: LobbyOffer, rollID: Int,
-                winner: Int?) {
+                caption: String, bubbleCaption: String, menu: Menu?, offered: LobbyOffer, mayLeave: Bool = false,
+                rollID: Int, rollPending: Bool = false, winner: Int?) {
         self.phase = phase
         self.seats = seats
         self.me = me
@@ -175,7 +189,9 @@ public struct TableModel: Equatable, Sendable {
         self.bubbleCaption = bubbleCaption
         self.menu = menu
         self.offered = offered
+        self.mayLeave = mayLeave
         self.rollID = rollID
+        self.rollPending = rollPending
         self.winner = winner
     }
 
@@ -189,7 +205,9 @@ public struct TableModel: Equatable, Sendable {
 public enum Word: CaseIterable, Sendable {
     case gameTitle
     case lobbyTitle, lobbyWaiting, lobbyFull
-    case join, start
+    case join, start, leave
+    /// "(you)", after my own name on the lobby's roster
+    case lobbyYou
     case raise, call, nextRound
     case loses, out
     case namePrompt
@@ -232,12 +250,20 @@ public protocol Kernel: AnyObject {
     func sender(_ url: URL?, isDM: Bool, iSent: Bool)
     /// The kernel's words for a refused link's error.
     func errorText(_ code: Int) -> String
-    /// A new lobby with me in seat 0.
+    /// A new lobby with me in seat 0. False when the kernel refused it; for
+    /// want of a nickname (cn_api_new seats me under it) the table is then
+    /// that lobby still to make: no seats, Join with the name field.
     func newGame(dm: Bool) -> Bool
     /// The kernel's verdict on a nickname typed into the lobby.
     func nameAccepted(_ name: String) -> Bool
+    /// Take a seat under `name` (the nickname too). With a new lobby the
+    /// kernel refused for want of a name (`newGame`), this is that lobby
+    /// made, me in seat 0 under `name`.
     func join(name: String) -> Bool
     func start() -> Bool
+    /// Get up from my lobby seat: the kernel's caption of the bubble that
+    /// says so ("Bo left"), or nil when it refused.
+    func leave() -> String?
     func raise(quantity: Int, face: Int) -> Bool
     func call() -> Bool
     func nextRound() -> Bool
@@ -266,10 +292,158 @@ public protocol Kernel: AnyObject {
     func sameGame(_ a: URL, _ b: URL) -> Bool
     /// `a` is later in the game than `b` (the kernel's ranking).
     func isNewer(_ a: URL, than b: URL) -> Bool
+    /// The throw of the round `rollID` names (`TableModel.rollID`) ran to its
+    /// end on this phone (or was shown at rest under Reduce Motion): the
+    /// kernel records it in the game's seat record, stored at once, and the
+    /// round is no longer `rollPending`, in this launch or any later one.
+    func rollSeen(rollID: Int)
+}
+
+// MARK: the stage: the table's pixels, drawn by the kernel (cn_stage.h)
+
+/// Which screen the stage draws (the kernel's CN_STAGE_*).
+public enum StageScreen: Int {
+    case table = 1, reveal = 2, bubble = 3
+}
+
+/// One frame: the picture and where it goes. The picture goes at
+/// `shot.canvas` (flat points: it turns with the planks by the HUD's `ca`).
+/// It is premultiplied BGRA, Core Animation's own form (it draws it without
+/// redrawing it first).
+///
+/// THE PICTURE IS NEVER COPIED (package M): the kernel draws it straight into
+/// an IOSurface (`surface`), which a layer shows as it is (`contents`, the top
+/// `contentsRect` of it). The surface is the frame's: while a layer or this
+/// frame holds it, the stage draws the next picture into another. `image` is
+/// a copy, made when asked (the bubble's picture, the tests); a Debug
+/// `dev.straight` build draws through the old copy and has no surface.
+public struct StageFrame {
+    public let shot: CnStageShotSnap
+    /// The surface the kernel drew into (while a frame holds it, the stage
+    /// draws into no other frame's), or nil for a copied picture.
+    let held: StageSurface?
+    let copied: CGImage?
+    public var surface: IOSurface? { held?.surface }
+    /// The surface's rows: the picture is the top `shot.h` of them.
+    var rows: Int { held?.surface.height ?? shot.h }
+
+    init(shot: CnStageShotSnap, surface: StageSurface) {
+        self.shot = shot; held = surface; copied = nil
+    }
+
+    init(shot: CnStageShotSnap, image: CGImage) {
+        self.shot = shot; held = nil; copied = image
+    }
+
+    /// What a layer shows: the surface, or the copied image.
+    public var contents: Any? { surface ?? copied }
+    /// The part of `contents` that is the picture (unit rect).
+    public var contentsRect: CGRect {
+        rows > 0 ? CGRect(x: 0, y: 0, width: 1, height: CGFloat(shot.h) / CGFloat(rows)) : CGRect(x: 0, y: 0, width: 1, height: 1)
+    }
+    /// The picture as an image of its own (a copy of the surface's rows).
+    public var image: CGImage {
+        if let copied { return copied }
+        return StageFrame.copy(surface, w: shot.w, h: shot.h) ?? StageFrame.blank
+    }
+}
+
+/// One picture surface the stage drew into, owned by the frames that hold it
+/// and by the stage's pool: the stage draws into it again only when the pool
+/// alone holds it (a class, so that is a reference count the pool can ask).
+final class StageSurface {
+    let surface: IOSurface
+    init(_ surface: IOSurface) { self.surface = surface }
+}
+
+/// The transcript picture: the stage's bubble frame and the HUD that places
+/// the names and the plate on it (CN_STAGE_BUBBLE, 300 by 195 points).
+public struct BubbleFrame {
+    public let hud: CnStageHudSnap
+    public let frame: StageFrame
+}
+
+/// THE TABLE'S PICTURE IS THE KERNEL'S. A host begins a screen of the resident
+/// game and asks for frames on the clock it samples the beats on; every place
+/// on the screen (cups, names, plate, shelf, my cup's tap target, the camera's
+/// turn) is in the HUD, read through the generated reader. There is one stage
+/// a process (the renderer is one).
+///
+/// MEMORY. The arena (CN_STAGE_ARENA, 48 MB) is taken by the first FRAME, not
+/// by a begin, and given back by `purge` (a memory warning, the extension
+/// going away) and after every bubble; the next frame takes it again and
+/// draws the same picture. One stage, so one arena: the bubble and the live
+/// table never hold two. At rest (`rest`) only the textures stay resident.
+/// The pictures: the one on show and, while a frame draws, the one being
+/// drawn; never a copy of either.
+@MainActor
+public protocol TableStage: AnyObject {
+    /// Begin `screen` for a drawer of `drawer` points on a `scale` device. A
+    /// table throws its round from the current plan's SHAKE beat when the
+    /// kernel says the round's throw is pending on this phone
+    /// (`TableModel.rollPending`); the host never decides it. nil when the
+    /// kernel has nothing to draw (or the readers are stale). `drawer` is
+    /// the drawer as the host measured it (the hosting view's bounds), never
+    /// a constant: the kernel lays the table out for it (cn_lay).
+    func begin(_ screen: StageScreen, drawer: CGSize, scale: CGFloat) -> CnStageHudSnap?
+    /// The frame `ms` into the plan's clock, my cup tipped `peek` of its full
+    /// tip; drawn in CN_STAGE_BANDS bands over the cores, now (the caller
+    /// waits, behind any frame in flight). nil when nothing could be drawn.
+    func frame(atMs ms: Int, peek: Double) -> StageFrame?
+    /// THE DISPLAY'S FRAME, OFF THE MAIN THREAD: the same frame, its clock,
+    /// peek and the resident's lift sampled now, drawn on the stage's own
+    /// queue while the main thread goes on; `done` on the main actor with it
+    /// (nil when nothing could be drawn). Frames are drawn one at a time, in
+    /// the order asked; a begin, a purge or `frame` waits for the one in
+    /// flight. The same `ms` and `peek` draw the same bytes either way.
+    func submit(atMs ms: Int, peek: Double, then done: @escaping @MainActor (StageFrame?) -> Void)
+    /// The same frame drawn on one thread, the reference the banded frame must
+    /// equal byte for byte (the tests ask; no screen does).
+    func frameOnOneThread(atMs ms: Int, peek: Double) -> StageFrame?
+    /// The peek's tween at `t` (0 to 1 through CN_PEEK_MS): the kernel's ease.
+    func peekEase(_ t: Double) -> Double
+    /// Everything at rest at `ms`: the display link may stop.
+    func done(atMs ms: Int) -> Bool
+    /// A memory warning: the arena is freed; the next frame takes a new one
+    /// and draws the same picture.
+    func purge()
+    /// THE TABLE AT REST (nothing moves, no frame due): the stage keeps its
+    /// textures and the picture on show, and gives back the rest of the arena
+    /// (the frame's buffers, about two thirds of it) and every spare picture
+    /// surface; the next frame takes the pages again and draws at once, with
+    /// nothing uploaded (cn_api_stage_rest).
+    func rest()
+    /// THE BUBBLE: the resident game's transcript picture, drawn once at
+    /// `scale` (the kernel clamps it: 2 at most), the arena freed after it.
+    /// A table or reveal begun before is begun again exactly as it was (the
+    /// same HUD, the same frame at the same time on its clock), so a screen
+    /// on show never draws the bubble's table. nil when there is nothing to
+    /// draw (a lobby: no dice yet).
+    func bubble(scale: CGFloat) -> BubbleFrame?
+    /// A SEAT'S NAME ON THE TABLE (cn_api_stage_name): its picture, drawn by
+    /// the host (`NameDecal`), laid flat on the planks by the kernel in every
+    /// frame of a table or a reveal from the next one on, so a cup in front of
+    /// it hides it; nil takes it away. Hand it over only when it changes.
+    func name(seat: Int, bitmap: NameBitmap?)
+    /// The arena is allocated now.
+    var holdsArena: Bool { get }
+    /// The drawer the table or reveal on show was begun for, nil before one
+    /// is: what the host measured, for a Debug check against its bounds.
+    var drawer: CGSize? { get }
 }
 
 public enum KernelSeam {
     /// The kernel the extension runs on: the bridge.
     @MainActor
     public static func make() -> Kernel { BridgeKernel() }
+    /// The stage that draws the table: the bridge's one.
+    @MainActor
+    public static func stage() -> TableStage { BridgeStage.shared }
+    /// The cold open: the stage's pack and the planks made ready off the main
+    /// thread while the drawer opens.
+    @MainActor
+    public static func warm() {
+        BridgeStage.shared.warm()
+        CnTextures.preload()
+    }
 }

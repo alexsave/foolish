@@ -112,10 +112,12 @@ targets:
       # dev-file reader.
       - path: ../../shared/swift/MessagesKit/InsertStaging.swift
       - path: ../../shared/swift/MessagesKit/DevFlags.swift
-      # The texture palettes and resource names. The images themselves are
-      # pickemup's baked JPEGs, copied into ChuiniuKit/Resources; nothing
-      # renders a texture at run time.
-      - path: ../../shared/swift/Textures
+      # ChuiniuKit/Resources (in the path above) carries the baked images and
+      # the two IM Fell English faces, written by `make -C ../c tex-ios`
+      # (chuiniu/c/tools/cn_texgen.c; DECISIONS I27). Nothing renders a
+      # texture at run time; the faces are registered from this framework's
+      # bundle at first use (Tokens.swift), since UIAppFonts reads only the
+      # main bundle.
     # KERNEL: the static library, module CChuiniu.
     dependencies:
       # STATIC (embed:false): the linker pulls it in per object.

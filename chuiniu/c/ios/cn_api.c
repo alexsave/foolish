@@ -7,13 +7,15 @@
 #include "../src/cn_say.h"
 #include "../src/cn_view.h"
 #include "../src/cn_beats.h"
+#include "../src/cn_stage.h"
+#include "../src/cn_scene.h"
 #include "../i18n/keys.h"
 #include <stddef.h>
 #include <string.h>
 
 /* The host's numbers against the kernel's, held together by the compiler. */
 _Static_assert(CN_API_TEXT_MAX >= CN_MSG_MAX_TEXT, "the longest link fits the host buffer");
-_Static_assert(CN_API_REC_BYTES == CN_REC_BYTES, "the seat records");
+_Static_assert(CN_API_REC_BYTES == CN_REC_FILE_BYTES, "the seat records, stored");
 _Static_assert(CN_API_SPECTATOR == CN_VIEW_SPECTATOR && CN_API_ALL == CN_VIEW_ALL, "viewers");
 _Static_assert(CN_API_ME != CN_VIEW_SPECTATOR && CN_API_ME != CN_VIEW_ALL && CN_API_ME < 0, "CN_API_ME is its own viewer");
 _Static_assert(CN_API_EVENTS >= CN_EVENTS_PER_MOVE + 1, "one move's plan fits");
@@ -82,11 +84,7 @@ int cn_api_name_verdict(const uint8_t *name, int n) { return msg_seat_name_verdi
 
 void cn_api_seats_load(const uint8_t *bytes, int n)
 {
-    if (!bytes || n < 0) n = 0;
-    if (n > CN_REC_BYTES) n = CN_REC_BYTES;
-    n -= n % CN_REC_LEN;
-    if (n) memcpy(S.rec, bytes, (size_t)n);
-    S.rec_n = n;
+    S.rec_n = cn_rec_load(S.rec, bytes, n);
     S.rec_dirty = 0;
 }
 
@@ -94,10 +92,9 @@ int cn_api_seats_dirty(void) { return S.rec_dirty; }
 
 int cn_api_seats_save(uint8_t *out, int cap)
 {
-    if (!out || cap < S.rec_n) return -1;
-    memcpy(out, S.rec, (size_t)S.rec_n);
-    S.rec_dirty = 0;
-    return S.rec_n;
+    int n = cn_rec_save(S.rec, S.rec_n, out, cap);
+    if (n >= 0) S.rec_dirty = 0;
+    return n;
 }
 
 /* ---- the resident ----------------------------------------------------------- */
@@ -496,6 +493,8 @@ int cn_api_words(int what, int arg, char *out, int cap)
         return cn_say_headline(g, S.me, S.names, out, cap);
     case CN_API_W_SUBLINE:        return g ? cn_say_subline(g, S.names, out, cap) : -1;
     case CN_API_W_OUTCOME:        return g ? cn_say_outcome(g, S.names, out, cap) : -1;
+    case CN_API_W_OUTCOME_LOSS:   return g ? cn_say_outcome_part(g, S.names, CN_SAY_PART_LOSS, out, cap) : -1;
+    case CN_API_W_OUTCOME_WIN:    return g ? cn_say_outcome_part(g, S.names, CN_SAY_PART_WIN, out, cap) : -1;
     case CN_API_W_SEAT:           return S.have && arg >= 0 && arg < S.m.n_seats ? cn_say_seat(S.names, arg, out, cap) : -1;
     case CN_API_W_BID:            return cn_say_bid(arg / 8, arg % 8, 0, out, cap);
     case CN_API_W_DICE_N:         return cn_say_dice_n(arg, out, cap);
@@ -512,6 +511,31 @@ int cn_api_words(int what, int arg, char *out, int cap)
     default:                      return -1;
     }
 }
+
+int cn_api_caption_probe(int what, const char *who, int q, int f, char *out, int cap)
+{
+    if (!out || cap < 1 || !who) return -1;
+    const char *names[CN_MAX_SEATS] = { who };
+    CnEvent ev;
+    memset(&ev, 0, sizeof ev);
+    switch (what) {
+    case CN_API_P_START:  ev.kind = CN_EV_ROUND; break;
+    case CN_API_P_BID:    ev.kind = CN_EV_BID;  ev.q = (uint8_t)q; ev.f = (uint8_t)f; ev.move = 1; break;
+    case CN_API_P_CALL:   ev.kind = CN_EV_CALL; ev.q = (uint8_t)q; ev.f = (uint8_t)f; ev.move = 1; break;
+    case CN_API_P_INVITE: return cn_say_lobby_caption(CN_SAY_INVITE, who, out, cap);
+    case CN_API_P_JOINED: return cn_say_lobby_caption(CN_SAY_JOINED, who, out, cap);
+    case CN_API_P_LEFT:   return cn_say_lobby_caption(CN_SAY_LEFT, who, out, cap);
+    case CN_API_P_PLATE_BID: return cn_say_bid(q, f, 0, out, cap);
+    case CN_API_P_TALLY:  return cn_say_tally(q, out, cap);
+    default:              return -1;
+    }
+    if (ev.kind != CN_EV_ROUND && (q < 1 || q > CN_MAX_DICE || f < 1 || f > CN_FACES)) return -1;
+    return cn_say_caption_of(&ev, 1, names, out, cap);
+}
+
+int cn_api_caption_width(const char *line) { return cn_cap_width(line); }
+int cn_api_caption_budget(void) { return CN_CAP_BUDGET; }
+int cn_api_caption_unit(void) { return CN_CAP_UNIT; }
 
 /* ---- two messages ------------------------------------------------------------------------ */
 
@@ -533,3 +557,152 @@ int cn_api_common(const char *a, const char *b)
     if (cn_msg_text_decode(a, &S.other) || cn_msg_text_decode(b, &S.other2)) return -1;
     return cn_common_moves(&S.other, &S.other2);
 }
+
+/* ---- the stage ------------------------------------------------------------------------- */
+
+/* ONE STAGE A PROCESS: the renderer is one (cn_scene.h), so its handle is too */
+static CnStage STAGE;
+static int stage_inited;
+
+int cn_api_stage_init(const uint8_t *pack, size_t pack_len)
+{
+    int e = cn_stage_init(&STAGE, pack, pack_len);
+    stage_inited = e == 0;
+    return e;
+}
+
+void cn_api_stage_purge(void) { if (stage_inited) cn_stage_purge(&STAGE); }
+
+int cn_api_stage_attach(void *arena, size_t bytes) { return stage_inited ? cn_stage_attach(&STAGE, arena, bytes) : CN_STAGE_E_ARENA; }
+
+/* the current plan's beat of `kind`, or -1 */
+static int beat_of(int kind)
+{
+    if (!S.beats_ok) return -1;
+    for (int i = 0; i < S.beats.n; i++) if (S.beats.beat[i].kind == kind) return i;
+    return -1;
+}
+
+/* ---- the throw: once a phone a round ------------------------------------------------
+ *
+ * A round's throw plays on this phone until it has been watched to its end,
+ * and never again: the game's record keeps the newest round watched, so a new
+ * launch of the extension, a bid arriving or the drawer changing size does
+ * not throw it again. A throw cut off before its end was not watched. */
+static int roll_pending(void)
+{
+    if (!started() || S.me < 0 || S.m.game.phase == CN_PH_OVER) return 0;
+    return cn_rec_seen(S.rec, S.rec_n, &S.m) <= S.m.game.round;
+}
+
+int cn_api_roll_pending(void) { return roll_pending(); }
+
+int cn_api_roll_seen(int round)
+{
+    if (!started() || S.me < 0 || round < 0 || round > S.m.game.round) return 0;
+    if (!cn_rec_see(S.rec, S.rec_n, &S.m, round + 1)) return 0;
+    S.rec_dirty = 1;
+    return 1;
+}
+
+/* THE STAGE'S INPUT IS THE RESIDENT GAME'S (I22): the host names the screen,
+ * the kernel fills the table. My dice are the view's (sorted, so the HUD's die
+ * places line up with CnView.my_dice and shown), a reveal's are the newest
+ * call's, and the throw's seed is the round's. A table throws while its round
+ * is pending (cn_api_roll_pending): the kernel's call, never the host's. */
+const void *cn_api_stage_begin(int kind, float w, float h, float scale)
+{
+    if (!stage_inited || !started() || S.me < 0) return 0;
+    const CnGame *g = &S.m.game;
+    CnView v;
+    cn_view(g, S.me, &v);
+    CnStageIn in;
+    memset(&in, 0, sizeof in);
+    in.kind = (uint8_t)kind; in.seats = g->n; in.me = (uint8_t)S.me;
+    in.turn = g->turn != CN_SEAT_NONE ? g->turn : (uint8_t)((S.me + 1) % g->n);
+    in.w = w; in.h = h; in.scale = scale;
+    in.roll_at_ms = CN_STAGE_NO_ROLL;
+    int round = g->round;
+    if (kind == CN_STAGE_REVEAL) {
+        if (!v.revealed) return 0;
+        in.turn = (uint8_t)((S.me + 1) % g->n);
+        for (int s = 0; s < g->n; s++) {
+            in.dice[s] = v.shown_n[s];
+            if (!v.shown_n[s]) in.out_mask |= (uint8_t)(1 << s);
+            memcpy(&in.faces[s * CN_STAGE_DICE], &v.shown[s * CN_START_DICE], v.shown_n[s]);
+            for (int k = 0; k < v.shown_n[s]; k++)
+                if (v.shown_counts[s * CN_START_DICE + k]) in.count_mask |= 1u << (s * CN_STAGE_DICE + k);
+        }
+        in.known_mask = (uint8_t)((1 << g->n) - 1);
+        round = g->phase == CN_PH_OVER ? g->round : g->round - 1;
+    } else {
+        if (kind == CN_STAGE_TABLE && g->phase == CN_PH_OVER) return 0;
+        for (int s = 0; s < g->n; s++) {
+            in.dice[s] = g->dice_n[s];
+            if (!g->dice_n[s]) in.out_mask |= (uint8_t)(1 << s);
+        }
+        if (kind == CN_STAGE_TABLE) {
+            memcpy(&in.faces[S.me * CN_STAGE_DICE], v.my_dice, v.my_n);
+            in.known_mask = (uint8_t)(1 << S.me);
+            if (roll_pending()) { int b = beat_of(CN_BK_SHAKE); in.roll_at_ms = b >= 0 ? S.beats.beat[b].start_ms : 0; }
+        }
+    }
+    in.seed = cn_stage_round_seed(g->seed, round < 0 ? 0 : round);
+    return cn_stage_begin(&STAGE, &in);
+}
+
+/* a reveal's cups lift with the current plan's LIFT beat; with none, they are up */
+static float lift_at(uint32_t now_ms)
+{
+    int b = beat_of(CN_BK_LIFT);
+    if (b < 0) return 1;
+    CnBeatFrame f;
+    cn_beats_frame(&S.beats, now_ms, &f);
+    return f.prog[b];
+}
+
+float cn_api_stage_lift(uint32_t now_ms) { return lift_at(now_ms); }
+
+int cn_api_stage_prepare_at(uint32_t now_ms, float peek, float lift)
+{
+    return stage_inited && cn_stage_prepare(&STAGE, now_ms, peek, lift);
+}
+
+int cn_api_stage_prepare(uint32_t now_ms, float peek) { return cn_api_stage_prepare_at(now_ms, peek, lift_at(now_ms)); }
+
+_Static_assert(CN_API_STAGE_RGBA == CN_SCENE_OUT_RGBA && CN_API_STAGE_CA == CN_SCENE_OUT_PREMUL_BGRA, "the forms");
+void cn_api_stage_output(int form) { cn_scene_output(form); }
+
+void cn_api_stage_band(int pass, int band, int nbands) { if (stage_inited) cn_stage_band(&STAGE, pass, band, nbands); }
+
+const uint8_t *cn_api_stage_pixels(void) { return stage_inited ? cn_stage_finish(&STAGE) : 0; }
+
+const uint8_t *cn_api_stage_frame(uint32_t now_ms, float peek)
+{
+    if (!stage_inited) return 0;
+    return cn_stage_frame(&STAGE, now_ms, peek, lift_at(now_ms), 0, 0);
+}
+
+const void *cn_api_stage_shot(void) { return stage_inited ? (const void *)cn_stage_shot(&STAGE) : 0; }
+
+void cn_api_stage_external(int on) { cn_scene_external(on); }
+
+int cn_api_stage_target(void *px, size_t bytes) { return stage_inited && STAGE.shot.ok && cn_scene_target(px, bytes); }
+
+int cn_api_stage_target_most(int *w, int *h)
+{
+    if (w) *w = 0;
+    if (h) *h = 0;
+    return stage_inited && cn_stage_target_most(&STAGE, w, h);
+}
+
+size_t cn_api_stage_rest(void) { return stage_inited ? cn_stage_rest(&STAGE) : 0; }
+
+int cn_api_stage_name(int seat, const uint8_t *rgba, int w, int h, float w_pt, float h_pt)
+{
+    return stage_inited ? cn_stage_name(&STAGE, seat, rgba, w, h, w_pt, h_pt) : -1;
+}
+
+int cn_api_stage_done(uint32_t now_ms) { return stage_inited && cn_stage_done(&STAGE, now_ms); }
+
+float cn_api_peek_ease(float t) { return cn_cam_peek_ease(t); }

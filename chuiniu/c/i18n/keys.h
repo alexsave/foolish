@@ -19,7 +19,7 @@
  * PLACEHOLDERS: {who} {loser} a seat's name from the roster; {bid} a
  * BID_ONE / BID_MANY phrase (sentence-initial where the template starts
  * with it); {qty} a NUM_ word or a number; {face} a face digit; {n} a
- * number; {game} GAME_NAME.
+ * number; {game} GAME_NAME; {loss} CAP_LOSES composed.
  *
  * No em dashes or en dashes, and no line ends in a full stop
  * (tests/cn_say_test.c refuses both). */
@@ -66,12 +66,19 @@
     /* the outcome of a call, a screen line once it is sent (K8)            */ \
     X(CAP_CALL_TRUE,       0, 0)  /* the bid stood; the caller loses a die    */ \
     X(CAP_CALL_FALSE,      0, 0)  /* the bid fell; the bidder loses a die     */ \
+    X(CAP_LOSES,           0, 0)  /* "Bo loses a die": {loss} in the two above,
+                                     set apart on the screen (in blood)     */ \
     X(CAP_OUT,             0, 0)  /* "Bo is out"                              */ \
     X(CAP_WINS,            0, 0)  /* "Alex wins"                              */ \
     X(CAP_JOIN,            4, 0)  /* ". " between two clauses                 */ \
     X(CAP_INVITE,          0, 0)                                                 \
     X(CAP_JOINED,          0, 0)                                                 \
     X(CAP_LEFT,            0, 0)                                                 \
+    /* a caption's shorter forms, said only when the long one is past       */ \
+    /* CN_CAP_BUDGET (cn_say.h): the same sentence, its filler dropped      */ \
+    X(CAP_START_SHORT,     0, 0)  /* "Alex bids first"                        */ \
+    X(CAP_INVITE_SHORT,    0, 0)  /* "Alex wants a game": the picture names it*/ \
+    X(CAP_CLIP,            1, 0)  /* the mark a clipped name ends in          */ \
     /* screen lines, drawn for one phone, so they may say "you"             */ \
     X(HEAD_OPEN,          36, 0)  /* my turn, no bid yet                      */ \
     X(HEAD_RAISE_OR_CALL, 36, 0)                                                 \
@@ -81,13 +88,13 @@
     X(HEAD_WINS,           0, 0)                                                 \
     X(HEAD_YOU_OUT,       36, 0)                                                 \
     X(HEAD_STAGED_BID,     0, 0)  /* "Send to bid four 3s"                    */ \
-    X(HEAD_STAGED_CALL,    0, 0)  /* "Send to call four 3s"                   */ \
+    X(HEAD_STAGED_CALL,    0, 0)  /* "Send to call Liar on four 3s"           */ \
     X(SUB_STANDING,        0, 0)  /* "Bid to beat: four 3s by Alex"           */ \
     X(SUB_NONE,           36, 0)                                                 \
     X(SUB_TABLE,          36, 0)  /* "14 dice on the table"                   */ \
     X(REVEAL_COUNT,        0, 0)  /* "There were five"                        */ \
     X(BTN_RAISE,          12, 0)                                                 \
-    X(BTN_CALL,           12, 0)                                                 \
+    X(BTN_CALL,           12, 0)  /* "Liar": the owner's word for the call     */ \
     X(BTN_JOIN,           12, 0)                                                 \
     X(BTN_START,          12, 0)                                                 \
     /* the lobby                                                            */ \
@@ -95,6 +102,8 @@
     X(LOBBY_ROW_YOU,       0, 0)  /* "2. Bo (You)"                            */ \
     X(LOBBY_WAITING,      36, 0)                                                 \
     X(LOBBY_FULL,         36, 0)                                                 \
+    X(LOBBY_YOU,           8, 0)  /* "(you)", dim after my own name's row      */ \
+    X(BTN_LEAVE,          12, 0)  /* get up from a lobby's seat (can_exit)    */ \
     /* errors                                                               */ \
     X(ERR_UNREADABLE,     36, 0)                                                 \
     X(ERR_NEWER,           0, 0)                                                 \
