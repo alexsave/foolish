@@ -57,6 +57,27 @@ public enum ChuiniuDev {
     /// measurement's "before"). Read once a process.
     public static let straightFrames: Bool = files.exists("dev.straight")
 
+    /// THE LAUNCH LOG (package M): `launch <what> <ms>` with the ms since
+    /// this process started (the kernel's own start time), so the rig reads
+    /// where a cold open's time goes: dyld and the extension's start, the
+    /// view, the conversation, the first frame.
+    public static func launch(_ what: String) {
+        let ms = (Date().timeIntervalSince1970 - processStart) * 1000
+        log.info("launch \(what, privacy: .public) \(String(format: "%.1f", ms), privacy: .public)")
+    }
+
+    private static let processStart: Double = {
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()]
+        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0 else { return Date().timeIntervalSince1970 }
+        let t = info.kp_proc.p_un.__p_starttime
+        return Double(t.tv_sec) + Double(t.tv_usec) / 1e6
+    }()
+
+    /// The first stage frame of this process is logged once.
+    @MainActor static var firstFrameLogged = false
+
     public static var person: String? {
         guard let w = files.string("dev.seat")?.trimmingCharacters(in: .whitespacesAndNewlines), !w.isEmpty
         else { return nil }

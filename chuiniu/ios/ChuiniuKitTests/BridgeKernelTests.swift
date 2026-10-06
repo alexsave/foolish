@@ -237,7 +237,60 @@ final class BridgeKernelTests: XCTestCase {
 
         _ = try XCTUnwrap(stage.begin(.bubble, drawer: .zero, scale: 3))
         let bubble = try XCTUnwrap(stage.frame(atMs: 0, peek: 0))
-        XCTAssertEqual([bubble.shot.w, bubble.shot.h], [600, 390], "300 by 195 points at 2x")
+        // 300 by 195 points at 2x, the row rounded up to 16 pixels (the surface's 64-byte rows): 4 points more
+        // of the same view to the right, past the bubble's edge
+        XCTAssertEqual([bubble.shot.w, bubble.shot.h], [608, 390], "300 by 195 points at 2x, the row to 608")
+        XCTAssertEqual(bubble.shot.canvas[2] * 2, 608, accuracy: 1e-3, "the canvas is the picture's width")
+        stage.purge()
+    }
+
+    /// THE PICTURE IS NEVER COPIED, AND THE STAGE RESTS (package M). A frame
+    /// is the kernel's own IOSurface, rows of exactly the picture's width (a
+    /// multiple of 16 pixels), the canvas as wide; while a frame holds its
+    /// surface the next frame goes into another, and a surface no frame holds
+    /// is drawn into again (two, not one a frame). At rest the arena's frame
+    /// pages go back and only surfaces a frame holds stay; the next frame
+    /// takes the pages again and draws the same picture.
+    func testFramesAreTheKernelsSurfacesAndTheStageRests() throws {
+        var ann = phone("Ann")
+        XCTAssertTrue(ann.newGame(dm: true, seed: Self.seed))
+        let lobby = try XCTUnwrap(ann.stagedURL())
+        let ben = phone("Ben")
+        XCTAssertEqual(ben.adoptBubble(lobby), 0)
+        XCTAssertTrue(ben.join(name: "Ben"))
+        let start = try XCTUnwrap(ben.stagedURL())
+        ann = phone("Ann")
+        XCTAssertEqual(ann.adoptBubble(start), 0)
+
+        let stage = BridgeStage.shared
+        stage.purge()
+        let hud = try XCTUnwrap(stage.begin(.table, drawer: CGSize(width: 440, height: 894), scale: 3))
+        var a: StageFrame? = try XCTUnwrap(stage.frame(atMs: hud.totalMs, peek: 0))
+        let first = try XCTUnwrap(a?.surface, "the frame is a surface, not a copy")
+        let shot = try XCTUnwrap(a?.shot)
+        XCTAssertEqual(shot.w % 16, 0, "64-byte rows")
+        XCTAssertEqual(first.bytesPerRow, shot.w * 4, "rows of exactly the picture")
+        XCTAssertGreaterThanOrEqual(first.height, shot.h)
+        XCTAssertEqual(shot.canvas[2] * shot.scale, Double(shot.w), accuracy: 1e-3, "the canvas as wide as the picture")
+        let bytesA = Self.bytes(try XCTUnwrap(a?.image))
+
+        let b = try XCTUnwrap(stage.frame(atMs: hud.totalMs, peek: 1))
+        XCTAssertFalse(b.surface === first, "a surface a frame holds is never drawn into")
+        XCTAssertEqual(Self.bytes(try XCTUnwrap(a?.image)), bytesA, "the held frame keeps its picture")
+        a = nil
+        let c = try XCTUnwrap(stage.frame(atMs: hud.totalMs, peek: 0))
+        XCTAssertTrue(c.surface === first, "a surface no frame holds is drawn into again")
+        XCTAssertEqual(Self.bytes(c.image), bytesA, "the same picture")
+
+        stage.rest()
+        let resting = stage.resting
+        XCTAssertGreaterThan(resting.bytes, 8 << 20, "at rest the frame's pages go back (\(resting.bytes) bytes)")
+        XCTAssertEqual(resting.surfaces, 2, "the two surfaces frames hold stay, no spare")
+        XCTAssertTrue(stage.holdsArena, "the textures stay")
+        let d = try XCTUnwrap(stage.frame(atMs: hud.totalMs, peek: 0), "a rested stage draws at once")
+        XCTAssertEqual(Self.bytes(d.image), bytesA, "the same picture after a rest")
+        XCTAssertEqual(stage.resting.bytes, 0, "the pages taken again")
+        _ = (b, c, d)
         stage.purge()
     }
 
@@ -286,7 +339,7 @@ final class BridgeKernelTests: XCTestCase {
         XCTAssertEqual(Self.bytes(after.image), Self.bytes(before.image), "the table on show draws its own picture again")
 
         let one = try XCTUnwrap(stage.bubble(scale: 1), "any scale the extension gives")
-        XCTAssertEqual([one.frame.shot.w, one.frame.shot.h], [300, 195])
+        XCTAssertEqual([one.frame.shot.w, one.frame.shot.h], [304, 195], "300 rounded up to 16 pixels")
         XCTAssertEqual(one.hud.seats, 2)
         XCTAssertFalse(stage.holdsArena)
         stage.purge()
@@ -398,6 +451,7 @@ private final class SpyStage: TableStage {
     func peekEase(_ t: Double) -> Double { real.peekEase(t) }
     func done(atMs ms: Int) -> Bool { real.done(atMs: ms) }
     func purge() { real.purge() }
+    func rest() { real.rest() }
     func bubble(scale: CGFloat) -> BubbleFrame? { bubbles += 1; return real.bubble(scale: scale) }
     func name(seat: Int, bitmap: NameBitmap?) { real.name(seat: seat, bitmap: bitmap) }
     var holdsArena: Bool { real.holdsArena }

@@ -697,6 +697,91 @@ static int name_px_box(const CnStage *st, int s, float in, int box[4])
     return 1;
 }
 
+/* ---- the picture in the host's buffer; the arena at rest (package M) -------------------------------------------- */
+
+/* the frame at t drawn the usual way: its bytes copied out, its sides and its canvas */
+typedef struct { uint8_t *px; int w, h; float canvas[4], scale; } HostPic;
+static HostPic pic_of(CnStage *st, uint32_t t, float peek)
+{
+    HostPic p;
+    memset(&p, 0, sizeof p);
+    int w = 0, h = 0;
+    const uint8_t *fb = cn_stage_frame(st, t, peek, 0, &w, &h);
+    if (!fb) return p;
+    p.px = malloc((size_t)w * h * 4);
+    if (!p.px) exit(2);
+    memcpy(p.px, fb, (size_t)w * h * 4);
+    p.w = w; p.h = h; p.scale = st->shot.scale;
+    memcpy(p.canvas, st->shot.canvas, sizeof p.canvas);
+    return p;
+}
+
+static void test_external(void)
+{
+    TEST("the picture in the host's buffer: the same pixels, 64-byte rows, nothing drawn without it; the arena at rest");
+    void *A = arena_new(ARENA);
+    cn_stage_init(&ST, PACK, PACK_N); cn_stage_attach(&ST, A, ARENA);
+    CnStageIn in = table_in(430, 830, 6, 0, 0, CN_STAGE_TABLE);
+    in.roll_at_ms = 0; in.scale = 3;
+    const CnStageHud *hud = cn_stage_begin(&ST, &in);
+    CHECK(hud && hud->ok, "the tall drawer begun");
+    if (!hud) return;
+    const uint32_t ts[2] = { 1200, hud->total_ms };
+    int most_w = 0, most_h = 0;
+    cn_scene_external(1);
+    CHECK(cn_stage_target_most(&ST, &most_w, &most_h) && most_w % CN_SCENE_TARGET_ALIGN == 0, "the most a frame draws: %d by %d", most_w, most_h);
+    for (int k = 0; k < 2; k++) {
+        const float peek = k ? .6f : 0;
+        cn_scene_external(0);
+        HostPic a = pic_of(&ST, ts[k], peek);
+        CHECK(a.px != 0, "t %u: the arena's frame", ts[k]);
+        if (!a.px) continue;
+        cn_scene_external(1);
+        CHECK(cn_stage_prepare(&ST, ts[k], peek, 0), "t %u: external, prepared", ts[k]);
+        const int w = ST.shot.w, h = ST.shot.h;
+        CHECK(w % CN_SCENE_TARGET_ALIGN == 0 && w >= a.w && w < a.w + CN_SCENE_TARGET_ALIGN && h == a.h && ST.shot.scale == a.scale,
+              "t %u: %d by %d at %.1f, the arena's %d by %d rounded to 16", ts[k], w, h, ST.shot.scale, a.w, a.h);
+        CHECK((size_t)w * h <= (size_t)most_w * most_h, "t %u: within the most (%d by %d)", ts[k], most_w, most_h);
+        CHECK(near(ST.shot.canvas[2], a.canvas[2] + (float)(w - a.w) / a.scale, 1e-4) && memcmp(a.canvas, ST.shot.canvas, 2 * sizeof(float)) == 0
+              && ST.shot.canvas[3] == a.canvas[3], "t %u: the canvas %.3f wide, the arena's %.3f and the extra columns", ts[k], ST.shot.canvas[2], a.canvas[2]);
+        const size_t n = (size_t)w * h * 4;
+        uint8_t *buf = malloc(n);
+        if (!buf) exit(2);
+        memset(buf, 0xEE, n);
+        CHECK(cn_scene_target(buf, n - 1) == 0, "t %u: a buffer a byte short is refused", ts[k]);
+        for (int pass = 0; pass < CN_STAGE_PASSES; pass++) cn_stage_band(&ST, pass, 0, 1);
+        int untouched = 1;
+        for (size_t i = 0; i < n; i++) untouched &= buf[i] == 0xEE;
+        CHECK(untouched && cn_stage_finish(&ST) == 0, "t %u: no buffer, nothing drawn", ts[k]);
+        CHECK(cn_stage_prepare(&ST, ts[k], peek, 0) && cn_scene_target(buf, n) == 1, "t %u: the buffer taken", ts[k]);
+        for (int pass = 0; pass < CN_STAGE_PASSES; pass++)
+            for (int b = 0; b < CN_STAGE_BANDS; b++) cn_stage_band(&ST, pass, CN_STAGE_BANDS - 1 - b, CN_STAGE_BANDS);
+        int same = cn_stage_finish(&ST) == buf;
+        for (int y = 0; y < h && same; y++) same = memcmp(buf + (size_t)y * w * 4, a.px + (size_t)y * a.w * 4, (size_t)a.w * 4) == 0;
+        CHECK(same, "t %u: every pixel of the arena's frame, in the host's buffer, in 16 bands", ts[k]);
+        free(buf);
+        free(a.px);
+    }
+    cn_scene_external(0);
+
+    /* AT REST: the frame's bytes given back, scribbled over, and the next frame the same, its textures not uploaded */
+    HostPic a = pic_of(&ST, hud->total_ms, .6f);
+    const uint32_t gen = ST.scene_gen;
+    const size_t r = cn_stage_rest(&ST);
+    CHECK(r > ((size_t)8 << 20) && r < ARENA, "at rest: %.1f MB of the arena hold no texture", r / 1048576.0);
+    /* exactly up to the lowest texture byte (malloc's block is 16-aligned: none of it lost) */
+    CHECK(r == cn_scene_room(), "at rest: the span ends where the textures begin (%zu %zu)", r, cn_scene_room());
+    CHECK(!ST.shot.ok && cn_stage_finish(&ST) == 0, "at rest: the frame is forgotten");
+    memset(A, 0xA5, r);
+    HostPic b = pic_of(&ST, hud->total_ms, .6f);
+    CHECK(a.px && b.px && a.w == b.w && a.h == b.h && memcmp(a.px, b.px, (size_t)a.w * a.h * 4) == 0, "after rest and the bytes scribbled: the same picture");
+    CHECK(ST.scene_gen == gen, "after rest: no texture uploaded again (%u %u)", ST.scene_gen, gen);
+    free(a.px); free(b.px);
+    cn_stage_purge(&ST);
+    CHECK(cn_stage_rest(&ST) == 0, "no arena, nothing at rest");
+    free(A);
+}
+
 static void test_names(void)
 {
     TEST("the names lie on the table: a cup in front hides one, the frame without them is the old one, and they fit 48 MB");
@@ -862,6 +947,7 @@ int main(int argc, char **argv)
     test_reveal_inside();
     test_hud_clear();
     test_names();
+    test_external();
     free(PACK);
     return report("cn_stage_test");
 }

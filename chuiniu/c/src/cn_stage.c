@@ -653,6 +653,12 @@ int cn_stage_prepare(CnStage *st, uint32_t t_ms, float peek, float lift)
     st->shot.w = (uint16_t)cn_scene_fb_w(); st->shot.h = (uint16_t)cn_scene_fb_h();
     st->shot.scale = used;
     canvas_of(st, st->pad, st->shot.canvas);
+    /* a host's buffer rounds the picture's width up (cn_scene_target): the canvas is that much wider, the same
+     * points a pixel, more of the same view to its right */
+    {
+        const int w0 = (int)(st->W * used + .5f);
+        if (st->shot.w > w0) st->shot.canvas[2] += (float)(st->shot.w - w0) / used;
+    }
     st->shot.rolling = (uint8_t)moving;
     st->shot.done = (uint8_t)cn_stage_done(st, t_ms);
     return 1;
@@ -677,3 +683,26 @@ const uint8_t *cn_stage_frame(CnStage *st, uint32_t t_ms, float peek, float lift
 }
 
 const CnStageShot *cn_stage_shot(const CnStage *st) { return &st->shot; }
+
+int cn_stage_target_most(const CnStage *st, int *w, int *h)
+{
+    int bw = 0, bh = 0;
+    if (st->begun) {
+        const float sc[2] = { st->hud.scale_still, st->hud.scale_roll };
+        for (int k = 0; k < 2; k++) {
+            int a, b;
+            if (!cn_scene_target_size(st->W, st->H, st->pad_max, sc[k], &a, &b)) continue;
+            if ((size_t)a * b > (size_t)bw * bh) { bw = a; bh = b; }
+        }
+    }
+    if (w) *w = bw;
+    if (h) *h = bh;
+    return bw > 0;
+}
+
+size_t cn_stage_rest(CnStage *st)
+{
+    if (!st->arena) return 0;
+    st->shot.ok = 0;
+    return cn_scene_rest();
+}

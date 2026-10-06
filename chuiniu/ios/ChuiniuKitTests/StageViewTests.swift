@@ -227,7 +227,7 @@ final class StageViewTests: XCTestCase {
     /// A stage spy: the real stage, counted.
     private final class Counting: TableStage {
         let real = KernelSeam.stage()
-        var begins = 0, frames = 0, named = 0
+        var begins = 0, frames = 0, named = 0, rests = 0
         func begin(_ screen: StageScreen, drawer: CGSize, scale: CGFloat) -> CnStageHudSnap? {
             begins += 1
             return real.begin(screen, drawer: drawer, scale: scale)
@@ -241,6 +241,7 @@ final class StageViewTests: XCTestCase {
         func peekEase(_ t: Double) -> Double { real.peekEase(t) }
         func done(atMs ms: Int) -> Bool { real.done(atMs: ms) }
         func purge() { real.purge() }
+        func rest() { rests += 1; real.rest() }
         func bubble(scale: CGFloat) -> BubbleFrame? { real.bubble(scale: scale) }
         func name(seat: Int, bitmap: NameBitmap?) { named += 1; real.name(seat: seat, bitmap: bitmap) }
         var holdsArena: Bool { real.holdsArena }
@@ -286,6 +287,47 @@ final class StageViewTests: XCTestCase {
         drain(director)
         XCTAssertEqual(spy.frames, 1, "a view shrunk to nothing asks for no frame")
         window.isHidden = true
+    }
+
+    /// AT REST: half a second after the last frame lands with nothing moving,
+    /// the director rests the stage, once; a frame asked meanwhile puts it
+    /// off, so a tap's peek never makes the stage give its pages back between
+    /// two frames.
+    func testTheDirectorRestsTheStageOnceTheTableIsStill() throws {
+        let me = try started(seats: 2)
+        me.rollSeen(rollID: me.table.rollID)            // a still table
+        let spy = Counting()
+        let director = StageDirector(stage: spy)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 718))
+        let view = StageUIView(director: director)
+        view.frame = window.bounds
+        window.addSubview(view)
+        window.isHidden = false
+        director.begin(request(view.bounds.size, table: me.table), planMs: nil)
+        view.layoutIfNeeded()
+        view.wake()
+        drain(director)
+        XCTAssertEqual(spy.rests, 0, "not at once")
+        let landed = Date()
+        spin(until: landed.addingTimeInterval(StageDirector.restDelay / 2))
+        director.redraw()                                  // a frame asked before the rest is due
+        drain(director)
+        let again = Date()
+        spin(until: landed.addingTimeInterval(StageDirector.restDelay + 0.05))
+        if Date() < again.addingTimeInterval(StageDirector.restDelay) {
+            XCTAssertEqual(spy.rests, 0, "a frame asked meanwhile puts the rest off")
+        }
+        spin(until: again.addingTimeInterval(StageDirector.restDelay + 0.2))
+        XCTAssertEqual(spy.rests, 1, "half a second after the last frame: rested, once")
+        XCTAssertEqual(director.rested, 1)
+        spin(until: Date().addingTimeInterval(StageDirector.restDelay))
+        XCTAssertEqual(spy.rests, 1, "and not again while nothing is drawn")
+        window.isHidden = true
+        spy.purge()
+    }
+
+    private func spin(until t: Date) {
+        while Date() < t { RunLoop.main.run(until: min(t, Date().addingTimeInterval(0.005))) }
     }
 
     /// The main run loop turned until the director's frame in flight has

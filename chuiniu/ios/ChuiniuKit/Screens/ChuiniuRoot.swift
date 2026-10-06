@@ -78,6 +78,10 @@ public struct ChuiniuRoot: View {
         Group {
             if let e = host.unreadable {
                 UnreadableScreen(title: host.word(.gameTitle), reason: host.kernel.errorText(e))
+            } else if host.table == .empty {
+                // no game read yet (the conversation has not been presented):
+                // the bare planks, never a lobby that is about to be replaced
+                PlanksBackground().ignoresSafeArea()
             } else {
                 switch host.table.phase {
                 case .lobby:

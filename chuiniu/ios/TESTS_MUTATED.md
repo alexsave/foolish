@@ -165,3 +165,17 @@ Each mutant was one edit to a product file by a script that read the file, repla
 | P6 | the roster fixed to its content height (no scroll) | "start/leave/name/join at (.., 306, .., 44) leaves the (390 or 320, 328) drawer" |
 | P7 | Start 40 tall | "start is 40.0 tall" at every drawer |
 | P8 | the leave caption worded after the row is gone | `bo.leave()` is "" not "Bo left" |
+
+## Memory and the cold open (package M, 2026-10-06)
+
+`BridgeKernelTests.testFramesAreTheKernelsSurfacesAndTheStageRests` and `StageViewTests.testTheDirectorRestsTheStageOnceTheTableIsStill`, on the private simulator cnmem (`A996019C`), `-only-testing`, one test each run; the C rows (`cn_stage_test.c` test_external) are in `chuiniu/c/docs_pkgM.md`.
+Each mutant was one edit to a product file, restored by editing it back.
+
+| # | Mutation | Assertion that went red |
+|---|---|---|
+| S1 | the pool draws into any fitting surface, held or not | "a surface a frame holds is never drawn into", "the held frame keeps its picture", "the two surfaces frames hold stay, no spare" |
+| S2 | the rest records no pages given back | "at rest the frame's pages go back" |
+| S3 | the rest's ticket ignored (an overtaken wait rests anyway) | "a frame asked meanwhile puts the rest off", "rested, once", "and not again while nothing is drawn" |
+| S4 | the director never rests | "half a second after the last frame: rested, once", "and not again" |
+
+A first S3 (the asked frame no longer bumps the ticket) stayed green: the landing of the same frame bumps it, so that bump was a second band-aid and is gone.

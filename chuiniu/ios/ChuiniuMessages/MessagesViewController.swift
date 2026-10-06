@@ -57,9 +57,16 @@ final class MessagesViewController: MSMessagesAppViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
 #if DEBUG
+        ChuiniuDev.launch("viewDidLoad")
+        defer { ChuiniuDev.launch("viewDidLoad done") }
         if ChuiniuDev.empty { return }
 #endif
-        view.backgroundColor = .clear
+        // NEVER A BLANK DRAWER: the planks' own dark from the first commit, so
+        // the drawer Messages opens while the table is still being made (the
+        // conversation, the stage's first frame) is the table's colour, not
+        // Messages' white; every screen paints its planks over it
+        view.backgroundColor = UIColor(Ink.hold)
+        KernelSeam.warm()
         watchHostBackground()
         host.onStage = { [weak self] caption, collapse in self?.stageResident(caption: caption, collapse: collapse) }
         let h = UIHostingController(rootView: ChuiniuRoot(host: host))
@@ -101,6 +108,9 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+#if DEBUG
+        ChuiniuDev.launch("viewDidAppear")
+#endif
         if drawerUp {
             appeared = true
             hosting?.view.isHidden = false
@@ -130,6 +140,10 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func willBecomeActive(with conversation: MSConversation) {
         super.willBecomeActive(with: conversation)
+#if DEBUG
+        ChuiniuDev.launch("willBecomeActive")
+        defer { ChuiniuDev.launch("willBecomeActive done") }
+#endif
         arrived = nil
         unbound = conversation.selectedMessage == nil
         present(conversation)
@@ -146,6 +160,9 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func didBecomeActive(with conversation: MSConversation) {
         super.didBecomeActive(with: conversation)
+#if DEBUG
+        ChuiniuDev.launch("didBecomeActive")
+#endif
         conversationActive = true
         becameReady()
     }
