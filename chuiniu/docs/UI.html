@@ -2439,10 +2439,17 @@ const SHAPE = (() => {
     }
     return frames;
   }
+  // THE ROW'S STEP AND THE PLATE BESIDE IT (cn_lay.c's row_step, package S): at four seats the room right of the
+  // row was 102, where a bid beside its die took two lines; the step narrows to leave the plate 140 while it stays 60
+  function rowStep(others, W) {
+    let step = Math.min(L.badge[0] + L.margin, (W - 2 * L.margin) / others), w = Math.min(L.plate[0], W - 2 * L.margin - others * step);
+    if (w < 140) { const s2 = (W - 2 * L.margin - 140) / others; if (s2 >= 60) { step = s2; w = 140; } }
+    return { step, w: w >= L.plateMin ? w : 0 };
+  }
   function plateFrame(count, W, H) {
     if (isShort(H)) {
-      const others = count - 1, rowEnd = L.margin + others * (L.badge[0] + L.margin), w = Math.min(L.plate[0], W - L.margin - rowEnd);
-      if (w < L.plateMin) return null;
+      const w = rowStep(count - 1, W).w;
+      if (!w) return null;
       return [W - L.margin - w, Math.max(0, (H - L.shortBand - L.plate[1]) / 2), w, L.plate[1]];
     }
     const bandTop = H - L.myBand;
@@ -2678,7 +2685,7 @@ const SHAPE = (() => {
   // then a point smaller at a time until every crown in the row, standing or lying, is EDGE inside the screen (this
   // page's row leaned its crowns past the top of a drawer under 323)
   function rowSeats(n, W, H, myR, mcy, tilt, topM, origin) {
-    const others = n - 1, step = Math.min(L.badge[0] + L.margin, (W - 2 * L.margin) / others), bandTop = H - L.shortBand;
+    const others = n - 1, step = rowStep(others, W).step, bandTop = H - L.shortBand;
     let R = Math.min(myR, step / 2 - 4), cy;
     for (;; R -= 1) {
       cy = Math.max(R + 2, (bandTop - (2 * R + 24)) / 2 + R);

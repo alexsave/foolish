@@ -392,10 +392,28 @@ static void ring_seats(const CnLayIn *in, CnLay *L, double W, double H, double m
  * the row allows (my cup's size at most), then a point smaller at a time until
  * every crown in the row, standing or lying, is inside the drawer (the study's
  * row is; below a 323 drawer the study's crowns lean past its top) */
+/* THE ROW'S STEP AND THE PLATE BESIDE IT (package S). The study's step (a badge and a margin, less when the
+ * row is crowded), and the plate the room right of the row (CN_LAY_PLATE_W at most). At four seats that room
+ * is 102 points, where a bid beside its die took two lines ("three / 6s", the verifier, and the study too):
+ * so when the plate would be under CN_LAY_PLATE_SHORT_W the row's step narrows to leave it that, as long as
+ * the step stays CN_LAY_ROW_STEP_MIN (five seats and more keep the study's row and have no plate). The plate's
+ * width, 0 for none (under CN_LAY_PLATE_MIN). */
+static double row_step(int others, double W, double *plate_w)
+{
+    double step = dmin(CN_LAY_BADGE + CN_LAY_MARGIN, (W - 2 * CN_LAY_MARGIN) / others);
+    double w = dmin(CN_LAY_PLATE_W, W - 2 * CN_LAY_MARGIN - others * step);
+    if (w < CN_LAY_PLATE_SHORT_W) {
+        const double s2 = (W - 2 * CN_LAY_MARGIN - CN_LAY_PLATE_SHORT_W) / others;
+        if (s2 >= CN_LAY_ROW_STEP_MIN) { step = s2; w = CN_LAY_PLATE_SHORT_W; }
+    }
+    if (plate_w) *plate_w = w >= CN_LAY_PLATE_MIN ? w : 0;
+    return step;
+}
+
 static void row_seats(const CnLayIn *in, CnLay *L, double W, double H, double myR, double mcy)
 {
     const int n = in->seats, me = in->me, others = n - 1;
-    const double step = dmin(CN_LAY_BADGE + CN_LAY_MARGIN, (W - 2 * CN_LAY_MARGIN) / others), bandTop = H - CN_LAY_SHORT_BAND;
+    const double step = row_step(others, W, 0), bandTop = H - CN_LAY_SHORT_BAND;
     double R = dmin(myR, step / 2 - 4), cy;
     for (;; R -= 1) {
         cy = dmax(R + 2, (bandTop - (2 * R + 24)) / 2 + R);
@@ -808,9 +826,9 @@ static int make(const CnLayIn *in, CnLay *L, int fit)
         L->d = (float)d; L->ring = (float)ring; L->my_r = (float)myR;
         /* the plate beside the row (not drawn when the room left is under 100); cn_stage_test's HUD test
          * finds it clear of every cup and name at every height and seat count (package V2) */
-        const double rowEnd = CN_LAY_MARGIN + (in->seats - 1) * (CN_LAY_BADGE + CN_LAY_MARGIN);
-        const double w = dmin(CN_LAY_PLATE_W, inner - CN_LAY_MARGIN - rowEnd);
-        if (w >= CN_LAY_PLATE_MIN) {
+        double w;
+        row_step(in->seats - 1, inner, &w);
+        if (w > 0) {
             L->has_plate = 1;
             L->plate[0] = (float)(CN_LAY_SIDE + inner - CN_LAY_MARGIN - w);
             L->plate[1] = (float)(topM + dmax(0, (boardH - CN_LAY_SHORT_BAND - CN_LAY_PLATE_H) / 2));

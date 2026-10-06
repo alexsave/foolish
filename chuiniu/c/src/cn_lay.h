@@ -83,6 +83,8 @@
 #define CN_LAY_PLATE_W    160.0
 #define CN_LAY_PLATE_H    56.0
 #define CN_LAY_PLATE_MIN  100.0
+#define CN_LAY_PLATE_SHORT_W 140.0 /* the short board's plate at the least: a bid at four seats on one line (package S) */
+#define CN_LAY_ROW_STEP_MIN  60.0  /* the row's step is never narrowed under this to give the plate room */
 #define CN_LAY_MARGIN     8.0
 #define CN_LAY_SIDE       16.0    /* the board's inset from the drawer's sides */
 #define CN_LAY_SHORT_H    (CN_LAY_BADGE + CN_LAY_PLATE_H + CN_LAY_MY_BAND + 4 * CN_LAY_MARGIN)
