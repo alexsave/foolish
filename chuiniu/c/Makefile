@@ -120,6 +120,14 @@ build/cn_scene_bench: tests/cn_scene_bench.c tests/cn_scene_frame.h src/cn_scene
 bench: build/cn_scene_bench
 	./build/cn_scene_bench
 
+# THE NAMES ON THE TABLE, OFFLINE (package N; not a test, not in `run`): a six-seat table through the stage with
+# every name handed over as the iOS host hands it, laid over the planks, one name half behind a cup; and what the
+# names cost a still frame at 2x. tools/cn_names_shot.c.
+build/cn_names_shot: tools/cn_names_shot.c tools/cn_texgen.c $(SRC) $(HDR) | build
+	$(CC) -O2 $(WARN) $(SRC) tools/cn_names_shot.c -lm -o $@
+names-shot: build/cn_names_shot $(TEX_PACK)
+	./build/cn_names_shot $(TEX_PACK) tools/fonts/IMFeENsc28P.ttf build/names_shot.png build/names_shot_zoom.png
+
 ASAN_FLAGS := -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined $(WARN)
 
 build/asan_%: tests/%.c $(SRC) $(HDR) | build
@@ -325,7 +333,7 @@ ios-lib: build/layout/ios.hash datagen tex-ios
 clean:
 	rm -rf build
 
-.PHONY: all run bench asan wasm wasm-roll docs-roll docs-roll-check ios-smoke swift-smoke structgen datagen ios-lib clean FORCE
+.PHONY: all run bench names-shot asan wasm wasm-roll docs-roll docs-roll-check ios-smoke swift-smoke structgen datagen ios-lib clean FORCE
 FORCE:
 .SECONDARY:
 
