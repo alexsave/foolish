@@ -827,6 +827,15 @@ What is new is the view: the table is seen <b>from above, from my seat</b>: the 
 <!-- cn_roll.wasm end -->
 
 <script>
+// THE COUNT'S FACE (chuiniu/c/docs_pkgQ.md): Libre Caslon Text's lining figures, the face the app's
+// texture pack bakes the crown from. Fell's old-style figures are kept for words; its 5 read as a long s
+// on a cup and its 1 as a small capital I. Loaded here (one name for the whole page, every scope below reads it), not in the page's head, and the 3D crowns are
+// redrawn once it lands (a canvas draws with whatever face is loaded at that moment; until then the
+// system serif's lining figures stand in, as they always have).
+const NUMERAL_FACE = "'Libre Caslon Text', serif";
+{ const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = 'https://fonts.googleapis.com/css2?family=Libre+Caslon+Text&display=swap'; document.head.appendChild(l); }
+</script>
+<script>
 /* =====================================================================
    THE TEXTURE KERNEL. Read it as the Swift it will become: every function
    is integer hashes and doubles, no library, no DOM until the very end.
@@ -1352,7 +1361,7 @@ const SHAPE = (() => {
     let m = `<svg class="die" width="${W}" height="${W}" viewBox="${-pad} ${-pad} ${W} ${W}"><g filter="url(#f-shadow)">`;
     m += `<circle cx="${s / 2}" cy="${s / 2}" r="${s / 2}" fill="url(#p-m-fresh)"/><circle cx="${s / 2}" cy="${s / 2}" r="${s / 2}" fill="url(#g-badge)"/>`;
     m += `<circle cx="${s / 2}" cy="${s / 2}" r="${s / 2 - .5}" fill="none" stroke="rgba(0,0,0,.5)" stroke-width="1"/>`;
-    m += `<text x="${s / 2}" y="${s * .74}" text-anchor="middle" font-family="'IM Fell English',serif" font-size="${s * .78}" fill="#141a16">${n}</text></g></svg>`;
+    m += `<text x="${s / 2}" y="${s * .74}" text-anchor="middle" font-family="${NUMERAL_FACE}" font-size="${s * .78}" fill="#141a16">${n}</text></g></svg>`;
     return m;
   }
   let cupN = 0;
@@ -1396,7 +1405,7 @@ const SHAPE = (() => {
       m += `<path d="${body}" fill="#0b2e32" opacity=".55"/>`;
       m += `<path d="M${w * .55},${cr * .9} q${-w * .08},${h * .2} ${w * .04},${h * .34} q${-w * .1},${h * .12} ${-w * .02},${h * .3}" fill="none" stroke="#050a09" stroke-width="${Math.max(.8, w * .028)}" stroke-linecap="round"/>`;
     }
-    if (o.count != null && S.badge === 'stamp') m += `<text x="${w / 2}" y="${h * .62}" text-anchor="middle" font-family="'IM Fell English',serif" font-size="${w * .46}" fill="#0a0d0b" opacity=".85">${o.count}</text><text x="${w / 2}" y="${h * .62 - .8}" text-anchor="middle" font-family="'IM Fell English',serif" font-size="${w * .46}" fill="#e8ecd8" opacity=".9">${o.count}</text>`;
+    if (o.count != null && S.badge === 'stamp') m += `<text x="${w / 2}" y="${h * .62}" text-anchor="middle" font-family="${NUMERAL_FACE}" font-size="${w * .46}" fill="#0a0d0b" opacity=".85">${o.count}</text><text x="${w / 2}" y="${h * .62 - .8}" text-anchor="middle" font-family="${NUMERAL_FACE}" font-size="${w * .46}" fill="#e8ecd8" opacity=".9">${o.count}</text>`;
     m += `</g></g>`;
     if (o.count != null && S.badge !== 'stamp') m += `<g transform="translate(${w * (S.badge === 'tag' ? .66 : .78)},${h * (S.badge === 'tag' ? .5 : .72)})">${badge(o.count, w * (S.badge === 'tag' ? .58 : .45), S.badge).replace(/<svg[^>]*>|<\/svg>/g, '')}</g>`;
     return m + `</svg>`;
@@ -1420,7 +1429,7 @@ const SHAPE = (() => {
     if (S.crust !== 'none') m += `<g clip-path="url(#${id})" mask="url(#m${id})"><rect x="${-R - 10}" y="${-R - 10}" width="${w + 20}" height="${w + 20}" fill="url(#p-crust-xl)" transform="translate(${o.seed || 0},${(o.seed || 0) * .3})"/>${heavy ? `<rect x="${-R - 10}" y="${-R - 10}" width="${w + 20}" height="${w + 20}" fill="url(#p-crust-l)" transform="translate(${(o.seed || 0) + 77},${(o.seed || 0) * .3 + 9})"/>` : ''}</g>`;
     m += `<circle r="${R}" fill="none" stroke="rgba(0,0,0,.6)" stroke-width="${Math.max(.8, w * .03)}"/>`;
     if (o.out) m += `<circle r="${R}" fill="#0b2e32" opacity=".55"/><path d="M${-rc * .2},${-rc * .9} q${rc * .3},${rc * .5} ${-rc * .1},${rc * .9} q${rc * .35},${rc * .4} ${rc * .15},${rc * .9}" fill="none" stroke="#050a09" stroke-width="${Math.max(.8, w * .028)}" stroke-linecap="round"/>`;
-    if (o.count != null) m += `<text x="0" y="${rc * .36}" text-anchor="middle" font-family="'IM Fell English',serif" font-size="${rc * 1.05}" fill="#0a0d0b" opacity=".85">${o.count}</text><text x="0" y="${rc * .36 - .8}" text-anchor="middle" font-family="'IM Fell English',serif" font-size="${rc * 1.05}" fill="#e8ecd8" opacity=".9">${o.count}</text>`;
+    if (o.count != null) m += `<text x="0" y="${rc * .36}" text-anchor="middle" font-family="${NUMERAL_FACE}" font-size="${rc * 1.05}" fill="#0a0d0b" opacity=".85">${o.count}</text><text x="0" y="${rc * .36 - .8}" text-anchor="middle" font-family="${NUMERAL_FACE}" font-size="${rc * 1.05}" fill="#e8ecd8" opacity=".9">${o.count}</text>`;
     return m + `</g></g></svg>`;
   }
   function icon(s) {
@@ -1911,8 +1920,11 @@ const SHAPE = (() => {
       if (out) {
         g.fillStyle = 'rgba(4,14,15,.6)'; g.fillRect(0, 0, 256, 256);
       } else if (count != null) {
-        g.font = `${numeral}px 'IM Fell English', serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
-        g.fillStyle = 'rgba(10,13,11,.85)'; g.fillText(count, 130, 140); g.fillStyle = 'rgba(232,236,216,.92)'; g.fillText(count, 128, 136);
+        // the figure centred on (128, 136): its baseline half the figure height (.386 of the size) below
+        // (the pack's baker places it the same way, tools/cn_texgen.c bake_glyph)
+        const b = numeral * .386;
+        g.font = `${numeral}px ${NUMERAL_FACE}`; g.textAlign = 'center'; g.textBaseline = 'alphabetic';
+        g.fillStyle = 'rgba(10,13,11,.85)'; g.fillText(count, 130, 140 + b); g.fillStyle = 'rgba(232,236,216,.92)'; g.fillText(count, 128, 136 + b);
       }
       c._bump = reliefOf(c, 1.2);
       return cache[k] = c;
@@ -2715,6 +2727,8 @@ const SHAPE = (() => {
   });
   const syncLay = mixer('lay-mixer', LAY_FIELDS, LAY, drawLayout);
   drawLayout();
+  // the crowns drawn before the count's face arrived carry the fallback's figures: draw them again
+  document.fonts.load(`112px ${NUMERAL_FACE}`).then(f => { if (f.length) { TEX3.reset(); drawLayout(); } }, () => {});
 
   // no two plates alike: every plank and plate takes its own offset of the verdigris tile
   function varyPlates() {

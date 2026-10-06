@@ -370,9 +370,10 @@ static void test_bands_and_determinism(void)
      * (their held cups left the drawer), so their dice lie at their stations (docs_pkgV2.md); re-pinned for
      * package V1: the edges pass draws each pixel on a surface's edge from four samples (every other pixel is
      * the old picture's byte for byte: cn_scene_test holds that), and every body numbers its faces; the pair is
-     * the merge of both, the same under clang, gcc 16 and ASan/UBSan */
-    CHECK(one_mid == 0x563a3970u, "the throw frame's golden");
-    CHECK(one_still == 0x50980f05u, "the still frame's golden");
+     * the merge of both, the same under clang, gcc 16 and ASan/UBSan; re-pinned for package Q: the crowns' counts
+     * are Libre Caslon Text's lining figures (the old pack still gives 563a3970 and 50980f05; docs_pkgQ.md) */
+    CHECK(one_mid == 0x4fd65adau, "the throw frame's golden");
+    CHECK(one_still == 0x1b8cf9c5u, "the still frame's golden");
     cn_stage_purge(&ST);
     free(A);
 }
@@ -826,8 +827,8 @@ static void test_names(void)
     CHECK(mid && banded(&ST, 1200, 0, CN_STAGE_BANDS, 1) == mid && still && banded(&ST, hh->total_ms, .6f, 7, 0) == still, "with names: 16 and 7 bands draw the one thread's bytes");
     printf("  frames with names: throw at 1.2 s %08x, still peeking %08x\n", mid, still);
     /* pinned (package N): the same under clang, gcc 16 and ASan/UBSan */
-    CHECK(mid == 0xa48f41f0u, "the throw frame with names' golden");
-    CHECK(still == 0x44078389u, "the still frame with names' golden");
+    CHECK(mid == 0xd8cd012au, "the throw frame with names' golden");
+    CHECK(still == 0xa69d7ab1u, "the still frame with names' golden");
     CnStageIn bub = table_in(300, 195, 4, 0, 0, CN_STAGE_BUBBLE);
     cn_stage_begin(&ST, &bub);
     fb = cn_stage_frame(&ST, 0, 0, 0, &w, &h);

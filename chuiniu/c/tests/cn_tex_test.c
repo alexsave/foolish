@@ -15,10 +15,10 @@ static uint32_t fnv(const void *b, size_t n) { return cn_tex_fnv1a((const uint8_
 
 /* THE GOLDENS. A change to any generator, offset, gradient, glyph or the
  * layout moves one of these; that is a new look, so re-pin it on purpose. */
-#define GOLD_PACK_LEN    344944u
-#define GOLD_PACK        0xacf5f72au
+#define GOLD_PACK_LEN    431232u
+#define GOLD_PACK        0x507d6735u
 #define GOLD_SIDE7       0xd26ecd2du
-#define GOLD_CROWN7      0x65aa86fdu
+#define GOLD_CROWN7      0xb9737bbeu
 #define GOLD_DIE7        0x7a477160u
 #define GOLD_DIE7_BUMP   0x455713c1u
 
@@ -66,7 +66,7 @@ static int mock_alloc(void *ctx, int w, int h, int has_bump, CnTexImage *img)
 
 int main(int argc, char **argv)
 {
-    const char *font = argc > 1 ? argv[1] : "tools/fonts/IMFeENrm28P.ttf";
+    const char *font = argc > 1 ? argv[1] : "tools/fonts/LibreCaslonText-wght.ttf";
     const char *file = argc > 2 ? argv[2] : "build/cn_tex.pack";
     static uint8_t A[CN_TEX_SIDE_W * CN_TEX_SIDE_H * 4], B[CN_TEX_SIDE_W * CN_TEX_SIDE_H * 4];
     static int8_t BA[CN_TEX_SIDE_W * CN_TEX_SIDE_H * 2], BB[CN_TEX_SIDE_W * CN_TEX_SIDE_H * 2];
@@ -161,6 +161,22 @@ int main(int argc, char **argv)
         CHECK(changed > (s ? 1500 : 500), "digit %d at %d: only %d texels stamped", d, px, changed);
         if (changed) CHECK((sx / changed - 128) * (sx / changed - 128) + (sy / changed - 136) * (sy / changed - 136) < 30 * 30,
                            "digit %d at %d: centred at %.1f, %.1f", d, px, sx / changed, sy / changed);
+    }
+    /* LINING FIGURES (docs_pkgQ.md): every digit stands on one baseline and reaches one height,
+     * so a 5 never drops below the line as a long s and a 1 is never a small capital I. The ink's
+     * top and bottom rows (coverage over half), in the anchor's coordinates, agree with the 0's to
+     * 3% of the size; old-style figures miss by a fifth of it. */
+    TEST("numerals are lining figures");
+    for (int s = 0; s < CN_TEX_GLYPH_SIZES; s++) {
+        int px = s ? CN_TEX_NUMERAL_LARGE : CN_TEX_NUMERAL_SMALL, top0 = 0, bot0 = 0;
+        for (int d = 0; d < CN_TEX_DIGITS; d++) {
+            const CnTexGlyph *g = &p.glyph[s][d]; int top = 1 << 20, bot = -(1 << 20);
+            for (int y = 0; y < g->h; y++) for (int x = 0; x < g->w; x++)
+                if (g->px[y * g->w + x] > 127) { if (g->oy + y < top) top = g->oy + y; if (g->oy + y > bot) bot = g->oy + y; }
+            if (d == 0) { top0 = top; bot0 = bot; continue; }
+            CHECK(abs(top - top0) * 100 <= 3 * px && abs(bot - bot0) * 100 <= 3 * px,
+                  "digit %d at %d: ink rows %d..%d against the 0's %d..%d", d, px, top, bot, top0, bot0);
+        }
     }
     CHECK(!cn_tex_stamp_numeral(&p, A, 256, 256, 10, CN_TEX_NUMERAL_SMALL), "digit 10");
     CHECK(!cn_tex_stamp_numeral(&p, A, 256, 256, 3, 100), "an unbaked size");

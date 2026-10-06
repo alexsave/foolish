@@ -22,13 +22,16 @@
  * (-ffp-contract=off, set by the Makefile, keeps a fused multiply-add from
  * rounding once where JavaScript rounds twice.)
  *
- * THE NUMERALS are IM Fell English (SIL OFL, tools/fonts/), read from the
- * TrueType file by a small glyf parser here and rasterized with 16 sub-scanlines
- * a row and exact horizontal span coverage, nonzero winding. Placement is the
- * canvas's: textAlign 'center' (the pen at minus half the advance) and
- * textBaseline 'middle', which Chromium puts at the middle of the em box it
- * derives from OS/2 sTypoAscender / sTypoDescender (measured: 418.9 units of
- * 2048 above the baseline, the formula gives 418.92).
+ * THE NUMERALS are Libre Caslon Text's default figures, which are lining (SIL
+ * OFL, tools/fonts/LibreCaslonText-wght.ttf, the variable font's default
+ * instance, weight 400; docs_pkgQ.md: IM Fell English's old-style 5 read as a
+ * long s on the crown), read from the TrueType file by a small glyf parser here
+ * and rasterized with 16 sub-scanlines a row and exact horizontal span coverage,
+ * nonzero winding. Placement is the study's crown (docs/UI.html cupCrown):
+ * textAlign 'center' (the pen at minus half the advance) and textBaseline
+ * 'alphabetic' at the anchor plus half the figure height (the 1's top, 1544 of
+ * 2000 units: .386 of the size), so a figure is centred on the anchor as Fell's
+ * small ones were.
  *
  * --compare reads raw RGBA and bump files captured from the study in headless
  * Chromium (one file per texture, NAME_WxH.rgba / .bump), derives the same
@@ -364,7 +367,8 @@ static void tg_stop(const TgStops *g, double t, double *rgb, double *a)
         for (int k = 0; k < 3; k++) rgb[k] = A > 0 ? (g->c[i - 1][k] * a0 + (g->c[i][k] * a1 - g->c[i - 1][k] * a0) * u) / A : g->c[i][k];
         *a = A; return;
     }
-    for (int k = 0; k < 3; k++) rgb[k] = g->c[g->n - 1][k]; *a = g->c[g->n - 1][3];
+    for (int k = 0; k < 3; k++) rgb[k] = g->c[g->n - 1][k];
+    *a = g->c[g->n - 1][3];
 }
 /* createRadialGradient(x0, y0, 0, x1, y1, r1): the largest t >= 0 whose circle passes through q */
 static double tg_conic(double qx, double qy, double x0, double y0, double x1, double y1, double r1)
@@ -516,6 +520,14 @@ static unsigned font_advance(const Font *f, int gid)
     unsigned nh = be16(f->b + f->hhea + 34);
     return be16(f->b + f->hmtx + 4 * ((unsigned)gid < nh ? (unsigned)gid : nh - 1));
 }
+/* a glyph's yMax from its glyf header, font units (0 for an empty glyph) */
+static int font_top(const Font *f, int gid)
+{
+    int long_loca = bes16(f->b + f->head + 50);
+    uint32_t o0 = long_loca ? be32(f->b + f->loca + 4 * gid) : 2u * be16(f->b + f->loca + 2 * gid);
+    uint32_t o1 = long_loca ? be32(f->b + f->loca + 4 * gid + 4) : 2u * be16(f->b + f->loca + 2 * gid + 2);
+    return o1 > o0 ? bes16(f->b + f->glyf + o0 + 8) : 0;
+}
 /* the glyph's outline as line segments (each quadratic cut in 16), in font units; returns the count or -1 */
 typedef struct { double x0, y0, x1, y1; } Edge;
 static int font_outline(const Font *f, int gid, Edge *e, int cap, int *bbox)
@@ -608,8 +620,11 @@ static int bake_glyph(const Font *f, int digit, int px, Glyph *out)
     int ne = font_outline(f, gid, e, 8192, bbox);
     if (ne < 0) return 0;
     double upem = be16(f->b + f->head + 18), s = px / upem;
-    double ta = bes16(f->b + f->os2 + 68), td = bes16(f->b + f->os2 + 70);
-    double mid = ta * upem / (ta - td) - upem / 2;            /* the em box's middle above the baseline, font units */
+    /* the figures' middle above the baseline, font units: half the 1's height (a lining 1 is flat at
+     * both ends, from the baseline to the figure height), so every figure is centred on the anchor */
+    int one = font_gid(f, '1');
+    if (one <= 0) return 0;
+    double mid = font_top(f, one) / 2.0;
     double penx = -(double)font_advance(f, gid) * s / 2, base = mid * s;
     int ox = (int)tg_floor(penx + bbox[0] * s) - 1, oy = (int)tg_floor(base - bbox[3] * s) - 1;
     int x1 = (int)tg_floor(penx + bbox[2] * s) + 2, y1 = (int)tg_floor(base - bbox[1] * s) + 2;
