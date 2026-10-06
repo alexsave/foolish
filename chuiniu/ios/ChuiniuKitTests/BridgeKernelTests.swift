@@ -216,9 +216,13 @@ final class BridgeKernelTests: XCTestCase {
                 XCTAssertEqual(q != nil, k < shown, "seat \(s) die \(k): a face exactly where a die is shown")
                 guard let q else { continue }
                 let i = s * Int(CN_STAGE_DICE) + k
-                let c = CGPoint(x: q.map(\.x).reduce(0, +) / 4, y: q.map(\.y).reduce(0, +) / 4)
-                XCTAssertLessThan(hypot(c.x - reveal.dieX[i], c.y - reveal.dieY[i]), reveal.dieD[s], "seat \(s) die \(k): the face is the die's")
-                let w = q.indices.map { hypot(q[($0 + 1) % 4].x - q[$0].x, q[($0 + 1) % 4].y - q[$0].y) }.max() ?? 0
+                let cx: Double = q.reduce(0) { $0 + $1.x } / 4, cy: Double = q.reduce(0) { $0 + $1.y } / 4
+                XCTAssertLessThan(hypot(cx - reveal.dieX[i], cy - reveal.dieY[i]), reveal.dieD[s], "seat \(s) die \(k): the face is the die's")
+                var w = 0.0
+                for e in 0..<4 {
+                    let a = q[e], b = q[(e + 1) % 4]
+                    w = max(w, hypot(b.x - a.x, b.y - a.y))
+                }
                 XCTAssertGreaterThan(w, reveal.dieD[s], "seat \(s) die \(k): the face grown past the die's side")
             }
         }

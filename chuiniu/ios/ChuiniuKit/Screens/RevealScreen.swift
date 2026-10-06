@@ -196,7 +196,11 @@ struct Rings: View {
     /// sixth of the shorter side).
     static func rounded(_ q: [CGPoint]) -> Path {
         func mid(_ a: CGPoint, _ b: CGPoint) -> CGPoint { CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2) }
-        let short = (0..<4).map { hypot(q[($0 + 1) % 4].x - q[$0].x, q[($0 + 1) % 4].y - q[$0].y) }.min() ?? 0
+        var short = CGFloat.greatestFiniteMagnitude
+        for e in 0..<4 {
+            let a = q[e], b = q[(e + 1) % 4]
+            short = min(short, hypot(b.x - a.x, b.y - a.y))
+        }
         return Path { p in
             p.move(to: mid(q[3], q[0]))
             for c in 0..<4 { p.addArc(tangent1End: q[c], tangent2End: mid(q[c], q[(c + 1) % 4]), radius: short / 6) }

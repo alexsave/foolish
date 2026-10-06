@@ -37,6 +37,6 @@
 --root CnStageHud --root CnStageShot --snapshot CnStageHud --snapshot CnStageShot
 --const CN_STAGE_TABLE --const CN_STAGE_REVEAL --const CN_STAGE_BUBBLE
 --const CN_STAGE_PASSES --const CN_STAGE_BANDS
---const CN_STAGE_E_ARENA --const CN_NAME_BOX --const CN_NAME_FOOT --const CN_NAME_LEFT --const CN_STAGE_EDGE --const CN_PEEK_MS --const CN_CAM_REACH
+--const CN_STAGE_E_ARENA --const CN_NAME_BOX --const CN_NAME_FOOT --const CN_NAME_LEFT --const CN_STAGE_EDGE --const CN_STAGE_DICE --const CN_PEEK_MS --const CN_CAM_REACH
 --const CN_STAGE_ARENA
 --const CN_STAGE_NAME_HALO --const CN_STAGE_NAME_W_MAX --const CN_STAGE_NAME_H_MAX
