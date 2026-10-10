@@ -269,8 +269,14 @@ int evwire_as3_split(const unsigned char *buf, int len, int *seq_len, int *flags
 // the sequence: a receiver that drops a version it has applied has dropped
 // every duplicate. The id used to be a random UUID drawn per push, which was
 // one more draw than the product allows itself (sdk/ts/wire/detid.ts).
-#define EVW_CAST_FORMAT       1
+//
+// The format byte is deliberately NOT a value a bare push can open with (a push
+// opens with EVWIRE_FORMAT_VERSION): a receiver handed the old payload's `b`,
+// which was the push alone, must find no header there, rather than read four
+// bytes of the push as a version.
+#define EVW_CAST_FORMAT       0xC1
 #define EVW_CAST_HEADER_BYTES 5
+_Static_assert(EVW_CAST_FORMAT != EVWIRE_FORMAT_VERSION, "a bare push is never mistaken for a cast");
 
 // Writes the header at `out`: EVW_CAST_HEADER_BYTES, or EVW_ECAP.
 int evwire_cast_header_put(uint32_t version, unsigned char *out, int cap);

@@ -12662,6 +12662,12 @@ static void test_table_cast_carries_its_version(void) {
           && client_cast_open(&ct, ct_env, EVW_CAST_HEADER_BYTES + 3, 0, 0) == CLIENT_E_PUSH
           && client_cast_open(&ct, ct_env, cl / 2, 0, 0) == CLIENT_E_PUSH, "a cast cut short is refused");
     CHECK(client_cast_open(&ct, ct_push, pl, 0, 0) == CLIENT_E_PUSH, "a bare push is not a cast");
+    {
+        uint32_t v = 7;
+        CHECK(evwire_cast_header_get(ct_push, pl, &v) == EVW_EPARSE && v == 7,
+              "and has no cast header: its first bytes are never read as a version");
+        CHECK(evwire_cast_header_get(ct_env, cl, &v) == EVW_CAST_HEADER_BYTES && v == 0x01020304u, "a cast has");
+    }
 }
 
 // THE TABLE'S RULES (table.h table_set_rules, docs/PODKIDNOY.md). Any seated

@@ -189,7 +189,8 @@ test('a cast: the realtime message is { b }, and the client reads its version an
     assert.deepEqual(read, clientTable().readPush(push, { as3: true, version: 42, identity: 'none' }));
 
     assert.equal(clientTable().readCast(push, { identity: 'none' }), null, 'a bare push is not a cast');
-    assert.equal(clientTable().castVersion(push.subarray(0, 3)), null, 'and bytes too short for a header name no version');
+    assert.equal(clientTable().castVersion(push), null, 'nor does it name a version: what an old server sent as `b` is never half-read');
+    assert.equal(clientTable().castVersion(parts.cast.subarray(0, 3)), null, 'and bytes too short for a header name none');
     const cut = parts.cast.subarray(0, parts.cast.length >> 1);
     assert.equal(clientTable().readCast(cut, { identity: 'none' }), null, 'a cast cut short does not read');
     assert.equal(clientTable().castVersion(cut), 42, 'but still says which version to fetch instead');
