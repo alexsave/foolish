@@ -508,12 +508,15 @@ int anim_build_plan(const AnimPlanEvent *events, int n_events, int n_players,
 // where the host put them and copies none of them.
 //
 // SIZED BY THE DECK, NOT BY THE WORST A WIRE COULD NAME. One event moves at most
-// the cards one hand can hold (MAX_HAND_SIZE, above a whole deck) and a row is
-// at most MAX_BATTLES wide. ANIM_MAX_CARDS allows 128 cards an event, and at
-// 128 events that alone would be 16 KB of static in every module this is
-// linked into for a stream no deal can produce.
-#define ANIM_ASK_MAX_CARDS MAX_HAND_SIZE
-#define ANIM_ASK_MAX_ROW   (2 * MAX_BATTLES)
+// every card there is, and the widest row is that deck laid out with nothing
+// covered. The build's own caps are wider (ANIM_MAX_CARDS is 128 cards an
+// event; MAX_HAND_SIZE and MAX_BATTLES are 64 on wasm), and at 128 events the
+// difference is real: sized by those the ask is 30,248 B, which is what took
+// web.wasm from 26 pages of linear memory to 27 (e2e/mem/wasm_memory.test.ts).
+// Sized by the deck it is 25,640 B, under the 28,672 B of pools the hand
+// parser it replaced kept, for a stream no deal can produce being refused.
+#define ANIM_ASK_MAX_CARDS (NUM_SUITS * ACE_VALUE)
+#define ANIM_ASK_MAX_ROW   (2 * ANIM_ASK_MAX_CARDS)
 typedef struct {
     int8_t  type;        // ANIM_EVT_*
     int8_t  seat;        // acting seat, or ANIM_SEAT_NONE

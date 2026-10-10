@@ -121,10 +121,11 @@ test('a question the kernel refuses is thrown, and so is one that does not fit t
     assert.throws(() => animBuildPlan([out], 1, final), /anim_build_plan error/);
     assert.throws(() => animBuildPlan([{ ...out, battles: [id(SIX_D), NONE, id(KING_D)] }], 2, final),
         /anim_build_plan error/);
-    // The writer's: more than the ask has room for never reaches the kernel.
+    // The writer's: more than the ask has room for never reaches the kernel -
+    // a 129th event, a 53rd card, a 53rd battle.
     assert.throws(() => animBuildPlan(new Array<AnimPlanEventIn>(129).fill(out), 2, final), RangeError);
-    assert.throws(() => animBuildPlan([{ ...out, cards: new Array<Card>(65).fill(SIX_D) }], 2, final), RangeError);
-    assert.throws(() => animBuildPlan([{ ...out, battles: new Array<number>(130).fill(NONE) }], 2, final), RangeError);
+    assert.throws(() => animBuildPlan([{ ...out, cards: new Array<Card>(53).fill(SIX_D) }], 2, final), RangeError);
+    assert.throws(() => animBuildPlan([{ ...out, battles: new Array<number>(106).fill(NONE) }], 2, final), RangeError);
     // …and the widest stream that does fit is planned.
     assert.equal(animBuildPlan(new Array<AnimPlanEventIn>(128).fill(out), 2, final).nSteps, 128);
 });
