@@ -41,7 +41,6 @@ interface EngineExports {
     wasm_msg_rule_p?(aLen: number, bLen: number): number;
     wasm_msg_rematch?(inLen: number, tappedAtMs: number, creatorSeat: number): number;
     wasm_msg_rebase?(pendingRound: number, seat: number, wireLen: number): number;
-    wasm_msg_pickup_hold?(seat: number, sentAt: number, now: number): number;
 }
 
 // One cached view over the whole linear memory. The kernel never mallocs, so
@@ -173,18 +172,13 @@ interface BotsExports extends EngineExports {
     wasm_anim_event_key(type: number, suit: number, value: number, from: number, to: number, seat: number): number;
     wasm_anim_finish_rows(nElim: number, gameOver: number, nPlayers: number, mySeat: number): number;
     wasm_anim_hand_laid_out(nCards: number, nOrder: number, deferredLo: number, deferredHi: number): number;
-    wasm_anim_conflict_verdicts(pendingAttacks: number, defenderHand: number,
-                                finalUncovered: number): number;
     wasm_anim_set_transport(transport: number): number;
-    wasm_anim_transport(): number;
     // The plan, the frame and the beats: the structs are read where they lie.
     wasm_anim_plan_ptr(): number;
     wasm_anim_frame_ptr(): number;
-    wasm_anim_beats_ptr(): number;
     wasm_anim_build_plan(nEvents: number, nPlayers: number, finalDeck: number,
                          finalDiscard: number, finalFlipped: number): number;
     wasm_anim_plan_at(nowMs: number): number;
-    wasm_anim_build_beats(nEvents: number): number;
     wasm_anim_reversal_order(): number;
     wasm_anim_roles_goods_opening(d: number, fa: number, gm: number, firstGoodMask: number): number;
     wasm_anim_roles_goods_cleared(d: number, fa: number, gm: number, stepGoodMask: number): number;
@@ -197,11 +191,6 @@ interface BotsExports extends EngineExports {
 export const ANIM_TRANSPORT_UNSET = 0;
 export const ANIM_TRANSPORT_CHAIN = 1;
 export const ANIM_TRANSPORT_SERVER = 2;
-
-/** Which transport this module is set to, for diagnostics: a wrong-mode bug
- *  looks exactly like an animation bug. The setter is deliberately not exported
- *  as a public knob - a host states its transport at init, in `bots()`. */
-export function animTransport(): number { return bots().wasm_anim_transport(); }
 
 /** THE ONE PLACE A TEST MAY MOVE IT. The two transports have to be provable
  *  against the same input in the same process (the FMSG suites already drive
@@ -713,20 +702,6 @@ export function kernelReplayLink(moves: string, names: string[], style: number =
     return new TextDecoder().decode(mem(ex).subarray(base, base + w));
 }
 
-/**
- * ROUND 16 - how many seconds this seat must still wait before it may pick up,
- * against the game the last `kernelMsgDecode` left resident. 0 means now.
- *
- * `sentAt` is the decoded envelope's `sent_at` and `now` the caller's own unix
- * seconds mod 65536; a chain with no clock (format 2) always answers 0, which
- * is what keeps every bubble sealed by a shipped build playable.
- */
-export function kernelMsgPickupHold(seat: number, sentAt: number, now: number): number {
-    const ex = bots();
-    if (!ex.wasm_msg_pickup_hold) throw new Error('kernelMsgPickupHold: module has no FMSG support');
-    return ex.wasm_msg_pickup_hold(seat, sentAt & 0xffff, now & 0xffff);
-}
-
 export function kernelMsgSeal(
     header: Omit<MsgEnvelope, 'digest' | 'turn' | 'round' | 'format' | 'sent_at' | 'n_new'
                               | 'opening' | 'carry_key' | 'carry_fool'>
@@ -967,7 +942,7 @@ export function animEventTypeCode(type: string | undefined): number {
 
 /** The location string -> ANIM_LOC_* code; a location the wire did not name is
  *  ANIM_LOC_NONE, which is a code of its own and collides with no real place. */
-export function animLocationCode(loc: string | undefined): number {
+function animLocationCode(loc: string | undefined): number {
     return (loc && loc in ANIM_LOC) ? ANIM_LOC[loc] : A.ANIM_LOC_NONE;
 }
 
@@ -1165,93 +1140,11 @@ export function animHandLaidOut(
 // legal.h/anim_plan.h spell "no card here" the same byte.
 const ANIM_TABLE_NONE = 0xfe;
 
-/** anim_plan.h ANIM_DEST_*: which kind of place a doomed motion put its card. */
-export const ANIM_DEST = { table: 0, hand: 1, pool: 2 } as const;
 /** anim_plan.h ANIM_CONFLICT_*, in the order the C defines them. The CODES are
  *  generated (sdk/ts/gen/anim.bots.ts); only the names are TypeScript's. */
 export const ANIM_CONFLICT_REVERT = A.ANIM_CONFLICT_REVERT;
 export const ANIM_CONFLICT_KEEP = A.ANIM_CONFLICT_KEEP;
 export const ANIM_CONFLICT_CLEAR = A.ANIM_CONFLICT_CLEAR;
-export const ANIM_CONFLICT = ['revert', 'keep', 'clear'] as const;
-export type AnimConflictVerdict = (typeof ANIM_CONFLICT)[number];
-
-/** One motion a superseded move made: which card, and what kind of place it
- *  landed in. `isCover` marks the defender's own play, which the capacity rule
- *  excludes (capacity is an attack rule). */
-export interface AnimConflictMotion {
-    card: Card | null;                     // null models a viewer-masked back
-    dest: (typeof ANIM_DEST)[keyof typeof ANIM_DEST];
-    isCover?: boolean;
-}
-
-/** One event of the arriving broadcast, as the conflict rule reads it. Which
- *  events SWEEP - and so whether the table was cleared - is the kernel's to
- *  decide (anim_conflict_sweep); this hands it the stream, not a verdict. */
-export interface AnimConflictEvent {
-    type: number;            // ANIM_EVT_* (animEventTypeCode)
-    cards?: (Card | null)[];
-    masked?: boolean;        // viewer-masked backs: they name nothing
-}
-
-/** What the arriving broadcast vouches for, and the server transport's extra
- *  question (anim_plan.h AnimServerHope). */
-export interface AnimConflictInputs {
-    /** The arriving stream's own events. The sweep is derived from these. */
-    events: AnimConflictEvent[];
-    /** The table of the board it opens on; both sides of a battle stand. */
-    openTable: { attack: Card; defense: Card | null }[];
-    /** My hand on that board. */
-    myHand: Card[];
-    pendingAttacks: number;
-    defenderHand: number;
-    finalUncovered: number;
-}
-
-/**
- * THE CONFLICT VERDICT per motion (anim_plan.h anim_conflict_facts +
- * anim_conflict_verdict), server transport. One door for all four shapes
- * AnimationContext asks about.
- *
- * The stream goes in as EVENTS: which of them sweep the table is part of the
- * rule (anim_conflict_sweep), not part of the marshal.
- */
-export function animConflictVerdicts(
-    motions: AnimConflictMotion[], inputs: AnimConflictInputs,
-): AnimConflictVerdict[] {
-    if (motions.length === 0) return [];
-    const ex = bots();
-    const buf = mem(ex);
-    let p = ex.wasm_io_ptr();
-    buf[p++] = inputs.events.length & 0xff;
-    for (const e of inputs.events) {
-        const cards = e.cards ?? [];
-        buf[p++] = e.type & 0xff;
-        buf[p++] = e.masked ? 1 : 0;
-        buf[p++] = cards.length & 0xff;
-        for (const c of cards) buf[p++] = c ? wireStateCard(c) : ANIM_TABLE_NONE;
-    }
-    buf[p++] = inputs.openTable.length & 0xff;
-    for (const b of inputs.openTable) {
-        buf[p++] = wireStateCard(b.attack);
-        buf[p++] = b.defense ? wireStateCard(b.defense) : ANIM_TABLE_NONE;
-    }
-    buf[p++] = inputs.myHand.length & 0xff;
-    for (const c of inputs.myHand) buf[p++] = wireStateCard(c);
-    buf[p++] = motions.length & 0xff;
-    for (const m of motions) {
-        buf[p++] = m.card ? wireStateCard(m.card) : ANIM_TABLE_NONE;
-        buf[p++] = m.dest;
-        buf[p++] = m.isCover ? 1 : 0;
-    }
-    const n = ex.wasm_anim_conflict_verdicts(
-        inputs.pendingAttacks, inputs.defenderHand, inputs.finalUncovered);
-    if (n < 0) throw new Error(`anim_conflict_verdicts error ${n}`);
-    const out = mem(ex);
-    const ob = ex.wasm_io_ptr();
-    const verdicts: AnimConflictVerdict[] = [];
-    for (let i = 0; i < n; i++) verdicts.push(ANIM_CONFLICT[out[ob + i]]);
-    return verdicts;
-}
 
 // ---------------------------------------------------------------------------
 // The plan, the frame and the beats (anim_plan.h)
@@ -1334,22 +1227,6 @@ export interface AnimFrameSnap {
     trumpFlight: Card | null;
 }
 
-/** One event as the beat rules see it (anim_plan.h AnimBeatEvent). */
-export interface AnimBeatEventIn {
-    type: number; seat?: number; cards?: readonly Card[]; maskCards?: boolean;
-    /** good_players_mask of THIS step's own board; absent for a step with none. */
-    goodMask?: number;
-}
-
-/** One beat (anim_plan.h AnimBeat). */
-export interface AnimBeatSnap {
-    first: number; nEvents: number; type: number; seat: number; flags: number;
-    outsMask: number; attackPassSeats: number; placedIds: bigint; goodMask: number;
-}
-
-/** The beats of a stream (anim_plan.h AnimBeats). */
-export interface AnimBeatsSnap { beats: AnimBeatSnap[]; placedIds: bigint; firstGoodMask: number }
-
 /** THE TIMED PLAN for a decoded viewer sequence (anim_plan.h anim_build_plan).
  *  `final` is the board the host already holds; the plan freezes the DISPLAY
  *  back to the pre-sequence values and reveals forward one step at a time. */
@@ -1411,47 +1288,6 @@ export function animPlanAt(nowMs: number): AnimFrameSnap {
         inFlightToFlipped: A.AnimFrame_get_in_flight_to_flipped(m, at),
         veiled: A.AnimFrame_get_veiled(m, at),
         trumpFlight: readAnimCard(m, A.AnimFrame_trump_flight_at(at)),
-    };
-}
-
-/** THE BEATS a stream plays in (anim_plan.h anim_build_beats). */
-export function animBuildBeats(events: readonly AnimBeatEventIn[]): AnimBeatsSnap {
-    const ex = bots();
-    const buf = mem(ex);
-    let p = ex.wasm_io_ptr();
-    for (const e of events) {
-        buf[p++] = e.type & 0xff;
-        buf[p++] = e.seat === undefined || e.seat < 0 ? ANIM_W_NONE : e.seat & 0xff;
-        buf[p++] = e.maskCards ? 1 : 0;
-        buf[p++] = e.goodMask === undefined ? 0 : 1;
-        buf[p++] = (e.goodMask ?? 0) & 0xff;
-        const cards = e.cards ?? [];
-        buf[p++] = cards.length & 0xff;
-        for (const c of cards) buf[p++] = wireStateCard(c);
-    }
-    const n = ex.wasm_anim_build_beats(events.length);
-    if (n < 0) throw new Error(`anim_build_beats error ${n}`);
-    const m = animMemOf(ex.memory.buffer);
-    const at = ex.wasm_anim_beats_ptr();
-    const beats: AnimBeatSnap[] = [];
-    for (let i = 0; i < n; i++) {
-        const b = A.AnimBeats_beats_at(at, i);
-        beats.push({
-            first: A.AnimBeat_get_first(m, b),
-            nEvents: A.AnimBeat_get_n_events(m, b),
-            type: A.AnimBeat_get_type(m, b),
-            seat: A.AnimBeat_get_seat(m, b),
-            flags: A.AnimBeat_get_flags(m, b),
-            outsMask: A.AnimBeat_get_outs_mask(m, b),
-            attackPassSeats: A.AnimBeat_get_attack_pass_seats(m, b),
-            placedIds: A.AnimBeat_get_placed_ids(m, b),
-            goodMask: A.AnimBeat_get_good_mask(m, b),
-        });
-    }
-    return {
-        beats,
-        placedIds: A.AnimBeats_get_placed_ids(m, at),
-        firstGoodMask: A.AnimBeats_get_first_good_mask(m, at),
     };
 }
 

@@ -25,10 +25,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-    animBuildPlan, animPlanAt, animBuildBeats, animReversalOrder,
+    animBuildPlan, animPlanAt, animReversalOrder,
     ANIM_EVT, ANIM_LOC, ANIM_STEP_NONE, ANIM_NEVER, ANIM_TIME_MS, ANIM_BOUT_END_HOLD_MS,
     ANIM_CONFLICT_REVERT, ANIM_CONFLICT_KEEP, ANIM_CONFLICT_CLEAR,
-    type AnimPlanEventIn, type AnimBeatEventIn,
+    type AnimPlanEventIn,
 } from '../sdk/ts/wasm/bots.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
@@ -259,29 +259,6 @@ test('an `out` is a notice: no flight, no time, and it costs the beat behind it 
     assert.equal(p.totalMs, TIME + GAP + TIME, 'the sequence is two flights long, not three');
 });
 
-test('two covers by one seat are ONE beat, and a lone attack is its own', () => {
-    const events: AnimBeatEventIn[] = [
-        { type: ANIM_EVT.attack_pass, seat: 0, cards: [SIX_S] },
-        { type: ANIM_EVT.cover, seat: 1, cards: [SEVEN_S] },
-        { type: ANIM_EVT.cover, seat: 1, cards: [C(1, 6)] },
-    ];
-    const b = animBuildBeats(events);
-    assert.equal(b.beats.length, 2, 'the kernel spends one COVER event per card; one move is one beat');
-    assert.equal(b.beats[0].nEvents, 1);
-    assert.equal(b.beats[1].first, 1);
-    assert.equal(b.beats[1].nEvents, 2);
-    assert.equal(b.placedIds,
-        (1n << BigInt(id(SIX_S))) | (1n << BigInt(id(SEVEN_S))) | (1n << BigInt(id(C(1, 6)))));
-});
-
-test('a step that carries no good mask says so, and does not read as eight good seats', () => {
-    const b = animBuildBeats([{ type: ANIM_EVT.attack_pass, seat: 0, cards: [SIX_S] }]);
-    assert.equal(b.firstGoodMask, -1, 'ANIM_NO_MASK, not a mask of every seat');
-    assert.equal(b.beats[0].goodMask, -1);
-    const withMask = animBuildBeats([{ type: ANIM_EVT.attack_pass, seat: 0, cards: [SIX_S], goodMask: 0xff }]);
-    assert.equal(withMask.firstGoodMask, 0xff, 'eight good seats is a real mask and must survive the wire');
-});
-
 // ---- the reversal's order ---------------------------------------------------
 // The rule AnimationContext's four queue-insertion branches gave way to: the
 // board reverses what it must before it plays anything else, last group first,
@@ -313,9 +290,4 @@ test('a reversal with nothing doomed is no reversal at all', () => {
 test('groups that do not account for the motions are refused, not half-reversed', () => {
     assert.throws(() => animReversalOrder([ANIM_CONFLICT_REVERT, ANIM_CONFLICT_REVERT], [1]),
         /anim_reversal_order error/);
-});
-
-test('a seatless notice keeps its seat out of the answer', () => {
-    const b = animBuildBeats([{ type: ANIM_EVT.magic_transition }]);
-    assert.equal(b.beats[0].seat, -1, 'ANIM_SEAT_NONE, not seat 255');
 });

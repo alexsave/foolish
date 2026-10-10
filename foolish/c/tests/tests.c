@@ -6843,6 +6843,62 @@ static void test_the_transport_is_the_only_thing_the_two_clients_disagree_about(
     CHECK(anim_transport() == ANIM_TRANSPORT_CHAIN, "…and does not land");
 }
 
+// THE SWEEP IS DERIVED, AND THE CAPACITY TEST IS INCLUSIVE. Both were pinned
+// only through a wasm entry that parsed its own byte format
+// (wasm_anim_conflict_verdicts), which no host called; they are pinned on the
+// rule now, and that entry is gone.
+static void test_conflict_the_sweep_is_read_off_the_stream(void) {
+    const Card three = card_of_id(CF_ID(0, 3)), four = card_of_id(CF_ID(1, 4));
+    const Card two = card_of_id(CF_ID(3, 2)), mine = card_of_id(CF_ID(2, 6));
+    AnimEvent busy[4] = {
+        { ANIM_EVT_ATTACK_PASS, 0, ANIM_LOC_NONE, ANIM_LOC_NONE, &three, 1, 0 },
+        { ANIM_EVT_COVER,       1, ANIM_LOC_NONE, ANIM_LOC_NONE, &four,  1, 0 },
+        { ANIM_EVT_REFILL,      0, ANIM_LOC_NONE, ANIM_LOC_NONE, &two,   1, 0 },
+        { ANIM_EVT_CARDS_TO_TRASH, ANIM_SEAT_NONE, ANIM_LOC_NONE, ANIM_LOC_NONE, &three, 1, 0 },
+    };
+    int moved[8], cleared = 9;
+
+    CHECK(anim_conflict_sweep(busy, 3, moved, 8, &cleared) == 0 && cleared == 0,
+          "placements and a draw move nothing this rule reads and clear no table");
+    CHECK(anim_conflict_sweep(busy, 4, moved, 8, &cleared) == 1 && cleared == 1
+              && moved[0] == CF_ID(0, 3),
+          "a trash sweeps: the table is gone and the card it names is moved");
+
+    busy[3].type = ANIM_EVT_PICKUP; busy[3].seat = 1; busy[3].cards = &mine;
+    CHECK(anim_conflict_sweep(busy, 4, moved, 8, &cleared) == 1 && cleared == 1
+              && moved[0] == CF_ID(2, 6),
+          "a pickup sweeps too");
+
+    busy[3].mask_cards = 1;
+    CHECK(anim_conflict_sweep(busy, 4, moved, 8, &cleared) == 0 && cleared == 1,
+          "a pickup of masked backs still took the table, and names nothing");
+    busy[3].mask_cards = 0; busy[3].cards = NULL; busy[3].n_cards = 0;
+    CHECK(anim_conflict_sweep(busy, 4, moved, 8, &cleared) == 0 && cleared == 1,
+          "…and so did a sweep that carries no card at all");
+
+    CHECK(anim_conflict_sweep(busy, 4, moved, 0, &cleared) == 0, "nothing named needs no room");
+    busy[3].cards = &mine; busy[3].n_cards = 1;
+    CHECK(anim_conflict_sweep(busy, 4, moved, 0, &cleared) == ANIM_ECAP, "a named card with no room is refused");
+    CHECK(anim_conflict_sweep(NULL, 1, moved, 8, &cleared) == ANIM_EBADARG, "a count with no events");
+}
+
+static void test_conflict_capacity_is_inclusive(void) {
+    const int mine = CF_ID(0, 4);
+    AnimConflictFacts f = cf_facts(NULL, 0, NULL, 0, NULL, 0);
+    anim_set_transport(ANIM_TRANSPORT_SERVER);
+    // server_may_still_accept: final_uncovered + pending_attacks <= defender_hand.
+    AnimServerHope hope = { .is_cover = 0, .table_cleared = 0,
+                            .pending_attacks = 2, .defender_hand = 5, .final_uncovered = 3 };
+    CHECK(anim_conflict_verdict(mine, ANIM_DEST_TABLE, &f, &hope) == ANIM_CONFLICT_KEEP,
+          "3 + 2 <= 5 exactly fits, so the card may yet be accepted");
+    hope.defender_hand = 4;
+    CHECK(anim_conflict_verdict(mine, ANIM_DEST_TABLE, &f, &hope) == ANIM_CONFLICT_REVERT,
+          "3 + 2 > 4 cannot fit");
+    hope.is_cover = 1;
+    CHECK(anim_conflict_verdict(mine, ANIM_DEST_TABLE, &f, &hope) == ANIM_CONFLICT_KEEP,
+          "the same card as a cover is not counted against the hand");
+}
+
 
 // ---- the board's own sets and small rules ---------------------------------
 //
@@ -14392,6 +14448,8 @@ int main(void) {
     test_reversal_order_is_not_about_the_transport();
     test_conflict_degenerate_inputs();
     test_the_transport_is_the_only_thing_the_two_clients_disagree_about();
+    test_conflict_the_sweep_is_read_off_the_stream();
+    test_conflict_capacity_is_inclusive();
     test_board_veil_unions_its_three_sources();
     test_board_veil_flying_is_hidden_minus_pre_hidden();
     test_board_veil_the_fan_never_withholds_a_slot_it_draws();

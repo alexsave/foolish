@@ -984,14 +984,12 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_msg_decode -Wl,--export=wasm_msg_seal -Wl,--export=wasm_msg_header_ptr \
   -Wl,--export=wasm_msg_rule_p -Wl,--export=wasm_msg_rebase \
   -Wl,--export=wasm_msg_rematch \
-  -Wl,--export=wasm_msg_pickup_hold \
   -Wl,--export=wasm_anim_should_drop_stale -Wl,--export=wasm_anim_stale_optimistic \
   -Wl,--export=wasm_anim_event_key \
   -Wl,--export=wasm_anim_finish_rows -Wl,--export=wasm_anim_hand_laid_out \
-  -Wl,--export=wasm_anim_conflict_verdicts \
-  -Wl,--export=wasm_anim_set_transport -Wl,--export=wasm_anim_transport \
-  -Wl,--export=wasm_anim_plan_ptr -Wl,--export=wasm_anim_frame_ptr -Wl,--export=wasm_anim_beats_ptr \
-  -Wl,--export=wasm_anim_build_plan -Wl,--export=wasm_anim_plan_at -Wl,--export=wasm_anim_build_beats \
+  -Wl,--export=wasm_anim_set_transport \
+  -Wl,--export=wasm_anim_plan_ptr -Wl,--export=wasm_anim_frame_ptr \
+  -Wl,--export=wasm_anim_build_plan -Wl,--export=wasm_anim_plan_at \
   -Wl,--export=wasm_anim_reversal_order \
   -Wl,--export=wasm_anim_roles_goods_opening -Wl,--export=wasm_anim_roles_goods_cleared \
   -Wl,--export=wasm_anim_roles_pass_hand_off -Wl,--export=wasm_anim_shown_ledger_allows \
@@ -1209,14 +1207,12 @@ WASM_MSG_EXPORTS := \
   -Wl,--export=wasm_unambiguous_cover \
   -Wl,--export=wasm_msg_decode -Wl,--export=wasm_msg_seal -Wl,--export=wasm_msg_header_ptr \
   -Wl,--export=wasm_msg_rule_p -Wl,--export=wasm_msg_rebase \
-  -Wl,--export=wasm_msg_pickup_hold \
   -Wl,--export=wasm_anim_should_drop_stale -Wl,--export=wasm_anim_stale_optimistic \
   -Wl,--export=wasm_anim_event_key \
   -Wl,--export=wasm_anim_finish_rows -Wl,--export=wasm_anim_hand_laid_out \
-  -Wl,--export=wasm_anim_conflict_verdicts \
-  -Wl,--export=wasm_anim_set_transport -Wl,--export=wasm_anim_transport \
-  -Wl,--export=wasm_anim_plan_ptr -Wl,--export=wasm_anim_frame_ptr -Wl,--export=wasm_anim_beats_ptr \
-  -Wl,--export=wasm_anim_build_plan -Wl,--export=wasm_anim_plan_at -Wl,--export=wasm_anim_build_beats \
+  -Wl,--export=wasm_anim_set_transport \
+  -Wl,--export=wasm_anim_plan_ptr -Wl,--export=wasm_anim_frame_ptr \
+  -Wl,--export=wasm_anim_build_plan -Wl,--export=wasm_anim_plan_at \
   -Wl,--export=wasm_anim_reversal_order \
   -Wl,--export=wasm_anim_roles_goods_opening -Wl,--export=wasm_anim_roles_goods_cleared \
   -Wl,--export=wasm_anim_roles_pass_hand_off -Wl,--export=wasm_anim_shown_ledger_allows
@@ -1527,7 +1523,7 @@ wasm-bots: wasm-cc-check
 # (wasm_export_state / wasm_state_serialize / wasm_state_deserialize, which
 # e2e/security_client_boundary.test.ts denies the browser — they are now absent
 # from the module rather than merely unreferenced by the bundle), and the
-# test-only entries (wasm_msg_seal, wasm_legal_moves, wasm_anim_build_beats,
+# test-only entries (wasm_msg_seal, wasm_legal_moves,
 # wasm_replay_extras_encode, wasm_replay_link_parse …) which run on Node against
 # bots.wasm.
 WASM_WEB_NAMES := \
