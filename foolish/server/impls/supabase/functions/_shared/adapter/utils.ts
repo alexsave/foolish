@@ -122,10 +122,6 @@ export async function authenticate(req: Request): Promise<User> {
     try {
         return await getAuthenticatedUser(req);
     } catch (e) {
-        // A server that does not know which keys it trusts (auth.ts
-        // AuthNotConfigured) has not judged the caller: that is its own failure,
-        // a 500, never "you are not signed in".
-        if ((e as Error)?.name === 'AuthNotConfigured') throw e;
         throw new Unauthenticated((e as Error).message);
     }
 }

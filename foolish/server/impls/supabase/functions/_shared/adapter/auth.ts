@@ -6,8 +6,7 @@ import type { User } from 'jsr:@supabase/supabase-js'; // type-only → erased a
  *
  * Fast path — LOCAL asymmetric verification (verifyJwtLocal below). With
  * asymmetric JWT signing keys (ES256/RS256) enabled on the project, the token is
- * verified against the project's public keys, PINNED in this function's
- * configuration (JWT_VERIFY_KEYS, below), right here: no GoTrue round-trip
+ * verified against the project's public JWKS right here: no GoTrue round-trip
  * and — the reason this was rewritten — NO `@supabase/supabase-js` in the boot
  * graph. supabase-js was the single heaviest module every edge function
  * evaluated on a cold isolate; auth runs on every request, so lazy-importing it
@@ -21,16 +20,10 @@ import type { User } from 'jsr:@supabase/supabase-js'; // type-only → erased a
  * verifyJwtLocal — using the PUBLIC key only, so it can't forge tokens.
  *
  * Fallback — supabase-js `auth.getUser(token)`: if the project still uses the
- * legacy HS256 shared secret (JWT_VERIFY_KEYS says `gotrue`), the token names a
- * key that is not pinned (a rotation in progress), or local verification fails
- * for any reason, fall back to server-side verification so auth never silently
- * breaks. supabase-js is imported LAZILY here, so the common (asymmetric) case
- * never loads it.
- *
- * NO CONFIGURATION IS NOT A FALLBACK. With JWT_VERIFY_KEYS unset or unreadable
- * every request is refused (AuthNotConfigured, logged as an error): a function
- * that does not know which keys it trusts must not quietly settle for asking
- * somebody else on every request.
+ * legacy HS256 shared secret (no public JWKS to verify against locally), or
+ * local verification fails for any reason, fall back to server-side
+ * verification so auth never silently breaks. supabase-js is imported LAZILY
+ * here, so the common (asymmetric) case never loads it.
  *
  * Downstream only reads `user.id` and `user.user_metadata.username`.
  *
@@ -46,11 +39,7 @@ export async function getAuthenticatedUser(req: Request): Promise<User> {
 
     const token = authHeader.replace('Bearer ', '');
 
-    // Which keys are trusted is configuration, read before any token is: a
-    // missing or unreadable JWT_VERIFY_KEYS throws here, loudly, for everyone.
-    if (!injectedJwks) pinnedKeys();
-
-    // Fast path: local signature verification against the pinned keys.
+    // Fast path: local signature verification via JWKS (asymmetric keys).
     const tAuth = performance.now();
     const claims = await verifyJwtLocal(token);
     if (claims) {
@@ -90,7 +79,7 @@ export async function getAuthenticatedUser(req: Request): Promise<User> {
 
 // The ONLY algorithms accepted — both ASYMMETRIC, verified with a PUBLIC key.
 // This is the alg-confusion defense: HS256/HS384/HS512 (symmetric) and "none"
-// are absent, so we never treat a public key as an HMAC secret, and we
+// are absent, so we never treat the public JWKS key as an HMAC secret, and we
 // only ever import keys / call verify as ECDSA or RSA. A token declaring any
 // other alg is rejected before any crypto runs.
 type Alg = 'ES256' | 'RS256';
@@ -104,141 +93,21 @@ const VERIFY_PARAMS: Record<Alg, EcdsaParams | AlgorithmIdentifier> = {
     RS256: { name: 'RSASSA-PKCS1-v1_5' },
 };
 
-// ============================================================================
-// The pinned keys: JWT_VERIFY_KEYS.
-//
-// The project's public signing keys used to be FETCHED - a GET of
-// /auth/v1/.well-known/jwks.json on a cold isolate, parsed as JSON. A JWT has to
-// be parsed as JSON (the format is JSON); the key set does not, and a function
-// that fetches the list of keys it trusts trusts whatever answers that fetch.
-// So the keys are configuration now, in a form that is not JSON:
-//
-//   JWT_VERIFY_KEYS = <kid>:<alg>:<base64 SPKI>[,<kid>:<alg>:<base64 SPKI>...]
-//
-//     kid   the key id a token's header names
-//     alg   ES256 or RS256
-//     SPKI  the public key as DER SubjectPublicKeyInfo, standard base64 - the
-//           body of a PEM "PUBLIC KEY" block, which is what crypto.subtle
-//           imports as 'spki' for both algorithms
-//
-//   JWT_VERIFY_KEYS = gotrue
-//
-//     No key is pinned and EVERY token is verified at GoTrue (the fallback
-//     below). For a stack that signs with the legacy HS256 secret, where there
-//     is no public key to pin: a local `supabase start`.
-//
-// More than one key is how a rotation works: the standby key is pinned beside
-// the current one BEFORE GoTrue starts signing with it, and the old one is
-// dropped once its last token has expired. A token naming a kid that is not
-// pinned is not accepted locally; it goes to GoTrue, with a warning that names
-// the kid, so a rotation done out of order is slow and noisy rather than an
-// outage.
-//
-// The public half only: nothing here can sign a token.
-//
-// SETTING IT (the hosted project, once, BEFORE the function that reads it is
-// deployed - without it every signed-in request is refused):
-//
-//   curl -s "https://<project-ref>.supabase.co/auth/v1/.well-known/jwks.json" | node -e '
-//     const { createPublicKey } = require("crypto"); let s = "";
-//     process.stdin.on("data", (d) => s += d).on("end", () => console.log(JSON.parse(s).keys.map((k) =>
-//       `${k.kid}:${k.kty === "EC" ? "ES256" : "RS256"}:${createPublicKey({ key: k, format: "jwk" })
-//         .export({ type: "spki", format: "der" }).toString("base64")}`).join(",")))'
-//   supabase secrets set JWT_VERIFY_KEYS='<that line>' --project-ref <project-ref>
-//
-// (That one-liner reads the JWKS, which is JSON, on the operator's machine, once
-// per rotation. Nothing shipped does.) An empty key list from the first command
-// means the project still signs with the legacy HS256 secret: either turn on
-// asymmetric signing keys first, or set JWT_VERIFY_KEYS=gotrue.
-//
-// ROTATING THE SIGNING KEY, in this order:
-//   1. Create the standby key in the dashboard (Authentication > JWT signing keys).
-//      The JWKS now lists it beside the current one.
-//   2. Run the two commands above again: both keys are pinned.
-//   3. Rotate in the dashboard. Tokens signed by the new key verify at once.
-//   4. When the old key is revoked (its last token has expired), run the two
-//      commands a third time to drop it.
-// Skipping step 2 is not an outage: tokens under the new kid go to GoTrue until
-// the key is pinned, and the log says which kid to pin.
-//
-// A LOCAL STACK (`supabase start` + `functions serve`) signs with HS256 unless
-// told otherwise: put JWT_VERIFY_KEYS=gotrue in the env file the functions are
-// served with.
-// ============================================================================
-
-/** JWT_VERIFY_KEYS is unset, or is not a key list: no token can be judged. */
-export class AuthNotConfigured extends Error {
-    constructor(why: string) {
-        super(`auth is not configured: JWT_VERIFY_KEYS ${why}`);
-        this.name = 'AuthNotConfigured';
-    }
-}
-
-interface PinnedKey { alg: Alg; spki: Uint8Array<ArrayBuffer> }
-/** null: the configuration says `gotrue`, so nothing is verified locally. */
-type Pinned = Map<string, PinnedKey> | null;
-
-const GOTRUE_ONLY = 'gotrue';
-let pinnedFrom: string | undefined;        // the configuration text `pinned` was read from
-let pinned: Pinned = null;
-
-/** The key list a configuration value states. Throws AuthNotConfigured for one that is not a key list. */
-export function parseVerifyKeys(text: string | undefined): Pinned {
-    const value = (text ?? '').trim();
-    if (!value) throw new AuthNotConfigured('is not set');
-    if (value === GOTRUE_ONLY) return null;
-    const keys = new Map<string, PinnedKey>();
-    for (const entry of value.split(',')) {
-        const parts = entry.trim().split(':');
-        if (parts.length !== 3) throw new AuthNotConfigured(`has an entry that is not <kid>:<alg>:<base64 SPKI> (entry ${keys.size + 1})`);
-        const [kid, alg, b64] = parts;
-        if (!kid) throw new AuthNotConfigured(`has an entry with no kid (entry ${keys.size + 1})`);
-        if (!isAlg(alg)) throw new AuthNotConfigured(`names an algorithm that is not ES256 or RS256 for kid ${kid}`);
-        if (keys.has(kid)) throw new AuthNotConfigured(`pins kid ${kid} twice`);
-        let spki: Uint8Array<ArrayBuffer>;
-        try {
-            const bin = atob(b64);
-            spki = new Uint8Array(bin.length);
-            for (let i = 0; i < bin.length; i++) spki[i] = bin.charCodeAt(i);
-        } catch {
-            throw new AuthNotConfigured(`holds a key that is not base64 for kid ${kid}`);
-        }
-        if (spki.length === 0) throw new AuthNotConfigured(`holds an empty key for kid ${kid}`);
-        keys.set(kid, { alg, spki });
-    }
-    return keys;
-}
-
-/** The pinned keys of this isolate's configuration, read once per value. Throws AuthNotConfigured, and says so in the log. */
-function pinnedKeys(): Pinned {
-    const text = Deno.env.get('JWT_VERIFY_KEYS');
-    if (pinnedFrom !== undefined && text === pinnedFrom) return pinned;
-    try {
-        pinned = parseVerifyKeys(text);
-    } catch (e) {
-        console.error(`[auth] ${(e as Error).message}. Every request is refused until it is set `
-            + '(see _shared/adapter/auth.ts: <kid>:<alg>:<base64 SPKI>, comma separated, or `gotrue`).');
-        throw e;
-    }
-    pinnedFrom = text;
-    importedByKidAlg.clear();
-    if (pinned === null) console.warn('[auth] JWT_VERIFY_KEYS is `gotrue`: no key is pinned, every token is verified at GoTrue (slow)');
-    return pinned;
-}
-
-// A test's key set: Web Crypto JWKs (what importKey takes) by the key id they
-// are served under. Production reads no JWK: its keys are the pinned SPKIs.
+// A JWKS entry: a Web Crypto JWK (what importKey takes) plus the key id it is served under.
 type Jwk = JsonWebKey & { kid?: string };
 interface Jwks { keys: Jwk[]; }
 
-// CryptoKeys imported under a specific alg, cached across invocations on a warm
-// isolate. A pinned key states its algorithm, and a token must name the same
-// one: an EC key can never satisfy an RS256 header, or the reverse. (A test's
-// JWK carries no `alg` - per RFC 7517 it is optional - so there the algorithm
-// comes from the already validated and pinned token header, and a wrong key
-// type for it makes importKey throw, which rejects the token.)
+// Raw JWKs by kid, and CryptoKeys imported under a specific alg, cached across
+// invocations on a warm isolate. We DON'T key off the JWK's own `alg` field:
+// per RFC 7517 it is OPTIONAL, and Supabase's JWKS omits it — so the algorithm
+// comes from the (already validated + pinned) token header, and the JWK is
+// imported under that alg. A wrong key type for that alg makes importKey throw,
+// which rejects the token, so this is also the algorithm-substitution bind
+// (an EC key can't satisfy an RS256 header, or vice versa).
+const jwkByKid = new Map<string, Jwk>();
 const importedByKidAlg = new Map<string, CryptoKey>(); // `${kid}:${alg}` → key
-let injectedJwks: Jwks | null = null; // test hook (see __setJwksForTest); bypasses the configuration
+let lastJwksFetch = 0;
+let injectedJwks: Jwks | null = null; // test hook (see __setJwksForTest); bypasses the network
 
 const b64urlToBytes = (s: string): Uint8Array<ArrayBuffer> => {
     const b64 = s.replace(/-/g, '+').replace(/_/g, '/');
@@ -249,48 +118,64 @@ const b64urlToBytes = (s: string): Uint8Array<ArrayBuffer> => {
 };
 const b64urlToString = (s: string): string => new TextDecoder().decode(b64urlToBytes(s));
 
-// Kids already warned about, so a rotation in progress logs once per isolate
-// and not once per request.
-const warnedKids = new Set<string>();
+async function fetchJwks(): Promise<Jwks | null> {
+    const url = Deno.env.get('SUPABASE_URL');
+    if (!url) return null;
+    const apikey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || Deno.env.get('SUPABASE_ANON_KEY') || '';
+    try {
+        const res = await fetch(`${url}/auth/v1/.well-known/jwks.json`, { headers: apikey ? { apikey } : {} });
+        if (!res.ok) {
+            console.warn(`[auth] JWKS fetch HTTP ${res.status}`);
+            return null;
+        }
+        return await res.json() as Jwks;
+    } catch (e) {
+        console.warn('[auth] JWKS fetch failed:', (e as Error).message);
+        return null;
+    }
+}
 
-// Resolve (and cache) the verify key for a header `kid` under `alg` (from the
-// token header). Returns null if the kid is not pinned, is pinned for another
-// algorithm, or the key cannot be imported under that alg (wrong key type →
-// algorithm-substitution rejected). Never throws: an unreadable configuration
-// reads as no key here, and getAuthenticatedUser has already refused it loudly.
+function cacheJwks(jwks: Jwks): void {
+    for (const jwk of jwks.keys ?? []) {
+        if (typeof jwk.kid === 'string') jwkByKid.set(jwk.kid, jwk);
+    }
+}
+
+// The raw JWK for a header `kid`. On a miss, refetch the JWKS at most once per
+// minute so a bogus/rotated kid can't force a JWKS fetch on every request.
+async function jwkForKid(kid: string): Promise<Jwk | null> {
+    const cached = jwkByKid.get(kid);
+    if (cached) return cached;
+
+    if (injectedJwks) {
+        cacheJwks(injectedJwks);
+        return jwkByKid.get(kid) ?? null;
+    }
+
+    const now = Date.now();
+    if (jwkByKid.size > 0 && now - lastJwksFetch < 60_000) return null; // throttle refetch for unknown kids
+    lastJwksFetch = now;
+    const jwks = await fetchJwks();
+    if (jwks) cacheJwks(jwks);
+    return jwkByKid.get(kid) ?? null;
+}
+
+// Resolve (and cache) the verify key for a header `kid`, imported under `alg`
+// (from the token header). Returns null if the kid is unknown or the JWK can't
+// be imported under that alg (wrong key type → algorithm-substitution rejected).
 async function keyForKid(kid: string, alg: Alg): Promise<CryptoKey | null> {
     const cacheKey = `${kid}:${alg}`;
-    try {
-        // The configuration is read BEFORE the cache: a key imported under one
-        // configuration is not a key under another (pinnedKeys clears the cache
-        // when the value changes).
-        const keys = injectedJwks ? null : pinnedKeys();
-        const cached = importedByKidAlg.get(cacheKey);
-        if (cached) return cached;
+    const cached = importedByKidAlg.get(cacheKey);
+    if (cached) return cached;
 
-        let key: CryptoKey;
-        if (injectedJwks) {
-            const jwk = injectedJwks.keys.find((k) => k.kid === kid);
-            if (!jwk) return null;
-            key = await crypto.subtle.importKey('jwk', jwk, IMPORT_PARAMS[alg], false, ['verify']);
-        } else {
-            if (keys === null) return null;                 // `gotrue`: nothing is verified locally
-            const entry = keys.get(kid);
-            if (!entry) {
-                if (!warnedKids.has(kid)) {
-                    warnedKids.add(kid);
-                    console.warn(`[auth] a token names kid ${kid}, which JWT_VERIFY_KEYS does not pin: `
-                        + 'verified at GoTrue instead. If the signing key was rotated, pin the new one.');
-                }
-                return null;
-            }
-            if (entry.alg !== alg) return null;             // the token claims another algorithm for this key
-            key = await crypto.subtle.importKey('spki', entry.spki, IMPORT_PARAMS[alg], false, ['verify']);
-        }
+    const jwk = await jwkForKid(kid);
+    if (!jwk) return null;
+    try {
+        const key = await crypto.subtle.importKey('jwk', jwk, IMPORT_PARAMS[alg], false, ['verify']);
         importedByKidAlg.set(cacheKey, key);
         return key;
     } catch {
-        return null; // not a valid key for this alg, or no readable configuration
+        return null; // JWK is not a valid key for this alg
     }
 }
 
@@ -376,13 +261,13 @@ export async function verifyJwtLocal(token: string): Promise<VerifiedClaims | nu
     return claims;
 }
 
-// Test hook: inject a key set so verifyJwtLocal runs without any configuration.
-// Passing null restores the configured path (JWT_VERIFY_KEYS) and clears cached keys.
+// Test hook: inject a JWKS so verifyJwtLocal runs entirely offline (no fetch,
+// no Deno). Passing null restores the network path and clears cached keys.
 export function __setJwksForTest(jwks: Jwks | null): void {
     injectedJwks = jwks;
+    jwkByKid.clear();
     importedByKidAlg.clear();
-    pinnedFrom = undefined;
-    warnedKids.clear();
+    lastJwksFetch = 0;
 }
 
 // Reconstruct the minimal User the rest of the server reads (id +

@@ -64,8 +64,8 @@ const ALLOWED: Allowed[] = [
         why: 'FORCED by Supabase: the Realtime broadcast REST endpoint takes a JSON envelope { messages: [{ topic, event, payload, private }] } and a payload must be an object. Ours is { b }, one base64 string holding the kernel\'s cast.',
     },
     {
-        file: `${ADAPTER}/auth.ts`, count: 3,
-        why: 'FORCED by the JWT format (RFC 7519): a token\'s header and claims are base64url JSON. Two parses verify a token, one reads the unverified `sub` for a parallel read. (The key set is not JSON: it is pinned as JWT_VERIFY_KEYS.)',
+        file: `${ADAPTER}/auth.ts`, count: 4,
+        why: 'Three are FORCED by the JWT format (RFC 7519): a token\'s header and claims are base64url JSON - two parses verify a token, one reads the unverified `sub` for a parallel read. The fourth is the JWKS fetch (res.json() on /auth/v1/.well-known/jwks.json), which a key pinned in the function\'s configuration would remove.',
     },
     {
         file: 'foolish/ios/FoolishNet/GameFeed.swift', count: 2,
