@@ -18,7 +18,7 @@ import { memOf as msgMemOf, readMsgHeader, writeMsgHeader, readReplayExtras, wri
          type MsgHeader_Snap, type ReplayExtras_Snap } from '../gen/msg_layout.bots.ts';
 import * as A from '../gen/anim.bots.ts';
 import { memOf as animMemOf } from '../gen/anim.bots.ts';
-import { writeAnimPlanAsk, CARD_NONE_SUIT, CARD_NONE_VALUE, MAX_PLAYERS } from '../gen/view_layout.bots.ts';
+import { writeAnimPlanAsk, MAX_PLAYERS } from '../gen/view_layout.bots.ts';
 
 /** A card as the kernel's doors here read and write it (suit 0..3, value 1..13; -1/-1 is a hidden card). */
 export interface Card { readonly suit: number; readonly value: number }
@@ -1082,9 +1082,10 @@ export function animFinishRows(
         .map((r) => ({ place: r.place, seat: r.seat, isYou: r.isYou !== 0 }));
 }
 
-// A slot the caller cannot name crosses as the kernel's "no card" (card.h
-// CARD_NONE), spelled from its generated fields: anim_plan.h AnimHandAsk reads
-// it as a back on the way in and writes one on the way out.
+// "No card" as the kernel holds it (card.h CARD_NONE), spelled from its
+// generated fields. A hand slot the caller cannot name crosses as it (anim_plan.h
+// AnimHandAsk reads it as a back on the way in and writes one on the way out),
+// and so does a board whose flipped trump has been dealt out (AnimPlanAsk).
 const NO_CARD: Card = { suit: V.CARD_NONE_SUIT, value: V.CARD_NONE_VALUE };
 
 /**
@@ -1204,10 +1205,6 @@ export interface AnimFrameSnap {
     /** The trump in the air: the step in flight's `trumpOut`, or null. */
     trumpFlight: Card | null;
 }
-
-/** "No card" as the kernel holds it (card.h CARD_NONE): a board whose flipped
- *  trump has been dealt out. */
-const NO_CARD: Card = { suit: CARD_NONE_SUIT, value: CARD_NONE_VALUE };
 
 /** THE TIMED PLAN for a decoded viewer sequence (anim_plan.h anim_build_plan).
  *  `final` is the board the host already holds; the plan freezes the DISPLAY
