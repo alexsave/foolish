@@ -64,3 +64,5 @@
 # The move a client sends (view_layout.args writes it), so the layout hash
 # covers ClientMove too.
 --header client_table.h --root ClientMove
+# The action response a client reads (view_layout.args), for the hash.
+--header table.h --root TableResponse

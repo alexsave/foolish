@@ -43,3 +43,7 @@
 --root ClientMove --snapshot ClientMove --writer ClientMove
 --count ClientMove.cards=n_cards --count ClientMove.attack_cards=n_attacks
 --header awire.h --const AWIRE_
+# The `action` endpoint's answer as a client reads it (table.h TableResponse,
+# table_response_decode), with the statuses and the one policy code it carries.
+--header table.h --root TableResponse --snapshot TableResponse
+--const TABLE_STATUS_ --const TABLE_REJECT_STALE_ROUND

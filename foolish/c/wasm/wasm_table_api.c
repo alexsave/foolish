@@ -487,6 +487,27 @@ ClientMove *wasm_client_move_ptr(void) { return &g_move; }
 // -> io = the action wire.
 int wasm_client_move_wire(void) { return client_move_wire(&g_move, wasm_io_ptr(), wasm_io_cap()); }
 
+// ---- the `action` endpoint's bodies, as a client holds them (table.h) ----
+//
+// The client's halves of the request and the response the server's entries
+// above read and write (wasm_table_request_decode, wasm_table_action_response).
+
+// io = [game id][action wire] -> io = the request body. intent < 0: none (v1).
+int wasm_client_action_request(int gid_len, int wire_len, double intent) {
+    if (!inputs(gid_len + wire_len) || gid_len < 0 || wire_len < 0) return TABLE_E_WIRE;
+    return table_request_encode(wasm_io_ptr(), wasm_io_cap(), gid_len, wire_len, intent >= 0, u32_of(intent));
+}
+
+static TableResponse g_response;
+TableResponse *wasm_client_response_ptr(void) { return &g_response; }
+
+// io = [response body]
+int wasm_client_action_response(int len) {
+    const unsigned char *io = inputs(len);
+    if (!io || len < 0) return TABLE_E_WIRE;
+    return table_response_decode(io, len, &g_response);
+}
+
 // ---- what a gesture on a board means (client_table.h) ----
 //
 // The gesture is written through the generated writer and the answer read

@@ -1051,6 +1051,8 @@ WASM_CLIENT_EXPORTS := \
   -Wl,--export=wasm_client_gesture_ptr -Wl,--export=wasm_client_play_ptr \
   -Wl,--export=wasm_client_play \
   -Wl,--export=wasm_client_move_ptr -Wl,--export=wasm_client_move_wire \
+  -Wl,--export=wasm_client_action_request -Wl,--export=wasm_client_action_response \
+  -Wl,--export=wasm_client_response_ptr \
   -Wl,--export=wasm_hand_metrics_ptr -Wl,--export=wasm_hand_layout_ptr \
   -Wl,--export=wasm_hand_layout
 

@@ -53,6 +53,28 @@ int table_action_response(int result, int reject, uint32_t version, uint8_t *out
     return TABLE_RESP_BYTES;
 }
 
+int table_request_encode(uint8_t *buf, int cap, int gid_len, int wire_len, bool has_intent, uint32_t intent) {
+    if (!buf || gid_len < 0 || gid_len > 255 || wire_len < 0) return TABLE_E_WIRE;
+    const int head = 2, at = head + gid_len + (has_intent ? 4 : 0);
+    if (wire_len > cap - at) return TABLE_E_CAP;
+    // Back to front, so nothing is written over bytes not yet moved.
+    memmove(buf + at, buf + gid_len, (size_t)wire_len);
+    memmove(buf + head, buf, (size_t)gid_len);
+    if (has_intent) put_u32(buf + head + gid_len, intent);
+    buf[0] = has_intent ? TABLE_REQ_FORMAT_V2 : TABLE_REQ_FORMAT_V1;
+    buf[1] = (uint8_t)gid_len;
+    return at + wire_len;
+}
+
+int table_response_decode(const uint8_t *p, int len, TableResponse *out) {
+    memset(out, 0, sizeof(*out));
+    if (!p || len < TABLE_RESP_BYTES || p[0] != TABLE_RESP_FORMAT) return TABLE_E_WIRE;
+    out->status = p[1];
+    out->reject_code = p[2];
+    out->version = le_get_u32(p + 3);
+    return 0;
+}
+
 // ---------- snapshots -----------------------------------------------------------
 
 // The table an operation is capturing into. Thread-local for the same reason

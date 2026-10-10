@@ -18,12 +18,11 @@ import assert from 'node:assert/strict';
 
 import {
     AWIRE_KIND, AWIRE_MAX_CARDS, AwireKindName, AwireMove,
-    ACTION_REQ_FORMAT, ACTION_REQ_FORMAT_V1,
-    encodeAction, encodeActionRequest, decodeActionRequest,
-    encodeActionResponse, ACTION_STATUS, REJECT_STALE_ROUND,
+    encodeAction, encodeActionRequest, decodeActionResponse,
+    ACTION_STATUS, REJECT_STALE_ROUND,
 } from '../sdk/ts/wire/awire.ts';
 import { createServerTable } from '../sdk/ts/table/server_table.ts';
-import { TABLE_STALE_ROUND } from '../sdk/ts/gen/game_layout.bots.ts';
+import { TABLE_APPLIED, TABLE_MOOT, TABLE_REJECTED, TABLE_STALE_ROUND } from '../sdk/ts/gen/game_layout.bots.ts';
 
 type Card = NonNullable<AwireMove['cards']>[number];
 
@@ -99,69 +98,86 @@ test('awire: encodeAction refuses unencodable moves (client bugs, not race condi
 });
 
 // ---------------------------------------------------------------------------
-// Request envelope (the `action` edge function's binary body). v1 =
-// [fmt|gid_len|gid|wire]; v2 adds the client-intent round guard's u32
-// intent_version. An old client sends v1 (unguarded); a new client sends v2.
+// The `action` endpoint's bodies. The request: v1 is the unguarded form, v2
+// adds the client-intent round guard's u32 intent_version. Both ends of each
+// body are the kernel's (c/src/table.h): the client's writer and reader are
+// reached through sdk/ts/wire/awire.ts, the server's through the C Table. The
+// bytes themselves are pinned in c/tests/tests.c
+// (test_table_request_encode_and_response_decode); here the two ends meet
+// across the TypeScript that carries them.
 // ---------------------------------------------------------------------------
-test('awire request envelope: v1 (no intent) and v2 (intent version) round-trip; decoder reads both', () => {
+test('action request: what the client writes, with and without an intent, the server reads back', () => {
+    const table = createServerTable();
     for (let i = 0; i < 500; i++) {
         const gid = `g${ri(1e9).toString(36)}`;
         const wire = encodeAction(randValidMove());
 
-        // v1 — no intent version.
-        const v1 = encodeActionRequest(gid, wire);
-        assert.equal(v1[0], ACTION_REQ_FORMAT_V1, 'v1 format byte');
-        const d1 = decodeActionRequest(v1);
-        assert.ok(d1, 'v1 decodes');
-        assert.equal(d1!.gameId, gid, 'v1 game id');
-        assert.deepEqual([...d1!.wire], [...wire], 'v1 wire preserved');
-        assert.equal(d1!.intentVersion, undefined, 'v1 carries no intent version (unguarded)');
+        // v1 - no intent version.
+        const d1 = table.requestDecode(encodeActionRequest(gid, wire));
+        assert.ok(typeof d1 !== 'number', `v1 decodes (${d1})`);
+        assert.equal(d1.gameId, gid, 'v1 game id');
+        assert.equal(hex(d1.wire), hex(wire), 'v1 wire preserved');
+        assert.equal(d1.intent, null, 'v1 carries no intent version (unguarded)');
 
-        // v2 — with a u32 intent version (exercise the full u32 range incl. > 2^31).
+        // v2 - with a u32 intent version (exercise the full u32 range incl. > 2^31).
         const iv = (ri(0xffff) * 0x10001) >>> 0; // spread across all 4 bytes
-        const v2 = encodeActionRequest(gid, wire, iv);
-        assert.equal(v2[0], ACTION_REQ_FORMAT, 'v2 format byte');
-        const d2 = decodeActionRequest(v2);
-        assert.ok(d2, 'v2 decodes');
-        assert.equal(d2!.gameId, gid, 'v2 game id');
-        assert.deepEqual([...d2!.wire], [...wire], 'v2 wire preserved after the intent field');
-        assert.equal(d2!.intentVersion, iv, 'v2 intent version round-trips exactly (u32)');
+        const d2 = table.requestDecode(encodeActionRequest(gid, wire, iv));
+        assert.ok(typeof d2 !== 'number', `v2 decodes (${d2})`);
+        assert.equal(d2.gameId, gid, 'v2 game id');
+        assert.equal(hex(d2.wire), hex(wire), 'v2 wire preserved after the intent field');
+        assert.equal(d2.intent, iv, 'v2 intent version round-trips exactly (u32)');
     }
-    // intent_version 0 is a real value, not "absent" — the u32 must still ride.
-    const z = decodeActionRequest(encodeActionRequest('gg', encodeAction({ kind: 'good' }), 0));
-    assert.equal(z!.intentVersion, 0, 'intent version 0 is preserved as 0, not dropped');
-});
+    // intent_version 0 is a real value, not "absent" - the u32 must still ride.
+    const z = table.requestDecode(encodeActionRequest('gg', encodeAction({ kind: 'good' }), 0));
+    assert.ok(typeof z !== 'number');
+    assert.equal(z.intent, 0, 'intent version 0 is preserved as 0, not dropped');
 
-test('awire request envelope: malformed/truncated buffers decode to null (never throw, never partial)', () => {
-    assert.equal(decodeActionRequest(new Uint8Array([])), null, 'empty');
-    assert.equal(decodeActionRequest(new Uint8Array([9, 0])), null, 'unknown format byte');
-    // v2 header claiming a gid + intent but truncated before the 2-byte wire.
-    assert.equal(decodeActionRequest(new Uint8Array([ACTION_REQ_FORMAT, 2, 65, 66, 0, 0, 0, 0])), null, 'v2 missing wire');
-    // v1 with a gid but no wire.
-    assert.equal(decodeActionRequest(new Uint8Array([ACTION_REQ_FORMAT_V1, 2, 65, 66])), null, 'v1 missing wire');
-});
-
-test('the client\'s request is what the server\'s C codec reads, and its stale-round response is the client\'s bytes', () => {
-    const table = createServerTable();
-    const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
-    const wires = [Uint8Array.of(3, 0), Uint8Array.of(0, 1, 7), Uint8Array.of(1, 2, 8, 9, 10, 11)];
-    for (const gid of ['a', 'd79ae3', 'x'.repeat(64)]) {
-        for (const wire of wires) {
+    for (const gid of ['a', 'd79ae3', 'x'.repeat(64), '\u00e9\u2603']) {
+        for (const wire of [Uint8Array.of(3, 0), Uint8Array.of(0, 1, 7), Uint8Array.of(1, 2, 8, 9, 10, 11)]) {
             for (const intent of [undefined, 0, 5, 0x7fffffff, 0xffffffff]) {
-                const body = encodeActionRequest(gid, wire, intent);
-                const c = table.requestDecode(body);
+                const c = table.requestDecode(encodeActionRequest(gid, wire, intent));
                 assert.ok(typeof c !== 'number', `${gid}/${hex(wire)}/${intent}: the server decodes it (${c})`);
                 assert.deepEqual({ gameId: c.gameId, wire: hex(c.wire), intent: c.intent },
                     { gameId: gid, wire: hex(wire), intent: intent ?? null }, `${gid}/${hex(wire)}/${intent}`);
             }
         }
     }
-    for (const bad of [Uint8Array.of(), Uint8Array.of(1), Uint8Array.of(2, 1, 0x67, 1, 0, 0), Uint8Array.of(9, 0, 3, 0)]) {
-        assert.equal(decodeActionRequest(bad), null, `the client's reader refuses ${hex(bad)}`);
-        assert.equal(typeof table.requestDecode(bad), 'number', `the server refuses ${hex(bad)}`);
+    // A game id its length byte cannot say is a client bug, and thrown as one.
+    assert.throws(() => encodeActionRequest('x'.repeat(256), Uint8Array.of(3, 0)), /action request: refused/);
+    assert.equal(encodeActionRequest('x'.repeat(255), Uint8Array.of(3, 0), 1).length, 2 + 255 + 4 + 2, 'the longest id still fits');
+});
+
+test('action request: malformed and truncated bodies are refused by the server (never thrown, never partly read)', () => {
+    const table = createServerTable();
+    for (const [label, bad] of [
+        ['empty', Uint8Array.of()],
+        ['one byte', Uint8Array.of(1)],
+        ['an unknown format byte', Uint8Array.of(9, 0, 3, 0)],
+        ['v2 with a game id and an intent but no wire', Uint8Array.of(2, 2, 65, 66, 0, 0, 0, 0)],
+        ['v2 cut inside its intent', Uint8Array.of(2, 1, 0x67, 1, 0, 0)],
+        ['v1 with a game id but no wire', Uint8Array.of(1, 2, 65, 66)],
+    ] as const) {
+        const read = table.requestDecode(bad);
+        assert.ok(typeof read === 'number' && read < 0, `${label} (${hex(bad)}) is refused`);
     }
-    for (const version of [0, 1, 256, 0x01020304, 0x7fffffff]) {
-        assert.equal(hex(table.actionResponse(TABLE_STALE_ROUND, 0, version)),
-            hex(encodeActionResponse(ACTION_STATUS.REJECTED, REJECT_STALE_ROUND, version)), `stale round at ${version}`);
+});
+
+test('action response: what the server writes for each result is what the client reads', () => {
+    const table = createServerTable();
+    for (const version of [0, 1, 256, 0x01020304, 0x7fffffff, 0xffffffff]) {
+        for (const [result, reject, status, rejectCode] of [
+            [TABLE_APPLIED, 0, ACTION_STATUS.APPLIED, 0],
+            [TABLE_REJECTED, 13, ACTION_STATUS.REJECTED, 13],
+            [TABLE_STALE_ROUND, 0, ACTION_STATUS.REJECTED, REJECT_STALE_ROUND],
+            [TABLE_MOOT, 0, ACTION_STATUS.MOOT, 0],
+        ] as const) {
+            assert.deepEqual(decodeActionResponse(table.actionResponse(result, reject, version)),
+                { status, rejectCode, version }, `result ${result} at ${version}`);
+        }
     }
+    assert.equal(decodeActionResponse(Uint8Array.of()), null, 'an empty body is not a response');
+    assert.equal(decodeActionResponse(table.actionResponse(TABLE_APPLIED, 0, 7).subarray(0, 6)), null, 'a short body is not a response');
+    const other = table.actionResponse(TABLE_APPLIED, 0, 7);
+    other[0] = 9;
+    assert.equal(decodeActionResponse(other), null, 'a body of another format is not a response');
 });

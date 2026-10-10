@@ -46,87 +46,39 @@ export function encodeAction(move: AwireMove): Uint8Array {
 }
 
 // ---------------------------------------------------------------------------
-// HTTP envelopes (the `action` edge function's binary request/response)
+// The `action` endpoint's bodies (c/src/table.h: the request and the response)
 // ---------------------------------------------------------------------------
+//
+// The server reads the request and writes the response in the kernel
+// (table_request_decode, table_action_response). The client's halves are the
+// kernel's too (table_request_encode, table_response_decode), reached through
+// the client slot, so both ends of each body are one C file and the framing is
+// written down once, there.
 
-// Request envelope formats. v1 = [fmt | gid_len | gid | wire]. v2 adds the
-// client-intent round guard: [fmt | gid_len | gid | u32 intent_version | wire]
-// — the games.version the client composed this move against. The server's
-// round-boundary guard (packed_action.ts) rejects a move whose intent_version
-// predates the current round (REJECT_STALE_ROUND), which is the stale-intent
-// bug from docs/WEB_RACE_BUG_HANDOFF.md. v1 requests (old clients mid-rollout)
-// carry no intent_version and are simply not guarded — today's behavior.
-export const ACTION_REQ_FORMAT_V1 = 1;
-export const ACTION_REQ_FORMAT = 2;
-export const ACTION_RESP_FORMAT = 1;
+/** The response's status byte, numbered by the kernel (table.h TABLE_STATUS_*). */
+export const ACTION_STATUS = {
+    APPLIED: V.TABLE_STATUS_APPLIED,
+    REJECTED: V.TABLE_STATUS_REJECTED,
+    MOOT: V.TABLE_STATUS_MOOT,
+} as const;
 
-// Response status byte.
-export const ACTION_STATUS = { APPLIED: 0, REJECTED: 1, MOOT: 2 } as const;
+// Server-edge reject codes live ABOVE the kernel's ENGINE_REJECT_* space (c/src/game.h)
+// so a client can tell a rules rejection from an edge-policy one by the code
+// alone. REJECT_STALE_ROUND is not a kernel verdict on the move - the move is
+// kernel-legal against the CURRENT state; it is refused because a round closed
+// after the client composed it (round-boundary rule,
+// docs/IMESSAGE_GAME_DESIGN.md §7.4-§7.5). The number is table.h's.
+export const REJECT_STALE_ROUND = V.TABLE_REJECT_STALE_ROUND;
 
-// Server-edge reject codes live ABOVE the kernel's ENGINE_REJECT_* space
-// (0..21 in c/src/game.h) so a client can tell a rules rejection from an
-// edge-policy one by the code alone. REJECT_STALE_ROUND is not a kernel
-// verdict — the move is kernel-legal against the CURRENT state; it is refused
-// because a round closed after the client composed it (round-boundary rule,
-// docs/IMESSAGE_GAME_DESIGN.md §7.4-§7.5).
-export const REJECT_STALE_ROUND = 100;
-
+// The request body for a move's wire. `intentVersion` is the games.version the
+// client composed the move against: the server's round-boundary guard rejects a
+// move whose intent predates the current round (REJECT_STALE_ROUND), which is
+// the stale-intent bug from docs/WEB_RACE_BUG_HANDOFF.md. Without one the body
+// is the v1 form, which carries no intent and is simply not guarded.
 export function encodeActionRequest(gameId: string, wire: Uint8Array, intentVersion?: number): Uint8Array {
-    const gid = new TextEncoder().encode(gameId);
-    if (gid.length > 255) throw new Error('awire: game id too long');
-    if (intentVersion === undefined) {
-        // Legacy v1 envelope — no intent guard.
-        const out = new Uint8Array(2 + gid.length + wire.length);
-        out[0] = ACTION_REQ_FORMAT_V1;
-        out[1] = gid.length;
-        out.set(gid, 2);
-        out.set(wire, 2 + gid.length);
-        return out;
-    }
-    const iv = intentVersion >>> 0;
-    const out = new Uint8Array(2 + gid.length + 4 + wire.length);
-    out[0] = ACTION_REQ_FORMAT;
-    out[1] = gid.length;
-    out.set(gid, 2);
-    let p = 2 + gid.length;
-    out[p++] = iv & 0xff;
-    out[p++] = (iv >> 8) & 0xff;
-    out[p++] = (iv >> 16) & 0xff;
-    out[p++] = (iv >> 24) & 0xff;
-    out.set(wire, p);
-    return out;
-}
-
-export function decodeActionRequest(buf: Uint8Array): { gameId: string; wire: Uint8Array; intentVersion?: number } | null {
-    if (buf.length < 2) return null;
-    const fmt = buf[0];
-    const gidLen = buf[1];
-    if (fmt === ACTION_REQ_FORMAT_V1) {
-        if (buf.length < 2 + gidLen + 2) return null; // wire is at least 2 bytes
-        const gameId = new TextDecoder().decode(buf.subarray(2, 2 + gidLen));
-        return { gameId, wire: buf.subarray(2 + gidLen) };
-    }
-    if (fmt === ACTION_REQ_FORMAT) {
-        if (buf.length < 2 + gidLen + 4 + 2) return null; // u32 intent + 2-byte wire
-        const gameId = new TextDecoder().decode(buf.subarray(2, 2 + gidLen));
-        const p = 2 + gidLen;
-        const intentVersion = (buf[p] | (buf[p + 1] << 8) | (buf[p + 2] << 16) | (buf[p + 3] << 24)) >>> 0;
-        return { gameId, wire: buf.subarray(p + 4), intentVersion };
-    }
-    return null;
-}
-
-export function encodeActionResponse(status: number, rejectCode: number, version: number): Uint8Array {
-    const out: number[] = [ACTION_RESP_FORMAT, status & 0xff, rejectCode & 0xff];
-    out.push(version & 0xff, (version >> 8) & 0xff, (version >> 16) & 0xff, (version >> 24) & 0xff);
-    return new Uint8Array(out);
+    return clientTable().actionRequest(gameId, wire, intentVersion);
 }
 
 export function decodeActionResponse(buf: Uint8Array): { status: number; rejectCode: number; version: number } | null {
-    if (buf.length < 7 || buf[0] !== ACTION_RESP_FORMAT) return null;
-    return {
-        status: buf[1],
-        rejectCode: buf[2],
-        version: (buf[3] | (buf[4] << 8) | (buf[5] << 16) | (buf[6] << 24)) >>> 0,
-    };
+    return clientTable().readActionResponse(buf);
 }

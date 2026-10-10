@@ -3,6 +3,8 @@
 // produced the code). These are diagnostic only: the client console.errors
 // them and reverts optimistic state; nothing renders them.
 
+import { CLIENT_E_MOVE, TABLE_REJECT_STALE_ROUND as REJECT_STALE_ROUND } from '@sdk/ts/gen/view_layout.bots.ts';
+
 export const REJECT_MESSAGES: Record<number, string> = {
     1: 'NOT_PLAYING: game is not in progress',
     2: 'EMPTY: no cards in the move',
@@ -29,13 +31,12 @@ export const REJECT_MESSAGES: Record<number, string> = {
 
 // Server-edge reject codes live above the kernel's ENGINE_REJECT_* range (see
 // wire/awire.ts REJECT_STALE_ROUND): the move was kernel-legal but refused by
-// an edge policy — here, a round closed before it landed.
-const REJECT_STALE_ROUND = 100;
-
+// an edge policy - here, a round closed before it landed.
+//
 // -1 is the rules kernel's "malformed wire" verdict and CLIENT_E_MOVE the client
 // slot's (neither is an ENGINE_REJECT_* code); anything else unknown falls
-// through generically.
-const CLIENT_E_MOVE = -209;
+// through generically. Both numbers are the kernel's own, generated from its
+// headers, where this file used to keep a copy of each.
 export function rejectMessage(code: number): string {
     if (code === -1 || code === CLIENT_E_MOVE) return 'MALFORMED: unreadable action wire';
     if (code === REJECT_STALE_ROUND) return 'STALE_ROUND: a round closed before this move landed';

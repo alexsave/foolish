@@ -9543,6 +9543,99 @@ static void test_table_request_and_response(void) {
     CHECK(table_action_response(TABLE_APPLIED, 0, 9, r, 6) == TABLE_E_CAP, "a short buffer is refused");
 }
 
+// Test: the client's halves of the action bodies (table_request_encode,
+// table_response_decode) against bytes captured from the hand-written
+// TypeScript that wrote and read them until it was deleted
+// (sdk/ts/wire/awire.ts encodeActionRequest, encodeActionResponse,
+// decodeActionResponse), and against the server's halves beside them.
+static void test_table_request_encode_and_response_decode(void) {
+    // A cover of two: 01 02 28 17 07 16.
+    static const uint8_t wire[] = { 0x01, 0x02, 0x28, 0x17, 0x07, 0x16 };
+    static const struct { const char *gid; int has_intent; uint32_t intent; int head; uint8_t want[16]; } req[] = {
+        { "a", 0, 0, 3, { 0x01, 0x01, 0x61 } },
+        { "a", 1, 0, 7, { 0x02, 0x01, 0x61, 0x00, 0x00, 0x00, 0x00 } },
+        { "a", 1, 5, 7, { 0x02, 0x01, 0x61, 0x05, 0x00, 0x00, 0x00 } },
+        { "a", 1, 0x01020304u, 7, { 0x02, 0x01, 0x61, 0x04, 0x03, 0x02, 0x01 } },
+        { "a", 1, 0x7fffffffu, 7, { 0x02, 0x01, 0x61, 0xff, 0xff, 0xff, 0x7f } },
+        { "a", 1, 0xffffffffu, 7, { 0x02, 0x01, 0x61, 0xff, 0xff, 0xff, 0xff } },
+        { "d79ae3", 0, 0, 8, { 0x01, 0x06, 0x64, 0x37, 0x39, 0x61, 0x65, 0x33 } },
+        { "d79ae3", 1, 0x01020304u, 12, { 0x02, 0x06, 0x64, 0x37, 0x39, 0x61, 0x65, 0x33, 0x04, 0x03, 0x02, 0x01 } },
+        { "\xc3\xa9\xe2\x98\x83", 0, 0, 7, { 0x01, 0x05, 0xc3, 0xa9, 0xe2, 0x98, 0x83 } },
+        { "\xc3\xa9\xe2\x98\x83", 1, 5, 11, { 0x02, 0x05, 0xc3, 0xa9, 0xe2, 0x98, 0x83, 0x05, 0x00, 0x00, 0x00 } },
+    };
+    uint8_t buf[600];
+    for (size_t i = 0; i < sizeof(req) / sizeof(req[0]); i++) {
+        const int gl = (int)strlen(req[i].gid);
+        memcpy(buf, req[i].gid, (size_t)gl);
+        memcpy(buf + gl, wire, sizeof(wire));
+        const int n = table_request_encode(buf, sizeof(buf), gl, sizeof(wire), req[i].has_intent, req[i].intent);
+        CHECK(n == req[i].head + (int)sizeof(wire) && memcmp(buf, req[i].want, (size_t)req[i].head) == 0
+              && memcmp(buf + req[i].head, wire, sizeof(wire)) == 0, "a request is the bytes the TypeScript encoder wrote");
+        TableRequest q;
+        CHECK(table_request_decode(buf, n, &q) == 0 && q.gid_len == gl && memcmp(buf + q.gid_off, req[i].gid, (size_t)gl) == 0
+              && q.wire_len == (int)sizeof(wire) && memcmp(buf + q.wire_off, wire, sizeof(wire)) == 0
+              && q.has_intent == (req[i].has_intent != 0) && q.intent == (req[i].has_intent ? req[i].intent : 0u),
+              "and the server reads back the game id, the intent and the wire");
+    }
+    // The longest game id a length byte says, both formats: 01 ff / 02 ff, 255 x 'x'.
+    for (int has_intent = 0; has_intent <= 1; has_intent++) {
+        memset(buf, 'x', 255);
+        memcpy(buf + 255, wire, sizeof(wire));
+        const int n = table_request_encode(buf, sizeof(buf), 255, sizeof(wire), has_intent, 0x01020304u);
+        int same = n == 257 + 4 * has_intent + (int)sizeof(wire) && buf[0] == 1 + has_intent && buf[1] == 0xff;
+        for (int i = 0; i < 255 && same; i++) same = buf[2 + i] == 'x';
+        if (has_intent) same = same && buf[257] == 4 && buf[258] == 3 && buf[259] == 2 && buf[260] == 1;
+        CHECK(same && memcmp(buf + n - (int)sizeof(wire), wire, sizeof(wire)) == 0, "a 255-byte game id: its length byte, the id, the wire after it");
+    }
+    memset(buf, 'x', sizeof(buf));
+    CHECK(table_request_encode(buf, sizeof(buf), 256, 2, false, 0) == TABLE_E_WIRE, "a game id a length byte cannot say is refused");
+    CHECK(table_request_encode(buf, sizeof(buf), -1, 2, false, 0) == TABLE_E_WIRE, "a negative length is refused");
+    CHECK(table_request_encode(buf, 10, 3, 6, false, 0) == TABLE_E_CAP, "a v1 body one byte past the buffer is TABLE_E_CAP");
+    CHECK(table_request_encode(buf, 11, 3, 6, false, 0) == 11, "and one that exactly fits is written");
+    CHECK(table_request_encode(buf, 14, 3, 6, true, 0) == TABLE_E_CAP, "a v2 body needs its four intent bytes too");
+    // The wire is opaque here: whatever its sender made is framed, for table_act to judge.
+    buf[0] = 'g'; buf[1] = 0xee;
+    CHECK(table_request_encode(buf, sizeof(buf), 1, 1, false, 0) == 4 && buf[0] == 1 && buf[1] == 1 && buf[2] == 'g' && buf[3] == 0xee,
+          "a one-byte wire is framed as it is");
+    buf[0] = 'g';
+    CHECK(table_request_encode(buf, sizeof(buf), 1, 0, true, 7) == 7 && buf[0] == 2 && buf[3] == 7, "and so is no wire at all");
+
+    // Responses, as the TypeScript wrote them: [bytes] -> status, code, version.
+    static const struct { uint8_t b[7]; int status, code; uint32_t version; } resp[] = {
+        { { 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }, 0, 0, 0 },
+        { { 0x01, 0x01, 0x0d, 0x29, 0x00, 0x00, 0x00 }, 1, 13, 41 },
+        { { 0x01, 0x02, 0x00, 0xff, 0xff, 0xff, 0x7f }, 2, 0, 0x7fffffffu },
+        { { 0x01, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff }, 0, 0, 0xffffffffu },
+        { { 0x01, 0x01, 0x64, 0x04, 0x03, 0x02, 0x01 }, 1, 100, 0x01020304u },
+        { { 0x01, 0x01, 0x15, 0x00, 0x01, 0x00, 0x00 }, 1, 21, 256 },
+    };
+    TableResponse r;
+    for (size_t i = 0; i < sizeof(resp) / sizeof(resp[0]); i++) {
+        CHECK(table_response_decode(resp[i].b, 7, &r) == 0 && r.status == resp[i].status && r.reject_code == resp[i].code
+              && r.version == resp[i].version, "a response reads as the TypeScript reader read it");
+    }
+    // What the server writes for each result is what the client reads.
+    uint8_t out[TABLE_RESP_BYTES + 2];
+    CHECK(table_action_response(TABLE_APPLIED, 0, 0x01020304u, out, sizeof(out)) == TABLE_RESP_BYTES
+          && table_response_decode(out, TABLE_RESP_BYTES, &r) == 0 && r.status == TABLE_STATUS_APPLIED && r.reject_code == 0
+          && r.version == 0x01020304u, "applied reads back");
+    CHECK(table_action_response(TABLE_REJECTED, ENGINE_REJECT_NOT_IN_HAND, 9, out, sizeof(out)) == TABLE_RESP_BYTES
+          && table_response_decode(out, TABLE_RESP_BYTES, &r) == 0 && r.status == TABLE_STATUS_REJECTED
+          && r.reject_code == ENGINE_REJECT_NOT_IN_HAND && r.version == 9, "a rules rejection reads back with its reason");
+    CHECK(table_action_response(TABLE_STALE_ROUND, 0, 0xfffffffeu, out, sizeof(out)) == TABLE_RESP_BYTES
+          && table_response_decode(out, TABLE_RESP_BYTES, &r) == 0 && r.status == TABLE_STATUS_REJECTED
+          && r.reject_code == TABLE_REJECT_STALE_ROUND && r.version == 0xfffffffeu, "a stale round reads back as the policy code");
+    CHECK(table_action_response(TABLE_MOOT, 0, 3, out, sizeof(out)) == TABLE_RESP_BYTES
+          && table_response_decode(out, TABLE_RESP_BYTES, &r) == 0 && r.status == TABLE_STATUS_MOOT && r.version == 3, "moot reads back");
+    out[7] = 0xaa; out[8] = 0xbb;
+    CHECK(table_response_decode(out, 9, &r) == 0 && r.status == TABLE_STATUS_MOOT && r.version == 3, "bytes past the body are not read");
+    CHECK(table_response_decode(out, 6, &r) == TABLE_E_WIRE, "a body one byte short is refused");
+    CHECK(table_response_decode(out, 0, &r) == TABLE_E_WIRE, "an empty body is refused");
+    out[0] = 2;
+    CHECK(table_response_decode(out, TABLE_RESP_BYTES, &r) == TABLE_E_WIRE && r.status == 0 && r.version == 0,
+          "another format is refused, and nothing of it is left in the answer");
+}
+
 static void test_evwire_as3_split(void) {
     static Game g;
     memset(&g, 0, sizeof(g));
@@ -14663,6 +14756,7 @@ int main(void) {
     test_table_commit_products();
     test_table_plays_a_game_to_its_end();
     test_table_request_and_response();
+    test_table_request_encode_and_response_decode();
     test_evwire_as3_split();
     test_evwire_frames_index();
     test_evwire_walk_skips_a_hook_it_does_not_know();
