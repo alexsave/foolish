@@ -985,6 +985,10 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_msg_rule_p -Wl,--export=wasm_msg_rebase \
   -Wl,--export=wasm_msg_rematch \
   -Wl,--export=wasm_anim_should_drop_stale -Wl,--export=wasm_anim_stale_optimistic \
+  -Wl,--export=wasm_anim_stale_ask_ptr -Wl,--export=wasm_anim_stale_release_ptr \
+  -Wl,--export=wasm_anim_reversal_ask_ptr -Wl,--export=wasm_anim_reversal_plan_ptr \
+  -Wl,--export=wasm_anim_hand_ask_ptr -Wl,--export=wasm_anim_hand_laid_ptr \
+  -Wl,--export=wasm_anim_finish_ask_ptr -Wl,--export=wasm_anim_finish_ptr \
   -Wl,--export=wasm_anim_event_key \
   -Wl,--export=wasm_anim_finish_rows -Wl,--export=wasm_anim_hand_laid_out \
   -Wl,--export=wasm_anim_set_transport \
@@ -1208,6 +1212,10 @@ WASM_MSG_EXPORTS := \
   -Wl,--export=wasm_msg_decode -Wl,--export=wasm_msg_seal -Wl,--export=wasm_msg_header_ptr \
   -Wl,--export=wasm_msg_rule_p -Wl,--export=wasm_msg_rebase \
   -Wl,--export=wasm_anim_should_drop_stale -Wl,--export=wasm_anim_stale_optimistic \
+  -Wl,--export=wasm_anim_stale_ask_ptr -Wl,--export=wasm_anim_stale_release_ptr \
+  -Wl,--export=wasm_anim_reversal_ask_ptr -Wl,--export=wasm_anim_reversal_plan_ptr \
+  -Wl,--export=wasm_anim_hand_ask_ptr -Wl,--export=wasm_anim_hand_laid_ptr \
+  -Wl,--export=wasm_anim_finish_ask_ptr -Wl,--export=wasm_anim_finish_ptr \
   -Wl,--export=wasm_anim_event_key \
   -Wl,--export=wasm_anim_finish_rows -Wl,--export=wasm_anim_hand_laid_out \
   -Wl,--export=wasm_anim_set_transport \
@@ -1533,6 +1541,10 @@ WASM_WEB_NAMES := \
   wasm_msg_decode wasm_msg_header_ptr \
   wasm_anim_set_transport wasm_anim_event_key \
   wasm_anim_should_drop_stale wasm_anim_stale_optimistic \
+  wasm_anim_stale_ask_ptr wasm_anim_stale_release_ptr \
+  wasm_anim_reversal_ask_ptr wasm_anim_reversal_plan_ptr \
+  wasm_anim_hand_ask_ptr wasm_anim_hand_laid_ptr \
+  wasm_anim_finish_ask_ptr wasm_anim_finish_ptr \
   wasm_anim_finish_rows wasm_anim_hand_laid_out wasm_anim_reversal_order \
   wasm_anim_plan_ask_ptr wasm_anim_build_plan wasm_anim_plan_ptr wasm_anim_plan_at wasm_anim_frame_ptr \
   wasm_anim_roles_goods_opening wasm_anim_roles_goods_cleared \

@@ -64,3 +64,7 @@
 # The stream a plan is asked for (view_layout.args writes it), so the layout
 # hash bots.wasm is checked against covers AnimPlanAsk too.
 --header anim_plan.h --root AnimPlanAsk
+# The animation core's four small questions (view_layout.args reads and writes
+# them), so the layout hash bots.wasm is checked against covers them too.
+--header anim_plan.h --root AnimStaleAsk --root AnimStaleRelease --root AnimReversalAsk --root AnimConflictPlan
+--root AnimHandAsk --root AnimHandLaid --root AnimFinishAsk --root AnimFinish
