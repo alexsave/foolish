@@ -878,17 +878,11 @@ void og_difftest_report(void) {
 // draw/unknown), and the chosen move. Nothing runs when the var is unset.
 #ifdef OG_EXPLAIN_BUILD
 #ifdef CD_WASM_OVERLAY
-// Freestanding snprintf/atol for the analysis-only wasm build (-nostdlib has no
+// Freestanding snprintf for the analysis-only wasm build (-nostdlib has no
 // libc). Supports exactly what og_ex_emit uses: %d, %ld, %s, %c, %.Nf, %%.
 // Returns bytes actually written (clamped), which keeps the `w += snprintf(...)`
 // accumulators inside the 16 KiB record buffer.
 #include <stdarg.h>
-static long atol(const char *s) {
-    long v = 0; int neg = 0;
-    if (*s == '-') { neg = 1; s++; } else if (*s == '+') s++;
-    while (*s >= '0' && *s <= '9') v = v * 10 + (*s++ - '0');
-    return neg ? -v : v;
-}
 static int og_ex_putl(char *b, int cap, long v) {
     char t[24]; int n = 0, w = 0; unsigned long u;
     if (v < 0) { if (w < cap) b[w] = '-'; w++; u = (unsigned long)(-(v + 1)) + 1; }
