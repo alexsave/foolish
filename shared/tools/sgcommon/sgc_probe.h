@@ -26,5 +26,10 @@ void sgc_args_base(const char *target);
 // `opts` whatever the caller needs on top of SkipFunctionBodies, and `errnote`
 // is appended to the "N compile error(s)" refusal ("" for nothing to add).
 CXTranslationUnit sgc_parse(CXIndex idx, const char *name, const char *src, unsigned opts, const char *errnote);
+// The same probe with function bodies KEPT. Skipping them is what every other
+// question wants, but libclang then reports a function with a body as a mere
+// declaration, and a caller that has to tell a definition from a prototype
+// (structgen's exports run) cannot ask that of a skipped one.
+CXTranslationUnit sgc_parse_bodies(CXIndex idx, const char *name, const char *src, unsigned opts, const char *errnote);
 
 #endif

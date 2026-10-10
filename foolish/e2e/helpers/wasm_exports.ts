@@ -20,6 +20,20 @@
 // Generating the declaration alone would move the drift rather than remove it,
 // because the hand-written call sites would still have to agree with it.
 //
+// THAT QUESTION HAS SINCE BEEN ANSWERED THE OTHER WAY, and this file is what
+// holds the line until the hosts move over. The objection was sound as far as it
+// went: which of the `wasm_*` definitions a module exports is in no header, it
+// is in the link. But the link line is in c/Makefile, and `structgen --link` now
+// reads it from there, types each export from its C definition and writes one
+// interface per link (sdk/ts/gen/exports.<link>.ts, tools/structgen/gen.sh);
+// e2e/wasm_exports.test.ts holds those to the built modules. The hand-written
+// binders scanned below are still what every host casts `instance.exports` to,
+// so they are still checked here. A binder that becomes an alias of a generated
+// interface leaves BINDER_MODULES, and when the last one has, the signature half
+// of this file has nothing left to read. The export-with-no-caller test in
+// e2e/validation/wasm_exports_validation.test.ts asks a different question (an
+// export roots its code) and does not go with it.
+//
 // WHAT A SIGNATURE CAN SAY HERE. Everything the kernel exports takes and
 // returns i32 (pointers are u32 offsets in wasm32), so the type match is thin;
 // the ARITY and the value-versus-void return are not. Passing three arguments
@@ -163,7 +177,7 @@ export interface Binder {
 }
 
 /** The kernel modules a binder can be bound to. */
-export type ModuleId = 'bots' | 'web' | 'bots-test' | 'oracle' | 'oracle-mt';
+export type ModuleId = 'bots' | 'web' | 'bots-test' | 'oracle' | 'oracle-mt' | 'msg';
 
 /**
  * Which module each binding interface talks to.
@@ -235,49 +249,59 @@ export function wasmBinders(root: string): Binder[] {
     for (const path of tsFiles(root)) {
         const src = readFileSync(path, 'utf8');
         if (!src.includes('wasm_')) continue;
-        const rel = path.slice(root.length).replace(/^\//, '');
-        for (const head of src.matchAll(/(?:^|\n)\s*(?:export\s+)?(?:interface\s+(\w+)[^{=]*|type\s+(\w+)\s*=\s*)\{/g)) {
-            // Brace matching rather than a lazy `}` : a member's type can hold
-            // braces of its own, and stopping at the first one would read half
-            // an interface and call the rest absent.
-            const open = head.index! + head[0].length;
-            let depth = 1, i = open;
-            for (; i < src.length && depth > 0; i++) {
-                if (src[i] === '{') depth++;
-                else if (src[i] === '}') depth--;
-            }
-            // Comments blanked rather than cut, so the offsets a member reports
-            // as its line still land where the member is. A doc comment naming
-            // a RETIRED entry point is otherwise read as a declaration of it.
-            const body = src.slice(open, i - 1)
-                .replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, ' '))
-                .replace(/\/\/[^\n]*/g, (c) => ' '.repeat(c.length));
-            const members: BoundMember[] = [];
-            // Not anchored to the start of a line: tools/structgen/test/bench.ts
-            // declares five members on two lines, and anchoring read one of
-            // each - an under-read that looks exactly like agreement.
-            // The lookbehind keeps `__wasm_init_tls` - wasm-ld's own TLS entry,
-            // which oracleMtWorker.ts binds - from being read as a kernel
-            // `wasm_init_tls` that no module exports.
-            // The return type is taken as the first identifier after the colon
-            // rather than "everything up to the semicolon": a member written
-            // without its trailing `;` (legal inside a `type X = { … }`) was
-            // read as no member at all, which is a scanner that agrees with
-            // anything.
-            for (const m of body.matchAll(/(?<![A-Za-z0-9_])(wasm_[a-z0-9_]+)(\??)\s*\(([^)]*)\)\s*:\s*([A-Za-z0-9_]+)/g)) {
-                const args = m[3].trim();
-                members.push({
-                    name: m[1],
-                    optional: m[2] === '?',
-                    paramTypes: args ? args.split(',').map((a) => a.split(':').slice(1).join(':').trim()) : [],
-                    returnType: m[4].trim(),
-                    line: src.slice(0, open + m.index!).split('\n').length,
-                });
-            }
-            if (members.length) binders.push({ key: `${rel}#${head[1] ?? head[2]}`, file: rel, members });
-        }
+        binders.push(...bindersIn(src, path.slice(root.length).replace(/^\//, '')));
     }
     return binders.sort((a, b) => (a.key < b.key ? -1 : 1));
+}
+
+/**
+ * The binders one file's text declares. Split out of the walk above so a file
+ * the walk deliberately skips - a GENERATED interface under sdk/ts/gen - can be
+ * read by the same rules as a hand-written one (e2e/wasm_exports.test.ts).
+ */
+export function bindersIn(src: string, rel: string): Binder[] {
+    const binders: Binder[] = [];
+    for (const head of src.matchAll(/(?:^|\n)\s*(?:export\s+)?(?:interface\s+(\w+)[^{=]*|type\s+(\w+)\s*=\s*)\{/g)) {
+        // Brace matching rather than a lazy `}` : a member's type can hold
+        // braces of its own, and stopping at the first one would read half
+        // an interface and call the rest absent.
+        const open = head.index! + head[0].length;
+        let depth = 1, i = open;
+        for (; i < src.length && depth > 0; i++) {
+            if (src[i] === '{') depth++;
+            else if (src[i] === '}') depth--;
+        }
+        // Comments blanked rather than cut, so the offsets a member reports
+        // as its line still land where the member is. A doc comment naming
+        // a RETIRED entry point is otherwise read as a declaration of it.
+        const body = src.slice(open, i - 1)
+            .replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, ' '))
+            .replace(/\/\/[^\n]*/g, (c) => ' '.repeat(c.length));
+        const members: BoundMember[] = [];
+        // Not anchored to the start of a line: tools/structgen/test/bench.ts
+        // declares five members on two lines, and anchoring read one of
+        // each - an under-read that looks exactly like agreement.
+        // The lookbehind keeps `__wasm_init_tls` - wasm-ld's own TLS entry,
+        // which oracleMtWorker.ts binds - from being read as a kernel
+        // `wasm_init_tls` that no module exports.
+        // The return type is taken as the first identifier after the colon
+        // rather than "everything up to the semicolon": a member written
+        // without its trailing `;` (legal inside a `type X = { … }`) was
+        // read as no member at all, which is a scanner that agrees with
+        // anything.
+        for (const m of body.matchAll(/(?<![A-Za-z0-9_])(wasm_[a-z0-9_]+)(\??)\s*\(([^)]*)\)\s*:\s*([A-Za-z0-9_]+)/g)) {
+            const args = m[3].trim();
+            members.push({
+                name: m[1],
+                optional: m[2] === '?',
+                paramTypes: args ? args.split(',').map((a) => a.split(':').slice(1).join(':').trim()) : [],
+                returnType: m[4].trim(),
+                line: src.slice(0, open + m.index!).split('\n').length,
+            });
+        }
+        if (members.length) binders.push({ key: `${rel}#${head[1] ?? head[2]}`, file: rel, members });
+    }
+    return binders;
 }
 
 /**
