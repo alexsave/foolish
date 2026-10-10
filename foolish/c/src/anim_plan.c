@@ -485,7 +485,7 @@ int anim_build_plan(const AnimPlanEvent *events, int n_events, int n_players,
 // (c/Makefile WASM_BOT_LDFLAGS), and a static would be the same bytes held for
 // the life of every module instead of for one call.
 int anim_plan_ask(const AnimPlanAsk *ask, AnimPlan *out) {
-    if (!ask || !out) return ANIM_EBADARG;
+    if (!ask) return ANIM_EBADARG;
     if (ask->n_events > ANIM_MAX_STEPS) return ANIM_ECAP;
     AnimPlanEvent events[ANIM_MAX_STEPS];
     for (int i = 0; i < ask->n_events; i++) {
@@ -499,12 +499,14 @@ int anim_plan_ask(const AnimPlanAsk *ask, AnimPlan *out) {
         ev->cards = a->n_cards ? a->cards : 0;
         ev->n_cards = a->n_cards;
         ev->mask_cards = a->mask_cards ? 1 : 0;
-        // A step with no board of its own says nothing about one: the fields a
-        // host left behind from the stream before must not read as this step's.
+        // `has_counts` is the whole gate, here as in anim_build_plan: a step
+        // without it has counts in its struct all the same - whatever the last
+        // stream left there - and nothing reads them. The hand is NULL for such
+        // a step because that is what AnimPlanEvent says it is.
         ev->has_counts = a->has_counts ? 1 : 0;
-        ev->deck = a->has_counts ? a->deck : 0;
-        ev->discard = a->has_counts ? a->discard : 0;
-        ev->flipped = a->has_counts ? a->flipped : CARD_NONE;
+        ev->deck = a->deck;
+        ev->discard = a->discard;
+        ev->flipped = a->flipped;
         ev->hand = a->has_counts ? a->hand : 0;
         if (!a->has_board) { ev->n_battles = ANIM_NO_BOARD; ev->battles = 0; continue; }
         if (a->n_row % 2) return ANIM_EBADARG;

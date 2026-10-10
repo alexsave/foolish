@@ -545,8 +545,9 @@ typedef struct {
 // with nothing decided here that it does not decide. Returns what it returns,
 // or before it is ever called ANIM_ECAP (more events than ANIM_MAX_STEPS, an
 // event with more cards than ANIM_ASK_MAX_CARDS or a row longer than
-// ANIM_ASK_MAX_ROW) / ANIM_EBADARG (NULL ask or out, or a row of an odd number
-// of bytes, which is half a battle).
+// ANIM_ASK_MAX_ROW, whether or not the step says the row is in use) /
+// ANIM_EBADARG (NULL ask, or a board's row of an odd number of bytes, which is
+// half a battle).
 int anim_plan_ask(const AnimPlanAsk *ask, AnimPlan *out);
 
 // ---- how long a stream plays ----------------------------------------------

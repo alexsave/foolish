@@ -6275,6 +6275,235 @@ static void test_build_plan_freezes_the_row_with_the_counts(void) {
           "a stream with no rows on it gets no row back");
 }
 
+// ---- the plan asked as one struct (anim_plan.h anim_plan_ask) ---------------
+//
+// A host across a bridge fills an AnimPlanAsk and the kernel plans from it. The
+// claim is that this is anim_build_plan and nothing else: the same stream said
+// as AnimPlanEvents gets the same plan, field for field. Compared by field and
+// not by memcmp, because a plan past its n_steps and a struct's padding are
+// whatever the stack held.
+static int anim_plans_same(const AnimPlan *a, const AnimPlan *b, int n_players) {
+    if (a->n_steps != b->n_steps || a->total_ms != b->total_ms || a->n_veil != b->n_veil) return 0;
+    if (memcmp(a->veil_ids, b->veil_ids, (size_t)a->n_veil) != 0) return 0;
+    const AnimCounts *p = &a->pre, *q = &b->pre;
+    if (p->deck != q->deck || p->discard != q->discard || p->n_players != q->n_players
+        || p->n_battles != q->n_battles || p->paired != q->paired
+        || !card_eq(p->flipped, q->flipped)) return 0;
+    if (memcmp(p->hand, q->hand, sizeof(int) * (size_t)n_players) != 0) return 0;
+    if (memcmp(p->battles, q->battles, 2 * (size_t)p->n_battles) != 0) return 0;
+    for (int i = 0; i < a->n_steps; i++) {
+        const AnimPlanStep *x = &a->steps[i], *y = &b->steps[i];
+        if (x->type != y->type || x->seat != y->seat || x->from != y->from || x->to != y->to
+            || x->n_cards != y->n_cards || x->duration_ms != y->duration_ms
+            || x->start_ms != y->start_ms || x->beat_first != y->beat_first
+            || x->beat_n != y->beat_n || x->hold_ms != y->hold_ms
+            || x->deck != y->deck || x->discard != y->discard
+            || x->in_flight_from_deck != y->in_flight_from_deck
+            || x->in_flight_to_flipped != y->in_flight_to_flipped
+            || x->reveals != y->reveals || !card_eq(x->trump_out, y->trump_out)
+            || x->trump_from != y->trump_from) return 0;
+        if (memcmp(x->hand, y->hand, sizeof(int) * (size_t)n_players) != 0) return 0;
+    }
+    return 1;
+}
+
+// Static: 128 events of storage is more than a test frame should carry.
+static AnimPlanAsk pa_ask;
+static AnimPlan    pa_asked, pa_direct;
+
+// A STREAM WITH EVERY KIND OF STEP IN IT: one with its own board and row, one
+// with neither, one of masked backs, and the draw that deals the trump out.
+// The steps that carry no board are filled with a stale one anyway, because a
+// host reuses the struct and what the last stream left there is not this
+// step's board.
+static void test_plan_ask_is_build_plan(void) {
+    const Card trump = { 1, 7 }, hidden = { -1, -1 };
+    const unsigned char six_d = 3 * 13 + 5, king_d = 3 * 13 + 12;
+    const unsigned char after_pass[4] = { six_d, ANIM_TABLE_NONE, king_d, ANIM_TABLE_NONE };
+    const int final_hand[3] = { 7, 7, 6 };
+
+    memset(&pa_ask, 0, sizeof pa_ask);
+    pa_ask.n_events = 4;
+    pa_ask.n_players = 3;
+    pa_ask.final_deck = 0;
+    pa_ask.final_discard = 4;
+    pa_ask.final_flipped = CARD_NONE;
+    memcpy(pa_ask.final_hand, final_hand, sizeof final_hand);
+
+    // 0: a pass onto the table, with its own board and that board's row.
+    AnimPlanAskEvent *a = &pa_ask.events[0];
+    a->type = ANIM_EVT_ATTACK_PASS; a->seat = 0; a->from = ANIM_LOC_HAND; a->to = ANIM_LOC_TABLE;
+    a->n_cards = 1; a->cards[0] = (Card){ 3, 13 };
+    a->has_counts = true; a->deck = 3; a->discard = 4; a->flipped = trump;
+    a->hand[0] = 5; a->hand[1] = 6; a->hand[2] = 6;
+    a->has_board = true; a->n_row = 4; memcpy(a->row, after_pass, 4);
+
+    // 1: a cover with NO board of its own - and a stale one lying in the struct.
+    a = &pa_ask.events[1];
+    a->type = ANIM_EVT_COVER; a->seat = 1; a->from = ANIM_LOC_HAND; a->to = ANIM_LOC_TABLE;
+    a->n_cards = 1; a->cards[0] = (Card){ 3, 12 };
+    a->has_counts = false; a->deck = 99; a->discard = 98; a->flipped = (Card){ 0, 1 };
+    a->hand[0] = 40; a->hand[1] = 41; a->hand[2] = 42;
+    a->has_board = false; a->n_row = 2; a->row[0] = 1; a->row[1] = 2;
+
+    // 2: another seat's draw, masked. The cards are given identities on
+    // purpose: it is the FLAG that keeps them out of the veil, and a stream
+    // whose masked cards were already {-1,-1} could lose the flag unnoticed.
+    a = &pa_ask.events[2];
+    a->type = ANIM_EVT_REFILL; a->seat = 1; a->from = ANIM_LOC_DECK; a->to = ANIM_LOC_HAND;
+    a->mask_cards = true; a->n_cards = 2; a->cards[0] = (Card){ 2, 5 }; a->cards[1] = (Card){ 2, 6 };
+    a->has_counts = true; a->deck = 1; a->discard = 4; a->flipped = trump;
+    a->hand[0] = 5; a->hand[1] = 7; a->hand[2] = 6;
+    a->has_board = false;
+
+    // 3: my draw, a hidden card and the trump, on a board whose flipped slot is
+    // now CARD_NONE and whose table is empty - a board all the same.
+    a = &pa_ask.events[3];
+    a->type = ANIM_EVT_REFILL; a->seat = 0; a->from = ANIM_LOC_DECK; a->to = ANIM_LOC_HAND;
+    a->n_cards = 2; a->cards[0] = hidden; a->cards[1] = trump;
+    a->has_counts = true; a->deck = 0; a->discard = 4; a->flipped = CARD_NONE;
+    a->hand[0] = 7; a->hand[1] = 7; a->hand[2] = 6;
+    a->has_board = true; a->n_row = 0;
+
+    // The same stream as anim_build_plan takes it, written out by hand.
+    const int h0[3] = { 5, 6, 6 }, h2[3] = { 5, 7, 6 }, h3[3] = { 7, 7, 6 };
+    const Card c0[1] = { { 3, 13 } }, c1[1] = { { 3, 12 } };
+    const Card c2[2] = { { 2, 5 }, { 2, 6 } }, c3[2] = { hidden, trump };
+    const unsigned char no_row[1] = { 0 };
+    const AnimPlanEvent evs[4] = {
+        { .type = ANIM_EVT_ATTACK_PASS, .seat = 0, .from = ANIM_LOC_HAND, .to = ANIM_LOC_TABLE,
+          .cards = c0, .n_cards = 1, .has_counts = 1, .deck = 3, .discard = 4, .flipped = trump,
+          .hand = h0, .n_battles = 2, .battles = after_pass },
+        { .type = ANIM_EVT_COVER, .seat = 1, .from = ANIM_LOC_HAND, .to = ANIM_LOC_TABLE,
+          .cards = c1, .n_cards = 1, .flipped = CARD_NONE, .n_battles = ANIM_NO_BOARD },
+        { .type = ANIM_EVT_REFILL, .seat = 1, .from = ANIM_LOC_DECK, .to = ANIM_LOC_HAND,
+          .cards = c2, .n_cards = 2, .mask_cards = 1, .has_counts = 1, .deck = 1, .discard = 4,
+          .flipped = trump, .hand = h2, .n_battles = ANIM_NO_BOARD },
+        { .type = ANIM_EVT_REFILL, .seat = 0, .from = ANIM_LOC_DECK, .to = ANIM_LOC_HAND,
+          .cards = c3, .n_cards = 2, .has_counts = 1, .deck = 0, .discard = 4,
+          .flipped = CARD_NONE, .hand = h3, .n_battles = 0, .battles = no_row },
+    };
+    CHECK(anim_build_plan(evs, 4, 3, 0, 4, CARD_NONE, final_hand, &pa_direct) == ANIM_EOK,
+          "the stream plans, said as events");
+    CHECK(anim_plan_ask(&pa_ask, &pa_asked) == ANIM_EOK, "the stream plans, asked as one struct");
+    CHECK(anim_plans_same(&pa_asked, &pa_direct, 3), "the ask's plan is anim_build_plan's plan");
+
+    // …and what each kind of step is there to prove, said on its own so that a
+    // failure names the field and not just "the plans differ".
+    CHECK(pa_asked.n_steps == 4, "four events, four steps");
+    CHECK(pa_asked.pre.hand[0] == 6 && pa_asked.pre.deck == 3,
+          "the freeze anchors on the first step's own counts");
+    CHECK(card_eq(pa_asked.pre.flipped, trump), "…and on its flipped trump");
+    CHECK(pa_asked.pre.n_battles == 1 && pa_asked.pre.battles[0] == six_d,
+          "the first step's row crossed: the plan opens on the pile already down");
+    CHECK(pa_asked.steps[1].deck == 3 && pa_asked.steps[1].discard == 4
+          && pa_asked.steps[1].hand[1] == 5,
+          "a step with no board carries the walk forward, not the stale board in its struct");
+    CHECK(pa_asked.n_veil == 3, "the masked draw's cards stay out of the veil, and a hidden card names nothing");
+    CHECK(card_eq(pa_asked.steps[3].trump_out, trump) && card_is_none(pa_asked.steps[2].trump_out),
+          "CARD_NONE in a board's flipped slot is the step that dealt the trump out");
+    CHECK(pa_asked.steps[2].seat == 1 && pa_asked.steps[2].from == ANIM_LOC_DECK
+          && pa_asked.steps[2].to == ANIM_LOC_HAND && pa_asked.steps[2].type == ANIM_EVT_REFILL,
+          "a step's type, seat and places cross as they were said");
+}
+
+// THE FINAL BOARD IS READ ONLY BY A STREAM CARRYING NO BOARD, so that is the
+// stream that proves it crosses: its counts, its hand, and its flipped slot as
+// a hidden card and as CARD_NONE, which are two different cards to the kernel.
+static void test_plan_ask_carries_the_final_board(void) {
+    const Card hidden = { -1, -1 };
+    const int final_hand[2] = { 3, 9 };
+    const Card swept[2] = { { 0, 9 }, { 2, 9 } };
+
+    memset(&pa_ask, 0, sizeof pa_ask);
+    pa_ask.n_events = 1;
+    pa_ask.n_players = 2;
+    pa_ask.final_deck = 7;
+    pa_ask.final_discard = 2;
+    pa_ask.final_flipped = hidden;
+    memcpy(pa_ask.final_hand, final_hand, sizeof final_hand);
+    AnimPlanAskEvent *a = &pa_ask.events[0];
+    a->type = ANIM_EVT_PICKUP; a->seat = 1; a->from = ANIM_LOC_TABLE; a->to = ANIM_LOC_HAND;
+    a->n_cards = 2; a->cards[0] = swept[0]; a->cards[1] = swept[1];
+    // No board - and a row left in the struct that names one.
+    a->has_board = false; a->n_row = 4;
+    a->row[0] = 9 - 1; a->row[1] = ANIM_TABLE_NONE; a->row[2] = 2 * 13 + 9 - 1; a->row[3] = ANIM_TABLE_NONE;
+
+    const AnimPlanEvent ev = {
+        .type = ANIM_EVT_PICKUP, .seat = 1, .from = ANIM_LOC_TABLE, .to = ANIM_LOC_HAND,
+        .cards = swept, .n_cards = 2, .flipped = CARD_NONE, .n_battles = ANIM_NO_BOARD,
+    };
+    CHECK(anim_build_plan(&ev, 1, 2, 7, 2, hidden, final_hand, &pa_direct) == ANIM_EOK
+          && anim_plan_ask(&pa_ask, &pa_asked) == ANIM_EOK
+          && anim_plans_same(&pa_asked, &pa_direct, 2),
+          "a boardless stream plans off the final board, the same either way");
+    CHECK(pa_asked.pre.deck == 7 && pa_asked.pre.discard == 2, "the final deck and discard crossed");
+    CHECK(pa_asked.pre.hand[0] == 3 && pa_asked.pre.hand[1] == 7,
+          "the final hand crossed, with the pickup taken back out of it");
+    CHECK(pa_asked.pre.flipped.suit == -1 && pa_asked.pre.flipped.value == -1,
+          "a hidden flipped card stays the hidden card");
+    CHECK(pa_asked.pre.paired == 0,
+          "a row left in a step that says it has no board is not that step's row");
+
+    pa_ask.final_flipped = CARD_NONE;
+    CHECK(anim_plan_ask(&pa_ask, &pa_asked) == ANIM_EOK && card_is_none(pa_asked.pre.flipped),
+          "…and no flipped card stays CARD_NONE, which is not the hidden card");
+
+    pa_ask.n_players = 1;
+    CHECK(anim_plan_ask(&pa_ask, &pa_asked) == ANIM_EBADARG, "a table of one is refused, as it is for events");
+}
+
+// THE CAPS. Each count is a byte that can say more than its array holds, so
+// each is refused before anything reads past the array - and the widest stream
+// that does fit is still planned.
+static void test_plan_ask_caps(void) {
+    memset(&pa_ask, 0, sizeof pa_ask);
+    pa_ask.n_players = 2;
+    pa_ask.final_hand[0] = pa_ask.final_hand[1] = 6;
+    CHECK(anim_plan_ask(NULL, &pa_asked) == ANIM_EBADARG, "no ask, no plan");
+    CHECK(anim_plan_ask(&pa_ask, NULL) == ANIM_EBADARG, "nowhere to put a plan, no plan");
+    CHECK(anim_plan_ask(&pa_ask, &pa_asked) == ANIM_EOK && pa_asked.n_steps == 0,
+          "an empty stream is a plan of no steps");
+
+    // Notices, so that 128 of them stay inside the veil and the clock.
+    for (int i = 0; i < ANIM_MAX_STEPS; i++) {
+        pa_ask.events[i].type = ANIM_EVT_OUT;
+        pa_ask.events[i].seat = ANIM_SEAT_NONE;
+        pa_ask.events[i].from = pa_ask.events[i].to = ANIM_LOC_NONE;
+    }
+    pa_ask.n_events = ANIM_MAX_STEPS;
+    CHECK(anim_plan_ask(&pa_ask, &pa_asked) == ANIM_EOK && pa_asked.n_steps == ANIM_MAX_STEPS,
+          "as many events as a plan has steps fit");
+    CHECK(pa_asked.steps[ANIM_MAX_STEPS - 1].seat == ANIM_SEAT_NONE
+          && pa_asked.steps[ANIM_MAX_STEPS - 1].from == ANIM_LOC_NONE,
+          "…and no seat and no place cross as themselves");
+    pa_ask.n_events = ANIM_MAX_STEPS + 1;
+    CHECK(anim_plan_ask(&pa_ask, &pa_asked) == ANIM_ECAP, "one event more is over the cap");
+
+    pa_ask.n_events = 1;
+    AnimPlanAskEvent *a = &pa_ask.events[0];
+    a->mask_cards = true;
+    a->n_cards = ANIM_ASK_MAX_CARDS;
+    CHECK(anim_plan_ask(&pa_ask, &pa_asked) == ANIM_EOK && pa_asked.steps[0].n_cards == ANIM_ASK_MAX_CARDS,
+          "an event of as many cards as its array holds fits");
+    a->n_cards = ANIM_ASK_MAX_CARDS + 1;
+    CHECK(anim_plan_ask(&pa_ask, &pa_asked) == ANIM_ECAP, "one card more is over the cap");
+    a->n_cards = 0;
+
+    a->has_board = true;
+    a->n_row = ANIM_ASK_MAX_ROW;
+    CHECK(anim_plan_ask(&pa_ask, &pa_asked) == ANIM_EOK, "a row as long as its array fits");
+    a->n_row = ANIM_ASK_MAX_ROW + 2;
+    CHECK(anim_plan_ask(&pa_ask, &pa_asked) == ANIM_ECAP, "one battle more is over the cap");
+    a->n_row = 3;
+    CHECK(anim_plan_ask(&pa_ask, &pa_asked) == ANIM_EBADARG, "a row of three bytes is half a battle, and refused");
+    // The caps are the struct's, so a count over one is refused whether or not
+    // the step says the array is in use.
+    a->has_board = false;
+    a->n_row = ANIM_ASK_MAX_ROW + 2;
+    CHECK(anim_plan_ask(&pa_ask, &pa_asked) == ANIM_ECAP, "a row count past its array is refused on a boardless step too");
+}
+
 // ---------------------------------------------------------------------------
 // …and over REAL GAMES, against the kernel's own boards.
 //
@@ -14433,6 +14662,9 @@ int main(void) {
     test_pre_stream_table_declines_rather_than_inventing();
     test_pre_stream_table_leaves_the_sweep_rule_alone();
     test_build_plan_freezes_the_row_with_the_counts();
+    test_plan_ask_is_build_plan();
+    test_plan_ask_carries_the_final_board();
+    test_plan_ask_caps();
     test_pre_bout_table_walks_back_through_the_stream();
     test_pre_bout_table_degenerate_inputs();
     test_the_pre_bout_table_is_the_board_the_kernel_had();
