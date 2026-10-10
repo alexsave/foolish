@@ -818,6 +818,35 @@ int anim_stale_optimistic_on_table(const Card *opt_cards, int n_opt,
                                    const Card *named_cards, int n_named,
                                    int *out_release, int cap);
 
+// THE SAME QUESTION AS ONE VALUE, for a host that crosses a boundary to ask it.
+// The three lists go in as a struct and the indices come back as one, so a
+// generated writer and a generated reader carry them and no host packs a card
+// byte of its own (the wasm entry used to take three runs of wire bytes and
+// hand back a run of index bytes, a layout only a comment described).
+//
+// THE CARDS ARE READ THE WAY THAT WIRE READ THEM, because that is what every
+// caller of the byte entry was getting and a release decision must not move
+// with the plumbing: the hidden card (-1/-1) stays hidden, and so matches
+// nothing; every other card is clamped onto the deck (suit 0.., value
+// 1..ACE_VALUE). CARD_NONE is not a card of any of these lists and is clamped
+// like any other off-deck value - a caller with no card leaves it out.
+//
+// Returns the release count, or ANIM_ECAP for a count past its array /
+// ANIM_EBADARG; `out->n` is 0 on a refusal.
+typedef struct {
+    uint8_t n_opt, n_table, n_named;
+    Card    opt[ANIM_MAX_CARDS];            // the local player's pending cards
+    Card    table[ANIM_MAX_TABLE_INPUT];    // what the authoritative table shows
+    Card    named[ANIM_MAX_TABLE_INPUT];    // every card this broadcast's events name
+} AnimStaleAsk;
+typedef struct {
+    uint8_t n;
+    uint8_t release[ANIM_MAX_CARDS];        // INDICES into AnimStaleAsk.opt
+} AnimStaleRelease;
+_Static_assert(ANIM_MAX_CARDS <= 255 && ANIM_MAX_TABLE_INPUT <= 255,
+               "an AnimStaleAsk count, and a release index, is one byte");
+int anim_stale_optimistic_ask(const AnimStaleAsk *q, AnimStaleRelease *out);
+
 // A pending optimistic attack/cover, for the revert decision below.
 typedef struct {
     Card card;
@@ -1049,6 +1078,24 @@ int anim_reversal_order(const unsigned char *verdicts, int n_motions,
                         const int *group_sizes, int n_groups,
                         AnimConflictPlan *out);
 
+// THE SAME QUESTION AS ONE VALUE (see AnimStaleAsk for why): the verdicts and
+// the groups go in through a generated writer and the AnimConflictPlan is read
+// where it lies, so the host slices `order` by `step_count` and knows no byte
+// of either. The arrays are the widths anim_reversal_order takes, so they are
+// handed straight to it and every refusal is its own: a count past its array is
+// ANIM_ECAP, exactly as above. `out` is left with no steps on any refusal, so a
+// reader that ignored the return code plays nothing rather than the previous
+// question's answer.
+typedef struct {
+    uint16_t n_motions;
+    uint8_t  n_groups;
+    uint8_t  verdicts[ANIM_MAX_CONFLICT_MOTIONS];   // ANIM_CONFLICT_*, in flight order
+    int      group_sizes[ANIM_MAX_CONFLICT_GROUPS];
+} AnimReversalAsk;
+_Static_assert(ANIM_MAX_CONFLICT_MOTIONS <= 65535 && ANIM_MAX_CONFLICT_GROUPS <= 255,
+               "an AnimReversalAsk count fits its field");
+int anim_reversal_order_ask(const AnimReversalAsk *q, AnimConflictPlan *out);
+
 // ---- the board's own sets and small rules ---------------------------------
 //
 // THE VEIL, THE HAND, THE TABLE AND THE END SCREEN, lifted whole out of
@@ -1220,6 +1267,37 @@ int anim_hand_laid_out_masked(const unsigned char *cards, int n_cards, uint64_t 
                               const unsigned char *order, int n_order,
                               unsigned char *out, int cap);
 
+// THE SAME QUESTION AS ONE VALUE, IN CARDS (see AnimStaleAsk for why). The
+// rule above speaks in bytes - a dense id, or a sentinel - and a host does not:
+// it holds cards, and a slot it cannot name. So the alphabet is translated
+// HERE, both ways, and no host carries ANIM_TABLE_UNKNOWN or a dense id.
+//
+//   in    CARD_NONE          a slot the caller cannot name -> ANIM_TABLE_UNKNOWN
+//         the hidden card    (-1/-1) -> ANIM_TABLE_NONE, which has no bit and
+//                            so drops out: a back is CARD_NONE here, and a
+//                            card that merely has no face is not a back
+//         any other card     clamped onto the deck (suit 0.., value
+//                            1..ACE_VALUE), then its dense id
+//   out   ANIM_TABLE_UNKNOWN -> CARD_NONE; a dense id -> its card
+//
+// That is the byte entry's reading of the same hands, kept on purpose: the web
+// reached it through the wire's card byte, which clamped and which spelled the
+// hidden card 0xFE - the same byte as ANIM_TABLE_NONE.
+// Returns the count laid out, or ANIM_ECAP for a count past MAX_HAND_SIZE /
+// ANIM_EBADARG; `out->n` is 0 on a refusal.
+typedef struct {
+    uint64_t deferred;               // dense-id bits: deals still holding their slot back
+    uint8_t  n_cards, n_order;
+    Card     cards[MAX_HAND_SIZE];   // the hand, in kernel order
+    Card     order[MAX_HAND_SIZE];   // the viewer's preferred arrangement
+} AnimHandAsk;
+typedef struct {
+    uint8_t n;
+    Card    cards[MAX_HAND_SIZE];
+} AnimHandLaid;
+_Static_assert(MAX_HAND_SIZE <= 255, "an AnimHandAsk count is one byte");
+int anim_hand_laid_out_ask(const AnimHandAsk *q, AnimHandLaid *out);
+
 // ---- the table under the sweep ----
 
 // A cell holding a card the caller cannot NAME - not an empty cell, which is
@@ -1335,6 +1413,23 @@ typedef struct {
 int anim_finish_rows(const unsigned char *elimination, int n_elim,
                      int game_over, int n_players, int my_seat,
                      AnimFinishRow *out, int cap);
+
+// THE SAME QUESTION AS ONE VALUE (see AnimStaleAsk for why): the list and the
+// three scalars in, the rows out, each through a generated writer or reader.
+// A seat count no table has (negative, or past MAX_PLAYERS) and a list longer
+// than a table are ANIM_EBADARG; `out->n` is 0 on a refusal.
+typedef struct {
+    int     game_over;                   // the fool's seat, negative while the game runs
+    int     n_players;
+    int     my_seat;                     // negative for a spectator
+    uint8_t n_elim;
+    uint8_t elimination[MAX_PLAYERS];    // first out first
+} AnimFinishAsk;
+typedef struct {
+    uint8_t       n;
+    AnimFinishRow rows[MAX_PLAYERS + 1]; // everyone out, then the fool
+} AnimFinish;
+int anim_finish_ask(const AnimFinishAsk *q, AnimFinish *out);
 
 // WHAT THE BOARD'S OWN CHROME DRAWS, end screen included.
 //

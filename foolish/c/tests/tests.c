@@ -7422,6 +7422,350 @@ static void test_board_finish_rows_rank_first_out_to_the_fool(void) {
     CHECK(anim_finish_rows(NULL, 0, -1, 4, 0, rows, MAX_PLAYERS) == 0, "…and an untouched game, nobody");
 }
 
+// ---------- four questions asked as values (anim_plan.h Anim*Ask) ------------
+//
+// A browser used to ask these four by packing bytes into the io buffer in a
+// layout only a comment in c/wasm/wasm_api.c described, and the shim did the
+// converting and the bounds checks where no native test could reach them. Each
+// is now a struct in and a struct out, converted in anim_plan.c, so this file
+// can hold it to what the byte entries answered.
+//
+// "WHAT THE BYTE ENTRIES ANSWERED" IS REBUILT HERE, NOT REMEMBERED: a card went
+// through sdk/ts/wasm/bots.ts wireStateCard (old_wire_state_card below is that
+// function, line for line) and then the shim's own card_from_wire_pair
+// (c/wasm/wire.h, still the real one). The asks are compared against that
+// composition over EVERY value a Card can hold, because the cases that matter
+// are the ones nobody would think to write down: the hidden card, CARD_NONE,
+// and a card with one field off the deck.
+//
+// MUTATION-CHECKED, each mutation applied to c/src/anim_plan.c on its own and
+// the failures counted (0 = survived; none did):
+//
+//   A1  ask_card returns the card unclamped                       -> 6
+//   A2  ask_card clamps the hidden card onto the deck too         -> 2
+//   A3  anim_stale_optimistic_ask drops the n_opt cap             -> 1
+//   A4  ...drops the n_table and n_named caps                     -> 2
+//   A5  ...reads `named` from `table`                             -> 1
+//   A6  ...leaves out->n set on a refusal                         -> 1
+//   B1  anim_reversal_order_ask does not empty the plan first     -> 2
+//   B2  ...hands the two counts over the wrong way round          -> 4
+//   C1  ask_hand_slot reads CARD_NONE as a card, not a back       -> 6
+//   C2  ask_hand_slot reads the hidden card as a back             -> 3
+//   C3  ask_hand_slot skips the clamp                             -> 3
+//   C4  anim_hand_laid_out_ask narrows `deferred` to 32 bits      -> 1
+//   C5  ...drops the n_cards cap (its scratch one slot longer,    -> 1
+//       or the stack protector kills the run before the CHECK)
+//   C6  ...drops the n_order cap                                  -> 1
+//   C7  ...writes a back out as the hidden card                   -> 5
+//   C8  ...passes the hand as the order                           -> 4
+//   C9  ...leaves out->n set on a refusal                         -> 1
+//   D1  anim_finish_ask drops the n_elim bound                    -> 1
+//   D2  ...drops the n_players ceiling                            -> 1
+//   D3  ...swaps game_over and my_seat                            -> 4
+//   D4  ...caps the rows at MAX_PLAYERS (no room for the fool)    -> 1
+//   D5  ...leaves out->n set on a refusal                         -> 1
+//
+// TWO CHECKS WERE REMOVED RATHER THAN TESTED, because no input could tell them
+// from the entry they wrap: a motions/groups cap in anim_reversal_order_ask
+// (anim_reversal_order refuses both first) and a floor on n_players in
+// anim_finish_ask (anim_finish_rows refuses a negative count itself).
+
+// sdk/ts/wasm/bots.ts wireStateCard, as it stood when these four went through
+// it. Its int8 wrap is the identity here: every value a Card holds is an int8.
+static unsigned char old_wire_state_card(Card c) {
+    int s = c.suit, v = c.value;
+    if (s == -1 && v == -1) return 0xFE;
+    if (s < 0) s = 0; else if (s > 3) s = 3;
+    if (v < 1) v = 1; else if (v > 13) v = 13;
+    return (unsigned char)(s * 13 + (v - 1));
+}
+
+// Every value the one-byte Card can hold, real or not: suit -4..3, value -16..15.
+static Card every_card(int i) {
+    Card c;
+    c.suit = (int8_t)((i & 7) - 4);
+    c.value = (int8_t)(((i >> 3) & 31) - 16);
+    return c;
+}
+
+static void test_ask_stale_reads_cards_as_the_wire_did(void) {
+    static AnimStaleAsk q;
+    AnimStaleRelease out;
+    const Card s7 = { SUIT_SPADES, 7 }, h9 = { SUIT_HEARTS, 9 }, dA = { SUIT_DIAMONDS, ACE_VALUE };
+    const Card c5 = { SUIT_CLUBS, 5 }, hidden = { -1, -1 };
+
+    // The rule itself, through the value: on the table and not named -> release.
+    memset(&q, 0, sizeof q);
+    q.n_opt = 3; q.opt[0] = s7; q.opt[1] = h9; q.opt[2] = dA;
+    q.n_table = 3; q.table[0] = dA; q.table[1] = c5; q.table[2] = s7;
+    q.n_named = 1; q.named[0] = dA;
+    CHECK(anim_stale_optimistic_ask(&q, &out) == 1 && out.n == 1 && out.release[0] == 0,
+          "the 7 is on the table and unnamed, the ace is named, the 9 is not there");
+    q.n_named = 0;
+    CHECK(anim_stale_optimistic_ask(&q, &out) == 2 && out.n == 2
+          && out.release[0] == 0 && out.release[1] == 2,
+          "with nothing named both on-table cards release, as indices into opt");
+
+    // EVERY CARD AGAINST EVERY CARD, held to the byte entry's answer.
+    int differ = 0;
+    for (int a = 0; a < 256; a++) for (int b = 0; b < 256; b++) {
+        const Card oc = every_card(a), tc = every_card(b);
+        memset(&q, 0, sizeof q);
+        q.n_opt = 1; q.opt[0] = oc;
+        q.n_table = 1; q.table[0] = tc;
+        const int got = anim_stale_optimistic_ask(&q, &out);
+        const Card wo = card_from_wire_pair(old_wire_state_card(oc));
+        const Card wt = card_from_wire_pair(old_wire_state_card(tc));
+        int rel[1];
+        const int want = anim_stale_optimistic_on_table(&wo, 1, &wt, 1, NULL, 0, rel, 1);
+        if (got != want || out.n != want) differ++;
+    }
+    CHECK(differ == 0, "over every pair of card values the ask releases what the wire bytes released");
+
+    // The three the sweep above is really about, by name.
+    memset(&q, 0, sizeof q);
+    q.n_opt = 1; q.opt[0] = hidden; q.n_table = 1; q.table[0] = hidden;
+    CHECK(anim_stale_optimistic_ask(&q, &out) == 0, "the hidden card matches nothing, not even itself");
+    q.opt[0] = (Card){ -1, 7 }; q.table[0] = s7;
+    CHECK(anim_stale_optimistic_ask(&q, &out) == 1,
+          "a suit off the deck is clamped onto it, as the wire clamped it");
+    q.opt[0] = CARD_NONE; q.table[0] = (Card){ SUIT_SPADES, 1 };
+    CHECK(anim_stale_optimistic_ask(&q, &out) == 1,
+          "CARD_NONE is no card of these lists: it clamps like any off-deck value");
+    q.opt[0] = s7; q.n_table = 0; q.n_named = 1; q.named[0] = s7;
+    CHECK(anim_stale_optimistic_ask(&q, &out) == 0, "a card only NAMED is not on the table");
+
+    // The caps, each at its edge and one past it.
+    memset(&q, 0, sizeof q);
+    q.n_opt = ANIM_MAX_CARDS; q.n_table = ANIM_MAX_TABLE_INPUT; q.n_named = ANIM_MAX_TABLE_INPUT;
+    for (int i = 0; i < ANIM_MAX_CARDS; i++) q.opt[i] = s7;
+    for (int i = 0; i < ANIM_MAX_TABLE_INPUT; i++) { q.table[i] = s7; q.named[i] = h9; }
+    CHECK(anim_stale_optimistic_ask(&q, &out) == ANIM_MAX_CARDS && out.n == ANIM_MAX_CARDS
+          && out.release[ANIM_MAX_CARDS - 1] == ANIM_MAX_CARDS - 1,
+          "three full lists are answered, the last index a byte still holds");
+    // ONE PAST, WITH NOTHING ON THE TABLE, so the only thing that can refuse
+    // is the count: with the table still full every pending card releases and
+    // the release cap answers ANIM_ECAP for the wrong reason.
+    q.n_opt = ANIM_MAX_CARDS + 1; q.n_table = 0; q.n_named = 0;
+    out.n = 7;
+    CHECK(anim_stale_optimistic_ask(&q, &out) == ANIM_ECAP && out.n == 0,
+          "one pending card too many is refused, and the answer is emptied");
+    q.n_opt = 1; q.n_table = ANIM_MAX_TABLE_INPUT + 1;
+    CHECK(anim_stale_optimistic_ask(&q, &out) == ANIM_ECAP, "a table past its array is refused");
+    q.n_table = 1; q.n_named = ANIM_MAX_TABLE_INPUT + 1;
+    CHECK(anim_stale_optimistic_ask(&q, &out) == ANIM_ECAP, "and so is a named list past its own");
+    CHECK(anim_stale_optimistic_ask(NULL, &out) == ANIM_EBADARG
+          && anim_stale_optimistic_ask(&q, NULL) == ANIM_EBADARG, "no question, or nowhere to answer");
+}
+
+static void test_ask_reversal_order_is_the_plan(void) {
+    static AnimReversalAsk q;
+    static AnimConflictPlan plan;
+
+    memset(&q, 0, sizeof q);
+    q.n_motions = 4; q.n_groups = 3;
+    q.verdicts[0] = ANIM_CONFLICT_REVERT; q.verdicts[1] = ANIM_CONFLICT_KEEP;
+    q.verdicts[2] = ANIM_CONFLICT_CLEAR;  q.verdicts[3] = ANIM_CONFLICT_REVERT;
+    q.group_sizes[0] = 2; q.group_sizes[1] = 1; q.group_sizes[2] = 1;
+    CHECK(anim_reversal_order_ask(&q, &plan) == 2 && plan.n_steps == 2 && plan.n_order == 2
+          && plan.step_count[0] == 1 && plan.step_count[1] == 1
+          && plan.order[0] == 3 && plan.order[1] == 0 && plan.n_verdicts == 4,
+          "last group first, and the group nothing reverts is dropped");
+
+    // A refusal leaves no steps behind: the plan is read where it lies.
+    q.group_sizes[2] = 0;
+    CHECK(anim_reversal_order_ask(&q, &plan) == ANIM_EBADARG
+          && plan.n_steps == 0 && plan.n_order == 0 && plan.n_verdicts == 0,
+          "groups that do not account for the motions are refused, and the last answer is gone");
+    q.group_sizes[1] = -1; q.group_sizes[2] = 3;
+    CHECK(anim_reversal_order_ask(&q, &plan) == ANIM_EBADARG,
+          "a negative group is refused even where the sizes still sum");
+
+    // The caps.
+    memset(&q, 0, sizeof q);
+    q.n_motions = ANIM_MAX_CONFLICT_MOTIONS + 1; q.n_groups = 1;
+    q.group_sizes[0] = ANIM_MAX_CONFLICT_MOTIONS + 1;
+    plan.n_steps = 5;
+    CHECK(anim_reversal_order_ask(&q, &plan) == ANIM_ECAP && plan.n_steps == 0,
+          "one motion past the array is refused before a verdict is read");
+    memset(&q, 0, sizeof q);
+    q.n_groups = ANIM_MAX_CONFLICT_GROUPS + 1;
+    CHECK(anim_reversal_order_ask(&q, &plan) == ANIM_ECAP, "and one group past its own");
+
+    // EVERY MOTION IN ONE GROUP - a size, and a motion count, the byte entry
+    // could not carry: it wrapped 256 to 0.
+    memset(&q, 0, sizeof q);
+    q.n_motions = ANIM_MAX_CONFLICT_MOTIONS; q.n_groups = 1;
+    q.group_sizes[0] = ANIM_MAX_CONFLICT_MOTIONS;
+    for (int i = 0; i < ANIM_MAX_CONFLICT_MOTIONS; i++) q.verdicts[i] = ANIM_CONFLICT_REVERT;
+    CHECK(anim_reversal_order_ask(&q, &plan) == 1 && plan.step_count[0] == ANIM_MAX_CONFLICT_MOTIONS
+          && plan.order[ANIM_MAX_CONFLICT_MOTIONS - 1] == ANIM_MAX_CONFLICT_MOTIONS - 1,
+          "a full sequence flown as one step reverses as one step");
+
+    // A full set of groups, against the entry it wraps.
+    memset(&q, 0, sizeof q);
+    q.n_motions = ANIM_MAX_CONFLICT_GROUPS; q.n_groups = ANIM_MAX_CONFLICT_GROUPS;
+    for (int i = 0; i < ANIM_MAX_CONFLICT_GROUPS; i++) {
+        q.group_sizes[i] = 1;
+        q.verdicts[i] = (i % 3) ? ANIM_CONFLICT_REVERT : ANIM_CONFLICT_KEEP;
+    }
+    static AnimConflictPlan want;
+    const int n_want = anim_reversal_order(q.verdicts, q.n_motions, q.group_sizes, q.n_groups, &want);
+    CHECK(anim_reversal_order_ask(&q, &plan) == n_want && n_want > 0
+          && plan.n_order == want.n_order
+          && memcmp(plan.order, want.order, (size_t)want.n_order * sizeof want.order[0]) == 0
+          && memcmp(plan.step_count, want.step_count, (size_t)n_want * sizeof want.step_count[0]) == 0,
+          "every group the cap allows, the same plan as the entry that takes arrays");
+    CHECK(anim_reversal_order_ask(NULL, &plan) == ANIM_EBADARG
+          && anim_reversal_order_ask(&q, NULL) == ANIM_EBADARG, "no question, or nowhere to answer");
+}
+
+static void test_ask_hand_laid_out_speaks_in_cards(void) {
+    static AnimHandAsk q;
+    AnimHandLaid out;
+    const Card h7 = { SUIT_HEARTS, 7 }, s9 = { SUIT_SPADES, 9 }, dQ = { SUIT_DIAMONDS, 11 };
+    const Card d2 = { SUIT_DIAMONDS, 1 }, hidden = { -1, -1 };
+
+    // Backs by count, known cards by identity: the masked rule, in cards.
+    memset(&q, 0, sizeof q);
+    q.n_cards = 4; q.cards[0] = h7; q.cards[1] = CARD_NONE; q.cards[2] = CARD_NONE; q.cards[3] = s9;
+    q.n_order = 5; q.order[0] = CARD_NONE; q.order[1] = s9; q.order[2] = CARD_NONE;
+    q.order[3] = CARD_NONE; q.order[4] = dQ;
+    CHECK(anim_hand_laid_out_ask(&q, &out) == 4 && out.n == 4
+          && card_is_none(out.cards[0]) && card_eq(out.cards[1], s9)
+          && card_is_none(out.cards[2]) && card_eq(out.cards[3], h7),
+          "two backs where the order put them, the third and the stale queen fall out, the 7 appends");
+    q.n_order = 0;
+    CHECK(anim_hand_laid_out_ask(&q, &out) == 4 && card_eq(out.cards[0], h7)
+          && card_is_none(out.cards[1]) && card_is_none(out.cards[2]) && card_eq(out.cards[3], s9),
+          "with no arrangement the hand comes back in kernel order");
+
+    // EVERY CARD VALUE as a one-card hand, held to the byte entry: a null slot
+    // crossed as ANIM_TABLE_UNKNOWN and came back null, anything else crossed as
+    // its wire byte and came back through cardFromWire. CARD_NONE is the null.
+    int differ = 0;
+    for (int a = 0; a < 256; a++) {
+        const Card c = every_card(a);
+        memset(&q, 0, sizeof q);
+        q.n_cards = 1; q.cards[0] = c;
+        const int got = anim_hand_laid_out_ask(&q, &out);
+        const unsigned char in = card_is_none(c) ? ANIM_TABLE_UNKNOWN : old_wire_state_card(c);
+        unsigned char laid[1];
+        const int want = anim_hand_laid_out_masked(&in, 1, 0, NULL, 0, laid, 1);
+        if (got != want || out.n != want) { differ++; continue; }
+        if (want == 1) {
+            const Card wc = laid[0] == ANIM_TABLE_UNKNOWN ? CARD_NONE : card_from_wire_pair(laid[0]);
+            if (!card_eq(out.cards[0], wc)) differ++;
+        }
+    }
+    CHECK(differ == 0, "over every card value the ask lays out what the wire bytes laid out");
+
+    // And the same alphabet on the ORDER side: every value as the arrangement
+    // of a hand that holds one back and the two of spades.
+    differ = 0;
+    for (int a = 0; a < 256; a++) {
+        const Card c = every_card(a);
+        memset(&q, 0, sizeof q);
+        q.n_cards = 2; q.cards[0] = (Card){ SUIT_SPADES, 1 }; q.cards[1] = CARD_NONE;
+        q.n_order = 1; q.order[0] = c;
+        const int got = anim_hand_laid_out_ask(&q, &out);
+        const unsigned char hand[2] = { 0, ANIM_TABLE_UNKNOWN };
+        const unsigned char ord = card_is_none(c) ? ANIM_TABLE_UNKNOWN : old_wire_state_card(c);
+        unsigned char laid[2];
+        const int want = anim_hand_laid_out_masked(hand, 2, 0, &ord, 1, laid, 2);
+        if (got != want) { differ++; continue; }
+        for (int i = 0; i < want; i++)
+            if (card_is_none(out.cards[i]) != (laid[i] == ANIM_TABLE_UNKNOWN)) differ++;
+    }
+    CHECK(differ == 0, "and an arrangement of any card value orders it as the wire bytes did");
+
+    // The three by name.
+    memset(&q, 0, sizeof q);
+    q.n_cards = 2; q.cards[0] = hidden; q.cards[1] = h7;
+    CHECK(anim_hand_laid_out_ask(&q, &out) == 1 && card_eq(out.cards[0], h7),
+          "the hidden card is not a back: it has no bit and drops out, as its wire byte did");
+    q.cards[0] = CARD_NONE;
+    CHECK(anim_hand_laid_out_ask(&q, &out) == 2 && card_is_none(out.cards[0]),
+          "CARD_NONE is the back, in and out");
+    q.cards[0] = (Card){ SUIT_CLUBS, 15 };
+    CHECK(anim_hand_laid_out_ask(&q, &out) == 2 && card_eq(out.cards[0], (Card){ SUIT_CLUBS, ACE_VALUE }),
+          "a value past the ace is clamped to it");
+
+    // THE DEFERRED SET IS ONE 64-BIT FIELD. The two of diamonds is id 39, a bit
+    // the low half does not have - the byte entry took the set as two 32-bit
+    // arguments for exactly that reason.
+    memset(&q, 0, sizeof q);
+    q.n_cards = 3; q.cards[0] = h7; q.cards[1] = d2; q.cards[2] = s9;
+    q.n_order = 1; q.order[0] = d2;
+    CHECK(card_to_id(d2) >= 32, "the fixture's deferred card sits in the high half");
+    CHECK(anim_hand_laid_out_ask(&q, &out) == 3 && card_eq(out.cards[0], d2), "not deferred: it leads");
+    q.deferred = (uint64_t)1 << card_to_id(d2);
+    CHECK(anim_hand_laid_out_ask(&q, &out) == 2 && card_eq(out.cards[0], h7) && card_eq(out.cards[1], s9),
+          "deferred: it reserves no slot, and the order cannot place it");
+
+    // The caps: a whole hand is answered, one card more is refused.
+    memset(&q, 0, sizeof q);
+    q.n_cards = MAX_HAND_SIZE; q.n_order = MAX_HAND_SIZE;
+    for (int i = 0; i < MAX_HAND_SIZE; i++) {
+        q.cards[i] = i < 52 ? card_of_id(i) : CARD_NONE;
+        q.order[MAX_HAND_SIZE - 1 - i] = q.cards[i];
+    }
+    CHECK(anim_hand_laid_out_ask(&q, &out) == MAX_HAND_SIZE && out.n == MAX_HAND_SIZE
+          && card_eq(out.cards[MAX_HAND_SIZE - 1], card_of_id(0)),
+          "a hand of every card and a fill of backs is laid out whole, in the order asked");
+    // ONE PAST, OF ONE CARD REPEATED, so the only thing that can refuse is the
+    // count: repeats fall out, and a hand of distinct cards would overflow the
+    // answer and get ANIM_ECAP for the wrong reason.
+    for (int i = 0; i < MAX_HAND_SIZE; i++) { q.cards[i] = h7; q.order[i] = h7; }
+    q.n_cards = MAX_HAND_SIZE + 1; q.n_order = 0;
+    out.n = 7;
+    CHECK(anim_hand_laid_out_ask(&q, &out) == ANIM_ECAP && out.n == 0,
+          "a hand past the array is refused, and the answer is emptied");
+    q.n_cards = 1; q.n_order = MAX_HAND_SIZE + 1;
+    CHECK(anim_hand_laid_out_ask(&q, &out) == ANIM_ECAP, "and so is an order past its own");
+    CHECK(anim_hand_laid_out_ask(NULL, &out) == ANIM_EBADARG
+          && anim_hand_laid_out_ask(&q, NULL) == ANIM_EBADARG, "no question, or nowhere to answer");
+}
+
+static void test_ask_finish_rows_and_its_bounds(void) {
+    AnimFinishAsk q;
+    AnimFinish out;
+
+    memset(&q, 0, sizeof q);
+    q.n_elim = 3; q.elimination[0] = 2; q.elimination[1] = 0; q.elimination[2] = 3;
+    q.game_over = 1; q.n_players = 4; q.my_seat = 3;
+    CHECK(anim_finish_ask(&q, &out) == 4 && out.n == 4, "everyone gets a row");
+    CHECK(out.rows[0].place == 1 && out.rows[0].seat == 2 && out.rows[0].is_you == 0
+          && out.rows[2].place == 3 && out.rows[2].seat == 3 && out.rows[2].is_you == 1
+          && out.rows[3].place == 4 && out.rows[3].seat == 1 && out.rows[3].is_you == 0,
+          "first out first, my row marked, the fool last and not me");
+    q.game_over = -1;
+    CHECK(anim_finish_ask(&q, &out) == 3 && out.n == 3, "a running game has no fool row");
+    q.game_over = 1; q.my_seat = -1;
+    CHECK(anim_finish_ask(&q, &out) == 4 && !out.rows[0].is_you && !out.rows[1].is_you
+          && !out.rows[2].is_you && !out.rows[3].is_you, "a spectator owns no row");
+
+    // A FULL TABLE'S LIST AND A FOOL is one row more than there are seats, and
+    // the answer has room for it (the byte entry's scratch did too).
+    memset(&q, 0, sizeof q);
+    q.n_elim = MAX_PLAYERS; q.n_players = MAX_PLAYERS; q.game_over = 0; q.my_seat = -1;
+    for (int i = 0; i < MAX_PLAYERS; i++) q.elimination[i] = (uint8_t)i;
+    CHECK(anim_finish_ask(&q, &out) == MAX_PLAYERS + 1 && out.rows[MAX_PLAYERS].place == MAX_PLAYERS,
+          "the longest list a table can hold, and the fool after it");
+
+    // The bounds the shim used to hold.
+    q.n_elim = MAX_PLAYERS + 1;
+    out.n = 7;
+    CHECK(anim_finish_ask(&q, &out) == ANIM_EBADARG && out.n == 0,
+          "a list longer than a table is refused, and the answer is emptied");
+    q.n_elim = 1; q.n_players = MAX_PLAYERS + 1;
+    CHECK(anim_finish_ask(&q, &out) == ANIM_EBADARG, "more seats than a table has");
+    q.n_players = -1;
+    CHECK(anim_finish_ask(&q, &out) == ANIM_EBADARG, "and fewer than none");
+    CHECK(anim_finish_ask(NULL, &out) == ANIM_EBADARG
+          && anim_finish_ask(&q, NULL) == ANIM_EBADARG, "no question, or nowhere to answer");
+}
+
 // THE END SCREEN CLEARS THE BOARD'S CHROME. Owner: "the last players (the
 // fools) cards are still seen in the end 'game over' screen... it also blocks
 // the 'new game' button." Filmed at 2p and 4p with the local player as the
@@ -14463,6 +14807,10 @@ int main(void) {
     test_board_hand_laid_out_follows_the_local_arrangement();
     test_board_the_table_under_the_sweep();
     test_board_finish_rows_rank_first_out_to_the_fool();
+    test_ask_stale_reads_cards_as_the_wire_did();
+    test_ask_reversal_order_is_the_plan();
+    test_ask_hand_laid_out_speaks_in_cards();
+    test_ask_finish_rows_and_its_bounds();
     test_board_end_screen_clears_the_boards_chrome();
     test_board_degenerate_inputs();
     test_board_reads_nothing_past_what_it_was_given();
