@@ -228,7 +228,7 @@ int evwire_frames(const unsigned char *frames, int len, int *off, int *flen, int
 
 // ---------- as3: the push payload ------------------------------------------
 //
-// What a realtime push carries (the `b` of {t:'as3', s, v, b}). It is the
+// What a realtime push carries (behind the cast header, below). It is the
 // sequence above byte for byte - the whole as2 payload - followed by one flags
 // byte and whatever blocks the flags announce:
 //

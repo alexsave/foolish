@@ -5,10 +5,11 @@
 // same functions the edge entry points call - handleMetaAction (meta),
 // executePackedAction (action), lockedBotLoop (the bot loop) - with the caller's
 // auth id, and read the result back through the kernel (table_play.ts). A suite
-// that is about the HTTP shell itself (auth, the JSON body, the response) goes
+// that is about the HTTP shell itself (auth, the request's bytes, the response) goes
 // through e2e/helpers/edge.ts instead.
 
 import { fixture, READY, IDLE, type FixtureSeat } from './table_fixture.ts';
+import { askBody } from './ask.ts';
 import { seedTable } from './table_db.ts';
 import { legalMoves, mustReadTable, type PlayMove, type TableState } from './table_play.ts';
 import { handleMetaAction } from '../../server/impls/supabase/functions/_shared/adapter/meta_actions.ts';
@@ -34,11 +35,16 @@ export async function seedLobby(gameId: string, seats: LobbySeat[], title = game
     await seedTable(gameId, b.build());
 }
 
-/** One `meta` request by `userId`, through the real handler. */
-export function runMeta(gameId: string, userId: string, body: Record<string, unknown>, userName = 'U'): Promise<HandlerResult> {
+/**
+ * One `meta` request by `userId`, through the real handler. `body` states the
+ * ask with the old request's names (helpers/ask.ts), or is the raw request
+ * bytes, for a suite that sends something the kernel must refuse.
+ */
+export async function runMeta(gameId: string, userId: string, body: Record<string, unknown> | Uint8Array, userName = 'U'): Promise<HandlerResult> {
+    // async, so a request the helper cannot even state rejects like one the server refuses.
     return handleMetaAction({
         user: { id: userId, user_metadata: { username: userName } } as never,
-        userName, body: { ...body, game_id: gameId }, reqId: 'e2e-meta',
+        userName, body: body instanceof Uint8Array ? body : askBody({ ...body, game_id: gameId }), reqId: 'e2e-meta',
     });
 }
 

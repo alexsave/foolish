@@ -331,8 +331,11 @@ export async function runTableOp(op: TableOp): Promise<TableOutcome> {
             const { finalizeEndedGame } = await finalizeMod();
             await finalizeEndedGame(op.gameId, p.state, p.roster, op.reqId);
         }
+        // The casts were written in the kernel section and name nextVersion, as
+        // the envelopes do: commit_table is fenced on row.version and bumps it by
+        // one, so the version it committed is the one they carry.
         if (c.pushes.length > 0) {
-            broadcastPushes(op.gameId, version, c.seats, c.pushes, op.reqId)
+            broadcastPushes(op.gameId, c.seats, c.pushes, op.reqId)
                 .catch((err) => console.error(`[${op.reqId}] broadcast failed:`, err));
         }
         return { result: c.rc, reject: c.reject, version, deleted: false, committed: true, needsBots: p.needsBots, envelope: c.envelope! };
@@ -385,9 +388,9 @@ function section(table: ServerTable, row: TableRow, op: TableOp, dealSeed: Uint8
     if (products.nEvents > 0 || products.goodsChanged) {
         for (let s = 0; s < seats.length; s++) {
             if (seats[s].brain) continue;   // a bot has no client
-            pushes.push({ viewer: s, bytes: pushOrThrow(table.push(op.gameId, s)) });
+            pushes.push({ viewer: s, bytes: pushOrThrow(table.cast(op.gameId, s, nextVersion)) });
         }
-        pushes.push({ viewer: -1, bytes: pushOrThrow(table.push(op.gameId, -1)) });
+        pushes.push({ viewer: -1, bytes: pushOrThrow(table.cast(op.gameId, -1, nextVersion)) });
     }
     const seat = op.viewerId !== null ? table.seatOf(op.viewerId) : -1;
     const envelope = (seat >= 0 ? products.views[seat] : null) ?? products.spectator;
@@ -458,22 +461,25 @@ export async function commitProducts(
 // ---- broadcast ------------------------------------------------------------------
 
 /**
- * The kernel's per-viewer pushes to each human seat's private topic and the
+ * The kernel's per-viewer casts to each human seat's private topic and the
  * spectator topic, in one batched realtime POST.
  *
- * `{t:'as3', s, v, b}`: `b` is the kernel's push (evwire.h as3: the as2
- * sequence, a flags byte, the new roster when the operation changed it), so a
- * push that changes who sits where names the seats itself. The web reads as3
- * since Phase 5a; before Phase 5b the same bytes went out labelled `as2`.
+ * A cast (evwire.h) is the whole message: the committed version, then the as3
+ * push (the event sequence, a flags byte, the new roster when the operation
+ * changed it). It used to ride as `{t:'as3', s, v, b}`, with the format, a
+ * random sequence id and the version spelled beside the bytes; the format and
+ * the version are in the bytes now, and the sequence id is gone, because the
+ * game id and the version already name the push (one push per topic per
+ * committed version). What is left for the envelope is one base64 string.
  */
 export async function broadcastPushes(
-    gameId: string, version: number, seats: TableSeat[],
+    gameId: string, seats: TableSeat[],
     pushes: { viewer: number; bytes: Uint8Array }[], reqId: string,
 ): Promise<void> {
     const messages: BroadcastMessage[] = pushes.map(({ viewer, bytes }) => ({
         topic: viewer >= 0 ? `gu-${gameId}-${seats[viewer].id}` : `game-${gameId}`,
         event: 'animation_events',
-        payload: { t: 'as3', s: crypto.randomUUID(), v: version, b: base64(bytes) },
+        cast: base64(bytes),
     }));
     await broadcastMessages(messages, reqId);
 }

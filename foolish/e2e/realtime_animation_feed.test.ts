@@ -105,8 +105,9 @@ test('feed: admitted on the first join, it republishes broadcasts and spends no 
     await sleep(100);
 
     assert.deepEqual(joins, [{ topic: `gu-${GAME_ID}-${USER_ID}`, private: true }], 'joins its own private gu- topic');
-    live!.handlers.get('animation_events')!({ payload: { t: 'as2', s: 'seq', v: 7, b: '' } });
-    assert.deepEqual(published, [{ t: 'as2', s: 'seq', v: 7, b: '', game_id: GAME_ID }], 'broadcast republished with its game id');
+    // A payload is { b }; anything beside it (here a retired key) is not carried on.
+    live!.handlers.get('animation_events')!({ payload: { b: 'Y2FzdA==', t: 'as3' } });
+    assert.deepEqual(published, [{ b: 'Y2FzdA==', game_id: GAME_ID }], 'the cast republished with its game id, and nothing else');
     assert.deepEqual(loadGameCalls, [], 'nothing was missed, so nothing is refetched');
 
     off();

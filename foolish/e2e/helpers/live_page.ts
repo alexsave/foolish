@@ -32,7 +32,9 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { JSDOM } from 'jsdom';
 import { broadcastLog, pgPool } from '../harness.ts';
-import { postJson, postPacked, tokenFor } from './edge.ts';
+import { postBytes, postEmpty, tokenFor } from './edge.ts';
+import { askKindName } from './ask.ts';
+import { castParts } from './cast.ts';
 // The modules the server loads lazily, loaded now: a lazy import resolves in REAL
 // time, and the virtual clock would otherwise move on while one is in flight.
 import '../../server/impls/supabase/functions/_shared/adapter/bot_actions.ts';
@@ -197,16 +199,21 @@ const later = (ms: number): Promise<void> => new Promise((r) => { g.setTimeout(r
 
 async function invoke(name: string, opts: { body?: unknown }): Promise<{ data: unknown; error: unknown }> {
     const body = opts?.body;
-    const rec: Sent = { at: clock, answeredAt: -1, name, kind: body instanceof Blob ? 'packed' : String((body as any)?.type ?? ''), status: 0, body };
+    // Every body the page sends is bytes (functions-js posts a Blob as
+    // octet-stream): a move to `action`, an ask to `meta`. A request with no
+    // body (create) has nothing to post.
+    const bytes = body instanceof Blob ? new Uint8Array(await body.arrayBuffer()) : null;
+    const kind = !bytes ? '' : name === 'meta' ? askKindName(bytes) : 'packed';
+    const rec: Sent = { at: clock, answeredAt: -1, name, kind, status: 0, body };
     sent.push(rec);
     if (latency.invokeMs > 0) await later(latency.invokeMs);
-    const res = body instanceof Blob
-        ? await track(postPacked(myToken, new Uint8Array(await body.arrayBuffer())))
-        : await track(postJson(name as 'action' | 'meta', myToken, body ?? {}));
+    const res = bytes
+        ? await track(postBytes(name as 'action' | 'meta', myToken, bytes))
+        : await track(postEmpty(name as 'create', myToken));
     rec.status = res.status;
     if (latency.invokeMs > 0) await later(latency.invokeMs);
     rec.answeredAt = clock;
-    if (res.status !== 200) return { data: null, error: new Error(res.json?.error ?? `HTTP ${res.status}`) };
+    if (res.status !== 200) return { data: null, error: new Error(res.reason || `HTTP ${res.status}`) };
     return { data: res.bytes.buffer.slice(res.bytes.byteOffset, res.bytes.byteOffset + res.bytes.byteLength), error: null };
 }
 
@@ -284,7 +291,7 @@ const logPush = broadcastLog.push.bind(broadcastLog);
     for (const m of items) {
         const handlers = channels.get(m.channel)?.handlers.filter((h) => h.event === m.event) ?? [];
         if (handlers.length === 0 || !me || m.channel.indexOf(me) < 0) continue;
-        const rec: Delivered = { sentAt: clock, deliveredAt: -1, version: m.payload?.v, payload: m.payload };
+        const rec: Delivered = { sentAt: clock, deliveredAt: -1, version: castParts(m.payload).version, payload: m.payload };
         delivered.push(rec);
         g.setTimeout(() => { rec.deliveredAt = clock; for (const h of handlers) h.cb({ payload: m.payload }); }, latency.realtimeMs);
     }
@@ -347,7 +354,7 @@ export class LivePage {
         const { ensureBotsAsync } = await import('../../sdk/ts/wasm/bots.ts');
         await ensureBotsAsync();
         await serverTable();
-        for (const name of ['action', 'meta'] as const) await postJson(name, null, {});   // import each index.ts now
+        for (const name of ['action', 'meta'] as const) await postEmpty(name, null);   // import each index.ts now
         this.act = async (fn) => { await act(async () => { await fn(); }); };
         routeGameId = gameId;
         const Probe = () => {

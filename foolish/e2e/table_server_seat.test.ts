@@ -13,7 +13,7 @@ import './harness.ts';
 import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, resetDb, uuid, pgPool } from './harness.ts';
-import { settle, tokenFor, postJson, postPacked } from './helpers/edge.ts';
+import { settle, tokenFor, postJson, postPacked, postAsk } from './helpers/edge.ts';
 import { fixture, PLAYING, GAME_OVER, READY, IDLE } from './helpers/table_fixture.ts';
 import { seedTable } from './helpers/table_db.ts';
 import { actionRequest, legalMoves, mustReadTable } from './helpers/table_play.ts';
@@ -79,7 +79,7 @@ test('action: a move applies for the auth user\'s seat, and another seat\'s move
     // A stranger sends it: not seated.
     const asS = await postPacked(c.tok.S, actionRequest(g, attack));
     assert.equal(asS.status, 400);
-    assert.match(String(asS.json?.error), /not in game/i);
+    assert.match(String(asS.reason), /not in game/i);
 
     // A sends it: applied, from seat 0's hand.
     const asA = decoded(await postPacked(c.tok.A, actionRequest(g, attack)));
@@ -95,10 +95,11 @@ test('action: a JSON body naming another player acts for nobody', async () => {
     const c = await cast();
     const g = await dealt(c);
     const t0 = await mustReadTable(g);
-    for (const [who, re] of [['B', /packed/i], ['S', /not in game/i]] as const) {
+    // No endpoint reads JSON: seated or not, the caller gets a 415 and a refusal.
+    for (const who of ['B', 'S'] as const) {
         const res = await postJson('action', c.tok[who], { type: 'attack', game_id: g, cards: [{ suit: 2, value: 5 }], player_id: c.A, user_id: c.A, seat: 0 });
-        assert.equal(res.status, 400);
-        assert.match(String(res.json?.error), re, `${who} names A in a JSON move`);
+        assert.equal(res.status, 415);
+        assert.match(String(res.reason), /malformed/i, `${who} names A in a JSON move`);
     }
     assert.equal((await mustReadTable(g)).version, t0.version, 'nothing committed');
 });
@@ -106,9 +107,9 @@ test('action: a JSON body naming another player acts for nobody', async () => {
 test('meta start: readies the caller\'s seat, never the one the body names', async () => {
     const c = await cast();
     const g = await lobby(c);
-    const refused = await postJson('meta', c.tok.S, { type: 'start', game_id: g, player_id: c.A });
-    assert.match(String(refused.json?.error), /not in game/i, 'a stranger readies nobody');
-    const res = await postJson('meta', c.tok.A, { type: 'start', game_id: g, player_id: c.B, user_id: c.B, seat: 1 });
+    const refused = await postAsk(c.tok.S, { type: 'start', game_id: g, player_id: c.A });
+    assert.match(String(refused.reason), /not in game/i, 'a stranger readies nobody');
+    const res = await postAsk(c.tok.A, { type: 'start', game_id: g, player_id: c.B, user_id: c.B, seat: 1 });
     assert.equal(res.status, 200, JSON.stringify(res.json));
     const t = await mustReadTable(g);
     assert.deepEqual(t.seats.map((s) => s.status), [READY, IDLE], 'A (seat 0) is ready, B is not');
@@ -117,7 +118,7 @@ test('meta start: readies the caller\'s seat, never the one the body names', asy
 test('meta join: seats the caller, never the user the body names', async () => {
     const c = await cast();
     const g = await lobby(c);
-    assertOk(await postJson('meta', c.tok.C, { type: 'join', game_id: g, player_id: c.S, user_id: c.S }));
+    assertOk(await postAsk(c.tok.C, { type: 'join', game_id: g, player_id: c.S, user_id: c.S }));
     const ids = (await mustReadTable(g)).seats.map((s) => s.id);
     assert.deepEqual(ids, [c.A, c.B, c.C]);
 });
@@ -126,15 +127,15 @@ test('meta add-bot / exit: only a seated caller edits; a body player_id is the t
     const c = await cast();
     const g = await lobby(c);
     const v0 = (await mustReadTable(g)).version;
-    assert.match(String((await postJson('meta', c.tok.S, { type: 'add-bot', game_id: g, bot_id: c.bot, player_id: c.A })).json?.error), /not in game/i);
-    assert.match(String((await postJson('meta', c.tok.S, { type: 'exit', game_id: g, player_id: c.B })).json?.error), /not in game/i);
-    assert.match(String((await postJson('meta', c.tok.S, { type: 'exit', game_id: g, player_id: c.S })).json?.error), /not in game/i);
+    assert.match(String((await postAsk(c.tok.S, { type: 'add-bot', game_id: g, bot_id: c.bot, player_id: c.A })).reason), /not in game/i);
+    assert.match(String((await postAsk(c.tok.S, { type: 'exit', game_id: g, player_id: c.B })).reason), /not in game/i);
+    assert.match(String((await postAsk(c.tok.S, { type: 'exit', game_id: g, player_id: c.S })).reason), /not in game/i);
     assert.equal((await mustReadTable(g)).version, v0, 'refusals commit nothing');
 
-    assertOk(await postJson('meta', c.tok.A, { type: 'add-bot', game_id: g, bot_id: c.bot }));
+    assertOk(await postAsk(c.tok.A, { type: 'add-bot', game_id: g, bot_id: c.bot }));
     assert.deepEqual((await mustReadTable(g)).seats.map((s) => s.id), [c.A, c.B, c.bot]);
     // B names A as the actor fields, and nobody as the target: B leaves.
-    assertOk(await postJson('meta', c.tok.B, { type: 'exit', game_id: g, user_id: c.A, seat: 0 }));
+    assertOk(await postAsk(c.tok.B, { type: 'exit', game_id: g, user_id: c.A, seat: 0 }));
     assert.deepEqual((await mustReadTable(g)).seats.map((s) => s.id), [c.A, c.bot]);
 });
 
@@ -143,12 +144,12 @@ test('meta continue / rearrange-players / update-name: a stranger naming a seate
     const g = await lobby(c);
     const v0 = (await mustReadTable(g)).version;
     for (const body of [{ type: 'continue' }, { type: 'rearrange-players', new_order: [c.B, c.A] }, { type: 'update-name', new_name: 'owned' }]) {
-        const res = await postJson('meta', c.tok.S, { ...body, game_id: g, player_id: c.A, user_id: c.A });
-        assert.match(String(res.json?.error), /not in game/i, `stranger ${body.type}`);
+        const res = await postAsk(c.tok.S, { ...body, game_id: g, player_id: c.A, user_id: c.A });
+        assert.match(String(res.reason), /not in game/i, `stranger ${body.type}`);
     }
     assert.equal((await mustReadTable(g)).version, v0);
-    assertOk(await postJson('meta', c.tok.B, { type: 'rearrange-players', game_id: g, new_order: [c.B, c.A], player_id: c.A }));
-    assertOk(await postJson('meta', c.tok.A, { type: 'update-name', game_id: g, new_name: 'ours', player_id: c.B }));
+    assertOk(await postAsk(c.tok.B, { type: 'rearrange-players', game_id: g, new_order: [c.B, c.A], player_id: c.A }));
+    assertOk(await postAsk(c.tok.A, { type: 'update-name', game_id: g, new_name: 'ours', player_id: c.B }));
     const t = await mustReadTable(g);
     assert.deepEqual(t.seats.map((s) => s.id), [c.B, c.A]);
     assert.equal(t.title, 'ours');
@@ -159,8 +160,8 @@ test('meta continue: the caller\'s seat must be at the finished table', async ()
     const g = gid('o');
     await seedTable(g, fixture().seats([{ id: c.A, name: 'alice' }, { id: c.B, name: 'bob' }])
         .status(GAME_OVER).eliminated(0).discard(36).seatStatus(0, IDLE).seatStatus(1, IDLE).build());
-    assert.match(String((await postJson('meta', c.tok.S, { type: 'continue', game_id: g, player_id: c.A })).json?.error), /not in game/i);
-    assertOk(await postJson('meta', c.tok.B, { type: 'continue', game_id: g, player_id: c.A }));
+    assert.match(String((await postAsk(c.tok.S, { type: 'continue', game_id: g, player_id: c.A })).reason), /not in game/i);
+    assertOk(await postAsk(c.tok.B, { type: 'continue', game_id: g, player_id: c.A }));
     assert.equal((await mustReadTable(g)).statusColumn, 'waiting');
 });
 
@@ -169,14 +170,14 @@ test('meta rearrange-hand: reorders the caller\'s hand only, whatever seat the b
     const g = await dealt(c);
     const t0 = await mustReadTable(g);
     for (const seat of [0, 1, 99, -1]) {
-        const res = await postJson('meta', c.tok.B, { type: 'rearrange-hand', game_id: g, card_indices: [5, 4, 3, 2, 1, 0], player_id: c.A, user_id: c.A, seat });
+        const res = await postAsk(c.tok.B, { type: 'rearrange-hand', game_id: g, card_indices: [5, 4, 3, 2, 1, 0], player_id: c.A, user_id: c.A, seat });
         assert.equal(res.status, 200, JSON.stringify(res.json));
     }
     const t = await mustReadTable(g);
     assert.deepEqual(t.seats[0].hand, t0.seats[0].hand, 'A\'s hand never moved');
     assert.deepEqual(t.seats[1].hand, t0.seats[1].hand, 'four reversals of B\'s own hand bring it back');
-    const once = await postJson('meta', c.tok.B, { type: 'rearrange-hand', game_id: g, card_indices: [5, 4, 3, 2, 1, 0], seat: 0 });
+    const once = await postAsk(c.tok.B, { type: 'rearrange-hand', game_id: g, card_indices: [5, 4, 3, 2, 1, 0], seat: 0 });
     assert.equal(once.status, 200);
     assert.deepEqual((await mustReadTable(g)).seats[1].hand, [...t0.seats[1].hand].reverse(), 'one reversal lands on B');
-    assert.match(String((await postJson('meta', c.tok.S, { type: 'rearrange-hand', game_id: g, card_indices: [0], player_id: c.A })).json?.error), /not in game/i);
+    assert.match(String((await postAsk(c.tok.S, { type: 'rearrange-hand', game_id: g, card_indices: [0], player_id: c.A })).reason), /not in game/i);
 });

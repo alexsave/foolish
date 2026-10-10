@@ -11,7 +11,7 @@
 import './harness.ts';
 import { applySchema, resetDb, uuid, pgPool } from './harness.ts';
 import { rpcBodyBytes } from './adapters/supabase.ts';
-import { postJson, settle, tokenFor } from './helpers/edge.ts';
+import { settle, tokenFor, postEmpty } from './helpers/edge.ts';
 
 const N = Number(process.env.BENCH_CREATES || 201);
 const say = (line: string) => process.stdout.write(line + '\n');
@@ -26,7 +26,7 @@ const say = (line: string) => process.stdout.write(line + '\n');
     const samples: number[] = [];
     for (let i = 0; i < N; i++) {
         const t0 = performance.now();
-        const res = await postJson('create', tokens[i], {});
+        const res = await postEmpty('create', tokens[i]);
         samples.push(performance.now() - t0);
         if (res.status !== 200) throw new Error(`create ${i}: ${res.status} ${new TextDecoder().decode(res.bytes)}`);
     }

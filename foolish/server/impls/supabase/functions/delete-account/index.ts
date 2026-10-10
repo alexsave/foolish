@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import * as L from "@sdk/ts/gen/game_layout.bots.ts";
 import { corsHeaders, handleCors } from "@shared/adapter/cors.ts";
-import { getAuthenticatedUser } from "@shared/adapter/auth.ts";
+import { authenticate, refusalFor, refusalResponse } from "@shared/adapter/utils.ts";
 import { GameNotFound, runTableOp, TableRefusal } from "@shared/adapter/table_io.ts";
 import { createClient } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -23,6 +23,9 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 //
 // Idempotent-ish: a second call after the user is gone fails auth (token
 // invalid) and returns 401 - which the client treats as "already deleted".
+//
+// The request has no body and neither does the answer: 204 says the account is
+// gone. A failure is a status and a refusal the kernel wrote (c/src/ask.h).
 
 const admin = createClient(
     Deno.env.get('SUPABASE_URL') || '',
@@ -37,20 +40,16 @@ serve(async (req: Request): Promise<Response> => {
     if (cors) return cors;
 
     if (req.method !== 'POST') {
-        return new Response(JSON.stringify({ error: 'method not allowed' }), {
-            status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
+        return refusalResponse(L.ASK_WHY_METHOD, 405);
     }
 
     let userId: string;
     try {
-        const user = await getAuthenticatedUser(req);
+        const user = await authenticate(req);
         userId = user.id;
-    } catch (e) {
+    } catch {
         // No or invalid token: treat as already deleted / unauthenticated.
-        return new Response(JSON.stringify({ error: (e as Error).message }), {
-            status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
+        return refusalResponse(L.ASK_WHY_AUTH, 401);
     }
 
     const reqId = `delete-${crypto.randomUUID().split('-')[0]}`;
@@ -86,13 +85,12 @@ serve(async (req: Request): Promise<Response> => {
         const { error: delErr } = await admin.auth.admin.deleteUser(userId);
         if (delErr) throw new Error(`auth delete failed: ${delErr.message}`);
 
-        return new Response(JSON.stringify({ status: 'deleted' }), {
-            status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
+        return new Response(null, { status: 204, headers: corsHeaders });
     } catch (e) {
         console.error(`[delete-account] failed for ${userId}: ${(e as Error).message}`);
-        return new Response(JSON.stringify({ error: (e as Error).message }), {
-            status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
+        // Whatever stopped the delete, the account is still there: a 500, with the
+        // kernel's code when it was a table that refused the redaction.
+        const refusal = await refusalFor(e);
+        return new Response(refusal.body, { status: 500, headers: refusal.headers });
     }
 });

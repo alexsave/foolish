@@ -43,10 +43,10 @@ export const RealtimeAnimationFeed = () => {
         return holdPrivateChannel(`gu-${url_game_id}-${user_id}`, {
             bind: (channel) => {
                 channel.on('broadcast', { event: 'animation_events' }, (payload) => {
-                    // Attach the game id this channel is subscribed for: the
-                    // packed envelope ({t:'as3', s, v, b}) carries no JS game
-                    // state, so the consumer needs it to pick the decode roster.
-                    animationFeed.publish({ ...payload.payload, game_id: url_game_id });
+                    // The payload is { b }: the kernel's cast, base64. Attach
+                    // the game id this channel is subscribed for, so the
+                    // consumer can pick the identity to decode it against.
+                    animationFeed.publish({ b: payload.payload?.b, game_id: url_game_id });
                 });
             },
             onJoined: (missed) => {

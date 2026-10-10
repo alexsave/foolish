@@ -45,7 +45,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { applySchema, pgPool, uuid } from './harness.ts';
-import { postJson, settle } from './helpers/edge.ts';
+import { settle, postEmpty } from './helpers/edge.ts';
 import { fixture, GAME_OVER, PLAYING } from './helpers/table_fixture.ts';
 import { seedTable } from './helpers/table_db.ts';
 import { runMeta, seedLobby } from './helpers/table_server.ts';
@@ -65,9 +65,11 @@ const dispatched: string[] = [];
 const passThrough = globalThis.fetch;
 globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : String((input as { url?: string })?.url ?? '');
-    if (url.endsWith('/functions/v1/bot-heartbeat')) {
-        dispatched.push(JSON.parse(String(init?.body)).game_id);
-        return new Response('{}', { status: 200 });
+    // A drive names its game in the URL and carries no body (bot-heartbeat/index.ts).
+    if (url.includes('/functions/v1/bot-heartbeat?')) {
+        assert.equal(init?.body, undefined, 'a drive dispatch has no body');
+        dispatched.push(new URL(url).searchParams.get('game') ?? '');
+        return new Response(null, { status: 202 });
     }
     return passThrough(input as RequestInfo, init);
 }) as typeof fetch;
@@ -97,8 +99,9 @@ async function tick(): Promise<number> {
 /** The SCAN, through the real bot-heartbeat entry point. Returns what it dispatched. */
 async function scan(): Promise<string[]> {
     dispatched.length = 0;
-    const res = await postJson('bot-heartbeat', null, {});
-    assert.equal(res.status, 200, JSON.stringify(res.json));
+    const res = await postEmpty('bot-heartbeat', null);
+    assert.equal(res.status, 204, 'a scan answers with a status and no body');
+    assert.equal(res.bytes.length, 0);
     return [...dispatched];
 }
 

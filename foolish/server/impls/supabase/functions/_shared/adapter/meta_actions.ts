@@ -1,106 +1,68 @@
-// Lobby and "game meta" edits (docs/C_GAME_SHAPE_MIGRATION.md 2.4): the `meta`
-// endpoint's body.type, dispatched to one C Table operation each.
+// Lobby and "game meta" requests (docs/C_GAME_SHAPE_MIGRATION.md 2.4): the `meta`
+// endpoint's body is an ask (c/src/ask.h), read and run by the kernel.
 //
-// The JSON request body stays (it is HTTP input, and shipped iOS builds send
-// it). Every edit's rule - who may do it (Q9), whether the table is in its
-// lobby, a full table, a duplicate join, a title, a permutation, the rules,
-// whether it deals - is the kernel's. What is left here is I/O: the `bots` read add-bot
-// needs, the crypto deal seed an edit that may deal is handed (table_io), and
-// the CAS loop.
+// Nothing here knows what an ask says. Its layout is ask_decode's, which edit a
+// kind means is table_ask's, and every edit's rule - who may do it (Q9),
+// whether the table is in its lobby, a full table, a duplicate join, a title, a
+// permutation, the rules, whether it deals - is the edit's own. What is left
+// here is I/O: the `bots` read add-bot needs, the crypto deal seed an edit that
+// may deal is handed (table_io), and the CAS loop.
 
 import * as L from '@sdk/ts/gen/game_layout.bots.ts';
-import { runTableOp, type TableOutcome } from './table_io.ts';
-import { supabaseClient, type HandlerResult, type RequestContext } from './utils.ts';
+import { serverTable, type TableAsk } from '@sdk/ts/table/server_table.ts';
+import { runTableOp } from './table_io.ts';
+import { MalformedRequest, NoBotAvailable, supabaseClient, type HandlerResult, type RequestContext } from './utils.ts';
 
 interface BotRow { id: string; nickname: string; strategy_key: string }
+type BotsRead = PromiseLike<{ data: BotRow[] | null; error: unknown }>;
 
-/** add-bot only: the bots read, which does not depend on the game, so it can start before the game loads. */
-export function prefetchBots(body: { type?: string }): PromiseLike<{ data: BotRow[] | null; error: unknown }> | undefined {
-    return body?.type === 'add-bot'
-        ? supabaseClient.from('bots').select('id, nickname, strategy_key') as unknown as PromiseLike<{ data: BotRow[] | null; error: unknown }>
-        : undefined;
+/** The bots read add-bot needs. */
+const readBots = (): BotsRead =>
+    supabaseClient.from('bots').select('id, nickname, strategy_key') as unknown as BotsRead;
+
+/** What a request body asks, as the kernel read it. Throws MalformedRequest for a body that is not an ask. */
+export async function readAsk(body: Uint8Array): Promise<TableAsk> {
+    const ask = (await serverTable()).askDecode(body);
+    if (typeof ask === 'number') throw new MalformedRequest('the body is not an ask');
+    return ask;
 }
 
-const str = (v: unknown): string => (typeof v === 'string' ? v : '');
-
 /** One meta request. Shared by the `meta` edge function and tests. */
-export async function handleMetaAction(ctx: RequestContext, botsPrefetch = prefetchBots(ctx.body)): Promise<HandlerResult> {
+export async function handleMetaAction(ctx: RequestContext): Promise<HandlerResult> {
     const { user, userName, body, reqId } = ctx;
-    const gameId = str(body?.game_id);
-    if (!gameId) throw new Error('game_id is required');
+    const ask = await readAsk(body);
+    const gameId = ask.gid;
     const actor = user.id;
+    const addBot = ask.kind === L.ASK_ADD_BOT;
 
-    const op = (run: Parameters<typeof runTableOp>[0]['run'], noCommit?: (rc: number) => boolean): Promise<TableOutcome> =>
-        runTableOp({ gameId, reqId, viewerId: actor, run, noCommit });
-    const moot = (rc: number) => rc === L.TABLE_MOOT;
-
-    let out: TableOutcome;
-    switch (body?.type) {
-        case 'start':
-            out = await op(({ table, dealSeed }) => table.ready(actor, dealSeed), moot);
-            break;
-        case 'join':
-            out = await op(({ table }) => table.join(actor, userName ?? ''), moot);
-            break;
-        case 'exit': {
-            // An id that is present must be an id: a malformed one is a malformed
-            // request, never "no target given" (which would make the caller leave).
-            const given = (v: unknown) => v !== undefined && v !== null;
-            const malformed = (given(body.bot_id) && typeof body.bot_id !== 'string')
-                || (given(body.player_id) && typeof body.player_id !== 'string');
-            const botId = str(body.bot_id);
-            const target = str(body.player_id) || actor;
-            out = await op(({ table }) => (malformed ? L.TABLE_E_WIRE
-                : botId ? table.removeBot(actor, botId) : table.leave(actor, target)), moot);
-            break;
-        }
-        case 'add-bot': {
-            const { data: bots, error } = await (botsPrefetch ?? prefetchBots({ type: 'add-bot' })!);
-            if (error || !bots) throw new Error('Failed to fetch bots');
-            const wanted = str(body.bot_id);
-            out = await op(({ table, dealSeed }) => {
-                // Which bot row to seat is the request's choice among the rows
-                // (a named one, or any not already seated); whether it may sit
-                // is the kernel's.
-                const seated = new Set(table.seats().map((s) => s.id));
-                const pool = wanted ? bots.filter((b) => b.id === wanted) : bots.filter((b) => !seated.has(b.id));
-                const bot = pool[Math.floor(Math.random() * pool.length)];
-                if (!bot) throw new Error(wanted ? `Bot ${wanted} is not available to add to this game` : 'No available bots to add to the game');
-                return table.addBot(actor, bot.id, bot.nickname, bot.strategy_key, dealSeed);
-            }, moot);
-            break;
-        }
-        case 'continue':
-            out = await op(({ table }) => table.continueGame(actor), moot);
-            break;
-        case 'rearrange-hand': {
-            const indices = body.card_indices;
-            out = await op(({ table }) => (Array.isArray(indices)
-                ? table.rearrangeHand(actor, indices as number[])
-                : L.TABLE_E_WIRE), moot);
-            break;
-        }
-        case 'rearrange-players': {
-            const order = body.new_order;
-            out = await op(({ table }) => (Array.isArray(order) && order.every((id: unknown) => typeof id === 'string')
-                ? table.reseat(actor, order as string[])
-                : L.TABLE_E_WIRE), moot);
-            break;
-        }
-        case 'update-name':
-            out = await op(({ table }) => table.retitle(actor, str(body.new_name)), moot);
-            break;
-        case 'set-rules': {
-            // { passing: true } the classic passing game, { passing: false }
-            // podkidnoy. Anything else is a malformed request, never a default.
-            const passing = body.passing;
-            out = await op(({ table }) => (typeof passing === 'boolean'
-                ? table.setRules(actor, passing)
-                : L.TABLE_E_WIRE), moot);
-            break;
-        }
-        default:
-            throw new Error(`unknown meta action type: ${body?.type}`);
+    let bots: BotRow[] = [];
+    if (addBot) {
+        const { data, error } = await readBots();
+        if (error || !data) throw new Error('Failed to fetch bots');
+        bots = data;
     }
-    return { body: out.envelope, runBots: out.committed && out.needsBots ? gameId : null };
+
+    const out = await runTableOp({
+        gameId, reqId, viewerId: actor,
+        noCommit: (rc) => rc === L.TABLE_MOOT,
+        run: ({ table, dealSeed }) => {
+            if (!addBot) return table.ask(body, actor, userName ?? '', dealSeed);
+            // Which bot row to seat is the request's choice among the rows (the
+            // one it names, or any not already seated); whether it may sit is
+            // the kernel's.
+            const seated = new Set(table.seats().map((s) => s.id));
+            const pool = ask.bot ? bots.filter((b) => b.id === ask.bot) : bots.filter((b) => !seated.has(b.id));
+            const bot = pool[Math.floor(Math.random() * pool.length)];
+            if (!bot) {
+                throw new NoBotAvailable(ask.bot
+                    ? `Bot ${ask.bot} is not available to add to this game`
+                    : 'No available bots to add to the game');
+            }
+            return table.ask(body, actor, userName ?? '', dealSeed, { id: bot.id, nickname: bot.nickname, brain: bot.strategy_key });
+        },
+    });
+    // A bump commits nothing and wakes the bots whenever the table has bot work;
+    // an edit wakes them when it committed a table that has (the deal).
+    const wake = ask.kind === L.ASK_BUMP ? out.needsBots : out.committed && out.needsBots;
+    return { body: out.envelope, runBots: wake ? gameId : null };
 }

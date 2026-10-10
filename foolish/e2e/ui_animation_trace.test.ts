@@ -55,6 +55,7 @@ import { encodeAction } from '../sdk/ts/wire/awire.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import { clientTable } from '../sdk/ts/table/client_table.ts';
 import * as V from '../sdk/ts/gen/view_layout.bots.ts';
+import { askKindName } from './helpers/ask.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; console.debug = () => {}; }
 // THE OVERLAY'S OWN WORD THAT A PLACE WAS MISSING. The stock and the trump's
@@ -163,7 +164,7 @@ class Server {
         if (p.nEvents > 0 || p.goodsChanged) {
             for (let s = 0; s < seats.length; s++) {
                 if (seats[s].brain) continue;
-                const b = t.push(this.gid, s);
+                const b = t.cast(this.gid, s, this.version + 1);
                 assert.ok(b instanceof Uint8Array, `push: ${b}`);
                 pushes.push([seats[s].id, b]);
             }
@@ -242,9 +243,15 @@ const supabaseMock = {
     functions: {
         invoke: (name: string, opts: { body?: unknown }) => {
             const body = opts?.body;
-            // The bot bump rides the action endpoint as JSON: nothing to answer.
-            if (name === 'action' && !(body instanceof Blob)) return Promise.resolve({ data: null, error: null });
-            return new Promise((resolve) => { pending.push({ kind: name === 'action' ? 'action' : 'meta', body, resolve }); });
+            const hold = () => new Promise((resolve) => { pending.push({ kind: name === 'action' ? 'action' : 'meta', body, resolve }); });
+            // The bot bump is an ask to `meta` (ASK_BUMP): nothing to answer.
+            // Which ask a body holds is the kernel's to say, and a Blob reads
+            // asynchronously, so a meta request is held one turn later than a move.
+            if (name === 'meta' && body instanceof Blob) {
+                return body.arrayBuffer().then((buf) => (askKindName(new Uint8Array(buf)) === 'bump'
+                    ? { data: null, error: null } : hold()));
+            }
+            return hold();
         },
     },
     auth: {
@@ -558,7 +565,7 @@ async function deliver(stage: Stage, label: string, push?: Push): Promise<void> 
     assert.ok(ch, `${label}: the page joined its gu- channel`);
     const handler = ch.handlers.find((x) => x.event === 'animation_events');
     assert.ok(handler, `${label}: the page listens for animation events`);
-    await stage.step(label, () => handler.cb({ payload: { t: 'as3', s: p.seq, v: p.version, b: b64(p.bytes) } }));
+    await stage.step(label, () => handler.cb({ payload: { b: b64(p.bytes) } }));
 }
 
 const traceText = (frames: Frame[]): string =>

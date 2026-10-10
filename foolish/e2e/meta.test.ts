@@ -18,6 +18,7 @@ import { fixture, fixtureTable, GAME_OVER, IN, OUT } from './helpers/table_fixtu
 import { seedTable } from './helpers/table_db.ts';
 import { checkCardConservation, mustReadTable, readTable, residentBoard } from './helpers/table_play.ts';
 import { playToEnd, runMeta, seedLobby } from './helpers/table_server.ts';
+import { askBody } from './helpers/ask.ts';
 import { suiteRng } from './helpers/rng.ts';
 
 // Only one test here draws: the rematch scenario plays a dealt game out with
@@ -39,11 +40,16 @@ export function registerMetaValidation(): void {
         assert.ok((await checkCardConservation(gameId)).ok, 'cards conserved on deal');
     });
 
-    test('meta: unknown type is rejected', async () => {
+    test('meta: a body that is not an ask is rejected', async () => {
         const gameId = `m${uuid().slice(0, 5)}`;
         const h1 = uuid();
         await seedLobby(gameId, [human(h1, 'H1')]);
-        await assert.rejects(runMeta(gameId, h1, { type: 'nonsense' }), /unknown meta action/i);
+        // A well-formed join, with its kind byte (the second) turned into one no ask has.
+        const body = askBody({ type: 'join', game_id: gameId });
+        body[1] = 0xee;
+        await assert.rejects(runMeta(gameId, h1, body), /not an ask/i);
+        // And what a client built before the requests left JSON would send.
+        await assert.rejects(runMeta(gameId, h1, new TextEncoder().encode(JSON.stringify({ type: 'join', game_id: gameId }))), /not an ask/i);
     });
 }
 

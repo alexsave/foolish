@@ -28,6 +28,7 @@ import { __clearGameCache } from '../server/impls/supabase/functions/_shared/ada
 import { ClientTable, type ClientExports } from '../sdk/ts/table/client_table.ts';
 import { __clientKernelExports } from '../sdk/ts/wasm/bots.ts';
 import { base64ToBytes } from '../sdk/ts/wire/bytes.ts';
+import { castParts } from './helpers/cast.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; }
 
@@ -37,12 +38,9 @@ const settle = () => new Promise((r) => setImmediate(() => setImmediate(r)));
 const pushesOn = (from: number, topic: string) =>
     broadcastLog.slice(from).filter((b) => b.event === 'animation_events' && b.channel === topic);
 
-/** The client's reading of a realtime payload, as AnimationContext.tsx reads it: the as3 flag from `t`, the kept identity. */
+/** The client's reading of a realtime payload, as AnimationContext.tsx reads it: the cast whole, against the kept identity. */
 function clientRead(client: ClientTable, gameId: string, payload: Record<string, unknown>) {
-    assert.deepEqual(Object.keys(payload).sort(), ['b', 's', 't', 'v'], 'the payload is exactly {t,s,v,b}');
-    return client.readPush(base64ToBytes(payload.b as string), {
-        as3: payload.t === 'as3', gameId, version: payload.v as number, identity: 'kept',
-    });
+    return client.readCast(castParts(payload).cast, { gameId, identity: 'kept' });
 }
 
 if (!process.env.VALIDATION_ONLY) {
@@ -75,8 +73,7 @@ test('a lobby join push is as3 and seats the joiner from its own bytes over a st
     const joinPushes = pushesOn(from, hostTopic);
     assert.equal(joinPushes.length, 1, 'the join pushes once to the host');
     const payload = joinPushes[0].payload as Record<string, unknown>;
-    assert.equal(payload.t, 'as3', 'the push is labelled as3');
-    const bytes = base64ToBytes(payload.b as string);
+    const bytes = castParts(payload).push;
 
     // Held to the product's reading: no refetch, the joiner named by the push.
     const read = clientRead(client, gameId, payload);
@@ -84,7 +81,7 @@ test('a lobby join push is as3 and seats the joiner from its own bytes over a st
     assert.deepEqual(read!.final.seats.map((s) => [s.id, s.name]), [[host, 'Host'], [joiner, 'Joiner']],
         'the push seats the joiner under their name, over the stale kept roster');
     assert.equal(read!.final.mySeat, 0, 'written for the host');
-    assert.equal(read!.final.version, payload.v, 'at the pushed version');
+    assert.equal(read!.final.version, castParts(payload).version, 'at the pushed version');
 
     // The roster is the push's own, not the kept one: without any identity the push still names both seats.
     const alone = client.readPush(bytes, { as3: true, identity: 'none' });

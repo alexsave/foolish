@@ -1,12 +1,20 @@
 // The Supabase host's shared shell: the service-role client, the batched
 // realtime broadcast, the post-response bot loop, and wrap400 (CORS, auth, the
-// JSON body, the error response). Everything here is I/O. The game itself is
+// request's bytes, the refusal). Everything here is I/O. The game itself is
 // the C Table's, reached through table_io.ts.
+//
+// NO JSON OF OURS CROSSES HERE. A request body is bytes the kernel reads (an
+// ask, ask.h; a move, table.h), an answer is bytes the kernel wrote (an
+// envelope, an action response) and so is a refusal (ask.h AskRefusal). The one
+// JSON left in this file is the envelope Realtime's broadcast endpoint takes,
+// which is Supabase's format and not ours.
 import { corsHeaders, handleCors } from './cors.ts';
 import { createClient } from 'jsr:@supabase/supabase-js';
 import type { User } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+import * as L from '@sdk/ts/gen/game_layout.bots.ts';
+import { serverTable } from '@sdk/ts/table/server_table.ts';
 import { getAuthenticatedUser } from './auth.ts';
 
 // A lazy import that resolves ONCE. The bot loop's module graph (the bot drive)
@@ -34,8 +42,8 @@ export const supabaseClient = createClient(
 const REALTIME_BROADCAST_URL = `${Deno.env.get('SUPABASE_URL') || ''}/realtime/v1/api/broadcast`;
 const REALTIME_BROADCAST_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 
-// deno-lint-ignore no-explicit-any
-export interface BroadcastMessage { topic: string; event: string; payload: any; }
+/** One realtime message: `cast` is the kernel's bytes (evwire.h, the cast: the version and the as3 push) as base64. */
+export interface BroadcastMessage { topic: string; event: string; cast: string; }
 
 export const broadcastMessages = async (messages: BroadcastMessage[], reqId: string = 'unknown'): Promise<void> => {
     if (messages.length === 0) return;
@@ -53,8 +61,14 @@ export const broadcastMessages = async (messages: BroadcastMessage[], reqId: str
                     Authorization: `Bearer ${REALTIME_BROADCAST_KEY}`,
                     'Content-Type': 'application/json',
                 },
+                // THE ONE JSON IN THE SERVER, and it is Supabase's: the broadcast
+                // endpoint accepts nothing else, and a message's `payload` must
+                // be an object. Ours is the smallest one there is - a single
+                // key holding the cast, base64. What the message means (its
+                // format, its version) is inside those bytes, which the client
+                // reads through the kernel (client_table.h client_cast_open).
                 body: JSON.stringify({
-                    messages: messages.map(m => ({ topic: m.topic, event: m.event, payload: m.payload, private: true })),
+                    messages: messages.map(m => ({ topic: m.topic, event: m.event, payload: { b: m.cast }, private: true })),
                 }),
             });
             // Realtime returns 202 Accepted on success.
@@ -86,29 +100,105 @@ export const scheduleBotLoop = (game_id: string, reqId: string): void => {
     }
 };
 
-/** What wrap400 hands a JSON endpoint's handler. */
+// ---- refusals ----------------------------------------------------------------
+
+/** A request the endpoint cannot read: not bytes, or bytes the kernel refuses. */
+export class MalformedRequest extends Error {
+    constructor(message = 'malformed request') { super(message); this.name = 'MalformedRequest'; }
+}
+
+/** add-bot: no bot row is free to seat, or the one asked for is not. */
+export class NoBotAvailable extends Error {
+    constructor(message: string) { super(message); this.name = 'NoBotAvailable'; }
+}
+
+/** The caller did not authenticate. */
+export class Unauthenticated extends Error {
+    constructor(message: string) { super(message); this.name = 'Unauthenticated'; }
+}
+
+/** getAuthenticatedUser, with its failure typed so the refusal can say ASK_WHY_AUTH. */
+export async function authenticate(req: Request): Promise<User> {
+    try {
+        return await getAuthenticatedUser(req);
+    } catch (e) {
+        throw new Unauthenticated((e as Error).message);
+    }
+}
+
+/** An error carrying the kernel's own refusal (table_io.ts TableRefusal), by shape so this module need not import that one. */
+const kernelCode = (e: unknown): { code: number; detail: number } | null => {
+    const r = e as { name?: string; code?: unknown; detail?: unknown };
+    return r?.name === 'TableRefusal' && typeof r.code === 'number'
+        ? { code: r.code, detail: typeof r.detail === 'number' ? r.detail : 0 } : null;
+};
+
+/**
+ * A reply that has no answer: the HTTP status, and a body the kernel wrote
+ * (ask.h AskRefusal: why, and the kernel's codes behind it). There is no prose
+ * in it. No client ever showed the old `{ error: "<sentence>" }` to anybody; the
+ * sentence a person reads is the log line the caller writes.
+ */
+export async function refusalResponse(why: number, status: number, code = 0, detail = 0): Promise<Response> {
+    let body: Uint8Array;
+    try {
+        body = (await serverTable()).refusal(why, code, detail);
+    } catch (e) {
+        // The kernel itself did not load: the status still says it failed.
+        console.error('[REFUSAL] the kernel could not write the refusal:', e);
+        body = new Uint8Array(0);
+    }
+    return new Response(body as unknown as BodyInit, {
+        status, headers: { ...corsHeaders, 'Content-Type': 'application/octet-stream' },
+    });
+}
+
+/** The refusal for whatever a handler threw: a 400 for what the caller got wrong or the kernel refused, a 500 for what the server broke. */
+export function refusalFor(e: unknown): Promise<Response> {
+    const kernel = kernelCode(e);
+    if (kernel) return refusalResponse(L.ASK_WHY_REFUSED, 400, kernel.code, kernel.detail);
+    const name = (e as { name?: string })?.name;
+    if (name === 'Unauthenticated') return refusalResponse(L.ASK_WHY_AUTH, 400);
+    if (name === 'MalformedRequest' || name === 'MalformedActionRequest') return refusalResponse(L.ASK_WHY_MALFORMED, 400);
+    if (name === 'GameNotFound') return refusalResponse(L.ASK_WHY_NOT_FOUND, 400);
+    if (name === 'NoBotAvailable') return refusalResponse(L.ASK_WHY_NO_BOT, 400);
+    return refusalResponse(L.ASK_WHY_INTERNAL, 500);
+}
+
+const OCTETS = 'application/octet-stream';
+
+/**
+ * The request's body as bytes. A body that does not say it is bytes is refused
+ * before it is read: that is every client built before the requests left JSON
+ * (they send application/json), which get a clean 415 instead of having their
+ * JSON handed to the kernel as a malformed ask.
+ */
+export async function requestBytes(req: Request): Promise<Uint8Array | Response> {
+    if (!(req.headers.get('content-type') || '').includes(OCTETS)) {
+        return refusalResponse(L.ASK_WHY_MALFORMED, 415);
+    }
+    return new Uint8Array(await req.arrayBuffer());
+}
+
+// ---- the request shell -----------------------------------------------------------
+
+/** What wrap400 hands an endpoint's handler. */
 export interface RequestContext {
     user: User;
     /** The caller's display name (user_metadata.username). */
     userName: string;
-    // deno-lint-ignore no-explicit-any
-    body: any;
+    /** The request body: bytes the kernel reads (an ask, or an action request). */
+    body: Uint8Array;
     reqId: string;
 }
 
-/** A handler's answer: the response body (a packed envelope) and the game whose bots to wake, if any. */
+/** A handler's answer: the response body (bytes the kernel wrote) and the game whose bots to wake, if any. */
 export interface HandlerResult {
     body: Uint8Array;
     runBots?: string | null;
 }
 
-export const wrap400 = (
-    execute: (ctx: RequestContext) => Promise<HandlerResult>,
-    // Packed-request escape hatch: when set and the request body is
-    // application/octet-stream, the whole request is delegated here after CORS
-    // and auth (the `action` function's binary path).
-    binary: ((req: Request, user: User, reqId: string) => Promise<Response>) | null = null,
-) => {
+export const wrap400 = (execute: (ctx: RequestContext) => Promise<HandlerResult>) => {
     const handler = async (req: Request): Promise<Response> => {
         const reqId = crypto.randomUUID().split('-')[0];
         const started = Date.now();
@@ -116,29 +206,22 @@ export const wrap400 = (
             const corsResponse = handleCors(req);
             if (corsResponse) return corsResponse;
 
-            const user: User = await getAuthenticatedUser(req);
+            const user: User = await authenticate(req);
 
-            if (binary && (req.headers.get('content-type') || '').includes('application/octet-stream')) {
-                return await binary(req, user, reqId);
-            }
-
-            let body = {};
-            try { body = await req.json(); } catch { /* an empty or non-JSON body reads as {} */ }
+            const body = await requestBytes(req);
+            if (body instanceof Response) return body;
 
             const result = await execute({ user, userName: user.user_metadata.username, body, reqId });
             if (result.runBots) scheduleBotLoop(result.runBots, reqId);
 
             console.log(`[${reqId}][WRAP400] ${req.method} ${new URL(req.url).pathname} in ${Date.now() - started}ms`);
             return new Response(result.body as unknown as BodyInit, {
-                headers: { ...corsHeaders, 'Content-Type': 'application/octet-stream' },
+                headers: { ...corsHeaders, 'Content-Type': OCTETS },
             });
         } catch (e: unknown) {
             const err = e as Error;
             console.error(`[${reqId}][WRAP400] error after ${Date.now() - started}ms:`, { name: err.name, message: err.message, stack: err.stack });
-            return new Response(
-                JSON.stringify({ error: err.message }),
-                { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-            );
+            return refusalFor(e);
         }
     };
 
