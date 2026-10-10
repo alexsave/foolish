@@ -58,3 +58,13 @@
 --count AnimHandAsk.cards=n_cards --count AnimHandAsk.order=n_order --count AnimHandLaid.cards=n
 --root AnimFinishAsk --root AnimFinish --writer AnimFinishAsk --snapshot AnimFinishAsk --snapshot AnimFinish
 --count AnimFinishAsk.elimination=n_elim --count AnimFinish.rows=n
+# The move a client sends (client_table.h ClientMove, awire.h): it goes in
+# through its writer and the kernel writes the action wire, so no host packs a
+# frame or a card byte. AWIRE_* are the kinds and the frame's card capacity.
+--root ClientMove --snapshot ClientMove --writer ClientMove
+--count ClientMove.cards=n_cards --count ClientMove.attack_cards=n_attacks
+--header awire.h --const AWIRE_
+# The `action` endpoint's answer as a client reads it (table.h TableResponse,
+# table_response_decode), with the statuses and the one policy code it carries.
+--header table.h --root TableResponse --snapshot TableResponse
+--const TABLE_STATUS_ --const TABLE_REJECT_STALE_ROUND

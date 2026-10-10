@@ -57,7 +57,8 @@
 
 // The response code for a stale-round refusal. It sits above the kernel's
 // ENGINE_REJECT_* space so a client can tell a rules rejection from a server
-// policy one by the number alone (sdk/ts/wire/awire.ts REJECT_STALE_ROUND).
+// policy one by the number alone (the web reads this very constant, generated,
+// as sdk/ts/wire/awire.ts REJECT_STALE_ROUND).
 #define TABLE_REJECT_STALE_ROUND 100
 
 // The durable state blob: [STATE_BLOB_FORMAT][flags][state_put], then the
@@ -111,6 +112,32 @@ int table_request_decode(const uint8_t *p, int len, TableRequest *out);
 // The response body for a table_act result: TABLE_RESP_BYTES, or TABLE_E_CAP.
 // A refusal of the request as a whole (a negative result) is not a response.
 int table_action_response(int result, int reject, uint32_t version, uint8_t *out, int cap);
+
+// THE CLIENT'S HALVES of the same two bodies, beside the server's so each format
+// has one owner: a client writes the request table_request_decode reads, and
+// reads the response table_action_response writes. A browser reaches them
+// through its client slot's exports (wasm_client_action_request,
+// wasm_client_action_response); nothing else of the table is linked there.
+
+// A request body, made IN PLACE: `buf` holds [game id][action wire] back to
+// back, and is rewritten as the request around them - v2 with `intent` when
+// `has_intent`, else v1. In place because the wire is opaque and as long as its
+// sender made it (table_act judges it, not this), so there is no bound to size a
+// second buffer by. The body's length, TABLE_E_WIRE for a game id a length byte
+// cannot say, or TABLE_E_CAP.
+int table_request_encode(uint8_t *buf, int cap, int gid_len, int wire_len, bool has_intent, uint32_t intent);
+
+// What a response says. `reject_code` is the ENGINE_REJECT_* or
+// TABLE_REJECT_STALE_ROUND behind a TABLE_STATUS_REJECTED, else 0.
+typedef struct {
+    uint8_t  status;       // TABLE_STATUS_*
+    uint8_t  reject_code;
+    uint32_t version;      // the table's committed version when the server answered
+} TableResponse;
+
+// Reads a response body; 0, or TABLE_E_WIRE for one that is short or not this
+// format. Bytes past TABLE_RESP_BYTES are not read: a later server may say more.
+int table_response_decode(const uint8_t *p, int len, TableResponse *out);
 
 // ---- the table ---------------------------------------------------------------
 

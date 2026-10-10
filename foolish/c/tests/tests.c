@@ -10106,6 +10106,99 @@ static void test_table_request_and_response(void) {
     CHECK(table_action_response(TABLE_APPLIED, 0, 9, r, 6) == TABLE_E_CAP, "a short buffer is refused");
 }
 
+// Test: the client's halves of the action bodies (table_request_encode,
+// table_response_decode) against bytes captured from the hand-written
+// TypeScript that wrote and read them until it was deleted
+// (sdk/ts/wire/awire.ts encodeActionRequest, encodeActionResponse,
+// decodeActionResponse), and against the server's halves beside them.
+static void test_table_request_encode_and_response_decode(void) {
+    // A cover of two: 01 02 28 17 07 16.
+    static const uint8_t wire[] = { 0x01, 0x02, 0x28, 0x17, 0x07, 0x16 };
+    static const struct { const char *gid; int has_intent; uint32_t intent; int head; uint8_t want[16]; } req[] = {
+        { "a", 0, 0, 3, { 0x01, 0x01, 0x61 } },
+        { "a", 1, 0, 7, { 0x02, 0x01, 0x61, 0x00, 0x00, 0x00, 0x00 } },
+        { "a", 1, 5, 7, { 0x02, 0x01, 0x61, 0x05, 0x00, 0x00, 0x00 } },
+        { "a", 1, 0x01020304u, 7, { 0x02, 0x01, 0x61, 0x04, 0x03, 0x02, 0x01 } },
+        { "a", 1, 0x7fffffffu, 7, { 0x02, 0x01, 0x61, 0xff, 0xff, 0xff, 0x7f } },
+        { "a", 1, 0xffffffffu, 7, { 0x02, 0x01, 0x61, 0xff, 0xff, 0xff, 0xff } },
+        { "d79ae3", 0, 0, 8, { 0x01, 0x06, 0x64, 0x37, 0x39, 0x61, 0x65, 0x33 } },
+        { "d79ae3", 1, 0x01020304u, 12, { 0x02, 0x06, 0x64, 0x37, 0x39, 0x61, 0x65, 0x33, 0x04, 0x03, 0x02, 0x01 } },
+        { "\xc3\xa9\xe2\x98\x83", 0, 0, 7, { 0x01, 0x05, 0xc3, 0xa9, 0xe2, 0x98, 0x83 } },
+        { "\xc3\xa9\xe2\x98\x83", 1, 5, 11, { 0x02, 0x05, 0xc3, 0xa9, 0xe2, 0x98, 0x83, 0x05, 0x00, 0x00, 0x00 } },
+    };
+    uint8_t buf[600];
+    for (size_t i = 0; i < sizeof(req) / sizeof(req[0]); i++) {
+        const int gl = (int)strlen(req[i].gid);
+        memcpy(buf, req[i].gid, (size_t)gl);
+        memcpy(buf + gl, wire, sizeof(wire));
+        const int n = table_request_encode(buf, sizeof(buf), gl, sizeof(wire), req[i].has_intent, req[i].intent);
+        CHECK(n == req[i].head + (int)sizeof(wire) && memcmp(buf, req[i].want, (size_t)req[i].head) == 0
+              && memcmp(buf + req[i].head, wire, sizeof(wire)) == 0, "a request is the bytes the TypeScript encoder wrote");
+        TableRequest q;
+        CHECK(table_request_decode(buf, n, &q) == 0 && q.gid_len == gl && memcmp(buf + q.gid_off, req[i].gid, (size_t)gl) == 0
+              && q.wire_len == (int)sizeof(wire) && memcmp(buf + q.wire_off, wire, sizeof(wire)) == 0
+              && q.has_intent == (req[i].has_intent != 0) && q.intent == (req[i].has_intent ? req[i].intent : 0u),
+              "and the server reads back the game id, the intent and the wire");
+    }
+    // The longest game id a length byte says, both formats: 01 ff / 02 ff, 255 x 'x'.
+    for (int has_intent = 0; has_intent <= 1; has_intent++) {
+        memset(buf, 'x', 255);
+        memcpy(buf + 255, wire, sizeof(wire));
+        const int n = table_request_encode(buf, sizeof(buf), 255, sizeof(wire), has_intent, 0x01020304u);
+        int same = n == 257 + 4 * has_intent + (int)sizeof(wire) && buf[0] == 1 + has_intent && buf[1] == 0xff;
+        for (int i = 0; i < 255 && same; i++) same = buf[2 + i] == 'x';
+        if (has_intent) same = same && buf[257] == 4 && buf[258] == 3 && buf[259] == 2 && buf[260] == 1;
+        CHECK(same && memcmp(buf + n - (int)sizeof(wire), wire, sizeof(wire)) == 0, "a 255-byte game id: its length byte, the id, the wire after it");
+    }
+    memset(buf, 'x', sizeof(buf));
+    CHECK(table_request_encode(buf, sizeof(buf), 256, 2, false, 0) == TABLE_E_WIRE, "a game id a length byte cannot say is refused");
+    CHECK(table_request_encode(buf, sizeof(buf), -1, 2, false, 0) == TABLE_E_WIRE, "a negative length is refused");
+    CHECK(table_request_encode(buf, 10, 3, 6, false, 0) == TABLE_E_CAP, "a v1 body one byte past the buffer is TABLE_E_CAP");
+    CHECK(table_request_encode(buf, 11, 3, 6, false, 0) == 11, "and one that exactly fits is written");
+    CHECK(table_request_encode(buf, 14, 3, 6, true, 0) == TABLE_E_CAP, "a v2 body needs its four intent bytes too");
+    // The wire is opaque here: whatever its sender made is framed, for table_act to judge.
+    buf[0] = 'g'; buf[1] = 0xee;
+    CHECK(table_request_encode(buf, sizeof(buf), 1, 1, false, 0) == 4 && buf[0] == 1 && buf[1] == 1 && buf[2] == 'g' && buf[3] == 0xee,
+          "a one-byte wire is framed as it is");
+    buf[0] = 'g';
+    CHECK(table_request_encode(buf, sizeof(buf), 1, 0, true, 7) == 7 && buf[0] == 2 && buf[3] == 7, "and so is no wire at all");
+
+    // Responses, as the TypeScript wrote them: [bytes] -> status, code, version.
+    static const struct { uint8_t b[7]; int status, code; uint32_t version; } resp[] = {
+        { { 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }, 0, 0, 0 },
+        { { 0x01, 0x01, 0x0d, 0x29, 0x00, 0x00, 0x00 }, 1, 13, 41 },
+        { { 0x01, 0x02, 0x00, 0xff, 0xff, 0xff, 0x7f }, 2, 0, 0x7fffffffu },
+        { { 0x01, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff }, 0, 0, 0xffffffffu },
+        { { 0x01, 0x01, 0x64, 0x04, 0x03, 0x02, 0x01 }, 1, 100, 0x01020304u },
+        { { 0x01, 0x01, 0x15, 0x00, 0x01, 0x00, 0x00 }, 1, 21, 256 },
+    };
+    TableResponse r;
+    for (size_t i = 0; i < sizeof(resp) / sizeof(resp[0]); i++) {
+        CHECK(table_response_decode(resp[i].b, 7, &r) == 0 && r.status == resp[i].status && r.reject_code == resp[i].code
+              && r.version == resp[i].version, "a response reads as the TypeScript reader read it");
+    }
+    // What the server writes for each result is what the client reads.
+    uint8_t out[TABLE_RESP_BYTES + 2];
+    CHECK(table_action_response(TABLE_APPLIED, 0, 0x01020304u, out, sizeof(out)) == TABLE_RESP_BYTES
+          && table_response_decode(out, TABLE_RESP_BYTES, &r) == 0 && r.status == TABLE_STATUS_APPLIED && r.reject_code == 0
+          && r.version == 0x01020304u, "applied reads back");
+    CHECK(table_action_response(TABLE_REJECTED, ENGINE_REJECT_NOT_IN_HAND, 9, out, sizeof(out)) == TABLE_RESP_BYTES
+          && table_response_decode(out, TABLE_RESP_BYTES, &r) == 0 && r.status == TABLE_STATUS_REJECTED
+          && r.reject_code == ENGINE_REJECT_NOT_IN_HAND && r.version == 9, "a rules rejection reads back with its reason");
+    CHECK(table_action_response(TABLE_STALE_ROUND, 0, 0xfffffffeu, out, sizeof(out)) == TABLE_RESP_BYTES
+          && table_response_decode(out, TABLE_RESP_BYTES, &r) == 0 && r.status == TABLE_STATUS_REJECTED
+          && r.reject_code == TABLE_REJECT_STALE_ROUND && r.version == 0xfffffffeu, "a stale round reads back as the policy code");
+    CHECK(table_action_response(TABLE_MOOT, 0, 3, out, sizeof(out)) == TABLE_RESP_BYTES
+          && table_response_decode(out, TABLE_RESP_BYTES, &r) == 0 && r.status == TABLE_STATUS_MOOT && r.version == 3, "moot reads back");
+    out[7] = 0xaa; out[8] = 0xbb;
+    CHECK(table_response_decode(out, 9, &r) == 0 && r.status == TABLE_STATUS_MOOT && r.version == 3, "bytes past the body are not read");
+    CHECK(table_response_decode(out, 6, &r) == TABLE_E_WIRE, "a body one byte short is refused");
+    CHECK(table_response_decode(out, 0, &r) == TABLE_E_WIRE, "an empty body is refused");
+    out[0] = 2;
+    CHECK(table_response_decode(out, TABLE_RESP_BYTES, &r) == TABLE_E_WIRE && r.status == 0 && r.version == 0,
+          "another format is refused, and nothing of it is left in the answer");
+}
+
 static void test_evwire_as3_split(void) {
     static Game g;
     memset(&g, 0, sizeof(g));
@@ -13522,6 +13615,165 @@ static int cb_step(Game *g) {
     return awire_apply(g, seat, &a) ? 1 : 0;
 }
 
+// Test: the wire of a move a host states (client_move_wire) is the bytes the
+// hand-written TypeScript encoder wrote until it was deleted: these frames were
+// captured from sdk/ts/wire/awire.ts encodeAction before it went, so the web's
+// POST body did not change by a byte when the kernel started writing it.
+static void test_client_move_wire_is_the_old_encoders_bytes(void) {
+    Card all[52];
+    for (int i = 0; i < 52; i++) all[i] = card_of_id(i);
+    uint8_t w[64];
+    ClientMove m;
+
+    #define CM_BEGIN(k) do { memset(&m, 0, sizeof(m)); m.kind = (k); } while (0)
+    #define CM_CARD(su, va) (m.cards[m.n_cards++] = (Card){ (su), (va) })
+    #define CM_ATTACK(su, va) (m.attack_cards[m.n_attacks++] = (Card){ (su), (va) })
+    #define CM_IS(label, ...) do { \
+        const uint8_t want[] = { __VA_ARGS__ }; \
+        const int n = client_move_wire(&m, w, sizeof(w)); \
+        CHECK(n == (int)sizeof(want) && memcmp(w, want, sizeof(want)) == 0, label); \
+    } while (0)
+
+    CM_BEGIN(AWIRE_PICKUP); CM_IS("pickup is 03 00", 0x03, 0x00);
+    CM_BEGIN(AWIRE_GOOD);   CM_IS("good is 04 00", 0x04, 0x00);
+    CM_BEGIN(AWIRE_ATTACK); CM_IS("an attack of no card is a frame (the rules refuse it, not the wire)", 0x00, 0x00);
+    CM_BEGIN(AWIRE_ATTACK); CM_CARD(0, 1); CM_IS("the first card is byte 0", 0x00, 0x01, 0x00);
+    CM_BEGIN(AWIRE_ATTACK); CM_CARD(3, 13); CM_IS("the ace of diamonds is byte 51", 0x00, 0x01, 0x33);
+    CM_BEGIN(AWIRE_ATTACK); CM_CARD(2, 9); CM_CARD(1, 9); CM_CARD(0, 9);
+    CM_IS("three attacks, in the order they were named", 0x00, 0x03, 0x22, 0x15, 0x08);
+    CM_BEGIN(AWIRE_PASS); CM_CARD(1, 6); CM_CARD(3, 6); CM_IS("a pass of two", 0x02, 0x02, 0x12, 0x2c);
+    CM_BEGIN(AWIRE_COVER); CM_CARD(0, 13); CM_ATTACK(0, 12); CM_IS("a cover: the cover, then its attack", 0x01, 0x01, 0x0c, 0x0b);
+    CM_BEGIN(AWIRE_COVER); CM_CARD(3, 2); CM_CARD(1, 11); CM_CARD(2, 5); CM_ATTACK(0, 8); CM_ATTACK(1, 10); CM_ATTACK(2, 4);
+    CM_IS("three covers, then the three attacks, by position", 0x01, 0x03, 0x28, 0x17, 0x1e, 0x07, 0x16, 0x1d);
+    CM_BEGIN(AWIRE_ATTACK); CM_CARD(1, 1); CM_ATTACK(2, 2);
+    CM_IS("attacks named beside a move that is not a cover are not read", 0x00, 0x01, 0x0d);
+
+    // The longest frames: 28 cards, and 28 covers over 28 attacks.
+    CM_BEGIN(AWIRE_PASS);
+    for (int i = 24; i < 52; i++) m.cards[m.n_cards++] = all[i];
+    int n = client_move_wire(&m, w, sizeof(w));
+    int same = n == 30 && w[0] == 0x02 && w[1] == 0x1c;
+    for (int i = 0; i < 28 && same; i++) same = w[2 + i] == 24 + i;
+    CHECK(same, "a pass of 28: 02 1c, then bytes 24..51");
+    CM_BEGIN(AWIRE_COVER);
+    for (int i = 0; i < 28; i++) { m.cards[m.n_cards++] = all[i]; m.attack_cards[m.n_attacks++] = all[24 + i]; }
+    n = client_move_wire(&m, w, sizeof(w));
+    same = n == 58 && w[0] == 0x01 && w[1] == 0x1c;
+    for (int i = 0; i < 28 && same; i++) same = w[2 + i] == i && w[30 + i] == 24 + i;
+    CHECK(same, "a cover of 28: 01 1c, bytes 0..27, then bytes 24..51");
+    CHECK(client_move_wire(&m, w, 57) == CLIENT_E_CAP, "a buffer one byte short of the frame is CLIENT_E_CAP");
+
+    // What is not a move is refused, each for its own reason.
+    CM_BEGIN(5); CHECK(client_move_wire(&m, w, sizeof(w)) == CLIENT_E_MOVE, "a kind past good is refused");
+    CM_BEGIN(-1); CHECK(client_move_wire(&m, w, sizeof(w)) == CLIENT_E_MOVE, "a negative kind is refused");
+    CM_BEGIN(AWIRE_PICKUP); CM_CARD(0, 5); CHECK(client_move_wire(&m, w, sizeof(w)) == CLIENT_E_MOVE, "a pickup carries no card");
+    CM_BEGIN(AWIRE_GOOD); CM_CARD(0, 5); CHECK(client_move_wire(&m, w, sizeof(w)) == CLIENT_E_MOVE, "a good carries no card");
+    CM_BEGIN(AWIRE_ATTACK); m.n_cards = AWIRE_MAX_CARDS + 1;
+    CHECK(client_move_wire(&m, w, sizeof(w)) == CLIENT_E_MOVE, "29 cards are refused before any is read");
+    CM_BEGIN(AWIRE_COVER); CM_CARD(0, 9); CM_CARD(1, 9); CM_ATTACK(0, 8);
+    m.attack_cards[1] = (Card){ 1, 8 };   // a real card past the count: only the count says it is not named
+    CHECK(client_move_wire(&m, w, sizeof(w)) == CLIENT_E_MOVE, "a cover with fewer attacks than cards is refused");
+    CM_BEGIN(AWIRE_COVER); CM_CARD(0, 9); CM_ATTACK(0, 8); CM_ATTACK(1, 8);
+    CHECK(client_move_wire(&m, w, sizeof(w)) == CLIENT_E_MOVE, "a cover with more attacks than cards is refused");
+    const Card not_cards[] = { { -1, -1 }, CARD_NONE, { 0, 0 }, { 0, 14 }, { -1, 5 }, { 2, -3 } };
+    for (size_t i = 0; i < sizeof(not_cards) / sizeof(not_cards[0]); i++) {
+        CM_BEGIN(AWIRE_ATTACK); CM_CARD(0, 5); m.cards[m.n_cards++] = not_cards[i];
+        CHECK(client_move_wire(&m, w, sizeof(w)) == CLIENT_E_MOVE, "a card that is not a card is refused, never written as some other");
+        CM_BEGIN(AWIRE_COVER); CM_CARD(0, 5); CM_ATTACK(0, 4); m.cards[m.n_cards++] = (Card){ 1, 5 }; m.attack_cards[m.n_attacks++] = not_cards[i];
+        CHECK(client_move_wire(&m, w, sizeof(w)) == CLIENT_E_MOVE, "and so is a cover's attack that is not a card");
+    }
+    CHECK(client_move_wire(NULL, w, sizeof(w)) == CLIENT_E_MOVE, "no move is refused");
+
+    // Every move a host can state reads back as itself through the one decoder.
+    cb_rng = 0xa11ce;
+    for (int it = 0; it < 20000; it++) {
+        CM_BEGIN(cb_rand(5));
+        const int k = (m.kind == AWIRE_PICKUP || m.kind == AWIRE_GOOD) ? 0 : cb_rand(AWIRE_MAX_CARDS + 1);
+        for (int i = 0; i < k; i++) m.cards[m.n_cards++] = all[cb_rand(52)];
+        if (m.kind == AWIRE_COVER) for (int i = 0; i < k; i++) m.attack_cards[m.n_attacks++] = all[cb_rand(52)];
+        const int wl = client_move_wire(&m, w, sizeof(w));
+        AwireAction a;
+        int ok = wl == 2 + k * (m.kind == AWIRE_COVER ? 2 : 1) && awire_decode(w, wl, &a) == 1 && a.kind == m.kind && a.n == k;
+        for (int i = 0; i < k && ok; i++) {
+            ok = card_eq(a.cards[i], m.cards[i]) && (m.kind != AWIRE_COVER || card_eq(a.attacks[i], m.attack_cards[i]));
+        }
+        if (!ok) { CHECK(0, "a stated move reads back as itself (awire_decode of client_move_wire)"); break; }
+    }
+    CHECK(1, "20000 stated moves read back as themselves");
+    #undef CM_BEGIN
+    #undef CM_CARD
+    #undef CM_ATTACK
+    #undef CM_IS
+}
+
+// Test: awire_decode's strictness, shape by shape. These were the cases a
+// TypeScript twin of the decoder was held to (sdk/ts/wire/awire.ts decodeAction,
+// e2e/awire_codec.test.ts); the twin is gone, so they are asked of the decoder
+// itself: 0 on anything malformed, and whatever it accepts is a whole move that
+// encodes back to the same bytes.
+static void test_awire_decode_refuses_every_malformed_shape(void) {
+    AwireAction a;
+    static const struct { const char *label; int len; uint8_t w[8]; } bad[] = {
+        { "empty", 0, { 0 } },
+        { "a single byte", 1, { 0 } },
+        { "unknown kind 5", 2, { 5, 0 } },
+        { "unknown kind 255", 3, { 255, 1, 3 } },
+        { "a pickup with n=1", 3, { 3, 1, 7 } },
+        { "a pickup with n=1 and no card bytes", 2, { 3, 1 } },
+        { "a good with n=2", 4, { 4, 2, 7, 8 } },
+        { "an attack truncated", 3, { 0, 2, 7 } },
+        { "an attack with a trailing byte", 4, { 0, 1, 7, 9 } },
+        { "a pass truncated", 4, { 2, 3, 7, 8 } },
+        { "a cover missing the attack half", 4, { 1, 2, 7, 8 } },
+        { "a cover with half-truncated pairs", 5, { 1, 2, 7, 8, 9 } },
+        { "a cover with a trailing byte", 5, { 1, 1, 7, 8, 9 } },
+        { "a good with a trailing byte", 3, { 4, 0, 1 } },
+    };
+    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        CHECK(awire_decode(bad[i].w, bad[i].len, &a) == 0, bad[i].label);
+    }
+    uint8_t big[2 + 2 * (AWIRE_MAX_CARDS + 1)];
+    memset(big, 1, sizeof(big));
+    big[0] = AWIRE_ATTACK; big[1] = AWIRE_MAX_CARDS + 1;
+    CHECK(awire_decode(big, 2 + AWIRE_MAX_CARDS + 1, &a) == 0, "an attack of 29 is refused");
+    big[0] = AWIRE_COVER;
+    CHECK(awire_decode(big, sizeof(big), &a) == 0, "a cover of 29 is refused");
+    // A frame of no card is structurally a frame for every kind: the rules
+    // refuse an empty attack, not the wire.
+    for (int kind = AWIRE_ATTACK; kind <= AWIRE_GOOD; kind++) {
+        const uint8_t w[2] = { (uint8_t)kind, 0 };
+        CHECK(awire_decode(w, 2, &a) == 1 && a.kind == kind && a.n == 0, "[kind, 0] is a frame");
+    }
+
+    // Noise, and near-frames: a kind 0..5, a count 0..30 and a body its size, so
+    // the accepts and the off-by-one refusals both really run.
+    cb_rng = 0xa11ce;
+    int accepted = 0, sound = 1;
+    for (int it = 0; it < 20000 && sound; it++) {
+        uint8_t w[80], back[64];
+        int len;
+        if (it % 4 == 0) {
+            const int kind = cb_rand(6), k = cb_rand(31);
+            len = 2 + (kind == AWIRE_COVER ? 2 * k : k);
+            w[0] = (uint8_t)kind; w[1] = (uint8_t)k;
+            for (int j = 2; j < len; j++) w[j] = (uint8_t)(cb_rand(8) == 0 ? cb_rand(256) : cb_rand(52));
+        } else {
+            len = cb_rand(80);
+            for (int j = 0; j < len; j++) w[j] = (uint8_t)cb_rand(256);
+        }
+        if (!awire_decode(w, len, &a)) continue;
+        accepted++;
+        sound = a.kind >= AWIRE_ATTACK && a.kind <= AWIRE_GOOD && a.n == w[1] && a.n <= AWIRE_MAX_CARDS
+            && ((a.kind != AWIRE_PICKUP && a.kind != AWIRE_GOOD) || a.n == 0);
+        for (int i = 0; i < a.n && sound; i++) {
+            sound = card_in_range(a.cards[i], 1, ACE_VALUE) && (a.kind != AWIRE_COVER || card_in_range(a.attacks[i], 1, ACE_VALUE));
+        }
+        sound = sound && awire_encode(&a, back, sizeof(back)) == len && memcmp(back, w, (size_t)len) == 0;
+    }
+    CHECK(sound, "whatever the decoder accepts is a whole move, and encodes back to the bytes it was read from");
+    CHECK(accepted > 500, "enough near-frames were accepted for that to mean something");
+}
+
 static void test_client_validate_is_the_engine(void) {
     int checked = 0, legal = 0, refused = 0, wrong = 0;
     uint8_t w[64];
@@ -15074,6 +15326,7 @@ int main(void) {
     test_table_commit_products();
     test_table_plays_a_game_to_its_end();
     test_table_request_and_response();
+    test_table_request_encode_and_response_decode();
     test_evwire_as3_split();
     test_evwire_frames_index();
     test_evwire_walk_skips_a_hook_it_does_not_know();
@@ -15122,6 +15375,8 @@ int main(void) {
     test_client_conflict_verdicts();
     test_client_play_is_the_engine();
     test_client_play_refuses_what_is_not_a_gesture();
+    test_client_move_wire_is_the_old_encoders_bytes();
+    test_awire_decode_refuses_every_malformed_shape();
     test_client_adopts_a_bare_board();
     test_hand_layout_rows_and_slots();
     test_hand_layout_refuses_what_it_cannot_answer();

@@ -15,7 +15,7 @@
 //
 // The request envelope at the bottom is NOT the kernel's: it is the `action`
 // endpoint's protocol, read by table_request_decode (c/src/table.c) and written
-// on the web by sdk/ts/wire/awire.ts. See the note in PackedAction.swift.
+// on the web by table_request_encode beside it. See the note in PackedAction.swift.
 
 import XCTest
 @testable import FoolishKit

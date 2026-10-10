@@ -32,7 +32,7 @@ import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, resetDb, uuid, pgPool } from './harness.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { AWIRE_KIND, ACTION_STATUS, decodeActionResponse, encodeActionRequest, wireCard } from '../sdk/ts/wire/awire.ts';
+import { AWIRE_KIND, ACTION_STATUS, decodeActionResponse, encodeActionRequest } from '../sdk/ts/wire/awire.ts';
 import { executePackedAction, MalformedActionRequest } from '../server/impls/supabase/functions/_shared/adapter/packed_action.ts';
 import { GameNotFound, TableRefusal, __setTableDealSeedOverride } from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
 import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
@@ -48,7 +48,10 @@ if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {};
 const rng = suiteRng('fuzz');
 const { int: ri, pick } = rng;
 
-const wc = (c: PlayCard) => wireCard(c);
+// A card's wire byte, named here ON PURPOSE: this file forges frames the kernel's
+// encoder refuses to write (cards on a pickup, counts the bytes do not carry),
+// so it packs its own bytes rather than ask the encoder it is attacking around.
+const wc = (c: PlayCard) => c.suit * 13 + (c.value - 1);
 const bytes = (...xs: number[]) => Uint8Array.from(xs.map((x) => x & 0xff));
 
 // ---- handpicked, pure validation (no DB): the always-reject invariants -------

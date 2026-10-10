@@ -1076,8 +1076,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // meantime (docs/WEB_RACE_BUG_HANDOFF.md). undefined => the legacy v1
         // envelope, unguarded (we've not yet seen an authoritative version).
         const req = encodeActionRequest(gameId, wire, authoritativeVersion(gameId));
-        // Cast: encodeActionRequest builds a fresh, non-shared buffer; TS just
-        // types Uint8Array over ArrayBufferLike, which BlobPart rejects.
+        // Cast: encodeActionRequest hands back a fresh, non-shared copy out of
+        // the kernel; TS just types Uint8Array over ArrayBufferLike, which
+        // BlobPart rejects.
         const { data, error } = await supabase.functions.invoke('action', { body: new Blob([req as Uint8Array<ArrayBuffer>]) });
         if (error) {
             throw error;

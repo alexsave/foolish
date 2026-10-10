@@ -33,6 +33,7 @@
 #include "game.h"
 #include "legal.h"
 #include "roster.h"
+#include "awire.h"
 #include <stddef.h>
 
 #define CLIENT_OK           0
@@ -356,6 +357,29 @@ int client_rearrange_hand(ClientTable *c, TableView *v, const uint8_t *idx, int 
 // CLIENT_E_FORMAT for a view or a question that is not one, or the negative
 // ANIM_E* the rule returns.
 int client_conflict_verdicts(const TableView *open, const TableView *final, const ClientConflict *q, ConflictVerdicts *out);
+
+// ---------- the move a client sends (awire.h) ---------------------------------
+//
+// A host says a move as what it is - a kind and its cards - through the
+// generated writer, and the kernel writes the action wire: the bytes
+// client_validate and client_optimistic_apply read above, and the bytes the
+// server's table_act applies (table.h). awire.c is the one encoder and the one
+// decoder of that wire, so a host knows neither the frame nor a card's byte.
+typedef struct {
+    int8_t  kind;                          // AWIRE_*
+    uint8_t n_cards;
+    uint8_t n_attacks;                     // read for a cover only: one attack per card
+    Card    cards[AWIRE_MAX_CARDS];
+    Card    attack_cards[AWIRE_MAX_CARDS]; // a cover: the attack each of `cards` covers, by position
+} ClientMove;
+
+// The action wire of `m` (awire_encode) into `out`: its length, CLIENT_E_MOVE
+// for a move that is not one - a kind the wire does not have, more cards than a
+// frame holds, cards on a pickup or a good, a cover whose attacks are not one
+// per card, a card that is not a card - or CLIENT_E_CAP. REFUSED, NEVER CLAMPED,
+// like everything read here: a wire that named some other card would be a move
+// nobody made, and the seat might hold it.
+int client_move_wire(const ClientMove *m, uint8_t *out, int cap);
 
 // ---------- what a gesture on a board means ----------------------------------
 //

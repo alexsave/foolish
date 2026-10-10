@@ -33,7 +33,7 @@ import { fixture, fixtureTable, GAME_OVER, IDLE, READY, type TableFixture } from
 import { legalMoves, residentBoard, type BoardState, type PlayCard } from './helpers/table_play.ts';
 import { runMeta, seedLobby } from './helpers/table_server.ts';
 import { suiteRng } from './helpers/rng.ts';
-import { encodeAction, decodeAction, encodeActionRequest, decodeActionRequest, encodeActionResponse, decodeActionResponse, ACTION_STATUS } from '../sdk/ts/wire/awire.ts';
+import { encodeAction, encodeActionRequest, decodeActionResponse, ACTION_STATUS } from '../sdk/ts/wire/awire.ts';
 import { readEnvelopeView } from './helpers/client_read.ts';
 import { clientTable } from '../sdk/ts/table/client_table.ts';
 import * as V from '../sdk/ts/gen/view_layout.bots.ts';
@@ -87,13 +87,9 @@ function servedView(gameId: string, fx: TableFixture, seat: number, version: num
 
 // ---- 2. binary HTTP envelopes (DB-free) -------------------------------------
 
-test('awire HTTP envelopes: request/response round-trip, garbage rejected (by the TS codec and the kernel)', () => {
+test('awire HTTP envelopes: request/response round-trip, garbage rejected (both ends are the kernel)', () => {
   const wire = encodeAction({ kind: 'attack', cards: [{ suit: 2, value: 9 }] });
   const req = encodeActionRequest('abc123', wire);
-  const parsed = decodeActionRequest(req);
-  assert.ok(parsed, 'request decodes');
-  assert.equal(parsed!.gameId, 'abc123');
-  assert.deepEqual(Array.from(parsed!.wire), Array.from(wire), 'wire bytes verbatim');
   const kernel = fixtureTable().requestDecode(req);
   assert.ok(typeof kernel !== 'number', 'the kernel decodes the same request');
   assert.equal(kernel.gameId, 'abc123');
@@ -104,15 +100,14 @@ test('awire HTTP envelopes: request/response round-trip, garbage rejected (by th
     ['bad format byte', new Uint8Array([9, 3, 97, 98, 99, 0, 0])],
     ['truncated', req.subarray(0, 5)],
   ] as const) {
-    assert.equal(decodeActionRequest(garbage), null, `${label} rejected`);
     assert.equal(typeof fixtureTable().requestDecode(garbage), 'number', `${label} refused by the kernel`);
   }
 
-  for (const [status, code, version] of [
-    [ACTION_STATUS.APPLIED, 0, 0], [ACTION_STATUS.REJECTED, 13, 41],
-    [ACTION_STATUS.MOOT, 0, 0x7fffffff], [ACTION_STATUS.APPLIED, 0, 0xffffffff],
+  for (const [result, status, code, version] of [
+    [L.TABLE_APPLIED, ACTION_STATUS.APPLIED, 0, 0], [L.TABLE_REJECTED, ACTION_STATUS.REJECTED, 13, 41],
+    [L.TABLE_MOOT, ACTION_STATUS.MOOT, 0, 0x7fffffff], [L.TABLE_APPLIED, ACTION_STATUS.APPLIED, 0, 0xffffffff],
   ] as const) {
-    const resp = decodeActionResponse(encodeActionResponse(status, code, version));
+    const resp = decodeActionResponse(fixtureTable().actionResponse(result, code, version));
     assert.ok(resp, 'response decodes');
     assert.equal(resp!.status, status);
     assert.equal(resp!.rejectCode, code);
@@ -120,11 +115,14 @@ test('awire HTTP envelopes: request/response round-trip, garbage rejected (by th
   }
   assert.equal(decodeActionResponse(new Uint8Array([1, 0, 0])), null, 'short response rejected');
 
-  // decodeAction never throws on garbage.
+  // The kernel's request reader never throws on garbage: it answers a request
+  // or a refusal. (The action wire's own reader is fuzzed where it lives,
+  // c/tests/tests.c test_awire_decode_refuses_every_malformed_shape.)
   for (let i = 0; i < 5000; i++) {
     const buf = new Uint8Array(ri(12));
     for (let j = 0; j < buf.length; j++) buf[j] = ri(256);
-    decodeAction(buf);
+    const read = fixtureTable().requestDecode(buf);
+    assert.ok(typeof read === 'number' ? read < 0 : read.wire.length >= 2, 'a request with a wire, or a refusal');
   }
 });
 

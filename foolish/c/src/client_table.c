@@ -450,6 +450,30 @@ int client_validate(ClientTable *c, const TableView *v, const uint8_t *awire, in
     return ok ? 0 : engine_last_reject;
 }
 
+int client_move_wire(const ClientMove *m, uint8_t *out, int cap) {
+    if (!m || !out || m->n_cards > AWIRE_MAX_CARDS) return CLIENT_E_MOVE;
+    const bool cover = m->kind == AWIRE_COVER;
+    if (cover && m->n_attacks != m->n_cards) return CLIENT_E_MOVE;
+    AwireAction a;
+    a.kind = m->kind;
+    a.n = m->n_cards;
+    for (int i = 0; i < a.n; i++) {
+        if (!card_in_range(m->cards[i], 1, ACE_VALUE)) return CLIENT_E_MOVE;
+        a.cards[i] = m->cards[i];
+        if (!cover) continue;
+        if (!card_in_range(m->attack_cards[i], 1, ACE_VALUE)) return CLIENT_E_MOVE;
+        a.attacks[i] = m->attack_cards[i];
+    }
+    // Into a frame of its own first: awire_encode answers 0 for a move that is
+    // not one and for a buffer too small alike, and a host is told which.
+    unsigned char frame[2 + 2 * AWIRE_MAX_CARDS];
+    const int n = awire_encode(&a, frame, sizeof(frame));
+    if (n <= 0) return CLIENT_E_MOVE;
+    if (n > cap) return CLIENT_E_CAP;
+    memcpy(out, frame, (size_t)n);
+    return n;
+}
+
 // The viewer's hand without any of `cards`.
 static void hand_without(TableView *v, const Card *cards, int n) {
     int kept = 0;
