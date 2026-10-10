@@ -4,6 +4,7 @@
 // Playwright: Node 26 has a global WebSocket.
 //
 //   node e2e/bench_wasm_streaming.mjs [rounds=10]
+//   WAYS=st-gz,st-br5,st-br VISITS=cold,repeat,cold4g,slow4g,slow3g node e2e/bench_wasm_streaming.mjs 12
 //
 // THE THREE WAYS, per module:
 //   gz      today's path. The .gz fetched as opaque bytes, inflated by the
@@ -12,13 +13,18 @@
 //           oracle-mt: compile(bytes) + an Instance over a shared Memory).
 //   st-gz   the raw .wasm as `application/wasm`, `Content-Encoding: gzip`
 //           (the very same .gz bytes on the wire), into the streaming call.
-//   st-br   the same with brotli, which is what a CDN would actually send.
+//   st-br   the same with brotli at quality 11, which is what a build step
+//           or a CDN's cache would send.
+//   st-br5  brotli at quality 5, which is what a server compressing on the
+//           fly would send. Not in the default set.
 //
 // THE THREE VISITS:
 //   cold    a fresh Chrome profile in a fresh process. Nothing cached.
 //   repeat  the SAME profile, relaunched: the HTTP cache is warm, and so is
 //           V8's compiled-code cache if the first visit earned one.
 //   cold4g  a fresh profile behind DevTools' "Fast 4G" (9 Mbit/s, 165 ms).
+//   slow4g  the same behind "Slow 4G" (1.6 Mbit/s, 562 ms). Not in the default set.
+//   slow3g  the same behind "Slow 3G" (400 kbit/s, 2 s). Not in the default set.
 //
 // A FRESH PROCESS PER SAMPLE is not fussiness. V8 keeps compiled modules in a
 // per-process cache keyed on the wire bytes, so a second compile of the same
@@ -43,8 +49,10 @@ const MODULES = {
     oracle: new URL('../public/oracle.wasm.gz', here),
     'oracle-mt': new URL('../public/oracle-mt.wasm.gz', here),
 };
-const WAYS = ['gz', 'st-gz', 'st-br'];
-const VISITS = ['cold', 'repeat', 'cold4g'];
+const WAYS = (process.env.WAYS ?? 'gz,st-gz,st-br').split(',');
+const VISITS = (process.env.VISITS ?? 'cold,repeat,cold4g').split(',');
+// DevTools' own presets, with its multipliers applied: [latency ms, download bytes/s].
+const NETS = { cold4g: [165, 9e6 * 0.9 / 8], slow4g: [562.5, 1.6e6 * 0.9 / 8], slow3g: [2000, 500e3 * 0.8 / 8] };
 // How long the first visit idles before Chrome is closed, so the top tier can
 // finish and the code cache can be written. Without it `repeat` never has one.
 const SETTLE_MS = 3000;
@@ -54,7 +62,8 @@ for (const [name, url] of Object.entries(MODULES)) {
     const gz = readFileSync(url);
     const raw = gunzipSync(gz);
     const br = brotliCompressSync(raw, { params: { [Z.BROTLI_PARAM_QUALITY]: 11, [Z.BROTLI_PARAM_SIZE_HINT]: raw.length } });
-    assets[name] = { gz, raw, br };
+    const br5 = brotliCompressSync(raw, { params: { [Z.BROTLI_PARAM_QUALITY]: 5, [Z.BROTLI_PARAM_SIZE_HINT]: raw.length } });
+    assets[name] = { gz, raw, br, br5 };
 }
 
 const PAGE = `<!doctype html><meta charset="utf-8"><script type="module">
@@ -115,13 +124,14 @@ const server = createServer((req, res) => {
     if (a && dir === 'gz') { res.writeHead(200, { 'Content-Type': 'application/gzip', 'Content-Length': a.gz.length, ...CACHE }); return res.end(a.gz); }
     if (a && dir === 'st-gz') { res.writeHead(200, { 'Content-Type': 'application/wasm', 'Content-Encoding': 'gzip', 'Content-Length': a.gz.length, ...CACHE }); return res.end(a.gz); }
     if (a && dir === 'st-br') { res.writeHead(200, { 'Content-Type': 'application/wasm', 'Content-Encoding': 'br', 'Content-Length': a.br.length, ...CACHE }); return res.end(a.br); }
+    if (a && dir === 'st-br5') { res.writeHead(200, { 'Content-Type': 'application/wasm', 'Content-Encoding': 'br', 'Content-Length': a.br5.length, ...CACHE }); return res.end(a.br5); }
     res.writeHead(404); res.end();
 });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const ORIGIN = `http://127.0.0.1:${server.address().port}`;
 
 /** One Chrome process on `profile`, one page, one run() - then a clean close so the caches reach the disk. */
-async function sample(profile, name, way, { throttle = false, settle = 0 } = {}) {
+async function sample(profile, name, way, { throttle = null, settle = 0 } = {}) {
     const portFile = join(profile, 'DevToolsActivePort');
     if (existsSync(portFile)) rmSync(portFile);
     const proc = spawn(CHROME, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
@@ -147,13 +157,13 @@ async function sample(profile, name, way, { throttle = false, settle = 0 } = {})
         const { targetId } = await send('Target.createTarget', { url: 'about:blank' });
         const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true });
         await send('Network.enable', {}, sessionId);
-        if (throttle) await send('Network.emulateNetworkConditions', { offline: false, latency: 165, downloadThroughput: 9e6 / 8, uploadThroughput: 1.5e6 / 8 }, sessionId);
+        if (throttle) await send('Network.emulateNetworkConditions', { offline: false, latency: throttle[0], downloadThroughput: throttle[1], uploadThroughput: throttle[1] / 4 }, sessionId);
         await send('Page.enable', {}, sessionId);
         await send('Page.navigate', { url: `${ORIGIN}/page` }, sessionId);
         for (let i = 0; ; i++) {
             const r = await send('Runtime.evaluate', { expression: 'window.ok === true' }, sessionId);
             if (r.result.value) break;
-            if (i > 400) throw new Error('the page never loaded');
+            if (i > 1200) throw new Error('the page never loaded');
             await sleep(25);
         }
         const r = await send('Runtime.evaluate', { expression: `run(${JSON.stringify(name)}, ${JSON.stringify(way)})`, awaitPromise: true, returnByValue: true }, sessionId);
@@ -174,12 +184,16 @@ for (let round = 0; round < ROUNDS; round++) {
     for (const name of Object.keys(MODULES)) for (const way of WAYS) {
         const profile = mkdtempSync(join(tmpdir(), 'wasm-stream-'));
         try {
-            out[name][way].cold.push(await sample(profile, name, way, { settle: SETTLE_MS }));
-            out[name][way].repeat.push(await sample(profile, name, way));
+            const cold = await sample(profile, name, way, { settle: SETTLE_MS });
+            if (VISITS.includes('cold')) out[name][way].cold.push(cold);
+            if (VISITS.includes('repeat')) out[name][way].repeat.push(await sample(profile, name, way));
         } finally { rmSync(profile, { recursive: true, force: true }); }
-        const slow = mkdtempSync(join(tmpdir(), 'wasm-stream-'));
-        try { out[name][way].cold4g.push(await sample(slow, name, way, { throttle: true })); }
-        finally { rmSync(slow, { recursive: true, force: true }); }
+        for (const v of VISITS) {
+            if (!NETS[v]) continue;
+            const slow = mkdtempSync(join(tmpdir(), 'wasm-stream-'));
+            try { out[name][way][v].push(await sample(slow, name, way, { throttle: NETS[v] })); }
+            finally { rmSync(slow, { recursive: true, force: true }); }
+        }
     }
     process.stderr.write(`round ${round + 1}/${ROUNDS}\n`);
 }
@@ -191,7 +205,7 @@ const f = (x) => x.toFixed(1).padStart(7);
 console.log(`Chrome, ${ROUNDS} rounds, median ms from fetch to instance (and to wasm_init done); min..max in brackets\n`);
 for (const name of Object.keys(MODULES)) {
     const a = assets[name];
-    console.log(`${name}: raw ${a.raw.length} B, gzip ${a.gz.length} B, brotli ${a.br.length} B`);
+    console.log(`${name}: raw ${a.raw.length} B, gzip ${a.gz.length} B, brotli-5 ${a.br5.length} B, brotli-11 ${a.br.length} B`);
     for (const v of VISITS) for (const way of WAYS) {
         const rows = out[name][way][v], ready = col(rows, 0);
         const parts = way === 'gz' ? `  fetch ${f(med(col(rows, 2)))}  inflate ${f(med(col(rows, 3)))}` : '';
