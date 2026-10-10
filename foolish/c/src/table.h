@@ -59,7 +59,7 @@
 // The response code for a stale-round refusal. It sits above the kernel's
 // ENGINE_REJECT_* space so a client can tell a rules rejection from a server
 // policy one by the number alone (the web reads this very constant, generated,
-// as sdk/ts/wire/awire.ts REJECT_STALE_ROUND).
+// as sdk/ts/gen/view_layout.bots.ts TABLE_REJECT_STALE_ROUND).
 #define TABLE_REJECT_STALE_ROUND 100
 
 // The durable state blob: [STATE_BLOB_FORMAT][flags][state_put], then the

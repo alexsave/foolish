@@ -77,7 +77,6 @@ import { lockedBotLoop } from '../../server/impls/supabase/functions/_shared/ada
 import { __clearGameCache } from '../../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
 import { __setTableDealSeedOverride } from '../../server/impls/supabase/functions/_shared/adapter/table_io.ts';
 import { botsTestWasm } from './bots_test_wasm.ts';
-import { encodeActionRequest } from '../../sdk/ts/wire/awire.ts';
 import { readEnvelopeView, readPushSequence } from './client_read.ts';
 import { cRosterTrailerRead } from './roster_kernel.ts';
 import { clientTable } from '../../sdk/ts/table/client_table.ts';
@@ -683,7 +682,7 @@ export async function playTable(nHumans: number, nBots: number, dealSeed: number
             t.counts.humanSteps++;
             truth = await doStep(t, {
                 label: `#${n} ${who.name} ${pm.kind}`, requester: who,
-                run: () => postPacked(who.tok, encodeActionRequest(t.gameId, pm.wire, version)),
+                run: () => postPacked(who.tok, clientTable().actionRequest(t.gameId, pm.wire, version)),
                 actors: () => [pm.seat], pinDeck: false,
             }, true);
         } else if (botMoves.length > 0) {

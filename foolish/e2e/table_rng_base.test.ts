@@ -24,7 +24,7 @@ import { boardBytes, fixture, PLAYING } from './helpers/table_fixture.ts';
 import { seedTable } from './helpers/table_db.ts';
 import { legalMoves, mustReadTable, type TableState } from './helpers/table_play.ts';
 import { runAction } from './helpers/table_server.ts';
-import { ACTION_STATUS } from '../sdk/ts/wire/awire.ts';
+import { TABLE_STATUS_APPLIED } from '../sdk/ts/gen/view_layout.bots.ts';
 import { __botCycle } from '../server/impls/supabase/functions/_shared/adapter/bot_actions.ts';
 import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
 
@@ -69,7 +69,7 @@ async function pickupRound(id: string): Promise<TableState> {
         const moves = legalMoves(t);
         const mv = moves.find((m) => m.kind === 'pickup') ?? moves.find((m) => m.kind === 'good');
         assert.ok(mv, `fixture: a pickup or a good is legal (step ${step}: ${moves.map((m) => m.kind).join(', ')})`);
-        assert.equal((await runAction(id, mv.playerId, mv)).status, ACTION_STATUS.APPLIED);
+        assert.equal((await runAction(id, mv.playerId, mv)).status, TABLE_STATUS_APPLIED);
     }
     assert.fail('fixture: the round never drew');
 }

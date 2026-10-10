@@ -51,9 +51,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { JSDOM } from 'jsdom';
 import { fixture, fixtureTable, WAITING, PLAYING, GAME_OVER, IN, OUT, type FixtureSeat, type TableFixture } from './helpers/table_fixture.ts';
-import { encodeAction } from '../sdk/ts/wire/awire.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { clientTable } from '../sdk/ts/table/client_table.ts';
+import { clientTable, encodeAction } from '../sdk/ts/table/client_table.ts';
 import * as V from '../sdk/ts/gen/view_layout.bots.ts';
 import { askKindName } from './helpers/ask.ts';
 

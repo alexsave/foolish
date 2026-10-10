@@ -24,8 +24,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { encodeAction } from '../sdk/ts/wire/awire.ts';
-import { clientTable } from '../sdk/ts/table/client_table.ts';
+import { clientTable, encodeAction } from '../sdk/ts/table/client_table.ts';
 import { EVW_T_COVER, EVW_T_DEAL, EVW_T_REFILL } from '../sdk/ts/gen/view_layout.bots.ts';
 import { fixtureTable } from './helpers/table_fixture.ts';
 import { legalMoves, residentBoard, type BoardState } from './helpers/table_play.ts';

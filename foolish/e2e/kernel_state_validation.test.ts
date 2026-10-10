@@ -22,7 +22,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { encodeAction } from '../sdk/ts/wire/awire.ts';
+import { encodeAction } from '../sdk/ts/table/client_table.ts';
 import { boardBytes, fixture, fixtureExports, fixtureTable, reasonOf, IDLE, READY, type TableFixture } from './helpers/table_fixture.ts';
 import { legalMoves, residentBoard } from './helpers/table_play.ts';
 

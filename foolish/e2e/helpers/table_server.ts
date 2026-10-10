@@ -16,7 +16,8 @@ import { handleMetaAction } from '../../server/impls/supabase/functions/_shared/
 import { executePackedAction } from '../../server/impls/supabase/functions/_shared/adapter/packed_action.ts';
 import { lockedBotLoop } from '../../server/impls/supabase/functions/_shared/adapter/bot_actions.ts';
 import type { HandlerResult } from '../../server/impls/supabase/functions/_shared/adapter/utils.ts';
-import { ACTION_STATUS, decodeActionResponse, encodeActionRequest } from '../../sdk/ts/wire/awire.ts';
+import { clientTable } from '../../sdk/ts/table/client_table.ts';
+import { TABLE_STATUS_MOOT } from '../../sdk/ts/gen/view_layout.bots.ts';
 import * as L from '../../sdk/ts/gen/game_layout.bots.ts';
 
 export interface LobbySeat extends FixtureSeat {
@@ -49,7 +50,7 @@ export async function runMeta(gameId: string, userId: string, body: Record<strin
 }
 
 export interface ActionResult {
-    /** ACTION_STATUS.* */
+    /** TABLE_STATUS_* */
     status: number;
     rejectCode: number;
     version: number;
@@ -59,8 +60,8 @@ export interface ActionResult {
 /** One packed move by `userId`, through the real move path. */
 export async function runAction(gameId: string, userId: string, move: PlayMove | Uint8Array, intentVersion?: number): Promise<ActionResult> {
     const wire = move instanceof Uint8Array ? move : move.wire;
-    const out = await executePackedAction(encodeActionRequest(gameId, wire, intentVersion), userId, 'e2e-action');
-    const r = decodeActionResponse(out.body);
+    const out = await executePackedAction(clientTable().actionRequest(gameId, wire, intentVersion), userId, 'e2e-action');
+    const r = clientTable().readActionResponse(out.body);
     if (!r) throw new Error('runAction: the response did not decode');
     return { ...r, needsBots: out.needsBots };
 }
@@ -96,7 +97,7 @@ export async function playToEnd(gameId: string, opts: PlayOptions = {}): Promise
         }
         const mv = pick(moves, t);
         const r = await runAction(gameId, mv.playerId, mv);
-        if (r.status === ACTION_STATUS.MOOT) return mustReadTable(gameId);
+        if (r.status === TABLE_STATUS_MOOT) return mustReadTable(gameId);
     }
     throw new Error(`playToEnd: game ${gameId} did not end`);
 }

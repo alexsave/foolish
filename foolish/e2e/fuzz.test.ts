@@ -32,7 +32,8 @@ import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, resetDb, uuid, pgPool } from './harness.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { AWIRE_KIND, ACTION_STATUS, decodeActionResponse, encodeActionRequest } from '../sdk/ts/wire/awire.ts';
+import { AWIRE_KIND, clientTable } from '../sdk/ts/table/client_table.ts';
+import { TABLE_STATUS_APPLIED, TABLE_STATUS_MOOT, TABLE_STATUS_REJECTED } from '../sdk/ts/gen/view_layout.bots.ts';
 import { executePackedAction, MalformedActionRequest } from '../server/impls/supabase/functions/_shared/adapter/packed_action.ts';
 import { GameNotFound, TableRefusal, __setTableDealSeedOverride } from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
 import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
@@ -125,7 +126,7 @@ const anyWire = () => bytes(ri(256), ri(256), ...Array.from({ length: ri(6) }, (
 function generators(): ((t: TableState) => Hostile)[] {
     let cur: TableState;
     const seatId = (i: number) => cur.seats[i]?.id ?? uuid();
-    const req = (wire: Uint8Array, intent?: number) => encodeActionRequest(cur.gameId, wire, intent);
+    const req = (wire: Uint8Array, intent?: number) => clientTable().actionRequest(cur.gameId, wire, intent);
     const someHandCard = (): PlayCard | null => {
         const withHands = cur.seats.filter((s) => s.hand.length);
         return withHands.length ? pick(pick(withHands).hand) : null;
@@ -176,7 +177,7 @@ function generators(): ((t: TableState) => Hostile)[] {
         // 14) malformed wire: unknown kind, one byte, cards on a pickup/good, extra trailing bytes
         () => pick([
             h('unknown-kind', attackerId(), req(bytes(5 + ri(251), 0)), true),
-            h('one-byte-wire', attackerId(), encodeActionRequest(cur.gameId, bytes(AWIRE_KIND.pickup)), true),
+            h('one-byte-wire', attackerId(), clientTable().actionRequest(cur.gameId, bytes(AWIRE_KIND.pickup)), true),
             h('pickup-with-cards', defender(), req(bytes(AWIRE_KIND.pickup, 1, aCard())), true),
             h('good-with-cards', attackerId(), req(bytes(AWIRE_KIND.good, 1, aCard())), true),
             h('trailing-bytes', attackerId(), req(bytes(AWIRE_KIND.attack, 1, aCard(), 0)), true),
@@ -201,7 +202,7 @@ function generators(): ((t: TableState) => Hostile)[] {
             h('envelope-empty', attackerId(), new Uint8Array(0), true),
             h('envelope-gid-past-body', attackerId(), Uint8Array.of(1, 200, 0x61, 0x62), true),
             h('envelope-v2-short', attackerId(), Uint8Array.of(2, 0, 1, 2, 3), true),
-            h('envelope-other-game', attackerId(), encodeActionRequest(pick(["g'; DROP TABLE games;--", 'nope', ' ', 'x'.repeat(255)]), bytes(AWIRE_KIND.pickup, 0)), true),
+            h('envelope-other-game', attackerId(), clientTable().actionRequest(pick(["g'; DROP TABLE games;--", 'nope', ' ', 'x'.repeat(255)]), bytes(AWIRE_KIND.pickup, 0)), true),
             h('envelope-invalid-utf8-gid', attackerId(), Uint8Array.of(1, 2, 0xff, 0xfe, AWIRE_KIND.pickup, 0), true),
         ]),
         // 20) intent versions at the edges on a real move (stale, zero, far future)
@@ -222,9 +223,9 @@ type Outcome = 'applied' | 'rejected' | 'moot' | 'malformed' | 'refused' | 'not-
 async function send(x: Hostile): Promise<{ outcome: Outcome; detail: string }> {
     try {
         const out = await executePackedAction(x.body, x.actor, 'fuzz');
-        const r = decodeActionResponse(out.body);
+        const r = clientTable().readActionResponse(out.body);
         if (!r) return { outcome: 'crash', detail: 'the response did not decode' };
-        const outcome = r.status === ACTION_STATUS.APPLIED ? 'applied' : r.status === ACTION_STATUS.MOOT ? 'moot' : 'rejected';
+        const outcome = r.status === TABLE_STATUS_APPLIED ? 'applied' : r.status === TABLE_STATUS_MOOT ? 'moot' : 'rejected';
         return { outcome, detail: `code ${r.rejectCode}` };
     } catch (e) {
         if (e instanceof MalformedActionRequest) return { outcome: 'malformed', detail: e.message };
@@ -296,7 +297,7 @@ test('targeted: forged cards and non-members are always rejected', async () => {
         for (let v = 5; v <= 13 && !forged; v++)
             if (!attacker.hand.some((c) => c.suit === s && c.value === v)) forged = { suit: s, value: v };
     const res = await runAction(gameId, attacker.id, bytes(AWIRE_KIND.attack, 1, wc(forged!)));
-    assert.equal(res.status, ACTION_STATUS.REJECTED, 'forged card rejected');
+    assert.equal(res.status, TABLE_STATUS_REJECTED, 'forged card rejected');
     assert.equal(res.rejectCode, L.ENGINE_REJECT_NOT_IN_HAND, 'forged card: not in hand');
     assert.equal(res.version, t.version, 'the response carries the unchanged version');
     // a player who isn't in the game, sending the attacker's own card
@@ -311,7 +312,7 @@ test('regression: sending the same card twice in one move is rejected (no duplic
     const x = wc(fa.hand[0]);
     // attack with [X, X] - the object-identity dedup hole - must be rejected.
     const res = await runAction(gameId, fa.id, bytes(AWIRE_KIND.attack, 2, x, x));
-    assert.equal(res.status, ACTION_STATUS.REJECTED, 'duplicate attack rejected');
+    assert.equal(res.status, TABLE_STATUS_REJECTED, 'duplicate attack rejected');
     assert.equal(res.rejectCode, L.ENGINE_REJECT_DUPLICATES, 'duplicate attack: duplicates');
     // and the durable state is untouched (the refusal committed nothing).
     const later = await mustReadTable(gameId);

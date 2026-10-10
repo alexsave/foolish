@@ -19,7 +19,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { encodeAction, AWIRE_KIND } from '../sdk/ts/wire/awire.ts';
+import { encodeAction, AWIRE_KIND } from '../sdk/ts/table/client_table.ts';
 import { fixtureTable, reasonOf } from './helpers/table_fixture.ts';
 import { residentBoard, type BoardState, type PlayCard } from './helpers/table_play.ts';
 import { botCycle, dealBotTable, seedBytes, type BotTableRow } from './helpers/bot_table.ts';

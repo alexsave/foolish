@@ -16,7 +16,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { encodeAction } from '../sdk/ts/wire/awire.ts';
+import { encodeAction } from '../sdk/ts/table/client_table.ts';
 import { boardFixture, MemTable, residentBoard, type MemCard, type BoardSpec } from './helpers/table_mem.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }

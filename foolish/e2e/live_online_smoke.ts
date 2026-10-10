@@ -38,7 +38,7 @@ import { join } from 'node:path';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import { fixtureTable } from './helpers/table_fixture.ts';
 import { legalMoves, residentBoard, type BoardState } from './helpers/table_play.ts';
-import { encodeActionRequest, decodeActionResponse, ACTION_STATUS } from '../sdk/ts/wire/awire.ts';
+import { TABLE_STATUS_APPLIED } from '../sdk/ts/gen/view_layout.bots.ts';
 import { createClient } from '@supabase/supabase-js';
 import { clientTable } from '../sdk/ts/table/client_table.ts';
 
@@ -198,9 +198,9 @@ async function main(): Promise<void> {
             continue;
         }
         const m = playable[pick++ % playable.length];
-        const out = decodeActionResponse(await edge('action', humans.get(m.playerId)!, encodeActionRequest(gameId, m.wire, r.version)));
+        const out = clientTable().readActionResponse(await edge('action', humans.get(m.playerId)!, clientTable().actionRequest(gameId, m.wire, r.version)));
         if (!out) throw new Error('action: the response does not decode');
-        if (out.status === ACTION_STATUS.APPLIED) moves++;
+        if (out.status === TABLE_STATUS_APPLIED) moves++;
         lastVersion = Math.max(lastVersion, out.version);
     }
     r = await row(gameId);

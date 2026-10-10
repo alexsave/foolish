@@ -35,7 +35,8 @@ import { applySchema, resetDb, uuid, pgPool, broadcastLog } from './harness.ts';
 import { settle, tokenFor, postJson, postPacked, postAsk, postEmpty } from './helpers/edge.ts';
 import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
 import { __setTableDealSeedOverride } from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
-import { ACTION_STATUS, decodeActionResponse } from '../sdk/ts/wire/awire.ts';
+import { clientTable } from '../sdk/ts/table/client_table.ts';
+import { TABLE_STATUS_APPLIED, TABLE_STATUS_REJECTED } from '../sdk/ts/gen/view_layout.bots.ts';
 import { readEnvelopeView } from './helpers/client_read.ts';
 import { IDLE, PLAYING, READY, WAITING } from './helpers/table_fixture.ts';
 import { actionRequest, legalMoves, mustReadTable } from './helpers/table_play.ts';
@@ -160,8 +161,8 @@ test('action: the seat to move, acting as itself, applies (positive control)', a
     const { pm, mover, t } = await moverAndBystander(gameId, c);
     const res = await postPacked(c.tok[mover], actionRequest(gameId, pm));
     assert.equal(res.status, 200);
-    const out = decodeActionResponse(res.bytes)!;
-    assert.equal(out.status, ACTION_STATUS.APPLIED, 'the move applied');
+    const out = clientTable().readActionResponse(res.bytes)!;
+    assert.equal(out.status, TABLE_STATUS_APPLIED, 'the move applied');
     assert.equal(out.version, t.version + 1, 'and committed');
 });
 
@@ -172,8 +173,8 @@ test('action: a seated player sending the OTHER seat\'s legal move is rejected a
     const before = await world(gameId);
     const res = await postPacked(c.tok[bystander], actionRequest(gameId, pm));
     assert.equal(res.status, 200, 'a rules rejection is a packed response, not an HTTP error');
-    const out = decodeActionResponse(res.bytes)!;
-    assert.equal(out.status, ACTION_STATUS.REJECTED, `the kernel judged the move as ${bystander}'s, and refused it`);
+    const out = clientTable().readActionResponse(res.bytes)!;
+    assert.equal(out.status, TABLE_STATUS_REJECTED, `the kernel judged the move as ${bystander}'s, and refused it`);
     await assertUnchanged(gameId, before, `${bystander} plays the mover's cards`);
 });
 

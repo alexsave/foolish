@@ -6,14 +6,14 @@ import { MAX_PLAYERS } from '@api/core/constants.ts';
 import { ANIM_TIME_MS } from '@sdk/ts/gen/anim.bots.ts';
 import { optimisticOverlay } from '../state/optimisticOverlay';
 import { animationFeed } from '../state/animationFeed';
-import { sendAsk, sendBump, sendCreate } from '../state/askServer';
+import { invokeBytes, sendAsk, sendBump, sendCreate } from '../state/askServer';
 import * as V from '@sdk/ts/gen/view_layout.bots.ts';
 import type { Ask } from '@sdk/ts/table/client_table.ts';
 import { holdPrivateChannel } from '../state/privateChannel';
 import { cardKey, mergeHandOrder, reconcileHandMemory, displayedHand, mergeTableBattles } from '../state/clientReconcile';
 import { keepPending, lobbyBoard, rearrangedBoard } from '../state/clientBoards';
-import { ACTION_STATUS, REJECT_STALE_ROUND, decodeActionResponse, encodeAction, encodeActionRequest } from '@sdk/ts/wire/awire.ts';
-import { clientTable } from '@sdk/ts/table/client_table.ts';
+import { TABLE_STATUS_APPLIED, TABLE_STATUS_REJECTED, TABLE_REJECT_STALE_ROUND } from '@sdk/ts/gen/view_layout.bots.ts';
+import { clientTable, encodeAction } from '@sdk/ts/table/client_table.ts';
 import { GAME_STATUS, type TableView, type ViewCard } from '../state/view';
 import { rejectMessage } from '../wasm/rejectMessages';
 import { authoritativeVersion } from '../state/authoritativeVersion';
@@ -97,7 +97,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     const [gameLoadError, setGameLoadError] = useState<string | null>(null);
 
     // A transient, localized notice shown when the server rejects a move because
-    // a round closed before it landed (REJECT_STALE_ROUND, the stale-intent race
+    // a round closed before it landed (TABLE_REJECT_STALE_ROUND, the stale-intent race
     // in docs/WEB_RACE_BUG_HANDOFF.md). The optimistic revert already happened
     // off the pickup broadcast; this just tells the user WHY their card came back.
     const [staleRoundNotice, setStaleRoundNotice] = useState<string | null>(null);
@@ -970,7 +970,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     // back - the same bytes `create` returns, player_views stores and the
     // realtime feed pushes. The kernel writes the request and reads the answer
     // (state/askServer.ts), so nothing crosses this wire as JSON in either
-    // direction, and a refusal arrives as the kernel's own code (AskRefused).
+    // direction, and a refusal arrives as the kernel's own code.
     const askMeta = async (
         ask: Ask,
         options: {
@@ -1021,35 +1021,26 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // server's round-boundary guard can reject it if a round closed in the
         // meantime (docs/WEB_RACE_BUG_HANDOFF.md). undefined => the legacy v1
         // envelope, unguarded (we've not yet seen an authoritative version).
-        const req = encodeActionRequest(gameId, wire, authoritativeVersion(gameId));
-        // Cast: encodeActionRequest hands back a fresh, non-shared copy out of
-        // the kernel; TS just types Uint8Array over ArrayBufferLike, which
-        // BlobPart rejects.
-        const { data, error } = await supabase.functions.invoke('action', { body: new Blob([req as Uint8Array<ArrayBuffer>]) });
+        const req = clientTable().actionRequest(gameId, wire, authoritativeVersion(gameId));
+        const { bytes, error } = await invokeBytes('action', req);
         if (error) {
             throw error;
         }
-        let bytes: Uint8Array | null = null;
-        if (typeof Blob !== 'undefined' && data instanceof Blob) {
-            bytes = new Uint8Array(await data.arrayBuffer());
-        } else if (data instanceof ArrayBuffer) {
-            bytes = new Uint8Array(data);
-        }
-        const resp = bytes ? decodeActionResponse(bytes) : null;
+        const resp = bytes ? clientTable().readActionResponse(bytes) : null;
         if (!resp) {
             throw new Error('Invalid response from action: unreadable packed response');
         }
         // A move that did not apply was judged against a game newer than the one
         // on screen: catch up with it (reconcileAfter), whether or not its pushes
         // ever arrive.
-        if (resp.status !== ACTION_STATUS.APPLIED) reconcileAfter(gameId, resp.version);
-        if (resp.status === ACTION_STATUS.REJECTED) {
+        if (resp.status !== TABLE_STATUS_APPLIED) reconcileAfter(gameId, resp.version);
+        if (resp.status === TABLE_STATUS_REJECTED) {
             // A stale-round reject is the one rejection the user should SEE: the
             // move was kernel-legal, just aimed at a round that closed first, so
             // surface the localized notice (the revert already fired off the
             // pickup broadcast). Every other reject stays console-only diagnostics
             // - callers revert the optimistic state either way.
-            if (resp.rejectCode === REJECT_STALE_ROUND) showStaleRoundNotice();
+            if (resp.rejectCode === TABLE_REJECT_STALE_ROUND) showStaleRoundNotice();
             throw new Error(rejectMessage(resp.rejectCode));
         }
         // APPLIED - or MOOT (the move lost the end-game race, a no-op): both

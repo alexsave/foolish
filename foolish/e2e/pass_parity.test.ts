@@ -31,7 +31,7 @@ import type { TableView } from '../sdk/ts/table/client_table.ts';
 import { boardPills } from '../src/utils/gameValidation.ts';
 import { PLAY_PILL_PASS } from '../sdk/ts/gen/view_layout.bots.ts';
 import { readEnvelopeView as readEnvelope } from './helpers/client_read.ts';
-import { encodeAction } from '../sdk/ts/wire/awire.ts';
+import { encodeAction } from '../sdk/ts/table/client_table.ts';
 import { __setTableDealSeedOverride } from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
 import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
 import { fixture, fixtureTable, OUT } from './helpers/table_fixture.ts';

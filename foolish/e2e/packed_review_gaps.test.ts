@@ -33,9 +33,9 @@ import { fixture, fixtureTable, GAME_OVER, IDLE, READY, type TableFixture } from
 import { legalMoves, residentBoard, type BoardState, type PlayCard } from './helpers/table_play.ts';
 import { runMeta, seedLobby } from './helpers/table_server.ts';
 import { suiteRng } from './helpers/rng.ts';
-import { encodeAction, encodeActionRequest, decodeActionResponse, ACTION_STATUS } from '../sdk/ts/wire/awire.ts';
+import { TABLE_STATUS_APPLIED, TABLE_STATUS_MOOT, TABLE_STATUS_REJECTED } from '../sdk/ts/gen/view_layout.bots.ts';
 import { readEnvelopeView } from './helpers/client_read.ts';
-import { clientTable } from '../sdk/ts/table/client_table.ts';
+import { clientTable, encodeAction } from '../sdk/ts/table/client_table.ts';
 import * as V from '../sdk/ts/gen/view_layout.bots.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
@@ -89,7 +89,7 @@ function servedView(gameId: string, fx: TableFixture, seat: number, version: num
 
 test('awire HTTP envelopes: request/response round-trip, garbage rejected (both ends are the kernel)', () => {
   const wire = encodeAction({ kind: 'attack', cards: [{ suit: 2, value: 9 }] });
-  const req = encodeActionRequest('abc123', wire);
+  const req = clientTable().actionRequest('abc123', wire);
   const kernel = fixtureTable().requestDecode(req);
   assert.ok(typeof kernel !== 'number', 'the kernel decodes the same request');
   assert.equal(kernel.gameId, 'abc123');
@@ -104,16 +104,16 @@ test('awire HTTP envelopes: request/response round-trip, garbage rejected (both 
   }
 
   for (const [result, status, code, version] of [
-    [L.TABLE_APPLIED, ACTION_STATUS.APPLIED, 0, 0], [L.TABLE_REJECTED, ACTION_STATUS.REJECTED, 13, 41],
-    [L.TABLE_MOOT, ACTION_STATUS.MOOT, 0, 0x7fffffff], [L.TABLE_APPLIED, ACTION_STATUS.APPLIED, 0, 0xffffffff],
+    [L.TABLE_APPLIED, TABLE_STATUS_APPLIED, 0, 0], [L.TABLE_REJECTED, TABLE_STATUS_REJECTED, 13, 41],
+    [L.TABLE_MOOT, TABLE_STATUS_MOOT, 0, 0x7fffffff], [L.TABLE_APPLIED, TABLE_STATUS_APPLIED, 0, 0xffffffff],
   ] as const) {
-    const resp = decodeActionResponse(fixtureTable().actionResponse(result, code, version));
+    const resp = clientTable().readActionResponse(fixtureTable().actionResponse(result, code, version));
     assert.ok(resp, 'response decodes');
     assert.equal(resp!.status, status);
     assert.equal(resp!.rejectCode, code);
     assert.equal(resp!.version, version, 'u32 version survives (incl. high bit)');
   }
-  assert.equal(decodeActionResponse(new Uint8Array([1, 0, 0])), null, 'short response rejected');
+  assert.equal(clientTable().readActionResponse(new Uint8Array([1, 0, 0])), null, 'short response rejected');
 
   // The kernel's request reader never throws on garbage: it answers a request
   // or a refusal. (The action wire's own reader is fuzzed where it lives,

@@ -49,10 +49,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { clientTable } from '../sdk/ts/table/client_table.ts';
+import { clientTable, encodeAction } from '../sdk/ts/table/client_table.ts';
 import { createServerTable, type ServerTable } from '../sdk/ts/table/server_table.ts';
 import { animRolesGoodsOpening } from '../sdk/ts/wasm/bots.ts';
-import { encodeAction } from '../sdk/ts/wire/awire.ts';
 import { pushToSequence } from '../src/state/pushSequence.ts';
 import { fixture, fixtureTable, PLAYING, type TableFixture } from './helpers/table_fixture.ts';
 
