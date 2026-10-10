@@ -53,6 +53,7 @@ import { gunzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 
 import { LAYOUT_HASH } from '../sdk/ts/gen/layout_hash.bots.ts';
+import type { WebExports } from '../sdk/ts/gen/exports.web.ts';
 import { TUTORIAL_MOVES_CODE } from '../src/components/tutorialGame.ts';
 import { CLIENT_BOUNDARY, browserWasmReach } from './helpers/client_bundle.ts';
 
@@ -127,30 +128,15 @@ function signatures(rel: string): Map<string, string> {
 
 // A raw instance of one link: no bridge, no wrapper, so the comparison below is
 // of the MODULES and not of the TypeScript that usually stands in front of them.
-interface RawKernel {
-    memory: WebAssembly.Memory;
-    wasm_init(): void;
-    wasm_layout_hash(): number;
-    wasm_io_ptr(): number;
-    wasm_replay_io_ptr(): number;
-    wasm_replay_io_cap(): number;
-    wasm_replay_b32_decode(len: number): number;
-    wasm_replay_summary(len: number): number;
-    wasm_replay_step_count(len: number): number;
-    wasm_replay_step_index(len: number): number;
-    wasm_replay_step_masked_state(len: number, step: number, viewer: number): number;
-    wasm_replay_step_logs(len: number, step: number): number;
-}
-
-function instantiate(rel: string): RawKernel {
+function instantiate(rel: string): WebExports {
     const bytes = gunzipSync(readFileSync(ROOT + rel));
     const m = new WebAssembly.Module(bytes as BufferSource);
-    const ex = new WebAssembly.Instance(m, {}).exports as unknown as RawKernel;
+    const ex = new WebAssembly.Instance(m, {}).exports as unknown as WebExports;
     ex.wasm_init();
     return ex;
 }
 
-const bytesOf = (ex: RawKernel) => new Uint8Array(ex.memory.buffer);
+const bytesOf = (ex: WebExports) => new Uint8Array(ex.memory.buffer);
 
 test('web.wasm exports nothing bots.wasm does not, and nothing with a different shape', () => {
     const web = signatures('sdk/ts/wasm/web.wasm.gz');
@@ -191,7 +177,7 @@ test('both links answer the same replay code identically, step by step', () => {
     // going out.
     const code = new TextEncoder().encode(TUTORIAL_MOVES_CODE);
 
-    const decode = (ex: RawKernel): Uint8Array => {
+    const decode = (ex: WebExports): Uint8Array => {
         bytesOf(ex).set(code, ex.wasm_replay_io_ptr());
         const w = ex.wasm_replay_b32_decode(code.length);
         assert.ok(w > 0, 'the tutorial code did not decode - it may need re-cutting (tests/gen_tutorial_game.ts)');
@@ -201,7 +187,7 @@ test('both links answer the same replay code identically, step by step', () => {
     const moves = decode(bots);
     assert.deepEqual([...decode(web)], [...moves], 'the two links disagree about base32');
 
-    const put = (ex: RawKernel) => bytesOf(ex).set(moves, ex.wasm_replay_io_ptr());
+    const put = (ex: WebExports) => bytesOf(ex).set(moves, ex.wasm_replay_io_ptr());
 
     // The summary: seats, trump, opener, the fool and the order the rest went out.
     put(bots); const sa = bots.wasm_replay_summary(moves.length);

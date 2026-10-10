@@ -13,6 +13,7 @@
 // type stripping. See test/bench.sh for all three.
 import { readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
+import type { BotsTestExports } from '../../../sdk/ts/gen/exports.bots_test.ts';
 import * as L from '../../../sdk/ts/gen/game_layout.bots.ts';
 import {
     type Mem, memOf, Game_get_status, Game_set_status, Game_get_deck_count, Game_set_deck_count, Game_set_num_players,
@@ -24,14 +25,9 @@ import {
 import * as A from './alt_accessors.ts';
 import * as Anim from '../../../sdk/ts/gen/anim.bots.ts';
 
-interface Kernel {
-    memory: WebAssembly.Memory;
-    wasm_init(): void; wasm_set_seed(s: number): void; wasm_start_game(): number;
-    wasm_game_ptr_internal(): number; wasm_table_roster_ptr(): number;
-}
 const wasmPath = process.env.BENCH_WASM ?? new URL('../../../c/build/bots_test.wasm', import.meta.url);
 const wasmBytes = readFileSync(wasmPath);
-const ex = new WebAssembly.Instance(new WebAssembly.Module(String(wasmPath).endsWith('.gz') ? gunzipSync(wasmBytes) : wasmBytes), {}).exports as unknown as Kernel;
+const ex = new WebAssembly.Instance(new WebAssembly.Module(String(wasmPath).endsWith('.gz') ? gunzipSync(wasmBytes) : wasmBytes), {}).exports as unknown as BotsTestExports;
 const N = Number(process.env.BENCH_N ?? 200000), RUNS = Number(process.env.BENCH_RUNS ?? 7);
 const MODE = process.env.BENCH_MODE ?? 'unknown';
 const m: Mem = memOf(ex.memory.buffer), mx = A.memXOf(ex.memory.buffer);

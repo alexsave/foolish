@@ -24,7 +24,8 @@
 
 import * as L from '../../sdk/ts/gen/game_layout.bots.ts';
 import { LAYOUT_HASH } from '../../sdk/ts/gen/layout_hash.bots.ts';
-import { ServerTable, type TableExports } from '../../sdk/ts/table/server_table.ts';
+import type { BotsTestExports } from '../../sdk/ts/gen/exports.bots_test.ts';
+import { ServerTable } from '../../sdk/ts/table/server_table.ts';
 import { assertLayoutHash } from '../../sdk/ts/wasm/layout_hash.ts';
 import { botsTestWasm } from './bots_test_wasm.ts';
 
@@ -42,22 +43,11 @@ export interface FixtureSeat { id: string; name: string; brain?: string }
 /** A row the kernel accepted: the games.state and games.roster bytes. */
 export interface TableFixture { state: Uint8Array; roster: Uint8Array }
 
-interface FixtureExports extends TableExports {
-    wasm_fixture_begin(): number;
-    wasm_fixture_title(len: number): number;
-    wasm_fixture_seat(idLen: number, nameLen: number, brainLen: number): number;
-    wasm_fixture_seal(): number;
-    wasm_card_list_parse(len: number, cap: number, battles: number): number;
-    wasm_cards_a_ptr(): number;
-    wasm_cards_b_ptr(): number;
-    wasm_unambiguous_cover(nCover: number, nBattles: number, powerSuit: number): number;
-}
-
-let kernel: { ex: FixtureExports; table: ServerTable } | null = null;
-function k(): { ex: FixtureExports; table: ServerTable } {
+let kernel: { ex: BotsTestExports; table: ServerTable } | null = null;
+function k(): { ex: BotsTestExports; table: ServerTable } {
     if (!kernel) {
         const inst = new WebAssembly.Instance(new WebAssembly.Module(botsTestWasm() as BufferSource), {});
-        const ex = inst.exports as unknown as FixtureExports;
+        const ex = inst.exports as unknown as BotsTestExports;
         assertLayoutHash('bots_test.wasm', ex, LAYOUT_HASH, 'sdk/ts/gen/layout_hash.bots.ts');
         ex.wasm_init();
         kernel = { ex, table: new ServerTable(ex) };
@@ -78,8 +68,8 @@ export const boardBytes = (state: Uint8Array): Uint8Array =>
     state.subarray(0, state.length - (state[0] === L.TABLE_STATE_FORMAT_V2 ? 0 : L.TABLE_STATE_V3_CLOCK_BYTES));
 
 /** The raw exports of that instance, for a test helper that reads the loaded board through the generated accessors. */
-export function fixtureExports(): TableExports & { wasm_game_ptr_internal(): number; wasm_moves_ptr_internal(): number; wasm_legal_moves(seat: number): number } {
-    return k().ex as unknown as ReturnType<typeof fixtureExports>;
+export function fixtureExports(): BotsTestExports {
+    return k().ex;
 }
 
 /** The generated name of a kernel result code, among the constant families `prefixes` name. */
@@ -319,7 +309,7 @@ export function unambiguousCover(
     powerSuit: number,
 ): CoverCombination | null {
     if (coverCards.length === 0) return null;
-    const ex = fixtureExports() as unknown as FixtureExports;
+    const ex = fixtureExports() as unknown as BotsTestExports;
     const buf = new Uint8Array(ex.memory.buffer);
     const a = ex.wasm_cards_a_ptr();
     coverCards.forEach((c, i) => { buf[a + i] = wireCard(c); });

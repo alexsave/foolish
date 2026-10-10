@@ -83,6 +83,7 @@ import { cRosterTrailerRead } from './roster_kernel.ts';
 import { clientTable } from '../../sdk/ts/table/client_table.ts';
 import { base64ToBytes } from '../../sdk/ts/wire/bytes.ts';
 import * as L from '../../sdk/ts/gen/game_layout.bots.ts';
+import type { BotsTestExports } from '../../sdk/ts/gen/exports.bots_test.ts';
 import { boardBytes, fixtureTable } from './table_fixture.ts';
 import { legalMoves, readTable, rebuild, type BoardState, type PlayCard } from './table_play.ts';
 import { suiteRng } from './rng.ts';
@@ -111,13 +112,7 @@ const hexToBytes = (h: string) => Uint8Array.from(Buffer.from(h.replace(/^\\x/, 
 // A separate instance of the test build of bots.wasm (every shipped export plus the
 // engine probes this needs, same C and layout hash), so probing a payload never disturbs the game the
 // server's instance holds resident.
-interface ProbeExports {
-    memory: WebAssembly.Memory;
-    wasm_init(): void; wasm_io_ptr(): number;
-    wasm_import_state(len: number, masked: number): number;
-    wasm_view_serialize(viewer: number): number;
-}
-const probe = new WebAssembly.Instance(new WebAssembly.Module(botsTestWasm() as BufferSource), {}).exports as unknown as ProbeExports;
+const probe = new WebAssembly.Instance(new WebAssembly.Module(botsTestWasm() as BufferSource), {}).exports as unknown as BotsTestExports;
 probe.wasm_init();
 
 /** The board, imported MASKED and re-serialized for the same viewer. */

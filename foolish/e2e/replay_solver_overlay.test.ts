@@ -20,14 +20,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { __clientKernelExports, replayStepIndex, replaySummary } from '../sdk/ts/wasm/bots.ts';
-import { ServerTable, type TableExports } from '../sdk/ts/table/server_table.ts';
+import { ServerTable } from '../sdk/ts/table/server_table.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
+import type { BotsExports } from '../sdk/ts/gen/exports.bots.ts';
 import { botCycle, dealBotTable, playBotTable, replayCodeOf, seedBytes, type BotTableRow } from './helpers/bot_table.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; }
 
 // The shared bots.wasm instance, as a C Table: every call below lands on it.
-const table = new ServerTable(__clientKernelExports() as unknown as TableExports);
+const table = new ServerTable(__clientKernelExports() as unknown as BotsExports);
 
 /** Up to `cycles` bot cycles of a dealt row on the shared instance. */
 function drive(row: BotTableRow, cycles: number): BotTableRow {

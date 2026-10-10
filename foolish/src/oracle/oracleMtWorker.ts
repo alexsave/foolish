@@ -12,11 +12,7 @@
  * before it parks, so a job armed in the gap is not missed either way.
  * ========================================================================== */
 
-interface MtExports {
-    __stack_pointer: WebAssembly.Global;
-    __wasm_init_tls(ptr: number): void;
-    wasm_mt_thread_main(tid: number, stackLow: number): void;
-}
+import type { OracleMtExports } from '@sdk/ts/gen/exports.oracle_mt.ts';
 
 self.onmessage = (e: MessageEvent) => {
     const { bytes, memory, tid, stackTop, stackLow, tlsPtr } = e.data as {
@@ -26,7 +22,7 @@ self.onmessage = (e: MessageEvent) => {
     try {
         const mod = new WebAssembly.Module(bytes as BufferSource);
         const inst = new WebAssembly.Instance(mod, { env: { memory } });
-        const ex = inst.exports as unknown as MtExports;
+        const ex = inst.exports as unknown as OracleMtExports;
         ex.__stack_pointer.value = stackTop;   // BEFORE any other export call
         ex.__wasm_init_tls(tlsPtr);
         self.postMessage({ t: 'ready', tid });

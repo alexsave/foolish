@@ -17,65 +17,11 @@
 // The Supabase server runs every game operation through it since Phase 4b
 // (docs/C_GAME_SHAPE_MIGRATION.md; server/impls/supabase/functions/_shared/adapter/table_io.ts).
 
+import type { BotsExports } from '../gen/exports.bots.ts';
 import * as L from '../gen/game_layout.bots.ts';
 import { LAYOUT_HASH } from '../gen/layout_hash.bots.ts';
 import { assertLayoutHash } from '../wasm/layout_hash.ts';
 import { loadWasmGz, loadWasmGzAsync } from '../wasm/wasm_asset.ts';
-
-/** The bots.wasm exports this wrapper calls (c/wasm/wasm_table_api.c). */
-export interface TableExports {
-    memory: WebAssembly.Memory;
-    wasm_init(): void;
-    wasm_layout_hash(): number;
-    wasm_io_ptr(): number;
-    wasm_io_cap(): number;
-    wasm_table_roster_ptr(): number;
-    wasm_table_commit_ptr(): number;
-    wasm_table_request_ptr(): number;
-    wasm_table_elo_ptr(): number;
-    wasm_table_detail(): number;
-    wasm_table_reject(): number;
-    wasm_table_request_decode(len: number): number;
-    wasm_table_load(stateLen: number, rosterLen: number): number;
-    wasm_table_act(idLen: number, wireLen: number, intent: number, roundEpoch: number): number;
-    wasm_table_needs_bots(): number;
-    wasm_table_bots_need_logs(): number;
-    wasm_table_commit_products(gidLen: number, nextVersion: number, nowMs: number): number;
-    wasm_table_push(gidLen: number, viewer: number): number;
-    wasm_table_envelope(gidLen: number, viewer: number, version: number): number;
-    wasm_table_action_response(result: number, reject: number, version: number): number;
-    wasm_table_rankings(): number;
-    wasm_elo_deltas(n: number): number;
-    wasm_table_create(idLen: number, nameLen: number): number;
-    wasm_table_join(idLen: number, nameLen: number): number;
-    wasm_table_leave(idLen: number, targetLen: number): number;
-    wasm_table_add_bot(idLen: number, botLen: number, nickLen: number, brainLen: number): number;
-    wasm_table_remove_bot(idLen: number, botLen: number): number;
-    wasm_table_ready(idLen: number): number;
-    wasm_table_reseat(idLen: number, idsLen: number): number;
-    wasm_table_retitle(idLen: number, titleLen: number): number;
-    wasm_table_set_rules(idLen: number, passing: number): number;
-    wasm_table_continue(idLen: number): number;
-    wasm_table_rearrange_hand(idLen: number, n: number): number;
-    wasm_table_redact(idLen: number, nameLen: number): number;
-    wasm_table_seat_of(idLen: number): number;
-    wasm_table_set_deal_seed(len: number): number;
-    wasm_table_set_session_log(len: number): number;
-    wasm_table_bot_drive(prefsLen: number, maxActions: number): number;
-    wasm_table_drive_ptr(): number;
-    wasm_table_drive_prefs(): number;
-    wasm_table_bot_wait_ms(nowMs: number): number;
-    wasm_table_replay_code(seedLen: number, logLen: number): number;
-    wasm_table_replay_extras(logLen: number): number;
-    wasm_table_ask_ptr(): number;
-    wasm_table_ask_decode(len: number): number;
-    wasm_table_ask(bodyLen: number, idLen: number, nameLen: number, botLen: number, nickLen: number, brainLen: number): number;
-    wasm_ask_refusal_encode(why: number, code: number, detail: number): number;
-    wasm_table_cast(gidLen: number, viewer: number, version: number): number;
-    wasm_belief_probe_reset(): void;
-    wasm_belief_probe_dump(): number;
-    wasm_belief_probe_ptr(): number;
-}
 
 /** One recorded bot SEARCH, as the kernel saw it (c/src/bot_drive.h BeliefProbe). */
 export interface BeliefProbeRecord {
@@ -151,10 +97,10 @@ export interface TableSeat {
 const enc = new TextEncoder();
 
 export class ServerTable {
-    private readonly ex: TableExports;
+    private readonly ex: BotsExports;
     private mem: L.Mem;
 
-    constructor(ex: TableExports) {
+    constructor(ex: BotsExports) {
         this.ex = ex;
         this.mem = L.memOf(ex.memory.buffer);
     }
@@ -545,7 +491,7 @@ let statusLabels: Map<number, string> | null = null;
 /** A table over a PRIVATE bots.wasm instance: nothing else shares its resident slot. */
 export function createServerTable(): ServerTable {
     const inst = new WebAssembly.Instance(new WebAssembly.Module(loadWasmGz('bots') as BufferSource), {});
-    const ex = inst.exports as unknown as TableExports;
+    const ex = inst.exports as unknown as BotsExports;
     assertLayoutHash('bots.wasm', ex, LAYOUT_HASH, 'sdk/ts/gen/layout_hash.bots.ts');
     ex.wasm_init();
     return new ServerTable(ex);
