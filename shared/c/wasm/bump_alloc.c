@@ -43,7 +43,13 @@ void *malloc(size_t n)
      * itself one past what size_t holds. */
     unsigned long long brk = (size_t)g_brk;
     for (;;) {
-        unsigned long long room = (unsigned long long)__builtin_wasm_memory_size(0) * WASM_PAGE - brk;
+        /* The end as THIS thread sees it. Over a shared memory that can be
+         * behind the break: another thread grew the memory and allocated in
+         * what it grew, and an engine may not have told this one yet. No room
+         * then, not a negative amount of it, and the grow below is what brings
+         * this thread's view up to date. */
+        unsigned long long end = (unsigned long long)__builtin_wasm_memory_size(0) * WASM_PAGE;
+        unsigned long long room = end > brk ? end - brk : 0;
         if (need <= room) break;
         /* Grow by what is missing, counting the room already above the break,
          * plus 2 pages of slack. Not more: a host is charged for the size of

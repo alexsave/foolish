@@ -1762,7 +1762,10 @@ wasm-oracle-mt: wasm-cc-check
 # has no native form - the allocator is __heap_base and memory.grow - so it is
 # a module of its own, linked small (2 pages, 16 at most) so that growth and
 # refusal are both a few lines away, and built twice: plain, and -matomics
-# over an imported shared memory, which is the arm that takes the lock.
+# over an imported shared memory, which is the arm that takes the lock. The
+# -matomics module is also entered by real threads (the runner's workers), so
+# its declared maximum is 64 MiB; the runner still hands the one-thread checks
+# a 16-page memory.
 #
 # Here and not in a Makefile under shared/: this is the product that links the
 # allocator, and wasm.yml builds every `wasm*` target of this file with node on
@@ -1776,7 +1779,8 @@ build/bump_alloc_test.wasm: $(ALLOC_TEST_SRC) $(wildcard $(SHARED)/wasm/include/
 	$(WASM_CC) $(ALLOC_TEST_FLAGS) -Wl,--export-memory $(ALLOC_TEST_SRC) -o $@
 build/bump_alloc_test_mt.wasm: $(ALLOC_TEST_SRC) $(wildcard $(SHARED)/wasm/include/*.h) Makefile
 	@mkdir -p build
-	$(WASM_CC) $(ALLOC_TEST_FLAGS) -matomics -Wl,--shared-memory -Wl,--import-memory $(ALLOC_TEST_SRC) -o $@
+	$(WASM_CC) $(filter-out -Wl$(comma)--max-memory=%,$(ALLOC_TEST_FLAGS)) -matomics -Wl,--shared-memory -Wl,--import-memory \
+	  -Wl,--max-memory=67108864 -Wl,--export=__stack_pointer -Wl,--export=malloc $(ALLOC_TEST_SRC) -o $@
 
 .PHONY: wasm-alloc-test
 wasm-alloc-test: wasm-cc-check build/bump_alloc_test.wasm build/bump_alloc_test_mt.wasm

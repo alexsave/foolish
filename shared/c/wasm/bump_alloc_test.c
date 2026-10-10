@@ -7,9 +7,10 @@
  * it and reads that number; foolish/c's `make wasm-alloc-test` builds it
  * twice, plain and -matomics over a shared memory, and runs both.
  *
- * One thread. The -matomics build takes the lock on every call, which proves
- * it is released on every path, the failing ones included; contention is
- * covered where real threads allocate (foolish's oracle-mt tests). */
+ * That part is one thread; in the -matomics build it takes the lock on every
+ * call, which proves the lock is released on every path, the failing ones
+ * included. The second part is the -matomics build only and is real threads:
+ * bump_alloc_hammer() below, entered by several workers at once. */
 #include <stdlib.h>
 #include <string.h>
 
@@ -92,3 +93,71 @@ int bump_alloc_test(void)
     MUST(malloc(1) == 0);
     return 0;
 }
+
+#ifdef __wasm_atomics__
+/* ---- threads ----------------------------------------------------------------
+ * Several workers enter bump_alloc_hammer() over one shared memory, each on a
+ * stack the runner allocated for it, and park at the gate so that they
+ * allocate at the same moment and not one after another.
+ *
+ * The gate is opened by the runner's own instance, and not before it has
+ * allocated 40 pages: the memory has grown and the break has moved far past
+ * the end every parked thread last saw. That is the state a threaded product
+ * is in when its control thread allocates and then wakes its workers, and a
+ * parked thread is the one an engine has had no chance to tell. So the first
+ * thing a woken thread does is ask for 8 pages, which are not there: an
+ * allocator that measured its room against the end it remembers would find
+ * plenty, grow nothing, and hand out pages no one has.
+ *
+ * Each allocates `rounds` blocks, mostly a few bytes and now and then more
+ * than a page so the memory keeps growing under all of them, fills every block
+ * with its own tag and chains it to its previous one. Then it walks its chain.
+ * A block two threads were both given holds the wrong tag or a broken link (no
+ * lock, or a lock that does not cover the break). A block past the end of the
+ * memory as this thread sees it traps on the fill (a thread that trusted a
+ * size another thread's growth had already overtaken). */
+static int g_gate;
+
+__attribute__((export_name("bump_alloc_go")))
+int bump_alloc_go(void)
+{
+    unsigned char *ahead = malloc(40 * PAGE);
+    MUST(ahead);
+    ahead[40 * PAGE - 1] = 1;
+    __atomic_store_n(&g_gate, 1, __ATOMIC_RELEASE);
+    __builtin_wasm_memory_atomic_notify(&g_gate, ~0u);
+    return 0;
+}
+
+typedef struct Block { struct Block *prev; size_t size; } Block;
+
+__attribute__((export_name("bump_alloc_hammer")))
+int bump_alloc_hammer(int tid, int rounds)
+{
+    unsigned char tag = (unsigned char)(tid + 1);
+    Block *last = 0;
+    while (!__atomic_load_n(&g_gate, __ATOMIC_ACQUIRE)) __builtin_wasm_memory_atomic_wait32(&g_gate, 0, -1);
+    unsigned char *first = malloc(8 * PAGE);
+    MUST(first);
+    memset(first, tag, 8 * PAGE);
+    for (int r = 0; r < rounds; r++) {
+        size_t n = sizeof(Block) + 8 + (size_t)((r + tid) % 3) * 16;
+        if ((r + tid * 1250) % 4999 == 0) n += PAGE + 4096;
+        Block *b = malloc(n);
+        MUST(b);
+        memset(b, tag, n);
+        b->prev = last;
+        b->size = n;
+        last = b;
+    }
+    int seen = 0;
+    for (Block *b = last; b; b = b->prev, seen++) {
+        MUST(seen < rounds);
+        const unsigned char *body = (const unsigned char *)(b + 1);
+        for (size_t i = 0; i < b->size - sizeof(Block); i++) MUST(body[i] == tag);
+    }
+    MUST(seen == rounds);
+    for (size_t i = 0; i < 8 * PAGE; i++) MUST(first[i] == tag);
+    return 0;
+}
+#endif
