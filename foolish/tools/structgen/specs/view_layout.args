@@ -37,3 +37,10 @@
 --header hand_layout.h --root HandMetrics --root HandLayout
 --writer HandMetrics --snapshot HandMetrics --snapshot HandLayout
 --count HandLayout.slot=n --const HAND_
+# The stream a plan is asked for (anim_plan.h anim_plan_ask): every step with
+# its cards, its own board and its row goes in through the ask's writer, so the
+# bridge packs no event byte by hand. The plan itself is read where it lies
+# (anim.bots.ts), which is why only the question is here.
+--root AnimPlanAsk --writer AnimPlanAsk --snapshot AnimPlanAsk
+--count AnimPlanAsk.events=n_events --count AnimPlanAskEvent.cards=n_cards --count AnimPlanAskEvent.row=n_row
+--const MAX_PLAYERS

@@ -1053,64 +1053,14 @@ void *wasm_anim_frame_ptr(void) { return &g_anim_frame; }
 // no mask may take.
 #define ANIM_W_NONE 0xFFu
 
-// THE PLAN (anim_plan.h anim_build_plan). g_io in, per event:
-//   u8 type (ANIM_EVT_*), u8 seat (ANIM_W_NONE for none),
-//   u8 from, u8 to (ANIM_LOC_*; ANIM_LOC_NONE is already 0xFF),
-//   u8 mask_cards, u8 n_cards, n_cards x u8 wire card,
-//   u8 has_counts, and when it is 1: u8 deck, u8 discard, u8 flipped (wire
-//     card), n_players x u8 hand,
-//   u8 n_battles (ANIM_W_NONE for "no board of its own"), then 2 x that u8.
-// Then, once: n_players x u8 the FINAL hand.
-// Scalars: the final board's deck, discard and flipped (a wire card).
-// The answer is left in g_anim_plan for the caller to read where it lies.
-// Returns ANIM_EOK, or a negative ANIM_E*.
-int wasm_anim_build_plan(int n_events, int n_players,
-                         int final_deck, int final_discard, int final_flipped) {
-    if (n_events < 0 || n_players < 0 || n_players > MAX_PLAYERS) return ANIM_EBADARG;
-    if (n_events > ANIM_MAX_STEPS) return ANIM_ECAP;
-    static AnimPlanEvent events[ANIM_MAX_STEPS];
-    static Card cpool[ANIM_MAX_CARD_POOL];
-    static int  hpool[ANIM_MAX_STEPS * MAX_PLAYERS];
-    static unsigned char bpool[ANIM_MAX_STEPS * 2 * MAX_BATTLES];
-    int nc_pool = 0, nh_pool = 0, nb_pool = 0, p = 0;
-    for (int e = 0; e < n_events; e++) {
-        AnimPlanEvent *ev = &events[e];
-        ev->type = g_io[p++];
-        const unsigned char seat = g_io[p++];
-        ev->seat = (seat == ANIM_W_NONE) ? ANIM_SEAT_NONE : (int)seat;
-        ev->from = g_io[p++];
-        ev->to   = g_io[p++];
-        ev->mask_cards = g_io[p++] ? 1 : 0;
-        const int nc = g_io[p++];
-        if (nc > ANIM_MAX_CARDS || nc_pool + nc > (int)(sizeof cpool / sizeof cpool[0])) return ANIM_ECAP;
-        ev->cards = nc ? &cpool[nc_pool] : 0;
-        ev->n_cards = nc;
-        for (int k = 0; k < nc; k++) cpool[nc_pool++] = card_from_wire_pair(g_io[p++]);
-        ev->has_counts = g_io[p++] ? 1 : 0;
-        ev->deck = ev->discard = 0;
-        ev->flipped = CARD_NONE;
-        ev->hand = 0;
-        if (ev->has_counts) {
-            ev->deck = g_io[p++];
-            ev->discard = g_io[p++];
-            ev->flipped = card_from_wire_pair(g_io[p++]);
-            if (nh_pool + n_players > (int)(sizeof hpool / sizeof hpool[0])) return ANIM_ECAP;
-            ev->hand = &hpool[nh_pool];
-            for (int s = 0; s < n_players; s++) hpool[nh_pool++] = g_io[p++];
-        }
-        const unsigned char nb = g_io[p++];
-        if (nb == ANIM_W_NONE) { ev->n_battles = ANIM_NO_BOARD; ev->battles = 0; continue; }
-        if (nb > MAX_BATTLES || nb_pool + 2 * nb > (int)sizeof bpool) return ANIM_ECAP;
-        ev->n_battles = nb;
-        ev->battles = &bpool[nb_pool];
-        for (int k = 0; k < 2 * nb; k++) bpool[nb_pool++] = g_io[p++];
-    }
-    int final_hand[MAX_PLAYERS];
-    for (int s = 0; s < n_players; s++) final_hand[s] = g_io[p++];
-    return anim_build_plan(events, n_events, n_players, final_deck, final_discard,
-                           card_from_wire_pair((unsigned char)(final_flipped & 0xff)),
-                           final_hand, &g_anim_plan);
-}
+// THE PLAN (anim_plan.h anim_plan_ask). The stream goes in as the kernel's own
+// AnimPlanAsk, filled where it lies through the generated writer
+// (sdk/ts/gen/view_layout.bots.ts writeAnimPlanAsk), so there is no byte format
+// here for a host to keep in step with. The answer is left in g_anim_plan for
+// the caller to read where it lies. Returns ANIM_EOK, or a negative ANIM_E*.
+static AnimPlanAsk g_anim_plan_ask;
+AnimPlanAsk *wasm_anim_plan_ask_ptr(void) { return &g_anim_plan_ask; }
+int wasm_anim_build_plan(void) { return anim_plan_ask(&g_anim_plan_ask, &g_anim_plan); }
 
 // WHERE THE PLAN STANDS AT now_ms (anim_plan.h anim_plan_at), measured from the
 // sequence's start. The clock is an argument: the kernel imports nothing, so
