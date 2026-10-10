@@ -15,7 +15,7 @@ Commands below run from inside `chuiniu/`.
 |---|---|
 | `c/` | the C kernel (`c/src/cn_*`), its tests (`c/tests/`) and the iOS bridge (`c/ios/`, header `cn_api.h`, module `CChuiniu`) (K1) |
 | `ios/` | `ChuiniuKit`, `ChuiniuMessages` (the extension) and `ChuiniuMessagesApp` (the container), from `ios/project.yml` (I1) |
-| `docs/` | `DECISIONS.md`, the one decisions doc |
+| `docs/` | `DECISIONS.md`, the one decisions doc; `UI.html`, the element study for the drowned-table look (open it in a browser: it bakes its own textures, and its Roll tab plays the kernel's throw as embedded wasm, `make -C c docs-roll`); `roll_wasm_check.mjs`, a smoke for that embed |
 | `LEGAL.md` | what is safe to clone here, what is avoided, and what was not checked |
 
 ## Build and test
@@ -23,6 +23,7 @@ Commands below run from inside `chuiniu/`.
 ```
 make -C c run             every C test and the bridge smoke
 make -C c asan            the same under ASan + UBSan
+make -C c wasm-roll       the throw (K14) as a browser module; docs-roll embeds it in docs/UI.html
 make -C c ios-lib         ios/vendor/Chuiniu.xcframework and ios/Generated/ (Xcode)
 make -C c swift-smoke     the bridge driven from Swift (a Mac)
 make -C c build/cn_link_dump   decode a bubble's link (a simulator check)

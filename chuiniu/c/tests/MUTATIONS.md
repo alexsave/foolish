@@ -113,3 +113,29 @@ Run 2026-09-27 on the kernel as of this commit, with `cn_fuzz 100` to `500`, `cn
 | Swift smoke | the same cold adopt | "the start's cups shake", "the frame at 0", "the frame at the end" |
 | Swift smoke | `cn_api_view` shows the staged move | "nothing lifts while staged" |
 | Swift smoke | `cn_min_quantity` takes `f >= bid_f` | "above three 4s: four 2s to four 4s, three 5s and 6s" |
+
+## cn_stage_test.c and the stage through the bridge
+
+Package D's rows (the stage, its C and Swift smokes, the Swift stage test) are in `chuiniu/c/docs_pkgD.md`, "Mutation checks": every test function of `cn_stage_test.c` went red at least once, and the smokes' stage checks named there did.
+
+## Package G (the smooth shadow, the arena-free stage init)
+
+Its rows are in `chuiniu/c/docs_pkgG.md`, "Tests added, each seen red".
+
+## Package X (the throw once a phone)
+
+Its rows are in `chuiniu/c/docs_pkgX.md`, "Tests, each seen red": `cn_msg_test` `test_records`, `cn_twophone_test` `throw_once`, the C smoke's still table, and the Swift tests.
+## Package Y (every bubble is one line)
+
+Its rows are in `chuiniu/c/docs_pkgY.md`, "Mutation checks".
+
+## Package N (the names on the table)
+
+Its rows are in `chuiniu/c/docs_pkgN.md`, "Tests, each seen red".
+## Package Q (the crown count in lining figures)
+
+Its rows are in `chuiniu/c/docs_pkgQ.md`, "Tests, each seen red".
+
+## Package S (the verifier's findings)
+
+Its rows are in `chuiniu/c/docs_pkgS.md`, "Tests, each seen red".

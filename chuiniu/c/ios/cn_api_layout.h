@@ -16,6 +16,7 @@
 #include "../src/cn_view.h"
 #include "../src/cn_msg.h"
 #include "../src/cn_beats.h"
+#include "../src/cn_stage.h"
 
 /* A plan the host asked for. A range too long for this is refused and the
  * host asks for a shorter one; one bubble is at most CN_EVENTS_PER_MOVE. */

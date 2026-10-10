@@ -42,6 +42,29 @@ int cn_say_bid(int q, int f, int initial, char *out, int cap);
 int cn_say_seat(const char *const *names, int seat, char *out, int cap);
 int cn_say_dice_n(int n, char *out, int cap);                    /* "4 dice" */
 
+/* ---- the bubble's one line (docs_pkgY.md) ------------------------------------- *
+ *
+ * A BUBBLE'S CAPTION IS ONE LINE (the owner's rule): Messages sets it in the
+ * system font at 17 points across a 300-point bubble with 14 points each
+ * side, and a longer caption wraps or is cut. The kernel knows no font, so it
+ * counts every caption in CN_CAP_UNIT-ths of a point by cn_cap_width, an
+ * UPPER BOUND on the system font's advance at 17 points, regular or
+ * semibold: a table for ASCII measured with Core Text on the phone, and a
+ * class for every other code point that is the widest glyph of that class
+ * there (W and % are 16.5, a Latin letter 19, Greek and Cyrillic 24, a CJK
+ * ideograph 19, an emoji 24, anything else 46, U+FDFD 73, cuneiform 80; a
+ * combining mark 0).
+ *
+ * Every caption this file writes is at most CN_CAP_BUDGET by that count, by
+ * construction: it says the study's sentence when that fits (the usual
+ * case), else the same sentence in steps, never cutting a word and never
+ * losing who or what: the template's shorter form (CAP_START_SHORT,
+ * CAP_INVITE_SHORT), then the bid in digits ("12 3s"), and last the name
+ * clipped to the room left with CAP_CLIP ("Maximilia… bids first"). */
+#define CN_CAP_UNIT      8                    /* width units a point              */
+#define CN_CAP_BUDGET    (272 * CN_CAP_UNIT)  /* 300 less 14 a side, in units     */
+int cn_cap_width(const char *s);              /* in units; NULL is 0              */
+
 /* ---- the bubble -------------------------------------------------------------- */
 
 /* The caption of move `move` (1..hist_n), or of the start for 0: "Dice
@@ -57,23 +80,32 @@ int cn_say_caption_of(const CnEvent *ev, int n, const char *const *names, char *
  * every clause, the most important first (K9). "" before the first call. */
 int cn_say_outcome(const CnGame *g, const char *const *names, char *out, int cap);
 int cn_say_outcome_of(const CnEvent *ev, int n, const char *const *names, char *out, int cap);
+/* One clause of that line, as the line says it, for a host to set apart where
+ * it finds it (the study's outcome sets the loser's clause in blood and the
+ * winner's in the glow): CN_SAY_PART_LOSS "Bo loses a die", CN_SAY_PART_WIN
+ * "Alex wins"; "" when the line has none. CN_SAY_PART_ALL is the whole line. */
+enum { CN_SAY_PART_ALL = 0, CN_SAY_PART_LOSS, CN_SAY_PART_WIN };
+int cn_say_outcome_part(const CnGame *g, const char *const *names, int part, char *out, int cap);
+int cn_say_outcome_part_of(const CnEvent *ev, int n, const char *const *names, int part, char *out, int cap);
 
 enum { CN_SAY_INVITE = 0, CN_SAY_JOINED, CN_SAY_LEFT };
 int cn_say_lobby_caption(int which, const char *who, char *out, int cap);
 
 /* ---- the screen, for one viewer --------------------------------------------- */
 
-/* "Your turn: raise or call", "Bo's turn", "You win", "Alex wins". */
+/* "Your turn: raise or call Liar", "Bo's turn", "You win", "Alex wins". */
 int cn_say_headline(const CnGame *g, int viewer, const char *const *names, char *out, int cap);
 /* "Bid to beat: four 3s by Alex", "No bid yet". */
 int cn_say_subline(const CnGame *g, const char *const *names, char *out, int cap);
-/* "Send to bid four 3s" / "Send to call four 3s": a staged move of mine. */
+/* "Send to bid four 3s" / "Send to call Liar on four 3s": a staged move of mine. */
 int cn_say_staged(const CnGame *g, CnMove m, char *out, int cap);
 
 /* "14 dice on the table". */
 int cn_say_table(const CnGame *g, char *out, int cap);
 /* The newest call's count: "There were five"; "" before the first call. */
 int cn_say_reveal_count(const CnGame *g, char *out, int cap);
+/* The same for any count 0..CN_MAX_DICE: "There were twelve", "There were 30". */
+int cn_say_tally(int count, char *out, int cap);
 /* A lobby row: "2. Bo", or "2. Bo (You)" when `mine`. */
 int cn_say_lobby_row(const char *const *names, int seat, int mine, char *out, int cap);
 /* Why a link did not read, from a negative CN_E* (cn_msg.h): a newer

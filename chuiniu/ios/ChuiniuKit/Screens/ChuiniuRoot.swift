@@ -11,9 +11,6 @@ public final class ChuiniuHost: ObservableObject {
     @Published public private(set) var table: TableModel = .empty
     /// A link the kernel refused, with its error; the unreadable screen.
     @Published public var unreadable: Int?
-    /// The newest roll this phone has played, so a screen change does not
-    /// replay it (DiceRoll).
-    @Published public var playedRoll = 0
     /// A touch left a bubble to stage, captioned with the kernel's caption;
     /// `collapse` for a move (the drawer goes down once it has rested), not
     /// for a lobby bubble.
@@ -25,6 +22,10 @@ public final class ChuiniuHost: ObservableObject {
     }
 
     public func word(_ w: Word) -> String { kernel.word(w) }
+
+    /// How far the kernel's newest plan has run, ms (the clock the stage and
+    /// the beats share, I21); nil when no plan is playing.
+    public var planMs: Int? { kernel.motionStart.map { max(0, Int(Date().timeIntervalSince($0) * 1000)) } }
 
     /// Read the resident again.
     public func refresh() { table = kernel.table }
@@ -38,9 +39,24 @@ public final class ChuiniuHost: ObservableObject {
 
     public func join(name: String) { act(kernel.join(name: name), collapse: false) }
     public func start() { act(kernel.start(), collapse: false) }
+    /// Get up from my lobby seat: the bubble is captioned with my leaving,
+    /// which the kernel words before the row is gone.
+    public func leave() {
+        let caption = kernel.leave()
+        refresh()
+        if let caption { onStage?(caption, false) }
+    }
     public func raise(_ bid: Bid) { act(kernel.raise(quantity: bid.quantity, face: bid.face), collapse: true) }
     public func call() { act(kernel.call(), collapse: true) }
     public func nextRound() { act(kernel.nextRound(), collapse: false) }
+
+    /// The table's throw of `rollID` ran to its end: the kernel keeps it (a
+    /// round's throw plays once a phone, however often the extension is
+    /// launched), and the model reads it back as no longer pending.
+    public func rollSeen(_ rollID: Int) {
+        kernel.rollSeen(rollID: rollID)
+        refresh()
+    }
 
     /// Adopt a bubble's link: 0, or the kernel's error (and the unreadable
     /// screen).
@@ -62,6 +78,10 @@ public struct ChuiniuRoot: View {
         Group {
             if let e = host.unreadable {
                 UnreadableScreen(title: host.word(.gameTitle), reason: host.kernel.errorText(e))
+            } else if host.table == .empty {
+                // no game read yet (the conversation has not been presented):
+                // the bare planks, never a lobby that is about to be replaced
+                PlanksBackground().ignoresSafeArea()
             } else {
                 switch host.table.phase {
                 case .lobby:
@@ -74,6 +94,16 @@ public struct ChuiniuRoot: View {
             }
         }
         .animation(FMotion.chrome, value: host.table.phase)
+#if DEBUG
+        .task {
+            // StageHarness: a table of any size, once per extension process,
+            // after the conversation's own first read has landed
+            guard !Harness.ran, let spec = Harness.spec else { return }
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            Harness.ran = true
+            if Harness.play(spec) { host.unreadable = nil; host.refresh() }
+        }
+#endif
     }
 }
 
@@ -84,12 +114,12 @@ public struct UnreadableScreen: View {
 
     public var body: some View {
         VStack(spacing: 8) {
-            Text(title).font(.system(size: 17, weight: .heavy)).onFeltText()
-            Text(reason).font(.system(size: 13, weight: .semibold)).onFeltText(FColor.textDim)
+            Text(title).font(FType.serif(26)).bidInk()
+            Text(reason).font(FType.serif(15.5)).onPlanks(Ink.inkdim).multilineTextAlignment(.center)
             Spacer(minLength: 0)
         }
         .padding(22)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(FeltBackground())
+        .background(PlanksBackground().ignoresSafeArea())
     }
 }

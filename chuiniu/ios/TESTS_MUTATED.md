@@ -25,14 +25,10 @@ The badge is now 72pt wide and the plate 160pt, and that run is what M8, M9 and 
 | M6 | testCallFollowsTheMenu | `callEnabled` always true | "nothing to call before the opening bid" |
 | M7 | testTheStepperSpansTheLeastQuantityToEveryDie | `quantityRange` takes the `max` of the faces | "least of the faces to the table" (5...20 against 4...20) |
 
-## DiceTableLayoutTests
+## DiceTableLayoutTests (retired 2026-10-05, package E1)
 
-| # | Test | Mutation | Assertion that went red |
-|---|---|---|---|
-| M8 | testSeatsNeverOverlapEachOtherOrThePlate | the arc's step divides by `others + 3` | "seats 2 and 3 do not overlap" (4 seats), "seat 2 clears the bid plate" (6 seats), 65 in all |
-| M9 | testSeatsNeverOverlapEachOtherOrThePlate | the horizontal radius halved | "seats 2 and 3 do not overlap" (5 seats), "seat 1 clears the bid plate", 112 in all |
-| M10 | testMySeatIsTheBottomBand | the others run right to left | "the seat after mine is the leftmost" (295.9 against 179) |
-| M11 | testSeatsNeverOverlapEachOtherOrThePlate | the plate sits at `0.7` of the radius instead of `0.3` | "seat 1 clears the bid plate" (2 seats), 71 in all |
+`DiceTableLayout` and its test are deleted: the seats, the plate, the shelf and the short board are the kernel's (`cn_lay`, pinned by `cn_lay_test.c` to the study's own numbers), and Swift places nothing.
+Rows M8 to M11, M18 and M19 recorded mutants of a function that no longer exists.
 
 ## BridgeKernelTests (the tie-together, 2026-09-27)
 
@@ -51,17 +47,138 @@ The unmutated suite is 12 tests, 0 failures.
 
 `testTheLayoutOfTheReadersIsTheLibrarys` is a startup check (`cn_api_layout_hash` against `SG_LAYOUT_HASH`); it was not mutated, because a mismatched pair is a rebuilt library or a regenerated reader, not a source edit.
 
-## DiceTableLayoutTests on the short board (the tie-together, 2026-09-27)
+## StageViewTests (package E1, 2026-10-05)
 
-The compact drawer's boards (358 x 140, 358 x 150, 398 x 160) were added after the first run inside Messages showed a seat drawn over the plate there.
+The host side of the kernel's stage, on real group games played into the bridge.
+Each mutant was applied by `~/.claude/skills/ios-sim-verify/mutation_check.sh` (exact replacement, restored and verified byte for byte), `-only-testing:ChuiniuKitTests/StageViewTests`, on a private iPhone 17e simulator (`EA27629F`, iOS 27.0); the driver was a Python script, never a shell loop.
+The unmutated suite is 16 tests, 0 failures.
+These tests were written after the code, so the mutants are their red runs.
 
 | # | Test | Mutation | Assertion that went red |
 |---|---|---|---|
-| M18 | testSeatsNeverOverlapEachOtherOrThePlate | the short band is 120pt, as tall as the expanded one | "seats 0 and 1 do not overlap", "seat 0 clears the bid plate" (358 x 140), 291 in all |
-| M19 | testSeatsNeverOverlapEachOtherOrThePlate | the plate is drawn at any width beside the row | "a drawn plate is wide enough to read" (22 at five seats); survived until that assertion was added |
+| M21 | testTheTurnedLayerMapsEveryPointAsTheKernelsCamera | `tilt` reads `ca` (about the origin) instead of `ca_screen` | "390x340: (0.0, 0.0) lands at x the kernel's camera says" (0 against -1.24), every size |
+| M22 | testTheTurnedLayerMapsEveryPointAsTheKernelsCamera | `m23` and `m32` swapped | SURVIVED: they act on z only, and every painted point is flat (z 0); replaced by M22b |
+| M22b | testTheTurnedLayerMapsEveryPointAsTheKernelsCamera | `m24` negated (the turn's sign on the y-to-w term, what a wrong rotation sign does to a flat point) | "390x718: (0.0, 718.0) lands at x" (-19.95 against -39.21), every size |
+| M23 | testAViewWithNoSizeNeverAsksForAFrame | `begin` drops its no-size guard | "nothing begun for a drawer with no size" (2 against 0) |
+| M24 | testAViewWithNoSizeNeverAsksForAFrame | `wake` drops its no-size guard | "a view shrunk to nothing asks for no frame" (2 against 1) |
+| M25 | testMyCupsEllipseIsTheOneTapAndItTipsTheCupByTheKernelsEase | the ellipse test is `<= 1.2` | "just past its edge", "just above it" |
+| M26 | testMyCupsEllipseIsTheOneTapAndItTipsTheCupByTheKernelsEase | the peek tween is linear, not `cn_api_peek_ease` | "halfway, the kernel's ease" (0.50 against 0.89) |
+| M27 | testTheThrowsClockIsTheStudysAndNothingIsStagedBeforeMyDiceRest | dt clamped to 0.1 | "dt clamped to .05" (100 against 50) |
+| M28 | testTheThrowsClockIsTheStudysAndNothingIsStagedBeforeMyDiceRest | at rest from `roll_at_ms`, not `rest_ms` | "my dice are in the air", "just before rest_ms nothing may be staged" |
+| M29 | testTheThrowsClockIsTheStudysAndNothingIsStagedBeforeMyDiceRest | the tap ignores `atRest` | "no peek while they are" |
+| M30 | testTheFrameInBandsIsTheFrameOnOneThread | `BridgeStage.frame` draws `bands - 1` bands (a Kernel file, mutated for the check only and restored) | "at 1200 ms, peek 0.0: the bands' bytes are one thread's", and at 4052 ms peeking |
+
+## The bubble and the arena (package E2, 2026-10-05)
+
+`testTheBubbleIsTheStagesFreesTheArenaAndPutsTheTableBack`, on a private iPhone 17e (iOS 27.0, `C6058B4C`), `-only-testing:ChuiniuKitTests/BridgeKernelTests` (5 tests executed every run, none a compile error).
+Each mutant was one edit by hand, run, then edited back; `git diff` showed the source unchanged afterwards.
+
+| # | Mutation | Assertion that went red |
+|---|---|---|
+| E1 | `BridgeStage.bubble` does not begin the table on show again | `:280` "the table on show draws its own picture again" (936000 bytes against 2312640) |
+| E2 | `BridgeStage.bubble` does not purge | `:277` "no arena after the bubble", `:285` |
+| E3 | `BridgeStage.begin` takes an arena (`ready(arena: true)`) | `:266` "a begin takes no arena", then `:277`, `:285` |
+| E4 | `BubbleSnapshot.render` asks the stage only when the game is over | `:274` "the stage drew the picture, once" (0 against 1), `:276` the scale (3 against 2), `:277` |
+
+## lint_architecture.sh (package E2, 2026-10-05)
+
+Each mutant was one edit by hand to a product file or to the lint, the lint run, the edit taken back, and the lint clean again.
+
+| # | Mutation | What the lint said |
+|---|---|---|
+| L1 | `MessagesViewController.swift` gains `d.withUnsafeBytes { $0.load(fromByteOffset: 2, as: UInt16.self) }` | `ChuiniuMessages/MessagesViewController.swift:39: withUnsafeBytes` and `: load(fromByteOffset` |
+| L2 | `KernelSeam.swift` imports `CChuiniu` | `ChuiniuKit/Kernel/KernelSeam.swift:16: import CChuiniu (only BridgeKernel.swift may)` |
+| L3 | `KernelSeam.swift` declares `struct MutantView { var bidQ: Int; let bidF: Int }` | `ChuiniuKit/Kernel/KernelSeam.swift:18: struct MutantView declares bidQ, bidF` |
+| L4 | `BridgeKernel.swift` spells a bid `b.quantity << 8 \| b.face` | first SURVIVED: `grep -q` closed the pipe early and `pipefail` read the SIGPIPE as "this file does not reach the kernel". The detector now reads a here-string; then `ChuiniuKit/Kernel/BridgeKernel.swift:238: shift << 8 on a file that reaches the kernel` |
+| L5 | `ALLOWED` gains `ChuiniuKit/Kernel/BridgeKernel.swift\|bytes` (with L4 in place) | the shift was let through and `ALLOWED has 1 entries; it only shrinks, and it is empty: fix the code` |
+| L6 | the detector loses `withUnsafeBytes` from its tokens | `detector self-test: four byte reads (found 3, want 4)` |
+
+Before the lint went in it found three hand byte reads, all removed: `BridgeKernel.swift` handed the seat records and the participant id to C through `withUnsafeBytes` and `bindMemory` (now a `[UInt8]` argument), `MessagesViewController.swift` read the participant UUID with `withUnsafeBytes(of:)` (now its sixteen bytes spelled out), and `BridgeKernelTests.swift` imported `CChuiniu` for the tests-only view (now `BridgeKernel.everyonesView()`, Debug only).
+
+## The baked planks (package T, 2026-10-05)
+
+`chuiniu/c/tests/cn_tex_test.c`, "planks: six planks, seamless, a running bond, nails, the deep palette", run by `make -C chuiniu/c tex-test` (402 assertions green before and after).
+Each mutant was one edit by hand to `tools/cn_texgen.c`, the test run, the edit taken back by re-editing, and the test green again.
+
+| # | Mutation | Assertion that went red |
+|---|---|---|
+| T1 | the gap pass reads `u0 * 5`, not six planks | `:254` "plank edge 1 (x 172) is not a gap" (and edges 4 and 5), `:258` "plank 1's middle is dark" |
+| T2 | no running bond: `shift = (pi % 2) * .0` | `:272` "plank 1 ends at row 0, not 830" (and 3 and 5) |
+| T3 | the texel's v is `(y + .5) / (H - 40)` (the tile no longer wraps) | `:266` "the top and bottom edges part: 32.25 a texel against 1.07 inside", and `:272` |
+| T4 | the march's palette warm (base 16 10 6, gains 14 9 5: foolish's walnut direction) | `:280` "the planks lean warm: 26.5 19.1 12.1" |
+| T5 | one nail a plank, not one inside each edge | `:299` "48 nail heads, 48 missing" |
+| T6 | the crust draws no wrapped copies (`w < 1` for the patches and the shells) | `:333` "left and right edges part more than the study's: 111.66 against 5.31", `:334` "top and bottom edges part: 114.62 against 5.38" |
+| T7 | no shells (`per = 0`) | `:323` "only 0 solid texels: the shells are missing", and `:333` |
+
+## DesignTests (package T, 2026-10-05)
+
+`ChuiniuKitTests/DesignTests.swift`, on the private simulator TChuiniu (`5FD5777D`, iPhone 6.9", iOS 27.0), `-only-testing:ChuiniuKitTests/DesignTests` (6 tests executed every run, none a compile error).
+Each mutant was one edit to a product file by a script that read the file, replaced one line, ran the tests and wrote the line back; `git status` showed the sources unchanged afterwards.
+
+| # | Mutation | Assertion that went red |
+|---|---|---|
+| D1 | `PlankTile.left` starts the tile at the centre line (no `- plank / 2`) | `:38` "300.0: a plank's middle is on the centre line" (193 against 150), every width, and `:43` on the stage |
+| D2 | `FType.registered` registers no file | `:50` "IM Fell English roman and small caps resolve by name", `:51` ".SFUI-Regular is not IM_FELL_English_Roman", `:52` |
+| D3 | `nameInk` gives every seat the bright ink | `:63` "every other name is the dim ink" |
+| D4 | `callKind(enabled: true)` is `.bronze` | `:69` "Liar is the blood plate" (bronze against call) |
+| D5 | the planks open at 1 texel a point | `:15` "the planks are the study's 516 by 830 tile" (1032 by 1660), `:16` "two texels a point" |
+| D6 | the narrow plate steps down to 14 | `:80` "nothing under 15.5 in the roman" (14 against 15.5) |
+
+## The throw once a phone (package X, 2026-10-05)
+
+| Test | Mutation | Assertion that went red |
+|---|---|---|
+| `testARoundsThrowPlaysOncePerPhoneAcrossLaunches` | `BridgeKernel.rollSeen` without its flush | "launched again: the store kept it", "the bid: no throw", "watched, and kept" |
+| same | `rollSeen` passes `rollID`, not `rollID - 1` | "watched: the host's model reads it back", "launched again: the store kept it", "the past round's report watches nothing new" (and the still-table StageViewTests: "no throw: at rest") |
+| same | the model's `rollPending` always true | "watched: the host's model reads it back", "launched again: the store kept it", "the bid: no throw", "watched, and kept" |
+| `testUnderReduceMotionTheThrowIsReportedWatchedAtTheBegin` | the director's Reduce Motion clock jump removed | "reported from the begin", "once" |
 
 ## Not tested
 
 The conversation (`ChuiniuMessages/MessagesViewController.swift`) has no test target, as pickemup's has none.
 The screens and the conversation were played inside Messages on the real kernel, a round and a call step by step and a whole game to a winner (`chuiniu/docs/SIM_VERIFICATION.md`); that is looked at, not asserted.
 `RevealScreen`'s use of the kernel's frame (I10) has no test of its own; `revealMotion` is asserted only at 0 ms (cups down) and at 60 s (done).
+`StageUIView`'s paint (the planks, the names, the canvas layer) is looked at on the simulator, not asserted, beyond the canvas frame in `testAViewWithNoSizeNeverAsksForAFrame`.
+
+## Package Z (the planks cover the whole view)
+
+`testThePlanksTurnedCoverTheWholeViewAtEveryDrawer` and the C cover tests (`cn_cam_test.c` test_planks_cover, the planks check in `cn_stage_test.c` test_layout): the rows are in `chuiniu/c/docs_pkgZ.md`, "Tests seen red" (S1 to S3 Swift, on the booted simulator cnverify, `-only-testing`; M1 to M4 C).
+## Package Y (every bubble is one line)
+
+Its rows are in `chuiniu/c/docs_pkgY.md`, "Mutation checks": every test of `BubbleLineTests.swift` and the new `cn_say_test.c` test went red for its own assertion.
+
+## Package N (the names on the table)
+
+`StageViewTests` testANamesPictureIsItsLettersAndItsBar and testANameIsHandedToTheStageOnlyWhenItChanges: see `chuiniu/c/docs_pkgN.md` (their mutation runs were cut off; not yet seen red).
+## The lobby's controls (package P, 2026-10-05)
+
+`ChuiniuKitTests/LobbyTests.swift`, on the private simulator TChuiniu (`5FD5777D`), `-only-testing:ChuiniuKitTests/LobbyTests` (3 tests executed every run, none a compile error).
+Each mutant was one edit to a product file by a script that read the file, replaced one string, ran the tests and wrote the file back; `git status` showed the sources unchanged afterwards.
+
+| # | Mutation | Assertion that went red |
+|---|---|---|
+| P1 | `LobbyControls` shows nothing for WAITING and INVITE (the old screen) | "alone: Start and Leave are there, sunk", "the newest joiner with room left may not start, but may leave", "alone again: sunk", and the unnamed creator's last check |
+| P2 | Leave always quiet, ignoring `mayLeave` | "alone: Start and Leave are there, sunk", "alone again: sunk" |
+| P3 | the bridge's `mayLeave` always false | "the newest joiner ... may leave", the creator with two (Leave quiet) |
+| P4 | the lobby's seats carry `dice: 0` | "the cup carries the dice a seat sits down with" |
+| P5 | the bridge never remembers a create refused for want of a name | "the name field with Join", the join, `me`, the seats, the caption, "the invitation is staged" |
+| P6 | the roster fixed to its content height (no scroll) | "start/leave/name/join at (.., 306, .., 44) leaves the (390 or 320, 328) drawer" |
+| P7 | Start 40 tall | "start is 40.0 tall" at every drawer |
+| P8 | the leave caption worded after the row is gone | `bo.leave()` is "" not "Bo left" |
+
+## Memory and the cold open (package M, 2026-10-06)
+
+`BridgeKernelTests.testFramesAreTheKernelsSurfacesAndTheStageRests` and `StageViewTests.testTheDirectorRestsTheStageOnceTheTableIsStill`, on the private simulator cnmem (`A996019C`), `-only-testing`, one test each run; the C rows (`cn_stage_test.c` test_external) are in `chuiniu/c/docs_pkgM.md`.
+Each mutant was one edit to a product file, restored by editing it back.
+
+| # | Mutation | Assertion that went red |
+|---|---|---|
+| S1 | the pool draws into any fitting surface, held or not | "a surface a frame holds is never drawn into", "the held frame keeps its picture", "the two surfaces frames hold stay, no spare" |
+| S2 | the rest records no pages given back | "at rest the frame's pages go back" |
+| S3 | the rest's ticket ignored (an overtaken wait rests anyway) | "a frame asked meanwhile puts the rest off", "rested, once", "and not again while nothing is drawn" |
+| S4 | the director never rests | "half a second after the last frame: rested, once", "and not again" |
+
+A first S3 (the asked frame no longer bumps the ticket) stayed green: the landing of the same frame bumps it, so that bump was a second band-aid and is gone.
+## Package S (the verifier's findings) and package N's Swift tests
+
+Their rows, package N's two Swift tests among them (seen red at last; the one-ink mutant survived and the picture test gained the letters' check), are in `chuiniu/c/docs_pkgS.md`, "Tests, each seen red".

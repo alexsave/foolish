@@ -174,13 +174,39 @@ int cn_msg_resolve(const CnMsg *m, int record, int tag_seat, int is_dm, int i_se
                    const uint8_t *name, int name_len, int *by);
 
 /* THE RECORDS: this device's seats, newest first, CN_REC_LEN bytes each -
- * the game id and the tag it sat with. */
-#define CN_REC_LEN   (8 + CN_TAG_LEN)
+ * the game id, the tag it sat with, and the newest round whose throw this
+ * device has watched to its end (that round + 1, 0 for none): each round's
+ * throw plays on a phone once (docs_pkgX.md). */
+#define CN_REC_LEN   (8 + CN_TAG_LEN + 1)
+#define CN_REC_SEEN  (8 + CN_TAG_LEN)          /* the seen byte's offset    */
 #define CN_REC_MAX   256
 #define CN_REC_BYTES (CN_REC_LEN * CN_REC_MAX)
 #define CN_REC_GONE  MSG_SEAT_REC_GONE
 int cn_rec_find(const uint8_t *recs, int n, const CnMsg *m);
+/* Records `seat`'s tag for m's game, newest first; a game already recorded
+ * keeps its seen byte (a rejoin is the same phone that watched). */
 int cn_rec_put(uint8_t *recs, int n, const CnMsg *m, int seat);
 int cn_rec_forget(uint8_t *recs, int n, const CnMsg *m);
+/* The seen byte of m's game: 0 with no record. */
+int cn_rec_seen(const uint8_t *recs, int n, const CnMsg *m);
+/* Raise m's seen byte to `seen` (1..255); never lowers it. 1 if it changed,
+ * 0 otherwise (no record of the game, or already as high). */
+int cn_rec_see(uint8_t *recs, int n, const CnMsg *m, int seen);
+
+/* THE STORED FORM (what the host keeps and hands back unread): the magic
+ * CN_REC_MAGIC, then the records as above. A stored form without the magic
+ * is the first one (17-byte records: no seen byte), read as nothing seen.
+ * The magic is 8 bytes where the first form held a game id (a SHA-256
+ * prefix), so a first-form store is mistaken for this one with chance 2^-64.
+ * Either form's trailing partial record is dropped. */
+#define CN_REC_MAGIC      "cnrec\x02\x00\xa5"
+#define CN_REC_MAGIC_LEN  8
+#define CN_REC_LEN_V1     (8 + CN_TAG_LEN)
+#define CN_REC_FILE_BYTES (CN_REC_MAGIC_LEN + CN_REC_BYTES)
+/* The stored form `bytes` (n of them) into recs (CN_REC_BYTES): the records'
+ * length. */
+int cn_rec_load(uint8_t *recs, const uint8_t *bytes, int n);
+/* recs (n bytes) in the stored form: its length, or -1 when cap is short. */
+int cn_rec_save(const uint8_t *recs, int n, uint8_t *out, int cap);
 
 #endif

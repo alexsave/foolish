@@ -47,6 +47,41 @@ The whole log is `chuiniu/docs/SIM_GAME_LOG.txt`.
 
 - In the compact drawer the reveal's names came out at 70% of their size (the loser row's stamp squeezed the row and the name's minimum scale gave way); the name no longer scales and the reveal is spaced to fit the compact drawer. `tie_19_reveal_names_fixed.png`, one more round played after the fix; the earlier reveal shots are from before it.
 
+## The kernel's bubble, six seats and memory (package E2, 2026-10-05)
+
+A private iPhone 17e simulator `C6058B4C` (iOS 27.0, 390 by 844 points, light), the Debug build installed with `rig.sh build`, a two-line session in the 888 thread, `dev.nick` Alex.
+
+- `dev.fill` 6, then `rig.sh open`: one opening made a group lobby, sat Bo, Cy, Di, Ed and Fay, started it, and staged the start bubble.
+  The bubble is the stage's own picture: six verdigris cups in a row with 5 on each crown, the bare names under them in small caps, no plate (no bid yet), caption "Dice rolled. Alex bids first". `e2_01_six_seats_start_bubble.png`
+- Raise on one 2: after the staged beats the drawer collapsed and the bubble went in with the plate "one 2" and a 2 die, Alex's name lit and the others dim, caption "Alex bid one 2" (I18: the staged bid, bare names). `e2_02_raise_bubble_staged.png`, cropped `e2_03_bubble_crop.png`
+- The picture is made at 2 pixels a point (600 by 390) on this 3x screen; the stage draws a still at 2 at most.
+
+### Memory
+
+`footprint` and `vmmap --summary` on the extension process, six seats.
+The live table here is still the SwiftUI one, so the arena is taken only while a bubble is drawn.
+
+| when | footprint | peak |
+|---|---|---|
+| compact (328 pt), after the start bubble | 37 MB | 55 MB |
+| expanded (797 pt) | 37 MB | 55 MB |
+| compact, after the raise's bubble | 38 MB | 59 MB |
+
+The peak is the bubble's moment: the arena's touched pages, about 12 MB of textures and the 600 by 390 frame, then given back.
+Nothing is near 120 MB.
+Once the live table draws through the stage, a 2x frame of the tall drawer is up to 36 MB of the arena on top of the textures, plus each frame's copy out, so expect 90 to 100 MB there; that has to be measured again then.
+
+### The drawer is measured
+
+The Debug log prints the extension's bounds on every layout beside the drawer the stage was begun with.
+Collapsed it was 390 by 328 and expanded 390 by 797, and the expand laid the view out at every height in between (348, 358, ... 669), so the hosting view follows the drawer and a screen reading its own size sees each one.
+"stage none" on every line: no screen begins the table stage yet; when one does, the line shows whether it took the measured size.
+
+### Seen wrong and left
+
+- The cups' shadows in the bubble are stair-stepped, blocks of about two points (`e2_04_bubble_shadow_zoom.png`, nearest-neighbour zoom); the cups' own edges are clean. The shadow map's sampling is the renderer's (`cn_scene.c`), so it is reported to the kernel, not changed here.
+- The felt under the bubble is the felt of the old table; the study's bubble sits on the grey plank table, which is not drawn anywhere yet.
+
 ## Not seen, or seen wrong and left
 
 - "There were 0" and "There were one": the kernel's `REVEAL_COUNT` has one form for every count, so none reads as a digit and one reads as a plural; the words are the kernel's (K11, `cn_say.c`), so it is reported, not changed here.
