@@ -4,8 +4,9 @@
  * the checks are compiled into a module of their own, linked with a 2-page
  * initial memory and a 16-page maximum, and bump_alloc_test() returns 0 or
  * the line of the first check that failed. bump_alloc_test.mjs instantiates
- * it and reads that number; foolish/c's `make wasm-alloc-test` builds it
- * twice, plain and -matomics over a shared memory, and runs both.
+ * it and reads that number; `make wasm-alloc-test`, in the product that links
+ * the allocator, builds it twice, plain and -matomics over a shared memory,
+ * and runs both.
  *
  * That part is one thread; in the -matomics build it takes the lock on every
  * call, which proves the lock is released on every path, the failing ones
