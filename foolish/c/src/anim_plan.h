@@ -520,11 +520,11 @@ typedef struct {
     uint8_t from, to;    // ANIM_LOC_*
     bool    mask_cards;  // AnimPlanEvent.mask_cards
     bool    has_counts;  // deck/discard/flipped/hand are THIS step's own board
-    bool    has_board;   // `row` is that board's row. False is ANIM_NO_BOARD,
-                         // which an empty row cannot say: a board with nothing
-                         // on its table is still a board.
     uint8_t n_cards;
-    uint8_t n_row;       // BYTES of `row`, so twice the battles it holds
+    uint8_t n_row;       // BYTES of `row`, so twice the battles it holds. 0 is
+                         // a step that carries no row, and needs no flag of
+                         // its own: an empty table and ANIM_NO_BOARD are one
+                         // case to every rule that reads a row.
     uint8_t deck, discard;
     Card    flipped;     // CARD_NONE once it has been dealt out
     int     hand[MAX_PLAYERS];
@@ -545,9 +545,8 @@ typedef struct {
 // with nothing decided here that it does not decide. Returns what it returns,
 // or before it is ever called ANIM_ECAP (more events than ANIM_MAX_STEPS, an
 // event with more cards than ANIM_ASK_MAX_CARDS or a row longer than
-// ANIM_ASK_MAX_ROW, whether or not the step says the row is in use) /
-// ANIM_EBADARG (NULL ask, or a board's row of an odd number of bytes, which is
-// half a battle).
+// ANIM_ASK_MAX_ROW) / ANIM_EBADARG (NULL ask, or a row of an odd number of
+// bytes, which is half a battle).
 int anim_plan_ask(const AnimPlanAsk *ask, AnimPlan *out);
 
 // ---- how long a stream plays ----------------------------------------------

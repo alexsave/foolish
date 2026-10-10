@@ -1257,7 +1257,6 @@ export function animBuildPlan(
             hasCounts: !!e.counts,
             deck: e.counts?.deck ?? 0, discard: e.counts?.discard ?? 0,
             flipped: e.counts?.flipped ?? NO_CARD, hand: seats(e.counts?.hand ?? []),
-            hasBoard: e.battles !== undefined,
             row: e.battles ?? [],
         })),
     });

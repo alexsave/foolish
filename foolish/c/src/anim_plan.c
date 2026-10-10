@@ -479,9 +479,10 @@ int anim_build_plan(const AnimPlanEvent *events, int n_events, int n_players,
 // INTO the ask - its cards, its hand, its row - so the only thing built here is
 // the array of events that carry those pointers.
 //
-// THAT ARRAY IS ON THE STACK, ~7 KB on wasm32, and not static scratch. With
-// anim_build_plan's own frame under it the call peaks near 12 KB, below the
-// 14.3 KiB the cover enumeration already costs the 22 KiB bots stack
+// THAT ARRAY IS ON THE STACK, 7,168 B on wasm32, and not static scratch. With
+// anim_build_plan's own frames under it a full 128-event stream peaks at
+// 11,056 B of shadow stack (measured by canary on bots.wasm and web.wasm),
+// below the 14.3 KiB the cover enumeration already costs their 22 KiB stack
 // (c/Makefile WASM_BOT_LDFLAGS), and a static would be the same bytes held for
 // the life of every module instead of for one call.
 int anim_plan_ask(const AnimPlanAsk *ask, AnimPlan *out) {
@@ -508,10 +509,9 @@ int anim_plan_ask(const AnimPlanAsk *ask, AnimPlan *out) {
         ev->discard = a->discard;
         ev->flipped = a->flipped;
         ev->hand = a->has_counts ? a->hand : 0;
-        if (!a->has_board) { ev->n_battles = ANIM_NO_BOARD; ev->battles = 0; continue; }
         if (a->n_row % 2) return ANIM_EBADARG;
-        ev->n_battles = a->n_row / 2;
-        ev->battles = a->row;
+        ev->n_battles = a->n_row ? a->n_row / 2 : ANIM_NO_BOARD;
+        ev->battles = a->n_row ? a->row : 0;
     }
     return anim_build_plan(events, ask->n_events, ask->n_players,
                            ask->final_deck, ask->final_discard, ask->final_flipped,
