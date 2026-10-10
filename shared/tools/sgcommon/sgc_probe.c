@@ -28,11 +28,10 @@ void sgc_args_base(const char *target) {
     sgc_arg("-resource-dir"); sgc_arg(SG_RESOURCE_DIR);
 }
 
-CXTranslationUnit sgc_parse(CXIndex idx, const char *name, const char *src, unsigned opts, const char *errnote) {
+static CXTranslationUnit parse(CXIndex idx, const char *name, const char *src, unsigned opts, const char *errnote) {
     struct CXUnsavedFile probe = { name, src, (unsigned long)strlen(src) };
     CXTranslationUnit tu;
-    enum CXErrorCode e = clang_parseTranslationUnit2(idx, name, args, nargs, &probe, 1,
-        opts | CXTranslationUnit_SkipFunctionBodies, &tu);
+    enum CXErrorCode e = clang_parseTranslationUnit2(idx, name, args, nargs, &probe, 1, opts, &tu);
     if (e != CXError_Success) die("libclang parse failed (CXErrorCode %d)", (int)e);
     int errors = 0;
     for (unsigned i = 0; i < clang_getNumDiagnostics(tu); i++) {
@@ -45,4 +44,12 @@ CXTranslationUnit sgc_parse(CXIndex idx, const char *name, const char *src, unsi
     }
     if (errors) die("%d compile error(s)%s", errors, errnote);
     return tu;
+}
+
+CXTranslationUnit sgc_parse(CXIndex idx, const char *name, const char *src, unsigned opts, const char *errnote) {
+    return parse(idx, name, src, opts | CXTranslationUnit_SkipFunctionBodies, errnote);
+}
+
+CXTranslationUnit sgc_parse_bodies(CXIndex idx, const char *name, const char *src, unsigned opts, const char *errnote) {
+    return parse(idx, name, src, opts, errnote);
 }
