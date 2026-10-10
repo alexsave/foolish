@@ -58,9 +58,6 @@ function mem(ex: { memory: WebAssembly.Memory }): Uint8Array {
 const WIRE_HIDDEN = 0xfe;
 const WIRE_NONE = 0xff;
 const i8 = (v: number) => (v > 127 ? v - 256 : v);
-const HIDDEN_CARD: Card = { suit: -1, value: -1 };
-const CARD_POOL: Card[] = [];
-for (let s = 0; s < 4; s++) for (let v = 1; v <= 13; v++) CARD_POOL[s * 13 + v - 1] = { suit: s, value: v };
 function wireStateCard(c: Card): number {
     let s = i8(c.suit & 0xff), v = i8(c.value & 0xff);
     if (s === -1 && v === -1) return WIRE_HIDDEN;
@@ -70,9 +67,6 @@ function wireStateCard(c: Card): number {
 }
 function wireLogCard(c: Card | null | undefined): number {
     return c ? wireStateCard(c) : WIRE_NONE;
-}
-function cardFromWire(b: number): Card {
-    return b === WIRE_HIDDEN ? HIDDEN_CARD : CARD_POOL[b <= 51 ? b : 51];
 }
 
 const MOVE_TYPE = ['attack', 'cover', 'pass', 'pickup', 'good', 'wait'];
