@@ -50,6 +50,12 @@ export interface ClientExports {
     wasm_client_push_next(): number;
     wasm_client_push_final(): number;
     wasm_client_identity(): number;
+    wasm_client_cast_open(len: number, identityLen: number): number;
+    wasm_client_cast_version(len: number): number;
+    wasm_client_ask_ptr(): number;
+    wasm_client_ask_encode(): number;
+    wasm_client_refusal_ptr(): number;
+    wasm_client_refusal_decode(len: number): number;
     wasm_client_identity_at(): number;
     wasm_client_identity_begin(gidLen: number, titleLen: number): number;
     wasm_client_identity_seat(idLen: number, nameLen: number, isAi: number): number;
@@ -77,6 +83,13 @@ export interface ClientExports {
 
 /** A seat of an identity built from parts (a roster that arrived as JSON). */
 export interface IdentitySeat { id: string; name: string; isAi: boolean }
+
+/** A refusal as the kernel read it (ask.h AskRefusal): `why` an ASK_WHY_*, `code` and `detail` the kernel's own. */
+export type AskRefusal = V.AskRefusal_Snap;
+
+/** An ask (ask.h TableAsk): its kind, the game it names, and whichever fields that kind carries. */
+export type Ask = Pick<V.TableAsk_Snap, 'kind' | 'gid'> & Partial<V.TableAsk_Snap>;
+const NO_ASK: V.TableAsk_Snap = { kind: 0, passing: 0, gid: '', bot: '', player: '', idx: [], order: [], title: '' };
 
 const enc = new TextEncoder();
 
@@ -150,8 +163,36 @@ export class ClientTable {
             : opts.identity === 'none' || !opts.gameId ? new Uint8Array(0)
             : this.identities.get(opts.gameId) ?? new Uint8Array(0);
         if (!this.put(bytes, identity)) return this.refused(V.CLIENT_E_PUSH);
-        let rc = this.ex.wasm_client_push_open(bytes.length, identity.length, opts.as3 ? 1 : 0, opts.version ?? 0);
+        const rc = this.ex.wasm_client_push_open(bytes.length, identity.length, opts.as3 ? 1 : 0, opts.version ?? 0);
         if (rc !== V.CLIENT_OK) return this.refused(rc);
+        return this.drain(bytes);
+    }
+
+    /**
+     * A realtime message's payload whole (evwire.h, the cast: the committed version
+     * and the as3 push in one run of bytes), or null when it does not read whole.
+     * The boards carry the version the cast names. `identity` as readPush takes it.
+     */
+    readCast(bytes: Uint8Array, opts: { gameId?: string; identity?: 'kept' | 'none' | Uint8Array } = {}): PushRead | null {
+        const identity = opts.identity instanceof Uint8Array ? opts.identity
+            : opts.identity === 'none' || !opts.gameId ? new Uint8Array(0)
+            : this.identities.get(opts.gameId) ?? new Uint8Array(0);
+        if (!this.put(bytes, identity)) return this.refused(V.CLIENT_E_PUSH);
+        const rc = this.ex.wasm_client_cast_open(bytes.length, identity.length);
+        if (rc !== V.CLIENT_OK) return this.refused(rc);
+        return this.drain(bytes);
+    }
+
+    /** The version a cast's header names, or null for bytes that have no such header: what to fetch at least, when the cast itself did not read. */
+    castVersion(bytes: Uint8Array): number | null {
+        if (!this.put(bytes)) return null;
+        const v = this.ex.wasm_client_cast_version(bytes.length);
+        return v < 0 ? null : v;
+    }
+
+    /** Every step and the committed board of the push or cast just opened from `bytes`. */
+    private drain(bytes: Uint8Array): PushRead | null {
+        let rc: number;
         const m = this.m();
         const viewAt = this.ex.wasm_client_view_ptr(), eventAt = this.ex.wasm_client_event_ptr();
         const steps: PushStep[] = [];
@@ -164,6 +205,29 @@ export class ClientTable {
         const final = V.readTableView(m, viewAt);
         this.keepIdentity(final.gameId, bytes);
         return { steps, final };
+    }
+
+    // ---- an ask (ask.h): every request that is not a move ----
+
+    /**
+     * The request body for an ask, written by the kernel (ask_encode), or null for
+     * an ask that is not one (no game id, a count past its array). A string too
+     * long for its slot is the generated writer's RangeError.
+     */
+    askBody(ask: Ask): Uint8Array | null {
+        V.writeTableAsk(this.m(), this.ex.wasm_client_ask_ptr(), { ...NO_ASK, ...ask });
+        const n = this.ex.wasm_client_ask_encode();
+        if (n < 0) return this.refused(n);
+        const at = this.ex.wasm_io_ptr();
+        return this.m().u8.slice(at, at + n);
+    }
+
+    /** A refusal body (ask.h AskRefusal: why, and the kernel's codes behind it), or null when the bytes are not one. */
+    readRefusal(bytes: Uint8Array): AskRefusal | null {
+        if (!this.put(bytes)) return this.refused(V.ASK_E_WIRE);
+        const rc = this.ex.wasm_client_refusal_decode(bytes.length);
+        if (rc !== V.ASK_OK) return this.refused(rc);
+        return V.readAskRefusal(this.m(), this.ex.wasm_client_refusal_ptr());
     }
 
     /** Builds and keeps a table's identity from parts; its bytes, or null when the kernel refuses them. */

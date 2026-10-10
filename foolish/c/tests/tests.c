@@ -12447,6 +12447,223 @@ static int sr_client_pass(int rules) {
     return client_validate(&ct, &ct.view, w, awire_encode(&a, w, sizeof(w)));
 }
 
+// AN ASK (ask.h): every request that is not a move. The body is what ask_encode
+// writes and ask_decode reads, so the two are tested against each other and
+// against the bytes, which are the wire older and newer clients must agree on.
+static TableAsk ask_of(int kind, const char *gid) {
+    TableAsk a;
+    memset(&a, 0, sizeof(a));
+    a.kind = (uint8_t)kind;
+    a.gid_len = (uint8_t)strlen(gid);
+    memcpy(a.gid, gid, a.gid_len);
+    return a;
+}
+
+static void ask_order(TableAsk *a, const char *id) {
+    AskId *o = &a->order[a->n_order++];
+    o->len = (uint8_t)strlen(id);
+    memcpy(o->id, id, o->len);
+}
+
+static void test_ask_round_trips(void) {
+    uint8_t w[ASK_BYTES_MAX];
+    TableAsk a, b;
+
+    // Every kind comes back as the struct that went in.
+    for (int kind = ASK_JOIN; kind <= ASK_BUMP; kind++) {
+        a = ask_of(kind, "g-12ab");
+        if (kind == ASK_ADD_BOT || kind == ASK_EXIT) { a.bot_len = 5; memcpy(a.bot, "bot-1", 5); }
+        if (kind == ASK_EXIT) { a.player_len = 2; memcpy(a.player, "p7", 2); }
+        if (kind == ASK_REARRANGE_HAND) { a.n_idx = 3; a.idx[0] = 2; a.idx[1] = 0; a.idx[2] = 1; }
+        if (kind == ASK_REARRANGE_PLAYERS) { ask_order(&a, "c"); ask_order(&a, "a"); ask_order(&a, "b"); }
+        if (kind == ASK_UPDATE_NAME) { a.title_len = 300; memset(a.title, 'x', 300); }
+        if (kind == ASK_SET_RULES) a.passing = 1;
+        const int n = ask_encode(&a, w, sizeof(w));
+        CHECK(n > 0 && ask_decode(w, n, &b) == ASK_OK && memcmp(&a, &b, sizeof(a)) == 0, "an ask of every kind round-trips");
+        CHECK(ask_decode(w, n - 1, &b) == ASK_E_WIRE && b.kind == 0, "a body one byte short is refused, and nothing is left decoded");
+        w[n] = 0;
+        CHECK(ask_decode(w, n + 1, &b) == ASK_E_WIRE, "a body one byte long is refused");
+        CHECK(ask_encode(&a, w, n - 1) == ASK_E_CAP, "a buffer one byte small is refused");
+    }
+
+    // The bytes themselves.
+    a = ask_of(ASK_EXIT, "g1");
+    a.player_len = 1;
+    a.player[0] = 'p';
+    const uint8_t exit_wire[] = { ASK_FORMAT, ASK_EXIT, 2, 'g', '1', 0, 1, 'p' };
+    CHECK(ask_encode(&a, w, sizeof(w)) == (int)sizeof(exit_wire) && memcmp(w, exit_wire, sizeof(exit_wire)) == 0,
+          "exit: format, kind, the game id, an empty bot, the player");
+    a = ask_of(ASK_UPDATE_NAME, "g");
+    a.title_len = 2;
+    memcpy(a.title, "Hi", 2);
+    const uint8_t name_wire[] = { ASK_FORMAT, ASK_UPDATE_NAME, 1, 'g', 2, 0, 'H', 'i' };
+    CHECK(ask_encode(&a, w, sizeof(w)) == (int)sizeof(name_wire) && memcmp(w, name_wire, sizeof(name_wire)) == 0,
+          "update-name: a u16 length, then the title");
+    a = ask_of(ASK_BUMP, "g");
+    a.bot_len = 3;   // a field the kind does not carry is not written
+    const uint8_t bump_wire[] = { ASK_FORMAT, ASK_BUMP, 1, 'g' };
+    CHECK(ask_encode(&a, w, sizeof(w)) == (int)sizeof(bump_wire) && memcmp(w, bump_wire, sizeof(bump_wire)) == 0,
+          "bump: the game id and nothing else");
+
+    // What is not an ask.
+    const uint8_t fmt2[] = { 2, ASK_JOIN, 1, 'g' };
+    CHECK(ask_decode(fmt2, sizeof(fmt2), &b) == ASK_E_WIRE, "an unknown format is refused");
+    const uint8_t kind0[] = { ASK_FORMAT, 0, 1, 'g' }, kind11[] = { ASK_FORMAT, ASK_BUMP + 1, 1, 'g' };
+    CHECK(ask_decode(kind0, sizeof(kind0), &b) == ASK_E_WIRE && ask_decode(kind11, sizeof(kind11), &b) == ASK_E_WIRE,
+          "an unknown kind is refused");
+    const uint8_t no_gid[] = { ASK_FORMAT, ASK_JOIN, 0 };
+    CHECK(ask_decode(no_gid, sizeof(no_gid), &b) == ASK_E_WIRE, "an ask names a game");
+    const uint8_t rules2[] = { ASK_FORMAT, ASK_SET_RULES, 1, 'g', 2 };
+    CHECK(ask_decode(rules2, sizeof(rules2), &b) == ASK_E_WIRE, "rules that are neither 0 nor 1 are refused");
+    const uint8_t nine[] = { ASK_FORMAT, ASK_REARRANGE_PLAYERS, 1, 'g', MAX_PLAYERS + 1 };
+    CHECK(ask_decode(nine, sizeof(nine), &b) == ASK_E_WIRE, "an order longer than the table is refused");
+    const uint8_t json[] = "{\"type\":\"join\",\"game_id\":\"g\"}";
+    CHECK(ask_decode(json, sizeof(json) - 1, &b) == ASK_E_WIRE, "the JSON body an old client sends is not an ask");
+    CHECK(ask_decode(w, 0, &b) == ASK_E_WIRE, "an empty body is refused");
+    a = ask_of(ASK_JOIN, "g");
+    a.kind = 0;
+    CHECK(ask_encode(&a, w, sizeof(w)) == ASK_E_WIRE, "a struct with no kind is not encoded");
+    a = ask_of(ASK_REARRANGE_HAND, "g");
+    a.n_idx = MAX_HAND_SIZE + 1;
+    CHECK(ask_encode(&a, w, sizeof(w)) == ASK_E_WIRE, "a count past its array is not encoded");
+
+    // The refusal.
+    AskRefusal r = { ASK_WHY_REFUSED, TABLE_E_ROSTER, ROSTER_E_FULL }, q;
+    const uint8_t refusal_wire[] = { ASK_REFUSAL_FORMAT, ASK_WHY_REFUSED, 0x9a, 0xff, 0xff, 0xff, 0xf7, 0xff, 0xff, 0xff };
+    CHECK(ask_refusal_encode(&r, w, sizeof(w)) == ASK_REFUSAL_BYTES && memcmp(w, refusal_wire, ASK_REFUSAL_BYTES) == 0,
+          "a refusal: format, why, and the two codes little-endian");
+    CHECK(ask_refusal_decode(w, ASK_REFUSAL_BYTES, &q) == ASK_OK && q.why == ASK_WHY_REFUSED
+          && q.code == TABLE_E_ROSTER && q.detail == ROSTER_E_FULL, "and it reads back, negative codes whole");
+    CHECK(ask_refusal_decode(w, ASK_REFUSAL_BYTES - 1, &q) == ASK_E_WIRE
+          && ask_refusal_decode(w, ASK_REFUSAL_BYTES + 1, &q) == ASK_E_WIRE, "a refusal is exactly its bytes");
+    w[1] = ASK_WHY_METHOD + 1;
+    CHECK(ask_refusal_decode(w, ASK_REFUSAL_BYTES, &q) == ASK_E_WIRE, "an unknown reason is refused");
+    r.why = 0;
+    CHECK(ask_refusal_encode(&r, w, sizeof(w)) == ASK_E_WIRE, "and not encoded");
+    r.why = ASK_WHY_AUTH;
+    CHECK(ask_refusal_encode(&r, w, ASK_REFUSAL_BYTES - 1) == ASK_E_CAP, "a refusal needs its ten bytes");
+}
+
+// table_ask is the dispatch the hosts used to write: each kind is the edit it
+// names, with the edit's own result.
+static void test_table_ask_runs_every_kind(void) {
+    TableAsk a;
+    tb_seed_fill(3);
+    table_init(&tb, &tb_game, &tb_snaps);
+    a = ask_of(ASK_BUMP, "g");
+    CHECK(table_ask(&tb, RS("a"), RS("Alice"), &a, 0, tb_seed) == TABLE_E_NOT_LOADED, "no bump before a table is loaded");
+    tb_lobby();
+
+    TB_REFUSED(table_ask(&tb, RS("stranger"), RS("S"), &a, 0, tb_seed), TABLE_MOOT, "a bump commits nothing, even from a stranger");
+    CHECK(tb_same_table(&tb, &tb_before, &tb_r_before), "and leaves the table as it was");
+
+    a = ask_of(ASK_JOIN, "g");
+    CHECK(table_ask(&tb, RS("d"), RS("Dora"), &a, 0, tb_seed) == TABLE_OK && tb.r.n == 4
+          && roster_seat_of(&tb.r, RS("d")) == 3 && tb.r.seats[3].name_len == 4
+          && memcmp(tb.r.seats[3].name, "Dora", 4) == 0, "join seats the asker under the name it came with");
+
+    a = ask_of(ASK_ADD_BOT, "g");
+    TB_REFUSED(table_ask(&tb, RS("a"), RS("Alice"), &a, 0, tb_seed), TABLE_E_WIRE, "add-bot with no bot row is malformed");
+    const TableAskBot bot = { RS("bot-1"), RS("Rando"), RS("random") };
+    CHECK(table_ask(&tb, RS("a"), RS("Alice"), &a, &bot, tb_seed) == TABLE_OK && tb.r.n == 5
+          && roster_seat_of(&tb.r, RS("bot-1")) == 4 && tb.r.seats[4].brain_len == 6, "add-bot seats the row it was handed");
+    TB_REFUSED(table_ask(&tb, RS("stranger"), RS("S"), &a, &bot, tb_seed), TABLE_E_NOT_SEATED, "and a stranger's is refused");
+
+    a = ask_of(ASK_REARRANGE_PLAYERS, "g");
+    ask_order(&a, "bot-1"); ask_order(&a, "d"); ask_order(&a, "c"); ask_order(&a, "b"); ask_order(&a, "a");
+    CHECK(table_ask(&tb, RS("a"), RS("Alice"), &a, 0, tb_seed) == TABLE_OK && roster_seat_of(&tb.r, RS("a")) == 4
+          && roster_seat_of(&tb.r, RS("bot-1")) == 0, "rearrange-players reseats in the order asked");
+    a.n_order = 4;
+    TB_REFUSED(table_ask(&tb, RS("a"), RS("Alice"), &a, 0, tb_seed), TABLE_E_ROSTER, "an order missing a seat is refused");
+    CHECK(tb.detail == ROSTER_E_PERM, "as not a permutation");
+
+    a = ask_of(ASK_UPDATE_NAME, "g");
+    a.title_len = 9;
+    memcpy(a.title, " Friday  ", 9);
+    CHECK(table_ask(&tb, RS("b"), RS("Bob"), &a, 0, tb_seed) == TABLE_OK && tb.r.title_len == 6
+          && memcmp(tb.r.title, "Friday", 6) == 0, "update-name retitles, trimmed by the kernel");
+
+    a = ask_of(ASK_SET_RULES, "g");
+    a.passing = 0;
+    CHECK(table_ask(&tb, RS("c"), RS("Cleo"), &a, 0, tb_seed) == TABLE_OK && !game_pass_allowed(&tb_game), "set-rules: podkidnoy");
+    TB_REFUSED(table_ask(&tb, RS("c"), RS("Cleo"), &a, 0, tb_seed), TABLE_MOOT, "the rules it already has are moot");
+
+    // exit: a bot when the ask names one, else the player it names, else the asker
+    a = ask_of(ASK_EXIT, "g");
+    a.bot_len = 5;
+    memcpy(a.bot, "bot-1", 5);
+    a.player_len = 1;
+    a.player[0] = 'd';
+    CHECK(table_ask(&tb, RS("a"), RS("Alice"), &a, 0, tb_seed) == TABLE_OK && tb.r.n == 4
+          && roster_seat_of(&tb.r, RS("bot-1")) < 0 && roster_seat_of(&tb.r, RS("d")) >= 0,
+          "exit removes the bot it names, and only the bot");
+    a.bot_len = 0;
+    CHECK(table_ask(&tb, RS("a"), RS("Alice"), &a, 0, tb_seed) == TABLE_OK && tb.r.n == 3
+          && roster_seat_of(&tb.r, RS("d")) < 0 && roster_seat_of(&tb.r, RS("a")) >= 0, "else the player it names");
+    a.player_len = 0;
+    CHECK(table_ask(&tb, RS("c"), RS("Cleo"), &a, 0, tb_seed) == TABLE_OK && tb.r.n == 2
+          && roster_seat_of(&tb.r, RS("c")) < 0, "else the asker");
+
+    // start deals when every seat is ready; rearrange-hand and continue need a game
+    a = ask_of(ASK_START, "g");
+    CHECK(table_ask(&tb, RS("a"), RS("Alice"), &a, 0, tb_seed) == TABLE_OK && tb_game.status == GAME_STATUS_WAITING, "one ready seat deals nothing");
+    CHECK(table_ask(&tb, RS("b"), RS("Bob"), &a, 0, tb_seed) == TABLE_OK && tb_game.status == GAME_STATUS_PLAYING
+          && tb.dealt_now, "the last ready deals, from the seed the ask was handed");
+    TB_REFUSED(table_ask(&tb, RS("a"), RS("Alice"), &a, 0, tb_seed), TABLE_MOOT, "a ready once dealt is moot");
+    const int a_seat = roster_seat_of(&tb.r, RS("a"));
+    const Card first = tb_game.players[a_seat].hand[0], second = tb_game.players[a_seat].hand[1];
+    a = ask_of(ASK_REARRANGE_HAND, "g");
+    a.n_idx = (uint8_t)tb_game.players[a_seat].hand_count;
+    for (int i = 0; i < a.n_idx; i++) a.idx[i] = (uint8_t)i;
+    a.idx[0] = 1;
+    a.idx[1] = 0;
+    CHECK(table_ask(&tb, RS("a"), RS("Alice"), &a, 0, tb_seed) == TABLE_OK
+          && tb_game.players[a_seat].hand[0].suit == second.suit && tb_game.players[a_seat].hand[0].value == second.value
+          && tb_game.players[a_seat].hand[1].suit == first.suit && tb_game.players[a_seat].hand[1].value == first.value,
+          "rearrange-hand orders the asker's own hand");
+    a.idx[0] = 0;
+    TB_REFUSED(table_ask(&tb, RS("a"), RS("Alice"), &a, 0, tb_seed), TABLE_E_WIRE, "indices that are not a permutation are refused");
+    a = ask_of(ASK_CONTINUE, "g");
+    TB_REFUSED(table_ask(&tb, RS("a"), RS("Alice"), &a, 0, tb_seed), TABLE_E_NOT_OVER, "continue is table_continue's to refuse");
+    a.kind = 99;
+    TB_REFUSED(table_ask(&tb, RS("a"), RS("Alice"), &a, 0, tb_seed), TABLE_E_WIRE, "a kind that is not one is malformed");
+}
+
+// A CAST (evwire.h) is what a realtime message carries: the version and the as3
+// push in one run of bytes, read by the client with nothing beside them.
+static void test_table_cast_carries_its_version(void) {
+    tb_seed_fill(5);
+    client_init(&ct, &ct_slot);
+    tb_lobby();
+    const int pl = table_push(&tb, RS("g-7"), 0, ct_push, sizeof(ct_push));
+    const int cl = table_cast(&tb, RS("g-7"), 0, 0x01020304u, ct_env, sizeof(ct_env));
+    CHECK(pl > 0 && cl == pl + EVW_CAST_HEADER_BYTES && ct_env[0] == EVW_CAST_FORMAT && ct_env[1] == 4 && ct_env[2] == 3
+          && ct_env[3] == 2 && ct_env[4] == 1 && memcmp(ct_env + EVW_CAST_HEADER_BYTES, ct_push, (size_t)pl) == 0,
+          "a cast is the format, the version little-endian, then exactly the push");
+    CHECK(table_cast(&tb, RS("g-7"), 0, 9, ct_env2, EVW_CAST_HEADER_BYTES - 1) == TABLE_E_CAP
+          && table_cast(&tb, RS("g-7"), 0, 9, ct_env2, cl - 1) == TABLE_E_CAP, "a buffer too small for either part is refused");
+
+    int k = 0, rc = client_cast_open(&ct, ct_env, cl, 0, 0);
+    while (rc == CLIENT_OK && (k = client_push_next(&ct)) == 1) { }
+    CHECK(rc == CLIENT_OK && k == 0 && client_push_final(&ct) == CLIENT_OK && ct.view.version == 0x01020304u
+          && ct.view.num_players == 3, "the client reads the cast whole, and the board carries the header's version");
+    // The join's push carries the roster; where the client says it is must be
+    // an offset into the CAST, which is what the host holds.
+    CHECK(client_cast_open(&ct, ct_env, cl, 0, 0) == CLIENT_OK && client_identity_at(&ct) > EVW_CAST_HEADER_BYTES, "the identity is found in the cast");
+    {
+        const int at = client_identity_at(&ct);
+        client_push_open(&ct, ct_push, pl, 1, 0, 0, 1);
+        CHECK(at == client_identity_at(&ct) + EVW_CAST_HEADER_BYTES, "at the push's offset moved past the header");
+    }
+    ct_env[0] = EVW_CAST_FORMAT + 1;
+    CHECK(client_cast_open(&ct, ct_env, cl, 0, 0) == CLIENT_E_PUSH, "an unknown cast format is refused");
+    ct_env[0] = EVW_CAST_FORMAT;
+    CHECK(client_cast_open(&ct, ct_env, EVW_CAST_HEADER_BYTES - 1, 0, 0) == CLIENT_E_PUSH
+          && client_cast_open(&ct, ct_env, EVW_CAST_HEADER_BYTES + 3, 0, 0) == CLIENT_E_PUSH
+          && client_cast_open(&ct, ct_env, cl / 2, 0, 0) == CLIENT_E_PUSH, "a cast cut short is refused");
+    CHECK(client_cast_open(&ct, ct_push, pl, 0, 0) == CLIENT_E_PUSH, "a bare push is not a cast");
+}
+
 // THE TABLE'S RULES (table.h table_set_rules, docs/PODKIDNOY.md). Any seated
 // player sets them, either way, while the lobby waits; the change clears no
 // Ready; the game that deals plays the rules standing at the last Ready; every
@@ -14537,6 +14754,9 @@ int main(void) {
     test_table_session_log_is_load_bearing_for_octogen();
     test_table_state_blob_round_trips_every_reachable_state();
     test_client_adopts_envelopes();
+    test_ask_round_trips();
+    test_table_ask_runs_every_kind();
+    test_table_cast_carries_its_version();
     test_lobby_can_set_rules();
     test_table_set_rules();
     test_table_bots_never_transfer_under_podkidnoy();

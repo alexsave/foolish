@@ -240,6 +240,13 @@ int client_adopt_state(ClientTable *c, const uint8_t *p, int len, int viewer);
 int client_push_open(ClientTable *c, const uint8_t *p, int len, int as3,
                      const uint8_t *identity, int identity_len, uint32_t version);
 
+// Opens a cast for iteration: a realtime message's payload whole (evwire.h, the
+// cast header and the as3 push behind it). The version the boards carry is the
+// header's, so a host is told nothing beside the bytes. Everything else is
+// client_push_open's, and so are the refusals; a payload whose header does not
+// read is CLIENT_E_PUSH.
+int client_cast_open(ClientTable *c, const uint8_t *p, int len, const uint8_t *identity, int identity_len);
+
 // The next step into ClientTable.event and its board into the view: 1, or 0
 // when every step has been read, or a refusal.
 int client_push_next(ClientTable *c);

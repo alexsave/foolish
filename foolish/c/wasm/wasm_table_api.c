@@ -511,3 +511,88 @@ HandLayout *wasm_hand_layout_ptr(void)   { return &g_hand_layout; }
 int wasm_hand_layout(int count, double width) {
     return hand_layout(&g_hand_metrics, count, width, &g_hand_layout);
 }
+
+// ---- an ask (src/ask.h): every request that is not a move ----------------------
+//
+// The CLIENT writes a TableAsk through the generated writer and takes the
+// request body back; the SERVER hands the body over and runs it. Neither reads a
+// byte of the body, and a refusal crosses the same way in the other direction.
+
+static TableAsk   g_ask;           // the client's: what it is about to ask
+static TableAsk   g_table_ask;     // the server's: the ask a body decoded to
+static AskRefusal g_refusal;
+TableAsk *wasm_client_ask_ptr(void)       { return &g_ask; }
+AskRefusal *wasm_client_refusal_ptr(void) { return &g_refusal; }
+TableAsk *wasm_table_ask_ptr(void)        { return &g_table_ask; }
+
+// -> io = the request body for the ask at wasm_client_ask_ptr.
+int wasm_client_ask_encode(void) { return ask_encode(&g_ask, wasm_io_ptr(), wasm_io_cap()); }
+
+// io = [a refusal body] -> the refusal at wasm_client_refusal_ptr.
+int wasm_client_refusal_decode(int len) {
+    const unsigned char *io = inputs(len);
+    if (!io) return ASK_E_WIRE;
+    return ask_refusal_decode(io, len, &g_refusal);
+}
+
+// io = [cast][identity]: a realtime message's payload whole (evwire.h). The
+// cast must stay in the IO buffer until push_final, as a push does.
+int wasm_client_cast_open(int len, int identity_len) {
+    const unsigned char *io = inputs(len + identity_len);
+    if (!io || len < 0 || identity_len < 0) return CLIENT_E_PUSH;
+    return client_cast_open(client(), io, len, io + len, identity_len);
+}
+
+// io = [cast] -> the version its header names, or -1 for a payload that has no
+// header this build reads. For the host that could not read a cast's boards and
+// must fetch the game instead: it asks for at least this version.
+double wasm_client_cast_version(int len) {
+    const unsigned char *io = inputs(len);
+    uint32_t version = 0;
+    if (!io || evwire_cast_header_get(io, len, &version) < 0) return -1;
+    return (double)version;
+}
+
+// io = [request body] -> the ask at wasm_table_ask_ptr, for the host to read
+// what it must before the table is loaded (the game id; the bot an add-bot names).
+int wasm_table_ask_decode(int len) {
+    const unsigned char *io = inputs(len);
+    if (!io) return TABLE_E_WIRE;
+    return ask_decode(io, len, &g_table_ask) == ASK_OK ? TABLE_OK : TABLE_E_WIRE;
+}
+
+// io = [request body][actor id][actor name][deal seed, FOOLISH_SEED_LEN]
+//      [bot id][bot nickname][bot brain key]   (the bot row: all empty for none)
+// The body is decoded again here rather than read from wasm_table_ask_ptr: a
+// host awaits between its decode and its run (the row's SELECT), and another
+// request of the same isolate may have decoded its own ask in between.
+int wasm_table_ask(int body_len, int id_len, int name_len, int bot_len, int nick_len, int brain_len) {
+    if (body_len < 0 || id_len < 0 || name_len < 0 || bot_len < 0 || nick_len < 0 || brain_len < 0) return TABLE_E_WIRE;
+    const int seed_at = body_len + id_len + name_len;
+    const int bot_at = seed_at + FOOLISH_SEED_LEN;
+    const unsigned char *io = inputs(bot_at + bot_len + nick_len + brain_len);
+    if (!io) return TABLE_E_WIRE;
+    TableAsk a;
+    if (ask_decode(io, body_len, &a) != ASK_OK) return TABLE_E_WIRE;
+    const char *c = (const char *)io;
+    const TableAskBot bot = {
+        c + bot_at, bot_len, c + bot_at + bot_len, nick_len, c + bot_at + bot_len + nick_len, brain_len,
+    };
+    return table_ask(table(), c + body_len, id_len, c + body_len + id_len, name_len,
+                     &a, bot_len > 0 ? &bot : 0, io + seed_at);
+}
+
+// -> io = a refusal body (ask.h): why an endpoint has no answer.
+int wasm_ask_refusal_encode(int why, int code, int detail) {
+    if (why < 0 || why > 255) return ASK_E_WIRE;
+    const AskRefusal r = { (uint8_t)why, code, detail };
+    return ask_refusal_encode(&r, wasm_io_ptr(), wasm_io_cap());
+}
+
+// io = [game id] -> io = one viewer's cast: the realtime message for the last
+// operation, carrying the version the commit will produce.
+int wasm_table_cast(int gid_len, int viewer, double version) {
+    char gid[ROSTER_GAME_ID_MAX];
+    if (take_gid(gid_len, gid) != 0) return TABLE_E_WIRE;
+    return table_cast(table(), gid, gid_len, viewer, u32_of(version), wasm_io_ptr(), wasm_io_cap());
+}

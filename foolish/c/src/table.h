@@ -28,6 +28,7 @@
 #include "roster.h"
 #include "evwire.h"
 #include "bot_drive.h"
+#include "ask.h"
 #include <stddef.h>
 
 // ---- results ----------------------------------------------------------------
@@ -244,6 +245,37 @@ int table_rearrange_hand(Table *t, const char *actor_id, int id_len, const uint8
 // Account deletion: the seat holding user_id is renamed.
 int table_redact(Table *t, const char *user_id, int id_len, const char *name, int name_len);
 
+// ---- an ask (ask.h): every request that is not a move ---------------------------
+
+// The bot row an ASK_ADD_BOT seats. Which row is the host's read of its bots
+// (the one the ask names, or any not seated); whether it may sit is table_add_bot's.
+typedef struct {
+    const char *id;    int id_len;
+    const char *nick;  int nick_len;
+    const char *brain; int brain_len;
+} TableAskBot;
+
+// Runs a decoded ask on the loaded table as `actor_id`, whose display name is
+// `name` (a join seats it). One entry for every kind, so no host dispatches on a
+// kind or reads a field to decide what an ask means:
+//
+//   ASK_JOIN               table_join
+//   ASK_START              table_ready
+//   ASK_ADD_BOT            table_add_bot with `bot`; TABLE_E_WIRE without one
+//   ASK_EXIT               table_remove_bot when the ask names a bot, else
+//                          table_leave of the player it names, else of the actor
+//   ASK_CONTINUE           table_continue
+//   ASK_REARRANGE_HAND     table_rearrange_hand
+//   ASK_REARRANGE_PLAYERS  table_reseat
+//   ASK_UPDATE_NAME        table_retitle
+//   ASK_SET_RULES          table_set_rules
+//   ASK_BUMP               TABLE_MOOT, seated or not: nothing to commit
+//
+// The result is the edit's own. `deal_seed` is FOOLISH_SEED_LEN bytes, used by
+// the edits that can deal. TABLE_E_WIRE for a kind that is not one.
+int table_ask(Table *t, const char *actor_id, int id_len, const char *name, int name_len,
+              const TableAsk *a, const TableAskBot *bot, const uint8_t *deal_seed);
+
 // ---- fixtures ------------------------------------------------------------------
 
 // A board and a roster a test composed field by field, checked exactly as a
@@ -326,6 +358,13 @@ int table_envelope(const Table *t, const char *game_id, int gid_len, int viewer,
 // event sequence masked for `viewer` (seat, or -1), the flags byte, and the new
 // roster when the operation changed it. A bot seat has no viewer.
 int table_push(const Table *t, const char *game_id, int gid_len, int viewer, uint8_t *out, int cap);
+
+// One viewer's realtime MESSAGE for the last operation (evwire.h, the cast): the
+// header carrying `version`, the version the commit will produce, then exactly
+// table_push's bytes. This is what a host broadcasts; the bare push stays for
+// the callers that hold a version of their own (iOS, the fixtures).
+int table_cast(const Table *t, const char *game_id, int gid_len, int viewer, uint32_t version,
+               uint8_t *out, int cap);
 
 // ---- the bot cycle (docs/C_GAME_SHAPE_MIGRATION.md 2.7) ------------------------
 //

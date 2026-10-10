@@ -253,6 +253,31 @@ int evwire_frames(const unsigned char *frames, int len, int *off, int *flen, int
 // an unknown flag, or bytes after the flags that no flag announced.
 int evwire_as3_split(const unsigned char *buf, int len, int *seq_len, int *flags, int *block_off);
 
+// ---------- the cast: an as3 push as a realtime message carries it ---------
+//
+// Realtime's broadcast endpoint takes a JSON object per message, so the push
+// rides in it as ONE base64 string - and everything else the message used to
+// say beside that string ({t:'as3', s, v, b}) is in the bytes instead:
+//
+//   u8  EVW_CAST_FORMAT          what `t` said: the block below is as3
+//   u32 LE version               what `v` said: the committed games.version
+//   as3 push                     what `b` held
+//
+// `s`, the sequence id, is not carried at all. A topic receives exactly one
+// push per committed version (the commit is fenced on the version, and a
+// resend repeats the same bytes), so the game id and the version already name
+// the sequence: a receiver that drops a version it has applied has dropped
+// every duplicate. The id used to be a random UUID drawn per push, which was
+// one more draw than the product allows itself (sdk/ts/wire/detid.ts).
+#define EVW_CAST_FORMAT       1
+#define EVW_CAST_HEADER_BYTES 5
+
+// Writes the header at `out`: EVW_CAST_HEADER_BYTES, or EVW_ECAP.
+int evwire_cast_header_put(uint32_t version, unsigned char *out, int cap);
+// Reads it: EVW_CAST_HEADER_BYTES (the offset of the as3 push), or EVW_EPARSE
+// for a payload too short to hold one or a format this build does not read.
+int evwire_cast_header_get(const unsigned char *buf, int len, uint32_t *version);
+
 // Serialize the full sequence for `viewer` (seat index, or VIEW_SPECTATOR).
 // `logs`/`n_logs` are THIS action's kernel logs (the resident game's fresh
 // log buffer). `final_g` is the post-action (post-finalize) state for the

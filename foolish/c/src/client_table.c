@@ -255,6 +255,21 @@ static Card event_card(unsigned b) {
     return card_of_id((int)b);
 }
 
+int client_cast_open(ClientTable *c, const uint8_t *p, int len, const uint8_t *identity, int identity_len) {
+    uint32_t version = 0;
+    const int at = evwire_cast_header_get(p, len, &version);
+    if (at < 0) {
+        c->open = false;
+        c->detail = 0;
+        return CLIENT_E_PUSH;
+    }
+    const int rc = client_push_open(c, p + at, len - at, 1, identity, identity_len, version);
+    // client_identity_at answers in the bytes the host handed over, and those
+    // begin at the header.
+    if (rc == CLIENT_OK && c->identity_at >= 0) c->identity_at += at;
+    return rc;
+}
+
 int client_push_next(ClientTable *c) {
     if (!c->open) return CLIENT_E_ORDER;
     if (c->index >= c->n_events) return 0;

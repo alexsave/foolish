@@ -344,6 +344,14 @@ int table_push(const Table *t, const char *game_id, int gid_len, int viewer, uin
     return seq + 1 + tr;
 }
 
+int table_cast(const Table *t, const char *game_id, int gid_len, int viewer, uint32_t version,
+               uint8_t *out, int cap) {
+    const int at = evwire_cast_header_put(version, out, cap);
+    if (at < 0) return TABLE_E_CAP;
+    const int n = table_push(t, game_id, gid_len, viewer, out + at, cap - at);
+    return n < 0 ? n : at + n;
+}
+
 int table_commit_products(const Table *t, const char *game_id, int gid_len, uint32_t next_version,
                           int64_t now_ms, TableCommit *out, uint8_t *arena, int cap) {
     memset(out, 0, sizeof(*out));
@@ -714,6 +722,53 @@ int table_redact(Table *t, const char *user_id, int id_len, const char *name, in
 // The one seat the elimination order does not name. A finished game's seats
 // are parked READY/IDLE by the finalize, so game_done (which reads IN/OUT) can
 // no longer say; the elimination order still can.
+// ---------- an ask ---------------------------------------------------------------
+
+int table_ask(Table *t, const char *actor_id, int id_len, const char *name, int name_len,
+              const TableAsk *a, const TableAskBot *bot, const uint8_t *deal_seed) {
+    if (!a) return TABLE_E_WIRE;
+    switch (a->kind) {
+        case ASK_JOIN:
+            return table_join(t, actor_id, id_len, name, name_len);
+        case ASK_START:
+            return table_ready(t, actor_id, id_len, deal_seed);
+        case ASK_ADD_BOT:
+            if (!bot) return TABLE_E_WIRE;
+            return table_add_bot(t, actor_id, id_len, bot->id, bot->id_len, bot->nick, bot->nick_len,
+                                 bot->brain, bot->brain_len, deal_seed);
+        case ASK_EXIT:
+            if (a->bot_len > 0) return table_remove_bot(t, actor_id, id_len, a->bot, a->bot_len);
+            if (a->player_len > 0) return table_leave(t, actor_id, id_len, a->player, a->player_len);
+            return table_leave(t, actor_id, id_len, actor_id, id_len);
+        case ASK_CONTINUE:
+            return table_continue(t, actor_id, id_len);
+        case ASK_REARRANGE_HAND:
+            return table_rearrange_hand(t, actor_id, id_len, a->idx, a->n_idx);
+        case ASK_REARRANGE_PLAYERS: {
+            // table_reseat's list: n x { u8 len, id }.
+            uint8_t ids[MAX_PLAYERS * (1 + ROSTER_ID_MAX)];
+            int at = 0;
+            if (a->n_order > MAX_PLAYERS) return TABLE_E_WIRE;
+            for (int i = 0; i < a->n_order; i++) {
+                const int len = a->order[i].len;
+                if (len > ROSTER_ID_MAX) return TABLE_E_WIRE;
+                ids[at++] = (uint8_t)len;
+                memcpy(ids + at, a->order[i].id, (size_t)len);
+                at += len;
+            }
+            return table_reseat(t, actor_id, id_len, ids, at);
+        }
+        case ASK_UPDATE_NAME:
+            return table_retitle(t, actor_id, id_len, a->title, a->title_len);
+        case ASK_SET_RULES:
+            return table_set_rules(t, actor_id, id_len, a->passing);
+        case ASK_BUMP:
+            return t->loaded ? TABLE_MOOT : TABLE_E_NOT_LOADED;
+        default:
+            return TABLE_E_WIRE;
+    }
+}
+
 static int unnamed_seat(const Game *g) {
     uint32_t out_mask = 0;
     for (int i = 0; i < g->num_eliminated; i++) out_mask |= 1u << g->elimination_order[i];
