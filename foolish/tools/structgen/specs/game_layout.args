@@ -61,3 +61,6 @@
 # The hand's shape (view_layout.args reads and writes these), so the layout hash
 # bots.wasm is checked against covers HandMetrics and HandLayout too.
 --header hand_layout.h --root HandMetrics --root HandLayout
+# The move a client sends (view_layout.args writes it), so the layout hash
+# covers ClientMove too.
+--header client_table.h --root ClientMove

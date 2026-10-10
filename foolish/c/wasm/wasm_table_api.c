@@ -476,6 +476,17 @@ int wasm_client_conflict_verdicts(void) {
     return client_conflict_verdicts(&g_edit_view, &g_final_view, &g_conflict, &g_verdicts);
 }
 
+// ---- the move a client sends (client_table.h) ----
+//
+// The move goes in through the generated ClientMove writer; its action wire
+// comes back in the IO buffer, where the gates above read one and from where
+// the request below is built.
+static ClientMove g_move;
+ClientMove *wasm_client_move_ptr(void) { return &g_move; }
+
+// -> io = the action wire.
+int wasm_client_move_wire(void) { return client_move_wire(&g_move, wasm_io_ptr(), wasm_io_cap()); }
+
 // ---- what a gesture on a board means (client_table.h) ----
 //
 // The gesture is written through the generated writer and the answer read

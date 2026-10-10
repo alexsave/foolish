@@ -27,6 +27,7 @@ export type ViewRules = V.ViewRules_Snap;
 export type BoardEdit = V.BoardEdit_Snap;
 export type ConflictQuestion = V.ClientConflict_Snap;
 export type ClientPlay = V.ClientPlay_Snap;
+export type ClientMove = V.ClientMove_Snap;
 export type HandMetrics = V.HandMetrics_Snap;
 export type HandLayout = V.HandLayout_Snap;
 
@@ -69,6 +70,8 @@ export interface ClientExports {
     wasm_client_gesture_ptr(): number;
     wasm_client_play_ptr(): number;
     wasm_client_play(): number;
+    wasm_client_move_ptr(): number;
+    wasm_client_move_wire(): number;
     wasm_hand_metrics_ptr(): number;
     wasm_hand_layout_ptr(): number;
     wasm_hand_layout(count: number, width: number): number;
@@ -287,6 +290,22 @@ export class ClientTable {
         const n = this.ex.wasm_client_conflict_verdicts();
         if (n < 0) throw new Error(`client conflict verdicts: refused (${n})`);
         return V.readConflictVerdicts(this.m(), this.ex.wasm_client_verdicts_ptr()).verdicts;
+    }
+
+    /**
+     * The action wire of a move (c/src/client_table.h client_move_wire, over
+     * awire.c's one encoder): the bytes `validate` and `optimisticApply` read and
+     * the bytes the server applies. `kind` is an AWIRE_*; `attackCards` is read
+     * for a cover only, one per card. Throws when the kernel refuses the move -
+     * cards on a pickup, a cover whose pairs do not match, a card that is not a
+     * card: a move the screen could not have meant, never a race.
+     */
+    moveWire(move: ClientMove): Uint8Array {
+        V.writeClientMove(this.m(), this.ex.wasm_client_move_ptr(), move);
+        const n = this.ex.wasm_client_move_wire();
+        if (n <= 0) throw new Error(`client move: not a move the wire carries (${n})`);
+        const at = this.ex.wasm_io_ptr();
+        return this.m().u8.slice(at, at + n);
     }
 
     /** Whether `defense` beats `attack` under `powerSuit` (the kernel's can_cover). */

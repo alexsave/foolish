@@ -33,7 +33,7 @@ import { fixture, fixtureTable, GAME_OVER, IDLE, READY, type TableFixture } from
 import { legalMoves, residentBoard, type BoardState, type PlayCard } from './helpers/table_play.ts';
 import { runMeta, seedLobby } from './helpers/table_server.ts';
 import { suiteRng } from './helpers/rng.ts';
-import { encodeAction, decodeAction, encodeActionRequest, decodeActionRequest, encodeActionResponse, decodeActionResponse, ACTION_STATUS } from '../sdk/ts/wire/awire.ts';
+import { encodeAction, encodeActionRequest, decodeActionRequest, encodeActionResponse, decodeActionResponse, ACTION_STATUS } from '../sdk/ts/wire/awire.ts';
 import { readEnvelopeView } from './helpers/client_read.ts';
 import { clientTable } from '../sdk/ts/table/client_table.ts';
 import * as V from '../sdk/ts/gen/view_layout.bots.ts';
@@ -120,11 +120,14 @@ test('awire HTTP envelopes: request/response round-trip, garbage rejected (by th
   }
   assert.equal(decodeActionResponse(new Uint8Array([1, 0, 0])), null, 'short response rejected');
 
-  // decodeAction never throws on garbage.
+  // The kernel's request reader never throws on garbage: it answers a request
+  // or a refusal. (The action wire's own reader is fuzzed where it lives,
+  // c/tests/tests.c test_awire_decode_refuses_every_malformed_shape.)
   for (let i = 0; i < 5000; i++) {
     const buf = new Uint8Array(ri(12));
     for (let j = 0; j < buf.length; j++) buf[j] = ri(256);
-    decodeAction(buf);
+    const read = fixtureTable().requestDecode(buf);
+    assert.ok(typeof read === 'number' ? read < 0 : read.wire.length >= 2, 'a request with a wire, or a refusal');
   }
 });
 

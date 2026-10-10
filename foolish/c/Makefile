@@ -1050,6 +1050,7 @@ WASM_CLIENT_EXPORTS := \
   -Wl,--export=wasm_client_rearrange_hand -Wl,--export=wasm_client_conflict_verdicts \
   -Wl,--export=wasm_client_gesture_ptr -Wl,--export=wasm_client_play_ptr \
   -Wl,--export=wasm_client_play \
+  -Wl,--export=wasm_client_move_ptr -Wl,--export=wasm_client_move_wire \
   -Wl,--export=wasm_hand_metrics_ptr -Wl,--export=wasm_hand_layout_ptr \
   -Wl,--export=wasm_hand_layout
 

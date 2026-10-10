@@ -1,39 +1,32 @@
-// Action wire ("awire" v1) — TS mirror of c/src/awire.h. The client
-// builds ONE buffer per move and uses it for the kernel's gate and
-// optimistic board (c/src/client_table.h), and the POST body; the server kernel applies the same
-// bytes verbatim. Pure TS, no wasm imports.
+// The action wire ("awire" v1, c/src/awire.h) as TypeScript reaches it. The
+// client builds ONE buffer per move and uses it for the kernel's gate and
+// optimistic board (c/src/client_table.h), and the POST body; the server kernel
+// applies the same bytes verbatim.
+//
+// NO BYTE OF IT IS WRITTEN HERE. This file used to be a second implementation
+// of awire.c - its own frame, its own card byte, its own copies of the kinds -
+// and the two could only be held together by tests. A move is now a plain
+// object that goes into the kernel through the generated ClientMove writer
+// (sdk/ts/gen/view_layout.bots.ts), and awire.c's one encoder writes the wire.
+// What is left here is the names a caller says a move with.
 
-/** A card as the wire carries it (suit 0..3, value 1..13; -1/-1 is a hidden card). */
+import * as V from '../gen/view_layout.bots.ts';
+import { clientTable } from '../table/client_table.ts';
+
+/** A card of a move (suit 0..3, value 1..13). */
 export interface Card { readonly suit: number; readonly value: number }
 
+/** A move's kinds by name, numbered by the kernel (awire.h AWIRE_*). */
 export const AWIRE_KIND = {
-    attack: 0,
-    cover: 1,
-    pass: 2,
-    pickup: 3,
-    good: 4,
+    attack: V.AWIRE_ATTACK,
+    cover: V.AWIRE_COVER,
+    pass: V.AWIRE_PASS,
+    pickup: V.AWIRE_PICKUP,
+    good: V.AWIRE_GOOD,
 } as const;
 export type AwireKindName = keyof typeof AWIRE_KIND;
 
-export const AWIRE_MAX_CARDS = 28;
-
-// Mirrors wire.h: clamp into the representable
-// space; the kernel re-clamps on decode (memory safety never depends on
-// this side).
-export function wireCard(c: Card): number {
-    const suit = Math.min(3, Math.max(0, c.suit | 0));
-    const value = Math.min(13, Math.max(1, c.value | 0));
-    return suit * 13 + (value - 1);
-}
-
-export const WIRE_HIDDEN = 0xfe;
-export const WIRE_NONE = 0xff;
-
-export function cardFromWireByte(b: number): Card {
-    if (b === WIRE_HIDDEN) return { suit: -1, value: -1 };
-    const clamped = b > 51 ? 51 : b;
-    return { suit: Math.floor(clamped / 13), value: (clamped % 13) + 1 };
-}
+export const AWIRE_MAX_CARDS = V.AWIRE_MAX_CARDS;
 
 export interface AwireMove {
     kind: AwireKindName;
@@ -41,58 +34,15 @@ export interface AwireMove {
     attack_cards?: Card[]; // cover only, positional with cards
 }
 
-// Move -> awire bytes. Throws on unencodable input (too many cards,
-// mismatched cover pairs) — those are client bugs, not race conditions.
+// Move -> awire bytes, written by the kernel (client_move_wire). Throws on a
+// move the wire cannot carry (too many cards, cards on a pickup, mismatched
+// cover pairs, a card that is not a card) - those are client bugs, not race
+// conditions. Needs the kernel warm, as every board a move is made on already
+// does (ensureBotsAsync).
 export function encodeAction(move: AwireMove): Uint8Array {
     const kind = AWIRE_KIND[move.kind];
-    const cards = move.cards ?? [];
     if (kind === undefined) throw new Error(`awire: unknown kind ${move.kind}`);
-    if (cards.length > AWIRE_MAX_CARDS) throw new Error(`awire: ${cards.length} cards exceeds ${AWIRE_MAX_CARDS}`);
-    if ((move.kind === 'pickup' || move.kind === 'good') && cards.length > 0) {
-        throw new Error(`awire: ${move.kind} carries no cards`);
-    }
-    const out = [kind, cards.length];
-    for (const c of cards) out.push(wireCard(c));
-    if (move.kind === 'cover') {
-        const attacks = move.attack_cards ?? [];
-        if (attacks.length !== cards.length) {
-            throw new Error(`awire: cover pairs mismatched (${cards.length} covers, ${attacks.length} attacks)`);
-        }
-        for (const c of attacks) out.push(wireCard(c));
-    }
-    return new Uint8Array(out);
-}
-
-// awire bytes -> move, mirroring awire_decode's strictness (null on any
-// malformed payload).
-//
-// No production caller left: the server's legacy-fallback path was its last one
-// and is retired (moves are packed only). What it still is, and why it stays, is
-// the ORACLE the encoder is fuzzed against - e2e/awire_codec.test.ts round-trips
-// 3,000 generated moves through encode -> decode -> encode, which is how
-// encodeAction (very much live) is held to the format. Same role the frozen TS
-// bot oracles play for the kernel's move choice. It is not a second
-// implementation anything runs on.
-export function decodeAction(buf: Uint8Array): AwireMove | null {
-    if (buf.length < 2) return null;
-    const kind = buf[0], n = buf[1];
-    const name = (Object.keys(AWIRE_KIND) as AwireKindName[]).find(k => AWIRE_KIND[k] === kind);
-    if (!name) return null;
-    if (n > AWIRE_MAX_CARDS) return null;
-    if ((name === 'pickup' || name === 'good') && n !== 0) return null;
-    const expected = 2 + n * (name === 'cover' ? 2 : 1);
-    if (buf.length !== expected) return null;
-    // Every card byte is a card: awire_decode refuses the wire otherwise.
-    for (let i = 2; i < expected; i++) if (buf[i] > 51) return null;
-    const cards: Card[] = [];
-    for (let i = 0; i < n; i++) cards.push(cardFromWireByte(buf[2 + i]));
-    const move: AwireMove = { kind: name, cards };
-    if (name === 'cover') {
-        const attacks: Card[] = [];
-        for (let i = 0; i < n; i++) attacks.push(cardFromWireByte(buf[2 + n + i]));
-        move.attack_cards = attacks;
-    }
-    return move;
+    return clientTable().moveWire({ kind, cards: move.cards ?? [], attackCards: move.attack_cards ?? [] });
 }
 
 // ---------------------------------------------------------------------------

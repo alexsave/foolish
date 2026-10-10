@@ -77,7 +77,7 @@ import { lockedBotLoop } from '../../server/impls/supabase/functions/_shared/ada
 import { __clearGameCache } from '../../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
 import { __setTableDealSeedOverride } from '../../server/impls/supabase/functions/_shared/adapter/table_io.ts';
 import { botsTestWasm } from './bots_test_wasm.ts';
-import { encodeActionRequest, wireCard } from '../../sdk/ts/wire/awire.ts';
+import { encodeActionRequest } from '../../sdk/ts/wire/awire.ts';
 import { readEnvelopeView, readPushSequence } from './client_read.ts';
 import { cRosterTrailerRead } from './roster_kernel.ts';
 import { clientTable } from '../../sdk/ts/table/client_table.ts';
@@ -98,7 +98,11 @@ if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {};
 const rng = suiteRng('security_hidden_info');
 const HIDDEN = 0xfe;
 const NONE = 0xff;
-const id = (c: PlayCard) => wireCard(c);
+// A card's byte in the streams walked below. This helper reads those streams
+// byte by byte ON PURPOSE - it is the outside observer that checks what the
+// kernel put on the wire for each viewer - so it names the byte itself rather
+// than asking the kernel it is auditing.
+const id = (c: PlayCard) => c.suit * 13 + (c.value - 1);
 const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
 const hexToBytes = (h: string) => Uint8Array.from(Buffer.from(h.replace(/^\\x/, ''), 'hex'));
 

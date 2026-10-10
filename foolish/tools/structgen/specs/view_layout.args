@@ -37,3 +37,9 @@
 --header hand_layout.h --root HandMetrics --root HandLayout
 --writer HandMetrics --snapshot HandMetrics --snapshot HandLayout
 --count HandLayout.slot=n --const HAND_
+# The move a client sends (client_table.h ClientMove, awire.h): it goes in
+# through its writer and the kernel writes the action wire, so no host packs a
+# frame or a card byte. AWIRE_* are the kinds and the frame's card capacity.
+--root ClientMove --snapshot ClientMove --writer ClientMove
+--count ClientMove.cards=n_cards --count ClientMove.attack_cards=n_attacks
+--header awire.h --const AWIRE_
