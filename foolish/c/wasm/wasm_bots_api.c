@@ -256,10 +256,8 @@ void wasm_reload_bot_flags(void) { cordite_reload_flags(); }
 #ifdef FOOLISH_ORACLE_BUILD
 // Infinite-oracle only (docs/INFINITE_ORACLE_DESIGN.md §6.2): the replay
 // analyzer resets the OG_* knobs between deliberation batches (adaptive world
-// budget) and octogen has to re-read them. Compiled ONLY into the oracle
-// modules.
-void og_reload_flags(void);
-
+// budget). Compiled ONLY into the oracle modules.
+//
 // THE ORACLE'S KNOBS, AS A STRUCT (oracle_answer.h OgKnobs). The host writes the
 // six numbers through its generated writer and applies them; it never spells a
 // knob's name and never packs a string. Three hosts used to carry the same loop
@@ -272,6 +270,15 @@ void og_reload_flags(void);
 // REPLACED, not merged: these are the Oracle's knobs and every other OG_* value
 // is the C default, which is what wasm_clearenv followed by six sets always
 // meant.
+//
+// Applying does NOT tell octogen to re-read, because octogen already does, in
+// both modules, before anything it deliberates: bot_roster_choose drops the
+// latched values around every choose (Mode A's wasm_choose_move goes through
+// it), and Mode B's warmup and every thread at every generation do the same
+// (wasm_oracle_mt.c). The hosts used to call a wasm_og_reload_flags export
+// after their six sets as well; that was a second owner of a rule that had
+// one, and removing it changes no answer (e2e/oracle_answer.test.ts moves every
+// knob between two batches of one instance).
 static OgKnobs g_og_knobs;
 OgKnobs *wasm_og_knobs_ptr(void) { return &g_og_knobs; }
 
@@ -301,7 +308,6 @@ void wasm_og_knobs_apply(void) {
     og_knob_put("OG_W2", g_og_knobs.w2);
     og_knob_put("OG_W3", g_og_knobs.w3);
     og_knob_put("OG_EXPLAIN_SOLVE_BUDGET", g_og_knobs.solve_budget);
-    og_reload_flags();
 }
 #endif
 

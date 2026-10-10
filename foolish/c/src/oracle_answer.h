@@ -35,7 +35,7 @@
 // The knobs the Oracle sets, and the only ones: every other OG_* value is the C
 // default. Applying them replaces the whole override table, so a knob the host
 // does not name cannot survive from an earlier batch (wasm_bots_api.c
-// wasm_og_knobs_apply).
+// wasm_og_knobs_apply), and octogen reads the new values at its next choose.
 typedef struct {
     int32_t keep1, keep2;           // OG_KEEP1 / OG_KEEP2: 26 turns racing off
     int32_t w1, w2, w3;             // OG_W1..OG_W3: worlds per stage

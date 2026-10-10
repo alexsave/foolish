@@ -117,9 +117,9 @@ export class OracleInstance {
         this.ex.wasm_init();
     }
 
-    /** Set the OG_* knobs and have octogen re-read them (§8.5 step 1). Every
-     *  knob not in the struct goes back to its default. Only called when the
-     *  knobs are dirty (first batch or a retune). */
+    /** Set the OG_* knobs (§8.5 step 1); octogen reads them at its next
+     *  choose. Every knob not in the struct goes back to its default. Only
+     *  called when the knobs are dirty (first batch or a retune). */
     setKnobs(knobs: OracleKnobs): void {
         const ex = this.ex;
         writeOgKnobs(memOf(ex.memory.buffer), ex.wasm_og_knobs_ptr(), knobs);

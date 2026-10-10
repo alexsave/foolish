@@ -282,6 +282,18 @@ build/analyse_test: $(ANALYSE_OBJ) $(call c_objs,build/obj/analyse,tests/analyse
 analyse-test: build/analyse_test
 	./build/analyse_test
 
+# The Oracle's answer (src/oracle_answer.h OgAnswer), checked natively against
+# the games it was deliberated on: tests/oracle_answer_test.c says what it holds
+# the struct to. Its own binary because it needs the two flags an oracle build
+# is made of, which no other native target sets - the answer does not exist
+# without them. The wasm half, and the proof against the old JSON line, is
+# e2e/oracle_answer.test.ts.
+.PHONY: oracle-answer-test
+oracle-answer-test:
+	@mkdir -p build
+	$(CC) $(CFLAGS) -DOG_EXPLAIN_BUILD -DFOOLISH_ORACLE_BUILD $(CORE_SRC) tests/oracle_answer_test.c -o build/oracle_answer_test $(LDFLAGS)
+	./build/oracle_answer_test
+
 # ---------- iOS static library / xcframework (docs/IOS_APP_DESIGN.md §16.A1) --
 #
 # Builds ../ios/vendor/Foolish.xcframework from the SAME CORE_SRC every native

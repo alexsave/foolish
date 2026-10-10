@@ -209,7 +209,7 @@ void  solve_clone_root(Game *dst, const Game *src);
 //
 // Compiled ONLY into the Mode A oracle module. Shipped builds carry no trace
 // of it, and Mode B (oracle-mt.wasm) is excluded DELIBERATELY: that module has
-// no JSON explain sink to hang the sidecar off (OG_EXPLAIN_BUILD is not set
+// no per-batch answer to carry it in (oracle_answer.h; OG_EXPLAIN_BUILD is not set
 // there), it restores real TLS, and the per-candidate aggregation below is
 // ~163 KiB of thread-local state per worker thread. Paying that eight times
 // over to produce something nothing can read is not a trade worth making, so
