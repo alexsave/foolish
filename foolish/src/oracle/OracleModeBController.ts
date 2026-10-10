@@ -207,8 +207,8 @@ export class OracleModeBController {
             approx: job.approx,
             deckAlive: job.deckAlive,
             numPlayers: job.numPlayers,
-            // No `belief` and no per-candidate `why`: oracle-mt.wasm has no
-            // JSON explain sink and no cd_orc path trace (c/src/cordite_sim.h
+            // No `belief` and no per-candidate `why`: oracle-mt.wasm fills no
+            // per-batch answer and has no cd_orc path trace (c/src/cordite_sim.h
             // CD_ORC_TRACE says why), so the overlay's proof panel is a Mode A
             // feature and simply does not open here.
             error: this.error,

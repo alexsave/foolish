@@ -24,7 +24,7 @@ const ORACLE_DECISION_KINDS: ReadonlySet<number> = new Set([
     REPLAY_STEP.PICKUP, REPLAY_STEP.GOOD,
 ]);
 
-// A step's kind -> the dump's move-type string (og_ex OG_EX_MTYPE).
+// A step's kind -> the move-type name a candidate row carries (oracleBridge.ts MOVE_NAME).
 const KIND_TO_MTYPE: Record<number, string> = {
     [REPLAY_STEP.ATTACK]: 'attack',
     [REPLAY_STEP.COVER]: 'cover',
@@ -52,7 +52,7 @@ function recordedMove(frames: ReplayFrame[], j: number, trump: number): { key: s
     // index's third byte). A step's cards are not always its move's: a pickup
     // carries the pile it swept, which nobody chose. Slicing to the kernel's
     // count is what stops this side inventing a second answer to a question the
-    // kernel already answers for octogen's dump - they disagreed about pickup,
+    // kernel already answers for octogen's rows - they disagreed about pickup,
     // and every recorded pickup read as "not considered" because of it.
     // A cover names its pairs; everything else names the cards the kernel counted.
     const cards: string[] = [];

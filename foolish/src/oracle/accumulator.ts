@@ -1,17 +1,16 @@
 /* =============================================================================
  * Infinite Oracle — batch merge, standard error & convergence (§8.7)
- * Pure, worker-free: feed it dump records (from any number of workers, any
+ * Pure, worker-free: feed it batch records (from any number of workers, any
  * order) and read running per-candidate means, SE, and the convergence verdict.
  * Extracted from the controller so the headless suite can drive it directly.
  * ========================================================================== */
 
 import {
-    OracleDumpRecord, OracleCandidate, OracleVerdict, OracleCandPaths,
+    OracleRecord, OracleCandidate, OracleVerdict, OracleCandPaths,
     OraclePathStat, OracleReplyStat,
     ORACLE_TRUMP_KEEP, ORACLE_CONVERGE_MIN_N, ORACLE_CONVERGE_MAX_SE,
     canonicalMoveKey,
 } from './types';
-import { decodePathsBlob } from './pathsBlob';
 
 interface Welford { count: number; mean: number; m2: number; }
 function welfordAdd(w: Welford, x: number): void {
@@ -41,7 +40,7 @@ interface Acc {
     forcedLoss: boolean;
     pruned: boolean;
     chosen: boolean;
-    // ---- "why" sidecar pools (merged across batches) ----
+    // ---- "why" pools (merged across batches) ----
     whyN: number;                                          // playouts folded
     whyMepk: number; whyOppk: number;                      // sum of mean*n (weighted)
     whyMetr: number; whyOpptr: number; whyRnds: number;
@@ -63,18 +62,17 @@ export class OracleAccumulator {
     /** Decision-static context captured from the first record that carries a
      *  belief block (identical every batch - the belief is a function of the
      *  marshaled position, not of the sampling). */
-    belief: OracleDumpRecord['belief'] | null = null;
+    belief: OracleRecord['belief'] | null = null;
     beliefCtx: {
         hand: string[]; oppCounts: number[];
         table: { attack: string; defense: string | null }[];
         defender: number; trump: number;
     } | null = null;
 
-    /** Merge one decision record (one worker's one batch), plus its optional
-     *  binary paths sidecar. */
-    add(rec: OracleDumpRecord, pathsBlob?: ArrayBuffer): void {
+    /** Merge one decision record (one worker's one batch), each sampled row
+     *  with the storylines behind its score. */
+    add(rec: OracleRecord): void {
         const cands = rec.candidates || [];
-        const why = pathsBlob ? decodePathsBlob(pathsBlob) : null;
         if (!this.belief && rec.belief) {
             this.belief = rec.belief;
             this.beliefCtx = {
@@ -86,8 +84,7 @@ export class OracleAccumulator {
             };
         }
         let batchWorlds = 0;
-        for (let ci = 0; ci < cands.length; ci++) {
-            const c = cands[ci];
+        for (const c of cands) {
             const key = canonicalMoveKey(c.type, c.cards, c.target);
             let a = this.acc.get(key);
             if (!a) {
@@ -113,8 +110,7 @@ export class OracleAccumulator {
             if (c.pruned) a.pruned = true;
             if (c.forced_loss) a.forcedLoss = true;
             if (c.chosen) a.chosen = true;
-            // sidecar entries key by candidate INDEX within this record
-            const w = why?.get(ci);
+            const w = c.why;
             if (w && w.agg.n > 0) {
                 a.whyN += w.agg.n;
                 a.whyMepk += w.agg.mepk * w.agg.n;

@@ -1427,9 +1427,9 @@ build/bots.wasm: $(WASM_BOT_OBJ) Makefile
 
 # bots-explain.wasm: byte-for-byte the SAME octogen as bots.wasm (same sources,
 # same per-file opt, same flags, same wasm-opt pass) PLUS -DOG_EXPLAIN_BUILD,
-# which is behavior-neutral (the deliberation dump is #ifdef'd + gated and resets
-# the TT). Extra exports let the JS harness read the per-decision dump from a
-# static buffer (wasm has no file I/O). ANALYSIS ONLY — never shipped.
+# which is behavior-neutral (the deliberation's answer is #ifdef'd + gated and
+# resets the TT). Extra exports let a harness read each decision's answer
+# (src/oracle_answer.h OgAnswer). ANALYSIS ONLY - never shipped.
 .PHONY: bots-wasm-explain
 bots-wasm-explain: build/layout/bots-explain.hash
 	@mkdir -p build/botexplain
@@ -1441,7 +1441,7 @@ bots-wasm-explain: build/layout/bots-explain.hash
 	done
 	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_BOT_LDFLAGS) \
 	          $(WASM_BOTS_SHIPPED_EXPORTS) \
-	          -Wl,--export=wasm_og_explain_ptr -Wl,--export=wasm_og_explain_len -Wl,--export=wasm_og_explain_reset \
+	          -Wl,--export=wasm_og_answer -Wl,--export=wasm_og_answer_reset \
 	          build/botexplain/*.o -o build/bots-explain.wasm
 	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),build/bots-explain.wasm)
 	gzip -9 -c build/bots-explain.wasm > build/bots-explain.wasm.gz
@@ -1608,20 +1608,20 @@ wasm-bots-test: wasm-cc-check
 # ---------------------------------------------------------------------------
 # oracle.wasm — the client-side "infinite oracle" replay analyzer
 # (docs/INFINITE_ORACLE_DESIGN.md). bots.wasm's brain + the OG_EXPLAIN
-# per-candidate dump + oracle-only hooks (-DFOOLISH_ORACLE_BUILD), rebuilt for
+# per-candidate answer + oracle-only hooks (-DFOOLISH_ORACLE_BUILD), rebuilt for
 # the browser's unconstrained-memory regime: TT20 (+2WAY+PACK8 = 8 MiB runtime
 # table — a strength knob, Makefile:296-304) and the default 256 KiB stack (no
-# 22528 override). CD_WASM_OVERLAY stays: the explain sink requires it
-# (octogen_strategy.c) and repeated complete calls respect the tenancy. NEVER
+# 22528 override). CD_WASM_OVERLAY stays: it is what makes the answer
+# unconditional (octogen_strategy.c og_explain_on) and repeated complete calls
+# respect the tenancy. NEVER
 # replaces the shipped modules; ships as a committed public/oracle.wasm.gz the
 # replay page fetches lazily on the first Oracle button press.
 WASM_ORACLE_CFLAGS := $(filter-out -DCD_TT_BITS=12,$(WASM_BOT_CFLAGS)) \
                       -DCD_TT_BITS=20 -DOG_EXPLAIN_BUILD -DFOOLISH_ORACLE_BUILD
 WASM_ORACLE_LDFLAGS := $(filter -Wl%,$(WASM_FLAGS))
 WASM_ORACLE_EXPORTS := $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) \
-  -Wl,--export=wasm_og_explain_ptr -Wl,--export=wasm_og_explain_len \
-  -Wl,--export=wasm_og_explain_reset -Wl,--export=wasm_og_reload_flags \
-  -Wl,--export=wasm_og_paths_ptr -Wl,--export=wasm_og_paths_len
+  -Wl,--export=wasm_og_answer -Wl,--export=wasm_og_answer_reset \
+  -Wl,--export=wasm_og_knobs_ptr -Wl,--export=wasm_og_knobs_apply
 # ONE MAKE RULE PER OBJECT, the same shape wasm-bots has had all along. This
 # recipe used to be a shell `for` loop over all 34 sources inside a .PHONY
 # target, so every `npm run wasm` recompiled the whole oracle whether or not
@@ -1703,8 +1703,9 @@ wasm-oracle: wasm-cc-check
 #   -DCD_WASM_OVERLAY  its fixed-address aliasing into solve_ws is only legal
 #                      when TLS is stripped (wasm/wasm_overlay.h says so); with
 #                      real TLS it is the native data race.
-#   -DOG_EXPLAIN_BUILD its wasm sink is #ifdef CD_WASM_OVERLAY and would not
-#                      link; Mode B replaces the JSON dump with the C accumulator.
+#   -DOG_EXPLAIN_BUILD its answer is one static struct per instance, which is
+#                      only right when TLS is stripped; Mode B replaces it with
+#                      the C accumulator (src/oracle_mt.h).
 # A SECOND committed artifact (public/oracle-mt.wasm.gz); the browser loader
 # picks it only when crossOriginIsolated. NEVER replaces the shipped modules.
 WASM_ORACLE_MT_SRC := $(WASM_BOT_SRC) wasm/wasm_oracle_mt.c
@@ -1716,7 +1717,7 @@ WASM_ORACLE_MT_LDFLAGS := $(filter-out -Wl$(comma)--export-memory,$(filter -Wl%,
                           -Wl,--export=__stack_pointer -Wl,--export=__wasm_init_tls \
                           -Wl,--export=__tls_size -Wl,--export=__tls_align
 WASM_ORACLE_MT_EXPORTS := $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) \
-  -Wl,--export=wasm_og_reload_flags \
+  -Wl,--export=wasm_og_knobs_ptr -Wl,--export=wasm_og_knobs_apply \
   -Wl,--export=wasm_mt_reserve \
   -Wl,--export=wasm_mt_warmup -Wl,--export=wasm_mt_setup -Wl,--export=wasm_mt_stop \
   -Wl,--export=wasm_mt_total -Wl,--export=wasm_mt_checksum -Wl,--export=wasm_mt_active \
