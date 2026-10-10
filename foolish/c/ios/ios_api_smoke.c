@@ -19,6 +19,7 @@
 #include "client_table.h"  // PushEvent: the step a push walk hands back
 #include "anim_plan.h"     // AnimPlan: the plan, read where it lies
 #include "hand_layout.h"   // HandMetrics: the hand's shape, crossing as its structs
+#include "ask.h"           // ask_decode: what the server reads of the body the app posts
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -2379,6 +2380,33 @@ int main(void) {
         if (s->msg_opening != MSG_NO_OPENING) { printf("FAIL fresh msg_opening = %d\n", s->msg_opening); return 1; }
         if (s->msg_carry_fool != MSG_NO_FOOL) { printf("FAIL fresh msg_carry_fool = %d\n", s->msg_carry_fool); return 1; }
         if (fio_msg_staged_atoms_before() != -1) { printf("FAIL fresh staged_atoms_before\n"); return 1; }
+    }
+
+    // AN ASK, as the online app writes one (fio_ask_encode) and the server reads
+    // it (ask_decode): every kind the app sends, read back field for field, and
+    // the refusals. Mutation-checked: with the door writing the player where the
+    // bot goes, the exit line fails.
+    {
+        uint8_t body[ASK_BYTES_MAX];
+        TableAsk a;
+        static const int kinds[] = { FIO_ASK_JOIN, FIO_ASK_START, FIO_ASK_ADD_BOT, FIO_ASK_EXIT, FIO_ASK_CONTINUE, FIO_ASK_BUMP };
+        for (unsigned i = 0; i < sizeof(kinds) / sizeof(kinds[0]); i++) {
+            const int n = fio_ask_encode(kinds[i], "g-12ab", 6, 0, 0, 0, 0, body, sizeof(body));
+            if (n <= 0 || ask_decode(body, n, &a) != ASK_OK || a.kind != kinds[i] || a.gid_len != 6
+                || memcmp(a.gid, "g-12ab", 6) != 0 || a.bot_len != 0 || a.player_len != 0) {
+                printf("FAIL ask kind %d does not read back (%d)\n", kinds[i], n); return 1;
+            }
+        }
+        int n = fio_ask_encode(FIO_ASK_EXIT, "g", 1, "bot-1", 5, "p-77", 4, body, sizeof(body));
+        if (n <= 0 || ask_decode(body, n, &a) != ASK_OK || a.bot_len != 5 || memcmp(a.bot, "bot-1", 5) != 0
+            || a.player_len != 4 || memcmp(a.player, "p-77", 4) != 0) { printf("FAIL ask exit: the bot and the player\n"); return 1; }
+        n = fio_ask_encode(FIO_ASK_ADD_BOT, "g", 1, "bot-1", 5, 0, 0, body, sizeof(body));
+        if (n <= 0 || ask_decode(body, n, &a) != ASK_OK || a.bot_len != 5 || a.player_len != 0) { printf("FAIL ask add-bot: the bot\n"); return 1; }
+        if (fio_ask_encode(FIO_ASK_JOIN, "", 0, 0, 0, 0, 0, body, sizeof(body)) != FIO_EBADARG) { printf("FAIL ask with no game id\n"); return 1; }
+        if (fio_ask_encode(7, "g", 1, 0, 0, 0, 0, body, sizeof(body)) != FIO_EBADARG) { printf("FAIL ask of a kind the app does not send\n"); return 1; }
+        if (fio_ask_encode(FIO_ASK_JOIN, "g", 1, 0, 0, 0, 0, body, 3) != FIO_ECAP) { printf("FAIL ask into a short buffer\n"); return 1; }
+        if (fio_ask_encode(FIO_ASK_EXIT, "g", 1, 0, 0, (const char *)body, 37, body, sizeof(body)) != FIO_EBADARG) { printf("FAIL ask with an over-long id\n"); return 1; }
+        printf("ask door OK\n");
     }
 
     if (fio_new_game(seed, 32, 4) != FIO_EOK) { printf("FAIL new_game\n"); return 1; }

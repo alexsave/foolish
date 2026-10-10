@@ -1413,6 +1413,32 @@ void fio_msg_style_init(int style, int *out_style, int *out_confirmed);
 // afterwards. The io_ pointers are read and written; NULL ones read as 0.
 int fio_msg_style_note(int phase, int style, int *io_style, int *io_confirmed);
 
+// AN ASK, WRITTEN - the request body for everything the online app asks its
+// server that is not a move (src/ask.h): the lobby edits and the bot nudge. The
+// same door fio_awire_encode is for a move, for the same reason: the app sent
+// these as JSON objects it spelled itself ({ type, game_id, ... }), and the
+// layout that replaced them is ask.c's to state, not Swift's.
+//
+// `kind` is one of the FIO_ASK_* below - the kinds the app sends. `bot` and
+// `player` are UTF-8 ids, len 0 for none: the bot an add-bot names (none: any
+// bot not seated), and for an exit the bot to remove or else the player (none
+// of either: the caller leaves).
+//
+// Returns the bytes written, FIO_ECAP if they do not fit in `cap`, or
+// FIO_EBADARG for an ask ask_encode will not write (a kind that is not one of
+// these, an empty or over-long game id, an over-long id).
+#define FIO_ASK_JOIN     1
+#define FIO_ASK_START    2
+#define FIO_ASK_ADD_BOT  3
+#define FIO_ASK_EXIT     4
+#define FIO_ASK_CONTINUE 5
+#define FIO_ASK_BUMP     10
+int fio_ask_encode(int kind,
+                   const char *gid, int gid_len,
+                   const char *bot, int bot_len,
+                   const char *player, int player_len,
+                   uint8_t *out, int cap);
+
 #ifdef __cplusplus
 }
 #endif
