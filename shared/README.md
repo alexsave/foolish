@@ -55,8 +55,11 @@ Swift reaches a header-only C module through its `module.modulemap` on `SWIFT_IN
 | `tools/structgen/`, `tools/sgcommon/` | the C-layout-to-Swift/TS/Kotlin generator and its libclang driver | CARDS, SHED, LIAR, BONES (THIRD hand-writes its bindings) |
 | `tools/datagen/` | the translation-table generator | CARDS, SHED, LIAR, BONES |
 | `tools/llvm.mk` | the one LLVM toolchain the wasm builds use | CARDS, SHED, LIAR, BONES (through structgen and datagen) |
-| `tools/wasm_cc.mk` | which clang compiles a kernel for wasm32 (the pinned Homebrew LLVM on a Mac) and `wasm-cc-check`, the guard that refuses Apple clang, which targets wasm32 but produces different bytes | SHED, LIAR, BONES (CARDS still carries its own copy of the same guard) |
-| `tools/ios_xcframework.mk` | the `ios-lib` recipe: `$(call IOS_XCFRAMEWORK,name,sources,cflags,headers,min-ios,out)` builds the device and both simulator slices and wraps them in an xcframework | CARDS, UTTT, SHED, LIAR, BONES |
+| `tools/c_rules.mk` | how a C file becomes an object, for every product's `c/Makefile`: `$(eval $(call C_VARIANT,dir,CC,FLAGS))` is one compiler and one set of flags owning one directory of objects, each depending on exactly the headers its compile opened (`-MD -MP`) and on a stamp of its command line, so a header edit, a changed flag and a new compiler each rebuild what they reach and nothing else | CARDS, UTTT, THIRD, SHED, LIAR, BONES |
+| `tools/shared_tests.mk` | what each of `c/`'s own tests is built from, once; a product lists the ones it runs (`SHARED_TESTS`) and gets `shared-tests` and `shared-tests-asan` | UTTT, SHED, LIAR, BONES |
+| `tools/gen_tools.mk` | where structgen and datagen are and the rule that builds each, `gen_sync` (copy a generated file only when its content differs) and `DATAGEN_I18N` (a product's string tables as Swift) | CARDS, UTTT, SHED, LIAR, BONES |
+| `tools/wasm_cc.mk` | which clang compiles a kernel for wasm32 (the pinned Homebrew LLVM on a Mac) and `wasm-cc-check`, the guard that refuses Apple clang, which targets wasm32 but produces different bytes ; and `WASM_OBJECT_PROOF`, the `wasm` target that compiles a kernel as freestanding wasm32 objects | SHED, LIAR, BONES (CARDS still carries its own copy of the same guard) |
+| `tools/ios_xcframework.mk` | `ios-lib` as real rules: `$(eval $(call IOS_XCFRAMEWORK,name,sources,headers,out))` makes each slice a `c_rules.mk` variant, a library per slice and the xcframework, each rebuilt only when its inputs moved, so the target does nothing when nothing changed; also the iOS layout hash with its generated Swift readers (`IOS_SG_SPEC`, `IOS_KERNEL_SWIFT`) and the `swift-smoke` recipe | CARDS, UTTT, THIRD, SHED, LIAR, BONES |
 | `tools/layout_probe/` | does the extension that reads a Messages app message get its layout back: a probe app that stages a message whose picture is a known pattern and whose strings are a known length, the pattern and its judge in C (`layout_probe.h`, `CLayoutProbe`), and the recompression sweep; `README.md` is the evidence (simulator only so far), `layout_probe_test.c` the test | nobody: a measurement, and no product sends data this way |
 | `tools/tighten/` | the showcase video cutter (`media/`) | CARDS |
 | `tools/textures/` | the bake tool: `regenerate_textures.sh <out-dir>` compiles `swift/Textures` with `GenerateTextures.swift` and writes the JPEGs; a product passes its own resources folder | CARDS, SHED |
@@ -67,6 +70,7 @@ Swift reaches a header-only C module through its `module.modulemap` on `SWIFT_IN
 | Path | What | Used by |
 | --- | --- | --- |
 | `scripts/ios_mac_tests.sh` | the Mac-side iOS gate: xcframework, xcodegen with every tracked entitlements file put back by `cp -p` (bytes and mtime), then each test scheme and each build scheme; the product is the env its own `ios/scripts/mac_tests.sh` sets before it `exec`s this one | CARDS, UTTT, SHED |
+| `scripts/xcode_kernel.sh` | Xcode builds the C kernel itself: the script of each product's `<Name>Kernel` aggregate target, which runs `make ios-lib` in a clean environment before the framework that links the kernel is built | CARDS, UTTT, THIRD, SHED, LIAR, BONES |
 
 ## Rig (`rig/lib/`)
 

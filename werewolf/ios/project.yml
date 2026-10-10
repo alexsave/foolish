@@ -5,11 +5,19 @@
 # change is reviewable here, in text.
 #
 # BOOTSTRAP ORDER (from a clean checkout):
-#   1. cd ../c && make ios-lib      # builds ios/vendor/Werewolf.xcframework
-#   2. cd ../ios && xcodegen generate
-#   3. ios/scripts/mac_tests.sh
-# Step 1 must run first: WerewolfKit links vendor/Werewolf.xcframework, which is
-# not in git because it is generated.
+#   1. cd ../ios && xcodegen generate
+#   2. ios/scripts/mac_tests.sh
+# There is no "make the kernel first" step, and both halves of that are this
+# file. `xcodegen generate` runs `make -C ../c ios-lib` before it writes the
+# project (preGenCommand below), and every build runs it again first (the
+# WerewolfKernel target at the bottom); it does nothing when no C changed.
+#
+# BEFORE THE PROJECT IS WRITTEN, and not only in the build, because of two
+# things Xcode does. It will not plan a build whose xcframework does not exist
+# ("There is no XCFramework found"), which is before any script of ours can
+# run to make it. And having refused once it goes on refusing from that
+# derived data after the xcframework is there (measured, Xcode 27, with and
+# without the kernel target), so the first plan must never see it missing.
 #
 # THREE TARGETS, and the shape is inherited from the fork for one reason worth
 # stating: an app extension cannot be distributed on its own, so the iMessage
@@ -24,6 +32,7 @@
 # would be bytes on every install for code that install can never run.
 name: Werewolf
 options:
+  preGenCommand: ../../shared/scripts/xcode_kernel.sh ../c
   bundleIdPrefix: cards.werewolf
   deploymentTarget:
     iOS: "17.0"
@@ -127,6 +136,8 @@ targets:
       # taking the screens.
       - path: ../sdk/swift
     dependencies:
+      # The kernel is BUILT before it is linked: see WerewolfKernel at the bottom.
+      - target: WerewolfKernel
       # The C kernel, built by `make ios-lib` in ../c. STATIC (embed:false), so
       # the linker pulls it in per object and nothing unreferenced ships.
       - framework: vendor/Werewolf.xcframework
@@ -155,6 +166,32 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: cards.werewolf.tests
         GENERATE_INFOPLIST_FILE: "YES"
+
+# THE C KERNEL, BUILT BY THE BUILD. WerewolfKit links a library made by another
+# build system (make -C ../c ios-lib), and for as long as a person had to run
+# that, an app built after an edit to the C linked the kernel from before it -
+# green tests on both sides and the change not in the product. This target is
+# that command, and WerewolfKit depends on it, so Xcode runs it first on every
+# build. It costs a fraction of a second when nothing changed: the Makefile
+# rebuilds only the objects, libraries and xcframework whose inputs moved
+# (shared/tools/ios_xcframework.mk), and Xcode relinks only when the
+# xcframework did.
+#
+# outputFiles IS LOAD-BEARING. Xcode reads an xcframework (ProcessXCFramework)
+# whenever it likes unless something says who writes it, and measured without
+# this line it read the old one, ran make, and linked the old kernel: the
+# library on disk was the new one and the app built that moment was not.
+# Named as this script's output, the read waits for the script, and an edit to
+# the C is in the app that same build.
+aggregateTargets:
+  WerewolfKernel:
+    buildScripts:
+      - name: C kernel (make -C ../c ios-lib)
+        basedOnDependencyAnalysis: false
+        outputFiles:
+          - $(SRCROOT)/vendor/Werewolf.xcframework
+        script: |
+          "$SRCROOT/../../shared/scripts/xcode_kernel.sh" "$SRCROOT/../c"
 
 schemes:
   WerewolfMessagesApp:
