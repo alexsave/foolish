@@ -23,6 +23,7 @@
 // (e2e/security_client_boundary.test.ts denies it to the browser).
 
 import * as L from '../../sdk/ts/gen/game_layout.bots.ts';
+import { WIRE_CARD_NONE } from '../../sdk/ts/gen/kernel_consts.bots.ts';
 import { LAYOUT_HASH } from '../../sdk/ts/gen/layout_hash.bots.ts';
 import type { BotsTestExports } from '../../sdk/ts/gen/exports.bots_test.ts';
 import { ServerTable } from '../../sdk/ts/table/server_table.ts';
@@ -295,7 +296,6 @@ export interface CoverCombination { coverCards: PlayCardLike[]; attackCards: Pla
 interface PlayCardLike { suit: number; value: number }
 
 // The wire card byte (c/wasm/wire.h): 0..51 = suit*13 + (value-1), 0xFF no card.
-const WIRE_NONE = 0xff;
 const wireCard = (c: PlayCardLike): number => c.suit * 13 + (c.value - 1);
 
 /**
@@ -317,7 +317,7 @@ export function unambiguousCover(
     battles.forEach((t, i) => {
         buf[b + 2 * i] = wireCard(t.attack);
         const d = t.defense;
-        buf[b + 2 * i + 1] = !d || (d.suit === -2 && d.value === -2) ? WIRE_NONE : wireCard(d);
+        buf[b + 2 * i + 1] = !d || (d.suit === -2 && d.value === -2) ? WIRE_CARD_NONE : wireCard(d);
     });
     const n = ex.wasm_unambiguous_cover(coverCards.length, battles.length, powerSuit);
     if (n <= 0) return null;

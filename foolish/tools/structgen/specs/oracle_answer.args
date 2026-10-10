@@ -16,3 +16,4 @@
 --count OgAnswerWhy.replies=n_replies --count OgAnswerWhy.paths=n_paths --count OgAnswerPath.sym=len
 # The codes a row and an answer carry, and the move ids a row's type is one of.
 --const OG_VERDICT_ --const OG_SOLVER_ --const MOVE_
+--header strategy.h --const STRAT_OCTOGEN

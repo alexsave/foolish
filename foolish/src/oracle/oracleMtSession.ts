@@ -13,6 +13,7 @@
  * hand-copied bootstrap sequences and they had already drifted apart).
  * ========================================================================== */
 
+import { MOVE_NAMES } from '@sdk/ts/gen/kernel_consts.bots.ts';
 import type { OracleMtExports } from '@sdk/ts/gen/exports.oracle_mt.ts';
 import { memOf, readOgMtCandidates, writeOgKnobs } from '@sdk/ts/gen/oracle_layout.oracle_mt.ts';
 import {
@@ -24,9 +25,6 @@ import {
  *  Thread stacks live in the heap region where --stack-first's trap-on-overflow
  *  does not reach, so the C side also stamps a canary at each stack's low end. */
 export const ORACLE_MT_STACK_BYTES = 512 * 1024;
-
-/** Move-type ids, in MOVE_* order (legal.h). */
-const MOVE_TYPE = ['attack', 'cover', 'pass', 'pickup', 'good', 'wait'];
 
 const OG_EX_NONE_V = 2000001, OG_EX_UNKNOWN_V = 2000002, OG_EX_ILLEGAL_V = 2000003;
 
@@ -221,7 +219,7 @@ export class OracleMtSession {
         const out: OracleCandidate[] = [];
         for (let i = 0; i < table.length; i++) {
             const d = table[i];
-            const type = MOVE_TYPE[d.type] ?? '?';
+            const type = MOVE_NAMES[d.type]?.toLowerCase() ?? '?';
             const cards = d.cards.map((c) => oracleCardToken(c, trump));
             const target = d.targets.map((c) => oracleCardToken(c, trump));
             const key = canonicalMoveKey(type, cards, target);

@@ -14,14 +14,12 @@ import {
     MOVE_ATTACK, MOVE_COVER, MOVE_PASS, MOVE_PICKUP, MOVE_GOOD, MOVE_WAIT,
     OG_VERDICT_NONE, OG_VERDICT_UNKNOWN, OG_VERDICT_ILLEGAL,
     OG_VERDICT_WIN, OG_VERDICT_LOSS, OG_VERDICT_DRAW,
-    OG_SOLVER_NONE, OG_SOLVER_WIN, OG_SOLVER_EVAL,
+    OG_SOLVER_NONE, OG_SOLVER_WIN, OG_SOLVER_EVAL, STRAT_OCTOGEN,
 } from '@sdk/ts/gen/oracle_answer.oracle.ts';
 import type { OracleExports } from '@sdk/ts/gen/exports.oracle.ts';
 import {
     OracleJob, OracleKnobs, OracleRecord, OracleRecordCandidate, OracleVerdict, oracleCardToken,
 } from './types';
-
-const STRAT_OCTOGEN = 20;
 
 export type BatchResult =
     | { record: OracleRecord }

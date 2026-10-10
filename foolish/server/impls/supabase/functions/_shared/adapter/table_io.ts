@@ -26,7 +26,7 @@
 
 import * as L from '@sdk/ts/gen/game_layout.bots.ts';
 import {
-    serverTable, tableCodeName, TABLE_DEAL_SEED_BYTES,
+    serverTable, tableCodeName,
     type ServerTable, type TableProducts, type TableSeat,
 } from '@sdk/ts/table/server_table.ts';
 import { broadcastMessages, supabaseClient, type BroadcastMessage } from './utils.ts';
@@ -227,7 +227,7 @@ export function __setTableDealSeedOverride(seed: Uint8Array | null): void {
 /** The bytes a lobby edit that may deal hands the kernel. */
 export function drawDealSeed(): Uint8Array {
     if (dealSeedOverride) return dealSeedOverride.slice();
-    const seed = new Uint8Array(TABLE_DEAL_SEED_BYTES);
+    const seed = new Uint8Array(L.FOOLISH_SEED_LEN);
     crypto.getRandomValues(seed);
     return seed;
 }

@@ -42,9 +42,6 @@ export interface TableDrive {
     seats: number[];
 }
 
-/** A deal seed: the bytes the host draws from crypto for a lobby edit that may deal. */
-export const TABLE_DEAL_SEED_BYTES = 32;
-
 /** A decoded action request: the game id, the action wire, and the intent version when the request carried one. */
 export interface TableActionRequest {
     gameId: string;
@@ -177,16 +174,16 @@ export class ServerTable {
         return this.ex.wasm_table_leave(...this.put(actorId, targetId));
     }
 
-    /** `dealSeed`: TABLE_DEAL_SEED_BYTES from crypto, used if the bot makes every seat ready. */
+    /** `dealSeed`: FOOLISH_SEED_LEN bytes from crypto, used if the bot makes every seat ready. */
     addBot(actorId: string, botId: string, nickname: string, brain: string, dealSeed: Uint8Array): number {
-        if (dealSeed.length !== TABLE_DEAL_SEED_BYTES) throw new RangeError('table: a deal seed is 32 bytes');
+        if (dealSeed.length !== L.FOOLISH_SEED_LEN) throw new RangeError('table: a deal seed is 32 bytes');
         const [a, b, n, k] = this.put(actorId, botId, nickname, brain, dealSeed);
         return this.ex.wasm_table_add_bot(a, b, n, k);
     }
 
-    /** `dealSeed`: TABLE_DEAL_SEED_BYTES from crypto, used if every seat is now ready. */
+    /** `dealSeed`: FOOLISH_SEED_LEN bytes from crypto, used if every seat is now ready. */
     ready(actorId: string, dealSeed: Uint8Array): number {
-        if (dealSeed.length !== TABLE_DEAL_SEED_BYTES) throw new RangeError('table: a deal seed is 32 bytes');
+        if (dealSeed.length !== L.FOOLISH_SEED_LEN) throw new RangeError('table: a deal seed is 32 bytes');
         return this.ex.wasm_table_ready(this.put(actorId, dealSeed)[0]);
     }
 
@@ -378,7 +375,7 @@ export class ServerTable {
      * display name is `name`. `bot`: the row an add-bot seats. The edit's own result.
      */
     ask(body: Uint8Array, actorId: string, name: string, dealSeed: Uint8Array, bot: TableAskBot | null = null): number {
-        if (dealSeed.length !== TABLE_DEAL_SEED_BYTES) throw new RangeError('table: a deal seed is 32 bytes');
+        if (dealSeed.length !== L.FOOLISH_SEED_LEN) throw new RangeError('table: a deal seed is 32 bytes');
         const [b, a, n, , i, k, r] = this.put(body, actorId, name, dealSeed, bot?.id ?? '', bot?.nickname ?? '', bot?.brain ?? '');
         return this.ex.wasm_table_ask(b, a, n, i, k, r);
     }
