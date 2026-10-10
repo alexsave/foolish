@@ -206,6 +206,7 @@ jobs:
         run: |
           bash ../shared/tools/structgen/test/cli.sh
           bash ../shared/tools/structgen/test/hash.sh
+          bash ../shared/tools/structgen/test/exports.sh
           bash ../shared/tools/datagen/test/cli.sh
 
       # gen.sh writes a module only when its bytes changed: the iOS build runs

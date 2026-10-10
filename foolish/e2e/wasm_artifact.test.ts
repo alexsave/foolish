@@ -36,7 +36,11 @@ import { loadWasmGz } from '../sdk/ts/wasm/wasm_asset.ts';
 function calledExports(dir: string, out = new Set<string>()): Set<string> {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
         const p = join(dir, entry.name);
-        if (entry.isDirectory()) { calledExports(p, out); continue; }
+        // Not sdk/ts/gen: the generated interfaces there (exports.<link>.ts)
+        // declare what EVERY link exports - the test build's doors, the Oracle's -
+        // which is a statement about those modules and not something a wrapper
+        // calls on this one. e2e/wasm_exports.test.ts holds each to its module.
+        if (entry.isDirectory()) { if (entry.name !== 'gen') calledExports(p, out); continue; }
         if (!entry.name.endsWith('.ts') || entry.name.endsWith('.d.ts')) continue;
         // Comments name kernel FILES (wasm_api.c) and retired entries, so they
         // are stripped before the scan: what counts is a call or a declaration.
