@@ -1,6 +1,6 @@
 /* =============================================================================
  * Infinite Oracle - the hard-coded "why" proof generator (no AI calls)
- * Turns a candidate's merged MC path statistics (pathsBlob sidecar) into a
+ * Turns a candidate's merged MC path statistics (the answer's why table) into a
  * chess.com-style template explanation: the most likely concrete reply, the
  * dominant storylines as a probability tree, and a prose proof of why the
  * expected finish is what it is - including the counterfactual against the

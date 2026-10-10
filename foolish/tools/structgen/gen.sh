@@ -194,6 +194,14 @@ ORACLE=(--cwd "$root/c" $(spec oracle_layout))
 set +f
 "$SG" "${ORACLE[@]}" --build "oracle_mt=$(flags WASM_ORACLE_MT_CFLAGS)" --ts "$prod/oracle_layout.oracle_mt.ts"
 
+# The Oracle's Mode A answer and knobs (c/src/oracle_answer.h), read back from
+# and written into oracle.wasm (specs/oracle_answer.args).
+set -f
+# shellcheck disable=SC2207
+ANSWER=(--cwd "$root/c" $(spec oracle_answer))
+set +f
+"$SG" "${ANSWER[@]}" --build "oracle=$(flags WASM_ORACLE_CFLAGS)" --ts "$prod/oracle_answer.oracle.ts"
+
 # The structs iOS reads out of the kernel it LINKS (specs/ios_layout.args), as
 # Swift value snapshots. Its own caps and its own triple: neither is the wasm
 # build's, and the layouts really do differ - a pointer alone is 4 bytes there

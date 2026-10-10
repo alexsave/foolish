@@ -17,7 +17,7 @@ Mode B is selected at runtime, per visitor, and only where the page is cross-ori
 | Score merge | TS sums batch records | C: `__atomic_fetch_add` into a shared per-candidate table |
 | UI feed | one `postMessage` per batch | the main thread polls the C accumulator each frame |
 | Worker code | bridge + batch loop | a trampoline: set stack, init TLS, enter the C loop, never return |
-| Explain dump | JSONL per batch, parsed in JS | not built - the C accumulator replaces it |
+| Per-batch answer | one `OgAnswer` struct per batch (`c/src/oracle_answer.h`), read through its generated reader | not built - the C accumulator replaces it |
 
 The overlay, `replayOracleInput`, `logsWire` and the candidate rows are shared verbatim.
 `src/oracle/oracleControllerFactory.ts` picks the engine; nothing above it knows which one is running.
@@ -67,7 +67,7 @@ Call it **1.1x to 1.2x**, and treat any single run as noise.
 Absolute rates move with the machine and with which decision the fixture lands on, so only the ratio is worth carrying between kernels.
 
 Both modes scale with thread count the same way, because Mode A's fleet is already N OS threads.
-What Mode B removes is the **per-batch** overhead - the marshal, the strategy-key write, the log import, the JSON dump and its parse - and at a ~40 ms batch that is worth about a sixth of the time.
+What Mode B removes is the **per-batch** overhead - the marshal, the strategy-key write, the log import, the per-batch answer and its read (a JSON line and its parse when this was measured; a struct since) - and at a ~40 ms batch that is worth about a sixth of the time.
 §8b.8 predicted exactly this ("unlikely at ~25 Hz total").
 The number is the number: Mode B is a real but modest throughput win, not a step change.
 
@@ -169,10 +169,11 @@ To turn it off: unset it and redeploy.
 3. **`engine_last_reject`** - rewritten at the top of every `handle_*`, read only by `wasm_reject_reason`. A benign diagnostic race; classified and left.
 4. **`log_alloc`'s static drop-sink scratch** - `solve_clone_prefix` routes solver-child log appends into it and nothing ever reads them. A formal data race with no observable effect; classified and left.
 
-Items 3 and 4 are only reachable through the STRUCT solver / rollout paths, which the default fast bitboard path never enters. The env knobs that would route a thread there (`OG_NO_BBSOLVE`, `OG_NO_FASTROLL`, `OG_LEAF`, `OG_DIFFTEST`, `OG_NO_WORLDSIM`) are therefore forbidden in Mode B env sets; `ORACLE_MT_ENV` in `oracleMtSession.ts` sets none of them.
+Items 3 and 4 are only reachable through the STRUCT solver / rollout paths, which the default fast bitboard path never enters. The env knobs that would route a thread there (`OG_NO_BBSOLVE`, `OG_NO_FASTROLL`, `OG_LEAF`, `OG_DIFFTEST`, `OG_NO_WORLDSIM`) are therefore forbidden in Mode B.
+They cannot be set at all now: both modes set their knobs through `OgKnobs` (`c/src/oracle_answer.h`), which has six fields and none of these.
 
 ## What is deliberately not built
 
-- **No `OG_EXPLAIN` dump in Mode B.** Its wasm sink is `#ifdef CD_WASM_OVERLAY`, and the overlay aliases fixed static addresses into `solve_ws`, which is only legal when TLS is stripped. With real TLS it would be the native data race, so both defines are dropped from the Mode B target and the C accumulator replaces the dump.
+- **No per-batch answer in Mode B.** Mode A's `OgAnswer` is one static struct per instance, right only because Mode A strips TLS, and `CD_WASM_OVERLAY` aliases fixed static addresses into `solve_ws`, which is likewise only legal when TLS is stripped. With real TLS both would be the native data race, so `OG_EXPLAIN_BUILD` and `CD_WASM_OVERLAY` are dropped from the Mode B target and the C accumulator replaces the answer.
 - **No shared transposition table** (see above).
 - **No per-batch standard error.** Mode B has no per-batch stream by design, so the `+-` text uses an n-based proxy at the finish-position spread Mode A measures rather than a running Welford estimate.

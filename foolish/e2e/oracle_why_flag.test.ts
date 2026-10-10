@@ -39,7 +39,7 @@ const saved = process.env[FLAG];
 before(() => { delete process.env[FLAG]; });
 after(() => { if (saved === undefined) delete process.env[FLAG]; else process.env[FLAG] = saved; });
 
-/** One candidate's merged path data, shaped exactly as the sidecar decodes it. */
+/** One candidate's merged path data, shaped exactly as the bridge reads it. */
 const why = (mepk: number, fin: number) => ({
     agg: { n: 400, mepk, oppk: 0.8, metr: 0.5, opptr: 0.4, rnds: 3.2 },
     replies: [{ type: 1, card: 22, n: 180 }],
@@ -152,7 +152,7 @@ test('flag on: clicking a candidate opens its measured proof', async () => {
     assert.ok(text.includes('1.30'), `the measured pickup rate: ${text.slice(0, 160)}`);
     // The counterfactual names the measured driver of the gap, not just the gap.
     assert.ok(text.includes('biggest measured driver'), `the counterfactual: ${text}`);
-    // The most likely reply is a concrete card, decoded from the sidecar's id.
+    // The most likely reply is a concrete card, decoded from the reply's card id.
     assert.ok(/covers with J\u2665/.test(text), `the likely reply: ${text}`);
     // The storyline tree is drawn, with its own share percentages.
     assert.ok(panel!.textContent!.includes('FUTURES') || text.includes('%'), 'the tree renders');

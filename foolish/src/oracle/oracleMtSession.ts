@@ -13,9 +13,9 @@
  * hand-copied bootstrap sequences and they had already drifted apart).
  * ========================================================================== */
 
-import { memOf, readOgMtCandidates } from '@sdk/ts/gen/oracle_layout.oracle_mt.ts';
+import { memOf, readOgMtCandidates, writeOgKnobs } from '@sdk/ts/gen/oracle_layout.oracle_mt.ts';
 import {
-    OracleJob, OracleCandidate, OracleVerdict,
+    OracleJob, OracleCandidate, OracleVerdict, OracleKnobs, ORACLE_KNOBS,
     oracleCardToken, canonicalMoveKey, ORACLE_TRUMP_KEEP,
 } from './types';
 
@@ -38,21 +38,20 @@ export function decodeVerdict(val: number): { verdict: OracleVerdict; verdictVal
     return { verdict: 'draw' };
 }
 
-/** Mode B's env set. The struct-path knobs (OG_NO_BBSOLVE, OG_NO_FASTROLL,
- *  OG_LEAF, OG_DIFFTEST, OG_NO_WORLDSIM) are FORBIDDEN here (§8b.5 MT3): they
- *  route threads into game.c's handle_* where the benign-but-real statics
- *  (engine_last_reject, log_alloc's drop sink) live. The default fast bitboard
- *  path never enters them.
+/** Mode B's knobs: the Oracle's starting set, never moved. The struct-path
+ *  knobs (OG_NO_BBSOLVE, OG_NO_FASTROLL, OG_LEAF, OG_DIFFTEST, OG_NO_WORLDSIM)
+ *  are FORBIDDEN here (§8b.5 MT3): they route threads into game.c's handle_*
+ *  where the benign-but-real statics (engine_last_reject, log_alloc's drop
+ *  sink) live. The default fast bitboard path never enters them - and OgKnobs
+ *  (c/src/oracle_answer.h) has no field for any of them, so a host cannot set
+ *  one by accident.
  *
- *  OG_W1 is FIXED here, where Mode A retunes it per batch (oracleWorker.ts). Mode
+ *  w1 is FIXED here, where Mode A retunes it per batch (oracleWorker.ts). Mode
  *  A has to: its batch size sets how often a worker posts, and so how often React
  *  re-renders. In Mode B nothing crosses the boundary per batch - the main thread
  *  polls a C counter on its own frame budget - so the batch size is only an inner
  *  loop and there is nothing to adapt it to. */
-export const ORACLE_MT_ENV: Readonly<Record<string, string>> = {
-    OG_KEEP1: '26', OG_KEEP2: '26', OG_W1: '24', OG_W2: '1', OG_W3: '0',
-    OG_EXPLAIN_SOLVE_BUDGET: '2000000',
-};
+export const ORACLE_MT_KNOBS: Readonly<OracleKnobs> = ORACLE_KNOBS;
 
 export interface MtExports {
     memory: WebAssembly.Memory;
@@ -61,9 +60,9 @@ export interface MtExports {
     wasm_import_state(len: number, masked: number): number;
     wasm_import_strategy_keys(): void;
     wasm_import_logs(): void;
-    wasm_clearenv(): void;
-    wasm_setenv_from_io(): void;
-    wasm_og_reload_flags(): void;
+    /** Where the knobs are written (OgKnobs), and the call that applies them. */
+    wasm_og_knobs_ptr(): number;
+    wasm_og_knobs_apply(): void;
     __tls_size: WebAssembly.Global;
     wasm_mt_reserve(n: number, stack: number, tls: number): number;
     wasm_mt_warmup(seat: number): void;
@@ -156,7 +155,7 @@ export class OracleMtSession {
     /** §8.5 steps 1-4 against the SHARED resident game, then §8b.5 MT3's warmup
      *  (force the lazily-first-touch bitboard masks, detach the snapshot hook)
      *  and the stack/TLS reservation. Control instance only, main thread only. */
-    prepare(job: OracleJob, env: Readonly<Record<string, string>> = ORACLE_MT_ENV): MtThreadArgs[] {
+    prepare(job: OracleJob, knobs: Readonly<OracleKnobs> = ORACLE_MT_KNOBS): MtThreadArgs[] {
         const ex = this.ex;
         if (!ex) throw new Error('oracle-mt session not loaded');
 
@@ -174,14 +173,8 @@ export class OracleMtSession {
             bytes().set(job.logsWire, ex.wasm_io_ptr());
             ex.wasm_import_logs();
         }
-        ex.wasm_clearenv();
-        for (const [k, v] of Object.entries(env)) {
-            const buf = bytes(); let q = ex.wasm_io_ptr();
-            for (let i = 0; i < k.length; i++) buf[q++] = k.charCodeAt(i) & 0xff; buf[q++] = 0;
-            for (let i = 0; i < v.length; i++) buf[q++] = v.charCodeAt(i) & 0xff; buf[q++] = 0;
-            ex.wasm_setenv_from_io();
-        }
-        ex.wasm_og_reload_flags();
+        writeOgKnobs(memOf(this.memory!.buffer), ex.wasm_og_knobs_ptr(), knobs);
+        ex.wasm_og_knobs_apply();
         ex.wasm_mt_warmup(job.seat);
 
         // Reserve AFTER the warmup so the control instance's own table is already

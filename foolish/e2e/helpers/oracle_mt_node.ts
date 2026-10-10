@@ -11,8 +11,8 @@
 import { readFileSync } from 'node:fs';
 import { Worker } from 'node:worker_threads';
 import { gunzip } from '@sdk/ts/wasm/gunzip.ts';
-import { OracleJob } from '../../src/oracle/types.ts';
-import { OracleMtSession, ORACLE_MT_ENV } from '../../src/oracle/oracleMtSession.ts';
+import { OracleJob, OracleKnobs } from '../../src/oracle/types.ts';
+import { OracleMtSession, ORACLE_MT_KNOBS } from '../../src/oracle/oracleMtSession.ts';
 
 export const ORACLE_MT_BYTES = (): Uint8Array =>
     gunzip(new Uint8Array(readFileSync('public/oracle-mt.wasm.gz')));
@@ -30,11 +30,11 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export async function openMtRig(
     job: OracleJob,
     nThreads: number,
-    env: Readonly<Record<string, string>> = ORACLE_MT_ENV,
+    knobs: Readonly<OracleKnobs> = ORACLE_MT_KNOBS,
 ): Promise<MtRig> {
     const session = new OracleMtSession();
     await session.load(ORACLE_MT_BYTES(), nThreads);
-    const args = session.prepare(job, env);
+    const args = session.prepare(job, knobs);
     const bytes = session.moduleBytes!;
     const memory = session.memory!;
 

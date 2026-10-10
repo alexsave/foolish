@@ -1,7 +1,7 @@
 /* =============================================================================
  * Infinite Oracle — Worker entry: protocol + batch loop (§8.5, §8.6)
  * One oracle.wasm instance per worker (Mode A: instance fleet). Loops
- * import -> seed -> choose -> read dump, posts each batch to the controller,
+ * import -> seed -> choose -> read the answer, posts each batch to the controller,
  * adapts OG_W1 to device speed, and honours the exact/forced/defuse stop rules.
  * Cancellation-safe: a new 'analyze' (or 'stop') bumps the generation and the
  * running loop exits at its next checkpoint.
@@ -9,13 +9,13 @@
 
 import { OracleInstance } from './oracleBridge';
 import {
-    MainToWorker, WorkerToMain, OracleJob,
-    ORACLE_W1_START, ORACLE_W1_MIN, ORACLE_W1_MAX,
-    ORACLE_BATCH_FAST_MS, ORACLE_BATCH_SLOW_MS, ORACLE_SOLVE_BUDGET,
+    MainToWorker, WorkerToMain, OracleJob, OracleKnobs, ORACLE_KNOBS,
+    ORACLE_W1_MIN, ORACLE_W1_MAX,
+    ORACLE_BATCH_FAST_MS, ORACLE_BATCH_SLOW_MS,
 } from './types';
 
 const ctx = self as unknown as {
-    postMessage(m: WorkerToMain, transfer?: Transferable[]): void;
+    postMessage(m: WorkerToMain): void;
     onmessage: ((e: MessageEvent<MainToWorker>) => void) | null;
 };
 
@@ -56,17 +56,15 @@ async function runLoop(job: OracleJob, seedSalt: number, gen: number): Promise<v
         return seedState || 1;
     };
 
-    let w1 = ORACLE_W1_START;
-    let solveBudget = ORACLE_SOLVE_BUDGET;
-    let envDirty = true;
-    const env = () => ({
-        OG_KEEP1: '26', OG_KEEP2: '26',            // racing OFF -> uniform nsim per batch
-        OG_W1: String(w1), OG_W2: '1', OG_W3: '0', // batch = W1+1 worlds per candidate
-        OG_EXPLAIN_SOLVE_BUDGET: String(solveBudget),
-    });
+    // ORACLE_KNOBS is racing OFF (uniform nsim per batch) and a batch of w1 + 1
+    // worlds per candidate; this loop only ever moves w1 and the probe budget.
+    let w1 = ORACLE_KNOBS.w1;
+    let solveBudget = ORACLE_KNOBS.solveBudget;
+    let knobsDirty = true;
+    const knobs = (): OracleKnobs => ({ ...ORACLE_KNOBS, w1, solveBudget });
 
     while (activeGen === gen) {
-        if (envDirty) { inst.writeEnv(env()); envDirty = false; }
+        if (knobsDirty) { inst.setKnobs(knobs()); knobsDirty = false; }
 
         const seed = nextSeed();
         const t0 = performance.now();
@@ -80,14 +78,7 @@ async function runLoop(job: OracleJob, seedSalt: number, gen: number): Promise<v
         }
 
         const rec = res.record;
-        if (res.paths) {
-            ctx.postMessage(
-                { t: 'batch', decisionId: job.decisionId, record: rec, batchMs, gen, paths: res.paths },
-                [res.paths],   // transfer, don't copy - binary stays zero-cost
-            );
-        } else {
-            post({ t: 'batch', decisionId: job.decisionId, record: rec, batchMs, gen });
-        }
+        post({ t: 'batch', decisionId: job.decisionId, record: rec, batchMs, gen });
 
         const solverApplied = !!(rec.solver && rec.solver.applied);
         const cands = rec.candidates || [];
@@ -99,15 +90,15 @@ async function runLoop(job: OracleJob, seedSalt: number, gen: number): Promise<v
         const allZero = cands.length > 0 && cands.every((c) => (c.nsim || 0) === 0);
         if (allZero && !hasWinLoss) { post({ t: 'forced', decisionId: job.decisionId, gen }); return; }
         // 11c UNPROVEN-SOLVER DEFUSE — solver gate passes but proves nothing;
-        // rewrite the probe budget to 0 (per-call getenv) so later batches are
-        // pure-MC-priced, and keep batching.
-        if (solverApplied && !hasWinLoss && solveBudget !== 0) { solveBudget = 0; envDirty = true; }
+        // set the probe budget to 0 (the kernel asks for it per probe) so later
+        // batches are pure-MC-priced, and keep batching.
+        if (solverApplied && !hasWinLoss && solveBudget !== 0) { solveBudget = 0; knobsDirty = true; }
 
         // Adaptive batch sizing (§8.6): aim ~40 ms/batch.
         if (batchMs < ORACLE_BATCH_FAST_MS && w1 < ORACLE_W1_MAX) {
-            w1 = Math.min(ORACLE_W1_MAX, w1 * 2); envDirty = true;
+            w1 = Math.min(ORACLE_W1_MAX, w1 * 2); knobsDirty = true;
         } else if (batchMs > ORACLE_BATCH_SLOW_MS && w1 > ORACLE_W1_MIN) {
-            w1 = Math.max(ORACLE_W1_MIN, Math.floor(w1 / 2)); envDirty = true;
+            w1 = Math.max(ORACLE_W1_MIN, Math.floor(w1 / 2)); knobsDirty = true;
         }
 
         // Yield so incoming stop/analyze messages are processed.

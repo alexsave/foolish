@@ -7,3 +7,7 @@
 --header oracle_mt.h --root OgMtCandidates
 --snapshot OgMtCandidates --snapshot-only
 --count OgMtCandidates.cand=n --count OgMtCand.cards=n_cards --count OgMtCand.targets=n_targets
+# And the knobs the Oracle sets before a job (c/src/oracle_answer.h OgKnobs),
+# which go in through their writer in both oracle modules: Mode A's is in
+# specs/oracle_answer.args.
+--header oracle_answer.h --root OgKnobs --snapshot OgKnobs --writer OgKnobs
