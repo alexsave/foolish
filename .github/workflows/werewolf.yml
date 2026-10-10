@@ -26,15 +26,18 @@ on:
     branches: [main]
     paths:
       - 'werewolf/**'
-      # The two primitives werewolf compiles out of shared/, and the .github
-      # entry so a change to this gate runs this gate.
+      # The two primitives werewolf compiles out of shared/, the compile rules
+      # its Makefile includes, and the .github entry so a change to this gate
+      # runs this gate.
       - 'shared/c/**'
+      - 'shared/tools/*.mk'
       - '.github/workflows/werewolf.yml'
   pull_request:
     branches: [main]
     paths:
       - 'werewolf/**'
       - 'shared/c/**'
+      - 'shared/tools/*.mk'
       - '.github/workflows/werewolf.yml'
   workflow_dispatch: {}
 
