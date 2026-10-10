@@ -17,6 +17,7 @@ import { memOf as msgMemOf, readMsgHeader, writeMsgHeader, readReplayExtras, wri
          type MsgHeader_Snap, type ReplayExtras_Snap } from '../gen/msg_layout.bots.ts';
 import * as A from '../gen/anim.bots.ts';
 import { memOf as animMemOf } from '../gen/anim.bots.ts';
+import { writeAnimPlanAsk, CARD_NONE_SUIT, CARD_NONE_VALUE, MAX_PLAYERS } from '../gen/view_layout.bots.ts';
 
 /** A card as the kernel's doors here read and write it (suit 0..3, value 1..13; -1/-1 is a hidden card). */
 export interface Card { readonly suit: number; readonly value: number }
@@ -176,8 +177,8 @@ interface BotsExports extends EngineExports {
     // The plan, the frame and the beats: the structs are read where they lie.
     wasm_anim_plan_ptr(): number;
     wasm_anim_frame_ptr(): number;
-    wasm_anim_build_plan(nEvents: number, nPlayers: number, finalDeck: number,
-                         finalDiscard: number, finalFlipped: number): number;
+    wasm_anim_plan_ask_ptr(): number;
+    wasm_anim_build_plan(): number;
     wasm_anim_plan_at(nowMs: number): number;
     wasm_anim_reversal_order(): number;
     wasm_anim_roles_goods_opening(d: number, fa: number, gm: number, firstGoodMask: number): number;
@@ -1227,6 +1228,10 @@ export interface AnimFrameSnap {
     trumpFlight: Card | null;
 }
 
+/** "No card" as the kernel holds it (card.h CARD_NONE): a board whose flipped
+ *  trump has been dealt out. */
+const NO_CARD: Card = { suit: CARD_NONE_SUIT, value: CARD_NONE_VALUE };
+
 /** THE TIMED PLAN for a decoded viewer sequence (anim_plan.h anim_build_plan).
  *  `final` is the board the host already holds; the plan freezes the DISPLAY
  *  back to the pre-sequence values and reveals forward one step at a time. */
@@ -1235,31 +1240,27 @@ export function animBuildPlan(
     final: { deck: number; discard: number; flipped: Card | null; hand: readonly number[] },
 ): AnimPlanSnap {
     const ex = bots();
-    const buf = mem(ex);
-    let p = ex.wasm_io_ptr();
-    for (const e of events) {
-        buf[p++] = e.type & 0xff;
-        buf[p++] = e.seat === undefined || e.seat < 0 ? ANIM_W_NONE : e.seat & 0xff;
-        buf[p++] = e.from === undefined ? ANIM_LOC_NONE : e.from & 0xff;
-        buf[p++] = e.to === undefined ? ANIM_LOC_NONE : e.to & 0xff;
-        buf[p++] = e.maskCards ? 1 : 0;
-        const cards = e.cards ?? [];
-        buf[p++] = cards.length & 0xff;
-        for (const c of cards) buf[p++] = wireStateCard(c);
-        buf[p++] = e.counts ? 1 : 0;
-        if (e.counts) {
-            buf[p++] = e.counts.deck & 0xff;
-            buf[p++] = e.counts.discard & 0xff;
-            buf[p++] = wireLogCard(e.counts.flipped);
-            for (let s = 0; s < nPlayers; s++) buf[p++] = (e.counts.hand[s] ?? 0) & 0xff;
-        }
-        if (e.battles === undefined) { buf[p++] = ANIM_W_NONE; continue; }
-        buf[p++] = (e.battles.length >> 1) & 0xff;
-        for (const b of e.battles) buf[p++] = b & 0xff;
-    }
-    for (let s = 0; s < nPlayers; s++) buf[p++] = (final.hand[s] ?? 0) & 0xff;
-    const rc = ex.wasm_anim_build_plan(events.length, nPlayers, final.deck, final.discard,
-                                       wireLogCard(final.flipped));
+    // A hand as the ask holds one: a count for every seat a table can have,
+    // of which the kernel reads this table's own.
+    const seats = (hand: readonly number[]): number[] =>
+        Array.from({ length: MAX_PLAYERS }, (_, s) => hand[s] ?? 0);
+    writeAnimPlanAsk(viewMemOf(ex.memory.buffer), ex.wasm_anim_plan_ask_ptr(), {
+        nPlayers,
+        finalDeck: final.deck, finalDiscard: final.discard,
+        finalFlipped: final.flipped ?? NO_CARD, finalHand: seats(final.hand),
+        events: events.map((e) => ({
+            type: e.type,
+            seat: e.seat === undefined || e.seat < 0 ? A.ANIM_SEAT_NONE : e.seat,
+            from: e.from ?? A.ANIM_LOC_NONE, to: e.to ?? A.ANIM_LOC_NONE,
+            maskCards: !!e.maskCards,
+            cards: e.cards ?? [],
+            hasCounts: !!e.counts,
+            deck: e.counts?.deck ?? 0, discard: e.counts?.discard ?? 0,
+            flipped: e.counts?.flipped ?? NO_CARD, hand: seats(e.counts?.hand ?? []),
+            row: e.battles ?? [],
+        })),
+    });
+    const rc = ex.wasm_anim_build_plan();
     if (rc < 0) throw new Error(`anim_build_plan error ${rc}`);
     return readPlan(ex);
 }
@@ -1290,10 +1291,6 @@ export function animPlanAt(nowMs: number): AnimFrameSnap {
         trumpFlight: readAnimCard(m, A.AnimFrame_trump_flight_at(at)),
     };
 }
-
-// "no seat" on the wire in, mirroring wasm_api.c's ANIM_W_NONE.
-const ANIM_W_NONE = 0xff;
-const ANIM_LOC_NONE = A.ANIM_LOC_NONE;
 
 // A Card inside a kernel struct is a packed byte, not the wire's dense id.
 // CARD_NONE is what the kernel writes for "no flipped trump left".

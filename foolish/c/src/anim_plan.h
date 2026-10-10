@@ -492,6 +492,66 @@ int anim_build_plan(const AnimPlanEvent *events, int n_events, int n_players,
                     int final_deck, int final_discard, Card final_flipped,
                     const int *final_hand, AnimPlan *out);
 
+// ---- the plan, asked as one struct ------------------------------------------
+// THE SAME QUESTION AS anim_build_plan, IN THE SHAPE A HOST CAN FILL. An
+// AnimPlanEvent borrows its cards, its hand and its row through pointers, which
+// a caller on the far side of a bridge cannot hold: the wasm entry used to take
+// the stream as a byte format of its own instead, written by hand in
+// TypeScript, parsed by hand in the shim and described only by a comment there.
+// These two structs are that format as a layout structgen can read, so the host
+// fills them through a generated writer and no line of it knows an offset.
+//
+// One event owns its storage. `cards` are Cards as they lie everywhere else
+// ({-1,-1} a masked back, CARD_NONE no card), `row` is the one table layout (2
+// bytes per battle, `n_row` its BYTE count) and `hand` is plain ints because
+// that is what AnimPlanEvent.hand points at, so the kernel reads all three
+// where the host put them and copies none of them.
+//
+// SIZED BY THE DECK, NOT BY THE WORST A WIRE COULD NAME. One event moves at most
+// every card there is, and the widest row is that deck laid out with nothing
+// covered. The build's own caps are wider (ANIM_MAX_CARDS is 128 cards an
+// event; MAX_HAND_SIZE and MAX_BATTLES are 64 on wasm), and at 128 events the
+// difference is real: sized by those the ask is 30,248 B, which is what took
+// web.wasm from 26 pages of linear memory to 27 (e2e/mem/wasm_memory.test.ts).
+// Sized by the deck it is 25,640 B, under the 28,672 B of pools the hand
+// parser it replaced kept, for a stream no deal can produce being refused.
+#define ANIM_ASK_MAX_CARDS (NUM_SUITS * ACE_VALUE)
+#define ANIM_ASK_MAX_ROW   (2 * ANIM_ASK_MAX_CARDS)
+typedef struct {
+    int8_t  type;        // ANIM_EVT_*
+    int8_t  seat;        // acting seat, or ANIM_SEAT_NONE
+    uint8_t from, to;    // ANIM_LOC_*
+    bool    mask_cards;  // AnimPlanEvent.mask_cards
+    bool    has_counts;  // deck/discard/flipped/hand are THIS step's own board
+    uint8_t n_cards;
+    uint8_t n_row;       // BYTES of `row`, so twice the battles it holds. 0 is
+                         // a step that carries no row, and needs no flag of
+                         // its own: an empty table and ANIM_NO_BOARD are one
+                         // case to every rule that reads a row.
+    uint8_t deck, discard;
+    Card    flipped;     // CARD_NONE once it has been dealt out
+    int     hand[MAX_PLAYERS];
+    Card    cards[ANIM_ASK_MAX_CARDS];
+    uint8_t row[ANIM_ASK_MAX_ROW];
+} AnimPlanAskEvent;
+
+typedef struct {
+    uint8_t n_events, n_players;
+    // The FINAL committed board, as anim_build_plan takes it.
+    uint8_t final_deck, final_discard;
+    Card    final_flipped;
+    int     final_hand[MAX_PLAYERS];
+    AnimPlanAskEvent events[ANIM_MAX_STEPS];
+} AnimPlanAsk;
+
+// Build the plan `ask` describes: anim_build_plan over the ask's own arrays,
+// with nothing decided here that it does not decide. Returns what it returns,
+// or before it is ever called ANIM_ECAP (more events than ANIM_MAX_STEPS, an
+// event with more cards than ANIM_ASK_MAX_CARDS or a row longer than
+// ANIM_ASK_MAX_ROW) / ANIM_EBADARG (NULL ask, or a row of an odd number of
+// bytes, which is half a battle).
+int anim_plan_ask(const AnimPlanAsk *ask, AnimPlan *out);
+
 // ---- how long a stream plays ----------------------------------------------
 // The wall time anim_build_plan would give a stream of these event types and
 // acting seats (AnimPlan.total_ms), from the same beat layout: the timing needs

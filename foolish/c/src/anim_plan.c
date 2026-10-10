@@ -475,6 +475,49 @@ int anim_build_plan(const AnimPlanEvent *events, int n_events, int n_players,
     return ANIM_EOK;
 }
 
+// The plan asked as one struct (anim_plan.h AnimPlanAsk). Every borrow points
+// INTO the ask - its cards, its hand, its row - so the only thing built here is
+// the array of events that carry those pointers.
+//
+// THAT ARRAY IS ON THE STACK, 7,168 B on wasm32, and not static scratch. With
+// anim_build_plan's own frames under it a full 128-event stream peaks at
+// 11,056 B of shadow stack (measured by canary on bots.wasm and web.wasm),
+// below the 14.3 KiB the cover enumeration already costs their 22 KiB stack
+// (c/Makefile WASM_BOT_LDFLAGS), and a static would be the same bytes held for
+// the life of every module instead of for one call.
+int anim_plan_ask(const AnimPlanAsk *ask, AnimPlan *out) {
+    if (!ask) return ANIM_EBADARG;
+    if (ask->n_events > ANIM_MAX_STEPS) return ANIM_ECAP;
+    AnimPlanEvent events[ANIM_MAX_STEPS];
+    for (int i = 0; i < ask->n_events; i++) {
+        const AnimPlanAskEvent *a = &ask->events[i];
+        AnimPlanEvent *ev = &events[i];
+        if (a->n_cards > ANIM_ASK_MAX_CARDS || a->n_row > ANIM_ASK_MAX_ROW) return ANIM_ECAP;
+        ev->type = a->type;
+        ev->seat = a->seat;
+        ev->from = a->from;
+        ev->to = a->to;
+        ev->cards = a->n_cards ? a->cards : 0;
+        ev->n_cards = a->n_cards;
+        ev->mask_cards = a->mask_cards ? 1 : 0;
+        // `has_counts` is the whole gate, here as in anim_build_plan: a step
+        // without it has counts in its struct all the same - whatever the last
+        // stream left there - and nothing reads them. The hand is NULL for such
+        // a step because that is what AnimPlanEvent says it is.
+        ev->has_counts = a->has_counts ? 1 : 0;
+        ev->deck = a->deck;
+        ev->discard = a->discard;
+        ev->flipped = a->flipped;
+        ev->hand = a->has_counts ? a->hand : 0;
+        if (a->n_row % 2) return ANIM_EBADARG;
+        ev->n_battles = a->n_row ? a->n_row / 2 : ANIM_NO_BOARD;
+        ev->battles = a->n_row ? a->row : 0;
+    }
+    return anim_build_plan(events, ask->n_events, ask->n_players,
+                           ask->final_deck, ask->final_discard, ask->final_flipped,
+                           ask->final_hand, out);
+}
+
 // ---- the plan, re-asked ---------------------------------------------------
 //
 // ONE PASS OVER THE STEPS, and no state kept between calls. A frame is a pure
