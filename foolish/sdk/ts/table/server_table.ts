@@ -112,25 +112,32 @@ export class ServerTable {
 
     private io(): number { return this.ex.wasm_io_ptr(); }
 
-    /** Writes byte strings back to back at the IO buffer; returns their lengths. */
-    private put(...parts: Uint8Array[]): number[] {
+    /** Writes byte strings (a string as its UTF-8) back to back at the IO buffer; returns their lengths. */
+    private put<P extends (Uint8Array | string)[]>(...parts: P): { [K in keyof P]: number } {
+        const bytes = parts.map((p) => (typeof p === 'string' ? enc.encode(p) : p));
+        const cap = this.ex.wasm_io_cap();
+        const total = bytes.reduce((n, p) => n + p.length, 0);
+        if (total > cap) throw new RangeError(`table: ${total} input bytes exceed the IO buffer (${cap})`);
         const u8 = this.m().u8;
         let at = this.io();
-        const cap = this.ex.wasm_io_cap();
-        const total = parts.reduce((n, p) => n + p.length, 0);
-        if (total > cap) throw new RangeError(`table: ${total} input bytes exceed the IO buffer (${cap})`);
-        return parts.map((p) => { u8.set(p, at); at += p.length; return p.length; });
+        return bytes.map((p) => { u8.set(p, at); at += p.length; return p.length; }) as { [K in keyof P]: number };
     }
 
-    private out(len: number): Uint8Array {
+    /** The `n` bytes a door left at the IO buffer, copied out; a refusal (n < 0) passes through. */
+    private out(n: number): Uint8Array | number {
         const at = this.io();
-        return this.m().u8.slice(at, at + len);
+        return n < 0 ? n : this.m().u8.slice(at, at + n);
+    }
+
+    /** out() for a door that cannot refuse what this wrapper hands it. */
+    private must(what: string, n: number): Uint8Array {
+        if (n < 0) throw new Error(`table: ${what} refused (${n})`);
+        return this.out(n) as Uint8Array;
     }
 
     /** table_request_decode: the request's parts, or a TABLE_E_* refusal. */
     requestDecode(body: Uint8Array): TableActionRequest | number {
-        const [len] = this.put(body);
-        const rc = this.ex.wasm_table_request_decode(len);
+        const rc = this.ex.wasm_table_request_decode(...this.put(body));
         if (rc < 0) return rc;
         const m = this.m();
         const q = this.ex.wasm_table_request_ptr();
@@ -145,81 +152,56 @@ export class ServerTable {
 
     /** table_load: TABLE_OK, or a GAME_INVALID_* / TABLE_E_* refusal (see detail()). */
     load(state: Uint8Array, roster: Uint8Array): number {
-        const [s, r] = this.put(state, roster);
-        return this.ex.wasm_table_load(s, r);
+        return this.ex.wasm_table_load(...this.put(state, roster));
     }
 
     /** table_act by the seat whose roster id is `actorId`. `intent` null: the request carried none. */
     act(actorId: string, wire: Uint8Array, intent: number | null, roundEpoch: number): number {
-        const [i, w] = this.put(enc.encode(actorId), wire);
-        return this.ex.wasm_table_act(i, w, intent ?? -1, roundEpoch);
+        return this.ex.wasm_table_act(...this.put(actorId, wire), intent ?? -1, roundEpoch);
     }
 
-    // ---- lobby edits (table.h): each returns TABLE_OK / TABLE_EMPTY / TABLE_MOOT, or a refusal ----
+    // ---- lobby edits (table.h): each returns TABLE_OK / TABLE_EMPTY / TABLE_MOOT, or a refusal.
+    // The server runs them through ask(); these are the doors tests and benches build a table with. ----
 
     /** table_create: a new lobby with the creator seated. */
     create(actorId: string, name: string): number {
-        return this.ex.wasm_table_create(...this.put(enc.encode(actorId), enc.encode(name)) as [number, number]);
+        return this.ex.wasm_table_create(...this.put(actorId, name));
     }
 
     join(actorId: string, name: string): number {
-        return this.ex.wasm_table_join(...this.put(enc.encode(actorId), enc.encode(name)) as [number, number]);
+        return this.ex.wasm_table_join(...this.put(actorId, name));
     }
 
     /** A human leaves, or a seated player removes another human. */
     leave(actorId: string, targetId: string): number {
-        return this.ex.wasm_table_leave(...this.put(enc.encode(actorId), enc.encode(targetId)) as [number, number]);
+        return this.ex.wasm_table_leave(...this.put(actorId, targetId));
     }
 
     /** `dealSeed`: TABLE_DEAL_SEED_BYTES from crypto, used if the bot makes every seat ready. */
     addBot(actorId: string, botId: string, nickname: string, brain: string, dealSeed: Uint8Array): number {
         if (dealSeed.length !== TABLE_DEAL_SEED_BYTES) throw new RangeError('table: a deal seed is 32 bytes');
-        const [a, b, n, k] = this.put(enc.encode(actorId), enc.encode(botId), enc.encode(nickname), enc.encode(brain), dealSeed);
+        const [a, b, n, k] = this.put(actorId, botId, nickname, brain, dealSeed);
         return this.ex.wasm_table_add_bot(a, b, n, k);
-    }
-
-    removeBot(actorId: string, botId: string): number {
-        return this.ex.wasm_table_remove_bot(...this.put(enc.encode(actorId), enc.encode(botId)) as [number, number]);
     }
 
     /** `dealSeed`: TABLE_DEAL_SEED_BYTES from crypto, used if every seat is now ready. */
     ready(actorId: string, dealSeed: Uint8Array): number {
         if (dealSeed.length !== TABLE_DEAL_SEED_BYTES) throw new RangeError('table: a deal seed is 32 bytes');
-        const [a] = this.put(enc.encode(actorId), dealSeed);
-        return this.ex.wasm_table_ready(a);
-    }
-
-    /** The new seat order, as the seated ids. */
-    reseat(actorId: string, ids: string[]): number {
-        const parts = ids.map((id) => enc.encode(id));
-        if (parts.some((p) => p.length > 255)) return L.TABLE_E_WIRE;
-        const list = new Uint8Array(parts.reduce((n, p) => n + 1 + p.length, 0));
-        let at = 0;
-        for (const p of parts) { list[at++] = p.length; list.set(p, at); at += p.length; }
-        return this.ex.wasm_table_reseat(...this.put(enc.encode(actorId), list) as [number, number]);
-    }
-
-    retitle(actorId: string, title: string): number {
-        return this.ex.wasm_table_retitle(...this.put(enc.encode(actorId), enc.encode(title)) as [number, number]);
-    }
-
-    /** The table's rules: `passing` true the classic passing game, false podkidnoy. */
-    setRules(actorId: string, passing: boolean): number {
-        return this.ex.wasm_table_set_rules(...this.put(enc.encode(actorId)) as [number], passing ? 1 : 0);
+        return this.ex.wasm_table_ready(this.put(actorId, dealSeed)[0]);
     }
 
     continueGame(actorId: string): number {
-        return this.ex.wasm_table_continue(...this.put(enc.encode(actorId)) as [number]);
+        return this.ex.wasm_table_continue(...this.put(actorId));
     }
 
     /** New card i is old card indices[i], of the actor's own hand. */
     rearrangeHand(actorId: string, indices: number[]): number {
         if (!indices.every((i) => Number.isInteger(i) && i >= 0 && i <= 255)) return L.TABLE_E_WIRE;
-        return this.ex.wasm_table_rearrange_hand(...this.put(enc.encode(actorId), Uint8Array.from(indices)) as [number, number]);
+        return this.ex.wasm_table_rearrange_hand(...this.put(actorId, Uint8Array.from(indices)));
     }
 
     redact(userId: string, name: string): number {
-        return this.ex.wasm_table_redact(...this.put(enc.encode(userId), enc.encode(name)) as [number, number]);
+        return this.ex.wasm_table_redact(...this.put(userId, name));
     }
 
     /** The ENGINE_REJECT_* behind the last TABLE_REJECTED. */
@@ -234,16 +216,14 @@ export class ServerTable {
 
     /** table_seat_of: the seat whose roster id is exactly `actorId`, or -1 (or TABLE_E_NOT_LOADED). */
     seatOf(actorId: string): number {
-        const [i] = this.put(enc.encode(actorId));
-        return this.ex.wasm_table_seat_of(i);
+        return this.ex.wasm_table_seat_of(...this.put(actorId));
     }
 
     // ---- the bot cycle (table.h): after load, in one kernel section ----
 
     /** table_set_deal_seed: the loaded game's deal seed as its stored hex text (null: none). */
     setDealSeed(seedHex: string | null): number {
-        const [n] = this.put(enc.encode(seedHex ?? ''));
-        return this.ex.wasm_table_set_deal_seed(n);
+        return this.ex.wasm_table_set_deal_seed(...this.put(seedHex ?? ''));
     }
 
     /**
@@ -253,14 +233,12 @@ export class ServerTable {
      * that consults them. Records the log holds, or a refusal.
      */
     setSessionLog(log: Uint8Array): number {
-        const [n] = this.put(log);
-        return this.ex.wasm_table_set_session_log(n);
+        return this.ex.wasm_table_set_session_log(...this.put(log));
     }
 
     /** table_bot_drive, offered `prefs` (a drivePrefs() blob of a failed attempt, or null). A TableDrive, or a refusal. */
     botDrive(prefs: Uint8Array | null, maxActions = 0): TableDrive | number {
-        const [p] = this.put(prefs ?? new Uint8Array(0));
-        const n = this.ex.wasm_table_bot_drive(p, maxActions);
+        const n = this.ex.wasm_table_bot_drive(...this.put(prefs ?? ''), maxActions);
         if (n < 0) return n;
         const m = this.m();
         const d = this.ex.wasm_table_drive_ptr();
@@ -273,11 +251,7 @@ export class ServerTable {
     }
 
     /** table_drive_prefs: the opaque blob to offer a retry of the last cycle. */
-    drivePrefs(): Uint8Array {
-        const n = this.ex.wasm_table_drive_prefs();
-        if (n < 0) throw new Error(`table: drive prefs refused (${n})`);
-        return this.out(n);
-    }
+    drivePrefs(): Uint8Array { return this.must('drive prefs', this.ex.wasm_table_drive_prefs()); }
 
     /** table_bot_wait_ms: ms from `nowMs` to wait before driving the loaded board (0: drive now), or a refusal. */
     botWaitMs(nowMs: number): number { return this.ex.wasm_table_bot_wait_ms(nowMs); }
@@ -286,16 +260,12 @@ export class ServerTable {
 
     /** table_replay_code: the verified v6 replay code of the loaded finished game, or a refusal. */
     replayCode(seed: Uint8Array, log: Uint8Array): Uint8Array | number {
-        const [s, l] = this.put(seed, log);
-        const n = this.ex.wasm_table_replay_code(s, l);
-        return n < 0 ? n : this.out(n);
+        return this.out(this.ex.wasm_table_replay_code(...this.put(seed, log)));
     }
 
     /** table_replay_extras: the replay extras blob (names from the roster, times from the log), or a refusal. */
     replayExtras(log: Uint8Array): Uint8Array | number {
-        const [l] = this.put(log);
-        const n = this.ex.wasm_table_replay_extras(l);
-        return n < 0 ? n : this.out(n);
+        return this.out(this.ex.wasm_table_replay_extras(...this.put(log)));
     }
 
     /** The module's linear memory, for the edge memory log line. */
@@ -344,8 +314,7 @@ export class ServerTable {
 
     /** table_commit_products: every product of the loaded table and its last operation, or a refusal. */
     commit(gameId: string, nextVersion: number, nowMs: number): TableProducts | number {
-        const [g] = this.put(enc.encode(gameId));
-        const n = this.ex.wasm_table_commit_products(g, nextVersion, nowMs);
+        const n = this.ex.wasm_table_commit_products(...this.put(gameId), nextVersion, nowMs);
         if (n < 0) return n;
         const m = this.m();
         const c = this.ex.wasm_table_commit_ptr();
@@ -382,23 +351,17 @@ export class ServerTable {
 
     /** table_push: one viewer's as3 payload (seat, or -1 for the spectator channel), or a refusal. */
     push(gameId: string, viewer: number): Uint8Array | number {
-        const [g] = this.put(enc.encode(gameId));
-        const n = this.ex.wasm_table_push(g, viewer);
-        return n < 0 ? n : this.out(n);
+        return this.out(this.ex.wasm_table_push(...this.put(gameId), viewer));
     }
 
     /** table_envelope: one viewer's response envelope at `version`, or a refusal. */
     envelope(gameId: string, viewer: number, version: number): Uint8Array | number {
-        const [g] = this.put(enc.encode(gameId));
-        const n = this.ex.wasm_table_envelope(g, viewer, version);
-        return n < 0 ? n : this.out(n);
+        return this.out(this.ex.wasm_table_envelope(...this.put(gameId), viewer, version));
     }
 
     /** table_action_response: the `action` endpoint's response body for a table_act result. */
     actionResponse(result: number, reject: number, version: number): Uint8Array {
-        const n = this.ex.wasm_table_action_response(result, reject, version);
-        if (n < 0) throw new Error(`table: action response refused (${n})`);
-        return this.out(n);
+        return this.must('action response', this.ex.wasm_table_action_response(result, reject, version));
     }
 
     // ---- an ask (ask.h): every request that is not a move ----
@@ -406,8 +369,7 @@ export class ServerTable {
     /** ask_decode: what a request body asks, or TABLE_E_WIRE. A copy: it survives later kernel calls. */
     askDecode(body: Uint8Array): TableAsk | number {
         if (body.length > this.ex.wasm_io_cap()) return L.TABLE_E_WIRE;
-        const [len] = this.put(body);
-        const rc = this.ex.wasm_table_ask_decode(len);
+        const rc = this.ex.wasm_table_ask_decode(...this.put(body));
         return rc < 0 ? rc : L.readTableAsk(this.m(), this.ex.wasm_table_ask_ptr());
     }
 
@@ -417,23 +379,18 @@ export class ServerTable {
      */
     ask(body: Uint8Array, actorId: string, name: string, dealSeed: Uint8Array, bot: TableAskBot | null = null): number {
         if (dealSeed.length !== TABLE_DEAL_SEED_BYTES) throw new RangeError('table: a deal seed is 32 bytes');
-        const [b, a, n, , i, k, r] = this.put(body, enc.encode(actorId), enc.encode(name), dealSeed,
-            enc.encode(bot?.id ?? ''), enc.encode(bot?.nickname ?? ''), enc.encode(bot?.brain ?? ''));
+        const [b, a, n, , i, k, r] = this.put(body, actorId, name, dealSeed, bot?.id ?? '', bot?.nickname ?? '', bot?.brain ?? '');
         return this.ex.wasm_table_ask(b, a, n, i, k, r);
     }
 
     /** ask_refusal_encode: the body of a reply that has no answer (ASK_WHY_*, and the kernel's codes behind it). */
     refusal(why: number, code = 0, detail = 0): Uint8Array {
-        const n = this.ex.wasm_ask_refusal_encode(why, code, detail);
-        if (n < 0) throw new Error(`table: refusal refused (${n})`);
-        return this.out(n);
+        return this.must('refusal', this.ex.wasm_ask_refusal_encode(why, code, detail));
     }
 
     /** table_cast: one viewer's realtime message for the last operation, carrying `version`, or a refusal. */
     cast(gameId: string, viewer: number, version: number): Uint8Array | number {
-        const [g] = this.put(enc.encode(gameId));
-        const n = this.ex.wasm_table_cast(g, viewer, version);
-        return n < 0 ? n : this.out(n);
+        return this.out(this.ex.wasm_table_cast(...this.put(gameId), viewer, version));
     }
 
     /** table_rankings: seats, best first. */
