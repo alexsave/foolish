@@ -37,19 +37,19 @@ async function main() {
     const roster = table.seats();
     const pushes: { viewer: number; bytes: Uint8Array }[] = [];
     for (const viewer of [...roster.flatMap((s, i) => (s.brain ? [] : [i])), -1]) {
-        const push = table.push(gameId, viewer);
+        const push = table.cast(gameId, viewer, 1);
         if (typeof push === 'number') throw new Error(`push refused (${push})`);
         pushes.push({ viewer, bytes: push });
     }
 
     // Warm up (JIT, connections), not measured.
-    await broadcastPushes(gameId, 1, roster, pushes, 'warm');
+    await broadcastPushes(gameId, roster, pushes, 'warm');
     resetBroadcastLog();
 
     const samples: number[] = [];
     for (let i = 0; i < ITERS; i++) {
         const t0 = performance.now();
-        await broadcastPushes(gameId, 1, roster, pushes, `bench${i}`);
+        await broadcastPushes(gameId, roster, pushes, `bench${i}`);
         samples.push(performance.now() - t0);
     }
 

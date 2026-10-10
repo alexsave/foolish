@@ -30,6 +30,7 @@ import { __clearGameCache, getCachedRow, noteCommittedRow } from '../server/impl
 import { encodeAction, ACTION_STATUS, REJECT_STALE_ROUND } from '../sdk/ts/wire/awire.ts';
 import { readPushSequence } from './helpers/client_read.ts';
 import { base64ToBytes } from '../sdk/ts/wire/bytes.ts';
+import { castParts } from './helpers/cast.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; }
 
@@ -492,9 +493,9 @@ for (const otherWriter of [false, true]) {
             const mine = broadcastLog.slice(logStart).filter((e) => e.event === 'animation_events' && e.channel.includes(g.gameId));
             assert.equal(mine.length, 3, `${g.gameId}: one push per human and the spectator`);
             for (const e of mine) {
-                const d = readPushSequence(base64ToBytes(e.payload.b), roster);
+                const d = readPushSequence(castParts(e.payload).push, roster);
                 assert.ok(d, `${g.gameId}: its push decodes against its roster`);
-                assert.equal(e.payload.v, s.version, `${g.gameId}: the push carries its commit's version`);
+                assert.equal(castParts(e.payload).version, s.version, `${g.gameId}: the push carries its commit's version`);
                 assert.ok(d!.events.some((ev) => ev.type === kind && ev.seat === actorSeat),
                     `${g.gameId}: the push carries its own ${kind}`);
             }

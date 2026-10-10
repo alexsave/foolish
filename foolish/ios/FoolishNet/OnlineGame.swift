@@ -156,13 +156,10 @@ public final class OnlineGame: ObservableObject, GameSession {
     /// Leave the game / lobby.
     public func leave() { Task { try? await OnlineService.shared.leave(gameId: gameId, userId: userId) } }
 
-    /// Nudge the bot loop where the web does (ServerContext.tsx:633) — a JSON
-    /// `action` body, not a packed move.
+    /// Nudge the bot loop where the web does (ServerContext loadGameInternal):
+    /// an ask to `meta` (c/src/ask.h ASK_BUMP), not a move.
     public func bumpBots() {
-        guard let client = Backend.shared.client else { return }
-        struct Bump: Encodable { let game_id: String; let type = "bump" }
-        Task { _ = try? await client.functions.invoke("action",
-            options: FunctionInvokeOptions(method: .post, body: Bump(game_id: gameId))) }
+        Task { try? await OnlineService.shared.ask(.bump, gameId: gameId) }
     }
 
     /// Refetch authoritative state on foreground/reconnect (§16.D6): reset the

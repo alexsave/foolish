@@ -67,6 +67,11 @@ export interface TableExports {
     wasm_table_bot_wait_ms(nowMs: number): number;
     wasm_table_replay_code(seedLen: number, logLen: number): number;
     wasm_table_replay_extras(logLen: number): number;
+    wasm_table_ask_ptr(): number;
+    wasm_table_ask_decode(len: number): number;
+    wasm_table_ask(bodyLen: number, idLen: number, nameLen: number, botLen: number, nickLen: number, brainLen: number): number;
+    wasm_ask_refusal_encode(why: number, code: number, detail: number): number;
+    wasm_table_cast(gidLen: number, viewer: number, version: number): number;
     wasm_belief_probe_reset(): void;
     wasm_belief_probe_dump(): number;
     wasm_belief_probe_ptr(): number;
@@ -100,6 +105,12 @@ export interface TableActionRequest {
     wire: Uint8Array;
     intent: number | null;
 }
+
+/** A decoded ask (ask.h TableAsk): a request that is not a move, as the kernel read its body. */
+export type TableAsk = L.TableAsk_Snap;
+
+/** The bot row an add-bot ask seats (table.h TableAskBot). */
+export interface TableAskBot { id: string; nickname: string; brain: string }
 
 /** Every product of a commit (table.h TableCommit), copied out of the module. */
 export interface TableProducts {
@@ -442,6 +453,41 @@ export class ServerTable {
         const n = this.ex.wasm_table_action_response(result, reject, version);
         if (n < 0) throw new Error(`table: action response refused (${n})`);
         return this.out(n);
+    }
+
+    // ---- an ask (ask.h): every request that is not a move ----
+
+    /** ask_decode: what a request body asks, or TABLE_E_WIRE. A copy: it survives later kernel calls. */
+    askDecode(body: Uint8Array): TableAsk | number {
+        if (body.length > this.ex.wasm_io_cap()) return L.TABLE_E_WIRE;
+        const [len] = this.put(body);
+        const rc = this.ex.wasm_table_ask_decode(len);
+        return rc < 0 ? rc : L.readTableAsk(this.m(), this.ex.wasm_table_ask_ptr());
+    }
+
+    /**
+     * table_ask: runs the ask `body` holds on the loaded table as `actorId`, whose
+     * display name is `name`. `bot`: the row an add-bot seats. The edit's own result.
+     */
+    ask(body: Uint8Array, actorId: string, name: string, dealSeed: Uint8Array, bot: TableAskBot | null = null): number {
+        if (dealSeed.length !== TABLE_DEAL_SEED_BYTES) throw new RangeError('table: a deal seed is 32 bytes');
+        const [b, a, n, , i, k, r] = this.put(body, enc.encode(actorId), enc.encode(name), dealSeed,
+            enc.encode(bot?.id ?? ''), enc.encode(bot?.nickname ?? ''), enc.encode(bot?.brain ?? ''));
+        return this.ex.wasm_table_ask(b, a, n, i, k, r);
+    }
+
+    /** ask_refusal_encode: the body of a reply that has no answer (ASK_WHY_*, and the kernel's codes behind it). */
+    refusal(why: number, code = 0, detail = 0): Uint8Array {
+        const n = this.ex.wasm_ask_refusal_encode(why, code, detail);
+        if (n < 0) throw new Error(`table: refusal refused (${n})`);
+        return this.out(n);
+    }
+
+    /** table_cast: one viewer's realtime message for the last operation, carrying `version`, or a refusal. */
+    cast(gameId: string, viewer: number, version: number): Uint8Array | number {
+        const [g] = this.put(enc.encode(gameId));
+        const n = this.ex.wasm_table_cast(g, viewer, version);
+        return n < 0 ? n : this.out(n);
     }
 
     /** table_rankings: seats, best first. */

@@ -11,7 +11,7 @@ import './harness.ts';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, pgPool, uuid } from './harness.ts';
-import { postJson, settle, tokenFor } from './helpers/edge.ts';
+import { settle, tokenFor, postAsk, postEmpty } from './helpers/edge.ts';
 import { fixture, GAME_OVER, PLAYING, READY } from './helpers/table_fixture.ts';
 import { seedTable } from './helpers/table_db.ts';
 
@@ -22,9 +22,11 @@ const dispatched: string[] = [];
 const passThrough = globalThis.fetch;
 globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : String((input as { url?: string })?.url ?? '');
-    if (url.endsWith('/functions/v1/bot-heartbeat')) {
-        dispatched.push(JSON.parse(String(init?.body)).game_id);
-        return new Response('{}', { status: 200 });
+    // A drive names its game in the URL and carries no body (bot-heartbeat/index.ts).
+    if (url.includes('/functions/v1/bot-heartbeat?')) {
+        assert.equal(init?.body, undefined, 'a drive dispatch has no body');
+        dispatched.push(new URL(url).searchParams.get('game') ?? '');
+        return new Response(null, { status: 202 });
     }
     return passThrough(input as RequestInfo, init);
 }) as typeof fetch;
@@ -93,10 +95,10 @@ test('SCAN dispatches the stalled playing games with a bot IN, and nothing else'
         await age(id, k === 'abandoned' ? 7200 : 30);
     }
 
-    const res = await postJson('bot-heartbeat', null, {});
-    assert.equal(res.status, 200, JSON.stringify(res.json));
+    const res = await postEmpty('bot-heartbeat', null);
+    assert.equal(res.status, 204, 'a scan answers with a status and no body');
+    assert.equal(res.bytes.length, 0);
     assert.deepEqual(dispatched, [rows.botIn], 'exactly the stalled game with a bot IN');
-    assert.deepEqual(res.json, { scanned: 1, dispatched: 1 });
 });
 
 // The other way a stalled table gets its bots moving: any signed-in client's
@@ -115,7 +117,7 @@ test('a bump wakes the bot loop when a bot has work, and does nothing when none 
     const versionOf = async (g: string) => Number((await pgPool.query('SELECT version FROM games WHERE id = $1', [g])).rows[0].version);
 
     for (const g of [botTurn, humans]) {
-        const res = await postJson('action', stranger, { type: 'bump', game_id: g });
+        const res = await postAsk(stranger, { type: 'bump', game_id: g });
         assert.equal(res.status, 200, `${g}: bump answers (${JSON.stringify(res.json)})`);
     }
     await settle();

@@ -18,7 +18,7 @@ import './harness.ts';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, pgPool, uuid } from './harness.ts';
-import { postJson, settle, tokenFor } from './helpers/edge.ts';
+import { settle, tokenFor, postAsk, postEmpty } from './helpers/edge.ts';
 import { mustReadTable } from './helpers/table_play.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; }
@@ -55,28 +55,29 @@ test('after delete-account, no view or roster of the user\'s games holds their n
     const tokA = await tokenFor(A, NAME), tokB = await tokenFor(B, 'Bystander');
 
     // A lobby A made and B joined.
-    const lobbyRes = await postJson('create', tokA, {});
+    const lobbyRes = await postEmpty('create', tokA);
     assert.equal(lobbyRes.status, 200, JSON.stringify(lobbyRes.json));
     const lobby = await gameIdOf(lobbyRes.bytes);
-    assert.equal((await postJson('meta', tokB, { type: 'join', game_id: lobby })).status, 200);
+    assert.equal((await postAsk(tokB, { type: 'join', game_id: lobby })).status, 200);
     // The default title is "<creator>'s Game"; a title is the table's, not a seat's
     // name, so this test gives both tables their own (see the note at the top).
-    assert.equal((await postJson('meta', tokB, { type: 'update-name', game_id: lobby, new_name: 'Lobby table' })).status, 200);
+    assert.equal((await postAsk(tokB, { type: 'update-name', game_id: lobby, new_name: 'Lobby table' })).status, 200);
 
     // A game they dealt.
-    const dealtRes = await postJson('create', tokA, {});
+    const dealtRes = await postEmpty('create', tokA);
     const dealt = await gameIdOf(dealtRes.bytes);
-    assert.equal((await postJson('meta', tokB, { type: 'join', game_id: dealt })).status, 200);
-    assert.equal((await postJson('meta', tokB, { type: 'update-name', game_id: dealt, new_name: 'Dealt table' })).status, 200);
-    for (const tok of [tokA, tokB]) assert.equal((await postJson('meta', tok, { type: 'start', game_id: dealt })).status, 200);
+    assert.equal((await postAsk(tokB, { type: 'join', game_id: dealt })).status, 200);
+    assert.equal((await postAsk(tokB, { type: 'update-name', game_id: dealt, new_name: 'Dealt table' })).status, 200);
+    for (const tok of [tokA, tokB]) assert.equal((await postAsk(tok, { type: 'start', game_id: dealt })).status, 200);
     await settle();
     assert.equal((await mustReadTable(dealt)).statusColumn, 'playing', 'fixture: the second game dealt');
 
     const games = [lobby, dealt];
     assert.ok((await holdingName(games)).length >= 6, 'fixture: the name is in the views and rosters before deletion');
 
-    const res = await postJson('delete-account', tokA, {});
-    assert.equal(res.status, 200, JSON.stringify(res.json));
+    const res = await postEmpty('delete-account', tokA);
+    assert.equal(res.status, 204, res.reason);
+    assert.equal(res.bytes.length, 0, 'a deleted account is a status, with no body');
     await settle();
 
     assert.deepEqual(await holdingName(games), [], 'no cached view, spectator view or roster holds the name');
@@ -94,14 +95,14 @@ test('after delete-account, a table still titled "<name>\'s Game" is retitled fr
     const A = uuid(), B = uuid();
     await pgPool.query('INSERT INTO auth.users(id) VALUES ($1), ($2)', [A, B]);
     const tokA = await tokenFor(A, NAME), tokB = await tokenFor(B, 'Bystander');
-    const res = await postJson('create', tokA, {});
+    const res = await postEmpty('create', tokA);
     assert.equal(res.status, 200, JSON.stringify(res.json));
     const gameId = await gameIdOf(res.bytes);
-    assert.equal((await postJson('meta', tokB, { type: 'join', game_id: gameId })).status, 200);
+    assert.equal((await postAsk(tokB, { type: 'join', game_id: gameId })).status, 200);
     assert.equal((await mustReadTable(gameId)).title, `${NAME}'s Game`, 'fixture: the default title holds the name');
     assert.ok((await holdingName([gameId])).length >= 3, 'fixture: so every view and the roster hold it');
 
-    assert.equal((await postJson('delete-account', tokA, {})).status, 200);
+    assert.equal((await postEmpty('delete-account', tokA)).status, 204);
     await settle();
 
     assert.deepEqual(await holdingName([gameId]), [], 'no view, spectator view or roster holds the name, title included');

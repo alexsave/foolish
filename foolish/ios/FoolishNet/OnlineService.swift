@@ -6,6 +6,9 @@
 //   the same thing decodePackedGame does on the web (ServerContext.tsx:433).
 // - `join`/`spectate` only need the game id up front; the seat and state arrive
 //   on the `player_views` / `spectator_views` feed (OnlineGame learns them).
+// - Every lobby request is an ask (c/src/ask.h) POSTed to `meta` as bytes the
+//   kernel wrote (AskWire). Nothing here is JSON: the server reads no JSON, and
+//   a request with nothing to say (`create`) has no body at all.
 
 import Foundation
 import Supabase
@@ -23,8 +26,9 @@ public final class OnlineService {
     public func quickMatch(userId: UUID) async throws -> OnlineGame {
         guard let client else { throw OnlineError.notConfigured }
         // Raw-bytes overload: `create` returns the packed envelope, not JSON.
+        // No body: a new game takes the caller's identity, which the token carries.
         let data: Data = try await client.functions.invoke(
-            "create", options: FunctionInvokeOptions(method: .post, body: EmptyBody())
+            "create", options: FunctionInvokeOptions(method: .post)
         ) { data, _ in data }
         guard let decoded = await PackedGame.decode(data, engine: engine) else {
             throw OnlineError.badResponse
@@ -35,12 +39,8 @@ public final class OnlineService {
     /// Join a game by id/code (the same parser as the universal-link route). The
     /// seat + state arrive on the feed; we only need the id to subscribe.
     public func join(gameId rawId: String, userId: UUID) async throws -> OnlineGame {
-        guard let client else { throw OnlineError.notConfigured }
         let gameId = Self.normalizeGameId(rawId)
-        struct JoinBody: Encodable { let type = "join"; let game_id: String }
-        try await client.functions.invoke(
-            "meta", options: FunctionInvokeOptions(method: .post, body: JoinBody(game_id: gameId))
-        )
+        try await ask(.join, gameId: gameId)
         return OnlineGame(userId: userId, gameId: gameId)
     }
 
@@ -52,37 +52,24 @@ public final class OnlineService {
     /// Start a game in the lobby (deal cards). The web's `meta type:'start'`
     /// (ServerContext.startGame). Any seated player may start.
     public func start(gameId: String) async throws {
-        guard let client else { throw OnlineError.notConfigured }
-        struct StartBody: Encodable { let type = "start"; let game_id: String }
-        try await client.functions.invoke(
-            "meta", options: FunctionInvokeOptions(method: .post, body: StartBody(game_id: gameId)))
+        try await ask(.start, gameId: gameId)
     }
 
     /// Add a bot to fill a seat (web `meta type:'add-bot'`). `botId` nil lets the
     /// server pick from the seeded roster.
     public func addBot(gameId: String, botId: String? = nil) async throws {
-        guard let client else { throw OnlineError.notConfigured }
-        struct BotBody: Encodable { let type = "add-bot"; let game_id: String; let bot_id: String? }
-        try await client.functions.invoke(
-            "meta", options: FunctionInvokeOptions(method: .post, body: BotBody(game_id: gameId, bot_id: botId)))
+        try await ask(.addBot, gameId: gameId, bot: botId)
     }
 
     /// Continue after a finished game — resets the same game back to its lobby for
     /// a rematch (web `meta type:'continue'`, ServerContext.continueGame).
     public func continueGame(gameId: String) async throws {
-        guard let client else { throw OnlineError.notConfigured }
-        struct ContinueBody: Encodable { let type = "continue"; let game_id: String }
-        try await client.functions.invoke(
-            "meta", options: FunctionInvokeOptions(method: .post, body: ContinueBody(game_id: gameId)))
+        try await ask(.continueGame, gameId: gameId)
     }
 
     /// Leave a game / lobby (web `meta type:'exit'`).
     public func leave(gameId: String, userId: UUID) async throws {
-        guard let client else { throw OnlineError.notConfigured }
-        struct ExitBody: Encodable { let type = "exit"; let game_id: String; let player_id: String }
-        try await client.functions.invoke(
-            "meta", options: FunctionInvokeOptions(method: .post,
-                                                   body: ExitBody(game_id: gameId, player_id: userId.uuidString.lowercased())))
+        try await ask(.exit, gameId: gameId, player: userId.uuidString.lowercased())
     }
 
     static func normalizeGameId(_ raw: String) -> String {
@@ -91,14 +78,23 @@ public final class OnlineService {
             .replacingOccurrences(of: "http://foolish.cards/", with: "")
     }
 
-    private struct EmptyBody: Encodable {}
+    /// POST one ask to `meta`. The body is the kernel's (AskWire); a `Data` body
+    /// goes out as application/octet-stream, which is the only body the server
+    /// reads. The answer is the caller's envelope, which the feed delivers
+    /// anyway, so it is not read here.
+    func ask(_ kind: AskWire.Kind, gameId: String, bot: String? = nil, player: String? = nil) async throws {
+        guard let client else { throw OnlineError.notConfigured }
+        guard let body = AskWire.body(kind, gameId: gameId, bot: bot, player: player) else { throw OnlineError.badRequest }
+        try await client.functions.invoke("meta", options: FunctionInvokeOptions(method: .post, body: body))
+    }
 
     public enum OnlineError: Error, LocalizedError {
-        case notConfigured, badResponse
+        case notConfigured, badResponse, badRequest
         public var errorDescription: String? {
             switch self {
             case .notConfigured: return "Online play isn’t configured in this build."
             case .badResponse: return "The server sent an unreadable response."
+            case .badRequest: return "That game code isn’t one the server can take."
             }
         }
     }

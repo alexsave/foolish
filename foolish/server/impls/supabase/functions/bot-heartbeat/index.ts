@@ -13,11 +13,18 @@
 // unchanged 10 seconds.
 //
 // Two modes (one function, so the cron only needs one URL):
-//   SCAN  (no game_id, the cron): find stalled bot games, then dispatch one
-//         self-call per game. Each dispatch is a SEPARATE request => its own fresh
-//         ~2s CPU budget (cordite is CPU-bound; sharing one budget across many games
-//         would starve them).
-//   DRIVE (game_id present): run one lockedBotLoop segment for that game.
+//   SCAN  (no `game` in the URL, the cron): find stalled bot games, then dispatch
+//         one self-call per game. Each dispatch is a SEPARATE request => its own
+//         fresh ~2s CPU budget (cordite is CPU-bound; sharing one budget across
+//         many games would starve them).
+//   DRIVE (`?game=<id>`): run one lockedBotLoop segment for that game.
+//
+// THE REQUEST BODY IS NEVER READ, and neither answer has one. The mode is the
+// URL's: the one thing a drive must be told is a game id, and an id is a URL's
+// to carry. The cron still POSTs `{}` (seed.sql): pg_net's http_post takes a
+// jsonb body and nothing else, so those two bytes are pg_net's, and this
+// function does not look at them. A scan's counts go to the log; nothing ever
+// read them from the response but pg_net's own response table.
 //
 // Auth: the function relies on the platform's JWT verification - the cron and the
 // self-dispatch both present the service-role key, which passes. We never call
@@ -54,10 +61,11 @@ const STALE_MS = 10_000;
 const ABANDON_MS = 60 * 60 * 1000; // 1 hour
 const MAX_GAMES = 100; // safety cap per scan
 
-const json = (body: unknown, status = 200): Response =>
-    new Response(JSON.stringify(body), {
-        status, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+/** A reply with no body: the status is the whole answer. */
+const reply = (status: number): Response => new Response(null, { status, headers: corsHeaders });
+
+/** The URL that drives one game: this function again, the game in the query. */
+const driveUrl = (gameId: string): string => `${SELF_URL}?game=${encodeURIComponent(gameId)}`;
 
 const runInBackground = (p: Promise<unknown>): void => {
     // deno-lint-ignore no-explicit-any
@@ -68,17 +76,14 @@ const runInBackground = (p: Promise<unknown>): void => {
 serve(async (req: Request): Promise<Response> => {
     if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
-    // deno-lint-ignore no-explicit-any
-    let body: any = {};
-    try { body = await req.json(); } catch { /* empty body == scan */ }
-
     // ---- DRIVE: advance one game (fresh request => fresh CPU budget) ----
-    if (body && body.game_id) {
+    const gameId = new URL(req.url).searchParams.get('game');
+    if (gameId) {
         runInBackground(
-            lockedBotLoop(body.game_id).catch(e =>
-                console.error(`[heartbeat] drive error for ${body.game_id}:`, e)),
+            lockedBotLoop(gameId).catch(e =>
+                console.error(`[heartbeat] drive error for ${gameId}:`, e)),
         );
-        return json({ ok: true, drove: body.game_id });
+        return reply(202);
     }
 
     // ---- SCAN: the stalled games the kernel says have bot work ----
@@ -95,22 +100,18 @@ serve(async (req: Request): Promise<Response> => {
 
     if (error) {
         console.error('[heartbeat] scan query failed:', error);
-        return json({ error: error.message }, 500);
+        return reply(500);
     }
     const ids = (data ?? []).map((g: { id: string }) => g.id);
 
     // One fresh drive request per game.
     await Promise.all(ids.map((id: string) =>
-        fetch(SELF_URL, {
+        fetch(driveUrl(id), {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${SERVICE_KEY}`,
-            },
-            body: JSON.stringify({ game_id: id }),
+            headers: { 'Authorization': `Bearer ${SERVICE_KEY}` },
         }).catch(e => console.error(`[heartbeat] dispatch failed for ${id}:`, e)),
     ));
 
     console.log(`[heartbeat] dispatched=${ids.length}`);
-    return json({ scanned: ids.length, dispatched: ids.length });
+    return reply(204);
 });

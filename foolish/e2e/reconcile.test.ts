@@ -19,6 +19,7 @@ import { shouldDropStaleSequence, mergeTableBattles } from '../src/state/clientR
 import { readPushSequence } from './helpers/client_read.ts';
 import { base64ToBytes } from '../sdk/ts/wire/bytes.ts';
 import { suiteRng, type SeededRng } from './helpers/rng.ts';
+import { castParts } from './helpers/cast.ts';
 
 // Three streams, so widening one does not renumber the others: `deal` pins each
 // game's deal seed, `moves` drives the game the broadcasts come from, `arrival`
@@ -70,10 +71,10 @@ async function driveAndCapture(): Promise<{ stream: Bcast[]; serverFinalTable: u
     const stream: Bcast[] = broadcastLog
         .filter((b) => b.channel === chan && b.event === 'animation_events')
         .map((b) => {
-            const decoded = readPushSequence(base64ToBytes(b.payload.b), roster);
-            assert.ok(decoded, `packed broadcast payload must decode (v=${b.payload.v})`);
+            const decoded = readPushSequence(castParts(b.payload).push, roster);
+            assert.ok(decoded, `packed broadcast payload must decode (v=${castParts(b.payload).version})`);
             return {
-                version: b.payload.v as number,
+                version: castParts(b.payload).version,
                 eventTables: decoded!.events.map((e) => e.game_state.battles),
                 finalTable: decoded!.game.battles,
             };

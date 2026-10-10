@@ -68,3 +68,14 @@
 # table_response_decode), with the statuses and the one policy code it carries.
 --header table.h --root TableResponse --snapshot TableResponse
 --const TABLE_STATUS_ --const TABLE_REJECT_STALE_ROUND
+# An ask (ask.h): every request that is not a move goes in through its writer and
+# the kernel writes the body; a refusal comes back through its reader. No host
+# spells a field name or packs a byte of either.
+--header ask.h --root TableAsk --root AskRefusal
+--snapshot TableAsk --writer TableAsk --snapshot AskRefusal
+--count TableAsk.gid=gid_len --count TableAsk.bot=bot_len --count TableAsk.player=player_len
+--count TableAsk.idx=n_idx --count TableAsk.order=n_order --count TableAsk.title=title_len
+--count AskId.id=len
+--const ASK_
+# The cast header (evwire.h): how many bytes of a realtime payload stand before the as3 push.
+--const EVW_CAST_

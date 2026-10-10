@@ -21,6 +21,7 @@ import { applySchema, resetDb, uuid, pgPool } from './harness.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import { ACTION_STATUS, AWIRE_KIND, encodeAction, type AwireMove } from '../sdk/ts/wire/awire.ts';
 import { handleMetaAction } from '../server/impls/supabase/functions/_shared/adapter/meta_actions.ts';
+import { askBody } from './helpers/ask.ts';
 import { __setTableDealSeedOverride } from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
 import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
 import { fixture, FixtureRefused, WAITING } from './helpers/table_fixture.ts';
@@ -216,7 +217,7 @@ test('meta: hostile game_id / bot_id / player_id values never crash the handler'
         { type: 'update-name', new_name: { toString: () => { throw new Error('boom'); } } },
     ];
     const user = { id: H0, user_metadata: { username: 'Alice' } } as never;
-    const send = (body: Record<string, unknown>) => handleMetaAction({ user, userName: 'Alice', body, reqId: 'h' });
+    const send = async (body: Record<string, unknown>) => handleMetaAction({ user, userName: 'Alice', body: askBody(body), reqId: 'h' });
     const barrage: [string, () => Promise<unknown>][] = [
         ...hostile.map((b): [string, () => Promise<unknown>] => [JSON.stringify(b), () => runMeta(id, H0, b, 'Alice')]),
         ...[{ $ne: null }, ['advmeta'], "advmeta' OR '1'='1", 'x'.repeat(10000), 42, null].map((gid): [string, () => Promise<unknown>] =>

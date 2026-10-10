@@ -20,6 +20,7 @@ import { clientTable, type TableView } from '../sdk/ts/table/client_table.ts';
 import { fixtureTable } from './helpers/table_fixture.ts';
 import { legalMoves, mustReadTable } from './helpers/table_play.ts';
 import { runMeta, seedLobby } from './helpers/table_server.ts';
+import { castParts } from './helpers/cast.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; }
 
@@ -53,8 +54,7 @@ function lastPush(topic: string, from: number): TableView {
     const sends = broadcastLog.slice(from).filter((b) => b.channel === topic && b.event === 'animation_events');
     assert.ok(sends.length > 0, `a push on ${topic}`);
     const p = sends[sends.length - 1].payload;
-    assert.equal(p.t, 'as3');
-    const read = clientTable().readPush(Uint8Array.from(Buffer.from(p.b, 'base64')), { as3: true, identity: 'none' });
+    const read = clientTable().readCast(castParts(p).cast, { identity: 'none' });
     assert.ok(read, `the push reads (${JSON.stringify(clientTable().lastRefusal())})`);
     return read.final;
 }

@@ -42,6 +42,7 @@ import type { TableState } from './helpers/table_play.ts';
 import { readPushSequence } from './helpers/client_read.ts';
 import type { ReadRoster as ViewRoster } from './helpers/client_read.ts';
 import { base64ToBytes } from '../sdk/ts/wire/bytes.ts';
+import { castParts } from './helpers/cast.ts';
 
 const rng = suiteRng('optimistic_revert');
 
@@ -61,7 +62,7 @@ function streamFor(gameId: string, playerId: string, roster: ViewRoster) {
     const chan = `gu-${gameId}-${playerId}`;
     return broadcastLog
         .filter((b) => b.channel === chan && b.event === 'animation_events')
-        .map((b) => readPushSequence(base64ToBytes(b.payload.b), roster)!);
+        .map((b) => readPushSequence(castParts(b.payload).push, roster)!);
 }
 
 // AnimationContext's inputs to the decision, pulled out of a raw broadcast exactly

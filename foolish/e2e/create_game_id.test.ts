@@ -19,7 +19,7 @@ import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import { fixtureTable } from './helpers/table_fixture.ts';
 import { mustReadTable } from './helpers/table_play.ts';
 import { seedLobby } from './helpers/table_server.ts';
-import { postJson, settle, tokenFor } from './helpers/edge.ts';
+import { settle, tokenFor, postEmpty } from './helpers/edge.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; }
 
@@ -68,7 +68,7 @@ test('create: a new id that collides with a stored game is drawn again, and the 
         const id = script.shift();
         assert.ok(id, 'create drew more ids than the script holds');
         return id;
-    }, () => postJson('create', token, {}));
+    }, () => postEmpty('create', token));
     assert.equal(res.status, 200, JSON.stringify(res.json));
 
     // The response is the creator's view of a row that exists and seats them.
@@ -95,7 +95,7 @@ test('create: when every id it draws is taken, it fails after a bounded number o
     const before = await snapshot(TAKEN);
     const token = await tokenFor(creator, 'Creator');
 
-    const { result: res, draws } = await withGameIds(() => TAKEN, () => postJson('create', token, {}));
+    const { result: res, draws } = await withGameIds(() => TAKEN, () => postEmpty('create', token));
     assert.notEqual(res.status, 200, 'no game was stored, so none is handed out');
     assert.ok(draws > 1 && draws <= 8, `a few draws, then a clean error (drew ${draws})`);
     assert.deepEqual((await pgPool.query('SELECT game_id FROM player_hands WHERE player_id = $1', [creator])).rows, []);

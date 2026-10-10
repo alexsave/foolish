@@ -73,3 +73,13 @@
 --header client_table.h --root ClientMove
 # The action response a client reads (view_layout.args), for the hash.
 --header table.h --root TableResponse
+#
+# An ask (ask.h): every request that is not a move, as the server reads the one
+# a body decoded to, and the refusal it answers with. view_layout.args holds the
+# client's writer and readers; the roots are here so the load-time hash covers both.
+--header ask.h --root TableAsk --root AskRefusal
+--snapshot TableAsk
+--count TableAsk.gid=gid_len --count TableAsk.bot=bot_len --count TableAsk.player=player_len
+--count TableAsk.idx=n_idx --count TableAsk.order=n_order --count TableAsk.title=title_len
+--count AskId.id=len
+--const ASK_

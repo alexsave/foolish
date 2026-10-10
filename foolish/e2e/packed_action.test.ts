@@ -27,6 +27,7 @@ import { encodeAction, encodeActionRequest, ACTION_STATUS } from '../sdk/ts/wire
 import { readPushSequence } from './helpers/client_read.ts';
 import type { ReadRoster as ViewRoster } from './helpers/client_read.ts';
 import { base64ToBytes } from '../sdk/ts/wire/bytes.ts';
+import { castParts } from './helpers/cast.ts';
 
 // console.error too: a fixture game has no deal seed, so its end logs that no
 // replay snapshot could be encoded (expected here, and finalize's own suites own it).
@@ -149,11 +150,8 @@ test('packed pipeline: legal awire moves apply, bump the version, rewrite the bl
             for (const p of seats) assert.ok(chans.has(`gu-${gameId}-${p.id}`), `payload for human ${p.name}`);
             assert.ok(chans.has(`game-${gameId}`), 'spectator payload');
             for (const f of fresh) {
-                assert.deepEqual(Object.keys(f.payload).sort(), ['b', 's', 't', 'v'], 'exactly {t,s,v,b}: no r / m extras (Q7)');
-                assert.equal(f.payload.t, 'as3', 'packed payload tag');
-                assert.equal(typeof f.payload.s, 'string', 'sequence id');
-                assert.equal(f.payload.v, out.version, 'payload.v is the committed version');
-                const bytes = base64ToBytes(f.payload.b);
+                assert.equal(castParts(f.payload).version, out.version, 'the cast names the committed version');
+                const bytes = castParts(f.payload).push;
                 const decoded = readPush(bytes, roster);
                 assert.ok(decoded, 'payload.b decodes as event wire');
                 // as3: the as2 sequence, then one flags byte (0 for a move: no roster trailer).
@@ -372,14 +370,9 @@ test('human moves and the bot loop interleave: same payload shape, strictly incr
     assert.ok(evts.length > 0, 'interleaved moves broadcast');
     const perChannel = new Map<string, number[]>();
     for (const e of evts) {
-        assert.deepEqual(Object.keys(e.payload).sort(), ['b', 's', 't', 'v'], 'exactly {t,s,v,b}');
-        assert.equal(e.payload.t, 'as3', 'payload tag');
-        assert.equal(typeof e.payload.s, 'string', 'sequence id');
-        assert.equal(typeof e.payload.v, 'number', 'numeric version');
-        assert.equal(typeof e.payload.b, 'string', 'base64 event wire');
-        assert.ok(readPush(base64ToBytes(e.payload.b), roster), 'payload decodes regardless of the emitting path');
+        assert.ok(readPush(castParts(e.payload).push, roster), 'payload decodes regardless of the emitting path');
         if (!perChannel.has(e.channel)) perChannel.set(e.channel, []);
-        perChannel.get(e.channel)!.push(e.payload.v);
+        perChannel.get(e.channel)!.push(castParts(e.payload).version);
     }
     assert.equal(perChannel.size, humans.length + 1, 'per-human channels + the spectator channel (a bot has none)');
     for (const [chan, vs] of perChannel) {

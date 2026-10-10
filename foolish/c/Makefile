@@ -84,7 +84,8 @@ CORE_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/replay_
             src/bot_knobs.c src/bot_roster.c src/bot_drive.c \
             $(SHARED)/sha256.c src/msg_wire.c src/msg_expand.c src/anim_plan.c \
             src/analyse.c src/roster.c src/table.c src/client_table.c src/card.c \
-            src/strategy.c src/hand_layout.c
+            src/strategy.c src/hand_layout.c \
+            src/ask.c
 # Where each becomes an object: build/obj/host/<the source's own path>.o, the
 # "host" variant below (shared/tools/c_rules.mk).
 CORE_OBJ = $(call c_objs,build/obj/host,$(CORE_SRC))
@@ -352,7 +353,8 @@ IOS_CORE_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c \
                 src/replay_steps.c src/replay_extras.c src/view.c src/awire.c \
                 src/evwire.c $(SHARED)/sha256.c src/msg_wire.c src/msg_expand.c \
                 src/anim_plan.c src/roster.c src/card.c src/client_table.c \
-                src/hand_layout.c $(IOS_BRIDGE_SRC)
+                src/hand_layout.c $(IOS_BRIDGE_SRC) \
+                src/ask.c
 IOS_BOTS_SRC := $(filter-out $(IOS_CORE_SRC),$(CORE_SRC)) ios/ios_bots_api.c
 
 # Everything, for the host-side smoke/golden binaries that want one link line.
@@ -1033,7 +1035,10 @@ WASM_TABLE_EXPORTS := \
   -Wl,--export=wasm_table_set_deal_seed -Wl,--export=wasm_table_set_session_log \
   -Wl,--export=wasm_table_bot_drive -Wl,--export=wasm_table_drive_ptr \
   -Wl,--export=wasm_table_drive_prefs -Wl,--export=wasm_table_bot_wait_ms \
-  -Wl,--export=wasm_table_replay_code -Wl,--export=wasm_table_replay_extras
+  -Wl,--export=wasm_table_replay_code -Wl,--export=wasm_table_replay_extras \
+  -Wl,--export=wasm_table_ask_ptr -Wl,--export=wasm_table_ask_decode \
+  -Wl,--export=wasm_table_ask -Wl,--export=wasm_ask_refusal_encode \
+  -Wl,--export=wasm_table_cast
 
 # The web client's slot (src/client_table.h, wasm/wasm_table_api.c), bots.wasm
 # ONLY: the browser reads every envelope and push through these, and through the
@@ -1058,7 +1063,10 @@ WASM_CLIENT_EXPORTS := \
   -Wl,--export=wasm_client_action_request -Wl,--export=wasm_client_action_response \
   -Wl,--export=wasm_client_response_ptr \
   -Wl,--export=wasm_hand_metrics_ptr -Wl,--export=wasm_hand_layout_ptr \
-  -Wl,--export=wasm_hand_layout
+  -Wl,--export=wasm_hand_layout \
+  -Wl,--export=wasm_client_ask_ptr -Wl,--export=wasm_client_ask_encode \
+  -Wl,--export=wasm_client_refusal_ptr -Wl,--export=wasm_client_refusal_decode \
+  -Wl,--export=wasm_client_cast_open -Wl,--export=wasm_client_cast_version
 
 # A replay's recorded decision as the Oracle imports it, and a code at a glance
 # (src/replay_steps.h, wasm/wasm_bots_api.c), bots.wasm ONLY: the web page builds
@@ -1343,6 +1351,7 @@ WASM_BOT_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/rep
                 src/octogen_strategy.c \
                 src/bot_knobs.c src/bot_roster.c src/bot_drive.c src/roster.c src/table.c src/client_table.c src/card.c \
                 src/hand_layout.c \
+                src/ask.c \
                 $(SHARED)/wasm/libc.c \
                 wasm/wasm_api.c wasm/wasm_bots_api.c wasm/wasm_msg_api.c wasm/wasm_table_api.c
 
