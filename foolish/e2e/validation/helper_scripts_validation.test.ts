@@ -14,7 +14,7 @@
 //   - The same pipeline kept shelling out to e2e/_wasm_drive.test.ts,
 //     e2e/_wasm_multi_drive.test.ts and two more that had been deleted.
 //   - "reading a pasted link is the kernel's too" moved urlToGame out of
-//     server/api/common/replay/codec.ts into kernelReplayLinkParse. Two scripts
+//     server/api/common/replay_codec.ts into kernelReplayLinkParse. Two scripts
 //     went on destructuring the old name and threw on their first line.
 //   - A10 and the kernel lift deleted server/api/common/game_lifecycle.ts,
 //     sdk/ts/wasm/engine.ts and four more modules that helper scripts import.

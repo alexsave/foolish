@@ -14,16 +14,16 @@ import { FernFractalProvider } from '../utils/fernFractal';
 import { useLocalization } from '../contexts/LocalizationContext';
 import { TutorialHintProvider, TutorialHint } from '../contexts/TutorialHintContext';
 import { GameBoard } from './GameBoard';
-import { usePreventScroll } from '../hooks/usePreventScroll';
+import { usePreventScroll } from '../utils/usePreventScroll';
 import { animationFeed, AnimationSequenceMessage } from '../state/animationFeed';
-import { bigintToBytes, bytesToBigint } from '@api/common/replay/codec.ts';
+import { bigintToBytes, bytesToBigint } from '@api/common/replay_codec.ts';
 import { ensureBotsAsync, kernelB32Decode, replaySummary, type ReplaySummary } from '@sdk/ts/wasm/bots.ts';
 import {
     buildReplayFrames, preDealGame, ReplayFrame, ReplayGameState, REPLAY_STEP,
 } from '../replay/frames';
 import { boardPills } from '../utils/gameValidation';
 import { PLAY_PILL_COVER } from '@sdk/ts/gen/view_layout.bots.ts';
-import type { StringId } from '../localization/strings';
+import type { StringId } from '../common/strings';
 import { buildBeats, type Beat, type TutKey } from './tutorialBeats.ts';
 import { TUTORIAL_MOVES_CODE, TUTORIAL_NAMES } from './tutorialGame';
 

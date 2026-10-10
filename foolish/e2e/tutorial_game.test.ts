@@ -20,11 +20,11 @@
  * ========================================================================== */
 
 import { test } from 'node:test';
-import { bytesToBigint } from '../server/api/common/replay/codec.ts';
+import { bytesToBigint } from '../server/api/common/replay_codec.ts';
 import { kernelB32Decode, replaySummary } from '../sdk/ts/wasm/bots.ts';
 import assert from 'node:assert/strict';
 
-import { bigintToBytes } from '../server/api/common/replay/codec.ts';
+import { bigintToBytes } from '../server/api/common/replay_codec.ts';
 import { buildReplayFrames, REPLAY_STEP, ReplayFrame } from '../src/replay/frames.ts';
 import { TUTORIAL_MOVES_CODE, TUTORIAL_NAMES } from '../src/components/tutorialGame.ts';
 import { buildBeats } from '../src/components/tutorialBeats.ts';

@@ -194,7 +194,7 @@ test('both links answer the same replay code identically, step by step', () => {
     const decode = (ex: RawKernel): Uint8Array => {
         bytesOf(ex).set(code, ex.wasm_replay_io_ptr());
         const w = ex.wasm_replay_b32_decode(code.length);
-        assert.ok(w > 0, 'the tutorial code did not decode - it may need re-cutting (tests/gen_tutorial_game.ts)');
+        assert.ok(w > 0, 'the tutorial code did not decode - it may need re-cutting (e2e/gen_tutorial_game.ts)');
         const at = ex.wasm_io_ptr();
         return bytesOf(ex).slice(at, at + w);
     };

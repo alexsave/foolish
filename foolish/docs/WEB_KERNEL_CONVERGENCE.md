@@ -138,7 +138,7 @@ On the web the equivalents are:
 - `src/components/GameDisplay/AnimationOverlay.tsx` (583) - invisible-placeholder DOM measurement, `getBoundingClientRect`, CSS transitions. Pure rendering.
 - `src/contexts/DragContext.tsx`'s `getTableCardUnderCursor` (`elementsFromPoint`), pointer/touch handling, drag thresholds. The gesture's *resolution* is liftable; the hit-test is not.
 - Every texture and canvas component (`fernFractal` 651, `WoolBackground` 432, `WoodTexture` 295, `SovietIcon` 299, `webglTexture`, `textureCache`, `ConcreteTexture`, `TexturedSurface`).
-- `src/contexts/ServerContext.tsx` (1,409) and `src/backend/Connector.ts` - Supabase realtime, auth, fetch, React state.
+- `src/contexts/ServerContext.tsx` (1,409) and `src/common/Connector.ts` - Supabase realtime, auth, fetch, React state.
 - `server/impls/supabase/functions/_shared/adapter/utils.ts` (1,180) - row locking, CAS commits, broadcast fan-out, edge scheduling. Server-shaped, not rule-shaped.
 - Routing, localization, leaderboard, match history, lobby, chat, the Oracle UI.
 

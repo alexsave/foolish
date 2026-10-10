@@ -7,7 +7,7 @@
 // the same `delete-account` edge function the apps call.
 
 import { useState } from 'react';
-import supabase from '../../backend/Connector';
+import supabase from '../../common/Connector';
 import { useAuth } from '../../contexts/AuthContext';
 
 type Phase = 'idle' | 'working' | 'done' | 'error';

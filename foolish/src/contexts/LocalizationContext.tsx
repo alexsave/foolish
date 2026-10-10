@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, ReactNode, useEffect } from 'react';
-import { StringId, StringTable, Language, EN, LANGUAGES, isLanguage, loadLanguage, translate } from '../localization/strings';
+import { StringId, StringTable, Language, EN, LANGUAGES, isLanguage, loadLanguage, translate } from '../common/strings';
 
 export type { Language };
 

@@ -231,7 +231,7 @@ screens (every terminal state offers rematch/share/home); the table is
 chrome-free while a round is live (status communicates through the board, not
 banners); confirmation dialogs only for destructive acts (leave live game);
 all text through the localization table from day one (`en/ru/ko` — port keys
-from `src/localization/strings.ts`, adding new keys in all three languages).
+from `src/common/strings.ts`, adding new keys in all three languages).
 
 ---
 
@@ -780,7 +780,7 @@ anon key is public by design; still keep it in xcconfig, not source).
 **D2. Auth port.** Mirror `AuthContext` exactly (`src/contexts/AuthContext.tsx`):
 `nameToEmail` = SHA-256 of uppercased username → first 16 hex chars →
 `<hex>@foolish.cards` (`:12-33`, `WEBSITE_DOMAIN` from
-`src/constants/constants.ts`); signUp carries
+`src/common/constants.ts`); signUp carries
 `user_metadata.username` (uppercased) and must locally enforce the
 bot-reserved-prefix rejection (`usernameUsesReservedPrefix`,
 `src/common/botName.ts` — port the check). supabase-swift persists the
@@ -858,7 +858,7 @@ don't fake it with a mailto), licenses (single static screen), links
 (privacy policy + terms URLs on foolish.cards — coordinate with web).
 
 **E4. Localization.** Write `scripts/gen_ios_strings.mjs`: parse
-`src/localization/strings.ts` → merge into `ios/FoolishKit/Localizable.xcstrings`
+`src/common/strings.ts` → merge into `ios/FoolishKit/Localizable.xcstrings`
 (String Catalog JSON; en/ru/ko values per key; keys keep the web's names,
 new iOS-only keys get an `ios.` prefix and MUST be added in all three
 languages in the same commit — CI check: the three language columns have

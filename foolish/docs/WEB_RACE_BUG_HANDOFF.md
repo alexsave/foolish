@@ -114,7 +114,7 @@ the same guard.
 3. Client on `REJECT_STALE_ROUND`: keep the revert (already happened), show
    the small toast the iMessage doc words as: "«Sveta» picked up before your
    9♣ landed." No retry, no resend. Strings: en/ru/ko in
-   `src/localization/strings.ts`.
+   `src/common/strings.ts`.
 4. **Compatibility:** old clients that don't send `intent_round` (missing
    field / old fmt) must keep working during rollout — treat absent as
    "no guard" (today's behavior), then tighten once clients are deployed.

@@ -34,13 +34,13 @@ import * as V from '../sdk/ts/gen/view_layout.bots.ts';
 import { REPLAY_ETOOLONG } from '../sdk/ts/gen/game_layout.bots.ts';
 import {
   base64Decode, base64Encode, bytesToBigint,
-} from '../server/api/common/replay/codec.ts';
+} from '../server/api/common/replay_codec.ts';
 import {
   encodeExtrasFromGaps,
   decodeExtras,
   splitReplayCode,
   joinReplayCode,
-} from '../server/api/common/replay/extras.ts';
+} from '../server/api/common/replay_extras.ts';
 import { buildReplayFrames } from '../src/replay/frames';
 import { fixtureTable } from './helpers/table_fixture.ts';
 import { recordBotTable } from './helpers/replay_play.ts';

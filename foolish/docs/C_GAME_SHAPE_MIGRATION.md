@@ -2008,5 +2008,5 @@ Step 4 is `--status reverted`, not `--status applied`: the rows being removed ar
 
 Deleted: `cirun.txt` and `multisuggestion.txt` at the repo root (one-off dumps, no reader), and `server/api/common/replay/core.ts` (one constant, one importer, folded into `e2e/tutorial_game.test.ts`).
 Also removed: `animationUtils.getTableCards`, a synonym for `state/view.tableCards`, and the `dotenv` devDependency, which nothing imported.
-`RECONCILE_GRACE_MS` moved from `src/constants/constants.ts` into `ServerContext.tsx` beside its one reader.
+`RECONCILE_GRACE_MS` moved from `src/common/constants.ts` into `ServerContext.tsx` beside its one reader.
 Kept, with reasons in the commits: `IMG_7452.PNG` and `IMG_7453.PNG`, which are the only copy of the app icon's source art and now live at `ios/Tools/icon-source/`; `src/wasm/msgKernel.ts`, the client-bundle boundary; `seatName.ts`, `animationUtils.ts` and `tutorialGame.ts`, which all have several callers; and `docs/review-shots`, `docs/review-shots-2` and `ios/docs/review_2026-07-25`, each of which its review notes embed.

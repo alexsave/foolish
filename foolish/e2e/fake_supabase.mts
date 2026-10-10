@@ -75,7 +75,7 @@ import { clientTable } from '../sdk/ts/table/client_table.ts';
 import { fixture, fixtureTable, parseCardText, PLAYING, type FixtureSeat, type TableFixture } from './helpers/table_fixture.ts';
 import { attachPhoenix, type PhxHub } from './helpers/ws_phoenix.ts';
 
-const WEBSITE_DOMAIN = 'foolish.cards';   // src/constants/constants.ts
+const WEBSITE_DOMAIN = 'foolish.cards';   // src/common/constants.ts
 
 // ---- the people ---------------------------------------------------------------
 //

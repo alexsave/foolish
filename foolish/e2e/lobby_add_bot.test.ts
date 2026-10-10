@@ -82,11 +82,11 @@ const SERVER = {
 // Stub every module Lobby imports (paths resolve the same absolute files Lobby does).
 mock.module('../src/contexts/ServerContext.tsx', { namedExports: { useServer: () => SERVER } });
 mock.module('next/navigation', { namedExports: { useParams: () => ({ game_id: 'ABCDE' }), useRouter: () => ({ push: () => {} }) } });
-mock.module('../src/constants/constants.ts', { namedExports: { WEBSITE_DOMAIN: 'example.com' } });
+mock.module('../src/common/constants.ts', { namedExports: { WEBSITE_DOMAIN: 'example.com' } });
 mock.module('../src/contexts/AuthContext.tsx', { namedExports: { useAuth: () => ({ user_id: 'h1' }) } });
 mock.module('qrcode.react', { namedExports: { QRCodeSVG: () => null } });
-mock.module('../src/backend/Connector.ts', { defaultExport: supabaseMock });
-mock.module('../src/hooks/usePreventScroll.ts', { namedExports: { usePreventScroll: () => {} } });
+mock.module('../src/common/Connector.ts', { defaultExport: supabaseMock });
+mock.module('../src/utils/usePreventScroll.ts', { namedExports: { usePreventScroll: () => {} } });
 mock.module('../src/components/TexturedSurface.tsx', { namedExports: {
     useTexture: () => ({ woodUrl: null, concreteUrl: null }),
     getTextureStyle: () => ({}), seedFromString: () => 0.5, flipFromString: () => 1,

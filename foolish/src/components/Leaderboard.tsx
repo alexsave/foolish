@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import supabase from '../backend/Connector';
+import supabase from '../common/Connector';
 import { useAuth } from '../contexts/AuthContext';
 import { useLocalization } from '../contexts/LocalizationContext';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';

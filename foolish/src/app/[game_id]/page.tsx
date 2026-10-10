@@ -6,7 +6,7 @@ import { KernelGate } from '../../components/KernelGate';
 import { ProtectedRoute } from '../../components/ProtectedRoute';
 import { GameView } from '../../components/GameView';
 import { ReplayScreen } from '../../components/ReplayScreen';
-import { classifyPathSegment } from '@api/common/replay/codec.ts';
+import { classifyPathSegment } from '@api/common/replay_codec.ts';
 
 export default function GamePage() {
   const segment = useParams<{ game_id: string }>().game_id || '';

@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import supabase from '../backend/Connector';
+import supabase from '../common/Connector';
 import { Text } from './Text';
-import { hexToBytes } from '@api/common/replay/codec.ts';
+import { hexToBytes } from '@api/common/replay_codec.ts';
 import { kernelB32Encode, kernelReplayLink, REPLAY_LINK } from '@sdk/ts/wasm/bots.ts';
 import { useStyles } from '../contexts/StyleContext';
 import { useTexture, getTextureStyle } from './TexturedSurface';

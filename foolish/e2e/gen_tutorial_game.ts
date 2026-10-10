@@ -1,7 +1,7 @@
 /* =============================================================================
  * Cut the tutorial's scripted game (src/components/tutorialGame.ts)
  * =============================================================================
- *   npx tsx tests/gen_tutorial_game.ts [--seeds N]
+ *   npx tsx e2e/gen_tutorial_game.ts [--seeds N]
  *
  * The tutorial is a real 3-player game played by the real engine and frozen as a
  * replay code. It has to be a particular KIND of real game: one where the
@@ -37,7 +37,7 @@
  * ========================================================================== */
 
 import { kernelB32Encode, replaySummary } from '../sdk/ts/wasm/bots.ts';
-import { playBotTable, seedBytes } from '../e2e/helpers/bot_table.ts';
+import { playBotTable, seedBytes } from './helpers/bot_table.ts';
 import { buildReplayFrames, REPLAY_STEP, ReplayFrame } from '../src/replay/frames.ts';
 import { TUTORIAL_NAMES } from '../src/components/tutorialGame.ts';
 import { PLAYER_STATUS } from '../src/state/view.ts';

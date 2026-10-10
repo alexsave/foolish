@@ -8,6 +8,6 @@
 // now lives beside its one caller in ServerContext.tsx.
 //
 // It stays a module of its own because e2e/lobby_add_bot.test.ts mocks this
-// exact path (`mock.module('../src/constants/constants.ts', ...)`) to point the
+// exact path (`mock.module('../src/common/constants.ts', ...)`) to point the
 // QR code at example.com.
 export const WEBSITE_DOMAIN = 'foolish.cards';

@@ -371,7 +371,7 @@ test('§12.2-7 why sidecar: binary paths decode, merge, and template into a proo
     // The English table, which is now generated from c/i18n rather than written
     // in strings.ts. `translate` is the site's own substitution, so this test
     // fills placeholders exactly the way the browser does.
-    const { EN, translate } = await import('../src/localization/strings.ts');
+    const { EN, translate } = await import('../src/common/strings.ts');
     const t = (id: string, params?: Record<string, string | number>) =>
         translate(EN, id as never, Object.fromEntries(
             Object.entries(params ?? {}).map(([k, v]) => [k, String(v)])));

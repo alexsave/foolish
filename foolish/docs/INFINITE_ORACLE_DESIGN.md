@@ -339,7 +339,7 @@ From `wasmChooseMove` (`bots.ts:244-289`) and the C side:
   `reactStrictMode: true` double-fires dev effects (`next.config.mjs:3`) —
   the oracle loop must be cancellation-safe.
 - i18n: new strings must be added to the `StringId` union AND all three
-  tables en/ru/ko (`src/localization/strings.ts:2-90,93,185,277`).
+  tables en/ru/ko (`src/common/strings.ts:2-90,93,185,277`).
 
 ### 4.5 Build & distribution facts
 
@@ -1274,7 +1274,7 @@ stop the fleet. Memory-off caveat: verdicts vanish (solver gate closed,
 ### 9.6 i18n & theming
 
 Add to the `StringId` union and ALL THREE tables
-(`src/localization/strings.ts` — the union is typed; missing a language
+(`src/common/strings.ts` — the union is typed; missing a language
 fails the build). Keys and English copy (ru/ko drafts follow the file's
 existing tone; have them reviewed like the rest of the table):
 

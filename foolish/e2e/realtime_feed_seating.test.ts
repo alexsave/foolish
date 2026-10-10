@@ -107,7 +107,7 @@ mock.module('next/navigation', { namedExports: {
     useRouter: () => ({ push: () => {}, replace: () => {} }),
 } });
 mock.module('../src/contexts/AuthContext.tsx', { namedExports: { useAuth: () => ({ user_id: ME }) } });
-mock.module('../src/backend/Connector.ts', { defaultExport: supabaseMock });
+mock.module('../src/common/Connector.ts', { defaultExport: supabaseMock });
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useState, useRef, useCallb
 import { useServer, useServerActions } from './ServerContext';
 import { useAuth } from './AuthContext';
 import { useParams } from 'next/navigation';
-import supabase from '../backend/Connector';
+import supabase from '../common/Connector';
 import { validateActionWire } from '../utils/gameValidation';
 import { encodeAction } from '@sdk/ts/wire/awire.ts';
 import { clientTable } from '@sdk/ts/table/client_table.ts';

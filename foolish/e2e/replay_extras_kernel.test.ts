@@ -52,7 +52,7 @@
  * ========================================================================== */
 
 import { test } from 'node:test';
-import { bytesToBigint } from '../server/api/common/replay/codec.ts';
+import { bytesToBigint } from '../server/api/common/replay_codec.ts';
 import assert from 'node:assert/strict';
 
 import {
@@ -61,7 +61,7 @@ import {
 import {
   encodeExtras, encodeExtrasBytes, encodeExtrasFromGaps, decodeExtras,
   splitReplayCode, joinReplayCode,
-} from '../server/api/common/replay/extras.ts';
+} from '../server/api/common/replay_extras.ts';
 import { kernelReplayExtrasEncode, kernelReplayExtrasDecode, kernelReplayLink, ensureBotsAsync, kernelB32Encode, kernelB32Decode } from '../sdk/ts/wasm/bots.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }

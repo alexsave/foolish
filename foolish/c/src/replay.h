@@ -117,7 +117,7 @@
 // the version in replay_last_error_detail(), which is the whole point: a loud
 // "this was played under older rules" beats a quiet fiction. Nothing bridges
 // them. The fix is to play a new game, and for the tutorial's frozen code, to
-// re-cut it (npx tsx tests/gen_tutorial_game.ts).
+// re-cut it (npx tsx e2e/gen_tutorial_game.ts).
 #define REPLAY_FORMAT_VERSION_V10 10
 #define REPLAY_VERSION_ALPHABET 16
 // Hard guard: a malformed integer must never hang (mirrors core.ts MAX_ATOMS).
