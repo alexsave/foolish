@@ -61,7 +61,9 @@ done
 echo "[3/5] symbol -> source-file map"
 # The module compiles to per-file objects, so every symbol has a home object.
 : > "$WORK/symfile.tsv"
-for o in build/botobj/*.o; do
+# An object keeps its source's directory now (build/botobj/src/game.o), so the
+# objects are found rather than globbed one level down.
+find build/botobj -name '*.o' | sort | while IFS= read -r o; do
   base="$(basename "$o" .o)"
   llvm-nm --defined-only "$o" 2>/dev/null | awk -v f="$base" '$2 ~ /[TtWw]/ {print $3"\t"f}'
 done >> "$WORK/symfile.tsv"

@@ -53,7 +53,7 @@ Every candidate below follows that shape: measure → cap → gate.
 ```sh
 cd c && make build/bots.wasm
 # per-symbol data/BSS sizes (these + stack + heap = linear memory)
-llvm-nm --print-size --size-sort --defined-only build/botobj/*.o \
+llvm-nm --print-size --size-sort --defined-only $(find build/botobj -name '*.o') \
   | awk '$3 ~ /[dDbB]/ {print $2, $4}' | sort -r | head -30
 # page count + full layout: regenerate the anatomy page
 bash tools/wasm_anatomy/generate.sh && open ../docs/wasm-anatomy.html  # Memory layout tab

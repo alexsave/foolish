@@ -85,11 +85,9 @@ CORE_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/replay_
             $(SHARED)/sha256.c src/msg_wire.c src/msg_expand.c src/anim_plan.c \
             src/analyse.c src/roster.c src/table.c src/client_table.c src/card.c \
             src/strategy.c src/hand_layout.c
-# BY BASENAME, not by stripping src/: the sources come from two directories now,
-# and the old `$(CORE_SRC:src/%.c=build/%.o)` left the shared pair as .c paths -
-# which still links, from source, silently, while the pattern rule below never
-# fires.
-CORE_OBJ := $(addprefix build/,$(notdir $(CORE_SRC:.c=.o)))
+# Where each becomes an object: build/obj/host/<the source's own path>.o, the
+# "host" variant below (shared/tools/c_rules.mk).
+CORE_OBJ = $(call c_objs,build/obj/host,$(CORE_SRC))
 
 .PHONY: all clean tests print-core print-wasm-src
 # Emit the core engine+strategy source list (used by tools/tt_divergence.sh to
@@ -107,46 +105,66 @@ print-wasm-src:
 	@echo $(sort $(WASM_BOT_SRC) $(WASM_ORACLE_MT_SRC))
 all: build/cnitro_eval build/cnitro_elo build/cnitro_replay build/cnitro_showcase build/cnitro_tests build/cnitro_gen
 
-# Generic compile rule for sources under src/ (build/%.o: src/%.c).
-# Blanket header dependency: a struct-layout change in any header must
-# rebuild every object, or the binaries mix layouts (observed: SimState
-# edits producing garbage evals until a make clean).
-build/%.o: src/%.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h)
-	@mkdir -p build
-	$(CC) $(CFLAGS) -c $< -o $@
+# ---- how a file becomes an object ---------------------------------------------
+# shared/tools/c_rules.mk: one directory of objects per compiler-and-flags (a
+# "variant"), each object depending on exactly the headers its compile opened
+# (the compiler's own list, -MD) and on the command line it was built with.
+#
+# THIS USED TO BE A BLANKET: every object depended on every header in src/ and
+# shared/c, so that a struct-layout change rebuilt everything and no binary
+# mixed layouts (observed: SimState edits producing garbage evals until a make
+# clean; a 1-byte Card pack in the tests). The exact list keeps that promise -
+# every object that includes the header is rebuilt, which is every object that
+# can see the struct - without recompiling the kernel for a header two files
+# read.
+#
+# AND EVERY PROGRAM BELOW IS OBJECTS NOW. The sanitized suite, the analyser,
+# the bridge smoke, the three golden writers and the flow simulator each
+# compiled all of CORE_SRC from source in one command, every time they were
+# asked for - never stale, and forty-odd files recompiled to rerun a test. Each
+# flag set is its own variant instead, so no object built one way is reachable
+# from a link of another:
+#
+#   build/obj/host      $(CFLAGS)           the arena, the tests, the difftests
+#   build/obj/asan      $(ASAN_CFLAGS)      tests-asan
+#   build/obj/analyse   $(ANALYSE_CFLAGS)   the analyser, at the production caps
+#   build/obj/ioshost   $(IOS_CFLAGS)       the bridge on the HOST compiler: the
+#                                           smoke, the goldens, the flow sim and
+#                                           the two archives ios-archives checks
+#   build/obj/l1        $(L1_CFLAGS)        l1-measure
+include ../../shared/tools/c_rules.mk
+$(eval $(call C_VARIANT,build/obj/host,CC,CFLAGS))
+$(eval $(call C_VARIANT,build/obj/asan,CC,ASAN_CFLAGS))
+$(eval $(call C_VARIANT,build/obj/analyse,CC,ANALYSE_CFLAGS))
+$(eval $(call C_VARIANT,build/obj/ioshost,CC,IOS_CFLAGS))
+$(eval $(call C_VARIANT,build/obj/l1,CC,L1_CFLAGS))
 
-build/%.o: $(SHARED)/%.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h)
-	@mkdir -p build
-	$(CC) $(CFLAGS) -c $< -o $@
+# $(call host_prog,<name>,<what it is besides the kernel>): build/<name> from
+# the host variant's objects.
+define HOST_PROG
+build/$(1): $$(CORE_OBJ) $$(call c_objs,build/obj/host,$(2))
+	$$(CC) $$(CFLAGS) $$^ -o $$@ $$(LDFLAGS)
+endef
+host_prog = $(eval $(call HOST_PROG,$(1),$(2)))
+# ...and the same with its own file FIRST on the link line, which is where the
+# difftests have always had theirs (link order is function order in the
+# binary, and these stay the binaries they were).
+define HOST_TEST
+build/$(1): $$(call c_objs,build/obj/host,$(2)) $$(CORE_OBJ)
+	$$(CC) $$(CFLAGS) $$^ -o $$@ $$(LDFLAGS)
+endef
+host_test = $(eval $(call HOST_TEST,$(1),$(2)))
 
 # The arena statistics (mean and standard error of the paired delta) live in
 # shared/c/stats, in their own directory so the builds that wildcard
 # shared/c/*.c do not pick up its test.
-build/stats.o: $(SHARED)/stats/stats.c $(SHARED)/stats/stats.h
-	@mkdir -p build
-	$(CC) $(CFLAGS) -c $< -o $@
-
-build/main_eval.o: $(SHARED)/stats/stats.h
-build/cnitro_eval: $(CORE_OBJ) build/main_eval.o build/stats.o
-	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
-build/cnitro_elo: $(CORE_OBJ) build/main_elo.o
-	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
-build/cnitro_replay: $(CORE_OBJ) build/main_replay.o
-	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
-build/cnitro_showcase: $(CORE_OBJ) build/main_showcase.o
-	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
-build/cnitro_tests: $(CORE_OBJ) build/tests.o
-	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
-build/cnitro_distill: $(CORE_OBJ) build/main_distill.o
-	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
-build/cnitro_gen: $(CORE_OBJ) build/main_gen.o
-	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
-
-# Same blanket header dependency as src objects: a struct-layout change must
-# rebuild the tests or the binary mixes layouts (observed: 1-byte Card pack).
-build/tests.o: tests/tests.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h)
-	@mkdir -p build
-	$(CC) $(CFLAGS) -c $< -o $@
+$(call host_prog,cnitro_eval,src/main_eval.c $(SHARED)/stats/stats.c)
+$(call host_prog,cnitro_elo,src/main_elo.c)
+$(call host_prog,cnitro_replay,src/main_replay.c)
+$(call host_prog,cnitro_showcase,src/main_showcase.c)
+$(call host_prog,cnitro_tests,tests/tests.c)
+$(call host_prog,cnitro_distill,src/main_distill.c)
+$(call host_prog,cnitro_gen,src/main_gen.c)
 
 # 5,761 checks in 23.8s at -O3, and 23.5s of that is ONE of the 204 tests:
 # test_table_session_log_is_load_bearing_for_octogen, 3,430 octogen decisions at
@@ -169,8 +187,9 @@ build/tests.o: tests/tests.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h)
 tests: build/cnitro_tests
 	./build/cnitro_tests
 
-# The same suite under AddressSanitizer + UBSan, built in one shot at -O1 (not
-# against CORE_OBJ, whose objects are -O3 -flto and not instrumented).
+# The same suite under AddressSanitizer + UBSan, at -O1, from its own objects
+# (build/obj/asan - not CORE_OBJ, whose objects are -O3 -flto and not
+# instrumented).
 # This is where a read past the end of a caller's buffer stops being invisible:
 # the wire decoders take byte counts off the network and off a DB row, and a
 # test that hands one a truncated payload only proves anything if the buffer is
@@ -185,30 +204,25 @@ ASAN_CFLAGS := -fsanitize=address,undefined -fno-sanitize=object-size \
                -g -O1 -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations -Isrc -DCD_LEAFBOOK \
                -DCD_PASS_PROBE
 .PHONY: tests-asan
-tests-asan:
-	@mkdir -p build
-	$(CC) $(ASAN_CFLAGS) $(CORE_SRC) tests/tests.c -o build/cnitro_tests_asan -lm
+build/cnitro_tests_asan: $(call c_objs,build/obj/asan,$(CORE_SRC) tests/tests.c)
+	$(CC) $(ASAN_CFLAGS) $^ -o $@ -lm
+tests-asan: build/cnitro_tests_asan
 	./build/cnitro_tests_asan
 
 # Bitboard-rollout difftests (not part of the default suite). Each plays many
 # games and asserts the bitboard engine matches the struct engine.
-build/sim_difftest: tests/sim_difftest.c $(CORE_OBJ)
-	$(CC) $(CFLAGS) tests/sim_difftest.c $(CORE_OBJ) -o $@ $(LDFLAGS)
-build/apply_difftest: tests/apply_difftest.c $(CORE_OBJ)
-	$(CC) $(CFLAGS) tests/apply_difftest.c $(CORE_OBJ) -o $@ $(LDFLAGS)
-build/solver_difftest: tests/solver_difftest.c $(CORE_OBJ)
-	$(CC) $(CFLAGS) tests/solver_difftest.c $(CORE_OBJ) -o $@ $(LDFLAGS)
+$(call host_test,sim_difftest,tests/sim_difftest.c)
+$(call host_test,apply_difftest,tests/apply_difftest.c)
+$(call host_test,solver_difftest,tests/solver_difftest.c)
 # Replay-codec round trip against real engine games (the native mirror of
 # e2e/replay_codec.test.ts): losslessness, mid-game cuts, size
 # (docs/IMESSAGE_GAME_DESIGN.md §16 option 3). It absorbed the old
 # replay_difftest, which drove the same games through the retired retrodiction
 # encoder and asserted the same full-stream fidelity.
-build/replay_v6_test: tests/replay_v6_test.c $(CORE_OBJ)
-	$(CC) $(CFLAGS) tests/replay_v6_test.c $(CORE_OBJ) -o $@ $(LDFLAGS)
+$(call host_test,replay_v6_test,tests/replay_v6_test.c)
 # FMSG v1 envelope (the iMessage payload): round-trip, replay fidelity, tamper
 # matrix, size guardrail (docs/IMESSAGE_GAME_DESIGN.md §4/§7, src/msg_wire.h).
-build/msg_wire_test: tests/msg_wire_test.c $(CORE_OBJ)
-	$(CC) $(CFLAGS) tests/msg_wire_test.c $(CORE_OBJ) -o $@ $(LDFLAGS)
+$(call host_test,msg_wire_test,tests/msg_wire_test.c)
 # Animation core (c/src/anim_plan.h): the C twins of the React animation-quality
 # tests (e2e/optimistic_animation, optimistic_revert, reconcile) plus plan
 # building. The owner's headline ask — the quality tests live in C now.
@@ -216,10 +230,8 @@ build/msg_wire_test: tests/msg_wire_test.c $(CORE_OBJ)
 # cold opens that measured WHEN Messages honours an `.expanded` request. A pure
 # transition function, so no game and no arguments - it either matches the
 # filmed trace or it does not.
-build/msg_expand_test: tests/msg_expand_test.c $(CORE_OBJ)
-	$(CC) $(CFLAGS) tests/msg_expand_test.c $(CORE_OBJ) -o $@ $(LDFLAGS)
-build/anim_plan_test: tests/anim_plan_test.c $(CORE_OBJ)
-	$(CC) $(CFLAGS) tests/anim_plan_test.c $(CORE_OBJ) -o $@ $(LDFLAGS)
+$(call host_test,msg_expand_test,tests/msg_expand_test.c)
+$(call host_test,anim_plan_test,tests/anim_plan_test.c)
 difftests: build/sim_difftest build/apply_difftest build/msg_wire_test build/solver_difftest build/replay_v6_test build/anim_plan_test build/msg_expand_test
 	./build/sim_difftest 4 1000 && ./build/apply_difftest 4 200 && \
 	./build/msg_wire_test 20 && \
@@ -234,7 +246,8 @@ difftests: build/sim_difftest build/apply_difftest build/msg_wire_test build/sol
 
 # ---------- the post-game analyser (docs/POST_GAME_ANALYSER.md) ---------------
 #
-# Built at the iOS/production caps, in one shot, never against CORE_OBJ: the
+# Built at the iOS/production caps, from its own objects (build/obj/analyse),
+# never against CORE_OBJ: the
 # native arena caps drop legal moves past MAX_LEGAL_MOVES / MAX_MOVE_CARDS
 # silently in enumeration order, and an analyser that enumerates every legal
 # move must not have the winning one dropped before it is scored. A LegalMoves
@@ -255,17 +268,18 @@ difftests: build/sim_difftest build/apply_difftest build/msg_wire_test build/sol
 # is filtered back in. Same idiom as WASM_ORACLE_MT_CFLAGS.
 ANALYSE_CFLAGS = $(filter-out -D_Thread_local=,$(CFLAGS)) $(IOS_CAPS)
 .PHONY: analyse analyse-test winprob
-analyse:
-	@mkdir -p build
-	$(CC) $(ANALYSE_CFLAGS) $(CORE_SRC) src/main_analyse.c -o build/cnitro_analyse $(LDFLAGS)
+ANALYSE_OBJ = $(call c_objs,build/obj/analyse,$(CORE_SRC))
+build/cnitro_analyse: $(ANALYSE_OBJ) $(call c_objs,build/obj/analyse,src/main_analyse.c)
+	$(CC) $(ANALYSE_CFLAGS) $^ -o $@ $(LDFLAGS)
+analyse: build/cnitro_analyse
 # src/winprob.c is NOT in CORE_SRC: it is a dev tool over the analyser's
 # pieces, and nothing on a phone or in a wasm module should carry its bytes.
-winprob:
-	@mkdir -p build
-	$(CC) $(ANALYSE_CFLAGS) $(CORE_SRC) src/winprob.c src/main_winprob.c -o build/cnitro_winprob $(LDFLAGS)
-analyse-test:
-	@mkdir -p build
-	$(CC) $(ANALYSE_CFLAGS) $(CORE_SRC) tests/analyse_test.c -o build/analyse_test $(LDFLAGS)
+build/cnitro_winprob: $(ANALYSE_OBJ) $(call c_objs,build/obj/analyse,src/winprob.c src/main_winprob.c)
+	$(CC) $(ANALYSE_CFLAGS) $^ -o $@ $(LDFLAGS)
+winprob: build/cnitro_winprob
+build/analyse_test: $(ANALYSE_OBJ) $(call c_objs,build/obj/analyse,tests/analyse_test.c)
+	$(CC) $(ANALYSE_CFLAGS) $^ -o $@ $(LDFLAGS)
+analyse-test: build/analyse_test
 	./build/analyse_test
 
 # ---------- iOS static library / xcframework (docs/IOS_APP_DESIGN.md §16.A1) --
@@ -352,20 +366,28 @@ IOS_SRC    := $(IOS_CORE_SRC) $(IOS_BOTS_SRC)
 IOS_CFLAGS := -O2 -Isrc -Iios/include -Iios/include-bots/CFoolishBots $(IOS_CAPS)
 
 # The device slice, both simulator slices, the lipo and the xcframework, once
-# per library: IOS_XCFRAMEWORK(name, sources, cflags, headers, min iOS, out).
-include ../../shared/tools/ios_xcframework.mk
-
-.PHONY: ios-lib ios-smoke
+# per library, and all of it rebuilt only when something it is made of changed
+# (shared/tools/ios_xcframework.mk) - which is what lets Xcode run `make
+# ios-lib` on every build (shared/scripts/xcode_kernel.sh).
+#
 # THE LIBRARY CARRIES THE LAYOUT IT WAS COMPILED FOR. sdk/swift/gen is generated
 # from these same headers under these same flags; a library built from different
 # ones would read right at every offset the two happen to share and wrong at the
-# rest. Stamped only here, because only the shipped slices are read by the Swift
-# bindings - ios-smoke, ios-goldens and ios-archives build the same sources with
-# the HOST compiler and need no libclang on the machine that runs them.
-ios-lib: IOS_CFLAGS += -DSG_LAYOUT_HASH=$$(cat build/layout/ios.hash)
-ios-lib: build/layout/ios.hash
-	$(call IOS_XCFRAMEWORK,foolish,$(IOS_CORE_SRC),$(IOS_CFLAGS),ios/include,$(IOS_MIN_VERSION),../ios/vendor/Foolish.xcframework)
-	$(call IOS_XCFRAMEWORK,foolishbots,$(IOS_BOTS_SRC),$(IOS_CFLAGS),ios/include-bots,$(IOS_MIN_VERSION),../ios/vendor/FoolishBots.xcframework)
+# rest. Stamped only into the shipped slices (ios_xcframework.mk adds
+# -DSG_LAYOUT_HASH to them, not to IOS_CFLAGS), because only they are read by
+# the Swift bindings - ios-smoke, ios-goldens and ios-archives build the same
+# sources with the HOST compiler and need no libclang on the machine that runs
+# them. The layout rule itself (build/layout/ios.hash, and kernel.ios.swift
+# beside it) is that file's too; the notes on it are under "Layout hash" below.
+IOS_SG_SPEC      := ../tools/structgen/specs/ios_layout.args
+IOS_KERNEL_SWIFT := ../sdk/swift/gen/kernel.ios.swift
+include ../../shared/tools/gen_tools.mk
+include ../../shared/tools/ios_xcframework.mk
+$(eval $(call IOS_XCFRAMEWORK,foolish,$(IOS_CORE_SRC),ios/include,../ios/vendor/Foolish.xcframework))
+$(eval $(call IOS_XCFRAMEWORK,foolishbots,$(IOS_BOTS_SRC),ios/include-bots,../ios/vendor/FoolishBots.xcframework))
+
+.PHONY: ios-lib ios-smoke
+ios-lib: $(IOS_XCFRAMEWORKS)
 	@./ios/archive_check.sh build/ios/device/libfoolish.a build/ios/device/libfoolishbots.a
 
 # The two shipped iOS libraries, built and checked WITHOUT a Mac.
@@ -378,12 +400,13 @@ ios-lib: build/layout/ios.hash
 # (1) is the one that keeps octogen out of the iMessage bundle. (2) is what
 # would break silently if the split were done carelessly.
 #
-# THE OBJECT DIRECTORIES ARE EMPTIED FIRST, here and in IOS_XCF_SLICE, because
-# both archives are made by globbing *.o: a source that MOVES from one list to
-# the other leaves its old object behind in the directory it left, the glob
-# picks it up, and the two archives then define the same symbols twice. Moving
-# client_table.c into the core list is exactly that, and "ld: 16 duplicate
-# symbols" is what it says when nothing sweeps.
+# THE ARCHIVES ARE MADE FROM NAMED OBJECTS, here and in ios_xcframework.mk, and
+# never from a glob of *.o: a source that MOVES from one list to the other
+# leaves its old object behind, a glob picks it up, and the two archives then
+# define the same symbols twice. Moving client_table.c into the core list was
+# exactly that, and "ld: 16 duplicate symbols" is what it said. (The
+# directories used to be emptied first for the same reason; a list does not
+# need sweeping.)
 # `ar` on a Mac is not necessarily Apple's: a homebrew binutils on PATH writes a
 # GNU-format archive that ld(1) refuses ("archive member '/' not a mach-o
 # file"). Apple's libtool writes what its linker reads, and is what ios-lib
@@ -391,32 +414,36 @@ ios-lib: build/layout/ios.hash
 IOS_ARCHIVE := $(if $(filter Darwin,$(shell uname -s)),libtool -static -o,ar rcs)
 
 .PHONY: ios-archives
-ios-archives:
-	@rm -rf build/ios-a/core build/ios-a/bots
-	@mkdir -p build/ios-a/core build/ios-a/bots
-	@for s in $(IOS_CORE_SRC); do \
-	  $(CC) $(IOS_CFLAGS) -c $$s -o build/ios-a/core/$$(basename $$s .c).o || exit 1; done
-	@for s in $(IOS_BOTS_SRC); do \
-	  $(CC) $(IOS_CFLAGS) -c $$s -o build/ios-a/bots/$$(basename $$s .c).o || exit 1; done
-	@$(IOS_ARCHIVE) build/ios-a/libfoolish.a     build/ios-a/core/*.o
-	@$(IOS_ARCHIVE) build/ios-a/libfoolishbots.a build/ios-a/bots/*.o
+IOSHOST_CORE_OBJ = $(call c_objs,build/obj/ioshost,$(IOS_CORE_SRC))
+IOSHOST_BOTS_OBJ = $(call c_objs,build/obj/ioshost,$(IOS_BOTS_SRC))
+ios-archives: $(IOSHOST_CORE_OBJ) $(IOSHOST_BOTS_OBJ) $(call c_objs,build/obj/ioshost,ios/one_game_check.c)
+	@mkdir -p build/ios-a
+	@rm -f build/ios-a/libfoolish.a build/ios-a/libfoolishbots.a
+	@$(IOS_ARCHIVE) build/ios-a/libfoolish.a     $(IOSHOST_CORE_OBJ)
+	@$(IOS_ARCHIVE) build/ios-a/libfoolishbots.a $(IOSHOST_BOTS_OBJ)
 	@printf 'core %s B   bots %s B\n' \
 	  $$(wc -c < build/ios-a/libfoolish.a) $$(wc -c < build/ios-a/libfoolishbots.a)
 	./ios/archive_check.sh build/ios-a/libfoolish.a build/ios-a/libfoolishbots.a
-	$(CC) $(IOS_CFLAGS) ios/one_game_check.c \
+	$(CC) $(IOS_CFLAGS) $(call c_objs,build/obj/ioshost,ios/one_game_check.c) \
 	  build/ios-a/libfoolishbots.a build/ios-a/libfoolish.a -lm -o build/ios-a/one_game
 	./build/ios-a/one_game
 
-# Portable bridge smoke test (Linux/CI-friendly). Compiles the bridge + core
-# fresh at the iOS caps (self-consistent struct layout — never mix cap sets)
+# Portable bridge smoke test (Linux/CI-friendly). Links the bridge + core
+# compiled at the iOS caps (build/obj/ioshost: a self-consistent struct layout,
+# and its own variant so it can never mix cap sets with CORE_OBJ)
 # and drives a full 4-player game to a fool through the Swift-facing entry
 # points. Fast (< 1s). This is the M-A keystone check runnable without a Mac.
-ios-smoke:
-	@mkdir -p build/ios-split
-	@for s in $(IOS_BRIDGE_SRC); do \
-	  $(CC) $(IOS_CFLAGS) -c $$s -o build/ios-split/$$(basename $$s .c).o || exit 1; done
-	./ios/split_check.sh build/ios-split/*.o
-	$(CC) $(IOS_CFLAGS) ios/ios_api_smoke.c $(IOS_BRIDGE_SRC) ios/ios_bots_api.c $(CORE_SRC) -lm -o build/ios_smoke
+# Every host-side bridge program is the same objects and one file of its own.
+IOSHOST_OBJ = $(call c_objs,build/obj/ioshost,$(IOS_BRIDGE_SRC) ios/ios_bots_api.c $(CORE_SRC))
+define IOSHOST_PROG
+build/$(1): $$(call c_objs,build/obj/ioshost,$(2)) $$(IOSHOST_OBJ)
+	$$(CC) $$(IOS_CFLAGS) $$^ -lm -o $$@
+endef
+ioshost_prog = $(eval $(call IOSHOST_PROG,$(1),$(2)))
+
+$(call ioshost_prog,ios_smoke,ios/ios_api_smoke.c)
+ios-smoke: build/ios_smoke
+	./ios/split_check.sh $(call c_objs,build/obj/ioshost,$(IOS_BRIDGE_SRC))
 	./build/ios_smoke
 
 # PART OF `difftests`, deliberately. Left out of it, this target rotted twice
@@ -434,9 +461,8 @@ ios-smoke:
 # Runnable without a Mac; the file header lists the Swift functions it ports
 # line for line — keep them in step.
 .PHONY: msg-flow-sim
-msg-flow-sim:
-	@mkdir -p build
-	$(CC) $(IOS_CFLAGS) tests/msg_flow_sim.c $(IOS_BRIDGE_SRC) ios/ios_bots_api.c $(CORE_SRC) -lm -o build/msg_flow_sim
+$(call ioshost_prog,msg_flow_sim,tests/msg_flow_sim.c)
+msg-flow-sim: build/msg_flow_sim
 	./build/msg_flow_sim 300 9 0
 	./build/msg_flow_sim 300 8 1
 	./build/msg_flow_sim 300 4 1
@@ -459,15 +485,15 @@ msg-flow-sim:
 #                         writes for a fixed set of boards, masked cells
 #                         included, PACKED (see ios/ios_table_goldens.c).
 .PHONY: ios-goldens
-ios-goldens:
-	@mkdir -p build ../ios/Fixtures
-	$(CC) $(IOS_CFLAGS) ios/ios_goldens.c $(IOS_BRIDGE_SRC) ios/ios_bots_api.c $(CORE_SRC) -lm -o build/ios_goldens
+$(call ioshost_prog,ios_goldens,ios/ios_goldens.c)
+$(call ioshost_prog,ios_action_goldens,ios/ios_action_goldens.c)
+$(call ioshost_prog,ios_table_goldens,ios/ios_table_goldens.c)
+ios-goldens: build/ios_goldens build/ios_action_goldens build/ios_table_goldens
+	@mkdir -p ../ios/Fixtures
 	./build/ios_goldens > ../ios/Fixtures/goldens.json
 	@echo "wrote ../ios/Fixtures/goldens.json"
-	$(CC) $(IOS_CFLAGS) ios/ios_action_goldens.c $(IOS_BRIDGE_SRC) ios/ios_bots_api.c $(CORE_SRC) -lm -o build/ios_action_goldens
 	./build/ios_action_goldens > ../ios/Fixtures/action_goldens.bin
 	@echo "wrote ../ios/Fixtures/action_goldens.bin"
-	$(CC) $(IOS_CFLAGS) ios/ios_table_goldens.c $(IOS_BRIDGE_SRC) ios/ios_bots_api.c $(CORE_SRC) -lm -o build/ios_table_goldens
 	./build/ios_table_goldens > ../ios/Fixtures/table_goldens.bin
 	@echo "wrote ../ios/Fixtures/table_goldens.bin"
 
@@ -477,12 +503,12 @@ ios-goldens:
 # turns on the (otherwise compiled-out) replay coder peak counters.
 # `make l1-measure GAMES=1500` runs the sweep across seeds.
 GAMES ?= 1500
-build/l1_measure: tests/l1_measure.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h) src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/view.c src/random_strategy.c src/handwritten_strategy.c
-	@mkdir -p build
-	$(CC) -O2 -Isrc -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_LOGS=2048 \
-	  -DMAX_LEGAL_MOVES=16384 -DMAX_MOVE_CARDS=52 -DREPLAY_STATS \
-	  src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/view.c \
-	  src/random_strategy.c src/handwritten_strategy.c tests/l1_measure.c -o $@ -lm
+L1_CFLAGS := -O2 -Isrc -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_LOGS=2048 \
+             -DMAX_LEGAL_MOVES=16384 -DMAX_MOVE_CARDS=52 -DREPLAY_STATS
+L1_SRC    := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/view.c \
+             src/random_strategy.c src/handwritten_strategy.c tests/l1_measure.c
+build/l1_measure: $(call c_objs,build/obj/l1,$(L1_SRC))
+	$(CC) $(L1_CFLAGS) $^ -o $@ -lm
 .PHONY: l1-measure
 l1-measure: build/l1_measure
 	./build/l1_measure $(GAMES) 1 && ./build/l1_measure $(GAMES) 99991
@@ -738,19 +764,21 @@ WASM_FLAGS := --target=wasm32 $(WASM_OPT) -nostdlib -ffreestanding -mbulk-memory
 # to a wrong value at only ~1e-5/game, an order of magnitude below octogen's ~4e-4
 # inherent floor). Net solver table: 128 KiB (TT13) -> 64 KiB (TT12+2WAY) -> 32 KiB.
 
-# THE BLANKET HEADER DEPENDENCY every wasm object rule below carries, named
-# once instead of spelled out at each of them. Same rule as the native
-# build/%.o objects: a struct-layout change in ANY header must rebuild every
-# object, or one module links two layouts.
-#
-# wasm/include is in it and was NOT in the copies this replaces. That directory
-# is the freestanding libc shim set (-isystem wasm/include, see WASM_FLAGS):
-# string.h there declares the memcpy/memset every translation unit calls, and
-# an edit to it rebuilt nothing. The gap was harmless while only two object
-# directories had rules; the oracle rules below would have widened it to four,
-# so it is closed here rather than copied twice more.
-WASM_HDRS := $(wildcard src/*.h) $(wildcard $(SHARED)/*.h) $(wildcard wasm/*.h) \
-             $(wildcard wasm/include/*.h) $(wildcard $(SHARED)/wasm/include/*.h)
+# WHAT A WASM OBJECT DEPENDS ON is what its compile opened (-MD, c_rules.mk).
+# There was a blanket here instead (WASM_HDRS: every object on every header in
+# five directories), and a hole in the copies before it that is worth keeping
+# the note of: wasm/include, the freestanding libc shim set (-isystem
+# wasm/include, see WASM_FLAGS), was in none of them. string.h there declares
+# the memcpy/memset every translation unit calls, and an edit to it rebuilt
+# nothing. That is why the compiler is asked with -MD and not -MMD, which
+# leaves out exactly the headers found through -isystem.
+
+# $(call wasm_sorted,<sources>): the sources in the order their objects had on
+# a link line when the objects were build/<dir>/<basename>.o and the list was
+# $(sort)ed - by basename. Object order decides function order in a module, so
+# the modules that were linked sorted stay linked in exactly that order now
+# that an object keeps its source's directory.
+wasm_sorted = $(foreach o,$(sort $(notdir $(1:.c=.o))),$(filter %/$(o:.o=.c),$(1)))
 
 # Explicit export allow-list — only the memory (above) + wasm_* API the TS
 # bridge actually calls (engine.ts / bots.ts). This REPLACES -Wl,--export-all,
@@ -814,20 +842,25 @@ WASM_API_EXPORTS := \
 # landing in the second of the last build rebuilds nothing, and a header whose
 # mtime went BACKWARDS (a checkout, a copy) never does. For a layout change that
 # means objects compiled against two different Game structs linked into one
-# module. So the wasm phony targets settle by CONTENT first: every object
-# directory records the layout hash its objects were compiled for
-# (<objdir>/.layout), and when that differs from the current hash (sg_settle)
-# the directory and the module are deleted before a sub-make builds them from
-# clean. Deleting is the only reliable lever: make 3.81 does not even relink a
-# target whose prerequisite was recreated inside the same second. The file
-# targets (build/bots.wasm, used directly by tools/wasm_anatomy) keep the plain
-# mtime rules, with wasm_api.o depending on the hash file.
+# module. So a layout change is settled by CONTENT: each wasm object directory
+# is a variant (shared/tools/c_rules.mk) whose flag stamp carries the CONTENTS
+# of its build/layout/<build>.hash. A hash that differs is a different command
+# line for every object in the directory, whatever any timestamp says, and the
+# stamp is written a second after anything built before it, so the objects and
+# then the module are rebuilt even inside one second.
+#
+# THAT REPLACED sg_settle, which did the same job from outside: each phony
+# target compared the hash to a copy kept in the object directory and, when
+# they differed, deleted the directory and the module before a sub-make built
+# them from clean. It was a second mechanism beside the objects' own rules, it
+# only ran for the phony targets (build/bots.wasm asked for by name depended on
+# the hash file through wasm_api.o alone, by timestamp), and it needed the
+# sub-make so the deleting happened before make looked. One rule owns it now,
+# and it is the one that compiles the objects.
 # TWO DIRECTORIES, because the generator is shared and its configuration is not.
 # STRUCTGEN_DIR is the tool, built once for both products; SG_SPEC_DIR is this
 # product's description of its own structs and stays beside the product.
-STRUCTGEN_DIR  := ../../shared/tools/structgen
 SG_SPEC_DIR    := ../tools/structgen/specs
-STRUCTGEN      := $(STRUCTGEN_DIR)/build/structgen
 SG_GAME_SPEC   := $(SG_SPEC_DIR)/game_layout.args
 SG_GAME_ARGS    = $(shell grep -v '^[[:space:]]*\#' $(SG_GAME_SPEC))
 
@@ -843,10 +876,8 @@ SG_GAME_ARGS    = $(shell grep -v '^[[:space:]]*\#' $(SG_GAME_SPEC))
 # tools/structgen/Makefile lists its sources explicitly and is correct on its
 # own; this wildcard exists because THIS file reaches across into that directory
 # and must not hold a narrower idea of what structgen is made of than it does.
-$(STRUCTGEN): $(wildcard $(STRUCTGEN_DIR)/*.c) $(wildcard $(STRUCTGEN_DIR)/*.h) \
-              $(wildcard $(STRUCTGEN_DIR)/../sgcommon/*.c) $(wildcard $(STRUCTGEN_DIR)/../sgcommon/*.h) \
-              $(STRUCTGEN_DIR)/Makefile $(STRUCTGEN_DIR)/../llvm.mk
-	$(MAKE) -C $(STRUCTGEN_DIR) build/structgen
+# (That rule, with the wildcard, is shared/tools/gen_tools.mk's: every product
+# reaches across into that directory the same way.)
 
 # $(call sg_hash,...) IS NOT SAFE AGAINST A SECOND MAKE IN THE SAME TREE, and
 # that is worth knowing before it costs someone an afternoon. It writes its
@@ -876,12 +907,6 @@ sg_hash = @mkdir -p build/layout && \
   { cmp -s $@.new $@ || { echo "layout $(1): $$(cat $@ 2>/dev/null || echo none) -> $$(cat $@.new)"; mv $@.new $@; }; } && \
   rm -f $@.new $(if $(3),$(call sg_sync,$@.ts,$(sg_gen)/game_layout.$(3).ts) $(call sg_sync,$@.hash.ts,$(sg_gen)/layout_hash.$(3).ts))
 
-# $(call sg_settle,<build name>,<object dir>,<wasm file target>): run before the
-# sub-make that builds <wasm file target>, after build/layout/<build>.hash.
-sg_settle = @cmp -s $(2)/.layout build/layout/$(1).hash || { \
-  if [ -d $(2) ]; then echo "layout $(1): $(2) was compiled for $$(cat $(2)/.layout 2>/dev/null || echo an unrecorded layout), not $$(cat build/layout/$(1).hash) - rebuilding $(3) from clean"; fi; \
-  rm -rf $(2) $(3) && mkdir -p $(2) && cp build/layout/$(1).hash $(2)/.layout; }
-
 # The iOS layout, which is its own: its caps are not the wasm caps and its
 # target is not wasm32 (a pointer alone is 4 bytes there and 8 here). The hash
 # is of the structs the Swift bindings read (tools/structgen/specs/
@@ -894,31 +919,18 @@ sg_settle = @cmp -s $(2)/.layout build/layout/$(1).hash || { \
 # targets - and if one ever stops agreeing, the library it is stamped into
 # would read right on two architectures and wrong on the third, which is
 # exactly the failure this file refuses to ship.
-IOS_LAYOUT_TRIPLE  := arm64-apple-ios$(IOS_MIN_VERSION)
-IOS_LAYOUT_TRIPLES := $(IOS_LAYOUT_TRIPLE) arm64-apple-ios$(IOS_MIN_VERSION)-simulator x86_64-apple-ios$(IOS_MIN_VERSION)-simulator
-SG_IOS_SPEC := $(SG_SPEC_DIR)/ios_layout.args
-SG_IOS_ARGS  = $(shell grep -v '^[[:space:]]*\#' $(SG_IOS_SPEC))
-build/layout/ios.hash: $(STRUCTGEN) $(SG_IOS_SPEC) FORCE
-	@mkdir -p build/layout && \
-	for t in $(IOS_LAYOUT_TRIPLES); do \
-	  $(STRUCTGEN) --cwd . $(SG_IOS_ARGS) --build 'ios=$(strip $(IOS_CFLAGS))' --target $$t --print-hash || exit 1; \
-	done | sort -u > $@.new && \
-	[ "$$(grep -c . $@.new)" = 1 ] || { echo "layout ios: the iOS slices do not share one layout:"; cat $@.new; exit 1; }
-	@{ cmp -s $@.new $@ || { echo "layout ios: $$(cat $@ 2>/dev/null || echo none) -> $$(cat $@.new)"; mv $@.new $@; }; }; rm -f $@.new
-# AND THE MODULE THE HASH IS FOR, beside it. `ios-lib` bakes this hash into the
-# library; sdk/swift/gen/kernel.ios.swift carries it as SG_LAYOUT_HASH and
-# FoolishKit compiles that file. Writing only the hash here meant the pair was
-# made by two different commands - `make ios-lib` and `tools/structgen/gen.sh` -
-# and running the first without the second gave a library and a module that
-# disagree, which sdk/swift/KernelLayout.swift turns into a fatalError at the
-# first EngineC(). The wasm builds have written their own generated module all
-# along ($(call sg_hash,…,bots)); this is the same rule for iOS.
 #
-# Same cmp-then-copy as sg_sync: the file's mtime moves only when its CONTENT
-# does, so a rebuild that changes no layout does not make Xcode recompile
-# FoolishKit.
-	@$(STRUCTGEN) --cwd . $(SG_IOS_ARGS) --build 'ios=$(strip $(IOS_CFLAGS))' --target $(IOS_LAYOUT_TRIPLE) \
-	  --swift $@.swift $(call sg_sync,$@.swift,$(sg_swift)/kernel.ios.swift)
+# The rule is shared/tools/ios_xcframework.mk's ($(IOS_LAYOUT_HASH), from
+# IOS_SG_SPEC and IOS_KERNEL_SWIFT in the iOS section above): the three slices'
+# hashes, which must be one, and beside it
+#
+# THE MODULE THE HASH IS FOR. `ios-lib` bakes this hash into the
+# library, and FoolishKit reads the kernel's structs through
+# sdk/swift/gen/kernel.ios.swift. Those two were once made by two different
+# commands - `make ios-lib` and `tools/structgen/gen.sh` - so nothing made
+# them agree. Written in the same rule as the hash, with cmp-then-copy: the
+# file's mtime moves only when its CONTENT does, so a rebuild that changes no
+# layout does not make Xcode recompile FoolishKit.
 
 build/layout/bots.hash: $(STRUCTGEN) FORCE
 	$(call sg_hash,bots,$(WASM_BOT_CFLAGS),bots)
@@ -931,8 +943,7 @@ build/layout/oracle.hash: $(STRUCTGEN) FORCE
 build/layout/oracle-mt.hash: $(STRUCTGEN) FORCE
 	$(call sg_hash,oracle_mt,$(WASM_ORACLE_MT_CFLAGS),)
 
-.PHONY: FORCE
-FORCE:
+# FORCE itself is shared/tools/gen_tools.mk's.
 
 # bots.wasm exports the rules API above PLUS the bot bridge (wasm_bots_api.c),
 # and PLUS the FMSG pair (wasm_msg_decode/seal). FMSG is bots-only by steer, not
@@ -1228,24 +1239,11 @@ WASM_MSG_FLAGS := $(filter-out -Wl$(comma)--initial-memory=196608 -Wl$(comma)--m
 WASM_MSG_CFLAGS  := $(filter-out -Wl%,$(WASM_MSG_FLAGS))
 WASM_MSG_LDFLAGS := --target=wasm32 -nostdlib $(filter -Wl%,$(WASM_MSG_FLAGS))
 WASM_MSG_POSTOPT ?= $(if $(strip $(WASM_POSTOPT)),$(WASM_POSTOPT),-Oz)
-WASM_MSG_OBJ := $(addprefix build/msgobj/,$(notdir $(WASM_MSG_SRC:.c=.o)))
-
-build/msgobj/%.o: src/%.c $(WASM_HDRS)
-	@mkdir -p build/msgobj
-	$(WASM_CC) $(WASM_MSG_CFLAGS) -c $< -o $@
-build/msgobj/%.o: wasm/%.c $(WASM_HDRS)
-	@mkdir -p build/msgobj
-	$(WASM_CC) $(WASM_MSG_CFLAGS) -c $< -o $@
-build/msgobj/wasm_api.o: wasm/wasm_api.c build/layout/msg.hash $(WASM_HDRS)
-	@mkdir -p build/msgobj
-	$(WASM_CC) $(WASM_MSG_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/msg.hash) -c $< -o $@
-
-build/msgobj/%.o: $(SHARED)/%.c $(WASM_HDRS)
-	@mkdir -p build/msgobj
-	$(WASM_CC) $(WASM_MSG_CFLAGS) -c $< -o $@
-build/msgobj/%.o: $(SHARED)/wasm/%.c $(WASM_HDRS)
-	@mkdir -p build/msgobj
-	$(WASM_CC) $(WASM_MSG_CFLAGS) -c $< -o $@
+# The objects: a variant (c_rules.mk). wasm_api.c alone is given the layout
+# hash, and the hash's contents are in the variant's stamp.
+WASM_MSG_OBJ_FLAGS = $(WASM_MSG_CFLAGS) $(if $(filter wasm/wasm_api,$*),-DSG_LAYOUT_HASH=$$(cat build/layout/msg.hash))
+$(eval $(call C_VARIANT,build/msgobj,WASM_CC,WASM_MSG_OBJ_FLAGS,build/layout/msg.hash))
+WASM_MSG_OBJ := $(call c_objs,build/msgobj,$(WASM_MSG_SRC))
 
 build/msg.wasm: $(WASM_MSG_OBJ) wasm/msg_exports_check.mjs Makefile
 	@mkdir -p build
@@ -1254,8 +1252,7 @@ build/msg.wasm: $(WASM_MSG_OBJ) wasm/msg_exports_check.mjs Makefile
 	node wasm/msg_exports_check.mjs $@
 
 .PHONY: wasm-msg wasm-msg-size
-wasm-msg: wasm-cc-check build/layout/msg.hash
-	$(call sg_settle,msg,build/msgobj,build/msg.wasm)
+wasm-msg: wasm-cc-check
 	@$(MAKE) --no-print-directory build/msg.wasm
 
 # The number this target exists to produce.
@@ -1404,29 +1401,15 @@ WASM_BOT_LDFLAGS := $(filter -Wl%,$(WASM_FLAGS)) -Wl,-z,stack-size=22528
 WASM_BOT_O3_SRC  := src/cordite_sim.c src/cordite_strategy.c \
                     src/octogen_strategy.c
 
-WASM_BOT_OBJ    := $(addprefix build/botobj/,$(notdir $(WASM_BOT_SRC:.c=.o)))
-WASM_BOT_O3_OBJ := $(addprefix build/botobj/,$(notdir $(WASM_BOT_O3_SRC:.c=.o)))
-
-# Default bot-object opt is -Oz; the MC-core objects override to -O3.
-build/botobj/%.o: WASM_BOT_FILE_OPT := -Oz
-$(WASM_BOT_O3_OBJ): WASM_BOT_FILE_OPT := -O3
-
-build/botobj/%.o: src/%.c $(WASM_HDRS)
-	@mkdir -p build/botobj
-	$(WASM_CC) $(WASM_BOT_CFLAGS) $(WASM_BOT_FILE_OPT) -c $< -o $@
-build/botobj/%.o: wasm/%.c $(WASM_HDRS)
-	@mkdir -p build/botobj
-	$(WASM_CC) $(WASM_BOT_CFLAGS) $(WASM_BOT_FILE_OPT) -c $< -o $@
-build/botobj/wasm_api.o: wasm/wasm_api.c build/layout/bots.hash $(WASM_HDRS)
-	@mkdir -p build/botobj
-	$(WASM_CC) $(WASM_BOT_CFLAGS) $(WASM_BOT_FILE_OPT) -DSG_LAYOUT_HASH=$$(cat build/layout/bots.hash) -c $< -o $@
-
-build/botobj/%.o: $(SHARED)/%.c $(WASM_HDRS)
-	@mkdir -p build/botobj
-	$(WASM_CC) $(WASM_BOT_CFLAGS) $(WASM_BOT_FILE_OPT) -c $< -o $@
-build/botobj/%.o: $(SHARED)/wasm/%.c $(WASM_HDRS)
-	@mkdir -p build/botobj
-	$(WASM_CC) $(WASM_BOT_CFLAGS) $(WASM_BOT_FILE_OPT) -c $< -o $@
+# The objects: a variant (c_rules.mk). Per-file opt is said by SOURCE ($* in a
+# compile is the source without its .c): -Oz for everything, -O3 for the
+# profiled MC core. wasm_api.c alone is given the layout hash, and the hash's
+# contents are in the variant's stamp, as is the -O3 list.
+WASM_BOT_O3_STEMS  := $(WASM_BOT_O3_SRC:.c=)
+WASM_BOT_OBJ_FLAGS  = $(WASM_BOT_CFLAGS) $(if $(filter $(WASM_BOT_O3_STEMS),$*),-O3,-Oz) \
+                      $(if $(filter wasm/wasm_api,$*),-DSG_LAYOUT_HASH=$$(cat build/layout/bots.hash))
+$(eval $(call C_VARIANT,build/botobj,WASM_CC,WASM_BOT_OBJ_FLAGS,build/layout/bots.hash,O3: $(WASM_BOT_O3_SRC)))
+WASM_BOT_OBJ    := $(call c_objs,build/botobj,$(WASM_BOT_SRC))
 
 WASM_BOTS_SHIPPED_EXPORTS = $(filter-out $(WASM_BOTS_UNSHIPPED_API),$(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS)) \
                             $(WASM_TABLE_EXPORTS) $(WASM_CLIENT_EXPORTS) $(WASM_REPLAY_WEB_EXPORTS)
@@ -1498,8 +1481,7 @@ build/named/bots.named.wasm: $(WASM_BOT_OBJ) Makefile
 # change invisible to every TS test that loaded the stale one. It also put 80 KB
 # of single-line base64, rewritten on every kernel build, into git. The price is
 # that the browser's door is async (ensureBotsAsync); that is the cheaper half.
-wasm-bots: wasm-cc-check build/layout/bots.hash
-	$(call sg_settle,bots,build/botobj,build/bots.wasm)
+wasm-bots: wasm-cc-check
 	@$(MAKE) --no-print-directory build/bots.wasm
 	gzip -9 -n -c build/bots.wasm > ../sdk/ts/wasm/bots.wasm.gz
 
@@ -1589,8 +1571,7 @@ build/web.wasm: $(WASM_BOT_OBJ) Makefile
 	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),$@)
 
 .PHONY: wasm-web wasm-web-size
-wasm-web: wasm-cc-check build/layout/bots.hash
-	$(call sg_settle,bots,build/botobj,build/web.wasm)
+wasm-web: wasm-cc-check
 	@$(MAKE) --no-print-directory build/web.wasm
 	gzip -9 -n -c build/web.wasm > ../sdk/ts/wasm/web.wasm.gz
 
@@ -1624,8 +1605,7 @@ build/bots_test.wasm: $(WASM_BOT_OBJ) Makefile
 	mv $@.tmp $@
 
 .PHONY: wasm-bots-test
-wasm-bots-test: wasm-cc-check build/layout/bots.hash
-	$(call sg_settle,bots,build/botobj,build/bots_test.wasm)
+wasm-bots-test: wasm-cc-check
 	@$(MAKE) --no-print-directory build/bots_test.wasm
 	@bash ../scripts/wasm_stamp.sh --hash > build/bots_test.stamp.tmp && mv build/bots_test.stamp.tmp build/bots_test.stamp
 
@@ -1657,8 +1637,9 @@ WASM_ORACLE_EXPORTS := $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) \
 # for this change.
 #
 # NOTHING IS CACHED AND NOTHING IS ALLOWED TO GO STALE by this: make compares
-# each object against the source and the headers ($(WASM_HDRS)) it was built
-# from, which is a stronger contract than "recompile everything", not a weaker
+# each object against the source, the headers it included and the command line
+# it was built with (c_rules.mk), which is a stronger contract than "recompile
+# everything", not a weaker
 # one - the loop had no idea what an object was built from either, it just
 # overwrote it.
 #
@@ -1684,34 +1665,21 @@ WASM_ORACLE_EXPORTS := $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) \
 #
 # And the EXPLICIT LIST is what the glob could not be: a source removed from
 # WASM_BOT_SRC leaves its object behind in the directory, and a glob would keep
-# linking it. Same failure the iOS archive rules sweep for with `rm -rf`.
-WASM_ORACLE_OBJ    := $(sort $(addprefix build/botoracle/,$(notdir $(WASM_BOT_SRC:.c=.o))))
-WASM_ORACLE_O3_OBJ := $(addprefix build/botoracle/,$(notdir $(WASM_BOT_O3_SRC:.c=.o)))
-
-# Per-file opt, exactly as the loop chose it: -Oz for everything, -O3 for the
-# profiled MC core (WASM_BOT_O3_SRC). Target-specific beats pattern-specific.
-build/botoracle/%.o: WASM_ORACLE_FILE_OPT := -Oz
-$(WASM_ORACLE_O3_OBJ): WASM_ORACLE_FILE_OPT := -O3
-
-# EVERY object here bakes -DSG_LAYOUT_HASH, because the loop passed it to every
-# compile - so every object names build/layout/oracle.hash as a prerequisite.
-# (bots gives the define to wasm_api.o alone, which is why only that object
-# depends on the hash there.) The hash file's mtime moves only when its CONTENT
-# does, so this costs nothing on a warm build. sg_settle below is the other half
-# of it, for the same-second and mtime-went-backwards traps the layout notes
-# describe.
-build/botoracle/%.o: src/%.c build/layout/oracle.hash $(WASM_HDRS)
-	@mkdir -p build/botoracle
-	$(WASM_CC) $(WASM_ORACLE_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle.hash) $(WASM_ORACLE_FILE_OPT) -c $< -o $@
-build/botoracle/%.o: wasm/%.c build/layout/oracle.hash $(WASM_HDRS)
-	@mkdir -p build/botoracle
-	$(WASM_CC) $(WASM_ORACLE_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle.hash) $(WASM_ORACLE_FILE_OPT) -c $< -o $@
-build/botoracle/%.o: $(SHARED)/%.c build/layout/oracle.hash $(WASM_HDRS)
-	@mkdir -p build/botoracle
-	$(WASM_CC) $(WASM_ORACLE_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle.hash) $(WASM_ORACLE_FILE_OPT) -c $< -o $@
-build/botoracle/%.o: $(SHARED)/wasm/%.c build/layout/oracle.hash $(WASM_HDRS)
-	@mkdir -p build/botoracle
-	$(WASM_CC) $(WASM_ORACLE_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle.hash) $(WASM_ORACLE_FILE_OPT) -c $< -o $@
+# linking it. Same failure the iOS archives name their objects to avoid.
+#
+# BY BASENAME STILL (wasm_sorted), now that an object keeps its source's
+# directory: sorting the new paths would put every shared/ object first and
+# move the module's functions.
+# The objects: a variant (c_rules.mk). Per-file opt exactly as the loop chose
+# it, said by source: -Oz for everything, -O3 for the profiled MC core
+# (WASM_BOT_O3_SRC). EVERY object here bakes -DSG_LAYOUT_HASH, because the loop
+# passed it to every compile (bots gives the define to wasm_api.c alone); the
+# hash's contents are in the variant's stamp, which is what rebuilds all of
+# them when the layout moves.
+WASM_ORACLE_OBJ_FLAGS = $(WASM_ORACLE_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle.hash) \
+                        $(if $(filter $(WASM_BOT_O3_STEMS),$*),-O3,-Oz)
+$(eval $(call C_VARIANT,build/botoracle,WASM_CC,WASM_ORACLE_OBJ_FLAGS,build/layout/oracle.hash,O3: $(WASM_BOT_O3_SRC)))
+WASM_ORACLE_OBJ    := $(call c_objs,build/botoracle,$(call wasm_sorted,$(WASM_BOT_SRC)))
 
 # Makefile is a prerequisite for the reason build/bots.wasm names it: the export
 # list IS this file, and the link had been .PHONY (so always run) until now.
@@ -1722,8 +1690,7 @@ build/oracle.wasm: $(WASM_ORACLE_OBJ) Makefile
 	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),$@)
 
 .PHONY: wasm-oracle
-wasm-oracle: wasm-cc-check build/layout/oracle.hash
-	$(call sg_settle,oracle,build/botoracle,build/oracle.wasm)
+wasm-oracle: wasm-cc-check
 	@$(MAKE) --no-print-directory build/oracle.wasm
 	gzip -9 -n -c build/oracle.wasm > ../public/oracle.wasm.gz
 	@echo "built ../public/oracle.wasm.gz ($$(wc -c < ../public/oracle.wasm.gz) B gz, $$(wc -c < build/oracle.wasm) B raw)"
@@ -1771,24 +1738,10 @@ WASM_ORACLE_MT_EXPORTS := $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) \
 # the other two. Mixing here would be the worst of the three to debug: an object
 # compiled with -D_Thread_local= stripped into the threaded module is a data
 # race, not a link error.
-WASM_ORACLE_MT_OBJ    := $(sort $(addprefix build/botoraclemt/,$(notdir $(WASM_ORACLE_MT_SRC:.c=.o))))
-WASM_ORACLE_MT_O3_OBJ := $(addprefix build/botoraclemt/,$(notdir $(WASM_BOT_O3_SRC:.c=.o)))
-
-build/botoraclemt/%.o: WASM_ORACLE_MT_FILE_OPT := -Oz
-$(WASM_ORACLE_MT_O3_OBJ): WASM_ORACLE_MT_FILE_OPT := -O3
-
-build/botoraclemt/%.o: src/%.c build/layout/oracle-mt.hash $(WASM_HDRS)
-	@mkdir -p build/botoraclemt
-	$(WASM_CC) $(WASM_ORACLE_MT_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle-mt.hash) $(WASM_ORACLE_MT_FILE_OPT) -c $< -o $@
-build/botoraclemt/%.o: wasm/%.c build/layout/oracle-mt.hash $(WASM_HDRS)
-	@mkdir -p build/botoraclemt
-	$(WASM_CC) $(WASM_ORACLE_MT_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle-mt.hash) $(WASM_ORACLE_MT_FILE_OPT) -c $< -o $@
-build/botoraclemt/%.o: $(SHARED)/%.c build/layout/oracle-mt.hash $(WASM_HDRS)
-	@mkdir -p build/botoraclemt
-	$(WASM_CC) $(WASM_ORACLE_MT_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle-mt.hash) $(WASM_ORACLE_MT_FILE_OPT) -c $< -o $@
-build/botoraclemt/%.o: $(SHARED)/wasm/%.c build/layout/oracle-mt.hash $(WASM_HDRS)
-	@mkdir -p build/botoraclemt
-	$(WASM_CC) $(WASM_ORACLE_MT_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle-mt.hash) $(WASM_ORACLE_MT_FILE_OPT) -c $< -o $@
+WASM_ORACLE_MT_OBJ_FLAGS = $(WASM_ORACLE_MT_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle-mt.hash) \
+                           $(if $(filter $(WASM_BOT_O3_STEMS),$*),-O3,-Oz)
+$(eval $(call C_VARIANT,build/botoraclemt,WASM_CC,WASM_ORACLE_MT_OBJ_FLAGS,build/layout/oracle-mt.hash,O3: $(WASM_BOT_O3_SRC)))
+WASM_ORACLE_MT_OBJ    := $(call c_objs,build/botoraclemt,$(call wasm_sorted,$(WASM_ORACLE_MT_SRC)))
 
 # wasm-opt runs with --enable-threads here and writes the module in place, which
 # is not $(call wasm_postopt,...) - keep the line as the loop had it.
@@ -1799,8 +1752,7 @@ build/oracle-mt.wasm: $(WASM_ORACLE_MT_OBJ) Makefile
 	$(WASM_OPT_BIN) $(WASM_OPT_FEATURES) --enable-threads $(WASM_BOTS_POSTOPT) $@ -o $@
 
 .PHONY: wasm-oracle-mt
-wasm-oracle-mt: wasm-cc-check build/layout/oracle-mt.hash
-	$(call sg_settle,oracle-mt,build/botoraclemt,build/oracle-mt.wasm)
+wasm-oracle-mt: wasm-cc-check
 	@$(MAKE) --no-print-directory build/oracle-mt.wasm
 	gzip -9 -n -c build/oracle-mt.wasm > ../public/oracle-mt.wasm.gz
 	@echo "built ../public/oracle-mt.wasm.gz ($$(wc -c < ../public/oracle-mt.wasm.gz) B gz, $$(wc -c < build/oracle-mt.wasm) B raw)"
