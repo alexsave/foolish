@@ -317,11 +317,21 @@ export const KeyboardPlayMode = () => {
     const [geom, setGeom] = useState<{ sel: Rect | null; arrowTo: Rect | { point: { x: number; y: number } } | null; pass: boolean }>(
         { sel: null, arrowTo: null, pass: false },
     );
-    const geomSig = useRef('');
+    // What the overlay last drew, compared field by field each frame: a card
+    // sliding under the selection moves the rect, and only a moved rect re-renders.
+    type ArrowTo = Rect | { point: { x: number; y: number } } | null;
+    const drawn = useRef<{ sel: Rect | null; arrowTo: ArrowTo; pass: boolean } | null>(null);
+    const sameRect = (a: Rect | null, b: Rect | null): boolean =>
+        a === b || (!!a && !!b && a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h);
+    const sameArrow = (a: ArrowTo, b: ArrowTo): boolean => {
+        if (!a || !b) return a === b;
+        if ('point' in a) return 'point' in b && a.point.x === b.point.x && a.point.y === b.point.y;
+        return !('point' in b) && sameRect(a, b);
+    };
 
     useEffect(() => {
         if (selIdx == null && !target) {
-            if (geomSig.current !== '') { geomSig.current = ''; setGeom({ sel: null, arrowTo: null, pass: false }); }
+            if (drawn.current) { drawn.current = null; setGeom({ sel: null, arrowTo: null, pass: false }); }
             return;
         }
         let raf = 0;
@@ -342,8 +352,11 @@ export const KeyboardPlayMode = () => {
                     arrowTo = { point: passPoint() };
                 }
             }
-            const sig = JSON.stringify({ selRect, arrowTo, pass });
-            if (sig !== geomSig.current) { geomSig.current = sig; setGeom({ sel: selRect, arrowTo, pass }); }
+            const was = drawn.current;
+            if (!was || was.pass !== pass || !sameRect(was.sel, selRect) || !sameArrow(was.arrowTo, arrowTo)) {
+                drawn.current = { sel: selRect, arrowTo, pass };
+                setGeom({ sel: selRect, arrowTo, pass });
+            }
             raf = requestAnimationFrame(tick);
         };
         raf = requestAnimationFrame(tick);
