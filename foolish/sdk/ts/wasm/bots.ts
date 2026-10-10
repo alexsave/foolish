@@ -12,6 +12,7 @@ import { kernelModule, loadWasmGz, loadWasmGzAsync } from './wasm_asset.ts';
 import { LAYOUT_HASH as BOTS_LAYOUT_HASH } from '../gen/layout_hash.bots.ts';
 import { assertLayoutHash } from './layout_hash.ts';
 import { memOf as viewMemOf, readTableView, readReplaySummary, readReplayError, readReplayFrameIndex, TableView_Snap, ReplaySummary_Snap, ReplayError_Snap } from '../gen/view_layout.bots.ts';
+import * as V from '../gen/view_layout.bots.ts';
 import { memOf as msgMemOf, readMsgHeader, writeMsgHeader, readReplayExtras, writeReplayExtras,
          MSG_MAX_NAME, REPLAY_EXTRAS_FLAG_NAMES, REPLAY_EXTRAS_FLAG_TIMES, REPLAY_LINK_STYLE_URL, REPLAY_LINK_STYLE_QR,
          type MsgHeader_Snap, type ReplayExtras_Snap } from '../gen/msg_layout.bots.ts';
@@ -168,10 +169,20 @@ interface BotsExports extends EngineExports {
     // Animation core (c/src/anim_plan.h) — the platform-independent animation
     // policy the web pure modules (src/state/*) delegate to. bots-only.
     wasm_anim_should_drop_stale(hasLast: number, last: number, hasIncoming: number, incoming: number): number;
-    wasm_anim_stale_optimistic(nOpt: number, nTable: number, nNamed: number): number;
+    // Four questions asked as values: the ask is written at its _ptr through
+    // its generated writer, the answer read at its own through its reader.
+    wasm_anim_stale_ask_ptr(): number;
+    wasm_anim_stale_release_ptr(): number;
+    wasm_anim_stale_optimistic(): number;
+    wasm_anim_reversal_ask_ptr(): number;
+    wasm_anim_reversal_plan_ptr(): number;
+    wasm_anim_hand_ask_ptr(): number;
+    wasm_anim_hand_laid_ptr(): number;
+    wasm_anim_hand_laid_out(): number;
+    wasm_anim_finish_ask_ptr(): number;
+    wasm_anim_finish_ptr(): number;
+    wasm_anim_finish_rows(): number;
     wasm_anim_event_key(type: number, suit: number, value: number, from: number, to: number, seat: number): number;
-    wasm_anim_finish_rows(nElim: number, gameOver: number, nPlayers: number, mySeat: number): number;
-    wasm_anim_hand_laid_out(nCards: number, nOrder: number, deferredLo: number, deferredHi: number): number;
     wasm_anim_set_transport(transport: number): number;
     // The plan, the frame and the beats: the structs are read where they lie.
     wasm_anim_plan_ptr(): number;
@@ -979,22 +990,11 @@ export function animShouldDropStale(last: number | null, incoming: number | null
  *  into `optCards` to release. */
 export function animStaleOptimisticOnTable(optCards: Card[], tableCards: Card[], namedCards: Card[]): number[] {
     const ex = bots();
-    if (optCards.length > 128 || tableCards.length > 160 || namedCards.length > 160) {
-        throw new Error('anim: card list exceeds ABI cap');
-    }
-    const buf = mem(ex);
-    const base = ex.wasm_io_ptr();
-    let p = base;
-    for (const c of optCards) buf[p++] = wireStateCard(c);
-    for (const c of tableCards) buf[p++] = wireStateCard(c);
-    for (const c of namedCards) buf[p++] = wireStateCard(c);
-    const n = ex.wasm_anim_stale_optimistic(optCards.length, tableCards.length, namedCards.length);
+    V.writeAnimStaleAsk(viewMemOf(ex.memory.buffer), ex.wasm_anim_stale_ask_ptr(),
+        { opt: optCards, table: tableCards, named: namedCards });
+    const n = ex.wasm_anim_stale_optimistic();
     if (n < 0) throw new Error(`anim_stale_optimistic error ${n}`);
-    const out = mem(ex);
-    const ob = ex.wasm_io_ptr();
-    const rel: number[] = [];
-    for (let i = 0; i < n; i++) rel.push(out[ob + i]);
-    return rel;
+    return [...V.readAnimStaleRelease(viewMemOf(ex.memory.buffer), ex.wasm_anim_stale_release_ptr()).release];
 }
 
 // ---- the role beat (anim_plan.h "the role beat") -----------------------------
@@ -1079,24 +1079,18 @@ export function animFinishRows(
     elimination: number[], gameOver: number, nPlayers: number, mySeat: number,
 ): AnimFinishRow[] {
     const ex = bots();
-    const buf = mem(ex);
-    const base = ex.wasm_io_ptr();
-    for (let i = 0; i < elimination.length; i++) buf[base + i] = elimination[i] & 0xff;
-    const n = ex.wasm_anim_finish_rows(elimination.length, gameOver, nPlayers, mySeat);
+    V.writeAnimFinishAsk(viewMemOf(ex.memory.buffer), ex.wasm_anim_finish_ask_ptr(),
+        { gameOver, nPlayers, mySeat, elimination });
+    const n = ex.wasm_anim_finish_rows();
     if (n < 0) throw new Error(`anim_finish_rows error ${n}`);
-    const out = mem(ex);
-    const ob = ex.wasm_io_ptr();
-    const rows: AnimFinishRow[] = [];
-    for (let i = 0; i < n; i++) {
-        rows.push({ place: out[ob + i * 3], seat: out[ob + i * 3 + 1], isYou: out[ob + i * 3 + 2] !== 0 });
-    }
-    return rows;
+    return V.readAnimFinish(viewMemOf(ex.memory.buffer), ex.wasm_anim_finish_ptr()).rows
+        .map((r) => ({ place: r.place, seat: r.seat, isYou: r.isYou !== 0 }));
 }
 
-// A slot holding a card the caller cannot NAME (anim_plan.h
-// ANIM_TABLE_UNKNOWN): a replay's face-down hand card. Not an empty cell, which
-// is ANIM_TABLE_NONE below.
-const ANIM_TABLE_UNKNOWN = 0xff;
+// A slot the caller cannot name crosses as the kernel's "no card" (card.h
+// CARD_NONE), spelled from its generated fields: anim_plan.h AnimHandAsk reads
+// it as a back on the way in and writes one on the way out.
+const NO_CARD: Card = { suit: V.CARD_NONE_SUIT, value: V.CARD_NONE_VALUE };
 
 /**
  * THE ORDER A HAND IS DRAWN IN, in C (anim_plan.h anim_hand_laid_out_masked).
@@ -1116,25 +1110,14 @@ const ANIM_TABLE_UNKNOWN = 0xff;
 export function animHandLaidOut(
     cards: readonly (Card | null)[], order: readonly (Card | null)[], deferred = 0n,
 ): (Card | null)[] {
-    if (cards.length > 36 || order.length > 36) throw new Error('anim: hand exceeds ABI cap');
     const ex = bots();
-    const buf = mem(ex);
-    const base = ex.wasm_io_ptr();
-    let p = base;
-    for (const c of cards) buf[p++] = c ? wireStateCard(c) : ANIM_TABLE_UNKNOWN;
-    for (const c of order) buf[p++] = c ? wireStateCard(c) : ANIM_TABLE_UNKNOWN;
-    const n = ex.wasm_anim_hand_laid_out(
-        cards.length, order.length,
-        Number(deferred & 0xffffffffn), Number((deferred >> 32n) & 0xffffffffn));
+    V.writeAnimHandAsk(viewMemOf(ex.memory.buffer), ex.wasm_anim_hand_ask_ptr(), {
+        deferred, cards: cards.map((c) => c ?? NO_CARD), order: order.map((c) => c ?? NO_CARD),
+    });
+    const n = ex.wasm_anim_hand_laid_out();
     if (n < 0) throw new Error(`anim_hand_laid_out error ${n}`);
-    const out = mem(ex);
-    const ob = ex.wasm_io_ptr();
-    const laid: (Card | null)[] = [];
-    for (let i = 0; i < n; i++) {
-        const b = out[ob + i];
-        laid.push(b === ANIM_TABLE_UNKNOWN ? null : cardFromWire(b));
-    }
-    return laid;
+    return V.readAnimHandLaid(viewMemOf(ex.memory.buffer), ex.wasm_anim_hand_laid_ptr()).cards
+        .map((c) => (c.suit === V.CARD_NONE_SUIT && c.value === V.CARD_NONE_VALUE ? null : c));
 }
 
 // legal.h/anim_plan.h spell "no card here" the same byte.
@@ -1370,25 +1353,13 @@ export function animReversalOrder(
     verdicts: readonly number[], groupSizes: readonly number[],
 ): number[][] {
     const ex = bots();
-    const buf = mem(ex);
-    const base = ex.wasm_io_ptr();
-    let p = base;
-    buf[p++] = verdicts.length & 0xff;
-    for (const v of verdicts) buf[p++] = v & 0xff;
-    buf[p++] = groupSizes.length & 0xff;
-    for (const g of groupSizes) buf[p++] = g & 0xff;
+    V.writeAnimReversalAsk(viewMemOf(ex.memory.buffer), ex.wasm_anim_reversal_ask_ptr(),
+        { verdicts, groupSizes });
     const n = ex.wasm_anim_reversal_order();
     if (n < 0) throw new Error(`anim_reversal_order error ${n}`);
-    const out = mem(ex);
-    const ob = ex.wasm_io_ptr();
-    const counts: number[] = [];
-    for (let i = 0; i < n; i++) counts.push(out[ob + i]);
+    const plan = V.readAnimConflictPlan(viewMemOf(ex.memory.buffer), ex.wasm_anim_reversal_plan_ptr());
     const steps: number[][] = [];
-    let at = ob + n;
-    for (const c of counts) {
-        const step: number[] = [];
-        for (let i = 0; i < c; i++) step.push(out[at++]);
-        steps.push(step);
-    }
+    let at = 0;
+    for (const c of plan.stepCount) steps.push(plan.order.slice(at, at += c));
     return steps;
 }

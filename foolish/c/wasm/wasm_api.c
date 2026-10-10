@@ -925,27 +925,17 @@ double wasm_anim_event_key(int type, int suit, int value, int from, int to, int 
     return (double)anim_event_key(type, card, from, to, seat);
 }
 
-// staleOptimisticKeysOnTable (optimisticAnimation.ts). g_io in:
-//   [0 .. n_opt)                    opt cards      (wire)
-//   [n_opt .. +n_table)             table cards    (wire)
-//   [n_opt+n_table .. +n_named)     named cards    (wire)
-// g_io out (overwrites): the release INDICES into opt (one byte each).
-// Returns the release count, or a negative ANIM_E*.
-int wasm_anim_stale_optimistic(int n_opt, int n_table, int n_named) {
-    if (n_opt < 0 || n_table < 0 || n_named < 0) return ANIM_EBADARG;
-    if (n_opt > ANIM_MAX_CARDS || n_table > ANIM_MAX_TABLE_INPUT || n_named > ANIM_MAX_TABLE_INPUT)
-        return ANIM_ECAP;
-    static Card opt[ANIM_MAX_CARDS], table[ANIM_MAX_TABLE_INPUT], named[ANIM_MAX_TABLE_INPUT];
-    int p = 0;
-    for (int i = 0; i < n_opt; i++)   opt[i]   = card_from_wire_pair(g_io[p++]);
-    for (int i = 0; i < n_table; i++) table[i] = card_from_wire_pair(g_io[p++]);
-    for (int i = 0; i < n_named; i++) named[i] = card_from_wire_pair(g_io[p++]);
-    static int rel[ANIM_MAX_CARDS];
-    int n = anim_stale_optimistic_on_table(opt, n_opt, table, n_table, named, n_named,
-                                           rel, ANIM_MAX_CARDS);
-    if (n < 0) return n;
-    for (int i = 0; i < n; i++) g_io[i] = (unsigned char)rel[i];
-    return n;
+// staleOptimisticKeysOnTable (optimisticAnimation.ts), asked as a value
+// (anim_plan.h AnimStaleAsk): the host writes the three card lists through the
+// generated writer and reads the release indices through the generated reader
+// (sdk/ts/gen/view_layout.bots.ts), so the layout of neither is written down
+// anywhere but the header. Returns the release count, or a negative ANIM_E*.
+static AnimStaleAsk     g_anim_stale_ask;
+static AnimStaleRelease g_anim_stale_release;
+AnimStaleAsk *wasm_anim_stale_ask_ptr(void)         { return &g_anim_stale_ask; }
+AnimStaleRelease *wasm_anim_stale_release_ptr(void) { return &g_anim_stale_release; }
+int wasm_anim_stale_optimistic(void) {
+    return anim_stale_optimistic_ask(&g_anim_stale_ask, &g_anim_stale_release);
 }
 
 // THE REVERSAL'S ORDER (anim_plan.h anim_reversal_order), for a host that
@@ -959,29 +949,16 @@ int wasm_anim_stale_optimistic(int n_opt, int n_table, int n_named) {
 // pickup, or first - and the kernel's rule is simply that the board reverses
 // what it must before it plays anything else, last group first.
 //
-// g_io in:
-//   u8 n_motions, n_motions x u8 verdict (ANIM_CONFLICT_*),
-//   u8 n_groups,  n_groups  x u8 group size
-// g_io out (overwrites): n_steps x u8 step size, then the motion indices, the
-// steps laid end to end. Returns the step count, or a negative ANIM_E*.
+// Asked as a value (anim_plan.h AnimReversalAsk) and answered in the
+// AnimConflictPlan itself, read where it lies with its counts: the generated
+// writer and reader are the only things that know either layout.
+// Returns the step count, or a negative ANIM_E*.
+static AnimReversalAsk  g_anim_reversal_ask;
+static AnimConflictPlan g_anim_reversal_plan;
+AnimReversalAsk *wasm_anim_reversal_ask_ptr(void)   { return &g_anim_reversal_ask; }
+AnimConflictPlan *wasm_anim_reversal_plan_ptr(void) { return &g_anim_reversal_plan; }
 int wasm_anim_reversal_order(void) {
-    int p = 0;
-    const int n_motions = g_io[p++];
-    if (n_motions > ANIM_MAX_CONFLICT_MOTIONS) return ANIM_ECAP;
-    static unsigned char verdicts[ANIM_MAX_CONFLICT_MOTIONS];
-    for (int i = 0; i < n_motions; i++) verdicts[i] = g_io[p++];
-    const int n_groups = g_io[p++];
-    if (n_groups > ANIM_MAX_CONFLICT_GROUPS) return ANIM_ECAP;
-    static int groups[ANIM_MAX_CONFLICT_GROUPS];
-    for (int g = 0; g < n_groups; g++) groups[g] = g_io[p++];
-
-    static AnimConflictPlan plan;
-    const int n = anim_reversal_order(verdicts, n_motions, groups, n_groups, &plan);
-    if (n < 0) return n;
-    int q = 0;
-    for (int i = 0; i < n; i++) g_io[q++] = (unsigned char)plan.step_count[i];
-    for (int i = 0; i < plan.n_order; i++) g_io[q++] = (unsigned char)plan.order[i];
-    return n;
+    return anim_reversal_order_ask(&g_anim_reversal_ask, &g_anim_reversal_plan);
 }
 
 // THE HAND'S ORDER (anim_plan.h anim_hand_laid_out_masked): the array a fan is
@@ -993,29 +970,19 @@ int wasm_anim_reversal_order(void) {
 // rearrangement could come out two different ways depending on which screen was
 // drawing it. One door, so they cannot.
 //
-// g_io in:
-//   [0 .. n_cards)              the hand, in kernel order: dense ids, or
-//                               ANIM_TABLE_UNKNOWN for a slot the caller
-//                               cannot name (a replay's face-down card)
-//   [n_cards .. +n_order)       the viewer's preferred order, same alphabet
-// g_io out (overwrites): the laid-out array, one byte per slot.
-// `deferred_lo`/`deferred_hi` are the deferred-card bitset's two halves, because
-// a wasm export's arguments are 32 bits wide and the set is 52.
-// Returns the count written, or a negative ANIM_E*.
-int wasm_anim_hand_laid_out(int n_cards, int n_order,
-                            unsigned deferred_lo, unsigned deferred_hi) {
-    if (n_cards < 0 || n_order < 0) return ANIM_EBADARG;
-    if (n_cards > MAX_HAND_SIZE || n_order > MAX_HAND_SIZE) return ANIM_ECAP;
-    unsigned char hand[MAX_HAND_SIZE], order[MAX_HAND_SIZE], out[MAX_HAND_SIZE];
-    for (int i = 0; i < n_cards; i++) hand[i] = g_io[i];
-    for (int i = 0; i < n_order; i++) order[i] = g_io[n_cards + i];
-    const uint64_t deferred = ((uint64_t)deferred_hi << 32) | (uint64_t)deferred_lo;
-    const int n = anim_hand_laid_out_masked(hand, n_cards, deferred,
-                                            n_order ? order : 0, n_order,
-                                            out, MAX_HAND_SIZE);
-    if (n < 0) return n;
-    for (int i = 0; i < n; i++) g_io[i] = out[i];
-    return n;
+// Asked as a value, in CARDS (anim_plan.h AnimHandAsk): the hand, the viewer's
+// order and the deferred set go in through the generated writer - the set as
+// the one 64-bit field it is, where this entry used to take it as two 32-bit
+// arguments - and the laid-out hand comes back through the generated reader.
+// The byte alphabet the rule speaks (a dense id, or ANIM_TABLE_UNKNOWN for a
+// back) is translated in anim_hand_laid_out_ask, so no host carries it.
+// Returns the count laid out, or a negative ANIM_E*.
+static AnimHandAsk  g_anim_hand_ask;
+static AnimHandLaid g_anim_hand_laid;
+AnimHandAsk *wasm_anim_hand_ask_ptr(void)   { return &g_anim_hand_ask; }
+AnimHandLaid *wasm_anim_hand_laid_ptr(void) { return &g_anim_hand_laid; }
+int wasm_anim_hand_laid_out(void) {
+    return anim_hand_laid_out_ask(&g_anim_hand_ask, &g_anim_hand_laid);
 }
 
 // THE TRANSPORT (anim_plan.h), said once by the host. Every wasm host is the
@@ -1187,28 +1154,17 @@ int wasm_anim_shown_ledger_allows(int claim, int sequencing) {
     return anim_shown_ledger_allows(claim, sequencing);
 }
 
-// THE FINISH ORDER (anim_plan.h anim_finish_rows), for the end screen. g_io in:
-//   [0 .. n_elim)  the elimination seats, first out first.
-// Scalars: game_over is the fool's seat (negative while the game runs),
-// n_players the seat count, my_seat the viewer (negative for a spectator).
-// g_io out (overwrites): n_rows x { u8 place, u8 seat, u8 is_you }.
-// Returns the row count, or a negative ANIM_E*.
-int wasm_anim_finish_rows(int n_elim, int game_over, int n_players, int my_seat) {
-    if (n_elim < 0 || n_elim > MAX_PLAYERS) return ANIM_EBADARG;
-    if (n_players < 0 || n_players > MAX_PLAYERS) return ANIM_EBADARG;
-    unsigned char elim[MAX_PLAYERS];
-    for (int i = 0; i < n_elim; i++) elim[i] = g_io[i];
-    AnimFinishRow rows[MAX_PLAYERS + 1];
-    int n = anim_finish_rows(elim, n_elim, game_over, n_players, my_seat,
-                             rows, MAX_PLAYERS + 1);
-    if (n < 0) return n;
-    int q = 0;
-    for (int i = 0; i < n; i++) {
-        g_io[q++] = (unsigned char)rows[i].place;
-        g_io[q++] = (unsigned char)rows[i].seat;
-        g_io[q++] = (unsigned char)rows[i].is_you;
-    }
-    return n;
+// THE FINISH ORDER (anim_plan.h anim_finish_rows), for the end screen, asked as
+// a value (AnimFinishAsk: the elimination seats first out first, the fool's
+// seat or a negative while the game runs, the seat count, and the viewer or a
+// negative for a spectator) and answered as one (AnimFinish), each through its
+// generated writer or reader. Returns the row count, or a negative ANIM_E*.
+static AnimFinishAsk g_anim_finish_ask;
+static AnimFinish    g_anim_finish;
+AnimFinishAsk *wasm_anim_finish_ask_ptr(void) { return &g_anim_finish_ask; }
+AnimFinish *wasm_anim_finish_ptr(void)        { return &g_anim_finish; }
+int wasm_anim_finish_rows(void) {
+    return anim_finish_ask(&g_anim_finish_ask, &g_anim_finish);
 }
 
 

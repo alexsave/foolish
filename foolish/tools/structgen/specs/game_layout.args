@@ -61,3 +61,7 @@
 # The hand's shape (view_layout.args reads and writes these), so the layout hash
 # bots.wasm is checked against covers HandMetrics and HandLayout too.
 --header hand_layout.h --root HandMetrics --root HandLayout
+# The animation core's four small questions (view_layout.args reads and writes
+# them), so the layout hash bots.wasm is checked against covers them too.
+--header anim_plan.h --root AnimStaleAsk --root AnimStaleRelease --root AnimReversalAsk --root AnimConflictPlan
+--root AnimHandAsk --root AnimHandLaid --root AnimFinishAsk --root AnimFinish

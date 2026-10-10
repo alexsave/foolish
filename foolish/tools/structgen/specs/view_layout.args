@@ -37,3 +37,17 @@
 --header hand_layout.h --root HandMetrics --root HandLayout
 --writer HandMetrics --snapshot HandMetrics --snapshot HandLayout
 --count HandLayout.slot=n --const HAND_
+# Four small questions of the animation core, asked as values (anim_plan.h):
+# which optimistic cards a broadcast releases, the order a doomed sequence flies
+# home in, the order a hand is drawn in, and the end screen's rows. Each ask
+# goes in through its writer and each answer comes back through its reader, so
+# sdk/ts/wasm/bots.ts packs no card byte and reads no offset for them.
+--root AnimStaleAsk --root AnimStaleRelease --writer AnimStaleAsk --snapshot AnimStaleAsk --snapshot AnimStaleRelease
+--count AnimStaleAsk.opt=n_opt --count AnimStaleAsk.table=n_table --count AnimStaleAsk.named=n_named --count AnimStaleRelease.release=n
+--root AnimReversalAsk --root AnimConflictPlan --writer AnimReversalAsk --snapshot AnimReversalAsk --snapshot AnimConflictPlan
+--count AnimReversalAsk.verdicts=n_motions --count AnimReversalAsk.group_sizes=n_groups
+--count AnimConflictPlan.verdicts=n_verdicts --count AnimConflictPlan.step_count=n_steps --count AnimConflictPlan.order=n_order
+--root AnimHandAsk --root AnimHandLaid --writer AnimHandAsk --snapshot AnimHandAsk --snapshot AnimHandLaid
+--count AnimHandAsk.cards=n_cards --count AnimHandAsk.order=n_order --count AnimHandLaid.cards=n
+--root AnimFinishAsk --root AnimFinish --writer AnimFinishAsk --snapshot AnimFinishAsk --snapshot AnimFinish
+--count AnimFinishAsk.elimination=n_elim --count AnimFinish.rows=n
