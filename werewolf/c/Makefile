@@ -25,11 +25,6 @@ LDFLAGS ?=
 CORE_SRC := $(SHARED)/deal_rng.c $(SHARED)/sha256.c \
             src/ww_game.c src/ww_view.c src/ww_wire.c src/ww_seat.c \
             src/ww_lobby.c
-# By BASENAME, not by stripping a fixed prefix: the sources now come from two
-# directories, and `$(CORE_SRC:src/%.c=build/%.o)` silently left the shared ones
-# as .c paths in the link line - which links, slowly and from source, and hides
-# that the pattern rule below never fired.
-CORE_OBJ := $(addprefix build/,$(notdir $(CORE_SRC:.c=.o)))
 
 .PHONY: all tests tests-asan clean print-core ios-lib ios-smoke
 all: build/ww_tests
@@ -37,20 +32,18 @@ all: build/ww_tests
 print-core:
 	@echo $(CORE_SRC)
 
-build/%.o: src/%.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h)
-	@mkdir -p build
-	$(CC) $(CFLAGS) -c $< -o $@
+# HOW A FILE BECOMES AN OBJECT is shared/tools/c_rules.mk: one directory of
+# objects per compiler-and-flags (a "variant"), each object depending on
+# exactly the headers its compile opened and on the command line it was built
+# with. Three variants here - the kernel as tested, the same under the
+# sanitizers, and the bridge's flags on the host compiler.
+include ../../shared/tools/c_rules.mk
+$(eval $(call C_VARIANT,build/obj/host,CC,CFLAGS))
+$(eval $(call C_VARIANT,build/obj/asan,CC,ASAN_CFLAGS))
+$(eval $(call C_VARIANT,build/obj/ioshost,CC,IOS_CFLAGS))
 
-# The same rule for the shared half. Two rules rather than a vpath, because a
-# vpath would also make `src/sha256.c` resolve again from somewhere else the day
-# one comes back - and the whole point of the move is that there is one.
-build/%.o: $(SHARED)/%.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h)
-	@mkdir -p build
-	$(CC) $(CFLAGS) -c $< -o $@
-
-build/ww_tests: $(CORE_OBJ) tests/tests.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h)
-	@mkdir -p build
-	$(CC) $(CFLAGS) tests/tests.c $(CORE_OBJ) -o $@ $(LDFLAGS)
+build/ww_tests: $(call c_objs,build/obj/host,tests/tests.c $(CORE_SRC))
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 # ONE command is the gate, and it runs the bridge too. The bridge is a second
 # reader of the masking, so a leak that only shows up through the flat accessors
@@ -60,14 +53,14 @@ tests: build/ww_tests build/ios_smoke
 	./build/ww_tests
 	./build/ios_smoke
 
-# The same suite under ASan+UBSan. Its own binary from source rather than the
-# objects above, because the sanitizers change codegen and mixing is how a clean
-# run comes from a stale object.
+# The same suite under ASan+UBSan. Its own objects, in its own variant: the
+# sanitizers change codegen, and mixing is how a clean run comes from a stale
+# object.
 ASAN_CFLAGS := -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer \
                -Wall -Wextra -Werror -Wno-unused-parameter -Isrc
-tests-asan:
-	@mkdir -p build
-	$(CC) $(ASAN_CFLAGS) $(CORE_SRC) tests/tests.c -o build/ww_tests_asan
+build/ww_tests_asan: $(call c_objs,build/obj/asan,$(CORE_SRC) tests/tests.c)
+	$(CC) $(ASAN_CFLAGS) $^ -o $@
+tests-asan: build/ww_tests_asan
 	./build/ww_tests_asan
 
 # ---------- iOS static library / xcframework -------------------------------
@@ -84,40 +77,17 @@ IOS_BRIDGE_SRC  := ios/ios_api.c
 IOS_SRC         := $(CORE_SRC) $(IOS_BRIDGE_SRC)
 IOS_CFLAGS      := -O2 -Isrc -Iios/include -Wall -Wextra -Werror -Wno-unused-parameter
 
-# $(1)=target-triple  $(2)=sdk name  $(3)=output dir
-define IOS_SLICE
-	@rm -rf $(3)/obj
-	@mkdir -p $(3)/obj
-	@for s in $(IOS_SRC); do \
-	  o=$(3)/obj/$$(basename $$s .c).o; \
-	  echo "  CC[$(2)] $$s"; \
-	  xcrun -sdk $(2) clang -target $(1) $(IOS_CFLAGS) -c $$s -o $$o || exit 1; \
-	done
-	libtool -static -o $(3)/libwerewolf.a $(3)/obj/*.o
-endef
-
-ios-lib:
-	@echo "== device slice (arm64) =="
-	$(call IOS_SLICE,arm64-apple-ios$(IOS_MIN_VERSION),iphoneos,build/ios/device)
-	@echo "== simulator slices (arm64 + x86_64) =="
-	$(call IOS_SLICE,arm64-apple-ios$(IOS_MIN_VERSION)-simulator,iphonesimulator,build/ios/sim-arm64)
-	$(call IOS_SLICE,x86_64-apple-ios$(IOS_MIN_VERSION)-simulator,iphonesimulator,build/ios/sim-x86_64)
-	@mkdir -p build/ios/sim
-	lipo -create build/ios/sim-arm64/libwerewolf.a build/ios/sim-x86_64/libwerewolf.a \
-	     -output build/ios/sim/libwerewolf.a
-	@rm -rf ../ios/vendor/Werewolf.xcframework
-	@mkdir -p ../ios/vendor
-	xcodebuild -create-xcframework \
-	  -library build/ios/device/libwerewolf.a -headers ios/include \
-	  -library build/ios/sim/libwerewolf.a    -headers ios/include \
-	  -output ../ios/vendor/Werewolf.xcframework
-	@echo "wrote ../ios/vendor/Werewolf.xcframework"
+# The device slice, both simulator slices, the lipo and the xcframework are
+# the shared recipe, and it rebuilds only what changed - which is what lets
+# Xcode run this target on every build (shared/scripts/xcode_kernel.sh).
+include ../../shared/tools/ios_xcframework.mk
+$(eval $(call IOS_XCFRAMEWORK,werewolf,$(IOS_SRC),ios/include,../ios/vendor/Werewolf.xcframework))
+ios-lib: $(IOS_XCFRAMEWORKS)
 
 # The bridge, built and run WITHOUT a Mac: the portable proof that
 # deal -> night -> view -> seal -> replay runs through the Swift entry points.
-build/ios_smoke: $(IOS_SRC) ios/ios_api_smoke.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h) ios/include/ww_api.h
-	@mkdir -p build
-	$(CC) $(IOS_CFLAGS) $(IOS_SRC) ios/ios_api_smoke.c -o $@
+build/ios_smoke: $(call c_objs,build/obj/ioshost,$(IOS_SRC) ios/ios_api_smoke.c)
+	$(CC) $(IOS_CFLAGS) $^ -o $@
 
 ios-smoke: build/ios_smoke
 	./build/ios_smoke

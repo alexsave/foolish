@@ -4,12 +4,22 @@
 # (git-ignored, as uttt's is).
 #
 # BOOTSTRAP ORDER (from a clean checkout):
-#   1. make -C ../c ios-lib      # writes ios/vendor/Pickemup.xcframework and ios/Generated/
-#   2. xcodegen generate
-#   3. xcodebuild -scheme PickemupMessagesApp -destination 'generic/platform=iOS Simulator' build
-# Step 1 must run first: PickemupKit links vendor/Pickemup.xcframework and
-# compiles Generated/, and neither is in git because both are generated.
-# scripts/mac_tests.sh runs all three, and the tests.
+#   1. xcodegen generate      # builds ios/vendor/Pickemup.xcframework and ios/Generated/ first
+#   2. xcodebuild -scheme PickemupMessagesApp -destination 'generic/platform=iOS Simulator' build
+# scripts/mac_tests.sh runs both, and the tests.
+# There is no "make the kernel first" step, and both halves of that are this
+# file. `xcodegen generate` runs `make -C ../c ios-lib` before it writes the
+# project (preGenCommand below), and every build runs it again first (the
+# PickemupKernel target at the bottom); it does nothing when no C changed.
+#
+# BEFORE THE PROJECT IS WRITTEN, and not only in the build, for reasons that
+# are xcodegen's and Xcode's. xcodegen lists the files under Generated/ when it
+# writes the project, so they have to exist by then. Xcode will not plan a
+# build whose xcframework does not exist ("There is no XCFramework found"),
+# which is before any script of ours can run to make it. And having refused
+# once it goes on refusing from that derived data after the xcframework is
+# there (measured, Xcode 27, with and without the kernel target), so the
+# first plan must never see it missing.
 #
 # THREE SHIPPING TARGETS, for uttt's reason: an app extension cannot be
 # distributed on its own, so the iMessage game needs a codeless container to
@@ -23,6 +33,7 @@
 # game is the message URL, so there is nothing to talk to.
 name: Pickemup
 options:
+  preGenCommand: ../../shared/scripts/xcode_kernel.sh ../c
   bundleIdPrefix: cards.pickemup
   deploymentTarget:
     iOS: "17.0"
@@ -128,6 +139,8 @@ targets:
       # texture at run time.
       - path: ../../shared/swift/Textures
     dependencies:
+      # The kernel is BUILT before it is linked: see PickemupKernel at the bottom.
+      - target: PickemupKernel
       # STATIC (embed:false): the linker pulls it in per object.
       - framework: vendor/Pickemup.xcframework
         embed: false
@@ -153,6 +166,32 @@ targets:
         GENERATE_INFOPLIST_FILE: "YES"
         HEADER_SEARCH_PATHS: $(inherited) $(BUILT_PRODUCTS_DIR)/include
         TARGETED_DEVICE_FAMILY: "1"
+
+# THE C KERNEL, BUILT BY THE BUILD. PickemupKit links a library made by another
+# build system (make -C ../c ios-lib), and for as long as a person had to run
+# that, an app built after an edit to the C linked the kernel from before it -
+# green tests on both sides and the change not in the product. This target is
+# that command, and PickemupKit depends on it, so Xcode runs it first on every
+# build. It costs a fraction of a second when nothing changed: the Makefile
+# rebuilds only the objects, libraries and xcframework whose inputs moved
+# (shared/tools/ios_xcframework.mk), and Xcode relinks only when the
+# xcframework did.
+#
+# outputFiles IS LOAD-BEARING. Xcode reads an xcframework (ProcessXCFramework)
+# whenever it likes unless something says who writes it, and measured without
+# this line it read the old one, ran make, and linked the old kernel: the
+# library on disk was the new one and the app built that moment was not.
+# Named as this script's output, the read waits for the script, and an edit to
+# the C is in the app that same build.
+aggregateTargets:
+  PickemupKernel:
+    buildScripts:
+      - name: C kernel (make -C ../c ios-lib)
+        basedOnDependencyAnalysis: false
+        outputFiles:
+          - $(SRCROOT)/vendor/Pickemup.xcframework
+        script: |
+          "$SRCROOT/../../shared/scripts/xcode_kernel.sh" "$SRCROOT/../c"
 
 schemes:
   PickemupMessagesApp:

@@ -35,78 +35,92 @@ SRC     := src/uttt.c src/uttt_code.c src/uttt_bots.c src/uttt_msg.c src/uttt_sa
 
 all: build/uttt_test build/uttt_msg_test build/uttt_arena build/uttt_render build/uttt_mate
 
-build:
-	@mkdir -p build
+# ---- how a file becomes an object, and a program ---------------------------
+# shared/tools/c_rules.mk: one directory of objects per compiler-and-flags (a
+# "variant"), each object depending on exactly the headers its compile opened
+# and on the command line it was built with.
+#
+# THIS FILE USED TO NAME ITS HEADERS BY HAND, per program, and compile every
+# program whole in one command. The lists were wrong in the way such lists
+# are: a number that lived only in a header (UTB_HOLD_MS) changed and the
+# smoke ran the old binary, green, before the headers were listed. Nothing is
+# listed now. A program is its objects; an object knows what it included.
+#
+# -flto STILL DOES ITS WORK: with it an object is the compiler's bitcode and
+# the link is where the cross-file inlining happens, which is what one command
+# over every source was doing.
+#
+# ONE EXTRA FLAG FOR ONE OBJECT (OBJ_FLAGS_<source without .c>, which is $* in
+# the compile): the bridge and its smoke need ios/include, a tool needs src.
+# Said for the file that needs it, so the kernel is compiled once and not once
+# more per include path.
+ASAN_FLAGS  := -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11
+HOST_FLAGS   = $(CFLAGS) $(OBJ_FLAGS_$*)
+SAN_FLAGS    = $(ASAN_FLAGS) $(OBJ_FLAGS_$*)
+OBJ_FLAGS_tools/uttt_side    := -Isrc
+OBJ_FLAGS_ios/uttt_api       := -Iios/include
+OBJ_FLAGS_ios/uttt_api_smoke := -Iios/include
+# ...and the replay page's English-only kernel (UTTT_LANG_ENGLISH_ONLY), a
+# different compile of the same files.
+EN_FLAGS     = $(CFLAGS) -DUTTT_LANG_ENGLISH_ONLY
 
-build/uttt_test: $(SRC) tests/uttt_test.c | build
-	$(CC) $(CFLAGS) $(SRC) tests/uttt_test.c -o $@ $(LDLIBS)
+# The shared/c tests this kernel runs: what it links (b32, mixrad, sha256, the
+# wasm libc, text_util, wire_check, stats) and the header-only pieces its app
+# calls (msg_stage, collapse, le_bytes); deal_rng has no other home that runs
+# every shared test in one place. What each is built from is
+# shared/tools/shared_tests.mk's.
+SHARED_TESTS      := msg_stage_test collapse_test text_util_test wire_check_test stats_test \
+                     libc_test b32_test mixrad_test sha256_test deal_rng_test le_bytes_test
+SHARED_ASAN_TESTS := text_util_test wire_check_test stats_test collapse_test
+
+include ../../shared/tools/c_rules.mk
+include ../../shared/tools/shared_tests.mk
+$(eval $(call C_VARIANT,build/obj/host,CC,HOST_FLAGS))
+$(eval $(call C_VARIANT,build/obj/asan,CC,SAN_FLAGS))
+$(eval $(call C_VARIANT,build/obj/en,CC,EN_FLAGS))
+$(call SHARED_TESTS_IN,,build/obj/host,CC,CFLAGS)
+$(call SHARED_TESTS_IN,asan_,build/obj/asan,CC,ASAN_FLAGS)
+
+# $(call prog,<name>,<what it is besides the kernel>,<more to link>): the
+# program build/<name>, and its sanitized twin build/asan_<name>.
+define PROG
+build/$(1): $$(call c_objs,build/obj/host,$$(SRC) $(2))
+	$$(CC) $$(CFLAGS) $$^ -o $$@ $$(LDLIBS) $(3)
+build/asan_$(1): $$(call c_objs,build/obj/asan,$$(SRC) $(2))
+	$$(CC) $$(ASAN_FLAGS) $$^ -o $$@ $$(LDLIBS) $(3)
+endef
+prog = $(eval $(call PROG,$(1),$(2),$(3)))
+
+$(call prog,uttt_test,tests/uttt_test.c)
 
 # The recursive game: depth 2 against the shipped one move for move, depth 5
 # played to the end, and the relaxation, undo and adopt corners by hand.
-build/uttt_big_test: $(SRC) src/uttt_big.h tests/uttt_big_test.c | build
-	$(CC) $(CFLAGS) $(SRC) tests/uttt_big_test.c -o $@ $(LDLIBS)
+$(call prog,uttt_big_test,tests/uttt_big_test.c)
 
 # The 243 page's bot (src/uttt_big_bot.h): the weights on hand-built
 # positions, a game as its seed, a player against random play, and a whole
 # depth-5 game at the page's settings, timed. NOT in SRC: no app links it.
 BIG_BOT_SRC := src/uttt_big_bot.c
-build/uttt_big_bot_test: $(SRC) $(BIG_BOT_SRC) src/uttt_big_bot.h src/uttt_big.h tests/uttt_big_bot_test.c | build
-	$(CC) $(CFLAGS) $(SRC) $(BIG_BOT_SRC) tests/uttt_big_bot_test.c -o $@ $(LDLIBS)
+$(call prog,uttt_big_bot_test,$(BIG_BOT_SRC) tests/uttt_big_bot_test.c)
 
-build/uttt_arena: $(SRC) tests/uttt_arena.c $(SHARED)/stats/stats.c $(SHARED)/stats/stats.h | build
-	$(CC) $(CFLAGS) $(SRC) $(SHARED)/stats/stats.c tests/uttt_arena.c -o $@ $(LDLIBS)
+$(call prog,uttt_arena,$(SHARED)/stats/stats.c tests/uttt_arena.c)
 
-build/uttt_msg_test: $(SRC) tests/uttt_msg_test.c | build
-	$(CC) $(CFLAGS) $(SRC) tests/uttt_msg_test.c -o $@ $(LDLIBS)
+$(call prog,uttt_msg_test,tests/uttt_msg_test.c)
 
 # The big game's message: its bytes, board check, seats and words, and the
 # kit's picture path without the JPEG. Links the kit's C (plain C, no
 # framework) so its CRC and its picture are the ones held to.
 BUBBLE_DATA := ../../shared/swift/BubbleDataKit/Sources/CBubbleData
-build/uttt_big_msg_test: $(SRC) $(BUBBLE_DATA)/bubble_data.c tests/uttt_big_msg_test.c | build
-	$(CC) $(CFLAGS) $(SRC) $(BUBBLE_DATA)/bubble_data.c tests/uttt_big_msg_test.c -o $@ $(LDLIBS)
+$(call prog,uttt_big_msg_test,$(BUBBLE_DATA)/bubble_data.c tests/uttt_big_msg_test.c)
 
 # The 243 diagnostics (src/uttt_big_diag.h): the JPEG facts against real
 # files (tests/fixtures), the greys against the kit's own bd_sample, the
 # history ring's layout and the report's lines. Links the kit's C, as above.
-build/uttt_big_diag_test: $(SRC) src/uttt_big_diag.h src/uttt_jpeg_imageio.inc $(BUBBLE_DATA)/bubble_data.c tests/uttt_big_diag_test.c | build
-	$(CC) $(CFLAGS) $(SRC) $(BUBBLE_DATA)/bubble_data.c tests/uttt_big_diag_test.c -o $@ $(LDLIBS)
-
-# The shared insert-staging decisions (shared/c/msg_stage), header-only, so
-# its test is the only thing to build.
-MSG_STAGE := ../../shared/c/msg_stage
-build/msg_stage_test: $(MSG_STAGE)/msg_stage_test.c $(MSG_STAGE)/msg_stage.h | build
-	$(CC) $(CFLAGS) $(MSG_STAGE)/msg_stage_test.c -o $@
-
-# The shared auto-collapse push (shared/c/collapse), header-only, so its test
-# is the only thing to build; uttt_collapse_push forwards to it.
-COLLAPSE := $(SHARED)/collapse
-build/collapse_test: $(COLLAPSE)/collapse_test.c $(COLLAPSE)/collapse.h | build
-	$(CC) $(CFLAGS) $(COLLAPSE)/collapse_test.c -o $@ -lm
-
-# The shared text writers (shared/c/text_util): the stepping, the copy and the
-# filler this kernel uses, and the column table it does not.
-TEXT_UTIL := $(SHARED)/text_util
-build/text_util_test: $(TEXT_UTIL)/text_util.c $(TEXT_UTIL)/text_util_test.c $(TEXT_UTIL)/text_util.h | build
-	$(CC) $(CFLAGS) $(TEXT_UTIL)/text_util.c $(TEXT_UTIL)/text_util_test.c -o $@
-
-# The shared wire check (shared/c/wire_check): the envelope's truncated
-# SHA-256 over head and body, which uttt_msg.c carries UTM_CHECK_LEN bytes of.
-WIRE_CHECK := $(SHARED)/wire_check
-WIRE_CHECK_SRC := $(SHARED)/sha256.c $(WIRE_CHECK)/wire_check.c $(WIRE_CHECK)/wire_check_test.c
-build/wire_check_test: $(WIRE_CHECK_SRC) $(WIRE_CHECK)/wire_check.h $(SHARED)/sha256.h | build
-	$(CC) $(CFLAGS) $(WIRE_CHECK_SRC) -o $@
-
-# The shared arena statistics (shared/c/stats): mean and standard error, the
-# Wilson interval, and the per-game seed hash.
-STATS := $(SHARED)/stats
-STATS_SRC := $(STATS)/stats.c $(STATS)/stats_test.c
-build/stats_test: $(STATS_SRC) $(STATS)/stats.h $(STATS)/seed_hash.h | build
-	$(CC) $(CFLAGS) $(STATS_SRC) -o $@ -lm
+$(call prog,uttt_big_diag_test,$(BUBBLE_DATA)/bubble_data.c tests/uttt_big_diag_test.c)
 
 # The message: every ply of 10,000 games through bytes and text, the seat
 # truth table, two joiners, the tap map and every sentence.
-run: build/uttt_test build/uttt_big_test build/uttt_msg_test build/uttt_big_msg_test build/uttt_big_diag_test build/uttt_anim_test build/msg_stage_test build/collapse_test build/text_util_test build/wire_check_test build/stats_test build/uttt_bots_test build/uttt_ink_test build/uttt_lang_test build/uttt_lang_en_test build/uttt_big_bot_test
+run: build/uttt_test build/uttt_big_test build/uttt_msg_test build/uttt_big_msg_test build/uttt_big_diag_test build/uttt_anim_test build/uttt_bots_test build/uttt_ink_test build/uttt_lang_test build/uttt_lang_en_test build/uttt_big_bot_test
 	./build/uttt_test 1000
 	./build/uttt_big_test 2000 10
 	./build/uttt_big_bot_test 40
@@ -116,50 +130,41 @@ run: build/uttt_test build/uttt_big_test build/uttt_msg_test build/uttt_big_msg_
 	./build/uttt_msg_test 10000
 	./build/uttt_big_msg_test 20
 	./build/uttt_big_diag_test
-	./build/msg_stage_test
-	./build/collapse_test
-	./build/text_util_test
-	./build/wire_check_test
-	./build/stats_test
 	./build/uttt_anim_test
 	./build/uttt_ink_test
 
+# ...and shared/c's own tests, as part of the same `make run`.
+run: shared-tests
+
 # The ink: one polygon per stroke, the pen's shape with no hole, the alpha.
-build/uttt_ink_test: $(SRC) tests/uttt_ink_test.c | build
-	$(CC) $(CFLAGS) $(SRC) tests/uttt_ink_test.c -o $@ $(LDLIBS)
+$(call prog,uttt_ink_test,tests/uttt_ink_test.c)
 
 # The words: every language fills every key, keeps English's placeholders,
 # fits each key's width, and every caption it can compose fits one line.
-build/uttt_lang_test: $(SRC) i18n/keys.h tests/uttt_lang_test.c | build
-	$(CC) $(CFLAGS) $(SRC) tests/uttt_lang_test.c -o $@ $(LDLIBS)
+$(call prog,uttt_lang_test,tests/uttt_lang_test.c)
 
 # ...and the replay page's English-only kernel falls back rather than blanks.
 SRC_EN := $(filter-out $(I18N),$(SRC)) i18n/strings_en.c
-build/uttt_lang_en_test: $(SRC_EN) i18n/keys.h tests/uttt_lang_test.c | build
-	$(CC) $(CFLAGS) -DUTTT_LANG_ENGLISH_ONLY $(SRC_EN) tests/uttt_lang_test.c -o $@ $(LDLIBS)
+build/uttt_lang_en_test: $(call c_objs,build/obj/en,$(SRC_EN) tests/uttt_lang_test.c)
+	$(CC) $(EN_FLAGS) $^ -o $@ $(LDLIBS)
 
-build/uttt_bots_test: $(SRC) tests/uttt_bots_test.c | build
-	$(CC) $(CFLAGS) $(SRC) tests/uttt_bots_test.c -o $@ $(LDLIBS)
+$(call prog,uttt_bots_test,tests/uttt_bots_test.c)
 
-build/uttt_anim_test: $(SRC) tests/uttt_anim_test.c | build
-	$(CC) $(CFLAGS) $(SRC) tests/uttt_anim_test.c -o $@ $(LDLIBS)
+$(call prog,uttt_anim_test,tests/uttt_anim_test.c)
 
 # The board's side per drawer height, for the ruler's scorer (tools/uttt_side.c).
-build/uttt_side: $(SRC) tools/uttt_side.c | build
-	$(CC) $(CFLAGS) -Isrc $(SRC) tools/uttt_side.c -o $@ $(LDLIBS)
+$(call prog,uttt_side,tools/uttt_side.c)
 
 arena: build/uttt_arena
 	./build/uttt_arena 200 200
 
-build/uttt_line: $(SRC) tests/uttt_line.c | build
-	$(CC) $(CFLAGS) $(SRC) tests/uttt_line.c -o $@ $(LDLIBS)
+$(call prog,uttt_line,tests/uttt_line.c)
 
 # The 62% hotspot against the version it replaced, over every board there is.
 line: build/uttt_line
 	./build/uttt_line
 
-build/uttt_mate: $(SRC) tests/uttt_mate.c | build
-	$(CC) $(CFLAGS) $(SRC) tests/uttt_mate.c -o $@ $(LDLIBS)
+$(call prog,uttt_mate,tests/uttt_mate.c)
 
 # The mate search against an exhaustive one. Both the verdict and the
 # distance, on positions deep enough to tell a min from a max. And quill's
@@ -168,16 +173,14 @@ build/uttt_mate: $(SRC) tests/uttt_mate.c | build
 mate: build/uttt_mate
 	./build/uttt_mate 2000
 
-build/uttt_icon: $(SRC) tools/uttt_icon.c | build
-	$(CC) $(CFLAGS) $(SRC) tools/uttt_icon.c -o $@ $(LDLIBS)
+$(call prog,uttt_icon,tools/uttt_icon.c)
 
 # THE ICONS THE APP SHIPS, drawn by the app's own pen rather than traced by
 # hand. Writes straight into both asset catalogues; commit what it changes.
 icons: build/uttt_icon
 	./tools/icons.sh
 
-build/uttt_play: $(SRC) tools/uttt_play.c | build
-	$(CC) $(CFLAGS) $(SRC) tools/uttt_play.c -o $@ $(LDLIBS)
+$(call prog,uttt_play,tools/uttt_play.c)
 
 # PLAY THE THING. quill, first move, as hard as it gets without waiting.
 ROLLOUTS ?= 400
@@ -187,14 +190,12 @@ play: build/uttt_play
 # THE STORE GAME: the one real game every App Store frame is a phase of
 # (docs/STORE_SHOTS.md). Plays its fixed opening through the rules, finishes
 # it with fountain and prints the ply list and the replay link.
-build/uttt_store_game: $(SRC) tools/uttt_store_game.c | build
-	$(CC) $(CFLAGS) $(SRC) tools/uttt_store_game.c -o $@ $(LDLIBS)
+$(call prog,uttt_store_game,tools/uttt_store_game.c)
 
 store-game: build/uttt_store_game
 	./build/uttt_store_game 44 5 2000
 
-build/uttt_render: $(SRC) tests/uttt_render.c | build
-	$(CC) $(CFLAGS) $(SRC) tests/uttt_render.c -o $@ $(LDLIBS)
+$(call prog,uttt_render,tests/uttt_render.c)
 
 render: build/uttt_render
 	./build/uttt_render $(PLIES)
@@ -202,8 +203,7 @@ render: build/uttt_render
 	  && echo "build/board.png"
 
 
-build/uttt_look: $(SRC) tools/uttt_look.c | build
-	$(CC) $(CFLAGS) $(SRC) tools/uttt_look.c -o $@ $(LDLIBS)
+$(call prog,uttt_look,tools/uttt_look.c)
 
 # The pieces the owner reviews, at a phone's scale, with numbers where a
 # number settles it (the door's edge thickness). See tools/uttt_look.c.
@@ -212,11 +212,9 @@ look: build/uttt_look
 # THE POST-GAME ANALYSER, not part of the app: every ply of a replay code
 # held against quill. `make analyse CODE=<code or link> PLAYOUTS=20000`.
 ANALYSE_SRC := src/uttt_analyse.c
-build/uttt_analyse: $(SRC) $(ANALYSE_SRC) src/uttt_analyse.h tools/uttt_analyse.c | build
-	$(CC) $(CFLAGS) $(SRC) $(ANALYSE_SRC) tools/uttt_analyse.c -o $@ $(LDLIBS)
+$(call prog,uttt_analyse,$(ANALYSE_SRC) tools/uttt_analyse.c)
 
-build/uttt_analyse_test: $(SRC) $(ANALYSE_SRC) src/uttt_analyse.h tests/uttt_analyse_test.c | build
-	$(CC) $(CFLAGS) $(SRC) $(ANALYSE_SRC) tests/uttt_analyse_test.c -o $@ $(LDLIBS)
+$(call prog,uttt_analyse_test,$(ANALYSE_SRC) tests/uttt_analyse_test.c)
 
 PLAYOUTS ?= 20000
 analyse: build/uttt_analyse
@@ -230,49 +228,22 @@ analyse-test: build/uttt_analyse_test
 rough-diff: build/uttt_render
 	node tests/rough_diff.mjs
 
-asan: $(SRC) tests/uttt_test.c | build
-	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
-	  $(SRC) tests/uttt_test.c -o build/uttt_asan $(LDLIBS)
-	./build/uttt_asan 400
-	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
-	  $(SRC) tests/uttt_big_test.c -o build/uttt_big_asan $(LDLIBS)
-	./build/uttt_big_asan 300 1
-	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
-	  $(SRC) $(BIG_BOT_SRC) tests/uttt_big_bot_test.c -o build/uttt_big_bot_asan $(LDLIBS)
-	./build/uttt_big_bot_asan 20
-	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
-	  $(SRC) tests/uttt_msg_test.c -o build/uttt_msg_asan $(LDLIBS)
-	./build/uttt_msg_asan 1000
-	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
-	  $(SRC) $(BUBBLE_DATA)/bubble_data.c tests/uttt_big_msg_test.c -o build/uttt_big_msg_asan $(LDLIBS)
-	./build/uttt_big_msg_asan 3
-	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
-	  $(SRC) $(BUBBLE_DATA)/bubble_data.c tests/uttt_big_diag_test.c -o build/uttt_big_diag_asan $(LDLIBS)
-	./build/uttt_big_diag_asan
-	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
-	  $(SRC) tests/uttt_anim_test.c -o build/uttt_anim_asan $(LDLIBS)
-	./build/uttt_anim_asan
-	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
-	  $(SRC) tests/uttt_bots_test.c -o build/uttt_bots_asan $(LDLIBS)
-	./build/uttt_bots_asan 3
-	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
-	  $(SRC) tests/uttt_ink_test.c -o build/uttt_ink_asan $(LDLIBS)
-	./build/uttt_ink_asan
-	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
-	  $(SRC) tests/uttt_lang_test.c -o build/uttt_lang_asan $(LDLIBS)
-	./build/uttt_lang_asan
-	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
-	  $(TEXT_UTIL)/text_util.c $(TEXT_UTIL)/text_util_test.c -o build/text_util_asan
-	./build/text_util_asan
-	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
-	  $(WIRE_CHECK_SRC) -o build/wire_check_asan
-	./build/wire_check_asan
-	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
-	  $(STATS_SRC) -o build/stats_asan -lm
-	./build/stats_asan
-	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
-	  $(COLLAPSE)/collapse_test.c -o build/collapse_asan -lm
-	./build/collapse_asan
+# The same tests under the sanitizers, from their own objects (build/obj/asan):
+# the kernel is compiled for them once, where each program used to compile it
+# again.
+ASAN_PROGS := uttt_test uttt_big_test uttt_big_bot_test uttt_msg_test uttt_big_msg_test \
+              uttt_big_diag_test uttt_anim_test uttt_bots_test uttt_ink_test uttt_lang_test
+asan: $(addprefix build/asan_,$(ASAN_PROGS)) shared-tests-asan
+	./build/asan_uttt_test 400
+	./build/asan_uttt_big_test 300 1
+	./build/asan_uttt_big_bot_test 20
+	./build/asan_uttt_msg_test 1000
+	./build/asan_uttt_big_msg_test 3
+	./build/asan_uttt_big_diag_test
+	./build/asan_uttt_anim_test
+	./build/asan_uttt_bots_test 3
+	./build/asan_uttt_ink_test
+	./build/asan_uttt_lang_test
 
 clean:
 	rm -rf build
@@ -287,17 +258,15 @@ IOS_SRC    := $(SRC) ios/uttt_api.c
 IOS_CFLAGS := -O2 -Isrc -Iios/include -Wall -Wextra -Werror -std=c11
 
 # The device slice, both simulator slices, the lipo and the xcframework are
-# the shared recipe.
+# the shared recipe, and it rebuilds only what changed - which is what lets
+# Xcode run this target on every build (shared/scripts/xcode_kernel.sh).
 include ../../shared/tools/ios_xcframework.mk
+$(eval $(call IOS_XCFRAMEWORK,uttt,$(IOS_SRC),ios/include,../ios/vendor/Uttt.xcframework))
 
-ios-lib:
-	$(call IOS_XCFRAMEWORK,uttt,$(IOS_SRC),$(IOS_CFLAGS),ios/include,$(IOS_MIN_VERSION),../ios/vendor/Uttt.xcframework)
+ios-lib: $(IOS_XCFRAMEWORKS)
 
 
-# The headers too: a number that lives only in a header (UTB_HOLD_MS) changed
-# and the smoke ran the old binary, green, before they were listed here.
-build/ios_smoke: $(IOS_SRC) $(wildcard src/*.h src/*.inc) ios/include/uttt_api.h ios/uttt_api_smoke.c | build
-	$(CC) $(CFLAGS) -Iios/include $(IOS_SRC) ios/uttt_api_smoke.c -o $@ $(LDLIBS)
+$(call prog,ios_smoke,ios/uttt_api.c ios/uttt_api_smoke.c)
 
 ios-smoke: build/ios_smoke
 	./build/ios_smoke
@@ -308,8 +277,7 @@ ios-smoke: build/ios_smoke
 # games under one rule, random and greedy bots, and what they decided. A
 # measurement, not a test, so not in run. ARGS="<rule 0|1|2> <random games>
 # <bot games> [seed]".
-build/uttt_big_rules_sim: $(SRC) $(BIG_BOT_SRC) src/uttt_big_bot.h src/uttt_big.h tests/uttt_big_rules_sim.c | build
-	$(CC) $(CFLAGS) $(SRC) $(BIG_BOT_SRC) tests/uttt_big_rules_sim.c -o $@ $(LDLIBS)
+$(call prog,uttt_big_rules_sim,$(BIG_BOT_SRC) tests/uttt_big_rules_sim.c)
 
 big-rules-sim: build/uttt_big_rules_sim
 	./build/uttt_big_rules_sim $(ARGS)
@@ -324,27 +292,22 @@ big-rules-sim: build/uttt_big_rules_sim
 # K", "--px 1" (board243, which a real game's sparse board does NOT survive:
 # see the test's header).
 ifeq ($(shell uname),Darwin)
-build/uttt_big_chain: $(SRC) $(BUBBLE_DATA)/bubble_data.c tests/uttt_big_chain.c | build
-	$(CC) $(CFLAGS) $(SRC) $(BUBBLE_DATA)/bubble_data.c tests/uttt_big_chain.c -o $@ $(LDLIBS) \
-	  -framework ImageIO -framework CoreGraphics -framework CoreFoundation
+IMAGEIO := -framework ImageIO -framework CoreGraphics -framework CoreFoundation
+$(call prog,uttt_big_chain,$(BUBBLE_DATA)/bubble_data.c tests/uttt_big_chain.c,$(IMAGEIO))
 
 big-chain: build/uttt_big_chain
 	./build/uttt_big_chain $(ARGS)
 
 # THE 243 DIAGNOSTICS' QUALITY TABLES: ImageIO's luma table at every step
 # 0.00..1.00, written into src/uttt_jpeg_imageio.inc (commit what it changes).
-build/uttt_jpeg_imageio: $(SRC) tools/uttt_jpeg_imageio.c | build
-	$(CC) $(CFLAGS) $(SRC) tools/uttt_jpeg_imageio.c -o $@ $(LDLIBS) \
-	  -framework ImageIO -framework CoreGraphics -framework CoreFoundation
+$(call prog,uttt_jpeg_imageio,tools/uttt_jpeg_imageio.c,$(IMAGEIO))
 
 jpeg-imageio: build/uttt_jpeg_imageio
 	./build/uttt_jpeg_imageio src/uttt_jpeg_imageio.inc
 
 # ...and the parser against JPEGs ImageIO writes NOW, at known qualities, and
 # the committed tables against what ImageIO writes today. macOS only.
-build/uttt_big_diag_imageio: $(SRC) $(BUBBLE_DATA)/bubble_data.c src/uttt_jpeg_imageio.inc tests/uttt_big_diag_imageio.c | build
-	$(CC) $(CFLAGS) $(SRC) $(BUBBLE_DATA)/bubble_data.c tests/uttt_big_diag_imageio.c -o $@ $(LDLIBS) \
-	  -framework ImageIO -framework CoreGraphics -framework CoreFoundation
+$(call prog,uttt_big_diag_imageio,$(BUBBLE_DATA)/bubble_data.c tests/uttt_big_diag_imageio.c,$(IMAGEIO))
 
 big-diag-imageio: build/uttt_big_diag_imageio
 	./build/uttt_big_diag_imageio
@@ -352,8 +315,7 @@ big-diag-imageio: build/uttt_big_diag_imageio
 .PHONY: big-chain jpeg-imageio big-diag-imageio
 endif
 
-build/uttt_ladder: $(SRC) tests/uttt_ladder.c | build
-	$(CC) $(CFLAGS) $(SRC) tests/uttt_ladder.c -o $@ $(LDLIBS)
+$(call prog,uttt_ladder,tests/uttt_ladder.c)
 ladder: build/uttt_ladder
 	./build/uttt_ladder 40 8
 
@@ -375,14 +337,19 @@ WEB_WASM_SRC := src/uttt.c src/uttt_code.c src/uttt_pen.c src/uttt_draw.c \
                 ../../shared/c/text_util/text_util.c \
                 ../../shared/c/wasm/libc.c ../../shared/c/wasm/libm.c wasm/uttt_web.c
 WEB_WASM_OUT := ../web/public/uttt.wasm
+# What compiles a file and what links the module, apart: an object is compiled
+# once (the variant below) and the linker's flags mean nothing to a compile.
+# The link is still handed every flag the single command had, so the driver
+# does there exactly what it did.
+WEB_WASM_CFLAGS  := --target=wasm32 -Oz -nostdlib -ffreestanding -mbulk-memory \
+                    -mno-nontrapping-fptoint -std=c11 -Wall -Wextra -Werror -DUTTT_LANG_ENGLISH_ONLY \
+                    -isystem ../../shared/c/wasm/include -Isrc
+WEB_WASM_LDFLAGS := -Wl,--no-entry -Wl,--export-memory -Wl,-z,stack-size=131072 -Wl,--strip-all
+$(eval $(call C_VARIANT,build/obj/web,WEB_WASM_CC,WEB_WASM_CFLAGS))
 
-$(WEB_WASM_OUT): $(WEB_WASM_SRC) $(wildcard src/*.h i18n/*.h ../../shared/c/wasm/include/*.h ../../shared/c/text_util/*.h ../../shared/c/collapse/*.h) Makefile
+$(WEB_WASM_OUT): $(call c_objs,build/obj/web,$(WEB_WASM_SRC)) Makefile
 	@mkdir -p $(dir $@)
-	$(WEB_WASM_CC) --target=wasm32 -Oz -nostdlib -ffreestanding -mbulk-memory \
-	  -mno-nontrapping-fptoint -std=c11 -Wall -Wextra -Werror -DUTTT_LANG_ENGLISH_ONLY \
-	  -isystem ../../shared/c/wasm/include -Isrc \
-	  -Wl,--no-entry -Wl,--export-memory -Wl,-z,stack-size=131072 -Wl,--strip-all \
-	  $(WEB_WASM_SRC) -o $@
+	$(WEB_WASM_CC) $(WEB_WASM_CFLAGS) $(WEB_WASM_LDFLAGS) $(filter %.o,$^) -o $@
 	@echo "built $@ ($$(wc -c < $@) B, $$(gzip -9 -c $@ | wc -c) B gz)"
 
 wasm-web: $(WEB_WASM_OUT)
@@ -410,8 +377,7 @@ wasm-web: $(WEB_WASM_OUT)
 # whole-second mtimes, a checkout moving a header backwards - is the one
 # failure the hash exists to catch. Rebuilding every time is cheaper than
 # being clever about it.
-STRUCTGEN_DIR  := ../../shared/tools/structgen
-STRUCTGEN      := $(STRUCTGEN_DIR)/build/structgen
+include ../../shared/tools/gen_tools.mk
 ARENA_FLAGS    := -isystem ../../shared/c/wasm/include -Isrc
 ARENA_SG_ARGS  := --cwd . --header wasm/uttt_243_web.h \
                   --root UaStatus --root UaConfig --root UaBox \
@@ -422,13 +388,8 @@ ARENA_WASM_SRC := src/uttt.c src/uttt_big.c src/uttt_big_bot.c \
                   ../../shared/c/wasm/libc.c wasm/uttt_243_web.c
 ARENA_WASM_OUT := ../web/public/uttt243.wasm
 
-$(STRUCTGEN): $(wildcard $(STRUCTGEN_DIR)/*.c) $(wildcard $(STRUCTGEN_DIR)/*.h) \
-              $(wildcard $(STRUCTGEN_DIR)/../sgcommon/*.c) $(wildcard $(STRUCTGEN_DIR)/../sgcommon/*.h) \
-              $(STRUCTGEN_DIR)/Makefile $(STRUCTGEN_DIR)/../llvm.mk
-	$(MAKE) -C $(STRUCTGEN_DIR) build/structgen
-
-wasm-243: $(STRUCTGEN) | build
-	@mkdir -p $(ARENA_GEN) $(dir $(ARENA_WASM_OUT))
+wasm-243: $(STRUCTGEN)
+	@mkdir -p build $(ARENA_GEN) $(dir $(ARENA_WASM_OUT))
 	@$(STRUCTGEN) $(ARENA_SG_ARGS) --ts $(ARENA_GEN)/arena_layout.ts \
 	  --hash-ts $(ARENA_GEN)/arena_layout_hash.ts --print-hash > build/arena_layout.hash
 	$(WEB_WASM_CC) --target=wasm32 -mcpu=mvp -mbulk-memory -msign-ext -O3 -nostdlib -ffreestanding \
@@ -439,30 +400,3 @@ wasm-243: $(STRUCTGEN) | build
 	@echo "built $(ARENA_WASM_OUT) ($$(wc -c < $(ARENA_WASM_OUT)) B, $$(gzip -9 -c $(ARENA_WASM_OUT) | wc -c) B gz), layout $$(cat build/arena_layout.hash)"
 
 .PHONY: wasm-web wasm-243
-
-# ---- shared/c's own tests ---------------------------------------------------
-# The tests beside shared/c's primitives, run as part of `make run` (this
-# kernel links b32, mixrad and the wasm libc; sha256 and deal_rng have no
-# other home that runs every shared test in one place). Self-contained: each
-# test builds from its own file and the one it covers, so no SRC list changes.
-SHARED_C := ../../shared/c
-SHARED_TESTS := build/libc_test build/b32_test build/mixrad_test build/sha256_test build/deal_rng_test \
-                build/le_bytes_test
-
-build/libc_test: $(SHARED_C)/wasm/libc_test.c $(SHARED_C)/wasm/libc.c $(SHARED_C)/test/check.h | build
-	$(CC) $(CFLAGS) $(SHARED_C)/wasm/libc_test.c -o $@
-
-# Header-only, so the pattern rule below (which wants a .c beside the test)
-# does not match it.
-build/le_bytes_test: $(SHARED_C)/le_bytes_test.c $(SHARED_C)/le_bytes.h $(SHARED_C)/test/check.h | build
-	$(CC) $(CFLAGS) $(SHARED_C)/le_bytes_test.c -o $@
-
-build/%_test: $(SHARED_C)/%_test.c $(SHARED_C)/%.c $(SHARED_C)/%.h $(SHARED_C)/test/check.h | build
-	$(CC) $(CFLAGS) $(SHARED_C)/$*_test.c $(SHARED_C)/$*.c -o $@
-
-shared-tests: $(SHARED_TESTS)
-	@for t in $(SHARED_TESTS); do ./$$t || exit 1; done
-
-run: shared-tests
-
-.PHONY: shared-tests
