@@ -32,6 +32,7 @@
 #include "../../../shared/c/sha256.h"
 #include "../src/replay.h"
 #include "../src/replay_steps.h"
+#include "../src/client_table.h"
 #include "../wasm/wire.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -5880,6 +5881,746 @@ static void test_rule_0f_bounds(void) {
     CHECK(msg_rule_p(&fin, &fin2) < 0 && msg_rule_p(&fin2, &fin) > 0, "0F: ordered two finished deals");
 }
 
+// ---------- Rule R and the races, on real chains ---------------------------
+//
+// What a device does between two bubbles, driven the way a device drives it:
+// adopt a chain (decode, replay, digest, the log mark), rebase the move it had
+// pending (msg_rebase_one), seal what it holds as the child of what it adopted,
+// and let Rule P say which of two such children the table keeps
+// (docs/IMESSAGE_GAME_DESIGN.md §7 and §14's worked races).
+//
+// These were Node suites that reached the same functions through bots.wasm
+// (e2e/msg_concurrency, msg_full_game, msg_lobby_v2 and the board half of
+// msg_route). The rules are the kernel's, so they are pinned here, beside it,
+// and the wasm entry points that existed for those suites are gone.
+
+// The mid-game turn bubbles e2e/msg_wire.test.ts holds the wasm decoder to, at
+// 2, 3 and 4 seats. Each is cut where the defender may pick up while an
+// attacker can still throw in (poses_the_race), with a bout already closed.
+static const char *const RR_PARENT_HEX[3] = {
+    "f7020002efcdab89674523010800000200020000000000000000ae15293755bd748b2919627cd0591ffb"
+    "42d7f9b2e9b57da5c2839ed47bd7ced7020004416e6e300104416e6e310800f72719e90cb7ee031bd6af"
+    "74a3a23a",
+    "f7020002efcdab89674523010a0000030001000000000000000079d87206410d37d302c19dfb6cacbc8b"
+    "ebf879d242622082315709cc0f183788030004416e6e300104416e6e310204416e6e320a00012951da5b"
+    "ef3096f9f7bf2cfb58d013f6d7fa",
+    "f7020002efcdab89674523010700000400010000000000000000449bbad52d5dfb1bdb68d87a09fe591b"
+    "9419f9f39b0ec35e9f2b75c5a359a138040004416e6e300104416e6e310204416e6e320304416e6e3307"
+    "0001c32dd6c13bd1e53963f945fef906649a",
+};
+
+static int rr_parent(int np, unsigned char *out, int cap) {
+    return unhex(RR_PARENT_HEX[np - 2], out, cap);
+}
+
+// A chain as a device holds it once adopted: the game it replays to, its
+// header, the digest a child names as its parent, and the log mark a seal
+// measures its own bubble against (msg_seal's base_logs).
+typedef struct {
+    Game        g;
+    MsgEnvelope e;
+    uint8_t     digest[SHA256_DIGEST_LEN];
+    int         base_logs;
+} RrDevice;
+
+static int rr_adopt(RrDevice *d, const unsigned char *wire, int n) {
+    MsgEnvelope e;
+    int rc = msg_decode(wire, n, &e);
+    if (rc != MSG_EOK) return rc;
+    rc = msg_replay(&e, &d->g);
+    if (rc != MSG_EOK) return rc;
+    msg_digest(wire, n, d->digest);
+    d->e = e;
+    d->e.actions = 0;            // borrowed from `wire`, which the caller may reuse
+    d->e.actions_len = 0;
+    d->base_logs = d->g.num_logs;
+    return MSG_EOK;
+}
+
+// The header of the bubble `seat` sends next on the chain `d` adopted: the
+// protocol's fields, with the adopted chain as its parent. The body's fields
+// (turn, round, the delta, the format) are the seal's.
+static void rr_header(const RrDevice *d, int seat, int phase, MsgEnvelope *e) {
+    msg_envelope_init(e);
+    e->format = MSG_FORMAT_V6;
+    e->phase = (uint8_t)phase;
+    e->game_id = d->e.game_id;
+    e->n_players = d->e.n_players;
+    e->last_actor_seat = (uint8_t)seat;
+    memcpy(e->seed, d->e.seed, MSG_SEED_LEN);
+    memcpy(e->parent8, d->digest, MSG_PARENT_LEN);
+    e->n_joins = d->e.n_joins;
+    for (int i = 0; i < d->e.n_joins; i++) e->joins[i] = d->e.joins[i];
+}
+
+// Seal the game `d` holds under `e` and write the bubble. Returns its length,
+// or a negative MSG_E*.
+static int rr_seal_as(const RrDevice *d, MsgEnvelope *e, unsigned char *out, int cap) {
+    static unsigned char body[1024];
+    static Game scratch;
+    const int rc = msg_seal(e, &d->g, msg_seal_base(&d->g, d->base_logs), body, sizeof(body), &scratch);
+    if (rc != MSG_EOK) return rc;
+    return msg_encode(e, out, cap);
+}
+
+static int rr_phase(const Game *g) {
+    return game_done(g) >= 0 ? MSG_PHASE_FINISHED : MSG_PHASE_LIVE;
+}
+
+static int rr_seal(const RrDevice *d, int seat, unsigned char *out, int cap) {
+    MsgEnvelope e;
+    rr_header(d, seat, rr_phase(&d->g), &e);
+    return rr_seal_as(d, &e, out, cap);
+}
+
+// One move a seat chose against a board.
+typedef struct { int seat; int type; AwireAction a; } RrMove;
+
+// Up to `cap` moves the seats of `g` may make, seats in order and at most
+// `per_seat` each, of `type` only (or every type but WAIT when type < 0),
+// skipping `not_seat`. Returns how many.
+static int rr_moves(const Game *g, int type, int per_seat, int not_seat, RrMove *out, int cap) {
+    static LegalMoves ml;
+    int n = 0;
+    for (int s = 0; s < g->num_players && n < cap; s++) {
+        if (s == not_seat || g->players[s].status != PLAYER_STATUS_IN) continue;
+        calculate_legal_moves(g, s, &ml);
+        int taken = 0;
+        for (int i = 0; i < ml.n && taken < per_seat && n < cap; i++) {
+            const LegalMove *m = &ml.moves[i];
+            if (m->type == MOVE_WAIT || (type >= 0 && m->type != type)) continue;
+            out[n].seat = s;
+            out[n].type = m->type;
+            move_to_awire(m, &out[n].a);
+            n++; taken++;
+        }
+    }
+    return n;
+}
+
+// The send path: adopt `parent`, play `m` on it, seal the result as the
+// mover's bubble. Returns the child's length, or <= 0 when `m` is not a move
+// the parent allows.
+static int rr_play_on(const unsigned char *parent, int n, const RrMove *m, unsigned char *out, int cap) {
+    static RrDevice d;
+    if (rr_adopt(&d, parent, n) != MSG_EOK) return -1;
+    if (msg_rebase_one(&d.g, d.e.round, d.e.round, m->seat, &m->a) != MSG_REBASE_REAPPLY) return -2;
+    return rr_seal(&d, m->seat, out, cap);
+}
+
+// A LIVE bubble of a random np-seat game cut after `cut` moves: the boards the
+// three fixtures above do not reach. Returns its length, or 0 when that game
+// ended first.
+static int rr_random_parent(uint32_t s, int np, int cut, unsigned char *out, int cap) {
+    static unsigned char body[1024];
+    static Game played, scratch;
+    uint8_t seed[MSG_SEED_LEN];
+    seed_fill(seed, 77000u + s * 131u + (uint32_t)np);
+    g_rng = 91u + s;
+    Chain ch; memset(&ch, 0, sizeof(ch));
+    play_game(seed, np, cut, &ch, &played, -1);
+    if (ch.n < cut || played.status != GAME_STATUS_PLAYING || game_done(&played) >= 0) return 0;
+    MsgEnvelope e;
+    env_init(&e, seed, np);
+    e.game_id = 0x7700000000ULL + s;
+    if (msg_seal(&e, &played, MSG_NO_BASE, body, sizeof(body), &scratch) != MSG_EOK) return 0;
+    const int n = msg_encode(&e, out, cap);
+    return n > 0 ? n : 0;
+}
+
+// RULE P IS A TOTAL ORDER (§7.2), over chains devices really build: the
+// children of one parent, one per move a seat could have sent. The same bytes
+// tie; any two different chains order, and the other way round when asked the
+// other way; the order is transitive; and the chain a device ends up on does
+// not depend on the order the bubbles reached it.
+//
+// MUTATION-CHECKED (c/src/msg_wire.c msg_rule_p):
+//   the digest tiebreak returns -1 whichever is smaller  -> "order -1 one way and -1 the other"
+//   two equal digests return -1                          -> "a chain beat itself"
+#define RR_FAN 24
+static void test_rule_p_total_order(void) {
+    static unsigned char parent[ENV_CAP], kids[RR_FAN][ENV_CAP];
+    static RrDevice d;
+    static RrMove mv[RR_FAN];
+    int ordered = 0, triples = 0;
+    for (int np = 2; np <= 4; np++) {
+        const int pn = rr_parent(np, parent, sizeof(parent));
+        CHECK(pn > 0 && rr_adopt(&d, parent, pn) == MSG_EOK, "order %dp: the parent does not adopt", np);
+        CHECK(rm_rule(parent, pn, parent, pn) == 0, "order %dp: a chain beat itself", np);
+
+        const int nm = rr_moves(&d.g, -1, 3, -1, mv, RR_FAN - 1);
+        int kn[RR_FAN], nk = 0;
+        for (int i = 0; i < nm; i++) {
+            const int w = rr_play_on(parent, pn, &mv[i], kids[nk], ENV_CAP);
+            CHECK(w > 0, "order %dp: a move its seat's menu offered did not send (%d)", np, w);
+            if (w > 0) kn[nk++] = w;
+        }
+        CHECK(nk >= 2, "order %dp: a fan of %d chains orders nothing", np, nk);
+        // The parent rides along: a child and the chain it grew from are two
+        // chains a device holds at once.
+        memcpy(kids[nk], parent, (size_t)pn);
+        kn[nk++] = pn;
+
+        for (int a = 0; a < nk; a++) {
+            CHECK(rm_rule(kids[a], kn[a], kids[a], kn[a]) == 0, "order %dp: chain %d beat itself", np, a);
+            for (int b = a + 1; b < nk; b++) {
+                const int ab = rm_rule(kids[a], kn[a], kids[b], kn[b]);
+                const int ba = rm_rule(kids[b], kn[b], kids[a], kn[a]);
+                CHECK((ab == -1 || ab == 1) && ab == -ba,
+                      "order %dp: chains %d and %d order %d one way and %d the other", np, a, b, ab, ba);
+                ordered++;
+            }
+        }
+        for (int a = 0; a < nk; a++)
+            for (int b = 0; b < nk; b++)
+                for (int c = 0; c < nk; c++) {
+                    if (a == b || b == c || a == c) continue;
+                    if (rm_rule(kids[a], kn[a], kids[b], kn[b]) < 0 && rm_rule(kids[b], kn[b], kids[c], kn[c]) < 0) {
+                        CHECK(rm_rule(kids[a], kn[a], kids[c], kn[c]) < 0,
+                              "order %dp: %d beats %d beats %d, and %d does not beat %d", np, a, b, c, a, c);
+                        triples++;
+                    }
+                }
+        // DELIVERY ORDER IS NEVER AN INPUT: a device keeps the better of what it
+        // holds and what arrives, and every rotation and reversal of the
+        // arrivals leaves it on the same chain.
+        int winner = -1;
+        for (int start = 0; start < nk; start++) {
+            for (int dir = -1; dir <= 1; dir += 2) {
+                int best = start;
+                for (int k = 1; k < nk; k++) {
+                    const int cur = ((start + dir * k) % nk + nk) % nk;
+                    if (rm_rule(kids[cur], kn[cur], kids[best], kn[best]) < 0) best = cur;
+                }
+                if (winner < 0) winner = best;
+                CHECK(best == winner, "order %dp: arrivals from %d (step %d) settled on chain %d, not %d",
+                      np, start, dir, best, winner);
+            }
+        }
+    }
+    CHECK(ordered > 20 && triples > 20, "order: %d pairs and %d triples is not a fan", ordered, triples);
+}
+
+// §14.1 AND §7.4, THE CANONICAL RACE: the defender picks up while an attacker
+// throws in, both composed against the same parent. The pickup closes the
+// bout, so its chain is a round ahead and every device keeps it, whichever
+// bubble it saw first. The attacker's device then rebases the throw-in and the
+// round-boundary guard discards it: it was chosen against a table that is
+// gone, and applied to the new one it would be an OPENING ATTACK nobody chose.
+// The same holds for a straggler racing the move that ended a round (§14.6).
+//
+// MUTATION-CHECKED:
+//   msg_rule_p prefers the LOWER round                    -> "the throw-in beat the pickup"
+//   msg_rebase_one drops the round guard                  -> "the throw-in survived the round"
+static void test_race_pickup_vs_throwin(void) {
+    static unsigned char parent[ENV_CAP], dw[ENV_CAP], aw[ENV_CAP];
+    static RrDevice p, dev;
+    static Game before;
+    for (int np = 3; np <= 4; np++) {
+        const int pn = rr_parent(np, parent, sizeof(parent));
+        CHECK(pn > 0 && rr_adopt(&p, parent, pn) == MSG_EOK, "race %dp: the parent does not adopt", np);
+        RrMove pick, atk;
+        const int have = rr_moves(&p.g, MOVE_PICKUP, 1, -1, &pick, 1) == 1
+                      && rr_moves(&p.g, MOVE_ATTACK, 1, pick.seat, &atk, 1) == 1;
+        CHECK(have, "race %dp: the fixture offers no pickup beside a throw-in", np);
+        if (!have) continue;
+
+        const int dn = rr_play_on(parent, pn, &pick, dw, sizeof(dw));
+        const int an = rr_play_on(parent, pn, &atk, aw, sizeof(aw));
+        CHECK(dn > 0 && an > 0, "race %dp: the two bubbles did not send (%d %d)", np, dn, an);
+        if (dn <= 0 || an <= 0) continue;
+        MsgEnvelope de, ae;
+        CHECK(msg_decode(dw, dn, &de) == MSG_EOK && msg_decode(aw, an, &ae) == MSG_EOK,
+              "race %dp: a bubble a device sealed does not decode", np);
+        CHECK(de.round == p.e.round + 1, "race %dp: the pickup sealed round %d on round %d", np, de.round, p.e.round);
+        CHECK(ae.round == p.e.round, "race %dp: a throw-in sealed round %d on round %d", np, ae.round, p.e.round);
+        CHECK(rm_rule(dw, dn, aw, an) < 0, "race %dp: the throw-in beat the pickup", np);
+        CHECK(rm_rule(aw, an, dw, dn) > 0, "race %dp: the throw-in beat the pickup, asked the other way", np);
+
+        // The attacker adopts the pickup's chain and rebases what it composed
+        // against the parent.
+        CHECK(rr_adopt(&dev, dw, dn) == MSG_EOK, "race %dp: the pickup's chain does not adopt", np);
+        game_clone(&before, &dev.g);
+        CHECK(msg_rebase_one(&dev.g, dev.e.round, p.e.round, atk.seat, &atk.a) == MSG_REBASE_DISCARD_ROUND,
+              "race %dp: the throw-in survived the round it was composed in", np);
+        CHECK(!memcmp(&before, &dev.g, sizeof(Game)), "race %dp: a discarded move changed the board", np);
+        // The same move composed against THIS round is a different question,
+        // and legality alone answers it.
+        CHECK(msg_rebase_one(&dev.g, dev.e.round, dev.e.round, atk.seat, &atk.a) != MSG_REBASE_DISCARD_ROUND,
+              "race %dp: the round guard fired inside one round", np);
+    }
+}
+
+// §14.2 AND §14.3, THE RACES INSIDE ONE BOUT. Two seats act on the same
+// parent and neither closes the bout: a cover beside a throw-in, or two
+// throw-ins. Nothing is a round apart, so
+//   * two children equal on round, turn and roster order by DIGEST, smaller
+//     first, the same from both sides (arbitrary, and the same arbitrary on
+//     every device);
+//   * the loser's rebase is answered by legality alone, never by the round
+//     guard; a move the kernel refuses leaves the board as it was; and
+//   * a move that re-applies is ON the adopted board, seals as its child, is
+//     read back by a fresh device as that very board, and outranks the chain
+//     it was rebased onto.
+// Searched over random boards and counted, so a run that never posed a race
+// fails rather than passes.
+//
+// MUTATION-CHECKED:
+//   msg_rule_p's digest tiebreak prefers the LARGER      -> "the digest did not break the tie"
+//   msg_rebase_one applies to the probe and never copies  -> "re-applied, and not on the board"
+//   msg_rebase_one answers REAPPLY for a refused move     -> "a refused move re-applied"
+static void test_race_inside_a_bout(void) {
+    static unsigned char parent[ENV_CAP], w1[ENV_CAP], w2[ENV_CAP], merged[ENV_CAP];
+    static RrDevice p, dev, fresh;
+    static Game before;
+    static RrMove mv[2];
+    int cover_races = 0, attack_races = 0, digest_ties = 0, reapplied = 0, refused = 0;
+    for (uint32_t s = 0; s < 400 && (cover_races < 12 || attack_races < 12 || digest_ties < 6); s++) {
+        const int np = 3 + (int)(s % 2u);
+        const int pn = rr_random_parent(s, np, 3 + (int)(s % 17u), parent, sizeof(parent));
+        if (pn <= 0 || rr_adopt(&p, parent, pn) != MSG_EOK) continue;
+        for (int shape = 0; shape < 2; shape++) {
+            // shape 0: a cover and another seat's throw-in. shape 1: two seats' throw-ins.
+            RrMove first, second;
+            if (shape == 0) {
+                if (rr_moves(&p.g, MOVE_COVER, 1, -1, &first, 1) != 1) continue;
+                if (rr_moves(&p.g, MOVE_ATTACK, 1, first.seat, &second, 1) != 1) continue;
+            } else {
+                if (rr_moves(&p.g, MOVE_ATTACK, 1, -1, mv, 2) != 2 || p.g.num_battles == 0) continue;
+                first = mv[0]; second = mv[1];
+            }
+            const int n1 = rr_play_on(parent, pn, &first, w1, sizeof(w1));
+            const int n2 = rr_play_on(parent, pn, &second, w2, sizeof(w2));
+            if (n1 <= 0 || n2 <= 0) continue;
+            MsgChainKey k1, k2;
+            if (msg_chain_key(w1, n1, &k1) != MSG_EOK || msg_chain_key(w2, n2, &k2) != MSG_EOK) continue;
+            if (k1.round != p.e.round || k2.round != p.e.round) continue;   // one of them closed the bout
+            if (k1.phase != MSG_PHASE_LIVE || k2.phase != MSG_PHASE_LIVE) continue;
+            if (shape == 0) cover_races++; else attack_races++;
+
+            const int v = msg_rule_p(&k1, &k2);
+            CHECK((v == -1 || v == 1) && msg_rule_p(&k2, &k1) == -v,
+                  "bout %u/%d: two different chains order %d and %d", s, shape, v, msg_rule_p(&k2, &k1));
+            if (k1.turn == k2.turn && k1.n_joins == k2.n_joins) {
+                const int lex = memcmp(k1.digest, k2.digest, SHA256_DIGEST_LEN);
+                CHECK(lex != 0 && (v < 0) == (lex < 0),
+                      "bout %u/%d: the digest did not break the tie, smaller first", s, shape);
+                digest_ties++;
+            }
+
+            // The loser adopts the winner and rebases its own move.
+            const int first_won = v < 0;
+            const unsigned char *win = first_won ? w1 : w2;
+            const int wn = first_won ? n1 : n2;
+            const RrMove *lost = first_won ? &second : &first;
+            if (rr_adopt(&dev, win, wn) != MSG_EOK) { CHECK(0, "bout %u/%d: the winner does not adopt", s, shape); continue; }
+            game_clone(&before, &dev.g);
+            const int verdict = msg_rebase_one(&dev.g, dev.e.round, p.e.round, lost->seat, &lost->a);
+            CHECK(verdict == MSG_REBASE_REAPPLY || verdict == MSG_REBASE_DISCARD_ILLEGAL,
+                  "bout %u/%d: inside one round the verdict was %d, and legality is the only arbiter", s, shape, verdict);
+            // Legality, asked the way the kernel answers it: by the handler, on a copy.
+            static Game probe;
+            game_clone(&probe, &before);
+            const int legal = awire_apply(&probe, lost->seat, &lost->a) ? 1 : 0;
+            CHECK((verdict == MSG_REBASE_REAPPLY) == legal,
+                  "bout %u/%d: %s", s, shape, legal ? "a legal move was lost" : "a refused move re-applied");
+            if (verdict != MSG_REBASE_REAPPLY) {
+                CHECK(!memcmp(&before, &dev.g, sizeof(Game)), "bout %u/%d: a discarded move changed the board", s, shape);
+                refused++;
+                continue;
+            }
+            reapplied++;
+            CHECK(dev.g.num_logs > before.num_logs, "bout %u/%d: re-applied, and not on the board", s, shape);
+            const int mn = rr_seal(&dev, lost->seat, merged, sizeof(merged));
+            CHECK(mn > 0, "bout %u/%d: a re-applied move did not seal (%d)", s, shape, mn);
+            if (mn <= 0) continue;
+            CHECK(rm_rule(merged, mn, win, wn) < 0 && rm_rule(win, wn, merged, mn) > 0,
+                  "bout %u/%d: the merge does not outrank the chain it was rebased onto", s, shape);
+            const int frc = rr_adopt(&fresh, merged, mn);
+            CHECK(frc == MSG_EOK, "bout %u/%d: a fresh device refuses the merge (%d)", s, shape, frc);
+            if (frc != MSG_EOK) continue;
+            CHECK(!memcmp(fresh.e.parent8, dev.digest, MSG_PARENT_LEN), "bout %u/%d: the merge does not name what it adopted", s, shape);
+            int same = fresh.g.num_battles == dev.g.num_battles && fresh.g.defender == dev.g.defender
+                    && fresh.g.deck_count == dev.g.deck_count;
+            for (int i = 0; i < dev.g.num_battles && same; i++)
+                same = card_eq(fresh.g.table_battles[i].attack, dev.g.table_battles[i].attack);
+            for (int seat = 0; seat < np && same; seat++) {
+                same = fresh.g.players[seat].hand_count == dev.g.players[seat].hand_count;
+                for (int c = 0; c < dev.g.players[seat].hand_count && same; c++)
+                    same = card_eq(fresh.g.players[seat].hand[c], dev.g.players[seat].hand[c]);
+            }
+            CHECK(same, "bout %u/%d: the merge replays to a different board than the one that sealed it", s, shape);
+        }
+    }
+    CHECK(cover_races >= 12 && attack_races >= 12, "bout: only %d cover and %d throw-in races were posed", cover_races, attack_races);
+    CHECK(digest_ties >= 6, "bout: only %d ties reached the digest", digest_ties);
+    CHECK(reapplied > 0 && refused > 0, "bout: %d re-applied and %d refused, so one answer was never asked for", reapplied, refused);
+    printf("  rule_r inside a bout: %d cover and %d throw-in races, %d digest ties, %d re-applied, %d refused\n",
+           cover_races, attack_races, digest_ties, reapplied, refused);
+}
+
+// RULE R'S THREE ANSWERS (§7.4), over every pair of moves a parent offers: one
+// seat's move becomes the chain, another's is rebased onto it. Every verdict
+// is one of the three; a re-applied move always seals into a bubble a fresh
+// device accepts (no legal move is silently lost); either discard leaves the
+// board untouched; and a seat the table does not have is refused, not played.
+//
+// MUTATION-CHECKED:
+//   msg_rebase_one re-applies for a seat out of range     -> "a seat the table does not have"
+//   msg_rebase_one drops the round guard                  -> "the round guard never fired"
+#define RR_PAIR 32
+static void test_rebase_verdicts(void) {
+    static unsigned char parent[ENV_CAP], chain[ENV_CAP], merged[ENV_CAP];
+    static RrDevice p, dev, fresh;
+    static Game before;
+    static RrMove mv[RR_PAIR];
+    int seen[3] = { 0, 0, 0 };
+    for (int np = 2; np <= 4; np++) {
+        const int pn = rr_parent(np, parent, sizeof(parent));
+        CHECK(pn > 0 && rr_adopt(&p, parent, pn) == MSG_EOK, "verdicts %dp: the parent does not adopt", np);
+        const int nm = rr_moves(&p.g, -1, 4, -1, mv, RR_PAIR);
+        CHECK(nm >= 2, "verdicts %dp: the parent offers %d moves", np, nm);
+        for (int f = 0; f < nm; f++) {
+            const int cn = rr_play_on(parent, pn, &mv[f], chain, sizeof(chain));
+            CHECK(cn > 0, "verdicts %dp: move %d did not send (%d)", np, f, cn);
+            if (cn <= 0) continue;
+            for (int q = 0; q < nm; q++) {
+                CHECK(rr_adopt(&dev, chain, cn) == MSG_EOK, "verdicts %dp: chain %d does not adopt", np, f);
+                game_clone(&before, &dev.g);
+                const int v = msg_rebase_one(&dev.g, dev.e.round, p.e.round, mv[q].seat, &mv[q].a);
+                CHECK(v == MSG_REBASE_REAPPLY || v == MSG_REBASE_DISCARD_ROUND || v == MSG_REBASE_DISCARD_ILLEGAL,
+                      "verdicts %dp: %d is not one of the three reasons", np, v);
+                if (v < 0 || v > 2) continue;
+                seen[v]++;
+                CHECK((v == MSG_REBASE_DISCARD_ROUND) == (dev.e.round > p.e.round),
+                      "verdicts %dp: verdict %d with the chain at round %d and the move composed in round %d",
+                      np, v, dev.e.round, p.e.round);
+                if (v != MSG_REBASE_REAPPLY) {
+                    CHECK(!memcmp(&before, &dev.g, sizeof(Game)), "verdicts %dp: a discarded move changed the board", np);
+                    continue;
+                }
+                const int mn = rr_seal(&dev, mv[q].seat, merged, sizeof(merged));
+                CHECK(mn > 0, "verdicts %dp: a re-applied move did not seal (%d): a legal move was lost", np, mn);
+                CHECK(mn > 0 && rr_adopt(&fresh, merged, mn) == MSG_EOK,
+                      "verdicts %dp: a fresh device refuses a chain this one built", np);
+            }
+        }
+        // A seat the table does not have, on either side of it.
+        CHECK(rr_adopt(&dev, parent, pn) == MSG_EOK, "verdicts %dp: the parent does not adopt twice", np);
+        game_clone(&before, &dev.g);
+        CHECK(msg_rebase_one(&dev.g, dev.e.round, dev.e.round, np, &mv[0].a) == MSG_REBASE_DISCARD_ILLEGAL
+              && msg_rebase_one(&dev.g, dev.e.round, dev.e.round, -1, &mv[0].a) == MSG_REBASE_DISCARD_ILLEGAL,
+              "verdicts %dp: a seat the table does not have was not refused", np);
+        CHECK(!memcmp(&before, &dev.g, sizeof(Game)), "verdicts %dp: a refused seat changed the board", np);
+    }
+    CHECK(seen[MSG_REBASE_REAPPLY] > 0, "verdicts: no move ever re-applied");
+    CHECK(seen[MSG_REBASE_DISCARD_ROUND] > 0, "verdicts: the round guard never fired");
+    CHECK(seen[MSG_REBASE_DISCARD_ILLEGAL] > 0, "verdicts: the kernel never refused a move");
+    printf("  rule_r verdicts: %d re-applied, %d discarded by round, %d refused\n",
+           seen[MSG_REBASE_REAPPLY], seen[MSG_REBASE_DISCARD_ROUND], seen[MSG_REBASE_DISCARD_ILLEGAL]);
+}
+
+// A WHOLE GAME THROUGH THE SEND/ACCEPT LEG: the loop the extension runs, minus
+// the transport. Each turn a device adopts the newest bubble, plays one legal
+// move on it through the rebase, and seals the result as that bubble's child;
+// the next turn starts from those bytes and nothing else. The game must reach
+// a fool, the last bubble must be FINISHED (the same board sealed LIVE is a
+// lie the replay refuses), and no bubble may outgrow the MSMessage URL budget.
+//
+// At every bubble the PUBLIC board is read too - the spectator's view the
+// bubble image is drawn from, which lands on lock screens: it seats nobody and
+// holds no hand, while every seat's count is there.
+//
+// And the finished chain's own bytes are enough to share the game: the game it
+// replays to, encoded from the envelope's seed, is a replay code of that game,
+// too long to be mistaken for a legacy short code (the site routes on length,
+// server/api/common/replay_codec.ts classifyPathSegment: 7 characters or less).
+//
+// MUTATION-CHECKED:
+//   client_adopt_board fills a spectator's view as seat 0 -> "a hand in the public bubble"
+//   msg_replay accepts a finished board claimed LIVE      -> "sealed LIVE and accepted"
+//   msg_seal_base answers NOTHING for a board that moved  -> "says it added 255"
+static void test_send_accept_leg(void) {
+    static const int priority[] = { MOVE_COVER, MOVE_ATTACK, MOVE_GOOD, MOVE_PASS, MOVE_PICKUP };
+    static unsigned char bubble[ENV_CAP], next[ENV_CAP];
+    static RrDevice dev;
+    static ClientTable ct;
+    static ClientSlot slot;
+    client_init(&ct, &slot);
+    int games = 0;
+    for (int np = 2; np <= 4; np++) {
+        int n = rr_parent(np, bubble, sizeof(bubble));
+        int steps = 0, fool = -1, biggest = 0;
+        for (; steps < 3000; steps++) {
+            const int rc = rr_adopt(&dev, bubble, n);
+            CHECK(rc == MSG_EOK, "leg %dp step %d: a sealed bubble was not accepted (%d)", np, steps, rc);
+            if (rc != MSG_EOK) break;
+
+            const int vrc = client_adopt_board(&ct, &dev.g, -1);
+            CHECK(vrc == CLIENT_OK, "leg %dp step %d: the public board does not read (%d)", np, steps, vrc);
+            CHECK(ct.view.my_seat == -1 && ct.view.my_hand_count == 0,
+                  "leg %dp step %d: a hand in the public bubble", np, steps);
+            CHECK(ct.view.num_players == np && ct.view.power_suit == dev.g.power_suit
+                  && ct.view.deck_count == dev.g.deck_count,
+                  "leg %dp step %d: the public board is not the table", np, steps);
+            for (int s = 0; s < np; s++)
+                CHECK(ct.view.seats[s].hand_count == dev.g.players[s].hand_count,
+                      "leg %dp step %d: seat %d's count is %d on the public board, %d at the table", np, steps, s,
+                      ct.view.seats[s].hand_count, dev.g.players[s].hand_count);
+
+            if (game_done(&dev.g) >= 0) {
+                fool = game_done(&dev.g);
+                CHECK(dev.e.phase == MSG_PHASE_FINISHED, "leg %dp: the chain that ended the game is phase %d", np, dev.e.phase);
+                CHECK(ct.view.fool == fool, "leg %dp: the public board names fool %d, the game %d", np, ct.view.fool, fool);
+                break;
+            }
+            CHECK(dev.e.phase == MSG_PHASE_LIVE, "leg %dp step %d: a game in play is phase %d", np, steps, dev.e.phase);
+
+            RrMove m;
+            int found = 0;
+            for (int k = 0; k < 5 && !found; k++) found = rr_moves(&dev.g, priority[k], 1, -1, &m, 1);
+            CHECK(found, "leg %dp step %d: nobody can move, and the game is not over", np, steps);
+            if (!found) break;
+            const int v = msg_rebase_one(&dev.g, dev.e.round, dev.e.round, m.seat, &m.a);
+            CHECK(v == MSG_REBASE_REAPPLY, "leg %dp step %d: a move from the menu got verdict %d", np, steps, v);
+            if (v != MSG_REBASE_REAPPLY) break;
+
+            if (game_done(&dev.g) >= 0) {
+                // The board is over. Claimed LIVE it is refused by whoever reads it.
+                MsgEnvelope lie;
+                rr_header(&dev, m.seat, MSG_PHASE_LIVE, &lie);
+                const int ln = rr_seal_as(&dev, &lie, next, sizeof(next));
+                MsgEnvelope back;
+                static Game lg;
+                CHECK(ln <= 0 || msg_decode(next, ln, &back) != MSG_EOK || msg_replay(&back, &lg) == MSG_EPHASE,
+                      "leg %dp: a finished board was sealed LIVE and accepted", np);
+            }
+            n = rr_seal(&dev, m.seat, next, sizeof(next));
+            CHECK(n > 0, "leg %dp step %d: the move did not seal (%d)", np, steps, n);
+            if (n <= 0) break;
+            MsgEnvelope sent;
+            CHECK(msg_decode(next, n, &sent) == MSG_EOK && sent.n_new >= 1 && sent.n_new != MSG_NEW_NOTHING,
+                  "leg %dp step %d: a bubble that carries a move says it added %d", np, steps, sent.n_new);
+            memcpy(bubble, next, (size_t)n);
+            if (n > biggest) biggest = n;
+        }
+        CHECK(fool >= 0, "leg %dp: %d bubbles and no fool", np, steps);
+        // 240 B is 384 base32 characters; the 2- and 3-seat games stay under
+        // it, and the size budget proper is test_size_budget's.
+        if (np < 4) CHECK(biggest < 240, "leg %dp: a turn bubble grew to %d bytes", np, biggest);
+        if (fool < 0) continue;
+        games++;
+
+        // The share: the finished envelope's own seed and the game it replays to.
+        static unsigned char code[4096];
+        static char text[8192];
+        const int cn = replay_encode_v6_from_game(&dev.g, dev.e.seed, MSG_SEED_LEN, 1 << 30, code, sizeof(code));
+        CHECK(cn > 0, "leg %dp: the finished chain does not encode as a replay (%d)", np, cn);
+        if (cn <= 0) continue;
+        ReplaySummary sum;
+        CHECK(replay_summary_v6(code, cn, &sum) == REPLAY_EOK && sum.num_players == np && sum.fool == fool,
+              "leg %dp: the replay code is not this game's", np);
+        const int tn = replay_b32_encode(code, cn, text, sizeof(text));
+        CHECK(tn > 7, "leg %dp: a %d-character code routes as a legacy short code", np, tn);
+    }
+    CHECK(games == 3, "leg: %d of 3 games reached a fool", games);
+}
+
+// THE OPEN LOBBY (docs/IMESSAGE_LOBBY_V3.md): created at the wire's capacity
+// with one seat taken, joined bubble by bubble without ever starting itself,
+// and then STARTED by any seated player at the count that actually joined.
+// The LIVE child deals 3 seats from the seed the 8-seat lobby locked in, and
+// nothing ties a child's player count to its parent's: each bubble is read
+// from its own bytes, and the parent is a tag. Then a first move is played on
+// the fresh deal, and a racing wider Start that nobody played on loses to it
+// (turn outranks roster).
+//
+// MUTATION-CHECKED:
+//   msg_seal encodes a body for a board nobody attacked on -> "the invite does not seal"
+//   msg_rule_p ranks the roster above the turn            -> "a start nobody played on"
+static void test_open_lobby_start(void) {
+    static const char *const names[4] = { "Alex", "Sveta", "Boris", "Dima" };
+    static unsigned char lobby[ENV_CAP], live[ENV_CAP], played[ENV_CAP], wide[ENV_CAP];
+    static RrDevice dev;
+    uint8_t seed[MSG_SEED_LEN];
+    for (int i = 0; i < MSG_SEED_LEN; i++) seed[i] = (uint8_t)(i * 41 + 7);
+
+    // Create: nothing adopted, nothing dealt, one seat.
+    memset(&dev, 0, sizeof(dev));
+    dev.base_logs = -1;
+    MsgEnvelope e;
+    msg_envelope_init(&e);
+    e.format = MSG_FORMAT_V6;
+    e.phase = MSG_PHASE_WAITING;
+    e.game_id = 268501037u;
+    e.n_players = MSG_MAX_JOINS;
+    memcpy(e.seed, seed, MSG_SEED_LEN);
+    joins_of(e.joins, names, 1);
+    e.n_joins = 1;
+    int ln = rr_seal_as(&dev, &e, lobby, sizeof(lobby));
+    CHECK(ln > 0 && rr_adopt(&dev, lobby, ln) == MSG_EOK, "lobby: the invite does not seal and adopt (%d)", ln);
+    if (ln <= 0) return;
+    CHECK(dev.e.phase == MSG_PHASE_WAITING && dev.e.n_players == MSG_MAX_JOINS && dev.e.n_joins == 1
+          && dev.e.turn == 0 && !memcmp(dev.e.seed, seed, MSG_SEED_LEN),
+          "lobby: the invite is not an open 8-seat lobby of the locked seed");
+
+    // Two joins, each the child of the lobby before it. Neither starts anything.
+    for (int joined = 2; joined <= 3; joined++) {
+        rr_header(&dev, joined - 1, MSG_PHASE_WAITING, &e);
+        joins_of(e.joins, names, joined);
+        e.n_joins = joined;
+        uint8_t parent[MSG_PARENT_LEN];
+        memcpy(parent, dev.digest, MSG_PARENT_LEN);
+        ln = rr_seal_as(&dev, &e, lobby, sizeof(lobby));
+        CHECK(ln > 0 && rr_adopt(&dev, lobby, ln) == MSG_EOK, "lobby: join %d does not seal and adopt (%d)", joined, ln);
+        if (ln <= 0) return;
+        CHECK(dev.e.phase == MSG_PHASE_WAITING && dev.e.n_players == MSG_MAX_JOINS && dev.e.n_joins == joined
+              && dev.e.turn == 0, "lobby: join %d started the game or closed the lobby", joined);
+        CHECK(!memcmp(dev.e.parent8, parent, MSG_PARENT_LEN), "lobby: join %d does not name the lobby before it", joined);
+        for (int i = 0; i < joined; i++)
+            CHECK(dev.e.joins[i].seat == i, "lobby: join %d seated %d at row %d", joined, dev.e.joins[i].seat, i);
+    }
+    uint8_t lobby_digest[SHA256_DIGEST_LEN];
+    memcpy(lobby_digest, dev.digest, SHA256_DIGEST_LEN);
+
+    // Start, by seat 1 (any seated player), at the count that joined.
+    rr_header(&dev, 1, MSG_PHASE_LIVE, &e);
+    e.n_players = 3;
+    const int vn = rr_seal_as(&dev, &e, live, sizeof(live));
+    CHECK(vn > 0 && rr_adopt(&dev, live, vn) == MSG_EOK, "lobby: Start does not seal and adopt (%d)", vn);
+    if (vn <= 0) return;
+    CHECK(dev.e.phase == MSG_PHASE_LIVE && dev.e.turn == 0 && dev.e.n_players == 3 && dev.e.n_joins == 3,
+          "lobby: Start is not a 3-seat deal with nothing played (%d seats, turn %d)", dev.e.n_players, dev.e.turn);
+    CHECK(dev.g.num_players == 3 && dev.g.status == GAME_STATUS_PLAYING && dev.g.players[2].hand_count > 0
+          && dev.g.players[3].hand_count == 0,
+          "lobby: the 3-seat Start dealt %d seats", dev.g.num_players);
+    CHECK(!memcmp(dev.e.parent8, lobby_digest, MSG_PARENT_LEN) && !memcmp(dev.e.seed, seed, MSG_SEED_LEN),
+          "lobby: Start does not name the lobby, or left its seed");
+    CHECK(rm_rule(live, vn, lobby, ln) < 0 && rm_rule(lobby, ln, live, vn) > 0,
+          "lobby: the lobby outranks the game started from it");
+
+    // The first move on the fresh deal.
+    RrMove m;
+    CHECK(rr_moves(&dev.g, -1, 1, -1, &m, 1) == 1, "lobby: the fresh deal has no first move");
+    CHECK(msg_rebase_one(&dev.g, dev.e.round, dev.e.round, m.seat, &m.a) == MSG_REBASE_REAPPLY,
+          "lobby: the opener's first move did not apply");
+    const int pn = rr_seal(&dev, m.seat, played, sizeof(played));
+    CHECK(pn > 0 && rr_adopt(&dev, played, pn) == MSG_EOK, "lobby: the first move does not seal and adopt (%d)", pn);
+    if (pn <= 0) return;
+    CHECK(dev.e.n_players == 3 && dev.e.turn == 1 && dev.e.phase == MSG_PHASE_LIVE,
+          "lobby: the first move is turn %d of a %d-seat game", dev.e.turn, dev.e.n_players);
+
+    // A racing Start off the same lobby with a fourth seat that nobody played
+    // on: wider, and behind.
+    msg_envelope_init(&e);
+    e.format = MSG_FORMAT_V6;
+    e.phase = MSG_PHASE_LIVE;
+    e.game_id = dev.e.game_id;
+    e.n_players = 4;
+    memcpy(e.seed, seed, MSG_SEED_LEN);
+    memcpy(e.parent8, lobby_digest, MSG_PARENT_LEN);
+    joins_of(e.joins, names, 4);
+    e.n_joins = 4;
+    const int wn = msg_encode(&e, wide, sizeof(wide));
+    CHECK(wn > 0, "lobby: the wider Start does not encode (%d)", wn);
+    CHECK(rm_rule(wide, wn, live, vn) < 0 && rm_rule(live, vn, wide, wn) > 0,
+          "lobby: of two Starts nobody played on, the fuller one lost");
+    CHECK(rm_rule(played, pn, wide, wn) < 0 && rm_rule(wide, wn, played, pn) > 0,
+          "lobby: a start nobody played on outranks a chain somebody did");
+}
+
+// A DAMAGED LINK IS REFUSED, OR IT IS A WHOLE GAME - never half of one. The
+// payload arrives in a URL. A flipped body byte and a header that claims a
+// round the chain does not reach are refused; a chain cut short is either
+// refused or, where the shorter code happens to be a chain of its own, a
+// complete board a spectator can be shown. What it can never be is a board
+// with seats missing or a hand in it.
+//
+// MUTATION-CHECKED:
+//   msg_replay stops checking the header's round          -> "a round the chain does not reach"
+static void test_damaged_link(void) {
+    static unsigned char wire[ENV_CAP], bad[ENV_CAP];
+    static RrDevice dev;
+    static ClientTable ct;
+    static ClientSlot slot;
+    client_init(&ct, &slot);
+    for (int np = 2; np <= 4; np++) {
+        const int n = rr_parent(np, wire, sizeof(wire));
+        CHECK(n > 0 && rr_adopt(&dev, wire, n) == MSG_EOK, "damaged %dp: the link itself does not adopt", np);
+        // Where the body starts: after the header, the joins and the u16 count.
+        int body_at = MSG_HEADER_LEN;
+        for (int i = 0; i < wire[MSG_HEADER_LEN - 1]; i++) body_at += 2 + wire[body_at + 1];
+        body_at += 2;
+        CHECK(body_at + 1 < n, "damaged %dp: the fixture has no body to damage", np);
+
+        memcpy(bad, wire, (size_t)n);
+        bad[body_at + 1] ^= 0xff;
+        CHECK(rr_adopt(&dev, bad, n) != MSG_EOK, "damaged %dp: a flipped body byte was accepted", np);
+
+        memcpy(bad, wire, (size_t)n);
+        bad[17] = 99;                               // round
+        MsgEnvelope e;
+        static Game g;
+        CHECK(msg_decode(bad, n, &e) == MSG_EOK && msg_replay(&e, &g) == MSG_EROUND,
+              "damaged %dp: a header claiming a round the chain does not reach was accepted", np);
+
+        for (int cut = 1; cut <= 6; cut++) {
+            if (rr_adopt(&dev, wire, n - cut) != MSG_EOK) continue;
+            CHECK(client_adopt_board(&ct, &dev.g, -1) == CLIENT_OK && ct.view.num_players == np
+                  && ct.view.my_seat == -1 && ct.view.my_hand_count == 0,
+                  "damaged %dp: a link cut by %d reads as part of a game", np, cut);
+        }
+    }
+}
+
+// THE REMATCH LOBBY, PINNED AS BYTES. A finished 4-seat game and the lobby
+// seat 2's tap on it builds at 0x1234 seconds and 567 ms (--rematch-fixture
+// prints both). e2e/msg_rematch.test.ts holds the wasm kernel to the same two
+// strings, so the phone's build and the test build of bots.wasm are each held
+// to one answer rather than to each other.
+//
+// MUTATION-CHECKED:
+//   msg_rematch_seed draws from half the moment           -> "builds other bytes"
+static const char *const REMATCH_FINISHED_HEX =
+    "f7050003606000000000000064000004011100000000000000006d380f1cae7638124850ee2cbae14e7f"
+    "c19e018780f568cd99f0b18252d0fe21e43400040004416c657801044d69726102054a6f6e6173030550"
+    "726979616400" "0370d96bdfca53aaf159b08e7238ee50564efe1f1864a345b71d69ef4147da284b47f32f"
+    "0cdca05a1cc4661a827ad6cfc3e8d7bafa";
+static const char *const REMATCH_LOBBY_HEX =
+    "f70600006060000000000000000002040100f887535ca3ce410d5792a42bb5bb707687ad8735658d6b93"
+    "11cd750e096921e6a88a4dea8f3814aa34120000ff44c9ed0100040004416c657801044d69726102054a"
+    "6f6e6173030550726979610000";
+
+static void test_rematch_golden(void) {
+    static unsigned char fin[ENV_CAP], want[ENV_CAP], got[ENV_CAP], built[ENV_CAP];
+    static Game scratch;
+    const int nf = unhex(REMATCH_FINISHED_HEX, fin, sizeof(fin));
+    const int nw = unhex(REMATCH_LOBBY_HEX, want, sizeof(want));
+    const int ng = msg_rematch_lobby(fin, nf, 0x1234ull * 1000u + 567u, 2, got, sizeof(got), &scratch);
+    CHECK(ng == nw && !memcmp(got, want, (size_t)nw),
+          "rematch golden: the pinned finished game's rematch is %d bytes and builds other bytes than the pinned %d",
+          ng, nw);
+    // The finished game is the one the generator still plays, so the pin cannot
+    // drift away from what --rematch-fixture prints.
+    const int nb = rm_finished(4, 0, 9700u, 0x6060, built, sizeof(built), NULL);
+    CHECK(nb == nf && !memcmp(built, fin, (size_t)nf),
+          "rematch golden: the generator's finished game (%d bytes) is no longer the pinned one (%d)", nb, nf);
+}
+
+// The chain-level tests above, as one list: the whole run calls it, and so does
+// `msg_wire_test --chains`, which runs these alone in about a second - what a
+// mutation check of msg_rebase_one or msg_rule_p wants.
+static void test_chains(void) {
+    test_rule_p_total_order();
+    test_race_pickup_vs_throwin();
+    test_race_inside_a_bout();
+    test_rebase_verdicts();
+    test_send_accept_leg();
+    test_open_lobby_start();
+    test_damaged_link();
+    test_rematch_golden();
+}
+
 // --decode <hex>: what THIS build's decoder says about a payload. Kept so a
 // binary built from an older commit can be pointed at a bubble a newer build
 // sealed - that is the only honest model of an old client.
@@ -5933,6 +6674,11 @@ int main(int argc, char **argv) {
     }
     if (argc > 2 && !strcmp(argv[1], "--holdcheck")) { print_holdcheck(argv[2]); return 0; }
     if (argc > 2 && !strcmp(argv[1], "--decode")) { print_decode(argv[2]); return 0; }
+    if (argc > 1 && !strcmp(argv[1], "--chains")) {
+        test_chains();
+        printf(g_fails ? "msg_wire_test --chains: %d FAILURES\n" : "msg_wire_test --chains: OK\n", g_fails);
+        return g_fails ? 1 : 0;
+    }
     if (argc > 1 && !strcmp(argv[1], "--rematch-fixture")) {
         // A finished 4-seat game and the rematch lobby the NATIVE kernel builds
         // for it when seat 2 taps at 0x1234 seconds and 567 ms -
@@ -6006,6 +6752,7 @@ int main(int argc, char **argv) {
     test_rematch_taps();
     test_rematch_creator_gate();
     test_rule_0f_bounds();
+    test_chains();
     test_size_budget(games * 4, seed0);
     { const int rb = bot_roster_find("robusta");
       probe_v6_midgame(seed0, 2, rb);

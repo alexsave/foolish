@@ -1,11 +1,11 @@
 /* =============================================================================
  * Replay extras: player names + move timestamps (optional URL section)
  * =============================================================================
- * THE CODEC IS THE KERNEL'S (c/src/replay_extras.h). This file is the base32
- * and log-timestamp adapter around it: it turns the blob into the text half of
- * a URL and a session's log rows into the gaps the blob wants, and knows
- * nothing about the bytes in between. It used to be a second implementation of
- * the format, kept in step with a Swift third by a parity test - #113.
+ * THE CODEC IS THE KERNEL'S (c/src/replay_extras.h). This file is what a page
+ * that READS a code needs around it: the split at the dash and the blob out of
+ * its base32. Writing one is the C Table's, when a game finishes
+ * (wasm_table_replay_extras). It used to be a second implementation of the
+ * format, kept in step with a Swift third by a parity test - #113.
  *
  * The move integer (encode.ts/decode.ts) is deliberately untouched - extras
  * are a SEPARATE blob appended to the URL code after a dash:
@@ -19,11 +19,7 @@
  * small one.
  * ========================================================================== */
 
-import { kernelB32Encode, kernelB32Decode } from "@sdk/ts/wasm/bots.ts";
-import {
-    kernelReplayExtrasEncode,
-    kernelReplayExtrasDecode,
-} from "@sdk/ts/wasm/bots.ts";
+import { kernelB32Decode, kernelReplayExtrasDecode } from "@sdk/ts/wasm/bots.ts";
 
 export interface ReplayExtras {
     /** one per seat, '' when absent */
@@ -49,59 +45,7 @@ export function joinReplayCode(moves: string, extras: string | null): string {
     return extras ? `${moves}-${extras}` : moves;
 }
 
-/* -------------------------------- encoding -------------------------------- */
-
-/**
- * Build the extras blob from a start time plus per-move gaps. This is the
- * precision-preserving entry point: gaps are stored relative, so nanosecond
- * resolution survives even though an ABSOLUTE unix-seconds double cannot
- * represent it (the ULP near 2e9 s is ~240 ns). High-resolution producers
- * (simulations) should call this directly with their raw gaps.
- */
-export function encodeExtrasFromGaps(
-    names: string[] | null,
-    startTime: number | null,
-    gaps: number[] | null,
-): string {
-    return kernelB32Encode(kernelReplayExtrasEncode(names, startTime, gaps));
-}
-
-/**
- * The blob as RAW BYTES, for the one caller that stores it rather than putting
- * it in a URL (game_snapshots.extras). The share code is derived from the
- * column client-side, so base32 would only be a round trip.
- */
-export function encodeExtrasBytes(
-    names: string[] | null,
-    moveTimes: number[] | null,
-): Uint8Array {
-    const gaps = moveTimes && moveTimes.length >= 1 ? gapsFrom(moveTimes) : null;
-    return kernelReplayExtrasEncode(names, gaps ? moveTimes![0] : null, gaps);
-}
-
-function gapsFrom(moveTimes: number[]): number[] {
-    const gaps: number[] = [];
-    for (let i = 1; i < moveTimes.length; i++) {
-        gaps.push(Math.max(0, moveTimes[i] - moveTimes[i - 1]));
-    }
-    return gaps;
-}
-
-/**
- * Convenience wrapper over absolute unix-seconds move times - [GAME_START,
- * move, move, ...]. Differences of absolute
- * doubles resolve to ~us near the current epoch; finer than that, use
- * encodeExtrasFromGaps.
- */
-export function encodeExtras(
-    names: string[] | null,
-    moveTimes: number[] | null,
-): string {
-    if (!moveTimes || moveTimes.length < 1) {
-        return encodeExtrasFromGaps(names, null, null);
-    }
-    return encodeExtrasFromGaps(names, moveTimes[0], gapsFrom(moveTimes));
-}
+/* -------------------------------- decoding -------------------------------- */
 
 /**
  * Parse an extras blob. `playerCount` and `moveCount` come from the decoded

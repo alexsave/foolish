@@ -1,11 +1,10 @@
-// The iMessage concurrency model, wired — the Swift twin of
-// e2e/msg_concurrency.test.ts. That suite proves Rule P / Rule R in the kernel
-// through wasm; this one proves the PHONE's glue over the same primitives:
+// The iMessage concurrency model, wired. c/tests/msg_wire_test.c proves
+// Rule P / Rule R in the kernel (test_rule_p_total_order, the race tests,
+// test_rebase_verdicts); this one proves the PHONE's glue over the same primitives:
 // Rule P's stale verdict, driven exactly the way MessagesRootView.load()
 // drives it. (ROUND 9: the durable pending ledger, the Swift rebase binding
 // and the pre-staged replay are removed - owner call - so their legs went
-// too.) If the wasm suite and this one disagree, a phone and a browser would
-// resolve a race differently — the one thing §7 forbids.
+// too.)
 //
 // No Messages harness here (that is B4, live-only): every leg is the kernel and
 // the store, driven exactly the way MessagesRootView.load() drives them.
@@ -84,6 +83,6 @@ final class MessageConcurrencyTests: XCTestCase {
     // ROUND 9 (owner): the durable pending ledger and its Rule R rebase are
     // removed - the two ledger tests that lived here went with them. Staged
     // moves exist only in the controller's memory now; the concurrency rules
-    // (Rule P and the kernel-side Rule R) remain covered by the FMSG e2e suite
-    // (e2e/msg_concurrency.test.ts).
+    // (Rule P and the kernel-side Rule R) remain covered by the kernel's own
+    // suite (c/tests/msg_wire_test.c).
 }

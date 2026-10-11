@@ -41,7 +41,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { gunzip } from '../sdk/ts/wasm/gunzip.ts';
 import { __overrideLayoutHash, assertLayoutHash } from '../sdk/ts/wasm/layout_hash.ts';
-import { __ensureBots, kernelBotRoster } from '../sdk/ts/wasm/bots.ts';
+import { kernelBotRoster } from '../sdk/ts/wasm/bots.ts';
 import { LAYOUT_HASH as BOTS_LAYOUT_HASH } from '../sdk/ts/gen/layout_hash.bots.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; }
@@ -52,7 +52,8 @@ const hex = (h: number) => `0x${(h >>> 0).toString(16).padStart(8, '0')}`;
 test('bots.wasm: a doctored LAYOUT_HASH refuses the module at load; the real one loads', () => {
     __overrideLayoutHash(doctored(BOTS_LAYOUT_HASH));
     try {
-        assert.throws(() => __ensureBots(), (e: Error) => {
+        // The roster is the first thing a host asks, and asking loads the module.
+        assert.throws(() => kernelBotRoster(), (e: Error) => {
             assert.match(e.message, /bots\.wasm/);
             assert.match(e.message, /sdk\/ts\/gen\/layout_hash\.bots\.ts/);
             assert.ok(e.message.includes(hex(BOTS_LAYOUT_HASH)), `names the module's hash: ${e.message}`);
@@ -61,7 +62,6 @@ test('bots.wasm: a doctored LAYOUT_HASH refuses the module at load; the real one
     } finally {
         __overrideLayoutHash(null);
     }
-    __ensureBots();
     assert.ok(kernelBotRoster().length > 0, 'the real hash loads a working bots.wasm');
 });
 

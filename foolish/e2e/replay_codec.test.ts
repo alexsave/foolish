@@ -28,7 +28,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   kernelB32Encode, kernelReplayLink, kernelB32Decode, kernelReplayLinkParse,
-  replayStepCount, replayStepIndex, replaySummary, __replayError,
+  replayStepIndex, replaySummary,
 } from '../sdk/ts/wasm/bots.ts';
 import { REPLAY_ATOM_ATTACK, REPLAY_ATOM_COVER, REPLAY_ATOM_PASS, REPLAY_ATOM_PICKUP } from '../sdk/ts/gen/kernel_consts.bots.ts';
 import * as V from '../sdk/ts/gen/view_layout.bots.ts';
@@ -37,11 +37,11 @@ import {
   base64Decode, base64Encode, bytesToBigint,
 } from '../server/api/common/replay_codec.ts';
 import {
-  encodeExtrasFromGaps,
   decodeExtras,
   splitReplayCode,
   joinReplayCode,
 } from '../server/api/common/replay_extras.ts';
+import { encodeExtrasFromGaps } from './helpers/extras_encode.ts';
 import { buildReplayFrames } from '../src/replay/frames';
 import { fixtureTable } from './helpers/table_fixture.ts';
 import { recordBotTable } from './helpers/replay_play.ts';
@@ -138,7 +138,7 @@ function roundTripGame(game: Played, np: number, where: string): boolean {
     // The documented refusal (REPLAY_ETOOLONG), reported by the kernel itself.
     // Not an assertion failure: there is nothing to round-trip.
     if (tooLong(bytes)) return false;
-    throw new Error(`v6 encode failed on a ${np}p game (${where}, seed=${rng.seed}): ${__replayError(bytes).message} (${bytes})`);
+    throw new Error(`v6 encode failed on a ${np}p game (${where}, seed=${rng.seed}): kernel refusal ${bytes}`);
   }
   const x = bytesToBigint(bytes);
   const enc = {
@@ -171,7 +171,6 @@ function roundTripGame(game: Played, np: number, where: string): boolean {
   // actions, in order and by seat: what the replay says each step played
   // (replay_steps.c) against the moves live play pushed to the table's watchers.
   const steps = replayStepIndex(enc.bytes);
-  assert.equal(steps.length, replayStepCount(enc.bytes), 'the step index covers every step');
   const decodedMoves = steps.filter((s) => INFO_STEP[s.kind]).map((s) => `${INFO_STEP[s.kind]}@${s.seat}`);
   assert.equal(diffStreams(pushedMoves(game), decodedMoves), null,
     `info-action stream mismatch (np=${np}, ${where}, seed=${rng.seed})`);
@@ -255,7 +254,7 @@ export function registerReplayValidation(): void {
     // the deal-order fix), and the kernel refuses it by number rather than
     // trying to read it - c/tests/tests.c walks the whole alphabet.
     assert.throws(
-      () => replayStepCount(new Uint8Array([7])),
+      () => replayStepIndex(new Uint8Array([7])),
       /unsupported replay format version 7/,
     );
     assert.equal(replaySummary(new Uint8Array([7])), null, 'a retired code has no summary');

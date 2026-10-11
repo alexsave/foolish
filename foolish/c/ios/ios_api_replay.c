@@ -43,9 +43,8 @@ int fio_b32_encode(const uint8_t *in, int n, char *out, int cap) {
 // The exact game, hidden state and all. One kernel call - the deal seed was kept
 // at fio_new_game, the actions are this game's own logs, and the reveal stream
 // is re-derived inside the kernel, so the app assembles nothing. This is the
-// same replay_encode_v6_from_game the server calls through
-// wasm_replay_encode_v6_from_game, so an offline share and a site share are the
-// same code.
+// same replay_encode_v6_from_game the server's table calls (table.c
+// table_replay_code), so an offline share and a site share are the same code.
 //
 // Returns FIO_ENOSEED for a game dealt without a wide seed: its deal cannot be
 // re-derived, and there is no second format to fall back to any more.

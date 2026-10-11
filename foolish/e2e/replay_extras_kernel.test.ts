@@ -58,11 +58,9 @@ import assert from 'node:assert/strict';
 import {
   frozenEncodeExtras, frozenDecodeExtras,
 } from './helpers/extras_format_v2.ts';
-import {
-  encodeExtras, encodeExtrasBytes, encodeExtrasFromGaps, decodeExtras,
-  splitReplayCode, joinReplayCode,
-} from '../server/api/common/replay_extras.ts';
-import { kernelReplayExtrasEncode, kernelReplayExtrasDecode, kernelReplayLink, ensureBotsAsync, kernelB32Encode, kernelB32Decode } from '../sdk/ts/wasm/bots.ts';
+import { decodeExtras, splitReplayCode, joinReplayCode } from '../server/api/common/replay_extras.ts';
+import { encodeExtras, encodeExtrasBytes, encodeExtrasFromGaps, kernelReplayExtrasEncode } from './helpers/extras_encode.ts';
+import { kernelReplayExtrasDecode, kernelReplayLink, ensureBotsAsync, kernelB32Encode, kernelB32Decode } from '../sdk/ts/wasm/bots.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 

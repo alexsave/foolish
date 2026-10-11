@@ -384,8 +384,7 @@ int fio_msg_surface_plan(const uint8_t *showing, int showing_len,
 }
 
 // Rule R over the AWIRE frame - the one rebase entry (the phone stages moves as
-// awire and the pending ledger holds them the same way). Same contract as
-// wasm_msg_rebase: decode the
+// awire and the pending ledger holds them the same way): decode the
 // action, then msg_rebase_one against the adopted chain's round (g_msg_round, set
 // by the last fio_msg_decode). Returns MSG_REBASE_* (0 re-applied and
 // APPLIED to the resident game, 1 discarded by the round guard, 2 discarded as
