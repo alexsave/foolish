@@ -2,18 +2,17 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import supabase from '../common/Connector';
 import { useParams } from 'next/navigation';
 import { useAuth } from './AuthContext';
-import { MAX_PLAYERS } from '@api/core/constants.ts';
 import { ANIM_TIME_MS } from '@sdk/ts/gen/anim.bots.ts';
 import { optimisticOverlay } from '../state/optimisticOverlay';
 import { animationFeed } from '../state/animationFeed';
 import * as V from '@sdk/ts/gen/view_layout.bots.ts';
 import type { Ask } from '@sdk/ts/table/client_table.ts';
 import { holdPrivateChannel } from '../state/privateChannel';
-import { cardKey, mergeHandOrder, reconcileHandMemory, displayedHand, mergeTableBattles } from '../state/clientReconcile';
+import { cardKey, mergeHandOrder, reconcileHandMemory, displayedHand } from '../state/clientReconcile';
 import { keepPending, lobbyBoard, rearrangedBoard } from '../state/clientBoards';
 import { TABLE_STATUS_APPLIED, TABLE_STATUS_REJECTED, TABLE_REJECT_STALE_ROUND } from '@sdk/ts/gen/view_layout.bots.ts';
 import { clientTable, encodeAction } from '@sdk/ts/table/client_table.ts';
-import { GAME_STATUS, type TableView, type ViewCard } from '../state/view';
+import { GAME_STATUS, rulesOf, type TableView, type ViewCard } from '../state/view';
 import { rejectMessage } from '../wasm/rejectMessages';
 import { authoritativeVersion } from '../state/authoritativeVersion';
 import { EN, StringId, StringTable, isLanguage, loadLanguage, translate } from '../common/strings';
@@ -37,13 +36,7 @@ const hexToBytes = (hex: string): Uint8Array => {
 };
 
 // How long a refused move waits for the pushes it was refused over before
-// reconcileAfter loads the game: two flights, time for a late push.
-//
-// DERIVED FROM THE KERNEL'S FLIGHT, not from a TypeScript copy of it. This used
-// to be `ANIMATION_TIME = 500` in src/common/constants.ts, and every
-// duration, gap and deadline in the product was that one number; the flight
-// itself is the kernel's (c/src/anim_plan.h ANIM_TIME_MS, generated into
-// sdk/ts/gen/anim.bots.ts), so the coupling cannot silently come apart.
+// reconcileAfter loads the game: two of the kernel's flights, time for a late push.
 const RECONCILE_GRACE_MS = 2 * ANIM_TIME_MS;
 
 // Re-apply the local player's unconfirmed optimistic table cards onto an
@@ -63,13 +56,6 @@ const applyOptimisticOverlay = (v: TableView): TableView => {
 const ServerActionsContext = createContext<ServerActionsType | null>(null);
 const ServerStateContext = createContext<ServerStateType | null>(null);
 
-// (The old `handsQuery` PostgREST projection is gone: the client no longer
-// reads player_hands/games directly - it reads its own already-masked packed
-// view straight from the player_views / spectator_views caches (a plain indexed
-// RLS SELECT), with no edge round-trip. See docs/PLAYER_VIEWS.md.)
-
-// for now we'll just use a fake auth impl
-// this will be kinda similar to client.js
 export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     const { user_id } = useAuth();
     const url_game_id = useParams<{ game_id: string }>().game_id?.toLowerCase();
@@ -146,21 +132,17 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     useEffect(() => { spectatorGamesRef.current = spectatorGames; }, [spectatorGames]);
     useEffect(() => { urlGameIdRef.current = url_game_id; }, [url_game_id]);
 
-    // Local hand order state - keyed by game_id
-    // Thinking we just need one tbh
+    // The viewer's own arrangement of each hand, by game id.
     const [localHandOrders, setLocalHandOrders] = useState<{ [key: string]: Card[] }>({});
 
-    // Use ref to avoid closure issues in WebSocket handler
-    const gameIdRef = useRef<string | null>(null);
     const userNamesRef = useRef<{ [userId: string]: string }>({});
 
     // Use ref to prevent duplicate user effect executions
     const prevUserRef = useRef<string | null>(null);
 
-    // Track ongoing loadGame calls to prevent duplicates
+    // The loads in flight, so a second caller shares the first's.
     const loadGamePromises = useRef<Map<string, Promise<{ game_id: string }>>>(new Map());
 
-    // Track ongoing getUserGames call to prevent duplicates
     const getUserGamesPromise = useRef<Promise<void> | null>(null);
 
     // The chat: channel held for a seated game (holdPrivateChannel), and how to
@@ -205,7 +187,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
     useEffect(() => {
         if (url_game_id) {
-            gameIdRef.current = url_game_id;
             setGameId(url_game_id);
             setGameLoadError(null); // Clear any previous errors
 
@@ -223,10 +204,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [url_game_id]);
-
-
-
-    // Keep ref in sync with state
 
 
     useEffect(() => {
@@ -272,11 +249,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     }, [user_id, url_game_id]);
 
 
-    // NOTE: there is deliberately no gu-<game>-<user> subscription here. That
-    // personalized channel is owned by RealtimeAnimationFeed (the animation
-    // pipeline); a second subscription from this context was pure duplicate
-    // socket load - its only events were `private_message` (sender commented out
-    // server-side) and `HAND_REARRANGED` (handler was a no-op).
+    // There is deliberately no gu-<game>-<user> subscription here: that channel
+    // is RealtimeAnimationFeed's, and a second one is duplicate socket load.
 
     // A seated player's chat stream. chat:{game} admits only a member of the
     // game, so this is never asked for a spectator: a refused private join
@@ -297,40 +271,21 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         chatHoldRef.current = { gameId, stop };
     };
 
-    // mergeHandOrder / reconcileHandMemory / displayedHand / mergeTableBattles all
-    // live in src/state/clientReconcile.ts (imported at the top) so they can be
-    // unit-tested directly without React.
-
-    // Helper method to update local hand order when game state changes. Sticky:
-    // the arrangement memory keeps known slots and only grows with new cards, so a
-    // card that's transiently absent (optimistically played then rejected) keeps
-    // its slot instead of jumping to the end.
+    // Sticky: the arrangement memory keeps known slots and only grows with new
+    // cards, so a card that's transiently absent (optimistically played then
+    // rejected) keeps its slot instead of jumping to the end.
     const updateLocalHandOrder = (gameId: string, newHand: readonly Card[]) => {
         setLocalHandOrders(prev => ({ ...prev, [gameId]: reconcileHandMemory(prev[gameId] || [], newHand) }));
     };
 
-
-    // Helper method to merge an incoming board with the one held for the game.
-    // Every board names its viewer's seat and carries its version, so the
-    // incoming board is taken whole except for the viewer's hand ORDER, which is
-    // the client's own arrangement.
+    // An incoming board is taken whole except for the viewer's hand ORDER, which
+    // is the client's own arrangement.
     const mergeGameData = (gameId: string, next: TableView, prevGames: { [key: string]: TableView }): TableView => {
         const prev = prevGames[gameId];
-        let result: TableView = next;
-
-        // Trust the incoming table (the merge policy lives in clientReconcile).
-        if (prev) result = { ...result, battles: mergeTableBattles(prev.battles, next.battles) };
-
-        // If we held this seat's hand before, preserve the hand order
-        if (prev && prev.mySeat >= 0 && next.mySeat >= 0) {
-            result = { ...result, myHand: mergeHandOrder(prev.myHand, next.myHand) };
-        }
-
-        // Update local hand order when game data changes
-        if (result.mySeat >= 0) {
-            updateLocalHandOrder(gameId, result.myHand);
-        }
-
+        const result = prev && prev.mySeat >= 0 && next.mySeat >= 0
+            ? { ...next, myHand: mergeHandOrder(prev.myHand, next.myHand) }
+            : next;
+        if (result.mySeat >= 0) updateLocalHandOrder(gameId, result.myHand);
         return result;
     };
 
@@ -485,8 +440,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // start / add-bot / exit / continue are one consolidated `meta` endpoint
-    // (dispatched on `type`) - fewer functions, faster deploys.
+    // start / add-bot / exit / continue are asks to the one `meta` endpoint.
     const startGame = useCallback((gameId: string): Promise<{ game_id: string }> => {
         return askMeta({ kind: V.ASK_START, gid: gameId })
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -500,13 +454,14 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     const exitGame = useCallback((gameId: string, botId?: string, playerId?: string): Promise<{ game_id: string }> => {
         return askMeta({ kind: V.ASK_EXIT, gid: gameId, bot: botId ?? '', player: playerId ?? '' }, {
             onSuccess: (view) => {
-                // If I gave up my own seat (not a bot's, not another player's),
-                // I am watching now. The gu- stream is RealtimeAnimationFeed's to
-                // leave once the board shows no seat; the chat: membership is gone.
-                if (!botId && (!playerId || playerId === userIdRef.current)) {
+                // The answer is my view: with no seat on it, the seat given up was
+                // mine (not a bot's, not another player's) and I am watching now.
+                // The gu- stream is RealtimeAnimationFeed's to leave once the board
+                // shows no seat; the chat: membership is gone.
+                if (view.mySeat < 0) {
                     setSpectatorGames(prev => new Set(prev).add(gameId));
-                    // The answer is my view without the seat: apply it, as a join
-                    // applies its own, so the page and the feed see the seat gone now.
+                    // Apply it, as a join applies its own, so the page and the feed
+                    // see the seat gone now.
                     setGames(prev => ({ ...prev, [view.gameId]: mergeGameData(view.gameId, view, prev) }));
                     stopChat();
                     watchGame(gameId);
@@ -516,24 +471,15 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // Hmm loading the url should add the player to the game.
-
     const loadGame = useCallback(async (gameId: string): Promise<{ game_id: string }> => {
-        // Check if we already have an ongoing request for this game
+        // One load per game at a time: a second caller shares the first's promise.
         const existingPromise = loadGamePromises.current.get(gameId);
-        if (existingPromise) {
-            return existingPromise;
-        }
-
-        // Create new promise and cache it
+        if (existingPromise) return existingPromise;
         const gamePromise = loadGameInternal(gameId);
         loadGamePromises.current.set(gameId, gamePromise);
-
-        // Clean up cache when promise resolves or rejects
         gamePromise.finally(() => {
             loadGamePromises.current.delete(gameId);
         });
-
         return gamePromise;
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
@@ -580,51 +526,36 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const loadGameInternal = async (gameId: string): Promise<{ game_id: string }> => {
-        try {
-            // Player fast path: the caller's own masked view from the
-            // player_views cache. Falls back to the shared spectator_views row
-            // (fully masked, no seat) for a non-participant - both are plain
-            // indexed RLS SELECTs, no edge function.
-            let view: TableView | null = await loadGameFromCache(gameId);
+        // The caller's own masked view, or the shared spectator view for a
+        // non-participant.
+        const view = await loadGameFromCache(gameId) ?? await loadSpectatorFromCache(gameId);
 
-            if (!view) {
-                view = await loadSpectatorFromCache(gameId);
-            }
+        // Neither cache had a row (game predates the caches, or was pruned):
+        // there is no edge fallback, so this is a genuine not-found.
+        if (!view) throw new Error(`Game ${gameId} not found`);
 
-            // Neither cache had a row (game predates the caches, or was pruned):
-            // there is no edge fallback anymore, so this is a genuine not-found.
-            if (!view) throw new Error(`Game ${gameId} not found`);
+        // Re-apply the local player's unconfirmed optimistic cards onto
+        // the authoritative state so a reconnect resync doesn't make a
+        // just-played card vanish-then-reappear (Q7). No-op on a normal
+        // load (nothing optimistic pending) and for a spectator.
+        const loaded = applyOptimisticOverlay(view);
 
-            // Re-apply the local player's unconfirmed optimistic cards onto
-            // the authoritative state so a reconnect resync doesn't make a
-            // just-played card vanish-then-reappear (Q7). No-op on a normal
-            // load (nothing optimistic pending) and for a spectator.
-            const loaded = applyOptimisticOverlay(view);
+        setGames(prev => ({ ...prev, [gameId]: mergeGameData(gameId, loaded, prev) }));
+        joinOrSubscribe(loaded);
 
-            setGames(prev => ({ ...prev, [gameId]: mergeGameData(gameId, loaded, prev) }));
-            joinOrSubscribe(loaded);
-
-            // Trigger the bot loop only if the caller is a player in a game with
-            // AI players. Fire and forget - don't block UI rendering.
-            if (loaded.mySeat >= 0 && loaded.seats.some(seat => seat.isAi)) {
-                invokeBytes('meta', clientTable().askBody({ kind: V.ASK_BUMP, gid: gameId })).catch(() => { });
-            }
-
-            return { game_id: gameId };
-
-        } catch (error) {
-            throw error;
+        // Trigger the bot loop only if the caller is a player in a game with
+        // AI players. Fire and forget - don't block UI rendering.
+        if (loaded.mySeat >= 0 && loaded.seats.some(seat => seat.isAi)) {
+            invokeBytes('meta', clientTable().askBody({ kind: V.ASK_BUMP, gid: gameId })).catch(() => { });
         }
+
+        return { game_id: gameId };
     };
 
     const joinOrSubscribe = (view: TableView) => {
         const gameId = view.gameId;
 
-        // Set game_id state and game data first, then load chat history
         setGameId(gameId);
-        //setGames(prev => ({ ...prev, [gameId]: mergeGameData(gameId, game, prev) }));
-
-        // Load chat history with game data
         loadChatHistory(gameId).catch(console.error);
 
         if (view.mySeat >= 0) {
@@ -639,13 +570,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             return;
         }
 
-        // Check if user is intentionally spectating this game
-        const isSpectating = spectatorGamesRef.current.has(gameId);
-
-        // no game self + waiting + not spectating + room available -> join
-        // no game self + (not waiting OR spectating OR no room) -> subscribe to game
-        if (!isSpectating && view.status === GAME_STATUS.WAITING && view.seats.length < MAX_PLAYERS) {
-            // Auto-join only if not intentionally spectating
+        // Sit down when the lobby has a seat to give (the kernel's canJoin),
+        // unless this user chose to watch; otherwise watch.
+        if (!spectatorGamesRef.current.has(gameId) && rulesOf(view).canJoin) {
             joinGame(gameId).catch(console.error);
         } else {
             // Subscribe as spectator. No chat: for a spectator: its policy admits
@@ -686,15 +613,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     // A move goes to the server FIRST - the server is authoritative and rejects an
     // illegal move, so the round-trip isn't gated on local validation. The body is
     // the packed awire buffer: the caller-supplied bytes (already validated against
-    // the kernel) or a fresh encode for direct callers.
-    //
-    // THE BOARD THE MOVE LEAVES IS NOT THIS FILE'S ANY MORE. It used to land here
-    // on a SECOND ANIMATION_TIME timer, in a different file from the flight it was
-    // meant to follow and coupled to it by nothing but the two reading the same
-    // constant: if the queue was busy the board arrived while some other card was
-    // still in the air. The prediction is one of the kernel's steps now, and its
-    // board commits when that step lands (AnimationContext, ClientAnimationEvent
-    // commit_board / commit_if) - one clock, one plan, one landing.
+    // the kernel) or a fresh encode for direct callers. The board the move leaves
+    // is not this file's: it is one of the kernel's steps, and commits when that
+    // step lands (AnimationContext).
     const playMove = (move: Uint8Array): Promise<{ game_id: string }> =>
         invokePackedAction(activeGameIdRef.current!, move);
 
@@ -719,183 +640,83 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     }, []);
 
     const good = useCallback((): Promise<{ game_id: string }> => {
-        // Packed like the other moves; `good` has no optimistic patch. MOOT
-        // (the game ended under us) resolves as success, same as before.
-        return invokePackedAction(activeGameIdRef.current!, encodeAction({ kind: 'good' }));
+        return playMove(encodeAction({ kind: 'good' }));
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const sendMessage = useCallback(async (message: string): Promise<void> => {
-        try {
-            const gid = activeGameIdRef.current;
-            const user_id = userIdRef.current;
-            if (!gid || !user_id) {
-                const error = new Error('No game or user available');
-                throw error;
-            }
+        const gid = activeGameIdRef.current;
+        const user_id = userIdRef.current;
+        if (!gid || !user_id) throw new Error('No game or user available');
+        if (!message || message.trim() === '') throw new Error('Message cannot be empty');
+        if (message.length > 1000) throw new Error('Message is too long');
 
-            if (!message || message.trim() === '') {
-                const error = new Error('Message cannot be empty');
-                throw error;
-            }
-
-            if (message.length > 1000) {
-                const error = new Error('Message is too long');
-                throw error;
-            }
-
-            const trimmedMessage = message.trim();
-
-            // Save message to database - the trigger will handle broadcasting
-            const { error } = await supabase
-                .from('chat_messages')
-                .insert({
-                    game_id: gid,
-                    user_id: user_id,
-                    message: trimmedMessage,
-                    is_system: false
-                });
-
-            if (error) {
-                throw error;
-            }
-
-        } catch (error) {
-            throw error;
-        }
+        // Save message to database - the trigger will handle broadcasting
+        const { error } = await supabase
+            .from('chat_messages')
+            .insert({ game_id: gid, user_id: user_id, message: message.trim(), is_system: false });
+        if (error) throw error;
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const updateGameName = useCallback((gameId: string, name: string): Promise<{ game_id: string }> => {
-        const previousName = gamesRef.current[gameId]?.title;
-
-        setGames(prev => ({
-            ...prev,
-            [gameId]: {
-                ...prev[gameId],
-                title: name
-            }
-        }));
-
-        const revert = () => {
-            if (!previousName) {
-                return;
-            }
-            setGames(prev => ({
-                ...prev,
-                [gameId]: {
-                    ...prev[gameId],
-                    title: previousName
-                }
-            }));
-        }
-
-        return askMeta({ kind: V.ASK_UPDATE_NAME, gid: gameId, title: name }, {
-            onError: revert
+    // A lobby edit shows at once and is put back if the server refuses: `shown`
+    // is the board the kernel says the ask leaves, null for one it does not show
+    // (then the server's answer is the first board that does). It replaces only
+    // the board it was made from, and is put back only while it still stands: a
+    // newer board is the server's own.
+    const askShowing = (ask: Ask, shown: TableView | null): Promise<{ game_id: string }> => {
+        const held = gamesRef.current[ask.gid];
+        if (!held || !shown) return askMeta(ask);
+        setGames(cur => (cur[ask.gid] === held ? { ...cur, [ask.gid]: shown } : cur));
+        return askMeta(ask, {
+            onError: () => setGames(cur => (cur[ask.gid] === shown ? { ...cur, [ask.gid]: held } : cur)),
         });
+    };
+    // async: an ask the writer cannot hold (a title past its buffer) rejects, as it did.
+    const lobbyEdit = async (ask: Ask): Promise<{ game_id: string }> => {
+        const held = gamesRef.current[ask.gid];
+        return askShowing(ask, held ? clientTable().askApplied(held, ask) : null);
+    };
+
+    const updateGameName = useCallback((gameId: string, name: string): Promise<{ game_id: string }> => {
+        return lobbyEdit({ kind: V.ASK_UPDATE_NAME, gid: gameId, title: name });
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     // The lobby's rules (docs/PODKIDNOY.md): `passing` true for the classic
-    // passing game, false for podkidnoy. Shown at once, as a retitle is, and put
-    // back if the server refuses; whether this viewer may change them at all is
-    // the kernel's (ViewRules.canSetRules), and the server holds the same rule.
+    // passing game, false for podkidnoy. Whether this viewer may change them at
+    // all is the kernel's (ViewRules.canSetRules), and the server holds the same rule.
     const setRules = useCallback((gameId: string, passing: boolean): Promise<{ game_id: string }> => {
-        const previous = gamesRef.current[gameId]?.passing;
-        setGames(prev => (prev[gameId] ? { ...prev, [gameId]: { ...prev[gameId], passing } } : prev));
-
-        const revert = () => {
-            if (previous === undefined) return;
-            setGames(prev => (prev[gameId] ? { ...prev, [gameId]: { ...prev[gameId], passing: previous } } : prev));
-        };
-
-        return askMeta({ kind: V.ASK_SET_RULES, gid: gameId, passing: passing ? 1 : 0 }, {
-            onError: revert
-        });
+        return lobbyEdit({ kind: V.ASK_SET_RULES, gid: gameId, passing: passing ? 1 : 0 });
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const rearrangePlayer = useCallback((gameId: string, playerIds: string[]): Promise<{ game_id: string }> => {
-        // A lobby's seats, reordered by their player ids (a lobby holds no cards,
-        // so the seats are all a reorder moves).
-        const previousSeats = gamesRef.current[gameId]?.seats ? [...gamesRef.current[gameId].seats] : [];
-        if (previousSeats.length === 0) {
-            return Promise.reject(new Error(`Cannot rearrange players`));
-        }
-        const rearrangedSeats = playerIds.map(playerId =>
-            previousSeats.find(s => s.id === playerId)!
-        );
-        setGames(prev => ({ ...prev, [gameId]: { ...prev[gameId], seats: rearrangedSeats } }));
-
-        const revert = () => {
-            if (previousSeats.length === 0) {
-                return;
-            }
-            setGames(prev => ({ ...prev, [gameId]: { ...prev[gameId], seats: previousSeats } }));
-        }
-
-        return askMeta({ kind: V.ASK_REARRANGE_PLAYERS, gid: gameId, order: playerIds.map(id => ({ id })) }, {
-            onError: revert
-        });
+        return lobbyEdit({ kind: V.ASK_REARRANGE_PLAYERS, gid: gameId, order: playerIds.map(id => ({ id })) });
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const rearrangeHand = useCallback((gameId: string, cardIndices: number[]): Promise<{ game_id: string }> => {
         // The reorder is debounced (DragContext.scheduleCardRearrangeUpdate), so by
         // the time it flushes the hand may have changed (a card played, drawn, or
-        // picked up). Indices computed against the OLD hand can now be out-of-range
-        // or non-bijective; applying them optimistically would mint an `undefined`
-        // slot into the hand, and the next render crashes reading `card.suit`. The
-        // kernel orders the hand only by a true permutation (game_rearrange_hand, the
-        // server's own check); a stale reorder is abandoned rather than materialized.
+        // picked up). The kernel orders the hand only by a true permutation
+        // (game_rearrange_hand, the server's own check); a stale reorder is
+        // abandoned rather than materialized.
         const board = gamesRef.current[gameId];
         const arranged = board ? rearrangedBoard(board, cardIndices) : { kind: 'no-hand' as const };
-        if (arranged.kind === 'no-hand') {
-            return Promise.reject(new Error(`Cannot rearrange hand`));
-        }
-        if (arranged.kind === 'not-an-order') {
-            return Promise.resolve({ game_id: gameId });
-        }
-
-        const previousHand = board!.myHand;
-        const rearrangedHand = arranged.view.myHand;
-        setGames(prev => ({
-            ...prev, [gameId]: {
-                ...prev[gameId],
-                myHand: rearrangedHand
-            }
-        }));
-
-        const revert = () => {
-            setGames(prev => ({
-                ...prev, [gameId]: {
-                    ...prev[gameId],
-                    myHand: previousHand
-                }
-            }));
-        }
-
-        return askMeta({ kind: V.ASK_REARRANGE_HAND, gid: gameId, idx: cardIndices }, {
-            onError: revert
-        });
+        if (arranged.kind === 'no-hand') return Promise.reject(new Error(`Cannot rearrange hand`));
+        if (arranged.kind === 'not-an-order') return Promise.resolve({ game_id: gameId });
+        return askShowing({ kind: V.ASK_REARRANGE_HAND, gid: gameId, idx: cardIndices }, arranged.view);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const getUserGames = useCallback(async (): Promise<void> => {
-        // Check if we already have an ongoing getUserGames request
-        if (getUserGamesPromise.current) {
-            return getUserGamesPromise.current;
-        }
-
-        // Create new promise and cache it
+        if (getUserGamesPromise.current) return getUserGamesPromise.current;
         const gamesPromise = getUserGamesInternal();
         getUserGamesPromise.current = gamesPromise;
-
-        // Clean up cache when promise resolves or rejects
         gamesPromise.finally(() => {
             getUserGamesPromise.current = null;
         });
-
         return gamesPromise;
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
@@ -965,8 +786,10 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     }, []);
 
     // The one transport: bytes the kernel wrote out, the bytes the server
-    // answered with back. functions-js posts a Blob as application/octet-stream
-    // and hands one back. `body` null: a request with nothing to say (create).
+    // answered with back. functions-js posts a body as application/octet-stream
+    // only when it is a Blob or an ArrayBuffer (a Uint8Array would be
+    // JSON.stringified), and hands a Blob back. `body` null: a request with
+    // nothing to say (create).
     const invokeBytes = async (endpoint: string, body: Uint8Array | null): Promise<Uint8Array | null> => {
         const { data, error } = await supabase.functions.invoke(endpoint, body ? { body: new Blob([body as BlobPart]) } : {});
         if (error) throw error;
@@ -995,14 +818,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }
     }
 
-    // The packed move transport (docs/PACKED_WIRE_CUTOVER.md): POST the awire
-    // bytes - the exact buffer the kernel validated - wrapped in the binary
-    // request envelope. functions-js only passes a body through with
-    // Content-Type: application/octet-stream when it is a Blob or an
-    // ArrayBuffer (a Uint8Array would be JSON.stringified - see
-    // @supabase/functions-js FunctionsClient.invoke), so the envelope rides in
-    // a Blob; octet-stream responses come back as a Blob too.
-    // 'bump' and every lobby edit are asks, sent through askMeta above.
     // After a refused (or moot) move whose answer names a newer version than the
     // page has applied, the page is behind the server: the pushes that would have
     // told it are late or lost. Give a late push RECONCILE_GRACE_MS to arrive and
@@ -1024,10 +839,12 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const invokePackedAction = async (gameId: string, wire: Uint8Array): Promise<{ game_id: string }> => {
-        // Stamp the move with the version the client composed it against, so the
-        // server's round-boundary guard can reject it if a round closed in the
-        // meantime (docs/WEB_RACE_BUG_HANDOFF.md). undefined => the legacy v1
-        // envelope, unguarded (we've not yet seen an authoritative version).
+        // The packed move transport (docs/PACKED_WIRE_CUTOVER.md): the awire bytes
+        // the kernel validated, in the binary request envelope, stamped with the
+        // version the client composed the move against so the server's
+        // round-boundary guard can reject it if a round closed in the meantime
+        // (docs/WEB_RACE_BUG_HANDOFF.md). undefined => the v1 envelope, unguarded
+        // (no authoritative version seen yet).
         const req = clientTable().actionRequest(gameId, wire, authoritativeVersion(gameId));
         const bytes = await invokeBytes('action', req);
         const resp = bytes ? clientTable().readActionResponse(bytes) : null;
@@ -1048,7 +865,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             throw new Error(rejectMessage(resp.rejectCode));
         }
         // APPLIED - or MOOT (the move lost the end-game race, a no-op): both
-        // resolve as success, mirroring the old JSON path's data.id check.
+        // resolve as success.
         return { game_id: gameId };
     };
 

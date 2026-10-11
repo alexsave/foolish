@@ -174,6 +174,13 @@ export class ClientTable {
         return n < 0 ? this.refused(n) : this.out(n);
     }
 
+    /** The board `view` becomes once the viewer's lobby edit (a rename, the rules, a reseat) stands on it (client_ask_apply), or null when the kernel does not show it. */
+    askApplied(view: TableView, ask: Ask): TableView | null {
+        V.writeTableView(this.m(), this.ex.wasm_client_edit_view_ptr(), view);
+        V.writeTableAsk(this.m(), this.ex.wasm_client_ask_ptr(), { ...NO_ASK, ...ask });
+        return this.edited(this.ex.wasm_client_ask_apply());
+    }
+
     /** A refusal body (ask.h AskRefusal), or null when the bytes are not one. */
     readRefusal(bytes: Uint8Array): AskRefusal | null {
         const rc = this.put(bytes) ? this.ex.wasm_client_refusal_decode(bytes.length) : V.ASK_E_WIRE;
