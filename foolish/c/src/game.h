@@ -494,6 +494,12 @@ uint32_t game_human_mask(const Game *g);
 // host records the seat's id and name in its Roster (roster.h).
 int game_lobby_seat(Game *g, int strategy_key);
 
+// HAS THIS LOBBY A SEAT LEFT? `seats` taken, in a game that has not dealt
+// (`waiting`). The one predicate behind game_lobby_seat and the lobby view's
+// offer to sit down (client_table.h ViewRules.can_join), so a screen never
+// offers a seat the kernel then refuses.
+int game_lobby_has_room(int seats, int waiting);
+
 // Mark a seated player READY. Returns 1 if that changed anything, else 0
 // (an out-of-range seat, or a game that is no longer WAITING).
 int game_lobby_ready(Game *g, int seat);

@@ -1076,6 +1076,7 @@ WASM_CLIENT_EXPORTS := \
   -Wl,--export=wasm_hand_metrics_ptr -Wl,--export=wasm_hand_layout_ptr \
   -Wl,--export=wasm_hand_layout \
   -Wl,--export=wasm_client_ask_ptr -Wl,--export=wasm_client_ask_encode \
+  -Wl,--export=wasm_client_ask_apply \
   -Wl,--export=wasm_client_refusal_ptr -Wl,--export=wasm_client_refusal_decode \
   -Wl,--export=wasm_client_cast_open -Wl,--export=wasm_client_cast_version
 

@@ -532,6 +532,9 @@ TableAsk *wasm_table_ask_ptr(void)        { return &g_table_ask; }
 // -> io = the request body for the ask at wasm_client_ask_ptr.
 int wasm_client_ask_encode(void) { return ask_encode(&g_ask, wasm_io_ptr(), wasm_io_cap()); }
 
+// The board at wasm_client_edit_view_ptr once the ask at wasm_client_ask_ptr stands on it.
+int wasm_client_ask_apply(void) { return client_ask_apply(&g_edit_view, &g_ask); }
+
 // io = [a refusal body] -> the refusal at wasm_client_refusal_ptr.
 int wasm_client_refusal_decode(int len) {
     const unsigned char *io = inputs(len);

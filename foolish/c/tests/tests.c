@@ -14401,6 +14401,107 @@ static void test_client_board_edits(void) {
           "the rematch's lobby is the server's reset, bots ready and humans not");
 }
 
+// A LOBBY EDIT'S BOARD IS THE SERVER'S ANSWER (client_table.h client_ask_apply):
+// the board a viewer shows the moment it asks is the envelope table_ask then
+// writes for that same ask, for a rename, the rules and a reseat, and an ask the
+// table would refuse - or one only the server can answer - moves nothing.
+static TableView aa_view;
+static int aa_predicts(const char *actor, int viewer, const TableAsk *a) {
+    ViewRules vr;
+    if (sr_view(viewer, &vr) != CLIENT_OK) return 0;
+    aa_view = ct.view;
+    if (client_ask_apply(&aa_view, a) != CLIENT_OK) return 0;
+    if (table_ask(&tb, actor, (int)strlen(actor), RS("n"), a, 0, tb_seed) != TABLE_OK) return 0;
+    return sr_view(aa_view.my_seat, &vr) == CLIENT_OK && ct_same_view(&aa_view, &ct.view);
+}
+static int aa_refused(int viewer, const TableAsk *a, int want) {
+    ViewRules vr;
+    if (sr_view(viewer, &vr) != CLIENT_OK) return 0;
+    aa_view = ct.view;
+    return client_ask_apply(&aa_view, a) == want && memcmp(&aa_view, &ct.view, sizeof(TableView)) == 0;
+}
+static void aa_title(TableAsk *a, const char *title) {
+    memset(a, 0, sizeof(*a));
+    a->kind = ASK_UPDATE_NAME;
+    a->title_len = (uint16_t)strlen(title);
+    memcpy(a->title, title, a->title_len);
+}
+static void aa_order(TableAsk *a, const char *ids) {
+    memset(a, 0, sizeof(*a));
+    a->kind = ASK_REARRANGE_PLAYERS;
+    for (; *ids; ids++) { a->order[a->n_order].len = 1; a->order[a->n_order++].id[0] = *ids; }
+}
+static void test_client_ask_apply(void) {
+    TableAsk a;
+    tb_seed_fill(12);
+    client_init(&ct, &ct_slot);
+    tb_lobby();
+
+    aa_title(&a, " \t Friday night\xc2\xa0 ");
+    CHECK(aa_predicts("b", 1, &a) && aa_view.title_len == 12 && memcmp(aa_view.title, "Friday night", 12) == 0,
+          "ask_apply: a rename shows the title the server keeps, trimmed");
+    aa_title(&a, "  \n ");
+    CHECK(aa_refused(1, &a, CLIENT_E_MOVE), "ask_apply: a title that trims to nothing is not shown");
+    aa_title(&a, "123456789012345678901234567890123456789012345678901");
+    CHECK(aa_refused(1, &a, CLIENT_E_MOVE), "ask_apply: nor one past the lobby's 50 characters");
+    aa_title(&a, "Saturday");
+    CHECK(aa_refused(-1, &a, CLIENT_E_MISMATCH), "ask_apply: a spectator's rename is not shown");
+
+    memset(&a, 0, sizeof(a));
+    a.kind = ASK_SET_RULES;
+    a.passing = 0;
+    CHECK(aa_predicts("c", 2, &a) && !aa_view.passing, "ask_apply: the rules show as the server sets them");
+    a.passing = 1;
+    CHECK(aa_predicts("a", 0, &a) && aa_view.passing, "ask_apply: and back");
+    a.passing = 2;
+    CHECK(aa_refused(0, &a, CLIENT_E_MOVE), "ask_apply: rules that are neither are not shown");
+
+    aa_order(&a, "cab");
+    CHECK(aa_predicts("a", 0, &a) && aa_view.my_seat == 1 && aa_view.seats[0].id[0] == 'c' && aa_view.seats[2].id[0] == 'b',
+          "ask_apply: a reseat shows the seats in the order named, and the viewer's seat moves with them");
+    aa_order(&a, "caa");
+    CHECK(aa_refused(1, &a, CLIENT_E_MOVE), "ask_apply: an order naming a seat twice is not shown");
+    aa_order(&a, "ca");
+    CHECK(aa_refused(1, &a, CLIENT_E_MOVE), "ask_apply: nor one that leaves a seat out");
+    aa_order(&a, "caz");
+    CHECK(aa_refused(1, &a, CLIENT_E_MOVE), "ask_apply: nor one naming somebody who is not seated");
+
+    memset(&a, 0, sizeof(a));
+    a.kind = ASK_JOIN;
+    CHECK(aa_refused(-1, &a, CLIENT_OK), "ask_apply: a join is the server's to answer, and the board waits for it");
+
+    table_ready(&tb, RS("a"), tb_seed);
+    table_ready(&tb, RS("b"), tb_seed);
+    table_ready(&tb, RS("c"), tb_seed);
+    aa_title(&a, "Too late");
+    CHECK(tb_game.status == GAME_STATUS_PLAYING && aa_refused(0, &a, CLIENT_E_MISMATCH),
+          "ask_apply: no lobby edit is shown once the game has dealt");
+}
+
+// THE LOBBY'S SEATS (game.h game_lobby_has_room, ViewRules.can_join): a
+// spectator is offered a seat exactly while game_lobby_seat would give one.
+static void test_lobby_has_room(void) {
+    ViewRules vr;
+    tb_seed_fill(13);
+    client_init(&ct, &ct_slot);
+    tb_lobby();
+    CHECK(sr_view(-1, &vr) == CLIENT_OK && vr.can_join, "room: a spectator of a lobby with a seat left may sit down");
+    CHECK(sr_view(0, &vr) == CLIENT_OK && !vr.can_join, "room: a seated viewer may not sit down twice");
+    for (int i = 3; i < MAX_PLAYERS; i++) {
+        char id[4] = { 'p', (char)('0' + i), 0 };
+        CHECK(game_lobby_has_room(tb_game.num_players, 1) && table_join(&tb, id, 2, RS("P")) == TABLE_OK, "room: a seat is given while there is room");
+    }
+    CHECK(tb_game.num_players == MAX_PLAYERS && !game_lobby_has_room(MAX_PLAYERS, 1) && game_lobby_seat(&tb_game, STRATEGY_KEY_HUMAN) == -1,
+          "room: a full lobby has none, and seats nobody");
+    CHECK(sr_view(-1, &vr) == CLIENT_OK && !vr.can_join, "room: a full lobby offers a spectator no seat");
+    tb_lobby();
+    table_ready(&tb, RS("a"), tb_seed);
+    table_ready(&tb, RS("b"), tb_seed);
+    table_ready(&tb, RS("c"), tb_seed);
+    CHECK(tb_game.status == GAME_STATUS_PLAYING && !game_lobby_has_room(3, 0), "room: a dealt game has none");
+    CHECK(sr_view(-1, &vr) == CLIENT_OK && !vr.can_join, "room: and offers a spectator no seat");
+}
+
 static void test_client_rearrange_hand(void) {
     cvr_board(&cb_view, 0);
     cb_view.my_hand_count = 3;
@@ -15643,6 +15744,8 @@ int main(void) {
     test_client_board_edits();
     test_client_board_edit_undeal();
     test_client_rearrange_hand();
+    test_client_ask_apply();
+    test_lobby_has_room();
     test_client_conflict_verdicts();
     test_client_play_is_the_engine();
     test_client_play_refuses_what_is_not_a_gesture();

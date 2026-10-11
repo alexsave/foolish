@@ -34,6 +34,7 @@
 #include "legal.h"
 #include "roster.h"
 #include "awire.h"
+#include "ask.h"
 #include <stddef.h>
 
 #define CLIENT_OK           0
@@ -111,6 +112,7 @@ typedef struct {
     int8_t  defender_badge;        // the defending seat; -1 none (GAME_SEAT_NONE until the opening names it)
     bool    can_say_good;          // the viewer may say Good and the bout could close on it
     bool    can_set_rules;         // the viewer may change the table's rules: seated, in a lobby that has not dealt (game.h game_lobby_can_set_rules)
+    bool    can_join;              // the viewer may sit down: not seated, in a lobby with a seat left (game.h game_lobby_has_room)
     bool    show_deck_pile;        // the stock has cards left to draw on screen
     bool    show_flipped_slot;     // the trump's slot, kept while a card is on its way into it or out of it
     bool    show_trump_icon;       // stock and trump are gone: the power suit stands in their place
@@ -354,6 +356,21 @@ int client_board_edit(ClientTable *c, TableView *v, const BoardEdit *e);
 // hand), CLIENT_E_MOVE when `idx` is not a permutation of the hand, CLIENT_E_STATE
 // when the board is refused.
 int client_rearrange_hand(ClientTable *c, TableView *v, const uint8_t *idx, int n);
+
+// The board the viewer's lobby edit leaves until the server answers, from the
+// ask itself (ask.h, the one the host then sends): what table_ask will make of
+// it, so a lobby shows the edit at once and the answer changes nothing.
+//   ASK_UPDATE_NAME        the title as the lobby's rule keeps it (roster.h roster_title_keep)
+//   ASK_SET_RULES          the table's rules
+//   ASK_REARRANGE_PLAYERS  the seats in the order the ask names them, the viewer's with them
+// Every other kind leaves the board as it is: a hand's order is
+// client_rearrange_hand's and the rematch's lobby CLIENT_EDIT_LOBBY's, and the
+// rest (a join, a deal, a bot) only the server can say.
+// CLIENT_OK, CLIENT_E_FORMAT for a view that is not one, CLIENT_E_MISMATCH for an
+// edit the table refuses whoever makes it here (the viewer is not seated, or the
+// game has dealt), CLIENT_E_MOVE for an edit that is not one: a title the rule
+// refuses, rules that are neither, an order that is not the seats.
+int client_ask_apply(TableView *v, const TableAsk *a);
 
 // The conflict verdict for each of `q`'s motions against a push (anim_plan.h
 // anim_conflict_sweep, anim_conflict_facts, anim_conflict_verdict; the server

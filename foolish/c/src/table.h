@@ -249,8 +249,7 @@ int table_remove_bot(Table *t, const char *actor_id, int id_len, const char *bot
 int table_ready(Table *t, const char *actor_id, int id_len, const uint8_t *deal_seed);
 // The new seat order as the seated ids: n x { u8 len, id bytes }.
 int table_reseat(Table *t, const char *actor_id, int id_len, const uint8_t *ids, int ids_len);
-// The lobby's title rule: at most 50 characters as the web counts them (UTF-16
-// code units, before trimming), then trimmed of JavaScript whitespace, not empty.
+// The title as the lobby's rule keeps it (roster.h roster_title_keep).
 int table_retitle(Table *t, const char *actor_id, int id_len, const char *title, int title_len);
 // The table's RULES (docs/PODKIDNOY.md): `passing` 1 the classic passing game,
 // 0 podkidnoy. Any seated player, while the lobby has not dealt
