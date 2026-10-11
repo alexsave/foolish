@@ -22,17 +22,17 @@
 # there (measured, Xcode 27, with and without the kernel target), so the
 # first plan must never see it missing.
 #
-# TWO COMMANDS BEFORE THE PROJECT IS WRITTEN, because ../sdk/swift/gen has two
+# TWO COMMANDS, HERE AND IN EVERY BUILD, because ../sdk/swift/gen has two
 # writers: tools/structgen/gen.sh writes all of it (the translated string
 # tables among them), and `make ios-lib` writes the kernel's readers beside the
-# hash it bakes into the library. The build reruns only the second - gen.sh
-# rewrites every file it owns whether it changed or not, and a build that did
-# that would recompile FoolishKit every time - so after an edit to a string
-# table it is `xcodegen generate` (or gen.sh) again. See ios/README.md.
+# hash it bakes into the library. Both write a file only when its content
+# changed, so running them every build recompiles nothing that did not move,
+# and an edit to a string table in C is in the app on the next build like an
+# edit to the kernel is. See ios/README.md.
 
 name: Foolish
 options:
-  preGenCommand: bash ../tools/structgen/gen.sh && ../../shared/scripts/xcode_kernel.sh ../c
+  preGenCommand: ../../shared/scripts/xcode_kernel.sh ../c "" ../tools/structgen/gen.sh
   bundleIdPrefix: cards.foolish
   # 16.0, not the doc's 15.0 starter: the signature SF Compressed numerals
   # (Font.width(.compressed), §5.2) and ShareLink (§16.C2) are iOS 16 APIs, and
@@ -590,7 +590,7 @@ aggregateTargets:
           - $(SRCROOT)/vendor/Foolish.xcframework
           - $(SRCROOT)/vendor/FoolishBots.xcframework
         script: |
-          "$SRCROOT/../../shared/scripts/xcode_kernel.sh" "$SRCROOT/../c"
+          "$SRCROOT/../../shared/scripts/xcode_kernel.sh" "$SRCROOT/../c" "" "$SRCROOT/../tools/structgen/gen.sh"
 
 schemes:
   Foolish:

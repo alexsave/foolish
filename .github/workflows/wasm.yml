@@ -208,6 +208,11 @@ jobs:
           bash ../shared/tools/structgen/test/hash.sh
           bash ../shared/tools/datagen/test/cli.sh
 
+      # gen.sh writes a module only when its bytes changed: the iOS build runs
+      # it first on every build, and a file whose time moved is a recompile.
+      - name: gen.sh publishes by content
+        run: bash tools/structgen/test/publish.sh
+
       - name: Accessors against wasm32 C (verify)
         # --verify-wasm links test/verify.c into build/verify.wasm. That module is
         # never committed - its bytes are this runner's clang, not a macOS one -

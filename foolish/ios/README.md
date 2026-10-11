@@ -36,8 +36,7 @@ There is no separate "build the engine" step.
 After that the build runs `make ios-lib` itself, first, on every build (the `FoolishKernel` target in `project.yml`).
 It does nothing when no C changed, and when one did the library is rebuilt and relinked in that same build, so an edit to the kernel can no longer be tested against the library from before it.
 
-The translated string tables are the exception: `tools/structgen/gen.sh` writes them and the build does not rerun it, so after an edit to a string table run `xcodegen generate` (or `gen.sh`) again.
-`ios/scripts/mac_tests.sh` does all of it.
+The same goes for the generated Swift, the translated string tables included: the build runs `tools/structgen/gen.sh` first too, and it writes a file only when its content changed, so nothing is recompiled that did not move.
 
 ## Build & test from the shell
 
