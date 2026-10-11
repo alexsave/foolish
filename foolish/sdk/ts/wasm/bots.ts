@@ -14,12 +14,15 @@ import { assertLayoutHash } from './layout_hash.ts';
 import { memOf as viewMemOf, readTableView, readReplaySummary, readReplayError, readReplayFrameIndex, TableView_Snap, ReplaySummary_Snap, ReplayError_Snap } from '../gen/view_layout.bots.ts';
 import * as V from '../gen/view_layout.bots.ts';
 import { memOf as msgMemOf, readMsgHeader, writeMsgHeader, readReplayExtras, writeReplayExtras,
-         REPLAY_EXTRAS_FLAG_NAMES, REPLAY_EXTRAS_FLAG_TIMES, REPLAY_LINK_STYLE_URL,
+         MSG_NO_OPENING, MSG_NO_FOOL, REPLAY_EXTRAS_FLAG_NAMES, REPLAY_EXTRAS_FLAG_TIMES, REPLAY_LINK_STYLE_URL,
          type MsgHeader_Snap, type ReplayExtras_Snap } from '../gen/msg_layout.bots.ts';
 import * as A from '../gen/anim.bots.ts';
 import { memOf as animMemOf } from '../gen/anim.bots.ts';
 import { writeAnimPlanAsk, MAX_PLAYERS } from '../gen/view_layout.bots.ts';
-import { RS_INDEX_STRIDE } from '../gen/kernel_consts.bots.ts';
+import * as K from '../gen/kernel_consts.bots.ts';
+import { MsgErrorText } from '../gen/errtext/msg.ts';
+import { ReplayErrorText } from '../gen/errtext/replay.ts';
+import { ReplayExtrasErrorText } from '../gen/errtext/replay_extras.ts';
 
 /** A card as the kernel's doors here read and write it (suit 0..3, value 1..13; -1/-1 is a hidden card). */
 export interface Card { readonly suit: number; readonly value: number }
@@ -54,8 +57,6 @@ function mem(ex: { memory: WebAssembly.Memory }): Uint8Array {
     return memView;
 }
 
-const MOVE_TYPE = ['attack', 'cover', 'pass', 'pickup', 'good', 'wait'];
-
 // The legal moves of whatever game is RESIDENT in the kernel, no marshal and no
 // copy: wasm_legal_moves fills the kernel's own LegalMoves and this reads it
 // where it lies, through the generated accessors (sdk/ts/gen/anim.bots.ts).
@@ -67,7 +68,7 @@ function residentLegalMoves(ex: EngineExports, seat: number): { type: string; ca
     const moves: { type: string; cards?: Card[]; attack_cards?: Card[] }[] = new Array(total);
     for (let i = 0; i < total; i++) {
         const mv = A.LegalMoves_moves_at(lm, i);
-        const type = MOVE_TYPE[A.LegalMove_get_type(m, mv)];
+        const type = K.MOVE_NAMES[A.LegalMove_get_type(m, mv)].toLowerCase();
         const k = A.LegalMove_get_n_cards(m, mv);
         if (type === 'pickup' || type === 'good' || type === 'wait') { moves[i] = { type }; continue; }
         const cards: Card[] = new Array(k);
@@ -80,51 +81,26 @@ function residentLegalMoves(ex: EngineExports, seat: number): { type: string; ca
     return moves;
 }
 
-// The session log record types (c/src/game.h LOG_*), for the desync message only.
-const LOG_TYPE_NAMES = ['game_start', 'attack', 'cover', 'pass', 'pickup', 'good', 'discard', 'defender_change', 'player_out', 'draw'];
-
-// Mirrors REPLAY_E* in replay.h. The NUMBERS are the wire between the two
-// files, so 3, 8 and 9 are a deliberate hole: they belonged to the retired
-// retrodiction format and are unreachable now.
-//
-// `d` is the refusal's parameters (replay.h ReplayError) as the generated reader
-// copies them out; zeros stand in when a caller has no module to ask (a message
-// written from the code alone).
-const NO_REPLAY_DETAIL: ReplayError_Snap = { version: 0, logType: 0, menu: 0 };
+// What the kernel's refusal codes say, from its own table (c/errtext/error_text.h,
+// written out by tools/datagen); only the sentence for a code that table does
+// not hold is this file's.
+const refusalText = (rows: readonly { code: number; text: string }[], code: number, family: string): string =>
+    rows.find((row) => row.code === code)?.text ?? `${family} kernel error ${code}`;
+const msgError = (code: number) => new Error(refusalText(MsgErrorText, code, 'iMessage payload:'));
+const __extrasError = (code: number) => new Error(refusalText(ReplayExtrasErrorText, code, 'extras:'));
 
 /** Why the module's last replay call refused, through the generated reader. */
 function replayErrorDetail(ex: EngineExports): ReplayError_Snap {
     return readReplayError(viewMemOf(ex.memory.buffer), ex.wasm_replay_error_ptr());
 }
 
-export function __replayError(negCode: number, d: ReplayError_Snap = NO_REPLAY_DETAIL): Error {
-    switch (-negCode) {
-        case 1: return new Error(`unsupported replay format version ${d.version}`);
-        case 2: return new Error('invalid replay: leftover data after game end');
-        case 4: return new Error('replay guard: too many events');
-        case 5: return new Error('replay desync: no legal moves');
-        case 6: return new Error('replay desync: conservation');
-        case 7: return new Error('replay desync: played card not in hand');
-        case 10: return new Error('replay desync: the unseen pool is empty');
-        case 11: return new Error('replay desync: a supplied reveal is not unseen');
-        case 12: return new Error(
-            `replay desync: logged ${LOG_TYPE_NAMES[d.logType] ?? d.logType} not in menu of ${d.menu}`);
-        case 13: return new Error('replay desync: round end not in menu');
-        case 14: return new Error('replay desync: attack continuation');
-        case 15: return new Error('replay desync: pass continuation');
-        case 16: return new Error('incomplete replay: the actions ran out before the coded atom count');
-        case 17: return new Error('replay desync: logs continue after the game ended');
-        case 18: return new Error('empty menu');
-        case 19: return new Error('encode: chosen index out of range');
-        // REPLAY_EHEADER covers every "the header does not fit the game" fault,
-        // including a rebuilt deal that disagrees with the header's opening seat.
-        case 20: return new Error('invalid replay header (trump not in alphabet, or the rebuilt deal contradicts it)');
-        case 21: return new Error('replay: malformed encode input');
-        case 22: return new Error('replay: capacity exceeded');
-        // A refusal, not a fault - see REPLAY_ETOOLONG in c/src/replay.h.
-        case 23: return new Error('replay: game too long to encode (session log overflowed)');
-        default: return new Error(`replay kernel error ${negCode}`);
-    }
+/** A replay refusal as a sentence. `d` is its parameters (replay.h ReplayError),
+ *  which fill the table's {version}, {log_type} and {menu}; zeros stand in when
+ *  a caller has only the code. */
+export function __replayError(negCode: number, d: ReplayError_Snap = { version: 0, logType: 0, menu: 0 }): Error {
+    return new Error(refusalText(ReplayErrorText, negCode, 'replay')
+        .replace('{version}', `${d.version}`).replace('{menu}', `${d.menu}`)
+        .replace('{log_type}', K.LOG_NAMES[d.logType]?.toLowerCase() ?? `${d.logType}`));
 }
 
 interface BotsExports extends EngineExports {
@@ -176,9 +152,6 @@ interface BotsExports extends EngineExports {
                                   attackPassSeats: number, finalDefender: number): number;
     wasm_anim_shown_ledger_allows(claim: number, sequencing: number): number;
 }
-
-// ANIM_TRANSPORT_SERVER (c/src/anim_plan.h).
-const ANIM_TRANSPORT_SERVER = 2;
 
 /** One row of the kernel's bot roster (c/src/bot_roster.h BotRosterRow). */
 export type BotRosterEntry = V.BotRosterRow_Snap;
@@ -264,7 +237,7 @@ function bots(): BotsExports {
     // means the receipt is in the post, not that it was rejected. The kernel
     // has no default for this and errors rather than guessing, which is what
     // keeps a new host from silently inheriting iMessage's answer.
-    ex.wasm_anim_set_transport(ANIM_TRANSPORT_SERVER);
+    ex.wasm_anim_set_transport(K.ANIM_TRANSPORT_SERVER);
     exportsCache = ex;
     return ex;
 }
@@ -314,43 +287,15 @@ export interface MsgEnvelope {
     /// here is ignored (see wasm_api.c's blob layout).
     n_new: number;
     /// THE FOOL'S PENALTY (c/src/msg_wire.h format 4). `opening` is the seat
-    /// this deal opens on, or 0xFF (MSG_NO_OPENING) for the ordinary
-    /// lowest-trump rule; `carry_key`/`carry_fool` are a WAITING lobby's
-    /// rematch carry, 0 / 0xFF when there is none. All three go BOTH ways -
+    /// this deal opens on, or MSG_NO_OPENING for the ordinary lowest-trump
+    /// rule; `carry_key`/`carry_fool` are a WAITING lobby's rematch carry,
+    /// 0 / MSG_NO_FOOL when there is none. All three go BOTH ways -
     /// they are terms of the deal, not claims about the body, so a caller that
     /// writes them seals a format-4 envelope.
     opening: number;
     carry_key: number;
     carry_fool: number;
     joins: MsgJoin[];
-}
-
-/// The wire's "no penalty" sentinels, so callers never spell 0xFF themselves.
-const MSG_NO_OPENING = 0xff;
-const MSG_NO_FOOL = 0xff;
-
-function msgError(code: number): Error {
-    switch (code) {
-        case -1: return new Error('iMessage payload: truncated');
-        case -2: return new Error('iMessage payload: not an FMSG envelope');
-        case -3: return new Error('iMessage payload: unsupported format');
-        case -4: return new Error('iMessage payload: unsupported flags');
-        case -5: return new Error('iMessage payload: bad phase');
-        case -6: return new Error('iMessage payload: bad player count');
-        case -7: return new Error('iMessage payload: unknown variant');
-        case -8: return new Error('iMessage payload: bad seat');
-        case -9: return new Error('iMessage payload: bad nickname');
-        case -10: return new Error('iMessage payload: dead deal seed');
-        case -11: return new Error('iMessage payload: malformed action');
-        case -12: return new Error('iMessage payload: turn does not match the chain');
-        case -13: return new Error('iMessage payload: round does not match the chain');
-        case -14: return new Error('iMessage payload: capacity exceeded');
-        case -15: return new Error('iMessage payload: trailing bytes');
-        case -16: return new Error('iMessage payload: illegal chain');
-        case -17: return new Error('iMessage payload: bad joins');
-        case -18: return new Error('iMessage payload: body is not a replay code for this game');
-        default: return new Error(`iMessage payload: kernel error ${code}`);
-    }
 }
 
 // The struct at wasm_msg_header_ptr <-> this bridge's MsgEnvelope. Only the
@@ -478,24 +423,9 @@ export function kernelMsgPublicView(): { view: TableView_Snap } {
  * The nicknames and per-move timing behind the dash in a share link. The codec
  * is the kernel's - one encoder, shared with the phone (fio_replay_extras_link)
  * - and these are the doors the web and the server reach it through. Both are
- * synchronous and assume a warm module, like every other reader here.
+ * synchronous and assume a warm module, like every other reader here. Callers
+ * catch an extras failure and fall back to "P1"/"P2".
  */
-
-
-/** The kernel's REPLAY_EXTRAS_E* codes, as the messages this format has always
- *  thrown - callers catch extras failures and fall back to "P1"/"P2". */
-function __extrasError(code: number): Error {
-    switch (-code) {
-        case 1: return new Error('extras: truncated header');
-        case 2: return new Error('extras: unsupported version');
-        case 3: return new Error('extras: unterminated name');
-        case 4: return new Error('extras: truncated time header');
-        case 5: return new Error('extras: too few gaps for the moves they describe');
-        case 6: return new Error('extras: malformed argument blob');
-        case 7: return new Error('extras: exceeds the kernel IO buffer');
-        default: return new Error(`extras: kernel error ${code}`);
-    }
-}
 
 /**
  * The names and timing into the kernel's own struct (replay_extras.h
@@ -713,17 +643,14 @@ export function replayStepCount(code: Uint8Array): number {
     return n;
 }
 
-/** REPLAY_ATOM_* — what a step played. Mirrors c/src/replay.h. */
-export const REPLAY_STEP = {
-    DEAL: 0,        // the opening deal; never an action
-    DRAW: 1,        // never a step (draws ride the action that caused them)
-    ATTACK: 2,
-    COVER: 3,
-    PASS: 4,
-    PICKUP: 5,
-    ROUND_END: 6,   // every remaining attacker said good and the bout closed
-    GOOD: 7,        // one seat said good and the bout stayed open
-} as const;
+/** What a step played: the kernel's REPLAY_ATOM_* (c/src/replay.h), each under
+ *  its own name with the prefix dropped, out of the generated constants. DEAL is
+ *  the opening deal and never an action; DRAW is never a step (draws ride the
+ *  action that caused them); ROUND_END is every remaining attacker saying good. */
+type AtomName<N> = N extends `REPLAY_ATOM_${infer S}` ? (S extends 'NAMES' ? never : S) : never;
+export const REPLAY_STEP = Object.fromEntries(
+    Object.entries(K.REPLAY_ATOM_NAMES).map(([code, name]) => [name, Number(code)]),
+) as { readonly [N in keyof typeof K as AtomName<N>]: (typeof K)[N] };
 
 /** What one step of a code IS (replay_steps.h ReplayStep): `kind` a REPLAY_ATOM_*,
  *  `seat` the acting seat or -1 (the deal, and round ends nobody in particular
@@ -743,7 +670,7 @@ export function replayStepIndex(code: Uint8Array): ReplayStepInfo[] {
     const len = ex.wasm_replay_step_index(code.length);
     if (len < 0) throw __replayError(len, replayErrorDetail(ex));
     const m = viewMemOf(ex.memory.buffer), base = ex.wasm_io_ptr();
-    return Array.from({ length: len / RS_INDEX_STRIDE }, (_, i) => V.readReplayStep(m, base + i * RS_INDEX_STRIDE));
+    return Array.from({ length: len / K.RS_INDEX_STRIDE }, (_, i) => V.readReplayStep(m, base + i * K.RS_INDEX_STRIDE));
 }
 
 /**
@@ -835,20 +762,14 @@ export function replayStepLogs(code: Uint8Array, step: number): Uint8Array | nul
 // (providers.tsx awaits ensureBotsAsync), and bots() is synchronous on the
 // server, so these calls are safe synchronously in both.
 
-// The pipeline's event-type and location NAMES, against the kernel's codes. The
-// numbers are generated from anim_plan.h (sdk/ts/gen/anim.bots.ts); only the
-// spelling of each name is TypeScript's, because the wire the web decodes from
-// (src/state/pushSequence.ts) speaks strings.
-export const ANIM_EVT: Record<string, number> = {
-    magic_transition: A.ANIM_EVT_MAGIC_TRANSITION, deal: A.ANIM_EVT_DEAL, flipped: A.ANIM_EVT_FLIPPED,
-    defender_move: A.ANIM_EVT_DEFENDER_MOVE, attack_pass: A.ANIM_EVT_ATTACK_PASS, cover: A.ANIM_EVT_COVER,
-    pickup: A.ANIM_EVT_PICKUP, discard: A.ANIM_EVT_DISCARD, out: A.ANIM_EVT_OUT, refill: A.ANIM_EVT_REFILL,
-    cards_to_trash: A.ANIM_EVT_CARDS_TO_TRASH, revert: A.ANIM_EVT_REVERT,
-};
-export const ANIM_LOC: Record<string, number> = {
-    deck: A.ANIM_LOC_DECK, hand: A.ANIM_LOC_HAND, table: A.ANIM_LOC_TABLE,
-    discard: A.ANIM_LOC_DISCARD, flipped: A.ANIM_LOC_FLIPPED,
-};
+// The pipeline's event-type and location NAMES against the kernel's codes: the
+// wire the web decodes from (src/state/pushSequence.ts) speaks strings, and they
+// are the kernel's own ANIM_EVT_* and ANIM_LOC_* names in lower case, turned
+// round out of the generated value -> name tables.
+const codesByName = (names: Readonly<Record<number, string>>): Record<string, number> =>
+    Object.fromEntries(Object.entries(names).map(([code, name]) => [name.toLowerCase(), Number(code)]));
+export const ANIM_EVT = codesByName(K.ANIM_EVT_NAMES);
+export const ANIM_LOC = codesByName(K.ANIM_LOC_NAMES);
 
 /** The event-type string -> ANIM_EVT_* code (0 for an unknown/None type). */
 export function animEventTypeCode(type: string | undefined): number {
