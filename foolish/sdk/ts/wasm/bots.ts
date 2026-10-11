@@ -968,7 +968,7 @@ export function animStaleOptimisticOnTable(optCards: Card[], tableCards: Card[],
 
 /** The three facts a role mark is drawn from (anim_plan.h AnimRoles). A seat is
  *  -1 for none, and `goodMask` is one bit per seat. */
-export interface AnimRoles { defender: number; firstAttacker: number; goodMask: number }
+export type AnimRoles = V.AnimRoles_Snap;
 
 /** "This step carried no board", the one value a good mask may not take
  *  (anim_plan.h ANIM_NO_MASK). Both goods rules answer 0 for it. */
@@ -979,14 +979,10 @@ export const ANIM_CLAIM_ARMING = A.ANIM_CLAIM_ARMING;
 export const ANIM_CLAIM_HAND_OFF = A.ANIM_CLAIM_HAND_OFF;
 export const ANIM_CLAIM_BYSTANDER = A.ANIM_CLAIM_BYSTANDER;
 
-/** The three bytes every role entry leaves in g_io, or null for "nothing changed". */
-function rolesAnswer(ex: BotsExports, rc: number): AnimRoles | null {
-    if (rc < 0) throw new Error(`anim roles error ${rc}`);
-    if (rc === 0) return null;
-    const buf = mem(ex);
-    const p = ex.wasm_io_ptr();
-    const seat = (b: number) => (b === 0xff ? -1 : b);
-    return { defender: seat(buf[p]), firstAttacker: seat(buf[p + 1]), goodMask: buf[p + 2] };
+/** What every role entry answers: the marks to show next where the kernel left them, or null for "nothing changed". */
+function rolesAnswer(ex: BotsExports, at: number): AnimRoles | null {
+    if (at < 0) throw new Error(`anim roles error ${at}`);
+    return at === 0 ? null : V.readAnimRoles(viewMemOf(ex.memory.buffer), at);
 }
 
 /** THE STATE A STREAM SHOULD OPEN ON (anim_goods_opening), or null for "start

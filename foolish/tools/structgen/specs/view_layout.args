@@ -86,3 +86,6 @@
 # One record of a code's step index (replay_steps.h ReplayStep), read where the
 # index lies, RS_INDEX_STRIDE bytes apart.
 --root ReplayStep --snapshot ReplayStep
+# The marks a role beat shows next (anim_plan.h AnimRoles): the three role
+# entries answer with its address, so the bridge reads no byte of it.
+--root AnimRoles --snapshot AnimRoles

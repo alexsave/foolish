@@ -1013,13 +1013,6 @@ static AnimFrame g_anim_frame;
 void *wasm_anim_plan_ptr(void)  { return &g_anim_plan; }
 void *wasm_anim_frame_ptr(void) { return &g_anim_frame; }
 
-// "no seat" / "this event carries no board", on the wire. A seat is 0..7 and a
-// battle count at most MAX_BATTLES, so 0xFF names neither. A GOOD MASK is the
-// one field this sentinel could not serve: eight players all wearing the mark
-// is 0xFF, so ANIM_NO_MASK crosses as its own flag byte rather than as a value
-// no mask may take.
-#define ANIM_W_NONE 0xFFu
-
 // THE PLAN (anim_plan.h anim_plan_ask). The stream goes in as the kernel's own
 // AnimPlanAsk, filled where it lies through the generated writer
 // (sdk/ts/gen/view_layout.bots.ts writeAnimPlanAsk), so there is no byte format
@@ -1050,38 +1043,28 @@ int wasm_anim_plan_at(int now_ms) {
 // resident game - and it crosses as three scalars for that reason: a caller that
 // could pass a board would pass the wrong one.
 //
-// g_io out (all three entries, on a 1): u8 defender, u8 first_attacker, u8
-// good_mask, with ANIM_W_NONE for "no seat". Returns 1 when the marks change, 0
-// when nothing does, or a negative ANIM_E*.
-static int wasm_roles_answer(int changed, const AnimRoles *r) {
-    if (!changed) return 0;
-    g_io[0] = (r->defender < 0) ? ANIM_W_NONE : (unsigned char)r->defender;
-    g_io[1] = (r->first_attacker < 0) ? ANIM_W_NONE : (unsigned char)r->first_attacker;
-    g_io[2] = (unsigned char)(r->good_mask & 0xFF);
-    return 1;
+// The answer, for all three entries: the address of the AnimRoles to show next
+// (read through its generated reader) when the marks change, 0 when nothing
+// does, or a negative ANIM_E*. A seat is -1 for none, in and out.
+static AnimRoles g_anim_roles;
+static int wasm_roles_answer(int changed) {
+    return changed == 1 ? (int)(uintptr_t)&g_anim_roles : changed;
 }
-
-// A seat as the three entries below take it: ANIM_W_NONE is "no seat".
-static int wasm_roles_seat(int seat) { return seat == (int)ANIM_W_NONE ? -1 : seat; }
 
 // A good being SET leads the stream - `first_good_mask` is the stream's own
 // event 0 mask (AnimBeats.first_good_mask), ANIM_NO_MASK for a step with none.
 int wasm_anim_roles_goods_opening(int shown_defender, int shown_first_attacker,
                                   int shown_good_mask, int first_good_mask) {
-    const AnimRoles shown = { wasm_roles_seat(shown_defender),
-                              wasm_roles_seat(shown_first_attacker), shown_good_mask };
-    AnimRoles r;
-    return wasm_roles_answer(anim_goods_opening(shown, first_good_mask, &r), &r);
+    const AnimRoles shown = { shown_defender, shown_first_attacker, shown_good_mask };
+    return wasm_roles_answer(anim_goods_opening(shown, first_good_mask, &g_anim_roles));
 }
 
 // A good being CLEARED runs parallel with the throw-in that cleared it -
 // `step_good_mask` is that beat's own mask (AnimBeat.good_mask).
 int wasm_anim_roles_goods_cleared(int shown_defender, int shown_first_attacker,
                                   int shown_good_mask, int step_good_mask) {
-    const AnimRoles shown = { wasm_roles_seat(shown_defender),
-                              wasm_roles_seat(shown_first_attacker), shown_good_mask };
-    AnimRoles r;
-    return wasm_roles_answer(anim_goods_cleared(shown, step_good_mask, &r), &r);
+    const AnimRoles shown = { shown_defender, shown_first_attacker, shown_good_mask };
+    return wasm_roles_answer(anim_goods_cleared(shown, step_good_mask, &g_anim_roles));
 }
 
 // A PASS hands the shield over WITH the transfer card. `final_defender` is the
@@ -1090,12 +1073,9 @@ int wasm_anim_roles_goods_cleared(int shown_defender, int shown_first_attacker,
 int wasm_anim_roles_pass_hand_off(int shown_defender, int shown_first_attacker,
                                   int shown_good_mask, int attack_pass_seats,
                                   int final_defender) {
-    const AnimRoles shown = { wasm_roles_seat(shown_defender),
-                              wasm_roles_seat(shown_first_attacker), shown_good_mask };
-    AnimRoles r;
-    return wasm_roles_answer(
-        anim_pass_hand_off(shown, (unsigned)attack_pass_seats,
-                           wasm_roles_seat(final_defender), &r), &r);
+    const AnimRoles shown = { shown_defender, shown_first_attacker, shown_good_mask };
+    return wasm_roles_answer(anim_pass_hand_off(shown, (unsigned)attack_pass_seats,
+                                                final_defender, &g_anim_roles));
 }
 
 // MAY THIS WRITER TOUCH THE SHOWN BADGES (anim_plan.h anim_shown_ledger_allows)?
