@@ -318,7 +318,7 @@ export type ReplayStepInfo = V.ReplayStep_Snap;
  * only by a reconstructed English message. See replay_steps.h.
  */
 export function replayStepIndex(code: Uint8Array): ReplayStepInfo[] {
-    const ex = codeIn(code);
+    const ex = replayIn(serverBots(), codeTooBig, code);
     const len = ok(ex.wasm_replay_step_index(code.length), replayRefused);
     const m = mem(ex), base = ex.wasm_io_ptr();
     return Array.from({ length: len / K.RS_INDEX_STRIDE }, (_, i) => V.readReplayStep(m, base + i * K.RS_INDEX_STRIDE));
