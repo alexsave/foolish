@@ -222,7 +222,15 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             }
         }
 
-        // cleanup realtime subscriptions
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [user_id, url_game_id]);
+
+    // Leaving a game (another one in the URL, or another user) leaves its
+    // streams. An effect of its own: the one above stops early when the user
+    // has not changed, and a cleanup returned from behind that test ran for the
+    // first game left and for none after it, so every later game's spectator
+    // stream stayed subscribed and kept publishing into the feed.
+    useEffect(() => {
         return () => {
             // Leave the chat: channel and cancel its pending rejoin, so it doesn't
             // re-subscribe to a game we're navigating away from.
