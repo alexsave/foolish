@@ -1465,6 +1465,32 @@ test('flicker B, in order: my attack\'s push, then the pickup that sweeps it', a
     });
 });
 
+test('a push delivered twice plays once: the version gate is the one dedup', async () => {
+    // A cast is one committed version, so a retry and the same version on a
+    // second channel are both "at or below what I hold" - the kernel's gate
+    // (c/src/anim_plan.h anim_should_drop_stale; natively c/tests/anim_plan_test.c
+    // test_reconcile_gate). Two more layers used to stand behind it, a set of
+    // sequence ids (built from the game id and this same version) and a set of
+    // strings joined from the events' fields; neither could catch a push the
+    // gate let through. Taking the gate out of handleAnimationMessage turns the
+    // second delivery into a second flight, and this case red.
+    const board = threeMeFirst().hand(0, '7d Tc Jd').hand(1, 'Js Qs Ks 6s As').hand(2, '9d Qd 6d').table('7h/9h')
+        .attacker(0).defender(1).build();
+    await play('push_twice', 139, 'a-push-twice', board, async (s, srv) => {
+        await s.step('Boris throws in 9d on the server', () => { srv.act(BORIS, encodeAction({ kind: 'attack', cards: cards('9d') })); });
+        const push = srv.take(ME);
+        await deliver(s, 'push: Boris\'s throw-in', push);
+        await s.advance(150);
+        assert.equal(flights(s.host).length, 1, 'his card is in the air');
+        await s.advance(1000);
+        assert.equal(flights(s.host).length, 0, 'and it has landed');
+        await deliver(s, 'push: the same bytes again', push);
+        await s.advance(150);
+        assert.equal(flights(s.host).length, 0, 'the second delivery flies nothing');
+        await s.advance(600);
+    });
+});
+
 test('flicker A: a concurrent throw-in lands after my optimistic board, without my card', async () => {
     const board = threeMeFirst().hand(0, '7d Tc Jd').hand(1, 'Js Qs Ks 6s As').hand(2, '9d Qd 6d').table('7h/9h')
         .attacker(0).defender(1).build();

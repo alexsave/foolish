@@ -20,9 +20,8 @@ import {
     type OptimisticState,
 } from '../state/optimisticResolve';
 import { optimisticOverlay } from '../state/optimisticOverlay';
-import { shouldDropStaleSequence } from '../state/clientReconcile';
-import { noteAuthoritativeVersion } from '../state/authoritativeVersion';
-import { animEventKey } from '@sdk/ts/wasm/bots.ts';
+import { authoritativeVersion, noteAuthoritativeVersion } from '../state/authoritativeVersion';
+import { animEventKey, animShouldDropStale } from '@sdk/ts/wasm/bots.ts';
 import { useAnimationRun } from '../state/useAnimationRun';
 import type { ArrivingPile } from '../state/animPlan';
 import { ROLE_CLAIM, useRoleMotion, type RoleHandOff } from '../state/useRoleMotion';
@@ -133,51 +132,6 @@ interface AnimationContextType {
 // while still spreading the real animation state (isAnimating, etc.).
 export const AnimationContext = createContext<AnimationContextType | null>(null);
 
-// Compact content fingerprint of a sequence's events, for backup dedup (the
-// primary key is sequence_id). The old code did JSON.stringify(events), which
-// serialized each event's entire embedded `game_state` - the heaviest part of the
-// payload - on every received message just to compare it. This signature captures
-// the move-defining fields (type, player, from/to, cards, battle index) PLUS a few
-// O(1) scalars off game_state (deck size, table size, own hand size) so two
-// same-shaped-but-distinct sequences - e.g. two single-card refills at different
-// deck sizes - still hash differently, the way the full stringify did, at a tiny
-// fraction of the cost.
-const eventsSignature = (events: any[], game?: { version?: number; goodMask?: number }): string =>
-    // A STREAM WITH NO EVENTS HAS NO EVENT CONTENT, and mapping it produced the
-    // empty string - so every goods-only push signed identically and the second
-    // one onward was thrown away as a duplicate of the first.
-    //
-    // It survived review because the set below is cleared at the closing beat of
-    // an animated sequence, and until a good could be broadcast alone there was
-    // always one of those between two empty signatures. A goods-only push runs
-    // no sequence, so it clears nothing: after the last card settles, exactly ONE
-    // good gets through and every later one is silently dropped. The owner found
-    // it the only way it can be found - eight seats and enough bots to say good
-    // several times in a row: "I only ever see one checkmark per bout."
-    //
-    // For such a push the BOARD is the content, so it signs with the board. A
-    // genuine duplicate still carries the same version and still dedupes; the
-    // monotonic version gate above catches those first in any case.
-    events.length === 0
-        ? `empty|${game?.version ?? ''}|${game?.goodMask ?? ''}`
-        : events
-        .map((e) => {
-            const gs = e.game_state;
-            return [
-                e.type,
-                e.seat ?? '',
-                e.from_location ?? '',
-                e.to_location ?? '',
-                e.battle_index ?? '',
-                (e.cards ?? []).map((c: Card) => `${c.suit}-${c.value}`).join(','),
-                // cheap state discriminators (no deep serialization)
-                gs?.deckCount ?? '',
-                gs?.battles.length ?? '',
-                gs && gs.mySeat >= 0 ? gs.myHand.length : '',
-            ].join('|');
-        })
-        .join(';');
-
 // Check if any bot can possibly move on the current board. Turn eligibility
 // lives in ONE place - the kernel's should_bot_act rule, asked of the board
 // (ViewRules.bot_to_move; a hand-rolled copy here used to count a said-good
@@ -214,10 +168,6 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     // not the possibly-stale `games` closure the effect captured).
     const gamesRef = useRef(games);
 
-    // Keep track of processed sequence IDs and event content to avoid duplicates
-    const processedSequenceIds = useRef<Set<string>>(new Set());
-    const processedEventContent = useRef<Set<string>>(new Set());
-
     // Store the current game ID for this animation sequence
     const currentGameIdRef = useRef<string | null>(null);
 
@@ -243,30 +193,17 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     // position tracking, so it's always current.
     useEffect(() => optimisticOverlay.register(() => pendingOverlayCards(optimistic)), []);
 
-    // Highest committed games.version we've applied from a live broadcast. Live
-    // sequences are fired un-awaited by the server over per-call channels, so under
-    // realtime latency they can arrive out of order; we drop any whose version is
-    // <= this one (strictly superseded - each sequence carries the full resulting
-    // state). null until the first versioned sequence; reset when the game changes.
-    const lastAppliedVersionRef = useRef<number | null>(null);
-    const gateGameRef = useRef<string | undefined>(undefined);
-    // Reset the gate when switching games, and seed/raise it from authoritative
-    // REST loads (initial load and the post-reconnect resync). Live broadcasts
-    // advance it higher during play; we never lower it, so a late in-flight stale
-    // broadcast arriving after a resync is still dropped.
+    // THE ONE DEDUP AND ORDERING RULE of the live feed is the kernel's version
+    // gate (c/src/anim_plan.h anim_should_drop_stale), asked in
+    // handleAnimationMessage against the newest version applied for the push's
+    // own game (src/state/authoritativeVersion.ts). A cast is one committed
+    // version, so a retry, the same version on a second channel and a late
+    // out-of-order push are all "at or below what I hold". An authoritative REST
+    // load (first load, post-reconnect resync) raises the same number, so a
+    // push that was in flight before the load is dropped too. A replay's or the
+    // tutorial's sequence carries no version and is never gated.
     useEffect(() => {
-        if (gateGameRef.current !== url_game_id) {
-            gateGameRef.current = url_game_id;
-            lastAppliedVersionRef.current = null;
-        }
-        const v = url_game_id ? games[url_game_id]?.version : undefined;
-        if (typeof v === 'number') {
-            lastAppliedVersionRef.current = lastAppliedVersionRef.current === null
-                ? v : Math.max(lastAppliedVersionRef.current, v);
-            // Share it with ServerContext so an outgoing move can be stamped with
-            // the version the client composed it against (the round guard).
-            noteAuthoritativeVersion(url_game_id, lastAppliedVersionRef.current);
-        }
+        noteAuthoritativeVersion(url_game_id, url_game_id ? games[url_game_id]?.version : undefined);
     }, [url_game_id, games]);
 
     // Keep currentGameRef in sync with latest game state
@@ -378,10 +315,6 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     // Who sits where: a push that changed the roster carries it. Otherwise the
     // table's identity the kernel kept from the last envelope or roster push it
     // read for this game names the seats.
-    //
-    // THE SEQUENCE ID IS DERIVED, not sent. A topic receives one push per
-    // committed version, so the game id and the version name the sequence; the
-    // server used to draw a random UUID for it, per push.
     const decodeCast = (m: any): any | null => {
         const gid = typeof m.game_id === 'string' ? m.game_id : url_game_id;
         const table = clientTable();
@@ -403,14 +336,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             return null;
         }
         const decoded = pushToSequence(read);
-        return {
-            type: 'animation_sequence',
-            sequence_id: `${gid}:${read.final.version}`,
-            timestamp: Date.now(),
-            version: read.final.version,
-            events: decoded.events,
-            game: decoded.game,
-        };
+        return { version: read.final.version, events: decoded.events, game: decoded.game };
     };
 
     // Handle animation messages from real-time channel
@@ -425,20 +351,13 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             return;
         }
 
-        // Monotonic ordering gate. Live broadcasts carry the committed games.version;
-        // drop any that arrives at or below the newest version we've already applied
-        // (stale/out-of-order/duplicate). Each sequence carries the full resulting
-        // state, so dropping a superseded one loses nothing. Replay-synthesized
-        // sequences have no version and are never gated.
-        const incomingVersion = typeof message.version === 'number' ? message.version : null;
-        if (incomingVersion !== null) {
-            if (shouldDropStaleSequence(lastAppliedVersionRef.current, incomingVersion)) {
-                return;
-            }
-            lastAppliedVersionRef.current = incomingVersion;
-            // A live broadcast is the freshest authoritative version - feed the
-            // move-stamping store so the next tap carries the current round.
-            noteAuthoritativeVersion(gateGameRef.current, incomingVersion);
+        // The version gate (see the effect above). Replay-synthesized sequences
+        // have no version and are never gated.
+        if (typeof message.version === 'number') {
+            const gid = message.game.gameId;
+            if (animShouldDropStale(authoritativeVersion(gid) ?? null, message.version)) return;
+            // Also what the next tap is stamped with (ServerContext's round guard).
+            noteAuthoritativeVersion(gid, message.version);
 
             // My cards this AUTHORITATIVE state shows on the table but whose own
             // confirming broadcast the gate dropped. message.game is still the
@@ -449,25 +368,6 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
         // Store the game ID for use during animations
         currentGameIdRef.current = message.game.gameId;
-
-        // Check for duplicate sequence_id FIRST (before checking optimistic events)
-        const sequenceId = message.sequence_id;
-
-        if (processedSequenceIds.current.has(sequenceId)) {
-            return;
-        }
-
-        // Also check event content as backup (compact signature, not a full
-        // JSON.stringify of the events + their embedded game snapshots).
-        const eventsString = eventsSignature(message.events, message.game);
-
-        if (processedEventContent.current.has(eventsString)) {
-            return;
-        }
-
-        // Mark as processed early to prevent race conditions
-        processedSequenceIds.current.add(sequenceId);
-        processedEventContent.current.add(eventsString);
 
         // Only the events this client has not already animated as a prediction;
         // the ones it has release their tracking there.
@@ -521,13 +421,6 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
         // Otherwise, continue with non-optimistic events
         message.events = nonOptimisticEvents;
-
-        // Clean up old sequence IDs to prevent memory leaks (keep only last 50)
-        // Event content is cleared after each sequence, so no cleanup needed there
-        if (processedSequenceIds.current.size > 50) {
-            const ids = Array.from(processedSequenceIds.current);
-            processedSequenceIds.current = new Set(ids.slice(-25));
-        }
 
         // CONFLICT DETECTION: which of my unanswered moves this push dooms, and
         // the flights that carry them home (src/state/optimisticResolve.ts).
@@ -721,8 +614,6 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             roleMotionRef.current.syncFromView(
                 sequenceFinalRef.current ?? currentGameRef.current, ROLE_CLAIM.handOff, false);
             sequenceFinalRef.current = null;
-            // Allows future legitimate duplicates of a sequence already played.
-            if (processedEventContent.current.size > 0) processedEventContent.current.clear();
             if (pendingCompletionCallbackRef.current && remainingSequenceEventsRef.current === 0) {
                 const callback = pendingCompletionCallbackRef.current;
                 pendingCompletionCallbackRef.current = null;
@@ -1284,7 +1175,6 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     const resetAnimations = useCallback(() => {
         pendingCompletionCallbackRef.current = null;
         remainingSequenceEventsRef.current = 0;
-        processedEventContent.current.clear();
         resetRun();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
