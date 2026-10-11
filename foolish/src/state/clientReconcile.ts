@@ -13,22 +13,6 @@ type Card = ViewCard;
 
 export const cardKey = (c: Card): string => `${c.suit}-${c.value}`;
 
-// ---- Table reconciliation --------------------------------------------------
-// Trust the server's table outright. Ordering is handled by the version gate and
-// the local player's unconfirmed cards are injected upstream (optimistic resolver
-// for broadcasts, clientBoards.keepPending for resync), so appending stale leftover
-// battles is unnecessary and would re-introduce a previous bout's cards when an
-// intermediate clear is skipped.
-//
-// This is the C plan's "trust incoming" merge policy expressed at the JS-null
-// boundary — there is no decision for the kernel to make (no branch, no compute),
-// only a null-coalesce over Battle[] objects the C side never needs to see. It
-// stays here deliberately; the animation-core DECISIONS (the version gate, the
-// optimistic resolver, the plan) are all the kernel's.
-export const mergeTableBattles = <B>(existingBattles: readonly B[] | undefined, incomingBattles: readonly B[] | undefined): readonly B[] => {
-    return incomingBattles ?? existingBattles ?? [];
-};
-
 // ---- Hand reconciliation ---------------------------------------------------
 // Legacy order-preserving merge (kept for game.self.hand). Appends new cards at
 // the end; superseded for the RENDERED hand by reconcileHandMemory + displayedHand.

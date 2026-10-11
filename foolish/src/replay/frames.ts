@@ -190,8 +190,6 @@ export function buildReplayFrames(
             count: ev?.cards?.length ?? 0,
             seq: {
                 type: 'animation_sequence',
-                sequence_id: '',
-                timestamp: 0,
                 events: seq.events.map((e) => ({ ...e }) as unknown as FeedAnimationEvent),
                 game,
             },
@@ -326,8 +324,6 @@ export function buildReverseFrames(frames: ReplayFrame[]): (AnimationSequenceMes
 
         reverse.push({
             type: 'animation_sequence',
-            sequence_id: '',
-            timestamp: 0,
             events: [event],
             game: prev,
         });

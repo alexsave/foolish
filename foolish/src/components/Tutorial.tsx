@@ -111,7 +111,6 @@ const TutorialPlayback = ({ summary, frames, names, onExit }: PlaybackProps) => 
     const stepRef = useRef(stepIdx);
     stepRef.current = stepIdx;
     const lastIdx = frames.length - 1;
-    const publishSeq = useRef(0);
 
     const beats = useMemo(() => buildBeats(frames, summary, names), [frames, summary, names]);
     // The learner's own move: a step they acted on, or the seat-less round end
@@ -135,9 +134,6 @@ const TutorialPlayback = ({ summary, frames, names, onExit }: PlaybackProps) => 
 
     const publishStep = useCallback((i: number) => {
         const seq: AnimationSequenceMessage = structuredClone(frames[i].seq);
-        seq.sequence_id = `tut-${i}-${++publishSeq.current}-${Math.random().toString(36).slice(2)}`;
-        seq.timestamp = Date.now();
-        if (seq.events[0]) (seq.events[0] as any)._nonce = seq.sequence_id;
         animationFeed.publish(seq);
         setLanding(seq.events.length > 0);
         setStepIdx(i);

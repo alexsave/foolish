@@ -71,17 +71,11 @@ export function usePlayback(
     stepRef.current = stepIdx;
     const lastIdx = frames.length - 1;
 
-    // publish one step's sequence into the feed; a fresh sequence_id (and a
-    // deep copy) lets the same step replay after scrubbing back. Plain
-    // counter + Math.random - crypto.randomUUID needs a secure context and
-    // breaks LAN dev on iOS (http://192.168.x.x).
-    const publishSeq = useRef(0);
+    // publish one step's sequence into the feed (a deep copy: the queue owns
+    // what it is handed, and the same step replays after scrubbing back)
     const publishStep = useCallback(
         (i: number) => {
             const seq: AnimationSequenceMessage = structuredClone(frames[i].seq);
-            seq.sequence_id = `replay-${i}-${++publishSeq.current}-${Math.random().toString(36).slice(2)}`;
-            seq.timestamp = Date.now();
-            (seq.events[0] as any)._nonce = seq.sequence_id; // defeat content dedup
             animationFeed.publish(seq);
             setStepIdx(i);
         },
@@ -104,9 +98,6 @@ export function usePlayback(
             const rev = reverses[i];
             if (!rev) return;
             const seq: AnimationSequenceMessage = structuredClone(rev);
-            seq.sequence_id = `replay-rev-${i}-${++publishSeq.current}-${Math.random().toString(36).slice(2)}`;
-            seq.timestamp = Date.now();
-            if (seq.events[0]) (seq.events[0] as any)._nonce = seq.sequence_id;
             animationFeed.publish(seq);
             setStepIdx(i - 1);
         },

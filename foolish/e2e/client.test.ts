@@ -10,7 +10,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    displayedHand, reconcileHandMemory, mergeTableBattles, cardKey,
+    displayedHand, reconcileHandMemory, cardKey,
     reorderHand,
 } from '../src/state/clientReconcile';
 import { keepPending, rearrangedBoard } from '../src/state/clientBoards';
@@ -61,14 +61,6 @@ export function registerClientValidation(): void {
         assert.ok(!displayedHand(arranged, authHand).some((x) => cardKey(x) === cardKey(onTable)), 'table card not in hand');
     });
 
-    // ---- table merge (cross-bout fix) ------------------------------------------
-    test('mergeTableBattles trusts the incoming authoritative table (no stale-bout append)', () => {
-        const boutA: B[] = [{ attack: c(0, 6), defense: c(0, 7) }];
-        const boutB: B[] = [{ attack: c(2, 8), defense: null }];
-        assert.deepEqual(mergeTableBattles(boutA, boutB), boutB, 'previous bout is not re-appended');
-        assert.deepEqual(mergeTableBattles(boutA, []), [], 'empty incoming clears');
-    });
-
     // ---- version gate (reordering fix) -----------------------------------------
     test('animShouldDropStale drops at-or-below the newest applied version, keeps replay (no version)', () => {
         assert.equal(animShouldDropStale(5, 4), true, 'older dropped');
@@ -89,7 +81,7 @@ export function registerClientValidation(): void {
         let table: readonly B[] = []; let last: number | null = null;
         for (const b of order) {
             if (gated && animShouldDropStale(last, b.version)) continue;
-            table = mergeTableBattles(table, b.finalTable);
+            table = b.finalTable; // the client trusts the incoming table outright
             last = b.version;
         }
         return table;

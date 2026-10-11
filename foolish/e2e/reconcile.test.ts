@@ -15,7 +15,6 @@ import { legalMoves, mustReadTable } from './helpers/table_play.ts';
 import { runAction, runMeta, seedLobby } from './helpers/table_server.ts';
 import { __setTableDealSeedOverride } from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
 import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
-import { mergeTableBattles } from '../src/state/clientReconcile';
 import { animShouldDropStale } from '../sdk/ts/wasm/bots.ts';
 import { readPushSequence } from './helpers/client_read.ts';
 import { base64ToBytes } from '../sdk/ts/wire/bytes.ts';
@@ -91,7 +90,7 @@ function replayReordered(stream: Bcast[], jitter: number, arrival: SeededRng): r
     let lastApplied: number | null = null;
     for (const bc of order) {
         if (animShouldDropStale(lastApplied, bc.version)) continue; // REAL gate
-        for (const tb of [...bc.eventTables, bc.finalTable]) table = mergeTableBattles(table, tb); // REAL merge
+        for (const tb of [...bc.eventTables, bc.finalTable]) table = tb; // the client trusts the incoming table outright
         lastApplied = bc.version;
     }
     return table;
