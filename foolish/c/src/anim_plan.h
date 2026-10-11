@@ -492,6 +492,66 @@ int anim_build_plan(const AnimPlanEvent *events, int n_events, int n_players,
                     int final_deck, int final_discard, Card final_flipped,
                     const int *final_hand, AnimPlan *out);
 
+// ---- the plan, asked as one struct ------------------------------------------
+// THE SAME QUESTION AS anim_build_plan, IN THE SHAPE A HOST CAN FILL. An
+// AnimPlanEvent borrows its cards, its hand and its row through pointers, which
+// a caller on the far side of a bridge cannot hold: the wasm entry used to take
+// the stream as a byte format of its own instead, written by hand in
+// TypeScript, parsed by hand in the shim and described only by a comment there.
+// These two structs are that format as a layout structgen can read, so the host
+// fills them through a generated writer and no line of it knows an offset.
+//
+// One event owns its storage. `cards` are Cards as they lie everywhere else
+// ({-1,-1} a masked back, CARD_NONE no card), `row` is the one table layout (2
+// bytes per battle, `n_row` its BYTE count) and `hand` is plain ints because
+// that is what AnimPlanEvent.hand points at, so the kernel reads all three
+// where the host put them and copies none of them.
+//
+// SIZED BY THE DECK, NOT BY THE WORST A WIRE COULD NAME. One event moves at most
+// every card there is, and the widest row is that deck laid out with nothing
+// covered. The build's own caps are wider (ANIM_MAX_CARDS is 128 cards an
+// event; MAX_HAND_SIZE and MAX_BATTLES are 64 on wasm), and at 128 events the
+// difference is real: sized by those the ask is 30,248 B, which is what took
+// web.wasm from 26 pages of linear memory to 27 (e2e/mem/wasm_memory.test.ts).
+// Sized by the deck it is 25,640 B, under the 28,672 B of pools the hand
+// parser it replaced kept, for a stream no deal can produce being refused.
+#define ANIM_ASK_MAX_CARDS (NUM_SUITS * ACE_VALUE)
+#define ANIM_ASK_MAX_ROW   (2 * ANIM_ASK_MAX_CARDS)
+typedef struct {
+    int8_t  type;        // ANIM_EVT_*
+    int8_t  seat;        // acting seat, or ANIM_SEAT_NONE
+    uint8_t from, to;    // ANIM_LOC_*
+    bool    mask_cards;  // AnimPlanEvent.mask_cards
+    bool    has_counts;  // deck/discard/flipped/hand are THIS step's own board
+    uint8_t n_cards;
+    uint8_t n_row;       // BYTES of `row`, so twice the battles it holds. 0 is
+                         // a step that carries no row, and needs no flag of
+                         // its own: an empty table and ANIM_NO_BOARD are one
+                         // case to every rule that reads a row.
+    uint8_t deck, discard;
+    Card    flipped;     // CARD_NONE once it has been dealt out
+    int     hand[MAX_PLAYERS];
+    Card    cards[ANIM_ASK_MAX_CARDS];
+    uint8_t row[ANIM_ASK_MAX_ROW];
+} AnimPlanAskEvent;
+
+typedef struct {
+    uint8_t n_events, n_players;
+    // The FINAL committed board, as anim_build_plan takes it.
+    uint8_t final_deck, final_discard;
+    Card    final_flipped;
+    int     final_hand[MAX_PLAYERS];
+    AnimPlanAskEvent events[ANIM_MAX_STEPS];
+} AnimPlanAsk;
+
+// Build the plan `ask` describes: anim_build_plan over the ask's own arrays,
+// with nothing decided here that it does not decide. Returns what it returns,
+// or before it is ever called ANIM_ECAP (more events than ANIM_MAX_STEPS, an
+// event with more cards than ANIM_ASK_MAX_CARDS or a row longer than
+// ANIM_ASK_MAX_ROW) / ANIM_EBADARG (NULL ask, or a row of an odd number of
+// bytes, which is half a battle).
+int anim_plan_ask(const AnimPlanAsk *ask, AnimPlan *out);
+
 // ---- how long a stream plays ----------------------------------------------
 // The wall time anim_build_plan would give a stream of these event types and
 // acting seats (AnimPlan.total_ms), from the same beat layout: the timing needs
@@ -818,6 +878,35 @@ int anim_stale_optimistic_on_table(const Card *opt_cards, int n_opt,
                                    const Card *named_cards, int n_named,
                                    int *out_release, int cap);
 
+// THE SAME QUESTION AS ONE VALUE, for a host that crosses a boundary to ask it.
+// The three lists go in as a struct and the indices come back as one, so a
+// generated writer and a generated reader carry them and no host packs a card
+// byte of its own (the wasm entry used to take three runs of wire bytes and
+// hand back a run of index bytes, a layout only a comment described).
+//
+// THE CARDS ARE READ THE WAY THAT WIRE READ THEM, because that is what every
+// caller of the byte entry was getting and a release decision must not move
+// with the plumbing: the hidden card (-1/-1) stays hidden, and so matches
+// nothing; every other card is clamped onto the deck (suit 0.., value
+// 1..ACE_VALUE). CARD_NONE is not a card of any of these lists and is clamped
+// like any other off-deck value - a caller with no card leaves it out.
+//
+// Returns the release count, or ANIM_ECAP for a count past its array /
+// ANIM_EBADARG; `out->n` is 0 on a refusal.
+typedef struct {
+    uint8_t n_opt, n_table, n_named;
+    Card    opt[ANIM_MAX_CARDS];            // the local player's pending cards
+    Card    table[ANIM_MAX_TABLE_INPUT];    // what the authoritative table shows
+    Card    named[ANIM_MAX_TABLE_INPUT];    // every card this broadcast's events name
+} AnimStaleAsk;
+typedef struct {
+    uint8_t n;
+    uint8_t release[ANIM_MAX_CARDS];        // INDICES into AnimStaleAsk.opt
+} AnimStaleRelease;
+_Static_assert(ANIM_MAX_CARDS <= 255 && ANIM_MAX_TABLE_INPUT <= 255,
+               "an AnimStaleAsk count, and a release index, is one byte");
+int anim_stale_optimistic_ask(const AnimStaleAsk *q, AnimStaleRelease *out);
+
 // A pending optimistic attack/cover, for the revert decision below.
 typedef struct {
     Card card;
@@ -1049,6 +1138,24 @@ int anim_reversal_order(const unsigned char *verdicts, int n_motions,
                         const int *group_sizes, int n_groups,
                         AnimConflictPlan *out);
 
+// THE SAME QUESTION AS ONE VALUE (see AnimStaleAsk for why): the verdicts and
+// the groups go in through a generated writer and the AnimConflictPlan is read
+// where it lies, so the host slices `order` by `step_count` and knows no byte
+// of either. The arrays are the widths anim_reversal_order takes, so they are
+// handed straight to it and every refusal is its own: a count past its array is
+// ANIM_ECAP, exactly as above. `out` is left with no steps on any refusal, so a
+// reader that ignored the return code plays nothing rather than the previous
+// question's answer.
+typedef struct {
+    uint16_t n_motions;
+    uint8_t  n_groups;
+    uint8_t  verdicts[ANIM_MAX_CONFLICT_MOTIONS];   // ANIM_CONFLICT_*, in flight order
+    int      group_sizes[ANIM_MAX_CONFLICT_GROUPS];
+} AnimReversalAsk;
+_Static_assert(ANIM_MAX_CONFLICT_MOTIONS <= 65535 && ANIM_MAX_CONFLICT_GROUPS <= 255,
+               "an AnimReversalAsk count fits its field");
+int anim_reversal_order_ask(const AnimReversalAsk *q, AnimConflictPlan *out);
+
 // ---- the board's own sets and small rules ---------------------------------
 //
 // THE VEIL, THE HAND, THE TABLE AND THE END SCREEN, lifted whole out of
@@ -1220,6 +1327,37 @@ int anim_hand_laid_out_masked(const unsigned char *cards, int n_cards, uint64_t 
                               const unsigned char *order, int n_order,
                               unsigned char *out, int cap);
 
+// THE SAME QUESTION AS ONE VALUE, IN CARDS (see AnimStaleAsk for why). The
+// rule above speaks in bytes - a dense id, or a sentinel - and a host does not:
+// it holds cards, and a slot it cannot name. So the alphabet is translated
+// HERE, both ways, and no host carries ANIM_TABLE_UNKNOWN or a dense id.
+//
+//   in    CARD_NONE          a slot the caller cannot name -> ANIM_TABLE_UNKNOWN
+//         the hidden card    (-1/-1) -> ANIM_TABLE_NONE, which has no bit and
+//                            so drops out: a back is CARD_NONE here, and a
+//                            card that merely has no face is not a back
+//         any other card     clamped onto the deck (suit 0.., value
+//                            1..ACE_VALUE), then its dense id
+//   out   ANIM_TABLE_UNKNOWN -> CARD_NONE; a dense id -> its card
+//
+// That is the byte entry's reading of the same hands, kept on purpose: the web
+// reached it through the wire's card byte, which clamped and which spelled the
+// hidden card 0xFE - the same byte as ANIM_TABLE_NONE.
+// Returns the count laid out, or ANIM_ECAP for a count past MAX_HAND_SIZE /
+// ANIM_EBADARG; `out->n` is 0 on a refusal.
+typedef struct {
+    uint64_t deferred;               // dense-id bits: deals still holding their slot back
+    uint8_t  n_cards, n_order;
+    Card     cards[MAX_HAND_SIZE];   // the hand, in kernel order
+    Card     order[MAX_HAND_SIZE];   // the viewer's preferred arrangement
+} AnimHandAsk;
+typedef struct {
+    uint8_t n;
+    Card    cards[MAX_HAND_SIZE];
+} AnimHandLaid;
+_Static_assert(MAX_HAND_SIZE <= 255, "an AnimHandAsk count is one byte");
+int anim_hand_laid_out_ask(const AnimHandAsk *q, AnimHandLaid *out);
+
 // ---- the table under the sweep ----
 
 // A cell holding a card the caller cannot NAME - not an empty cell, which is
@@ -1335,6 +1473,23 @@ typedef struct {
 int anim_finish_rows(const unsigned char *elimination, int n_elim,
                      int game_over, int n_players, int my_seat,
                      AnimFinishRow *out, int cap);
+
+// THE SAME QUESTION AS ONE VALUE (see AnimStaleAsk for why): the list and the
+// three scalars in, the rows out, each through a generated writer or reader.
+// A seat count no table has (negative, or past MAX_PLAYERS) and a list longer
+// than a table are ANIM_EBADARG; `out->n` is 0 on a refusal.
+typedef struct {
+    int     game_over;                   // the fool's seat, negative while the game runs
+    int     n_players;
+    int     my_seat;                     // negative for a spectator
+    uint8_t n_elim;
+    uint8_t elimination[MAX_PLAYERS];    // first out first
+} AnimFinishAsk;
+typedef struct {
+    uint8_t       n;
+    AnimFinishRow rows[MAX_PLAYERS + 1]; // everyone out, then the fool
+} AnimFinish;
+int anim_finish_ask(const AnimFinishAsk *q, AnimFinish *out);
 
 // WHAT THE BOARD'S OWN CHROME DRAWS, end screen included.
 //

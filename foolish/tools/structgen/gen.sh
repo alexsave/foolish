@@ -34,6 +34,15 @@
 #   gen.sh --check         generate TWICE, as two separate processes into two
 #                          temp trees, and refuse a difference. The generator
 #                          has to be a function of this tree and of nothing else.
+#   gen.sh --check-exports hold each generated exports interface (sdk/ts/gen/
+#                          exports.<link>.ts) against the wasm module that link
+#                          BUILT, and refuse any difference: a name on one side
+#                          only, or a function whose wasm signature is not its C
+#                          definition's. Writes nothing and needs the modules
+#                          (`make -C c wasm-msg wasm-bots wasm-web wasm-bots-test
+#                          wasm-oracle wasm-oracle-mt`), which is why it is not
+#                          part of plain gen.sh: generation comes BEFORE the
+#                          build it describes. e2e/wasm_exports.test.ts runs it.
 #   gen.sh --print-dirs    the output directories, repo-relative. Needs no
 #                          toolchain: it is how the gate below asks what is
 #                          generated instead of keeping its own list.
@@ -149,12 +158,119 @@ publish() {
   done
 }
 check=0
+check_exports=0
 case "${1:-}" in
-  ""|--check|--verify-wasm) ;;
-  *) echo "gen.sh: unknown argument '$1' (want nothing, --check, --verify-wasm or --print-dirs)" >&2; exit 2 ;;
+  ""|--check|--verify-wasm|--check-exports) ;;
+  *) echo "gen.sh: unknown argument '$1' (want nothing, --check, --check-exports, --verify-wasm or --print-dirs)" >&2; exit 2 ;;
 esac
 [ "${1:-}" = "--check" ] && check=1
+[ "${1:-}" = "--check-exports" ] && check_exports=1
 mkdir -p "$prod" "$fixtures" "$swift" "$kotlin"
+
+# ---- what each link of the kernel exports (structgen --link) --------------------
+#
+# `instance.exports` is untyped, so every host cast it to an interface somebody
+# typed by hand - a couple of hundred lines across sdk/ts and src/oracle, each a
+# copy of a C signature that could change underneath it and still compile. These
+# are those interfaces, written from the two places the facts already are: WHICH
+# functions from the link line, WHAT they take from the C that defines them.
+#
+# THE LINK LINE IS READ OUT OF c/Makefile, not restated here. Each `ex_link`
+# below names the make VARIABLES its recipe passes the linker, and structgen
+# reads the `-Wl,--export=NAME` tokens out of their values, so adding an export
+# to a WASM_*_EXPORTS list is the whole change: the next gen types it, for
+# exactly the links whose lists carry it. That is also why there is one
+# interface PER LINK and no optional member: bots.wasm, the web.wasm a browser
+# downloads and the test build are three links of the same objects that export
+# three different sets, and each module's set is known here.
+#
+# What this cannot see is a recipe that stops using the variables named below.
+# `gen.sh --check-exports` closes that: it reads the BUILT module's own export
+# and type sections and refuses any difference from the interface.
+#
+# -DSG_LAYOUT_HASH=0: wasm_api.c refuses to compile without the hash c/Makefile
+# bakes in, and a prototype does not depend on its value.
+#
+# FOUR PARSES, SIDE BY SIDE, AND ONE MAKE. This runs before every type-check and
+# every test lane, so it is assembled first and run once: `ex_link` and `ex_run`
+# only record what they are asked, and `ex_go` reads every variable they named
+# out of c/Makefile in a single make, then starts the runs together and waits
+# for each. Done one at a time, with a make per variable, it cost more than the
+# whole of the rest of this script.
+EX_LINKS=()   # "run|INTERFACE|OUT.ts|MODULE.wasm|MAKE_VARIABLE..."
+EX_RUNS=()    # "BUILD|CFLAGS_VARIABLE|SRC_VARIABLE"
+ex_link() { # INTERFACE OUT.ts MODULE.wasm MAKE_VARIABLE...: one link of the run that the next ex_run closes
+  local head="${#EX_RUNS[@]}|$1|$2|$3"; shift 3
+  EX_LINKS+=("$head|$*")
+}
+ex_run() { # BUILD CFLAGS_VARIABLE SRC_VARIABLE: one parse of the sources, for every link since the last
+  EX_RUNS+=("$1|$2|$3")
+}
+ex_go() {
+  local names="" n v line i=0 r l
+  for r in "${EX_RUNS[@]}"; do IFS='|' read -r _ n v <<< "$r"; names="$names $n $v"; done
+  for l in "${EX_LINKS[@]}"; do names="$names ${l##*|}"; done
+  # Each variable once (make builds a goal named twice only once), one line each.
+  names="$(printf '%s\n' $names | awk '!seen[$0]++')"
+  # shellcheck disable=SC2086
+  while IFS= read -r line; do
+    i=$((i + 1)); n="$(printf '%s\n' $names | sed -n "${i}p")"
+    printf -v "EXV_$n" '%s' "$line"
+  done < <(make -s --no-print-directory -C "$root/c" -f Makefile -f "$sg/print.mk" $(printf 'sg-print-%s ' $names))
+  [ "$i" = "$(printf '%s\n' $names | wc -l | tr -d ' ')" ] || { echo "gen: c/Makefile answered $i of the variables the exports runs asked for" >&2; exit 1; }
+  local pids=() ri=0 build cflags src cmd srcs s iface file module vars link ref
+  for r in "${EX_RUNS[@]}"; do
+    IFS='|' read -r build cflags src <<< "$r"
+    srcs=(); ref="EXV_$src"
+    set -f
+    for s in ${!ref}; do srcs+=(--source "$s"); done
+    set +f
+    ref="EXV_$cflags"
+    cmd=("$SG" --cwd "$root/c" --build "$build=${!ref} -DSG_LAYOUT_HASH=0" "${srcs[@]}")
+    for l in "${EX_LINKS[@]}"; do
+      IFS='|' read -r n iface file module vars <<< "$l"
+      [ "$n" = "$ri" ] || continue
+      # The leading space is load-bearing: one of these values begins with
+      # `--target`, and structgen takes an argument that begins with `--` for
+      # the next flag.
+      link=""
+      for v in $vars; do ref="EXV_$v"; link="$link ${!ref}"; done
+      cmd+=(--link "$link" --exports-name "$iface")
+      if [ "$check_exports" = 1 ]; then cmd+=(--check-wasm "$root/c/build/$module"); else cmd+=(--exports-ts "$prod/$file"); fi
+    done
+    "${cmd[@]}" &
+    pids+=($!)
+    ri=$((ri + 1))
+  done
+  # Every run is waited for, so a refusal in one is not hidden by another's exit.
+  local failed=0 p
+  for p in "${pids[@]}"; do wait "$p" || failed=1; done
+  [ "$failed" = 0 ] || exit 1
+}
+gen_exports() {
+  # Three links of one set of objects, so one run: the server's module, the
+  # browser's, and the test build with the doors only a test opens.
+  ex_link BotsExports     exports.bots.ts      bots.wasm      WASM_BOT_LDFLAGS WASM_BOTS_SHIPPED_EXPORTS
+  ex_link WebExports      exports.web.ts       web.wasm       WASM_BOT_LDFLAGS WASM_WEB_EXPORTS
+  ex_link BotsTestExports exports.bots_test.ts bots_test.wasm WASM_BOT_LDFLAGS WASM_BOTS_SHIPPED_EXPORTS WASM_TEST_EXPORTS
+  ex_run bots WASM_BOT_CFLAGS WASM_BOT_SRC
+  # The iMessage extension's module: its own sources, flags and export lists.
+  ex_link MsgExports      exports.msg.ts       msg.wasm       WASM_MSG_LDFLAGS WASM_MSG_API_EXPORTS WASM_MSG_EXPORTS
+  ex_run msg WASM_MSG_CFLAGS WASM_MSG_SRC
+  # The Infinite Oracle's two: the same sources under the Oracle's flags, and
+  # the threaded build, which adds wasm_oracle_mt.c and imports its memory.
+  ex_link OracleExports   exports.oracle.ts    oracle.wasm    WASM_ORACLE_LDFLAGS WASM_ORACLE_EXPORTS
+  ex_run oracle WASM_ORACLE_CFLAGS WASM_BOT_SRC
+  ex_link OracleMtExports exports.oracle_mt.ts oracle-mt.wasm WASM_ORACLE_MT_LDFLAGS WASM_ORACLE_MT_EXPORTS
+  ex_run oracle_mt WASM_ORACLE_MT_CFLAGS WASM_ORACLE_MT_SRC
+  ex_go
+}
+if [ "$check_exports" = 1 ]; then
+  gen_exports
+  echo "gen: every exports interface is the module its link built, name for name and type for type"
+  exit 0
+fi
+gen_exports
 
 # The resident Game prefix the TS marshal reads and writes, per wasm build.
 set -f   # the spec is split on whitespace, never globbed
@@ -186,6 +302,14 @@ MSG=(--cwd "$root/c" $(spec msg_layout))
 set +f
 "$SG" "${MSG[@]}" --build "bots=$BOTS" --ts "$prod/msg_layout.bots.ts"
 
+# The kernel's numbers a host needs with no struct beside them: refusal codes,
+# sentinels, strides, and the value -> name tables (specs/kernel_consts.args).
+set -f
+# shellcheck disable=SC2207
+KCONSTS=(--cwd "$root/c" $(spec kernel_consts))
+set +f
+"$SG" "${KCONSTS[@]}" --build "bots=$BOTS" --ts "$prod/kernel_consts.bots.ts"
+
 # The Oracle's Mode B candidate table (c/src/oracle_mt.h), read back from
 # oracle-mt.wasm (specs/oracle_layout.args).
 set -f
@@ -193,6 +317,14 @@ set -f
 ORACLE=(--cwd "$root/c" $(spec oracle_layout))
 set +f
 "$SG" "${ORACLE[@]}" --build "oracle_mt=$(flags WASM_ORACLE_MT_CFLAGS)" --ts "$prod/oracle_layout.oracle_mt.ts"
+
+# The Oracle's Mode A answer and knobs (c/src/oracle_answer.h), read back from
+# and written into oracle.wasm (specs/oracle_answer.args).
+set -f
+# shellcheck disable=SC2207
+ANSWER=(--cwd "$root/c" $(spec oracle_answer))
+set +f
+"$SG" "${ANSWER[@]}" --build "oracle=$(flags WASM_ORACLE_CFLAGS)" --ts "$prod/oracle_answer.oracle.ts"
 
 # The structs iOS reads out of the kernel it LINKS (specs/ios_layout.args), as
 # Swift value snapshots. Its own caps and its own triple: neither is the wasm
@@ -294,6 +426,21 @@ for code in $codes; do
      --ts "$i18n_ts/strings.$code.ts" --swift "$i18n_swift/FoolishStrings$cap.swift" \
      --kotlin "$i18n_kotlin/FoolishStrings$cap.kt" --kotlin-package cards.foolish.i18n
 done
+
+# ---- what the refusal codes say (c/errtext, through datagen) --------------------
+#
+# The English a host logs or throws for a code the kernel returned: one table of
+# { code, text } rows per family, each row written against the constant itself
+# (c/errtext/error_text.h says why it is C). Read under the bots build's flags
+# because the headers it includes are sized by them. Like c/i18n it is linked by
+# nothing; e2e/validation/error_text_validation.test.ts holds every code to a row.
+errtext_ts="$prod/errtext"
+mkdir -p "$errtext_ts"
+dge() { "$DG" --cwd "$root/c" --flags "$BOTS" --header errtext/error_text.h "$@"; }
+dge --table MOVE_REJECT_TEXT         --name MoveRejectText        --ts "$errtext_ts/move_reject.ts"
+dge --table MSG_ERROR_TEXT           --name MsgErrorText          --ts "$errtext_ts/msg.ts"
+dge --table REPLAY_EXTRAS_ERROR_TEXT --name ReplayExtrasErrorText --ts "$errtext_ts/replay_extras.ts"
+dge --table REPLAY_ERROR_TEXT        --name ReplayErrorText       --ts "$errtext_ts/replay.ts"
 
 # Genericity fixtures (test/verify.test.ts).
 "$SG" --cwd "$sg/test" --header kinds.h --root Kinds --build wasm= --const K_ --const KFLAG_ --ts "$fixtures/kinds.ts"

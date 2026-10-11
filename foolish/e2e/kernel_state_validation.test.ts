@@ -22,25 +22,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { encodeAction } from '../sdk/ts/wire/awire.ts';
+import { encodeAction } from '../sdk/ts/table/client_table.ts';
 import { boardBytes, fixture, fixtureExports, fixtureTable, reasonOf, IDLE, READY, type TableFixture } from './helpers/table_fixture.ts';
 import { legalMoves, residentBoard } from './helpers/table_play.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
-/** The raw doors of the fixtures' bots.wasm instance this suite knocks on (c/wasm/wasm_api.c). */
-interface Doors {
-    memory: WebAssembly.Memory;
-    wasm_io_ptr(): number;
-    wasm_game_ptr_internal(): number;
-    /** The resident board as a durable blob into the IO buffer: [version][deterministic flag][state]. */
-    wasm_state_serialize(): number;
-    /** The resident board's state (no prefix) into the IO buffer. */
-    wasm_export_state(): number;
-    /** The IO buffer's first `len` bytes into the resident board, masked or whole: GAME_VALID or GAME_INVALID_*. */
-    wasm_import_state(len: number, masked: number): number;
-}
-const doors = (): Doors => fixtureExports() as unknown as Doors;
+const doors = fixtureExports;
 const mem = () => L.memOf(doors().memory.buffer);
 const io = (n: number) => mem().u8.slice(doors().wasm_io_ptr(), doors().wasm_io_ptr() + n);
 

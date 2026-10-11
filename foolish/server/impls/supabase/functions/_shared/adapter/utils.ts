@@ -1,22 +1,22 @@
 // The Supabase host's shared shell: the service-role client, the batched
 // realtime broadcast, the post-response bot loop, and wrap400 (CORS, auth, the
-// JSON body, the error response). Everything here is I/O. The game itself is
-// the C Table's, reached through table_io.ts.
+// request's bytes, the refusal). Everything here is I/O; every body in or out
+// is bytes the kernel reads or wrote.
 import { corsHeaders, handleCors } from './cors.ts';
 import { createClient } from 'jsr:@supabase/supabase-js';
 import type { User } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+import * as L from '@sdk/ts/gen/game_layout.bots.ts';
+import { serverTable } from '@sdk/ts/table/server_table.ts';
 import { getAuthenticatedUser } from './auth.ts';
+
+const OCTETS = 'application/octet-stream';
 
 // A lazy import that resolves ONCE. The bot loop's module graph (the bot drive)
 // stays off every cold start that never drives a bot; and re-RESOLVING a
 // specifier per call walks the resolver again under the e2e loader.
-const lazy = <T>(load: () => Promise<T>): (() => Promise<T>) => {
-    let mod: Promise<T> | undefined;
-    return () => (mod ??= load());
-};
-const botActionsMod = lazy(() => import('./bot_actions.ts'));
+let botActionsMod: Promise<typeof import('./bot_actions.ts')> | undefined;
 
 export const supabaseClient = createClient(
     Deno.env.get('SUPABASE_URL') || '',
@@ -34,8 +34,8 @@ export const supabaseClient = createClient(
 const REALTIME_BROADCAST_URL = `${Deno.env.get('SUPABASE_URL') || ''}/realtime/v1/api/broadcast`;
 const REALTIME_BROADCAST_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 
-// deno-lint-ignore no-explicit-any
-export interface BroadcastMessage { topic: string; event: string; payload: any; }
+/** One realtime message: `cast` is the kernel's cast (evwire.h), base64. */
+export interface BroadcastMessage { topic: string; event: string; cast: string; }
 
 export const broadcastMessages = async (messages: BroadcastMessage[], reqId: string = 'unknown'): Promise<void> => {
     if (messages.length === 0) return;
@@ -53,8 +53,9 @@ export const broadcastMessages = async (messages: BroadcastMessage[], reqId: str
                     Authorization: `Bearer ${REALTIME_BROADCAST_KEY}`,
                     'Content-Type': 'application/json',
                 },
+                // Supabase's envelope, not ours: a `payload` must be a JSON object.
                 body: JSON.stringify({
-                    messages: messages.map(m => ({ topic: m.topic, event: m.event, payload: m.payload, private: true })),
+                    messages: messages.map(m => ({ topic: m.topic, event: m.event, payload: { b: m.cast }, private: true })),
                 }),
             });
             // Realtime returns 202 Accepted on success.
@@ -76,7 +77,7 @@ export const broadcastMessages = async (messages: BroadcastMessage[], reqId: str
 // mid-loop - so the loop's `finally` never releases the bot lease. waitUntil
 // keeps the worker alive until the loop settles.
 export const scheduleBotLoop = (game_id: string, reqId: string): void => {
-    const botLoop = botActionsMod()
+    const botLoop = (botActionsMod ??= import('./bot_actions.ts'))
         .then(m => m.lockedBotLoop(game_id))
         .catch(err => console.error(`[${reqId}] bot loop error:`, err));
     // deno-lint-ignore no-explicit-any
@@ -86,29 +87,35 @@ export const scheduleBotLoop = (game_id: string, reqId: string): void => {
     }
 };
 
-/** What wrap400 hands a JSON endpoint's handler. */
+/** An error whose refusal says `why` (an ASK_WHY_*). One thrown without a `why` is the server's own fault. */
+export const refused = (why: number, message: string): Error => Object.assign(new Error(message), { why });
+
+/** The reply for whatever was thrown: a body the kernel wrote (ask.h AskRefusal) from the error's `why`, `code` and `detail`. */
+export async function refusalFor(e: unknown, status?: number): Promise<Response> {
+    const r = (e ?? {}) as { why?: number; code?: number; detail?: number };
+    const table = await serverTable();
+    const body = r.why === undefined ? table.refusal(L.ASK_WHY_INTERNAL) : table.refusal(r.why, r.code ?? 0, r.detail ?? 0);
+    return new Response(body as unknown as BodyInit, {
+        status: status ?? (r.why === undefined ? 500 : 400), headers: { ...corsHeaders, 'Content-Type': OCTETS },
+    });
+}
+
+/** What wrap400 hands an endpoint's handler. */
 export interface RequestContext {
     user: User;
     /** The caller's display name (user_metadata.username). */
     userName: string;
-    // deno-lint-ignore no-explicit-any
-    body: any;
+    body: Uint8Array;
     reqId: string;
 }
 
-/** A handler's answer: the response body (a packed envelope) and the game whose bots to wake, if any. */
+/** A handler's answer: the response body and the game whose bots to wake, if any. */
 export interface HandlerResult {
     body: Uint8Array;
     runBots?: string | null;
 }
 
-export const wrap400 = (
-    execute: (ctx: RequestContext) => Promise<HandlerResult>,
-    // Packed-request escape hatch: when set and the request body is
-    // application/octet-stream, the whole request is delegated here after CORS
-    // and auth (the `action` function's binary path).
-    binary: ((req: Request, user: User, reqId: string) => Promise<Response>) | null = null,
-) => {
+export const wrap400 = (execute: (ctx: RequestContext) => Promise<HandlerResult>) => {
     const handler = async (req: Request): Promise<Response> => {
         const reqId = crypto.randomUUID().split('-')[0];
         const started = Date.now();
@@ -117,28 +124,20 @@ export const wrap400 = (
             if (corsResponse) return corsResponse;
 
             const user: User = await getAuthenticatedUser(req);
-
-            if (binary && (req.headers.get('content-type') || '').includes('application/octet-stream')) {
-                return await binary(req, user, reqId);
-            }
-
-            let body = {};
-            try { body = await req.json(); } catch { /* an empty or non-JSON body reads as {} */ }
-
+            // A client that still sends JSON must not have it read as an ask.
+            if (!(req.headers.get('content-type') || '').includes(OCTETS)) return refusalFor(refused(L.ASK_WHY_MALFORMED, ''), 415);
+            const body = new Uint8Array(await req.arrayBuffer());
             const result = await execute({ user, userName: user.user_metadata.username, body, reqId });
             if (result.runBots) scheduleBotLoop(result.runBots, reqId);
 
             console.log(`[${reqId}][WRAP400] ${req.method} ${new URL(req.url).pathname} in ${Date.now() - started}ms`);
             return new Response(result.body as unknown as BodyInit, {
-                headers: { ...corsHeaders, 'Content-Type': 'application/octet-stream' },
+                headers: { ...corsHeaders, 'Content-Type': OCTETS },
             });
         } catch (e: unknown) {
             const err = e as Error;
             console.error(`[${reqId}][WRAP400] error after ${Date.now() - started}ms:`, { name: err.name, message: err.message, stack: err.stack });
-            return new Response(
-                JSON.stringify({ error: err.message }),
-                { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-            );
+            return refusalFor(e);
         }
     };
 

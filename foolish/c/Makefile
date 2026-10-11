@@ -84,7 +84,8 @@ CORE_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/replay_
             src/bot_knobs.c src/bot_roster.c src/bot_drive.c \
             $(SHARED)/sha256.c src/msg_wire.c src/msg_expand.c src/anim_plan.c \
             src/analyse.c src/roster.c src/table.c src/client_table.c src/card.c \
-            src/strategy.c src/hand_layout.c
+            src/strategy.c src/hand_layout.c \
+            src/ask.c
 # Where each becomes an object: build/obj/host/<the source's own path>.o, the
 # "host" variant below (shared/tools/c_rules.mk).
 CORE_OBJ = $(call c_objs,build/obj/host,$(CORE_SRC))
@@ -282,6 +283,18 @@ build/analyse_test: $(ANALYSE_OBJ) $(call c_objs,build/obj/analyse,tests/analyse
 analyse-test: build/analyse_test
 	./build/analyse_test
 
+# The Oracle's answer (src/oracle_answer.h OgAnswer), checked natively against
+# the games it was deliberated on: tests/oracle_answer_test.c says what it holds
+# the struct to. Its own binary because it needs the two flags an oracle build
+# is made of, which no other native target sets - the answer does not exist
+# without them. The wasm half, and the proof against the old JSON line, is
+# e2e/oracle_answer.test.ts.
+.PHONY: oracle-answer-test
+oracle-answer-test:
+	@mkdir -p build
+	$(CC) $(CFLAGS) -DOG_EXPLAIN_BUILD -DFOOLISH_ORACLE_BUILD $(CORE_SRC) tests/oracle_answer_test.c -o build/oracle_answer_test $(LDFLAGS)
+	./build/oracle_answer_test
+
 # ---------- iOS static library / xcframework (docs/IOS_APP_DESIGN.md §16.A1) --
 #
 # Builds ../ios/vendor/Foolish.xcframework from the SAME CORE_SRC every native
@@ -352,7 +365,8 @@ IOS_CORE_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c \
                 src/replay_steps.c src/replay_extras.c src/view.c src/awire.c \
                 src/evwire.c $(SHARED)/sha256.c src/msg_wire.c src/msg_expand.c \
                 src/anim_plan.c src/roster.c src/card.c src/client_table.c \
-                src/hand_layout.c $(IOS_BRIDGE_SRC)
+                src/hand_layout.c $(IOS_BRIDGE_SRC) \
+                src/ask.c
 IOS_BOTS_SRC := $(filter-out $(IOS_CORE_SRC),$(CORE_SRC)) ios/ios_bots_api.c
 
 # Everything, for the host-side smoke/golden binaries that want one link line.
@@ -981,17 +995,20 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_replay_b32_encode -Wl,--export=wasm_replay_b32_decode \
   -Wl,--export=wasm_replay_link_parse \
   -Wl,--export=wasm_unambiguous_cover \
+  -Wl,--export=wasm_client_adopt_resident \
   -Wl,--export=wasm_msg_decode -Wl,--export=wasm_msg_seal -Wl,--export=wasm_msg_header_ptr \
   -Wl,--export=wasm_msg_rule_p -Wl,--export=wasm_msg_rebase \
   -Wl,--export=wasm_msg_rematch \
-  -Wl,--export=wasm_msg_pickup_hold \
   -Wl,--export=wasm_anim_should_drop_stale -Wl,--export=wasm_anim_stale_optimistic \
+  -Wl,--export=wasm_anim_stale_ask_ptr -Wl,--export=wasm_anim_stale_release_ptr \
+  -Wl,--export=wasm_anim_reversal_ask_ptr -Wl,--export=wasm_anim_reversal_plan_ptr \
+  -Wl,--export=wasm_anim_hand_ask_ptr -Wl,--export=wasm_anim_hand_laid_ptr \
+  -Wl,--export=wasm_anim_finish_ask_ptr -Wl,--export=wasm_anim_finish_ptr \
   -Wl,--export=wasm_anim_event_key \
   -Wl,--export=wasm_anim_finish_rows -Wl,--export=wasm_anim_hand_laid_out \
-  -Wl,--export=wasm_anim_conflict_verdicts \
-  -Wl,--export=wasm_anim_set_transport -Wl,--export=wasm_anim_transport \
-  -Wl,--export=wasm_anim_plan_ptr -Wl,--export=wasm_anim_frame_ptr -Wl,--export=wasm_anim_beats_ptr \
-  -Wl,--export=wasm_anim_build_plan -Wl,--export=wasm_anim_plan_at -Wl,--export=wasm_anim_build_beats \
+  -Wl,--export=wasm_anim_set_transport \
+  -Wl,--export=wasm_anim_plan_ptr -Wl,--export=wasm_anim_frame_ptr \
+  -Wl,--export=wasm_anim_plan_ask_ptr -Wl,--export=wasm_anim_build_plan -Wl,--export=wasm_anim_plan_at \
   -Wl,--export=wasm_anim_reversal_order \
   -Wl,--export=wasm_anim_roles_goods_opening -Wl,--export=wasm_anim_roles_goods_cleared \
   -Wl,--export=wasm_anim_roles_pass_hand_off -Wl,--export=wasm_anim_shown_ledger_allows \
@@ -1023,15 +1040,16 @@ WASM_TABLE_EXPORTS := \
   -Wl,--export=wasm_elo_deltas \
   -Wl,--export=wasm_table_create -Wl,--export=wasm_table_join \
   -Wl,--export=wasm_table_leave -Wl,--export=wasm_table_add_bot \
-  -Wl,--export=wasm_table_remove_bot -Wl,--export=wasm_table_ready \
-  -Wl,--export=wasm_table_reseat -Wl,--export=wasm_table_retitle \
-  -Wl,--export=wasm_table_set_rules \
+  -Wl,--export=wasm_table_ready \
   -Wl,--export=wasm_table_continue -Wl,--export=wasm_table_rearrange_hand \
   -Wl,--export=wasm_table_redact -Wl,--export=wasm_table_seat_of \
   -Wl,--export=wasm_table_set_deal_seed -Wl,--export=wasm_table_set_session_log \
   -Wl,--export=wasm_table_bot_drive -Wl,--export=wasm_table_drive_ptr \
   -Wl,--export=wasm_table_drive_prefs -Wl,--export=wasm_table_bot_wait_ms \
-  -Wl,--export=wasm_table_replay_code -Wl,--export=wasm_table_replay_extras
+  -Wl,--export=wasm_table_replay_code -Wl,--export=wasm_table_replay_extras \
+  -Wl,--export=wasm_table_ask_ptr -Wl,--export=wasm_table_ask_decode \
+  -Wl,--export=wasm_table_ask -Wl,--export=wasm_ask_refusal_encode \
+  -Wl,--export=wasm_table_cast
 
 # The web client's slot (src/client_table.h, wasm/wasm_table_api.c), bots.wasm
 # ONLY: the browser reads every envelope and push through these, and through the
@@ -1039,7 +1057,7 @@ WASM_TABLE_EXPORTS := \
 WASM_CLIENT_EXPORTS := \
   -Wl,--export=wasm_client_view_ptr -Wl,--export=wasm_client_event_ptr \
   -Wl,--export=wasm_client_detail -Wl,--export=wasm_client_adopt_envelope \
-  -Wl,--export=wasm_client_adopt_resident -Wl,--export=wasm_client_identity_at \
+  -Wl,--export=wasm_client_identity_at \
   -Wl,--export=wasm_client_push_open -Wl,--export=wasm_client_push_next \
   -Wl,--export=wasm_client_push_final -Wl,--export=wasm_client_identity \
   -Wl,--export=wasm_client_identity_begin -Wl,--export=wasm_client_identity_seat \
@@ -1052,8 +1070,14 @@ WASM_CLIENT_EXPORTS := \
   -Wl,--export=wasm_client_rearrange_hand -Wl,--export=wasm_client_conflict_verdicts \
   -Wl,--export=wasm_client_gesture_ptr -Wl,--export=wasm_client_play_ptr \
   -Wl,--export=wasm_client_play \
+  -Wl,--export=wasm_client_move_ptr -Wl,--export=wasm_client_move_wire \
+  -Wl,--export=wasm_client_action_request -Wl,--export=wasm_client_action_response \
+  -Wl,--export=wasm_client_response_ptr \
   -Wl,--export=wasm_hand_metrics_ptr -Wl,--export=wasm_hand_layout_ptr \
-  -Wl,--export=wasm_hand_layout
+  -Wl,--export=wasm_hand_layout \
+  -Wl,--export=wasm_client_ask_ptr -Wl,--export=wasm_client_ask_encode \
+  -Wl,--export=wasm_client_refusal_ptr -Wl,--export=wasm_client_refusal_decode \
+  -Wl,--export=wasm_client_cast_open -Wl,--export=wasm_client_cast_version
 
 # A replay's recorded decision as the Oracle imports it, and a code at a glance
 # (src/replay_steps.h, wasm/wasm_bots_api.c), bots.wasm ONLY: the web page builds
@@ -1110,16 +1134,26 @@ WASM_REPLAY_DECODE_EXPORTS := \
 # It is the PACKED-INT predecessor of wasm_replay_error_ptr: one int carrying
 # log_type << 16 | menu, which every host stopped unpacking when replay.h grew
 # a ReplayError struct and structgen started generating its reader
-# (sdk/ts/wasm/bots.ts replayErrorDetail). No TypeScript has named it since.
+# (sdk/ts/wasm/bots.ts replayRefused). No TypeScript has named it since.
 # The C entry stays for the oracle modules and the test build, and
 # replay_last_error_detail() itself is what the C suites print on a refusal.
 # It is a one-line accessor, so the shipped module moved by 39 raw / 14 gzip
 # bytes: the point here is not the bytes but that the export list and the
 # TypeScript that binds it agree, which is the only state a gate can tell apart
 # from drift.
+#
+# wasm_cards_a_ptr and wasm_cards_b_ptr joined them on 2026-10-10. They are the
+# addresses of the card buffers the move doors read (wasm_attack, wasm_cover,
+# wasm_pass, wasm_apply_action, wasm_rearrange_hand, wasm_unambiguous_cover),
+# every one of which is already on this list. The last shipped caller was
+# kernelMsgRebase, which now lays its awire frame in the replay-io buffer like
+# every other FMSG input, so the shipped module was exporting two pointers to
+# buffers nothing in it reads. The test build's fixture still fills them
+# (e2e/helpers/table_fixture.ts).
 WASM_BOTS_UNSHIPPED_API := \
   -Wl,--export=wasm_unambiguous_cover \
   -Wl,--export=wasm_replay_error_detail \
+  -Wl,--export=wasm_cards_a_ptr -Wl,--export=wasm_cards_b_ptr \
   -Wl,--export=wasm_game_ptr_internal -Wl,--export=wasm_moves_ptr_internal \
   -Wl,--export=wasm_set_seed -Wl,--export=wasm_set_deal_seed_bytes -Wl,--export=wasm_reject_reason \
   -Wl,--export=wasm_import_state -Wl,--export=wasm_export_state \
@@ -1209,14 +1243,16 @@ WASM_MSG_EXPORTS := \
   -Wl,--export=wasm_unambiguous_cover \
   -Wl,--export=wasm_msg_decode -Wl,--export=wasm_msg_seal -Wl,--export=wasm_msg_header_ptr \
   -Wl,--export=wasm_msg_rule_p -Wl,--export=wasm_msg_rebase \
-  -Wl,--export=wasm_msg_pickup_hold \
   -Wl,--export=wasm_anim_should_drop_stale -Wl,--export=wasm_anim_stale_optimistic \
+  -Wl,--export=wasm_anim_stale_ask_ptr -Wl,--export=wasm_anim_stale_release_ptr \
+  -Wl,--export=wasm_anim_reversal_ask_ptr -Wl,--export=wasm_anim_reversal_plan_ptr \
+  -Wl,--export=wasm_anim_hand_ask_ptr -Wl,--export=wasm_anim_hand_laid_ptr \
+  -Wl,--export=wasm_anim_finish_ask_ptr -Wl,--export=wasm_anim_finish_ptr \
   -Wl,--export=wasm_anim_event_key \
   -Wl,--export=wasm_anim_finish_rows -Wl,--export=wasm_anim_hand_laid_out \
-  -Wl,--export=wasm_anim_conflict_verdicts \
-  -Wl,--export=wasm_anim_set_transport -Wl,--export=wasm_anim_transport \
-  -Wl,--export=wasm_anim_plan_ptr -Wl,--export=wasm_anim_frame_ptr -Wl,--export=wasm_anim_beats_ptr \
-  -Wl,--export=wasm_anim_build_plan -Wl,--export=wasm_anim_plan_at -Wl,--export=wasm_anim_build_beats \
+  -Wl,--export=wasm_anim_set_transport \
+  -Wl,--export=wasm_anim_plan_ptr -Wl,--export=wasm_anim_frame_ptr \
+  -Wl,--export=wasm_anim_plan_ask_ptr -Wl,--export=wasm_anim_build_plan -Wl,--export=wasm_anim_plan_at \
   -Wl,--export=wasm_anim_reversal_order \
   -Wl,--export=wasm_anim_roles_goods_opening -Wl,--export=wasm_anim_roles_goods_cleared \
   -Wl,--export=wasm_anim_roles_pass_hand_off -Wl,--export=wasm_anim_shown_ledger_allows
@@ -1336,6 +1372,7 @@ WASM_BOT_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/rep
                 src/octogen_strategy.c \
                 src/bot_knobs.c src/bot_roster.c src/bot_drive.c src/roster.c src/table.c src/client_table.c src/card.c \
                 src/hand_layout.c \
+                src/ask.c \
                 $(SHARED)/wasm/libc.c $(SHARED)/wasm/bump_alloc.c \
                 wasm/wasm_api.c wasm/wasm_bots_api.c wasm/wasm_msg_api.c wasm/wasm_table_api.c
 
@@ -1431,9 +1468,9 @@ build/bots.wasm: $(WASM_BOT_OBJ) Makefile
 
 # bots-explain.wasm: byte-for-byte the SAME octogen as bots.wasm (same sources,
 # same per-file opt, same flags, same wasm-opt pass) PLUS -DOG_EXPLAIN_BUILD,
-# which is behavior-neutral (the deliberation dump is #ifdef'd + gated and resets
-# the TT). Extra exports let the JS harness read the per-decision dump from a
-# static buffer (wasm has no file I/O). ANALYSIS ONLY — never shipped.
+# which is behavior-neutral (the deliberation's answer is #ifdef'd + gated and
+# resets the TT). Extra exports let a harness read each decision's answer
+# (src/oracle_answer.h OgAnswer). ANALYSIS ONLY - never shipped.
 .PHONY: bots-wasm-explain
 bots-wasm-explain: build/layout/bots-explain.hash
 	@mkdir -p build/botexplain
@@ -1445,7 +1482,7 @@ bots-wasm-explain: build/layout/bots-explain.hash
 	done
 	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_BOT_LDFLAGS) \
 	          $(WASM_BOTS_SHIPPED_EXPORTS) \
-	          -Wl,--export=wasm_og_explain_ptr -Wl,--export=wasm_og_explain_len -Wl,--export=wasm_og_explain_reset \
+	          -Wl,--export=wasm_og_answer -Wl,--export=wasm_og_answer_reset \
 	          build/botexplain/*.o -o build/bots-explain.wasm
 	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),build/bots-explain.wasm)
 	gzip -9 -c build/bots-explain.wasm > build/bots-explain.wasm.gz
@@ -1527,7 +1564,7 @@ wasm-bots: wasm-cc-check
 # (wasm_export_state / wasm_state_serialize / wasm_state_deserialize, which
 # e2e/security_client_boundary.test.ts denies the browser — they are now absent
 # from the module rather than merely unreferenced by the bundle), and the
-# test-only entries (wasm_msg_seal, wasm_legal_moves, wasm_anim_build_beats,
+# test-only entries (wasm_msg_seal, wasm_legal_moves,
 # wasm_replay_extras_encode, wasm_replay_link_parse …) which run on Node against
 # bots.wasm.
 WASM_WEB_NAMES := \
@@ -1537,8 +1574,12 @@ WASM_WEB_NAMES := \
   wasm_msg_decode wasm_msg_header_ptr \
   wasm_anim_set_transport wasm_anim_event_key \
   wasm_anim_should_drop_stale wasm_anim_stale_optimistic \
+  wasm_anim_stale_ask_ptr wasm_anim_stale_release_ptr \
+  wasm_anim_reversal_ask_ptr wasm_anim_reversal_plan_ptr \
+  wasm_anim_hand_ask_ptr wasm_anim_hand_laid_ptr \
+  wasm_anim_finish_ask_ptr wasm_anim_finish_ptr \
   wasm_anim_finish_rows wasm_anim_hand_laid_out wasm_anim_reversal_order \
-  wasm_anim_build_plan wasm_anim_plan_ptr wasm_anim_plan_at wasm_anim_frame_ptr \
+  wasm_anim_plan_ask_ptr wasm_anim_build_plan wasm_anim_plan_ptr wasm_anim_plan_at wasm_anim_frame_ptr \
   wasm_anim_roles_goods_opening wasm_anim_roles_goods_cleared \
   wasm_anim_roles_pass_hand_off wasm_anim_shown_ledger_allows \
   wasm_replay_b32_encode wasm_replay_b32_decode wasm_replay_link \
@@ -1612,20 +1653,20 @@ wasm-bots-test: wasm-cc-check
 # ---------------------------------------------------------------------------
 # oracle.wasm — the client-side "infinite oracle" replay analyzer
 # (docs/INFINITE_ORACLE_DESIGN.md). bots.wasm's brain + the OG_EXPLAIN
-# per-candidate dump + oracle-only hooks (-DFOOLISH_ORACLE_BUILD), rebuilt for
+# per-candidate answer + oracle-only hooks (-DFOOLISH_ORACLE_BUILD), rebuilt for
 # the browser's unconstrained-memory regime: TT20 (+2WAY+PACK8 = 8 MiB runtime
 # table — a strength knob, Makefile:296-304) and the default 256 KiB stack (no
-# 22528 override). CD_WASM_OVERLAY stays: the explain sink requires it
-# (octogen_strategy.c) and repeated complete calls respect the tenancy. NEVER
+# 22528 override). CD_WASM_OVERLAY stays: it is what makes the answer
+# unconditional (octogen_strategy.c og_explain_on) and repeated complete calls
+# respect the tenancy. NEVER
 # replaces the shipped modules; ships as a committed public/oracle.wasm.gz the
 # replay page fetches lazily on the first Oracle button press.
 WASM_ORACLE_CFLAGS := $(filter-out -DCD_TT_BITS=12,$(WASM_BOT_CFLAGS)) \
                       -DCD_TT_BITS=20 -DOG_EXPLAIN_BUILD -DFOOLISH_ORACLE_BUILD
 WASM_ORACLE_LDFLAGS := $(filter -Wl%,$(WASM_FLAGS))
 WASM_ORACLE_EXPORTS := $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) \
-  -Wl,--export=wasm_og_explain_ptr -Wl,--export=wasm_og_explain_len \
-  -Wl,--export=wasm_og_explain_reset -Wl,--export=wasm_og_reload_flags \
-  -Wl,--export=wasm_og_paths_ptr -Wl,--export=wasm_og_paths_len
+  -Wl,--export=wasm_og_answer -Wl,--export=wasm_og_answer_reset \
+  -Wl,--export=wasm_og_knobs_ptr -Wl,--export=wasm_og_knobs_apply
 # ONE MAKE RULE PER OBJECT, the same shape wasm-bots has had all along. This
 # recipe used to be a shell `for` loop over all 34 sources inside a .PHONY
 # target, so every `npm run wasm` recompiled the whole oracle whether or not
@@ -1707,8 +1748,9 @@ wasm-oracle: wasm-cc-check
 #   -DCD_WASM_OVERLAY  its fixed-address aliasing into solve_ws is only legal
 #                      when TLS is stripped (wasm/wasm_overlay.h says so); with
 #                      real TLS it is the native data race.
-#   -DOG_EXPLAIN_BUILD its wasm sink is #ifdef CD_WASM_OVERLAY and would not
-#                      link; Mode B replaces the JSON dump with the C accumulator.
+#   -DOG_EXPLAIN_BUILD its answer is one static struct per instance, which is
+#                      only right when TLS is stripped; Mode B replaces it with
+#                      the C accumulator (src/oracle_mt.h).
 # A SECOND committed artifact (public/oracle-mt.wasm.gz); the browser loader
 # picks it only when crossOriginIsolated. NEVER replaces the shipped modules.
 WASM_ORACLE_MT_SRC := $(WASM_BOT_SRC) wasm/wasm_oracle_mt.c
@@ -1720,7 +1762,7 @@ WASM_ORACLE_MT_LDFLAGS := $(filter-out -Wl$(comma)--export-memory,$(filter -Wl%,
                           -Wl,--export=__stack_pointer -Wl,--export=__wasm_init_tls \
                           -Wl,--export=__tls_size -Wl,--export=__tls_align
 WASM_ORACLE_MT_EXPORTS := $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) \
-  -Wl,--export=wasm_og_reload_flags \
+  -Wl,--export=wasm_og_knobs_ptr -Wl,--export=wasm_og_knobs_apply \
   -Wl,--export=wasm_mt_reserve \
   -Wl,--export=wasm_mt_warmup -Wl,--export=wasm_mt_setup -Wl,--export=wasm_mt_stop \
   -Wl,--export=wasm_mt_total -Wl,--export=wasm_mt_checksum -Wl,--export=wasm_mt_active \
@@ -1817,7 +1859,7 @@ COV_BRANCH_MIN ?= 74
 # coverage climbs; never lower one to make a red build pass.
 COV_KERNEL     := game legal replay replay_steps replay_extras view awire evwire \
                   msg_wire msg_expand anim_plan table client_table roster card \
-                  hand_layout bot_drive bot_roster analyse
+                  hand_layout bot_drive bot_roster analyse ask
 # deal_rng and sha256 are in the SAME gate, from their new home. They left this
 # list's `src/` prefix behind when they moved to shared/, and a filter that no
 # longer matches does not fail - gcovr simply reports the file it cannot find as

@@ -173,7 +173,7 @@ async function runCycle(
             // happening in the same breath.
             if (p.nEvents > 0 || p.goodsChanged) {
                 for (const viewer of [...seats.flatMap((s, i) => (s.brain ? [] : [i])), -1]) {
-                    const push = table.push(gameId, viewer);
+                    const push = table.cast(gameId, viewer, row.version + 1);
                     if (typeof push === 'number') throw refusal(gameId, 'push', push);
                     pushes.push({ viewer, bytes: push });
                 }
@@ -197,7 +197,7 @@ async function runCycle(
             await finalizeEndedGame(gameId, products.state, products.roster, reqId);
         }
         if (pushes.length > 0) {
-            broadcastPushes(gameId, version, seats, pushes, reqId)
+            broadcastPushes(gameId, seats, pushes, reqId)
                 .catch((err) => console.error(`[${reqId}] broadcast failed:`, err));
         }
         if (products.ended) return null;

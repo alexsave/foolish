@@ -1,31 +1,14 @@
 // The kernel's export table, read out of a linked module, and the TypeScript
-// interfaces that bind it.
+// that binds it.
 //
-// WHY THE MODULE AND NOT THE SOURCES. c/Makefile declares the exports
-// (WASM_API_EXPORTS and its siblings), c/wasm/*.c defines the functions, and
-// eleven hand-written TypeScript interfaces declare the other side of every one
-// of them. Three places, one contract, and nothing compared them: over the
-// repo's history wasm_api.c and sdk/ts/wasm/bots.ts changed together in fifteen
-// commits without either ever being able to fail because of the other. The
-// linked module is the only place where the Makefile's list and the C
-// definitions have already met, so it is what the TypeScript is checked
-// against. A committed .wasm.gz needs no compiler to read, which is what lets
-// this run in the fast lane - CI never rebuilds the wasm.
-//
-// WHY NOT GENERATE THE TYPESCRIPT. tools/structgen exists for facts only a
-// compiler knows: a field's offset, a struct's size, a bitfield's position. An
-// export's arity is not one of those - it is in the module's own type section,
-// already compiled. And the interfaces are ~120 lines out of the ~2,900 in the
-// files that hold them; the rest is marshalling that no generator can write.
-// Generating the declaration alone would move the drift rather than remove it,
-// because the hand-written call sites would still have to agree with it.
-//
-// WHAT A SIGNATURE CAN SAY HERE. Everything the kernel exports takes and
-// returns i32 (pointers are u32 offsets in wasm32), so the type match is thin;
-// the ARITY and the value-versus-void return are not. Passing three arguments
-// to a function that grew a fourth reads whatever was left on the stack, and
-// declaring a refusal code as `void` throws it away at the call site. Both are
-// silent in TypeScript and both are what this compares.
+// Every host casts `instance.exports` to an interface structgen writes from the
+// link line and the C definitions (sdk/ts/gen/exports.<link>.ts), so a call
+// with a wrong name, arity or return is a compile error, and
+// e2e/wasm_exports.test.ts holds each interface to its built module with the
+// readers below. What is left for a scanner of hand-written TypeScript: the
+// hand-typed interfaces that remain (BINDER_MODULES, a closed list) and the
+// names the tree actually calls (calledExports), which is what tells an export
+// with no caller from one that earns the code it roots.
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -163,47 +146,14 @@ export interface Binder {
 }
 
 /** The kernel modules a binder can be bound to. */
-export type ModuleId = 'bots' | 'web' | 'bots-test' | 'oracle' | 'oracle-mt';
+export type ModuleId = 'bots' | 'web' | 'bots-test' | 'oracle' | 'oracle-mt' | 'msg';
 
 /**
- * Which module each binding interface talks to.
- *
- * Kept by hand ON PURPOSE, and asserted complete against what the tree
- * actually holds: the module a binder binds is not written anywhere a scanner
- * could read, and a new binder must make that choice out loud rather than be
- * quietly matched to whichever module happens to carry its names. A key here
- * that no longer exists fails just as loudly as a binder that is not here - an
- * interface that was renamed or moved must be re-declared, not silently
- * dropped out of the check.
+ * The hand-typed interfaces that still declare a kernel entry point, and the
+ * module each binds. A closed list: a new binder is the generated interface of
+ * its link, not a line here.
  */
 export const BINDER_MODULES: Readonly<Record<string, ModuleId>> = {
-    // The shipped module, bound by the SDK every host loads.
-    'sdk/ts/wasm/bots.ts#EngineExports': 'bots',
-    'sdk/ts/wasm/bots.ts#BotsExports': 'bots',
-    'sdk/ts/table/server_table.ts#TableExports': 'bots',
-    'sdk/ts/table/client_table.ts#ClientExports': 'bots',
-    // The BROWSER's link of those same objects (c/Makefile, WASM_WEB_NAMES).
-    // The four binders above are declared against `bots` because that is the
-    // superset - BotsExports names test-only entries that run on Node - and the
-    // browser reaches them through the subset. What is bound to `web` is the
-    // gate that holds the two links to one answer, which instantiates BOTH and
-    // so may only name entries both export.
-    'e2e/wasm_web_link.test.ts#RawKernel': 'web',
-    // The TEST build: the shipped module's link plus c/Makefile's
-    // WASM_TEST_EXPORTS (e2e/bots_test_build.test.ts proves that equality).
-    // Never committed, so the fast lane checks these by name and
-    // e2e/bots_test_build.test.ts checks their signatures against the module it
-    // builds.
-    'e2e/helpers/replay_decode.ts#DecodeExports': 'bots-test',
-    'e2e/helpers/roster_kernel.ts#RosterExports': 'bots-test',
-    'e2e/helpers/table_fixture.ts#FixtureExports': 'bots-test',
-    'e2e/kernel_state_validation.test.ts#Doors': 'bots-test',
-    'e2e/helpers/hidden_info.ts#ProbeExports': 'bots-test',
-    'tools/structgen/test/bench.ts#Kernel': 'bots-test',
-    // The Oracle's own modules, committed under public/.
-    'src/oracle/oracleBridge.ts#OracleExports': 'oracle',
-    'src/oracle/oracleMtSession.ts#MtExports': 'oracle-mt',
-    'src/oracle/oracleMtWorker.ts#MtExports': 'oracle-mt',
 };
 
 // Only directories that hold no hand-written TypeScript: dependencies, build
@@ -222,62 +172,78 @@ function tsFiles(dir: string, out: string[] = []): string[] {
 }
 
 /**
- * Every TypeScript interface or object type alias in the tree that declares a
- * `wasm_*` member.
- *
- * Found by SHAPE, not by name. Eleven of the twelve are called `*Exports`, one
- * is `Doors` and one is `Kernel`, and a fourth naming convention would be along
- * eventually; a declaration of a kernel entry point is a binder whatever it is
- * called and whichever of the two spellings declares it.
+ * Every `wasm_*` name the hand-written TypeScript calls on an instance
+ * (`ex.wasm_foo(`, `ex.wasm_foo?.(`). A declaration is not a call: the
+ * generated interfaces declare every export of every link.
  */
+export function calledExports(root: string): Set<string> {
+    const out = new Set<string>();
+    for (const path of tsFiles(root)) {
+        const src = readFileSync(path, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+        for (const m of src.matchAll(/\.(wasm_[a-z0-9_]+)(?=\s*[!?]?\.?\()/g)) out.add(m[1]);
+    }
+    return out;
+}
+
+/** Every hand-written interface or object type alias in the tree that declares a `wasm_*` member, found by shape. */
 export function wasmBinders(root: string): Binder[] {
     const binders: Binder[] = [];
     for (const path of tsFiles(root)) {
         const src = readFileSync(path, 'utf8');
         if (!src.includes('wasm_')) continue;
-        const rel = path.slice(root.length).replace(/^\//, '');
-        for (const head of src.matchAll(/(?:^|\n)\s*(?:export\s+)?(?:interface\s+(\w+)[^{=]*|type\s+(\w+)\s*=\s*)\{/g)) {
-            // Brace matching rather than a lazy `}` : a member's type can hold
-            // braces of its own, and stopping at the first one would read half
-            // an interface and call the rest absent.
-            const open = head.index! + head[0].length;
-            let depth = 1, i = open;
-            for (; i < src.length && depth > 0; i++) {
-                if (src[i] === '{') depth++;
-                else if (src[i] === '}') depth--;
-            }
-            // Comments blanked rather than cut, so the offsets a member reports
-            // as its line still land where the member is. A doc comment naming
-            // a RETIRED entry point is otherwise read as a declaration of it.
-            const body = src.slice(open, i - 1)
-                .replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, ' '))
-                .replace(/\/\/[^\n]*/g, (c) => ' '.repeat(c.length));
-            const members: BoundMember[] = [];
-            // Not anchored to the start of a line: tools/structgen/test/bench.ts
-            // declares five members on two lines, and anchoring read one of
-            // each - an under-read that looks exactly like agreement.
-            // The lookbehind keeps `__wasm_init_tls` - wasm-ld's own TLS entry,
-            // which oracleMtWorker.ts binds - from being read as a kernel
-            // `wasm_init_tls` that no module exports.
-            // The return type is taken as the first identifier after the colon
-            // rather than "everything up to the semicolon": a member written
-            // without its trailing `;` (legal inside a `type X = { … }`) was
-            // read as no member at all, which is a scanner that agrees with
-            // anything.
-            for (const m of body.matchAll(/(?<![A-Za-z0-9_])(wasm_[a-z0-9_]+)(\??)\s*\(([^)]*)\)\s*:\s*([A-Za-z0-9_]+)/g)) {
-                const args = m[3].trim();
-                members.push({
-                    name: m[1],
-                    optional: m[2] === '?',
-                    paramTypes: args ? args.split(',').map((a) => a.split(':').slice(1).join(':').trim()) : [],
-                    returnType: m[4].trim(),
-                    line: src.slice(0, open + m.index!).split('\n').length,
-                });
-            }
-            if (members.length) binders.push({ key: `${rel}#${head[1] ?? head[2]}`, file: rel, members });
-        }
+        binders.push(...bindersIn(src, path.slice(root.length).replace(/^\//, '')));
     }
     return binders.sort((a, b) => (a.key < b.key ? -1 : 1));
+}
+
+/**
+ * The binders one file's text declares. Split out of the walk above so a file
+ * the walk deliberately skips - a GENERATED interface under sdk/ts/gen - can be
+ * read by the same rules as a hand-written one (e2e/wasm_exports.test.ts).
+ */
+export function bindersIn(src: string, rel: string): Binder[] {
+    const binders: Binder[] = [];
+    for (const head of src.matchAll(/(?:^|\n)\s*(?:export\s+)?(?:interface\s+(\w+)[^{=]*|type\s+(\w+)\s*=\s*)\{/g)) {
+        // Brace matching rather than a lazy `}` : a member's type can hold
+        // braces of its own, and stopping at the first one would read half
+        // an interface and call the rest absent.
+        const open = head.index! + head[0].length;
+        let depth = 1, i = open;
+        for (; i < src.length && depth > 0; i++) {
+            if (src[i] === '{') depth++;
+            else if (src[i] === '}') depth--;
+        }
+        // Comments blanked rather than cut, so the offsets a member reports
+        // as its line still land where the member is. A doc comment naming
+        // a RETIRED entry point is otherwise read as a declaration of it.
+        const body = src.slice(open, i - 1)
+            .replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, ' '))
+            .replace(/\/\/[^\n]*/g, (c) => ' '.repeat(c.length));
+        const members: BoundMember[] = [];
+        // Not anchored to the start of a line: tools/structgen/test/bench.ts
+        // declares five members on two lines, and anchoring read one of
+        // each - an under-read that looks exactly like agreement.
+        // The lookbehind keeps `__wasm_init_tls` - wasm-ld's own TLS entry,
+        // which oracleMtWorker.ts binds - from being read as a kernel
+        // `wasm_init_tls` that no module exports.
+        // The return type is taken as the first identifier after the colon
+        // rather than "everything up to the semicolon": a member written
+        // without its trailing `;` (legal inside a `type X = { … }`) was
+        // read as no member at all, which is a scanner that agrees with
+        // anything.
+        for (const m of body.matchAll(/(?<![A-Za-z0-9_])(wasm_[a-z0-9_]+)(\??)\s*\(([^)]*)\)\s*:\s*([A-Za-z0-9_]+)/g)) {
+            const args = m[3].trim();
+            members.push({
+                name: m[1],
+                optional: m[2] === '?',
+                paramTypes: args ? args.split(',').map((a) => a.split(':').slice(1).join(':').trim()) : [],
+                returnType: m[4].trim(),
+                line: src.slice(0, open + m.index!).split('\n').length,
+            });
+        }
+        if (members.length) binders.push({ key: `${rel}#${head[1] ?? head[2]}`, file: rel, members });
+    }
+    return binders;
 }
 
 /**

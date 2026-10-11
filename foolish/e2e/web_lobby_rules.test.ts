@@ -24,7 +24,7 @@ import assert from 'node:assert/strict';
 import { applySchema, pgPool, resetDb, uuid } from './harness.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import { MAX_PLAYERS } from '../server/api/core/constants.ts';
-import { fixture, IDLE } from './helpers/table_fixture.ts';
+import { fixture, fixtureTable, IDLE } from './helpers/table_fixture.ts';
 import { seedTable } from './helpers/table_db.ts';
 import { mustReadTable } from './helpers/table_play.ts';
 import { runMeta } from './helpers/table_server.ts';
@@ -69,7 +69,8 @@ test('web lobby: a seat unticks the rules box, the other seat and a spectator re
         await page.step(() => { box(page).click(); });
         const setRules = sent.filter((s) => s.name === 'meta' && s.kind === 'set-rules');
         assert.equal(setRules.length, 1, `unticking sends one set-rules (${sent.map((s) => s.kind).join(',')})`);
-        assert.equal((setRules[0].body as { passing?: unknown }).passing, false, 'and it asks for podkidnoy: passing false');
+        const asked = fixtureTable().askDecode(setRules[0].bytes!);
+        assert.equal(typeof asked !== 'number' && asked.passing, 0, 'and it asks for podkidnoy: passing off');
         assert.equal(setRules[0].status, 200, 'the server takes it');
         assert.equal(box(page).checked, false, "Ana's box now reads unticked");
         await page.advance(1500);

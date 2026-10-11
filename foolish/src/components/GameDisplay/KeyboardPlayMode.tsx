@@ -342,7 +342,7 @@ export const KeyboardPlayMode = () => {
                     arrowTo = { point: passPoint() };
                 }
             }
-            const sig = JSON.stringify({ selRect, arrowTo, pass });
+            const sig = [pass, ...Object.values(selRect ?? {}), '|', ...Object.values(arrowTo && 'point' in arrowTo ? arrowTo.point : arrowTo ?? {})].join();   // four numbers a rect, two a point
             if (sig !== geomSig.current) { geomSig.current = sig; setGeom({ sel: selRect, arrowTo, pass }); }
             raf = requestAnimationFrame(tick);
         };

@@ -22,8 +22,8 @@ export interface ActionOutcome {
     needsBots: boolean;
 }
 
-/** A request the kernel could not parse. */
 export class MalformedActionRequest extends Error {
+    readonly why = L.ASK_WHY_MALFORMED;
     constructor() { super('malformed action request'); this.name = 'MalformedActionRequest'; }
 }
 

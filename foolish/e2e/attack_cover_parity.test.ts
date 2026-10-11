@@ -37,7 +37,7 @@ import assert from 'node:assert/strict';
 
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import type { TableView, ViewCard as Card } from '../sdk/ts/table/client_table.ts';
-import { encodeAction } from '../sdk/ts/wire/awire.ts';
+import { encodeAction } from '../sdk/ts/table/client_table.ts';
 import * as V from '../sdk/ts/gen/view_layout.bots.ts';
 import { boardPills, coverGesture as clientCoverGesture, validateActionWire } from '../src/utils/gameValidation.ts';
 import { MemTable, type MemBoard } from './helpers/table_mem.ts';

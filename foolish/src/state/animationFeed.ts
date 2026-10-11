@@ -54,28 +54,22 @@ export interface AnimationSequenceMessage {
 }
 
 /**
- * Packed broadcast envelope (docs/PACKED_WIRE_CUTOVER.md): the server now
- * ships the whole personalized animation sequence as ONE kernel-format byte
- * buffer, base64 inside the JSON payload the realtime API requires. The
- * consumer (AnimationProvider) decodes it into the legacy sequence shape at
- * the render boundary; replay/tutorial synthesis still publishes the legacy
+ * A live realtime message: the kernel's cast (c/src/evwire.h - the committed
+ * version and the as3 push, one run of bytes), base64 because the realtime
+ * API's envelope is JSON. Nothing rides beside it: the consumer
+ * (AnimationProvider) hands the bytes to the kernel's client slot and gets the
+ * sequence back. Replay/tutorial synthesis still publishes an
  * AnimationSequenceMessage directly.
  */
-export interface PackedSequenceEnvelope {
-    t: 'as2' | 'as3';
-    /** sequence id (dedup key) */
-    s: string;
-    /** committed games.version (the monotonic reorder-drop token) */
-    v: number;
-    /** base64(evwire bytes) */
+export interface CastMessage {
+    /** base64(cast bytes) */
     b: string;
-    /** Attached by the transport (RealtimeAnimationFeed): the game this
-     *  envelope belongs to — the packed payload itself carries no JS state,
-     *  so the consumer needs it to pick the decode roster. */
+    /** Attached by the transport (RealtimeAnimationFeed): the game the topic
+     *  belongs to, so the consumer can pick the identity to decode against. */
     game_id?: string;
 }
 
-export type AnimationFeedMessage = AnimationSequenceMessage | PackedSequenceEnvelope;
+export type AnimationFeedMessage = AnimationSequenceMessage | CastMessage;
 
 type FeedListener = (message: AnimationFeedMessage) => void;
 

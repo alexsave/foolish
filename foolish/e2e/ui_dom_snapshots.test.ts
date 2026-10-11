@@ -29,7 +29,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { fixture, fixtureTable, parseCardText, PLAYING, GAME_OVER, IN, OUT, READY, IDLE, type FixtureSeat } from './helpers/table_fixture.ts';
-import { encodeAction } from '../sdk/ts/wire/awire.ts';
+import { encodeAction } from '../sdk/ts/table/client_table.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; }

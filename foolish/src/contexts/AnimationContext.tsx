@@ -4,8 +4,8 @@ import { useAuth } from './AuthContext';
 import { useParams } from 'next/navigation';
 import supabase from '../common/Connector';
 import { validateActionWire } from '../utils/gameValidation';
-import { encodeAction } from '@sdk/ts/wire/awire.ts';
-import { clientTable } from '@sdk/ts/table/client_table.ts';
+import { clientTable, encodeAction } from '@sdk/ts/table/client_table.ts';
+import { ASK_BUMP } from '@sdk/ts/gen/view_layout.bots.ts';
 import { pushToSequence } from '../state/pushSequence';
 import { rulesOf, tableCards, type TableView, type ViewCard } from '../state/view';
 import { optimisticBoard, turnedBoard, withdrawn } from '../state/clientBoards';
@@ -28,9 +28,8 @@ import type { ArrivingPile } from '../state/animPlan';
 import { ROLE_CLAIM, useRoleMotion, type RoleHandOff } from '../state/useRoleMotion';
 import { rolesOf } from '../state/roleLedger';
 import type { ShownBoard } from '../state/roleLedger';
-import {
-    ANIM_NO_MASK, animRolesGoodsCleared, animRolesGoodsOpening, animRolesPassHandOff,
-} from '@sdk/ts/wasm/bots.ts';
+import { animRolesGoodsCleared, animRolesGoodsOpening, animRolesPassHandOff } from '@sdk/ts/wasm/bots.ts';
+import { ANIM_NO_MASK } from '@sdk/ts/gen/anim.bots.ts';
 
 // Bot bump timeout - 20 seconds of no animations (currently unused)
 // const BOT_BUMP_TIMEOUT = 20000;
@@ -303,10 +302,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                     return;
                 }
 
-                // No bot moves but a bot could move - nudge the bot loop (folded into
-                // the unified `action` endpoint as type:'bump'; was the bot_bump fn)
-                supabase.functions.invoke('action', {
-                    body: { game_id: url_game_id, type: 'bump' }
+                // No bot moves but a bot could move - nudge the bot loop
+                supabase.functions.invoke('meta', {
+                    body: new Blob([clientTable().askBody({ kind: ASK_BUMP, gid: url_game_id }) as BlobPart])
                 }).catch(error => {
                     console.error('Bot bump failed:', error);
                 });
@@ -371,52 +369,45 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             .finally(() => packedRefetchInFlight.current.delete(gid));
     };
 
-    // Packed broadcast envelope {t:'as2' | 'as3', s, v, b, game_id, r?} -> the
-    // sequence this pipeline plays (docs/PACKED_WIRE_CUTOVER.md). This is the
-    // client's render-boundary read for live broadcasts: the kernel reads the
-    // bytes (sdk/ts/table/client_table.ts) into boards, src/state/pushSequence.ts
-    // names each step's event, and the EXISTING pipeline (version gate, dedup,
-    // optimistic-conflict resolution) runs unchanged on the result.
+    // A realtime cast { b, game_id } -> the sequence shape (events + final game)
+    // handleAnimationMessage consumes. `b` is the kernel's cast (evwire.h): the
+    // committed version and the as3 push, read whole by the client slot
+    // (client_table.h client_cast_open), so nothing here is told the format or
+    // the version beside the bytes.
     //
-    // Who sits where: an as3 push that changed the roster carries it. Otherwise
-    // the table's identity the kernel kept from the last envelope or roster push
-    // it read for this game names the seats - or, from a server that still
-    // sends as2 lobby broadcasts, the JSON roster beside them (`r`), which is
-    // exactly the case a kept identity would be stale for. `m` (message prose)
-    // is ignored: no component renders an event's message (Q7).
-    const decodePackedEnvelope = (m: any): any | null => {
-        if (typeof m.b !== 'string') return null;
+    // Who sits where: a push that changed the roster carries it. Otherwise the
+    // table's identity the kernel kept from the last envelope or roster push it
+    // read for this game names the seats.
+    //
+    // THE SEQUENCE ID IS DERIVED, not sent. A topic receives one push per
+    // committed version, so the game id and the version name the sequence; the
+    // server used to draw a random UUID for it, per push.
+    const decodeCast = (m: any): any | null => {
         const gid = typeof m.game_id === 'string' ? m.game_id : url_game_id;
-        const version = typeof m.v === 'number' ? m.v : undefined;
         const table = clientTable();
-        let identity: 'kept' | Uint8Array = 'kept';
-        if (m.r && Array.isArray(m.r.players) && gid) {
-            const built = table.identityFromSeats(gid, m.r.name ?? '', m.r.players.map((p: any) => ({
-                id: String(p.player_id), name: String(p.name ?? ''), isAi: p.is_ai === true,
-            })));
-            if (built) identity = built;
-        }
+        let bytes: Uint8Array | null = null;
         let read = null;
         try {
-            read = table.readPush(base64ToBytes(m.b), { as3: m.t === 'as3', gameId: gid, version, identity });
+            bytes = base64ToBytes(m.b);
+            read = table.readCast(bytes, { gameId: gid });
         } catch (e) {
-            console.error('packed animation envelope decode failed:', e);
+            console.error('cast decode failed:', e);
         }
         // Unreadable bytes, or a push the kernel could not name the seats of
         // (no identity for this game yet, or one whose seats the push's boards
         // do not have - the roster changed while this client was away): fetch
         // the authoritative state and drop this sequence. The load carries the
-        // fresh roster.
+        // fresh roster, and is asked for at least the version the cast names.
         if (!read || read.final.seats.length === 0 || read.final.seats[0].id === '') {
-            refetchForEnvelope(gid, version);
+            refetchForEnvelope(gid, (bytes && table.castVersion(bytes)) ?? undefined);
             return null;
         }
         const decoded = pushToSequence(read);
         return {
             type: 'animation_sequence',
-            sequence_id: m.s,
+            sequence_id: `${gid}:${read.final.version}`,
             timestamp: Date.now(),
-            version: m.v,
+            version: read.final.version,
             events: decoded.events,
             game: decoded.game,
         };
@@ -424,8 +415,10 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
     // Handle animation messages from real-time channel
     const handleAnimationMessage = (message: any) => {
-        if (message && (message.t === 'as2' || message.t === 'as3')) {
-            message = decodePackedEnvelope(message);
+        // A live message is a cast: `b` and nothing else (animationFeed.ts
+        // CastMessage). A replay or the tutorial publishes the sequence itself.
+        if (message && typeof message.b === 'string') {
+            message = decodeCast(message);
             if (!message) return;
         }
         if (!message.events || !Array.isArray(message.events)) {

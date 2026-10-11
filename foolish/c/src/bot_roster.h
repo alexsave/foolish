@@ -64,6 +64,31 @@ int bot_roster_find_by_strat(int strat);
 int bot_roster_offline_count(void);
 int bot_roster_offline_at(int n);
 
+// The roster as a VALUE, for a host on the far side of a boundary: the entries
+// above hold pointers, which do not cross one. One row per entry, in table
+// order, read through the reader structgen writes from this declaration.
+#define BOT_ROSTER_MAX     16
+#define BOT_ROSTER_KEY_MAX 24
+typedef struct {
+    int32_t strat;       // STRAT_* brain id (strategy.h)
+    bool    linked;      // this build links the brain (bot_roster_linked)
+    bool    uses_logs;
+    bool    seeded;
+    bool    offline;
+    uint8_t tier;
+    uint8_t key_len;
+    char    key[BOT_ROSTER_KEY_MAX];   // key_len bytes, not NUL-terminated
+} BotRosterRow;
+typedef struct {
+    int32_t      n;
+    BotRosterRow rows[BOT_ROSTER_MAX];
+} BotRosterTable;
+
+// Fills `out` and returns the row count. A table or a key that outgrew the
+// struct is -1 with `out->n` 0: a refusal, never a shorter roster that would
+// read as a bot going missing.
+int bot_roster_table(BotRosterTable *out);
+
 // Run entry `idx`'s brain over `moves`, with the entry's knobs installed for
 // the duration (env still overrides — see bot_knobs.h). Returns the chosen
 // index into moves->moves[], or -1 for an unknown idx / no legal moves.

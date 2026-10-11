@@ -420,9 +420,9 @@ static void rs_step_index(const Game *g, int viewer, void *u) {
             default: named = 0; break;      // pickup, good, draw, round end
         }
     }
-    x->out[x->len++] = (unsigned char)kind;
-    x->out[x->len++] = (unsigned char)seat;
-    x->out[x->len++] = (unsigned char)named;
+    const ReplayStep rec = { (uint8_t)kind, (int8_t)(uint8_t)seat, (uint8_t)named };
+    memcpy(x->out + x->len, &rec, sizeof rec);
+    x->len += RS_INDEX_STRIDE;
 }
 
 int replay_steps_index_v6(const unsigned char *code, int code_len,

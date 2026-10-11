@@ -26,7 +26,7 @@
 
 import * as L from '@sdk/ts/gen/game_layout.bots.ts';
 import {
-    serverTable, tableCodeName, TABLE_DEAL_SEED_BYTES,
+    serverTable, tableCodeName,
     type ServerTable, type TableProducts, type TableSeat,
 } from '@sdk/ts/table/server_table.ts';
 import { broadcastMessages, supabaseClient, type BroadcastMessage } from './utils.ts';
@@ -141,6 +141,7 @@ export interface TableRow {
 
 /** A game id that names no row. */
 export class GameNotFound extends Error {
+    readonly why = L.ASK_WHY_NOT_FOUND;
     constructor(gameId: string) { super(`Game ${gameId} not found`); this.name = 'GameNotFound'; }
 }
 
@@ -187,6 +188,7 @@ export async function loadRow(gameId: string, allowCache = true, withLog = false
 
 /** The kernel refused an operation (a negative table result). */
 export class TableRefusal extends Error {
+    readonly why = L.ASK_WHY_REFUSED;
     constructor(readonly code: number, readonly detail: number, message: string) {
         super(message);
         this.name = 'TableRefusal';
@@ -227,7 +229,7 @@ export function __setTableDealSeedOverride(seed: Uint8Array | null): void {
 /** The bytes a lobby edit that may deal hands the kernel. */
 export function drawDealSeed(): Uint8Array {
     if (dealSeedOverride) return dealSeedOverride.slice();
-    const seed = new Uint8Array(TABLE_DEAL_SEED_BYTES);
+    const seed = new Uint8Array(L.FOOLISH_SEED_LEN);
     crypto.getRandomValues(seed);
     return seed;
 }
@@ -331,8 +333,9 @@ export async function runTableOp(op: TableOp): Promise<TableOutcome> {
             const { finalizeEndedGame } = await finalizeMod();
             await finalizeEndedGame(op.gameId, p.state, p.roster, op.reqId);
         }
+        // The casts name nextVersion, which is what commit_table (fenced on row.version) committed.
         if (c.pushes.length > 0) {
-            broadcastPushes(op.gameId, version, c.seats, c.pushes, op.reqId)
+            broadcastPushes(op.gameId, c.seats, c.pushes, op.reqId)
                 .catch((err) => console.error(`[${op.reqId}] broadcast failed:`, err));
         }
         return { result: c.rc, reject: c.reject, version, deleted: false, committed: true, needsBots: p.needsBots, envelope: c.envelope! };
@@ -385,9 +388,9 @@ function section(table: ServerTable, row: TableRow, op: TableOp, dealSeed: Uint8
     if (products.nEvents > 0 || products.goodsChanged) {
         for (let s = 0; s < seats.length; s++) {
             if (seats[s].brain) continue;   // a bot has no client
-            pushes.push({ viewer: s, bytes: pushOrThrow(table.push(op.gameId, s)) });
+            pushes.push({ viewer: s, bytes: pushOrThrow(table.cast(op.gameId, s, nextVersion)) });
         }
-        pushes.push({ viewer: -1, bytes: pushOrThrow(table.push(op.gameId, -1)) });
+        pushes.push({ viewer: -1, bytes: pushOrThrow(table.cast(op.gameId, -1, nextVersion)) });
     }
     const seat = op.viewerId !== null ? table.seatOf(op.viewerId) : -1;
     const envelope = (seat >= 0 ? products.views[seat] : null) ?? products.spectator;
@@ -458,22 +461,19 @@ export async function commitProducts(
 // ---- broadcast ------------------------------------------------------------------
 
 /**
- * The kernel's per-viewer pushes to each human seat's private topic and the
+ * The kernel's per-viewer casts to each human seat's private topic and the
  * spectator topic, in one batched realtime POST.
  *
- * `{t:'as3', s, v, b}`: `b` is the kernel's push (evwire.h as3: the as2
- * sequence, a flags byte, the new roster when the operation changed it), so a
- * push that changes who sits where names the seats itself. The web reads as3
- * since Phase 5a; before Phase 5b the same bytes went out labelled `as2`.
+ * A cast (evwire.h) is the whole message: the committed version, then the as3 push.
  */
 export async function broadcastPushes(
-    gameId: string, version: number, seats: TableSeat[],
+    gameId: string, seats: TableSeat[],
     pushes: { viewer: number; bytes: Uint8Array }[], reqId: string,
 ): Promise<void> {
     const messages: BroadcastMessage[] = pushes.map(({ viewer, bytes }) => ({
         topic: viewer >= 0 ? `gu-${gameId}-${seats[viewer].id}` : `game-${gameId}`,
         event: 'animation_events',
-        payload: { t: 'as3', s: crypto.randomUUID(), v: version, b: base64(bytes) },
+        cast: base64(bytes),
     }));
     await broadcastMessages(messages, reqId);
 }

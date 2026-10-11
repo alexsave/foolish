@@ -9,8 +9,9 @@
 // malformed move does. Both now call `MoveWire.encodeAction`, which asks
 // `fio_awire_encode` (c/src/awire.c). What is left here is the REQUEST
 // ENVELOPE around it, which is a server protocol rather than a game format: its
-// twin is `encodeActionRequest` in sdk/ts/wire/awire.ts and its reader is
-// `table_request_decode` in c/src/table.c.
+// reader is `table_request_decode` in c/src/table.c, and the web's writer is
+// the kernel's too now (`table_request_encode`, beside it), which this one
+// could call in its place.
 //
 // The move frame is pinned by golden vectors generated FROM THE KERNEL -
 // ios/Fixtures/action_goldens.bin, written by c/ios/ios_action_goldens.c and

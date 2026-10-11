@@ -13,9 +13,11 @@
  * hand-copied bootstrap sequences and they had already drifted apart).
  * ========================================================================== */
 
-import { memOf, readOgMtCandidates } from '@sdk/ts/gen/oracle_layout.oracle_mt.ts';
+import { MOVE_NAMES } from '@sdk/ts/gen/kernel_consts.bots.ts';
+import type { OracleMtExports } from '@sdk/ts/gen/exports.oracle_mt.ts';
+import { memOf, readOgMtCandidates, writeOgKnobs } from '@sdk/ts/gen/oracle_layout.oracle_mt.ts';
 import {
-    OracleJob, OracleCandidate, OracleVerdict,
+    OracleJob, OracleCandidate, OracleVerdict, OracleKnobs, ORACLE_KNOBS,
     oracleCardToken, canonicalMoveKey, ORACLE_TRUMP_KEEP,
 } from './types';
 
@@ -23,9 +25,6 @@ import {
  *  Thread stacks live in the heap region where --stack-first's trap-on-overflow
  *  does not reach, so the C side also stamps a canary at each stack's low end. */
 export const ORACLE_MT_STACK_BYTES = 512 * 1024;
-
-/** Move-type ids, in MOVE_* order (legal.h). */
-const MOVE_TYPE = ['attack', 'cover', 'pass', 'pickup', 'good', 'wait'];
 
 const OG_EX_NONE_V = 2000001, OG_EX_UNKNOWN_V = 2000002, OG_EX_ILLEGAL_V = 2000003;
 
@@ -38,54 +37,20 @@ export function decodeVerdict(val: number): { verdict: OracleVerdict; verdictVal
     return { verdict: 'draw' };
 }
 
-/** Mode B's env set. The struct-path knobs (OG_NO_BBSOLVE, OG_NO_FASTROLL,
- *  OG_LEAF, OG_DIFFTEST, OG_NO_WORLDSIM) are FORBIDDEN here (§8b.5 MT3): they
- *  route threads into game.c's handle_* where the benign-but-real statics
- *  (engine_last_reject, log_alloc's drop sink) live. The default fast bitboard
- *  path never enters them.
+/** Mode B's knobs: the Oracle's starting set, never moved. The struct-path
+ *  knobs (OG_NO_BBSOLVE, OG_NO_FASTROLL, OG_LEAF, OG_DIFFTEST, OG_NO_WORLDSIM)
+ *  are FORBIDDEN here (§8b.5 MT3): they route threads into game.c's handle_*
+ *  where the benign-but-real statics (engine_last_reject, log_alloc's drop
+ *  sink) live. The default fast bitboard path never enters them - and OgKnobs
+ *  (c/src/oracle_answer.h) has no field for any of them, so a host cannot set
+ *  one by accident.
  *
- *  OG_W1 is FIXED here, where Mode A retunes it per batch (oracleWorker.ts). Mode
+ *  w1 is FIXED here, where Mode A retunes it per batch (oracleWorker.ts). Mode
  *  A has to: its batch size sets how often a worker posts, and so how often React
  *  re-renders. In Mode B nothing crosses the boundary per batch - the main thread
  *  polls a C counter on its own frame budget - so the batch size is only an inner
  *  loop and there is nothing to adapt it to. */
-export const ORACLE_MT_ENV: Readonly<Record<string, string>> = {
-    OG_KEEP1: '26', OG_KEEP2: '26', OG_W1: '24', OG_W2: '1', OG_W3: '0',
-    OG_EXPLAIN_SOLVE_BUDGET: '2000000',
-};
-
-export interface MtExports {
-    memory: WebAssembly.Memory;
-    wasm_init(): void;
-    wasm_io_ptr(): number;
-    wasm_import_state(len: number, masked: number): number;
-    wasm_import_strategy_keys(): void;
-    wasm_import_logs(): void;
-    wasm_clearenv(): void;
-    wasm_setenv_from_io(): void;
-    wasm_og_reload_flags(): void;
-    __tls_size: WebAssembly.Global;
-    wasm_mt_reserve(n: number, stack: number, tls: number): number;
-    wasm_mt_warmup(seat: number): void;
-    wasm_mt_setup(seat: number, seed: number, n: number): void;
-    wasm_mt_stop(): void;
-    wasm_mt_total(): number;
-    wasm_mt_active(): number;
-    wasm_mt_ncand(): number;
-    wasm_mt_ready(): number;
-    wasm_mt_batches(): number;
-    wasm_mt_mismatch(): number;
-    wasm_mt_canary(): number;
-    wasm_mt_chosen(): number;
-    wasm_mt_sumfp(i: number): number;
-    wasm_mt_nsim(i: number): number;
-    wasm_mt_forced(i: number): number;
-    /** The published candidate table's address (OgMtCandidates), 0 until published. */
-    wasm_mt_candidates(): number;
-    wasm_mt_solver(): number;
-    wasm_mt_verdict(i: number): number;
-    wasm_mt_defuse(): void;
-}
+export const ORACLE_MT_KNOBS: Readonly<OracleKnobs> = ORACLE_KNOBS;
 
 /** What one worker trampoline needs, and nothing else. */
 export interface MtThreadArgs {
@@ -109,7 +74,7 @@ export function oracleSeedBase(decisionId: string): number {
 }
 
 export class OracleMtSession {
-    ex: MtExports | null = null;
+    ex: (OracleMtExports & { memory: WebAssembly.Memory }) | null = null;
     memory: WebAssembly.Memory | null = null;
     private tlsBlock = 0;
     private base = 0;
@@ -126,7 +91,7 @@ export class OracleMtSession {
         // at MAX_LEGAL_MOVES=4096, and cordite's recursion scratch rides along.
         const probeMem = new WebAssembly.Memory({ initial: 64, maximum: 2048, shared: true });
         const probe = await WebAssembly.instantiate(mod, { env: { memory: probeMem } });
-        const tlsSize = (probe.exports as unknown as MtExports).__tls_size.value;
+        const tlsSize = (probe.exports as unknown as OracleMtExports).__tls_size.value;
         this.tlsBlock = (Math.max(tlsSize, 16) + 15) & ~15;
 
         // Size the memory for what is live BEFORE any thread solves: statics,
@@ -144,7 +109,7 @@ export class OracleMtSession {
         const inst = await WebAssembly.instantiate(mod, { env: { memory: this.memory } });
         // A shared-memory module IMPORTS its memory, so exports carry no
         // `memory`; attach it.
-        this.ex = { ...(inst.exports as unknown as MtExports), memory: this.memory };
+        this.ex = { ...(inst.exports as unknown as OracleMtExports), memory: this.memory };
         this.ex.wasm_init();
         this.moduleBytes = bytes;
     }
@@ -156,7 +121,7 @@ export class OracleMtSession {
     /** §8.5 steps 1-4 against the SHARED resident game, then §8b.5 MT3's warmup
      *  (force the lazily-first-touch bitboard masks, detach the snapshot hook)
      *  and the stack/TLS reservation. Control instance only, main thread only. */
-    prepare(job: OracleJob, env: Readonly<Record<string, string>> = ORACLE_MT_ENV): MtThreadArgs[] {
+    prepare(job: OracleJob, knobs: Readonly<OracleKnobs> = ORACLE_MT_KNOBS): MtThreadArgs[] {
         const ex = this.ex;
         if (!ex) throw new Error('oracle-mt session not loaded');
 
@@ -174,14 +139,8 @@ export class OracleMtSession {
             bytes().set(job.logsWire, ex.wasm_io_ptr());
             ex.wasm_import_logs();
         }
-        ex.wasm_clearenv();
-        for (const [k, v] of Object.entries(env)) {
-            const buf = bytes(); let q = ex.wasm_io_ptr();
-            for (let i = 0; i < k.length; i++) buf[q++] = k.charCodeAt(i) & 0xff; buf[q++] = 0;
-            for (let i = 0; i < v.length; i++) buf[q++] = v.charCodeAt(i) & 0xff; buf[q++] = 0;
-            ex.wasm_setenv_from_io();
-        }
-        ex.wasm_og_reload_flags();
+        writeOgKnobs(memOf(this.memory!.buffer), ex.wasm_og_knobs_ptr(), knobs);
+        ex.wasm_og_knobs_apply();
         ex.wasm_mt_warmup(job.seat);
 
         // Reserve AFTER the warmup so the control instance's own table is already
@@ -260,7 +219,7 @@ export class OracleMtSession {
         const out: OracleCandidate[] = [];
         for (let i = 0; i < table.length; i++) {
             const d = table[i];
-            const type = MOVE_TYPE[d.type] ?? '?';
+            const type = MOVE_NAMES[d.type]?.toLowerCase() ?? '?';
             const cards = d.cards.map((c) => oracleCardToken(c, trump));
             const target = d.targets.map((c) => oracleCardToken(c, trump));
             const key = canonicalMoveKey(type, cards, target);

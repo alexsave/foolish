@@ -13,6 +13,7 @@
 #include "legal.h"
 #include "view.h"
 #include "client_table.h"
+#include "ask.h"
 
 #include <string.h>
 
@@ -232,4 +233,37 @@ int fio_play_human_menu(const uint8_t *menu, int menu_len,
     if (n == LEGAL_WIRE_ECAP) return FIO_ECAP;
     if (n < 0) return FIO_EPARSE;
     return n;
+}
+
+// An ask the host is holding, as its request body. See ios_api.h.
+//
+// THE VALIDATION IS ask_encode's. This fills the struct and asks; the only
+// rules restated here are the array bounds, because copying an id past its slot
+// is a memory question that has to be answered before the encoder may look.
+_Static_assert(FIO_ASK_JOIN == ASK_JOIN && FIO_ASK_START == ASK_START && FIO_ASK_ADD_BOT == ASK_ADD_BOT
+               && FIO_ASK_EXIT == ASK_EXIT && FIO_ASK_CONTINUE == ASK_CONTINUE && FIO_ASK_BUMP == ASK_BUMP,
+               "the door's kinds are ask.h's");
+int fio_ask_encode(int kind,
+                   const char *gid, int gid_len,
+                   const char *bot, int bot_len,
+                   const char *player, int player_len,
+                   uint8_t *out, int cap) {
+    if (!out || cap < 0) return FIO_EBADARG;
+    if (kind != FIO_ASK_JOIN && kind != FIO_ASK_START && kind != FIO_ASK_ADD_BOT && kind != FIO_ASK_EXIT
+        && kind != FIO_ASK_CONTINUE && kind != FIO_ASK_BUMP) return FIO_EBADARG;
+    if (gid_len < 0 || gid_len > ROSTER_GAME_ID_MAX || bot_len < 0 || bot_len > ROSTER_ID_MAX
+        || player_len < 0 || player_len > ROSTER_ID_MAX) return FIO_EBADARG;
+    if ((gid_len > 0 && !gid) || (bot_len > 0 && !bot) || (player_len > 0 && !player)) return FIO_EBADARG;
+
+    TableAsk a;
+    memset(&a, 0, sizeof(a));
+    a.kind = (uint8_t)kind;
+    a.gid_len = (uint8_t)gid_len;
+    memcpy(a.gid, gid, (size_t)gid_len);
+    a.bot_len = (uint8_t)bot_len;
+    if (bot_len > 0) memcpy(a.bot, bot, (size_t)bot_len);
+    a.player_len = (uint8_t)player_len;
+    if (player_len > 0) memcpy(a.player, player, (size_t)player_len);
+    const int n = ask_encode(&a, out, cap);
+    return n == ASK_E_CAP ? FIO_ECAP : n < 0 ? FIO_EBADARG : n;
 }

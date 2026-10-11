@@ -11,7 +11,7 @@
 
 import * as L from '../../sdk/ts/gen/game_layout.bots.ts';
 import * as A from '../../sdk/ts/gen/anim.bots.ts';
-import { AWIRE_KIND, encodeAction, encodeActionRequest, type AwireMove } from '../../sdk/ts/wire/awire.ts';
+import { AWIRE_KIND, encodeAction, type AwireMove, clientTable } from '../../sdk/ts/table/client_table.ts';
 import { pgPool } from '../harness.ts';
 import { fixture, fixtureExports, fixtureTable, reasonOf } from './table_fixture.ts';
 
@@ -178,7 +178,7 @@ export function legalMoves(t: BoardState, allow?:(seat: SeatState, index: number
 
 /** The `action` request body for a move. */
 export const actionRequest = (gameId: string, move: PlayMove, intentVersion?: number): Uint8Array =>
-    encodeActionRequest(gameId, move.wire, intentVersion);
+    clientTable().actionRequest(gameId, move.wire, intentVersion);
 
 /**
  * Card conservation of a stored dealt table, read straight from its blob: the

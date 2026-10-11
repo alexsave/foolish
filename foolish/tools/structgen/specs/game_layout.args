@@ -9,6 +9,7 @@
 --fields Game=status,num_players,power_suit,first_attacker,defender,num_battles,deck_count,discard_pile_length,has_flipped,deterministic_deck,flipped,deck,table_battles,players,elimination_order,num_eliminated,good_players_mask,has_good_timestamp,rules
 --fields Player=status,hand_count,awaiting_attack,strategy_key,hand
 --const GAME_STATUS_ --const PLAYER_STATUS_ --const GAME_RULE_
+--const FOOLISH_SEED_LEN
 #
 # The C Table (c/src/table.h): what the server reads back from bots.wasm - the
 # loaded roster, a commit's spans and scalars, a decoded action request, the
@@ -61,3 +62,28 @@
 # The hand's shape (view_layout.args reads and writes these), so the layout hash
 # bots.wasm is checked against covers HandMetrics and HandLayout too.
 --header hand_layout.h --root HandMetrics --root HandLayout
+# The stream a plan is asked for (view_layout.args writes it), so the layout
+# hash bots.wasm is checked against covers AnimPlanAsk too.
+--header anim_plan.h --root AnimPlanAsk
+# The animation core's four small questions (view_layout.args reads and writes
+# them), so the layout hash bots.wasm is checked against covers them too.
+--header anim_plan.h --root AnimStaleAsk --root AnimStaleRelease --root AnimReversalAsk --root AnimConflictPlan
+--root AnimHandAsk --root AnimHandLaid --root AnimFinishAsk --root AnimFinish
+# The move a client sends (view_layout.args writes it), so the layout hash
+# covers ClientMove too.
+--header client_table.h --root ClientMove
+# The action response a client reads (view_layout.args), for the hash.
+--header table.h --root TableResponse
+#
+# An ask (ask.h): every request that is not a move, as the server reads the one
+# a body decoded to, and the refusal it answers with. view_layout.args holds the
+# client's writer and readers; the roots are here so the load-time hash covers both.
+--header ask.h --root TableAsk --root AskRefusal
+--snapshot TableAsk
+--count TableAsk.gid=gid_len --count TableAsk.bot=bot_len --count TableAsk.player=player_len
+--count TableAsk.idx=n_idx --count TableAsk.order=n_order --count TableAsk.title=title_len
+--count AskId.id=len
+--const ASK_
+--header bot_roster.h --root BotRosterTable
+--header replay_steps.h --root ReplayStep
+--header anim_plan.h --root AnimRoles

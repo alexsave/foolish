@@ -37,3 +37,55 @@
 --header hand_layout.h --root HandMetrics --root HandLayout
 --writer HandMetrics --snapshot HandMetrics --snapshot HandLayout
 --count HandLayout.slot=n --const HAND_
+# The stream a plan is asked for (anim_plan.h anim_plan_ask): every step with
+# its cards, its own board and its row goes in through the ask's writer, so the
+# bridge packs no event byte by hand. The plan itself is read where it lies
+# (anim.bots.ts), which is why only the question is here.
+--root AnimPlanAsk --writer AnimPlanAsk --snapshot AnimPlanAsk
+--count AnimPlanAsk.events=n_events --count AnimPlanAskEvent.cards=n_cards --count AnimPlanAskEvent.row=n_row
+--const MAX_PLAYERS
+# Four small questions of the animation core, asked as values (anim_plan.h):
+# which optimistic cards a broadcast releases, the order a doomed sequence flies
+# home in, the order a hand is drawn in, and the end screen's rows. Each ask
+# goes in through its writer and each answer comes back through its reader, so
+# sdk/ts/wasm/bots.ts packs no card byte and reads no offset for them.
+--root AnimStaleAsk --root AnimStaleRelease --writer AnimStaleAsk --snapshot AnimStaleAsk --snapshot AnimStaleRelease
+--count AnimStaleAsk.opt=n_opt --count AnimStaleAsk.table=n_table --count AnimStaleAsk.named=n_named --count AnimStaleRelease.release=n
+--root AnimReversalAsk --root AnimConflictPlan --writer AnimReversalAsk --snapshot AnimReversalAsk --snapshot AnimConflictPlan
+--count AnimReversalAsk.verdicts=n_motions --count AnimReversalAsk.group_sizes=n_groups
+--count AnimConflictPlan.verdicts=n_verdicts --count AnimConflictPlan.step_count=n_steps --count AnimConflictPlan.order=n_order
+--root AnimHandAsk --root AnimHandLaid --writer AnimHandAsk --snapshot AnimHandAsk --snapshot AnimHandLaid
+--count AnimHandAsk.cards=n_cards --count AnimHandAsk.order=n_order --count AnimHandLaid.cards=n
+--root AnimFinishAsk --root AnimFinish --writer AnimFinishAsk --snapshot AnimFinishAsk --snapshot AnimFinish
+--count AnimFinishAsk.elimination=n_elim --count AnimFinish.rows=n
+# The move a client sends (client_table.h ClientMove, awire.h): it goes in
+# through its writer and the kernel writes the action wire, so no host packs a
+# frame or a card byte. AWIRE_* are the kinds and the frame's card capacity.
+--root ClientMove --snapshot ClientMove --writer ClientMove
+--count ClientMove.cards=n_cards --count ClientMove.attack_cards=n_attacks
+--header awire.h --const AWIRE_
+# The `action` endpoint's answer as a client reads it (table.h TableResponse,
+# table_response_decode), with the statuses and the one policy code it carries.
+--header table.h --root TableResponse --snapshot TableResponse
+--const TABLE_STATUS_ --const TABLE_REJECT_STALE_ROUND
+# An ask (ask.h): every request that is not a move goes in through its writer and
+# the kernel writes the body; a refusal comes back through its reader. No host
+# spells a field name or packs a byte of either.
+--header ask.h --root TableAsk --root AskRefusal
+--snapshot TableAsk --writer TableAsk --snapshot AskRefusal
+--count TableAsk.gid=gid_len --count TableAsk.bot=bot_len --count TableAsk.player=player_len
+--count TableAsk.idx=n_idx --count TableAsk.order=n_order --count TableAsk.title=title_len
+--count AskId.id=len
+--const ASK_
+# The cast header (evwire.h): how many bytes of a realtime payload stand before the as3 push.
+--const EVW_CAST_
+# The bot roster as a value (bot_roster.h BotRosterTable): what the kernel's one
+# table says about every named bot and what this build links, through its reader.
+--header bot_roster.h --root BotRosterTable --snapshot BotRosterTable
+--count BotRosterTable.rows=n --count BotRosterRow.key=key_len
+# One record of a code's step index (replay_steps.h ReplayStep), read where the
+# index lies, RS_INDEX_STRIDE bytes apart.
+--root ReplayStep --snapshot ReplayStep
+# The marks a role beat shows next (anim_plan.h AnimRoles): the three role
+# entries answer with its address, so the bridge reads no byte of it.
+--root AnimRoles --snapshot AnimRoles

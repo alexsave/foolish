@@ -11,26 +11,15 @@
 // through the generated writer and reader (sdk/ts/gen/game_layout.bots.ts); the
 // durable roster and the trailer are opaque bytes this file only forwards.
 
+import type { BotsTestExports } from '../../sdk/ts/gen/exports.bots_test.ts';
 import * as L from '../../sdk/ts/gen/game_layout.bots.ts';
 import { botsTestWasm } from './bots_test_wasm.ts';
 
-interface RosterExports {
-    memory: WebAssembly.Memory;
-    wasm_io_ptr(): number;
-    wasm_io_cap(): number;
-    wasm_roster_spec_ptr(): number;
-    wasm_roster_trailer_ptr(): number;
-    wasm_roster_encode(): number;
-    wasm_roster_decode(len: number): number;
-    wasm_roster_trailer_write(rosterLen: number, gidLen: number, status: number, goodMask: number, passing: number): number;
-    wasm_roster_trailer_read(len: number): number;
-}
-
-let cached: RosterExports | null = null;
-function kernel(): RosterExports {
+let cached: BotsTestExports | null = null;
+function kernel(): BotsTestExports {
     if (!cached) {
         const inst = new WebAssembly.Instance(new WebAssembly.Module(botsTestWasm() as BufferSource), {});
-        cached = inst.exports as unknown as RosterExports;
+        cached = inst.exports as unknown as BotsTestExports;
     }
     return cached;
 }

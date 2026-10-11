@@ -1,0 +1,38 @@
+# structgen arguments for sdk/ts/gen/kernel_consts.bots.ts: the kernel's numbers
+# that a host used to type out beside the #define they mirrored. No --root, so
+# the module is constants and nothing else - no reader of any struct, and so
+# nothing e2e/security_client_boundary has to keep out of the browser, which is
+# why these are here as well as in the layout modules that already carry some of
+# them next to accessors a client may not import (game_layout.bots.ts).
+# Read by tools/structgen/gen.sh with --cwd c/ and the bots build's flags.
+# Lines starting with # are dropped; everything else is split on whitespace.
+#
+# --names writes the constants AND one table from value to name per prefix,
+# for the host that prints a code or turns one into the word it goes by:
+#   ENGINE_REJECT_NAMES  the rules kernel's refusals (game.h)
+#   LOG_NAMES            the session log's record types (game.h), which a
+#                        replay desync names
+#   MOVE_NAMES           a legal move's type (legal.h); in lower case these are
+#                        the words the TypeScript move objects carry
+#   REPLAY_ATOM_NAMES    what a replay step played (replay.h)
+--header game.h --header legal.h --header replay.h
+--names ENGINE_REJECT_ --names LOG_ --names MOVE_ --names REPLAY_ATOM_
+#
+# The refusal codes whose text is c/errtext/error_text.h, so the test that
+# holds the two together (e2e/validation/error_text_validation.test.ts) reads
+# every family out of one module: the replay coder's, the extras blob's, the
+# FMSG envelope's, the client slot's, and the table's stale-round answer.
+--header replay_extras.h --header msg_wire.h --header client_table.h --header table.h
+--const REPLAY_E --const MSG_E --const CLIENT_E_ --const TABLE_REJECT_
+#
+# And the sentinels and strides of the byte formats a host reads by hand: the
+# 1-byte wire card (wasm/wire.h), the replay step index record (replay_steps.h),
+# the animation table cells and the transport switch (anim_plan.h).
+--header ../wasm/wire.h --header replay_steps.h --header anim_plan.h
+--const WIRE_CARD_ --const RS_ --const ANIM_TABLE_ --const ANIM_TRANSPORT_
+#
+# And the wire names of an animation step: its event type and the place a card
+# flies from or to (anim_plan.h). In lower case these are the words the web's
+# pipeline carries, so the bridge keeps no table of its own:
+#   ANIM_EVT_NAMES      ANIM_LOC_NAMES
+--names ANIM_EVT_ --names ANIM_LOC_

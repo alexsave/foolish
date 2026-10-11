@@ -3,7 +3,8 @@ import { QRCodeSVG } from 'qrcode.react';
 import supabase from '../common/Connector';
 import { Text } from './Text';
 import { hexToBytes } from '@api/common/replay_codec.ts';
-import { kernelB32Encode, kernelReplayLink, REPLAY_LINK } from '@sdk/ts/wasm/bots.ts';
+import { kernelB32Encode, kernelReplayLink } from '@sdk/ts/wasm/bots.ts';
+import { REPLAY_LINK_STYLE_URL, REPLAY_LINK_STYLE_QR } from '@sdk/ts/gen/msg_layout.bots.ts';
 import { useStyles } from '../contexts/StyleContext';
 import { useTexture, getTextureStyle } from './TexturedSurface';
 
@@ -89,8 +90,8 @@ export const ReplayShare: React.FC<ReplayShareProps> = ({ gameId }) => {
         // person copies takes the https one, which a browser or a chat client
         // will actually auto-link.
         return {
-            url: kernelReplayLink(code, [], REPLAY_LINK.url),
-            qr: kernelReplayLink(code, [], REPLAY_LINK.qr),
+            url: kernelReplayLink(code, [], REPLAY_LINK_STYLE_URL),
+            qr: kernelReplayLink(code, [], REPLAY_LINK_STYLE_QR),
             hasExtras,
         };
     }, [snapshot, withExtras]);

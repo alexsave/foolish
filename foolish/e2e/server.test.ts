@@ -14,6 +14,7 @@ import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import { checkCardConservation, legalMoves, mustReadTable, type PlayMove } from './helpers/table_play.ts';
 import { runAction, runMeta, seedLobby } from './helpers/table_server.ts';
 import { suiteRng } from './helpers/rng.ts';
+import { castParts } from './helpers/cast.ts';
 
 // One stream for the whole file: every test here draws sequentially, so the
 // suite seed reproduces the exact move sequence of every game it plays.
@@ -54,9 +55,8 @@ export function registerServerValidation(): void {
         assert.ok(evts.length > 0, 'expected broadcasts');
         const perChannel = new Map<string, number[]>();
         for (const e of evts) {
-            assert.equal(typeof e.payload.v, 'number', 'packed broadcast carries a numeric version (payload.v)');
             if (!perChannel.has(e.channel)) perChannel.set(e.channel, []);
-            perChannel.get(e.channel)!.push(e.payload.v);
+            perChannel.get(e.channel)!.push(castParts(e.payload).version);
         }
         for (const [chan, vs] of perChannel)
             for (let i = 1; i < vs.length; i++) assert.ok(vs[i] > vs[i - 1], `versions not increasing on ${chan}: ${vs.join(',')}`);
@@ -116,9 +116,8 @@ test('every broadcast carries a monotonically non-decreasing games.version (the 
     assert.ok(evts.length > 0, 'expected broadcasts');
     const perChannel = new Map<string, number[]>();
     for (const e of evts) {
-        assert.equal(typeof e.payload.v, 'number', 'broadcast payload must carry a version (payload.v)');
         if (!perChannel.has(e.channel)) perChannel.set(e.channel, []);
-        perChannel.get(e.channel)!.push(e.payload.v);
+        perChannel.get(e.channel)!.push(castParts(e.payload).version);
     }
     for (const [chan, versions] of perChannel) {
         for (let i = 1; i < versions.length; i++) {

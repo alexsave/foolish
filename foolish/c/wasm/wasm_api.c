@@ -828,15 +828,17 @@ int wasm_msg_rule_p(int a_len, int b_len) {
 
 // Rule R (msg_wire.h §7.4). Rebases ONE pending action onto the adopted chain -
 // the game wasm_msg_decode left resident - in the order the ledger holds them.
-// The awire frame is in the cards_a buffer, as for wasm_apply_action.
+// The awire frame is at the front of g_replay_io, like every other FMSG input,
+// so a caller checks it against the one capacity that buffer exports; it is
+// decoded out of there before anything else runs.
 //
 // Returns MSG_REBASE_* (0 re-applied and APPLIED to the resident game, 1
 // discarded by the round guard, 2 discarded as illegal), or a negative MSG_E*.
 int wasm_msg_rebase(int pending_round, int seat, int wire_len) {
     if (g_msg_round < 0) return MSG_ECHAIN;   // nothing adopted to rebase onto
-    if (wire_len < 0 || wire_len > MAX_IN_CARDS) return MSG_EACTION;
+    if (wire_len < 0 || wire_len > REPLAY_IO_CAP) return MSG_EACTION;
     AwireAction a;
-    if (!awire_decode(g_in_raw_a, wire_len, &a)) return MSG_EACTION;
+    if (!awire_decode(g_replay_io, wire_len, &a)) return MSG_EACTION;
     return msg_rebase_one(&g_game, g_msg_round, pending_round, seat, &a);
 }
 
@@ -894,16 +896,6 @@ int wasm_msg_rematch(int in_len, double tapped_at_ms, int creator_seat) {
                              g_replay_io, REPLAY_IO_CAP, &g_msg_scratch);
 }
 
-// ROUND 16 - the pickup hold, on the resident game (the one wasm_msg_decode
-// replayed). Seconds `seat` must still wait before it may pick up; 0 = now.
-// Pure relay of msg_pickup_hold_remaining, exported so the web asks the same
-// rule the phone does rather than re-deriving it in TS.
-int wasm_msg_pickup_hold(int seat, int sent_at, int now) {
-    return msg_pickup_hold_remaining(&g_game, seat,
-                                     (uint16_t)(sent_at & 0xffff),
-                                     (uint16_t)(now & 0xffff));
-}
-
 // ---------- animation core (anim_plan.h) --------------------------------------
 //
 // The platform-independent animation policy, exported so the web pure modules
@@ -935,126 +927,17 @@ double wasm_anim_event_key(int type, int suit, int value, int from, int to, int 
     return (double)anim_event_key(type, card, from, to, seat);
 }
 
-// staleOptimisticKeysOnTable (optimisticAnimation.ts). g_io in:
-//   [0 .. n_opt)                    opt cards      (wire)
-//   [n_opt .. +n_table)             table cards    (wire)
-//   [n_opt+n_table .. +n_named)     named cards    (wire)
-// g_io out (overwrites): the release INDICES into opt (one byte each).
-// Returns the release count, or a negative ANIM_E*.
-int wasm_anim_stale_optimistic(int n_opt, int n_table, int n_named) {
-    if (n_opt < 0 || n_table < 0 || n_named < 0) return ANIM_EBADARG;
-    if (n_opt > ANIM_MAX_CARDS || n_table > ANIM_MAX_TABLE_INPUT || n_named > ANIM_MAX_TABLE_INPUT)
-        return ANIM_ECAP;
-    static Card opt[ANIM_MAX_CARDS], table[ANIM_MAX_TABLE_INPUT], named[ANIM_MAX_TABLE_INPUT];
-    int p = 0;
-    for (int i = 0; i < n_opt; i++)   opt[i]   = card_from_wire_pair(g_io[p++]);
-    for (int i = 0; i < n_table; i++) table[i] = card_from_wire_pair(g_io[p++]);
-    for (int i = 0; i < n_named; i++) named[i] = card_from_wire_pair(g_io[p++]);
-    static int rel[ANIM_MAX_CARDS];
-    int n = anim_stale_optimistic_on_table(opt, n_opt, table, n_table, named, n_named,
-                                           rel, ANIM_MAX_CARDS);
-    if (n < 0) return n;
-    for (int i = 0; i < n; i++) g_io[i] = (unsigned char)rel[i];
-    return n;
-}
-
-// THE CONFLICT VERDICT, per motion (anim_plan.h anim_conflict_facts +
-// anim_conflict_verdict), for the SERVER transport.
-//
-// ONE DOOR. AnimationContext asks this question four times - about a pending
-// attack/cover, about a pass judged against the NEXT defender, about my attacks
-// after a pass moved the shield, and about a pickup, whose cards landed in MY
-// HAND rather than on the table - and only the first used to reach C. The other
-// three re-derived the rule in TypeScript and so had none of its precedence
-// (CLEAR before the standing sets), its pool rule or its masked-back rule.
-// A second wasm entry for the first shape (wasm_anim_resolve) is gone with
-// them: two doors onto one rule is a new way for two hosts to disagree.
-//
-// The arriving stream comes in AS ITS EVENTS, not as a pre-digested swept set.
-// Deciding which events sweep - and therefore whether the table was cleared,
-// which short-circuits the server transport's hope - is the rule's own job
-// (anim_conflict_sweep), and it was the last piece of it still written in
-// TypeScript.
-//
-// g_io in:
-//   u8 n_events, then per event: u8 type (ANIM_EVT_*), u8 mask, u8 n_cards,
-//     n_cards x u8 dense id
-//   u8 n_open_battles, then 2 x that u8: the opening table (attack, then its
-//     cover or ANIM_TABLE_NONE). BOTH sides stand.
-//   u8 n_my_hand, then that many u8 dense ids: my hand on that board
-//   u8 n_motions, then per motion: u8 dense id (or ANIM_TABLE_NONE),
-//     u8 dest (ANIM_DEST_*), u8 is_cover
-// g_io out (overwrites): n_motions x u8 verdict (ANIM_CONFLICT_*).
-// Returns the motion count, or a negative ANIM_E*.
-int wasm_anim_conflict_verdicts(int pending_attacks, int defender_hand,
-                                int final_uncovered) {
-    int p = 0;
-    const int n_events = g_io[p++];
-    if (n_events > ANIM_MAX_STEPS) return ANIM_ECAP;
-    static Card ev_cards[ANIM_MAX_CARD_POOL];
-    static AnimEvent events[ANIM_MAX_STEPS];
-    int cpool = 0;
-    for (int e = 0; e < n_events; e++) {
-        events[e].type = g_io[p++];
-        events[e].mask_cards = g_io[p++] ? 1 : 0;
-        const int nc = g_io[p++];
-        if (nc > ANIM_MAX_CARDS || cpool + nc > (int)(sizeof ev_cards / sizeof ev_cards[0]))
-            return ANIM_ECAP;
-        events[e].seat = ANIM_SEAT_NONE;
-        events[e].from = ANIM_LOC_NONE;
-        events[e].to = ANIM_LOC_NONE;
-        events[e].cards = &ev_cards[cpool];
-        events[e].n_cards = nc;
-        for (int k = 0; k < nc; k++) {
-            const unsigned char b = g_io[p++];
-            ev_cards[cpool++] = (b == ANIM_TABLE_NONE) ? CARD_NONE : card_of_id((int)b);
-        }
-    }
-
-    int table_cleared = 0;
-    static int moved[ANIM_MAX_CARD_POOL];
-    const int n_moved = anim_conflict_sweep(events, n_events, moved,
-                                            (int)(sizeof moved / sizeof moved[0]),
-                                            &table_cleared);
-    if (n_moved < 0) return n_moved;
-
-    const int n_bat = g_io[p++];
-    if (n_bat > MAX_BATTLES) return ANIM_ECAP;
-    const unsigned char *table = &g_io[p];
-    p += 2 * n_bat;
-    const int n_hand = g_io[p++];
-    if (n_hand > ANIM_MAX_CARDS) return ANIM_ECAP;
-    const unsigned char *hand = &g_io[p];
-    p += n_hand;
-
-    AnimConflictFacts facts;
-    const int fr = anim_conflict_facts(moved, n_moved, table, n_bat, hand, n_hand, &facts);
-    if (fr != ANIM_EOK) return fr;
-
-    const int n_motions = g_io[p++];
-    if (n_motions > ANIM_MAX_CARDS) return ANIM_ECAP;
-    // Read every motion out before writing any verdict back: the output
-    // overwrites the input buffer they are still sitting in.
-    static unsigned char m_id[ANIM_MAX_CARDS], m_dest[ANIM_MAX_CARDS], m_cover[ANIM_MAX_CARDS];
-    for (int i = 0; i < n_motions; i++) {
-        m_id[i] = g_io[p++];
-        m_dest[i] = g_io[p++];
-        m_cover[i] = g_io[p++];
-    }
-
-    AnimServerHope hope;
-    hope.table_cleared = table_cleared;
-    hope.pending_attacks = pending_attacks;
-    hope.defender_hand = defender_hand;
-    hope.final_uncovered = final_uncovered;
-    for (int i = 0; i < n_motions; i++) {
-        hope.is_cover = m_cover[i];
-        const int id = (m_id[i] == ANIM_TABLE_NONE) ? ANIM_CARD_NONE : (int)m_id[i];
-        const int v = anim_conflict_verdict(id, m_dest[i], &facts, &hope);
-        if (v < 0) return v;
-        g_io[i] = (unsigned char)v;
-    }
-    return n_motions;
+// staleOptimisticKeysOnTable (optimisticAnimation.ts), asked as a value
+// (anim_plan.h AnimStaleAsk): the host writes the three card lists through the
+// generated writer and reads the release indices through the generated reader
+// (sdk/ts/gen/view_layout.bots.ts), so the layout of neither is written down
+// anywhere but the header. Returns the release count, or a negative ANIM_E*.
+static AnimStaleAsk     g_anim_stale_ask;
+static AnimStaleRelease g_anim_stale_release;
+AnimStaleAsk *wasm_anim_stale_ask_ptr(void)         { return &g_anim_stale_ask; }
+AnimStaleRelease *wasm_anim_stale_release_ptr(void) { return &g_anim_stale_release; }
+int wasm_anim_stale_optimistic(void) {
+    return anim_stale_optimistic_ask(&g_anim_stale_ask, &g_anim_stale_release);
 }
 
 // THE REVERSAL'S ORDER (anim_plan.h anim_reversal_order), for a host that
@@ -1068,29 +951,16 @@ int wasm_anim_conflict_verdicts(int pending_attacks, int defender_hand,
 // pickup, or first - and the kernel's rule is simply that the board reverses
 // what it must before it plays anything else, last group first.
 //
-// g_io in:
-//   u8 n_motions, n_motions x u8 verdict (ANIM_CONFLICT_*),
-//   u8 n_groups,  n_groups  x u8 group size
-// g_io out (overwrites): n_steps x u8 step size, then the motion indices, the
-// steps laid end to end. Returns the step count, or a negative ANIM_E*.
+// Asked as a value (anim_plan.h AnimReversalAsk) and answered in the
+// AnimConflictPlan itself, read where it lies with its counts: the generated
+// writer and reader are the only things that know either layout.
+// Returns the step count, or a negative ANIM_E*.
+static AnimReversalAsk  g_anim_reversal_ask;
+static AnimConflictPlan g_anim_reversal_plan;
+AnimReversalAsk *wasm_anim_reversal_ask_ptr(void)   { return &g_anim_reversal_ask; }
+AnimConflictPlan *wasm_anim_reversal_plan_ptr(void) { return &g_anim_reversal_plan; }
 int wasm_anim_reversal_order(void) {
-    int p = 0;
-    const int n_motions = g_io[p++];
-    if (n_motions > ANIM_MAX_CONFLICT_MOTIONS) return ANIM_ECAP;
-    static unsigned char verdicts[ANIM_MAX_CONFLICT_MOTIONS];
-    for (int i = 0; i < n_motions; i++) verdicts[i] = g_io[p++];
-    const int n_groups = g_io[p++];
-    if (n_groups > ANIM_MAX_CONFLICT_GROUPS) return ANIM_ECAP;
-    static int groups[ANIM_MAX_CONFLICT_GROUPS];
-    for (int g = 0; g < n_groups; g++) groups[g] = g_io[p++];
-
-    static AnimConflictPlan plan;
-    const int n = anim_reversal_order(verdicts, n_motions, groups, n_groups, &plan);
-    if (n < 0) return n;
-    int q = 0;
-    for (int i = 0; i < n; i++) g_io[q++] = (unsigned char)plan.step_count[i];
-    for (int i = 0; i < plan.n_order; i++) g_io[q++] = (unsigned char)plan.order[i];
-    return n;
+    return anim_reversal_order_ask(&g_anim_reversal_ask, &g_anim_reversal_plan);
 }
 
 // THE HAND'S ORDER (anim_plan.h anim_hand_laid_out_masked): the array a fan is
@@ -1102,29 +972,19 @@ int wasm_anim_reversal_order(void) {
 // rearrangement could come out two different ways depending on which screen was
 // drawing it. One door, so they cannot.
 //
-// g_io in:
-//   [0 .. n_cards)              the hand, in kernel order: dense ids, or
-//                               ANIM_TABLE_UNKNOWN for a slot the caller
-//                               cannot name (a replay's face-down card)
-//   [n_cards .. +n_order)       the viewer's preferred order, same alphabet
-// g_io out (overwrites): the laid-out array, one byte per slot.
-// `deferred_lo`/`deferred_hi` are the deferred-card bitset's two halves, because
-// a wasm export's arguments are 32 bits wide and the set is 52.
-// Returns the count written, or a negative ANIM_E*.
-int wasm_anim_hand_laid_out(int n_cards, int n_order,
-                            unsigned deferred_lo, unsigned deferred_hi) {
-    if (n_cards < 0 || n_order < 0) return ANIM_EBADARG;
-    if (n_cards > MAX_HAND_SIZE || n_order > MAX_HAND_SIZE) return ANIM_ECAP;
-    unsigned char hand[MAX_HAND_SIZE], order[MAX_HAND_SIZE], out[MAX_HAND_SIZE];
-    for (int i = 0; i < n_cards; i++) hand[i] = g_io[i];
-    for (int i = 0; i < n_order; i++) order[i] = g_io[n_cards + i];
-    const uint64_t deferred = ((uint64_t)deferred_hi << 32) | (uint64_t)deferred_lo;
-    const int n = anim_hand_laid_out_masked(hand, n_cards, deferred,
-                                            n_order ? order : 0, n_order,
-                                            out, MAX_HAND_SIZE);
-    if (n < 0) return n;
-    for (int i = 0; i < n; i++) g_io[i] = out[i];
-    return n;
+// Asked as a value, in CARDS (anim_plan.h AnimHandAsk): the hand, the viewer's
+// order and the deferred set go in through the generated writer - the set as
+// the one 64-bit field it is, where this entry used to take it as two 32-bit
+// arguments - and the laid-out hand comes back through the generated reader.
+// The byte alphabet the rule speaks (a dense id, or ANIM_TABLE_UNKNOWN for a
+// back) is translated in anim_hand_laid_out_ask, so no host carries it.
+// Returns the count laid out, or a negative ANIM_E*.
+static AnimHandAsk  g_anim_hand_ask;
+static AnimHandLaid g_anim_hand_laid;
+AnimHandAsk *wasm_anim_hand_ask_ptr(void)   { return &g_anim_hand_ask; }
+AnimHandLaid *wasm_anim_hand_laid_ptr(void) { return &g_anim_hand_laid; }
+int wasm_anim_hand_laid_out(void) {
+    return anim_hand_laid_out_ask(&g_anim_hand_ask, &g_anim_hand_laid);
 }
 
 // THE TRANSPORT (anim_plan.h), said once by the host. Every wasm host is the
@@ -1133,15 +993,16 @@ int wasm_anim_hand_laid_out(int n_cards, int n_order,
 // The FMSG suites drive CHAIN behaviour from this same module, so it is a
 // setter and not a compile-time constant.
 int wasm_anim_set_transport(int transport) { return anim_set_transport(transport); }
-int wasm_anim_transport(void) { return anim_transport(); }
 
-// ---------- the plan, the frame and the beats ---------------------------------
+// ---------- the plan and the frame ---------------------------------------------
 //
-// THE THREE ENTRIES A HOST WITH A FRAME LOOP NEEDS, and the reason they cross
+// THE ENTRIES A HOST WITH A FRAME LOOP NEEDS, and the reason they cross
 // here and not earlier: wasm_anim_build_plan was DELETED in 0cda5e85 for being
 // a bridge with no caller, so the builders wait for the consumer that asks them
 // (docs/C_GAME_SHAPE_MIGRATION.md Phase 9). iOS reaches the same C natively
-// through fio_anim_plan / fio_anim_beats.
+// through fio_anim_plan / fio_anim_beats. The beats have no wasm entry: the web
+// plays a plan's steps, and the beat rules are pinned on anim_build_beats itself
+// (c/tests).
 //
 // THE STRUCTS ARE READ WHERE THEY LIE, like wasm_legal_moves_ptr: a plan is
 // 11,752 bytes and a host that copied it through g_io once per frame would
@@ -1150,77 +1011,18 @@ int wasm_anim_transport(void) { return anim_transport(); }
 // a structgen root: no TypeScript may know a byte offset.
 static AnimPlan  g_anim_plan;
 static AnimFrame g_anim_frame;
-static AnimBeats g_anim_beats;
 
 void *wasm_anim_plan_ptr(void)  { return &g_anim_plan; }
 void *wasm_anim_frame_ptr(void) { return &g_anim_frame; }
-void *wasm_anim_beats_ptr(void) { return &g_anim_beats; }
 
-// "no seat" / "this event carries no board", on the wire. A seat is 0..7 and a
-// battle count at most MAX_BATTLES, so 0xFF names neither. A GOOD MASK is the
-// one field this sentinel could not serve: eight players all wearing the mark
-// is 0xFF, so ANIM_NO_MASK crosses as its own flag byte rather than as a value
-// no mask may take.
-#define ANIM_W_NONE 0xFFu
-
-// THE PLAN (anim_plan.h anim_build_plan). g_io in, per event:
-//   u8 type (ANIM_EVT_*), u8 seat (ANIM_W_NONE for none),
-//   u8 from, u8 to (ANIM_LOC_*; ANIM_LOC_NONE is already 0xFF),
-//   u8 mask_cards, u8 n_cards, n_cards x u8 wire card,
-//   u8 has_counts, and when it is 1: u8 deck, u8 discard, u8 flipped (wire
-//     card), n_players x u8 hand,
-//   u8 n_battles (ANIM_W_NONE for "no board of its own"), then 2 x that u8.
-// Then, once: n_players x u8 the FINAL hand.
-// Scalars: the final board's deck, discard and flipped (a wire card).
-// The answer is left in g_anim_plan for the caller to read where it lies.
-// Returns ANIM_EOK, or a negative ANIM_E*.
-int wasm_anim_build_plan(int n_events, int n_players,
-                         int final_deck, int final_discard, int final_flipped) {
-    if (n_events < 0 || n_players < 0 || n_players > MAX_PLAYERS) return ANIM_EBADARG;
-    if (n_events > ANIM_MAX_STEPS) return ANIM_ECAP;
-    static AnimPlanEvent events[ANIM_MAX_STEPS];
-    static Card cpool[ANIM_MAX_CARD_POOL];
-    static int  hpool[ANIM_MAX_STEPS * MAX_PLAYERS];
-    static unsigned char bpool[ANIM_MAX_STEPS * 2 * MAX_BATTLES];
-    int nc_pool = 0, nh_pool = 0, nb_pool = 0, p = 0;
-    for (int e = 0; e < n_events; e++) {
-        AnimPlanEvent *ev = &events[e];
-        ev->type = g_io[p++];
-        const unsigned char seat = g_io[p++];
-        ev->seat = (seat == ANIM_W_NONE) ? ANIM_SEAT_NONE : (int)seat;
-        ev->from = g_io[p++];
-        ev->to   = g_io[p++];
-        ev->mask_cards = g_io[p++] ? 1 : 0;
-        const int nc = g_io[p++];
-        if (nc > ANIM_MAX_CARDS || nc_pool + nc > (int)(sizeof cpool / sizeof cpool[0])) return ANIM_ECAP;
-        ev->cards = nc ? &cpool[nc_pool] : 0;
-        ev->n_cards = nc;
-        for (int k = 0; k < nc; k++) cpool[nc_pool++] = card_from_wire_pair(g_io[p++]);
-        ev->has_counts = g_io[p++] ? 1 : 0;
-        ev->deck = ev->discard = 0;
-        ev->flipped = CARD_NONE;
-        ev->hand = 0;
-        if (ev->has_counts) {
-            ev->deck = g_io[p++];
-            ev->discard = g_io[p++];
-            ev->flipped = card_from_wire_pair(g_io[p++]);
-            if (nh_pool + n_players > (int)(sizeof hpool / sizeof hpool[0])) return ANIM_ECAP;
-            ev->hand = &hpool[nh_pool];
-            for (int s = 0; s < n_players; s++) hpool[nh_pool++] = g_io[p++];
-        }
-        const unsigned char nb = g_io[p++];
-        if (nb == ANIM_W_NONE) { ev->n_battles = ANIM_NO_BOARD; ev->battles = 0; continue; }
-        if (nb > MAX_BATTLES || nb_pool + 2 * nb > (int)sizeof bpool) return ANIM_ECAP;
-        ev->n_battles = nb;
-        ev->battles = &bpool[nb_pool];
-        for (int k = 0; k < 2 * nb; k++) bpool[nb_pool++] = g_io[p++];
-    }
-    int final_hand[MAX_PLAYERS];
-    for (int s = 0; s < n_players; s++) final_hand[s] = g_io[p++];
-    return anim_build_plan(events, n_events, n_players, final_deck, final_discard,
-                           card_from_wire_pair((unsigned char)(final_flipped & 0xff)),
-                           final_hand, &g_anim_plan);
-}
+// THE PLAN (anim_plan.h anim_plan_ask). The stream goes in as the kernel's own
+// AnimPlanAsk, filled where it lies through the generated writer
+// (sdk/ts/gen/view_layout.bots.ts writeAnimPlanAsk), so there is no byte format
+// here for a host to keep in step with. The answer is left in g_anim_plan for
+// the caller to read where it lies. Returns ANIM_EOK, or a negative ANIM_E*.
+static AnimPlanAsk g_anim_plan_ask;
+AnimPlanAsk *wasm_anim_plan_ask_ptr(void) { return &g_anim_plan_ask; }
+int wasm_anim_build_plan(void) { return anim_plan_ask(&g_anim_plan_ask, &g_anim_plan); }
 
 // WHERE THE PLAN STANDS AT now_ms (anim_plan.h anim_plan_at), measured from the
 // sequence's start. The clock is an argument: the kernel imports nothing, so
@@ -1228,34 +1030,6 @@ int wasm_anim_build_plan(int n_events, int n_players,
 // g_anim_frame. Returns ANIM_EOK or a negative ANIM_E*.
 int wasm_anim_plan_at(int now_ms) {
     return anim_plan_at(&g_anim_plan, now_ms, &g_anim_frame);
-}
-
-// THE BEATS (anim_plan.h anim_build_beats). g_io in, per event:
-//   u8 type, u8 seat (ANIM_W_NONE for none), u8 mask_cards,
-//   u8 has_good_mask, u8 good_mask, u8 n_cards, n_cards x u8 wire card.
-// The answer is left in g_anim_beats. Returns the beat count, or a negative ANIM_E*.
-int wasm_anim_build_beats(int n_events) {
-    if (n_events < 0) return ANIM_EBADARG;
-    if (n_events > ANIM_MAX_BEATS) return ANIM_ECAP;
-    static AnimBeatEvent events[ANIM_MAX_BEATS];
-    static Card cpool[ANIM_MAX_CARD_POOL];
-    int nc_pool = 0, p = 0;
-    for (int e = 0; e < n_events; e++) {
-        AnimBeatEvent *ev = &events[e];
-        ev->type = g_io[p++];
-        const unsigned char seat = g_io[p++];
-        ev->seat = (seat == ANIM_W_NONE) ? ANIM_SEAT_NONE : (int)seat;
-        ev->mask_cards = g_io[p++] ? 1 : 0;
-        const int has_gm = g_io[p++];
-        const unsigned char gm = g_io[p++];
-        ev->good_mask = has_gm ? (int)gm : ANIM_NO_MASK;
-        const int nc = g_io[p++];
-        if (nc > ANIM_MAX_CARDS || nc_pool + nc > (int)(sizeof cpool / sizeof cpool[0])) return ANIM_ECAP;
-        ev->cards = nc ? &cpool[nc_pool] : 0;
-        ev->n_cards = nc;
-        for (int k = 0; k < nc; k++) cpool[nc_pool++] = card_from_wire_pair(g_io[p++]);
-    }
-    return anim_build_beats(events, n_events, &g_anim_beats);
 }
 
 // ---------- the role beat (anim_plan.h "the role beat") ------------------------
@@ -1271,38 +1045,28 @@ int wasm_anim_build_beats(int n_events) {
 // resident game - and it crosses as three scalars for that reason: a caller that
 // could pass a board would pass the wrong one.
 //
-// g_io out (all three entries, on a 1): u8 defender, u8 first_attacker, u8
-// good_mask, with ANIM_W_NONE for "no seat". Returns 1 when the marks change, 0
-// when nothing does, or a negative ANIM_E*.
-static int wasm_roles_answer(int changed, const AnimRoles *r) {
-    if (!changed) return 0;
-    g_io[0] = (r->defender < 0) ? ANIM_W_NONE : (unsigned char)r->defender;
-    g_io[1] = (r->first_attacker < 0) ? ANIM_W_NONE : (unsigned char)r->first_attacker;
-    g_io[2] = (unsigned char)(r->good_mask & 0xFF);
-    return 1;
+// The answer, for all three entries: the address of the AnimRoles to show next
+// (read through its generated reader) when the marks change, 0 when nothing
+// does, or a negative ANIM_E*. A seat is -1 for none, in and out.
+static AnimRoles g_anim_roles;
+static int wasm_roles_answer(int changed) {
+    return changed == 1 ? (int)(uintptr_t)&g_anim_roles : changed;
 }
-
-// A seat as the three entries below take it: ANIM_W_NONE is "no seat".
-static int wasm_roles_seat(int seat) { return seat == (int)ANIM_W_NONE ? -1 : seat; }
 
 // A good being SET leads the stream - `first_good_mask` is the stream's own
 // event 0 mask (AnimBeats.first_good_mask), ANIM_NO_MASK for a step with none.
 int wasm_anim_roles_goods_opening(int shown_defender, int shown_first_attacker,
                                   int shown_good_mask, int first_good_mask) {
-    const AnimRoles shown = { wasm_roles_seat(shown_defender),
-                              wasm_roles_seat(shown_first_attacker), shown_good_mask };
-    AnimRoles r;
-    return wasm_roles_answer(anim_goods_opening(shown, first_good_mask, &r), &r);
+    const AnimRoles shown = { shown_defender, shown_first_attacker, shown_good_mask };
+    return wasm_roles_answer(anim_goods_opening(shown, first_good_mask, &g_anim_roles));
 }
 
 // A good being CLEARED runs parallel with the throw-in that cleared it -
 // `step_good_mask` is that beat's own mask (AnimBeat.good_mask).
 int wasm_anim_roles_goods_cleared(int shown_defender, int shown_first_attacker,
                                   int shown_good_mask, int step_good_mask) {
-    const AnimRoles shown = { wasm_roles_seat(shown_defender),
-                              wasm_roles_seat(shown_first_attacker), shown_good_mask };
-    AnimRoles r;
-    return wasm_roles_answer(anim_goods_cleared(shown, step_good_mask, &r), &r);
+    const AnimRoles shown = { shown_defender, shown_first_attacker, shown_good_mask };
+    return wasm_roles_answer(anim_goods_cleared(shown, step_good_mask, &g_anim_roles));
 }
 
 // A PASS hands the shield over WITH the transfer card. `final_defender` is the
@@ -1311,12 +1075,9 @@ int wasm_anim_roles_goods_cleared(int shown_defender, int shown_first_attacker,
 int wasm_anim_roles_pass_hand_off(int shown_defender, int shown_first_attacker,
                                   int shown_good_mask, int attack_pass_seats,
                                   int final_defender) {
-    const AnimRoles shown = { wasm_roles_seat(shown_defender),
-                              wasm_roles_seat(shown_first_attacker), shown_good_mask };
-    AnimRoles r;
-    return wasm_roles_answer(
-        anim_pass_hand_off(shown, (unsigned)attack_pass_seats,
-                           wasm_roles_seat(final_defender), &r), &r);
+    const AnimRoles shown = { shown_defender, shown_first_attacker, shown_good_mask };
+    return wasm_roles_answer(anim_pass_hand_off(shown, (unsigned)attack_pass_seats,
+                                                final_defender, &g_anim_roles));
 }
 
 // MAY THIS WRITER TOUCH THE SHOWN BADGES (anim_plan.h anim_shown_ledger_allows)?
@@ -1325,28 +1086,17 @@ int wasm_anim_shown_ledger_allows(int claim, int sequencing) {
     return anim_shown_ledger_allows(claim, sequencing);
 }
 
-// THE FINISH ORDER (anim_plan.h anim_finish_rows), for the end screen. g_io in:
-//   [0 .. n_elim)  the elimination seats, first out first.
-// Scalars: game_over is the fool's seat (negative while the game runs),
-// n_players the seat count, my_seat the viewer (negative for a spectator).
-// g_io out (overwrites): n_rows x { u8 place, u8 seat, u8 is_you }.
-// Returns the row count, or a negative ANIM_E*.
-int wasm_anim_finish_rows(int n_elim, int game_over, int n_players, int my_seat) {
-    if (n_elim < 0 || n_elim > MAX_PLAYERS) return ANIM_EBADARG;
-    if (n_players < 0 || n_players > MAX_PLAYERS) return ANIM_EBADARG;
-    unsigned char elim[MAX_PLAYERS];
-    for (int i = 0; i < n_elim; i++) elim[i] = g_io[i];
-    AnimFinishRow rows[MAX_PLAYERS + 1];
-    int n = anim_finish_rows(elim, n_elim, game_over, n_players, my_seat,
-                             rows, MAX_PLAYERS + 1);
-    if (n < 0) return n;
-    int q = 0;
-    for (int i = 0; i < n; i++) {
-        g_io[q++] = (unsigned char)rows[i].place;
-        g_io[q++] = (unsigned char)rows[i].seat;
-        g_io[q++] = (unsigned char)rows[i].is_you;
-    }
-    return n;
+// THE FINISH ORDER (anim_plan.h anim_finish_rows), for the end screen, asked as
+// a value (AnimFinishAsk: the elimination seats first out first, the fool's
+// seat or a negative while the game runs, the seat count, and the viewer or a
+// negative for a spectator) and answered as one (AnimFinish), each through its
+// generated writer or reader. Returns the row count, or a negative ANIM_E*.
+static AnimFinishAsk g_anim_finish_ask;
+static AnimFinish    g_anim_finish;
+AnimFinishAsk *wasm_anim_finish_ask_ptr(void) { return &g_anim_finish_ask; }
+AnimFinish *wasm_anim_finish_ptr(void)        { return &g_anim_finish; }
+int wasm_anim_finish_rows(void) {
+    return anim_finish_ask(&g_anim_finish_ask, &g_anim_finish);
 }
 
 

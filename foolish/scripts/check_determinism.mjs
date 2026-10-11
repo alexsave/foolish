@@ -135,15 +135,6 @@ export const ALLOW = [
             + 'orders by it; nothing replays it.',
     },
     {
-        rule: 'random-uuid',
-        file: 'server/impls/supabase/functions/_shared/adapter/table_io.ts',
-        calls: 1,
-        reason:
-            'The broadcast envelope sequence id `s`: the client dedupes an animation '
-            + 'sequence by it, and playback order comes from the version `v`. Nothing '
-            + 'replays it.',
-    },
-    {
         rule: 'random-bytes',
         file: 'server/impls/supabase/functions/_shared/adapter/table_io.ts',
         calls: 1,

@@ -36,7 +36,7 @@ import { buildOracleJob } from '../src/oracle/replayOracleInput.ts';
 import { OracleInstance } from '../src/oracle/oracleBridge.ts';
 import { OracleAccumulator } from '../src/oracle/accumulator.ts';
 import { OracleJob } from '../src/oracle/types.ts';
-import { ORACLE_MT_ENV, oracleSeedBase } from '../src/oracle/oracleMtSession.ts';
+import { ORACLE_MT_KNOBS, oracleSeedBase } from '../src/oracle/oracleMtSession.ts';
 import { openMtRig } from './helpers/oracle_mt_node.ts';
 import { seededCode } from './helpers/seeded_codes.ts';
 
@@ -97,7 +97,7 @@ const exactJob = () => jobAt(FIX_EXACT.np, FIX_EXACT.seed, FIX_EXACT.step);
 async function modeA(job: OracleJob, minN: number, batchCap: number) {
     const inst = new OracleInstance();
     await inst.init(ORACLE_BYTES);
-    inst.writeEnv({ ...ORACLE_MT_ENV });
+    inst.setKnobs(ORACLE_MT_KNOBS);
     const acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey });
     let batches = 0;
     for (let b = 0; b < batchCap; b++) {

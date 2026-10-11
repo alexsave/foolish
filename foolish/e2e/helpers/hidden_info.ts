@@ -72,21 +72,23 @@
 import assert from 'node:assert/strict';
 import { applySchema, uuid, pgPool, broadcastLog } from '../harness.ts';
 import { pgAdminConfig } from '../adapters/supabase.ts';
-import { settle, tokenFor, postJson, postPacked, EdgeResponse } from './edge.ts';
+import { settle, tokenFor, postPacked, EdgeResponse, postAsk, postEmpty } from './edge.ts';
 import { lockedBotLoop } from '../../server/impls/supabase/functions/_shared/adapter/bot_actions.ts';
 import { __clearGameCache } from '../../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
 import { __setTableDealSeedOverride } from '../../server/impls/supabase/functions/_shared/adapter/table_io.ts';
 import { botsTestWasm } from './bots_test_wasm.ts';
-import { encodeActionRequest, wireCard } from '../../sdk/ts/wire/awire.ts';
 import { readEnvelopeView, readPushSequence } from './client_read.ts';
 import { cRosterTrailerRead } from './roster_kernel.ts';
 import { clientTable } from '../../sdk/ts/table/client_table.ts';
 import { base64ToBytes } from '../../sdk/ts/wire/bytes.ts';
 import * as L from '../../sdk/ts/gen/game_layout.bots.ts';
+import { WIRE_CARD_HIDDEN, WIRE_CARD_NONE } from '../../sdk/ts/gen/kernel_consts.bots.ts';
+import type { BotsTestExports } from '../../sdk/ts/gen/exports.bots_test.ts';
 import { boardBytes, fixtureTable } from './table_fixture.ts';
 import { legalMoves, readTable, rebuild, type BoardState, type PlayCard } from './table_play.ts';
 import { suiteRng } from './rng.ts';
 import { isCard } from '../../src/state/view.ts';
+import { castParts } from './cast.ts';
 
 // The harness silences log and warn; the handlers under test also console.error
 // the refusals these games provoke on purpose, so that goes too.
@@ -96,9 +98,11 @@ if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {};
 // seat count at once. Each file is its own process, so each game draws from the
 // head of the stream rather than from wherever the previous game left it.
 const rng = suiteRng('security_hidden_info');
-const HIDDEN = 0xfe;
-const NONE = 0xff;
-const id = (c: PlayCard) => wireCard(c);
+// A card's byte in the streams walked below. This helper reads those streams
+// byte by byte ON PURPOSE - it is the outside observer that checks what the
+// kernel put on the wire for each viewer - so it names the byte itself rather
+// than asking the kernel it is auditing.
+const id = (c: PlayCard) => c.suit * 13 + (c.value - 1);
 const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
 const hexToBytes = (h: string) => Uint8Array.from(Buffer.from(h.replace(/^\\x/, ''), 'hex'));
 
@@ -106,13 +110,7 @@ const hexToBytes = (h: string) => Uint8Array.from(Buffer.from(h.replace(/^\\x/, 
 // A separate instance of the test build of bots.wasm (every shipped export plus the
 // engine probes this needs, same C and layout hash), so probing a payload never disturbs the game the
 // server's instance holds resident.
-interface ProbeExports {
-    memory: WebAssembly.Memory;
-    wasm_init(): void; wasm_io_ptr(): number;
-    wasm_import_state(len: number, masked: number): number;
-    wasm_view_serialize(viewer: number): number;
-}
-const probe = new WebAssembly.Instance(new WebAssembly.Module(botsTestWasm() as BufferSource), {}).exports as unknown as ProbeExports;
+const probe = new WebAssembly.Instance(new WebAssembly.Module(botsTestWasm() as BufferSource), {}).exports as unknown as BotsTestExports;
 probe.wasm_init();
 
 /** The board, imported MASKED and re-serialized for the same viewer. */
@@ -292,7 +290,7 @@ async function refreshEverPublic(t: Table): Promise<void> {
     for (const log of await sessionLogs(t.gameId)) {
         for (const r of sessionLogRecords(log, `${t.gameId} session log`)) {
             if (r.type === LOG_DRAW) continue;
-            for (const c of r.cards) if (c !== HIDDEN && c !== NONE) t.everPublic.add(c);
+            for (const c of r.cards) if (c !== WIRE_CARD_HIDDEN && c !== WIRE_CARD_NONE) t.everPublic.add(c);
         }
     }
 }
@@ -315,7 +313,7 @@ async function receivedBy(t: Table, v: Viewer, cap: Capture): Promise<Record<str
         }
         const topics = new Set([`game-${t.gameId}`, ...(v.kind === 'human' ? [`gu-${t.gameId}-${v.h.id}`] : [])]);
         out.broadcasts = JSON.stringify(cap.broadcasts.filter(b => topics.has(b.channel))
-            .map(b => ({ channel: b.channel, payload: { ...b.payload, s: undefined } })));
+            .map(b => ({ channel: b.channel, payload: b.payload })));
         if (v.kind === 'human') out.ownView = JSON.stringify(await ownViewRow(t.gameId, v.h.id));
         out.spectatorView = JSON.stringify(await spectatorRow(t.gameId, v.h.id));
     }
@@ -411,14 +409,12 @@ function walkEvwire(b: Uint8Array, what: string) {
 function checkEventPayload(t: Table, payload: Record<string, unknown>, v: Viewer, seat: number,
                            pre: Truth, post: Truth, roster: { id: string; name: string; players: { player_id: string; name: string; is_ai: boolean }[] }, what: string) {
     t.counts.streams++;
-    // The JSON envelope carries the kernel's bytes and nothing else (plan Q7: no r / m extras).
-    assert.deepEqual(Object.keys(payload).sort(), ['b', 's', 't', 'v'], `${what}: envelope keys`);
+    // The JSON envelope carries the kernel's cast and nothing else: castParts holds it to exactly { b }.
     // Phase 5b: labelled for what it is, so the client reads the roster block from the push itself.
-    assert.equal(payload.t, 'as3', `${what}: an as3 push`);
 
-    const b = base64ToBytes(payload.b as string);
+    const b = castParts(payload).push;
     const walked = walkEvwire(b, what);
-    assert.equal(walked.viewer, seat < 0 ? NONE : seat, `${what}: the stream is written for seat ${seat}`);
+    assert.equal(walked.viewer, seat < 0 ? 0xff : seat, `${what}: the stream is written for seat ${seat}`);
     for (const [i, e] of walked.events.entries()) assertMaskedFixedPoint(e.board, seat, `${what} event ${i} board`);
     assertMaskedFixedPoint(walked.final, seat, `${what} trailer board`);
 
@@ -435,7 +431,7 @@ function checkEventPayload(t: Table, payload: Record<string, unknown>, v: Viewer
     assert.equal(decoded!.events.length, walked.events.length, `${what}: decoder and walk agree on the event count`);
     for (const [i, e] of walked.events.entries()) {
         const de = decoded!.events[i];
-        const named = [...e.cards, ...(e.target === null ? [] : [e.target])].filter(c => c !== HIDDEN);
+        const named = [...e.cards, ...(e.target === null ? [] : [e.target])].filter(c => c !== WIRE_CARD_HIDDEN);
         for (const c of named) {
             assert.ok(c <= 51, `${what} event ${i}: a card byte that is no card (${c})`);
             assert.ok(may.has(c), `${what} event ${i} (${de.type}): names card ${c}, which ${viewerName(v)} may not know`);
@@ -444,7 +440,7 @@ function checkEventPayload(t: Table, payload: Record<string, unknown>, v: Viewer
         const drawSeat = de.seat ?? -1;
         if ((de.type === 'deal' || de.type === 'refill') && drawSeat !== seat) {
             for (const c of e.cards) {
-                assert.ok(c === HIDDEN || c === t.trumpId, `${what} event ${i}: seat ${drawSeat}'s ${de.type} names card ${c} to ${viewerName(v)}`);
+                assert.ok(c === WIRE_CARD_HIDDEN || c === t.trumpId, `${what} event ${i}: seat ${drawSeat}'s ${de.type} names card ${c} to ${viewerName(v)}`);
             }
             t.counts.otherDraws++;
         }
@@ -647,7 +643,7 @@ export async function playTable(nHumans: number, nBots: number, dealSeed: number
 
     // create - the response is the creator's first payload
     const noActors = () => [];
-    const created = await runCaptured({ label: 'create', requester: humans[0], run: () => postJson('create', humans[0].tok, {}), actors: noActors, pinDeck: false });
+    const created = await runCaptured({ label: 'create', requester: humans[0], run: () => postEmpty('create', humans[0].tok), actors: noActors, pinDeck: false });
     const d = readEnvelopeView(created.response!.bytes);
     assert.ok(d, 'create answered with a view');
     t.gameId = d!.gameId;
@@ -656,7 +652,7 @@ export async function playTable(nHumans: number, nBots: number, dealSeed: number
     await checkAllViewers(t, created, lobbyTruth, lobbyTruth, `${t.gameId} create`);
 
     const meta = (who: Human, body: object, label: string): Step =>
-        ({ label, requester: who, run: () => postJson('meta', who.tok, { ...body, game_id: t.gameId }), actors: noActors, pinDeck: false });
+        ({ label, requester: who, run: () => postAsk(who.tok, { ...body, game_id: t.gameId }), actors: noActors, pinDeck: false });
     for (const h of humans.slice(1)) await doStep(t, meta(h, { type: 'join' }, `join ${h.name}`), false);
     for (const b of bots) await doStep(t, meta(humans[0], { type: 'add-bot', bot_id: b }, 'add-bot'), false);
     // interleave humans and bots around the table
@@ -685,7 +681,7 @@ export async function playTable(nHumans: number, nBots: number, dealSeed: number
             t.counts.humanSteps++;
             truth = await doStep(t, {
                 label: `#${n} ${who.name} ${pm.kind}`, requester: who,
-                run: () => postPacked(who.tok, encodeActionRequest(t.gameId, pm.wire, version)),
+                run: () => postPacked(who.tok, clientTable().actionRequest(t.gameId, pm.wire, version)),
                 actors: () => [pm.seat], pinDeck: false,
             }, true);
         } else if (botMoves.length > 0) {
@@ -768,10 +764,10 @@ export async function installHiddenInfoSchema(): Promise<void> {
 export async function channelFixture() {
     // A lobby is enough: channel authorization reads membership, not cards.
     const a = await human('rt-a'), b = await human('rt-b'), spectator = await human('rt-spec');
-    const created = await postJson('create', a.tok, {});
+    const created = await postEmpty('create', a.tok);
     await settle();
     const gameId = readEnvelopeView(created.bytes)!.gameId;
-    assert.equal((await postJson('meta', b.tok, { type: 'join', game_id: gameId })).status, 200, 'b joins');
+    assert.equal((await postAsk(b.tok, { type: 'join', game_id: gameId })).status, 200, 'b joins');
     await settle();
     await pgPool.query(`INSERT INTO realtime.messages(topic, extension) SELECT 'x', 'broadcast' WHERE NOT EXISTS (SELECT 1 FROM realtime.messages)`);
     // The topic rides in asRole's preamble, transaction-scoped like the claims.

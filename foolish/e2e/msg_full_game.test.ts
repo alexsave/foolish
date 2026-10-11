@@ -13,7 +13,11 @@
 // Run: npx tsx --test e2e/msg_full_game.test.ts
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { kernelMsgDecode, kernelMsgSeal, kernelMsgRebase, kernelMsgLegalMoves, kernelMsgPublicView, kernelResidentReplayCodeV6, MSG_REBASE_REAPPLY, kernelB32Encode } from '../sdk/ts/wasm/bots.ts';
+import { kernelMsgDecode as decodeHeader, kernelMsgSeal, kernelMsgRebase, kernelMsgLegalMoves, kernelMsgPublicView, kernelResidentReplayCodeV6, kernelB32Encode } from '../sdk/ts/wasm/bots.ts';
+
+// The envelope and its digest as one flat value: the generated header (msg_wire.h MsgHeader) holds them apart.
+const kernelMsgDecode = (bytes: Uint8Array) => { const h = decodeHeader(bytes); return { ...h.e, digest: h.digest }; };
+import { MSG_REBASE_REAPPLY } from '../sdk/ts/gen/msg_layout.bots.ts';
 import { classifyPathSegment } from '../server/api/common/replay_codec.ts';
 
 const AWIRE = { attack: 0, cover: 1, pass: 2, pickup: 3, good: 4 } as const;
@@ -53,7 +57,7 @@ test('a full 2p game plays to a fool through the FMSG send/accept leg, and no pu
         // Whichever seat can act, by the closing priority above.
         let chosen: { seat: number; move: any } | null = null;
         scan: for (const type of PRIORITY) {
-            for (let s = 0; s < p.n_players; s++) {
+            for (let s = 0; s < p.nPlayers; s++) {
                 const m = kernelMsgLegalMoves(s).find(x => x.type === type);
                 if (m) { chosen = { seat: s, move: m }; break scan; }
             }
@@ -68,8 +72,8 @@ test('a full 2p game plays to a fool through the FMSG send/accept leg, and no pu
         // LIVE is refused by the kernel — so this branch is load-bearing.
         const finished = kernelMsgPublicView().view.fool >= 0;
         bubble = kernelMsgSeal({
-            flags: 0, phase: finished ? 3 : 2, n_players: p.n_players, variant: 0,
-            last_actor_seat: chosen!.seat, game_id: p.game_id,
+            flags: 0, phase: finished ? 3 : 2, nPlayers: p.nPlayers, variant: 0,
+            lastActorSeat: chosen!.seat, gameId: p.gameId,
             parent8: p.digest.slice(0, 8), seed: p.seed, joins: p.joins,
         });
         sealBytesMax = Math.max(sealBytesMax, bubble.length);
@@ -101,7 +105,7 @@ test('a FINISHED envelope\'s own seed derives a real replay code — the /m/ pag
 
         let chosen: { seat: number; move: any } | null = null;
         scan: for (const type of PRIORITY) {
-            for (let s = 0; s < p.n_players; s++) {
+            for (let s = 0; s < p.nPlayers; s++) {
                 const m = kernelMsgLegalMoves(s).find(x => x.type === type);
                 if (m) { chosen = { seat: s, move: m }; break scan; }
             }
@@ -110,8 +114,8 @@ test('a FINISHED envelope\'s own seed derives a real replay code — the /m/ pag
         kernelMsgRebase(p.round, chosen.seat, toWire(chosen.move));
         const finished = kernelMsgPublicView().view.fool >= 0;
         bubble = kernelMsgSeal({
-            flags: 0, phase: finished ? 3 : 2, n_players: p.n_players, variant: 0,
-            last_actor_seat: chosen.seat, game_id: p.game_id,
+            flags: 0, phase: finished ? 3 : 2, nPlayers: p.nPlayers, variant: 0,
+            lastActorSeat: chosen.seat, gameId: p.gameId,
             parent8: p.digest.slice(0, 8), seed: p.seed, joins: p.joins,
         });
     }
@@ -122,12 +126,12 @@ test('a FINISHED envelope\'s own seed derives a real replay code — the /m/ pag
     // The page's exact call: derive the code from the decoded envelope's own
     // seed, with nothing re-marshalled (kernelMsgDecode already left the whole
     // session log resident).
-    const code = kernelResidentReplayCodeV6(finishedEnv!.seed);
+    const code = kernelResidentReplayCodeV6(Uint8Array.from(finishedEnv!.seed));
     assert.ok(code.length > 0, 'a finished game must produce a replay code');
 
     // The resulting URL (https://foolish.cards/<b32>) must actually route to
     // the replay screen, not the legacy authenticated shortcode path — the
-    // same classifier the site's own [game_id] page uses.
+    // same classifier the site's own [gameId] page uses.
     const b32 = kernelB32Encode(code);
     assert.equal(classifyPathSegment(b32), 'replay',
                 'the derived code must be long enough to route to ReplayScreen');

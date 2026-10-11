@@ -151,7 +151,7 @@ export class OracleController {
 
         switch (m.t) {
             case 'batch': {
-                this.acc.add(m.record, m.paths);
+                this.acc.add(m.record);
                 // convergence checkpoint (§8.7), held past the minimum focus
                 // duration so the sharpening is perceptible on fast devices.
                 const elapsed = Date.now() - this.startMs;
@@ -175,7 +175,7 @@ export class OracleController {
                 this.publish(true);
                 break;
             case 'empty':
-                // No dump — a decision with no deliberation (unexpected). Treat as
+                // No answer - a decision with no deliberation (unexpected). Treat as
                 // forced so the panel settles rather than spinning.
                 this.status = 'forced';
                 this.stopFleet();
@@ -223,7 +223,7 @@ export class OracleController {
                 pinned: acc.belief.pinned,
                 voids: acc.belief.voids,
                 floor: acc.belief.floor,
-                poolCount: acc.belief.pool.length,
+                poolCount: acc.belief.poolCount,
                 hand: acc.beliefCtx?.hand ?? [],
                 oppCounts: acc.beliefCtx?.oppCounts ?? [],
                 table: acc.beliefCtx?.table ?? [],

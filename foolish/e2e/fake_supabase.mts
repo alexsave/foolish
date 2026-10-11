@@ -67,11 +67,10 @@
 import { createHash } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { encodeAction, type AwireMove } from '../sdk/ts/wire/awire.ts';
 import { bytesToBase64, bytesToBareHex } from '../sdk/ts/wire/bytes.ts';
 import { derivedUuid } from '../sdk/ts/wire/detid.ts';
-import { TABLE_DEAL_SEED_BYTES, type TableProducts, type TableSeat } from '../sdk/ts/table/server_table.ts';
-import { clientTable } from '../sdk/ts/table/client_table.ts';
+import { type TableProducts, type TableSeat } from '../sdk/ts/table/server_table.ts';
+import { clientTable, encodeAction, type AwireMove } from '../sdk/ts/table/client_table.ts';
 import { fixture, fixtureTable, parseCardText, PLAYING, type FixtureSeat, type TableFixture } from './helpers/table_fixture.ts';
 import { attachPhoenix, type PhxHub } from './helpers/ws_phoenix.ts';
 
@@ -108,7 +107,7 @@ const dealSeedFor = (gameId: string, version: number): Uint8Array =>
     new Uint8Array(createHash('sha256')
         .update(`e2e/fake_supabase:deal#${gameId}#${version}`, 'utf8')
         .digest()
-        .subarray(0, TABLE_DEAL_SEED_BYTES));
+        .subarray(0, L.FOOLISH_SEED_LEN));
 
 const userFor = (name: string): FakeUser => ({ id: `u-${name.toLowerCase()}`, name: name.toUpperCase(), email: emailFor(name) });
 
@@ -274,11 +273,11 @@ export async function startFakeSupabase(opts: FakeOptions = {}): Promise<FakeBac
         if (p.nEvents > 0 || p.goodsChanged) {
             for (let s = 0; s < seats.length; s++) {
                 if (seats[s].brain) continue;
-                const b = t.push(row.id, s);
+                const b = t.cast(row.id, s, row.version + 1);
                 if (typeof b === 'number') throw new Error(`game ${row.id}: push refused (${b})`);
                 pushes.push({ topic: `gu-${row.id}-${seats[s].id}`, owner: seats[s].id, seq: pushSeq(), version: row.version + 1, bytes: b });
             }
-            const spec = t.push(row.id, -1);
+            const spec = t.cast(row.id, -1, row.version + 1);
             if (typeof spec !== 'number') pushes.push({ topic: `game-${row.id}`, owner: null, seq: pushSeq(), version: row.version + 1, bytes: spec });
         }
         const envelope = (seat >= 0 ? p.views[seat] : null) ?? p.spectator;
@@ -328,7 +327,7 @@ export async function startFakeSupabase(opts: FakeOptions = {}): Promise<FakeBac
     }
 
     function send(p: Push): void {
-        const n = hub.broadcast(p.topic, 'animation_events', { t: 'as3', s: p.seq, v: p.version, b: bytesToBase64(p.bytes) });
+        const n = hub.broadcast(p.topic, 'animation_events', { b: bytesToBase64(p.bytes) });
         note(`push v${p.version} -> ${p.topic} (${n} listener${n === 1 ? '' : 's'})`);
     }
 
@@ -368,10 +367,10 @@ export async function startFakeSupabase(opts: FakeOptions = {}): Promise<FakeBac
         if (p.nEvents > 0 || p.goodsChanged) {
             for (let s = 0; s < seats.length; s++) {
                 if (seats[s].brain) continue;
-                const b = t.push(gameId, s);
+                const b = t.cast(gameId, s, row.version + 1);
                 if (typeof b !== 'number') pushes.push({ topic: `gu-${gameId}-${seats[s].id}`, owner: seats[s].id, seq: pushSeq(), version: row.version + 1, bytes: b });
             }
-            const spec = t.push(gameId, -1);
+            const spec = t.cast(gameId, -1, row.version + 1);
             if (typeof spec !== 'number') pushes.push({ topic: `game-${gameId}`, owner: null, seq: pushSeq(), version: row.version + 1, bytes: spec });
         }
         commitRow(row, p, seats, null);
@@ -561,7 +560,12 @@ export async function startFakeSupabase(opts: FakeOptions = {}): Promise<FakeBac
             return packed(res, mine);
         }
 
-        if (name === 'action' && !isJson) {
+        // Every request body is bytes the kernel reads: a move to `action`, an
+        // ask (c/src/ask.h) to `meta`. A body that says it is JSON is what a client
+        // built before the requests left JSON sends, and gets the server's 415.
+        if (isJson) return json(res, 415, { error: 'this server reads bytes, not JSON' });
+
+        if (name === 'action') {
             const t0 = fixtureTable();
             const decoded = t0.requestDecode(new Uint8Array(raw));
             if (typeof decoded === 'number') return json(res, 400, { error: 'malformed action request' });
@@ -576,50 +580,29 @@ export async function startFakeSupabase(opts: FakeOptions = {}): Promise<FakeBac
             return packed(res, t.actionResponse(out.rc, out.reject, row.version));
         }
 
-        const body = raw.length > 0 ? JSON.parse(raw.toString('utf8')) : {};
-        if (name === 'action') {
-            // The JSON side of `action` is one request: `bump`, the bot nudge.
-            const row = rows.get(String(body.game_id ?? ''));
-            if (!row) return json(res, 400, { error: `unknown game ${body.game_id}` });
-            if (needsBots(row)) wakeBots(row.id);
-            const t = fixtureTable();
-            t.load(row.state, row.roster);
-            const env = t.envelope(row.id, t.seatOf(me.id), row.version);
-            return typeof env === 'number' ? json(res, 400, { error: `no envelope (${env})` }) : packed(res, env);
-        }
-
         if (name === 'meta') {
-            const row = rows.get(String(body.game_id ?? ''));
-            if (!row) return json(res, 400, { error: `unknown game ${body.game_id}` });
-            const out = run(row, me.id, (t, seed) => metaOp(t, me, body, seed));
-            dispatch(out.pushes);
-            if (needsBots(row)) wakeBots(row.id);
-            return out.envelope ? packed(res, out.envelope) : json(res, 400, { error: `meta ${body.type} refused (${out.rc})` });
-        }
-
-        if (name === 'delete-account') return json(res, 200, { ok: true });
-        return json(res, 404, { error: `no function ${name}` });
-    }
-
-    function metaOp(t: ReturnType<typeof fixtureTable>, me: FakeUser, body: any, seed: Uint8Array): number {
-        switch (body?.type) {
-            case 'start': return t.ready(me.id, seed);
-            case 'join': return t.join(me.id, me.name);
-            case 'exit': return body.bot_id ? t.removeBot(me.id, String(body.bot_id)) : t.leave(me.id, String(body.player_id ?? me.id));
-            case 'add-bot': {
+            const body = new Uint8Array(raw);
+            const ask = fixtureTable().askDecode(body);
+            if (typeof ask === 'number') return json(res, 400, { error: 'the body is not an ask' });
+            const row = rows.get(ask.gid);
+            if (!row) return json(res, 400, { error: `unknown game ${ask.gid}` });
+            // The ask is the kernel's to run (table_ask); the bot row an add-bot
+            // seats is this server's read of its bots, as the real one's is.
+            const out = run(row, me.id, (t, seed) => {
+                if (ask.kind !== L.ASK_ADD_BOT) return t.ask(body, me.id, me.name, seed);
                 const seated = new Set(t.seats().map((s) => s.id));
-                const pool = body.bot_id ? BOTS.filter((b) => b.id === body.bot_id) : BOTS.filter((b) => !seated.has(b.id));
+                const pool = ask.bot ? BOTS.filter((b) => b.id === ask.bot) : BOTS.filter((b) => !seated.has(b.id));
                 const bot = pool[0];
                 if (!bot) throw new Error('no available bots');
-                return t.addBot(me.id, bot.id, bot.nickname, bot.strategy_key, seed);
-            }
-            case 'continue': return t.continueGame(me.id);
-            case 'rearrange-hand': return t.rearrangeHand(me.id, body.card_indices ?? []);
-            case 'rearrange-players': return t.reseat(me.id, body.new_order ?? []);
-            case 'update-name': return t.retitle(me.id, String(body.new_name ?? ''));
-            case 'set-rules': return typeof body.passing === 'boolean' ? t.setRules(me.id, body.passing) : L.TABLE_E_WIRE;
-            default: throw new Error(`unknown meta type ${body?.type}`);
+                return t.ask(body, me.id, me.name, seed, { id: bot.id, nickname: bot.nickname, brain: bot.strategy_key });
+            });
+            dispatch(out.pushes);
+            if (needsBots(row)) wakeBots(row.id);
+            return out.envelope ? packed(res, out.envelope) : json(res, 400, { error: `ask ${ask.kind} refused (${out.rc})` });
         }
+
+        if (name === 'delete-account') { res.writeHead(204, CORS); res.end(); return; }
+        return json(res, 404, { error: `no function ${name}` });
     }
 
     // ---- the control API -----------------------------------------------------

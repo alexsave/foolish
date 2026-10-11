@@ -27,29 +27,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
-
 import { loadWasmGz } from '../sdk/ts/wasm/wasm_asset.ts';
-
-/** Every `wasm_*` name the SDK wrappers call on a module instance. */
-function calledExports(dir: string, out = new Set<string>()): Set<string> {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const p = join(dir, entry.name);
-        if (entry.isDirectory()) { calledExports(p, out); continue; }
-        if (!entry.name.endsWith('.ts') || entry.name.endsWith('.d.ts')) continue;
-        // Comments name kernel FILES (wasm_api.c) and retired entries, so they
-        // are stripped before the scan: what counts is a call or a declaration.
-        const src = readFileSync(p, 'utf8')
-            .replace(/\/\*[\s\S]*?\*\//g, '')
-            .replace(/^[ \t]*\/\/.*$/gm, '');
-        // `ex.wasm_foo(`, `instance.exports.wasm_foo(`, and the interface
-        // declarations the wrappers type their exports with: all are a name
-        // immediately followed by its argument list.
-        for (const m of src.matchAll(/\bwasm_[a-z0-9_]+(?=\s*[(:])/g)) out.add(m[0]);
-    }
-    return out;
-}
+import { calledExports } from './helpers/wasm_exports.ts';
 
 test('the shipped bots.wasm exports what the web calls', () => {
     const mod = new WebAssembly.Module(loadWasmGz('bots') as BufferSource);

@@ -29,7 +29,7 @@ import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import { fixtureTable } from './helpers/table_fixture.ts';
 import { legalMoves, mustReadTable, type TableState } from './helpers/table_play.ts';
 import { runAction, runMeta, seedLobby } from './helpers/table_server.ts';
-import { postJson, settle, tokenFor } from './helpers/edge.ts';
+import { settle, tokenFor, postEmpty } from './helpers/edge.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
@@ -152,7 +152,7 @@ test('#24: at game-over every human has a terminal player_views row a refetch re
 test('create seeds the creator\'s lobby row and the spectator lobby row', async () => {
     const h1 = uuid();
     await pgPool.query('INSERT INTO auth.users(id) VALUES($1)', [h1]);
-    const res = await postJson('create', await tokenFor(h1, 'H1'), {});
+    const res = await postEmpty('create', await tokenFor(h1, 'H1'));
     assert.equal(res.status, 200, JSON.stringify(res.json));
     await settle();
     const { rows } = await pgPool.query('SELECT game_id FROM player_views WHERE player_id=$1', [h1]);

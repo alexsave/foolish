@@ -30,7 +30,8 @@ import { legalMoves, mustReadTable } from './helpers/table_play.ts';
 import { runAction, runMeta, seedLobby } from './helpers/table_server.ts';
 import { __botCycle } from '../server/impls/supabase/functions/_shared/adapter/bot_actions.ts';
 import { serverTable } from '../sdk/ts/table/server_table.ts';
-import { ACTION_STATUS, AWIRE_KIND } from '../sdk/ts/wire/awire.ts';
+import { AWIRE_KIND } from '../sdk/ts/table/client_table.ts';
+import { TABLE_STATUS_APPLIED, TABLE_STATUS_MOOT } from '../sdk/ts/gen/view_layout.bots.ts';
 import { suiteRng } from './helpers/rng.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; }
@@ -138,7 +139,7 @@ test('a real move recovers from a concurrent write the same way', async () => {
   assert.ok(mv, 'fixture: somebody can move');
   let res!: Awaited<ReturnType<typeof runAction>>;
   const commits = await withStomp(id, (call) => call === 1, async () => { res = await runAction(id, mv.playerId, mv); });
-  assert.equal(res.status, ACTION_STATUS.APPLIED, 'the move applied after the retry');
+  assert.equal(res.status, TABLE_STATUS_APPLIED, 'the move applied after the retry');
   assert.equal(commits, 2);
   assert.equal(res.version, t0.version + 2, 'the response carries the version the move committed at');
   assert.equal(await dbVersion(id), t0.version + 2);
@@ -179,7 +180,7 @@ test('a bot cycle that loses its commit replays the moves it already chose inste
   for (let step = 0; clean.commits === 0 && step < 40; step++) {
     const mv = legalMoves(await mustReadTable(id), (s) => s.id === human)[0];
     assert.ok(mv, `fixture: the human can move while the bot has none (step ${step})`);
-    assert.equal((await runAction(id, human, mv)).status, ACTION_STATUS.APPLIED);
+    assert.equal((await runAction(id, human, mv)).status, TABLE_STATUS_APPLIED);
     before = await snapshot();
     clean = await cycle(false);
   }
@@ -227,7 +228,7 @@ test('a move on an already-finished game is a moot no-op, never a crash', async 
 
   for (const wire of [Uint8Array.of(AWIRE_KIND.pickup, 0), Uint8Array.of(AWIRE_KIND.good, 0), Uint8Array.of(AWIRE_KIND.attack, 1, 4)]) {
     const res = await runAction(id, a, wire);
-    assert.equal(res.status, ACTION_STATUS.MOOT, 'the kernel answers moot');
+    assert.equal(res.status, TABLE_STATUS_MOOT, 'the kernel answers moot');
     assert.equal(res.version, 7, 'the response carries the stored version');
     assert.equal(res.needsBots, false);
   }
@@ -266,7 +267,7 @@ test('a full game commits GAME_OVER and lands its end-of-game side effects (ELO 
 
   // A move after the end is moot.
   assert.ok(last, 'moves were made');
-  assert.equal((await runAction(id, last!.playerId, last!)).status, ACTION_STATUS.MOOT, 'a late move on the finished game is moot');
+  assert.equal((await runAction(id, last!.playerId, last!)).status, TABLE_STATUS_MOOT, 'a late move on the finished game is moot');
 
   // The replay snapshot is a best-effort side effect, but on the happy path it
   // must land (proving finalizeEndedGame ran to completion) and retire the log.

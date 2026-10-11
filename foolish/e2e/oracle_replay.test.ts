@@ -4,7 +4,7 @@
  * modules (replayOracleInput, accumulator) + the OracleInstance
  * bridge against three replays. No Postgres, no browser. Validates the hardest
  * reconstruction (defender/goods/elimination), batching, the memory toggle, the
- * exact endgame regime, and the env-reload hook.
+ * exact endgame regime, and the knob reload.
  *
  * The replays are PLAYED here (a table of `handwritten` bots on the C Table,
  * helpers/bot_table.ts playBotTable) rather than frozen as
@@ -30,10 +30,10 @@ import { buildReplayFrames, REPLAY_STEP } from '../src/replay/frames.ts';
 import { buildOracleJob, findDecisionIndex } from '../src/oracle/replayOracleInput.ts';
 import { OracleInstance } from '../src/oracle/oracleBridge.ts';
 import { OracleAccumulator } from '../src/oracle/accumulator.ts';
+import { ORACLE_KNOBS } from '../src/oracle/types.ts';
 import { playBotTable, seedBytes } from './helpers/bot_table.ts';
 
 const ORACLE_BYTES = gunzip(new Uint8Array(readFileSync('public/oracle.wasm.gz')));
-const ENV_BASE = { OG_KEEP1: '26', OG_KEEP2: '26', OG_W2: '1', OG_W3: '0', OG_EXPLAIN_SOLVE_BUDGET: '2000000' };
 
 // The three shapes that stress the marshal differently: heads-up-ish, the
 // 4-player middle, and a full 8-way table (52-card deck, most eliminations).
@@ -109,11 +109,11 @@ test('§12.2-1 reconstruction: every decision imports to a well-formed deliberat
             seen.add(j);
             const job = buildOracleJob(frames, code, idx, true, id);
             assert.ok(job, `job at step ${idx} of ${id}`);
-            inst.writeEnv({ ...ENV_BASE, OG_W1: '8' });
+            inst.setKnobs({ ...ORACLE_KNOBS, w1: 8 });
             const r = inst.analyzeOnce(job!, 0x51 + j);
-            assert.ok('record' in r, `dump parsed at j=${j} (${id})`);
+            assert.ok('record' in r, `answered at j=${j} (${id})`);
             const rec = (r as { record: any }).record;
-            assert.equal(rec.seat, job!.seat, 'dumped seat matches acting seat');
+            assert.equal(rec.seat, job!.seat, 'the answer names the acting seat');
             assert.ok(Array.isArray(rec.candidates) && rec.candidates.length > 0, 'candidates present');
             // EF floor: after k eliminations, every finish is >= k+1, so no
             // candidate mean can be below k+1 (catches an empty elimination_order).
@@ -168,7 +168,7 @@ test('§12.2-1b the recorded move is one of the candidates, at every decision', 
     //
     // That is what shipped for pickup. A replay frame for a pickup carries the
     // cards swept off the table, so the recorded key came out
-    // `pickup|10H,10S*,7C,...|` while the dump only ever emits `pickup||`: the
+    // `pickup|10H,10S*,7C,...|` while a pickup row only ever keys as `pickup||`: the
     // pickup row sat at the top of the panel marked BEST while the footer said
     // it was never considered. 19 of 19 pickups, against 0 of 96 attacks, 0 of
     // 97 covers and 0 of 13 passes - which is why this walks EVERY decision and
@@ -183,11 +183,11 @@ test('§12.2-1b the recorded move is one of the candidates, at every decision', 
             if (findDecisionIndex(frames, j) !== j) continue;   // the decision itself
             const job = buildOracleJob(frames, code, j, true, id);
             if (!job) continue;
-            inst.writeEnv({ ...ENV_BASE, OG_W1: '8' });
+            inst.setKnobs({ ...ORACLE_KNOBS, w1: 8 });
             const r = inst.analyzeOnce(job, 0x9e37 + j);
             if (!('record' in r)) continue;
             const acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey });
-            acc.add((r as { record: any }).record, (r as { paths?: ArrayBuffer }).paths);
+            acc.add(r.record);
             const kind = STEP_NAME[frames[j].kind] ?? String(frames[j].kind);
             total[kind] = (total[kind] ?? 0) + 1;
             if (!acc.hasKey(job.recordedKey)) {
@@ -235,12 +235,12 @@ test('§12.2-1c every pass a hand can make is on the panel', async () => {
         if (frames[j].kind !== REPLAY_STEP.PASS) continue;
         const job = buildOracleJob(frames, code, j, true, id);
         if (!job) continue;
-        inst.writeEnv({ ...ENV_BASE, OG_W1: '8' });
+        inst.setKnobs({ ...ORACLE_KNOBS, w1: 8 });
         const r = inst.analyzeOnce(job, 0x9e37 + j);
         if (!('record' in r)) continue;
         walked++;
         const acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey });
-        acc.add((r as { record: any }).record, (r as { paths?: ArrayBuffer }).paths);
+        acc.add(r.record);
         const passes = acc.candidates(false).filter((c) => String(c.key).startsWith('pass|')).length;
         widest = Math.max(widest, passes);
         assert.ok(acc.hasKey(job.recordedKey),
@@ -274,9 +274,9 @@ test('§12.2-1d a podkidnoy replay is deliberated as podkidnoy: no transfer on t
         if (kind !== REPLAY_STEP.COVER && kind !== REPLAY_STEP.PICKUP) continue;
         const job = buildOracleJob(frames, played.code, j, true, 'podkidnoy-6p');
         if (!job) continue;
-        inst.writeEnv({ ...ENV_BASE, OG_W1: '8' });
+        inst.setKnobs({ ...ORACLE_KNOBS, w1: 8 });
         const r = inst.analyzeOnce(job, 0x51d + j);
-        assert.ok('record' in r, `step ${j}: the dump parsed`);
+        assert.ok('record' in r, `step ${j}: the choose answered`);
         const passes = (r as { record: any }).record.candidates.filter((c: any) => c.type === 'pass');
         assert.equal(passes.length, 0, `step ${j}: the panel offered ${passes.map((c: any) => c.label).join(', ')} at a podkidnoy table`);
         defences++;
@@ -292,7 +292,7 @@ test('§12.2-2 batching: keys stable, n increases, worlds vary across seeds', as
     const job = buildOracleJob(frames, code, idx, true, id)!;
     assert.ok(job);
     const acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey });
-    inst.writeEnv({ ...ENV_BASE, OG_W1: '24' });
+    inst.setKnobs({ ...ORACLE_KNOBS, w1: 24 });
     let prevKeys = '';
     const means: number[] = [];
     for (let b = 0; b < 5; b++) {
@@ -327,7 +327,7 @@ test('§12.2-4 memory toggle: ON proves an endgame verdict that OFF cannot', asy
         const run = (memoryOn: boolean) => {
             const job = buildOracleJob(frames, code, idx, memoryOn, id)!;
             const acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey });
-            inst.writeEnv({ ...ENV_BASE, OG_W1: '16' });
+            inst.setKnobs({ ...ORACLE_KNOBS, w1: 16 });
             for (let b = 0; b < 2; b++) {
                 const r = inst.analyzeOnce(job, 31 + b);
                 if ('record' in r) acc.add((r as any).record);
@@ -352,7 +352,7 @@ test('§12.2-5 exact regime: a proven win/loss verdict appears near the end', as
         const j = findDecisionIndex(frames, idx);
         if (j == null || j !== idx) continue;
         const job = buildOracleJob(frames, code, idx, true, id)!;
-        inst.writeEnv({ ...ENV_BASE, OG_W1: '8' });
+        inst.setKnobs({ ...ORACLE_KNOBS, w1: 8 });
         const r = inst.analyzeOnce(job, 77);
         if (!('record' in r)) continue;
         const rec = (r as any).record;
@@ -365,8 +365,7 @@ test('§12.2-5 exact regime: a proven win/loss verdict appears near the end', as
     console.log('  §12.2-5: exact win/loss verdict observed');
 });
 
-test('§12.2-7 why sidecar: binary paths decode, merge, and template into a proof', async () => {
-    const { decodePathsBlob } = await import('../src/oracle/pathsBlob.ts');
+test('§12.2-7 why table: storylines read back, merge, and template into a proof', async () => {
     const { explainCandidate } = await import('../src/oracle/explain.ts');
     // The English table, which is now generated from c/i18n rather than written
     // in strings.ts. `translate` is the site's own substitution, so this test
@@ -381,22 +380,22 @@ test('§12.2-7 why sidecar: binary paths decode, merge, and template into a proo
     const idx = Math.floor(frames.length * 0.4);
     const job = buildOracleJob(frames, code, idx, true, id)!;
     const acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey });
-    inst.writeEnv({ ...ENV_BASE, OG_W1: '24' });
-    let sawSidecar = false;
+    inst.setKnobs({ ...ORACLE_KNOBS, w1: 24 });
+    let sawWhy = false;
     for (let b = 0; b < 3; b++) {
         const r = inst.analyzeOnce(job, 4242 + b * 101);
-        assert.ok('record' in r, 'record parsed');
-        const { record, paths } = r as { record: any; paths?: ArrayBuffer };
-        // the sidecar must be present whenever the record carries MC scores
-        const scored = record.candidates.filter((c: any) => c.nsim > 0);
+        assert.ok('record' in r, 'the choose answered');
+        const { record } = r;
+        // storylines must be present whenever the record carries MC scores
+        const scored = record.candidates.filter((c) => c.nsim > 0);
         if (scored.length > 0) {
-            assert.ok(paths && paths.byteLength >= 8, 'binary sidecar present');
-            sawSidecar = true;
-            const blob = decodePathsBlob(paths!);
-            assert.ok(blob.size > 0, 'sidecar decodes to entries');
-            // every entry indexes a real candidate and carries sane counts
-            for (const [k, w] of blob) {
-                assert.ok(k < record.candidates.length, 'entry indexes a candidate');
+            const told = record.candidates.filter((c) => c.why);
+            assert.ok(told.length > 0, 'sampled rows carry their storylines');
+            sawWhy = true;
+            // only a sampled row is told a story, and its counts are sane
+            for (const c of told) {
+                const w = c.why!;
+                assert.ok(c.nsim > 0, 'a row with storylines was sampled');
                 assert.ok(w.agg.n > 0, 'entry has folded playouts');
                 const pathN = w.paths.reduce((sum: number, pth) => sum + pth.n, 0);
                 assert.ok(pathN <= w.agg.n, 'cluster counts bounded by total');
@@ -406,9 +405,9 @@ test('§12.2-7 why sidecar: binary paths decode, merge, and template into a proo
                 }
             }
         }
-        acc.add(record, paths);
+        acc.add(record);
     }
-    assert.ok(sawSidecar, 'at least one batch carried a sidecar');
+    assert.ok(sawWhy, 'at least one batch carried storylines');
     // belief context captured for the panel
     assert.ok(acc.belief, 'belief block captured');
     // the merged candidates carry why-data, and the generator produces prose
@@ -423,7 +422,7 @@ test('§12.2-7 why sidecar: binary paths decode, merge, and template into a proo
             seat: job.seat,
             belief: {
                 pinned: acc.belief!.pinned, voids: acc.belief!.voids, floor: acc.belief!.floor,
-                poolCount: acc.belief!.pool.length,
+                poolCount: acc.belief!.poolCount,
                 hand: [], oppCounts: [], table: [], defender: 0,
                 trump: acc.beliefCtx?.trump ?? -1,
             },
@@ -444,22 +443,22 @@ test('§12.2-7 why sidecar: binary paths decode, merge, and template into a proo
         }
     }
     assert.ok(proofs > 0, 'at least one candidate has a storyline proof');
-    console.log(`  §12.2-7: sidecar decoded; ${withWhy.length} candidates explained, ${proofs} with storyline proofs`);
+    console.log(`  §12.2-7: storylines read; ${withWhy.length} candidates explained, ${proofs} with storyline proofs`);
 });
 
-test('§12.2-6 env reload: raising OG_W1 grows nsim between batches', async () => {
+test('§12.2-6 knob reload: raising w1 grows nsim between batches', async () => {
     const inst = await freshInstance();
     const { code, frames, id } = await fixture('4p', hw(4), 42);
     const idx = Math.floor(frames.length * 0.4);
     const job = buildOracleJob(frames, code, idx, true, id)!;
-    const nsimAt = (w1: string) => {
-        inst.writeEnv({ ...ENV_BASE, OG_W1: w1 });
+    const nsimAt = (w1: number) => {
+        inst.setKnobs({ ...ORACLE_KNOBS, w1 });
         const r = inst.analyzeOnce(job, 5);
         const rec = (r as any).record;
         return Math.max(...rec.candidates.map((c: any) => c.nsim || 0));
     };
-    const small = nsimAt('8');
-    const big = nsimAt('32');
+    const small = nsimAt(8);
+    const big = nsimAt(32);
     assert.ok(big > small, `nsim grew after reload (${small} -> ${big})`);
-    console.log(`  §12.2-6: OG_W1 8->32 grew nsim ${small} -> ${big}`);
+    console.log(`  §12.2-6: w1 8->32 grew nsim ${small} -> ${big}`);
 });

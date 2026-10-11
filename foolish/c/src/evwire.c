@@ -416,3 +416,18 @@ int evwire_as3_split(const unsigned char *buf, int len, int *seq_len, int *flags
     if (block_off) *block_off = seq + 1;
     return 0;
 }
+
+// ---------- the cast header -----------------------------------------------------
+
+int evwire_cast_header_put(uint32_t version, unsigned char *out, int cap) {
+    if (!out || cap < EVW_CAST_HEADER_BYTES) return EVW_ECAP;
+    out[0] = EVW_CAST_FORMAT;
+    le_put_u32(out + 1, version);
+    return EVW_CAST_HEADER_BYTES;
+}
+
+int evwire_cast_header_get(const unsigned char *buf, int len, uint32_t *version) {
+    if (!buf || len < EVW_CAST_HEADER_BYTES || buf[0] != EVW_CAST_FORMAT) return EVW_EPARSE;
+    if (version) *version = le_get_u32(buf + 1);
+    return EVW_CAST_HEADER_BYTES;
+}

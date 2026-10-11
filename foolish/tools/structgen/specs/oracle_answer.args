@@ -1,0 +1,19 @@
+# structgen arguments for sdk/ts/gen/oracle_answer.oracle.ts: the Infinite
+# Oracle's Mode A bridge (src/oracle/oracleBridge.ts). What one deliberation
+# answered comes back through a snapshot reader, and the knobs go in through a
+# writer (c/src/oracle_answer.h OgAnswer, OgKnobs), so the bridge holds no
+# offset, no magic number and no text to parse. Read by tools/structgen/gen.sh
+# with --cwd c/ and the oracle build's own flags (the header is compiled only
+# under FOOLISH_ORACLE_BUILD and OG_EXPLAIN_BUILD).
+# Lines starting with # are dropped; everything else is split on whitespace.
+--header oracle_answer.h --root OgAnswer --root OgKnobs
+--snapshot OgAnswer --snapshot OgKnobs --writer OgKnobs --snapshot-only
+--count OgAnswer.hand=n_hand --count OgAnswer.hand_count=n_players --count OgAnswer.table=n_battles
+--count OgAnswer.pinned=n_players --count OgAnswer.voids=n_players --count OgAnswer.floor=n_players
+--count OgAnswer.rows=n_rows --count OgAnswer.why=n_why
+--count OgAnswerPinned.cards=n --count OgAnswerVoids.cards=n
+--count OgAnswerRow.cards=n_cards --count OgAnswerRow.targets=n_targets --count OgAnswerRow.label=label_len
+--count OgAnswerWhy.replies=n_replies --count OgAnswerWhy.paths=n_paths --count OgAnswerPath.sym=len
+# The codes a row and an answer carry, and the move ids a row's type is one of.
+--const OG_VERDICT_ --const OG_SOLVER_ --const MOVE_
+--header strategy.h --const STRAT_OCTOGEN

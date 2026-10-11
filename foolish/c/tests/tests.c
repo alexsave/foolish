@@ -1678,6 +1678,27 @@ static void test_bot_knobs_precedence(void) {
     CHECK(bot_knob_int("CD_RACE", 42) == 42, "after clear, defaults apply");
 }
 
+// The roster as the value a host reads (bot_roster.h BotRosterTable): every
+// entry, in table order, field for field, with what this build links.
+static void test_bot_roster_table_is_the_roster(void) {
+    BotRosterTable t;
+    memset(&t, 0xA5, sizeof t);
+    const int n = bot_roster_table(&t);
+    CHECK(n == bot_roster_count() && t.n == n, "one row per roster entry");
+    for (int i = 0; i < n && i < BOT_ROSTER_MAX; i++) {
+        const BotRosterEntry *e = bot_roster_at(i);
+        const BotRosterRow *r = &t.rows[i];
+        CHECK(r->strat == e->strat, "a row carries its entry's brain");
+        CHECK(r->linked == (bot_roster_linked(i) != 0), "a row says whether this build links the brain");
+        CHECK(r->uses_logs == (e->uses_logs != 0), "a row carries uses_logs");
+        CHECK(r->seeded == (e->seeded != 0), "a row carries seeded");
+        CHECK(r->offline == (e->offline != 0), "a row carries offline");
+        CHECK(r->tier == e->tier, "a row carries its tier");
+        CHECK(r->key_len == strlen(e->key) && memcmp(r->key, e->key, r->key_len) == 0,
+              "a row carries its key, byte for byte");
+    }
+}
+
 // bot_roster_choose must leave no knobs installed behind it: the arena and the
 // MC rollout policies call the strategies directly and must see C defaults.
 static void test_bot_roster_choose_scopes_knobs(void) {
@@ -2521,7 +2542,21 @@ static void test_replay_step_index_says_what_each_step_is(void) {
         CHECK(idx[0] == REPLAY_ATOM_DEAL, "step 0 is the deal");
         CHECK(idx[1] == RS_SEAT_NONE, "the deal is nobody's action");
 
+        // The same records as the struct a host reads them through
+        // (replay_steps.h ReplayStep): three named fields over the three bytes,
+        // with nobody's seat reading as -1.
+        int as_struct = 1;
+        for (int i = 0; i < steps; i++) {
+            ReplayStep r;
+            memcpy(&r, idx + i * RS_INDEX_STRIDE, sizeof r);
+            const int seat = idx[i * RS_INDEX_STRIDE + 1];
+            if (r.kind != idx[i * RS_INDEX_STRIDE] || r.named != idx[i * RS_INDEX_STRIDE + 2]
+                || r.seat != (seat == RS_SEAT_NONE ? -1 : seat)) as_struct = 0;
+        }
+        CHECK(as_struct, "a record read as a ReplayStep is its kind, its seat (-1 for nobody) and its named count");
+
         int seen[8] = {0};
+        int named_cards = 0, laid_cards = 0;
         for (int i = 1; i < steps; i++) {
             const int kind = idx[i * RS_INDEX_STRIDE];
             const int seat = idx[i * RS_INDEX_STRIDE + 1];
@@ -2529,6 +2564,14 @@ static void test_replay_step_index_says_what_each_step_is(void) {
             CHECK(kind != REPLAY_ATOM_DRAW, "a draw is never a step of its own");
             CHECK(kind <= REPLAY_ATOM_GOOD, "every step reports a known atom kind");
             if (kind <= REPLAY_ATOM_GOOD) seen[kind]++;
+            // Laying cards names them; taking the pile or saying good names none.
+            const int named = idx[i * RS_INDEX_STRIDE + 2];
+            named_cards += named;
+            if (kind == REPLAY_ATOM_ATTACK || kind == REPLAY_ATOM_COVER || kind == REPLAY_ATOM_PASS) {
+                CHECK(named >= 1, "a move that lays cards names them");
+            } else {
+                CHECK(named == 0, "a pickup, a good and a round end name no card");
+            }
             // A seat acts, or the bout closed on nobody in particular.
             if (kind == REPLAY_ATOM_ROUND_END) {
                 CHECK(seat == RS_SEAT_NONE, "a round end is nobody's action");
@@ -2545,13 +2588,14 @@ static void test_replay_step_index_says_what_each_step_is(void) {
         int want[8] = {0};
         for (int i = 0; i < g.num_logs; i++) {
             switch (g.logs[i].log_type) {
-                case LOG_ATTACK: want[REPLAY_ATOM_ATTACK]++; break;
-                case LOG_COVER:  want[REPLAY_ATOM_COVER]++;  break;
-                case LOG_PASS:   want[REPLAY_ATOM_PASS]++;   break;
+                case LOG_ATTACK: want[REPLAY_ATOM_ATTACK]++; laid_cards += g.logs[i].num_pairs; break;
+                case LOG_COVER:  want[REPLAY_ATOM_COVER]++;  laid_cards += g.logs[i].num_pairs; break;
+                case LOG_PASS:   want[REPLAY_ATOM_PASS]++;   laid_cards += g.logs[i].num_pairs; break;
                 case LOG_PICKUP: want[REPLAY_ATOM_PICKUP]++; break;
                 default: break;
             }
         }
+        CHECK(named_cards == laid_cards, "the index names exactly the cards the game's moves laid");
         CHECK(seen[REPLAY_ATOM_ATTACK] == want[REPLAY_ATOM_ATTACK], "the index counts the game's attacks");
         CHECK(seen[REPLAY_ATOM_COVER]  == want[REPLAY_ATOM_COVER],  "the index counts the game's covers");
         CHECK(seen[REPLAY_ATOM_PASS]   == want[REPLAY_ATOM_PASS],   "the index counts the game's passes");
@@ -6275,6 +6319,225 @@ static void test_build_plan_freezes_the_row_with_the_counts(void) {
           "a stream with no rows on it gets no row back");
 }
 
+// ---- the plan asked as one struct (anim_plan.h anim_plan_ask) ---------------
+//
+// A host across a bridge fills an AnimPlanAsk and the kernel plans from it. The
+// claim is that this is anim_build_plan and nothing else: the same stream said
+// as AnimPlanEvents gets the same plan, field for field. Compared by field and
+// not by memcmp, because a plan past its n_steps and a struct's padding are
+// whatever the stack held.
+static int anim_plans_same(const AnimPlan *a, const AnimPlan *b, int n_players) {
+    if (a->n_steps != b->n_steps || a->total_ms != b->total_ms || a->n_veil != b->n_veil) return 0;
+    if (memcmp(a->veil_ids, b->veil_ids, (size_t)a->n_veil) != 0) return 0;
+    const AnimCounts *p = &a->pre, *q = &b->pre;
+    if (p->deck != q->deck || p->discard != q->discard || p->n_players != q->n_players
+        || p->n_battles != q->n_battles || p->paired != q->paired
+        || !card_eq(p->flipped, q->flipped)) return 0;
+    if (memcmp(p->hand, q->hand, sizeof(int) * (size_t)n_players) != 0) return 0;
+    if (memcmp(p->battles, q->battles, 2 * (size_t)p->n_battles) != 0) return 0;
+    for (int i = 0; i < a->n_steps; i++) {
+        const AnimPlanStep *x = &a->steps[i], *y = &b->steps[i];
+        if (x->type != y->type || x->seat != y->seat || x->from != y->from || x->to != y->to
+            || x->n_cards != y->n_cards || x->duration_ms != y->duration_ms
+            || x->start_ms != y->start_ms || x->beat_first != y->beat_first
+            || x->beat_n != y->beat_n || x->hold_ms != y->hold_ms
+            || x->deck != y->deck || x->discard != y->discard
+            || x->in_flight_from_deck != y->in_flight_from_deck
+            || x->in_flight_to_flipped != y->in_flight_to_flipped
+            || x->reveals != y->reveals || !card_eq(x->trump_out, y->trump_out)
+            || x->trump_from != y->trump_from) return 0;
+        if (memcmp(x->hand, y->hand, sizeof(int) * (size_t)n_players) != 0) return 0;
+    }
+    return 1;
+}
+
+// Static: 128 events of storage is more than a test frame should carry.
+static AnimPlanAsk pa_ask;
+static AnimPlan    pa_asked, pa_direct;
+
+// A STREAM WITH EVERY KIND OF STEP IN IT: one with its own board and row, one
+// with neither, one of masked backs, and the draw that deals the trump out.
+// The step that carries no counts is filled with stale ones anyway, because a
+// host reuses the struct and what the last stream left there is not this
+// step's board.
+static void test_plan_ask_is_build_plan(void) {
+    const Card trump = { 1, 7 }, hidden = { -1, -1 };
+    const unsigned char six_d = 3 * 13 + 5, king_d = 3 * 13 + 12;
+    const unsigned char after_pass[4] = { six_d, ANIM_TABLE_NONE, king_d, ANIM_TABLE_NONE };
+    const int final_hand[3] = { 7, 7, 6 };
+
+    memset(&pa_ask, 0, sizeof pa_ask);
+    pa_ask.n_events = 4;
+    pa_ask.n_players = 3;
+    pa_ask.final_deck = 0;
+    pa_ask.final_discard = 4;
+    pa_ask.final_flipped = CARD_NONE;
+    memcpy(pa_ask.final_hand, final_hand, sizeof final_hand);
+
+    // 0: a pass onto the table, with its own board and that board's row.
+    AnimPlanAskEvent *a = &pa_ask.events[0];
+    a->type = ANIM_EVT_ATTACK_PASS; a->seat = 0; a->from = ANIM_LOC_HAND; a->to = ANIM_LOC_TABLE;
+    a->n_cards = 1; a->cards[0] = (Card){ 3, 13 };
+    a->has_counts = true; a->deck = 3; a->discard = 4; a->flipped = trump;
+    a->hand[0] = 5; a->hand[1] = 6; a->hand[2] = 6;
+    a->n_row = 4; memcpy(a->row, after_pass, 4);
+
+    // 1: a cover with NO counts of its own - and stale ones lying in the struct.
+    a = &pa_ask.events[1];
+    a->type = ANIM_EVT_COVER; a->seat = 1; a->from = ANIM_LOC_HAND; a->to = ANIM_LOC_TABLE;
+    a->n_cards = 1; a->cards[0] = (Card){ 3, 12 };
+    a->has_counts = false; a->deck = 99; a->discard = 98; a->flipped = (Card){ 0, 1 };
+    a->hand[0] = 40; a->hand[1] = 41; a->hand[2] = 42;
+
+    // 2: another seat's draw, masked. The cards are given identities on
+    // purpose: it is the FLAG that keeps them out of the veil, and a stream
+    // whose masked cards were already {-1,-1} could lose the flag unnoticed.
+    a = &pa_ask.events[2];
+    a->type = ANIM_EVT_REFILL; a->seat = 1; a->from = ANIM_LOC_DECK; a->to = ANIM_LOC_HAND;
+    a->mask_cards = true; a->n_cards = 2; a->cards[0] = (Card){ 2, 5 }; a->cards[1] = (Card){ 2, 6 };
+    a->has_counts = true; a->deck = 1; a->discard = 4; a->flipped = trump;
+    a->hand[0] = 5; a->hand[1] = 7; a->hand[2] = 6;
+
+    // 3: my draw, a hidden card and the trump, on a board whose flipped slot is
+    // now CARD_NONE.
+    a = &pa_ask.events[3];
+    a->type = ANIM_EVT_REFILL; a->seat = 0; a->from = ANIM_LOC_DECK; a->to = ANIM_LOC_HAND;
+    a->n_cards = 2; a->cards[0] = hidden; a->cards[1] = trump;
+    a->has_counts = true; a->deck = 0; a->discard = 4; a->flipped = CARD_NONE;
+    a->hand[0] = 7; a->hand[1] = 7; a->hand[2] = 6;
+
+    // The same stream as anim_build_plan takes it, written out by hand.
+    const int h0[3] = { 5, 6, 6 }, h2[3] = { 5, 7, 6 }, h3[3] = { 7, 7, 6 };
+    const Card c0[1] = { { 3, 13 } }, c1[1] = { { 3, 12 } };
+    const Card c2[2] = { { 2, 5 }, { 2, 6 } }, c3[2] = { hidden, trump };
+    const AnimPlanEvent evs[4] = {
+        { .type = ANIM_EVT_ATTACK_PASS, .seat = 0, .from = ANIM_LOC_HAND, .to = ANIM_LOC_TABLE,
+          .cards = c0, .n_cards = 1, .has_counts = 1, .deck = 3, .discard = 4, .flipped = trump,
+          .hand = h0, .n_battles = 2, .battles = after_pass },
+        { .type = ANIM_EVT_COVER, .seat = 1, .from = ANIM_LOC_HAND, .to = ANIM_LOC_TABLE,
+          .cards = c1, .n_cards = 1, .flipped = CARD_NONE, .n_battles = ANIM_NO_BOARD },
+        { .type = ANIM_EVT_REFILL, .seat = 1, .from = ANIM_LOC_DECK, .to = ANIM_LOC_HAND,
+          .cards = c2, .n_cards = 2, .mask_cards = 1, .has_counts = 1, .deck = 1, .discard = 4,
+          .flipped = trump, .hand = h2, .n_battles = ANIM_NO_BOARD },
+        { .type = ANIM_EVT_REFILL, .seat = 0, .from = ANIM_LOC_DECK, .to = ANIM_LOC_HAND,
+          .cards = c3, .n_cards = 2, .has_counts = 1, .deck = 0, .discard = 4,
+          .flipped = CARD_NONE, .hand = h3, .n_battles = ANIM_NO_BOARD },
+    };
+    CHECK(anim_build_plan(evs, 4, 3, 0, 4, CARD_NONE, final_hand, &pa_direct) == ANIM_EOK,
+          "the stream plans, said as events");
+    CHECK(anim_plan_ask(&pa_ask, &pa_asked) == ANIM_EOK, "the stream plans, asked as one struct");
+    CHECK(anim_plans_same(&pa_asked, &pa_direct, 3), "the ask's plan is anim_build_plan's plan");
+
+    // …and what each kind of step is there to prove, said on its own so that a
+    // failure names the field and not just "the plans differ".
+    CHECK(pa_asked.n_steps == 4, "four events, four steps");
+    CHECK(pa_asked.pre.hand[0] == 6 && pa_asked.pre.deck == 3,
+          "the freeze anchors on the first step's own counts");
+    CHECK(card_eq(pa_asked.pre.flipped, trump), "…and on its flipped trump");
+    CHECK(pa_asked.pre.n_battles == 1 && pa_asked.pre.battles[0] == six_d,
+          "the first step's row crossed: the plan opens on the pile already down");
+    CHECK(pa_asked.steps[1].deck == 3 && pa_asked.steps[1].discard == 4
+          && pa_asked.steps[1].hand[1] == 5,
+          "a step with no board carries the walk forward, not the stale board in its struct");
+    CHECK(pa_asked.n_veil == 3, "the masked draw's cards stay out of the veil, and a hidden card names nothing");
+    CHECK(card_eq(pa_asked.steps[3].trump_out, trump) && card_is_none(pa_asked.steps[2].trump_out),
+          "CARD_NONE in a board's flipped slot is the step that dealt the trump out");
+    CHECK(pa_asked.steps[2].seat == 1 && pa_asked.steps[2].from == ANIM_LOC_DECK
+          && pa_asked.steps[2].to == ANIM_LOC_HAND && pa_asked.steps[2].type == ANIM_EVT_REFILL,
+          "a step's type, seat and places cross as they were said");
+}
+
+// THE FINAL BOARD IS READ ONLY BY A STREAM CARRYING NO BOARD, so that is the
+// stream that proves it crosses: its counts, its hand, and its flipped slot as
+// a hidden card and as CARD_NONE, which are two different cards to the kernel.
+static void test_plan_ask_carries_the_final_board(void) {
+    const Card hidden = { -1, -1 };
+    const int final_hand[2] = { 3, 9 };
+    const Card swept[2] = { { 0, 9 }, { 2, 9 } };
+
+    memset(&pa_ask, 0, sizeof pa_ask);
+    pa_ask.n_events = 1;
+    pa_ask.n_players = 2;
+    pa_ask.final_deck = 7;
+    pa_ask.final_discard = 2;
+    pa_ask.final_flipped = hidden;
+    memcpy(pa_ask.final_hand, final_hand, sizeof final_hand);
+    AnimPlanAskEvent *a = &pa_ask.events[0];
+    a->type = ANIM_EVT_PICKUP; a->seat = 1; a->from = ANIM_LOC_TABLE; a->to = ANIM_LOC_HAND;
+    a->n_cards = 2; a->cards[0] = swept[0]; a->cards[1] = swept[1];
+    // No row: bytes lying in the array past n_row are not this step's table.
+    a->n_row = 0;
+    a->row[0] = 9 - 1; a->row[1] = ANIM_TABLE_NONE; a->row[2] = 2 * 13 + 9 - 1; a->row[3] = ANIM_TABLE_NONE;
+
+    const AnimPlanEvent ev = {
+        .type = ANIM_EVT_PICKUP, .seat = 1, .from = ANIM_LOC_TABLE, .to = ANIM_LOC_HAND,
+        .cards = swept, .n_cards = 2, .flipped = CARD_NONE, .n_battles = ANIM_NO_BOARD,
+    };
+    CHECK(anim_build_plan(&ev, 1, 2, 7, 2, hidden, final_hand, &pa_direct) == ANIM_EOK
+          && anim_plan_ask(&pa_ask, &pa_asked) == ANIM_EOK
+          && anim_plans_same(&pa_asked, &pa_direct, 2),
+          "a boardless stream plans off the final board, the same either way");
+    CHECK(pa_asked.pre.deck == 7 && pa_asked.pre.discard == 2, "the final deck and discard crossed");
+    CHECK(pa_asked.pre.hand[0] == 3 && pa_asked.pre.hand[1] == 7,
+          "the final hand crossed, with the pickup taken back out of it");
+    CHECK(pa_asked.pre.flipped.suit == -1 && pa_asked.pre.flipped.value == -1,
+          "a hidden flipped card stays the hidden card");
+    CHECK(pa_asked.pre.paired == 0,
+          "a step that carries no row gets none from the bytes left in its array");
+
+    pa_ask.final_flipped = CARD_NONE;
+    CHECK(anim_plan_ask(&pa_ask, &pa_asked) == ANIM_EOK && card_is_none(pa_asked.pre.flipped),
+          "…and no flipped card stays CARD_NONE, which is not the hidden card");
+
+    pa_ask.n_players = 1;
+    CHECK(anim_plan_ask(&pa_ask, &pa_asked) == ANIM_EBADARG, "a table of one is refused, as it is for events");
+}
+
+// THE CAPS. Each count is a byte that can say more than its array holds, so
+// each is refused before anything reads past the array - and the widest stream
+// that does fit is still planned.
+static void test_plan_ask_caps(void) {
+    memset(&pa_ask, 0, sizeof pa_ask);
+    pa_ask.n_players = 2;
+    pa_ask.final_hand[0] = pa_ask.final_hand[1] = 6;
+    CHECK(anim_plan_ask(NULL, &pa_asked) == ANIM_EBADARG, "no ask, no plan");
+    CHECK(anim_plan_ask(&pa_ask, NULL) == ANIM_EBADARG, "nowhere to put a plan, no plan");
+    CHECK(anim_plan_ask(&pa_ask, &pa_asked) == ANIM_EOK && pa_asked.n_steps == 0,
+          "an empty stream is a plan of no steps");
+
+    // Notices, so that 128 of them stay inside the veil and the clock.
+    for (int i = 0; i < ANIM_MAX_STEPS; i++) {
+        pa_ask.events[i].type = ANIM_EVT_OUT;
+        pa_ask.events[i].seat = ANIM_SEAT_NONE;
+        pa_ask.events[i].from = pa_ask.events[i].to = ANIM_LOC_NONE;
+    }
+    pa_ask.n_events = ANIM_MAX_STEPS;
+    CHECK(anim_plan_ask(&pa_ask, &pa_asked) == ANIM_EOK && pa_asked.n_steps == ANIM_MAX_STEPS,
+          "as many events as a plan has steps fit");
+    CHECK(pa_asked.steps[ANIM_MAX_STEPS - 1].seat == ANIM_SEAT_NONE
+          && pa_asked.steps[ANIM_MAX_STEPS - 1].from == ANIM_LOC_NONE,
+          "…and no seat and no place cross as themselves");
+    pa_ask.n_events = ANIM_MAX_STEPS + 1;
+    CHECK(anim_plan_ask(&pa_ask, &pa_asked) == ANIM_ECAP, "one event more is over the cap");
+
+    pa_ask.n_events = 1;
+    AnimPlanAskEvent *a = &pa_ask.events[0];
+    a->mask_cards = true;
+    a->n_cards = ANIM_ASK_MAX_CARDS;
+    CHECK(anim_plan_ask(&pa_ask, &pa_asked) == ANIM_EOK && pa_asked.steps[0].n_cards == ANIM_ASK_MAX_CARDS,
+          "an event of as many cards as its array holds fits");
+    a->n_cards = ANIM_ASK_MAX_CARDS + 1;
+    CHECK(anim_plan_ask(&pa_ask, &pa_asked) == ANIM_ECAP, "one card more is over the cap");
+    a->n_cards = 0;
+
+    a->n_row = ANIM_ASK_MAX_ROW;
+    CHECK(anim_plan_ask(&pa_ask, &pa_asked) == ANIM_EOK, "a row as long as its array fits");
+    a->n_row = ANIM_ASK_MAX_ROW + 2;
+    CHECK(anim_plan_ask(&pa_ask, &pa_asked) == ANIM_ECAP, "one battle more is over the cap");
+    a->n_row = 3;
+    CHECK(anim_plan_ask(&pa_ask, &pa_asked) == ANIM_EBADARG, "a row of three bytes is half a battle, and refused");
+}
+
 // ---------------------------------------------------------------------------
 // …and over REAL GAMES, against the kernel's own boards.
 //
@@ -6843,6 +7106,62 @@ static void test_the_transport_is_the_only_thing_the_two_clients_disagree_about(
     CHECK(anim_transport() == ANIM_TRANSPORT_CHAIN, "…and does not land");
 }
 
+// THE SWEEP IS DERIVED, AND THE CAPACITY TEST IS INCLUSIVE. Both were pinned
+// only through a wasm entry that parsed its own byte format
+// (wasm_anim_conflict_verdicts), which no host called; they are pinned on the
+// rule now, and that entry is gone.
+static void test_conflict_the_sweep_is_read_off_the_stream(void) {
+    const Card three = card_of_id(CF_ID(0, 3)), four = card_of_id(CF_ID(1, 4));
+    const Card two = card_of_id(CF_ID(3, 2)), mine = card_of_id(CF_ID(2, 6));
+    AnimEvent busy[4] = {
+        { ANIM_EVT_ATTACK_PASS, 0, ANIM_LOC_NONE, ANIM_LOC_NONE, &three, 1, 0 },
+        { ANIM_EVT_COVER,       1, ANIM_LOC_NONE, ANIM_LOC_NONE, &four,  1, 0 },
+        { ANIM_EVT_REFILL,      0, ANIM_LOC_NONE, ANIM_LOC_NONE, &two,   1, 0 },
+        { ANIM_EVT_CARDS_TO_TRASH, ANIM_SEAT_NONE, ANIM_LOC_NONE, ANIM_LOC_NONE, &three, 1, 0 },
+    };
+    int moved[8], cleared = 9;
+
+    CHECK(anim_conflict_sweep(busy, 3, moved, 8, &cleared) == 0 && cleared == 0,
+          "placements and a draw move nothing this rule reads and clear no table");
+    CHECK(anim_conflict_sweep(busy, 4, moved, 8, &cleared) == 1 && cleared == 1
+              && moved[0] == CF_ID(0, 3),
+          "a trash sweeps: the table is gone and the card it names is moved");
+
+    busy[3].type = ANIM_EVT_PICKUP; busy[3].seat = 1; busy[3].cards = &mine;
+    CHECK(anim_conflict_sweep(busy, 4, moved, 8, &cleared) == 1 && cleared == 1
+              && moved[0] == CF_ID(2, 6),
+          "a pickup sweeps too");
+
+    busy[3].mask_cards = 1;
+    CHECK(anim_conflict_sweep(busy, 4, moved, 8, &cleared) == 0 && cleared == 1,
+          "a pickup of masked backs still took the table, and names nothing");
+    busy[3].mask_cards = 0; busy[3].cards = NULL; busy[3].n_cards = 0;
+    CHECK(anim_conflict_sweep(busy, 4, moved, 8, &cleared) == 0 && cleared == 1,
+          "…and so did a sweep that carries no card at all");
+
+    CHECK(anim_conflict_sweep(busy, 4, moved, 0, &cleared) == 0, "nothing named needs no room");
+    busy[3].cards = &mine; busy[3].n_cards = 1;
+    CHECK(anim_conflict_sweep(busy, 4, moved, 0, &cleared) == ANIM_ECAP, "a named card with no room is refused");
+    CHECK(anim_conflict_sweep(NULL, 1, moved, 8, &cleared) == ANIM_EBADARG, "a count with no events");
+}
+
+static void test_conflict_capacity_is_inclusive(void) {
+    const int mine = CF_ID(0, 4);
+    AnimConflictFacts f = cf_facts(NULL, 0, NULL, 0, NULL, 0);
+    anim_set_transport(ANIM_TRANSPORT_SERVER);
+    // server_may_still_accept: final_uncovered + pending_attacks <= defender_hand.
+    AnimServerHope hope = { .is_cover = 0, .table_cleared = 0,
+                            .pending_attacks = 2, .defender_hand = 5, .final_uncovered = 3 };
+    CHECK(anim_conflict_verdict(mine, ANIM_DEST_TABLE, &f, &hope) == ANIM_CONFLICT_KEEP,
+          "3 + 2 <= 5 exactly fits, so the card may yet be accepted");
+    hope.defender_hand = 4;
+    CHECK(anim_conflict_verdict(mine, ANIM_DEST_TABLE, &f, &hope) == ANIM_CONFLICT_REVERT,
+          "3 + 2 > 4 cannot fit");
+    hope.is_cover = 1;
+    CHECK(anim_conflict_verdict(mine, ANIM_DEST_TABLE, &f, &hope) == ANIM_CONFLICT_KEEP,
+          "the same card as a cover is not counted against the hand");
+}
+
 
 // ---- the board's own sets and small rules ---------------------------------
 //
@@ -7364,6 +7683,350 @@ static void test_board_finish_rows_rank_first_out_to_the_fool(void) {
     n = anim_finish_rows(order, 1, -1, 4, 0, rows, MAX_PLAYERS);
     CHECK(n == 1 && rows[0].place == 1, "a game with nobody out yet ranks only who is out");
     CHECK(anim_finish_rows(NULL, 0, -1, 4, 0, rows, MAX_PLAYERS) == 0, "…and an untouched game, nobody");
+}
+
+// ---------- four questions asked as values (anim_plan.h Anim*Ask) ------------
+//
+// A browser used to ask these four by packing bytes into the io buffer in a
+// layout only a comment in c/wasm/wasm_api.c described, and the shim did the
+// converting and the bounds checks where no native test could reach them. Each
+// is now a struct in and a struct out, converted in anim_plan.c, so this file
+// can hold it to what the byte entries answered.
+//
+// "WHAT THE BYTE ENTRIES ANSWERED" IS REBUILT HERE, NOT REMEMBERED: a card went
+// through sdk/ts/wasm/bots.ts wireStateCard (old_wire_state_card below is that
+// function, line for line) and then the shim's own card_from_wire_pair
+// (c/wasm/wire.h, still the real one). The asks are compared against that
+// composition over EVERY value a Card can hold, because the cases that matter
+// are the ones nobody would think to write down: the hidden card, CARD_NONE,
+// and a card with one field off the deck.
+//
+// MUTATION-CHECKED, each mutation applied to c/src/anim_plan.c on its own and
+// the failures counted (0 = survived; none did):
+//
+//   A1  ask_card returns the card unclamped                       -> 6
+//   A2  ask_card clamps the hidden card onto the deck too         -> 2
+//   A3  anim_stale_optimistic_ask drops the n_opt cap             -> 1
+//   A4  ...drops the n_table and n_named caps                     -> 2
+//   A5  ...reads `named` from `table`                             -> 1
+//   A6  ...leaves out->n set on a refusal                         -> 1
+//   B1  anim_reversal_order_ask does not empty the plan first     -> 2
+//   B2  ...hands the two counts over the wrong way round          -> 4
+//   C1  ask_hand_slot reads CARD_NONE as a card, not a back       -> 6
+//   C2  ask_hand_slot reads the hidden card as a back             -> 3
+//   C3  ask_hand_slot skips the clamp                             -> 3
+//   C4  anim_hand_laid_out_ask narrows `deferred` to 32 bits      -> 1
+//   C5  ...drops the n_cards cap (its scratch one slot longer,    -> 1
+//       or the stack protector kills the run before the CHECK)
+//   C6  ...drops the n_order cap                                  -> 1
+//   C7  ...writes a back out as the hidden card                   -> 5
+//   C8  ...passes the hand as the order                           -> 4
+//   C9  ...leaves out->n set on a refusal                         -> 1
+//   D1  anim_finish_ask drops the n_elim bound                    -> 1
+//   D2  ...drops the n_players ceiling                            -> 1
+//   D3  ...swaps game_over and my_seat                            -> 4
+//   D4  ...caps the rows at MAX_PLAYERS (no room for the fool)    -> 1
+//   D5  ...leaves out->n set on a refusal                         -> 1
+//
+// TWO CHECKS WERE REMOVED RATHER THAN TESTED, because no input could tell them
+// from the entry they wrap: a motions/groups cap in anim_reversal_order_ask
+// (anim_reversal_order refuses both first) and a floor on n_players in
+// anim_finish_ask (anim_finish_rows refuses a negative count itself).
+
+// sdk/ts/wasm/bots.ts wireStateCard, as it stood when these four went through
+// it. Its int8 wrap is the identity here: every value a Card holds is an int8.
+static unsigned char old_wire_state_card(Card c) {
+    int s = c.suit, v = c.value;
+    if (s == -1 && v == -1) return 0xFE;
+    if (s < 0) s = 0; else if (s > 3) s = 3;
+    if (v < 1) v = 1; else if (v > 13) v = 13;
+    return (unsigned char)(s * 13 + (v - 1));
+}
+
+// Every value the one-byte Card can hold, real or not: suit -4..3, value -16..15.
+static Card every_card(int i) {
+    Card c;
+    c.suit = (int8_t)((i & 7) - 4);
+    c.value = (int8_t)(((i >> 3) & 31) - 16);
+    return c;
+}
+
+static void test_ask_stale_reads_cards_as_the_wire_did(void) {
+    static AnimStaleAsk q;
+    AnimStaleRelease out;
+    const Card s7 = { SUIT_SPADES, 7 }, h9 = { SUIT_HEARTS, 9 }, dA = { SUIT_DIAMONDS, ACE_VALUE };
+    const Card c5 = { SUIT_CLUBS, 5 }, hidden = { -1, -1 };
+
+    // The rule itself, through the value: on the table and not named -> release.
+    memset(&q, 0, sizeof q);
+    q.n_opt = 3; q.opt[0] = s7; q.opt[1] = h9; q.opt[2] = dA;
+    q.n_table = 3; q.table[0] = dA; q.table[1] = c5; q.table[2] = s7;
+    q.n_named = 1; q.named[0] = dA;
+    CHECK(anim_stale_optimistic_ask(&q, &out) == 1 && out.n == 1 && out.release[0] == 0,
+          "the 7 is on the table and unnamed, the ace is named, the 9 is not there");
+    q.n_named = 0;
+    CHECK(anim_stale_optimistic_ask(&q, &out) == 2 && out.n == 2
+          && out.release[0] == 0 && out.release[1] == 2,
+          "with nothing named both on-table cards release, as indices into opt");
+
+    // EVERY CARD AGAINST EVERY CARD, held to the byte entry's answer.
+    int differ = 0;
+    for (int a = 0; a < 256; a++) for (int b = 0; b < 256; b++) {
+        const Card oc = every_card(a), tc = every_card(b);
+        memset(&q, 0, sizeof q);
+        q.n_opt = 1; q.opt[0] = oc;
+        q.n_table = 1; q.table[0] = tc;
+        const int got = anim_stale_optimistic_ask(&q, &out);
+        const Card wo = card_from_wire_pair(old_wire_state_card(oc));
+        const Card wt = card_from_wire_pair(old_wire_state_card(tc));
+        int rel[1];
+        const int want = anim_stale_optimistic_on_table(&wo, 1, &wt, 1, NULL, 0, rel, 1);
+        if (got != want || out.n != want) differ++;
+    }
+    CHECK(differ == 0, "over every pair of card values the ask releases what the wire bytes released");
+
+    // The three the sweep above is really about, by name.
+    memset(&q, 0, sizeof q);
+    q.n_opt = 1; q.opt[0] = hidden; q.n_table = 1; q.table[0] = hidden;
+    CHECK(anim_stale_optimistic_ask(&q, &out) == 0, "the hidden card matches nothing, not even itself");
+    q.opt[0] = (Card){ -1, 7 }; q.table[0] = s7;
+    CHECK(anim_stale_optimistic_ask(&q, &out) == 1,
+          "a suit off the deck is clamped onto it, as the wire clamped it");
+    q.opt[0] = CARD_NONE; q.table[0] = (Card){ SUIT_SPADES, 1 };
+    CHECK(anim_stale_optimistic_ask(&q, &out) == 1,
+          "CARD_NONE is no card of these lists: it clamps like any off-deck value");
+    q.opt[0] = s7; q.n_table = 0; q.n_named = 1; q.named[0] = s7;
+    CHECK(anim_stale_optimistic_ask(&q, &out) == 0, "a card only NAMED is not on the table");
+
+    // The caps, each at its edge and one past it.
+    memset(&q, 0, sizeof q);
+    q.n_opt = ANIM_MAX_CARDS; q.n_table = ANIM_MAX_TABLE_INPUT; q.n_named = ANIM_MAX_TABLE_INPUT;
+    for (int i = 0; i < ANIM_MAX_CARDS; i++) q.opt[i] = s7;
+    for (int i = 0; i < ANIM_MAX_TABLE_INPUT; i++) { q.table[i] = s7; q.named[i] = h9; }
+    CHECK(anim_stale_optimistic_ask(&q, &out) == ANIM_MAX_CARDS && out.n == ANIM_MAX_CARDS
+          && out.release[ANIM_MAX_CARDS - 1] == ANIM_MAX_CARDS - 1,
+          "three full lists are answered, the last index a byte still holds");
+    // ONE PAST, WITH NOTHING ON THE TABLE, so the only thing that can refuse
+    // is the count: with the table still full every pending card releases and
+    // the release cap answers ANIM_ECAP for the wrong reason.
+    q.n_opt = ANIM_MAX_CARDS + 1; q.n_table = 0; q.n_named = 0;
+    out.n = 7;
+    CHECK(anim_stale_optimistic_ask(&q, &out) == ANIM_ECAP && out.n == 0,
+          "one pending card too many is refused, and the answer is emptied");
+    q.n_opt = 1; q.n_table = ANIM_MAX_TABLE_INPUT + 1;
+    CHECK(anim_stale_optimistic_ask(&q, &out) == ANIM_ECAP, "a table past its array is refused");
+    q.n_table = 1; q.n_named = ANIM_MAX_TABLE_INPUT + 1;
+    CHECK(anim_stale_optimistic_ask(&q, &out) == ANIM_ECAP, "and so is a named list past its own");
+    CHECK(anim_stale_optimistic_ask(NULL, &out) == ANIM_EBADARG
+          && anim_stale_optimistic_ask(&q, NULL) == ANIM_EBADARG, "no question, or nowhere to answer");
+}
+
+static void test_ask_reversal_order_is_the_plan(void) {
+    static AnimReversalAsk q;
+    static AnimConflictPlan plan;
+
+    memset(&q, 0, sizeof q);
+    q.n_motions = 4; q.n_groups = 3;
+    q.verdicts[0] = ANIM_CONFLICT_REVERT; q.verdicts[1] = ANIM_CONFLICT_KEEP;
+    q.verdicts[2] = ANIM_CONFLICT_CLEAR;  q.verdicts[3] = ANIM_CONFLICT_REVERT;
+    q.group_sizes[0] = 2; q.group_sizes[1] = 1; q.group_sizes[2] = 1;
+    CHECK(anim_reversal_order_ask(&q, &plan) == 2 && plan.n_steps == 2 && plan.n_order == 2
+          && plan.step_count[0] == 1 && plan.step_count[1] == 1
+          && plan.order[0] == 3 && plan.order[1] == 0 && plan.n_verdicts == 4,
+          "last group first, and the group nothing reverts is dropped");
+
+    // A refusal leaves no steps behind: the plan is read where it lies.
+    q.group_sizes[2] = 0;
+    CHECK(anim_reversal_order_ask(&q, &plan) == ANIM_EBADARG
+          && plan.n_steps == 0 && plan.n_order == 0 && plan.n_verdicts == 0,
+          "groups that do not account for the motions are refused, and the last answer is gone");
+    q.group_sizes[1] = -1; q.group_sizes[2] = 3;
+    CHECK(anim_reversal_order_ask(&q, &plan) == ANIM_EBADARG,
+          "a negative group is refused even where the sizes still sum");
+
+    // The caps.
+    memset(&q, 0, sizeof q);
+    q.n_motions = ANIM_MAX_CONFLICT_MOTIONS + 1; q.n_groups = 1;
+    q.group_sizes[0] = ANIM_MAX_CONFLICT_MOTIONS + 1;
+    plan.n_steps = 5;
+    CHECK(anim_reversal_order_ask(&q, &plan) == ANIM_ECAP && plan.n_steps == 0,
+          "one motion past the array is refused before a verdict is read");
+    memset(&q, 0, sizeof q);
+    q.n_groups = ANIM_MAX_CONFLICT_GROUPS + 1;
+    CHECK(anim_reversal_order_ask(&q, &plan) == ANIM_ECAP, "and one group past its own");
+
+    // EVERY MOTION IN ONE GROUP - a size, and a motion count, the byte entry
+    // could not carry: it wrapped 256 to 0.
+    memset(&q, 0, sizeof q);
+    q.n_motions = ANIM_MAX_CONFLICT_MOTIONS; q.n_groups = 1;
+    q.group_sizes[0] = ANIM_MAX_CONFLICT_MOTIONS;
+    for (int i = 0; i < ANIM_MAX_CONFLICT_MOTIONS; i++) q.verdicts[i] = ANIM_CONFLICT_REVERT;
+    CHECK(anim_reversal_order_ask(&q, &plan) == 1 && plan.step_count[0] == ANIM_MAX_CONFLICT_MOTIONS
+          && plan.order[ANIM_MAX_CONFLICT_MOTIONS - 1] == ANIM_MAX_CONFLICT_MOTIONS - 1,
+          "a full sequence flown as one step reverses as one step");
+
+    // A full set of groups, against the entry it wraps.
+    memset(&q, 0, sizeof q);
+    q.n_motions = ANIM_MAX_CONFLICT_GROUPS; q.n_groups = ANIM_MAX_CONFLICT_GROUPS;
+    for (int i = 0; i < ANIM_MAX_CONFLICT_GROUPS; i++) {
+        q.group_sizes[i] = 1;
+        q.verdicts[i] = (i % 3) ? ANIM_CONFLICT_REVERT : ANIM_CONFLICT_KEEP;
+    }
+    static AnimConflictPlan want;
+    const int n_want = anim_reversal_order(q.verdicts, q.n_motions, q.group_sizes, q.n_groups, &want);
+    CHECK(anim_reversal_order_ask(&q, &plan) == n_want && n_want > 0
+          && plan.n_order == want.n_order
+          && memcmp(plan.order, want.order, (size_t)want.n_order * sizeof want.order[0]) == 0
+          && memcmp(plan.step_count, want.step_count, (size_t)n_want * sizeof want.step_count[0]) == 0,
+          "every group the cap allows, the same plan as the entry that takes arrays");
+    CHECK(anim_reversal_order_ask(NULL, &plan) == ANIM_EBADARG
+          && anim_reversal_order_ask(&q, NULL) == ANIM_EBADARG, "no question, or nowhere to answer");
+}
+
+static void test_ask_hand_laid_out_speaks_in_cards(void) {
+    static AnimHandAsk q;
+    AnimHandLaid out;
+    const Card h7 = { SUIT_HEARTS, 7 }, s9 = { SUIT_SPADES, 9 }, dQ = { SUIT_DIAMONDS, 11 };
+    const Card d2 = { SUIT_DIAMONDS, 1 }, hidden = { -1, -1 };
+
+    // Backs by count, known cards by identity: the masked rule, in cards.
+    memset(&q, 0, sizeof q);
+    q.n_cards = 4; q.cards[0] = h7; q.cards[1] = CARD_NONE; q.cards[2] = CARD_NONE; q.cards[3] = s9;
+    q.n_order = 5; q.order[0] = CARD_NONE; q.order[1] = s9; q.order[2] = CARD_NONE;
+    q.order[3] = CARD_NONE; q.order[4] = dQ;
+    CHECK(anim_hand_laid_out_ask(&q, &out) == 4 && out.n == 4
+          && card_is_none(out.cards[0]) && card_eq(out.cards[1], s9)
+          && card_is_none(out.cards[2]) && card_eq(out.cards[3], h7),
+          "two backs where the order put them, the third and the stale queen fall out, the 7 appends");
+    q.n_order = 0;
+    CHECK(anim_hand_laid_out_ask(&q, &out) == 4 && card_eq(out.cards[0], h7)
+          && card_is_none(out.cards[1]) && card_is_none(out.cards[2]) && card_eq(out.cards[3], s9),
+          "with no arrangement the hand comes back in kernel order");
+
+    // EVERY CARD VALUE as a one-card hand, held to the byte entry: a null slot
+    // crossed as ANIM_TABLE_UNKNOWN and came back null, anything else crossed as
+    // its wire byte and came back through cardFromWire. CARD_NONE is the null.
+    int differ = 0;
+    for (int a = 0; a < 256; a++) {
+        const Card c = every_card(a);
+        memset(&q, 0, sizeof q);
+        q.n_cards = 1; q.cards[0] = c;
+        const int got = anim_hand_laid_out_ask(&q, &out);
+        const unsigned char in = card_is_none(c) ? ANIM_TABLE_UNKNOWN : old_wire_state_card(c);
+        unsigned char laid[1];
+        const int want = anim_hand_laid_out_masked(&in, 1, 0, NULL, 0, laid, 1);
+        if (got != want || out.n != want) { differ++; continue; }
+        if (want == 1) {
+            const Card wc = laid[0] == ANIM_TABLE_UNKNOWN ? CARD_NONE : card_from_wire_pair(laid[0]);
+            if (!card_eq(out.cards[0], wc)) differ++;
+        }
+    }
+    CHECK(differ == 0, "over every card value the ask lays out what the wire bytes laid out");
+
+    // And the same alphabet on the ORDER side: every value as the arrangement
+    // of a hand that holds one back and the two of spades.
+    differ = 0;
+    for (int a = 0; a < 256; a++) {
+        const Card c = every_card(a);
+        memset(&q, 0, sizeof q);
+        q.n_cards = 2; q.cards[0] = (Card){ SUIT_SPADES, 1 }; q.cards[1] = CARD_NONE;
+        q.n_order = 1; q.order[0] = c;
+        const int got = anim_hand_laid_out_ask(&q, &out);
+        const unsigned char hand[2] = { 0, ANIM_TABLE_UNKNOWN };
+        const unsigned char ord = card_is_none(c) ? ANIM_TABLE_UNKNOWN : old_wire_state_card(c);
+        unsigned char laid[2];
+        const int want = anim_hand_laid_out_masked(hand, 2, 0, &ord, 1, laid, 2);
+        if (got != want) { differ++; continue; }
+        for (int i = 0; i < want; i++)
+            if (card_is_none(out.cards[i]) != (laid[i] == ANIM_TABLE_UNKNOWN)) differ++;
+    }
+    CHECK(differ == 0, "and an arrangement of any card value orders it as the wire bytes did");
+
+    // The three by name.
+    memset(&q, 0, sizeof q);
+    q.n_cards = 2; q.cards[0] = hidden; q.cards[1] = h7;
+    CHECK(anim_hand_laid_out_ask(&q, &out) == 1 && card_eq(out.cards[0], h7),
+          "the hidden card is not a back: it has no bit and drops out, as its wire byte did");
+    q.cards[0] = CARD_NONE;
+    CHECK(anim_hand_laid_out_ask(&q, &out) == 2 && card_is_none(out.cards[0]),
+          "CARD_NONE is the back, in and out");
+    q.cards[0] = (Card){ SUIT_CLUBS, 15 };
+    CHECK(anim_hand_laid_out_ask(&q, &out) == 2 && card_eq(out.cards[0], (Card){ SUIT_CLUBS, ACE_VALUE }),
+          "a value past the ace is clamped to it");
+
+    // THE DEFERRED SET IS ONE 64-BIT FIELD. The two of diamonds is id 39, a bit
+    // the low half does not have - the byte entry took the set as two 32-bit
+    // arguments for exactly that reason.
+    memset(&q, 0, sizeof q);
+    q.n_cards = 3; q.cards[0] = h7; q.cards[1] = d2; q.cards[2] = s9;
+    q.n_order = 1; q.order[0] = d2;
+    CHECK(card_to_id(d2) >= 32, "the fixture's deferred card sits in the high half");
+    CHECK(anim_hand_laid_out_ask(&q, &out) == 3 && card_eq(out.cards[0], d2), "not deferred: it leads");
+    q.deferred = (uint64_t)1 << card_to_id(d2);
+    CHECK(anim_hand_laid_out_ask(&q, &out) == 2 && card_eq(out.cards[0], h7) && card_eq(out.cards[1], s9),
+          "deferred: it reserves no slot, and the order cannot place it");
+
+    // The caps: a whole hand is answered, one card more is refused.
+    memset(&q, 0, sizeof q);
+    q.n_cards = MAX_HAND_SIZE; q.n_order = MAX_HAND_SIZE;
+    for (int i = 0; i < MAX_HAND_SIZE; i++) {
+        q.cards[i] = i < 52 ? card_of_id(i) : CARD_NONE;
+        q.order[MAX_HAND_SIZE - 1 - i] = q.cards[i];
+    }
+    CHECK(anim_hand_laid_out_ask(&q, &out) == MAX_HAND_SIZE && out.n == MAX_HAND_SIZE
+          && card_eq(out.cards[MAX_HAND_SIZE - 1], card_of_id(0)),
+          "a hand of every card and a fill of backs is laid out whole, in the order asked");
+    // ONE PAST, OF ONE CARD REPEATED, so the only thing that can refuse is the
+    // count: repeats fall out, and a hand of distinct cards would overflow the
+    // answer and get ANIM_ECAP for the wrong reason.
+    for (int i = 0; i < MAX_HAND_SIZE; i++) { q.cards[i] = h7; q.order[i] = h7; }
+    q.n_cards = MAX_HAND_SIZE + 1; q.n_order = 0;
+    out.n = 7;
+    CHECK(anim_hand_laid_out_ask(&q, &out) == ANIM_ECAP && out.n == 0,
+          "a hand past the array is refused, and the answer is emptied");
+    q.n_cards = 1; q.n_order = MAX_HAND_SIZE + 1;
+    CHECK(anim_hand_laid_out_ask(&q, &out) == ANIM_ECAP, "and so is an order past its own");
+    CHECK(anim_hand_laid_out_ask(NULL, &out) == ANIM_EBADARG
+          && anim_hand_laid_out_ask(&q, NULL) == ANIM_EBADARG, "no question, or nowhere to answer");
+}
+
+static void test_ask_finish_rows_and_its_bounds(void) {
+    AnimFinishAsk q;
+    AnimFinish out;
+
+    memset(&q, 0, sizeof q);
+    q.n_elim = 3; q.elimination[0] = 2; q.elimination[1] = 0; q.elimination[2] = 3;
+    q.game_over = 1; q.n_players = 4; q.my_seat = 3;
+    CHECK(anim_finish_ask(&q, &out) == 4 && out.n == 4, "everyone gets a row");
+    CHECK(out.rows[0].place == 1 && out.rows[0].seat == 2 && out.rows[0].is_you == 0
+          && out.rows[2].place == 3 && out.rows[2].seat == 3 && out.rows[2].is_you == 1
+          && out.rows[3].place == 4 && out.rows[3].seat == 1 && out.rows[3].is_you == 0,
+          "first out first, my row marked, the fool last and not me");
+    q.game_over = -1;
+    CHECK(anim_finish_ask(&q, &out) == 3 && out.n == 3, "a running game has no fool row");
+    q.game_over = 1; q.my_seat = -1;
+    CHECK(anim_finish_ask(&q, &out) == 4 && !out.rows[0].is_you && !out.rows[1].is_you
+          && !out.rows[2].is_you && !out.rows[3].is_you, "a spectator owns no row");
+
+    // A FULL TABLE'S LIST AND A FOOL is one row more than there are seats, and
+    // the answer has room for it (the byte entry's scratch did too).
+    memset(&q, 0, sizeof q);
+    q.n_elim = MAX_PLAYERS; q.n_players = MAX_PLAYERS; q.game_over = 0; q.my_seat = -1;
+    for (int i = 0; i < MAX_PLAYERS; i++) q.elimination[i] = (uint8_t)i;
+    CHECK(anim_finish_ask(&q, &out) == MAX_PLAYERS + 1 && out.rows[MAX_PLAYERS].place == MAX_PLAYERS,
+          "the longest list a table can hold, and the fool after it");
+
+    // The bounds the shim used to hold.
+    q.n_elim = MAX_PLAYERS + 1;
+    out.n = 7;
+    CHECK(anim_finish_ask(&q, &out) == ANIM_EBADARG && out.n == 0,
+          "a list longer than a table is refused, and the answer is emptied");
+    q.n_elim = 1; q.n_players = MAX_PLAYERS + 1;
+    CHECK(anim_finish_ask(&q, &out) == ANIM_EBADARG, "more seats than a table has");
+    q.n_players = -1;
+    CHECK(anim_finish_ask(&q, &out) == ANIM_EBADARG, "and fewer than none");
+    CHECK(anim_finish_ask(NULL, &out) == ANIM_EBADARG
+          && anim_finish_ask(&q, NULL) == ANIM_EBADARG, "no question, or nowhere to answer");
 }
 
 // THE END SCREEN CLEARS THE BOARD'S CHROME. Owner: "the last players (the
@@ -9485,6 +10148,99 @@ static void test_table_request_and_response(void) {
     CHECK(table_action_response(TABLE_MOOT, 5, 9, r, sizeof(r)) == TABLE_RESP_BYTES && r[1] == 2 && r[2] == 0,
           "moot: status 2 and no code");
     CHECK(table_action_response(TABLE_APPLIED, 0, 9, r, 6) == TABLE_E_CAP, "a short buffer is refused");
+}
+
+// Test: the client's halves of the action bodies (table_request_encode,
+// table_response_decode) against bytes captured from the hand-written
+// TypeScript that wrote and read them until it was deleted
+// (sdk/ts/wire/awire.ts encodeActionRequest, encodeActionResponse,
+// decodeActionResponse), and against the server's halves beside them.
+static void test_table_request_encode_and_response_decode(void) {
+    // A cover of two: 01 02 28 17 07 16.
+    static const uint8_t wire[] = { 0x01, 0x02, 0x28, 0x17, 0x07, 0x16 };
+    static const struct { const char *gid; int has_intent; uint32_t intent; int head; uint8_t want[16]; } req[] = {
+        { "a", 0, 0, 3, { 0x01, 0x01, 0x61 } },
+        { "a", 1, 0, 7, { 0x02, 0x01, 0x61, 0x00, 0x00, 0x00, 0x00 } },
+        { "a", 1, 5, 7, { 0x02, 0x01, 0x61, 0x05, 0x00, 0x00, 0x00 } },
+        { "a", 1, 0x01020304u, 7, { 0x02, 0x01, 0x61, 0x04, 0x03, 0x02, 0x01 } },
+        { "a", 1, 0x7fffffffu, 7, { 0x02, 0x01, 0x61, 0xff, 0xff, 0xff, 0x7f } },
+        { "a", 1, 0xffffffffu, 7, { 0x02, 0x01, 0x61, 0xff, 0xff, 0xff, 0xff } },
+        { "d79ae3", 0, 0, 8, { 0x01, 0x06, 0x64, 0x37, 0x39, 0x61, 0x65, 0x33 } },
+        { "d79ae3", 1, 0x01020304u, 12, { 0x02, 0x06, 0x64, 0x37, 0x39, 0x61, 0x65, 0x33, 0x04, 0x03, 0x02, 0x01 } },
+        { "\xc3\xa9\xe2\x98\x83", 0, 0, 7, { 0x01, 0x05, 0xc3, 0xa9, 0xe2, 0x98, 0x83 } },
+        { "\xc3\xa9\xe2\x98\x83", 1, 5, 11, { 0x02, 0x05, 0xc3, 0xa9, 0xe2, 0x98, 0x83, 0x05, 0x00, 0x00, 0x00 } },
+    };
+    uint8_t buf[600];
+    for (size_t i = 0; i < sizeof(req) / sizeof(req[0]); i++) {
+        const int gl = (int)strlen(req[i].gid);
+        memcpy(buf, req[i].gid, (size_t)gl);
+        memcpy(buf + gl, wire, sizeof(wire));
+        const int n = table_request_encode(buf, sizeof(buf), gl, sizeof(wire), req[i].has_intent, req[i].intent);
+        CHECK(n == req[i].head + (int)sizeof(wire) && memcmp(buf, req[i].want, (size_t)req[i].head) == 0
+              && memcmp(buf + req[i].head, wire, sizeof(wire)) == 0, "a request is the bytes the TypeScript encoder wrote");
+        TableRequest q;
+        CHECK(table_request_decode(buf, n, &q) == 0 && q.gid_len == gl && memcmp(buf + q.gid_off, req[i].gid, (size_t)gl) == 0
+              && q.wire_len == (int)sizeof(wire) && memcmp(buf + q.wire_off, wire, sizeof(wire)) == 0
+              && q.has_intent == (req[i].has_intent != 0) && q.intent == (req[i].has_intent ? req[i].intent : 0u),
+              "and the server reads back the game id, the intent and the wire");
+    }
+    // The longest game id a length byte says, both formats: 01 ff / 02 ff, 255 x 'x'.
+    for (int has_intent = 0; has_intent <= 1; has_intent++) {
+        memset(buf, 'x', 255);
+        memcpy(buf + 255, wire, sizeof(wire));
+        const int n = table_request_encode(buf, sizeof(buf), 255, sizeof(wire), has_intent, 0x01020304u);
+        int same = n == 257 + 4 * has_intent + (int)sizeof(wire) && buf[0] == 1 + has_intent && buf[1] == 0xff;
+        for (int i = 0; i < 255 && same; i++) same = buf[2 + i] == 'x';
+        if (has_intent) same = same && buf[257] == 4 && buf[258] == 3 && buf[259] == 2 && buf[260] == 1;
+        CHECK(same && memcmp(buf + n - (int)sizeof(wire), wire, sizeof(wire)) == 0, "a 255-byte game id: its length byte, the id, the wire after it");
+    }
+    memset(buf, 'x', sizeof(buf));
+    CHECK(table_request_encode(buf, sizeof(buf), 256, 2, false, 0) == TABLE_E_WIRE, "a game id a length byte cannot say is refused");
+    CHECK(table_request_encode(buf, sizeof(buf), -1, 2, false, 0) == TABLE_E_WIRE, "a negative length is refused");
+    CHECK(table_request_encode(buf, 10, 3, 6, false, 0) == TABLE_E_CAP, "a v1 body one byte past the buffer is TABLE_E_CAP");
+    CHECK(table_request_encode(buf, 11, 3, 6, false, 0) == 11, "and one that exactly fits is written");
+    CHECK(table_request_encode(buf, 14, 3, 6, true, 0) == TABLE_E_CAP, "a v2 body needs its four intent bytes too");
+    // The wire is opaque here: whatever its sender made is framed, for table_act to judge.
+    buf[0] = 'g'; buf[1] = 0xee;
+    CHECK(table_request_encode(buf, sizeof(buf), 1, 1, false, 0) == 4 && buf[0] == 1 && buf[1] == 1 && buf[2] == 'g' && buf[3] == 0xee,
+          "a one-byte wire is framed as it is");
+    buf[0] = 'g';
+    CHECK(table_request_encode(buf, sizeof(buf), 1, 0, true, 7) == 7 && buf[0] == 2 && buf[3] == 7, "and so is no wire at all");
+
+    // Responses, as the TypeScript wrote them: [bytes] -> status, code, version.
+    static const struct { uint8_t b[7]; int status, code; uint32_t version; } resp[] = {
+        { { 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }, 0, 0, 0 },
+        { { 0x01, 0x01, 0x0d, 0x29, 0x00, 0x00, 0x00 }, 1, 13, 41 },
+        { { 0x01, 0x02, 0x00, 0xff, 0xff, 0xff, 0x7f }, 2, 0, 0x7fffffffu },
+        { { 0x01, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff }, 0, 0, 0xffffffffu },
+        { { 0x01, 0x01, 0x64, 0x04, 0x03, 0x02, 0x01 }, 1, 100, 0x01020304u },
+        { { 0x01, 0x01, 0x15, 0x00, 0x01, 0x00, 0x00 }, 1, 21, 256 },
+    };
+    TableResponse r;
+    for (size_t i = 0; i < sizeof(resp) / sizeof(resp[0]); i++) {
+        CHECK(table_response_decode(resp[i].b, 7, &r) == 0 && r.status == resp[i].status && r.reject_code == resp[i].code
+              && r.version == resp[i].version, "a response reads as the TypeScript reader read it");
+    }
+    // What the server writes for each result is what the client reads.
+    uint8_t out[TABLE_RESP_BYTES + 2];
+    CHECK(table_action_response(TABLE_APPLIED, 0, 0x01020304u, out, sizeof(out)) == TABLE_RESP_BYTES
+          && table_response_decode(out, TABLE_RESP_BYTES, &r) == 0 && r.status == TABLE_STATUS_APPLIED && r.reject_code == 0
+          && r.version == 0x01020304u, "applied reads back");
+    CHECK(table_action_response(TABLE_REJECTED, ENGINE_REJECT_NOT_IN_HAND, 9, out, sizeof(out)) == TABLE_RESP_BYTES
+          && table_response_decode(out, TABLE_RESP_BYTES, &r) == 0 && r.status == TABLE_STATUS_REJECTED
+          && r.reject_code == ENGINE_REJECT_NOT_IN_HAND && r.version == 9, "a rules rejection reads back with its reason");
+    CHECK(table_action_response(TABLE_STALE_ROUND, 0, 0xfffffffeu, out, sizeof(out)) == TABLE_RESP_BYTES
+          && table_response_decode(out, TABLE_RESP_BYTES, &r) == 0 && r.status == TABLE_STATUS_REJECTED
+          && r.reject_code == TABLE_REJECT_STALE_ROUND && r.version == 0xfffffffeu, "a stale round reads back as the policy code");
+    CHECK(table_action_response(TABLE_MOOT, 0, 3, out, sizeof(out)) == TABLE_RESP_BYTES
+          && table_response_decode(out, TABLE_RESP_BYTES, &r) == 0 && r.status == TABLE_STATUS_MOOT && r.version == 3, "moot reads back");
+    out[7] = 0xaa; out[8] = 0xbb;
+    CHECK(table_response_decode(out, 9, &r) == 0 && r.status == TABLE_STATUS_MOOT && r.version == 3, "bytes past the body are not read");
+    CHECK(table_response_decode(out, 6, &r) == TABLE_E_WIRE, "a body one byte short is refused");
+    CHECK(table_response_decode(out, 0, &r) == TABLE_E_WIRE, "an empty body is refused");
+    out[0] = 2;
+    CHECK(table_response_decode(out, TABLE_RESP_BYTES, &r) == TABLE_E_WIRE && r.status == 0 && r.version == 0,
+          "another format is refused, and nothing of it is left in the answer");
 }
 
 static void test_evwire_as3_split(void) {
@@ -12391,6 +13147,229 @@ static int sr_client_pass(int rules) {
     return client_validate(&ct, &ct.view, w, awire_encode(&a, w, sizeof(w)));
 }
 
+// AN ASK (ask.h): every request that is not a move. The body is what ask_encode
+// writes and ask_decode reads, so the two are tested against each other and
+// against the bytes, which are the wire older and newer clients must agree on.
+static TableAsk ask_of(int kind, const char *gid) {
+    TableAsk a;
+    memset(&a, 0, sizeof(a));
+    a.kind = (uint8_t)kind;
+    a.gid_len = (uint8_t)strlen(gid);
+    memcpy(a.gid, gid, a.gid_len);
+    return a;
+}
+
+static void ask_order(TableAsk *a, const char *id) {
+    AskId *o = &a->order[a->n_order++];
+    o->len = (uint8_t)strlen(id);
+    memcpy(o->id, id, o->len);
+}
+
+static void test_ask_round_trips(void) {
+    uint8_t w[ASK_BYTES_MAX];
+    TableAsk a, b;
+
+    // Every kind comes back as the struct that went in.
+    for (int kind = ASK_JOIN; kind <= ASK_BUMP; kind++) {
+        a = ask_of(kind, "g-12ab");
+        if (kind == ASK_ADD_BOT || kind == ASK_EXIT) { a.bot_len = 5; memcpy(a.bot, "bot-1", 5); }
+        if (kind == ASK_EXIT) { a.player_len = 2; memcpy(a.player, "p7", 2); }
+        if (kind == ASK_REARRANGE_HAND) { a.n_idx = 3; a.idx[0] = 2; a.idx[1] = 0; a.idx[2] = 1; }
+        if (kind == ASK_REARRANGE_PLAYERS) { ask_order(&a, "c"); ask_order(&a, "a"); ask_order(&a, "b"); }
+        if (kind == ASK_UPDATE_NAME) { a.title_len = 300; memset(a.title, 'x', 300); }
+        if (kind == ASK_SET_RULES) a.passing = 1;
+        const int n = ask_encode(&a, w, sizeof(w));
+        CHECK(n > 0 && ask_decode(w, n, &b) == ASK_OK && memcmp(&a, &b, sizeof(a)) == 0, "an ask of every kind round-trips");
+        CHECK(ask_decode(w, n - 1, &b) == ASK_E_WIRE && b.kind == 0, "a body one byte short is refused, and nothing is left decoded");
+        w[n] = 0;
+        CHECK(ask_decode(w, n + 1, &b) == ASK_E_WIRE, "a body one byte long is refused");
+        CHECK(ask_encode(&a, w, n - 1) == ASK_E_CAP, "a buffer one byte small is refused");
+    }
+
+    // The bytes themselves.
+    a = ask_of(ASK_EXIT, "g1");
+    a.player_len = 1;
+    a.player[0] = 'p';
+    const uint8_t exit_wire[] = { ASK_FORMAT, ASK_EXIT, 2, 'g', '1', 0, 1, 'p' };
+    CHECK(ask_encode(&a, w, sizeof(w)) == (int)sizeof(exit_wire) && memcmp(w, exit_wire, sizeof(exit_wire)) == 0,
+          "exit: format, kind, the game id, an empty bot, the player");
+    a = ask_of(ASK_UPDATE_NAME, "g");
+    a.title_len = 2;
+    memcpy(a.title, "Hi", 2);
+    const uint8_t name_wire[] = { ASK_FORMAT, ASK_UPDATE_NAME, 1, 'g', 2, 0, 'H', 'i' };
+    CHECK(ask_encode(&a, w, sizeof(w)) == (int)sizeof(name_wire) && memcmp(w, name_wire, sizeof(name_wire)) == 0,
+          "update-name: a u16 length, then the title");
+    a = ask_of(ASK_BUMP, "g");
+    a.bot_len = 3;   // a field the kind does not carry is not written
+    const uint8_t bump_wire[] = { ASK_FORMAT, ASK_BUMP, 1, 'g' };
+    CHECK(ask_encode(&a, w, sizeof(w)) == (int)sizeof(bump_wire) && memcmp(w, bump_wire, sizeof(bump_wire)) == 0,
+          "bump: the game id and nothing else");
+
+    // What is not an ask.
+    const uint8_t fmt2[] = { 2, ASK_JOIN, 1, 'g' };
+    CHECK(ask_decode(fmt2, sizeof(fmt2), &b) == ASK_E_WIRE, "an unknown format is refused");
+    const uint8_t kind0[] = { ASK_FORMAT, 0, 1, 'g' }, kind11[] = { ASK_FORMAT, ASK_BUMP + 1, 1, 'g' };
+    CHECK(ask_decode(kind0, sizeof(kind0), &b) == ASK_E_WIRE && ask_decode(kind11, sizeof(kind11), &b) == ASK_E_WIRE,
+          "an unknown kind is refused");
+    const uint8_t no_gid[] = { ASK_FORMAT, ASK_JOIN, 0 };
+    CHECK(ask_decode(no_gid, sizeof(no_gid), &b) == ASK_E_WIRE, "an ask names a game");
+    const uint8_t rules2[] = { ASK_FORMAT, ASK_SET_RULES, 1, 'g', 2 };
+    CHECK(ask_decode(rules2, sizeof(rules2), &b) == ASK_E_WIRE, "rules that are neither 0 nor 1 are refused");
+    const uint8_t nine[] = { ASK_FORMAT, ASK_REARRANGE_PLAYERS, 1, 'g', MAX_PLAYERS + 1 };
+    CHECK(ask_decode(nine, sizeof(nine), &b) == ASK_E_WIRE, "an order longer than the table is refused");
+    const uint8_t json[] = "{\"type\":\"join\",\"game_id\":\"g\"}";
+    CHECK(ask_decode(json, sizeof(json) - 1, &b) == ASK_E_WIRE, "the JSON body an old client sends is not an ask");
+    CHECK(ask_decode(w, 0, &b) == ASK_E_WIRE, "an empty body is refused");
+    a = ask_of(ASK_JOIN, "g");
+    a.kind = 0;
+    CHECK(ask_encode(&a, w, sizeof(w)) == ASK_E_WIRE, "a struct with no kind is not encoded");
+    a = ask_of(ASK_REARRANGE_HAND, "g");
+    a.n_idx = MAX_HAND_SIZE + 1;
+    CHECK(ask_encode(&a, w, sizeof(w)) == ASK_E_WIRE, "a count past its array is not encoded");
+
+    // The refusal.
+    AskRefusal r = { ASK_WHY_REFUSED, TABLE_E_ROSTER, ROSTER_E_FULL }, q;
+    const uint8_t refusal_wire[] = { ASK_REFUSAL_FORMAT, ASK_WHY_REFUSED, 0x9a, 0xff, 0xff, 0xff, 0xf7, 0xff, 0xff, 0xff };
+    CHECK(ask_refusal_encode(&r, w, sizeof(w)) == ASK_REFUSAL_BYTES && memcmp(w, refusal_wire, ASK_REFUSAL_BYTES) == 0,
+          "a refusal: format, why, and the two codes little-endian");
+    CHECK(ask_refusal_decode(w, ASK_REFUSAL_BYTES, &q) == ASK_OK && q.why == ASK_WHY_REFUSED
+          && q.code == TABLE_E_ROSTER && q.detail == ROSTER_E_FULL, "and it reads back, negative codes whole");
+    CHECK(ask_refusal_decode(w, ASK_REFUSAL_BYTES - 1, &q) == ASK_E_WIRE
+          && ask_refusal_decode(w, ASK_REFUSAL_BYTES + 1, &q) == ASK_E_WIRE, "a refusal is exactly its bytes");
+    w[1] = ASK_WHY_METHOD + 1;
+    CHECK(ask_refusal_decode(w, ASK_REFUSAL_BYTES, &q) == ASK_E_WIRE, "an unknown reason is refused");
+    r.why = 0;
+    CHECK(ask_refusal_encode(&r, w, sizeof(w)) == ASK_E_WIRE, "and not encoded");
+    r.why = ASK_WHY_AUTH;
+    CHECK(ask_refusal_encode(&r, w, ASK_REFUSAL_BYTES - 1) == ASK_E_CAP, "a refusal needs its ten bytes");
+}
+
+// table_ask is the dispatch the hosts used to write: each kind is the edit it
+// names, with the edit's own result.
+static void test_table_ask_runs_every_kind(void) {
+    TableAsk a;
+    tb_seed_fill(3);
+    table_init(&tb, &tb_game, &tb_snaps);
+    a = ask_of(ASK_BUMP, "g");
+    CHECK(table_ask(&tb, RS("a"), RS("Alice"), &a, 0, tb_seed) == TABLE_E_NOT_LOADED, "no bump before a table is loaded");
+    tb_lobby();
+
+    TB_REFUSED(table_ask(&tb, RS("stranger"), RS("S"), &a, 0, tb_seed), TABLE_MOOT, "a bump commits nothing, even from a stranger");
+    CHECK(tb_same_table(&tb, &tb_before, &tb_r_before), "and leaves the table as it was");
+
+    a = ask_of(ASK_JOIN, "g");
+    CHECK(table_ask(&tb, RS("d"), RS("Dora"), &a, 0, tb_seed) == TABLE_OK && tb.r.n == 4
+          && roster_seat_of(&tb.r, RS("d")) == 3 && tb.r.seats[3].name_len == 4
+          && memcmp(tb.r.seats[3].name, "Dora", 4) == 0, "join seats the asker under the name it came with");
+
+    a = ask_of(ASK_ADD_BOT, "g");
+    TB_REFUSED(table_ask(&tb, RS("a"), RS("Alice"), &a, 0, tb_seed), TABLE_E_WIRE, "add-bot with no bot row is malformed");
+    const TableAskBot bot = { RS("bot-1"), RS("Rando"), RS("random") };
+    CHECK(table_ask(&tb, RS("a"), RS("Alice"), &a, &bot, tb_seed) == TABLE_OK && tb.r.n == 5
+          && roster_seat_of(&tb.r, RS("bot-1")) == 4 && tb.r.seats[4].brain_len == 6, "add-bot seats the row it was handed");
+    TB_REFUSED(table_ask(&tb, RS("stranger"), RS("S"), &a, &bot, tb_seed), TABLE_E_NOT_SEATED, "and a stranger's is refused");
+
+    a = ask_of(ASK_REARRANGE_PLAYERS, "g");
+    ask_order(&a, "bot-1"); ask_order(&a, "d"); ask_order(&a, "c"); ask_order(&a, "b"); ask_order(&a, "a");
+    CHECK(table_ask(&tb, RS("a"), RS("Alice"), &a, 0, tb_seed) == TABLE_OK && roster_seat_of(&tb.r, RS("a")) == 4
+          && roster_seat_of(&tb.r, RS("bot-1")) == 0, "rearrange-players reseats in the order asked");
+    a.n_order = 4;
+    TB_REFUSED(table_ask(&tb, RS("a"), RS("Alice"), &a, 0, tb_seed), TABLE_E_ROSTER, "an order missing a seat is refused");
+    CHECK(tb.detail == ROSTER_E_PERM, "as not a permutation");
+
+    a = ask_of(ASK_UPDATE_NAME, "g");
+    a.title_len = 9;
+    memcpy(a.title, " Friday  ", 9);
+    CHECK(table_ask(&tb, RS("b"), RS("Bob"), &a, 0, tb_seed) == TABLE_OK && tb.r.title_len == 6
+          && memcmp(tb.r.title, "Friday", 6) == 0, "update-name retitles, trimmed by the kernel");
+
+    a = ask_of(ASK_SET_RULES, "g");
+    a.passing = 0;
+    CHECK(table_ask(&tb, RS("c"), RS("Cleo"), &a, 0, tb_seed) == TABLE_OK && !game_pass_allowed(&tb_game), "set-rules: podkidnoy");
+    TB_REFUSED(table_ask(&tb, RS("c"), RS("Cleo"), &a, 0, tb_seed), TABLE_MOOT, "the rules it already has are moot");
+
+    // exit: a bot when the ask names one, else the player it names, else the asker
+    a = ask_of(ASK_EXIT, "g");
+    a.bot_len = 5;
+    memcpy(a.bot, "bot-1", 5);
+    a.player_len = 1;
+    a.player[0] = 'd';
+    CHECK(table_ask(&tb, RS("a"), RS("Alice"), &a, 0, tb_seed) == TABLE_OK && tb.r.n == 4
+          && roster_seat_of(&tb.r, RS("bot-1")) < 0 && roster_seat_of(&tb.r, RS("d")) >= 0,
+          "exit removes the bot it names, and only the bot");
+    a.bot_len = 0;
+    CHECK(table_ask(&tb, RS("a"), RS("Alice"), &a, 0, tb_seed) == TABLE_OK && tb.r.n == 3
+          && roster_seat_of(&tb.r, RS("d")) < 0 && roster_seat_of(&tb.r, RS("a")) >= 0, "else the player it names");
+    a.player_len = 0;
+    CHECK(table_ask(&tb, RS("c"), RS("Cleo"), &a, 0, tb_seed) == TABLE_OK && tb.r.n == 2
+          && roster_seat_of(&tb.r, RS("c")) < 0, "else the asker");
+
+    // start deals when every seat is ready; rearrange-hand and continue need a game
+    a = ask_of(ASK_START, "g");
+    CHECK(table_ask(&tb, RS("a"), RS("Alice"), &a, 0, tb_seed) == TABLE_OK && tb_game.status == GAME_STATUS_WAITING, "one ready seat deals nothing");
+    CHECK(table_ask(&tb, RS("b"), RS("Bob"), &a, 0, tb_seed) == TABLE_OK && tb_game.status == GAME_STATUS_PLAYING
+          && tb.dealt_now, "the last ready deals, from the seed the ask was handed");
+    TB_REFUSED(table_ask(&tb, RS("a"), RS("Alice"), &a, 0, tb_seed), TABLE_MOOT, "a ready once dealt is moot");
+    const int a_seat = roster_seat_of(&tb.r, RS("a"));
+    const Card first = tb_game.players[a_seat].hand[0], second = tb_game.players[a_seat].hand[1];
+    a = ask_of(ASK_REARRANGE_HAND, "g");
+    a.n_idx = (uint8_t)tb_game.players[a_seat].hand_count;
+    for (int i = 0; i < a.n_idx; i++) a.idx[i] = (uint8_t)i;
+    a.idx[0] = 1;
+    a.idx[1] = 0;
+    CHECK(table_ask(&tb, RS("a"), RS("Alice"), &a, 0, tb_seed) == TABLE_OK
+          && tb_game.players[a_seat].hand[0].suit == second.suit && tb_game.players[a_seat].hand[0].value == second.value
+          && tb_game.players[a_seat].hand[1].suit == first.suit && tb_game.players[a_seat].hand[1].value == first.value,
+          "rearrange-hand orders the asker's own hand");
+    a.idx[0] = 0;
+    TB_REFUSED(table_ask(&tb, RS("a"), RS("Alice"), &a, 0, tb_seed), TABLE_E_WIRE, "indices that are not a permutation are refused");
+    a = ask_of(ASK_CONTINUE, "g");
+    TB_REFUSED(table_ask(&tb, RS("a"), RS("Alice"), &a, 0, tb_seed), TABLE_E_NOT_OVER, "continue is table_continue's to refuse");
+    a.kind = 99;
+    TB_REFUSED(table_ask(&tb, RS("a"), RS("Alice"), &a, 0, tb_seed), TABLE_E_WIRE, "a kind that is not one is malformed");
+}
+
+// A CAST (evwire.h) is what a realtime message carries: the version and the as3
+// push in one run of bytes, read by the client with nothing beside them.
+static void test_table_cast_carries_its_version(void) {
+    tb_seed_fill(5);
+    client_init(&ct, &ct_slot);
+    tb_lobby();
+    const int pl = table_push(&tb, RS("g-7"), 0, ct_push, sizeof(ct_push));
+    const int cl = table_cast(&tb, RS("g-7"), 0, 0x01020304u, ct_env, sizeof(ct_env));
+    CHECK(pl > 0 && cl == pl + EVW_CAST_HEADER_BYTES && ct_env[0] == EVW_CAST_FORMAT && ct_env[1] == 4 && ct_env[2] == 3
+          && ct_env[3] == 2 && ct_env[4] == 1 && memcmp(ct_env + EVW_CAST_HEADER_BYTES, ct_push, (size_t)pl) == 0,
+          "a cast is the format, the version little-endian, then exactly the push");
+    CHECK(table_cast(&tb, RS("g-7"), 0, 9, ct_env2, EVW_CAST_HEADER_BYTES - 1) == TABLE_E_CAP
+          && table_cast(&tb, RS("g-7"), 0, 9, ct_env2, cl - 1) == TABLE_E_CAP, "a buffer too small for either part is refused");
+
+    int k = 0, rc = client_cast_open(&ct, ct_env, cl, 0, 0);
+    while (rc == CLIENT_OK && (k = client_push_next(&ct)) == 1) { }
+    CHECK(rc == CLIENT_OK && k == 0 && client_push_final(&ct) == CLIENT_OK && ct.view.version == 0x01020304u
+          && ct.view.num_players == 3, "the client reads the cast whole, and the board carries the header's version");
+    // The join's push carries the roster; where the client says it is must be
+    // an offset into the CAST, which is what the host holds.
+    CHECK(client_cast_open(&ct, ct_env, cl, 0, 0) == CLIENT_OK && client_identity_at(&ct) > EVW_CAST_HEADER_BYTES, "the identity is found in the cast");
+    {
+        const int at = client_identity_at(&ct);
+        client_push_open(&ct, ct_push, pl, 1, 0, 0, 1);
+        CHECK(at == client_identity_at(&ct) + EVW_CAST_HEADER_BYTES, "at the push's offset moved past the header");
+    }
+    ct_env[0] = EVW_CAST_FORMAT + 1;
+    CHECK(client_cast_open(&ct, ct_env, cl, 0, 0) == CLIENT_E_PUSH, "an unknown cast format is refused");
+    ct_env[0] = EVW_CAST_FORMAT;
+    CHECK(client_cast_open(&ct, ct_env, EVW_CAST_HEADER_BYTES - 1, 0, 0) == CLIENT_E_PUSH
+          && client_cast_open(&ct, ct_env, EVW_CAST_HEADER_BYTES + 3, 0, 0) == CLIENT_E_PUSH
+          && client_cast_open(&ct, ct_env, cl / 2, 0, 0) == CLIENT_E_PUSH, "a cast cut short is refused");
+    CHECK(client_cast_open(&ct, ct_push, pl, 0, 0) == CLIENT_E_PUSH, "a bare push is not a cast");
+    {
+        uint32_t v = 7;
+        CHECK(evwire_cast_header_get(ct_push, pl, &v) == EVW_EPARSE && v == 7,
+              "and has no cast header: its first bytes are never read as a version");
+        CHECK(evwire_cast_header_get(ct_env, cl, &v) == EVW_CAST_HEADER_BYTES && v == 0x01020304u, "a cast has");
+    }
+}
+
 // THE TABLE'S RULES (table.h table_set_rules, docs/PODKIDNOY.md). Any seated
 // player sets them, either way, while the lobby waits; the change clears no
 // Ready; the game that deals plays the rules standing at the last Ready; every
@@ -12901,6 +13880,165 @@ static int cb_step(Game *g) {
     if (wl <= 0 || !awire_decode(w, wl, &a)) return 0;
     g->num_logs = 0;
     return awire_apply(g, seat, &a) ? 1 : 0;
+}
+
+// Test: the wire of a move a host states (client_move_wire) is the bytes the
+// hand-written TypeScript encoder wrote until it was deleted: these frames were
+// captured from sdk/ts/wire/awire.ts encodeAction before it went, so the web's
+// POST body did not change by a byte when the kernel started writing it.
+static void test_client_move_wire_is_the_old_encoders_bytes(void) {
+    Card all[52];
+    for (int i = 0; i < 52; i++) all[i] = card_of_id(i);
+    uint8_t w[64];
+    ClientMove m;
+
+    #define CM_BEGIN(k) do { memset(&m, 0, sizeof(m)); m.kind = (k); } while (0)
+    #define CM_CARD(su, va) (m.cards[m.n_cards++] = (Card){ (su), (va) })
+    #define CM_ATTACK(su, va) (m.attack_cards[m.n_attacks++] = (Card){ (su), (va) })
+    #define CM_IS(label, ...) do { \
+        const uint8_t want[] = { __VA_ARGS__ }; \
+        const int n = client_move_wire(&m, w, sizeof(w)); \
+        CHECK(n == (int)sizeof(want) && memcmp(w, want, sizeof(want)) == 0, label); \
+    } while (0)
+
+    CM_BEGIN(AWIRE_PICKUP); CM_IS("pickup is 03 00", 0x03, 0x00);
+    CM_BEGIN(AWIRE_GOOD);   CM_IS("good is 04 00", 0x04, 0x00);
+    CM_BEGIN(AWIRE_ATTACK); CM_IS("an attack of no card is a frame (the rules refuse it, not the wire)", 0x00, 0x00);
+    CM_BEGIN(AWIRE_ATTACK); CM_CARD(0, 1); CM_IS("the first card is byte 0", 0x00, 0x01, 0x00);
+    CM_BEGIN(AWIRE_ATTACK); CM_CARD(3, 13); CM_IS("the ace of diamonds is byte 51", 0x00, 0x01, 0x33);
+    CM_BEGIN(AWIRE_ATTACK); CM_CARD(2, 9); CM_CARD(1, 9); CM_CARD(0, 9);
+    CM_IS("three attacks, in the order they were named", 0x00, 0x03, 0x22, 0x15, 0x08);
+    CM_BEGIN(AWIRE_PASS); CM_CARD(1, 6); CM_CARD(3, 6); CM_IS("a pass of two", 0x02, 0x02, 0x12, 0x2c);
+    CM_BEGIN(AWIRE_COVER); CM_CARD(0, 13); CM_ATTACK(0, 12); CM_IS("a cover: the cover, then its attack", 0x01, 0x01, 0x0c, 0x0b);
+    CM_BEGIN(AWIRE_COVER); CM_CARD(3, 2); CM_CARD(1, 11); CM_CARD(2, 5); CM_ATTACK(0, 8); CM_ATTACK(1, 10); CM_ATTACK(2, 4);
+    CM_IS("three covers, then the three attacks, by position", 0x01, 0x03, 0x28, 0x17, 0x1e, 0x07, 0x16, 0x1d);
+    CM_BEGIN(AWIRE_ATTACK); CM_CARD(1, 1); CM_ATTACK(2, 2);
+    CM_IS("attacks named beside a move that is not a cover are not read", 0x00, 0x01, 0x0d);
+
+    // The longest frames: 28 cards, and 28 covers over 28 attacks.
+    CM_BEGIN(AWIRE_PASS);
+    for (int i = 24; i < 52; i++) m.cards[m.n_cards++] = all[i];
+    int n = client_move_wire(&m, w, sizeof(w));
+    int same = n == 30 && w[0] == 0x02 && w[1] == 0x1c;
+    for (int i = 0; i < 28 && same; i++) same = w[2 + i] == 24 + i;
+    CHECK(same, "a pass of 28: 02 1c, then bytes 24..51");
+    CM_BEGIN(AWIRE_COVER);
+    for (int i = 0; i < 28; i++) { m.cards[m.n_cards++] = all[i]; m.attack_cards[m.n_attacks++] = all[24 + i]; }
+    n = client_move_wire(&m, w, sizeof(w));
+    same = n == 58 && w[0] == 0x01 && w[1] == 0x1c;
+    for (int i = 0; i < 28 && same; i++) same = w[2 + i] == i && w[30 + i] == 24 + i;
+    CHECK(same, "a cover of 28: 01 1c, bytes 0..27, then bytes 24..51");
+    CHECK(client_move_wire(&m, w, 57) == CLIENT_E_CAP, "a buffer one byte short of the frame is CLIENT_E_CAP");
+
+    // What is not a move is refused, each for its own reason.
+    CM_BEGIN(5); CHECK(client_move_wire(&m, w, sizeof(w)) == CLIENT_E_MOVE, "a kind past good is refused");
+    CM_BEGIN(-1); CHECK(client_move_wire(&m, w, sizeof(w)) == CLIENT_E_MOVE, "a negative kind is refused");
+    CM_BEGIN(AWIRE_PICKUP); CM_CARD(0, 5); CHECK(client_move_wire(&m, w, sizeof(w)) == CLIENT_E_MOVE, "a pickup carries no card");
+    CM_BEGIN(AWIRE_GOOD); CM_CARD(0, 5); CHECK(client_move_wire(&m, w, sizeof(w)) == CLIENT_E_MOVE, "a good carries no card");
+    CM_BEGIN(AWIRE_ATTACK); m.n_cards = AWIRE_MAX_CARDS + 1;
+    CHECK(client_move_wire(&m, w, sizeof(w)) == CLIENT_E_MOVE, "29 cards are refused before any is read");
+    CM_BEGIN(AWIRE_COVER); CM_CARD(0, 9); CM_CARD(1, 9); CM_ATTACK(0, 8);
+    m.attack_cards[1] = (Card){ 1, 8 };   // a real card past the count: only the count says it is not named
+    CHECK(client_move_wire(&m, w, sizeof(w)) == CLIENT_E_MOVE, "a cover with fewer attacks than cards is refused");
+    CM_BEGIN(AWIRE_COVER); CM_CARD(0, 9); CM_ATTACK(0, 8); CM_ATTACK(1, 8);
+    CHECK(client_move_wire(&m, w, sizeof(w)) == CLIENT_E_MOVE, "a cover with more attacks than cards is refused");
+    const Card not_cards[] = { { -1, -1 }, CARD_NONE, { 0, 0 }, { 0, 14 }, { -1, 5 }, { 2, -3 } };
+    for (size_t i = 0; i < sizeof(not_cards) / sizeof(not_cards[0]); i++) {
+        CM_BEGIN(AWIRE_ATTACK); CM_CARD(0, 5); m.cards[m.n_cards++] = not_cards[i];
+        CHECK(client_move_wire(&m, w, sizeof(w)) == CLIENT_E_MOVE, "a card that is not a card is refused, never written as some other");
+        CM_BEGIN(AWIRE_COVER); CM_CARD(0, 5); CM_ATTACK(0, 4); m.cards[m.n_cards++] = (Card){ 1, 5 }; m.attack_cards[m.n_attacks++] = not_cards[i];
+        CHECK(client_move_wire(&m, w, sizeof(w)) == CLIENT_E_MOVE, "and so is a cover's attack that is not a card");
+    }
+    CHECK(client_move_wire(NULL, w, sizeof(w)) == CLIENT_E_MOVE, "no move is refused");
+
+    // Every move a host can state reads back as itself through the one decoder.
+    cb_rng = 0xa11ce;
+    for (int it = 0; it < 20000; it++) {
+        CM_BEGIN(cb_rand(5));
+        const int k = (m.kind == AWIRE_PICKUP || m.kind == AWIRE_GOOD) ? 0 : cb_rand(AWIRE_MAX_CARDS + 1);
+        for (int i = 0; i < k; i++) m.cards[m.n_cards++] = all[cb_rand(52)];
+        if (m.kind == AWIRE_COVER) for (int i = 0; i < k; i++) m.attack_cards[m.n_attacks++] = all[cb_rand(52)];
+        const int wl = client_move_wire(&m, w, sizeof(w));
+        AwireAction a;
+        int ok = wl == 2 + k * (m.kind == AWIRE_COVER ? 2 : 1) && awire_decode(w, wl, &a) == 1 && a.kind == m.kind && a.n == k;
+        for (int i = 0; i < k && ok; i++) {
+            ok = card_eq(a.cards[i], m.cards[i]) && (m.kind != AWIRE_COVER || card_eq(a.attacks[i], m.attack_cards[i]));
+        }
+        if (!ok) { CHECK(0, "a stated move reads back as itself (awire_decode of client_move_wire)"); break; }
+    }
+    CHECK(1, "20000 stated moves read back as themselves");
+    #undef CM_BEGIN
+    #undef CM_CARD
+    #undef CM_ATTACK
+    #undef CM_IS
+}
+
+// Test: awire_decode's strictness, shape by shape. These were the cases a
+// TypeScript twin of the decoder was held to (sdk/ts/wire/awire.ts decodeAction,
+// e2e/awire_codec.test.ts); the twin is gone, so they are asked of the decoder
+// itself: 0 on anything malformed, and whatever it accepts is a whole move that
+// encodes back to the same bytes.
+static void test_awire_decode_refuses_every_malformed_shape(void) {
+    AwireAction a;
+    static const struct { const char *label; int len; uint8_t w[8]; } bad[] = {
+        { "empty", 0, { 0 } },
+        { "a single byte", 1, { 0 } },
+        { "unknown kind 5", 2, { 5, 0 } },
+        { "unknown kind 255", 3, { 255, 1, 3 } },
+        { "a pickup with n=1", 3, { 3, 1, 7 } },
+        { "a pickup with n=1 and no card bytes", 2, { 3, 1 } },
+        { "a good with n=2", 4, { 4, 2, 7, 8 } },
+        { "an attack truncated", 3, { 0, 2, 7 } },
+        { "an attack with a trailing byte", 4, { 0, 1, 7, 9 } },
+        { "a pass truncated", 4, { 2, 3, 7, 8 } },
+        { "a cover missing the attack half", 4, { 1, 2, 7, 8 } },
+        { "a cover with half-truncated pairs", 5, { 1, 2, 7, 8, 9 } },
+        { "a cover with a trailing byte", 5, { 1, 1, 7, 8, 9 } },
+        { "a good with a trailing byte", 3, { 4, 0, 1 } },
+    };
+    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        CHECK(awire_decode(bad[i].w, bad[i].len, &a) == 0, bad[i].label);
+    }
+    uint8_t big[2 + 2 * (AWIRE_MAX_CARDS + 1)];
+    memset(big, 1, sizeof(big));
+    big[0] = AWIRE_ATTACK; big[1] = AWIRE_MAX_CARDS + 1;
+    CHECK(awire_decode(big, 2 + AWIRE_MAX_CARDS + 1, &a) == 0, "an attack of 29 is refused");
+    big[0] = AWIRE_COVER;
+    CHECK(awire_decode(big, sizeof(big), &a) == 0, "a cover of 29 is refused");
+    // A frame of no card is structurally a frame for every kind: the rules
+    // refuse an empty attack, not the wire.
+    for (int kind = AWIRE_ATTACK; kind <= AWIRE_GOOD; kind++) {
+        const uint8_t w[2] = { (uint8_t)kind, 0 };
+        CHECK(awire_decode(w, 2, &a) == 1 && a.kind == kind && a.n == 0, "[kind, 0] is a frame");
+    }
+
+    // Noise, and near-frames: a kind 0..5, a count 0..30 and a body its size, so
+    // the accepts and the off-by-one refusals both really run.
+    cb_rng = 0xa11ce;
+    int accepted = 0, sound = 1;
+    for (int it = 0; it < 20000 && sound; it++) {
+        uint8_t w[80], back[64];
+        int len;
+        if (it % 4 == 0) {
+            const int kind = cb_rand(6), k = cb_rand(31);
+            len = 2 + (kind == AWIRE_COVER ? 2 * k : k);
+            w[0] = (uint8_t)kind; w[1] = (uint8_t)k;
+            for (int j = 2; j < len; j++) w[j] = (uint8_t)(cb_rand(8) == 0 ? cb_rand(256) : cb_rand(52));
+        } else {
+            len = cb_rand(80);
+            for (int j = 0; j < len; j++) w[j] = (uint8_t)cb_rand(256);
+        }
+        if (!awire_decode(w, len, &a)) continue;
+        accepted++;
+        sound = a.kind >= AWIRE_ATTACK && a.kind <= AWIRE_GOOD && a.n == w[1] && a.n <= AWIRE_MAX_CARDS
+            && ((a.kind != AWIRE_PICKUP && a.kind != AWIRE_GOOD) || a.n == 0);
+        for (int i = 0; i < a.n && sound; i++) {
+            sound = card_in_range(a.cards[i], 1, ACE_VALUE) && (a.kind != AWIRE_COVER || card_in_range(a.attacks[i], 1, ACE_VALUE));
+        }
+        sound = sound && awire_encode(&a, back, sizeof(back)) == len && memcmp(back, w, (size_t)len) == 0;
+    }
+    CHECK(sound, "whatever the decoder accepts is a whole move, and encodes back to the bytes it was read from");
+    CHECK(accepted > 500, "enough near-frames were accepted for that to mean something");
 }
 
 static void test_client_validate_is_the_engine(void) {
@@ -14284,6 +15422,7 @@ int main(void) {
     test_bot_drive_pre_action_hook();
 
     test_bot_roster_table();
+    test_bot_roster_table_is_the_roster();
     test_bot_knobs_precedence();
     test_bot_roster_choose_scopes_knobs();
 
@@ -14377,6 +15516,9 @@ int main(void) {
     test_pre_stream_table_declines_rather_than_inventing();
     test_pre_stream_table_leaves_the_sweep_rule_alone();
     test_build_plan_freezes_the_row_with_the_counts();
+    test_plan_ask_is_build_plan();
+    test_plan_ask_carries_the_final_board();
+    test_plan_ask_caps();
     test_pre_bout_table_walks_back_through_the_stream();
     test_pre_bout_table_degenerate_inputs();
     test_the_pre_bout_table_is_the_board_the_kernel_had();
@@ -14392,6 +15534,8 @@ int main(void) {
     test_reversal_order_is_not_about_the_transport();
     test_conflict_degenerate_inputs();
     test_the_transport_is_the_only_thing_the_two_clients_disagree_about();
+    test_conflict_the_sweep_is_read_off_the_stream();
+    test_conflict_capacity_is_inclusive();
     test_board_veil_unions_its_three_sources();
     test_board_veil_flying_is_hidden_minus_pre_hidden();
     test_board_veil_the_fan_never_withholds_a_slot_it_draws();
@@ -14405,6 +15549,10 @@ int main(void) {
     test_board_hand_laid_out_follows_the_local_arrangement();
     test_board_the_table_under_the_sweep();
     test_board_finish_rows_rank_first_out_to_the_fool();
+    test_ask_stale_reads_cards_as_the_wire_did();
+    test_ask_reversal_order_is_the_plan();
+    test_ask_hand_laid_out_speaks_in_cards();
+    test_ask_finish_rows_and_its_bounds();
     test_board_end_screen_clears_the_boards_chrome();
     test_board_degenerate_inputs();
     test_board_reads_nothing_past_what_it_was_given();
@@ -14446,6 +15594,7 @@ int main(void) {
     test_table_commit_products();
     test_table_plays_a_game_to_its_end();
     test_table_request_and_response();
+    test_table_request_encode_and_response_decode();
     test_evwire_as3_split();
     test_evwire_frames_index();
     test_evwire_walk_skips_a_hook_it_does_not_know();
@@ -14479,6 +15628,9 @@ int main(void) {
     test_table_session_log_is_load_bearing_for_octogen();
     test_table_state_blob_round_trips_every_reachable_state();
     test_client_adopts_envelopes();
+    test_ask_round_trips();
+    test_table_ask_runs_every_kind();
+    test_table_cast_carries_its_version();
     test_lobby_can_set_rules();
     test_table_set_rules();
     test_table_bots_never_transfer_under_podkidnoy();
@@ -14494,6 +15646,8 @@ int main(void) {
     test_client_conflict_verdicts();
     test_client_play_is_the_engine();
     test_client_play_refuses_what_is_not_a_gesture();
+    test_client_move_wire_is_the_old_encoders_bytes();
+    test_awire_decode_refuses_every_malformed_shape();
     test_client_adopts_a_bare_board();
     test_hand_layout_rows_and_slots();
     test_hand_layout_refuses_what_it_cannot_answer();

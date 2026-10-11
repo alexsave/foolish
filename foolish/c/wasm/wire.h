@@ -3,8 +3,8 @@
 //   0xFE  = the hidden card ({-1,-1}: DRAW logs for other players' picks)
 //   0xFF  = no card (uncovered battle defense, single-card log pair)
 // Halves every card crossing the boundary and removes the has_defense /
-// has_target wire bytes (in-band sentinels instead). Mirrored by
-// sdk/ts/wasm/engine.ts (wireStateCard/cardFromWire*).
+// has_target wire bytes (in-band sentinels instead). No host restates the two
+// sentinels: they are generated (sdk/ts/gen/kernel_consts.bots.ts).
 #ifndef CNITRO_WASM_WIRE_H
 #define CNITRO_WASM_WIRE_H
 

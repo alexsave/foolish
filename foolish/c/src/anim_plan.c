@@ -475,6 +475,49 @@ int anim_build_plan(const AnimPlanEvent *events, int n_events, int n_players,
     return ANIM_EOK;
 }
 
+// The plan asked as one struct (anim_plan.h AnimPlanAsk). Every borrow points
+// INTO the ask - its cards, its hand, its row - so the only thing built here is
+// the array of events that carry those pointers.
+//
+// THAT ARRAY IS ON THE STACK, 7,168 B on wasm32, and not static scratch. With
+// anim_build_plan's own frames under it a full 128-event stream peaks at
+// 11,056 B of shadow stack (measured by canary on bots.wasm and web.wasm),
+// below the 14.3 KiB the cover enumeration already costs their 22 KiB stack
+// (c/Makefile WASM_BOT_LDFLAGS), and a static would be the same bytes held for
+// the life of every module instead of for one call.
+int anim_plan_ask(const AnimPlanAsk *ask, AnimPlan *out) {
+    if (!ask) return ANIM_EBADARG;
+    if (ask->n_events > ANIM_MAX_STEPS) return ANIM_ECAP;
+    AnimPlanEvent events[ANIM_MAX_STEPS];
+    for (int i = 0; i < ask->n_events; i++) {
+        const AnimPlanAskEvent *a = &ask->events[i];
+        AnimPlanEvent *ev = &events[i];
+        if (a->n_cards > ANIM_ASK_MAX_CARDS || a->n_row > ANIM_ASK_MAX_ROW) return ANIM_ECAP;
+        ev->type = a->type;
+        ev->seat = a->seat;
+        ev->from = a->from;
+        ev->to = a->to;
+        ev->cards = a->n_cards ? a->cards : 0;
+        ev->n_cards = a->n_cards;
+        ev->mask_cards = a->mask_cards ? 1 : 0;
+        // `has_counts` is the whole gate, here as in anim_build_plan: a step
+        // without it has counts in its struct all the same - whatever the last
+        // stream left there - and nothing reads them. The hand is NULL for such
+        // a step because that is what AnimPlanEvent says it is.
+        ev->has_counts = a->has_counts ? 1 : 0;
+        ev->deck = a->deck;
+        ev->discard = a->discard;
+        ev->flipped = a->flipped;
+        ev->hand = a->has_counts ? a->hand : 0;
+        if (a->n_row % 2) return ANIM_EBADARG;
+        ev->n_battles = a->n_row ? a->n_row / 2 : ANIM_NO_BOARD;
+        ev->battles = a->n_row ? a->row : 0;
+    }
+    return anim_build_plan(events, ask->n_events, ask->n_players,
+                           ask->final_deck, ask->final_discard, ask->final_flipped,
+                           ask->final_hand, out);
+}
+
 // ---- the plan, re-asked ---------------------------------------------------
 //
 // ONE PASS OVER THE STEPS, and no state kept between calls. A frame is a pure
@@ -973,6 +1016,37 @@ int anim_stale_optimistic_on_table(const Card *opt_cards, int n_opt,
     return n;
 }
 
+// A card as an ask struct's caller meant it, which is how the wire's card byte
+// read it before these questions were structs: the hidden card stays hidden,
+// and anything else is clamped onto the deck. The suit needs no ceiling - its
+// field cannot exceed 3 (card.h pins that) - so only its floor is checked.
+static Card ask_card(Card c) {
+    if (c.suit == -1 && c.value == -1) return c;
+    Card r;
+    r.suit = (int8_t)(c.suit < 0 ? 0 : c.suit);
+    r.value = (int8_t)(c.value < 1 ? 1 : c.value > ACE_VALUE ? ACE_VALUE : c.value);
+    return r;
+}
+
+int anim_stale_optimistic_ask(const AnimStaleAsk *q, AnimStaleRelease *out) {
+    if (!out) return ANIM_EBADARG;
+    out->n = 0;
+    if (!q) return ANIM_EBADARG;
+    if (q->n_opt > ANIM_MAX_CARDS || q->n_table > ANIM_MAX_TABLE_INPUT
+        || q->n_named > ANIM_MAX_TABLE_INPUT) return ANIM_ECAP;
+    Card opt[ANIM_MAX_CARDS], table[ANIM_MAX_TABLE_INPUT], named[ANIM_MAX_TABLE_INPUT];
+    for (int i = 0; i < q->n_opt; i++)   opt[i]   = ask_card(q->opt[i]);
+    for (int i = 0; i < q->n_table; i++) table[i] = ask_card(q->table[i]);
+    for (int i = 0; i < q->n_named; i++) named[i] = ask_card(q->named[i]);
+    int rel[ANIM_MAX_CARDS];
+    const int n = anim_stale_optimistic_on_table(opt, q->n_opt, table, q->n_table,
+                                                 named, q->n_named, rel, ANIM_MAX_CARDS);
+    if (n < 0) return n;
+    for (int i = 0; i < n; i++) out->release[i] = (uint8_t)rel[i];
+    out->n = (uint8_t)n;
+    return n;
+}
+
 static uint64_t conflict_bit(int id) {
     return (id >= 0 && id < 52) ? ((uint64_t)1 << id) : 0;
 }
@@ -1263,6 +1337,18 @@ int anim_reversal_order(const unsigned char *verdicts, int n_motions,
     return out->n_steps;
 }
 
+int anim_reversal_order_ask(const AnimReversalAsk *q, AnimConflictPlan *out) {
+    if (!out) return ANIM_EBADARG;
+    // Emptied before anything can refuse: the plan is read where it lies, and a
+    // refusal must not leave the last question's steps lying there. Once is
+    // enough - anim_reversal_order refuses before it writes.
+    out->n_verdicts = 0;
+    out->n_steps = 0;
+    out->n_order = 0;
+    if (!q) return ANIM_EBADARG;
+    return anim_reversal_order(q->verdicts, q->n_motions, q->group_sizes, q->n_groups, out);
+}
+
 // ---- the board's own sets and small rules ---------------------------------
 // See anim_plan.h. Card sets are u64 bitsets over dense ids, so every one of
 // these is set algebra a compiler turns into a handful of instructions.
@@ -1481,6 +1567,32 @@ int anim_hand_laid_out_masked(const unsigned char *cards, int n_cards, uint64_t 
     return w;
 }
 
+// A hand slot in the byte alphabet the rule above speaks (the header's table).
+static unsigned char ask_hand_slot(Card c) {
+    if (card_is_none(c)) return ANIM_TABLE_UNKNOWN;
+    if (c.suit == -1 && c.value == -1) return ANIM_TABLE_NONE;
+    return (unsigned char)card_to_id(ask_card(c));
+}
+
+int anim_hand_laid_out_ask(const AnimHandAsk *q, AnimHandLaid *out) {
+    if (!out) return ANIM_EBADARG;
+    out->n = 0;
+    if (!q) return ANIM_EBADARG;
+    if (q->n_cards > MAX_HAND_SIZE || q->n_order > MAX_HAND_SIZE) return ANIM_ECAP;
+    unsigned char hand[MAX_HAND_SIZE], order[MAX_HAND_SIZE], laid[MAX_HAND_SIZE];
+    for (int i = 0; i < q->n_cards; i++) hand[i] = ask_hand_slot(q->cards[i]);
+    for (int i = 0; i < q->n_order; i++) order[i] = ask_hand_slot(q->order[i]);
+    const int n = anim_hand_laid_out_masked(hand, q->n_cards, q->deferred,
+                                            order, q->n_order, laid, MAX_HAND_SIZE);
+    if (n < 0) return n;
+    // Everything the rule writes it copied from its input, so a byte that is
+    // not a back is a dense id.
+    for (int i = 0; i < n; i++)
+        out->cards[i] = laid[i] == ANIM_TABLE_UNKNOWN ? CARD_NONE : card_of_id(laid[i]);
+    out->n = (uint8_t)n;
+    return n;
+}
+
 uint64_t anim_table_card_ids(const unsigned char *table, int n_battles) {
     uint64_t ids = 0;
     if (!table || n_battles <= 0) return 0;
@@ -1594,6 +1706,20 @@ int anim_finish_rows(const unsigned char *elimination, int n_elim,
         w++;
     }
     return w;
+}
+
+int anim_finish_ask(const AnimFinishAsk *q, AnimFinish *out) {
+    if (!out) return ANIM_EBADARG;
+    out->n = 0;
+    if (!q) return ANIM_EBADARG;
+    if (q->n_elim > MAX_PLAYERS) return ANIM_EBADARG;
+    // No floor here: anim_finish_rows refuses a negative seat count itself.
+    if (q->n_players > MAX_PLAYERS) return ANIM_EBADARG;
+    const int n = anim_finish_rows(q->elimination, q->n_elim, q->game_over, q->n_players,
+                                   q->my_seat, out->rows, MAX_PLAYERS + 1);
+    if (n < 0) return n;
+    out->n = (uint8_t)n;
+    return n;
 }
 
 unsigned anim_board_chrome(int is_over, int results_shown, int spectating, int rules) {

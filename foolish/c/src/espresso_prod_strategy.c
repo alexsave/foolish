@@ -62,7 +62,7 @@
 //   first occurrence of each value in `matching`; mirrored with a
 //   first-occurrence scan.
 // - `strategy_key === 'random'` maps to strategy_key == 0 (STRAT_RANDOM in
-//   strategy.h / STRAT.random in wasm/bots.ts). strategy.h itself is not
+//   strategy.h, the roster's `random` row). strategy.h itself is not
 //   included: its parse_strategy needs strcmp, absent from the wasm shim.
 // - All eval arithmetic is done in double with the TS's left-to-right
 //   term order; counts/sums/scores are exact small integers so the double

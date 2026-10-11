@@ -5,17 +5,19 @@
 // same functions the edge entry points call - handleMetaAction (meta),
 // executePackedAction (action), lockedBotLoop (the bot loop) - with the caller's
 // auth id, and read the result back through the kernel (table_play.ts). A suite
-// that is about the HTTP shell itself (auth, the JSON body, the response) goes
+// that is about the HTTP shell itself (auth, the request's bytes, the response) goes
 // through e2e/helpers/edge.ts instead.
 
 import { fixture, READY, IDLE, type FixtureSeat } from './table_fixture.ts';
+import { askBody } from './ask.ts';
 import { seedTable } from './table_db.ts';
 import { legalMoves, mustReadTable, type PlayMove, type TableState } from './table_play.ts';
 import { handleMetaAction } from '../../server/impls/supabase/functions/_shared/adapter/meta_actions.ts';
 import { executePackedAction } from '../../server/impls/supabase/functions/_shared/adapter/packed_action.ts';
 import { lockedBotLoop } from '../../server/impls/supabase/functions/_shared/adapter/bot_actions.ts';
 import type { HandlerResult } from '../../server/impls/supabase/functions/_shared/adapter/utils.ts';
-import { ACTION_STATUS, decodeActionResponse, encodeActionRequest } from '../../sdk/ts/wire/awire.ts';
+import { clientTable } from '../../sdk/ts/table/client_table.ts';
+import { TABLE_STATUS_MOOT } from '../../sdk/ts/gen/view_layout.bots.ts';
 import * as L from '../../sdk/ts/gen/game_layout.bots.ts';
 
 export interface LobbySeat extends FixtureSeat {
@@ -34,16 +36,21 @@ export async function seedLobby(gameId: string, seats: LobbySeat[], title = game
     await seedTable(gameId, b.build());
 }
 
-/** One `meta` request by `userId`, through the real handler. */
-export function runMeta(gameId: string, userId: string, body: Record<string, unknown>, userName = 'U'): Promise<HandlerResult> {
+/**
+ * One `meta` request by `userId`, through the real handler. `body` states the
+ * ask with the old request's names (helpers/ask.ts), or is the raw request
+ * bytes, for a suite that sends something the kernel must refuse.
+ */
+export async function runMeta(gameId: string, userId: string, body: Record<string, unknown> | Uint8Array, userName = 'U'): Promise<HandlerResult> {
+    // async, so a request the helper cannot even state rejects like one the server refuses.
     return handleMetaAction({
         user: { id: userId, user_metadata: { username: userName } } as never,
-        userName, body: { ...body, game_id: gameId }, reqId: 'e2e-meta',
+        userName, body: body instanceof Uint8Array ? body : askBody({ ...body, game_id: gameId }), reqId: 'e2e-meta',
     });
 }
 
 export interface ActionResult {
-    /** ACTION_STATUS.* */
+    /** TABLE_STATUS_* */
     status: number;
     rejectCode: number;
     version: number;
@@ -53,8 +60,8 @@ export interface ActionResult {
 /** One packed move by `userId`, through the real move path. */
 export async function runAction(gameId: string, userId: string, move: PlayMove | Uint8Array, intentVersion?: number): Promise<ActionResult> {
     const wire = move instanceof Uint8Array ? move : move.wire;
-    const out = await executePackedAction(encodeActionRequest(gameId, wire, intentVersion), userId, 'e2e-action');
-    const r = decodeActionResponse(out.body);
+    const out = await executePackedAction(clientTable().actionRequest(gameId, wire, intentVersion), userId, 'e2e-action');
+    const r = clientTable().readActionResponse(out.body);
     if (!r) throw new Error('runAction: the response did not decode');
     return { ...r, needsBots: out.needsBots };
 }
@@ -90,7 +97,7 @@ export async function playToEnd(gameId: string, opts: PlayOptions = {}): Promise
         }
         const mv = pick(moves, t);
         const r = await runAction(gameId, mv.playerId, mv);
-        if (r.status === ACTION_STATUS.MOOT) return mustReadTable(gameId);
+        if (r.status === TABLE_STATUS_MOOT) return mustReadTable(gameId);
     }
     throw new Error(`playToEnd: game ${gameId} did not end`);
 }

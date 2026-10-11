@@ -22,10 +22,9 @@ import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import type { TableView, ViewCard as Card } from '../sdk/ts/table/client_table.ts';
 import * as V from '../sdk/ts/gen/view_layout.bots.ts';
 import { boardPills, canCoverPair, validateActionWire } from '../src/utils/gameValidation.ts';
-import { clientTable } from '../sdk/ts/table/client_table.ts';
+import { clientTable, encodeAction, type AwireMove } from '../sdk/ts/table/client_table.ts';
 import { __clientKernelExports } from '../sdk/ts/wasm/bots.ts';
 import { unambiguousCover as kernelUnambiguousCover } from './helpers/table_fixture.ts';
-import { encodeAction, type AwireMove } from '../sdk/ts/wire/awire.ts';
 import { MemTable, residentMoves } from './helpers/table_mem.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }

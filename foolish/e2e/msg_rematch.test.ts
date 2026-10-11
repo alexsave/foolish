@@ -11,8 +11,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    kernelMsgDecode, kernelMsgRematch, kernelMsgRuleP, kernelB32Encode,
+    kernelMsgDecode as decodeHeader, kernelMsgRematch, kernelMsgRuleP, kernelB32Encode,
 } from '../sdk/ts/wasm/bots.ts';
+
+// The envelope and its digest as one flat value: the generated header (msg_wire.h MsgHeader) holds them apart.
+const kernelMsgDecode = (bytes: Uint8Array) => { const h = decodeHeader(bytes); return { ...h.e, digest: h.digest }; };
 
 const hex = (h: string) => Uint8Array.from(h.match(/../g)!.map((b) => parseInt(b, 16)));
 
@@ -44,16 +47,16 @@ test('the rematch is an ordinary format 6 lobby of the same game, seated as it f
     assert.equal(fin.phase, 3);
     assert.equal(lob.format, 6, 'a rematch lobby is format 6, the wire every shipped build reads');
     assert.equal(lob.phase, 0, 'a rematch is a lobby');
-    assert.equal(lob.game_id, fin.game_id, 'the rematch left the game');
-    assert.deepEqual(Array.from(lob.parent8), Array.from(fin.digest.subarray(0, 8)),
+    assert.equal(lob.gameId, fin.gameId, 'the rematch left the game');
+    assert.deepEqual(Array.from(lob.parent8), Array.from(fin.digest.slice(0, 8)),
         'the rematch does not descend from the finished chain');
-    assert.equal(lob.last_actor_seat, 2, 'the lobby does not say its tapper sealed it');
-    assert.equal(lob.sent_at, 0x1234, "the lobby's send clock is not the tap's");
+    assert.equal(lob.lastActorSeat, 2, 'the lobby does not say its tapper sealed it');
+    assert.equal(lob.sentAt, 0x1234, "the lobby's send clock is not the tap's");
     assert.notDeepEqual(Array.from(lob.seed), Array.from(fin.seed), 'the rematch re-deals the old deal');
     assert.deepEqual(lob.joins.slice().sort((a, b) => a.seat - b.seat),
                      fin.joins.slice().sort((a, b) => a.seat - b.seat));
-    assert.equal(lob.n_players, 4, 'the rematch is the finished table, full');
-    assert.notEqual(lob.carry_key, 0, "the fool's penalty did not carry over");
+    assert.equal(lob.nPlayers, 4, 'the rematch is the finished table, full');
+    assert.notEqual(lob.carryKey, 0, "the fool's penalty did not carry over");
 });
 
 test('three taps are three lobbies of one game, and every one outranks the finished game', () => {
@@ -61,10 +64,10 @@ test('three taps are three lobbies of one game, and every one outranks the finis
     const envs = taps.map((t) => kernelMsgDecode(t));
     const fin = kernelMsgDecode(FINISHED);
     for (const [s, e] of envs.entries()) {
-        assert.equal(e.game_id, fin.game_id, `seat ${s}: the tap left the game`);
-        assert.deepEqual(Array.from(e.parent8), Array.from(fin.digest.subarray(0, 8)),
+        assert.equal(e.gameId, fin.gameId, `seat ${s}: the tap left the game`);
+        assert.deepEqual(Array.from(e.parent8), Array.from(fin.digest.slice(0, 8)),
             `seat ${s}: the tap does not name the finished chain`);
-        assert.equal(e.last_actor_seat, s, `seat ${s}: the tap is not its tapper's`);
+        assert.equal(e.lastActorSeat, s, `seat ${s}: the tap is not its tapper's`);
     }
     for (let a = 0; a < 3; a++) for (let b = a + 1; b < 3; b++) {
         assert.notDeepEqual(Array.from(envs[a].seed), Array.from(envs[b].seed),

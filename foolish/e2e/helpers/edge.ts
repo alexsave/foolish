@@ -22,6 +22,10 @@
 import './../harness.ts';
 import { servedHandlers, ServedHandler } from '../adapters/server.ts';
 import { __setJwksForTest } from '../../server/impls/supabase/functions/_shared/adapter/auth.ts';
+import { clientTable, type AskRefusal } from '../../sdk/ts/table/client_table.ts';
+import { askBody } from './ask.ts';
+import { refusalMessage } from '../../server/impls/supabase/functions/_shared/adapter/table_io.ts';
+import * as V from '../../sdk/ts/gen/view_layout.bots.ts';
 
 // ---- post-response work ----------------------------------------------------
 const pending: Promise<unknown>[] = [];
@@ -103,7 +107,28 @@ export async function edge(name: EdgeName): Promise<ServedHandler> {
     return h;
 }
 
-export interface EdgeResponse { status: number; type: string; bytes: Uint8Array; json: any }
+/**
+ * `refusal`: the body of a non-2xx answer as the kernel reads it (c/src/ask.h
+ * AskRefusal), or null when it is not one. `reason`: that refusal in words, for
+ * a suite that matches loosely on why - the wire carries codes and no prose, so
+ * the words are this helper's, and for a kernel refusal they are the server's
+ * own log sentence (table_io.ts refusalMessage).
+ */
+export interface EdgeResponse { status: number; type: string; bytes: Uint8Array; json: any; refusal: AskRefusal | null; reason: string }
+
+function reasonOf(r: AskRefusal | null): string {
+    if (!r) return '';
+    switch (r.why) {
+        case V.ASK_WHY_AUTH: return 'Invalid token, or no authorization header';
+        case V.ASK_WHY_MALFORMED: return 'Malformed request';
+        case V.ASK_WHY_REFUSED: return refusalMessage(r.code, r.detail, '', '');
+        case V.ASK_WHY_NOT_FOUND: return 'Game not found';
+        case V.ASK_WHY_NO_BOT: return 'Bot not available';
+        case V.ASK_WHY_INTERNAL: return 'Internal error';
+        case V.ASK_WHY_METHOD: return 'Method not allowed';
+        default: return `why ${r.why}`;
+    }
+}
 
 async function read(res: Response): Promise<EdgeResponse> {
     const type = res.headers.get('content-type') ?? '';
@@ -112,12 +137,17 @@ async function read(res: Response): Promise<EdgeResponse> {
     if (type.includes('application/json')) {
         try { json = JSON.parse(new TextDecoder().decode(bytes)); } catch { /* not json */ }
     }
-    return { status: res.status, type, bytes, json };
+    const refusal = res.status >= 400 && bytes.length > 0 ? clientTable().readRefusal(bytes) : null;
+    return { status: res.status, type, bytes, json, refusal, reason: reasonOf(refusal) };
 }
 
 const URL_BASE = 'http://edge.local/functions/v1';
 
-/** POST a JSON body to an edge function as `token` (null = no Authorization). */
+/**
+ * POST a JSON body to an edge function as `token` (null = no Authorization).
+ * No endpoint reads JSON any more: this is what a client built before the
+ * requests left JSON still sends, for the suites that hold what it gets back.
+ */
 export async function postJson(name: EdgeName, token: string | null, body: unknown): Promise<EdgeResponse> {
     const h = await edge(name);
     const headers: Record<string, string> = { 'content-type': 'application/json' };
@@ -125,10 +155,25 @@ export async function postJson(name: EdgeName, token: string | null, body: unkno
     return read(await h(new Request(`${URL_BASE}/${name}`, { method: 'POST', headers, body: JSON.stringify(body) })));
 }
 
-/** POST a packed binary body to the action function as `token`. */
-export async function postPacked(token: string | null, body: Uint8Array): Promise<EdgeResponse> {
-    const h = await edge('action');
+/** POST bytes to an edge function as `token`: an ask to `meta`, an action request to `action`. */
+export async function postBytes(name: EdgeName, token: string | null, body: Uint8Array): Promise<EdgeResponse> {
+    const h = await edge(name);
     const headers: Record<string, string> = { 'content-type': 'application/octet-stream' };
     if (token) headers.authorization = `Bearer ${token}`;
-    return read(await h(new Request(`${URL_BASE}/action`, { method: 'POST', headers, body: body as unknown as BodyInit })));
+    return read(await h(new Request(`${URL_BASE}/${name}`, { method: 'POST', headers, body: body as unknown as BodyInit })));
 }
+
+/** POST a request that is not a move, stated with the old body's names (helpers/ask.ts), as the ask a client sends to `meta`. */
+export const postAsk = (token: string | null, body: Record<string, unknown>): Promise<EdgeResponse> =>
+    postBytes('meta', token, askBody(body));
+
+/** POST with no body at all (create, delete-account, the heartbeat). `query`: the URL's, e.g. '?game=abc'. */
+export async function postEmpty(name: EdgeName, token: string | null, query = ''): Promise<EdgeResponse> {
+    const h = await edge(name);
+    const headers: Record<string, string> = {};
+    if (token) headers.authorization = `Bearer ${token}`;
+    return read(await h(new Request(`${URL_BASE}/${name}${query}`, { method: 'POST', headers })));
+}
+
+/** POST a packed binary body to the action function as `token`. */
+export const postPacked = (token: string | null, body: Uint8Array): Promise<EdgeResponse> => postBytes('action', token, body);

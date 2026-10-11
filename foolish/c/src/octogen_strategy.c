@@ -45,6 +45,9 @@
 #include "legal.h"
 #include "oracle_mt.h"     // Mode B: the shared accumulator this file feeds (MT5)
 #endif
+#ifdef OG_EXPLAIN_BUILD
+#include "oracle_answer.h" // Mode A and the research builds: the answer this file fills
+#endif
 
 // ---------- small utils ------------------------------------------------
 
@@ -193,6 +196,9 @@ static void og_lite_clone(Game *dst, const Game *src) {
 // ---------- belief state ------------------------------------------------
 
 #define OG_MAX_VOIDS 6
+#ifdef OG_EXPLAIN_BUILD
+_Static_assert(OG_MAX_VOIDS <= OG_ANSWER_MAX_VOIDS, "the answer cannot hold a seat's voids");
+#endif
 
 typedef struct {
     Card pool[80];                  // unseen pool (deck ∪ opp unknowns)
@@ -862,82 +868,40 @@ void og_difftest_report(void) {
     }
 }
 
-// ---------- OG_EXPLAIN: deliberation dump (analysis build only) -------------
+// ---------- OG_EXPLAIN: the deliberation's answer (analysis builds only) ----
 //
-// COMPILED OUT of every normal build: the entire deliberation-dump machinery
-// (this block, the solver-verdict probe, og_ex_emit, and the emit hooks in
+// COMPILED OUT of every normal build: everything that reads a deliberation back
+// out (this block, the solver-verdict probe, og_ex_emit, and the emit hooks in
 // octogen_choose_impl) lives behind OG_EXPLAIN_BUILD, so the shipped native +
-// wasm bots carry ZERO of it — no code-size cost. It is enabled only by the
-// `make og_explain` analysis tool (c/tools/og_explain), which defines
-// -DOG_EXPLAIN_BUILD.
+// wasm bots carry ZERO of it - no code-size cost. It is what the oracle builds
+// are made of (c/Makefile, `wasm-oracle`).
 //
-// When built, set OG_EXPLAIN=1 (dump to stderr) or OG_EXPLAIN=/path/to/file to
-// emit one JSON-lines record per deciding-seat decision: the seat's hand, the
-// table, the candidate moves with their MC average-finish scores
-// (score[i]/nsim[i]) OR the exact endgame-solver verdict per move (win/loss/
-// draw/unknown), and the chosen move. Nothing runs when the var is unset.
+// One deliberation fills one OgAnswer (oracle_answer.h): the seat's hand, the
+// table, octogen's belief, the candidate moves with their MC average-finish
+// scores (score[i]/nsim[i]) OR the exact endgame-solver verdict per move, and
+// the chosen move. A host reads it through og_answer(); nothing is formatted
+// and nothing is parsed.
+//
+// A wasm build answers every choose. A NATIVE build answers only when asked:
+// set OG_EXPLAIN=1 (stderr) or OG_EXPLAIN=/path/to/file and each answer is also
+// printed there as one line of JSON, for a person to read (og_answer_print).
+// That text is debugging output and exists in no wasm module. Nothing runs
+// when the var is unset.
 #ifdef OG_EXPLAIN_BUILD
-#ifdef CD_WASM_OVERLAY
-// Freestanding snprintf for the analysis-only wasm build (-nostdlib has no
-// libc). Supports exactly what og_ex_emit uses: %d, %ld, %s, %c, %.Nf, %%.
-// Returns bytes actually written (clamped), which keeps the `w += snprintf(...)`
-// accumulators inside the 16 KiB record buffer.
-#include <stdarg.h>
-static int og_ex_putl(char *b, int cap, long v) {
-    char t[24]; int n = 0, w = 0; unsigned long u;
-    if (v < 0) { if (w < cap) b[w] = '-'; w++; u = (unsigned long)(-(v + 1)) + 1; }
-    else u = (unsigned long)v;
-    do { t[n++] = (char)('0' + u % 10); u /= 10; } while (u);
-    while (n) { if (w < cap) b[w] = t[--n]; w++; }
-    return w;
-}
-static int wasm_vsnprintf(char *buf, unsigned long n, const char *fmt, va_list ap) {
-    int w = 0; int cap = (int)n - 1; if (cap < 0) cap = 0;
-    for (; *fmt; fmt++) {
-        if (*fmt != '%') { if (w < cap) buf[w] = *fmt; w++; continue; }
-        fmt++;
-        int prec = -1, islong = 0;
-        if (*fmt == '.') { fmt++; prec = 0; while (*fmt >= '0' && *fmt <= '9') prec = prec * 10 + (*fmt++ - '0'); }
-        if (*fmt == 'l') { islong = 1; fmt++; }
-        if (*fmt == 'd') { long v = islong ? va_arg(ap, long) : va_arg(ap, int); w += og_ex_putl(buf + (w < cap ? w : cap), (w < cap ? cap - w : 0), v); }
-        else if (*fmt == 's') { const char *s = va_arg(ap, const char *); for (; *s; s++) { if (w < cap) buf[w] = *s; w++; } }
-        else if (*fmt == 'c') { char c = (char)va_arg(ap, int); if (w < cap) buf[w] = c; w++; }
-        else if (*fmt == 'f') {
-            double d = va_arg(ap, double); if (prec < 0) prec = 6;
-            if (d < 0) { if (w < cap) buf[w] = '-'; w++; d = -d; }
-            double scale = 1; for (int i = 0; i < prec; i++) scale *= 10;
-            double rounded = d * scale + 0.5;
-            long long whole = (long long)(rounded / scale);
-            long long frac = (long long)rounded - whole * (long long)scale;
-            w += og_ex_putl(buf + (w < cap ? w : cap), (w < cap ? cap - w : 0), (long)whole);
-            if (prec > 0) {
-                if (w < cap) buf[w] = '.'; w++;
-                for (int i = prec - 1, ff = (int)frac; i >= 0; i--) {
-                    int dv = 1; for (int j = 0; j < i; j++) dv *= 10;
-                    if (w < cap) buf[w] = (char)('0' + (ff / dv) % 10); w++;
-                }
-            }
-        } else if (*fmt == '%') { if (w < cap) buf[w] = '%'; w++; }
-    }
-    if ((int)n > 0) buf[w < cap ? w : cap] = 0;
-    return w < cap ? w : cap;
-}
-static int snprintf(char *buf, unsigned long n, const char *fmt, ...) {
-    va_list ap; va_start(ap, fmt); int r = wasm_vsnprintf(buf, n, fmt, ap); va_end(ap); return r;
-}
-#endif
 enum { OG_EX_NONE_V = 2000001, OG_EX_UNKNOWN_V = 2000002, OG_EX_ILLEGAL_V = 2000003 };
 static int   og_ex_solve_applied = 0;   // did the endgame solver fire this decision
-static int   og_ex_verdict[600];        // exact per-root-move solver value / sentinel
+static int   og_ex_verdict[OG_ANSWER_MAX_VERDICTS];   // exact per-root-move solver value / sentinel
+
+// Not thread-local: Mode A is one instance per worker with TLS stripped, and a
+// native research run deliberates on one thread. Mode B never compiles this.
+static OgAnswer og_ans;
+static bool     og_ans_ready = false;
+const OgAnswer *og_answer(void)       { return og_ans_ready ? &og_ans : NULL; }
+void            og_answer_reset(void) { og_ans_ready = false; }
 
 #ifdef CD_WASM_OVERLAY
-// wasm has no getenv/FILE*: the dump goes to a static buffer the JS harness reads
-// via the exported accessors below. Always on in this (analysis-only) build.
-static char og_ex_wbuf[1 << 20];
-static int  og_ex_wlen = 0;
-const char *wasm_og_explain_ptr(void)   { return og_ex_wbuf; }
-int         wasm_og_explain_len(void)   { return og_ex_wlen; }
-void        wasm_og_explain_reset(void) { og_ex_wlen = 0; }
+// wasm has no getenv to ask and no file to print to: this (analysis-only) build
+// always answers, and the host reads the struct.
 static int og_explain_on(void) { return 1; }
 #else
 static FILE *og_ex_out = NULL;
@@ -954,7 +918,7 @@ static int og_explain_on(void) {
     return og_ex_on;
 }
 #endif
-// og_ex_emit (the per-decision JSON dump) is defined after the Candidates
+// og_ex_emit (the per-decision answer) is defined after the Candidates
 // typedef, just above octogen_choose_impl.
 static void og_ex_emit(const Game *g, int bot_idx, const LegalMoves *moves,
                        const Belief *B, const void *C, const double *score, const int *nsim,
@@ -964,7 +928,7 @@ static void og_ex_emit(const Game *g, int bot_idx, const LegalMoves *moves,
 
 #if defined(FOOLISH_ORACLE_MT) && !defined(OG_EXPLAIN_BUILD)
 // Mode B (docs/INFINITE_ORACLE_DESIGN.md §8b.5, MT6) reuses the exact-verdict
-// probe below but not the JSON dump, so declare just the verdict state the probe
+// probe below but not the answer struct, so declare just the verdict state the probe
 // fills. Thread-local: every thread runs its own probe over the same position
 // off its own transposition table, so there is no cross-thread race on these
 // and no cross-thread reuse of a seat-perspective solver value.
@@ -1046,7 +1010,7 @@ static int og_try_endgame_solve(const Game *g, int bot_idx,
             }
             int ab = 0;
             const char *ebs = getenv("OG_EXPLAIN_SOLVE_BUDGET");
-            long eb = ebs ? atol(ebs) : 4000000L;
+            long eb = ebs ? (long)atoi(ebs) : 4000000L;
             int v = cd_sim_solve_d(&child, bot_idx, -2000, 2000, &eb, 1, &ab);
             og_ex_verdict[i] = (ab || eb <= 0) ? OG_EX_UNKNOWN_V : v;
         }
@@ -1239,6 +1203,9 @@ typedef struct {
     int idx[OG_MAX_CANDS];
     int n;
 } Candidates;
+#ifdef OG_EXPLAIN_BUILD
+_Static_assert(OG_MAX_CANDS <= OG_ANSWER_MAX_CANDS, "the answer cannot hold every candidate");
+#endif
 
 #ifdef FOOLISH_ORACLE_MT
 // Mode B helpers (docs/INFINITE_ORACLE_DESIGN.md §8b.5, MT5). One thread
@@ -1331,9 +1298,9 @@ static void og_mt_capture_verdicts(const Candidates *C) {
 // Per-candidate aggregation of the cd_orc playout traces across every
 // (world x candidate) rollout of ONE deliberation: path-prefix clusters
 // (base-5 id over the first CD_ORC_ROUNDS round symbols -> count + finish
-// sum) plus whole-playout marginals. Emitted per candidate by og_ex_emit as
-// the binary sidecar below, the raw material for the overlay's template
-// proof. ~163 KiB of file-scope BSS - the Mode A oracle build only, where
+// sum) plus whole-playout marginals. Read back per candidate by og_ex_emit
+// into the answer's why table below, the raw material for the overlay's
+// template proof. ~163 KiB of file-scope BSS - the Mode A oracle build only, where
 // memory is free and TLS is stripped (see CD_ORC_TRACE in cordite_sim.h).
 #define OG_ORC_PATHS 625   // 5^CD_ORC_ROUNDS
 #define OG_ORC_RTYPES 6    // MV_ATTACK..MV_NONE
@@ -1377,48 +1344,29 @@ static void og_orc_fold(int ci, int fp) {
     og_orc_rounds[ci] += (uint32_t)cd_orc.rounds;
 }
 
-// ---- binary sidecar (wasm_og_paths_ptr/len) -------------------------------
-// The per-candidate path/reply/marginal data rides NEXT TO the JSONL record
-// as a packed little-endian blob - no JSON encode/parse on the hot batch
-// path. Layout (all offsets byte-based, floats IEEE f32 via memcpy):
-//   header: u32 magic "OGP1" (0x3150474F); u16 nentries; u8 stride=244; u8 0
-//   entry (244 B), one per candidate with samples, in candidate-list order:
-//     +0  u8 k (index into the record's candidates array)
-//     +1  u8 npaths (<=12)   +2 u8 nreplies (<=3)   +3 u8 0
-//     +4  u32 n (playouts folded)
-//     +8  f32 mepk, oppk, metr, opptr, rnds        (marginal means)
-//     +28 reply[3]:  u8 type; u8 card(52=none); u16 0; u32 n     (8 B each)
-//     +52 path[12]:  u8 len; u8 sym[4]; u8 pad[3]; u32 n; f32 fin (16 B each)
-#define OG_ORC_TOP_PATHS 12
-#define OG_ORC_TOP_REPLIES 3
-#define OG_ORC_STRIDE 244
-static _Thread_local uint8_t og_orc_blob[8 + OG_MAX_CANDS * OG_ORC_STRIDE];
-static _Thread_local int og_orc_blob_len = 0;
-#ifdef CD_WASM_OVERLAY
-const uint8_t *wasm_og_paths_ptr(void) { return og_orc_blob; }
-int            wasm_og_paths_len(void) { return og_orc_blob_len; }
-#endif
-static void og_orc_put32(uint8_t *p, uint32_t v) { memcpy(p, &v, 4); }
-static void og_orc_putf(uint8_t *p, float v)     { memcpy(p, &v, 4); }
+// ---- the answer's why table (oracle_answer.h OgAnswerWhy) ------------------
+// One entry per candidate with samples, in candidate order: its most told
+// storylines, the replies it most often met, and the whole-playout means. The
+// raw material for the overlay's template proof.
+_Static_assert(CD_ORC_ROUNDS == OG_ANSWER_PATH_ROUNDS, "a storyline is CD_ORC_ROUNDS symbols");
 
-static void og_orc_write_blob(int ncand, const int *nsim) {
-    int off = 8, nc = 0;
+static void og_orc_fill_why(OgAnswer *a, int ncand, const int *nsim) {
+    int nc = 0;
     for (int k = 0; k < ncand && k < OG_MAX_CANDS; k++) {
         if (!nsim || nsim[k] <= 0 || og_orc_n[k] == 0) continue;
-        uint8_t *e = og_orc_blob + off;
-        memset(e, 0, OG_ORC_STRIDE);
-        e[0] = (uint8_t)k;
-        og_orc_put32(e + 4, og_orc_n[k]);
+        OgAnswerWhy *e = &a->why[nc++];
+        e->row = (uint8_t)k;
+        e->n = og_orc_n[k];
         double on = (double)og_orc_n[k];
-        og_orc_putf(e + 8,  (float)(og_orc_mepk[k] / on));
-        og_orc_putf(e + 12, (float)(og_orc_oppk[k] / on));
-        og_orc_putf(e + 16, (float)(og_orc_metr[k] / on));
-        og_orc_putf(e + 20, (float)(og_orc_opptr[k] / on));
-        og_orc_putf(e + 24, (float)(og_orc_rounds[k] / on));
+        e->mepk  = (float)(og_orc_mepk[k] / on);
+        e->oppk  = (float)(og_orc_oppk[k] / on);
+        e->metr  = (float)(og_orc_metr[k] / on);
+        e->opptr = (float)(og_orc_opptr[k] / on);
+        e->rnds  = (float)(og_orc_rounds[k] / on);
         // top replies by count (insertion top-3 over the 6x53 table)
         {
-            int bt[OG_ORC_TOP_REPLIES], bc[OG_ORC_TOP_REPLIES];
-            uint32_t bn[OG_ORC_TOP_REPLIES];
+            int bt[OG_ANSWER_TOP_REPLIES], bc[OG_ANSWER_TOP_REPLIES];
+            uint32_t bn[OG_ANSWER_TOP_REPLIES];
             int nr = 0;
             for (int t = 0; t < OG_ORC_RTYPES; t++)
                 for (int c = 0; c < OG_ORC_RCARDS; c++) {
@@ -1426,58 +1374,49 @@ static void og_orc_write_blob(int ncand, const int *nsim) {
                     if (!v) continue;
                     int ins = nr;
                     while (ins > 0 && bn[ins - 1] < v) ins--;
-                    if (ins >= OG_ORC_TOP_REPLIES) continue;
-                    if (nr < OG_ORC_TOP_REPLIES) nr++;
+                    if (ins >= OG_ANSWER_TOP_REPLIES) continue;
+                    if (nr < OG_ANSWER_TOP_REPLIES) nr++;
                     for (int j = nr - 1; j > ins; j--) {
                         bt[j] = bt[j-1]; bc[j] = bc[j-1]; bn[j] = bn[j-1];
                     }
                     bt[ins] = t; bc[ins] = c; bn[ins] = v;
                 }
-            e[2] = (uint8_t)nr;
+            e->n_replies = (uint8_t)nr;
             for (int r = 0; r < nr; r++) {
-                uint8_t *re = e + 28 + r * 8;
-                re[0] = (uint8_t)bt[r];
-                re[1] = (uint8_t)bc[r];
-                og_orc_put32(re + 4, bn[r]);
+                e->replies[r].type = (uint8_t)bt[r];
+                e->replies[r].card = (uint8_t)bc[r];
+                e->replies[r].n = bn[r];
             }
         }
         // top path clusters by count (insertion top-12 over 625 slots)
         {
-            int top[OG_ORC_TOP_PATHS];
+            int top[OG_ANSWER_TOP_PATHS];
             int nt = 0;
             for (int pid = 0; pid < OG_ORC_PATHS; pid++) {
                 uint32_t v = og_orc_cnt[k][pid];
                 if (!v) continue;
                 int ins = nt;
                 while (ins > 0 && og_orc_cnt[k][top[ins - 1]] < v) ins--;
-                if (ins >= OG_ORC_TOP_PATHS) continue;
-                if (nt < OG_ORC_TOP_PATHS) nt++;
+                if (ins >= OG_ANSWER_TOP_PATHS) continue;
+                if (nt < OG_ANSWER_TOP_PATHS) nt++;
                 for (int j = nt - 1; j > ins; j--) top[j] = top[j-1];
                 top[ins] = pid;
             }
-            e[1] = (uint8_t)nt;
+            e->n_paths = (uint8_t)nt;
             for (int ti = 0; ti < nt; ti++) {
-                uint8_t *pe = e + 52 + ti * 16;
+                OgAnswerPath *pe = &e->paths[ti];
                 int x = top[ti], len = 0;
                 while (x > 0 && len < CD_ORC_ROUNDS) {
-                    pe[1 + len] = (uint8_t)(x % 5);
+                    pe->sym[len] = (uint8_t)(x % 5);
                     x /= 5; len++;
                 }
-                pe[0] = (uint8_t)len;
-                og_orc_put32(pe + 8, og_orc_cnt[k][top[ti]]);
-                og_orc_putf(pe + 12,
-                            (float)(og_orc_fin[k][top[ti]] / (double)og_orc_cnt[k][top[ti]]));
+                pe->len = (uint8_t)len;
+                pe->n = og_orc_cnt[k][top[ti]];
+                pe->fin = (float)(og_orc_fin[k][top[ti]] / (double)og_orc_cnt[k][top[ti]]);
             }
         }
-        off += OG_ORC_STRIDE;
-        nc++;
     }
-    og_orc_put32(og_orc_blob, 0x3150474Fu);   // "OGP1"
-    og_orc_blob[4] = (uint8_t)(nc & 0xFF);
-    og_orc_blob[5] = (uint8_t)((nc >> 8) & 0xFF);
-    og_orc_blob[6] = OG_ORC_STRIDE;
-    og_orc_blob[7] = 0;
-    og_orc_blob_len = off;
+    a->n_why = (uint8_t)nc;
 }
 #endif  // CD_ORC_TRACE
 
@@ -1756,228 +1695,239 @@ static void og_verify_belief(const Game *g, int bot_idx, const Belief *B) {
 
 // ---------- OG_EXPLAIN emit (defined here: needs Candidates + MOVE_*) -------
 #ifdef OG_EXPLAIN_BUILD
+// A bounded text cursor: what a row's label is written through. It saturates at
+// `cap` and never writes past it, so a label too long for its field is cut
+// short, never an overrun.
+typedef struct { char *b; int cap, n; } OgText;
+static void og_text_put(OgText *t, const char *s) {
+    for (; *s; s++) if (t->n < t->cap) t->b[t->n++] = *s;
+}
 static const char *OG_EX_VAL[14] = {
     "?","2","3","4","5","6","7","8","9","10","J","Q","K","A"
 };
 // Canonical durak rank convention (wire v13 = A), trump marked with '*'.
-static void og_ex_fmt_card(char *buf, size_t n, Card c, int trump) {
-    const char *v = (c.value >= 1 && c.value <= 13) ? OG_EX_VAL[c.value] : "?";
-    char s = (c.suit >= 0 && c.suit < 4) ? "SHCD"[(int)c.suit] : '?';
-    snprintf(buf, n, "%s%c%s", v, s, (c.suit == trump) ? "*" : "");
-}
-static int og_ex_cards_json(char *out, size_t cap, const Card *cards, int n, int trump) {
-    int w = 0;
-    w += snprintf(out + w, cap - w, "[");
-    for (int i = 0; i < n; i++) {
-        char cb[8]; og_ex_fmt_card(cb, sizeof cb, cards[i], trump);
-        w += snprintf(out + w, cap - w, "%s\"%s\"", i ? "," : "", cb);
-    }
-    w += snprintf(out + w, cap - w, "]");
-    return w;
+static void og_text_card(OgText *t, Card c, int trump) {
+    char s[2] = { (c.suit >= 0 && c.suit < 4) ? "SHCD"[(int)c.suit] : '?', 0 };
+    og_text_put(t, (c.value >= 1 && c.value <= 13) ? OG_EX_VAL[c.value] : "?");
+    og_text_put(t, s);
+    if (c.suit == trump) og_text_put(t, "*");
 }
 static const char *OG_EX_MTYPE[6] = { "attack","cover","pass","pickup","good","wait" };
-static void og_ex_move_label(char *label, size_t cap, const LegalMove *m, int trump) {
-    const char *mt = (m->type >= 0 && m->type < 6) ? OG_EX_MTYPE[m->type] : "?";
+// The move in the kernel's notation, the text a reader is shown for it:
+// "attack 7H 7S*", "cover 10H->7H,QS*->9D", "pickup", "good".
+static void og_ans_label(OgAnswerRow *r, const LegalMove *m, int trump) {
+    OgText t = { r->label, OG_ANSWER_LABEL - 1, 0 };
     if (m->type == MOVE_COVER && m->n_cards >= 1) {
-        int w = snprintf(label, cap, "cover");
+        og_text_put(&t, "cover");
         for (int k = 0; k < m->n_cards; k++) {
-            char cc[8], tt[8];
-            og_ex_fmt_card(cc, sizeof cc, m->cards[k], trump);
-            og_ex_fmt_card(tt, sizeof tt, m->attack_cards[k], trump);
-            w += snprintf(label + w, cap - w, "%s%s->%s", k ? "," : " ", cc, tt);
+            og_text_put(&t, k ? "," : " ");
+            og_text_card(&t, m->cards[k], trump);
+            og_text_put(&t, "->");
+            og_text_card(&t, m->attack_cards[k], trump);
         }
     } else if (m->type == MOVE_PICKUP) {
-        snprintf(label, cap, "pickup");
+        og_text_put(&t, "pickup");
     } else if (m->type == MOVE_GOOD) {
-        snprintf(label, cap, "good");
+        og_text_put(&t, "good");
     } else {
-        char cl[64]; cl[0] = 0; int cw = 0;
+        og_text_put(&t, (m->type >= 0 && m->type < 6) ? OG_EX_MTYPE[m->type] : "?");
+        og_text_put(&t, " ");
         for (int c = 0; c < m->n_cards; c++) {
-            char cb[8]; og_ex_fmt_card(cb, sizeof cb, m->cards[c], trump);
-            cw += snprintf(cl + cw, sizeof(cl) - cw, "%s%s", c ? " " : "", cb);
+            if (c) og_text_put(&t, " ");
+            og_text_card(&t, m->cards[c], trump);
         }
-        snprintf(label, cap, "%s %s", mt, cl);
+    }
+    r->label_len = (uint8_t)t.n;
+    r->label[t.n] = 0;              // for the native printer; a host reads label_len
+}
+// A row as its move describes it, with nothing sampled and nothing proven yet.
+static void og_ans_row(OgAnswerRow *r, const LegalMove *m, int trump) {
+    int n = m->n_cards < MAX_MOVE_CARDS ? m->n_cards : MAX_MOVE_CARDS;
+    r->type = (uint8_t)m->type;
+    r->n_cards = (uint8_t)n;
+    r->n_targets = (m->type == MOVE_COVER) ? (uint8_t)n : 0;
+    for (int i = 0; i < n; i++) { r->cards[i] = m->cards[i]; r->targets[i] = m->attack_cards[i]; }
+    r->scored = false; r->alive = true; r->pruned = false;
+    r->forced_loss = false; r->chosen = false;
+    r->verdict = OG_VERDICT_NONE; r->has_verdict_val = false; r->verdict_val = 0;
+    r->nsim = 0; r->score = 0.0;
+    og_ans_label(r, m, trump);
+}
+// The probe's value for a move, as a verdict: a sentinel says why there is no
+// value, anything else IS one and its sign is the result.
+static void og_ans_verdict(OgAnswerRow *r, int val) {
+    if (val == OG_EX_UNKNOWN_V) r->verdict = OG_VERDICT_UNKNOWN;
+    else if (val == OG_EX_ILLEGAL_V) r->verdict = OG_VERDICT_ILLEGAL;
+    else if (val == OG_EX_NONE_V) r->verdict = OG_VERDICT_NONE;
+    else {
+        r->has_verdict_val = true; r->verdict_val = val;
+        r->verdict = (val > 0) ? OG_VERDICT_WIN : (val < 0) ? OG_VERDICT_LOSS : OG_VERDICT_DRAW;
     }
 }
-// Emit one decision record as a JSON line. score/nsim/alive/forced_loss/Cv may
-// be NULL (endgame-win and single-move paths). score[k]/nsim[k]/alive[k] index
-// by CANDIDATE position k (matching C->idx[k]); verdicts/forced_loss index by
-// the move index into moves->moves[].
+
+#ifndef CD_WASM_OVERLAY
+// The answer as one line of JSON, for a person running a native research build
+// with OG_EXPLAIN set. Printed FROM the struct, so what a reader is shown is
+// what a host would have read. Debugging output only: no wasm module has it.
+static void og_answer_print_cards(FILE *f, const Card *cards, int n, int trump) {
+    fputc('[', f);
+    for (int i = 0; i < n; i++) {
+        char cb[8]; OgText t = { cb, (int)sizeof cb - 1, 0 };
+        og_text_card(&t, cards[i], trump); cb[t.n] = 0;
+        fprintf(f, "%s\"%s\"", i ? "," : "", cb);
+    }
+    fputc(']', f);
+}
+static void og_answer_print(FILE *f, const OgAnswer *a) {
+    static const char *VERDICT[] = { "none","unknown","illegal","win","loss","draw" };
+    static const char *SOLVER[]  = { "none","win","eval" };
+    int trump = a->trump;
+    fprintf(f, "{\"seat\":%d,\"deck\":%d,\"defender\":%d,\"trump\":%d,\"nlogs\":%d",
+            a->seat, a->deck, a->defender, trump, a->n_logs);
+    fprintf(f, ",\"belief\":{\"pinned\":[");
+    for (int p = 0; p < a->n_players; p++) {
+        if (p) fputc(',', f);
+        og_answer_print_cards(f, a->pinned[p].cards, a->pinned[p].n, trump);
+    }
+    fprintf(f, "],\"pool_count\":%d,\"voids\":[", a->n_pool);
+    for (int p = 0; p < a->n_players; p++) {
+        if (p) fputc(',', f);
+        og_answer_print_cards(f, a->voids[p].cards, a->voids[p].n, trump);
+    }
+    fprintf(f, "],\"floor\":[");
+    for (int p = 0; p < a->n_players; p++) fprintf(f, "%s%d", p ? "," : "", a->floor[p]);
+    fprintf(f, "]},\"hand\":");
+    og_answer_print_cards(f, a->hand, a->n_hand, trump);
+    fprintf(f, ",\"hand_counts\":[");
+    for (int p = 0; p < a->n_players; p++) fprintf(f, "%s%d", p ? "," : "", a->hand_count[p]);
+    fprintf(f, "],\"table\":[");
+    for (int b = 0; b < a->n_battles; b++) {
+        fprintf(f, "%s{\"attack\":", b ? "," : "");
+        og_answer_print_cards(f, &a->table[b].attack, 1, trump);
+        fprintf(f, ",\"defense\":");
+        og_answer_print_cards(f, &a->table[b].defense, a->table[b].covered ? 1 : 0, trump);
+        fputc('}', f);
+    }
+    fprintf(f, "],\"solver\":{\"applied\":%d,\"result\":\"%s\"},\"candidates\":[",
+            a->solver_applied ? 1 : 0, SOLVER[a->solver_result]);
+    for (int k = 0; k < a->n_rows; k++) {
+        const OgAnswerRow *r = &a->rows[k];
+        fprintf(f, "%s{\"label\":\"%s\"", k ? "," : "", r->label);
+        if (r->scored) fprintf(f, ",\"score\":%.4f", r->score);
+        fprintf(f, ",\"nsim\":%d,\"alive\":%d", r->nsim, r->alive ? 1 : 0);
+        if (r->pruned) fprintf(f, ",\"pruned\":1");
+        fprintf(f, ",\"forced_loss\":%d,\"verdict\":\"%s\"", r->forced_loss ? 1 : 0, VERDICT[r->verdict]);
+        if (r->has_verdict_val) fprintf(f, ",\"verdict_val\":%d", r->verdict_val);
+        fprintf(f, ",\"chosen\":%d}", r->chosen ? 1 : 0);
+    }
+    fprintf(f, "]}\n");
+    fflush(f);
+}
+#endif  // !CD_WASM_OVERLAY
+
+// Fill the answer for one decision. score/nsim/alive/forced_loss/Cv may be
+// NULL (endgame-win and single-move paths). score[k]/nsim[k]/alive[k] index by
+// CANDIDATE position k (matching C->idx[k]); verdicts/forced_loss index by the
+// move index into moves->moves[].
 static void og_ex_emit(const Game *g, int bot_idx, const LegalMoves *moves,
                        const Belief *B, const void *Cv, const double *score, const int *nsim,
                        const bool *alive, const bool *forced_loss,
                        int chosen_idx, int solver_applied, int solver_win_idx) {
-    (void)solver_win_idx;
 #ifndef CD_WASM_OVERLAY
     if (!og_ex_out) return;
 #endif
     const Candidates *C = (const Candidates *)Cv;
+    OgAnswer *a = &og_ans;
     int trump = g->power_suit;
-#ifdef FOOLISH_ORACLE_BUILD
-    // §6.3: the oracle appends verdict entries for pruned moves; heads-up
-    // ≤28-card positions can enumerate ~75-97 root moves, pushing a record past
-    // the 16 KiB staging cap where the freestanding snprintf TRUNCATES (not
-    // drops) into malformed JSON. Give the oracle build a big file-scope buffer
-    // (og_ex_emit is non-recursive, single-threaded in Mode A).
-    static char buf[65536]; int w = 0;
-#else
-    char buf[16384]; int w = 0;
-#endif
-    #define OGA(...) do { w += snprintf(buf + w, sizeof(buf) - w, __VA_ARGS__); } while (0)
+    const int vcap = (int)(sizeof(og_ex_verdict) / sizeof(og_ex_verdict[0]));
 
-    OGA("{\"ply\":%d,\"seat\":%d,\"deck\":%d,\"defender\":%d,\"trump\":%d,\"nlogs\":%d",
-        g->num_logs, bot_idx, g->deck_count, g->defender, trump, g->num_logs);
+    a->seat = (int8_t)bot_idx;
+    a->defender = (int8_t)g->defender;
+    a->trump = (int8_t)trump;
+    a->n_players = (uint8_t)g->num_players;
+    a->deck = g->deck_count;
+    a->n_logs = g->num_logs;
+    a->solver_applied = solver_applied != 0;
+    a->solver_result = !solver_applied ? OG_SOLVER_NONE
+                     : (chosen_idx >= 0 && solver_win_idx >= 0) ? OG_SOLVER_WIN : OG_SOLVER_EVAL;
+
+    { const Player *pl = &g->players[bot_idx];
+      a->n_hand = (uint8_t)pl->hand_count;
+      for (int i = 0; i < pl->hand_count; i++) a->hand[i] = pl->hand[i]; }
+    a->n_battles = (uint8_t)g->num_battles;
+    for (int b = 0; b < g->num_battles; b++) {
+        a->table[b].attack = g->table_battles[b].attack;
+        a->table[b].defense = g->table_battles[b].defense;
+        a->table[b].covered = !card_is_none(g->table_battles[b].defense);
+    }
 
     // octogen's actual belief about the hidden cards (public deduction): the
     // cards it has PINNED to each opponent's hand (watched them pick up, not yet
     // replayed) vs the genuinely-unknown pool (deck + un-pinned opponent cards),
     // plus demonstrated suit voids and rank floors. This is what octogen knows,
-    // straight from og_build_belief — not reconstructed downstream.
-    if (B) {
-        OGA(",\"belief\":{\"pinned\":[");
-        for (int p = 0; p < g->num_players; p++) {
-            OGA("%s", p ? "," : "");
-            w += og_ex_cards_json(buf + w, sizeof(buf) - w, B->pinned[p], B->pinned_n[p], trump);
-        }
-        OGA("],\"pool\":");
-        w += og_ex_cards_json(buf + w, sizeof(buf) - w, B->pool, B->n, trump);
-        // voids[p] = attack cards p demonstrably could NOT cover at a pickup, so
-        // p holds nothing that beats them (a deduced constraint, not a card).
-        OGA(",\"voids\":[");
-        for (int p = 0; p < g->num_players; p++) {
-            OGA("%s", p ? "," : "");
-            w += og_ex_cards_json(buf + w, sizeof(buf) - w, B->voids[p], B->void_n[p], trump);
-        }
-        OGA("],\"floor\":[");
-        for (int p = 0; p < g->num_players; p++) OGA("%s%d", p ? "," : "", B->floor_v[p]);
-        OGA("]}");
+    // straight from og_build_belief - not reconstructed downstream.
+    // voids[p] = attack cards p demonstrably could NOT cover at a pickup, so p
+    // holds nothing that beats them (a deduced constraint, not a card).
+    for (int p = 0; p < g->num_players; p++) {
+        a->hand_count[p] = (uint8_t)g->players[p].hand_count;
+        a->pinned[p].n = (uint8_t)B->pinned_n[p];
+        for (int i = 0; i < B->pinned_n[p]; i++) a->pinned[p].cards[i] = B->pinned[p][i];
+        a->voids[p].n = (uint8_t)B->void_n[p];
+        for (int i = 0; i < B->void_n[p]; i++) a->voids[p].cards[i] = B->voids[p][i];
+        a->floor[p] = (int8_t)B->floor_v[p];
     }
-
-    OGA(",\"hand\":");
-    { const Player *pl = &g->players[bot_idx];
-      w += og_ex_cards_json(buf + w, sizeof(buf) - w, pl->hand, pl->hand_count, trump); }
-    OGA(",\"hand_count\":%d", g->players[bot_idx].hand_count);
-    OGA(",\"opp_counts\":[");
-    for (int p = 0; p < g->num_players; p++) OGA("%s%d", p ? "," : "", g->players[p].hand_count);
-    OGA("]");
-
-    OGA(",\"table\":[");
-    for (int b = 0; b < g->num_battles; b++) {
-        char ab[8], db[8];
-        og_ex_fmt_card(ab, sizeof ab, g->table_battles[b].attack, trump);
-        bool cov = !card_is_none(g->table_battles[b].defense);
-        if (cov) { og_ex_fmt_card(db, sizeof db, g->table_battles[b].defense, trump);
-                   OGA("%s{\"attack\":\"%s\",\"defense\":\"%s\"}", b ? "," : "", ab, db); }
-        else       OGA("%s{\"attack\":\"%s\",\"defense\":null}", b ? "," : "", ab);
-    }
-    OGA("]");
-
-    const char *sres = !solver_applied ? "none" : (chosen_idx >= 0 && solver_win_idx >= 0 ? "win" : "eval");
-    OGA(",\"solver\":{\"applied\":%d,\"result\":\"%s\"}", solver_applied ? 1 : 0, sres);
+    a->n_pool = (uint8_t)B->n;
 
     int ncand = C ? C->n : moves->n;
-    OGA(",\"candidates\":[");
+    if (ncand > OG_ANSWER_MAX_CANDS) ncand = OG_ANSWER_MAX_CANDS;
     for (int k = 0; k < ncand; k++) {
         int mi = C ? C->idx[k] : k;
-        const LegalMove *m = &moves->moves[mi];
-        const char *mt = (m->type >= 0 && m->type < 6) ? OG_EX_MTYPE[m->type] : "?";
-        char label[96]; og_ex_move_label(label, sizeof label, m, trump);
-        OGA("%s{\"type\":\"%s\",\"label\":\"%s\",\"cards\":", k ? "," : "", mt, label);
-        w += og_ex_cards_json(buf + w, sizeof(buf) - w, m->cards, m->n_cards, trump);
-        if (m->type == MOVE_COVER) {
-            OGA(",\"target\":");
-            w += og_ex_cards_json(buf + w, sizeof(buf) - w, m->attack_cards, m->n_cards, trump);
-        }
-        if (score && nsim && nsim[k] > 0)
-            OGA(",\"score\":%.4f,\"nsim\":%d", score[k] / (double)nsim[k], nsim[k]);
-        else
-            OGA(",\"score\":null,\"nsim\":%d", nsim ? nsim[k] : 0);
-        OGA(",\"alive\":%d", (alive ? (alive[k] ? 1 : 0) : 1));
-        OGA(",\"forced_loss\":%d", (forced_loss ? (forced_loss[mi] ? 1 : 0) : 0));
-        const char *vd = "none"; int vv = 0, has_vv = 0;
-        if (solver_applied && mi < (int)(sizeof(og_ex_verdict)/sizeof(int))) {
-            int val = og_ex_verdict[mi];
-            if (val == OG_EX_UNKNOWN_V) vd = "unknown";
-            else if (val == OG_EX_ILLEGAL_V) vd = "illegal";
-            else if (val == OG_EX_NONE_V) vd = "none";
-            else { has_vv = 1; vv = val; vd = (val > 0) ? "win" : (val < 0) ? "loss" : "draw"; }
-        }
-        OGA(",\"verdict\":\"%s\"", vd);
-        if (has_vv) OGA(",\"verdict_val\":%d", vv);
-        OGA(",\"chosen\":%d}", (mi == chosen_idx) ? 1 : 0);
+        OgAnswerRow *r = &a->rows[k];
+        og_ans_row(r, &moves->moves[mi], trump);
+        r->nsim = nsim ? nsim[k] : 0;
+        if (score && nsim && nsim[k] > 0) { r->scored = true; r->score = score[k] / (double)nsim[k]; }
+        r->alive = alive ? alive[k] : true;
+        r->forced_loss = forced_loss ? forced_loss[mi] : false;
+        if (solver_applied && mi < vcap) og_ans_verdict(r, og_ex_verdict[mi]);
+        r->chosen = (mi == chosen_idx);
     }
+    int nrows = ncand;
 #ifdef FOOLISH_ORACLE_BUILD
     // §6.3: in the exact regime, the move the player actually made may be
-    // excluded from candidacy as a proven loss — the very move a reviewer most
+    // excluded from candidacy as a proven loss - the very move a reviewer most
     // wants judged. The probe already filled og_ex_verdict[mi] by MOVE index;
-    // emit a scoreless, pruned entry for every legal move with a PROVEN verdict
+    // add a scoreless, pruned row for every legal move with a PROVEN verdict
     // (win/loss/draw) that is not already a candidate. C==NULL means the
     // candidate set IS every move, so nothing is pruned; the MC regime
-    // (!solver_applied) emits none — mid-game menus can be thousands of moves.
+    // (!solver_applied) adds none - mid-game menus can be thousands of moves.
     if (solver_applied && C) {
-        int k2 = ncand;
-        for (int mi = 0; mi < moves->n; mi++) {
+        for (int mi = 0; mi < moves->n && mi < vcap && nrows < OG_ANSWER_MAX_ROWS; mi++) {
             int is_cand = 0;
             for (int k = 0; k < C->n; k++) if (C->idx[k] == mi) { is_cand = 1; break; }
             if (is_cand) continue;
-            if (mi >= (int)(sizeof(og_ex_verdict)/sizeof(int))) continue;
             int val = og_ex_verdict[mi];
             if (val == OG_EX_NONE_V || val == OG_EX_UNKNOWN_V || val == OG_EX_ILLEGAL_V) continue;
-            const LegalMove *m = &moves->moves[mi];
-            const char *mt = (m->type >= 0 && m->type < 6) ? OG_EX_MTYPE[m->type] : "?";
-            char label[96]; og_ex_move_label(label, sizeof label, m, trump);
-            OGA("%s{\"type\":\"%s\",\"label\":\"%s\",\"cards\":", k2 ? "," : "", mt, label);
-            w += og_ex_cards_json(buf + w, sizeof(buf) - w, m->cards, m->n_cards, trump);
-            if (m->type == MOVE_COVER) {
-                OGA(",\"target\":");
-                w += og_ex_cards_json(buf + w, sizeof(buf) - w, m->attack_cards, m->n_cards, trump);
-            }
-            const char *vd = (val > 0) ? "win" : (val < 0) ? "loss" : "draw";
-            OGA(",\"score\":null,\"nsim\":0,\"alive\":0,\"pruned\":1,\"forced_loss\":%d",
-                (forced_loss ? (forced_loss[mi] ? 1 : 0) : 0));
-            OGA(",\"verdict\":\"%s\",\"verdict_val\":%d,\"chosen\":%d}",
-                vd, val, (mi == chosen_idx) ? 1 : 0);
-            k2++;
+            OgAnswerRow *r = &a->rows[nrows++];
+            og_ans_row(r, &moves->moves[mi], trump);
+            r->alive = false;
+            r->pruned = true;
+            r->forced_loss = forced_loss ? forced_loss[mi] : false;
+            og_ans_verdict(r, val);
+            r->chosen = (mi == chosen_idx);
         }
     }
 #endif
-    OGA("]");
+    a->n_rows = (uint16_t)nrows;
 
-    { char label[96] = "?";
-      if (chosen_idx >= 0 && chosen_idx < moves->n)
-          og_ex_move_label(label, sizeof label, &moves->moves[chosen_idx], trump);
-      OGA(",\"chosen\":\"%s\"}", label); }
-    #undef OGA
+    // The why table is refreshed in lockstep with the rows: stale storylines
+    // must never survive an answer that carries no MC candidates.
+    a->n_why = 0;
 #ifdef CD_ORC_TRACE
-    // Refresh the binary paths sidecar in lockstep with the record: stale
-    // data must never survive a record that carries no MC candidates.
-    og_orc_blob_len = 0;
-    if (C && score && nsim) og_orc_write_blob(ncand, nsim);
+    if (C && score && nsim) og_orc_fill_why(a, ncand, nsim);
 #endif
-#ifdef CD_WASM_OVERLAY
-#ifdef FOOLISH_ORACLE_BUILD
-    // §6.3: the freestanding snprintf clamps (saturating w at sizeof(buf)-1)
-    // rather than failing, so a record that hit the staging cap is truncated
-    // malformed JSON. Detect the saturation and append an explicit overflow
-    // marker the worker recognizes (§8.5 step 9) instead of a broken line.
-    if (w >= (int)sizeof(buf) - 1) {
-        static const char ov[] = "{\"overflow\":1}";
-        int ol = (int)sizeof(ov) - 1;
-        if (og_ex_wlen + ol + 1 < (int)sizeof(og_ex_wbuf)) {
-            for (int i = 0; i < ol; i++) og_ex_wbuf[og_ex_wlen++] = ov[i];
-            og_ex_wbuf[og_ex_wlen++] = '\n';
-        }
-    } else
-#endif
-    // append "buf\n" to the JS-readable buffer (drop the record if it won't fit)
-    if (og_ex_wlen + w + 1 < (int)sizeof(og_ex_wbuf)) {
-        for (int i = 0; i < w; i++) og_ex_wbuf[og_ex_wlen++] = buf[i];
-        og_ex_wbuf[og_ex_wlen++] = '\n';
-    }
-#else
-    fputs(buf, og_ex_out);
-    fputc('\n', og_ex_out);
-    fflush(og_ex_out);
+    og_ans_ready = true;
+#ifndef CD_WASM_OVERLAY
+    og_answer_print(og_ex_out, a);
 #endif
 }
 #endif  // OG_EXPLAIN_BUILD

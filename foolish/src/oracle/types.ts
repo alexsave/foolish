@@ -19,7 +19,7 @@ export interface OracleJob {
     /** The public log before the move, what wasm_import_logs reads
      *  (replay_steps_memory_v6); empty when memory is off. */
     logsWire: Uint8Array;
-    powerSuit: number;              // the trump suit, for the dump's card tokens
+    powerSuit: number;              // the trump suit, for the rows' card tokens
     recordedKey: string;            // canonical key of the recorded move (§9.4)
     recordedLabel: string;          // human label of the recorded move
     numPlayers: number;
@@ -28,14 +28,35 @@ export interface OracleJob {
     eliminations: number;           // # seats already out at this decision (EF floor check)
 }
 
-/* ------------------------- the wasm dump records ------------------------- */
+/* ---------------------------- the Oracle's knobs -------------------------- */
+
+/** The OG_* values the Oracle sets, and the only ones: every other knob is the
+ *  kernel's default. The same six numbers in both modes, written into the module
+ *  through the generated writer of c/src/oracle_answer.h OgKnobs - no host names
+ *  a knob or packs a string. */
+export interface OracleKnobs {
+    keep1: number;                  // OG_KEEP1 / OG_KEEP2: 26 turns racing OFF,
+    keep2: number;                  //   so nsim is uniform across candidates
+    w1: number;                     // OG_W1: a batch is w1 + 1 worlds per candidate
+    w2: number;
+    w3: number;
+    solveBudget: number;            // nodes the exact probe may spend per root move; 0 = no probe
+}
+
+/* ------------------------- one batch's answer ---------------------------- */
+// What one deliberation answered, as the rest of src/oracle reads it. The
+// bridge fills these from the kernel's struct (oracleBridge.ts, over the
+// snapshot reader generated from c/src/oracle_answer.h OgAnswer); the field
+// names are the ones the kernel's JSON line used to carry, kept so that nothing
+// downstream had to change when the text went away.
 
 export type OracleVerdict = 'none' | 'unknown' | 'illegal' | 'win' | 'loss' | 'draw';
 
-/** One candidate line from og_ex_emit's JSONL dump. */
-export interface OracleDumpCandidate {
+/** One row of an answer: a candidate octogen weighed, or a pruned move the
+ *  exact probe proved. */
+export interface OracleRecordCandidate {
     type: string;
-    label: string;
+    label: string;                 // the move in the kernel's notation, e.g. "cover 10H->7H"
     cards: string[];
     target?: string[];
     score: number | null;          // mean finish this record, null if nsim==0
@@ -46,43 +67,41 @@ export interface OracleDumpCandidate {
     verdict: OracleVerdict;
     verdict_val?: number;
     chosen: number;
+    /** The playout storylines behind this batch's score. Absent on a row that
+     *  was not sampled. */
+    why?: OracleCandPaths;
 }
 
-/** Octogen's belief block, emitted per record (og_ex_emit): cards publicly
- *  PINNED to each seat's hand, the genuinely-unknown pool, per-seat void
+/** Octogen's belief, carried by every record: cards publicly PINNED to each
+ *  seat's hand, how many cards are still genuinely unknown, per-seat void
  *  constraints (attack cards the seat demonstrably could not beat) and rank
  *  floors. The raw material of the overlay's belief display. */
-export interface OracleDumpBelief {
+export interface OracleRecordBelief {
     pinned: string[][];
-    pool: string[];
+    poolCount: number;
     voids: string[][];
     floor: number[];
 }
 
-export interface OracleDumpRecord {
+export interface OracleRecord {
     seat: number;
     deck: number;
     defender: number;
     trump: number;
-    belief?: OracleDumpBelief;
-    hand?: string[];
-    hand_count?: number;
-    opp_counts?: number[];
-    table?: { attack: string; defense: string | null }[];
-    solver: { applied: number; result: string };
-    candidates: OracleDumpCandidate[];
-    chosen: string;
-    overflow?: number;             // §6.3 staging-buffer overflow marker
+    belief: OracleRecordBelief;
+    hand: string[];
+    opp_counts: number[];
+    table: { attack: string; defense: string | null }[];
+    solver: { applied: number; result: 'none' | 'win' | 'eval' };
+    candidates: OracleRecordCandidate[];
 }
 
-/* ---------------------- MC path sidecar (binary blob) --------------------- */
-// Per-candidate playout storylines, shipped NEXT TO the JSON record as a
-// packed little-endian blob (wasm_og_paths_ptr/len - no JSON on the hot batch
-// path). Decoder: pathsBlob.ts. Round-outcome symbols (cd_orc,
-// c/src/cordite_sim.h): 1 = we defended and beat the round, 2 = we were
-// forced to pick up, 3 = an opponent beat the round, 4 = an opponent picked
-// up. A shorter seq than the round count means the playout resolved (game
-// over or exact leaf) inside the recorded window.
+/* ------------------------- MC path storylines ----------------------------- */
+// Per-candidate playout storylines, part of the answer (OgAnswerWhy).
+// Round-outcome symbols (cd_orc, c/src/cordite_sim.h): 1 = we defended and beat
+// the round, 2 = we were forced to pick up, 3 = an opponent beat the round, 4 =
+// an opponent picked up. A shorter seq than the round count means the playout
+// resolved (game over or exact leaf) inside the recorded window.
 //
 // Mode A ONLY. oracle-mt.wasm carries no trace hooks at all (CD_ORC_TRACE in
 // c/src/cordite_sim.h says why), so under Mode B every candidate's `why` is
@@ -110,7 +129,7 @@ export interface OracleCandPaths {
 
 export type WorkerToMain =
     | { t: 'ready' }
-    | { t: 'batch'; decisionId: string; record: OracleDumpRecord; batchMs: number; gen: number; paths?: ArrayBuffer }
+    | { t: 'batch'; decisionId: string; record: OracleRecord; batchMs: number; gen: number }
     | { t: 'exact'; decisionId: string; gen: number }
     | { t: 'forced'; decisionId: string; gen: number }
     | { t: 'empty'; decisionId: string; gen: number }
@@ -141,8 +160,8 @@ export interface OracleCandidate {
     chosen: boolean;
     played: boolean;               // matches the recorded move
     /** Merged MC path data for the "why" panel (top storylines, most likely
-     *  replies, whole-playout marginals). Absent until a sidecar arrives, and
-     *  always absent under Mode B. */
+     *  replies, whole-playout marginals). Absent until a sampled batch arrives,
+     *  and always absent under Mode B. */
     why?: OracleCandPaths;
 }
 
@@ -167,8 +186,8 @@ export interface OracleSnapshot {
     approx: boolean;
     deckAlive: boolean;
     numPlayers: number;
-    /** Decision-static context for the belief display (from the dump record).
-     *  Mode A only - Mode B has no JSON record to read it from. */
+    /** Decision-static context for the belief display (from the first record).
+     *  Mode A only - Mode B has no per-batch record to read it from. */
     belief?: {
         pinned: string[][];
         voids: string[][];
@@ -185,9 +204,11 @@ export interface OracleSnapshot {
 
 /* --------------------- canonical move keys (§9.4) ------------------------ */
 
-// Card grammar of the wasm dump (octogen_strategy.c og_ex_fmt_card): value via
-// OG_EX_VAL, suit via "SHCD", trump-starred. Recorded-move tokens must match so
-// the recorded move keys to its candidate row.
+// The card grammar every Oracle row is keyed by: value via OG_EX_VAL, suit via
+// "SHCD", trump-starred. Both modes turn the kernel's cards into tokens here,
+// and so does the recorded move, which is what makes it key to its candidate
+// row. (octogen_strategy.c og_text_card writes the same grammar into a row's
+// label, which is shown and never keyed on.)
 const OG_EX_VAL = ['?', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
 export function oracleCardToken(c: { suit: number; value: number }, trump: number): string {
     const v = c.value >= 1 && c.value <= 13 ? OG_EX_VAL[c.value] : '?';
@@ -236,7 +257,7 @@ export function oracleWhyPanelEnabled(): boolean {
 
 /** octogen's trump-keep tax (OG_TRUMP_KEEP default 40 milli = 0.040 per trump
  *  card in an attack while the deck is alive). Applied at selection only; the
- *  dumped scores are UNTAXED, so the client re-applies it for display ranking,
+ *  scores an answer carries are UNTAXED, so the client re-applies it for display ranking,
  *  exactly as the X-ray pages do (octogen_strategy.c OG_TRUMP_KEEP default;
  *  bot_strategy.ts deployed env; build_data.py). */
 export const ORACLE_TRUMP_KEEP = 0.040;
@@ -255,8 +276,16 @@ export const ORACLE_W1_MAX = 192;
 export const ORACLE_BATCH_FAST_MS = 25;   // below → double W1
 export const ORACLE_BATCH_SLOW_MS = 80;   // above → halve W1
 
-/** Per-move endgame verdict probe budget (per-call getenv). */
+/** Per-move endgame verdict probe budget (the kernel asks for it per probe). */
 export const ORACLE_SOLVE_BUDGET = 2_000_000;
+
+/** The knobs a deliberation starts from, in both modes: racing off, one batch
+ *  of ORACLE_W1_START + 1 worlds per candidate, the full probe budget. Mode A
+ *  then retunes w1 and zeroes the budget as it learns (oracleWorker.ts). */
+export const ORACLE_KNOBS: Readonly<OracleKnobs> = {
+    keep1: 26, keep2: 26, w1: ORACLE_W1_START, w2: 1, w3: 0,
+    solveBudget: ORACLE_SOLVE_BUDGET,
+};
 
 /** Convergence checkpoint (§8.7), computed over candidates with n > 0 ONLY. */
 export const ORACLE_CONVERGE_MIN_N = 65_536;

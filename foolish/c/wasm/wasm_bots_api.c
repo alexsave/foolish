@@ -20,6 +20,7 @@
 #include "replay_steps.h"
 #include "view.h"
 #include "replay_extras.h"
+#include "oracle_answer.h"   // empty outside the oracle builds
 #include <string.h>
 #include <stdlib.h>
 
@@ -65,35 +66,12 @@ extern unsigned char *wasm_io_ptr(void);
 // drifted three separate ways, including a gunpowder seat that silently played
 // blackpowder because two tables disagreed about an index.
 //
-// One call dumps the whole table, so a host never asks per entry and never
-// caches an index. Writes to g_io, per entry:
-//   u8 linked, u8 strat, u8 uses_logs, u8 seeded, u8 offline, u8 tier,
-//   u8 key_len, key_len x u8 key bytes (no NUL)
-// Returns the entry count, or -1 if the buffer could not hold the table.
+// One call answers with the whole table, so a host never asks per entry and
+// never caches an index: the address of a BotRosterTable (bot_roster.h), read
+// through its generated reader, or 0 when the table does not fit the struct.
+static BotRosterTable g_bot_roster;
 int wasm_bot_roster_dump(void) {
-    const int n = bot_roster_count();
-    unsigned char *io = wasm_io_ptr();
-    int q = 0;
-    for (int i = 0; i < n; i++) {
-        const BotRosterEntry *e = bot_roster_at(i);
-        if (!e) return -1;
-        int klen = 0;
-        while (e->key[klen]) klen++;
-        if (klen > 255) return -1;
-        // 7 header bytes + the key; IO_CAP is orders of magnitude above a
-        // ten-row table, but a caller that shrank it gets a refusal, not a
-        // truncated roster that would look like a bot going missing.
-        if (q + 7 + klen > WASM_IO_CAP) return -1;
-        io[q++] = (unsigned char)(bot_roster_linked(i) ? 1 : 0);
-        io[q++] = (unsigned char)e->strat;
-        io[q++] = e->uses_logs;
-        io[q++] = e->seeded;
-        io[q++] = e->offline;
-        io[q++] = e->tier;
-        io[q++] = (unsigned char)klen;
-        for (int k = 0; k < klen; k++) io[q++] = (unsigned char)e->key[k];
-    }
-    return n;
+    return bot_roster_table(&g_bot_roster) < 0 ? 0 : (int)(uintptr_t)&g_bot_roster;
 }
 
 // Key and value are NUL-terminated strings at the start of the IO buffer
@@ -196,10 +174,69 @@ void wasm_reload_bot_flags(void) { cordite_reload_flags(); }
 
 #ifdef FOOLISH_ORACLE_BUILD
 // Infinite-oracle only (docs/INFINITE_ORACLE_DESIGN.md §6.2): the replay
-// analyzer rewrites OG_* env between deliberation batches (adaptive world
-// budget) and forces octogen to re-read it. Compiled ONLY into oracle.wasm.
-void og_reload_flags(void);
-void wasm_og_reload_flags(void) { og_reload_flags(); }
+// analyzer resets the OG_* knobs between deliberation batches (adaptive world
+// budget). Compiled ONLY into the oracle modules.
+//
+// THE ORACLE'S KNOBS, AS A STRUCT (oracle_answer.h OgKnobs). The host writes the
+// six numbers through its generated writer and applies them; it never spells a
+// knob's name and never packs a string. Three hosts used to carry the same loop
+// that wrote "KEY\0VALUE\0" into the IO buffer a character at a time, once per
+// knob, and this is the one place that knows the names instead.
+//
+// The values still reach octogen through the env table above, as text, because
+// that is what bot_knobs.h reads and what makes a knob a per-decision re-read
+// (OG_EXPLAIN_SOLVE_BUDGET is asked for fresh on every probe). The table is
+// REPLACED, not merged: these are the Oracle's knobs and every other OG_* value
+// is the C default, which is what wasm_clearenv followed by six sets always
+// meant.
+//
+// Applying does NOT tell octogen to re-read, because octogen already does, in
+// both modules, before anything it deliberates: bot_roster_choose drops the
+// latched values around every choose (Mode A's wasm_choose_move goes through
+// it), and Mode B's warmup and every thread at every generation do the same
+// (wasm_oracle_mt.c). The hosts used to call a wasm_og_reload_flags export
+// after their six sets as well; that was a second owner of a rule that had
+// one, and removing it changes no answer (e2e/oracle_answer.test.ts moves every
+// knob between two batches of one instance).
+static OgKnobs g_og_knobs;
+OgKnobs *wasm_og_knobs_ptr(void) { return &g_og_knobs; }
+
+static void og_knob_put(const char *key, int32_t v) {
+    if (g_env_n >= ENV_SLOTS) return;
+    char *k = g_env_keys[g_env_n], *out = g_env_vals[g_env_n];
+    int i = 0;
+    for (; key[i] && i < ENV_KEY - 1; i++) k[i] = key[i];
+    k[i] = 0;
+    // Decimal, most significant digit first. Through unsigned so INT32_MIN has
+    // a magnitude; eleven characters at most, well inside ENV_VAL.
+    char digits[10];
+    int nd = 0, q = 0;
+    uint32_t u = v < 0 ? 0u - (uint32_t)v : (uint32_t)v;
+    do { digits[nd++] = (char)('0' + u % 10); u /= 10; } while (u);
+    if (v < 0) out[q++] = '-';
+    while (nd) out[q++] = digits[--nd];
+    out[q] = 0;
+    g_env_n++;
+}
+
+void wasm_og_knobs_apply(void) {
+    g_env_n = 0;
+    og_knob_put("OG_KEEP1", g_og_knobs.keep1);
+    og_knob_put("OG_KEEP2", g_og_knobs.keep2);
+    og_knob_put("OG_W1", g_og_knobs.w1);
+    og_knob_put("OG_W2", g_og_knobs.w2);
+    og_knob_put("OG_W3", g_og_knobs.w3);
+    og_knob_put("OG_EXPLAIN_SOLVE_BUDGET", g_og_knobs.solve_budget);
+}
+#endif
+
+#ifdef OG_EXPLAIN_BUILD
+// What the last choose answered (oracle_answer.h OgAnswer), read by the host
+// through its generated snapshot reader: the address, or 0 when no choose has
+// answered since the reset. Reset before every choose, so an answer read back
+// is always this batch's and never the one before it.
+const OgAnswer *wasm_og_answer(void) { return og_answer(); }
+void wasm_og_answer_reset(void) { og_answer_reset(); }
 #endif
 
 extern LegalMoves *wasm_moves_ptr_internal(void);

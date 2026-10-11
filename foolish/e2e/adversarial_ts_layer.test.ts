@@ -19,8 +19,10 @@ import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, resetDb, uuid, pgPool } from './harness.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { ACTION_STATUS, AWIRE_KIND, encodeAction, type AwireMove } from '../sdk/ts/wire/awire.ts';
+import { AWIRE_KIND, encodeAction, type AwireMove } from '../sdk/ts/table/client_table.ts';
+import { TABLE_STATUS_APPLIED } from '../sdk/ts/gen/view_layout.bots.ts';
 import { handleMetaAction } from '../server/impls/supabase/functions/_shared/adapter/meta_actions.ts';
+import { askBody } from './helpers/ask.ts';
 import { __setTableDealSeedOverride } from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
 import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
 import { fixture, FixtureRefused, WAITING } from './helpers/table_fixture.ts';
@@ -216,7 +218,7 @@ test('meta: hostile game_id / bot_id / player_id values never crash the handler'
         { type: 'update-name', new_name: { toString: () => { throw new Error('boom'); } } },
     ];
     const user = { id: H0, user_metadata: { username: 'Alice' } } as never;
-    const send = (body: Record<string, unknown>) => handleMetaAction({ user, userName: 'Alice', body, reqId: 'h' });
+    const send = async (body: Record<string, unknown>) => handleMetaAction({ user, userName: 'Alice', body: askBody(body), reqId: 'h' });
     const barrage: [string, () => Promise<unknown>][] = [
         ...hostile.map((b): [string, () => Promise<unknown>] => [JSON.stringify(b), () => runMeta(id, H0, b, 'Alice')]),
         ...[{ $ne: null }, ['advmeta'], "advmeta' OR '1'='1", 'x'.repeat(10000), 42, null].map((gid): [string, () => Promise<unknown>] =>
@@ -244,7 +246,10 @@ test('numeric edge-case cards and hostile wires are rejected or applied cleanly,
     await freshLobby(id);
     const t0 = await mustReadTable(id);
     const fa = t0.seats[t0.firstAttacker].id;
-    // Hostile numbers through the client's encoder (it clamps them into a card).
+    // Hostile numbers through the client's encoder. The kernel writes the wire
+    // now (client_move_wire), and it refuses a card that is not a card where the
+    // TypeScript encoder used to clamp one into the deck: a number that lands on
+    // a real card is a wire to throw at the server, the rest never leave here.
     const evil = [
         [{ suit: 0, value: Infinity }], [{ suit: 0, value: -Infinity }], [{ suit: 0, value: NaN }],
         [{ suit: 0, value: 1e300 }], [{ suit: 1e300, value: 5 }], [{ suit: -0, value: -0 }],
@@ -252,8 +257,16 @@ test('numeric edge-case cards and hostile wires are rejected or applied cleanly,
         [{ suit: 0, value: 5, extra: 'x'.repeat(10000) }],
         [{ suit: { valueOf: () => 0 }, value: { valueOf: () => 5 } }],
     ];
-    const wires: [string, Uint8Array][] = evil.map((cards) =>
-        [JSON.stringify(cards).slice(0, 60), encodeAction({ kind: 'attack', cards } as unknown as AwireMove)]);
+    const wires: [string, Uint8Array][] = [];
+    for (const cards of evil) {
+        const what = JSON.stringify(cards).slice(0, 60);
+        try {
+            wires.push([what, encodeAction({ kind: 'attack', cards } as unknown as AwireMove)]);
+        } catch (e) {
+            assert.match(String(e), /not a move/, `${what}: refused as no move, not a crash`);
+        }
+    }
+    assert.ok(wires.length >= 4, `some hostile numbers still land on a card and are sent (${wires.length})`);
     // Hostile bytes the encoder would never write.
     for (const raw of [
         [], [0], [0, 255], [0, 1], [0, 1, 0xff], [0, 1, 0xfe], [0, 1, 200], [0, 2, 0, 0],
@@ -266,7 +279,7 @@ test('numeric edge-case cards and hostile wires are rejected or applied cleanly,
         if (out instanceof Error) {
             assert.ok(!crashed(out), `${what}: a crash, not a refusal: ${out.message}`);
             assert.equal((await mustReadTable(id)).version, v0, `${what}: a refused wire commits nothing`);
-        } else if (out.status !== ACTION_STATUS.APPLIED) {
+        } else if (out.status !== TABLE_STATUS_APPLIED) {
             assert.equal((await mustReadTable(id)).version, v0, `${what}: a rejected move commits nothing`);
         }
         const chk = await checkCardConservation(id);

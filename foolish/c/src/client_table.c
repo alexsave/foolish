@@ -255,6 +255,21 @@ static Card event_card(unsigned b) {
     return card_of_id((int)b);
 }
 
+int client_cast_open(ClientTable *c, const uint8_t *p, int len, const uint8_t *identity, int identity_len) {
+    uint32_t version = 0;
+    const int at = evwire_cast_header_get(p, len, &version);
+    if (at < 0) {
+        c->open = false;
+        c->detail = 0;
+        return CLIENT_E_PUSH;
+    }
+    const int rc = client_push_open(c, p + at, len - at, 1, identity, identity_len, version);
+    // client_identity_at answers in the bytes the host handed over, and those
+    // begin at the header.
+    if (rc == CLIENT_OK && c->identity_at >= 0) c->identity_at += at;
+    return rc;
+}
+
 int client_push_next(ClientTable *c) {
     if (!c->open) return CLIENT_E_ORDER;
     if (c->index >= c->n_events) return 0;
@@ -448,6 +463,30 @@ int client_validate(ClientTable *c, const TableView *v, const uint8_t *awire, in
     const bool ok = awire_apply(rules_game(c), seat, &a);
     engine_snap_hook = hook;
     return ok ? 0 : engine_last_reject;
+}
+
+int client_move_wire(const ClientMove *m, uint8_t *out, int cap) {
+    if (!m || !out || m->n_cards > AWIRE_MAX_CARDS) return CLIENT_E_MOVE;
+    const bool cover = m->kind == AWIRE_COVER;
+    if (cover && m->n_attacks != m->n_cards) return CLIENT_E_MOVE;
+    AwireAction a;
+    a.kind = m->kind;
+    a.n = m->n_cards;
+    for (int i = 0; i < a.n; i++) {
+        if (!card_in_range(m->cards[i], 1, ACE_VALUE)) return CLIENT_E_MOVE;
+        a.cards[i] = m->cards[i];
+        if (!cover) continue;
+        if (!card_in_range(m->attack_cards[i], 1, ACE_VALUE)) return CLIENT_E_MOVE;
+        a.attacks[i] = m->attack_cards[i];
+    }
+    // Into a frame of its own first: awire_encode answers 0 for a move that is
+    // not one and for a buffer too small alike, and a host is told which.
+    unsigned char frame[2 + 2 * AWIRE_MAX_CARDS];
+    const int n = awire_encode(&a, frame, sizeof(frame));
+    if (n <= 0) return CLIENT_E_MOVE;
+    if (n > cap) return CLIENT_E_CAP;
+    memcpy(out, frame, (size_t)n);
+    return n;
 }
 
 // The viewer's hand without any of `cards`.

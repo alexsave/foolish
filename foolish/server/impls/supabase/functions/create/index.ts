@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { corsHeaders, handleCors } from "@shared/adapter/cors.ts";
 import { getAuthenticatedUser } from "@shared/adapter/auth.ts";
+import { refusalFor } from "@shared/adapter/utils.ts";
 import { serverTable, tableCodeName } from "@sdk/ts/table/server_table.ts";
 import { base64 } from "@shared/adapter/table_io.ts";
 import { createClient } from 'jsr:@supabase/supabase-js';
@@ -69,8 +70,7 @@ serve(async (req: Request): Promise<Response> => {
         }
         throw new Error(`create: no free game id in ${MAX_ID_DRAWS} draws`);
     } catch (e: unknown) {
-        return new Response(JSON.stringify({ error: (e as Error).message }), {
-            status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
+        console.error(`[create] ${(e as Error).message}`);
+        return refusalFor(e);
     }
 });

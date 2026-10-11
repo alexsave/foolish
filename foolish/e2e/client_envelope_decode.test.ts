@@ -31,9 +31,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { clientTable, type TableView } from '../sdk/ts/table/client_table.ts';
+import { clientTable, type TableView, encodeAction } from '../sdk/ts/table/client_table.ts';
 import { pushToSequence } from '../src/state/pushSequence.ts';
-import { encodeAction } from '../sdk/ts/wire/awire.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import * as V from '../sdk/ts/gen/view_layout.bots.ts';
 import type { ServerTable } from '../sdk/ts/table/server_table.ts';

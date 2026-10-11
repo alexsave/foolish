@@ -44,20 +44,20 @@ export async function generateMetadata(
             // async path is correct in both runtimes and is a no-op once loaded.
             await ensureBotsAsync();
             const { kernelB32Decode } = await import('../../../wasm/msgKernel.ts');
-            const env = kernelMsgDecode(kernelB32Decode(text.slice(1)));
+            const { e: env } = kernelMsgDecode(kernelB32Decode(text.slice(1)));
 
             // Nicknames are the only identity a payload carries, and they are
             // self-reported (§4.1) - there is nothing else to put here, which is
             // also why this is safe to unfurl.
             const names = env.joins.map(j => j.name).filter(Boolean);
-            const who = names.length >= 2 ? names.join(' vs ') : `${env.n_players} players`;
+            const who = names.length >= 2 ? names.join(' vs ') : `${env.nPlayers} players`;
             // A REMATCH LOBBY is the same table about to play again, not "turn 0"
             // of a game nobody has started. It is an ordinary format 5/6 lobby,
             // told apart by what the wire already says: only the lobby a New
             // game on a finished table creates carries the fool's penalty
             // (c/src/msg_wire.h, carry_key).
             title = env.phase === 3 ? `${who} - a finished Durak game`
-                : env.phase === 0 && env.carry_key !== 0 ? `${who} - a rematch, waiting to start`
+                : env.phase === 0 && env.carryKey !== 0 ? `${who} - a rematch, waiting to start`
                 : `${who} - turn ${env.turn}`;
             description = `A Durak game in iMessage. ${BLURB}`;
         }

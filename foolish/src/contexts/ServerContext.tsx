@@ -6,11 +6,13 @@ import { MAX_PLAYERS } from '@api/core/constants.ts';
 import { ANIM_TIME_MS } from '@sdk/ts/gen/anim.bots.ts';
 import { optimisticOverlay } from '../state/optimisticOverlay';
 import { animationFeed } from '../state/animationFeed';
+import * as V from '@sdk/ts/gen/view_layout.bots.ts';
+import type { Ask } from '@sdk/ts/table/client_table.ts';
 import { holdPrivateChannel } from '../state/privateChannel';
 import { cardKey, mergeHandOrder, reconcileHandMemory, displayedHand, mergeTableBattles } from '../state/clientReconcile';
 import { keepPending, lobbyBoard, rearrangedBoard } from '../state/clientBoards';
-import { ACTION_STATUS, REJECT_STALE_ROUND, decodeActionResponse, encodeAction, encodeActionRequest } from '@sdk/ts/wire/awire.ts';
-import { clientTable } from '@sdk/ts/table/client_table.ts';
+import { TABLE_STATUS_APPLIED, TABLE_STATUS_REJECTED, TABLE_REJECT_STALE_ROUND } from '@sdk/ts/gen/view_layout.bots.ts';
+import { clientTable, encodeAction } from '@sdk/ts/table/client_table.ts';
 import { GAME_STATUS, type TableView, type ViewCard } from '../state/view';
 import { rejectMessage } from '../wasm/rejectMessages';
 import { authoritativeVersion } from '../state/authoritativeVersion';
@@ -94,7 +96,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     const [gameLoadError, setGameLoadError] = useState<string | null>(null);
 
     // A transient, localized notice shown when the server rejects a move because
-    // a round closed before it landed (REJECT_STALE_ROUND, the stale-intent race
+    // a round closed before it landed (TABLE_REJECT_STALE_ROUND, the stale-intent race
     // in docs/WEB_RACE_BUG_HANDOFF.md). The optimistic revert already happened
     // off the pickup broadcast; this just tells the user WHY their card came back.
     const [staleRoundNotice, setStaleRoundNotice] = useState<string | null>(null);
@@ -187,7 +189,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             if (spectatorChannels.current.get(gameId) !== gameChannel) return;
             gameChannel
                 .on('broadcast', { event: 'animation_events' }, (payload) => {
-                    animationFeed.publish({ ...payload.payload, game_id: gameId });
+                    animationFeed.publish({ b: payload.payload?.b, game_id: gameId });
                 })
                 .subscribe((status, err) => status === 'SUBSCRIBED'
                     ? console.log('Connected to game channel:', `game-${gameId}`)
@@ -439,18 +441,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const createGame = useCallback(async (): Promise<{ game_id: string }> => {
-        // create now returns the caller's PACKED view buffer (like get_game) -
-        // decode it with the shared codec, the same path loadGame uses. There is
-        // no JSON body to fall back to any more - the server has one answer. The
-        // server persists the game to the DB in the background AFTER responding,
-        // so this returns as soon as the lobby is built (no create_game
-        // round-trip on the critical path).
-        const { data, error } = await supabase.functions.invoke('create', { body: {} });
-        if (error) throw error;
-
-        const bytes = typeof Blob !== 'undefined' && data instanceof Blob
-            ? new Uint8Array(await data.arrayBuffer())
-            : data instanceof ArrayBuffer ? new Uint8Array(data) : null;
+        // create takes no body (the token names the caller) and answers with the
+        // caller's envelope, like a player_views row.
+        const bytes = await invokeBytes('create', null);
         const view = bytes ? readEnvelope(bytes) : null;
         if (!view) throw new Error('create: unreadable packed response');
 
@@ -464,10 +457,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     }, []);
 
     const joinGame = useCallback((gameId: string): Promise<{ game_id: string }> => {
-        return invokeGameFunctions('meta', {
-            type: 'join',
-            game_id: gameId,
-        }, {
+        return askMeta({ kind: V.ASK_JOIN, gid: gameId }, {
             onSuccess: (view) => {
                 setGameId(view.gameId);
                 // The response is the joiner's own seated view. Apply it: the
@@ -498,29 +488,17 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     // start / add-bot / exit / continue are one consolidated `meta` endpoint
     // (dispatched on `type`) - fewer functions, faster deploys.
     const startGame = useCallback((gameId: string): Promise<{ game_id: string }> => {
-        return invokeGameFunctions('meta', {
-            type: 'start',
-            game_id: gameId,
-        })
+        return askMeta({ kind: V.ASK_START, gid: gameId })
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const addBot = useCallback((gameId: string, botId?: string): Promise<{ game_id: string }> => {
-        return invokeGameFunctions('meta', {
-            type: 'add-bot',
-            game_id: gameId,
-            bot_id: botId,
-        })
+        return askMeta({ kind: V.ASK_ADD_BOT, gid: gameId, bot: botId ?? '' })
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const exitGame = useCallback((gameId: string, botId?: string, playerId?: string): Promise<{ game_id: string }> => {
-        return invokeGameFunctions('meta', {
-            type: 'exit',
-            game_id: gameId,
-            bot_id: botId,
-            player_id: playerId
-        }, {
+        return askMeta({ kind: V.ASK_EXIT, gid: gameId, bot: botId ?? '', player: playerId ?? '' }, {
             onSuccess: (view) => {
                 // If I gave up my own seat (not a bot's, not another player's),
                 // I am watching now. The gu- stream is RealtimeAnimationFeed's to
@@ -629,7 +607,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             // Trigger the bot loop only if the caller is a player in a game with
             // AI players. Fire and forget - don't block UI rendering.
             if (loaded.mySeat >= 0 && loaded.seats.some(seat => seat.isAi)) {
-                supabase.functions.invoke('action', { body: { game_id: gameId, type: 'bump' } }).catch(() => { });
+                invokeBytes('meta', clientTable().askBody({ kind: V.ASK_BUMP, gid: gameId })).catch(() => { });
             }
 
             return { game_id: gameId };
@@ -812,11 +790,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             }));
         }
 
-        return invokeGameFunctions('meta', {
-            type: 'update-name',
-            game_id: gameId,
-            new_name: name
-        }, {
+        return askMeta({ kind: V.ASK_UPDATE_NAME, gid: gameId, title: name }, {
             onError: revert
         });
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -835,11 +809,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             setGames(prev => (prev[gameId] ? { ...prev, [gameId]: { ...prev[gameId], passing: previous } } : prev));
         };
 
-        return invokeGameFunctions('meta', {
-            type: 'set-rules',
-            game_id: gameId,
-            passing,
-        }, {
+        return askMeta({ kind: V.ASK_SET_RULES, gid: gameId, passing: passing ? 1 : 0 }, {
             onError: revert
         });
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -864,11 +834,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             setGames(prev => ({ ...prev, [gameId]: { ...prev[gameId], seats: previousSeats } }));
         }
 
-        return invokeGameFunctions('meta', {
-            type: 'rearrange-players',
-            game_id: gameId,
-            new_order: playerIds
-        }, {
+        return askMeta({ kind: V.ASK_REARRANGE_PLAYERS, gid: gameId, order: playerIds.map(id => ({ id })) }, {
             onError: revert
         });
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -909,11 +875,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             }));
         }
 
-        return invokeGameFunctions('meta', {
-            type: 'rearrange-hand',
-            game_id: gameId,
-            card_indices: cardIndices
-        }, {
+        return askMeta({ kind: V.ASK_REARRANGE_HAND, gid: gameId, idx: cardIndices }, {
             onError: revert
         });
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -989,7 +951,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         if (prev && optimistic) {
             setGames(cur => ({ ...cur, [gameId]: optimistic }));
 
-            invokeGameFunctions('meta', { type: 'continue', game_id: gameId }).catch(err => {
+            askMeta({ kind: V.ASK_CONTINUE, gid: gameId }).catch(err => {
                 console.error('continue failed - rolling back to the finished game:', err);
                 setGames(cur => (cur[gameId] === optimistic ? { ...cur, [gameId]: prev } : cur));
             });
@@ -998,44 +960,35 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
         // Not a finished game we hold locally: no optimistic state to build, just
         // await the server (the authoritative update arrives via broadcast).
-        return invokeGameFunctions('meta', { type: 'continue', game_id: gameId });
+        return askMeta({ kind: V.ASK_CONTINUE, gid: gameId });
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // The lobby / meta transport. The REQUEST is still JSON ({type, game_id, ...}
-    // is a command, not game state), but the RESPONSE is the packed view
-    // envelope - the same bytes `create` returns, player_views stores and the
-    // realtime feed pushes - so no game state crosses this wire as JSON.
-    // functions-js hands an octet-stream response back as a Blob.
-    const invokeGameFunctions = async (
-        functionName: string,
-        body: any = {},
+    // The one transport: bytes the kernel wrote out, the bytes the server
+    // answered with back. functions-js posts a Blob as application/octet-stream
+    // and hands one back. `body` null: a request with nothing to say (create).
+    const invokeBytes = async (endpoint: string, body: Uint8Array | null): Promise<Uint8Array | null> => {
+        const { data, error } = await supabase.functions.invoke(endpoint, body ? { body: new Blob([body as BlobPart]) } : {});
+        if (error) throw error;
+        if (typeof Blob !== 'undefined' && data instanceof Blob) return new Uint8Array(await data.arrayBuffer());
+        return data instanceof ArrayBuffer ? new Uint8Array(data) : null;
+    };
+
+    // The lobby / meta transport: an ask (c/src/ask.h) out, the caller's envelope
+    // back - the same bytes `create` returns and player_views stores.
+    const askMeta = async (
+        ask: Ask,
         options: {
             onSuccess?: (view: TableView) => void;
             onError?: (error: any) => void;
         } = {}
     ): Promise<{ game_id: string }> => {
         try {
-            const { data } = await supabase.functions.invoke(functionName, { body });
-
-            let bytes: Uint8Array | null = null;
-            if (typeof Blob !== 'undefined' && data instanceof Blob) {
-                bytes = new Uint8Array(await data.arrayBuffer());
-            } else if (data instanceof ArrayBuffer) {
-                bytes = new Uint8Array(data);
-            }
+            const bytes = await invokeBytes('meta', clientTable().askBody(ask));
             const view = bytes ? readEnvelope(bytes) : null;
-
-            if (!view || !view.gameId) {
-                throw new Error(`Invalid response from ${functionName}: missing game ID`);
-            }
-
-            const game_id = view.gameId;
-
+            if (!view || !view.gameId) throw new Error('Invalid response from meta: missing game ID');
             options.onSuccess?.(view);
-
-            return { game_id };
-
+            return { game_id: view.gameId };
         } catch (error) {
             options.onError?.(error);
             throw error;
@@ -1049,7 +1002,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     // ArrayBuffer (a Uint8Array would be JSON.stringified - see
     // @supabase/functions-js FunctionsClient.invoke), so the envelope rides in
     // a Blob; octet-stream responses come back as a Blob too.
-    // 'bump' and all meta ops stay JSON via invokeGameFunctions.
+    // 'bump' and every lobby edit are asks, sent through askMeta above.
     // After a refused (or moot) move whose answer names a newer version than the
     // page has applied, the page is behind the server: the pushes that would have
     // told it are late or lost. Give a late push RECONCILE_GRACE_MS to arrive and
@@ -1075,34 +1028,23 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // server's round-boundary guard can reject it if a round closed in the
         // meantime (docs/WEB_RACE_BUG_HANDOFF.md). undefined => the legacy v1
         // envelope, unguarded (we've not yet seen an authoritative version).
-        const req = encodeActionRequest(gameId, wire, authoritativeVersion(gameId));
-        // Cast: encodeActionRequest builds a fresh, non-shared buffer; TS just
-        // types Uint8Array over ArrayBufferLike, which BlobPart rejects.
-        const { data, error } = await supabase.functions.invoke('action', { body: new Blob([req as Uint8Array<ArrayBuffer>]) });
-        if (error) {
-            throw error;
-        }
-        let bytes: Uint8Array | null = null;
-        if (typeof Blob !== 'undefined' && data instanceof Blob) {
-            bytes = new Uint8Array(await data.arrayBuffer());
-        } else if (data instanceof ArrayBuffer) {
-            bytes = new Uint8Array(data);
-        }
-        const resp = bytes ? decodeActionResponse(bytes) : null;
+        const req = clientTable().actionRequest(gameId, wire, authoritativeVersion(gameId));
+        const bytes = await invokeBytes('action', req);
+        const resp = bytes ? clientTable().readActionResponse(bytes) : null;
         if (!resp) {
             throw new Error('Invalid response from action: unreadable packed response');
         }
         // A move that did not apply was judged against a game newer than the one
         // on screen: catch up with it (reconcileAfter), whether or not its pushes
         // ever arrive.
-        if (resp.status !== ACTION_STATUS.APPLIED) reconcileAfter(gameId, resp.version);
-        if (resp.status === ACTION_STATUS.REJECTED) {
+        if (resp.status !== TABLE_STATUS_APPLIED) reconcileAfter(gameId, resp.version);
+        if (resp.status === TABLE_STATUS_REJECTED) {
             // A stale-round reject is the one rejection the user should SEE: the
             // move was kernel-legal, just aimed at a round that closed first, so
             // surface the localized notice (the revert already fired off the
             // pickup broadcast). Every other reject stays console-only diagnostics
             // - callers revert the optimistic state either way.
-            if (resp.rejectCode === REJECT_STALE_ROUND) showStaleRoundNotice();
+            if (resp.rejectCode === TABLE_REJECT_STALE_ROUND) showStaleRoundNotice();
             throw new Error(rejectMessage(resp.rejectCode));
         }
         // APPLIED - or MOOT (the move lost the end-game race, a no-op): both

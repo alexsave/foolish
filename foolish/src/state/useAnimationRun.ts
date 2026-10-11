@@ -18,7 +18,8 @@
 // game and not about time.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ANIM_STEP_NONE, type AnimPlanSnap } from '@sdk/ts/wasm/bots.ts';
+import { type AnimPlanSnap } from '@sdk/ts/wasm/bots.ts';
+import { ANIM_STEP_NONE } from '@sdk/ts/gen/anim.bots.ts';
 import {
     arrivingPiles, frameAt, heldPiles, NO_ARRIVING, NO_HELD, planFor, sameArriving, sameHeld, withTrumpOut,
     type AnimStep, type ArrivingPile,

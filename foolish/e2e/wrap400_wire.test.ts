@@ -19,7 +19,7 @@ import './harness.ts';
 import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, resetDb, uuid, pgPool } from './harness.ts';
-import { postJson, settle, tokenFor, type EdgeResponse } from './helpers/edge.ts';
+import { postJson, settle, tokenFor, type EdgeResponse, postAsk } from './helpers/edge.ts';
 import { fixture, fixtureTable, PLAYING } from './helpers/table_fixture.ts';
 import { seedTable } from './helpers/table_db.ts';
 import { mustReadTable, type TableState } from './helpers/table_play.ts';
@@ -84,7 +84,7 @@ after(async () => { await settle(); });
 test('wrap400 answers with the PACKED game envelope, never a JSON game', async () => {
     for (const [tag, make, version] of [['lobby', lobby, 43], ['dealt', dealt, 42]] as const) {
         const gameId = await make();
-        const res = await postJson('meta', await tok(HUMAN_A, 'A'), { type: 'start', game_id: gameId });
+        const res = await postAsk(await tok(HUMAN_A, 'A'), { type: 'start', game_id: gameId });
         assertPackedBody(res, tag);
 
         const decoded = readEnvelopeView(res.bytes);
@@ -104,7 +104,7 @@ test('wrap400: a caller with no seat gets the spectator envelope', async () => {
     const t = await mustReadTable(gameId);
     const expected = kernelEnvelope(t, OUTSIDER);
     // The one JSON request an outsider may send: the bump nudge.
-    const res = await postJson('action', await tok(OUTSIDER, 'Nobody'), { type: 'bump', game_id: gameId });
+    const res = await postAsk(await tok(OUTSIDER, 'Nobody'), { type: 'bump', game_id: gameId });
     assertPackedBody(res, 'spectator');
 
     const decoded = readEnvelopeView(res.bytes);
@@ -120,7 +120,7 @@ test('wrap400: a caller with no seat gets the spectator envelope', async () => {
 
 test('wrap400: seat 1 sees its OWN hand', async () => {
     const gameId = await dealt();
-    const res = await postJson('meta', await tok(HUMAN_B, 'B'), { type: 'start', game_id: gameId });
+    const res = await postAsk(await tok(HUMAN_B, 'B'), { type: 'start', game_id: gameId });
     assertPackedBody(res, 'seat 1');
     const decoded = readEnvelopeView(res.bytes);
     assert.ok(decoded);
