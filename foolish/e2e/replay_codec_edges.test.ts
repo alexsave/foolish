@@ -7,9 +7,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  kernelB32Encode, kernelB32Decode, kernelReplayLink, REPLAY_LINK, kernelReplayLinkParse,
-} from '../sdk/ts/wasm/bots.ts';
+import { kernelB32Encode, kernelB32Decode, kernelReplayLink, kernelReplayLinkParse } from '../sdk/ts/wasm/bots.ts';
+import { REPLAY_LINK_STYLE_URL, REPLAY_LINK_STYLE_QR } from '../sdk/ts/gen/msg_layout.bots.ts';
 
 import {
   bytesToHex, hexToBytes, classifyPathSegment, bytesToBigint, bigintToBytes,
@@ -47,8 +46,8 @@ test('classifyPathSegment splits legacy shortcodes from long replay codes', () =
 test('both kernel link styles wrap a moves bigint that urlToGame unwraps', () => {
   for (const x of [0n, 1n, 123456789n, 2n ** 40n + 7n]) {
     const code = kernelB32Encode(bigintToBytes(x));
-    const url = kernelReplayLink(code, [], REPLAY_LINK.url);
-    const qr = kernelReplayLink(code, [], REPLAY_LINK.qr);
+    const url = kernelReplayLink(code, [], REPLAY_LINK_STYLE_URL);
+    const qr = kernelReplayLink(code, [], REPLAY_LINK_STYLE_QR);
     assert.ok(url.startsWith('https://foolish.cards/'), `https form: ${url}`);
     assert.ok(qr.startsWith('WWW.FOOLISH.CARDS/'), `qr form: ${qr}`);
     assert.ok(/^[0-9A-Z $%*+\-./:]+$/.test(qr), `the QR form must stay in QR alphanumeric mode: ${qr}`);

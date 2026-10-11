@@ -38,10 +38,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import {
-    ANIM_CONFLICT_KEEP, ANIM_CONFLICT_REVERT,
-    animHandLaidOut, animReversalOrder, animStaleOptimisticOnTable,
-} from '../sdk/ts/wasm/bots.ts';
+import { animHandLaidOut, animReversalOrder, animStaleOptimisticOnTable } from '../sdk/ts/wasm/bots.ts';
+import { ANIM_CONFLICT_KEEP, ANIM_CONFLICT_REVERT } from '../sdk/ts/gen/anim.bots.ts';
 
 interface Card { suit: number; value: number }
 const c = (suit: number, value: number): Card => ({ suit, value });

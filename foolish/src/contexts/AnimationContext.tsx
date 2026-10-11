@@ -28,9 +28,8 @@ import type { ArrivingPile } from '../state/animPlan';
 import { ROLE_CLAIM, useRoleMotion, type RoleHandOff } from '../state/useRoleMotion';
 import { rolesOf } from '../state/roleLedger';
 import type { ShownBoard } from '../state/roleLedger';
-import {
-    ANIM_NO_MASK, animRolesGoodsCleared, animRolesGoodsOpening, animRolesPassHandOff,
-} from '@sdk/ts/wasm/bots.ts';
+import { animRolesGoodsCleared, animRolesGoodsOpening, animRolesPassHandOff } from '@sdk/ts/wasm/bots.ts';
+import { ANIM_NO_MASK } from '@sdk/ts/gen/anim.bots.ts';
 
 // Bot bump timeout - 20 seconds of no animations (currently unused)
 // const BOT_BUMP_TIMEOUT = 20000;

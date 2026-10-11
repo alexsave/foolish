@@ -16,10 +16,8 @@
 // Run: npx tsx --test e2e/msg_concurrency.test.ts
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
-    kernelMsgDecode, kernelMsgSeal, kernelMsgRuleP, kernelMsgRebase, kernelMsgLegalMoves,
-    MSG_REBASE_REAPPLY, MSG_REBASE_DISCARD_ROUND, MSG_REBASE_DISCARD_ILLEGAL,
-} from '../sdk/ts/wasm/bots.ts';
+import { kernelMsgDecode, kernelMsgSeal, kernelMsgRuleP, kernelMsgRebase, kernelMsgLegalMoves } from '../sdk/ts/wasm/bots.ts';
+import { MSG_REBASE_REAPPLY, MSG_REBASE_DISCARD_ROUND, MSG_REBASE_DISCARD_ILLEGAL } from '../sdk/ts/gen/msg_layout.bots.ts';
 
 // Mid-game turn bubbles sealed by the native kernel (c/build/msg_wire_test
 // --fixture). Every chain below is grown from one of these.

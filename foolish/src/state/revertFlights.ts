@@ -26,7 +26,8 @@
 import { lifted, returnedToHand, tableOf, turnedBoard } from './clientBoards';
 import type { TableView, ViewCard as Card } from './view';
 import type { ClientAnimationEvent } from './animationStep';
-import { ANIM_CONFLICT_REVERT, animReversalOrder } from '@sdk/ts/wasm/bots.ts';
+import { animReversalOrder } from '@sdk/ts/wasm/bots.ts';
+import { ANIM_CONFLICT_REVERT } from '@sdk/ts/gen/anim.bots.ts';
 
 /** The push whose events the reverts are being staged against. */
 interface IncomingPush {

@@ -15,7 +15,8 @@
 // not, and that is `anim_shown_ledger_allows`, asked and not restated.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ANIM_CLAIM_BYSTANDER, ANIM_CLAIM_HAND_OFF, animShownLedgerAllows } from '@sdk/ts/wasm/bots.ts';
+import { animShownLedgerAllows } from '@sdk/ts/wasm/bots.ts';
+import { ANIM_CLAIM_BYSTANDER, ANIM_CLAIM_HAND_OFF } from '@sdk/ts/gen/anim.bots.ts';
 import {
     roleFlightsBetween, sameShownBoard, shownBoardOf,
     type ShownBoard, type ShownRoles,
