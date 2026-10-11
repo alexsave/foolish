@@ -19,6 +19,7 @@ import { memOf as msgMemOf, readMsgHeader, writeMsgHeader, readReplayExtras, wri
 import * as A from '../gen/anim.bots.ts';
 import { memOf as animMemOf } from '../gen/anim.bots.ts';
 import { writeAnimPlanAsk, MAX_PLAYERS } from '../gen/view_layout.bots.ts';
+import { RS_INDEX_STRIDE } from '../gen/kernel_consts.bots.ts';
 
 /** A card as the kernel's doors here read and write it (suit 0..3, value 1..13; -1/-1 is a hidden card). */
 export interface Card { readonly suit: number; readonly value: number }
@@ -776,19 +777,11 @@ export const REPLAY_STEP = {
     GOOD: 7,        // one seat said good and the bout stayed open
 } as const;
 
-export const REPLAY_STEP_SEAT_NONE = 0xff;
-/** Bytes per step index record (c/src/replay_steps.h RS_INDEX_STRIDE). */
-const RS_INDEX_STRIDE = 3;
-
-export interface ReplayStepInfo {
-    /** REPLAY_STEP.* — the action this step played. */
-    kind: number;
-    /** The acting seat, or -1 (the deal, and round ends nobody in particular closes). */
-    seat: number;
-    /** How many of this step's cards the MOVE NAMED - 0 for a pickup or a good,
-     *  whose step carries cards nobody chose. See replay_steps.h. */
-    named: number;
-}
+/** What one step of a code IS (replay_steps.h ReplayStep): `kind` a REPLAY_ATOM_*,
+ *  `seat` the acting seat or -1 (the deal, and round ends nobody in particular
+ *  closes), `named` how many of the step's cards the MOVE NAMED - 0 for a pickup
+ *  or a good, whose step carries cards nobody chose. */
+export type ReplayStepInfo = V.ReplayStep_Snap;
 
 /**
  * What each step of a code IS, in step order. The kernel reports this rather
@@ -801,14 +794,8 @@ export function replayStepIndex(code: Uint8Array): ReplayStepInfo[] {
     mem(ex).set(code, ex.wasm_replay_io_ptr());
     const len = ex.wasm_replay_step_index(code.length);
     if (len < 0) throw __replayError(len, replayErrorDetail(ex));
-    const buf = mem(ex);
-    const base = ex.wasm_io_ptr();
-    const out: ReplayStepInfo[] = [];
-    for (let q = base; q < base + len; q += RS_INDEX_STRIDE) {
-        const seat = buf[q + 1];
-        out.push({ kind: buf[q], seat: seat === REPLAY_STEP_SEAT_NONE ? -1 : seat, named: buf[q + 2] });
-    }
-    return out;
+    const m = viewMemOf(ex.memory.buffer), base = ex.wasm_io_ptr();
+    return Array.from({ length: len / RS_INDEX_STRIDE }, (_, i) => V.readReplayStep(m, base + i * RS_INDEX_STRIDE));
 }
 
 /**

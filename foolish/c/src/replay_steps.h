@@ -150,6 +150,15 @@ int replay_steps_count_v6(const unsigned char *code, int code_len,
 // Returns bytes written (steps * RS_INDEX_STRIDE) or -REPLAY_E*.
 #define RS_INDEX_STRIDE 3
 #define RS_SEAT_NONE    0xFF
+// One record AS A STRUCT, the same RS_INDEX_STRIDE bytes, for a host that reads
+// it through a generated reader. The seat is signed here, so RS_SEAT_NONE reads
+// as -1.
+typedef struct {
+    uint8_t kind;
+    int8_t  seat;
+    uint8_t named;
+} ReplayStep;
+_Static_assert(sizeof(ReplayStep) == RS_INDEX_STRIDE, "a ReplayStep is one index record");
 int replay_steps_index_v6(const unsigned char *code, int code_len,
                           ReplayHeader *hdr, unsigned char *out, int out_cap);
 
