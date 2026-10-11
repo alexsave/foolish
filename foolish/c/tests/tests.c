@@ -1678,6 +1678,27 @@ static void test_bot_knobs_precedence(void) {
     CHECK(bot_knob_int("CD_RACE", 42) == 42, "after clear, defaults apply");
 }
 
+// The roster as the value a host reads (bot_roster.h BotRosterTable): every
+// entry, in table order, field for field, with what this build links.
+static void test_bot_roster_table_is_the_roster(void) {
+    BotRosterTable t;
+    memset(&t, 0xA5, sizeof t);
+    const int n = bot_roster_table(&t);
+    CHECK(n == bot_roster_count() && t.n == n, "one row per roster entry");
+    for (int i = 0; i < n && i < BOT_ROSTER_MAX; i++) {
+        const BotRosterEntry *e = bot_roster_at(i);
+        const BotRosterRow *r = &t.rows[i];
+        CHECK(r->strat == e->strat, "a row carries its entry's brain");
+        CHECK(r->linked == (bot_roster_linked(i) != 0), "a row says whether this build links the brain");
+        CHECK(r->uses_logs == (e->uses_logs != 0), "a row carries uses_logs");
+        CHECK(r->seeded == (e->seeded != 0), "a row carries seeded");
+        CHECK(r->offline == (e->offline != 0), "a row carries offline");
+        CHECK(r->tier == e->tier, "a row carries its tier");
+        CHECK(r->key_len == strlen(e->key) && memcmp(r->key, e->key, r->key_len) == 0,
+              "a row carries its key, byte for byte");
+    }
+}
+
 // bot_roster_choose must leave no knobs installed behind it: the arena and the
 // MC rollout policies call the strategies directly and must see C defaults.
 static void test_bot_roster_choose_scopes_knobs(void) {
@@ -2521,7 +2542,21 @@ static void test_replay_step_index_says_what_each_step_is(void) {
         CHECK(idx[0] == REPLAY_ATOM_DEAL, "step 0 is the deal");
         CHECK(idx[1] == RS_SEAT_NONE, "the deal is nobody's action");
 
+        // The same records as the struct a host reads them through
+        // (replay_steps.h ReplayStep): three named fields over the three bytes,
+        // with nobody's seat reading as -1.
+        int as_struct = 1;
+        for (int i = 0; i < steps; i++) {
+            ReplayStep r;
+            memcpy(&r, idx + i * RS_INDEX_STRIDE, sizeof r);
+            const int seat = idx[i * RS_INDEX_STRIDE + 1];
+            if (r.kind != idx[i * RS_INDEX_STRIDE] || r.named != idx[i * RS_INDEX_STRIDE + 2]
+                || r.seat != (seat == RS_SEAT_NONE ? -1 : seat)) as_struct = 0;
+        }
+        CHECK(as_struct, "a record read as a ReplayStep is its kind, its seat (-1 for nobody) and its named count");
+
         int seen[8] = {0};
+        int named_cards = 0, laid_cards = 0;
         for (int i = 1; i < steps; i++) {
             const int kind = idx[i * RS_INDEX_STRIDE];
             const int seat = idx[i * RS_INDEX_STRIDE + 1];
@@ -2529,6 +2564,14 @@ static void test_replay_step_index_says_what_each_step_is(void) {
             CHECK(kind != REPLAY_ATOM_DRAW, "a draw is never a step of its own");
             CHECK(kind <= REPLAY_ATOM_GOOD, "every step reports a known atom kind");
             if (kind <= REPLAY_ATOM_GOOD) seen[kind]++;
+            // Laying cards names them; taking the pile or saying good names none.
+            const int named = idx[i * RS_INDEX_STRIDE + 2];
+            named_cards += named;
+            if (kind == REPLAY_ATOM_ATTACK || kind == REPLAY_ATOM_COVER || kind == REPLAY_ATOM_PASS) {
+                CHECK(named >= 1, "a move that lays cards names them");
+            } else {
+                CHECK(named == 0, "a pickup, a good and a round end name no card");
+            }
             // A seat acts, or the bout closed on nobody in particular.
             if (kind == REPLAY_ATOM_ROUND_END) {
                 CHECK(seat == RS_SEAT_NONE, "a round end is nobody's action");
@@ -2545,13 +2588,14 @@ static void test_replay_step_index_says_what_each_step_is(void) {
         int want[8] = {0};
         for (int i = 0; i < g.num_logs; i++) {
             switch (g.logs[i].log_type) {
-                case LOG_ATTACK: want[REPLAY_ATOM_ATTACK]++; break;
-                case LOG_COVER:  want[REPLAY_ATOM_COVER]++;  break;
-                case LOG_PASS:   want[REPLAY_ATOM_PASS]++;   break;
+                case LOG_ATTACK: want[REPLAY_ATOM_ATTACK]++; laid_cards += g.logs[i].num_pairs; break;
+                case LOG_COVER:  want[REPLAY_ATOM_COVER]++;  laid_cards += g.logs[i].num_pairs; break;
+                case LOG_PASS:   want[REPLAY_ATOM_PASS]++;   laid_cards += g.logs[i].num_pairs; break;
                 case LOG_PICKUP: want[REPLAY_ATOM_PICKUP]++; break;
                 default: break;
             }
         }
+        CHECK(named_cards == laid_cards, "the index names exactly the cards the game's moves laid");
         CHECK(seen[REPLAY_ATOM_ATTACK] == want[REPLAY_ATOM_ATTACK], "the index counts the game's attacks");
         CHECK(seen[REPLAY_ATOM_COVER]  == want[REPLAY_ATOM_COVER],  "the index counts the game's covers");
         CHECK(seen[REPLAY_ATOM_PASS]   == want[REPLAY_ATOM_PASS],   "the index counts the game's passes");
@@ -15378,6 +15422,7 @@ int main(void) {
     test_bot_drive_pre_action_hook();
 
     test_bot_roster_table();
+    test_bot_roster_table_is_the_roster();
     test_bot_knobs_precedence();
     test_bot_roster_choose_scopes_knobs();
 

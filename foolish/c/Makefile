@@ -1135,16 +1135,26 @@ WASM_REPLAY_DECODE_EXPORTS := \
 # It is the PACKED-INT predecessor of wasm_replay_error_ptr: one int carrying
 # log_type << 16 | menu, which every host stopped unpacking when replay.h grew
 # a ReplayError struct and structgen started generating its reader
-# (sdk/ts/wasm/bots.ts replayErrorDetail). No TypeScript has named it since.
+# (sdk/ts/wasm/bots.ts replayRefused). No TypeScript has named it since.
 # The C entry stays for the oracle modules and the test build, and
 # replay_last_error_detail() itself is what the C suites print on a refusal.
 # It is a one-line accessor, so the shipped module moved by 39 raw / 14 gzip
 # bytes: the point here is not the bytes but that the export list and the
 # TypeScript that binds it agree, which is the only state a gate can tell apart
 # from drift.
+#
+# wasm_cards_a_ptr and wasm_cards_b_ptr joined them on 2026-10-10. They are the
+# addresses of the card buffers the move doors read (wasm_attack, wasm_cover,
+# wasm_pass, wasm_apply_action, wasm_rearrange_hand, wasm_unambiguous_cover),
+# every one of which is already on this list. The last shipped caller was
+# kernelMsgRebase, which now lays its awire frame in the replay-io buffer like
+# every other FMSG input, so the shipped module was exporting two pointers to
+# buffers nothing in it reads. The test build's fixture still fills them
+# (e2e/helpers/table_fixture.ts).
 WASM_BOTS_UNSHIPPED_API := \
   -Wl,--export=wasm_unambiguous_cover \
   -Wl,--export=wasm_replay_error_detail \
+  -Wl,--export=wasm_cards_a_ptr -Wl,--export=wasm_cards_b_ptr \
   -Wl,--export=wasm_game_ptr_internal -Wl,--export=wasm_moves_ptr_internal \
   -Wl,--export=wasm_set_seed -Wl,--export=wasm_set_deal_seed_bytes -Wl,--export=wasm_reject_reason \
   -Wl,--export=wasm_import_state -Wl,--export=wasm_export_state \

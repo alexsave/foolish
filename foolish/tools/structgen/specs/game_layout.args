@@ -83,3 +83,6 @@
 --count TableAsk.idx=n_idx --count TableAsk.order=n_order --count TableAsk.title=title_len
 --count AskId.id=len
 --const ASK_
+--header bot_roster.h --root BotRosterTable
+--header replay_steps.h --root ReplayStep
+--header anim_plan.h --root AnimRoles

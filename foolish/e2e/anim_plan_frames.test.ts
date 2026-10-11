@@ -24,12 +24,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { animBuildPlan, animPlanAt, animReversalOrder, ANIM_EVT, ANIM_LOC, type AnimPlanEventIn } from '../sdk/ts/wasm/bots.ts';
 import {
-    animBuildPlan, animPlanAt, animReversalOrder,
-    ANIM_EVT, ANIM_LOC, ANIM_STEP_NONE, ANIM_NEVER, ANIM_TIME_MS, ANIM_BOUT_END_HOLD_MS,
+    ANIM_STEP_NONE, ANIM_NEVER, ANIM_TIME_MS, ANIM_BOUT_END_HOLD_MS,
     ANIM_CONFLICT_REVERT, ANIM_CONFLICT_KEEP, ANIM_CONFLICT_CLEAR,
-    type AnimPlanEventIn,
-} from '../sdk/ts/wasm/bots.ts';
+} from '../sdk/ts/gen/anim.bots.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 

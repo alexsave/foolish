@@ -30,3 +30,9 @@
 # the animation table cells and the transport switch (anim_plan.h).
 --header ../wasm/wire.h --header replay_steps.h --header anim_plan.h
 --const WIRE_CARD_ --const RS_ --const ANIM_TABLE_ --const ANIM_TRANSPORT_
+#
+# And the wire names of an animation step: its event type and the place a card
+# flies from or to (anim_plan.h). In lower case these are the words the web's
+# pipeline carries, so the bridge keeps no table of its own:
+#   ANIM_EVT_NAMES      ANIM_LOC_NAMES
+--names ANIM_EVT_ --names ANIM_LOC_

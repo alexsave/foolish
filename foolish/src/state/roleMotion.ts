@@ -29,7 +29,7 @@
 // the kernel's (anim_goods_opening / anim_goods_cleared / anim_pass_hand_off,
 // reached through sdk/ts/wasm/bots.ts). This file is arithmetic only.
 
-import { ANIM_TIME_MS } from '@sdk/ts/wasm/bots.ts';
+import { ANIM_TIME_MS } from '@sdk/ts/gen/anim.bots.ts';
 import type { RoleMarkKind } from '../components/RoleMark';
 
 /** A point on screen, in viewport coordinates - the same space

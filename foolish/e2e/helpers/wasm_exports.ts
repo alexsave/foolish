@@ -158,6 +158,34 @@ export function wasmExportSignatures(bytes: Uint8Array): Map<string, WasmSig> {
     return out;
 }
 
+/**
+ * Every `wasm_*` name the hand-written TypeScript under `dir` calls on a module
+ * instance or declares in an interface it types one with. A wrapper typed by a
+ * generated interface declares nothing, so for it a call is the only place a
+ * name appears.
+ */
+export function calledExports(dir: string, out = new Set<string>()): Set<string> {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const p = join(dir, entry.name);
+        // Not sdk/ts/gen: the generated interfaces there (exports.<link>.ts)
+        // declare what EVERY link exports - the test build's doors, the Oracle's -
+        // which is a statement about those modules and not something a wrapper
+        // calls on this one. e2e/wasm_exports.test.ts holds each to its module.
+        if (entry.isDirectory()) { if (entry.name !== 'gen') calledExports(p, out); continue; }
+        if (!entry.name.endsWith('.ts') || entry.name.endsWith('.d.ts')) continue;
+        // Comments name kernel FILES (wasm_api.c) and retired entries, so they
+        // are stripped before the scan: what counts is a call or a declaration.
+        const src = readFileSync(p, 'utf8')
+            .replace(/\/\*[\s\S]*?\*\//g, '')
+            .replace(/^[ \t]*\/\/.*$/gm, '');
+        // `ex.wasm_foo(`, `instance.exports.wasm_foo(`, and a member of a
+        // hand-written binder: all are a name immediately followed by its
+        // argument list or its type.
+        for (const m of src.matchAll(/\bwasm_[a-z0-9_]+(?=\s*[(:])/g)) out.add(m[0]);
+    }
+    return out;
+}
+
 /** One `wasm_*` member of a binding interface, as TypeScript declares it. */
 export interface BoundMember {
     readonly name: string;
@@ -191,15 +219,14 @@ export type ModuleId = 'bots' | 'web' | 'bots-test' | 'oracle' | 'oracle-mt' | '
  * dropped out of the check.
  */
 export const BINDER_MODULES: Readonly<Record<string, ModuleId>> = {
-    // The shipped module, bound by the SDK every host loads.
-    'sdk/ts/wasm/bots.ts#EngineExports': 'bots',
-    'sdk/ts/wasm/bots.ts#BotsExports': 'bots',
+    // The shipped module, bound by the SDK every host loads. sdk/ts/wasm/bots.ts
+    // is not here: it types the module with the generated interfaces
+    // (sdk/ts/gen/exports.bots.ts and exports.web.ts) and declares no entry.
     'sdk/ts/table/server_table.ts#TableExports': 'bots',
     'sdk/ts/table/client_table.ts#ClientExports': 'bots',
     // The BROWSER's link of those same objects (c/Makefile, WASM_WEB_NAMES).
-    // The four binders above are declared against `bots` because that is the
-    // superset - BotsExports names test-only entries that run on Node - and the
-    // browser reaches them through the subset. What is bound to `web` is the
+    // The binders above are declared against `bots` because that is the
+    // superset, and the browser reaches them through the subset. What is bound to `web` is the
     // gate that holds the two links to one answer, which instantiates BOTH and
     // so may only name entries both export.
     'e2e/wasm_web_link.test.ts#RawKernel': 'web',
@@ -308,9 +335,8 @@ export function bindersIn(src: string, rel: string): Binder[] {
  * How a binder's declarations disagree with a module's export table, one
  * human-readable line per disagreement. Empty is agreement.
  *
- * An OPTIONAL member is allowed to be absent - `wasm_msg_*` is declared `?` in
- * sdk/ts/wasm/bots.ts because the same wrapper types msg.wasm, which does not
- * carry it - but when it is present it must still match.
+ * An OPTIONAL member (`?`) is allowed to be absent, but when it is present it
+ * must still match.
  */
 export function binderMismatches(binder: Binder, module: ModuleId, sigs: Map<string, WasmSig>): string[] {
     const out: string[] = [];

@@ -22,8 +22,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
     kernelMsgDecode, kernelMsgSeal, kernelMsgRebase, kernelMsgLegalMoves,
-    kernelMsgPublicView, kernelMsgRuleP, MSG_REBASE_REAPPLY,
+    kernelMsgPublicView, kernelMsgRuleP,
 } from '../sdk/ts/wasm/bots.ts';
+import { MSG_REBASE_REAPPLY } from '../sdk/ts/gen/msg_layout.bots.ts';
 
 const AWIRE = { attack: 0, cover: 1, pass: 2, pickup: 3, good: 4 } as const;
 const wireCard = (c: { suit: number; value: number }) => c.suit * 13 + (c.value - 1);

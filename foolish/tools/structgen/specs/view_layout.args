@@ -79,3 +79,13 @@
 --const ASK_
 # The cast header (evwire.h): how many bytes of a realtime payload stand before the as3 push.
 --const EVW_CAST_
+# The bot roster as a value (bot_roster.h BotRosterTable): what the kernel's one
+# table says about every named bot and what this build links, through its reader.
+--header bot_roster.h --root BotRosterTable --snapshot BotRosterTable
+--count BotRosterTable.rows=n --count BotRosterRow.key=key_len
+# One record of a code's step index (replay_steps.h ReplayStep), read where the
+# index lies, RS_INDEX_STRIDE bytes apart.
+--root ReplayStep --snapshot ReplayStep
+# The marks a role beat shows next (anim_plan.h AnimRoles): the three role
+# entries answer with its address, so the bridge reads no byte of it.
+--root AnimRoles --snapshot AnimRoles

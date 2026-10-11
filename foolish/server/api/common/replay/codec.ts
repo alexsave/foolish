@@ -121,7 +121,7 @@ export function hexToBytes(hex: string): Uint8Array {
 // scheme-less, so the same replay copied from two screens gave two links.
 //
 // Both forms survive because both are wanted, and the kernel owns the choice:
-// REPLAY_LINK.url is the https link a person copies, REPLAY_LINK.qr is the
+// REPLAY_LINK_STYLE_URL is the https link a person copies, REPLAY_LINK_STYLE_QR the
 // uppercase scheme-less one, which stays in QR alphanumeric mode and so fits a
 // smaller QR version.
 //
