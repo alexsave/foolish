@@ -241,13 +241,24 @@ test("bots.wasm declared INITIAL memory is 34 pages (static buffers, not the run
     // had long since been spent), so a store that holds a deal cannot fit in 37.
     // That left 36,016 BYTES under the 38-page line.
     //
-    // 34, LOWERED: the FMSG seal, rebase and Rule P entries left this link (no
-    // host of bots.wasm called them - the phone links that code natively and it
-    // is tested natively, c/tests/msg_wire_test.c), and their scratch Games
-    // went with them. Four pages, 262,144 B, a server instance no longer reserves.
+    // 34, LOWERED: the FMSG seal, rebase, Rule P and rematch entries left this
+    // link (no host of bots.wasm called them - the phone links that code
+    // natively and it is tested natively, c/tests/msg_wire_test.c), and the
+    // linker dropped the statics only they reached. Measured from two links of
+    // the shipped objects with a -Map, the commit before against the commit after:
+    //
+    //   msg_rebase_one.probe      135,944 B -> 0   (a scratch Game)
+    //   g_msg_scratch             135,944 B -> 0   (a scratch Game)
+    //   wasm_msg_rematch.finished  32,768 B -> 0
+    //   wasm_msg_seal.body            512 B -> 0
+    //   end of static data      2,470,168 B -> 2,165,824 B   (-304,344 B, 37.69 -> 33.05 pages)
+    //
+    // Everything else that moved between the two maps is a rename or a few
+    // hundred bytes of new ask structs. That leaves 62,400 BYTES under the
+    // 34-page line.
     const wasm = new Uint8Array(gunzipSync(readFileSync(resolve('sdk/ts/wasm/bots.wasm.gz'))));
     const { min } = memLimits(wasm);
-    assert.equal(min, 34, `bots.wasm initial memory is ${min} pages (${min * PAGE}B); expected 34: the deliberate static buffers (g_io 400 KiB, the cordite solver working set, the move enumerators, the resident and replay Games, the Table's 64-slot snapshot store that holds one deal) plus the bridge's generated structs (ReplayExtras 8,744 B, RosterSpec 3,448 B, ReplayFrameIndex 1,032 B, MsgHeader 656 B). Going UP is a regression, so look for a new buffer below __heap_base. Going DOWN means something was freed - lower this pin and take the page back.`);
+    assert.equal(min, 34, `bots.wasm initial memory is ${min} pages (${min * PAGE}B); expected 34: the deliberate static buffers (g_io 400 KiB, the cordite solver working set, the move enumerators, the resident and replay Games, the Table's 64-slot snapshot store that holds one deal) plus the bridge's generated structs (ReplayExtras 8,744 B, RosterSpec 3,448 B, ReplayFrameIndex 1,032 B, MsgHeader 656 B). Going UP is a regression: 62,400 B of static room are left under the 34-page line, so look for a new buffer below __heap_base. Going DOWN means something was freed - lower this pin and take the page back.`);
 });
 
 test("web.wasm declared INITIAL memory is 26 pages - 8 fewer than the server's link", () => {
