@@ -828,15 +828,17 @@ int wasm_msg_rule_p(int a_len, int b_len) {
 
 // Rule R (msg_wire.h §7.4). Rebases ONE pending action onto the adopted chain -
 // the game wasm_msg_decode left resident - in the order the ledger holds them.
-// The awire frame is in the cards_a buffer, as for wasm_apply_action.
+// The awire frame is at the front of g_replay_io, like every other FMSG input,
+// so a caller checks it against the one capacity that buffer exports; it is
+// decoded out of there before anything else runs.
 //
 // Returns MSG_REBASE_* (0 re-applied and APPLIED to the resident game, 1
 // discarded by the round guard, 2 discarded as illegal), or a negative MSG_E*.
 int wasm_msg_rebase(int pending_round, int seat, int wire_len) {
     if (g_msg_round < 0) return MSG_ECHAIN;   // nothing adopted to rebase onto
-    if (wire_len < 0 || wire_len > MAX_IN_CARDS) return MSG_EACTION;
+    if (wire_len < 0 || wire_len > REPLAY_IO_CAP) return MSG_EACTION;
     AwireAction a;
-    if (!awire_decode(g_in_raw_a, wire_len, &a)) return MSG_EACTION;
+    if (!awire_decode(g_replay_io, wire_len, &a)) return MSG_EACTION;
     return msg_rebase_one(&g_game, g_msg_round, pending_round, seat, &a);
 }
 

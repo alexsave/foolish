@@ -311,9 +311,7 @@ export function kernelMsgLegalMoves(seat: number): { type: string; cards?: Card[
 // composed against round 5, after a pickup closed round 5, would re-validate as
 // an opening attack of round 6 — legal, and not what the player chose.
 export function kernelMsgRebase(pendingRound: number, seat: number, wire: Uint8Array): number {
-    const ex = serverBots();
-    if (wire.length > 128) throw new Error('malformed action wire');
-    mem(ex).u8.set(wire, ex.wasm_cards_a_ptr());
+    const ex = replayIn(serverBots(), () => msgError(M.MSG_EACTION), wire);
     return ok(ex.wasm_msg_rebase(pendingRound, seat, wire.length), msgError);
 }
 
