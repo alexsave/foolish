@@ -193,7 +193,7 @@ class Server {
 }
 
 // ---- the network ---------------------------------------------------------------------
-interface Pending { kind: 'action' | 'meta'; body: unknown; resolve: (r: { data: unknown; error: unknown }) => void }
+interface Pending { kind: 'action' | 'meta'; body: unknown; type?: string; idx?: number[]; resolve: (r: { data: unknown; error: unknown }) => void }
 let server: Server | null = null;
 let pending: Pending[] = [];
 const channels = new Map<string, { handlers: { event: string; cb: (p: unknown) => void }[] }>();
@@ -247,8 +247,14 @@ const supabaseMock = {
             // Which ask a body holds is the kernel's to say, and a Blob reads
             // asynchronously, so a meta request is held one turn later than a move.
             if (name === 'meta' && body instanceof Blob) {
-                return body.arrayBuffer().then((buf) => (askKindName(new Uint8Array(buf)) === 'bump'
-                    ? { data: null, error: null } : hold()));
+                return body.arrayBuffer().then((buf) => {
+                    const bytes = new Uint8Array(buf), type = askKindName(bytes);
+                    if (type === 'bump') return { data: null, error: null };
+                    const ask = fixtureTable().askDecode(bytes);
+                    return new Promise((resolve) => {
+                        pending.push({ kind: 'meta', body, type, idx: typeof ask === 'number' ? [] : [...ask.idx], resolve });
+                    });
+                });
             }
             return hold();
         },
@@ -546,10 +552,9 @@ async function answer(stage: Stage, label: string): Promise<void> {
             const r = s.act(ME, decoded.wire);            const response = fixtureTable().actionResponse(r.rc, r.reject, s.version);
             req.resolve({ data: response.buffer.slice(response.byteOffset, response.byteOffset + response.byteLength), error: null });
         } else {
-            const body = req.body as { type: string; card_indices?: number[] };
-            if (body.type === 'continue') s.op(ME, (t) => t.continueGame(ME));
-            else if (body.type === 'rearrange-hand') s.op(ME, (t) => t.rearrangeHand(ME, body.card_indices!));
-            else assert.fail(`${label}: an unexpected meta ${body.type}`);
+            if (req.type === 'continue') s.op(ME, (t) => t.continueGame(ME));
+            else if (req.type === 'rearrange-hand') s.op(ME, (t) => t.rearrangeHand(ME, req.idx!));
+            else assert.fail(`${label}: an unexpected meta ${req.type}`);
             const env = s.envelope(ME);
             req.resolve({ data: env.buffer.slice(env.byteOffset, env.byteOffset + env.byteLength), error: null });
         }
@@ -1796,7 +1801,7 @@ async function openingDeal(name: string, gid: string, ids: FixtureSeat[], wantDe
         await stage.step('tap Ready', () => tap(probe.actions.startGame(gid)));
         await stage.advance(100);
         const req = pending.shift();
-        assert.ok(req && req.kind === 'meta' && (req.body as { type: string }).type === 'start', `${name}: Ready asks the server to start`);
+        assert.ok(req && req.kind === 'meta' && req.type === 'start', `${name}: Ready asks the server to start`);
         await stage.step('server starts the game', () => {
             server!.op(ME, (t) => t.ready(ME, seed));
             const env = server!.envelope(ME);

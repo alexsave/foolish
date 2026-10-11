@@ -278,7 +278,7 @@ export function kernelMsgRebase(pendingRound: number, seat: number, wire: Uint8A
 // view.c, like every other view in the product - nothing here decides what a
 // stranger may see. The view names no one: the joins carry the names.
 export function kernelMsgPublicView(): { view: V.TableView_Snap } {
-    const ex = bots();
+    const ex = serverBots();
     const rc = ex.wasm_client_adopt_resident(-1);
     if (rc !== 0) throw new Error(`view: the resident game does not read (${rc})`);
     return { view: V.readTableView(mem(ex), ex.wasm_client_view_ptr()) };

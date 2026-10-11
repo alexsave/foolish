@@ -192,7 +192,7 @@ let myToken = '';
 const channels = new Map<string, { handlers: { event: string; cb: (p: unknown) => void }[] }>();
 
 /** Every request the page sent, and when it was answered (virtual ms). */
-export interface Sent { at: number; answeredAt: number; name: string; kind: string; status: number; body: unknown }
+export interface Sent { at: number; answeredAt: number; name: string; kind: string; status: number; body: unknown; bytes: Uint8Array | null }
 export const sent: Sent[] = [];
 
 const later = (ms: number): Promise<void> => new Promise((r) => { g.setTimeout(r, ms); });
@@ -204,7 +204,7 @@ async function invoke(name: string, opts: { body?: unknown }): Promise<{ data: u
     // body (create) has nothing to post.
     const bytes = body instanceof Blob ? new Uint8Array(await body.arrayBuffer()) : null;
     const kind = !bytes ? '' : name === 'meta' ? askKindName(bytes) : 'packed';
-    const rec: Sent = { at: clock, answeredAt: -1, name, kind, status: 0, body };
+    const rec: Sent = { at: clock, answeredAt: -1, name, kind, status: 0, body, bytes };
     sent.push(rec);
     if (latency.invokeMs > 0) await later(latency.invokeMs);
     const res = bytes

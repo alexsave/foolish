@@ -77,7 +77,7 @@ test('cover: a legal cover applies; a card that cannot cover is refused; the wir
     'a legal cover applies');
   refusedWith(t, 1, encodeAction({ kind: 'cover', cards: [C(2, 7)], attack_cards: [C(0, 7)] }),
     L.TABLE_REJECTED, L.ENGINE_REJECT_CANNOT_COVER, 'an off-suit 7 over the 7 of spades');
-  assert.throws(() => encodeAction({ kind: 'cover', cards: [C(0, 9), C(2, 7)], attack_cards: [C(0, 7)] }), /mismatched/,
+  assert.throws(() => encodeAction({ kind: 'cover', cards: [C(0, 9), C(2, 7)], attack_cards: [C(0, 7)] }), /not a move the wire carries/,
     'covers and attacks of different sizes have no wire');
 });
 

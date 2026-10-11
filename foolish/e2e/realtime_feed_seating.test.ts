@@ -18,6 +18,7 @@ import { JSDOM } from 'jsdom';
 import { MAX_PLAYERS } from '../server/api/core/constants.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import { fixture, fixtureTable, type FixtureSeat } from './helpers/table_fixture.ts';
+import { askKindName } from './helpers/ask.ts';
 
 const dom = new JSDOM('<!DOCTYPE html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
 const g = globalThis as any;
@@ -81,8 +82,10 @@ const supabaseMock = {
     removeChannel: async () => 'ok',
     functions: {
         invoke: async (fn: string, opts: { body: any }) => {
-            invokes.push({ fn, type: opts?.body?.type });
-            if (fn === 'meta' && opts.body?.type === 'join' && joinResponse) {
+            // A request to meta is an ask, as bytes; which ask is the kernel's to say.
+            const type = opts?.body instanceof Blob ? askKindName(new Uint8Array(await opts.body.arrayBuffer())) : undefined;
+            invokes.push({ fn, type });
+            if (fn === 'meta' && type === 'join' && joinResponse) {
                 return { data: new Blob([joinResponse as Uint8Array<ArrayBuffer>]), error: null };
             }
             return { data: null, error: null };

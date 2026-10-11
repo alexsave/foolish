@@ -20,6 +20,7 @@ import { fixture, GAME_OVER, IDLE, IN, OUT, PLAYING, WAITING } from './helpers/t
 import { seedTable } from './helpers/table_db.ts';
 import { mustReadTable } from './helpers/table_play.ts';
 import { runMeta } from './helpers/table_server.ts';
+import { askBody } from './helpers/ask.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; }
 
@@ -34,7 +35,7 @@ async function playing(h1: string, h2: string): Promise<string> {
 }
 
 /** The refusal, and that the row did not move. */
-async function refused(gameId: string, userId: string, body: Record<string, unknown>, why: RegExp, what: string): Promise<void> {
+async function refused(gameId: string, userId: string, body: Record<string, unknown> | Uint8Array, why: RegExp, what: string): Promise<void> {
     const v0 = (await mustReadTable(gameId)).version;
     await assert.rejects(runMeta(gameId, userId, body), why, what);
     assert.equal((await mustReadTable(gameId)).version, v0, `${what}: nothing committed`);
@@ -87,5 +88,9 @@ test('continue resets a finished game to the lobby, clearing the fool\'s hand', 
 
 test('an unknown meta action type is rejected', async () => {
     const h1 = uuid(), h2 = uuid();
-    await refused(await playing(h1, h2), h1, { type: 'no-such-action' }, /unknown meta action type/i, 'unknown type');
+    // A well-formed continue, with its kind byte (the second) turned into one no ask has.
+    const g = await playing(h1, h2);
+    const body = askBody({ type: 'continue', game_id: g });
+    body[1] = 0xee;
+    await refused(g, h1, body, /not an ask/i, 'unknown type');
 });

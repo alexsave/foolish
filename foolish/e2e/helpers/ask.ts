@@ -20,18 +20,38 @@ const KIND = new Map<string, number>([
     ['set-rules', V.ASK_SET_RULES], ['bump', V.ASK_BUMP],
 ]);
 
-const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+// An ask's fields are typed: an id is text, a list is a list, the rule is a
+// yes or a no. A value of another type is one the hostile suites used to put in
+// a JSON body - `bot_id: { $ne: null }`, `passing: 0` - and no ask can carry it,
+// so stating one is refused HERE rather than read as the field being absent
+// (an exit with no bot named is the caller leaving, which is not what was asked).
+const absent = (v: unknown): boolean => v === undefined;
+function text(body: Record<string, unknown>, field: string): string {
+    const v = body[field];
+    if (absent(v)) return '';
+    if (typeof v !== 'string') throw new Error(`askOf: ${field} is not text, and an ask carries nothing else there`);
+    return v;
+}
+function list(body: Record<string, unknown>, field: string): unknown[] {
+    const v = body[field];
+    if (absent(v)) return [];
+    if (!Array.isArray(v)) throw new Error(`askOf: ${field} is not a list, and an ask carries nothing else there`);
+    return v;
+}
 
-/** The ask a legacy-named request object states. Throws for a `type` that names no ask. */
+/** The ask a legacy-named request object states. Throws for a `type` that names no ask, and for a field no ask can carry. */
 export function askOf(body: Record<string, unknown>): Ask {
-    const kind = KIND.get(str(body.type));
+    const kind = typeof body.type === 'string' ? KIND.get(body.type) : undefined;
     if (kind === undefined) throw new Error(`askOf: "${String(body.type)}" names no ask`);
+    if (kind === V.ASK_SET_RULES && typeof body.passing !== 'boolean') {
+        throw new Error('askOf: passing is not a yes or a no, and an ask carries nothing else there');
+    }
     return {
-        kind, gid: str(body.game_id),
-        bot: str(body.bot_id), player: str(body.player_id),
-        idx: Array.isArray(body.card_indices) ? body.card_indices as number[] : [],
-        order: Array.isArray(body.new_order) ? (body.new_order as string[]).map((id) => ({ id })) : [],
-        title: str(body.new_name),
+        kind, gid: text(body, 'game_id'),
+        bot: text(body, 'bot_id'), player: text(body, 'player_id'),
+        idx: list(body, 'card_indices') as number[],
+        order: (list(body, 'new_order') as string[]).map((id) => ({ id })),
+        title: text(body, 'new_name'),
         passing: body.passing === true ? 1 : 0,
     };
 }

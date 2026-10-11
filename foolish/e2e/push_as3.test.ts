@@ -98,7 +98,7 @@ test('a lobby join push is as3 and seats the joiner from its own bytes over a st
     const next = pushesOn(from2, hostTopic);
     assert.equal(next.length, 1, 'the joiner getting ready pushes once to the host');
     const nextPayload = next[0].payload as Record<string, unknown>;
-    assert.equal(nextPayload.t, 'as3', 'labelled as3');
+    assert.deepEqual(Object.keys(nextPayload), ['b'], 'the payload is the cast and nothing beside it');
     const nextBytes = base64ToBytes(nextPayload.b as string);
     assert.equal(nextBytes[nextBytes.length - 1], 0, 'a push that did not change the roster ends in a zero flags byte');
     const nextRead = clientRead(client, gameId, nextPayload);

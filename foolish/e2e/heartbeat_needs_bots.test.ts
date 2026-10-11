@@ -25,7 +25,7 @@ globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
     // A drive names its game in the URL and carries no body (bot-heartbeat/index.ts).
     if (url.includes('/functions/v1/bot-heartbeat?')) {
         assert.equal(init?.body, undefined, 'a drive dispatch has no body');
-        dispatched.push(new URL(url).searchParams.get('game') ?? '');
+        dispatched.push(new URL(url, 'http://edge.invalid').searchParams.get('game') ?? '');
         return new Response(null, { status: 202 });
     }
     return passThrough(input as RequestInfo, init);
