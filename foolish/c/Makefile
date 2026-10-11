@@ -1135,7 +1135,7 @@ WASM_REPLAY_DECODE_EXPORTS := \
 # It is the PACKED-INT predecessor of wasm_replay_error_ptr: one int carrying
 # log_type << 16 | menu, which every host stopped unpacking when replay.h grew
 # a ReplayError struct and structgen started generating its reader
-# (sdk/ts/wasm/bots.ts replayErrorDetail). No TypeScript has named it since.
+# (sdk/ts/wasm/bots.ts replayRefused). No TypeScript has named it since.
 # The C entry stays for the oracle modules and the test build, and
 # replay_last_error_detail() itself is what the C suites print on a refusal.
 # It is a one-line accessor, so the shipped module moved by 39 raw / 14 gzip

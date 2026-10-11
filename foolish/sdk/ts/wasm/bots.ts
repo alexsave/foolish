@@ -27,9 +27,8 @@ export type Card = V.Card_Snap;
 let exportsCache: WebExports | null = null;
 let linked: WasmModuleName = 'web';
 
-// Memory diagnostics for the edge 150MB-external budget (see utils.ts [MEM]
-// logging): the size of the kernel's linear memory, -1 until loaded. Bytes for
-// the benchmarks that need to see a 64KB page, MB for the log line.
+// Memory diagnostics for the edge 150MB-external budget: the size of the
+// kernel's linear memory, -1 until loaded (e2e/bench_bot_e2e.ts reads both).
 export function __botsWasmBytes(): number {
     return exportsCache ? exportsCache.memory.buffer.byteLength : -1;
 }
@@ -41,12 +40,12 @@ export function __botsWasmMB(): number {
 export function __ensureBots(): void { bots(); }
 
 /**
- * Prepare the kernel where it cannot be read synchronously — i.e. the browser,
+ * Prepare the kernel where it cannot be read synchronously - i.e. the browser,
  * which has no filesystem and must FETCH the .gz. Await this once before any
  * bots() call; on the server it is a no-op fast path (fs is synchronous).
  *
  * WHICH module: kernelModule() answers, and in the browser the answer is
- * web.wasm — the same objects as bots.wasm under a smaller export allow-list,
+ * web.wasm - the same objects as bots.wasm under a smaller export allow-list,
  * so the browser gets the client slot, the animation plan, the replay reader
  * and the FMSG decode it calls, and none of the C Table or the Monte-Carlo
  * brains it does not. One source, one layout hash, two links (c/Makefile,
@@ -197,7 +196,7 @@ export function kernelBotStrat(key: string): number {
 // An iMessage game has no server: the whole game is (32-byte deal seed, v6
 // replay code) in an MSMessage URL, and every device rebuilds it by re-dealing
 // from the seed and replaying the code through the kernel. These calls are the
-// only way in — the envelope's layout lives in C, once, so the phone and the
+// only way in - the envelope's layout lives in C, once, so the phone and the
 // web can never read the same bytes as different games.
 //
 // They ride the REPLAY io buffer, never g_io: an FMSG call IS a replay call (its
@@ -210,13 +209,13 @@ export interface MsgEnvelope {
     phase: number;          // 0 WAITING, 1 ACCEPT, 2 LIVE, 3 FINISHED
     n_players: number;
     variant: number;
-    round: number;          // completed bouts — Rule P's first key
+    round: number;          // completed bouts - Rule P's first key
     last_actor_seat: number;
     game_id: bigint;
-    turn: number;           // atoms applied — Rule P's second key
+    turn: number;           // atoms applied - Rule P's second key
     parent8: Uint8Array;    // first 8 bytes of SHA-256(parent envelope)
     seed: Uint8Array;       // 32
-    digest: Uint8Array;     // SHA-256 of THIS envelope — Rule P's tiebreak
+    digest: Uint8Array;     // SHA-256 of THIS envelope - Rule P's tiebreak
     /// ROUND 16: the send clock, unix seconds mod 65536, or 0 for a chain that
     /// carries none (format 2). Written as well as read: sealing with a
     /// non-zero clock is what makes an envelope format 3.
@@ -241,7 +240,7 @@ export interface MsgEnvelope {
 }
 
 // Decode + VALIDATE an envelope: the chain is replayed through the kernel, so a
-// corrupt or hand-edited payload throws rather than half-loading (§7.3 —
+// corrupt or hand-edited payload throws rather than half-loading (§7.3 -
 // validation IS replay). Leaves the game RESIDENT: the legal-move and view doors
 // below then read exactly the state the payload describes, which is what the
 // /m/ route renders and what a turn continues from.
@@ -279,12 +278,12 @@ export function kernelMsgRuleP(a: Uint8Array, b: Uint8Array): number {
     return r;
 }
 
-// The legal moves of the game the last kernelMsgDecode adopted — read from the
+// The legal moves of the game the last kernelMsgDecode adopted - read from the
 // kernel's own LegalMoves where it lies, through the generated accessors, never
 // marshalled. An iMessage device does not hold the game as a TS object: the
 // envelope put it in the kernel, and that is the only copy.
 //
-// This is how the extension/route answers "what can I do?" — never by asking TS.
+// This is how the extension/route answers "what can I do?" - never by asking TS.
 // A hand-rolled "is it my turn" is a bug by policy (design §17.16).
 export function kernelMsgLegalMoves(seat: number): { type: string; cards?: Card[]; attack_cards?: Card[] }[] {
     const ex = serverBots();
@@ -304,26 +303,26 @@ export function kernelMsgLegalMoves(seat: number): { type: string; cards?: Card[
 
 // Rule R (§7.4): rebase ONE pending action onto the chain kernelMsgDecode last
 // adopted, in ledger order; the answer is a MSG_REBASE_*. REAPPLY mutates the
-// resident game — that IS the rebase — so keep folding the rest in after it; a
+// resident game - that IS the rebase - so keep folding the rest in after it; a
 // DISCARD leaves it untouched.
 //
 // The round-boundary guard and the legality question both live in C. A throw-in
 // composed against round 5, after a pickup closed round 5, would re-validate as
-// an opening attack of round 6 — legal, and not what the player chose.
+// an opening attack of round 6 - legal, and not what the player chose.
 export function kernelMsgRebase(pendingRound: number, seat: number, wire: Uint8Array): number {
     const ex = replayIn(serverBots(), () => msgError(M.MSG_EACTION), wire);
     return ok(ex.wasm_msg_rebase(pendingRound, seat, wire.length), msgError);
 }
 
-// The PUBLIC view of the game the last kernelMsgDecode adopted — every hand as
+// The PUBLIC view of the game the last kernelMsgDecode adopted - every hand as
 // backs, the deck masked. What /m/ renders for a stranger with a link, and what
 // the bubble snapshot shows (it lands in notifications and on lock screens, so
-// it must never carry a hand — design §5 invariants).
+// it must never carry a hand - design §5 invariants).
 //
 // The resident game is read into the web client's slot as a spectator sees it
 // (c/src/client_table.h client_adopt_board), so this needs no re-deserialize:
 // the envelope already put the game in the kernel. The masking itself is in
-// view.c, like every other view in the product — nothing here decides what a
+// view.c, like every other view in the product - nothing here decides what a
 // stranger may see. The view names no one: the joins carry the names.
 export function kernelMsgPublicView(): { view: V.TableView_Snap } {
     const ex = bots();
@@ -334,7 +333,7 @@ export function kernelMsgPublicView(): { view: V.TableView_Snap } {
 
 // Seal the RESIDENT game into an envelope. `header` supplies what the protocol
 // owns (game_id, phase, seed, joins, parent8, last_actor_seat); the kernel fills
-// in what the BODY owns — turn, round — by decoding the code it just wrote, so a
+// in what the BODY owns - turn, round - by decoding the code it just wrote, so a
 // host cannot emit a payload it would itself reject. Returns the wire bytes.
 export function kernelMsgSeal(
     header: Omit<MsgEnvelope, 'digest' | 'turn' | 'round' | 'format' | 'sent_at' | 'n_new'
@@ -376,14 +375,14 @@ export function kernelMsgRematch(finished: Uint8Array, tappedAtMs: number, creat
 }
 
 // The best shareable REPLAY code for the game the last kernelMsgDecode
-// adopted — the TS-side twin of MessageKernel.residentReplayCode()
+// adopted - the TS-side twin of MessageKernel.residentReplayCode()
 // (sdk/swift/MessageEnvelope.swift), reached off the same resident g_game
 // instead of Swift's fio_replay_share_code_b32. Used by the /m/ page's
 // FINISHED-bubble funnel (docs/IMESSAGE_LOBBY_V3.md, batch 6 item B): once a
 // payload decodes, msg_replay has already run the whole chain through the
 // ORDINARY kernel handlers (handle_attack etc.), which log exactly like any
-// other play — so the resident game already carries the full session log a
-// v6 code needs. Only the envelope's own seed (env.seed, already decoded — no
+// other play - so the resident game already carries the full session log a
+// v6 code needs. Only the envelope's own seed (env.seed, already decoded - no
 // second kernel round-trip to fetch it) has to be supplied.
 export function kernelResidentReplayCodeV6(seed: Uint8Array): Uint8Array {
     if (seed.length !== M.MSG_SEED_LEN) {
@@ -549,8 +548,8 @@ export function replayStepIndex(code: Uint8Array): ReplayStepInfo[] {
 
 /**
  * Every evwire frame a code replays to, for `viewer` (-1 = spectator), in step
- * order. Pulled in chunks because the frames of a whole game — each carrying a
- * masked board snapshot — outgrow the wasm IO buffer, and because evwire's
+ * order. Pulled in chunks because the frames of a whole game - each carrying a
+ * masked board snapshot - outgrow the wasm IO buffer, and because evwire's
  * n_events is a u8, so one frame per game is impossible regardless.
  */
 export function replayEventFrames(code: Uint8Array, viewer: number): Uint8Array[] {
@@ -618,7 +617,7 @@ export function replayStepLogs(code: Uint8Array, step: number): Uint8Array | nul
 // Animation core (c/src/anim_plan.h)
 // ===========================================================================
 // The bridge the web pure modules (src/state/*) delegate to, so the animation
-// policy the React glitch-fixing hardened lives in C once — the same "one kernel
+// policy the React glitch-fixing hardened lives in C once - the same "one kernel
 // behind every host" argument FMSG makes. The kernel is loaded at app boot
 // (providers.tsx awaits ensureBotsAsync), and bots() is synchronous on the
 // server, so these calls are safe synchronously in both.
