@@ -471,16 +471,8 @@ export function replayStepCount(code: Uint8Array): number {
     return ok(codeIn(code).wasm_replay_step_count(code.length), replayRefused);
 }
 
-/** What a step played: the kernel's REPLAY_ATOM_* (c/src/replay.h), each under
- *  its own name with the prefix dropped, out of the generated constants. DEAL is
- *  the opening deal and never an action; DRAW is never a step (draws ride the
- *  action that caused them); ROUND_END is every remaining attacker saying good. */
-type AtomName<N> = N extends `REPLAY_ATOM_${infer S}` ? (S extends 'NAMES' ? never : S) : never;
-export const REPLAY_STEP = Object.fromEntries(
-    Object.entries(K.REPLAY_ATOM_NAMES).map(([code, name]) => [name, Number(code)]),
-) as { readonly [N in keyof typeof K as AtomName<N>]: (typeof K)[N] };
-
-/** What one step of a code IS (replay_steps.h ReplayStep): `kind` a REPLAY_ATOM_*,
+/** What one step of a code IS (replay_steps.h ReplayStep): `kind` a REPLAY_ATOM_*
+ *  (DEAL is the opening deal; ROUND_END is every remaining attacker saying good),
  *  `seat` the acting seat or -1 (the deal, and round ends nobody in particular
  *  closes), `named` how many of the step's cards the MOVE NAMED - 0 for a pickup
  *  or a good, whose step carries cards nobody chose. */

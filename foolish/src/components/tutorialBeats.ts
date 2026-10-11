@@ -9,7 +9,8 @@
  * ========================================================================== */
 
 import type { ReplaySummary } from '@sdk/ts/wasm/bots.ts';
-import { ReplayFrame, REPLAY_STEP } from '../replay/frames.ts';
+import { ReplayFrame } from '../replay/frames.ts';
+import { REPLAY_ATOM_ATTACK, REPLAY_ATOM_COVER, REPLAY_ATOM_PASS, REPLAY_ATOM_PICKUP, REPLAY_ATOM_ROUND_END, REPLAY_ATOM_GOOD } from '@sdk/ts/gen/kernel_consts.bots.ts';
 import type { StringId } from '../common/strings';
 
 /** The learner always sits at seat 0 in the frozen tutorial game. */
@@ -81,11 +82,11 @@ export function buildBeats(frames: ReplayFrame[], summary: ReplaySummary, names:
         const f = frames[i];
         const prev = frames[i - 1];
         switch (f.kind) {
-            case REPLAY_STEP.ATTACK:
+            case REPLAY_ATOM_ATTACK:
                 if (prev && prev.game.battles.length > 0 && once('throwIn'))
                     beats.push({ at: i, key: 'tut_throw_in', extras: ['tut_capacity'] });
                 break;
-            case REPLAY_STEP.COVER: {
+            case REPLAY_ATOM_COVER: {
                 if (once('cover')) beats.push({ at: i, key: 'tut_cover', extras: ['tut_stack_rule'] });
                 // EVERY pair of the move: one step can take several attacks
                 // (buildReplayFrames merges a multi-cover the wire split), and
@@ -97,10 +98,10 @@ export function buildBeats(frames: ReplayFrame[], summary: ReplaySummary, names:
                     beats.push({ at: i, key: 'tut_trump_cover' });
                 break;
             }
-            case REPLAY_STEP.PASS: if (once('pass')) beats.push({ at: i, key: 'tut_pass' }); break;
-            case REPLAY_STEP.PICKUP: if (once('pickup')) beats.push({ at: i, key: 'tut_pickup' }); break;
-            case REPLAY_STEP.GOOD: if (once('good')) beats.push({ at: i, key: 'tut_good' }); break;
-            case REPLAY_STEP.ROUND_END: {
+            case REPLAY_ATOM_PASS: if (once('pass')) beats.push({ at: i, key: 'tut_pass' }); break;
+            case REPLAY_ATOM_PICKUP: if (once('pickup')) beats.push({ at: i, key: 'tut_pickup' }); break;
+            case REPLAY_ATOM_GOOD: if (once('good')) beats.push({ at: i, key: 'tut_good' }); break;
+            case REPLAY_ATOM_ROUND_END: {
                 // The bout closed: everyone said good, and the table was binned.
                 const g = once('good'), d = once('discard');
                 if (g) beats.push({ at: i, key: 'tut_good', extras: d ? ['tut_discard'] : undefined });

@@ -33,15 +33,14 @@
  * ========================================================================== */
 
 import {
-    replayEventFrames, replayStepIndex, REPLAY_STEP, ReplayStepInfo,
+    replayEventFrames, replayStepIndex, ReplayStepInfo,
 } from '@sdk/ts/wasm/bots.ts';
+import { REPLAY_ATOM_DEAL, REPLAY_ATOM_ATTACK, REPLAY_ATOM_COVER, REPLAY_ATOM_PASS, REPLAY_ATOM_PICKUP, REPLAY_ATOM_ROUND_END } from '@sdk/ts/gen/kernel_consts.bots.ts';
 import { clientTable } from '@sdk/ts/table/client_table.ts';
 import { AnimationSequenceMessage, FeedAnimationEvent } from '../state/animationFeed';
 import { undealtBoard } from '../state/clientBoards';
 import { pushToSequence, type ViewEvent } from '../state/pushSequence';
 import { type TableView, type ViewCard as Card } from '../state/view';
-
-export { REPLAY_STEP } from '@sdk/ts/wasm/bots.ts';
 
 /** The key a replay's boards are held under: the frames' game id, and the one
  *  ReplayServerProvider keeps them in. A board's game id is a table's, and a
@@ -55,7 +54,7 @@ export type ReplayGameState = TableView & {
 };
 
 export interface ReplayFrame {
-    /** REPLAY_STEP.* — what the kernel says this step played. */
+    /** REPLAY_ATOM_* - what the kernel says this step played. */
     kind: number;
     /** The acting seat, or null (the deal; a round end nobody in particular closed). */
     seat: number | null;
@@ -92,12 +91,12 @@ export interface ReplayFrame {
  * refills with it, exactly as live play does), so the kernel's kind picks which
  * of those events is the one being narrated. */
 const NARRATED_EVENT: Record<number, string> = {
-    [REPLAY_STEP.DEAL]: 'flipped',        // the deal's news is the trump
-    [REPLAY_STEP.ATTACK]: 'attack_pass',
-    [REPLAY_STEP.PASS]: 'attack_pass',
-    [REPLAY_STEP.COVER]: 'cover',
-    [REPLAY_STEP.PICKUP]: 'pickup',
-    [REPLAY_STEP.ROUND_END]: 'cards_to_trash',
+    [REPLAY_ATOM_DEAL]: 'flipped',        // the deal's news is the trump
+    [REPLAY_ATOM_ATTACK]: 'attack_pass',
+    [REPLAY_ATOM_PASS]: 'attack_pass',
+    [REPLAY_ATOM_COVER]: 'cover',
+    [REPLAY_ATOM_PICKUP]: 'pickup',
+    [REPLAY_ATOM_ROUND_END]: 'cards_to_trash',
     // GOOD moves no cards — nothing to narrate but the seat.
 };
 
@@ -202,7 +201,7 @@ export function buildReplayFrames(
             named: info.named,
             moves: 1,
             step: i,
-            ...(info.kind === REPLAY_STEP.COVER && ev?.cards?.[0] && ev?.target_card
+            ...(info.kind === REPLAY_ATOM_COVER && ev?.cards?.[0] && ev?.target_card
                 ? { pairs: [{ card: { ...ev.cards[0] }, target: { ...ev.target_card } }] }
                 : null),
             target: ev?.target_card ? { ...ev.target_card } : null,
@@ -302,8 +301,8 @@ function mergeCoverRuns(frames: ReplayFrame[], moveGaps: number[] | null): Repla
     for (let i = 0; i < frames.length; i++) {
         const f = frames[i];
         let j = i;
-        while (j + 1 < frames.length && frames[j + 1].kind === REPLAY_STEP.COVER
-               && frames[j + 1].seat === f.seat && f.kind === REPLAY_STEP.COVER
+        while (j + 1 < frames.length && frames[j + 1].kind === REPLAY_ATOM_COVER
+               && frames[j + 1].seat === f.seat && f.kind === REPLAY_ATOM_COVER
                && sameSend(j + 1)) j++;
         if (j === i) { out.push(f); continue; }
         const run = frames.slice(i, j + 1);
@@ -442,7 +441,7 @@ export function buildReverseFrames(frames: ReplayFrame[]): (AnimationSequenceMes
  * any derived step.
  */
 const TIMED_KINDS: number[] = [
-    REPLAY_STEP.ATTACK, REPLAY_STEP.COVER, REPLAY_STEP.PASS, REPLAY_STEP.PICKUP,
+    REPLAY_ATOM_ATTACK, REPLAY_ATOM_COVER, REPLAY_ATOM_PASS, REPLAY_ATOM_PICKUP,
 ];
 
 export function stepTimes(

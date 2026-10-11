@@ -18,7 +18,8 @@ import { useServerActions } from '../contexts/ServerContext';
 import { useAnimation } from '../contexts/AnimationContext';
 import { animationFeed, AnimationSequenceMessage } from '../state/animationFeed';
 import { buildSpeeds, type SpeedStop } from './speeds';
-import { REPLAY_KEY, REPLAY_STEP, type ReplayFrame } from './frames';
+import { REPLAY_KEY, type ReplayFrame } from './frames';
+import { REPLAY_ATOM_ATTACK } from '@sdk/ts/gen/kernel_consts.bots.ts';
 
 /** The deck head and the buttons that move it. */
 export interface Playback {
@@ -145,7 +146,7 @@ export function usePlayback(
         const starts: number[] = [];
         for (let i = 0; i < frames.length; i++) {
             const opensEmpty = i === 0 || frames[i - 1].game.battles.length === 0;
-            if (frames[i].kind === REPLAY_STEP.ATTACK && opensEmpty) starts.push(i);
+            if (frames[i].kind === REPLAY_ATOM_ATTACK && opensEmpty) starts.push(i);
         }
         return starts;
     }, [frames]);

@@ -28,8 +28,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   kernelB32Encode, kernelReplayLink, kernelB32Decode, kernelReplayLinkParse,
-  replayStepCount, replayStepIndex, replaySummary, REPLAY_STEP, __replayError,
+  replayStepCount, replayStepIndex, replaySummary, __replayError,
 } from '../sdk/ts/wasm/bots.ts';
+import { REPLAY_ATOM_ATTACK, REPLAY_ATOM_COVER, REPLAY_ATOM_PASS, REPLAY_ATOM_PICKUP } from '../sdk/ts/gen/kernel_consts.bots.ts';
 import * as V from '../sdk/ts/gen/view_layout.bots.ts';
 import { REPLAY_ETOOLONG } from '../sdk/ts/gen/game_layout.bots.ts';
 import {
@@ -100,8 +101,8 @@ function encodeGame(game: Pick<Played, 'state' | 'roster' | 'seed' | 'log'>): Ui
 const tooLong = (rc: number) => rc === -REPLAY_ETOOLONG;
 
 const INFO_STEP: Record<number, string> = {
-  [REPLAY_STEP.ATTACK]: 'attack', [REPLAY_STEP.PASS]: 'pass',
-  [REPLAY_STEP.COVER]: 'cover', [REPLAY_STEP.PICKUP]: 'pickup',
+  [REPLAY_ATOM_ATTACK]: 'attack', [REPLAY_ATOM_PASS]: 'pass',
+  [REPLAY_ATOM_COVER]: 'cover', [REPLAY_ATOM_PICKUP]: 'pickup',
 };
 
 /** The information-bearing moves live play pushed, in order: kind and acting seat. */
@@ -229,7 +230,7 @@ function roundTripGame(game: Played, np: number, where: string): boolean {
   // is left to check is that the board agrees with what happened.
   for (let s = 1; s < frames.length; s++) {
     if (
-      frames[s].kind === REPLAY_STEP.ATTACK &&
+      frames[s].kind === REPLAY_ATOM_ATTACK &&
       frames[s - 1].game.battles.length === 0 &&
       frames[s].seat !== frames[s - 1].game.firstAttacker
     ) {

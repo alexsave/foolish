@@ -15,22 +15,23 @@
  * ========================================================================== */
 
 import { replayStepLogs, replayStepMaskedState } from '@sdk/ts/wasm/bots.ts';
-import { ReplayFrame, REPLAY_STEP } from '../replay/frames';
+import { ReplayFrame } from '../replay/frames';
+import { REPLAY_ATOM_ATTACK, REPLAY_ATOM_COVER, REPLAY_ATOM_PASS, REPLAY_ATOM_PICKUP, REPLAY_ATOM_GOOD } from '@sdk/ts/gen/kernel_consts.bots.ts';
 import { OracleJob, oracleCardToken, canonicalMoveKey } from './types';
 
 // The decisions octogen actually deliberates (derived steps excluded).
 const ORACLE_DECISION_KINDS: ReadonlySet<number> = new Set([
-    REPLAY_STEP.ATTACK, REPLAY_STEP.COVER, REPLAY_STEP.PASS,
-    REPLAY_STEP.PICKUP, REPLAY_STEP.GOOD,
+    REPLAY_ATOM_ATTACK, REPLAY_ATOM_COVER, REPLAY_ATOM_PASS,
+    REPLAY_ATOM_PICKUP, REPLAY_ATOM_GOOD,
 ]);
 
 // A step's kind -> the move-type name a candidate row carries (oracleBridge.ts MOVE_NAME).
 const KIND_TO_MTYPE: Record<number, string> = {
-    [REPLAY_STEP.ATTACK]: 'attack',
-    [REPLAY_STEP.COVER]: 'cover',
-    [REPLAY_STEP.PASS]: 'pass',
-    [REPLAY_STEP.PICKUP]: 'pickup',
-    [REPLAY_STEP.GOOD]: 'good',
+    [REPLAY_ATOM_ATTACK]: 'attack',
+    [REPLAY_ATOM_COVER]: 'cover',
+    [REPLAY_ATOM_PASS]: 'pass',
+    [REPLAY_ATOM_PICKUP]: 'pickup',
+    [REPLAY_ATOM_GOOD]: 'good',
 };
 
 /** The decision step under the cursor: the nearest decision at or before the
