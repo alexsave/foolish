@@ -45,9 +45,12 @@ async function key(alg: Alg, kid: string) {
     return { kp, kid, alg, pin: `${kid}:${alg}:${b64(spki)}` };
 }
 
+// 2100-01-01, a constant: no case here is about expiry, so none reads the clock to make a token.
+const FAR = 4102444800;
+
 async function mint(k: { kp: CryptoKeyPair; alg: Alg }, kid: string, sub: string, headerAlg: string = k.alg): Promise<string> {
     const h = b64url(enc.encode(JSON.stringify({ alg: headerAlg, kid, typ: 'JWT' })));
-    const p = b64url(enc.encode(JSON.stringify({ sub, aud: 'authenticated', exp: Math.floor(Date.now() / 1000) + 600, user_metadata: { username: 'ana' } })));
+    const p = b64url(enc.encode(JSON.stringify({ sub, aud: 'authenticated', exp: FAR, user_metadata: { username: 'ana' } })));
     const sig = new Uint8Array(await crypto.subtle.sign(SIGN[k.alg], k.kp.privateKey, enc.encode(`${h}.${p}`)));
     return `${h}.${p}.${b64url(sig)}`;
 }
