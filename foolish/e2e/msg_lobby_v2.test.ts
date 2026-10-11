@@ -3,14 +3,14 @@
 // the phone both replay against.
 //
 // THE CLAIM UNDER TEST: a lobby is created OPEN — dealt at the wire's max
-// capacity (n_players=8) so seats stay free — and Start later re-derives the
+// capacity (nPlayers=8) so seats stay free — and Start later re-derives the
 // SAME locked seed at the ACTUAL joined count (here 3), sealing a LIVE
-// envelope whose n_players (3) legitimately differs from its WAITING parent's
-// (8). Nothing in msg_wire.c cross-checks a child's n_players against its
+// envelope whose nPlayers (3) legitimately differs from its WAITING parent's
+// (8). Nothing in msg_wire.c cross-checks a child's nPlayers against its
 // parent chain: parentage is only the 8-byte digest tag (parent8), carried and
 // read back, never independently verified against the parent's own header.
 // Each envelope is decoded/replayed entirely from its OWN bytes (msg_decode +
-// msg_replay's deal_from_envelope re-deals fresh from `seed` at `n_players`
+// msg_replay's deal_from_envelope re-deals fresh from `seed` at `nPlayers`
 // every time), so a WAITING(8) -> LIVE(3) transition is not a special case the
 // wire has to allow — it is simply two independent, self-describing envelopes
 // that happen to share a seed and a parent8 tag. This test proves that in
@@ -21,9 +21,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    kernelMsgDecode, kernelMsgSeal, kernelMsgRebase, kernelMsgLegalMoves,
+    kernelMsgDecode as decodeHeader, kernelMsgSeal, kernelMsgRebase, kernelMsgLegalMoves,
     kernelMsgPublicView, kernelMsgRuleP,
 } from '../sdk/ts/wasm/bots.ts';
+
+// The envelope and its digest as one flat value: the generated header (msg_wire.h MsgHeader) holds them apart.
+const kernelMsgDecode = (bytes: Uint8Array) => { const h = decodeHeader(bytes); return { ...h.e, digest: h.digest }; };
 import { MSG_REBASE_REAPPLY } from '../sdk/ts/gen/msg_layout.bots.ts';
 
 const AWIRE = { attack: 0, cover: 1, pass: 2, pickup: 3, good: 4 } as const;
@@ -46,65 +49,65 @@ const ZERO8 = new Uint8Array(8);
 test('create-open-lobby(8) -> 3 joins (never auto-starting) -> start-at-3 -> play a move, decoding every leg', () => {
     // ---- Create: lock the seed in, dealt OPEN at the wire's max (8) --------
     const waiting0 = kernelMsgSeal({
-        flags: 0, phase: 0, n_players: 8, variant: 0, last_actor_seat: 0,
-        game_id: GAME_ID, parent8: ZERO8, seed: SEED,
+        flags: 0, phase: 0, nPlayers: 8, variant: 0, lastActorSeat: 0,
+        gameId: GAME_ID, parent8: ZERO8, seed: SEED,
         joins: [{ seat: 0, name: 'Alex' }],
     });
     let env = kernelMsgDecode(waiting0);
     assert.equal(env.phase, 0, 'WAITING');
-    assert.equal(env.n_players, 8, 'open-lobby convention: max capacity, not a chosen count');
+    assert.equal(env.nPlayers, 8, 'open-lobby convention: max capacity, not a chosen count');
     assert.equal(env.joins.length, 1);
-    assert.deepEqual(env.seed, SEED, 'the locked seed round-trips unchanged');
+    assert.deepEqual(env.seed, Array.from(SEED), 'the locked seed round-trips unchanged');
 
     // ---- Join seat 1 --------------------------------------------------------
     let waiting = kernelMsgSeal({
-        flags: 0, phase: 0, n_players: 8, variant: 0, last_actor_seat: 1,
-        game_id: GAME_ID, parent8: env.digest.slice(0, 8), seed: env.seed,
+        flags: 0, phase: 0, nPlayers: 8, variant: 0, lastActorSeat: 1,
+        gameId: GAME_ID, parent8: env.digest.slice(0, 8), seed: env.seed,
         joins: [...env.joins, { seat: 1, name: 'Sveta' }],
     });
     env = kernelMsgDecode(waiting);
     assert.equal(env.phase, 0, 'still WAITING after one join');
-    assert.equal(env.n_players, 8, 'the open capacity never shrinks on a join');
+    assert.equal(env.nPlayers, 8, 'the open capacity never shrinks on a join');
     assert.equal(env.joins.length, 2);
 
     // ---- Join seat 2 — THREE joined now, and STILL just a lobby ------------
     waiting = kernelMsgSeal({
-        flags: 0, phase: 0, n_players: 8, variant: 0, last_actor_seat: 2,
-        game_id: GAME_ID, parent8: env.digest.slice(0, 8), seed: env.seed,
+        flags: 0, phase: 0, nPlayers: 8, variant: 0, lastActorSeat: 2,
+        gameId: GAME_ID, parent8: env.digest.slice(0, 8), seed: env.seed,
         joins: [...env.joins, { seat: 2, name: 'Boris' }],
     });
     const lobbyAt3 = kernelMsgDecode(waiting);
     assert.equal(lobbyAt3.phase, 0, 'lobby v2: joining NEVER auto-starts the game, at any count');
-    assert.equal(lobbyAt3.n_players, 8, 'still the open capacity, not 3');
+    assert.equal(lobbyAt3.nPlayers, 8, 'still the open capacity, not 3');
     assert.equal(lobbyAt3.joins.length, 3);
     assert.deepEqual(lobbyAt3.joins.map(j => j.seat), [0, 1, 2], 'seats claimed lowest-free-first: contiguous');
 
     // ---- Start, as seat 1 (ANY joined player, not just the creator) --------
     // Re-derives the SAME locked seed at the REAL joined count (3) — the LIVE
-    // envelope's n_players (3) differs from its WAITING parent's (8), and nothing
+    // envelope's nPlayers (3) differs from its WAITING parent's (8), and nothing
     // about that is special-cased: deal_from_envelope re-deals fresh from
-    // `env.seed` at `env.n_players` on EVERY decode, whatever the last envelope
+    // `env.seed` at `env.nPlayers` on EVERY decode, whatever the last envelope
     // claimed. parent8 is the only link back to the lobby, and it is just a tag.
     const live0 = kernelMsgSeal({
-        flags: 0, phase: 2, n_players: 3, variant: 0, last_actor_seat: 1,
-        game_id: GAME_ID, parent8: lobbyAt3.digest.slice(0, 8), seed: lobbyAt3.seed,
+        flags: 0, phase: 2, nPlayers: 3, variant: 0, lastActorSeat: 1,
+        gameId: GAME_ID, parent8: lobbyAt3.digest.slice(0, 8), seed: lobbyAt3.seed,
         joins: lobbyAt3.joins,
     });
     env = kernelMsgDecode(live0);
     assert.equal(env.phase, 2, 'LIVE handoff');
     assert.equal(env.turn, 0, 'no move yet — just the re-deal');
-    assert.notEqual(env.n_players, lobbyAt3.n_players, 'THE claim: child n_players (3) != parent (8)');
-    assert.equal(env.n_players, 3, 'the REAL joined count, not the lobby capacity');
+    assert.notEqual(env.nPlayers, lobbyAt3.nPlayers, 'THE claim: child nPlayers (3) != parent (8)');
+    assert.equal(env.nPlayers, 3, 'the REAL joined count, not the lobby capacity');
     assert.deepEqual(env.parent8, lobbyAt3.digest.slice(0, 8),
-                     'parentage is carried as this tag alone, independent of either side\'s n_players');
+                     'parentage is carried as this tag alone, independent of either side\'s nPlayers');
     // Rule P: a fresh handoff (turn 0) sitting on top of a lobby (round/turn 0
     // too, phase WAITING) — a LIVE envelope must still be comparable, and never
-    // crash the moment n_players first diverges from what came before it.
+    // crash the moment nPlayers first diverges from what came before it.
     assert.doesNotThrow(() => kernelMsgRuleP(live0, waiting));
 
     // ---- Play one legal move on the freshly-dealt 3p game ------------------
     let chosen: { seat: number; move: any } | null = null;
-    for (let s = 0; s < env.n_players && !chosen; s++) {
+    for (let s = 0; s < env.nPlayers && !chosen; s++) {
         const m = kernelMsgLegalMoves(s).find(x => x.type !== 'wait');
         if (m) chosen = { seat: s, move: m };
     }
@@ -115,12 +118,12 @@ test('create-open-lobby(8) -> 3 joins (never auto-starting) -> start-at-3 -> pla
 
     const finished = kernelMsgPublicView().view.fool >= 0;
     const live1 = kernelMsgSeal({
-        flags: 0, phase: finished ? 3 : 2, n_players: 3, variant: 0,
-        last_actor_seat: chosen!.seat, game_id: GAME_ID,
+        flags: 0, phase: finished ? 3 : 2, nPlayers: 3, variant: 0,
+        lastActorSeat: chosen!.seat, gameId: GAME_ID,
         parent8: env.digest.slice(0, 8), seed: env.seed, joins: env.joins,
     });
     const played = kernelMsgDecode(live1);   // validate = replay (§7.3): must accept cleanly
-    assert.equal(played.n_players, 3);
+    assert.equal(played.nPlayers, 3);
     assert.ok(played.turn > 0, 'the move is now part of the chain');
     assert.equal(played.phase, finished ? 3 : 2);
 });
@@ -147,7 +150,7 @@ function handoff0(phase: number, nPlayers: number, la: number, gid: bigint,
                   joins: { seat: number; name: string }[]): Uint8Array {
     const out = [0xf7, 2, 0, phase];                                   // magic, format, flags, phase
     for (let i = 0n; i < 8n; i++) out.push(Number((gid >> (8n * i)) & 0xffn));
-    out.push(0, 0, la, nPlayers, 0, 0);                                // turn u16, last_actor, n_players, variant, round
+    out.push(0, 0, la, nPlayers, 0, 0);                                // turn u16, last_actor, nPlayers, variant, round
     out.push(...ZERO8, ...SEED, joins.length);
     for (const j of joins) {
         const name = Array.from(new TextEncoder().encode(j.name));
@@ -175,15 +178,15 @@ test('two Starts race: the fuller roster wins Rule P everywhere, but never over 
     // But rule 3 sits BELOW turn: a chain someone actually played on is never
     // clobbered by a stale wider Start sealed after the fact.
     let chosen: { seat: number; move: any } | null = null;
-    for (let s = 0; s < env3.n_players && !chosen; s++) {
+    for (let s = 0; s < env3.nPlayers && !chosen; s++) {
         const m = kernelMsgLegalMoves(s).find(x => x.type !== 'wait');
         if (m) chosen = { seat: s, move: m };
     }
     assert.ok(chosen, 'the 3p deal must have a first attacker with a legal move');
     assert.equal(kernelMsgRebase(env3.round, chosen!.seat, toWire(chosen!.move)), MSG_REBASE_REAPPLY);
     const played3 = kernelMsgSeal({
-        flags: 0, phase: kernelMsgPublicView().view.fool >= 0 ? 3 : 2, n_players: 3, variant: 0,
-        last_actor_seat: chosen!.seat, game_id: gid,
+        flags: 0, phase: kernelMsgPublicView().view.fool >= 0 ? 3 : 2, nPlayers: 3, variant: 0,
+        lastActorSeat: chosen!.seat, gameId: gid,
         parent8: env3.digest.slice(0, 8), seed: env3.seed, joins: env3.joins,
     });
     assert.ok(kernelMsgRuleP(played3, live4) < 0,

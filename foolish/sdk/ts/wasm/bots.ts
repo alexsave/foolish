@@ -203,42 +203,6 @@ export function kernelBotStrat(key: string): number {
 // body is a v6 code), so an envelope in g_io would be clobbered by the codec's
 // own bignum scratch mid-decode. See wasm_api.c.
 
-export interface MsgEnvelope {
-    format: number;
-    flags: number;
-    phase: number;          // 0 WAITING, 1 ACCEPT, 2 LIVE, 3 FINISHED
-    n_players: number;
-    variant: number;
-    round: number;          // completed bouts - Rule P's first key
-    last_actor_seat: number;
-    game_id: bigint;
-    turn: number;           // atoms applied - Rule P's second key
-    parent8: Uint8Array;    // first 8 bytes of SHA-256(parent envelope)
-    seed: Uint8Array;       // 32
-    digest: Uint8Array;     // SHA-256 of THIS envelope - Rule P's tiebreak
-    /// ROUND 16: the send clock, unix seconds mod 65536, or 0 for a chain that
-    /// carries none (format 2). Written as well as read: sealing with a
-    /// non-zero clock is what makes an envelope format 3.
-    sent_at: number;
-    /// ROUND 16: the bubble delta - how many atoms THIS bubble added to the
-    /// chain, or 0 for a chain that does not say (c/src/msg_wire.h). It is what
-    /// tells a client to animate only the move it just opened instead of that
-    /// move plus the one before it. READ-ONLY across this bridge: the kernel
-    /// derives it at seal time from the chain it decoded, so anything written
-    /// here is ignored (see wasm_api.c's blob layout).
-    n_new: number;
-    /// THE FOOL'S PENALTY (c/src/msg_wire.h format 4). `opening` is the seat
-    /// this deal opens on, or MSG_NO_OPENING for the ordinary lowest-trump
-    /// rule; `carry_key`/`carry_fool` are a WAITING lobby's rematch carry,
-    /// 0 / MSG_NO_FOOL when there is none. All three go BOTH ways - they are
-    /// terms of the deal, not claims about the body, so a caller that writes
-    /// them seals a format-4 envelope.
-    opening: number;
-    carry_key: number;
-    carry_fool: number;
-    joins: readonly M.MsgJoin_Snap[];
-}
-
 // Decode + VALIDATE an envelope: the chain is replayed through the kernel, so a
 // corrupt or hand-edited payload throws rather than half-loading (§7.3 -
 // validation IS replay). Leaves the game RESIDENT: the legal-move and view doors
@@ -246,23 +210,12 @@ export interface MsgEnvelope {
 // /m/ route renders and what a turn continues from.
 //
 // The header comes back as the C struct itself (msg_wire.h MsgHeader, at
-// wasm_msg_header_ptr) through its generated reader. Only the shapes differ:
-// the snapshot holds byte arrays as number[] and camelCases its fields.
-export function kernelMsgDecode(envelope: Uint8Array): MsgEnvelope {
+// wasm_msg_header_ptr), read by its generated reader: the envelope is `.e` and
+// the digest Rule P breaks ties on is `.digest`.
+export function kernelMsgDecode(envelope: Uint8Array): M.MsgHeader_Snap {
     const ex = replayIn(bots(), msgTooBig, envelope);
     ok(ex.wasm_msg_decode(envelope.length), msgError);
-    const s = M.readMsgHeader(mem(ex), ex.wasm_msg_header_ptr());
-    return {
-        format: s.e.format, flags: s.e.flags, phase: s.e.phase, n_players: s.e.nPlayers,
-        variant: s.e.variant, round: s.e.round, last_actor_seat: s.e.lastActorSeat,
-        game_id: s.e.gameId, turn: s.e.turn,
-        parent8: Uint8Array.from(s.e.parent8),
-        seed: Uint8Array.from(s.e.seed),
-        digest: Uint8Array.from(s.digest),
-        sent_at: s.e.sentAt, n_new: s.e.nNew, opening: s.e.opening,
-        carry_key: s.e.carryKey, carry_fool: s.e.carryFool,
-        joins: s.e.joins,
-    };
+    return M.readMsgHeader(mem(ex), ex.wasm_msg_header_ptr());
 }
 
 // Rule P (§7.2): which chain does every device prefer? <0 a, >0 b, 0 the same.
@@ -335,11 +288,14 @@ export function kernelMsgPublicView(): { view: V.TableView_Snap } {
 // owns (game_id, phase, seed, joins, parent8, last_actor_seat); the kernel fills
 // in what the BODY owns - turn, round - by decoding the code it just wrote, so a
 // host cannot emit a payload it would itself reject. Returns the wire bytes.
-export function kernelMsgSeal(
-    header: Omit<MsgEnvelope, 'digest' | 'turn' | 'round' | 'format' | 'sent_at' | 'n_new'
-                              | 'opening' | 'carry_key' | 'carry_fool'>
-          & { sent_at?: number; opening?: number; carry_key?: number; carry_fool?: number },
-): Uint8Array {
+/** What a caller states of an envelope it seals: the protocol's fields. The
+ *  kernel derives the rest from the chain wasm_msg_decode adopted. */
+export type MsgSealHeader =
+    Omit<M.MsgEnvelope_Snap, 'format' | 'turn' | 'round' | 'nNew' | 'sentAt' | 'opening' | 'carryKey' | 'carryFool' | 'parent8' | 'seed'>
+    & Partial<Pick<M.MsgEnvelope_Snap, 'sentAt' | 'opening' | 'carryKey' | 'carryFool'>>
+    & { parent8: ArrayLike<number>; seed: ArrayLike<number> };
+
+export function kernelMsgSeal(header: MsgSealHeader): Uint8Array {
     const ex = serverBots();
     const at = ex.wasm_msg_header_ptr();
     // The format here is a placeholder: msg_seal picks the real one off what the
@@ -350,15 +306,12 @@ export function kernelMsgSeal(
     // RangeError.
     M.writeMsgHeader(mem(ex), at, {
         e: {
-            format: M.MSG_FORMAT_V6, flags: header.flags, phase: header.phase, nPlayers: header.n_players,
-            variant: header.variant, round: 0, lastActorSeat: header.last_actor_seat,
-            gameId: header.game_id, turn: 0,
-            parent8: Array.from(header.parent8.subarray(0, M.MSG_PARENT_LEN)),
-            seed: Array.from(header.seed.subarray(0, M.MSG_SEED_LEN)),
-            sentAt: (header.sent_at ?? 0) & 0xffff, nNew: 0,
+            ...header, format: M.MSG_FORMAT_V6, round: 0, turn: 0, nNew: 0,
+            parent8: Array.from(header.parent8).slice(0, M.MSG_PARENT_LEN),
+            seed: Array.from(header.seed).slice(0, M.MSG_SEED_LEN),
+            sentAt: (header.sentAt ?? 0) & 0xffff,
             opening: header.opening ?? M.MSG_NO_OPENING,
-            carryKey: (header.carry_key ?? 0) >>> 0, carryFool: header.carry_fool ?? M.MSG_NO_FOOL,
-            joins: header.joins,
+            carryKey: (header.carryKey ?? 0) >>> 0, carryFool: header.carryFool ?? M.MSG_NO_FOOL,
         },
         digest: M.readMsgHeader(mem(ex), at).digest,
     });

@@ -16,7 +16,10 @@
 // Run: npx tsx --test e2e/msg_concurrency.test.ts
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { kernelMsgDecode, kernelMsgSeal, kernelMsgRuleP, kernelMsgRebase, kernelMsgLegalMoves } from '../sdk/ts/wasm/bots.ts';
+import { kernelMsgDecode as decodeHeader, kernelMsgSeal, kernelMsgRuleP, kernelMsgRebase, kernelMsgLegalMoves } from '../sdk/ts/wasm/bots.ts';
+
+// The envelope and its digest as one flat value: the generated header (msg_wire.h MsgHeader) holds them apart.
+const kernelMsgDecode = (bytes: Uint8Array) => { const h = decodeHeader(bytes); return { ...h.e, digest: h.digest }; };
 import { MSG_REBASE_REAPPLY, MSG_REBASE_DISCARD_ROUND, MSG_REBASE_DISCARD_ILLEGAL } from '../sdk/ts/gen/msg_layout.bots.ts';
 
 // Mid-game turn bubbles sealed by the native kernel (c/build/msg_wire_test
@@ -49,8 +52,8 @@ function playOn(parent: Uint8Array, seat: number, move: { type: string; cards?: 
     const verdict = kernelMsgRebase(p.round, seat, toWire(move));
     assert.equal(verdict, MSG_REBASE_REAPPLY, `${move.type} by seat ${seat} should be legal on the parent`);
     return kernelMsgSeal({
-        flags: 0, phase: 2, n_players: p.n_players, variant: 0,
-        last_actor_seat: seat, game_id: p.game_id,
+        flags: 0, phase: 2, nPlayers: p.nPlayers, variant: 0,
+        lastActorSeat: seat, gameId: p.gameId,
         parent8: p.digest.slice(0, 8), seed: p.seed, joins: p.joins,
     });
 }
@@ -59,7 +62,7 @@ function playOn(parent: Uint8Array, seat: number, move: { type: string; cards?: 
 function seatsWith(parent: Uint8Array, type: string): { seat: number; move: any }[] {
     const p = kernelMsgDecode(parent);
     const out: { seat: number; move: any }[] = [];
-    for (let s = 0; s < p.n_players; s++) {
+    for (let s = 0; s < p.nPlayers; s++) {
         const m = kernelMsgLegalMoves(s).find(x => x.type === type);
         if (m) out.push({ seat: s, move: m });
     }
@@ -195,8 +198,8 @@ test('§14.3 cover ∥ throw-in: the loser rebases with no user-visible conflict
     if (verdict === MSG_REBASE_REAPPLY) {
         // ...and the merged envelope is sealable: "send to confirm".
         const merged = kernelMsgSeal({
-            flags: 0, phase: 2, n_players: c.n_players, variant: 0,
-            last_actor_seat: atk.seat, game_id: c.game_id,
+            flags: 0, phase: 2, nPlayers: c.nPlayers, variant: 0,
+            lastActorSeat: atk.seat, gameId: c.gameId,
             parent8: c.digest.slice(0, 8), seed: c.seed, joins: c.joins,
         });
         const m = kernelMsgDecode(merged);
@@ -282,8 +285,8 @@ test('every rebase verdict is one of §7.4\'s three reasons, and REAPPLY always 
                     // "send to confirm" path. If this throws, a legal move was
                     // silently lost, which is the one thing Rule R forbids.
                     const merged = kernelMsgSeal({
-                        flags: 0, phase: 2, n_players: c.n_players, variant: 0,
-                        last_actor_seat: pending.seat, game_id: c.game_id,
+                        flags: 0, phase: 2, nPlayers: c.nPlayers, variant: 0,
+                        lastActorSeat: pending.seat, gameId: c.gameId,
                         parent8: c.digest.slice(0, 8), seed: c.seed, joins: c.joins,
                     });
                     assert.ok(merged.length > 0);
@@ -305,7 +308,7 @@ test('a chain a device builds is always one it would itself accept', () => {
         for (const m of moves) {
             const chain = playOn(p, m.seat, m.move);
             const e = kernelMsgDecode(chain);   // throws if the header lies
-            assert.equal(e.n_players, np);
+            assert.equal(e.nPlayers, np);
             assert.ok(e.turn > 0);
         }
     }
