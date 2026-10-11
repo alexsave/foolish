@@ -5,7 +5,7 @@
 # and as xcodegen's preGenCommand, so the library exists before there is a
 # project to build.
 #
-#   shared/scripts/xcode_kernel.sh <the product's c/ directory> [catalyst target]
+#   shared/scripts/xcode_kernel.sh <the product's c/ directory> [catalyst target] [generator]
 #
 # It runs `make ios-lib` there. That target does nothing when nothing changed
 # (shared/tools/ios_xcframework.mk), so it costs a build under a second, and
@@ -26,16 +26,25 @@
 # HOME, a PATH and the Xcode that is doing the building, and nothing else.
 #
 # MAC CATALYST: a product whose tests run there keeps a third slice behind its
-# own target (the optional second argument). Xcode says which build this is.
+# own target (the optional second argument, "" for none). Xcode says which
+# build this is.
+#
+# A GENERATOR OF ITS OWN: a product whose generated Swift has a second writer
+# besides `make ios-lib` names that script as the third argument, and it runs
+# first, in the same clean environment. It has to be one that writes a file
+# only when the file's content changed, or every build would recompile
+# everything that imports what it writes.
 set -euo pipefail
 
-dir=${1:?usage: xcode_kernel.sh <c directory> [catalyst target]}
+dir=${1:?usage: xcode_kernel.sh <c directory> [catalyst target] [generator]}
 target=ios-lib
 if [ "${IS_MACCATALYST:-NO}" = "YES" ] && [ -n "${2:-}" ]; then target=$2; fi
+generator=${3:-}
 
 # Homebrew first: the generators need its llvm (shared/tools/llvm.mk), and a
 # script phase's own PATH does not have it.
 path="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
-exec env -i HOME="$HOME" PATH="$path" ${DEVELOPER_DIR:+DEVELOPER_DIR="$DEVELOPER_DIR"} \
-  make -C "$dir" "$target"
+clean() { env -i HOME="$HOME" PATH="$path" ${DEVELOPER_DIR:+DEVELOPER_DIR="$DEVELOPER_DIR"} "$@"; }
+[ -z "$generator" ] || clean bash "$generator"
+clean make -C "$dir" "$target"

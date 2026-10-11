@@ -109,6 +109,45 @@ fixtures="$root/$(printf '%s\n' "$OUT_DIRS" | sed -n 4p)"
 if [ -n "${SG_OUT_ROOT:-}" ]; then
   prod="$SG_OUT_ROOT/ts"; swift="$SG_OUT_ROOT/swift"; kotlin="$SG_OUT_ROOT/kotlin"; fixtures="$SG_OUT_ROOT/fixtures"
 fi
+
+# EVERYTHING IS GENERATED INTO A STAGING TREE and then published file by file,
+# and a file is only written when its CONTENT differs (publish, below). A file
+# whose bytes did not change keeps its modification time.
+#
+# That is what lets this script run on every build. It used to write each
+# module in place, so every run made every module look new: harmless to `npm
+# run build`, but Xcode recompiles whatever imports a Swift file that moved, so
+# the iOS build could not call it and did not. An edit to a string table in C
+# then reached the app only when somebody remembered to run this, with the C's
+# tests and the Swift tests both green in between - the same gap the kernel
+# library had until the build started building it. Now the build runs this
+# first, every time (ios/project.yml, the FoolishKernel target), and it costs
+# about two seconds and recompiles nothing unless a module really changed.
+#
+# It is also why a run that FAILS leaves the published modules as they were,
+# instead of half of them from the new headers.
+publishing=0
+if [ -z "${SG_OUT_ROOT:-}" ]; then
+  stage="$(mktemp -d)"
+  trap 'rm -rf "$stage"' EXIT
+  publishing=1
+  pub_prod="$prod"; pub_swift="$swift"; pub_kotlin="$kotlin"; pub_fixtures="$fixtures"
+  prod="$stage/ts"; swift="$stage/swift"; kotlin="$stage/kotlin"; fixtures="$stage/fixtures"
+fi
+# publish <staged dir> <real dir>: every staged file, to the same path under
+# the real directory, written only if it is not already those bytes. Nothing is
+# ever deleted from the real directory: the wasm make targets write some of the
+# same files there (c/Makefile, "Layout hash"), and what a removed language
+# leaves behind is an ignored build output, not this script's to sweep.
+publish() {
+  ( cd "$1" && find . -type f | sort ) | while IFS= read -r f; do
+    f="${f#./}"
+    if ! cmp -s "$1/$f" "$2/$f"; then
+      mkdir -p "$(dirname "$2/$f")"
+      cp "$1/$f" "$2/$f"
+    fi
+  done
+}
 check=0
 case "${1:-}" in
   ""|--check|--verify-wasm) ;;
@@ -261,6 +300,12 @@ done
 "$SG" --cwd "$sg/test" --header snap.h --root Snap --root SPtr --build wasm= --snapshot Snap --snapshot SPtr --snapshot-only \
   --count Snap.pairs=n_pairs --count Snap.items=n_items --count Snap.text=n_text --count SItem.text=len --writer Snap \
   --count SPtr.vals=n_vals --count SPtr.items=n_items --count SPtr.name=name_len --count SPtr.none=n_none --ts "$fixtures/snap.ts"
+
+if [ "$publishing" = 1 ]; then
+  publish "$prod" "$pub_prod"; publish "$swift" "$pub_swift"
+  publish "$kotlin" "$pub_kotlin"; publish "$fixtures" "$pub_fixtures"
+  rm -rf "$stage"; trap - EXIT
+fi
 
 if [ "$check" = 1 ]; then
   tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
