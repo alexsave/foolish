@@ -79,10 +79,6 @@ const ALLOWED: Allowed[] = [
         file: 'foolish/offlinefun/sw.js', count: 1,
         why: 'Throwaway debugging output: the service worker\'s own error log in localStorage, same as ErrorBoundary.',
     },
-    {
-        file: 'foolish/src/oracle/oracleBridge.ts', count: 1, leaving: true,
-        why: 'The Oracle\'s dump records, being moved off JSON by the Oracle change in flight. Delete this entry when that lands.',
-    },
 ];
 
 /** Source with its comments blanked, line structure kept: // to end of line, and block comments. Strings are left alone, so a "//" inside one (a URL) must not start a comment. */
