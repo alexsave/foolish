@@ -43,9 +43,8 @@ const hex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, '
 // ---- the backend --------------------------------------------------------------------
 const GAMES = ['feed01', 'feed02', 'feed03'];
 let page = GAMES[0];
-let playerViews: Record<string, string> = {};
+const playerViews: Record<string, string> = {};
 let spectatorViews: Record<string, string> = {};
-let metaAnswer: Uint8Array | null = null;
 
 function table(name: string) {
     let gameId: string | null = null;
@@ -83,11 +82,7 @@ const supabaseMock = {
     getChannels: () => channels.filter((c) => !c.removed),
     removeChannel: async (ch: FakeChannel) => { ch.removed = true; return 'ok'; },
     functions: {
-        invoke: async (_name: string, opts: { body?: any }) => {
-            if (opts?.body?.type === 'bump' || !metaAnswer) return { data: null, error: null };
-            const b = metaAnswer;
-            return { data: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength), error: null };
-        },
+        invoke: async () => ({ data: null, error: null }),
     },
     channel: (topic: string) => {
         // RealtimeClient.channel: the topic is prefixed, and a live channel of that topic is handed back.

@@ -175,5 +175,16 @@ jobs:
             echo "server/impls/supabase/migrations/ holds no .sql file: this deploy runs no SQL against the hosted database."
           fi
 
+      # The functions verify every token against the keys JWT_VERIFY_KEYS pins
+      # (functions/_shared/adapter/auth.ts) and refuse EVERY request without it.
+      # So a deploy to a project that does not have it set is an outage, and it
+      # stops here instead, with the functions that were running still running.
+      - name: The project pins its token keys, or nothing deploys
+        run: |
+          if ! supabase secrets list --project-ref "$SUPABASE_PROJECT_REF" | grep -q 'JWT_VERIFY_KEYS'; then
+            echo "::error::JWT_VERIFY_KEYS is not set on $SUPABASE_PROJECT_REF. The functions in this commit refuse every request without it. Set it (the two commands are in server/impls/supabase/functions/_shared/adapter/auth.ts) and re-run this job."
+            exit 1
+          fi
+
       - name: Deploy edge functions
         run: supabase functions deploy --project-ref "$SUPABASE_PROJECT_REF" --workdir server/impls
