@@ -83,9 +83,16 @@ On a Mac, build and run it in a container - the `Makefile` prints this same
 one-liner if you try:
 
 ```sh
-docker run --rm -it -v "$(cd ../../.. && pwd)":/repo ubuntu:24.04 bash
+docker run --rm -it -v "$(cd ../../../.. && pwd)":/repo ubuntu:24.04 bash
 #   apt-get update && apt-get install -y build-essential libsqlite3-dev libssl-dev
-#   cd /repo/server/impls/native && make && bash test.sh
+#   cd /repo/foolish/server/impls/native && make && bash test.sh
+```
+
+The mount is the repository root, not `foolish/`: the kernel compiles `shared/c` and the build rules are `shared/tools/c_rules.mk`, both beside `foolish/`.
+Objects go to `build/` here, one directory per flag set, and each depends on the headers it included, so `make` after a header edit rebuilds what read it.
+
+```sh
+#   make clean      # the programs and build/
 ```
 
 `sem_fuzz` / `sem_fuzz_asan` (kernel-only) and `fuzz_client` (pure sockets)
