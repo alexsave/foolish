@@ -20,7 +20,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { replayStepIndex, replayStepLogs, replayStepMaskedState } from '../sdk/ts/wasm/bots.ts';
+import { replayPlaySteps, replayStepLogs, replayStepMaskedState } from '../sdk/ts/wasm/bots.ts';
 import { REPLAY_ATOM_ROUND_END } from '../sdk/ts/gen/kernel_consts.bots.ts';
 import { LOG_DRAW } from '../sdk/ts/gen/game_layout.bots.ts';
 import { playBotTable, seedBytes } from './helpers/bot_table.ts';
@@ -35,7 +35,7 @@ test('an Oracle memory hides every drawn card', () => {
     for (let np = 2; np <= 4; np++) {
         for (let s = 0; s < 3; s++) {
             const { code } = playBotTable(Array(np).fill('handwritten'), seedBytes(np, 300 + s));
-            const steps = replayStepIndex(code).length;
+            const steps = replayPlaySteps(code, null, null).length;
             for (let step = 1; step < steps; step++) {
                 const wire = replayStepLogs(code, step);
                 if (!wire) continue;
@@ -62,14 +62,14 @@ test('an Oracle memory hides every drawn card', () => {
 
 test('the kernel refuses what is not a decision it can vouch for', () => {
     const { code } = playBotTable(['handwritten', 'handwritten', 'handwritten'], seedBytes(3, 41));
-    const steps = replayStepIndex(code).length;
+    const steps = replayPlaySteps(code, null, null).length;
     assert.equal(replayStepMaskedState(code, 0, 0), null, 'the deal was decided by nobody');
     assert.equal(replayStepMaskedState(code, steps, 0), null, 'no step past the last');
     assert.equal(replayStepMaskedState(code, 1, 3), null, 'a viewer that is not a seat');
     assert.ok(replayStepMaskedState(code, 1, -1), 'a spectator is a viewer');
     assert.equal(replayStepLogs(code, 0), null, 'the deal has no record');
     assert.equal(replayStepLogs(code, steps), null, 'no step past the last');
-    const round = replayStepIndex(code).findIndex((info, i) => i > 0 && info.kind === REPLAY_ATOM_ROUND_END);
+    const round = replayPlaySteps(code, null, null).findIndex((info, i) => i > 0 && info.kind === REPLAY_ATOM_ROUND_END);
     assert.ok(round > 0, 'the game has a round end');
     assert.equal(replayStepLogs(code, round), null, 'a round end has no record of its own');
     assert.ok(replayStepMaskedState(code, round, -1), 'but it has a board');

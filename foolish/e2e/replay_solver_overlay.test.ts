@@ -19,7 +19,7 @@
 // replay_codec.test.ts; this file adds only the interleave dimension.)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { __clientKernelExports, replayStepIndex, replaySummary } from '../sdk/ts/wasm/bots.ts';
+import { __clientKernelExports, replayPlaySteps, replaySummary } from '../sdk/ts/wasm/bots.ts';
 import { ServerTable } from '../sdk/ts/table/server_table.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import type { BotsExports } from '../sdk/ts/gen/exports.bots.ts';
@@ -75,7 +75,7 @@ test('M8: replay encode is byte-identical before and after a solver burst on the
 
   // And the reverse direction: a decode sandwiched by solver work must be stable
   // (proves decode re-inits its scratch each call too).
-  const decode = () => ({ steps: replayStepIndex(game.code), summary: replaySummary(game.code) });
+  const decode = () => ({ steps: replayPlaySteps(game.code, null, null), summary: replaySummary(game.code) });
   const d1 = decode();
   assert.ok(d1.steps.length > 1 && d1.summary, 'the code decodes to steps');
   hammerSolver();
