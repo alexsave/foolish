@@ -146,7 +146,6 @@ test('the scan covers the shipped code of every product', () => {
     // looking at nothing and would pass forever.
     for (const must of [
         'foolish/src/contexts/ServerContext.tsx',
-        'foolish/src/state/askServer.ts',
         'foolish/sdk/ts/table/client_table.ts',
         'foolish/sdk/swift/AskWire.swift',
         `${ADAPTER}/utils.ts`,

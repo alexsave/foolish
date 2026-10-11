@@ -133,11 +133,7 @@ export class ClientTable {
         return this.read(bytes, opts, (n) => this.ex.wasm_client_push_open(bytes.length, n, opts.as3 ? 1 : 0, opts.version ?? 0));
     }
 
-    /**
-     * A realtime message's payload whole (evwire.h, the cast: the committed version
-     * and the as3 push in one run of bytes), or null when it does not read whole.
-     * The boards carry the version the cast names.
-     */
+    /** A realtime message whole (evwire.h, the cast: the committed version, then the as3 push), or null when it does not read whole. */
     readCast(bytes: Uint8Array, opts: PushIdentity = {}): PushRead | null {
         return this.read(bytes, opts, (n) => this.ex.wasm_client_cast_open(bytes.length, n));
     }
@@ -171,13 +167,7 @@ export class ClientTable {
         return { steps, final };
     }
 
-    // ---- an ask (ask.h): every request that is not a move ----
-
-    /**
-     * The request body for an ask, written by the kernel (ask_encode), or null for
-     * an ask that is not one (no game id, a count past its array). A string too
-     * long for its slot is the generated writer's RangeError.
-     */
+    /** The request body for an ask (ask_encode), or null for one that is not an ask (no game id, a count past its array). */
     askBody(ask: Ask): Uint8Array | null {
         V.writeTableAsk(this.m(), this.ex.wasm_client_ask_ptr(), { ...NO_ASK, ...ask });
         const n = this.ex.wasm_client_ask_encode();
@@ -304,12 +294,7 @@ export class ClientTable {
         return V.readConflictVerdicts(this.m(), this.ex.wasm_client_verdicts_ptr()).verdicts;
     }
 
-    /**
-     * The action wire of a move (awire.c's one encoder): the bytes `validate` and
-     * `optimisticApply` read and the bytes the server applies. Throws on a move
-     * the wire cannot carry - cards on a pickup, a cover whose pairs do not
-     * match, a card that is not a card: a client bug, never a race.
-     */
+    /** The action wire of a move (awire.c's one encoder). Throws on a move the wire cannot carry: a client bug, never a race. */
     moveWire(move: AwireMove): Uint8Array {
         const kind = AWIRE_KIND[move.kind];
         if (kind === undefined) throw new Error(`awire: unknown kind ${move.kind}`);
@@ -320,12 +305,9 @@ export class ClientTable {
     }
 
     /**
-     * The `action` endpoint's request body for a move's wire (table_request_encode).
-     * `intent` is the games.version the move was composed against: the server
-     * refuses a move whose intent predates the current round
-     * (TABLE_REJECT_STALE_ROUND, docs/WEB_RACE_BUG_HANDOFF.md); undefined sends the
-     * v1 body, which is not guarded. Throws when the kernel refuses: a game id
-     * longer than its length byte can say.
+     * The `action` endpoint's request body (table_request_encode). `intent` is the
+     * games.version the move was composed against, for the server's stale-round
+     * guard (docs/WEB_RACE_BUG_HANDOFF.md); undefined sends the unguarded v1 body.
      */
     actionRequest(gameId: string, wire: Uint8Array, intent?: number): Uint8Array {
         const gid = enc.encode(gameId);

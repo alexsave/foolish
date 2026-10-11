@@ -6,7 +6,6 @@ import { MAX_PLAYERS } from '@api/core/constants.ts';
 import { ANIM_TIME_MS } from '@sdk/ts/gen/anim.bots.ts';
 import { optimisticOverlay } from '../state/optimisticOverlay';
 import { animationFeed } from '../state/animationFeed';
-import { invokeBytes, sendAsk, sendBump, sendCreate } from '../state/askServer';
 import * as V from '@sdk/ts/gen/view_layout.bots.ts';
 import type { Ask } from '@sdk/ts/table/client_table.ts';
 import { holdPrivateChannel } from '../state/privateChannel';
@@ -442,12 +441,11 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const createGame = useCallback(async (): Promise<{ game_id: string }> => {
-        // create answers with the caller's envelope (like a player_views row),
-        // read through the kernel. The request has no body: a new game needs the
-        // caller's identity and nothing else, and the token carries that. The
-        // server stores the game BEFORE it answers, so the id in the envelope
-        // names a row that exists.
-        const view = await sendCreate();
+        // create takes no body (the token names the caller) and answers with the
+        // caller's envelope, like a player_views row.
+        const bytes = await invokeBytes('create', null);
+        const view = bytes ? readEnvelope(bytes) : null;
+        if (!view) throw new Error('create: unreadable packed response');
 
         setGameId(view.gameId);
         setGames(prev => ({ ...prev, [view.gameId]: mergeGameData(view.gameId, view, prev) }));
@@ -609,7 +607,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             // Trigger the bot loop only if the caller is a player in a game with
             // AI players. Fire and forget - don't block UI rendering.
             if (loaded.mySeat >= 0 && loaded.seats.some(seat => seat.isAi)) {
-                sendBump(gameId).catch(() => { });
+                invokeBytes('meta', clientTable().askBody({ kind: V.ASK_BUMP, gid: gameId })).catch(() => { });
             }
 
             return { game_id: gameId };
@@ -966,11 +964,18 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
+    // The one transport: bytes the kernel wrote out, the bytes the server
+    // answered with back. functions-js posts a Blob as application/octet-stream
+    // and hands one back. `body` null: a request with nothing to say (create).
+    const invokeBytes = async (endpoint: string, body: Uint8Array | null): Promise<Uint8Array | null> => {
+        const { data, error } = await supabase.functions.invoke(endpoint, body ? { body: new Blob([body as BlobPart]) } : {});
+        if (error) throw error;
+        if (typeof Blob !== 'undefined' && data instanceof Blob) return new Uint8Array(await data.arrayBuffer());
+        return data instanceof ArrayBuffer ? new Uint8Array(data) : null;
+    };
+
     // The lobby / meta transport: an ask (c/src/ask.h) out, the caller's envelope
-    // back - the same bytes `create` returns, player_views stores and the
-    // realtime feed pushes. The kernel writes the request and reads the answer
-    // (state/askServer.ts), so nothing crosses this wire as JSON in either
-    // direction, and a refusal arrives as the kernel's own code.
+    // back - the same bytes `create` returns and player_views stores.
     const askMeta = async (
         ask: Ask,
         options: {
@@ -979,7 +984,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         } = {}
     ): Promise<{ game_id: string }> => {
         try {
-            const view = await sendAsk(ask);
+            const bytes = await invokeBytes('meta', clientTable().askBody(ask));
+            const view = bytes ? readEnvelope(bytes) : null;
+            if (!view || !view.gameId) throw new Error('Invalid response from meta: missing game ID');
             options.onSuccess?.(view);
             return { game_id: view.gameId };
         } catch (error) {
@@ -1022,10 +1029,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // meantime (docs/WEB_RACE_BUG_HANDOFF.md). undefined => the legacy v1
         // envelope, unguarded (we've not yet seen an authoritative version).
         const req = clientTable().actionRequest(gameId, wire, authoritativeVersion(gameId));
-        const { bytes, error } = await invokeBytes('action', req);
-        if (error) {
-            throw error;
-        }
+        const bytes = await invokeBytes('action', req);
         const resp = bytes ? clientTable().readActionResponse(bytes) : null;
         if (!resp) {
             throw new Error('Invalid response from action: unreadable packed response');
