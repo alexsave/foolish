@@ -3,6 +3,11 @@ foolish_server_prof
 foolish_hammer
 *.o
 
+# Every object, per flag set, with the compiler's dependency list beside it
+# (shared/tools/c_rules.mk). The programs above are still linked here, beside
+# the sources.
+build/
+
 # AddressSanitizer/UBSan server build + the adversarial fuzz client
 # (fuzz_client.c). Both are local-only dev/test binaries — the source is
 # tracked, the compiled artifacts are not. See the foolish_server_asan and

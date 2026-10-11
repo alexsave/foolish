@@ -59,7 +59,11 @@ static void w_u8(CtlW *w, unsigned v) {
 
 static void w_bytes(CtlW *w, const unsigned char *p, int n) {
     if (!w->ok || n < 0 || w->len + n > w->cap) { w->ok = false; return; }
-    memcpy(w->buf + w->len, p, (size_t)n);
+    // Nothing to copy is a caller's NULL as often as not (w_str8's absent
+    // string), and memcpy from NULL is undefined even for zero bytes: glibc
+    // declares the argument nonnull, and ctl_wire_test under UBSan stopped
+    // here on Linux while the same test passed on a Mac.
+    if (n > 0) memcpy(w->buf + w->len, p, (size_t)n);
     w->len += n;
 }
 

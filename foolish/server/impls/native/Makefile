@@ -2,7 +2,12 @@
 # same c/src/*.c the wasm and iOS builds use — so the game logic is shared and
 # this backend only adds a socket + an in-memory store. See README.md.
 
-KDIR   := ../../../c
+# The repository root from here, and the kernel through it. Spelled through
+# C_ROOT because that is how shared/tools/c_rules.mk tells a source outside
+# this directory from one inside it (it is ../.. for a product's c/, and this
+# directory is two levels further down).
+C_ROOT := ../../../..
+KDIR   := $(C_ROOT)/foolish/c
 # A bare `make` builds the server (README.md), not the first rule below.
 .DEFAULT_GOAL := foolish_server
 UNAME  := $(shell uname)
@@ -14,14 +19,15 @@ CFLAGS ?= -O2 -ffast-math -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-de
 # (SERVER_SCALING.md "Stage 6") - `sys/epoll.h` has no macOS equivalent and no
 # kqueue port was attempted. Rather than let that surface as a mystery
 # "'sys/epoll.h' file not found" three screens into a kernel build, the
-# Linux-only targets depend on `require-linux`, which says so and points at the
-# container one-liner in README.md. The kernel-only targets (sem_fuzz,
-# sem_fuzz_asan) and fuzz_client carry no epoll and still build on macOS.
+# Linux-only targets ARE `require-linux` anywhere else (LINUX_ONLY, below the
+# variants), which says so and points at the container one-liner in README.md.
+# The kernel-only targets (sem_fuzz, sem_fuzz_asan) and fuzz_client carry no
+# epoll and still build on macOS.
 require-linux:
 	@if [ "$(UNAME)" != "Linux" ]; then \
 	  echo "server/impls/native: this target needs Linux (epoll, Stage 6 - see SERVER_SCALING.md)."; \
 	  echo "  Build and run it in a container instead - see README.md 'Build & run':"; \
-	  echo "    docker run --rm -it -v \"$$(cd ../../.. && pwd)\":/repo ubuntu:24.04 bash"; \
+	  echo "    docker run --rm -it -v \"$$(cd $(C_ROOT) && pwd)\":/repo ubuntu:24.04 bash"; \
 	  echo "  On macOS only the kernel-linking targets build natively: make sem_fuzz"; \
 	  exit 1; \
 	fi
@@ -48,7 +54,7 @@ SQLITE_LDFLAGS ?= -lsqlite3
 TLS_LDFLAGS ?= -lssl -lcrypto
 
 # Every kernel source except the standalone tools (their own main()).
-SHARED := $(KDIR)/../../shared/c
+SHARED := $(C_ROOT)/shared/c
 # …AND THE SHARED HALF. This used to be one wildcard over $(KDIR)/src, which is
 # why it broke silently when sha256.c and deal_rng.c moved to shared/: a wildcard
 # does not fail when a file leaves it, it just compiles less. Both directories are
@@ -76,7 +82,54 @@ SERVER_SRC := foolish_server.c registry.c session.c lobby.c play.c bots.c \
 # DURABILITY.md). Only foolish_server / foolish_server_prof link this.
 PERSIST_SRC := persist.c
 
-foolish_server: $(SERVER_SRC) $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC) | require-linux
+# ---- how a file becomes an object -------------------------------------------------
+# shared/tools/c_rules.mk, the rules every product's c/Makefile uses: one
+# directory of objects per compiler-and-flags (a "variant"), each object
+# depending on exactly the headers its compile opened and on the command line
+# it was built with.
+#
+# EVERY PROGRAM HERE USED TO BE ONE COMMAND OVER ITS SOURCES, with the .c files
+# as its only prerequisites. No header was a prerequisite of anything, so an
+# edit to session.h, or to the kernel's game.h, left `make` saying the server
+# was up to date - a stale binary nothing would rebuild short of `make clean`
+# (which did not exist as a habit, because there were no objects to clean).
+#
+#   build/obj/server    $(CFLAGS)           the server, the hammer, the fuzzers
+#   build/obj/prof      $(PROF_CFLAGS)      foolish_server_prof
+#   build/obj/asan      $(ASAN_CFLAGS)      foolish_server_asan, sem_fuzz_asan
+#   build/obj/quic      $(QUIC_CFLAGS)      foolish_server_quic
+#   build/obj/wstest    $(WS_TEST_CFLAGS)   ws_frame_test
+#   build/obj/ctltest   $(CTL_TEST_CFLAGS)  ctl_wire_test
+#
+# The kernel is compiled here at THIS file's flags, into this directory's
+# build/, and shares nothing with c/build: an object built for the arena is
+# not reachable from a link of the server.
+#
+# The programs themselves stay where they were, beside the sources: scripts
+# and docs name ./foolish_server.
+SERVER_FLAGS = $(CFLAGS) $(OBJ_FLAGS_$*)
+include $(C_ROOT)/shared/tools/c_rules.mk
+$(eval $(call C_VARIANT,build/obj/server,CC,SERVER_FLAGS))
+$(eval $(call C_VARIANT,build/obj/prof,CC,PROF_CFLAGS))
+$(eval $(call C_VARIANT,build/obj/asan,CC,ASAN_CFLAGS))
+$(eval $(call C_VARIANT,build/obj/quic,CC,QUIC_CFLAGS))
+$(eval $(call C_VARIANT,build/obj/wstest,CC,WS_TEST_CFLAGS))
+$(eval $(call C_VARIANT,build/obj/ctltest,CC,CTL_TEST_CFLAGS))
+
+# THE LINUX-ONLY PROGRAMS, and what they are made of anywhere else. Their
+# sources include sys/epoll.h, so now that a program is made of objects, asking
+# for one on a Mac would compile the whole kernel and then fail on the first
+# server file - the mystery this guard exists to prevent, and an order-only
+# prerequisite no longer prevents it (make builds the objects first). So off
+# Linux such a program has ONE prerequisite, require-linux, which fails with
+# the explanation before anything is compiled.
+ifeq ($(UNAME),Linux)
+linux_objs = $(call c_objs,$(1),$(2))
+else
+linux_objs = require-linux
+endif
+
+foolish_server: $(call linux_objs,build/obj/server,$(SERVER_SRC) $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC))
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) $(SQLITE_LDFLAGS) $(TLS_LDFLAGS)
 
 run: foolish_server
@@ -87,7 +140,7 @@ run: foolish_server
 # it needs awire_encode + view.h/state_get to build/decode real wire frames —
 # but never includes foolish_server.c itself: it is a separate process that
 # hits the server over the loopback socket, exactly like a real client.
-foolish_hammer: foolish_hammer.c $(NATIVE_SRC) $(KERNEL_SRC) | require-linux
+foolish_hammer: $(call linux_objs,build/obj/server,foolish_hammer.c $(NATIVE_SRC) $(KERNEL_SRC))
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) $(TLS_LDFLAGS)
 
 # Profiling build of the server: same sources, but -g -fno-omit-frame-pointer
@@ -97,7 +150,7 @@ foolish_hammer: foolish_hammer.c $(NATIVE_SRC) $(KERNEL_SRC) | require-linux
 PROF_CFLAGS := -g -fno-omit-frame-pointer -O2 -ffast-math -Wall -Wextra \
                -Wno-unused-parameter -Wno-deprecated-declarations \
                -I$(KDIR)/src -DACCELERATE_NEW_LAPACK -DCD_LEAFBOOK
-foolish_server_prof: $(SERVER_SRC) $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC) | require-linux
+foolish_server_prof: $(call linux_objs,build/obj/prof,$(SERVER_SRC) $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC))
 	$(CC) $(PROF_CFLAGS) $^ -o $@ $(LDFLAGS) $(SQLITE_LDFLAGS) $(TLS_LDFLAGS)
 
 # AddressSanitizer + UBSan build, for fuzzing the server (fuzz_client.c): catches
@@ -107,7 +160,7 @@ foolish_server_prof: $(SERVER_SRC) $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC) | 
 ASAN_CFLAGS := -fsanitize=address,undefined -fno-omit-frame-pointer -g -O1 \
                -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations \
                -I$(KDIR)/src -DACCELERATE_NEW_LAPACK -DCD_LEAFBOOK
-foolish_server_asan: $(SERVER_SRC) $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC) | require-linux
+foolish_server_asan: $(call linux_objs,build/obj/asan,$(SERVER_SRC) $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC))
 	$(CC) $(ASAN_CFLAGS) $^ -o $@ $(LDFLAGS) $(SQLITE_LDFLAGS) $(TLS_LDFLAGS)
 
 # ws_frame_test: the RFC 6455 frame header against a hostile peer (ws.c's
@@ -119,7 +172,7 @@ foolish_server_asan: $(SERVER_SRC) $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC) | 
 WS_TEST_CFLAGS := -fsanitize=undefined -fno-sanitize-recover=undefined \
                   -fno-omit-frame-pointer -g -O1 \
                   -Wall -Wextra -Wno-unused-parameter -DFOOLISH_NO_OPENSSL
-ws_frame_test: ws_frame_test.c ws.c conn.c
+ws_frame_test: $(call c_objs,build/obj/wstest,ws_frame_test.c ws.c conn.c)
 	$(CC) $(WS_TEST_CFLAGS) $^ -o $@
 .PHONY: ws-frame-test
 ws-frame-test: ws_frame_test
@@ -132,7 +185,7 @@ ws-frame-test: ws_frame_test
 # runs on macOS too (no epoll).
 CTL_TEST_CFLAGS := -fsanitize=undefined -fno-sanitize-recover=undefined \
                    -fno-omit-frame-pointer -g -O1 -Wall -Wextra -Wno-unused-parameter
-ctl_wire_test: ctl_wire_test.c ctl_wire.c
+ctl_wire_test: $(call c_objs,build/obj/ctltest,ctl_wire_test.c ctl_wire.c)
 	$(CC) $(CTL_TEST_CFLAGS) $^ -o $@
 .PHONY: ctl-wire-test
 ctl-wire-test: ctl_wire_test
@@ -141,7 +194,7 @@ ctl-wire-test: ctl_wire_test
 # The adversarial fuzz client: hammers the server with malformed HTTP, junk
 # signups, forged tokens, meta abuse, binary action garbage, seat attacks, and
 # malformed WebSocket frames — trying to crash, corrupt, or bypass it.
-fuzz_client: fuzz_client.c ctl_wire.c
+fuzz_client: $(call c_objs,build/obj/server,fuzz_client.c ctl_wire.c)
 	$(CC) $(CFLAGS) $^ -o $@ -lpthread
 
 # sem_fuzz: the SEMANTIC anti-cheat fuzzer. Links the kernel DIRECTLY (no server,
@@ -150,12 +203,12 @@ fuzz_client: fuzz_client.c ctl_wire.c
 # with bot_drive, and fires well-formed ILLEGAL moves between turns, asserting no
 # card-not-in-hand is ever accepted, card conservation holds, rejects never
 # mutate state, and every enumerated legal move is accepted. See sem_fuzz.c.
-sem_fuzz: sem_fuzz.c $(KERNEL_SRC)
+sem_fuzz: $(call c_objs,build/obj/server,sem_fuzz.c $(KERNEL_SRC))
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 # ASan/UBSan build of the semantic fuzzer (memory-safety of the legality engine
 # under hostile-but-well-formed moves, on top of the logical invariants).
-sem_fuzz_asan: sem_fuzz.c $(KERNEL_SRC)
+sem_fuzz_asan: $(call c_objs,build/obj/asan,sem_fuzz.c $(KERNEL_SRC))
 	$(CC) $(ASAN_CFLAGS) $^ -o $@ $(LDFLAGS)
 
 # QUIC/HTTP3/WebTransport build (foolish_server_quic). Adds a UDP/QUIC listener
@@ -173,16 +226,22 @@ sem_fuzz_asan: sem_fuzz.c $(KERNEL_SRC)
 # (its ssl/ objects reference the C++ runtime), and the link failed without it.
 QUICHE_DIR ?= ./quiche
 QUIC_SRC   := quic_wt.c game_bridge.c
-foolish_server_quic: $(SERVER_SRC) $(QUIC_SRC) $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC) | require-linux
-	$(CC) $(CFLAGS) -DFOOLISH_QUIC -DFOOLISH_NO_OPENSSL -I$(QUICHE_DIR)/include \
-	  $^ -o $@ $(LDFLAGS) $(SQLITE_LDFLAGS) $(QUICHE_DIR)/lib/libquiche.a -ldl -lstdc++
+# Its own variant: -DFOOLISH_QUIC and -DFOOLISH_NO_OPENSSL change what the
+# server's own files compile to, so none of build/obj/server can be reused.
+QUIC_CFLAGS = $(CFLAGS) -DFOOLISH_QUIC -DFOOLISH_NO_OPENSSL -I$(QUICHE_DIR)/include
+foolish_server_quic: $(call linux_objs,build/obj/quic,$(SERVER_SRC) $(QUIC_SRC) $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC))
+	$(CC) $(QUIC_CFLAGS) $^ -o $@ $(LDFLAGS) $(SQLITE_LDFLAGS) $(QUICHE_DIR)/lib/libquiche.a -ldl -lstdc++
 
 # wt_client: the WebTransport smoke-test client (quic_test.sh drives it). Pure
 # quiche client — no kernel, no server sources. Same QUICHE_DIR as above.
-wt_client: wt_client.c
+# The one file that needs quiche's headers without being the QUIC server: a
+# flag for one object (c_rules.mk, $*).
+OBJ_FLAGS_wt_client = -I$(QUICHE_DIR)/include
+wt_client: $(call c_objs,build/obj/server,wt_client.c)
 	$(CC) $(CFLAGS) -I$(QUICHE_DIR)/include $^ -o $@ -lpthread -ldl -lm $(QUICHE_DIR)/lib/libquiche.a -lstdc++
 
 clean:
+	rm -rf build
 	rm -f foolish_server foolish_hammer foolish_server_prof foolish_server_quic wt_client \
 	      foolish_server_asan fuzz_client ws_frame_test ctl_wire_test sem_fuzz sem_fuzz_asan
 
