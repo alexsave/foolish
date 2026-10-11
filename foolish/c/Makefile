@@ -996,7 +996,6 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_anim_reversal_ask_ptr -Wl,--export=wasm_anim_reversal_plan_ptr \
   -Wl,--export=wasm_anim_hand_ask_ptr -Wl,--export=wasm_anim_hand_laid_ptr \
   -Wl,--export=wasm_anim_finish_ask_ptr -Wl,--export=wasm_anim_finish_ptr \
-  -Wl,--export=wasm_anim_event_key \
   -Wl,--export=wasm_anim_finish_rows -Wl,--export=wasm_anim_hand_laid_out \
   -Wl,--export=wasm_anim_set_transport \
   -Wl,--export=wasm_anim_plan_ptr -Wl,--export=wasm_anim_frame_ptr \
@@ -1261,7 +1260,6 @@ WASM_MSG_EXPORTS := \
   -Wl,--export=wasm_anim_reversal_ask_ptr -Wl,--export=wasm_anim_reversal_plan_ptr \
   -Wl,--export=wasm_anim_hand_ask_ptr -Wl,--export=wasm_anim_hand_laid_ptr \
   -Wl,--export=wasm_anim_finish_ask_ptr -Wl,--export=wasm_anim_finish_ptr \
-  -Wl,--export=wasm_anim_event_key \
   -Wl,--export=wasm_anim_finish_rows -Wl,--export=wasm_anim_hand_laid_out \
   -Wl,--export=wasm_anim_set_transport \
   -Wl,--export=wasm_anim_plan_ptr -Wl,--export=wasm_anim_frame_ptr \

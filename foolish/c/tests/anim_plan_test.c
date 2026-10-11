@@ -78,14 +78,14 @@ static void test_optimistic_animation(void) {
               "a different type must key differently");
     }
 
-    // --- the key crosses to the browser as a DOUBLE (wasm_anim_event_key), so
-    //     it is a plain Map key there and no host packs the fields itself. That
-    //     only works while every key the kernel can make is exact in a double:
-    //     six bytes, bits 0..47, well inside a double's 53. Walk the whole range
+    // --- the key stays inside the kernel now (client_table.c matches a push
+    //     against the pending moves with it), but it is still six bytes, bits
+    //     0..47, so a host that ever needs it can carry it in a double, whose
+    //     53 bits hold every key the kernel can make. Walk the whole range
     //     of every field - every event type, every location including the NONE
     //     sentinel, every seat a byte can name, every suit and value - and hold
     //     each key both to the 2^48 ceiling and to the round trip through a
-    //     double, which is what the browser actually receives. ---
+    //     double. ---
     {
         const int locs[] = { ANIM_LOC_DECK, ANIM_LOC_HAND, ANIM_LOC_TABLE, ANIM_LOC_DISCARD,
                              ANIM_LOC_FLIPPED, ANIM_LOC_NONE };
