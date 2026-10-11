@@ -14,7 +14,7 @@ import { assertLayoutHash } from './layout_hash.ts';
 import { memOf as viewMemOf, readTableView, readReplaySummary, readReplayError, readReplayFrameIndex, TableView_Snap, ReplaySummary_Snap, ReplayError_Snap } from '../gen/view_layout.bots.ts';
 import * as V from '../gen/view_layout.bots.ts';
 import { memOf as msgMemOf, readMsgHeader, writeMsgHeader, readReplayExtras, writeReplayExtras,
-         MSG_MAX_NAME, REPLAY_EXTRAS_FLAG_NAMES, REPLAY_EXTRAS_FLAG_TIMES, REPLAY_LINK_STYLE_URL, REPLAY_LINK_STYLE_QR,
+         REPLAY_EXTRAS_FLAG_NAMES, REPLAY_EXTRAS_FLAG_TIMES, REPLAY_LINK_STYLE_URL,
          type MsgHeader_Snap, type ReplayExtras_Snap } from '../gen/msg_layout.bots.ts';
 import * as A from '../gen/anim.bots.ts';
 import { memOf as animMemOf } from '../gen/anim.bots.ts';
@@ -52,23 +52,6 @@ let memView = new Uint8Array(0);
 function mem(ex: { memory: WebAssembly.Memory }): Uint8Array {
     if (memView.buffer !== ex.memory.buffer) memView = new Uint8Array(ex.memory.buffer);
     return memView;
-}
-
-// 1-byte wire cards (c/wasm/wire.h): 0..51 = suit*13+(value-1), 0xFE the hidden
-// card, 0xFF no card. A hostile suit or value wraps through int8 and is clamped
-// the way the kernel clamps it (suit 0..3, value 1..13).
-const WIRE_HIDDEN = 0xfe;
-const WIRE_NONE = 0xff;
-const i8 = (v: number) => (v > 127 ? v - 256 : v);
-function wireStateCard(c: Card): number {
-    let s = i8(c.suit & 0xff), v = i8(c.value & 0xff);
-    if (s === -1 && v === -1) return WIRE_HIDDEN;
-    if (s < 0) s = 0; else if (s > 3) s = 3;
-    if (v < 1) v = 1; else if (v > 13) v = 13;
-    return s * 13 + (v - 1);
-}
-function wireLogCard(c: Card | null | undefined): number {
-    return c ? wireStateCard(c) : WIRE_NONE;
 }
 
 const MOVE_TYPE = ['attack', 'cover', 'pass', 'pickup', 'good', 'wait'];
@@ -194,19 +177,8 @@ interface BotsExports extends EngineExports {
     wasm_anim_shown_ledger_allows(claim: number, sequencing: number): number;
 }
 
-// ANIM_TRANSPORT_* (c/src/anim_plan.h).
-export const ANIM_TRANSPORT_UNSET = 0;
-export const ANIM_TRANSPORT_CHAIN = 1;
-export const ANIM_TRANSPORT_SERVER = 2;
-
-/** THE ONE PLACE A TEST MAY MOVE IT. The two transports have to be provable
- *  against the same input in the same process (the FMSG suites already drive
- *  chain behaviour through this module), and that cannot be done without
- *  putting it back afterwards. */
-export function __setAnimTransport(transport: number): void {
-    const rc = bots().wasm_anim_set_transport(transport);
-    if (rc < 0) throw new Error(`anim_set_transport error ${rc}`);
-}
+// ANIM_TRANSPORT_SERVER (c/src/anim_plan.h).
+const ANIM_TRANSPORT_SERVER = 2;
 
 /** One row of the kernel's bot roster (c/src/bot_roster.h BotRosterRow). */
 export type BotRosterEntry = V.BotRosterRow_Snap;
@@ -221,20 +193,6 @@ export function kernelBotRoster(): readonly BotRosterEntry[] {
     if (!at) throw new Error('bot_roster: the kernel refused to dump the table');
     return rosterCache = V.readBotRosterTable(viewMemOf(ex.memory.buffer), at).rows;
 }
-
-/**
- * Brain ids by roster key - a lookup, not a mirrored table, so an unknown key
- * is -1 rather than a stale number. Lazy: reading a property instantiates
- * bots.wasm, and a lobby-only cold start must not pay that for an import.
- */
-export const STRAT: Record<string, number> = new Proxy({} as Record<string, number>, {
-    get: (_t, key) => (typeof key === 'string' ? kernelBotStrat(key) : undefined),
-    has: (_t, key) => typeof key === 'string' && kernelBotStrat(key) >= 0,
-    ownKeys: () => kernelBotRoster().map((e) => e.key),
-    getOwnPropertyDescriptor: (_t, key) => (typeof key === 'string' && kernelBotStrat(key) >= 0
-        ? { enumerable: true, configurable: true, value: kernelBotStrat(key) }
-        : undefined),
-});
 
 /** The STRAT_* brain id the kernel's roster gives this key, or -1. */
 export function kernelBotStrat(key: string): number {
@@ -311,10 +269,6 @@ function bots(): BotsExports {
     return ex;
 }
 
-// ---------------------------------------------------------------------------
-// Belief probe: what a bot's search read (c/wasm/wasm_bots_api.c)
-// ---------------------------------------------------------------------------
-
 // ---------- FMSG: the iMessage envelope (c/src/msg_wire.h) -------------
 //
 // An iMessage game has no server: the whole game is (32-byte deal seed, v6
@@ -330,9 +284,8 @@ function bots(): BotsExports {
 // The header crosses as the C struct itself (msg_wire.h MsgHeader), read and
 // written through the generated snapshot reader and writer
 // (sdk/ts/gen/msg_layout.bots.ts) at wasm_msg_header_ptr. Nothing here knows an
-// offset or a cap: MSG_MAX_NAME comes from the same generated module, and a name
-// too long for the struct's slot is the writer's RangeError.
-export { MSG_MAX_NAME };
+// offset or a cap: a name too long for the struct's slot is the writer's
+// RangeError.
 
 export interface MsgJoin { seat: number; name: string }
 
@@ -373,8 +326,8 @@ export interface MsgEnvelope {
 }
 
 /// The wire's "no penalty" sentinels, so callers never spell 0xFF themselves.
-export const MSG_NO_OPENING = 0xff;
-export const MSG_NO_FOOL = 0xff;
+const MSG_NO_OPENING = 0xff;
+const MSG_NO_FOOL = 0xff;
 
 function msgError(code: number): Error {
     switch (code) {
@@ -484,12 +437,8 @@ export function kernelMsgLegalMoves(seat: number): { type: string; cards?: Card[
     return residentLegalMoves(bots() as unknown as EngineExports, seat);
 }
 
-export const MSG_REBASE_REAPPLY = 0;
-export const MSG_REBASE_DISCARD_ROUND = 1;
-export const MSG_REBASE_DISCARD_ILLEGAL = 2;
-
 // Rule R (§7.4): rebase ONE pending action onto the chain kernelMsgDecode last
-// adopted, in ledger order. REAPPLY mutates the resident game — that IS the
+// adopted, in ledger order; the answer is a MSG_REBASE_*. REAPPLY mutates the resident game — that IS the
 // rebase — so keep folding the rest in after it; a DISCARD leaves it untouched.
 //
 // The round-boundary guard and the legality question both live in C. A throw-in
@@ -617,10 +566,9 @@ export function kernelReplayExtrasDecode(blob: Uint8Array, playerCount: number,
  * nobody at the table is named. Built in the kernel rather than concatenated
  * here (c/src/replay_extras.h) - the prefix is a constant and the dash is the
  * codec's, so a phone, a watch and a browser have no business each writing it.
- * `names` must be as wide as the table; unnamed seats are ''.
+ * `names` must be as wide as the table; unnamed seats are ''. `style` is a
+ * REPLAY_LINK_STYLE_*: the https link, or the QR form.
  */
-/** replay_extras.h REPLAY_LINK_STYLE_*, from the kernel: the https link, or the QR form. */
-export const REPLAY_LINK = { url: REPLAY_LINK_STYLE_URL, qr: REPLAY_LINK_STYLE_QR } as const;
 
 // base32, from the kernel (replay.c replay_b32_encode/decode). replay.h called
 // this alphabet "the web's codec.ts alphabet" and replay.c said a code made on
@@ -667,7 +615,7 @@ export function kernelReplayLinkParse(url: string): string {
     return new TextDecoder().decode(mem(ex).slice(base, base + w));
 }
 
-export function kernelReplayLink(moves: string, names: string[], style: number = REPLAY_LINK.url): string {
+export function kernelReplayLink(moves: string, names: string[], style: number = REPLAY_LINK_STYLE_URL): string {
     const ex = bots();
     // The roster goes through the kernel's own struct; the moves code crosses as
     // itself (a base32 string the kernel NUL-terminates in place, since a long
@@ -970,15 +918,6 @@ export function animStaleOptimisticOnTable(optCards: Card[], tableCards: Card[],
  *  -1 for none, and `goodMask` is one bit per seat. */
 export type AnimRoles = V.AnimRoles_Snap;
 
-/** "This step carried no board", the one value a good mask may not take
- *  (anim_plan.h ANIM_NO_MASK). Both goods rules answer 0 for it. */
-export const ANIM_NO_MASK = A.ANIM_NO_MASK;
-/** Who is writing the shown badges (anim_plan.h ANIM_CLAIM_*). */
-export const ANIM_CLAIM_SEQUENCE = A.ANIM_CLAIM_SEQUENCE;
-export const ANIM_CLAIM_ARMING = A.ANIM_CLAIM_ARMING;
-export const ANIM_CLAIM_HAND_OFF = A.ANIM_CLAIM_HAND_OFF;
-export const ANIM_CLAIM_BYSTANDER = A.ANIM_CLAIM_BYSTANDER;
-
 /** What every role entry answers: the marks to show next where the kernel left them, or null for "nothing changed". */
 function rolesAnswer(ex: BotsExports, at: number): AnimRoles | null {
     if (at < 0) throw new Error(`anim roles error ${at}`);
@@ -1073,15 +1012,6 @@ export function animHandLaidOut(
         .map((c) => (c.suit === V.CARD_NONE_SUIT && c.value === V.CARD_NONE_VALUE ? null : c));
 }
 
-// legal.h/anim_plan.h spell "no card here" the same byte.
-const ANIM_TABLE_NONE = 0xfe;
-
-/** anim_plan.h ANIM_CONFLICT_*, in the order the C defines them. The CODES are
- *  generated (sdk/ts/gen/anim.bots.ts); only the names are TypeScript's. */
-export const ANIM_CONFLICT_REVERT = A.ANIM_CONFLICT_REVERT;
-export const ANIM_CONFLICT_KEEP = A.ANIM_CONFLICT_KEEP;
-export const ANIM_CONFLICT_CLEAR = A.ANIM_CONFLICT_CLEAR;
-
 // ---------------------------------------------------------------------------
 // The plan, the frame and the beats (anim_plan.h)
 // ---------------------------------------------------------------------------
@@ -1095,19 +1025,6 @@ export const ANIM_CONFLICT_CLEAR = A.ANIM_CONFLICT_CLEAR;
 // only the scalars a caller actually uses are copied out: a plan is 11,752
 // bytes and a frame loop that marshalled it whole once per frame would spend
 // more time copying than animating.
-
-// The timing policy and the two frame sentinels, generated from anim_plan.h:
-// ANIM_STEP_NONE ("no step is playing at this instant"), ANIM_NEVER ("the
-// answer will not change again"), and the duration and gap every step is paced
-// by. Re-exported here so a caller of this bridge needs one import, not two.
-export const ANIM_STEP_NONE = A.ANIM_STEP_NONE;
-export const ANIM_NEVER = A.ANIM_NEVER;
-export const ANIM_TIME_MS = A.ANIM_TIME_MS;
-export const ANIM_GAP_MS = A.ANIM_GAP_MS;
-/** The rest after a bout-ending cover (anim_plan.h ANIM_BOUT_END_HOLD_MS). The
- *  plan has already put it inside the next beat's startMs; it is re-exported so
- *  a caller can NAME the pause, never so it can add one of its own. */
-export const ANIM_BOUT_END_HOLD_MS = A.ANIM_BOUT_END_HOLD_MS;
 
 /** One decoded event as the plan sees it (anim_plan.h AnimPlanEvent). */
 export interface AnimPlanEventIn {
