@@ -23,6 +23,7 @@
 
 #ifdef FOOLISH_ORACLE_MT
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include "game.h"
 #include "legal.h"
@@ -55,7 +56,6 @@ static inline uint32_t mix3(uint32_t a, uint32_t b, uint32_t c) {
     return a ? a : 1u;
 }
 
-void *malloc(unsigned long n);              /* bump allocator (wasm_bots_api.c) */
 
 /* ---- MT8: control-instance exports (main thread only) ------------------- */
 

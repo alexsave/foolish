@@ -1336,7 +1336,7 @@ WASM_BOT_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/rep
                 src/octogen_strategy.c \
                 src/bot_knobs.c src/bot_roster.c src/bot_drive.c src/roster.c src/table.c src/client_table.c src/card.c \
                 src/hand_layout.c \
-                $(SHARED)/wasm/libc.c \
+                $(SHARED)/wasm/libc.c $(SHARED)/wasm/bump_alloc.c \
                 wasm/wasm_api.c wasm/wasm_bots_api.c wasm/wasm_msg_api.c wasm/wasm_table_api.c
 
 # PER-FILE opt (a mix one clang invocation can't express): the profiled hot MC
@@ -1756,6 +1756,35 @@ wasm-oracle-mt: wasm-cc-check
 	@$(MAKE) --no-print-directory build/oracle-mt.wasm
 	gzip -9 -n -c build/oracle-mt.wasm > ../public/oracle-mt.wasm.gz
 	@echo "built ../public/oracle-mt.wasm.gz ($$(wc -c < ../public/oracle-mt.wasm.gz) B gz, $$(wc -c < build/oracle-mt.wasm) B raw)"
+
+# ---------------------------------------------------------------------------
+# The shared bump allocator's own test ($(SHARED)/wasm/bump_alloc_test.c). It
+# has no native form - the allocator is __heap_base and memory.grow - so it is
+# a module of its own, linked small (2 pages, 16 at most) so that growth and
+# refusal are both a few lines away, and built twice: plain, and -matomics
+# over an imported shared memory, which is the arm that takes the lock. The
+# -matomics module is also entered by real threads (the runner's workers), so
+# its declared maximum is 64 MiB; the runner still hands the one-thread checks
+# a 16-page memory.
+#
+# Here and not in a Makefile under shared/: this is the product that links the
+# allocator, and wasm.yml builds every `wasm*` target of this file with node on
+# the path, so the test runs in CI the day it lands.
+ALLOC_TEST_SRC   := $(SHARED)/wasm/bump_alloc_test.c $(SHARED)/wasm/bump_alloc.c $(SHARED)/wasm/libc.c
+ALLOC_TEST_FLAGS := --target=wasm32 -O2 -nostdlib -ffreestanding -mbulk-memory -Wall -Wextra -Werror \
+                    -isystem $(SHARED)/wasm/include \
+                    -Wl,--no-entry -Wl,--initial-memory=131072 -Wl,--max-memory=1048576
+build/bump_alloc_test.wasm: $(ALLOC_TEST_SRC) $(wildcard $(SHARED)/wasm/include/*.h) Makefile
+	@mkdir -p build
+	$(WASM_CC) $(ALLOC_TEST_FLAGS) -Wl,--export-memory $(ALLOC_TEST_SRC) -o $@
+build/bump_alloc_test_mt.wasm: $(ALLOC_TEST_SRC) $(wildcard $(SHARED)/wasm/include/*.h) Makefile
+	@mkdir -p build
+	$(WASM_CC) $(filter-out -Wl$(comma)--max-memory=%,$(ALLOC_TEST_FLAGS)) -matomics -Wl,--shared-memory -Wl,--import-memory \
+	  -Wl,--max-memory=67108864 -Wl,--export=__stack_pointer -Wl,--export=malloc $(ALLOC_TEST_SRC) -o $@
+
+.PHONY: wasm-alloc-test
+wasm-alloc-test: wasm-cc-check build/bump_alloc_test.wasm build/bump_alloc_test_mt.wasm
+	node $(SHARED)/wasm/bump_alloc_test.mjs build/bump_alloc_test.wasm build/bump_alloc_test_mt.wasm
 
 # ---------------------------------------------------------------------------
 # Coverage gate (CI: ../.github/workflows/coverage.yml). Instruments the engine

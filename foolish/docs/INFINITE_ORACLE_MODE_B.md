@@ -28,7 +28,7 @@ The overlay, `replayOracleInput`, `logsWire` and the candidate rows are shared v
 c/src/oracle_mt.h              the shared control block (MT4)
 c/wasm/wasm_oracle_mt.c        the thread loop + the control-side exports (MT7/MT8)
 c/src/octogen_strategy.c       the accumulate + verdict-capture seams (MT5/MT6), all #ifdef FOOLISH_ORACLE_MT
-c/wasm/wasm_bots_api.c         the bump allocator's spinlock (MT1)
+shared/c/wasm/bump_alloc.c     the bump allocator's spinlock (MT1), on under -matomics
 c/Makefile                     the `wasm-oracle-mt` target
 public/oracle-mt.wasm.gz       the committed second artifact
 src/oracle/oracleMtSession.ts  everything that is not "spawn a thread"
