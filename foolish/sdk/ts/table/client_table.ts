@@ -27,20 +27,20 @@ export type ViewCard = V.Card_Snap;
 export type ViewBattle = V.Battle_Snap;
 export type ViewRules = V.ViewRules_Snap;
 export type BoardEdit = V.BoardEdit_Snap;
-export type ConflictQuestion = V.ClientConflict_Snap;
+type ConflictQuestion = V.ClientConflict_Snap;
 export type ClientPlay = V.ClientPlay_Snap;
-export type ActionResponse = V.TableResponse_Snap;
+type ActionResponse = V.TableResponse_Snap;
 export type HandMetrics = V.HandMetrics_Snap;
 export type HandLayout = V.HandLayout_Snap;
 
 /** One step of a push: what moved, and the board it left. */
-export interface PushStep { event: PushEvent; view: TableView }
+interface PushStep { event: PushEvent; view: TableView }
 
 /** A whole push, read. */
 export interface PushRead { steps: PushStep[]; final: TableView }
 
 /** A seat of an identity built from parts. */
-export interface IdentitySeat { id: string; name: string; isAi: boolean }
+interface IdentitySeat { id: string; name: string; isAi: boolean }
 
 /** A refusal as the kernel read it (ask.h AskRefusal): `why` an ASK_WHY_*, `code` and `detail` the kernel's own. */
 export type AskRefusal = V.AskRefusal_Snap;
@@ -66,7 +66,7 @@ export interface AwireMove {
 }
 
 /** How a push or cast names its seats: the identity kept for `gameId` ('kept', the default), explicit bytes, or 'none' (as a replay's are). */
-export interface PushIdentity { gameId?: string; identity?: 'kept' | 'none' | Uint8Array }
+interface PushIdentity { gameId?: string; identity?: 'kept' | 'none' | Uint8Array }
 
 const enc = new TextEncoder();
 

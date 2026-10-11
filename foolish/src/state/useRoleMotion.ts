@@ -46,7 +46,7 @@ export interface RoleHandOff {
 
 const NO_HAND_OFF: RoleHandOff = { flights: [], departing: new Set(), arriving: new Set() };
 
-export interface RoleMotion {
+interface RoleMotion {
     /** What the badges are wearing right now, or null for a board that has not
      *  shown anything yet (the one case the kernel is never asked about). The
      *  value a screen RENDERS from. */

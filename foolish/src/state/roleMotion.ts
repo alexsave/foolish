@@ -52,7 +52,7 @@ export const ROLE_FLIGHT_MS = ANIM_TIME_MS * 0.8;
  *  turn, one on its own is a mark arriving or leaving, and the pair comes in
  *  under a card's motion - the mark is a caption on the move, not the move.
  *  `roleFlipHalf`. */
-export const ROLE_FLIP_HALF_MS = ANIM_TIME_MS * 0.22;
+const ROLE_FLIP_HALF_MS = ANIM_TIME_MS * 0.22;
 
 /** ROUND 30, the owner: "for the sword -> check rotation, the width doesn't
  *  QUITE go to zero during rotate out before swapping to the other glyph and
@@ -60,11 +60,11 @@ export const ROLE_FLIP_HALF_MS = ANIM_TIME_MS * 0.22;
  *  the difference is a genuine edge-on beat; taken out of the collapse rather
  *  than added to the flip, so the gesture's total length - tuned against the
  *  card flights it captions - does not change at all. `roleFlipSettle`. */
-export const ROLE_FLIP_SETTLE_MS = Math.min(30, ROLE_FLIP_HALF_MS * 0.3);
+const ROLE_FLIP_SETTLE_MS = Math.min(30, ROLE_FLIP_HALF_MS * 0.3);
 
 /** How long the collapse itself is given: a settle short of the swap.
  *  `roleFlipCollapse`. */
-export const ROLE_FLIP_COLLAPSE_MS = Math.max(10, ROLE_FLIP_HALF_MS - ROLE_FLIP_SETTLE_MS);
+const ROLE_FLIP_COLLAPSE_MS = Math.max(10, ROLE_FLIP_HALF_MS - ROLE_FLIP_SETTLE_MS);
 
 /** How long a seat expecting an arrival waits before turning its own mark away,
  *  so the collapse FINISHES as the ghost touches down (the owner: "the shield
@@ -96,7 +96,7 @@ export const ROLE_FRAME_CAP_MS = 1000 / 60;
 /** The width a coin edge-on is drawn at. Never a true zero: a scale of 0
  *  collapses the box some browsers then decline to paint at all, and the mark
  *  has to come back from it. */
-export const ROLE_EDGE_ON = 0.001;
+const ROLE_EDGE_ON = 0.001;
 
 // ---- one gesture of a coin ---------------------------------------------------
 
@@ -151,12 +151,12 @@ export function coinFrameAt(p: RoleCoinPhase, elapsedMs: number): { face: RoleMa
 
 /** WHICH MOTION a mark makes when it changes, as a value - the rule on its own,
  *  away from the state that plays it. `RoleGesture`. */
-export type RoleGesture = 'flip' | 'rotateOut' | 'rotateIn' | 'restore' | 'none';
+type RoleGesture = 'flip' | 'rotateOut' | 'rotateIn' | 'restore' | 'none';
 
 /** A mark that TRAVELS is not a gesture a seat makes at all - the board blanks
  *  the seat it left and the ghost carries it - so a flight never reaches here.
  *  `RoleGesture.between`. */
-export function gestureBetween(shown: RoleMarkKind | null, next: RoleMarkKind | null): RoleGesture {
+function gestureBetween(shown: RoleMarkKind | null, next: RoleMarkKind | null): RoleGesture {
     if (shown !== null && next !== null) return shown === next ? 'none' : 'flip';
     if (shown !== null) return 'rotateOut';
     if (next !== null) return 'rotateIn';
@@ -209,7 +209,7 @@ export interface RoleFlight {
  *  through it, so the arc lifts toward the top of the board - scaled to the
  *  distance so neighbouring seats get a hop and opposite seats get a sail, and
  *  capped so it can never leave the board. `RoleFlight.control`. */
-export function flightControl(f: RoleFlight): Spot {
+function flightControl(f: RoleFlight): Spot {
     const dx = f.to.x - f.from.x;
     const dy = f.to.y - f.from.y;
     const dist = Math.sqrt(dx * dx + dy * dy);

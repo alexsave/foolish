@@ -126,7 +126,7 @@ const readFrame = (bytes: Uint8Array, naming: Naming | null) => {
     });
 };
 
-export interface ReplayFramesOpts {
+interface ReplayFramesOpts {
     /** Seat whose eyes the replay is watched through; -1 (default) = spectator.
      *  The shared-replay screen is a spectator; the tutorial sits in seat 0, so
      *  its boards mask exactly as they would for a real player in that seat. */

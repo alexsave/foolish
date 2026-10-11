@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import supabase from '../common/Connector';
 import { useAuth } from '../contexts/AuthContext';
-import { useLocalization } from '../contexts/LocalizationContext';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 import { BackButton } from './BackButton';
 import { LanguageSwitcher } from './LanguageSwitcher';
@@ -44,7 +43,6 @@ const BOARD_SIZE = 100;
 
 export const Leaderboard: React.FC = () => {
     const { user_id } = useAuth();
-    const { t } = useLocalization();
     const { woodUrl } = useTexture();
     const [entries, setEntries] = useState<Entry[] | null>(null);
     const [failed, setFailed] = useState(false);

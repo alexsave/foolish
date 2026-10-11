@@ -21,7 +21,7 @@ const readBots = (): BotsRead =>
     supabaseClient.from('bots').select('id, nickname, strategy_key') as unknown as BotsRead;
 
 /** What a request body asks, as the kernel read it. Throws for a body that is not an ask. */
-export async function readAsk(body: Uint8Array): Promise<TableAsk> {
+async function readAsk(body: Uint8Array): Promise<TableAsk> {
     const ask = (await serverTable()).askDecode(body);
     if (typeof ask === 'number') throw refused(L.ASK_WHY_MALFORMED, 'the body is not an ask');
     return ask;

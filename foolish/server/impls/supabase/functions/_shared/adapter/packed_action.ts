@@ -14,7 +14,7 @@ import * as L from '@sdk/ts/gen/game_layout.bots.ts';
 import { serverTable } from '@sdk/ts/table/server_table.ts';
 import { runTableOp, TableRefusal } from './table_io.ts';
 
-export interface ActionOutcome {
+interface ActionOutcome {
     /** The response body. */
     body: Uint8Array;
     gameId: string;

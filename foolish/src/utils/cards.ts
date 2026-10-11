@@ -1,5 +1,3 @@
-// Use the actual Khokhloma pattern PNG
-const FRACTAL_PATTERN_PNG = "/khokhloma-pattern.png";
 
 
 

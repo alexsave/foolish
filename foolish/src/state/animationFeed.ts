@@ -69,7 +69,7 @@ export interface CastMessage {
     game_id?: string;
 }
 
-export type AnimationFeedMessage = AnimationSequenceMessage | CastMessage;
+type AnimationFeedMessage = AnimationSequenceMessage | CastMessage;
 
 type FeedListener = (message: AnimationFeedMessage) => void;
 

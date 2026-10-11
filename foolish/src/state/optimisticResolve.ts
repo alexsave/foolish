@@ -44,7 +44,7 @@ export const seatOf = (v: TableView | null | undefined): number | undefined =>
 // back, so nothing here ever takes a key apart - which is what the key it
 // replaced existed for. That was a JSON.stringify of these same five fields,
 // JSON.parse'd back out in five places, i.e. a byte layout TypeScript knew.
-export interface PendingMotion {
+interface PendingMotion {
     type: string;
     card: Card;
     from: string;
@@ -56,7 +56,7 @@ export interface PendingMotion {
 }
 
 /** Where a pending card is DRAWN while it waits, so a revert knows where to fly it home from. */
-export interface OptimisticPosition {
+interface OptimisticPosition {
     location: string;
     seat?: number;
     target_card?: Card;
@@ -64,7 +64,7 @@ export interface OptimisticPosition {
 }
 
 /** MY PASS THE SERVER HAS NOT CONFIRMED, as the action wire I sent it (see `pass`). */
-export interface PendingPass {
+interface PendingPass {
     wire: Uint8Array;
     cards: readonly Card[];
     seat?: number;
@@ -134,7 +134,7 @@ export const pendingOverlayCards = (s: OptimisticState): { card: Card; target?: 
  * reverts, a refusal, the sweep - so the pass needs no clearing discipline of
  * its own, which is the discipline the cached seats kept getting wrong.
  */
-export const passStillPending = (s: OptimisticState): boolean => {
+const passStillPending = (s: OptimisticState): boolean => {
     const p = s.pass.current;
     if (!p) return false;
     const live = p.cards.some((c) => s.motions.has(animEventKey('attack_pass', c, 'hand', 'table', p.seat)));
@@ -223,7 +223,7 @@ export function withoutConfirmedMotions(s: OptimisticState, serverEvents: any[])
 }
 
 /** What the caller owes the screen once a push has been judged against my predictions. */
-export interface ConflictResolution {
+interface ConflictResolution {
     /** The flights that carry doomed predictions home, in the order they were found. */
     revertEvents: ClientAnimationEvent[];
     /** Whether one of those flights is a pass going home (its board needs the server's own lead and shield). */

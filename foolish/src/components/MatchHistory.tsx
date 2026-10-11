@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import supabase from '../common/Connector';
 import { useAuth } from '../contexts/AuthContext';
-import { useLocalization } from '../contexts/LocalizationContext';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 import { BackButton } from './BackButton';
 import { LanguageSwitcher } from './LanguageSwitcher';
@@ -55,7 +54,6 @@ const parseUtcTimestamp = (ts: string): Date =>
 export const MatchHistory: React.FC = () => {
     const router = useRouter();
     const { user_id } = useAuth();
-    const { t } = useLocalization();
     const { woodUrl } = useTexture();
     const [entries, setEntries] = useState<HistoryEntry[] | null>(null);
     const [elo, setElo] = useState<{ rating: number } | null>(null);

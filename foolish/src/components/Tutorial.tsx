@@ -23,7 +23,6 @@ import {
 } from '../replay/frames';
 import { boardPills } from '../utils/gameValidation';
 import { PLAY_PILL_COVER } from '@sdk/ts/gen/view_layout.bots.ts';
-import type { StringId } from '../common/strings';
 import { buildBeats, type Beat, type TutKey } from './tutorialBeats.ts';
 import { TUTORIAL_MOVES_CODE, TUTORIAL_NAMES } from './tutorialGame';
 
@@ -31,7 +30,6 @@ const LEARNER_SEAT = 0;
 const GAME_ID = 'tutorial';
 const RESULT = { game_id: GAME_ID };
 
-const sameCard = (a: Card, b: Card) => a.suit === b.suit && a.value === b.value;
 const LEARNER_KINDS: number[] = [
     REPLAY_STEP.ATTACK, REPLAY_STEP.COVER, REPLAY_STEP.PASS, REPLAY_STEP.PICKUP, REPLAY_STEP.GOOD,
 ];

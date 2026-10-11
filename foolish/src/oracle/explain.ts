@@ -22,7 +22,7 @@ const VALUE_STR = ['?', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 
 const SUIT_CHAR = ['♠', '♥', '♣', '♦'];
 
 /** 0..51 card id (suit*13 + value-1, cordite_sim id space) → display token. */
-export function cardIdToken(id: number, trump: number): string {
+function cardIdToken(id: number, trump: number): string {
     if (id < 0 || id > 51) return '-';
     const suit = Math.floor(id / 13);
     const value = (id % 13) + 1;
@@ -30,7 +30,7 @@ export function cardIdToken(id: number, trump: number): string {
 }
 
 /** Reply move (type + card) → localized phrase, e.g. "covers with 10♥". */
-export function replyPhrase(t: TFn, type: number, card: number, trump: number): string {
+function replyPhrase(t: TFn, type: number, card: number, trump: number): string {
     const tok = card < 52 ? cardIdToken(card, trump) : '';
     switch (type) {
         case 0: return t('oracle_reply_attack', { card: tok });
@@ -105,7 +105,7 @@ export interface WhyTreeNode {
 /** Fold the flat path clusters into a prefix tree (the storyline tree view).
  *  Cluster seqs are ≤4 symbols; a cluster ending before round 4 is a leaf
  *  with its own fin. Shares are relative to the candidate's folded total. */
-export function buildWhyTree(paths: OraclePathStat[], total: number): WhyTreeNode[] {
+function buildWhyTree(paths: OraclePathStat[], total: number): WhyTreeNode[] {
     interface Mut { sym: number | null; n: number; finSum: number; leafN: number; kids: Map<number | -1, Mut>; }
     const root: Mut = { sym: null, n: 0, finSum: 0, leafN: 0, kids: new Map() };
     for (const p of paths) {
@@ -130,7 +130,7 @@ export function buildWhyTree(paths: OraclePathStat[], total: number): WhyTreeNod
 
 /* ---------------------------- the proof text ------------------------------- */
 
-export interface WhyExplanation {
+interface WhyExplanation {
     headline: string;          // one-line verdict, chess.com-comment style
     reply: string | null;      // "Most likely reply: covers with 10♥ (43%)"
     proof: string[];           // the storyline proof paragraphs

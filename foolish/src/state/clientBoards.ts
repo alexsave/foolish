@@ -18,7 +18,7 @@ const edit = (op: number, cards: readonly ViewCard[] = [], more: Partial<BoardEd
     ({ op, firstAttacker: 0, defender: 0, target: NO_CARD, cards, ...more });
 
 /** A pending card of mine, standing on the table: over `target` when it is a cover, as an attack when it is none. */
-export interface PendingCard { card: ViewCard; target?: ViewCard | null }
+interface PendingCard { card: ViewCard; target?: ViewCard | null }
 
 /** The board once my move (its action wire) stands on it. */
 export const optimisticBoard = (view: TableView, wire: Uint8Array): TableView | null =>
@@ -57,7 +57,7 @@ export const lobbyBoard = (view: TableView): TableView | null =>
     clientTable().edit(view, edit(V.CLIENT_EDIT_LOBBY));
 
 /** The outcome of a hand rearrange: the board, or why there is none. */
-export type Rearranged = { kind: 'ordered'; view: TableView } | { kind: 'no-hand' } | { kind: 'not-an-order' };
+type Rearranged = { kind: 'ordered'; view: TableView } | { kind: 'no-hand' } | { kind: 'not-an-order' };
 
 /** My hand in the order `indices` gives. */
 export const rearrangedBoard = (view: TableView, indices: readonly number[]): Rearranged => {

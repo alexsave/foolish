@@ -74,7 +74,7 @@ export const shownBoardOf = (view: TableView): ShownBoard => ({
 });
 
 /** Two role states naming the same thing. */
-export const sameRoles = (a: ShownRoles, b: ShownRoles): boolean =>
+const sameRoles = (a: ShownRoles, b: ShownRoles): boolean =>
     a.defender === b.defender && a.firstAttacker === b.firstAttacker && a.goodMask === b.goodMask;
 
 export const sameShownBoard = (a: ShownBoard, b: ShownBoard): boolean =>

@@ -55,7 +55,7 @@ const reduceMotion = (): boolean => {
     } catch { return false; }
 };
 
-export interface RoleCoinProps {
+interface RoleCoinProps {
     seat: number;
     kind: RoleMarkKind | null;
     departing?: boolean;

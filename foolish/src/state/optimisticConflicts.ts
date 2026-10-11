@@ -27,7 +27,7 @@ import { animEventTypeCode } from '@sdk/ts/wasm/bots.ts';
 import { clientTable } from '@sdk/ts/table/client_table.ts';
 import type { TableView, ViewCard as Card } from './view';
 
-export interface AttackCoverResolution {
+interface AttackCoverResolution {
     /** Optimistic attack/cover cards to fly back to hand (genuinely never accepted). */
     revert: Card[];
     /** Optimistic attack/cover cards to keep and merge into the incoming states. */
@@ -48,10 +48,10 @@ interface AnimEvent { type?: string; cards?: readonly Card[] }
 export const CONFLICT_DEST = { table: V.ANIM_DEST_TABLE, hand: V.ANIM_DEST_MY_HAND } as const;
 
 /** One pending motion: which card, where it went, and whether it was the defender's own cover. */
-export interface ConflictMotion { card: Card; dest: number; isCover?: boolean }
+interface ConflictMotion { card: Card; dest: number; isCover?: boolean }
 
 /** The push a pending motion is judged against. */
-export interface ConflictPush {
+interface ConflictPush {
     /** The push's events this client has not already played. Which of them sweep is the kernel's call. */
     events: readonly AnimEvent[];
     /** The push's last board: where its cards stand, on the table and in my hand. */

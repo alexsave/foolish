@@ -23,7 +23,7 @@ export interface IOracleController {
 }
 
 /** 'B' when shared-memory threads can run here, else 'A'. */
-export function oracleMode(): 'A' | 'B' {
+function oracleMode(): 'A' | 'B' {
     const isolated = typeof globalThis !== 'undefined'
         && typeof SharedArrayBuffer !== 'undefined'
         && (globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated === true;

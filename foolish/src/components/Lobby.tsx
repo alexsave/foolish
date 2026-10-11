@@ -45,7 +45,6 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
     textureUrl,
     useWoodTexture,
 }) => {
-    const { t } = useLocalization();
     const playerSeed = seedFromString(player.id);
     const flip = flipFromString(player.id);
     const playerCardStyle = getTextureStyle(textureUrl, !useWoodTexture, playerSeed);

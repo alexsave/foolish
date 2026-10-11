@@ -76,7 +76,7 @@ export interface OracleRecordCandidate {
  *  seat's hand, how many cards are still genuinely unknown, per-seat void
  *  constraints (attack cards the seat demonstrably could not beat) and rank
  *  floors. The raw material of the overlay's belief display. */
-export interface OracleRecordBelief {
+interface OracleRecordBelief {
     pinned: string[][];
     poolCount: number;
     voids: string[][];
@@ -111,7 +111,7 @@ export interface OraclePathStat { seq: number[]; n: number; fin: number; }
 /** First move by any non-hero seat after the root move: type indexes
  *  MV_ATTACK..MV_GOOD (0..4), card is a 0..51 id or 52 for card-less. */
 export interface OracleReplyStat { type: number; card: number; n: number; }
-export interface OracleCandAgg {
+interface OracleCandAgg {
     n: number;                     // playouts folded
     mepk: number;                  // my pickups per playout
     oppk: number;                  // opponent pickups per playout
@@ -244,7 +244,7 @@ export function canonicalMoveKey(type: string, cards: string[], target?: string[
  *
  *  Turn it on for development:  NEXT_PUBLIC_FOOLISH_ORACLE_WHY=1 npm run dev
  */
-export const ORACLE_WHY_PANEL_SHIPPING = false;
+const ORACLE_WHY_PANEL_SHIPPING = false;
 
 export function oracleWhyPanelEnabled(): boolean {
     const v = process.env.NEXT_PUBLIC_FOOLISH_ORACLE_WHY;
@@ -263,21 +263,21 @@ export function oracleWhyPanelEnabled(): boolean {
 export const ORACLE_TRUMP_KEEP = 0.040;
 
 /** Worker fleet size: clamp(cores - 2, 1, 8). */
-export const ORACLE_MAX_WORKERS = 8;
+const ORACLE_MAX_WORKERS = 8;
 export function oracleWorkerCount(): number {
     const cores = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 4;
     return Math.max(1, Math.min(ORACLE_MAX_WORKERS, cores - 2));
 }
 
 /** Batch sizing (§8.6): target ~40 ms/batch; adapt OG_W1 to device speed. */
-export const ORACLE_W1_START = 24;
+const ORACLE_W1_START = 24;
 export const ORACLE_W1_MIN = 8;
 export const ORACLE_W1_MAX = 192;
 export const ORACLE_BATCH_FAST_MS = 25;   // below → double W1
 export const ORACLE_BATCH_SLOW_MS = 80;   // above → halve W1
 
 /** Per-move endgame verdict probe budget (the kernel asks for it per probe). */
-export const ORACLE_SOLVE_BUDGET = 2_000_000;
+const ORACLE_SOLVE_BUDGET = 2_000_000;
 
 /** The knobs a deliberation starts from, in both modes: racing off, one batch
  *  of ORACLE_W1_START + 1 worlds per candidate, the full probe budget. Mode A
@@ -316,11 +316,8 @@ export const ORACLE_MIN_FOCUS_MS = 3_500;
  *  and a terminal snapshot (converged/exact/forced/error) ignores it entirely. */
 export const ORACLE_PUBLISH_MS = 80;
 
-/** Focus animation: SE at which a row is "fully in focus" (§9.3). */
-export const ORACLE_SE0 = 0.25;
-
 /** chess.com-style move classification, on ADJUSTED scores relative to best. */
-export const ORACLE_CLASS_THRESHOLDS: { max: number; id: OracleClass }[] = [
+const ORACLE_CLASS_THRESHOLDS: { max: number; id: OracleClass }[] = [
     { max: 0.0001, id: 'best' },
     { max: 0.05, id: 'excellent' },
     { max: 0.15, id: 'good' },

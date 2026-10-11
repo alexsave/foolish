@@ -126,7 +126,7 @@ export function columnHexToBytes(hex: string): Uint8Array {
 // ---- the row ----------------------------------------------------------------
 
 /** The columns a table operation reads. */
-export interface TableRow {
+interface TableRow {
     gameId: string;
     version: number;
     roundEpoch: number;
@@ -237,14 +237,14 @@ export function drawDealSeed(): Uint8Array {
 // ---- one operation ---------------------------------------------------------
 
 /** What an operation's kernel section is handed. */
-export interface TableSection {
+interface TableSection {
     table: ServerTable;
     row: TableRow;
     /** 32 fresh bytes per attempt, for an edit that may deal. */
     dealSeed: Uint8Array;
 }
 
-export interface TableOp {
+interface TableOp {
     gameId: string;
     reqId: string;
     /** The caller's auth id: whose envelope the outcome carries (the spectator's when not seated). */
@@ -259,7 +259,7 @@ export interface TableOp {
     fresh?: boolean;
 }
 
-export interface TableOutcome {
+interface TableOutcome {
     /** The table result code (never negative: refusals throw TableRefusal). */
     result: number;
     /** ENGINE_REJECT_* behind a TABLE_REJECTED. */

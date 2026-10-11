@@ -24,7 +24,7 @@ import { assertLayoutHash } from '../wasm/layout_hash.ts';
 import { loadWasmGz, loadWasmGzAsync } from '../wasm/wasm_asset.ts';
 
 /** One recorded bot SEARCH, as the kernel saw it (c/src/bot_drive.h BeliefProbe). */
-export interface BeliefProbeRecord {
+interface BeliefProbeRecord {
     seat: number;
     /** Log records spliced into the Game the strategy was about to read. */
     nLogs: number;
@@ -43,7 +43,7 @@ export interface TableDrive {
 }
 
 /** A decoded action request: the game id, the action wire, and the intent version when the request carried one. */
-export interface TableActionRequest {
+interface TableActionRequest {
     gameId: string;
     wire: Uint8Array;
     intent: number | null;
@@ -53,7 +53,7 @@ export interface TableActionRequest {
 export type TableAsk = L.TableAsk_Snap;
 
 /** The bot row an add-bot ask seats (table.h TableAskBot). */
-export interface TableAskBot { id: string; nickname: string; brain: string }
+interface TableAskBot { id: string; nickname: string; brain: string }
 
 /** Every product of a commit (table.h TableCommit), copied out of the module. */
 export interface TableProducts {

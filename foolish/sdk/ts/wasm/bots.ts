@@ -290,7 +290,7 @@ export function kernelMsgPublicView(): { view: V.TableView_Snap } {
 // host cannot emit a payload it would itself reject. Returns the wire bytes.
 /** What a caller states of an envelope it seals: the protocol's fields. The
  *  kernel derives the rest from the chain wasm_msg_decode adopted. */
-export type MsgSealHeader =
+type MsgSealHeader =
     Omit<M.MsgEnvelope_Snap, 'format' | 'turn' | 'round' | 'nNew' | 'sentAt' | 'opening' | 'carryKey' | 'carryFool' | 'parent8' | 'seed'>
     & Partial<Pick<M.MsgEnvelope_Snap, 'sentAt' | 'opening' | 'carryKey' | 'carryFool'>>
     & { parent8: ArrayLike<number>; seed: ArrayLike<number> };
@@ -385,7 +385,7 @@ export function kernelReplayExtrasEncode(names: string[] | null, startTime: numb
 }
 
 /** What a decoded extras blob says. */
-export interface KernelReplayExtras {
+interface KernelReplayExtras {
     names: string[] | null;
     startTime: number | null;
     moveGaps: number[] | null;
@@ -691,7 +691,7 @@ export function animShownLedgerAllows(claim: number, sequencing: boolean): boole
 }
 
 /** One row of the end screen's finish order (anim_plan.h AnimFinishRow). */
-export interface AnimFinishRow { place: number; seat: number; isYou: boolean }
+interface AnimFinishRow { place: number; seat: number; isYou: boolean }
 
 /** THE FINISH ORDER, in C (anim_plan.h anim_finish_rows). Rank 1 is the first
  *  seat out, counting up to the fool last - whose place is the SEAT count, not

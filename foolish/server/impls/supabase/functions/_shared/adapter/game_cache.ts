@@ -10,7 +10,7 @@
 // reload, never a wrong write. The cache holds opaque bytes and bookkeeping
 // columns only; what they mean is the kernel's.
 
-export interface CachedRow {
+interface CachedRow {
     version: number;
     // The version at which the current round began (games.round_epoch), for the
     // kernel's round guard. Written by the same commit as `version`, so a stale

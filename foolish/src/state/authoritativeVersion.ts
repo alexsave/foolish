@@ -26,9 +26,3 @@ export function authoritativeVersion(gameId: string | null | undefined): number 
     return gameId ? versions.get(gameId) : undefined;
 }
 
-export function forgetAuthoritativeVersion(gameId: string): void {
-    versions.delete(gameId);
-}
-
-// Test hook.
-export function __clearAuthoritativeVersions(): void { versions.clear(); }

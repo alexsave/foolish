@@ -27,7 +27,7 @@ import {
 import { sameCard, type TableView, type ViewCard } from './view';
 
 /** What the page draws for one card at one place while its flight is up. */
-export interface CardFlight {
+interface CardFlight {
     animationType: string;
     progress: number;
     fromLocation: string | null;
@@ -36,12 +36,12 @@ export interface CardFlight {
 }
 
 /** A step the loop plays: the plan's fields, plus what its landing is worth. */
-export interface RunStep extends AnimStep {
+interface RunStep extends AnimStep {
     /** The places this flight's card is drawn at, by the page's own owner keys. */
     places?: (number | string)[];
 }
 
-export interface AnimationRunHooks<S extends RunStep> {
+interface AnimationRunHooks<S extends RunStep> {
     /** The board on screen right now: the plan's boardless fallback reads it. */
     board: () => TableView | undefined;
     /** One step has landed. The provider decides what that is worth. */

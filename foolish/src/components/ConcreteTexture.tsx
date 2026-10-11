@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState } from 'react';
 import { getCachedTexture, setCachedTexture } from '../utils/textureCache';
 
 // Global cache for concrete texture - using blob URL

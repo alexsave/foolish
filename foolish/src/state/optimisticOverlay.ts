@@ -14,7 +14,7 @@ import type { ViewCard as Card } from './view';
  * Live broadcasts don't need this — AnimationContext already injects optimistic
  * cards into incoming broadcast states. This only covers the load/resync path.
  */
-export interface OptimisticEntry {
+interface OptimisticEntry {
     card: Card;            // the optimistically-played card
     target?: Card | null;  // present => it's a cover; the attack card it covers
 }

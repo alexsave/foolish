@@ -57,7 +57,7 @@ const idOf = (c: ViewCard): number =>
 
 /** The row a board holds, in the one 2-bytes-per-battle layout every table in
  *  this codebase uses (the attack, then its cover or ANIM_TABLE_NONE). */
-export const rowOf = (view: TableView): number[] => {
+const rowOf = (view: TableView): number[] => {
     const row: number[] = [];
     for (const b of view.battles) {
         row.push(idOf(b.attack));

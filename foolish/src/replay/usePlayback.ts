@@ -45,7 +45,7 @@ export interface Playback {
 
 /** The telestrator, which the keyboard shares: 'c' toggles it, and while it is
  *  on a commentator's keystrokes must not scrub the replay underneath the pen. */
-export interface PenKeys {
+interface PenKeys {
     drawing: boolean;
     toggleDrawing: () => void;
 }

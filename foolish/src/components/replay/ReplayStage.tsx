@@ -18,7 +18,7 @@ import {
     IconPlay, IconStepBack, IconStepForward,
 } from './ReplayIcons';
 
-export interface StageProps {
+interface StageProps {
     /** The fool's seat, or null for a code cut before the game ended. */
     fool: number | null;
     /** The replay code the frames were built from: the Oracle's position is read off it. */
