@@ -12,6 +12,7 @@
 #   make -C chuiniu/c datagen     the Swift strings  -> ../ios/Generated/i18n/
 #   make -C chuiniu/c ios-lib     ../ios/vendor/Chuiniu.xcframework (needs Xcode)
 #   make -C chuiniu/c swift-smoke the bridge driven from Swift through the readers (a Mac)
+#   make -C chuiniu/c bot-test    the offline bot's tests (bot/, docs/BOT.md); bot-asan, bot-arena, bot-arena-fast
 #   make -C chuiniu/c clean
 CC      ?= cc
 # THE WARNINGS ARE ONE LIST for every build below. -ffp-contract=off is in it
@@ -254,6 +255,66 @@ ios-lib: datagen tex-ios $(IOS_XCFRAMEWORKS)
 	  done; \
 	done; echo "the scene renderer is in every slice ($(words $(IOS_SCENE_SYMBOLS)) entry points)"
 	@echo "layout $$(cat build/layout/ios.hash)"
+
+# ---- THE OFFLINE BOT AND ITS ARENA (bot/, ../docs/BOT.md) ------------------------
+# Never shipped: bot/ is in no SRC list, so the wasm objects, the bridge and the
+# xcframework never carry it, and it is not in `run` or `asan` (no workflow ran
+# it before it was built here, and none does now).
+#   make -C chuiniu/c bot-test        the bot's tests, built and run
+#   make -C chuiniu/c bot-asan        the same under ASan + UBSan
+#   make -C chuiniu/c bot-arena       the headline runs: bot vs random at 2 and 4 seats
+#   make -C chuiniu/c bot-arena-fast  a smoke run of the same
+#
+# IT HAD ITS OWN MAKEFILE (bot/Makefile), which listed the kernel's headers by
+# hand and compiled the kernel again from source for each program. It is built
+# here now, through the same rules as everything else (c_rules.mk): an object
+# knows what it included, and the three programs share one compile of the
+# kernel files they link.
+#
+# ITS OWN TWO VARIANTS, because its flags are not the kernel's. WARN above
+# carries -ffp-contract=off for cn_roll.c, and the bot was never built with it:
+# every number in docs/BOT.md comes from a bot compiled without, and a fused
+# multiply-add is exactly the kind of thing that moves a belief by one ulp and
+# a close game by a seat. So the kernel files the bot links are compiled again
+# under the bot's flags, in build/obj/bot, and the kernel's own objects are
+# left out of it.
+#
+# THE KERNEL FILES IT LINKS ARE A SUBSET (BOT_KSRC), as they always were: the
+# rules, the dice and the plan. Not SRC - the bot has no wire, no words and no
+# picture, and a program that links what it does not use hides what it needs.
+BOT_WARN       := -Wall -Wextra -Werror -std=c11
+BOT_FLAGS      ?= -O2 $(BOT_WARN)
+BOT_ASAN_FLAGS := -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined $(BOT_WARN)
+BOT_KSRC       := src/cn.c src/cn_dice.c src/cn_plan.c $(SHARED)/deal_rng.c $(SHARED)/sha256.c
+BOT_SRC        := bot/cn_bot.c bot/cn_bot_random.c
+BOT_LIBS       := -lm -lpthread
+ARENA_GAMES    ?= 4000
+ARENA_SEED     ?= 1
+$(eval $(call C_VARIANT,build/obj/bot,CC,BOT_FLAGS))
+$(eval $(call C_VARIANT,build/obj/botasan,CC,BOT_ASAN_FLAGS))
+
+build/cn_bot_test: $(call c_objs,build/obj/bot,$(BOT_KSRC) $(BOT_SRC) bot/cn_bot_test.c)
+	$(CC) $(BOT_FLAGS) $^ -o $@ $(BOT_LIBS)
+build/asan_cn_bot_test: $(call c_objs,build/obj/botasan,$(BOT_KSRC) $(BOT_SRC) bot/cn_bot_test.c)
+	$(CC) $(BOT_ASAN_FLAGS) $^ -o $@ $(BOT_LIBS)
+build/cn_arena: $(call c_objs,build/obj/bot,$(BOT_KSRC) $(BOT_SRC) $(SHARED)/stats/stats.c bot/cn_arena.c)
+	$(CC) $(BOT_FLAGS) $^ -o $@ $(BOT_LIBS)
+
+bot-test: build/cn_bot_test
+	./build/cn_bot_test
+
+bot-asan: build/asan_cn_bot_test
+	./build/asan_cn_bot_test
+
+bot-arena: build/cn_arena
+	./build/cn_arena --seats=2 --mix=bot,random --games=$(ARENA_GAMES) --seed=$(ARENA_SEED)
+	./build/cn_arena --seats=4 --mix=bot,random,random,random --games=$(ARENA_GAMES) --seed=$(ARENA_SEED)
+
+bot-arena-fast: build/cn_arena
+	./build/cn_arena --fast --seats=2 --mix=bot,random
+	./build/cn_arena --fast --seats=4 --mix=bot,random,random,random
+
+.PHONY: bot-test bot-asan bot-arena bot-arena-fast
 
 clean:
 	rm -rf build

@@ -220,7 +220,7 @@ The names Perudo and Dudo, pirate theming and any published product's cup or box
 
 ## Bot (owner: the bot worker; B1 onward)
 
-B1: the bot is offline only: `chuiniu/c/bot/` (a C module, its tests and the arena), built by its own `chuiniu/c/bot/Makefile` against the kernel's sources by relative path.
+B1: the bot is offline only: `chuiniu/c/bot/` (a C module, its tests and the arena), built by `chuiniu/c/Makefile` (the `bot-` targets) in variants of its own, under its own flags; it had its own `chuiniu/c/bot/Makefile` until the kernel's rules could build it.
 Nothing of it is in the bridge, the lobby or `chuiniu/ios/`, and it decides from a `CnSeen` (my dice, the counts, the moves, the hands shown at past calls), never from a `CnGame`.
 
 B2: the opponent model is a quantal response: a seat raises or calls with probability proportional to exp(8 x the chance the claim is true given its own hand and the prior for everyone else), normalised over every legal option.

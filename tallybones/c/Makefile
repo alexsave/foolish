@@ -10,6 +10,7 @@
 #   make -C tallybones/c ios-lib     ../ios/vendor/Tallybones.xcframework (needs Xcode)
 #   make -C tallybones/c ios-lib-catalyst   the same plus a Mac Catalyst slice, for the Swift tests
 #   make -C tallybones/c swift-smoke the bridge driven from Swift through the readers (a Mac)
+#   make -C tallybones/c bot-test    the exact solver's checks (bot/, bot/README.md); bot-asan, bot-solve
 #   make -C tallybones/c clean
 CC      ?= cc
 # THE WARNINGS ARE ONE LIST for every build below.
@@ -181,6 +182,44 @@ $(CATALYST_LIB): build/ios/device/libtallybones.a build/ios/sim/libtallybones.a 
 	@echo "wrote $(XCF) (device, simulator, Mac Catalyst)"
 ios-lib-catalyst: datagen $(CATALYST_LIB)
 	@echo "layout $$(cat build/layout/ios.hash)"
+
+# ---- THE EXACT SINGLE-PLAYER SOLVER (bot/, DECISIONS.md T30 onwards) -----------
+# An internal simulation and evaluation tool; nothing here ships: bot/ is in no
+# SRC list, and it is not in `run` or `asan` (no workflow ran it before it was
+# built here, and none does now; its test alone is about 35 s on 8 cores).
+#   make -C tallybones/c bot-test    build and run every check (tb_bot_test, 200000 games)
+#   make -C tallybones/c bot-asan    the same under ASan + UBSan (a smaller simulation)
+#   make -C tallybones/c bot-solve   build/tb_solve, then print the exact EV and play 200000 games
+#
+# IT HAD ITS OWN MAKEFILE (bot/Makefile), which listed the kernel's headers by
+# hand and compiled the kernel again from source for each program. Its flags
+# were this file's, both sets, so its programs are built from this file's own
+# objects now (build/obj/host, build/obj/asan): the bot scores with the one
+# tb_score_of the kernel's tests are run against, object for object.
+#
+# THE KERNEL FILES IT LINKS ARE A SUBSET (BOT_KSRC), as they always were: the
+# rules, the code and the plan. Not SRC - the solver has no wire and no words.
+BOT_KSRC := src/tb.c src/tb_code.c src/tb_plan.c $(SHARED)/deal_rng.c $(SHARED)/sha256.c $(SHARED)/mixrad.c
+BOT_SRC  := bot/tb_bot.c $(SHARED)/stats/stats.c
+BOT_LIBS := -lpthread -lm
+
+build/tb_solve: $(call c_objs,build/obj/host,$(BOT_SRC) $(BOT_KSRC) bot/tb_solve.c)
+	$(CC) $(CFLAGS) $^ -o $@ $(BOT_LIBS)
+build/tb_bot_test: $(call c_objs,build/obj/host,$(BOT_SRC) $(BOT_KSRC) bot/tb_bot_test.c)
+	$(CC) $(CFLAGS) $^ -o $@ $(BOT_LIBS)
+build/asan_tb_bot_test: $(call c_objs,build/obj/asan,$(BOT_SRC) $(BOT_KSRC) bot/tb_bot_test.c)
+	$(CC) $(ASAN_FLAGS) $^ -o $@ $(BOT_LIBS)
+
+bot-test: build/tb_bot_test build/tb_solve
+	./build/tb_bot_test 200000
+
+bot-solve: build/tb_solve
+	./build/tb_solve play 200000
+
+bot-asan: build/asan_tb_bot_test
+	./build/asan_tb_bot_test 20000
+
+.PHONY: bot-test bot-solve bot-asan
 
 clean:
 	rm -rf build
