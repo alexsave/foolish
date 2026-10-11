@@ -9,32 +9,33 @@
 // WHY IT IS C. The web kept the rank labels as a table of its own beside a copy
 // of the suit numbers, and a card value is a rank INDEX, not a face number
 // (value 1 is the two, 5 the six the small deck starts at, ACE_VALUE the ace),
-// so a table that slips by one draws a deck nobody dealt. Here the tables are held
-// to the kernel's own constants by the compiler.
+// so a table that slips by one draws a deck nobody dealt. Here every row is
+// written under its own value or card.h's own constant, and datagen keys it by that.
 #ifndef FOOLISH_CARD_TEXT_H
 #define FOOLISH_CARD_TEXT_H
 
 #include "card.h"
 
-// By card value, in order: a value with no rank (0, which no card has) is the
-// empty label, 1 is the two and ACE_VALUE the ace. Positional, so the asserts
-// are what hold the rows to card.h's numbering.
+// By card value: the index beside each label IS the value, so a row cannot slip.
+// A value with no rank (0, which no card has) is the empty label, 1 is the two
+// and ACE_VALUE the ace. datagen refuses a value left without a label.
 static const char *const CARD_RANK_LABEL[] = {
-    "", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A",
+    [0] = "",
+    [1] = "2",  [2] = "3",  [3] = "4",  [4] = "5",
+    [5] = "6",  [6] = "7",  [7] = "8",  [8] = "9",  [9] = "10",
+    [10] = "J", [11] = "Q", [12] = "K", [ACE_VALUE] = "A",
 };
 _Static_assert(sizeof(CARD_RANK_LABEL) / sizeof(CARD_RANK_LABEL[0]) == ACE_VALUE + 1, "one label per card value, the ace last");
 
 typedef struct { const char *glyph; int red; } SuitFace;
 
-// By suit, in order: spades, hearts, clubs, diamonds.
+// By suit, each row under card.h's own name for it.
 static const SuitFace CARD_SUIT_FACE[] = {
-    { "\u2660", 0 },
-    { "\u2665", 1 },
-    { "\u2663", 0 },
-    { "\u2666", 1 },
+    [SUIT_SPADES]   = { "\u2660", 0 },
+    [SUIT_HEARTS]   = { "\u2665", 1 },
+    [SUIT_CLUBS]    = { "\u2663", 0 },
+    [SUIT_DIAMONDS] = { "\u2666", 1 },
 };
-_Static_assert(sizeof(CARD_SUIT_FACE) / sizeof(CARD_SUIT_FACE[0]) == NUM_SUITS
-               && SUIT_SPADES == 0 && SUIT_HEARTS == 1 && SUIT_CLUBS == 2 && SUIT_DIAMONDS == 3,
-               "one face per suit, in card.h's order");
+_Static_assert(sizeof(CARD_SUIT_FACE) / sizeof(CARD_SUIT_FACE[0]) == NUM_SUITS, "one face per suit");
 
 #endif
