@@ -5,116 +5,36 @@
 // as the C Table (sdk/ts/table/server_table.ts) and the web as its client slot
 // (sdk/ts/table/client_table.ts), both over this module's instance. What is left
 // here are the doors that take a handful of bytes rather than a board: the bot
-// roster, the replay codec and its extras and links, the iMessage envelope, the
-// one-tap cover resolver and the animation rules. Loaded lazily and cached.
+// roster, the replay codec and its extras and links, the iMessage envelope and
+// the animation rules. Loaded lazily and cached.
 
 import { kernelModule, loadWasmGz, loadWasmGzAsync, type WasmModuleName } from './wasm_asset.ts';
-import type { BotsExports } from '../gen/exports.bots.ts';
-import type { WebExports } from '../gen/exports.web.ts';
 import { LAYOUT_HASH as BOTS_LAYOUT_HASH } from '../gen/layout_hash.bots.ts';
 import { assertLayoutHash } from './layout_hash.ts';
-import { memOf as viewMemOf, readTableView, readReplaySummary, readReplayError, readReplayFrameIndex, TableView_Snap, ReplaySummary_Snap, ReplayError_Snap } from '../gen/view_layout.bots.ts';
+import type { BotsExports } from '../gen/exports.bots.ts';
+import type { WebExports } from '../gen/exports.web.ts';
 import * as V from '../gen/view_layout.bots.ts';
-import { memOf as msgMemOf, readMsgHeader, writeMsgHeader, readReplayExtras, writeReplayExtras,
-         MSG_NO_OPENING, MSG_NO_FOOL, REPLAY_EXTRAS_FLAG_NAMES, REPLAY_EXTRAS_FLAG_TIMES, REPLAY_LINK_STYLE_URL,
-         type MsgHeader_Snap, type ReplayExtras_Snap } from '../gen/msg_layout.bots.ts';
+import * as M from '../gen/msg_layout.bots.ts';
 import * as A from '../gen/anim.bots.ts';
-import { memOf as animMemOf } from '../gen/anim.bots.ts';
-import { writeAnimPlanAsk, MAX_PLAYERS } from '../gen/view_layout.bots.ts';
 import * as K from '../gen/kernel_consts.bots.ts';
 import { MsgErrorText } from '../gen/errtext/msg.ts';
 import { ReplayErrorText } from '../gen/errtext/replay.ts';
 import { ReplayExtrasErrorText } from '../gen/errtext/replay_extras.ts';
 
 /** A card as the kernel's doors here read and write it (suit 0..3, value 1..13; -1/-1 is a hidden card). */
-export interface Card { readonly suit: number; readonly value: number }
-
-// One cached view over the whole linear memory. The kernel never mallocs, so
-// the buffer identity is stable, but a detached buffer is re-viewed anyway.
-let memView = new Uint8Array(0);
-function mem(ex: { memory: WebAssembly.Memory }): Uint8Array {
-    if (memView.buffer !== ex.memory.buffer) memView = new Uint8Array(ex.memory.buffer);
-    return memView;
-}
-
-// The legal moves of whatever game is RESIDENT in the kernel, no marshal and no
-// copy: wasm_legal_moves fills the kernel's own LegalMoves and this reads it
-// where it lies, through the generated accessors (sdk/ts/gen/anim.bots.ts).
-function residentLegalMoves(ex: BotsExports, seat: number): { type: string; cards?: Card[]; attack_cards?: Card[] }[] {
-    const total = ex.wasm_legal_moves(seat);
-    const m = animMemOf(ex.memory.buffer);
-    const lm = ex.wasm_legal_moves_ptr();
-    const card = (p: number): Card => ({ suit: A.Card_get_suit(m, p), value: A.Card_get_value(m, p) });
-    const moves: { type: string; cards?: Card[]; attack_cards?: Card[] }[] = new Array(total);
-    for (let i = 0; i < total; i++) {
-        const mv = A.LegalMoves_moves_at(lm, i);
-        const type = K.MOVE_NAMES[A.LegalMove_get_type(m, mv)].toLowerCase();
-        const k = A.LegalMove_get_n_cards(m, mv);
-        if (type === 'pickup' || type === 'good' || type === 'wait') { moves[i] = { type }; continue; }
-        const cards: Card[] = new Array(k);
-        for (let j = 0; j < k; j++) cards[j] = card(A.LegalMove_cards_at(mv, j));
-        if (type !== 'cover') { moves[i] = { type, cards }; continue; }
-        const attacks: Card[] = new Array(k);
-        for (let j = 0; j < k; j++) attacks[j] = card(A.LegalMove_attack_cards_at(mv, j));
-        moves[i] = { type, cards, attack_cards: attacks };
-    }
-    return moves;
-}
-
-// What the kernel's refusal codes say, from its own table (c/errtext/error_text.h,
-// written out by tools/datagen); only the sentence for a code that table does
-// not hold is this file's.
-const refusalText = (rows: readonly { code: number; text: string }[], code: number, family: string): string =>
-    rows.find((row) => row.code === code)?.text ?? `${family} kernel error ${code}`;
-const msgError = (code: number) => new Error(refusalText(MsgErrorText, code, 'iMessage payload:'));
-const __extrasError = (code: number) => new Error(refusalText(ReplayExtrasErrorText, code, 'extras:'));
-
-/** Why the module's last replay call refused, through the generated reader. */
-function replayErrorDetail(ex: WebExports): ReplayError_Snap {
-    return readReplayError(viewMemOf(ex.memory.buffer), ex.wasm_replay_error_ptr());
-}
-
-/** A replay refusal as a sentence. `d` is its parameters (replay.h ReplayError),
- *  which fill the table's {version}, {log_type} and {menu}; zeros stand in when
- *  a caller has only the code. */
-export function __replayError(negCode: number, d: ReplayError_Snap = { version: 0, logType: 0, menu: 0 }): Error {
-    return new Error(refusalText(ReplayErrorText, negCode, 'replay')
-        .replace('{version}', `${d.version}`).replace('{menu}', `${d.menu}`)
-        .replace('{log_type}', K.LOG_NAMES[d.logType]?.toLowerCase() ?? `${d.logType}`));
-}
-
-/** One row of the kernel's bot roster (c/src/bot_roster.h BotRosterRow). */
-export type BotRosterEntry = V.BotRosterRow_Snap;
-
-let rosterCache: readonly BotRosterEntry[] | null = null;
-
-/** The kernel's bot roster (bot_roster.h): hosts look it up, never restate it. */
-export function kernelBotRoster(): readonly BotRosterEntry[] {
-    if (rosterCache) return rosterCache;
-    const ex = bots();
-    const at = ex.wasm_bot_roster_dump();
-    if (!at) throw new Error('bot_roster: the kernel refused to dump the table');
-    return rosterCache = V.readBotRosterTable(viewMemOf(ex.memory.buffer), at).rows;
-}
-
-/** The STRAT_* brain id the kernel's roster gives this key, or -1. */
-export function kernelBotStrat(key: string): number {
-    return kernelBotRoster().find((e) => e.key === key)?.strat ?? -1;
-}
+export type Card = V.Card_Snap;
 
 let exportsCache: WebExports | null = null;
 let linked: WasmModuleName = 'web';
 
 // Memory diagnostics for the edge 150MB-external budget (see utils.ts [MEM]
-// logging): current size of the bots.wasm linear memory, -1 until loaded.
-export function __botsWasmMB(): number {
-    return exportsCache ? Math.round(exportsCache.memory.buffer.byteLength / 1048576) : -1;
-}
-
-// Raw linear-memory bytes (wasm grows in 64KB pages) — finer than the MB round
-// above for benchmarks that need to see small deltas.
+// logging): the size of the kernel's linear memory, -1 until loaded. Bytes for
+// the benchmarks that need to see a 64KB page, MB for the log line.
 export function __botsWasmBytes(): number {
     return exportsCache ? exportsCache.memory.buffer.byteLength : -1;
+}
+export function __botsWasmMB(): number {
+    return exportsCache ? Math.round(__botsWasmBytes() / 1048576) : -1;
 }
 
 /** Instantiate bots.wasm now (a harness that measures memory or timing before its first call). */
@@ -183,25 +103,106 @@ function serverBots(): BotsExports {
     return ex as BotsExports;
 }
 
+// One cached view over the whole linear memory, in the shape every generated
+// reader takes. The kernel never mallocs, so the buffer identity is stable, but
+// a detached buffer is re-viewed anyway.
+let memView = V.memOf(new ArrayBuffer(0));
+function mem(ex: WebExports): V.Mem {
+    if (memView.u8.buffer !== ex.memory.buffer) memView = V.memOf(ex.memory.buffer);
+    return memView;
+}
+
+/** Byte strings back to back in the kernel's replay-io buffer, where every call
+ *  here reads its input; `tooBig` is thrown when they do not fit. */
+function replayIn<E extends WebExports>(ex: E, tooBig: () => Error, ...parts: Uint8Array[]): E {
+    let at = ex.wasm_replay_io_ptr();
+    const end = at + ex.wasm_replay_io_cap();
+    for (const part of parts) {
+        if (part.length > end - at) throw tooBig();
+        mem(ex).u8.set(part, at);
+        at += part.length;
+    }
+    return ex;
+}
+
+/** A kernel answer that is not a refusal: a negative one is thrown as its family's sentence. */
+function ok(rc: number, refusal: (code: number) => Error): number {
+    if (rc < 0) throw refusal(rc);
+    return rc;
+}
+
+/** `n` bytes of an answer, copied out of the kernel's io buffer or from `at`. */
+function taken(ex: WebExports, n: number, at = ex.wasm_io_ptr()): Uint8Array {
+    return mem(ex).u8.slice(at, at + n);
+}
+
+const utf8 = (text: string) => new TextEncoder().encode(text);
+const str = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
+// The kernel terminates a string in place, one byte past it, so a string goes
+// in with that byte behind it and is refused unless both fit.
+const NUL = new Uint8Array(1);
+
+// What the kernel's refusal codes say, from its own table (c/errtext/error_text.h,
+// written out by tools/datagen); only the sentence for a code that table does
+// not hold is this file's.
+const refusalText = (rows: readonly { code: number; text: string }[], code: number, family: string): string =>
+    rows.find((row) => row.code === code)?.text ?? `${family} kernel error ${code}`;
+const msgError = (code: number) => new Error(refusalText(MsgErrorText, code, 'iMessage payload:'));
+const extrasError = (code: number) => new Error(refusalText(ReplayExtrasErrorText, code, 'extras:'));
+const animError = (entry: string) => (code: number) => new Error(`${entry} error ${code}`);
+const msgTooBig = () => msgError(M.MSG_ECAP);
+const extrasTooBig = () => extrasError(-M.REPLAY_EXTRAS_ECAP);
+const codeTooBig = () => __replayError(-K.REPLAY_ECAP);
+const tooBig = (what: string) => () => new Error(`${what}: does not fit the kernel IO buffer`);
+
+/** A replay refusal as a sentence. `d` is its parameters (replay.h ReplayError),
+ *  which fill the table's {version}, {log_type} and {menu}; zeros stand in when
+ *  a caller has only the code. */
+export function __replayError(negCode: number, d: V.ReplayError_Snap = { version: 0, logType: 0, menu: 0 }): Error {
+    return new Error(refusalText(ReplayErrorText, negCode, 'replay')
+        .replace('{version}', `${d.version}`).replace('{menu}', `${d.menu}`)
+        .replace('{log_type}', K.LOG_NAMES[d.logType]?.toLowerCase() ?? `${d.logType}`));
+}
+
+/** The module's last replay refusal, with the parameters the kernel kept for it. */
+function replayRefused(negCode: number): Error {
+    const ex = bots();
+    return __replayError(negCode, V.readReplayError(mem(ex), ex.wasm_replay_error_ptr()));
+}
+
+/** A replay code into the kernel, for the wasm_replay_* call that reads it. */
+const codeIn = (code: Uint8Array) => replayIn(bots(), codeTooBig, code);
+
+/** One row of the kernel's bot roster (c/src/bot_roster.h BotRosterRow). */
+export type BotRosterEntry = V.BotRosterRow_Snap;
+
+let rosterCache: readonly BotRosterEntry[] | null = null;
+
+/** The kernel's bot roster (bot_roster.h): hosts look it up, never restate it. */
+export function kernelBotRoster(): readonly BotRosterEntry[] {
+    if (rosterCache) return rosterCache;
+    const ex = bots();
+    const at = ex.wasm_bot_roster_dump();
+    if (!at) throw new Error('bot_roster: the kernel refused to dump the table');
+    return rosterCache = V.readBotRosterTable(mem(ex), at).rows;
+}
+
+/** The STRAT_* brain id the kernel's roster gives this key, or -1. */
+export function kernelBotStrat(key: string): number {
+    return kernelBotRoster().find((e) => e.key === key)?.strat ?? -1;
+}
+
 // ---------- FMSG: the iMessage envelope (c/src/msg_wire.h) -------------
 //
 // An iMessage game has no server: the whole game is (32-byte deal seed, v6
 // replay code) in an MSMessage URL, and every device rebuilds it by re-dealing
-// from the seed and replaying the code through the kernel. These two calls are
-// the only way in — the envelope's layout lives in C, once, so the phone and
-// the web can never read the same bytes as different games.
+// from the seed and replaying the code through the kernel. These calls are the
+// only way in — the envelope's layout lives in C, once, so the phone and the
+// web can never read the same bytes as different games.
 //
-// Both ride the REPLAY io buffer, never g_io: an FMSG call IS a replay call (its
+// They ride the REPLAY io buffer, never g_io: an FMSG call IS a replay call (its
 // body is a v6 code), so an envelope in g_io would be clobbered by the codec's
 // own bignum scratch mid-decode. See wasm_api.c.
-
-// The header crosses as the C struct itself (msg_wire.h MsgHeader), read and
-// written through the generated snapshot reader and writer
-// (sdk/ts/gen/msg_layout.bots.ts) at wasm_msg_header_ptr. Nothing here knows an
-// offset or a cap: a name too long for the struct's slot is the writer's
-// RangeError.
-
-export interface MsgJoin { seat: number; name: string }
 
 export interface MsgEnvelope {
     format: number;
@@ -230,20 +231,28 @@ export interface MsgEnvelope {
     /// THE FOOL'S PENALTY (c/src/msg_wire.h format 4). `opening` is the seat
     /// this deal opens on, or MSG_NO_OPENING for the ordinary lowest-trump
     /// rule; `carry_key`/`carry_fool` are a WAITING lobby's rematch carry,
-    /// 0 / MSG_NO_FOOL when there is none. All three go BOTH ways -
-    /// they are terms of the deal, not claims about the body, so a caller that
-    /// writes them seals a format-4 envelope.
+    /// 0 / MSG_NO_FOOL when there is none. All three go BOTH ways - they are
+    /// terms of the deal, not claims about the body, so a caller that writes
+    /// them seals a format-4 envelope.
     opening: number;
     carry_key: number;
     carry_fool: number;
-    joins: MsgJoin[];
+    joins: readonly M.MsgJoin_Snap[];
 }
 
-// The struct at wasm_msg_header_ptr <-> this bridge's MsgEnvelope. Only the
-// shapes differ (the snapshot holds byte arrays as number[] and camelCases its
-// fields); every offset is the generated module's.
-function readHeader(ex: WebExports): MsgEnvelope {
-    const s = readMsgHeader(msgMemOf(ex.memory.buffer), ex.wasm_msg_header_ptr());
+// Decode + VALIDATE an envelope: the chain is replayed through the kernel, so a
+// corrupt or hand-edited payload throws rather than half-loading (§7.3 —
+// validation IS replay). Leaves the game RESIDENT: the legal-move and view doors
+// below then read exactly the state the payload describes, which is what the
+// /m/ route renders and what a turn continues from.
+//
+// The header comes back as the C struct itself (msg_wire.h MsgHeader, at
+// wasm_msg_header_ptr) through its generated reader. Only the shapes differ:
+// the snapshot holds byte arrays as number[] and camelCases its fields.
+export function kernelMsgDecode(envelope: Uint8Array): MsgEnvelope {
+    const ex = replayIn(bots(), msgTooBig, envelope);
+    ok(ex.wasm_msg_decode(envelope.length), msgError);
+    const s = M.readMsgHeader(mem(ex), ex.wasm_msg_header_ptr());
     return {
         format: s.e.format, flags: s.e.flags, phase: s.e.phase, n_players: s.e.nPlayers,
         variant: s.e.variant, round: s.e.round, last_actor_seat: s.e.lastActorSeat,
@@ -253,46 +262,10 @@ function readHeader(ex: WebExports): MsgEnvelope {
         digest: Uint8Array.from(s.digest),
         sent_at: s.e.sentAt, n_new: s.e.nNew, opening: s.e.opening,
         carry_key: s.e.carryKey, carry_fool: s.e.carryFool,
-        joins: s.e.joins.map((j) => ({ seat: j.seat, name: j.name })),
+        joins: s.e.joins,
     };
 }
 
-function writeHeader(ex: WebExports, e: MsgEnvelope): void {
-    const snap: MsgHeader_Snap = {
-        e: {
-            format: e.format, flags: e.flags, phase: e.phase, nPlayers: e.n_players,
-            variant: e.variant, round: e.round, lastActorSeat: e.last_actor_seat,
-            gameId: e.game_id, turn: e.turn,
-            parent8: Array.from(e.parent8.subarray(0, 8)),
-            seed: Array.from(e.seed.subarray(0, 32)),
-            sentAt: e.sent_at & 0xffff, nNew: e.n_new, opening: e.opening,
-            carryKey: e.carry_key >>> 0, carryFool: e.carry_fool,
-            joins: e.joins.map((j) => ({ seat: j.seat, name: j.name })),
-        },
-        digest: Array.from(e.digest.subarray(0, 32)),
-    };
-    writeMsgHeader(msgMemOf(ex.memory.buffer), ex.wasm_msg_header_ptr(), snap);
-}
-
-// Decode + VALIDATE an envelope: the chain is replayed through the kernel, so a
-// corrupt or hand-edited payload throws rather than half-loading (§7.3 —
-// validation IS replay). Leaves the game RESIDENT: kernelViewSerialize and the
-// legal-move exports then read exactly the state the payload describes, which is
-// what the /m/ route renders and what a turn continues from.
-export function kernelMsgDecode(envelope: Uint8Array): MsgEnvelope {
-    const ex = bots();
-    if (envelope.length > ex.wasm_replay_io_cap()) throw new Error('iMessage payload: capacity exceeded');
-    mem(ex).set(envelope, ex.wasm_replay_io_ptr());
-    const r = ex.wasm_msg_decode(envelope.length);
-    if (r < 0) throw msgError(r);
-    return readHeader(ex);
-}
-
-// Seal the RESIDENT game into an envelope. `header` supplies what the protocol
-// owns (game_id, phase, seed, joins, parent8, last_actor_seat); the kernel fills
-// in what the BODY owns — turn, round — by decoding the code it just wrote, so a
-// host cannot emit a payload it would itself reject. Returns the wire bytes.
-//
 // Rule P (§7.2): which chain does every device prefer? <0 a, >0 b, 0 the same.
 //
 // The comparison is in C (msg_rule_p) and not here, deliberately. This decides
@@ -300,30 +273,39 @@ export function kernelMsgDecode(envelope: Uint8Array): MsgEnvelope {
 // game, so there is one implementation and nothing to port to Swift. TS only
 // moves bytes.
 export function kernelMsgRuleP(a: Uint8Array, b: Uint8Array): number {
-    const ex = serverBots();
-    if (a.length + b.length > ex.wasm_replay_io_cap()) throw new Error('iMessage payload: capacity exceeded');
-    const base = ex.wasm_replay_io_ptr();
-    mem(ex).set(a, base);
-    mem(ex).set(b, base + a.length);
-    const r = ex.wasm_msg_rule_p(a.length, b.length);
+    const r = replayIn(serverBots(), msgTooBig, a, b).wasm_msg_rule_p(a.length, b.length);
     // -1/0/+1 are verdicts; anything below is a decode error (MSG_E* < -1).
     if (r < -1) throw msgError(r);
     return r;
 }
 
 // The legal moves of the game the last kernelMsgDecode adopted — read from the
-// kernel, never marshalled. An iMessage device does not hold the game as a TS
-// object: the envelope put it in the kernel, and that is the only copy.
+// kernel's own LegalMoves where it lies, through the generated accessors, never
+// marshalled. An iMessage device does not hold the game as a TS object: the
+// envelope put it in the kernel, and that is the only copy.
 //
 // This is how the extension/route answers "what can I do?" — never by asking TS.
 // A hand-rolled "is it my turn" is a bug by policy (design §17.16).
 export function kernelMsgLegalMoves(seat: number): { type: string; cards?: Card[]; attack_cards?: Card[] }[] {
-    return residentLegalMoves(serverBots(), seat);
+    const ex = serverBots();
+    const total = ex.wasm_legal_moves(seat);
+    const m = mem(ex), lm = ex.wasm_legal_moves_ptr();
+    const card = (p: number): Card => ({ suit: A.Card_get_suit(m, p), value: A.Card_get_value(m, p) });
+    return Array.from({ length: total }, (_, i) => {
+        const mv = A.LegalMoves_moves_at(lm, i);
+        const code = A.LegalMove_get_type(m, mv);
+        const type = K.MOVE_NAMES[code].toLowerCase();
+        if (code === K.MOVE_PICKUP || code === K.MOVE_GOOD || code === K.MOVE_WAIT) return { type };
+        const cards = Array.from({ length: A.LegalMove_get_n_cards(m, mv) }, (_c, j) => card(A.LegalMove_cards_at(mv, j)));
+        if (code !== K.MOVE_COVER) return { type, cards };
+        return { type, cards, attack_cards: cards.map((_c, j) => card(A.LegalMove_attack_cards_at(mv, j))) };
+    });
 }
 
 // Rule R (§7.4): rebase ONE pending action onto the chain kernelMsgDecode last
-// adopted, in ledger order; the answer is a MSG_REBASE_*. REAPPLY mutates the resident game — that IS the
-// rebase — so keep folding the rest in after it; a DISCARD leaves it untouched.
+// adopted, in ledger order; the answer is a MSG_REBASE_*. REAPPLY mutates the
+// resident game — that IS the rebase — so keep folding the rest in after it; a
+// DISCARD leaves it untouched.
 //
 // The round-boundary guard and the legality question both live in C. A throw-in
 // composed against round 5, after a pickup closed round 5, would re-validate as
@@ -331,10 +313,8 @@ export function kernelMsgLegalMoves(seat: number): { type: string; cards?: Card[
 export function kernelMsgRebase(pendingRound: number, seat: number, wire: Uint8Array): number {
     const ex = serverBots();
     if (wire.length > 128) throw new Error('malformed action wire');
-    mem(ex).set(wire, ex.wasm_cards_a_ptr());
-    const r = ex.wasm_msg_rebase(pendingRound, seat, wire.length);
-    if (r < 0) throw msgError(r);
-    return r;
+    mem(ex).u8.set(wire, ex.wasm_cards_a_ptr());
+    return ok(ex.wasm_msg_rebase(pendingRound, seat, wire.length), msgError);
 }
 
 // The PUBLIC view of the game the last kernelMsgDecode adopted — every hand as
@@ -347,11 +327,72 @@ export function kernelMsgRebase(pendingRound: number, seat: number, wire: Uint8A
 // the envelope already put the game in the kernel. The masking itself is in
 // view.c, like every other view in the product — nothing here decides what a
 // stranger may see. The view names no one: the joins carry the names.
-export function kernelMsgPublicView(): { view: TableView_Snap } {
+export function kernelMsgPublicView(): { view: V.TableView_Snap } {
     const ex = bots();
     const rc = ex.wasm_client_adopt_resident(-1);
     if (rc !== 0) throw new Error(`view: the resident game does not read (${rc})`);
-    return { view: readTableView(viewMemOf(ex.memory.buffer), ex.wasm_client_view_ptr()) };
+    return { view: V.readTableView(mem(ex), ex.wasm_client_view_ptr()) };
+}
+
+// Seal the RESIDENT game into an envelope. `header` supplies what the protocol
+// owns (game_id, phase, seed, joins, parent8, last_actor_seat); the kernel fills
+// in what the BODY owns — turn, round — by decoding the code it just wrote, so a
+// host cannot emit a payload it would itself reject. Returns the wire bytes.
+export function kernelMsgSeal(
+    header: Omit<MsgEnvelope, 'digest' | 'turn' | 'round' | 'format' | 'sent_at' | 'n_new'
+                              | 'opening' | 'carry_key' | 'carry_fool'>
+          & { sent_at?: number; opening?: number; carry_key?: number; carry_fool?: number },
+): Uint8Array {
+    const ex = serverBots();
+    const at = ex.wasm_msg_header_ptr();
+    // The format here is a placeholder: msg_seal picks the real one off what the
+    // header ends up carrying (a clock, or a bubble delta, seals format 3), so
+    // the caller never states it twice. n_new is 0 and the digest is left as it
+    // lay for the same reason: the kernel derives both, from the chain
+    // wasm_msg_decode adopted. A name too long for its slot is the writer's
+    // RangeError.
+    M.writeMsgHeader(mem(ex), at, {
+        e: {
+            format: M.MSG_FORMAT_V6, flags: header.flags, phase: header.phase, nPlayers: header.n_players,
+            variant: header.variant, round: 0, lastActorSeat: header.last_actor_seat,
+            gameId: header.game_id, turn: 0,
+            parent8: Array.from(header.parent8.subarray(0, M.MSG_PARENT_LEN)),
+            seed: Array.from(header.seed.subarray(0, M.MSG_SEED_LEN)),
+            sentAt: (header.sent_at ?? 0) & 0xffff, nNew: 0,
+            opening: header.opening ?? M.MSG_NO_OPENING,
+            carryKey: (header.carry_key ?? 0) >>> 0, carryFool: header.carry_fool ?? M.MSG_NO_FOOL,
+            joins: header.joins,
+        },
+        digest: M.readMsgHeader(mem(ex), at).digest,
+    });
+    return taken(ex, ok(ex.wasm_msg_seal(), msgError), ex.wasm_replay_io_ptr());
+}
+
+// THE REMATCH LOBBY for a FINISHED envelope (c/src/msg_wire.h
+// msg_rematch_lobby): the same game dealt again, built wholly by the kernel.
+// The same C the phone's fio_msg_rematch calls - this is how
+// e2e/msg_rematch.test.ts holds the two engines to one answer.
+export function kernelMsgRematch(finished: Uint8Array, tappedAtMs: number, creatorSeat: number): Uint8Array {
+    const ex = replayIn(serverBots(), msgTooBig, finished);
+    return taken(ex, ok(ex.wasm_msg_rematch(finished.length, tappedAtMs, creatorSeat), msgError), ex.wasm_replay_io_ptr());
+}
+
+// The best shareable REPLAY code for the game the last kernelMsgDecode
+// adopted — the TS-side twin of MessageKernel.residentReplayCode()
+// (sdk/swift/MessageEnvelope.swift), reached off the same resident g_game
+// instead of Swift's fio_replay_share_code_b32. Used by the /m/ page's
+// FINISHED-bubble funnel (docs/IMESSAGE_LOBBY_V3.md, batch 6 item B): once a
+// payload decodes, msg_replay has already run the whole chain through the
+// ORDINARY kernel handlers (handle_attack etc.), which log exactly like any
+// other play — so the resident game already carries the full session log a
+// v6 code needs. Only the envelope's own seed (env.seed, already decoded — no
+// second kernel round-trip to fetch it) has to be supplied.
+export function kernelResidentReplayCodeV6(seed: Uint8Array): Uint8Array {
+    if (seed.length !== M.MSG_SEED_LEN) {
+        throw new Error(`replay: v6 needs a ${M.MSG_SEED_LEN}-byte deal seed, got ${seed.length}`);
+    }
+    const ex = replayIn(serverBots(), codeTooBig, seed);
+    return taken(ex, ok(ex.wasm_replay_encode_v6_from_game(1 << 30), replayRefused), ex.wasm_replay_io_ptr());
 }
 
 /* ---------------- the replay code's extras blob (c/src/replay_extras.h) ------
@@ -370,17 +411,15 @@ export function kernelMsgPublicView(): { view: TableView_Snap } {
  * nothing here knows its layout; a name too wide for the struct's slot, or more
  * gaps than it holds, is the writer's RangeError.
  */
-function __extrasArgs(ex: WebExports, names: string[] | null, startTime: number | null,
-                      gaps: number[] | null): void {
+function extrasArgs(ex: WebExports, names: string[] | null, startTime: number | null, gaps: number[] | null): void {
     const hasNames = (names?.length ?? 0) > 0;
     const hasTimes = startTime !== null && gaps !== null;
-    const snap: ReplayExtras_Snap = {
-        flags: (hasNames ? REPLAY_EXTRAS_FLAG_NAMES : 0) | (hasTimes ? REPLAY_EXTRAS_FLAG_TIMES : 0),
+    M.writeReplayExtras(mem(ex), ex.wasm_replay_extras_ptr(), {
+        flags: (hasNames ? M.REPLAY_EXTRAS_FLAG_NAMES : 0) | (hasTimes ? M.REPLAY_EXTRAS_FLAG_TIMES : 0),
         names: hasNames ? names!.map((text) => ({ text })) : [],
         startTime: hasTimes ? startTime! : 0,
         gaps: hasTimes ? gaps! : [],
-    };
-    writeReplayExtras(msgMemOf(ex.memory.buffer), ex.wasm_replay_extras_ptr(), snap);
+    });
 }
 
 /**
@@ -391,11 +430,8 @@ function __extrasArgs(ex: WebExports, names: string[] | null, startTime: number 
 export function kernelReplayExtrasEncode(names: string[] | null, startTime: number | null,
                                          gaps: number[] | null): Uint8Array {
     const ex = serverBots();
-    __extrasArgs(ex, names, startTime, gaps);
-    const n = ex.wasm_replay_extras_encode();
-    if (n < 0) throw __extrasError(n);
-    const base = ex.wasm_io_ptr();
-    return mem(ex).slice(base, base + n);
+    extrasArgs(ex, names, startTime, gaps);
+    return taken(ex, ok(ex.wasm_replay_extras_encode(), extrasError));
 }
 
 /** What a decoded extras blob says. */
@@ -412,18 +448,44 @@ export interface KernelReplayExtras {
  */
 export function kernelReplayExtrasDecode(blob: Uint8Array, playerCount: number,
                                          moveCount: number): KernelReplayExtras {
-    const ex = bots();
-    if (blob.length > ex.wasm_replay_io_cap()) throw new Error('extras: blob exceeds the kernel IO buffer');
-    mem(ex).set(blob, ex.wasm_replay_io_ptr());
-    const rc = ex.wasm_replay_extras_decode(blob.length, playerCount, moveCount);
-    if (rc < 0) throw __extrasError(rc);
-    const x = readReplayExtras(msgMemOf(ex.memory.buffer), ex.wasm_replay_extras_ptr());
-    const hasTimes = (x.flags & REPLAY_EXTRAS_FLAG_TIMES) !== 0;
+    const ex = replayIn(bots(), extrasTooBig, blob);
+    ok(ex.wasm_replay_extras_decode(blob.length, playerCount, moveCount), extrasError);
+    const x = M.readReplayExtras(mem(ex), ex.wasm_replay_extras_ptr());
+    const hasTimes = (x.flags & M.REPLAY_EXTRAS_FLAG_TIMES) !== 0;
     return {
-        names: (x.flags & REPLAY_EXTRAS_FLAG_NAMES) ? x.names.map((n) => n.text) : null,
+        names: (x.flags & M.REPLAY_EXTRAS_FLAG_NAMES) ? x.names.map((n) => n.text) : null,
         startTime: hasTimes ? x.startTime : null,
         moveGaps: hasTimes ? [...x.gaps] : null,
     };
+}
+
+// base32, from the kernel (replay.c replay_b32_encode/decode). replay.h called
+// this alphabet "the web's codec.ts alphabet" and replay.c said a code made on
+// the web "reads here byte for byte" - a mirror documenting itself as one. The
+// web asks for it now, so there is one alphabet.
+export function kernelB32Encode(bytes: Uint8Array): string {
+    const ex = replayIn(bots(), tooBig('b32'), bytes);
+    return str(taken(ex, ok(ex.wasm_replay_b32_encode(bytes.length), tooBig('b32'))));
+}
+
+// Accepts lower case, ignores characters outside the alphabet, and stops at the
+// '-' where a share link's extras suffix begins. All of that is the kernel's
+// decoder, not a convention restated here.
+export function kernelB32Decode(code: string): Uint8Array {
+    const text = utf8(code);
+    const ex = replayIn(bots(), tooBig('b32'), text, NUL);
+    return taken(ex, ok(ex.wasm_replay_b32_decode(text.length), tooBig('b32')));
+}
+
+// The replay code out of whatever a person pasted - the kernel's
+// replay_link_parse. Building a link and reading one back are two halves of the
+// same format, and this is the half that has to REFUSE: replay_b32_decode is
+// deliberately tolerant, so an unstripped "https" prefix would decode to a
+// different game rather than fail. Throws when the input is not a code.
+export function kernelReplayLinkParse(url: string): string {
+    const text = utf8(url);
+    const ex = replayIn(serverBots(), tooBig('link'), text, NUL);
+    return str(taken(ex, ok(ex.wasm_replay_link_parse(text.length), () => new Error(`not a replay code: "${url}"`))));
 }
 
 /**
@@ -434,129 +496,15 @@ export function kernelReplayExtrasDecode(blob: Uint8Array, playerCount: number,
  * codec's, so a phone, a watch and a browser have no business each writing it.
  * `names` must be as wide as the table; unnamed seats are ''. `style` is a
  * REPLAY_LINK_STYLE_*: the https link, or the QR form.
+ *
+ * The roster goes through the kernel's own struct; the moves code crosses as
+ * itself, since a long game's code runs to tens of KB.
  */
-
-// base32, from the kernel (replay.c replay_b32_encode/decode). replay.h called
-// this alphabet "the web's codec.ts alphabet" and replay.c said a code made on
-// the web "reads here byte for byte" - a mirror documenting itself as one. The
-// web asks for it now, so there is one alphabet.
-export function kernelB32Encode(bytes: Uint8Array): string {
-    const ex = bots();
-    if (bytes.length >= ex.wasm_replay_io_cap()) throw new Error('b32: input exceeds the kernel IO buffer');
-    mem(ex).set(bytes, ex.wasm_replay_io_ptr());
-    const w = ex.wasm_replay_b32_encode(bytes.length);
-    if (w < 0) throw new Error('b32: encode overflowed the kernel IO buffer');
-    const base = ex.wasm_io_ptr();
-    return new TextDecoder().decode(mem(ex).slice(base, base + w));
-}
-
-// Accepts lower case, ignores characters outside the alphabet, and stops at the
-// '-' where a share link's extras suffix begins. All of that is the kernel's
-// decoder, not a convention restated here.
-export function kernelB32Decode(code: string): Uint8Array {
-    const ex = bots();
-    const inBytes = new TextEncoder().encode(code);
-    // The kernel writes a terminator one byte past the input.
-    if (inBytes.length + 1 >= ex.wasm_replay_io_cap()) throw new Error('b32: input exceeds the kernel IO buffer');
-    mem(ex).set(inBytes, ex.wasm_replay_io_ptr());
-    const w = ex.wasm_replay_b32_decode(inBytes.length);
-    if (w < 0) throw new Error('b32: decode overflowed the kernel IO buffer');
-    const base = ex.wasm_io_ptr();
-    return mem(ex).slice(base, base + w);
-}
-
-// The replay code out of whatever a person pasted - the kernel's
-// replay_link_parse. Building a link and reading one back are two halves of the
-// same format, and this is the half that has to REFUSE: replay_b32_decode is
-// deliberately tolerant, so an unstripped "https" prefix would decode to a
-// different game rather than fail. Throws when the input is not a code.
-export function kernelReplayLinkParse(url: string): string {
-    const ex = serverBots();
-    const inBytes = new TextEncoder().encode(url);
-    if (inBytes.length + 1 >= ex.wasm_replay_io_cap()) throw new Error('link: input exceeds the kernel IO buffer');
-    mem(ex).set(inBytes, ex.wasm_replay_io_ptr());
-    const w = ex.wasm_replay_link_parse(inBytes.length);
-    if (w < 0) throw new Error(`not a replay code: "${url}"`);
-    const base = ex.wasm_io_ptr();
-    return new TextDecoder().decode(mem(ex).slice(base, base + w));
-}
-
-export function kernelReplayLink(moves: string, names: string[], style: number = REPLAY_LINK_STYLE_URL): string {
-    const ex = bots();
-    // The roster goes through the kernel's own struct; the moves code crosses as
-    // itself (a base32 string the kernel NUL-terminates in place, since a long
-    // game's code runs to tens of KB). The kernel writes that terminator one
-    // byte past the input, so the code must fit the buffer with room for it.
-    __extrasArgs(ex, names, null, null);
-    const movesBytes = new TextEncoder().encode(moves);
-    if (movesBytes.length >= ex.wasm_replay_io_cap()) throw new Error('extras: the replay code exceeds the kernel IO buffer');
-    mem(ex).set(movesBytes, ex.wasm_replay_io_ptr());
-    const w = ex.wasm_replay_link(movesBytes.length, style);
-    if (w < 0) throw __extrasError(w);
-    const base = ex.wasm_io_ptr();
-    return new TextDecoder().decode(mem(ex).subarray(base, base + w));
-}
-
-export function kernelMsgSeal(
-    header: Omit<MsgEnvelope, 'digest' | 'turn' | 'round' | 'format' | 'sent_at' | 'n_new'
-                              | 'opening' | 'carry_key' | 'carry_fool'>
-          & { sent_at?: number; opening?: number; carry_key?: number; carry_fool?: number },
-): Uint8Array {
-    const ex = serverBots();
-    // format 2 here is a placeholder: msg_seal picks the real one off what the
-    // header ends up carrying (a clock, or a bubble delta, seals format 3), so
-    // the caller never states it twice. n_new is 0 for the same reason the
-    // digest is: the kernel derives it, from the chain wasm_msg_decode adopted.
-    writeHeader(ex, { ...header, sent_at: header.sent_at ?? 0, n_new: 0,
-                      opening: header.opening ?? MSG_NO_OPENING,
-                      carry_key: header.carry_key ?? 0,
-                      carry_fool: header.carry_fool ?? MSG_NO_FOOL,
-                      format: 2, turn: 0, round: 0, digest: new Uint8Array(32) });
-    const r = ex.wasm_msg_seal();
-    if (r < 0) throw msgError(r);
-    const base = ex.wasm_replay_io_ptr();
-    return mem(ex).slice(base, base + r);
-}
-
-// THE REMATCH LOBBY for a FINISHED envelope (c/src/msg_wire.h
-// msg_rematch_lobby): the same game dealt again, built wholly by the kernel.
-// The same C the phone's fio_msg_rematch calls - this is how
-// e2e/msg_rematch.test.ts holds the two engines to one answer.
-export function kernelMsgRematch(finished: Uint8Array, tappedAtMs: number,
-                                 creatorSeat: number): Uint8Array {
-    const ex = serverBots();
-    if (finished.length > ex.wasm_replay_io_cap()) throw new Error('iMessage payload: capacity exceeded');
-    const base = ex.wasm_replay_io_ptr();
-    mem(ex).set(finished, base);
-    const r = ex.wasm_msg_rematch(finished.length, tappedAtMs, creatorSeat);
-    if (r < 0) throw msgError(r);
-    return mem(ex).slice(base, base + r);
-}
-
-// The best shareable REPLAY code for the game the last kernelMsgDecode
-// adopted — the TS-side twin of MessageKernel.residentReplayCode()
-// (sdk/swift/MessageEnvelope.swift), reached off the same resident g_game
-// instead of Swift's fio_replay_share_code_b32. Used by the /m/ page's
-// FINISHED-bubble funnel (docs/IMESSAGE_LOBBY_V3.md, batch 6 item B): once a
-// payload decodes, msg_replay has already run the whole chain through the
-// ORDINARY kernel handlers (handle_attack etc.), which log exactly like any
-// other play — so the resident game already carries the full session log a
-// v6 code needs. Only the envelope's own seed (env.seed, already decoded — no
-// second kernel round-trip to fetch it) has to be supplied.
-//
-// It encodes whatever is already resident (wasm_replay_encode_v6_from_game), the
-// log kernelMsgDecode built included, exactly as fio_replay_share_code_b32 does
-// on the native/Swift side.
-export function kernelResidentReplayCodeV6(seed: Uint8Array): Uint8Array {
-    if (seed.length !== 32) {
-        throw new Error(`replay: v6 needs a 32-byte deal seed, got ${seed.length}`);
-    }
-    const ex = serverBots();
-    const base = ex.wasm_replay_io_ptr();
-    mem(ex).set(seed, base);
-    const n = ex.wasm_replay_encode_v6_from_game(1 << 30);
-    if (n < 0) throw __replayError(n, replayErrorDetail(ex));
-    return mem(ex).slice(base, base + n);
+export function kernelReplayLink(moves: string, names: string[], style: number = M.REPLAY_LINK_STYLE_URL): string {
+    const code = utf8(moves);
+    const ex = replayIn(bots(), extrasTooBig, code, NUL);
+    extrasArgs(ex, names, null, null);
+    return str(taken(ex, ok(ex.wasm_replay_link(code.length, style), extrasError)));
 }
 
 // ---------------------------------------------------------------------------
@@ -570,11 +518,7 @@ export function kernelResidentReplayCodeV6(seed: Uint8Array): Uint8Array {
 
 /** Steps a code replays to: the deal, then one per action. */
 export function replayStepCount(code: Uint8Array): number {
-    const ex = bots();
-    mem(ex).set(code, ex.wasm_replay_io_ptr());
-    const n = ex.wasm_replay_step_count(code.length);
-    if (n < 0) throw __replayError(n, replayErrorDetail(ex));
-    return n;
+    return ok(codeIn(code).wasm_replay_step_count(code.length), replayRefused);
 }
 
 /** What a step played: the kernel's REPLAY_ATOM_* (c/src/replay.h), each under
@@ -599,11 +543,9 @@ export type ReplayStepInfo = V.ReplayStep_Snap;
  * only by a reconstructed English message. See replay_steps.h.
  */
 export function replayStepIndex(code: Uint8Array): ReplayStepInfo[] {
-    const ex = bots();
-    mem(ex).set(code, ex.wasm_replay_io_ptr());
-    const len = ex.wasm_replay_step_index(code.length);
-    if (len < 0) throw __replayError(len, replayErrorDetail(ex));
-    const m = viewMemOf(ex.memory.buffer), base = ex.wasm_io_ptr();
+    const ex = codeIn(code);
+    const len = ok(ex.wasm_replay_step_index(code.length), replayRefused);
+    const m = mem(ex), base = ex.wasm_io_ptr();
     return Array.from({ length: len / K.RS_INDEX_STRIDE }, (_, i) => V.readReplayStep(m, base + i * K.RS_INDEX_STRIDE));
 }
 
@@ -614,27 +556,21 @@ export function replayStepIndex(code: Uint8Array): ReplayStepInfo[] {
  * n_events is a u8, so one frame per game is impossible regardless.
  */
 export function replayEventFrames(code: Uint8Array, viewer: number): Uint8Array[] {
-    const ex = bots();
     const frames: Uint8Array[] = [];
     const steps = replayStepCount(code);
     let from = 0;
     // Each chunk re-runs the replay from the start (the arithmetic decode is the
     // cost and it is ~1ms); a game takes a couple of chunks. The guard is a
     // no-progress backstop, not a step limit. Where each frame lies in the chunk
-    // is the kernel's own index (replay_steps.h ReplayFrameIndex), read through
-    // the generated reader; the frames themselves are opaque bytes forwarded to
-    // the same decoder live play feeds.
+    // is the kernel's own index (replay_steps.h ReplayFrameIndex); the frames
+    // themselves are opaque bytes forwarded to the same decoder live play feeds.
     for (let guard = 0; from < steps && guard < 4096; guard++) {
-        mem(ex).set(code, ex.wasm_replay_io_ptr());
-        const len = ex.wasm_replay_events(viewer, from, code.length);
-        if (len < 0) throw __replayError(len, replayErrorDetail(ex));
-        const index = readReplayFrameIndex(viewMemOf(ex.memory.buffer), ex.wasm_replay_events_index_ptr());
+        const ex = codeIn(code);
+        ok(ex.wasm_replay_events(viewer, from, code.length), replayRefused);
+        const index = V.readReplayFrameIndex(mem(ex), ex.wasm_replay_events_index_ptr());
         if (index.nextStep <= from) throw new Error(`replay frames stalled at step ${from}/${steps}`);
-        const buf = mem(ex);
         const base = ex.wasm_io_ptr();
-        for (let i = 0; i < index.off.length; i++) {
-            frames.push(buf.slice(base + index.off[i], base + index.off[i] + index.len[i]));
-        }
+        index.off.forEach((off, i) => frames.push(taken(ex, index.len[i], base + off)));
         from = index.nextStep;
     }
     if (frames.length !== steps) {
@@ -644,7 +580,7 @@ export function replayEventFrames(code: Uint8Array, viewer: number): Uint8Array[
 }
 
 /** What a code says about its game as a whole (c/src/replay_steps.h ReplaySummary). */
-export type ReplaySummary = ReplaySummary_Snap;
+export type ReplaySummary = V.ReplaySummary_Snap;
 
 /**
  * A code at a glance, without playing it back: the seat count, the trump suit and
@@ -652,10 +588,9 @@ export type ReplaySummary = ReplaySummary_Snap;
  * out, and how many moves its extras time. null when the code does not decode.
  */
 export function replaySummary(code: Uint8Array): ReplaySummary | null {
-    const ex = bots();
-    mem(ex).set(code, ex.wasm_replay_io_ptr());
+    const ex = codeIn(code);
     const at = ex.wasm_replay_summary(code.length);
-    return at > 0 ? readReplaySummary(viewMemOf(ex.memory.buffer), at) : null;
+    return at > 0 ? V.readReplaySummary(mem(ex), at) : null;
 }
 
 /**
@@ -665,12 +600,9 @@ export function replaySummary(code: Uint8Array): ReplaySummary | null {
  * action or the viewer is not a seat.
  */
 export function replayStepMaskedState(code: Uint8Array, step: number, viewer: number): Uint8Array | null {
-    const ex = bots();
-    mem(ex).set(code, ex.wasm_replay_io_ptr());
+    const ex = codeIn(code);
     const len = ex.wasm_replay_step_masked_state(code.length, step, viewer);
-    if (len < 0) return null;
-    const at = ex.wasm_io_ptr();
-    return mem(ex).slice(at, at + len);
+    return len < 0 ? null : taken(ex, len);
 }
 
 /**
@@ -679,12 +611,9 @@ export function replayStepMaskedState(code: Uint8Array, step: number, viewer: nu
  * null when the step has no record of its own to pair with (a good, a round end).
  */
 export function replayStepLogs(code: Uint8Array, step: number): Uint8Array | null {
-    const ex = bots();
-    mem(ex).set(code, ex.wasm_replay_io_ptr());
+    const ex = codeIn(code);
     const len = ex.wasm_replay_step_logs(code.length, step);
-    if (len < 0) return null;
-    const at = ex.wasm_io_ptr();
-    return mem(ex).slice(at, at + len);
+    return len < 0 ? null : taken(ex, len);
 }
 
 // ===========================================================================
@@ -692,7 +621,7 @@ export function replayStepLogs(code: Uint8Array, step: number): Uint8Array | nul
 // ===========================================================================
 // The bridge the web pure modules (src/state/*) delegate to, so the animation
 // policy the React glitch-fixing hardened lives in C once — the same "one kernel
-// behind every host" argument FMSG makes. bots.wasm is loaded at app boot
+// behind every host" argument FMSG makes. The kernel is loaded at app boot
 // (providers.tsx awaits ensureBotsAsync), and bots() is synchronous on the
 // server, so these calls are safe synchronously in both.
 
@@ -739,8 +668,7 @@ export function animEventKey(type: string | undefined, card: Card,
 /** clientReconcile.shouldDropStaleSequence, in C. null models "no version"
  *  (a replay sequence, never gated). */
 export function animShouldDropStale(last: number | null, incoming: number | null): boolean {
-    const ex = bots();
-    return ex.wasm_anim_should_drop_stale(
+    return bots().wasm_anim_should_drop_stale(
         last === null ? 0 : 1, last ?? 0,
         incoming === null ? 0 : 1, incoming ?? 0) !== 0;
 }
@@ -749,11 +677,9 @@ export function animShouldDropStale(last: number | null, incoming: number | null
  *  into `optCards` to release. */
 export function animStaleOptimisticOnTable(optCards: Card[], tableCards: Card[], namedCards: Card[]): number[] {
     const ex = bots();
-    V.writeAnimStaleAsk(viewMemOf(ex.memory.buffer), ex.wasm_anim_stale_ask_ptr(),
-        { opt: optCards, table: tableCards, named: namedCards });
-    const n = ex.wasm_anim_stale_optimistic();
-    if (n < 0) throw new Error(`anim_stale_optimistic error ${n}`);
-    return [...V.readAnimStaleRelease(viewMemOf(ex.memory.buffer), ex.wasm_anim_stale_release_ptr()).release];
+    V.writeAnimStaleAsk(mem(ex), ex.wasm_anim_stale_ask_ptr(), { opt: optCards, table: tableCards, named: namedCards });
+    ok(ex.wasm_anim_stale_optimistic(), animError('anim_stale_optimistic'));
+    return [...V.readAnimStaleRelease(mem(ex), ex.wasm_anim_stale_release_ptr()).release];
 }
 
 // ---- the role beat (anim_plan.h "the role beat") -----------------------------
@@ -775,12 +701,12 @@ export type AnimRoles = V.AnimRoles_Snap;
 
 /** What every role entry answers: the marks to show next where the kernel left them, or null for "nothing changed". */
 function rolesAnswer(ex: WebExports, at: number): AnimRoles | null {
-    if (at < 0) throw new Error(`anim roles error ${at}`);
-    return at === 0 ? null : V.readAnimRoles(viewMemOf(ex.memory.buffer), at);
+    return ok(at, animError('anim roles')) === 0 ? null : V.readAnimRoles(mem(ex), at);
 }
 
 /** THE STATE A STREAM SHOULD OPEN ON (anim_goods_opening), or null for "start
- *  playing straight away". `firstGoodMask` is the stream's event-0 mask. */
+ *  playing straight away". `firstGoodMask` is the stream's event-0 mask, or
+ *  ANIM_NO_MASK for a step that carried no board. */
 export function animRolesGoodsOpening(shown: AnimRoles, firstGoodMask: number): AnimRoles | null {
     const ex = bots();
     return rolesAnswer(ex, ex.wasm_anim_roles_goods_opening(
@@ -807,8 +733,9 @@ export function animRolesPassHandOff(shown: AnimRoles, attackPassSeats: number,
         shown.defender, shown.firstAttacker, shown.goodMask, attackPassSeats, finalDefender));
 }
 
-/** MAY THIS WRITER TOUCH THE SHOWN BADGES (anim_shown_ledger_allows)? A
- *  bystander may not, while a sequence is running; everyone else may. */
+/** MAY THIS WRITER TOUCH THE SHOWN BADGES (anim_shown_ledger_allows)? `claim` is
+ *  an ANIM_CLAIM_*: a bystander may not, while a sequence is running; everyone
+ *  else may. */
 export function animShownLedgerAllows(claim: number, sequencing: boolean): boolean {
     return bots().wasm_anim_shown_ledger_allows(claim, sequencing ? 1 : 0) !== 0;
 }
@@ -825,11 +752,9 @@ export function animFinishRows(
     elimination: number[], gameOver: number, nPlayers: number, mySeat: number,
 ): AnimFinishRow[] {
     const ex = bots();
-    V.writeAnimFinishAsk(viewMemOf(ex.memory.buffer), ex.wasm_anim_finish_ask_ptr(),
-        { gameOver, nPlayers, mySeat, elimination });
-    const n = ex.wasm_anim_finish_rows();
-    if (n < 0) throw new Error(`anim_finish_rows error ${n}`);
-    return V.readAnimFinish(viewMemOf(ex.memory.buffer), ex.wasm_anim_finish_ptr()).rows
+    V.writeAnimFinishAsk(mem(ex), ex.wasm_anim_finish_ask_ptr(), { gameOver, nPlayers, mySeat, elimination });
+    ok(ex.wasm_anim_finish_rows(), animError('anim_finish_rows'));
+    return V.readAnimFinish(mem(ex), ex.wasm_anim_finish_ptr()).rows
         .map((r) => ({ place: r.place, seat: r.seat, isYou: r.isYou !== 0 }));
 }
 
@@ -858,12 +783,11 @@ export function animHandLaidOut(
     cards: readonly (Card | null)[], order: readonly (Card | null)[], deferred = 0n,
 ): (Card | null)[] {
     const ex = bots();
-    V.writeAnimHandAsk(viewMemOf(ex.memory.buffer), ex.wasm_anim_hand_ask_ptr(), {
+    V.writeAnimHandAsk(mem(ex), ex.wasm_anim_hand_ask_ptr(), {
         deferred, cards: cards.map((c) => c ?? NO_CARD), order: order.map((c) => c ?? NO_CARD),
     });
-    const n = ex.wasm_anim_hand_laid_out();
-    if (n < 0) throw new Error(`anim_hand_laid_out error ${n}`);
-    return V.readAnimHandLaid(viewMemOf(ex.memory.buffer), ex.wasm_anim_hand_laid_ptr()).cards
+    ok(ex.wasm_anim_hand_laid_out(), animError('anim_hand_laid_out'));
+    return V.readAnimHandLaid(mem(ex), ex.wasm_anim_hand_laid_ptr()).cards
         .map((c) => (c.suit === V.CARD_NONE_SUIT && c.value === V.CARD_NONE_VALUE ? null : c));
 }
 
@@ -925,7 +849,9 @@ export interface AnimPlanSnap {
     veilIds: number[]; steps: AnimPlanStepSnap[];
 }
 
-/** Where the plan stands at a moment (anim_plan.h AnimFrame). */
+/** Where the plan stands at a moment (anim_plan.h AnimFrame). `step` is
+ *  ANIM_STEP_NONE when no step is playing at this instant, and `nextMs` is
+ *  ANIM_NEVER when the answer will not change again. */
 export interface AnimFrameSnap {
     step: number; elapsedMs: number; landed: number; nextMs: number; done: boolean;
     deck: number; discard: number; hand: number[]; nPlayers: number; flipped: Card | null;
@@ -946,8 +872,8 @@ export function animBuildPlan(
     // A hand as the ask holds one: a count for every seat a table can have,
     // of which the kernel reads this table's own.
     const seats = (hand: readonly number[]): number[] =>
-        Array.from({ length: MAX_PLAYERS }, (_, s) => hand[s] ?? 0);
-    writeAnimPlanAsk(viewMemOf(ex.memory.buffer), ex.wasm_anim_plan_ask_ptr(), {
+        Array.from({ length: V.MAX_PLAYERS }, (_, s) => hand[s] ?? 0);
+    V.writeAnimPlanAsk(mem(ex), ex.wasm_anim_plan_ask_ptr(), {
         nPlayers,
         finalDeck: final.deck, finalDiscard: final.discard,
         finalFlipped: final.flipped ?? NO_CARD, finalHand: seats(final.hand),
@@ -963,17 +889,15 @@ export function animBuildPlan(
             row: e.battles ?? [],
         })),
     });
-    const rc = ex.wasm_anim_build_plan();
-    if (rc < 0) throw new Error(`anim_build_plan error ${rc}`);
+    ok(ex.wasm_anim_build_plan(), animError('anim_build_plan'));
     return readPlan(ex);
 }
 
 /** WHERE THE LAST-BUILT PLAN STANDS at `nowMs` from its start (anim_plan_at). */
 export function animPlanAt(nowMs: number): AnimFrameSnap {
     const ex = bots();
-    const rc = ex.wasm_anim_plan_at(Math.max(0, Math.round(nowMs)));
-    if (rc < 0) throw new Error(`anim_plan_at error ${rc}`);
-    const m = animMemOf(ex.memory.buffer);
+    ok(ex.wasm_anim_plan_at(Math.max(0, Math.round(nowMs))), animError('anim_plan_at'));
+    const m = mem(ex);
     const at = ex.wasm_anim_frame_ptr();
     const nPlayers = A.AnimFrame_get_n_players(m, at);
     const hand: number[] = [];
@@ -997,13 +921,13 @@ export function animPlanAt(nowMs: number): AnimFrameSnap {
 
 // A Card inside a kernel struct is a packed byte, not the wire's dense id.
 // CARD_NONE is what the kernel writes for "no flipped trump left".
-function readAnimCard(m: ReturnType<typeof animMemOf>, at: number): Card | null {
+function readAnimCard(m: V.Mem, at: number): Card | null {
     const suit = A.Card_get_suit(m, at), value = A.Card_get_value(m, at);
     return suit < 0 || value < 1 ? null : { suit, value };
 }
 
 function readPlan(ex: WebExports): AnimPlanSnap {
-    const m = animMemOf(ex.memory.buffer);
+    const m = mem(ex);
     const at = ex.wasm_anim_plan_ptr();
     const nSteps = A.AnimPlan_get_n_steps(m, at);
     const preAt = A.AnimPlan_pre_at(at);
@@ -1053,7 +977,6 @@ function readPlan(ex: WebExports): AnimPlanSnap {
     };
 }
 
-
 /**
  * THE ORDER A DOOMED SEQUENCE FLIES HOME IN (anim_plan.h anim_reversal_order),
  * for a caller that already holds its verdicts - which every server-transport
@@ -1070,11 +993,9 @@ export function animReversalOrder(
     verdicts: readonly number[], groupSizes: readonly number[],
 ): number[][] {
     const ex = bots();
-    V.writeAnimReversalAsk(viewMemOf(ex.memory.buffer), ex.wasm_anim_reversal_ask_ptr(),
-        { verdicts, groupSizes });
-    const n = ex.wasm_anim_reversal_order();
-    if (n < 0) throw new Error(`anim_reversal_order error ${n}`);
-    const plan = V.readAnimConflictPlan(viewMemOf(ex.memory.buffer), ex.wasm_anim_reversal_plan_ptr());
+    V.writeAnimReversalAsk(mem(ex), ex.wasm_anim_reversal_ask_ptr(), { verdicts, groupSizes });
+    ok(ex.wasm_anim_reversal_order(), animError('anim_reversal_order'));
+    const plan = V.readAnimConflictPlan(mem(ex), ex.wasm_anim_reversal_plan_ptr());
     const steps: number[][] = [];
     let at = 0;
     for (const c of plan.stepCount) steps.push(plan.order.slice(at, at += c));
