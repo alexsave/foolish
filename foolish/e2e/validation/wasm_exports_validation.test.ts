@@ -56,7 +56,7 @@ import { gunzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 
 import {
-    BINDER_MODULES, binderMismatches, makefileExportNames, wasmBinders, wasmExportSignatures,
+    BINDER_MODULES, binderMismatches, calledExports, makefileExportNames, wasmBinders, wasmExportSignatures,
     type ModuleId, type WasmSig,
 } from '../helpers/wasm_exports.ts';
 
@@ -119,9 +119,13 @@ test('the shipped bots.wasm exports nothing the TypeScript leaves unbound', () =
     // page can drive any of it, and the test build is checked in
     // e2e/bots_test_build.test.ts.
     const shipped = [...sigsOf(COMMITTED.bots).keys()];
-    const boundToBots = new Set(binders
+    // Bound means declared by a hand-written binder, or CALLED by the SDK: a
+    // wrapper typed with a generated interface (sdk/ts/wasm/bots.ts) declares
+    // nothing, and that interface lists every export, so the call is what says
+    // the entry is used.
+    const boundToBots = new Set([...calledExports(ROOT + 'sdk/ts'), ...binders
         .filter((b) => BINDER_MODULES[b.key] === 'bots' || BINDER_MODULES[b.key] === 'bots-test')
-        .flatMap((b) => b.members.map((m) => m.name)));
+        .flatMap((b) => b.members.map((m) => m.name))]);
 
     const unbound = shipped.filter((n) => !boundToBots.has(n)).sort();
     assert.deepEqual(unbound, [], `bots.wasm exports ${unbound.join(', ')} that no TypeScript binds - `
