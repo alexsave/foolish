@@ -5,7 +5,9 @@
 // them, the board a card flies home to, the rematch's lobby before its reset
 // arrives, the board a replay's deal lands on. The kernel makes every one of them from a board the screen holds
 // (c/src/client_table.h client_optimistic_apply, client_board_edit,
-// client_rearrange_hand), through the client slot's generated writer and reader
+// client_rearrange_hand; the boards a push keeps my cards on and flies them
+// home over are client_keep_board and client_revert_board, asked from
+// optimisticResolve.ts), through the client slot's generated writer and reader
 // (sdk/ts/table/client_table.ts). This file only names the edits; it decides
 // nothing about what a board becomes, and a board the kernel refuses to change
 // is null for the caller to keep what it had.
@@ -31,18 +33,6 @@ export const keepPending = (view: TableView, pending: readonly PendingCard[]): T
 /** The board with the lead and the shield my pending pass gave. */
 export const turnedBoard = (view: TableView, firstAttacker: number, defender: number): TableView | null =>
     clientTable().edit(view, edit(V.CLIENT_EDIT_TURN, [], { firstAttacker, defender }));
-
-/** The board whose table is `cards`, uncovered. */
-export const tableOf = (view: TableView, cards: readonly ViewCard[]): TableView | null =>
-    clientTable().edit(view, edit(V.CLIENT_EDIT_TABLE, cards));
-
-/** The board without every battle that holds one of `cards`. */
-export const lifted = (view: TableView, cards: readonly ViewCard[]): TableView | null =>
-    clientTable().edit(view, edit(V.CLIENT_EDIT_LIFT, cards));
-
-/** The board with `cards` back in my hand. */
-export const returnedToHand = (view: TableView, cards: readonly ViewCard[]): TableView | null =>
-    clientTable().edit(view, edit(V.CLIENT_EDIT_RETURN, cards));
 
 /** The board with a refused move's cards off the table and back in my hand. */
 export const withdrawn = (view: TableView, cards: readonly ViewCard[]): TableView | null =>

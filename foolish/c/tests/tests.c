@@ -13930,6 +13930,7 @@ static LegalMoves cb_moves;
 static TableView cb_view, cb_view2;
 static ClientConflict cb_q;
 static ConflictVerdicts cb_out;
+static ConflictHope cb_h;
 static uint32_t cb_rng;
 
 // seat 0 led 7h, the attack cvr_board lays.
@@ -14681,7 +14682,7 @@ static void test_client_rearrange_hand(void) {
 }
 
 static int cb_verdicts(TableView *open, TableView *final) {
-    const int n = client_conflict_verdicts(open, final, &cb_q, &cb_out);
+    const int n = client_conflict_verdicts(open, final, &cb_q, &cb_h, &cb_out);
     return n;
 }
 
@@ -14694,8 +14695,9 @@ static void test_client_conflict_verdicts(void) {
     cvr_board(&cb_view, 0);
     cb_view2 = cb_view;
     memset(&cb_q, 0, sizeof(cb_q));
-    cb_q.defender_seat = 1;
-    cb_q.pending_attacks = -1;
+    memset(&cb_h, 0, sizeof(cb_h));
+    cb_h.defender_seat = 1;
+    cb_h.pending_attacks = -1;
     cb_q.n_motions = 2;
     cb_q.motions[0] = (ConflictMotion){ .card = cvr_attack(), .dest = ANIM_DEST_TABLE };
     cb_q.motions[1] = (ConflictMotion){ .card = c7s, .dest = ANIM_DEST_TABLE };
@@ -14708,14 +14710,14 @@ static void test_client_conflict_verdicts(void) {
     cb_q.motions[0] = (ConflictMotion){ .card = c9d, .dest = ANIM_DEST_TABLE };
     CHECK(cb_verdicts(&cb_view, &cb_view2) == 2 && cb_out.verdicts[0] == ANIM_CONFLICT_KEEP && cb_out.verdicts[1] == ANIM_CONFLICT_KEEP,
           "two fit a hand of two");
-    cb_q.defender_seat = -1;
+    cb_h.defender_seat = -1;
     CHECK(cb_verdicts(&cb_view, &cb_view2) == 2 && cb_out.verdicts[0] == ANIM_CONFLICT_REVERT && cb_out.verdicts[1] == ANIM_CONFLICT_REVERT,
           "no defender seat is a hand of none");
-    cb_q.defender_seat = 7;
+    cb_h.defender_seat = 7;
     CHECK(cb_verdicts(&cb_view, &cb_view2) == 2 && cb_out.verdicts[0] == ANIM_CONFLICT_REVERT, "and so is a seat the board does not have");
 
     // The sweep: a pickup the push carries clears what it names, and a back names nothing.
-    cb_q.defender_seat = 1;
+    cb_h.defender_seat = 1;
     cb_q.n_events = 1;
     cb_q.events[0].type = ANIM_EVT_PICKUP;
     cb_q.events[0].n_cards = 2;
@@ -14741,23 +14743,239 @@ static void test_client_conflict_verdicts(void) {
     cb_view2.battles[0].defense = (Card){ .suit = SUIT_HEARTS, .value = 8 };
     cb_view2.seats[1].hand_count = 2;
     memset(&cb_q, 0, sizeof(cb_q));
-    cb_q.defender_seat = 1;
-    cb_q.pending_attacks = -1;
+    memset(&cb_h, 0, sizeof(cb_h));
+    cb_h.defender_seat = 1;
+    cb_h.pending_attacks = -1;
     cb_q.n_motions = 2;
     cb_q.motions[0] = (ConflictMotion){ .card = c7s, .dest = ANIM_DEST_TABLE };
     cb_q.motions[1] = (ConflictMotion){ .card = c9d, .dest = ANIM_DEST_TABLE };
     CHECK(cb_verdicts(&cb_view, &cb_view2) == 2 && cb_out.verdicts[0] == ANIM_CONFLICT_REVERT,
           "the open board's uncovered attack and two pending ones overfill a hand of two");
-    cb_q.uncovered_on_final = true;
+    cb_h.uncovered_on_final = true;
     CHECK(cb_verdicts(&cb_view, &cb_view2) == 2 && cb_out.verdicts[0] == ANIM_CONFLICT_KEEP, "the final board's covered table leaves room");
-    cb_q.uncovered_on_final = false;
+    cb_h.uncovered_on_final = false;
     cb_q.motions[1].is_cover = true;
     CHECK(cb_verdicts(&cb_view, &cb_view2) == 2 && cb_out.verdicts[0] == ANIM_CONFLICT_KEEP, "a cover is not a pending attack");
-    cb_q.pending_attacks = 2;
+    cb_h.pending_attacks = 2;
     CHECK(cb_verdicts(&cb_view, &cb_view2) == 2 && cb_out.verdicts[0] == ANIM_CONFLICT_REVERT, "unless the count is said outright");
 
     cb_q.n_motions = CLIENT_CONFLICT_MAX_MOTIONS + 1;
     CHECK(cb_verdicts(&cb_view, &cb_view2) == CLIENT_E_FORMAT, "more motions than the question holds is refused");
+    anim_set_transport(ANIM_TRANSPORT_CHAIN);
+}
+
+// ---------- a push against my unanswered moves (client_push_settle) ----------
+
+static PushSettle ps_out;
+static uint8_t ps_wire[AWIRE_MAX_CARDS * 2 + 8];
+
+static void ps_event(int e, int type, int seat, int from, int to, const Card *cards, int n) {
+    cb_q.events[e] = (ConflictEvent){ .type = (int8_t)type, .seat = (int8_t)seat, .from = (uint8_t)from, .to = (uint8_t)to, .n_cards = (uint8_t)n };
+    for (int i = 0; i < n; i++) cb_q.events[e].cards[i] = cards[i];
+    if (e >= cb_q.n_events) cb_q.n_events = (uint8_t)(e + 1);
+}
+
+// Asked the way a host asks: once with no board, and again with the board of the event the answer names.
+static int ps_settle(const TableView *open, const TableView *final, int pass_len) {
+    cb_q.open_event = CLIENT_EVENT_NONE;
+    int rc = client_push_settle(&ct, 0, final, &cb_q, ps_wire, pass_len, &ps_out);
+    if (rc != CLIENT_OK || ps_out.open_event == CLIENT_EVENT_NONE) return rc;
+    cb_q.open_event = ps_out.open_event;
+    return client_push_settle(&ct, open, final, &cb_q, ps_wire, pass_len, &ps_out);
+}
+
+static void test_client_push_settle(void) {
+    anim_set_transport(ANIM_TRANSPORT_SERVER);
+    const Card c7s = { .suit = SUIT_SPADES, .value = 6 }, c9d = { .suit = SUIT_DIAMONDS, .value = 8 };
+    const Card cJs = { .suit = SUIT_SPADES, .value = 10 }, c7d = { .suit = SUIT_DIAMONDS, .value = 6 };
+    const Card c9h = { .suit = SUIT_HEARTS, .value = 8 }, back = { .suit = -1, .value = -1 };
+    const ConflictMotion attack7s = { .card = c7s, .dest = ANIM_DEST_TABLE, .target = CARD_NONE };
+    const ConflictMotion attack9d = { .card = c9d, .dest = ANIM_DEST_TABLE, .target = CARD_NONE };
+
+    // My own attack coming back: the event is played already, and the motion is answered.
+    cvr_board(&cb_view, 0);
+    cb_view2 = cb_view;
+    cb_view2.battles[cb_view2.num_battles++] = (Battle){ .attack = c7s, .defense = CARD_NONE };
+    memset(&cb_q, 0, sizeof(cb_q));
+    cb_q.versioned = true;
+    cb_q.n_motions = 1;
+    cb_q.motions[0] = attack7s;
+    ps_event(0, ANIM_EVT_ATTACK_PASS, 0, ANIM_LOC_HAND, ANIM_LOC_TABLE, &c7s, 1);
+    CHECK(ps_settle(&cb_view2, &cb_view2, 0) == CLIENT_OK && ps_out.played[0] == 1 && ps_out.fates[0] == CLIENT_FATE_SETTLED
+          && ps_out.open_event == CLIENT_EVENT_NONE && ps_out.n_flights == 0 && ps_out.n_events == 1 && ps_out.n_motions == 1,
+          "an event whose every card is a pending motion of its kind is my own move: played, and settled");
+    cb_q.events[0].seat = 2;
+    CHECK(ps_settle(&cb_view2, &cb_view2, 0) == CLIENT_OK && ps_out.played[0] == 0 && ps_out.fates[0] == CLIENT_FATE_PENDING
+          && ps_out.open_event == 0, "another seat's event is not mine, and its board is the one to judge on");
+    cb_q.events[0].seat = 0;
+    cb_q.events[0].type = ANIM_EVT_COVER;
+    CHECK(ps_settle(&cb_view2, &cb_view2, 0) == CLIENT_OK && ps_out.played[0] == 0, "nor is an event of another kind");
+
+    // A card the final table shows and no event names was confirmed by a push the gate dropped.
+    ps_event(0, ANIM_EVT_REFILL, 2, ANIM_LOC_DECK, ANIM_LOC_HAND, &back, 1);
+    CHECK(ps_settle(&cb_view2, &cb_view2, 0) == CLIENT_OK && ps_out.fates[0] == CLIENT_FATE_SETTLED && ps_out.played[0] == 0
+          && ps_out.open_event == CLIENT_EVENT_NONE, "a versioned push whose table shows my card settles it");
+    cb_q.versioned = false;
+    CHECK(ps_settle(&cb_view2, &cb_view2, 0) == CLIENT_OK && ps_out.fates[0] == CLIENT_FATE_PENDING, "a sequence with no version is not authoritative");
+    cb_q.versioned = true;
+    cb_q.n_events = 0;
+    CHECK(ps_settle(&cb_view2, &cb_view2, 0) == CLIENT_OK && ps_out.fates[0] == CLIENT_FATE_SETTLED, "a push with no events settles it too");
+
+    // Another seat throws in while two attacks of mine wait: kept, while the defender can take them.
+    cvr_board(&cb_view, 0);
+    cb_view.battles[cb_view.num_battles++] = (Battle){ .attack = cJs, .defense = CARD_NONE };
+    cb_view2 = cb_view;
+    memset(&cb_q, 0, sizeof(cb_q));
+    cb_q.versioned = true;
+    cb_q.n_motions = 2;
+    cb_q.motions[0] = attack7s;
+    cb_q.motions[1] = attack9d;
+    ps_event(0, ANIM_EVT_ATTACK_PASS, 2, ANIM_LOC_HAND, ANIM_LOC_TABLE, &cJs, 1);
+    cb_q.open_event = CLIENT_EVENT_NONE;
+    CHECK(client_push_settle(&ct, 0, &cb_view2, &cb_q, ps_wire, 0, &ps_out) == CLIENT_OK && ps_out.open_event == 0
+          && ps_out.fates[0] == CLIENT_FATE_PENDING && ps_out.fates[1] == CLIENT_FATE_PENDING && ps_out.n_flights == 0,
+          "asked without a board, the answer names the event whose board it wants and judges nothing");
+    CHECK(ps_settle(&cb_view, &cb_view2, 0) == CLIENT_OK && ps_out.fates[0] == CLIENT_FATE_KEEP && ps_out.fates[1] == CLIENT_FATE_KEEP
+          && ps_out.n_flights == 0 && ps_out.home_event == CLIENT_EVENT_NONE, "two attacks a hand of five can take are kept");
+    cb_view2.seats[1].hand_count = 2;
+    cb_view2.battles[1].defense = (Card){ .suit = SUIT_SPADES, .value = 12 };
+    CHECK(ps_settle(&cb_view, &cb_view2, 0) == CLIENT_OK && ps_out.fates[0] == CLIENT_FATE_KEEP && ps_out.fates[1] == CLIENT_FATE_KEEP,
+          "the room is counted on the final board: its throw-in is covered there, so a hand of two takes both");
+    cb_view2.battles[1].defense = CARD_NONE;
+    cb_view2.seats[1].hand_count = 1;
+    CHECK(ps_settle(&cb_view, &cb_view2, 0) == CLIENT_OK && ps_out.fates[0] == CLIENT_FATE_REVERT && ps_out.fates[1] == CLIENT_FATE_REVERT
+          && ps_out.n_flights == 2 && ps_out.flight_count[0] == 1 && ps_out.flight_count[1] == 1 && ps_out.n_order == 2
+          && ps_out.order[0] == 1 && ps_out.order[1] == 0 && ps_out.home_event == 0 && ps_out.magic_event == CLIENT_EVENT_NONE
+          && !ps_out.pass_home, "a hand of one takes neither: each flies home on its own, the last one first");
+
+    // The board those two fly home over: the push's first board, without them and without the throw-in still to fly.
+    TableView home = cb_view;
+    home.battles[home.num_battles++] = (Battle){ .attack = c7s, .defense = CARD_NONE };
+    CHECK(client_revert_board(&ct, &home, 0, &cb_q, &ps_out) == CLIENT_OK && home.num_battles == 1
+          && card_eq(home.battles[0].attack, cvr_attack()) && home.my_hand_count == 0,
+          "the return flights are drawn over the table without my cards and without the push's own attack");
+
+    // One of mine already stands on the judged board: they all wait.
+    cb_view.battles[cb_view.num_battles++] = (Battle){ .attack = c7s, .defense = CARD_NONE };
+    CHECK(ps_settle(&cb_view, &cb_view2, 0) == CLIENT_OK && ps_out.fates[0] == CLIENT_FATE_PENDING && ps_out.fates[1] == CLIENT_FATE_PENDING
+          && ps_out.n_flights == 0, "a board that shows one of my cards dooms none of them");
+
+    // The push's own sweep carries my card off: settled with no flight; the other was never there.
+    cvr_board(&cb_view, 0);
+    cb_view.num_battles = 0;
+    cb_view2 = cb_view;
+    cb_q.n_events = 0;
+    ps_event(0, ANIM_EVT_PICKUP, 1, ANIM_LOC_TABLE, ANIM_LOC_HAND, (const Card[]){ cvr_attack(), c9h, c7s }, 3);
+    CHECK(ps_settle(&cb_view, &cb_view2, 0) == CLIENT_OK && ps_out.fates[0] == CLIENT_FATE_SETTLED && ps_out.fates[1] == CLIENT_FATE_REVERT
+          && ps_out.n_flights == 1 && ps_out.order[0] == 1, "a card the push's pickup names is settled, and one it does not flies home");
+    // ...and that sweep needs every other card standing, so only mine leave the board it is drawn over.
+    cvr_board(&home, 0);
+    home.battles[home.num_battles++] = (Battle){ .attack = c9d, .defense = CARD_NONE };
+    ps_event(1, ANIM_EVT_ATTACK_PASS, 2, ANIM_LOC_HAND, ANIM_LOC_TABLE, &cJs, 1);
+    home.battles[home.num_battles++] = (Battle){ .attack = cJs, .defense = CARD_NONE };
+    CHECK(ps_settle(&cb_view, &cb_view2, 0) == CLIENT_OK && client_revert_board(&ct, &home, 0, &cb_q, &ps_out) == CLIENT_OK
+          && home.num_battles == 2 && card_eq(home.battles[1].attack, cJs), "over a push that sweeps, the push's attacks stay on the board");
+
+    // The push hands the shield to me while my attacks wait: every one goes home.
+    cvr_board(&cb_view, 0);
+    cb_view2 = cb_view;
+    cb_view2.defender = 0;
+    cb_q.n_events = 0;
+    ps_event(0, ANIM_EVT_ATTACK_PASS, 1, ANIM_LOC_HAND, ANIM_LOC_TABLE, &c7d, 1);
+    CHECK(ps_settle(&cb_view, &cb_view2, 0) == CLIENT_OK && ps_out.fates[0] == CLIENT_FATE_REVERT && ps_out.fates[1] == CLIENT_FATE_REVERT
+          && ps_out.n_flights == 2 && ps_out.order[0] == 1, "a defender does not attack: both fly home");
+    cb_view2.defender = 2;
+    cb_view2.seats[2].hand_count = 1;
+    CHECK(ps_settle(&cb_view, &cb_view2, 0) == CLIENT_OK && ps_out.n_flights == 2, "and so do they when the new defender cannot take them");
+    cb_view2.seats[2].hand_count = 5;
+    CHECK(ps_settle(&cb_view, &cb_view2, 0) == CLIENT_OK && ps_out.n_flights == 0 && ps_out.fates[0] == CLIENT_FATE_KEEP,
+          "one that can keeps them");
+
+    // A pickup of mine a closing sweep overtakes: what my hand holds waits, the rest goes back as ONE flight.
+    cvr_board(&cb_view, 1);
+    cb_view.num_battles = 0;
+    cb_view.my_hand_count = 1;
+    cb_view.my_hand[0] = cvr_attack();
+    cb_view2 = cb_view;
+    memset(&cb_q, 0, sizeof(cb_q));
+    cb_q.versioned = true;
+    cb_q.n_motions = 3;
+    cb_q.motions[0] = (ConflictMotion){ .card = cvr_attack(), .dest = ANIM_DEST_MY_HAND, .target = CARD_NONE };
+    cb_q.motions[1] = (ConflictMotion){ .card = c9h, .dest = ANIM_DEST_MY_HAND, .target = CARD_NONE };
+    cb_q.motions[2] = (ConflictMotion){ .card = c7s, .dest = ANIM_DEST_MY_HAND, .target = CARD_NONE };
+    ps_event(0, ANIM_EVT_MAGIC_TRANSITION, ANIM_SEAT_NONE, ANIM_LOC_NONE, ANIM_LOC_NONE, 0, 0);
+    ps_event(1, ANIM_EVT_CARDS_TO_TRASH, ANIM_SEAT_NONE, ANIM_LOC_TABLE, ANIM_LOC_DISCARD, &c9h, 1);
+    CHECK(ps_settle(&cb_view, &cb_view2, 0) == CLIENT_OK && ps_out.open_event == 1 && ps_out.fates[0] == CLIENT_FATE_PENDING
+          && ps_out.fates[1] == CLIENT_FATE_REVERT && ps_out.fates[2] == CLIENT_FATE_REVERT && ps_out.n_flights == 1
+          && ps_out.flight_count[0] == 2 && ps_out.order[0] == 2 && ps_out.order[1] == 1 && ps_out.home_event == 0 && ps_out.magic_event == 0,
+          "a pickup the sweep overtakes flies back with the one my hand never held, and the transition's board is asked for");
+    cvr_board(&home, 1);
+    home.num_battles = 0;
+    cvr_board(&cb_view2, 1);
+    CHECK(client_revert_board(&ct, &home, &cb_view2, &cb_q, &ps_out) == CLIENT_OK && home.num_battles == 1
+          && card_eq(home.battles[0].attack, cvr_attack()) && card_eq(home.battles[0].defense, c9h),
+          "the pickup is laid back on the transition's table");
+    CHECK(client_revert_board(&ct, &home, 0, &cb_q, &ps_out) == CLIENT_E_FORMAT, "which has to be handed over");
+    cb_q.events[0].type = ANIM_EVT_DEFENDER_MOVE;
+    cvr_board(&cb_view2, 1);
+    cb_view2.num_battles = 0;
+    home = cb_view2;
+    CHECK(ps_settle(&cb_view, &cb_view2, 0) == CLIENT_OK && ps_out.magic_event == CLIENT_EVENT_NONE
+          && client_revert_board(&ct, &home, 0, &cb_q, &ps_out) == CLIENT_OK && home.num_battles == 1
+          && card_eq(home.battles[0].attack, c9h) && card_is_none(home.battles[0].defense),
+          "with no transition it is the cards the sweep names, uncovered");
+
+    // My pending pass: judged against the seat the shield lands on once it stands.
+    cvr_board(&cb_view, 1);
+    cb_view.battles[0].defense = CARD_NONE;
+    cb_view.my_hand_count = 1;
+    cb_view.my_hand[0] = c7s;
+    cb_view2 = cb_view;
+    memset(&cb_q, 0, sizeof(cb_q));
+    cb_q.versioned = true;
+    cb_q.n_motions = 1;
+    cb_q.motions[0] = attack7s;
+    cb_q.motions[0].is_pass = true;
+    ps_event(0, ANIM_EVT_ATTACK_PASS, 0, ANIM_LOC_HAND, ANIM_LOC_TABLE, &c7d, 1);
+    const int pass_len = cb_wire(AWIRE_PASS, &c7s, 0, 1, ps_wire);
+    CHECK(ps_settle(&cb_view, &cb_view2, pass_len) == CLIENT_OK && ps_out.fates[0] == CLIENT_FATE_KEEP && !ps_out.pass_home,
+          "a pass the next seat can hold is kept");
+    cb_view2.seats[2].hand_count = 1;
+    CHECK(ps_settle(&cb_view, &cb_view2, pass_len) == CLIENT_OK && ps_out.fates[0] == CLIENT_FATE_REVERT && ps_out.pass_home
+          && ps_out.n_flights == 1, "one the next seat cannot hold goes home, and the answer says a pass did");
+    CHECK(ps_settle(&cb_view, &cb_view2, 0) == CLIENT_OK && ps_out.fates[0] == CLIENT_FATE_KEEP && !ps_out.pass_home,
+          "with no pass to stand, the same card is an attack on the defender the board has");
+    // The board it flies home over: the push's lead and shield, the card off the table and back in my hand.
+    CHECK(ps_settle(&cb_view, &cb_view2, pass_len) == CLIENT_OK, "(the pass again)");
+    home = cb_view;
+    home.my_hand_count = 0;
+    home.battles[home.num_battles++] = (Battle){ .attack = c7s, .defense = CARD_NONE };
+    home.battles[home.num_battles++] = (Battle){ .attack = c7d, .defense = CARD_NONE };
+    CHECK(client_revert_board(&ct, &home, 0, &cb_q, &ps_out) == CLIENT_OK && home.num_battles == 1 && home.defender == 1
+          && home.first_attacker == 0 && home.my_hand_count == 1 && card_eq(home.my_hand[0], c7s),
+          "a pass going home leaves the table, lands in my hand, and the shield is where the push has it");
+
+    // The boards a kept pass stands on: the shield handed on, the card laid.
+    cb_view2.seats[2].hand_count = 5;
+    CHECK(ps_settle(&cb_view, &cb_view2, pass_len) == CLIENT_OK && ps_out.fates[0] == CLIENT_FATE_KEEP, "(kept again)");
+    home = cb_view;
+    CHECK(client_keep_board(&ct, &home, &cb_q, &ps_out, ps_wire, pass_len) == CLIENT_OK && home.defender == 2 && home.num_battles == 2
+          && card_eq(home.battles[1].attack, c7s) && home.my_hand_count == 0, "a kept pass stands on the board: its card laid, the shield handed on");
+    home = cb_view;
+    CHECK(client_keep_board(&ct, &home, &cb_q, &ps_out, ps_wire, 0) == CLIENT_OK && home.defender == 1 && home.num_battles == 2,
+          "with no wire the card is kept and the shield stays");
+    // A kept cover goes over its target.
+    cb_q.motions[0] = (ConflictMotion){ .card = c9h, .dest = ANIM_DEST_TABLE, .is_cover = true, .target = cvr_attack() };
+    home = cb_view;
+    CHECK(client_keep_board(&ct, &home, &cb_q, &ps_out, ps_wire, 0) == CLIENT_OK && home.num_battles == 1
+          && card_eq(home.battles[0].defense, c9h), "a kept cover lies over the attack it covers");
+    ps_out.fates[0] = CLIENT_FATE_PENDING;
+    home = cb_view;
+    CHECK(client_keep_board(&ct, &home, &cb_q, &ps_out, ps_wire, 0) == CLIENT_OK && memcmp(&home, &cb_view, sizeof(TableView)) == 0,
+          "a motion that is not kept is not laid");
+
+    cb_q.n_motions = CLIENT_CONFLICT_MAX_MOTIONS + 1;
+    CHECK(ps_settle(&cb_view, &cb_view2, 0) == CLIENT_E_FORMAT, "more motions than the question holds is refused");
     anim_set_transport(ANIM_TRANSPORT_CHAIN);
 }
 
@@ -16058,6 +16276,7 @@ int main(void) {
     test_client_plan_reads_the_boards();
     test_client_plan_without_a_final_board();
     test_client_plan_order_and_caps();
+    test_client_push_settle();
     test_client_play_is_the_engine();
     test_client_play_refuses_what_is_not_a_gesture();
     test_client_move_wire_is_the_old_encoders_bytes();

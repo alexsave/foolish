@@ -27,7 +27,6 @@ export type ViewCard = V.Card_Snap;
 export type ViewBattle = V.Battle_Snap;
 export type ViewRules = V.ViewRules_Snap;
 export type BoardEdit = V.BoardEdit_Snap;
-type ConflictQuestion = V.ClientConflict_Snap;
 export type ClientPlay = V.ClientPlay_Snap;
 type ActionResponse = V.TableResponse_Snap;
 export type HandMetrics = V.HandMetrics_Snap;
@@ -69,6 +68,7 @@ export interface AwireMove {
 interface PushIdentity { gameId?: string; identity?: 'kept' | 'none' | Uint8Array }
 
 const enc = new TextEncoder();
+const NO_BYTES = new Uint8Array(0);
 
 export class ClientTable {
     private readonly ex: WebExports;
@@ -286,19 +286,32 @@ export class ClientTable {
     }
 
     /**
-     * The conflict verdict (ANIM_CONFLICT_*) for each of the question's motions
-     * against a push whose last board is `open` and whose final board is `final`.
-     * Throws when the kernel refuses the question: a verdict nobody could read is
-     * not a verdict to act on.
+     * A push against my unanswered moves (c/src/client_table.h client_push_settle):
+     * which events I already played, each pending motion's CLIENT_FATE_*, and the
+     * return flights in order. `open` is the board of the event the question says
+     * it holds (`q.openEvent`), `pass` my pending pass's action wire. Throws when
+     * the kernel refuses the question: a fate nobody could read is not one to act on.
      */
-    conflictVerdicts(open: TableView, final: TableView, q: ConflictQuestion): readonly number[] {
-        const m = this.m();
-        V.writeTableView(m, this.ex.wasm_client_edit_view_ptr(), open);
-        V.writeTableView(m, this.ex.wasm_client_final_view_ptr(), final);
-        V.writeClientConflict(m, this.ex.wasm_client_conflict_ptr(), q);
-        const n = this.ex.wasm_client_conflict_verdicts();
-        if (n < 0) throw new Error(`client conflict verdicts: refused (${n})`);
-        return V.readConflictVerdicts(this.m(), this.ex.wasm_client_verdicts_ptr()).verdicts;
+    settle(open: TableView | null, final: TableView, q: V.ClientConflict_Snap, pass: Uint8Array | null): V.PushSettle_Snap {
+        if (open) V.writeTableView(this.m(), this.ex.wasm_client_edit_view_ptr(), open);
+        V.writeTableView(this.m(), this.ex.wasm_client_final_view_ptr(), final);
+        V.writeClientConflict(this.m(), this.ex.wasm_client_conflict_ptr(), q);
+        const rc = this.put(pass ?? NO_BYTES) ? this.ex.wasm_client_push_settle(pass?.length ?? 0) : V.CLIENT_E_MOVE;
+        if (rc !== V.CLIENT_OK) throw new Error(`client push settle: refused (${rc})`);
+        return V.readPushSettle(this.m(), this.ex.wasm_client_settle_ptr());
+    }
+
+    /** The board the last settle's return flights are drawn over (client_revert_board), from the boards of its `homeEvent` and, when it names one, its `magicEvent`; null when the kernel refuses an edit. */
+    revertBoard(home: TableView, magic: TableView | null): TableView | null {
+        V.writeTableView(this.m(), this.ex.wasm_client_edit_view_ptr(), home);
+        if (magic) V.writeTableView(this.m(), this.ex.wasm_client_final_view_ptr(), magic);
+        return this.edited(this.ex.wasm_client_revert_board());
+    }
+
+    /** `view` with the motions the last settle keeps standing on it, over my pending pass (client_keep_board). */
+    keptBoard(view: TableView, pass: Uint8Array | null): TableView | null {
+        V.writeTableView(this.m(), this.ex.wasm_client_edit_view_ptr(), view);
+        return this.edited(this.put(pass ?? NO_BYTES) ? this.ex.wasm_client_keep_board(pass?.length ?? 0) : V.CLIENT_E_MOVE);
     }
 
     /** The action wire of a move (awire.c's one encoder). Throws on a move the wire cannot carry: a client bug, never a race. */

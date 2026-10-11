@@ -770,7 +770,7 @@ int wasm_msg_rematch(int in_len, double tapped_at_ms, int creator_seat) {
 // g_io - no resident game, no session log - so they run in any module that
 // exports them (the web loads bots.wasm, which is where they ship).
 
-// The version gate (clientReconcile.shouldDropStaleSequence). Pure scalars; the
+// The version gate (anim_should_drop_stale). Pure scalars; the
 // two has_* flags model TS null (a replay sequence has no version -> never gated).
 int wasm_anim_should_drop_stale(int has_last, int last, int has_incoming, int incoming) {
     return anim_should_drop_stale(has_last, last, has_incoming, incoming);
@@ -792,7 +792,7 @@ double wasm_anim_event_key(int type, int suit, int value, int from, int to, int 
     return (double)anim_event_key(type, card, from, to, seat);
 }
 
-// staleOptimisticKeysOnTable (optimisticAnimation.ts), asked as a value
+// anim_stale_optimistic_on_table, asked as a value
 // (anim_plan.h AnimStaleAsk): the host writes the three card lists through the
 // generated writer and reads the release indices through the generated reader
 // (sdk/ts/gen/view_layout.bots.ts), so the layout of neither is written down

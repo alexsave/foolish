@@ -1057,9 +1057,11 @@ WASM_CLIENT_EXPORTS := \
   -Wl,--export=wasm_client_view_rules \
   -Wl,--export=wasm_client_edit_view_ptr -Wl,--export=wasm_client_final_view_ptr \
   -Wl,--export=wasm_client_board_edit_ptr -Wl,--export=wasm_client_conflict_ptr \
-  -Wl,--export=wasm_client_verdicts_ptr -Wl,--export=wasm_client_validate \
+  -Wl,--export=wasm_client_validate \
   -Wl,--export=wasm_client_optimistic_apply -Wl,--export=wasm_client_board_edit \
-  -Wl,--export=wasm_client_rearrange_hand -Wl,--export=wasm_client_conflict_verdicts \
+  -Wl,--export=wasm_client_rearrange_hand \
+  -Wl,--export=wasm_client_settle_ptr -Wl,--export=wasm_client_push_settle \
+  -Wl,--export=wasm_client_revert_board -Wl,--export=wasm_client_keep_board \
   -Wl,--export=wasm_client_gesture_ptr -Wl,--export=wasm_client_play_ptr \
   -Wl,--export=wasm_client_play \
   -Wl,--export=wasm_client_move_ptr -Wl,--export=wasm_client_move_wire \
@@ -1582,13 +1584,11 @@ WASM_WEB_NAMES := \
   wasm_replay_io_ptr wasm_replay_io_cap wasm_replay_error_ptr \
   wasm_bot_roster_dump \
   wasm_msg_decode wasm_msg_header_ptr \
-  wasm_anim_set_transport wasm_anim_event_key \
-  wasm_anim_should_drop_stale wasm_anim_stale_optimistic \
-  wasm_anim_stale_ask_ptr wasm_anim_stale_release_ptr \
-  wasm_anim_reversal_ask_ptr wasm_anim_reversal_plan_ptr \
+  wasm_anim_set_transport \
+  wasm_anim_should_drop_stale \
   wasm_anim_hand_ask_ptr wasm_anim_hand_laid_ptr \
   wasm_anim_finish_ask_ptr wasm_anim_finish_ptr \
-  wasm_anim_finish_rows wasm_anim_hand_laid_out wasm_anim_reversal_order \
+  wasm_anim_finish_rows wasm_anim_hand_laid_out \
   wasm_anim_plan_ptr wasm_anim_plan_at wasm_anim_frame_ptr \
   wasm_anim_roles_goods_opening wasm_anim_roles_goods_cleared \
   wasm_anim_roles_pass_hand_off wasm_anim_shown_ledger_allows \

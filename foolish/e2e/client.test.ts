@@ -10,10 +10,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    displayedHand, reconcileHandMemory, mergeTableBattles, shouldDropStaleSequence, cardKey,
+    displayedHand, reconcileHandMemory, mergeTableBattles, cardKey,
     reorderHand,
 } from '../src/state/clientReconcile';
 import { keepPending, rearrangedBoard } from '../src/state/clientBoards';
+import { animShouldDropStale } from '../sdk/ts/wasm/bots.ts';
 import type { TableView } from '../sdk/ts/table/client_table.ts';
 import * as V from '../sdk/ts/gen/view_layout.bots.ts';
 
@@ -69,12 +70,12 @@ export function registerClientValidation(): void {
     });
 
     // ---- version gate (reordering fix) -----------------------------------------
-    test('shouldDropStaleSequence drops at-or-below the newest applied version, keeps replay (no version)', () => {
-        assert.equal(shouldDropStaleSequence(5, 4), true, 'older dropped');
-        assert.equal(shouldDropStaleSequence(5, 5), true, 'duplicate-version dropped');
-        assert.equal(shouldDropStaleSequence(5, 6), false, 'newer applied');
-        assert.equal(shouldDropStaleSequence(null, 1), false, 'first applied');
-        assert.equal(shouldDropStaleSequence(5, null), false, 'replay (no version) never gated');
+    test('animShouldDropStale drops at-or-below the newest applied version, keeps replay (no version)', () => {
+        assert.equal(animShouldDropStale(5, 4), true, 'older dropped');
+        assert.equal(animShouldDropStale(5, 5), true, 'duplicate-version dropped');
+        assert.equal(animShouldDropStale(5, 6), false, 'newer applied');
+        assert.equal(animShouldDropStale(null, 1), false, 'first applied');
+        assert.equal(animShouldDropStale(5, null), false, 'replay (no version) never gated');
     });
 
     // ---- reordering / cross-bout (codified from the latency sweeps; reconcile.test.ts)
@@ -87,7 +88,7 @@ export function registerClientValidation(): void {
     const replay = (order: typeof boutStream, gated: boolean) => {
         let table: readonly B[] = []; let last: number | null = null;
         for (const b of order) {
-            if (gated && shouldDropStaleSequence(last, b.version)) continue;
+            if (gated && animShouldDropStale(last, b.version)) continue;
             table = mergeTableBattles(table, b.finalTable);
             last = b.version;
         }

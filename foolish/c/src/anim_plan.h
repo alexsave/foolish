@@ -852,7 +852,7 @@ uint64_t anim_event_key(int type, Card card, int from, int to, int seat);
 // event fields. (Distinct from anim_event_key: getCardKey ignores type/from/to.)
 static inline int anim_card_key(Card c) { return ((int)c.suit << 5) | ((int)c.value & 31); }
 
-// Live broadcast ordering gate — clientReconcile.shouldDropStaleSequence. A
+// Live broadcast ordering gate, and the feed's one dedup rule. A
 // broadcast carries the committed games.version; drop any at or below the newest
 // already applied (strictly superseded — each sequence carries the full state).
 // `has_last`/`has_incoming` model TS null: a replay sequence has no version
@@ -860,7 +860,7 @@ static inline int anim_card_key(Card c) { return ((int)c.suit << 5) | ((int)c.va
 int anim_should_drop_stale(int has_last, int last_version,
                            int has_incoming, int incoming_version);
 
-// The version gate's optimistic release — optimisticAnimation.staleOptimisticKeysOnTable.
+// The version gate's optimistic release (the web asks it inside client_table.h client_push_settle).
 // When an authoritative broadcast lands, release the local player's optimistic
 // entries for any of its cards the server's table now shows BUT whose own
 // confirming event this broadcast does NOT name (their broadcast was dropped by
@@ -911,7 +911,7 @@ int anim_stale_optimistic_ask(const AnimStaleAsk *q, AnimStaleRelease *out);
 typedef struct {
     Card card;
     int  is_cover;   // 1 if a COVER (the defender's own play — excluded from the
-                     //   attack-capacity rule; see optimisticConflicts.ts)
+                     //   attack-capacity rule)
 } AnimPending;
 
 // The final personalized state fields the capacity rule reads (a whole game is
@@ -933,7 +933,7 @@ typedef struct {
 } AnimResolve;
 
 // The "my optimistically-played attack/cover is not (yet) on the authoritative
-// table" decision — optimisticConflicts.resolveUnconfirmedAttackCovers. This is
+// table" decision. This is
 // the hardened fix for the "card jumps to the table, snaps back to my hand, then
 // re-appears" flicker.
 //
