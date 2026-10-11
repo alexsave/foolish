@@ -20,7 +20,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { replayStepCount, replayStepIndex, replayStepLogs, replayStepMaskedState, REPLAY_STEP } from '../sdk/ts/wasm/bots.ts';
+import { replayStepIndex, replayStepLogs, replayStepMaskedState, REPLAY_STEP } from '../sdk/ts/wasm/bots.ts';
 import { LOG_DRAW } from '../sdk/ts/gen/game_layout.bots.ts';
 import { playBotTable, seedBytes } from './helpers/bot_table.ts';
 
@@ -34,7 +34,8 @@ test('an Oracle memory hides every drawn card', () => {
     for (let np = 2; np <= 4; np++) {
         for (let s = 0; s < 3; s++) {
             const { code } = playBotTable(Array(np).fill('handwritten'), seedBytes(np, 300 + s));
-            for (let step = 1; step < replayStepCount(code); step++) {
+            const steps = replayStepIndex(code).length;
+            for (let step = 1; step < steps; step++) {
                 const wire = replayStepLogs(code, step);
                 if (!wire) continue;
                 memories++;
@@ -60,7 +61,7 @@ test('an Oracle memory hides every drawn card', () => {
 
 test('the kernel refuses what is not a decision it can vouch for', () => {
     const { code } = playBotTable(['handwritten', 'handwritten', 'handwritten'], seedBytes(3, 41));
-    const steps = replayStepCount(code);
+    const steps = replayStepIndex(code).length;
     assert.equal(replayStepMaskedState(code, 0, 0), null, 'the deal was decided by nobody');
     assert.equal(replayStepMaskedState(code, steps, 0), null, 'no step past the last');
     assert.equal(replayStepMaskedState(code, 1, 3), null, 'a viewer that is not a seat');

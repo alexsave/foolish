@@ -20,7 +20,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { kernelBotRoster, kernelBotStrat } from '../sdk/ts/wasm/bots.ts';
+import { kernelBotRoster } from '../sdk/ts/wasm/bots.ts';
 import { fixture, fixtureTable, FixtureRefused } from './helpers/table_fixture.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
@@ -51,8 +51,7 @@ function loadRow(brain: string): number {
 test('every brain this build links seats as itself', () => {
     const linked = kernelBotRoster().filter((e) => e.linked);
     assert.ok(linked.length >= 4, `the roster links the shipped bots (${linked.map((e) => e.key).join(', ')})`);
-    for (const { key, strat } of linked) {
-        assert.equal(kernelBotStrat(key), strat, `${key} resolves to its own brain`);
+    for (const { key } of linked) {
         const r = addBot(key);
         assert.equal(r.rc, L.TABLE_OK, `${key}: added to a lobby`);
         assert.equal(r.seated, key, `${key}: the seat holds the brain asked for, not a neighbour or random`);

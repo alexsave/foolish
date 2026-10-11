@@ -1,21 +1,24 @@
-// The rematch through the SAME wasm kernel the web reads with: New game on a
-// finished table seals a lobby of the same game, naming the finished chain as
-// its parent, seeded from the moment of the tap, as an ordinary format 6 lobby
-// (c/src/msg_wire.h msg_rematch_lobby). Nothing on the wire is new.
+// The rematch lobby, held to one answer in two engines: New game on a finished
+// table seals a lobby of the same game, built wholly by the kernel
+// (c/src/msg_wire.h msg_rematch_lobby), and the wasm kernel must build, byte for
+// byte, the lobby the phone's native kernel builds.
 //
-// The fixtures were sealed by the NATIVE kernel (`msg_wire_test
-// --rematch-fixture`), so the first test holds the two engines to one answer:
-// wasm must build, byte for byte, the lobby the phone builds.
+// The two strings below are pinned on the native side too
+// (c/tests/msg_wire_test.c test_rematch_golden; `msg_wire_test
+// --rematch-fixture` prints them), so each engine is held to the bytes rather
+// than to the other. What a rematch IS - the same game, a new deal drawn from
+// the moment of the tap, who may start it, how Rule P ranks it - is the
+// kernel's and is tested there (test_rematch_same_chain, test_rematch_taps,
+// test_rematch_creator_gate).
+//
+// No shipped host of bots.wasm builds a rematch (the phone does), so the entry
+// is the TEST build's (c/Makefile WASM_BOTS_UNSHIPPED_API).
 //
 // Run: npx tsx --test e2e/msg_rematch.test.ts
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
-    kernelMsgDecode as decodeHeader, kernelMsgRematch, kernelMsgRuleP, kernelB32Encode,
-} from '../sdk/ts/wasm/bots.ts';
-
-// The envelope and its digest as one flat value: the generated header (msg_wire.h MsgHeader) holds them apart.
-const kernelMsgDecode = (bytes: Uint8Array) => { const h = decodeHeader(bytes); return { ...h.e, digest: h.digest }; };
+import { kernelB32Encode } from '../sdk/ts/wasm/bots.ts';
+import { fixtureExports } from './helpers/table_fixture.ts';
 
 const hex = (h: string) => Uint8Array.from(h.match(/../g)!.map((b) => parseInt(b, 16)));
 
@@ -33,78 +36,23 @@ const NATIVE_LOBBY = hex(
     + '11cd750e096921e6a88a4dea8f3814aa34120000ff44c9ed0100040004416c657801044d69726102054a'
     + '6f6e6173030550726979610000');
 
-const T0 = 1790000000000;   // 2026-09, in unix ms
-const sameBytes = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((v, i) => v === b[i]);
+/** The test build's msg_rematch_lobby: the finished chain in, the lobby out, both in the replay-io buffer. */
+function rematch(finished: Uint8Array, tappedAtMs: number, creatorSeat: number): Uint8Array {
+    const ex = fixtureExports();
+    const at = ex.wasm_replay_io_ptr();
+    new Uint8Array(ex.memory.buffer).set(finished, at);
+    const n = ex.wasm_msg_rematch(finished.length, tappedAtMs, creatorSeat);
+    assert.ok(n > 0, `the kernel refused the rematch (${n})`);
+    return new Uint8Array(ex.memory.buffer).slice(at, at + n);
+}
 
 test('wasm builds the rematch lobby the native kernel built, byte for byte', () => {
-    const lobby = kernelMsgRematch(FINISHED, TAPPED_AT_MS, 2);
-    assert.deepEqual(Array.from(lobby), Array.from(NATIVE_LOBBY));
-});
-
-test('the rematch is an ordinary format 6 lobby of the same game, seated as it finished', () => {
-    const fin = kernelMsgDecode(FINISHED);
-    const lob = kernelMsgDecode(kernelMsgRematch(FINISHED, TAPPED_AT_MS, 2));
-    assert.equal(fin.phase, 3);
-    assert.equal(lob.format, 6, 'a rematch lobby is format 6, the wire every shipped build reads');
-    assert.equal(lob.phase, 0, 'a rematch is a lobby');
-    assert.equal(lob.gameId, fin.gameId, 'the rematch left the game');
-    assert.deepEqual(Array.from(lob.parent8), Array.from(fin.digest.slice(0, 8)),
-        'the rematch does not descend from the finished chain');
-    assert.equal(lob.lastActorSeat, 2, 'the lobby does not say its tapper sealed it');
-    assert.equal(lob.sentAt, 0x1234, "the lobby's send clock is not the tap's");
-    assert.notDeepEqual(Array.from(lob.seed), Array.from(fin.seed), 'the rematch re-deals the old deal');
-    assert.deepEqual(lob.joins.slice().sort((a, b) => a.seat - b.seat),
-                     fin.joins.slice().sort((a, b) => a.seat - b.seat));
-    assert.equal(lob.nPlayers, 4, 'the rematch is the finished table, full');
-    assert.notEqual(lob.carryKey, 0, "the fool's penalty did not carry over");
-});
-
-test('three taps are three lobbies of one game, and every one outranks the finished game', () => {
-    const taps = [0, 1, 2].map((s) => kernelMsgRematch(FINISHED, T0 + s * 1337, s));
-    const envs = taps.map((t) => kernelMsgDecode(t));
-    const fin = kernelMsgDecode(FINISHED);
-    for (const [s, e] of envs.entries()) {
-        assert.equal(e.gameId, fin.gameId, `seat ${s}: the tap left the game`);
-        assert.deepEqual(Array.from(e.parent8), Array.from(fin.digest.slice(0, 8)),
-            `seat ${s}: the tap does not name the finished chain`);
-        assert.equal(e.lastActorSeat, s, `seat ${s}: the tap is not its tapper's`);
-    }
-    for (let a = 0; a < 3; a++) for (let b = a + 1; b < 3; b++) {
-        assert.notDeepEqual(Array.from(envs[a].seed), Array.from(envs[b].seed),
-            `seats ${a} and ${b} tapped at different moments and got one deal`);
-    }
-    for (const t of taps) {
-        assert.ok(kernelMsgRuleP(FINISHED, t) > 0, 'Rule P kept the finished game over its rematch');
-        assert.ok(kernelMsgRuleP(t, FINISHED) < 0, '(reversed) Rule P kept the finished game');
-    }
-    for (const a of taps) for (const b of taps) {
-        if (a === b) continue;
-        assert.notEqual(kernelMsgRuleP(a, b), 0, 'two different lobbies tied');
-        assert.equal(kernelMsgRuleP(a, b), -kernelMsgRuleP(b, a), 'two lobbies order differently by who asks');
-    }
-});
-
-test('one moment is one deal, whoever taps', () => {
-    const a = kernelMsgDecode(kernelMsgRematch(FINISHED, T0 + 42, 0));
-    const b = kernelMsgDecode(kernelMsgRematch(FINISHED, T0 + 42, 3));
-    const c = kernelMsgDecode(kernelMsgRematch(FINISHED, T0 + 43, 0));
-    assert.deepEqual(Array.from(a.seed), Array.from(b.seed), 'two seats at one moment got two deals');
-    assert.notDeepEqual(Array.from(a.seed), Array.from(c.seed), 'one millisecond apart is one deal');
-    assert.ok(sameBytes(kernelMsgRematch(FINISHED, T0 + 42, 0), kernelMsgRematch(FINISHED, T0 + 42, 0)),
-        'one tap built twice is two bubbles');
-});
-
-test('only a finished game can be rematched, and only from a seat at its table', () => {
-    const lobby = kernelMsgRematch(FINISHED, TAPPED_AT_MS, 2);
-    assert.throws(() => kernelMsgRematch(lobby, TAPPED_AT_MS, 2), /bad phase/);
-    assert.throws(() => kernelMsgRematch(FINISHED, TAPPED_AT_MS, 4));
-    assert.throws(() => kernelMsgRematch(FINISHED, TAPPED_AT_MS, -1));
+    assert.deepEqual(Array.from(rematch(FINISHED, TAPPED_AT_MS, 2)), Array.from(NATIVE_LOBBY));
 });
 
 test('a shared rematch link unfurls as a rematch, not as turn 0', async () => {
     const { generateMetadata } = await import('../src/app/m/[payload]/layout.tsx');
-    const lobby = kernelMsgRematch(FINISHED, TAPPED_AT_MS, 2);
-    const m = await generateMetadata({ params: Promise.resolve({ payload: '1' + kernelB32Encode(lobby) }) });
+    const m = await generateMetadata({ params: Promise.resolve({ payload: '1' + kernelB32Encode(NATIVE_LOBBY) }) });
     assert.match(String(m.title), /Alex vs Mira vs Jonas vs Priya/);
     assert.match(String(m.title), /a rematch, waiting to start/);
     const f = await generateMetadata({ params: Promise.resolve({ payload: '1' + kernelB32Encode(FINISHED) }) });

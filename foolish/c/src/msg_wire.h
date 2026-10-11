@@ -484,7 +484,7 @@ typedef struct {
 // buffer the envelope was decoded out of and a seal's body is the kernel's own -
 // and neither are the fields a producer must not be able to claim: `digest` and
 // `n_new` are written by the kernel and ignored when it reads one back
-// (wasm_msg_seal).
+// (fio_msg_encode).
 typedef struct {
     MsgEnvelope e;
     uint8_t     digest[SHA256_DIGEST_LEN];

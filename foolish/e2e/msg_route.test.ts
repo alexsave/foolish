@@ -1,12 +1,13 @@
-// The /m/ route's pipeline, minus React: base32 → decode → PUBLIC view, the
-// board the page renders. The page is JSX around exactly this.
+// The /m/ route's link, minus React: base32 -> decode, through the same door
+// the page's metadata opens (kernelMsgDecode), and what that door says of a
+// link that was damaged on the way.
 //
-// The claim under test is the invariant, not the layout: a stranger with the
-// link sees the table and NO hand. That must hold because view.c masked it, not
-// because the page forgot to render one.
+// What a stranger with the link is SHOWN - the table and no hand, at every
+// bubble of a whole game - is the kernel's rule and is pinned beside it
+// (c/tests/msg_wire_test.c test_send_accept_leg and test_damaged_link).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { kernelMsgDecode as decodeHeader, kernelMsgPublicView, kernelB32Encode, kernelB32Decode } from '../sdk/ts/wasm/bots.ts';
+import { kernelMsgDecode as decodeHeader, kernelB32Encode, kernelB32Decode } from '../sdk/ts/wasm/bots.ts';
 
 // The envelope and its digest as one flat value: the generated header (msg_wire.h MsgHeader) holds them apart.
 const kernelMsgDecode = (bytes: Uint8Array) => { const h = decodeHeader(bytes); return { ...h.e, digest: h.digest }; };
@@ -27,31 +28,9 @@ test('the page fits well inside MSMessage.url (5,000 chars)', () => {
     assert.ok(link.length < 5000, `${link.length} chars`);
 });
 
-test('a stranger with the link sees the table and NO hand', () => {
-    const env = kernelMsgDecode(kernelB32Decode(kernelB32Encode(bytes)));
-    const { view } = kernelMsgPublicView();
-    const names = Array.from({ length: env.nPlayers }, (_, i) => env.joins.find(j => j.seat === i)?.name || `Seat ${i + 1}`);
-
-    // The public table is all there - this is a real page, not a bounce.
-    assert.equal(view.seats.length, env.nPlayers);
-    assert.ok(view.powerSuit >= 0, 'trump is public');
-    assert.ok(view.deckCount >= 0, 'the stock is a count');
-    assert.ok(Array.isArray(view.battles));
-    assert.deepEqual(names, ['Ann0', 'Ann1', 'Ann2']);
-
-    // ...and no hand crossed. A spectator's board sits nobody and holds no hand,
-    // and every seat is a count only. This appears on lock screens; a leak here
-    // is the payload handing someone else's cards to a stranger.
-    assert.equal(view.mySeat, -1, 'a spectator sits no seat');
-    assert.equal(view.myHand.length, 0, 'a spectator has no hand');
-    for (const [i, seat] of view.seats.entries()) {
-        assert.ok(seat.handCount > 0, `seat ${i}: counts are public, identities are not`);
-    }
-});
-
-test('a damaged link is refused, or renders a whole game — never half of one', () => {
+test('a damaged link is refused, and the refusal says why', () => {
     // A corrupted body is usually rejected outright. The body starts after the
-    // 59-byte header, the joins, and the u16 count — derive it, never guess: at
+    // 59-byte header, the joins, and the u16 count - derive it, never guess: at
     // a guessed offset this flipped a NICKNAME byte, which is legitimately valid
     // and made the test pass for the wrong reason.
     const nJoins = bytes[58];
@@ -66,19 +45,14 @@ test('a damaged link is refused, or renders a whole game — never half of one',
     badHeader[17] = 99;   // round: a lie the chain cannot back
     assert.throws(() => kernelMsgDecode(badHeader), /round does not match/);
 
-    // But NOT every corruption can be caught, and pretending otherwise would be
-    // the bug. An entropy-coded body has no framing: a truncated code is simply
-    // a SHORTER code, and if it still yields this header's atom count and round
-    // it is a valid chain — of a different game. That is not a leak, and the
-    // page cannot half-render it: what binds a chain to its identity is the
-    // digest a receiver checks against parent8, not decode refusing to read.
-    // The invariant is all-or-nothing, so assert THAT.
+    // A link cut short is refused or is a shorter chain of its own (an
+    // entropy-coded body has no framing), and which of the two is the kernel's
+    // to say (test_damaged_link). Here: the door throws or answers, the same
+    // way twice.
     for (let cut = 1; cut <= 6; cut++) {
         const short = bytes.slice(0, bytes.length - cut);
-        let env;
-        try { env = kernelMsgDecode(short); } catch { continue; }   // refused: fine
-        assert.equal(env.turn, kernelMsgDecode(short).turn, 'decode is deterministic');
-        const { view } = kernelMsgPublicView();
-        assert.equal(view.seats.length, env.nPlayers, 'a whole game, or nothing');
+        let turn: number;
+        try { turn = kernelMsgDecode(short).turn; } catch { continue; }
+        assert.equal(kernelMsgDecode(short).turn, turn, 'decode is deterministic');
     }
 });
