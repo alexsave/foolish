@@ -151,7 +151,7 @@ the `APPLICATION_EXTENSION_API_ONLY` step for this milestone).
   `rules_wasm.ts`), wired to the client via `src/wasm/clientGuards.ts`
   patterns.
 - base32: `base32Encode/base32Decode` in
-  `server/api/common/replay/codec.ts` (QR-alphanumeric-safe,
+  `server/api/common/replay_codec.ts` (QR-alphanumeric-safe,
   URL-safe — reuse, do not invent).
 - e2e harness: `e2e/*.test.ts` runs the real wasm kernel under Node
   (`npm run test:e2e`). Pattern-match `e2e/replay_v6.test.ts` and the
@@ -432,7 +432,7 @@ device-pair pass, submit riding the app's record.
 | iOS shim + build | `c/ios/`, `c/Makefile` (`ios-lib`, `ios-smoke`) |
 | v6 codec + doc | `c/src/replay.{h,c}`, `docs/REPLAY_FORMAT6_HIDDEN_STATE.md` |
 | wasm bridge (TS) | `sdk/ts/wasm/engine.ts` |
-| base32 | `server/api/common/replay/codec.ts` |
+| base32 | `server/api/common/replay_codec.ts` |
 | e2e harness | `e2e/` (`npm run test:e2e`) |
 | Host app + design system | `ios/` (`project.yml`, `FoolishKit/*`) |
 | App design + status | `docs/IOS_APP_DESIGN.md` (§16 how-to, §17 status) |

@@ -47,7 +47,7 @@ A Debug build reads three dev files from the App Group (`TallybonesKit/Kernel/Ta
 | `TallybonesKit/Kernel/TallyKernel.swift` | THE SEAM: every call the screens and the conversation make, each naming the pickemup entry point it mirrors, and `TallyStage` |
 | `TallybonesKit/Kernel/Tb.swift` | the Swift face of `tb_api.h`: one call per entry point, every read through the generated readers |
 | `TallybonesKit/Kernel/BridgeKernel.swift` | the seam over `Tb`: the kernel's view, verdicts and words copied into the plain models |
-| `TallybonesKit/Model/TrayModel.swift` | the plain values: `TrayModel`, `CardModel`, `LobbyModel`, `Category`, `TallyView`, `DraftKind` |
+| `TallybonesKit/Kernel/TrayModel.swift` | the plain values: `TrayModel`, `CardModel`, `LobbyModel`, `Category`, `TallyView`, `DraftKind` |
 | `TallybonesKit/Board/TallyTable.swift` | the view model: my keep marks before Roll, the kernel's preview, the newest plan to the player, one kernel call per touch |
 | `TallybonesKit/Board/DiceFace.swift`, `DiceTray.swift`, `BeatPlayer.swift` | a drawn die, the tray, the kernel's timeline behind `DiceMotion` |
 | `TallybonesKit/Board/Scorecard.swift`, `SeatBadge.swift`, `TableScreen.swift`, `Anchors.swift` | the card, the badges, the table, the named anchors |

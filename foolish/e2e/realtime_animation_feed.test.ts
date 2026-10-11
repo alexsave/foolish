@@ -68,7 +68,7 @@ mock.module('../src/contexts/ServerContext.tsx', { namedExports: {
         views: { [GAME_ID]: { mySeat: 0 } },
     }),
 } });
-mock.module('../src/backend/Connector.ts', { defaultExport: supabaseMock });
+mock.module('../src/common/Connector.ts', { defaultExport: supabaseMock });
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

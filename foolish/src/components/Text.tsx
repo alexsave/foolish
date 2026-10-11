@@ -1,5 +1,5 @@
 import { CSSProperties } from 'react';
-import { StringId } from '../localization/strings';
+import { StringId } from '../common/strings';
 import { useLocalization } from '../contexts/LocalizationContext';
 
 interface TextProps {

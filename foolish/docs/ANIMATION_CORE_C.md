@@ -30,7 +30,7 @@ deliberately leaves behind.
 ## The C API surface (`c/src/anim_plan.h`)
 
 ### Timing policy
-- `#define ANIM_TIME_MS 500` — `ANIMATION_TIME` (`src/constants/constants.ts`).
+- `#define ANIM_TIME_MS 500` — `ANIMATION_TIME` (`src/common/constants.ts`).
 - `#define ANIM_GAP_MS 25` — the inter-event gap the web queue waits before
   creating the next event's cards (a matched pair with the overlay clear).
 - `int anim_step_duration_ms(int event_type)` — the one place a duration is

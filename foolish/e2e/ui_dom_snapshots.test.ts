@@ -126,7 +126,7 @@ const supabaseMock = {
 };
 
 let routeGameId = '';
-mock.module('../src/backend/Connector.ts', { defaultExport: supabaseMock });
+mock.module('../src/common/Connector.ts', { defaultExport: supabaseMock });
 mock.module('next/navigation', { namedExports: {
     useParams: () => (routeGameId ? { game_id: routeGameId } : {}),
     useRouter: () => ({ push() {}, replace() {}, back() {} }),
@@ -477,7 +477,7 @@ test('the dashboard', async () => {
 test('the match history', async () => {
     const { seededCode } = await import('./helpers/seeded_codes.ts');
     const { replaySummary } = await import('../sdk/ts/wasm/bots.ts');
-    const { encodeExtrasBytes } = await import('../server/api/common/replay/extras.ts');
+    const { encodeExtrasBytes } = await import('../server/api/common/replay_extras.ts');
     // BOTH ERAS OF BOT NAME, on purpose, because the history screen is where they
     // coexist. A blob stores the name the bot had when the game was played and the
     // screen renders it as stored - there is no display map - so '%Cordite' is an
@@ -539,7 +539,7 @@ void IDLE;
 test('a replay with names, at its last step', async () => {
     const { TUTORIAL_MOVES_CODE } = await import('../src/components/tutorialGame.ts');
     const { replaySummary, kernelB32Decode } = await import('../sdk/ts/wasm/bots.ts');
-    const { encodeExtras, joinReplayCode } = await import('../server/api/common/replay/extras.ts');
+    const { encodeExtras, joinReplayCode } = await import('../server/api/common/replay_extras.ts');
     await (await import('../sdk/ts/wasm/bots.ts')).ensureBotsAsync();
     const summary = replaySummary(kernelB32Decode(TUTORIAL_MOVES_CODE));
     assert.ok(summary, 'the code has a summary');

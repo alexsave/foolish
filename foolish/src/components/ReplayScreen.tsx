@@ -7,7 +7,7 @@ import { AnimationProvider } from '../contexts/AnimationContext';
 import { GameProvider } from '../contexts/GameContext';
 import { DragProvider } from '../contexts/DragContext';
 import { FernFractalProvider } from '../utils/fernFractal';
-import { bigintToBytes, bytesToBigint } from '@api/common/replay/codec.ts';
+import { bigintToBytes, bytesToBigint } from '@api/common/replay_codec.ts';
 import { ensureBotsAsync, kernelB32Decode, replaySummary } from '@sdk/ts/wasm/bots.ts';
 import {
     buildReplayFrames,
@@ -16,7 +16,7 @@ import {
     stepTimes,
     REPLAY_KEY,
 } from '../replay/frames';
-import { splitReplayCode, decodeExtras, ReplayExtras } from '@api/common/replay/extras.ts';
+import { splitReplayCode, decodeExtras, ReplayExtras } from '@api/common/replay_extras.ts';
 import { ReplayStage } from './replay/ReplayStage';
 
 /**

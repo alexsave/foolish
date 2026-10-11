@@ -1,5 +1,5 @@
 import { useServer } from '../contexts/ServerContext';
-import { usePreventScroll } from '../hooks/usePreventScroll';
+import { usePreventScroll } from '../utils/usePreventScroll';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 import { BackButton } from './BackButton';
 import { GameBoard } from './GameBoard';

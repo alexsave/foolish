@@ -262,7 +262,7 @@ dgl --header languages.h --table FS_LANGUAGES --require-complete --name FoolishL
    --kotlin "$i18n_kotlin/FoolishLanguages.kt" --kotlin-package cards.foolish.i18n
 # Every key that exists, in one list. --ts-const so TypeScript keeps them as
 # LITERAL types: the website's `StringId` union is derived from this array
-# (src/localization/strings.ts), so the set of keys a call site may ask for is
+# (src/common/strings.ts), so the set of keys a call site may ask for is
 # the set the C declares, checked by tsc, and not a second list to fall behind.
 dg --header keys.h --table FS_KEY_NAME --require-complete --name FoolishStringKeys --ts-const \
    --ts "$i18n_ts/keys.ts" --swift "$i18n_swift/FoolishStringKeys.swift" \

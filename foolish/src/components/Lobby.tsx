@@ -1,11 +1,11 @@
 import { useServer } from "../contexts/ServerContext";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, useRef, useMemo } from "react";
-import { WEBSITE_DOMAIN } from "../constants/constants";
+import { WEBSITE_DOMAIN } from "../common/constants";
 import { QRCodeSVG } from "qrcode.react";
 import { PLAYER_STATUS, GAME_STATUS, rulesOf, type ViewSeat } from "../state/view";
-import supabase from "../backend/Connector";
-import { usePreventScroll } from "../hooks/usePreventScroll";
+import supabase from "../common/Connector";
+import { usePreventScroll } from "../utils/usePreventScroll";
 import { MAX_PLAYERS } from "@api/core/constants.ts";
 import { useTexture, getTextureStyle, seedFromString, flipFromString } from "./TexturedSurface";
 import { WoolBackgroundLayer } from "./WoolBackgroundLayer";

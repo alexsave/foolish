@@ -44,9 +44,7 @@ SKIP='^docs/
 ^rustpoc/
 ^foolyard/
 ^offlinefun/
-^cnitro/
 ^e2e/
-^tests/
 ^\.github/workflows/
 ^uttt/
 ^werewolf/

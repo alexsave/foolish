@@ -1419,7 +1419,7 @@ The original report follows.
 
 A papercut, not a crash, on the most natural input a person can give.
 
-`urlToGame` in `server/api/common/replay/codec.ts` recognises exactly one
+`urlToGame` in `server/api/common/replay_codec.ts` recognises exactly one
 prefix, `WWW.FOOLISH.CARDS/`.
 Paste the obvious thing, a real link of the form `https://foolish.cards/<code>`,
 and the prefix does not match, so the whole string is treated as the code.

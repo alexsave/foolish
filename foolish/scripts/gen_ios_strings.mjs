@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // gen_ios_strings.mjs — Milestone E4 (§16.E4). Parses the web's
-// src/localization/strings.ts and emits ios/FoolishKit/Localizable.xcstrings
+// src/common/strings.ts and emits ios/FoolishKit/Localizable.xcstrings
 // (Xcode String Catalog), en/ru/ko per key. Keys keep the web's names so the
 // Swift and web string tables read the same; iOS-only keys (added elsewhere
 // with an `ios.` prefix) are merged in and MUST exist in all three languages.
@@ -14,7 +14,7 @@ import { dirname, resolve } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
-const SRC = resolve(root, "src/localization/strings.ts");
+const SRC = resolve(root, "src/common/strings.ts");
 const OUT = resolve(root, "ios/FoolishKit/Localizable.xcstrings");
 const LANGS = ["en", "ru", "ko"];
 

@@ -66,7 +66,7 @@
 #include "game.h"   // MAX_PLAYERS, MAX_HAND_SIZE, MAX_BATTLES
 
 // ---------- timing policy -------------------------------------------------
-// ANIMATION_TIME (src/constants/constants.ts) — every event animates for this
+// ANIMATION_TIME (src/common/constants.ts) — every event animates for this
 // long. The web's processAnimationQueue then waits ANIM_GAP_MS before creating
 // the next event's cards; the two are a matched pair (see the comment there:
 // the gap is coupled to the overlay's clear timeout, "don't lower one without

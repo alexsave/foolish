@@ -622,7 +622,7 @@ export const OracleOverlay = ({ snapshot, onClose, onToggleMemory, onRetry }: Pr
                 scrolls. data-chat-scrollable is the OPT-IN: usePreventScroll
                 refuses every touchmove on the site so a dragged card cannot drag
                 the page, and a region that genuinely scrolls has to say so or a
-                finger does nothing to it (src/hooks/usePreventScroll.ts). */}
+                finger does nothing to it (src/utils/usePreventScroll.ts). */}
             <div data-chat-scrollable style={{ position: 'relative', overflowY: 'auto', padding: '6px 6px 8px' }}>
                 {!s || s.status === 'loading' ? (
                     <div style={{ padding: 16, textAlign: 'center', fontSize: '0.74rem', ...ledText(AMBER) }}>

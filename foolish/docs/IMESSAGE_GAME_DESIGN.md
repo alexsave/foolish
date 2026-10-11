@@ -216,7 +216,7 @@ implementer MUST read that file first and mirror it, not approximate it.
 ### 4.3 Text encoding & URL
 
 `bytes → base32` using the codec's existing base32 (same alphabet/util as
-`server/api/common/replay/codec.ts` — QR-alphanumeric-safe, already
+`server/api/common/replay_codec.ts` — QR-alphanumeric-safe, already
 proven in URLs). URL shape:
 
 ```
@@ -726,7 +726,7 @@ Two presentation styles (§11.2):
 - Rendering: pure SwiftUI shapes + SF Symbols (`suit.spade.fill` etc.), white
   rounded-rect cards, red/black glyphs; the procedural fractal aesthetic is a
   later port, NOT v1. Dark mode via system colors. Localize all strings from
-  day one — reuse the exact keys/strings from `src/localization/strings.ts`
+  day one — reuse the exact keys/strings from `src/common/strings.ts`
   (en/ru/ko) so the two clients never drift in terminology.
 - Bubble snapshot: render the *public* table (both hands as backs, battles,
   trump, counts) with `UIGraphicsImageRenderer` at 300×195pt into

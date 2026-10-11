@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useServer } from '../contexts/ServerContext';
 import { useLocalization } from '../contexts/LocalizationContext';
 import { GAME_STATUS } from '../state/view';
-import supabase from '../backend/Connector';
+import supabase from '../common/Connector';
 import { TexturedSurface, useTexture, getTextureStyle } from './TexturedSurface';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 import { Text } from './Text';
