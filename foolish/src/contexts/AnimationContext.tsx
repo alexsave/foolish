@@ -4,34 +4,27 @@ import { useAuth } from './AuthContext';
 import { useParams } from 'next/navigation';
 import supabase from '../common/Connector';
 import { validateActionWire } from '../utils/gameValidation';
-import { clientTable, encodeAction } from '@sdk/ts/table/client_table.ts';
-import { ASK_BUMP } from '@sdk/ts/gen/view_layout.bots.ts';
+import { clientTable, encodeAction, type AwireMove } from '@sdk/ts/table/client_table.ts';
 import { pushToSequence } from '../state/pushSequence';
 import { rulesOf, tableCards, type TableView, type ViewCard } from '../state/view';
 import { optimisticBoard, turnedBoard, withdrawn } from '../state/clientBoards';
 import { base64ToBytes } from '@sdk/ts/wire/bytes.ts';
-import { getCardKeyOwner, getCardKey } from '../utils/animationUtils';
+import * as V from '@sdk/ts/gen/view_layout.bots.ts';
+import { getCardKeyOwner } from '../utils/animationUtils';
 import { animationFeed } from '../state/animationFeed';
-import { revertsFirst } from '../state/revertFlights';
 import type { ClientAnimationEvent } from '../state/animationStep';
 import {
-    passedBoard, pendingOverlayCards, releaseConfirmedOnTable, rememberPending, resolveOptimisticConflicts, seatOf,
-    sweepStaleMotions, withoutConfirmedMotions,
+    forgetRefused, passedBoard, pendingOverlayCards, rememberPending, seatOf, settlePush, sweepStaleMotions,
     type OptimisticState,
 } from '../state/optimisticResolve';
 import { optimisticOverlay } from '../state/optimisticOverlay';
 import { authoritativeVersion, noteAuthoritativeVersion } from '../state/authoritativeVersion';
-import { animEventKey, animShouldDropStale } from '@sdk/ts/wasm/bots.ts';
 import { useAnimationRun } from '../state/useAnimationRun';
 import type { ArrivingPile } from '../state/animPlan';
 import { ROLE_CLAIM, useRoleMotion, type RoleHandOff } from '../state/useRoleMotion';
-import { rolesOf } from '../state/roleLedger';
-import type { ShownBoard } from '../state/roleLedger';
-import { animRolesGoodsCleared, animRolesGoodsOpening, animRolesPassHandOff } from '@sdk/ts/wasm/bots.ts';
+import { rolesOf, type ShownBoard } from '../state/roleLedger';
+import { animRolesGoodsCleared, animRolesGoodsOpening, animRolesPassHandOff, animShouldDropStale } from '@sdk/ts/wasm/bots.ts';
 import { ANIM_NO_MASK } from '@sdk/ts/gen/anim.bots.ts';
-
-// Bot bump timeout - 20 seconds of no animations (currently unused)
-// const BOT_BUMP_TIMEOUT = 20000;
 
 type Card = ViewCard;
 
@@ -155,9 +148,6 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     const pendingCompletionCallbackRef = useRef<(() => void) | null>(null);
     const remainingSequenceEventsRef = useRef<number>(0);
 
-    // Bot bump timer ref
-    const botBumpTimerRef = useRef<NodeJS.Timeout | null>(null);
-
     // Track if there have been bot moves in the last interval
     const hasBotMovedRef = useRef<boolean>(false);
 
@@ -171,26 +161,14 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     // Store the current game ID for this animation sequence
     const currentGameIdRef = useRef<string | null>(null);
 
-    // MY MOVES THE SERVER HAS NOT ANSWERED: the predictions on screen, where each
-    // one is drawn, the cards a revert is already carrying home, and my pending
-    // pass. src/state/optimisticResolve.ts owns the shape and every routine that
-    // settles it; this file only holds it and hands it over.
-    //
-    // ONE ref, not four, because they are one thing and every routine there needs
-    // more than one of them. The three collections are mutated in place and never
-    // replaced; the pass IS replaced, so it lives in its own cell inside - which
-    // is why it reads `optimistic.pass.current` while the rest do not.
-    const optimistic = useRef<OptimisticState>({
-        motions: new Map(),
-        reverting: new Set(),
-        positions: new Map(),
-        pass: { current: null },
-    }).current;
+    // MY MOVES THE SERVER HAS NOT ANSWERED: the cards I have predicted, and my
+    // pending pass. src/state/optimisticResolve.ts owns the shape and every
+    // routine that settles it; this file only holds it and hands it over.
+    const optimistic = useRef<OptimisticState>({ motions: [], pass: null }).current;
 
     // Expose the local player's live optimistic table cards to the REST load path,
     // so a reconnect resync re-applies them instead of momentarily wiping them
-    // (the "vanish then reappear" glitch). Derived on demand from the live
-    // position tracking, so it's always current.
+    // (the "vanish then reappear" glitch).
     useEffect(() => optimisticOverlay.register(() => pendingOverlayCards(optimistic)), []);
 
     // THE ONE DEDUP AND ORDERING RULE of the live feed is the kernel's version
@@ -241,7 +219,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
                 // No bot moves but a bot could move - nudge the bot loop
                 supabase.functions.invoke('meta', {
-                    body: new Blob([clientTable().askBody({ kind: ASK_BUMP, gid: url_game_id }) as BlobPart])
+                    body: new Blob([clientTable().askBody({ kind: V.ASK_BUMP, gid: url_game_id }) as BlobPart])
                 }).catch(error => {
                     console.error('Bot bump failed:', error);
                 });
@@ -251,16 +229,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             hasBotMovedRef.current = false;
         }, 5000); // 5 seconds
 
-        // Store the interval ID for cleanup
-        botBumpTimerRef.current = intervalId as any;
-
-        // Cleanup on unmount
-        return () => {
-            if (botBumpTimerRef.current) {
-                clearInterval(botBumpTimerRef.current);
-                botBumpTimerRef.current = null;
-            }
-        };
+        return () => clearInterval(intervalId);
     // Re-run when game data loads or players change (bot might be added)
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [url_game_id, url_game_id ? games[url_game_id]?.seats.length : 0]);
@@ -359,22 +328,19 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             // Also what the next tap is stamped with (ServerContext's round guard).
             noteAuthoritativeVersion(gid, message.version);
 
-            // My cards this AUTHORITATIVE state shows on the table but whose own
-            // confirming broadcast the gate dropped. message.game is still the
-            // pristine server board here - resolveOptimisticConflicts has not
-            // kept anything on it - which is what the release is judged against.
-            releaseConfirmedOnTable(optimistic, message);
         }
 
         // Store the game ID for use during animations
         currentGameIdRef.current = message.game.gameId;
 
-        // Only the events this client has not already animated as a prediction;
-        // the ones it has release their tracking there.
-        const nonOptimisticEvents = withoutConfirmedMotions(optimistic, message.events);
+        // The push against my unanswered moves (src/state/optimisticResolve.ts):
+        // what is left of `message.events` is what this client has not already
+        // animated as a prediction, and the flights carry home what it dooms.
+        const pushWasEmpty = message.events.length === 0;
+        const revertEvents = settlePush(optimistic, message, typeof message.version === 'number');
 
         // If ALL events were optimistic, just update state and return
-        if (nonOptimisticEvents.length === 0) {
+        if (message.events.length === 0) {
             // A GOOD CAN BE THE WHOLE STREAM, AND THIS IS THE WEB'S EMPTY-STREAM
             // GUARD - so the good has to be played ABOVE it, not below.
             //
@@ -400,7 +366,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             // answers null for anything else, which is right: a good being taken
             // away is a consequence of the card that cleared it, and that card is
             // an event, so such a push is never one of these.
-            if (message.events.length === 0 && message.game) {
+            if (pushWasEmpty && message.game) {
                 const shown = roleMotionRef.current.read();
                 const opening = shown ? animRolesGoodsOpening(shown.roles, message.game.goodMask) : null;
                 // The seats do not change, only what they are wearing: the same
@@ -418,13 +384,6 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             }
             return;
         }
-
-        // Otherwise, continue with non-optimistic events
-        message.events = nonOptimisticEvents;
-
-        // CONFLICT DETECTION: which of my unanswered moves this push dooms, and
-        // the flights that carry them home (src/state/optimisticResolve.ts).
-        const { revertEvents, passIsInvalid } = resolveOptimisticConflicts(optimistic, message);
 
         // Store the completion callback to update final game state
         pendingCompletionCallbackRef.current = () => {
@@ -470,12 +429,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         // flies: this is the coin flip each badge makes where it stands.
         if (opening) roleMotionRef.current.syncRoles(opening);
 
-        // Nothing doomed: the push plays as it came. Otherwise every return
-        // flight goes first, over the board it must be drawn against
-        // (src/state/revertFlights.ts).
-        enqueue(revertEvents.length === 0
-            ? message.events
-            : revertsFirst(message, revertEvents, passIsInvalid));
+        // Every return flight goes first, then the push as it came.
+        enqueue([...revertEvents, ...message.events]);
     };
 
 
@@ -562,13 +517,6 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             if (board && commitGameId && (step.commit_if?.() ?? true)) {
                 updateGameState(commitGameId, board);
             }
-            if (step.type === 'revert' && step.cards) {
-                for (const card of step.cards) {
-                    const cardKey = getCardKey(card);
-                    optimistic.reverting.delete(cardKey);
-                    optimistic.positions.delete(cardKey);
-                }
-            }
             if (pendingCompletionCallbackRef.current && remainingSequenceEventsRef.current > 0) {
                 remainingSequenceEventsRef.current--;
             }
@@ -644,9 +592,6 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [url_game_id, games, isAnimating]);
 
-    // Queue a single animation
-    const queueAnimation = (event: ClientAnimationEvent) => enqueue([event]);
-
     // Get animation state for a specific card
     const getCardAnimationState = (card: Card, owner?: number | string) => {
         const cardKey = getCardKeyOwner(card, owner);
@@ -671,414 +616,100 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         };
     };
 
-    // THE BOARD A PREDICTED MOVE LEAVES, made by the kernel from whatever is on
-    // screen at the moment the prediction's flight lands (clientBoards.optimisticBoard:
-    // the table, the hand, a pass's shield, a pickup's rotation). It used to be a
-    // second ANIMATION_TIME timer in ServerContext, coupled to this flight by
-    // nothing but the two files reading the same constant.
-    const predictedLanding = (wire: Uint8Array, still: () => boolean) => ({
-        commit_board: () => {
+    // ONE PREDICTED MOVE - an attack, a pass, a cover, a pickup - from tap to verdict:
+    //
+    //   1. THE REQUEST GOES FIRST. The server is authoritative and rejects an
+    //      illegal move, so the round trip is never held up on the local gate.
+    //   2. The same wire bytes are judged here (the kernel's gate), and only a
+    //      legal move is predicted: its cards fly at once and are remembered as
+    //      pending. THE BOARD THE MOVE LEAVES IS MADE AT ITS LANDING, by the
+    //      kernel, from whatever is on screen then (clientBoards.optimisticBoard) -
+    //      a push can commit fresher state inside the flight, and a board derived
+    //      at tap time would write the stale table and hand back over it.
+    //   3. A refusal flies home each card that is still pending (a push may have
+    //      settled or doomed it already), over the board with the move undone -
+    //      while the board on screen is still the version the move was made on.
+    //      Once a push has moved the game on, the server's board is on its way
+    //      through the queue and none is made here.
+    const play = async (
+        move: AwireMove,
+        send: (wire: Uint8Array) => Promise<{ game_id: string }>,
+        undo: (held: TableView, tap: TableView) => TableView | null,
+    ): Promise<{ game_id: string }> => {
+        if (!game_id || !games[game_id]) {
+            throw new Error('No active game');
+        }
+        const game = games[game_id], seat = seatOf(game);
+        // The awire bytes are built ONCE per move: the exact buffer the kernel
+        // validates is what travels as the POST body. A mismatched cover/attack
+        // pairing throws here (a client bug, not a race) - the caller sees a
+        // rejected promise, same as a server reject.
+        const wire = encodeAction(move);
+        const toHand = move.kind === 'pickup', isCover = move.kind === 'cover';
+        const dest = toHand ? V.ANIM_DEST_MY_HAND : V.ANIM_DEST_TABLE;
+        const cards = toHand ? tableCards(game) : move.cards ?? [];
+        const [from, to] = toHand ? ['table', 'hand'] as const : ['hand', 'table'] as const;
+
+        let refused = false;
+        const serverPromise = send(wire);
+        let valid = true;
+        try {
+            validateActionWire(game, wire);
+        } catch {
+            valid = false;
+        }
+        if (valid) {
+            rememberPending(optimistic, cards, dest, Date.now(),
+                isCover ? move.attack_cards : undefined, move.kind === 'pass' ? wire : undefined);
+            enqueue([{
+                type: toHand ? 'pickup' : isCover ? 'cover' : 'attack_pass',
+                cards,
+                target_cards: isCover ? move.attack_cards : undefined,
+                from_location: from,
+                to_location: to,
+                seat,
+                commit_board: () => {
+                    const held = currentGameRef.current;
+                    return held ? optimisticBoard(held, wire) : null;
+                },
+                // A refusal that arrives mid-flight stops a card-laying move's
+                // board landing. A refused PICKUP still takes the table into the
+                // hand: its cards' return flight starts from the hand, which hides
+                // them while they fly, and the refusal's board puts the table back.
+                commit_if: () => toHand || !refused,
+            }]);
+        }
+
+        try {
+            return await serverPromise;
+        } catch (error) {
+            refused = true;
             const held = currentGameRef.current;
-            return held ? optimisticBoard(held, wire) : null;
-        },
-        commit_if: still,
-    });
+            const home = (held && held.version === game.version ? undo(held, game) : null) ?? undefined;
+            enqueue(forgetRefused(optimistic, cards, dest, isCover).map((card): ClientAnimationEvent => ({
+                type: 'revert', cards: [card], from_location: to, to_location: from, seat, is_revert: true, game_state: home,
+            })));
+            throw error;
+        }
+    };
 
-    // Helper function to trigger optimistic animation and track it
-    const triggerOptimisticAnimation = (animationType: string, cards: Card[], fromLocation: string, toLocation: string, seat?: number, targetCard?: Card, battleIndex?: number, landing?: { commit_board: () => TableView | null; commit_if: () => boolean }) => {
-        const animationEvent: ClientAnimationEvent = {
-            type: animationType as any,
-            cards: cards,
-            from_location: fromLocation as any,
-            to_location: toLocation as any,
-            seat,
-            target_card: targetCard,
-            battle_index: battleIndex,
-            message: `Optimistic ${animationType} animation`,
-            ...landing,
-        };
+    const attack = (cards: Card[]) =>
+        play({ kind: 'attack', cards }, (wire) => serverActions.attack(cards, wire), (held) => withdrawn(held, cards));
 
-        // Track EACH CARD individually to avoid duplicates from server
-        // Server may split multi-card actions into separate events (one per card)
-        const timestamp = Date.now();
-        cards.forEach(card => {
-            const cardKey = getCardKey(card);
-            rememberPending(optimistic, animationType, card, fromLocation, toLocation, seat, timestamp);
-
-            // Track visual position for revert animations
-            // After animation completes, card will VISUALLY be at toLocation
-            const positionInfo: any = {
-                location: toLocation,
-                seat
-            };
-            if (targetCard !== undefined) {
-                positionInfo.target_card = targetCard;
-            }
-            if (battleIndex !== undefined) {
-                positionInfo.battle_index = battleIndex;
-            }
-            optimistic.positions.set(cardKey, positionInfo);
+    // A refused pass: the cards land back in my hand, and the lead and the shield are as they were.
+    const pass = (cards: Card[]) =>
+        play({ kind: 'pass', cards }, (wire) => serverActions.pass(cards, wire), (held, tap) => {
+            const back = withdrawn(held, cards);
+            return back && turnedBoard(back, tap.firstAttacker, tap.defender);
         });
 
-        // Queue the optimistic animation immediately
-        queueAnimation(animationEvent);
-    };
+    // A refused pickup: the table goes back to the board the pickup was made on.
+    const pickup = () => play({ kind: 'pickup' }, (wire) => serverActions.pickup(wire), (_held, tap) => tap);
 
-    // TIMING FLOW:
-    // 1. User action validates in AnimationContext (instant rejection if invalid)
-    // 2. Optimistic animation triggers immediately (instant feedback)
-    // 3. ServerContext puts the board the move leaves on screen after ANIMATION_TIME,
-    //    unless the server has refused a card-laying move by then: its cards fly
-    //    home from a table that does not show them. (The kernel leaves a board that
-    //    already shows the move as it is: a confirmation that landed first.)
-    // 4. Server response with intermediate states provides final truth
-
-    // The board a refused move's cards fly home to. While no push has moved the
-    // game on - the board on screen is still the version the move was made on - it
-    // is that board with the move undone; once a push has, the server's board is on
-    // its way through the queue and nothing is made here.
-    const refusedBoard = (tap: TableView, undo: (held: TableView) => TableView | null): TableView | undefined => {
-        const held = currentGameRef.current;
-        if (!held || held.version !== tap.version) return undefined;
-        return undo(held) ?? undefined;
-    };
-
-    // Game action methods that handle optimistic animations + server calls
-    const attack = async (cards: Card[]): Promise<{ game_id: string }> => {
-        if (!game_id || !games[game_id]) {
-            throw new Error('No active game');
-        }
-
-        const game = games[game_id];
-
-        // Build the awire bytes ONCE per move: the exact buffer the kernel
-        // validates below is what travels as the binary POST body.
-        const wire = encodeAction({ kind: 'attack', cards });
-
-        // 1. Send the request BEFORE validating - the server is authoritative and
-        //    rejects illegal moves, so we don't block the round-trip on local
-        //    validation. `valid` is captured by the server method's deferred
-        //    optimistic patch (applied only if still valid) and gates the optimistic
-        //    animation below.
-        let valid = true, refused = false;
-        const serverPromise = serverActions.attack(cards, wire);
-
-        // 2. Validate the SAME wire bytes locally; only add optimistic feedback
-        //    if the move is legal.
-        try {
-            validateActionWire(game, wire);
-        } catch {
-            valid = false;
-        }
-        if (valid) {
-            triggerOptimisticAnimation('attack_pass', cards, 'hand', 'table', seatOf(game), undefined, undefined,
-                predictedLanding(wire, () => valid && !refused));
-        }
-
-        // 3. Await the server's verdict (revert-on-rejection below).
-        try {
-            return await serverPromise;
-        } catch (error) {
-            // Server rejected the attack - but check if we already reverted due to conflict detection
-            refused = true;
-            // The cards land back in my hand, off the table the move may already stand on.
-            const homeBoard = refusedBoard(game, (held) => withdrawn(held, cards));
-
-            cards.forEach(card => {
-                const cardKey = getCardKey(card);
-
-                // Check if this card is already being reverted OR tracking was cleared
-                const isCurrentlyReverting = optimistic.reverting.has(cardKey);
-                const wasAlreadyReverted = !optimistic.positions.has(cardKey);
-
-                // Also check if optimistic animation was cleared (conflict detection clears it)
-                const optimisticAnimationCleared =
-                    !optimistic.motions.has(animEventKey('attack_pass', card, 'hand', 'table', seatOf(game)));
-
-                if (isCurrentlyReverting || wasAlreadyReverted || optimisticAnimationCleared) {
-                    return;
-                }
-
-                optimistic.reverting.add(cardKey);
-
-                // Get where this card currently is visually
-                const visualPosition = optimistic.positions.get(cardKey);
-                const fromLocation = visualPosition?.location || 'table';
-
-                const revertEvent: ClientAnimationEvent = {
-                    type: 'revert',
-                    cards: [card],
-                    from_location: fromLocation as any,
-                    to_location: 'hand',
-                    seat: seatOf(game),
-                    is_revert: true,
-                    message: 'Attack rejected by server',
-                    game_state: homeBoard
-                };
-
-                queueAnimation(revertEvent);
-
-                // Clear from optimistic tracking: a refused card is pending nowhere,
-                // so a resync (optimisticOverlay) does not lay it again.
-                optimistic.motions.delete(animEventKey('attack_pass', card, 'hand', 'table', seatOf(game)));
-                optimistic.positions.delete(cardKey);
-            });
-
-            throw error;
-        }
-    };
-
-    const pass = async (cards: Card[]): Promise<{ game_id: string }> => {
-        if (!game_id || !games[game_id]) {
-            throw new Error('No active game');
-        }
-
-        const game = games[game_id];
-
-        // One awire buffer for the gate + the POST body (see attack).
-        const wire = encodeAction({ kind: 'pass', cards });
-
-        // 1. Send the request BEFORE validating (server is authoritative; see attack).
-        let valid = true, refused = false;
-        const serverPromise = serverActions.pass(cards, wire);
-
-        // 2. Validate the same wire bytes locally; only add optimistic feedback
-        //    if the move is legal.
-        try {
-            validateActionWire(game, wire);
-        } catch {
-            valid = false;
-        }
-        if (valid) {
-            // Trigger optimistic animation - single animation with all cards going to their spots
-            triggerOptimisticAnimation('attack_pass', cards, 'hand', 'table', seatOf(game), undefined, undefined,
-                predictedLanding(wire, () => valid && !refused));
-
-            // Keep the pass itself - the wire I sent - so a board it has not been
-            // confirmed on can be asked of the kernel instead of patched from two
-            // seat numbers read off this one board at this one moment.
-            optimistic.pass.current = { wire, cards, seat: seatOf(game) };
-        }
-
-        // 3. Await the server's verdict (revert-on-rejection below).
-        try {
-            return await serverPromise;
-        } catch (error) {
-            // Server rejected the pass - the cards go home and the pass is pending
-            // nowhere, so no board is asked about it again.
-            refused = true;
-            optimistic.pass.current = null;
-            // The cards land back in my hand, and the lead and the shield are as they were.
-            const homeBoard = refusedBoard(game, (held) => {
-                const back = withdrawn(held, cards);
-                return back && turnedBoard(back, game.firstAttacker, game.defender);
-            });
-
-            // Check if conflict detection already handled these cards
-            const cardsNeedingRevert = cards.filter(card =>
-                optimistic.motions.has(animEventKey('attack_pass', card, 'hand', 'table', seatOf(game))));
-
-            if (cardsNeedingRevert.length === 0) {
-            } else {
-
-                cardsNeedingRevert.forEach(card => {
-                    const cardKey = getCardKey(card);
-                    if (optimistic.reverting.has(cardKey)) return;
-                    optimistic.reverting.add(cardKey);
-
-                    const visualPosition = optimistic.positions.get(cardKey);
-                    const fromLocation = visualPosition?.location || 'table';
-
-                    queueAnimation({
-                        type: 'revert',
-                        cards: [card],
-                        from_location: fromLocation as any,
-                        to_location: 'hand',
-                        seat: seatOf(game),
-                        is_revert: true,
-                        message: 'Pass rejected by server',
-                        game_state: homeBoard
-                    });
-
-                    optimistic.motions.delete(animEventKey('attack_pass', card, 'hand', 'table', seatOf(game)));
-                    optimistic.positions.delete(cardKey);
-                });
-            }
-            throw error;
-        }
-    };
-
-    const pickup = async (): Promise<{ game_id: string }> => {
-        if (!game_id || !games[game_id]) {
-            throw new Error('No active game');
-        }
-
-        const game = games[game_id];
-        const allTableCards = tableCards(game);
-
-        // One awire buffer for the gate + the POST body (see attack).
-        const wire = encodeAction({ kind: 'pickup' });
-
-        // 1. Send the request BEFORE validating (server is authoritative; see attack).
-        //    A refused pickup still takes the table into the hand once its flight
-        //    lands: the cards' return flight starts from the hand, which hides them
-        //    while they fly, and the refusal's board puts the table back.
-        let valid = true;
-        const serverPromise = serverActions.pickup(wire);
-
-        // 2. Validate the same wire bytes locally; only add optimistic feedback
-        //    if the move is legal.
-        try {
-            validateActionWire(game, wire);
-        } catch {
-            valid = false;
-        }
-        if (valid) {
-            triggerOptimisticAnimation('pickup', allTableCards, 'table', 'hand', seatOf(game), undefined, undefined,
-                predictedLanding(wire, () => valid));
-        }
-
-        // 3. Await the server's verdict (revert-on-rejection below).
-        try {
-            return await serverPromise;
-        } catch (error) {
-            // Server rejected the pickup
-            // Check if conflict detection already handled reverts
-            const stillTracking = allTableCards.filter(card =>
-                optimistic.motions.has(animEventKey('pickup', card, 'table', 'hand', seatOf(game))));
-
-            if (stillTracking.length === 0) {
-                throw error;
-            }
-            // The table goes back to the board the pickup was made on, as long as no push has moved the game on.
-            const homeBoard = refusedBoard(game, () => game);
-
-            allTableCards.forEach(card => {
-                const cardKey = getCardKey(card);
-                if (optimistic.reverting.has(cardKey)) return;
-                optimistic.reverting.add(cardKey);
-
-                const visualPosition = optimistic.positions.get(cardKey);
-                const fromLocation = visualPosition?.location || 'hand';
-                const toLocation = fromLocation === 'hand' ? 'table' : 'hand';
-
-                queueAnimation({
-                    type: 'revert',
-                    cards: [card],
-                    from_location: fromLocation as any,
-                    to_location: toLocation as any,
-                    seat: seatOf(game),
-                    is_revert: true,
-                    message: 'Pickup rejected by server',
-                    game_state: homeBoard
-                });
-
-                optimistic.motions.delete(animEventKey('pickup', card, 'table', 'hand', seatOf(game)));
-                optimistic.positions.delete(cardKey);
-            });
-            throw error;
-        }
-    };
-
-    const cover = async (coverCards: Card[], attackCards: Card[]): Promise<{ game_id: string }> => {
-        if (!game_id || !games[game_id]) {
-            throw new Error('No active game');
-        }
-
-        const game = games[game_id];
-
-        // One awire buffer for the gate + the POST body (see attack). A
-        // mismatched cover/attack pairing throws here (a client bug, not a
-        // race) - the caller sees a rejected promise, same as a server reject.
-        const wire = encodeAction({ kind: 'cover', cards: coverCards, attack_cards: attackCards });
-
-        // 1. Send the request BEFORE validating (server is authoritative; see attack).
-        let valid = true, refused = false;
-        const serverPromise = serverActions.cover(coverCards, attackCards, wire);
-
-        // 2. Validate the same wire bytes locally; only add optimistic feedback
-        //    if the move is legal.
-        try {
-            validateActionWire(game, wire);
-        } catch {
-            valid = false;
-        }
-
-        if (valid) {
-            // Trigger optimistic cover animation - SINGLE animation with all cards going to their targets
-            // Track cover cards with their target attack cards for proper merging later
-            const animationEvent: ClientAnimationEvent = {
-                type: 'cover',
-                cards: coverCards,
-                target_cards: attackCards, // Pass the target attack cards for each cover card
-                from_location: 'hand',
-                to_location: 'table',
-                seat: seatOf(game),
-                message: 'Optimistic cover animation',
-                ...predictedLanding(wire, () => valid && !refused),
-            };
-
-            // Track EACH CARD individually with its target attack card
-            const timestamp = Date.now();
-            coverCards.forEach((coverCard, idx) => {
-                const attackCard = attackCards[idx];
-                const cardKey = getCardKey(coverCard);
-
-                // Find battle index for this attack
-                const battleIndex = game.battles.findIndex(b =>
-                    b.attack.suit === attackCard.suit && b.attack.value === attackCard.value
-                );
-
-                // Track for conflict detection
-                rememberPending(optimistic, 'cover', coverCard, 'hand', 'table', seatOf(game), timestamp);
-
-                // Track visual position with target card info for animations
-                const positionInfo: any = {
-                    location: 'table',
-                    seat: seatOf(game),
-                    target_card: attackCard,
-                    battle_index: battleIndex
-                };
-                optimistic.positions.set(cardKey, positionInfo);
-            });
-
-            // Queue the single animation with all cover cards
-            queueAnimation(animationEvent);
-        }
-
-        // 3. Await the server's verdict (revert-on-rejection below).
-        try {
-            return await serverPromise;
-        } catch (error) {
-            // Server rejected the cover - create revert animation
-            refused = true;
-            // The covers land back in my hand, and their attacks stand uncovered.
-            const homeBoard = refusedBoard(game, (held) => withdrawn(held, coverCards));
-            coverCards.forEach(card => {
-                const cardKey = getCardKey(card);
-                if (optimistic.reverting.has(cardKey)) return;
-                optimistic.reverting.add(cardKey);
-
-                const visualPosition = optimistic.positions.get(cardKey);
-                const fromLocation = visualPosition?.location || 'table';
-
-                queueAnimation({
-                    type: 'revert',
-                    cards: [card],
-                    from_location: fromLocation as any,
-                    to_location: 'hand',
-                    seat: seatOf(game),
-                    is_revert: true,
-                    message: 'Cover rejected by server',
-                    game_state: homeBoard
-                });
-
-                optimistic.motions.delete(animEventKey('cover', card, 'hand', 'table', seatOf(game)));
-                optimistic.positions.delete(cardKey);
-            });
-            throw error;
-        }
-    };
+    // A refused cover: the covers land back in my hand, and their attacks stand uncovered.
+    const cover = (coverCards: Card[], attackCards: Card[]) =>
+        play({ kind: 'cover', cards: coverCards, attack_cards: attackCards },
+            (wire) => serverActions.cover(coverCards, attackCards, wire), (held) => withdrawn(held, coverCards));
 
     /**
      * MY OWN GOOD, FLIPPED THE INSTANT I TAP.
@@ -1162,15 +793,6 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             throw error;
         }
     };
-
-    // The frame loop drops itself on unmount; the bump timer is this file's.
-    useEffect(() => {
-        return () => {
-            if (botBumpTimerRef.current) {
-                clearInterval(botBumpTimerRef.current);
-            }
-        };
-    }, []);
 
     const resetAnimations = useCallback(() => {
         pendingCompletionCallbackRef.current = null;

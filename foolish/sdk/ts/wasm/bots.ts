@@ -589,33 +589,7 @@ export function animEventTypeCode(type: string | undefined): number {
     return (type && type in ANIM_EVT) ? ANIM_EVT[type] : 0;
 }
 
-/** The location string -> ANIM_LOC_* code; a location the wire did not name is
- *  ANIM_LOC_NONE, which is a code of its own and collides with no real place. */
-function animLocationCode(loc: string | undefined): number {
-    return (loc && loc in ANIM_LOC) ? ANIM_LOC[loc] : A.ANIM_LOC_NONE;
-}
-
-/**
- * THE DEDUP KEY, in C (anim_plan.h anim_event_key): two events collide iff they
- * name the same (type, card, from, to, seat). The seat stands in for the player
- * id, because a plan is per viewer and the only actor whose prediction can
- * collide with a confirming broadcast is the local one.
- *
- * It is a plain number, not a string and not a BigInt: the kernel packs six
- * bytes, so every key it can make is exact in a double (asserted over the whole
- * range in c/tests/anim_plan_test.c). Nothing in TypeScript knows which byte is
- * which - a caller that wants a field back keeps the field, not the key.
- */
-export function animEventKey(type: string | undefined, card: Card,
-                             from: string | undefined, to: string | undefined,
-                             seat: number | undefined): number {
-    return bots().wasm_anim_event_key(
-        animEventTypeCode(type), card.suit, card.value,
-        animLocationCode(from), animLocationCode(to),
-        seat === undefined ? A.ANIM_SEAT_NONE : seat);
-}
-
-/** clientReconcile.shouldDropStaleSequence, in C. null models "no version"
+/** The live feed's version gate (anim_plan.h anim_should_drop_stale). null models "no version"
  *  (a replay sequence, never gated). */
 export function animShouldDropStale(last: number | null, incoming: number | null): boolean {
     return bots().wasm_anim_should_drop_stale(
@@ -623,10 +597,10 @@ export function animShouldDropStale(last: number | null, incoming: number | null
         incoming === null ? 0 : 1, incoming ?? 0) !== 0;
 }
 
-/** optimisticAnimation.staleOptimisticKeysOnTable, in C. Returns the INDICES
+/** anim_plan.h anim_stale_optimistic_ask (the browser asks it inside client_push_settle). Returns the INDICES
  *  into `optCards` to release. */
 export function animStaleOptimisticOnTable(optCards: Card[], tableCards: Card[], namedCards: Card[]): number[] {
-    const ex = bots();
+    const ex = serverBots();
     V.writeAnimStaleAsk(mem(ex), ex.wasm_anim_stale_ask_ptr(), { opt: optCards, table: tableCards, named: namedCards });
     ok(ex.wasm_anim_stale_optimistic(), animError('anim_stale_optimistic'));
     return [...V.readAnimStaleRelease(mem(ex), ex.wasm_anim_stale_release_ptr()).release];
@@ -942,7 +916,7 @@ function readPlan(ex: WebExports): AnimPlanSnap {
 export function animReversalOrder(
     verdicts: readonly number[], groupSizes: readonly number[],
 ): number[][] {
-    const ex = bots();
+    const ex = serverBots();
     V.writeAnimReversalAsk(mem(ex), ex.wasm_anim_reversal_ask_ptr(), { verdicts, groupSizes });
     ok(ex.wasm_anim_reversal_order(), animError('anim_reversal_order'));
     const plan = V.readAnimConflictPlan(mem(ex), ex.wasm_anim_reversal_plan_ptr());

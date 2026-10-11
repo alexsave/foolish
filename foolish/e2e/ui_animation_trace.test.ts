@@ -1243,7 +1243,7 @@ test('a pile makes room for itself while its card is in the air, and a pile whos
     //   MY OWN push is delivered while 7s is still in the air - and every one
     //   of its events is a motion this client already animated, so
     //   AnimationContext takes the dedup branch and commits its board AT ONCE
-    //   (withoutConfirmedMotions -> updateGameState). That board holds 7s,
+    //   (settlePush leaves no event -> updateGameState). That board holds 7s,
     //   which is in the air, AND 7c, whose step has not opened.
     //
     // The three rules this pins, in the three rows:

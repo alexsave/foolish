@@ -408,18 +408,20 @@ int wasm_client_identity_seat(int id_len, int name_len, int is_ai) {
 // A gate reads the board the rules view holds (wasm_client_rules_view_ptr, the
 // same board client_view_rules reads, and neither changes it). An edit changes
 // the board at wasm_client_edit_view_ptr in place, and the host reads it back.
-// A conflict question reads the edit view as the push's last board and the
-// final view as its final board. Everything is written through the generated
+// A push is settled against the edit view as the board of the event the answer
+// names and the final view as its final board; the board its return flights are
+// drawn over is made at the edit view, from the final view when the answer names
+// a second event. Everything is written through the generated
 // writers (sdk/ts/gen/view_layout.bots.ts).
 static TableView        g_edit_view, g_final_view;
 static BoardEdit        g_board_edit;
 static ClientConflict   g_conflict;
-static ConflictVerdicts g_verdicts;
+static PushSettle       g_settle;
 TableView *wasm_client_edit_view_ptr(void)        { return &g_edit_view; }
 TableView *wasm_client_final_view_ptr(void)       { return &g_final_view; }
 BoardEdit *wasm_client_board_edit_ptr(void)       { return &g_board_edit; }
 ClientConflict *wasm_client_conflict_ptr(void)    { return &g_conflict; }
-ConflictVerdicts *wasm_client_verdicts_ptr(void)  { return &g_verdicts; }
+PushSettle *wasm_client_settle_ptr(void)          { return &g_settle; }
 
 // io = [action wire]; the board at the rules view.
 int wasm_client_validate(int len) {
@@ -444,8 +446,24 @@ int wasm_client_rearrange_hand(int n) {
     return client_rearrange_hand(client(), &g_edit_view, io, n);
 }
 
-int wasm_client_conflict_verdicts(void) {
-    return client_conflict_verdicts(&g_edit_view, &g_final_view, &g_conflict, &g_verdicts);
+// io = [my pending pass's action wire, or nothing]; the question at the conflict
+// pointer, the answer at the settle pointer.
+int wasm_client_push_settle(int pass_len) {
+    const unsigned char *io = inputs(pass_len);
+    if (!io || pass_len < 0) return CLIENT_E_MOVE;
+    return client_push_settle(client(), &g_edit_view, &g_final_view, &g_conflict, io, pass_len, &g_settle);
+}
+
+// The question and the answer wasm_client_push_settle left; the board at the edit view.
+int wasm_client_revert_board(void) {
+    return client_revert_board(client(), &g_edit_view, &g_final_view, &g_conflict, &g_settle);
+}
+
+// io = [my pending pass's action wire, or nothing]; the board at the edit view.
+int wasm_client_keep_board(int pass_len) {
+    const unsigned char *io = inputs(pass_len);
+    if (!io || pass_len < 0) return CLIENT_E_MOVE;
+    return client_keep_board(client(), &g_edit_view, &g_conflict, &g_settle, io, pass_len);
 }
 
 // ---- the move a client sends (client_table.h) ----
