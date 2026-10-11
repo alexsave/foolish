@@ -662,7 +662,7 @@ export function kernelReplayLinkParse(url: string): string {
     if (inBytes.length + 1 >= ex.wasm_replay_io_cap()) throw new Error('link: input exceeds the kernel IO buffer');
     mem(ex).set(inBytes, ex.wasm_replay_io_ptr());
     const w = ex.wasm_replay_link_parse(inBytes.length);
-    if (w < 0) throw new Error(`not a replay code: ${JSON.stringify(url)}`);
+    if (w < 0) throw new Error(`not a replay code: "${url}"`);
     const base = ex.wasm_io_ptr();
     return new TextDecoder().decode(mem(ex).slice(base, base + w));
 }
