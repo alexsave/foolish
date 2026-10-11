@@ -195,12 +195,15 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 setLocalHandOrders(prev => ({ ...prev, [url_game_id]: [...games[url_game_id].myHand] }));
             }
 
-            // Only load if we don't have this game data yet
-            if (!games[url_game_id]) {
-                loadGame(url_game_id).catch(error => {
-                    setGameLoadError(url_game_id); // Set error for this specific game
-                });
-            }
+            // Arriving on a game loads it, held or not: its streams were left
+            // when the page last left it (the effect below), so a board held
+            // from then is as old as that, and loading is also what joins the
+            // streams again. A held board stays up while the load runs, and only
+            // a game with nothing to show reports a failed one.
+            const held = !!games[url_game_id];
+            loadGame(url_game_id).catch(() => {
+                if (!held) setGameLoadError(url_game_id);
+            });
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [url_game_id]);

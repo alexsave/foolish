@@ -1491,6 +1491,39 @@ test('a push delivered twice plays once: the version gate is the one dedup', asy
     });
 });
 
+test('a push for another table plays nothing on this page', async () => {
+    // The page leaves a table's streams when it leaves the table (ServerContext),
+    // but leaving is not instant: a push already on the socket still arrives, and
+    // it names the table it is for. It is that table's board to keep. Played
+    // here, another table's card flies across this one - which is what taking
+    // the game test out of handleAnimationMessage does, and turns this case red.
+    const board = () => threeMeFirst().hand(0, '7d Tc Jd').hand(1, 'Js Qs Ks 6s As').hand(2, '9d Qd 6d').table('7h/9h')
+        .attacker(0).defender(1).build();
+    await play('push_other_table', 151, 'a-table-here', board(), async (s, srv) => {
+        const there = new Server('a-table-there', board());
+        // The page has been on that table: the kernel knows who sits at it.
+        assert.ok(clientTable().adoptEnvelope(there.envelope(ME)), 'the other table\'s envelope reads');
+        there.act(BORIS, encodeAction({ kind: 'attack', cards: cards('9d') }));
+        const push = there.take(ME);
+        const { animationFeed } = await import('../src/state/animationFeed.ts');
+        await s.step('push: Boris throws in 9d on the other table', () => {
+            animationFeed.publish({ b: b64(push.bytes), game_id: there.gid });
+        });
+        await s.advance(150);
+        assert.equal(flights(s.host).length, 0, 'nothing flies on this page');
+        await s.advance(1000);
+        const store = JSON.parse(probe.store);
+        assert.equal(store.view.gameId, 'a-table-here', 'the page is still on its own table');
+        assert.equal(store.view.battles.length, 1, 'whose table is still the one battle it held');
+        // And its own next push plays as it always did.
+        await s.step('Boris throws in 9d on this table', () => { srv.act(BORIS, encodeAction({ kind: 'attack', cards: cards('9d') })); });
+        await deliver(s, 'push: Boris\'s throw-in here');
+        await s.advance(150);
+        assert.equal(flights(s.host).length, 1, 'his card is in the air on this page');
+        await s.advance(1000);
+    });
+});
+
 test('flicker A: a concurrent throw-in lands after my optimistic board, without my card', async () => {
     const board = threeMeFirst().hand(0, '7d Tc Jd').hand(1, 'Js Qs Ks 6s As').hand(2, '9d Qd 6d').table('7h/9h')
         .attacker(0).defender(1).build();
