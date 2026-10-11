@@ -543,9 +543,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         setGames(prev => ({ ...prev, [gameId]: mergeGameData(gameId, loaded, prev) }));
         joinOrSubscribe(loaded);
 
-        // Trigger the bot loop only if the caller is a player in a game with
-        // AI players. Fire and forget - don't block UI rendering.
-        if (loaded.mySeat >= 0 && loaded.seats.some(seat => seat.isAi)) {
+        // One shot on load: is there bot work at all (the server's needs_bots rule)?
+        // AnimationContext's repeating poll asks "may a bot act this instant". Fire and forget.
+        if (loaded.mySeat >= 0 && rulesOf(loaded).needsBots) {
             invokeBytes('meta', clientTable().askBody({ kind: V.ASK_BUMP, gid: gameId })).catch(() => { });
         }
 

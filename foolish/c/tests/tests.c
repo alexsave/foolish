@@ -14502,6 +14502,43 @@ static void test_lobby_has_room(void) {
     CHECK(sr_view(-1, &vr) == CLIENT_OK && !vr.can_join, "room: and offers a spectator no seat");
 }
 
+// BOT WORK IS ONE RULE (game.h seat_needs_bot): a bot's seat, in, in a playing
+// game. The server's table (table_needs_bots) and the board a client reads of it
+// (ViewRules.needs_bots) agree in a lobby, while a bot is in, once every bot is
+// out, and when the game is over.
+static int nb_agree(int want) {
+    ViewRules vr;
+    return sr_view(0, &vr) == CLIENT_OK && vr.needs_bots == (want != 0) && table_needs_bots(&tb) == (want != 0);
+}
+static void test_needs_bots(void) {
+    CHECK(seat_needs_bot(GAME_STATUS_PLAYING, PLAYER_STATUS_IN, true), "needs_bots: a bot in a playing game is bot work");
+    CHECK(!seat_needs_bot(GAME_STATUS_PLAYING, PLAYER_STATUS_IN, false), "needs_bots: a human is not");
+    CHECK(!seat_needs_bot(GAME_STATUS_PLAYING, PLAYER_STATUS_OUT, true), "needs_bots: nor a bot that is out");
+    CHECK(!seat_needs_bot(GAME_STATUS_WAITING, PLAYER_STATUS_READY, true) && !seat_needs_bot(GAME_STATUS_WAITING, PLAYER_STATUS_IN, true)
+          && !seat_needs_bot(GAME_STATUS_GAME_OVER, PLAYER_STATUS_IN, true), "needs_bots: nor any seat of a game that is not playing");
+
+    tb_fixture(3, 1u << 2, 163);
+    table_init(&tb, &tb_game, &tb_snaps);
+    client_init(&ct, &ct_slot);
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK && tb_game.status == GAME_STATUS_PLAYING
+          && tb_game.players[2].status == PLAYER_STATUS_IN, "needs_bots: a game being played, its bot in");
+    CHECK(nb_agree(1), "needs_bots: playing with a bot in, the table and its view both say so");
+    tb_game.players[2].status = PLAYER_STATUS_OUT;
+    CHECK(nb_agree(0), "needs_bots: playing with every bot out, neither does");
+    tb_game.players[2].status = PLAYER_STATUS_IN;
+    tb_game.status = GAME_STATUS_GAME_OVER;
+    CHECK(nb_agree(0), "needs_bots: nor once the game is over");
+    tb_game.status = GAME_STATUS_PLAYING;
+    CHECK(nb_agree(1), "needs_bots: and playing again, both do");
+
+    tb_seed_fill(14);
+    table_init(&tb, &tb_game, &tb_snaps);
+    table_create(&tb, RS("a"), RS("Alice"));
+    CHECK(table_add_bot(&tb, RS("a"), RS("bot-1"), RS("%Bot"), RS("random"), tb_seed) == TABLE_OK
+          && tb_game.status == GAME_STATUS_WAITING && tb.r.seats[1].brain_len > 0, "needs_bots: a lobby with a bot seated");
+    CHECK(nb_agree(0), "needs_bots: a lobby is no bot work, for the table or its view");
+}
+
 static void test_client_rearrange_hand(void) {
     cvr_board(&cb_view, 0);
     cb_view.my_hand_count = 3;
@@ -15745,6 +15782,7 @@ int main(void) {
     test_client_board_edit_undeal();
     test_client_rearrange_hand();
     test_client_ask_apply();
+    test_needs_bots();
     test_lobby_has_room();
     test_client_conflict_verdicts();
     test_client_play_is_the_engine();

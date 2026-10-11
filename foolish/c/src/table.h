@@ -213,7 +213,7 @@ int table_act(Table *t, const char *actor_id, int id_len, const uint8_t *awire, 
 // when no table is loaded. A host picks the caller's response envelope with it.
 int table_seat_of(const Table *t, const char *id, int id_len);
 
-// PLAYING, and a bot seat is still IN: the row's needs_bots column.
+// Some seat is bot work (game.h seat_needs_bot): the row's needs_bots column.
 bool table_needs_bots(const Table *t);
 
 // A bot that could act now uses the session log (a belief brain), so the host

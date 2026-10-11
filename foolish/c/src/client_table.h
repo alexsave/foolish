@@ -117,6 +117,7 @@ typedef struct {
     bool    show_flipped_slot;     // the trump's slot, kept while a card is on its way into it or out of it
     bool    show_trump_icon;       // stock and trump are gone: the power suit stands in their place
     bool    bot_to_move;           // a bot seat may act (should_bot_act's rule): a stalled bot loop is worth a nudge
+    bool    needs_bots;            // the table has bot work at all (game.h seat_needs_bot, the server's table_needs_bots)
     int16_t deck_pile;             // cards drawn in the stock pile
     int16_t deck_badge;            // the count on the pile: the stock, the trump, and cards in flight to the trump
     // THE STOCK'S PLACE, drawn while the pile shows OR while cards fly out of

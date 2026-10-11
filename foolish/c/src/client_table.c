@@ -371,6 +371,8 @@ int client_view_rules(const TableView *v, int from_deck, int to_flipped, int tru
     out->can_set_rules = game_lobby_can_set_rules(me, v->status == GAME_STATUS_WAITING) != 0;
     out->can_join = me < 0 && game_lobby_has_room(n, v->status == GAME_STATUS_WAITING);
 
+    for (int s = 0; s < n && !out->needs_bots; s++)
+        out->needs_bots = seat_needs_bot(v->status, v->seats[s].status, v->seats[s].is_ai);
     for (int s = 0; s < n && !out->bot_to_move; s++)
         out->bot_to_move = v->seats[s].is_ai && turn_may_act(v->status, v->seats[s].status, s, v->num_battles, covered,
                                                              v->first_attacker, v->defender, v->good_mask);

@@ -200,10 +200,10 @@ int table_act(Table *t, const char *actor_id, int id_len, const uint8_t *awire, 
 }
 
 bool table_needs_bots(const Table *t) {
-    if (!t->loaded || t->g->status != GAME_STATUS_PLAYING) return false;
+    if (!t->loaded) return false;
     const uint32_t bots = roster_bot_mask(&t->r);
     for (int s = 0; s < t->g->num_players; s++)
-        if (((bots >> s) & 1u) && t->g->players[s].status == PLAYER_STATUS_IN) return true;
+        if (seat_needs_bot(t->g->status, t->g->players[s].status, ((bots >> s) & 1u) != 0)) return true;
     return false;
 }
 
