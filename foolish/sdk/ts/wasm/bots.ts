@@ -336,7 +336,10 @@ export type ReplayPlayStep = V.ReplayPlayStep_Snap;
  */
 export function replayPlaySteps(code: Uint8Array, startTime: number | null, gaps: number[] | null): ReplayPlayStep[] {
     const ex = codeIn(code);
-    extrasArgs(ex, null, startTime ?? 0, gaps);
+    M.writeReplayExtras(mem(ex), ex.wasm_replay_extras_ptr(), {
+        flags: gaps ? M.REPLAY_EXTRAS_FLAG_TIMES : 0,
+        names: [], startTime: gaps ? startTime ?? 0 : 0, gaps: gaps ?? [],
+    });
     const n = ok(ex.wasm_replay_step_play(code.length), replayRefused);
     const m = mem(ex), base = ex.wasm_io_ptr();
     return Array.from({ length: n }, (_, i) => V.readReplayPlayStep(m, base + i * K.RS_PLAY_STRIDE));
