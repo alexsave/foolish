@@ -24,7 +24,7 @@
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { MAX_PLAYERS } from '../server/api/core/constants.ts';
+import { MAX_PLAYERS } from '../sdk/ts/gen/view_layout.bots.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import { fixture, fixtureTable, type FixtureSeat } from './helpers/table_fixture.ts';
 

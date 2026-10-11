@@ -23,7 +23,7 @@ import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, pgPool, resetDb, uuid } from './harness.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { MAX_PLAYERS } from '../server/api/core/constants.ts';
+import { MAX_PLAYERS } from '../sdk/ts/gen/view_layout.bots.ts';
 import { fixture, fixtureTable, IDLE } from './helpers/table_fixture.ts';
 import { seedTable } from './helpers/table_db.ts';
 import { mustReadTable } from './helpers/table_play.ts';

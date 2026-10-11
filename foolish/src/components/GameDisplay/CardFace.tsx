@@ -1,8 +1,8 @@
 import React, { useRef, useEffect, useState } from 'react';
 import type { ViewCard as Card } from '../../state/view';
 import { CardBack } from './CardBack';
-import { VALUE_MAP } from '../../utils/cards';
-import { HEARTS, DIAMONDS } from '@api/core/constants.ts';
+import { CardRankLabel } from '@sdk/ts/gen/card_rank.ts';
+import { CardSuitFace } from '@sdk/ts/gen/card_suit.ts';
 import { useAnimation } from '../../contexts/AnimationContext';
 import { useStyles } from '../../contexts/StyleContext';
 import { SuitIcon } from '../SovietIcon';
@@ -61,14 +61,15 @@ export const CardFace = ({ card, onClick, style = {}, owner, isAnimationOverlay 
 
     const animationState = getCardAnimationState(card, owner);
 
-    // Determine if suit is red (hearts/diamonds) or black (spades/clubs)
-    const isRed = card.suit === HEARTS || card.suit === DIAMONDS; // hearts or diamonds
-    const suitColor = isRed ? '#dc2626' : '#000000'; // red or black
+    // The rank's label and the suit's glyph and ink are the kernel's tables (c/cardtext).
+    const suitFace = CardSuitFace[card.suit];
+    const isRed = !!suitFace?.red;
+    const suitColor = isRed ? '#dc2626' : '#000000';
 
-    const valueSymbol = VALUE_MAP[card.value] || '?';
-    
+    const valueSymbol = CardRankLabel[card.value] || '?';
+
     // Render suit symbol - SVG icon for Soviet theme, emoji for default
-    const suitEmoji = ['♠', '♥', '♣', '♦'][card.suit] || '?';
+    const suitEmoji = suitFace?.glyph || '?';
     const renderSuit = (size: number) => {
         if (!styles.icons.useEmojiIcons) {
             return <SuitIcon suit={card.suit} size={size} />;

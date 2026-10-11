@@ -99,7 +99,6 @@ mock.module('../src/components/SovietIcon.tsx', { namedExports: { SovietIcon: ()
 mock.module('../src/contexts/StyleContext.tsx', { namedExports: { useStyles: () => ({ texture: { useWoodTexture: false } }) } });
 // Lobby.tsx reads the board's statuses from src/state/view.ts (the kernel's
 // generated constants), which it loads for real, as the page does.
-mock.module('@api/core/constants.ts', { namedExports: { MAX_PLAYERS: 6 } });
 
 test('lobby: clicking Add Bot before the roster loads adds a SPECIFIC bot, not a random one', async () => {
     const React = (await import('react')).default;

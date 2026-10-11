@@ -1,36 +1,41 @@
-// A10 — the module layering is a machine-checked invariant, not a hope.
+// A10 - the module layering is a machine-checked invariant, not a hope.
 //
-// _shared/ is four tiers with a one-way dependency DAG:
+// The server is four tiers with a one-way dependency DAG:
 //
-//     core   (0) — domain vocabulary, zero logic, zero host deps
-//     sdk    (1) — the ONLY code that knows the C kernel's ABI (wasm/wire)
-//     common (2) — host-neutral game logic
-//     adapter(3) — the Supabase host: DB, realtime, lease, auth, waitUntil
+//     gen    (0) - domain vocabulary, zero logic, zero host deps: the modules
+//                  generated from the kernel's own headers and tables
+//                  (sdk/ts/gen, `npm run gen`). The game's constants used to be
+//                  typed out by hand in server/api/core; nothing is now, so a
+//                  number a host reads is the one the C defines.
+//     sdk    (1) - the ONLY code that knows the C kernel's ABI (wasm/wire)
+//     common (2) - host-neutral game logic
+//     adapter(3) - the Supabase host: DB, realtime, lease, auth, waitUntil
 //
 // A file may import its own tier or any tier BENEATH it, never above. And
-// core/sdk/common must carry NO vendor/host coupling — that is what makes the
+// gen/sdk/common must carry NO vendor/host coupling - that is what makes the
 // adapter swappable "with no diff in the common part" (the A10 acceptance
 // test). This test fails the build the moment either rule is broken.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve, dirname, relative } from 'node:path';
 
 const REPO = resolve(import.meta.dirname, '../..');
-// A10 homes: the kernel bindings at repo-root sdk/, the host-neutral game code
-// at server/api/{core,common}, the one Supabase adapter under its impl.
+// A10 homes: the kernel bindings at repo-root sdk/ with the generated vocabulary
+// in sdk/ts/gen, the host-neutral game code at server/api/common, the one
+// Supabase adapter under its impl.
 const SDK = join(REPO, 'sdk');
-const CORE = join(REPO, 'server/api/core');
+const GEN = join(SDK, 'ts/gen');
 const COMMON = join(REPO, 'server/api/common');
 const ADAPTER = join(REPO, 'server/impls/supabase/functions/_shared/adapter');
-const RANK: Record<string, number> = { core: 0, sdk: 1, common: 2, adapter: 3 };
+const RANK: Record<string, number> = { gen: 0, sdk: 1, common: 2, adapter: 3 };
 
 function under(root: string, p: string): boolean {
     return !relative(root, p).startsWith('..');
 }
 
 function layerOf(absPath: string): string | null {
-    if (under(CORE, absPath)) return 'core';
+    if (under(GEN, absPath)) return 'gen';                // before sdk, which holds it
     if (under(COMMON, absPath)) return 'common';
     if (under(ADAPTER, absPath)) return 'adapter';
     if (under(SDK, absPath)) return 'sdk';          // sdk/{ts,swift} bindings
@@ -50,7 +55,7 @@ function walk(dir: string): string[] {
 // every quoted specifier in from '...' / import('...') / new URL('...')
 const SPEC = /(?:from|import|URL)\s*\(?\s*['"]([^'"]+)['"]/g;
 
-const files = [...walk(CORE), ...walk(COMMON), ...walk(ADAPTER), ...walk(SDK)];
+const files = [...walk(COMMON), ...walk(ADAPTER), ...walk(SDK)];
 
 test('the four tiers form a one-way DAG (no file imports a higher tier)', () => {
     const violations: string[] = [];
@@ -60,23 +65,23 @@ test('the four tiers form a one-way DAG (no file imports a higher tier)', () => 
         const src = readFileSync(f, 'utf8');
         for (const m of src.matchAll(SPEC)) {
             const spec = m[1];
-            if (!spec.startsWith('.')) continue;    // external / npm / jsr — not a local tier edge
+            if (!spec.startsWith('.')) continue;    // external / npm / jsr - not a local tier edge
             const target = resolve(dirname(f), spec);
             const toLayer = layerOf(target);
             if (!toLayer) continue;                 // resolves outside _shared
             if (RANK[toLayer] > RANK[fromLayer]) {
                 violations.push(
-                    `${relative(REPO, f)} (${fromLayer}) imports ${spec} (${toLayer}) — upward edge`);
+                    `${relative(REPO, f)} (${fromLayer}) imports ${spec} (${toLayer}) - upward edge`);
             }
         }
     }
     assert.deepEqual(violations, [], `\n${violations.join('\n')}\n`);
 });
 
-test('core / sdk / common carry no vendor or host coupling', () => {
+test('gen / sdk / common carry no vendor or host coupling', () => {
     // The tokens that mean "this code is bound to a specific backend/runtime".
     // Deno.readFileSync is deliberately NOT here: the SDK probes globalThis.Deno
-    // to load its wasm asset across runtimes — a capability probe, not coupling.
+    // to load its wasm asset across runtimes - a capability probe, not coupling.
     const FORBIDDEN = [/jsr:@supabase/, /\bEdgeRuntime\b/, /\bDeno\.env\b/, /\bDeno\.serve\b/, /\bcreateClient\b/];
     const violations: string[] = [];
     for (const f of files) {
@@ -85,7 +90,7 @@ test('core / sdk / common carry no vendor or host coupling', () => {
         const src = readFileSync(f, 'utf8');
         for (const pat of FORBIDDEN) {
             if (pat.test(src)) {
-                violations.push(`${relative(REPO, f)} (${layer}) contains ${pat} — host coupling above the adapter`);
+                violations.push(`${relative(REPO, f)} (${layer}) contains ${pat} - host coupling above the adapter`);
             }
         }
     }
@@ -93,12 +98,18 @@ test('core / sdk / common carry no vendor or host coupling', () => {
 });
 
 test('every tier is non-empty (the split actually happened)', () => {
-    const counts: Record<string, number> = { core: 0, sdk: 0, common: 0, adapter: 0 };
+    const counts: Record<string, number> = { gen: 0, sdk: 0, common: 0, adapter: 0 };
     for (const f of files) {
         const l = layerOf(f);
         if (l) counts[l]++;
     }
     for (const tier of Object.keys(RANK)) {
-        assert.ok(counts[tier] > 0, `tier '${tier}' has no files — did the layout move?`);
+        assert.ok(counts[tier] > 0, `tier '${tier}' has no files - did the layout move?`);
     }
+});
+
+test('the vocabulary is generated: no hand-written tier sits beneath the kernel bindings', () => {
+    assert.ok(!existsSync(join(REPO, 'server/api/core')),
+        'server/api/core is back. A constant of the game typed out in TypeScript is a second copy of a '
+        + 'C #define; add it to tools/structgen/specs (or a c/ table datagen reads) and import sdk/ts/gen');
 });
