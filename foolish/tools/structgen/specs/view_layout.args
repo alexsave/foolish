@@ -79,3 +79,7 @@
 --const ASK_
 # The cast header (evwire.h): how many bytes of a realtime payload stand before the as3 push.
 --const EVW_CAST_
+# The bot roster as a value (bot_roster.h BotRosterTable): what the kernel's one
+# table says about every named bot and what this build links, through its reader.
+--header bot_roster.h --root BotRosterTable --snapshot BotRosterTable
+--count BotRosterTable.rows=n --count BotRosterRow.key=key_len

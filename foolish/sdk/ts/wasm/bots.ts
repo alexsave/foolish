@@ -207,44 +207,18 @@ export function __setAnimTransport(transport: number): void {
     if (rc < 0) throw new Error(`anim_set_transport error ${rc}`);
 }
 
-/** One row of the kernel's bot roster (c/src/bot_roster.c ROSTER). */
-export interface BotRosterEntry {
-    key: string;
-    /** STRAT_* brain id (strategy.h). */
-    strat: number;
-    /** Belief bot: the session log must be hydrated before it chooses. */
-    usesLogs: boolean;
-    /** This build links the brain, so it can actually be run here. */
-    linked: boolean;
-    /** Seeded as a live bot on the site (seed.sql). */
-    seeded: boolean;
-    /** Shown in the offline picker. */
-    offline: boolean;
-    /** Strength order, 1 = weakest; 0 = unranked. */
-    tier: number;
-}
+/** One row of the kernel's bot roster (c/src/bot_roster.h BotRosterRow). */
+export type BotRosterEntry = V.BotRosterRow_Snap;
 
-let rosterCache: BotRosterEntry[] | null = null;
+let rosterCache: readonly BotRosterEntry[] | null = null;
 
 /** The kernel's bot roster (bot_roster.h): hosts look it up, never restate it. */
-export function kernelBotRoster(): BotRosterEntry[] {
+export function kernelBotRoster(): readonly BotRosterEntry[] {
     if (rosterCache) return rosterCache;
     const ex = bots();
-    const n = ex.wasm_bot_roster_dump();
-    if (n < 0) throw new Error('bot_roster: the kernel refused to dump the table');
-    const buf = mem(ex);
-    let q = ex.wasm_io_ptr();
-    const out: BotRosterEntry[] = [];
-    for (let i = 0; i < n; i++) {
-        const linked = buf[q++] !== 0, strat = buf[q++], usesLogs = buf[q++] !== 0;
-        const seeded = buf[q++] !== 0, offline = buf[q++] !== 0, tier = buf[q++];
-        const klen = buf[q++];
-        let key = '';
-        for (let k = 0; k < klen; k++) key += String.fromCharCode(buf[q++]);
-        out.push({ key, strat, usesLogs, linked, seeded, offline, tier });
-    }
-    rosterCache = out;
-    return out;
+    const at = ex.wasm_bot_roster_dump();
+    if (!at) throw new Error('bot_roster: the kernel refused to dump the table');
+    return rosterCache = V.readBotRosterTable(viewMemOf(ex.memory.buffer), at).rows;
 }
 
 /**

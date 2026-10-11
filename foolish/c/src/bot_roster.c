@@ -4,6 +4,8 @@
 
 #include "bot_roster.h"
 
+#include <string.h>
+
 #include "bot_knobs.h"
 #include "strategy.h"
 
@@ -112,6 +114,29 @@ int bot_roster_offline_at(int n) {
     for (int i = 0; i < ROSTER_N; i++)
         if (ROSTER[i].offline && n-- == 0) return i;
     return -1;
+}
+
+int bot_roster_table(BotRosterTable *out) {
+    out->n = 0;
+    if (ROSTER_N > BOT_ROSTER_MAX) return -1;
+    for (int i = 0; i < ROSTER_N; i++) {
+        const BotRosterEntry *e = &ROSTER[i];
+        BotRosterRow *r = &out->rows[i];
+        int klen = 0;
+        while (e->key[klen]) klen++;
+        if (klen > BOT_ROSTER_KEY_MAX) return -1;
+        memset(r, 0, sizeof *r);
+        r->strat = e->strat;
+        r->linked = bot_roster_linked(i) != 0;
+        r->uses_logs = e->uses_logs != 0;
+        r->seeded = e->seeded != 0;
+        r->offline = e->offline != 0;
+        r->tier = e->tier;
+        r->key_len = (uint8_t)klen;
+        memcpy(r->key, e->key, (size_t)klen);
+    }
+    out->n = ROSTER_N;
+    return ROSTER_N;
 }
 
 // The roster TABLE is universal — every host reads the same keys, knobs, flags

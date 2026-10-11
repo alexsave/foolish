@@ -1678,6 +1678,27 @@ static void test_bot_knobs_precedence(void) {
     CHECK(bot_knob_int("CD_RACE", 42) == 42, "after clear, defaults apply");
 }
 
+// The roster as the value a host reads (bot_roster.h BotRosterTable): every
+// entry, in table order, field for field, with what this build links.
+static void test_bot_roster_table_is_the_roster(void) {
+    BotRosterTable t;
+    memset(&t, 0xA5, sizeof t);
+    const int n = bot_roster_table(&t);
+    CHECK(n == bot_roster_count() && t.n == n, "one row per roster entry");
+    for (int i = 0; i < n && i < BOT_ROSTER_MAX; i++) {
+        const BotRosterEntry *e = bot_roster_at(i);
+        const BotRosterRow *r = &t.rows[i];
+        CHECK(r->strat == e->strat, "a row carries its entry's brain");
+        CHECK(r->linked == (bot_roster_linked(i) != 0), "a row says whether this build links the brain");
+        CHECK(r->uses_logs == (e->uses_logs != 0), "a row carries uses_logs");
+        CHECK(r->seeded == (e->seeded != 0), "a row carries seeded");
+        CHECK(r->offline == (e->offline != 0), "a row carries offline");
+        CHECK(r->tier == e->tier, "a row carries its tier");
+        CHECK(r->key_len == strlen(e->key) && memcmp(r->key, e->key, r->key_len) == 0,
+              "a row carries its key, byte for byte");
+    }
+}
+
 // bot_roster_choose must leave no knobs installed behind it: the arena and the
 // MC rollout policies call the strategies directly and must see C defaults.
 static void test_bot_roster_choose_scopes_knobs(void) {
@@ -15378,6 +15399,7 @@ int main(void) {
     test_bot_drive_pre_action_hook();
 
     test_bot_roster_table();
+    test_bot_roster_table_is_the_roster();
     test_bot_knobs_precedence();
     test_bot_roster_choose_scopes_knobs();
 
