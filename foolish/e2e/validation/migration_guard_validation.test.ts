@@ -64,3 +64,23 @@ test('every migration is one block that declines to run without the schema', () 
         + `${offenders.join('\n  ')}\n`
         + 'See server/impls/supabase/migrations/README.md.');
 });
+
+test('a migration that schedules a cron job schedules seed.sql\'s statement, character for character', () => {
+    // A schema change is written twice (README.md): in seed.sql for every new
+    // database and here for hosted. For a cron job the two are one statement,
+    // and a job that differs between them is a hosted database running a
+    // command no test database has ever run.
+    const seed = readFileSync(join(REPO, 'server/impls/supabase/seed.sql'), 'utf8');
+    const offenders: string[] = [];
+    for (const f of migrations()) {
+        const sql = readFileSync(join(DIR, f), 'utf8');
+        const jobs = sql.match(/^ *PERFORM cron\.schedule\([\s\S]*?^ *\);\n/gm) ?? [];
+        if (/cron\.schedule\(/.test(statements(sql)) && jobs.length === 0) {
+            offenders.push(`${f}: calls cron.schedule() in a shape this test cannot read`);
+        }
+        for (const job of jobs) {
+            if (!seed.includes(job)) offenders.push(`${f}: schedules a job whose statement is not in seed.sql:\n${job}`);
+        }
+    }
+    assert.deepEqual(offenders, [], offenders.join('\n'));
+});

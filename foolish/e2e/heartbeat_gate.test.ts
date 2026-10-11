@@ -341,6 +341,22 @@ describe('the heartbeat only fires when there is something to drive', () => {
             + 'the lobby, so last_commit_at is now, and nothing about the gate may delay the first drive.');
     });
 
+    // ---- what a tick sends ----------------------------------------------------
+
+    test('a tick is a GET with no body', async () => {
+        // The function reads the URL and nothing else, so the job sends nothing
+        // else: pg_net's http_post can only carry a jsonb body, and for as long
+        // as this was a POST it carried a `{}` nobody asked for.
+        const g = await liveGame('gt');
+        await age(g, 30);
+        assert.equal(await tick(), 1, 'the tick called (fixture sanity)');
+        const sent = (await pgPool.query('SELECT method, body, headers FROM net.http_request_queue')).rows[0];
+        assert.equal(sent.method, 'GET', 'the heartbeat is asked for, not posted to');
+        assert.equal(sent.body, null, 'and nothing follows the headers');
+        assert.deepEqual(Object.keys(sent.headers).sort(), ['Authorization', 'apikey'],
+            'with no Content-Type, there being no content');
+    });
+
     // ---- the two windows have to agree ---------------------------------------
 
     test('the gate can only be weaker than the scan, never narrower', async () => {

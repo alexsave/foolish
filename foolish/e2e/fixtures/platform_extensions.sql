@@ -50,10 +50,10 @@ CREATE INDEX IF NOT EXISTS _http_response_created_idx ON net._http_response (cre
 ALTER TABLE net._http_response SET (autovacuum_enabled = false);
 
 -- pg_net's outbound queue, and the one function the heartbeat's cron command
--- calls. Real pg_net's http_post does exactly this - it appends the request to
+-- calls. Real pg_net's http_get does exactly this - it appends the request to
 -- net.http_request_queue and returns the id, and a background worker it owns
 -- sends it later and writes net._http_response. There is no worker here, so a
--- row in the queue means "this tick posted", which is the question every
+-- row in the queue means "this tick called", which is the question every
 -- heartbeat-gate assertion asks. The signature is pg_net 0.14.0's, argument
 -- names and defaults included, so the production command string runs unedited.
 CREATE TABLE IF NOT EXISTS net.http_request_queue (
@@ -66,18 +66,17 @@ CREATE TABLE IF NOT EXISTS net.http_request_queue (
     queued      timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE OR REPLACE FUNCTION net.http_post(
+CREATE OR REPLACE FUNCTION net.http_get(
     url text,
-    body jsonb DEFAULT '{}'::jsonb,
     params jsonb DEFAULT '{}'::jsonb,
-    headers jsonb DEFAULT '{"Content-Type": "application/json"}'::jsonb,
+    headers jsonb DEFAULT '{}'::jsonb,
     timeout_milliseconds integer DEFAULT 5000
 )
 RETURNS bigint
 LANGUAGE sql
 AS $$
     INSERT INTO net.http_request_queue (method, url, headers, body, timeout_milliseconds)
-    VALUES ('POST', url, headers, convert_to(body::text, 'UTF8'), timeout_milliseconds)
+    VALUES ('GET', url, headers, NULL, timeout_milliseconds)
     RETURNING id;
 $$;
 
