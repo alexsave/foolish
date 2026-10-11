@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { useServer } from '../contexts/ServerContext';
-import { useLocalization } from '../contexts/LocalizationContext';
 import { GAME_STATUS } from '../state/view';
 import supabase from '../common/Connector';
 import { TexturedSurface, useTexture, getTextureStyle } from './TexturedSurface';
@@ -27,7 +26,6 @@ interface PlayerResult {
 export const WinScreen: React.FC = () => {
     const { view: game, continueGame } = useServer();
     const { woodUrl } = useTexture();
-    const { t } = useLocalization();
     const [playerResults, setPlayerResults] = useState<Map<string, PlayerResult>>(new Map());
     const [loading, setLoading] = useState(true);
 

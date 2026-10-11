@@ -21,7 +21,7 @@ import supabase from '../common/Connector';
  * from RETRY_FIRST_MS to RETRY_MAX_MS. Callers should also not ask for a
  * channel the policy will refuse (a spectator's chat:, for one).
  */
-export interface PrivateChannelHandlers {
+interface PrivateChannelHandlers {
     /** Adds the channel's listeners before it subscribes. */
     bind: (channel: RealtimeChannel) => void;
     /**
@@ -34,8 +34,8 @@ export interface PrivateChannelHandlers {
     onFailed?: (status: string, error: unknown, retryInMs: number) => void;
 }
 
-export const RETRY_FIRST_MS = 500;
-export const RETRY_MAX_MS = 10_000;
+const RETRY_FIRST_MS = 500;
+const RETRY_MAX_MS = 10_000;
 
 /** Joins `topic` privately and keeps it joined; the returned function leaves it for good. */
 export function holdPrivateChannel(topic: string, handlers: PrivateChannelHandlers): () => void {

@@ -40,7 +40,7 @@ import { HandShapeProvider } from './GameDisplay/handShape';
  * Slots inject each screen's bespoke chrome (replay transport + reveal overlay,
  * tutorial narration + hint + intro/end cards) on top of the shared board.
  */
-export interface GameBoardProps {
+interface GameBoardProps {
     /** Render the self hand, wooden action buttons, drag shadow + cover arrows. */
     interactive?: boolean;
     /** Live in-game chat overlay + bubbles. */

@@ -54,6 +54,7 @@ import { fileURLToPath } from 'node:url';
 
 import { LAYOUT_HASH } from '../sdk/ts/gen/layout_hash.bots.ts';
 import type { WebExports } from '../sdk/ts/gen/exports.web.ts';
+import { RS_PLAY_STRIDE } from '../sdk/ts/gen/kernel_consts.bots.ts';
 import { TUTORIAL_MOVES_CODE } from '../src/components/tutorialGame.ts';
 import { CLIENT_BOUNDARY, browserWasmReach } from './helpers/client_bundle.ts';
 
@@ -201,11 +202,12 @@ test('both links answer the same replay code identically, step by step', () => {
     put(web); assert.equal(web.wasm_replay_step_count(moves.length), steps, 'different step counts');
     assert.ok(steps > 20, `the tutorial game should have tens of steps, got ${steps}`);
 
-    // The step index: what every step IS, in one buffer.
-    put(bots); const ia = bots.wasm_replay_step_index(moves.length);
-    put(web); const ib = web.wasm_replay_step_index(moves.length);
-    assert.equal(ib, ia, 'different step-index lengths');
-    assert.ok(ia > 0, 'the step index did not decode');
+    // The steps as a replay screen plays them: what every step IS, in one
+    // buffer (no extras either side, so no clock).
+    put(bots); const ia = bots.wasm_replay_step_play(moves.length) * RS_PLAY_STRIDE;
+    put(web); const ib = web.wasm_replay_step_play(moves.length) * RS_PLAY_STRIDE;
+    assert.equal(ib, ia, 'different step-list lengths');
+    assert.equal(ia, steps * RS_PLAY_STRIDE, 'the step list did not decode');
     assert.deepEqual(
         [...bytesOf(web).slice(web.wasm_io_ptr(), web.wasm_io_ptr() + ib)],
         [...bytesOf(bots).slice(bots.wasm_io_ptr(), bots.wasm_io_ptr() + ia)],

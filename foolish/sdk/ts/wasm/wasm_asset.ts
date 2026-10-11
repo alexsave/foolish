@@ -70,7 +70,7 @@ async function readAssetAsync(name: WasmModuleName): Promise<Uint8Array | null> 
 
 export type WasmModuleName = 'rules' | 'bots' | 'web';
 
-export function wasmAssetUrl(name: WasmModuleName): URL {
+function wasmAssetUrl(name: WasmModuleName): URL {
     return new URL(`./${name}.wasm.gz`, import.meta.url);
 }
 

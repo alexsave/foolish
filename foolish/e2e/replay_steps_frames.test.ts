@@ -21,7 +21,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { replayEventFrames, replayStepCount } from '../sdk/ts/wasm/bots.ts';
+import { replayEventFrames, replayStepIndex } from '../sdk/ts/wasm/bots.ts';
 import { clientTable, type TableView } from '../sdk/ts/table/client_table.ts';
 import { pushToSequence } from '../src/state/pushSequence.ts';
 import { playRecorded } from './helpers/replay_play.ts';
@@ -38,8 +38,8 @@ const SEED = Uint8Array.from(Buffer.from('00112233445566778899aabbccddeeff001122
 test('a v6 replay decodes as LIVE evwire frames, and is the game that was played', () => {
     for (let np = 2; np <= 4; np++) {
         const played = playRecorded(Array(np).fill('handwritten'), SEED);
-        const steps = replayStepCount(played.code);
-        assert.ok(steps > 0, `${np}p: the code reports a step count`);
+        const steps = replayStepIndex(played.code).length;
+        assert.ok(steps > 0, `${np}p: the code has steps`);
 
         // Spectator: the viewer every replay share is watched as.
         const frames = replayEventFrames(played.code, -1);
@@ -86,7 +86,7 @@ test('a replay refuses every retired format by number, and names it', () => {
     // whose version field is 0, so the assertion never once saw a 5.
     for (const v of [5, 6, 7, 8, 9]) {
         assert.throws(
-            () => replayStepCount(new Uint8Array([v])),
+            () => replayStepIndex(new Uint8Array([v])),
             new RegExp(`unsupported replay format version ${v}\\b`),
             `a version-${v} code must be refused by number`,
         );

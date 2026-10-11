@@ -6,7 +6,8 @@ import React from 'react';
 import type { ViewCard as Card } from '../../state/view';
 import { Text } from '../Text';
 import { SovietIcon } from '../SovietIcon';
-import { ReplayFrame, REPLAY_STEP } from '../../replay/frames';
+import { ReplayFrame } from '../../replay/frames';
+import { REPLAY_ATOM_DEAL, REPLAY_ATOM_ATTACK, REPLAY_ATOM_COVER, REPLAY_ATOM_PASS, REPLAY_ATOM_PICKUP, REPLAY_ATOM_ROUND_END, REPLAY_ATOM_GOOD } from '@sdk/ts/gen/kernel_consts.bots.ts';
 import { InlineCard } from './InlineCards';
 import { seatName } from './seatName';
 
@@ -31,7 +32,7 @@ const StepMessage = ({ frame, names }: {
     const who = frame.seat !== null ? <b>{seatName(frame.seat, names)}</b> : null;
 
     switch (frame.kind) {
-        case REPLAY_STEP.DEAL:
+        case REPLAY_ATOM_DEAL:
             return (
                 <span>
                     <Text id="trump" />: {frame.cards.length > 0 && cards(frame.cards)}
@@ -43,13 +44,13 @@ const StepMessage = ({ frame, names }: {
         // presses to do it. One key cannot be both: Russian shipped the button
         // wording ("Подкидываю", first person), so this line read "Alice I
         // throw in". Two meanings, two keys (c/i18n/keys.h).
-        case REPLAY_STEP.ATTACK:
+        case REPLAY_ATOM_ATTACK:
             return (
                 <span>
                     {who} <SovietIcon name="sword" size={13} /> <Text id="replay_attack" />: {cards(frame.cards)}
                 </span>
             );
-        case REPLAY_STEP.COVER:
+        case REPLAY_ATOM_COVER:
             return (
                 <span>
                     {who} <Text id="replay_cover" />:{' '}
@@ -60,19 +61,19 @@ const StepMessage = ({ frame, names }: {
                     ))}
                 </span>
             );
-        case REPLAY_STEP.PASS:
+        case REPLAY_ATOM_PASS:
             return (
                 <span>
                     {who} <Text id="replay_pass" />: {cards(frame.cards)}
                 </span>
             );
-        case REPLAY_STEP.PICKUP:
+        case REPLAY_ATOM_PICKUP:
             return (
                 <span>
                     {who} <Text id="replay_pickup" /> ({frame.count})
                 </span>
             );
-        case REPLAY_STEP.GOOD:
+        case REPLAY_ATOM_GOOD:
             return (
                 <span>
                     {who} ✓ <Text id="replay_good" />
@@ -80,7 +81,7 @@ const StepMessage = ({ frame, names }: {
             );
         // The bout closed: everyone still in said good, and the table went to
         // the discard. One step, because it is one thing that happened.
-        case REPLAY_STEP.ROUND_END:
+        case REPLAY_ATOM_ROUND_END:
             return (
                 <span>
                     ✓ <Text id="replay_good" /> - {frame.count} <Text id="discarded" />

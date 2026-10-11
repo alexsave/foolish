@@ -21,7 +21,7 @@ import {
     OracleJob, OracleKnobs, OracleRecord, OracleRecordCandidate, OracleVerdict, oracleCardToken,
 } from './types';
 
-export type BatchResult =
+type BatchResult =
     | { record: OracleRecord }
     | { error: 'empty' | 'state' };
 
@@ -44,7 +44,7 @@ const SOLVER_NAME: Record<number, OracleRecord['solver']['result']> = {
 /** The kernel's answer as the record the accumulator, the worker and the
  *  overlay read: cards become the tokens rows are keyed by, codes become their
  *  names, and each sampled row is handed its own storylines. */
-export function recordOfAnswer(a: OgAnswer_Snap): OracleRecord {
+function recordOfAnswer(a: OgAnswer_Snap): OracleRecord {
     const tok = (c: Card_Snap) => oracleCardToken(c, a.trump);
     const candidates = a.rows.map((r): OracleRecordCandidate => {
         const c: OracleRecordCandidate = {

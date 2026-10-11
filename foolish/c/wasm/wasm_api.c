@@ -112,16 +112,6 @@ static unsigned char g_io[IO_CAP];
 #endif
 static Game g_game;
 
-// ROUND 16 - g_game's log count at the moment the last FMSG decode adopted a
-// chain into it, or -1 for "no mark". THE base a seal measures its bubble
-// against: how much of the atom stream is mine (msg_seal), and whether any of
-// it is - "this bubble adds NOTHING" (the re-seal that cancels a staged move)
-// as against "this bubble adds a move the codec folded into an existing atom"
-// (msg_seal_base). It sits up here, away from the rest of the FMSG statics,
-// only because every path that REPLACES g_game has to clear it, and the first
-// of those appears above them.
-static int g_msg_base_logs = -1;
-
 // Snapshots never carry logs (animation game_states are log-stripped
 // downstream), so each slot stores only the Game prefix up to num_logs -
 // ~2.5 KB instead of the full log-laden struct.
@@ -251,11 +241,6 @@ int wasm_import_state(int len, int masked) {
     const int r = state_import(&g_game, g_io, len, masked ? 1 : 0);
     if (r != GAME_VALID) return r;
     g_game.deterministic_deck = false;
-    // A game swapped in wholesale is not the one the last FMSG decode adopted,
-    // so its log count says nothing about whether that chain has moved. Forget
-    // the mark (see g_msg_base_logs); a seal then behaves exactly as it did
-    // before the mark existed.
-    g_msg_base_logs = -1;
     return GAME_VALID;
 }
 
@@ -688,30 +673,6 @@ int wasm_replay_encode_v6(int in_len) {
     return replay_encode_v6(g_replay_io, in_len, g_replay_io, REPLAY_IO_CAP);
 }
 
-// A replay from the RESIDENT game (replay.h replay_encode_v6_from_game) - the
-// production producer, the same call the phone makes through
-// fio_replay_encode_v6_b32.
-// The host stages the game exactly as a bot decision does (wasm_import_state
-// then wasm_import_logs) and puts the deal seed at the front of the replay IO
-// buffer; the kernel re-derives the deal from the seed and reads the actions
-// out of the imported logs, so no caller assembles a reveal stream or marshals
-// an action ever again.
-//
-//   in:  g_replay_io[0 .. FOOLISH_SEED_LEN) = the 32-byte deal seed
-//   out: the replay integer, written back over g_replay_io
-//
-// Exported from bots.wasm ONLY (see the Makefile): this needs a whole session
-// log resident, and the rules module is built at MAX_LOGS=128 with no log
-// import - it cannot hold one.
-int wasm_replay_encode_v6_from_game(int max_atoms) {
-    // The seed is copied out first: `out` aliases the buffer it arrived in, and
-    // the encoder is free to write output before it has finished with its input.
-    unsigned char seed[FOOLISH_SEED_LEN];
-    memcpy(seed, g_replay_io, sizeof seed);
-    return replay_encode_v6_from_game(&g_game, seed, (int)sizeof seed, max_atoms,
-                                      g_replay_io, REPLAY_IO_CAP);
-}
-
 int wasm_replay_error_detail(void) { return replay_last_error_detail(); }
 // The same refusal as a struct (replay.h ReplayError), so a host words the
 // message from named fields instead of unpacking log_type << 16 | menu.
@@ -728,20 +689,12 @@ const void *wasm_replay_error_ptr(void) { return replay_last_error(); }
 // BORROWS the bytes it decoded from. Keeping it in the replay family's own
 // buffer keeps that invariant true.
 //
-// Both entries are exported from bots.wasm ONLY - not because decode needs
-// anything rules.wasm lacks (it does not), but because FMSG runs on the ONE big
-// module everywhere, by owner steer: every host (server, web, phone, watch,
-// iMessage) builds on one wasm, and the split comes back later once they all do.
-// Sealing genuinely needs the resident session log, which rules.wasm cannot hold
-// (MAX_LOGS=128, no log import, 3-page pin) - and splitting decode away from
-// seal to work around that is exactly the contortion the steer forbids. Two
-// kernels in the tree is the trap: rules_wasm.ts went stale at 32b5b38 while
-// bots.wasm kept being rebuilt, so a C change reached one and not the other.
+// The web READS an envelope and never writes one: sealing, rebasing and Rule P
+// are the phone's, through ios_api_msg.c, and are tested natively
+// (tests/msg_wire_test.c). So decode is the one FMSG entry a shipped module
+// exports; wasm_msg_rematch below is the test build's.
 //
-// Both replay into the resident g_game, so after a decode the ordinary exports
-// (wasm_view_serialize, wasm_legal_moves, wasm_apply_action) all read the game
-// the payload describes - the /m/ route needs no new rendering path, and a turn
-// continues from exactly what it decoded.
+// A decode replays into the resident g_game.
 
 // THE HEADER, as a struct (msg_wire.h MsgHeader), not a byte string. A bridge
 // reads and writes it through the readers and writers tools/structgen generates
@@ -750,33 +703,11 @@ const void *wasm_replay_error_ptr(void) { return replay_last_error(); }
 // written here and re-read field by field in sdk/ts/wasm/bots.ts.
 //
 // It lives OUTSIDE g_replay_io deliberately: a decode leaves the envelope's own
-// bytes in that buffer and a seal writes the new ones back over them, so a
-// header parked there would be clobbered by the very call that reads it.
+// bytes in that buffer, which the next call is free to overwrite.
 static MsgHeader g_msg_header;
 
-// The address of that header. The whole ABI: the caller reads it after a decode
-// and fills it in before a seal.
+// The address of that header. The whole ABI: the caller reads it after a decode.
 void *wasm_msg_header_ptr(void) { return &g_msg_header; }
-
-// The adopted chain's round, kept from the last successful wasm_msg_decode -
-// Rule R's guard input, and the one thing a rebase needs that the resident Game
-// does not carry (a Game has no bout counter; msg_replay derives it).
-static int g_msg_round = -1;
-
-// ROUND 16 - where the chain the resident game was decoded from ENDED, as a
-// mark in the log (g_msg_base_logs, declared beside g_game), so a seal can say
-// how much of the atom stream THIS bubble added (msg_wire.h's n_new). -1 = this
-// host cannot say, which seals the delta as 0 and leaves the receiver to guess
-// the animation boundary exactly as builds before round 16 did. Same shape as
-// g_msg_round above: the fact belongs to the adopted chain, and this is the
-// file that adopts one.
-//
-// The same mark is what lets a seal say "I added NOTHING" - the bubble that
-// cancels a staged move by re-sealing the board the chain was already in
-// (msg_wire.h's MSG_NEW_NOTHING). The web does not stage-and-undo today; the
-// twin carries the rule anyway, because what an empty bubble IS belongs to the
-// wire and not to one host, and a twin that answered differently would put a
-// different byte on the same chain.
 
 // in:  g_replay_io[0 .. in_len) = the envelope bytes
 // out: the header at wasm_msg_header_ptr (MsgHeader)
@@ -797,9 +728,6 @@ int wasm_msg_decode(int in_len) {
     if (rrc != MSG_EOK) return rrc;
 
     // Safe now: replay is done with the borrowed body.
-    g_msg_round = e.round;   // Rule R's guard reads this against a pending move
-    // …and the log mark a later seal measures its bubble against.
-    g_msg_base_logs = g_game.num_logs;
     // The header, at wasm_msg_header_ptr. `actions` is dropped on the way: it
     // borrows g_replay_io, which the next call is free to overwrite.
     g_msg_header.e = e;
@@ -809,83 +737,20 @@ int wasm_msg_decode(int in_len) {
     return MSG_EOK;
 }
 
-// Rule P (msg_wire.h §7.2). Two envelopes laid end to end in g_replay_io:
-// a at [0, a_len), b at [a_len, a_len + b_len). Returns -1 if a is preferred,
-// +1 if b, 0 if they are the same chain - or a negative MSG_E* < -1 if either
-// is not an envelope (callers check for < -1, see the TS bridge).
-//
-// Structure only: no replay, no Game. Rule P decides which chain to adopt, and
-// a device compares far more chains than it adopts.
-int wasm_msg_rule_p(int a_len, int b_len) {
-    if (a_len < 0 || b_len < 0 || a_len + b_len > REPLAY_IO_CAP) return MSG_ECAP;
-    MsgChainKey ka, kb;
-    int rc = msg_chain_key(g_replay_io, a_len, &ka);
-    if (rc != MSG_EOK) return rc;
-    rc = msg_chain_key(g_replay_io + a_len, b_len, &kb);
-    if (rc != MSG_EOK) return rc;
-    return msg_rule_p(&ka, &kb);
-}
-
-// Rule R (msg_wire.h §7.4). Rebases ONE pending action onto the adopted chain -
-// the game wasm_msg_decode left resident - in the order the ledger holds them.
-// The awire frame is at the front of g_replay_io, like every other FMSG input,
-// so a caller checks it against the one capacity that buffer exports; it is
-// decoded out of there before anything else runs.
-//
-// Returns MSG_REBASE_* (0 re-applied and APPLIED to the resident game, 1
-// discarded by the round guard, 2 discarded as illegal), or a negative MSG_E*.
-int wasm_msg_rebase(int pending_round, int seat, int wire_len) {
-    if (g_msg_round < 0) return MSG_ECHAIN;   // nothing adopted to rebase onto
-    if (wire_len < 0 || wire_len > REPLAY_IO_CAP) return MSG_EACTION;
-    AwireAction a;
-    if (!awire_decode(g_replay_io, wire_len, &a)) return MSG_EACTION;
-    return msg_rebase_one(&g_game, g_msg_round, pending_round, seat, &a);
-}
-
-// in:  the header at wasm_msg_header_ptr (MsgHeader)
-// out: the envelope bytes in g_replay_io
-// Seals the RESIDENT g_game - the game the caller just played a move on.
-// Returns the envelope length, or a negative MSG_E*.
-//
-// Three of the header's fields are the KERNEL'S to state, and a caller does not
-// get to claim them: the digest (an envelope cannot carry its own), `n_new` (the
-// bubble's atom delta, which msg_seal derives from the base turn this host
-// tracks) and the borrowed body. They are cleared here rather than trusted, so
-// the struct a caller filled in cannot assert a boundary its body does not have.
-// The one scratch Game the FMSG exports borrow for the length of a call (a
-// Game is far too big for a wasm stack): wasm_msg_seal reads its own body back
-// into it, and wasm_msg_rematch replays the finished chain and deals the lobby
-// in it. Neither holds it across a return.
-static Game g_msg_scratch;
-
-int wasm_msg_seal(void) {
-    MsgEnvelope e = g_msg_header.e;
-    if (e.n_joins < 1 || e.n_joins > MSG_MAX_JOINS) return MSG_EJOINS;
-    for (int i = 0; i < e.n_joins; i++)
-        if (e.joins[i].name_len > MSG_MAX_NAME) return MSG_ENAME;
-    e.n_new = 0;
-    e.n_actions = 0;
-    e.actions_len = 0;
-    e.actions = 0;
-
-    // A v6 body is tens of bytes; 512 is far above any measured game (8p ~68 B).
-    static unsigned char body[512];
-    const int src = msg_seal(&e, &g_game, msg_seal_base(&g_game, g_msg_base_logs),
-                             body, (int)sizeof body, &g_msg_scratch);
-    if (src != MSG_EOK) return src;
-    return msg_encode(&e, g_replay_io, REPLAY_IO_CAP);
-}
-
 // THE REMATCH LOBBY (msg_wire.h msg_rematch_lobby) for the FINISHED envelope in
 // g_replay_io[0, in_len): the same game dealt again, written back into
 // g_replay_io. Returns its length or a negative MSG_E*. Adopts nothing - the
 // resident game is untouched; decode the answer to put it on screen. The same
-// C the phone's fio_msg_rematch calls, exported so e2e/msg_rematch.test.ts can
-// hold the two engines to one answer.
+// C the phone's fio_msg_rematch calls, exported from the TEST build only
+// (Makefile WASM_BOTS_UNSHIPPED_API) so e2e/msg_rematch.test.ts can hold the
+// wasm kernel to the bytes the native one is pinned to.
 // `tapped_at_ms` crosses as a double: a JS number holds every millisecond
 // timestamp exactly, and wasm32 has no 64-bit integer a JS caller can pass
 // without BigInt.
 int wasm_msg_rematch(int in_len, double tapped_at_ms, int creator_seat) {
+    // The scratch Game the lobby is replayed and dealt in (a Game is far too
+    // big for a wasm stack). Not held across a return.
+    static Game g_msg_scratch;
     if (in_len < 0 || in_len > REPLAY_IO_CAP) return MSG_ECAP;
     // The answer is written where the question was, so the question is copied
     // out first: the lobby is built while the finished chain is still read.
@@ -905,29 +770,13 @@ int wasm_msg_rematch(int in_len, double tapped_at_ms, int creator_seat) {
 // g_io - no resident game, no session log - so they run in any module that
 // exports them (the web loads bots.wasm, which is where they ship).
 
-// The version gate (clientReconcile.shouldDropStaleSequence). Pure scalars; the
+// The version gate (anim_should_drop_stale). Pure scalars; the
 // two has_* flags model TS null (a replay sequence has no version -> never gated).
 int wasm_anim_should_drop_stale(int has_last, int last, int has_incoming, int incoming) {
     return anim_should_drop_stale(has_last, last, has_incoming, incoming);
 }
 
-// THE DEDUP KEY (anim_plan.h anim_event_key). Two events collide iff they name
-// the same (type, card, from, to, seat); the seat stands in for the player id
-// because a plan is per viewer. The web used to key its pending moves on a
-// JSON.stringify of those five fields and JSON.parse them back out in five
-// places, which is a byte layout TypeScript knew.
-//
-// It comes back as a DOUBLE so the host can use it as a plain Map key without a
-// BigInt: the key packs six BYTES (bits 0..47, see anim_event_key), so every
-// value it can take is exact in a double, and every value it cannot take -
-// anything at or above 2^48 - is unreachable by construction. Asserted in
-// c/tests/anim_plan_test.c over the whole range of each field.
-double wasm_anim_event_key(int type, int suit, int value, int from, int to, int seat) {
-    const Card card = { (int8_t)suit, (int8_t)value };
-    return (double)anim_event_key(type, card, from, to, seat);
-}
-
-// staleOptimisticKeysOnTable (optimisticAnimation.ts), asked as a value
+// anim_stale_optimistic_on_table, asked as a value
 // (anim_plan.h AnimStaleAsk): the host writes the three card lists through the
 // generated writer and reads the release indices through the generated reader
 // (sdk/ts/gen/view_layout.bots.ts), so the layout of neither is written down
@@ -997,7 +846,7 @@ int wasm_anim_set_transport(int transport) { return anim_set_transport(transport
 // ---------- the plan and the frame ---------------------------------------------
 //
 // THE ENTRIES A HOST WITH A FRAME LOOP NEEDS, and the reason they cross
-// here and not earlier: wasm_anim_build_plan was DELETED in 0cda5e85 for being
+// here and not earlier: the web's plan bridge was DELETED in 0cda5e85 for being
 // a bridge with no caller, so the builders wait for the consumer that asks them
 // (docs/C_GAME_SHAPE_MIGRATION.md Phase 9). iOS reaches the same C natively
 // through fio_anim_plan / fio_anim_beats. The beats have no wasm entry: the web
@@ -1015,14 +864,8 @@ static AnimFrame g_anim_frame;
 void *wasm_anim_plan_ptr(void)  { return &g_anim_plan; }
 void *wasm_anim_frame_ptr(void) { return &g_anim_frame; }
 
-// THE PLAN (anim_plan.h anim_plan_ask). The stream goes in as the kernel's own
-// AnimPlanAsk, filled where it lies through the generated writer
-// (sdk/ts/gen/view_layout.bots.ts writeAnimPlanAsk), so there is no byte format
-// here for a host to keep in step with. The answer is left in g_anim_plan for
-// the caller to read where it lies. Returns ANIM_EOK, or a negative ANIM_E*.
-static AnimPlanAsk g_anim_plan_ask;
-AnimPlanAsk *wasm_anim_plan_ask_ptr(void) { return &g_anim_plan_ask; }
-int wasm_anim_build_plan(void) { return anim_plan_ask(&g_anim_plan_ask, &g_anim_plan); }
+// THE PLAN is asked with the boards a client holds, so its door is the client
+// slot's (wasm_table_api.c wasm_client_plan); the answer is left in g_anim_plan.
 
 // WHERE THE PLAN STANDS AT now_ms (anim_plan.h anim_plan_at), measured from the
 // sequence's start. The clock is an argument: the kernel imports nothing, so

@@ -3,44 +3,15 @@
 // needed). The components import from here; the e2e suite imports from here. There
 // is no second copy. The boards the client makes itself - an optimistic move, a
 // resync that keeps pending cards, the rematch's lobby - are the kernel's
-// (src/state/clientBoards.ts); what is left here orders a hand and gates a push.
+// (src/state/clientBoards.ts), and a push is gated by the kernel's version gate
+// (anim_plan.h anim_should_drop_stale, asked in AnimationContext); what is left
+// here orders a hand.
 
-import { animShouldDropStale } from '@sdk/ts/wasm/bots.ts';
 import type { ViewCard } from './view';
 
 type Card = ViewCard;
 
 export const cardKey = (c: Card): string => `${c.suit}-${c.value}`;
-
-// ---- Live broadcast ordering gate -----------------------------------------
-// Broadcasts are fired un-awaited over per-call channels, so under realtime
-// latency they can arrive out of order. Each carries the committed games.version;
-// drop any whose version is at or below the newest already applied (it's strictly
-// superseded — each sequence carries the full resulting state). Replay sequences
-// have no version and are never gated.
-// Delegates to the C animation core (c/src/anim_plan.h anim_should_drop_stale)
-// through the wasm bridge, so the gate that decides which broadcast every client
-// applies lives in ONE place — a phone and a browser disagreeing here forks the
-// feed. The C twin is asserted natively (c/tests/anim_plan_test.c test_reconcile)
-// AND exercised end-to-end through this delegation by e2e/reconcile.test.ts.
-export const shouldDropStaleSequence = (lastAppliedVersion: number | null, incomingVersion: number | null): boolean =>
-    animShouldDropStale(lastAppliedVersion, incomingVersion);
-
-// ---- Table reconciliation --------------------------------------------------
-// Trust the server's table outright. Ordering is handled by the version gate and
-// the local player's unconfirmed cards are injected upstream (optimistic resolver
-// for broadcasts, clientBoards.keepPending for resync), so appending stale leftover
-// battles is unnecessary and would re-introduce a previous bout's cards when an
-// intermediate clear is skipped.
-//
-// This is the C plan's "trust incoming" merge policy expressed at the JS-null
-// boundary — there is no decision for the kernel to make (no branch, no compute),
-// only a null-coalesce over Battle[] objects the C side never needs to see. It
-// stays here deliberately; the animation-core DECISIONS (the gate above, the
-// optimistic resolver, the plan) all delegate to C.
-export const mergeTableBattles = <B>(existingBattles: readonly B[] | undefined, incomingBattles: readonly B[] | undefined): readonly B[] => {
-    return incomingBattles ?? existingBattles ?? [];
-};
 
 // ---- Hand reconciliation ---------------------------------------------------
 // Legacy order-preserving merge (kept for game.self.hand). Appends new cards at

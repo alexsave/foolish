@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useServer } from '../contexts/ServerContext';
 import { Lobby } from './Lobby';

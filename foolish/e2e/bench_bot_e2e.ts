@@ -19,7 +19,7 @@
 import './harness.ts';
 import { applySchema, resetDb, uuid, pgPool } from './harness.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { __botsWasmMB, __botsWasmBytes, kernelBotRoster } from '../sdk/ts/wasm/bots.ts';
+import { __clientKernelExports, kernelBotRoster } from '../sdk/ts/wasm/bots.ts';
 import { __botCycle } from '../server/impls/supabase/functions/_shared/adapter/bot_actions.ts';
 import { __setTableDealSeedOverride } from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
 import { mustReadTable } from './helpers/table_play.ts';
@@ -80,9 +80,11 @@ async function main() {
     // Peak wasm linear memory after the MC bots ran (the external-budget number).
     // One module serves the server now (bots.wasm is the kernel): the kernel
     // columns the metrics renderer reads are the same instance.
+    const kernelBytes = (__clientKernelExports().memory as WebAssembly.Memory).buffer.byteLength;
+    const kernelMB = Math.round(kernelBytes / 1048576);
     const memory = {
-        botsWasmMB: __botsWasmMB(), kernelWasmMB: __botsWasmMB(),
-        botsWasmBytes: __botsWasmBytes(), kernelWasmBytes: __botsWasmBytes(),
+        botsWasmMB: kernelMB, kernelWasmMB: kernelMB,
+        botsWasmBytes: kernelBytes, kernelWasmBytes: kernelBytes,
     };
 
     if (JSON_OUT) { say(JSON.stringify({ e2e: results, memory })); await pgPool.end(); return; }

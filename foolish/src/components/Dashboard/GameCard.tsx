@@ -1,5 +1,4 @@
 import { useRouter } from "next/navigation";
-import { useLocalization } from "../../contexts/LocalizationContext";
 import { useTexture, getTextureStyle, seedFromString, flipFromString } from "../TexturedSurface";
 import { Text } from "../Text";
 import { SovietIcon, SuitIcon } from "../SovietIcon";
@@ -13,7 +12,6 @@ interface GameCardProps {
 export const GameCard: React.FC<GameCardProps> = ({ game }) => {
     const router = useRouter();
     const { woodUrl } = useTexture();
-    const { t } = useLocalization();
 
     const isGameOver = game.status === GAME_STATUS.GAME_OVER;
     const isWaiting = game.status === GAME_STATUS.WAITING;

@@ -29,18 +29,33 @@ import {
     ANIM_STEP_NONE, ANIM_NEVER, ANIM_TIME_MS, ANIM_BOUT_END_HOLD_MS,
     ANIM_CONFLICT_REVERT, ANIM_CONFLICT_KEEP, ANIM_CONFLICT_CLEAR,
 } from '../sdk/ts/gen/anim.bots.ts';
+import { CARD_NONE_SUIT, CARD_NONE_VALUE, GAME_STATUS_PLAYING, PLAYER_STATUS_IN, type TableView_Snap as TableView } from '../sdk/ts/gen/view_layout.bots.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
 interface Card { suit: number; value: number }
 const C = (suit: number, value: number): Card => ({ suit, value });
 const id = (c: Card) => c.suit * 13 + (c.value - 1);
-const NONE = 0xfe;                      // ANIM_TABLE_NONE: an uncovered battle
+const NO_CARD: Card = { suit: CARD_NONE_SUIT, value: CARD_NONE_VALUE };
 
 // The timing policy, as the kernel states it (anim_plan.h ANIM_TIME_MS / ANIM_GAP_MS).
 const TIME = 500, GAP = 25;
 
 const SIX_S = C(0, 5), SEVEN_S = C(0, 6), TRUMP = C(2, 12);
+
+// A board as the plan reads one (c/src/client_table.h client_plan_step): the
+// stock, the discard, the trump while it is face up, a hand count per seat and
+// the row, each battle an attack and its cover when it has one.
+const board = (
+    b: { deck: number; discard: number; flipped: Card | null; hand: number[] }, row: Card[][] = [],
+): TableView => ({
+    status: GAME_STATUS_PLAYING, powerSuit: 2, firstAttacker: 0, defender: 1, mySeat: -1, fool: -1,
+    deckCount: b.deck, discardPileLength: b.discard, hasFlipped: b.flipped !== null, hasGoodTimestamp: false,
+    passing: true, flipped: b.flipped ?? NO_CARD, goodMask: 0, version: 0,
+    battles: row.map(([attack, defense]) => ({ attack, defense: defense ?? NO_CARD })),
+    seats: b.hand.map((handCount) => ({ status: PLAYER_STATUS_IN, handCount, awaitingAttack: false, isAi: false, id: '', name: '' })),
+    myHand: [], elimination: [], gameId: 'g', title: '',
+});
 
 // A two-step bout: I lay 6s, the defender covers with 7s. Both events carry
 // their own board, which is what makes the count-freeze derivable at all.
@@ -48,19 +63,17 @@ const bout = (): AnimPlanEventIn[] => [
     {
         type: ANIM_EVT.attack_pass, seat: 0, from: ANIM_LOC.hand, to: ANIM_LOC.table,
         cards: [SIX_S],
-        counts: { deck: 4, discard: 0, flipped: TRUMP, hand: [5, 6] },
-        battles: [id(SIX_S), NONE],
+        board: board({ deck: 4, discard: 0, flipped: TRUMP, hand: [5, 6] }, [[SIX_S]]),
     },
     {
         type: ANIM_EVT.cover, seat: 1, from: ANIM_LOC.hand, to: ANIM_LOC.table,
         cards: [SEVEN_S],
-        counts: { deck: 4, discard: 0, flipped: TRUMP, hand: [5, 5] },
-        battles: [id(SIX_S), id(SEVEN_S)],
+        board: board({ deck: 4, discard: 0, flipped: TRUMP, hand: [5, 5] }, [[SIX_S, SEVEN_S]]),
     },
 ];
-const FINAL = { deck: 4, discard: 0, flipped: TRUMP as Card | null, hand: [5, 5] };
+const FINAL = board({ deck: 4, discard: 0, flipped: TRUMP, hand: [5, 5] });
 
-const plan = () => animBuildPlan(bout(), 2, FINAL);
+const plan = () => animBuildPlan(bout(), FINAL);
 
 test('a step lasts the kernel\'s time and the next one waits its gap', () => {
     const p = plan();
@@ -136,10 +149,9 @@ test('a deal out of the deck carries its in-flight counts, and the trump does no
     const deal: AnimPlanEventIn[] = [{
         type: ANIM_EVT.refill, seat: 0, from: ANIM_LOC.deck, to: ANIM_LOC.flipped,
         cards: [TRUMP],
-        counts: { deck: 0, discard: 0, flipped: null, hand: [6, 6] },
-        battles: [],
+        board: board({ deck: 0, discard: 0, flipped: null, hand: [6, 6] }),
     }];
-    animBuildPlan(deal, 2, { deck: 0, discard: 0, flipped: null, hand: [6, 6] });
+    animBuildPlan(deal, board({ deck: 0, discard: 0, flipped: null, hand: [6, 6] }));
     const f = animPlanAt(0);
     assert.equal(f.inFlightFromDeck, 1);
     assert.equal(f.inFlightToFlipped, 1);
@@ -156,14 +168,14 @@ test('the draw that takes the trump names it, from its slot, and the frame carri
     const draw: AnimPlanEventIn[] = [
         {
             type: ANIM_EVT.discard, from: ANIM_LOC.table, to: ANIM_LOC.discard, cards: [SIX_S, SEVEN_S],
-            counts: { deck: 1, discard: 20, flipped: TRUMP, hand: [4, 5] }, battles: [],
+            board: board({ deck: 1, discard: 20, flipped: TRUMP, hand: [4, 5] }),
         },
         {
             type: ANIM_EVT.refill, seat: 0, from: ANIM_LOC.deck, to: ANIM_LOC.hand, cards: [BACK, BACK],
-            counts: { deck: 0, discard: 20, flipped: null, hand: [6, 5] }, battles: [],
+            board: board({ deck: 0, discard: 20, flipped: null, hand: [6, 5] }),
         },
     ];
-    const p = animBuildPlan(draw, 2, { deck: 0, discard: 20, flipped: null, hand: [6, 5] });
+    const p = animBuildPlan(draw, board({ deck: 0, discard: 20, flipped: null, hand: [6, 5] }));
     assert.equal(p.steps[0].trumpOut, null, 'the sweep deals no trump');
     assert.equal(p.steps[0].trumpFrom, 0xff, 'and has no trump origin (ANIM_LOC_NONE)');
     assert.deepEqual(p.steps[1].trumpOut, TRUMP, 'the masked draw names the trump by its real identity');
@@ -203,7 +215,7 @@ test('the hold is the kernel\'s number, and it is three flights long', () => {
 });
 
 test('a bout-ending cover rests before the sweep, and the rest is inside the sweep\'s start', () => {
-    const p = animBuildPlan(lastDefence(), 2, FINAL);
+    const p = animBuildPlan(lastDefence(), FINAL);
     assert.equal(p.steps[0].startMs, 0);
     assert.equal(p.steps[0].holdMs, ANIM_BOUT_END_HOLD_MS, 'the cover carries the hold');
     assert.equal(p.steps[1].startMs, TIME + GAP + ANIM_BOUT_END_HOLD_MS,
@@ -215,7 +227,7 @@ test('a bout-ending cover rests before the sweep, and the rest is inside the swe
 });
 
 test('sampled inside the hold, nothing is flying and the covered table is what shows', () => {
-    const p = animBuildPlan(lastDefence(), 2, FINAL);
+    const p = animBuildPlan(lastDefence(), FINAL);
     const f = animPlanAt(TIME + 400);
     assert.equal(f.step, ANIM_STEP_NONE, 'a hold is a beat of NOTHING moving - that is what makes it a hold');
     assert.equal(f.landed, 1, 'the board on show is the one the cover landed on');
@@ -226,7 +238,7 @@ test('a cover with the bout still open keeps the ordinary gap', () => {
     const p = animBuildPlan([
         lastDefence()[0],
         { type: ANIM_EVT.attack_pass, seat: 0, from: ANIM_LOC.hand, to: ANIM_LOC.table, cards: [SIX_S] },
-    ], 2, FINAL);
+    ], FINAL);
     assert.equal(p.steps[0].holdMs, 0, 'the hold is a bout END, not a pause between any two moves');
     assert.equal(p.steps[1].startMs, TIME + GAP);
 });
@@ -236,7 +248,7 @@ test('two covers by one seat open at the same instant and name one beat', () => 
         { type: ANIM_EVT.cover, seat: 1, from: ANIM_LOC.hand, to: ANIM_LOC.table, cards: [SEVEN_S] },
         { type: ANIM_EVT.cover, seat: 1, from: ANIM_LOC.hand, to: ANIM_LOC.table, cards: [C(1, 6)] },
         { type: ANIM_EVT.refill, seat: 0, from: ANIM_LOC.deck, to: ANIM_LOC.hand, cards: [TRUMP] },
-    ], 2, FINAL);
+    ], FINAL);
     assert.equal(p.steps[0].startMs, 0);
     assert.equal(p.steps[1].startMs, 0, 'one move is one movement; the kernel just spends an event per card');
     assert.deepEqual([p.steps[0].beatFirst, p.steps[0].beatN], [0, 2]);
@@ -251,7 +263,7 @@ test('an `out` is a notice: no flight, no time, and it costs the beat behind it 
         { type: ANIM_EVT.pickup, seat: 1, from: ANIM_LOC.table, to: ANIM_LOC.hand, cards: [SIX_S] },
         { type: ANIM_EVT.out, seat: 0 },
         { type: ANIM_EVT.refill, seat: 0, from: ANIM_LOC.deck, to: ANIM_LOC.hand, cards: [TRUMP] },
-    ], 2, FINAL);
+    ], FINAL);
     assert.equal(p.steps[1].durationMs, 0, 'an out moves no card, so it flies for no time');
     assert.equal(p.steps[1].startMs, TIME + GAP);
     assert.equal(p.steps[2].startMs, TIME + GAP, 'the refill opens where it would have with no out at all');

@@ -84,7 +84,7 @@ const CHECK_BODY = 3.4;
 
 interface GlyphProps { size?: number }
 
-export const Sword = ({ size = 24, fill = RoleInk.fill }: GlyphProps & { fill?: string }) => (
+const Sword = ({ size = 24, fill = RoleInk.fill }: GlyphProps & { fill?: string }) => (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
         <g transform="rotate(45 12 12)">
             <path d={SWORD_PATH} fill={fill} stroke={RoleInk.line} strokeWidth={RoleInk.stroke} strokeLinejoin="round" />
@@ -95,7 +95,7 @@ export const Sword = ({ size = 24, fill = RoleInk.fill }: GlyphProps & { fill?: 
     </svg>
 );
 
-export const Shield = ({ size = 24 }: GlyphProps) => (
+const Shield = ({ size = 24 }: GlyphProps) => (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
         <path d={SHIELD_PATH} fill={RoleInk.fill} stroke={RoleInk.line} strokeWidth={RoleInk.stroke} strokeLinejoin="round" />
     </svg>

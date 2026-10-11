@@ -18,7 +18,7 @@ import { useServerActions } from '../contexts/ServerContext';
 import { useAnimation } from '../contexts/AnimationContext';
 import { animationFeed, AnimationSequenceMessage } from '../state/animationFeed';
 import { buildSpeeds, type SpeedStop } from './speeds';
-import { REPLAY_KEY, REPLAY_STEP, type ReplayFrame } from './frames';
+import { REPLAY_KEY, type ReplayFrame } from './frames';
 
 /** The deck head and the buttons that move it. */
 export interface Playback {
@@ -45,7 +45,7 @@ export interface Playback {
 
 /** The telestrator, which the keyboard shares: 'c' toggles it, and while it is
  *  on a commentator's keystrokes must not scrub the replay underneath the pen. */
-export interface PenKeys {
+interface PenKeys {
     drawing: boolean;
     toggleDrawing: () => void;
 }
@@ -71,17 +71,11 @@ export function usePlayback(
     stepRef.current = stepIdx;
     const lastIdx = frames.length - 1;
 
-    // publish one step's sequence into the feed; a fresh sequence_id (and a
-    // deep copy) lets the same step replay after scrubbing back. Plain
-    // counter + Math.random - crypto.randomUUID needs a secure context and
-    // breaks LAN dev on iOS (http://192.168.x.x).
-    const publishSeq = useRef(0);
+    // publish one step's sequence into the feed (a deep copy: the queue owns
+    // what it is handed, and the same step replays after scrubbing back)
     const publishStep = useCallback(
         (i: number) => {
             const seq: AnimationSequenceMessage = structuredClone(frames[i].seq);
-            seq.sequence_id = `replay-${i}-${++publishSeq.current}-${Math.random().toString(36).slice(2)}`;
-            seq.timestamp = Date.now();
-            (seq.events[0] as any)._nonce = seq.sequence_id; // defeat content dedup
             animationFeed.publish(seq);
             setStepIdx(i);
         },
@@ -104,9 +98,6 @@ export function usePlayback(
             const rev = reverses[i];
             if (!rev) return;
             const seq: AnimationSequenceMessage = structuredClone(rev);
-            seq.sequence_id = `replay-rev-${i}-${++publishSeq.current}-${Math.random().toString(36).slice(2)}`;
-            seq.timestamp = Date.now();
-            if (seq.events[0]) (seq.events[0] as any)._nonce = seq.sequence_id;
             animationFeed.publish(seq);
             setStepIdx(i - 1);
         },
@@ -138,17 +129,9 @@ export function usePlayback(
         publishReverse(stepRef.current);
     }, [publishReverse, jumpTo]);
 
-    // Bout boundaries: a bout begins at the ATTACK that opens onto an empty
-    // table (the previous step cleared it via pickup/discard, or it's the
-    // game's first attack). Skip-to-bout jumps are animationless seeks.
-    const boutStarts = useMemo(() => {
-        const starts: number[] = [];
-        for (let i = 0; i < frames.length; i++) {
-            const opensEmpty = i === 0 || frames[i - 1].game.battles.length === 0;
-            if (frames[i].kind === REPLAY_STEP.ATTACK && opensEmpty) starts.push(i);
-        }
-        return starts;
-    }, [frames]);
+    // Where each bout begins, by the kernel's word. Skip-to-bout jumps are
+    // animationless seeks.
+    const boutStarts = useMemo(() => frames.flatMap((f, i) => (f.opensBout ? [i] : [])), [frames]);
 
     const nextBout = useCallback(() => {
         const from = Math.max(0, stepRef.current);

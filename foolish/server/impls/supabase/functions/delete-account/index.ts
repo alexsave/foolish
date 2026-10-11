@@ -34,7 +34,7 @@ const admin = createClient(
 );
 
 /** The name a deleted user's seat keeps. */
-export const DELETED_PLAYER_NAME = 'Deleted player';
+const DELETED_PLAYER_NAME = 'Deleted player';
 
 serve(async (req: Request): Promise<Response> => {
     const cors = handleCors(req);

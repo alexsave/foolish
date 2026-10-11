@@ -25,8 +25,9 @@ import assert from 'node:assert/strict';
 
 import { covered } from '../src/state/view.ts';
 import {
-    buildReplayFrames, buildReverseFrames, preDealGame, stepTimes, REPLAY_STEP,
+    buildReplayFrames, buildReverseFrames, preDealGame,
 } from '../src/replay/frames.ts';
+import { REPLAY_ATOM_DEAL, REPLAY_ATOM_ATTACK, REPLAY_ATOM_COVER, REPLAY_ATOM_PASS, REPLAY_ATOM_PICKUP, REPLAY_ATOM_ROUND_END } from '../sdk/ts/gen/kernel_consts.bots.ts';
 import { seedBytes } from './helpers/bot_table.ts';
 import { cardKey as key, movesOf, playRecorded, type RecordedGame } from './helpers/replay_play.ts';
 
@@ -127,19 +128,17 @@ test('the status line asks the kernel what happened, and gets the real game back
 
             const frames = buildReplayFrames(code, 'g', null);
             const kinds = (k: number) => frames.filter(f => f.kind === k).length;
-            assert.equal(kinds(REPLAY_STEP.PASS), count('pass'), `${np}p: passes are passes`);
-            assert.equal(kinds(REPLAY_STEP.ATTACK), count('attack'), `${np}p: attacks are attacks`);
+            assert.equal(kinds(REPLAY_ATOM_PASS), count('pass'), `${np}p: passes are passes`);
+            assert.equal(kinds(REPLAY_ATOM_ATTACK), count('attack'), `${np}p: attacks are attacks`);
             // A COVER FRAME IS A MOVE, NOT A PAIR. Live play pushes one cover
             // event per pair, and the replay wire codes one step per pair, but
             // buildReplayFrames merges a defender's consecutive covers back
             // into the single move they were. So the pairs must still all be
             // there - none invented, none dropped - while the frames that carry
             // them are fewer.
-            const coverFrames = frames.filter((f) => f.kind === REPLAY_STEP.COVER);
+            const coverFrames = frames.filter((f) => f.kind === REPLAY_ATOM_COVER);
             const pairs = coverFrames.reduce((n, f) => n + (f.pairs?.length ?? 0), 0);
             assert.equal(pairs, count('cover'), `${np}p: every cover pair survives merging`);
-            assert.equal(coverFrames.reduce((n, f) => n + f.moves, 0), count('cover'),
-                `${np}p: a merged frame counts the moves it merged`);
             assert.ok(coverFrames.length <= count('cover'), `${np}p: merging never adds frames`);
             // Each frame's own cards and events agree with its pair count, so a
             // merge cannot quietly lose the second card of a double cover.
@@ -158,24 +157,24 @@ test('the status line asks the kernel what happened, and gets the real game back
                 assert.deepEqual(f.cards[0], f.pairs?.[0]?.card ?? null,
                     `${np}p: a cover frame's first card is its first pair's`);
             }
-            assert.equal(kinds(REPLAY_STEP.PICKUP), count('pickup'), `${np}p: pickups are pickups`);
+            assert.equal(kinds(REPLAY_ATOM_PICKUP), count('pickup'), `${np}p: pickups are pickups`);
 
-            assert.equal(frames[0].kind, REPLAY_STEP.DEAL, 'step 0 is the deal');
+            assert.equal(frames[0].kind, REPLAY_ATOM_DEAL, 'step 0 is the deal');
             assert.equal(frames[0].seat, null, 'the deal is nobody\'s action');
             // Every acting step names its seat, or the status line has nobody
             // to credit the move to.
             for (const f of frames.slice(1)) {
-                if (f.kind === REPLAY_STEP.ROUND_END) continue;
+                if (f.kind === REPLAY_ATOM_ROUND_END) continue;
                 assert.ok(f.seat !== null && f.seat >= 0 && f.seat < np,
                     `${np}p: a ${f.kind} step names a real seat`);
             }
             // The cards the status line shows are the cards that moved.
             for (const f of frames) {
-                if (f.kind === REPLAY_STEP.ATTACK || f.kind === REPLAY_STEP.PASS
-                    || f.kind === REPLAY_STEP.COVER) {
+                if (f.kind === REPLAY_ATOM_ATTACK || f.kind === REPLAY_ATOM_PASS
+                    || f.kind === REPLAY_ATOM_COVER) {
                     assert.ok(f.cards.length > 0, `a ${f.kind} step shows the cards it played`);
                 }
-                if (f.kind === REPLAY_STEP.COVER) {
+                if (f.kind === REPLAY_ATOM_COVER) {
                     assert.ok(f.target, 'a cover shows what it covered');
                 }
             }
@@ -220,15 +219,20 @@ test('the deal animates out of an empty table, and the clock tracks the moves', 
     // kinds the clock advances on. If those ever drift apart the timestamps slide
     // silently, so check the arithmetic end to end.
     const timed = frames.filter(f =>
-        ([REPLAY_STEP.ATTACK, REPLAY_STEP.COVER, REPLAY_STEP.PASS, REPLAY_STEP.PICKUP] as number[])
+        ([REPLAY_ATOM_ATTACK, REPLAY_ATOM_COVER, REPLAY_ATOM_PASS, REPLAY_ATOM_PICKUP] as number[])
             .includes(f.kind)).length;
     const gaps = Array.from({ length: timed }, () => 10);
-    const times = stepTimes(frames, 1000, gaps);
+    const times = buildReplayFrames(played.code, 'g', null, { startTime: 1000, moveGaps: gaps }).map((f) => f.time);
+    assert.equal(times.length, frames.length, 'a 10s gap joins nothing');
     assert.equal(times[0], 1000, 'the deal is the start time');
     assert.equal(times[times.length - 1], 1000 + 10 * timed, 'every gap is spent, exactly once');
 
-    assert.deepEqual(stepTimes(frames, null, null), frames.map(() => null),
+    assert.deepEqual(frames.map((f) => f.time), frames.map(() => null),
         'no timing data, no timestamps');
+
+    // A bout begins at the attack that opens onto an empty table.
+    frames.forEach((f, i) => assert.equal(f.opensBout,
+        f.kind === REPLAY_ATOM_ATTACK && frames[i - 1].game.battles.length === 0, `step ${i}: opens a bout`));
 });
 
 test('before the deal lands, nobody holds a card - the watching seat included', async () => {
@@ -279,46 +283,45 @@ test('a cover run is merged only when its pairs were one send', async () => {
     const frames = buildReplayFrames(code, 'g', null);
     const runs: number[] = [];
     for (let i = 1; i < frames.length; i++) {
-        if (frames[i].kind === REPLAY_STEP.COVER && frames[i - 1].kind === REPLAY_STEP.COVER
+        if (frames[i].kind === REPLAY_ATOM_COVER && frames[i - 1].kind === REPLAY_ATOM_COVER
             && frames[i].seat === frames[i - 1].seat) runs.push(i);
     }
 
     // With NO gaps, nothing is merged: an unknown send boundary must not be
     // guessed at, because inventing a move is worse than showing two real ones.
     for (const f of frames) {
-        if (f.kind !== REPLAY_STEP.COVER) continue;
+        if (f.kind !== REPLAY_ATOM_COVER) continue;
         assert.equal(f.pairs?.length ?? 0, 1,
             'without the extras\' times, a cover step stays one pair');
-        assert.equal(f.moves, 1, 'and counts as the one move it is');
     }
 
     // Same code, but every adjacent pair declared same-send: now they merge.
-    // `number[]`, not the literal union an inline array infers: REPLAY_STEP's
-    // members are `as const`, so [ATTACK, COVER, PASS, PICKUP] types as
+    // `number[]`, not the literal union an inline array infers: the generated
+    // constants are literals, so [ATTACK, COVER, PASS, PICKUP] types as
     // (2|3|4|5)[] and .includes refuses a plain `kind`. tsc catches it, the
     // test runner does not, and `npm run typecheck` is a CI lane of its own.
-    const TIMED: number[] = [REPLAY_STEP.ATTACK, REPLAY_STEP.COVER, REPLAY_STEP.PASS, REPLAY_STEP.PICKUP];
+    const TIMED: number[] = [REPLAY_ATOM_ATTACK, REPLAY_ATOM_COVER, REPLAY_ATOM_PASS, REPLAY_ATOM_PICKUP];
     const nTimed = frames.filter((f) => TIMED.includes(f.kind)).length;
     const together = buildReplayFrames(code, 'g', null, { moveGaps: new Array(nTimed).fill(0) });
-    const merged = together.filter((f) => f.kind === REPLAY_STEP.COVER && (f.pairs?.length ?? 0) > 1);
+    const merged = together.filter((f) => f.kind === REPLAY_ATOM_COVER && (f.pairs?.length ?? 0) > 1);
     assert.ok(runs.length === 0 || merged.length > 0,
         'with every gap at zero, an adjacent cover run is one move');
 
     // And declared far apart: never merged, however adjacent.
     const apart = buildReplayFrames(code, 'g', null, { moveGaps: new Array(nTimed).fill(30) });
     for (const f of apart) {
-        if (f.kind !== REPLAY_STEP.COVER) continue;
+        if (f.kind !== REPLAY_ATOM_COVER) continue;
         assert.equal(f.pairs?.length ?? 0, 1, 'a 30s gap is two sends, never one move');
     }
 });
 
 test('one committed operation is one clock stamp, which is what the merge reads', async () => {
     // THE INVARIANT THE COVER MERGE STANDS ON, pinned where it can be seen.
-    // frames.ts merges a run of cover steps only when the gap between them is
-    // exactly zero, and that is only meaningful because table_commit_products
+    // The kernel joins a run of cover steps only when the gap between them is
+    // exactly zero (c/src/replay_steps.h ReplayPlayStep.joins), and that is only meaningful because table_commit_products
     // stamps every record of ONE committed operation with the same now_ms
     // (c/src/table.c) and table_replay_extras derives one gap per record from
-    // those stamps. Nothing in frames.ts can see that, and if table.c ever
+    // those stamps. Nothing in replay_steps.c can see that, and if table.c ever
     // stamped per record instead of per commit the merge would quietly join
     // every cover run again. So the rule is checked here, against a real table.
     const { dealBotTable, botCycle, seedBytes } = await import('./helpers/bot_table.ts');

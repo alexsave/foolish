@@ -41,8 +41,6 @@ export interface FeedAnimationEvent {
 
 export interface AnimationSequenceMessage {
     type: 'animation_sequence';
-    sequence_id: string;
-    timestamp: number;
     events: FeedAnimationEvent[];
     /** the final board, committed when the whole sequence has played */
     game: TableView;
@@ -69,7 +67,7 @@ export interface CastMessage {
     game_id?: string;
 }
 
-export type AnimationFeedMessage = AnimationSequenceMessage | CastMessage;
+type AnimationFeedMessage = AnimationSequenceMessage | CastMessage;
 
 type FeedListener = (message: AnimationFeedMessage) => void;
 

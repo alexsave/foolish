@@ -34,6 +34,8 @@
 #include "legal.h"
 #include "roster.h"
 #include "awire.h"
+#include "ask.h"
+#include "anim_plan.h"
 #include <stddef.h>
 
 #define CLIENT_OK           0
@@ -111,10 +113,12 @@ typedef struct {
     int8_t  defender_badge;        // the defending seat; -1 none (GAME_SEAT_NONE until the opening names it)
     bool    can_say_good;          // the viewer may say Good and the bout could close on it
     bool    can_set_rules;         // the viewer may change the table's rules: seated, in a lobby that has not dealt (game.h game_lobby_can_set_rules)
+    bool    can_join;              // the viewer may sit down: not seated, in a lobby with a seat left (game.h game_lobby_has_room)
     bool    show_deck_pile;        // the stock has cards left to draw on screen
     bool    show_flipped_slot;     // the trump's slot, kept while a card is on its way into it or out of it
     bool    show_trump_icon;       // stock and trump are gone: the power suit stands in their place
     bool    bot_to_move;           // a bot seat may act (should_bot_act's rule): a stalled bot loop is worth a nudge
+    bool    needs_bots;            // the table has bot work at all (game.h seat_needs_bot, the server's table_needs_bots)
     int16_t deck_pile;             // cards drawn in the stock pile
     int16_t deck_badge;            // the count on the pile: the stock, the trump, and cards in flight to the trump
     // THE STOCK'S PLACE, drawn while the pile shows OR while cards fly out of
@@ -146,10 +150,10 @@ typedef struct {
     Card    cards[MAX_HAND_SIZE];
 } BoardEdit;
 
-// The conflict verdict's question about my pending motions, asked of a push's
-// boards (client_conflict_verdicts). The events and motions are the host's -
-// the push's events it has not already played, the cards it has in flight -
-// and the boards say the rest.
+// My moves the server has not answered, and the push they are judged against
+// (client_push_settle). The events are the push's, every one of them, as the
+// host read them; the motions are the cards the host has predicted and nobody
+// has confirmed. Everything else the kernel reads off the push's boards.
 #define CLIENT_CONFLICT_MAX_EVENTS 128   // == ANIM_MAX_STEPS
 #define CLIENT_CONFLICT_MAX_MOTIONS 64
 
@@ -157,29 +161,62 @@ typedef struct {
     int8_t  type;       // ANIM_EVT_*
     bool    masked;     // viewer-masked backs: they name nothing
     uint8_t n_cards;
+    int8_t  seat;       // the acting seat, ANIM_SEAT_NONE for none
+    uint8_t from, to;   // ANIM_LOC_*
     Card    cards[MAX_HAND_SIZE];   // a card that is not one (a back) names nothing
 } ConflictEvent;
 
 typedef struct {
     Card    card;       // CARD_NONE: a masked back
-    int8_t  dest;       // ANIM_DEST_*
+    int8_t  dest;       // ANIM_DEST_*: the table for an attack, a pass or a cover, my hand for a pickup
     bool    is_cover;
+    bool    is_pass;    // a card of my pending pass (the action wire handed to client_push_settle)
+    Card    target;     // a cover: the attack it covers; CARD_NONE otherwise
 } ConflictMotion;
 
 typedef struct {
-    int8_t  defender_seat;      // whose hand on the final board bounds my attacks; -1: none (a hand of 0)
-    bool    uncovered_on_final; // count the uncovered attacks on the final board, else on the open one
-    int8_t  pending_attacks;    // my unconfirmed attacks; -1: the motions that are not covers
+    bool    versioned;  // a live cast, which carries a committed version; a replay's sequence does not
+    int8_t  open_event; // the event whose board the host wrote as `open`; CLIENT_EVENT_NONE on the first ask
     uint8_t n_events;
     uint8_t n_motions;
     ConflictEvent  events[CLIENT_CONFLICT_MAX_EVENTS];
     ConflictMotion motions[CLIENT_CONFLICT_MAX_MOTIONS];
 } ClientConflict;
 
+// The server's hope for one verdict (anim_plan.h AnimServerHope), as
+// client_conflict_verdicts reads it off the boards.
+typedef struct {
+    int8_t  defender_seat;      // whose hand on the final board bounds my attacks; -1: none (a hand of 0)
+    bool    uncovered_on_final; // count the uncovered attacks on the final board, else on the open one
+    int8_t  pending_attacks;    // my unconfirmed attacks; -1: the motions that are not covers
+} ConflictHope;
+
 typedef struct {
     uint8_t n;
     uint8_t verdicts[CLIENT_CONFLICT_MAX_MOTIONS];   // ANIM_CONFLICT_* per motion
 } ConflictVerdicts;
+
+// What a push does to one pending motion.
+#define CLIENT_FATE_PENDING 0   // nothing yet: it waits for its own push or the server's refusal
+#define CLIENT_FATE_SETTLED 1   // answered, and nothing is drawn for it: the push's own event is this move, its board already shows the card, or its sweep carries the card off
+#define CLIENT_FATE_KEEP    2   // not on this push's boards yet: it stays on every board the push carries (client_keep_board)
+#define CLIENT_FATE_REVERT  3   // doomed: it flies home
+
+#define CLIENT_EVENT_NONE (-1)
+
+typedef struct {
+    int8_t  open_event;   // the last event the client has not already played: its board is the `open` the fates are judged on. CLIENT_EVENT_NONE when nothing is left to judge
+    int8_t  home_event;   // the first such event: its board is what client_revert_board draws the return flights over. CLIENT_EVENT_NONE with no flight
+    int8_t  magic_event;  // the event whose board client_revert_board reads beside it, CLIENT_EVENT_NONE for none
+    bool    pass_home;    // a return flight carries my pass
+    uint8_t n_events, n_motions, n_flights, n_order;
+    uint8_t played[CLIENT_CONFLICT_MAX_EVENTS];        // 1: the client played this event as its own prediction, and does not play it again
+    uint8_t fates[CLIENT_CONFLICT_MAX_MOTIONS];        // CLIENT_FATE_* per motion
+    // The return flights in the order they fly (anim_plan.h anim_reversal_order):
+    // flight i carries flight_count[i] of `order`'s motion indices, from the running sum.
+    uint8_t flight_count[CLIENT_CONFLICT_MAX_MOTIONS];
+    uint8_t order[CLIENT_CONFLICT_MAX_MOTIONS];
+} PushSettle;
 
 // A board as the rules read it: a masked Game with room for the one log record a
 // dry run writes (log_cap 1), so a move can be judged on it.
@@ -355,15 +392,126 @@ int client_board_edit(ClientTable *c, TableView *v, const BoardEdit *e);
 // when the board is refused.
 int client_rearrange_hand(ClientTable *c, TableView *v, const uint8_t *idx, int n);
 
+// The board the viewer's lobby edit leaves until the server answers, from the
+// ask itself (ask.h, the one the host then sends): what table_ask will make of
+// it, so a lobby shows the edit at once and the answer changes nothing.
+//   ASK_UPDATE_NAME        the title as the lobby's rule keeps it (roster.h roster_title_keep)
+//   ASK_SET_RULES          the table's rules
+//   ASK_REARRANGE_PLAYERS  the seats in the order the ask names them, the viewer's with them
+// Every other kind leaves the board as it is: a hand's order is
+// client_rearrange_hand's and the rematch's lobby CLIENT_EDIT_LOBBY's, and the
+// rest (a join, a deal, a bot) only the server can say.
+// CLIENT_OK, CLIENT_E_FORMAT for a view that is not one, CLIENT_E_MISMATCH for an
+// edit the table refuses whoever makes it here (the viewer is not seated, or the
+// game has dealt), CLIENT_E_MOVE for an edit that is not one: a title the rule
+// refuses, rules that are neither, an order that is not the seats.
+int client_ask_apply(TableView *v, const TableAsk *a);
+
 // The conflict verdict for each of `q`'s motions against a push (anim_plan.h
 // anim_conflict_sweep, anim_conflict_facts, anim_conflict_verdict; the server
 // transport): the push's events are what it moves; `open` - the push's last
 // board - is where its cards stand, on the table and in the viewer's hand; the
-// server's hope reads the hand of `q->defender_seat` on `final` and the uncovered
+// server's hope reads the hand of `h->defender_seat` on `final` and the uncovered
 // attacks of `final` or `open`. Fills `out`; the motion count, or
 // CLIENT_E_FORMAT for a view or a question that is not one, or the negative
 // ANIM_E* the rule returns.
-int client_conflict_verdicts(const TableView *open, const TableView *final, const ClientConflict *q, ConflictVerdicts *out);
+int client_conflict_verdicts(const TableView *open, const TableView *final, const ClientConflict *q,
+                             const ConflictHope *h, ConflictVerdicts *out);
+
+// A PUSH AGAINST MY UNANSWERED MOVES: which of its events the client has already
+// played, what becomes of each pending motion, and the return flights in the
+// order they fly. One question, because the four answers lean on each other:
+//
+//   1. A card the push's FINAL board shows on the table and none of its events
+//      names was confirmed by a push the version gate dropped: SETTLED
+//      (anim_stale_optimistic_on_table). Only a versioned push is authoritative.
+//   2. An event every one of whose cards is a pending motion of the same kind
+//      (anim_event_key: type, card, from, to, seat) is the client's own move
+//      coming back: `played`, and those motions SETTLED.
+//   3. What is left is judged on `open`, the board of the last event not played,
+//      by client_conflict_verdicts under the hope each case calls for:
+//        my pending pass, when the push lays cards: against the hand of the seat
+//          the shield lands on once the pass stands on `open`
+//          (client_optimistic_apply of `pass_wire`). The doomed fly home as ONE
+//          flight, and `pass_home` says so;
+//        the push moved the shield while my cards waited: if it moved to ME, or
+//          the new defender cannot take them, every one flies home;
+//        a pickup of mine: against my hand on `open`. A pickup the push's sweep
+//          overtakes flies back to the table too (a CLEAR is a REVERT here): the
+//          sweep lifts cards off the table, and mine are in my hand;
+//        my attacks and covers `open` shows none of: CLEAR is SETTLED, KEEP is
+//          KEEP, REVERT flies home, against the final board's defender and its
+//          uncovered attacks. When `open` shows any of them they all wait.
+//   4. The flights go last motion first (anim_reversal_order).
+//
+// `open` is read only when `q->open_event` is the event the answer names
+// (`out->open_event`): a host asks once without a board, and again with that
+// event's board when one is named. `pass_wire` is my pending pass's action wire,
+// length 0 for none. CLIENT_OK, CLIENT_E_FORMAT for a view or a question that is
+// not one, or the negative ANIM_E* a rule returns.
+int client_push_settle(ClientTable *c, const TableView *open, const TableView *final, const ClientConflict *q,
+                       const uint8_t *pass_wire, int pass_len, PushSettle *out);
+
+// The board the return flights of `s` are drawn over, from `v` - the board of
+// `s->home_event` - in place. A card flies home from where it is DRAWN, so the
+// screen holds the world it was drawn into until it lands: the push's first
+// board, without the cards about to move.
+//   a pickup going back: the table it is laid on again is `magic`'s (the board
+//     of `s->magic_event`) when the push opens with a transition, else the cards
+//     the push's own pickup or sweep names; the push's attacks from hand leave
+//     it, since their own flights bring them.
+//   cards going home to my hand: they leave the table - and so do the push's
+//     attacks from hand, unless the push sweeps the table, which needs every
+//     other card standing.
+//   my pass going home: the lead and the shield are `v`'s own, and the cards
+//     are back in my hand.
+// CLIENT_OK, or the refusal of the edit that failed (client_board_edit).
+int client_revert_board(ClientTable *c, TableView *v, const TableView *magic, const ClientConflict *q, const PushSettle *s);
+
+// `v` with the motions `s` keeps standing on it (CLIENT_EDIT_KEEP, each cover
+// over its target), over my pending pass when it still stands
+// (client_optimistic_apply of `pass_wire`), in place. A board that refuses the
+// pass keeps the cards without it; one that refuses a card is left as it was.
+// CLIENT_OK or CLIENT_E_FORMAT.
+int client_keep_board(ClientTable *c, TableView *v, const ClientConflict *q, const PushSettle *s,
+                      const uint8_t *pass_wire, int pass_len);
+
+// ---------- the plan, asked with the boards a client holds (anim_plan.h) ------
+//
+// A client holds each step of a run as what moved and the board that step left.
+// The plan reads four numbers and a row off a board (AnimPlanAskEvent), so the
+// kernel takes them off the TableView itself: a host hands over the board it
+// was given and knows no dense id, no row layout and no ANIM_TABLE_*.
+//
+// One step at a time, because a board is 1.4 KB and a stream is up to
+// ANIM_MAX_STEPS of them: `ask` keeps the 200 bytes the plan reads of each.
+typedef struct {
+    int8_t  type;        // ANIM_EVT_*
+    int8_t  seat;        // the acting seat, or ANIM_SEAT_NONE
+    uint8_t from, to;    // ANIM_LOC_*
+    uint8_t n_cards;
+    Card    cards[ANIM_ASK_MAX_CARDS];
+} ClientPlanStep;
+
+// Step `at` of the stream `ask` is gathering: `at` 0 starts a stream, and any
+// other must be the next one. `board` is the board this step left, or NULL for
+// a step that carries none. Off it: the stock, the discard, the trump while it
+// is face up (CARD_NONE once it is not), every seat's hand count, and the row -
+// a card that cannot be named is ANIM_TABLE_UNKNOWN there, an uncovered battle's
+// cover ANIM_TABLE_NONE. A step whose cards are ALL viewer-masked backs is
+// `mask_cards`: it has no identity to veil and flies as backs. ANIM_EOK;
+// ANIM_EBADARG for a step out of turn or a board that is not one; ANIM_ECAP for
+// a step past ANIM_MAX_STEPS, more cards than ANIM_ASK_MAX_CARDS, or a row
+// longer than ANIM_ASK_MAX_ROW.
+int client_plan_step(AnimPlanAsk *ask, int at, const ClientPlanStep *step, const TableView *board);
+
+// The plan of the `n` steps given (anim_plan_ask), frozen back from `final` -
+// the board the screen holds now - which also says how many sit. With no
+// `final` (NULL: every step a prediction, before any board arrived) the table
+// is as wide as the widest board a step carried and the final counts are zero,
+// which only a stream with no board at all reads. What anim_plan_ask returns;
+// ANIM_EBADARG when `n` is not the number of steps given.
+int client_plan(AnimPlanAsk *ask, int n, const TableView *final, AnimPlan *out);
 
 // ---------- the move a client sends (awire.h) ---------------------------------
 //

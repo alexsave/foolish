@@ -960,20 +960,14 @@ build/layout/oracle-mt.hash: $(STRUCTGEN) FORCE
 # FORCE itself is shared/tools/gen_tools.mk's.
 
 # bots.wasm exports the rules API above PLUS the bot bridge (wasm_bots_api.c),
-# and PLUS the FMSG pair (wasm_msg_decode/seal). FMSG is bots-only by steer, not
-# by necessity: decode would run in rules.wasm, but every host is consolidating
-# onto the ONE big module (see docs/IMESSAGE_BODY_CODEC.md), and seal cannot live
-# anywhere else anyway — it reads a resident session log.
-# Three entry points live in wasm_api.c but are exported ONLY here, for the same
-# reason: they need a whole SESSION LOG resident, which only this module can
-# hold. Two are the log-offset variants for the drive cycle, whose belief bots
-# keep the session log under the records the cycle writes (see
-# wasm_export_logs_masked_from). The third is wasm_replay_encode_v6_from_game:
-# it reads a finished game's actions out of its imported logs. The rules module
-# is built at MAX_LOGS=128 with no log import — raising it is not a knob, since
-# the Game struct alone would go 33KB -> 133KB and blow the module's pinned
-# 3-page memory — so its exports stay as they were and rules.wasm/guards.wasm
-# do not move.
+# and PLUS the FMSG decode (wasm_msg_decode and its header), which the web's
+# /m/ route reads a shared link with. Sealing, rebasing and Rule P are the
+# phone's and have no wasm entry: they are tested natively (tests/msg_wire_test.c).
+# Two entry points live in wasm_api.c but are exported ONLY here: the
+# log-offset variants for the drive cycle, whose belief bots keep the session
+# log under the records the cycle writes (see wasm_export_logs_masked_from).
+# They need a whole SESSION LOG resident, which the small-memory flag set
+# (MAX_LOGS=128, no log import) cannot hold.
 WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_setenv_from_io -Wl,--export=wasm_clearenv \
   -Wl,--export=wasm_import_logs -Wl,--export=wasm_clear_logs \
@@ -985,30 +979,27 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_bot_cycle_delay_ms -Wl,--export=wasm_bot_drive_log_start \
   -Wl,--export=wasm_export_logs_masked_from \
   -Wl,--export=wasm_events_serialize_from \
-  -Wl,--export=wasm_replay_encode_v6_from_game \
   -Wl,--export=wasm_replay_events -Wl,--export=wasm_replay_events_index_ptr \
   -Wl,--export=wasm_replay_step_count \
   -Wl,--export=wasm_replay_step_index \
+  -Wl,--export=wasm_replay_step_play \
   -Wl,--export=wasm_replay_extras_encode -Wl,--export=wasm_replay_extras_ptr \
   -Wl,--export=wasm_replay_extras_decode \
   -Wl,--export=wasm_replay_link \
   -Wl,--export=wasm_replay_b32_encode -Wl,--export=wasm_replay_b32_decode \
   -Wl,--export=wasm_replay_link_parse \
   -Wl,--export=wasm_unambiguous_cover \
-  -Wl,--export=wasm_client_adopt_resident \
-  -Wl,--export=wasm_msg_decode -Wl,--export=wasm_msg_seal -Wl,--export=wasm_msg_header_ptr \
-  -Wl,--export=wasm_msg_rule_p -Wl,--export=wasm_msg_rebase \
+  -Wl,--export=wasm_msg_decode -Wl,--export=wasm_msg_header_ptr \
   -Wl,--export=wasm_msg_rematch \
   -Wl,--export=wasm_anim_should_drop_stale -Wl,--export=wasm_anim_stale_optimistic \
   -Wl,--export=wasm_anim_stale_ask_ptr -Wl,--export=wasm_anim_stale_release_ptr \
   -Wl,--export=wasm_anim_reversal_ask_ptr -Wl,--export=wasm_anim_reversal_plan_ptr \
   -Wl,--export=wasm_anim_hand_ask_ptr -Wl,--export=wasm_anim_hand_laid_ptr \
   -Wl,--export=wasm_anim_finish_ask_ptr -Wl,--export=wasm_anim_finish_ptr \
-  -Wl,--export=wasm_anim_event_key \
   -Wl,--export=wasm_anim_finish_rows -Wl,--export=wasm_anim_hand_laid_out \
   -Wl,--export=wasm_anim_set_transport \
   -Wl,--export=wasm_anim_plan_ptr -Wl,--export=wasm_anim_frame_ptr \
-  -Wl,--export=wasm_anim_plan_ask_ptr -Wl,--export=wasm_anim_build_plan -Wl,--export=wasm_anim_plan_at \
+  -Wl,--export=wasm_anim_plan_at \
   -Wl,--export=wasm_anim_reversal_order \
   -Wl,--export=wasm_anim_roles_goods_opening -Wl,--export=wasm_anim_roles_goods_cleared \
   -Wl,--export=wasm_anim_roles_pass_hand_off -Wl,--export=wasm_anim_shown_ledger_allows \
@@ -1065,9 +1056,11 @@ WASM_CLIENT_EXPORTS := \
   -Wl,--export=wasm_client_view_rules \
   -Wl,--export=wasm_client_edit_view_ptr -Wl,--export=wasm_client_final_view_ptr \
   -Wl,--export=wasm_client_board_edit_ptr -Wl,--export=wasm_client_conflict_ptr \
-  -Wl,--export=wasm_client_verdicts_ptr -Wl,--export=wasm_client_validate \
+  -Wl,--export=wasm_client_validate \
   -Wl,--export=wasm_client_optimistic_apply -Wl,--export=wasm_client_board_edit \
-  -Wl,--export=wasm_client_rearrange_hand -Wl,--export=wasm_client_conflict_verdicts \
+  -Wl,--export=wasm_client_rearrange_hand \
+  -Wl,--export=wasm_client_settle_ptr -Wl,--export=wasm_client_push_settle \
+  -Wl,--export=wasm_client_revert_board -Wl,--export=wasm_client_keep_board \
   -Wl,--export=wasm_client_gesture_ptr -Wl,--export=wasm_client_play_ptr \
   -Wl,--export=wasm_client_play \
   -Wl,--export=wasm_client_move_ptr -Wl,--export=wasm_client_move_wire \
@@ -1076,8 +1069,10 @@ WASM_CLIENT_EXPORTS := \
   -Wl,--export=wasm_hand_metrics_ptr -Wl,--export=wasm_hand_layout_ptr \
   -Wl,--export=wasm_hand_layout \
   -Wl,--export=wasm_client_ask_ptr -Wl,--export=wasm_client_ask_encode \
+  -Wl,--export=wasm_client_ask_apply \
   -Wl,--export=wasm_client_refusal_ptr -Wl,--export=wasm_client_refusal_decode \
-  -Wl,--export=wasm_client_cast_open -Wl,--export=wasm_client_cast_version
+  -Wl,--export=wasm_client_cast_open -Wl,--export=wasm_client_cast_version \
+  -Wl,--export=wasm_client_plan_step_ptr -Wl,--export=wasm_client_plan_step -Wl,--export=wasm_client_plan
 
 # A replay's recorded decision as the Oracle imports it, and a code at a glance
 # (src/replay_steps.h, wasm/wasm_bots_api.c), bots.wasm ONLY: the web page builds
@@ -1150,7 +1145,25 @@ WASM_REPLAY_DECODE_EXPORTS := \
 # every other FMSG input, so the shipped module was exporting two pointers to
 # buffers nothing in it reads. The test build's fixture still fills them
 # (e2e/helpers/table_fixture.ts).
+#
+# Four more joined them on 2026-10-10, when the Node suites that tested kernel
+# rules through bots.wasm became native tests (tests/msg_wire_test.c) and the
+# TypeScript doors that existed for them left sdk/ts/wasm/bots.ts:
+#   wasm_legal_moves, wasm_legal_moves_ptr   the menu of the resident game. The
+#     server asks the C Table and the web its client slot; the e2e fixtures still
+#     enumerate a loaded board with it (e2e/helpers/table_mem.ts, table_play.ts).
+#   wasm_msg_rematch   the rematch lobby. The phone builds one natively; one
+#     test holds the wasm kernel to the same bytes (e2e/msg_rematch.test.ts).
+#   wasm_replay_extras_encode   names and timing into an extras blob. A finished
+#     game's is written by the C Table (wasm_table_replay_extras); tests encode
+#     one to have something to decode (e2e/helpers/extras_encode.ts).
+# The entries those suites had to themselves are gone from every link, with
+# their C: wasm_msg_seal, wasm_msg_rebase, wasm_msg_rule_p,
+# wasm_replay_encode_v6_from_game and wasm_client_adopt_resident.
 WASM_BOTS_UNSHIPPED_API := \
+  -Wl,--export=wasm_legal_moves -Wl,--export=wasm_legal_moves_ptr \
+  -Wl,--export=wasm_msg_rematch \
+  -Wl,--export=wasm_replay_extras_encode \
   -Wl,--export=wasm_unambiguous_cover \
   -Wl,--export=wasm_replay_error_detail \
   -Wl,--export=wasm_cards_a_ptr -Wl,--export=wasm_cards_b_ptr \
@@ -1241,18 +1254,16 @@ WASM_MSG_EXPORTS := \
   -Wl,--export=wasm_replay_b32_encode \
   -Wl,--export=wasm_replay_link \
   -Wl,--export=wasm_unambiguous_cover \
-  -Wl,--export=wasm_msg_decode -Wl,--export=wasm_msg_seal -Wl,--export=wasm_msg_header_ptr \
-  -Wl,--export=wasm_msg_rule_p -Wl,--export=wasm_msg_rebase \
+  -Wl,--export=wasm_msg_decode -Wl,--export=wasm_msg_header_ptr \
   -Wl,--export=wasm_anim_should_drop_stale -Wl,--export=wasm_anim_stale_optimistic \
   -Wl,--export=wasm_anim_stale_ask_ptr -Wl,--export=wasm_anim_stale_release_ptr \
   -Wl,--export=wasm_anim_reversal_ask_ptr -Wl,--export=wasm_anim_reversal_plan_ptr \
   -Wl,--export=wasm_anim_hand_ask_ptr -Wl,--export=wasm_anim_hand_laid_ptr \
   -Wl,--export=wasm_anim_finish_ask_ptr -Wl,--export=wasm_anim_finish_ptr \
-  -Wl,--export=wasm_anim_event_key \
   -Wl,--export=wasm_anim_finish_rows -Wl,--export=wasm_anim_hand_laid_out \
   -Wl,--export=wasm_anim_set_transport \
   -Wl,--export=wasm_anim_plan_ptr -Wl,--export=wasm_anim_frame_ptr \
-  -Wl,--export=wasm_anim_plan_ask_ptr -Wl,--export=wasm_anim_build_plan -Wl,--export=wasm_anim_plan_at \
+  -Wl,--export=wasm_anim_plan_at \
   -Wl,--export=wasm_anim_reversal_order \
   -Wl,--export=wasm_anim_roles_goods_opening -Wl,--export=wasm_anim_roles_goods_cleared \
   -Wl,--export=wasm_anim_roles_pass_hand_off -Wl,--export=wasm_anim_shown_ledger_allows
@@ -1564,28 +1575,26 @@ wasm-bots: wasm-cc-check
 # (wasm_export_state / wasm_state_serialize / wasm_state_deserialize, which
 # e2e/security_client_boundary.test.ts denies the browser — they are now absent
 # from the module rather than merely unreferenced by the bundle), and the
-# test-only entries (wasm_msg_seal, wasm_legal_moves,
-# wasm_replay_extras_encode, wasm_replay_link_parse …) which run on Node against
-# bots.wasm.
+# entries only the server calls (wasm_replay_link_parse …), which run on Node
+# against bots.wasm.
 WASM_WEB_NAMES := \
   wasm_init wasm_io_ptr wasm_io_cap wasm_layout_hash wasm_can_cover \
   wasm_replay_io_ptr wasm_replay_io_cap wasm_replay_error_ptr \
   wasm_bot_roster_dump \
   wasm_msg_decode wasm_msg_header_ptr \
-  wasm_anim_set_transport wasm_anim_event_key \
-  wasm_anim_should_drop_stale wasm_anim_stale_optimistic \
-  wasm_anim_stale_ask_ptr wasm_anim_stale_release_ptr \
-  wasm_anim_reversal_ask_ptr wasm_anim_reversal_plan_ptr \
+  wasm_anim_set_transport \
+  wasm_anim_should_drop_stale \
   wasm_anim_hand_ask_ptr wasm_anim_hand_laid_ptr \
   wasm_anim_finish_ask_ptr wasm_anim_finish_ptr \
-  wasm_anim_finish_rows wasm_anim_hand_laid_out wasm_anim_reversal_order \
-  wasm_anim_plan_ask_ptr wasm_anim_build_plan wasm_anim_plan_ptr wasm_anim_plan_at wasm_anim_frame_ptr \
+  wasm_anim_finish_rows wasm_anim_hand_laid_out \
+  wasm_anim_plan_ptr wasm_anim_plan_at wasm_anim_frame_ptr \
   wasm_anim_roles_goods_opening wasm_anim_roles_goods_cleared \
   wasm_anim_roles_pass_hand_off wasm_anim_shown_ledger_allows \
   wasm_replay_b32_encode wasm_replay_b32_decode wasm_replay_link \
   wasm_replay_extras_ptr wasm_replay_extras_decode \
   wasm_replay_events wasm_replay_events_index_ptr \
-  wasm_replay_step_count wasm_replay_step_index
+  wasm_replay_step_count \
+  wasm_replay_step_play
 
 # Picked OUT of the shipped list rather than spelled a second time, so a name
 # cannot be in the browser's module and not in the server's — that would be the

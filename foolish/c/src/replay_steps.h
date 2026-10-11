@@ -162,6 +162,58 @@ _Static_assert(sizeof(ReplayStep) == RS_INDEX_STRIDE, "a ReplayStep is one index
 int replay_steps_index_v6(const unsigned char *code, int code_len,
                           ReplayHeader *hdr, unsigned char *out, int out_cap);
 
+// ---------- a step, as a replay screen plays it ------------------------------
+//
+// The index's record, and the three things a screen that PLAYS a code needs on
+// top of what a step is - each a rule of the game or of the format, so each is
+// answered here and no host derives it:
+//
+//   joins       this step is the SAME MOVE as the step before it. The coder
+//               groups an attack and a pass but codes a cover one pair at a time
+//               (replay.c atom_cover), so a defender who takes three attacks in
+//               one move comes back as three steps. A run of covers by one seat
+//               is not always one move, though - a defender may cover, send, and
+//               cover again - and the code does not say which. The extras' clock
+//               does: table_commit_products stamps every record of one committed
+//               operation with the same now_ms (table.c), so the pairs of one
+//               send are a gap of exactly 0, and any other gap is a different
+//               commit. ZERO is an identity, not a tolerance: a 1 ms difference
+//               survives the extras' quantisation for any game shorter than
+//               about eight days. Without gaps nothing joins - an unknown send
+//               boundary is not guessed at, because inventing a move is worse
+//               than showing two real ones.
+//
+//               The clock is a proxy for the commit boundary, which nothing
+//               records. Keeping the fact itself means a flag bit per move in
+//               the extras (old readers skip flag bits they do not know) or a
+//               cover continuation in the moves half (a new version byte);
+//               until then this depends on one commit being one now_ms.
+//
+//   opens_bout  an ATTACK onto an empty table: where a bout begins.
+//
+//   at          when the step happened, unix seconds: `start_time` plus every
+//               gap up to and including its own. The gaps are one per ATTACK,
+//               COVER, PASS and PICKUP (ReplaySummary.moves), in step order;
+//               every other step happens at the moment of the move before it,
+//               and a move past the last gap adds nothing.
+#define RS_PLAY_STRIDE 16
+typedef struct {
+    uint8_t kind;        // as ReplayStep
+    int8_t  seat;
+    uint8_t named;
+    bool    joins;
+    bool    opens_bout;
+    double  at;
+} ReplayPlayStep;
+_Static_assert(sizeof(ReplayPlayStep) == RS_PLAY_STRIDE, "a ReplayPlayStep is one play record");
+
+// One RS_PLAY_STRIDE-byte record per step of `code`, in step order. `gaps` are
+// the extras' (NULL or n_gaps 0 for a code with no times). Returns the step
+// count, or -REPLAY_E* (-REPLAY_ECAP when `out_cap` bytes do not hold them).
+int replay_steps_play_v6(const unsigned char *code, int code_len,
+                         double start_time, const double *gaps, int n_gaps,
+                         unsigned char *out, int out_cap);
+
 // ---------- a code at a glance ----------------------------------------------
 //
 // What a code says about its game as a whole, without playing it back: how many

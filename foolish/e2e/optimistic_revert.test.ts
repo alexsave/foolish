@@ -2,16 +2,16 @@
 // drive a REAL game (the real move path: executePackedAction -> the table_io CAS
 // loop -> the C Table -> commit_table -> the kernel's per-viewer pushes), capture
 // the exact broadcasts the attacking player's client receives, then feed them
-// through the REAL client decision the deployed AnimationContext uses
-// (resolveUnconfirmedAttackCovers, the kernel's client_conflict_verdicts over
-// the push's own boards) - and assert the client does NOT revert a card the
+// through the REAL client routine the deployed AnimationContext uses
+// (settlePush, the kernel's client_push_settle over the push's own boards) -
+// and assert the client does NOT revert a card the
 // server actually accepted. The boards on the client's side are the kernel's
 // too: the optimistic board a tap leaves (client_optimistic_apply) and the push
-// boards that keep a pending card (client_board_edit KEEP), held to the boards
+// boards that keep a pending card (client_keep_board), held to the boards
 // the server then commits, so a kept card is where the server puts it.
 //
 // Two player-reported symptoms, one root cause (the broadcast-path speculative
-// revert in resolveOptimisticConflicts):
+// revert, now client_push_settle's):
 //   Scenario B - "I put a card down and someone nearly immediately picked it up,
 //                 resulting in a revert animation." The pickup broadcast sweeps my
 //                 card off the table; the client wrongly flies it back to my hand.
@@ -33,8 +33,9 @@ import { runAction, runMeta, seedLobby } from './helpers/table_server.ts';
 import { suiteRng } from './helpers/rng.ts';
 import { __setTableDealSeedOverride } from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
 import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
-import { resolveUnconfirmedAttackCovers } from '../src/state/optimisticConflicts';
-import { keepPending, optimisticBoard } from '../src/state/clientBoards';
+import { rememberPending, settlePush, type OptimisticState } from '../src/state/optimisticResolve';
+import { optimisticBoard } from '../src/state/clientBoards';
+import * as V from '../sdk/ts/gen/view_layout.bots.ts';
 import { getCardKey } from '../src/utils/animationUtils';
 import { clientTable, type TableView } from '../sdk/ts/table/client_table.ts';
 import { fixtureTable } from './helpers/table_fixture.ts';
@@ -65,13 +66,15 @@ function streamFor(gameId: string, playerId: string, roster: ViewRoster) {
         .map((b) => readPushSequence(castParts(b.payload).push, roster)!);
 }
 
-// AnimationContext's inputs to the decision, pulled out of a raw broadcast exactly
-// as handleAnimationMessage does: the push's last board is the last event that
-// carries a game_state, and its final board is the push's own.
-function decisionInputs(payload: any): { open: TableView; events: any[]; final: TableView } {
-    const lastEventWithState = [...payload.events].reverse().find((e: any) => e.game_state);
-    const serverState = lastEventWithState?.game_state ?? payload.game;
-    return { open: serverState, events: payload.events, final: payload.game || serverState };
+// A push as handleAnimationMessage hands it to settlePush, against one pending
+// table-bound card of mine: the flights home, what is still pending, and the
+// push with its boards as the routine left them.
+function settleAgainst(payload: any, card: Card) {
+    const pending: OptimisticState = { motions: [], pass: null };
+    rememberPending(pending, [card], V.ANIM_DEST_TABLE, 0);
+    const push = { events: payload.events.map((e: any) => ({ ...e })), game: payload.game as TableView };
+    const flights = settlePush(pending, push, true);
+    return { flights, pending: pending.motions.map((m) => m.card), push };
 }
 
 // The board a seat holds for a stored row: the envelope the server serves it, read as the web reads it.
@@ -136,12 +139,12 @@ test('SCENARIO B: a card the defender picks up is NOT reverted to my hand', asyn
 
     // 4. The client processes that pickup while my optimistic attack is still pending
     //    (its own confirming broadcast not yet applied - the race the player hit).
-    const { open, events, final } = decisionInputs(pickupBcast);
-    const { revert, merge, clear } = resolveUnconfirmedAttackCovers([myCard], open, events, final);
+    const { flights, pending, push } = settleAgainst(pickupBcast, myCard);
+    const final = push.game;
 
-    assert.ok(!revert.some((c) => sameCard(c, myCard)),
+    assert.deepEqual(flights, [],
         `BUG: my card ${getCardKey(myCard)} was reverted to my hand even though the defender legitimately picked it up`);
-    assert.ok(clear.some((c) => sameCard(c, myCard)) && merge.length === 0,
+    assert.equal(pending.length, 0,
         'the swept card is cleared: its tracking drops and the pickup animates it, nothing is merged back');
     assert.equal(tableHas(final, myCard), 0, 'the board the pickup leaves has my card off the table');
     assert.ok(!handHas(final, myCard), 'and not in my hand: the defender holds it');
@@ -189,19 +192,17 @@ test('SCENARIO A: a card still in flight is NOT reverted by a concurrent attack 
         const rivalBcast = streamFor(gameId, heroId, roster).find((p) => p.events.some((e: any) => e.type === 'attack_pass'));
         if (!rivalBcast) continue;
 
-        const { open, events, final } = decisionInputs(rivalBcast);
-        const { revert, merge } = resolveUnconfirmedAttackCovers([heroCard], open, events, final);
-        assert.ok(!revert.some((c) => sameCard(c, heroCard)),
+        const { flights, pending, push } = settleAgainst(rivalBcast, heroCard);
+        assert.deepEqual(flights, [],
             `BUG: Hero's still-valid card ${getCardKey(heroCard)} was reverted by a concurrent attack broadcast (trial ${t}, seed=${rng.seed})`);
-        assert.ok(merge.some((c) => sameCard(c, heroCard)), `the pending card is kept (trial ${t}, seed=${rng.seed})`);
+        assert.ok(pending.some((c) => sameCard(c, heroCard)), `the pending card is kept (trial ${t}, seed=${rng.seed})`);
 
         // The kept card stands on every board of that push, once, and out of Hero's hand -
         // as the kernel's optimistic board for the tap has it.
         const heroSeat = g2.seats.findIndex((s) => s.id === heroId);
         const optimistic = optimisticBoard(heldBoard(g2, heroSeat), heroAttack.wire);
         assert.ok(optimistic && tableHas(optimistic, heroCard) === 1 && !handHas(optimistic, heroCard), 'the tap leaves the card on the table');
-        const boards = [...rivalBcast.events.map((e: any) => e.game_state).filter(Boolean), rivalBcast.game] as TableView[];
-        const kept = boards.map((b) => keepPending(b, [{ card: heroCard }]));
+        const kept = [...push.events.map((e: any) => e.game_state).filter(Boolean), push.game] as TableView[];
         for (const b of kept) {
             assert.ok(b, 'the kernel keeps the card on the push board');
             assert.equal(tableHas(b!, heroCard), 1, `the kept card stands once (trial ${t}, seed=${rng.seed})`);

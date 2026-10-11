@@ -34,6 +34,7 @@ extern void wasm_belief_probe_observe_internal(const Game *g, int seat);
 extern LegalMoves *wasm_moves_ptr_internal(void);
 extern unsigned char *wasm_replay_io_ptr(void);
 extern int wasm_replay_io_cap(void);
+extern void *wasm_anim_plan_ptr(void);
 
 static TableSnaps   g_table_snaps;
 static Table        g_table;
@@ -376,11 +377,6 @@ int wasm_client_push_open(int len, int identity_len, int as3, double version) {
     return client_push_open(client(), io, len, as3, io + len, identity_len, u32_of(version));
 }
 
-// The resident game (what an FMSG decode adopted) as `viewer` sees it.
-int wasm_client_adopt_resident(int viewer) {
-    return client_adopt_board(client(), wasm_game_ptr_internal(), viewer);
-}
-
 int wasm_client_push_next(void)  { return client_push_next(client()); }
 int wasm_client_push_final(void) { return client_push_final(client()); }
 
@@ -408,18 +404,20 @@ int wasm_client_identity_seat(int id_len, int name_len, int is_ai) {
 // A gate reads the board the rules view holds (wasm_client_rules_view_ptr, the
 // same board client_view_rules reads, and neither changes it). An edit changes
 // the board at wasm_client_edit_view_ptr in place, and the host reads it back.
-// A conflict question reads the edit view as the push's last board and the
-// final view as its final board. Everything is written through the generated
+// A push is settled against the edit view as the board of the event the answer
+// names and the final view as its final board; the board its return flights are
+// drawn over is made at the edit view, from the final view when the answer names
+// a second event. Everything is written through the generated
 // writers (sdk/ts/gen/view_layout.bots.ts).
 static TableView        g_edit_view, g_final_view;
 static BoardEdit        g_board_edit;
 static ClientConflict   g_conflict;
-static ConflictVerdicts g_verdicts;
+static PushSettle       g_settle;
 TableView *wasm_client_edit_view_ptr(void)        { return &g_edit_view; }
 TableView *wasm_client_final_view_ptr(void)       { return &g_final_view; }
 BoardEdit *wasm_client_board_edit_ptr(void)       { return &g_board_edit; }
 ClientConflict *wasm_client_conflict_ptr(void)    { return &g_conflict; }
-ConflictVerdicts *wasm_client_verdicts_ptr(void)  { return &g_verdicts; }
+PushSettle *wasm_client_settle_ptr(void)          { return &g_settle; }
 
 // io = [action wire]; the board at the rules view.
 int wasm_client_validate(int len) {
@@ -444,8 +442,38 @@ int wasm_client_rearrange_hand(int n) {
     return client_rearrange_hand(client(), &g_edit_view, io, n);
 }
 
-int wasm_client_conflict_verdicts(void) {
-    return client_conflict_verdicts(&g_edit_view, &g_final_view, &g_conflict, &g_verdicts);
+// io = [my pending pass's action wire, or nothing]; the question at the conflict
+// pointer, the answer at the settle pointer.
+int wasm_client_push_settle(int pass_len) {
+    const unsigned char *io = inputs(pass_len);
+    if (!io || pass_len < 0) return CLIENT_E_MOVE;
+    return client_push_settle(client(), &g_edit_view, &g_final_view, &g_conflict, io, pass_len, &g_settle);
+}
+
+// The question and the answer wasm_client_push_settle left; the board at the edit view.
+int wasm_client_revert_board(void) {
+    return client_revert_board(client(), &g_edit_view, &g_final_view, &g_conflict, &g_settle);
+}
+
+// io = [my pending pass's action wire, or nothing]; the board at the edit view.
+int wasm_client_keep_board(int pass_len) {
+    const unsigned char *io = inputs(pass_len);
+    if (!io || pass_len < 0) return CLIENT_E_MOVE;
+    return client_keep_board(client(), &g_edit_view, &g_conflict, &g_settle, io, pass_len);
+}
+
+// THE PLAN (client_table.h client_plan_step, client_plan). Each step goes in as
+// what moved, through the generated writer, with the board it left at the edit
+// view; the board the screen holds goes in at the final view. The answer is the
+// plan at wasm_anim_plan_ptr. ANIM_EOK, or a negative ANIM_E*.
+static ClientPlanStep g_plan_step;
+static AnimPlanAsk    g_plan_ask;
+ClientPlanStep *wasm_client_plan_step_ptr(void) { return &g_plan_step; }
+int wasm_client_plan_step(int at, int has_board) {
+    return client_plan_step(&g_plan_ask, at, &g_plan_step, has_board ? &g_edit_view : 0);
+}
+int wasm_client_plan(int n, int has_final) {
+    return client_plan(&g_plan_ask, n, has_final ? &g_final_view : 0, wasm_anim_plan_ptr());
 }
 
 // ---- the move a client sends (client_table.h) ----
@@ -531,6 +559,9 @@ TableAsk *wasm_table_ask_ptr(void)        { return &g_table_ask; }
 
 // -> io = the request body for the ask at wasm_client_ask_ptr.
 int wasm_client_ask_encode(void) { return ask_encode(&g_ask, wasm_io_ptr(), wasm_io_cap()); }
+
+// The board at wasm_client_edit_view_ptr once the ask at wasm_client_ask_ptr stands on it.
+int wasm_client_ask_apply(void) { return client_ask_apply(&g_edit_view, &g_ask); }
 
 // io = [a refusal body] -> the refusal at wasm_client_refusal_ptr.
 int wasm_client_refusal_decode(int len) {

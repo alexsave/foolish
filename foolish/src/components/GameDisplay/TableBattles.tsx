@@ -1,7 +1,6 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { CardFace } from "./CardFace";
 import { useServer } from "../../contexts/ServerContext";
-import { useAuth } from "../../contexts/AuthContext";
 import { useGame } from "../../contexts/GameContext";
 import { useDrag } from "../../contexts/DragContext";
 import { useTutorialHint } from "../../contexts/TutorialHintContext";
@@ -69,7 +68,6 @@ export const glideOffset = (el: HTMLElement): { x: number; y: number } => {
 export const TableBattles = () => {
     const game = useServer().view;
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { user_id } = useAuth();
     const { coverMap, setCoverMap, isSelectingCover, selectedCards } = useGame();
     const { isDraggingForGameAction, draggedCard, currentCursorPos, determineGameAction } = useDrag();
     const hint = useTutorialHint();

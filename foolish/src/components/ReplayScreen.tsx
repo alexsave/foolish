@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Text } from './Text';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
@@ -13,7 +13,6 @@ import {
     buildReplayFrames,
     buildReverseFrames,
     preDealGame,
-    stepTimes,
     REPLAY_KEY,
 } from '../replay/frames';
 import { splitReplayCode, decodeExtras, ReplayExtras } from '@api/common/replay_extras.ts';
@@ -62,10 +61,10 @@ const buildReplayData = async (code: string) => {
     // engine really committed and the events it really produced.
     // The gaps come in with the names: they are what tells one multi-cover apart
     // from a defender who covered, sent, and covered again (frames.ts mergeCoverRuns).
-    const frames = buildReplayFrames(bytes, REPLAY_KEY, names, { fool, moveGaps: extras.moveGaps });
+    const frames = buildReplayFrames(bytes, REPLAY_KEY, names, { fool, startTime: extras.startTime, moveGaps: extras.moveGaps });
     const reverses = buildReverseFrames(frames);
     const initial = preDealGame(frames[0]);
-    const times = stepTimes(frames, extras.startTime, extras.moveGaps);
+    const times = frames.map((f) => f.time);
     return { fool, code: bytes, frames, reverses, initial, names, times };
 };
 

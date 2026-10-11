@@ -27,7 +27,8 @@
 #
 # The web client's slot (client_table.h): hashed here so a stale
 # view_layout.bots.ts (specs/view_layout.args) is a load-time error too.
---header client_table.h --root TableView --root PushEvent --root ViewRules --root BoardEdit --root ClientConflict --root ConflictVerdicts
+--header client_table.h --root TableView --root PushEvent --root ViewRules --root BoardEdit --root ClientConflict
+--root PushSettle
 --header replay_steps.h --root ReplaySummary --root ReplayFrameIndex
 #
 # A code's decoded log stream, record by record (replay.h, the test build's
@@ -62,9 +63,9 @@
 # The hand's shape (view_layout.args reads and writes these), so the layout hash
 # bots.wasm is checked against covers HandMetrics and HandLayout too.
 --header hand_layout.h --root HandMetrics --root HandLayout
-# The stream a plan is asked for (view_layout.args writes it), so the layout
-# hash bots.wasm is checked against covers AnimPlanAsk too.
---header anim_plan.h --root AnimPlanAsk
+# One step of the stream a plan is asked for (view_layout.args writes it), so the
+# layout hash bots.wasm is checked against covers ClientPlanStep too.
+--root ClientPlanStep
 # The animation core's four small questions (view_layout.args reads and writes
 # them), so the layout hash bots.wasm is checked against covers them too.
 --header anim_plan.h --root AnimStaleAsk --root AnimStaleRelease --root AnimReversalAsk --root AnimConflictPlan
@@ -86,4 +87,5 @@
 --const ASK_
 --header bot_roster.h --root BotRosterTable
 --header replay_steps.h --root ReplayStep
+--root ReplayPlayStep
 --header anim_plan.h --root AnimRoles

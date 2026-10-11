@@ -24,11 +24,11 @@ import {
 /** Per-thread stack (§8b.6): 512 KiB, ~36x the measured 14.3 KiB worst case.
  *  Thread stacks live in the heap region where --stack-first's trap-on-overflow
  *  does not reach, so the C side also stamps a canary at each stack's low end. */
-export const ORACLE_MT_STACK_BYTES = 512 * 1024;
+const ORACLE_MT_STACK_BYTES = 512 * 1024;
 
 const OG_EX_NONE_V = 2000001, OG_EX_UNKNOWN_V = 2000002, OG_EX_ILLEGAL_V = 2000003;
 
-export function decodeVerdict(val: number): { verdict: OracleVerdict; verdictVal?: number } {
+function decodeVerdict(val: number): { verdict: OracleVerdict; verdictVal?: number } {
     if (val === OG_EX_NONE_V || val === 0) return { verdict: 'none' };
     if (val === OG_EX_UNKNOWN_V) return { verdict: 'unknown' };
     if (val === OG_EX_ILLEGAL_V) return { verdict: 'illegal' };
@@ -53,7 +53,7 @@ export function decodeVerdict(val: number): { verdict: OracleVerdict; verdictVal
 export const ORACLE_MT_KNOBS: Readonly<OracleKnobs> = ORACLE_KNOBS;
 
 /** What one worker trampoline needs, and nothing else. */
-export interface MtThreadArgs {
+interface MtThreadArgs {
     tid: number;
     stackTop: number;   // __stack_pointer for this thread (stacks grow DOWN)
     stackLow: number;   // its canary word, at the low end of its own region
@@ -250,7 +250,7 @@ export class OracleMtSession {
 /** The overlay's row order. Identical rule to the Mode A accumulator: bars,
  *  sort and the displayed number all key off the true expected finish; the
  *  trump tax is only an invisible tie-break. */
-export function sortCandidates(list: OracleCandidate[], exact: boolean): OracleCandidate[] {
+function sortCandidates(list: OracleCandidate[], exact: boolean): OracleCandidate[] {
     if (exact) {
         const RANK: Record<string, number> = { win: 0, draw: 1, unknown: 2, none: 3, loss: 4, illegal: 5 };
         const depth = (c: OracleCandidate) => (c.verdictVal != null ? 1000 - Math.abs(c.verdictVal) : 1000);

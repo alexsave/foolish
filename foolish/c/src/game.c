@@ -352,8 +352,7 @@ uint32_t game_human_mask(const Game *g) {
 }
 
 int game_lobby_seat(Game *g, int strategy_key) {
-    if (!g || g->status != GAME_STATUS_WAITING) return -1;
-    if (g->num_players < 0 || g->num_players >= MAX_PLAYERS) return -1;
+    if (!g || !game_lobby_has_room(g->num_players, g->status == GAME_STATUS_WAITING)) return -1;
     const int i = g->num_players++;
     Player *p = &g->players[i];
     p->strategy_key = (int8_t)strategy_key;
@@ -363,6 +362,10 @@ int game_lobby_seat(Game *g, int strategy_key) {
     p->hand_count = 0;
     p->awaiting_attack = false;
     return i;
+}
+
+int game_lobby_has_room(int seats, int waiting) {
+    return waiting && seats >= 0 && seats < MAX_PLAYERS;
 }
 
 int game_lobby_ready(Game *g, int seat) {

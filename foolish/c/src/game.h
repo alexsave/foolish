@@ -494,6 +494,12 @@ uint32_t game_human_mask(const Game *g);
 // host records the seat's id and name in its Roster (roster.h).
 int game_lobby_seat(Game *g, int strategy_key);
 
+// HAS THIS LOBBY A SEAT LEFT? `seats` taken, in a game that has not dealt
+// (`waiting`). The one predicate behind game_lobby_seat and the lobby view's
+// offer to sit down (client_table.h ViewRules.can_join), so a screen never
+// offers a seat the kernel then refuses.
+int game_lobby_has_room(int seats, int waiting);
+
 // Mark a seated player READY. Returns 1 if that changed anything, else 0
 // (an out-of-range seat, or a game that is no longer WAITING).
 int game_lobby_ready(Game *g, int seat);
@@ -649,6 +655,16 @@ uint32_t game_shown_good_mask(const Game *g);
 // ---------- Loop helpers ------------------------------------------------
 
 bool should_bot_act(const Game *g, int bot_idx);
+
+// IS THIS SEAT BOT WORK? A bot's seat, still in, in a game that is playing. The
+// one rule behind "does this table need its bots woken", over only the facts it
+// reads, so the server's table (table.h table_needs_bots, the row's needs_bots
+// column the heartbeat scans) and a client's board (client_table.h
+// ViewRules.needs_bots) are asked the same question. It asks whether there is
+// bot work AT ALL, not whether a bot may act this instant (turn_may_act below).
+static inline bool seat_needs_bot(int game_status, int seat_status, bool is_bot) {
+    return is_bot && game_status == GAME_STATUS_PLAYING && seat_status == PLAYER_STATUS_IN;
+}
 
 // The turn rule should_bot_act applies, over only the facts it reads, so a board
 // that is not a Game (client_table.h TableView) is asked the same question: a

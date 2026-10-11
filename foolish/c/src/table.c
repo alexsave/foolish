@@ -200,10 +200,10 @@ int table_act(Table *t, const char *actor_id, int id_len, const uint8_t *awire, 
 }
 
 bool table_needs_bots(const Table *t) {
-    if (!t->loaded || t->g->status != GAME_STATUS_PLAYING) return false;
+    if (!t->loaded) return false;
     const uint32_t bots = roster_bot_mask(&t->r);
     for (int s = 0; s < t->g->num_players; s++)
-        if (((bots >> s) & 1u) && t->g->players[s].status == PLAYER_STATUS_IN) return true;
+        if (seat_needs_bot(t->g->status, t->g->players[s].status, ((bots >> s) & 1u) != 0)) return true;
     return false;
 }
 
@@ -640,43 +640,14 @@ int table_reseat(Table *t, const char *actor_id, int id_len, const uint8_t *ids,
     return TABLE_OK;
 }
 
-// JavaScript's String.prototype.trim whitespace, as UTF-8 (ECMA-262 WhiteSpace
-// and LineTerminator): the length of the whitespace scalar at p, or 0.
-static int js_space(const uint8_t *p, int n) {
-    if (n >= 1 && ((p[0] >= 0x09 && p[0] <= 0x0d) || p[0] == 0x20)) return 1;
-    if (n >= 2 && p[0] == 0xc2 && p[1] == 0xa0) return 2;                               // U+00A0
-    if (n >= 3 && p[0] == 0xe1 && p[1] == 0x9a && p[2] == 0x80) return 3;               // U+1680
-    if (n >= 3 && p[0] == 0xe2 && p[1] == 0x80 && ((p[2] >= 0x80 && p[2] <= 0x8a)       // U+2000-200A
-        || p[2] == 0xa8 || p[2] == 0xa9 || p[2] == 0xaf)) return 3;                      // U+2028, 2029, 202F
-    if (n >= 3 && p[0] == 0xe2 && p[1] == 0x81 && p[2] == 0x9f) return 3;               // U+205F
-    if (n >= 3 && p[0] == 0xe3 && p[1] == 0x80 && p[2] == 0x80) return 3;               // U+3000
-    if (n >= 3 && p[0] == 0xef && p[1] == 0xbb && p[2] == 0xbf) return 3;               // U+FEFF
-    return 0;
-}
-
-// The title rule the lobby has always kept: at most 50 characters as the web
-// counts them (UTF-16 code units, before trimming), and not empty once trimmed.
 int table_retitle(Table *t, const char *actor_id, int id_len, const char *title, int title_len) {
     if (!t->loaded) return TABLE_E_NOT_LOADED;
     if (actor_seat(t, actor_id, id_len) < 0) return TABLE_E_NOT_SEATED;
     if (t->g->status != GAME_STATUS_WAITING) return TABLE_E_NOT_WAITING;
-    const uint8_t *p = (const uint8_t *)title;
-    if (title_len < 0 || (title_len > 0 && !p)) return roster_refusal(t, ROSTER_E_TITLE);
-    int units = 0;
-    for (int i = 0; i < title_len; i++) {
-        if ((p[i] & 0xc0) != 0x80) units += p[i] >= 0xf0 ? 2 : 1;
-    }
-    if (units > 50) return roster_refusal(t, ROSTER_E_TITLE);
-    int lo = 0, hi = title_len, k;
-    while (lo < hi && (k = js_space(p + lo, hi - lo)) > 0) lo += k;
-    for (int moved = 1; moved && hi > lo; ) {
-        moved = 0;
-        for (int w = 3; w >= 1; w--) {
-            if (hi - w >= lo && js_space(p + hi - w, w) == w) { hi -= w; moved = 1; break; }
-        }
-    }
-    if (hi == lo) return roster_refusal(t, ROSTER_E_TITLE);
-    const int rc = roster_set_title(&t->r, title + lo, hi - lo);
+    int lo;
+    const int keep = roster_title_keep(title, title_len, &lo);
+    if (keep < 0) return roster_refusal(t, keep);
+    const int rc = roster_set_title(&t->r, title + lo, keep);
     if (rc != ROSTER_OK) return roster_refusal(t, rc);
     lobby_edit(t, 1);
     return TABLE_OK;

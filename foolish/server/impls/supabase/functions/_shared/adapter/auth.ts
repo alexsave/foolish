@@ -180,7 +180,7 @@ async function keyForKid(kid: string, alg: Alg): Promise<CryptoKey | null> {
     }
 }
 
-export interface VerifiedClaims {
+interface VerifiedClaims {
     sub: string;
     aud?: string | string[];
     role?: string;

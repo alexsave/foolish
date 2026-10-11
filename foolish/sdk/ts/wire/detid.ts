@@ -88,9 +88,3 @@ export function derivedUuid(namespace: string, seq: number): string {
         `${hex(Math.floor(seq / 0x100000000), 4)}${hex(seq % 0x100000000, 8)}`,
     ].join('-');
 }
-
-/** A counter bound to one namespace, for callers that just want "the next one". */
-export function derivedUuidSeq(namespace: string, start = 0): () => string {
-    let n = start;
-    return () => derivedUuid(namespace, n++);
-}

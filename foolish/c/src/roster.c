@@ -235,6 +235,41 @@ int roster_set_title(Roster *r, const char *t, int len) {
     return ROSTER_OK;
 }
 
+// JavaScript's String.prototype.trim whitespace, as UTF-8 (ECMA-262 WhiteSpace
+// and LineTerminator): the length of the whitespace scalar at p, or 0.
+static int js_space(const uint8_t *p, int n) {
+    if (n >= 1 && ((p[0] >= 0x09 && p[0] <= 0x0d) || p[0] == 0x20)) return 1;
+    if (n >= 2 && p[0] == 0xc2 && p[1] == 0xa0) return 2;                               // U+00A0
+    if (n >= 3 && p[0] == 0xe1 && p[1] == 0x9a && p[2] == 0x80) return 3;               // U+1680
+    if (n >= 3 && p[0] == 0xe2 && p[1] == 0x80 && ((p[2] >= 0x80 && p[2] <= 0x8a)       // U+2000-200A
+        || p[2] == 0xa8 || p[2] == 0xa9 || p[2] == 0xaf)) return 3;                      // U+2028, 2029, 202F
+    if (n >= 3 && p[0] == 0xe2 && p[1] == 0x81 && p[2] == 0x9f) return 3;               // U+205F
+    if (n >= 3 && p[0] == 0xe3 && p[1] == 0x80 && p[2] == 0x80) return 3;               // U+3000
+    if (n >= 3 && p[0] == 0xef && p[1] == 0xbb && p[2] == 0xbf) return 3;               // U+FEFF
+    return 0;
+}
+
+int roster_title_keep(const char *t, int len, int *lo_out) {
+    const uint8_t *p = (const uint8_t *)t;
+    if (len < 0 || (len > 0 && !p) || !utf8_valid(t, len)) return ROSTER_E_TITLE;
+    int units = 0;
+    for (int i = 0; i < len; i++) {
+        if ((p[i] & 0xc0) != 0x80) units += p[i] >= 0xf0 ? 2 : 1;
+    }
+    if (units > 50) return ROSTER_E_TITLE;
+    int lo = 0, hi = len, k;
+    while (lo < hi && (k = js_space(p + lo, hi - lo)) > 0) lo += k;
+    for (int moved = 1; moved && hi > lo; ) {
+        moved = 0;
+        for (int w = 3; w >= 1; w--) {
+            if (hi - w >= lo && js_space(p + hi - w, w) == w) { hi -= w; moved = 1; break; }
+        }
+    }
+    if (hi == lo) return ROSTER_E_TITLE;
+    *lo_out = lo;
+    return hi - lo;
+}
+
 int roster_redact(Roster *r, const char *id, int id_len, const char *name, int name_len) {
     const int s = roster_seat_of(r, id, id_len);
     if (s < 0) return ROSTER_E_SEAT;

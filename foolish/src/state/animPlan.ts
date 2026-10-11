@@ -1,28 +1,18 @@
 // animPlan.ts - the web's animation steps, as the KERNEL's plan.
 //
-// docs/C_GAME_SHAPE_MIGRATION.md Phase 9. AnimationContext used to decide its
-// own timing: one setTimeout per step, ANIMATION_TIME for every duration, and
-// nothing anywhere holding "where does this sequence stand at time T". This
-// file is the marshal that lets it ask C instead - the steps in, the kernel's
-// AnimPlan out, and `frameAt` sampling it at a clock the host owns.
-//
-// NOTHING HERE DECIDES ANYTHING. Every number a plan carries - the duration, the
-// inter-step gap, the start offset, which badges are frozen, which cards are
-// veiled, how many of a step's cards left the deck - is the kernel's
-// (c/src/anim_plan.h). What is here is the shape change: a ClientAnimationEvent
-// names its type and its places with strings and carries a whole TableView; the
-// kernel takes ANIM_EVT_*/ANIM_LOC_* and the four numbers off that board.
+// Every number a plan carries - the duration, the inter-step gap, the start
+// offset, which badges are frozen, which cards are veiled, how many of a step's
+// cards left the deck - is the kernel's (c/src/anim_plan.h), read off the
+// boards the steps carry (c/src/client_table.h client_plan). What is here is
+// the names: a step says its type and its places with strings, the kernel with
+// ANIM_EVT_* and ANIM_LOC_*. The rest is the row the grid draws mid-run.
 
 import {
     ANIM_EVT, ANIM_LOC, animBuildPlan, animPlanAt,
-    type AnimCountsSnap, type AnimFrameSnap, type AnimPlanEventIn, type AnimPlanSnap, type AnimPlanStepSnap,
+    type AnimCountsSnap, type AnimFrameSnap, type AnimPlanSnap, type AnimPlanStepSnap,
 } from '@sdk/ts/wasm/bots.ts';
+import { ANIM_TABLE_UNKNOWN } from '@sdk/ts/gen/kernel_consts.bots.ts';
 import { covered, sameCard, NO_CARD, type TableView, type ViewBattle, type ViewCard } from './view';
-
-/** anim_plan.h ANIM_TABLE_NONE: a battle with no cover on it. */
-const TABLE_NONE = 0xfe;
-/** anim_plan.h ANIM_TABLE_UNKNOWN: a card that is there and cannot be named. */
-const TABLE_UNKNOWN = 0xff;
 
 /** One step, as the pipeline holds it: the fields the plan reads, and nothing else. */
 export interface AnimStep {
@@ -52,19 +42,10 @@ export function withTrumpOut<S extends AnimStep>(step: S, planned: AnimPlanStepS
     return { ...step, trump_out: planned.trumpOut, trump_from: 'flipped' };
 }
 
+/** A card as the plan's pre-stream row names it (AnimCounts.battles): its dense
+ *  id, the one number `heldPiles` has to hold a card against. */
 const idOf = (c: ViewCard): number =>
-    c.suit < 0 || c.value < 1 ? TABLE_UNKNOWN : c.suit * 13 + (c.value - 1);
-
-/** The row a board holds, in the one 2-bytes-per-battle layout every table in
- *  this codebase uses (the attack, then its cover or ANIM_TABLE_NONE). */
-export const rowOf = (view: TableView): number[] => {
-    const row: number[] = [];
-    for (const b of view.battles) {
-        row.push(idOf(b.attack));
-        row.push(covered(b) ? idOf(b.defense) : TABLE_NONE);
-    }
-    return row;
-};
+    c.suit < 0 || c.value < 1 ? ANIM_TABLE_UNKNOWN : c.suit * 13 + (c.value - 1);
 
 /** The same row, cell for cell. */
 const sameRow = (a: readonly ViewBattle[], b: readonly ViewBattle[]): boolean =>
@@ -232,30 +213,6 @@ export function shownRow(
     return sameRow(row, battles) ? battles : row;
 }
 
-const countsOf = (view: TableView) => ({
-    deck: view.deckCount,
-    discard: view.discardPileLength,
-    flipped: view.hasFlipped ? view.flipped : null,
-    hand: view.seats.map((s) => s.handCount),
-});
-
-const planEvent = (step: AnimStep): AnimPlanEventIn => {
-    const view = step.game_state ?? undefined;
-    const cards = step.cards ?? [];
-    return {
-        type: ANIM_EVT[step.type] ?? ANIM_EVT.magic_transition,
-        seat: step.seat,
-        from: step.from_location === undefined ? undefined : ANIM_LOC[step.from_location],
-        to: step.to_location === undefined ? undefined : ANIM_LOC[step.to_location],
-        cards,
-        // A viewer-masked back has no identity, so it is excluded from the veil
-        // and animates as a back - another player's draw, and nothing else.
-        maskCards: cards.length > 0 && cards.every((c) => c.suit < 0),
-        counts: view ? countsOf(view) : undefined,
-        battles: view ? rowOf(view) : undefined,
-    };
-};
-
 /**
  * THE TIMED PLAN for a run of steps. `board` is what the page is holding now -
  * the plan's boardless fallback reads it, and nothing else does, because every
@@ -265,12 +222,14 @@ const planEvent = (step: AnimStep): AnimPlanEventIn => {
  * plans: the kernel's timing does not depend on a board, only its freeze does.
  */
 export function planFor(steps: readonly AnimStep[], board: TableView | undefined): AnimPlanSnap {
-    const nPlayers = board?.seats.length
-        ?? steps.reduce((n, s) => Math.max(n, s.game_state?.seats.length ?? 0), 0);
-    const final = board
-        ? countsOf(board)
-        : { deck: 0, discard: 0, flipped: null, hand: new Array<number>(nPlayers).fill(0) };
-    return animBuildPlan(steps.map(planEvent), nPlayers, final);
+    return animBuildPlan(steps.map((s) => ({
+        type: ANIM_EVT[s.type] ?? ANIM_EVT.magic_transition,
+        seat: s.seat,
+        from: s.from_location === undefined ? undefined : ANIM_LOC[s.from_location],
+        to: s.to_location === undefined ? undefined : ANIM_LOC[s.to_location],
+        cards: s.cards,
+        board: s.game_state,
+    })), board);
 }
 
 /** WHERE THE LAST-BUILT PLAN STANDS at `nowMs` from its start (anim_plan_at). */

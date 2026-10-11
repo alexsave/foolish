@@ -49,7 +49,7 @@ public enum Suit: Int, CaseIterable, Sendable {
 public enum CardRank {
     /// Face-value label for a card. The kernel `value` is a rank INDEX, not the
     /// face number: value 1='2' … 9='10', 10='J', 11='Q', 12='K', 13='A' — the
-    /// exact web VALUE_MAP (src/utils/cards.ts / server/api/core/constants.ts). The
+    /// web's labels too (c/cardtext/card_text.h CARD_RANK_LABEL). The
     /// 36-card deck (min_value_for 2p = 5) therefore runs value 5..13 = 6..A, so a
     /// value 5 is a SIX, not a five (that off-by-mapping was the "5♦" bug).
     public static func label(_ value: Int) -> String {

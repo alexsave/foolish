@@ -36,13 +36,13 @@ const GUTTER = 10;
  *  has a width (the first render, and jsdom, where layout is all zeros) it is
  *  the window less the two gutters - the width the plane will have on every
  *  screen without a side safe area, so nothing balloons or jumps for a frame. */
-export const handWidth = (plane: Element | null): number => {
+const handWidth = (plane: Element | null): number => {
     const w = plane ? plane.getBoundingClientRect().width : 0;
     return w > 0 ? w : Math.max(0, (typeof window === 'undefined' ? 0 : window.innerWidth) - 2 * GUTTER);
 };
 
 /** How `count` cards sit in `width` CSS px. */
-export const webHandLayout = (count: number, width: number): HandLayout =>
+const webHandLayout = (count: number, width: number): HandLayout =>
     clientTable().handLayout(WEB_HAND, count, width);
 
 /** A slot's distance from the hand's bottom edge (see the top of this file). */
@@ -58,7 +58,7 @@ const keyOf = (c: Card) => `${c.suit}-${c.value}`;
  *  and splits, if the arrivals take it over the line - while the cards are in
  *  the air, and each lands on the slot it will rest in. A card the hand already
  *  holds (a refused move coming home) is not counted twice. */
-export const handLaidOut = (hand: readonly Card[], arriving: readonly Card[]): string[] =>
+const handLaidOut = (hand: readonly Card[], arriving: readonly Card[]): string[] =>
     withArrivals(hand.map(keyOf), arriving);
 
 const withArrivals = (held: string[], arriving: readonly Card[]): string[] => {
@@ -95,7 +95,7 @@ export const laidOutOnScreen = (playerId: string, arriving: readonly Card[]): st
         .sort((a, b) => Number(a.getAttribute('data-card-index')) - Number(b.getAttribute('data-card-index')))
         .map((e) => e.getAttribute('data-card')!), arriving);
 
-export interface HandShape {
+interface HandShape {
     /** The kernel's layout of the laid-out set. */
     layout: HandLayout;
     /** How much taller than one row the hand stands: what sits above it moves up by this. */

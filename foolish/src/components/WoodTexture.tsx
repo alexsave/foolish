@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { getCachedTexture, setCachedTexture } from '../utils/textureCache';
 import { PixelData, pixelsToPointArrays, generateTextureViaWebGL } from '../utils/webglTexture';
 

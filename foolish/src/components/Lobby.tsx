@@ -6,7 +6,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { PLAYER_STATUS, GAME_STATUS, rulesOf, type ViewSeat } from "../state/view";
 import supabase from "../common/Connector";
 import { usePreventScroll } from "../utils/usePreventScroll";
-import { MAX_PLAYERS } from "@api/core/constants.ts";
+import { MAX_PLAYERS } from "@sdk/ts/gen/view_layout.bots.ts";
 import { useTexture, getTextureStyle, seedFromString, flipFromString } from "./TexturedSurface";
 import { WoolBackgroundLayer } from "./WoolBackgroundLayer";
 import { BackButton } from "./BackButton";
@@ -45,7 +45,6 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
     textureUrl,
     useWoodTexture,
 }) => {
-    const { t } = useLocalization();
     const playerSeed = seedFromString(player.id);
     const flip = flipFromString(player.id);
     const playerCardStyle = getTextureStyle(textureUrl, !useWoodTexture, playerSeed);
@@ -656,7 +655,7 @@ export const Lobby = () => {
                 </div>
             )}
             
-            {game.status === GAME_STATUS.WAITING && game.mySeat < 0 && game.seats.length < MAX_PLAYERS && (
+            {rulesOf(game).canJoin && (
                 <div className="lobby__join-section">
                     <button 
                         className="btn-wood btn-wood--md"

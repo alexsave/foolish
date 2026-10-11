@@ -43,7 +43,7 @@
  *       cover else pass. Cleared on success; ambiguous covers are a no-op.
  * ========================================================================== */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useServer } from '../../contexts/ServerContext';
 import { useAnimation } from '../../contexts/AnimationContext';
 import { useGame } from '../../contexts/GameContext';
@@ -52,7 +52,7 @@ import { clientTable } from '@sdk/ts/table/client_table.ts';
 import {
     PLAY_PILL_ATTACK, PLAY_PILL_GOOD, PLAY_PILL_PASS, PLAY_PILL_PICKUP, PLAY_TARGET_HAND,
 } from '@sdk/ts/gen/view_layout.bots.ts';
-import { covered, seatKey, type TableView, type ViewCard as Card } from '../../state/view';
+import { seatKey, type TableView, type ViewCard as Card } from '../../state/view';
 
 type CoverTarget = { kind: 'cover'; attack: Card; battleIndex: number };
 type Target = CoverTarget | { kind: 'pass' };

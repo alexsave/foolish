@@ -149,7 +149,7 @@ function createCardParams(canvasWidth: number, canvasHeight: number): FernParame
 }
 
 // OpenGL-based fern pattern generation (like C++ example: CPU computes IFS, GL renders)
-export async function generateFernPattern(
+async function generateFernPattern(
     params?: FernParameters,
     options?: { width?: number; height?: number; bypassCache?: boolean }
 ): Promise<string> {
