@@ -26,7 +26,7 @@
 
 import * as L from '@sdk/ts/gen/game_layout.bots.ts';
 import {
-    serverTable, tableCodeName, TABLE_DEAL_SEED_BYTES,
+    serverTable, tableCodeName,
     type ServerTable, type TableProducts, type TableSeat,
 } from '@sdk/ts/table/server_table.ts';
 import { broadcastMessages, supabaseClient, type BroadcastMessage } from './utils.ts';
@@ -141,6 +141,7 @@ export interface TableRow {
 
 /** A game id that names no row. */
 export class GameNotFound extends Error {
+    readonly why = L.ASK_WHY_NOT_FOUND;
     constructor(gameId: string) { super(`Game ${gameId} not found`); this.name = 'GameNotFound'; }
 }
 
@@ -187,6 +188,7 @@ export async function loadRow(gameId: string, allowCache = true, withLog = false
 
 /** The kernel refused an operation (a negative table result). */
 export class TableRefusal extends Error {
+    readonly why = L.ASK_WHY_REFUSED;
     constructor(readonly code: number, readonly detail: number, message: string) {
         super(message);
         this.name = 'TableRefusal';
@@ -227,7 +229,7 @@ export function __setTableDealSeedOverride(seed: Uint8Array | null): void {
 /** The bytes a lobby edit that may deal hands the kernel. */
 export function drawDealSeed(): Uint8Array {
     if (dealSeedOverride) return dealSeedOverride.slice();
-    const seed = new Uint8Array(TABLE_DEAL_SEED_BYTES);
+    const seed = new Uint8Array(L.FOOLISH_SEED_LEN);
     crypto.getRandomValues(seed);
     return seed;
 }
@@ -331,9 +333,7 @@ export async function runTableOp(op: TableOp): Promise<TableOutcome> {
             const { finalizeEndedGame } = await finalizeMod();
             await finalizeEndedGame(op.gameId, p.state, p.roster, op.reqId);
         }
-        // The casts were written in the kernel section and name nextVersion, as
-        // the envelopes do: commit_table is fenced on row.version and bumps it by
-        // one, so the version it committed is the one they carry.
+        // The casts name nextVersion, which is what commit_table (fenced on row.version) committed.
         if (c.pushes.length > 0) {
             broadcastPushes(op.gameId, c.seats, c.pushes, op.reqId)
                 .catch((err) => console.error(`[${op.reqId}] broadcast failed:`, err));
@@ -464,13 +464,7 @@ export async function commitProducts(
  * The kernel's per-viewer casts to each human seat's private topic and the
  * spectator topic, in one batched realtime POST.
  *
- * A cast (evwire.h) is the whole message: the committed version, then the as3
- * push (the event sequence, a flags byte, the new roster when the operation
- * changed it). It used to ride as `{t:'as3', s, v, b}`, with the format, a
- * random sequence id and the version spelled beside the bytes; the format and
- * the version are in the bytes now, and the sequence id is gone, because the
- * game id and the version already name the push (one push per topic per
- * committed version). What is left for the envelope is one base64 string.
+ * A cast (evwire.h) is the whole message: the committed version, then the as3 push.
  */
 export async function broadcastPushes(
     gameId: string, seats: TableSeat[],

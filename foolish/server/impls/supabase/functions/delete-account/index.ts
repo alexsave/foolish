@@ -1,7 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import * as L from "@sdk/ts/gen/game_layout.bots.ts";
 import { corsHeaders, handleCors } from "@shared/adapter/cors.ts";
-import { authenticate, refusalFor, refusalResponse } from "@shared/adapter/utils.ts";
+import { getAuthenticatedUser } from "@shared/adapter/auth.ts";
+import { refusalFor, refused } from "@shared/adapter/utils.ts";
 import { GameNotFound, runTableOp, TableRefusal } from "@shared/adapter/table_io.ts";
 import { createClient } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -40,16 +41,16 @@ serve(async (req: Request): Promise<Response> => {
     if (cors) return cors;
 
     if (req.method !== 'POST') {
-        return refusalResponse(L.ASK_WHY_METHOD, 405);
+        return refusalFor(refused(L.ASK_WHY_METHOD, ''), 405);
     }
 
     let userId: string;
     try {
-        const user = await authenticate(req);
+        const user = await getAuthenticatedUser(req);
         userId = user.id;
-    } catch {
+    } catch (e) {
         // No or invalid token: treat as already deleted / unauthenticated.
-        return refusalResponse(L.ASK_WHY_AUTH, 401);
+        return refusalFor(e, 401);
     }
 
     const reqId = `delete-${crypto.randomUUID().split('-')[0]}`;
@@ -90,7 +91,6 @@ serve(async (req: Request): Promise<Response> => {
         console.error(`[delete-account] failed for ${userId}: ${(e as Error).message}`);
         // Whatever stopped the delete, the account is still there: a 500, with the
         // kernel's code when it was a table that refused the redaction.
-        const refusal = await refusalFor(e);
-        return new Response(refusal.body, { status: 500, headers: refusal.headers });
+        return refusalFor(e, 500);
     }
 });

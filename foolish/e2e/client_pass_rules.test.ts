@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import { boardPills } from '../src/utils/gameValidation.ts';
 import { PLAY_PILL_PASS } from '../sdk/ts/gen/view_layout.bots.ts';
 import { optimisticBoard } from '../src/state/clientBoards.ts';
-import { encodeAction } from '../sdk/ts/wire/awire.ts';
+import { encodeAction } from '../sdk/ts/table/client_table.ts';
 import type { TableView, ViewCard as Card } from '../sdk/ts/table/client_table.ts';
 import { boardFixture, fixtureView, type BoardSpec } from './helpers/table_mem.ts';
 

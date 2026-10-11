@@ -13,6 +13,8 @@
  * hand-copied bootstrap sequences and they had already drifted apart).
  * ========================================================================== */
 
+import { MOVE_NAMES } from '@sdk/ts/gen/kernel_consts.bots.ts';
+import type { OracleMtExports } from '@sdk/ts/gen/exports.oracle_mt.ts';
 import { memOf, readOgMtCandidates, writeOgKnobs } from '@sdk/ts/gen/oracle_layout.oracle_mt.ts';
 import {
     OracleJob, OracleCandidate, OracleVerdict, OracleKnobs, ORACLE_KNOBS,
@@ -23,9 +25,6 @@ import {
  *  Thread stacks live in the heap region where --stack-first's trap-on-overflow
  *  does not reach, so the C side also stamps a canary at each stack's low end. */
 export const ORACLE_MT_STACK_BYTES = 512 * 1024;
-
-/** Move-type ids, in MOVE_* order (legal.h). */
-const MOVE_TYPE = ['attack', 'cover', 'pass', 'pickup', 'good', 'wait'];
 
 const OG_EX_NONE_V = 2000001, OG_EX_UNKNOWN_V = 2000002, OG_EX_ILLEGAL_V = 2000003;
 
@@ -53,39 +52,6 @@ export function decodeVerdict(val: number): { verdict: OracleVerdict; verdictVal
  *  loop and there is nothing to adapt it to. */
 export const ORACLE_MT_KNOBS: Readonly<OracleKnobs> = ORACLE_KNOBS;
 
-export interface MtExports {
-    memory: WebAssembly.Memory;
-    wasm_init(): void;
-    wasm_io_ptr(): number;
-    wasm_import_state(len: number, masked: number): number;
-    wasm_import_strategy_keys(): void;
-    wasm_import_logs(): void;
-    /** Where the knobs are written (OgKnobs), and the call that applies them. */
-    wasm_og_knobs_ptr(): number;
-    wasm_og_knobs_apply(): void;
-    __tls_size: WebAssembly.Global;
-    wasm_mt_reserve(n: number, stack: number, tls: number): number;
-    wasm_mt_warmup(seat: number): void;
-    wasm_mt_setup(seat: number, seed: number, n: number): void;
-    wasm_mt_stop(): void;
-    wasm_mt_total(): number;
-    wasm_mt_active(): number;
-    wasm_mt_ncand(): number;
-    wasm_mt_ready(): number;
-    wasm_mt_batches(): number;
-    wasm_mt_mismatch(): number;
-    wasm_mt_canary(): number;
-    wasm_mt_chosen(): number;
-    wasm_mt_sumfp(i: number): number;
-    wasm_mt_nsim(i: number): number;
-    wasm_mt_forced(i: number): number;
-    /** The published candidate table's address (OgMtCandidates), 0 until published. */
-    wasm_mt_candidates(): number;
-    wasm_mt_solver(): number;
-    wasm_mt_verdict(i: number): number;
-    wasm_mt_defuse(): void;
-}
-
 /** What one worker trampoline needs, and nothing else. */
 export interface MtThreadArgs {
     tid: number;
@@ -108,7 +74,7 @@ export function oracleSeedBase(decisionId: string): number {
 }
 
 export class OracleMtSession {
-    ex: MtExports | null = null;
+    ex: (OracleMtExports & { memory: WebAssembly.Memory }) | null = null;
     memory: WebAssembly.Memory | null = null;
     private tlsBlock = 0;
     private base = 0;
@@ -125,7 +91,7 @@ export class OracleMtSession {
         // at MAX_LEGAL_MOVES=4096, and cordite's recursion scratch rides along.
         const probeMem = new WebAssembly.Memory({ initial: 64, maximum: 2048, shared: true });
         const probe = await WebAssembly.instantiate(mod, { env: { memory: probeMem } });
-        const tlsSize = (probe.exports as unknown as MtExports).__tls_size.value;
+        const tlsSize = (probe.exports as unknown as OracleMtExports).__tls_size.value;
         this.tlsBlock = (Math.max(tlsSize, 16) + 15) & ~15;
 
         // Size the memory for what is live BEFORE any thread solves: statics,
@@ -143,7 +109,7 @@ export class OracleMtSession {
         const inst = await WebAssembly.instantiate(mod, { env: { memory: this.memory } });
         // A shared-memory module IMPORTS its memory, so exports carry no
         // `memory`; attach it.
-        this.ex = { ...(inst.exports as unknown as MtExports), memory: this.memory };
+        this.ex = { ...(inst.exports as unknown as OracleMtExports), memory: this.memory };
         this.ex.wasm_init();
         this.moduleBytes = bytes;
     }
@@ -253,7 +219,7 @@ export class OracleMtSession {
         const out: OracleCandidate[] = [];
         for (let i = 0; i < table.length; i++) {
             const d = table[i];
-            const type = MOVE_TYPE[d.type] ?? '?';
+            const type = MOVE_NAMES[d.type]?.toLowerCase() ?? '?';
             const cards = d.cards.map((c) => oracleCardToken(c, trump));
             const target = d.targets.map((c) => oracleCardToken(c, trump));
             const key = canonicalMoveKey(type, cards, target);

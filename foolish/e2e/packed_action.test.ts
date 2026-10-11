@@ -23,7 +23,8 @@ import { suiteRng } from './helpers/rng.ts';
 import { executePackedAction, MalformedActionRequest } from '../server/impls/supabase/functions/_shared/adapter/packed_action.ts';
 import { __setTableDealSeedOverride } from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
 import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
-import { encodeAction, encodeActionRequest, ACTION_STATUS } from '../sdk/ts/wire/awire.ts';
+import { encodeAction, clientTable } from '../sdk/ts/table/client_table.ts';
+import { TABLE_STATUS_APPLIED, TABLE_STATUS_MOOT, TABLE_STATUS_REJECTED } from '../sdk/ts/gen/view_layout.bots.ts';
 import { readPushSequence } from './helpers/client_read.ts';
 import type { ReadRoster as ViewRoster } from './helpers/client_read.ts';
 import { base64ToBytes } from '../sdk/ts/wire/bytes.ts';
@@ -111,7 +112,7 @@ test('packed pipeline: legal awire moves apply, bump the version, rewrite the bl
         const out = await runAction(gameId, pm.playerId, pm);
         await settle();
 
-        assert.equal(out.status, ACTION_STATUS.APPLIED, `legal ${pm.kind} applies (step ${step}, seed=${rng.seed})`);
+        assert.equal(out.status, TABLE_STATUS_APPLIED, `legal ${pm.kind} applies (step ${step}, seed=${rng.seed})`);
         assert.equal(out.rejectCode, 0, 'applied moves carry no reject code');
         assert.equal(out.version, prev.version + 1, 'committed version increments');
         const row = await mustReadTable(gameId);
@@ -212,7 +213,7 @@ test('packed pipeline: an illegal move is REJECTED with a reject code - no versi
     const out = await runAction(gameId, defender.id, encodeAction({ kind: 'attack', cards: [defender.hand[0]] }));
     await settle();
 
-    assert.equal(out.status, ACTION_STATUS.REJECTED, 'illegal move is rejected');
+    assert.equal(out.status, TABLE_STATUS_REJECTED, 'illegal move is rejected');
     assert.equal(out.rejectCode, L.ENGINE_REJECT_IS_DEFENDER, `rejection carries the kernel's reason (got ${out.rejectCode})`);
     assert.equal(out.version, prev.version, 'returned version is the untouched current version');
     assert.equal(out.needsBots, false, 'nothing committed, nothing to wake');
@@ -230,7 +231,7 @@ test('packed pipeline: a move against a finished game is MOOT', async () => {
 
     // A's last card ends the game (through the real move path and its finalize).
     const last = legalMoves(t0, (_, seat) => seat === 0).find((m) => m.kind === 'attack')!;
-    assert.equal((await runAction(gameId, seats[0].id, last)).status, ACTION_STATUS.APPLIED, 'the last card applies');
+    assert.equal((await runAction(gameId, seats[0].id, last)).status, TABLE_STATUS_APPLIED, 'the last card applies');
     const prev = await mustReadTable(gameId);
     assert.equal(prev.statusColumn, 'game_over', 'and ended the game');
     await settle();
@@ -240,7 +241,7 @@ test('packed pipeline: a move against a finished game is MOOT', async () => {
     const out = await runAction(gameId, seats[1].id, encodeAction({ kind: 'pickup' }), t0.version);
     await settle();
 
-    assert.equal(out.status, ACTION_STATUS.MOOT, 'move against a finished game is a no-op');
+    assert.equal(out.status, TABLE_STATUS_MOOT, 'move against a finished game is a no-op');
     assert.equal(out.rejectCode, 0, 'moot carries no reject code');
     assert.equal(out.version, prev.version, 'version untouched');
     const row = await mustReadTable(gameId);
@@ -277,7 +278,7 @@ test('packed pipeline: malformed wire throws cleanly, never commits, never break
     for (const [label, body] of [
         ['empty body', new Uint8Array([])],
         ['bad format', new Uint8Array([7, 2, 97, 98, 3, 0])],
-        ['game id past the end', encodeActionRequest(gameId, encodeAction({ kind: 'pickup' })).subarray(0, 6)],
+        ['game id past the end', clientTable().actionRequest(gameId, encodeAction({ kind: 'pickup' })).subarray(0, 6)],
     ] as const) {
         await assert.rejects(executePackedAction(body, actor, 'mal'), MalformedActionRequest, `${label}: malformed request`);
     }
@@ -312,9 +313,9 @@ test('packed pipeline: malformed wire throws cleanly, never commits, never break
         const who = pick(seats).id;
         try {
             const out = await runAction(gameId, who, wire);
-            assert.ok(([ACTION_STATUS.APPLIED, ACTION_STATUS.REJECTED, ACTION_STATUS.MOOT] as number[]).includes(out.status),
+            assert.ok(([TABLE_STATUS_APPLIED, TABLE_STATUS_REJECTED, TABLE_STATUS_MOOT] as number[]).includes(out.status),
                 `random wire returned a defined status (got ${out.status})`);
-            if (out.status === ACTION_STATUS.APPLIED) {
+            if (out.status === TABLE_STATUS_APPLIED) {
                 assert.equal(out.version, lastVersion + 1, 'random-but-legal wire bumps the version by one');
                 lastVersion = out.version;
                 appliedRandom++;
@@ -355,7 +356,7 @@ test('human moves and the bot loop interleave: same payload shape, strictly incr
             if (moves.length === 0) continue;
             const pm = pick(moves);
             const out = await runAction(gameId, pm.playerId, pm);
-            assert.equal(out.status, ACTION_STATUS.APPLIED, `human leg applies (step ${step} ${pm.kind}, seed=${rng.seed})`);
+            assert.equal(out.status, TABLE_STATUS_APPLIED, `human leg applies (step ${step} ${pm.kind}, seed=${rng.seed})`);
             humanApplied++;
         }
         await settle();

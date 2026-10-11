@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { ASK_WHY_AUTH } from '@sdk/ts/gen/game_layout.bots.ts';
 import type { User } from 'jsr:@supabase/supabase-js'; // type-only → erased at compile time, no runtime/boot cost
 
 /**
@@ -34,7 +35,7 @@ import type { User } from 'jsr:@supabase/supabase-js'; // type-only → erased a
 export async function getAuthenticatedUser(req: Request): Promise<User> {
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
-        throw new Error('No authorization header');
+        throw Object.assign(new Error('No authorization header'), { why: ASK_WHY_AUTH });
     }
 
     const token = authHeader.replace('Bearer ', '');
@@ -68,7 +69,7 @@ export async function getAuthenticatedUser(req: Request): Promise<User> {
         }
         return user;
     } catch (e) {
-        throw new Error(`Invalid token: ${(e as Error).message}`);
+        throw Object.assign(new Error(`Invalid token: ${(e as Error).message}`), { why: ASK_WHY_AUTH });
     }
 }
 

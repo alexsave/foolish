@@ -131,39 +131,11 @@ int wasm_table_add_bot(int id_len, int bot_len, int nick_len, int brain_len) {
                          c + id_len + bot_len + nick_len, brain_len, io + seed_at);
 }
 
-// io = [actor id][bot id]
-int wasm_table_remove_bot(int id_len, int bot_len) {
-    const unsigned char *io = inputs(id_len + bot_len);
-    if (!io || id_len < 0 || bot_len < 0) return TABLE_E_WIRE;
-    return table_remove_bot(table(), (const char *)io, id_len, (const char *)io + id_len, bot_len);
-}
-
 // io = [actor id][deal seed, FOOLISH_SEED_LEN]
 int wasm_table_ready(int id_len) {
     const unsigned char *io = inputs(id_len + FOOLISH_SEED_LEN);
     if (!io || id_len < 0) return TABLE_E_WIRE;
     return table_ready(table(), (const char *)io, id_len, io + id_len);
-}
-
-// io = [actor id][n x { u8 len, id }]
-int wasm_table_reseat(int id_len, int ids_len) {
-    const unsigned char *io = inputs(id_len + ids_len);
-    if (!io || id_len < 0 || ids_len < 0) return TABLE_E_WIRE;
-    return table_reseat(table(), (const char *)io, id_len, io + id_len, ids_len);
-}
-
-// io = [actor id][title]
-int wasm_table_retitle(int id_len, int title_len) {
-    const unsigned char *io = inputs(id_len + title_len);
-    if (!io || id_len < 0 || title_len < 0) return TABLE_E_WIRE;
-    return table_retitle(table(), (const char *)io, id_len, (const char *)io + id_len, title_len);
-}
-
-// io = [actor id]; `passing` 1 the classic passing game, 0 podkidnoy.
-int wasm_table_set_rules(int id_len, int passing) {
-    const unsigned char *io = inputs(id_len);
-    if (!io || id_len < 0) return TABLE_E_WIRE;
-    return table_set_rules(table(), (const char *)io, id_len, passing);
 }
 
 // io = [actor id]

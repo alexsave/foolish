@@ -160,7 +160,7 @@ test('the filter never skips anything that can change what a visitor downloads',
     const skips = skipPatterns();
     const never = [
         'c/src/game.c', 'c/src/legal.h', 'c/wasm/wasm_api.c',
-        'sdk/ts/wasm/bots.wasm.gz', 'sdk/ts/wire/awire.ts',
+        'sdk/ts/wasm/bots.wasm.gz', 'sdk/ts/table/client_table.ts',
         'shared/tools/structgen/structgen.c', 'tools/structgen/gen.sh',
         'tools/structgen/specs/view_layout.args',
         'public/oracle.wasm.gz', 'public/favicon.ico',

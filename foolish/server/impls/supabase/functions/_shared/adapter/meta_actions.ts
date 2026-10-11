@@ -11,7 +11,7 @@
 import * as L from '@sdk/ts/gen/game_layout.bots.ts';
 import { serverTable, type TableAsk } from '@sdk/ts/table/server_table.ts';
 import { runTableOp } from './table_io.ts';
-import { MalformedRequest, NoBotAvailable, supabaseClient, type HandlerResult, type RequestContext } from './utils.ts';
+import { refused, supabaseClient, type HandlerResult, type RequestContext } from './utils.ts';
 
 interface BotRow { id: string; nickname: string; strategy_key: string }
 type BotsRead = PromiseLike<{ data: BotRow[] | null; error: unknown }>;
@@ -20,10 +20,10 @@ type BotsRead = PromiseLike<{ data: BotRow[] | null; error: unknown }>;
 const readBots = (): BotsRead =>
     supabaseClient.from('bots').select('id, nickname, strategy_key') as unknown as BotsRead;
 
-/** What a request body asks, as the kernel read it. Throws MalformedRequest for a body that is not an ask. */
+/** What a request body asks, as the kernel read it. Throws for a body that is not an ask. */
 export async function readAsk(body: Uint8Array): Promise<TableAsk> {
     const ask = (await serverTable()).askDecode(body);
-    if (typeof ask === 'number') throw new MalformedRequest('the body is not an ask');
+    if (typeof ask === 'number') throw refused(L.ASK_WHY_MALFORMED, 'the body is not an ask');
     return ask;
 }
 
@@ -54,7 +54,7 @@ export async function handleMetaAction(ctx: RequestContext): Promise<HandlerResu
             const pool = ask.bot ? bots.filter((b) => b.id === ask.bot) : bots.filter((b) => !seated.has(b.id));
             const bot = pool[Math.floor(Math.random() * pool.length)];
             if (!bot) {
-                throw new NoBotAvailable(ask.bot
+                throw refused(L.ASK_WHY_NO_BOT, ask.bot
                     ? `Bot ${ask.bot} is not available to add to this game`
                     : 'No available bots to add to the game');
             }

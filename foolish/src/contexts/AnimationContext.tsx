@@ -2,10 +2,10 @@ import React, { createContext, useContext, useEffect, useState, useRef, useCallb
 import { useServer, useServerActions } from './ServerContext';
 import { useAuth } from './AuthContext';
 import { useParams } from 'next/navigation';
-import { sendBump } from '../state/askServer';
+import supabase from '../backend/Connector';
 import { validateActionWire } from '../utils/gameValidation';
-import { encodeAction } from '@sdk/ts/wire/awire.ts';
-import { clientTable } from '@sdk/ts/table/client_table.ts';
+import { clientTable, encodeAction } from '@sdk/ts/table/client_table.ts';
+import { ASK_BUMP } from '@sdk/ts/gen/view_layout.bots.ts';
 import { pushToSequence } from '../state/pushSequence';
 import { rulesOf, tableCards, type TableView, type ViewCard } from '../state/view';
 import { optimisticBoard, turnedBoard, withdrawn } from '../state/clientBoards';
@@ -302,9 +302,10 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                     return;
                 }
 
-                // No bot moves but a bot could move - nudge the bot loop (an ask,
-                // c/src/ask.h ASK_BUMP; was the bot_bump fn, then a JSON `action`)
-                sendBump(url_game_id).catch(error => {
+                // No bot moves but a bot could move - nudge the bot loop
+                supabase.functions.invoke('meta', {
+                    body: new Blob([clientTable().askBody({ kind: ASK_BUMP, gid: url_game_id }) as BlobPart])
+                }).catch(error => {
                     console.error('Bot bump failed:', error);
                 });
             }

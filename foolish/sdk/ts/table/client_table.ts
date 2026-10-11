@@ -1,4 +1,5 @@
-// client_table.ts - the web client's slot (c/src/client_table.h), over bots.wasm.
+// client_table.ts - the web client's slot (c/src/client_table.h), over the
+// kernel link the runtime loads (web.wasm in a browser, bots.wasm on Node).
 //
 // A thin, synchronous call-and-copy wrapper, like server_table.ts on the other
 // side of the wire. It knows the export names and the snapshot readers
@@ -15,6 +16,7 @@
 // from every envelope and roster-carrying push this reads, and handed back to
 // read the next push for that game.
 
+import type { WebExports } from '../gen/exports.web.ts';
 import * as V from '../gen/view_layout.bots.ts';
 import { __clientKernelExports } from '../wasm/bots.ts';
 
@@ -27,7 +29,6 @@ export type ViewRules = V.ViewRules_Snap;
 export type BoardEdit = V.BoardEdit_Snap;
 export type ConflictQuestion = V.ClientConflict_Snap;
 export type ClientPlay = V.ClientPlay_Snap;
-export type ClientMove = V.ClientMove_Snap;
 export type ActionResponse = V.TableResponse_Snap;
 export type HandMetrics = V.HandMetrics_Snap;
 export type HandLayout = V.HandLayout_Snap;
@@ -38,57 +39,7 @@ export interface PushStep { event: PushEvent; view: TableView }
 /** A whole push, read. */
 export interface PushRead { steps: PushStep[]; final: TableView }
 
-/** The bots.wasm exports this wrapper calls (c/wasm/wasm_table_api.c). */
-export interface ClientExports {
-    memory: WebAssembly.Memory;
-    wasm_io_ptr(): number;
-    wasm_io_cap(): number;
-    wasm_client_view_ptr(): number;
-    wasm_client_event_ptr(): number;
-    wasm_client_detail(): number;
-    wasm_client_adopt_envelope(len: number): number;
-    wasm_client_adopt_resident(viewer: number): number;
-    wasm_client_push_open(len: number, identityLen: number, as3: number, version: number): number;
-    wasm_client_push_next(): number;
-    wasm_client_push_final(): number;
-    wasm_client_identity(): number;
-    wasm_client_cast_open(len: number, identityLen: number): number;
-    wasm_client_cast_version(len: number): number;
-    wasm_client_ask_ptr(): number;
-    wasm_client_ask_encode(): number;
-    wasm_client_refusal_ptr(): number;
-    wasm_client_refusal_decode(len: number): number;
-    wasm_client_identity_at(): number;
-    wasm_client_identity_begin(gidLen: number, titleLen: number): number;
-    wasm_client_identity_seat(idLen: number, nameLen: number, isAi: number): number;
-    wasm_client_rules_view_ptr(): number;
-    wasm_client_rules_ptr(): number;
-    wasm_client_view_rules(fromDeck: number, toFlipped: number, trumpOut: number): number;
-    wasm_client_edit_view_ptr(): number;
-    wasm_client_final_view_ptr(): number;
-    wasm_client_board_edit_ptr(): number;
-    wasm_client_conflict_ptr(): number;
-    wasm_client_verdicts_ptr(): number;
-    wasm_client_validate(len: number): number;
-    wasm_client_optimistic_apply(len: number): number;
-    wasm_client_board_edit(): number;
-    wasm_client_rearrange_hand(n: number): number;
-    wasm_client_conflict_verdicts(): number;
-    wasm_client_gesture_ptr(): number;
-    wasm_client_play_ptr(): number;
-    wasm_client_play(): number;
-    wasm_client_move_ptr(): number;
-    wasm_client_move_wire(): number;
-    wasm_client_action_request(gidLen: number, wireLen: number, intent: number): number;
-    wasm_client_action_response(len: number): number;
-    wasm_client_response_ptr(): number;
-    wasm_hand_metrics_ptr(): number;
-    wasm_hand_layout_ptr(): number;
-    wasm_hand_layout(count: number, width: number): number;
-    wasm_can_cover(attackSuit: number, attackValue: number, defenseSuit: number, defenseValue: number, powerSuit: number): number;
-}
-
-/** A seat of an identity built from parts (a roster that arrived as JSON). */
+/** A seat of an identity built from parts. */
 export interface IdentitySeat { id: string; name: string; isAi: boolean }
 
 /** A refusal as the kernel read it (ask.h AskRefusal): `why` an ASK_WHY_*, `code` and `detail` the kernel's own. */
@@ -98,15 +49,34 @@ export type AskRefusal = V.AskRefusal_Snap;
 export type Ask = Pick<V.TableAsk_Snap, 'kind' | 'gid'> & Partial<V.TableAsk_Snap>;
 const NO_ASK: V.TableAsk_Snap = { kind: 0, passing: 0, gid: '', bot: '', player: '', idx: [], order: [], title: '' };
 
+/** A move's kinds by the names a caller says them with, numbered by the kernel (awire.h AWIRE_*). */
+export const AWIRE_KIND = {
+    attack: V.AWIRE_ATTACK,
+    cover: V.AWIRE_COVER,
+    pass: V.AWIRE_PASS,
+    pickup: V.AWIRE_PICKUP,
+    good: V.AWIRE_GOOD,
+} as const;
+export type AwireKindName = keyof typeof AWIRE_KIND;
+
+export interface AwireMove {
+    kind: AwireKindName;
+    cards?: ViewCard[];
+    attack_cards?: ViewCard[]; // cover only, positional with cards
+}
+
+/** How a push or cast names its seats: the identity kept for `gameId` ('kept', the default), explicit bytes, or 'none' (as a replay's are). */
+export interface PushIdentity { gameId?: string; identity?: 'kept' | 'none' | Uint8Array }
+
 const enc = new TextEncoder();
 
 export class ClientTable {
-    private readonly ex: ClientExports;
+    private readonly ex: WebExports;
     private mem: V.Mem;
     private readonly identities = new Map<string, Uint8Array>();
     private refusal = 0;
 
-    constructor(ex: ClientExports) {
+    constructor(ex: WebExports) {
         this.ex = ex;
         this.mem = V.memOf(ex.memory.buffer);
     }
@@ -142,6 +112,12 @@ export class ClientTable {
         return { code: this.refusal, detail: this.ex.wasm_client_detail() };
     }
 
+    /** The `n` bytes a door left at the IO buffer, copied out. */
+    private out(n: number): Uint8Array {
+        const at = this.ex.wasm_io_ptr();
+        return this.m().u8.slice(at, at + n);
+    }
+
     /** A response envelope (a player_views / spectator_views row, a create or meta response), or null when it does not read whole. */
     adoptEnvelope(bytes: Uint8Array): TableView | null {
         if (!this.put(bytes)) return this.refused(V.CLIENT_E_FORMAT);
@@ -152,42 +128,14 @@ export class ClientTable {
         return view;
     }
 
-    /** The game the module holds (an FMSG decode's), as `viewer` sees it; it names no one. */
-    adoptResident(viewer: number): TableView | null {
-        const rc = this.ex.wasm_client_adopt_resident(viewer);
-        if (rc !== V.CLIENT_OK) return this.refused(rc);
-        return V.readTableView(this.m(), this.ex.wasm_client_view_ptr());
+    /** A realtime push (evwire as2, or as3 with its flags byte), or null when it does not read whole. A push that carries a roster names its seats itself. */
+    readPush(bytes: Uint8Array, opts: PushIdentity & { as3: boolean; version?: number }): PushRead | null {
+        return this.read(bytes, opts, (n) => this.ex.wasm_client_push_open(bytes.length, n, opts.as3 ? 1 : 0, opts.version ?? 0));
     }
 
-    /**
-     * A realtime push (evwire as2, or as3 with its flags byte), or null when it does
-     * not read whole. `identity`: the table's kept identity for `gameId` ('kept', the
-     * default), explicit bytes, or 'none' (seats unnamed, as a replay's are). A push
-     * that carries a roster names its seats itself.
-     */
-    readPush(bytes: Uint8Array, opts: { as3: boolean; gameId?: string; version?: number; identity?: 'kept' | 'none' | Uint8Array }): PushRead | null {
-        const identity = opts.identity instanceof Uint8Array ? opts.identity
-            : opts.identity === 'none' || !opts.gameId ? new Uint8Array(0)
-            : this.identities.get(opts.gameId) ?? new Uint8Array(0);
-        if (!this.put(bytes, identity)) return this.refused(V.CLIENT_E_PUSH);
-        const rc = this.ex.wasm_client_push_open(bytes.length, identity.length, opts.as3 ? 1 : 0, opts.version ?? 0);
-        if (rc !== V.CLIENT_OK) return this.refused(rc);
-        return this.drain(bytes);
-    }
-
-    /**
-     * A realtime message's payload whole (evwire.h, the cast: the committed version
-     * and the as3 push in one run of bytes), or null when it does not read whole.
-     * The boards carry the version the cast names. `identity` as readPush takes it.
-     */
-    readCast(bytes: Uint8Array, opts: { gameId?: string; identity?: 'kept' | 'none' | Uint8Array } = {}): PushRead | null {
-        const identity = opts.identity instanceof Uint8Array ? opts.identity
-            : opts.identity === 'none' || !opts.gameId ? new Uint8Array(0)
-            : this.identities.get(opts.gameId) ?? new Uint8Array(0);
-        if (!this.put(bytes, identity)) return this.refused(V.CLIENT_E_PUSH);
-        const rc = this.ex.wasm_client_cast_open(bytes.length, identity.length);
-        if (rc !== V.CLIENT_OK) return this.refused(rc);
-        return this.drain(bytes);
+    /** A realtime message whole (evwire.h, the cast: the committed version, then the as3 push), or null when it does not read whole. */
+    readCast(bytes: Uint8Array, opts: PushIdentity = {}): PushRead | null {
+        return this.read(bytes, opts, (n) => this.ex.wasm_client_cast_open(bytes.length, n));
     }
 
     /** The version a cast's header names, or null for bytes that have no such header: what to fetch at least, when the cast itself did not read. */
@@ -197,9 +145,14 @@ export class ClientTable {
         return v < 0 ? null : v;
     }
 
-    /** Every step and the committed board of the push or cast just opened from `bytes`. */
-    private drain(bytes: Uint8Array): PushRead | null {
-        let rc: number;
+    /** Every step and the committed board of the push or cast `open` opens from `bytes` and the identity's length. */
+    private read(bytes: Uint8Array, opts: PushIdentity, open: (identityLen: number) => number): PushRead | null {
+        const identity = opts.identity instanceof Uint8Array ? opts.identity
+            : opts.identity === 'none' || !opts.gameId ? new Uint8Array(0)
+            : this.identities.get(opts.gameId) ?? new Uint8Array(0);
+        if (!this.put(bytes, identity)) return this.refused(V.CLIENT_E_PUSH);
+        let rc = open(identity.length);
+        if (rc !== V.CLIENT_OK) return this.refused(rc);
         const m = this.m();
         const viewAt = this.ex.wasm_client_view_ptr(), eventAt = this.ex.wasm_client_event_ptr();
         const steps: PushStep[] = [];
@@ -214,51 +167,33 @@ export class ClientTable {
         return { steps, final };
     }
 
-    // ---- an ask (ask.h): every request that is not a move ----
-
-    /**
-     * The request body for an ask, written by the kernel (ask_encode), or null for
-     * an ask that is not one (no game id, a count past its array). A string too
-     * long for its slot is the generated writer's RangeError.
-     */
+    /** The request body for an ask (ask_encode), or null for one that is not an ask (no game id, a count past its array). */
     askBody(ask: Ask): Uint8Array | null {
         V.writeTableAsk(this.m(), this.ex.wasm_client_ask_ptr(), { ...NO_ASK, ...ask });
         const n = this.ex.wasm_client_ask_encode();
-        if (n < 0) return this.refused(n);
-        const at = this.ex.wasm_io_ptr();
-        return this.m().u8.slice(at, at + n);
+        return n < 0 ? this.refused(n) : this.out(n);
     }
 
-    /** A refusal body (ask.h AskRefusal: why, and the kernel's codes behind it), or null when the bytes are not one. */
+    /** A refusal body (ask.h AskRefusal), or null when the bytes are not one. */
     readRefusal(bytes: Uint8Array): AskRefusal | null {
-        if (!this.put(bytes)) return this.refused(V.ASK_E_WIRE);
-        const rc = this.ex.wasm_client_refusal_decode(bytes.length);
-        if (rc !== V.ASK_OK) return this.refused(rc);
-        return V.readAskRefusal(this.m(), this.ex.wasm_client_refusal_ptr());
+        const rc = this.put(bytes) ? this.ex.wasm_client_refusal_decode(bytes.length) : V.ASK_E_WIRE;
+        return rc !== V.ASK_OK ? this.refused(rc) : V.readAskRefusal(this.m(), this.ex.wasm_client_refusal_ptr());
     }
 
     /** Builds and keeps a table's identity from parts; its bytes, or null when the kernel refuses them. */
     identityFromSeats(gameId: string, title: string, seats: IdentitySeat[]): Uint8Array | null {
         const gid = enc.encode(gameId), text = enc.encode(title);
-        if (!this.put(gid, text)) return this.refused(V.CLIENT_E_IDENTITY);
-        let rc = this.ex.wasm_client_identity_begin(gid.length, text.length);
-        if (rc !== V.CLIENT_OK) return this.refused(rc);
+        let rc = this.put(gid, text) ? this.ex.wasm_client_identity_begin(gid.length, text.length) : V.CLIENT_E_IDENTITY;
         for (const s of seats) {
+            if (rc !== V.CLIENT_OK) break;
             const id = enc.encode(s.id), name = enc.encode(s.name);
-            if (!this.put(id, name)) return this.refused(V.CLIENT_E_IDENTITY);
-            if ((rc = this.ex.wasm_client_identity_seat(id.length, name.length, s.isAi ? 1 : 0)) !== V.CLIENT_OK) return this.refused(rc);
+            rc = this.put(id, name) ? this.ex.wasm_client_identity_seat(id.length, name.length, s.isAi ? 1 : 0) : V.CLIENT_E_IDENTITY;
         }
-        const n = this.ex.wasm_client_identity();
+        const n = rc === V.CLIENT_OK ? this.ex.wasm_client_identity() : rc;
         if (n <= 0) return this.refused(n);
-        const at = this.ex.wasm_io_ptr();
-        const identity = this.m().u8.slice(at, at + n);
+        const identity = this.out(n);
         this.identities.set(gameId, identity);
         return identity;
-    }
-
-    /** The identity kept for a game, if any. */
-    identity(gameId: string): Uint8Array | undefined {
-        return this.identities.get(gameId);
     }
 
     /**
@@ -308,25 +243,26 @@ export class ClientTable {
         return this.ex.wasm_client_validate(wire.length);
     }
 
+    /** The board at the edit view, or null (and the refusal kept) when the door that edited it answered `rc`. */
+    private edited(rc: number): TableView | null {
+        return rc !== V.CLIENT_OK ? this.refused(rc) : V.readTableView(this.m(), this.ex.wasm_client_edit_view_ptr());
+    }
+
     /** The board `view` becomes once the viewer's move (its action wire) stands on it, or null when the kernel refuses. */
     optimisticApply(view: TableView, wire: Uint8Array): TableView | null {
         V.writeTableView(this.m(), this.ex.wasm_client_edit_view_ptr(), view);
-        if (!this.put(wire)) return this.refused(V.CLIENT_E_MOVE);
-        const rc = this.ex.wasm_client_optimistic_apply(wire.length);
-        if (rc !== V.CLIENT_OK) return this.refused(rc);
-        return V.readTableView(this.m(), this.ex.wasm_client_edit_view_ptr());
+        return this.edited(this.put(wire) ? this.ex.wasm_client_optimistic_apply(wire.length) : V.CLIENT_E_MOVE);
     }
 
     /** The board after each edit in turn (CLIENT_EDIT_*), or null when the kernel refuses one. */
     edit(view: TableView, ...edits: BoardEdit[]): TableView | null {
-        const m = this.m();
-        V.writeTableView(m, this.ex.wasm_client_edit_view_ptr(), view);
+        V.writeTableView(this.m(), this.ex.wasm_client_edit_view_ptr(), view);
+        let rc: number = V.CLIENT_OK;
         for (const e of edits) {
             V.writeBoardEdit(this.m(), this.ex.wasm_client_board_edit_ptr(), e);
-            const rc = this.ex.wasm_client_board_edit();
-            if (rc !== V.CLIENT_OK) return this.refused(rc);
+            if ((rc = this.ex.wasm_client_board_edit()) !== V.CLIENT_OK) break;
         }
-        return V.readTableView(this.m(), this.ex.wasm_client_edit_view_ptr());
+        return this.edited(rc);
     }
 
     /**
@@ -338,10 +274,8 @@ export class ClientTable {
         // An index a byte cannot hold is no index of a hand: 255 is past every hand.
         const bytes = Uint8Array.from(indices, (i) => (Number.isInteger(i) && i >= 0 && i < 255 ? i : 255));
         V.writeTableView(this.m(), this.ex.wasm_client_edit_view_ptr(), view);
-        if (!this.put(bytes)) return { rc: V.CLIENT_E_MOVE, view: this.refused(V.CLIENT_E_MOVE) };
-        const rc = this.ex.wasm_client_rearrange_hand(bytes.length);
-        if (rc !== V.CLIENT_OK) return { rc, view: this.refused(rc) };
-        return { rc, view: V.readTableView(this.m(), this.ex.wasm_client_edit_view_ptr()) };
+        const rc = this.put(bytes) ? this.ex.wasm_client_rearrange_hand(bytes.length) : V.CLIENT_E_MOVE;
+        return { rc, view: this.edited(rc) };
     }
 
     /**
@@ -360,29 +294,20 @@ export class ClientTable {
         return V.readConflictVerdicts(this.m(), this.ex.wasm_client_verdicts_ptr()).verdicts;
     }
 
-    /**
-     * The action wire of a move (c/src/client_table.h client_move_wire, over
-     * awire.c's one encoder): the bytes `validate` and `optimisticApply` read and
-     * the bytes the server applies. `kind` is an AWIRE_*; `attackCards` is read
-     * for a cover only, one per card. Throws when the kernel refuses the move -
-     * cards on a pickup, a cover whose pairs do not match, a card that is not a
-     * card: a move the screen could not have meant, never a race.
-     */
-    moveWire(move: ClientMove): Uint8Array {
-        V.writeClientMove(this.m(), this.ex.wasm_client_move_ptr(), move);
+    /** The action wire of a move (awire.c's one encoder). Throws on a move the wire cannot carry: a client bug, never a race. */
+    moveWire(move: AwireMove): Uint8Array {
+        const kind = AWIRE_KIND[move.kind];
+        if (kind === undefined) throw new Error(`awire: unknown kind ${move.kind}`);
+        V.writeClientMove(this.m(), this.ex.wasm_client_move_ptr(), { kind, cards: move.cards ?? [], attackCards: move.attack_cards ?? [] });
         const n = this.ex.wasm_client_move_wire();
         if (n <= 0) throw new Error(`client move: not a move the wire carries (${n})`);
-        const at = this.ex.wasm_io_ptr();
-        return this.m().u8.slice(at, at + n);
+        return this.out(n);
     }
 
     /**
-     * The `action` endpoint's request body for a move's wire (c/src/table.h
-     * table_request_encode, the writer of what the server's table_request_decode
-     * reads). `intent` is the version the move was composed against, for the
-     * server's round guard; undefined sends the unguarded v1 body. The wire is
-     * framed as it is - the server judges it. Throws when the kernel refuses: a
-     * game id longer than its length byte can say.
+     * The `action` endpoint's request body (table_request_encode). `intent` is the
+     * games.version the move was composed against, for the server's stale-round
+     * guard (docs/WEB_RACE_BUG_HANDOFF.md); undefined sends the unguarded v1 body.
      */
     actionRequest(gameId: string, wire: Uint8Array, intent?: number): Uint8Array {
         const gid = enc.encode(gameId);
@@ -390,14 +315,12 @@ export class ClientTable {
             ? this.ex.wasm_client_action_request(gid.length, wire.length, intent === undefined ? -1 : intent >>> 0)
             : -1;
         if (n <= 0) throw new Error(`action request: refused (${n}) for a ${gid.length}-byte game id and a ${wire.length}-byte wire`);
-        const at = this.ex.wasm_io_ptr();
-        return this.m().u8.slice(at, at + n);
+        return this.out(n);
     }
 
-    /** The `action` endpoint's response body (table.h table_response_decode), or null when it is not one. */
+    /** The `action` endpoint's response body (table_response_decode: a TABLE_STATUS_*, the reject code, the version), or null when it is not one. */
     readActionResponse(body: Uint8Array): ActionResponse | null {
-        if (!this.put(body)) return null;
-        if (this.ex.wasm_client_action_response(body.length) !== 0) return null;
+        if (!this.put(body) || this.ex.wasm_client_action_response(body.length) !== 0) return null;
         return V.readTableResponse(this.m(), this.ex.wasm_client_response_ptr());
     }
 
@@ -456,7 +379,10 @@ export class ClientTable {
 
 let shared: ClientTable | null = null;
 
-/** The client's one slot, on the page's bots.wasm (warm it first: ensureBotsAsync). */
+/** The client's one slot, on the page's kernel (warm it first: ensureBotsAsync). */
 export function clientTable(): ClientTable {
-    return (shared ??= new ClientTable(__clientKernelExports() as unknown as ClientExports));
+    return (shared ??= new ClientTable(__clientKernelExports() as unknown as WebExports));
 }
+
+/** A move's action wire, written by the client's one slot. */
+export const encodeAction = (move: AwireMove): Uint8Array => clientTable().moveWire(move);

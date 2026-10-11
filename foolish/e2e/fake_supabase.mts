@@ -67,11 +67,10 @@
 import { createHash } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { encodeAction, type AwireMove } from '../sdk/ts/wire/awire.ts';
 import { bytesToBase64, bytesToBareHex } from '../sdk/ts/wire/bytes.ts';
 import { derivedUuid } from '../sdk/ts/wire/detid.ts';
-import { TABLE_DEAL_SEED_BYTES, type TableProducts, type TableSeat } from '../sdk/ts/table/server_table.ts';
-import { clientTable } from '../sdk/ts/table/client_table.ts';
+import { type TableProducts, type TableSeat } from '../sdk/ts/table/server_table.ts';
+import { clientTable, encodeAction, type AwireMove } from '../sdk/ts/table/client_table.ts';
 import { fixture, fixtureTable, parseCardText, PLAYING, type FixtureSeat, type TableFixture } from './helpers/table_fixture.ts';
 import { attachPhoenix, type PhxHub } from './helpers/ws_phoenix.ts';
 
@@ -108,7 +107,7 @@ const dealSeedFor = (gameId: string, version: number): Uint8Array =>
     new Uint8Array(createHash('sha256')
         .update(`e2e/fake_supabase:deal#${gameId}#${version}`, 'utf8')
         .digest()
-        .subarray(0, TABLE_DEAL_SEED_BYTES));
+        .subarray(0, L.FOOLISH_SEED_LEN));
 
 const userFor = (name: string): FakeUser => ({ id: `u-${name.toLowerCase()}`, name: name.toUpperCase(), email: emailFor(name) });
 

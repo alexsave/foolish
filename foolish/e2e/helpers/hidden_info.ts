@@ -77,12 +77,13 @@ import { lockedBotLoop } from '../../server/impls/supabase/functions/_shared/ada
 import { __clearGameCache } from '../../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
 import { __setTableDealSeedOverride } from '../../server/impls/supabase/functions/_shared/adapter/table_io.ts';
 import { botsTestWasm } from './bots_test_wasm.ts';
-import { encodeActionRequest } from '../../sdk/ts/wire/awire.ts';
 import { readEnvelopeView, readPushSequence } from './client_read.ts';
 import { cRosterTrailerRead } from './roster_kernel.ts';
 import { clientTable } from '../../sdk/ts/table/client_table.ts';
 import { base64ToBytes } from '../../sdk/ts/wire/bytes.ts';
 import * as L from '../../sdk/ts/gen/game_layout.bots.ts';
+import { WIRE_CARD_HIDDEN, WIRE_CARD_NONE } from '../../sdk/ts/gen/kernel_consts.bots.ts';
+import type { BotsTestExports } from '../../sdk/ts/gen/exports.bots_test.ts';
 import { boardBytes, fixtureTable } from './table_fixture.ts';
 import { legalMoves, readTable, rebuild, type BoardState, type PlayCard } from './table_play.ts';
 import { suiteRng } from './rng.ts';
@@ -97,8 +98,6 @@ if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {};
 // seat count at once. Each file is its own process, so each game draws from the
 // head of the stream rather than from wherever the previous game left it.
 const rng = suiteRng('security_hidden_info');
-const HIDDEN = 0xfe;
-const NONE = 0xff;
 // A card's byte in the streams walked below. This helper reads those streams
 // byte by byte ON PURPOSE - it is the outside observer that checks what the
 // kernel put on the wire for each viewer - so it names the byte itself rather
@@ -111,13 +110,7 @@ const hexToBytes = (h: string) => Uint8Array.from(Buffer.from(h.replace(/^\\x/, 
 // A separate instance of the test build of bots.wasm (every shipped export plus the
 // engine probes this needs, same C and layout hash), so probing a payload never disturbs the game the
 // server's instance holds resident.
-interface ProbeExports {
-    memory: WebAssembly.Memory;
-    wasm_init(): void; wasm_io_ptr(): number;
-    wasm_import_state(len: number, masked: number): number;
-    wasm_view_serialize(viewer: number): number;
-}
-const probe = new WebAssembly.Instance(new WebAssembly.Module(botsTestWasm() as BufferSource), {}).exports as unknown as ProbeExports;
+const probe = new WebAssembly.Instance(new WebAssembly.Module(botsTestWasm() as BufferSource), {}).exports as unknown as BotsTestExports;
 probe.wasm_init();
 
 /** The board, imported MASKED and re-serialized for the same viewer. */
@@ -297,7 +290,7 @@ async function refreshEverPublic(t: Table): Promise<void> {
     for (const log of await sessionLogs(t.gameId)) {
         for (const r of sessionLogRecords(log, `${t.gameId} session log`)) {
             if (r.type === LOG_DRAW) continue;
-            for (const c of r.cards) if (c !== HIDDEN && c !== NONE) t.everPublic.add(c);
+            for (const c of r.cards) if (c !== WIRE_CARD_HIDDEN && c !== WIRE_CARD_NONE) t.everPublic.add(c);
         }
     }
 }
@@ -421,7 +414,7 @@ function checkEventPayload(t: Table, payload: Record<string, unknown>, v: Viewer
 
     const b = castParts(payload).push;
     const walked = walkEvwire(b, what);
-    assert.equal(walked.viewer, seat < 0 ? NONE : seat, `${what}: the stream is written for seat ${seat}`);
+    assert.equal(walked.viewer, seat < 0 ? 0xff : seat, `${what}: the stream is written for seat ${seat}`);
     for (const [i, e] of walked.events.entries()) assertMaskedFixedPoint(e.board, seat, `${what} event ${i} board`);
     assertMaskedFixedPoint(walked.final, seat, `${what} trailer board`);
 
@@ -438,7 +431,7 @@ function checkEventPayload(t: Table, payload: Record<string, unknown>, v: Viewer
     assert.equal(decoded!.events.length, walked.events.length, `${what}: decoder and walk agree on the event count`);
     for (const [i, e] of walked.events.entries()) {
         const de = decoded!.events[i];
-        const named = [...e.cards, ...(e.target === null ? [] : [e.target])].filter(c => c !== HIDDEN);
+        const named = [...e.cards, ...(e.target === null ? [] : [e.target])].filter(c => c !== WIRE_CARD_HIDDEN);
         for (const c of named) {
             assert.ok(c <= 51, `${what} event ${i}: a card byte that is no card (${c})`);
             assert.ok(may.has(c), `${what} event ${i} (${de.type}): names card ${c}, which ${viewerName(v)} may not know`);
@@ -447,7 +440,7 @@ function checkEventPayload(t: Table, payload: Record<string, unknown>, v: Viewer
         const drawSeat = de.seat ?? -1;
         if ((de.type === 'deal' || de.type === 'refill') && drawSeat !== seat) {
             for (const c of e.cards) {
-                assert.ok(c === HIDDEN || c === t.trumpId, `${what} event ${i}: seat ${drawSeat}'s ${de.type} names card ${c} to ${viewerName(v)}`);
+                assert.ok(c === WIRE_CARD_HIDDEN || c === t.trumpId, `${what} event ${i}: seat ${drawSeat}'s ${de.type} names card ${c} to ${viewerName(v)}`);
             }
             t.counts.otherDraws++;
         }
@@ -688,7 +681,7 @@ export async function playTable(nHumans: number, nBots: number, dealSeed: number
             t.counts.humanSteps++;
             truth = await doStep(t, {
                 label: `#${n} ${who.name} ${pm.kind}`, requester: who,
-                run: () => postPacked(who.tok, encodeActionRequest(t.gameId, pm.wire, version)),
+                run: () => postPacked(who.tok, clientTable().actionRequest(t.gameId, pm.wire, version)),
                 actors: () => [pm.seat], pinDeck: false,
             }, true);
         } else if (botMoves.length > 0) {

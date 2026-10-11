@@ -19,7 +19,8 @@ import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, resetDb, uuid, pgPool } from './harness.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { ACTION_STATUS, AWIRE_KIND, encodeAction, type AwireMove } from '../sdk/ts/wire/awire.ts';
+import { AWIRE_KIND, encodeAction, type AwireMove } from '../sdk/ts/table/client_table.ts';
+import { TABLE_STATUS_APPLIED } from '../sdk/ts/gen/view_layout.bots.ts';
 import { handleMetaAction } from '../server/impls/supabase/functions/_shared/adapter/meta_actions.ts';
 import { askBody } from './helpers/ask.ts';
 import { __setTableDealSeedOverride } from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
@@ -278,7 +279,7 @@ test('numeric edge-case cards and hostile wires are rejected or applied cleanly,
         if (out instanceof Error) {
             assert.ok(!crashed(out), `${what}: a crash, not a refusal: ${out.message}`);
             assert.equal((await mustReadTable(id)).version, v0, `${what}: a refused wire commits nothing`);
-        } else if (out.status !== ACTION_STATUS.APPLIED) {
+        } else if (out.status !== TABLE_STATUS_APPLIED) {
             assert.equal((await mustReadTable(id)).version, v0, `${what}: a rejected move commits nothing`);
         }
         const chk = await checkCardConservation(id);

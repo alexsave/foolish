@@ -6,6 +6,7 @@
 // accessors. No byte of the decoder's output is read here. It runs on a private
 // instance of the test build (e2e/helpers/bots_test_wasm.ts), which is the only
 // module that exports the log reader: no shipped host reads a whole log stream.
+import type { BotsTestExports } from '../../sdk/ts/gen/exports.bots_test.ts';
 import * as G from '../../sdk/ts/gen/game_layout.bots.ts';
 import { LAYOUT_HASH } from '../../sdk/ts/gen/layout_hash.bots.ts';
 import { CARD_NONE_SUIT, CARD_NONE_VALUE, memOf as viewMemOf, readReplaySummary, type ReplaySummary_Snap, type Card_Snap } from '../../sdk/ts/gen/view_layout.bots.ts';
@@ -13,20 +14,10 @@ import { assertLayoutHash } from '../../sdk/ts/wasm/layout_hash.ts';
 import { kernelB32Decode, kernelReplayExtrasDecode, kernelReplayLinkParse } from '../../sdk/ts/wasm/bots.ts';
 import { botsTestWasm } from './bots_test_wasm.ts';
 
-interface DecodeExports {
-    memory: WebAssembly.Memory;
-    wasm_layout_hash(): number;
-    wasm_replay_io_ptr(): number;
-    wasm_replay_io_cap(): number;
-    wasm_replay_summary(codeLen: number): number;
-    wasm_replay_decoded_open(codeLen: number): number;
-    wasm_replay_decoded_next(): number;
-}
-
-let cached: DecodeExports | null = null;
-function kernel(): DecodeExports {
+let cached: BotsTestExports | null = null;
+function kernel(): BotsTestExports {
     if (!cached) {
-        const ex = new WebAssembly.Instance(new WebAssembly.Module(botsTestWasm() as BufferSource), {}).exports as unknown as DecodeExports;
+        const ex = new WebAssembly.Instance(new WebAssembly.Module(botsTestWasm() as BufferSource), {}).exports as unknown as BotsTestExports;
         assertLayoutHash('bots_test.wasm', ex, LAYOUT_HASH, 'sdk/ts/gen/layout_hash.bots.ts');
         cached = ex;
     }

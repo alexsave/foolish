@@ -15,7 +15,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { boardPills, coverGesture, validateActionWire } from '../src/utils/gameValidation.ts';
-import { encodeAction, type AwireMove } from '../sdk/ts/wire/awire.ts';
+import { encodeAction, type AwireMove } from '../sdk/ts/table/client_table.ts';
 import type { TableView, ViewCard as Card } from '../sdk/ts/table/client_table.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import * as V from '../sdk/ts/gen/view_layout.bots.ts';

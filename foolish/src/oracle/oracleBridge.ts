@@ -14,30 +14,12 @@ import {
     MOVE_ATTACK, MOVE_COVER, MOVE_PASS, MOVE_PICKUP, MOVE_GOOD, MOVE_WAIT,
     OG_VERDICT_NONE, OG_VERDICT_UNKNOWN, OG_VERDICT_ILLEGAL,
     OG_VERDICT_WIN, OG_VERDICT_LOSS, OG_VERDICT_DRAW,
-    OG_SOLVER_NONE, OG_SOLVER_WIN, OG_SOLVER_EVAL,
+    OG_SOLVER_NONE, OG_SOLVER_WIN, OG_SOLVER_EVAL, STRAT_OCTOGEN,
 } from '@sdk/ts/gen/oracle_answer.oracle.ts';
+import type { OracleExports } from '@sdk/ts/gen/exports.oracle.ts';
 import {
     OracleJob, OracleKnobs, OracleRecord, OracleRecordCandidate, OracleVerdict, oracleCardToken,
 } from './types';
-
-const STRAT_OCTOGEN = 20;
-
-interface OracleExports {
-    memory: WebAssembly.Memory;
-    wasm_init(): void;
-    wasm_io_ptr(): number;
-    wasm_import_state(len: number, masked: number): number;
-    wasm_import_strategy_keys(): void;
-    wasm_import_logs(): void;
-    /** Where the knobs are written (OgKnobs), and the call that applies them. */
-    wasm_og_knobs_ptr(): number;
-    wasm_og_knobs_apply(): void;
-    wasm_set_strategy_seed(s: number): void;
-    wasm_choose_move(strat: number, seat: number): number;
-    /** The last choose's answer (OgAnswer), 0 when none since the reset. */
-    wasm_og_answer(): number;
-    wasm_og_answer_reset(): void;
-}
 
 export type BatchResult =
     | { record: OracleRecord }

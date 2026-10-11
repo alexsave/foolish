@@ -18,7 +18,8 @@ import { fixture, PLAYING, GAME_OVER, READY, IDLE } from './helpers/table_fixtur
 import { seedTable } from './helpers/table_db.ts';
 import { actionRequest, legalMoves, mustReadTable } from './helpers/table_play.ts';
 import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
-import { ACTION_STATUS, decodeActionResponse } from '../sdk/ts/wire/awire.ts';
+import { clientTable } from '../sdk/ts/table/client_table.ts';
+import { TABLE_STATUS_APPLIED, TABLE_STATUS_REJECTED } from '../sdk/ts/gen/view_layout.bots.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; }
 
@@ -37,7 +38,7 @@ async function cast(): Promise<Cast> {
 const gid = (p: string) => `${p}${uuid().slice(0, 5)}`;
 const decoded = (r: { status: number; bytes: Uint8Array; json: unknown }) => {
     assert.equal(r.status, 200, `a packed action response (${JSON.stringify(r.json)})`);
-    return decodeActionResponse(r.bytes)!;
+    return clientTable().readActionResponse(r.bytes)!;
 };
 const assertOk = (r: { status: number; json: unknown }) => assert.equal(r.status, 200, JSON.stringify(r.json));
 
@@ -73,7 +74,7 @@ test('action: a move applies for the auth user\'s seat, and another seat\'s move
 
     // B sends A's attack: the kernel judges it as B's (the defender, holding none of those cards).
     const asB = decoded(await postPacked(c.tok.B, actionRequest(g, attack)));
-    assert.equal(asB.status, ACTION_STATUS.REJECTED, 'B cannot play A\'s cards');
+    assert.equal(asB.status, TABLE_STATUS_REJECTED, 'B cannot play A\'s cards');
     assert.equal((await mustReadTable(g)).version, t0.version, 'nothing committed');
 
     // A stranger sends it: not seated.
@@ -83,7 +84,7 @@ test('action: a move applies for the auth user\'s seat, and another seat\'s move
 
     // A sends it: applied, from seat 0's hand.
     const asA = decoded(await postPacked(c.tok.A, actionRequest(g, attack)));
-    assert.equal(asA.status, ACTION_STATUS.APPLIED);
+    assert.equal(asA.status, TABLE_STATUS_APPLIED);
     const t1 = await mustReadTable(g);
     assert.equal(t1.version, t0.version + 1);
     assert.equal(t1.seats[0].hand.length, 5, 'the card left seat 0');

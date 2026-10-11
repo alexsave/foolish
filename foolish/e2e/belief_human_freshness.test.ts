@@ -32,7 +32,7 @@ import { __clearGameCache } from '../server/impls/supabase/functions/_shared/ada
 import { supabaseClient } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
 import { legalMoves, mustReadTable, type PlayCard } from './helpers/table_play.ts';
 import { driveBots, runAction, runMeta, seedLobby } from './helpers/table_server.ts';
-import { ACTION_STATUS } from '../sdk/ts/wire/awire.ts';
+import { TABLE_STATUS_APPLIED } from '../sdk/ts/gen/view_layout.bots.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
@@ -95,7 +95,7 @@ test('human+octogen: octogen always sees the human\'s committed moves (resident 
       const moves = t.status === L.GAME_STATUS_PLAYING ? legalMoves(t, (s) => s.id === humanId).filter((m) => m.kind !== 'good') : [];
       if (moves.length > 0) {
         const pm = moves[midSegmentMoves % moves.length];
-        if ((await runAction(gameId, humanId, pm)).status === ACTION_STATUS.APPLIED) {
+        if ((await runAction(gameId, humanId, pm)).status === TABLE_STATUS_APPLIED) {
           for (const c of pm.cards) humanCards.add(cid(c));
           midSegmentMoves++;
         }
@@ -111,7 +111,7 @@ test('human+octogen: octogen always sees the human\'s committed moves (resident 
     if (humanMoves.length > 0) {
       const pm = humanMoves[guard % humanMoves.length];
       const res = await runAction(gameId, humanId, pm);
-      assert.equal(res.status, ACTION_STATUS.APPLIED, `the human's legal move applied (step ${guard})`);
+      assert.equal(res.status, TABLE_STATUS_APPLIED, `the human's legal move applied (step ${guard})`);
       for (const c of pm.cards) humanCards.add(cid(c));
     } else {
       // Octogen's turn - the REAL bot loop (a human is seated, so a fresh log

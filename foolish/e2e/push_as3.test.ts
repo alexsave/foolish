@@ -21,11 +21,12 @@ import assert from 'node:assert/strict';
 
 import { applySchema, resetDb, uuid, pgPool, broadcastLog } from './harness.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
+import type { WebExports } from '../sdk/ts/gen/exports.web.ts';
 import { fixtureTable } from './helpers/table_fixture.ts';
 import { mustReadTable } from './helpers/table_play.ts';
 import { runMeta, seedLobby } from './helpers/table_server.ts';
 import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
-import { ClientTable, type ClientExports } from '../sdk/ts/table/client_table.ts';
+import { ClientTable } from '../sdk/ts/table/client_table.ts';
 import { __clientKernelExports } from '../sdk/ts/wasm/bots.ts';
 import { base64ToBytes } from '../sdk/ts/wire/bytes.ts';
 import { castParts } from './helpers/cast.ts';
@@ -60,7 +61,7 @@ test('a lobby join push is as3 and seats the joiner from its own bytes over a st
     assert.equal(server.load(before.state, before.roster), L.TABLE_OK, 'the lobby loads');
     const envelope = server.envelope(gameId, 0, before.version);
     assert.ok(envelope instanceof Uint8Array, 'the host has an envelope');
-    const client = new ClientTable(__clientKernelExports() as unknown as ClientExports);
+    const client = new ClientTable(__clientKernelExports() as unknown as WebExports);
     const held = client.adoptEnvelope(envelope as Uint8Array);
     assert.ok(held, 'the host client adopts the lobby');
     assert.deepEqual(held!.seats.map((s) => s.id), [host], 'the kept roster is the stale one-seat lobby');
