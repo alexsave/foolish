@@ -2610,6 +2610,127 @@ static void test_replay_step_index_says_what_each_step_is(void) {
 
 // The counts above only bite on passes if some seeded game actually passes.
 // Find one, so a pass-collapsing index cannot hide behind a pass-free game.
+// A step as a replay screen plays it (replay_steps.h ReplayPlayStep). The three
+// answers it adds to the index were each a host's own rule once - which cover
+// steps were one move, where a bout opens, what the clock reads - so each is
+// held here against the code replayed by hand through the public API.
+static void test_replay_play_steps(void) {
+    static unsigned char code[1 << 20];
+    static unsigned char idx[RS_INDEX_STRIDE * 2048];
+    static unsigned char play[RS_PLAY_STRIDE * 2048];
+    static ReplayPlayStep p[2048];
+    static ReplayAction acts[REPLAY_MAX_ACTIONS];
+    static double gaps[2048];
+    static Game rebuilt;
+    int runs = 0, joined = 0, bouts = 0, later_bouts = 0;
+
+    for (int np = 2; np <= 4; np++) for (int s = 0; s < 4; s++) {
+        Game g;
+        unsigned char seed[FOOLISH_SEED_LEN];
+        if (!rs_play_seeded(&g, np, 900 + 10 * np + s, seed)) { CHECK(0, "seeded game plays out"); continue; }
+        const int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 20, code, (int)sizeof code);
+        const int ilen = enc > 0 ? replay_steps_index_v6(code, enc, 0, idx, (int)sizeof idx) : -1;
+        ReplaySummary sum;
+        if (ilen <= 0 || replay_summary_v6(code, enc, &sum) != REPLAY_EOK) { CHECK(0, "the played game encodes and indexes"); continue; }
+        const int steps = ilen / RS_INDEX_STRIDE;
+
+        // NO CLOCK: every step is the index's, nothing joins, and time stands at the start.
+        int n = replay_steps_play_v6(code, enc, 77, NULL, 0, play, (int)sizeof play);
+        CHECK(n == steps, "one play record per step");
+        if (n != steps) continue;
+        memcpy(p, play, (size_t)n * RS_PLAY_STRIDE);
+        int same = 1, none_join = 1, stands = 1;
+        for (int i = 0; i < n; i++) {
+            ReplayStep r;
+            memcpy(&r, idx + i * RS_INDEX_STRIDE, sizeof r);
+            if (p[i].kind != r.kind || p[i].seat != r.seat || p[i].named != r.named) same = 0;
+            if (p[i].joins) none_join = 0;
+            if (p[i].at != 77) stands = 0;
+        }
+        CHECK(same, "a play record is the index's kind, seat and named count");
+        CHECK(none_join, "without the extras' gaps no step joins another: a send boundary is not guessed");
+        CHECK(stands, "and every step stands at the start time");
+
+        // WHERE A BOUT OPENS, against the game replayed by hand: an ATTACK onto
+        // a table the action before it left empty.
+        ReplayHeader hdr;
+        Card deck[MAX_DECK];
+        int n_deck = 0, n_acts = 0, opens = 1;
+        if (replay_deal_v6(code, enc, &hdr, deck, MAX_DECK, &n_deck, acts, REPLAY_MAX_ACTIONS, &n_acts) != REPLAY_EOK
+            || replay_deal_start(&rebuilt, &hdr, deck, n_deck) != REPLAY_EOK || n_acts != n - 1) {
+            CHECK(0, "the code deals and lists its actions"); continue;
+        }
+        CHECK(!p[0].opens_bout && p[1].opens_bout, "the deal opens no bout, and the first attack opens the first");
+        for (int i = 0; i < n_acts; i++) {
+            const int empty = rebuilt.num_battles == 0;
+            if (p[i + 1].opens_bout != (acts[i].kind == REPLAY_ATOM_ATTACK && empty)) opens = 0;
+            if (p[i + 1].opens_bout) { bouts++; if (i > 0) later_bouts++; }
+            replay_action_apply(&rebuilt, &acts[i]);
+        }
+        CHECK(opens, "a bout opens at an ATTACK onto an empty table, and nowhere else");
+
+        // THE CLOCK: one gap per ATTACK, COVER, PASS and PICKUP, the summary's
+        // `moves`; every other step happens at the moment of the move before it.
+        CHECK(sum.moves <= 2048, "the gaps fit the test");
+        for (int i = 0; i < sum.moves; i++) gaps[i] = 10;
+        n = replay_steps_play_v6(code, enc, 1000, gaps, sum.moves, play, (int)sizeof play);
+        memcpy(p, play, (size_t)(n > 0 ? n : 0) * RS_PLAY_STRIDE);
+        int clock = n == steps && p[0].at == 1000, moves = 0, apart = 1;
+        for (int i = 1; i < n; i++) {
+            const int timed = p[i].kind == REPLAY_ATOM_ATTACK || p[i].kind == REPLAY_ATOM_COVER
+                              || p[i].kind == REPLAY_ATOM_PASS || p[i].kind == REPLAY_ATOM_PICKUP;
+            moves += timed;
+            if (p[i].at != 1000 + 10.0 * moves) clock = 0;
+            if (p[i].joins) apart = 0;
+        }
+        CHECK(clock && moves == sum.moves, "each move spends its own gap once, and a step that is not a move spends none");
+        CHECK(apart, "two sends ten seconds apart are never one move, however adjacent");
+
+        // Fewer gaps than moves: the clock stops at the last one, and nothing past it joins.
+        const int half = sum.moves / 2;
+        for (int i = 0; i < sum.moves; i++) gaps[i] = 0;
+        n = replay_steps_play_v6(code, enc, 0, gaps, half, play, (int)sizeof play);
+        memcpy(p, play, (size_t)(n > 0 ? n : 0) * RS_PLAY_STRIDE);
+        int past = 1;
+        moves = 0;
+        for (int i = 1; i < n; i++) {
+            const int timed = p[i].kind == REPLAY_ATOM_ATTACK || p[i].kind == REPLAY_ATOM_COVER
+                              || p[i].kind == REPLAY_ATOM_PASS || p[i].kind == REPLAY_ATOM_PICKUP;
+            moves += timed;
+            if (moves > half && p[i].joins) past = 0;
+        }
+        CHECK(n == steps && past, "a move past the last gap has no send boundary to read, so it joins nothing");
+
+        // ONE SEND: with every gap at zero a cover joins the cover before it
+        // when the same seat laid both, and nothing else ever joins.
+        n = replay_steps_play_v6(code, enc, 0, gaps, sum.moves, play, (int)sizeof play);
+        memcpy(p, play, (size_t)(n > 0 ? n : 0) * RS_PLAY_STRIDE);
+        int joins = n == steps && !p[0].joins;
+        for (int i = 1; i < n; i++) {
+            const int run = p[i].kind == REPLAY_ATOM_COVER && p[i - 1].kind == REPLAY_ATOM_COVER && p[i].seat == p[i - 1].seat;
+            if (p[i].joins != run) joins = 0;
+            runs += run;
+            joined += p[i].joins;
+        }
+        CHECK(joins, "at a gap of zero a cover joins the same seat's cover before it, and nothing else joins");
+
+        // The gap is the cover's OWN: a zero on the step before it, or after, joins nothing.
+        for (int i = 0; i < sum.moves; i++) gaps[i] = 0.001;
+        n = replay_steps_play_v6(code, enc, 0, gaps, sum.moves, play, (int)sizeof play);
+        memcpy(p, play, (size_t)(n > 0 ? n : 0) * RS_PLAY_STRIDE);
+        int ms = 1;
+        for (int i = 0; i < n; i++) if (p[i].joins) ms = 0;
+        CHECK(n == steps && ms, "a millisecond apart is two sends: zero is an identity, not a tolerance");
+
+        CHECK(replay_steps_play_v6(code, enc, 0, NULL, 0, play, steps * RS_PLAY_STRIDE - 1) == -REPLAY_ECAP,
+              "a buffer one byte short of the records is refused");
+    }
+    CHECK(runs > 0 && joined == runs, "the games held cover runs, and every one joined");
+    CHECK(later_bouts > 0 && bouts > later_bouts, "and more than one bout each");
+    const unsigned char junk[1] = { 0xFF };
+    CHECK(replay_steps_play_v6(junk, 1, 0, NULL, 0, play, (int)sizeof play) < 0, "a code that does not decode has no steps to play");
+}
+
 static void test_replay_step_index_tells_a_pass_from_an_attack(void) {
     static unsigned char code[1 << 20];
     static unsigned char idx[4096];
@@ -15540,6 +15661,7 @@ int main(void) {
     test_replay_summary_is_the_decode();
     test_replay_decoded_log_reads_the_stream();
     test_replay_step_index_tells_a_pass_from_an_attack();
+    test_replay_play_steps();
     test_replay_step_index_reports_a_pending_good();
     test_replay_steps_replays_a_deal_with_no_trump();
     test_replay_step_index_refuses_a_small_buffer();

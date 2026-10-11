@@ -396,12 +396,8 @@ typedef struct {
     int cap, len, err;
 } RsIndexCtx;
 
-static void rs_step_index(const Game *g, int viewer, void *u) {
-    (void)viewer;
-    (void)g;
-    RsIndexCtx *x = (RsIndexCtx *)u;
-    if (x->err) return;
-    if (x->len + RS_INDEX_STRIDE > x->cap) { x->err = REPLAY_ECAP; return; }
+// What the step now playing is (g_rs_cur): the index's record.
+static ReplayStep rs_step_record(void) {
     // The deal is nobody's action; ROUND_END is every remaining attacker's, so
     // it is nobody in particular's either (rs_apply says good for all of them).
     const int kind = g_rs_cur ? g_rs_cur->kind : REPLAY_ATOM_DEAL;
@@ -420,7 +416,16 @@ static void rs_step_index(const Game *g, int viewer, void *u) {
             default: named = 0; break;      // pickup, good, draw, round end
         }
     }
-    const ReplayStep rec = { (uint8_t)kind, (int8_t)(uint8_t)seat, (uint8_t)named };
+    return (ReplayStep){ (uint8_t)kind, (int8_t)(uint8_t)seat, (uint8_t)named };
+}
+
+static void rs_step_index(const Game *g, int viewer, void *u) {
+    (void)viewer;
+    (void)g;
+    RsIndexCtx *x = (RsIndexCtx *)u;
+    if (x->err) return;
+    if (x->len + RS_INDEX_STRIDE > x->cap) { x->err = REPLAY_ECAP; return; }
+    const ReplayStep rec = rs_step_record();
     memcpy(x->out + x->len, &rec, sizeof rec);
     x->len += RS_INDEX_STRIDE;
 }
@@ -437,9 +442,64 @@ int replay_steps_index_v6(const unsigned char *code, int code_len,
     return x.len;
 }
 
-/* ------------------------------- a code at a glance ------------------------ */
+/* ------------------------- a step, as a screen plays it -------------------- */
 
 static int rs_move_log_type(int kind);
+
+typedef struct {
+    RsIndexCtx    o;
+    const double *gaps;
+    int           n_gaps, g;      // the gaps, and the next one to spend
+    double        at;
+    ReplayStep    prev;
+    int           prev_battles;   // the table the step before this one left
+} RsPlayCtx;
+
+static void rs_step_play(const Game *g, int viewer, void *u) {
+    (void)viewer;
+    RsPlayCtx *x = (RsPlayCtx *)u;
+    if (x->o.err) return;
+    if (x->o.len + RS_PLAY_STRIDE > x->o.cap) { x->o.err = REPLAY_ECAP; return; }
+    const ReplayStep s = rs_step_record();
+    ReplayPlayStep rec;
+    memset(&rec, 0, sizeof rec);
+    rec.kind = s.kind;
+    rec.seat = s.seat;
+    rec.named = s.named;
+    rec.opens_bout = s.kind == REPLAY_ATOM_ATTACK && x->prev_battles == 0;
+    if (rs_move_log_type(s.kind) >= 0) {
+        if (x->g < x->n_gaps) {
+            const double gap = x->gaps[x->g];
+            rec.joins = s.kind == REPLAY_ATOM_COVER && x->prev.kind == REPLAY_ATOM_COVER
+                        && s.seat == x->prev.seat && gap <= 0;
+            x->at += gap;
+        }
+        x->g++;
+    }
+    rec.at = x->at;
+    memcpy(x->o.out + x->o.len, &rec, sizeof rec);
+    x->o.len += RS_PLAY_STRIDE;
+    x->prev = s;
+    x->prev_battles = g->num_battles;
+}
+
+int replay_steps_play_v6(const unsigned char *code, int code_len,
+                         double start_time, const double *gaps, int n_gaps,
+                         unsigned char *out, int out_cap) {
+    RsPlayCtx x;
+    memset(&x, 0, sizeof x);
+    x.o.out = out;
+    x.o.cap = out_cap;
+    x.gaps = gaps;
+    x.n_gaps = gaps ? n_gaps : 0;
+    x.at = start_time;
+    const int r = rs_play(code, code_len, VIEW_SPECTATOR, 0, rs_step_play, &x);
+    if (r < 0) return r;
+    if (x.o.err) return -x.o.err;
+    return x.o.len / RS_PLAY_STRIDE;
+}
+
+/* ------------------------------- a code at a glance ------------------------ */
 
 static void rs_count_moves(void *ctx, const ReplayAtom *a) {
     if (rs_move_log_type(a->kind) >= 0) (*(int *)ctx)++;

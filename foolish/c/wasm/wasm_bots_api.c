@@ -542,6 +542,19 @@ int wasm_replay_step_index(int code_len) {
                                  wasm_io_ptr(), wasm_io_cap());
 }
 
+// Each step as a replay screen plays it (replay_steps.h ReplayPlayStep), one
+// RS_PLAY_STRIDE-byte record per step into the MAIN io buffer. The clock is the
+// struct at wasm_replay_extras_ptr: its start time and gaps when it has times,
+// none otherwise. Returns the step count or -REPLAY_E*.
+extern void *wasm_replay_extras_ptr(void);
+int wasm_replay_step_play(int code_len) {
+    const ReplayExtras *x = (const ReplayExtras *)wasm_replay_extras_ptr();
+    const int timed = (x->flags & REPLAY_EXTRAS_FLAG_TIMES) != 0;
+    if (timed && (x->n_gaps < 0 || x->n_gaps > REPLAY_EXTRAS_MAX_GAPS)) return -REPLAY_EINPUT;
+    return replay_steps_play_v6(wasm_replay_io_ptr(), code_len, timed ? x->start_time : 0,
+                                x->gaps, timed ? x->n_gaps : 0, wasm_io_ptr(), wasm_io_cap());
+}
+
 // A recorded decision, as the Oracle imports it (replay_steps.h): the board step
 // `step` was decided on, as `viewer` saw it, and the public log before it. The
 // code is in the replay buffer; the bytes come back in the main IO buffer for the

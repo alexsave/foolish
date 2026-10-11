@@ -491,6 +491,24 @@ export function replayStepIndex(code: Uint8Array): ReplayStepInfo[] {
     return Array.from({ length: len / K.RS_INDEX_STRIDE }, (_, i) => V.readReplayStep(m, base + i * K.RS_INDEX_STRIDE));
 }
 
+/** One step as a replay screen plays it (replay_steps.h ReplayPlayStep): what it
+ *  is, whether it `joins` the step before it into one move, whether it opens a
+ *  bout, and when it happened (`at`, unix seconds). */
+export type ReplayPlayStep = V.ReplayPlayStep_Snap;
+
+/**
+ * Every step of a code as a replay screen plays it, against the extras' clock:
+ * `gaps` are the per-move gaps and `startTime` the first move's time, null for a
+ * code cut without them (nothing joins, and `at` says nothing).
+ */
+export function replayPlaySteps(code: Uint8Array, startTime: number | null, gaps: number[] | null): ReplayPlayStep[] {
+    const ex = codeIn(code);
+    extrasArgs(ex, null, startTime ?? 0, gaps);
+    const n = ok(ex.wasm_replay_step_play(code.length), replayRefused);
+    const m = mem(ex), base = ex.wasm_io_ptr();
+    return Array.from({ length: n }, (_, i) => V.readReplayPlayStep(m, base + i * K.RS_PLAY_STRIDE));
+}
+
 /**
  * Every evwire frame a code replays to, for `viewer` (-1 = spectator), in step
  * order. Pulled in chunks because the frames of a whole game - each carrying a

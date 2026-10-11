@@ -989,6 +989,7 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_replay_events -Wl,--export=wasm_replay_events_index_ptr \
   -Wl,--export=wasm_replay_step_count \
   -Wl,--export=wasm_replay_step_index \
+  -Wl,--export=wasm_replay_step_play \
   -Wl,--export=wasm_replay_extras_encode -Wl,--export=wasm_replay_extras_ptr \
   -Wl,--export=wasm_replay_extras_decode \
   -Wl,--export=wasm_replay_link \
@@ -1586,7 +1587,8 @@ WASM_WEB_NAMES := \
   wasm_replay_b32_encode wasm_replay_b32_decode wasm_replay_link \
   wasm_replay_extras_ptr wasm_replay_extras_decode \
   wasm_replay_events wasm_replay_events_index_ptr \
-  wasm_replay_step_count wasm_replay_step_index
+  wasm_replay_step_count wasm_replay_step_index \
+  wasm_replay_step_play
 
 # Picked OUT of the shipped list rather than spelled a second time, so a name
 # cannot be in the browser's module and not in the server's — that would be the

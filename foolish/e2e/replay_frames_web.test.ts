@@ -25,7 +25,7 @@ import assert from 'node:assert/strict';
 
 import { covered } from '../src/state/view.ts';
 import {
-    buildReplayFrames, buildReverseFrames, preDealGame, stepTimes,
+    buildReplayFrames, buildReverseFrames, preDealGame,
 } from '../src/replay/frames.ts';
 import { REPLAY_ATOM_DEAL, REPLAY_ATOM_ATTACK, REPLAY_ATOM_COVER, REPLAY_ATOM_PASS, REPLAY_ATOM_PICKUP, REPLAY_ATOM_ROUND_END } from '../sdk/ts/gen/kernel_consts.bots.ts';
 import { seedBytes } from './helpers/bot_table.ts';
@@ -139,8 +139,6 @@ test('the status line asks the kernel what happened, and gets the real game back
             const coverFrames = frames.filter((f) => f.kind === REPLAY_ATOM_COVER);
             const pairs = coverFrames.reduce((n, f) => n + (f.pairs?.length ?? 0), 0);
             assert.equal(pairs, count('cover'), `${np}p: every cover pair survives merging`);
-            assert.equal(coverFrames.reduce((n, f) => n + f.moves, 0), count('cover'),
-                `${np}p: a merged frame counts the moves it merged`);
             assert.ok(coverFrames.length <= count('cover'), `${np}p: merging never adds frames`);
             // Each frame's own cards and events agree with its pair count, so a
             // merge cannot quietly lose the second card of a double cover.
@@ -224,12 +222,17 @@ test('the deal animates out of an empty table, and the clock tracks the moves', 
         ([REPLAY_ATOM_ATTACK, REPLAY_ATOM_COVER, REPLAY_ATOM_PASS, REPLAY_ATOM_PICKUP] as number[])
             .includes(f.kind)).length;
     const gaps = Array.from({ length: timed }, () => 10);
-    const times = stepTimes(frames, 1000, gaps);
+    const times = buildReplayFrames(played.code, 'g', null, { startTime: 1000, moveGaps: gaps }).map((f) => f.time);
+    assert.equal(times.length, frames.length, 'a 10s gap joins nothing');
     assert.equal(times[0], 1000, 'the deal is the start time');
     assert.equal(times[times.length - 1], 1000 + 10 * timed, 'every gap is spent, exactly once');
 
-    assert.deepEqual(stepTimes(frames, null, null), frames.map(() => null),
+    assert.deepEqual(frames.map((f) => f.time), frames.map(() => null),
         'no timing data, no timestamps');
+
+    // A bout begins at the attack that opens onto an empty table.
+    frames.forEach((f, i) => assert.equal(f.opensBout,
+        f.kind === REPLAY_ATOM_ATTACK && frames[i - 1].game.battles.length === 0, `step ${i}: opens a bout`));
 });
 
 test('before the deal lands, nobody holds a card - the watching seat included', async () => {
@@ -290,7 +293,6 @@ test('a cover run is merged only when its pairs were one send', async () => {
         if (f.kind !== REPLAY_ATOM_COVER) continue;
         assert.equal(f.pairs?.length ?? 0, 1,
             'without the extras\' times, a cover step stays one pair');
-        assert.equal(f.moves, 1, 'and counts as the one move it is');
     }
 
     // Same code, but every adjacent pair declared same-send: now they merge.
@@ -315,11 +317,11 @@ test('a cover run is merged only when its pairs were one send', async () => {
 
 test('one committed operation is one clock stamp, which is what the merge reads', async () => {
     // THE INVARIANT THE COVER MERGE STANDS ON, pinned where it can be seen.
-    // frames.ts merges a run of cover steps only when the gap between them is
-    // exactly zero, and that is only meaningful because table_commit_products
+    // The kernel joins a run of cover steps only when the gap between them is
+    // exactly zero (c/src/replay_steps.h ReplayPlayStep.joins), and that is only meaningful because table_commit_products
     // stamps every record of ONE committed operation with the same now_ms
     // (c/src/table.c) and table_replay_extras derives one gap per record from
-    // those stamps. Nothing in frames.ts can see that, and if table.c ever
+    // those stamps. Nothing in replay_steps.c can see that, and if table.c ever
     // stamped per record instead of per commit the merge would quietly join
     // every cover run again. So the rule is checked here, against a real table.
     const { dealBotTable, botCycle, seedBytes } = await import('./helpers/bot_table.ts');

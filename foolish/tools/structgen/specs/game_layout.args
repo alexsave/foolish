@@ -86,4 +86,5 @@
 --const ASK_
 --header bot_roster.h --root BotRosterTable
 --header replay_steps.h --root ReplayStep
+--root ReplayPlayStep
 --header anim_plan.h --root AnimRoles

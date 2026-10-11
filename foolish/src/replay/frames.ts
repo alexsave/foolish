@@ -1,40 +1,23 @@
 /* =============================================================================
- * A replay, as the frames live play broadcasts (C_CORE_CONSOLIDATION.md A5)
+ * A replay, as the frames live play broadcasts
  * =============================================================================
  * The kernel rebuilds the real Game a v6 code describes, replays it through the
- * real engine, and hands back the SAME packed evwire frames a live game sends —
+ * real engine, and hands back the SAME packed evwire frames a live game sends -
  * one per step (the deal, then one per action). This module pulls them, reads
  * them with the client's LIVE reader (the kernel's client slot, into TableView
- * boards named by the replay's own seats, src/state/pushSequence.ts naming each
- * step's event), and shapes the handful of things a scrubber needs on top: what
- * each step is, and what each seat held.
+ * boards, src/state/pushSequence.ts naming each step's event), and shapes what a
+ * scrubber draws on top.
  *
- * What used to be here instead: a TS fold over the decoded log stream that
- * rebuilt every board itself and RETRODICTED the hidden cards — assigning each
- * revealed card back to the oldest face-down slot that could have held it. It
- * was a second implementation of the rules, kept in step with the engine by
- * hand, and it was a guess. None of that survives: v6 is hidden-state-lossless,
- * so the kernel does not guess, and the boards are the ones the engine really
- * played.
+ * What a frame cannot say, the kernel says (c/src/replay_steps.h ReplayPlayStep):
+ * what a step IS - an attack and a pass are one event type on the wire - which
+ * steps were one move, where a bout opens and when each step happened.
  *
- * The two facts a frame cannot tell you, and where they come from instead:
- *
- *   - WHAT a step is. On the wire an attack and a pass are one event type,
- *     separated only by a reconstructed English sentence. Pattern-matching that
- *     prose would be a projection by the back door, so the kernel reports it
- *     (replayStepIndex -> c/src/replay_steps.c).
- *
- *   - WHAT EACH SEAT HELD, for the reveal-hands eye. A frame is masked for one
- *     viewer, so a spectator's frames show backs. Rather than deduce identities,
- *     replay the code once per seat and read each seat's own hand out of its own
- *     frames — exact, by construction. It is not expensive: a whole 3p game is
- *     ~7 KB of frames per viewer and four replays land in ~1 ms, because the
- *     arithmetic decode is the cost and it is tiny.
+ * WHAT EACH SEAT HELD, for the reveal-hands eye: a frame is masked for one
+ * viewer, so the code is replayed once per seat and each seat's own hand read
+ * out of its own frames - exact, by construction, and ~1 ms for a whole game.
  * ========================================================================== */
 
-import {
-    replayEventFrames, replayStepIndex, ReplayStepInfo,
-} from '@sdk/ts/wasm/bots.ts';
+import { replayEventFrames, replayPlaySteps, type ReplayPlayStep } from '@sdk/ts/wasm/bots.ts';
 import { REPLAY_ATOM_DEAL, REPLAY_ATOM_ATTACK, REPLAY_ATOM_COVER, REPLAY_ATOM_PASS, REPLAY_ATOM_PICKUP, REPLAY_ATOM_ROUND_END } from '@sdk/ts/gen/kernel_consts.bots.ts';
 import { clientTable } from '@sdk/ts/table/client_table.ts';
 import { AnimationSequenceMessage, FeedAnimationEvent } from '../state/animationFeed';
@@ -68,9 +51,10 @@ export interface ReplayFrame {
      *  split one multi-cover into consecutive steps and this frame merged them
      *  back. Absent for every other kind. */
     pairs?: { card: Card; target: Card }[];
-    /** How many recorded MOVES this step is: 1, except a merged cover run.
-     *  The extras' gaps are one per move, so the clock counts these, not steps. */
-    moves: number;
+    /** When it happened, unix seconds, or null for a replay cut without times. */
+    time: number | null;
+    /** An attack onto an empty table: where a bout begins. */
+    opensBout: boolean;
     /** This frame's index in the KERNEL's step stream, which a merged cover run
      *  makes different from its index here. Every call that addresses the wire
      *  by step - replayStepMaskedState, replayStepLogs - takes this, not the
@@ -80,7 +64,7 @@ export interface ReplayFrame {
     target: Card | null;
     /** Cards moved but not shown individually (the discard count, hidden draws). */
     count: number;
-    /** Ready to publish into the animation feed — the events + the committed board. */
+    /** Ready to publish into the animation feed - the events + the committed board. */
     seq: AnimationSequenceMessage;
     /** This step's committed board, with every seat's hand attached. */
     game: ReplayGameState;
@@ -97,22 +81,21 @@ const NARRATED_EVENT: Record<number, string> = {
     [REPLAY_ATOM_COVER]: 'cover',
     [REPLAY_ATOM_PICKUP]: 'pickup',
     [REPLAY_ATOM_ROUND_END]: 'cards_to_trash',
-    // GOOD moves no cards — nothing to narrate but the seat.
+    // GOOD moves no cards - nothing to narrate but the seat.
 };
 
 /* A replay's frames name no one on the wire, and a replay has no one signed in:
  * a code carries no player ids at all. So a frame is read with no identity, and
  * its seats keep the kernel's empty ids - the page names a seat by its index
  * (state/view.ts seatKey) - and take the names the code's extras give them (or
- * P1, P2...). The board carries the replay's own id, the code itself, which is
- * longer than a table's id may be. Both are the host's display strings, set on
- * the snapshot after the read; no field of the game is. */
-interface Naming { names: string[]; gameId: string }
+ * P1, P2...). Both are the host's display strings, set on the snapshot after
+ * the read; no field of the game is. */
+interface Naming { names?: (string | null)[] | null; gameId: string }
 
 const named = (v: TableView, naming: Naming): TableView => ({
     ...v,
     gameId: naming.gameId,
-    seats: v.seats.map((s, i) => ({ ...s, name: naming.names[i] ?? '' })),
+    seats: v.seats.map((s, i) => ({ ...s, name: naming.names?.[i] || `P${i + 1}` })),
 });
 
 const readFrame = (bytes: Uint8Array, naming: Naming | null) => {
@@ -130,12 +113,13 @@ interface ReplayFramesOpts {
      *  The shared-replay screen is a spectator; the tutorial sits in seat 0, so
      *  its boards mask exactly as they would for a real player in that seat. */
     viewer?: number;
-    /** The loser's seat, marked in the closing board's name — the one thing the
+    /** The loser's seat, marked in the closing board's name - the one thing the
      *  board itself does not carry. */
     fool?: number | null;
-    /** The extras' per-move gaps, in seconds, one per timed step. They are what
-     *  tells one multi-cover apart from several single ones - see mergeCoverRuns.
-     *  Absent on a replay cut without times, and then no cover run is merged. */
+    /** The extras' clock: the first move's unix time and the per-move gaps, in
+     *  seconds. The gaps are what tells one multi-cover apart from several single
+     *  ones; absent on a replay cut without times, and then no cover run is merged. */
+    startTime?: number | null;
     moveGaps?: number[] | null;
 }
 
@@ -149,27 +133,24 @@ export function buildReplayFrames(
     const viewer = opts.viewer ?? -1;
     const fool = opts.fool ?? null;
 
-    const index: ReplayStepInfo[] = replayStepIndex(code);
+    const moveGaps = opts.moveGaps ?? null, startTime = opts.startTime ?? null;
+    const index = replayPlaySteps(code, startTime, moveGaps);
     const main = replayEventFrames(code, viewer);
     if (main.length !== index.length) {
         throw new Error(`replay: ${main.length} frames for ${index.length} steps`);
     }
-
-    // Player count comes from the frames, not from a header we would have to
-    // trust separately: read step 0 once, then name the seats it has.
-    const probe = readFrame(main[0], null);
-    if (!probe) throw new Error('replay: the opening frame did not decode');
-    const n = probe.game.seats.length;
-    const seats: Naming = { names: Array.from({ length: n }, (_, s) => names?.[s] || `P${s + 1}`), gameId };
-
-    // One replay per seat, read for that seat's own hand. This is the reveal
-    // eye's whole source of truth — see the header.
-    const perSeat = Array.from({ length: n }, (_, s) => replayEventFrames(code, s));
-
-    const built: ReplayFrame[] = main.map((bytes, i): ReplayFrame => {
+    const seats: Naming = { names, gameId };
+    const seqs = main.map((bytes, i) => {
         const seq = readFrame(bytes, seats);
         if (!seq) throw new Error(`replay: step ${i} did not decode`);
+        return seq;
+    });
 
+    // One replay per seat, read for that seat's own hand: the reveal eye's
+    // whole source of truth.
+    const perSeat = seqs[0].game.seats.map((_, s) => replayEventFrames(code, s));
+
+    const built: ReplayFrame[] = seqs.map((seq, i): ReplayFrame => {
         const hands: (Card | null)[][] = perSeat.map((frames, s) => {
             const own = readFrame(frames[i], null);
             // A seat's own frame always reveals its own hand; fall back to backs
@@ -199,7 +180,8 @@ export function buildReplayFrames(
             seat: info.seat < 0 ? null : info.seat,
             cards: ev?.cards?.map((c) => ({ ...c })) ?? [],
             named: info.named,
-            moves: 1,
+            time: startTime === null || !moveGaps ? null : info.at,
+            opensBout: info.opensBout,
             step: i,
             ...(info.kind === REPLAY_ATOM_COVER && ev?.cards?.[0] && ev?.target_card
                 ? { pairs: [{ card: { ...ev.cards[0] }, target: { ...ev.target_card } }] }
@@ -216,94 +198,20 @@ export function buildReplayFrames(
             game,
         };
     });
-    return mergeCoverRuns(built, opts.moveGaps ?? null);
+    return mergeCoverRuns(built, index);
 }
 
-// WHAT IT WOULD TAKE TO STOP READING THE CLOCK, if this ever needs to.
-//
-// The clock is a PROXY. The fact is the commit boundary: the server knows which
-// pairs were one operation (table_commit_products stamps them together) and
-// keeps none of it except as a timestamp. Two ways to keep the fact itself:
-//
-//   In the EXTRAS, under a new flag bit - one bit per info move, "starts a new
-//   operation". No version byte moves: replay_extras_decode ignores flag bits it
-//   does not know and never reads past the sections it wants, so old readers
-//   tolerate a new one. This is the cheap door, and it is the only one that also
-//   fixes the links that carry no times at all (an iOS share carries names only,
-//   fio_replay_share_link). The cost is that every producer has to write it and
-//   the clock path has to stay for every code cut before it did.
-//
-//   In the MOVES half, as a cover continuation mirroring atom_attack/atom_pass.
-//   That is the honest home - a cover run IS one move, and the body is where a
-//   move lives - and it needs the version byte (v11): it changes the mixed-radix
-//   integer for every cover, so every v10 code decodes wrongly. 46b32c1f and
-//   c/ios/ios_api_replay.c both reached that conclusion before this did.
-//
-// Neither is EASIER than reading the clock, which is why the clock is what ships.
-// The reason to move is not effort, it is that the gate below silently depends on
-// an invariant two layers away - one commit, one now_ms - that nothing in this
-// file can see and no test here pins. If table.c ever stamps per record instead
-// of per commit, every cover run merges again and only a replay with real times
-// in it would notice.
-
-/** ZERO, exactly. Not a tolerance - an identity. table_commit_products stamps
- *  every record of one committed operation with the same `now_ms` (c/src/table.c),
- *  and table_replay_extras derives one gap per record from those stamps, so two
- *  cover pairs of the SAME send are the same millisecond and their gap decodes
- *  to 0.0. A 1 ms difference already survives the extras' quantisation for any
- *  game shorter than about eight days. So a non-zero gap is a different commit,
- *  and there is no band of "close enough" in between to pick a threshold from. */
-const SAME_SEND_S = 0;
-
-/** Each frame's own gap from the one before it, or null where it has none. The
- *  extras hold one gap per TIMED step and nothing for the derived ones, so they
- *  have to be walked in step order rather than indexed by frame. */
-function timedGaps(frames: ReplayFrame[], moveGaps: number[] | null): (number | null)[] {
-    const out: (number | null)[] = new Array(frames.length).fill(null);
-    if (!moveGaps) return out;
-    let g = 0;
-    for (let i = 0; i < frames.length; i++) {
-        if (!TIMED_KINDS.includes(frames[i].kind)) continue;
-        out[i] = g < moveGaps.length ? moveGaps[g] : null;
-        g++;
-    }
-    return out;
-}
-
-// ONE MOVE IS ONE STEP. The replay coder groups an attack and a pass - both
-// have a continuation loop - but codes a cover one pair at a time
-// (c/src/replay.c atom_cover), so a defender who takes three attacks in one
-// move comes back as three steps. Measured on a 65-step game: attacks arrive
-// carrying 1, 2 or 3 cards, and all 21 covers arrive carrying exactly 1.
-//
-// The kernel reconstructs this rather than storing it, and iMessage has been
-// reading it that way all along: it animates a TURN, found by walking back over
-// consecutive steps of the same actor (c/ios/ios_api_replay.c). The same rule
-// here, for covers only - the one kind the wire is known to split - so the
-// board plays a double cover as one move, the scrubber counts it once, and the
-// Oracle deliberates it once. Anything downstream that used to see two steps
-// now sees one, which is what the game did.
-function mergeCoverRuns(frames: ReplayFrame[], moveGaps: number[] | null): ReplayFrame[] {
-    // WHICH CONSECUTIVE COVERS WERE ONE SEND. The clock says, and it says it
-    // sharply: the pairs of one operation are committed in the same instant, and
-    // two sends are a human or a bot thinking in between. Measured on a shared
-    // 2p replay - within a run 0.000s four times over and 8.434s once; the gap
-    // that OPENS any cover, which is always a separate operation, never came in
-    // under 0.300s. So the 0.000 is not a small gap, it is the same commit.
-    //
-    // This matters because a run of consecutive covers by one seat is NOT
-    // always one move. A defender may cover, send, and cover again later -
-    // which is exactly what happened at the one run this gate now refuses, and
-    // merging it invented a triple cover nobody played.
-    const gapOf = timedGaps(frames, moveGaps);
-    const sameSend = (k: number): boolean => gapOf[k] !== null && gapOf[k]! <= SAME_SEND_S;
+// ONE MOVE IS ONE STEP. The replay coder codes a cover one pair at a time, so
+// a defender who takes three attacks in one move comes back as three steps; the
+// kernel says which steps were one move (ReplayPlayStep.joins) and this folds
+// them, so the board plays a double cover as one move, the scrubber counts it
+// once, and the Oracle deliberates it once.
+function mergeCoverRuns(frames: ReplayFrame[], index: readonly ReplayPlayStep[]): ReplayFrame[] {
     const out: ReplayFrame[] = [];
     for (let i = 0; i < frames.length; i++) {
         const f = frames[i];
         let j = i;
-        while (j + 1 < frames.length && frames[j + 1].kind === REPLAY_ATOM_COVER
-               && frames[j + 1].seat === f.seat && f.kind === REPLAY_ATOM_COVER
-               && sameSend(j + 1)) j++;
+        while (j + 1 < frames.length && index[j + 1].joins) j++;
         if (j === i) { out.push(f); continue; }
         const run = frames.slice(i, j + 1);
         const last = run[run.length - 1];
@@ -324,7 +232,6 @@ function mergeCoverRuns(frames: ReplayFrame[], moveGaps: number[] | null): Repla
             named: run.reduce((n, r) => n + r.named, 0),
             count: run.reduce((n, r) => n + r.count, 0),
             pairs: run.flatMap((r) => r.pairs ?? []),
-            moves: run.reduce((n, r) => n + r.moves, 0),
             seq: { ...last.seq, events: run.flatMap((r) => r.seq.events) },
         });
         i = j;
@@ -348,8 +255,8 @@ export function preDealGame(first: ReplayFrame): ReplayGameState {
  * Stepping backwards
  * =============================================================================
  * The forward stream is the engine's own; there is no backward one, because the
- * engine cannot un-play a move. So a step back INVERTS the flight — cards that
- * flew hand->table on the way in fly table->hand on the way out — and lands on
+ * engine cannot un-play a move. So a step back INVERTS the flight - cards that
+ * flew hand->table on the way in fly table->hand on the way out - and lands on
  * the previous step's board, which the previous frame already carries. The
  * inversion is presentation only: nothing about the game is being recomputed,
  * and the state committed at the end is the kernel's, not a rewind of it.
@@ -427,37 +334,4 @@ export function buildReverseFrames(frames: ReplayFrame[]): (AnimationSequenceMes
     }
 
     return reverse;
-}
-
-/**
- * Absolute unix time (seconds) per step, from the extras blob: the deal is the
- * start time, each information-bearing step advances the clock by its recorded
- * gap, and everything else happens "at the same moment" as the action that
- * caused it.
- *
- * The gaps are recorded one per attack/cover/pass/pickup, and those are exactly
- * the step kinds below — one gap, one step. Goods carry no gap (v6 keeps only a
- * trailing one, and the rest are reconstructed), so they inherit the clock like
- * any derived step.
- */
-const TIMED_KINDS: number[] = [
-    REPLAY_ATOM_ATTACK, REPLAY_ATOM_COVER, REPLAY_ATOM_PASS, REPLAY_ATOM_PICKUP,
-];
-
-export function stepTimes(
-    frames: ReplayFrame[],
-    startTime: number | null,
-    moveGaps: number[] | null,
-): (number | null)[] {
-    if (startTime === null || !moveGaps) return frames.map(() => null);
-    let t = startTime;
-    let g = 0;
-    return frames.map((f) => {
-        // A merged cover run is several recorded moves on one step, and the
-        // extras hold one gap per move: spend them all or every later step drifts.
-        if (TIMED_KINDS.includes(f.kind)) {
-            for (let k = 0; k < f.moves && g < moveGaps.length; k++) t += moveGaps[g++];
-        }
-        return t;
-    });
 }
