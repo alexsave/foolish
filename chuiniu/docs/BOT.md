@@ -13,10 +13,10 @@ The code is `chuiniu/c/bot/`; the decisions that matter are B1 to B4 in `DECISIO
 - `Makefile`: its own, compiling the kernel's sources by relative path, so it never touches `chuiniu/c/Makefile`.
 
 ```
-make -C chuiniu/c/bot bot-test     # 210,779 checks, 0 failures
-make -C chuiniu/c/bot asan         # the same under ASan + UBSan
-make -C chuiniu/c/bot arena        # bot vs random, 4000 games at 2 and at 4 seats
-make -C chuiniu/c/bot arena-fast   # a smoke run of the same
+make -C chuiniu/c bot-test         # 210,779 checks, 0 failures
+make -C chuiniu/c bot-asan         # the same under ASan + UBSan
+make -C chuiniu/c bot-arena        # bot vs random, 4000 games at 2 and at 4 seats
+make -C chuiniu/c bot-arena-fast   # a smoke run of the same
 chuiniu/c/bot/build/cn_arena --seats=4 --mix=bot,prior,prior,prior --games=4000 [--seed=1 --threads=8 --worlds=96 --fast]
 ```
 

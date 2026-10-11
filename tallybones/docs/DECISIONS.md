@@ -192,7 +192,7 @@ Also from the run: the table replaces the lobby the moment my own join fills the
 
 ## Bot
 
-T30: the bot is an exact single-player expected-value solver in pure C, `tallybones/c/bot/` with its own Makefile, an internal simulation and evaluation tool only (no lobby seat, nothing in iOS or Swift).
+T30: the bot is an exact single-player expected-value solver in pure C, `tallybones/c/bot/` (built by `tallybones/c/Makefile`, the `bot-` targets; it had its own Makefile until the kernel's rules could build it), an internal simulation and evaluation tool only (no lobby seat, nothing in iOS or Swift).
 The game has no interaction between seats, so there is no opponent model: the bot maximises the expected value of its own final score.
 It scores with the kernel's `tb_score_of` and `TB_BONUS_AT` / `TB_BONUS`, compiled in, so the bot and the game have one scoring implementation.
 
@@ -220,7 +220,7 @@ Also checked: P(five alike in three rolls, optimal) = 2783176/6^10, the publishe
 200,000 games played by the policy: mean 245.9042, standard error 0.0890 (sd 39.8), so the exact value is 0.38 standard errors from the simulated mean.
 The table builds in 8.4 s on one thread and 2.2 s on 8.
 
-T35: the verification is `make -C tallybones/c/bot run` (and `asan`), `tb_bot_test`, eight groups, each mutation-checked (`tallybones/c/bot/MUTATIONS.md`).
+T35: the verification is `make -C tallybones/c bot-test` (and `bot-asan`), `tb_bot_test`, eight groups, each mutation-checked (`tallybones/c/bot/MUTATIONS.md`).
 G1: every (hand, keep mask) distribution, 8064 of them, sums to 1 and equals a by-position enumeration of the raw rerolls.
 G2: one roll of five dice against hand counts: five alike 6, long run 240, full house 300, four alike 156, three alike 1656, short run 1200, all over 7776.
 G3: whole sub-problems with hand-computed values (Any alone 70/3, Sixes alone 30 x 91/216 and with the bonus at 33, Ones alone at 60, Tallybones alone, and one roll with no rerolls).

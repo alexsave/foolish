@@ -1,4 +1,4 @@
-/* Chui Niu - the bot's tests. `make -C chuiniu/c/bot bot-test`.
+/* Chui Niu - the bot's tests. `make -C chuiniu/c bot-test`.
  *
  * Every test here was mutation-checked by hand: MUTATIONS.md names the
  * break, the assertion that went red, and the restore. */

@@ -13,14 +13,14 @@ DECISIONS.md T30 to T35 are the design and the numbers.
 - `tb_bot_test.c`: every check, in eight groups (G1 to G8).
 - `MUTATIONS.md`: the break that turns each check red.
 
-Scoring is the kernel's `tb_score_of` (`../src/tb.c`), compiled in from this Makefile; nothing in `../src` or `../tests` is edited.
+Scoring is the kernel's `tb_score_of` (`../src/tb.c`), linked from the kernel's own objects by `../Makefile`; nothing in `../src` or `../tests` is edited.
 
 ## Targets
 
-- `make -C tallybones/c/bot run`: build and run every check with 200,000 simulated games (about 35 s on 8 cores).
-- `make -C tallybones/c/bot asan`: the same under ASan and UBSan with 20,000 games (about 50 s).
-- `make -C tallybones/c/bot solve`: `build/tb_solve play 200000`, the exact value, the simulated mean and a histogram.
-- `build/tb_solve [-t THREADS] [play N [SEED]]`.
+- `make -C tallybones/c bot-test`: build and run every check with 200,000 simulated games (about 35 s on 8 cores).
+- `make -C tallybones/c bot-asan`: the same under ASan and UBSan with 20,000 games (about 50 s).
+- `make -C tallybones/c bot-solve`: `build/tb_solve play 200000`, the exact value, the simulated mean and a histogram.
+- `tallybones/c/build/tb_solve [-t THREADS] [play N [SEED]]`.
 
 ## Numbers
 

@@ -1,6 +1,6 @@
 # cn_bot_test mutation checks
 
-Every test in `cn_bot_test.c` was broken on purpose by hand, run with `make bot-test`, seen to go red on the named assertion, and restored.
+Every test in `cn_bot_test.c` was broken on purpose by hand, run with `make -C chuiniu/c bot-test`, seen to go red on the named assertion, and restored.
 After the last restore `git diff` on `cn_bot.c` was empty and the suite was green (210,779 checks, 0 failures).
 
 | # | Test | Break (in `cn_bot.c`) | Red assertion |
