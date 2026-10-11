@@ -304,26 +304,6 @@ function replayStepCount(code: Uint8Array): number {
     return ok(codeIn(code).wasm_replay_step_count(code.length), replayRefused);
 }
 
-/** What one step of a code IS (replay_steps.h ReplayStep): `kind` a REPLAY_ATOM_*
- *  (DEAL is the opening deal; ROUND_END is every remaining attacker saying good),
- *  `seat` the acting seat or -1 (the deal, and round ends nobody in particular
- *  closes), `named` how many of the step's cards the MOVE NAMED - 0 for a pickup
- *  or a good, whose step carries cards nobody chose. */
-export type ReplayStepInfo = V.ReplayStep_Snap;
-
-/**
- * What each step of a code IS, in step order. The kernel reports this rather
- * than the web inferring it from the frames, because the frames genuinely
- * cannot say: an attack and a pass are the same evwire event type, told apart
- * only by a reconstructed English message. See replay_steps.h.
- */
-export function replayStepIndex(code: Uint8Array): ReplayStepInfo[] {
-    const ex = replayIn(serverBots(), codeTooBig, code);
-    const len = ok(ex.wasm_replay_step_index(code.length), replayRefused);
-    const m = mem(ex), base = ex.wasm_io_ptr();
-    return Array.from({ length: len / K.RS_INDEX_STRIDE }, (_, i) => V.readReplayStep(m, base + i * K.RS_INDEX_STRIDE));
-}
-
 /** One step as a replay screen plays it (replay_steps.h ReplayPlayStep): what it
  *  is, whether it `joins` the step before it into one move, whether it opens a
  *  bout, and when it happened (`at`, unix seconds). */

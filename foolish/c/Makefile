@@ -981,7 +981,6 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_events_serialize_from \
   -Wl,--export=wasm_replay_events -Wl,--export=wasm_replay_events_index_ptr \
   -Wl,--export=wasm_replay_step_count \
-  -Wl,--export=wasm_replay_step_index \
   -Wl,--export=wasm_replay_step_play \
   -Wl,--export=wasm_replay_extras_encode -Wl,--export=wasm_replay_extras_ptr \
   -Wl,--export=wasm_replay_extras_decode \

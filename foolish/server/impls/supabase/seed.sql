@@ -1077,19 +1077,22 @@ BEGIN
   -- scheduled. A local stack therefore posts at hosted's bot-heartbeat with a
   -- service-role key its Vault does not have, which 401s and drives nothing; the
   -- local bot loop is woken inline by scheduleBotLoop instead.
+  --
+  -- A GET, with no body. The function reads none (a scan is the bare URL, a
+  -- drive is `?game=<id>`), and pg_net's http_post can only send a jsonb one, so
+  -- for as long as this was a POST it carried a `{}` nobody asked for. The
+  -- headers are a jsonb value because that is the only type pg_net takes them in.
   PERFORM cron.schedule(
     'bot-heartbeat',
     '10 seconds',
     $job$
   DELETE FROM cron.job_run_details WHERE end_time < now() - interval '2 days';
-  SELECT net.http_post(
+  SELECT net.http_get(
     url := 'https://wngpfwmwkltonwosqflx.supabase.co/functions/v1/bot-heartbeat',
     headers := jsonb_build_object(
-      'Content-Type',  'application/json',
       'Authorization', 'Bearer ' || (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'service_role_key'),
       'apikey',        (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'service_role_key')
     ),
-    body := '{}'::jsonb,
     timeout_milliseconds := 5000
   )
   WHERE EXISTS (

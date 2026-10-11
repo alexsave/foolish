@@ -21,9 +21,8 @@
 //
 // THE REQUEST BODY IS NEVER READ, and neither answer has one. The mode is the
 // URL's: the one thing a drive must be told is a game id, and an id is a URL's
-// to carry. The cron still POSTs `{}` (seed.sql): pg_net's http_post takes a
-// jsonb body and nothing else, so those two bytes are pg_net's, and this
-// function does not look at them. A scan's counts go to the log; nothing ever
+// to carry. The cron sends none either: it is a GET (seed.sql), because pg_net's
+// http_post can only send a jsonb body. A scan's counts go to the log; nothing ever
 // read them from the response but pg_net's own response table.
 //
 // Auth: the function relies on the platform's JWT verification - the cron and the

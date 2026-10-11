@@ -28,7 +28,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   kernelB32Encode, kernelReplayLink, kernelB32Decode, kernelReplayLinkParse,
-  replayStepIndex, replaySummary,
+  replayPlaySteps, replaySummary,
 } from '../sdk/ts/wasm/bots.ts';
 import { REPLAY_ATOM_ATTACK, REPLAY_ATOM_COVER, REPLAY_ATOM_PASS, REPLAY_ATOM_PICKUP } from '../sdk/ts/gen/kernel_consts.bots.ts';
 import * as V from '../sdk/ts/gen/view_layout.bots.ts';
@@ -170,7 +170,7 @@ function roundTripGame(game: Played, np: number, where: string): boolean {
   // The decode is the game the engine actually played - compared on the INFO
   // actions, in order and by seat: what the replay says each step played
   // (replay_steps.c) against the moves live play pushed to the table's watchers.
-  const steps = replayStepIndex(enc.bytes);
+  const steps = replayPlaySteps(enc.bytes, null, null);
   const decodedMoves = steps.filter((s) => INFO_STEP[s.kind]).map((s) => `${INFO_STEP[s.kind]}@${s.seat}`);
   assert.equal(diffStreams(pushedMoves(game), decodedMoves), null,
     `info-action stream mismatch (np=${np}, ${where}, seed=${rng.seed})`);
@@ -254,7 +254,7 @@ export function registerReplayValidation(): void {
     // the deal-order fix), and the kernel refuses it by number rather than
     // trying to read it - c/tests/tests.c walks the whole alphabet.
     assert.throws(
-      () => replayStepIndex(new Uint8Array([7])),
+      () => replayPlaySteps(new Uint8Array([7]), null, null),
       /unsupported replay format version 7/,
     );
     assert.equal(replaySummary(new Uint8Array([7])), null, 'a retired code has no summary');
@@ -263,7 +263,7 @@ export function registerReplayValidation(): void {
     const junk = new Uint8Array(64);
     for (let i = 0; i < junk.length; i++) junk[i] = (i * 37 + 11) & 0xff;
     try {
-      const steps = replayStepIndex(junk);
+      const steps = replayPlaySteps(junk, null, null);
       assert.ok(Array.isArray(steps));
     } catch {
       // expected: a clean rejection

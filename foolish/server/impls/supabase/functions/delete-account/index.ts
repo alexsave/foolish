@@ -49,6 +49,9 @@ serve(async (req: Request): Promise<Response> => {
         const user = await getAuthenticatedUser(req);
         userId = user.id;
     } catch (e) {
+        // Auth that is not configured judged nobody: the server's failure, not a 401
+        // a client would read as "already deleted".
+        if ((e as Error)?.name === 'AuthNotConfigured') return refusalFor(e, 500);
         // No or invalid token: treat as already deleted / unauthenticated.
         return refusalFor(e, 401);
     }

@@ -330,6 +330,16 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
         }
 
+        // A push for a game this page is not showing is a board to keep, not a
+        // sequence to play: its cards have no place on this table. ServerContext
+        // leaves a game's streams when the page does, but leaving is not
+        // instant - a push already on the socket still arrives - so the stream's
+        // owner and this test cover different moments, and both stay.
+        if (typeof message.version === 'number' && message.game.gameId !== url_game_id) {
+            updateGameState(message.game.gameId, message.game);
+            return;
+        }
+
         // Store the game ID for use during animations
         currentGameIdRef.current = message.game.gameId;
 
