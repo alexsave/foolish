@@ -20,7 +20,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { replayStepCount, replayStepIndex, replayStepLogs, replayStepMaskedState, REPLAY_STEP } from '../sdk/ts/wasm/bots.ts';
+import { replayStepCount, replayStepIndex, replayStepLogs, replayStepMaskedState } from '../sdk/ts/wasm/bots.ts';
+import { REPLAY_ATOM_ROUND_END } from '../sdk/ts/gen/kernel_consts.bots.ts';
 import { LOG_DRAW } from '../sdk/ts/gen/game_layout.bots.ts';
 import { playBotTable, seedBytes } from './helpers/bot_table.ts';
 
@@ -67,7 +68,7 @@ test('the kernel refuses what is not a decision it can vouch for', () => {
     assert.ok(replayStepMaskedState(code, 1, -1), 'a spectator is a viewer');
     assert.equal(replayStepLogs(code, 0), null, 'the deal has no record');
     assert.equal(replayStepLogs(code, steps), null, 'no step past the last');
-    const round = replayStepIndex(code).findIndex((info, i) => i > 0 && info.kind === REPLAY_STEP.ROUND_END);
+    const round = replayStepIndex(code).findIndex((info, i) => i > 0 && info.kind === REPLAY_ATOM_ROUND_END);
     assert.ok(round > 0, 'the game has a round end');
     assert.equal(replayStepLogs(code, round), null, 'a round end has no record of its own');
     assert.ok(replayStepMaskedState(code, round, -1), 'but it has a board');

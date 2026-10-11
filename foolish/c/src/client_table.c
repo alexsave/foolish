@@ -732,6 +732,79 @@ static int uncovered(const TableView *v) {
 
 // A card as the conflict rule names it: its dense id, or ANIM_CARD_NONE for a
 // back or no card at all.
+// ---- the plan, asked with boards (client_table.h) ----------------------------
+
+// A row cell: the card's dense id, or ANIM_TABLE_UNKNOWN for one that is there
+// and cannot be named.
+static unsigned char plan_row_id(Card c) {
+    return card_in_range(c, 1, ACE_VALUE) ? (unsigned char)card_to_id(c) : (unsigned char)ANIM_TABLE_UNKNOWN;
+}
+
+// The four numbers and the row the plan reads off a board. `hand` is written
+// for every seat a table can have, so a narrower board reads as empty seats.
+static int plan_board(const TableView *v, uint8_t *deck, uint8_t *discard, Card *flipped, int *hand,
+                      uint8_t *row, uint8_t *n_row) {
+    if (!view_holds(v)) return ANIM_EBADARG;
+    if (row && 2 * v->num_battles > ANIM_ASK_MAX_ROW) return ANIM_ECAP;
+    *deck = (uint8_t)v->deck_count;
+    *discard = (uint8_t)v->discard_pile_length;
+    *flipped = v->has_flipped ? v->flipped : CARD_NONE;
+    for (int s = 0; s < MAX_PLAYERS; s++) hand[s] = s < v->num_players ? v->seats[s].hand_count : 0;
+    if (!row) return ANIM_EOK;
+    for (int b = 0; b < v->num_battles; b++) {
+        row[2 * b] = plan_row_id(v->battles[b].attack);
+        row[2 * b + 1] = card_is_none(v->battles[b].defense) ? (unsigned char)ANIM_TABLE_NONE
+                                                             : plan_row_id(v->battles[b].defense);
+    }
+    *n_row = (uint8_t)(2 * v->num_battles);
+    return ANIM_EOK;
+}
+
+int client_plan_step(AnimPlanAsk *ask, int at, const ClientPlanStep *step, const TableView *board) {
+    if (!ask || !step || at < 0) return ANIM_EBADARG;
+    if (at == 0) ask->n_events = ask->n_players = 0;
+    if (at != ask->n_events) return ANIM_EBADARG;
+    if (at >= ANIM_MAX_STEPS || step->n_cards > ANIM_ASK_MAX_CARDS) return ANIM_ECAP;
+    AnimPlanAskEvent *ev = &ask->events[at];
+    ev->type = step->type;
+    ev->seat = step->seat;
+    ev->from = step->from;
+    ev->to = step->to;
+    ev->n_cards = step->n_cards;
+    int backs = 0;
+    for (int i = 0; i < step->n_cards; i++) {
+        ev->cards[i] = step->cards[i];
+        if (step->cards[i].suit < 0) backs++;
+    }
+    ev->mask_cards = step->n_cards > 0 && backs == step->n_cards;
+    ev->has_counts = board != NULL;
+    ev->n_row = 0;
+    if (board) {
+        const int rc = plan_board(board, &ev->deck, &ev->discard, &ev->flipped, ev->hand, ev->row, &ev->n_row);
+        if (rc != ANIM_EOK) return rc;
+        if (board->num_players > ask->n_players) ask->n_players = (uint8_t)board->num_players;
+    }
+    ask->n_events = (uint8_t)(at + 1);
+    return ANIM_EOK;
+}
+
+int client_plan(AnimPlanAsk *ask, int n, const TableView *final, AnimPlan *out) {
+    if (!ask) return ANIM_EBADARG;
+    if (n == 0) ask->n_events = ask->n_players = 0;
+    if (n != ask->n_events) return ANIM_EBADARG;
+    if (final) {
+        const int rc = plan_board(final, &ask->final_deck, &ask->final_discard, &ask->final_flipped,
+                                  ask->final_hand, NULL, NULL);
+        if (rc != ANIM_EOK) return rc;
+        ask->n_players = (uint8_t)final->num_players;
+    } else {
+        ask->final_deck = ask->final_discard = 0;
+        ask->final_flipped = CARD_NONE;
+        memset(ask->final_hand, 0, sizeof ask->final_hand);
+    }
+    return anim_plan_ask(ask, out);
+}
+
 static int conflict_id(Card c) {
     // card.h's range test: the suit's upper bound is the bitfield's, which gcc
     // was answering itself (-Wtype-limits).

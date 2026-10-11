@@ -997,7 +997,7 @@ int wasm_anim_set_transport(int transport) { return anim_set_transport(transport
 // ---------- the plan and the frame ---------------------------------------------
 //
 // THE ENTRIES A HOST WITH A FRAME LOOP NEEDS, and the reason they cross
-// here and not earlier: wasm_anim_build_plan was DELETED in 0cda5e85 for being
+// here and not earlier: the web's plan bridge was DELETED in 0cda5e85 for being
 // a bridge with no caller, so the builders wait for the consumer that asks them
 // (docs/C_GAME_SHAPE_MIGRATION.md Phase 9). iOS reaches the same C natively
 // through fio_anim_plan / fio_anim_beats. The beats have no wasm entry: the web
@@ -1015,14 +1015,8 @@ static AnimFrame g_anim_frame;
 void *wasm_anim_plan_ptr(void)  { return &g_anim_plan; }
 void *wasm_anim_frame_ptr(void) { return &g_anim_frame; }
 
-// THE PLAN (anim_plan.h anim_plan_ask). The stream goes in as the kernel's own
-// AnimPlanAsk, filled where it lies through the generated writer
-// (sdk/ts/gen/view_layout.bots.ts writeAnimPlanAsk), so there is no byte format
-// here for a host to keep in step with. The answer is left in g_anim_plan for
-// the caller to read where it lies. Returns ANIM_EOK, or a negative ANIM_E*.
-static AnimPlanAsk g_anim_plan_ask;
-AnimPlanAsk *wasm_anim_plan_ask_ptr(void) { return &g_anim_plan_ask; }
-int wasm_anim_build_plan(void) { return anim_plan_ask(&g_anim_plan_ask, &g_anim_plan); }
+// THE PLAN is asked with the boards a client holds, so its door is the client
+// slot's (wasm_table_api.c wasm_client_plan); the answer is left in g_anim_plan.
 
 // WHERE THE PLAN STANDS AT now_ms (anim_plan.h anim_plan_at), measured from the
 // sequence's start. The clock is an argument: the kernel imports nothing, so

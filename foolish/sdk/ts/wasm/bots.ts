@@ -471,16 +471,8 @@ export function replayStepCount(code: Uint8Array): number {
     return ok(codeIn(code).wasm_replay_step_count(code.length), replayRefused);
 }
 
-/** What a step played: the kernel's REPLAY_ATOM_* (c/src/replay.h), each under
- *  its own name with the prefix dropped, out of the generated constants. DEAL is
- *  the opening deal and never an action; DRAW is never a step (draws ride the
- *  action that caused them); ROUND_END is every remaining attacker saying good. */
-type AtomName<N> = N extends `REPLAY_ATOM_${infer S}` ? (S extends 'NAMES' ? never : S) : never;
-export const REPLAY_STEP = Object.fromEntries(
-    Object.entries(K.REPLAY_ATOM_NAMES).map(([code, name]) => [name, Number(code)]),
-) as { readonly [N in keyof typeof K as AtomName<N>]: (typeof K)[N] };
-
-/** What one step of a code IS (replay_steps.h ReplayStep): `kind` a REPLAY_ATOM_*,
+/** What one step of a code IS (replay_steps.h ReplayStep): `kind` a REPLAY_ATOM_*
+ *  (DEAL is the opening deal; ROUND_END is every remaining attacker saying good),
  *  `seat` the acting seat or -1 (the deal, and round ends nobody in particular
  *  closes), `named` how many of the step's cards the MOVE NAMED - 0 for a pickup
  *  or a good, whose step carries cards nobody chose. */
@@ -497,6 +489,24 @@ export function replayStepIndex(code: Uint8Array): ReplayStepInfo[] {
     const len = ok(ex.wasm_replay_step_index(code.length), replayRefused);
     const m = mem(ex), base = ex.wasm_io_ptr();
     return Array.from({ length: len / K.RS_INDEX_STRIDE }, (_, i) => V.readReplayStep(m, base + i * K.RS_INDEX_STRIDE));
+}
+
+/** One step as a replay screen plays it (replay_steps.h ReplayPlayStep): what it
+ *  is, whether it `joins` the step before it into one move, whether it opens a
+ *  bout, and when it happened (`at`, unix seconds). */
+export type ReplayPlayStep = V.ReplayPlayStep_Snap;
+
+/**
+ * Every step of a code as a replay screen plays it, against the extras' clock:
+ * `gaps` are the per-move gaps and `startTime` the first move's time, null for a
+ * code cut without them (nothing joins, and `at` says nothing).
+ */
+export function replayPlaySteps(code: Uint8Array, startTime: number | null, gaps: number[] | null): ReplayPlayStep[] {
+    const ex = codeIn(code);
+    extrasArgs(ex, null, startTime ?? 0, gaps);
+    const n = ok(ex.wasm_replay_step_play(code.length), replayRefused);
+    const m = mem(ex), base = ex.wasm_io_ptr();
+    return Array.from({ length: n }, (_, i) => V.readReplayPlayStep(m, base + i * K.RS_PLAY_STRIDE));
 }
 
 /**
@@ -710,8 +720,7 @@ export function animFinishRows(
 
 // "No card" as the kernel holds it (card.h CARD_NONE), spelled from its
 // generated fields. A hand slot the caller cannot name crosses as it (anim_plan.h
-// AnimHandAsk reads it as a back on the way in and writes one on the way out),
-// and so does a board whose flipped trump has been dealt out (AnimPlanAsk).
+// AnimHandAsk reads it as a back on the way in and writes one on the way out).
 const NO_CARD: Card = { suit: V.CARD_NONE_SUIT, value: V.CARD_NONE_VALUE };
 
 /**
@@ -755,17 +764,14 @@ export function animHandLaidOut(
 // bytes and a frame loop that marshalled it whole once per frame would spend
 // more time copying than animating.
 
-/** One decoded event as the plan sees it (anim_plan.h AnimPlanEvent). */
+/** One step as the plan is asked it (client_table.h ClientPlanStep), and the board it left. */
 export interface AnimPlanEventIn {
     type: number;                   // ANIM_EVT_*
     seat?: number;                  // the acting seat; absent for none
     from?: number; to?: number;     // ANIM_LOC_*
     cards?: readonly Card[];
-    maskCards?: boolean;            // viewer-masked backs: no identity, no veil
-    /** THIS step's own board, when the wire carried one. */
-    counts?: { deck: number; discard: number; flipped: Card | null; hand: readonly number[] };
-    /** The row that board held, 2 bytes per battle (attack, then its cover or ANIM_TABLE_NONE). */
-    battles?: readonly number[];
+    /** THIS step's own board, when it has one. */
+    board?: V.TableView_Snap | null;
 }
 
 /** The count-freeze (anim_plan.h AnimCounts): the board the display holds until a step lands. */
@@ -811,35 +817,24 @@ export interface AnimFrameSnap {
     trumpFlight: Card | null;
 }
 
-/** THE TIMED PLAN for a decoded viewer sequence (anim_plan.h anim_build_plan).
- *  `final` is the board the host already holds; the plan freezes the DISPLAY
- *  back to the pre-sequence values and reveals forward one step at a time. */
-export function animBuildPlan(
-    events: readonly AnimPlanEventIn[], nPlayers: number,
-    final: { deck: number; discard: number; flipped: Card | null; hand: readonly number[] },
-): AnimPlanSnap {
-    const ex = bots();
-    // A hand as the ask holds one: a count for every seat a table can have,
-    // of which the kernel reads this table's own.
-    const seats = (hand: readonly number[]): number[] =>
-        Array.from({ length: V.MAX_PLAYERS }, (_, s) => hand[s] ?? 0);
-    V.writeAnimPlanAsk(mem(ex), ex.wasm_anim_plan_ask_ptr(), {
-        nPlayers,
-        finalDeck: final.deck, finalDiscard: final.discard,
-        finalFlipped: final.flipped ?? NO_CARD, finalHand: seats(final.hand),
-        events: events.map((e) => ({
+/** THE TIMED PLAN for a run of steps (client_table.h client_plan). `final` is
+ *  the board the host already holds; the plan freezes the DISPLAY back to the
+ *  pre-sequence values and reveals forward one step at a time. The kernel reads
+ *  every count, the row and the masking off the boards themselves. */
+export function animBuildPlan(events: readonly AnimPlanEventIn[], final: V.TableView_Snap | undefined): AnimPlanSnap {
+    const ex = bots(), m = mem(ex), refused = animError('anim_build_plan');
+    events.forEach((e, at) => {
+        V.writeClientPlanStep(m, ex.wasm_client_plan_step_ptr(), {
             type: e.type,
             seat: e.seat === undefined || e.seat < 0 ? A.ANIM_SEAT_NONE : e.seat,
             from: e.from ?? A.ANIM_LOC_NONE, to: e.to ?? A.ANIM_LOC_NONE,
-            maskCards: !!e.maskCards,
             cards: e.cards ?? [],
-            hasCounts: !!e.counts,
-            deck: e.counts?.deck ?? 0, discard: e.counts?.discard ?? 0,
-            flipped: e.counts?.flipped ?? NO_CARD, hand: seats(e.counts?.hand ?? []),
-            row: e.battles ?? [],
-        })),
+        });
+        if (e.board) V.writeTableView(m, ex.wasm_client_edit_view_ptr(), e.board);
+        ok(ex.wasm_client_plan_step(at, e.board ? 1 : 0), refused);
     });
-    ok(ex.wasm_anim_build_plan(), animError('anim_build_plan'));
+    if (final) V.writeTableView(m, ex.wasm_client_final_view_ptr(), final);
+    ok(ex.wasm_client_plan(events.length, final ? 1 : 0), refused);
     return readPlan(ex);
 }
 

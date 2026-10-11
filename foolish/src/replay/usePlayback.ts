@@ -18,7 +18,7 @@ import { useServerActions } from '../contexts/ServerContext';
 import { useAnimation } from '../contexts/AnimationContext';
 import { animationFeed, AnimationSequenceMessage } from '../state/animationFeed';
 import { buildSpeeds, type SpeedStop } from './speeds';
-import { REPLAY_KEY, REPLAY_STEP, type ReplayFrame } from './frames';
+import { REPLAY_KEY, type ReplayFrame } from './frames';
 
 /** The deck head and the buttons that move it. */
 export interface Playback {
@@ -138,17 +138,9 @@ export function usePlayback(
         publishReverse(stepRef.current);
     }, [publishReverse, jumpTo]);
 
-    // Bout boundaries: a bout begins at the ATTACK that opens onto an empty
-    // table (the previous step cleared it via pickup/discard, or it's the
-    // game's first attack). Skip-to-bout jumps are animationless seeks.
-    const boutStarts = useMemo(() => {
-        const starts: number[] = [];
-        for (let i = 0; i < frames.length; i++) {
-            const opensEmpty = i === 0 || frames[i - 1].game.battles.length === 0;
-            if (frames[i].kind === REPLAY_STEP.ATTACK && opensEmpty) starts.push(i);
-        }
-        return starts;
-    }, [frames]);
+    // Where each bout begins, by the kernel's word. Skip-to-bout jumps are
+    // animationless seeks.
+    const boutStarts = useMemo(() => frames.flatMap((f, i) => (f.opensBout ? [i] : [])), [frames]);
 
     const nextBout = useCallback(() => {
         const from = Math.max(0, stepRef.current);

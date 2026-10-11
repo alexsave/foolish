@@ -37,12 +37,11 @@
 --header hand_layout.h --root HandMetrics --root HandLayout
 --writer HandMetrics --snapshot HandMetrics --snapshot HandLayout
 --count HandLayout.slot=n --const HAND_
-# The stream a plan is asked for (anim_plan.h anim_plan_ask): every step with
-# its cards, its own board and its row goes in through the ask's writer, so the
-# bridge packs no event byte by hand. The plan itself is read where it lies
-# (anim.bots.ts), which is why only the question is here.
---root AnimPlanAsk --writer AnimPlanAsk --snapshot AnimPlanAsk
---count AnimPlanAsk.events=n_events --count AnimPlanAskEvent.cards=n_cards --count AnimPlanAskEvent.row=n_row
+# One step of the stream a plan is asked for (client_table.h client_plan_step):
+# what moved goes in through its writer, and the board it left through
+# TableView's. The plan itself is read where it lies (anim.bots.ts).
+--root ClientPlanStep --writer ClientPlanStep --snapshot ClientPlanStep
+--count ClientPlanStep.cards=n_cards
 --const MAX_PLAYERS
 # Four small questions of the animation core, asked as values (anim_plan.h):
 # which optimistic cards a broadcast releases, the order a doomed sequence flies
@@ -86,6 +85,9 @@
 # One record of a code's step index (replay_steps.h ReplayStep), read where the
 # index lies, RS_INDEX_STRIDE bytes apart.
 --root ReplayStep --snapshot ReplayStep
+# One step as a replay screen plays it (replay_steps.h ReplayPlayStep), read the
+# same way, RS_PLAY_STRIDE bytes apart.
+--root ReplayPlayStep --snapshot ReplayPlayStep
 # The marks a role beat shows next (anim_plan.h AnimRoles): the three role
 # entries answer with its address, so the bridge reads no byte of it.
 --root AnimRoles --snapshot AnimRoles

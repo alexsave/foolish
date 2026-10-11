@@ -38,7 +38,8 @@
 
 import { kernelB32Encode, replaySummary } from '../sdk/ts/wasm/bots.ts';
 import { playBotTable, seedBytes } from './helpers/bot_table.ts';
-import { buildReplayFrames, REPLAY_STEP, ReplayFrame } from '../src/replay/frames.ts';
+import { buildReplayFrames, ReplayFrame } from '../src/replay/frames.ts';
+import { REPLAY_ATOM_DEAL, REPLAY_ATOM_ATTACK, REPLAY_ATOM_COVER, REPLAY_ATOM_PASS, REPLAY_ATOM_PICKUP, REPLAY_ATOM_ROUND_END, REPLAY_ATOM_GOOD } from '../sdk/ts/gen/kernel_consts.bots.ts';
 import { TUTORIAL_NAMES } from '../src/components/tutorialGame.ts';
 import { PLAYER_STATUS } from '../src/state/view.ts';
 
@@ -86,13 +87,13 @@ function elementsOf(frames: ReplayFrame[], trump: number, firstAttacker: number,
         const prev = frames[i - 1];
         const mine = f.seat === LEARNER;
         switch (f.kind) {
-            case REPLAY_STEP.ATTACK:
+            case REPLAY_ATOM_ATTACK:
                 if (mine) {
                     e.attack = true;
                     if (prev && prev.game.battles.length > 0) e.throwIn = true;
                 }
                 break;
-            case REPLAY_STEP.COVER:
+            case REPLAY_ATOM_COVER:
                 if (mine) {
                     e.cover = true;
                     if (f.cards[0]?.suit === trump && f.target && f.target.suit !== trump) {
@@ -100,10 +101,10 @@ function elementsOf(frames: ReplayFrame[], trump: number, firstAttacker: number,
                     }
                 }
                 break;
-            case REPLAY_STEP.PASS: if (mine) e.pass = true; break;
-            case REPLAY_STEP.PICKUP: if (mine) e.pickup = true; break;
-            case REPLAY_STEP.GOOD: if (mine) e.good = true; break;
-            case REPLAY_STEP.ROUND_END:
+            case REPLAY_ATOM_PASS: if (mine) e.pass = true; break;
+            case REPLAY_ATOM_PICKUP: if (mine) e.pickup = true; break;
+            case REPLAY_ATOM_GOOD: if (mine) e.good = true; break;
+            case REPLAY_ATOM_ROUND_END:
                 e.roundEnd = true;
                 if (learnerOwesGood(prev)) e.good = true;
                 break;
@@ -152,8 +153,8 @@ async function main() {
     if (!best) { console.error('no game finished'); process.exit(1); }
     const missing = REQUIRED.filter((k) => !best!.e[k]);
     const learnerSteps = best.frames.filter((f, i) =>
-        (f.seat === LEARNER && f.kind !== REPLAY_STEP.DEAL)
-        || (f.kind === REPLAY_STEP.ROUND_END && learnerOwesGood(best!.frames[i - 1]))).length;
+        (f.seat === LEARNER && f.kind !== REPLAY_ATOM_DEAL)
+        || (f.kind === REPLAY_ATOM_ROUND_END && learnerOwesGood(best!.frames[i - 1]))).length;
 
     console.log(`searched ${SEEDS} seeds; ${complete} taught every element`);
     console.log(`best: seed ${best.s} - ${score(best.e)}/${REQUIRED.length} elements, ${best.frames.length} steps`);

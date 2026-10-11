@@ -35,6 +35,7 @@
 #include "roster.h"
 #include "awire.h"
 #include "ask.h"
+#include "anim_plan.h"
 #include <stddef.h>
 
 #define CLIENT_OK           0
@@ -382,6 +383,43 @@ int client_ask_apply(TableView *v, const TableAsk *a);
 // CLIENT_E_FORMAT for a view or a question that is not one, or the negative
 // ANIM_E* the rule returns.
 int client_conflict_verdicts(const TableView *open, const TableView *final, const ClientConflict *q, ConflictVerdicts *out);
+
+// ---------- the plan, asked with the boards a client holds (anim_plan.h) ------
+//
+// A client holds each step of a run as what moved and the board that step left.
+// The plan reads four numbers and a row off a board (AnimPlanAskEvent), so the
+// kernel takes them off the TableView itself: a host hands over the board it
+// was given and knows no dense id, no row layout and no ANIM_TABLE_*.
+//
+// One step at a time, because a board is 1.4 KB and a stream is up to
+// ANIM_MAX_STEPS of them: `ask` keeps the 200 bytes the plan reads of each.
+typedef struct {
+    int8_t  type;        // ANIM_EVT_*
+    int8_t  seat;        // the acting seat, or ANIM_SEAT_NONE
+    uint8_t from, to;    // ANIM_LOC_*
+    uint8_t n_cards;
+    Card    cards[ANIM_ASK_MAX_CARDS];
+} ClientPlanStep;
+
+// Step `at` of the stream `ask` is gathering: `at` 0 starts a stream, and any
+// other must be the next one. `board` is the board this step left, or NULL for
+// a step that carries none. Off it: the stock, the discard, the trump while it
+// is face up (CARD_NONE once it is not), every seat's hand count, and the row -
+// a card that cannot be named is ANIM_TABLE_UNKNOWN there, an uncovered battle's
+// cover ANIM_TABLE_NONE. A step whose cards are ALL viewer-masked backs is
+// `mask_cards`: it has no identity to veil and flies as backs. ANIM_EOK;
+// ANIM_EBADARG for a step out of turn or a board that is not one; ANIM_ECAP for
+// a step past ANIM_MAX_STEPS, more cards than ANIM_ASK_MAX_CARDS, or a row
+// longer than ANIM_ASK_MAX_ROW.
+int client_plan_step(AnimPlanAsk *ask, int at, const ClientPlanStep *step, const TableView *board);
+
+// The plan of the `n` steps given (anim_plan_ask), frozen back from `final` -
+// the board the screen holds now - which also says how many sit. With no
+// `final` (NULL: every step a prediction, before any board arrived) the table
+// is as wide as the widest board a step carried and the final counts are zero,
+// which only a stream with no board at all reads. What anim_plan_ask returns;
+// ANIM_EBADARG when `n` is not the number of steps given.
+int client_plan(AnimPlanAsk *ask, int n, const TableView *final, AnimPlan *out);
 
 // ---------- the move a client sends (awire.h) ---------------------------------
 //

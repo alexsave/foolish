@@ -26,7 +26,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 import { gunzip } from '../sdk/ts/wasm/gunzip.ts';
-import { buildReplayFrames, REPLAY_STEP } from '../src/replay/frames.ts';
+import { buildReplayFrames } from '../src/replay/frames.ts';
+import { REPLAY_ATOM_COVER, REPLAY_ATOM_PASS, REPLAY_ATOM_PICKUP, REPLAY_ATOM_NAMES } from '../sdk/ts/gen/kernel_consts.bots.ts';
 import { buildOracleJob, findDecisionIndex } from '../src/oracle/replayOracleInput.ts';
 import { OracleInstance } from '../src/oracle/oracleBridge.ts';
 import { OracleAccumulator } from '../src/oracle/accumulator.ts';
@@ -75,9 +76,8 @@ const WIDE: [string, string[], number][] =
 // and 752 stopped staging the board. 758 is the first seed after it that does:
 // seven legal passes at its widest over five pass decisions, measured.
 const PASS_BOARD = ['handwritten', 'octogen', 'random', 'handwritten', 'octogen', 'random'];
-/** REPLAY_STEP id -> its name, so a failure names the move type it broke on. */
-const STEP_NAME: Record<number, string> =
-    Object.fromEntries(Object.entries(REPLAY_STEP).map(([k, v]) => [v as number, k]));
+/** REPLAY_ATOM_* -> its name, so a failure names the move type it broke on. */
+const STEP_NAME = REPLAY_ATOM_NAMES;
 
 interface Fixture { code: Uint8Array; frames: ReturnType<typeof buildReplayFrames>; id: string }
 const cache = new Map<string, Fixture>();
@@ -232,7 +232,7 @@ test('§12.2-1c every pass a hand can make is on the panel', async () => {
     let widest = 0, walked = 0;
     for (let j = 1; j < frames.length; j++) {
         if (findDecisionIndex(frames, j) !== j) continue;
-        if (frames[j].kind !== REPLAY_STEP.PASS) continue;
+        if (frames[j].kind !== REPLAY_ATOM_PASS) continue;
         const job = buildOracleJob(frames, code, j, true, id);
         if (!job) continue;
         inst.setKnobs({ ...ORACLE_KNOBS, w1: 8 });
@@ -270,8 +270,8 @@ test('§12.2-1d a podkidnoy replay is deliberated as podkidnoy: no transfer on t
     for (let j = 1; j < frames.length; j++) {
         if (findDecisionIndex(frames, j) !== j) continue;
         const kind = frames[j].kind;
-        assert.notEqual(kind, REPLAY_STEP.PASS, `step ${j}: a podkidnoy game recorded a transfer`);
-        if (kind !== REPLAY_STEP.COVER && kind !== REPLAY_STEP.PICKUP) continue;
+        assert.notEqual(kind, REPLAY_ATOM_PASS, `step ${j}: a podkidnoy game recorded a transfer`);
+        if (kind !== REPLAY_ATOM_COVER && kind !== REPLAY_ATOM_PICKUP) continue;
         const job = buildOracleJob(frames, played.code, j, true, 'podkidnoy-6p');
         if (!job) continue;
         inst.setKnobs({ ...ORACLE_KNOBS, w1: 8 });

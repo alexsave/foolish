@@ -19,8 +19,9 @@ import { animationFeed, AnimationSequenceMessage } from '../state/animationFeed'
 import { bigintToBytes, bytesToBigint } from '@api/common/replay_codec.ts';
 import { ensureBotsAsync, kernelB32Decode, replaySummary, type ReplaySummary } from '@sdk/ts/wasm/bots.ts';
 import {
-    buildReplayFrames, preDealGame, ReplayFrame, ReplayGameState, REPLAY_STEP,
+    buildReplayFrames, preDealGame, ReplayFrame, ReplayGameState,
 } from '../replay/frames';
+import { REPLAY_ATOM_ATTACK, REPLAY_ATOM_COVER, REPLAY_ATOM_PASS, REPLAY_ATOM_PICKUP, REPLAY_ATOM_ROUND_END, REPLAY_ATOM_GOOD } from '@sdk/ts/gen/kernel_consts.bots.ts';
 import { boardPills } from '../utils/gameValidation';
 import { PLAY_PILL_COVER } from '@sdk/ts/gen/view_layout.bots.ts';
 import { buildBeats, type Beat, type TutKey } from './tutorialBeats.ts';
@@ -31,7 +32,7 @@ const GAME_ID = 'tutorial';
 const RESULT = { game_id: GAME_ID };
 
 const LEARNER_KINDS: number[] = [
-    REPLAY_STEP.ATTACK, REPLAY_STEP.COVER, REPLAY_STEP.PASS, REPLAY_STEP.PICKUP, REPLAY_STEP.GOOD,
+    REPLAY_ATOM_ATTACK, REPLAY_ATOM_COVER, REPLAY_ATOM_PASS, REPLAY_ATOM_PICKUP, REPLAY_ATOM_GOOD,
 ];
 
 /* A good that CLOSES the bout is not attributed to anyone: v6 records the round
@@ -119,7 +120,7 @@ const TutorialPlayback = ({ summary, frames, names, onExit }: PlaybackProps) => 
         (i: number) => {
             if (i < 0 || i > lastIdx) return false;
             const f = frames[i];
-            if (f.kind === REPLAY_STEP.ROUND_END) return learnerOwesGood(frames[i - 1]);
+            if (f.kind === REPLAY_ATOM_ROUND_END) return learnerOwesGood(frames[i - 1]);
             return f.seat === LEARNER_SEAT && LEARNER_KINDS.includes(f.kind);
         },
         [frames, lastIdx],
@@ -149,9 +150,9 @@ const TutorialPlayback = ({ summary, frames, names, onExit }: PlaybackProps) => 
         const f = frames[next];
         // A good that closes the bout arrives as a seat-less ROUND_END; it is
         // still the learner's good to press.
-        const matches = kind === REPLAY_STEP.GOOD
-            ? (f.kind === REPLAY_STEP.GOOD && f.seat === LEARNER_SEAT)
-                || (f.kind === REPLAY_STEP.ROUND_END && learnerOwesGood(frames[next - 1]))
+        const matches = kind === REPLAY_ATOM_GOOD
+            ? (f.kind === REPLAY_ATOM_GOOD && f.seat === LEARNER_SEAT)
+                || (f.kind === REPLAY_ATOM_ROUND_END && learnerOwesGood(frames[next - 1]))
             : f.seat === LEARNER_SEAT && f.kind === kind;
         if (!matches) return false;
         publishStep(next);
@@ -190,14 +191,14 @@ const TutorialPlayback = ({ summary, frames, names, onExit }: PlaybackProps) => 
     const move: Move | null = useMemo(() => {
         if (!pending) return null;
         // A round end reaching here IS the learner's good (isLearnerStep gates it).
-        const k = pending.kind === REPLAY_STEP.ROUND_END ? REPLAY_STEP.GOOD : pending.kind;
-        if (k === REPLAY_STEP.ATTACK || k === REPLAY_STEP.PASS)
-            return { kind: k, cards: pending.cards, target: null, action: k === REPLAY_STEP.ATTACK ? 'attack' : 'pass', mode: 'button' };
-        if (k === REPLAY_STEP.PICKUP)
+        const k = pending.kind === REPLAY_ATOM_ROUND_END ? REPLAY_ATOM_GOOD : pending.kind;
+        if (k === REPLAY_ATOM_ATTACK || k === REPLAY_ATOM_PASS)
+            return { kind: k, cards: pending.cards, target: null, action: k === REPLAY_ATOM_ATTACK ? 'attack' : 'pass', mode: 'button' };
+        if (k === REPLAY_ATOM_PICKUP)
             return { kind: k, cards: [], target: null, action: 'pickup', mode: 'button' };
-        if (k === REPLAY_STEP.GOOD)
+        if (k === REPLAY_ATOM_GOOD)
             return { kind: k, cards: [], target: null, action: 'good', mode: 'button' };
-        if (k === REPLAY_STEP.COVER) {
+        if (k === REPLAY_ATOM_COVER) {
             const coverCard = pending.cards[0];
             // the learner presses Cover when the board shows it for this card;
             // otherwise the learner drags the card onto the specific attack.
@@ -223,11 +224,11 @@ const TutorialPlayback = ({ summary, frames, names, onExit }: PlaybackProps) => 
 
     const animValue = useMemo(() => ({
         ...real,
-        attack: async () => { tryAdvance(REPLAY_STEP.ATTACK); return RESULT; },
-        pass: async () => { tryAdvance(REPLAY_STEP.PASS); return RESULT; },
-        pickup: async () => { tryAdvance(REPLAY_STEP.PICKUP); return RESULT; },
-        cover: async () => { tryAdvance(REPLAY_STEP.COVER); return RESULT; },
-        good: async () => { tryAdvance(REPLAY_STEP.GOOD); return RESULT; },
+        attack: async () => { tryAdvance(REPLAY_ATOM_ATTACK); return RESULT; },
+        pass: async () => { tryAdvance(REPLAY_ATOM_PASS); return RESULT; },
+        pickup: async () => { tryAdvance(REPLAY_ATOM_PICKUP); return RESULT; },
+        cover: async () => { tryAdvance(REPLAY_ATOM_COVER); return RESULT; },
+        good: async () => { tryAdvance(REPLAY_ATOM_GOOD); return RESULT; },
     }), [real, tryAdvance]);
 
     const play: TutPlay = { names, summary, stepIdx, awaiting, finished, beatText, move, skipToEnd, onExit };
@@ -258,7 +259,7 @@ const TutorialBoard = () => {
     // on the awaiting step so it doesn't loop on every render.
     const selKey = awaiting ? `${stepIdx}` : 'none';
     useEffect(() => {
-        if (move && move.cards.length && (move.kind === REPLAY_STEP.ATTACK || move.kind === REPLAY_STEP.PASS || move.kind === REPLAY_STEP.COVER)) {
+        if (move && move.cards.length && (move.kind === REPLAY_ATOM_ATTACK || move.kind === REPLAY_ATOM_PASS || move.kind === REPLAY_ATOM_COVER)) {
             setSelectedCards(move.cards.map((c) => ({ ...c })));
         } else {
             setSelectedCards([]);

@@ -989,6 +989,7 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_replay_events -Wl,--export=wasm_replay_events_index_ptr \
   -Wl,--export=wasm_replay_step_count \
   -Wl,--export=wasm_replay_step_index \
+  -Wl,--export=wasm_replay_step_play \
   -Wl,--export=wasm_replay_extras_encode -Wl,--export=wasm_replay_extras_ptr \
   -Wl,--export=wasm_replay_extras_decode \
   -Wl,--export=wasm_replay_link \
@@ -1008,7 +1009,7 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_anim_finish_rows -Wl,--export=wasm_anim_hand_laid_out \
   -Wl,--export=wasm_anim_set_transport \
   -Wl,--export=wasm_anim_plan_ptr -Wl,--export=wasm_anim_frame_ptr \
-  -Wl,--export=wasm_anim_plan_ask_ptr -Wl,--export=wasm_anim_build_plan -Wl,--export=wasm_anim_plan_at \
+  -Wl,--export=wasm_anim_plan_at \
   -Wl,--export=wasm_anim_reversal_order \
   -Wl,--export=wasm_anim_roles_goods_opening -Wl,--export=wasm_anim_roles_goods_cleared \
   -Wl,--export=wasm_anim_roles_pass_hand_off -Wl,--export=wasm_anim_shown_ledger_allows \
@@ -1078,7 +1079,8 @@ WASM_CLIENT_EXPORTS := \
   -Wl,--export=wasm_client_ask_ptr -Wl,--export=wasm_client_ask_encode \
   -Wl,--export=wasm_client_ask_apply \
   -Wl,--export=wasm_client_refusal_ptr -Wl,--export=wasm_client_refusal_decode \
-  -Wl,--export=wasm_client_cast_open -Wl,--export=wasm_client_cast_version
+  -Wl,--export=wasm_client_cast_open -Wl,--export=wasm_client_cast_version \
+  -Wl,--export=wasm_client_plan_step_ptr -Wl,--export=wasm_client_plan_step -Wl,--export=wasm_client_plan
 
 # A replay's recorded decision as the Oracle imports it, and a code at a glance
 # (src/replay_steps.h, wasm/wasm_bots_api.c), bots.wasm ONLY: the web page builds
@@ -1253,7 +1255,7 @@ WASM_MSG_EXPORTS := \
   -Wl,--export=wasm_anim_finish_rows -Wl,--export=wasm_anim_hand_laid_out \
   -Wl,--export=wasm_anim_set_transport \
   -Wl,--export=wasm_anim_plan_ptr -Wl,--export=wasm_anim_frame_ptr \
-  -Wl,--export=wasm_anim_plan_ask_ptr -Wl,--export=wasm_anim_build_plan -Wl,--export=wasm_anim_plan_at \
+  -Wl,--export=wasm_anim_plan_at \
   -Wl,--export=wasm_anim_reversal_order \
   -Wl,--export=wasm_anim_roles_goods_opening -Wl,--export=wasm_anim_roles_goods_cleared \
   -Wl,--export=wasm_anim_roles_pass_hand_off -Wl,--export=wasm_anim_shown_ledger_allows
@@ -1580,13 +1582,14 @@ WASM_WEB_NAMES := \
   wasm_anim_hand_ask_ptr wasm_anim_hand_laid_ptr \
   wasm_anim_finish_ask_ptr wasm_anim_finish_ptr \
   wasm_anim_finish_rows wasm_anim_hand_laid_out wasm_anim_reversal_order \
-  wasm_anim_plan_ask_ptr wasm_anim_build_plan wasm_anim_plan_ptr wasm_anim_plan_at wasm_anim_frame_ptr \
+  wasm_anim_plan_ptr wasm_anim_plan_at wasm_anim_frame_ptr \
   wasm_anim_roles_goods_opening wasm_anim_roles_goods_cleared \
   wasm_anim_roles_pass_hand_off wasm_anim_shown_ledger_allows \
   wasm_replay_b32_encode wasm_replay_b32_decode wasm_replay_link \
   wasm_replay_extras_ptr wasm_replay_extras_decode \
   wasm_replay_events wasm_replay_events_index_ptr \
-  wasm_replay_step_count wasm_replay_step_index
+  wasm_replay_step_count wasm_replay_step_index \
+  wasm_replay_step_play
 
 # Picked OUT of the shipped list rather than spelled a second time, so a name
 # cannot be in the browser's module and not in the server's — that would be the

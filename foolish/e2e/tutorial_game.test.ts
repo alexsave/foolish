@@ -25,7 +25,8 @@ import { kernelB32Decode, replaySummary } from '../sdk/ts/wasm/bots.ts';
 import assert from 'node:assert/strict';
 
 import { bigintToBytes } from '../server/api/common/replay_codec.ts';
-import { buildReplayFrames, REPLAY_STEP, ReplayFrame } from '../src/replay/frames.ts';
+import { buildReplayFrames, ReplayFrame } from '../src/replay/frames.ts';
+import { REPLAY_ATOM_DEAL, REPLAY_ATOM_ATTACK, REPLAY_ATOM_COVER, REPLAY_ATOM_PASS, REPLAY_ATOM_PICKUP, REPLAY_ATOM_ROUND_END, REPLAY_ATOM_GOOD } from '../sdk/ts/gen/kernel_consts.bots.ts';
 import { TUTORIAL_MOVES_CODE, TUTORIAL_NAMES } from '../src/components/tutorialGame.ts';
 import { buildBeats } from '../src/components/tutorialBeats.ts';
 import { PLAYER_STATUS } from '../src/state/view.ts';
@@ -66,10 +67,10 @@ const learnerOwesGood = (prev: ReplayFrame | undefined): boolean => {
 const isLearnerStep = (frames: ReplayFrame[], i: number): boolean => {
     if (i < 0 || i >= frames.length) return false;
     const f = frames[i];
-    if (f.kind === REPLAY_STEP.ROUND_END) return learnerOwesGood(frames[i - 1]);
+    if (f.kind === REPLAY_ATOM_ROUND_END) return learnerOwesGood(frames[i - 1]);
     const moves: readonly number[] = [
-        REPLAY_STEP.ATTACK, REPLAY_STEP.COVER, REPLAY_STEP.PASS,
-        REPLAY_STEP.PICKUP, REPLAY_STEP.GOOD,
+        REPLAY_ATOM_ATTACK, REPLAY_ATOM_COVER, REPLAY_ATOM_PASS,
+        REPLAY_ATOM_PICKUP, REPLAY_ATOM_GOOD,
     ];
     return f.seat === LEARNER && moves.includes(f.kind);
 };
@@ -93,7 +94,7 @@ test('the tutorial code still replays on the kernel that ships', async () => {
         'the tutorial is an inline-reveal code (the retrodiction line cannot replay)');
     assert.equal(summary.numPlayers, 3, '3-player game');
     assert.ok(frames.length > 10, `replays to ${frames.length} steps`);
-    assert.equal(frames[0].kind, REPLAY_STEP.DEAL, 'it opens with the deal');
+    assert.equal(frames[0].kind, REPLAY_ATOM_DEAL, 'it opens with the deal');
     assert.notEqual(summary.fool, LEARNER, 'the learner is not left the fool');
     assert.equal(summary.firstAttacker, LEARNER, 'the learner holds the lowest trump and leads');
     assert.equal(summary.trump.suit, summary.powerSuit, 'the flipped trump names the trump suit');
@@ -123,19 +124,19 @@ test('the tutorial teaches every element it narrates', async () => {
     const ps = summary.powerSuit;
 
     // The learner performs each move the tutorial prompts for...
-    assert.ok(learner(REPLAY_STEP.ATTACK).length > 0, 'the learner attacks');
-    assert.ok(learner(REPLAY_STEP.COVER).length > 0, 'the learner covers');
-    assert.ok(learner(REPLAY_STEP.PASS).length > 0, 'the learner passes (perevod)');
-    assert.ok(learner(REPLAY_STEP.PICKUP).length > 0, 'the learner picks up');
+    assert.ok(learner(REPLAY_ATOM_ATTACK).length > 0, 'the learner attacks');
+    assert.ok(learner(REPLAY_ATOM_COVER).length > 0, 'the learner covers');
+    assert.ok(learner(REPLAY_ATOM_PASS).length > 0, 'the learner passes (perevod)');
+    assert.ok(learner(REPLAY_ATOM_PICKUP).length > 0, 'the learner picks up');
 
     // ...including a throw-in (an attack onto a table that is not empty)...
     const threwIn = frames.some((f, i) =>
-        f.kind === REPLAY_STEP.ATTACK && f.seat === LEARNER
+        f.kind === REPLAY_ATOM_ATTACK && f.seat === LEARNER
         && i > 0 && frames[i - 1].game.battles.length > 0);
     assert.ok(threwIn, 'the learner throws in');
 
     // ...and a trump cover, the one the beat calls out by name.
-    const trumpCovered = learner(REPLAY_STEP.COVER).some((f) =>
+    const trumpCovered = learner(REPLAY_ATOM_COVER).some((f) =>
         f.cards[0]?.suit === ps && f.target && f.target.suit !== ps);
     assert.ok(trumpCovered, 'the learner covers a plain card with a trump');
 
@@ -143,14 +144,14 @@ test('the tutorial teaches every element it narrates', async () => {
     // closes a bout becomes a seat-less ROUND_END — which is exactly why the
     // tutorial reads it off the board instead. If this assertion ever needed
     // GOOD steps, the learnerOwesGood path would be dead code.
-    assert.equal(learner(REPLAY_STEP.GOOD).length, 0,
+    assert.equal(learner(REPLAY_ATOM_GOOD).length, 0,
         'a finished game has no pending goods — the learner\'s goods close bouts');
     const owes = frames.filter((f, i) =>
-        f.kind === REPLAY_STEP.ROUND_END && learnerOwesGood(frames[i - 1]));
+        f.kind === REPLAY_ATOM_ROUND_END && learnerOwesGood(frames[i - 1]));
     assert.ok(owes.length > 0, 'the learner is asked to say good at least once');
 
     // And the table shows the rest.
-    assert.ok(kinds(REPLAY_STEP.ROUND_END).length > 0, 'a bout closes and the table is binned');
+    assert.ok(kinds(REPLAY_ATOM_ROUND_END).length > 0, 'a bout closes and the table is binned');
     assert.ok(frames.some((f) => f.seq.events.some((e) => e.type === 'refill')), 'players draw');
     assert.ok(frames.some((f) => f.seq.events.some((e) => e.type === 'out')), 'a player goes out');
     assert.ok(frames.some((f) => f.game.deckCount === 0 && !f.game.hasFlipped),
@@ -169,16 +170,16 @@ test('walking the tutorial the way a learner does reaches the end', async () => 
         const next = i + 1;
         if (isLearnerStep(frames, next)) {
             const f = frames[next];
-            const kind = f.kind === REPLAY_STEP.ROUND_END ? REPLAY_STEP.GOOD : f.kind;
+            const kind = f.kind === REPLAY_ATOM_ROUND_END ? REPLAY_ATOM_GOOD : f.kind;
             // Every learner step maps to a button the tutorial can highlight.
-            const askable: readonly number[] = [REPLAY_STEP.ATTACK, REPLAY_STEP.PASS, REPLAY_STEP.PICKUP,
-                       REPLAY_STEP.GOOD, REPLAY_STEP.COVER];
+            const askable: readonly number[] = [REPLAY_ATOM_ATTACK, REPLAY_ATOM_PASS, REPLAY_ATOM_PICKUP,
+                       REPLAY_ATOM_GOOD, REPLAY_ATOM_COVER];
             assert.ok(askable.includes(kind),
                 `step ${next} (kind ${f.kind}) is a move the learner can be asked for`);
-            if (kind === REPLAY_STEP.ATTACK || kind === REPLAY_STEP.PASS || kind === REPLAY_STEP.COVER) {
+            if (kind === REPLAY_ATOM_ATTACK || kind === REPLAY_ATOM_PASS || kind === REPLAY_ATOM_COVER) {
                 assert.ok(f.cards.length > 0, `step ${next} highlights the cards to play`);
             }
-            if (kind === REPLAY_STEP.COVER) assert.ok(f.target, `step ${next} names the card to cover`);
+            if (kind === REPLAY_ATOM_COVER) assert.ok(f.target, `step ${next} names the card to cover`);
             prompts++;
         }
         i = next;
@@ -207,7 +208,7 @@ test('the tutorial narrates the trump cover, and every concept exactly once', as
     const trump = beats.find((b) => teaches(b, 'tut_trump_cover'));
     assert.ok(trump, `the tutorial teaches the trump cover (beats: ${beats.map((b) => [b.key, ...(b.extras ?? [])].join('+')).join(', ')})`);
     const f = frames[trump!.at];
-    assert.equal(f.kind, REPLAY_STEP.COVER, 'the trump-cover beat sits on a cover');
+    assert.equal(f.kind, REPLAY_ATOM_COVER, 'the trump-cover beat sits on a cover');
     assert.ok((f.pairs ?? []).some((pr) => pr.card.suit === ps && pr.target.suit !== ps),
         'the step the beat names really spends a trump on a plain attack');
 
@@ -244,7 +245,7 @@ test('the trump-cover beat reads the PAIR, not the first card against the first 
     const ps = S.S;
     const card = (value: number, suit: number) => ({ value, suit });
     const step = {
-        kind: REPLAY_STEP.COVER,
+        kind: REPLAY_ATOM_COVER,
         seat: LEARNER,
         cards: [card(9, S.H), card(6, ps)],
         target: card(7, S.H),
@@ -255,7 +256,7 @@ test('the trump-cover beat reads the PAIR, not the first card against the first 
         seq: { events: [] },
         game: { battles: [], deckCount: 12, hasFlipped: false, seats: [] },
     };
-    const deal = { ...step, kind: REPLAY_STEP.DEAL, cards: [], target: null, pairs: [] };
+    const deal = { ...step, kind: REPLAY_ATOM_DEAL, cards: [], target: null, pairs: [] };
     const frames = [deal, step] as unknown as ReplayFrame[];
     const summary = { powerSuit: ps, firstAttacker: LEARNER, fool: 1 } as never;
 
