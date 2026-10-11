@@ -14590,6 +14590,154 @@ static int cp_engine_takes(const Game *g, int seat, const ClientPlay *p) {
     return cb_engine_verdict(g, seat, w, wl) == 0;
 }
 
+// ---- the plan, asked with boards (client_table.h client_plan_step, client_plan) ----
+//
+// A client hands over each step's board whole and the kernel takes the counts,
+// the row and the masking off it. The claim is that this is anim_plan_ask over
+// exactly the numbers a host used to work out for itself, so the plan is held
+// against anim_build_plan given those numbers by hand.
+static void test_client_plan_reads_the_boards(void) {
+    const Card seven_h = { .suit = SUIT_HEARTS, .value = 6 }, nine_h = { .suit = SUIT_HEARTS, .value = 8 };
+    const Card king_d = { .suit = SUIT_DIAMONDS, .value = 12 }, trump = { .suit = SUIT_CLUBS, .value = 12 };
+    const Card back = { .suit = -1, .value = -1 };
+
+    // The board the pass left: 7h covered by 9h, and the king laid beside it.
+    cvr_board(&cb_view, 0);
+    cb_view.num_battles = 2;
+    cb_view.battles[1] = (Battle){ .attack = king_d, .defense = CARD_NONE };
+    cb_view.seats[0].hand_count = 4;
+    cb_view.seats[2].hand_count = 6;
+    cb_view.discard_pile_length = 3;
+    // The final board: the stock drawn dry, the trump dealt out with it.
+    cb_view2 = cb_view;
+    cb_view2.deck_count = 0;
+    cb_view2.has_flipped = false;
+    cb_view2.seats[1].hand_count = 9;
+
+    // Stale on purpose: a host reuses the ask, and none of this is the stream's.
+    memset(&pa_ask, 0x5a, sizeof pa_ask);
+    ClientPlanStep st = { .type = ANIM_EVT_ATTACK_PASS, .seat = 0, .from = ANIM_LOC_HAND, .to = ANIM_LOC_TABLE,
+                          .n_cards = 1, .cards = { king_d } };
+    CHECK(client_plan_step(&pa_ask, 0, &st, &cb_view) == ANIM_EOK, "a step with its board is taken");
+    const AnimPlanAskEvent *a = &pa_ask.events[0];
+    const unsigned char row[4] = { (unsigned char)card_to_id(seven_h), (unsigned char)card_to_id(nine_h),
+                                   (unsigned char)card_to_id(king_d), ANIM_TABLE_NONE };
+    CHECK(a->has_counts && a->deck == 12 && a->discard == 3 && card_eq(a->flipped, trump),
+          "the stock, the discard and the face-up trump are the board's");
+    CHECK(a->hand[0] == 4 && a->hand[1] == 5 && a->hand[2] == 6 && a->hand[3] == 0 && a->hand[MAX_PLAYERS - 1] == 0,
+          "every seat's hand count is the board's, and a seat the board does not have holds nothing");
+    CHECK(a->n_row == 4 && memcmp(a->row, row, 4) == 0,
+          "the row is the board's battles: each attack, then its cover or ANIM_TABLE_NONE");
+    CHECK(!a->mask_cards, "a step that names its card is not masked");
+
+    // A pickup of backs that carries no board.
+    st = (ClientPlanStep){ .type = ANIM_EVT_PICKUP, .seat = 1, .from = ANIM_LOC_TABLE, .to = ANIM_LOC_HAND,
+                           .n_cards = 2, .cards = { back, back } };
+    CHECK(client_plan_step(&pa_ask, 1, &st, NULL) == ANIM_EOK, "a step with no board is taken");
+    CHECK(!pa_ask.events[1].has_counts && pa_ask.events[1].n_row == 0, "and carries no counts and no row");
+    CHECK(pa_ask.events[1].mask_cards, "a step of nothing but backs is masked");
+
+    CHECK(client_plan(&pa_ask, 2, &cb_view2, &pa_asked) == ANIM_EOK, "the stream plans");
+    CHECK(pa_ask.n_players == 3 && pa_ask.final_deck == 0 && pa_ask.final_discard == 3
+          && card_is_none(pa_ask.final_flipped) && pa_ask.final_hand[1] == 9 && pa_ask.final_hand[3] == 0,
+          "the final board gives the seat count and the final counts, a trump that is not face up being no card");
+
+    const int hand0[3] = { 4, 5, 6 }, final_hand[3] = { 4, 9, 6 };
+    const Card backs[2] = { back, back };
+    const AnimPlanEvent evs[2] = {
+        { .type = ANIM_EVT_ATTACK_PASS, .seat = 0, .from = ANIM_LOC_HAND, .to = ANIM_LOC_TABLE, .cards = &king_d,
+          .n_cards = 1, .has_counts = 1, .deck = 12, .discard = 3, .flipped = trump, .hand = hand0,
+          .battles = row, .n_battles = 2 },
+        { .type = ANIM_EVT_PICKUP, .seat = 1, .from = ANIM_LOC_TABLE, .to = ANIM_LOC_HAND, .cards = backs,
+          .n_cards = 2, .mask_cards = 1, .n_battles = ANIM_NO_BOARD },
+    };
+    CHECK(anim_build_plan(evs, 2, 3, 0, 3, CARD_NONE, final_hand, &pa_direct) == ANIM_EOK
+          && anim_plans_same(&pa_asked, &pa_direct, 3),
+          "the plan is anim_build_plan's over the numbers read off the boards");
+
+    // The cells a board cannot name, and the two masks that are not one.
+    cb_view.battles[1].attack = back;
+    cb_view.battles[0].defense = back;
+    st = (ClientPlanStep){ .type = ANIM_EVT_REFILL, .seat = 2, .from = ANIM_LOC_DECK, .to = ANIM_LOC_HAND,
+                           .n_cards = 2, .cards = { back, king_d } };
+    CHECK(client_plan_step(&pa_ask, 0, &st, &cb_view) == ANIM_EOK && pa_ask.n_events == 1,
+          "step 0 starts a new stream over the last one");
+    CHECK(a->row[1] == ANIM_TABLE_UNKNOWN && a->row[2] == ANIM_TABLE_UNKNOWN && a->row[3] == ANIM_TABLE_NONE,
+          "a card that is there and cannot be named is ANIM_TABLE_UNKNOWN, and still not an uncovered battle");
+    CHECK(!a->mask_cards, "one named card among backs is not a masked step");
+    st.n_cards = 0;
+    CHECK(client_plan_step(&pa_ask, 0, &st, &cb_view) == ANIM_EOK && !a->mask_cards, "and neither is a step of no cards");
+}
+
+static void test_client_plan_without_a_final_board(void) {
+    const Card king_d = { .suit = SUIT_DIAMONDS, .value = 12 };
+    cvr_board(&cb_view, 0);
+    cb_view2 = cb_view;
+    ClientPlanStep st = { .type = ANIM_EVT_ATTACK_PASS, .seat = 0, .from = ANIM_LOC_HAND, .to = ANIM_LOC_TABLE,
+                          .n_cards = 1, .cards = { king_d } };
+
+    // A final board first, so what it left in the ask is there to be stale.
+    CHECK(client_plan_step(&pa_ask, 0, &st, NULL) == ANIM_EOK && client_plan(&pa_ask, 1, &cb_view2, &pa_asked) == ANIM_EOK
+          && pa_ask.final_deck == 12, "a boardless stream plans against the final board");
+
+    // Two boards of different widths and no final: the widest is the table.
+    cb_view.num_players = 2;
+    CHECK(client_plan_step(&pa_ask, 0, &st, &cb_view) == ANIM_EOK && pa_ask.n_players == 2, "a stream starts as wide as its first board");
+    CHECK(pa_ask.events[0].hand[2] == 0, "a seat past the board's own holds nothing, whatever the view has there");
+    cb_view.num_players = 3;
+    CHECK(client_plan_step(&pa_ask, 1, &st, &cb_view) == ANIM_EOK && pa_ask.n_players == 3, "and widens to the widest board given");
+    cb_view.num_players = 2;
+    CHECK(client_plan_step(&pa_ask, 2, &st, &cb_view) == ANIM_EOK && pa_ask.n_players == 3, "a narrower one after it narrows nothing");
+    CHECK(client_plan(&pa_ask, 3, NULL, &pa_asked) == ANIM_EOK && pa_asked.n_steps == 3 && pa_asked.pre.n_players == 3,
+          "with no final board the table is the widest board a step carried");
+    CHECK(pa_ask.final_deck == 0 && pa_ask.final_discard == 0 && card_is_none(pa_ask.final_flipped)
+          && pa_ask.final_hand[1] == 0, "and the final counts are zero, not the last stream's");
+
+    // No board anywhere is no table, which the plan refuses as it does for events.
+    CHECK(client_plan_step(&pa_ask, 0, &st, NULL) == ANIM_EOK && pa_ask.n_players == 0
+          && client_plan(&pa_ask, 1, NULL, &pa_asked) == ANIM_EBADARG, "a stream with no board and no final has no table");
+}
+
+static void test_client_plan_order_and_caps(void) {
+    cvr_board(&cb_view, 0);
+    ClientPlanStep st = { .type = ANIM_EVT_OUT, .seat = ANIM_SEAT_NONE, .from = ANIM_LOC_NONE, .to = ANIM_LOC_NONE };
+
+    CHECK(client_plan_step(NULL, 0, &st, NULL) == ANIM_EBADARG && client_plan_step(&pa_ask, 0, NULL, NULL) == ANIM_EBADARG
+          && client_plan_step(&pa_ask, -1, &st, NULL) == ANIM_EBADARG && client_plan(NULL, 0, &cb_view, &pa_asked) == ANIM_EBADARG,
+          "no ask, no step or a step before the first is refused");
+    CHECK(client_plan_step(&pa_ask, 0, &st, NULL) == ANIM_EOK && client_plan_step(&pa_ask, 2, &st, NULL) == ANIM_EBADARG
+          && pa_ask.n_events == 1, "a step out of turn is refused and the stream is left as it was");
+    CHECK(client_plan(&pa_ask, 2, &cb_view, &pa_asked) == ANIM_EBADARG, "a plan of more steps than were given is refused");
+    CHECK(client_plan(&pa_ask, 1, &cb_view, &pa_asked) == ANIM_EOK && pa_asked.n_steps == 1, "the steps given plan");
+    CHECK(client_plan(&pa_ask, 0, &cb_view, &pa_asked) == ANIM_EOK && pa_asked.n_steps == 0,
+          "a plan of no steps is the empty plan, whatever stream came before");
+
+    for (int i = 0; i < ANIM_MAX_STEPS; i++)
+        if (client_plan_step(&pa_ask, i, &st, NULL) != ANIM_EOK) { CHECK(0, "a stream as long as the plan's cap is taken"); break; }
+    CHECK(client_plan_step(&pa_ask, ANIM_MAX_STEPS, &st, NULL) == ANIM_ECAP, "one step more is over the cap");
+    CHECK(client_plan(&pa_ask, ANIM_MAX_STEPS, &cb_view, &pa_asked) == ANIM_EOK && pa_asked.n_steps == ANIM_MAX_STEPS,
+          "and the full stream still plans");
+
+    st.n_cards = ANIM_ASK_MAX_CARDS;
+    for (int i = 0; i < ANIM_ASK_MAX_CARDS; i++) st.cards[i] = card_of_id(i);
+    CHECK(client_plan_step(&pa_ask, 0, &st, NULL) == ANIM_EOK && pa_ask.events[0].n_cards == ANIM_ASK_MAX_CARDS
+          && card_eq(pa_ask.events[0].cards[ANIM_ASK_MAX_CARDS - 1], card_of_id(ANIM_ASK_MAX_CARDS - 1)),
+          "a step of every card there is fits, each card where the host put it");
+    st.n_cards = ANIM_ASK_MAX_CARDS + 1;
+    CHECK(client_plan_step(&pa_ask, 0, &st, NULL) == ANIM_ECAP, "one card more is over the cap");
+
+    st.n_cards = 0;
+    cb_view.num_players = MAX_PLAYERS + 1;
+    CHECK(client_plan_step(&pa_ask, 0, &st, &cb_view) == ANIM_EBADARG, "a board that is not one is refused as a step's");
+    CHECK(client_plan_step(&pa_ask, 0, &st, NULL) == ANIM_EOK && client_plan(&pa_ask, 1, &cb_view, &pa_asked) == ANIM_EBADARG,
+          "and as the final board");
+#if 2 * MAX_BATTLES > ANIM_ASK_MAX_ROW
+    cvr_board(&cb_view, 0);
+    cb_view.num_battles = ANIM_ASK_MAX_ROW / 2 + 1;
+    CHECK(client_plan_step(&pa_ask, 0, &st, &cb_view) == ANIM_ECAP, "a row longer than the ask holds is over the cap");
+#endif
+}
+
 static void test_client_play_is_the_engine(void) {
     int asked = 0, resolved = 0, covers = 0, wrong = 0, good_offers = 0;
     int pill_wrong = 0, pickup_pills = 0, card_pills = 0;
@@ -15644,6 +15792,9 @@ int main(void) {
     test_client_board_edit_undeal();
     test_client_rearrange_hand();
     test_client_conflict_verdicts();
+    test_client_plan_reads_the_boards();
+    test_client_plan_without_a_final_board();
+    test_client_plan_order_and_caps();
     test_client_play_is_the_engine();
     test_client_play_refuses_what_is_not_a_gesture();
     test_client_move_wire_is_the_old_encoders_bytes();

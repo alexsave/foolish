@@ -34,6 +34,7 @@ extern void wasm_belief_probe_observe_internal(const Game *g, int seat);
 extern LegalMoves *wasm_moves_ptr_internal(void);
 extern unsigned char *wasm_replay_io_ptr(void);
 extern int wasm_replay_io_cap(void);
+extern void *wasm_anim_plan_ptr(void);
 
 static TableSnaps   g_table_snaps;
 static Table        g_table;
@@ -446,6 +447,20 @@ int wasm_client_rearrange_hand(int n) {
 
 int wasm_client_conflict_verdicts(void) {
     return client_conflict_verdicts(&g_edit_view, &g_final_view, &g_conflict, &g_verdicts);
+}
+
+// THE PLAN (client_table.h client_plan_step, client_plan). Each step goes in as
+// what moved, through the generated writer, with the board it left at the edit
+// view; the board the screen holds goes in at the final view. The answer is the
+// plan at wasm_anim_plan_ptr. ANIM_EOK, or a negative ANIM_E*.
+static ClientPlanStep g_plan_step;
+static AnimPlanAsk    g_plan_ask;
+ClientPlanStep *wasm_client_plan_step_ptr(void) { return &g_plan_step; }
+int wasm_client_plan_step(int at, int has_board) {
+    return client_plan_step(&g_plan_ask, at, &g_plan_step, has_board ? &g_edit_view : 0);
+}
+int wasm_client_plan(int n, int has_final) {
+    return client_plan(&g_plan_ask, n, has_final ? &g_final_view : 0, wasm_anim_plan_ptr());
 }
 
 // ---- the move a client sends (client_table.h) ----

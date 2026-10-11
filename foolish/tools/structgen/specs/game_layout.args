@@ -62,9 +62,9 @@
 # The hand's shape (view_layout.args reads and writes these), so the layout hash
 # bots.wasm is checked against covers HandMetrics and HandLayout too.
 --header hand_layout.h --root HandMetrics --root HandLayout
-# The stream a plan is asked for (view_layout.args writes it), so the layout
-# hash bots.wasm is checked against covers AnimPlanAsk too.
---header anim_plan.h --root AnimPlanAsk
+# One step of the stream a plan is asked for (view_layout.args writes it), so the
+# layout hash bots.wasm is checked against covers ClientPlanStep too.
+--root ClientPlanStep
 # The animation core's four small questions (view_layout.args reads and writes
 # them), so the layout hash bots.wasm is checked against covers them too.
 --header anim_plan.h --root AnimStaleAsk --root AnimStaleRelease --root AnimReversalAsk --root AnimConflictPlan
