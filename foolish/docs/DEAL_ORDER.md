@@ -96,7 +96,7 @@ What that costs, concretely:
   the owner accepted when the FMSG header grew a send clock ("a build that only
   knows format 2 rejects a format-3 bubble outright").
 - **The tutorial's frozen code** was re-cut, which is a one-line change and a
-  supported operation: `npx tsx tests/gen_tutorial_game.ts`.
+  supported operation: `npx tsx e2e/gen_tutorial_game.ts`.
 
 ## Where it lives
 

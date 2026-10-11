@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import supabase from '../backend/Connector';
+import supabase from '../common/Connector';
 import { useAuth } from '../contexts/AuthContext';
 import { useLocalization } from '../contexts/LocalizationContext';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
@@ -11,8 +11,8 @@ import { SovietIcon, RankIcon } from './SovietIcon';
 import { useTexture, getTextureStyle, seedFromString, flipFromString } from './TexturedSurface';
 import { botDisplayName, isBotName } from '../common/botName';
 import { ensureBotsAsync, kernelB32Encode, replaySummary } from '@sdk/ts/wasm/bots.ts';
-import { decodeExtras, joinReplayCode } from '@api/common/replay/extras.ts';
-import { bigintToBytes, bytesToBigint, hexToBytes } from '@api/common/replay/codec.ts';
+import { decodeExtras, joinReplayCode } from '@api/common/replay_extras.ts';
+import { bigintToBytes, bytesToBigint, hexToBytes } from '@api/common/replay_codec.ts';
 
 /**
  * Match history: every finished game the signed-in user played, straight from

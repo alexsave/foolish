@@ -39,14 +39,21 @@ export async function openMtRig(
     const memory = session.memory!;
 
     const workers: Worker[] = [];
+    // A thread that traps AFTER it reported ready (an out-of-bounds read deep in
+    // a solve) posts its error to a promise that has already resolved. It used
+    // to vanish there, and the only trace was one thread fewer deliberating -
+    // which every test but the drain check passes on. Kept, and thrown by the
+    // next run().
+    const trapped: string[] = [];
     await Promise.all(args.map((a) => new Promise<void>((resolve, reject) => {
         const w = new Worker(new URL('./oracle_mt_thread.mjs', import.meta.url), {
             workerData: { bytes, ...a },
         });
         workers.push(w);
         w.on('message', (m: { t: string; message?: string }) => {
-            if (m.t === 'ready') resolve();
-            else reject(new Error(m.message ?? 'oracle-mt worker failed'));
+            if (m.t === 'ready') return resolve();
+            trapped.push(`thread ${a.tid}: ${m.message ?? 'oracle-mt worker failed'}`);
+            reject(new Error(m.message ?? 'oracle-mt worker failed'));
         });
         w.on('error', reject);
         // NB: never unref() - an unref'd worker can be reclaimed before it runs.
@@ -60,7 +67,8 @@ export async function openMtRig(
             await sleep(ms);
             session.stop();
             // let every thread leave octogen before anything is read or re-armed
-            for (let i = 0; i < 400 && session.active() > 0; i++) await sleep(5);
+            for (let i = 0; i < 400 && session.active() > 0 && !trapped.length; i++) await sleep(5);
+            if (trapped.length) throw new Error(`oracle-mt: a thread trapped (${trapped.join('; ')})`);
         },
         async close() {
             session.stop();

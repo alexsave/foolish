@@ -137,7 +137,6 @@ rust/         a frozen experiment whose answer was "do not rewrite the kernel
 experiments/  a WASM Component Model bake-off. A recorded negative result.
 offlinefun/   the PWA and service-worker layer.
 docs/         62 design documents.
-cnitro/       one orphaned header from a rename. Nothing builds from it.
 ```
 
 ---

@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import supabase from '../backend/Connector';
+import supabase from '../common/Connector';
 import { useParams } from 'next/navigation';
 import { useAuth } from './AuthContext';
 import { MAX_PLAYERS } from '@api/core/constants.ts';
@@ -16,7 +16,7 @@ import { clientTable, encodeAction } from '@sdk/ts/table/client_table.ts';
 import { GAME_STATUS, type TableView, type ViewCard } from '../state/view';
 import { rejectMessage } from '../wasm/rejectMessages';
 import { authoritativeVersion } from '../state/authoritativeVersion';
-import { EN, StringId, StringTable, isLanguage, loadLanguage, translate } from '../localization/strings';
+import { EN, StringId, StringTable, isLanguage, loadLanguage, translate } from '../common/strings';
 
 type Card = ViewCard;
 
@@ -40,7 +40,7 @@ const hexToBytes = (hex: string): Uint8Array => {
 // reconcileAfter loads the game: two flights, time for a late push.
 //
 // DERIVED FROM THE KERNEL'S FLIGHT, not from a TypeScript copy of it. This used
-// to be `ANIMATION_TIME = 500` in src/constants/constants.ts, and every
+// to be `ANIMATION_TIME = 500` in src/common/constants.ts, and every
 // duration, gap and deadline in the product was that one number; the flight
 // itself is the kernel's (c/src/anim_plan.h ANIM_TIME_MS, generated into
 // sdk/ts/gen/anim.bots.ts), so the coupling cannot silently come apart.

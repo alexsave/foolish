@@ -43,7 +43,7 @@ before(async () => {
     const React = await import('react');
     const { createRoot } = await import('react-dom/client');
     const { act } = await import('react');
-    const { usePreventScroll } = await import('../../src/hooks/usePreventScroll.ts');
+    const { usePreventScroll } = await import('../../src/utils/usePreventScroll.ts');
 
     const Probe = () => { usePreventScroll(); return null; };
     const host = document.getElementById('host')!;

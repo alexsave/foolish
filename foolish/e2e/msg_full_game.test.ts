@@ -18,7 +18,7 @@ import { kernelMsgDecode as decodeHeader, kernelMsgSeal, kernelMsgRebase, kernel
 // The envelope and its digest as one flat value: the generated header (msg_wire.h MsgHeader) holds them apart.
 const kernelMsgDecode = (bytes: Uint8Array) => { const h = decodeHeader(bytes); return { ...h.e, digest: h.digest }; };
 import { MSG_REBASE_REAPPLY } from '../sdk/ts/gen/msg_layout.bots.ts';
-import { classifyPathSegment } from '../server/api/common/replay/codec.ts';
+import { classifyPathSegment } from '../server/api/common/replay_codec.ts';
 
 const AWIRE = { attack: 0, cover: 1, pass: 2, pickup: 3, good: 4 } as const;
 const wireCard = (c: { suit: number; value: number }) => c.suit * 13 + (c.value - 1);

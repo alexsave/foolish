@@ -1,5 +1,5 @@
 import type { RealtimeChannel } from '@supabase/supabase-js';
-import supabase from '../backend/Connector';
+import supabase from '../common/Connector';
 
 /**
  * Holds one PRIVATE Realtime channel open for as long as the caller wants it,

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
-import supabase from '../backend/Connector';
-import { WEBSITE_DOMAIN } from '../constants/constants';
+import supabase from '../common/Connector';
+import { WEBSITE_DOMAIN } from '../common/constants';
 import type { Session, User, WeakPassword } from '@supabase/supabase-js';
 import { Sha256 } from '@aws-crypto/sha256-js';
 import { usernameUsesReservedPrefix } from '../common/botName';

@@ -97,7 +97,7 @@ final class MessageReplayLinkTests: XCTestCase {
     ///
     /// The site has read a names channel off the end of a replay code since the
     /// channel existed - `<moves>-<extras>`, decoded by ReplayScreen through
-    /// server/api/common/replay/extras.ts - and the website's own finished games
+    /// server/api/common/replay_extras.ts - and the website's own finished games
     /// have written it all along. The phone was the one producer that did not,
     /// so a game between friends replayed as "P1" beating "P2".
     ///

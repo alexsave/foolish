@@ -266,7 +266,7 @@ const supabaseMock = {
 };
 
 let routeGameId = '';
-mock.module('../src/backend/Connector.ts', { defaultExport: supabaseMock });
+mock.module('../src/common/Connector.ts', { defaultExport: supabaseMock });
 mock.module('next/navigation', { namedExports: {
     useParams: () => (routeGameId ? { game_id: routeGameId } : {}),
     useRouter: () => ({ push() {}, replace() {}, back() {} }),

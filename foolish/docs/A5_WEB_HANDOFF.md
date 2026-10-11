@@ -123,12 +123,12 @@ deck to rebuild. So the game had to change. It is now a different game (seed 37)
 new deal, new moves. The narration **beats are derived**, so it re-narrates
 itself; nothing was hand-keyed.
 
-`tests/gen_tutorial_game.ts` is **restored** — the old one had been lost, which
+`e2e/gen_tutorial_game.ts` is **restored** — the old one had been lost, which
 is how the tutorial came to be a base32 constant nobody could regenerate and had
 to be re-cut by hand when the menu last moved. To re-cut:
 
 ```
-npx tsx tests/gen_tutorial_game.ts          # prints a code; paste into tutorialGame.ts
+npx tsx e2e/gen_tutorial_game.ts          # prints a code; paste into tutorialGame.ts
 ```
 
 Nothing else needs editing. It searches seeds for a game where the learner

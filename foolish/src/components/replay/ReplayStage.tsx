@@ -4,7 +4,7 @@ import { TexturedSurface } from '../TexturedSurface';
 import { useLocalization } from '../../contexts/LocalizationContext';
 import { GameBoard } from '../GameBoard';
 import { Telestrator } from '../Telestrator';
-import { usePreventScroll } from '../../hooks/usePreventScroll';
+import { usePreventScroll } from '../../utils/usePreventScroll';
 import { AnimationSequenceMessage } from '../../state/animationFeed';
 import { type ReplayFrame } from '../../replay/frames';
 import { usePlayback } from '../../replay/usePlayback';

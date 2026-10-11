@@ -12,10 +12,10 @@ import { REPLAY_LINK_STYLE_URL, REPLAY_LINK_STYLE_QR } from '../sdk/ts/gen/msg_l
 
 import {
   bytesToHex, hexToBytes, classifyPathSegment, bytesToBigint, bigintToBytes,
-} from '../server/api/common/replay/codec.ts';
+} from '../server/api/common/replay_codec.ts';
 import {
   encodeExtras, decodeExtras, splitReplayCode, joinReplayCode,
-} from '../server/api/common/replay/extras.ts';
+} from '../server/api/common/replay_extras.ts';
 
 // A pasted link as the moves bigint: the kernel strips and refuses
 // (replay_link_parse), the kernel decodes (replay_b32_decode). Composed here

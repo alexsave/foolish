@@ -1,6 +1,6 @@
 /* The tutorial's scripted game — a third "game-state source" alongside the
  * live server and shared replay URLs. It is a real, complete 3-player game
- * produced by the actual engine (tests/gen_tutorial_game.ts) and frozen here as
+ * produced by the actual engine (e2e/gen_tutorial_game.ts) and frozen here as
  * a replay moves code. The tutorial replays it client-side exactly like the
  * replay screen, then narrates it and highlights the learner's moves.
  *
@@ -9,7 +9,7 @@
  * round-end discard, refills, the deck running out, a player going out, and the
  * fool — with seat 0 performing as many of them as possible. */
 
-// base32 moves code (no extras section). Produced by tests/gen_tutorial_game.ts,
+// base32 moves code (no extras section). Produced by e2e/gen_tutorial_game.ts,
 // which searches seeds for a game that teaches everything: this is seed 211 of
 // 1500 (147 of which qualified), the shortest complete one - 43 steps, 17 of
 // them the learner's.
@@ -24,7 +24,7 @@
 // deal-order fix (game.c refill_player_hands) deals different cards to different
 // seats, so the game this code described stopped existing. Either way, do NOT
 // hunt for an old kernel to decode it with - re-cut it:
-// `npx tsx tests/gen_tutorial_game.ts`. The beats and the learner's prompts are
+// `npx tsx e2e/gen_tutorial_game.ts`. The beats and the learner's prompts are
 // all derived from the game itself, so a re-cut needs no other edit. (The
 // previous code was frozen with its generator missing, which is how it came to
 // be re-cut by hand once already.)

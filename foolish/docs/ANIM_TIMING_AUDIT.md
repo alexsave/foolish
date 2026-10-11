@@ -21,7 +21,7 @@ Its second paragraph sets the direction of travel: iMessage is the spec, so wher
 ## 0. The shape of the problem, in one paragraph
 
 The web has no animation model.
-It has a queue of events (`animationQueueRef`, `src/contexts/AnimationContext.tsx:168`), one `setTimeout` at a time (`src/contexts/AnimationContext.tsx:1196`), and a single constant (`ANIMATION_TIME = 500`, `src/constants/constants.ts:2`) standing in for every duration, every gap and every deadline in the product.
+It has a queue of events (`animationQueueRef`, `src/contexts/AnimationContext.tsx:168`), one `setTimeout` at a time (`src/contexts/AnimationContext.tsx:1196`), and a single constant (`ANIMATION_TIME = 500`, `src/common/constants.ts:2`) standing in for every duration, every gap and every deadline in the product.
 Each timer's callback commits that step's board, clears the flight, decrements a counter and calls itself for the next step (`src/contexts/AnimationContext.tsx:1196-1247`).
 Nothing anywhere holds "what is the current step at time T" as a value, so a push that lands mid-flight cannot be answered by re-asking; it can only be answered by mutating the queue the timer chain is walking, which is what the four insertion branches at `src/contexts/AnimationContext.tsx:1074-1112` do.
 The file's own TODO says this (`src/contexts/AnimationContext.tsx:1116-1119`): "this serial setTimeout-driven event queue is a React workaround ... It should be replaced with a proper animation model".
@@ -30,7 +30,7 @@ The file's own TODO says this (`src/contexts/AnimationContext.tsx:1116-1119`): "
 
 | Decision | Web code | C today |
 | --- | --- | --- |
-| A step lasts 500 ms | `src/constants/constants.ts:2`, read at `src/contexts/AnimationContext.tsx:1247` | **C answers it.** `ANIM_TIME_MS` (`c/src/anim_plan.h:74`) is the same 500, and `anim_step_duration_ms` (`:329`) is the seam a per-type rule would land in. The web imports the TS constant instead. |
+| A step lasts 500 ms | `src/common/constants.ts:2`, read at `src/contexts/AnimationContext.tsx:1247` | **C answers it.** `ANIM_TIME_MS` (`c/src/anim_plan.h:74`) is the same 500, and `anim_step_duration_ms` (`:329`) is the seam a per-type rule would land in. The web imports the TS constant instead. |
 | The CSS transition lasts 500 ms | `src/components/GameDisplay/AnimationOverlay.tsx:580` | **C answers it.** Same constant. This one is rendering (a CSS string), so it may keep reading a number, but the number must come from the kernel. |
 | The gap between two steps is 0 ms | `src/contexts/AnimationContext.tsx:1242-1246`: the next flight starts in the same commit as the previous one lands | **C answers it, and differently.** `ANIM_GAP_MS` is 25 (`c/src/anim_plan.h:75`), and `AnimPlanStep.start_ms` is documented as `i*(ANIM_TIME_MS+ANIM_GAP_MS)` (`:271`). The web's effective gap is zero. This is a real, intentional divergence the gate must justify frame by frame. |
 | Step i starts at i x (duration + gap) | nowhere: the web has no start time, only "when the previous timer fired" | **C answers it.** `AnimPlanStep.start_ms` (`c/src/anim_plan.h:271`). |
@@ -131,7 +131,7 @@ The four catch blocks then queue one `revert` event per card: `attack` `:1385-14
 
 | Decision | Web code | C today |
 | --- | --- | --- |
-| After a refused move whose answer names a newer version, wait 1000 ms for a late push, then load the game | `src/constants/constants.ts:5` (`RECONCILE_GRACE_MS = 2 * ANIMATION_TIME`), `src/contexts/ServerContext.tsx:1033-1045` | **C has no concept of it.** This is a network deadline, not choreography. It is DERIVED from the animation constant, though, so once the kernel owns `ANIM_TIME_MS` this number must be derived from the kernel's too, or the coupling the comment relies on ("two flights, time for a late push") silently breaks. |
+| After a refused move whose answer names a newer version, wait 1000 ms for a late push, then load the game | `src/common/constants.ts:5` (`RECONCILE_GRACE_MS = 2 * ANIMATION_TIME`), `src/contexts/ServerContext.tsx:1033-1045` | **C has no concept of it.** This is a network deadline, not choreography. It is DERIVED from the animation constant, though, so once the kernel owns `ANIM_TIME_MS` this number must be derived from the kernel's too, or the coupling the comment relies on ("two flights, time for a late push") silently breaks. |
 | A resync re-applies my pending optimistic cards so a just-played card does not vanish and reappear | `src/contexts/ServerContext.tsx:608` (`applyOptimisticOverlay`), fed by `src/contexts/AnimationContext.tsx:215-224` | **C answers the board edit** (`clientBoards.keepPending`, a `clientTable().edit` call), not the decision to do it. |
 | A resync does not reset the version gate downward | `src/contexts/AnimationContext.tsx:237-250` (`Math.max`) | **C answers it partly.** `anim_should_drop_stale` is the per-push gate; "never lower the watermark" is a separate monotonic rule with no C entry. |
 | A stale-round notice clears after 4000 ms | `src/contexts/ServerContext.tsx:97` | **C has no concept of it.** A toast's dwell time; stays in React. |

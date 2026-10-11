@@ -10,7 +10,7 @@
 
 import type { ReplaySummary } from '@sdk/ts/wasm/bots.ts';
 import { ReplayFrame, REPLAY_STEP } from '../replay/frames.ts';
-import type { StringId } from '../localization/strings';
+import type { StringId } from '../common/strings';
 
 /** The learner always sits at seat 0 in the frozen tutorial game. */
 const LEARNER_SEAT = 0;
