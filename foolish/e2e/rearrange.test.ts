@@ -121,7 +121,8 @@ if (!process.env.VALIDATION_ONLY) {
         const identity = Array.from({ length: n }, (_, i) => i);
         await assert.rejects(runMeta(gameId, human, { type: 'rearrange-hand', card_indices: [n, 0, 1] }), /malformed request/i, 'out of range + wrong length');
         await assert.rejects(runMeta(gameId, human, { type: 'rearrange-hand', card_indices: [n, ...identity.slice(1)] }), /malformed request/i, 'out of range');
-        await assert.rejects(runMeta(gameId, human, { type: 'rearrange-hand', card_indices: 'nope' }), /malformed request/i, 'non-array');
+        // An ask's indices are a list; a request cannot be written with anything else there (helpers/ask.ts).
+        await assert.rejects(runMeta(gameId, human, { type: 'rearrange-hand', card_indices: 'nope' }), /not a list/i, 'non-array');
         await assert.rejects(runMeta(gameId, uuid(), { type: 'rearrange-hand', card_indices: identity }), /not in game/i, 'non-member');
         assert.equal((await mustReadTable(gameId)).version, before.version, 'no refusal committed');
     });
