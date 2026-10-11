@@ -208,6 +208,13 @@ int      roster_reorder(Roster *r, const int8_t *perm, int n);
 // The title is refused over its cap, never trimmed (no envelope ever trimmed it).
 int      roster_set_title(Roster *r, const char *t, int len);
 
+// THE LOBBY'S TITLE RULE, for whoever sets one (table.h table_retitle, and the
+// board a client shows until the server answers, client_table.h
+// client_ask_apply): at most 50 characters as the web counts them (UTF-16 code
+// units, before trimming), trimmed of JavaScript's whitespace, and not empty
+// once trimmed. The kept bytes start at t + *lo; their length, or E_TITLE.
+int      roster_title_keep(const char *t, int len, int *lo);
+
 // Replaces the name of the seat holding this id (account deletion). Returns the
 // seat, E_SEAT when the id is not seated, or E_NAME.
 int      roster_redact(Roster *r, const char *id, int id_len, const char *name, int name_len);

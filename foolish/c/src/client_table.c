@@ -369,7 +369,10 @@ int client_view_rules(const TableView *v, int from_deck, int to_flipped, int tru
     out->can_say_good = me >= 0 && v->status == GAME_STATUS_PLAYING && v->seats[me].status == PLAYER_STATUS_IN
         && me != v->defender && !((v->good_mask >> me) & 1u) && covered;
     out->can_set_rules = game_lobby_can_set_rules(me, v->status == GAME_STATUS_WAITING) != 0;
+    out->can_join = me < 0 && game_lobby_has_room(n, v->status == GAME_STATUS_WAITING);
 
+    for (int s = 0; s < n && !out->needs_bots; s++)
+        out->needs_bots = seat_needs_bot(v->status, v->seats[s].status, v->seats[s].is_ai);
     for (int s = 0; s < n && !out->bot_to_move; s++)
         out->bot_to_move = v->seats[s].is_ai && turn_may_act(v->status, v->seats[s].status, s, v->num_battles, covered,
                                                              v->first_attacker, v->defender, v->good_mask);
@@ -676,6 +679,48 @@ int client_rearrange_hand(ClientTable *c, TableView *v, const uint8_t *idx, int 
     Game *g = rules_game(c);
     if (!game_rearrange_hand(g, v->my_seat, idx, n)) return CLIENT_E_MOVE;
     memcpy(v->my_hand, g->players[v->my_seat].hand, (size_t)v->my_hand_count);
+    return CLIENT_OK;
+}
+
+int client_ask_apply(TableView *v, const TableAsk *a) {
+    if (!a || !view_holds(v)) return CLIENT_E_FORMAT;
+    if (a->kind != ASK_UPDATE_NAME && a->kind != ASK_SET_RULES && a->kind != ASK_REARRANGE_PLAYERS) return CLIENT_OK;
+    if (v->my_seat < 0 || v->status != GAME_STATUS_WAITING) return CLIENT_E_MISMATCH;
+    if (a->kind == ASK_UPDATE_NAME) {
+        int lo;
+        const int keep = a->title_len > ASK_TITLE_MAX ? ROSTER_E_TITLE : roster_title_keep(a->title, a->title_len, &lo);
+        if (keep < 0 || keep > ROSTER_TITLE_MAX) return CLIENT_E_MOVE;
+        memcpy(v->title, a->title + lo, (size_t)keep);
+        v->title[keep] = 0;
+        v->title_len = (uint8_t)keep;
+        return CLIENT_OK;
+    }
+    if (a->kind == ASK_SET_RULES) {
+        if (a->passing > 1) return CLIENT_E_MOVE;
+        v->passing = a->passing == 1;
+        return CLIENT_OK;
+    }
+    // New seat i is the seat the ask's i-th id names, each seat named once.
+    const int n = v->num_players;
+    ViewSeat old[MAX_PLAYERS];
+    int8_t from[MAX_PLAYERS];
+    uint32_t seen = 0;
+    if (a->n_order != n) return CLIENT_E_MOVE;
+    for (int i = 0; i < n; i++) {
+        int s = 0;
+        if (a->order[i].len > ROSTER_ID_MAX) return CLIENT_E_MOVE;
+        while (s < n && (v->seats[s].id_len != a->order[i].len
+                         || memcmp(v->seats[s].id, a->order[i].id, a->order[i].len) != 0)) s++;
+        if (s == n || (seen & (1u << s))) return CLIENT_E_MOVE;
+        seen |= 1u << s;
+        from[i] = (int8_t)s;
+    }
+    memcpy(old, v->seats, sizeof old);
+    const int me = v->my_seat;
+    for (int i = 0; i < n; i++) {
+        v->seats[i] = old[from[i]];
+        if (from[i] == me) v->my_seat = (int8_t)i;
+    }
     return CLIENT_OK;
 }
 

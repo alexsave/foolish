@@ -442,6 +442,15 @@ dge --table MSG_ERROR_TEXT           --name MsgErrorText          --ts "$errtext
 dge --table REPLAY_EXTRAS_ERROR_TEXT --name ReplayExtrasErrorText --ts "$errtext_ts/replay_extras.ts"
 dge --table REPLAY_ERROR_TEXT        --name ReplayErrorText       --ts "$errtext_ts/replay.ts"
 
+# ---- what a card's face says (c/cardtext, through datagen) ------------------------
+#
+# The rank labels by card value and each suit's glyph and ink, written against
+# card.h's own numbering (c/cardtext/card_text.h says why it is C). Linked by
+# nothing, like c/errtext.
+dgc() { "$DG" --cwd "$root/c" --flags "$BOTS" --header cardtext/card_text.h "$@"; }
+dgc --table CARD_RANK_LABEL --require-complete --name CardRankLabel --ts "$prod/card_rank.ts"
+dgc --table CARD_SUIT_FACE  --require-complete --name CardSuitFace  --ts "$prod/card_suit.ts"
+
 # Genericity fixtures (test/verify.test.ts).
 "$SG" --cwd "$sg/test" --header kinds.h --root Kinds --build wasm= --const K_ --const KFLAG_ --ts "$fixtures/kinds.ts"
 "$SG" --cwd "$sg/test" --header snap.h --root Snap --root SPtr --build wasm= --snapshot Snap --snapshot SPtr --snapshot-only \

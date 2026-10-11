@@ -213,7 +213,7 @@ int table_act(Table *t, const char *actor_id, int id_len, const uint8_t *awire, 
 // when no table is loaded. A host picks the caller's response envelope with it.
 int table_seat_of(const Table *t, const char *id, int id_len);
 
-// PLAYING, and a bot seat is still IN: the row's needs_bots column.
+// Some seat is bot work (game.h seat_needs_bot): the row's needs_bots column.
 bool table_needs_bots(const Table *t);
 
 // A bot that could act now uses the session log (a belief brain), so the host
@@ -249,8 +249,7 @@ int table_remove_bot(Table *t, const char *actor_id, int id_len, const char *bot
 int table_ready(Table *t, const char *actor_id, int id_len, const uint8_t *deal_seed);
 // The new seat order as the seated ids: n x { u8 len, id bytes }.
 int table_reseat(Table *t, const char *actor_id, int id_len, const uint8_t *ids, int ids_len);
-// The lobby's title rule: at most 50 characters as the web counts them (UTF-16
-// code units, before trimming), then trimmed of JavaScript whitespace, not empty.
+// The title as the lobby's rule keeps it (roster.h roster_title_keep).
 int table_retitle(Table *t, const char *actor_id, int id_len, const char *title, int title_len);
 // The table's RULES (docs/PODKIDNOY.md): `passing` 1 the classic passing game,
 // 0 podkidnoy. Any seated player, while the lobby has not dealt
