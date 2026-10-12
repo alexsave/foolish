@@ -131,6 +131,13 @@ extension MessageTableView {
             // and re-freeze them. An opponent stuck a card too high until they
             // played again is the owner's "briefly bumped, then they play a
             // single card and it goes back down".
+            //
+            // ONE OF FOUR RELEASES, AND NOT ALL FOUR ARE THE SAME (this one,
+            // the teardown below, `releaseCounts`, `releaseLivePlayVeil`).
+            // This hands back the six count fields and deliberately LEAVES
+            // `roles`: the marks go to `syncRoles` at the end of this guard,
+            // which flies what changed. Only `releaseLivePlayVeil` nils the roles too, so
+            // do not fold the four into one helper that forgets which is which.
             ledger.write(.sequence) { l in
                 l.deck = nil; l.trump = nil; l.discard = nil; l.hand = [:]; l.battles = nil
                 l.out = nil
@@ -191,6 +198,11 @@ extension MessageTableView {
             // it has pre-hidden but not yet flown, so they appear in the fan and
             // are then flown into it a second time.
             if mySeq == animSequenceToken {
+                // The six count fields, and deliberately NOT `roles`: the
+                // closing beat's `syncRoles` owns the marks and flies them.
+                // Same six as the empty-stream guard above and
+                // `releaseCounts`; `releaseLivePlayVeil` is the one release
+                // that nils the roles as well - keep the four apart.
                 ledger.write(.sequence) { l in
                     l.deck = nil; l.trump = nil; l.discard = nil; l.hand = [:]; l.battles = nil
                     l.out = nil
