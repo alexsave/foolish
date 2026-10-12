@@ -871,8 +871,8 @@ void og_difftest_report(void) {
 // ---------- OG_EXPLAIN: the deliberation's answer (analysis builds only) ----
 //
 // COMPILED OUT of every normal build: everything that reads a deliberation back
-// out (this block, the solver-verdict probe, og_ex_emit, and the emit hooks in
-// octogen_choose_impl) lives behind OG_EXPLAIN_BUILD, so the shipped native +
+// out (this block, the solver-verdict probe, og_ex_emit, and og_publish, the
+// one hook octogen_choose_impl's exits call) lives behind OG_EXPLAIN_BUILD, so the shipped native +
 // wasm bots carry ZERO of it - no code-size cost. It is what the oracle builds
 // are made of (c/Makefile, `wasm-oracle`).
 //
@@ -919,7 +919,7 @@ static int og_explain_on(void) {
 }
 #endif
 // og_ex_emit (the per-decision answer) is defined after the Candidates
-// typedef, just above octogen_choose_impl.
+// typedef, just above og_publish.
 static void og_ex_emit(const Game *g, int bot_idx, const LegalMoves *moves,
                        const Belief *B, const void *C, const double *score, const int *nsim,
                        const bool *alive, const bool *forced_loss,
@@ -1932,78 +1932,404 @@ static void og_ex_emit(const Game *g, int bot_idx, const LegalMoves *moves,
 }
 #endif  // OG_EXPLAIN_BUILD
 
+// ---------- the chooser's parts ----------------------------------------------
+// octogen_choose_impl below is the algorithm and nothing else. What used to be
+// written out inside it lives here, each part once: the knob latch, what a
+// build reads back out of a deliberation (every #ifdef the chooser had), and
+// the stages of the search. All of it is static, so in a shipped build it
+// inlines back into the chooser and the publishing half is no code at all.
+
+// Latch the OG_* knobs (bot_knobs.h: env over the roster spec over the C
+// default). Once per thread, and again after og_reload_flags.
+static void og_load_flags(void) {
+    og_no_solve  = og_flag("OG_NO_SOLVE");
+    og_no_voids  = og_flag("OG_NO_VOIDS");
+    og_no_flip   = og_flag("OG_NO_FLIP");
+    og_no_floors = og_flag("OG_NO_FLOORS");
+    // Exact leaf endgames in rollouts are OFF by default: measured both
+    // slower and weaker vs the real (imperfect) opponent pool - modeling
+    // actual opponents beats assuming perfect play. OG_LEAF=1 re-enables.
+    og_no_leaf   = !og_flag("OG_LEAF");
+    og_no_avoid  = og_flag("OG_NO_AVOID");
+    og_verify    = og_flag("OG_VERIFY");
+    og_w1_override = og_env_int("OG_W1", 0);
+    og_w2_override = og_env_int("OG_W2", 0);
+    og_w3_override = og_env_int("OG_W3", -1);
+    og_keep1 = og_env_int("OG_KEEP1", 0);
+    og_keep2 = og_env_int("OG_KEEP2", 0);
+    og_rollout_policy = og_env_int("OG_ROLLOUT", 0);
+    og_trump_keep = og_env_int("OG_TRUMP_KEEP", 40) / 1000.0;
+    og_bb_win_budget = og_env_int("OG_BB_WIN", 400000);
+    og_solve_cards = og_env_int("OG_SOLVE_CARDS", 28);
+    og_avoid_cards = og_env_int("OG_AVOID_CARDS", 24);
+    og_bb_avoid_budget = og_env_int("OG_BB_AVOID", 250000);
+    og_leaf_budget = og_env_int("OG_LEAF_BUDGET", 1500);
+    og_leaf_max_cards = og_env_int("OG_LEAF_CARDS", 10);
+    og_floor_mod = og_env_int("OG_FLOOR_MOD", 2);
+    if (og_floor_mod < 1) og_floor_mod = 1;
+    og_full_logs = og_flag("OG_FULL_LOGS");
+    og_no_earlyexit = og_flag("OG_NO_EARLYEXIT");
+    og_no_fastroll = og_flag("OG_NO_FASTROLL");
+    og_bbleaf = og_env_int("OG_BBLEAF", 2);
+    og_adapt = og_env_int("OG_ADAPT", 1);
+    og_reply = og_env_int("OG_REPLY", 0);
+    og_mcdef = og_env_int("OG_MCDEF", 0);
+    og_reply_cap = og_env_int("OG_REPLY_CAP", 6);
+    og_reply_stage = og_env_int("OG_REPLY_STAGE", 2);
+    og_void_mod = og_env_int("OG_VOID_MOD", 4);
+    if (og_void_mod < 2) og_void_mod = 2;
+    og_profile = og_env_int("OG_PROFILE", 0);
+    og_bbleaf_cards = og_env_int("OG_BBLEAF_CARDS", 0);
+    og_bbleaf_cards2 = og_env_int("OG_BBLEAF_CARDS2", 8);
+    og_bbleaf_budget = og_env_int("OG_BBLEAF_BUDGET", 3000);
+    og_difftest = og_flag("OG_DIFFTEST");
+    if (og_difftest) { void og_difftest_report(void); atexit(og_difftest_report); }
+    og_flags_loaded = 1;
+}
+
+// ---------- publishing a decision (analysis builds only) --------------------
+//
+// THE ONE PLACE a deliberation is read back out. Each of octogen_choose_impl's
+// five exits publishes what it decided, and what that means is the build's:
+//
+//   OG_EXPLAIN_BUILD   fill the answer (og_ex_emit), when it is asked for
+//   FOOLISH_ORACLE_MT  agree the candidate table with the other threads
+//                      (og_mt_commit_desc) and, if this batch may contribute,
+//                      fold it into the shared accumulator
+//   neither (shipped)  nothing: every function in this section is empty
+//
+// The five exits are NOT five copies of one call. What each hands og_publish:
+//
+//   exit            candidates    scores  chosen    best          win
+//   one legal move  move 0 alone  -       0         0             -       (og_publish_only_move)
+//   proven win      a fresh pick  -       solved    solved's row  solved  (og_publish_win)
+//   no candidate    C, empty      -       0         none          -
+//   one candidate   C             -       C.idx[0]  0             -
+//   Monte Carlo     C             yes     chosen    best          -
+//
+// `chosen` indexes the legal moves and is the row the answer marks. `best`
+// indexes the candidates and is what Mode B stores (-1 stores nothing). They
+// are two arguments because at the Monte Carlo exit they are two moves: the
+// information-hiding rule can turn the sampled best into a pickup, and the
+// answer marks the pickup while Mode B keeps the sampled best; and when
+// nothing was sampled at all, the answer marks move 0 and Mode B stores no
+// choice. Only the Monte Carlo exit has scores, so only it folds sums, sample
+// counts and forced-loss marks into the accumulator - the other exits publish
+// the table and the verdicts and count the batch.
+//
+// The first two exits need something the chooser does not have at that point
+// (a belief, a candidate set), which is built only when somebody is reading.
+// They get a wrapper each, so the chooser never builds it in a shipped build.
+#if defined(OG_EXPLAIN_BUILD) || defined(FOOLISH_ORACLE_MT)
+// Is anybody reading? Mode B always is; an explain build only when asked.
+static int og_publishing(void) {
+#ifdef FOOLISH_ORACLE_MT
+    return 1;
+#else
+    return og_explain_on();
+#endif
+}
+#endif
+
+// Forget the last decision's exact verdicts, before the root endgame solve
+// probes this one's (og_try_endgame_solve).
+static void og_verdicts_reset(void) {
+#ifdef OG_EXPLAIN_BUILD
+    if (og_explain_on()) {
+        og_ex_solve_applied = 0;
+        for (int i = 0; i < (int)(sizeof(og_ex_verdict)/sizeof(og_ex_verdict[0])); i++)
+            og_ex_verdict[i] = OG_EX_NONE_V;
+    }
+#elif defined(FOOLISH_ORACLE_MT)
+    og_ex_solve_applied = 0;
+    for (int i = 0; i < (int)(sizeof(og_ex_verdict)/sizeof(og_ex_verdict[0])); i++)
+        og_ex_verdict[i] = OG_EX_NONE_V;
+#endif
+}
+
+// score/nsim/alive index by CANDIDATE position (matching C->idx[]) and are
+// NULL at every exit but the Monte Carlo one; forced_loss indexes the legal
+// moves and is NULL only when one move was legal.
+static void og_publish(const Game *g, int bot_idx, const LegalMoves *moves,
+                       const Belief *B, const Candidates *C,
+                       const double *score, const int *nsim, const bool *alive,
+                       const bool *forced_loss, int chosen, int best, int win_idx) {
+    (void)g; (void)bot_idx; (void)moves; (void)B; (void)C; (void)score; (void)nsim;
+    (void)alive; (void)forced_loss; (void)chosen; (void)best; (void)win_idx;
+#ifdef OG_EXPLAIN_BUILD
+    if (og_explain_on())
+        og_ex_emit(g, bot_idx, moves, B, C, score, nsim, alive, forced_loss,
+                   chosen, og_ex_solve_applied, win_idx);
+#endif
+#ifdef FOOLISH_ORACLE_MT
+    // MT5 (docs/INFINITE_ORACLE_DESIGN.md §8b.5): fold this batch's per-candidate
+    // rollout scores into the shared accumulator, once the candidate set has
+    // been agreed with whatever thread published first. score[] is a sum of
+    // finish positions (ints 1..N), so the u64 atomic add is exact - no float
+    // reduction, and no dependence on the order the threads happen to land in.
+    if (og_mt_commit_desc(moves, C)) {
+        og_mt_capture_verdicts(C);            // NONE unless the endgame probe fired
+        if (score) {
+            for (int i = 0; i < C->n && i < OG_MT_MAX_CANDS; i++) {
+                if (nsim[i] > 0) {
+                    __atomic_fetch_add(&g_ogmt.sum_fp[i], (uint64_t)(score[i] + 0.5), __ATOMIC_RELAXED);
+                    __atomic_fetch_add(&g_ogmt.nsim[i], (uint32_t)nsim[i], __ATOMIC_RELAXED);
+                }
+                if (forced_loss[C->idx[i]])
+                    __atomic_store_n(&g_ogmt.forced_loss[i], 1u, __ATOMIC_RELAXED);
+            }
+        }
+        if (best >= 0) __atomic_store_n(&g_ogmt.chosen, best, __ATOMIC_RELAXED);
+        __atomic_fetch_add(&g_ogmt.batches, 1u, __ATOMIC_RELAXED);
+    }
+#endif
+}
+
+// The degenerate exit: one legal move, nothing to sample. It runs BEFORE the
+// belief is built and before the verdicts are reset, so it resets the solver
+// mark itself, and builds a belief only for an answer that is being read.
+// Published so the answer and the overlay have their one row, and the batch
+// is counted.
+static void og_publish_only_move(const Game *g, int bot_idx, const LegalMoves *moves) {
+    (void)g; (void)bot_idx; (void)moves;
+#if defined(OG_EXPLAIN_BUILD) || defined(FOOLISH_ORACLE_MT)
+    if (!og_publishing()) return;
+    og_ex_solve_applied = 0;
+    Candidates TC; TC.n = 1; TC.idx[0] = 0;
+    const Belief *B = NULL;
+#ifdef OG_EXPLAIN_BUILD
+    Belief lb;
+    if (og_explain_on()) { og_build_belief(g, bot_idx, &lb); B = &lb; }   // for the known-state dump only
+#endif
+    og_publish(g, bot_idx, moves, B, &TC, NULL, NULL, NULL, NULL, 0, 0, -1);
+#endif
+}
+
+// Proven win: octogen returns the winning move directly (no MC), so there is
+// no candidate set yet. Pick one - what Monte Carlo would have been handed -
+// so the answer and the controller show the exact panel with its verdicts.
+static void og_publish_win(const Game *g, int bot_idx, const LegalMoves *moves,
+                           const Belief *B, const bool *forced_loss, int solved) {
+    (void)g; (void)bot_idx; (void)moves; (void)B; (void)forced_loss; (void)solved;
+#if defined(OG_EXPLAIN_BUILD) || defined(FOOLISH_ORACLE_MT)
+    if (!og_publishing()) return;
+    Candidates EC; og_pick_candidates(g, moves, forced_loss, &EC);
+    int row = -1;
+    for (int i = 0; i < EC.n; i++)
+        if (EC.idx[i] == solved) { row = i; break; }
+    og_publish(g, bot_idx, moves, B, &EC, NULL, NULL, NULL, forced_loss, solved, row, solved);
+#endif
+}
+
+// The Mode A path trace (CD_ORC_TRACE, the answer's why table), around one
+// deliberation and around each root-move playout of it. Empty elsewhere.
+static inline void og_trace_reset(void) {
+#ifdef CD_ORC_TRACE
+    og_orc_reset();   // fresh path aggregation per deliberation
+#endif
+}
+static inline void og_trace_begin(int bot_idx) {
+    (void)bot_idx;
+#ifdef CD_ORC_TRACE
+    cd_orc_begin(bot_idx);   // trace root apply + playout
+#endif
+}
+static inline void og_trace_end(int ci, int fp) {
+    (void)ci; (void)fp;
+#ifdef CD_ORC_TRACE
+    cd_orc_end();
+    og_orc_fold(ci, fp);
+#endif
+}
+
+// ---------- the Monte Carlo stages -------------------------------------------
+
+// Trump-conservation tie-break tax for one candidate (added to its mean-finish
+// score ONLY at selection; the raw MC scores in score[]/nsim[] are left
+// untouched so the OG_EXPLAIN dump still shows true rollout values). Attacks
+// only, deck alive only - leading/throwing a trump is discretionary spend;
+// covering with one is forced defense and endgame trumps must be used.
+static double og_keep_penalty(const Game *g, const LegalMove *m) {
+    double pen = 0.0;
+    if (og_trump_keep > 0.0 && (g->deck_count > 0 || g->has_flipped) && m->type == MOVE_ATTACK)
+        for (int k = 0; k < m->n_cards; k++)
+            if (m->cards[k].suit == g->power_suit)
+                pen += og_trump_keep;
+    return pen;
+}
+
+// After stage 0 and stage 1: drop the worst candidates until `keep` are alive.
+static void og_cull(int stage, int n, const double *keep_pen,
+                    const double *score, const int *nsim, bool *alive) {
+    int n_alive = 0;
+    for (int i = 0; i < n; i++) if (alive[i]) n_alive++;
+    int keep;
+    if (stage == 0) {
+        keep = (og_keep1 > 0) ? og_keep1 : (og_oracle ? (n + 1) / 2 : n / 3);
+        if (keep < (og_oracle ? 4 : 3)) keep = og_oracle ? 4 : 3;
+    } else {
+        keep = (og_keep2 > 0) ? og_keep2 : (og_oracle ? 3 : 2);
+    }
+    if (keep >= n_alive) return;
+    for (int dropped = n_alive - keep; dropped > 0; dropped--) {
+        int worst = -1;
+        double worst_v = -1e30;
+        for (int i = 0; i < n; i++) {
+            if (!alive[i]) continue;
+            double v = score[i] / (double)(nsim[i] ? nsim[i] : 1) + keep_pen[i];
+            // >= : among tied scores drop the LAST candidate. The
+            // candidate list is ranked cheapest-first, so this keeps
+            // the cheap move on ties; dropping the first-tied instead
+            // systematically burns trumps (measured ~0.1 mean finish
+            // vs blackpowder tables at pc4).
+            if (v >= worst_v) { worst_v = v; worst = i; }
+        }
+        if (worst < 0) break;
+        alive[worst] = false;
+    }
+}
+
+// The three-stage race over shared sampled worlds. On return score[]/nsim[]
+// hold each candidate's summed finish positions and sample count, and alive[]
+// the survivors of the two culls.
+//
+// The two rollout paths stay written out in the world loop on purpose. Lifted
+// into a function per path they inline back, and bots.wasm still came out
+// 182 B larger for it (measured at the shipped flags); this is the hot loop,
+// so it keeps the shape it was profiled in.
+static void og_run_stages(const Game *g, int bot_idx, const LegalMoves *moves,
+                          const Belief *B, const Candidates *C, const double *keep_pen,
+                          double *score, int *nsim, bool *alive) {
+    int W1, W2, W3;
+    og_params(g->num_players, &W1, &W2, &W3);
+
+    // World-sampling seed. Depends ONLY on the SERVER-ONLY secret - the strategy
+    // LCG, reseeded per decision from state_fnv(g_rng_base) (see wasm_api.c) -
+    // and the deciding seat. It deliberately folds in NO other game state.
+    // Rationale: anything that seeds the RNG but is NOT recoverable from a shared
+    // replay makes a recorded game impossible to reproduce bit-exactly. num_logs
+    // (records the codec may drop), the ordered hands and the face-down deck are
+    // all either non-reproducible or hidden from the bot; a player could even
+    // perturb them (hand rearrange). Unpredictability still rests entirely on the
+    // secret deal seed - a source holder can't recompute it - and the W diverse
+    // wseeds within a decision come from (w+1) below, so MC coverage is intact.
+    // bot_idx only decorrelates co-seated bots in multi-bot games.
+    uint32_t base = og_mix((uint32_t)bot_idx * 2654435761u, random_strategy_rng_get());
+
+    Game *world = world_scratch_game(), *trial = trial_scratch_game();
+    SimState *world_sim = world_scratch_sim(), *trial_sim = trial_scratch_sim();
+
+    // The fast bitboard path: convert each sampled WORLD to a compact SimState
+    // ONCE, then each candidate just clones the SimState, applies its move on
+    // bitboards, and plays out. The struct path (OG_NO_FASTROLL / OG_LEAF /
+    // OG_DIFFTEST) keeps the per-candidate Game clone for the leaf solver and
+    // the exact-equivalence difftest.
+    bool fast_path = !og_no_fastroll && og_no_leaf && !og_difftest && !og_flag("OG_NO_WORLDSIM");
+
+    // Stage 1: all candidates on W1 shared worlds.
+    // Stage 2: surviving third on W2 more shared worlds.
+    // Stage 3: top 2 duel on W3 final shared worlds.
+    for (int stage = 0; stage < 3; stage++) {
+        int w_lo = (stage == 0) ? 0 : (stage == 1) ? W1 : W1 + W2;
+        int w_hi = (stage == 0) ? W1 : (stage == 1) ? W1 + W2 : W1 + W2 + W3;
+        for (int w = w_lo; w < w_hi; w++) {
+            uint32_t wseed = og_mix(base, (uint32_t)(w + 1) * 0x85EBCA77u);
+            // Belief mixture: voids assume cover-if-you-can pickups (3 of 4
+            // worlds), floors assume lowest-first attackers (every other
+            // world). Per-player distrust already cleared bogus constraints.
+            bool use_voids  = (w % og_void_mod) != og_void_mod - 1;
+            bool use_floors = !og_no_floors && (w % og_floor_mod) == 0;
+            og_sample_world(world, g, bot_idx, B, wseed, use_voids, use_floors);
+            uint32_t sim_rng = og_mix(wseed, 0x51AB1E5u);
+
+            if (fast_path) {
+                cd_sim_from_game(world_sim, world);     // convert world ONCE
+                bool reply_stage = og_reply && stage >= og_reply_stage;
+                for (int ci = 0; ci < C->n; ci++) {
+                    if (!alive[ci]) continue;
+                    *trial_sim = *world_sim;            // cheap struct copy
+                    game_rng_set(sim_rng);              // identical stream
+                    og_trace_begin(bot_idx);
+                    int fp;
+                    if (!cd_sim_apply_root_move(trial_sim, bot_idx,
+                                                &moves->moves[C->idx[ci]])) {
+                        fp = g->num_players;
+                    } else if (reply_stage) {
+                        fp = cd_sim_playout_reply(trial_sim, bot_idx, 600,
+                                                  og_bbleaf_on ? og_bbleaf_cards_eff : 0,
+                                                  og_bbleaf_budget, og_polmap,
+                                                  og_reply_cap);
+                        if (fp == 0) fp = g->num_players;
+                    } else {
+                        fp = (og_bbleaf_on || og_polmap)
+                           ? cd_sim_playout_pol(trial_sim, bot_idx, 600,
+                                                !og_no_earlyexit,
+                                                og_bbleaf_on ? og_bbleaf_cards_eff : 0,
+                                                og_bbleaf_budget, og_polmap)
+                           : cd_sim_playout(trial_sim, bot_idx, 600, !og_no_earlyexit);
+                        if (fp == 0) fp = g->num_players;
+                    }
+                    score[ci] += (double)fp;
+                    nsim[ci]++;
+                    og_trace_end(ci, fp);
+                }
+                continue;
+            }
+
+            for (int ci = 0; ci < C->n; ci++) {
+                if (!alive[ci]) continue;
+                og_lite_clone(trial, world);
+                game_rng_set(sim_rng);   // identical stream for every move
+                if (!legal_move_apply(trial, bot_idx, &moves->moves[C->idx[ci]])) {
+                    score[ci] += (double)g->num_players;
+                    nsim[ci]++;
+                    continue;
+                }
+                int fp = og_rollout(trial, bot_idx, 600);
+                if (fp == 0) fp = g->num_players;
+                score[ci] += (double)fp;
+                nsim[ci]++;
+            }
+        }
+        if (stage < 2) og_cull(stage, C->n, keep_pen, score, nsim, alive);
+    }
+}
+
+// Information-hiding rule (docs/OCTOGEN_HIDE_UNCOVERABLE.md). If octogen is
+// about to play a COVER while it cannot cover EVERY uncovered card on the
+// table (no full cover exists in the legal set), pick up immediately. A
+// doomed partial cover only leaks its cover cards - returned to hand and
+// logged by the pickup that is coming anyway - to the memory-keeping MC
+// opponents, and covering opens throw-in windows that grow the pickup.
+// Weakly dominant: never costs a card or tempo. ON for every seat.
+// Returns the move to play: `chosen`, or the pickup in its place.
+static int og_hide_uncoverable(const Game *g, const LegalMoves *moves, int chosen) {
+    if (chosen >= 0 && chosen < moves->n && moves->moves[chosen].type == MOVE_COVER) {
+        int n_uncov = 0;
+        for (int i = 0; i < g->num_battles; i++)
+            if (card_is_none(g->table_battles[i].defense)) n_uncov++;
+        int full_cover = 0, pickup_idx = -1;
+        for (int i = 0; i < moves->n; i++) {
+            if (moves->moves[i].type == MOVE_COVER && moves->moves[i].n_cards == n_uncov)
+                full_cover = 1;
+            else if (moves->moves[i].type == MOVE_PICKUP)
+                pickup_idx = i;
+        }
+        if (!full_cover && pickup_idx >= 0) chosen = pickup_idx;
+    }
+    return chosen;
+}
+
 static int octogen_choose_impl(const Game *g, int bot_idx,
                             const LegalMoves *moves, void *ctx) {
     (void)ctx;
     if (moves->n == 0) return -1;
     if (moves->n == 1) {
-#ifdef OG_EXPLAIN_BUILD
-        if (og_explain_on()) {
-            og_ex_solve_applied = 0;
-            Belief lb; og_build_belief(g, bot_idx, &lb);   // for the known-state dump only
-            og_ex_emit(g, bot_idx, moves, &lb, NULL, NULL, NULL, NULL, NULL, 0, 0, -1);
-        }
-#endif
-#ifdef FOOLISH_ORACLE_MT
-        // Degenerate emit site: one legal move, nothing to sample. Publish the
-        // descriptor so the overlay has a row, and count the batch.
-        {
-            Candidates TC; TC.n = 1; TC.idx[0] = 0;
-            og_ex_solve_applied = 0;
-            if (og_mt_commit_desc(moves, &TC)) {
-                __atomic_store_n(&g_ogmt.chosen, 0, __ATOMIC_RELAXED);
-                __atomic_fetch_add(&g_ogmt.batches, 1u, __ATOMIC_RELAXED);
-            }
-        }
-#endif
+        og_publish_only_move(g, bot_idx, moves);
         return 0;
     }
 
-    if (!og_flags_loaded) {
-        og_no_solve  = og_flag("OG_NO_SOLVE");
-        og_no_voids  = og_flag("OG_NO_VOIDS");
-        og_no_flip   = og_flag("OG_NO_FLIP");
-        og_no_floors = og_flag("OG_NO_FLOORS");
-        // Exact leaf endgames in rollouts are OFF by default: measured both
-        // slower and weaker vs the real (imperfect) opponent pool — modeling
-        // actual opponents beats assuming perfect play. OG_LEAF=1 re-enables.
-        og_no_leaf   = !og_flag("OG_LEAF");
-        og_no_avoid  = og_flag("OG_NO_AVOID");
-        og_verify    = og_flag("OG_VERIFY");
-        og_w1_override = og_env_int("OG_W1", 0);
-        og_w2_override = og_env_int("OG_W2", 0);
-        og_w3_override = og_env_int("OG_W3", -1);
-        og_keep1 = og_env_int("OG_KEEP1", 0);
-        og_keep2 = og_env_int("OG_KEEP2", 0);
-        og_rollout_policy = og_env_int("OG_ROLLOUT", 0);
-        og_trump_keep = og_env_int("OG_TRUMP_KEEP", 40) / 1000.0;
-        og_bb_win_budget = og_env_int("OG_BB_WIN", 400000);
-        og_solve_cards = og_env_int("OG_SOLVE_CARDS", 28);
-        og_avoid_cards = og_env_int("OG_AVOID_CARDS", 24);
-        og_bb_avoid_budget = og_env_int("OG_BB_AVOID", 250000);
-        og_leaf_budget = og_env_int("OG_LEAF_BUDGET", 1500);
-        og_leaf_max_cards = og_env_int("OG_LEAF_CARDS", 10);
-        og_floor_mod = og_env_int("OG_FLOOR_MOD", 2);
-        if (og_floor_mod < 1) og_floor_mod = 1;
-        og_full_logs = og_flag("OG_FULL_LOGS");
-        og_no_earlyexit = og_flag("OG_NO_EARLYEXIT");
-        og_no_fastroll = og_flag("OG_NO_FASTROLL");
-        og_bbleaf = og_env_int("OG_BBLEAF", 2);
-        og_adapt = og_env_int("OG_ADAPT", 1);
-        og_reply = og_env_int("OG_REPLY", 0);
-        og_mcdef = og_env_int("OG_MCDEF", 0);
-        og_reply_cap = og_env_int("OG_REPLY_CAP", 6);
-        og_reply_stage = og_env_int("OG_REPLY_STAGE", 2);
-        og_void_mod = og_env_int("OG_VOID_MOD", 4);
-        if (og_void_mod < 2) og_void_mod = 2;
-        og_profile = og_env_int("OG_PROFILE", 0);
-        og_bbleaf_cards = og_env_int("OG_BBLEAF_CARDS", 0);
-        og_bbleaf_cards2 = og_env_int("OG_BBLEAF_CARDS2", 8);
-        og_bbleaf_budget = og_env_int("OG_BBLEAF_BUDGET", 3000);
-        og_difftest = og_flag("OG_DIFFTEST");
-        if (og_difftest) { void og_difftest_report(void); atexit(og_difftest_report); }
-        og_flags_loaded = 1;
-    }
+    if (!og_flags_loaded) og_load_flags();
 
     uint32_t saved_rng = game_rng_get();
 
@@ -2037,40 +2363,11 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
     bool *forced_loss = forced_loss_scratch();
     memset(forced_loss, 0, (size_t)moves->n * sizeof(bool));
     int n_safe = moves->n;
-#ifdef OG_EXPLAIN_BUILD
-    if (og_explain_on()) {
-        og_ex_solve_applied = 0;
-        for (int i = 0; i < (int)(sizeof(og_ex_verdict)/sizeof(og_ex_verdict[0])); i++)
-            og_ex_verdict[i] = OG_EX_NONE_V;
-    }
-#elif defined(FOOLISH_ORACLE_MT)
-    og_ex_solve_applied = 0;
-    for (int i = 0; i < (int)(sizeof(og_ex_verdict)/sizeof(og_ex_verdict[0])); i++)
-        og_ex_verdict[i] = OG_EX_NONE_V;
-#endif
+    og_verdicts_reset();
     int solved = og_no_solve ? -1
                : og_try_endgame_solve(g, bot_idx, moves, &B, forced_loss, &n_safe);
     if (solved >= 0) {
-#ifdef OG_EXPLAIN_BUILD
-        if (og_explain_on()) {
-            Candidates EC; og_pick_candidates(g, moves, forced_loss, &EC);
-            og_ex_emit(g, bot_idx, moves, &B, &EC, NULL, NULL, NULL, forced_loss,
-                       solved, og_ex_solve_applied, solved);
-        }
-#endif
-#ifdef FOOLISH_ORACLE_MT
-        // Proven win: octogen returns the winning move directly (no MC). Publish
-        // the candidate table + verdicts so the controller shows the exact panel.
-        {
-            Candidates EC; og_pick_candidates(g, moves, forced_loss, &EC);
-            if (og_mt_commit_desc(moves, &EC)) {
-                og_mt_capture_verdicts(&EC);
-                for (int i = 0; i < EC.n; i++)
-                    if (EC.idx[i] == solved) { __atomic_store_n(&g_ogmt.chosen, i, __ATOMIC_RELAXED); break; }
-                __atomic_fetch_add(&g_ogmt.batches, 1u, __ATOMIC_RELAXED);
-            }
-        }
-#endif
+        og_publish_win(g, bot_idx, moves, &B, forced_loss, solved);
         game_rng_set(saved_rng);
         return solved;
     }
@@ -2083,188 +2380,24 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
         og_pick_candidates(g, moves, forced_loss, &C);
     }
     if (C.n == 0) {
-#ifdef OG_EXPLAIN_BUILD
-        if (og_explain_on())
-            og_ex_emit(g, bot_idx, moves, &B, &C, NULL, NULL, NULL, forced_loss,
-                       0, og_ex_solve_applied, -1);
-#endif
-#ifdef FOOLISH_ORACLE_MT
-        if (og_mt_commit_desc(moves, &C)) {
-            og_mt_capture_verdicts(&C);
-            __atomic_fetch_add(&g_ogmt.batches, 1u, __ATOMIC_RELAXED);
-        }
-#endif
+        og_publish(g, bot_idx, moves, &B, &C, NULL, NULL, NULL, forced_loss, 0, -1, -1);
         game_rng_set(saved_rng); return 0;
     }
     if (C.n == 1) {
-#ifdef OG_EXPLAIN_BUILD
-        if (og_explain_on())
-            og_ex_emit(g, bot_idx, moves, &B, &C, NULL, NULL, NULL, forced_loss,
-                       C.idx[0], og_ex_solve_applied, -1);
-#endif
-#ifdef FOOLISH_ORACLE_MT
-        if (og_mt_commit_desc(moves, &C)) {
-            og_mt_capture_verdicts(&C);
-            __atomic_store_n(&g_ogmt.chosen, 0, __ATOMIC_RELAXED);
-            __atomic_fetch_add(&g_ogmt.batches, 1u, __ATOMIC_RELAXED);
-        }
-#endif
+        og_publish(g, bot_idx, moves, &B, &C, NULL, NULL, NULL, forced_loss, C.idx[0], 0, -1);
         game_rng_set(saved_rng); return C.idx[0];
     }
-
-    int W1, W2, W3;
-    og_params(g->num_players, &W1, &W2, &W3);
-
-    // World-sampling seed. Depends ONLY on the SERVER-ONLY secret — the strategy
-    // LCG, reseeded per decision from state_fnv(g_rng_base) (see wasm_api.c) —
-    // and the deciding seat. It deliberately folds in NO other game state.
-    // Rationale: anything that seeds the RNG but is NOT recoverable from a shared
-    // replay makes a recorded game impossible to reproduce bit-exactly. num_logs
-    // (records the codec may drop), the ordered hands and the face-down deck are
-    // all either non-reproducible or hidden from the bot; a player could even
-    // perturb them (hand rearrange). Unpredictability still rests entirely on the
-    // secret deal seed — a source holder can't recompute it — and the W diverse
-    // wseeds within a decision come from (w+1) below, so MC coverage is intact.
-    // bot_idx only decorrelates co-seated bots in multi-bot games.
-    uint32_t base = og_mix((uint32_t)bot_idx * 2654435761u, random_strategy_rng_get());
 
     double score[OG_MAX_CANDS] = {0};
     int    nsim [OG_MAX_CANDS] = {0};
     bool   alive[OG_MAX_CANDS];
-#ifdef CD_ORC_TRACE
-    og_orc_reset();   // fresh path aggregation per deliberation
-#endif
+    og_trace_reset();
     for (int i = 0; i < C.n; i++) alive[i] = true;
 
-    // Trump-conservation tie-break tax (added to a candidate's mean-finish score
-    // ONLY at selection; the raw MC scores in score[]/nsim[] are left untouched so
-    // the OG_EXPLAIN dump still shows true rollout values). Attacks only, deck
-    // alive only — leading/throwing a trump is discretionary spend; covering with
-    // one is forced defense and endgame trumps must be used.
     double keep_pen[OG_MAX_CANDS];
-    {
-        bool deck_alive = (g->deck_count > 0 || g->has_flipped);
-        for (int i = 0; i < C.n; i++) {
-            keep_pen[i] = 0.0;
-            if (og_trump_keep > 0.0 && deck_alive) {
-                const LegalMove *m = &moves->moves[C.idx[i]];
-                if (m->type == MOVE_ATTACK)
-                    for (int k = 0; k < m->n_cards; k++)
-                        if (m->cards[k].suit == g->power_suit)
-                            keep_pen[i] += og_trump_keep;
-            }
-        }
-    }
+    for (int i = 0; i < C.n; i++) keep_pen[i] = og_keep_penalty(g, &moves->moves[C.idx[i]]);
 
-    Game *world = world_scratch_game(), *trial = trial_scratch_game();
-    SimState *world_sim = world_scratch_sim(), *trial_sim = trial_scratch_sim();
-
-    // The fast bitboard path: convert each sampled WORLD to a compact SimState
-    // ONCE, then each candidate just clones the SimState, applies its move on
-    // bitboards, and plays out. The struct path (OG_NO_FASTROLL / OG_LEAF /
-    // OG_DIFFTEST) keeps the per-candidate Game clone for the leaf solver and
-    // the exact-equivalence difftest.
-    bool fast_path = !og_no_fastroll && og_no_leaf && !og_difftest && !og_flag("OG_NO_WORLDSIM");
-
-    // Stage 1: all candidates on W1 shared worlds.
-    // Stage 2: surviving third on W2 more shared worlds.
-    // Stage 3: top 2 duel on W3 final shared worlds.
-    for (int stage = 0; stage < 3; stage++) {
-        int w_lo = (stage == 0) ? 0 : (stage == 1) ? W1 : W1 + W2;
-        int w_hi = (stage == 0) ? W1 : (stage == 1) ? W1 + W2 : W1 + W2 + W3;
-        for (int w = w_lo; w < w_hi; w++) {
-            uint32_t wseed = og_mix(base, (uint32_t)(w + 1) * 0x85EBCA77u);
-            // Belief mixture: voids assume cover-if-you-can pickups (3 of 4
-            // worlds), floors assume lowest-first attackers (every other
-            // world). Per-player distrust already cleared bogus constraints.
-            bool use_voids  = (w % og_void_mod) != og_void_mod - 1;
-            bool use_floors = !og_no_floors && (w % og_floor_mod) == 0;
-            og_sample_world(world, g, bot_idx, &B, wseed, use_voids, use_floors);
-            uint32_t sim_rng = og_mix(wseed, 0x51AB1E5u);
-
-            if (fast_path) {
-                cd_sim_from_game(world_sim, world);     // convert world ONCE
-                bool reply_stage = og_reply && stage >= og_reply_stage;
-                for (int ci = 0; ci < C.n; ci++) {
-                    if (!alive[ci]) continue;
-                    *trial_sim = *world_sim;            // cheap struct copy
-                    game_rng_set(sim_rng);              // identical stream
-#ifdef CD_ORC_TRACE
-                    cd_orc_begin(bot_idx);   // trace root apply + playout
-#endif
-                    int fp;
-                    if (!cd_sim_apply_root_move(trial_sim, bot_idx,
-                                                &moves->moves[C.idx[ci]])) {
-                        fp = g->num_players;
-                    } else if (reply_stage) {
-                        fp = cd_sim_playout_reply(trial_sim, bot_idx, 600,
-                                                  og_bbleaf_on ? og_bbleaf_cards_eff : 0,
-                                                  og_bbleaf_budget, og_polmap,
-                                                  og_reply_cap);
-                        if (fp == 0) fp = g->num_players;
-                    } else {
-                        fp = (og_bbleaf_on || og_polmap)
-                           ? cd_sim_playout_pol(trial_sim, bot_idx, 600,
-                                                !og_no_earlyexit,
-                                                og_bbleaf_on ? og_bbleaf_cards_eff : 0,
-                                                og_bbleaf_budget, og_polmap)
-                           : cd_sim_playout(trial_sim, bot_idx, 600, !og_no_earlyexit);
-                        if (fp == 0) fp = g->num_players;
-                    }
-                    score[ci] += (double)fp;
-                    nsim[ci]++;
-#ifdef CD_ORC_TRACE
-                    cd_orc_end();
-                    og_orc_fold(ci, fp);
-#endif
-                }
-                continue;
-            }
-
-            for (int ci = 0; ci < C.n; ci++) {
-                if (!alive[ci]) continue;
-                og_lite_clone(trial, world);
-                game_rng_set(sim_rng);   // identical stream for every move
-                if (!legal_move_apply(trial, bot_idx, &moves->moves[C.idx[ci]])) {
-                    score[ci] += (double)g->num_players;
-                    nsim[ci]++;
-                    continue;
-                }
-                int fp = og_rollout(trial, bot_idx, 600);
-                if (fp == 0) fp = g->num_players;
-                score[ci] += (double)fp;
-                nsim[ci]++;
-            }
-        }
-        if (stage < 2) {
-            int n_alive = 0;
-            for (int i = 0; i < C.n; i++) if (alive[i]) n_alive++;
-            int keep;
-            if (stage == 0) {
-                keep = (og_keep1 > 0) ? og_keep1 : (og_oracle ? (C.n + 1) / 2 : C.n / 3);
-                if (keep < (og_oracle ? 4 : 3)) keep = og_oracle ? 4 : 3;
-            } else {
-                keep = (og_keep2 > 0) ? og_keep2 : (og_oracle ? 3 : 2);
-            }
-            if (keep >= n_alive) continue;
-            for (int dropped = n_alive - keep; dropped > 0; dropped--) {
-                int worst = -1;
-                double worst_v = -1e30;
-                for (int i = 0; i < C.n; i++) {
-                    if (!alive[i]) continue;
-                    double v = score[i] / (double)(nsim[i] ? nsim[i] : 1) + keep_pen[i];
-                    // >= : among tied scores drop the LAST candidate. The
-                    // candidate list is ranked cheapest-first, so this keeps
-                    // the cheap move on ties; dropping the first-tied instead
-                    // systematically burns trumps (measured ~0.1 mean finish
-                    // vs blackpowder tables at pc4).
-                    if (v >= worst_v) { worst_v = v; worst = i; }
-                }
-                if (worst < 0) break;
-                alive[worst] = false;
-            }
-        }
-    }
+    og_run_stages(g, bot_idx, moves, &B, &C, keep_pen, score, nsim, alive);
 
     int best = -1;
     double best_v = 1e30;
@@ -2274,52 +2407,8 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
         if (v < best_v) { best_v = v; best = i; }
     }
 
-    int chosen = best >= 0 ? C.idx[best] : 0;
-    // Information-hiding rule (docs/OCTOGEN_HIDE_UNCOVERABLE.md). If octogen is
-    // about to play a COVER while it cannot cover EVERY uncovered card on the
-    // table (no full cover exists in the legal set), pick up immediately. A
-    // doomed partial cover only leaks its cover cards — returned to hand and
-    // logged by the pickup that is coming anyway — to the memory-keeping MC
-    // opponents, and covering opens throw-in windows that grow the pickup.
-    // Weakly dominant: never costs a card or tempo. ON for every seat.
-    if (chosen >= 0 && chosen < moves->n && moves->moves[chosen].type == MOVE_COVER) {
-        int n_uncov = 0;
-        for (int i = 0; i < g->num_battles; i++)
-            if (card_is_none(g->table_battles[i].defense)) n_uncov++;
-        int full_cover = 0, pickup_idx = -1;
-        for (int i = 0; i < moves->n; i++) {
-            if (moves->moves[i].type == MOVE_COVER && moves->moves[i].n_cards == n_uncov)
-                full_cover = 1;
-            else if (moves->moves[i].type == MOVE_PICKUP)
-                pickup_idx = i;
-        }
-        if (!full_cover && pickup_idx >= 0) chosen = pickup_idx;
-    }
-#ifdef OG_EXPLAIN_BUILD
-    if (og_explain_on())
-        og_ex_emit(g, bot_idx, moves, &B, &C, score, nsim, alive, forced_loss,
-                   chosen, og_ex_solve_applied, -1);
-#endif
-#ifdef FOOLISH_ORACLE_MT
-    // MT5 (docs/INFINITE_ORACLE_DESIGN.md §8b.5): fold this batch's per-candidate
-    // rollout scores into the shared accumulator, once the candidate set has
-    // been agreed with whatever thread published first. score[] is a sum of
-    // finish positions (ints 1..N), so the u64 atomic add is exact - no float
-    // reduction, and no dependence on the order the threads happen to land in.
-    if (og_mt_commit_desc(moves, &C)) {
-        og_mt_capture_verdicts(&C);           // NONE unless the endgame probe fired
-        for (int i = 0; i < C.n && i < OG_MT_MAX_CANDS; i++) {
-            if (nsim[i] > 0) {
-                __atomic_fetch_add(&g_ogmt.sum_fp[i], (uint64_t)(score[i] + 0.5), __ATOMIC_RELAXED);
-                __atomic_fetch_add(&g_ogmt.nsim[i], (uint32_t)nsim[i], __ATOMIC_RELAXED);
-            }
-            if (forced_loss[C.idx[i]])
-                __atomic_store_n(&g_ogmt.forced_loss[i], 1u, __ATOMIC_RELAXED);
-        }
-        if (best >= 0) __atomic_store_n(&g_ogmt.chosen, best, __ATOMIC_RELAXED);
-        __atomic_fetch_add(&g_ogmt.batches, 1u, __ATOMIC_RELAXED);
-    }
-#endif
+    int chosen = og_hide_uncoverable(g, moves, best >= 0 ? C.idx[best] : 0);
+    og_publish(g, bot_idx, moves, &B, &C, score, nsim, alive, forced_loss, chosen, best, -1);
     game_rng_set(saved_rng);
     return chosen;
 }
