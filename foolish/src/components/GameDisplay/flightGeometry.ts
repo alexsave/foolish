@@ -22,7 +22,9 @@ import { canCoverPair } from '../../utils/gameValidation';
 // land where the grid will DRAW the card, and the grid is where that is stated.
 // `glideOffset` is the other half of that: while the row is still sliding to
 // make room for the pile that just landed, a cell is not yet where it is going.
-import { COVER_ROTATION_RAD, glideOffset } from './TableBattles';
+// And the box one battle takes in the row, which a measuring placeholder has
+// to be the same size as.
+import { BATTLE_CELL_STYLE, COVER_ROTATION_RAD, glideOffset } from './TableBattles';
 import { handLandingCentre, laidOutOnScreen } from './handShape';
 
 // Table-slot geometry cache (Stage 9). The on-table battle layout is a function of
@@ -194,18 +196,9 @@ const measurePlaceholderPositions = (shownBattles: readonly Battle[], type: stri
         const placeholders: HTMLElement[] = [];
         cards.forEach((card, index) => {
             const placeholder = document.createElement('div');
-            placeholder.style.cssText = `
-                    display: flex;
-                    flex-direction: column;
-                    align-items: center;
-                    position: relative;
-                    width: 60px;
-                    height: 80px;
-                    margin: 5px;
-                    justify-content: center;
-                    visibility: hidden;
-                    pointer-events: none;
-                `;
+            // The grid's own cell box (TableBattles), so the slot measured is
+            // the slot it will draw; unseen and untouchable on top of that.
+            Object.assign(placeholder.style, BATTLE_CELL_STYLE, { visibility: 'hidden', pointerEvents: 'none' });
             placeholder.setAttribute('data-placeholder', 'true');
 
             // Insert at the correct position (after existing battles)

@@ -23,6 +23,25 @@ export const COVER_ROTATION_RAD: number = Math.PI / 16;
 
 const COVER_ROTATION: string = COVER_ROTATION_RAD + 'rad';
 
+/** THE BOX ONE BATTLE TAKES IN THE ROW, stated once because three things have
+ *  to agree on it to the pixel: a battle's own cell, the empty drop zone a
+ *  dragged attack is offered (which becomes that cell), and the invisible
+ *  placeholder a flight measures a not-yet-laid slot with (flightGeometry.ts
+ *  measurePlaceholderPositions) - a placeholder of any other size measures a
+ *  slot the grid will not draw. Each adds its own on top: the cell its
+ *  highlight, the drop zone its dashed border, the placeholder its
+ *  invisibility. Spread it, never hand it out: the cell's copy is written to. */
+export const BATTLE_CELL_STYLE = {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    position: 'relative',
+    width: '60px', // Slightly wider to accommodate rotation
+    height: '80px', // Taller to accommodate stacked/rotated cards
+    margin: '5px',
+    justifyContent: 'center',
+} as const satisfies React.CSSProperties;
+
 /** The name one pile keeps across a re-lay-out: its attack, which is what a
  *  battle IS until something covers it. Both the React key and the key the
  *  glide below remembers a cell's place by. */
@@ -252,16 +271,7 @@ export const TableBattles = () => {
         margin: '0 auto'
     }}> {
         battles.map((battle, index) => {
-            let containerStyle: React.CSSProperties = {
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                position: 'relative',
-                width: '60px', // Slightly wider to accommodate rotation
-                height: '80px', // Taller to accommodate stacked/rotated cards
-                margin: '5px',
-                justifyContent: 'center',
-            };
+            let containerStyle: React.CSSProperties = { ...BATTLE_CELL_STYLE };
 
             if (Array.from(coverMap.values()).some(c => c.value === battle.attack.value && c.suit === battle.attack.suit)) {
                 containerStyle.border = '3px solid red';
@@ -364,14 +374,7 @@ export const TableBattles = () => {
             data-location="table"
             data-battle-index={battles.length + index}
             style={{
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                position: 'relative',
-                width: '60px',
-                height: '80px',
-                margin: '5px',
-                justifyContent: 'center',
+                ...BATTLE_CELL_STYLE,
                 border: '3px dashed #d29002',
                 backgroundColor: 'rgba(210, 144, 2, 0.1)',
                 borderRadius: '8px'
