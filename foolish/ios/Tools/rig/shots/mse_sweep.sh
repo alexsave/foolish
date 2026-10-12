@@ -14,7 +14,7 @@
 set -uo pipefail
 : "${FOOLISH_SIM:?set FOOLISH_SIM}"
 HERE="$(cd "$(dirname "$0")" && pwd)"; RIG="$HERE/../rig.sh"
-REPO="$(cd "$HERE/../../../.." && pwd)"
+SHLIB="$HERE/../../../../../shared/rig/lib"  # the shared measurement half (no product knowledge in it)
 export FOOLISH_OUT="${FOOLISH_OUT:-$HOME/Downloads/mse}"
 KNOB="${1:?knob name: lead | hz | resp}"; N="${2:?takes per point}"; shift 2
 G=$("$RIG" group)
@@ -24,7 +24,7 @@ for v in "$@"; do
   echo "=== $KNOB = $v ==============================================="
   rm -rf "$FOOLISH_OUT/film/${tag}_"*
   "$HERE/tween_loop.sh" "$N" "$tag" 2>&1 | grep -E 'tween|NO MOTION|WHOLE'
-  python3 "$REPO/ios/Tools/rig/lib/mse.py" "$FOOLISH_OUT/film/${tag}_"*/edge.csv \
+  python3 "$SHLIB/mse.py" "$FOOLISH_OUT/film/${tag}_"*/edge.csv \
     --label "$tag" --json "$FOOLISH_OUT/$tag.json" 2>&1 | grep -E 'MSE|judder|peak|rest|CUT OFF'
 done
 rm -f "$G/dev.collapse"
