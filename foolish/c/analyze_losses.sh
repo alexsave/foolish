@@ -2,7 +2,7 @@
 # Loss analysis for paired A/B runs.
 #
 #   1) Run a paired eval with --dump to collect per-seed outcomes:
-#        ./build/cnitro_eval --strategy=semtex --control=cordite --opp=cordite \
+#        ./build/cnitro_eval --strategy=octogen --control=cordite --opp=cordite \
 #            --players=4 --games=300 --seed-start=910001 --dump=/tmp/pairs.txt
 #   2) List regression seeds (hero finished WORSE than control):
 #        ./analyze_losses.sh seeds /tmp/pairs.txt
@@ -25,7 +25,7 @@ fi
 if [ "$cmd" = diff ]; then
     seed=${2:?seed}
     pc=${3:?player count}
-    hero=${4:-semtex}
+    hero=${4:-octogen}
     ctrl=${5:-cordite}
     opp=${6:-cordite}
     a=$(mktemp) ; b=$(mktemp)

@@ -1,16 +1,19 @@
-// Training-data generator for the torpex value net.
+// Value-net training-data generator.
 //
-// Plays full games (all seats one strategy, default semtex — strong
+// Plays full games (all seats one strategy, default octogen - strong
 // self-play, so outcomes reflect strong continuations, unlike the
 // handwritten rollout policy whose bias motivated this) and, after each
 // applied move, snapshots the FULL-INFORMATION state from every IN seat's
 // perspective as a compact binary record. Targets (the seat's final finish
-// position) are filled in when the game ends. The value net trained on
-// these records replaces rollouts inside torpex's determinized MC — the
-// worlds it evaluates there are exactly this kind of full-info state.
+// position) are filled in when the game ends.
 //
-//   ./build/cnitro_gen --seats=semtex --players=4 --games=2000 \
-//       --seed-start=100001 --sample=4 --out=/tmp/torpex_pc4.bin
+// Written for torpex, a value net that replaced rollouts inside a
+// determinized MC (the worlds it evaluated were exactly this kind of
+// full-info state). Torpex, its trainer and the net that read these records
+// were retired and removed; nothing in the tree consumes them now.
+//
+//   ./build/cnitro_gen --seats=octogen --players=4 --games=2000 \
+//       --seed-start=100001 --sample=4 --out=/tmp/value_pc4.bin
 //
 // Record layout (little-endian, 72 bytes):
 //   u64 my_hand, opp1_hand, opp2_hand, opp_rest_hand   (card-id bitmasks,
@@ -114,14 +117,14 @@ static void snapshot(const Game *g, const SimState *s, int p, Rec *r) {
 }
 
 int main(int argc, char **argv) {
-    const char *seats_str = get_arg(argc, argv, "seats", "semtex");
+    const char *seats_str = get_arg(argc, argv, "seats", "octogen");
     int strat = parse_strategy(seats_str);
     if (strat < 0) { fprintf(stderr, "unknown strategy '%s'\n", seats_str); return 2; }
     int n = parse_int(get_arg(argc, argv, "players", "4"), 4);
     int games = parse_int(get_arg(argc, argv, "games", "1000"), 1000);
     uint32_t seed0 = (uint32_t)parse_int(get_arg(argc, argv, "seed-start", "100001"), 100001);
     int sample_mod = parse_int(get_arg(argc, argv, "sample", "4"), 4);   // 1/mod of moves
-    const char *out_path = get_arg(argc, argv, "out", "/tmp/torpex.bin");
+    const char *out_path = get_arg(argc, argv, "out", "/tmp/value.bin");
 
     FILE *out = fopen(out_path, "wb");
     if (!out) { fprintf(stderr, "cannot open %s\n", out_path); return 2; }

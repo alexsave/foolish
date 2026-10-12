@@ -130,7 +130,7 @@ int state_get(Game *g, const unsigned char *p, int len, int masked) {
     g->has_flipped = (*q & STATE_FLAG_FLIPPED) != 0;
     g->rules = (int8_t)(*q++ >> STATE_FLAG_RULES_SHIFT);
     // When there is no flip (TS flipped === null), preserve the exact {0,0}
-    // bytes the old 2-byte wire left in g->flipped — semtex-family belief
+    // bytes the old 2-byte wire left in g->flipped - cordite-lineage belief
     // code reads it unguarded and {0,0} acts as a harmless never-matches pin.
     {
         unsigned char fw = *q++;

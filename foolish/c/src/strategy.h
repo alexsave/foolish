@@ -33,16 +33,31 @@
 // Linear policy distilled from cordite(prod) self-play, with a DL_TAU
 // confidence gate that defers uncertain decisions back to cordite.
 #define STRAT_DISTILLED         17
-#define STRAT_SEMTEX            18   // cordite-derived; tuned to beat cordite itself
-#define STRAT_SEMTEX_ORACLE     19   // semtex at 6x worlds (research/audit only)
-#define STRAT_OCTOGEN           20   // semtex + stage-3 opponent reply tournament
+// 18 is retired: it was semtex (cordite-derived; octogen's predecessor).
+// 19 is retired: it was semtex_oracle (semtex at 6x worlds).
+#define STRAT_OCTOGEN           20   // cordite lineage + stage-3 opponent reply tournament
 #define STRAT_OCTOGEN_ORACLE    21   // octogen at 6x worlds (research/audit only)
-#define STRAT_TORPEX            22   // semtex + learned value net replacing rollouts
-#define STRAT_NOVICHOK          23   // CHEATING apex (real hands; research/eval only)
-// One past the last brain. A new STRAT_* id bumps this and gets a case in
-// strategy_choose (strategy.c); tests.c holds the two together, so a brain the
-// dispatch forgot, or a count the new brain forgot, fails there.
+// 22 is retired: it was torpex (a learned value net in place of rollouts).
+// 23 is retired: it was novichok (the cheating ceiling probe; read real hands).
+//
+// THE IDS ARE NOT COMPACTED, and a retired one is never handed out again. A
+// STRAT_* id leaves the process: it is a seat's Player.strategy_key, a
+// BotRosterRow.strat a host reads across the boundary, and STRAT_OCTOGEN is a
+// generated constant the oracle page passes back in (tools/structgen/specs/
+// oracle_answer.args). Renumbering the survivors would turn one bot into
+// another on the far side. strategy_retired() names the holes.
+//
+// One past the last id. A new STRAT_* id takes this value, bumps it, and gets a
+// case in strategy_choose (strategy.c); tests.c holds the three together, so a
+// brain the dispatch forgot, a count the new brain forgot, or a retired id that
+// came back to life fails there.
 #define STRAT_COUNT             24
+
+// 1 for an id below STRAT_COUNT whose brain was removed. Such an id dispatches
+// to nothing (strategy_choose is -1) and no name parses to it.
+static inline int strategy_retired(int strat) {
+    return strat == 18 || strat == 19 || strat == 22 || strat == 23;
+}
 
 // Returns chosen move index in moves->moves[] (0..moves->n-1).
 typedef int (*StrategyFn)(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
@@ -71,14 +86,10 @@ int fulminate_strategy_choose(const Game *g, int bot_idx, const LegalMoves *move
 int espresso_prod_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 int handwritten_prod_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 int distilled_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
-int semtex_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
-// Oracle semtex (research): 6x world budget + wider candidate survival. For
-// loss audits — a decision the oracle changes was compute-limited.
-int semtex_oracle_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 int octogen_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
+// Oracle octogen (research): 6x world budget + wider candidate survival. For
+// loss audits - a decision the oracle changes was compute-limited.
 int octogen_oracle_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
-int torpex_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
-int novichok_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 
 // Map a strategy name (or short alias) to its STRAT_* id; -1 if unknown.
 // Single source of truth for the name<->id mapping the main programs share.
@@ -102,12 +113,8 @@ static inline int parse_strategy(const char *s) {
     if (!strcmp(s, "espresso_prod")     || !strcmp(s, "ep")) return STRAT_ESPRESSO_PROD;
     if (!strcmp(s, "handwritten_prod")  || !strcmp(s, "hp")) return STRAT_HANDWRITTEN_PROD;
     if (!strcmp(s, "distilled")         || !strcmp(s, "dl")) return STRAT_DISTILLED;
-    if (!strcmp(s, "semtex")            || !strcmp(s, "sx"))  return STRAT_SEMTEX;
-    if (!strcmp(s, "semtex_oracle")     || !strcmp(s, "sxo")) return STRAT_SEMTEX_ORACLE;
     if (!strcmp(s, "octogen")           || !strcmp(s, "og"))  return STRAT_OCTOGEN;
     if (!strcmp(s, "octogen_oracle")    || !strcmp(s, "ogo")) return STRAT_OCTOGEN_ORACLE;
-    if (!strcmp(s, "torpex")            || !strcmp(s, "tx"))  return STRAT_TORPEX;
-    if (!strcmp(s, "novichok")          || !strcmp(s, "nv"))  return STRAT_NOVICHOK;
     return -1;
 }
 

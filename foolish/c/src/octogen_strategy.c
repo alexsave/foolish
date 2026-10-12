@@ -1,7 +1,7 @@
 // Octogen — semtex's successor: the same engine plus a stage-3 REPLY
 // TOURNAMENT (the first opponent reply in each final-duel world is chosen
 // by search over their legal replies, not assumed from the rollout policy).
-// See OCTOGEN.md. Derived from semtex_strategy.c (cordite lineage below).
+// See OCTOGEN.md. Derived from semtex (retired, its file removed; cordite lineage below).
 //
 // Blackpowder's contract (public info only: own hand, table, logs, hand
 // counts, deck count; no LLM, no reading hidden state) with five upgrades:

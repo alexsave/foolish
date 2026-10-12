@@ -15,7 +15,7 @@ set -e
 CORE="$1"; BOTS="$2"
 [ -n "$CORE" ] && [ -n "$BOTS" ] || { echo "usage: archive_check.sh <core.a> <bots.a>" >&2; exit 2; }
 
-LADDER='octogen|cordite|semtex|torpex|novichok|astrolite|espresso|robusta|firecracker|blackpowder|gunpowder|handwritten|simple_heuristic|champion|hacker|fulminate|distill|leafbook|bot_roster|bot_drive|bot_knob'
+LADDER='octogen|cordite|astrolite|espresso|robusta|firecracker|blackpowder|gunpowder|handwritten|simple_heuristic|champion|hacker|fulminate|distill|leafbook|bot_roster|bot_drive|bot_knob'
 
 # Symbols DEFINED by the core archive. random_strategy_set_seed is defined in
 # game.c, not a strategy file, so it is core by construction and not matched
