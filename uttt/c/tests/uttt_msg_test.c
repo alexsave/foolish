@@ -9,6 +9,7 @@
 #include "../src/uttt_say.h"
 #include "../src/uttt_draw.h"
 #include "../src/uttt_code.h"
+#include "uttt_fixture.h"
 #include "../../../shared/c/b32.h"
 #include "../../../shared/c/sha256.h"
 #include <math.h>
@@ -477,12 +478,12 @@ static void test_seats(void)
     OK(utm_door(&inv) == UTM_DOOR_NONE, "door: an invitation has none");
     OK(utm_door(&j) == UTM_DOOR_NONE, "door: a live game has none");
     UtmMsg over = inv;
-    /* X takes the top-left, centre and bottom-right blocks in 25 plies */
-    static const uint8_t win[] = { 79, 63, 5, 45, 8, 76, 42, 61, 70, 71, 78, 55, 15, 58, 36, 1, 11, 24, 4, 40, 39, 31, 80, 35, 0 };
+    /* the diagonal fixture: X takes the top-left, centre and bottom-right
+     * blocks in 25 plies */
     const uint8_t *who[2] = { b, a };
     int played = 1;
-    for (unsigned i = 0; i < sizeof win && !over.game.over; i++)
-        played &= utm_play(&over, who[i % 2], win[i]);
+    for (unsigned i = 0; i < sizeof diag_fixture && !over.game.over; i++)
+        played &= utm_play(&over, who[i % 2], diag_fixture[i]);
     OK(played && over.game.over == UTTT_X, "door: the finished fixture is won by X");
     OK(utm_door(&over) == UTM_DOOR_AGAIN, "door: a finished game offers Again");
 }
@@ -678,9 +679,8 @@ static void test_say(void)
        "say: a square off the board or a short buffer is refused");
 
     /* THE END, docs/UI.html 05-07: X on the top-left to bottom-right diagonal */
-    static const uint8_t diag[] = { 79, 63, 5, 45, 8, 76, 42, 61, 70, 71, 78, 55, 15, 58, 36, 1, 11, 24, 4, 40, 39, 31, 80, 35, 0 };
     uttt_init(&g);
-    for (unsigned i = 0; i < sizeof diag && !g.over; i++) uttt_play(&g, diag[i]);
+    for (unsigned i = 0; i < sizeof diag_fixture && !g.over; i++) uttt_play(&g, diag_fixture[i]);
     OK(g.over == UTTT_X && uttt_won_line(&g) == 6, "say: the end fixture is X on the diagonal");
     say(UTTT_SAY_SUBLINE, &g, UTM_SEAT_O, s);
     OK(!strcmp(s, "Diagonal"), "say: the end subline names the line");
@@ -964,9 +964,9 @@ static void test_look(void)
         tag_of("vera", 1726990000, v);
         tag_of("alex", 1726999999, a2);
         utm_open(&over, 1726990000, 123, a);
-        static const uint8_t win[] = { 79, 63, 5, 45, 8, 76, 42, 61, 70, 71, 78, 55, 15, 58, 36, 1, 11, 24, 4, 40, 39, 31, 80, 35, 0 };
         const uint8_t *who[2] = { v, a };
-        for (unsigned i = 0; i < sizeof win && !over.game.over; i++) utm_play(&over, who[i % 2], win[i]);
+        for (unsigned i = 0; i < sizeof diag_fixture && !over.game.over; i++)
+            utm_play(&over, who[i % 2], diag_fixture[i]);
         live = over;
         utm_undo(&live, v);
         OK(over.game.over == UTTT_X && !live.game.over, "again fixture: a finished game and its last live position");
