@@ -231,7 +231,7 @@ extension MessageTableView {
     /// unsorted hand - the right-hand end - and then snapped into the sorted
     /// hand a frame later ("the deal animation will give the rearranged card to
     /// the right regardless, then suddenly jump to the preferred order"). The
-    /// DEBUG SLOTCHECK above already compared against the display order, which
+    /// DEBUG SLOTCHECK (`checkHandSlots`) already compared against the display order, which
     /// is why it never flagged this: the check and the flights disagreed about
     /// which array they were describing.
     func laidOutHandNow(_ view: GameView) -> [Card] {
@@ -279,4 +279,76 @@ extension MessageTableView {
                  reflow: animator.tween)
             .padding(.horizontal, FSpace.s)
     }
+
+    #if DEBUG
+    /// slotRects self-check: at rest, the analytical landing slot must
+    /// match the MEASURED frame for every hand card, or a flight lands off
+    /// and snaps. Silent when they agree; logs the worst delta only when it
+    /// exceeds a couple of points, so a geometry drift shows up in the
+    /// device trace without spamming a correct build.
+    ///
+    /// Called from `table`'s `onPreferenceChange(HandCardFramesKey.self)` with
+    /// the frames that just published, which is where this body used to be
+    /// written out in full.
+    func checkHandSlots(against measured: [String: CGRect]) {
+        guard let hand = controller.view?.me?.hand, handFrame != .zero, !measured.isEmpty,
+              animator.hidden.isEmpty, sweepBattles.isEmpty, !animator.isAnimating
+        else { return }
+        // Round-8 #4: the fan renders the DISPLAY order (the stored
+        // per-game arrangement; the store and the fan's live order are
+        // kept in sync by onOrderChanged), so the analytical slots must
+        // be computed against it too, or every cosmetic reorder would
+        // log as a phantom geometry mismatch here.
+        let display = FHandFan.displayOrder(
+            cards: hand,
+            order: MessageGameStore.shared.handOrder(gameId: controller.gameIdString))
+        let rects = FHandFan.slotRects(cards: display, width: handFrame.width)
+
+        var worst = 0.0, worstId = ""
+        for c in hand {
+            // Placed by the SAME rule the flights use (`inBoardSpace`,
+            // anchored on the fan's bottom edge). It used to offset by
+            // `handFrame.minY`, which made this check disagree with
+            // every flight it was supposed to be validating - and made
+            // it report a full row of error (86pt at eleven cards)
+            // whenever the two preferences were a paint out of step,
+            // which is noise, not drift. What is worth shouting about
+            // is the two disagreeing about where the hand IS, and that
+            // survives this change: the 391pt collapse gap still reads.
+            guard let a = rects[c.identity].map({
+                      Self.inBoardSpace($0, laidOutCount: display.count,
+                                        handFrame: handFrame) }),
+                  let m = measured[c.identity] else { continue }
+            let d = max(abs(a.midX - m.midX), abs(a.midY - m.midY))
+            if d > worst { worst = d; worstId = c.identity }
+        }
+        if worst > 2 {
+            AnimLog.say("SLOTCHECK MISMATCH n=\(hand.count) worst=\(String(format: "%.1f", worst))pt @\(worstId)")
+        }
+        // …AND INTO THE DUMP THE OWNER CAN ACTUALLY READ, once it is
+        // past half a card. That threshold is the line between two
+        // completely different facts, and only the magnitude separates
+        // them: a few points is `handCardFrames` being one layout pass
+        // behind something that is still moving, which is harmless and
+        // constant during a drag; a whole board is the hand's per-card
+        // frames NOT RE-PUBLISHING AT ALL when the drawer resizes.
+        //
+        // The second is real and measured. On a 667 board collapsing to
+        // 261, the rig reads `SLOTCHECK MISMATCH n=7 worst=406.0pt` -
+        // and 406 is exactly 667 - 261. `HandFrameKey` re-publishes
+        // across that resize and `HandCardFramesKey` does not, which is
+        // why the analytical route (`handSlotsNow`, off `handFrame`)
+        // reads the new drawer correctly while anything trusting the
+        // per-card frames is still describing the expanded board.
+        //
+        // Everything load-bearing has been moved off them - a takeoff
+        // and a landing are both computed now - so this is a WATCH, not
+        // a live defect. It is here because this check named the bug in
+        // the owner's own Debug build for months and only ever said so
+        // to a log nobody was streaming.
+        if worst > 35 {
+            FlightRecorder.note("slotcheck", "hand rects \(Int(worst))pt off - stale after a resize?")
+        }
+    }
+    #endif
 }

@@ -394,6 +394,10 @@ extension MessageTableView {
         // three copies of it are one. All that is left here is the claim.
         let released = ledger.write(.bystander, by: "releaseLivePlayVeil",
                                     note: "counts/roles/sweep stay with the running sequence") { l in
+            // ALL SEVEN FIELDS, which is one more than the other three
+            // releases (`releaseCounts` and the two in `runEventStream`): they
+            // leave `roles` for `syncRoles` to fly, and this one nils it, for
+            // the reason written at the line below. Keep the four apart.
             l.deck = nil; l.trump = nil; l.discard = nil; l.hand = [:]; l.battles = nil
             // The out badges with them, which this function used to leave
             // frozen: `freezeCounts` seeds them in the same breath as the counts

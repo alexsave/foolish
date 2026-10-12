@@ -142,6 +142,11 @@ extension MessageTableView {
                          note: "badges stay "
                             + (controller.view?.players ?? []).map { "s\($0.seat)=\(shownHandCount($0))" }
                                 .joined(separator: " ")) { l in
+                // The six count fields, and deliberately NOT `roles`: a plain
+                // move's marks are `syncRoles`' to move (the `!sequenced`
+                // branch of the board's onChange). Same six as both releases
+                // in `runEventStream`; `releaseLivePlayVeil` also nils the
+                // roles - keep the four apart.
                 l.deck = nil; l.trump = nil; l.discard = nil; l.hand = [:]; l.battles = nil
                 l.out = nil
             }
