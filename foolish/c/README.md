@@ -77,9 +77,7 @@ make tests        # build + run the engine unit tests
   `    --pool=random,handwritten,espresso,robusta,firecracker,gunpowder,blackpowder,cordite`
 - `cnitro_replay` — replay one game move-by-move from a seed.
 - `cnitro_tests`  — engine smoke tests.
-- `cnitro_gen`, `cnitro_distill`, `cnitro_analyse` - a full-information
-  training-record generator (written for the retired torpex value net; nothing
-  reads its records now), the distillation arm (`CORDITE_RESEARCH.md`) and the
+- `cnitro_distill`, `cnitro_analyse` - the distillation arm (`CORDITE_RESEARCH.md`) and the
   post-game analyser (`docs/POST_GAME_ANALYSER.md`).
 
 The shipped roster (`src/bot_roster.c`) is ten tiers ending at octogen:

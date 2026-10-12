@@ -102,7 +102,7 @@ print-core:
 # artifact.
 print-wasm-src:
 	@echo $(sort $(WASM_BOT_SRC) $(WASM_ORACLE_MT_SRC))
-all: build/cnitro_eval build/cnitro_elo build/cnitro_replay build/cnitro_showcase build/cnitro_tests build/cnitro_gen
+all: build/cnitro_eval build/cnitro_elo build/cnitro_replay build/cnitro_showcase build/cnitro_tests
 
 # ---- how a file becomes an object ---------------------------------------------
 # shared/tools/c_rules.mk: one directory of objects per compiler-and-flags (a
@@ -163,7 +163,6 @@ $(call host_prog,cnitro_replay,src/main_replay.c)
 $(call host_prog,cnitro_showcase,src/main_showcase.c)
 $(call host_prog,cnitro_tests,tests/tests.c)
 $(call host_prog,cnitro_distill,src/main_distill.c)
-$(call host_prog,cnitro_gen,src/main_gen.c)
 
 # 5,761 checks in 23.8s at -O3, and 23.5s of that is ONE of the 204 tests:
 # test_table_session_log_is_load_bearing_for_octogen, 3,430 octogen decisions at
