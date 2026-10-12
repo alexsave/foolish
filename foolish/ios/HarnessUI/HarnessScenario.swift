@@ -512,20 +512,19 @@ extension HarnessModel {
         guard (try? await MessageKernel.shared.newGame(seed: seed, players: n)) != nil
         else { return }
         var lastSeat = 0
-        for _ in 0..<800 {
-            guard let v = await MessageKernel.shared.residentView(viewer: -1), !v.isOver
-            else { break }
-            var acted = false
-            for s in 0..<n {
-                let legal = await MessageKernel.shared.residentLegal(seat: s)
-                if let m = legal.first(where: { $0.type == .cover })
-                    ?? legal.first(where: { $0.type != .wait }) {
-                    try? await MessageKernel.shared.apply(seat: s, move: m)
-                    lastSeat = s; acted = true; break
-                }
-            }
-            if !acted { break }
-        }
+        await drive(seats: n, limit: 800,
+                    until: {
+                        guard let v = await MessageKernel.shared.residentView(viewer: -1), !v.isOver
+                        else { return true }
+                        return false
+                    },
+                    // Per SEAT: this seat's cover before this seat's anything
+                    // else - not HARNESS_SEED_PLAY's cover-anywhere-first.
+                    pick: { _, legal in
+                        legal.first(where: { $0.type == .cover })
+                            ?? legal.first(where: { $0.type != .wait })
+                    },
+                    onMove: { lastSeat = $0; return true })
         let over = (await MessageKernel.shared.residentView(viewer: -1))?.isOver == true
         AnimLog.say("scenario: spectator-over - game \(over ? "finished" : "DID NOT FINISH - rig bug")")
         guard let payload = try? await MessageKernel.shared.seal(
@@ -647,52 +646,52 @@ extension HarnessModel {
                     : Data((0..<32).map { UInt8(truncatingIfNeeded: $0 &* 31 &+ salt) | 1 })
                 try await MessageKernel.shared.newGame(seed: seed, players: n)
                 lastSeat = 0
-                for _ in 0..<steps {
-                    if stopWhenDeckEmpty,
-                       let v = await MessageKernel.shared.residentView(viewer: -1),
-                       v.deckCount == 0 || v.isOver { break }
-                    // …and stop the moment the DEFENDER may transfer, so the
-                    // board this lands on is one where the move being watched
-                    // is on my own menu (`viewAs: .defender` then seats me
-                    // there).
-                    if stopWhenCanPass,
-                       let v = await MessageKernel.shared.residentView(viewer: -1), !v.isOver,
-                       await MessageKernel.shared.residentLegal(seat: v.defender)
-                           .contains(where: { $0.type == .pass }) { break deal }
-                    var acted = false
-                    for s in 0..<n {
-                        let legal = await MessageKernel.shared.residentLegal(seat: s)
-                        let pick = legal.first { m in
-                            guard m.type != .wait else { return false }
-                            // Never spend the move being hunted for: this driver
-                            // drives the defender too, so without this it plays
-                            // every transfer it finds and the stop above is asked
-                            // the instant after the chance has gone.
-                            if stopWhenCanPass, m.type == .pass { return false }
-                            guard let only else { return true }
-                            return only.contains(m.type)
-                        }
-                        if let m = pick {
-                            try? await MessageKernel.shared.apply(seat: s, move: m)
-                            lastSeat = s; acted = true; break
-                        }
-                    }
-                    if !acted { break }
-                }
+                // The transfer being hunted for is on the defender's menu: this
+                // deal is the one, and no later deal is tried.
+                var canPass = false
+                await drive(seats: n, limit: steps,
+                            until: {
+                                if stopWhenDeckEmpty,
+                                   let v = await MessageKernel.shared.residentView(viewer: -1),
+                                   v.deckCount == 0 || v.isOver { return true }
+                                // …and stop the moment the DEFENDER may transfer, so the
+                                // board this lands on is one where the move being watched
+                                // is on my own menu (`viewAs: .defender` then seats me
+                                // there).
+                                if stopWhenCanPass,
+                                   let v = await MessageKernel.shared.residentView(viewer: -1), !v.isOver,
+                                   await MessageKernel.shared.residentLegal(seat: v.defender)
+                                       .contains(where: { $0.type == .pass }) { canPass = true; return true }
+                                return false
+                            },
+                            pick: { _, legal in
+                                legal.first { m in
+                                    guard m.type != .wait else { return false }
+                                    // Never spend the move being hunted for: this driver
+                                    // drives the defender too, so without this it plays
+                                    // every transfer it finds and the stop above is asked
+                                    // the instant after the chance has gone.
+                                    if stopWhenCanPass, m.type == .pass { return false }
+                                    guard let only else { return true }
+                                    return only.contains(m.type)
+                                }
+                            },
+                            onMove: { lastSeat = $0; return true })
+                if canPass { break deal }
             }
             let view = await MessageKernel.shared.residentView(viewer: -1)
-            let payload = try await MessageKernel.shared.seal(
-                phase: (view?.isOver == true) ? 3 : 2, lastActorSeat: lastSeat,
-                gameId: 0xF00D, parent8: Data(repeating: 0, count: 8), joins: joins)
-            _ = try? await MessageKernel.shared.decode(payload: payload, viewer: -1)
+            let payload = try await sealAndAdopt(
+                phase: (view?.isOver == true) ? 3 : 2, lastSeat: lastSeat,
+                gameId: 0xF00D, joins: joins)
 
             var seat = lastSeat
             switch viewAs {
             case .defender:
                 if let d = view?.defender, d >= 0, d < n { seat = d }
             case .actor:
-                for s in 0..<n where (await MessageKernel.shared.residentLegal(seat: s))
-                    .contains(where: { $0.type != .wait }) { seat = s; break }
+                if let hit = await firstLegal(seats: n, pick: { _, legal in
+                    legal.first { $0.type != .wait }
+                }) { seat = hit.seat }
             case .lastActor:
                 seat = lastSeat
             case .biggestHand:
@@ -995,36 +994,34 @@ extension HarnessModel {
                 else { break }
                 steps = 0
             }
-            while steps < cap {
-                if steps >= minWarmup, await wantReady() != nil { break deal }
-                var acted = false
-                for s in 0..<n {
-                    let legal = await MessageKernel.shared.residentLegal(seat: s)
-                    let pick = deep || deckMax >= 0
-                        ? (legal.first { $0.type == .cover } ?? legal.first { $0.type != .wait })
-                        // ROUND 29: never spend the move being hunted for. A
-                        // transfer only ever appears on the DEFENDER's menu, and
-                        // this loop drives the defender too - so without the
-                        // second clause the warm-up plays every pass it finds
-                        // and `wantReady` is asked the instant after the only
-                        // seat that could transfer has stopped being able to.
-                        : bigHandPick(legal, await biggestHand())
-                            ?? legal.first { $0.type != .wait && !(transfer && $0.type == .pass) }
-                    if let m = pick {
-                        try? await MessageKernel.shared.apply(seat: s, move: m)
-                        lastSeat = s; acted = true; break
-                    }
-                }
-                if !acted { break }
-                steps += 1
-            }
+            // `steps` is 0 here on every deal (it starts there, and a re-deal
+            // puts it back), so `cap` steps of this drive is `while steps < cap`.
+            var ready = false
+            await drive(seats: n, limit: cap,
+                        until: {
+                            guard steps >= minWarmup, await wantReady() != nil else { return false }
+                            ready = true
+                            return true
+                        },
+                        pick: { _, legal in
+                            deep || deckMax >= 0
+                                ? (legal.first { $0.type == .cover } ?? legal.first { $0.type != .wait })
+                                // ROUND 29: never spend the move being hunted for. A
+                                // transfer only ever appears on the DEFENDER's menu, and
+                                // this loop drives the defender too - so without the
+                                // second clause the warm-up plays every pass it finds
+                                // and `wantReady` is asked the instant after the only
+                                // seat that could transfer has stopped being able to.
+                                : bigHandPick(legal, await biggestHand())
+                                    ?? legal.first { $0.type != .wait && !(transfer && $0.type == .pass) }
+                        },
+                        onMove: { lastSeat = $0; steps += 1; return true })
+            if ready { break deal }
         }
         guard let view = await MessageKernel.shared.residentView(viewer: -1),
-              let opened = try? await MessageKernel.shared.seal(
-                phase: 2, lastActorSeat: lastSeat, gameId: 0xF00D,
-                parent8: Data(repeating: 0, count: 8), joins: joins)
+              let opened = try? await sealAndAdopt(phase: 2, lastSeat: lastSeat,
+                                                   gameId: 0xF00D, joins: joins)
         else { return }
-        _ = try? await MessageKernel.shared.decode(payload: opened, viewer: -1)
 
         // Watch as somebody who is NOT about to move, so what arrives is
         // unambiguously somebody else's move landing on my open board.
@@ -1176,28 +1173,28 @@ extension HarnessModel {
             let parent8 = (try? await MessageKernel.shared.peek(payload: lastPayload))
                 .map { MessageTurnController.firstEight(hex: $0.digest) }
                 ?? Data(repeating: 0, count: 8)
-            var acted: (seat: Int, move: Move)?
             let held = await MessageKernel.shared.residentView(viewer: -1)
-            for s in 0..<n where acted == nil {
+            // The same seat scan the warm-up drives with, but the move is NOT
+            // applied by it: a refused apply ends the arrivals here (the guard
+            // below), where the warm-up plays on.
+            let acted = await firstLegal(seats: n, where: { s in
                 // Ordinarily the watcher must NOT be the one moving - the whole
                 // point is somebody else's move landing on my board. With
                 // HARNESS_ARRIVE_SELF the rule inverts: the bubble to open is my
                 // OWN, so only the watcher may act.
-                if watchSelf { guard s == watcher else { continue } }
-                else { guard s != watcher else { continue } }
-                let legal = await MessageKernel.shared.residentLegal(seat: s)
+                watchSelf ? s == watcher : s != watcher
+            }, pick: { s, legal in
                 // The first arrival is the KIND asked for; the rest are whatever
                 // that seat can legally do next, which is what a real thread
                 // delivers. Round 20: `coverend` picks the cover that spends the
                 // defender's LAST cards, since any other cover leaves the table
                 // standing and poses a different arrival entirely.
                 let mine = held?.players.first { $0.seat == s }?.handCount ?? -1
-                let m = i > 0 ? legal.first { $0.type != .wait }
+                return i > 0 ? legal.first { $0.type != .wait }
                     : deep
                         ? legal.first { $0.type == .cover && $0.cards.count == mine }
                         : legal.first { $0.type == want }
-                if let m { acted = (s, m) }
-            }
+            })
             // Nobody but the watcher can act (a 2p goodend hands the next bout
             // to the very seat that is watching): the thread has delivered all
             // it can, so stop ARRIVING - but never skip the oracle below, which
