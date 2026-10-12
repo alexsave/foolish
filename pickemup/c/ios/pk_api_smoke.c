@@ -74,6 +74,26 @@ static void one_bubble(void)
     }
 }
 
+/* Alex makes a lobby, a DM's or a group's, from the seed bytes i * mul + add
+ * and writes its invitation to to[0]; then each of the next `joiners` people
+ * opens the newest link, joins, and writes the lobby to to[their number].
+ * Gives the last join's answer, the row it took (0 with nobody joining). */
+static int lobby(char (*to)[PK_API_TEXT_MAX], int mul, int add, int dm, int joiners)
+{
+    uint8_t seed[32];
+    int row = 0;
+    be(0);
+    for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(i * mul + add);
+    pk_api_new(seed, dm);
+    pk_api_text(to[0], PK_API_TEXT_MAX);
+    for (int i = 1; i <= joiners; i++) {
+        open_as(i, to[i - 1], dm, 0);
+        row = pk_api_join();
+        pk_api_text(to[i], PK_API_TEXT_MAX);
+    }
+    return row;
+}
+
 /* ---- the layout (pk_lay.c): UI.html's thresholds, pinned ---- */
 static int near(float a, float b) { return a > b - 0.05f && a < b + 0.05f; }
 
@@ -231,11 +251,7 @@ static void layout(void)
 static void adopt_and_fan(void)
 {
     static char l[4][PK_API_TEXT_MAX];
-    uint8_t seed[32];
-    for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(i * 17 + 9);
-    be(0);
-    pk_api_new(seed, 1);
-    pk_api_text(l[0], PK_API_TEXT_MAX);
+    lobby(l, 17, 9, 1, 0);
     open_as(1, l[0], 1, 0);
     pk_api_join_start();
     static char start[PK_API_TEXT_MAX];
@@ -291,16 +307,7 @@ static void adopt_and_fan(void)
     }
 
     /* three seats: the fan's tap */
-    be(0);
-    for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(i * 5 + 77);
-    pk_api_new(seed, 0);
-    pk_api_text(l[0], PK_API_TEXT_MAX);
-    open_as(1, l[0], 0, 0);
-    pk_api_join();
-    pk_api_text(l[1], PK_API_TEXT_MAX);
-    open_as(2, l[1], 0, 0);
-    pk_api_join();
-    pk_api_text(l[2], PK_API_TEXT_MAX);
+    lobby(l, 5, 77, 0, 2);
     open_as(0, l[2], 0, 0);
     OK(pk_api_start() == 0 && table()->n_seats == 3, "a three-seat game for the fans");
     int me = table()->me, a = (me + 1) % 3, c = (me + 2) % 3;
@@ -393,16 +400,10 @@ static void arrange(void)
     who = -1;
 }
 
-int main(void)
+/* Alex's lobby and its invitation, links[0], with the words a lobby is drawn in. */
+static void dm_invite(void)
 {
-    setvbuf(stdout, 0, _IONBF, 0);       /* a crash still shows what went red */
-    layout();
-    char buf[PK_API_TEXT_MAX], line[256];
-    OK(pk_api_layout_hash() == 0, "the smoke build is not stamped (ios-lib stamps the shipped one)");
-    OK(pk_api_name_verdict((const uint8_t *)"Alex", 4) == 0 && pk_api_name_verdict((const uint8_t *)"", 0) == 1
-       && pk_api_name_verdict((const uint8_t *)"seventeen chars!!", 17) == 2, "nickname verdicts");
-
-    /* ---- a DM: Alex invites, Bo joins and starts in one bubble ---- */
+    char line[256];
     be(0);
     uint8_t seed[32];
     for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(i * 29 + 7);
@@ -423,9 +424,14 @@ int main(void)
     OK(pk_api_words(PK_API_W_PUBLIC_ROW, 0, line, sizeof line) > 0 && !strcmp(line, "1. Alex"),
        "the bubble's roster says nobody is you");
     OK(pk_api_words(PK_API_W_STAGED_CAPTION, 0, line, sizeof line) == 0, "a lobby is captioned by its lobby line");
+}
 
+/* Bo opens the invitation, joins and starts: the deal, in words and in motion. */
+static void dm_join_start(void)
+{
+    char line[256];
     OK(open_as(1, links[0], 1, 0) == 0, "Bo opens it");
-    t = table();
+    const PkApiTable *t = table();
     OK(t->me == 0xFF && t->offered == PK_LOBBY_JOIN && t->can_join_start, "Bo is offered join-and-start");
     OK(pk_api_join_start() == 1, "Bo joins and starts");
     t = table();
@@ -456,6 +462,14 @@ int main(void)
         OK(b && b->n == 0 && b->total_ms == 0 && b->serial == serial + 1, "from == to: no motion, a new plan");
         OK(pk_api_beats(PK_API_ME, 0, 0, 7) == 0, "a mode that is not a range's is refused");
     }
+}
+
+/* Bo's first turn, staged in the start bubble and sent as links[1]: a draw,
+ * which stays, then whatever one_bubble plays. 0 when the bubble would not
+ * write. */
+static int dm_first_bubble(void)
+{
+    char buf[PK_API_TEXT_MAX], line[256];
     OK(pk_api_draw() == 1, "Bo draws in the start bubble");
     {
         const PkBeats *b = (const PkBeats *)pk_api_beats_stage(0);
@@ -465,7 +479,7 @@ int main(void)
         OK(b && b->n == 0, "asked again with nothing new: nothing moves");
     }
     OK(pk_api_undo() == 0, "a draw does not come back (D8)");
-    t = table();
+    const PkApiTable *t = table();
     OK(t->draft && !t->can_send, "mid-turn: a draft that cannot be sent");
     const PkApiEvents *ev = (const PkApiEvents *)pk_api_plan_draft(PK_API_ME);
     OK(ev && ev->n > 0 && ev->ev[0].kind == PK_EV_BUBBLE_BEGIN, "the draft's own plan");
@@ -476,9 +490,9 @@ int main(void)
     one_bubble();
     t = table();
     OK(t->can_send, "the turn is done: it can be sent");
-    n = pk_api_text(links[1], PK_API_TEXT_MAX);
+    int n = pk_api_text(links[1], PK_API_TEXT_MAX);
     OK(n > 0, "the start bubble is a link");
-    if (n <= 0) { printf("bridge: %d checks, %d failed\n", checks, fails); return 1; }
+    if (n <= 0) return 0;
     OK(pk_api_check(links[1]) == 0, "and it reads");
     OK(table()->draft, "writing the link left the draft staged");
     {
@@ -495,9 +509,100 @@ int main(void)
         printf("  staged: \"%s\"\n", staged);
     }
     OK(pk_api_seats_dirty(), "Bo's seat is recorded");
+    return 1;
+}
 
-    /* ---- play it out, phone to phone: the other phone reads each bubble,
-     * which at two players is always the turn seat's ---- */
+/* ---- a DM: Alex invites, Bo joins and starts in one bubble, which is left
+ * sent in links[1]. 0 when that bubble would not write: there is no game to
+ * go on with.
+ *
+ * tests/pk_twophone_test.c opens the same way and is NOT this section again:
+ * that one counts every bubble against its own oracle, with the bridge
+ * compiled into its file. This one links the bridge as the app does, through
+ * include/pk_api.h alone, and is the only place the lobby's roster words, the
+ * dirty seat records and the motion (the deal's plan, channel A's stage,
+ * channel B's send) are asked for. ---- */
+static int dm_start(void)
+{
+    dm_invite();
+    dm_join_start();
+    return dm_first_bubble();
+}
+
+/* The deck's count in words, asked once, on the playout's first bubble. */
+static void deck_words(void)
+{
+    char a[64], b[64];
+    pk_api_words(PK_API_W_DECK_LEFT, 0, a, sizeof a);
+    pk_api_words(PK_API_W_DECK_N, me_view()->deck_n, b, sizeof b);
+    OK(!strcmp(a, b), "a plan's count reads as the settled one");
+    OK(pk_api_words(PK_API_W_DECK_N, 27, b, sizeof b) > 0 && !strcmp(b, "27 left"), "any count");
+    OK(pk_api_words(PK_API_W_DECK_N, 105, b, sizeof b) < 0, "no count past the deck");
+    OK(pk_api_words(PK_API_W_DIR_OF, PK_DIR_ACW, b, sizeof b) == 0, "two players: no direction word (D13)");
+}
+
+/* ONE WRONG CALL, EARLY (I37), on the playout's fourth bubble, checked at the
+ * three moments it has: staged with nothing beside it, staged beside the turn
+ * that shares its bubble, and sent. */
+enum { WRONG_CALL_ROUND = 3 };
+
+static void wrong_call_staged(int callee)
+{
+    OK((me_view()->can_call & (1 << callee)) && pk_api_catch(callee) == 1, "a call on a seat that is not exposed");
+    OK(pk_api_collapses(PK_API_TOUCH_CALL) == 0, "a call does not collapse the drawer");
+}
+
+static void wrong_call_with_turn(void)
+{
+    OK(pk_api_collapses(PK_API_TOUCH_SAY) == 0, "a bubble with a call is not a lone Last card!");
+    OK(pk_api_collapses(PK_API_TOUCH_PLAY) == 1 && pk_api_collapses(PK_API_TOUCH_PASS) == 1
+       && pk_api_collapses(PK_API_TOUCH_DRAW) == 0 && pk_api_collapses(PK_API_TOUCH_UNDO) == 0
+       && pk_api_collapses(PK_API_TOUCH_UNSAY) == 0 && pk_api_collapses(PK_API_TOUCH_UNCALL) == 0
+       && pk_api_collapses(0) == 0, "a play or a pass collapses; a draw, an undo, an un-say, an un-call do not");
+}
+
+static void wrong_call_sent(int caller, int callee)
+{
+    OK(pk_api_stamp(caller) == PK_STAMP_WRONG && pk_api_stamp(callee) != PK_STAMP_CAUGHT,
+       "Wrong call under the caller, nothing caught on the other");
+    OK(pk_api_collapses(PK_API_TOUCH_PLAY) == 0, "no draft open: nothing to collapse for");
+}
+
+/* The finished game on the phone that read its last bubble, `cur`: every hand
+ * shown, the ranking, the results rows and the last bubble's plan.
+ *
+ * tests/pk_twophone_test.c's win pins the exact rows and both headlines of a
+ * game its own script steered; this is a game nobody steered, so it holds
+ * what must be true of any ending (the winner first and holding the fewest,
+ * no row past the table). */
+static void dm_results(const char *cur, int reads)
+{
+    char line[256];
+    const PkApiTable *t = table();
+    const PkView *v = (const PkView *)pk_api_view(PK_API_ME);
+    OK(v->over && v->reveal[0].n + v->reveal[1].n > 0, "the end reveals every hand");
+    {
+        uint8_t rank[8];
+        int loser = v->winner ^ 1;
+        OK(pk_api_ranks(rank) == 2 && rank[0] == v->winner && rank[1] == loser, "the winner ranks first");
+        OK(v->reveal[v->winner].n <= v->reveal[loser].n, "the winner holds the fewest");
+        OK(pk_api_words(PK_API_W_RANK_ROW, 0, line, sizeof line) > 0 && line[0] == '1'
+           && pk_api_words(PK_API_W_RANK_ROW, 2, line, sizeof line) == -1, "the results rows");
+    }
+    OK(pk_api_words(PK_API_W_CAPTION, t->bubbles, line, sizeof line) > 0, "the last caption");
+    printf("  a 2p game in %d bubbles over %d reads; last: \"%s\" (%d characters)\n", t->bubbles, reads, line,
+           (int)strlen(cur));
+    const PkApiEvents *ev = (const PkApiEvents *)pk_api_plan(PK_API_ALL, t->bubbles - 1, t->bubbles);
+    OK(ev && ev->n > 0 && ev->ev[ev->n - 1].kind == PK_EV_BUBBLE_END, "the last bubble's plan");
+}
+
+/* ---- play it out, phone to phone: the other phone reads each bubble,
+ * which at two players is always the turn seat's. Gives the last bubble. ---- */
+static const char *dm_playout(void)
+{
+    char line[256];
+    const PkView *v;
+    int n;
     int from = 1, reads = 0, won_with_call = 0;
     char *cur = links[1];
     static char next[PK_API_TEXT_MAX];
@@ -521,48 +626,27 @@ int main(void)
         OK(pk_api_words(PK_API_W_CAPTION, tt->bubbles, line, sizeof line) > 0
            && pk_api_words(PK_API_W_HEADLINE, 0, line, sizeof line) >= 0
            && pk_api_words(PK_API_W_DECK_LEFT, 0, line, sizeof line) > 0, "the words");
-        if (round == 0) {
-            char a[64], b[64];
-            pk_api_words(PK_API_W_DECK_LEFT, 0, a, sizeof a);
-            pk_api_words(PK_API_W_DECK_N, me_view()->deck_n, b, sizeof b);
-            OK(!strcmp(a, b), "a plan's count reads as the settled one");
-            OK(pk_api_words(PK_API_W_DECK_N, 27, b, sizeof b) > 0 && !strcmp(b, "27 left"), "any count");
-            OK(pk_api_words(PK_API_W_DECK_N, 105, b, sizeof b) < 0, "no count past the deck");
-            OK(pk_api_words(PK_API_W_DIR_OF, PK_DIR_ACW, b, sizeof b) == 0, "two players: no direction word (D13)");
-        }
+        if (round == 0) deck_words();
         {
             uint8_t rank[8];
             OK(pk_api_ranks(rank) == 0, "a live game ranks nobody (D22)");
         }
         /* one wrong call, early (I37): the caller's stamp, in the kernel's order */
         const int caller = table()->me, callee = caller ^ 1;
-        if (round == 3) {
-            OK((me_view()->can_call & (1 << callee)) && pk_api_catch(callee) == 1, "a call on a seat that is not exposed");
-            OK(pk_api_collapses(PK_API_TOUCH_CALL) == 0, "a call does not collapse the drawer");
-        }
+        if (round == WRONG_CALL_ROUND) wrong_call_staged(callee);
         /* the winning bubble carries a wrong call too: OUT outranks it (I37) */
         const int last_call = me_view()->my_n == 1 && me_view()->my_playable[0]
                               && (me_view()->can_call & (1 << callee)) && pk_api_catch(callee) == 1;
         one_bubble();
         OK(table()->can_send, "a bubble that can be sent");
-        if (round == 3) {
-            OK(pk_api_collapses(PK_API_TOUCH_SAY) == 0, "a bubble with a call is not a lone Last card!");
-            OK(pk_api_collapses(PK_API_TOUCH_PLAY) == 1 && pk_api_collapses(PK_API_TOUCH_PASS) == 1
-               && pk_api_collapses(PK_API_TOUCH_DRAW) == 0 && pk_api_collapses(PK_API_TOUCH_UNDO) == 0
-               && pk_api_collapses(PK_API_TOUCH_UNSAY) == 0 && pk_api_collapses(PK_API_TOUCH_UNCALL) == 0
-               && pk_api_collapses(0) == 0, "a play or a pass collapses; a draw, an undo, an un-say, an un-call do not");
-        }
+        if (round == WRONG_CALL_ROUND) wrong_call_with_turn();
         n = pk_api_text(next, sizeof next);
         OK(n > 0, "it writes");
         if (n <= 0) break;
         OK(pk_api_prefer(next, cur) < 0 && pk_api_prefer(cur, next) > 0, "the child beats its parent");
         OK(pk_api_common(next, cur) == table()->bubbles, "they share every bubble of the parent");
         pk_api_commit();
-        if (round == 3) {
-            OK(pk_api_stamp(caller) == PK_STAMP_WRONG && pk_api_stamp(callee) != PK_STAMP_CAUGHT,
-               "Wrong call under the caller, nothing caught on the other");
-            OK(pk_api_collapses(PK_API_TOUCH_PLAY) == 0, "no draft open: nothing to collapse for");
-        }
+        if (round == WRONG_CALL_ROUND) wrong_call_sent(caller, callee);
         if (last_call && table()->phase == PK_PHASE_FINISHED) {
             const PkSince *ls = (const PkSince *)pk_api_since(table()->bubbles - 1, table()->bubbles);
             OK(ls && ls->wrong == caller, "the winning bubble's call was judged");
@@ -574,26 +658,17 @@ int main(void)
         cur = links[2];
         from = table()->me;
     }
-    t = table();
-    OK(t->phase == 3, "the game ended");
+    OK(table()->phase == 3, "the game ended");
     OK(won_with_call, "the game was won by a bubble that also called");
-    v = (const PkView *)pk_api_view(PK_API_ME);
-    OK(v->over && v->reveal[0].n + v->reveal[1].n > 0, "the end reveals every hand");
-    {
-        uint8_t rank[8];
-        int loser = v->winner ^ 1;
-        OK(pk_api_ranks(rank) == 2 && rank[0] == v->winner && rank[1] == loser, "the winner ranks first");
-        OK(v->reveal[v->winner].n <= v->reveal[loser].n, "the winner holds the fewest");
-        OK(pk_api_words(PK_API_W_RANK_ROW, 0, line, sizeof line) > 0 && line[0] == '1'
-           && pk_api_words(PK_API_W_RANK_ROW, 2, line, sizeof line) == -1, "the results rows");
-    }
-    OK(pk_api_words(PK_API_W_CAPTION, t->bubbles, line, sizeof line) > 0, "the last caption");
-    printf("  a 2p game in %d bubbles over %d reads; last: \"%s\" (%d characters)\n", t->bubbles, reads, line,
-           (int)strlen(cur));
-    ev = (const PkApiEvents *)pk_api_plan(PK_API_ALL, t->bubbles - 1, t->bubbles);
-    OK(ev && ev->n > 0 && ev->ev[ev->n - 1].kind == PK_EV_BUBBLE_END, "the last bubble's plan");
+    dm_results(cur, reads);
+    return cur;
+}
 
-    /* ---- a rotated id: no record, no tag, only the sender fact or the name ---- */
+/* ---- a rotated id: no record, no tag, only the sender fact or the name.
+ * (The tag and the record, which this never meets, are
+ * tests/pk_twophone_test.c's "S13 seat resolver".) ---- */
+static void rotated_id(const char *cur)
+{
     uint8_t other[16] = { 9, 9, 9 };
     pk_api_seats_load(0, 0);
     pk_api_me(other, 16);
@@ -607,15 +682,14 @@ int main(void)
     pk_api_nickname((const uint8_t *)"Zed", 3);
     OK(pk_api_read(cur) == 0 && table()->me == 0xFF, "nobody I know: a spectator");
     OK(pk_api_draw() == 0, "a spectator stages nothing");
+}
 
-    /* ---- a group lobby: three join, one leaves, the lobby plan ---- */
-    be(0);
-    for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(i * 13 + 1);
-    pk_api_new(seed, 0);
-    pk_api_text(links[3], PK_API_TEXT_MAX);
-    open_as(1, links[3], 0, 0);
-    OK(pk_api_join() == 1, "Bo joins");
-    pk_api_text(links[4], PK_API_TEXT_MAX);
+/* ---- a group lobby: three join, one leaves, the lobby plan ---- */
+static void group_lobby(void)
+{
+    char line[256];
+    const PkApiEvents *ev;
+    OK(lobby(links + 3, 13, 1, 0, 1) == 1, "Bo joins");
     open_as(2, links[4], 0, 0);
     OK(table()->offered == PK_LOBBY_JOIN, "Cleo may join");
     OK(pk_api_join() == 2, "Cleo joins");
@@ -680,97 +754,92 @@ int main(void)
     OK(pk_api_start() == 0 && table()->phase == 2 && table()->starter == 1, "Cleo starts");
     ev = (const PkApiEvents *)pk_api_plan(PK_API_ME, -1, 0);
     OK(ev && ev->n > 7 && ev->ev[0].kind == PK_EV_LOBBY_START && ev->ev[0].seat == 1, "the deal's plan names its starter");
+}
 
-    /* ---- the name Bo freed is taken by somebody else: Bo's phone, which
-     * sat here and left, is not handed the namesake's seat (D51) ---- */
+/* ---- the name Bo freed is taken by somebody else: Bo's phone, which
+ * sat here and left, is not handed the namesake's seat (D51) ---- */
+static void freed_name(void)
+{
     open_as(3, links[6], 0, 0);
     pk_api_nickname((const uint8_t *)"Bo", 2);
     OK(pk_api_read(links[6]) == 0 && table()->me == 0xFF && pk_api_join() == 2, "another Bo joins at seat 2");
     pk_api_text(links[7], PK_API_TEXT_MAX);
     OK(open_as(1, links[7], 0, 0) == 0 && table()->me == 0xFF && table()->offered == PK_LOBBY_JOIN,
        "the first Bo, who left, is not seated by the name");
+}
 
-    /* ---- the buried start cards (D14, U16): there until drawn down to ---- */
-    {
-        int buried_at_deal = 0, found = 0;
-        for (int k = 0; k < 400 && !found; k++) {
-            be(0);
-            for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(i * 11 + k * 5 + 1);
-            pk_api_new(seed, 1);
-            pk_api_text(links[3], PK_API_TEXT_MAX);
-            open_as(1, links[3], 1, 0);
-            pk_api_join_start();
-            ev = (const PkApiEvents *)pk_api_plan(PK_API_ALL, -1, 0);
-            buried_at_deal = 0;
-            for (int i = 0; ev && i < ev->n; i++) buried_at_deal += ev->ev[i].kind == PK_EV_BURY;
-            found = buried_at_deal > 1;         /* two, so one can go before the other */
-        }
-        OK(found, "a deal that buries two start cards");
-        uint8_t under[8];
-        OK(pk_api_buried(under) == buried_at_deal, "every buried card is under the deck after the deal");
-        OK(!pk_api_card_rank(under[0]) || pk_api_card_rank(under[0]) > 9, "a buried card is not a number");
-        /* draw and pass, phone to phone, until the deck is empty: no play, so
-         * the pile is one card and nothing can reshuffle */
-        n = pk_api_text(links[6], PK_API_TEXT_MAX);
-        int mid_checked = 0;
-        for (int round = 0; round < 400 && n > 0; round++) {
-            v = me_view();
-            if (!mid_checked && v->deck_n > 20) {
-                OK(pk_api_buried(under) == buried_at_deal, "still buried with the deck half drawn");
-                mid_checked = 1;
-            }
-            int want = buried_at_deal < v->deck_n ? buried_at_deal : v->deck_n;
-            OK(pk_api_buried(under) == want, "the buried cards are the deck's bottom ones");
-            if (v->deck_n == 0 || v->over) break;
-            int turn = v->turn;
-            open_as(turn, links[6], 1, 0);
-            if (!pk_api_draw() || !pk_api_pass()) break;
-            n = pk_api_text(links[6], PK_API_TEXT_MAX);
-            pk_api_commit();
-        }
-        OK(me_view()->deck_n == 0, "the deck was drawn down");
-        OK(pk_api_buried(under) == 0, "drawn down to, the buried cards are in hands now");
+/* ---- the buried start cards (D14, U16): there until drawn down to ---- */
+static void buried(void)
+{
+    const PkView *v;
+    int n, buried_at_deal = 0, found = 0;
+    for (int k = 0; k < 400 && !found; k++) {
+        lobby(links + 3, 11, k * 5 + 1, 1, 0);
+        open_as(1, links[3], 1, 0);
+        pk_api_join_start();
+        const PkApiEvents *ev = (const PkApiEvents *)pk_api_plan(PK_API_ALL, -1, 0);
+        buried_at_deal = 0;
+        for (int i = 0; ev && i < ev->n; i++) buried_at_deal += ev->ev[i].kind == PK_EV_BURY;
+        found = buried_at_deal > 1;         /* two, so one can go before the other */
     }
-
-    /* ---- three players to the end: the results order ---- */
-    {
-        be(0);
-        for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(i * 7 + 3);
-        pk_api_new(seed, 0);
-        pk_api_text(links[3], PK_API_TEXT_MAX);
-        open_as(1, links[3], 0, 0);
-        pk_api_join();
-        pk_api_text(links[4], PK_API_TEXT_MAX);
-        open_as(2, links[4], 0, 0);
-        pk_api_join();
-        pk_api_text(links[5], PK_API_TEXT_MAX);
-        open_as(0, links[5], 0, 0);
-        OK(pk_api_start() == 0 && table()->n_seats == 3, "a three-seat game");
-        n = pk_api_text(links[6], PK_API_TEXT_MAX);
-        char *at = links[6];
-        for (int round = 0; round < 3000 && n > 0; round++) {
-            open_as(0, at, 0, 0);
-            if (table()->phase == 3) break;
-            int turn = me_view()->turn;
-            open_as(turn, at, 0, 0);
-            one_bubble();
-            n = pk_api_text(links[7], PK_API_TEXT_MAX);
-            pk_api_commit();
-            memcpy(links[6], links[7], (size_t)(n > 0 ? n : 0) + 1);
+    OK(found, "a deal that buries two start cards");
+    uint8_t under[8];
+    OK(pk_api_buried(under) == buried_at_deal, "every buried card is under the deck after the deal");
+    OK(!pk_api_card_rank(under[0]) || pk_api_card_rank(under[0]) > 9, "a buried card is not a number");
+    /* draw and pass, phone to phone, until the deck is empty: no play, so
+     * the pile is one card and nothing can reshuffle */
+    n = pk_api_text(links[6], PK_API_TEXT_MAX);
+    int mid_checked = 0;
+    for (int round = 0; round < 400 && n > 0; round++) {
+        v = me_view();
+        if (!mid_checked && v->deck_n > 20) {
+            OK(pk_api_buried(under) == buried_at_deal, "still buried with the deck half drawn");
+            mid_checked = 1;
         }
-        OK(table()->phase == 3, "the three-seat game ended");
-        uint8_t rank[8];
-        const PkView *all = (const PkView *)pk_api_view(PK_API_ALL);
-        OK(pk_api_ranks(rank) == 3 && rank[0] == all->winner, "three ranked, the winner first");
-        OK(all->reveal[rank[1]].n <= all->reveal[rank[2]].n
-           && (all->reveal[rank[1]].n < all->reveal[rank[2]].n || rank[1] < rank[2]),
-           "then fewest cards first, ties in seat order");
+        int want = buried_at_deal < v->deck_n ? buried_at_deal : v->deck_n;
+        OK(pk_api_buried(under) == want, "the buried cards are the deck's bottom ones");
+        if (v->deck_n == 0 || v->over) break;
+        int turn = v->turn;
+        open_as(turn, links[6], 1, 0);
+        if (!pk_api_draw() || !pk_api_pass()) break;
+        n = pk_api_text(links[6], PK_API_TEXT_MAX);
+        pk_api_commit();
     }
+    OK(me_view()->deck_n == 0, "the deck was drawn down");
+    OK(pk_api_buried(under) == 0, "drawn down to, the buried cards are in hands now");
+}
 
-    adopt_and_fan();
-    arrange();
+/* ---- three players to the end: the results order ---- */
+static void three_seats(void)
+{
+    lobby(links + 3, 7, 3, 0, 2);
+    open_as(0, links[5], 0, 0);
+    OK(pk_api_start() == 0 && table()->n_seats == 3, "a three-seat game");
+    int n = pk_api_text(links[6], PK_API_TEXT_MAX);
+    char *at = links[6];
+    for (int round = 0; round < 3000 && n > 0; round++) {
+        open_as(0, at, 0, 0);
+        if (table()->phase == 3) break;
+        int turn = me_view()->turn;
+        open_as(turn, at, 0, 0);
+        one_bubble();
+        n = pk_api_text(links[7], PK_API_TEXT_MAX);
+        pk_api_commit();
+        memcpy(links[6], links[7], (size_t)(n > 0 ? n : 0) + 1);
+    }
+    OK(table()->phase == 3, "the three-seat game ended");
+    uint8_t rank[8];
+    const PkView *all = (const PkView *)pk_api_view(PK_API_ALL);
+    OK(pk_api_ranks(rank) == 3 && rank[0] == all->winner, "three ranked, the winner first");
+    OK(all->reveal[rank[1]].n <= all->reveal[rank[2]].n
+       && (all->reveal[rank[1]].n < all->reveal[rank[2]].n || rank[1] < rank[2]),
+       "then fewest cards first, ties in seat order");
+}
 
-    /* ---- the corner index and the strip's count (I33) ---- */
+/* ---- the corner index and the strip's count (I33) ---- */
+static void words_and_refusals(void)
+{
+    char buf[PK_API_TEXT_MAX], line[256];
     OK(pk_api_words(PK_API_W_INDEX, 0, line, sizeof line) > 0 && !strcmp(line, "1"), "a number's index");
     OK(pk_api_words(PK_API_W_INDEX, 47, line, sizeof line) > 0 && !strcmp(line, "+2"), "+2's index");
     OK(pk_api_words(PK_API_W_INDEX, 100, line, sizeof line) > 0 && !strcmp(line, "+4"), "a Wild +4's index");
@@ -800,6 +869,26 @@ int main(void)
        "off the end of the words");
     OK(pk_api_string(0, line, sizeof line) > 0, "the game's name by key");
     OK(pk_api_seats_save((uint8_t *)buf, 3) == -1, "a short records buffer is refused");
+}
+
+int main(void)
+{
+    setvbuf(stdout, 0, _IONBF, 0);       /* a crash still shows what went red */
+    layout();
+    OK(pk_api_layout_hash() == 0, "the smoke build is not stamped (ios-lib stamps the shipped one)");
+    OK(pk_api_name_verdict((const uint8_t *)"Alex", 4) == 0 && pk_api_name_verdict((const uint8_t *)"", 0) == 1
+       && pk_api_name_verdict((const uint8_t *)"seventeen chars!!", 17) == 2, "nickname verdicts");
+
+    if (dm_start()) {
+        rotated_id(dm_playout());
+        group_lobby();
+        freed_name();
+        buried();
+        three_seats();
+        adopt_and_fan();
+        arrange();
+        words_and_refusals();
+    }
 
     printf("bridge: %d checks, %d failed\n", checks, fails);
     if (!fails) printf("bridge ok\n");

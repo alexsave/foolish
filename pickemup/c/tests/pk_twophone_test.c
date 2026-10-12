@@ -538,15 +538,24 @@ static int filler_(int keep, int any)
 }
 static int filler(int keep) { return filler_(keep, 0); }
 
-static int play_game(const uint8_t seed[32])
+/* ---- the game's opening, the same for every seed ------------------------------------
+ *
+ * ios/pk_api_smoke.c opens a DM the same way (new, join-and-start, a draw
+ * that stays, a play) and is NOT these steps again. That file links the
+ * bridge as the app does and asks, on one fixed game nobody steered, for what
+ * this script never does: the motion (pk_api_beats*), the roster's words, a
+ * wrong call, a group lobby, three seats, the buried cards, and a seat found
+ * by the sender fact or by a name. This one is the only place a bubble is
+ * held to an oracle: the exact captions, every event of both plans, pk_since,
+ * the three-draw strip, Rule P, the catch and "Last card!". */
+
+/* The lobby: Alex makes it, Bo joins, and the join fills the table. Alex's
+ * seven, as dealt, are left in `deal_a` for the deal's own check. */
+static int lobby_and_join(const uint8_t seed[32], uint8_t deal_a[7])
 {
-    reset_phones();
-    resh_total = 0;
-    cnt[A] = cnt[B] = 7;
     static char lobby[PK_API_TEXT_MAX];
     char line[256];
 
-    /* ---- the lobby: Alex makes it, Bo joins, and the join fills the table ---- */
     STEP("S1 lobby");
     pick_up(A);
     OK(pk_api_new(seed, 1) == 0, "Alex makes a lobby");
@@ -575,10 +584,15 @@ static int play_game(const uint8_t seed[32])
        "the deal's caption: \"%s\"", line);
     const PkView *v = vme();
     OK(v->my_n == 7 && v->turn == B, "Bo holds seven and moves first (D19, D28)");
-    static uint8_t deal_a[7];
     memcpy(deal_a, vall()->reveal[A].card, 7);
+    return 1;
+}
 
-    /* ---- Bo's first turn, in the start bubble: three draws, then a play ---- */
+/* Bo's first turn, in the start bubble: three draws, then a play. */
+static int first_turn(void)
+{
+    char line[256];
+    const PkView *v;
     STEP("S4 three draws then a play");
     bubble_begin(B);
     for (int k = 0; k < 3; k++) {
@@ -615,274 +629,340 @@ static int play_game(const uint8_t seed[32])
         OK(ok, "the strip: three backs, then the played card (chips_after_draws)");
     }
     if (!send_and_receive()) return 0;
+    return 1;
+}
 
-    /* Alex's phone also saw the deal: bubble 0, round robin from seat 1 */
+/* Alex's phone also saw the deal: bubble 0, round robin from seat 1 */
+static void deal_on_receiver(const uint8_t deal_a[7])
+{
     STEP("S2 the deal on the receiver");
-    {
-        const PkApiEvents *d = (const PkApiEvents *)pk_api_plan(PK_API_ME, -1, 0);
-        OK(d && d->n > 18, "the deal's plan");
-        if (d && d->n > 18) {
-            OK(d->ev[0].kind == PK_EV_LOBBY_START && d->ev[0].seat == B && d->ev[0].n == 2, "LOBBY_START names Bo");
-            OK(d->ev[1].kind == PK_EV_SHUFFLE && d->ev[1].n == PK_DECK, "one SHUFFLE of 104");
-            int ok = 1, mine = 0, bad = -1;
-            for (int j = 0; j < 14; j++) {
-                const PkEvent *e = &d->ev[2 + j];
-                int seat = (1 + j) % 2;
-                if (e->kind != PK_EV_DEAL || e->seat != seat || e->n != j / 2 + 1 || e->i != j + 1) { ok = 0; if (bad < 0) bad = j; }
-                if (seat == A) { if (e->card != deal_a[mine++]) ok = 0; }
-                else if (e->card != PK_CARD_HIDDEN) ok = 0;
-            }
-            OK(ok, "fourteen DEALs, one card at a time from seat 1, Bo's hidden, Alex's in hand order (first wrong %d)", bad);
-            int k = 16;
-            while (k + 1 < d->n && d->ev[k].kind == PK_EV_FLIP && d->ev[k + 1].kind == PK_EV_BURY) k += 2;
-            OK(k + 2 < d->n && d->ev[k].kind == PK_EV_FLIP && d->ev[k + 1].kind == PK_EV_START_CARD
-               && d->ev[k + 1].card == d->ev[k].card && is_num(d->ev[k].card)
-               && d->ev[k + 2].kind == PK_EV_TURN_TO && d->ev[k + 2].seat == B && k + 3 == d->n,
-               "FLIP and BURY pairs, a number START_CARD, TURN_TO Bo");
+    const PkApiEvents *d = (const PkApiEvents *)pk_api_plan(PK_API_ME, -1, 0);
+    OK(d && d->n > 18, "the deal's plan");
+    if (d && d->n > 18) {
+        OK(d->ev[0].kind == PK_EV_LOBBY_START && d->ev[0].seat == B && d->ev[0].n == 2, "LOBBY_START names Bo");
+        OK(d->ev[1].kind == PK_EV_SHUFFLE && d->ev[1].n == PK_DECK, "one SHUFFLE of 104");
+        int ok = 1, mine = 0, bad = -1;
+        for (int j = 0; j < 14; j++) {
+            const PkEvent *e = &d->ev[2 + j];
+            int seat = (1 + j) % 2;
+            if (e->kind != PK_EV_DEAL || e->seat != seat || e->n != j / 2 + 1 || e->i != j + 1) { ok = 0; if (bad < 0) bad = j; }
+            if (seat == A) { if (e->card != deal_a[mine++]) ok = 0; }
+            else if (e->card != PK_CARD_HIDDEN) ok = 0;
         }
+        OK(ok, "fourteen DEALs, one card at a time from seat 1, Bo's hidden, Alex's in hand order (first wrong %d)", bad);
+        int k = 16;
+        while (k + 1 < d->n && d->ev[k].kind == PK_EV_FLIP && d->ev[k + 1].kind == PK_EV_BURY) k += 2;
+        OK(k + 2 < d->n && d->ev[k].kind == PK_EV_FLIP && d->ev[k + 1].kind == PK_EV_START_CARD
+           && d->ev[k + 1].card == d->ev[k].card && is_num(d->ev[k].card)
+           && d->ev[k + 2].kind == PK_EV_TURN_TO && d->ev[k + 2].seat == B && k + 3 == d->n,
+           "FLIP and BURY pairs, a number START_CARD, TURN_TO Bo");
     }
+}
 
-    int need = NEED_EARLY, phase = PH_EARLY, x = -1;
-    static char exposing[PK_API_TEXT_MAX];
-    for (int round = 0; round < 200; round++) {
-        /* who sends next: the turn seat, or an exposed player saying it */
-        OK(open_tip(A) == 0 && table_()->me == A, "Alex's phone resolves to seat 0");
-        int turn = vme()->turn;
-        int sender = turn;
-        if (phase == PH_SAY) sender = x;
-        if (sender != A) {
-            OK(open_tip(sender) == 0 && table_()->me == sender, "the sender's phone resolves to its own seat");
-        }
-        v = vme();
-        bubble_begin(sender);
+static int open_and_first_turn(const uint8_t seed[32])
+{
+    static uint8_t deal_a[7];
+    if (!lobby_and_join(seed, deal_a) || !first_turn()) return 0;
+    deal_on_receiver(deal_a);
+    return 1;
+}
 
-        if (phase == PH_SAY) {
-            STEP("S9 Last card! in a later bubble");
-            OK(v->my_exposed && v->turn != sender, "exposed, out of turn, it may be said now");
-            OK(pk_api_say_it() == 1, "Last card! is staged");
-            OK(pk_api_collapses(PK_API_TOUCH_SAY) == 1, "a lone Last card! collapses the drawer (I37)");
-            OK((vme()->can_call & (1 << (sender ^ 1))) && pk_api_catch(sender ^ 1) == 1
-               && pk_api_collapses(PK_API_TOUCH_SAY) == 0 && pk_api_uncall() == 1
-               && pk_api_collapses(PK_API_TOUCH_SAY) == 1, "beside a call it is not the whole bubble; un-called, it is");
-            X.said = 1;
-            OK(pk_api_unsay() == 1 && !vme()->draft_said && pk_api_say_it() == 1 && vme()->draft_said,
-               "unsay and say again");
-            {
-                /* ---- a rival: the other catches off the same parent, unsent ---- */
-                STEP("S11 Rule P");
-                static char said_link[PK_API_TEXT_MAX], rival[PK_API_TEXT_MAX];
-                int ns = pk_api_text(said_link, sizeof said_link);
-                OK(ns > 0, "the say bubble writes");
-                pick_up(sender ^ 1);
-                pk_api_sender(exposing, 1, 0);
-                OK(pk_api_read(exposing) == 0 && (vme()->can_call & (1 << sender)), "the other may catch the exposed");
-                OK(pk_api_catch(sender) == 1, "the other stages a catch off the same bubble");
-                int nr = pk_api_text(rival, sizeof rival);
-                OK(nr > 0, "the rival writes");
-                OK(pk_api_prefer(said_link, rival) < 0 && pk_api_prefer(rival, said_link) > 0,
-                   "saying it beats a catch that answered the same bubble (4.8.5, D26)");
-                OK(pk_api_cancel() == 1 && !table_()->draft, "the rival catch is cancelled");
-                OK(open_tip(sender) == 0, "back to the exposed player's phone");
-                OK(pk_api_say_it() == 1, "the say is staged again");
-                STEP("S9 Last card! in a later bubble");
-            }
-            if (!send_and_receive()) return 0;
-            v = vme();
-            OK((v->said & (1 << sender)) && !(v->can_call & (1 << sender)),
-               "the LAST stamp shows and the fan cannot be caught (D5c)");
-            OK(pk_api_stamp(sender) == PK_STAMP_LAST && pk_api_stamp(sender ^ 1) == 0,
-               "the kernel's stamp: LAST under the sayer (I37)");
-            OK(pk_api_words(PK_API_W_SUBLINE, 0, line, sizeof line) >= 0, "a subline");
-            {
-                /* ---- a stale bubble tapped after a newer one ---- */
-                STEP("S11 Rule P");
-                OK(pk_api_check(exposing) == 0, "the older bubble still reads");
-                OK(pk_api_prefer(tip, exposing) < 0 && pk_api_prefer(exposing, tip) > 0,
-                   "Rule P keeps the newer bubble, whichever way round");
-                OK(pk_api_common(tip, exposing) == table_()->bubbles - 1, "the two share every bubble of the older");
-                int newest = table_()->bubbles, keep = pk_api_prefer(tip, exposing) < 0;
-                OK(pk_api_read(keep ? tip : exposing) == 0 && table_()->bubbles == newest && table_()->tip_said,
-                   "the host adopts the newer: its tip said it");
-            }
-            phase = PH_WIN;
-            continue;
-        }
+/* ---- the phases, one bubble each -----------------------------------------------------
+ *
+ * What the script carries from one bubble to the next, and what a phase
+ * answers: the seed cannot go on (a STEER's 0), the bubble went and the game
+ * goes on, or the bubble won it. A phase is handed the sender, whose phone is
+ * in hand, and that phone's view as the round opened. */
+typedef struct {
+    int  need;                           /* the early steps still owed (NEED_*)        */
+    int  phase;                          /* PH_*                                       */
+    int  x;                              /* the seat that sheds; -1 until the reshuffle */
+    char exposing[PK_API_TEXT_MAX];      /* the bubble that left x on one card again   */
+} Script;
+enum { GIVE_UP = 0, GO_ON = 1, WON = 2 };
 
-        if (phase == PH_EARLY) {
-            int done = 0;
-            if (!done && (need & NEED_UNDO_EMPTY) && (p = find(v, 0, 3)) >= 0) {
-                STEP("S5 an undo that empties the draft");
-                OK(pk_api_play(p, 4) == 1 && table_()->draft, "a play is staged with nothing before it");
-                OK(pk_api_undo() == 1, "and undone");
-                const PkApiEvents *d = (const PkApiEvents *)pk_api_plan_draft(PK_API_ME);
-                OK(!table_()->draft && !table_()->can_send && vme()->my_n == cnt[sender] && d && d->n == 0,
-                   "the draft is empty: no draft, nothing to send, the card home");
-                OK(pk_api_words(PK_API_W_STAGED_CAPTION, 0, line, sizeof line) > 0, "the staged caption falls back to the tip");
-                if (!do_play(p, 4)) return 0;
-                need &= ~NEED_UNDO_EMPTY;
-                done = 1;
-            }
-            if (!done && (need & NEED_WILD) && (p = find(v, R_WILD, 2)) >= 0) {
-                STEP("S6 a wild with a suit");
-                OK(pk_api_is_wild(p), "the host is told the wild needs a suit");
-                OK(pk_api_play(p, 4) == 0, "a wild with no suit is not a play (D17)");
-                int s = (v->live_suit + 2) % 4, c = v->my_hand[p];
-                if (!do_play(p, s)) return 0;
-                OK(vme()->live_suit == s && vme()->top == c, "the chosen suit is live");
-                need &= ~NEED_WILD;
-                done = 1;
-            }
-            if (!done && (need & NEED_PLUS2) && (p = find(v, R_PLUS2, 2)) >= 0) {
-                STEP("S7 a +2");
-                if (!do_play(p, 4)) return 0;
-                OK(vme()->turn == sender, "at two players the +2's sender goes again (1.6)");
-                need &= ~NEED_PLUS2;
-                done = 1;
-            }
-            if (!done && (need & NEED_SKIP) && (p = find(v, R_SKIP, 2)) >= 0) {
-                STEP("S7 a Skip");
-                if (!do_play(p, 4)) return 0;
-                need &= ~NEED_SKIP;
-                done = 1;
-            }
-            if (!done && (need & NEED_REVERSE) && (p = find(v, R_REV, 2)) >= 0) {
-                STEP("S7 a Reverse");
-                int dir = v->dir;
-                if (!do_play(p, 4)) return 0;
-                OK(vme()->dir == dir && !vme()->show_dir, "a Reverse at two is a Skip: no direction change, no word (D13)");
-                need &= ~NEED_REVERSE;
-                done = 1;
-            }
-            if (!done) {
-                STEP("filler");
-                if (!filler(2)) return 0;
-            }
-            if (!send_and_receive()) return 0;
-            if (!need) phase = PH_RESHUFFLE;
-            continue;
-        }
+/* PH_SAY: x, exposed and out of turn, says it in a bubble of its own. */
+static int phase_say(Script *sc, int sender, const PkView *v)
+{
+    char line[256];
+    STEP("S9 Last card! in a later bubble");
+    OK(v->my_exposed && v->turn != sender, "exposed, out of turn, it may be said now");
+    OK(pk_api_say_it() == 1, "Last card! is staged");
+    OK(pk_api_collapses(PK_API_TOUCH_SAY) == 1, "a lone Last card! collapses the drawer (I37)");
+    OK((vme()->can_call & (1 << (sender ^ 1))) && pk_api_catch(sender ^ 1) == 1
+       && pk_api_collapses(PK_API_TOUCH_SAY) == 0 && pk_api_uncall() == 1
+       && pk_api_collapses(PK_API_TOUCH_SAY) == 1, "beside a call it is not the whole bubble; un-called, it is");
+    X.said = 1;
+    OK(pk_api_unsay() == 1 && !vme()->draft_said && pk_api_say_it() == 1 && vme()->draft_said,
+       "unsay and say again");
+    {
+        /* ---- a rival: the other catches off the same parent, unsent ---- */
+        STEP("S11 Rule P");
+        static char said_link[PK_API_TEXT_MAX], rival[PK_API_TEXT_MAX];
+        int ns = pk_api_text(said_link, sizeof said_link);
+        OK(ns > 0, "the say bubble writes");
+        pick_up(sender ^ 1);
+        pk_api_sender(sc->exposing, 1, 0);
+        OK(pk_api_read(sc->exposing) == 0 && (vme()->can_call & (1 << sender)), "the other may catch the exposed");
+        OK(pk_api_catch(sender) == 1, "the other stages a catch off the same bubble");
+        int nr = pk_api_text(rival, sizeof rival);
+        OK(nr > 0, "the rival writes");
+        OK(pk_api_prefer(said_link, rival) < 0 && pk_api_prefer(rival, said_link) > 0,
+           "saying it beats a catch that answered the same bubble (4.8.5, D26)");
+        OK(pk_api_cancel() == 1 && !table_()->draft, "the rival catch is cancelled");
+        OK(open_tip(sender) == 0, "back to the exposed player's phone");
+        OK(pk_api_say_it() == 1, "the say is staged again");
+        STEP("S9 Last card! in a later bubble");
+    }
+    if (!send_and_receive()) return 0;
+    v = vme();
+    OK((v->said & (1 << sender)) && !(v->can_call & (1 << sender)),
+       "the LAST stamp shows and the fan cannot be caught (D5c)");
+    OK(pk_api_stamp(sender) == PK_STAMP_LAST && pk_api_stamp(sender ^ 1) == 0,
+       "the kernel's stamp: LAST under the sayer (I37)");
+    OK(pk_api_words(PK_API_W_SUBLINE, 0, line, sizeof line) >= 0, "a subline");
+    {
+        /* ---- a stale bubble tapped after a newer one ---- */
+        STEP("S11 Rule P");
+        OK(pk_api_check(sc->exposing) == 0, "the older bubble still reads");
+        OK(pk_api_prefer(tip, sc->exposing) < 0 && pk_api_prefer(sc->exposing, tip) > 0,
+           "Rule P keeps the newer bubble, whichever way round");
+        OK(pk_api_common(tip, sc->exposing) == table_()->bubbles - 1, "the two share every bubble of the older");
+        int newest = table_()->bubbles, keep = pk_api_prefer(tip, sc->exposing) < 0;
+        OK(pk_api_read(keep ? tip : sc->exposing) == 0 && table_()->bubbles == newest && table_()->tip_said,
+           "the host adopts the newer: its tip said it");
+    }
+    sc->phase = PH_WIN;
+    return GO_ON;
+}
 
-        if (phase == PH_RESHUFFLE) {
-            if (v->stack_n < 4) {
-                STEP("filler");
-                if (!filler(2)) return 0;
-                if (!send_and_receive()) return 0;
-                continue;
-            }
-            STEP("S8 reshuffle");
-            int guard = 0;
-            while (vme()->deck_n > 0 && guard++ < PK_DECK)
-                if (!do_draw()) return 0;
-            OK(vme()->deck_n == 0, "the deck is empty");
-            int before = resh_total;
-            if (!do_draw()) return 0;
-            OK(resh_total == before + 1, "one more draw reshuffled the pile");
-            char deck_line[64];
-            OK(pk_api_words(PK_API_W_DECK_LEFT, 0, deck_line, sizeof deck_line) > 0, "the deck count line");
-            p = find(vme(), 0, 2);
-            if (p >= 0) { if (!do_play(p, 4)) return 0; }
-            else if (!do_pass()) return 0;
-            if (!send_and_receive()) return 0;
-            x = sender ^ 1;                 /* the other seat plays down to one */
-            phase = PH_EXPOSE;
-            continue;
-        }
+/* PH_EARLY: the steps any turn of either seat can take, each owed once (the
+ * bits of `need`) and taken by the first turn that holds its card; a turn
+ * takes the first row it can, in this order. A row is the bit, the card find()
+ * looks for (rank and keep), the step's name, what is staged before the play
+ * (it may choose the play's suit) and what is checked after it. */
 
-        /* the endgame: x sheds, the other plays plain */
-        if (sender != x) {
-            if (phase == PH_CATCH) {
-                STEP("S8c Caught you! staged");
-                OK(v->can_call & (1 << x), "the fan can be tapped");
-                OK(pk_api_catch(x) == 1, "the fan is tapped");
-                OK(pk_api_collapses(PK_API_TOUCH_CALL) == 0, "a call alone does not collapse the drawer (I37)");
-                const PkView *w = vme();
-                const PkApiEvents *d = (const PkApiEvents *)pk_api_plan_draft(PK_API_ME);
-                OK(w->draft_open && w->draft_call == x && !(w->can_call & (1 << x)) && table_()->can_send,
-                   "staged: the catch is in the draft, one per bubble, and it could be sent alone");
-                OK(d && d->n == 2 && d->ev[1].kind == PK_EV_CALL_OUT && d->ev[1].seat == x && d->ev[1].other == sender,
-                   "the draft shows the tap, not its outcome (D5d)");
-                OK(vall()->reveal[x].n == 1, "nothing is drawn before Send");
-                OK(pk_api_uncall() == 1 && vme()->draft_call == PK_SEAT_NONE && pk_api_catch(x) == 1,
-                   "the tap can be taken back and made again");
-                X.call = x;
-                X.hit = 1;
-                STEP("filler");
-                if (!filler(2)) return 0;
-                STEP("S8c Caught you! staged");
-                d = (const PkApiEvents *)pk_api_plan_draft(PK_API_ME);
-                int outcome = 0;
-                for (int k = 0; d && k < d->n; k++)
-                    outcome |= d->ev[k].kind == PK_EV_CALL_HIT || d->ev[k].kind == PK_EV_CALL_MISS;
-                OK(!outcome && vall()->reveal[x].n == 1, "with the turn staged too, still no outcome before Send");
-                if (!send_and_receive()) return 0;
-                STEP("S8d Caught you! after Send");
-                OK(vme()->my_n == 3 && cnt[x] == 3, "the caught player drew two (1.8): %d", vme()->my_n);
-                OK(pk_api_stamp(x) == PK_STAMP_CAUGHT && pk_api_stamp(x ^ 1) == 0,
-                   "Caught you! under the caught, nothing under the catcher (I37)");
-                phase = PH_EXPOSE2;
-                continue;
-            }
-            STEP("filler");
-            if (!filler(2)) return 0;
-            if (!send_and_receive()) return 0;
-            continue;
-        }
+/* A row's play: who, on what suit, which card, and the direction before it. */
+typedef struct { int sender, suit, card, dir; } Early;
 
-        /* x's turn */
-        if (phase == PH_WIN && cnt[x] == 1) {
-            p = -1;
-            for (int k = 0; k < v->my_n; k++) if (v->my_playable[k]) p = k;
-            STEER(p >= 0, "the last card does not play");
-            STEP("S12 the win");
-            if (!do_play(p, 4)) return 0;
-            if (!send_and_receive()) return 0;
-            goto won;
-        }
+static void undo_empties(Early *e, const PkView *v, int p)
+{
+    char line[256];
+    (void)v;
+    OK(pk_api_play(p, 4) == 1 && table_()->draft, "a play is staged with nothing before it");
+    OK(pk_api_undo() == 1, "and undone");
+    const PkApiEvents *d = (const PkApiEvents *)pk_api_plan_draft(PK_API_ME);
+    OK(!table_()->draft && !table_()->can_send && vme()->my_n == cnt[e->sender] && d && d->n == 0,
+       "the draft is empty: no draft, nothing to send, the card home");
+    OK(pk_api_words(PK_API_W_STAGED_CAPTION, 0, line, sizeof line) > 0, "the staged caption falls back to the tip");
+}
+
+static void wild_needs_suit(Early *e, const PkView *v, int p)
+{
+    OK(pk_api_is_wild(p), "the host is told the wild needs a suit");
+    OK(pk_api_play(p, 4) == 0, "a wild with no suit is not a play (D17)");
+    e->suit = (v->live_suit + 2) % 4;
+}
+
+static void wild_suit_live(const Early *e)
+{
+    OK(vme()->live_suit == e->suit && vme()->top == e->card, "the chosen suit is live");
+}
+
+static void plus2_goes_again(const Early *e)
+{
+    OK(vme()->turn == e->sender, "at two players the +2's sender goes again (1.6)");
+}
+
+static void reverse_is_a_skip(const Early *e)
+{
+    OK(vme()->dir == e->dir && !vme()->show_dir, "a Reverse at two is a Skip: no direction change, no word (D13)");
+}
+
+static const struct {
+    int         bit, rank, keep;
+    const char *step;
+    void      (*before)(Early *, const PkView *, int);
+    void      (*after)(const Early *);
+} EARLY[] = {
+    { NEED_UNDO_EMPTY, 0,       3, "S5 an undo that empties the draft", undo_empties,    0                 },
+    { NEED_WILD,       R_WILD,  2, "S6 a wild with a suit",             wild_needs_suit, wild_suit_live    },
+    { NEED_PLUS2,      R_PLUS2, 2, "S7 a +2",                           0,               plus2_goes_again  },
+    { NEED_SKIP,       R_SKIP,  2, "S7 a Skip",                         0,               0                 },
+    { NEED_REVERSE,    R_REV,   2, "S7 a Reverse",                      0,               reverse_is_a_skip },
+};
+
+static int phase_early(Script *sc, int sender, const PkView *v)
+{
+    int done = 0, p;
+    for (size_t k = 0; !done && k < sizeof EARLY / sizeof EARLY[0]; k++) {
+        if (!(sc->need & EARLY[k].bit) || (p = find(v, EARLY[k].rank, EARLY[k].keep)) < 0) continue;
+        STEP(EARLY[k].step);
+        Early e = { sender, 4, 0, 0 };
+        if (EARLY[k].before) EARLY[k].before(&e, v, p);
+        e.card = v->my_hand[p];
+        e.dir = v->dir;
+        if (!do_play(p, e.suit)) return 0;
+        if (EARLY[k].after) EARLY[k].after(&e);
+        sc->need &= ~EARLY[k].bit;
+        done = 1;
+    }
+    if (!done) {
         STEP("filler");
-        const int shed = phase == PH_EXPOSE || phase == PH_EXPOSE2;
-        if (shed && cnt[x] == 2 && (p = find(v, 0, 1)) >= 0) {
-            STEP(phase == PH_EXPOSE ? "S8b down to one" : "S9b down to one again");
-            if (!do_play(p, 4)) return 0;
-            OK(pk_api_say_it() == 0 && !vme()->my_exposed, "not in the bubble that exposed me (D3)");
-            OK(!vme()->can_draw && table_()->can_send && vme()->turn == (x ^ 1), "a play to one card ends the bubble");
-            if (!send_and_receive()) return 0;
-            if (phase == PH_EXPOSE) phase = PH_CATCH;
-            else { phase = PH_SAY; memcpy(exposing, tip, strlen(tip) + 1); }
-            continue;
-        }
-        if (!filler_(2, shed)) return 0;
+        if (!filler(2)) return 0;
+    }
+    if (!send_and_receive()) return 0;
+    if (!sc->need) sc->phase = PH_RESHUFFLE;
+    return GO_ON;
+}
+
+/* PH_RESHUFFLE: plain turns until the pile holds four, then a turn that draws
+ * the deck dry and once more. The seat that did not is x from here on. */
+static int phase_reshuffle(Script *sc, int sender, const PkView *v)
+{
+    int p;
+    if (v->stack_n < 4) {
+        STEP("filler");
+        if (!filler(2)) return 0;
         if (!send_and_receive()) return 0;
+        return GO_ON;
     }
-    g_why = "the game ran past 200 bubbles";
-    return 0;
+    STEP("S8 reshuffle");
+    int guard = 0;
+    while (vme()->deck_n > 0 && guard++ < PK_DECK)
+        if (!do_draw()) return 0;
+    OK(vme()->deck_n == 0, "the deck is empty");
+    int before = resh_total;
+    if (!do_draw()) return 0;
+    OK(resh_total == before + 1, "one more draw reshuffled the pile");
+    char deck_line[64];
+    OK(pk_api_words(PK_API_W_DECK_LEFT, 0, deck_line, sizeof deck_line) > 0, "the deck count line");
+    p = find(vme(), 0, 2);
+    if (p >= 0) { if (!do_play(p, 4)) return 0; }
+    else if (!do_pass()) return 0;
+    if (!send_and_receive()) return 0;
+    sc->x = sender ^ 1;             /* the other seat plays down to one */
+    sc->phase = PH_EXPOSE;
+    return GO_ON;
+}
 
-won:
+/* PH_CATCH: the other seat taps x's fan, staged beside a plain turn. */
+static int phase_catch(Script *sc, int sender, const PkView *v)
+{
+    const int x = sc->x;
+    STEP("S8c Caught you! staged");
+    OK(v->can_call & (1 << x), "the fan can be tapped");
+    OK(pk_api_catch(x) == 1, "the fan is tapped");
+    OK(pk_api_collapses(PK_API_TOUCH_CALL) == 0, "a call alone does not collapse the drawer (I37)");
+    const PkView *w = vme();
+    const PkApiEvents *d = (const PkApiEvents *)pk_api_plan_draft(PK_API_ME);
+    OK(w->draft_open && w->draft_call == x && !(w->can_call & (1 << x)) && table_()->can_send,
+       "staged: the catch is in the draft, one per bubble, and it could be sent alone");
+    OK(d && d->n == 2 && d->ev[1].kind == PK_EV_CALL_OUT && d->ev[1].seat == x && d->ev[1].other == sender,
+       "the draft shows the tap, not its outcome (D5d)");
+    OK(vall()->reveal[x].n == 1, "nothing is drawn before Send");
+    OK(pk_api_uncall() == 1 && vme()->draft_call == PK_SEAT_NONE && pk_api_catch(x) == 1,
+       "the tap can be taken back and made again");
+    X.call = x;
+    X.hit = 1;
+    STEP("filler");
+    if (!filler(2)) return 0;
+    STEP("S8c Caught you! staged");
+    d = (const PkApiEvents *)pk_api_plan_draft(PK_API_ME);
+    int outcome = 0;
+    for (int k = 0; d && k < d->n; k++)
+        outcome |= d->ev[k].kind == PK_EV_CALL_HIT || d->ev[k].kind == PK_EV_CALL_MISS;
+    OK(!outcome && vall()->reveal[x].n == 1, "with the turn staged too, still no outcome before Send");
+    if (!send_and_receive()) return 0;
+    STEP("S8d Caught you! after Send");
+    OK(vme()->my_n == 3 && cnt[x] == 3, "the caught player drew two (1.8): %d", vme()->my_n);
+    OK(pk_api_stamp(x) == PK_STAMP_CAUGHT && pk_api_stamp(x ^ 1) == 0,
+       "Caught you! under the caught, nothing under the catcher (I37)");
+    sc->phase = PH_EXPOSE2;
+    return GO_ON;
+}
+
+/* x's own turn in the endgame: shed to two, play to one (twice: once to be
+ * caught, once to say it), and the last card once it has been said. */
+static int shedder_turn(Script *sc, const PkView *v)
+{
+    const int x = sc->x;
+    int p;
+    if (sc->phase == PH_WIN && cnt[x] == 1) {
+        p = -1;
+        for (int k = 0; k < v->my_n; k++) if (v->my_playable[k]) p = k;
+        STEER(p >= 0, "the last card does not play");
+        STEP("S12 the win");
+        if (!do_play(p, 4)) return 0;
+        if (!send_and_receive()) return 0;
+        return WON;
+    }
+    STEP("filler");
+    const int shed = sc->phase == PH_EXPOSE || sc->phase == PH_EXPOSE2;
+    if (shed && cnt[x] == 2 && (p = find(v, 0, 1)) >= 0) {
+        STEP(sc->phase == PH_EXPOSE ? "S8b down to one" : "S9b down to one again");
+        if (!do_play(p, 4)) return 0;
+        OK(pk_api_say_it() == 0 && !vme()->my_exposed, "not in the bubble that exposed me (D3)");
+        OK(!vme()->can_draw && table_()->can_send && vme()->turn == (x ^ 1), "a play to one card ends the bubble");
+        if (!send_and_receive()) return 0;
+        if (sc->phase == PH_EXPOSE) sc->phase = PH_CATCH;
+        else { sc->phase = PH_SAY; memcpy(sc->exposing, tip, strlen(tip) + 1); }
+        return GO_ON;
+    }
+    if (!filler_(2, shed)) return 0;
+    if (!send_and_receive()) return 0;
+    return GO_ON;
+}
+
+/* the endgame: x sheds, the other plays plain */
+static int phase_endgame(Script *sc, int sender, const PkView *v)
+{
+    if (sender == sc->x) return shedder_turn(sc, v);
+    if (sc->phase == PH_CATCH) return phase_catch(sc, sender, v);
+    STEP("filler");
+    if (!filler(2)) return 0;
+    if (!send_and_receive()) return 0;
+    return GO_ON;
+}
+
+/* ---- the game's end ------------------------------------------------------------------ */
+
+/* The win, on the loser's phone and then the winner's: x went out.
+ *
+ * ios/pk_api_smoke.c ranks its own finished game too, loosely, since nobody
+ * steered it (the winner first and holding the fewest); the rows and the two
+ * headlines are pinned to the letter only here. */
+static void check_win(int x)
+{
+    char line[256];
     STEP("S12 the win");
-    {
-        v = vme();
-        const PkApiTable *tt = table_();
-        OK(tt->phase == PK_PHASE_FINISHED && v->over == PK_OVER_OUT && v->winner == x, "the game is over, the shedder won");
-        OK(pk_api_stamp(x) == PK_STAMP_OUT && pk_api_stamp(x ^ 1) == 0 && pk_api_stamp(2) == 0 && pk_api_stamp(-1) == 0,
-           "OUT under the winner and nothing else once it is over (I37)");
-        int ok = 1;
-        for (int s = 0; s < 2; s++) ok &= v->reveal[s].n == cnt[s];
-        OK(ok && v->reveal[x].n == 0 && v->reveal[x ^ 1].n > 0, "every hand is revealed: %d and %d",
-           v->reveal[0].n, v->reveal[1].n);
-        OK(!memcmp(v->reveal[holding].card, v->my_hand, v->my_n), "my own row of the reveal is my hand");
-        uint8_t rank[8];
-        OK(pk_api_ranks(rank) == 2 && rank[0] == x && rank[1] == (x ^ 1), "the ranking: the winner, then the other");
-        char want[64];
-        snprintf(want, sizeof want, "1. %s", NICK[x]);
-        OK(pk_api_words(PK_API_W_RANK_ROW, 0, line, sizeof line) > 0 && !strcmp(line, want), "results row 1: \"%s\"", line);
-        snprintf(want, sizeof want, "2. %s (You)", NICK[x ^ 1]);
-        OK(pk_api_words(PK_API_W_RANK_ROW, 1, line, sizeof line) > 0 && !strcmp(line, want), "results row 2: \"%s\"", line);
-        snprintf(want, sizeof want, "%s wins", NICK[x]);
-        OK(pk_api_words(PK_API_W_HEADLINE, 0, line, sizeof line) > 0 && !strcmp(line, want), "the loser's headline: \"%s\"", line);
-        OK(open_tip(x) == 0 && pk_api_words(PK_API_W_HEADLINE, 0, line, sizeof line) > 0 && !strcmp(line, "You win"),
-           "the winner's headline: \"%s\"", line);
-    }
+    const PkView *v = vme();
+    const PkApiTable *tt = table_();
+    OK(tt->phase == PK_PHASE_FINISHED && v->over == PK_OVER_OUT && v->winner == x, "the game is over, the shedder won");
+    OK(pk_api_stamp(x) == PK_STAMP_OUT && pk_api_stamp(x ^ 1) == 0 && pk_api_stamp(2) == 0 && pk_api_stamp(-1) == 0,
+       "OUT under the winner and nothing else once it is over (I37)");
+    int ok = 1;
+    for (int s = 0; s < 2; s++) ok &= v->reveal[s].n == cnt[s];
+    OK(ok && v->reveal[x].n == 0 && v->reveal[x ^ 1].n > 0, "every hand is revealed: %d and %d",
+       v->reveal[0].n, v->reveal[1].n);
+    OK(!memcmp(v->reveal[holding].card, v->my_hand, v->my_n), "my own row of the reveal is my hand");
+    uint8_t rank[8];
+    OK(pk_api_ranks(rank) == 2 && rank[0] == x && rank[1] == (x ^ 1), "the ranking: the winner, then the other");
+    char want[64];
+    snprintf(want, sizeof want, "1. %s", NICK[x]);
+    OK(pk_api_words(PK_API_W_RANK_ROW, 0, line, sizeof line) > 0 && !strcmp(line, want), "results row 1: \"%s\"", line);
+    snprintf(want, sizeof want, "2. %s (You)", NICK[x ^ 1]);
+    OK(pk_api_words(PK_API_W_RANK_ROW, 1, line, sizeof line) > 0 && !strcmp(line, want), "results row 2: \"%s\"", line);
+    snprintf(want, sizeof want, "%s wins", NICK[x]);
+    OK(pk_api_words(PK_API_W_HEADLINE, 0, line, sizeof line) > 0 && !strcmp(line, want), "the loser's headline: \"%s\"", line);
+    OK(open_tip(x) == 0 && pk_api_words(PK_API_W_HEADLINE, 0, line, sizeof line) > 0 && !strcmp(line, "You win"),
+       "the winner's headline: \"%s\"", line);
+}
 
-    /* ---- the seat resolver with the records gone (a reinstall): the tag ---- */
+/* The seat resolver with the records gone (a reinstall): the tag. (No tag
+ * either, so the sender fact or the name: ios/pk_api_smoke.c's rotated id.) */
+static void seat_resolver(void)
+{
     STEP("S13 seat resolver");
     for (int ph = 0; ph < 2; ph++) {
         pick_up(ph);
@@ -893,7 +973,48 @@ won:
         OK(pk_api_read(tip) == 0 && table_()->me == ph && table_()->by == PK_BY_RECORD,
            "phone %d with its records finds it by the record", ph);
     }
-    return 1;
+}
+
+/* ---- the script itself: one loop, a bubble a round, and the phases in the order
+ * the enum gives them. The order is the test: each phase leaves the table as
+ * the next one needs it. ---- */
+static int play_game(const uint8_t seed[32])
+{
+    reset_phones();
+    resh_total = 0;
+    cnt[A] = cnt[B] = 7;
+    if (!open_and_first_turn(seed)) return 0;
+
+    static Script sc;
+    sc.need = NEED_EARLY;
+    sc.phase = PH_EARLY;
+    sc.x = -1;
+    for (int round = 0; round < 200; round++) {
+        /* who sends next: the turn seat, or an exposed player saying it */
+        OK(open_tip(A) == 0 && table_()->me == A, "Alex's phone resolves to seat 0");
+        int turn = vme()->turn;
+        int sender = turn;
+        if (sc.phase == PH_SAY) sender = sc.x;
+        if (sender != A) {
+            OK(open_tip(sender) == 0 && table_()->me == sender, "the sender's phone resolves to its own seat");
+        }
+        const PkView *v = vme();
+        bubble_begin(sender);
+
+        int went;
+        if (sc.phase == PH_SAY)            went = phase_say(&sc, sender, v);
+        else if (sc.phase == PH_EARLY)     went = phase_early(&sc, sender, v);
+        else if (sc.phase == PH_RESHUFFLE) went = phase_reshuffle(&sc, sender, v);
+        else                               went = phase_endgame(&sc, sender, v);
+        if (went == GIVE_UP) return 0;
+        if (went == WON) {
+            check_win(sc.x);
+            seat_resolver();
+            return 1;
+        }
+    }
+    g_why = "the game ran past 200 bubbles";
+    return 0;
 }
 
 /* ---- THE LOBBY'S RULES that the game above never meets (shared/c/msg_lobby_roster):
