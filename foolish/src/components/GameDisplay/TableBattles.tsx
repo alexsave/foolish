@@ -17,7 +17,7 @@ import type { ClientPlay } from "@sdk/ts/table/client_table.ts";
  *  `center bottom`. Exported because the flight that brings the cover in has to
  *  land where this grid will draw it: a cover shares its attack's slot and its
  *  bottom edge, so turning the attack's centre through this angle about that
- *  point IS the cover's centre (AnimationOverlay's `laidAcross`). The overlay
+ *  point IS the cover's centre (flightGeometry.ts `laidAcross`). The overlay
  *  reads the constant rather than keeping an offset of its own. */
 export const COVER_ROTATION_RAD: number = Math.PI / 16;
 
@@ -57,7 +57,7 @@ const liveTranslate = (el: HTMLElement): { x: number; y: number } => {
  * still sliding to make room is not there yet: measuring it raw would put a
  * cover down where its attack was half a flight ago. A card LIFTING OFF is the
  * other way round - it leaves from where it is drawn - so this is applied to
- * landings only, and AnimationOverlay says so at each of them.
+ * landings only, and flightGeometry.ts says so at each of them.
  */
 export const glideOffset = (el: HTMLElement): { x: number; y: number } => {
     const cell = typeof el.closest === 'function'
