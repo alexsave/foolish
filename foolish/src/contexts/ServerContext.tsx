@@ -16,6 +16,7 @@ import { GAME_STATUS, rulesOf, type TableView, type ViewCard } from '../state/vi
 import { rejectMessage } from '../wasm/rejectMessages';
 import { authoritativeVersion } from '../state/authoritativeVersion';
 import { EN, StringId, StringTable, isLanguage, loadLanguage, translate } from '../common/strings';
+import { hexToBytes } from '@api/common/replay_codec.ts';
 
 type Card = ViewCard;
 
@@ -24,16 +25,15 @@ type Card = ViewCard;
 // null when it does not read whole.
 const readEnvelope = (bytes: Uint8Array): TableView | null => clientTable().adoptEnvelope(bytes);
 
-// Decode the hex `view` blob stored in player_views. It is a BYTEA column, so a
-// PostgREST select gives it as '\x'-prefixed hex and a Realtime postgres_changes
-// payload as bare hex; the optional prefix is stripped either way. Tiny local
-// helper so the dashboard read doesn't pull the replay codec into the main bundle.
-const hexToBytes = (hex: string): Uint8Array => {
-    const h = hex.startsWith('\\x') ? hex.slice(2) : hex;
-    const out = new Uint8Array(h.length >> 1);
-    for (let i = 0; i < out.length; i++) out[i] = parseInt(h.slice(i * 2, i * 2 + 2), 16);
-    return out;
-};
+// `hexToBytes` decodes the hex `view` blob stored in player_views. It is a BYTEA
+// column, so a PostgREST select gives it as '\x'-prefixed hex and a Realtime
+// postgres_changes payload as bare hex; the optional prefix is stripped either
+// way. It is the server's own (replay_codec.ts, imported above), which the
+// page's replay screens already read their columns with. This file kept a
+// copy while that one still held the replay coder, to keep it out of first
+// load; it is the host-shaped byte helpers and nothing else now and imports
+// nothing. Measured (scripts/measure_web_bundle.mjs, gzip): `/` +240 B,
+// `/[game_id]` -93 B, the two together -93 B.
 
 // How long a refused move waits for the pushes it was refused over before
 // reconcileAfter loads the game: two of the kernel's flights, time for a late push.
