@@ -32,7 +32,7 @@ static inline int card_id(Card c)  { return c.suit * 13 + (c.value - 1); }
 // not on the seed list in SERVER_SCALING.md) would data-race both the ready
 // flag and the mask contents themselves. _Thread_local: each thread fills its
 // own copy once and reuses it, matching every other MC-solver scratch in this
-// file (cd_tt, sim_forced_q, world_slot, ...). wasm is unaffected (single-
+// file (cd_tt, world_slot, ...). wasm is unaffected (single-
 // threaded module; c/Makefile's `-D_Thread_local=` neutralizes the qualifier).
 static _Thread_local uint64_t VALUE_MASK[14];   // VALUE_MASK[v] = all ids with value v (1..13)
 static _Thread_local uint64_t SUIT_MASK[4];
@@ -168,45 +168,8 @@ static inline uint64_t sim_table_value_mask(const SimState *s) {
     return s->table_vmask;
 }
 
-// Forced-draw queue (see cordite_sim.h): pins the next draws to exact card
-// ids. Used by novichok's refill pinning, where the true refill cards after a
-// battle-ending root move are a deterministic function of the live RNG state.
-static _Thread_local uint8_t sim_forced_q[32];
-static _Thread_local int sim_forced_n = 0;
-static _Thread_local int sim_forced_i = 0;
-
-void cd_sim_set_forced_draws(const uint8_t *ids, int n) {
-    if (n > (int)sizeof(sim_forced_q)) n = (int)sizeof(sim_forced_q);
-    for (int i = 0; i < n; i++) sim_forced_q[i] = ids[i];
-    sim_forced_n = n;
-    sim_forced_i = 0;
-}
-
 // draw one card id, mirroring draw_card (deck array splice + flipped fallback).
 static int sim_draw(SimState *s, int *out) {
-    if (sim_forced_i < sim_forced_n) {
-        uint8_t want = sim_forced_q[sim_forced_i];
-        if (s->deck_n == 0) {
-            // The engine's draw here is RNG-free (flipped fallback); the
-            // pinned id is that same flipped card when states match.
-            sim_forced_i = sim_forced_n;
-            if (!s->has_flipped) return 0;
-            *out = s->flipped_id;
-            s->has_flipped = 0;
-            return 1;
-        }
-        for (int i = 0; i < s->deck_n; i++) {
-            if (s->deck[i] == want) {
-                for (int j = i + 1; j < s->deck_n; j++) s->deck[j - 1] = s->deck[j];
-                s->deck_n--;
-                s->deck_count = s->deck_n;
-                sim_forced_i++;
-                *out = want;
-                return 1;
-            }
-        }
-        sim_forced_i = sim_forced_n;   // divergence: rest of queue is stale
-    }
     if (s->deck_n == 0) {
         if (!s->has_flipped) return 0;
         *out = s->flipped_id;
@@ -1271,7 +1234,7 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
         // deck-empty endgames (entered at deck_n==0 && !has_flipped) and nothing
         // under it draws (sim_apply_sol never refills), so deck[] is dead here.
         // Skipping the 64B tail shaves ~20% off this per-node clone — the single
-        // hottest memmove in the semtex/octogen/cordite MC profile. deck_n (=0)
+        // hottest memmove in the octogen/cordite MC profile. deck_n (=0)
         // sits before deck[] and is still copied, so movegen sees a valid count.
         memcpy(child, s, offsetof(SimState, deck));
         sim_apply_sol(child, actor, &moves[i]);
@@ -1372,7 +1335,7 @@ int cd_sim_one_step(SimState *s) {
     return -1;
 }
 
-// ---------- per-seat-policy playout (semtex) -----------------------------
+// ---------- per-seat-policy playout (octogen) ----------------------------
 // POL_HW seats play the handwritten policy. POL_LOOSE seats play a weak
 // "random-ish" opponent model: random attack leads (no lowest-first), random
 // covers instead of cheapest (burning trumps freely), occasional needless
@@ -1465,7 +1428,7 @@ static int sim_loose_move(SimState *s, int p, SimMove *out) {
 // MC-defender model (CD_POL_MCDEF): handwritten EXCEPT the defender's
 // cover decision — when the greedy full cover would spend a trump while the
 // deck is still alive, the seat picks up instead half the time. Handwritten
-// NEVER picks up while holding a full cover, but MC bots (cordite/semtex)
+// NEVER picks up while holding a full cover, but MC bots (cordite/octogen)
 // and thinking humans do it constantly to protect trumps — the same
 // behavior the mc_tell belief evidence detects. Rolling proven-strategic
 // seats out with this model instead of pure handwritten removes that bias
@@ -1699,7 +1662,7 @@ int cd_sim_playout_reply(SimState *s, int my_idx, int max_turns,
 // attempt per playout; a failed solve falls back to the policy for good).
 // The TT is NOT cleared between leaf calls: entries are keyed on a full
 // 64-bit position fingerprint, so worlds can share it, and values are
-// depth-rebased so cross-call reuse reads back correctly. Used by semtex —
+// depth-rebased so cross-call reuse reads back correctly. Written for semtex (retired, removed) -
 // against near-perfect endgame players (cordite itself) modeling the endgame
 // as exact beats modeling it as handwritten play.
 int cd_sim_playout_leaf(SimState *s, int my_idx, int max_turns, int early_exit,
@@ -1809,7 +1772,7 @@ static _Thread_local unsigned char solve_child_scratch[SOLVE_SCRATCH_DEPTH * SOL
 // Solver move slots and the struct-rollout move list share one allocation:
 // they are never live at the same time (a leaf solve runs at the TOP of a
 // rollout ply, before that ply's enumeration; the rollout list is consumed
-// before the next ply — see cd_simulate/sx_simulate/og_simulate; root solves
+// before the next ply — see cd_simulate/og_simulate; root solves
 // run before any rollout starts). The union costs
 // max(48 x SolveMoves, LegalMoves) instead of both — the rollout list alone
 // is sizeof(LegalMoves) (~332KB at the bots build's MAX_LEGAL_MOVES=4096).
