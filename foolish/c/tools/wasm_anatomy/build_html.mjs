@@ -34,7 +34,7 @@ const FILE_SUB = {
   awire:'codec', evwire:'codec',
   wasm_api:'bridge', wasm_bots_api:'bridge',
 };
-const STRAT_FILES = ['random_strategy','espresso_strategy','espresso_prod_strategy','handwritten_strategy','handwritten_prod_strategy','simple_heuristic_strategy','champion_strategy','ultimate_champion_strategy','hacker_strategy','fulminate_strategy','cordite_strategy','cordite_sim','semtex_strategy','octogen_strategy'];
+const STRAT_FILES = ['random_strategy','espresso_strategy','espresso_prod_strategy','handwritten_strategy','handwritten_prod_strategy','simple_heuristic_strategy','champion_strategy','ultimate_champion_strategy','hacker_strategy','fulminate_strategy','cordite_strategy','cordite_sim','octogen_strategy'];
 for (const f of STRAT_FILES) FILE_SUB[f] = 'strategy';
 
 function attributeSym(name) {

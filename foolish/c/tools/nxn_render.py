@@ -18,8 +18,7 @@ CODE = {
     "astrolite": "as", "cordite_old": "cd0", "simple_heuristic": "sh",
     "champion": "ch", "ultimate_champion": "uc", "hacker": "hk", "fulminate": "fm",
     "espresso_prod": "ep", "handwritten_prod": "hp", "distilled": "dl",
-    "semtex": "sx", "semtex_oracle": "sxo", "octogen": "og",
-    "octogen_oracle": "ogo", "torpex": "tx", "novichok": "nv",
+    "octogen": "og", "octogen_oracle": "ogo",
 }
 
 def raw(a, b):
@@ -68,4 +67,4 @@ if not LIVE:
     print("\nOverall win-rate vs field (excl. self), ranked:")
     for a, avg in sorted(rows, key=lambda r: -r[1]):
         print(f"  {avg:5.1f}%  {a}")
-    print("\nnote: novichok, semtex_oracle, octogen_oracle observe hidden info (cheaters).")
+    print("\nnote: octogen_oracle is octogen at 6x worlds (research only, not a ladder bot).")
