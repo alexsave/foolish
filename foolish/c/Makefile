@@ -78,9 +78,7 @@ CORE_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/replay_
             src/ultimate_champion_strategy.c src/hacker_strategy.c \
             src/fulminate_strategy.c src/espresso_prod_strategy.c \
             src/handwritten_prod_strategy.c src/distill_feat.c \
-            src/distilled_strategy.c src/semtex_strategy.c \
-            src/octogen_strategy.c src/torpex_strategy.c \
-            src/torpex_value.c src/novichok_strategy.c \
+            src/distilled_strategy.c src/octogen_strategy.c \
             src/bot_knobs.c src/bot_roster.c src/bot_drive.c \
             $(SHARED)/sha256.c src/msg_wire.c src/msg_expand.c src/anim_plan.c \
             src/analyse.c src/roster.c src/table.c src/client_table.c src/card.c \
@@ -104,7 +102,7 @@ print-core:
 # artifact.
 print-wasm-src:
 	@echo $(sort $(WASM_BOT_SRC) $(WASM_ORACLE_MT_SRC))
-all: build/cnitro_eval build/cnitro_elo build/cnitro_replay build/cnitro_showcase build/cnitro_tests build/cnitro_gen
+all: build/cnitro_eval build/cnitro_elo build/cnitro_replay build/cnitro_showcase build/cnitro_tests
 
 # ---- how a file becomes an object ---------------------------------------------
 # shared/tools/c_rules.mk: one directory of objects per compiler-and-flags (a
@@ -165,7 +163,6 @@ $(call host_prog,cnitro_replay,src/main_replay.c)
 $(call host_prog,cnitro_showcase,src/main_showcase.c)
 $(call host_prog,cnitro_tests,tests/tests.c)
 $(call host_prog,cnitro_distill,src/main_distill.c)
-$(call host_prog,cnitro_gen,src/main_gen.c)
 
 # 5,761 checks in 23.8s at -O3, and 23.5s of that is ONE of the 204 tests:
 # test_table_session_log_is_load_bearing_for_octogen, 3,430 octogen decisions at
@@ -1323,7 +1320,7 @@ wasm-msg-size: build/msg.wasm
 # robusta_strategy.c rides along because firecracker IS robusta's MC with an
 # espresso rollout (firecracker_strategy.c calls robusta_mc_choose). Dropped
 # entirely (no ladder slot, no dep of a shipped bot): champion, ultimate_champion,
-# hacker, fulminate, semtex, espresso_prod — their code + static data leave the
+# hacker, fulminate, espresso_prod — their code + static data leave the
 # module. NOTE: robusta/blackpowder MC rolls a full Game + LegalMoves per sample;
 # those were stack locals (fine on native's 8 MB stack) and are hoisted to
 # lazily-malloc'd per-thread scratch so they fit the 22 KiB bots.wasm shadow

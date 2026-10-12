@@ -13,7 +13,7 @@
 // mark on screen at every instant of the hand-off.
 //
 // Viewport coordinates, like every other flight on this board
-// (AnimationOverlay's `centreOf`): the ghost is hung by its CENTRE, so both
+// (flightGeometry's `centreOf`): the ghost is hung by its CENTRE, so both
 // endpoints are element centres and `translate(-50%, -50%)` does the hanging.
 
 import { useEffect, useRef, useState } from 'react';

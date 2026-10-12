@@ -233,7 +233,8 @@ Apple's July-2025 rating overhaul (tiers 4+/9+/13+/16+/18+, new
 invites broader readings than the old depiction-based descriptors. A card
 game whose opponents are literally named after military explosives
 (octogen = HMX, cordite, gunpowder…) invites at minimum a conversation —
-and "Novichok" (research-only, never player-facing, but one grep away) is a
+and "Novichok" (research-only, never player-facing, one grep away when this
+was written, and since removed from the tree) is a
 nerve agent tied to real assassinations. A card game whose opponents are
 named Moscow and Brighton Beach invites nothing. Renaming is the zero-risk
 path to the 4+/9+ band. The Russia theming also *fits the product* — Durak

@@ -731,7 +731,7 @@ public struct MessageTableView: View {
             }
             .doesNotRideTheBoardSpring(controller.view)
         }
-        .padding(.horizontal, 8).padding(.top, 14).padding(.bottom, 4)   // top margin so the ring isn't clipped in the compact drawer
+        .boardInset()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay { FlyingCardsLayer(animator: animator) }
         // A STATUS ICON IS ALWAYS IN FRONT OF A CARD.
@@ -781,7 +781,7 @@ public struct MessageTableView: View {
                     // ZStack to that frame minus the padding, so without this
                     // the mark would sit 4pt lower and 8pt wider than it used
                     // to. This is a change of z and nothing else.
-                    .padding(.horizontal, 8).padding(.top, 14).padding(.bottom, 4)
+                    .boardInset()
             }
         }
         // MY OWN CARDS, ON TOP OF THE MARK. Owner, round 47: "the badge should
@@ -888,7 +888,7 @@ public struct MessageTableView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                 }
                 }
-                .padding(.horizontal, 8).padding(.top, 14).padding(.bottom, 4)
+                .boardInset()
             }
         }
         // Above the cards: a role changing hands IS the thing being read at that
@@ -919,69 +919,7 @@ public struct MessageTableView: View {
         .onPreferenceChange(HandCardFramesKey.self) {
             handCardFrames = $0
             #if DEBUG
-            // slotRects self-check: at rest, the analytical landing slot must
-            // match the MEASURED frame for every hand card, or a flight lands off
-            // and snaps. Silent when they agree; logs the worst delta only when it
-            // exceeds a couple of points, so a geometry drift shows up in the
-            // device trace without spamming a correct build.
-            if let hand = controller.view?.me?.hand, handFrame != .zero, !$0.isEmpty,
-               animator.hidden.isEmpty, sweepBattles.isEmpty, !animator.isAnimating {
-                // Round-8 #4: the fan renders the DISPLAY order (the stored
-                // per-game arrangement; the store and the fan's live order are
-                // kept in sync by onOrderChanged), so the analytical slots must
-                // be computed against it too, or every cosmetic reorder would
-                // log as a phantom geometry mismatch here.
-                let display = FHandFan.displayOrder(
-                    cards: hand,
-                    order: MessageGameStore.shared.handOrder(gameId: controller.gameIdString))
-                let rects = FHandFan.slotRects(cards: display, width: handFrame.width)
-
-                var worst = 0.0, worstId = ""
-                for c in hand {
-                    // Placed by the SAME rule the flights use (`inBoardSpace`,
-                    // anchored on the fan's bottom edge). It used to offset by
-                    // `handFrame.minY`, which made this check disagree with
-                    // every flight it was supposed to be validating - and made
-                    // it report a full row of error (86pt at eleven cards)
-                    // whenever the two preferences were a paint out of step,
-                    // which is noise, not drift. What is worth shouting about
-                    // is the two disagreeing about where the hand IS, and that
-                    // survives this change: the 391pt collapse gap still reads.
-                    guard let a = rects[c.identity].map({
-                              Self.inBoardSpace($0, laidOutCount: display.count,
-                                                handFrame: handFrame) }),
-                          let m = $0[c.identity] else { continue }
-                    let d = max(abs(a.midX - m.midX), abs(a.midY - m.midY))
-                    if d > worst { worst = d; worstId = c.identity }
-                }
-                if worst > 2 {
-                    AnimLog.say("SLOTCHECK MISMATCH n=\(hand.count) worst=\(String(format: "%.1f", worst))pt @\(worstId)")
-                }
-                // …AND INTO THE DUMP THE OWNER CAN ACTUALLY READ, once it is
-                // past half a card. That threshold is the line between two
-                // completely different facts, and only the magnitude separates
-                // them: a few points is `handCardFrames` being one layout pass
-                // behind something that is still moving, which is harmless and
-                // constant during a drag; a whole board is the hand's per-card
-                // frames NOT RE-PUBLISHING AT ALL when the drawer resizes.
-                //
-                // The second is real and measured. On a 667 board collapsing to
-                // 261, the rig reads `SLOTCHECK MISMATCH n=7 worst=406.0pt` -
-                // and 406 is exactly 667 - 261. `HandFrameKey` re-publishes
-                // across that resize and `HandCardFramesKey` does not, which is
-                // why the analytical route (`handSlotsNow`, off `handFrame`)
-                // reads the new drawer correctly while anything trusting the
-                // per-card frames is still describing the expanded board.
-                //
-                // Everything load-bearing has been moved off them - a takeoff
-                // and a landing are both computed now - so this is a WATCH, not
-                // a live defect. It is here because this check named the bug in
-                // the owner's own Debug build for months and only ever said so
-                // to a log nobody was streaming.
-                if worst > 35 {
-                    FlightRecorder.note("slotcheck", "hand rects \(Int(worst))pt off - stale after a resize?")
-                }
-            }
+            checkHandSlots(against: $0)
             #endif
         }
         .onChange(of: controller.view) { v in
@@ -1492,8 +1430,28 @@ public struct MessageTableView: View {
     /// "the arrow should be bumped a bit to the left").
     static let sendHintCenterFromScreenTrailing: CGFloat = SendHint.axisFromScreenTrailing
     /// The same axis measured from the BOARD's trailing edge - the board is
-    /// inset 8 from the screen (`.padding(.horizontal, 8)` on the root).
-    static let sendHintCenterFromTrailing: CGFloat = sendHintCenterFromScreenTrailing - 8
+    /// inset 8 from the screen (`boardInset` on the root).
+    static let sendHintCenterFromTrailing: CGFloat = sendHintCenterFromScreenTrailing - boardInset.trailing
+
+    /// THE BOARD'S INSET FROM ITS DRAWER, in one place. 14 on top so the ring
+    /// is not clipped in the compact drawer.
+    ///
+    /// `table` applies it three times and the three must agree to the point:
+    /// once on the board content, and once more INSIDE each overlay that was
+    /// promoted above the flight layer (my role mark; my hand and the chrome).
+    /// An overlay is sized to the padded frame and the board's ZStack to that
+    /// frame minus the padding, so each of those puts the difference back -
+    /// the notes at the two overlays say why they were promoted.
+    static let boardInset = EdgeInsets(top: 14, leading: 8, bottom: 4, trailing: 8)
+}
+
+private extension View {
+    /// `MessageTableView.boardInset`, as the modifier `table` hangs it with.
+    /// Three separate paddings, exactly as each site used to spell them.
+    func boardInset() -> some View {
+        let inset = MessageTableView.boardInset
+        return padding(.horizontal, inset.leading).padding(.top, inset.top).padding(.bottom, inset.bottom)
+    }
 }
 
 /// Round-8 #3 / round-9: the staged-but-unsent reminder, as this product shows

@@ -512,20 +512,19 @@ extension HarnessModel {
         guard (try? await MessageKernel.shared.newGame(seed: seed, players: n)) != nil
         else { return }
         var lastSeat = 0
-        for _ in 0..<800 {
-            guard let v = await MessageKernel.shared.residentView(viewer: -1), !v.isOver
-            else { break }
-            var acted = false
-            for s in 0..<n {
-                let legal = await MessageKernel.shared.residentLegal(seat: s)
-                if let m = legal.first(where: { $0.type == .cover })
-                    ?? legal.first(where: { $0.type != .wait }) {
-                    try? await MessageKernel.shared.apply(seat: s, move: m)
-                    lastSeat = s; acted = true; break
-                }
-            }
-            if !acted { break }
-        }
+        await drive(seats: n, limit: 800,
+                    until: {
+                        guard let v = await MessageKernel.shared.residentView(viewer: -1), !v.isOver
+                        else { return true }
+                        return false
+                    },
+                    // Per SEAT: this seat's cover before this seat's anything
+                    // else - not HARNESS_SEED_PLAY's cover-anywhere-first.
+                    pick: { _, legal in
+                        legal.first(where: { $0.type == .cover })
+                            ?? legal.first(where: { $0.type != .wait })
+                    },
+                    onMove: { lastSeat = $0; return true })
         let over = (await MessageKernel.shared.residentView(viewer: -1))?.isOver == true
         AnimLog.say("scenario: spectator-over - game \(over ? "finished" : "DID NOT FINISH - rig bug")")
         guard let payload = try? await MessageKernel.shared.seal(
@@ -647,52 +646,52 @@ extension HarnessModel {
                     : Data((0..<32).map { UInt8(truncatingIfNeeded: $0 &* 31 &+ salt) | 1 })
                 try await MessageKernel.shared.newGame(seed: seed, players: n)
                 lastSeat = 0
-                for _ in 0..<steps {
-                    if stopWhenDeckEmpty,
-                       let v = await MessageKernel.shared.residentView(viewer: -1),
-                       v.deckCount == 0 || v.isOver { break }
-                    // …and stop the moment the DEFENDER may transfer, so the
-                    // board this lands on is one where the move being watched
-                    // is on my own menu (`viewAs: .defender` then seats me
-                    // there).
-                    if stopWhenCanPass,
-                       let v = await MessageKernel.shared.residentView(viewer: -1), !v.isOver,
-                       await MessageKernel.shared.residentLegal(seat: v.defender)
-                           .contains(where: { $0.type == .pass }) { break deal }
-                    var acted = false
-                    for s in 0..<n {
-                        let legal = await MessageKernel.shared.residentLegal(seat: s)
-                        let pick = legal.first { m in
-                            guard m.type != .wait else { return false }
-                            // Never spend the move being hunted for: this driver
-                            // drives the defender too, so without this it plays
-                            // every transfer it finds and the stop above is asked
-                            // the instant after the chance has gone.
-                            if stopWhenCanPass, m.type == .pass { return false }
-                            guard let only else { return true }
-                            return only.contains(m.type)
-                        }
-                        if let m = pick {
-                            try? await MessageKernel.shared.apply(seat: s, move: m)
-                            lastSeat = s; acted = true; break
-                        }
-                    }
-                    if !acted { break }
-                }
+                // The transfer being hunted for is on the defender's menu: this
+                // deal is the one, and no later deal is tried.
+                var canPass = false
+                await drive(seats: n, limit: steps,
+                            until: {
+                                if stopWhenDeckEmpty,
+                                   let v = await MessageKernel.shared.residentView(viewer: -1),
+                                   v.deckCount == 0 || v.isOver { return true }
+                                // …and stop the moment the DEFENDER may transfer, so the
+                                // board this lands on is one where the move being watched
+                                // is on my own menu (`viewAs: .defender` then seats me
+                                // there).
+                                if stopWhenCanPass,
+                                   let v = await MessageKernel.shared.residentView(viewer: -1), !v.isOver,
+                                   await MessageKernel.shared.residentLegal(seat: v.defender)
+                                       .contains(where: { $0.type == .pass }) { canPass = true; return true }
+                                return false
+                            },
+                            pick: { _, legal in
+                                legal.first { m in
+                                    guard m.type != .wait else { return false }
+                                    // Never spend the move being hunted for: this driver
+                                    // drives the defender too, so without this it plays
+                                    // every transfer it finds and the stop above is asked
+                                    // the instant after the chance has gone.
+                                    if stopWhenCanPass, m.type == .pass { return false }
+                                    guard let only else { return true }
+                                    return only.contains(m.type)
+                                }
+                            },
+                            onMove: { lastSeat = $0; return true })
+                if canPass { break deal }
             }
             let view = await MessageKernel.shared.residentView(viewer: -1)
-            let payload = try await MessageKernel.shared.seal(
-                phase: (view?.isOver == true) ? 3 : 2, lastActorSeat: lastSeat,
-                gameId: 0xF00D, parent8: Data(repeating: 0, count: 8), joins: joins)
-            _ = try? await MessageKernel.shared.decode(payload: payload, viewer: -1)
+            let payload = try await sealAndAdopt(
+                phase: (view?.isOver == true) ? 3 : 2, lastSeat: lastSeat,
+                gameId: 0xF00D, joins: joins)
 
             var seat = lastSeat
             switch viewAs {
             case .defender:
                 if let d = view?.defender, d >= 0, d < n { seat = d }
             case .actor:
-                for s in 0..<n where (await MessageKernel.shared.residentLegal(seat: s))
-                    .contains(where: { $0.type != .wait }) { seat = s; break }
+                if let hit = await firstLegal(seats: n, pick: { _, legal in
+                    legal.first { $0.type != .wait }
+                }) { seat = hit.seat }
             case .lastActor:
                 seat = lastSeat
             case .biggestHand:
@@ -728,49 +727,6 @@ extension HarnessModel {
         } catch {}
     }
 
-    /// A MOVE ARRIVES ON THE OPEN BOARD - the lifecycle nothing here could pose
-    /// until `HarnessModel.arrive` existed, and the one the owner's report is
-    /// about ("the attack comes in, it animates that card moving, but it just
-    /// doesn't land on the table - the card just vanishes").
-    ///
-    /// Built in two halves on purpose. The first is an ordinary chain, opened
-    /// the way any board is opened, so the board is warm and measured before
-    /// anything arrives - a cold mount is the case that already worked. The
-    /// second plays ONE further move from another seat against the resident
-    /// kernel, seals it, and hands it to the live surface as an arrival.
-    ///
-    /// `HARNESS_ARRIVE_KIND` picks what arrives:
-    ///  - `attack` (default): the smallest thing that can go wrong - one card,
-    ///    one new battle.
-    ///  - `cover`: the receiver watches a cover land on an attack (the owner's
-    ///    "shows the card moving... then just vanishes and the attack card it
-    ///    covered rotates back to 0 degrees").
-    ///  - `pickup`: the arriving move ends the bout by taking the table - a
-    ///    round transition with a sweep and refills.
-    ///  - `goodend`: the arriving move is the closing GOOD over a fully covered
-    ///    table - discard sweep, refills, role hand-off, the longest stream an
-    ///    arrival can interrupt (run with HARNESS_PLAYERS=2 so one good closes).
-    ///  - `pass` (round 29): the arriving move is a TRANSFER - the defender
-    ///    lays the same rank down and the defence moves on. Four things must
-    ///    happen in ONE beat (docs/ANIMATION_CATALOGUE.md): the card flies to
-    ///    the table, the shield flies from the passer to the next defender, the
-    ///    passer's sword rotates in, and the next defender's rotates out. The
-    ///    default watcher is a bystander, who sees the shield cross the whole
-    ///    table; pair it with HARNESS_ARRIVE_SELF=1 to watch as the PASSER, whose
-    ///    own shield leaves and whose sword turns in behind it.
-    ///  - `coverend` (round 20): the arriving move is the COVER THAT CLOSES ITS
-    ///    OWN BOUT - the defender's last cards go down and the table goes with
-    ///    them in one apply. The owner's "on the last cover for a set, you need
-    ///    to show the cover animation, then pause then sweep. I wasn't seeing
-    ///    the cover animation on a replay." It is the only kind that has to be
-    ///    played DEEP into a game to reach (see the warmup below), because the
-    ///    kernel closes a bout on a cover for exactly one reason: the defender
-    ///    has run out of cards.
-    /// The kinds beyond `attack` exist because the first cut of this scenario
-    /// bailed out silently when the fixed six-step warmup happened not to leave
-    /// the wanted move legal - so the cover and round-transition arrivals (the
-    /// owner's symptoms 3 and 4) were never actually posed. The warmup now
-    /// DRIVES until the wanted move is available instead of hoping.
     /// HARNESS_AUTOSEND: once a move has been auto-staged, press Send.
     ///
     /// Pairs with HARNESS_AUTOMOVE, which plays a legal move through the real
@@ -824,41 +780,17 @@ extension HarnessModel {
         try? await Task.sleep(nanoseconds: 2_500_000_000)
     }
 
-    private func arrivalOnOpenBoard(players n: Int) async {
-        setCount(n)
-        let seed = Data(repeating: 42, count: 32)
-        let joins = (0..<n).map { MessageJoin(seat: $0, name: Self.nameFor($0)) }
-        guard (try? await MessageKernel.shared.newGame(seed: seed, players: n)) != nil
-        else { return }
+    /// EVERY KNOB `arrivalOnOpenBoard` TAKES FROM THE LAUNCH ENVIRONMENT, read
+    /// once. The names and defaults are the rig's command line - scripts and
+    /// handoff docs spell them - so neither changes here. A knob whose note
+    /// is about WHERE in the run it acts keeps that note at the line that
+    /// acts on it; a knob whose note is about why it exists at all has it
+    /// here.
+    private struct ArrivalOptions {
+        /// HARNESS_ARRIVE_KIND (default `attack`): what arrives. The kinds are
+        /// listed on `arrivalOnOpenBoard`.
+        let kind: String
 
-        let kind = ProcessInfo.processInfo.environment["HARNESS_ARRIVE_KIND"] ?? "attack"
-        let want: MoveType = switch kind {
-        case "cover", "coverend", "gameover": .cover
-        case "pickup": .pickup
-        case "goodend": .good
-        case "pass": .pass
-        default: .attack
-        }
-        // `gameover` is `coverend` without the survive-the-bout condition: the
-        // defender's last cards go down on an EMPTY deck at two seats, so the
-        // same move that closes the bout closes the game. Owner, round 20:
-        // "replaying a final move doesn't even show the winning move animation.
-        // It should show the final move animation, then the ranks."
-        let deep = kind == "coverend" || kind == "gameover"
-        // ROUND 29: `pass` - the TRANSFER, and the shape the catalogue had never
-        // posed in any channel. The owner's four-part beat (the card, the shield
-        // flying to the next defender, the passer's sword rotating in, the next
-        // defender's rotating out) is the one animation on the board that
-        // nothing had ever watched end to end, in the rig or on a phone.
-        //
-        // Unlike every other kind it can be SPENT by the warm-up: a transfer is
-        // only ever on the defender's menu, and the warm-up drives whatever it
-        // finds there, so the seat this rig is waiting for would play the very
-        // move being waited for. Hence `transfer` below, which keeps the pass
-        // off the warm-up's menu, and the re-deal loop `deep` already has - not
-        // every hand contains a transfer at all (the defender has to be holding
-        // the rank that is on the table), so a single deal is a coin toss.
-        let transfer = kind == "pass"
         // ROUND 36: HARNESS_ARRIVE_BIGHAND=<n> warms up until somebody is
         // holding at least `n` cards, which is the only way to pose the owner's
         // row-split reports at all.
@@ -873,10 +805,12 @@ extension HarnessModel {
         // FHandFan splits into two rows once a card would be thinner than 34pt,
         // which at a phone's hand width is somewhere around ten cards - so every
         // arrival run before this one watched a hand that could not split, and
-        // the whole class was invisible to the rig. The warm-up below therefore
+        // the whole class was invisible to the rig. The warm-up therefore
         // PREFERS pickups while it is under the target, because a pickup is the
         // only move in Durak that makes a hand bigger by more than one.
-        let bigHand = Int(ProcessInfo.processInfo.environment["HARNESS_ARRIVE_BIGHAND"] ?? "") ?? 0
+        /// HARNESS_ARRIVE_BIGHAND (default 0 = off).
+        let bigHand: Int
+
         // 1.1(55): HARNESS_ARRIVE_DECKMAX=<n> warms up until the STOCK is down
         // to `n` or fewer, which is the only way to pose the deck well's
         // endgame at all. The two reports this exists for both need a refill
@@ -885,7 +819,156 @@ extension HarnessModel {
         // is about to deal. Every arrival run before this one watched a board
         // with fifteen-plus cards in the well, so the whole class was invisible
         // to the rig, exactly as `bigHand`'s note says of the row split.
-        let deckMax = Int(ProcessInfo.processInfo.environment["HARNESS_ARRIVE_DECKMAX"] ?? "") ?? -1
+        /// HARNESS_ARRIVE_DECKMAX (default -1 = off).
+        let deckMax: Int
+
+        // HARNESS_ARRIVE_WARMUP=0 is the FIRST-MOVE case (two devices, 1.0(19)):
+        // the opened chain is the untouched deal, zero goods ever played, and
+        // the arrival is the game's very first attack landing on the open warm
+        // board. Default 4 keeps every existing run identical.
+        /// HARNESS_ARRIVE_WARMUP (default 4): the least moves to warm up by.
+        let minWarmup: Int
+
+        // ROUND 22: HARNESS_ARRIVE_SELF=1 watches as the seat that MOVED - "I
+        // close the bubble I just sent and open it again", which is what the
+        // owner did when they reported the missing sword-to-good rotation. Every
+        // other run here deliberately watches somebody who did NOT move, so
+        // reopening one's own move was a case this rig could not pose at all.
+        // Only meaningful with HARNESS_ARRIVE_COLD=1: live, a mover's own board
+        // already holds its role marks in @State and there is nothing to re-seed.
+        /// HARNESS_ARRIVE_SELF=1.
+        let watchSelf: Bool
+
+        // ROUND 21: HARNESS_ARRIVE_COLD=1 poses the OTHER half of the same
+        // move - the bubble opened from the transcript rather than landing on a
+        // board that is already up. The owner draws the distinction himself:
+        // "if we just played good and we send it off, we shouldn't show the good
+        // animation… but if we close and open to REPLAY it, then for sure we
+        // should show our own good animation." A live arrival keeps its role
+        // marks in `@State` across the move; a cold open has to be told where
+        // they stood, which is the entire difference being tested.
+        /// HARNESS_ARRIVE_COLD=1.
+        let cold: Bool
+
+        /// HARNESS_ARRIVE_COMPACT=1: collapse to the compact drawer before the
+        /// first arrival. See the ROUND 30 note where it acts.
+        let compact: Bool
+
+        // HARNESS_ARRIVE_COMPACT_MS: how long after the collapse the
+        // arrival lands. The default waits the tween out; a small value
+        // poses the case the owner actually hit - a sequence starting
+        // WHILE the box is still easing down from the expanded height,
+        // which is when a flight aimed once is aimed at a board that no
+        // longer exists.
+        /// HARNESS_ARRIVE_COMPACT_MS (default 1500). Only read with COMPACT.
+        let compactMs: Int
+
+        /// HARNESS_ARRIVE_STAGED=1: the second arrival lands on a board with
+        /// an unsent move on it. See the note above the arrival loop.
+        let stagedConflict: Bool
+        /// HARNESS_ARRIVE_N (default 1): how many arrivals were asked for.
+        let arrivalsAsked: Int
+        /// HARNESS_ARRIVE_GAP (default 250): milliseconds between arrivals.
+        let gapMs: Int
+        /// HARNESS_ARRIVE_DUP=<ms> (default unset = no duplicate): deliver each
+        /// arrival a second time that many milliseconds later. See the note
+        /// where it acts.
+        let dupMs: Int?
+
+        init(_ env: [String: String] = ProcessInfo.processInfo.environment) {
+            kind = env["HARNESS_ARRIVE_KIND"] ?? "attack"
+            bigHand = Int(env["HARNESS_ARRIVE_BIGHAND"] ?? "") ?? 0
+            deckMax = Int(env["HARNESS_ARRIVE_DECKMAX"] ?? "") ?? -1
+            minWarmup = Int(env["HARNESS_ARRIVE_WARMUP"] ?? "4") ?? 4
+            watchSelf = env["HARNESS_ARRIVE_SELF"] == "1"
+            cold = env["HARNESS_ARRIVE_COLD"] == "1"
+            compact = env["HARNESS_ARRIVE_COMPACT"] == "1"
+            compactMs = Int(env["HARNESS_ARRIVE_COMPACT_MS"] ?? "") ?? 1500
+            stagedConflict = env["HARNESS_ARRIVE_STAGED"] == "1"
+            arrivalsAsked = Int(env["HARNESS_ARRIVE_N"] ?? "1") ?? 1
+            gapMs = Int(env["HARNESS_ARRIVE_GAP"] ?? "250") ?? 250
+            dupMs = Int(env["HARNESS_ARRIVE_DUP"] ?? "")
+        }
+    }
+
+    /// A MOVE ARRIVES ON THE OPEN BOARD - the lifecycle nothing here could pose
+    /// until `HarnessModel.arrive` existed, and the one the owner's report is
+    /// about ("the attack comes in, it animates that card moving, but it just
+    /// doesn't land on the table - the card just vanishes").
+    ///
+    /// Built in two halves on purpose. The first is an ordinary chain, opened
+    /// the way any board is opened, so the board is warm and measured before
+    /// anything arrives - a cold mount is the case that already worked. The
+    /// second plays ONE further move from another seat against the resident
+    /// kernel, seals it, and hands it to the live surface as an arrival.
+    ///
+    /// `HARNESS_ARRIVE_KIND` picks what arrives:
+    ///  - `attack` (default): the smallest thing that can go wrong - one card,
+    ///    one new battle.
+    ///  - `cover`: the receiver watches a cover land on an attack (the owner's
+    ///    "shows the card moving... then just vanishes and the attack card it
+    ///    covered rotates back to 0 degrees").
+    ///  - `pickup`: the arriving move ends the bout by taking the table - a
+    ///    round transition with a sweep and refills.
+    ///  - `goodend`: the arriving move is the closing GOOD over a fully covered
+    ///    table - discard sweep, refills, role hand-off, the longest stream an
+    ///    arrival can interrupt (run with HARNESS_PLAYERS=2 so one good closes).
+    ///  - `pass` (round 29): the arriving move is a TRANSFER - the defender
+    ///    lays the same rank down and the defence moves on. Four things must
+    ///    happen in ONE beat (docs/ANIMATION_CATALOGUE.md): the card flies to
+    ///    the table, the shield flies from the passer to the next defender, the
+    ///    passer's sword rotates in, and the next defender's rotates out. The
+    ///    default watcher is a bystander, who sees the shield cross the whole
+    ///    table; pair it with HARNESS_ARRIVE_SELF=1 to watch as the PASSER, whose
+    ///    own shield leaves and whose sword turns in behind it.
+    ///  - `coverend` (round 20): the arriving move is the COVER THAT CLOSES ITS
+    ///    OWN BOUT - the defender's last cards go down and the table goes with
+    ///    them in one apply. The owner's "on the last cover for a set, you need
+    ///    to show the cover animation, then pause then sweep. I wasn't seeing
+    ///    the cover animation on a replay." It is the only kind that has to be
+    ///    played DEEP into a game to reach (see the warmup below), because the
+    ///    kernel closes a bout on a cover for exactly one reason: the defender
+    ///    has run out of cards.
+    /// The kinds beyond `attack` exist because the first cut of this scenario
+    /// bailed out silently when the fixed six-step warmup happened not to leave
+    /// the wanted move legal - so the cover and round-transition arrivals (the
+    /// owner's symptoms 3 and 4) were never actually posed. The warmup now
+    /// DRIVES until the wanted move is available instead of hoping.
+    private func arrivalOnOpenBoard(players n: Int) async {
+        setCount(n)
+        let seed = Data(repeating: 42, count: 32)
+        let joins = (0..<n).map { MessageJoin(seat: $0, name: Self.nameFor($0)) }
+        guard (try? await MessageKernel.shared.newGame(seed: seed, players: n)) != nil
+        else { return }
+
+        let opt = ArrivalOptions()
+        let want: MoveType = switch opt.kind {
+        case "cover", "coverend", "gameover": .cover
+        case "pickup": .pickup
+        case "goodend": .good
+        case "pass": .pass
+        default: .attack
+        }
+        // `gameover` is `coverend` without the survive-the-bout condition: the
+        // defender's last cards go down on an EMPTY deck at two seats, so the
+        // same move that closes the bout closes the game. Owner, round 20:
+        // "replaying a final move doesn't even show the winning move animation.
+        // It should show the final move animation, then the ranks."
+        let deep = opt.kind == "coverend" || opt.kind == "gameover"
+        // ROUND 29: `pass` - the TRANSFER, and the shape the catalogue had never
+        // posed in any channel. The owner's four-part beat (the card, the shield
+        // flying to the next defender, the passer's sword rotating in, the next
+        // defender's rotating out) is the one animation on the board that
+        // nothing had ever watched end to end, in the rig or on a phone.
+        //
+        // Unlike every other kind it can be SPENT by the warm-up: a transfer is
+        // only ever on the defender's menu, and the warm-up drives whatever it
+        // finds there, so the seat this rig is waiting for would play the very
+        // move being waited for. Hence `transfer` below, which keeps the pass
+        // off the warm-up's menu, and the re-deal loop `deep` already has - not
+        // every hand contains a transfer at all (the defender has to be holding
+        // the rank that is on the table), so a single deal is a coin toss.
+        let transfer = opt.kind == "pass"
         func biggestHand() async -> Int {
             guard let v = await MessageKernel.shared.residentView(viewer: -1) else { return 0 }
             return v.players.map(\.handCount).max() ?? 0
@@ -904,8 +987,8 @@ extension HarnessModel {
             // which is the only way the trump is dealt out rather than left
             // sitting there. Without the third the board just deals from a
             // short stock and the bug never poses.
-            if deckMax >= 0 {
-                guard v.deckCount > 0, v.deckCount <= deckMax, v.hasFlipped else { return nil }
+            if opt.deckMax >= 0 {
+                guard v.deckCount > 0, v.deckCount <= opt.deckMax, v.hasFlipped else { return nil }
                 let demand = v.players.filter { !$0.isOut }
                     .reduce(0) { $0 + max(0, 6 - $1.handCount) }
                 guard demand > v.deckCount else { return nil }
@@ -914,8 +997,8 @@ extension HarnessModel {
             // arrival is only interesting on a board where the row count is in
             // play, so a run that posed it over a six-card hand would pass while
             // testing nothing.
-            if bigHand > 0, (v.players.map(\.handCount).max() ?? 0) < bigHand { return nil }
-            if kind == "goodend" {
+            if opt.bigHand > 0, (v.players.map(\.handCount).max() ?? 0) < opt.bigHand { return nil }
+            if opt.kind == "goodend" {
                 guard !v.battles.isEmpty, v.battles.allSatisfy({ $0.defense != nil })
                 else { return nil }
             }
@@ -943,7 +1026,7 @@ extension HarnessModel {
                     let held = v.players.first { $0.seat == s }?.handCount ?? -1
                     let stillIn = v.players.filter { !$0.isOut }.count
                     let survives = v.deckCount > 0 || stillIn > 2
-                    if kind == "coverend" ? survives : true,
+                    if opt.kind == "coverend" ? survives : true,
                        legal.contains(where: { $0.type == .cover && $0.cards.count == held }) { return s }
                     continue
                 }
@@ -954,13 +1037,8 @@ extension HarnessModel {
         // Warm the game up to a real mid-game board (at least 4 moves), then
         // keep stepping until the wanted arrival is on somebody's menu. The cap
         // only guards a kind this seed can never produce; every kind above
-        // shows up within a bout or two.
-        //
-        // HARNESS_ARRIVE_WARMUP=0 is the FIRST-MOVE case (two devices, 1.0(19)):
-        // the opened chain is the untouched deal, zero goods ever played, and
-        // the arrival is the game's very first attack landing on the open warm
-        // board. Default 4 keeps every existing run identical.
-        let minWarmup = Int(ProcessInfo.processInfo.environment["HARNESS_ARRIVE_WARMUP"] ?? "4") ?? 4
+        // shows up within a bout or two. How few moves count as warm is
+        // `opt.minWarmup`.
         var lastSeat = 0
         var steps = 0
         // ROUND 20: a bout-ending COVER is an ENDGAME shape - it needs a
@@ -970,7 +1048,7 @@ extension HarnessModel {
         // same board offline: round after round of pickups never gets there).
         // …and a bighand run needs room to take several times over, so it gets
         // the deep cap even for a shallow kind.
-        let cap = deep || bigHand > 0 || deckMax >= 0 ? 400 : 40
+        let cap = deep || opt.bigHand > 0 || opt.deckMax >= 0 ? 400 : 40
         // …and if one whole game goes by without producing the board, RE-DEAL.
         // Not every deal contains a bout-ending cover at all (the defender has
         // to run out on a table they can fully answer), so a single game is a
@@ -979,13 +1057,13 @@ extension HarnessModel {
         // defender has to be holding the rank that is already on the table), so
         // it re-deals too. Any other kind takes exactly one pass, as it always
         // has.
-        let deals = deep || transfer || deckMax >= 0 ? 40 : 1
+        let deals = deep || transfer || opt.deckMax >= 0 ? 40 : 1
         // Grow a hand: take the table rather than defend it, and open bouts
         // rather than end them, until somebody is over the split threshold.
         // Returns nil once the target is reached, which hands the warm-up back
         // to its ordinary "first legal move" driver.
         func bigHandPick(_ legal: [Move], _ biggest: Int) -> Move? {
-            guard bigHand > 0, biggest < bigHand else { return nil }
+            guard opt.bigHand > 0, biggest < opt.bigHand else { return nil }
             return legal.first { $0.type == .pickup } ?? legal.first { $0.type == .attack }
         }
         deal: for salt in 0..<deals {
@@ -995,69 +1073,52 @@ extension HarnessModel {
                 else { break }
                 steps = 0
             }
-            while steps < cap {
-                if steps >= minWarmup, await wantReady() != nil { break deal }
-                var acted = false
-                for s in 0..<n {
-                    let legal = await MessageKernel.shared.residentLegal(seat: s)
-                    let pick = deep || deckMax >= 0
-                        ? (legal.first { $0.type == .cover } ?? legal.first { $0.type != .wait })
-                        // ROUND 29: never spend the move being hunted for. A
-                        // transfer only ever appears on the DEFENDER's menu, and
-                        // this loop drives the defender too - so without the
-                        // second clause the warm-up plays every pass it finds
-                        // and `wantReady` is asked the instant after the only
-                        // seat that could transfer has stopped being able to.
-                        : bigHandPick(legal, await biggestHand())
-                            ?? legal.first { $0.type != .wait && !(transfer && $0.type == .pass) }
-                    if let m = pick {
-                        try? await MessageKernel.shared.apply(seat: s, move: m)
-                        lastSeat = s; acted = true; break
-                    }
-                }
-                if !acted { break }
-                steps += 1
-            }
+            // `steps` is 0 here on every deal (it starts there, and a re-deal
+            // puts it back), so `cap` steps of this drive is `while steps < cap`.
+            var ready = false
+            await drive(seats: n, limit: cap,
+                        until: {
+                            guard steps >= opt.minWarmup, await wantReady() != nil else { return false }
+                            ready = true
+                            return true
+                        },
+                        pick: { _, legal in
+                            deep || opt.deckMax >= 0
+                                ? (legal.first { $0.type == .cover } ?? legal.first { $0.type != .wait })
+                                // ROUND 29: never spend the move being hunted for. A
+                                // transfer only ever appears on the DEFENDER's menu, and
+                                // this loop drives the defender too - so without the
+                                // second clause the warm-up plays every pass it finds
+                                // and `wantReady` is asked the instant after the only
+                                // seat that could transfer has stopped being able to.
+                                : bigHandPick(legal, await biggestHand())
+                                    ?? legal.first { $0.type != .wait && !(transfer && $0.type == .pass) }
+                        },
+                        onMove: { lastSeat = $0; steps += 1; return true })
+            if ready { break deal }
         }
         guard let view = await MessageKernel.shared.residentView(viewer: -1),
-              let opened = try? await MessageKernel.shared.seal(
-                phase: 2, lastActorSeat: lastSeat, gameId: 0xF00D,
-                parent8: Data(repeating: 0, count: 8), joins: joins)
+              let opened = try? await sealAndAdopt(phase: 2, lastSeat: lastSeat,
+                                                   gameId: 0xF00D, joins: joins)
         else { return }
-        _ = try? await MessageKernel.shared.decode(payload: opened, viewer: -1)
 
         // Watch as somebody who is NOT about to move, so what arrives is
         // unambiguously somebody else's move landing on my open board.
         guard let mover = await wantReady() else {
-            AnimLog.say("scenario: no seat can play \(kind) after \(steps) steps - rig bug")
+            AnimLog.say("scenario: no seat can play \(opt.kind) after \(steps) steps - rig bug")
             return
         }
-        // ROUND 22: HARNESS_ARRIVE_SELF=1 watches as the seat that MOVED - "I
-        // close the bubble I just sent and open it again", which is what the
-        // owner did when they reported the missing sword-to-good rotation. Every
-        // other run here deliberately watches somebody who did NOT move, so
-        // reopening one's own move was a case this rig could not pose at all.
-        // Only meaningful with HARNESS_ARRIVE_COLD=1: live, a mover's own board
-        // already holds its role marks in @State and there is nothing to re-seed.
-        let watchSelf = ProcessInfo.processInfo.environment["HARNESS_ARRIVE_SELF"] == "1"
-        let watcher = watchSelf
+        // …unless HARNESS_ARRIVE_SELF asks to watch as the mover (`opt.watchSelf`).
+        let watcher = opt.watchSelf
             ? mover
             : ((0..<n).first { $0 != mover && $0 != view.defender } ?? ((mover + 1) % n))
 
-        // ROUND 21: HARNESS_ARRIVE_COLD=1 poses the OTHER half of the same
-        // move - the bubble opened from the transcript rather than landing on a
-        // board that is already up. The owner draws the distinction himself:
-        // "if we just played good and we send it off, we shouldn't show the good
-        // animation… but if we close and open to REPLAY it, then for sure we
-        // should show our own good animation." A live arrival keeps its role
-        // marks in `@State` across the move; a cold open has to be told where
-        // they stood, which is the entire difference being tested.
-        //
+        // HARNESS_ARRIVE_COLD (`opt.cold`): the bubble is opened from the
+        // transcript instead of landing on a board that is already up.
         // Mechanically it is this same rig minus the pre-mount: the parent
         // chain is never delivered, so the first thing the surface ever sees is
         // the bubble carrying the move.
-        let cold = ProcessInfo.processInfo.environment["HARNESS_ARRIVE_COLD"] == "1"
-        if !cold {
+        if !opt.cold {
             await deliverSealed(opened, senderSeat: lastSeat)
         }
         become(watcher)
@@ -1068,7 +1129,7 @@ extension HarnessModel {
         // board that is already up, which is the whole point. A cold open has
         // nothing to mount yet, so it waits only long enough for the surface
         // itself to be there.
-        try? await Task.sleep(nanoseconds: cold ? 400_000_000 : 2_500_000_000)
+        try? await Task.sleep(nanoseconds: opt.cold ? 400_000_000 : 2_500_000_000)
         // ROUND 29: …AND UNTIL IT HAS ACTUALLY STOPPED MOVING.
         //
         // The sleep above is a guess at how long a mount takes, and it is not
@@ -1085,7 +1146,7 @@ extension HarnessModel {
         // Bounded by `waitForSettle`'s own 8s timeout, so a wedged sequence
         // still lets the run finish and report. Only the FIRST arrival waits:
         // the burst cases below are meant to interrupt each other.
-        if !cold { await BoardAnimator.waitForSettle() }
+        if !opt.cold { await BoardAnimator.waitForSettle() }
 
         // ROUND 30: pose the arrival against the COMPACT DRAWER, not the
         // expanded board. Every arrival run so far watched a full-height board,
@@ -1098,17 +1159,11 @@ extension HarnessModel {
         // AFTER the settle, so the collapse cannot be what the first replay
         // races against; the arrival below then lands on a board that has been
         // compact and still for a beat, which is the owner's case exactly.
-        if ProcessInfo.processInfo.environment["HARNESS_ARRIVE_COMPACT"] == "1" {
+        if opt.compact {
             AnimLog.say("scenario: collapsing to the compact drawer before the arrival")
             collapseForReview()
-            // HARNESS_ARRIVE_COMPACT_MS: how long after the collapse the
-            // arrival lands. The default waits the tween out; a small value
-            // poses the case the owner actually hit - a sequence starting
-            // WHILE the box is still easing down from the expanded height,
-            // which is when a flight aimed once is aimed at a board that no
-            // longer exists.
-            let ms = Int(ProcessInfo.processInfo.environment["HARNESS_ARRIVE_COMPACT_MS"] ?? "") ?? 1500
-            try? await Task.sleep(nanoseconds: UInt64(max(ms, 0)) * 1_000_000)
+            // …and then waits `opt.compactMs` (HARNESS_ARRIVE_COMPACT_MS).
+            try? await Task.sleep(nanoseconds: UInt64(max(opt.compactMs, 0)) * 1_000_000)
         }
 
         // …now the other seats play, and each ARRIVES. `HARNESS_ARRIVE_N` (with
@@ -1129,10 +1184,7 @@ extension HarnessModel {
         // arriving chain plays; the CONFLICT oracle at the bottom says whether
         // that machinery actually engaged. Forces at least two arrivals, since
         // the conflict is between them.
-        let stagedConflict = ProcessInfo.processInfo.environment["HARNESS_ARRIVE_STAGED"] == "1"
-        let n_asked = Int(ProcessInfo.processInfo.environment["HARNESS_ARRIVE_N"] ?? "1") ?? 1
-        let n_arrivals = stagedConflict ? max(n_asked, 2) : n_asked
-        let gapMs = Int(ProcessInfo.processInfo.environment["HARNESS_ARRIVE_GAP"] ?? "250") ?? 250
+        let n_arrivals = opt.stagedConflict ? max(opt.arrivalsAsked, 2) : opt.arrivalsAsked
         var lastPayload = opened
         for i in 0..<max(1, n_arrivals) {
             // WAIT FOR THE LIVE CONTROLLER TO FINISH FOLDING THE PREVIOUS CHAIN
@@ -1149,7 +1201,7 @@ extension HarnessModel {
             // the handshake below is about a LIVE controller folding the last
             // arrival in, and on the first pass of a cold run there is none.
             let deadline = Date().addingTimeInterval(4)
-            while Date() < deadline, !(cold && i == 0),
+            while Date() < deadline, !(opt.cold && i == 0),
                   MessageTurnController.debugLatest?.basePayload != lastPayload {
                 try? await Task.sleep(nanoseconds: 30_000_000)
             }
@@ -1158,7 +1210,7 @@ extension HarnessModel {
             // arrival provably lands on a board with an unsent move. Waiting
             // AFTER the adopt handshake above, because the stage is automove's
             // REACTION to the previous arrival.
-            if stagedConflict, i > 0 {
+            if opt.stagedConflict, i > 0 {
                 let stagedBy = Date().addingTimeInterval(20)
                 while Date() < stagedBy, stagedPayloadBytes == nil {
                     try? await Task.sleep(nanoseconds: 100_000_000)
@@ -1176,28 +1228,28 @@ extension HarnessModel {
             let parent8 = (try? await MessageKernel.shared.peek(payload: lastPayload))
                 .map { MessageTurnController.firstEight(hex: $0.digest) }
                 ?? Data(repeating: 0, count: 8)
-            var acted: (seat: Int, move: Move)?
             let held = await MessageKernel.shared.residentView(viewer: -1)
-            for s in 0..<n where acted == nil {
+            // The same seat scan the warm-up drives with, but the move is NOT
+            // applied by it: a refused apply ends the arrivals here (the guard
+            // below), where the warm-up plays on.
+            let acted = await firstLegal(seats: n, where: { s in
                 // Ordinarily the watcher must NOT be the one moving - the whole
                 // point is somebody else's move landing on my board. With
                 // HARNESS_ARRIVE_SELF the rule inverts: the bubble to open is my
                 // OWN, so only the watcher may act.
-                if watchSelf { guard s == watcher else { continue } }
-                else { guard s != watcher else { continue } }
-                let legal = await MessageKernel.shared.residentLegal(seat: s)
+                opt.watchSelf ? s == watcher : s != watcher
+            }, pick: { s, legal in
                 // The first arrival is the KIND asked for; the rest are whatever
                 // that seat can legally do next, which is what a real thread
                 // delivers. Round 20: `coverend` picks the cover that spends the
                 // defender's LAST cards, since any other cover leaves the table
                 // standing and poses a different arrival entirely.
                 let mine = held?.players.first { $0.seat == s }?.handCount ?? -1
-                let m = i > 0 ? legal.first { $0.type != .wait }
+                return i > 0 ? legal.first { $0.type != .wait }
                     : deep
                         ? legal.first { $0.type == .cover && $0.cards.count == mine }
                         : legal.first { $0.type == want }
-                if let m { acted = (s, m) }
-            }
+            })
             // Nobody but the watcher can act (a 2p goodend hands the next bout
             // to the very seat that is watching): the thread has delivered all
             // it can, so stop ARRIVING - but never skip the oracle below, which
@@ -1225,14 +1277,14 @@ extension HarnessModel {
             // The second begin() re-arms replayPending, publishes an UNCHANGED
             // view, and no onChange ever consumes the veil - the landed card
             // sits laid out at opacity 0 (the owner's vanish).
-            if let dupMs = Int(ProcessInfo.processInfo.environment["HARNESS_ARRIVE_DUP"] ?? "") {
+            if let dupMs = opt.dupMs {
                 try? await Task.sleep(nanoseconds: UInt64(max(dupMs, 0)) * 1_000_000)
                 AnimLog.say("scenario: duplicate delivery of arrival \(i + 1)")
                 arrive(next, senderIndex: a.seat)
             }
             lastPayload = next
             if i + 1 < n_arrivals {
-                try? await Task.sleep(nanoseconds: UInt64(gapMs) * 1_000_000)
+                try? await Task.sleep(nanoseconds: UInt64(opt.gapMs) * 1_000_000)
             }
         }
         // ROUND 22: and now MY OWN half of a turn - stage, then send. Pair
@@ -1250,6 +1302,15 @@ extension HarnessModel {
         // played it. A rig that only takes a screenshot cannot tell "a bit
         // behind" from "correct" without a human who remembers the moves.
         try? await Task.sleep(nanoseconds: 6_000_000_000)
+        await logOracle(watcher: watcher)
+    }
+
+    /// THE ORACLE'S REPORT, the last thing `arrivalOnOpenBoard` does: five
+    /// trace lines (TRUTH, the paint counters, CONFLICT, ORACLE, BOARD-STUCK)
+    /// that a script greps for. READS ONLY - the kernel's view and menu for
+    /// `watcher`, the board's own debug counters and the live controller's
+    /// published state. The caller has already waited the board out.
+    private func logOracle(watcher: Int) async {
         if let truth = await MessageKernel.shared.residentView(viewer: watcher) {
             AnimLog.say("TRUTH battles=\(truth.battles.count) "
                 + "table=[\(truth.battles.map { b in "\(b.attack.identity)/\(b.defense?.identity ?? "-")" }.joined(separator: " "))] "

@@ -24,7 +24,7 @@ export interface SeedTableOptions {
     /**
      * Also write each human seat's player_views row, as commit_table does for
      * every commit: the envelope a page loads the game from
-     * (ServerContext loadGameFromCache). Off by default - a seeded row is
+     * (ServerContext loadFromCache). Off by default - a seeded row is
      * otherwise one no commit has touched yet.
      */
     views?: boolean;

@@ -48,15 +48,12 @@ Bots (weakest → strongest):
   robusta with different rollout policies.
 - `blackpowder` — belief-constrained determinized MC + exact endgame.
 - `cordite` - blackpowder's successor. See `CORDITE.md` (and `BLACKPOWDER.md`).
-- `semtex` - cordite's successor (`SEMTEX.md`). Research only: octogen took
-  its place in the shipped roster, so `bot_roster.c` does not seed it.
 - `octogen` - **the current apex and the top shipped tier** (`OCTOGEN.md`).
 - `fulminate` — cordite + in-game per-seat opponent profiling (skews each
   profiled seat's rollout policy toward its best-fit archetype).
-- `torpex` - semtex's search with a learned value net. A measured negative
-  result, pipeline kept (`TORPEX.md`).
-- `novichok` - the cheating ceiling probe (`NOVICHOK.md`). Arena only, and it
-  must stay unreachable from `bots.wasm` and the roster.
+- `semtex`, `torpex` and `novichok` are retired and removed.
+  Semtex was cordite's successor and octogen's predecessor, torpex was semtex's search with a learned value net (a measured negative result), and novichok was a cheating ceiling probe.
+  Their sources, trainer and write-ups are in the git history, and their `STRAT_*` ids (18, 19, 22, 23) are retired in `src/strategy.h`, not reused.
 - `astrolite`, `distilled` - research arms; see `CORDITE_RESEARCH.md`.
 - Production TS mirrors: `simple_heuristic`, `champion`, `ultimate_champion`,
   `hacker`, `espresso_prod`, `handwritten_prod` — ported move for move from
@@ -80,8 +77,7 @@ make tests        # build + run the engine unit tests
   `    --pool=random,handwritten,espresso,robusta,firecracker,gunpowder,blackpowder,cordite`
 - `cnitro_replay` — replay one game move-by-move from a seed.
 - `cnitro_tests`  — engine smoke tests.
-- `cnitro_gen`, `cnitro_distill`, `cnitro_analyse` - the torpex training-data
-  generator (`TORPEX.md`), the distillation arm (`CORDITE_RESEARCH.md`) and the
+- `cnitro_distill`, `cnitro_analyse` - the distillation arm (`CORDITE_RESEARCH.md`) and the
   post-game analyser (`docs/POST_GAME_ANALYSER.md`).
 
 The shipped roster (`src/bot_roster.c`) is ten tiers ending at octogen:

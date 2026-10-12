@@ -115,7 +115,7 @@ export function useRoleMotion(): RoleMotion {
     }, []);
 
     /** Every seat's pad, measured NOW. Viewport coordinates, the same space the
-     *  card flights are drawn in (AnimationOverlay's `centreOf`). A pad with no
+     *  card flights are drawn in (flightGeometry's `centreOf`). A pad with no
      *  box yet - a seat laid out on this very frame - is left out, and the mark
      *  it would have carried changes in place instead. */
     const padSpots = (): Map<number, Spot> => {

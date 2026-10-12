@@ -18,8 +18,8 @@ mkdir -p "$OUT/cells"
 
 STRATS=(random espresso handwritten robusta firecracker gunpowder blackpowder \
         cordite astrolite cordite_old simple_heuristic champion ultimate_champion \
-        hacker fulminate espresso_prod handwritten_prod distilled semtex \
-        semtex_oracle octogen octogen_oracle torpex novichok)
+        hacker fulminate espresso_prod handwritten_prod distilled \
+        octogen octogen_oracle)
 printf '%s\n' "${STRATS[@]}" > "$OUT/strats.txt"
 N=${#STRATS[@]}
 TRIANGLE="${TRIANGLE:-0}"

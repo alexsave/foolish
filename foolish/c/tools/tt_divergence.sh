@@ -11,7 +11,7 @@
 #   tools/tt_divergence.sh                                   # cordite quick look
 #   tools/tt_divergence.sh octogen handwritten 2,4,6,8 4000 99 12 11 10 9 8 7
 #   S=8 tools/tt_divergence.sh octogen handwritten 2 8000 99 16 13   # 1 pc, fast
-#   for b in cordite fulminate octogen semtex; do tools/tt_divergence.sh $b; done
+#   for b in cordite fulminate octogen; do tools/tt_divergence.sh $b; done
 #
 # Method: two builds print a per-game FNV-1a hash of the protagonist's moves
 # (GAME_SIG=1, main_eval.c). Same seeds, same production env

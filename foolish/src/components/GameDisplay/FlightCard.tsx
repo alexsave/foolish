@@ -41,7 +41,7 @@ export interface AnimatedCard {
 
 // The card's own box. CardFace draws 50x70 border-box (its defaultStyle), and
 // the flight is hung by its CENTRE: both endpoints are element centres
-// (AnimationOverlay's centreOf), so a card hung by its corner would land half a
+// (flightGeometry's centreOf), so a card hung by its corner would land half a
 // card short of the slot it was measured into. `translate(-50%, -50%)` does the
 // hanging and needs no width; the height is named because the TILT pivots about
 // the card's bottom edge and the pivot has to be paid for (see `pivot` below).
@@ -104,7 +104,7 @@ export const FlightCard = ({ flight, flightMs }: { flight: AnimatedCard; flightM
     // scale and the tilt now both work off that corner rather than the middle, so
     // this translate puts the card's CENTRE back on the point the overlay
     // measured - at any angle, at any scale. It is the same two lines of
-    // trigonometry AnimationOverlay's `laidAcross` aims with.
+    // trigonometry flightGeometry's `laidAcross` aims with.
     const pivot = `translate(${-scale * (CARD_H / 2) * Math.sin(angle)}px, ${(scale * Math.cos(angle) - 1) * (CARD_H / 2)}px)`;
 
     return (

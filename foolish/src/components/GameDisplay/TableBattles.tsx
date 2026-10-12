@@ -17,11 +17,30 @@ import type { ClientPlay } from "@sdk/ts/table/client_table.ts";
  *  `center bottom`. Exported because the flight that brings the cover in has to
  *  land where this grid will draw it: a cover shares its attack's slot and its
  *  bottom edge, so turning the attack's centre through this angle about that
- *  point IS the cover's centre (AnimationOverlay's `laidAcross`). The overlay
+ *  point IS the cover's centre (flightGeometry.ts `laidAcross`). The overlay
  *  reads the constant rather than keeping an offset of its own. */
 export const COVER_ROTATION_RAD: number = Math.PI / 16;
 
 const COVER_ROTATION: string = COVER_ROTATION_RAD + 'rad';
+
+/** THE BOX ONE BATTLE TAKES IN THE ROW, stated once because three things have
+ *  to agree on it to the pixel: a battle's own cell, the empty drop zone a
+ *  dragged attack is offered (which becomes that cell), and the invisible
+ *  placeholder a flight measures a not-yet-laid slot with (flightGeometry.ts
+ *  measurePlaceholderPositions) - a placeholder of any other size measures a
+ *  slot the grid will not draw. Each adds its own on top: the cell its
+ *  highlight, the drop zone its dashed border, the placeholder its
+ *  invisibility. Spread it, never hand it out: the cell's copy is written to. */
+export const BATTLE_CELL_STYLE = {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    position: 'relative',
+    width: '60px', // Slightly wider to accommodate rotation
+    height: '80px', // Taller to accommodate stacked/rotated cards
+    margin: '5px',
+    justifyContent: 'center',
+} as const satisfies React.CSSProperties;
 
 /** The name one pile keeps across a re-lay-out: its attack, which is what a
  *  battle IS until something covers it. Both the React key and the key the
@@ -57,7 +76,7 @@ const liveTranslate = (el: HTMLElement): { x: number; y: number } => {
  * still sliding to make room is not there yet: measuring it raw would put a
  * cover down where its attack was half a flight ago. A card LIFTING OFF is the
  * other way round - it leaves from where it is drawn - so this is applied to
- * landings only, and AnimationOverlay says so at each of them.
+ * landings only, and flightGeometry.ts says so at each of them.
  */
 export const glideOffset = (el: HTMLElement): { x: number; y: number } => {
     const cell = typeof el.closest === 'function'
@@ -252,16 +271,7 @@ export const TableBattles = () => {
         margin: '0 auto'
     }}> {
         battles.map((battle, index) => {
-            let containerStyle: React.CSSProperties = {
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                position: 'relative',
-                width: '60px', // Slightly wider to accommodate rotation
-                height: '80px', // Taller to accommodate stacked/rotated cards
-                margin: '5px',
-                justifyContent: 'center',
-            };
+            let containerStyle: React.CSSProperties = { ...BATTLE_CELL_STYLE };
 
             if (Array.from(coverMap.values()).some(c => c.value === battle.attack.value && c.suit === battle.attack.suit)) {
                 containerStyle.border = '3px solid red';
@@ -364,14 +374,7 @@ export const TableBattles = () => {
             data-location="table"
             data-battle-index={battles.length + index}
             style={{
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                position: 'relative',
-                width: '60px',
-                height: '80px',
-                margin: '5px',
-                justifyContent: 'center',
+                ...BATTLE_CELL_STYLE,
                 border: '3px dashed #d29002',
                 backgroundColor: 'rgba(210, 144, 2, 0.1)',
                 borderRadius: '8px'

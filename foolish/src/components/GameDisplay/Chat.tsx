@@ -123,80 +123,46 @@ export const Chat = () => {
         );
     }
 
-    // Mobile expanded
-    if (isMobile) {
-        const keyboardStyle = isKeyboardOpen && window.visualViewport 
-            ? { bottom: `${window.innerHeight - window.visualViewport.height + 10}px`, transition: 'none' }
-            : {};
+    // Expanded: one panel for both layouts. On a phone each of these blocks
+    // also carries its --mobile modifier, the header has a close button (on
+    // desktop the whole header is the toggle), and the panel rides above the
+    // keyboard.
+    const block = (name: string) => (isMobile ? `${name} ${name}--mobile` : name);
+    const keyboardStyle = isMobile && isKeyboardOpen && window.visualViewport
+        ? { bottom: `${window.innerHeight - window.visualViewport.height + 10}px`, transition: 'none' }
+        : undefined;
 
-        return (
-            <div className="chat chat--mobile" style={keyboardStyle}>
-                <div className="chat__header chat__header--mobile" data-touch-interactive>
+    return (
+        <div className={block('chat')} style={keyboardStyle}>
+            {isMobile ? (
+                <div className={block('chat__header')} data-touch-interactive>
                     <span>{t('chat')}</span>
                     <button className="chat__close-btn" onClick={handleToggle}>✕</button>
                 </div>
-
-                <div ref={messagesContainerRef} className="chat__messages chat__messages--mobile" data-chat-scrollable>
-                    {chatMessages.map((msg, index) => (
-                        <div key={index} className="chat__message chat__message--mobile">
-                            <span className="chat__message-sender">{msg.sender_name || 'Unknown'}:</span>
-                            {' '}
-                            <span className="chat__message-text">{msg.message}</span>
-                            {' '}
-                            <span className="chat__message-time chat__message-time--mobile">
-                                [{new Date(msg.created_at).toLocaleTimeString()}]
-                            </span>
-                        </div>
-                    ))}
+            ) : (
+                <div className={block('chat__header')} onClick={handleToggle} data-touch-interactive>
+                    {t('chat')} ▼
                 </div>
+            )}
 
-                <form className="chat__form chat__form--mobile" onSubmit={handleSubmit} data-touch-interactive>
-                    <input
-                        ref={inputRef}
-                        className="chat__input chat__input--mobile"
-                        type="text"
-                        value={message}
-                        onChange={(e) => setMessage(e.target.value)}
-                        onKeyPress={handleKeyPress}
-                        onFocus={() => setIsInputFocused(true)}
-                        onBlur={() => setIsInputFocused(false)}
-                        placeholder={t('type_message')}
-                        inputMode={isInputFocused ? 'text' : 'none'}
-                        maxLength={1000}
-                    />
-                    <button className="chat__submit chat__submit--mobile" type="submit" disabled={!message.trim()}>
-                        {t('send')}
-                    </button>
-                </form>
-            </div>
-        );
-    }
-
-    // Desktop expanded
-    return (
-        <div className="chat">
-            <div className="chat__header" onClick={handleToggle} data-touch-interactive>
-                {t('chat')} ▼
-            </div>
-
-            <div ref={messagesContainerRef} className="chat__messages" data-chat-scrollable>
+            <div ref={messagesContainerRef} className={block('chat__messages')} data-chat-scrollable>
                 {chatMessages.map((msg, index) => (
-                    <div key={index} className="chat__message">
+                    <div key={index} className={block('chat__message')}>
                         <span className="chat__message-sender">{msg.sender_name || 'Unknown'}:</span>
                         {' '}
                         <span className="chat__message-text">{msg.message}</span>
                         {' '}
-                        <span className="chat__message-time">
+                        <span className={block('chat__message-time')}>
                             [{new Date(msg.created_at).toLocaleTimeString()}]
                         </span>
                     </div>
                 ))}
             </div>
 
-            <form className="chat__form" onSubmit={handleSubmit} data-touch-interactive>
+            <form className={block('chat__form')} onSubmit={handleSubmit} data-touch-interactive>
                 <input
                     ref={inputRef}
-                    className="chat__input"
+                    className={block('chat__input')}
                     type="text"
                     value={message}
                     onChange={(e) => setMessage(e.target.value)}
@@ -207,7 +173,7 @@ export const Chat = () => {
                     inputMode={isInputFocused ? 'text' : 'none'}
                     maxLength={1000}
                 />
-                <button className="chat__submit" type="submit" disabled={!message.trim()}>
+                <button className={block('chat__submit')} type="submit" disabled={!message.trim()}>
                     {t('send')}
                 </button>
             </form>

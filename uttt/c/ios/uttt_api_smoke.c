@@ -4,6 +4,7 @@
  *     make -C uttt/c ios-smoke
  */
 #include "include/uttt_api.h"
+#include "../tests/uttt_fixture.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -12,6 +13,16 @@ static int fails;
 static void ok(int cond, const char *what)
 {
     if (!cond) { printf("  FAIL %s\n", what); fails++; }
+}
+
+/* EVERY COORDINATE OF THE DISPLAY LIST, SUMMED: what "the same draw" is held
+ * to. Every one and not the first, because the first can be a point no seed
+ * moves (the rulebook's top hachure line, below). */
+static double points_sum(void)
+{
+    double sum = 0;
+    for (int i = 0; i < uti_point_count() * 2; i++) sum += uti_points()[i];
+    return sum;
 }
 
 /* ONE KERNEL, SEVERAL PHONES: each person's seat records are their own
@@ -202,7 +213,18 @@ static void big_smoke(void)
     printf("  big: %d moves across two phones; link %d chars\n", moves, (int)strlen(sent.text));
 }
 
-int main(void)
+/* ------------------------------------------------------- THE 9 x 9 BOARD */
+
+/* THE RECORDED GAME the first sections play, code and draw: 50 plies, and O
+ * wins it. */
+static const int recorded[] = { 34,67,44,80,76,43,69,62,79,63,4,40,39,31,37,16,
+    70,71,72,3,29,19,17,73,14,50,45,6,59,47,23,53,75,30,35,74,22,42,60,54,
+    0,2,24,58,38,18,1,9,5,77 };
+#define N_RECORDED ((int)(sizeof recorded / sizeof *recorded))
+
+/* The rules through the bridge: a new game, the recorded one played out,
+ * and the draft's undo. Leaves the recorded game resident, finished. */
+static void game_smoke(void)
 {
     uti_new(77);
     ok(uti_n_plies() == 0, "a new game has no plies");
@@ -212,35 +234,35 @@ int main(void)
     uint8_t list[81];
     ok(uti_legal(list) == 81, "81 legal moves at the start");
 
-    static const int mv[] = { 34,67,44,80,76,43,69,62,79,63,4,40,39,31,37,16,
-        70,71,72,3,29,19,17,73,14,50,45,6,59,47,23,53,75,30,35,74,22,42,60,54,
-        0,2,24,58,38,18,1,9,5,77 };
-    const int N = (int)(sizeof mv / sizeof *mv);
     /* A move can point at a block that is already won or full, and then the
      * reply goes anywhere - which uti_forced() does NOT say, because it is
      * the raw rule. The bubble's place line believes uti_active(), so the
      * difference between the two has to show up somewhere. */
     int sent_anywhere = 0;
-    for (int i = 0; i < N; i++) {
-        ok(uti_play(mv[i]), "a recorded move is legal");
+    for (int i = 0; i < N_RECORDED; i++) {
+        ok(uti_play(recorded[i]), "a recorded move is legal");
         if (uti_forced() != 255 && uti_active() == 9) sent_anywhere++;
     }
     ok(sent_anywhere == 1, "one move in that game points at a decided block");
-    ok(uti_n_plies() == N, "every move was played");
+    ok(uti_n_plies() == N_RECORDED, "every move was played");
 
     /* UNDO IS THE PRODUCT'S, not a test hook: a staged bubble is a draft and
      * the player has to be able to change their mind before they send. */
     {
-        int was_over = uti_over(), last = uti_move_at(N - 1);
+        int was_over = uti_over(), last = uti_move_at(N_RECORDED - 1);
         ok(uti_undo(), "the last move comes back");
-        ok(uti_n_plies() == N - 1, "and the history is one shorter");
+        ok(uti_n_plies() == N_RECORDED - 1, "and the history is one shorter");
         ok(uti_cell(last) == 0, "the square it was on is empty again");
         ok(uti_over() == 0, "a game undone below its winning move is not over");
         ok(uti_play(last), "and the same move can be played again");
-        ok(uti_over() == was_over && uti_n_plies() == N, "back where we were");
+        ok(uti_over() == was_over && uti_n_plies() == N_RECORDED, "back where we were");
     }
     ok(uti_over() == 2, "O wins that game");
+}
 
+/* ...and its code: under 32 bytes, and the decode is the same game. */
+static void code_smoke(void)
+{
     uint8_t buf[64];
     int len = uti_encode(buf, sizeof buf);
     ok(len > 0 && len < 32, "the game codes to under 32 bytes");
@@ -251,8 +273,12 @@ int main(void)
     ok(uti_n_plies() == plies, "the decode is the same length");
     ok(uti_over() == 2, "and the same result");
     ok(uti_active() == -1, "a finished game sends nobody anywhere");
+}
 
-    int np = uti_draw(-1, mv[N-1], 1.f, 1.f);
+/* The finished board as the display list the host fills. */
+static void draw_smoke(void)
+{
+    int np = uti_draw(-1, recorded[N_RECORDED - 1], 1.f, 1.f);
     /* ONE POLYGON PER STROKE (TESTFLIGHT_PLAN.md 20): 88 grid strokes and a
      * few per mark - a few hundred, where a quad and a disc per sample made
      * it tens of thousands. uttt_anim_test counts them exactly. */
@@ -260,27 +286,28 @@ int main(void)
     ok(uti_point_count() > np, "with more points than polygons");
     ok(!uti_draw_overflow(), "and it fits in the buffer");
     printf("  %d polygons, %d points\n", np, uti_point_count());
+}
 
-    /* THE WORST BOARD IS NOT THE ONE ABOVE. That game ended in 50 plies with
-     * half the sheet still blank; the buffers have to hold eighty-one marks
-     * and every won block's grid underneath them. Play a full board out and
-     * ask again, because the failure is silent. */
-    {
-        /* The FIRST legal square every time, which fills the sheet without
-         * asking a bot anything - the bots are research and do not cross this
-         * boundary. */
-        uti_new(77);
-        uint8_t list[81];
-        int full = 0;
-        while (!uti_over()) {
-            if (uti_legal(list) <= 0 || !uti_play(list[0])) break;
-            full++;
-        }
-        int wp = uti_draw(-1, -1, 1.f, 1.f);
-        ok(!uti_draw_overflow(), "and so does a board played to the end");
-        printf("  worst board: %d plies, %d polygons, %d points\n",
-               full, wp, uti_point_count());
+/* THE WORST BOARD IS NOT THE ONE ABOVE. That game ended in 50 plies with
+ * half the sheet still blank; the buffers have to hold eighty-one marks
+ * and every won block's grid underneath them. Play a full board out and
+ * ask again, because the failure is silent. */
+static void worst_board_smoke(void)
+{
+    /* The FIRST legal square every time, which fills the sheet without
+     * asking a bot anything - the bots are research and do not cross this
+     * boundary. */
+    uti_new(77);
+    uint8_t list[81];
+    int full = 0;
+    while (!uti_over()) {
+        if (uti_legal(list) <= 0 || !uti_play(list[0])) break;
+        full++;
     }
+    int wp = uti_draw(-1, -1, 1.f, 1.f);
+    ok(!uti_draw_overflow(), "and so does a board played to the end");
+    printf("  worst board: %d plies, %d polygons, %d points\n",
+           full, wp, uti_point_count());
 
     /* every polygon has to be inside the unit square, or a renderer that
      * trusts the kernel will draw outside its own view */
@@ -290,87 +317,105 @@ int main(void)
         if (p[i] < -0.25f || p[i] > 1.25f) out_of_range++;
     ok(out_of_range == 0, "no point escapes the board");
     if (out_of_range) printf("    %d stray coordinates\n", out_of_range);
+}
 
-    /* the display list must be deterministic - two phones, one sheet */
-    int a = uti_draw(-1, mv[N-1], 1.f, 1.f);
-    float first = uti_points()[0];
-    int b = uti_draw(-1, mv[N-1], 1.f, 1.f);
-    ok(a == b && first == uti_points()[0], "the same seed draws the same board");
+/* the display list must be deterministic - two phones, one sheet.
+ * Leaves the board drawn: returns its polygon count, and its first
+ * coordinate in `first`. */
+static int same_draw_smoke(float *first)
+{
+    int a = uti_draw(-1, recorded[N_RECORDED - 1], 1.f, 1.f);
+    *first = uti_points()[0];
+    int b = uti_draw(-1, recorded[N_RECORDED - 1], 1.f, 1.f);
+    ok(a == b && *first == uti_points()[0], "the same seed draws the same board");
+    return b;
+}
 
-    /* A WHOLE BOARD IS HANDED OVER, NOT COPIED: the host fills it off the
-     * main thread from the kernel's own memory, and the kernel keeps nothing
-     * of it resident (TESTFLIGHT_PLAN.md 12, memory). */
-    {
-        int npt = uti_point_count();
-        UtiTaken t = uti_take();
-        ok(t.n_polys == b && t.n_points == npt && t.points[0] == first
-           && t.polys[b - 1].first + t.polys[b - 1].n <= npt, "a taken board is the draw, whole");
-        ok(uti_point_count() == 0 && uti_points() == NULL, "and the kernel keeps none of it");
-        int c = uti_draw(-1, mv[N-1], 1.f, 1.f);
-        ok(c == b && uti_points() != t.points && uti_points()[0] == t.points[0]
-           && uti_polys()[c - 1].n == t.polys[b - 1].n, "the next draw starts on buffers of its own");
-        uti_taken_free(t);
-        UtiTaken none = uti_take();
-        uti_draw_last(0.f);
-        ok(uti_point_count() >= 0 && !uti_draw_overflow(), "a draw after a take still has room");
-        uti_taken_free(none);
-    }
+/* A WHOLE BOARD IS HANDED OVER, NOT COPIED: the host fills it off the
+ * main thread from the kernel's own memory, and the kernel keeps nothing
+ * of it resident (TESTFLIGHT_PLAN.md 12, memory). `np` and `first` are the
+ * draw it is handed (same_draw_smoke). */
+static void take_smoke(int np, float first)
+{
+    int npt = uti_point_count();
+    UtiTaken t = uti_take();
+    ok(t.n_polys == np && t.n_points == npt && t.points[0] == first
+       && t.polys[np - 1].first + t.polys[np - 1].n <= npt, "a taken board is the draw, whole");
+    ok(uti_point_count() == 0 && uti_points() == NULL, "and the kernel keeps none of it");
+    int c = uti_draw(-1, recorded[N_RECORDED - 1], 1.f, 1.f);
+    ok(c == np && uti_points() != t.points && uti_points()[0] == t.points[0]
+       && uti_polys()[c - 1].n == t.polys[np - 1].n, "the next draw starts on buffers of its own");
+    uti_taken_free(t);
+    UtiTaken none = uti_take();
+    uti_draw_last(0.f);
+    ok(uti_point_count() >= 0 && !uti_draw_overflow(), "a draw after a take still has room");
+    uti_taken_free(none);
+}
 
-    /* THE COMPOSITOR'S PAPER IS THE SAME PAPER: every pixel of the BGRA
-     * rows is the RGBA paper's with red and blue swapped, and the padding a
-     * surface's stride leaves past each row is not written. */
-    {
-        enum { PW = 37, PH = 23, STRIDE = PW * 4 + 12 };
-        static uint8_t rgba[PW * PH * 4], bgra[STRIDE * PH];
-        memset(bgra, 0xab, sizeof bgra);
-        uti_paper(rgba, PW, PH);
-        uti_paper_bgra(bgra, PW, PH, STRIDE);
-        int same = 1, pad = 1;
-        for (int y = 0; y < PH; y++) {
-            for (int x = 0; x < PW; x++) {
-                const uint8_t *s = rgba + (y * PW + x) * 4, *d = bgra + y * STRIDE + x * 4;
-                if (d[0] != s[2] || d[1] != s[1] || d[2] != s[0] || d[3] != s[3]) same = 0;
-            }
-            for (int k = PW * 4; k < STRIDE; k++) if (bgra[y * STRIDE + k] != 0xab) pad = 0;
+/* THE COMPOSITOR'S PAPER IS THE SAME PAPER: every pixel of the BGRA
+ * rows is the RGBA paper's with red and blue swapped, and the padding a
+ * surface's stride leaves past each row is not written. */
+static void paper_smoke(void)
+{
+    enum { PW = 37, PH = 23, STRIDE = PW * 4 + 12 };
+    static uint8_t rgba[PW * PH * 4], bgra[STRIDE * PH];
+    memset(bgra, 0xab, sizeof bgra);
+    uti_paper(rgba, PW, PH);
+    uti_paper_bgra(bgra, PW, PH, STRIDE);
+    int same = 1, pad = 1;
+    for (int y = 0; y < PH; y++) {
+        for (int x = 0; x < PW; x++) {
+            const uint8_t *s = rgba + (y * PW + x) * 4, *d = bgra + y * STRIDE + x * 4;
+            if (d[0] != s[2] || d[1] != s[1] || d[2] != s[0] || d[3] != s[3]) same = 0;
         }
-        ok(same, "the BGRA paper is the RGBA paper, red and blue swapped");
-        ok(pad, "and the stride's padding is left alone");
+        for (int k = PW * 4; k < STRIDE; k++) if (bgra[y * STRIDE + k] != 0xab) pad = 0;
     }
+    ok(same, "the BGRA paper is the RGBA paper, red and blue swapped");
+    ok(pad, "and the stride's padding is left alone");
+}
 
+/* THE LINES STOP ON THE PAPER, and none runs under the badge Messages
+ * stamps into the top-left corner: every point of the bubble's board,
+ * drawn with its own reach, lies 3 points or more inside the frame and
+ * outside the badge's corner. The drawer's reach would run 23 past.
+ * Draws the resident game's bubble board and measures it: `ink` is its extent
+ * in the frame's points (left top right bottom), and the answer is whether
+ * any of it lies in the badge's corner. */
+static int bubble_ink(float ink[4])
+{
+    float bx = 0, by = 0, bs = 0;
+    uti_bubble_board(&bx, &by, &bs);
+    int np = uti_draw_bubble(4, -1);
+    const float *pt = uti_points();
+    const UtiPoly *pq = uti_polys();
+    int under_badge = 0;
+    ink[0] = ink[1] = 1e9f; ink[2] = ink[3] = -1e9f;
+    for (int i = 0; i < np; i++)
+        for (int k = 0; k < pq[i].n; k++) {
+            float px = bx + pt[(pq[i].first + k) * 2] * bs, py = by + pt[(pq[i].first + k) * 2 + 1] * bs;
+            if (px < ink[0]) ink[0] = px;
+            if (py < ink[1]) ink[1] = py;
+            if (px > ink[2]) ink[2] = px;
+            if (py > ink[3]) ink[3] = py;
+            if (px < 31.f && py < 24.f) under_badge = 1;
+        }
+    ok(np > 0, "the bubble's board draws");
+    return under_badge;
+}
+
+/* ---- the bubble frame. 300x195 is somebody else's number, so the only
+ * thing worth asserting is that nothing the kernel hands back falls
+ * outside it - a renderer that trusts these draws off the image. */
+static void bubble_smoke(void)
+{
     uti_new(77);
-
-    /* ---- the bubble frame. 300x195 is somebody else's number, so the only
-     * thing worth asserting is that nothing the kernel hands back falls
-     * outside it - a renderer that trusts these draws off the image. */
     float bw = 0, bh = 0, x = 0, y = 0, s = 0, tw = 0, th = 0;
     uti_bubble_size(&bw, &bh);
     ok(bw == 300.f && bh == 195.f, "the bubble is 300 by 195");
     ok(uti_bubble_scale(2.f) == 2.f && uti_bubble_scale(3.f) == 3.f && uti_bubble_scale(1.f) == 2.f,
        "the bubble bakes at the sender's scale, 2 to 3");
-    /* THE LINES STOP ON THE PAPER, and none runs under the badge Messages
-     * stamps into the top-left corner: every point of the bubble's board,
-     * drawn with its own reach, lies 3 points or more inside the frame and
-     * outside the badge's corner. The drawer's reach would run 23 past. */
     float ink[4];                                   /* left top right bottom */
-    int under_badge = 0;
-    #define BUBBLE_INK() do { \
-        float bx = 0, by = 0, bs = 0; \
-        uti_bubble_board(&bx, &by, &bs); \
-        int np = uti_draw_bubble(4, -1); \
-        const float *pt = uti_points(); \
-        const UtiPoly *pq = uti_polys(); \
-        ink[0] = ink[1] = 1e9f; ink[2] = ink[3] = -1e9f; under_badge = 0; \
-        for (int i = 0; i < np; i++) \
-            for (int k = 0; k < pq[i].n; k++) { \
-                float px = bx + pt[(pq[i].first + k) * 2] * bs, py = by + pt[(pq[i].first + k) * 2 + 1] * bs; \
-                if (px < ink[0]) ink[0] = px; \
-                if (py < ink[1]) ink[1] = py; \
-                if (px > ink[2]) ink[2] = px; \
-                if (py > ink[3]) ink[3] = py; \
-                if (px < 31.f && py < 24.f) under_badge = 1; \
-            } \
-        ok(np > 0, "the bubble's board draws"); \
-    } while (0)
+    int under_badge;
 
     /* a game in play: the board alone, centred, as large as the frame's
      * height allows */
@@ -380,7 +425,7 @@ int main(void)
        "a game in play: the board is centred in the frame");
     uti_bubble_text(&x, &y, &tw, &th);
     ok(tw == 0.f && th == 0.f, "and has no words");
-    BUBBLE_INK();
+    under_badge = bubble_ink(ink);
     printf("  bubble board ink (in play): left %.1f top %.1f right %.1f bottom %.1f\n",
            ink[0], ink[1], bw - ink[2], bh - ink[3]);
     ok(ink[0] >= 3.f && ink[1] >= 3.f && bw - ink[2] >= 3.f && bh - ink[3] >= 3.f,
@@ -398,19 +443,21 @@ int main(void)
         ok(x >= 0 && x + tw <= bw && y + th <= bh, "a finished game: the text column is inside the frame");
         ok(tw >= 90.f, "and at least 90 points wide");
         ok(x + tw <= bx, "and left of the board");
-        BUBBLE_INK();
+        under_badge = bubble_ink(ink);
         ok(ink[1] >= 3.f && bw - ink[2] >= 3.f && bh - ink[3] >= 3.f,
            "a finished game: the bubble's lines stop 3 points inside the frame");
         ok(!under_badge, "a finished game: no line runs under Messages' badge");
         printf("  bubble %gx%g: board %g, text %g wide\n", bw, bh, s, tw);
     }
-    #undef BUBBLE_INK
     ok(uti_bubble_type(0) > 0 && uti_bubble_type(1) > 0, "both lines have a size");
     ok((uti_bubble_ink(0) & 0xffu) == 0xffu, "the headline ink is opaque");
     ok(uti_bubble_ink(0) != uti_bubble_ink(1), "the place is a different colour");
-    uti_new(77);
+}
 
-    /* ---- the place line. A new game is unforced, so it is "anywhere". */
+/* ---- the place line. A new game is unforced, so it is "anywhere". */
+static void place_smoke(void)
+{
+    uti_new(77);
     ok(uti_active() == 9, "a new game may be played anywhere");
     ok(!strcmp(uti_place_name(uti_active()), "anywhere"), "and it is named so");
     ok(uti_play(40), "a move in the centre of the centre");
@@ -421,536 +468,602 @@ int main(void)
        "an impossible block names nothing");
     for (int b = 0; b <= 9; b++)
         ok(uti_place_name(b)[0] != '\0', "every block is named");
+}
 
-    /* ---- THE LANGUAGE CROSSES THE BRIDGE: the phone's list in, the code
-     * out, and the words after it in that language */
+/* ---- THE LANGUAGE CROSSES THE BRIDGE: the phone's list in, the code
+ * out, and the words after it in that language */
+static void lang_smoke(void)
+{
     ok(!strcmp(uti_lang_prefer("ca-ES,fr-CA,en-US"), "fr"), "the first carried language wins");
     ok(!strcmp(uti_place_name(4), "au centre"), "and the kernel speaks it");
     ok(!strcmp(uti_lang_prefer("xx"), "en") && !strcmp(uti_place_name(4), "centre"),
        "a list of nothing carried is English");
+}
 
-    /* ---- THE "YOU ARE" O STAYS A RING (owner, TestFlight 1.0(6): "the drawn
-     * O sometimes draws lines right through the circle"). Off the display
-     * list the host fills: each pass of the O is one outline polygon, its
-     * points the ink's two edges, and every one must sit within 20% of the
-     * O's own mean distance from its centre, plus the pen's half-width (8%
-     * of the radius at the widest the pen goes) - a tail cutting a chord
-     * across the inside lands at half of it. Over EVERY LOOK THERE IS: the
-     * sheet is drawn from one byte, so 256 games are all the games. A
-     * seeded game's look is its seed's low byte, so uti_new(look) is the
-     * game with that look. */
+/* ---- THE "YOU ARE" O STAYS A RING (owner, TestFlight 1.0(6): "the drawn
+ * O sometimes draws lines right through the circle"). Off the display
+ * list the host fills: each pass of the O is one outline polygon, its
+ * points the ink's two edges, and every one must sit within 20% of the
+ * O's own mean distance from its centre, plus the pen's half-width (8%
+ * of the radius at the widest the pen goes) - a tail cutting a chord
+ * across the inside lands at half of it. Over EVERY LOOK THERE IS: the
+ * sheet is drawn from one byte, so 256 games are all the games. A
+ * seeded game's look is its seed's low byte, so uti_new(look) is the
+ * game with that look. */
+static void you_are_smoke(void)
+{
+    int ring = 1, worst_seed = 0;
+    float worst = 0.f;
+    const float cx = .06f + (50.f + .3f * 4.f) * .0088f, cy = .06f + (50.f - .3f * 3.f) * .0088f;
+    const float rx = (78.f - .3f * 10.f) * .0044f, ry = (76.f + .3f * 8.f) * .0044f;
+    for (int32_t g = 0; g < 256; g++) {
+        uti_new(g);
+        int m = uti_draw_mark(2, 0);
+        const UtiPoly *q = uti_polys();
+        const float *pt = uti_points();
+        static float rho[4000];
+        int n = 0;
+        for (int i = 0; i < m; i++)
+            for (int k = 0; k < q[i].n && n < 4000; k++) {
+                const float *a = &pt[(q[i].first + k) * 2];
+                float dx = (a[0] - cx) / rx, dy = (a[1] - cy) / ry;
+                rho[n++] = sqrtf(dx * dx + dy * dy);
+            }
+        float lo = 1e9f, hi = 0.f, sum = 0.f;
+        for (int i = 0; i < n; i++) { lo = fminf(lo, rho[i]); hi = fmaxf(hi, rho[i]); sum += rho[i]; }
+        float mid = n ? sum / n : 1.f;
+        float off = fmaxf(1.f - lo / mid, hi / mid - 1.f);
+        if (off > worst) { worst = off; worst_seed = g; }
+        if (m != 2 || n < 40 || off > .28f) ring = 0;
+    }
+    printf("  you-are O: worst stray %.3f of its radius (look %d)\n", worst, worst_seed);
+    ok(ring, "the you-are O never cuts across itself, over every look");
+    uti_new(12345);
+    ok(uti_msg_look() == (12345 & 0xff), "a seeded game's look is its seed's low byte");
+    int a = uti_draw_mark(2, 0);
+    double s1 = points_sum();
+    int b = uti_draw_mark(2, 0);
+    double s2 = points_sum();
+    ok(a == b && s1 == s2, "and one look draws one O, every time");
+    uti_new(12345 + 256);
+    int c = uti_draw_mark(2, 0);
+    double s3 = points_sum();
+    ok(c == a && s3 == s1, "another seed with that look draws the same O");
+    uti_new(12346);
+    int e = uti_draw_mark(2, 0);
+    double s4 = points_sum();
+    ok(e == a && s4 != s1, "and another look draws another O");
+}
+
+/* ---- the rulebook door. Its shape is rough.js's and its numbers are
+ * docs/UI.html's, so what is worth asserting is the handful of things a
+ * renderer would silently get wrong if the geometry ever came back to
+ * Swift: how many strokes there are, that they are the document's
+ * colours, that the fill is painted under its own outline, and that the
+ * button is NOT a scale-free drawing. */
+static void rulebook_smoke(void)
+{
+    int np = uti_draw_rulebook(54, 54);
+    /* 17 hachure lines in the square and 7 in each leaf, every one of
+     * them drawn twice, plus 4 edges drawn twice around each of the
+     * three shapes: (17 + 7 + 7 + 4 + 4 + 4) * 2. */
+    ok(np == 86, "the button is 86 strokes at 54 points");
+    printf("  rulebook: %d strokes, %d points\n", np, uti_point_count());
+
+    /* ONE POLYGON PER STROKE, which is what a canvas does when it strokes
+     * a path - a stroke laid as overlapping quads blends with itself and
+     * a 55% page comes out at 80%. */
+    int ribbons = 0;
+    for (int i = 0; i < np; i++)
+        if (uti_polys()[i].n >= 4 && uti_polys()[i].n % 2 == 0) ribbons++;
+    ok(ribbons == np, "each one is a single ribbon polygon");
+
+    const UtiPoly *cq = uti_polys();
+    int ink = 0, edge = 0, book = 0, other = 0;
+    uint32_t ink_rgba = 0, book_rgba = 0;
+    for (int i = 0; i < np; i++) {
+        uint32_t rgb = cq[i].rgba >> 8;
+        if (rgb == 0x25376bu)      { ink++;  ink_rgba = cq[i].rgba; }
+        else if (rgb == 0x1b2a52u) {
+            /* The outline and the book are the SAME ink at different
+             * strengths, so they are told apart by alpha rather than by
+             * hue - which is the point: one pen, one colour. */
+            if ((cq[i].rgba & 0xffu) == 255) edge++; else { book++; book_rgba = cq[i].rgba; }
+        } else other++;
+    }
+    ok(other == 0, "every stroke is one of the document's two inks");
+    ok(ink == 34 && edge == 8, "the square is filled in ink and edged darker");
+    ok(book == 44, "and the book is one colour, both leaves and both edges");
+
+    /* THE FIGURE READS AGAINST THE GROUND, not into it. At full strength
+     * the hachure closes into a solid navy block at 54 points and a pale
+     * glyph on top of it vanishes - which is what the design document did
+     * and what Chrome renders from it. So the fill is thin enough to see
+     * the paper through and the book is the dark one. */
+    ok((ink_rgba & 0xffu) < 128, "the square's fill lets the paper through");
+    ok((book_rgba & 0xffu) > 200, "and the book is nearly solid on top of it");
+    ok((book_rgba & 0xffu) > (ink_rgba & 0xffu),
+       "the glyph is darker than the field it lies on");
+
+    /* the fill is laid first so the outline lands ON it */
+    ok((cq[0].rgba >> 8) == 0x25376bu, "the first stroke down is fill, not outline");
+
+    const float *p = uti_points();
+    int stray = 0;
+    for (int i = 0; i < uti_point_count() * 2; i++)
+        if (p[i] < -0.05f || p[i] > 1.05f) stray++;
+    ok(stray == 0, "no stroke leaves the button");
+
+    /* EVERY coordinate, not the first one: the first hachure line is the
+     * scan through the top corner, which is a point rather than a line,
+     * and a line of no length is jittered by nothing - so p[0] is the
+     * same number whatever the seed does and would witness nothing. */
+    double sum = points_sum();
+    int pc = uti_point_count();
+    int again = uti_draw_rulebook(54, 54);
+    double sum2 = points_sum();
+    ok(again == np && uti_point_count() == pc && sum2 == sum,
+       "the same button draws the same way twice");
+
+    /* NOT SCALE-FREE, and this is the whole reason the entry takes a
+     * size: rough.js rounds a hachure gap to a whole unit, so a bigger
+     * button is filled with MORE lines rather than the same lines
+     * stretched. Draw it at 54 and hand a renderer a scaled copy and the
+     * fill is wrong at every other size. */
+    int big = uti_draw_rulebook(108, 108);
+    ok(big > np, "a bigger button gets more hachure, not bigger hachure");
+    printf("  rulebook at 108 points: %d strokes\n", big);
+}
+
+/* ---- the Again door. The bar is the rulebook square's pen stretched to
+ * the width a phone gives it, so what matters is that every width a
+ * phone can give fits the display list, that it is the rulebook's two
+ * inks with the fill under the outline, and that it is the same bar on
+ * every draw. */
+static void door_smoke(void)
+{
+    int fits = 1, lo = 1 << 30, hi = 0;
+    for (float w = 200; w <= 430; w += 10) {
+        int np = uti_draw_door(w, 46);
+        if (uti_draw_overflow() || np <= 0) fits = 0;
+        if (np < lo) lo = np;
+        if (np > hi) hi = np;
+    }
+    ok(fits, "the door fits at every width from 200 to 430 points");
+    printf("  door: %d to %d strokes\n", lo, hi);
+
+    int np = uti_draw_door(310, 46);
+    const UtiPoly *cq = uti_polys();
+    int fill = 0, edge = 0, other = 0, last_fill = -1, first_edge = np;
+    for (int i = 0; i < np; i++) {
+        if (cq[i].rgba == 0x25376b73u)      { fill++; last_fill = i; }   /* .40 x .90/.80 */
+        else if (cq[i].rgba == 0x1b2a52ffu) { edge++; if (i < first_edge) first_edge = i; }
+        else other++;
+    }
+    ok(other == 0 && fill > 0, "the door is the rulebook's two inks, hachured");
+    ok(edge == 8, "and edged by four sides drawn twice");
+    ok(last_fill < first_edge, "the fill is laid before the outline, so the edge is on top");
+
+    const float *p = uti_points();
+    int stray = 0, pc = uti_point_count();
+    for (int i = 0; i < pc * 2; i++)
+        if (p[i] < -0.05f || p[i] > 1.05f) stray++;
+    double sum = points_sum();
+    ok(stray == 0, "no stroke leaves the bar");
+    int again = uti_draw_door(310, 46);
+    double sum2 = points_sum();
+    ok(again == np && uti_point_count() == pc && sum2 == sum,
+       "the same door draws the same way twice");
+    /* THE GAP IS A LENGTH IN POINTS, so twice the bar is nearly twice
+     * the hachure (the diagonal's height share does not double, hence
+     * 1.6 rather than 2) - not the same lines spread further apart. */
+    int narrow = uti_draw_door(200, 46) - 8, wide = uti_draw_door(400, 46) - 8;
+    ok(wide * 10 >= narrow * 16,
+       "a wider door gets more hachure at the same gap, not wider hachure");
+}
+
+/* Which side of a w by H door an outline stroke is: 0 top, 1 bottom, 2 left,
+ * 3 right, by where the stroke sits - its centroid, and the edge nearest it
+ * in points. */
+static int stroke_side(const UtiPoly *q, const float *pt, float w, float H)
+{
+    double cx = 0, cy = 0;
+    for (int k = 0; k < q->n; k++) {
+        cx += pt[(q->first + k) * 2]; cy += pt[(q->first + k) * 2 + 1];
+    }
+    cx /= q->n; cy /= q->n;
+    double dx = fmin(cx, 1 - cx) * w, dy = fmin(cy, 1 - cy) * H;
+    return dy < dx ? (cy < .5 ? 0 : 1) : (cx < .5 ? 2 : 3);
+}
+
+/* OPPOSITE EDGES ARE THE SAME WEIGHT (owner, 2026-09-23: the top and
+ * the bottom of Again read as different widths). An edge's weight is
+ * how deep its ink band is across the edge: the spread of every
+ * outline point on that side, in points, whatever the wobble did. */
+static void door_edge_weight_smoke(void)
+{
+    for (float w = 200; w <= 430; w += 23) {
+        const float H = 46;
+        int m = uti_draw_door(w, H);
+        const UtiPoly *q = uti_polys();
+        const float *pt = uti_points();
+        float lo[4] = { 1e9f, 1e9f, 1e9f, 1e9f }, hi[4] = { -1e9f, -1e9f, -1e9f, -1e9f };
+        for (int i = 0; i < m; i++) {
+            if (q[i].rgba != 0x1b2a52ffu) continue;
+            int side = stroke_side(&q[i], pt, w, H);
+            for (int k = 0; k < q[i].n; k++) {
+                float v = side < 2 ? pt[(q[i].first + k) * 2 + 1] * H
+                                   : pt[(q[i].first + k) * 2] * w;
+                if (side == 1) v = H - v;
+                if (side == 3) v = w - v;
+                if (v < lo[side]) lo[side] = v;
+                if (v > hi[side]) hi[side] = v;
+            }
+        }
+        float top = hi[0] - lo[0], bot = hi[1] - lo[1];
+        float lft = hi[2] - lo[2], rgt = hi[3] - lo[3];
+        if (w == 200)
+            printf("  door edges at %g: top %.2f bottom %.2f left %.2f right %.2f\n",
+                   w, top, bot, lft, rgt);
+        if (fabsf(top - bot) > .05f || fabsf(lft - rgt) > .05f) {
+            printf("  door %g: top %.2f bottom %.2f left %.2f right %.2f\n",
+                   w, top, bot, lft, rgt);
+            ok(0, "the door's opposite edges are the same weight");
+            break;
+        }
+        if (w + 23 > 430) ok(1, "the door's opposite edges are the same weight");
+    }
+}
+
+/* THE INK ON ONE CUT straight across a side of the door, `at` points along
+ * it: each of the side's `nr` ribbons (`rib`, its two passes) crosses the cut
+ * in pairs, and the answer is the length of the union of those spans, in
+ * points. `horiz` is a top or bottom side, cut down the door; the others are
+ * cut across it. */
+static float cut_ink(const UtiPoly *q, const float *pt, const int *rib, int nr,
+                     int horiz, float at, float w, float H)
+{
+    float iv[64][2]; int ni = 0;
+    for (int r = 0; r < nr; r++) {
+        const UtiPoly *P = &q[rib[r]];
+        float xs[256]; int nx = 0;
+        for (int k = 0, j = P->n - 1; k < P->n; j = k++) {
+            /* a = along the side, b = across it, in points */
+            float ak = horiz ? pt[(P->first + k) * 2] * w : pt[(P->first + k) * 2 + 1] * H;
+            float bk = horiz ? pt[(P->first + k) * 2 + 1] * H : pt[(P->first + k) * 2] * w;
+            float aj = horiz ? pt[(P->first + j) * 2] * w : pt[(P->first + j) * 2 + 1] * H;
+            float bj = horiz ? pt[(P->first + j) * 2 + 1] * H : pt[(P->first + j) * 2] * w;
+            if ((ak > at) == (aj > at) || nx >= 256) continue;
+            xs[nx++] = bk + (bj - bk) * (at - ak) / (aj - ak);
+        }
+        for (int a = 1; a < nx; a++)
+            for (int b = a; b > 0 && xs[b - 1] > xs[b]; b--) {
+                float t = xs[b]; xs[b] = xs[b - 1]; xs[b - 1] = t;
+            }
+        for (int a = 0; a + 1 < nx && ni < 64; a += 2) {
+            iv[ni][0] = xs[a]; iv[ni][1] = xs[a + 1]; ni++;
+        }
+    }
+    for (int a = 1; a < ni; a++)                 /* union */
+        for (int b = a; b > 0 && iv[b - 1][0] > iv[b][0]; b--) {
+            float t0 = iv[b][0], t1 = iv[b][1];
+            iv[b][0] = iv[b - 1][0]; iv[b][1] = iv[b - 1][1];
+            iv[b - 1][0] = t0; iv[b - 1][1] = t1;
+        }
+    float len = 0.f, lo = -1e9f, hi = -1e9f;
+    for (int a = 0; a < ni; a++) {
+        if (iv[a][0] > hi) { if (hi > lo) len += hi - lo; lo = iv[a][0]; hi = iv[a][1]; }
+        else if (iv[a][1] > hi) hi = iv[a][1];
+    }
+    if (hi > lo) len += hi - lo;
+    return len;
+}
+
+/* ALL FOUR EDGES ARE ONE THICKNESS AS DRAWN (owner, four times, last
+ * on TestFlight 1.0(6): "horizontal borders appear less thick than
+ * vertical"). The host stretches the door's 0..1 to w by H, so this
+ * takes the edge ribbons into POINTS the same way and cuts each side
+ * straight across at nine places along it: the ink there is the
+ * union of its two passes' spans on the cut. Every side's mean must
+ * be within half a pixel at 3x of every other's - measured off the
+ * geometry, never off a constant, so a width that is right in one
+ * coordinate system and squashed in the other cannot pass. */
+static void door_edge_thickness_smoke(void)
+{
+    int even = 1;
+    float worst = 0.f, worst_w = 0.f;
+    for (float w = 100; w <= 430; w += 3.5f) {
+        const float H = 46;
+        int m = uti_draw_door(w, H);
+        const UtiPoly *q = uti_polys();
+        const float *pt = uti_points();
+        int rib[4][2], nr[4] = { 0 };
+        for (int i = 0; i < m; i++) {
+            if (q[i].rgba != 0x1b2a52ffu) continue;
+            int side = stroke_side(&q[i], pt, w, H);
+            if (nr[side] < 2) rib[side][nr[side]++] = i;
+        }
+        float mean[4];
+        for (int sd = 0; sd < 4; sd++) {
+            float tot = 0.f;
+            int horiz = sd < 2;
+            for (int c = 1; c <= 9; c++)
+                tot += cut_ink(q, pt, rib[sd], nr[sd], horiz, (horiz ? w : H) * c / 10.f, w, H);
+            mean[sd] = tot / 9.f;
+        }
+        float mn = fminf(fminf(mean[0], mean[1]), fminf(mean[2], mean[3]));
+        float mx = fmaxf(fmaxf(mean[0], mean[1]), fmaxf(mean[2], mean[3]));
+        if ((mx - mn) * 3.f > worst) { worst = (mx - mn) * 3.f; worst_w = w; }
+        if ((mx - mn) * 3.f > .5f || mn < 2.f) {
+            if (even) printf("  door %g: top %.2f bottom %.2f left %.2f right %.2f pt\n",
+                             w, mean[0], mean[1], mean[2], mean[3]);
+            even = 0;
+        }
+    }
+    printf("  door edges: widest spread %.2f px at 3x (door %g)\n", worst, worst_w);
+    ok(even, "all four door edges are one thickness, within half a pixel at 3x, at every width");
+}
+
+/* --------------------------------------------------------- THE MESSAGE */
+
+/* the three people of it, each a device's identity */
+static const uint8_t alex[16] = { 0xa1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
+static const uint8_t vera[16] = { 0xb2, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
+static const uint8_t cleo[16] = { 0xc3, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
+
+/* THE SEAT, RESOLVED (1.0(9)): Messages rotated alex's participant
+ * id, so neither sealed tag is his. His record seats him; without
+ * it, the sender of the bubble does, in a DM only. */
+static void seat_smoke(const char *join, const char *reply)
+{
+    static const uint8_t alex2[16] = { 0xa2, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
+    uint8_t o[UTI_TAG_LEN], x[UTI_TAG_LEN], me[UTI_TAG_LEN], h[UTI_TAG_LEN];
+    ok(uti_msg_seat_by() == UTI_BY_NONE && uti_msg_record() == 0
+       && !strncmp(uti_msg_seat_why(), "spectator by nothing", 20),
+       "cleo watches, and nothing seated her");
+
+    be(0, alex2);                       /* his phone, his records, a new id */
+    ok(uti_msg_read(join) == 0 && uti_msg_seat() == UTI_SEAT_O
+       && uti_msg_seat_by() == UTI_BY_RECORD, "rotated alex is O by the record he wrote at creation");
+    ok(uti_msg_tag(UTI_TAG_ME, me) && uti_msg_tag(UTI_TAG_O, o) && !memcmp(me, o, UTI_TAG_LEN)
+       && uti_msg_tag(UTI_TAG_HASHED, h) && memcmp(h, o, UTI_TAG_LEN),
+       "he plays with O's tag; his own hash is not it");
+    ok(uti_msg_can_move() && uti_msg_play(37), "and he can answer");
+    ok(uti_msg_seat() == UTI_SEAT_O && uti_msg_undo() && uti_msg_seat() == UTI_SEAT_O,
+       "and take it back");
+
+    be(3, alex2);                       /* a new id AND no records: the owner's phone */
+    ok(uti_msg_read(join) == 0 && uti_msg_seat() == UTI_SEAT_SPECTATOR, "with no witness he watches");
+    uti_msg_sender(join, 0, 0);
+    ok(uti_msg_seat() == UTI_SEAT_SPECTATOR, "a group chat infers nothing");
+    uti_msg_sender(reply, 1, 0);
+    ok(uti_msg_seat() == UTI_SEAT_SPECTATOR, "a fact about another message says nothing");
+    ok(!uti_seats_dirty(), "and nothing was recorded");
+    uti_msg_sender(join, 1, 0);
+    ok(uti_msg_seat() == UTI_SEAT_O && uti_msg_seat_by() == UTI_BY_SENDER,
+       "a DM, vera's bubble, O to move: he is O by the sender - asked twice");
+    ok(uti_seats_dirty() && uti_msg_record() == UTI_SEAT_O, "and it is recorded");
+    ok(uti_msg_play(37) && uti_msg_seat() == UTI_SEAT_O && uti_msg_seat_by() == UTI_BY_SENDER,
+       "after his move the sender fact is stale, and the record holds - still the sender's");
     {
-        int ring = 1, worst_seed = 0;
-        float worst = 0.f;
-        const float cx = .06f + (50.f + .3f * 4.f) * .0088f, cy = .06f + (50.f - .3f * 3.f) * .0088f;
-        const float rx = (78.f - .3f * 10.f) * .0044f, ry = (76.f + .3f * 8.f) * .0044f;
-        for (int32_t g = 0; g < 256; g++) {
-            uti_new(g);
-            int m = uti_draw_mark(2, 0);
-            const UtiPoly *q = uti_polys();
-            const float *pt = uti_points();
-            static float rho[4000];
-            int n = 0;
-            for (int i = 0; i < m; i++)
-                for (int k = 0; k < q[i].n && n < 4000; k++) {
-                    const float *a = &pt[(q[i].first + k) * 2];
-                    float dx = (a[0] - cx) / rx, dy = (a[1] - cy) / ry;
-                    rho[n++] = sqrtf(dx * dx + dy * dy);
-                }
-            float lo = 1e9f, hi = 0.f, sum = 0.f;
-            for (int i = 0; i < n; i++) { lo = fminf(lo, rho[i]); hi = fmaxf(hi, rho[i]); sum += rho[i]; }
-            float mid = n ? sum / n : 1.f;
-            float off = fmaxf(1.f - lo / mid, hi / mid - 1.f);
-            if (off > worst) { worst = off; worst_seed = g; }
-            if (m != 2 || n < 40 || off > .28f) ring = 0;
-        }
-        printf("  you-are O: worst stray %.3f of its radius (look %d)\n", worst, worst_seed);
-        ok(ring, "the you-are O never cuts across itself, over every look");
-        uti_new(12345);
-        ok(uti_msg_look() == (12345 & 0xff), "a seeded game's look is its seed's low byte");
-        int a = uti_draw_mark(2, 0);
-        double s1 = 0; for (int i = 0; i < uti_point_count() * 2; i++) s1 += uti_points()[i];
-        int b = uti_draw_mark(2, 0);
-        double s2 = 0; for (int i = 0; i < uti_point_count() * 2; i++) s2 += uti_points()[i];
-        ok(a == b && s1 == s2, "and one look draws one O, every time");
-        uti_new(12345 + 256);
-        int c = uti_draw_mark(2, 0);
-        double s3 = 0; for (int i = 0; i < uti_point_count() * 2; i++) s3 += uti_points()[i];
-        ok(c == a && s3 == s1, "another seed with that look draws the same O");
-        uti_new(12346);
-        int e = uti_draw_mark(2, 0);
-        double s4 = 0; for (int i = 0; i < uti_point_count() * 2; i++) s4 += uti_points()[i];
-        ok(e == a && s4 != s1, "and another look draws another O");
+        uint8_t keep[UTI_SEATS_BYTES];
+        int kn = uti_seats_save(keep, UTI_SEATS_BYTES);
+        uti_seats_load(keep, kn);           /* the next session */
+        ok(uti_msg_seat() == UTI_SEAT_O && uti_msg_seat_by() == UTI_BY_RECORD,
+           "next session the same record answers as the record");
     }
-
-    /* ---- the rulebook door. Its shape is rough.js's and its numbers are
-     * docs/UI.html's, so what is worth asserting is the handful of things a
-     * renderer would silently get wrong if the geometry ever came back to
-     * Swift: how many strokes there are, that they are the document's
-     * colours, that the fill is painted under its own outline, and that the
-     * button is NOT a scale-free drawing. */
     {
-        int np = uti_draw_rulebook(54, 54);
-        /* 17 hachure lines in the square and 7 in each leaf, every one of
-         * them drawn twice, plus 4 edges drawn twice around each of the
-         * three shapes: (17 + 7 + 7 + 4 + 4 + 4) * 2. */
-        ok(np == 86, "the button is 86 strokes at 54 points");
-        printf("  rulebook: %d strokes, %d points\n", np, uti_point_count());
-
-        /* ONE POLYGON PER STROKE, which is what a canvas does when it strokes
-         * a path - a stroke laid as overlapping quads blends with itself and
-         * a 55% page comes out at 80%. */
-        int ribbons = 0;
-        for (int i = 0; i < np; i++)
-            if (uti_polys()[i].n >= 4 && uti_polys()[i].n % 2 == 0) ribbons++;
-        ok(ribbons == np, "each one is a single ribbon polygon");
-
-        const UtiPoly *cq = uti_polys();
-        int ink = 0, edge = 0, book = 0, other = 0;
-        uint32_t ink_rgba = 0, book_rgba = 0;
-        for (int i = 0; i < np; i++) {
-            uint32_t rgb = cq[i].rgba >> 8;
-            if (rgb == 0x25376bu)      { ink++;  ink_rgba = cq[i].rgba; }
-            else if (rgb == 0x1b2a52u) {
-                /* The outline and the book are the SAME ink at different
-                 * strengths, so they are told apart by alpha rather than by
-                 * hue - which is the point: one pen, one colour. */
-                if ((cq[i].rgba & 0xffu) == 255) edge++; else { book++; book_rgba = cq[i].rgba; }
-            } else other++;
-        }
-        ok(other == 0, "every stroke is one of the document's two inks");
-        ok(ink == 34 && edge == 8, "the square is filled in ink and edged darker");
-        ok(book == 44, "and the book is one colour, both leaves and both edges");
-
-        /* THE FIGURE READS AGAINST THE GROUND, not into it. At full strength
-         * the hachure closes into a solid navy block at 54 points and a pale
-         * glyph on top of it vanishes - which is what the design document did
-         * and what Chrome renders from it. So the fill is thin enough to see
-         * the paper through and the book is the dark one. */
-        ok((ink_rgba & 0xffu) < 128, "the square's fill lets the paper through");
-        ok((book_rgba & 0xffu) > 200, "and the book is nearly solid on top of it");
-        ok((book_rgba & 0xffu) > (ink_rgba & 0xffu),
-           "the glyph is darker than the field it lies on");
-
-        /* the fill is laid first so the outline lands ON it */
-        ok((cq[0].rgba >> 8) == 0x25376bu, "the first stroke down is fill, not outline");
-
-        const float *p = uti_points();
-        int stray = 0;
-        for (int i = 0; i < uti_point_count() * 2; i++)
-            if (p[i] < -0.05f || p[i] > 1.05f) stray++;
-        ok(stray == 0, "no stroke leaves the button");
-
-        /* EVERY coordinate, not the first one: the first hachure line is the
-         * scan through the top corner, which is a point rather than a line,
-         * and a line of no length is jittered by nothing - so p[0] is the
-         * same number whatever the seed does and would witness nothing. */
-        double sum = 0;
-        for (int i = 0; i < uti_point_count() * 2; i++) sum += p[i];
-        int pc = uti_point_count();
-        int again = uti_draw_rulebook(54, 54);
-        double sum2 = 0;
-        for (int i = 0; i < uti_point_count() * 2; i++) sum2 += uti_points()[i];
-        ok(again == np && uti_point_count() == pc && sum2 == sum,
-           "the same button draws the same way twice");
-
-        /* NOT SCALE-FREE, and this is the whole reason the entry takes a
-         * size: rough.js rounds a hachure gap to a whole unit, so a bigger
-         * button is filled with MORE lines rather than the same lines
-         * stretched. Draw it at 54 and hand a renderer a scaled copy and the
-         * fill is wrong at every other size. */
-        int big = uti_draw_rulebook(108, 108);
-        ok(big > np, "a bigger button gets more hachure, not bigger hachure");
-        printf("  rulebook at 108 points: %d strokes\n", big);
+        uint8_t out[UTI_SEATS_BYTES];
+        ok(uti_seats_save(out, UTI_SEATS_BYTES) == 9 && !uti_seats_dirty()
+           && uti_seats_save(out, 3) == -1, "the records save, and a short buffer is refused");
     }
 
-    /* ---- the Again door. The bar is the rulebook square's pen stretched to
-     * the width a phone gives it, so what matters is that every width a
-     * phone can give fits the display list, that it is the rulebook's two
-     * inks with the fill under the outline, and that it is the same bar on
-     * every draw. */
+    be(2, cleo);
+    ok(uti_msg_read(reply) == 0 && uti_msg_seat() == UTI_SEAT_SPECTATOR, "cleo is still watching");
+    ok(uti_msg_tag(UTI_TAG_O, o) && uti_msg_tag(UTI_TAG_X, x) && memcmp(o, x, UTI_TAG_LEN),
+       "the diagnostics read both seats' tags");
+    ok(uti_msg_claim(UTI_SEAT_X) && uti_msg_seat() == UTI_SEAT_X
+       && uti_msg_seat_by() == UTI_BY_RECORD, "a claim is a record: cleo claims X and is X");
+    ok(uti_msg_claim(UTI_SEAT_O) && uti_msg_seat() == UTI_SEAT_O && uti_msg_record() == UTI_SEAT_O,
+       "a second claim replaces the first");
+    char mine[160];
+    ok(uti_msg_text(mine, sizeof mine) > 0 && uti_msg_open(1726990777, 3) == 1
+       && uti_msg_seat() == UTI_SEAT_WAITING && uti_msg_seat_by() == UTI_BY_RECORD
+       && uti_msg_tag(UTI_TAG_O, o) && uti_msg_tag(UTI_TAG_HASHED, h) && !memcmp(o, h, UTI_TAG_LEN),
+       "her own new invitation is her hash, and recorded");
+    ok(!uti_msg_claim(UTI_SEAT_X), "nobody claims X on an open invitation");
+    ok(uti_msg_read(mine) == 0 && uti_msg_seat() == UTI_SEAT_O, "the claimed game is still hers");
+    uti_msg_forget();
+    ok(uti_msg_seat() == UTI_SEAT_SPECTATOR && uti_msg_record() == 0, "forgotten, she watches again");
+}
+
+/* ---- the message, end to end as the host drives it: two devices are two
+ * identities, and the only thing that crosses between them is text. */
+static void msg_smoke(void)
+{
+    char inv[160], join[160], reply[160];
+
+    be(0, alex);
+    ok(uti_msg_open(1726990000, 77) == 1, "alex opens an invitation");
+    ok(uti_msg_look() == 77 && uti_msg_seed() == 1726990000, "on the look the host drew, at the send time");
+    ok(uti_msg_record() == UTI_SEAT_O && uti_seats_dirty(), "and records it as his, before anybody asks");
+    ok(uti_msg_seat() == UTI_SEAT_WAITING, "and waits on it");
+    ok(uti_msg_mark() == 0 && !uti_msg_can_move(), "with no mark and no move");
+    ok(!strcmp(uti_say_by(UTI_SAY_CAPTION, "$A1"), "$A1 wants a game. Tap to take it"),
+       "the invitation's caption names its sender");
+    ok(uti_say_bubble_mark() == 0, "and its bubble draws no mark");
+    ok(uti_msg_text(inv, sizeof inv) > 3 && !strncmp(inv, "?m=", 3), "the invitation is a bare query");
+    ok(uti_msg_door() == UTI_DOOR_NONE, "an invitation has no door");
+
+    be(1, vera);
+    ok(uti_msg_read(inv) == 0, "vera reads it");
+    ok(uti_msg_seat() == UTI_SEAT_OPEN && uti_msg_mark() == 1, "the seat is hers, as X");
+    ok(!strcmp(uti_say(UTI_SAY_HEADLINE_PRE), "Your move"), "and the first move is hers");
+    int mv = uti_hit(.5f, .5f);
+    ok(mv == 40, "a tap in the middle is the centre of the centre");
+    ok(uti_msg_play(mv) && uti_msg_sealed(), "her first move takes the seat");
+    ok(uti_msg_record() == UTI_SEAT_X, "and records it, before anybody asks");
+    ok(uti_msg_seat() == UTI_SEAT_X && !uti_msg_can_move(), "she is X and it is O's turn");
+    ok(uti_msg_text(join, sizeof join) > 0, "the join is one message");
+    ok(!strcmp(uti_say(UTI_SAY_CAPTION), "O to play"), "carrying her move");
+
+    be(0, alex);
+    ok(uti_msg_read(join) == 0 && uti_msg_seat() == UTI_SEAT_O, "alex opens it as O");
+    ok(uti_msg_can_move() && uti_msg_play(36), "and answers");
+    ok(uti_msg_can_replace(37) && !uti_msg_can_replace(36) && !uti_msg_can_replace(40)
+       && !uti_msg_can_replace(0), "a change of mind: another free square of the centre only");
+    ok(uti_draw_outline(4, 1.f) > 0 && uti_draw_outline(-1, 1.f) == 0,
+       "the promise draws round a block, and nothing for none");
+    ok(uti_msg_text(reply, sizeof reply) > 0, "the reply");
+    ok(uti_msg_prefer(reply, join) < 0 && uti_msg_prefer(join, reply) > 0, "the reply outranks the join");
+    ok(uti_msg_same_game(reply, inv), "all one game");
+
+    be(2, cleo);
+    ok(uti_msg_read(reply) == 0 && uti_msg_seat() == UTI_SEAT_SPECTATOR, "cleo watches");
+    ok(!uti_msg_play(0) && !uti_msg_undo(), "and cannot touch it");
+    ok(!strcmp(uti_say(UTI_SAY_WATCH_LINE), " to play") && uti_say_watch_mark() == 1 /* X */
+       && !strcmp(uti_say(UTI_SAY_WATCH_SPOKEN), "X to play"),
+       "the spectator's line: a drawn X, then the words");
+    seat_smoke(join, reply);
+    ok(!strcmp(uti_say_cell(40), "Centre board, centre square, X")
+       && !strcmp(uti_say_cell(36), "Centre board, top left square, O")
+       && !strcmp(uti_say_cell(0), "Top left board, top left square, empty"),
+       "VoiceOver reads each square by block, square and mark");
     {
-        int fits = 1, lo = 1 << 30, hi = 0;
-        for (float w = 200; w <= 430; w += 10) {
-            int np = uti_draw_door(w, 46);
-            if (uti_draw_overflow() || np <= 0) fits = 0;
-            if (np < lo) lo = np;
-            if (np > hi) hi = np;
-        }
-        ok(fits, "the door fits at every width from 200 to 430 points");
-        printf("  door: %d to %d strokes\n", lo, hi);
-
-        int np = uti_draw_door(310, 46);
-        const UtiPoly *cq = uti_polys();
-        int fill = 0, edge = 0, other = 0, last_fill = -1, first_edge = np;
-        for (int i = 0; i < np; i++) {
-            if (cq[i].rgba == 0x25376b73u)      { fill++; last_fill = i; }   /* .40 x .90/.80 */
-            else if (cq[i].rgba == 0x1b2a52ffu) { edge++; if (i < first_edge) first_edge = i; }
-            else other++;
-        }
-        ok(other == 0 && fill > 0, "the door is the rulebook's two inks, hachured");
-        ok(edge == 8, "and edged by four sides drawn twice");
-        ok(last_fill < first_edge, "the fill is laid before the outline, so the edge is on top");
-
-        const float *p = uti_points();
-        int stray = 0, pc = uti_point_count();
-        double sum = 0;
-        for (int i = 0; i < pc * 2; i++) {
-            if (p[i] < -0.05f || p[i] > 1.05f) stray++;
-            sum += p[i];
-        }
-        ok(stray == 0, "no stroke leaves the bar");
-        int again = uti_draw_door(310, 46);
-        double sum2 = 0;
-        for (int i = 0; i < uti_point_count() * 2; i++) sum2 += uti_points()[i];
-        ok(again == np && uti_point_count() == pc && sum2 == sum,
-           "the same door draws the same way twice");
-        /* THE GAP IS A LENGTH IN POINTS, so twice the bar is nearly twice
-         * the hachure (the diagonal's height share does not double, hence
-         * 1.6 rather than 2) - not the same lines spread further apart. */
-        int narrow = uti_draw_door(200, 46) - 8, wide = uti_draw_door(400, 46) - 8;
-        ok(wide * 10 >= narrow * 16,
-           "a wider door gets more hachure at the same gap, not wider hachure");
-
-        /* OPPOSITE EDGES ARE THE SAME WEIGHT (owner, 2026-09-23: the top and
-         * the bottom of Again read as different widths). An edge's weight is
-         * how deep its ink band is across the edge: the spread of every
-         * outline point on that side, in points, whatever the wobble did. */
-        for (float w = 200; w <= 430; w += 23) {
-            const float H = 46;
-            int m = uti_draw_door(w, H);
-            const UtiPoly *q = uti_polys();
-            const float *pt = uti_points();
-            float lo[4] = { 1e9f, 1e9f, 1e9f, 1e9f }, hi[4] = { -1e9f, -1e9f, -1e9f, -1e9f };
-            for (int i = 0; i < m; i++) {
-                if (q[i].rgba != 0x1b2a52ffu) continue;
-                double cx = 0, cy = 0;
-                for (int k = 0; k < q[i].n; k++) {
-                    cx += pt[(q[i].first + k) * 2]; cy += pt[(q[i].first + k) * 2 + 1];
-                }
-                cx /= q[i].n; cy /= q[i].n;
-                /* 0 top, 1 bottom, 2 left, 3 right, by where the stroke sits */
-                double dx = fmin(cx, 1 - cx) * w, dy = fmin(cy, 1 - cy) * H;
-                int side = dy < dx ? (cy < .5 ? 0 : 1) : (cx < .5 ? 2 : 3);
-                for (int k = 0; k < q[i].n; k++) {
-                    float v = side < 2 ? pt[(q[i].first + k) * 2 + 1] * H
-                                       : pt[(q[i].first + k) * 2] * w;
-                    if (side == 1) v = H - v;
-                    if (side == 3) v = w - v;
-                    if (v < lo[side]) lo[side] = v;
-                    if (v > hi[side]) hi[side] = v;
-                }
-            }
-            float top = hi[0] - lo[0], bot = hi[1] - lo[1];
-            float lft = hi[2] - lo[2], rgt = hi[3] - lo[3];
-            if (w == 200)
-                printf("  door edges at %g: top %.2f bottom %.2f left %.2f right %.2f\n",
-                       w, top, bot, lft, rgt);
-            if (fabsf(top - bot) > .05f || fabsf(lft - rgt) > .05f) {
-                printf("  door %g: top %.2f bottom %.2f left %.2f right %.2f\n",
-                       w, top, bot, lft, rgt);
-                ok(0, "the door's opposite edges are the same weight");
-                break;
-            }
-            if (w + 23 > 430) ok(1, "the door's opposite edges are the same weight");
-        }
-
-        /* ALL FOUR EDGES ARE ONE THICKNESS AS DRAWN (owner, four times, last
-         * on TestFlight 1.0(6): "horizontal borders appear less thick than
-         * vertical"). The host stretches the door's 0..1 to w by H, so this
-         * takes the edge ribbons into POINTS the same way and cuts each side
-         * straight across at nine places along it: the ink there is the
-         * union of its two passes' spans on the cut. Every side's mean must
-         * be within half a pixel at 3x of every other's - measured off the
-         * geometry, never off a constant, so a width that is right in one
-         * coordinate system and squashed in the other cannot pass. */
-        {
-            int even = 1;
-            float worst = 0.f, worst_w = 0.f;
-            for (float w = 100; w <= 430; w += 3.5f) {
-                const float H = 46;
-                int m = uti_draw_door(w, H);
-                const UtiPoly *q = uti_polys();
-                const float *pt = uti_points();
-                int rib[4][2], nr[4] = { 0 };
-                for (int i = 0; i < m; i++) {
-                    if (q[i].rgba != 0x1b2a52ffu) continue;
-                    double cx = 0, cy = 0;
-                    for (int k = 0; k < q[i].n; k++) {
-                        cx += pt[(q[i].first + k) * 2]; cy += pt[(q[i].first + k) * 2 + 1];
-                    }
-                    cx /= q[i].n; cy /= q[i].n;
-                    double dx = fmin(cx, 1 - cx) * w, dy = fmin(cy, 1 - cy) * H;
-                    int side = dy < dx ? (cy < .5 ? 0 : 1) : (cx < .5 ? 2 : 3);
-                    if (nr[side] < 2) rib[side][nr[side]++] = i;
-                }
-                float mean[4];
-                for (int sd = 0; sd < 4; sd++) {
-                    float tot = 0.f;
-                    int horiz = sd < 2;
-                    for (int c = 1; c <= 9; c++) {
-                        float at = (horiz ? w : H) * c / 10.f;
-                        float iv[64][2]; int ni = 0;
-                        for (int r = 0; r < nr[sd]; r++) {
-                            const UtiPoly *P = &q[rib[sd][r]];
-                            float xs[256]; int nx = 0;
-                            for (int k = 0, j = P->n - 1; k < P->n; j = k++) {
-                                /* a = along the side, b = across it, in points */
-                                float ak = horiz ? pt[(P->first + k) * 2] * w : pt[(P->first + k) * 2 + 1] * H;
-                                float bk = horiz ? pt[(P->first + k) * 2 + 1] * H : pt[(P->first + k) * 2] * w;
-                                float aj = horiz ? pt[(P->first + j) * 2] * w : pt[(P->first + j) * 2 + 1] * H;
-                                float bj = horiz ? pt[(P->first + j) * 2 + 1] * H : pt[(P->first + j) * 2] * w;
-                                if ((ak > at) == (aj > at) || nx >= 256) continue;
-                                xs[nx++] = bk + (bj - bk) * (at - ak) / (aj - ak);
-                            }
-                            for (int a = 1; a < nx; a++)
-                                for (int b = a; b > 0 && xs[b - 1] > xs[b]; b--) {
-                                    float t = xs[b]; xs[b] = xs[b - 1]; xs[b - 1] = t;
-                                }
-                            for (int a = 0; a + 1 < nx && ni < 64; a += 2) {
-                                iv[ni][0] = xs[a]; iv[ni][1] = xs[a + 1]; ni++;
-                            }
-                        }
-                        for (int a = 1; a < ni; a++)                 /* union */
-                            for (int b = a; b > 0 && iv[b - 1][0] > iv[b][0]; b--) {
-                                float t0 = iv[b][0], t1 = iv[b][1];
-                                iv[b][0] = iv[b - 1][0]; iv[b][1] = iv[b - 1][1];
-                                iv[b - 1][0] = t0; iv[b - 1][1] = t1;
-                            }
-                        float len = 0.f, lo = -1e9f, hi = -1e9f;
-                        for (int a = 0; a < ni; a++) {
-                            if (iv[a][0] > hi) { if (hi > lo) len += hi - lo; lo = iv[a][0]; hi = iv[a][1]; }
-                            else if (iv[a][1] > hi) hi = iv[a][1];
-                        }
-                        if (hi > lo) len += hi - lo;
-                        tot += len;
-                    }
-                    mean[sd] = tot / 9.f;
-                }
-                float mn = fminf(fminf(mean[0], mean[1]), fminf(mean[2], mean[3]));
-                float mx = fmaxf(fmaxf(mean[0], mean[1]), fmaxf(mean[2], mean[3]));
-                if ((mx - mn) * 3.f > worst) { worst = (mx - mn) * 3.f; worst_w = w; }
-                if ((mx - mn) * 3.f > .5f || mn < 2.f) {
-                    if (even) printf("  door %g: top %.2f bottom %.2f left %.2f right %.2f pt\n",
-                                     w, mean[0], mean[1], mean[2], mean[3]);
-                    even = 0;
-                }
-            }
-            printf("  door edges: widest spread %.2f px at 3x (door %g)\n", worst, worst_w);
-            ok(even, "all four door edges are one thickness, within half a pixel at 3x, at every width");
-        }
+        float r[4];
+        ok(uti_cell_rect(40, r) && uti_hit(r[0] + r[2] / 2, r[1] + r[3] / 2) == 40
+           && !uti_cell_rect(81, r), "and its rectangle is the one a tap hits");
     }
 
-    /* ---- the message, end to end as the host drives it: two devices are two
-     * identities, and the only thing that crosses between them is text. */
-    {
-        static const uint8_t alex[16] = { 0xa1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
-        static const uint8_t vera[16] = { 0xb2, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
-        static const uint8_t cleo[16] = { 0xc3, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
-        char inv[160], join[160], reply[160], other[160];
+    ok(uti_msg_check(join) == 0 && uti_msg_check("?v=1&s=2") < 0, "check reads without adopting");
+    ok(uti_msg_seat() == UTI_SEAT_SPECTATOR && uti_n_plies() == 2, "so cleo is still on the reply");
+    ok(uti_msg_read("?v=1&s=2") < 0, "an old-format link is refused");
+    ok(uti_msg_seat() == UTI_SEAT_SPECTATOR && uti_n_plies() == 2, "and changes nothing");
+    ok(uti_msg_prefer("garbage", reply) > 0 && uti_msg_prefer(reply, "garbage") < 0,
+       "an unreadable bubble always loses");
+}
 
-        be(0, alex);
-        ok(uti_msg_open(1726990000, 77) == 1, "alex opens an invitation");
-        ok(uti_msg_look() == 77 && uti_msg_seed() == 1726990000, "on the look the host drew, at the send time");
-        ok(uti_msg_record() == UTI_SEAT_O && uti_seats_dirty(), "and records it as his, before anybody asks");
-        ok(uti_msg_seat() == UTI_SEAT_WAITING, "and waits on it");
-        ok(uti_msg_mark() == 0 && !uti_msg_can_move(), "with no mark and no move");
-        ok(!strcmp(uti_say_by(UTI_SAY_CAPTION, "$A1"), "$A1 wants a game. Tap to take it"),
-           "the invitation's caption names its sender");
-        ok(uti_say_bubble_mark() == 0, "and its bubble draws no mark");
-        ok(uti_msg_text(inv, sizeof inv) > 3 && !strncmp(inv, "?m=", 3), "the invitation is a bare query");
-        ok(uti_msg_door() == UTI_DOOR_NONE, "an invitation has no door");
+/* A SEEDED POSITION, seated from two identities by fiat rather than by a
+ * message. */
+static void seeded_smoke(void)
+{
+    char other[160];
 
-        be(1, vera);
-        ok(uti_msg_read(inv) == 0, "vera reads it");
-        ok(uti_msg_seat() == UTI_SEAT_OPEN && uti_msg_mark() == 1, "the seat is hers, as X");
-        ok(!strcmp(uti_say(UTI_SAY_HEADLINE_PRE), "Your move"), "and the first move is hers");
-        int mv = uti_hit(.5f, .5f);
-        ok(mv == 40, "a tap in the middle is the centre of the centre");
-        ok(uti_msg_play(mv) && uti_msg_sealed(), "her first move takes the seat");
-        ok(uti_msg_record() == UTI_SEAT_X, "and records it, before anybody asks");
-        ok(uti_msg_seat() == UTI_SEAT_X && !uti_msg_can_move(), "she is X and it is O's turn");
-        ok(uti_msg_text(join, sizeof join) > 0, "the join is one message");
-        ok(!strcmp(uti_say(UTI_SAY_CAPTION), "O to play"), "carrying her move");
+    uti_me(alex, 16);
+    uti_new(99);
+    ok(uti_play(4) && uti_play(40), "a seeded position");
+    ok(uti_msg_seat_ids(vera, 16, alex, 16), "seated from two identities");
+    ok(uti_msg_seat() == UTI_SEAT_X && uti_msg_can_move(), "alex is X and on move");
+    /* SEATING BY FIAT IS A NEW GAME (the rig's `devgame`): the seeded
+     * game is a constant seed and two constant tags, so every seeding is
+     * the same record key, and a record from an earlier one - a claim a
+     * stray tap made - seated the dev player on the wrong side forever. */
+    ok(uti_msg_claim(UTI_SEAT_O) && uti_msg_seat() == UTI_SEAT_O, "a stale claim: alex says O");
+    uti_new(99);
+    ok(uti_play(4) && uti_play(40) && uti_msg_seat_ids(vera, 16, alex, 16), "the same game seeded again");
+    ok(uti_msg_record() == 0 && uti_seats_dirty(), "the reseating dropped the stale record");
+    ok(uti_msg_seat() == UTI_SEAT_X && uti_msg_seat_by() == UTI_BY_TAG,
+       "and alex is X again, by his tag");
+    ok(!uti_msg_seat_ids(vera, 16, vera, 16), "nobody plays themselves");
+    ok(uti_msg_text(other, sizeof other) > 0, "and it has a link");
+}
 
-        be(0, alex);
-        ok(uti_msg_read(join) == 0 && uti_msg_seat() == UTI_SEAT_O, "alex opens it as O");
-        ok(uti_msg_can_move() && uti_msg_play(36), "and answers");
-        ok(uti_msg_can_replace(37) && !uti_msg_can_replace(36) && !uti_msg_can_replace(40)
-           && !uti_msg_can_replace(0), "a change of mind: another free square of the centre only");
-        ok(uti_draw_outline(4, 1.f) > 0 && uti_draw_outline(-1, 1.f) == 0,
-           "the promise draws round a block, and nothing for none");
-        ok(uti_msg_text(reply, sizeof reply) > 0, "the reply");
-        ok(uti_msg_prefer(reply, join) < 0 && uti_msg_prefer(join, reply) > 0, "the reply outranks the join");
-        ok(uti_msg_same_game(reply, inv), "all one game");
-
-        be(2, cleo);
-        ok(uti_msg_read(reply) == 0 && uti_msg_seat() == UTI_SEAT_SPECTATOR, "cleo watches");
-        ok(!uti_msg_play(0) && !uti_msg_undo(), "and cannot touch it");
-        ok(!strcmp(uti_say(UTI_SAY_WATCH_LINE), " to play") && uti_say_watch_mark() == 1 /* X */
-           && !strcmp(uti_say(UTI_SAY_WATCH_SPOKEN), "X to play"),
-           "the spectator's line: a drawn X, then the words");
-        /* THE SEAT, RESOLVED (1.0(9)): Messages rotated alex's participant
-         * id, so neither sealed tag is his. His record seats him; without
-         * it, the sender of the bubble does, in a DM only. */
-        {
-            static const uint8_t alex2[16] = { 0xa2, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
-            uint8_t o[UTI_TAG_LEN], x[UTI_TAG_LEN], me[UTI_TAG_LEN], h[UTI_TAG_LEN];
-            ok(uti_msg_seat_by() == UTI_BY_NONE && uti_msg_record() == 0
-               && !strncmp(uti_msg_seat_why(), "spectator by nothing", 20),
-               "cleo watches, and nothing seated her");
-
-            be(0, alex2);                       /* his phone, his records, a new id */
-            ok(uti_msg_read(join) == 0 && uti_msg_seat() == UTI_SEAT_O
-               && uti_msg_seat_by() == UTI_BY_RECORD, "rotated alex is O by the record he wrote at creation");
-            ok(uti_msg_tag(UTI_TAG_ME, me) && uti_msg_tag(UTI_TAG_O, o) && !memcmp(me, o, UTI_TAG_LEN)
-               && uti_msg_tag(UTI_TAG_HASHED, h) && memcmp(h, o, UTI_TAG_LEN),
-               "he plays with O's tag; his own hash is not it");
-            ok(uti_msg_can_move() && uti_msg_play(37), "and he can answer");
-            ok(uti_msg_seat() == UTI_SEAT_O && uti_msg_undo() && uti_msg_seat() == UTI_SEAT_O,
-               "and take it back");
-
-            be(3, alex2);                       /* a new id AND no records: the owner's phone */
-            ok(uti_msg_read(join) == 0 && uti_msg_seat() == UTI_SEAT_SPECTATOR, "with no witness he watches");
-            uti_msg_sender(join, 0, 0);
-            ok(uti_msg_seat() == UTI_SEAT_SPECTATOR, "a group chat infers nothing");
-            uti_msg_sender(reply, 1, 0);
-            ok(uti_msg_seat() == UTI_SEAT_SPECTATOR, "a fact about another message says nothing");
-            ok(!uti_seats_dirty(), "and nothing was recorded");
-            uti_msg_sender(join, 1, 0);
-            ok(uti_msg_seat() == UTI_SEAT_O && uti_msg_seat_by() == UTI_BY_SENDER,
-               "a DM, vera's bubble, O to move: he is O by the sender - asked twice");
-            ok(uti_seats_dirty() && uti_msg_record() == UTI_SEAT_O, "and it is recorded");
-            ok(uti_msg_play(37) && uti_msg_seat() == UTI_SEAT_O && uti_msg_seat_by() == UTI_BY_SENDER,
-               "after his move the sender fact is stale, and the record holds - still the sender's");
-            {
-                uint8_t keep[UTI_SEATS_BYTES];
-                int kn = uti_seats_save(keep, UTI_SEATS_BYTES);
-                uti_seats_load(keep, kn);           /* the next session */
-                ok(uti_msg_seat() == UTI_SEAT_O && uti_msg_seat_by() == UTI_BY_RECORD,
-                   "next session the same record answers as the record");
-            }
-            {
-                uint8_t out[UTI_SEATS_BYTES];
-                ok(uti_seats_save(out, UTI_SEATS_BYTES) == 9 && !uti_seats_dirty()
-                   && uti_seats_save(out, 3) == -1, "the records save, and a short buffer is refused");
-            }
-
-            be(2, cleo);
-            ok(uti_msg_read(reply) == 0 && uti_msg_seat() == UTI_SEAT_SPECTATOR, "cleo is still watching");
-            ok(uti_msg_tag(UTI_TAG_O, o) && uti_msg_tag(UTI_TAG_X, x) && memcmp(o, x, UTI_TAG_LEN),
-               "the diagnostics read both seats' tags");
-            ok(uti_msg_claim(UTI_SEAT_X) && uti_msg_seat() == UTI_SEAT_X
-               && uti_msg_seat_by() == UTI_BY_RECORD, "a claim is a record: cleo claims X and is X");
-            ok(uti_msg_claim(UTI_SEAT_O) && uti_msg_seat() == UTI_SEAT_O && uti_msg_record() == UTI_SEAT_O,
-               "a second claim replaces the first");
-            char mine[160];
-            ok(uti_msg_text(mine, sizeof mine) > 0 && uti_msg_open(1726990777, 3) == 1
-               && uti_msg_seat() == UTI_SEAT_WAITING && uti_msg_seat_by() == UTI_BY_RECORD
-               && uti_msg_tag(UTI_TAG_O, o) && uti_msg_tag(UTI_TAG_HASHED, h) && !memcmp(o, h, UTI_TAG_LEN),
-               "her own new invitation is her hash, and recorded");
-            ok(!uti_msg_claim(UTI_SEAT_X), "nobody claims X on an open invitation");
-            ok(uti_msg_read(mine) == 0 && uti_msg_seat() == UTI_SEAT_O, "the claimed game is still hers");
-            uti_msg_forget();
-            ok(uti_msg_seat() == UTI_SEAT_SPECTATOR && uti_msg_record() == 0, "forgotten, she watches again");
-        }
-        ok(!strcmp(uti_say_cell(40), "Centre board, centre square, X")
-           && !strcmp(uti_say_cell(36), "Centre board, top left square, O")
-           && !strcmp(uti_say_cell(0), "Top left board, top left square, empty"),
-           "VoiceOver reads each square by block, square and mark");
-        {
-            float r[4];
-            ok(uti_cell_rect(40, r) && uti_hit(r[0] + r[2] / 2, r[1] + r[3] / 2) == 40
-               && !uti_cell_rect(81, r), "and its rectangle is the one a tap hits");
-        }
-
-        ok(uti_msg_check(join) == 0 && uti_msg_check("?v=1&s=2") < 0, "check reads without adopting");
-        ok(uti_msg_seat() == UTI_SEAT_SPECTATOR && uti_n_plies() == 2, "so cleo is still on the reply");
-        ok(uti_msg_read("?v=1&s=2") < 0, "an old-format link is refused");
-        ok(uti_msg_seat() == UTI_SEAT_SPECTATOR && uti_n_plies() == 2, "and changes nothing");
-        ok(uti_msg_prefer("garbage", reply) > 0 && uti_msg_prefer(reply, "garbage") < 0,
-           "an unreadable bubble always loses");
-
-        uti_me(alex, 16);
-        uti_new(99);
-        ok(uti_play(4) && uti_play(40), "a seeded position");
-        ok(uti_msg_seat_ids(vera, 16, alex, 16), "seated from two identities");
-        ok(uti_msg_seat() == UTI_SEAT_X && uti_msg_can_move(), "alex is X and on move");
-        /* SEATING BY FIAT IS A NEW GAME (the rig's `devgame`): the seeded
-         * game is a constant seed and two constant tags, so every seeding is
-         * the same record key, and a record from an earlier one - a claim a
-         * stray tap made - seated the dev player on the wrong side forever. */
-        ok(uti_msg_claim(UTI_SEAT_O) && uti_msg_seat() == UTI_SEAT_O, "a stale claim: alex says O");
-        uti_new(99);
-        ok(uti_play(4) && uti_play(40) && uti_msg_seat_ids(vera, 16, alex, 16), "the same game seeded again");
-        ok(uti_msg_record() == 0 && uti_seats_dirty(), "the reseating dropped the stale record");
-        ok(uti_msg_seat() == UTI_SEAT_X && uti_msg_seat_by() == UTI_BY_TAG,
-           "and alex is X again, by his tag");
-        ok(!uti_msg_seat_ids(vera, 16, vera, 16), "nobody plays themselves");
-        ok(uti_msg_text(other, sizeof other) > 0, "and it has a link");
-
-        /* AGAIN THROUGH THE BRIDGE: refused while the game runs; on a
-         * finished game a fresh invitation from me, recorded, on the
-         * finished game's look. The seeded invitation (the store frames')
-         * draws on the seed's low byte, as the seeded game does. */
-        ok(!uti_msg_open_again(1727000000) && uti_n_plies() == 2, "Again is refused on a live game, nothing changes");
-        {
-            static const uint8_t win[] = { 79, 63, 5, 45, 8, 76, 42, 61, 70, 71, 78, 55, 15, 58, 36, 1, 11, 24, 4, 40, 39, 31, 80, 35, 0 };
-            be(1, vera);
-            ok(uti_msg_open(1726995000, 211) == 1, "vera opens a game on look 211");
-            char fin[160];
-            ok(uti_msg_text(fin, sizeof fin) > 0, "and it has a link");
-            be(0, alex);
-            ok(uti_msg_read(fin) == 0 && uti_msg_seat() == UTI_SEAT_OPEN, "alex takes it");
-            int played = 1;
-            for (unsigned i = 0; i < sizeof win && !uti_over(); i++) {
-                if (i % 2) be(1, vera); else be(0, alex);
-                played &= uti_msg_play(win[i]);
-            }
-            ok(played && uti_over() == 1 && uti_msg_door() == UTI_DOOR_AGAIN, "played to X's win: the Again door");
-            be(1, vera);
-            int32_t was = uti_msg_seed();
-            ok(uti_msg_open_again(1727000000) == 1, "vera asks for another");
-            ok(uti_msg_look() == 211 && uti_msg_seed() == 1727000000 && uti_msg_seed() != was,
-               "the rematch keeps the look and takes the send time as its seed");
-            ok(uti_msg_seat() == UTI_SEAT_WAITING && uti_msg_record() == UTI_SEAT_O && uti_n_plies() == 0,
-               "an invitation from her, recorded as hers");
-            ok(uti_msg_open_seeded(77) == 1 && uti_msg_look() == 77 && uti_msg_seed() == 77,
-               "the seeded invitation draws on the seed's low byte");
-        }
-        ok(uti_say(12345)[0] == '\0', "an unknown sentence is empty, never NULL");
-        ok(!strcmp(uti_say(UTI_SAY_DOOR_SEND), "Send a board"), "the send door's words cross the bridge");
-        ok(uti_send_hint_ms() == 3000, "the send hint's fuse crosses the bridge");
+/* AGAIN THROUGH THE BRIDGE: refused while the game runs; on a
+ * finished game a fresh invitation from me, recorded, on the
+ * finished game's look. The seeded invitation (the store frames')
+ * draws on the seed's low byte, as the seeded game does. */
+static void again_smoke(void)
+{
+    ok(!uti_msg_open_again(1727000000) && uti_n_plies() == 2, "Again is refused on a live game, nothing changes");
+    be(1, vera);
+    ok(uti_msg_open(1726995000, 211) == 1, "vera opens a game on look 211");
+    char fin[160];
+    ok(uti_msg_text(fin, sizeof fin) > 0, "and it has a link");
+    be(0, alex);
+    ok(uti_msg_read(fin) == 0 && uti_msg_seat() == UTI_SEAT_OPEN, "alex takes it");
+    int played = 1;
+    for (unsigned i = 0; i < sizeof diag_fixture && !uti_over(); i++) {
+        if (i % 2) be(1, vera); else be(0, alex);
+        played &= uti_msg_play(diag_fixture[i]);
     }
+    ok(played && uti_over() == 1 && uti_msg_door() == UTI_DOOR_AGAIN, "played to X's win: the Again door");
+    be(1, vera);
+    int32_t was = uti_msg_seed();
+    ok(uti_msg_open_again(1727000000) == 1, "vera asks for another");
+    ok(uti_msg_look() == 211 && uti_msg_seed() == 1727000000 && uti_msg_seed() != was,
+       "the rematch keeps the look and takes the send time as its seed");
+    ok(uti_msg_seat() == UTI_SEAT_WAITING && uti_msg_record() == UTI_SEAT_O && uti_n_plies() == 0,
+       "an invitation from her, recorded as hers");
+    ok(uti_msg_open_seeded(77) == 1 && uti_msg_look() == 77 && uti_msg_seed() == 77,
+       "the seeded invitation draws on the seed's low byte");
+}
 
-    {   /* one layout through the bridge: the waiting strip's board is the
-         * sheet's centre, as tall as the strip allows, its words beside it,
-         * and every field crosses intact */
-        UtiSheet L = uti_sheet((UtiSheetIn){ .w = 440.f, .h = 280.f, .kind = UTI_SHEET_WAIT, .words = 1 });
-        ok(fabsf(L.board[0] + L.board[2] / 2 - 220.f) < 1e-3f
-           && fabsf(L.board[1] + L.board[2] / 2 - 140.f) < 1e-3f, "the waiting board is centred on the strip");
-        ok(fabsf(L.board[2] - (280.f - 2.f * L.vpad)) < 1e-3f, "and as tall as the strip allows");
-        ok(L.words_side == 1 && L.words[0] == L.hpad && L.words[0] + L.words[2] < L.board[0],
-           "with its words in the column beside it");
-        ok(L.t == 0.f && L.words_alpha == 1.f && L.door_alpha == 0.f,
-           "shown, and no door");
-        printf("  sheet: waiting strip 440x280 board %.1f at %.1f,%.1f, words %.1f wide\n",
-               L.board[2], L.board[0], L.board[1], L.words[2]);
-    }
+/* ...and the last few words and numbers the drawer asks for. */
+static void say_smoke(void)
+{
+    ok(uti_say(12345)[0] == '\0', "an unknown sentence is empty, never NULL");
+    ok(!strcmp(uti_say(UTI_SAY_DOOR_SEND), "Send a board"), "the send door's words cross the bridge");
+    ok(uti_send_hint_ms() == 3000, "the send hint's fuse crosses the bridge");
+}
 
-    /* THE RULES SHEET through the bridge: eight lines, eight drawings, the
-     * two marked phrases, and the look the host lays them out with. */
-    {
-        int all = uti_rules_count() == 8, at = -1, len = -1;
-        for (int i = 0; i < 8; i++) if (uti_draw_rule(i) < 4 || uti_draw_overflow()) all = 0;
-        ok(all, "the rules: eight lines, each with its drawing");
-        ok(uti_rules_yellow(5, &at, &len) == 1 && at == 4 && len == 14
-           && uti_rules_yellow(6, &at, &len) == 2 && uti_rules_yellow(0, &at, &len) == 0,
-           "the rules: the outlined and the tinted phrase");
-        ok(uti_draw_rule_box(120, 26) > 0 && !uti_draw_overflow(), "the rules: the phrase's pen box");
-        UtiRulesLook L = uti_rules_look();
-        ok(L.art == 62.f && L.body_pt == 15.f && L.ink == 0x1d1b16ffu, "the rules: the look crosses whole");
-    }
+/* one layout through the bridge: the waiting strip's board is the sheet's
+ * centre, as tall as the strip allows, its words beside it, and every field
+ * crosses intact */
+static void sheet_smoke(void)
+{
+    UtiSheet L = uti_sheet((UtiSheetIn){ .w = 440.f, .h = 280.f, .kind = UTI_SHEET_WAIT, .words = 1 });
+    ok(fabsf(L.board[0] + L.board[2] / 2 - 220.f) < 1e-3f
+       && fabsf(L.board[1] + L.board[2] / 2 - 140.f) < 1e-3f, "the waiting board is centred on the strip");
+    ok(fabsf(L.board[2] - (280.f - 2.f * L.vpad)) < 1e-3f, "and as tall as the strip allows");
+    ok(L.words_side == 1 && L.words[0] == L.hpad && L.words[0] + L.words[2] < L.board[0],
+       "with its words in the column beside it");
+    ok(L.t == 0.f && L.words_alpha == 1.f && L.door_alpha == 0.f,
+       "shown, and no door");
+    printf("  sheet: waiting strip 440x280 board %.1f at %.1f,%.1f, words %.1f wide\n",
+           L.board[2], L.board[0], L.board[1], L.words[2]);
+}
+
+/* THE RULES SHEET through the bridge: eight lines, eight drawings, the
+ * two marked phrases, and the look the host lays them out with. */
+static void rules_smoke(void)
+{
+    int all = uti_rules_count() == 8, at = -1, len = -1;
+    for (int i = 0; i < 8; i++) if (uti_draw_rule(i) < 4 || uti_draw_overflow()) all = 0;
+    ok(all, "the rules: eight lines, each with its drawing");
+    ok(uti_rules_yellow(5, &at, &len) == 1 && at == 4 && len == 14
+       && uti_rules_yellow(6, &at, &len) == 2 && uti_rules_yellow(0, &at, &len) == 0,
+       "the rules: the outlined and the tinted phrase");
+    ok(uti_draw_rule_box(120, 26) > 0 && !uti_draw_overflow(), "the rules: the phrase's pen box");
+    UtiRulesLook L = uti_rules_look();
+    ok(L.art == 62.f && L.body_pt == 15.f && L.ink == 0x1d1b16ffu, "the rules: the look crosses whole");
+}
+
+int main(void)
+{
+    game_smoke();
+    code_smoke();
+    draw_smoke();
+    worst_board_smoke();
+    float first;
+    int np = same_draw_smoke(&first);
+    take_smoke(np, first);
+    paper_smoke();
+
+    bubble_smoke();
+    place_smoke();
+    lang_smoke();
+    you_are_smoke();
+    rulebook_smoke();
+    door_smoke();
+    door_edge_weight_smoke();
+    door_edge_thickness_smoke();
+
+    msg_smoke();
+    seeded_smoke();
+    again_smoke();
+    say_smoke();
+    sheet_smoke();
+    rules_smoke();
 
     big_smoke();
 

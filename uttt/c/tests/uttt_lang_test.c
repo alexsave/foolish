@@ -22,6 +22,7 @@
 #include "../src/uttt_draw.h"
 #include "../src/uttt_msg.h"
 #include "../src/uttt_lang.h"
+#include "uttt_fixture.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -274,8 +275,7 @@ static void test_plural(void)
     uttt_lang_set(ru);
     UtttGame g;
     uttt_init(&g);
-    static const uint8_t diag[] = { 79, 63, 5, 45, 8, 76, 42, 61, 70, 71, 78, 55, 15, 58, 36, 1, 11, 24, 4, 40, 39, 31, 80, 35, 0 };
-    for (unsigned i = 0; i < sizeof diag && !g.over; i++) uttt_play(&g, diag[i]);
+    for (unsigned i = 0; i < sizeof diag_fixture && !g.over; i++) uttt_play(&g, diag_fixture[i]);
     OK(g.n_plies == 25 && uttt_say(UTTT_SAY_BUBBLE_PLACE, &g, UTM_SEAT_X, s, sizeof s) > 0 && !strcmp(s, "25 ходов"),
        "plural: the Russian bubble counts 25 ходов (\"%s\")", s);
     uttt_lang_set(0);

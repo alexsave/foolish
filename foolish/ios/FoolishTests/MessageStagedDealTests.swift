@@ -355,6 +355,48 @@ final class MessageStagedDealTests: XCTestCase {
         XCTAssertNil(c.takeReleasedSettlement(), "the release is one-shot")
     }
 
+    /// A REFUSED SEND RELEASES TOO, AND CLOSES THE SEND WINDOW. `markSent` has
+    /// four refusals and they all end in `endRefusedSend`: the REBASE is
+    /// refused, the release is not. The human pressed Send, so the move can no
+    /// longer be taken back, and a hold kept past that point is a board no tap
+    /// can move (owner, 1.0(35): "my board didn't move. It just stayed stuck in
+    /// the good checkmark state").
+    ///
+    /// Posed through the one refusal a test can reach with a settlement held:
+    /// the same staged bout end on a controller that has sealed NOTHING, sent
+    /// with bytes that will not decode - so `markSent` has only the host's
+    /// bytes to go on and the verdict is `unreadable`. A staged send on a
+    /// controller that HAS sealed is never refused on its bytes (its own
+    /// sealed chain is the bubble), which is why `stagedBoutEnd`'s own
+    /// controller cannot pose this.
+    ///
+    /// MUTATION-CHECKED against `endRefusedSend`, both writes: without
+    /// `releaseHoldForSend()` the hold assertions go red, and without
+    /// `sending = false` the send-window one does. Before this test either
+    /// could be deleted with all 919 green.
+    func testARefusedSendStillReleasesTheHoldAndClosesTheSendWindow() async throws {
+        let (staged, _, _) = try await stagedBoutEnd()
+        let parent = try XCTUnwrap(staged.basePayload,
+                                   "fixture: a bout cannot end on a game's first bubble")
+        let env = try await MessageEnvelope.decode(payload: parent, viewer: -1)
+        let c = MessageTurnController(parentPayload: parent, parent: env, mySeat: staged.mySeat)
+        await c.begin()
+        for move in staged.pending { await c.apply(move) }
+        XCTAssertEqual(c.pending, staged.pending, "fixture: the staged turn did not replay")
+        XCTAssertTrue(c.settlementHeld, "fixture: the replayed turn holds no settlement")
+        XCTAssertNil(c.takeReleasedSettlement(), "nothing is released before Send")
+
+        c.markSending()
+        XCTAssertTrue(c.sending, "fixture: the send window is open")
+        await c.markSent(payload: Data([0xde, 0xad, 0xbe, 0xef]))
+
+        XCTAssertEqual(c.pending, staged.pending, "a refusal keeps the staged move")
+        XCTAssertFalse(c.sending, "a refusal must not leave the board stuck mid-send")
+        XCTAssertFalse(c.settlementHeld, "a refusal must not keep the hold: nothing else releases it")
+        XCTAssertNotNil(c.takeReleasedSettlement(),
+                        "the settlement was dropped rather than released - the deal never plays")
+    }
+
     /// `legal` IS `legalPacked`, always. The board plays from the packed menu
     /// (every play is the kernel's answer over it) and reads moves off the
     /// decoded one, and the hold that empties a menu while a settlement stands

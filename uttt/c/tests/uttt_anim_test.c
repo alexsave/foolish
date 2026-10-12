@@ -5,6 +5,7 @@
 #include "../src/uttt_anim.h"
 #include "../src/uttt_draw.h"
 #include "../src/uttt_say.h"
+#include "uttt_fixture.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,6 +23,21 @@ static int same_rect(const float *a, const float *b)
 
 static UtttPt PT[400000];
 static UtttPoly PO[60000];
+
+/* An empty display list over the two buffers above, which every draw in
+ * this file fills, reads and starts over. */
+static void dl_fresh(UtttDL *d)
+{
+    uttt_dl_init(d, PT, 400000, PO, 60000);
+}
+
+/* The diagonal fixture (uttt_fixture.h) played out: its last move wins the
+ * bottom-right block and the game for X. */
+static void play_diag(UtttGame *w)
+{
+    uttt_init(w);
+    for (unsigned i = 0; i < sizeof diag_fixture && !w->over; i++) uttt_play(w, diag_fixture[i]);
+}
 
 /* Summed polygon area of a display list: how much ink it lays down. */
 static float ink_area(const UtttDL *d)
@@ -65,23 +81,25 @@ static double ribbon_width(const UtttDL *d, float top)
     return sa > 0 ? sw / sa : 0;
 }
 
-int main(void)
+/* nothing played: at rest */
+static void test_at_rest(const UtttGame *g)
 {
-    UtttGame g; uttt_init(&g);
     UtttFrame f;
-    float r4[4], r0[4], r9[4], a;
-
-    /* nothing played: at rest */
-    UtttMotion m = uttt_motion(&g, UTTT_CH_STAGE);
+    UtttMotion m = uttt_motion(g, UTTT_CH_STAGE);
     uttt_motion_at(&m, 0, &f);
     OK(m.ch == UTTT_CH_STILL && !f.running && f.mark_t == 1.f, "an empty board does not move");
+}
 
-    /* X in the centre of the centre: from anywhere (9) to the centre (4).
-     * PRE (stage): the ink draws, the highlighter stays on the sheet it was
-     * played in, and the centre block is outlined once the ink is down. */
-    uttt_play(&g, 4 * 9 + 4);
-    m = uttt_motion(&g, UTTT_CH_STAGE);
-    uttt_wash_rect(4, r4, &a); uttt_wash_rect(9, r9, NULL); uttt_wash_rect(0, r0, NULL);
+/* X in the centre of the centre: from anywhere (9) to the centre (4).
+ * PRE (stage): the ink draws, the highlighter stays on the sheet it was
+ * played in, and the centre block is outlined once the ink is down. Leaves
+ * its last frame in `staged`, which a draft shown again has to be. */
+static void test_stage(const UtttGame *g, UtttFrame *staged)
+{
+    UtttMotion m = uttt_motion(g, UTTT_CH_STAGE);
+    UtttFrame f;
+    float r9[4];
+    uttt_wash_rect(9, r9, NULL);
     OK(m.mark == UTTT_X && m.ink_ms == 260, "an X inks in 260 ms");
     OK(m.from == 9 && m.to == 9, "pre: the wash stays where the move was played");
     OK(m.outline == 4 && m.outline_at == 260 && !m.outline_fade,
@@ -114,126 +132,146 @@ int main(void)
     uttt_motion_at(&m, m.end_ms, &f);
     OK(!f.running && f.settled && f.outline_t == 1.f && same_rect(f.wash, r9),
        "at the end: the mark, the wash where it was, the whole outline");
+    *staged = f;
+}
 
-    /* A DRAFT SHOWN AGAIN is that last frame, still */
-    {
-        UtttMotion md = uttt_motion(&g, UTTT_CH_DRAFT);
-        UtttFrame fd; uttt_motion_at(&md, 0, &fd);
-        OK(!fd.running && fd.mark_t == 1.f && fd.outline == 4 && fd.outline_t == 1.f
-           && fd.outline_a == 1.f && same_rect(fd.wash, r9) && !memcmp(fd.wash, f.wash, sizeof f.wash),
-           "draft: the stage's last frame, still");
+/* A DRAFT SHOWN AGAIN is that last frame, still */
+static void test_draft(const UtttGame *g, const UtttFrame *staged)
+{
+    float r9[4];
+    uttt_wash_rect(9, r9, NULL);
+    UtttMotion md = uttt_motion(g, UTTT_CH_DRAFT);
+    UtttFrame fd; uttt_motion_at(&md, 0, &fd);
+    OK(!fd.running && fd.mark_t == 1.f && fd.outline == 4 && fd.outline_t == 1.f
+       && fd.outline_a == 1.f && same_rect(fd.wash, r9) && !memcmp(fd.wash, staged->wash, sizeof staged->wash),
+       "draft: the stage's last frame, still");
+}
+
+/* POST (Send): only the highlighter moves, to the outlined block, and the
+ * outline fades as the tint arrives. */
+static void test_send(const UtttGame *g)
+{
+    float r4[4], r9[4], a;
+    uttt_wash_rect(4, r4, &a); uttt_wash_rect(9, r9, NULL);
+    UtttMotion mb = uttt_motion(g, UTTT_CH_SETTLE);
+    UtttFrame fb;
+    uttt_motion_at(&mb, 0, &fb);
+    OK(fb.running && fb.mark_t == 1.f && same_rect(fb.wash, r9) && fb.outline == 4
+       && fb.outline_t == 1.f && fb.outline_a == 1.f,
+       "post: at Send the mark is down, the wash where it was, the outline whole");
+    uttt_motion_at(&mb, UTTT_MS_WASH_MINE / 2, &fb);
+    OK(!same_rect(fb.wash, r9) && !same_rect(fb.wash, r4) && fb.wash[2] < r9[2] && fb.wash[2] > r4[2],
+       "post: mid-travel the rect is between the sheet and the block");
+    OK(fb.outline_a > 0.f && fb.outline_a < 1.f && fb.mark_t == 1.f, "post: the outline fading, nothing else");
+    uttt_motion_at(&mb, mb.end_ms, &fb);
+    OK(!fb.running && same_rect(fb.wash, r4) && fb.wash_rgba == uttt_wash_rgba(a) && fb.outline < 0,
+       "post: the tint where the outline was, and the outline gone");
+    OK(mb.end_ms == UTTT_MS_WASH_MINE, "post: it lasts the wash's travel");
+}
+
+/* THE OUTLINE IS THE TINT'S RECT AND COLOUR, drawn round by the pen */
+static void test_outline(void)
+{
+    float r4[4];
+    uttt_wash_rect(4, r4, NULL);
+    UtttDL d; dl_fresh(&d);
+    uttt_draw_outline(&d, 4, 7, 1.f);
+    int whole = d.n_poly, ink = whole > 0;
+    float lo[2] = { 9, 9 }, hi[2] = { -9, -9 };
+    for (int i = 0; i < d.n_poly; i++)
+        if ((d.poly[i].rgba >> 8) != (uttt_wash_rgba(1.f) >> 8)) ink = 0;
+    for (int i = 0; i < d.n_pt; i++) {
+        if (d.pt[i].x < lo[0]) lo[0] = d.pt[i].x;
+        if (d.pt[i].y < lo[1]) lo[1] = d.pt[i].y;
+        if (d.pt[i].x > hi[0]) hi[0] = d.pt[i].x;
+        if (d.pt[i].y > hi[1]) hi[1] = d.pt[i].y;
     }
-
-    /* POST (Send): only the highlighter moves, to the outlined block, and the
-     * outline fades as the tint arrives. */
+    OK(ink, "outline: every stroke is the highlighter's colour");
+    /* ROUND THE TINT'S OWN RECT, within a hand's overshoot: a side's ends
+     * and middle stray by the short strokes' rough.js offset (.02 x 1.5),
+     * plus the pen */
+    OK(fabsf(lo[0] - r4[0]) < .05f && fabsf(lo[1] - r4[1]) < .05f
+       && fabsf(hi[0] - (r4[0] + r4[2])) < .05f && fabsf(hi[1] - (r4[1] + r4[3])) < .05f,
+       "outline: it runs round the tint's own rect, within a hand's overshoot");
+    /* A HAND-DRAWN ROUGH.JS RECTANGLE, CALMED (owner, 1.0(7): "still
+     * hand drawn but not so crazy"). Over five seeds the top side strays
+     * from its line by more than a ruled box's (.0033, no roughness) and
+     * by less than a box at the marks' full roughness (.0169): half of it
+     * lands at .0067. Every box has a side past a corner (the fixed
+     * overshoot), and none by more than a small one. */
     {
-        UtttMotion mb = uttt_motion(&g, UTTT_CH_SETTLE);
-        UtttFrame fb;
-        uttt_motion_at(&mb, 0, &fb);
-        OK(fb.running && fb.mark_t == 1.f && same_rect(fb.wash, r9) && fb.outline == 4
-           && fb.outline_t == 1.f && fb.outline_a == 1.f,
-           "post: at Send the mark is down, the wash where it was, the outline whole");
-        uttt_motion_at(&mb, UTTT_MS_WASH_MINE / 2, &fb);
-        OK(!same_rect(fb.wash, r9) && !same_rect(fb.wash, r4) && fb.wash[2] < r9[2] && fb.wash[2] > r4[2],
-           "post: mid-travel the rect is between the sheet and the block");
-        OK(fb.outline_a > 0.f && fb.outline_a < 1.f && fb.mark_t == 1.f, "post: the outline fading, nothing else");
-        uttt_motion_at(&mb, mb.end_ms, &fb);
-        OK(!fb.running && same_rect(fb.wash, r4) && fb.wash_rgba == uttt_wash_rgba(a) && fb.outline < 0,
-           "post: the tint where the outline was, and the outline gone");
-        OK(mb.end_ms == UTTT_MS_WASH_MINE, "post: it lasts the wash's travel");
-    }
-
-    /* THE OUTLINE IS THE TINT'S RECT AND COLOUR, drawn round by the pen */
-    {
-        UtttDL d; uttt_dl_init(&d, PT, 400000, PO, 60000);
-        uttt_draw_outline(&d, 4, 7, 1.f);
-        int whole = d.n_poly, ink = whole > 0;
-        float lo[2] = { 9, 9 }, hi[2] = { -9, -9 };
-        for (int i = 0; i < d.n_poly; i++)
-            if ((d.poly[i].rgba >> 8) != (uttt_wash_rgba(1.f) >> 8)) ink = 0;
-        for (int i = 0; i < d.n_pt; i++) {
-            if (d.pt[i].x < lo[0]) lo[0] = d.pt[i].x;
-            if (d.pt[i].y < lo[1]) lo[1] = d.pt[i].y;
-            if (d.pt[i].x > hi[0]) hi[0] = d.pt[i].x;
-            if (d.pt[i].y > hi[1]) hi[1] = d.pt[i].y;
-        }
-        OK(ink, "outline: every stroke is the highlighter's colour");
-        /* ROUND THE TINT'S OWN RECT, within a hand's overshoot: a side's ends
-         * and middle stray by the short strokes' rough.js offset (.02 x 1.5),
-         * plus the pen */
-        OK(fabsf(lo[0] - r4[0]) < .05f && fabsf(lo[1] - r4[1]) < .05f
-           && fabsf(hi[0] - (r4[0] + r4[2])) < .05f && fabsf(hi[1] - (r4[1] + r4[3])) < .05f,
-           "outline: it runs round the tint's own rect, within a hand's overshoot");
-        /* A HAND-DRAWN ROUGH.JS RECTANGLE, CALMED (owner, 1.0(7): "still
-         * hand drawn but not so crazy"). Over five seeds the top side strays
-         * from its line by more than a ruled box's (.0033, no roughness) and
-         * by less than a box at the marks' full roughness (.0169): half of it
-         * lands at .0067. Every box has a side past a corner (the fixed
-         * overshoot), and none by more than a small one. */
-        {
-            float dev = 0.f, most = 0.f; int crossed = 1;
-            for (int sd = 1; sd <= 5; sd++) {
-                uttt_dl_init(&d, PT, 400000, PO, 60000);
-                uttt_draw_outline(&d, 4, (uint8_t)sd, 1.f);
-                float over = 0.f, top = 0.f;
-                for (int i = 0; i < d.n_pt; i++) {
-                    float x = d.pt[i].x, y = d.pt[i].y;
-                    float o[4] = { r4[0] - x, r4[1] - y, x - r4[0] - r4[2], y - r4[1] - r4[3] };
-                    for (int q = 0; q < 4; q++) if (o[q] > over) over = o[q];
-                    if (x > r4[0] + r4[2] * .2f && x < r4[0] + r4[2] * .8f && y < r4[1] + r4[3] * .25f
-                        && fabsf(y - r4[1]) > top) top = fabsf(y - r4[1]);
-                }
-                dev += top / 5.f;
-                if (over < .012f) crossed = 0;
-                if (over > most) most = over;
+        float dev = 0.f, most = 0.f; int crossed = 1;
+        for (int sd = 1; sd <= 5; sd++) {
+            dl_fresh(&d);
+            uttt_draw_outline(&d, 4, (uint8_t)sd, 1.f);
+            float over = 0.f, top = 0.f;
+            for (int i = 0; i < d.n_pt; i++) {
+                float x = d.pt[i].x, y = d.pt[i].y;
+                float o[4] = { r4[0] - x, r4[1] - y, x - r4[0] - r4[2], y - r4[1] - r4[3] };
+                for (int q = 0; q < 4; q++) if (o[q] > over) over = o[q];
+                if (x > r4[0] + r4[2] * .2f && x < r4[0] + r4[2] * .8f && y < r4[1] + r4[3] * .25f
+                    && fabsf(y - r4[1]) > top) top = fabsf(y - r4[1]);
             }
-            printf("  outline: top-side wobble %.4f, worst corner overshoot %.4f\n", dev, most);
-            OK(dev > .005f, "outline: its sides still wobble by hand, not ruled");
-            OK(dev < .011f, "outline: calmer than a mark's full roughness");
-            OK(crossed, "outline: every box has a side run past its corner");
-            OK(most < .025f, "outline: and only a little past it");
+            dev += top / 5.f;
+            if (over < .012f) crossed = 0;
+            if (over > most) most = over;
         }
-        uttt_dl_init(&d, PT, 400000, PO, 60000);
-        uttt_draw_outline(&d, 4, 7, .5f);
-        int half = d.n_poly;
-        uttt_dl_init(&d, PT, 400000, PO, 60000);
-        uttt_draw_outline(&d, 4, 7, 0.f);
-        int none = d.n_poly;
-        uttt_dl_init(&d, PT, 400000, PO, 60000);
-        uttt_draw_outline(&d, -1, 7, 1.f);
-        OK(half > 0 && half < whole && none == 0 && d.n_poly == 0,
-           "outline: drawn round to t, nothing at 0 or for no block");
-        uttt_dl_init(&d, PT, 400000, PO, 60000);
-        uttt_draw_outline(&d, 4, 7, 1.f);
-        UtttPt p0 = d.pt[d.n_pt / 2];
-        uttt_dl_init(&d, PT, 400000, PO, 60000);
-        uttt_draw_outline(&d, 4, 7, 1.f);
-        OK(d.n_poly == whole && d.pt[d.n_pt / 2].x == p0.x && d.pt[d.n_pt / 2].y == p0.y,
-           "outline: the same seed draws the same wobble on both phones");
+        printf("  outline: top-side wobble %.4f, worst corner overshoot %.4f\n", dev, most);
+        OK(dev > .005f, "outline: its sides still wobble by hand, not ruled");
+        OK(dev < .011f, "outline: calmer than a mark's full roughness");
+        OK(crossed, "outline: every box has a side run past its corner");
+        OK(most < .025f, "outline: and only a little past it");
     }
+    dl_fresh(&d);
+    uttt_draw_outline(&d, 4, 7, .5f);
+    int half = d.n_poly;
+    dl_fresh(&d);
+    uttt_draw_outline(&d, 4, 7, 0.f);
+    int none = d.n_poly;
+    dl_fresh(&d);
+    uttt_draw_outline(&d, -1, 7, 1.f);
+    OK(half > 0 && half < whole && none == 0 && d.n_poly == 0,
+       "outline: drawn round to t, nothing at 0 or for no block");
+    dl_fresh(&d);
+    uttt_draw_outline(&d, 4, 7, 1.f);
+    UtttPt p0 = d.pt[d.n_pt / 2];
+    dl_fresh(&d);
+    uttt_draw_outline(&d, 4, 7, 1.f);
+    OK(d.n_poly == whole && d.pt[d.n_pt / 2].x == p0.x && d.pt[d.n_pt / 2].y == p0.y,
+       "outline: the same seed draws the same wobble on both phones");
+}
 
-    /* O answers into the top-left: centre (4) to top-left (0) */
-    uttt_play(&g, 4 * 9 + 0);
-    m = uttt_motion(&g, UTTT_CH_REPLAY);
+/* O answers into the top-left: centre (4) to top-left (0) */
+static void test_reply(const UtttGame *g)
+{
+    UtttFrame f;
+    float r0[4];
+    uttt_wash_rect(0, r0, NULL);
+    UtttMotion m = uttt_motion(g, UTTT_CH_REPLAY);
     OK(m.mark == UTTT_O && m.ink_ms == 340, "an O inks in 340 ms");
     OK(m.end_ms == 340 + 340, "my own replay rests once my wash arrives");
     OK(m.outline < 0, "my own bubble reopened: no promise, the wash moves");
     uttt_motion_at(&m, 170, &f);
     OK(f.mark_t > .5f && f.mark_t < 1.f, "an O eases out too");
-    m = uttt_motion(&g, UTTT_CH_THEIRS);
+    m = uttt_motion(g, UTTT_CH_THEIRS);
     OK(m.wash_ms == 420 && m.end_ms == 340 + 420, "their move: the wash takes longer, and nothing rings after it");
     OK(m.from == 4 && m.to == 0, "from the centre to the top left");
     OK(m.outline < 0 && m.wash_at == 340, "their move: no outline, the wash moves after the ink");
     uttt_motion_at(&m, 340 + 420, &f);
     OK(same_rect(f.wash, r0), "and lands on it");
-    m = uttt_motion(&g, UTTT_CH_ARRIVAL);
+    m = uttt_motion(g, UTTT_CH_ARRIVAL);
     OK(m.wash_ms == 420 && m.end_ms == 340 + 420, "an arrival is their move too, with no ring");
+}
 
-    /* THE HEADLINE ON THEIR MOVE: "Waiting on <O>" until the ink starts,
-     * nothing while it draws, "Your move" once it has landed (owner,
-     * 2026-09-26). D and E both; my own replay (C) never goes quiet. */
+/* THE HEADLINE ON THEIR MOVE: "Waiting on <O>" until the ink starts,
+ * nothing while it draws, "Your move" once it has landed (owner,
+ * 2026-09-26). D and E both; my own replay (C) never goes quiet. */
+static void test_their_headline(const UtttGame *g)
+{
+    UtttMotion m;
+    UtttFrame f;
     for (int k = 0; k < 2; k++) {
-        m = uttt_motion(&g, k ? UTTT_CH_ARRIVAL : UTTT_CH_THEIRS);
+        m = uttt_motion(g, k ? UTTT_CH_ARRIVAL : UTTT_CH_THEIRS);
         uttt_motion_at(&m, 0, &f);
         OK(f.words == UTTT_WORDS_BEFORE, "their move: the old words until the ink starts");
         int quiet = 1;
@@ -245,744 +283,846 @@ int main(void)
         uttt_motion_at(&m, 340, &f);
         OK(f.words == UTTT_WORDS_NOW, "their move: the new words once it has landed");
     }
-    m = uttt_motion(&g, UTTT_CH_REPLAY);
+    m = uttt_motion(g, UTTT_CH_REPLAY);
     uttt_motion_at(&m, 170, &f);
     OK(f.words == UTTT_WORDS_BEFORE, "my own replay: the old words while the ink draws");
-    m = uttt_motion(&g, UTTT_CH_STAGE);
+    m = uttt_motion(g, UTTT_CH_STAGE);
     uttt_motion_at(&m, 170, &f);
     OK(f.words == UTTT_WORDS_BEFORE, "my own stage: the old words while the ink draws");
     uttt_motion_at(&m, 340, &f);
     OK(f.words == UTTT_WORDS_NOW, "my own stage: the new words once it has landed");
+}
 
-    m = uttt_motion(&g, UTTT_CH_STILL);
+/* ...and no channel at all is the board at rest, the wash where O sent it */
+static void test_still(const UtttGame *g)
+{
+    UtttFrame f;
+    float r0[4];
+    uttt_wash_rect(0, r0, NULL);
+    UtttMotion m = uttt_motion(g, UTTT_CH_STILL);
     uttt_motion_at(&m, 0, &f);
     OK(!f.running && f.mark_t == 1.f && same_rect(f.wash, r0), "STILL is the resting board");
+}
 
-    /* THE CACHE AND THE STROKE ARE THE WHOLE BOARD: under + last == board */
-    {
-        UtttDL d; uttt_dl_init(&d, PT, 400000, PO, 60000);
-        UtttDrawOpts o = uttt_draw_opts(7);
-        o.last = 4 * 9 + 0;
-        uttt_draw_board(&d, &g, &o);
-        int whole = d.n_poly;
-        uttt_dl_init(&d, PT, 400000, PO, 60000);
-        o.mark_t = 0.f;
-        uttt_draw_board(&d, &g, &o);
-        int under = d.n_poly;
-        uttt_dl_init(&d, PT, 400000, PO, 60000);
-        uttt_draw_last(&d, &g, 7, 1.f);
-        OK(under + d.n_poly == whole && d.n_poly > 0, "the cached board plus the last mark is the board");
+/* THE CACHE AND THE STROKE ARE THE WHOLE BOARD: under + last == board */
+static void test_cache_and_stroke(const UtttGame *g)
+{
+    UtttDL d; dl_fresh(&d);
+    UtttDrawOpts o = uttt_draw_opts(7);
+    o.last = 4 * 9 + 0;
+    uttt_draw_board(&d, g, &o);
+    int whole = d.n_poly;
+    dl_fresh(&d);
+    o.mark_t = 0.f;
+    uttt_draw_board(&d, g, &o);
+    int under = d.n_poly;
+    dl_fresh(&d);
+    uttt_draw_last(&d, g, 7, 1.f);
+    OK(under + d.n_poly == whole && d.n_poly > 0, "the cached board plus the last mark is the board");
+}
+
+/* THE HEADLINE'S MARK IS THE LAST MARK'S WEIGHT (owner, 2026-09-25):
+ * "Waiting on O" draws its strokes as many points wide as the board's
+ * newest mark. Drawn the same size as it (`board` 9.9), its ink per
+ * square of side is the last mark's within a fifth, for X and O; drawn
+ * at half that size its strokes keep their points, so twice the ink per
+ * square of side; the "you are" mark keeps its lighter pen. */
+static void test_headline_mark(void)
+{
+    int heavy_ok = 1, plain_light = 1;
+    for (int m = UTTT_X; m <= UTTT_O; m++) {
+        UtttGame h; uttt_init(&h);
+        uttt_play(&h, 40);
+        if (m == UTTT_O) uttt_play(&h, 36);
+        int mv = m == UTTT_X ? 40 : 36;
+        UtttDL d; dl_fresh(&d);
+        uttt_draw_last(&d, &h, 7, 1.f);
+        float s = 1.f / 9.f * .8f, last = ink_area(&d) / (s * s);
+        dl_fresh(&d);
+        float same = UTTT_MARK_SIDE / s;       /* the board mark's size */
+        uttt_draw_mark(&d, m, 11, same);
+        float heavy = ink_area(&d) / (UTTT_MARK_SIDE * UTTT_MARK_SIDE);
+        dl_fresh(&d);
+        uttt_draw_mark(&d, m, 11, 2.f * same);
+        float small = ink_area(&d) / (UTTT_MARK_SIDE * UTTT_MARK_SIDE);
+        dl_fresh(&d);
+        uttt_draw_mark(&d, m, 11, 0.f);
+        float plain = ink_area(&d) / (UTTT_MARK_SIDE * UTTT_MARK_SIDE);
+        printf("  mark %d: ink per side^2 last %.4f heavy %.4f half-size %.4f plain %.4f (last at %d)\n",
+               m, last, heavy, small, plain, mv);
+        if (fabsf(heavy / last - 1.f) > .2f || small < 1.6f * heavy) heavy_ok = 0;
+        if (plain > .75f * last) plain_light = 0;
     }
+    OK(heavy_ok, "the headline's mark is drawn at the last move's weight");
+    OK(plain_light, "and the \"you are\" mark keeps its lighter pen");
+}
 
-    /* THE HEADLINE'S MARK IS THE LAST MARK'S WEIGHT (owner, 2026-09-25):
-     * "Waiting on O" draws its strokes as many points wide as the board's
-     * newest mark. Drawn the same size as it (`board` 9.9), its ink per
-     * square of side is the last mark's within a fifth, for X and O; drawn
-     * at half that size its strokes keep their points, so twice the ink per
-     * square of side; the "you are" mark keeps its lighter pen. */
-    {
-        int heavy_ok = 1, plain_light = 1;
-        for (int m = UTTT_X; m <= UTTT_O; m++) {
-            UtttGame h; uttt_init(&h);
-            uttt_play(&h, 40);
-            if (m == UTTT_O) uttt_play(&h, 36);
-            int mv = m == UTTT_X ? 40 : 36;
-            UtttDL d; uttt_dl_init(&d, PT, 400000, PO, 60000);
-            uttt_draw_last(&d, &h, 7, 1.f);
-            float s = 1.f / 9.f * .8f, last = ink_area(&d) / (s * s);
-            uttt_dl_init(&d, PT, 400000, PO, 60000);
-            float same = UTTT_MARK_SIDE / s;       /* the board mark's size */
-            uttt_draw_mark(&d, m, 11, same);
-            float heavy = ink_area(&d) / (UTTT_MARK_SIDE * UTTT_MARK_SIDE);
-            uttt_dl_init(&d, PT, 400000, PO, 60000);
-            uttt_draw_mark(&d, m, 11, 2.f * same);
-            float small = ink_area(&d) / (UTTT_MARK_SIDE * UTTT_MARK_SIDE);
-            uttt_dl_init(&d, PT, 400000, PO, 60000);
-            uttt_draw_mark(&d, m, 11, 0.f);
-            float plain = ink_area(&d) / (UTTT_MARK_SIDE * UTTT_MARK_SIDE);
-            printf("  mark %d: ink per side^2 last %.4f heavy %.4f half-size %.4f plain %.4f (last at %d)\n",
-                   m, last, heavy, small, plain, mv);
-            if (fabsf(heavy / last - 1.f) > .2f || small < 1.6f * heavy) heavy_ok = 0;
-            if (plain > .75f * last) plain_light = 0;
-        }
-        OK(heavy_ok, "the headline's mark is drawn at the last move's weight");
-        OK(plain_light, "and the \"you are\" mark keeps its lighter pen");
+/* THE SETTLEMENT (UI.html 04, 05): the final move of the diagonal
+ * fixture wins the bottom-right block and the game. At stage only the
+ * mark draws and the big mark and the line wait for Send; at Send (B)
+ * the big mark falls, then the line; an opened or arrived bubble plays
+ * both halves after the ink; and the cache plus the stroke plus the
+ * settlement is the whole board. */
+static void test_settlement(void)
+{
+    UtttGame w; play_diag(&w);
+    UtttFrame f;
+    UtttMotion ms = uttt_motion(&w, UTTT_CH_STAGE);
+    float rf[4], fa = 0.f; uttt_wash_rect(ms.from, rf, &fa);
+    OK(ms.fall_at == ms.ink_ms && ms.line_at == ms.ink_ms + UTTT_MS_FALL
+       && ms.end_ms == ms.line_at + UTTT_MS_LINE,
+       "pre: the winning move draws its mark, then the big mark, then the line");
+    OK(ms.outline < 0, "pre: a game it ended sends nobody anywhere - no outline");
+    uttt_motion_at(&ms, ms.ink_ms - 1, &f);
+    OK(f.fall_t == 0.f && f.line_t == 0.f, "pre: nothing of the settlement before the ink lands");
+    uttt_motion_at(&ms, ms.fall_at + UTTT_MS_FALL / 2, &f);
+    OK(f.mark_t == 1.f && f.fall_t > .3f && f.fall_t < 1.f && f.line_t == 0.f,
+       "pre: the big mark falls after the small one");
+    uttt_motion_at(&ms, ms.line_at + UTTT_MS_LINE / 2, &f);
+    OK(f.fall_t == 1.f && f.line_t > .3f && f.line_t < 1.f, "pre: then the line");
+    OK(f.wash[2] == 0.f && (f.wash_rgba & 0xff) == 0,
+       "pre: a finished game has no live board - the wash is gone once the ink lands");
+    uttt_motion_at(&ms, ms.ink_ms / 2, &f);
+    OK(same_rect(f.wash, rf) && (f.wash_rgba & 0xff) > 0
+       && (f.wash_rgba & 0xff) < (uttt_wash_rgba(fa) & 0xff),
+       "pre: the winning move's wash leaves with its ink, where it was");
+    uttt_motion_at(&ms, ms.end_ms, &f);
+    OK(!f.running && f.fall_t == 1.f && f.line_t == 1.f && f.wash[2] == 0.f,
+       "pre: at rest, the whole settlement and no tint");
+    UtttMotion mb = uttt_motion(&w, UTTT_CH_SETTLE);
+    uttt_motion_at(&mb, 0, &f);
+    OK(f.mark_t == 1.f && f.fall_t == 1.f && f.line_t == 1.f && f.running,
+       "post: at Send the whole settlement is already down");
+    uttt_motion_at(&mb, 0, &f);
+    int none = f.wash[2] == 0.f;
+    uttt_motion_at(&mb, mb.end_ms / 2, &f);
+    OK(none && f.fall_t == 1.f && f.line_t == 1.f && f.wash[2] == 0.f,
+       "post: the game is over and the stage took the wash - Send brings none back");
+    UtttMotion md = uttt_motion(&w, UTTT_CH_THEIRS);
+    uttt_motion_at(&md, md.ink_ms - 1, &f);
+    OK(f.fall_t == 0.f && md.fall_at == md.ink_ms && md.line_at == md.ink_ms + UTTT_MS_FALL
+       && md.wash_at == md.line_at + UTTT_MS_LINE && md.outline < 0,
+       "theirs: small mark, big mark, line, then the highlighter");
+    UtttMotion mr = uttt_motion(&w, UTTT_CH_DRAFT);
+    uttt_motion_at(&mr, 0, &f);
+    OK(!f.running && f.mark_t == 1.f && f.fall_t == 1.f && f.line_t == 1.f && f.wash[2] == 0.f,
+       "draft: the winning move staged, shown again, has its settlement and no tint");
+}
+
+/* a move that took a block and did not end the game: a prefix of
+ * the fixture whose last move won its block */
+static void test_block_taking_move(void)
+{
+    UtttFrame f;
+    int took = 0;
+    for (unsigned k = 1; k < sizeof diag_fixture - 1 && !took; k++) {
+        UtttGame p; uttt_init(&p);
+        for (unsigned i = 0; i < k; i++) uttt_play(&p, diag_fixture[i]);
+        int b = diag_fixture[k - 1] / 9;
+        if (p.over || (uttt_block(&p, b) != UTTT_X && uttt_block(&p, b) != UTTT_O)) continue;
+        took = 1;
+        UtttMotion mps = uttt_motion(&p, UTTT_CH_STAGE);
+        OK(mps.fall_at == mps.ink_ms && mps.line_at < 0 && mps.outline == uttt_active(&p)
+           && mps.outline_at == mps.ink_ms + UTTT_MS_FALL,
+           "pre: a block-taking move draws its big mark, then the outline");
+        UtttMotion mp = uttt_motion(&p, UTTT_CH_DRAFT);
+        UtttFrame fs;
+        uttt_motion_at(&mp, 0, &f);
+        uttt_motion_at(&mps, mps.end_ms, &fs);
+        OK(!f.running && f.fall_t == 1.f && f.mark_t == 1.f && f.outline == fs.outline
+           && !memcmp(f.wash, fs.wash, sizeof f.wash) && f.wash_rgba == fs.wash_rgba,
+           "draft: a block-taking move staged, shown again, is the stage's last frame");
     }
+    OK(took, "draft: the fixture has a block-taking move before the last");
+}
 
-    /* THE SETTLEMENT (UI.html 04, 05): the final move of the diagonal
-     * fixture wins the bottom-right block and the game. At stage only the
-     * mark draws and the big mark and the line wait for Send; at Send (B)
-     * the big mark falls, then the line; an opened or arrived bubble plays
-     * both halves after the ink; and the cache plus the stroke plus the
-     * settlement is the whole board. */
-    {
-        static const uint8_t diag[] = { 79, 63, 5, 45, 8, 76, 42, 61, 70, 71, 78, 55, 15,
-                                        58, 36, 1, 11, 24, 4, 40, 39, 31, 80, 35, 0 };
-        UtttGame w; uttt_init(&w);
-        for (unsigned i = 0; i < sizeof diag && !w.over; i++) uttt_play(&w, diag[i]);
-        UtttMotion ms = uttt_motion(&w, UTTT_CH_STAGE);
-        float rf[4], fa = 0.f; uttt_wash_rect(ms.from, rf, &fa);
-        OK(ms.fall_at == ms.ink_ms && ms.line_at == ms.ink_ms + UTTT_MS_FALL
-           && ms.end_ms == ms.line_at + UTTT_MS_LINE,
-           "pre: the winning move draws its mark, then the big mark, then the line");
-        OK(ms.outline < 0, "pre: a game it ended sends nobody anywhere - no outline");
-        uttt_motion_at(&ms, ms.ink_ms - 1, &f);
-        OK(f.fall_t == 0.f && f.line_t == 0.f, "pre: nothing of the settlement before the ink lands");
-        uttt_motion_at(&ms, ms.fall_at + UTTT_MS_FALL / 2, &f);
-        OK(f.mark_t == 1.f && f.fall_t > .3f && f.fall_t < 1.f && f.line_t == 0.f,
-           "pre: the big mark falls after the small one");
-        uttt_motion_at(&ms, ms.line_at + UTTT_MS_LINE / 2, &f);
-        OK(f.fall_t == 1.f && f.line_t > .3f && f.line_t < 1.f, "pre: then the line");
-        OK(f.wash[2] == 0.f && (f.wash_rgba & 0xff) == 0,
-           "pre: a finished game has no live board - the wash is gone once the ink lands");
-        uttt_motion_at(&ms, ms.ink_ms / 2, &f);
-        OK(same_rect(f.wash, rf) && (f.wash_rgba & 0xff) > 0
-           && (f.wash_rgba & 0xff) < (uttt_wash_rgba(fa) & 0xff),
-           "pre: the winning move's wash leaves with its ink, where it was");
-        uttt_motion_at(&ms, ms.end_ms, &f);
-        OK(!f.running && f.fall_t == 1.f && f.line_t == 1.f && f.wash[2] == 0.f,
-           "pre: at rest, the whole settlement and no tint");
-        UtttMotion mb = uttt_motion(&w, UTTT_CH_SETTLE);
-        uttt_motion_at(&mb, 0, &f);
-        OK(f.mark_t == 1.f && f.fall_t == 1.f && f.line_t == 1.f && f.running,
-           "post: at Send the whole settlement is already down");
-        uttt_motion_at(&mb, 0, &f);
-        int none = f.wash[2] == 0.f;
-        uttt_motion_at(&mb, mb.end_ms / 2, &f);
-        OK(none && f.fall_t == 1.f && f.line_t == 1.f && f.wash[2] == 0.f,
-           "post: the game is over and the stage took the wash - Send brings none back");
-        UtttMotion md = uttt_motion(&w, UTTT_CH_THEIRS);
-        uttt_motion_at(&md, md.ink_ms - 1, &f);
-        OK(f.fall_t == 0.f && md.fall_at == md.ink_ms && md.line_at == md.ink_ms + UTTT_MS_FALL
-           && md.wash_at == md.line_at + UTTT_MS_LINE && md.outline < 0,
-           "theirs: small mark, big mark, line, then the highlighter");
-        UtttMotion mr = uttt_motion(&w, UTTT_CH_DRAFT);
-        uttt_motion_at(&mr, 0, &f);
-        OK(!f.running && f.mark_t == 1.f && f.fall_t == 1.f && f.line_t == 1.f && f.wash[2] == 0.f,
-           "draft: the winning move staged, shown again, has its settlement and no tint");
-        /* a move that took a block and did not end the game: a prefix of
-         * the fixture whose last move won its block */
-        int took = 0;
-        for (unsigned k = 1; k < sizeof diag - 1 && !took; k++) {
-            UtttGame p; uttt_init(&p);
-            for (unsigned i = 0; i < k; i++) uttt_play(&p, diag[i]);
-            int b = diag[k - 1] / 9;
-            if (p.over || (uttt_block(&p, b) != UTTT_X && uttt_block(&p, b) != UTTT_O)) continue;
-            took = 1;
-            UtttMotion mps = uttt_motion(&p, UTTT_CH_STAGE);
-            OK(mps.fall_at == mps.ink_ms && mps.line_at < 0 && mps.outline == uttt_active(&p)
-               && mps.outline_at == mps.ink_ms + UTTT_MS_FALL,
-               "pre: a block-taking move draws its big mark, then the outline");
-            UtttMotion mp = uttt_motion(&p, UTTT_CH_DRAFT);
-            UtttFrame fs;
-            uttt_motion_at(&mp, 0, &f);
-            uttt_motion_at(&mps, mps.end_ms, &fs);
-            OK(!f.running && f.fall_t == 1.f && f.mark_t == 1.f && f.outline == fs.outline
-               && !memcmp(f.wash, fs.wash, sizeof f.wash) && f.wash_rgba == fs.wash_rgba,
-               "draft: a block-taking move staged, shown again, is the stage's last frame");
-        }
-        OK(took, "draft: the fixture has a block-taking move before the last");
+/* ...and the cache plus the stroke plus the settlement is the whole board */
+static void test_settlement_whole(void)
+{
+    UtttGame w; play_diag(&w);
+    UtttDL d; dl_fresh(&d);
+    UtttDrawOpts o = uttt_draw_opts(7);
+    o.last = w.move[w.n_plies - 1];
+    uttt_draw_board(&d, &w, &o);
+    int whole = d.n_poly;
+    dl_fresh(&d);
+    o.mark_t = 0.f; o.fall_t = 0.f; o.meta_t = 0.f;
+    uttt_draw_board(&d, &w, &o);
+    int under = d.n_poly;
+    dl_fresh(&d);
+    uttt_draw_last(&d, &w, 7, 1.f);
+    int last = d.n_poly;
+    dl_fresh(&d);
+    uttt_draw_settle(&d, &w, 7, 1.f, 1.f);
+    OK(under + last + d.n_poly == whole && d.n_poly > 0,
+       "settle: the cache, the last mark and the settlement are the whole board");
+}
 
-        UtttDL d; uttt_dl_init(&d, PT, 400000, PO, 60000);
-        UtttDrawOpts o = uttt_draw_opts(7);
-        o.last = w.move[w.n_plies - 1];
-        uttt_draw_board(&d, &w, &o);
-        int whole = d.n_poly;
-        uttt_dl_init(&d, PT, 400000, PO, 60000);
-        o.mark_t = 0.f; o.fall_t = 0.f; o.meta_t = 0.f;
-        uttt_draw_board(&d, &w, &o);
-        int under = d.n_poly;
-        uttt_dl_init(&d, PT, 400000, PO, 60000);
-        uttt_draw_last(&d, &w, 7, 1.f);
-        int last = d.n_poly;
-        uttt_dl_init(&d, PT, 400000, PO, 60000);
-        uttt_draw_settle(&d, &w, 7, 1.f, 1.f);
-        OK(under + last + d.n_poly == whole && d.n_poly > 0,
-           "settle: the cache, the last mark and the settlement are the whole board");
+/* THE WIN LINE IS THE HEAVIEST INK ON THE SHEET (owner, 2026-09-23:
+ * "winning diagonal needs to be thicker"): its width, area over half the
+ * perimeter of each ribbon and weighted by area, is at least twice the
+ * major grid lines' - the widest ribbons of an empty board. */
+static void test_win_line_weight(void)
+{
+    UtttGame w; play_diag(&w);
+    UtttDL d; dl_fresh(&d);
+    uttt_draw_settle(&d, &w, 7, 0.f, 1.f);
+    double line = ribbon_width(&d, 0.f);
+    UtttGame e; uttt_init(&e);
+    dl_fresh(&d);
+    UtttDrawOpts o = uttt_draw_opts(7);
+    o.active = -1;
+    uttt_draw_board(&d, &e, &o);
+    double major = ribbon_width(&d, .9f);
+    printf("  win line %.5f, major grid %.5f (x%.2f)\n", line, major, line / major);
+    OK(line > 0 && major > 0 && line >= 2.0 * major, "the win line is at least twice the major grid line");
+}
+
+/* THE MAIN LINES STOP NEAR THE BOARD, as UI.html draws them (5%) */
+static void test_main_lines_reach(const UtttGame *g)
+{
+    UtttDL d; dl_fresh(&d);
+    UtttDrawOpts o = uttt_draw_opts(7);
+    uttt_draw_board(&d, g, &o);
+    float lo = 1e9f, hi = -1e9f;
+    for (int i = 0; i < d.n_pt; i++) {
+        if (d.pt[i].x < lo) lo = d.pt[i].x;
+        if (d.pt[i].x > hi) hi = d.pt[i].x;
     }
+    printf("  drawer board ink: x %.3f .. %.3f\n", lo, hi);
+    OK(lo > -.07f && hi < 1.07f, "the drawer's lines run no more than 7% past the board");
+}
 
-    /* THE WIN LINE IS THE HEAVIEST INK ON THE SHEET (owner, 2026-09-23:
-     * "winning diagonal needs to be thicker"): its width, area over half the
-     * perimeter of each ribbon and weighted by area, is at least twice the
-     * major grid lines' - the widest ribbons of an empty board. */
-    {
-        static const uint8_t diag[] = { 79, 63, 5, 45, 8, 76, 42, 61, 70, 71, 78, 55, 15,
-                                        58, 36, 1, 11, 24, 4, 40, 39, 31, 80, 35, 0 };
-        UtttGame w; uttt_init(&w);
-        for (unsigned i = 0; i < sizeof diag && !w.over; i++) uttt_play(&w, diag[i]);
-        UtttDL d; uttt_dl_init(&d, PT, 400000, PO, 60000);
-        uttt_draw_settle(&d, &w, 7, 0.f, 1.f);
-        double line = ribbon_width(&d, 0.f);
-        UtttGame e; uttt_init(&e);
-        uttt_dl_init(&d, PT, 400000, PO, 60000);
-        UtttDrawOpts o = uttt_draw_opts(7);
-        o.active = -1;
+/* THE RULEBOOK DOOR IS ONE SIZE AT EVERY HEIGHT (owner, 2026-09-23): a
+ * bit bigger than it was collapsed (38), a bit smaller than expanded
+ * (54) - the midpoint, 46 - and on the strip its column is wide enough
+ * for it, so it never sits on the board's ink. */
+static void test_door_size(void)
+{
+    int one = 1, fits = 1;
+    for (float h = 220.f; h <= 900.f; h += .25f) {
+        UtttSheet o;
+        uttt_sheet(&(UtttSheetIn){ .w = 440.f, .h = h, .kind = UTTT_SHEET_PLAY }, &o);
+        if (o.door != 46.f) one = 0;
+        if (o.t == 0.f && o.col < o.door) fits = 0;
+    }
+    OK(one, "the rulebook door is 46 points at every drawer height");
+    OK(fits, "on the strip the door's column is as wide as the door");
+}
+
+/* THE FOUR MAIN LINES ARE CENTRED ON THE GRID (owner, 2026-09-23: "major
+ * grid lines aren't centered on the grid"). Measured on the INK, not on
+ * the endpoints asked for: those were always symmetric, and the pen still
+ * ran long at the start and short at the end. For each main line, the ink
+ * within a few percent of its 1/3 or 2/3 track is that line; its overshoot
+ * past the board at each end, averaged over many games, must match, and
+ * its track must sit on the block boundary. */
+static void test_main_lines_centred(void)
+{
+    UtttGame e; uttt_init(&e);
+    double bias[4] = { 0 }, track[4] = { 0 }, worst = 0;
+    int nan = 0;
+    const int SEEDS = 60;
+    for (int sd = 1; sd <= SEEDS; sd++) {
+        UtttDL d; dl_fresh(&d);
+        UtttDrawOpts o = uttt_draw_opts((uint8_t)(sd * 4 + 1));
         uttt_draw_board(&d, &e, &o);
-        double major = ribbon_width(&d, .9f);
-        printf("  win line %.5f, major grid %.5f (x%.2f)\n", line, major, line / major);
-        OK(line > 0 && major > 0 && line >= 2.0 * major, "the win line is at least twice the major grid line");
-    }
-
-    /* THE MAIN LINES STOP NEAR THE BOARD, as UI.html draws them (5%) */
-    {
-        UtttDL d; uttt_dl_init(&d, PT, 400000, PO, 60000);
-        UtttDrawOpts o = uttt_draw_opts(7);
-        uttt_draw_board(&d, &g, &o);
-        float lo = 1e9f, hi = -1e9f;
-        for (int i = 0; i < d.n_pt; i++) {
-            if (d.pt[i].x < lo) lo = d.pt[i].x;
-            if (d.pt[i].x > hi) hi = d.pt[i].x;
+        for (int i = 0; i < d.n_pt; i++)
+            if (isnan(d.pt[i].x) || isnan(d.pt[i].y)) nan++;
+        for (int L = 0; L < 4; L++) {
+            /* 0,1 vertical at x = 1/3, 2/3; 2,3 horizontal at y = 1/3, 2/3 */
+            float at = (L % 2 + 1) / 3.f, lo = 1e9f, hi = -1e9f;
+            double sum = 0; int n = 0;
+            for (int i = 0; i < d.n_pt; i++) {
+                float across = L < 2 ? d.pt[i].x : d.pt[i].y;
+                float along  = L < 2 ? d.pt[i].y : d.pt[i].x;
+                if (isnan(across) || isnan(along) || fabsf(across - at) > .03f) continue;
+                if (along > -.005f && along < 1.005f) continue;  /* only past the board */
+                if (along < lo) lo = along;
+                if (along > hi) hi = along;
+                sum += across; n++;
+            }
+            double b = (-lo) - (hi - 1.f);
+            bias[L] += b / SEEDS;
+            track[L] += (n ? sum / n - at : 1) / SEEDS;
+            if (fabs(b) > worst) worst = fabs(b);
         }
-        printf("  drawer board ink: x %.3f .. %.3f\n", lo, hi);
-        OK(lo > -.07f && hi < 1.07f, "the drawer's lines run no more than 7% past the board");
     }
+    printf("  main lines, start minus end overshoot: %.4f %.4f %.4f %.4f (worst game %.3f)\n",
+           bias[0], bias[1], bias[2], bias[3], worst);
+    printf("  main lines, track off 1/3 or 2/3: %.4f %.4f %.4f %.4f\n",
+           track[0], track[1], track[2], track[3]);
+    int even = 1, on = 1;
+    for (int L = 0; L < 4; L++) {
+        if (fabs(bias[L]) > .004) even = 0;
+        if (fabs(track[L]) > .003) on = 0;
+    }
+    OK(nan == 0, "no point of the board is NaN (a lifted stroke's last segment was)");
+    OK(even, "each main line overshoots the board by the same at both ends");
+    OK(on, "each main line sits on its block boundary");
+    OK(worst < .03, "no game's main line is more than 3% longer at one end");
+}
 
-    /* THE RULEBOOK DOOR IS ONE SIZE AT EVERY HEIGHT (owner, 2026-09-23): a
-     * bit bigger than it was collapsed (38), a bit smaller than expanded
-     * (54) - the midpoint, 46 - and on the strip its column is wide enough
-     * for it, so it never sits on the board's ink. */
-    {
-        int one = 1, fits = 1;
+/* THE SHEETS THE LAYOUT TESTS BELOW ARE HELD ON: the phone widths (the SE, a
+ * 6.1", the owner's 15 Pro Max and the 17 Pro Max), the four screens, and
+ * seven drawers a phone really shows. */
+static const float SHEET_W[] = { 375.f, 393.f, 430.f, 440.f };
+static const struct { int kind, words; } SHEET_K[] = {
+    { UTTT_SHEET_PLAY, 0 },           /* a live game                  */
+    { UTTT_SHEET_PLAY, 1 },           /* the end: the verdict         */
+    { UTTT_SHEET_WATCH, 1 },          /* the spectator's line         */
+    { UTTT_SHEET_WAIT, 1 },           /* the waiting words            */
+};
+static const struct { float w, h; } SHEET_D[] = {
+    { 440.f, 274.f }, { 440.f, 340.f }, { 393.f, 300.f }, { 375.f, 250.f },   /* compact  */
+    { 440.f, 800.f }, { 393.f, 700.f }, { 375.f, 541.f },                     /* expanded */
+};
+
+/* ONE LAYOUT, EVERY SCREEN: the board's centre is the sheet's centre at
+ * every height, its side never steps as the drawer moves, it is as large
+ * as the sheet allows, and the words sit clear of it (docs/UI.html "What
+ * holds which edge": the board holds the centre and is the only thing
+ * that resizes; owner 2026-09-23: the board as large as possible). */
+static void test_sheet_every_height(void)
+{
+    float reach = .135f * UTTT_REACH;
+    int centred = 1, clear = 1, onsheet = 1, grows = 1, squeezed = 0, jumps = 0;
+    int sub_cramped = 0, sub_jumps = 0;
+    float worst = 0.f;
+    for (int wi = 0; wi < 4; wi++)
+    for (int ki = 0; ki < 4; ki++) {
+        UtttSheetIn in = { .w = SHEET_W[wi], .kind = SHEET_K[ki].kind, .words = SHEET_K[ki].words };
+        float prev = -1.f, pa = -1.f, pb = -1.f, ps = -1.f;
         for (float h = 220.f; h <= 900.f; h += .25f) {
             UtttSheet o;
-            uttt_sheet(&(UtttSheetIn){ .w = 440.f, .h = h, .kind = UTTT_SHEET_PLAY }, &o);
-            if (o.door != 46.f) one = 0;
-            if (o.t == 0.f && o.col < o.door) fits = 0;
+            in.h = h;
+            uttt_sheet(&in, &o);
+            float s = o.board[2];
+            if (fabsf(o.board[0] + s / 2 - in.w / 2) > 1e-3f
+                || fabsf(o.board[1] + s / 2 - h / 2) > 1e-3f) centred = 0;
+            if (prev >= 0.f && fabsf(s - prev) > worst) worst = fabsf(s - prev);
+            /* AT EVERY HEIGHT, not only on the strip: a board that
+             * shrank while the drawer grew reversed its size mid-drag
+             * (462-485 points on a Pro Max, TESTFLIGHT_PLAN 17) */
+            if (prev >= 0.f && s < prev - 1e-3f) grows = 0;
+            prev = s;
+            if (s * (1.f + 2.f * reach) > in.w - 2.f * o.hpad + 1e-3f || s > h - 2.f * o.vpad + 1e-3f)
+                onsheet = 0;
+            /* the words' box: beside the ink on the strip, above the
+             * square in the band, and on the sheet either way */
+            float il = (in.w - s * (1.f + 2.f * reach)) / 2, ir = in.w - il;
+            const float *b = o.words, *bb = o.band;
+            if (b[0] < o.hpad - 1e-3f || b[0] + b[2] > in.w - o.hpad + 1e-3f || b[2] < 0.f) clear = 0;
+            if (o.words_alpha > 0.f && b[0] + b[2] > il + 1e-3f && b[0] < ir - 1e-3f) clear = 0;
+            if (o.band_alpha > 0.f && bb[1] + bb[3] > o.board[1] + 1e-3f) clear = 0;
+            /* NEVER SQUEEZED: a copy that shows has the room it needs,
+             * and the two copies fade rather than jump between heights */
+            if (o.words_alpha > 0.f && b[2] < 30.f) squeezed = 1;
+            if (o.band_alpha > 0.f && bb[3] < 38.f) squeezed = 1;
+            if (pa >= 0.f && (fabsf(o.words_alpha - pa) > .02f || fabsf(o.band_alpha - pb) > .02f))
+                jumps = 1;
+            pa = o.words_alpha; pb = o.band_alpha;
+            /* THE COLUMN'S SECOND LINE shows only where two short words
+             * fit on a line of it, and fades in rather than appears */
+            if (o.sub_alpha > 0.f && o.words[2] < 60.f) sub_cramped = 1;
+            if (ps >= 0.f && fabsf(o.sub_alpha - ps) > .02f) sub_jumps = 1;
+            ps = o.sub_alpha;
         }
-        OK(one, "the rulebook door is 46 points at every drawer height");
-        OK(fits, "on the strip the door's column is as wide as the door");
     }
+    printf("  sheet: largest side step per quarter point of drawer %.3f pt\n", worst);
+    OK(centred, "every screen's board is centred on the sheet at every height");
+    OK(worst < .6f, "and its side never steps as the drawer moves");
+    OK(grows, "a taller drawer never gives a smaller board, at any height");
+    OK(onsheet, "its lines stay on the sheet");
+    OK(clear, "and its words sit beside it on the strip and above it in the band");
+    OK(!squeezed, "a copy of the words shows only in a box with the room it needs");
+    OK(!jumps, "and the words crossfade between column and band, never switch in a step");
+    OK(!sub_cramped, "the column's second line shows only in a column it will not break a word a line");
+    OK(!sub_jumps, "and fades rather than switches as the drawer moves");
+}
 
-    /* THE FOUR MAIN LINES ARE CENTRED ON THE GRID (owner, 2026-09-23: "major
-     * grid lines aren't centered on the grid"). Measured on the INK, not on
-     * the endpoints asked for: those were always symmetric, and the pen still
-     * ran long at the start and short at the end. For each main line, the ink
-     * within a few percent of its 1/3 or 2/3 track is that line; its overshoot
-     * past the board at each end, averaged over many games, must match, and
-     * its track must sit on the block boundary. */
-    {
-        UtttGame e; uttt_init(&e);
-        double bias[4] = { 0 }, track[4] = { 0 }, worst = 0;
-        int nan = 0;
-        const int SEEDS = 60;
-        for (int sd = 1; sd <= SEEDS; sd++) {
-            UtttDL d; uttt_dl_init(&d, PT, 400000, PO, 60000);
-            UtttDrawOpts o = uttt_draw_opts((uint8_t)(sd * 4 + 1));
-            uttt_draw_board(&d, &e, &o);
-            for (int i = 0; i < d.n_pt; i++)
-                if (isnan(d.pt[i].x) || isnan(d.pt[i].y)) nan++;
-            for (int L = 0; L < 4; L++) {
-                /* 0,1 vertical at x = 1/3, 2/3; 2,3 horizontal at y = 1/3, 2/3 */
-                float at = (L % 2 + 1) / 3.f, lo = 1e9f, hi = -1e9f;
-                double sum = 0; int n = 0;
-                for (int i = 0; i < d.n_pt; i++) {
-                    float across = L < 2 ? d.pt[i].x : d.pt[i].y;
-                    float along  = L < 2 ? d.pt[i].y : d.pt[i].x;
-                    if (isnan(across) || isnan(along) || fabsf(across - at) > .03f) continue;
-                    if (along > -.005f && along < 1.005f) continue;  /* only past the board */
-                    if (along < lo) lo = along;
-                    if (along > hi) hi = along;
-                    sum += across; n++;
-                }
-                double b = (-lo) - (hi - 1.f);
-                bias[L] += b / SEEDS;
-                track[L] += (n ? sum / n - at : 1) / SEEDS;
-                if (fabs(b) > worst) worst = fabs(b);
-            }
+/* The release pass's strips: an SE's (375 x 260) and a Pro Max's (440 x 343)
+ * column is 40 points - the headline alone - and a short, wide strip's
+ * (440 x 260) is 72, room for both lines. */
+static void test_strip_second_line(void)
+{
+    UtttSheet a, b, c;
+    uttt_sheet(&(UtttSheetIn){ .w = 375.f, .h = 260.f, .kind = UTTT_SHEET_WAIT, .words = 1 }, &a);
+    uttt_sheet(&(UtttSheetIn){ .w = 440.f, .h = 343.f, .kind = UTTT_SHEET_PLAY, .words = 1 }, &b);
+    uttt_sheet(&(UtttSheetIn){ .w = 440.f, .h = 260.f, .kind = UTTT_SHEET_WAIT, .words = 1 }, &c);
+    OK(a.words_alpha > 0.f && a.sub_alpha == 0.f && b.words_alpha > 0.f && b.sub_alpha == 0.f,
+       "the SE's and Pro Max's strip columns carry the headline without its second line");
+    OK(c.sub_alpha > .5f, "a column wide enough carries the second line too");
+    printf("  sheet: column 375x260 %.1f (line two %.2f), 440x343 %.1f (%.2f), 440x260 %.1f (%.2f)\n",
+           a.words[2], a.sub_alpha, b.words[2], b.sub_alpha, c.words[2], c.sub_alpha);
+}
+
+/* AS LARGE AS THE SHEET ALLOWS, on every screen, words or none: on
+ * the strip the drawer's height less the grab handle's margins (or
+ * the width less the columns, on a narrow phone), expanded the width
+ * less the margins. Worked out here from the sheet's own numbers,
+ * not from the layout's arithmetic. */
+static void test_sheet_biggest(void)
+{
+    float reach = .135f * UTTT_REACH;
+    int biggest = 1, words_room = 1;
+    for (int di = 0; di < 7; di++)
+    for (int ki = 0; ki < 4; ki++) {
+        UtttSheet o;
+        uttt_sheet(&(UtttSheetIn){ .w = SHEET_D[di].w, .h = SHEET_D[di].h, .kind = SHEET_K[ki].kind,
+                                   .words = SHEET_K[ki].words }, &o);
+        int compact = di < 4;
+        float want = compact
+            ? fminf(SHEET_D[di].h - 2.f * 13.f, (SHEET_D[di].w - 2.f * 13.f - 2.f * 46.f) / (1.f + 2.f * reach))  /* columns: the 46-point door */
+            : (SHEET_D[di].w - 2.f * 16.f) / (1.f + 2.f * reach);
+        if (fabsf(o.board[2] - want) > 1e-2f) {
+            biggest = 0;
+            printf("  sheet %.0fx%.0f kind %d words %d: board %.2f, the sheet allows %.2f\n",
+                   SHEET_D[di].w, SHEET_D[di].h, SHEET_K[ki].kind, SHEET_K[ki].words, o.board[2], want);
         }
-        printf("  main lines, start minus end overshoot: %.4f %.4f %.4f %.4f (worst game %.3f)\n",
-               bias[0], bias[1], bias[2], bias[3], worst);
-        printf("  main lines, track off 1/3 or 2/3: %.4f %.4f %.4f %.4f\n",
-               track[0], track[1], track[2], track[3]);
-        int even = 1, on = 1;
-        for (int L = 0; L < 4; L++) {
-            if (fabs(bias[L]) > .004) even = 0;
-            if (fabs(track[L]) > .003) on = 0;
-        }
-        OK(nan == 0, "no point of the board is NaN (a lifted stroke's last segment was)");
-        OK(even, "each main line overshoots the board by the same at both ends");
-        OK(on, "each main line sits on its block boundary");
-        OK(worst < .03, "no game's main line is more than 3% longer at one end");
+        if (compact && o.words[2] < 32.f - 1e-3f) words_room = 0;
     }
+    OK(biggest, "every screen's board is as large as the sheet allows, compact and expanded");
+    OK(words_room, "and on every strip the words get a column of at least 32 points");
+}
 
-    /* ONE LAYOUT, EVERY SCREEN: the board's centre is the sheet's centre at
-     * every height, its side never steps as the drawer moves, it is as large
-     * as the sheet allows, and the words sit clear of it (docs/UI.html "What
-     * holds which edge": the board holds the centre and is the only thing
-     * that resizes; owner 2026-09-23: the board as large as possible). */
-    {
-        /* the SE, a 6.1", the owner's 15 Pro Max and the 17 Pro Max */
-        static const float W[] = { 375.f, 393.f, 430.f, 440.f };
-        static const struct { int kind, words; } K[] = {
-            { UTTT_SHEET_PLAY, 0 },           /* a live game                  */
-            { UTTT_SHEET_PLAY, 1 },           /* the end: the verdict         */
-            { UTTT_SHEET_WATCH, 1 },          /* the spectator's line         */
-            { UTTT_SHEET_WAIT, 1 },           /* the waiting words            */
-        };
-        float reach = .135f * UTTT_REACH;
-        int centred = 1, clear = 1, onsheet = 1, grows = 1, squeezed = 0, jumps = 0;
-        int sub_cramped = 0, sub_jumps = 0;
-        float worst = 0.f;
-        for (int wi = 0; wi < 4; wi++)
-        for (int ki = 0; ki < 4; ki++) {
-            UtttSheetIn in = { .w = W[wi], .kind = K[ki].kind, .words = K[ki].words };
-            float prev = -1.f, pa = -1.f, pb = -1.f, ps = -1.f;
-            for (float h = 220.f; h <= 900.f; h += .25f) {
+/* THE DOORS SIT INSIDE THE MARGINS: Again began at the sheet's edge
+ * (x 0) while the rulebook kept 13 points, and a phone's rounded
+ * corner cut it. Both doors on every sheet: inside the left, right
+ * and bottom margins, one height, apart by the gap, not overlapping. */
+static void test_doors_in_margins(void)
+{
+    int doors_in = 1;
+    for (int di = 0; di < 7; di++) {
+        UtttSheet o;
+        uttt_sheet(&(UtttSheetIn){ .w = SHEET_D[di].w, .h = SHEET_D[di].h, .kind = UTTT_SHEET_PLAY, .words = 1 }, &o);
+        const float *r = o.rulebook, *a = o.again;
+        /* the strip's rulebook is centred in its column (below) */
+        if (!(a[0] >= o.hpad - 1e-3f && (o.t < 1.f || r[0] + r[2] <= SHEET_D[di].w - o.hpad + 1e-3f)
+              && r[1] + r[3] <= SHEET_D[di].h - o.vpad + 1e-3f && a[1] == r[1] && a[3] == r[3]
+              && a[2] > 0.f && a[0] + a[2] + 8.f <= r[0] && r[2] == o.door)) {
+            doors_in = 0;
+            printf("  doors %.0fx%.0f: again %.1f+%.1f rulebook %.1f+%.1f\n",
+                   SHEET_D[di].w, SHEET_D[di].h, a[0], a[2], r[0], r[2]);
+        }
+    }
+    OK(doors_in, "both doors sit inside the sheet's margins, Again short of the rulebook");
+}
+
+/* THE REPLAY DOOR (`copy`): in the door row between Again and the
+ * rulebook, their height, a gap from each, narrower than Again and
+ * wide enough for its words; absent when not asked for. */
+static void test_replay_door(void)
+{
+    int copy_in = 1;
+    for (int di = 0; di < 7; di++) {
+        UtttSheet o, n;
+        uttt_sheet(&(UtttSheetIn){ .w = SHEET_D[di].w, .h = SHEET_D[di].h, .kind = UTTT_SHEET_PLAY, .words = 1, .copy = 1 }, &o);
+        uttt_sheet(&(UtttSheetIn){ .w = SHEET_D[di].w, .h = SHEET_D[di].h, .kind = UTTT_SHEET_PLAY, .words = 1 }, &n);
+        const float *r = o.rulebook, *a = o.again, *c = o.copy;
+        if (!(a[0] >= o.hpad - 1e-3f && a[0] + a[2] + 8.f <= c[0] && c[0] + c[2] + 8.f <= r[0]
+              && c[1] == r[1] && c[3] == r[3] && a[3] == r[3] && c[2] >= 100.f
+              && n.copy[2] == 0.f && n.again[2] > a[2])) {
+            copy_in = 0;
+            printf("  copy %.0fx%.0f: again %.1f+%.1f copy %.1f+%.1f rulebook %.1f\n",
+                   SHEET_D[di].w, SHEET_D[di].h, a[0], a[2], c[0], c[2], r[0]);
+        }
+    }
+    OK(copy_in, "the replay door sits between Again and the rulebook, at their height, only when asked");
+}
+
+/* THE STRIP'S COLUMNS CENTRE WHAT STANDS IN THEM (owner, 2026-09-25):
+ * each column runs from the sheet's edge to the board; the rulebook's
+ * centre is the right one's, "you are"'s the left one's, for any
+ * width of the indicator, at every compact drawer on every phone -
+ * at the heights they always had. Open, both are where they were:
+ * the rulebook in the corner, "you are" at the left pad. And a drag
+ * moves them without a step. */
+static void test_strip_columns(void)
+{
+    static const float CH[] = { 250.f, 260.f, 274.f, 300.f, 323.f, 340.f };
+    int door_c = 1, you_c = 1, same_y = 1, open_same = 1, smooth = 1;
+    for (float w = 320.f; w <= 440.f; w += 1.f)
+        for (int kind = 0; kind < 3; kind++) {
+            for (int hi = 0; hi < 6; hi++) {
                 UtttSheet o;
-                in.h = h;
-                uttt_sheet(&in, &o);
-                float s = o.board[2];
-                if (fabsf(o.board[0] + s / 2 - in.w / 2) > 1e-3f
-                    || fabsf(o.board[1] + s / 2 - h / 2) > 1e-3f) centred = 0;
-                if (prev >= 0.f && fabsf(s - prev) > worst) worst = fabsf(s - prev);
-                /* AT EVERY HEIGHT, not only on the strip: a board that
-                 * shrank while the drawer grew reversed its size mid-drag
-                 * (462-485 points on a Pro Max, TESTFLIGHT_PLAN 17) */
-                if (prev >= 0.f && s < prev - 1e-3f) grows = 0;
-                prev = s;
-                if (s * (1.f + 2.f * reach) > in.w - 2.f * o.hpad + 1e-3f || s > h - 2.f * o.vpad + 1e-3f)
-                    onsheet = 0;
-                /* the words' box: beside the ink on the strip, above the
-                 * square in the band, and on the sheet either way */
-                float il = (in.w - s * (1.f + 2.f * reach)) / 2, ir = in.w - il;
-                const float *b = o.words, *bb = o.band;
-                if (b[0] < o.hpad - 1e-3f || b[0] + b[2] > in.w - o.hpad + 1e-3f || b[2] < 0.f) clear = 0;
-                if (o.words_alpha > 0.f && b[0] + b[2] > il + 1e-3f && b[0] < ir - 1e-3f) clear = 0;
-                if (o.band_alpha > 0.f && bb[1] + bb[3] > o.board[1] + 1e-3f) clear = 0;
-                /* NEVER SQUEEZED: a copy that shows has the room it needs,
-                 * and the two copies fade rather than jump between heights */
-                if (o.words_alpha > 0.f && b[2] < 30.f) squeezed = 1;
-                if (o.band_alpha > 0.f && bb[3] < 38.f) squeezed = 1;
-                if (pa >= 0.f && (fabsf(o.words_alpha - pa) > .02f || fabsf(o.band_alpha - pb) > .02f))
-                    jumps = 1;
-                pa = o.words_alpha; pb = o.band_alpha;
-                /* THE COLUMN'S SECOND LINE shows only where two short words
-                 * fit on a line of it, and fades in rather than appears */
-                if (o.sub_alpha > 0.f && o.words[2] < 60.f) sub_cramped = 1;
-                if (ps >= 0.f && fabsf(o.sub_alpha - ps) > .02f) sub_jumps = 1;
-                ps = o.sub_alpha;
+                float h = CH[hi];
+                uttt_sheet(&(UtttSheetIn){ .w = w, .h = h, .kind = kind, .words = 1 }, &o);
+                float lc = o.board[0] * .5f, rc = (o.board[0] + o.board[2] + w) * .5f;
+                if (fabsf(o.rulebook[0] + o.rulebook[2] * .5f - rc) > 1e-3f) door_c = 0;
+                for (float sw = 30.f; sw <= 60.f; sw += 5.f)
+                    if (fabsf(o.you[0] - o.you[1] * sw + sw * .5f - lc) > 1e-3f) you_c = 0;
+                if (o.rulebook[1] != h - 13.f - 46.f || o.vpad + o.icon_top != 17.f) same_y = 0;
+            }
+            UtttSheet p = { 0 }, o;
+            for (float h = 250.f; h <= 800.f; h += 1.f) {
+                uttt_sheet(&(UtttSheetIn){ .w = w, .h = h, .kind = kind, .words = 1 }, &o);
+                if (h > 250.f && (fabsf(o.rulebook[0] - p.rulebook[0]) > .5f
+                                  || fabsf(o.you[0] - p.you[0]) > .5f
+                                  || fabsf(o.you[1] - p.you[1]) > .02f)) smooth = 0;
+                if (h >= UTTT_SHEET_HI && (o.rulebook[0] != w - 13.f - 46.f
+                                           || o.you[0] != 13.f || o.you[1] != 0.f))
+                    open_same = 0;
+                p = o;
             }
         }
-        printf("  sheet: largest side step per quarter point of drawer %.3f pt\n", worst);
-        OK(centred, "every screen's board is centred on the sheet at every height");
-        OK(worst < .6f, "and its side never steps as the drawer moves");
-        OK(grows, "a taller drawer never gives a smaller board, at any height");
-        OK(onsheet, "its lines stay on the sheet");
-        OK(clear, "and its words sit beside it on the strip and above it in the band");
-        OK(!squeezed, "a copy of the words shows only in a box with the room it needs");
-        OK(!jumps, "and the words crossfade between column and band, never switch in a step");
-        OK(!sub_cramped, "the column's second line shows only in a column it will not break a word a line");
-        OK(!sub_jumps, "and fades rather than switches as the drawer moves");
-        {   /* the release pass's strips: an SE's (375 x 260) and a Pro Max's
-             * (440 x 343) column is 40 points - the headline alone - and a
-             * short, wide strip's (440 x 260) is 72, room for both lines */
-            UtttSheet a, b, c;
-            uttt_sheet(&(UtttSheetIn){ .w = 375.f, .h = 260.f, .kind = UTTT_SHEET_WAIT, .words = 1 }, &a);
-            uttt_sheet(&(UtttSheetIn){ .w = 440.f, .h = 343.f, .kind = UTTT_SHEET_PLAY, .words = 1 }, &b);
-            uttt_sheet(&(UtttSheetIn){ .w = 440.f, .h = 260.f, .kind = UTTT_SHEET_WAIT, .words = 1 }, &c);
-            OK(a.words_alpha > 0.f && a.sub_alpha == 0.f && b.words_alpha > 0.f && b.sub_alpha == 0.f,
-               "the SE's and Pro Max's strip columns carry the headline without its second line");
-            OK(c.sub_alpha > .5f, "a column wide enough carries the second line too");
-            printf("  sheet: column 375x260 %.1f (line two %.2f), 440x343 %.1f (%.2f), 440x260 %.1f (%.2f)\n",
-                   a.words[2], a.sub_alpha, b.words[2], b.sub_alpha, c.words[2], c.sub_alpha);
-        }
+    OK(door_c, "on the strip the rulebook is centred in the right column, 320-440 wide");
+    OK(you_c, "on the strip \"you are\" is centred in the left column, 320-440 wide");
+    OK(same_y, "and neither moves up or down for it");
+    OK(open_same, "open, the rulebook keeps its corner and \"you are\" the left pad");
+    OK(smooth, "a drag slides both across with no step");
+}
 
-        /* AS LARGE AS THE SHEET ALLOWS, on every screen, words or none: on
-         * the strip the drawer's height less the grab handle's margins (or
-         * the width less the columns, on a narrow phone), expanded the width
-         * less the margins. Worked out here from the sheet's own numbers,
-         * not from the layout's arithmetic. */
-        static const struct { float w, h; } D[] = {
-            { 440.f, 274.f }, { 440.f, 340.f }, { 393.f, 300.f }, { 375.f, 250.f },   /* compact  */
-            { 440.f, 800.f }, { 393.f, 700.f }, { 375.f, 541.f },                     /* expanded */
-        };
-        int biggest = 1, words_room = 1;
-        for (int di = 0; di < 7; di++)
-        for (int ki = 0; ki < 4; ki++) {
+/* AGAIN AND COPY CODE ARE ONE WIDTH (owner, TestFlight 1.0(6)), at
+ * every drawer height on every phone width - compact, expanded and
+ * every frame of a drag between, not just the seven sheets above. */
+static void test_again_copy_width(void)
+{
+    int same_w = 1;
+    for (float w = 320.f; w <= 440.f && same_w; w += 1.f)
+        for (float h = 240.f; h <= 900.f; h += 1.f) {
             UtttSheet o;
-            uttt_sheet(&(UtttSheetIn){ .w = D[di].w, .h = D[di].h, .kind = K[ki].kind,
-                                       .words = K[ki].words }, &o);
-            int compact = di < 4;
-            float want = compact
-                ? fminf(D[di].h - 2.f * 13.f, (D[di].w - 2.f * 13.f - 2.f * 46.f) / (1.f + 2.f * reach))  /* columns: the 46-point door */
-                : (D[di].w - 2.f * 16.f) / (1.f + 2.f * reach);
-            if (fabsf(o.board[2] - want) > 1e-2f) {
-                biggest = 0;
-                printf("  sheet %.0fx%.0f kind %d words %d: board %.2f, the sheet allows %.2f\n",
-                       D[di].w, D[di].h, K[ki].kind, K[ki].words, o.board[2], want);
-            }
-            if (compact && o.words[2] < 32.f - 1e-3f) words_room = 0;
-        }
-        OK(biggest, "every screen's board is as large as the sheet allows, compact and expanded");
-
-        /* THE DOORS SIT INSIDE THE MARGINS: Again began at the sheet's edge
-         * (x 0) while the rulebook kept 13 points, and a phone's rounded
-         * corner cut it. Both doors on every sheet: inside the left, right
-         * and bottom margins, one height, apart by the gap, not overlapping. */
-        int doors_in = 1;
-        for (int di = 0; di < 7; di++) {
-            UtttSheet o;
-            uttt_sheet(&(UtttSheetIn){ .w = D[di].w, .h = D[di].h, .kind = UTTT_SHEET_PLAY, .words = 1 }, &o);
-            const float *r = o.rulebook, *a = o.again;
-            /* the strip's rulebook is centred in its column (below) */
-            if (!(a[0] >= o.hpad - 1e-3f && (o.t < 1.f || r[0] + r[2] <= D[di].w - o.hpad + 1e-3f)
-                  && r[1] + r[3] <= D[di].h - o.vpad + 1e-3f && a[1] == r[1] && a[3] == r[3]
-                  && a[2] > 0.f && a[0] + a[2] + 8.f <= r[0] && r[2] == o.door)) {
-                doors_in = 0;
-                printf("  doors %.0fx%.0f: again %.1f+%.1f rulebook %.1f+%.1f\n",
-                       D[di].w, D[di].h, a[0], a[2], r[0], r[2]);
+            uttt_sheet(&(UtttSheetIn){ .w = w, .h = h, .kind = UTTT_SHEET_PLAY, .words = 1, .copy = 1 }, &o);
+            if (o.again[2] != o.copy[2] || o.again[2] <= 0.f) {
+                same_w = 0;
+                printf("  %.0fx%.0f: again %.2f copy %.2f\n", w, h, o.again[2], o.copy[2]);
+                break;
             }
         }
-        OK(doors_in, "both doors sit inside the sheet's margins, Again short of the rulebook");
+    OK(same_w, "Again and Copy code are the same width at every drawer height and phone width");
+}
 
-        /* THE REPLAY DOOR (`copy`): in the door row between Again and the
-         * rulebook, their height, a gap from each, narrower than Again and
-         * wide enough for its words; absent when not asked for. */
-        int copy_in = 1;
-        for (int di = 0; di < 7; di++) {
-            UtttSheet o, n;
-            uttt_sheet(&(UtttSheetIn){ .w = D[di].w, .h = D[di].h, .kind = UTTT_SHEET_PLAY, .words = 1, .copy = 1 }, &o);
-            uttt_sheet(&(UtttSheetIn){ .w = D[di].w, .h = D[di].h, .kind = UTTT_SHEET_PLAY, .words = 1 }, &n);
-            const float *r = o.rulebook, *a = o.again, *c = o.copy;
-            if (!(a[0] >= o.hpad - 1e-3f && a[0] + a[2] + 8.f <= c[0] && c[0] + c[2] + 8.f <= r[0]
-                  && c[1] == r[1] && c[3] == r[3] && a[3] == r[3] && c[2] >= 100.f
-                  && n.copy[2] == 0.f && n.again[2] > a[2])) {
-                copy_in = 0;
-                printf("  copy %.0fx%.0f: again %.1f+%.1f copy %.1f+%.1f rulebook %.1f\n",
-                       D[di].w, D[di].h, a[0], a[2], c[0], c[2], r[0]);
-            }
-        }
-        OK(copy_in, "the replay door sits between Again and the rulebook, at their height, only when asked");
+/* THE TWO ENDS OF THE DRAG, on an SE: the strip at 340 and the open drawer
+ * at 541, and which copy of the headline each shows. */
+static void test_sheet_ends(void)
+{
+    UtttSheet c, e;
+    uttt_sheet(&(UtttSheetIn){ .w = 375.f, .h = 340.f, .kind = UTTT_SHEET_PLAY }, &c);
+    uttt_sheet(&(UtttSheetIn){ .w = 375.f, .h = 541.f, .kind = UTTT_SHEET_PLAY }, &e);
+    printf("  sheet: SE compact board %.1f, expanded %.1f\n", c.board[2], e.board[2]);
+    OK(c.t == 0.f && e.t == 1.f, "340 is the compact end and 541 the expanded one");
+    OK(c.words_alpha == 0.f && c.band_alpha == 0.f && e.band_alpha == 1.f && e.words_alpha == 0.f,
+       "a live strip hides the headline, the band shows it");
+}
 
-        /* THE STRIP'S COLUMNS CENTRE WHAT STANDS IN THEM (owner, 2026-09-25):
-         * each column runs from the sheet's edge to the board; the rulebook's
-         * centre is the right one's, "you are"'s the left one's, for any
-         * width of the indicator, at every compact drawer on every phone -
-         * at the heights they always had. Open, both are where they were:
-         * the rulebook in the corner, "you are" at the left pad. And a drag
-         * moves them without a step. */
-        {
-            static const float CH[] = { 250.f, 260.f, 274.f, 300.f, 323.f, 340.f };
-            int door_c = 1, you_c = 1, same_y = 1, open_same = 1, smooth = 1;
-            for (float w = 320.f; w <= 440.f; w += 1.f)
-                for (int kind = 0; kind < 3; kind++) {
-                    for (int hi = 0; hi < 6; hi++) {
-                        UtttSheet o;
-                        float h = CH[hi];
-                        uttt_sheet(&(UtttSheetIn){ .w = w, .h = h, .kind = kind, .words = 1 }, &o);
-                        float lc = o.board[0] * .5f, rc = (o.board[0] + o.board[2] + w) * .5f;
-                        if (fabsf(o.rulebook[0] + o.rulebook[2] * .5f - rc) > 1e-3f) door_c = 0;
-                        for (float sw = 30.f; sw <= 60.f; sw += 5.f)
-                            if (fabsf(o.you[0] - o.you[1] * sw + sw * .5f - lc) > 1e-3f) you_c = 0;
-                        if (o.rulebook[1] != h - 13.f - 46.f || o.vpad + o.icon_top != 17.f) same_y = 0;
-                    }
-                    UtttSheet p = { 0 }, o;
-                    for (float h = 250.f; h <= 800.f; h += 1.f) {
-                        uttt_sheet(&(UtttSheetIn){ .w = w, .h = h, .kind = kind, .words = 1 }, &o);
-                        if (h > 250.f && (fabsf(o.rulebook[0] - p.rulebook[0]) > .5f
-                                          || fabsf(o.you[0] - p.you[0]) > .5f
-                                          || fabsf(o.you[1] - p.you[1]) > .02f)) smooth = 0;
-                        if (h >= UTTT_SHEET_HI && (o.rulebook[0] != w - 13.f - 46.f
-                                                   || o.you[0] != 13.f || o.you[1] != 0.f))
-                            open_same = 0;
-                        p = o;
-                    }
-                }
-            OK(door_c, "on the strip the rulebook is centred in the right column, 320-440 wide");
-            OK(you_c, "on the strip \"you are\" is centred in the left column, 320-440 wide");
-            OK(same_y, "and neither moves up or down for it");
-            OK(open_same, "open, the rulebook keeps its corner and \"you are\" the left pad");
-            OK(smooth, "a drag slides both across with no step");
-        }
+/* THE SEND HINT'S CORNER (sheet 6: its ring over "You win"): with a
+ * bubble in the field the strip's right column starts under the
+ * hint, and without one it starts at the margin. */
+static void test_send_hint_corner(void)
+{
+    UtttSheet hn, h0;
+    uttt_sheet(&(UtttSheetIn){ .w = 440.f, .h = 274.f, .kind = UTTT_SHEET_PLAY, .words = 1, .hint = 1 }, &hn);
+    uttt_sheet(&(UtttSheetIn){ .w = 440.f, .h = 274.f, .kind = UTTT_SHEET_PLAY, .words = 1 }, &h0);
+    OK(UTTT_SHEET_HINT_TOP - UTTT_HINT_LIFT - UTTT_HINT_BOB >= 2.f,
+       "the send hint's crest stays inside the drawer, which Messages clips");
+    OK(hn.words[1] >= UTTT_SHEET_HINT_TOP - UTTT_HINT_LIFT + 29.f + 3.f + 15.f + 2.6f && h0.words[1] == h0.vpad
+       && fabsf(hn.words[1] + hn.words[3] - h0.words[1] - h0.words[3]) < 1e-3f && hn.words_alpha == 1.f,
+       "a staged bubble's hint never stands over the strip's verdict");
+}
 
-        /* AGAIN AND COPY CODE ARE ONE WIDTH (owner, TestFlight 1.0(6)), at
-         * every drawer height on every phone width - compact, expanded and
-         * every frame of a drag between, not just the seven sheets above. */
-        int same_w = 1;
-        for (float w = 320.f; w <= 440.f && same_w; w += 1.f)
-            for (float h = 240.f; h <= 900.f; h += 1.f) {
-                UtttSheet o;
-                uttt_sheet(&(UtttSheetIn){ .w = w, .h = h, .kind = UTTT_SHEET_PLAY, .words = 1, .copy = 1 }, &o);
-                if (o.again[2] != o.copy[2] || o.again[2] <= 0.f) {
-                    same_w = 0;
-                    printf("  %.0fx%.0f: again %.2f copy %.2f\n", w, h, o.again[2], o.copy[2]);
-                    break;
-                }
-            }
-        OK(same_w, "Again and Copy code are the same width at every drawer height and phone width");
-        OK(words_room, "and on every strip the words get a column of at least 32 points");
-
-        UtttSheet c, e;
-        uttt_sheet(&(UtttSheetIn){ .w = 375.f, .h = 340.f, .kind = UTTT_SHEET_PLAY }, &c);
-        uttt_sheet(&(UtttSheetIn){ .w = 375.f, .h = 541.f, .kind = UTTT_SHEET_PLAY }, &e);
-        printf("  sheet: SE compact board %.1f, expanded %.1f\n", c.board[2], e.board[2]);
-        OK(c.t == 0.f && e.t == 1.f, "340 is the compact end and 541 the expanded one");
-        OK(c.words_alpha == 0.f && c.band_alpha == 0.f && e.band_alpha == 1.f && e.words_alpha == 0.f,
-           "a live strip hides the headline, the band shows it");
-
-        /* THE SEND HINT'S CORNER (sheet 6: its ring over "You win"): with a
-         * bubble in the field the strip's right column starts under the
-         * hint, and without one it starts at the margin. */
-        UtttSheet hn, h0;
-        uttt_sheet(&(UtttSheetIn){ .w = 440.f, .h = 274.f, .kind = UTTT_SHEET_PLAY, .words = 1, .hint = 1 }, &hn);
-        uttt_sheet(&(UtttSheetIn){ .w = 440.f, .h = 274.f, .kind = UTTT_SHEET_PLAY, .words = 1 }, &h0);
-        OK(UTTT_SHEET_HINT_TOP - UTTT_HINT_LIFT - UTTT_HINT_BOB >= 2.f,
-           "the send hint's crest stays inside the drawer, which Messages clips");
-        OK(hn.words[1] >= UTTT_SHEET_HINT_TOP - UTTT_HINT_LIFT + 29.f + 3.f + 15.f + 2.6f && h0.words[1] == h0.vpad
-           && fabsf(hn.words[1] + hn.words[3] - h0.words[1] - h0.words[3]) < 1e-3f && hn.words_alpha == 1.f,
-           "a staged bubble's hint never stands over the strip's verdict");
+/* THE SLIDE: the whole travel at the start, nothing at the end, never
+ * back up, and on the host's own curve (a critically damped spring on
+ * the drawer's response) to within the tail it gives away. */
+static void test_slide(void)
+{
+    int mono = 1, host = 1;
+    float prev = 1e9f;
+    for (int t = 0; t <= UTTT_COLLAPSE_MS; t++) {
+        float p = uttt_collapse_push(500.f, t);
+        if (p > prev + 1e-4f) mono = 0;
+        prev = p;
+        double w = 2.0 * 3.14159265358979 / UTTT_DRAWER_RESPONSE_MS;
+        double want = 500.0 * (1.0 + w * t) * exp(-w * t);
+        if (fabs(p - want) > 1.5) host = 0;
     }
+    OK(uttt_collapse_push(500.f, 0) == 500.f && uttt_collapse_push(500.f, UTTT_COLLAPSE_MS) == 0.f
+       && fabsf(uttt_collapse_push(500.f, UTTT_COLLAPSE_MS - 1)) < .05f,
+       "the slide starts at the whole travel and ends at nothing, with no step at the release");
+    OK(mono, "and never pushes back up");
+    OK(host, "and rides the host's spring to within a point and a half");
+}
 
-    /* THE SLIDE: the whole travel at the start, nothing at the end, never
-     * back up, and on the host's own curve (a critically damped spring on
-     * the drawer's response) to within the tail it gives away. */
-    {
-        int mono = 1, host = 1;
-        float prev = 1e9f;
-        for (int t = 0; t <= UTTT_COLLAPSE_MS; t++) {
-            float p = uttt_collapse_push(500.f, t);
-            if (p > prev + 1e-4f) mono = 0;
-            prev = p;
-            double w = 2.0 * 3.14159265358979 / UTTT_DRAWER_RESPONSE_MS;
-            double want = 500.0 * (1.0 + w * t) * exp(-w * t);
-            if (fabs(p - want) > 1.5) host = 0;
-        }
-        OK(uttt_collapse_push(500.f, 0) == 500.f && uttt_collapse_push(500.f, UTTT_COLLAPSE_MS) == 0.f
-           && fabsf(uttt_collapse_push(500.f, UTTT_COLLAPSE_MS - 1)) < .05f,
-           "the slide starts at the whole travel and ends at nothing, with no step at the release");
-        OK(mono, "and never pushes back up");
-        OK(host, "and rides the host's spring to within a point and a half");
+/* THE EXPAND RIDES THE HOST'S SPRING (uttt_spring_left), with the
+ * numbers read off the host's own CASpringAnimation. Critically damped:
+ * the closed form, never back past the target, a step's worth left at
+ * the host's 0.506 s. Under and over damped against a numerical
+ * integration of m x'' + c x' + k x = 0, one of them with a velocity. */
+static void test_expand_spring(void)
+{
+    const float m = 1.f, k = 333.3333f, c = 36.51484f;
+    int closed = 1, mono = 1;
+    float prev = 1e9f;
+    for (int t = 0; t <= 506; t++) {
+        float p = uttt_spring_left(387.f, m, k, c, 0.f, t);
+        double w = sqrt(k / m), want = 387.0 * (1.0 + w * t / 1000.0) * exp(-w * t / 1000.0);
+        if (fabs(p - want) > .05) closed = 0;
+        if (p > prev + 1e-4f || p < -1e-4f) mono = 0;
+        prev = p;
     }
-
-    /* THE EXPAND RIDES THE HOST'S SPRING (uttt_spring_left), with the
-     * numbers read off the host's own CASpringAnimation. Critically damped:
-     * the closed form, never back past the target, a step's worth left at
-     * the host's 0.506 s. Under and over damped against a numerical
-     * integration of m x'' + c x' + k x = 0, one of them with a velocity. */
-    {
-        const float m = 1.f, k = 333.3333f, c = 36.51484f;
-        int closed = 1, mono = 1;
-        float prev = 1e9f;
-        for (int t = 0; t <= 506; t++) {
-            float p = uttt_spring_left(387.f, m, k, c, 0.f, t);
-            double w = sqrt(k / m), want = 387.0 * (1.0 + w * t / 1000.0) * exp(-w * t / 1000.0);
-            if (fabs(p - want) > .05) closed = 0;
-            if (p > prev + 1e-4f || p < -1e-4f) mono = 0;
-            prev = p;
-        }
-        OK(uttt_spring_left(387.f, m, k, c, 0.f, 0) == 387.f, "the expand starts with the whole travel left");
-        OK(closed, "and falls on the host's critically damped spring");
-        OK(mono, "never overshooting the drawer's height");
-        OK(uttt_spring_left(387.f, m, k, c, 0.f, 506) < 1.f && uttt_spring_left(387.f, m, k, c, 0.f, 506) > 0.f,
-           "and has under a point left when the host's animation ends");
-        const float cases[3][3] = { {1.f, 200.f, 10.f}, {1.f, 300.f, 60.f}, {2.f, 500.f, 20.f} };
-        const float v0s[3] = { 0.f, 4.f, -2.f };
-        int ode = 1;
-        for (int i = 0; i < 3; i++) {
-            double x = 1.0, v = -v0s[i], dt = 1e-5;
-            for (int step = 1; step <= 60000; step++) {        /* 0.6 s */
-                double a = (-cases[i][2] * v - cases[i][1] * x) / cases[i][0];
-                v += a * dt; x += v * dt;
-                if (step % 1000 == 0) {
-                    float p = uttt_spring_left(1.f, cases[i][0], cases[i][1], cases[i][2], v0s[i], step / 100);
-                    if (fabs(p - x) > 2e-3) ode = 0;
-                }
+    OK(uttt_spring_left(387.f, m, k, c, 0.f, 0) == 387.f, "the expand starts with the whole travel left");
+    OK(closed, "and falls on the host's critically damped spring");
+    OK(mono, "never overshooting the drawer's height");
+    OK(uttt_spring_left(387.f, m, k, c, 0.f, 506) < 1.f && uttt_spring_left(387.f, m, k, c, 0.f, 506) > 0.f,
+       "and has under a point left when the host's animation ends");
+    const float cases[3][3] = { {1.f, 200.f, 10.f}, {1.f, 300.f, 60.f}, {2.f, 500.f, 20.f} };
+    const float v0s[3] = { 0.f, 4.f, -2.f };
+    int ode = 1;
+    for (int i = 0; i < 3; i++) {
+        double x = 1.0, v = -v0s[i], dt = 1e-5;
+        for (int step = 1; step <= 60000; step++) {        /* 0.6 s */
+            double a = (-cases[i][2] * v - cases[i][1] * x) / cases[i][0];
+            v += a * dt; x += v * dt;
+            if (step % 1000 == 0) {
+                float p = uttt_spring_left(1.f, cases[i][0], cases[i][1], cases[i][2], v0s[i], step / 100);
+                if (fabs(p - x) > 2e-3) ode = 0;
             }
-        }
-        OK(ode, "and under, over or with a velocity, it is the spring's own motion");
-        /* how far past: nothing for the critically damped tap; for the
-         * flick's under-damped release, the least left anywhere on it */
-        OK(uttt_spring_past(387.f, m, k, c, 0.f) == 0.f, "a critically damped expand never goes past");
-        {
-            const float fm = 1.f, fk = 333.3333f, fc = 29.21f, fv = 4.68f, ft = 384.f;
-            float least = 0.f;
-            for (int t = 0; t <= 3000; t++) {
-                float p = uttt_spring_left(ft, fm, fk, fc, fv, t);
-                if (p < least) least = p;
-            }
-            float past = uttt_spring_past(ft, fm, fk, fc, fv);
-            OK(past > 1.f && past == -least, "a flick's release goes past its target, by the spring's own least");
         }
     }
-
-    /* THE WIN LINE IS DRAWN, NOT RULED (owner, TestFlight 1.0(6): "the
-     * winning line still appears quite straight"). Off the display list: the
-     * line alone (uttt_draw_settle with the big mark at 0), each stroke's
-     * centre along it, and how far the centres stray either side of the line
-     * through the whole stroke's ends - the ink's own wander, as a share of
-     * the board. Over 300 won games; each must wander at least half a percent
-     * (1.6 points on a 320-point board) and none more than six, so it stays
-     * one line and legible. */
+    OK(ode, "and under, over or with a velocity, it is the spring's own motion");
+    /* how far past: nothing for the critically damped tap; for the
+     * flick's under-damped release, the least left anywhere on it */
+    OK(uttt_spring_past(387.f, m, k, c, 0.f) == 0.f, "a critically damped expand never goes past");
     {
-        uint64_t r = 88172645463325252ull;
-        int games = 0, rough = 1, tame = 1;
-        float least = 1e9f, most = 0.f, sum = 0.f;
-        while (games < 300) {
-            UtttGame g; uttt_init(&g);
-            uint8_t mv[81];
-            while (!g.over) {
-                int n = uttt_legal(&g, mv);
-                r ^= r << 13; r ^= r >> 7; r ^= r << 17;
-                uttt_play(&g, mv[r % (uint64_t)n]);
-            }
-            if (g.over != UTTT_X && g.over != UTTT_O) continue;
-            /* the settle draws the last block's big mark and the line only
-             * when the last move won a block, which a finished win always did */
-            UtttDL d; uttt_dl_init(&d, PT, 400000, PO, 60000);
-            uint8_t look = (uint8_t)r;
-            if (uttt_draw_settle(&d, &g, look, 0.f, 1.f) != 0 || d.n_poly == 0) continue;
-            games++;
-            float ax = 0, ay = 0, zx = 0, zy = 0; int first = 1;
-            /* the line's direction: its two farthest points of ink */
-            float far = -1.f;
-            for (int i = 0; i < d.n_pt; i += 3)
-                for (int j = i + 1; j < d.n_pt; j += 3) {
-                    float dx = d.pt[i].x - d.pt[j].x, dy = d.pt[i].y - d.pt[j].y, dd = dx * dx + dy * dy;
-                    if (dd > far) { far = dd; ax = d.pt[i].x; ay = d.pt[i].y;
-                                    zx = d.pt[j].x; zy = d.pt[j].y; first = 0; }
-                }
-            if (first) { rough = 0; continue; }
-            /* EACH STROKE IS ONE OUTLINE, so its centre along the line is the
-             * middle of its two sides: in twenty stretches along the line
-             * (the samples are ~24), the midpoint of the ink's extremes
-             * across it, the two end stretches (the round caps) left out */
-            enum { BINS = 20 };
-            float L = sqrtf(far), lo = 1e9f, hi = -1e9f;
-            for (int i = 0; i < d.n_poly; i++) {
-                float blo[BINS], bhi[BINS];
-                for (int k = 0; k < BINS; k++) { blo[k] = 1e9f; bhi[k] = -1e9f; }
-                for (int k = 0; k < d.poly[i].n; k++) {
-                    const UtttPt *q = &d.pt[d.poly[i].first + k];
-                    float al = ((q->x - ax) * (zx - ax) + (q->y - ay) * (zy - ay)) / L / L;
-                    float c = ((q->x - ax) * (zy - ay) - (q->y - ay) * (zx - ax)) / L;
-                    int bin = (int)(al * BINS);
-                    if (bin < 1 || bin >= BINS - 1) continue;
-                    blo[bin] = fminf(blo[bin], c); bhi[bin] = fmaxf(bhi[bin], c);
-                }
-                for (int k = 1; k < BINS - 1; k++) {
-                    if (bhi[k] < blo[k]) continue;
-                    float mid = (blo[k] + bhi[k]) * .5f;
-                    lo = fminf(lo, mid); hi = fmaxf(hi, mid);
-                }
-            }
-            float wander = hi - lo;
-            least = fminf(least, wander); most = fmaxf(most, wander); sum += wander;
-            if (wander < .01f) rough = 0;
-            if (wander > .08f) tame = 0;
+        const float fm = 1.f, fk = 333.3333f, fc = 29.21f, fv = 4.68f, ft = 384.f;
+        float least = 0.f;
+        for (int t = 0; t <= 3000; t++) {
+            float p = uttt_spring_left(ft, fm, fk, fc, fv, t);
+            if (p < least) least = p;
         }
-        printf("  win line wander: least %.4f mean %.4f most %.4f of the board\n",
-               least, sum / games, most);
-        OK(rough, "the win line wanders at least a percent of the board, in every won game");
-        OK(tame, "and never more than eight, so it stays one legible line");
+        float past = uttt_spring_past(ft, fm, fk, fc, fv);
+        OK(past > 1.f && past == -least, "a flick's release goes past its target, by the spring's own least");
     }
+}
 
-    /* THE RULES SHEET (docs/RULES.html): eight lines, each with a drawing
-     * out of the board's pen, and the two yellows found in the text. */
-    {
-        OK(uttt_rules_count() == 8 && !strcmp(uttt_rules_title(), "Ultimate Tic-Tac-Toe Rules")
-           && !strcmp(uttt_rules_line(7), "X moves first.") && !strcmp(uttt_rules_line(8), ""),
-           "rules: RULES.html's eight lines and title");
-        int ascii = 1;
-        for (int i = 0; i < uttt_rules_count(); i++)
-            for (const char *c = uttt_rules_line(i); *c; c++) if ((unsigned char)*c > 126) ascii = 0;
-        OK(ascii, "rules: ASCII, so a byte offset is a character offset (no em dash either)");
-        int at, len, where[8];
-        for (int i = 0; i < 8; i++) where[i] = uttt_rules_yellow(i, &at, &len);
-        OK(where[5] == UTTT_RULES_OUTLINE && uttt_rules_yellow(5, &at, &len) && at == 4 && len == 14,
-           "rules: line 6 marks \"yellow outline\" with the promise's box");
-        OK(where[6] == UTTT_RULES_TINT && uttt_rules_yellow(6, &at, &len)
-           && !strncmp(uttt_rules_line(6) + at, "yellow tinted area", (size_t)len) && len == 18,
-           "rules: line 7 marks \"yellow tinted area\" with the wash");
-        int plain = 1;
-        for (int i = 0; i < 8; i++) if (i != 5 && i != 6 && where[i] != UTTT_RULES_PLAIN) plain = 0;
-        OK(plain, "rules: no other line is marked");
-
-        /* the drawings: each fits its square, and says what its line says */
-        int fit = 1, drawn = 1, wash[8] = { 0 }, promise[8] = { 0 }, xink[8] = { 0 }, oink[8] = { 0 };
-        float wash_w[8] = { 0 };
-        for (int i = 0; i < 8; i++) {
-            UtttDL d; uttt_dl_init(&d, PT, 400000, PO, 60000);
-            if (uttt_draw_rule(&d, i) != 0 || d.n_poly < 4) drawn = 0;
-            for (int k = 0; k < d.n_pt; k++)
-                if (d.pt[k].x < -.02f || d.pt[k].x > 1.02f || d.pt[k].y < -.02f || d.pt[k].y > 1.02f) fit = 0;
-            for (int k = 0; k < d.n_poly; k++) {
-                uint32_t c = d.poly[k].rgba >> 8;
-                if (c == (uttt_wash_rgba(1.f) >> 8)) {
-                    if (d.poly[k].n == 4) {
-                        wash[i]++;
-                        float w = d.pt[d.poly[k].first + 1].x - d.pt[d.poly[k].first].x;
-                        if (w > wash_w[i]) wash_w[i] = w;
-                    } else promise[i]++;
-                }
-                if (c == (uttt_mark_ink(UTTT_X) >> 8)) xink[i]++;
-                if (c == (uttt_mark_ink(UTTT_O) >> 8)) oink[i]++;
+/* THE WIN LINE IS DRAWN, NOT RULED (owner, TestFlight 1.0(6): "the
+ * winning line still appears quite straight"). Off the display list: the
+ * line alone (uttt_draw_settle with the big mark at 0), each stroke's
+ * centre along it, and how far the centres stray either side of the line
+ * through the whole stroke's ends - the ink's own wander, as a share of
+ * the board. Over 300 won games; each must wander at least half a percent
+ * (1.6 points on a 320-point board) and none more than six, so it stays
+ * one line and legible. */
+static void test_win_line_drawn(void)
+{
+    uint64_t r = 88172645463325252ull;
+    int games = 0, rough = 1, tame = 1;
+    float least = 1e9f, most = 0.f, sum = 0.f;
+    while (games < 300) {
+        UtttGame g; uttt_init(&g);
+        uint8_t mv[81];
+        while (!g.over) {
+            int n = uttt_legal(&g, mv);
+            r ^= r << 13; r ^= r >> 7; r ^= r << 17;
+            uttt_play(&g, mv[r % (uint64_t)n]);
+        }
+        if (g.over != UTTT_X && g.over != UTTT_O) continue;
+        /* the settle draws the last block's big mark and the line only
+         * when the last move won a block, which a finished win always did */
+        UtttDL d; dl_fresh(&d);
+        uint8_t look = (uint8_t)r;
+        if (uttt_draw_settle(&d, &g, look, 0.f, 1.f) != 0 || d.n_poly == 0) continue;
+        games++;
+        float ax = 0, ay = 0, zx = 0, zy = 0; int first = 1;
+        /* the line's direction: its two farthest points of ink */
+        float far = -1.f;
+        for (int i = 0; i < d.n_pt; i += 3)
+            for (int j = i + 1; j < d.n_pt; j += 3) {
+                float dx = d.pt[i].x - d.pt[j].x, dy = d.pt[i].y - d.pt[j].y, dd = dx * dx + dy * dy;
+                if (dd > far) { far = dd; ax = d.pt[i].x; ay = d.pt[i].y;
+                                zx = d.pt[j].x; zy = d.pt[j].y; first = 0; }
+            }
+        if (first) { rough = 0; continue; }
+        /* EACH STROKE IS ONE OUTLINE, so its centre along the line is the
+         * middle of its two sides: in twenty stretches along the line
+         * (the samples are ~24), the midpoint of the ink's extremes
+         * across it, the two end stretches (the round caps) left out */
+        enum { BINS = 20 };
+        float L = sqrtf(far), lo = 1e9f, hi = -1e9f;
+        for (int i = 0; i < d.n_poly; i++) {
+            float blo[BINS], bhi[BINS];
+            for (int k = 0; k < BINS; k++) { blo[k] = 1e9f; bhi[k] = -1e9f; }
+            for (int k = 0; k < d.poly[i].n; k++) {
+                const UtttPt *q = &d.pt[d.poly[i].first + k];
+                float al = ((q->x - ax) * (zx - ax) + (q->y - ay) * (zy - ay)) / L / L;
+                float c = ((q->x - ax) * (zy - ay) - (q->y - ay) * (zx - ax)) / L;
+                int bin = (int)(al * BINS);
+                if (bin < 1 || bin >= BINS - 1) continue;
+                blo[bin] = fminf(blo[bin], c); bhi[bin] = fmaxf(bhi[bin], c);
+            }
+            for (int k = 1; k < BINS - 1; k++) {
+                if (bhi[k] < blo[k]) continue;
+                float mid = (blo[k] + bhi[k]) * .5f;
+                lo = fminf(lo, mid); hi = fmaxf(hi, mid);
             }
         }
-        UtttDL d; uttt_dl_init(&d, PT, 400000, PO, 60000);
-        OK(drawn && uttt_draw_rule(&d, 8) == -1 && uttt_draw_rule(&d, -1) == -1,
-           "rules: eight drawings, and no ninth");
-        OK(fit, "rules: every drawing stays in its square");
-        OK(!xink[0] && !oink[0] && !wash[0], "rules 1: the board alone");
-        /* the win line is the one stroke that crosses the whole board */
-        uint32_t line_ink = 0; float span = 0.f;
-        {
-            UtttDL l; uttt_dl_init(&l, PT, 400000, PO, 60000);
-            uttt_draw_rule(&l, 1);
-            for (int k = 0; k < l.n_poly; k++) {
-                float x0 = 9, x1 = -9, y0 = 9, y1 = -9;
-                for (int q = 0; q < l.poly[k].n; q++) {
-                    UtttPt p = l.pt[l.poly[k].first + q];
-                    if (p.x < x0) x0 = p.x;
-                    if (p.x > x1) x1 = p.x;
-                    if (p.y < y0) y0 = p.y;
-                    if (p.y > y1) y1 = p.y;
-                }
-                if ((x1 - x0) + (y1 - y0) > span) { span = (x1 - x0) + (y1 - y0); line_ink = l.poly[k].rgba >> 8; }
-            }
-        }
-        OK(xink[1] && oink[1] && span > 1.6f && line_ink == (uttt_mark_ink(UTTT_O) >> 8),
-           "rules 2: O's won line across the board, with an X block for contrast");
-        OK(oink[2] && xink[2] && !wash[2], "rules 3: one subgrid, won by O");
-        OK(oink[3] && xink[3] && !wash[3], "rules 4: an X, and the red arrow to where it sends them");
-        OK(wash[4] == 1 && wash_w[4] > .9f, "rules 5: sent to a won block, the whole board is tinted");
-        OK(wash[5] == 1 && wash_w[5] < .4f && promise[5] > 0, "rules 6: one block tinted, the promise round another");
-        OK(wash[6] == 1 && !promise[6] && xink[6], "rules 7: the tinted block and the new tap in it");
-        OK(xink[7] && !oink[7] && !wash[7], "rules 8: one X");
+        float wander = hi - lo;
+        least = fminf(least, wander); most = fmaxf(most, wander); sum += wander;
+        if (wander < .01f) rough = 0;
+        if (wander > .08f) tame = 0;
+    }
+    printf("  win line wander: least %.4f mean %.4f most %.4f of the board\n",
+           least, sum / games, most);
+    OK(rough, "the win line wanders at least a percent of the board, in every won game");
+    OK(tame, "and never more than eight, so it stays one legible line");
+}
 
-        /* A PHRASE 104 BY 18 POINTS, in the frame the sheet gives it: its
-         * box plus box_pad + box_room on every side. The pen is rasterised
-         * into that frame, so NOTHING may leave it: the dropped box's bottom
-         * stroke was cropped (owner, 2026-09-26). */
-        UtttRulesLook L = uttt_rules_look();
-        const float e = L.box_pad + L.box_room, fw = 104.f + 2.f * e, fh = 18.f + 2.f * e;
-        uttt_dl_init(&d, PT, 400000, PO, 60000);
-        int box = uttt_draw_rule_box(&d, fw, fh) == 0 && d.n_poly > 0, inside = 1;
+/* THE RULES SHEET (docs/RULES.html): eight lines, each with a drawing
+ * out of the board's pen, and the two yellows found in the text. */
+static void test_rules_text(void)
+{
+    OK(uttt_rules_count() == 8 && !strcmp(uttt_rules_title(), "Ultimate Tic-Tac-Toe Rules")
+       && !strcmp(uttt_rules_line(7), "X moves first.") && !strcmp(uttt_rules_line(8), ""),
+       "rules: RULES.html's eight lines and title");
+    int ascii = 1;
+    for (int i = 0; i < uttt_rules_count(); i++)
+        for (const char *c = uttt_rules_line(i); *c; c++) if ((unsigned char)*c > 126) ascii = 0;
+    OK(ascii, "rules: ASCII, so a byte offset is a character offset (no em dash either)");
+    int at, len, where[8];
+    for (int i = 0; i < 8; i++) where[i] = uttt_rules_yellow(i, &at, &len);
+    OK(where[5] == UTTT_RULES_OUTLINE && uttt_rules_yellow(5, &at, &len) && at == 4 && len == 14,
+       "rules: line 6 marks \"yellow outline\" with the promise's box");
+    OK(where[6] == UTTT_RULES_TINT && uttt_rules_yellow(6, &at, &len)
+       && !strncmp(uttt_rules_line(6) + at, "yellow tinted area", (size_t)len) && len == 18,
+       "rules: line 7 marks \"yellow tinted area\" with the wash");
+    int plain = 1;
+    for (int i = 0; i < 8; i++) if (i != 5 && i != 6 && where[i] != UTTT_RULES_PLAIN) plain = 0;
+    OK(plain, "rules: no other line is marked");
+}
+
+/* the drawings: each fits its square, and says what its line says */
+static void test_rules_drawings(void)
+{
+    int fit = 1, drawn = 1, wash[8] = { 0 }, promise[8] = { 0 }, xink[8] = { 0 }, oink[8] = { 0 };
+    float wash_w[8] = { 0 };
+    for (int i = 0; i < 8; i++) {
+        UtttDL d; dl_fresh(&d);
+        if (uttt_draw_rule(&d, i) != 0 || d.n_poly < 4) drawn = 0;
         for (int k = 0; k < d.n_pt; k++)
-            if (d.pt[k].x < 0.f || d.pt[k].x > 1.f || d.pt[k].y < 0.f || d.pt[k].y > 1.f) inside = 0;
-        OK(box && (d.poly[0].rgba >> 8) == (uttt_wash_rgba(1.f) >> 8),
-           "rules: the phrase's outline is the promise's yellow");
-        OK(inside, "rules: the whole outline, roughness included, stays inside its frame");
-        /* THE PEN CLEARS THE DESCENDERS: drawn ON the phrase's box, the
-         * bottom stroke covered the y of "yellow". Its middle now runs a
-         * point or more under that box (the rough line bows about a point
-         * inward, so not the full box_grow + box_drop), and the top stroke's
-         * middle box_grow - box_drop over it. */
-        double top = 0, bot = 0; int nt = 0, nb = 0;
-        for (int k = 0; k < d.n_pt; k++) {
-            if (d.pt[k].x < .1f || d.pt[k].x > .9f) continue;   /* the sides */
-            float y = d.pt[k].y * fh;
-            if (y > fh / 2.f) { bot += y; nb++; } else { top += y; nt++; }
+            if (d.pt[k].x < -.02f || d.pt[k].x > 1.02f || d.pt[k].y < -.02f || d.pt[k].y > 1.02f) fit = 0;
+        for (int k = 0; k < d.n_poly; k++) {
+            uint32_t c = d.poly[k].rgba >> 8;
+            if (c == (uttt_wash_rgba(1.f) >> 8)) {
+                if (d.poly[k].n == 4) {
+                    wash[i]++;
+                    float w = d.pt[d.poly[k].first + 1].x - d.pt[d.poly[k].first].x;
+                    if (w > wash_w[i]) wash_w[i] = w;
+                } else promise[i]++;
+            }
+            if (c == (uttt_mark_ink(UTTT_X) >> 8)) xink[i]++;
+            if (c == (uttt_mark_ink(UTTT_O) >> 8)) oink[i]++;
         }
-        bot = nb ? bot / nb : 0; top = nt ? top / nt : 99;
-        OK(bot >= fh - e + 1.f
-           && fabs(top - (e - L.box_grow + L.box_drop)) < .6
-           && L.box_grow > 0.f && L.box_drop > 0.f,
-           "rules: the outline is grown and dropped off the phrase, clear of its descenders");
-        OK(L.row_h == 4.f * roundf(L.body_pt * L.body_lead) && L.row_h >= L.art,
-           "rules: every row one fixed height, four body lines, never shorter than a drawing");
-        OK(L.art == 62.f && L.row_gap == 14.f && L.body_pt == 15.f && L.tint == uttt_wash_rgba(.38f),
-           "rules: RULES.html's sizes");
     }
+    UtttDL d; dl_fresh(&d);
+    OK(drawn && uttt_draw_rule(&d, 8) == -1 && uttt_draw_rule(&d, -1) == -1,
+       "rules: eight drawings, and no ninth");
+    OK(fit, "rules: every drawing stays in its square");
+    OK(!xink[0] && !oink[0] && !wash[0], "rules 1: the board alone");
+    /* the win line is the one stroke that crosses the whole board */
+    uint32_t line_ink = 0; float span = 0.f;
+    {
+        UtttDL l; dl_fresh(&l);
+        uttt_draw_rule(&l, 1);
+        for (int k = 0; k < l.n_poly; k++) {
+            float x0 = 9, x1 = -9, y0 = 9, y1 = -9;
+            for (int q = 0; q < l.poly[k].n; q++) {
+                UtttPt p = l.pt[l.poly[k].first + q];
+                if (p.x < x0) x0 = p.x;
+                if (p.x > x1) x1 = p.x;
+                if (p.y < y0) y0 = p.y;
+                if (p.y > y1) y1 = p.y;
+            }
+            if ((x1 - x0) + (y1 - y0) > span) { span = (x1 - x0) + (y1 - y0); line_ink = l.poly[k].rgba >> 8; }
+        }
+    }
+    OK(xink[1] && oink[1] && span > 1.6f && line_ink == (uttt_mark_ink(UTTT_O) >> 8),
+       "rules 2: O's won line across the board, with an X block for contrast");
+    OK(oink[2] && xink[2] && !wash[2], "rules 3: one subgrid, won by O");
+    OK(oink[3] && xink[3] && !wash[3], "rules 4: an X, and the red arrow to where it sends them");
+    OK(wash[4] == 1 && wash_w[4] > .9f, "rules 5: sent to a won block, the whole board is tinted");
+    OK(wash[5] == 1 && wash_w[5] < .4f && promise[5] > 0, "rules 6: one block tinted, the promise round another");
+    OK(wash[6] == 1 && !promise[6] && xink[6], "rules 7: the tinted block and the new tap in it");
+    OK(xink[7] && !oink[7] && !wash[7], "rules 8: one X");
+}
+
+/* A PHRASE 104 BY 18 POINTS, in the frame the sheet gives it: its
+ * box plus box_pad + box_room on every side. The pen is rasterised
+ * into that frame, so NOTHING may leave it: the dropped box's bottom
+ * stroke was cropped (owner, 2026-09-26). */
+static void test_rules_phrase_box(void)
+{
+    UtttDL d; dl_fresh(&d);
+    UtttRulesLook L = uttt_rules_look();
+    const float e = L.box_pad + L.box_room, fw = 104.f + 2.f * e, fh = 18.f + 2.f * e;
+    int box = uttt_draw_rule_box(&d, fw, fh) == 0 && d.n_poly > 0, inside = 1;
+    for (int k = 0; k < d.n_pt; k++)
+        if (d.pt[k].x < 0.f || d.pt[k].x > 1.f || d.pt[k].y < 0.f || d.pt[k].y > 1.f) inside = 0;
+    OK(box && (d.poly[0].rgba >> 8) == (uttt_wash_rgba(1.f) >> 8),
+       "rules: the phrase's outline is the promise's yellow");
+    OK(inside, "rules: the whole outline, roughness included, stays inside its frame");
+    /* THE PEN CLEARS THE DESCENDERS: drawn ON the phrase's box, the
+     * bottom stroke covered the y of "yellow". Its middle now runs a
+     * point or more under that box (the rough line bows about a point
+     * inward, so not the full box_grow + box_drop), and the top stroke's
+     * middle box_grow - box_drop over it. */
+    double top = 0, bot = 0; int nt = 0, nb = 0;
+    for (int k = 0; k < d.n_pt; k++) {
+        if (d.pt[k].x < .1f || d.pt[k].x > .9f) continue;   /* the sides */
+        float y = d.pt[k].y * fh;
+        if (y > fh / 2.f) { bot += y; nb++; } else { top += y; nt++; }
+    }
+    bot = nb ? bot / nb : 0; top = nt ? top / nt : 99;
+    OK(bot >= fh - e + 1.f
+       && fabs(top - (e - L.box_grow + L.box_drop)) < .6
+       && L.box_grow > 0.f && L.box_drop > 0.f,
+       "rules: the outline is grown and dropped off the phrase, clear of its descenders");
+    OK(L.row_h == 4.f * roundf(L.body_pt * L.body_lead) && L.row_h >= L.art,
+       "rules: every row one fixed height, four body lines, never shorter than a drawing");
+    OK(L.art == 62.f && L.row_gap == 14.f && L.body_pt == 15.f && L.tint == uttt_wash_rgba(.38f),
+       "rules: RULES.html's sizes");
+}
+
+int main(void)
+{
+    UtttGame g; uttt_init(&g);
+    UtttFrame staged;
+
+    test_at_rest(&g);
+    uttt_play(&g, 4 * 9 + 4);           /* X in the centre of the centre */
+    test_stage(&g, &staged);
+    test_draft(&g, &staged);
+    test_send(&g);
+    test_outline();
+    uttt_play(&g, 4 * 9 + 0);           /* O answers into the top-left */
+    test_reply(&g);
+    test_their_headline(&g);
+    test_still(&g);
+    test_cache_and_stroke(&g);
+    test_headline_mark();
+
+    test_settlement();
+    test_block_taking_move();
+    test_settlement_whole();
+    test_win_line_weight();
+    test_main_lines_reach(&g);
+    test_door_size();
+    test_main_lines_centred();
+
+    test_sheet_every_height();
+    test_strip_second_line();
+    test_sheet_biggest();
+    test_doors_in_margins();
+    test_replay_door();
+    test_strip_columns();
+    test_again_copy_width();
+    test_sheet_ends();
+    test_send_hint_corner();
+
+    test_slide();
+    test_expand_spring();
+    test_win_line_drawn();
+    test_rules_text();
+    test_rules_drawings();
+    test_rules_phrase_box();
 
     printf("uttt_anim: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;

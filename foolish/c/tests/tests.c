@@ -1945,7 +1945,7 @@ static void test_bot_roster_strat_unique(void) {
     for (int i = 0; i < n; i++) if (bot_roster_find_by_strat(r[i].strat) != i) rt = 0;
     CHECK(rt, "bot_roster_find_by_strat round-trips every entry");
     CHECK(bot_roster_find_by_strat(-1) == -1, "an unassigned seat resolves to no entry");
-    CHECK(bot_roster_find_by_strat(STRAT_NOVICHOK) == -1, "an unrostered brain resolves to -1");
+    CHECK(bot_roster_find_by_strat(STRAT_ASTROLITE) == -1, "an unrostered brain resolves to -1");
 }
 
 static void seat_all(Game *g, int strat) {
@@ -15802,20 +15802,24 @@ static int pk_play(int brain, int roster_idx, int np, uint32_t seed, int max_act
 static void test_podkidnoy_every_brain(void) {
     static LegalMoves ml;
     // The count and the dispatch are one list: every id below STRAT_COUNT is a
-    // brain, and the first id past it is not.
+    // brain or a retired id (strategy_retired: a hole that is never handed out
+    // again and dispatches to nothing), and the first id past it is neither.
     {
         Game g; setup_transferable(&g);
-        // Real cards in the attacker's hand: a brain that reads every hand
-        // (novichok's endgame solve) must be handed a board that has them.
+        // Real cards in the attacker's hand, for any brain that reads them.
         for (int i = 0; i < 6; i++) g.players[0].hand[i] = (Card){ SUIT_CLUBS, (int8_t)(6 + i) };
         calculate_legal_moves(&g, 1, &ml);
-        int unknown_below = 0, known_past = 0;
+        int unknown_below = 0, known_past = 0, retired_alive = 0;
         for (int s = 0; s < 64; s++) {
             const int r = strategy_choose(s, &g, 1, &ml);
+            if (strategy_retired(s)) { retired_alive += r >= 0 || s >= STRAT_COUNT; continue; }
             if (s < STRAT_COUNT && r < 0) unknown_below++;
             if (s >= STRAT_COUNT && r >= 0) known_past++;
         }
         CHECK(unknown_below == 0, "every id below STRAT_COUNT dispatches to a brain");
+        CHECK(retired_alive == 0, "a retired id dispatches to nothing, and sits below STRAT_COUNT");
+        CHECK(STRAT_OCTOGEN == 20 && STRAT_OCTOGEN_ORACLE == 21 && STRAT_COUNT == 24,
+              "retiring a brain leaves a hole: the survivors keep their ids");
         CHECK(known_past == 0, "no id past STRAT_COUNT dispatches (bump STRAT_COUNT with a new brain)");
         // The probe sees a real transfer too, so a struct-world search (which
         // applies its moves through handle_pass) cannot transfer unseen.
@@ -15823,8 +15827,9 @@ static void test_podkidnoy_every_brain(void) {
         game_pass_probe = 0;
         CHECK(handle_pass(&g, 1, &p7h, 1) && game_pass_probe == 1, "the probe counts a transfer the engine applies");
     }
-    int brains = 0;
+    int brains = 0, retired = 0;
     for (int s = 0; s < STRAT_COUNT; s++) {
+        if (strategy_retired(s)) { retired++; continue; }
         long passes = 0; int chose = 0, refused = 0, decisions = 0, transferable = 0;
         for (int np = 2; np <= 3; np++)
             decisions += pk_play(s, -1, np, 500u + (uint32_t)(s * 3 + np), PK_ACTIONS, &passes, &chose, &refused, &transferable);
@@ -15835,7 +15840,7 @@ static void test_podkidnoy_every_brain(void) {
               "a podkidnoy table: no brain searches, chooses or plays a transfer");
         brains += transferable > 0;
     }
-    CHECK(brains == STRAT_COUNT, "every brain met a defence the classic game would let it transfer");
+    CHECK(brains == STRAT_COUNT - retired, "every brain met a defence the classic game would let it transfer");
     int bots = 0;
     for (int r = 0; r < bot_roster_count(); r++) {
         if (!bot_roster_linked(r)) continue;
@@ -16284,7 +16289,6 @@ int main(void) {
     test_client_adopts_a_bare_board();
     test_hand_layout_rows_and_slots();
     test_hand_layout_refuses_what_it_cannot_answer();
-    test_hand_layout_is_rows_and_slots_in_one_value();
     test_hand_layout_is_rows_and_slots_in_one_value();
 
     printf("\n%d passed, %d failed\n", n_pass, n_fail);

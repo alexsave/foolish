@@ -1431,8 +1431,8 @@ provisioned directory and skip `playwright install`; otherwise
 
 ```bash
 npm run dev &                       # port 3000; replay needs no Supabase
-# script: scripts/oracle_shots.mjs (playwright, ad-hoc; keep out of deps or
-# add as devDependency — builder's call, ROADMAP screenshots were ad-hoc too)
+# then an ad-hoc Playwright script of the steps below (none is committed, and
+# Playwright is not a dependency; the ROADMAP screenshots were ad-hoc too)
 ```
 
 Script steps (use the `data-testid` hooks from §9.1):

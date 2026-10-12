@@ -174,7 +174,8 @@ That is not a comment you have to trust: a test gunzips the shipped module and s
 **The bot roster is C.**
 [`c/src/bot_roster.c`](c/src/bot_roster.c) is the single source of truth for what a named bot *is*, read by the database seed, the edge functions, the iOS bridge and the wasm.
 The ladder players meet runs `random` → `simple_heuristic` → `handwritten` → `espresso` → `robusta` → `firecracker` → `gunpowder` → `blackpowder` → `cordite` → `octogen`.
-Eleven more strategies exist for the arena only and are deliberately not linked into the shipped module; one of them, `novichok`, is a cheating-ceiling probe that **must** stay unreachable from the roster.
+Ten more brains exist for the arena only ([`c/src/strategy.h`](c/src/strategy.h)), and none of them has a roster row.
+Three research bots - `semtex`, `torpex` and the cheating-ceiling probe `novichok` - were retired and their code removed; their strategy ids stay retired rather than being handed out again.
 Cordite is a belief-constrained determinized Monte-Carlo player with an exact endgame solver that deduces hidden information rather than peeking, under a strict no-LLM, no-cheating contract.
 Octogen is built on it and sits at the top.
 

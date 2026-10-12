@@ -9,9 +9,8 @@ import { Text } from './Text';
 import { SovietIcon, RankIcon } from './SovietIcon';
 import { useTexture, getTextureStyle, seedFromString, flipFromString } from './TexturedSurface';
 import { botDisplayName, isBotName } from '../common/botName';
-import { ensureBotsAsync, kernelB32Encode, replaySummary } from '@sdk/ts/wasm/bots.ts';
-import { decodeExtras, joinReplayCode } from '@api/common/replay_extras.ts';
-import { bigintToBytes, bytesToBigint, hexToBytes } from '@api/common/replay_codec.ts';
+import { ensureBotsAsync } from '@sdk/ts/wasm/bots.ts';
+import { decodeHistoryRow, type HistoryEntry } from './matchHistoryRow';
 
 /**
  * Match history: every finished game the signed-in user played, straight from
@@ -26,16 +25,10 @@ import { bigintToBytes, bytesToBigint, hexToBytes } from '@api/common/replay_cod
 
 const PAGE_SIZE = 50;
 
-interface HistoryEntry {
-    id: string;
-    code: string;           // base32 moves[-extras] - the replay URL path
-    createdAt: Date;
-    playerCount: number;
-    names: string[];        // seat order, '%'-prefixed for bots
-    mySeat: number;
-    myRank: number;         // 1 = first out (best), playerCount = the fool
-    foolSeat: number;
-    durationSec: number | null;
+interface HistoryStats {
+    games: number;
+    fools: number;
+    survival: number;       // percent of the listed games not lost
 }
 
 const formatDuration = (sec: number): string => {
@@ -45,11 +38,97 @@ const formatDuration = (sec: number): string => {
     return m > 0 ? `${m}m ${s}s` : `${s}s`;
 };
 
-// game_snapshots.created_at is TIMESTAMP WITHOUT TIME ZONE holding UTC wall
-// time; PostgREST serializes it with no offset, and new Date() would read
-// that as LOCAL time. Pin it to UTC unless an offset is already present.
-const parseUtcTimestamp = (ts: string): Date =>
-    new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(ts) ? ts : ts + 'Z');
+// The four tiles above the list: the lifetime rating, then the listed games' totals.
+const StatsCard: React.FC<{ stats: HistoryStats; elo: { rating: number } | null; woodUrl: string | null; userId: string | null }> = ({ stats, elo, woodUrl, userId }) => (
+    <div className="z-content flex flex-col items-center" style={{ width: '100%', maxWidth: 420 }}>
+        <span className="text-shadow" style={{ color: 'var(--color-text-muted)', fontSize: '0.75rem', marginBottom: 4 }}>
+            <Text id="your_stats" />
+        </span>
+        <div className="result-card" style={{ marginBottom: '0.8rem' }}>
+            <div
+                className="bg-wood"
+                style={{
+                    ...getTextureStyle(woodUrl, false, seedFromString(userId ?? 'stats')),
+                }}
+            />
+            <div className="flex flex-1 items-center" style={{ justifyContent: 'space-around', gap: '0.5rem' }}>
+                {[
+                    { label: 'rating' as const, value: elo ? String(elo.rating) : '-' },
+                    { label: 'games_label' as const, value: String(stats.games) },
+                    { label: 'survival_rate' as const, value: `${stats.survival}%` },
+                    { label: 'times_fool' as const, value: String(stats.fools) },
+                ].map((tile) => (
+                    <div key={tile.label} className="flex flex-col items-center" style={{ minWidth: 0 }}>
+                        <span className="text-shadow" style={{ color: 'var(--color-text-primary)', fontSize: '1.1rem', fontWeight: 'bold' }}>
+                            {tile.value}
+                        </span>
+                        <span className="text-shadow" style={{ color: 'var(--color-text-muted)', fontSize: '0.65rem', textAlign: 'center' }}>
+                            <Text id={tile.label} />
+                        </span>
+                    </div>
+                ))}
+            </div>
+        </div>
+    </div>
+);
+
+// One finished game: how it went for you, who sat where, and the way into its replay.
+const HistoryRow: React.FC<{ entry: HistoryEntry; woodUrl: string | null; onOpen: () => void }> = ({ entry, woodUrl, onOpen }) => {
+    const survived = entry.mySeat !== entry.foolSeat;
+    const seed = seedFromString(entry.id);
+    const flip = flipFromString(entry.id);
+
+    return (
+        <div
+            className="result-card"
+            style={{ cursor: 'pointer' }}
+            onClick={onOpen}
+        >
+            <div
+                className="bg-wood"
+                style={{
+                    ...getTextureStyle(woodUrl, false, seed),
+                    transform: `scaleX(${flip})`,
+                }}
+            />
+
+            <div className="flex items-center gap-md flex-1 min-w-0">
+                <div className="result-card__rank">
+                    <RankIcon rank={entry.myRank} totalPlayers={entry.playerCount} size={26} />
+                </div>
+
+                <div className="flex flex-col min-w-0" style={{ gap: '2px' }}>
+                    <span
+                        className={`result-card__name ${survived ? 'result-card__name--current' : ''}`}
+                        style={survived ? undefined : { color: 'var(--color-error)' }}
+                    >
+                        <Text id={survived ? 'result_survived' : 'result_fool'} />
+                    </span>
+                    <span className="text-shadow" style={{ color: 'var(--color-text-primary)', fontSize: '0.75rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {entry.names.map((name, seat) => (
+                            <span key={seat} style={{ marginRight: 6, fontWeight: seat === entry.mySeat ? 'bold' : 'normal' }}>
+                                {isBotName(name) && <SovietIcon name="bot" size={11} />}
+                                {seat === entry.foolSeat && <SovietIcon name="fool" size={11} />}
+                                {botDisplayName(name)}
+                            </span>
+                        ))}
+                    </span>
+                    <span className="text-shadow" style={{ color: 'var(--color-text-muted)', fontSize: '0.65rem' }}>
+                        {entry.createdAt.toLocaleDateString()}
+                        {entry.durationSec !== null && ` · ${formatDuration(entry.durationSec)}`}
+                        {` · ${entry.playerCount}p`}
+                    </span>
+                </div>
+            </div>
+
+            <div className="result-card__elo" style={{ flexShrink: 0 }}>
+                <span className="text-shadow" style={{ color: 'var(--color-text-primary)', fontSize: '0.75rem', opacity: 0.9 }}>
+                    <Text id="watch_replay" /> ▶
+                </span>
+            </div>
+        </div>
+    );
+};
 
 export const MatchHistory: React.FC = () => {
     const router = useRouter();
@@ -94,51 +173,11 @@ export const MatchHistory: React.FC = () => {
                         await new Promise((r) => setTimeout(r, 0));
                     if (cancelled) return;
 
-                    const row = rows[i];
                     // A snapshot that fails to decode (corrupt / future format)
                     // shouldn't take the whole screen down - skip it.
                     try {
-                        const playerIds = (row.player_ids as string[]) ?? [];
-                        const mySeat = playerIds.indexOf(user_id);
-                        if (mySeat < 0) continue; // cheap check before the expensive decode
-
-                        const movesBytes = hexToBytes(row.moves as string);
-                        const extrasBytes = row.extras ? hexToBytes(row.extras as string) : null;
-                        const extrasCode = extrasBytes && extrasBytes.length > 0
-                            ? kernelB32Encode(extrasBytes)
-                            : null;
-                        const d = replaySummary(bigintToBytes(bytesToBigint(movesBytes)));
-                        if (!d) throw new Error('the snapshot does not decode');
-
-                        let names: string[] | null = null;
-                        let durationSec: number | null = null;
-                        if (extrasCode) {
-                            try {
-                                const extras = decodeExtras(extrasCode, d.numPlayers, d.moves);
-                                names = extras.names;
-                                if (extras.moveGaps && extras.moveGaps.length > 0)
-                                    durationSec = extras.moveGaps.reduce((a, b) => a + b, 0);
-                            } catch (e) {
-                                console.error('History extras ignored:', e);
-                            }
-                        }
-
-                        // The fool is never in the elimination order (ReplaySummary),
-                        // so the fallback IS the fool's last place.
-                        const rankIndex = d.elimination.indexOf(mySeat);
-                        const myRank = rankIndex >= 0 ? rankIndex + 1 : d.numPlayers;
-
-                        decoded.push({
-                            id: row.id as string,
-                            code: joinReplayCode(kernelB32Encode(movesBytes), extrasCode),
-                            createdAt: parseUtcTimestamp(row.created_at as string),
-                            playerCount: d.numPlayers,
-                            names: names ?? playerIds.map((_, seat) => `#${seat + 1}`),
-                            mySeat,
-                            myRank,
-                            foolSeat: d.fool,
-                            durationSec,
-                        });
+                        const entry = decodeHistoryRow(rows[i], user_id);
+                        if (entry) decoded.push(entry);
                     } catch (e) {
                         console.error('History snapshot skipped:', e);
                     }
@@ -183,38 +222,7 @@ export const MatchHistory: React.FC = () => {
                 <Text id="match_history" />
             </h1>
 
-            {stats && (
-                <div className="z-content flex flex-col items-center" style={{ width: '100%', maxWidth: 420 }}>
-                    <span className="text-shadow" style={{ color: 'var(--color-text-muted)', fontSize: '0.75rem', marginBottom: 4 }}>
-                        <Text id="your_stats" />
-                    </span>
-                    <div className="result-card" style={{ marginBottom: '0.8rem' }}>
-                        <div
-                            className="bg-wood"
-                            style={{
-                                ...getTextureStyle(woodUrl, false, seedFromString(user_id ?? 'stats')),
-                            }}
-                        />
-                        <div className="flex flex-1 items-center" style={{ justifyContent: 'space-around', gap: '0.5rem' }}>
-                            {[
-                                { label: 'rating' as const, value: elo ? String(elo.rating) : '-' },
-                                { label: 'games_label' as const, value: String(stats.games) },
-                                { label: 'survival_rate' as const, value: `${stats.survival}%` },
-                                { label: 'times_fool' as const, value: String(stats.fools) },
-                            ].map((tile) => (
-                                <div key={tile.label} className="flex flex-col items-center" style={{ minWidth: 0 }}>
-                                    <span className="text-shadow" style={{ color: 'var(--color-text-primary)', fontSize: '1.1rem', fontWeight: 'bold' }}>
-                                        {tile.value}
-                                    </span>
-                                    <span className="text-shadow" style={{ color: 'var(--color-text-muted)', fontSize: '0.65rem', textAlign: 'center' }}>
-                                        <Text id={tile.label} />
-                                    </span>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                </div>
-            )}
+            {stats && <StatsCard stats={stats} elo={elo} woodUrl={woodUrl} userId={user_id} />}
 
             <div className="win-screen__results" style={{ maxWidth: 420 }}>
                 {entries === null && (
@@ -229,63 +237,9 @@ export const MatchHistory: React.FC = () => {
                     </div>
                 )}
 
-                {entries?.map((entry) => {
-                    const survived = entry.mySeat !== entry.foolSeat;
-                    const seed = seedFromString(entry.id);
-                    const flip = flipFromString(entry.id);
-
-                    return (
-                        <div
-                            key={entry.id}
-                            className="result-card"
-                            style={{ cursor: 'pointer' }}
-                            onClick={() => router.push(`/${entry.code}`)}
-                        >
-                            <div
-                                className="bg-wood"
-                                style={{
-                                    ...getTextureStyle(woodUrl, false, seed),
-                                    transform: `scaleX(${flip})`,
-                                }}
-                            />
-
-                            <div className="flex items-center gap-md flex-1 min-w-0">
-                                <div className="result-card__rank">
-                                    <RankIcon rank={entry.myRank} totalPlayers={entry.playerCount} size={26} />
-                                </div>
-
-                                <div className="flex flex-col min-w-0" style={{ gap: '2px' }}>
-                                    <span
-                                        className={`result-card__name ${survived ? 'result-card__name--current' : ''}`}
-                                        style={survived ? undefined : { color: 'var(--color-error)' }}
-                                    >
-                                        <Text id={survived ? 'result_survived' : 'result_fool'} />
-                                    </span>
-                                    <span className="text-shadow" style={{ color: 'var(--color-text-primary)', fontSize: '0.75rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                        {entry.names.map((name, seat) => (
-                                            <span key={seat} style={{ marginRight: 6, fontWeight: seat === entry.mySeat ? 'bold' : 'normal' }}>
-                                                {isBotName(name) && <SovietIcon name="bot" size={11} />}
-                                                {seat === entry.foolSeat && <SovietIcon name="fool" size={11} />}
-                                                {botDisplayName(name)}
-                                            </span>
-                                        ))}
-                                    </span>
-                                    <span className="text-shadow" style={{ color: 'var(--color-text-muted)', fontSize: '0.65rem' }}>
-                                        {entry.createdAt.toLocaleDateString()}
-                                        {entry.durationSec !== null && ` · ${formatDuration(entry.durationSec)}`}
-                                        {` · ${entry.playerCount}p`}
-                                    </span>
-                                </div>
-                            </div>
-
-                            <div className="result-card__elo" style={{ flexShrink: 0 }}>
-                                <span className="text-shadow" style={{ color: 'var(--color-text-primary)', fontSize: '0.75rem', opacity: 0.9 }}>
-                                    <Text id="watch_replay" /> ▶
-                                </span>
-                            </div>
-                        </div>
-                    );
-                })}
+                {entries?.map((entry) => (
+                    <HistoryRow key={entry.id} entry={entry} woodUrl={woodUrl} onOpen={() => router.push(`/${entry.code}`)} />
+                ))}
             </div>
 
             <LanguageSwitcher />

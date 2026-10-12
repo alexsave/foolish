@@ -830,6 +830,83 @@ final class HarnessModel: ObservableObject {
         }
     }
 
+    // MARK: - the one kernel driver
+    //
+    // Every rig that needs a mid-game board gets there the same way: ask each
+    // seat in turn for its legal menu, play the first move the rig wants, and
+    // go round again. That scan used to be written out at seven sites (three
+    // in `seedDemoGame` below, four in HarnessScenario.swift), each with its
+    // own `acted` flag. The RULE is one rule - lowest seat first, one move per
+    // step, stop when nobody has a move the rig wants - and lives here. What
+    // genuinely differs between the sites is a parameter, and each call says
+    // which: what a seat may play (`pick`), when to stop (`limit` / `until`),
+    // and what a played move owes (`onMove`: keep the seat, seal a bubble).
+
+    /// What a driver would play from one seat's legal menu, or nil to pass
+    /// that seat over. Reads only; the menu is the kernel's.
+    typealias DrivePick = (_ seat: Int, _ legal: [Move]) async -> Move?
+
+    /// THE SEAT SCAN: the lowest seat whose menu offers a move `pick` wants,
+    /// and that move. Nothing is applied - `drive` does that, and a caller
+    /// that must act on a refused apply (`arrivalOnOpenBoard`'s arrivals) does
+    /// it itself.
+    ///
+    /// `eligible` skips a seat BEFORE its menu is asked for, so a seat that is
+    /// not allowed to move costs no trip into the kernel.
+    func firstLegal(seats n: Int, where eligible: (Int) -> Bool = { _ in true },
+                    pick: DrivePick) async -> (seat: Int, move: Move)? {
+        for s in 0..<n where eligible(s) {
+            let legal = await MessageKernel.shared.residentLegal(seat: s)
+            if let m = await pick(s, legal) { return (s, m) }
+        }
+        return nil
+    }
+
+    /// THE DRIVER: play the resident game forward with kernel moves only, one
+    /// move per step, for at most `limit` steps.
+    ///
+    /// - `until`: asked at the top of every step, before any seat is scanned;
+    ///   true stops the drive with nothing played on that step.
+    /// - `pick`: one pass over the seats (`firstLegal`).
+    /// - `fallback`: a SECOND WHOLE PASS, tried only when the first found
+    ///   nothing at any seat. Not the same thing as `a ?? b` inside one pick,
+    ///   which prefers per seat: this prefers per TABLE (a cover anywhere
+    ///   before an attack anywhere - HARNESS_SEED_PLAY's rule, and only its).
+    /// - `onMove`: called with the seat that just played. Return false to stop
+    ///   there (HARNESS_ENDSCREEN leaves the game-ending move unsealed).
+    ///
+    /// A refused apply still counts as the step's move, as it did at every
+    /// site this replaced: the menu came from the kernel a line earlier, so a
+    /// refusal is not a case any of them handled.
+    func drive(seats n: Int, limit: Int,
+               until stop: () async -> Bool = { false },
+               pick: DrivePick, fallback: DrivePick? = nil,
+               onMove: (_ seat: Int) async -> Bool) async {
+        for _ in 0..<limit {
+            if await stop() { return }
+            var hit = await firstLegal(seats: n, pick: pick)
+            if hit == nil, let fallback { hit = await firstLegal(seats: n, pick: fallback) }
+            guard let hit else { return }
+            try? await MessageKernel.shared.apply(seat: hit.seat, move: hit.move)
+            guard await onMove(hit.seat) else { return }
+        }
+    }
+
+    /// ONE BUBBLE: seal the resident game as a root-parent chain and decode it
+    /// straight back, which is what a receiving device does. The decode is not
+    /// a formality - it moves the kernel's bubble mark (the session's
+    /// msg_base_logs), and everything played after it is the NEXT bubble's
+    /// delta. Throws only if the seal does; the decode is best-effort, as it
+    /// was at every site.
+    func sealAndAdopt(phase: Int, lastSeat: Int, gameId: UInt64,
+                      joins: [MessageJoin]) async throws -> Data {
+        let payload = try await MessageKernel.shared.seal(
+            phase: phase, lastActorSeat: lastSeat, gameId: gameId,
+            parent8: Data(repeating: 0, count: 8), joins: joins)
+        _ = try? await MessageKernel.shared.decode(payload: payload, viewer: -1)
+        return payload
+    }
+
     /// DEV screenshotting: deal a real 2-player game, play seat 0's opening
     /// attack, and land as the receiver (Vera) viewing that bubble — so the board
     /// renders without any taps. Gated by the HARNESS_SEED launch env; never runs
@@ -837,13 +914,6 @@ final class HarnessModel: ObservableObject {
     func seedDemoGame() async {
         let n = participants.count
         guard n >= 2 else { return }
-        // bug-2 crux: can a 0-move GENESIS (1 join, parent=zeros) be sealed? If so
-        // the creator-not-first-attacker can send the deal (MessageTableView.stageNow).
-        try? await MessageKernel.shared.newGame(seed: Data(repeating: 3, count: 32), players: 2)
-        let g0seal = ((try? await MessageKernel.shared.seal(
-            phase: 2, lastActorSeat: 0, gameId: 0xBEEF,
-            parent8: Data(repeating: 0, count: 8),
-            joins: [MessageJoin(seat: 0, name: "You")])) != nil)
         let seed = Data(repeating: 42, count: 32)   // fixed → reproducible screenshots
         let gid: UInt64 = 0xF001
         do {
@@ -851,36 +921,19 @@ final class HarnessModel: ObservableObject {
             // A fresh LIVE handoff: everyone seated, no move yet. Whoever holds
             // the lowest trump is the first attacker.
             let joins = (0..<n).map { MessageJoin(seat: $0, name: participants[$0].name) }
-            var payload = try await MessageKernel.shared.seal(
-                phase: 2, lastActorSeat: 0, gameId: gid,
-                parent8: Data(repeating: 0, count: 8), joins: joins)
-            _ = try? await MessageKernel.shared.decode(payload: payload, viewer: -1)
+            var payload = try await sealAndAdopt(phase: 2, lastSeat: 0, gameId: gid, joins: joins)
 
             // DEV: HARNESS_SEED_PLAY=N applies N attack/cover steps (cover an
             // uncovered attack when possible, else attack) so the board renders a
             // populated, wrapping table for layout screenshots — then re-seals it.
+            // The preference is per TABLE, not per seat - a cover at any seat
+            // before an attack at any seat - which is what `fallback` is for.
             if let raw = ProcessInfo.processInfo.environment["HARNESS_SEED_PLAY"] {
                 let steps = Int(raw) ?? 6
-                var lastSeat = 0
-                for _ in 0..<steps {
-                    var acted = false
-                    for s in 0..<n {
-                        let legal = await MessageKernel.shared.residentLegal(seat: s)
-                        if let cover = legal.first(where: { $0.type == .cover }) {
-                            try? await MessageKernel.shared.apply(seat: s, move: cover)
-                            lastSeat = s; acted = true; break
-                        }
-                    }
-                    if !acted {
-                        for s in 0..<n {
-                            let legal = await MessageKernel.shared.residentLegal(seat: s)
-                            if let atk = legal.first(where: { $0.type == .attack }) {
-                                try? await MessageKernel.shared.apply(seat: s, move: atk)
-                                lastSeat = s; acted = true; break
-                            }
-                        }
-                    }
-                    if !acted { break }
+                await drive(seats: n, limit: steps,
+                            pick: { _, legal in legal.first { $0.type == .cover } },
+                            fallback: { _, legal in legal.first { $0.type == .attack } },
+                            onMove: { seat in
                     // ONE BUBBLE PER MOVE. Sealing once at the END of the run
                     // instead put every one of these steps into a single
                     // bubble, and the bubble delta is what bounds a replay:
@@ -890,31 +943,23 @@ final class HarnessModel: ObservableObject {
                     // at once. Re-decoding here moves the mark exactly as a
                     // receiving device does, which is the only way a dev seed
                     // has the shape a real chain has.
-                    if let p = try? await MessageKernel.shared.seal(
-                        phase: 2, lastActorSeat: lastSeat, gameId: gid,
-                        parent8: Data(repeating: 0, count: 8), joins: joins) {
+                    if let p = try? await self.sealAndAdopt(phase: 2, lastSeat: seat,
+                                                            gameId: gid, joins: joins) {
                         payload = p
-                        _ = try? await MessageKernel.shared.decode(payload: payload, viewer: -1)
                     }
-                }
+                    return true
+                })
             }
             // DEV: HARNESS_ENDSCREEN plays the whole game out (first legal move for
             // any actionable seat) until it is over, then seals FINISHED so the
             // board lands on the ranked end screen — a deterministic screenshot.
             if ProcessInfo.processInfo.environment["HARNESS_ENDSCREEN"] != nil {
-                var guardN = 0
                 var lastSeat = 0
-                while (await MessageKernel.shared.residentView(viewer: -1))?.isOver != true, guardN < 6000 {
-                    guardN += 1
-                    var acted = false
-                    for s in 0..<n {
-                        let legal = await MessageKernel.shared.residentLegal(seat: s)
-                        if let m = legal.first(where: { $0.type != .wait }) {
-                            try? await MessageKernel.shared.apply(seat: s, move: m)
-                            lastSeat = s; acted = true; break
-                        }
-                    }
-                    if !acted { break }
+                await drive(seats: n, limit: 6000,
+                            until: { (await MessageKernel.shared.residentView(viewer: -1))?.isOver == true },
+                            pick: { _, legal in legal.first { $0.type != .wait } },
+                            onMove: { seat in
+                    lastSeat = seat
                     // The move that ENDS the game is deliberately left unsealed
                     // here, so the phase-3 seal below is the bubble that carries
                     // it and the end screen opens on a ONE-MOVE replay. Every
@@ -929,28 +974,24 @@ final class HarnessModel: ObservableObject {
                     // this: a staged bout end empties the legal menu
                     // (msg_wire.c, `out->empty_menu = held`), so no bubble can
                     // ever carry two bouts.
-                    if (await MessageKernel.shared.residentView(viewer: -1))?.isOver == true { break }
-                    if let p = try? await MessageKernel.shared.seal(
-                        phase: 2, lastActorSeat: lastSeat, gameId: gid,
-                        parent8: Data(repeating: 0, count: 8), joins: joins) {
+                    if (await MessageKernel.shared.residentView(viewer: -1))?.isOver == true { return false }
+                    if let p = try? await self.sealAndAdopt(phase: 2, lastSeat: seat,
+                                                            gameId: gid, joins: joins) {
                         payload = p
-                        _ = try? await MessageKernel.shared.decode(payload: payload, viewer: -1)
                     }
-                }
-                if let p = try? await MessageKernel.shared.seal(
-                    phase: 3, lastActorSeat: lastSeat, gameId: gid,
-                    parent8: Data(repeating: 0, count: 8), joins: joins) {
+                    return true
+                })
+                if let p = try? await sealAndAdopt(phase: 3, lastSeat: lastSeat,
+                                                   gameId: gid, joins: joins) {
                     payload = p
-                    _ = try? await MessageKernel.shared.decode(payload: payload, viewer: -1)
                 }
             }
-            var actor = 0
-            for s in 0..<n where (await MessageKernel.shared.residentLegal(seat: s)).contains(where: { $0.type != .wait }) {
-                actor = s; break
-            }
+            let actor = await firstLegal(seats: n, pick: { _, legal in
+                legal.first { $0.type != .wait }
+            })?.seat ?? 0
             let la = await MessageKernel.shared.residentLegal(seat: actor)
             let v = await MessageKernel.shared.residentView(viewer: actor)
-            debugInfo = "g0seal=\(g0seal) n=\(n) def=\(v?.defender ?? -9) firstActor=\(actor) legal=[\(la.map { "\($0.type)" }.joined(separator: ","))]"
+            debugInfo = "n=\(n) def=\(v?.defender ?? -9) firstActor=\(actor) legal=[\(la.map { "\($0.type)" }.joined(separator: ","))]"
 
             // Always seeds into chat 0 ("Chat A") — a dev screenshot helper, not the
             // two-chat leak repro, so it doesn't need to honor `currentChat`.

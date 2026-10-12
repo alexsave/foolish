@@ -48,6 +48,7 @@ the per-game move-divergence rate — see the page's write-up.
 | path | what |
 |------|------|
 | `generate.sh` | rebuild the page from `data/` |
+| `client.js` | the page's browser script, inlined by `build.mjs` |
 | `build.mjs` | render `data/*.json` → `docs/tt-divergence.html` |
 | `ccdf.mjs` | `data/W/*.gw` → `data/ccdf.json` (per-seed → CCDF) |
 | `data/W/*.gw` | accumulating per-game seed-keyed working sets |

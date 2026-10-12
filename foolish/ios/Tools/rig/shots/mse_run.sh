@@ -10,7 +10,7 @@
 set -uo pipefail
 : "${FOOLISH_SIM:?set FOOLISH_SIM}"
 HERE="$(cd "$(dirname "$0")" && pwd)"; RIG="$HERE/../rig.sh"
-REPO="$(cd "$HERE/../../../.." && pwd)"
+SHLIB="$HERE/../../../../../shared/rig/lib"  # the shared measurement half (no product knowledge in it)
 NAME="${1:?name this run}"; N="${2:-20}"
 export FOOLISH_OUT="${FOOLISH_OUT:-$HOME/Downloads/mse}"
 if [ "${3:-}" != "--nobuild" ]; then
@@ -18,5 +18,5 @@ if [ "${3:-}" != "--nobuild" ]; then
 fi
 rm -rf "$FOOLISH_OUT/film/${NAME}_"*
 "$HERE/tween_loop.sh" "$N" "$NAME" || true
-python3 "$REPO/ios/Tools/rig/lib/mse.py" "$FOOLISH_OUT/film/${NAME}_"*/edge.csv \
+python3 "$SHLIB/mse.py" "$FOOLISH_OUT/film/${NAME}_"*/edge.csv \
   --label "$NAME" --plot "$FOOLISH_OUT/$NAME.png" --json "$FOOLISH_OUT/$NAME.json"

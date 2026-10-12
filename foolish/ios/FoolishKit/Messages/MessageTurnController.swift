@@ -405,6 +405,23 @@ public final class MessageTurnController: ObservableObject {
         stagedAnimation = nil
     }
 
+    /// HOW EVERY REFUSAL IN `markSent` ENDS: the rebase is refused, the release
+    /// is not. Four verdicts come here - foreign bytes, an arrival that raced
+    /// the send, another game's chain, bytes that will not decode - each after
+    /// writing its own trail note, and each returns straight after.
+    ///
+    /// THE ORDER IS THE RULE, and it is the order all four spelled out by
+    /// hand: the send window closes, then the held settlement is released,
+    /// and only then the one `await`, so nothing can publish between the two
+    /// writes. Being a call on this same actor it adds no suspension of its
+    /// own ahead of them. The committing path does NOT end here - it has
+    /// `pending` and `base` to move between those same two writes.
+    private func endRefusedSend() async {
+        sending = false
+        releaseHoldForSend()
+        await refresh()
+    }
+
     /// Split the turn just staged at its settlement boundary, if it has one.
     /// Called after every `apply`, before the board is published, so the view
     /// that reaches the first paint is already the withheld one.
@@ -1541,9 +1558,7 @@ public final class MessageTurnController: ObservableObject {
             // so the move can no longer be undone or its bubble deleted, and
             // holding its settlement past that point is a board that cannot be
             // moved by any input at all. See `releaseHoldForSend`.
-            sending = false
-            releaseHoldForSend()
-            await refresh()
+            await endRefusedSend()
             return
         }
         // AND A REFUSAL CHANGES NOTHING. Not the base, and not `pending`
@@ -1635,9 +1650,7 @@ public final class MessageTurnController: ObservableObject {
                     "an arrival moved the board \(fate == .landed ? "past" : "away from") the sent bytes - board unchanged")
                 AnimLog.say("markSent REFUSED - an arrival raced the send (\(String(describing: fate)))")
                 // The rebase is refused; the release is not (`releaseHoldForSend`).
-                sending = false
-                releaseHoldForSend()
-                await refresh()
+                await endRefusedSend()
                 return
             }
             if verdict == .otherGame {
@@ -1647,9 +1660,7 @@ public final class MessageTurnController: ObservableObject {
                     + "(\(adopted?.gameId ?? "?") vs \(gameIdString))")
                 // The same shape as every other refusal in this function: the
                 // REBASE is refused, the release is not (see `releaseHoldForSend`).
-                sending = false
-                releaseHoldForSend()
-                await refresh()
+                await endRefusedSend()
                 return
             }
             if verdict == .unreadable {
@@ -1657,9 +1668,7 @@ public final class MessageTurnController: ObservableObject {
                 AnimLog.say("markSent: the sent bytes will not decode - board unchanged")
                 // The board keeps its staged move, but not its held settlement
                 // and not the send window - see `releaseHoldForSend`.
-                sending = false
-                releaseHoldForSend()
-                await refresh()
+                await endRefusedSend()
                 return
             }
         }

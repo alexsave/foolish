@@ -57,7 +57,7 @@ static void format_card_list(const Card *cards, int n, char *buf, size_t buflen)
 
 // Verbose variant of play_one: prints every move with player, type, cards.
 static int play_one_verbose(uint32_t seed, int n_players, int protagonist, int opp) {
-    // Cold solver TT per game: semtex/octogen leaf solving persists the TT
+    // Cold solver TT per game: octogen leaf solving persists the TT
     // across the worlds of a decision (sound: exact fingerprints), but
     // letting it persist ACROSS GAMES couples the two games of a --control
     // pair (game B inherits game A's warmth; budget-dependent solves then
@@ -137,7 +137,7 @@ static int play_one_verbose(uint32_t seed, int n_players, int protagonist, int o
 
 // Audit variant of play_one: plays the game normally (protagonist at seat 0),
 // but at every seat-0 decision with >1 legal move ALSO queries the oracle
-// (semtex with 6x worlds + wider candidate survival) and reports
+// (octogen with 6x worlds + wider candidate survival) and reports
 // disagreements. Both strategies save/restore the game RNG internally, so
 // the trajectory is identical to a normal game; the oracle is a pure probe.
 // A disagreement marks a compute-limited decision; unanimous decisions in a
@@ -155,7 +155,7 @@ static void fmt_move(const LegalMove *m, char *buf, size_t n) {
 
 static int play_one_audit(uint32_t seed, int n_players, int protagonist, int opp,
                           int *n_dec, int *n_disagree) {
-    // Cold solver TT per game: semtex/octogen leaf solving persists the TT
+    // Cold solver TT per game: octogen leaf solving persists the TT
     // across the worlds of a decision (sound: exact fingerprints), but
     // letting it persist ACROSS GAMES couples the two games of a --control
     // pair (game B inherits game A's warmth; budget-dependent solves then
@@ -193,7 +193,7 @@ static int play_one_audit(uint32_t seed, int n_players, int protagonist, int opp
             step++;
             if (pi == 0 && moves.n > 1) {
                 (*n_dec)++;
-                int oidx = semtex_oracle_strategy_choose(&g, pi, &moves, NULL);
+                int oidx = octogen_oracle_strategy_choose(&g, pi, &moves, NULL);
                 if (oidx >= 0 && oidx < moves.n && oidx != idx) {
                     (*n_disagree)++;
                     int in_c = 0;
@@ -244,7 +244,7 @@ static int play_one(uint32_t seed, int n_players, int protagonist, int opp) {
     if (g_lat < 0) { const char *e = getenv("CD_LAT");   g_lat = (e && e[0] && e[0] != '0') ? 1 : 0; }
     unsigned long long sig = 1469598103934665603ULL;
     #define SIG_FOLD(x) do { sig ^= (unsigned long long)(unsigned)(x); sig *= 1099511628211ULL; } while (0)
-    // Cold solver TT per game: semtex/octogen leaf solving persists the TT
+    // Cold solver TT per game: octogen leaf solving persists the TT
     // across the worlds of a decision (sound: exact fingerprints), but
     // letting it persist ACROSS GAMES couples the two games of a --control
     // pair (game B inherits game A's warmth; budget-dependent solves then
