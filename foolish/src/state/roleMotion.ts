@@ -33,7 +33,7 @@ import { ANIM_TIME_MS } from '@sdk/ts/gen/anim.bots.ts';
 import type { RoleMarkKind } from '../components/RoleMark';
 
 /** A point on screen, in viewport coordinates - the same space
- *  AnimationOverlay's `centreOf` answers in. */
+ *  flightGeometry's `centreOf` answers in. */
 export interface Spot { x: number; y: number }
 
 // ---- the durations ----------------------------------------------------------

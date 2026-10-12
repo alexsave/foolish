@@ -20,6 +20,7 @@ set -uo pipefail
 : "${FOOLISH_SIM:?set FOOLISH_SIM}"
 export FOOLISH_OUT="${FOOLISH_OUT:-$HOME/Downloads/foolish-shots}"
 HERE="$(cd "$(dirname "$0")" && pwd)"; RIG="$HERE/../rig.sh"
+SHLIB="$HERE/../../../../../shared/rig/lib"  # the shared measurement half (no product knowledge in it)
 REPO="$(cd "$HERE/../../../.." && pwd)"
 N="${1:-6}"; NAME="${2:-tweenloop}"
 G=$("$RIG" group)
@@ -57,7 +58,7 @@ mark "setup (once)" $t
 reset_board() {
   local W H y
   "$RIG" expand >/dev/null 2>&1
-  read -r W H < <(python3 "$REPO/ios/Tools/rig/lib/ax.py" screen)
+  read -r W H < <(python3 "$SHLIB/ax.py" screen)
   y=$(python3 "$REPO/ios/Tools/rig/lib/ui.py" bars | python3 -c "
 import sys, ast
 b = ast.literal_eval(sys.stdin.read().split('BARS ')[1]); print(b[-1][0] if b else -1)")

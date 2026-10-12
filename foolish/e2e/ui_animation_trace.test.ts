@@ -60,7 +60,7 @@ if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {};
 // THE OVERLAY'S OWN WORD THAT A PLACE WAS MISSING. The stock and the trump's
 // slot have no fallback position any more: a flight that cannot find the one it
 // leaves from or lands on is not drawn, and the overlay says so on the console
-// (AnimationOverlay stockPlace). Every case holds that it never had to.
+// (flightGeometry stockPlace). Every case holds that it never had to.
 const overlayMisses: string[] = [];
 {
     const quiet = console.error;

@@ -120,9 +120,9 @@ it).
   complete, so an empty result simply means the user has no games. (`get_my_games`
   has been removed.)
 - **Single game** (`loadGameInternal`): a player reads their own row for that
-  game (`loadGameFromCache`: `player_views WHERE game_id = ?`, RLS-scoped to the
+  game (`loadFromCache`: `player_views WHERE game_id = ?`, RLS-scoped to the
   caller, unique by PK) and decodes it. A **non-participant** (spectator) reads
-  the shared row (`loadSpectatorFromCache`: `spectator_views WHERE game_id = ?`,
+  the shared row (`loadFromCache`: `spectator_views WHERE game_id = ?`,
   readable by any authenticated user) and decodes it with no `self`. Both are
   plain indexed RLS SELECTs — **no edge function**. A total miss (a game
   predating both caches, or pruned) is a genuine not-found; there is no edge
