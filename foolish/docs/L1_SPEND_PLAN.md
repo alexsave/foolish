@@ -17,7 +17,9 @@ on it, and its §3 explains the solver invariant that constrains everything.
 
 **R1 — Never change how a shipped bot plays.** `bot_parity` pins the seven
 shipped families (octogen, semtex, cordite, novichok, torpex, champion,
-hacker) to exact-move TS-oracle mirrors. Anything that changes move choice —
+hacker) to exact-move TS-oracle mirrors.
+(Semtex, novichok and torpex have since been retired and removed, and their ids 18, 19, 22 and 23 are never reused, which is why hexogen below is still 24.)
+Anything that changes move choice —
 bigger budgets, new evaluation, book probes that alter which lines resolve —
 **must land as a NEW strategy id**, never as an edit to octogen. The registry
 precedent is `STRAT_OCTOGEN_ORACLE=21` (`src/strategy.h:30-45` — a research
@@ -47,7 +49,7 @@ CD_LAT=1 CD_BUDGET=prod CD_RACE=1 CD_RACE_C=75 ./eval_X --strategy=octogen \
 EXTRA='-D<flags>' CAND=12 BASE=22 OPP=espresso \
   bash tools/tt_divergence_viz/outcome_pair.sh 3000 700000
 # strength: head-to-head elo (the final arbiter for hexogen)
-build/cnitro_elo pool=hexogen,octogen,semtex,espresso pcs=2,4 games=2000
+build/cnitro_elo pool=hexogen,octogen,espresso pcs=2,4 games=2000
 # solver internals: -DCD_TT_STATS prints insert/collision/abort census on exit
 ```
 
@@ -205,7 +207,7 @@ not by cache-counter theater.
    when (and only when) it ships to production selection.
 5. Validation: hexogen has NO TS mirror, so `bot_parity` does not cover it —
    its gates are the outcome ladder (V4 vs TT22: 0 w→l/3,000) and the elo
-   arbiter: `cnitro_elo pool=hexogen,octogen,semtex,espresso pcs=2,4
+   arbiter: `cnitro_elo pool=hexogen,octogen,espresso pcs=2,4
    games=2000`, shipping bar = head-to-head ≥ 53% vs octogen with the elo CI
    clear of zero, at ms/decision ≤ octogen's.
 6. The seven shipped families stay byte-identical throughout (verify: V0 +

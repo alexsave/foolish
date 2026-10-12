@@ -6,6 +6,11 @@ truth still exists. Registered as `octogen`/`og` (C; `octogen_oracle`/`ogo`
 is the 6x-worlds audit variant). All numbers are paired same-deal deltas vs
 a **semtex** control (`--control=semtex`).
 
+> **Semtex, torpex and novichok are retired and their code is removed.**
+> This write-up is kept as it was measured, so it still compares against semtex throughout.
+> `SEMTEX.md` and `NOVICHOK.md`, which it cites, went with the bots and are in the git history.
+> A `--control=semtex` arm can no longer be run: the name is refused as an unknown strategy.
+
 ## The one lever that survived
 
 **Extended exact root-solve window**: the heads-up deck-empty solver

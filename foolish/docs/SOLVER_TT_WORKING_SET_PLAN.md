@@ -39,7 +39,8 @@ Facts every candidate must respect:
 - **Value lattice** is `{-(1000-d), 0, +(1000-d)}` — win/loss-in-d-plies or draw.
   Stored values are depth-relative and rebased on lookup (probe site, ~line 1290).
 - **Three solve-traffic classes** (grep `cd_sim_solve_d(` for windows):
-  1. Strategy win-hunts (octogen/semtex/cordite/novichok/torpex `*_strategy.c`):
+  1. Strategy win-hunts (octogen/cordite `*_strategy.c`; semtex, novichok and
+     torpex ran the same hunts before they were retired and removed):
      per-candidate-move solves with window `(alpha, 2000)`, depth0=1. Wins land
      strictly inside → **winning subtrees store exact values**; refuted candidates
      fail low and store nothing.

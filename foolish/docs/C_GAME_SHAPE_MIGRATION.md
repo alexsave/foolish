@@ -224,7 +224,7 @@ TS then does the three writes (`game_snapshots` insert, `logs_packed` retire, ra
 
 #### `c/src/roster.h`, `c/src/roster.c` (new)
 
-A roster lives BESIDE `Game`, not inside it: the Monte-Carlo searchers copy `offsetof(Game, logs)` bytes per node (`cordite_strategy.c:377`, `octogen_strategy.c:566`, `semtex_strategy.c:505`, and four more), and identity must not ride those copies.
+A roster lives BESIDE `Game`, not inside it: the Monte-Carlo searchers copy `offsetof(Game, logs)` bytes per node (`cordite_strategy.c:377`, `octogen_strategy.c:566`, and others), and identity must not ride those copies.
 
 ```c
 #define ROSTER_FORMAT_VERSION 1
