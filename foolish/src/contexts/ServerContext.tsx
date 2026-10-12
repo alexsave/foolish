@@ -47,6 +47,15 @@ const applyOptimisticOverlay = (v: TableView): TableView => {
     return pending.length === 0 ? v : keepPending(v, pending) ?? v;
 };
 
+// The spectated set with `gameId` taken out of it, as a state updater: a game
+// this user sits in is not one they are watching. A new set every time, as
+// both callers always made one.
+const withoutGame = (gameId: string) => (prev: Set<string>): Set<string> => {
+    const newSet = new Set(prev);
+    newSet.delete(gameId);
+    return newSet;
+};
+
 // Split contexts: actions are all useCallback([])-stable so this provider's
 // value NEVER changes identity - components that only dispatch (buttons, drag
 // handlers, feeds) subscribe via useServerActions() and stop re-rendering on
@@ -432,11 +441,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 // broadcast went out before this user could receive it.
                 setGames(prev => ({ ...prev, [view.gameId]: mergeGameData(view.gameId, view, prev) }));
                 // Remove from spectator mode when joining
-                setSpectatorGames(prev => {
-                    const newSet = new Set(prev);
-                    newSet.delete(gameId);
-                    return newSet;
-                });
+                setSpectatorGames(withoutGame(gameId));
 
                 // Leave the spectator stream: the seat's own gu- stream
                 // (RealtimeAnimationFeed) carries the game from here.
@@ -495,37 +500,26 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // Fast path for the game screen (docs/PLAYER_VIEWS.md): a PLAYER reads their
-    // own already-masked view straight from player_views - a plain indexed RLS
-    // SELECT, no edge round-trip. RLS scopes it to the caller, and the
-    // (game_id, player_id) PK means at most one row. Returns null for a spectator
-    // (no row), a cache miss (game predating the cache), or any failure - the
-    // caller then falls back to spectator_views (the shared masked view).
-    const loadGameFromCache = async (gameId: string): Promise<TableView | null> => {
+    // The game screen's read (docs/PLAYER_VIEWS.md): one masked view straight
+    // from a view table - a plain indexed RLS SELECT, no edge round-trip - which
+    // is the same read whichever of the two tables it is asked of.
+    //
+    // 'player_views': a PLAYER reads their own already-masked view. RLS scopes
+    // it to the caller, and the (game_id, player_id) PK means at most one row.
+    // Null for a spectator (no row), a cache miss (game predating the cache),
+    // or any failure - the caller then falls back to spectator_views (the
+    // shared masked view). Not asked at all with nobody signed in.
+    //
+    // 'spectator_views': a NON-participant reads the shared, fully-masked
+    // (seat -1) view, replacing the get_game spectate path. Readable by any
+    // authenticated user (the row carries no hidden state), one row per game.
+    // Null on a miss/failure; the board's seat is always -1 (a spectator has
+    // none). Live updates arrive over the game-<id> broadcast.
+    const loadFromCache = async (table: 'player_views' | 'spectator_views', gameId: string): Promise<TableView | null> => {
         try {
-            if (!userIdRef.current) return null;
+            if (table === 'player_views' && !userIdRef.current) return null;
             const { data, error } = await supabase
-                .from('player_views')
-                .select('view')
-                .eq('game_id', gameId)
-                .maybeSingle();
-            if (error || !(data as any)?.view) return null;
-            return readEnvelope(hexToBytes((data as any).view));
-        } catch {
-            return null;
-        }
-    };
-
-    // Spectator fast path (docs/PLAYER_VIEWS.md): a NON-participant reads the
-    // shared, fully-masked (seat -1) view straight from spectator_views - a plain
-    // indexed RLS SELECT, no edge round-trip, replacing the get_game spectate
-    // path. Readable by any authenticated user (the row carries no hidden state),
-    // one row per game. Returns null on a miss/failure; the board's seat is
-    // always -1 (a spectator has none). Live updates arrive over the game-<id> broadcast.
-    const loadSpectatorFromCache = async (gameId: string): Promise<TableView | null> => {
-        try {
-            const { data, error } = await supabase
-                .from('spectator_views')
+                .from(table)
                 .select('view')
                 .eq('game_id', gameId)
                 .maybeSingle();
@@ -539,7 +533,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     const loadGameInternal = async (gameId: string): Promise<{ game_id: string }> => {
         // The caller's own masked view, or the shared spectator view for a
         // non-participant.
-        const view = await loadGameFromCache(gameId) ?? await loadSpectatorFromCache(gameId);
+        const view = await loadFromCache('player_views', gameId) ?? await loadFromCache('spectator_views', gameId);
 
         // Neither cache had a row (game predates the caches, or was pruned):
         // there is no edge fallback, so this is a genuine not-found.
@@ -571,11 +565,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
         if (view.mySeat >= 0) {
             // Player is in the game - remove from spectator mode if present
-            setSpectatorGames(prev => {
-                const newSet = new Set(prev);
-                newSet.delete(gameId);
-                return newSet;
-            });
+            setSpectatorGames(withoutGame(gameId));
             // gu- (animation) subscription is handled by RealtimeAnimationFeed
             subscribeToChatMessages(gameId).catch(console.error);
             return;
