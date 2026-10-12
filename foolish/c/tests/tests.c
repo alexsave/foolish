@@ -16285,7 +16285,6 @@ int main(void) {
     test_hand_layout_rows_and_slots();
     test_hand_layout_refuses_what_it_cannot_answer();
     test_hand_layout_is_rows_and_slots_in_one_value();
-    test_hand_layout_is_rows_and_slots_in_one_value();
 
     printf("\n%d passed, %d failed\n", n_pass, n_fail);
     return n_fail > 0 ? 1 : 0;
