@@ -55,6 +55,13 @@ sdk/ts/wasm/web.wasm.gz
 public/oracle.wasm.gz
 public/oracle-mt.wasm.gz
 
+# The placeholder sounds, for the same reason again: written by tools/soundgen
+# (`npm run sounds`, hooked onto dev and build) and never committed. A RECORDED
+# sound is the opposite - a source file - and lives one level up, in
+# public/audio/, where this pattern does not reach. docs/AUDIO.md.
+public/audio/gen/
+tools/soundgen/build/
+
 # c
 c/build/
 c/*.trace/
