@@ -168,6 +168,105 @@
 // bound its input scratch.
 #define ANIM_MAX_TABLE_INPUT 160
 
+// ---------- sound cues -----------------------------------------------------
+//
+// WHAT A SEQUENCE SOUNDS LIKE, AND WHEN. A cue names a KIND of sound and the
+// moment it is struck, measured from the sequence's start on the same clock
+// every step's start_ms is on. Which beat makes which cue, at its opening or
+// at its landing, and how a move of several cards is spread, are rules, so
+// they are answered here once and a host only maps a kind to a sound it owns
+// and schedules it (docs/AUDIO.md). A host never looks at an event type to
+// decide what to play: two hosts that did would be two sound designs.
+//
+// THE IDS ARE STABLE AND APPEND-ONLY. A host's asset table is keyed by them,
+// so renumbering one silently re-voices every client built against the old
+// header. A cue nobody wants any more keeps its number and is mapped to no
+// sound by the hosts.
+//
+// THREE SOURCES, because a sequence's sounds are not all in its steps:
+//   the PLAN   AnimPlan.cues - everything a step's own motion makes.
+//   the ROLES  anim_role_cue - a good said, the shield and the sword changing
+//              seats. Those are not steps (a plain good emits no event at
+//              all), so the host asks as it turns the marks, which it already
+//              does on the kernel's word (the role beat, below).
+//   the END    anim_finish_cue - the result screen coming up.
+#define ANIM_CUE_NONE     0
+// One card off the stock: every card of the opening deal, and each card of a
+// refill. Struck as the card LEAVES - a deal is heard at the dealer's hand.
+#define ANIM_CUE_DEAL     1
+// The trump turned face up under the stock, as it lands in its slot.
+#define ANIM_CUE_FLIP     2
+// Cards leaving a hand for the table - the opening of an attack, a throw-in,
+// a transfer or a cover. One per BEAT, however many cards the beat carries.
+#define ANIM_CUE_LIFT     3
+// A card landing on the table uncovered: an attack, a throw-in, a transfer.
+// The wire names all three as one event type (ANIM_EVT_ATTACK_PASS) and this
+// layer is not told which it was; a transfer is told apart by the shield it
+// sends on, which is ANIM_CUE_HAND_OFF's to sound.
+#define ANIM_CUE_PLACE    4
+// A cover landing on the attack it beats.
+#define ANIM_CUE_COVER    5
+// The table taken into a hand, as the cards lift off it.
+#define ANIM_CUE_PICKUP   6
+// The table swept away to the discard pile, as the sweep opens...
+#define ANIM_CUE_SWEEP    7
+// ...and the same cards coming to rest on the pile, as it lands.
+#define ANIM_CUE_PILE     8
+// A seat going out. Struck with the landing of the move that put them out,
+// because that is when the badge has collapsed (the OUTS rule of the beats).
+#define ANIM_CUE_OUT      9
+// A refused card flying home (ANIM_EVT_REVERT, a client synthesis).
+#define ANIM_CUE_REVERT   10
+// A good being said: a sword turning into a check (anim_role_cue).
+#define ANIM_CUE_GOOD     11
+// The shield or the opening sword changing seats: a transfer, or the hand-off
+// that closes a bout (anim_role_cue).
+#define ANIM_CUE_HAND_OFF 12
+// The game is over and the viewer is not the fool - or is nobody at the table
+// (anim_finish_cue).
+#define ANIM_CUE_FINISH   13
+// The game is over and the viewer is the fool (anim_finish_cue).
+#define ANIM_CUE_FOOL     14
+
+// One past the last cue id, for a host sizing a table by it. NOT named
+// ANIM_CUE_*, like the three knobs under it: structgen writes a value -> name
+// table from that prefix, and it must hold the cues and nothing else.
+#define ANIM_N_CUES 15
+
+// SEVERAL CARDS, SEVERAL STRIKES, BUT NOT A CHORD. A move of n cards lands as
+// one movement, and n copies of one sound started in the same sample are one
+// louder, harsher sound (they sum in phase) rather than n cards. So the
+// strikes of one beat are spread this far apart, from the landing ONWARDS: a
+// sound that trails its picture by a few frames reads as its consequence,
+// while one that leads it reads as a mistake. A dealer's fingers manage about
+// this.
+#define ANIM_SOUND_STAGGER_MS 45
+// ...and no beat strikes more than this many times, whatever it carries. Six
+// is a full refill; a table of twelve cards swept away is one sweep, not
+// twelve taps, which is why the sweeps are a kind of their own.
+#define ANIM_SOUND_MAX_HITS 6
+// How long after the landing that put a seat out its cue is struck, so that
+// it follows the cards' own strikes instead of sitting under them.
+#define ANIM_SOUND_OUT_LAG_MS (2 * ANIM_SOUND_STAGGER_MS)
+
+// One cue. `hits` strikes of `kind`, the first at `at_ms` and each one after
+// ANIM_SOUND_STAGGER_MS behind the last. Eight bytes, deliberately: the plan
+// is static storage in every module that links it, and the wasm builds' linear
+// memory is pinned to the page.
+typedef struct {
+    int     at_ms;     // from the sequence's start, like AnimPlanStep.start_ms
+    uint8_t kind;      // ANIM_CUE_*, never ANIM_CUE_NONE
+    uint8_t step;      // the step that makes it: its seat is steps[step].seat,
+                       //   and (step, kind) names a cue uniquely within a plan
+    uint8_t hits;      // 1..ANIM_SOUND_MAX_HITS
+    uint8_t n_cards;   // how many cards it stands for (255 = that or more). A
+                       //   sweep of ten cards is ONE hit of ten cards, and how
+                       //   that sounds heavier is the host's rendering.
+} AnimCue;
+
+// A step makes at most two: one as it opens and one as it lands.
+#define ANIM_MAX_CUES (2 * ANIM_MAX_STEPS)
+
 // ---------- the one table layout ------------------------------------------
 // 2 bytes per battle - the attack, then its cover or ANIM_TABLE_NONE. The same
 // table layout PlayBoard takes (legal.h): one shape for a table in this
@@ -393,6 +492,17 @@ typedef struct {
     // (card_to_id, 0..51). A platform hides these until the revealing step.
     int          n_veil;
     unsigned char veil_ids[ANIM_MAX_VEIL];
+    // WHAT THE SEQUENCE SOUNDS LIKE (the sound cues section, above), in step
+    // order - which is not time order: a seat's out is struck back at the
+    // landing of the move that caused it. A host schedules each cue once, by
+    // its (step, kind), as its moment comes within reach.
+    //
+    // A CUE NEVER MOVES ONCE IT IS IN A PLAN. A host with a frame loop appends
+    // to a run in flight and re-plans it, and every rule above reads only the
+    // step's own beat and the steps BEFORE it, so the longer plan has the
+    // shorter one's cues at the same milliseconds and only adds to them.
+    int          n_cues;
+    AnimCue      cues[ANIM_MAX_CUES];
 } AnimPlan;
 
 // One decoded event as the PLAN sees it: the step, PLUS the board that step
@@ -742,6 +852,29 @@ int anim_goods_cleared(AnimRoles shown, int step_good_mask, AnimRoles *out);
 // currently wearing the shield can only be a pass.
 int anim_pass_hand_off(AnimRoles shown, unsigned attack_pass_seats,
                        int final_defender, AnimRoles *out);
+
+// WHAT A CHANGE OF THE MARKS SOUNDS LIKE: the cue for the badges going from
+// `shown` to `next`, whichever of the three rules above (or the closing beat)
+// produced `next`. Asked by the host at the one place it turns the marks, so
+// the sound is struck with the turn.
+//   a seat changed (the shield or the opening sword went somewhere)
+//                                 ANIM_CUE_HAND_OFF
+//   else a good was ADDED         ANIM_CUE_GOOD
+//   else                          ANIM_CUE_NONE
+// A good being CLEARED is silent on purpose: it is cleared by a throw-in, the
+// card and the mark are one event, and the card is already making a sound. A
+// hand-off outranks a good said in the same turn of the marks for the same
+// reason - one event, one sound. A mask of ANIM_NO_MASK says nothing about
+// the goods.
+int anim_role_cue(AnimRoles shown, AnimRoles next);
+
+// WHAT THE END OF THE GAME SOUNDS LIKE to the viewer at `my_seat` (negative
+// for a spectator): ANIM_CUE_FOOL for the fool, ANIM_CUE_FINISH for everyone
+// else, ANIM_CUE_NONE while the game is still running. `game_over` is the
+// fool's seat, negative while it runs - AnimFinishAsk.game_over, the same
+// value the end screen is asked with. The host strikes it as the results come
+// up.
+int anim_finish_cue(int game_over, int my_seat);
 
 // ---- the pre-bout table ---------------------------------------------------
 //
