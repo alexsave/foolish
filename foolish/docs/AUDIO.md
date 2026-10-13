@@ -4,6 +4,7 @@ Every animation beat the game plays makes a sound, struck in time with the motio
 This file says who decides what, how to hear each sound, how to replace one, and what is still open.
 
 Written 2026-10-13, with the first set of sounds, all of which are placeholders.
+Alex has listened to them since: "we'll definitely need to work on them".
 
 ## Who decides what
 
@@ -24,7 +25,7 @@ The engine has no idea what an attack is, and must not learn.
 A sequence's sounds are not all in its steps, so there are three sources.
 
 **The plan.**
-`AnimPlan.cues` lists everything a step's own motion makes: `{at_ms, kind, step, hits, n_cards}`, eight bytes a cue.
+`AnimPlan.cues` lists everything a step's own motion makes: `{at_ms, kind, step, hits, n_cards, undoes}`, twelve bytes a cue.
 `at_ms` is on the same clock as every step's `start_ms`.
 A host reads it through the generated layout (`sdk/ts/gen/anim.bots.ts`, `sdk/swift/gen/kernel.ios.swift`) like the rest of the plan.
 
@@ -52,7 +53,7 @@ The ids are stable and append-only: a host's table is keyed by them.
 | 7 | `SWEEP` | the table swept to the discard | as the sweep opens | 1, for n cards |
 | 8 | `PILE` | the swept cards coming to rest | as the sweep lands | 1, for n cards |
 | 9 | `OUT` | a seat going out | 90 ms behind the landing of the move that put them out | 1 |
-| 10 | `REVERT` | a refused card flying home | as it sets off | 1 |
+| 10 | `REVERT` | a refused move flying home | as it sets off | 1, of the cue it undoes, backwards |
 | 11 | `GOOD` | a good said | as the badge turns | 1 |
 | 12 | `HAND_OFF` | the shield or opening sword going from one seat to another | as the mark leaves | 1 |
 | 13 | `FINISH` | the game over, viewer not the fool (or a spectator) | as the results come up | 1 |
@@ -61,6 +62,22 @@ The ids are stable and append-only: a host's table is keyed by them.
 Steps that move no card make no sound: a magic transition and a defender move are silent.
 A good being CLEARED is silent, because the throw-in that cleared it is already making a sound.
 A mark that appears where there was none (the opening) or goes away altogether (a rematch) is not a hand-off.
+
+### A revert is the move it undoes, backwards
+
+Alex: "the revert audio should be the audio reversed of whatever the move was".
+So `REVERT` is not a sound of its own and no host keeps an asset for it.
+The cue carries `undoes`, the cue of the move being taken back, and a host plays that cue's sound reversed: a refused attack is `PLACE` backwards, a refused cover `COVER` backwards, a refused pickup `PICKUP` backwards.
+Replacing a move's sound with a recording therefore replaces its revert too, with nothing to keep in step.
+
+The kernel reads which move it was off the stream.
+Cards going back to the table undo a pickup.
+Cards going home to a hand were laid, and the nearest step before the revert that laid one of them says whether it was a cover.
+A revert whose move is not in the stream, because the refusal arrived after that run had ended, is read as `PLACE`.
+That is wrong for a cover refused more than half a second late, and fixing it needs the host to say what it is undoing on the step (see the open questions).
+
+On the web the engine reverses a decoded buffer the first time a revert needs it and keeps the result.
+`e2e/audio_cues.test.ts` refuses a `REVERT` row in the table and a revert file from soundgen.
 
 ### The rules that keep it from being noise
 
@@ -115,6 +132,74 @@ The route mounts it, not the board, so it is there for the lobby, the board and 
 The mute and the master volume are remembered in this browser as two plain keys (`foolish_sound_muted`, `foolish_sound_volume`).
 The volume slider lives on `/sounds` for now.
 
+## What is loaded first
+
+Every sound is loaded, but the ones the next move could make are loaded first.
+
+**Which those are is the kernel's answer.**
+`anim_cues_next(AnimCueAsk)` returns one bit per cue from seven scalars of the board a viewer holds: the status, their seat, the seat count, the piles on the table and how many are covered, the stock, and whether the trump is turned.
+"Next" is one move by any seat, with everything that move brings with it.
+
+| The board | Could sound next |
+| --- | --- |
+| a lobby | `DEAL`, `FLIP` |
+| a finished game | nothing |
+| in play, always | `LIFT`, `PLACE` |
+| no trump turned yet (the opening is still being dealt) | `DEAL`, `FLIP` |
+| an uncovered attack | `COVER`, `PICKUP` |
+| cards on the table | `SWEEP`, `PILE`, `GOOD`, `HAND_OFF`, and `DEAL` while there is stock |
+| the stock is empty, or the bout can close and its refills (six a seat at most) could empty it | `OUT`, `FINISH`, and `FOOL` for a seated viewer |
+
+`REVERT` is never named: the cue it plays backwards is already named wherever that move can be made.
+
+**It is a superset, deliberately, and never less.**
+A cue named and not played costs a place in a queue.
+A cue played and not named is a sound that may not have arrived, which is the one failure the rule must not have.
+`test_next_cues_cover_every_move` (`c/tests/tests.c`) asks the rule about 18,588 boards of real games and holds every sound each move then made to the answer: none was missed.
+It names 9.9 of the 14 cues on average, so it is a strong hint at a lobby (2) and on an empty table (2), and a weak one mid-bout.
+
+**How the queue behaves** (`src/audio/cueAudio.ts`, `src/audio/useCuePriority.ts`).
+
+- The page asks the kernel whenever one of the seven scalars changes and passes the answer to the engine (`want`).
+- Wanted files are fetched first, in the table's order, then everything else.
+- Three fetches run at a time, so the order of the queue decides what arrives first.
+- A fetch on its way is never restarted, and no file is asked for twice.
+- Before the first gesture only the wanted files are fetched, and only as bytes: there is no audio context yet, so they are decoded by the gesture itself.
+  This is the one change to "nothing before a gesture", and the reason is that the first sound is usually caused by the very tap that unlocks audio.
+- A muted player is sent nothing, before or after a gesture.
+- A cue that is struck jumps the queue, whatever the board said.
+- A strike whose file is still on its way waits for it: it starts as the file decodes if that is no more than 80 ms behind the moment it was aimed at, and is dropped otherwise.
+
+**Measured** in Chrome on the tutorial, where Start is the first gesture and the deal follows it, from a cold checkout started with `npm run dev`, cache off.
+The network was throttled with Chrome's own presets after the page had loaded.
+
+| | Before | After |
+| --- | --- | --- |
+| First deal sound decodable after the gesture, local | 137 ms | 108 ms |
+| ...on "Fast 4G" (9 Mbit/s, 60 ms) | 84 ms | 7 ms |
+| ...on "Slow 4G" (1.6 Mbit/s, 150 ms) | 257 ms | 7 ms |
+| Every sound decoded after the gesture, Slow 4G | 1073 ms | 839 ms |
+| Requests | 17 | 16 |
+| Bytes on the wire | 160,210 | 127,240 |
+
+Six files (33 KB) were fetched before the gesture: both deals, the flip, the lift and both places.
+The local row is the cost of creating the audio context, which nothing here shortens.
+
+**A correction.**
+An earlier version of this file said the first card or two of the tutorial's deal were silent.
+That was a measurement that stopped after seven seconds: the deal runs 6.75 s and its first card leaves about a second after Start.
+In both columns above all eighteen dealt cards were heard.
+What the change buys is margin: the sound is ready 7 ms after the tap where it used to be 257 ms on a slow connection, and a slower one than that would have lost cards.
+
+### The 122 KB itself
+
+| Option | Chosen | Why |
+| --- | --- | --- |
+| Lower sample rates where a sound has no top end | yes | 155,110 to 122,440 bytes with the revert file gone: the notes at 8 kHz, the pile and the hand-off at 12 kHz, each still above its recipe's highest partial |
+| One packed file for all sounds | no | it defeats loading by priority (the first cue would wait for the whole pack), and a pack needs an index, which is a second layout to keep or a manifest |
+| A compressed format (AAC, Opus) | not for placeholders | it needs an encoder in the build, Opus does not decode in every Safari, and both add a codec's start-up padding to sounds that have to start on the millisecond; a recording can ship compressed, since the table names any file |
+| Shorter sounds | no | their lengths are part of what is being judged |
+
 ## How to hear each cue
 
 **In the browser: `/sounds`.**
@@ -141,6 +226,8 @@ Prints each file's length, bytes, peak, RMS and spectral centroid.
    The placeholders are all written at one peak level, so that column is the whole mix.
 4. In `tools/soundgen/soundgen.c`, set the replaced cue's `make` to `NULL` in `RECIPES` so its placeholder stops being generated.
 
+A refused move needs no step of its own: it is the same file, reversed by the engine.
+
 Nothing else changes.
 `e2e/audio_cues.test.ts` fails if a row names a placeholder that is not generated, a recording that is not committed, or if a generated file is left with no row.
 To silence a cue altogether, map it to `null`.
@@ -149,7 +236,7 @@ The same recordings can serve iOS, since they are plain files under `public/audi
 
 ## The placeholders
 
-`tools/soundgen/soundgen.c` synthesises them: 17 WAV files, 155,110 bytes, 16-bit mono, 24 kHz for the card sounds and 12 kHz for the four that are notes.
+`tools/soundgen/soundgen.c` synthesises them: 16 WAV files, 122,440 bytes, 16-bit mono, at 24 kHz for the card sounds and 12 or 8 kHz for the ones with no top end.
 Each is filtered noise, a short falling sine and a click, added together; the header of that file describes the four layers.
 They are a build artifact (`npm run sounds`, hooked onto `predev` and `prebuild`), written to `public/audio/gen/` and never committed.
 
@@ -167,7 +254,6 @@ The agent that wrote them cannot hear, so treat the whole set as a first guess a
 | `pickup` | one slide with cards catching along it, squared up at the end |
 | `sweep` | a long slide over felt, nothing struck |
 | `pile` | a soft low thud with a little paper on top |
-| `revert` | the lift played backwards |
 | `hand_off` | air, then something set down |
 | `out` | two soft notes stepping down (D5, G4) |
 | `good` | two small bright notes, a fifth apart (C6, G6) |
@@ -178,14 +264,14 @@ The agent that wrote them cannot hear, so treat the whole set as a first guess a
 
 | What | Size | When it is paid |
 | --- | --- | --- |
-| Engine, table and scheduler | about 1.75 KB gzipped (esbuild, minified) | with the game routes' JavaScript |
-| Sound button and finish hook | about 0.95 KB gzipped | the same |
-| `web.wasm.gz` | +592 B (36,708 to 37,300) | with the kernel |
-| `bots.wasm.gz` | +553 B (87,138 to 87,691) | server side |
-| The placeholder files | 155 KB, 17 requests | after the first tap, and only when not muted |
+| Engine, table and scheduler | about 2.3 KB gzipped (esbuild, minified) | with the game routes' JavaScript |
+| Sound button, finish hook and priority hook | about 1.2 KB gzipped | the same |
+| `web.wasm.gz` | +858 B (36,974 to 37,832) | with the kernel |
+| `bots.wasm.gz` | +735 B (87,992 to 88,727) | server side |
+| The placeholder files | 122 KB, 16 requests | wanted ones first; all of them after the first tap; none when muted |
 | `/sounds` | about 2.5 KB gzipped | that route only |
 
-The wasm numbers are measured against a build of the base commit.
+The wasm numbers are measured against a build of main as of the rating stamp (PR #284).
 The JavaScript numbers are an estimate from bundling the modules alone, not a diff of two `next build` outputs.
 Neither wasm module grew a page of linear memory (`e2e/mem/wasm_memory.test.ts`).
 
@@ -195,7 +281,7 @@ Nothing plays sound on iOS yet; the architecture is ready for it.
 
 **What is already there.**
 `AnimPlanSnap.cues` is in the generated Swift layout with `ANIM_CUE_*`, `ANIM_N_CUES` and `ANIM_SOUND_STAGGER_MS` as constants.
-`fio_role_cue` and `fio_finish_cue` are in `c/ios/include/ios_api.h` and held by the host smoke test.
+`fio_role_cue`, `fio_finish_cue` and `fio_cues_next` are in `c/ios/include/ios_api.h` and held by the host smoke test.
 
 **What a host has to add.**
 
@@ -206,6 +292,8 @@ Nothing plays sound on iOS yet; the architecture is ready for it.
    iOS walks beats and sleeps between them, so the offset is taken from the beat, not from the sequence.
 4. Ask `fio_role_cue` in `syncRoles` (`MessageTableView+Roles.swift`) and `fio_finish_cue` where `gameOverHold` ends.
 5. Use the `.ambient` audio session category, so the ringer switch silences it and it mixes with the player's music.
+6. Play a `REVERT` as the buffer of `cue.undoes`, reversed (copy the samples back to front once and keep the buffer).
+7. Load the buffers `fio_cues_next` names first.
 
 An iMessage extension has its own constraints (memory, and it is torn down between bubbles), so the buffers should be loaded lazily and the engine stopped when the board goes away.
 
@@ -235,9 +323,9 @@ An iMessage extension has its own constraints (memory, and it is torn down betwe
    A key in `c/i18n` has to arrive in all twenty-five languages at once.
 8. **No sound for the game starting, for a card being selected, or for a button press.**
    Only animation beats were asked for.
-9. **The first card or two of the tutorial's deal are silent.**
-   Its Start button is the first gesture, the deal begins at once, and the files take about 200 ms to arrive and decode.
-   In a live game the gesture happened long before, on the dashboard or in the lobby.
+9. **A cover refused late reverts as `PLACE`, not `COVER`.**
+   The kernel reads the undone move off the stream, and a refusal that arrives after the move's run has ended finds nothing there.
+   Carrying it exactly means one more field on `ClientPlanStep` (`c/src/client_table.h`) for the host to say what it is undoing.
 10. **A replay has no finish sound**, because it has no results screen of its own.
 11. **Seat position.**
     A cue carries its step, so a host can pan a sound towards the seat that made it.

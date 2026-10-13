@@ -183,7 +183,7 @@ table half of `sdk/swift/PreTableWire.swift`.
 What a sequence sounds like (2026-10-13, [`AUDIO.md`](AUDIO.md)):
 
 - `AnimPlan.cues` / `n_cues` - every sound a step's own motion makes, as
-  `AnimCue {at_ms, kind, step, hits, n_cards}`: an `ANIM_CUE_*`, the moment it
+  `AnimCue {at_ms, kind, step, hits, n_cards, undoes}`: an `ANIM_CUE_*`, the moment it
   is struck on the plan's own clock, and how many strikes
   (`ANIM_SOUND_STAGGER_MS` apart, at most `ANIM_SOUND_MAX_HITS` a beat). Laid
   out by `anim_build_plan` off the same beats the clock is, so a two-card cover
@@ -194,6 +194,13 @@ What a sequence sounds like (2026-10-13, [`AUDIO.md`](AUDIO.md)):
   or a mark that went from one seat to another. A good cleared is silent.
 - `anim_finish_cue(game_over, my_seat)` - the fool's sound, everybody else's,
   or none while the game runs.
+- `AnimCue.undoes` - a `REVERT` is not a sound of its own: it names the cue of
+  the move being undone (read off the stream), and a host plays that sound
+  backwards.
+- `anim_cues_next(AnimCueAsk)` - one bit per cue that could sound NEXT from a
+  board, from seven scalars of it. A superset by design; a host loads those
+  sounds first. Held over real games by `tests.c`
+  `test_next_cues_cover_every_move`.
 
 A host maps a cue id to a sound it owns and schedules it; it never reads an
 event type to choose one.
