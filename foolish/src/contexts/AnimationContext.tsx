@@ -25,6 +25,7 @@ import { rolesOf, type ShownBoard } from '../state/roleLedger';
 import { animRolesGoodsCleared, animRolesGoodsOpening, animRolesPassHandOff, animShouldDropStale } from '@sdk/ts/wasm/bots.ts';
 import { ANIM_NO_MASK } from '@sdk/ts/gen/anim.bots.ts';
 import { cueAudio } from '../audio/cueAudio';
+import { useCuePriority } from '../audio/useCuePriority';
 
 type Card = ViewCard;
 
@@ -138,7 +139,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     // only the state this provider genuinely needs comes from the state context.
     const serverActions = useServerActions();
     const { updateGameState } = serverActions;
-    const { views: games, game_id } = useServer();
+    const { views: games, game_id, view: boardOnScreen } = useServer();
+    // The sounds that could be heard next from this board are loaded first.
+    useCuePriority(boardOnScreen);
     const { user_id } = useAuth();
     const url_game_id = useUrlGameId()?.toLowerCase();
 

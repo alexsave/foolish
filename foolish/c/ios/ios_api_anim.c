@@ -694,3 +694,10 @@ int fio_role_cue(int shown_defender, int shown_first_attacker, int shown_good_ma
 int fio_finish_cue(int game_over, int my_seat) {
     return anim_finish_cue(game_over, my_seat);
 }
+
+unsigned fio_cues_next(int status, int my_seat, int n_players, int n_battles,
+                       int n_covered, int has_flipped, int deck) {
+    const AnimCueAsk q = { (int8_t)status, (int8_t)my_seat, (uint8_t)n_players, (uint8_t)n_battles,
+                           (uint8_t)n_covered, has_flipped != 0, (int16_t)deck };
+    return anim_cues_next(&q);
+}

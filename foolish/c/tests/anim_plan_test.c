@@ -1799,8 +1799,45 @@ static void test_plan_sound_cues(void) {
         CHECK(fl && fl->at_ms == p.steps[3].start_ms + p.steps[3].duration_ms, "the trump is heard turning up as it lands");
         const AnimCue *rv = cue_of(&p, 5, ANIM_CUE_REVERT);
         CHECK(rv && rv->at_ms == p.steps[5].start_ms, "a refused card is heard as it sets off home");
+        CHECK(rv && rv->undoes == ANIM_CUE_PLACE,
+              "a card going home whose move is not in the stream undoes a card laid (got %d)", rv ? rv->undoes : -1);
+        CHECK(d && d->undoes == ANIM_CUE_NONE && fl && fl->undoes == ANIM_CUE_NONE, "no other cue undoes anything");
         CHECK(p.n_cues == 4, "four sounds for six steps (got %d)", p.n_cues);
     }
+    // A REVERT IS THE MOVE IT UNDOES, BACKWARDS, and the stream says which
+    // move that was: the nearest step before it that moved the same card.
+    {
+        AnimPlanEvent ev[6] = {
+            cue_ev(ANIM_EVT_ATTACK_PASS, 0, ANIM_LOC_HAND, ANIM_LOC_TABLE, cards, 1),
+            cue_ev(ANIM_EVT_REVERT, 0, ANIM_LOC_TABLE, ANIM_LOC_HAND, cards, 1),
+            cue_ev(ANIM_EVT_COVER, 0, ANIM_LOC_HAND, ANIM_LOC_TABLE, cards + 1, 1),
+            cue_ev(ANIM_EVT_REVERT, 0, ANIM_LOC_TABLE, ANIM_LOC_HAND, cards + 1, 1),
+            cue_ev(ANIM_EVT_PICKUP, 0, ANIM_LOC_TABLE, ANIM_LOC_HAND, cards + 2, 3),
+            cue_ev(ANIM_EVT_REVERT, 0, ANIM_LOC_HAND, ANIM_LOC_TABLE, cards + 4, 1),
+        };
+        CHECK(anim_build_plan(ev, 6, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "the refusals plan builds");
+        const AnimCue *a = cue_of(&p, 1, ANIM_CUE_REVERT), *c = cue_of(&p, 3, ANIM_CUE_REVERT), *k = cue_of(&p, 5, ANIM_CUE_REVERT);
+        CHECK(a && a->undoes == ANIM_CUE_PLACE, "a refused attack is a card laid, backwards (got %d)", a ? a->undoes : -1);
+        CHECK(c && c->undoes == ANIM_CUE_COVER, "a refused cover is a cover, backwards (got %d)", c ? c->undoes : -1);
+        CHECK(k && k->undoes == ANIM_CUE_PICKUP,
+              "a refused pickup is a pickup, backwards, found by one of its cards (got %d)", k ? k->undoes : -1);
+        // The NEAREST such step: a card laid, refused, then laid as a cover and refused again.
+        AnimPlanEvent twice[4] = { ev[0], ev[1], cue_ev(ANIM_EVT_COVER, 0, ANIM_LOC_HAND, ANIM_LOC_TABLE, cards, 1), ev[1] };
+        CHECK(anim_build_plan(twice, 4, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "the twice-refused plan builds");
+        c = cue_of(&p, 3, ANIM_CUE_REVERT);
+        CHECK(c && c->undoes == ANIM_CUE_COVER, "the nearest move of that card is the one undone (got %d)", c ? c->undoes : -1);
+        // Another card's cover in the stream is not this card's move.
+        AnimPlanEvent other[2] = { ev[2], ev[1] };
+        CHECK(anim_build_plan(other, 2, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "the unrelated plan builds");
+        a = cue_of(&p, 1, ANIM_CUE_REVERT);
+        CHECK(a && a->undoes == ANIM_CUE_PLACE, "a move of some other card is not the move undone (got %d)", a ? a->undoes : -1);
+        // With nothing in the stream the direction is all there is.
+        AnimPlanEvent alone[1] = { ev[5] };
+        CHECK(anim_build_plan(alone, 1, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "the lone revert builds");
+        k = cue_of(&p, 0, ANIM_CUE_REVERT);
+        CHECK(k && k->undoes == ANIM_CUE_PICKUP, "cards going back to the table undo a pickup (got %d)", k ? k->undoes : -1);
+    }
+
     // A step that names no cards moved none.
     {
         AnimPlanEvent ev[2] = {
@@ -1833,6 +1870,7 @@ static void test_plan_sound_cues(void) {
                 const AnimCue *a = &part.cues[i], *b = cue_of(&whole, a->step, a->kind);
                 CHECK(b && b->at_ms == a->at_ms && b->hits == a->hits && b->n_cards == a->n_cards,
                       "a cue of the first %d steps (step %d kind %d) is the same cue in the whole plan", n, a->step, a->kind);
+                CHECK(b && b->undoes == a->undoes, "and undoes the same move");
             }
         }
         // And within any one plan a (step, kind) names one cue, which is what
@@ -1869,6 +1907,61 @@ static void test_plan_sound_cues(void) {
         CHECK(anim_role_cue(nobody, shown) == ANIM_CUE_NONE, "marks that appear where there were none came from nowhere");
         next = shown; next.defender = ANIM_SEAT_NONE; next.first_attacker = 2;
         CHECK(anim_role_cue(shown, next) == ANIM_CUE_HAND_OFF, "one mark travelling is a hand-off whatever the other did");
+    }
+
+    // ---- which cues could sound next ----
+    {
+        #define BIT(k) ((uint32_t)1 << (k))
+        AnimCueAsk q = { GAME_STATUS_WAITING, 0, 2, 0, 0, false, 0 };
+        CHECK(anim_cues_next(&q) == (BIT(ANIM_CUE_DEAL) | BIT(ANIM_CUE_FLIP)), "a lobby can only deal");
+        q.status = GAME_STATUS_GAME_OVER;
+        CHECK(anim_cues_next(&q) == 0, "a finished game has nothing next");
+        q.status = 77;
+        CHECK(anim_cues_next(&q) == ANIM_CUES_ALL && !(ANIM_CUES_ALL & 1) && (ANIM_CUES_ALL >> ANIM_N_CUES) == 0,
+              "a board the rule cannot read names every cue, and NONE is not a cue");
+        CHECK(anim_cues_next(0) == ANIM_CUES_ALL, "and so does no board at all");
+
+        // An empty table mid-game, stock deep: somebody attacks, and that is all.
+        AnimCueAsk p = { GAME_STATUS_PLAYING, 0, 2, 0, 0, true, 20 };
+        CHECK(anim_cues_next(&p) == (BIT(ANIM_CUE_LIFT) | BIT(ANIM_CUE_PLACE)),
+              "an empty table with a deep stock: a card laid, and nothing else (got %x)", anim_cues_next(&p));
+        CHECK(!(ANIM_CUES_ALL & 0) && !(anim_cues_next(&p) & BIT(ANIM_CUE_REVERT)),
+              "a revert is never named: it is some other cue's sound, backwards");
+        // An uncovered attack: it can be covered or taken, the bout can close.
+        p.n_battles = 1;
+        uint32_t m = anim_cues_next(&p);
+        CHECK((m & BIT(ANIM_CUE_COVER)) && (m & BIT(ANIM_CUE_PICKUP)), "an uncovered attack can be covered or taken");
+        CHECK((m & BIT(ANIM_CUE_SWEEP)) && (m & BIT(ANIM_CUE_PILE)) && (m & BIT(ANIM_CUE_GOOD))
+              && (m & BIT(ANIM_CUE_HAND_OFF)) && (m & BIT(ANIM_CUE_DEAL)),
+              "cards on the table: the bout can close, with its sweep, its refills and its hand-off");
+        CHECK(!(m & BIT(ANIM_CUE_OUT)) && !(m & BIT(ANIM_CUE_FINISH)) && !(m & BIT(ANIM_CUE_FOOL)),
+              "twenty-one cards of stock cannot run out on one bout of two seats");
+        CHECK(!(m & BIT(ANIM_CUE_FLIP)), "the trump is turned: the opening is over");
+        // Every attack covered: nothing to cover or take, the rest stands.
+        p.n_covered = 1;
+        m = anim_cues_next(&p);
+        CHECK(!(m & BIT(ANIM_CUE_COVER)) && !(m & BIT(ANIM_CUE_PICKUP)) && (m & BIT(ANIM_CUE_SWEEP)),
+              "a table all covered has nothing to cover or take, and can still be swept");
+        // The stock within reach of one bout's refills: a seat can go out.
+        p.deck = 11;   // 11 + the trump = 12 = six a seat for two
+        m = anim_cues_next(&p);
+        CHECK((m & BIT(ANIM_CUE_OUT)) && (m & BIT(ANIM_CUE_FINISH)) && (m & BIT(ANIM_CUE_FOOL)),
+              "a stock the refills could empty: a seat can go out and the game can end");
+        p.deck = 12;
+        CHECK(!(anim_cues_next(&p) & BIT(ANIM_CUE_OUT)), "one card more and it cannot");
+        p.my_seat = -1; p.deck = 0;
+        m = anim_cues_next(&p);
+        CHECK((m & BIT(ANIM_CUE_FINISH)) && !(m & BIT(ANIM_CUE_FOOL)), "a spectator can hear the end, never the fool's");
+        // The stock gone, table empty: an attack can be somebody's last card.
+        AnimCueAsk e = { GAME_STATUS_PLAYING, 1, 3, 0, 0, false, 0 };
+        m = anim_cues_next(&e);
+        CHECK((m & BIT(ANIM_CUE_OUT)) && !(m & BIT(ANIM_CUE_DEAL)) && !(m & BIT(ANIM_CUE_SWEEP)),
+              "no stock and no table: a last card, nothing dealt, nothing swept");
+        // The opening still going round: no trump under a stock that has cards.
+        AnimCueAsk o = { GAME_STATUS_PLAYING, 0, 2, 0, 0, false, 30 };
+        m = anim_cues_next(&o);
+        CHECK((m & BIT(ANIM_CUE_DEAL)) && (m & BIT(ANIM_CUE_FLIP)), "a stock with no trump turned is a deal in progress");
+        #undef BIT
     }
 
     // ---- the end ----

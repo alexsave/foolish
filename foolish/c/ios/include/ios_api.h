@@ -447,6 +447,11 @@ int fio_roles_pass_hand_off(int shown_defender, int shown_first_attacker,
 int fio_role_cue(int shown_defender, int shown_first_attacker, int shown_good_mask,
                  int next_defender, int next_first_attacker, int next_good_mask);
 int fio_finish_cue(int game_over, int my_seat);
+// Which cues could sound NEXT from a board, one bit per ANIM_CUE_* - what a
+// host loads first (anim_cues_next; a superset by design). The scalars are
+// AnimCueAsk's, in its order.
+unsigned fio_cues_next(int status, int my_seat, int n_players, int n_battles,
+                       int n_covered, int has_flipped, int deck);
 
 // ---------- the pre-bout table (anim_plan.h) -------------------------------
 //

@@ -22,10 +22,16 @@
 //
 // A CUE MAPPED TO `null` IS SILENT ON PURPOSE. That is how a cue is turned off
 // here without touching the kernel's list, whose ids never change.
+//
+// ANIM_CUE_REVERT HAS NO ROW, AND MUST NOT GET ONE. A refused move sounds like
+// that move played backwards: the kernel's cue names the cue it undoes
+// (AnimCue.undoes) and the engine plays THAT row's file reversed. So a
+// recording dropped in for PLACE is also the sound of a refused attack, with
+// nothing to keep in step.
 
 import {
     ANIM_CUE_DEAL, ANIM_CUE_FLIP, ANIM_CUE_LIFT, ANIM_CUE_PLACE, ANIM_CUE_COVER,
-    ANIM_CUE_PICKUP, ANIM_CUE_SWEEP, ANIM_CUE_PILE, ANIM_CUE_OUT, ANIM_CUE_REVERT,
+    ANIM_CUE_PICKUP, ANIM_CUE_SWEEP, ANIM_CUE_PILE, ANIM_CUE_OUT,
     ANIM_CUE_GOOD, ANIM_CUE_HAND_OFF, ANIM_CUE_FINISH, ANIM_CUE_FOOL,
 } from '@sdk/ts/gen/kernel_consts.bots.ts';
 
@@ -63,7 +69,6 @@ export const CUE_SOUNDS: Readonly<Record<number, CueSound | null>> = {
     [ANIM_CUE_PICKUP]:   card(['gen/pickup_0.wav'], 0.5, 0.06),
     [ANIM_CUE_SWEEP]:    card(['gen/sweep_0.wav'], 0.42, 0.06),
     [ANIM_CUE_PILE]:     card(['gen/pile_0.wav'], 0.5, 0.06),
-    [ANIM_CUE_REVERT]:   card(['gen/revert_0.wav'], 0.4),
     [ANIM_CUE_HAND_OFF]: card(['gen/hand_off_0.wav'], 0.3),
     [ANIM_CUE_OUT]:      note(['gen/out_0.wav'], 0.32),
     [ANIM_CUE_GOOD]:     note(['gen/good_0.wav'], 0.26),

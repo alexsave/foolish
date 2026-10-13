@@ -1136,7 +1136,8 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_anim_reversal_order \
   -Wl,--export=wasm_anim_roles_goods_opening -Wl,--export=wasm_anim_roles_goods_cleared \
   -Wl,--export=wasm_anim_roles_pass_hand_off -Wl,--export=wasm_anim_shown_ledger_allows \
-  -Wl,--export=wasm_anim_role_cue -Wl,--export=wasm_anim_finish_cue
+  -Wl,--export=wasm_anim_role_cue -Wl,--export=wasm_anim_finish_cue \
+  -Wl,--export=wasm_anim_cue_ask_ptr -Wl,--export=wasm_anim_cues_next
 
 # The backend's client (src/netclient.h, wasm/wasm_net_api.c): what the web asks
 # c_base and how it reads the answers and the push stream. In the browser's
@@ -1541,6 +1542,7 @@ WASM_WEB_NAMES := \
   wasm_anim_roles_goods_opening wasm_anim_roles_goods_cleared \
   wasm_anim_roles_pass_hand_off wasm_anim_shown_ledger_allows \
   wasm_anim_role_cue wasm_anim_finish_cue \
+  wasm_anim_cue_ask_ptr wasm_anim_cues_next \
   wasm_replay_b32_encode wasm_replay_b32_decode wasm_replay_link \
   wasm_replay_extras_ptr wasm_replay_extras_decode \
   wasm_replay_events wasm_replay_events_index_ptr \
@@ -1606,6 +1608,7 @@ WASM_PROMO_NAMES := \
   wasm_anim_roles_goods_opening wasm_anim_roles_goods_cleared \
   wasm_anim_roles_pass_hand_off wasm_anim_shown_ledger_allows \
   wasm_anim_role_cue wasm_anim_finish_cue \
+  wasm_anim_cue_ask_ptr wasm_anim_cues_next \
   wasm_replay_b32_encode wasm_replay_extras_ptr wasm_replay_link
 WASM_PROMO_EXPORTS = $(WASM_CLIENT_EXPORTS) $(WASM_LOCAL_EXPORTS) \
                      $(filter $(addprefix -Wl$(comma)--export=,$(WASM_PROMO_NAMES)),$(WASM_BOTS_ALL_EXPORTS))
