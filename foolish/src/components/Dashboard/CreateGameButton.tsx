@@ -1,18 +1,21 @@
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useServerActions } from "../../contexts/ServerContext";
 import { TexturedSurface } from "../TexturedSurface";
 import { Text } from "../Text";
-import { GameLoadingPlaceholder } from "../GameLoadingPlaceholder";
+import { GameLoading } from "../GameLoading";
 
 export const CreateGameButton: React.FC = () => {
     const router = useRouter();
     const { createGame } = useServerActions();
     // `creating` does double duty: it guards against the button being mashed into
     // spawning multiple games (the create round-trip is a few hundred ms of dead
-    // time otherwise), and it drives the optimistic full-screen placeholder so the
-    // click feels instant.
+    // time otherwise), and it drives the full-screen loading overlay so the click
+    // feels instant.
     const [creating, setCreating] = useState(false);
+    // The game `create` answered with: the overlay draws its name from then on.
+    const [createdId, setCreatedId] = useState<string | null>(null);
 
     const handleCreate = () => {
         if (creating) return;            // ignore repeat taps while in flight
@@ -26,8 +29,9 @@ export const CreateGameButton: React.FC = () => {
         createGame()
             .then(({ game_id }) => {
                 // Navigate to the new game. Leave the overlay up: this component
-                // unmounts on navigation, and GameView shows the same placeholder
+                // unmounts on navigation, and GameView shows the same screen
                 // until the game state loads, so there's no blank gap.
+                setCreatedId(game_id);
                 router.push(`/${game_id}`);
             })
             .catch((error) => {
@@ -51,10 +55,16 @@ export const CreateGameButton: React.FC = () => {
                 </span>
             </TexturedSurface>
 
-            {creating && (
+            {/* On the body, not here: this button sits in one of the dashboard's
+                stacking contexts (.z-content), and an overlay inside it is
+                painted UNDER the game list beside it - the cards, the sign-out
+                button and the language flag all showed through the "full
+                screen" one this used to be. */}
+            {creating && createPortal(
                 <div style={{ position: 'fixed', inset: 0, zIndex: 9999 }}>
-                    <GameLoadingPlaceholder />
-                </div>
+                    <GameLoading gameId={createdId} />
+                </div>,
+                document.body,
             )}
         </>
     );
