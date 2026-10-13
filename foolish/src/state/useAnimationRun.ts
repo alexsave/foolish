@@ -25,6 +25,8 @@ import {
     type AnimStep, type ArrivingPile,
 } from './animPlan';
 import { sameCard, type TableView, type ViewCard } from './view';
+import { cueAudio } from '../audio/cueAudio';
+import { dueStrikes } from '../audio/cueSchedule';
 
 /** What the page draws for one card at one place while its flight is up. */
 interface CardFlight {
@@ -119,6 +121,11 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
     // schedule. A step that has opened has its cards in the air, so its pile
     // has earned its slot; every step behind it has not.
     const startedRef = useRef(0);
+    // WHICH OF THE RUN'S SOUND CUES HAVE BEEN HANDED TO THE AUDIO ENGINE, by
+    // the (step, kind) the kernel promises is one cue (AnimPlan.cues). The plan
+    // is rebuilt every frame and a run is appended to in flight; this is what
+    // makes a cue sound once across all of those plans. Emptied with the run.
+    const cuesDoneRef = useRef<Set<number>>(new Set());
     const frameHandleRef = useRef<number | null>(null);
     // The merged step a multi-step beat draws as, held so the page is handed
     // the SAME object every frame: `currentAnimation` is compared by identity
@@ -194,6 +201,15 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
         const plan = planFor(run, hooksRef.current.board());
         const nowMs = performance.now() - origin;
         const frame = frameAt(nowMs);
+
+        // WHAT THIS MOMENT SOUNDS LIKE. Which cue and when are the plan's
+        // (c/src/anim_plan.h "sound cues"); all that happens here is that the
+        // ones coming due are handed over a little EARLY, each with how far off
+        // it is, so the engine can pin it to the audio clock instead of to
+        // whenever a frame happens to run (src/audio/cueSchedule.ts).
+        for (const s of dueStrikes(plan.cues, nowMs, cuesDoneRef.current)) {
+            cueAudio.strike(s.kind, s.delayMs, s.nCards);
+        }
 
         while (landedRef.current < frame.landed && landedRef.current < run.length) {
             hooksRef.current.onLanded(run[landedRef.current++]);
@@ -272,6 +288,10 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
             beatRef.current = null;
             trumpStepRef.current = null;
             startedRef.current = 0;
+            // The next run numbers its steps from 0 again. Nothing is cancelled:
+            // a strike already scheduled a few milliseconds past the last
+            // landing (a seat's out, the tail of a spread) is still this run's.
+            cuesDoneRef.current.clear();
             setCurrentAnimation(null);
             setTrumpFlight(null);
             setFlightMs(0);
@@ -330,6 +350,11 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
         rowMsRef.current = 0;
         beatRef.current = null;
         trumpStepRef.current = null;
+        // A seek throws the run away, so what it had scheduled is thrown away
+        // with it: a sweep that was about to sound belongs to a moment the
+        // replay is no longer at.
+        cuesDoneRef.current.clear();
+        cueAudio.cancel();
         setCurrentAnimation(null);
         setTrumpFlight(null);
         setFlightMs(0);

@@ -15,8 +15,9 @@
 // not, and that is `anim_shown_ledger_allows`, asked and not restated.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { animShownLedgerAllows } from '@sdk/ts/wasm/bots.ts';
-import { ANIM_CLAIM_BYSTANDER, ANIM_CLAIM_HAND_OFF } from '@sdk/ts/gen/anim.bots.ts';
+import { animRoleCue, animShownLedgerAllows } from '@sdk/ts/wasm/bots.ts';
+import { ANIM_CLAIM_BYSTANDER, ANIM_CLAIM_HAND_OFF, ANIM_CUE_NONE } from '@sdk/ts/gen/anim.bots.ts';
+import { cueAudio } from '../audio/cueAudio';
 import {
     roleFlightsBetween, sameShownBoard, shownBoardOf,
     type ShownBoard, type ShownRoles,
@@ -140,6 +141,16 @@ export function useRoleMotion(): RoleMotion {
         // over from flies nothing, and neither does a change that took no mark
         // off a seat it belonged to.
         if (!was || opts?.animated === false) return false;
+
+        // …AND IT IS HEARD, here, because this is the one place the marks are
+        // ever turned: a good said, a transfer's shield, the hand-off that
+        // closes a bout and a bystander's board all come through this line.
+        // WHICH turn makes WHICH sound is the kernel's (anim_role_cue) - a good
+        // being cleared is silent, a mark that travels outranks a good said
+        // with it - so nothing above this call has an opinion about sound.
+        const cue = animRoleCue(was.roles, target);
+        if (cue !== ANIM_CUE_NONE) cueAudio.strike(cue);
+
         const flights = roleFlightsBetween(was.roles, target, padSpots());
         if (flights.length === 0) return false;
 

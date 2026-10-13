@@ -25,6 +25,7 @@ import { ROLE_CLAIM, useRoleMotion, type RoleHandOff } from '../state/useRoleMot
 import { rolesOf, type ShownBoard } from '../state/roleLedger';
 import { animRolesGoodsCleared, animRolesGoodsOpening, animRolesPassHandOff, animShouldDropStale } from '@sdk/ts/wasm/bots.ts';
 import { ANIM_NO_MASK } from '@sdk/ts/gen/anim.bots.ts';
+import { cueAudio } from '../audio/cueAudio';
 
 type Card = ViewCard;
 
@@ -165,6 +166,13 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     // pending pass. src/state/optimisticResolve.ts owns the shape and every
     // routine that settles it; this file only holds it and hands it over.
     const optimistic = useRef<OptimisticState>({ motions: [], pass: null }).current;
+
+    // THE FIRST TAP ANYWHERE UNDER THIS PROVIDER LETS THE GAME BE HEARD. A
+    // browser will not start audio nobody asked for, so the engine waits for a
+    // gesture (src/audio/cueAudio.ts); arming it here rather than on the board
+    // means a tap in the lobby or on the dashboard has already paid that toll
+    // by the time the first card is dealt.
+    useEffect(() => { cueAudio.arm(); }, []);
 
     // Expose the local player's live optimistic table cards to the REST load path,
     // so a reconnect resync re-applies them instead of momentarily wiping them
