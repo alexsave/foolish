@@ -284,6 +284,7 @@ set +f
   --const ANIM_STEP_NONE --const ANIM_NEVER \
   --const ANIM_EVT_ --const ANIM_LOC_ --const ANIM_CONFLICT_ --const ANIM_SEAT_NONE \
   --const ANIM_NO_MASK --const ANIM_CLAIM_ \
+  --const ANIM_CUE_ --const ANIM_N_CUES --const ANIM_SOUND_ \
   --ts "$prod/anim.bots.ts"
 
 # The web client's reader of its slot (c/src/client_table.h): snapshot readers

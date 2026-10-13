@@ -483,6 +483,23 @@ export function animRolesPassHandOff(shown: AnimRoles, attackPassSeats: number,
         shown.defender, shown.firstAttacker, shown.goodMask, attackPassSeats, finalDefender));
 }
 
+/** WHAT A CHANGE OF THE MARKS SOUNDS LIKE (anim_role_cue): the ANIM_CUE_* for
+ *  the badges going from `shown` to `next`, ANIM_CUE_NONE for a change that
+ *  makes no sound. Asked where the marks are turned, so no screen decides which
+ *  turn is audible. */
+export function animRoleCue(shown: AnimRoles, next: AnimRoles): number {
+    return bots().wasm_anim_role_cue(
+        shown.defender, shown.firstAttacker, shown.goodMask,
+        next.defender, next.firstAttacker, next.goodMask);
+}
+
+/** WHAT THE END OF THE GAME SOUNDS LIKE to this viewer (anim_finish_cue).
+ *  `gameOver` is the fool's seat, negative while the game runs; `mySeat` is
+ *  negative for a spectator. */
+export function animFinishCue(gameOver: number, mySeat: number): number {
+    return bots().wasm_anim_finish_cue(gameOver, mySeat);
+}
+
 /** MAY THIS WRITER TOUCH THE SHOWN BADGES (anim_shown_ledger_allows)? `claim` is
  *  an ANIM_CLAIM_*: a bystander may not, while a sequence is running; everyone
  *  else may. */
@@ -589,10 +606,20 @@ export interface AnimPlanStepSnap {
     trumpFrom: number;
 }
 
+/** One sound the plan makes (anim_plan.h AnimCue): `hits` strikes of `kind`
+ *  (an ANIM_CUE_*), the first `atMs` from the sequence's start and each one
+ *  after ANIM_SOUND_STAGGER_MS behind the last. `step` is the step that makes
+ *  it, and (step, kind) names a cue uniquely within a plan. */
+export interface AnimCueSnap {
+    atMs: number; kind: number; step: number; hits: number; nCards: number;
+}
+
 /** The plan (anim_plan.h AnimPlan). */
 export interface AnimPlanSnap {
     nSteps: number; totalMs: number; pre: AnimCountsSnap;
     veilIds: number[]; steps: AnimPlanStepSnap[];
+    /** What the sequence sounds like, in step order (which is not time order). */
+    cues: AnimCueSnap[];
 }
 
 /** Where the plan stands at a moment (anim_plan.h AnimFrame). `step` is
@@ -701,8 +728,20 @@ function readPlan(ex: WebExports): AnimPlanSnap {
     const nVeil = A.AnimPlan_get_n_veil(m, at);
     const veilIds: number[] = [];
     for (let i = 0; i < nVeil; i++) veilIds.push(A.AnimPlan_get_veil_ids(m, at, i));
+    const nCues = A.AnimPlan_get_n_cues(m, at);
+    const cues: AnimCueSnap[] = [];
+    for (let i = 0; i < nCues; i++) {
+        const c = A.AnimPlan_cues_at(at, i);
+        cues.push({
+            atMs: A.AnimCue_get_at_ms(m, c),
+            kind: A.AnimCue_get_kind(m, c),
+            step: A.AnimCue_get_step(m, c),
+            hits: A.AnimCue_get_hits(m, c),
+            nCards: A.AnimCue_get_n_cards(m, c),
+        });
+    }
     return {
-        nSteps, totalMs: A.AnimPlan_get_total_ms(m, at), steps, veilIds,
+        nSteps, totalMs: A.AnimPlan_get_total_ms(m, at), steps, veilIds, cues,
         pre: {
             deck: A.AnimCounts_get_deck(m, preAt), discard: A.AnimCounts_get_discard(m, preAt),
             hand: preHand, nPlayers, nBattles, battles,

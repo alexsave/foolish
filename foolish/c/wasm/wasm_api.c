@@ -929,6 +929,24 @@ int wasm_anim_shown_ledger_allows(int claim, int sequencing) {
     return anim_shown_ledger_allows(claim, sequencing);
 }
 
+// WHAT A CHANGE OF THE MARKS SOUNDS LIKE (anim_plan.h anim_role_cue): the badges
+// going from `shown` to `next`, each as its three scalars. An ANIM_CUE_* out,
+// ANIM_CUE_NONE for a change that makes no sound. The host asks it at the one
+// place it turns the marks, so no host decides which turn is audible.
+int wasm_anim_role_cue(int shown_defender, int shown_first_attacker, int shown_good_mask,
+                       int next_defender, int next_first_attacker, int next_good_mask) {
+    const AnimRoles shown = { shown_defender, shown_first_attacker, shown_good_mask };
+    const AnimRoles next = { next_defender, next_first_attacker, next_good_mask };
+    return anim_role_cue(shown, next);
+}
+
+// WHAT THE END OF THE GAME SOUNDS LIKE to this viewer (anim_plan.h
+// anim_finish_cue): the fool's seat (negative while the game runs) and the
+// viewer's (negative for a spectator) in, an ANIM_CUE_* out.
+int wasm_anim_finish_cue(int game_over, int my_seat) {
+    return anim_finish_cue(game_over, my_seat);
+}
+
 // THE FINISH ORDER (anim_plan.h anim_finish_rows), for the end screen, asked as
 // a value (AnimFinishAsk: the elimination seats first out first, the fool's
 // seat or a negative while the game runs, the seat count, and the viewer or a

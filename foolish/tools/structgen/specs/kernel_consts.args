@@ -36,3 +36,9 @@
 # pipeline carries, so the bridge keeps no table of its own:
 #   ANIM_EVT_NAMES      ANIM_LOC_NAMES
 --names ANIM_EVT_ --names ANIM_LOC_
+#
+# And the sounds a sequence makes (anim_plan.h "sound cues"): the cue ids, the
+# count of them, and the two numbers a host spreads a cue's strikes by. No
+# struct beside them, so the audio code imports no reader of anything.
+#   ANIM_CUE_NAMES      in lower case, the names the sound files go by
+--names ANIM_CUE_ --const ANIM_N_CUES --const ANIM_SOUND_

@@ -31,7 +31,7 @@
 # and n_battles crosses with it.
 --root AnimPlan --root AnimFrame --root AnimBeats --root AnimSurfacePlan
 --snapshot AnimPlan --snapshot AnimFrame --snapshot AnimBeats --snapshot AnimSurfacePlan
---count AnimPlan.steps=n_steps --count AnimPlan.veil_ids=n_veil
+--count AnimPlan.steps=n_steps --count AnimPlan.veil_ids=n_veil --count AnimPlan.cues=n_cues
 --count AnimCounts.hand=n_players --count AnimFrame.hand=n_players
 --count AnimBeats.beats=n_beats --count AnimSurfacePlan.beats=n
 #
@@ -77,6 +77,7 @@
 --const CLIENT_ --const ANIM_EVT_ --const ANIM_LOC_ --const ANIM_DEST_ --const ANIM_CONFLICT_
 --const ANIM_SEAT_NONE --const ANIM_STEP_NONE --const ANIM_NEVER --const ANIM_TIME_MS --const ANIM_GAP_MS
 --const ANIM_BOUT_END_HOLD_MS --const ANIM_DEAL_CARD_MS
+--const ANIM_CUE_ --const ANIM_N_CUES --const ANIM_SOUND_
 --const ANIM_NO_MASK --const ANIM_BEAT_ --const ANIM_SURFACE_ --const ANIM_TABLE_NONE
 --const BOT_STOP_ --const BOT_PACE_ --const MOVE_
 --const PLAY_ANSWER_ --const PLAY_HOST_ --const PLAY_PILL_
