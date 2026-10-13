@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useServerActions } from "../../contexts/ServerContext";
 import { TexturedSurface } from "../TexturedSurface";
@@ -54,10 +55,16 @@ export const CreateGameButton: React.FC = () => {
                 </span>
             </TexturedSurface>
 
-            {creating && (
+            {/* On the body, not here: this button sits in one of the dashboard's
+                stacking contexts (.z-content), and an overlay inside it is
+                painted UNDER the game list beside it - the cards, the sign-out
+                button and the language flag all showed through the "full
+                screen" one this used to be. */}
+            {creating && createPortal(
                 <div style={{ position: 'fixed', inset: 0, zIndex: 9999 }}>
                     <GameLoading gameId={createdId} />
-                </div>
+                </div>,
+                document.body,
             )}
         </>
     );

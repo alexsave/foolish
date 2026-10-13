@@ -249,12 +249,19 @@ test('create new game: the overlay is bare until `create` answers, then it is th
         assert.ok(button, 'the dashboard has its create button');
         button.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
         await dash.wait(30);
-        assertBare(loadingScreen(dash.host), 'before create answers');
+        // The overlay is the body's, over the whole page. Inside the dashboard it
+        // sat in the button's own stacking context, and the game list beside
+        // the button was painted over it.
+        const overlay = loadingScreen(dom.window.document.body);
+        assert.equal(overlay.parentElement?.parentElement, dom.window.document.body, 'the overlay is a child of the body');
+        assert.equal(dash.host.contains(overlay), false, 'and not inside the dashboard it covers');
+        assertBare(overlay, 'before create answers');
         createGate.open();
         await dash.wait(60);
         assert.deepEqual(pushed, ['/fresh001'], 'the page is sent to the new game');
-        assertNameOnly(loadingScreen(dash.host), 'Brand new', 'after create answers');
+        assertNameOnly(loadingScreen(dom.window.document.body), 'Brand new', 'after create answers');
     } finally { createGate.open(); createGate = null; await dash.close(); }
+    assert.equal(dom.window.document.querySelector('[aria-busy="true"].lobby'), null, 'the overlay leaves with the dashboard');
 
     // And the game page it lands on, a new provider, still has the name.
     playerViews.set('fresh001', hex(createAnswer));
