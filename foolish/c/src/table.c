@@ -131,7 +131,7 @@ int table_load(Table *t, const uint8_t *state, int state_len, const uint8_t *ros
     int8_t kinds[MAX_PLAYERS];
     t->loaded = false;
     t->detail = 0;
-    if (!state || state_len < 4 || state_blob_clock_bytes(state[0]) < 0) return TABLE_E_STATE_VERSION;
+    if (!state || state_len < 4 || state_blob_tail_bytes(state[0]) < 0) return TABLE_E_STATE_VERSION;
     const int rc = roster_decode(&r, roster, roster_len);
     if (rc != ROSTER_OK) { t->detail = rc; return TABLE_E_ROSTER; }
     // The seat count is the state's second byte; checked before the import so a
@@ -139,7 +139,7 @@ int table_load(Table *t, const uint8_t *state, int state_len, const uint8_t *ros
     if (state[STATE_BLOB_HEADER + 1] != (uint8_t)r.n) return TABLE_E_MISMATCH;
     const int kr = table_seat_kinds(&r, kinds);
     if (kr != TABLE_OK) return kr;
-    const int v = state_blob_load(t->g, state, state_len, &t->clock);
+    const int v = state_blob_load_rated(t->g, state, state_len, &t->clock, &t->ratings);
     // The row's rules are the load's to set (view.h state_blob_load): a v2 or v3
     // row is the classic game, whatever an earlier FMSG decode left on t->g.
     if (v != 1) return v == 0 ? TABLE_E_STATE_VERSION : v;
@@ -225,7 +225,7 @@ static int unnamed_seat(const Game *g);
 
 // A bound on one state_put, for reserving space before writing it.
 #define TABLE_STATE_MAX (STATE_BLOB_HEADER + 24 + MAX_DECK + 2 * MAX_BATTLES + MAX_PLAYERS * (3 + MAX_HAND_SIZE) + 1 + MAX_PLAYERS \
-                         + STATE_BLOB_V3_CLOCK_BYTES)
+                         + STATE_BLOB_V3_CLOCK_BYTES + GAME_RATINGS_BYTES)
 
 // ---------- fixtures --------------------------------------------------------------
 
@@ -254,16 +254,24 @@ int table_seal(Table *t, const Game *g, const Roster *r, uint8_t *out, int cap) 
 
 static uint8_t game_status_byte(const Game *g) { return (uint8_t)g->status; }
 
+// The rating stamp the loaded table shows and stores: the finished game's, and
+// no stamp at all once the board is anything else. A rematch's lobby
+// (table_continue) is a new game with nothing to show yet, and this is the one
+// place that says so - the Table keeps the bytes it loaded.
+static const GameRatings *table_stamp(const Table *t) {
+    return t->g->status == GAME_STATUS_GAME_OVER && t->ratings.n > 0 ? &t->ratings : 0;
+}
+
 int table_envelope(const Table *t, const char *game_id, int gid_len, int viewer, uint32_t version,
                    uint8_t *out, int cap) {
     if (!t->loaded) return TABLE_E_NOT_LOADED;
     const Game *g = t->g;
     if (viewer >= g->num_players) viewer = -1;
-    if (!out || cap < ENV_VIEW_AT + 2 + TABLE_STATE_MAX) return TABLE_E_CAP;
-    const int view_at = env_header_write(out, cap, viewer, version);
+    if (!out || cap < ENV_VIEW_AT + ENV_ISLAND_MAX + 2 + TABLE_STATE_MAX) return TABLE_E_CAP;
+    const int view_at = env_header_write(out, cap, viewer, version, table_stamp(t));
     if (view_at < 0) return TABLE_E_CAP;
     const int view_len = 2 + state_put(g, viewer >= 0 ? viewer : VIEW_SPECTATOR, out + view_at + 2);
-    env_header_set_view_len(out, view_len);
+    env_header_set_view_len(out, view_at, view_len);
     const int at = view_at + view_len;
     const int n = roster_trailer_write(&t->r, game_id, gid_len, game_status_byte(g), g->good_players_mask, game_pass_allowed(g),
                                        out + at, cap - at);
@@ -414,7 +422,7 @@ int table_commit_products(const Table *t, const char *game_id, int gid_len, uint
 
     if (cap - at < TABLE_STATE_MAX) return TABLE_E_CAP;
     out->state.off = at;
-    out->state.len = state_blob_put(g, &clock, arena + at);
+    out->state.len = state_blob_put_rated_at(g, &clock, table_stamp(t), STATE_BLOB_FORMAT, arena + at);
     if (out->state.len == STATE_BLOB_E_RULES) return TABLE_E_STATE_RULES;
     out->clock = clock;
     at += out->state.len;

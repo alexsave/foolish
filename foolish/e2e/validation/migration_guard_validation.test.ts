@@ -84,3 +84,25 @@ test('a migration that schedules a cron job schedules seed.sql\'s statement, cha
     }
     assert.deepEqual(offenders, [], offenders.join('\n'));
 });
+
+test('a migration that creates a function creates seed.sql\'s, character for character', () => {
+    // The same rule as the cron job above, for a function: hosted gets it from
+    // the migration and every other database from seed.sql, so a function that
+    // differs between the two is production running code no test has run.
+    // A function inside a migration's DO block is created by EXECUTE, so its
+    // body is quoted with a NAMED dollar tag ($commit_table$ ... $commit_table$;)
+    // and seed.sql uses the same tag: the two texts can then be one text.
+    const seed = readFileSync(join(REPO, 'server/impls/supabase/seed.sql'), 'utf8');
+    const offenders: string[] = [];
+    for (const f of migrations()) {
+        const sql = readFileSync(join(DIR, f), 'utf8');
+        const functions = sql.match(/^CREATE OR REPLACE FUNCTION [\s\S]*?^\$(\w+)\$;\n/gm) ?? [];
+        if (/CREATE (OR REPLACE )?FUNCTION/.test(statements(sql)) && functions.length === 0) {
+            offenders.push(`${f}: creates a function in a shape this test cannot read (start the statement at column 0 and close its body with a named dollar tag on a line of its own)`);
+        }
+        for (const fn of functions) {
+            if (!seed.includes(fn)) offenders.push(`${f}: creates a function that is not seed.sql's, character for character: ${fn.split('\n')[0]}`);
+        }
+    }
+    assert.deepEqual(offenders, [], offenders.join('\n'));
+});

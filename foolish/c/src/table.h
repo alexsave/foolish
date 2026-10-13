@@ -178,6 +178,10 @@ typedef struct {
     // row's viewers were last shown and when it finishes playing. Read by
     // table_bot_wait_ms; the commit writes the next one (table_commit_products).
     BoardClock  clock;
+    // What the finished game did to its seats' ratings (view.h GameRatings), from
+    // the state blob; unrated (n 0) for a game that is not over or was not rated.
+    // Every envelope of a rated, finished table carries it (table_envelope).
+    GameRatings ratings;
     // The preferred moves the last table_bot_drive was offered (BotDrivePref).
     int8_t      n_prefs;
     BotDrivePref prefs[MAX_PLAYERS];

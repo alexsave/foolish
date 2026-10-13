@@ -43,6 +43,9 @@ static void view_board(TableView *v, const Game *g, int viewer, int status) {
     v->num_battles = g->num_battles;
     v->num_eliminated = g->num_eliminated;
     v->my_seat = (int8_t)viewer;
+    // A stamp is a finished game's: a board edited out of one (the rematch's
+    // lobby, CLIENT_EDIT_LOBBY) leaves it behind.
+    if (status != GAME_STATUS_GAME_OVER) v->rated = false;
     v->fool = (int8_t)fool_of(g);
     v->deck_count = g->deck_count;
     v->discard_pile_length = g->discard_pile_length;
@@ -67,6 +70,7 @@ static void view_fill(ClientTable *c, int viewer, int status) {
     const Game *g = c->g;
     TableView *v = &c->view;
     view_board(v, g, viewer, status);
+    v->rated = false;   // an envelope's stamp is set by the one reader of it (client_adopt_envelope)
     v->version = c->version;
     v->passing = (c->table_rules & GAME_RULE_NO_PASS) == 0;
     for (int s = 0; s < g->num_players; s++) {
@@ -136,8 +140,19 @@ int client_adopt_envelope(ClientTable *c, const uint8_t *p, int len) {
     if (c->g->num_players < 1 || c->r.n != c->g->num_players || h.seat >= c->g->num_players) return CLIENT_E_MISMATCH;
     c->has_roster = true;
     c->identity_at = h.trailer_at;
+    // The game's rating stamp, when the island carries one: it counts this
+    // board's seats on a board that is over, as the server's own row must
+    // (view.h state_blob_load_rated), or the envelope is not one a kernel wrote.
+    GameRatings stamp;
+    if (!env_island_ratings(p, &h, &stamp)) return CLIENT_E_FORMAT;
+    if (stamp.n && (stamp.n != c->g->num_players || status != GAME_STATUS_GAME_OVER)) return CLIENT_E_FORMAT;
     c->version = h.version;
     view_fill(c, h.seat, status);
+    if (stamp.n) {
+        c->view.rated = true;
+        memcpy(c->view.rating_before, stamp.before, sizeof(stamp.before));
+        memcpy(c->view.rating_delta, stamp.delta, sizeof(stamp.delta));
+    }
     return CLIENT_OK;
 }
 
