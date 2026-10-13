@@ -81,7 +81,7 @@ test('set-rules: a seated player sets podkidnoy, every viewer reads it, and the 
     assert.equal(mine.passing, false, "the setter's envelope reads podkidnoy");
     const t1 = await mustReadTable(g);
     assert.equal(t1.version, v0 + 1, 'the change commits');
-    assert.equal(t1.state[0], L.TABLE_STATE_FORMAT_V4, 'the stored row is v4');
+    assert.equal(t1.state[0], L.TABLE_STATE_FORMAT, 'the stored row is at the written format');
     assert.equal(t1.state[1] & L.TABLE_STATE_FLAG_PASSING, 0, "and its flag byte's PASSING is clear");
 
     const bv = await playerView(g, b);
@@ -98,7 +98,7 @@ test('set-rules: a seated player sets podkidnoy, every viewer reads it, and the 
     await runMeta(g, b, { type: 'start' });
     const dealt = await mustReadTable(g);
     assert.equal(dealt.status, L.GAME_STATUS_PLAYING, 'the last Ready deals');
-    assert.equal(dealt.state[0], L.TABLE_STATE_FORMAT_V4);
+    assert.equal(dealt.state[0], L.TABLE_STATE_FORMAT);
     assert.equal(dealt.state[1] & L.TABLE_STATE_FLAG_PASSING, 0, "the dealt row's PASSING is clear: the game is podkidnoy");
     assert.ok(legalMoves(dealt).every((m) => m.kind !== 'pass'), 'no seat of the dealt game is offered a transfer');
     const table = fixtureTable();

@@ -1,5 +1,5 @@
-0 0c8f132b76d4a4f4899cf05e mounted
-0 66304e75b91c84435f11e68e tap cover 8h on 6h
-25 0ff3d464bde47578edc2333e timer@25
-250 c50752eec411a14669d24adb push: my cover
-512 25fadedbb84848e4aede0d77 timer@512
+0 027a291235ee0e0e0f2aac7a mounted
+0 028c26b688b0c028555fb648 tap cover 8h on 6h
+25 a7cef9d7cca13fb7bbbda063 timer@25
+250 9b3b76681a8c20655e110259 push: my cover
+512 ee079b92d4a46017e838b976 timer@512

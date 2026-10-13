@@ -6,8 +6,12 @@
 > §4 and §5 restate byte layouts that `c/src/awire.h` and `c/src/table.h` own -
 > read the headers, which are newer. §5's "the roster is packed and the JSON
 > island is a compatibility shim, both written today" is no longer true: the
-> island is retired (`c/src/table.c` writes zeroes for it) and
-> `LEGACY_ROSTER_JSON` is gone. `REJECT_STALE_ROUND=100` shipped as
+> island's JSON is retired and `LEGACY_ROSTER_JSON` is gone.
+> The island itself is now the envelope's one extension slot, because every
+> reader ever shipped skips it by its length (the `q = 9 + rosterLen` below): it
+> is empty, or one tagged run.
+> The only tag so far is `ENV_ISLAND_RATINGS`, a finished game's rating stamp -
+> what that game did to each seat's rating - which `c/src/view.h` documents. `REJECT_STALE_ROUND=100` shipped as
 > `TABLE_STALE_ROUND = 3`, and `sdk/ts/wire/view.ts` is now
 > `c/src/client_table.h` / `sdk/ts/table/client_table.ts`.
 

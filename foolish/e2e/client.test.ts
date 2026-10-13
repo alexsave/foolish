@@ -34,7 +34,7 @@ const board = (battles: B[], hand: C[], mySeat = 0): TableView => ({
         { status: V.PLAYER_STATUS_IN, handCount: mySeat === 0 ? hand.length : 5, awaitingAttack: false, isAi: false, id: 'p0', name: 'P0' },
         { status: V.PLAYER_STATUS_IN, handCount: mySeat === 1 ? hand.length : 5, awaitingAttack: false, isAi: false, id: 'p1', name: 'P1' },
     ],
-    myHand: mySeat >= 0 ? hand : [], elimination: [], rated: false, ratingDelta: new Array(8).fill(0), ratingBefore: new Array(8).fill(0), gameId: 'g', title: 'g',
+    myHand: mySeat >= 0 ? hand : [], elimination: [], rated: false, ratingKnown: false, ratingDelta: new Array(8).fill(0), ratingBefore: new Array(8).fill(0), ratingAfter: new Array(8).fill(0), gameId: 'g', title: 'g',
 });
 
 export function registerClientValidation(): void {

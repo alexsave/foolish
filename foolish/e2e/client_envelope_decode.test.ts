@@ -114,7 +114,14 @@ function compareProducts(label: string, row: Row, p: Exclude<ReturnType<ServerTa
         const mine = pushToSequence(read);
         assert.equal(mine.viewerSeat, viewer, `${label}: viewer ${viewer} push is theirs`);
         assert.equal(mine.events.length, p.nEvents, `${label}: viewer ${viewer} push carries every event`);
-        assert.deepEqual(mine.game, envelopeViews.get(viewer), `${label}: viewer ${viewer} push ends on the envelope's board`);
+        // The same board, with one difference that is the point of the field: an
+        // envelope's view has said whether the game was rated and a push's has
+        // not (TableView.rating_known), which is what tells a finish screen to
+        // go and read the envelope.
+        const env = envelopeViews.get(viewer)!;
+        assert.equal(env.ratingKnown, true, `${label}: viewer ${viewer} envelope has said whether the game was rated`);
+        assert.equal(mine.game.ratingKnown, false, `${label}: viewer ${viewer} push has not`);
+        assert.deepEqual({ ...mine.game, ratingKnown: true }, env, `${label}: viewer ${viewer} push ends on the envelope's board`);
         mine.events.forEach((e, i) => {
             const raw = read.steps[i].event, w = `${label}: viewer ${viewer} event ${i}`;
             assert.deepEqual(e.game_state.seats.map((s) => s.id), seats.map((s) => s.id), `${w} names the seats`);

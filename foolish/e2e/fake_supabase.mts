@@ -22,7 +22,8 @@
  * handlers scope by it themselves), no JWT signature (the token is well formed
  * and never verified), no lease, no CAS - one process, one thread, no contention
  * to lose. Realtime has no presence and no replay. Passwords are not checked.
- * `game_snapshots`, `user_elo_ratings` and `chat_messages` answer empty.
+ * `game_snapshots`, `user_elo_ratings` and `chat_messages` answer empty, and a
+ * finished game is rated as if every seat stood at 1000.
  * THIS IS A TEST HARNESS. It must never be reachable from anything shipped.
  *
  * ---------------------------------------------------------------------------
@@ -272,6 +273,11 @@ export async function startFakeSupabase(opts: FakeOptions = {}): Promise<FakeBac
             const env = t.envelope(row.id, seat, row.version);
             return { rc, reject, version: row.version, envelope: typeof env === 'number' ? null : env, pushes: [] };
         }
+        // A game that ends here is rated, as the real server rates it, so a
+        // finish screen has something to show: there are no rating rows in this
+        // backend, so every seat is one with no rating yet (the kernel rates it from TABLE_RATING_START). The kernel
+        // refuses this for any operation that did not end the game.
+        t.rate(t.seats().map(() => L.TABLE_RATING_NONE));
         const p = t.commit(row.id, row.version + 1, Date.now());
         if (typeof p === 'number') throw new Error(`game ${row.id}: no commit products (${p})`);
         const seats = t.seats();
@@ -368,6 +374,11 @@ export async function startFakeSupabase(opts: FakeOptions = {}): Promise<FakeBac
         t.setSessionLog(row.log);
         const drive = t.botDrive(null);
         if (typeof drive === 'number' || drive.n === 0) return;
+        // A game that ends here is rated, as the real server rates it, so a
+        // finish screen has something to show: there are no rating rows in this
+        // backend, so every seat is one with no rating yet (the kernel rates it from TABLE_RATING_START). The kernel
+        // refuses this for any operation that did not end the game.
+        t.rate(t.seats().map(() => L.TABLE_RATING_NONE));
         const p = t.commit(gameId, row.version + 1, Date.now());
         if (typeof p === 'number') return;
         const seats = t.seats();

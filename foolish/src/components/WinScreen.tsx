@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useServer } from '../contexts/ServerContext';
-import { GAME_STATUS } from '../state/view';
-import supabase from '../common/Connector';
+import { GAME_STATUS, rulesOf } from '../state/view';
 import { TexturedSurface, useTexture, getTextureStyle } from './TexturedSurface';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 import { Text } from './Text';
@@ -17,108 +16,63 @@ interface PlayerResult {
     seat: number;
     name: string;
     rank: number;
-    old_elo: number;
-    new_elo: number;
-    elo_change: number;
-    is_ai: boolean;
 }
 
 export const WinScreen: React.FC = () => {
-    const { view: game, continueGame } = useServer();
+    const { view: game, continueGame, loadGame } = useServer();
     const { woodUrl } = useTexture();
-    const [playerResults, setPlayerResults] = useState<Map<string, PlayerResult>>(new Map());
-    const [loading, setLoading] = useState(true);
 
+    // WHAT THE GAME DID TO EACH RATING IS THE GAME'S OWN RECORD: the kernel
+    // stamped it on the game as it ended (c/src/view.h GameRatings) and the view
+    // carries it by seat (rated, ratingBefore, ratingDelta). This screen used to
+    // ask the rating tables for each player's "rating now" and "rating before
+    // their last game" and subtract - which is that player's last change, in
+    // whatever game it came from. Reopen an old table, or seat a bot that plays
+    // many tables at once, and every row showed a number from some other game.
+    //
+    // The stamp rides the game's ENVELOPE. The board a game-ending push leaves
+    // has none (a push has nowhere to carry one), so a screen that arrives here
+    // on a push reads its envelope once, and draws when that read has answered:
+    // the rows and their ratings appear together, as they always have, rather
+    // than the ratings popping in a moment after. A game that was not rated (or
+    // ended before the stamp existed) answers unrated, and shows no rating.
+    // Whether the envelope has to be read first is the kernel's answer
+    // (ViewRules.wants_envelope): the game is over and this view has not said
+    // whether it was rated. The page asks once per game; if the read fails the
+    // screen draws the game unrated rather than never.
+    const gameId = game?.gameId ?? null;
+    const over = game?.status === GAME_STATUS.GAME_OVER;
+    const wantsEnvelope = !!game && rulesOf(game).wantsEnvelope;
+    const [askedFor, setAskedFor] = useState<string | null>(null);
+    const [answeredFor, setAnsweredFor] = useState<string | null>(null);
     useEffect(() => {
-        if (!game || game.status !== GAME_STATUS.GAME_OVER) {
-            return;
-        }
+        if (!gameId || !wantsEnvelope || askedFor === gameId) return;
+        setAskedFor(gameId);
+        loadGame(gameId).catch(() => { /* the screen then shows the game unrated */ }).finally(() => setAnsweredFor(gameId));
+    }, [gameId, wantsEnvelope, askedFor, loadGame]);
 
-        const loadEloData = async () => {
-            try {
-                // Separate player IDs by type
-                const userIds = game.seats.filter(p => !p.isAi).map(p => p.id);
-                const botIds = game.seats.filter(p => p.isAi).map(p => p.id);
-                
-                // Make bulk calls for ELO data
-                const [userEloData, botEloData] = await Promise.all([
-                    userIds.length > 0 ? supabase
-                        .from('user_elo_ratings')
-                        .select('user_id, elo_rating, previous_elo')
-                        .in('user_id', userIds) : Promise.resolve({ data: [] }),
-                    botIds.length > 0 ? supabase
-                        .from('bots')
-                        .select('id, elo_rating, previous_elo')
-                        .in('id', botIds) : Promise.resolve({ data: [] })
-                ]);
-                
-                // Create lookup maps
-                const userEloMap = new Map();
-                const botEloMap = new Map();
-                
-                if (userEloData.data) {
-                    userEloData.data.forEach(user => {
-                        userEloMap.set(user.user_id, {
-                            elo_rating: user.elo_rating,
-                            previous_elo: user.previous_elo
-                        });
-                    });
-                }
-                
-                if (botEloData.data) {
-                    botEloData.data.forEach(bot => {
-                        botEloMap.set(bot.id, {
-                            elo_rating: bot.elo_rating,
-                            previous_elo: bot.previous_elo
-                        });
-                    });
-                }
-                
-                // Calculate player results from the kernel's finish order.
-                const results = new Map<string, PlayerResult>();
-
-                for (const row of animFinishRows([...game.elimination], game.fool, game.seats.length, -1)) {
-                    const player = game.seats[row.seat];
-                    if (!player) continue;
-
-                    const eloData = player.isAi
-                        ? botEloMap.get(player.id) || { elo_rating: 0, previous_elo: 0 }
-                        : userEloMap.get(player.id) || { elo_rating: 0, previous_elo: 0 };
-
-                    results.set(player.id, {
-                        player_id: player.id,
-                        seat: row.seat,
-                        // Stored, not rendered: botDisplayName runs below, so
-                        // a language switch re-renders the city.
-                        name: player.name,
-                        rank: row.place,
-                        old_elo: eloData.previous_elo,
-                        new_elo: eloData.elo_rating,
-                        elo_change: eloData.elo_rating - eloData.previous_elo,
-                        is_ai: player.isAi
-                    });
-                }
-
-                setPlayerResults(results);
-                setLoading(false);
-            } catch (error) {
-                console.error('Error loading ELO data:', error);
-                setLoading(false);
-            }
-        };
-
-        loadEloData();
-    }, [game]);
-
-    // Render nothing while the game state settles / ELO data loads — the
+    // Render nothing while the game state settles / its envelope loads — the
     // app-wide background shows through, so the game→rankings handoff is seamless.
-    if (!game || game.status !== GAME_STATUS.GAME_OVER) {
+    if (!game || !over) {
         return null;
     }
+    if (wantsEnvelope && answeredFor !== gameId) {
+        return null;
+    }
+    const rated = game.rated;
 
-    if (loading) {
-        return null;
+    // The finish order is the kernel's (anim_finish_rows), over the board's own
+    // elimination order and fool.
+    const sortedResults: PlayerResult[] = [];
+    for (const row of animFinishRows([...game.elimination], game.fool, game.seats.length, -1)) {
+        const player = game.seats[row.seat];
+        if (!player) continue;
+        // The name is stored, not rendered: botDisplayName runs below, so a
+        // language switch re-renders the city.
+        sortedResults.push({ player_id: player.id, seat: row.seat, name: player.name, rank: row.place });
     }
+    sortedResults.sort((a, b) => a.rank - b.rank);
+    const totalPlayers = sortedResults.length;
 
     const handleContinue = async () => {
         try {
@@ -127,11 +81,6 @@ export const WinScreen: React.FC = () => {
             console.error('Error continuing game:', error);
         }
     };
-
-    // getRankEmoji is now replaced by RankIcon component
-
-    const sortedResults = Array.from(playerResults.values()).sort((a, b) => a.rank - b.rank);
-    const totalPlayers = sortedResults.length;
 
     return (
         <div className="page" style={{ padding: '0.25rem 1rem 1rem' }}>
@@ -146,9 +95,13 @@ export const WinScreen: React.FC = () => {
                 {sortedResults.map((result) => {
                     const isCurrentUser = result.seat === game.mySeat;
 
-                    const eloClass = result.elo_change > 0
+                    // The three numbers are the stamp's, the sum included.
+                    const before = game.ratingBefore[result.seat];
+                    const after = game.ratingAfter[result.seat];
+                    const change = game.ratingDelta[result.seat];
+                    const eloClass = change > 0
                         ? 'result-card__elo-change--positive'
-                        : result.elo_change < 0
+                        : change < 0
                             ? 'result-card__elo-change--negative'
                             : 'result-card__elo-change--neutral';
 
@@ -172,14 +125,16 @@ export const WinScreen: React.FC = () => {
                                 </div>
                             </div>
 
-                            <div className="result-card__elo">
-                                <span style={{ color: 'var(--color-text-primary)', fontSize: '0.85rem' }}>
-                                    {result.old_elo} → {result.new_elo}
-                                </span>
-                                <span className={`result-card__elo-change ${eloClass}`}>
-                                    {result.elo_change > 0 ? '+' : ''}{result.elo_change}
-                                </span>
-                            </div>
+                            {rated && (
+                                <div className="result-card__elo">
+                                    <span style={{ color: 'var(--color-text-primary)', fontSize: '0.85rem' }}>
+                                        {before} → {after}
+                                    </span>
+                                    <span className={`result-card__elo-change ${eloClass}`}>
+                                        {change > 0 ? '+' : ''}{change}
+                                    </span>
+                                </div>
+                            )}
                         </div>
                     );
                 })}
