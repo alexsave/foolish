@@ -75,7 +75,8 @@ const TABLE: TableView = {
     deckCount: 12, discardPileLength: 0, hasFlipped: false, hasGoodTimestamp: false, passing: true,
     flipped: { suit: CARD_NONE_SUIT, value: CARD_NONE_VALUE }, goodMask: 0, version: 0, battles: [],
     seats: [0, 1].map(() => ({ status: PLAYER_STATUS_IN, handCount: 6, awaitingAttack: false, isAi: false, id: '', name: '' })),
-    myHand: [], elimination: [], gameId: 'g', title: '',
+    myHand: [], elimination: [], rated: false, ratingDelta: new Array(8).fill(0), ratingBefore: new Array(8).fill(0),
+    gameId: 'g', title: '',
 };
 const planOf = (events: AnimPlanEventIn[]) => animBuildPlan(events, TABLE);
 const named = (cues: readonly PlanCue[]) =>
