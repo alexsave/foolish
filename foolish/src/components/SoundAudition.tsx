@@ -2,6 +2,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import Link from 'next/link';
 import { animBuildPlan, ANIM_EVT, ANIM_LOC, type AnimPlanEventIn } from '@sdk/ts/wasm/bots.ts';
 import { ANIM_CUE_NAMES, ANIM_N_CUES, ANIM_SOUND_STAGGER_MS } from '@sdk/ts/gen/kernel_consts.bots.ts';
+import { CARD_NONE_SUIT, CARD_NONE_VALUE, GAME_STATUS_PLAYING, PLAYER_STATUS_IN, type TableView_Snap } from '@sdk/ts/gen/view_layout.bots.ts';
 import { cueAudio } from '../audio/cueAudio';
 import { CUE_SOUNDS } from '../audio/cueSounds';
 import { TexturedSurface } from './TexturedSurface';
@@ -54,6 +55,16 @@ const MOVES: readonly { name: string; says: string; events: () => AnimPlanEventI
                      { type: ANIM_EVT.flipped, from: ANIM_LOC.deck, to: ANIM_LOC.flipped, cards: [card(2, 12)] }] },
 ];
 
+// The board a plan is asked against: two seats, nothing on the table. A plan
+// needs one to know how many sit; the cues themselves read no board.
+const TABLE: TableView_Snap = {
+    status: GAME_STATUS_PLAYING, powerSuit: 2, firstAttacker: 0, defender: 1, mySeat: -1, fool: -1,
+    deckCount: 12, discardPileLength: 0, hasFlipped: false, hasGoodTimestamp: false, passing: true,
+    flipped: { suit: CARD_NONE_SUIT, value: CARD_NONE_VALUE }, goodMask: 0, version: 0, battles: [],
+    seats: [0, 1].map(() => ({ status: PLAYER_STATUS_IN, handCount: 6, awaitingAttack: false, isAi: false, id: '', name: '' })),
+    myHand: [], elimination: [], gameId: 'sounds', title: '',
+};
+
 /** Run `strike` now, or as soon as the files it needs have arrived: the first
  *  tap on this page is also the gesture that lets them be fetched. */
 const whenLoaded = (strike: () => boolean, tries = 20): void => {
@@ -63,7 +74,7 @@ const whenLoaded = (strike: () => boolean, tries = 20): void => {
 };
 
 const playMove = (events: AnimPlanEventIn[]): void => {
-    const plan = animBuildPlan(events, undefined);
+    const plan = animBuildPlan(events, TABLE);
     whenLoaded(() => {
         let any = false;
         for (const cue of plan.cues) {

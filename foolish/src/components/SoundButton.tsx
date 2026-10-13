@@ -6,6 +6,11 @@ import { cueAudio } from '../audio/cueAudio';
 // this browser (src/audio/cueAudio.ts). The same little wood square as the back
 // button, in the opposite corner.
 //
+// MOUNTED BY THE ROUTE (src/app/[game_id], src/app/tutorial), beside the screen
+// and not inside the board, so it is there for the lobby, the board and the
+// results alike. That is why it is `fixed`: the icon buttons place themselves
+// against whatever positioned box holds them, and a route has none.
+//
 // THE TAP IS ALSO WHAT STARTS AUDIO for a player who arrived muted: a browser
 // only lets a page make sound from inside a user gesture, and `setMuted(false)`
 // is called from one here.
@@ -21,6 +26,7 @@ export const SoundButton = () => {
             as="button"
             seed={0.7}
             className="btn-icon btn-icon--right"
+            style={{ position: 'fixed' }}
             onClick={() => cueAudio.setMuted(!muted)}
             aria-label={label}
             aria-pressed={!muted}

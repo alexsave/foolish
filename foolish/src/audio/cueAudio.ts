@@ -65,7 +65,6 @@ export class CueAudio {
     private ctx: AudioContext | null = null;
     private master: GainNode | null = null;
     private readonly buffers = new Map<string, AudioBuffer>();
-    private readonly asked = new Set<string>();
     private readonly live = new Set<AudioBufferSourceNode>();
     private readonly lastVariant = new Map<number, number>();
     private readonly listeners = new Set<() => void>();
@@ -101,9 +100,10 @@ export class CueAudio {
         this.state = next;
         store(MUTED_KEY, next.muted ? '1' : '0');
         store(VOLUME_KEY, String(next.volume));
-        if (this.master && this.ctx) {
-            this.master.gain.setValueAtTime(next.muted ? 0 : next.volume, this.ctx.currentTime);
-        }
+        // The master carries the LEVEL only. Mute is not a level of zero: it is
+        // strike() refusing and cancel() stopping what was scheduled, so there
+        // is one place that decides whether a muted player hears anything.
+        if (this.master && this.ctx) this.master.gain.setValueAtTime(next.volume, this.ctx.currentTime);
         for (const l of this.listeners) l();
     }
 
@@ -158,15 +158,14 @@ export class CueAudio {
         this.load();
     }
 
-    /** Fetch and decode every file the table names, once each. A file that
-     *  does not arrive leaves its cue silent; nothing waits on this. */
+    /** Fetch and decode every file the table names. Runs once, as the context
+     *  is made. A file that does not arrive leaves its cue silent; nothing
+     *  waits on this. */
     private load(): void {
         const ctx = this.ctx;
         if (!ctx || typeof fetch === 'undefined') return;
         for (const sound of Object.values(CUE_SOUNDS)) {
             for (const file of sound?.files ?? []) {
-                if (this.asked.has(file)) continue;
-                this.asked.add(file);
                 fetch(CUE_SOUND_ROOT + file)
                     .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))))
                     // The callback form: older Safari has no promise from it.

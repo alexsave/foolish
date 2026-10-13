@@ -6,6 +6,7 @@ import { KernelGate } from '../../components/KernelGate';
 import { ProtectedRoute } from '../../components/ProtectedRoute';
 import { GameView } from '../../components/GameView';
 import { ReplayScreen } from '../../components/ReplayScreen';
+import { SoundButton } from '../../components/SoundButton';
 import { classifyPathSegment } from '@api/common/replay_codec.ts';
 
 export default function GamePage() {
@@ -21,6 +22,7 @@ export default function GamePage() {
       <KernelGate>
         <ErrorBoundary context="Replay Page">
           <ReplayScreen code={segment} />
+          <SoundButton />
         </ErrorBoundary>
       </KernelGate>
     );
@@ -32,6 +34,10 @@ export default function GamePage() {
         <ProtectedRoute>
           <GameView />
         </ProtectedRoute>
+        {/* The sound control belongs to the ROUTE, not to the board: a game is
+            heard from its lobby (the deal) to its results (the finish), and
+            those are three different screens under this one page. */}
+        <SoundButton />
       </ErrorBoundary>
     </KernelGate>
   );
