@@ -31,6 +31,18 @@ static void put_text(char *dst, uint8_t *dst_len, const char *src, int len) {
     *dst_len = (uint8_t)len;
 }
 
+// A view of a game that carries no rating stamp: the flag AND the numbers, so a
+// slot that showed a rated game a moment ago hands back nothing of it. The
+// snapshot is copied out whole, and a stale number beside a false flag is still
+// a stale number in somebody's store.
+static void view_unrate(TableView *v) {
+    v->rated = false;
+    v->rating_known = false;
+    memset(v->rating_before, 0, sizeof(v->rating_before));
+    memset(v->rating_delta, 0, sizeof(v->rating_delta));
+    memset(v->rating_after, 0, sizeof(v->rating_after));
+}
+
 // A board's game fields, as `viewer` sees it: everything but who sits where, the
 // table's name and the version. Only what the counts cover is ever read, so
 // nothing past them is cleared.
@@ -45,7 +57,7 @@ static void view_board(TableView *v, const Game *g, int viewer, int status) {
     v->my_seat = (int8_t)viewer;
     // A stamp is a finished game's: a board edited out of one (the rematch's
     // lobby, CLIENT_EDIT_LOBBY) leaves it behind.
-    if (status != GAME_STATUS_GAME_OVER) v->rated = false;
+    if (status != GAME_STATUS_GAME_OVER) view_unrate(v);
     v->fool = (int8_t)fool_of(g);
     v->deck_count = g->deck_count;
     v->discard_pile_length = g->discard_pile_length;
@@ -70,7 +82,7 @@ static void view_fill(ClientTable *c, int viewer, int status) {
     const Game *g = c->g;
     TableView *v = &c->view;
     view_board(v, g, viewer, status);
-    v->rated = false;   // an envelope's stamp is set by the one reader of it (client_adopt_envelope)
+    view_unrate(v);   // an envelope's stamp is set by the one reader of it (client_adopt_envelope)
     v->version = c->version;
     v->passing = (c->table_rules & GAME_RULE_NO_PASS) == 0;
     for (int s = 0; s < g->num_players; s++) {
@@ -148,10 +160,12 @@ int client_adopt_envelope(ClientTable *c, const uint8_t *p, int len) {
     if (stamp.n && (stamp.n != c->g->num_players || status != GAME_STATUS_GAME_OVER)) return CLIENT_E_FORMAT;
     c->version = h.version;
     view_fill(c, h.seat, status);
+    c->view.rating_known = true;
     if (stamp.n) {
         c->view.rated = true;
         memcpy(c->view.rating_before, stamp.before, sizeof(stamp.before));
         memcpy(c->view.rating_delta, stamp.delta, sizeof(stamp.delta));
+        for (int s = 0; s < stamp.n; s++) c->view.rating_after[s] = stamp.before[s] + stamp.delta[s];
     }
     return CLIENT_OK;
 }
@@ -405,6 +419,7 @@ int client_view_rules(const TableView *v, int from_deck, int to_flipped, int tru
     // those cards still fly from where the pile lay. The slot, likewise, stays
     // while the trump leaves it (the board keeps has_flipped until it lands).
     out->show_deck_spot = out->show_deck_pile || from_deck > 0;
+    out->wants_envelope = v->status == GAME_STATUS_GAME_OVER && !v->rating_known;
     out->show_flipped_slot = out->show_deck_pile || v->has_flipped || to_flipped > 0;
     out->show_flipped_card = trump_held;
     out->show_trump_icon = !out->show_deck_pile && !v->has_flipped && to_flipped == 0;

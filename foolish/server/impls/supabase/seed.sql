@@ -752,6 +752,26 @@ BEGIN
 END;
 $commit_table$;
 
+-- The ratings of a table's seats, in the order asked: what the kernel is handed
+-- to rate a game as it ends (c/src/table.h table_rate). The ids are the kernel's
+-- own (the roster's seats); a bot's rating is its bots row and a human's is
+-- their user_elo_ratings row, and the caller never has to know which is which.
+-- -1 is the kernel's TABLE_RATING_NONE, a seat with no rating yet, which it
+-- rates from its own starting rating
+-- (e2e/validation/rating_start_validation.test.ts holds the two equal).
+-- Reads only world-readable columns, so it is not SECURITY DEFINER.
+CREATE OR REPLACE FUNCTION seat_ratings(p_ids UUID[])
+RETURNS INTEGER[]
+LANGUAGE sql
+STABLE
+SET search_path = public
+AS $seat_ratings$
+  SELECT COALESCE(array_agg(COALESCE(b.elo_rating, u.elo_rating, -1) ORDER BY s.ord), '{}')
+  FROM unnest(p_ids) WITH ORDINALITY AS s(id, ord)
+  LEFT JOIN bots b ON b.id = s.id
+  LEFT JOIN user_elo_ratings u ON u.user_id = s.id;
+$seat_ratings$;
+
 -- A new lobby from table_create's products. A unique violation on the games row
 -- means the id is taken: the create function draws another.
 CREATE OR REPLACE FUNCTION create_table(

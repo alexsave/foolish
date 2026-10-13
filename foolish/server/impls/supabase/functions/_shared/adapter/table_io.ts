@@ -293,14 +293,18 @@ interface Copied {
 /** The CAS loop around one table operation. */
 export async function runTableOp(op: TableOp): Promise<TableOutcome> {
     const table = await serverTable();
+    // Set once the kernel has asked for the seats' ratings (ratingsFor below).
+    let ratings: number[] | null = null;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         const row = await loadRow(op.gameId, !op.fresh && attempt === 1);
         const dealSeed = drawDealSeed();
         const nextVersion = row.version + 1;
 
         // ---- the kernel section: nothing below awaits until it ends ----
-        const c = section(table, row, op, dealSeed, nextVersion);
+        const c = section(table, row, op, dealSeed, nextVersion, ratings);
         // ---- end of the kernel section ----
+
+        if (!ratings && (ratings = await ratingsFor(c.products, c.seats))) { attempt--; continue; }
 
         if (c.rc < 0) {
             if (row.cached) { invalidateCachedRow(op.gameId); continue; }
@@ -343,7 +347,20 @@ export async function runTableOp(op: TableOp): Promise<TableOutcome> {
     throw new Error(`Could not commit game ${op.gameId} after ${MAX_ATTEMPTS} attempts - write contention`);
 }
 
-function section(table: ServerTable, row: TableRow, op: TableOp, dealSeed: Uint8Array, nextVersion: number): Copied {
+/**
+ * The ratings the kernel asked for (TableCommit.wants_ratings: this operation
+ * ended a game, and it is to be rated), by seat, or null when it asked for
+ * none or they cannot be read. The kernel rates a game inside the section that
+ * ends it and a section cannot await, so the caller runs the operation again
+ * with these in hand; with none, the products stand and the game ends unrated.
+ */
+export async function ratingsFor(p: TableProducts | null, seats: TableSeat[]): Promise<number[] | null> {
+    if (!p?.wantsRatings) return null;
+    const { data } = await supabaseClient.rpc('seat_ratings', { p_ids: seats.map((s) => s.id) });
+    return (data as number[] | null) ?? null;
+}
+
+function section(table: ServerTable, row: TableRow, op: TableOp, dealSeed: Uint8Array, nextVersion: number, ratings: number[] | null): Copied {
     const none = { reject: 0, detail: 0, envelope: null, products: null, seats: [], pushes: [], needsBots: false };
     const loaded = table.load(row.state, row.roster);
     if (loaded < 0) {
@@ -370,6 +387,7 @@ function section(table: ServerTable, row: TableRow, op: TableOp, dealSeed: Uint8
         };
     }
 
+    if (ratings) table.rate(ratings);
     const products = table.commit(op.gameId, nextVersion, Date.now());
     if (typeof products === 'number') {
         throw new Error(`Game ${op.gameId}: no commit products: ${tableCodeName(products, ['TABLE_E_'])}`);
@@ -438,6 +456,10 @@ export async function commitProducts(
         p_views: humans.map((i) => base64(p.views[i]!)),
         p_spectator: base64(p.spectator),
         p_closed_round: p.closedRound,
+        // The kernel's rating changes: null for every commit but a rated game's last.
+        p_rated_ids: p.ratingDeltas ? seats.map((s) => s.id) : null,
+        p_rated_bots: p.ratingDeltas ? seats.map((s) => !!s.brain) : null,
+        p_rated_deltas: p.ratingDeltas,
     });
     if (error) {
         console.error(`[COMMIT] commit_table failed for ${gameId}:`, error);

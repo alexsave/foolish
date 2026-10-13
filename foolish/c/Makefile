@@ -1026,7 +1026,7 @@ WASM_TABLE_EXPORTS := \
   -Wl,--export=wasm_table_bots_need_logs -Wl,--export=wasm_table_commit_products \
   -Wl,--export=wasm_table_push -Wl,--export=wasm_table_envelope \
   -Wl,--export=wasm_table_action_response -Wl,--export=wasm_table_rankings \
-  -Wl,--export=wasm_elo_deltas \
+  -Wl,--export=wasm_table_rate \
   -Wl,--export=wasm_table_create -Wl,--export=wasm_table_join \
   -Wl,--export=wasm_table_leave -Wl,--export=wasm_table_add_bot \
   -Wl,--export=wasm_table_ready \
@@ -1086,7 +1086,7 @@ WASM_REPLAY_WEB_EXPORTS := \
 # kernel has loaded; card text goes through card.h's parser.
 WASM_FIXTURE_EXPORTS := \
   -Wl,--export=wasm_fixture_begin -Wl,--export=wasm_fixture_title \
-  -Wl,--export=wasm_fixture_seat -Wl,--export=wasm_fixture_seal \
+  -Wl,--export=wasm_fixture_seat -Wl,--export=wasm_fixture_seal -Wl,--export=wasm_fixture_stamp_ptr \
   -Wl,--export=wasm_card_list_parse
 
 # The exports only tests call. They are NOT in the shipped bots.wasm.gz: an

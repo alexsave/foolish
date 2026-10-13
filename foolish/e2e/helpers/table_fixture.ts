@@ -60,13 +60,15 @@ function k(): { ex: BotsTestExports; table: ServerTable } {
 export function fixtureTable(): ServerTable { return k().table; }
 
 /**
- * A state blob's BOARD: every byte but a v3 or v4 blob's trailing clock
- * (table.h TABLE_STATE_V3_CLOCK_BYTES; a v2 blob has none), which says when the
- * board was shown rather than what is on it - so two commits of one board at
+ * A state blob's BOARD: every byte but what its format carries behind the board
+ * (table.h): from v3 the clock (TABLE_STATE_V3_CLOCK_BYTES), which says when
+ * the board was shown rather than what is on it, and from v5 the game's rating
+ * stamp behind that (TABLE_STATE_STAMP_BYTES) - so two commits of one board at
  * two times, or a board and a fixture that was never shown, compare equal here.
  */
 export const boardBytes = (state: Uint8Array): Uint8Array =>
-    state.subarray(0, state.length - (state[0] === L.TABLE_STATE_FORMAT_V2 ? 0 : L.TABLE_STATE_V3_CLOCK_BYTES));
+    state.subarray(0, state.length - (state[0] === L.TABLE_STATE_FORMAT_V2 ? 0
+        : L.TABLE_STATE_V3_CLOCK_BYTES + (state[0] === L.TABLE_STATE_FORMAT_V5 ? L.TABLE_STATE_STAMP_BYTES : 0)));
 
 /** The raw exports of that instance, for a test helper that reads the loaded board through the generated accessors. */
 export function fixtureExports(): BotsTestExports {
@@ -116,6 +118,7 @@ class Builder {
     private awaitingSeats = new Set<number>();
     private seeded = false;
     private rulesBits = 0;
+    private stamp: { before: number; delta: number }[] = [];
 
     /** The roster, in seat order. The state's seat count follows it unless numPlayers() says otherwise. */
     seats(list: FixtureSeat[]): this { this.seatList = list; return this; }
@@ -158,6 +161,13 @@ class Builder {
     passing(on: boolean): this { this.rulesBits = on ? 0 : L.GAME_RULE_NO_PASS; return this; }
     /** A seed-dealt game: every draw takes the deck's first card (game.c draw_index). */
     deterministic(on = true): this { this.seeded = on; return this; }
+
+    /**
+     * The finished game's rating stamp (c/src/view.h GameRatings): each seat's
+     * rating as the game ended and the change the game made to it, in seat
+     * order. Only a board that is GAME_OVER carries one, one entry per seat.
+     */
+    ratings(...seats: { before: number; delta: number }[]): this { this.stamp = seats; return this; }
 
     /** Composes the board in the kernel and seals it: bytes the C Table has loaded, or FixtureRefused. */
     build(): TableFixture {
@@ -220,6 +230,14 @@ class Builder {
         }
         L.Game_set_good_players_mask(m, g, mask >>> 0);
         L.Game_set_has_good_timestamp(m, g, this.goodTs);
+
+        const stamp = ex.wasm_fixture_stamp_ptr();
+        if (this.stamp.length > L.GameRatings_before_LEN) throw new RangeError(`table fixture: ratings for ${this.stamp.length} seats`);
+        L.GameRatings_set_n(m, stamp, this.stamp.length);
+        this.stamp.forEach((r, s) => {
+            L.GameRatings_set_before(m, stamp, s, r.before);
+            L.GameRatings_set_delta(m, stamp, s, r.delta);
+        });
 
         const n = ex.wasm_fixture_seal();
         if (n < 0) {

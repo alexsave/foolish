@@ -9802,7 +9802,7 @@ static void test_table_load(void) {
         if (rc_ != (want)) fprintf(stderr, "  table_load(%s): got %d, want %d\n", msg, rc_, want); \
         CHECK(rc_ == (want) && !tb.loaded, msg); \
         CHECK(memcmp(&tb_before, &tb_game, offsetof(Game, logs)) == 0, msg); } while (0)
-    memcpy(tb_state2, tb_state, sizeof(tb_state)); tb_state2[0] = TABLE_STATE_FORMAT_V4 + 1;
+    memcpy(tb_state2, tb_state, sizeof(tb_state)); tb_state2[0] = TABLE_STATE_FORMAT + 1;
     REFUSE(TABLE_E_STATE_VERSION, "a state blob of an unknown format", tb_state2, tb_state_len, tb_roster);
     tb_state2[0] = 1;
     REFUSE(TABLE_E_STATE_VERSION, "a v1 state blob (rewritten to v2 by a migration long ago)", tb_state2, tb_state_len, tb_roster);
@@ -9884,11 +9884,16 @@ static void test_state_blob_v4_carries_the_rules(void) {
         static unsigned char loaded[8192];
         memcpy(loaded, blob, (size_t)n);
         const int cr = tr == TABLE_OK ? table_commit_products(&tb, RS("g"), 2, 0, &c, tb_arena, sizeof(tb_arena)) : tr;
-        CHECK(cr >= 0 && c.state.len == n && memcmp(tb_arena + c.state.off, loaded, (size_t)n) == 0,
-              "v4 writer: a podkidnoy table commits back the row it loaded, byte for byte");
+        // The commit writes the format this kernel writes: the v4 row's bytes
+        // past its format byte, and whatever that format adds behind the clock.
+        CHECK(cr >= 0 && c.state.len == n + TABLE_STATE_TAIL_BYTES - STATE_BLOB_V3_CLOCK_BYTES
+              && tb_arena[c.state.off] == TABLE_STATE_FORMAT
+              && memcmp(tb_arena + c.state.off + 1, loaded + 1, (size_t)n - 1) == 0,
+              "a podkidnoy v4 row commits back the board, flags and clock it loaded");
     }
-    CHECK(state_blob_put(&g, &clk, blob) == n && blob[0] == STATE_BLOB_FORMAT_V4 && !(blob[1] & STATE_BLOB_FLAG_PASSING),
-          "v4 writer: the shipped writer writes a podkidnoy board as v4, passing bit clear");
+    CHECK(state_blob_put(&g, &clk, blob) == n + TABLE_STATE_TAIL_BYTES - STATE_BLOB_V3_CLOCK_BYTES
+          && blob[0] == STATE_BLOB_FORMAT && !(blob[1] & STATE_BLOB_FLAG_PASSING),
+          "the shipped writer writes a podkidnoy board at its own format, passing bit clear");
     CHECK(state_blob_put_at(&g, &clk, STATE_BLOB_FORMAT_V3, blob) == STATE_BLOB_E_RULES
           && state_blob_put_at(&g, &clk, STATE_BLOB_FORMAT_V2, blob) == STATE_BLOB_E_RULES,
           "v3 and v2 writers: neither writes a podkidnoy board");
@@ -9925,9 +9930,9 @@ static void test_state_blob_v4_carries_the_rules(void) {
     CHECK(tr == TABLE_OK && game_pass_allowed(&tb_game) && menu_has(&tb_game, 1, MOVE_PASS),
           "v4: a table loads a passing row as passing over a podkidnoy Game");
     CHECK(tr == TABLE_OK && table_commit_products(&tb, RS("g"), 2, 0, &c, tb_arena, sizeof(tb_arena)) >= 0
-          && tb_arena[c.state.off] == TABLE_STATE_FORMAT && c.state.len == n
-          && memcmp(tb_arena + c.state.off, blob, (size_t)n) == 0,
-          "v4 writer: a passing v4 row commits back byte for byte");
+          && tb_arena[c.state.off] == TABLE_STATE_FORMAT && c.state.len == n + TABLE_STATE_TAIL_BYTES - STATE_BLOB_V3_CLOCK_BYTES
+          && memcmp(tb_arena + c.state.off + 1, blob + 1, (size_t)n - 1) == 0,
+          "a passing v4 row commits back the board, flags and clock it loaded");
 
     // v3 and v2 rows are the classic game, whatever the Game held before (an
     // FMSG decode in the same module, say).
@@ -10121,12 +10126,12 @@ static void test_table_commit_products(void) {
     // clock the move put on it (view.h BoardClock): shown at the commit's own
     // time, and done playing one flight later - the attack is a single beat.
     CHECK(tb_arena[c.state.off] == TABLE_STATE_FORMAT && c.state.len == tb_blob(&tb_game, tb_buf)
-          && memcmp(tb_arena + c.state.off, tb_buf, (size_t)c.state.len - TABLE_STATE_CLOCK_BYTES) == 0,
+          && memcmp(tb_arena + c.state.off, tb_buf, (size_t)c.state.len - TABLE_STATE_TAIL_BYTES) == 0,
           "the state blob is the board after the move, at the format this kernel writes");
     CHECK(c.clock.shown_ms == 0x010203040506LL, "the clock shows the move at the commit's time");
     CHECK(c.clock.settles_ms == 0x010203040506LL + ANIM_TIME_MS, "and has it done playing one flight later");
     if (TABLE_STATE_CLOCK_BYTES > 0) {
-        const uint8_t *ck = tb_arena + c.state.off + c.state.len - TABLE_STATE_CLOCK_BYTES;
+        const uint8_t *ck = tb_arena + c.state.off + c.state.len - TABLE_STATE_TAIL_BYTES;
         int64_t settles = 0;
         for (int b = 5; b >= 0; b--) settles = settles * 256 + ck[6 + b];
         CHECK(memcmp(ck, "\x06\x05\x04\x03\x02\x01", 6) == 0 && settles == c.clock.settles_ms,
@@ -11277,8 +11282,12 @@ static void test_opening_deal_bytes_are_unchanged(void) {
     // back, so the clock is the whole of the change. It moved again when the
     // writer went to v4: hashing each blob as its v3 self (format byte 3, the
     // flag byte's deck bit alone) gives the v3 digest 0xd207116e4eee7539 back,
-    // so the format byte and the PASSING bit are the whole of that change.
-    static const uint64_t golden[2] = { 0xeaae85afbc52968eULL, 0x3ec4d781fc36b8baULL };
+    // so the format byte and the PASSING bit are the whole of that change. And
+    // once more when the writer went to v5: hashing each blob as its v4 self
+    // (format byte 4, without the GAME_RATINGS_BYTES behind the clock) gives the
+    // v4 digest 0xeaae85afbc52968e back, so the format byte and the empty rating
+    // stamp are the whole of that one - a deal's envelopes did not move.
+    static const uint64_t golden[2] = { 0x8ca6eb1fe9345faaULL, 0x3ec4d781fc36b8baULL };
     uint64_t hc = 1469598103934665603ULL;
     for (int np = 2; np <= MAX_PLAYERS; np++) {
         for (int seed_k = 1; seed_k <= 3; seed_k++) {
@@ -12315,7 +12324,7 @@ static void test_table_bot_wait(void) {
         // stream now rather than behind it.
         tb_bot_table_n("random", 23, MAX_PLAYERS - 1);
         const BoardClock far = { T0, T0 + BOT_CLOCK_HORIZON_MS + 1 };
-        tb_put_clock(tb_state + tb_state_len - TABLE_STATE_V3_CLOCK_BYTES, &far);
+        tb_put_clock(tb_state + tb_state_len - TABLE_STATE_TAIL_BYTES, &far);
         CHECK(tb_reload(1) >= 0 && tb.clock.settles_ms == far.settles_ms && table_bot_wait_ms(&tb, T0) == 0,
               "a clock settling past the horizon holds no bot");
         ms = -1;
@@ -13418,9 +13427,9 @@ static void test_client_adopts_envelopes(void) {
 // THE RATING STAMP (view.h GameRatings, STATE_BLOB_FORMAT_V5, ENV_ISLAND_RATINGS).
 // What a finished game did to its seats' ratings is a fact of the game: it is in
 // the row, it is in every envelope of that finished table, and a client reads it
-// from there by seat. This kernel is the EXPAND step - it reads a v5 row and
-// still writes v4 - so the v5 rows here are written at an explicit format, as a
-// switch kernel will write them.
+// from there by seat. The rows here are written at an explicit format, v5 beside
+// v4, so the difference between the two is on the page; the table writing a
+// stamp of its own is test_table_rates_the_game_it_ends.
 //
 // The envelope half holds the one promise the whole design leans on: the stamp
 // travels in the island, which every reader ever shipped skips by its length.
@@ -13491,7 +13500,15 @@ static void test_rating_stamp_rides_the_row_and_the_envelope(void) {
               "a stamp that does not count the board's seats is unreadable, and adopts nothing");
         memcpy(blob2, blob, (size_t)n5); blob2[n5 - 1] = 1;
         CHECK(state_blob_load_rated(&untouched, blob2, n5, 0, &got) == 0, "a stamp with a slot past its count is unreadable");
-        CHECK(state_blob_load_rated(&untouched, blob, n5 - 1, 0, &got) != 1, "a v5 row cut short does not load");
+        // Cut short, the row is refused for what it is - a board that does not
+        // measure - and not as a format: the bytes its tail now holds are no stamp.
+        for (int cut = 1; cut < n5 - STATE_BLOB_HEADER; cut += 7)
+            CHECK(state_blob_load_rated(&untouched, blob, n5 - cut, 0, &got) == GAME_INVALID_COUNT && untouched.num_players == 5,
+                  "a v5 row cut short is a board that does not measure, whatever its tail reads as");
+        // A board the kernel refuses is refused with the BOARD's reason, stamped or not.
+        memcpy(blob2, blob, (size_t)n5); blob2[STATE_BLOB_HEADER] = GAME_STATUS_WAITING;
+        CHECK(state_blob_load_rated(&untouched, blob2, n5, 0, &got) == GAME_INVALID_LOBBY_CARDS && untouched.num_players == 5,
+              "a finished, stamped board relabelled a lobby is a lobby holding cards");
         // On a board that is not over: the writer drops it, and a row that pairs them is refused.
         tb_fixture(3, 1u << 2, 131);
         const int live = state_blob_put_rated_at(&tb_src, &clk, &stamp, STATE_BLOB_FORMAT_V5, blob2);
@@ -13506,7 +13523,7 @@ static void test_rating_stamp_rides_the_row_and_the_envelope(void) {
     table_init(&tb, &tb_game, &tb_snaps);
     CHECK(table_load(&tb, blob, n5, tb_roster, ROSTER_BYTES) == TABLE_OK && tb.ratings.n == 3 && tb.ratings.delta[1] == -3,
           "a table loads a v5 row and holds its stamp");
-    CHECK(TABLE_STATE_FORMAT == STATE_BLOB_FORMAT_V4, "this kernel still WRITES v4 (the expand step): flip this with the switch");
+    CHECK(TABLE_STATE_FORMAT == STATE_BLOB_FORMAT_V5, "this kernel WRITES v5 (the switch step)");
 
     // ---- the envelope ----
     client_init(&ct, &ct_slot);
@@ -13532,6 +13549,10 @@ static void test_rating_stamp_rides_the_row_and_the_envelope(void) {
               && memcmp(ct_env + ENV_ISLAND_AT + 2 + island, ct_env2 + ENV_ISLAND_AT + 2, (size_t)(n0 - ENV_ISLAND_AT - 2)) == 0,
               "the stamp changes the island and nothing else: a reader that skips it reads the envelope it always did");
         CHECK(client_adopt_envelope(&ct, ct_env2, n0) == CLIENT_OK && !ct.view.rated, "and an envelope without one reads unrated");
+        // The slot showed the rated game a moment ago: none of its numbers stay behind.
+        int stale = 0;
+        for (int s = 0; s < MAX_PLAYERS; s++) stale += ct.view.rating_before[s] != 0 || ct.view.rating_delta[s] != 0;
+        CHECK(stale == 0, "an unrated view holds no rating left over from the game the slot showed before");
     }
     {
         const int n = table_envelope(&tb, RS("g-7"), 0, 42, ct_env, sizeof(ct_env));
@@ -13552,7 +13573,8 @@ static void test_rating_stamp_rides_the_row_and_the_envelope(void) {
         // A push's board has no stamp: the view a later adoption leaves is unrated.
         CHECK(client_adopt_envelope(&ct, ct_env, n) == CLIENT_OK && ct.view.rated, "the stamped envelope reads again (the control)");
         const int slen = state_put(&tb_game, 0, ct_raw);
-        CHECK(client_adopt_state(&ct, ct_raw, slen, 0) == CLIENT_OK && !ct.view.rated, "a bare board adopted after it is unrated");
+        CHECK(client_adopt_state(&ct, ct_raw, slen, 0) == CLIENT_OK && !ct.view.rated
+              && ct.view.rating_before[0] == 0 && ct.view.rating_delta[0] == 0, "a bare board adopted after it is unrated, numbers and all");
     }
 
     // A rematch is a new game: the lobby it resets to has no stamp to show.
@@ -13562,6 +13584,168 @@ static void test_rating_stamp_rides_the_row_and_the_envelope(void) {
         CHECK(n > 0 && ct_env[ENV_ISLAND_AT] == 0 && ct_env[ENV_ISLAND_AT + 1] == 0
               && client_adopt_envelope(&ct, ct_env, n) == CLIENT_OK && !ct.view.rated, "and its envelope carries none");
     }
+}
+
+// Plays a seeded 3-seat table (a bot at seat 1) the way a server does - load the
+// committed row, act, commit - and stops with the LAST move applied and not yet
+// committed: tb is loaded and tb.ended. 1 when it got there.
+static int tb_play_to_the_last_move(int seed) {
+    tb_fixture(3, 1u << 1, seed);
+    table_init(&tb, &tb_game, &tb_snaps);
+    TableCommit c;
+    for (int guard = 0; guard < 5000; guard++) {
+        if (table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) != TABLE_OK) return 0;
+        int seat = -1;
+        for (int s = 0; s < 3 && seat < 0; s++) if (should_bot_act(&tb_game, s)) seat = s;
+        if (seat < 0) return 0;
+        calculate_legal_moves(&tb_game, seat, &tb_moves);
+        const LegalMove *m = &tb_moves.moves[handwritten_strategy_choose(&tb_game, seat, &tb_moves, 0)];
+        AwireAction a;
+        memset(&a, 0, sizeof(a));
+        a.kind = m->type; a.n = m->n_cards;
+        for (int i = 0; i < m->n_cards; i++) { a.cards[i] = m->cards[i]; a.attacks[i] = m->attack_cards[i]; }
+        const int wl = awire_encode(&a, tb_buf, sizeof(tb_buf));
+        char id[8];
+        snprintf(id, sizeof(id), "id-%d", seat);
+        if (table_act(&tb, id, (int)strlen(id), tb_buf, wl, -1, 0) != TABLE_APPLIED) return 0;
+        if (tb.ended) return 1;
+        if (table_commit_products(&tb, RS("g"), 1, 0, &c, tb_arena, sizeof(tb_arena)) < 0) return 0;
+        memcpy(tb_state, tb_arena + c.state.off, (size_t)c.state.len);
+        tb_state_len = c.state.len;
+    }
+    return 0;
+}
+
+// THE TABLE RATES THE GAME IT ENDS (table.h table_rate). The host reads the
+// seats' ratings and hands them over between the last move and its commit; the
+// kernel works the changes out from its own finish order, stamps the game, and
+// names the changes in that commit's products - and in no later commit's.
+//
+// The second half is the one that would corrupt ratings if it were wrong: a
+// finished table is committed again whenever an account at it is deleted
+// (table_redact), and that commit must carry the stamp without applying it.
+static void test_table_rates_the_game_it_ends(void) {
+    const int32_t ratings[3] = { 1000, 1210, 990 };
+    TableCommit c;
+
+    // Not before the game ends, and not with the wrong seat count.
+    tb_fixture(3, 1u << 1, 51);
+    table_init(&tb, &tb_game, &tb_snaps);
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK
+          && table_rate(&tb, ratings, 3) == TABLE_MOOT && tb.ratings.n == 0,
+          "a table whose last operation did not end the game has nothing to rate: moot, never an error a host must read");
+    CHECK(table_commit_products(&tb, RS("g"), 1, 0, &c, tb_arena, sizeof(tb_arena)) > 0 && !c.wants_ratings && c.n_rated == 0,
+          "and a commit that ends nothing wants no ratings");
+
+    CHECK(tb_play_to_the_last_move(51), "the game plays to its last move");
+    CHECK(table_rate(&tb, ratings, 2) == TABLE_E_WIRE && table_rate(&tb, 0, 3) == TABLE_E_WIRE && tb.ratings.n == 0,
+          "ratings that are not one per seat are refused");
+    {
+        const int32_t junk[3] = { 1000, TABLE_RATING_NONE - 1, 990 };
+        CHECK(table_rate(&tb, junk, 3) == TABLE_E_WIRE && tb.ratings.n == 0, "a rating below the no-rating mark is refused");
+    }
+    // THE KERNEL ASKS: the unrated ending's products say the host should read
+    // the ratings and run the operation again. That is the first pass of every
+    // rated game, and the host decides nothing about it.
+    CHECK(table_commit_products(&tb, RS("g"), 99, 0, &c, tb_arena, sizeof(tb_arena)) > 0 && c.ended && c.wants_ratings && c.n_rated == 0,
+          "the commit that ends the game unrated wants ratings");
+    CHECK(table_rate(&tb, ratings, 3) == TABLE_OK && tb.ratings.n == 3, "the ending operation rates its game");
+
+    // The changes are elo_deltas over the table's own finish order.
+    int8_t order[MAX_PLAYERS];
+    int32_t want[MAX_PLAYERS];
+    CHECK(table_rankings(&tb, order) == 3 && elo_deltas(ratings, order, 3, want) == 3, "the finish order and its changes");
+    CHECK(want[order[0]] > 0 && want[order[2]] < 0, "the winner gains and the fool loses (the control: these are real changes)");
+    for (int s = 0; s < 3; s++)
+        CHECK(tb.ratings.before[s] == ratings[s] && tb.ratings.delta[s] == want[s], "each seat is stamped with its rating and its change");
+
+    // The ending commit: the stamp in the row, in every envelope, and in the products.
+    const int n = table_commit_products(&tb, RS("g"), 99, 0, &c, tb_arena, sizeof(tb_arena));
+    CHECK(n > 0 && c.ended && c.n_rated == 3 && c.rating_delta[0] == want[0] && c.rating_delta[1] == want[1]
+          && c.rating_delta[2] == want[2] && c.rating_delta[3] == 0, "the ending commit names the changes to apply, by seat");
+    CHECK(!c.wants_ratings, "and, rated, it wants nothing more");
+    CHECK(tb_arena[c.state.off] == STATE_BLOB_FORMAT_V5, "the row is written as v5");
+    client_init(&ct, &ct_slot);
+    for (int s = 0; s < 3; s++) {
+        if (s == 1) { CHECK(c.views[s].len == 0, "the bot seat has no envelope"); continue; }
+        CHECK(client_adopt_envelope(&ct, tb_arena + c.views[s].off, c.views[s].len) == CLIENT_OK && ct.view.rated
+              && ct.view.rating_before[1] == 1210 && ct.view.rating_delta[order[0]] == want[order[0]]
+              && ct.view.rating_delta[order[2]] == want[order[2]], "each human seat's envelope carries the stamp");
+        CHECK(ct.view.rating_after[0] == 1000 + want[0] && ct.view.rating_after[1] == 1210 + want[1] && ct.view.rating_after[3] == 0,
+              "with what each rating became, so no screen adds it up");
+    }
+    CHECK(client_adopt_envelope(&ct, tb_arena + c.spectator.off, c.spectator.len) == CLIENT_OK && ct.view.rated
+          && ct.view.rating_delta[0] == want[0], "and so does the spectator's");
+    memcpy(tb_state, tb_arena + c.state.off, (size_t)c.state.len);
+    tb_state_len = c.state.len;
+    memcpy(tb_roster, tb_arena + c.roster.off, ROSTER_BYTES);
+
+    // A LATER COMMIT ON THE FINISHED TABLE: the stamp stays, and nobody is rated again.
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK && tb.ratings.n == 3
+          && tb.ratings.delta[0] == want[0], "the finished row loads with its stamp");
+    CHECK(table_rate(&tb, ratings, 3) == TABLE_MOOT && tb.ratings.delta[0] == want[0], "a game that is already over is not rated a second time, and its stamp stands");
+    CHECK(table_redact(&tb, RS("id-0"), RS("Deleted player")) == TABLE_OK, "an account at the finished table is deleted");
+    CHECK(table_commit_products(&tb, RS("g"), 100, 0, &c, tb_arena, sizeof(tb_arena)) > 0 && !c.ended, "that commits");
+    CHECK(c.n_rated == 0 && c.rating_delta[0] == 0 && c.rating_delta[2] == 0, "and its products rate NOBODY: the game was counted once");
+    CHECK(!c.wants_ratings, "nor do they ask for ratings: the game ended two commits ago");
+    CHECK(client_adopt_envelope(&ct, tb_arena + c.views[2].off, c.views[2].len) == CLIENT_OK && ct.view.rated
+          && ct.view.rating_delta[0] == want[0] && ct.view.rating_before[1] == 1210, "while its envelopes still show what the game did");
+    memcpy(tb_state, tb_arena + c.state.off, (size_t)c.state.len);
+    tb_state_len = c.state.len;
+    memcpy(tb_roster, tb_arena + c.roster.off, ROSTER_BYTES);
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK && tb.ratings.n == 3 && tb.ratings.delta[2] == want[2],
+          "and its row still carries the stamp");
+
+    // The rematch: no stamp in the lobby's row or its envelopes.
+    CHECK(table_continue(&tb, RS("id-2")) == TABLE_OK
+          && table_commit_products(&tb, RS("g"), 101, 0, &c, tb_arena, sizeof(tb_arena)) > 0 && c.n_rated == 0, "the table continues");
+    CHECK(table_load(&tb, tb_arena + c.state.off, c.state.len, tb_roster, ROSTER_BYTES) == TABLE_OK && tb.ratings.n == 0,
+          "the rematch's lobby row carries no stamp");
+
+    // A game the host could not read ratings for ends unrated: nothing stamped, nothing applied.
+    CHECK(tb_play_to_the_last_move(51), "the game plays to its last move again");
+    CHECK(table_commit_products(&tb, RS("g"), 99, 0, &c, tb_arena, sizeof(tb_arena)) > 0 && c.ended && c.n_rated == 0
+          && client_adopt_envelope(&ct, tb_arena + c.spectator.off, c.spectator.len) == CLIENT_OK && !ct.view.rated,
+          "a game nobody rated ends with no stamp and no changes");
+    {
+        // WHAT A FINISH SCREEN DOES ABOUT IT is the kernel's answer too: an
+        // envelope has said whether the game was rated (here: it was not), so
+        // nothing more is to be read; the board a push or a bare state leaves
+        // has not, so the envelope is wanted - once the game is over, and only then.
+        ViewRules vr;
+        CHECK(ct.view.rating_known && client_view_rules(&ct.view, 0, 0, 0, &vr) == CLIENT_OK && !vr.wants_envelope,
+              "an envelope's view knows: an unrated game's finish screen reads nothing more");
+        const int slen = state_put(&tb_game, 0, ct_raw);
+        CHECK(client_adopt_state(&ct, ct_raw, slen, 0) == CLIENT_OK && !ct.view.rating_known
+              && client_view_rules(&ct.view, 0, 0, 0, &vr) == CLIENT_OK && vr.wants_envelope,
+              "the finished board a push leaves does not: its screen wants the envelope");
+        tb_fixture(3, 1u << 1, 51);
+        const int live = state_put(&tb_src, 0, ct_raw);
+        CHECK(client_adopt_state(&ct, ct_raw, live, 0) == CLIENT_OK
+              && client_view_rules(&ct.view, 0, 0, 0, &vr) == CLIENT_OK && !vr.wants_envelope,
+              "a game still being played wants none");
+    }
+
+    // A seat with no rating yet is rated from the kernel's own starting rating.
+    CHECK(tb_play_to_the_last_move(51), "and again");
+    {
+        const int32_t fresh[3] = { TABLE_RATING_NONE, TABLE_RATING_NONE, TABLE_RATING_NONE };
+        const int32_t start[3] = { TABLE_RATING_START, TABLE_RATING_START, TABLE_RATING_START };
+        CHECK(table_rankings(&tb, order) == 3 && elo_deltas(start, order, 3, want) == 3, "the changes among three seats at the start");
+        CHECK(table_rate(&tb, fresh, 3) == TABLE_OK && tb.ratings.before[0] == TABLE_RATING_START && tb.ratings.before[2] == TABLE_RATING_START
+              && tb.ratings.delta[0] == want[0] && tb.ratings.delta[1] == want[1] && tb.ratings.delta[2] == want[2],
+              "seats with no rating are rated from TABLE_RATING_START");
+    }
+
+    // A rating never goes below zero, and the stamp is what is applied.
+    CHECK(tb_play_to_the_last_move(51), "and once more");
+    int32_t poor[3];
+    CHECK(table_rankings(&tb, order) == 3, "the finish order");
+    poor[0] = poor[1] = poor[2] = 3;
+    elo_deltas(poor, order, 3, want);
+    CHECK(want[order[2]] == -10, "three even seats: the fool would lose ten (the control)");
+    CHECK(table_rate(&tb, poor, 3) == TABLE_OK && tb.ratings.delta[order[2]] == -3 && tb.ratings.before[order[2]] == 3
+          && tb.ratings.delta[order[0]] == want[order[0]], "a seat with three points loses three, not ten");
 }
 
 
@@ -13982,8 +14166,8 @@ static void test_table_set_rules(void) {
 
     // The row: the commit writes podkidnoy, and a table that loads it plays it.
     CHECK(table_commit_products(&tb, RS("g"), 2, 0, &c, tb_arena, sizeof(tb_arena)) > 0
-          && tb_arena[c.state.off] == STATE_BLOB_FORMAT_V4 && !(tb_arena[c.state.off + 1] & STATE_BLOB_FLAG_PASSING),
-          "set_rules: the dealt commit's row is v4 with PASSING clear");
+          && tb_arena[c.state.off] == STATE_BLOB_FORMAT && !(tb_arena[c.state.off + 1] & STATE_BLOB_FLAG_PASSING),
+          "set_rules: the dealt commit's row is the written format with PASSING clear");
     memcpy(tb_state, tb_arena + c.state.off, (size_t)c.state.len);
     tb_state_len = c.state.len;
     memcpy(tb_roster, tb_arena + c.roster.off, ROSTER_BYTES);
@@ -16679,6 +16863,7 @@ int main(void) {
     test_table_state_blob_round_trips_every_reachable_state();
     test_client_adopts_envelopes();
     test_rating_stamp_rides_the_row_and_the_envelope();
+    test_table_rates_the_game_it_ends();
     test_ask_round_trips();
     test_table_ask_runs_every_kind();
     test_table_cast_carries_its_version();

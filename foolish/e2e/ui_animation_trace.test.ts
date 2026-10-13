@@ -153,6 +153,11 @@ class Server {
         const rc = run(t);
         assert.ok(rc >= 0, `the operation is not refused outright (${rc})`);
         if (rc === L.TABLE_REJECTED || rc === L.TABLE_MOOT || rc === L.TABLE_STALE_ROUND) return { rc, reject: t.reject() };
+        // The operation that ends the game rates it, as the real server's does
+        // (adapter/ratings.ts): this server has no rating rows, so every seat
+        // is one with no rating yet (the kernel rates it from TABLE_RATING_START). The kernel refuses this
+        // for every operation that did not end the game.
+        t.rate(t.seats().map(() => L.TABLE_RATING_NONE));
         const p = t.commit(this.gid, this.version + 1, 1_700_000_000_000);
         assert.ok(typeof p !== 'number', `commit products: ${p}`);
         const seats = t.seats();
@@ -1781,7 +1786,8 @@ test('a resync while my card is pending keeps it on the table', async () => {
 
 test('the rematch: continue from the win screen', async () => {
     const board = fixture().title('Finished').seats([seat(ME, 'Me'), seat(ANNA, 'Anna')]).status(GAME_OVER).powerSuit(1)
-        .hand(1, '6s 7s').seatStatus(0, OUT).seatStatus(1, IN).eliminated(0).discard(34).build();
+        .hand(1, '6s 7s').seatStatus(0, OUT).seatStatus(1, IN).eliminated(0).discard(34)
+        .ratings({ before: 1000, delta: 5 }, { before: 1000, delta: -5 }).build();
     const ears = await listen();
     try {
         await play('continue', 115, 'a-continue', board, async (s) => {

@@ -4,7 +4,8 @@ import { animBuildPlan, ANIM_EVT, ANIM_LOC, type AnimPlanEventIn } from '@sdk/ts
 import {
     ANIM_CUE_NAMES, ANIM_N_CUES, ANIM_SOUND_STAGGER_MS, ANIM_CUE_REVERT, ANIM_CUE_PLACE, ANIM_CUE_COVER, ANIM_CUE_PICKUP,
 } from '@sdk/ts/gen/kernel_consts.bots.ts';
-import { CARD_NONE_SUIT, CARD_NONE_VALUE, GAME_STATUS_PLAYING, PLAYER_STATUS_IN, type TableView_Snap } from '@sdk/ts/gen/view_layout.bots.ts';
+import type { TableView } from '../state/view';
+import { buildTutorialData } from './Tutorial';
 import { cueAudio } from '../audio/cueAudio';
 import { CUE_SOUNDS } from '../audio/cueSounds';
 import { TexturedSurface } from './TexturedSurface';
@@ -59,17 +60,6 @@ const MOVES: readonly { name: string; says: string; events: () => AnimPlanEventI
                      { type: ANIM_EVT.flipped, from: ANIM_LOC.deck, to: ANIM_LOC.flipped, cards: [card(2, 12)] }] },
 ];
 
-// The board a plan is asked against: two seats, nothing on the table. A plan
-// needs one to know how many sit; the cues themselves read no board.
-const TABLE: TableView_Snap = {
-    status: GAME_STATUS_PLAYING, powerSuit: 2, firstAttacker: 0, defender: 1, mySeat: -1, fool: -1,
-    deckCount: 12, discardPileLength: 0, hasFlipped: false, hasGoodTimestamp: false, passing: true,
-    flipped: { suit: CARD_NONE_SUIT, value: CARD_NONE_VALUE }, goodMask: 0, version: 0, battles: [],
-    seats: [0, 1].map(() => ({ status: PLAYER_STATUS_IN, handCount: 6, awaitingAttack: false, isAi: false, id: '', name: '' })),
-    myHand: [], elimination: [], rated: false, ratingDelta: new Array(8).fill(0), ratingBefore: new Array(8).fill(0),
-    gameId: 'sounds', title: '',
-};
-
 /** Run `play` now, or as soon as every file of `kinds` has arrived: the first
  *  tap on this page is also the gesture that lets them be fetched. The board
  *  never waits like this - a sound that is late there is dropped - but a
@@ -85,8 +75,8 @@ const whenLoaded = (kinds: readonly number[], play: () => void, tries = 40): voi
 /** The cue whose sound a cue is heard as: its own, or for a revert the one it undoes. */
 const voiced = (kind: number, undoes: number): number => (kind === ANIM_CUE_REVERT ? undoes : kind);
 
-const playMove = (events: AnimPlanEventIn[]): void => {
-    const plan = animBuildPlan(events, TABLE);
+const playMove = (events: AnimPlanEventIn[], table: TableView): void => {
+    const plan = animBuildPlan(events, table);
     whenLoaded(plan.cues.map((c) => voiced(c.kind, c.undoes)), () => {
         for (const cue of plan.cues) {
             for (let h = 0; h < cue.hits; h++) {
@@ -115,7 +105,13 @@ export const SoundAudition = () => {
     // The decoded state of each file is the engine's and has no event of its
     // own; a workbench can afford to look twice a second.
     const [, tick] = useState(0);
+    // The board a plan is asked against. A plan needs one to know how many sit
+    // (the cues themselves read no board), and the tutorial's own opening board
+    // is one the kernel made - so no board is written out by hand here, to be
+    // fixed up every time the view grows a field.
+    const [table, setTable] = useState<TableView | null>(null);
     useEffect(() => {
+        buildTutorialData().then((d) => setTable(d.initial)).catch(() => {});
         cueAudio.arm();
         const id = setInterval(() => tick((n) => n + 1), 500);
         return () => clearInterval(id);
@@ -193,7 +189,7 @@ export const SoundAudition = () => {
                         {MOVES.map((m) => (
                             <tr key={m.name}>
                                 <td style={cell}><strong>{m.name}</strong><div style={{ opacity: 0.7 }}>{m.says}</div></td>
-                                <td style={cell}><Button onClick={() => playMove(m.events())}>Play</Button></td>
+                                <td style={cell}><Button onClick={() => { if (table) playMove(m.events(), table); }}>Play</Button></td>
                             </tr>
                         ))}
                     </tbody>

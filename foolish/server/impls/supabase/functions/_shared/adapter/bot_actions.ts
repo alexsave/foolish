@@ -17,7 +17,7 @@
 // them (table_set_session_log).
 
 import { serverTable, tableCodeName, type TableProducts, type TableSeat } from '@sdk/ts/table/server_table.ts';
-import { broadcastPushes, commitProducts, loadRow } from './table_io.ts';
+import { broadcastPushes, commitProducts, loadRow, ratingsFor } from './table_io.ts';
 import { supabaseClient } from './utils.ts';
 
 const lazy = <T>(load: () => Promise<T>): (() => Promise<T>) => {
@@ -138,6 +138,8 @@ async function runCycle(
     // kernel replays one only while the reloaded state still makes it legal, so
     // a retry does not pay for a second Monte-Carlo search.
     let prefs: Uint8Array | null = null;
+    // Set once the kernel has asked for the seats' ratings (table_io.ts ratingsFor).
+    let ratings: number[] | null = null;
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         // The session log rides along on this SELECT: every cycle needs its
@@ -162,6 +164,7 @@ async function runCycle(
         let seats: TableSeat[] = [];
         const pushes: { viewer: number; bytes: Uint8Array }[] = [];
         if (drive.n > 0) {
+            if (ratings) table.rate(ratings);
             const p = table.commit(gameId, row.version + 1, Date.now());
             if (typeof p === 'number') throw refusal(gameId, 'commit products', p);
             products = p;
@@ -189,6 +192,7 @@ async function runCycle(
             + `(stop ${drive.stop}) ${memLine(table.memoryBytes())}`);
 
         if (!products) return null;
+        if (!ratings && (ratings = await ratingsFor(products, seats))) { attempt--; continue; }
         const version = await commitProducts(gameId, row, products, seats, null);
         if (version === null) continue;   // somebody else committed: reload and drive again
 

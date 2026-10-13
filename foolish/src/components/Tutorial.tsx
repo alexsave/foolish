@@ -405,7 +405,7 @@ const IntroCard = ({ onStart, onSkip }: { onStart: () => void; onSkip: () => voi
 };
 
 /* --------------------------------- root ------------------------------------ */
-const buildTutorialData = async () => {
+export const buildTutorialData = async () => {
     const code = bigintToBytes(bytesToBigint(kernelB32Decode(TUTORIAL_MOVES_CODE)));
     await ensureBotsAsync();
     const summary = replaySummary(code);

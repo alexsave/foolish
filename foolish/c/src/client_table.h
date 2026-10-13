@@ -95,8 +95,13 @@ typedef struct {
     // that was never rated stays unrated. A screen draws no rating for an
     // unrated board; it does not go and work one out.
     bool     rated;
+    // THIS VIEW HAS SAID WHETHER THE GAME WAS RATED: it is an envelope's. A push's
+    // board or a bare state has not, and ViewRules.wants_envelope turns that into
+    // what a finish screen does about it.
+    bool     rating_known;
     int16_t  rating_delta[MAX_PLAYERS];
     int32_t  rating_before[MAX_PLAYERS];
+    int32_t  rating_after[MAX_PLAYERS];   // before + delta: what the seat's rating became
     char     game_id[ROSTER_GAME_ID_MAX + 1];
     char     title[ROSTER_TITLE_MAX + 1];
 } TableView;
@@ -138,6 +143,12 @@ typedef struct {
     // The trump's face in its slot: the board has one and it is not the card
     // in the air (AnimFrame.trump_flight), which is drawn in flight instead.
     bool    show_flipped_card;
+    // THE SCREEN SHOULD READ THIS GAME'S ENVELOPE BEFORE IT DRAWS A RESULT: the
+    // game is over and the view has not said whether it was rated
+    // (TableView.rating_known). The board a game-ending push leaves is like
+    // that, since a push has nowhere to carry the stamp. Once an envelope has
+    // been read this is false whether the game was rated or not.
+    bool    wants_envelope;
 } ViewRules;
 
 // An edit a client makes to a board it holds (client_board_edit): each is a
