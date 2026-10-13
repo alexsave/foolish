@@ -25,6 +25,7 @@ import './harness.ts';
 import { describe, test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, pgPool, uuid } from './harness.ts';
+import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 
 /** A games row at version 0 that a commit can be fenced on. */
 async function game(): Promise<string> {
@@ -117,5 +118,17 @@ describe('commit_table rates the game it ends', () => {
                 p_rated_ids => $2::uuid[])`, [g, [a]]),
             /go together/);
         assert.deepEqual(await ratingOf(a), { elo: 1000, previous: 1000, played: 0 });
+    });
+
+    // seat_ratings: the read the kernel's rating starts from.
+    test('seat_ratings: each id\'s rating in the order asked: a bot\'s row, a human\'s row, and the no-rating mark for an id with neither', async () => {
+        const [m, a, b, stranger] = [await bot(1210), await human(), await human(), uuid()];
+        await pgPool.query('UPDATE user_elo_ratings SET elo_rating = 990 WHERE user_id = $1', [b]);
+        await pgPool.query('DELETE FROM user_elo_ratings WHERE user_id = $1', [a]);
+        const ask = async (ids: string[]) => (await pgPool.query('SELECT seat_ratings($1::uuid[]) AS r', [ids])).rows[0].r;
+        assert.deepEqual(await ask([b, m, stranger, a]), [990, 1210, L.TABLE_RATING_NONE, L.TABLE_RATING_NONE]);
+        assert.deepEqual(await ask([m, b]), [1210, 990], 'the order is the caller\'s, not the tables\'');
+        assert.deepEqual(await ask([m, m]), [1210, 1210], 'an id asked twice is answered twice');
+        assert.deepEqual(await ask([]), [], 'nobody asked, nothing answered');
     });
 });
