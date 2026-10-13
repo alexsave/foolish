@@ -1745,6 +1745,18 @@ static int board_rules_check(void) {
         || fio_shown_ledger_allows(FIO_CLAIM_HAND_OFF, 1) != 1) {
         printf("FAIL ledger ownership\n"); return 1;
     }
+    // The two sounds that are not steps (anim_role_cue, anim_finish_cue): the
+    // scalars cross in the order the header gives them.
+    if (fio_role_cue(1, 0, 0x1, 1, 0, 0x5) != ANIM_CUE_GOOD
+        || fio_role_cue(1, 0, 0x5, 1, 0, 0x1) != ANIM_CUE_NONE
+        || fio_role_cue(1, 0, 0x1, 2, 0, 0x1) != ANIM_CUE_HAND_OFF
+        || fio_role_cue(1, 0, 0x1, -1, -1, 0x1) != ANIM_CUE_NONE
+        || fio_finish_cue(-1, 0) != ANIM_CUE_NONE
+        || fio_finish_cue(2, 2) != ANIM_CUE_FOOL
+        || fio_finish_cue(2, 0) != ANIM_CUE_FINISH
+        || fio_finish_cue(2, -1) != ANIM_CUE_FINISH) {
+        printf("FAIL sound cues\n"); return 1;
+    }
     // The end screen clears the board's chrome (anim_board_chrome).
     if (fio_board_chrome(1, 1, 0, FIO_CHROME_RULE_CLEAR_ON_RESULTS) != FIO_CHROME_RESULTS
         || (fio_board_chrome(0, 0, 0, FIO_CHROME_RULE_CLEAR_ON_RESULTS) & FIO_CHROME_HAND) == 0

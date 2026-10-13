@@ -683,3 +683,14 @@ int fio_roles_pass_hand_off(int shown_defender, int shown_first_attacker,
     return fio_roles_answer(
         anim_pass_hand_off(shown, (unsigned)attack_pass_seats, final_defender, &r), &r, out);
 }
+
+int fio_role_cue(int shown_defender, int shown_first_attacker, int shown_good_mask,
+                 int next_defender, int next_first_attacker, int next_good_mask) {
+    const AnimRoles shown = { shown_defender, shown_first_attacker, shown_good_mask };
+    const AnimRoles next = { next_defender, next_first_attacker, next_good_mask };
+    return anim_role_cue(shown, next);
+}
+
+int fio_finish_cue(int game_over, int my_seat) {
+    return anim_finish_cue(game_over, my_seat);
+}
