@@ -826,7 +826,9 @@ int client_plan(AnimPlanAsk *ask, int n, const TableView *final, AnimPlan *out) 
         const int rc = plan_board(final, &ask->final_deck, &ask->final_discard, &ask->final_flipped,
                                   ask->final_hand, NULL, NULL);
         if (rc != ANIM_EOK) return rc;
-        ask->n_players = (uint8_t)final->num_players;
+        // The widest board is the table: a step's board can seat more than the
+        // screen's (a guest joining the lobby the screen still shows alone).
+        if (final->num_players > ask->n_players) ask->n_players = (uint8_t)final->num_players;
     } else {
         ask->final_deck = ask->final_discard = 0;
         ask->final_flipped = CARD_NONE;
