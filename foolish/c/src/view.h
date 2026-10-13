@@ -250,10 +250,10 @@ int state_blob_put_rated_at(const Game *g, const BoardClock *clk, const GameRati
 int state_blob_load(Game *g, const unsigned char *p, int len, BoardClock *clk);
 
 // THE ROW, whole: state_blob_load, and the game's rating stamp into `ratings`
-// (may be NULL; a blob before v5 reads as unrated). 0, unreadable, also for a
-// stamp this kernel did not write: one that does not read (game_ratings_get),
-// that counts seats the board does not have, or that sits on a board that is
-// not over.
+// (may be NULL; a blob before v5 reads as unrated). The board is judged first,
+// with its own GAME_INVALID_* reason; then 0, unreadable, also for a stamp this
+// kernel did not write: one that does not read (game_ratings_get), that counts
+// seats the board does not have, or that sits on a board that is not over.
 int state_blob_load_rated(Game *g, const unsigned char *p, int len, BoardClock *clk, GameRatings *ratings);
 
 // ---------- the response envelope header ----------------------------------

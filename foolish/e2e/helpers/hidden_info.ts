@@ -331,12 +331,19 @@ function checkViewEnvelope(t: Table, bytes: Uint8Array, v: Viewer, seat: number,
     assert.ok(d, `${what}: the view envelope decodes`);
     assert.equal(d!.mySeat, seat, `${what}: the envelope is ${viewerName(v)}'s own (seat ${seat})`);
 
-    // 2. byte accounting: [9-byte header][u16 view_len][view blob][packed roster], nothing else.
-    const viewLen = bytes[9] | (bytes[10] << 8);
-    const blob = bytes.subarray(11, 11 + viewLen);
-    const roster = cRosterTrailerRead(bytes.subarray(11 + viewLen));
+    // 2. byte accounting: [7-byte header][u16 island_len][island][u16 view_len][view blob][packed roster], nothing else.
+    //    The island is empty, or - on a finished, rated game - the rating stamp
+    //    (c/src/view.h ENV_ISLAND_RATINGS), which is public: what the game did to
+    //    each seat's rating, and no card.
+    const islandLen = bytes[7] | (bytes[8] << 8);
+    assert.ok(islandLen === 0 || (islandLen === 1 + L.TABLE_STATE_STAMP_BYTES && bytes[9] === L.ENV_ISLAND_RATINGS),
+        `${what}: the island is empty or a rating stamp (${islandLen} bytes, tag ${bytes[9]})`);
+    const at = 9 + islandLen;
+    const viewLen = bytes[at] | (bytes[at + 1] << 8);
+    const blob = bytes.subarray(at + 2, at + 2 + viewLen);
+    const roster = cRosterTrailerRead(bytes.subarray(at + 2 + viewLen));
     assert.ok(typeof roster !== 'number', `${what}: the roster trailer decodes (${roster})`);
-    assert.equal(11 + viewLen + roster.consumed, bytes.length, `${what}: no bytes after the roster trailer`);
+    assert.equal(at + 2 + viewLen + roster.consumed, bytes.length, `${what}: no bytes after the roster trailer`);
     assert.equal(blob[1], seat < 0 ? 0xff : seat, `${what}: the view blob is written for seat ${seat}`);
     assertMaskedFixedPoint(blob.subarray(2), seat, what);
     // Every byte is the kernel's own envelope for this viewer, from the stored row,

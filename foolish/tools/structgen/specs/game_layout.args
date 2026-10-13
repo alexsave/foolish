@@ -17,7 +17,7 @@
 # same hash, so a module and these readers cannot disagree about any of it.
 --header table.h --root Roster --root TableCommit --root TableRequest --root TableElo
 # A finished fixture's rating stamp (view.h), which e2e/helpers/table_fixture.ts writes.
---header view.h --root GameRatings
+--header view.h --root GameRatings --const ENV_ISLAND_
 # The test entries' shapes (roster.h): a table as a test states it, and what
 # reading an envelope trailer said - e2e/helpers/roster_kernel.ts writes the one
 # and reads the other through these.

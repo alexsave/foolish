@@ -13233,7 +13233,15 @@ static void test_rating_stamp_rides_the_row_and_the_envelope(void) {
               "a stamp that does not count the board's seats is unreadable, and adopts nothing");
         memcpy(blob2, blob, (size_t)n5); blob2[n5 - 1] = 1;
         CHECK(state_blob_load_rated(&untouched, blob2, n5, 0, &got) == 0, "a stamp with a slot past its count is unreadable");
-        CHECK(state_blob_load_rated(&untouched, blob, n5 - 1, 0, &got) != 1, "a v5 row cut short does not load");
+        // Cut short, the row is refused for what it is - a board that does not
+        // measure - and not as a format: the bytes its tail now holds are no stamp.
+        for (int cut = 1; cut < n5 - STATE_BLOB_HEADER; cut += 7)
+            CHECK(state_blob_load_rated(&untouched, blob, n5 - cut, 0, &got) == GAME_INVALID_COUNT && untouched.num_players == 5,
+                  "a v5 row cut short is a board that does not measure, whatever its tail reads as");
+        // A board the kernel refuses is refused with the BOARD's reason, stamped or not.
+        memcpy(blob2, blob, (size_t)n5); blob2[STATE_BLOB_HEADER] = GAME_STATUS_WAITING;
+        CHECK(state_blob_load_rated(&untouched, blob2, n5, 0, &got) == GAME_INVALID_LOBBY_CARDS && untouched.num_players == 5,
+              "a finished, stamped board relabelled a lobby is a lobby holding cards");
         // On a board that is not over: the writer drops it, and a row that pairs them is refused.
         tb_fixture(3, 1u << 2, 131);
         const int live = state_blob_put_rated_at(&tb_src, &clk, &stamp, STATE_BLOB_FORMAT_V5, blob2);
@@ -13274,6 +13282,10 @@ static void test_rating_stamp_rides_the_row_and_the_envelope(void) {
               && memcmp(ct_env + ENV_ISLAND_AT + 2 + island, ct_env2 + ENV_ISLAND_AT + 2, (size_t)(n0 - ENV_ISLAND_AT - 2)) == 0,
               "the stamp changes the island and nothing else: a reader that skips it reads the envelope it always did");
         CHECK(client_adopt_envelope(&ct, ct_env2, n0) == CLIENT_OK && !ct.view.rated, "and an envelope without one reads unrated");
+        // The slot showed the rated game a moment ago: none of its numbers stay behind.
+        int stale = 0;
+        for (int s = 0; s < MAX_PLAYERS; s++) stale += ct.view.rating_before[s] != 0 || ct.view.rating_delta[s] != 0;
+        CHECK(stale == 0, "an unrated view holds no rating left over from the game the slot showed before");
     }
     {
         const int n = table_envelope(&tb, RS("g-7"), 0, 42, ct_env, sizeof(ct_env));
@@ -13294,7 +13306,8 @@ static void test_rating_stamp_rides_the_row_and_the_envelope(void) {
         // A push's board has no stamp: the view a later adoption leaves is unrated.
         CHECK(client_adopt_envelope(&ct, ct_env, n) == CLIENT_OK && ct.view.rated, "the stamped envelope reads again (the control)");
         const int slen = state_put(&tb_game, 0, ct_raw);
-        CHECK(client_adopt_state(&ct, ct_raw, slen, 0) == CLIENT_OK && !ct.view.rated, "a bare board adopted after it is unrated");
+        CHECK(client_adopt_state(&ct, ct_raw, slen, 0) == CLIENT_OK && !ct.view.rated
+              && ct.view.rating_before[0] == 0 && ct.view.rating_delta[0] == 0, "a bare board adopted after it is unrated, numbers and all");
     }
 
     // A rematch is a new game: the lobby it resets to has no stamp to show.

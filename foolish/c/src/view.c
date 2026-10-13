@@ -299,17 +299,30 @@ int state_blob_load_rated(Game *g, const unsigned char *p, int len, BoardClock *
     if (len > STATE_BLOB_HEADER + STATE_FLAGS_AT
         && (p[STATE_BLOB_HEADER + STATE_FLAGS_AT] & ~STATE_FLAG_FLIPPED)) return 0;
     const int state_len = len - STATE_BLOB_HEADER - tail;
-    // The stamp is judged BEFORE the board is adopted, so a refusal adopts
-    // nothing: it must read, and count the board's seats (the state's second
-    // byte) on a board that is over (its first), or count none.
+    // THE BOARD IS JUDGED FIRST, THEN THE STAMP, and a refusal of either adopts
+    // nothing. A row that is cut short or holds a board the kernel refuses says
+    // so with the board's own reason (GAME_INVALID_*), stamped or not: the tail
+    // of a truncated blob is not a stamp, and reading it as one would turn every
+    // short v5 row into "a format this kernel does not read".
+    if (state_measure(p + STATE_BLOB_HEADER, state_len) != state_len) return GAME_INVALID_COUNT;
     GameRatings stamp = { 0 };
-    if (v5) {
-        if (!game_ratings_get(&stamp, p + len - GAME_RATINGS_BYTES)) return 0;
-        if (stamp.n && (state_len < 2 || stamp.n != p[STATE_BLOB_HEADER + 1]
-                        || p[STATE_BLOB_HEADER] != GAME_STATUS_GAME_OVER)) return 0;
+    if (v5 && !game_ratings_get(&stamp, p + len - GAME_RATINGS_BYTES)) return 0;
+    if (!stamp.n) {
+        const int r = state_import(g, p + STATE_BLOB_HEADER, state_len, 0);
+        if (r != GAME_VALID) return r;
+    } else {
+        // A stamp counts its board's seats, on a board that is over: checked on
+        // the board once it has imported, over a saved copy put back on a refusal
+        // (the same copy state_import keeps, for the same reason).
+        unsigned char saved[offsetof(Game, logs)];
+        memcpy(saved, g, sizeof saved);
+        const int r = state_import(g, p + STATE_BLOB_HEADER, state_len, 0);
+        if (r != GAME_VALID) return r;
+        if (stamp.n != g->num_players || g->status != GAME_STATUS_GAME_OVER) {
+            memcpy(g, saved, sizeof saved);
+            return 0;
+        }
     }
-    const int r = state_import(g, p + STATE_BLOB_HEADER, state_len, 0);
-    if (r != GAME_VALID) return r;
     if (ratings) *ratings = stamp;
     // v2 and v3 read the whole flag byte as the deck bit, as they always have.
     g->deterministic_deck = v4 ? (p[1] & STATE_BLOB_FLAG_DETERMINISTIC) != 0 : p[1] != 0;
