@@ -857,15 +857,17 @@ int anim_pass_hand_off(AnimRoles shown, unsigned attack_pass_seats,
 // `shown` to `next`, whichever of the three rules above (or the closing beat)
 // produced `next`. Asked by the host at the one place it turns the marks, so
 // the sound is struck with the turn.
-//   a seat changed (the shield or the opening sword went somewhere)
+//   the shield or the opening sword went from one seat to ANOTHER
 //                                 ANIM_CUE_HAND_OFF
 //   else a good was ADDED         ANIM_CUE_GOOD
 //   else                          ANIM_CUE_NONE
 // A good being CLEARED is silent on purpose: it is cleared by a throw-in, the
 // card and the mark are one event, and the card is already making a sound. A
 // hand-off outranks a good said in the same turn of the marks for the same
-// reason - one event, one sound. A mask of ANIM_NO_MASK says nothing about
-// the goods.
+// reason - one event, one sound. A mark that appears where there was none
+// (the opening, once the trump has turned) or goes away altogether (the table
+// reset for a rematch) travelled nowhere and is not a hand-off. A mask of
+// ANIM_NO_MASK says nothing about the goods.
 int anim_role_cue(AnimRoles shown, AnimRoles next);
 
 // WHAT THE END OF THE GAME SOUNDS LIKE to the viewer at `my_seat` (negative

@@ -889,10 +889,18 @@ int anim_pass_hand_off(AnimRoles shown, unsigned attack_pass_seats,
     return 1;
 }
 
+// A mark that TRAVELLED: it was on a seat and is on another one now. A mark
+// appearing where there was none (the opening, once the trump has turned) or
+// going away altogether (the table reset for a rematch) went nowhere.
+static int mark_moved(int from, int to) {
+    return from >= 0 && to >= 0 && from != to;
+}
+
 int anim_role_cue(AnimRoles shown, AnimRoles next) {
-    // A seat changed: a mark went somewhere, and a mark that travels is the
-    // one sound of that turn of the marks, whatever else turned with it.
-    if (shown.defender != next.defender || shown.first_attacker != next.first_attacker)
+    // A mark that travels is the one sound of that turn of the marks, whatever
+    // else turned with it.
+    if (mark_moved(shown.defender, next.defender)
+        || mark_moved(shown.first_attacker, next.first_attacker))
         return ANIM_CUE_HAND_OFF;
     if (shown.good_mask == ANIM_NO_MASK || next.good_mask == ANIM_NO_MASK) return ANIM_CUE_NONE;
     // ADDED goods only, the same reading anim_goods_opening makes: a good that

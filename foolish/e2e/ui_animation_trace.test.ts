@@ -55,6 +55,8 @@ import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import { clientTable, encodeAction } from '../sdk/ts/table/client_table.ts';
 import * as V from '../sdk/ts/gen/view_layout.bots.ts';
 import { askKindName } from './helpers/ask.ts';
+import { ANIM_CUE_NAMES, ANIM_SOUND_STAGGER_MS, ANIM_SOUND_OUT_LAG_MS } from '../sdk/ts/gen/kernel_consts.bots.ts';
+import { ANIM_TIME_MS, ANIM_GAP_MS, ANIM_BOUT_END_HOLD_MS } from '../sdk/ts/gen/anim.bots.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; console.debug = () => {}; }
 // THE OVERLAY'S OWN WORD THAT A PLACE WAS MISSING. The stock and the trump's
@@ -538,6 +540,32 @@ const scaleOf = (s: Stage, seat: number) =>
 /** A tap's promise, whose rejection (a refused move) is the page's to handle. */
 const tap = (p: Promise<unknown>) => { p.catch(() => {}); };
 
+// ---- WHAT THE PAGE SOUNDS LIKE ---------------------------------------------------------
+//
+// jsdom has no Web Audio, so the engine (src/audio/cueAudio.ts) is a no-op in
+// every case of this file and no frame depends on it. `listen` stands in for it
+// at its one door - `strike` - and writes down what the page asked to hear and
+// the virtual millisecond it was AIMED at (the frame's clock plus the lead the
+// page handed over with), which is the moment a real AudioContext would sound
+// it. So the cases that listen hold the page to two things a frame cannot show:
+// that a move makes the sounds the kernel's plan says it makes, once each, and
+// that they are aimed at the plan's milliseconds exactly, whatever frame
+// happened to hand them over.
+interface Heard { cue: string; at: number; cards: number }
+async function listen(): Promise<{ heard: Heard[]; stop: () => void }> {
+    const { cueAudio } = await import('../src/audio/cueAudio.ts');
+    const heard: Heard[] = [];
+    (cueAudio as any).strike = (kind: number, delayMs = 0, nCards = 1) => {
+        heard.push({ cue: ANIM_CUE_NAMES[kind] ?? String(kind), at: clock + delayMs, cards: nCards });
+        return true;
+    };
+    return { heard, stop: () => { delete (cueAudio as any).strike; } };
+}
+/** The cues in the order they would SOUND (a cue is handed over ahead of time,
+ *  so the order of the calls is not it). */
+const inOrder = (heard: Heard[]): Heard[] => [...heard].sort((a, b) => a.at - b.at);
+const times = (heard: Heard[], cue: string): number[] => inOrder(heard).filter((h) => h.cue === cue).map((h) => h.at);
+
 /** Answers the oldest waiting request from the page. */
 async function answer(stage: Stage, label: string): Promise<void> {
     const s = server!;
@@ -602,7 +630,8 @@ function holdToGolden(name: string, frames: Frame[]): void {
     }
 }
 
-async function play(name: string, seed: number, gid: string, board: TableFixture, script: (s: Stage, srv: Server) => Promise<void>): Promise<void> {
+async function play(name: string, seed: number, gid: string, board: TableFixture, script: (s: Stage, srv: Server) => Promise<void>,
+                    golden = true): Promise<void> {
     server = new Server(gid, board);
     overlayMisses.length = 0;
     pending = [];
@@ -629,7 +658,9 @@ async function play(name: string, seed: number, gid: string, board: TableFixture
         server = null;
         dumpFrames(name, stage.frames);
     }
-    holdToGolden(name, stage.frames);
+    // A case that exists to be LISTENED to replays moves other cases already
+    // hold frame by frame, and says so by not keeping a second golden of them.
+    if (golden) holdToGolden(name, stage.frames);
 }
 
 const two = (meSeat: 0 | 1) => {
@@ -841,15 +872,37 @@ test('a LAST DEFENCE rests before the sweep takes the table', async () => {
     // …AND THE TRUMP COMES TO ME: Anna refills first and takes 7s 8s, then I take
     // 9s Ts and the trump Kc, the last card of my draw.
     let trump!: TrumpWatch;
-    await play('cover_ends_bout', 130, 'a-bout-end', board, async (s) => {
-        trump = watchTrump(s, 'Kc');
-        await s.step('tap cover 8h on 6h', () => tap(probe.anim.cover(cards('8h'), cards('6h'))));
-        await s.advance(150);
-        await answer(s, 'server applies');
-        await s.advance(100);
-        await deliver(s, 'push: the last defence closes the bout');
-    });
+    const ears = await listen();
+    try {
+        await play('cover_ends_bout', 130, 'a-bout-end', board, async (s) => {
+            trump = watchTrump(s, 'Kc');
+            await s.step('tap cover 8h on 6h', () => tap(probe.anim.cover(cards('8h'), cards('6h'))));
+            await s.advance(150);
+            await answer(s, 'server applies');
+            await s.advance(100);
+            await deliver(s, 'push: the last defence closes the bout');
+        });
+    } finally { ears.stop(); }
     assertTrumpDealt('cover_ends_bout (the trump is mine)', trump);
+
+    // …AND IT SOUNDS LIKE ONE. My cover is predicted at the tap, so its lift is
+    // heard at once and its landing a flight later; the push then appends the
+    // sweep and the refills to the run already in flight, and the kernel's plan
+    // puts the sweep a gap and a HOLD behind the cover's landing. Each of those
+    // is aimed at the plan's own millisecond: the frames here are 16ms apart
+    // and none of these numbers is a multiple of 16.
+    const [lift] = times(ears.heard, 'LIFT'), [cover] = times(ears.heard, 'COVER');
+    const [sweep] = times(ears.heard, 'SWEEP'), [pile] = times(ears.heard, 'PILE');
+    assert.deepEqual(inOrder(ears.heard).map((h) => h.cue),
+        ['LIFT', 'COVER', 'SWEEP', 'PILE', 'DEAL', 'DEAL', 'DEAL', 'DEAL', 'DEAL', 'HAND_OFF'],
+        'my cover, the sweep, the pile, Anna\'s two cards and my three, and the roles handed on');
+    assert.equal(cover - lift, ANIM_TIME_MS, 'the cover is heard landing exactly one flight after it was heard leaving');
+    assert.equal(sweep - cover, ANIM_GAP_MS + ANIM_BOUT_END_HOLD_MS, 'the sweep is heard after the rest, not after the gap');
+    assert.equal(pile - sweep, ANIM_TIME_MS, 'and the pile as the sweep lands');
+    const deals = times(ears.heard, 'DEAL');
+    assert.equal(deals[0] - pile, ANIM_GAP_MS, 'Anna\'s refill opens a gap behind the sweep');
+    assert.equal(deals[1] - deals[0], ANIM_SOUND_STAGGER_MS, 'her two cards leave the stock a stagger apart');
+    assert.equal(deals[2] - deals[0], ANIM_TIME_MS + ANIM_GAP_MS, 'and my three open a flight and a gap behind hers');
 });
 
 test('the defender covers both attacks at once, and both cards fly together', async () => {
@@ -866,13 +919,22 @@ test('the defender covers both attacks at once, and both cards fly together', as
     // merge. Every cover that ARRIVES does.
     const board = two(0).hand(0, '9c Tc Jd Qd').hand(1, '8h 9h Ks').table('6h', '7h')
         .attacker(0).defender(1).build();
-    await play('cover_both_at_once', 131, 'a-double-cover', board, async (s, srv) => {
-        await s.step('Anna covers both on the server', () => {
-            srv.act(ANNA, encodeAction({ kind: 'cover', cards: cards('8h 9h'), attack_cards: cards('6h 7h') }));
+    const ears = await listen();
+    try {
+        await play('cover_both_at_once', 131, 'a-double-cover', board, async (s, srv) => {
+            await s.step('Anna covers both on the server', () => {
+                srv.act(ANNA, encodeAction({ kind: 'cover', cards: cards('8h 9h'), attack_cards: cards('6h 7h') }));
+            });
+            await s.advance(100);
+            await deliver(s, 'push: Anna covers both attacks');
         });
-        await s.advance(100);
-        await deliver(s, 'push: Anna covers both attacks');
-    });
+    } finally { ears.stop(); }
+    // ONE MOVEMENT, ONE LIFT, TWO STRIKES - and the strikes are not a chord.
+    const covers = times(ears.heard, 'COVER');
+    assert.deepEqual(inOrder(ears.heard).map((h) => h.cue), ['LIFT', 'COVER', 'COVER'],
+        'both cards leave her hand in one gesture and land as two');
+    assert.equal(covers[0] - times(ears.heard, 'LIFT')[0], ANIM_TIME_MS);
+    assert.equal(covers[1] - covers[0], ANIM_SOUND_STAGGER_MS, 'the second landing is struck a stagger behind the first');
 });
 
 test('the `out` that ends the game costs the sequence no time of its own', async () => {
@@ -889,39 +951,82 @@ test('the `out` that ends the game costs the sequence no time of its own', async
     // …AND THE TRUMP IS ALL ANNA DRAWS: the stock is empty, so her refill is the
     // trump alone, and it leaves from its slot with nothing leaving the stock.
     let trump!: TrumpWatch;
-    await play('out_costs_nothing', 140, 'an-out', board, async (s) => {
-        trump = watchTrump(s, 'Kc');
-        await s.step('tap cover 8h on 6h', () => tap(probe.anim.cover(cards('8h'), cards('6h'))));
-        await s.advance(150);
-        await answer(s, 'server applies');
-        await s.advance(100);
-        await deliver(s, 'push: the last defence ends the game');
-    });
+    const ears = await listen();
+    try {
+        await play('out_costs_nothing', 140, 'an-out', board, async (s) => {
+            trump = watchTrump(s, 'Kc');
+            await s.step('tap cover 8h on 6h', () => tap(probe.anim.cover(cards('8h'), cards('6h'))));
+            await s.advance(150);
+            await answer(s, 'server applies');
+            await s.advance(100);
+            await deliver(s, 'push: the last defence ends the game');
+        });
+    } finally { ears.stop(); }
     assertTrumpDealt('out_costs_nothing (the trump alone, to Anna)', trump);
+    // THE GAME ENDS IN MY FAVOUR, and that is heard once, last, as the results
+    // come up - the finish and not the fool's, because Anna is left holding cards.
+    const order = inOrder(ears.heard).map((h) => h.cue);
+    assert.equal(order.filter((c) => c === 'FINISH').length, 1, `the end of the game is heard exactly once (${order.join(' ')})`);
+    assert.equal(order[order.length - 1], 'FINISH', 'and after every sound of the move that ended it');
+    assert.ok(!order.includes('FOOL'), 'I am not the fool');
+    assert.ok(!order.includes('HAND_OFF'), 'and nothing is handed on: there is no next bout for a shield to go to');
+    assert.equal(order.filter((c) => c === 'OUT').length, 1, 'my going out is heard once');
+    // The stream is cover, discard, refill, OUT: the out rides the refill that
+    // found the stock empty, a lag behind its landing, and not a beat of its own.
+    const deal = times(ears.heard, 'DEAL'), out = times(ears.heard, 'OUT')[0];
+    assert.equal(out - (deal[deal.length - 1] + ANIM_TIME_MS), ANIM_SOUND_OUT_LAG_MS,
+        'struck a lag behind the landing of the move it rides');
 });
 
 test('pass: I hand the attack on with a card of its rank', async () => {
     const board = three().hand(0, '9c Tc Jd Qd').hand(1, '7d 8d Ad').hand(2, '6s Js Qs Ks As').table('7h').attacker(0).defender(1).build();
-    await play('pass', 103, 'a-pass', board, async (s) => {
-        s.track('7d', '7h');
-        await s.step('tap pass 7d', () => tap(probe.anim.pass(cards('7d'))));
-        await s.advance(600);
-        await answer(s, 'server applies');
-        await s.advance(50);
-        await deliver(s, 'push: my pass');
-    });
+    const ears = await listen();
+    try {
+        await play('pass', 103, 'a-pass', board, async (s) => {
+            s.track('7d', '7h');
+            await s.step('tap pass 7d', () => tap(probe.anim.pass(cards('7d'))));
+            await s.advance(600);
+            await answer(s, 'server applies');
+            await s.advance(50);
+            await deliver(s, 'push: my pass');
+        });
+    } finally { ears.stop(); }
+    // A TRANSFER IS A CARD AND A SHIELD LEAVING TOGETHER, so it is heard as
+    // both: the card's lift and the shield's hand-off in the same instant, then
+    // the card landing. The confirmation that arrives later adds nothing - the
+    // card was already played and the shield had already moved.
+    //
+    // MY OWN pass hands the shield on as its card LANDS, not as it leaves: a
+    // prediction has no settled board to read the next defender off, so the
+    // marks turn when the kernel's board for the move is committed. The sound is
+    // struck where the mark turns, so it is heard there too - one frame behind
+    // the card's own landing. (A pass that ARRIVES hands on as it opens.)
+    assert.deepEqual(inOrder(ears.heard).map((h) => h.cue), ['LIFT', 'PLACE', 'HAND_OFF']);
+    assert.equal(times(ears.heard, 'PLACE')[0] - times(ears.heard, 'LIFT')[0], ANIM_TIME_MS);
+    const behind = times(ears.heard, 'HAND_OFF')[0] - times(ears.heard, 'PLACE')[0];
+    assert.ok(behind >= 0 && behind <= FRAME_MS, `the shield is heard at the frame the pass lands (${behind}ms behind the card)`);
 });
 
 test('pickup: I take the table', async () => {
     const board = two(1).hand(0, '9c Tc Jd').hand(1, 'Js Qs Ks').table('6h/8h', '6d').attacker(0).defender(1).build();
-    await play('pickup', 104, 'a-pickup', board, async (s) => {
-        s.track('6h', '8h', '6d');
-        await s.step('tap pickup', () => tap(probe.anim.pickup()));
-        await s.advance(200);
-        await answer(s, 'server applies');
-        await s.advance(100);
-        await deliver(s, 'push: my pickup');
-    });
+    const ears = await listen();
+    try {
+        await play('pickup', 104, 'a-pickup', board, async (s) => {
+            s.track('6h', '8h', '6d');
+            await s.step('tap pickup', () => tap(probe.anim.pickup()));
+            await s.advance(200);
+            await answer(s, 'server applies');
+            await s.advance(100);
+            await deliver(s, 'push: my pickup');
+        });
+    } finally { ears.stop(); }
+    // ONE GESTURE, ONE SOUND, for all three cards - then Anna's refill, a card
+    // at a time. The push that confirms my pickup does not play it a second
+    // time, and nothing is handed on: with two of us she attacks again.
+    const order = inOrder(ears.heard);
+    assert.deepEqual(order.map((h) => h.cue), ['PICKUP', 'DEAL', 'DEAL', 'DEAL'],
+        'the table taken once, and Anna\'s three cards off the stock');
+    assert.equal(order[0].cards, 3, 'the pickup says how many cards it stands for');
 });
 
 test('good: my good closes the bout', async () => {
@@ -967,6 +1072,8 @@ test('my own good turns my badge as I tap it, and the confirmation finds nothing
     // events at all, which is the sharpest possible form of "nothing left".
     const board = three().hand(0, 'Ad Qd 6d').hand(1, '9c Tc Jd').hand(2, 'Js Qs Ks').table('7h/9h')
         .attacker(0).defender(2).goodTimestamp().build();
+    const ears = await listen();
+    try {
     await play('my_good_optimistic', 135, 'a-my-good', board, async (s, srv) => {
         assert.equal(markOf(s, 1), 'sword', 'I am an attacker to begin with');
         await s.step('tap good', () => tap(probe.anim.good()));
@@ -988,6 +1095,11 @@ test('my own good turns my badge as I tap it, and the confirmation finds nothing
         assert.equal(markOf(s, 1), 'check', 'the push confirms what is already on screen');
         assert.equal(scaleOf(s, 1), 1, 'and anim_goods_opening finds nothing to add, so the badge does not flip twice');
     });
+    } finally { ears.stop(); }
+    // HEARD ON THE TAP, AND ONCE. The badge and its sound are one turn of the
+    // marks (src/state/useRoleMotion.ts), so the confirmation that finds nothing
+    // left to turn finds nothing left to sound either.
+    assert.deepEqual(ears.heard, [{ cue: 'GOOD', at: 0, cards: 1 }], 'my good is heard as I tap it, and never again');
 });
 
 test('a good the server refuses takes its own check back off', async () => {
@@ -1004,6 +1116,8 @@ test('a good the server refuses takes its own check back off', async () => {
     // has moved on, which is the whole point.
     const board = three().hand(0, 'Ad Qd 6d').hand(1, '9c Tc Jd').hand(2, 'Js Qs Ks').table('7h')
         .attacker(0).defender(2).build();
+    const ears = await listen();
+    try {
     await play('my_good_refused', 136, 'a-my-good-no', board, async (s, srv) => {
         await s.step('Boris takes the table on the server', () => { srv.act(BORIS, encodeAction({ kind: 'pickup' })); });
         await s.step('tap good', () => tap(probe.anim.good()));
@@ -1016,6 +1130,10 @@ test('a good the server refuses takes its own check back off', async () => {
         await s.advance(900);
         assert.notEqual(markOf(s, 1), 'check', 'and the board that follows does not put it back');
     });
+    } finally { ears.stop(); }
+    // The check going up was heard; the check coming back off is not a good
+    // said, and the kernel's rule for the marks is that a good cleared is silent.
+    assert.deepEqual(ears.heard.map((h) => h.cue).filter((c) => c === 'GOOD'), ['GOOD'], 'the refusal does not sound a second good');
 });
 
 test('another player\'s good is the whole stream: the badge turns on its own push', async () => {
@@ -1645,13 +1763,20 @@ test('a resync while my card is pending keeps it on the table', async () => {
 test('the rematch: continue from the win screen', async () => {
     const board = fixture().title('Finished').seats([seat(ME, 'Me'), seat(ANNA, 'Anna')]).status(GAME_OVER).powerSuit(1)
         .hand(1, '6s 7s').seatStatus(0, OUT).seatStatus(1, IN).eliminated(0).discard(34).build();
-    await play('continue', 115, 'a-continue', board, async (s) => {
-        await s.step('tap continue', () => tap(probe.actions.continueGame('a-continue')));
-        await s.advance(200);
-        await answer(s, 'server resets the table');
-        await s.advance(100);
-        await deliver(s, 'push: back to the lobby');
-    });
+    const ears = await listen();
+    try {
+        await play('continue', 115, 'a-continue', board, async (s) => {
+            await s.step('tap continue', () => tap(probe.actions.continueGame('a-continue')));
+            await s.advance(200);
+            await answer(s, 'server resets the table');
+            await s.advance(100);
+            await deliver(s, 'push: back to the lobby');
+        });
+    } finally { ears.stop(); }
+    // OPENING A GAME THAT IS ALREADY OVER IS NOT ITS END. The results screen is
+    // the same one, but nobody watched this game finish, so nothing is heard -
+    // not on the way in, and not on the way back to the lobby.
+    assert.deepEqual(ears.heard, [], 'a finished game opened cold, and its rematch, make no sound');
 });
 
 test('a hand rearrange', async () => {
@@ -1897,4 +2022,50 @@ test('the opening deal, two of us: no shield until the trump turns, then on the 
 test('the opening deal, three of us and I am seat 1: no shield until the trump turns, then on the real defender', async () => {
     await openingDeal('Deal three', 'a-deal-three',
         [{ id: ANNA, name: 'Anna', brain: 'random' }, seat(ME, 'Me'), { id: BORIS, name: 'Boris', brain: 'random' }], 2);
+});
+
+// LAST IN THE FILE, DELIBERATELY. The frame goldens above are not independent of
+// the order their cases run in: src/components/GameDisplay/flightGeometry.ts
+// keeps `tableLandings`, a module-level memory of where each card last landed on
+// the table, and a return flight with no element to leave from starts there. A
+// case that lays a card another case later flies home therefore moves that later
+// case's frames (`rejected_push_first` frame 7 starts from the viewport centre
+// only while nothing before it has laid its card). This case lays 6s and 6h, so
+// it runs after every golden.
+test('two moves in a row are each heard whole: the second run\'s cues are not mistaken for the first\'s', async () => {
+    // THE RUN IS EMPTIED WHEN IT ENDS, and its steps are numbered from 0 again
+    // by the next one. The page remembers which cues it has handed to the audio
+    // engine by (step, kind) - the pair the kernel keeps unique within a plan -
+    // so that memory has to end with the run. If it did not, the second move
+    // here would lose its lift: step 0's LIFT was "already played", by a card
+    // that landed a second and a half ago.
+    //
+    // No golden of its own: both moves are the `attack` and `cover_both` cases'
+    // moves, which are held frame by frame where they live.
+    const board = two(0).hand(0, '6s 6h Qd Ad 9c Tc').hand(1, '7c 7h 9h Th Jh Qh').attacker(0).defender(1).build();
+    const ears = await listen();
+    let secondAt = 0;
+    try {
+        await play('two_moves_heard', 141, 'two-moves', board, async (s, srv) => {
+            await s.step('tap attack 6s 6h', () => tap(probe.anim.attack(cards('6s 6h'))));
+            await s.advance(120);
+            await answer(s, 'server applies');
+            await s.advance(130);
+            await deliver(s, 'push: my attack');
+            await s.advance(1250);
+            // The first run is long over (one flight, 500ms). Anna answers.
+            await s.step('Anna covers both on the server', () => {
+                srv.act(ANNA, encodeAction({ kind: 'cover', cards: cards('7c 7h'), attack_cards: cards('6s 6h') }));
+            });
+            secondAt = clock;
+            await deliver(s, 'push: Anna covers both');
+        }, false);
+    } finally { ears.stop(); }
+    const first = ears.heard.filter((h) => h.at < secondAt), second = ears.heard.filter((h) => h.at >= secondAt);
+    assert.deepEqual(inOrder(first).map((h) => h.cue), ['LIFT', 'PLACE', 'PLACE'], 'my two cards: one lift, two landings');
+    assert.equal(times(first, 'PLACE')[1] - times(first, 'PLACE')[0], ANIM_SOUND_STAGGER_MS);
+    assert.deepEqual(inOrder(second).map((h) => h.cue), ['LIFT', 'COVER', 'COVER'],
+        'and Anna\'s two covers whole, lift included, though they are steps 0 and 1 of a new run');
+    assert.equal(times(second, 'LIFT')[0], secondAt, 'her lift is heard as her cards leave, at the push');
+    assert.equal(times(second, 'COVER')[0] - secondAt, ANIM_TIME_MS);
 });

@@ -44,6 +44,7 @@ import {
 import { CUE_LATE_MS, CUE_LOOK_AHEAD_MS, cueKey, dueStrikes, type PlanCue } from '../src/audio/cueSchedule.ts';
 import { CUE_SOUNDS } from '../src/audio/cueSounds.ts';
 import { CueAudio } from '../src/audio/cueAudio.ts';
+import { finishCueOf } from '../src/audio/useFinishCue.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
@@ -122,6 +123,15 @@ test('the role cue and the finish cue are the kernel\'s answers', () => {
     assert.equal(animFinishCue(2, 2), ANIM_CUE_FOOL);
     assert.equal(animFinishCue(2, 0), ANIM_CUE_FINISH);
     assert.equal(animFinishCue(2, -1), ANIM_CUE_FINISH);
+});
+
+test('a board\'s finish cue reads the fool and the viewer off it, each as itself', () => {
+    assert.equal(finishCueOf({ fool: -1, mySeat: 0 }), ANIM_CUE_NONE, 'a running game has no fool and makes no sound');
+    assert.equal(finishCueOf({ fool: 1, mySeat: 1 }), ANIM_CUE_FOOL);
+    assert.equal(finishCueOf({ fool: 1, mySeat: 0 }), ANIM_CUE_FINISH);
+    // The one viewer for whom the two seats are not interchangeable: a spectator
+    // has no seat, and still hears the game end.
+    assert.equal(finishCueOf({ fool: 2, mySeat: -1 }), ANIM_CUE_FINISH);
 });
 
 // ---- 2. the hand-over ---------------------------------------------------------------

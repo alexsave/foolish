@@ -1619,7 +1619,7 @@ static void test_plan_is_laid_out_in_beats(void) {
 // Which beat sounds like what, and when, is the kernel's answer, so it is
 // pinned here and a host has nothing to test but its own playback.
 //
-// MUTATION-CHECKED against c/src/anim_plan.c: 27 mutants, each one built, seen
+// MUTATION-CHECKED against c/src/anim_plan.c: 28 mutants, each one built, seen
 // red on a check that names it and put back. The ones a reader would reach for:
 //   striking the landing at the step's start_ms          fails "at its landing"
 //   dropping the stagger across a beat                   fails "the beat's second strike"
@@ -1630,6 +1630,7 @@ static void test_plan_is_laid_out_in_beats(void) {
 //   a pickup struck once a card                          fails "one gesture"
 //   the LIFT counting its whole beat                     fails "is the same cue in the whole plan"
 //   anim_role_cue reading removed goods as a good said   fails "a good cleared is silent"
+//   a mark taken off (or put on) read as a hand-off      fails "not handed to anyone" / "came from nowhere"
 //   anim_finish_cue with the two cues swapped            fails "the fool hears"
 
 // The cue step `step` makes of `kind`, or NULL.
@@ -1859,6 +1860,16 @@ static void test_plan_sound_cues(void) {
     CHECK(anim_role_cue(shown, next) == ANIM_CUE_HAND_OFF, "a hand-off outranks a good said with it: one event, one sound");
     next = shown; next.good_mask = ANIM_NO_MASK;
     CHECK(anim_role_cue(shown, next) == ANIM_CUE_NONE, "a board that carried no mask says nothing about the goods");
+    // A MARK THAT WENT NOWHERE IS NOT HANDED ON. The table reset for a rematch
+    // takes both marks off (the web's results screen caught this one: the tap
+    // on Continue was heard as a hand-off), and the opening puts them on.
+    {
+        const AnimRoles nobody = { ANIM_SEAT_NONE, ANIM_SEAT_NONE, shown.good_mask };
+        CHECK(anim_role_cue(shown, nobody) == ANIM_CUE_NONE, "marks taken off the table are not handed to anyone");
+        CHECK(anim_role_cue(nobody, shown) == ANIM_CUE_NONE, "marks that appear where there were none came from nowhere");
+        next = shown; next.defender = ANIM_SEAT_NONE; next.first_attacker = 2;
+        CHECK(anim_role_cue(shown, next) == ANIM_CUE_HAND_OFF, "one mark travelling is a hand-off whatever the other did");
+    }
 
     // ---- the end ----
     CHECK(anim_finish_cue(-1, 0) == ANIM_CUE_NONE, "a game still running has no end to sound");
