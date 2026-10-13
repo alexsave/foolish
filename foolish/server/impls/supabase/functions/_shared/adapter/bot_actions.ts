@@ -25,6 +25,7 @@ const lazy = <T>(load: () => Promise<T>): (() => Promise<T>) => {
     return () => (mod ??= load());
 };
 const finalizeMod = lazy(() => import('./finalize.ts'));
+const ratingsMod = lazy(() => import('./ratings.ts'));
 
 // One-line memory snapshot against the edge limits (150MB heap + 150MB
 // external, where wasm linear memory counts as external).
@@ -138,6 +139,11 @@ async function runCycle(
     // kernel replays one only while the reloaded state still makes it legal, so
     // a retry does not pay for a second Monte-Carlo search.
     let prefs: Uint8Array | null = null;
+    // The seats' ratings, once a cycle has been seen to end the game: read
+    // after that section and handed to the next one, which drives the same
+    // moves again from `prefs` and has the kernel rate the game before it
+    // commits (table_io.ts runTableOp has the whole reasoning).
+    let rate: { ratings: number[] | null; apply: typeof import('./ratings.ts').rateIfEnded } | null = null;
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         // The session log rides along on this SELECT: every cycle needs its
@@ -162,6 +168,7 @@ async function runCycle(
         let seats: TableSeat[] = [];
         const pushes: { viewer: number; bytes: Uint8Array }[] = [];
         if (drive.n > 0) {
+            rate?.apply(table, rate.ratings, gameId, reqId);
             const p = table.commit(gameId, row.version + 1, Date.now());
             if (typeof p === 'number') throw refusal(gameId, 'commit products', p);
             products = p;
@@ -189,6 +196,12 @@ async function runCycle(
             + `(stop ${drive.stop}) ${memLine(table.memoryBytes())}`);
 
         if (!products) return null;
+        if (products.ended && !rate) {
+            const { readRatings, rateIfEnded } = await ratingsMod();
+            rate = { ratings: await readRatings(seats, reqId), apply: rateIfEnded };
+            // Unreadable ratings: this cycle's products stand, and the game ends unrated.
+            if (rate.ratings) { attempt--; continue; }
+        }
         const version = await commitProducts(gameId, row, products, seats, null);
         if (version === null) continue;   // somebody else committed: reload and drive again
 

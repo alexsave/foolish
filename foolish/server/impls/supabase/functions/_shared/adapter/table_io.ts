@@ -39,6 +39,7 @@ const lazy = <T>(load: () => Promise<T>): (() => Promise<T>) => {
     return () => (mod ??= load());
 };
 const finalizeMod = lazy(() => import('./finalize.ts'));
+const ratingsMod = lazy(() => import('./ratings.ts'));
 
 // ---- column transports ----------------------------------------------------
 
@@ -293,14 +294,31 @@ interface Copied {
 /** The CAS loop around one table operation. */
 export async function runTableOp(op: TableOp): Promise<TableOutcome> {
     const table = await serverTable();
+    // THE SEATS' RATINGS, once this operation has been seen to end the game.
+    // The kernel rates a game inside the section that ends it (table_rate),
+    // and a section cannot await, so the ratings have to be in hand BEFORE it
+    // runs - but nobody knows a move is the last one until the kernel has
+    // played it. So the first section to end the game is thrown away: its
+    // seats are read, and the loop runs the operation again from the row, this
+    // time with the ratings. Nothing was committed, so nothing is undone; an
+    // operation is a function of its row and its arguments, so the second run
+    // is the first one plus the stamp. One read per game, on its last move.
+    let rate: Rate | null = null;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         const row = await loadRow(op.gameId, !op.fresh && attempt === 1);
         const dealSeed = drawDealSeed();
         const nextVersion = row.version + 1;
 
         // ---- the kernel section: nothing below awaits until it ends ----
-        const c = section(table, row, op, dealSeed, nextVersion);
+        const c = section(table, row, op, dealSeed, nextVersion, rate);
         // ---- end of the kernel section ----
+
+        if (c.products?.ended && !rate) {
+            const { readRatings, rateIfEnded } = await ratingsMod();
+            rate = { ratings: await readRatings(c.seats, op.reqId), apply: rateIfEnded };
+            // Unreadable ratings: this attempt's products stand, and the game ends unrated.
+            if (rate.ratings) { attempt--; continue; }
+        }
 
         if (c.rc < 0) {
             if (row.cached) { invalidateCachedRow(op.gameId); continue; }
@@ -343,7 +361,13 @@ export async function runTableOp(op: TableOp): Promise<TableOutcome> {
     throw new Error(`Could not commit game ${op.gameId} after ${MAX_ATTEMPTS} attempts - write contention`);
 }
 
-function section(table: ServerTable, row: TableRow, op: TableOp, dealSeed: Uint8Array, nextVersion: number): Copied {
+/** The ratings read for a game's last move, and the adapter's synchronous hand-over of them (ratings.ts rateIfEnded). */
+interface Rate {
+    ratings: number[] | null;
+    apply: (table: ServerTable, ratings: number[] | null, gameId: string, reqId: string) => void;
+}
+
+function section(table: ServerTable, row: TableRow, op: TableOp, dealSeed: Uint8Array, nextVersion: number, rate: Rate | null): Copied {
     const none = { reject: 0, detail: 0, envelope: null, products: null, seats: [], pushes: [], needsBots: false };
     const loaded = table.load(row.state, row.roster);
     if (loaded < 0) {
@@ -370,6 +394,7 @@ function section(table: ServerTable, row: TableRow, op: TableOp, dealSeed: Uint8
         };
     }
 
+    rate?.apply(table, rate.ratings, op.gameId, op.reqId);
     const products = table.commit(op.gameId, nextVersion, Date.now());
     if (typeof products === 'number') {
         throw new Error(`Game ${op.gameId}: no commit products: ${tableCodeName(products, ['TABLE_E_'])}`);
@@ -438,6 +463,12 @@ export async function commitProducts(
         p_views: humans.map((i) => base64(p.views[i]!)),
         p_spectator: base64(p.spectator),
         p_closed_round: p.closedRound,
+        // The kernel's rating changes, applied by this commit and by nothing
+        // else: every seat, a bot's row being a bots row. Null for every
+        // operation but the one that ended a rated game.
+        p_rated_ids: p.ratingDeltas ? seats.map((s) => s.id) : null,
+        p_rated_bots: p.ratingDeltas ? seats.map((s) => !!s.brain) : null,
+        p_rated_deltas: p.ratingDeltas,
     });
     if (error) {
         console.error(`[COMMIT] commit_table failed for ${gameId}:`, error);

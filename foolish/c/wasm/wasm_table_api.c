@@ -278,6 +278,10 @@ int wasm_table_rate(int n) {
 // Card text is read by card.h's parser, never by the host.
 
 static Roster g_fixture_roster;
+// The rating stamp a FINISHED fixture carries (view.h GameRatings), written by
+// the host through the generated setters; unrated unless a fixture sets it.
+static GameRatings g_fixture_stamp;
+GameRatings *wasm_fixture_stamp_ptr(void) { return &g_fixture_stamp; }
 
 // An empty lobby (game_reset_to_lobby: no face-up trump, nobody leading or
 // defending) and an empty roster; the table holds nothing loaded. -> the Game
@@ -287,6 +291,7 @@ Game *wasm_fixture_begin(void) {
     memset(g, 0, sizeof(*g));
     game_reset_to_lobby(g, 0);
     memset(&g_fixture_roster, 0, sizeof(g_fixture_roster));
+    memset(&g_fixture_stamp, 0, sizeof(g_fixture_stamp));
     table()->loaded = false;
     return g;
 }
@@ -308,9 +313,19 @@ int wasm_fixture_seat(int id_len, int name_len, int brain_len) {
 
 // -> io = [state blob][durable roster]. The state blob's length, or the refusal
 // (table.h table_seal; wasm_table_detail after TABLE_E_ROSTER).
+//
+// A fixture that set a stamp is a row a rating commit wrote: the state is
+// written again with the stamp behind it (the same length - the stamp is fixed
+// width) and loaded, so a stamp the kernel would not have written (on a board
+// that is not over, or not one per seat) is a refusal here like any other.
 int wasm_fixture_seal(void) {
     Table *t = table();
-    return table_seal(t, t->g, &g_fixture_roster, wasm_io_ptr(), wasm_io_cap());
+    const int n = table_seal(t, t->g, &g_fixture_roster, wasm_io_ptr(), wasm_io_cap());
+    if (n < 0 || g_fixture_stamp.n == 0) return n;
+    if (state_blob_put_rated_at(t->g, 0, &g_fixture_stamp, STATE_BLOB_FORMAT, wasm_io_ptr()) != n) return TABLE_E_MISMATCH;
+    const int rc = table_load(t, wasm_io_ptr(), n, wasm_io_ptr() + n, ROSTER_BYTES);
+    if (rc != TABLE_OK) return rc;
+    return t->ratings.n == g_fixture_stamp.n ? n : TABLE_E_MISMATCH;
 }
 
 // io = card text -> io = n Cards, one byte each, then (battles != 0) their n

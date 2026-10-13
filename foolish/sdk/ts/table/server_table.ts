@@ -81,6 +81,12 @@ export interface TableProducts {
     /** The response envelope per seat; null for a bot seat. */
     views: (Uint8Array | null)[];
     spectator: Uint8Array;
+    /**
+     * What this operation did to each seat's rating, by seat (TableCommit.n_rated,
+     * rating_delta), or null: every operation but the one that ended a rated
+     * game. The commit applies these and nothing else ever does.
+     */
+    ratingDeltas: number[] | null;
 }
 
 /** One seat of the loaded roster. */
@@ -343,6 +349,9 @@ export class ServerTable {
             logs: L.Span_get_len(m, logs) > 0 ? bytes(logs) : null,
             views,
             spectator: bytes(L.TableCommit_spectator_at(c)),
+            ratingDeltas: L.TableCommit_get_n_rated(m, c) > 0
+                ? Array.from({ length: L.TableCommit_get_n_rated(m, c) }, (_, s) => L.TableCommit_get_rating_delta(m, c, s))
+                : null,
         };
     }
 
@@ -399,18 +408,17 @@ export class ServerTable {
         return Array.from({ length: n }, (_, i) => L.TableElo_get_order(m, e, i));
     }
 
-    /** elo_deltas: each seat's rating change, from ratings by seat and the finish order (seats, best first). */
-    eloDeltas(ratingsBySeat: number[], order: number[]): number[] {
+    /**
+     * table_rate: rates the game the last operation ended, from the seats'
+     * ratings by seat. Between the operation and commit(). TABLE_OK, or a
+     * refusal: TABLE_E_NOT_OVER when the operation did not end the game.
+     */
+    rate(ratingsBySeat: number[]): number {
         const m = this.m();
         const e = this.ex.wasm_table_elo_ptr();
-        if (ratingsBySeat.length > L.TableElo_ratings_LEN || order.length !== ratingsBySeat.length) {
-            throw new RangeError('table: elo input does not fit');
-        }
+        if (ratingsBySeat.length > L.TableElo_ratings_LEN) return L.TABLE_E_WIRE;
         ratingsBySeat.forEach((r, s) => L.TableElo_set_ratings(m, e, s, r));
-        order.forEach((s, i) => L.TableElo_set_order(m, e, i, s));
-        const n = this.ex.wasm_elo_deltas(order.length);
-        if (n < 0) throw new Error(`table: elo refused (${n})`);
-        return Array.from({ length: n }, (_, s) => L.TableElo_get_deltas(m, e, s));
+        return this.ex.wasm_table_rate(ratingsBySeat.length);
     }
 }
 

@@ -1084,7 +1084,7 @@ WASM_REPLAY_WEB_EXPORTS := \
 # kernel has loaded; card text goes through card.h's parser.
 WASM_FIXTURE_EXPORTS := \
   -Wl,--export=wasm_fixture_begin -Wl,--export=wasm_fixture_title \
-  -Wl,--export=wasm_fixture_seat -Wl,--export=wasm_fixture_seal \
+  -Wl,--export=wasm_fixture_seat -Wl,--export=wasm_fixture_seal -Wl,--export=wasm_fixture_stamp_ptr \
   -Wl,--export=wasm_card_list_parse
 
 # The exports only tests call. They are NOT in the shipped bots.wasm.gz: an

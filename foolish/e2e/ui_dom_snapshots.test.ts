@@ -456,11 +456,17 @@ test('the win screen', async () => {
     const gid = 'done';
     const board = fixture().title('Finished').seats([seat(ME, 'Me'), seat('b-cordite-01', 'St. Petersburg 1', 'cordite'), seat('u-anna-0001', 'Anna')])
         .status(GAME_OVER).powerSuit(1).hand(1, '6s 7s').seatStatus(0, OUT).seatStatus(1, IN).seatStatus(2, OUT)
-        .eliminated(2, 0).discard(34).build();
+        // What THIS game did to each seat's rating, stamped on it (the same
+        // numbers the rating rows used to be read for: 1200 -> 1216, 1426 -> 1400,
+        // 1180 -> 1190). The rows below say something else on purpose: they are
+        // each player's rating NOW, after other games, and the screen must not
+        // read them.
+        .eliminated(2, 0).discard(34)
+        .ratings({ before: 1200, delta: 16 }, { before: 1426, delta: -26 }, { before: 1180, delta: 10 }).build();
     await screen('win_screen', 61, () => {
         rows.playerViews.set(gid, envelope(gid, board, 0));
-        rows.elo = [{ user_id: ME, elo_rating: 1216, previous_elo: 1200 }, { user_id: 'u-anna-0001', elo_rating: 1190, previous_elo: 1180 }];
-        rows.botElo = [{ id: 'b-cordite-01', elo_rating: 1400, previous_elo: 1426 }];
+        rows.elo = [{ user_id: ME, elo_rating: 999, previous_elo: 1001 }, { user_id: 'u-anna-0001', elo_rating: 2000, previous_elo: 1950 }];
+        rows.botElo = [{ id: 'b-cordite-01', elo_rating: 1700, previous_elo: 1650 }];
     }, () => gamePage(gid, ME));
 });
 
