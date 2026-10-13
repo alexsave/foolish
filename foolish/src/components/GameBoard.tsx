@@ -15,7 +15,6 @@ import { KeyboardPlayMode } from './GameDisplay/KeyboardPlayMode';
 import { Text } from './Text';
 import { useAnimation } from '../contexts/AnimationContext';
 import { HandShapeProvider } from './GameDisplay/handShape';
-import { SoundButton } from './SoundButton';
 
 /**
  * The one parameterized board behind every game-state source.
@@ -122,10 +121,6 @@ export const GameBoard = ({
                 a shield passing behind a badge would read as a glitch. */}
             <RoleFlights />
             {chrome}
-            {/* On every board that can make a sound - the live game, the
-                tutorial and a replay all play the kernel's plan through this
-                component - so the control is here once, not in three chromes. */}
-            <SoundButton />
         </Shape>
     );
 };
