@@ -13365,12 +13365,23 @@ static void test_table_rates_the_game_it_ends(void) {
     tb_fixture(3, 1u << 1, 51);
     table_init(&tb, &tb_game, &tb_snaps);
     CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK
-          && table_rate(&tb, ratings, 3) == TABLE_E_NOT_OVER && tb.ratings.n == 0,
-          "a table whose last operation did not end the game is not rated");
+          && table_rate(&tb, ratings, 3) == TABLE_MOOT && tb.ratings.n == 0,
+          "a table whose last operation did not end the game has nothing to rate: moot, never an error a host must read");
+    CHECK(table_commit_products(&tb, RS("g"), 1, 0, &c, tb_arena, sizeof(tb_arena)) > 0 && !c.wants_ratings && c.n_rated == 0,
+          "and a commit that ends nothing wants no ratings");
 
     CHECK(tb_play_to_the_last_move(51), "the game plays to its last move");
     CHECK(table_rate(&tb, ratings, 2) == TABLE_E_WIRE && table_rate(&tb, 0, 3) == TABLE_E_WIRE && tb.ratings.n == 0,
           "ratings that are not one per seat are refused");
+    {
+        const int32_t junk[3] = { 1000, TABLE_RATING_NONE - 1, 990 };
+        CHECK(table_rate(&tb, junk, 3) == TABLE_E_WIRE && tb.ratings.n == 0, "a rating below the no-rating mark is refused");
+    }
+    // THE KERNEL ASKS: the unrated ending's products say the host should read
+    // the ratings and run the operation again. That is the first pass of every
+    // rated game, and the host decides nothing about it.
+    CHECK(table_commit_products(&tb, RS("g"), 99, 0, &c, tb_arena, sizeof(tb_arena)) > 0 && c.ended && c.wants_ratings && c.n_rated == 0,
+          "the commit that ends the game unrated wants ratings");
     CHECK(table_rate(&tb, ratings, 3) == TABLE_OK && tb.ratings.n == 3, "the ending operation rates its game");
 
     // The changes are elo_deltas over the table's own finish order.
@@ -13385,6 +13396,7 @@ static void test_table_rates_the_game_it_ends(void) {
     const int n = table_commit_products(&tb, RS("g"), 99, 0, &c, tb_arena, sizeof(tb_arena));
     CHECK(n > 0 && c.ended && c.n_rated == 3 && c.rating_delta[0] == want[0] && c.rating_delta[1] == want[1]
           && c.rating_delta[2] == want[2] && c.rating_delta[3] == 0, "the ending commit names the changes to apply, by seat");
+    CHECK(!c.wants_ratings, "and, rated, it wants nothing more");
     CHECK(tb_arena[c.state.off] == STATE_BLOB_FORMAT_V5, "the row is written as v5");
     client_init(&ct, &ct_slot);
     for (int s = 0; s < 3; s++) {
@@ -13392,6 +13404,8 @@ static void test_table_rates_the_game_it_ends(void) {
         CHECK(client_adopt_envelope(&ct, tb_arena + c.views[s].off, c.views[s].len) == CLIENT_OK && ct.view.rated
               && ct.view.rating_before[1] == 1210 && ct.view.rating_delta[order[0]] == want[order[0]]
               && ct.view.rating_delta[order[2]] == want[order[2]], "each human seat's envelope carries the stamp");
+        CHECK(ct.view.rating_after[0] == 1000 + want[0] && ct.view.rating_after[1] == 1210 + want[1] && ct.view.rating_after[3] == 0,
+              "with what each rating became, so no screen adds it up");
     }
     CHECK(client_adopt_envelope(&ct, tb_arena + c.spectator.off, c.spectator.len) == CLIENT_OK && ct.view.rated
           && ct.view.rating_delta[0] == want[0], "and so does the spectator's");
@@ -13402,10 +13416,11 @@ static void test_table_rates_the_game_it_ends(void) {
     // A LATER COMMIT ON THE FINISHED TABLE: the stamp stays, and nobody is rated again.
     CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK && tb.ratings.n == 3
           && tb.ratings.delta[0] == want[0], "the finished row loads with its stamp");
-    CHECK(table_rate(&tb, ratings, 3) == TABLE_E_NOT_OVER, "a game that is already over cannot be rated a second time");
+    CHECK(table_rate(&tb, ratings, 3) == TABLE_MOOT && tb.ratings.delta[0] == want[0], "a game that is already over is not rated a second time, and its stamp stands");
     CHECK(table_redact(&tb, RS("id-0"), RS("Deleted player")) == TABLE_OK, "an account at the finished table is deleted");
     CHECK(table_commit_products(&tb, RS("g"), 100, 0, &c, tb_arena, sizeof(tb_arena)) > 0 && !c.ended, "that commits");
     CHECK(c.n_rated == 0 && c.rating_delta[0] == 0 && c.rating_delta[2] == 0, "and its products rate NOBODY: the game was counted once");
+    CHECK(!c.wants_ratings, "nor do they ask for ratings: the game ended two commits ago");
     CHECK(client_adopt_envelope(&ct, tb_arena + c.views[2].off, c.views[2].len) == CLIENT_OK && ct.view.rated
           && ct.view.rating_delta[0] == want[0] && ct.view.rating_before[1] == 1210, "while its envelopes still show what the game did");
     memcpy(tb_state, tb_arena + c.state.off, (size_t)c.state.len);
@@ -13425,6 +13440,35 @@ static void test_table_rates_the_game_it_ends(void) {
     CHECK(table_commit_products(&tb, RS("g"), 99, 0, &c, tb_arena, sizeof(tb_arena)) > 0 && c.ended && c.n_rated == 0
           && client_adopt_envelope(&ct, tb_arena + c.spectator.off, c.spectator.len) == CLIENT_OK && !ct.view.rated,
           "a game nobody rated ends with no stamp and no changes");
+    {
+        // WHAT A FINISH SCREEN DOES ABOUT IT is the kernel's answer too: an
+        // envelope has said whether the game was rated (here: it was not), so
+        // nothing more is to be read; the board a push or a bare state leaves
+        // has not, so the envelope is wanted - once the game is over, and only then.
+        ViewRules vr;
+        CHECK(ct.view.rating_known && client_view_rules(&ct.view, 0, 0, 0, &vr) == CLIENT_OK && !vr.wants_envelope,
+              "an envelope's view knows: an unrated game's finish screen reads nothing more");
+        const int slen = state_put(&tb_game, 0, ct_raw);
+        CHECK(client_adopt_state(&ct, ct_raw, slen, 0) == CLIENT_OK && !ct.view.rating_known
+              && client_view_rules(&ct.view, 0, 0, 0, &vr) == CLIENT_OK && vr.wants_envelope,
+              "the finished board a push leaves does not: its screen wants the envelope");
+        tb_fixture(3, 1u << 1, 51);
+        const int live = state_put(&tb_src, 0, ct_raw);
+        CHECK(client_adopt_state(&ct, ct_raw, live, 0) == CLIENT_OK
+              && client_view_rules(&ct.view, 0, 0, 0, &vr) == CLIENT_OK && !vr.wants_envelope,
+              "a game still being played wants none");
+    }
+
+    // A seat with no rating yet is rated from the kernel's own starting rating.
+    CHECK(tb_play_to_the_last_move(51), "and again");
+    {
+        const int32_t fresh[3] = { TABLE_RATING_NONE, TABLE_RATING_NONE, TABLE_RATING_NONE };
+        const int32_t start[3] = { TABLE_RATING_START, TABLE_RATING_START, TABLE_RATING_START };
+        CHECK(table_rankings(&tb, order) == 3 && elo_deltas(start, order, 3, want) == 3, "the changes among three seats at the start");
+        CHECK(table_rate(&tb, fresh, 3) == TABLE_OK && tb.ratings.before[0] == TABLE_RATING_START && tb.ratings.before[2] == TABLE_RATING_START
+              && tb.ratings.delta[0] == want[0] && tb.ratings.delta[1] == want[1] && tb.ratings.delta[2] == want[2],
+              "seats with no rating are rated from TABLE_RATING_START");
+    }
 
     // A rating never goes below zero, and the stamp is what is applied.
     CHECK(tb_play_to_the_last_move(51), "and once more");

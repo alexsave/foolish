@@ -143,7 +143,7 @@ async function runCycle(
     // after that section and handed to the next one, which drives the same
     // moves again from `prefs` and has the kernel rate the game before it
     // commits (table_io.ts runTableOp has the whole reasoning).
-    let rate: { ratings: number[] | null; apply: typeof import('./ratings.ts').rateIfEnded } | null = null;
+    let rate: { ratings: number[] | null; apply: typeof import('./ratings.ts').handRatings } | null = null;
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         // The session log rides along on this SELECT: every cycle needs its
@@ -196,9 +196,9 @@ async function runCycle(
             + `(stop ${drive.stop}) ${memLine(table.memoryBytes())}`);
 
         if (!products) return null;
-        if (products.ended && !rate) {
-            const { readRatings, rateIfEnded } = await ratingsMod();
-            rate = { ratings: await readRatings(seats, reqId), apply: rateIfEnded };
+        if (products.wantsRatings && !rate) {
+            const { readRatings, handRatings } = await ratingsMod();
+            rate = { ratings: await readRatings(seats, reqId), apply: handRatings };
             // Unreadable ratings: this cycle's products stand, and the game ends unrated.
             if (rate.ratings) { attempt--; continue; }
         }

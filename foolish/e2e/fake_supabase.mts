@@ -275,9 +275,9 @@ export async function startFakeSupabase(opts: FakeOptions = {}): Promise<FakeBac
         }
         // A game that ends here is rated, as the real server rates it, so a
         // finish screen has something to show: there are no rating rows in this
-        // backend, so every seat is the 1000 a new player starts from. The kernel
+        // backend, so every seat is one with no rating yet (the kernel rates it from TABLE_RATING_START). The kernel
         // refuses this for any operation that did not end the game.
-        t.rate(t.seats().map(() => 1000));
+        t.rate(t.seats().map(() => L.TABLE_RATING_NONE));
         const p = t.commit(row.id, row.version + 1, Date.now());
         if (typeof p === 'number') throw new Error(`game ${row.id}: no commit products (${p})`);
         const seats = t.seats();
@@ -376,9 +376,9 @@ export async function startFakeSupabase(opts: FakeOptions = {}): Promise<FakeBac
         if (typeof drive === 'number' || drive.n === 0) return;
         // A game that ends here is rated, as the real server rates it, so a
         // finish screen has something to show: there are no rating rows in this
-        // backend, so every seat is the 1000 a new player starts from. The kernel
+        // backend, so every seat is one with no rating yet (the kernel rates it from TABLE_RATING_START). The kernel
         // refuses this for any operation that did not end the game.
-        t.rate(t.seats().map(() => 1000));
+        t.rate(t.seats().map(() => L.TABLE_RATING_NONE));
         const p = t.commit(gameId, row.version + 1, Date.now());
         if (typeof p === 'number') return;
         const seats = t.seats();

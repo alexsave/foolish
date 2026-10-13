@@ -54,7 +54,7 @@ const board = (
     passing: true, flipped: b.flipped ?? NO_CARD, goodMask: 0, version: 0,
     battles: row.map(([attack, defense]) => ({ attack, defense: defense ?? NO_CARD })),
     seats: b.hand.map((handCount) => ({ status: PLAYER_STATUS_IN, handCount, awaitingAttack: false, isAi: false, id: '', name: '' })),
-    myHand: [], elimination: [], rated: false, ratingDelta: new Array(8).fill(0), ratingBefore: new Array(8).fill(0), gameId: 'g', title: '',
+    myHand: [], elimination: [], rated: false, ratingKnown: false, ratingDelta: new Array(8).fill(0), ratingBefore: new Array(8).fill(0), ratingAfter: new Array(8).fill(0), gameId: 'g', title: '',
 });
 
 // A two-step bout: I lay 6s, the defender covers with 7s. Both events carry

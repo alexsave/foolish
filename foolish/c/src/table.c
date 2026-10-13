@@ -399,6 +399,7 @@ int table_commit_products(const Table *t, const char *game_id, int gid_len, uint
     out->n_rated = rated ? rated->n : 0;
     memset(out->rating_delta, 0, sizeof(out->rating_delta));
     if (rated) memcpy(out->rating_delta, rated->delta, sizeof(rated->delta));
+    out->wants_ratings = t->ended && !rated && g->num_players >= 2;
     out->dealt_now = t->dealt_now;
     out->roster_changed = t->roster_changed;
     // Compared against the mask scope_open saved, so a good that is SET and a
@@ -831,21 +832,24 @@ int elo_deltas(const int32_t *ratings, const int8_t *order, int n, int32_t *out)
 
 int table_rate(Table *t, const int32_t *ratings, int n) {
     if (!t->loaded) return TABLE_E_NOT_LOADED;
-    if (!t->ended) return TABLE_E_NOT_OVER;
     if (!ratings || n != t->g->num_players) return TABLE_E_WIRE;
-    memset(&t->ratings, 0, sizeof(t->ratings));
-    if (n < 2) return TABLE_OK;
+    int32_t from[MAX_PLAYERS];
+    for (int s = 0; s < n; s++) {
+        if (ratings[s] < TABLE_RATING_NONE) return TABLE_E_WIRE;
+        from[s] = ratings[s] == TABLE_RATING_NONE ? TABLE_RATING_START : ratings[s];
+    }
+    if (!t->ended || n < 2) return TABLE_MOOT;
     int8_t order[MAX_PLAYERS];
     int32_t deltas[MAX_PLAYERS];
     const int k = table_rankings(t, order);
     if (k != n) return k < 0 ? k : TABLE_E_MISMATCH;
-    const int rc = elo_deltas(ratings, order, n, deltas);
+    const int rc = elo_deltas(from, order, n, deltas);
     if (rc < 0) return rc;
+    memset(&t->ratings, 0, sizeof(t->ratings));
     t->ratings.n = (uint8_t)n;
     for (int s = 0; s < n; s++) {
-        const int32_t floor = ratings[s] > 0 ? -ratings[s] : 0;
-        t->ratings.before[s] = ratings[s];
-        t->ratings.delta[s] = (int16_t)(deltas[s] < floor ? floor : deltas[s]);
+        t->ratings.before[s] = from[s];
+        t->ratings.delta[s] = (int16_t)(deltas[s] < -from[s] ? -from[s] : deltas[s]);
     }
     return TABLE_OK;
 }

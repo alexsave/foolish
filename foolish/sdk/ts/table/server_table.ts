@@ -87,6 +87,12 @@ export interface TableProducts {
      * game. The commit applies these and nothing else ever does.
      */
     ratingDeltas: number[] | null;
+    /**
+     * The kernel wants the seats' ratings: read them and run this operation
+     * again, with rate() before commit() (TableCommit.wants_ratings). The whole
+     * of "is this game rated, and is now the moment" is this bit.
+     */
+    wantsRatings: boolean;
 }
 
 /** One seat of the loaded roster. */
@@ -352,6 +358,7 @@ export class ServerTable {
             ratingDeltas: L.TableCommit_get_n_rated(m, c) > 0
                 ? Array.from({ length: L.TableCommit_get_n_rated(m, c) }, (_, s) => L.TableCommit_get_rating_delta(m, c, s))
                 : null,
+            wantsRatings: L.TableCommit_get_wants_ratings(m, c),
         };
     }
 
@@ -410,8 +417,9 @@ export class ServerTable {
 
     /**
      * table_rate: rates the game the last operation ended, from the seats'
-     * ratings by seat. Between the operation and commit(). TABLE_OK, or a
-     * refusal: TABLE_E_NOT_OVER when the operation did not end the game.
+     * ratings by seat (TABLE_RATING_NONE for a seat that has none). Between the
+     * operation and commit(). TABLE_OK, TABLE_MOOT when there was nothing to
+     * rate, or negative for a malformed call.
      */
     rate(ratingsBySeat: number[]): number {
         const m = this.m();

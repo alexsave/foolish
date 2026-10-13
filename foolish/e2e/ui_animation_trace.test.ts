@@ -153,9 +153,9 @@ class Server {
         if (rc === L.TABLE_REJECTED || rc === L.TABLE_MOOT || rc === L.TABLE_STALE_ROUND) return { rc, reject: t.reject() };
         // The operation that ends the game rates it, as the real server's does
         // (adapter/ratings.ts): this server has no rating rows, so every seat
-        // stands at the 1000 a new player starts from. The kernel refuses this
+        // is one with no rating yet (the kernel rates it from TABLE_RATING_START). The kernel refuses this
         // for every operation that did not end the game.
-        t.rate(t.seats().map(() => 1000));
+        t.rate(t.seats().map(() => L.TABLE_RATING_NONE));
         const p = t.commit(this.gid, this.version + 1, 1_700_000_000_000);
         assert.ok(typeof p !== 'number', `commit products: ${p}`);
         const seats = t.seats();

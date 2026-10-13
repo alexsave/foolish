@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useServer } from '../contexts/ServerContext';
-import { GAME_STATUS } from '../state/view';
+import { GAME_STATUS, rulesOf } from '../state/view';
 import { TexturedSurface, useTexture, getTextureStyle } from './TexturedSurface';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 import { Text } from './Text';
@@ -36,25 +36,30 @@ export const WinScreen: React.FC = () => {
     // the rows and their ratings appear together, as they always have, rather
     // than the ratings popping in a moment after. A game that was not rated (or
     // ended before the stamp existed) answers unrated, and shows no rating.
+    // Whether the envelope has to be read first is the kernel's answer
+    // (ViewRules.wants_envelope): the game is over and this view has not said
+    // whether it was rated. The page asks once per game; if the read fails the
+    // screen draws the game unrated rather than never.
     const gameId = game?.gameId ?? null;
     const over = game?.status === GAME_STATUS.GAME_OVER;
-    const rated = !!game?.rated;
+    const wantsEnvelope = !!game && rulesOf(game).wantsEnvelope;
     const [askedFor, setAskedFor] = useState<string | null>(null);
     const [answeredFor, setAnsweredFor] = useState<string | null>(null);
     useEffect(() => {
-        if (!gameId || !over || rated || askedFor === gameId) return;
+        if (!gameId || !wantsEnvelope || askedFor === gameId) return;
         setAskedFor(gameId);
         loadGame(gameId).catch(() => { /* the screen then shows the game unrated */ }).finally(() => setAnsweredFor(gameId));
-    }, [gameId, over, rated, askedFor, loadGame]);
+    }, [gameId, wantsEnvelope, askedFor, loadGame]);
 
     // Render nothing while the game state settles / its envelope loads — the
     // app-wide background shows through, so the game→rankings handoff is seamless.
     if (!game || !over) {
         return null;
     }
-    if (!rated && answeredFor !== gameId) {
+    if (wantsEnvelope && answeredFor !== gameId) {
         return null;
     }
+    const rated = game.rated;
 
     // The finish order is the kernel's (anim_finish_rows), over the board's own
     // elimination order and fool.
@@ -90,7 +95,9 @@ export const WinScreen: React.FC = () => {
                 {sortedResults.map((result) => {
                     const isCurrentUser = result.seat === game.mySeat;
 
+                    // The three numbers are the stamp's, the sum included.
                     const before = game.ratingBefore[result.seat];
+                    const after = game.ratingAfter[result.seat];
                     const change = game.ratingDelta[result.seat];
                     const eloClass = change > 0
                         ? 'result-card__elo-change--positive'
@@ -121,7 +128,7 @@ export const WinScreen: React.FC = () => {
                             {rated && (
                                 <div className="result-card__elo">
                                     <span style={{ color: 'var(--color-text-primary)', fontSize: '0.85rem' }}>
-                                        {before} → {before + change}
+                                        {before} → {after}
                                     </span>
                                     <span className={`result-card__elo-change ${eloClass}`}>
                                         {change > 0 ? '+' : ''}{change}

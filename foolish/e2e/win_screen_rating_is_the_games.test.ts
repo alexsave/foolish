@@ -191,3 +191,27 @@ test('a game the BOT LOOP ends is rated too, once', async () => {
         assert.deepEqual(await ratingOf('bots', miami), { elo: 1000 + m, played: 1 }, 'a later bot cycle on the finished table rates nobody');
     } finally { __setTableDealSeedOverride(null); }
 });
+
+test('a player with no rating row yet is rated from the kernel\'s starting rating, and gets their row', async () => {
+    // The adapter does not know what a new player starts from: it tells the
+    // kernel the seat has no rating (TABLE_RATING_NONE) and the kernel says.
+    await resetDb();
+    __clearGameCache();
+    const [ana, miami] = [uuid(), uuid()];
+    try {
+        const id = await deal('n', [{ id: ana, name: 'Ana' }, { id: miami, name: '%Miami 1', brain: 'random' }], 5);
+        await pgPool.query('DELETE FROM user_elo_ratings WHERE user_id = $1', [ana]);
+        for (let step = 0; step < 600; step++) {
+            const t = await mustReadTable(id);
+            if (t.status !== L.GAME_STATUS_PLAYING) break;
+            const mv = legalMoves(t)[0];
+            assert.ok(mv, `somebody can move (step ${step})`);
+            await runAction(id, mv.playerId, mv);
+        }
+        const rows = await finishScreen(id, ana);
+        const change = changeIn(rows, 'Ana');
+        assert.ok(rows.some((r) => r.startsWith(`Ana: ${L.TABLE_RATING_START} → `)), `Ana is rated from the starting rating (${rows.join(' | ')})`);
+        assert.ok(change !== 0 && change === -changeIn(rows, 'Miami 1'), `as an even match for a bot at the same rating (${rows.join(' | ')})`);
+        assert.deepEqual(await ratingOf('user_elo_ratings', ana), { elo: L.TABLE_RATING_START + change, played: 1 }, 'and the commit gave her the row');
+    } finally { __setTableDealSeedOverride(null); }
+});

@@ -15,10 +15,6 @@ import type { ServerTable, TableSeat } from '@sdk/ts/table/server_table.ts';
 import * as L from '@sdk/ts/gen/game_layout.bots.ts';
 import { supabaseClient } from './utils.ts';
 
-// A human who has never been rated: user_elo_ratings.elo_rating's column
-// default, which is the row commit_table gives them when it rates them.
-const UNRATED_HUMAN = 1000;
-
 /**
  * Each seat's rating, by seat, or null when they cannot all be read. A game
  * whose ratings cannot be read still ENDS: it ends unrated, with no stamp and no
@@ -38,7 +34,9 @@ export async function readRatings(seats: TableSeat[], reqId: string): Promise<nu
             const { data, error } = await supabaseClient.from('user_elo_ratings').select('user_id, elo_rating').in('user_id', humanIds);
             if (error) throw new Error(`user ratings: ${error.message}`);
             for (const r of (data ?? []) as { user_id: string; elo_rating: number }[]) rating.set(r.user_id, Number(r.elo_rating));
-            for (const id of humanIds) if (!rating.has(id)) rating.set(id, UNRATED_HUMAN);
+            // A human with no row has no rating yet. What they are rated from is
+            // the kernel's to say (TABLE_RATING_START), not a number kept here.
+            for (const id of humanIds) if (!rating.has(id)) rating.set(id, L.TABLE_RATING_NONE);
         }
         return seats.map((s) => rating.get(s.id)!);
     } catch (e) {
@@ -50,15 +48,12 @@ export async function readRatings(seats: TableSeat[], reqId: string): Promise<nu
 /**
  * SYNCHRONOUS, inside a kernel section, between the operation and its commit
  * products: hands the loaded table the ratings read for it. With no ratings
- * this does nothing. An operation that did not end the game is not rated
- * (TABLE_E_NOT_OVER) and that is the common case on a retry, not an error: the
- * ratings were read because an EARLIER attempt at this operation ended the
- * game, and the row has moved since.
+ * this does nothing. Whether there is a game to rate is the kernel's call
+ * (table_rate answers TABLE_MOOT when there is not, as on a retry of the last
+ * move that finds the row has moved on); only a malformed hand-over is negative.
  */
-export function rateIfEnded(table: ServerTable, ratings: number[] | null, gameId: string, reqId: string): void {
+export function handRatings(table: ServerTable, ratings: number[] | null, gameId: string, reqId: string): void {
     if (!ratings) return;
     const rc = table.rate(ratings);
-    if (rc < 0 && rc !== L.TABLE_E_NOT_OVER) {
-        console.error(`[${reqId}][ELO] game ${gameId}: the kernel refused the ratings (${rc}); the game ends unrated`);
-    }
+    if (rc < 0) console.error(`[${reqId}][ELO] game ${gameId}: the kernel refused the ratings (${rc}); the game ends unrated`);
 }

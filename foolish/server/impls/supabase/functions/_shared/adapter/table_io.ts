@@ -313,9 +313,9 @@ export async function runTableOp(op: TableOp): Promise<TableOutcome> {
         const c = section(table, row, op, dealSeed, nextVersion, rate);
         // ---- end of the kernel section ----
 
-        if (c.products?.ended && !rate) {
-            const { readRatings, rateIfEnded } = await ratingsMod();
-            rate = { ratings: await readRatings(c.seats, op.reqId), apply: rateIfEnded };
+        if (c.products?.wantsRatings && !rate) {
+            const { readRatings, handRatings } = await ratingsMod();
+            rate = { ratings: await readRatings(c.seats, op.reqId), apply: handRatings };
             // Unreadable ratings: this attempt's products stand, and the game ends unrated.
             if (rate.ratings) { attempt--; continue; }
         }
@@ -361,7 +361,7 @@ export async function runTableOp(op: TableOp): Promise<TableOutcome> {
     throw new Error(`Could not commit game ${op.gameId} after ${MAX_ATTEMPTS} attempts - write contention`);
 }
 
-/** The ratings read for a game's last move, and the adapter's synchronous hand-over of them (ratings.ts rateIfEnded). */
+/** The ratings read for a game's last move, and the adapter's synchronous hand-over of them (ratings.ts handRatings). */
 interface Rate {
     ratings: number[] | null;
     apply: (table: ServerTable, ratings: number[] | null, gameId: string, reqId: string) => void;

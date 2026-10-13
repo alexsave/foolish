@@ -351,6 +351,11 @@ typedef struct {
     // counted again each time.
     uint8_t n_rated;
     int16_t rating_delta[MAX_PLAYERS];
+    // THE HOST SHOULD READ THE SEATS' RATINGS AND RUN THIS OPERATION AGAIN, with
+    // table_rate between it and these products: the operation ended a game that
+    // is to be rated, and nobody has rated it. The whole of "does this game get
+    // rated, and is now the moment" is this bit; a host decides nothing.
+    bool    wants_ratings;
     // THE OPERATION MOVED THE GOODS, which a push must carry even when the
     // operation moved no card. A `good` emits no event - the kernel has no card
     // to fly - so for years the adapter's `n_events > 0` test dropped the push
@@ -504,8 +509,16 @@ typedef struct {
     int8_t  order[MAX_PLAYERS];
 } TableElo;
 
+// The rating a seat with no rating yet is rated from, and what a host hands
+// table_rate for such a seat: it does not know the number, and should not.
+// (The rating tables' column default is the same number; a validation test
+// holds the two equal.)
+#define TABLE_RATING_START 1000
+#define TABLE_RATING_NONE  (-1)
+
 // RATES THE GAME THE LAST OPERATION ENDED. `ratings` are the seats' ratings as
-// the game ends, by seat, `n` of them. The table works out each seat's change
+// the game ends, by seat, `n` of them, TABLE_RATING_NONE for a seat that has
+// none. The table works out each seat's change
 // (table_rankings, elo_deltas) and stamps both on the game (view.h GameRatings):
 // the state blob and every envelope of the finished table carry the stamp from
 // this commit on, and the commit's products name the changes to apply
@@ -514,10 +527,13 @@ typedef struct {
 // A change never takes a rating below zero: a seat that would lose more than it
 // has loses what it has, so the stamp is what is applied.
 //
-// Called between the operation and table_commit_products, and only then:
-// TABLE_E_NOT_OVER unless THIS operation ended the game (a game is rated once,
-// by the commit that ends it), TABLE_E_WIRE when `n` is not the board's seat
-// count. A table of one has nobody to be rated against: TABLE_OK, and no stamp.
+// Called between the operation and table_commit_products. A host that holds
+// ratings calls it every time and reads nothing into the answer: TABLE_OK, the
+// game is stamped; TABLE_MOOT, there was nothing to rate - THIS operation did
+// not end a game (a game is rated once, by the commit that ends it; a retry of
+// the last move may find the row has moved on), or the table is one seat with
+// nobody to be rated against. Negative only for a malformed call: TABLE_E_WIRE
+// when `n` is not the board's seat count or a rating is below TABLE_RATING_NONE.
 //
 // A host that cannot read the ratings does not call this, and the game ends
 // unrated: no stamp, no change, and a screen that shows no rating rather than a
