@@ -222,9 +222,40 @@ int state_import(Game *g, const unsigned char *p, int len, int masked) {
 // "never" has one spelling.
 static void put_clock(unsigned char *q, int64_t v) { le_put_u48(q, v > 0 ? (uint64_t)v : 0); }
 
+int game_ratings_put(const GameRatings *r, unsigned char *out) {
+    memset(out, 0, GAME_RATINGS_BYTES);
+    if (!r) return GAME_RATINGS_BYTES;
+    out[0] = r->n;
+    for (int s = 0; s < r->n && s < MAX_PLAYERS; s++) {
+        unsigned char *q = out + 1 + 6 * s;
+        const uint32_t b = (uint32_t)r->before[s];
+        const uint16_t d = (uint16_t)r->delta[s];
+        q[0] = (unsigned char)b; q[1] = (unsigned char)(b >> 8); q[2] = (unsigned char)(b >> 16); q[3] = (unsigned char)(b >> 24);
+        q[4] = (unsigned char)d; q[5] = (unsigned char)(d >> 8);
+    }
+    return GAME_RATINGS_BYTES;
+}
+
+bool game_ratings_get(GameRatings *r, const unsigned char *p) {
+    if (p[0] > MAX_PLAYERS) return false;
+    for (int i = 1 + 6 * p[0]; i < GAME_RATINGS_BYTES; i++) if (p[i]) return false;
+    memset(r, 0, sizeof(*r));
+    r->n = p[0];
+    for (int s = 0; s < r->n; s++) {
+        const unsigned char *q = p + 1 + 6 * s;
+        r->before[s] = (int32_t)((uint32_t)q[0] | ((uint32_t)q[1] << 8) | ((uint32_t)q[2] << 16) | ((uint32_t)q[3] << 24));
+        r->delta[s] = (int16_t)(uint16_t)(q[4] | (q[5] << 8));
+    }
+    return true;
+}
+
 int state_blob_put_at(const Game *g, const BoardClock *clk, int format, unsigned char *out) {
+    return state_blob_put_rated_at(g, clk, 0, format, out);
+}
+
+int state_blob_put_rated_at(const Game *g, const BoardClock *clk, const GameRatings *ratings, int format, unsigned char *out) {
     int flag = g->deterministic_deck ? STATE_BLOB_FLAG_DETERMINISTIC : 0;
-    if (format == STATE_BLOB_FORMAT_V4) {
+    if (format == STATE_BLOB_FORMAT_V4 || format == STATE_BLOB_FORMAT_V5) {
         // The one rule v4 carries; a rules bit beyond it has no flag to go in.
         if (g->rules & ~GAME_RULE_NO_PASS) return STATE_BLOB_E_RULES;
         if (game_pass_allowed(g)) flag |= STATE_BLOB_FLAG_PASSING;
@@ -239,7 +270,10 @@ int state_blob_put_at(const Game *g, const BoardClock *clk, int format, unsigned
     if (format == STATE_BLOB_FORMAT_V2) return n;
     put_clock(out + n, clk ? clk->shown_ms : 0);
     put_clock(out + n + 6, clk ? clk->settles_ms : 0);
-    return n + STATE_BLOB_V3_CLOCK_BYTES;
+    if (format != STATE_BLOB_FORMAT_V5) return n + STATE_BLOB_V3_CLOCK_BYTES;
+    // The stamp is a finished game's: the one owner of that rule on the way in.
+    const bool stamped = ratings && ratings->n > 0 && g->status == GAME_STATUS_GAME_OVER;
+    return n + STATE_BLOB_V3_CLOCK_BYTES + game_ratings_put(stamped ? ratings : 0, out + n + STATE_BLOB_V3_CLOCK_BYTES);
 }
 
 int state_blob_put(const Game *g, const BoardClock *clk, unsigned char *out) {
@@ -247,12 +281,17 @@ int state_blob_put(const Game *g, const BoardClock *clk, unsigned char *out) {
 }
 
 int state_blob_load(Game *g, const unsigned char *p, int len, BoardClock *clk) {
+    return state_blob_load_rated(g, p, len, clk, 0);
+}
+
+int state_blob_load_rated(Game *g, const unsigned char *p, int len, BoardClock *clk, GameRatings *ratings) {
     if (len < STATE_BLOB_HEADER) return 0;
-    // `len` counts the header bytes too; the state is the rest, less the clock
-    // a v3 or v4 blob carries behind it (a v2 blob has none: see view.h).
-    const int tail = state_blob_clock_bytes(p[0]);
+    // `len` counts the header bytes too; the state is the rest, less what the
+    // format carries behind it: the clock from v3, the rating stamp from v5.
+    const int tail = state_blob_tail_bytes(p[0]);
     if (tail < 0) return 0;
-    const int v4 = p[0] == STATE_BLOB_FORMAT_V4;
+    const int v5 = p[0] == STATE_BLOB_FORMAT_V5;
+    const int v4 = v5 || p[0] == STATE_BLOB_FORMAT_V4;   // the flag byte is v4's from v4 on
     if (v4 && (p[1] & ~STATE_BLOB_FLAGS_V4)) return 0;   // a rule this kernel cannot honour
     if (len < STATE_BLOB_HEADER + tail) return GAME_INVALID_COUNT;
     // Nor does any row's board name rules (state_blob_put_at): the flag owns
@@ -260,8 +299,18 @@ int state_blob_load(Game *g, const unsigned char *p, int len, BoardClock *clk) {
     if (len > STATE_BLOB_HEADER + STATE_FLAGS_AT
         && (p[STATE_BLOB_HEADER + STATE_FLAGS_AT] & ~STATE_FLAG_FLIPPED)) return 0;
     const int state_len = len - STATE_BLOB_HEADER - tail;
+    // The stamp is judged BEFORE the board is adopted, so a refusal adopts
+    // nothing: it must read, and count the board's seats (the state's second
+    // byte) on a board that is over (its first), or count none.
+    GameRatings stamp = { 0 };
+    if (v5) {
+        if (!game_ratings_get(&stamp, p + len - GAME_RATINGS_BYTES)) return 0;
+        if (stamp.n && (state_len < 2 || stamp.n != p[STATE_BLOB_HEADER + 1]
+                        || p[STATE_BLOB_HEADER] != GAME_STATUS_GAME_OVER)) return 0;
+    }
     const int r = state_import(g, p + STATE_BLOB_HEADER, state_len, 0);
     if (r != GAME_VALID) return r;
+    if (ratings) *ratings = stamp;
     // v2 and v3 read the whole flag byte as the deck bit, as they always have.
     g->deterministic_deck = v4 ? (p[1] & STATE_BLOB_FLAG_DETERMINISTIC) != 0 : p[1] != 0;
     // THE one place a row sets the rules: before v4 every row is the classic
@@ -269,8 +318,9 @@ int state_blob_load(Game *g, const unsigned char *p, int len, BoardClock *clk) {
     g->rules = (int8_t)(v4 && !(p[1] & STATE_BLOB_FLAG_PASSING) ? GAME_RULE_NO_PASS : 0);
     if (clk) {
         const unsigned char *c = p + STATE_BLOB_HEADER + state_len;
-        clk->shown_ms = tail ? (int64_t)le_get_u48(c) : 0;
-        clk->settles_ms = tail ? (int64_t)le_get_u48(c + 6) : 0;
+        const int clocked = state_blob_clock_bytes(p[0]) > 0;
+        clk->shown_ms = clocked ? (int64_t)le_get_u48(c) : 0;
+        clk->settles_ms = clocked ? (int64_t)le_get_u48(c + 6) : 0;
     }
     return 1;
 }
@@ -280,8 +330,9 @@ int state_blob_load(Game *g, const unsigned char *p, int len, BoardClock *clk) {
 _Static_assert(ENV_VIEW_AT == ENV_ISLAND_AT + 2 + 2,
                "the header is the island's length prefix, an empty island, and the view's length prefix");
 
-int env_header_write(unsigned char *out, int cap, int viewer, uint32_t version) {
-    if (!out || cap < ENV_VIEW_AT + 2) return -1;
+int env_header_write(unsigned char *out, int cap, int viewer, uint32_t version, const GameRatings *ratings) {
+    const int island = ratings && ratings->n > 0 ? 1 + GAME_RATINGS_BYTES : 0;
+    if (!out || cap < ENV_VIEW_AT + island + 2) return -1;
     out[0] = ENV_FORMAT;
     out[1] = (unsigned char)((viewer >= 0 ? ENV_FLAG_SEATED : 0) | ENV_FLAG_ROSTER);
     out[2] = viewer >= 0 ? (unsigned char)viewer : 0xFF;
@@ -289,17 +340,27 @@ int env_header_write(unsigned char *out, int cap, int viewer, uint32_t version) 
     out[4] = (unsigned char)((version >> 8) & 0xff);
     out[5] = (unsigned char)((version >> 16) & 0xff);
     out[6] = (unsigned char)((version >> 24) & 0xff);
-    out[ENV_ISLAND_AT] = 0; out[ENV_ISLAND_AT + 1] = 0;   // the retired JSON roster island, empty
-    out[ENV_VIEW_AT] = VIEW_FORMAT_VERSION;
-    out[ENV_VIEW_AT + 1] = out[2];
-    return ENV_VIEW_AT;
+    out[ENV_ISLAND_AT] = (unsigned char)island; out[ENV_ISLAND_AT + 1] = 0;
+    if (island) {
+        out[ENV_ISLAND_AT + 2] = ENV_ISLAND_RATINGS;
+        game_ratings_put(ratings, out + ENV_ISLAND_AT + 3);
+    }
+    const int view_at = ENV_VIEW_AT + island;
+    out[view_at] = VIEW_FORMAT_VERSION;
+    out[view_at + 1] = out[2];
+    return view_at;
 }
 
-void env_header_set_view_len(unsigned char *out, int view_len) {
-    // The two bytes immediately ahead of the view, which is where they are
-    // because env_header_write wrote the island empty.
-    out[ENV_VIEW_AT - 2] = (unsigned char)view_len;
-    out[ENV_VIEW_AT - 1] = (unsigned char)(view_len >> 8);
+void env_header_set_view_len(unsigned char *out, int view_at, int view_len) {
+    // The two bytes immediately ahead of the view, wherever the island put it.
+    out[view_at - 2] = (unsigned char)view_len;
+    out[view_at - 1] = (unsigned char)(view_len >> 8);
+}
+
+bool env_island_ratings(const unsigned char *p, const EnvHeader *h, GameRatings *r) {
+    memset(r, 0, sizeof(*r));
+    if (h->island_len == 0 || p[h->island_at] != ENV_ISLAND_RATINGS) return true;
+    return h->island_len == 1 + GAME_RATINGS_BYTES && game_ratings_get(r, p + h->island_at + 1);
 }
 
 bool env_header_read(const unsigned char *p, int len, EnvHeader *h) {
@@ -309,8 +370,9 @@ bool env_header_read(const unsigned char *p, int len, EnvHeader *h) {
     const int seated = (flags & ENV_FLAG_SEATED) != 0;
     const int seat = seated ? p[2] : -1;
     if (seated ? seat >= MAX_PLAYERS : p[2] != 0xFF) return false;
-    // The retired JSON roster island (view.ts): empty, but skipped if a server wrote one.
-    int q = ENV_ISLAND_AT + 2 + (p[ENV_ISLAND_AT] | (p[ENV_ISLAND_AT + 1] << 8));
+    // The island: skipped by its length, whatever it holds (view.h).
+    const int island_len = p[ENV_ISLAND_AT] | (p[ENV_ISLAND_AT + 1] << 8);
+    int q = ENV_ISLAND_AT + 2 + island_len;
     if (q + 2 > len) return false;
     const int view_len = p[q] | (p[q + 1] << 8);
     q += 2;
@@ -321,6 +383,8 @@ bool env_header_read(const unsigned char *p, int len, EnvHeader *h) {
     h->state_at = q + 2;
     h->state_len = view_len - 2;
     h->trailer_at = q + view_len;
+    h->island_at = ENV_ISLAND_AT + 2;
+    h->island_len = island_len;
     return true;
 }
 

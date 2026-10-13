@@ -134,6 +134,7 @@ int state_import(Game *g, const unsigned char *p, int len, int masked);
 #define STATE_BLOB_FORMAT_V2 2   // [version][flag][state_put]
 #define STATE_BLOB_FORMAT_V3 3   // ... then the board's clock (BoardClock below)
 #define STATE_BLOB_FORMAT_V4 4   // v3, its flag byte the bits below
+#define STATE_BLOB_FORMAT_V5 5   // v4, then the game's rating stamp (GameRatings below)
 
 // The v4 flag byte. Bit 0 means what the whole v2/v3 flag byte meant; a classic
 // game's row reads PASSING with it.
@@ -141,10 +142,17 @@ int state_import(Game *g, const unsigned char *p, int len, int masked);
 #define STATE_BLOB_FLAG_PASSING       0x02   // 1 the classic passing game, 0 podkidnoy (GAME_RULE_NO_PASS)
 #define STATE_BLOB_FLAGS_V4 (STATE_BLOB_FLAG_DETERMINISTIC | STATE_BLOB_FLAG_PASSING)
 
+// Layout v5: v4, then the game's RATING STAMP (GameRatings below), fixed width,
+// behind the clock. v4 -> v5 is at its EXPAND step: this kernel reads v5 and
+// still writes v4, so it writes no stamp, and a stamped row it rewrites (an
+// account redacted on a finished table, say) loses the stamp. The switch is the
+// kernel that flips STATE_BLOB_FORMAT below and starts stamping (table.h).
+//
 // THE FORMAT THIS KERNEL WRITES, and the one switch of the move above: V4, the
 // switch step (it was V3 while the expand kernel was deploying). Everything that
 // depends on which one is written - the clock bytes a blob ends with, whether a
-// board's rules can be written at all - follows from it.
+// board's rules can be written at all, whether a finished game's rating stamp
+// survives the row - follows from it.
 #define STATE_BLOB_FORMAT STATE_BLOB_FORMAT_V4
 
 // The bytes the blob's header costs, ahead of the state_put payload.
@@ -160,13 +168,52 @@ typedef struct {
     int64_t shown_ms;
     int64_t settles_ms;
 } BoardClock;
-#define STATE_BLOB_V3_CLOCK_BYTES 12   // v3 and v4 alike
-// The clock bytes a blob of format `fmt` ends with, or -1 for a format this
+#define STATE_BLOB_V3_CLOCK_BYTES 12   // v3, v4 and v5 alike
+// The clock bytes a blob of format `fmt` carries, or -1 for a format this
 // kernel does not read: the ONE list of the formats read, for state_blob_load
 // and for table_load's look at the header before it.
 static inline int state_blob_clock_bytes(int fmt) {
-    return fmt == STATE_BLOB_FORMAT_V3 || fmt == STATE_BLOB_FORMAT_V4 ? STATE_BLOB_V3_CLOCK_BYTES
+    return fmt == STATE_BLOB_FORMAT_V3 || fmt == STATE_BLOB_FORMAT_V4 || fmt == STATE_BLOB_FORMAT_V5 ? STATE_BLOB_V3_CLOCK_BYTES
          : fmt == STATE_BLOB_FORMAT_V2 ? 0 : -1;
+}
+
+// WHAT A FINISHED GAME DID TO ITS SEATS' RATINGS, which a v5 blob carries behind
+// the clock: each seat's rating as the game ended, and the change this game made
+// to it. It is a fact of THE GAME, stamped once by the commit that ended it and
+// never recomputed, which is the whole point of it. The finish screen used to
+// read each player's own "rating now" and "rating before my last game" columns
+// and subtract, which is that player's LAST change, in whatever game it came
+// from: reopen an old table, or seat a bot that plays many tables at once, and
+// every row showed a number from some other game.
+//
+// `n` is 0 for a game that was not rated (a table of one, a game that ended
+// before the stamp existed, a rating read that failed) and the board's seat
+// count otherwise; a row with any other count is not one this kernel wrote. Only
+// a board that is OVER carries a stamp: the writer drops it from any other, and
+// a row that pairs one with a running game or a lobby is unreadable.
+//
+// Like the clock it is a table fact, not a rule of the game - the Game struct
+// never holds it. The envelope carries the same bytes to a viewer (ENV_ISLAND_
+// RATINGS below).
+typedef struct {
+    uint8_t n;
+    int32_t before[MAX_PLAYERS];
+    int16_t delta[MAX_PLAYERS];
+} GameRatings;
+// FIXED WIDTH, so the blob's tail is still a constant read from its end:
+// u8 n, then MAX_PLAYERS x { i32 LE before, i16 LE delta }, the slots past n zero.
+#define GAME_RATINGS_BYTES (1 + MAX_PLAYERS * 6)
+// Writes `r` (NULL: the unrated stamp) at out; returns GAME_RATINGS_BYTES.
+int game_ratings_put(const GameRatings *r, unsigned char *out);
+// Reads GAME_RATINGS_BYTES at p. false for bytes this kernel did not write: a
+// count past MAX_PLAYERS, or a slot past the count that is not zero.
+bool game_ratings_get(GameRatings *r, const unsigned char *p);
+
+// Every byte a blob of format `fmt` carries behind its state (the clock, and
+// from v5 the rating stamp), or -1 for a format this kernel does not read.
+static inline int state_blob_tail_bytes(int fmt) {
+    const int clock = state_blob_clock_bytes(fmt);
+    return clock < 0 ? -1 : clock + (fmt == STATE_BLOB_FORMAT_V5 ? GAME_RATINGS_BYTES : 0);
 }
 // The clock bytes a WRITTEN blob ends with.
 #define STATE_BLOB_CLOCK_BYTES (STATE_BLOB_FORMAT == STATE_BLOB_FORMAT_V2 ? 0 : STATE_BLOB_V3_CLOCK_BYTES)
@@ -181,11 +228,16 @@ static inline int state_blob_clock_bytes(int fmt) {
 // NULL writes a zero clock (a board nobody has been shown).
 int state_blob_put(const Game *g, const BoardClock *clk, unsigned char *out);
 
-// The same at an explicit format, v2, v3 or v4: for the tests that write the
-// rows older kernels wrote, which this one must still read, and that pin the
-// refusal of a variant at a format that cannot carry it. Nothing but
-// state_blob_put names a format in shipped code.
+// The same at an explicit format, v2 to v5: for the tests that write the rows
+// other kernels wrote, which this one must still read, and that pin the refusal
+// of a variant at a format that cannot carry it. Nothing but state_blob_put
+// names a format in shipped code. A v5 blob written here is unrated.
 int state_blob_put_at(const Game *g, const BoardClock *clk, int format, unsigned char *out);
+
+// THE ROW, whole: state_blob_put_at with the game's rating stamp. `ratings` NULL
+// is the unrated stamp. A format before v5 has nowhere to put a stamp and a
+// board that is not over has none, so in both cases none is written.
+int state_blob_put_rated_at(const Game *g, const BoardClock *clk, const GameRatings *ratings, int format, unsigned char *out);
 
 // Load a durable blob back into g, and its clock into `clk` (may be NULL; a v2
 // blob reads as a zero clock), and its rules into g->rules (v2 and v3: the
@@ -196,6 +248,13 @@ int state_blob_put_at(const Game *g, const BoardClock *clk, int format, unsigned
 // game_validate) - g and clk are then left exactly as they were.
 // `len` counts the header bytes too.
 int state_blob_load(Game *g, const unsigned char *p, int len, BoardClock *clk);
+
+// THE ROW, whole: state_blob_load, and the game's rating stamp into `ratings`
+// (may be NULL; a blob before v5 reads as unrated). 0, unreadable, also for a
+// stamp this kernel did not write: one that does not read (game_ratings_get),
+// that counts seats the board does not have, or that sits on a board that is
+// not over.
+int state_blob_load_rated(Game *g, const unsigned char *p, int len, BoardClock *clk, GameRatings *ratings);
 
 // ---------- the response envelope header ----------------------------------
 //
@@ -210,22 +269,41 @@ int state_blob_load(Game *g, const unsigned char *p, int len, BoardClock *clk);
 //   1   u8  flags: ENV_FLAG_SEATED, ENV_FLAG_ROSTER
 //   2   u8  the viewer's seat, 0xFF for the spectator
 //   3   u32 version, little-endian
-//   7   u16 the retired JSON roster island's length (view.ts), then that run
+//   7   u16 the island's length, then that run (below)
 //  ..   u16 view_len, then the view blob, then the roster trailer (roster.h)
 //
 // All little-endian. The view blob is [VIEW_FORMAT_VERSION][viewer][masked
 // state], and view_len counts those two prefix bytes.
 //
 // THE ISLAND IS A LENGTH-PREFIXED RUN, so the view's offset is DERIVED from it
-// and never a constant. This kernel writes the island empty, which makes the
-// header exactly ENV_VIEW_AT bytes long - but a reader that hardcoded
-// ENV_VIEW_AT would misread the first envelope anyone wrote an island into,
-// which is why there is one reader and it derives.
+// and never a constant. With an empty island the header is exactly ENV_VIEW_AT
+// bytes long - but a reader that hardcoded ENV_VIEW_AT would misread the first
+// envelope anyone wrote an island into, which is why there is one reader and it
+// derives.
+//
+// It began as a JSON copy of the roster (view.ts), long retired, and every
+// reader ever shipped - this one, the Swift one in old iOS builds, a web bundle
+// in a tab opened last week - SKIPS it by its length without looking inside.
+// That makes it the one place a server can say something new to the readers
+// that know to look, while every older reader reads the envelope exactly as it
+// always did. Nothing else in an envelope is like that: an unknown flag bit, a
+// new view format, a new trailer format or one byte past the trailer are each a
+// refusal on every reader that predates them.
+//
+// So an island is empty, or it is one TAGGED run: its first byte says what it
+// is, and a reader ignores a tag it does not know (the JSON one began with '{').
+//
+//   ENV_ISLAND_RATINGS  then GAME_RATINGS_BYTES: what this finished game did to
+//                       its seats' ratings (GameRatings above), the bytes the
+//                       state blob carries. Written for a rated game that is
+//                       over, to every viewer; the ratings are public.
 #define ENV_FORMAT       1
 #define ENV_FLAG_SEATED  0x01   // bit0: the envelope is for a seated viewer
 #define ENV_FLAG_ROSTER  0x02   // bit1: a packed roster trailer follows the view
 #define ENV_ISLAND_AT    7      // the island's u16 length, then its bytes
-#define ENV_VIEW_AT      11     // the view blob, with the empty island this kernel writes
+#define ENV_VIEW_AT      11     // the view blob, behind an empty island
+#define ENV_ISLAND_RATINGS 1    // the island's tag: a rating stamp follows
+#define ENV_ISLAND_MAX   (1 + GAME_RATINGS_BYTES)   // the longest island this kernel writes
 
 // What env_header_read found. Offsets are into the envelope it was given.
 typedef struct {
@@ -234,18 +312,28 @@ typedef struct {
     int      state_at;    // the masked state inside the view blob
     int      state_len;
     int      trailer_at;  // where the roster trailer starts (state_at + state_len)
+    int      island_at;   // the island's bytes, and how many (0: none)
+    int      island_len;
 } EnvHeader;
 
 // Writes the header for `viewer` (a seat, or -1 for the spectator) at
-// `version`, the empty island, and the view blob's own two-byte prefix.
-// Returns the view blob's offset (ENV_VIEW_AT), or -1 when `cap` cannot hold
-// even the header. The caller writes the masked state at that offset + 2 and
-// then calls env_header_set_view_len: the length prefix sits AHEAD of a blob
-// whose length is only known once it is written.
-int env_header_write(unsigned char *out, int cap, int viewer, uint32_t version);
+// `version`, the island for `ratings` (empty when that is NULL or unrated), and
+// the view blob's own two-byte prefix. Returns the view blob's offset
+// (ENV_VIEW_AT behind an empty island), or -1 when `cap` cannot hold the header.
+// The caller writes the masked state at that offset + 2 and then calls
+// env_header_set_view_len: the length prefix sits AHEAD of a blob whose length
+// is only known once it is written.
+int env_header_write(unsigned char *out, int cap, int viewer, uint32_t version, const GameRatings *ratings);
 
-// The view blob's length (2 + the state's), into the header written above.
-void env_header_set_view_len(unsigned char *out, int view_len);
+// The view blob's length (2 + the state's), into the header written above:
+// `view_at` is what env_header_write returned.
+void env_header_set_view_len(unsigned char *out, int view_at, int view_len);
+
+// The rating stamp the `len`-byte envelope at p carries in its island, into
+// *r. true for an envelope with no stamp too (r->n is then 0): an empty island,
+// or a tag this kernel does not know. false only for a ratings island that does
+// not read (its length, or game_ratings_get).
+bool env_island_ratings(const unsigned char *p, const EnvHeader *h, GameRatings *r);
 
 // Reads the header of the `len`-byte envelope at p. true and *h filled, or
 // false for a header this kernel does not read (format, flags, seat byte or a
