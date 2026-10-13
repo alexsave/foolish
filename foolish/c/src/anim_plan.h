@@ -215,7 +215,12 @@
 // A seat going out. Struck with the landing of the move that put them out,
 // because that is when the badge has collapsed (the OUTS rule of the beats).
 #define ANIM_CUE_OUT      9
-// A refused card flying home (ANIM_EVT_REVERT, a client synthesis).
+// A refused move flying home (ANIM_EVT_REVERT, a client synthesis). NOT A
+// SOUND OF ITS OWN: an undone move sounds like that move played backwards, so
+// this cue carries the cue it undoes (AnimCue.undoes - PLACE for a refused
+// attack, COVER for a refused cover, PICKUP for a refused pickup) and a host
+// plays THAT cue's sound reversed. No host keeps a revert asset, and a move
+// whose sound is replaced has its revert replaced with it.
 #define ANIM_CUE_REVERT   10
 // A good being said: a sword turning into a check (anim_role_cue).
 #define ANIM_CUE_GOOD     11
@@ -250,7 +255,7 @@
 #define ANIM_SOUND_OUT_LAG_MS (2 * ANIM_SOUND_STAGGER_MS)
 
 // One cue. `hits` strikes of `kind`, the first at `at_ms` and each one after
-// ANIM_SOUND_STAGGER_MS behind the last. Eight bytes, deliberately: the plan
+// ANIM_SOUND_STAGGER_MS behind the last. Twelve bytes, and counted: the plan
 // is static storage in every module that links it, and the wasm builds' linear
 // memory is pinned to the page.
 typedef struct {
@@ -262,6 +267,19 @@ typedef struct {
     uint8_t n_cards;   // how many cards it stands for (255 = that or more). A
                        //   sweep of ten cards is ONE hit of ten cards, and how
                        //   that sounds heavier is the host's rendering.
+    uint8_t undoes;    // for ANIM_CUE_REVERT, the cue of the move being undone,
+                       //   whose sound is played backwards; ANIM_CUE_NONE on
+                       //   every other cue.
+                       //
+                       //   WHICH MOVE IS READ OFF THE STREAM: the nearest step
+                       //   before the revert that moved one of its cards says
+                       //   whether it was laid, laid as a cover, or taken. A
+                       //   revert whose move is not in the stream (the refusal
+                       //   came after that run had ended) is read by its
+                       //   direction alone - home to a hand undoes a card laid
+                       //   (PLACE), back to the table undoes a PICKUP - which
+                       //   cannot tell a cover from an attack. Telling them
+                       //   apart there needs the host to say so on the step.
 } AnimCue;
 
 // A step makes at most two: one as it opens and one as it lands.
@@ -877,6 +895,59 @@ int anim_role_cue(AnimRoles shown, AnimRoles next);
 // value the end screen is asked with. The host strikes it as the results come
 // up.
 int anim_finish_cue(int game_over, int my_seat);
+
+// ---- which cues could sound NEXT ------------------------------------------
+//
+// A host has to fetch and decode a sound before it can strike it, and it does
+// not have to fetch them all at once: from any one board only some moves can
+// be made, so only some cues can be the next thing heard. This is that set, as
+// one bit per ANIM_CUE_* (bit k is cue k), for the board a viewer is holding.
+// A host loads the cues it names first and the rest behind them.
+//
+// "NEXT" IS ONE MOVE, WITH EVERYTHING THAT MOVE BRINGS WITH IT: the move any
+// seat could make from here (not only the viewer's), and its whole stream - a
+// cover that closes the bout brings the sweep, the pile, the refills, a seat
+// going out and the hand-off; the last card of a game brings its end.
+//
+// A SUPERSET, DELIBERATELY, AND NEVER LESS. It is a hint about order, so a cue
+// named and not played costs nothing but its place in a queue, while a cue
+// played and not named is a sound that may not have arrived - the one failure
+// this must not have, and the one tests.c test_next_cues_cover_every_move
+// plays whole games to look for. So the rule reads the few facts that decide
+// reachability and no hands or ranks at all:
+//
+//   a lobby             the deal it can make: DEAL, FLIP
+//   a finished game     nothing (a rematch is a lobby first)
+//   a game in play      LIFT and PLACE always - somebody can lay a card
+//     no trump turned yet DEAL, FLIP: the opening is still being dealt
+//     an uncovered attack COVER, PICKUP
+//     cards on the table  SWEEP, PILE, GOOD, HAND_OFF: the bout can close, and
+//                         a transfer or a good needs a bout to be in;
+//                         DEAL too while there is stock to refill from
+//     the stock can run out on this move (it is empty, or the bout can close
+//       and its refills, six a seat at most, could take all of it)
+//                         OUT, FINISH, and FOOL for a viewer who is seated
+//
+// REVERT is never named: it has no sound of its own to load. A refused move
+// is the viewer's own, and the cue it would play backwards (PLACE, COVER or
+// PICKUP) is already named wherever that move can be made.
+//
+// The ask is scalars a host already holds, in a struct so a generated writer
+// carries them. `deck` does not count the trump lying under it.
+typedef struct {
+    int8_t  status;       // GAME_STATUS_*
+    int8_t  my_seat;      // negative for a spectator
+    uint8_t n_players;
+    uint8_t n_battles;    // piles on the table
+    uint8_t n_covered;    // ...of which covered
+    bool    has_flipped;  // the trump is lying face up under the stock
+    int16_t deck;         // cards in the stock, the trump not among them
+} AnimCueAsk;
+
+// The mask above. An unknown status answers every cue: a board this rule
+// cannot read is no reason to load anything late.
+uint32_t anim_cues_next(const AnimCueAsk *q);
+#define ANIM_CUES_ALL (((uint32_t)1 << ANIM_N_CUES) - 2)   // every cue; NONE is not one
 
 // ---- the pre-bout table ---------------------------------------------------
 //

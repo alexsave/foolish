@@ -493,6 +493,15 @@ export function animRoleCue(shown: AnimRoles, next: AnimRoles): number {
         next.defender, next.firstAttacker, next.goodMask);
 }
 
+/** WHICH CUES COULD SOUND NEXT from a board (anim_cues_next): one bit per
+ *  ANIM_CUE_*, a superset by design - a hint for what to load first, never a
+ *  promise of what will play. The ask is the few scalars the rule reads. */
+export function animCuesNext(ask: V.AnimCueAsk_Snap): number {
+    const ex = bots();
+    V.writeAnimCueAsk(mem(ex), ex.wasm_anim_cue_ask_ptr(), ask);
+    return ex.wasm_anim_cues_next() >>> 0;
+}
+
 /** WHAT THE END OF THE GAME SOUNDS LIKE to this viewer (anim_finish_cue).
  *  `gameOver` is the fool's seat, negative while the game runs; `mySeat` is
  *  negative for a spectator. */
@@ -612,6 +621,9 @@ export interface AnimPlanStepSnap {
  *  it, and (step, kind) names a cue uniquely within a plan. */
 export interface AnimCueSnap {
     atMs: number; kind: number; step: number; hits: number; nCards: number;
+    /** For ANIM_CUE_REVERT, the cue of the move being undone, whose sound is
+     *  played backwards; ANIM_CUE_NONE on every other cue. */
+    undoes: number;
 }
 
 /** The plan (anim_plan.h AnimPlan). */
@@ -738,6 +750,7 @@ function readPlan(ex: WebExports): AnimPlanSnap {
             step: A.AnimCue_get_step(m, c),
             hits: A.AnimCue_get_hits(m, c),
             nCards: A.AnimCue_get_n_cards(m, c),
+            undoes: A.AnimCue_get_undoes(m, c),
         });
     }
     return {

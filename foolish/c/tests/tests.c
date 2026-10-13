@@ -11410,6 +11410,117 @@ static void test_opening_deal_plan_paces_card_by_card(void) {
 // same-millisecond check on real two-card covers; striking an out at its own
 // start_ms fails the lag check; counting a beat's cards on its LIFT fails the
 // prefix check; dropping the PILE cue fails "seen in real play".
+// 7c. THE ONE FAILURE anim_cues_next MAY NOT HAVE: a cue that plays without
+// having been named from the board before it. Whole games (2..6 seats), every
+// move, every viewer: the mask is asked of the board BEFORE the move, and then
+// every sound the move makes - its plan's cues, the turn of the marks it
+// causes, the end of the game if it is one - has to be in it. Also printed:
+// how much of a hint it is (the mean number of cues named, of 14), because a
+// rule that named everything would pass this and be worth nothing.
+//
+// MUTATION-CHECKED against c/src/anim_plan.c anim_cues_next: dropping any one
+// of DEAL-on-refill, COVER/PICKUP, SWEEP/PILE, HAND_OFF, GOOD, OUT/FINISH or
+// the six-a-seat reach fails "was not named"; so does reading the reach as
+// three a seat.
+static int ncue_bits(uint32_t m) { int n = 0; for (; m; m &= m - 1) n++; return n; }
+static void test_next_cues_cover_every_move(void) {
+    static Game g, before;
+    static LegalMoves moves;
+    static AnimPlan plan;
+    long named = 0;
+    int asked = 0, missed = 0, n_role = 0, n_finish = 0;
+    game_force_first_attacker(-1);
+    game_open_at_seat(-1);
+    for (int np = 2; np <= 6; np++) {
+        for (int salt = 0; salt < 4; salt++) {
+            const int seed = 7300 + salt * 19 + np;
+            game_set_seed((uint32_t)seed);
+            random_strategy_set_seed((uint32_t)seed);
+            unsigned char deal[FOOLISH_SEED_LEN];
+            for (int i = 0; i < FOOLISH_SEED_LEN; i++) deal[i] = (unsigned char)(i * 23 + seed * 7 + np);
+            game_set_deal_seed_bytes(deal, FOOLISH_SEED_LEN);
+            memset(&g, 0, sizeof g);
+            g.num_players = (int8_t)np;
+            for (int i = 0; i < np; i++) g.players[i].status = PLAYER_STATUS_READY;
+            start_game(&g);
+            pf_np = np;
+            for (int guard = 0; guard < 20000 && game_done(&g) < 0; guard++) {
+                bool acted = false;
+                const int log_start = g.num_logs;
+                memcpy(&before, &g, sizeof g);
+                pf_n_snaps = 0;
+                engine_snap_hook = pf_snap_cb;
+                for (int pi = 0; pi < np && !acted; pi++) {
+                    if (!should_bot_act(&g, pi)) continue;
+                    calculate_legal_moves(&g, pi, &moves);
+                    if (moves.n == 0) continue;
+                    // Alternate two players' worth of choices so passes, goods
+                    // and pickups all come up: the handwritten bot and a random one.
+                    const int pick = (salt & 1) ? random_strategy_choose(&g, pi, &moves, 0)
+                                                : handwritten_strategy_choose(&g, pi, &moves, 0);
+                    const LegalMove *m = &moves.moves[pick];
+                    switch (m->type) {
+                        case MOVE_ATTACK: acted = handle_attack(&g, pi, m->cards, m->n_cards); break;
+                        case MOVE_COVER:  acted = handle_cover(&g, pi, m->cards, m->attack_cards, m->n_cards); break;
+                        case MOVE_PASS:   acted = handle_pass(&g, pi, m->cards, m->n_cards); break;
+                        case MOVE_PICKUP: acted = handle_pickup(&g, pi); break;
+                        case MOVE_GOOD:   acted = handle_good(&g, pi); break;
+                        default: break;
+                    }
+                }
+                engine_snap_hook = 0;
+                if (!acted) break;
+                EvSnap refs[PF_MAX_SNAPS];
+                for (int i = 0; i < pf_n_snaps; i++) {
+                    refs[i].g = (const Game *)(const void *)pf_snaps[i].bytes;
+                    refs[i].tag = pf_tags[i];
+                    refs[i].aux = pf_aux[i];
+                }
+                const PfCounts after = pf_counts_of(&g);
+                int covered = 0;
+                for (int i = 0; i < before.num_battles; i++)
+                    if (!card_is_none(before.table_battles[i].defense)) covered++;
+                for (int viewer = -1; viewer < np; viewer++) {
+                    const AnimCueAsk q = { GAME_STATUS_PLAYING, (int8_t)viewer, (uint8_t)np,
+                                           (uint8_t)before.num_battles, (uint8_t)covered,
+                                           before.has_flipped, before.deck_count };
+                    const uint32_t mask = anim_cues_next(&q);
+                    asked++;
+                    named += ncue_bits(mask);
+                    uint32_t made = 0;
+                    pf_n = 0;
+                    pf_maybe_truncated = 0;
+                    evwire_walk(refs, pf_n_snaps, g.logs + log_start, g.num_logs - log_start,
+                                viewer, pf_sink, 0);
+                    if (pf_n > 0 && pf_n <= ANIM_MAX_STEPS
+                        && anim_build_plan(pf_evs, pf_n, np, after.deck, after.discard,
+                                           after.flipped, after.hand, &plan) == ANIM_EOK)
+                        for (int i = 0; i < plan.n_cues; i++) made |= (uint32_t)1 << plan.cues[i].kind;
+                    // The marks this move turned, and the end if it was one.
+                    const AnimRoles was = { before.defender, before.first_attacker, (int)before.good_players_mask };
+                    const AnimRoles now = { g.defender, g.first_attacker, (int)g.good_players_mask };
+                    const int role = game_done(&g) < 0 ? anim_role_cue(was, now) : ANIM_CUE_NONE;
+                    if (role != ANIM_CUE_NONE) { made |= (uint32_t)1 << role; n_role++; }
+                    const int fin = anim_finish_cue(game_done(&g), viewer);
+                    if (fin != ANIM_CUE_NONE) { made |= (uint32_t)1 << fin; n_finish++; }
+                    if (made & ~mask) {
+                        if (missed++ < 4)
+                            printf("  cues %x were not named from the board before (mask %x; np %d seed %d viewer %d, "
+                                   "table %d/%d covered, deck %d, trump %d)\n", made & ~mask, mask, np, seed, viewer,
+                                   before.num_battles, covered, before.deck_count, before.has_flipped);
+                    }
+                }
+            }
+        }
+    }
+    game_set_seed(1);
+    printf("  next cues over real games: %d boards asked, %.1f of %d cues named on average, %d role turns, %d ends, %d missed\n",
+           asked, asked ? (double)named / asked : 0.0, ANIM_N_CUES - 1, n_role, n_finish, missed);
+    CHECK(asked > 2000 && n_role > 100 && n_finish > 20, "the games asked the rule about real boards, marks and ends");
+    CHECK(missed == 0, "every cue a move made was named from the board before it");
+    CHECK(named < (long)asked * 11, "and it is a hint: on average it leaves cues out");
+}
+
 static void test_plan_cues_over_real_games(void) {
     static Game g;
     static LegalMoves moves;
@@ -16549,6 +16660,7 @@ int main(void) {
     test_opening_deal_bytes_are_unchanged();
     test_opening_deal_plan_paces_card_by_card();
     test_plan_cues_over_real_games();
+    test_next_cues_cover_every_move();
     test_a_started_game_replays_its_deal();
     test_table_reseat_retitle_continue();
     test_table_rearrange_and_redact();

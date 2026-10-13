@@ -17,11 +17,37 @@
 // (src/audio/cueSchedule.ts) precisely so that D is never zero for a sound that
 // has to land on a card.
 //
+// THE ORDER THE FILES ARRIVE IN. Every sound is loaded, but not all at once and
+// not in the table's order: the kernel says which cues could be the NEXT thing
+// heard from the board on screen (c/src/anim_plan.h anim_cues_next), the page
+// passes that on as `want`, and those files go to the front of the queue. A few
+// fetches run at a time so that the front of the queue means something; one
+// already on its way is never restarted, and none is asked for twice.
+//
+//   BEFORE THE FIRST GESTURE only the wanted files are fetched, and only as
+//   bytes: a browser will not let a page make sound unasked, but it will let it
+//   download, and the first thing a player hears is usually caused by the very
+//   tap that unlocks audio. With the bytes already here that tap only has to
+//   decode them (a few milliseconds), where fetching from cold loses the first
+//   card of a deal. It is a few kilobytes, and nothing at all for a player who
+//   is muted.
+//
+//   A STRIKE WHOSE FILE IS STILL ON ITS WAY WAITS FOR IT, briefly: it is
+//   started the moment the file decodes if that is no more than LATE_S behind
+//   the time it was aimed at, and dropped otherwise. A sound that is 20ms late
+//   is a sound; one that is half a second late is a mistake.
+//
+// A REVERT IS ANOTHER CUE, BACKWARDS. The one cue id this file knows by name:
+// ANIM_CUE_REVERT has no sound of its own, the kernel says which cue it undoes,
+// and that cue's buffer is played reversed (reversed once, and kept).
+//
 // WHEN IT IS SILENT, and each is a deliberate no-op rather than an error:
 //   - before the first tap or key. Browsers refuse to start audio a user did
 //     not ask for, so the context is not even created until a gesture; the
 //     sounds of a deal that plays before one are simply not heard.
 //   - while muted. Nothing is fetched or decoded for a player who has it off.
+//     (Before a gesture the wanted files' bytes are fetched, as above; the
+//     context itself still waits.)
 //   - while the tab is hidden. A game that makes noise from a background tab
 //     is the tab you close.
 //   - where there is no Web Audio at all (Node, jsdom, an old browser).
@@ -33,11 +59,20 @@
 // is leaning on the other channels to follow the table. The control for sound
 // is the mute, which is one tap and remembered.
 
+import { ANIM_CUE_REVERT } from '@sdk/ts/gen/kernel_consts.bots.ts';
 import { CUE_SOUNDS, CUE_SOUND_ROOT, type CueSound } from './cueSounds';
 
 const MUTED_KEY = 'foolish_sound_muted';
 const VOLUME_KEY = 'foolish_sound_volume';
 const DEFAULT_VOLUME = 0.7;
+/** How many files are fetched at once. Enough to fill a connection, few enough
+ *  that the order of the queue decides what arrives first. */
+const MAX_FETCHES = 3;
+/** How far behind its aim a strike that waited for its file may still start. */
+const LATE_S = 0.08;
+
+/** Where a file is between "not asked for" (absent) and decoded (in `buffers`). */
+type Progress = 'fetching' | 'held' | 'decoding' | 'failed';
 
 /** What a screen draws the sound control from. One object per change, so it
  *  compares by identity (useSyncExternalStore). */
@@ -70,6 +105,17 @@ export class CueAudio {
     private readonly listeners = new Set<() => void>();
     private state: CueAudioState | null = null;
     private armed = false;
+    /** The cues that could sound next, one bit per ANIM_CUE_* (anim_cues_next). */
+    private wanted = 0;
+    private readonly progress = new Map<string, Progress>();
+    /** Bytes fetched before there was a context to decode them with. */
+    private readonly held = new Map<string, ArrayBuffer>();
+    private fetching = 0;
+    /** Strikes whose file had not decoded yet, with the time each was aimed at. */
+    private waiting: { file: string; sound: CueSound; at: number; nCards: number; backwards: boolean }[] = [];
+    /** A decoded file, sample for sample back to front, made the first time a
+     *  revert needs it. */
+    private readonly reversed = new Map<AudioBuffer, AudioBuffer>();
     /** [0, 1). Replaceable so a test can hear the same thing twice. */
     random: () => number = Math.random;
 
@@ -142,6 +188,8 @@ export class CueAudio {
         if (this.settings().muted) return;
         if (this.ctx) {
             if (this.ctx.state !== 'running') void this.ctx.resume().catch(() => {});
+            // A player who muted mid-load and came back: carry on where it stopped.
+            this.pump();
             return;
         }
         const Ctor = contextCtor();
@@ -155,25 +203,89 @@ export class CueAudio {
         this.master.gain.value = this.settings().volume;
         this.master.connect(this.ctx.destination);
         if (this.ctx.state !== 'running') void this.ctx.resume().catch(() => {});
-        this.load();
+        // What arrived before the gesture can be decoded now, and everything
+        // else may be fetched.
+        for (const [file, bytes] of this.held) this.decode(file, bytes);
+        this.held.clear();
+        this.pump();
     }
 
-    /** Fetch and decode every file the table names. Runs once, as the context
-     *  is made. A file that does not arrive leaves its cue silent; nothing
-     *  waits on this. */
-    private load(): void {
-        const ctx = this.ctx;
-        if (!ctx || typeof fetch === 'undefined') return;
-        for (const sound of Object.values(CUE_SOUNDS)) {
+    // ---- loading ---------------------------------------------------------------
+
+    /**
+     * The cues that could sound next from the board on screen, one bit per
+     * ANIM_CUE_* - the kernel's answer (anim_cues_next), passed on whenever the
+     * board changes. Their files jump the queue. Nothing already fetching is
+     * disturbed, and a cue that drops out of the set keeps what it has.
+     */
+    want(mask: number): void {
+        if (mask === this.wanted) return;
+        this.wanted = mask;
+        this.pump();
+    }
+
+    /** The next file to ask for: a wanted cue's, in the table's order, and then
+     *  - once there is a context to decode into - anything left. */
+    private next(): string | null {
+        let later: string | null = null;
+        for (const [kind, sound] of Object.entries(CUE_SOUNDS)) {
             for (const file of sound?.files ?? []) {
-                fetch(CUE_SOUND_ROOT + file)
-                    .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))))
-                    // The callback form: older Safari has no promise from it.
-                    .then((bytes) => new Promise<AudioBuffer>((ok, no) => { ctx.decodeAudioData(bytes, ok, no); }))
-                    .then((buffer) => { this.buffers.set(file, buffer); })
-                    .catch(() => { /* this cue stays silent */ });
+                if (this.progress.has(file) || this.buffers.has(file)) continue;
+                if (this.wanted & (1 << Number(kind))) return file;
+                later ??= file;
             }
         }
+        return this.ctx ? later : null;
+    }
+
+    /** Start as many fetches as there is room for. Called whenever something
+     *  that decides the queue changes: a want, a gesture, a fetch finishing. */
+    private pump(): void {
+        if (this.settings().muted || typeof fetch === 'undefined' || !contextCtor()) return;
+        for (let file = this.next(); file !== null && this.fetching < MAX_FETCHES; file = this.next()) {
+            this.fetchFile(file);
+        }
+    }
+
+    private fetchFile(file: string): void {
+        this.progress.set(file, 'fetching');
+        this.fetching++;
+        fetch(CUE_SOUND_ROOT + file)
+            .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))))
+            .then((bytes) => {
+                this.fetching--;
+                if (this.ctx) this.decode(file, bytes);
+                else { this.held.set(file, bytes); this.progress.set(file, 'held'); }
+            }, () => {
+                this.fetching--;
+                this.fail(file);
+            })
+            .then(() => this.pump());
+    }
+
+    private decode(file: string, bytes: ArrayBuffer): void {
+        const ctx = this.ctx;
+        if (!ctx) return;
+        this.progress.set(file, 'decoding');
+        // The callback form: older Safari has no promise from it.
+        ctx.decodeAudioData(bytes, (buffer) => {
+            this.buffers.set(file, buffer);
+            this.progress.delete(file);
+            // The strikes that were waiting on this file: now, or not at all.
+            const due = this.waiting.filter((w) => w.file === file);
+            this.waiting = this.waiting.filter((w) => w.file !== file);
+            for (const w of due) {
+                if (ctx.currentTime <= w.at + LATE_S) {
+                    this.start(w.sound, buffer, Math.max(w.at, ctx.currentTime), w.nCards, w.backwards);
+                }
+            }
+        }, () => this.fail(file));
+    }
+
+    /** A file that did not arrive or would not decode: its cue is silent. */
+    private fail(file: string): void {
+        this.progress.set(file, 'failed');
+        this.waiting = this.waiting.filter((w) => w.file !== file);
     }
 
     /** Has this file arrived and decoded? For the audition page, which says
@@ -196,18 +308,53 @@ export class CueAudio {
 
     /**
      * Strike cue `kind` (an ANIM_CUE_*) `delayMs` from now, standing for
-     * `nCards` cards. Returns whether a sound was scheduled; false is every
-     * silent case in this file's header and is never an error.
+     * `nCards` cards. `undoes` is the plan's word for a REVERT: the cue whose
+     * sound it plays backwards. Returns whether a sound was scheduled, or is
+     * waiting on a file that is on its way; false is every silent case in this
+     * file's header and is never an error.
      */
-    strike(kind: number, delayMs = 0, nCards = 1): boolean {
+    strike(kind: number, delayMs = 0, nCards = 1, undoes = 0): boolean {
         const ctx = this.ctx, master = this.master;
         if (!ctx || !master || this.settings().muted || ctx.state !== 'running') return false;
         if (typeof document !== 'undefined' && document.hidden) return false;
-        const sound = CUE_SOUNDS[kind];
+        const backwards = kind === ANIM_CUE_REVERT;
+        const voiced = backwards ? undoes : kind;
+        const sound = CUE_SOUNDS[voiced];
         if (!sound) return false;
-        const buffer = this.buffers.get(this.variant(kind, sound));
-        if (!buffer) return false;
+        const file = this.variant(voiced, sound);
+        const at = ctx.currentTime + Math.max(0, delayMs) / 1000;
+        const buffer = this.buffers.get(file);
+        if (buffer) {
+            this.start(sound, buffer, at, nCards, backwards);
+            return true;
+        }
+        if (this.progress.get(file) === 'failed') return false;
+        // It is being played, so it is wanted, whatever the board said: to the
+        // front of the queue with it, and the strike waits for the file.
+        this.wanted |= 1 << voiced;
+        this.pump();
+        this.waiting.push({ file, sound, at, nCards, backwards });
+        return true;
+    }
 
+    /** `buffer` back to front. Made once a file, on the first revert that
+     *  wants it: most files are never undone. */
+    private backwards(ctx: AudioContext, buffer: AudioBuffer): AudioBuffer {
+        let out = this.reversed.get(buffer);
+        if (!out) {
+            out = ctx.createBuffer(buffer.numberOfChannels, buffer.length, buffer.sampleRate);
+            for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+                out.getChannelData(ch).set(buffer.getChannelData(ch).slice().reverse());
+            }
+            this.reversed.set(buffer, out);
+        }
+        return out;
+    }
+
+    private start(sound: CueSound, forwards: AudioBuffer, at: number, nCards: number, backwards: boolean): void {
+        const ctx = this.ctx, master = this.master;
+        if (!ctx || !master) return;
+        const buffer = backwards ? this.backwards(ctx, forwards) : forwards;
         const source = ctx.createBufferSource();
         source.buffer = buffer;
         // A little off true each time, so a row of one sample is a row of
@@ -224,8 +371,7 @@ export class CueAudio {
             gain.disconnect();
         };
         this.live.add(source);
-        source.start(ctx.currentTime + Math.max(0, delayMs) / 1000);
-        return true;
+        source.start(at);
     }
 
     /** Stop everything scheduled or sounding: a replay was scrubbed, the tab
@@ -235,6 +381,7 @@ export class CueAudio {
             try { source.stop(); } catch { /* never started */ }
         }
         this.live.clear();
+        this.waiting = [];
     }
 }
 

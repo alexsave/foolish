@@ -1000,6 +1000,7 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_anim_roles_goods_opening -Wl,--export=wasm_anim_roles_goods_cleared \
   -Wl,--export=wasm_anim_roles_pass_hand_off -Wl,--export=wasm_anim_shown_ledger_allows \
   -Wl,--export=wasm_anim_role_cue -Wl,--export=wasm_anim_finish_cue \
+  -Wl,--export=wasm_anim_cue_ask_ptr -Wl,--export=wasm_anim_cues_next \
   -Wl,--export=wasm_belief_probe_reset -Wl,--export=wasm_belief_probe_dump -Wl,--export=wasm_belief_probe_ptr
 
 # The C Roster (src/roster.h), in the TEST build only (WASM_TEST_EXPORTS below):
@@ -1588,6 +1589,7 @@ WASM_WEB_NAMES := \
   wasm_anim_roles_goods_opening wasm_anim_roles_goods_cleared \
   wasm_anim_roles_pass_hand_off wasm_anim_shown_ledger_allows \
   wasm_anim_role_cue wasm_anim_finish_cue \
+  wasm_anim_cue_ask_ptr wasm_anim_cues_next \
   wasm_replay_b32_encode wasm_replay_b32_decode wasm_replay_link \
   wasm_replay_extras_ptr wasm_replay_extras_decode \
   wasm_replay_events wasm_replay_events_index_ptr \

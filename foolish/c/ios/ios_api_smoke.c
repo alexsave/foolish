@@ -1757,6 +1757,15 @@ static int board_rules_check(void) {
         || fio_finish_cue(2, -1) != ANIM_CUE_FINISH) {
         printf("FAIL sound cues\n"); return 1;
     }
+    // What could sound next: a lobby can only deal, and the scalars cross in
+    // AnimCueAsk's order (an uncovered attack is n_battles 1, n_covered 0).
+    if (fio_cues_next(GAME_STATUS_WAITING, 0, 2, 0, 0, 0, 0) != ((1u << ANIM_CUE_DEAL) | (1u << ANIM_CUE_FLIP))
+        || !(fio_cues_next(GAME_STATUS_PLAYING, 0, 2, 1, 0, 1, 20) & (1u << ANIM_CUE_COVER))
+        || (fio_cues_next(GAME_STATUS_PLAYING, 0, 2, 1, 1, 1, 20) & (1u << ANIM_CUE_COVER))
+        || (fio_cues_next(GAME_STATUS_PLAYING, -1, 2, 1, 0, 0, 0) & (1u << ANIM_CUE_FOOL))
+        || !(fio_cues_next(GAME_STATUS_PLAYING, 1, 2, 1, 0, 0, 0) & (1u << ANIM_CUE_FOOL))) {
+        printf("FAIL next cues\n"); return 1;
+    }
     // The end screen clears the board's chrome (anim_board_chrome).
     if (fio_board_chrome(1, 1, 0, FIO_CHROME_RULE_CLEAR_ON_RESULTS) != FIO_CHROME_RESULTS
         || (fio_board_chrome(0, 0, 0, FIO_CHROME_RULE_CLEAR_ON_RESULTS) & FIO_CHROME_HAND) == 0

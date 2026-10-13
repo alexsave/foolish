@@ -1,7 +1,9 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import Link from 'next/link';
 import { animBuildPlan, ANIM_EVT, ANIM_LOC, type AnimPlanEventIn } from '@sdk/ts/wasm/bots.ts';
-import { ANIM_CUE_NAMES, ANIM_N_CUES, ANIM_SOUND_STAGGER_MS } from '@sdk/ts/gen/kernel_consts.bots.ts';
+import {
+    ANIM_CUE_NAMES, ANIM_N_CUES, ANIM_SOUND_STAGGER_MS, ANIM_CUE_REVERT, ANIM_CUE_PLACE, ANIM_CUE_COVER, ANIM_CUE_PICKUP,
+} from '@sdk/ts/gen/kernel_consts.bots.ts';
 import { CARD_NONE_SUIT, CARD_NONE_VALUE, GAME_STATUS_PLAYING, PLAYER_STATUS_IN, type TableView_Snap } from '@sdk/ts/gen/view_layout.bots.ts';
 import { cueAudio } from '../audio/cueAudio';
 import { CUE_SOUNDS } from '../audio/cueSounds';
@@ -47,6 +49,8 @@ const MOVES: readonly { name: string; says: string; events: () => AnimPlanEventI
                      draw(ANIM_EVT.refill, 0, 2), draw(ANIM_EVT.refill, 1, 2)] },
     { name: 'A pickup', says: 'the table taken into a hand, then the attacker refills',
       events: () => [sweep(ANIM_EVT.pickup, 5, ANIM_LOC.hand, 1), draw(ANIM_EVT.refill, 0, 3)] },
+    { name: 'A refused attack', says: 'the card goes down, then comes home: its landing, backwards',
+      events: () => [lay(ANIM_EVT.attack_pass, 0, 1), { ...lay(ANIM_EVT.revert, 0, 1), from: ANIM_LOC.table, to: ANIM_LOC.hand }] },
     { name: 'A last card', says: 'the cover that empties a hand, and the seat going out with it',
       events: () => [lay(ANIM_EVT.cover, 1, 1), { type: ANIM_EVT.out, seat: 1 },
                      sweep(ANIM_EVT.discard, 2, ANIM_LOC.discard)] },
@@ -66,26 +70,36 @@ const TABLE: TableView_Snap = {
     gameId: 'sounds', title: '',
 };
 
-/** Run `strike` now, or as soon as the files it needs have arrived: the first
- *  tap on this page is also the gesture that lets them be fetched. */
-const whenLoaded = (strike: () => boolean, tries = 20): void => {
+/** Run `play` now, or as soon as every file of `kinds` has arrived: the first
+ *  tap on this page is also the gesture that lets them be fetched. The board
+ *  never waits like this - a sound that is late there is dropped - but a
+ *  workbench is for hearing the sound, however long it took to arrive. */
+const whenLoaded = (kinds: readonly number[], play: () => void, tries = 40): void => {
     cueAudio.unlock();
-    if (strike() || tries <= 0) return;
-    setTimeout(() => whenLoaded(strike, tries - 1), 150);
+    cueAudio.want(kinds.reduce((m, k) => m | (1 << k), 0));
+    const ready = kinds.every((k) => (CUE_SOUNDS[k]?.files ?? []).every((f) => cueAudio.loaded(f)));
+    if (ready || tries <= 0) return play();
+    setTimeout(() => whenLoaded(kinds, play, tries - 1), 100);
 };
+
+/** The cue whose sound a cue is heard as: its own, or for a revert the one it undoes. */
+const voiced = (kind: number, undoes: number): number => (kind === ANIM_CUE_REVERT ? undoes : kind);
 
 const playMove = (events: AnimPlanEventIn[]): void => {
     const plan = animBuildPlan(events, TABLE);
-    whenLoaded(() => {
-        let any = false;
+    whenLoaded(plan.cues.map((c) => voiced(c.kind, c.undoes)), () => {
         for (const cue of plan.cues) {
             for (let h = 0; h < cue.hits; h++) {
-                any = cueAudio.strike(cue.kind, cue.atMs + h * ANIM_SOUND_STAGGER_MS, cue.nCards) || any;
+                cueAudio.strike(cue.kind, cue.atMs + h * ANIM_SOUND_STAGGER_MS, cue.nCards, cue.undoes);
             }
         }
-        return any;
     });
 };
+
+const strikes = (kind: number, n: number, undoes = 0): void =>
+    whenLoaded([voiced(kind, undoes)], () => {
+        for (let h = 0; h < n; h++) cueAudio.strike(kind, h * ANIM_SOUND_STAGGER_MS, 1, undoes);
+    });
 
 const Button = ({ onClick, children }: { onClick: () => void; children: React.ReactNode }) => (
     <TexturedSurface as="button" seed={0.4} className="btn-wood btn-wood--md" onClick={onClick}
@@ -152,20 +166,19 @@ export const SoundAudition = () => {
                                             <div key={f} data-file={f} data-loaded={cueAudio.loaded(f)}>
                                                 <code>{f}</code>{cueAudio.loaded(f) ? '' : ' (not loaded)'}
                                             </div>
-                                        )) : 'silent'}
+                                        )) : kind === ANIM_CUE_REVERT ? 'the undone move, backwards' : 'silent'}
                                     </td>
                                     <td style={cell}>{sound ? sound.gain : ''}</td>
                                     <td style={{ ...cell, display: 'flex', gap: 8 }}>
                                         {sound && <>
-                                            <Button onClick={() => whenLoaded(() => cueAudio.strike(kind))}>Play</Button>
-                                            <Button onClick={() => whenLoaded(() => {
-                                                let any = false;
-                                                for (let h = 0; h < 4; h++) {
-                                                    any = cueAudio.strike(kind, h * ANIM_SOUND_STAGGER_MS) || any;
-                                                }
-                                                return any;
-                                            })}>x4</Button>
+                                            <Button onClick={() => strikes(kind, 1)}>Play</Button>
+                                            <Button onClick={() => strikes(kind, 4)}>x4</Button>
                                         </>}
+                                        {kind === ANIM_CUE_REVERT && [ANIM_CUE_PLACE, ANIM_CUE_COVER, ANIM_CUE_PICKUP].map((u) => (
+                                            <Button key={u} onClick={() => strikes(kind, 1, u)}>
+                                                {(ANIM_CUE_NAMES[u] ?? '').toLowerCase()}
+                                            </Button>
+                                        ))}
                                     </td>
                                 </tr>
                             );

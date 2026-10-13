@@ -208,7 +208,7 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
         // it is, so the engine can pin it to the audio clock instead of to
         // whenever a frame happens to run (src/audio/cueSchedule.ts).
         for (const s of dueStrikes(plan.cues, nowMs, cuesDoneRef.current)) {
-            cueAudio.strike(s.kind, s.delayMs, s.nCards);
+            cueAudio.strike(s.kind, s.delayMs, s.nCards, s.undoes);
         }
 
         while (landedRef.current < frame.landed && landedRef.current < run.length) {

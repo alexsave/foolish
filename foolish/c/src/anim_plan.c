@@ -211,6 +211,26 @@ static void cue_push(AnimPlan *p, int kind, int step, int at_ms, int hits, int n
     c->step = (uint8_t)step;
     c->hits = (uint8_t)hits;
     c->n_cards = (uint8_t)(n_cards > 255 ? 255 : n_cards);
+    c->undoes = ANIM_CUE_NONE;
+}
+
+// WHICH MOVE A REVERT UNDOES, as the cue that move made (AnimCue.undoes). The
+// nearest step before it that moved one of the same cards decides; with no
+// such step in the stream the direction is all there is to read.
+static int revert_undoes(const AnimPlanEvent *events, int i) {
+    const AnimPlanEvent *rv = &events[i];
+    for (int j = i - 1; j >= 0; j--) {
+        const AnimPlanEvent *ev = &events[j];
+        const int cue = ev->type == ANIM_EVT_COVER ? ANIM_CUE_COVER
+                      : ev->type == ANIM_EVT_ATTACK_PASS ? ANIM_CUE_PLACE
+                      : ev->type == ANIM_EVT_PICKUP ? ANIM_CUE_PICKUP : ANIM_CUE_NONE;
+        if (cue == ANIM_CUE_NONE || ev->mask_cards || rv->mask_cards || !ev->cards || !rv->cards) continue;
+        for (int a = 0; a < rv->n_cards; a++)
+            for (int b = 0; b < ev->n_cards; b++)
+                if (rv->cards[a].suit == ev->cards[b].suit && rv->cards[a].value == ev->cards[b].value)
+                    return cue;
+    }
+    return rv->to == ANIM_LOC_TABLE ? ANIM_CUE_PICKUP : ANIM_CUE_PLACE;
 }
 
 // A STRIKE A CARD, for the sounds that are struck that way: `n` cards whose
@@ -249,7 +269,7 @@ static int out_cue_ms(const AnimPlanStep *steps, int i) {
     return steps[i].start_ms;
 }
 
-static void build_cues(AnimPlan *p) {
+static void build_cues(AnimPlan *p, const AnimPlanEvent *events) {
     p->n_cues = 0;
     for (int i = 0; i < p->n_steps; i++) {
         const AnimPlanStep *st = &p->steps[i];
@@ -299,7 +319,11 @@ static void build_cues(AnimPlan *p) {
                 cue_push(p, ANIM_CUE_OUT, i, out_cue_ms(p->steps, i), 1, 0);
                 break;
             case ANIM_EVT_REVERT:
-                if (n > 0) cue_push(p, ANIM_CUE_REVERT, i, st->start_ms, 1, n);
+                // Heard as it sets off, like the move it undoes heard backwards.
+                if (n > 0 && p->n_cues < ANIM_MAX_CUES) {
+                    cue_push(p, ANIM_CUE_REVERT, i, st->start_ms, 1, n);
+                    p->cues[p->n_cues - 1].undoes = (uint8_t)revert_undoes(events, i);
+                }
                 break;
             default:
                 // A magic transition and a defender move carry no card. What
@@ -595,7 +619,7 @@ int anim_build_plan(const AnimPlanEvent *events, int n_events, int n_players,
     out->total_ms = clock_ms;
     // …AND WHAT IT SOUNDS LIKE, last, because a cue is read off a step's clock
     // and its card count and both are on the steps only now.
-    build_cues(out);
+    build_cues(out, events);
     return ANIM_EOK;
 }
 
@@ -912,6 +936,36 @@ int anim_role_cue(AnimRoles shown, AnimRoles next) {
 int anim_finish_cue(int game_over, int my_seat) {
     if (game_over < 0) return ANIM_CUE_NONE;
     return my_seat == game_over ? ANIM_CUE_FOOL : ANIM_CUE_FINISH;
+}
+
+#define CUE(k) ((uint32_t)1 << (k))
+
+uint32_t anim_cues_next(const AnimCueAsk *q) {
+    if (!q) return ANIM_CUES_ALL;
+    if (q->status == GAME_STATUS_WAITING) return CUE(ANIM_CUE_DEAL) | CUE(ANIM_CUE_FLIP);
+    if (q->status == GAME_STATUS_GAME_OVER) return 0;
+    if (q->status != GAME_STATUS_PLAYING) return ANIM_CUES_ALL;
+
+    uint32_t m = CUE(ANIM_CUE_LIFT) | CUE(ANIM_CUE_PLACE);
+    const int seated = q->my_seat >= 0;   // only a seat can be the fool
+    const int stock = (q->deck > 0 ? q->deck : 0) + (q->has_flipped ? 1 : 0);
+    const int on_table = q->n_battles > 0;
+    // The trump is turned as the opening deal ends, so a stock with no trump
+    // under it is a deal still going round.
+    if (q->deck > 0 && !q->has_flipped) m |= CUE(ANIM_CUE_DEAL) | CUE(ANIM_CUE_FLIP);
+    if (q->n_battles > q->n_covered) m |= CUE(ANIM_CUE_COVER) | CUE(ANIM_CUE_PICKUP);
+    if (on_table) {
+        m |= CUE(ANIM_CUE_SWEEP) | CUE(ANIM_CUE_PILE) | CUE(ANIM_CUE_GOOD) | CUE(ANIM_CUE_HAND_OFF);
+        if (stock > 0) m |= CUE(ANIM_CUE_DEAL);
+    }
+    // A seat goes out when its hand is empty and there is nothing left to
+    // draw. That is now, with the stock already gone, or at the end of a bout
+    // whose refills (six a seat at the very most) could take all of it.
+    if (stock == 0 || (on_table && stock <= 6 * (int)q->n_players)) {
+        m |= CUE(ANIM_CUE_OUT) | CUE(ANIM_CUE_FINISH);
+        if (seated) m |= CUE(ANIM_CUE_FOOL);
+    }
+    return m;
 }
 
 // ---- the pre-bout table ---------------------------------------------------

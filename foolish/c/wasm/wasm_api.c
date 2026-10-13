@@ -940,6 +940,13 @@ int wasm_anim_role_cue(int shown_defender, int shown_first_attacker, int shown_g
     return anim_role_cue(shown, next);
 }
 
+// WHICH CUES COULD SOUND NEXT (anim_plan.h anim_cues_next), asked as a value
+// through its generated writer and answered as the mask itself: bit k is
+// ANIM_CUE_k. A host loads those sounds first.
+static AnimCueAsk g_anim_cue_ask;
+AnimCueAsk *wasm_anim_cue_ask_ptr(void) { return &g_anim_cue_ask; }
+unsigned wasm_anim_cues_next(void) { return anim_cues_next(&g_anim_cue_ask); }
+
 // WHAT THE END OF THE GAME SOUNDS LIKE to this viewer (anim_plan.h
 // anim_finish_cue): the fool's seat (negative while the game runs) and the
 // viewer's (negative for a spectator) in, an ANIM_CUE_* out.

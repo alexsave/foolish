@@ -54,6 +54,7 @@
 # goes in through its writer and each answer comes back through its reader, so
 # sdk/ts/wasm/bots.ts packs no card byte and reads no offset for them.
 --root AnimStaleAsk --root AnimStaleRelease --writer AnimStaleAsk --snapshot AnimStaleAsk --snapshot AnimStaleRelease
+--root AnimCueAsk --writer AnimCueAsk --snapshot AnimCueAsk
 --count AnimStaleAsk.opt=n_opt --count AnimStaleAsk.table=n_table --count AnimStaleAsk.named=n_named --count AnimStaleRelease.release=n
 --root AnimReversalAsk --root AnimConflictPlan --writer AnimReversalAsk --snapshot AnimReversalAsk --snapshot AnimConflictPlan
 --count AnimReversalAsk.verdicts=n_motions --count AnimReversalAsk.group_sizes=n_groups

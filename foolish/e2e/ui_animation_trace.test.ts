@@ -551,15 +551,23 @@ const tap = (p: Promise<unknown>) => { p.catch(() => {}); };
 // that a move makes the sounds the kernel's plan says it makes, once each, and
 // that they are aimed at the plan's milliseconds exactly, whatever frame
 // happened to hand them over.
+// A revert is written with the cue it undoes ("REVERT<PLACE"), and `wants` is
+// every set of cues the page asked the engine to load first, as the kernel's
+// names for them.
 interface Heard { cue: string; at: number; cards: number }
-async function listen(): Promise<{ heard: Heard[]; stop: () => void }> {
+async function listen(): Promise<{ heard: Heard[]; wants: string[][]; stop: () => void }> {
     const { cueAudio } = await import('../src/audio/cueAudio.ts');
     const heard: Heard[] = [];
-    (cueAudio as any).strike = (kind: number, delayMs = 0, nCards = 1) => {
-        heard.push({ cue: ANIM_CUE_NAMES[kind] ?? String(kind), at: clock + delayMs, cards: nCards });
+    const wants: string[][] = [];
+    (cueAudio as any).strike = (kind: number, delayMs = 0, nCards = 1, undoes = 0) => {
+        const name = ANIM_CUE_NAMES[kind] ?? String(kind);
+        heard.push({ cue: undoes ? `${name}<${ANIM_CUE_NAMES[undoes]}` : name, at: clock + delayMs, cards: nCards });
         return true;
     };
-    return { heard, stop: () => { delete (cueAudio as any).strike; } };
+    (cueAudio as any).want = (mask: number) => {
+        wants.push(Object.entries(ANIM_CUE_NAMES).filter(([k]) => mask & (1 << Number(k))).map(([, n]) => n));
+    };
+    return { heard, wants, stop: () => { delete (cueAudio as any).strike; delete (cueAudio as any).want; } };
 }
 /** The cues in the order they would SOUND (a cue is handed over ahead of time,
  *  so the order of the calls is not it). */
@@ -1460,6 +1468,8 @@ test('a rejected move, the refusal first: the defender took the table before my 
 test('a rejected move whose push never arrives: the card goes home and stays there', async () => {
     const board = threeMeFirst().hand(0, '6s Tc Jd').hand(1, 'Js Qs Ks As').hand(2, '9d Qd 6d').table('6h')
         .attacker(0).defender(1).build();
+    const ears = await listen();
+    try {
     await play('rejected_push_lost', 118, 'a-reject-lost', board, async (s, srv) => {
         s.track('6s');
         await s.step('Anna picks up on the server', () => { srv.act(ANNA, encodeAction({ kind: 'pickup' })); });
@@ -1493,6 +1503,15 @@ test('a rejected move whose push never arrives: the card goes home and stays the
         assert.ok(view.myHand.some((c: any) => c.suit === 0 && c.value === 5), 'the refused card is back in my hand');
         assert.equal(view.battles.length, 0, 'and the page has caught up with the pickup it never heard about: a refusal reconciles');
     });
+    } finally { ears.stop(); }
+    // THE REFUSAL IS HEARD AS MY ATTACK, BACKWARDS: the card leaves, lands, and
+    // comes home to the sound of its own landing reversed - the kernel's revert
+    // cue names PLACE as the cue undone, read off the attack still in the run.
+    // (The hand-off behind it is the board the refusal brings: Anna took the
+    // table, in a push this page never got, so the roles moved on without it.)
+    assert.deepEqual(inOrder(ears.heard).map((h) => h.cue), ['LIFT', 'PLACE', 'REVERT<PLACE', 'HAND_OFF']);
+    assert.equal(times(ears.heard, 'REVERT<PLACE')[0] - times(ears.heard, 'PLACE')[0], ANIM_GAP_MS,
+        'heard as the return flight opens, a gap behind the landing');
 });
 
 test('a rejected move refused after my card has landed, its push never arriving: the card goes home and stays there', async () => {
@@ -2064,6 +2083,12 @@ test('two moves in a row are each heard whole: the second run\'s cues are not mi
     const first = ears.heard.filter((h) => h.at < secondAt), second = ears.heard.filter((h) => h.at >= secondAt);
     assert.deepEqual(inOrder(first).map((h) => h.cue), ['LIFT', 'PLACE', 'PLACE'], 'my two cards: one lift, two landings');
     assert.equal(times(first, 'PLACE')[1] - times(first, 'PLACE')[0], ANIM_SOUND_STAGGER_MS);
+    // …AND THE ENGINE WAS TOLD WHAT TO LOAD FIRST, board by board. The table was
+    // empty, so only a card being laid could be heard; with my two attacks down
+    // and uncovered, a cover, a pickup and the end of the bout could.
+    assert.deepEqual(ears.wants[0], ['LIFT', 'PLACE'], 'an empty table: only an attack can sound next');
+    assert.ok(ears.wants.some((w) => w.includes('COVER') && w.includes('PICKUP') && w.includes('SWEEP')),
+        `once my attacks are down the page asks for what can answer them (${JSON.stringify(ears.wants)})`);
     assert.deepEqual(inOrder(second).map((h) => h.cue), ['LIFT', 'COVER', 'COVER'],
         'and Anna\'s two covers whole, lift included, though they are steps 0 and 1 of a new run');
     assert.equal(times(second, 'LIFT')[0], secondAt, 'her lift is heard as her cards leave, at the push');

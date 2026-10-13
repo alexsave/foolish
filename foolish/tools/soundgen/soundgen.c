@@ -253,13 +253,6 @@ static void r_out(Buf *b, int v, float k) {
     tone(b, 130, 392.00f * k, 42, 0, 1.0f);
 }
 
-// A refused card going home: the lift played backwards, so it reads as undone.
-static void r_revert(Buf *b, int v, float k) {
-    (void)v;
-    swell(b, 0, 160, 4800 * k, 2000 * k, 0.8f, 0.72f, 0.25f, 1.0f);
-    burst(b, 150, 30, 2500 * k, 2000 * k, 0.8f, 0.5f, 7, 0.4f);
-}
-
 // A good said: two small bright notes, the second a fifth up. Agreement.
 static void r_good(Buf *b, int v, float k) {
     (void)v;
@@ -296,8 +289,15 @@ static void r_fool(Buf *b, int v, float k) {
 // What a cue is written as. `name` is the file's stem and is the kernel's own
 // name for the cue in lower case, so a file can be found from a cue id with no
 // table in between. `rate` is per recipe because a sample is two bytes: the
-// card sounds need the top octave and the four that are notes do not, and
-// writing those at half the rate is a third off the whole set.
+// card sounds need the top octave and the rest do not. The rate is the lowest
+// that still holds the recipe's highest partial under Nyquist: 8 kHz for the
+// notes that top out near 3.1 kHz, 12 kHz for `good` (4.7 kHz) and for the two
+// sounds that are all low end (the pile's thud, the hand-off's air).
+//
+// A NULL `make` IS A CUE WITH NO PLACEHOLDER. REVERT is one for good: it has
+// no sound of its own, a host plays the undone cue's sound backwards
+// (anim_plan.h ANIM_CUE_REVERT). A cue whose row in the hosts' table now names
+// a recording becomes one too.
 typedef struct {
     const char *name;
     void      (*make)(Buf *, int v, float k);
@@ -313,13 +313,13 @@ static const Recipe RECIPES[] = {
     [ANIM_CUE_COVER]    = { "cover",    r_cover,    2, 24000 },
     [ANIM_CUE_PICKUP]   = { "pickup",   r_pickup,   1, 24000 },
     [ANIM_CUE_SWEEP]    = { "sweep",    r_sweep,    1, 24000 },
-    [ANIM_CUE_PILE]     = { "pile",     r_pile,     1, 24000 },
-    [ANIM_CUE_OUT]      = { "out",      r_out,      1, 12000 },
-    [ANIM_CUE_REVERT]   = { "revert",   r_revert,   1, 24000 },
+    [ANIM_CUE_PILE]     = { "pile",     r_pile,     1, 12000 },
+    [ANIM_CUE_OUT]      = { "out",      r_out,      1,  8000 },
+    [ANIM_CUE_REVERT]   = { "revert",   NULL,       0,     0 },
     [ANIM_CUE_GOOD]     = { "good",     r_good,     1, 12000 },
-    [ANIM_CUE_HAND_OFF] = { "hand_off", r_hand_off, 1, 24000 },
-    [ANIM_CUE_FINISH]   = { "finish",   r_finish,   1, 12000 },
-    [ANIM_CUE_FOOL]     = { "fool",     r_fool,     1, 12000 },
+    [ANIM_CUE_HAND_OFF] = { "hand_off", r_hand_off, 1, 12000 },
+    [ANIM_CUE_FINISH]   = { "finish",   r_finish,   1,  8000 },
+    [ANIM_CUE_FOOL]     = { "fool",     r_fool,     1,  8000 },
 };
 // A cue added to anim_plan.h grows ANIM_N_CUES, and this stops building until
 // it has a line above (a cue that is meant to be silent gets a NULL `make`).
