@@ -10,7 +10,8 @@ export default function TutorialPage() {
     <KernelGate>
       <ErrorBoundary context="Tutorial Page">
         <Tutorial />
-        <SoundButton />
+        {/* Beside the way out: the tutorial's Skip pill has the other corner. */}
+        <SoundButton beside="back" />
       </ErrorBoundary>
     </KernelGate>
   );

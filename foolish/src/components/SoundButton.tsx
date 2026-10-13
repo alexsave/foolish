@@ -11,6 +11,10 @@ import { cueAudio } from '../audio/cueAudio';
 // results alike. That is why it is `fixed`: the icon buttons place themselves
 // against whatever positioned box holds them, and a route has none.
 //
+// WHICH CORNER IS THE ROUTE'S TO SAY, because the corners are not free on every
+// screen: the tutorial keeps its Skip pill top-right, so there the button takes
+// the second slot on the left, next to the way out (`beside="back"`).
+//
 // THE TAP IS ALSO WHAT STARTS AUDIO for a player who arrived muted: a browser
 // only lets a page make sound from inside a user gesture, and `setMuted(false)`
 // is called from one here.
@@ -18,15 +22,21 @@ import { cueAudio } from '../audio/cueAudio';
 // The label is English and not a translated string, like the sign-out button's:
 // a key in c/i18n has to arrive in all twenty-five languages at once
 // (docs/AUDIO.md lists it as open).
-export const SoundButton = () => {
+/** The second slot of the top-left corner: one icon button and a gap along. */
+const BESIDE_BACK: React.CSSProperties = {
+    position: 'fixed',
+    left: 'calc(max(10px, env(safe-area-inset-left, 0px)) + var(--btn-icon-size) + 8px)',
+};
+
+export const SoundButton = ({ beside }: { beside?: 'back' }) => {
     const { muted } = useSyncExternalStore(cueAudio.subscribe, cueAudio.getState, cueAudio.getServerState);
     const label = muted ? 'Turn sound on' : 'Turn sound off';
     return (
         <TexturedSurface
             as="button"
             seed={0.7}
-            className="btn-icon btn-icon--right"
-            style={{ position: 'fixed' }}
+            className={beside === 'back' ? 'btn-icon' : 'btn-icon btn-icon--right'}
+            style={beside === 'back' ? BESIDE_BACK : { position: 'fixed' }}
             onClick={() => cueAudio.setMuted(!muted)}
             aria-label={label}
             aria-pressed={!muted}

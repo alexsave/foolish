@@ -110,8 +110,11 @@ export const SoundAudition = () => {
     return (
         <div className="page page--with-padding" style={{ width: '100vw', overflowY: 'auto' }}>
             <WoolBackgroundLayer />
+            {/* On a dark panel, like the tutorial's card: the wool is far too
+                busy to read a table against. */}
             <div className="content content--max-width content--gap-lg z-content"
-                 style={{ color: 'var(--color-text-light, #f5e6c8)', paddingBottom: 60 }}>
+                 style={{ color: '#f5e6c8', background: 'rgba(28, 20, 16, 0.92)', borderRadius: 14,
+                          padding: '28px 32px 36px', margin: '64px auto 48px', boxShadow: '0 6px 24px rgba(0,0,0,0.45)' }}>
                 <h1 className="title title--page">Sounds</h1>
                 <p>
                     Every sound the game can make, through the same engine and the same table the
