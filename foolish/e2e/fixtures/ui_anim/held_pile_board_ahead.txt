@@ -1,9 +1,9 @@
-0 39bdec09bfc11efe37301d69 mounted
-0 88831782433ccd6764da7ab7 tap attack 7d
-25 d8040ddd76f2ddc73adf06c9 timer@25
-512 c650ac362a7139020bef3b8b timer@512
-720 c9a9a7083050746ae86bb570 push: Boris's first throw-in
-745 49f66c403a42da9c9a49bce7 timer@745
+0 68bd9b260d7bd00af1c26fac mounted
+0 b5bf6be105364b26c7bb3e4f tap attack 7d
+25 3ef8bc0c68b08aeb370ef19c timer@25
+512 c161a5176b682d9d5ba72e73 timer@512
+720 629fa4087e9a40a8af0e3286 push: Boris's first throw-in
+745 3bb789033543ec348ed03c2f timer@745
 850 be601db9124219eff2029d8a push: my own throw-in, confirming a card already on the table
 1232 e9b30ba474f8ac4721b6ad94 timer@1232
 1248 79f377c343b01ef4664541f2 timer@1248
