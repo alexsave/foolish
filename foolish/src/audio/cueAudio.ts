@@ -272,13 +272,13 @@ export class CueAudio {
             this.buffers.set(file, buffer);
             this.progress.delete(file);
             // The strikes that were waiting on this file: now, or not at all.
-            const due = this.waiting.filter((w) => w.file === file);
-            this.waiting = this.waiting.filter((w) => w.file !== file);
-            for (const w of due) {
+            this.waiting = this.waiting.filter((w) => {
+                if (w.file !== file) return true;
                 if (ctx.currentTime <= w.at + LATE_S) {
                     this.start(w.sound, buffer, Math.max(w.at, ctx.currentTime), w.nCards, w.backwards);
                 }
-            }
+                return false;
+            });
         }, () => this.fail(file));
     }
 

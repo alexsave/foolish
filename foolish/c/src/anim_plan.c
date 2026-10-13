@@ -214,23 +214,24 @@ static void cue_push(AnimPlan *p, int kind, int step, int at_ms, int hits, int n
     c->undoes = ANIM_CUE_NONE;
 }
 
-// WHICH MOVE A REVERT UNDOES, as the cue that move made (AnimCue.undoes). The
-// nearest step before it that moved one of the same cards decides; with no
-// such step in the stream the direction is all there is to read.
+// WHICH MOVE A REVERT UNDOES, as the cue that move made (AnimCue.undoes).
+// Cards going back to the TABLE were taken off it: a pickup, and the direction
+// says so on its own. Cards going home to a hand were laid, and the stream says
+// how: the nearest step before the revert that laid one of them was a cover or
+// it was not. With no such step in the stream a card laid is all that is known.
 static int revert_undoes(const AnimPlanEvent *events, int i) {
     const AnimPlanEvent *rv = &events[i];
+    if (rv->to == ANIM_LOC_TABLE) return ANIM_CUE_PICKUP;
     for (int j = i - 1; j >= 0; j--) {
         const AnimPlanEvent *ev = &events[j];
-        const int cue = ev->type == ANIM_EVT_COVER ? ANIM_CUE_COVER
-                      : ev->type == ANIM_EVT_ATTACK_PASS ? ANIM_CUE_PLACE
-                      : ev->type == ANIM_EVT_PICKUP ? ANIM_CUE_PICKUP : ANIM_CUE_NONE;
-        if (cue == ANIM_CUE_NONE || ev->mask_cards || rv->mask_cards || !ev->cards || !rv->cards) continue;
+        if (ev->type != ANIM_EVT_COVER && ev->type != ANIM_EVT_ATTACK_PASS) continue;
+        if (ev->mask_cards || rv->mask_cards || !ev->cards || !rv->cards) continue;
         for (int a = 0; a < rv->n_cards; a++)
             for (int b = 0; b < ev->n_cards; b++)
                 if (rv->cards[a].suit == ev->cards[b].suit && rv->cards[a].value == ev->cards[b].value)
-                    return cue;
+                    return ev->type == ANIM_EVT_COVER ? ANIM_CUE_COVER : ANIM_CUE_PLACE;
     }
-    return rv->to == ANIM_LOC_TABLE ? ANIM_CUE_PICKUP : ANIM_CUE_PLACE;
+    return ANIM_CUE_PLACE;
 }
 
 // A STRIKE A CARD, for the sounds that are struck that way: `n` cards whose

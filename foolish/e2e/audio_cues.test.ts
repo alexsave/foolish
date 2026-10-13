@@ -333,6 +333,16 @@ function fakeAudio(opts: { state?: string; fail?: (url: string) => boolean; hold
         widest: () => widest, waiting: () => held.map((h) => h.url.replace('/audio/gen/', '')),
         /** Answer the `n` oldest held fetches and let what follows run. */
         release: async (n = 1) => { for (const h of held.splice(0, n)) h.go(); for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r)); },
+        /** Release held fetches one at a time until `done` (default: none is left). Bounded: a
+         *  queue that never empties is a failure to report, not a test to hang in. */
+        drain: async (done: () => boolean = () => held.length === 0) => {
+            for (let i = 0; i < 60 && !done(); i++) {
+                assert.ok(held.length > 0, 'the engine stopped asking for files before the test was satisfied');
+                held.shift()!.go();
+                for (let k = 0; k < 8; k++) await new Promise((r) => setImmediate(r));
+            }
+            assert.ok(done(), 'sixty fetches were answered and the test is still waiting');
+        },
         /** Let every fetch and decode finish. */
         settle: async () => { for (let i = 0; i < 30; i++) await new Promise((r) => setImmediate(r)); },
         restore: () => { Object.assign(g, saved); if (saved.AudioContext === undefined) delete g.AudioContext; },
@@ -579,7 +589,7 @@ test('the wanted cues are fetched first, a few at a time, and the rest in the ta
         assert.deepEqual(fake.waiting(), ['cover_0.wav', 'cover_1.wav', 'pickup_0.wav'], 'three at once, and they are the wanted three');
         await fake.release(1);
         assert.deepEqual(short(fake.fetched)[3], 'deal_0.wav', 'a place frees, and the first unwanted file takes it');
-        while (fake.waiting().length) await fake.release(1);
+        await fake.drain();
         assert.equal(fake.widest(), 3, 'never more than three in flight');
         assert.deepEqual(short(fake.fetched), ['cover_0.wav', 'cover_1.wav', 'pickup_0.wav',
             ...ALL_FILES.filter((f) => !f.startsWith('cover') && !f.startsWith('pickup'))]);
@@ -601,7 +611,7 @@ test('a board that changes re-orders what has not started, and disturbs nothing 
         assert.equal(short(fake.fetched)[4], 'fool_0.wav');
         engine.want(bits(ANIM_CUE_FINISH, ANIM_CUE_FOOL, ANIM_CUE_DEAL));
         engine.want(0);
-        while (fake.waiting().length) await fake.release(1);
+        await fake.drain();
         assert.equal(new Set(fake.fetched).size, fake.fetched.length, 'no file was asked for twice, wanted again or not');
         assert.equal(fake.fetched.length, ALL_FILES.length, 'and every file was asked for');
     } finally { fake.restore(); }
@@ -622,13 +632,13 @@ test('a strike whose file is on its way waits for it, and is dropped if the wait
         // A little late: the clock is 60ms past the aim when the file lands. Played, now.
         assert.equal(engine.strike(ANIM_CUE_PICKUP, 0), true);
         fake.ctxs[0].currentTime = 10.06;
-        while (!engine.loaded('gen/pickup_0.wav')) await fake.release(1);
+        await fake.drain(() => engine.loaded('gen/pickup_0.wav'));
         assert.equal(fake.sources.length, 2, '60ms behind is still a sound');
         assert.equal(fake.sources[1].startedAt, 10.06, 'started at once, since its moment has passed');
         // Too late: half a second behind. Dropped, and never played afterwards.
         assert.equal(engine.strike(ANIM_CUE_SWEEP, 0), true);
         fake.ctxs[0].currentTime = 10.6;
-        while (!engine.loaded('gen/sweep_0.wav')) await fake.release(1);
+        await fake.drain(() => engine.loaded('gen/sweep_0.wav'));
         assert.equal(fake.sources.length, 2, 'a sound half a second late is a mistake, so it is not made');
         await fake.settle();
         assert.equal(fake.sources.length, 2);
@@ -643,6 +653,25 @@ test('a cue that is struck jumps the queue, whatever the board said', async () =
         assert.equal(engine.strike(ANIM_CUE_FOOL), true);
         await fake.release(1);
         assert.equal(short(fake.fetched)[3], 'fool_0.wav', 'the last file in the table is the next one fetched');
+    } finally { fake.restore(); }
+});
+
+test('muting stops the queue where it is, and unmuting picks it up again', async () => {
+    const fake = fakeAudio({ hold: true });
+    try {
+        const engine = new CueAudio();
+        engine.unlock();
+        assert.equal(fake.waiting().length, 3);
+        engine.setMuted(true);
+        await fake.release(3);
+        assert.deepEqual(fake.waiting(), [], 'the three on their way finish, and a muted player is sent no more');
+        assert.equal(fake.fetched.length, 3);
+        engine.setMuted(false);
+        assert.equal(fake.waiting().length, 3, 'unmuting carries on from the fourth file');
+        await fake.drain();
+        assert.equal(new Set(fake.fetched).size, ALL_FILES.length, 'and every file arrives, once');
+        assert.equal(fake.fetched.length, ALL_FILES.length);
+        assert.equal(fake.created(), 1);
     } finally { fake.restore(); }
 });
 
@@ -680,6 +709,20 @@ test('a revert plays the undone cue\'s own file reversed, at that cue\'s level, 
         assert.equal(fake.sources[2].buffer, back.buffer, 'the reversed buffer is made once and kept');
         assert.ok(engine.strike(ANIM_CUE_PICKUP));
         assert.equal(fake.sources[3].buffer, forwards, 'and the cue itself still plays forwards');
+    } finally { fake.restore(); }
+});
+
+test('a revert that had to wait for its file is still played backwards', async () => {
+    const fake = fakeAudio({ hold: true });
+    try {
+        const engine = new CueAudio();
+        engine.unlock();
+        assert.equal(engine.strike(ANIM_CUE_REVERT, 30, 1, ANIM_CUE_PICKUP), true, 'the undone cue\'s file is what it waits on');
+        await fake.drain(() => engine.loaded('gen/pickup_0.wav'));
+        assert.equal(fake.sources.length, 1);
+        const back = [...(fake.sources[0].buffer as any).data];
+        assert.ok(engine.strike(ANIM_CUE_PICKUP));
+        assert.deepEqual(back, [...(fake.sources[1].buffer as any).data].reverse(), 'reversed, though it was started late');
     } finally { fake.restore(); }
 });
 

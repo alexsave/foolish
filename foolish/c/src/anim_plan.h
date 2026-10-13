@@ -271,15 +271,15 @@ typedef struct {
                        //   whose sound is played backwards; ANIM_CUE_NONE on
                        //   every other cue.
                        //
-                       //   WHICH MOVE IS READ OFF THE STREAM: the nearest step
-                       //   before the revert that moved one of its cards says
-                       //   whether it was laid, laid as a cover, or taken. A
-                       //   revert whose move is not in the stream (the refusal
-                       //   came after that run had ended) is read by its
-                       //   direction alone - home to a hand undoes a card laid
-                       //   (PLACE), back to the table undoes a PICKUP - which
-                       //   cannot tell a cover from an attack. Telling them
-                       //   apart there needs the host to say so on the step.
+                       //   WHICH MOVE: cards going back to the table undo a
+                       //   PICKUP. Cards going home to a hand were laid, and
+                       //   the nearest step before the revert that laid one
+                       //   of them says whether as a COVER or not (PLACE). A
+                       //   revert whose move is not in the stream (the
+                       //   refusal came after that run had ended) is read as
+                       //   PLACE, which is wrong for a late-refused cover:
+                       //   telling the two apart there needs the host to say
+                       //   so on the step.
 } AnimCue;
 
 // A step makes at most two: one as it opens and one as it lands.
