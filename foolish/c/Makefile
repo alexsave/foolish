@@ -88,7 +88,7 @@ CORE_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/replay_
 # "host" variant below (shared/tools/c_rules.mk).
 CORE_OBJ = $(call c_objs,build/obj/host,$(CORE_SRC))
 
-.PHONY: all clean tests print-core print-wasm-src
+.PHONY: all clean tests print-core print-wasm-src print-human-caps
 # Emit the core engine+strategy source list (used by tools/tt_divergence.sh to
 # build cnitro_eval at arbitrary -DCD_TT_BITS without duplicating the list).
 print-core:
@@ -102,6 +102,14 @@ print-core:
 # artifact.
 print-wasm-src:
 	@echo $(sort $(WASM_BOT_SRC) $(WASM_ORACLE_MT_SRC))
+# Emit the capacity flags the SHIPPED human-game build compiles the kernel
+# with (MAX_LOG_PAIRS=64, MAX_BATTLES=64 and the rest), for a host that links
+# the kernel natively and serves human games (c_base/Makefile). Read out of
+# WASM_FLAGS so no second copy exists: built with this file's compact arena
+# defaults instead, a pickup of more than 16 cards is logged short, and the
+# replay gate then refuses the finished game.
+print-human-caps:
+	@echo $(filter -DMAX_%,$(WASM_FLAGS))
 all: build/cnitro_eval build/cnitro_elo build/cnitro_replay build/cnitro_showcase build/cnitro_tests
 
 # ---- how a file becomes an object ---------------------------------------------
