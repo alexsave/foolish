@@ -433,6 +433,21 @@ int fio_roles_pass_hand_off(int shown_defender, int shown_first_attacker,
                             int shown_good_mask, int attack_pass_seats,
                             int final_defender, int *out);
 
+// ---------- sound cues (anim_plan.h "sound cues") ---------------------------
+// What a sequence sounds like is in its plan (AnimPlan.cues, read through the
+// generated reader with the rest of it). These two are the sounds that are not
+// steps, asked where the host already turns the marks and brings the results
+// up; each answers an ANIM_CUE_* (ANIM_CUE_NONE for silence), which the
+// generated Swift constants name. docs/AUDIO.md says how a host plays one.
+//
+//   role     the badges going from `shown` to `next`: a good said, or a mark
+//            that travelled from one seat to another.
+//   finish   the end of the game for the viewer at `my_seat` (negative for a
+//            spectator); `game_over` is the fool's seat, negative while it runs.
+int fio_role_cue(int shown_defender, int shown_first_attacker, int shown_good_mask,
+                 int next_defender, int next_first_attacker, int next_good_mask);
+int fio_finish_cue(int game_over, int my_seat);
+
 // ---------- the pre-bout table (anim_plan.h) -------------------------------
 //
 // THE TABLE A BOUT END SWEEPS, so the board can lay it out and fly each card
