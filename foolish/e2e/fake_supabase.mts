@@ -37,6 +37,8 @@
  * Then open http://localhost:3000, sign in as ME / ME (any password works), and
  * play. `--scenario <name>` seats you in a game that is already under way and
  * prints its URL; `--scenario list` names them.
+ * `--latency <ms>` makes every read and function call take that long, as a
+ * network would, so a loading screen stays up long enough to see.
  *
  * ---------------------------------------------------------------------------
  * DRIVE IT FROM A TEST OR A BROWSER SCRIPT
@@ -189,12 +191,21 @@ export interface FakeOptions {
     port?: number;
     /** Print a line per request and push. */
     verbose?: boolean;
+    /**
+     * Milliseconds every REST read and every function call waits before it is
+     * answered. This backend answers in a millisecond or two, which no network
+     * does, so a screen the page shows only WHILE it waits (the game page before
+     * its view lands, the create overlay) is up for a frame and cannot be looked
+     * at or filmed. Auth, realtime and the control surface are not delayed.
+     */
+    latencyMs?: number;
 }
 
 // ---- the server ---------------------------------------------------------------
 
 export async function startFakeSupabase(opts: FakeOptions = {}): Promise<FakeBackend> {
     const port = opts.port ?? 54321;
+    const latencyMs = opts.latencyMs ?? 0;
     const started = Date.now();
     const trace: Trace[] = [];
     const note = (what: string) => {
@@ -432,6 +443,7 @@ export async function startFakeSupabase(opts: FakeOptions = {}): Promise<FakeBac
         note(`${req.method} ${url.pathname}${url.search}`);
         try {
             if (url.pathname.startsWith('/auth/v1/')) return await auth(req, res, url);
+            if (latencyMs > 0 && /^\/(rest|functions)\/v1\//.test(url.pathname)) await new Promise((r) => setTimeout(r, latencyMs));
             if (url.pathname.startsWith('/rest/v1/')) return await rest(req, res, url);
             if (url.pathname.startsWith('/functions/v1/')) return await fn(req, res, url);
             if (url.pathname.startsWith('/realtime/v1/api/broadcast')) { res.writeHead(202, CORS); res.end('{}'); return; }
@@ -1012,7 +1024,7 @@ if (isEntry) {
         process.stdout.write(`scenarios: ${Object.keys(SCENARIOS).join(', ')}\n`);
     } else {
         const port = Number(flag('port', '54321'));
-        const be = await startFakeSupabase({ port, verbose: !argv.includes('--quiet') });
+        const be = await startFakeSupabase({ port, verbose: !argv.includes('--quiet'), latencyMs: Number(flag('latency', '0')) });
         process.stdout.write(`fake supabase on ${be.url}  (auth, rest, functions, realtime)\n`);
         const want = flag('scenario');
         if (want) {

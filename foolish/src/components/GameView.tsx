@@ -4,7 +4,7 @@ import { useServer } from '../contexts/ServerContext';
 import { Lobby } from './Lobby';
 import { GameDisplay } from './GameDisplay';
 import { WinScreen } from './WinScreen';
-import { GameLoadingPlaceholder } from './GameLoadingPlaceholder';
+import { GameLoading } from './GameLoading';
 import { GAME_STATUS } from '../state/view';
 import { useFinishCue } from '../audio/useFinishCue';
 
@@ -31,10 +31,10 @@ export const GameView = () => {
     }
 
     // Game state not loaded yet (e.g. just navigated here from "create new game",
-    // or a fresh page load): show a lobby-shaped placeholder instead of a blank
-    // screen so it looks like the game is coming to life, not frozen.
+    // or a fresh page load): the lobby's name if this tab already knows it, and
+    // the background alone if it does not.
     if (!game) {
-        return <GameLoadingPlaceholder />;
+        return <GameLoading gameId={urlGameId} />;
     }
 
     // Conditionally render based on game status

@@ -15,6 +15,7 @@ import { clientTable, encodeAction } from '@sdk/ts/table/client_table.ts';
 import { GAME_STATUS, rulesOf, type TableView, type ViewCard } from '../state/view';
 import { rejectMessage } from '../wasm/rejectMessages';
 import { authoritativeVersion } from '../state/authoritativeVersion';
+import { holdLobbyTitles } from '../state/lobbyTitles';
 import { EN, StringId, StringTable, isLanguage, loadLanguage, translate } from '../common/strings';
 
 type Card = ViewCard;
@@ -71,6 +72,10 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     // Every board this client holds, by game id: the kernel's TableView
     // snapshots (src/state/view.ts), as read or as changed optimistically.
     const [games, setGames] = useState<{ [key: string]: TableView }>({});
+
+    // The lobbies' names outlive this provider, which a navigation unmounts: the
+    // game page draws one while it loads its view (state/lobbyTitles.ts).
+    useEffect(() => { holdLobbyTitles(Object.values(games)); }, [games]);
 
     // Update user names ref when games change: a seat's name by its player id,
     // from the table's identity.

@@ -87,6 +87,16 @@ typedef struct {
     ViewSeat seats[MAX_PLAYERS];
     Card     my_hand[MAX_HAND_SIZE];
     int8_t   elimination[MAX_PLAYERS];    // seats, in the order they went out
+    // WHAT THIS GAME DID TO ITS SEATS' RATINGS (view.h GameRatings), by seat:
+    // the rating each seat had as the game ended and the change the game made to
+    // it. `rated` only on a finished game's ENVELOPE that carries the stamp: a
+    // push's board never does (a cast has nowhere to put one), so the board a
+    // game-ending push leaves is unrated until its envelope is read, and a game
+    // that was never rated stays unrated. A screen draws no rating for an
+    // unrated board; it does not go and work one out.
+    bool     rated;
+    int16_t  rating_delta[MAX_PLAYERS];
+    int32_t  rating_before[MAX_PLAYERS];
     char     game_id[ROSTER_GAME_ID_MAX + 1];
     char     title[ROSTER_TITLE_MAX + 1];
 } TableView;

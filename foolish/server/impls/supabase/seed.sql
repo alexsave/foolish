@@ -624,6 +624,9 @@ CREATE OR REPLACE FUNCTION commit_table(
   p_views            TEXT[]  DEFAULT NULL,  -- base64: each seat's envelope, parallel to p_view_players
   p_spectator        TEXT    DEFAULT NULL,  -- base64: the spectator envelope; NULL leaves spectator_views untouched
   p_closed_round     BOOLEAN DEFAULT FALSE, -- the operation closed a round: stamp round_epoch with the new version
+  p_rated_ids        UUID[]    DEFAULT NULL, -- the seats this commit RATES, humans and bots; NULL: it rates nobody
+  p_rated_bots       BOOLEAN[] DEFAULT NULL, -- parallel: the seat is a bot (its rating is a bots row)
+  p_rated_deltas     INTEGER[] DEFAULT NULL, -- parallel: the kernel's change to that seat's rating
   OUT committed       BOOLEAN,              -- FALSE: the version fence refused (another writer committed first)
   OUT new_version     BIGINT,
   OUT new_round_epoch BIGINT
@@ -631,7 +634,7 @@ CREATE OR REPLACE FUNCTION commit_table(
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
-AS $$
+AS $commit_table$
 DECLARE
   v_status game_status := (enum_range(NULL::game_status))[p_status + 1];
 BEGIN
@@ -643,6 +646,10 @@ BEGIN
   END IF;
   IF (p_view_players IS NULL) <> (p_views IS NULL) OR cardinality(p_view_players) <> cardinality(p_views) THEN
     RAISE EXCEPTION 'commit_table: p_view_players and p_views go together, one envelope per player' USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+  IF (p_rated_ids IS NULL) <> (p_rated_bots IS NULL) OR (p_rated_ids IS NULL) <> (p_rated_deltas IS NULL)
+     OR cardinality(p_rated_ids) <> cardinality(p_rated_bots) OR cardinality(p_rated_ids) <> cardinality(p_rated_deltas) THEN
+    RAISE EXCEPTION 'commit_table: p_rated_ids, p_rated_bots and p_rated_deltas go together, one of each per seat' USING ERRCODE = 'invalid_parameter_value';
   END IF;
 
   UPDATE games SET
@@ -701,8 +708,49 @@ BEGIN
       SET view = EXCLUDED.view, version = EXCLUDED.version,
           status = EXCLUDED.status, updated_at = now();
   END IF;
+
+  -- THE RATINGS, in the transaction that ends the game and behind its version
+  -- fence, so a game changes them exactly once: the commit that loses the fence
+  -- returned above, and a retry that wins it is the only one that gets here.
+  --
+  -- Each change is ADDED to the row as it stands now. The kernel worked the
+  -- changes out from ratings read a moment before this commit, and a seat that
+  -- sits at two tables (every bot does) may have finished the other one since:
+  -- writing "the rating I read, plus my change" would erase that game, which is
+  -- what the edge function used to do. The game's own record of what it did is
+  -- the stamp in its state blob (c/src/view.h GameRatings); these rows are only
+  -- the running totals.
+  --
+  -- Rows are locked in id order, humans before bots, so two games ending at
+  -- once with seats in common wait for each other instead of deadlocking.
+  -- previous_elo is kept for the web bundles that still read it.
+  IF p_rated_ids IS NOT NULL THEN
+    -- A human with no row yet starts from the column defaults. A seat whose
+    -- account is gone (delete_account redacts the roster, the id stays) has no
+    -- auth.users row to hang a rating on, and is skipped rather than failing
+    -- the commit that ends the game.
+    INSERT INTO user_elo_ratings (user_id)
+    SELECT r.id FROM unnest(p_rated_ids, p_rated_bots) AS r(id, bot)
+    WHERE NOT r.bot AND EXISTS (SELECT 1 FROM auth.users a WHERE a.id = r.id)
+    ON CONFLICT (user_id) DO NOTHING;
+
+    PERFORM 1 FROM user_elo_ratings WHERE user_id = ANY (p_rated_ids) ORDER BY user_id FOR UPDATE;
+    PERFORM 1 FROM bots WHERE id = ANY (p_rated_ids) ORDER BY id FOR UPDATE;
+
+    UPDATE user_elo_ratings u SET
+      previous_elo = u.elo_rating, elo_rating = GREATEST(0, u.elo_rating + r.delta),
+      games_played = u.games_played + 1, updated_at = now()
+    FROM unnest(p_rated_ids, p_rated_bots, p_rated_deltas) AS r(id, bot, delta)
+    WHERE NOT r.bot AND u.user_id = r.id;
+
+    UPDATE bots b SET
+      previous_elo = b.elo_rating, elo_rating = GREATEST(0, b.elo_rating + r.delta),
+      games_played = b.games_played + 1, updated_at = now()
+    FROM unnest(p_rated_ids, p_rated_bots, p_rated_deltas) AS r(id, bot, delta)
+    WHERE r.bot AND b.id = r.id;
+  END IF;
 END;
-$$;
+$commit_table$;
 
 -- A new lobby from table_create's products. A unique violation on the games row
 -- means the id is taken: the create function draws another.

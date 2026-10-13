@@ -13304,6 +13304,156 @@ static void test_client_adopts_envelopes(void) {
     CHECK(client_adopt_envelope(&ct, ct_env2, n) == CLIENT_E_MISMATCH, "a roster of another seat count is refused");
 }
 
+// THE RATING STAMP (view.h GameRatings, STATE_BLOB_FORMAT_V5, ENV_ISLAND_RATINGS).
+// What a finished game did to its seats' ratings is a fact of the game: it is in
+// the row, it is in every envelope of that finished table, and a client reads it
+// from there by seat. This kernel is the EXPAND step - it reads a v5 row and
+// still writes v4 - so the v5 rows here are written at an explicit format, as a
+// switch kernel will write them.
+//
+// The envelope half holds the one promise the whole design leans on: the stamp
+// travels in the island, which every reader ever shipped skips by its length.
+// So an envelope that carries one differs from the same envelope without one in
+// the island and nowhere else, and a reader that knows nothing of ratings (the
+// hand-rolled skip below is all an old one does) finds the same view and the
+// same trailer behind it.
+static void test_rating_stamp_rides_the_row_and_the_envelope(void) {
+    static unsigned char blob[8192], blob2[8192];
+    static Game back;
+    const BoardClock clk = { 1700000000000LL, 1700000000500LL };
+    const GameRatings stamp = { 3, { 1000, 1210, 0 }, { 7, -3, -4 } };
+    GameRatings got;
+    BoardClock gotclk;
+    unsigned char seed[FOOLISH_SEED_LEN];
+
+    // ---- the codec, alone: fixed width, strict ----
+    unsigned char raw[GAME_RATINGS_BYTES + 1];
+    raw[GAME_RATINGS_BYTES] = 0xEE;
+    CHECK(game_ratings_put(&stamp, raw) == GAME_RATINGS_BYTES && raw[GAME_RATINGS_BYTES] == 0xEE && raw[0] == 3,
+          "a stamp is GAME_RATINGS_BYTES, counted first");
+    CHECK(raw[1] == 0xE8 && raw[2] == 0x03 && raw[3] == 0 && raw[4] == 0 && raw[5] == 7 && raw[6] == 0,
+          "seat 0: i32 LE before, i16 LE delta");
+    CHECK(raw[11] == 0xFD && raw[12] == 0xFF, "a loss is a negative i16");
+    memset(&got, 0xAA, sizeof got);
+    CHECK(game_ratings_get(&got, raw) && got.n == 3 && got.before[0] == 1000 && got.before[1] == 1210 && got.before[2] == 0
+          && got.delta[0] == 7 && got.delta[1] == -3 && got.delta[2] == -4 && got.before[3] == 0 && got.delta[7] == 0,
+          "it reads back seat for seat, and names nothing past its count");
+    raw[1 + 6 * 3] = 1;
+    CHECK(!game_ratings_get(&got, raw), "a slot past the count that is not zero is refused");
+    raw[1 + 6 * 3] = 0; raw[0] = MAX_PLAYERS + 1;
+    CHECK(!game_ratings_get(&got, raw), "a count past MAX_PLAYERS is refused");
+    CHECK(game_ratings_put(0, raw) == GAME_RATINGS_BYTES && game_ratings_get(&got, raw) && got.n == 0, "no stamp is the unrated one");
+
+    // ---- the row ----
+    CHECK(rs_play_seeded(&tb_src, 3, 777, seed), "a game plays out");
+    game_set_seed(1);
+    tb_src.status = GAME_STATUS_GAME_OVER;
+    for (int i = 0; i < 3; i++) tb_src.players[i].status = i == 2 ? PLAYER_STATUS_READY : PLAYER_STATUS_IDLE;
+    tb_roster_for(3, 1u << 2, "random", tb_roster);
+
+    const int n4 = state_blob_put_rated_at(&tb_src, &clk, &stamp, STATE_BLOB_FORMAT_V4, blob2);
+    const int n5 = state_blob_put_rated_at(&tb_src, &clk, &stamp, STATE_BLOB_FORMAT_V5, blob);
+    CHECK(n4 > 0 && n5 == n4 + GAME_RATINGS_BYTES && blob[0] == STATE_BLOB_FORMAT_V5
+          && memcmp(blob + 1, blob2 + 1, (size_t)n4 - 1) == 0,
+          "a v5 row is the v4 row, its format byte, and the stamp behind the clock");
+    memset(&back, 0, sizeof back);
+    memset(&got, 0xAA, sizeof got);
+    memset(&gotclk, 0, sizeof gotclk);
+    CHECK(state_blob_load_rated(&back, blob, n5, &gotclk, &got) == 1 && tb_same_board(&back, &tb_src)
+          && gotclk.shown_ms == clk.shown_ms && gotclk.settles_ms == clk.settles_ms
+          && got.n == 3 && got.before[1] == 1210 && got.delta[0] == 7 && got.delta[2] == -4,
+          "a v5 row loads: the board, its clock and the stamp");
+    memset(&got, 0xAA, sizeof got);
+    CHECK(state_blob_load_rated(&back, blob2, n4, 0, &got) == 1 && got.n == 0, "a v4 row loads unrated");
+    CHECK(state_blob_load(&back, blob, n5, 0) == 1 && tb_same_board(&back, &tb_src), "a reader that asks for no stamp reads the v5 row too");
+    CHECK(state_blob_put_at(&tb_src, &clk, STATE_BLOB_FORMAT_V5, blob2) == n5
+          && state_blob_load_rated(&back, blob2, n5, 0, &got) == 1 && got.n == 0, "a v5 row with no stamp is an unrated game");
+
+    // Refused, and nothing adopted: a stamp this kernel did not write.
+    {
+        static Game untouched;
+        memset(&untouched, 0, sizeof untouched);
+        untouched.num_players = 5;
+        const GameRatings two = { 2, { 1000, 1210 }, { 7, -7 } };   // a whole stamp, for a table of two
+        memcpy(blob2, blob, (size_t)n5); game_ratings_put(&two, blob2 + n5 - GAME_RATINGS_BYTES);
+        CHECK(state_blob_load_rated(&untouched, blob2, n5, 0, &got) == 0 && untouched.num_players == 5,
+              "a stamp that does not count the board's seats is unreadable, and adopts nothing");
+        memcpy(blob2, blob, (size_t)n5); blob2[n5 - 1] = 1;
+        CHECK(state_blob_load_rated(&untouched, blob2, n5, 0, &got) == 0, "a stamp with a slot past its count is unreadable");
+        CHECK(state_blob_load_rated(&untouched, blob, n5 - 1, 0, &got) != 1, "a v5 row cut short does not load");
+        // On a board that is not over: the writer drops it, and a row that pairs them is refused.
+        tb_fixture(3, 1u << 2, 131);
+        const int live = state_blob_put_rated_at(&tb_src, &clk, &stamp, STATE_BLOB_FORMAT_V5, blob2);
+        CHECK(live > 0 && state_blob_load_rated(&back, blob2, live, 0, &got) == 1 && got.n == 0,
+              "a running game writes no stamp, whatever it was handed");
+        game_ratings_put(&stamp, blob2 + live - GAME_RATINGS_BYTES);
+        CHECK(state_blob_load_rated(&untouched, blob2, live, 0, &got) == 0 && untouched.num_players == 5,
+              "a stamp on a running game is unreadable");
+    }
+
+    // ---- the table: it holds the row's stamp, and a rematch drops it ----
+    table_init(&tb, &tb_game, &tb_snaps);
+    CHECK(table_load(&tb, blob, n5, tb_roster, ROSTER_BYTES) == TABLE_OK && tb.ratings.n == 3 && tb.ratings.delta[1] == -3,
+          "a table loads a v5 row and holds its stamp");
+    CHECK(TABLE_STATE_FORMAT == STATE_BLOB_FORMAT_V4, "this kernel still WRITES v4 (the expand step): flip this with the switch");
+
+    // ---- the envelope ----
+    client_init(&ct, &ct_slot);
+    for (int viewer = -1; viewer < 3; viewer++) {
+        const int n = table_envelope(&tb, RS("g-7"), viewer, 42, ct_env, sizeof(ct_env));
+        const int island = n > ENV_ISLAND_AT + 2 ? ct_env[ENV_ISLAND_AT] | (ct_env[ENV_ISLAND_AT + 1] << 8) : -1;
+        CHECK(island == 1 + GAME_RATINGS_BYTES && ct_env[ENV_ISLAND_AT + 2] == ENV_ISLAND_RATINGS,
+              "a rated, finished table's envelope carries the stamp in its island");
+        const int rc = client_adopt_envelope(&ct, ct_env, n);
+        if (rc != CLIENT_OK) fprintf(stderr, "  adopt(rated, viewer %d): %d\n", viewer, rc);
+        CHECK(rc == CLIENT_OK && ct.view.rated && ct.view.rating_before[0] == 1000 && ct.view.rating_before[1] == 1210
+              && ct.view.rating_delta[0] == 7 && ct.view.rating_delta[1] == -3 && ct.view.rating_delta[2] == -4
+              && ct.view.version == 42 && ct.view.my_seat == viewer && ct.view.status == GAME_STATUS_GAME_OVER,
+              "every viewer, the spectator too, reads it by seat");
+
+        // THE OLD READER: skip the island by its length and take what follows.
+        // What follows is byte for byte the envelope the unrated table writes.
+        Table plain = tb;
+        memset(&plain.ratings, 0, sizeof plain.ratings);
+        const int n0 = table_envelope(&plain, RS("g-7"), viewer, 42, ct_env2, sizeof(ct_env2));
+        CHECK(n0 == n - island && ct_env2[ENV_ISLAND_AT] == 0 && ct_env2[ENV_ISLAND_AT + 1] == 0
+              && memcmp(ct_env, ct_env2, ENV_ISLAND_AT) == 0
+              && memcmp(ct_env + ENV_ISLAND_AT + 2 + island, ct_env2 + ENV_ISLAND_AT + 2, (size_t)(n0 - ENV_ISLAND_AT - 2)) == 0,
+              "the stamp changes the island and nothing else: a reader that skips it reads the envelope it always did");
+        CHECK(client_adopt_envelope(&ct, ct_env2, n0) == CLIENT_OK && !ct.view.rated, "and an envelope without one reads unrated");
+    }
+    {
+        const int n = table_envelope(&tb, RS("g-7"), 0, 42, ct_env, sizeof(ct_env));
+        // An island of another kind is not this kernel's to judge: it is skipped.
+        memcpy(ct_env2, ct_env, (size_t)n); ct_env2[ENV_ISLAND_AT + 2] = '{';
+        CHECK(client_adopt_envelope(&ct, ct_env2, n) == CLIENT_OK && !ct.view.rated, "an island with a tag this kernel does not know is skipped");
+        // A ratings island that does not read is refused, never half-believed.
+        const GameRatings two = { 2, { 1000, 1210 }, { 7, -7 } };
+        memcpy(ct_env2, ct_env, (size_t)n); game_ratings_put(&two, ct_env2 + ENV_ISLAND_AT + 3);
+        CHECK(client_adopt_envelope(&ct, ct_env2, n) == CLIENT_E_FORMAT, "a stamp that does not count the board's seats is refused");
+        // One byte too long: the island still skips cleanly, and is not a stamp.
+        const int isle = ENV_ISLAND_AT + 2 + 1 + GAME_RATINGS_BYTES;
+        memcpy(ct_env2, ct_env, (size_t)isle); ct_env2[isle] = 0; memcpy(ct_env2 + isle + 1, ct_env + isle, (size_t)(n - isle));
+        ct_env2[ENV_ISLAND_AT] = (uint8_t)(1 + GAME_RATINGS_BYTES + 1);
+        CHECK(client_adopt_envelope(&ct, ct_env2, n + 1) == CLIENT_E_FORMAT, "a ratings island of another length is refused");
+        memcpy(ct_env2, ct_env, (size_t)n); ct_env2[ENV_ISLAND_AT + 2 + GAME_RATINGS_BYTES] = 9;
+        CHECK(client_adopt_envelope(&ct, ct_env2, n) == CLIENT_E_FORMAT, "a stamp with a slot past its count is refused");
+        // A push's board has no stamp: the view a later adoption leaves is unrated.
+        CHECK(client_adopt_envelope(&ct, ct_env, n) == CLIENT_OK && ct.view.rated, "the stamped envelope reads again (the control)");
+        const int slen = state_put(&tb_game, 0, ct_raw);
+        CHECK(client_adopt_state(&ct, ct_raw, slen, 0) == CLIENT_OK && !ct.view.rated, "a bare board adopted after it is unrated");
+    }
+
+    // A rematch is a new game: the lobby it resets to has no stamp to show.
+    CHECK(table_continue(&tb, RS("id-1")) == TABLE_OK && tb_game.status == GAME_STATUS_WAITING, "the table continues into its lobby");
+    {
+        const int n = table_envelope(&tb, RS("g-7"), 0, 43, ct_env, sizeof(ct_env));
+        CHECK(n > 0 && ct_env[ENV_ISLAND_AT] == 0 && ct_env[ENV_ISLAND_AT + 1] == 0
+              && client_adopt_envelope(&ct, ct_env, n) == CLIENT_OK && !ct.view.rated, "and its envelope carries none");
+    }
+}
+
+
 // Every push of a whole game, for every viewer, through the client: each opens,
 // every step reads, and the final board is the envelope's.
 // Two views read the same: every field and every counted element.
@@ -16416,6 +16566,7 @@ int main(void) {
     test_table_session_log_is_load_bearing_for_octogen();
     test_table_state_blob_round_trips_every_reachable_state();
     test_client_adopts_envelopes();
+    test_rating_stamp_rides_the_row_and_the_envelope();
     test_ask_round_trips();
     test_table_ask_runs_every_kind();
     test_table_cast_carries_its_version();
