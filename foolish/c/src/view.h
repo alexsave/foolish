@@ -143,17 +143,17 @@ int state_import(Game *g, const unsigned char *p, int len, int masked);
 #define STATE_BLOB_FLAGS_V4 (STATE_BLOB_FLAG_DETERMINISTIC | STATE_BLOB_FLAG_PASSING)
 
 // Layout v5: v4, then the game's RATING STAMP (GameRatings below), fixed width,
-// behind the clock. v4 -> v5 is at its EXPAND step: this kernel reads v5 and
-// still writes v4, so it writes no stamp, and a stamped row it rewrites (an
-// account redacted on a finished table, say) loses the stamp. The switch is the
-// kernel that flips STATE_BLOB_FORMAT below and starts stamping (table.h).
+// behind the clock. v4 -> v5 has had its expand (#283 read v5 and still wrote
+// v4) and this kernel is the switch, which writes v5 and stamps the game it
+// ends (table.h table_rate). v4 rows stay in the column until a game rewrites
+// them, so v4 is still read, as an unrated game.
 //
-// THE FORMAT THIS KERNEL WRITES, and the one switch of the move above: V4, the
-// switch step (it was V3 while the expand kernel was deploying). Everything that
+// THE FORMAT THIS KERNEL WRITES, and the one switch of the move above: V5, the
+// switch step (it was V4 while the expand kernel was deploying). Everything that
 // depends on which one is written - the clock bytes a blob ends with, whether a
 // board's rules can be written at all, whether a finished game's rating stamp
 // survives the row - follows from it.
-#define STATE_BLOB_FORMAT STATE_BLOB_FORMAT_V4
+#define STATE_BLOB_FORMAT STATE_BLOB_FORMAT_V5
 
 // The bytes the blob's header costs, ahead of the state_put payload.
 #define STATE_BLOB_HEADER 2

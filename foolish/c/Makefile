@@ -1024,7 +1024,7 @@ WASM_TABLE_EXPORTS := \
   -Wl,--export=wasm_table_bots_need_logs -Wl,--export=wasm_table_commit_products \
   -Wl,--export=wasm_table_push -Wl,--export=wasm_table_envelope \
   -Wl,--export=wasm_table_action_response -Wl,--export=wasm_table_rankings \
-  -Wl,--export=wasm_elo_deltas \
+  -Wl,--export=wasm_table_rate \
   -Wl,--export=wasm_table_create -Wl,--export=wasm_table_join \
   -Wl,--export=wasm_table_leave -Wl,--export=wasm_table_add_bot \
   -Wl,--export=wasm_table_ready \

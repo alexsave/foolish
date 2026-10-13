@@ -264,9 +264,10 @@ int wasm_table_rankings(void) {
     return table_rankings(table(), g_table_elo.order);
 }
 
-// TableElo.ratings (by seat) and .order (best first) -> TableElo.deltas (by seat).
-int wasm_elo_deltas(int n) {
-    return elo_deltas(g_table_elo.ratings, g_table_elo.order, n, g_table_elo.deltas);
+// TableElo.ratings (by seat, `n` of them): rates the game the last operation
+// ended (table.h table_rate). The next commit products carry the stamp.
+int wasm_table_rate(int n) {
+    return table_rate(table(), g_table_elo.ratings, n);
 }
 
 // ---- test fixtures (e2e/helpers/table_fixture.ts) -----------------------------

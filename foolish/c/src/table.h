@@ -73,6 +73,7 @@
 #define TABLE_STATE_FORMAT_V2 STATE_BLOB_FORMAT_V2
 #define TABLE_STATE_FORMAT_V3 STATE_BLOB_FORMAT_V3
 #define TABLE_STATE_FORMAT_V4 STATE_BLOB_FORMAT_V4
+#define TABLE_STATE_FORMAT_V5 STATE_BLOB_FORMAT_V5
 // The v4 flag byte's bits (view.h STATE_BLOB_FLAG_*): PASSING 1 the classic game, 0 podkidnoy.
 #define TABLE_STATE_FLAG_DETERMINISTIC STATE_BLOB_FLAG_DETERMINISTIC
 #define TABLE_STATE_FLAG_PASSING STATE_BLOB_FLAG_PASSING
@@ -81,6 +82,12 @@
 // these last bytes. A v3 or v4 blob's clock is always TABLE_STATE_V3_CLOCK_BYTES.
 #define TABLE_STATE_CLOCK_BYTES STATE_BLOB_CLOCK_BYTES
 #define TABLE_STATE_V3_CLOCK_BYTES STATE_BLOB_V3_CLOCK_BYTES
+// EVERYTHING a written blob carries behind its board: the clock, and from v5 the
+// game's rating stamp behind that (view.h GameRatings, TABLE_STATE_STAMP_BYTES
+// of it). Two blobs of the same BOARD are equal up to these bytes; the clock is
+// the first TABLE_STATE_CLOCK_BYTES of them.
+#define TABLE_STATE_STAMP_BYTES GAME_RATINGS_BYTES
+#define TABLE_STATE_TAIL_BYTES (STATE_BLOB_CLOCK_BYTES + (STATE_BLOB_FORMAT == STATE_BLOB_FORMAT_V5 ? GAME_RATINGS_BYTES : 0))
 
 // ---- the action request and response (the `action` endpoint's body) --------
 //
@@ -336,6 +343,14 @@ typedef struct {
     bool    ended;
     bool    dealt_now;
     bool    roster_changed;
+    // THE SEATS THIS OPERATION RATED (table_rate), and what it did to each: the
+    // changes the commit applies to the rating rows, by seat. Zero for every
+    // operation but the one that ended a rated game - a later commit on the same
+    // finished table (an account redacted, a hand reordered) carries the stamp
+    // in its state and its envelopes and rates NOBODY, or the game would be
+    // counted again each time.
+    uint8_t n_rated;
+    int16_t rating_delta[MAX_PLAYERS];
     // THE OPERATION MOVED THE GOODS, which a push must carry even when the
     // operation moved no card. A `good` emits no event - the kernel has no card
     // to fly - so for years the adapter's `n_events > 0` test dropped the push
@@ -481,11 +496,32 @@ int table_rankings(const Table *t, int8_t seats_out[MAX_PLAYERS]);
 // (K = 10, rounded like Math.round), scoring 1 against a seat that finished
 // below and 0 against one above. `ratings` and `out` by seat, `order` best
 // first. Integer ratings only, which every rating in the product is.
+int elo_deltas(const int32_t *ratings, const int8_t *order, int n, int32_t *out);
+
+// What a host hands table_rate, and where table_rankings answers.
 typedef struct {
     int32_t ratings[MAX_PLAYERS];
     int8_t  order[MAX_PLAYERS];
-    int32_t deltas[MAX_PLAYERS];
 } TableElo;
-int elo_deltas(const int32_t *ratings, const int8_t *order, int n, int32_t *out);
+
+// RATES THE GAME THE LAST OPERATION ENDED. `ratings` are the seats' ratings as
+// the game ends, by seat, `n` of them. The table works out each seat's change
+// (table_rankings, elo_deltas) and stamps both on the game (view.h GameRatings):
+// the state blob and every envelope of the finished table carry the stamp from
+// this commit on, and the commit's products name the changes to apply
+// (TableCommit.n_rated, rating_delta).
+//
+// A change never takes a rating below zero: a seat that would lose more than it
+// has loses what it has, so the stamp is what is applied.
+//
+// Called between the operation and table_commit_products, and only then:
+// TABLE_E_NOT_OVER unless THIS operation ended the game (a game is rated once,
+// by the commit that ends it), TABLE_E_WIRE when `n` is not the board's seat
+// count. A table of one has nobody to be rated against: TABLE_OK, and no stamp.
+//
+// A host that cannot read the ratings does not call this, and the game ends
+// unrated: no stamp, no change, and a screen that shows no rating rather than a
+// wrong one.
+int table_rate(Table *t, const int32_t *ratings, int n);
 
 #endif
