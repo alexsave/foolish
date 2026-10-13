@@ -1,0 +1,163 @@
+# c_base, the foolish backend in C (c_base/DESIGN.md): built and tested on
+# Linux and macOS, sanitized on Linux, packaged as the static arm64 Lambda
+# zip, and deployed from main when the deploy secrets exist.
+#
+# Paths: c_base itself, the kernel it links (foolish/c), the shared C it
+# compiles (shared/c), and the compile rules and tools its Makefile includes
+# (shared/tools). A change to any of them changes the deployed binary.
+#
+# Deploy secrets (Settings > Secrets and variables > Actions), see
+# c_base/RUNBOOK.md "GitHub deploys":
+#   CBASE_AWS_ROLE_ARN    the stack's DeployRoleArn output (OIDC, no keys)
+#   CBASE_FUNCTION_NAME   the stack's FunctionName output (cbase)
+#   CBASE_AWS_REGION      optional, default us-east-1
+# With either of the first two missing, the deploy job says so and does nothing.
+name: c_base
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'c_base/**'
+      - 'foolish/c/**'
+      - 'shared/c/**'
+      - 'shared/tools/**'
+      - '.github/workflows/c_base.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'c_base/**'
+      - 'foolish/c/**'
+      - 'shared/c/**'
+      - 'shared/tools/**'
+      - '.github/workflows/c_base.yml'
+  workflow_dispatch: {}
+
+concurrency:
+  group: c_base-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: make check (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q build-essential libssl-dev libsqlite3-dev
+      - name: dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew list openssl@3 >/dev/null 2>&1 || brew install openssl@3
+      - name: build
+        run: make -C c_base -j"$(getconf _NPROCESSORS_ONLN)"
+      - name: unit tests and both smoke lanes
+        run: make -C c_base -j"$(getconf _NPROCESSORS_ONLN)" check
+
+  asan:
+    name: make check-asan
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -q && sudo apt-get install -y -q build-essential libssl-dev libsqlite3-dev
+      - name: unit tests and smoke under ASan + UBSan
+        run: make -C c_base -j"$(getconf _NPROCESSORS_ONLN)" check-asan
+
+  ops:
+    name: template and scripts
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: the CloudFormation template (cfn-lint, no AWS calls)
+        run: |
+          python3 -m venv /tmp/cfn
+          /tmp/cfn/bin/pip install -q cfn-lint==1.57.2
+          /tmp/cfn/bin/cfn-lint --regions us-east-1 -- c_base/ops/cbase.yaml
+      - name: the shell scripts
+        run: |
+          bash -n c_base/ops/package.sh c_base/tools/build_bootstrap.sh
+          shellcheck c_base/ops/package.sh
+
+  bootstrap:
+    name: make bootstrap (Lambda zip)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      # The build container is linux/arm64 (tools/build_bootstrap.sh); this
+      # runner is x86, so Docker runs it under QEMU. Slower, same bytes.
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - name: package
+        run: c_base/ops/package.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cbase-lambda
+          path: |
+            c_base/build/cbase-lambda.zip
+            c_base/build/cbase-lambda.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+  deploy:
+    name: deploy to Lambda
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [check, asan, ops, bootstrap]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write   # the OIDC token configure-aws-credentials exchanges for the role
+    env:
+      ROLE_ARN: ${{ secrets.CBASE_AWS_ROLE_ARN }}
+      FUNCTION_NAME: ${{ secrets.CBASE_FUNCTION_NAME }}
+      AWS_REGION: ${{ secrets.CBASE_AWS_REGION || 'us-east-1' }}
+    steps:
+      - name: are the deploy secrets set
+        id: gate
+        run: |
+          if [ -n "$ROLE_ARN" ] && [ -n "$FUNCTION_NAME" ]; then
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::CBASE_AWS_ROLE_ARN or CBASE_FUNCTION_NAME is not set; nothing deployed (c_base/RUNBOOK.md, GitHub deploys)."
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/download-artifact@v4
+        if: steps.gate.outputs.go == 'true'
+        with:
+          name: cbase-lambda
+          path: dist
+      - uses: aws-actions/configure-aws-credentials@v4
+        if: steps.gate.outputs.go == 'true'
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: update the function code
+        if: steps.gate.outputs.go == 'true'
+        run: |
+          (cd dist && sha256sum -c cbase-lambda.zip.sha256)
+          aws lambda update-function-code --function-name "$FUNCTION_NAME" \
+            --zip-file fileb://dist/cbase-lambda.zip --query '[CodeSha256, LastUpdateStatus]' --output text
+          aws lambda wait function-updated --function-name "$FUNCTION_NAME"
+      - name: smoke GET /health on the Function URL
+        if: steps.gate.outputs.go == 'true'
+        run: |
+          url="$(aws lambda get-function-url-config --function-name "$FUNCTION_NAME" --query FunctionUrl --output text)"
+          url="${url%/}"
+          for i in 1 2 3 4 5; do
+            body="$(curl -fsS --max-time 20 "$url/health" || true)"
+            case "$body" in
+              "ok cbase "*) echo "$body"; exit 0 ;;
+            esac
+            echo "attempt $i: [$body]"
+            sleep 5
+          done
+          echo "::error::$url/health did not answer ok"
+          exit 1
