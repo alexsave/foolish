@@ -567,7 +567,7 @@ export function animHandLaidOut(
 // editing the queue a timer chain is walking.
 //
 // The structs are read WHERE THEY LIE, through the generated accessors, and
-// only the scalars a caller actually uses are copied out: a plan is 11,752
+// only the scalars a caller actually uses are copied out: a plan is 15,856
 // bytes and a frame loop that marshalled it whole once per frame would spend
 // more time copying than animating.
 

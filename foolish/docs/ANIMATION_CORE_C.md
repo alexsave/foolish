@@ -180,6 +180,24 @@ Reached from Swift through `sdk/swift/BoardWire.swift` (the card-set crossing,
 the veil, the ledger codes, the finish order), `sdk/swift/HandWire.swift` and the
 table half of `sdk/swift/PreTableWire.swift`.
 
+What a sequence sounds like (2026-10-13, [`AUDIO.md`](AUDIO.md)):
+
+- `AnimPlan.cues` / `n_cues` - every sound a step's own motion makes, as
+  `AnimCue {at_ms, kind, step, hits, n_cards}`: an `ANIM_CUE_*`, the moment it
+  is struck on the plan's own clock, and how many strikes
+  (`ANIM_SOUND_STAGGER_MS` apart, at most `ANIM_SOUND_MAX_HITS` a beat). Laid
+  out by `anim_build_plan` off the same beats the clock is, so a two-card cover
+  is one lift and two strikes, a sweep is one sound for however many cards, and
+  a seat's out is struck with the move that caused it instead of behind the
+  bout-end hold.
+- `anim_role_cue(shown, next)` - the cue for a turn of the marks: a good said,
+  or a mark that went from one seat to another. A good cleared is silent.
+- `anim_finish_cue(game_over, my_seat)` - the fool's sound, everybody else's,
+  or none while the game runs.
+
+A host maps a cue id to a sound it owns and schedules it; it never reads an
+event type to choose one.
+
 Style, per `msg_wire.h`/`evwire.h`: fixed-size structs, no allocation, every
 input range-checked, errors as negative `ANIM_E*` defines. Card inputs BORROW the
 caller's storage (like `EvwEvent`).
@@ -383,6 +401,7 @@ that shape; it is pinned in `anim_plan_test.c` rather than left implicit.
 | `e2e/optimistic_revert.test.ts` | `test_optimistic_revert` | yes — `optimistic_revert.test.ts` (real games) through the C bridge |
 | `e2e/reconcile.test.ts` | `test_reconcile` | yes — `reconcile.test.ts` (real broadcasts, reordered) through the C bridge |
 | (new - the choreography no TS test covered) | `test_plan_building` + `test_plan_anchors_on_the_first_events_own_board` | `tests.c` `test_the_freeze_is_the_board_before_every_move` |
+| (new - the sound cues) | `test_plan_sound_cues` | `tests.c` `test_plan_cues_over_real_games`; the bridge and the web's delivery in `e2e/audio_cues.test.ts`; the real page in `e2e/ui_animation_trace.test.ts` |
 
 ## What stayed in Swift, and why
 

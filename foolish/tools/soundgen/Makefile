@@ -8,9 +8,13 @@
 #
 # -ffp-contract=off so a multiply and an add are never fused into one rounding:
 # the same source then makes the same samples at -O0 and -O2 on one machine.
+#
+# NO -Werror, deliberately. `npm run build` runs this on whatever cc the lane
+# has, and a warning a newer compiler invents must not be what stops the
+# website building. Clean under Apple clang 21 and gcc 16 with these flags.
 
 CC      ?= cc
-CFLAGS  := -O2 -std=c11 -Wall -Wextra -Werror -ffp-contract=off -I../../c/src
+CFLAGS  := -O2 -std=c11 -Wall -Wextra -ffp-contract=off -I../../c/src
 OUT     := ../../public/audio/gen
 
 .PHONY: sounds list stats audition clean

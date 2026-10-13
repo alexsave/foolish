@@ -60,6 +60,7 @@ The dev server needs a Supabase backend, configured through two client-exposed v
 | Script | What it does |
 | --- | --- |
 | `npm run gen` | Regenerate the TS and Swift modules from the C. Ten other scripts run it first. |
+| `npm run sounds` | Synthesise the placeholder sounds into `public/audio/gen/` (see [`docs/AUDIO.md`](docs/AUDIO.md)). `dev` and `build` run it first. |
 | `npm run dev` / `build` / `start` | The website. |
 | `npm run test:e2e` | Full-stack tests against a real Postgres (see [`e2e/README.md`](e2e/README.md)). |
 | `npm run test:validate` | The 17 derived gates in `e2e/validation/`. No database, no network, no compiler. |

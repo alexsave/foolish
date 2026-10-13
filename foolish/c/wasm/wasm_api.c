@@ -854,7 +854,7 @@ int wasm_anim_set_transport(int transport) { return anim_set_transport(transport
 // (c/tests).
 //
 // THE STRUCTS ARE READ WHERE THEY LIE, like wasm_legal_moves_ptr: a plan is
-// 11,752 bytes and a host that copied it through g_io once per frame would
+// 15,856 bytes and a host that copied it through g_io once per frame would
 // spend more time marshalling than animating. The caller reads them through the
 // generated accessors (sdk/ts/gen/anim.bots.ts), which is also why AnimFrame is
 // a structgen root: no TypeScript may know a byte offset.
