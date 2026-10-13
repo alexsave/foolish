@@ -595,7 +595,7 @@ async function doStep(t: Table, step: Step, noninterference: boolean): Promise<T
         const fresh = (await truthOf(t)).board!;
         // The twin is sealed by the kernel (table_seal); unrotated it must be the real blob.
         const realHex = String(s0.games.state).replace(/^\\x/, '');
-        const clockHex = 2 * L.TABLE_STATE_CLOCK_BYTES;   // the board, not when it was shown (boardBytes)
+        const clockHex = 2 * L.TABLE_STATE_TAIL_BYTES;   // the board, not when it was shown (boardBytes)
         assert.equal(hex(boardBytes(rebuild(fresh).build().state)), realHex.slice(0, realHex.length - clockHex), 'the twin builder is faithful');
         const twin = rotateHidden(fresh, pinSeats, drawn, step.pinDeck);
         if (twin.moved < 2) continue;
