@@ -1831,6 +1831,34 @@ static void test_plan_sound_cues(void) {
         CHECK(anim_build_plan(other, 2, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "the unrelated plan builds");
         a = cue_of(&p, 1, ANIM_CUE_REVERT);
         CHECK(a && a->undoes == ANIM_CUE_PLACE, "a move of some other card is not the move undone (got %d)", a ? a->undoes : -1);
+        // THE SAME CARD, not a card like it: a cover of the same suit and one of
+        // the same rank are in the stream, and neither is the card going home.
+        {
+            Card mine[1] = { C(1, 9) }, same_suit[1] = { C(1, 10) }, same_rank[1] = { C(2, 9) };
+            AnimPlanEvent near[3] = {
+                cue_ev(ANIM_EVT_COVER, 1, ANIM_LOC_HAND, ANIM_LOC_TABLE, same_suit, 1),
+                cue_ev(ANIM_EVT_COVER, 1, ANIM_LOC_HAND, ANIM_LOC_TABLE, same_rank, 1),
+                cue_ev(ANIM_EVT_REVERT, 0, ANIM_LOC_TABLE, ANIM_LOC_HAND, mine, 1),
+            };
+            CHECK(anim_build_plan(near, 3, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "the near-miss plan builds");
+            a = cue_of(&p, 2, ANIM_CUE_REVERT);
+            CHECK(a && a->undoes == ANIM_CUE_PLACE, "a cover of the same suit or the same rank is not this card's (got %d)", a ? a->undoes : -1);
+            // SEVERAL CARDS GO HOME IN ONE FLIGHT, and any one of them finds the move.
+            Card home[2] = { C(3, 14), C(2, 9) };
+            near[2] = cue_ev(ANIM_EVT_REVERT, 0, ANIM_LOC_TABLE, ANIM_LOC_HAND, home, 2);
+            CHECK(anim_build_plan(near, 3, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "the two-card revert builds");
+            a = cue_of(&p, 2, ANIM_CUE_REVERT);
+            CHECK(a && a->undoes == ANIM_CUE_COVER, "the second card of a revert finds its cover too (got %d)", a ? a->undoes : -1);
+            // And a multi-card move is found by a card that is not its first.
+            Card laid[2] = { C(0, 7), C(1, 7) }, back[1] = { C(1, 7) };
+            AnimPlanEvent multi[2] = {
+                cue_ev(ANIM_EVT_COVER, 0, ANIM_LOC_HAND, ANIM_LOC_TABLE, laid, 2),
+                cue_ev(ANIM_EVT_REVERT, 0, ANIM_LOC_TABLE, ANIM_LOC_HAND, back, 1),
+            };
+            CHECK(anim_build_plan(multi, 2, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "the multi-card plan builds");
+            a = cue_of(&p, 1, ANIM_CUE_REVERT);
+            CHECK(a && a->undoes == ANIM_CUE_COVER, "the second card of a move is that move's card (got %d)", a ? a->undoes : -1);
+        }
         // With nothing in the stream the direction is all there is.
         AnimPlanEvent alone[1] = { ev[5] };
         CHECK(anim_build_plan(alone, 1, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "the lone revert builds");
