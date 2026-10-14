@@ -97,11 +97,13 @@ jobs:
         run: |
           python3 -m venv /tmp/cfn
           /tmp/cfn/bin/pip install -q cfn-lint==1.57.2
-          /tmp/cfn/bin/cfn-lint --regions us-east-1 -- c_base/ops/cbase.yaml
+          /tmp/cfn/bin/cfn-lint --regions us-east-1 -- c_base/ops/cbase.yaml c_base/ops/web.yaml
       - name: the shell scripts
         run: |
-          bash -n c_base/ops/package.sh c_base/tools/build_bootstrap.sh c_base/ops/dynamo_local.sh
-          shellcheck c_base/ops/package.sh c_base/ops/dynamo_local.sh
+          bash -n c_base/ops/package.sh c_base/tools/build_bootstrap.sh c_base/ops/dynamo_local.sh c_base/ops/web_deploy.sh
+          shellcheck c_base/ops/package.sh c_base/ops/dynamo_local.sh c_base/ops/web_deploy.sh
+      - name: the web router's rules (ops/web.yaml's Function code)
+        run: node --test c_base/ops/test/web_router.test.mjs
 
   bootstrap:
     name: make bootstrap (Lambda zip)

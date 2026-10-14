@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { useParams } from 'next/navigation';
+import { useUrlGameId } from '../utils/useUrlGameId';
 import { useAuth } from '../contexts/AuthContext';
 import { useServer } from '../contexts/ServerContext';
 import { animationFeed } from './animationFeed';
@@ -18,7 +18,7 @@ import { holdPrivateChannel } from './privateChannel';
 export const RealtimeAnimationFeed = () => {
     const { user_id } = useAuth();
     const { loadGame, views } = useServer();
-    const url_game_id = useParams<{ game_id: string }>().game_id?.toLowerCase();
+    const url_game_id = useUrlGameId()?.toLowerCase();
     // Only a seated player has a gu- stream. Realtime admits the private join
     // only for a member of the game, so a spectator's join is refused every
     // time (and each refusal stalls the whole socket, see privateChannel.ts);

@@ -119,6 +119,11 @@ jobs:
         run: npm install --global vercel@59.23.1
       - name: Vercel build
         if: steps.creds.outputs.ready == 'true'
+        # The SERVER build, with next.config.mjs's rewrites: without VERCEL=1
+        # the app builds as a static export for S3 (web_aws.yml). Vercel's CLI
+        # sets it too; it is stated here so this lane never depends on that.
+        env:
+          VERCEL: '1'
         run: |
           vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
           vercel build --prod --token="$VERCEL_TOKEN"

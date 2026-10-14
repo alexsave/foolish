@@ -24,6 +24,11 @@ open http://localhost:3000/AJG7NYNQG4RFXXGVPGD7QR2ETSOYTWMCREAQ
 `public/uttt.wasm` is a build output and is never committed. CI builds it
 with the repo's pinned clang (`.github/workflows/uttt-web.yml`) and deploys
 the site to its own Vercel project on every push to `main` that touches it.
+`npm run build` is a static export (`out/`); `.github/workflows/web_aws.yml`
+uploads the same export to S3 behind CloudFront (`c_base/ops/web.yaml`), which
+takes over when DNS moves (`c_base/RUNBOOK.md`, "Web hosting"). Vercel's
+build sets `VERCEL=1` and gets the server build with `next.config.mjs`'s
+rewrites instead.
 
 ## /243: two bots on the 243 x 243 board
 

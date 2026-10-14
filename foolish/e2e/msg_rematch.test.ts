@@ -14,10 +14,12 @@
 // No shipped host of bots.wasm builds a rematch (the phone does), so the entry
 // is the TEST build's (c/Makefile WASM_BOTS_UNSHIPPED_API).
 //
+// How a shared rematch link unfurls is no longer the web's: /m/<payload> is a
+// c_base route (c_base/docs/VERCEL.md section 4a), golden-tested there.
+//
 // Run: npx tsx --test e2e/msg_rematch.test.ts
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { kernelB32Encode } from '../sdk/ts/wasm/bots.ts';
 import { fixtureExports } from './helpers/table_fixture.ts';
 
 const hex = (h: string) => Uint8Array.from(h.match(/../g)!.map((b) => parseInt(b, 16)));
@@ -48,13 +50,4 @@ function rematch(finished: Uint8Array, tappedAtMs: number, creatorSeat: number):
 
 test('wasm builds the rematch lobby the native kernel built, byte for byte', () => {
     assert.deepEqual(Array.from(rematch(FINISHED, TAPPED_AT_MS, 2)), Array.from(NATIVE_LOBBY));
-});
-
-test('a shared rematch link unfurls as a rematch, not as turn 0', async () => {
-    const { generateMetadata } = await import('../src/app/m/[payload]/layout.tsx');
-    const m = await generateMetadata({ params: Promise.resolve({ payload: '1' + kernelB32Encode(NATIVE_LOBBY) }) });
-    assert.match(String(m.title), /Alex vs Mira vs Jonas vs Priya/);
-    assert.match(String(m.title), /a rematch, waiting to start/);
-    const f = await generateMetadata({ params: Promise.resolve({ payload: '1' + kernelB32Encode(FINISHED) }) });
-    assert.match(String(f.title), /a finished Durak game/);
 });
