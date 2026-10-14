@@ -130,8 +130,10 @@ test('an absent seat and an absent place cross as the kernel\'s own "none"', () 
 test('a question the kernel refuses is thrown, and so is one that does not fit the ask', () => {
     const final = board({ deck: 0, discard: 0, flipped: null, hand: [6, 6] });
     const out: AnimPlanEventIn = { type: ANIM_EVT.out };
-    // The kernel's own refusals: a table of one, a 129th step, and a row of 53 battles.
-    assert.throws(() => animBuildPlan([out], board({ deck: 0, discard: 0, flipped: null, hand: [6] })), /anim_build_plan error/);
+    // The kernel's own refusals: a table of no one, a 129th step, and a row of 53 battles.
+    // A table of ONE is not among them: a lobby the host sits in alone is a board.
+    assert.throws(() => animBuildPlan([out], board({ deck: 0, discard: 0, flipped: null, hand: [] })), /anim_build_plan error/);
+    assert.equal(animBuildPlan([out], board({ deck: 0, discard: 0, flipped: null, hand: [6] })).pre.nPlayers, 1);
     assert.throws(() => animBuildPlan(new Array<AnimPlanEventIn>(129).fill(out), final), /anim_build_plan error/);
     const wide = board({ deck: 0, discard: 0, flipped: null, hand: [6, 6] }, new Array<Card[]>(53).fill([SIX_D]));
     assert.throws(() => animBuildPlan([{ ...out, board: wide }], final), /anim_build_plan error/);

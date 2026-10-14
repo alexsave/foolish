@@ -527,10 +527,12 @@ typedef struct {
 int client_plan_step(AnimPlanAsk *ask, int at, const ClientPlanStep *step, const TableView *board);
 
 // The plan of the `n` steps given (anim_plan_ask), frozen back from `final` -
-// the board the screen holds now - which also says how many sit. With no
-// `final` (NULL: every step a prediction, before any board arrived) the table
-// is as wide as the widest board a step carried and the final counts are zero,
-// which only a stream with no board at all reads. What anim_plan_ask returns;
+// the board the screen holds now. The table is as wide as the widest board the
+// plan reads, `final` or a step's: the screen's board is the OLDER one, so a
+// step can seat more than it does (the first guest joining a lobby the screen
+// still shows alone). With no `final` (NULL: every step a prediction, before
+// any board arrived) the final counts are zero, which only a stream with no
+// board at all reads. What anim_plan_ask returns;
 // ANIM_EBADARG when `n` is not the number of steps given.
 int client_plan(AnimPlanAsk *ask, int n, const TableView *final, AnimPlan *out);
 
