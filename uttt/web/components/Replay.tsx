@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { openReplay, type Replay as Kernel } from '../lib/kernel';
+import { SHELL_CODE } from '../lib/shell';
 import styles from './Replay.module.css';
 
 /** The board's lines run past it (the pen's overshoot); this much paper is
@@ -20,6 +21,19 @@ const MARGIN = 0.06;
 const RESTS_BETWEEN_MOVES = 2;
 
 type Status = 'loading' | 'ready' | 'bad';
+
+/** The replay of the code in the address bar. Prerendered as the static
+ *  export's one shell (lib/shell.ts), it reads the code from
+ *  location.pathname after mount; given any other code (a server render) it
+ *  plays that code straight away. */
+export function ReplayAtPath({ code }: { code: string }) {
+    const [real, setReal] = useState<string | null>(code === SHELL_CODE ? null : code);
+    useEffect(() => {
+        if (code !== SHELL_CODE) return setReal(code);
+        setReal(decodeURIComponent(window.location.pathname.split('/')[1] ?? ''));
+    }, [code]);
+    return real === null ? null : <Replay code={real} />;
+}
 
 export function Replay({ code }: { code: string }) {
     const canvas = useRef<HTMLCanvasElement>(null);
