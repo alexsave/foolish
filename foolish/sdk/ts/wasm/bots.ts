@@ -17,7 +17,6 @@ import * as V from '../gen/view_layout.bots.ts';
 import * as M from '../gen/msg_layout.bots.ts';
 import * as A from '../gen/anim.bots.ts';
 import * as K from '../gen/kernel_consts.bots.ts';
-import { MsgErrorText } from '../gen/errtext/msg.ts';
 import { ReplayErrorText } from '../gen/errtext/replay.ts';
 import { ReplayExtrasErrorText } from '../gen/errtext/replay_extras.ts';
 
@@ -134,10 +133,8 @@ const NUL = new Uint8Array(1);
 // not hold is this file's.
 const refusalText = (rows: readonly { code: number; text: string }[], code: number, family: string): string =>
     rows.find((row) => row.code === code)?.text ?? `${family} kernel error ${code}`;
-const msgError = (code: number) => new Error(refusalText(MsgErrorText, code, 'iMessage payload:'));
 const extrasError = (code: number) => new Error(refusalText(ReplayExtrasErrorText, code, 'extras:'));
 const animError = (entry: string) => (code: number) => new Error(`${entry} error ${code}`);
-const msgTooBig = () => msgError(M.MSG_ECAP);
 const extrasTooBig = () => extrasError(-M.REPLAY_EXTRAS_ECAP);
 const codeTooBig = () => replayError(-K.REPLAY_ECAP);
 const tooBig = (what: string) => () => new Error(`${what}: does not fit the kernel IO buffer`);
@@ -172,36 +169,6 @@ export function kernelBotRoster(): readonly BotRosterEntry[] {
     const at = ex.wasm_bot_roster_dump();
     if (!at) throw new Error('bot_roster: the kernel refused to dump the table');
     return rosterCache = V.readBotRosterTable(mem(ex), at).rows;
-}
-
-// ---------- FMSG: the iMessage envelope (c/src/msg_wire.h) -------------
-//
-// An iMessage game has no server: the whole game is (32-byte deal seed, v6
-// replay code) in an MSMessage URL, and every device rebuilds it by re-dealing
-// from the seed and replaying the code through the kernel. Anything but the
-// phone only READS one: the envelope's layout lives in C, once, so no two hosts can read the
-// same bytes as different games. Its one browser reader, the /m/ route, went
-// with the static export, so the door is bots.wasm's alone (serverBots): what
-// still calls it is e2e/msg_wire.test.ts, holding the wasm decode to the
-// envelopes the native producer sealed. Sealing, rebasing and Rule P are the
-// phone's (c/ios/ios_api_msg.c) and are tested beside the kernel
-// (c/tests/msg_wire_test.c).
-//
-// It rides the REPLAY io buffer, never g_io: an FMSG call IS a replay call (its
-// body is a v6 code), so an envelope in g_io would be clobbered by the codec's
-// own bignum scratch mid-decode. See wasm_api.c.
-
-// Decode + VALIDATE an envelope: the chain is replayed through the kernel, so a
-// corrupt or hand-edited payload throws rather than half-loading (§7.3 -
-// validation IS replay).
-//
-// The header comes back as the C struct itself (msg_wire.h MsgHeader, at
-// wasm_msg_header_ptr), read by its generated reader: the envelope is `.e` and
-// the SHA-256 of its bytes is `.digest`.
-export function kernelMsgDecode(envelope: Uint8Array): M.MsgHeader_Snap {
-    const ex = replayIn(serverBots(), msgTooBig, envelope);
-    ok(ex.wasm_msg_decode(envelope.length), msgError);
-    return M.readMsgHeader(mem(ex), ex.wasm_msg_header_ptr());
 }
 
 /* ---------------- the replay code's extras blob (c/src/replay_extras.h) ------

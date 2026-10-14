@@ -256,9 +256,16 @@ test("bots.wasm declared INITIAL memory is 34 pages (static buffers, not the run
     // Everything else that moved between the two maps is a rename or a few
     // hundred bytes of new ask structs. That leaves 62,400 BYTES under the
     // 34-page line.
+    //
+    // Still 34 after wasm_msg_decode and wasm_msg_header_ptr left this link (no
+    // TS reads an iMessage envelope; the /m/ unfurl is C, in c_base). Measured
+    // from two links of the same objects with __heap_base exported, with and
+    // without those two exports: __heap_base 2,166,144 B -> 2,165,216 B
+    // (-928 B, g_msg_header's 656 B among it). That leaves 63,008 BYTES under
+    // the 34-page line.
     const wasm = new Uint8Array(gunzipSync(readFileSync(resolve('sdk/ts/wasm/bots.wasm.gz'))));
     const { min } = memLimits(wasm);
-    assert.equal(min, 34, `bots.wasm initial memory is ${min} pages (${min * PAGE}B); expected 34: the deliberate static buffers (g_io 400 KiB, the cordite solver working set, the move enumerators, the resident and replay Games, the Table's 64-slot snapshot store that holds one deal) plus the bridge's generated structs (ReplayExtras 8,744 B, RosterSpec 3,448 B, ReplayFrameIndex 1,032 B, MsgHeader 656 B). Going UP is a regression: 62,400 B of static room are left under the 34-page line, so look for a new buffer below __heap_base. Going DOWN means something was freed - lower this pin and take the page back.`);
+    assert.equal(min, 34, `bots.wasm initial memory is ${min} pages (${min * PAGE}B); expected 34: the deliberate static buffers (g_io 400 KiB, the cordite solver working set, the move enumerators, the resident and replay Games, the Table's 64-slot snapshot store that holds one deal) plus the bridge's generated structs (ReplayExtras 8,744 B, RosterSpec 3,448 B, ReplayFrameIndex 1,032 B). Going UP is a regression: 63,008 B of static room are left under the 34-page line, so look for a new buffer below __heap_base. Going DOWN means something was freed - lower this pin and take the page back.`);
 });
 
 test("web.wasm declared INITIAL memory is 24 pages - 10 fewer than the server's link", () => {

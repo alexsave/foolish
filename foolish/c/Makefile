@@ -964,12 +964,12 @@ build/layout/oracle-mt.hash: $(STRUCTGEN) FORCE
 
 # FORCE itself is shared/tools/gen_tools.mk's.
 
-# bots.wasm exports the rules API above PLUS the bot bridge (wasm_bots_api.c),
-# and PLUS the FMSG decode (wasm_msg_decode and its header). Its browser reader,
-# the web's /m/ route, went with the static export, so web.wasm no longer
-# carries it; e2e/msg_wire.test.ts still holds this decode to the envelopes the
-# native producer seals. Sealing, rebasing and Rule P are the phone's and have
-# no wasm entry: they are tested natively (tests/msg_wire_test.c).
+# bots.wasm exports the rules API above PLUS the bot bridge (wasm_bots_api.c).
+# It carries no FMSG decode: no browser or server TS reads an iMessage envelope
+# (the /m/ unfurl is C, in c_base), so the envelope codec ships only natively,
+# where the phone seals, rebases and decodes (tests/msg_wire_test.c). The one
+# wasm module that still exports wasm_msg_decode is msg.wasm below, the
+# extension-floor measurement, which nothing loads.
 # Two entry points live in wasm_api.c but are exported ONLY here: the
 # log-offset variants for the drive cycle, whose belief bots keep the session
 # log under the records the cycle writes (see wasm_export_logs_masked_from).
@@ -995,7 +995,6 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_replay_b32_encode -Wl,--export=wasm_replay_b32_decode \
   -Wl,--export=wasm_replay_link_parse \
   -Wl,--export=wasm_unambiguous_cover \
-  -Wl,--export=wasm_msg_decode -Wl,--export=wasm_msg_header_ptr \
   -Wl,--export=wasm_msg_rematch \
   -Wl,--export=wasm_anim_should_drop_stale -Wl,--export=wasm_anim_stale_optimistic \
   -Wl,--export=wasm_anim_stale_ask_ptr -Wl,--export=wasm_anim_stale_release_ptr \
