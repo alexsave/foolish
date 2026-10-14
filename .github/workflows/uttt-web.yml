@@ -1,13 +1,5 @@
 name: uttt-web
 
-# RETIRED AS A DEPLOY LANE ON 2026-10-14. uttt.live is built, tested and
-# deployed by web_aws.yml (S3 + CloudFront), whose `uttt` job runs this file's
-# `build` steps on every pull request. This file is kept only as the Vercel
-# rollback: Actions > uttt-web > Run workflow, on main, deploys production to
-# Vercel (DNS has to point back at Vercel for it to matter, c_base/RUNBOOK.md
-# "W7"). DELETE THIS FILE after 2026-10-28, two weeks after the cutover, with
-# the rest of c_base/RUNBOOK.md "W9".
-#
 # uttt.live - Ultimate Tic-Tac-Toe's replay site (uttt/web). Built HERE and
 # uploaded, like the foolish site (web.yml) and for the same reason: the page
 # runs the uttt kernel as wasm (uttt/c `make wasm-web`), a build output that is
@@ -26,6 +18,34 @@ name: uttt-web
 # uses; UTTT_VERCEL_PROJECT_ID is the uttt project's own id (uttt/web/README.md).
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'uttt/c/**'
+      - 'uttt/web/**'
+      - 'shared/c/b32.*'
+      - 'shared/c/mixrad.*'
+      - 'shared/c/i18n/**'
+      - 'shared/c/wasm/**'
+      - 'shared/tools/structgen/**'
+      - 'shared/tools/sgcommon/**'
+      - 'shared/tools/*.mk'
+      - 'shared/scripts/ci_llvm.sh'
+      - '.github/workflows/uttt-web.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'uttt/c/**'
+      - 'uttt/web/**'
+      - 'shared/c/b32.*'
+      - 'shared/c/mixrad.*'
+      - 'shared/c/i18n/**'
+      - 'shared/c/wasm/**'
+      - 'shared/tools/structgen/**'
+      - 'shared/tools/sgcommon/**'
+      - 'shared/tools/*.mk'
+      - 'shared/scripts/ci_llvm.sh'
+      - '.github/workflows/uttt-web.yml'
   workflow_dispatch: {}
 
 concurrency:
@@ -59,7 +79,7 @@ jobs:
 
   deploy:
     needs: build
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
