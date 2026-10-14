@@ -64,7 +64,7 @@ env:
   AWS_REGION: us-east-1
   NEXT_PUBLIC_SUPABASE_URL: https://api.foolish.cards
   # The one place that says which runs deploy; every job reads it.
-  DEPLOYS: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/claude/c_base-deployci') }}
+  DEPLOYS: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
 
 jobs:
   foolish:
@@ -168,7 +168,7 @@ jobs:
 
   deploy:
     needs: [foolish, uttt]
-    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/claude/c_base-deployci')
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     concurrency:
       group: web-aws-deploy

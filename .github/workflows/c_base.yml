@@ -132,7 +132,7 @@ jobs:
 
   deploy:
     name: deploy to Lambda
-    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/claude/c_base-deployci')
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     needs: [check, asan, dynamo, ops, bootstrap]
     runs-on: ubuntu-24.04
     # One deploy at a time; a queued one waits rather than cancelling a stack
