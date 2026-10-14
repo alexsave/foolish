@@ -101,7 +101,9 @@ jobs:
       - name: the shell scripts
         run: |
           bash -n c_base/ops/package.sh c_base/tools/build_bootstrap.sh c_base/ops/dynamo_local.sh c_base/ops/web_deploy.sh
-          shellcheck c_base/ops/package.sh c_base/ops/dynamo_local.sh c_base/ops/web_deploy.sh
+          shellcheck c_base/ops/package.sh c_base/ops/dynamo_local.sh c_base/ops/web_deploy.sh c_base/ops/test/web_deploy_gate_test.sh
+      - name: web_deploy.sh refuses a tree behind main (no AWS calls)
+        run: bash c_base/ops/test/web_deploy_gate_test.sh
       - name: the web router's rules (ops/web.yaml's Function code)
         run: node --test c_base/ops/test/web_router.test.mjs
 
