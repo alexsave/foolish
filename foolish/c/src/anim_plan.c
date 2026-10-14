@@ -275,7 +275,8 @@ static int carries_counts(const AnimPlanEvent *ev) {
 int anim_build_plan(const AnimPlanEvent *events, int n_events, int n_players,
                     int final_deck, int final_discard, Card final_flipped,
                     const int *final_hand, AnimPlan *out) {
-    if (!out || !final_hand || n_players < 2 || n_players > MAX_PLAYERS) return ANIM_EBADARG;
+    // A lobby of one is a table (anim_plan.h), so the floor is one seat.
+    if (!out || !final_hand || n_players < 1 || n_players > MAX_PLAYERS) return ANIM_EBADARG;
     if (n_events < 0) return ANIM_EBADARG;
     if (n_events > ANIM_MAX_STEPS) return ANIM_ECAP;
     if (n_events > 0 && !events) return ANIM_EBADARG;

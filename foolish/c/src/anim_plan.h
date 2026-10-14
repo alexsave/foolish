@@ -487,7 +487,9 @@ int anim_step_duration_ms(int event_type);
 //
 // Returns ANIM_EOK, or ANIM_ECAP (n_events > ANIM_MAX_STEPS, or the veil
 // overflows) / ANIM_EBADARG (NULL out/final_hand, NULL events with n_events > 0,
-// n_players out of range).
+// n_players outside 1..MAX_PLAYERS). ONE seat is a table: a lobby the host sits
+// in alone is a board a screen holds, and a guest leaving it is a push to plan.
+// No seat at all is not one.
 int anim_build_plan(const AnimPlanEvent *events, int n_events, int n_players,
                     int final_deck, int final_discard, Card final_flipped,
                     const int *final_hand, AnimPlan *out);
