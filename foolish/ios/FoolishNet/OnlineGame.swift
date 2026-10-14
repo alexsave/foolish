@@ -76,7 +76,9 @@ public final class OnlineGame: ObservableObject, GameSession {
         }
     }
 
-    private func apply(_ decoded: AdoptedEnvelope) {
+    /// Adopt one authoritative envelope. Internal, not private, so a test can
+    /// hand the session the row the feed would (OnlineSessionViewTests).
+    func apply(_ decoded: AdoptedEnvelope) {
         view = decoded.view
         seat = decoded.seat
         intentVersion = UInt32(max(0, decoded.version))
