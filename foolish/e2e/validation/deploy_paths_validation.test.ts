@@ -1,13 +1,12 @@
-// The Supabase edge functions are deployed with what they load.
+// The Supabase edge functions are served with what they load.
 //
-// The backend moved to c_base on AWS on 2026-10-14, and deploy.yml stopped
-// running on push: it is a workflow_dispatch-only lane that keeps Supabase
-// deployable for the 30 days old iOS installs still talk to it. The trigger-path
-// tests that used to open this file (every file the functions compile had to be
-// under deploy.yml's on.push.paths) went with the trigger: a dispatch deploys the
-// whole tree. What stays is what a dispatched deploy still depends on: each
-// function stages the kernel it loads, and every function resolves its aliases
-// from its own identical import map. Delete this file with deploy.yml.
+// Nothing deploys them any more: the backend moved to c_base on AWS on
+// 2026-10-14 and deploy.yml was deleted, since no shipped client talks to
+// Supabase. The trigger-path tests that used to open this file went with it.
+// The functions are still served locally (`supabase functions serve`), and
+// that still depends on what stays here: each function stages the kernel it
+// loads, and every function resolves its aliases from its own identical import
+// map. Delete this file with server/impls/supabase.
 //
 // Pure test - no Postgres, no network.
 import { test } from 'node:test';
