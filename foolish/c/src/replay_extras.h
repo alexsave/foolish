@@ -140,6 +140,26 @@ int replay_extras_encode_parts(const unsigned char *const *names, const int *nam
 // packed blob as `replay_extras_encode`.
 int replay_extras_roster_speaks(const unsigned char *in, int in_len);
 
+// ---------- account deletion -------------------------------------------------
+//
+// A stored replay outlives the account that played it, and the product promises
+// it is kept "in anonymized form": the one place a finished game names a person
+// is this blob's names section (the moves code names nobody). This rewrites
+// `blob` with seat `seat`'s name replaced by `name` (the caller passes the name
+// live tables are redacted to, table.h REDACTED_PLAYER_NAME), trimmed and stripped
+// of NULs as the encoder does, and EVERY other byte as it was: the version, the
+// flags, the other seats' names and the times section are copied, never
+// re-encoded, so no gap is re-quantized and no other seat changes.
+//
+// `player_count` is the seat count, as for replay_extras_decode. A blob with no
+// names section names nobody and is copied unchanged. Returns bytes written, or
+// -REPLAY_EXTRAS_EHEADER / EVERSION for a blob that is not one, ENAME for a
+// names section shorter than `player_count`, EINPUT for a seat outside it or a
+// player_count the format cannot hold, ECAP when `cap` is too small.
+int replay_extras_redact(const unsigned char *blob, int blob_len, int player_count, int seat,
+                         const unsigned char *name, int name_len,
+                         unsigned char *out, int cap);
+
 // ---------- the whole shareable link ----------------------------------------
 //
 // `https://foolish.cards/<base32 moves>` and, when the roster says anything,

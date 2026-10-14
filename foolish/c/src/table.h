@@ -280,6 +280,9 @@ int table_continue(Table *t, const char *actor_id, int id_len);
 // not a permutation of the hand. No push: nobody else can see a hand's order.
 int table_rearrange_hand(Table *t, const char *actor_id, int id_len, const uint8_t *idx, int n);
 // Account deletion: the seat holding user_id is renamed.
+// REDACTED_PLAYER_NAME is the name every host renames it to, and the name a stored
+// replay's extras take for the same seat (replay_extras.h replay_extras_redact).
+#define REDACTED_PLAYER_NAME "Deleted player"
 int table_redact(Table *t, const char *user_id, int id_len, const char *name, int name_len);
 
 // ---- an ask (ask.h): every request that is not a move ---------------------------
