@@ -261,7 +261,7 @@ test("bots.wasm declared INITIAL memory is 34 pages (static buffers, not the run
     assert.equal(min, 34, `bots.wasm initial memory is ${min} pages (${min * PAGE}B); expected 34: the deliberate static buffers (g_io 400 KiB, the cordite solver working set, the move enumerators, the resident and replay Games, the Table's 64-slot snapshot store that holds one deal) plus the bridge's generated structs (ReplayExtras 8,744 B, RosterSpec 3,448 B, ReplayFrameIndex 1,032 B, MsgHeader 656 B). Going UP is a regression: 62,400 B of static room are left under the 34-page line, so look for a new buffer below __heap_base. Going DOWN means something was freed - lower this pin and take the page back.`);
 });
 
-test("web.wasm declared INITIAL memory is 26 pages - 8 fewer than the server's link", () => {
+test("web.wasm declared INITIAL memory is 24 pages - 10 fewer than the server's link", () => {
     // A LINKER FACT, not a second budget. wasm-ld keeps a static only if
     // something an export reaches refers to it, so dropping the bot bridge and
     // the C Table from the browser's export list drops their buffers with their
@@ -276,10 +276,15 @@ test("web.wasm declared INITIAL memory is 26 pages - 8 fewer than the server's l
     // going UP means a browser call site pulled a server-sized buffer across,
     // which is the moment to ask whether the call belongs there at all. Going
     // DOWN is a win - re-pin it here and say what was freed.
+    //
+    // 24, LOWERED from 26: wasm_msg_decode and wasm_msg_header_ptr left the
+    // browser's export list when the web's /m/ route (their one caller) went
+    // with the static export, and the linker dropped the 131,072 B of statics
+    // only the FMSG decode reached.
     const wasm = new Uint8Array(gunzipSync(readFileSync(resolve('sdk/ts/wasm/web.wasm.gz'))));
     const { min } = memLimits(wasm);
-    assert.equal(min, 26,
-        `web.wasm initial memory is ${min} pages (${min * PAGE} B); expected 26. `
+    assert.equal(min, 24,
+        `web.wasm initial memory is ${min} pages (${min * PAGE} B); expected 24. `
         + 'Up means the browser\'s link started keeping a static it used to drop - look at what '
         + 'was added to c/Makefile WASM_WEB_NAMES, because an export is a GC root and roots the '
         + 'data its code reads. Down means something was freed: lower this pin in the same commit.');

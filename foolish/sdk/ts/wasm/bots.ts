@@ -34,8 +34,8 @@ let linked: WasmModuleName = 'web';
  *
  * WHICH module: kernelModule() answers, and in the browser the answer is
  * web.wasm - the same objects as bots.wasm under a smaller export allow-list,
- * so the browser gets the client slot, the animation plan, the replay reader
- * and the FMSG decode it calls, and none of the C Table or the Monte-Carlo
+ * so the browser gets the client slot, the animation plan and the replay
+ * reader it calls, and none of the C Table or the Monte-Carlo
  * brains it does not. One source, one layout hash, two links (c/Makefile,
  * WASM_WEB_NAMES; the reach set is pinned by e2e/wasm_web_link.test.ts).
  *
@@ -178,10 +178,12 @@ export function kernelBotRoster(): readonly BotRosterEntry[] {
 //
 // An iMessage game has no server: the whole game is (32-byte deal seed, v6
 // replay code) in an MSMessage URL, and every device rebuilds it by re-dealing
-// from the seed and replaying the code through the kernel. The web only READS
-// one - a shared link's unfurl and its page - so this is the one door: the
-// envelope's layout lives in C, once, so the phone and the web can never read
-// the same bytes as different games. Sealing, rebasing and Rule P are the
+// from the seed and replaying the code through the kernel. Anything but the
+// phone only READS one: the envelope's layout lives in C, once, so no two hosts can read the
+// same bytes as different games. Its one browser reader, the /m/ route, went
+// with the static export, so the door is bots.wasm's alone (serverBots): what
+// still calls it is e2e/msg_wire.test.ts, holding the wasm decode to the
+// envelopes the native producer sealed. Sealing, rebasing and Rule P are the
 // phone's (c/ios/ios_api_msg.c) and are tested beside the kernel
 // (c/tests/msg_wire_test.c).
 //
@@ -197,7 +199,7 @@ export function kernelBotRoster(): readonly BotRosterEntry[] {
 // wasm_msg_header_ptr), read by its generated reader: the envelope is `.e` and
 // the SHA-256 of its bytes is `.digest`.
 export function kernelMsgDecode(envelope: Uint8Array): M.MsgHeader_Snap {
-    const ex = replayIn(bots(), msgTooBig, envelope);
+    const ex = replayIn(serverBots(), msgTooBig, envelope);
     ok(ex.wasm_msg_decode(envelope.length), msgError);
     return M.readMsgHeader(mem(ex), ex.wasm_msg_header_ptr());
 }
