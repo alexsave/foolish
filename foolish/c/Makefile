@@ -965,8 +965,9 @@ build/layout/oracle-mt.hash: $(STRUCTGEN) FORCE
 # FORCE itself is shared/tools/gen_tools.mk's.
 
 # bots.wasm exports the rules API above PLUS the bot bridge (wasm_bots_api.c),
-# and PLUS the FMSG decode (wasm_msg_decode and its header), which the web's
-# /m/ route reads a shared link with. Sealing, rebasing and Rule P are the
+# and PLUS the FMSG decode (wasm_msg_decode and its header). The web's /m/
+# route that read a shared link with it is gone (the static export), so web.wasm
+# no longer carries it; its only reader left is e2e/msg_route.test.ts. Sealing, rebasing and Rule P are the
 # phone's and have no wasm entry: they are tested natively (tests/msg_wire_test.c).
 # Two entry points live in wasm_api.c but are exported ONLY here: the
 # log-offset variants for the drive cycle, whose belief bots keep the session
@@ -1585,7 +1586,6 @@ WASM_WEB_NAMES := \
   wasm_init wasm_io_ptr wasm_io_cap wasm_layout_hash wasm_can_cover \
   wasm_replay_io_ptr wasm_replay_io_cap wasm_replay_error_ptr \
   wasm_bot_roster_dump \
-  wasm_msg_decode wasm_msg_header_ptr \
   wasm_anim_set_transport \
   wasm_anim_should_drop_stale \
   wasm_anim_hand_ask_ptr wasm_anim_hand_laid_ptr \
