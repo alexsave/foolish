@@ -852,7 +852,10 @@ uint64_t anim_event_key(int type, Card card, int from, int to, int seat);
 // The card-identity key getCardKey uses (`${suit}-${value}`), as a small int —
 // suit*16 + value. Compares two cards for "same card on the table" without the
 // event fields. (Distinct from anim_event_key: getCardKey ignores type/from/to.)
-static inline int anim_card_key(Card c) { return ((int)c.suit << 5) | ((int)c.value & 31); }
+// A multiply, not a shift: CARD_NONE's suit is -1, and a left shift of a
+// negative int is undefined (UBSan stops tests-asan on it). The key is the same
+// -32 either way, which the callers' range checks reject.
+static inline int anim_card_key(Card c) { return ((int)c.suit * 32) | ((int)c.value & 31); }
 
 // Live broadcast ordering gate, and the feed's one dedup rule. A
 // broadcast carries the committed games.version; drop any at or below the newest
