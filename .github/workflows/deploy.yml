@@ -1,6 +1,14 @@
 name: deploy
 
-# Ships the Supabase backend on every merge to main: applies any pending schema
+# RETIRED AS A DEPLOY LANE ON 2026-10-14. The backend is c_base on AWS, deployed
+# from main by c_base.yml. Supabase stays up for 30 days for iOS installs that
+# still talk to it, and this file is kept only so a fix can still reach it:
+# Actions > deploy > Run workflow, on main. It no longer runs on push, so the
+# path list that used to decide when it ran is gone, and with it
+# e2e/validation/deploy_paths_validation.test.ts, which guarded that list.
+# DELETE THIS FILE after 2026-11-13, with c_base/RUNBOOK.md step 14.
+#
+# Shipped the Supabase backend on every merge to main: applies any pending schema
 # change, then deploys the edge functions. The schema change runs FIRST so it is
 # in place before the new function code that depends on it (the
 # expand-then-deploy order; an additive change keeps the currently-live
@@ -19,75 +27,6 @@ name: deploy
 # The project ref is public (it's in the project URL), so it lives inline below.
 
 on:
-  push:
-    branches: [main]
-    # EVERY PATH THE DEPLOYED SERVER IS BUILT FROM, not just the one it lives in.
-    # A missing path here does not fail anything: it merges, deploys nothing, and
-    # the server stays on the old code until some unrelated push happens to touch
-    # a path that IS listed. That has already happened once (see 'supabase/**'
-    # below) and it went unnoticed for weeks.
-    #
-    # `e2e/validation/deploy_paths_validation.test.ts` walks the functions' real
-    # import graph and fails if anything it reaches is not covered here, so this
-    # list is checked rather than remembered. Do not prune an entry because it
-    # "looks unrelated" - that test says what is related.
-    # Paths are from the REPOSITORY root: this repo holds foolish/, uttt/,
-    # werewolf/ and shared/ side by side, and only foolish/ and shared/ feed this
-    # server. (The steps below run from foolish/, where they always ran.)
-    paths:
-      # The backend moved to server/impls/supabase (A10). The old 'supabase/**'
-      # is anchored at the repo root, so after the move it matched NOTHING and
-      # pushes silently stopped triggering deploys — the server went stale.
-      - 'foolish/server/impls/supabase/**'
-      # The functions resolve @sdk/ and @api/ (functions/<name>/deno.json) and
-      # import real code through them: the wire codecs and the wasm bindings out
-      # of sdk/ts, and the whole host-neutral game layer out of server/api. That
-      # code is COMPILED INTO the deployed functions, so a change to it is a
-      # change to the server. Both roots are listed whole rather than by
-      # subdirectory because every subtree under them is on the graph today
-      # (sdk/ts is wasm/ + wire/; server/api is core/ + common/), and a new
-      # sibling is far likelier to be a dependency than not.
-      #
-      # The cost is deploys that change nothing in the functions. That is the
-      # cheap direction: `db push` + `functions deploy` are idempotent, while a
-      # missed deploy is a server running code nobody merged.
-      - 'foolish/sdk/ts/**'
-      - 'foolish/server/api/**'
-      # bots.wasm.gz used to be listed here explicitly, because it is not
-      # imported but BUNDLED as a static asset (config.toml static_files) and a
-      # kernel rebuild alone had to redeploy. It is a build output now, so that
-      # entry could never fire again - nothing commits it - and what actually
-      # has to trigger a deploy is the C it is built FROM. That is 'c/src/**'
-      # and the shared entries below, which are already here for sdk/ts/gen and
-      # now carry this too.
-      #
-      # THE SOURCES OF sdk/ts/gen, which the import graph cannot see. The
-      # functions import those modules and this workflow generates them from the
-      # C headers before bundling, so a header or a spec change is a change to
-      # the deployed code - but the modules are build outputs now, so no file
-      # under 'sdk/ts/**' moves when a header does. Without these two lines a
-      # layout change would merge, deploy nothing, and leave the server reading
-      # the kernel at last week's offsets.
-      #
-      # deploy_paths_validation.test.ts walks the import graph and cannot reach
-      # a generator through a generated file, so these are the one pair of
-      # entries in this list that the test does not derive. That is what the
-      # comment is for.
-      - 'foolish/c/src/**'
-      - 'foolish/tools/structgen/**'
-      # AND THE SHARED HALF OF BOTH, because this repo holds two products now.
-      # The generator, its libclang driver (llvm.mk) and datagen live in
-      # shared/tools; sha256.h and deal_rng.h - which the layout is computed
-      # THROUGH, since game.h and msg_wire.h include them - live in shared/c.
-      # Neither is under a path above any more.
-      #
-      # This is the same failure as the 'supabase/**' one at the top of this
-      # list, and a monorepo makes it likelier, not less: a path filter that
-      # matches nothing is indistinguishable from one that matches nothing
-      # RELEVANT. deploy_paths_validation.test.ts now asserts every entry here
-      # names something that exists, so a move cannot leave a dead glob behind.
-      - 'shared/c/**'
-      - 'shared/tools/**'
   workflow_dispatch: {}
 
 # Never let two deploys race; queue instead of cancelling a push mid-flight.

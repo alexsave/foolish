@@ -260,14 +260,13 @@ The Apple suite (847 Swift tests plus snapshot tests) runs on a Mac by hand via 
 
 ## Deploy
 
-**CI builds, Vercel never does.**
-The Git integration is disconnected on purpose.
-[`.github/workflows/web.yml`](../.github/workflows/web.yml) generates the modules, builds with libclang present, and uploads a prebuilt bundle.
-Previews are **opt-in** via a `preview` label on the pull request, because Vercel's free plan allows 100 deployments per day across the whole account and a day of C and iOS work will otherwise spend them all and lock production out.
-A merge to `main` always deploys production, and [`scripts/web_deploy_scope.sh`](scripts/web_deploy_scope.sh) decides whether a change could have reached the bundle at all.
+**CI builds and deploys, on AWS.**
+[`.github/workflows/web_aws.yml`](../.github/workflows/web_aws.yml) generates the modules, builds the static export with libclang present, and on every push to `main` uploads it to S3 behind CloudFront ([`c_base/ops/web_deploy.sh`](../c_base/ops/web_deploy.sh)).
+On a pull request the same job is the compile gate.
+The backend is c_base on AWS Lambda, deployed from `main` by [`.github/workflows/c_base.yml`](../.github/workflows/c_base.yml).
+Both assume one GitHub OIDC role ([`c_base/ops/github_oidc.yaml`](../c_base/ops/github_oidc.yaml)); [`c_base/RUNBOOK.md`](../c_base/RUNBOOK.md) has the rest.
 
-The Supabase side deploys through [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml).
-The 39 migrations were folded into `seed.sql`, so a merge to `main` runs no SQL.
+The Vercel lane ([`.github/workflows/web.yml`](../.github/workflows/web.yml)) and the Supabase one ([`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml)) run only by hand now, as rollbacks, until they are deleted.
 
 The shipped wasm is a **build output**, like `sdk/ts/gen`: [`scripts/wasm_build.sh`](scripts/wasm_build.sh) is the one entry point, every lane that loads a module builds it, and nothing is committed.
 It used to be built by hand on a Mac and committed, which needed two gates to hold it up - a freshness check that compared commit *order* because it could not compare bytes, and a `WASM_STAMP` committed beside the artifacts to prove a human had run `make`.
