@@ -23,8 +23,8 @@ on:
       - 'shared/c/**'
       - 'shared/tools/**'
       - '.github/workflows/c_base.yml'
+  # Every pull request, a stacked one into another branch included.
   pull_request:
-    branches: [main]
     paths:
       - 'c_base/**'
       - 'foolish/c/**'
@@ -70,6 +70,24 @@ jobs:
       - name: unit tests and smoke under ASan + UBSan
         run: make -C c_base -j"$(getconf _NPROCESSORS_ONLN)" check-asan
 
+  dynamo:
+    name: make check-dynamo (DynamoDB Local)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -q && sudo apt-get install -y -q build-essential libssl-dev libsqlite3-dev
+      # The runner image has Docker and the AWS CLI; dynamo_local.sh starts
+      # amazon/dynamodb-local (pinned by digest) and makes the table from
+      # ops/cbase.yaml.
+      - name: DynamoDB Local
+        run: c_base/ops/dynamo_local.sh > /dev/null
+      - name: the store, admin and import tests and the game smoke, on DynamoDB
+        run: make -C c_base -j"$(getconf _NPROCESSORS_ONLN)" check-dynamo
+      - name: stop DynamoDB Local
+        if: always()
+        run: c_base/ops/dynamo_local.sh --stop
+
   ops:
     name: template and scripts
     runs-on: ubuntu-24.04
@@ -82,8 +100,8 @@ jobs:
           /tmp/cfn/bin/cfn-lint --regions us-east-1 -- c_base/ops/cbase.yaml
       - name: the shell scripts
         run: |
-          bash -n c_base/ops/package.sh c_base/tools/build_bootstrap.sh
-          shellcheck c_base/ops/package.sh
+          bash -n c_base/ops/package.sh c_base/tools/build_bootstrap.sh c_base/ops/dynamo_local.sh
+          shellcheck c_base/ops/package.sh c_base/ops/dynamo_local.sh
 
   bootstrap:
     name: make bootstrap (Lambda zip)
