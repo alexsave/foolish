@@ -1,13 +1,16 @@
 # The web on AWS (c_base/ops/web.yaml): foolish.cards and uttt.live built here
 # as static exports and uploaded to S3 behind CloudFront by
-# c_base/ops/web_deploy.sh. This is the web's only deploy lane; web.yml and
-# uttt-web.yml (Vercel) are workflow_dispatch-only rollbacks until they are
-# deleted (c_base/RUNBOOK.md, "W9").
+# c_base/ops/web_deploy.sh. It is foolish.cards' only deploy lane; web.yml
+# (Vercel) is a workflow_dispatch-only rollback until it is deleted
+# (c_base/RUNBOOK.md, "W9"). uttt.live is deployed here AND by uttt-web.yml to
+# Vercel on every push: www.uttt.live is served from CloudFront, but the apex
+# stays on Vercel while its Squarespace DNSSEC blocks the move, so both hosts
+# are kept current.
 #
 #   foolish   gen, wasm, `next build` (out/): the compile gate web.yml's
 #             `build` job used to be, on every pull request that touches the site
 #   uttt      the uttt wasm, typecheck, the 243 page's module tests, `next
-#             build` (out/): the gate uttt-web.yml's `build` job used to be
+#             build` (out/), the same gate uttt-web.yml's `build` job runs
 #   deploy    on a push to main, or a workflow_dispatch from main: both exports,
 #             foolish then uttt (each rewrites the cbase-web stack's page list,
 #             and two stack updates cannot overlap), each upload gated on the
