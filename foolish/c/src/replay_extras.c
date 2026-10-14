@@ -454,10 +454,11 @@ int replay_extras_link_styled(const char *moves,
     // 8 seats of arbitrary Unicode with room to spare; a roster past this is a
     // caller bug, not a nickname. STATIC, not automatic: bots.wasm links with a
     // 22,528-byte stack (c/Makefile WASM_BOT_LDFLAGS) and 12 KB of it in one
-    // frame is not a margin. The kernel is single-threaded by design, here as
-    // everywhere else.
-    static unsigned char in[4096];
-    static unsigned char blob[8192];
+    // frame is not a margin. Per thread, like the codec's own scratch
+    // (replay.c): two threads building links at once each get their own 12 KB,
+    // and the wasm builds erase the qualifier.
+    static _Thread_local unsigned char in[4096];
+    static _Thread_local unsigned char blob[8192];
     int w = 0, n, bare;
 
     if (!moves || !out || cap < 1) return -REPLAY_EXTRAS_EINPUT;

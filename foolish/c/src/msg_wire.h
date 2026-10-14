@@ -569,8 +569,8 @@ int msg_seal_base(const Game *g, int base_logs);
 int msg_decode(const unsigned char *in, int in_len, MsgEnvelope *out);
 
 // 1.0(6) DIAGNOSTIC: replay codec version (9 or 10) of the last body msg_replay
-// decoded, or -1 for an empty-body message. Set by msg_replay.
-extern int msg_last_body_version;
+// decoded, or -1 for an empty-body message. Set by msg_replay, per thread.
+extern _Thread_local int msg_last_body_version;
 
 // Serialize `e` into `out`. Returns bytes written, or a negative MSG_E*. The
 // same field validation decode applies runs here too, so this host can never

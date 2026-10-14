@@ -182,8 +182,9 @@ $(call host_prog,cnitro_distill,src/main_distill.c)
 # move is a lane that runs `make tests` at the flags the product ships, and then
 # leaving the experiment out of the coverage build - not one without the other,
 # since dropping it from coverage today would leave it running in no CI at all.
-tests: build/cnitro_tests
+tests: build/cnitro_tests build/replay_threads_test
 	./build/cnitro_tests
+	./build/replay_threads_test
 
 # The same suite under AddressSanitizer + UBSan, at -O1, from its own objects
 # (build/obj/asan - not CORE_OBJ, whose objects are -O3 -flto and not
@@ -279,6 +280,16 @@ build/analyse_test: $(ANALYSE_OBJ) $(call c_objs,build/obj/analyse,tests/analyse
 	$(CC) $(ANALYSE_CFLAGS) $^ -o $@ $(LDFLAGS)
 analyse-test: build/analyse_test
 	./build/analyse_test
+# The replay codec, the envelope and the deal's opening overrides on two
+# threads at once, each of which must get exactly what it gets alone
+# (tests/replay_threads_test.c). Its objects are the analyse variant's because
+# the per-thread storage is the thing under test, and the host variant compiles
+# _Thread_local away. Part of `make tests`.
+.PHONY: replay-threads-test
+build/replay_threads_test: $(ANALYSE_OBJ) $(call c_objs,build/obj/analyse,tests/replay_threads_test.c)
+	$(CC) $(ANALYSE_CFLAGS) $^ -o $@ $(LDFLAGS) -pthread
+replay-threads-test: build/replay_threads_test
+	./build/replay_threads_test
 
 # The Oracle's answer (src/oracle_answer.h OgAnswer), checked natively against
 # the games it was deliberated on: tests/oracle_answer_test.c says what it holds
