@@ -220,8 +220,8 @@ jobs:
         if: steps.creds.outputs.ready == 'true'
         run: bash ../shared/scripts/ci_llvm.sh
 
-      # Pinned, never floated, for the reason deploy.yml gives for pinning the
-      # Supabase CLI: a deploy tool that changes under us changes what ships.
+      # Pinned, never floated: a deploy tool that changes under us changes what
+      # ships.
       - name: Install the Vercel CLI
         if: steps.creds.outputs.ready == 'true'
         run: npm install --global vercel@59.23.1
