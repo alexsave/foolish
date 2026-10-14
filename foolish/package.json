@@ -4,7 +4,6 @@
   "dependencies": {
     "@aws-crypto/sha256-js": "^5.2.0",
     "@supabase/supabase-js": "^2.50.2",
-    "@vercel/analytics": "^2.0.1",
     "next": "^16.2.6",
     "qrcode.react": "^4.2.0",
     "react": "^19.2.6",
