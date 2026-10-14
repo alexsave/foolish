@@ -33,10 +33,6 @@ extern atomic_ulong g_octogen_decisions;
 // that, so no lock is needed (same posture g_tls_ctx's doc takes).
 void bots_resolve_octogen_strat(void);
 
-// Install the per-decision seeding hook (bot_drive_pre_action_hook). Process-
-// wide and installed once, before any thread starts and before the self-tests.
-void bots_install_seed_hook(void);
-
 // Spawn the game-loop for a freshly dealt game (idempotent). Caller MUST
 // hold s->lock: bot_thread's very first action is to lock it too, so this
 // just races the parent's own unlock (harmless - see bot_thread's doc).
