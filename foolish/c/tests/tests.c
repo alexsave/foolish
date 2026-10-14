@@ -6610,8 +6610,8 @@ static void test_plan_ask_carries_the_final_board(void) {
     CHECK(anim_plan_ask(&pa_ask, &pa_asked) == ANIM_EOK && card_is_none(pa_asked.pre.flipped),
           "…and no flipped card stays CARD_NONE, which is not the hidden card");
 
-    pa_ask.n_players = 1;
-    CHECK(anim_plan_ask(&pa_ask, &pa_asked) == ANIM_EBADARG, "a table of one is refused, as it is for events");
+    pa_ask.n_players = 0;
+    CHECK(anim_plan_ask(&pa_ask, &pa_asked) == ANIM_EBADARG, "a table of no one is refused, as it is for events");
 }
 
 // THE CAPS. Each count is a byte that can say more than its array holds, so
@@ -15607,6 +15607,43 @@ static void test_client_plan_without_a_final_board(void) {
           && client_plan(&pa_ask, 1, NULL, &pa_asked) == ANIM_EBADARG, "a stream with no board and no final has no table");
 }
 
+// A LOBBY IS A TABLE, and its pushes plan like any other. The web host found
+// this one: the host sits alone in a lobby, the first guest joins, and the
+// push is one magic transition whose board seats two - while the board the
+// host's screen holds, which it hands over as `final`, still seats one. The
+// plan is as wide as the widest board it reads, so the join plans at two;
+// and once the guest leaves again every board seats one, which is a lobby of
+// one and still a table.
+static void lobby_board(TableView *v, int n_seats) {
+    memset(v, 0, sizeof *v);
+    v->status = GAME_STATUS_WAITING;
+    v->num_players = n_seats;
+    v->my_seat = 0;
+    v->has_flipped = false;
+    v->flipped = CARD_NONE;
+}
+
+static void test_client_plan_lobby_join(void) {
+    TableView alone, joined;
+    lobby_board(&alone, 1);
+    lobby_board(&joined, 2);
+    const ClientPlanStep st = { .type = ANIM_EVT_MAGIC_TRANSITION, .seat = ANIM_SEAT_NONE,
+                                .from = ANIM_LOC_NONE, .to = ANIM_LOC_NONE };
+
+    memset(&pa_ask, 0x5a, sizeof pa_ask);
+    CHECK(client_plan_step(&pa_ask, 0, &st, &joined) == ANIM_EOK, "the join's step, with its board of two, is taken");
+    CHECK(client_plan(&pa_ask, 1, &alone, &pa_asked) == ANIM_EOK,
+          "a join into a lobby of one plans, though the screen still holds the board of one");
+    CHECK(pa_ask.n_players == 2 && pa_asked.pre.n_players == 2,
+          "the table is the widest board the plan reads: the step's two seats, not the screen's one");
+    CHECK(pa_asked.n_steps == 1, "one transition, one step");
+
+    // The guest leaves: every board the plan reads now seats one.
+    CHECK(client_plan_step(&pa_ask, 0, &st, &alone) == ANIM_EOK
+          && client_plan(&pa_ask, 1, &alone, &pa_asked) == ANIM_EOK && pa_asked.pre.n_players == 1,
+          "a lobby of one is a table, and its pushes plan");
+}
+
 static void test_client_plan_order_and_caps(void) {
     cvr_board(&cb_view, 0);
     ClientPlanStep st = { .type = ANIM_EVT_OUT, .seat = ANIM_SEAT_NONE, .from = ANIM_LOC_NONE, .to = ANIM_LOC_NONE };
@@ -16715,6 +16752,7 @@ int main(void) {
     test_client_conflict_verdicts();
     test_client_plan_reads_the_boards();
     test_client_plan_without_a_final_board();
+    test_client_plan_lobby_join();
     test_client_plan_order_and_caps();
     test_client_push_settle();
     test_client_play_is_the_engine();
