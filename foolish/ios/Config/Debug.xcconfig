@@ -1,10 +1,6 @@
 #include "Base.xcconfig"
 
-// Debug-only overrides. Point at a staging Supabase project for CI/dev so tests
-// never touch prod (§16.D DoD: "do NOT point tests at prod").
-// SUPABASE_URL = https://<staging-ref>.supabase.co
-// SUPABASE_KEY = <staging-anon-key>
-
-// Optional local override: if Config/Local.xcconfig exists (untracked), it points
-// the Debug build at the local `supabase start` stack. Absent on CI → no-op.
+// Debug-only overrides. Point the Debug build at a local `cbase serve`
+// (BACKEND_URL = http:/$()/127.0.0.1:8080) in Config/Local.xcconfig, which is
+// untracked; absent on CI, so this is a no-op there.
 #include? "Local.xcconfig"

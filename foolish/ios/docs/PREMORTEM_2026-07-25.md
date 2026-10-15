@@ -25,11 +25,11 @@
 
 ## The one clarification that reshapes everything below
 
-There are **two separate online architectures** in this repo, and the brief conflates them. The thing being submitted is the **standalone iMessage extension**, which is *not* the Supabase/bots product.
+There are **two separate online architectures** in this repo, and the brief conflates them. The thing being submitted is the **standalone iMessage extension**, which is *not* the online/bots product.
 
 | | **iMessage extension** (this submission) | **Host app + web** (deferred, NOT this submission) |
 |---|---|---|
-| Transport | Apple iMessage bubbles (`MSMessage`) | Supabase realtime + edge functions |
+| Transport | Apple iMessage bubbles (`MSMessage`) | the hosted backend's realtime + edge functions |
 | Network stack | none — links `FoolishKit` only | `ios/FoolishNet/*` |
 | Bots | **none** — solo seats are `#if DEBUG \|\| SOLO_TESTING` | server-side `bot_drive` loop |
 | Concurrency model | Rule P / Rule R (git-style rebase of moves) | CAS on `games.version` + `round_epoch` fence |
@@ -38,7 +38,7 @@ There are **two separate online architectures** in this repo, and the brief conf
 Evidence: `ios/project.yml` (`FoolishMessages` depends on `FoolishKit` only), `docs/IMESSAGE_APP_STORE_SUBMISSION.md` ("zero network stack… entirely peer-to-peer through the message chain"), `docs/IMESSAGE_GAME_DESIGN.md` ("iMessage v1 ships rules only, no bots"). A Release build of the extension has **no bots and no server**.
 
 **Consequences for this pre-mortem:**
-- The scary Supabase failure modes (cold-start latency, dropped realtime push, the old bot-loop freeze) belong to a product that is **not shipping in this submission** → Paper Tigers here.
+- The scary hosted-backend failure modes (cold-start latency, dropped realtime push, the old bot-loop freeze) belong to a product that is **not shipping in this submission** → Paper Tigers here.
 - The reviewer's 6-player table was populated via the **DEBUG-only** `addSoloSeat` path. In a real thread a 6p game needs six real humans — rarer — but the compact-clipping and duplicate-render defects it surfaced live in **shipped** code and reproduce with real joins.
 - "A human abandons mid-bout" is not a crash — it is an unanswered text. With no bots and no server, a half-finished game just dies in the thread. That is the dominant *real-user* failure mode, and it is wide open.
 
@@ -117,7 +117,7 @@ Paper Tigers (P1-P6) sit below the line — see their section for why each looks
 | # | Risk | Why it is a Paper Tiger | Would become a Tiger if… |
 |---|------|-------------------------|--------------------------|
 | P1 | "The deal produced a genuinely duplicated card (state corruption) that will corrupt legal-move logic." | The C deal draws the flipped trump *out of* the deck via `draw_card` and never places it in a hand; the 52-card 6p deal leaves 16 cards after 36 dealt. Harness and production share the exact same `game_seat_and_deal` primitive — there is no separate harness deal to blame or trust. The *visible* duplicate is a render issue (T2), not state. | A repro shows two identical `card.identity` values in the **kernel view** (not just on screen). |
-| P2 | Supabase netcode failure modes — cold-start latency on first move, dropped realtime push, resync-on-foreground not wired. | These live in `FoolishNet` / the edge functions, which the **iMessage extension does not link**. Not part of this submission. (They are real for the deferred host app and tracked there.) | The host app is added to this submission, or the extension gains a network path. |
+| P2 | Hosted-backend netcode failure modes — cold-start latency on first move, dropped realtime push, resync-on-foreground not wired. | These live in `FoolishNet` / the edge functions, which the **iMessage extension does not link**. Not part of this submission. (They are real for the deferred host app and tracked there.) | The host app is added to this submission, or the extension gains a network path. |
 | P3 | The bot-loop freeze (`EdgeRuntime.waitUntil` baton leak) and the optimistic-revert flicker. | Both **fixed** with durable mechanisms — auto-expiring bot lease (`BOT_LEASE_TTL_MS`), `round_epoch` fence + `REJECT_STALE_ROUND` — plus regression tests. And both are host/web only; the extension has neither bots nor optimistic online mutation. | A regression test is deleted or the guard is removed. |
 | P4 | Crashes / hangs / rotation / rapid-tap / long-nickname instability. | The review exercised all of these adversarially and saw **no crashes, hangs, or beach-balls**. Robustness is a current strength. | A new code path (e.g. the T2 render fix) reintroduces a hang. |
 | P5 | Landscape layout is broken (large empty margins). | iMessage runs portrait; landscape is irrelevant to the extension. | N/A. |

@@ -1,6 +1,4 @@
 #include "Base.xcconfig"
 
-// Release overrides. Production Supabase project (the same backend the website
-// uses — the iOS app talks to the SAME backend, §8).
-// SUPABASE_URL = https://<prod-ref>.supabase.co
-// SUPABASE_KEY = <prod-anon-key>
+// Release: the production backend, the same one the website uses (§8).
+BACKEND_URL = https:/$()/api.foolish.cards

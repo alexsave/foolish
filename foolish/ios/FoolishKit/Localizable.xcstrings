@@ -94,19 +94,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "What started as a simple project to play the game with friends across the world turned into a lot of learning for me. This has game AIs, optimistic animations with reverts, and workarounds for the limits of Supabase's free tier."
+            "value": "What started as a simple project to play the game with friends across the world turned into a lot of learning for me. This has game AIs, optimistic animations with reverts, and workarounds for the limits of AWS's free tier."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "needs_translation",
-            "value": "What started as a simple project to play the game with friends across the world turned into a lot of learning for me. This has game AIs, optimistic animations with reverts, and workarounds for the limits of Supabase's free tier."
+            "value": "What started as a simple project to play the game with friends across the world turned into a lot of learning for me. This has game AIs, optimistic animations with reverts, and workarounds for the limits of AWS's free tier."
           }
         },
         "ko": {
           "stringUnit": {
             "state": "needs_translation",
-            "value": "What started as a simple project to play the game with friends across the world turned into a lot of learning for me. This has game AIs, optimistic animations with reverts, and workarounds for the limits of Supabase's free tier."
+            "value": "What started as a simple project to play the game with friends across the world turned into a lot of learning for me. This has game AIs, optimistic animations with reverts, and workarounds for the limits of AWS's free tier."
           }
         }
       }

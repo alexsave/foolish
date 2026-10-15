@@ -15,7 +15,7 @@
 // covering the table with their last cards is what ends the bout).
 //
 // So what these pin is the PAIRING: a cover names its targets positionally
-// (`cards[i]` answers `attackCards[i]`, the shape PackedAction writes to the
+// (`cards[i]` answers `attackCards[i]`, the shape MoveWire.encodeAction writes to the
 // wire), and each card's flight must end on its own target's slot.
 import XCTest
 @testable import FoolishKit
