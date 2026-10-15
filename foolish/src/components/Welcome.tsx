@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { useAuth } from '../contexts/AuthContext';
+import { signIn as backendSignIn } from '../common/backend';
 import { generateTitleFern } from '../utils/fernFractal';
 import { TexturedSurface } from './TexturedSurface';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
@@ -49,7 +49,8 @@ function rotateFern(url: string, degrees: number): Promise<string> {
 export const Welcome = () => {
     const [name, setName] = useState('');
     const [password, setPassword] = useState('');
-    const { signIn, signUp } = useAuth();
+    const signIn = (n: string, p: string) => backendSignIn(false, n, p);
+    const signUp = (n: string, p: string) => backendSignIn(true, n, p);
     const { t, language } = useLocalization();
     const styles = useStyles();
     const passwordRef = useRef<HTMLInputElement>(null);
@@ -123,10 +124,7 @@ export const Welcome = () => {
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
         try {
-            const { weakPassword } = await signIn(name, password);
-            if (weakPassword) {
-                alert(t('weak_password'));
-            }
+            await signIn(name, password);
         } catch (error: any) {
             // localized headline; the raw server detail stays for debugging
             alert(`${t('login_failed')}: ${error.message}`);

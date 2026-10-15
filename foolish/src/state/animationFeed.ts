@@ -5,12 +5,12 @@ import type { TableView, ViewCard } from './view';
  * the unit of game-state change the UI animates through. AnimationProvider
  * (AnimationContext.tsx) is the single consumer; producers are:
  *
- *   - RealtimeAnimationFeed: the live game's supabase broadcast channel
+ *   - RealtimeAnimationFeed: the live game's cast stream (src/common/backend.ts)
  *     (mounted inside ProtectedRoute, where auth + game id exist), and
  *   - the replay player (src/replay/), which synthesizes the same message
  *     shape from a decoded replay integer.
  *
- * Keeping this module free of React and supabase is the point: anything that
+ * Keeping this module free of React and of the transport is the point: anything that
  * can produce these messages drives the full game UI, animations included.
  */
 
@@ -52,16 +52,15 @@ export interface AnimationSequenceMessage {
 }
 
 /**
- * A live realtime message: the kernel's cast (c/src/evwire.h - the committed
- * version and the as3 push, one run of bytes), base64 because the realtime
- * API's envelope is JSON. Nothing rides beside it: the consumer
- * (AnimationProvider) hands the bytes to the kernel's client slot and gets the
- * sequence back. Replay/tutorial synthesis still publishes an
- * AnimationSequenceMessage directly.
+ * A live message: the kernel's cast (c/src/evwire.h - the committed version and
+ * the as3 push, one run of bytes), as the stream delivered it. Nothing rides
+ * beside it: the consumer (AnimationProvider) hands the bytes to the kernel's
+ * client slot and gets the sequence back. Replay/tutorial synthesis still
+ * publishes an AnimationSequenceMessage directly.
  */
 export interface CastMessage {
-    /** base64(cast bytes) */
-    b: string;
+    /** the cast's bytes */
+    cast: Uint8Array;
     /** Attached by the transport (RealtimeAnimationFeed): the game the topic
      *  belongs to, so the consumer can pick the identity to decode against. */
     game_id?: string;

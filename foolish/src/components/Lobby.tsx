@@ -5,7 +5,7 @@ import { useEffect, useState, useRef, useMemo } from "react";
 import { WEBSITE_DOMAIN } from "../common/constants";
 import { QRCodeSVG } from "qrcode.react";
 import { PLAYER_STATUS, GAME_STATUS, rulesOf, type ViewSeat } from "../state/view";
-import supabase from "../common/Connector";
+import { bots as fetchBots } from "../common/backend";
 import { usePreventScroll } from "../utils/usePreventScroll";
 import { MAX_PLAYERS } from "@sdk/ts/gen/view_layout.bots.ts";
 import { useTexture, getTextureStyle, seedFromString, flipFromString } from "./TexturedSurface";
@@ -261,20 +261,17 @@ export const Lobby = () => {
     // The order is the kernel's `tier` (c/src/bot_roster.c), looked up through
     // kernelBotRoster() rather than restated here; src/common/botLadder.ts holds
     // the comparator. It used to be `created_at` descending, which is the order
-    // seed.sql inserts, backwards - the picker opened on Moscow 7 and walked out
-    // through the families in reverse. The bots table is read-only to
-    // authenticated users (RLS). GPT bots are gated to one user server-side, so
-    // we don't surface them in the picker.
+    // the stored rows arrived in, backwards - the picker opened on Moscow 7 and
+    // walked out through the families in reverse.
     useEffect(() => {
         let cancelled = false;
-        supabase
-            .from('bots')
-            .select('id, nickname, strategy_key')
-            .then(({ data, error }) => {
+        fetchBots()
+            .catch(() => null)
+            .then((data) => {
                 if (cancelled) return;
-                if (!error && data) {
+                if (data) {
                     const tier = new Map(kernelBotRoster().map((e) => [e.key, e.tier]));
-                    setAllBots(sortBotsByLadder(data, (key) => tier.get(key)));
+                    setAllBots(sortBotsByLadder(data.map((b) => ({ id: b.id, nickname: b.nickname, strategy_key: b.key })), (key) => tier.get(key)));
                 }
                 // Mark the roster settled even on error, so a deferred add doesn't
                 // wait forever — it falls back to the server's pick only when the

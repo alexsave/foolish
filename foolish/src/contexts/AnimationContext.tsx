@@ -2,13 +2,12 @@ import React, { createContext, useContext, useEffect, useRef, useCallback } from
 import { useServer, useServerActions } from './ServerContext';
 import { useAuth } from './AuthContext';
 import { useUrlGameId } from '../utils/useUrlGameId';
-import supabase from '../common/Connector';
+import { meta } from '../common/backend';
 import { validateActionWire } from '../utils/gameValidation';
 import { clientTable, encodeAction, type AwireMove } from '@sdk/ts/table/client_table.ts';
 import { pushToSequence } from '../state/pushSequence';
 import { rulesOf, tableCards, type TableView, type ViewCard } from '../state/view';
 import { optimisticBoard, turnedBoard, withdrawn } from '../state/clientBoards';
-import { base64ToBytes } from '@sdk/ts/wire/bytes.ts';
 import * as V from '@sdk/ts/gen/view_layout.bots.ts';
 import { getCardKeyOwner } from '../utils/animationUtils';
 import { animationFeed } from '../state/animationFeed';
@@ -218,9 +217,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 }
 
                 // No bot moves but a bot could move - nudge the bot loop
-                supabase.functions.invoke('meta', {
-                    body: new Blob([clientTable().askBody({ kind: V.ASK_BUMP, gid: url_game_id }) as BlobPart])
-                }).catch(error => {
+                Promise.resolve(clientTable().askBody({ kind: V.ASK_BUMP, gid: url_game_id })).then((ask) => ask && meta(ask)).catch(error => {
                     console.error('Bot bump failed:', error);
                 });
             }
@@ -241,7 +238,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     }, []);
 
     // Consume the animation feed. The transport lives elsewhere: live games
-    // mount RealtimeAnimationFeed (src/state/) which republishes the supabase
+    // mount RealtimeAnimationFeed (src/state/) which republishes the backend's cast
     // broadcast channel into the bus; the replay screen publishes synthesized
     // sequences from a decoded replay integer. Either way the messages are
     // identical in shape, so this provider animates both.
@@ -275,8 +272,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             .finally(() => packedRefetchInFlight.current.delete(gid));
     };
 
-    // A realtime cast { b, game_id } -> the sequence shape (events + final game)
-    // handleAnimationMessage consumes. `b` is the kernel's cast (evwire.h): the
+    // A live cast { cast, game_id } -> the sequence shape (events + final game)
+    // handleAnimationMessage consumes. `cast` is the kernel's cast (evwire.h): the
     // committed version and the as3 push, read whole by the client slot
     // (client_table.h client_cast_open), so nothing here is told the format or
     // the version beside the bytes.
@@ -290,7 +287,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         let bytes: Uint8Array | null = null;
         let read = null;
         try {
-            bytes = base64ToBytes(m.b);
+            bytes = m.cast as Uint8Array;
             read = table.readCast(bytes, { gameId: gid });
         } catch (e) {
             console.error('cast decode failed:', e);
@@ -310,9 +307,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
     // Handle animation messages from real-time channel
     const handleAnimationMessage = (message: any) => {
-        // A live message is a cast: `b` and nothing else (animationFeed.ts
+        // A live message is a cast: its bytes and nothing else (animationFeed.ts
         // CastMessage). A replay or the tutorial publishes the sequence itself.
-        if (message && typeof message.b === 'string') {
+        if (message && message.cast instanceof Uint8Array) {
             message = decodeCast(message);
             if (!message) return;
         }

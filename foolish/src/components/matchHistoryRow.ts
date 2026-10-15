@@ -1,21 +1,16 @@
 import { kernelB32Encode, replaySummary } from '@sdk/ts/wasm/bots.ts';
 import { decodeExtras, joinReplayCode } from '@api/common/replay_extras.ts';
-import { bigintToBytes, bytesToBigint, hexToBytes } from '@api/common/replay_codec.ts';
+import { bigintToBytes, bytesToBigint } from '@api/common/replay_codec.ts';
+import type { NetHistoryRow } from '@sdk/ts/net/net_client.ts';
 
 /**
- * One game_snapshots row, read into the line the match history shows for it.
- * No React and no network here, so the screen's loader is a query and a loop,
- * and this can be asked directly.
+ * One stored replay, read into the line the match history shows for it.
+ * No React and no network here, so the screen's loader is a request and a
+ * loop, and this can be asked directly.
  */
 
-/** A game_snapshots row as the history query selects it. */
-export interface HistorySnapshotRow {
-    id: string;
-    player_ids: string[] | null;
-    moves: string;          // bytea as PostgREST sends it: hex, '\x'-prefixed
-    extras: string | null;
-    created_at: string;
-}
+/** A replay as the history answer carries it (net_client.ts history). */
+export type HistorySnapshotRow = NetHistoryRow;
 
 export interface HistoryEntry {
     id: string;
@@ -29,12 +24,6 @@ export interface HistoryEntry {
     durationSec: number | null;
 }
 
-// game_snapshots.created_at is TIMESTAMP WITHOUT TIME ZONE holding UTC wall
-// time; PostgREST serializes it with no offset, and new Date() would read
-// that as LOCAL time. Pin it to UTC unless an offset is already present.
-const parseUtcTimestamp = (ts: string): Date =>
-    new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(ts) ? ts : ts + 'Z');
-
 /**
  * The history line for `row` as `userId` played it, or null when they hold no
  * seat in it. Throws when the snapshot does not decode (corrupt / future
@@ -42,12 +31,12 @@ const parseUtcTimestamp = (ts: string): Date =>
  * The kernel has to be warm (ensureBotsAsync) before this is called.
  */
 export function decodeHistoryRow(row: HistorySnapshotRow, userId: string): HistoryEntry | null {
-    const playerIds = row.player_ids ?? [];
+    const playerIds = row.players;
     const mySeat = playerIds.indexOf(userId);
     if (mySeat < 0) return null; // cheap check before the expensive decode
 
-    const movesBytes = hexToBytes(row.moves);
-    const extrasBytes = row.extras ? hexToBytes(row.extras) : null;
+    const movesBytes = row.moves;
+    const extrasBytes = row.extras.length > 0 ? row.extras : null;
     const extrasCode = extrasBytes && extrasBytes.length > 0
         ? kernelB32Encode(extrasBytes)
         : null;
@@ -75,7 +64,7 @@ export function decodeHistoryRow(row: HistorySnapshotRow, userId: string): Histo
     return {
         id: row.id,
         code: joinReplayCode(kernelB32Encode(movesBytes), extrasCode),
-        createdAt: parseUtcTimestamp(row.created_at),
+        createdAt: new Date(row.createdMs),
         playerCount: d.numPlayers,
         names: names ?? playerIds.map((_, seat) => `#${seat + 1}`),
         mySeat,

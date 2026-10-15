@@ -1,8 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import supabase from '../common/Connector';
+import { replay } from '../common/backend';
 import { Text } from './Text';
-import { hexToBytes } from '@api/common/replay_codec.ts';
 import { kernelB32Encode, kernelReplayLink } from '@sdk/ts/wasm/bots.ts';
 import { REPLAY_LINK_STYLE_URL, REPLAY_LINK_STYLE_QR } from '@sdk/ts/gen/msg_layout.bots.ts';
 import { useStyles } from '../contexts/StyleContext';
@@ -50,18 +49,11 @@ export const ReplayShare: React.FC<ReplayShareProps> = ({ gameId }) => {
 
         const fetchSnapshot = async () => {
             try {
-                const { data, error } = await supabase
-                    .from('game_snapshots')
-                    .select('moves, extras')
-                    .eq('game_id', gameId)
-                    .order('created_at', { ascending: false })
-                    .limit(1);
-                if (error) throw error;
-                if (!data || data.length === 0)
-                    throw new Error('no snapshot rows for this game');
-                const moves = hexToBytes(data[0].moves as string);
+                const r = await replay(gameId);
+                if (!r) throw new Error('no replay for this game');
+                const moves = r.moves;
                 if (moves.length === 0) throw new Error('empty moves payload');
-                const extras = data[0].extras ? hexToBytes(data[0].extras as string) : null;
+                const extras = r.extras.length > 0 ? r.extras : null;
                 if (!cancelled) setSnapshot({ moves, extras });
             } catch (e) {
                 console.error('Replay snapshot unavailable:', e);

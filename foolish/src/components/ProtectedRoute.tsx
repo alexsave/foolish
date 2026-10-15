@@ -39,7 +39,7 @@ export const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
         <ServerProvider>
             <FernFractalProvider>
                     <AnimationProvider>
-                        {/* live transport: supabase broadcast -> animationFeed -> AnimationProvider */}
+                        {/* live transport: the backend's cast stream -> animationFeed -> AnimationProvider */}
                         <RealtimeAnimationFeed />
                         <GameProvider>
                             <DragProvider>

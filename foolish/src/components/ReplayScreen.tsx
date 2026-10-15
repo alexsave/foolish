@@ -25,7 +25,7 @@ import { ReplayStage } from './replay/ReplayStage';
  * It IS the real game UI: the same display components, driven by the same
  * AnimationProvider, fed the same animation-sequence messages a live game
  * receives - just published into src/state/animationFeed from the decoded
- * integer instead of a supabase channel. Stepping forward plays the event
+ * integer instead of a live stream. Stepping forward plays the event
  * with its full animation; seeking commits the target state directly.
  *
  * The screen itself is the code, the providers and the failure page. What the

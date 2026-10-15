@@ -3,12 +3,12 @@ import { useUrlGameId } from '../utils/useUrlGameId';
 import { useAuth } from '../contexts/AuthContext';
 import { useServer } from '../contexts/ServerContext';
 import { animationFeed } from './animationFeed';
-import { holdPrivateChannel } from './privateChannel';
+import { stream } from '../common/backend';
 
 /**
- * The LIVE game's producer for the animation feed: subscribes to the per-user
- * supabase broadcast channel and republishes every animation_events payload
- * into animationFeed, where AnimationProvider consumes it.
+ * The LIVE game's producer for the animation feed: holds the seated player's
+ * own cast stream of the game (backend.ts) and republishes every cast into
+ * animationFeed, where AnimationProvider consumes it.
  *
  * This is the channel-subscription half of what used to live inside
  * AnimationProvider — extracted so the provider itself is transport-agnostic
@@ -19,10 +19,8 @@ export const RealtimeAnimationFeed = () => {
     const { user_id } = useAuth();
     const { loadGame, views } = useServer();
     const url_game_id = useUrlGameId()?.toLowerCase();
-    // Only a seated player has a gu- stream. Realtime admits the private join
-    // only for a member of the game, so a spectator's join is refused every
-    // time (and each refusal stalls the whole socket, see privateChannel.ts);
-    // spectators get the game-<id> stream from ServerContext instead.
+    // Only a seated player hears their own seat's casts; spectators get the
+    // spectators' stream from ServerContext instead.
     // The board the signed-in user holds names their seat (mySeat, -1 for a
     // spectator). A boolean: this renders on every state change, but the
     // subscription effect re-runs only when the seat itself comes or goes.
@@ -37,29 +35,27 @@ export const RealtimeAnimationFeed = () => {
         if (!user_id || !url_game_id || !seated) {
             return;
         }
-        // A join can be refused while the membership row is not yet visible to
-        // Realtime (opening a game you are joining, or one whose create is still
-        // persisting); holdPrivateChannel removes a refused channel and rejoins.
-        return holdPrivateChannel(`gu-${url_game_id}-${user_id}`, {
-            bind: (channel) => {
-                channel.on('broadcast', { event: 'animation_events' }, (payload) => {
-                    // The payload is { b }: the kernel's cast, base64. Attach
-                    // the game id this channel is subscribed for, so the
-                    // consumer can pick the identity to decode it against.
-                    animationFeed.publish({ b: payload.payload?.b, game_id: url_game_id });
-                });
-            },
-            onJoined: (missed) => {
-                // Broadcasts sent while we were not subscribed are lost - realtime
-                // has no catch-up. After a rejoin, or a first join that followed
-                // refused joins, refetch authoritative state so the client can't
-                // be left showing a stale / mixed-bout table.
-                if (missed) loadGameRef.current(url_game_id).catch(console.error);
-            },
-            onFailed: (status, _err, retryInMs) => {
-                console.log(`animation channel ${status}, retrying in ${retryInMs}ms`);
+        // The cast is the kernel's (evwire.h); attach the game id the stream
+        // names, so the consumer can pick the identity to decode it against.
+        // Casts sent while the stream was not held are not replayed: after a
+        // rejoin (the socket was reopened), or a first join that followed
+        // refusals (a membership the server did not see yet), refetch
+        // authoritative state so the table is never stale or mixed-bout. A
+        // first join that was admitted at once missed nothing.
+        let missed = false;
+        let joined = false;
+        const unlisten = stream.listen({
+            cast: (gid, cast) => { if (gid === url_game_id) animationFeed.publish({ cast, game_id: url_game_id }); },
+            refused: (gid) => { if (gid === url_game_id) missed = true; },
+            joined: (gid) => {
+                if (gid !== url_game_id) return;
+                if (joined || missed) loadGameRef.current(url_game_id).catch(console.error);
+                joined = true;
+                missed = false;
             },
         });
+        const release = stream.game(url_game_id);
+        return () => { unlisten(); release(); };
     }, [user_id, url_game_id, seated]);
 
     return null;

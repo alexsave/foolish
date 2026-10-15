@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import supabase from '../common/Connector';
+import { board } from '../common/backend';
 import { useAuth } from '../contexts/AuthContext';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 import { BackButton } from './BackButton';
@@ -10,13 +10,10 @@ import { TexturedSurface, useTexture, getTextureStyle, seedFromString, flipFromS
 import { botDisplayName } from '../common/botName';
 
 /**
- * Global standings. Humans come from user_elo_ratings (publicly readable;
- * username denormalized onto the row — see migration
- * 20260702090000_leaderboard_usernames) and bots from the bots roster. Both
- * are rated by the same per-game pairwise Elo (updateEloRatings in
- * functions/_shared/utils.ts), so they share one ladder; ranks are computed
- * once over the merged list and the tabs only filter — an entry keeps its
- * overall rank on every tab.
+ * Global standings: the server's top players and top bots who have played
+ * (GET /v1/leaderboard). Both are rated by the same per-game pairwise Elo, so
+ * they share one ladder; ranks are computed once over the merged list and the
+ * tabs only filter — an entry keeps its overall rank on every tab.
  */
 
 type Filter = 'all' | 'humans' | 'bots';
@@ -53,44 +50,19 @@ export const Leaderboard: React.FC = () => {
 
         const load = async () => {
             try {
-                const [humans, bots] = await Promise.all([
-                    supabase
-                        .from('user_elo_ratings')
-                        .select('user_id, username, elo_rating, games_played')
-                        .gt('games_played', 0)
-                        .order('elo_rating', { ascending: false })
-                        .limit(BOARD_SIZE),
-                    supabase
-                        .from('bots')
-                        .select('id, nickname, elo_rating, games_played')
-                        .gt('games_played', 0)
-                        .order('elo_rating', { ascending: false })
-                        .limit(BOARD_SIZE),
-                ]);
-                if (humans.error) throw humans.error;
-                if (bots.error) throw bots.error;
+                const rows = await board();
 
-                const merged = [
-                    ...(humans.data ?? []).map((r) => ({
-                        id: r.user_id as string,
-                        // Rows created before the username backfill can lack a
-                        // name; a truncated uid still identifies the row.
-                        name: (r.username as string | null) ?? `#${(r.user_id as string).slice(0, 8)}`,
-                        is_ai: false,
-                        elo: r.elo_rating as number,
-                        games: r.games_played as number,
-                    })),
-                    ...(bots.data ?? []).map((r) => ({
-                        id: r.id as string,
-                        // The stored nickname, prefix and all - rendered
-                        // through botDisplayName below, not here, so a
-                        // language switch re-renders the city.
-                        name: r.nickname as string,
-                        is_ai: true,
-                        elo: r.elo_rating as number,
-                        games: r.games_played as number,
-                    })),
-                ]
+                const merged = rows.map((r) => ({
+                    id: r.id,
+                    // A deleted account keeps its row with no name; a truncated
+                    // uid still identifies it. A bot's stored nickname, prefix
+                    // and all, is rendered through botDisplayName below, so a
+                    // language switch re-renders the city.
+                    name: r.name || `#${r.id.slice(0, 8)}`,
+                    is_ai: r.isBot === 1,
+                    elo: r.rating,
+                    games: r.games,
+                }))
                     .sort((a, b) => b.elo - a.elo)
                     .slice(0, BOARD_SIZE)
                     .map((e, i) => ({ ...e, rank: i + 1 }));

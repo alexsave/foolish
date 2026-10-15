@@ -15,8 +15,8 @@
 //     serves both with permissive CORS, so this should hold - but "should" is
 //     the operative word and it is a live site's typography. (§8b.2 asserts this
 //     app has "no CDN fonts". That stopped being true.)
-//   - Supabase REST and realtime are CORS fetches and websockets, which COEP
-//     permits.
+//   - The backend's requests and its push stream are CORS fetches and a
+//     websocket, which COEP permits.
 //   - COOP: same-origin severs window.opener. Redirect-based auth is fine; any
 //     popup flow is not.
 //
