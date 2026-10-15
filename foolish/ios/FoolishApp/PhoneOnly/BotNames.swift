@@ -68,7 +68,7 @@ public enum BotNames {
 
     /// The reserved first character of every bot's STORED name (bots.nickname,
     /// a replay blob's seat name): '%Vienna 1'. Humans may not use it anywhere in
-    /// theirs (server/impls/supabase/seed.sql enforces it), which is what makes
+    /// theirs (the server refuses a name with it, c_base auth.c), which is what makes
     /// "starts with it" a sound bot test. The web's twin is BOT_USERNAME_PREFIX
     /// in src/common/botName.ts; the kernel has no rule for it.
     static let botPrefix = "%"
