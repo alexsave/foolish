@@ -25,11 +25,9 @@
 # Secrets (Settings > Secrets and variables > Actions):
 #   CBASE_AWS_ROLE_ARN   the cbase-github stack's DeployRoleArn
 #                        (c_base/ops/github_oidc.yaml; OIDC, no keys, main only)
-#   CBASE_ANON_KEY       the cbase stack's AnonKey (c_base/ops/.env), which the
-#                        bundle sends as `apikey`; public once shipped, a secret
-#                        here only so it lives in one place
-# The backend URL is not a secret: NEXT_PUBLIC_SUPABASE_URL is
-# https://api.foolish.cards.
+# The backend URL is not a secret: NEXT_PUBLIC_BACKEND_URL is
+# https://api.foolish.cards, and the binary surface the bundle speaks has no
+# anon key.
 name: web_aws
 
 on:
@@ -64,7 +62,7 @@ permissions:
 
 env:
   AWS_REGION: us-east-1
-  NEXT_PUBLIC_SUPABASE_URL: https://api.foolish.cards
+  NEXT_PUBLIC_BACKEND_URL: https://api.foolish.cards
   # The one place that says which runs deploy; every job reads it.
   DEPLOYS: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
 
@@ -95,23 +93,8 @@ jobs:
       - name: Shipped wasm modules
         run: bash scripts/wasm_build.sh
 
-      # The real key only on a deploying run; anything else builds against a
-      # placeholder (a compile gate) and never deploys. `next build` prerenders
-      # /_not-found and friends, and the module that creates the client throws
-      # at module scope without a well-formed pair, so the gate needs one.
       - name: Build the static export
-        env:
-          ANON_KEY: ${{ secrets.CBASE_ANON_KEY }}
         run: |
-          if [ "$DEPLOYS" = true ]; then
-            if [ -z "$ANON_KEY" ]; then
-              echo "::error::CBASE_ANON_KEY is not set: main cannot build the site it deploys (.github/workflows/web_aws.yml header)."
-              exit 1
-            fi
-            export NEXT_PUBLIC_SUPABASE_KEY="$ANON_KEY"
-          else
-            export NEXT_PUBLIC_SUPABASE_KEY=placeholder-anon-key-not-used-by-this-job
-          fi
           npx next build
           test -f out/index.html && test -f out/_shell.html && test -f out/.well-known/apple-app-site-association
           du -sh out
