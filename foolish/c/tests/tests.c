@@ -6610,8 +6610,8 @@ static void test_plan_ask_carries_the_final_board(void) {
     CHECK(anim_plan_ask(&pa_ask, &pa_asked) == ANIM_EOK && card_is_none(pa_asked.pre.flipped),
           "…and no flipped card stays CARD_NONE, which is not the hidden card");
 
-    pa_ask.n_players = 1;
-    CHECK(anim_plan_ask(&pa_ask, &pa_asked) == ANIM_EBADARG, "a table of one is refused, as it is for events");
+    pa_ask.n_players = 0;
+    CHECK(anim_plan_ask(&pa_ask, &pa_asked) == ANIM_EBADARG, "a table of no one is refused, as it is for events");
 }
 
 // THE CAPS. Each count is a byte that can say more than its array holds, so
@@ -8778,6 +8778,104 @@ static void test_extras_struct_is_the_argument_blob_the_codec_takes(void) {
     t.flags = REPLAY_EXTRAS_FLAG_TIMES;
     const int m = replay_extras_pack(&t, args, (int)sizeof args);
     CHECK(m == 1 + 8 + 2 + 8, "extras: a times-only argument has no name count");
+}
+
+// Account deletion (replay_extras_redact): a stored replay keeps the game and
+// loses the person. The round trip is the contract: encode, redact one seat,
+// decode, and the seat reads REDACTED_PLAYER_NAME while every other field is
+// EQUAL - not within the curve's 7%, equal, because the times section is
+// copied and never re-quantized.
+static void test_extras_redact_renames_one_seat_and_nothing_else(void) {
+    ReplayExtras x, before, after;
+    unsigned char args[2048], blob[1024], red[1024], ans1[8192], ans2[8192];
+    memset(&x, 0, sizeof x);
+    x.flags = REPLAY_EXTRAS_FLAG_NAMES | REPLAY_EXTRAS_FLAG_TIMES;
+    x.n_names = 3;
+    ex_set_name(&x, 0, "Sveta");
+    ex_set_name(&x, 1, "\xd0\x92\xd0\xbb\xd0\xb0\xd0\xb4 the Gone");
+    ex_set_name(&x, 2, "Bo");
+    x.start_time = 1750000000.0;
+    x.n_gaps = 5;
+    x.gaps[0] = 0.25; x.gaps[1] = 3.0; x.gaps[2] = 61.0; x.gaps[3] = 0.0; x.gaps[4] = 7.5;
+    const int na = replay_extras_pack(&x, args, (int)sizeof args);
+    const int nb = replay_extras_encode(args, na, blob, (int)sizeof blob);
+    CHECK(na > 0 && nb > 0, "redact: the fixture encodes");
+
+    const unsigned char *gone = (const unsigned char *)REDACTED_PLAYER_NAME;
+    const int gone_len = (int)strlen(REDACTED_PLAYER_NAME);
+    const int nr = replay_extras_redact(blob, nb, 3, 1, gone, gone_len, red, (int)sizeof red);
+    const int want_len = nb - (int)strlen("\xd0\x92\xd0\xbb\xd0\xb0\xd0\xb4 the Gone") + gone_len;
+    CHECK(nr == want_len, "redact: the blob grows or shrinks by exactly the name");
+
+    const int d1 = replay_extras_decode(blob, nb, 3, 5, ans1, (int)sizeof ans1);
+    const int d2 = nr > 0 ? replay_extras_decode(red, nr, 3, 5, ans2, (int)sizeof ans2) : -1;
+    CHECK(d1 > 0 && d2 > 0, "redact: the redacted blob still decodes");
+    memset(&before, 0, sizeof before);
+    memset(&after, 0, sizeof after);
+    if (d1 > 0) replay_extras_unpack(ans1, d1, &before);
+    if (d2 > 0) replay_extras_unpack(ans2, d2, &after);
+    CHECK(after.n_names == 3 && ex_name_is(&after, 1, REDACTED_PLAYER_NAME),
+          "redact: the deleted seat reads the redaction name");
+    CHECK(ex_name_is(&after, 0, "Sveta") && ex_name_is(&after, 2, "Bo"),
+          "redact: every other seat keeps its name");
+    CHECK(after.flags == before.flags && after.start_time == before.start_time
+          && after.n_gaps == before.n_gaps
+          && memcmp(after.gaps, before.gaps, sizeof(double) * (size_t)before.n_gaps) == 0,
+          "redact: the flags, start and every gap are EQUAL to the original's");
+    // The bytes themselves: the header, then everything after the names, as
+    // they were. Nothing of the old name survives anywhere in the blob.
+    const int tail = nb - (2 + 6 + 18 + 3);   // header + "Sveta\0" + old name\0 + "Bo\0"
+    CHECK(nr > 0 && red[0] == blob[0] && red[1] == blob[1]
+          && memcmp(red + nr - tail, blob + nb - tail, (size_t)tail) == 0,
+          "redact: the header and the times section are the original bytes");
+    int found = 0;
+    for (int i = 0; nr > 0 && i + 4 <= nr; i++) if (memcmp(red + i, "Gone", 4) == 0) found = 1;
+    CHECK(!found, "redact: no byte of the old name is left");
+
+    // The first and the last seat too: the parse has no off-by-one at the edges.
+    int n0 = replay_extras_redact(blob, nb, 3, 0, gone, gone_len, red, (int)sizeof red);
+    CHECK(n0 > 0 && replay_extras_decode(red, n0, 3, 5, ans2, (int)sizeof ans2) > 0
+          && replay_extras_unpack(ans2, replay_extras_decode(red, n0, 3, 5, ans2, (int)sizeof ans2), &after) > 0
+          && ex_name_is(&after, 0, REDACTED_PLAYER_NAME) && ex_name_is(&after, 2, "Bo"),
+          "redact: seat 0 is renamed and the last seat kept");
+    int n2 = replay_extras_redact(blob, nb, 3, 2, gone, gone_len, red, (int)sizeof red);
+    CHECK(n2 > 0 && replay_extras_decode(red, n2, 3, 5, ans2, (int)sizeof ans2) > 0
+          && replay_extras_unpack(ans2, replay_extras_decode(red, n2, 3, 5, ans2, (int)sizeof ans2), &after) > 0
+          && ex_name_is(&after, 2, REDACTED_PLAYER_NAME) && after.start_time == before.start_time,
+          "redact: the last seat is renamed and the times still follow it");
+
+    // A names-less blob names nobody: copied as it is.
+    ReplayExtras t;
+    memset(&t, 0, sizeof t);
+    t.flags = REPLAY_EXTRAS_FLAG_TIMES;
+    t.start_time = 1750000123.0;
+    t.n_gaps = 2; t.gaps[0] = 1.0; t.gaps[1] = 2.0;
+    const int ta = replay_extras_pack(&t, args, (int)sizeof args);
+    const int tb = replay_extras_encode(args, ta, blob, (int)sizeof blob);
+    CHECK(replay_extras_redact(blob, tb, 2, 1, gone, gone_len, red, (int)sizeof red) == tb
+          && memcmp(red, blob, (size_t)tb) == 0, "redact: a blob with no names is copied unchanged");
+
+    // What it refuses, and never a write past `cap`.
+    const int nb2 = replay_extras_encode(args, replay_extras_pack(&x, args, (int)sizeof args), blob, (int)sizeof blob);
+    CHECK(replay_extras_redact(blob, nb2, 3, 3, gone, gone_len, red, (int)sizeof red) == -REPLAY_EXTRAS_EINPUT,
+          "redact: a seat past the table is refused");
+    CHECK(replay_extras_redact(blob, nb2, 3, -1, gone, gone_len, red, (int)sizeof red) == -REPLAY_EXTRAS_EINPUT,
+          "redact: a negative seat is refused");
+    CHECK(replay_extras_redact(blob, 1, 3, 0, gone, gone_len, red, (int)sizeof red) == -REPLAY_EXTRAS_EHEADER,
+          "redact: a blob shorter than its header is refused");
+    const unsigned char future[] = { 3, 1, 'a', 0 };
+    CHECK(replay_extras_redact(future, 4, 1, 0, gone, gone_len, red, (int)sizeof red) == -REPLAY_EXTRAS_EVERSION,
+          "redact: a version it does not know is refused");
+    const unsigned char short_names[] = { 2, 1, 'a', 0, 'b' };
+    CHECK(replay_extras_redact(short_names, 5, 2, 0, gone, gone_len, red, (int)sizeof red) == -REPLAY_EXTRAS_ENAME,
+          "redact: a names section shorter than the table is refused");
+    unsigned char guard[64];
+    memset(guard, 0x5A, sizeof guard);
+    CHECK(replay_extras_redact(blob, nb2, 3, 1, gone, gone_len, guard, 20) == -REPLAY_EXTRAS_ECAP,
+          "redact: a short buffer is refused");
+    int clean = 1;
+    for (int i = 20; i < (int)sizeof guard; i++) if (guard[i] != 0x5A) clean = 0;
+    CHECK(clean, "redact: nothing is written past cap");
 }
 
 static void test_extras_struct_survives_the_codec(void) {
@@ -15509,6 +15607,43 @@ static void test_client_plan_without_a_final_board(void) {
           && client_plan(&pa_ask, 1, NULL, &pa_asked) == ANIM_EBADARG, "a stream with no board and no final has no table");
 }
 
+// A LOBBY IS A TABLE, and its pushes plan like any other. The web host found
+// this one: the host sits alone in a lobby, the first guest joins, and the
+// push is one magic transition whose board seats two - while the board the
+// host's screen holds, which it hands over as `final`, still seats one. The
+// plan is as wide as the widest board it reads, so the join plans at two;
+// and once the guest leaves again every board seats one, which is a lobby of
+// one and still a table.
+static void lobby_board(TableView *v, int n_seats) {
+    memset(v, 0, sizeof *v);
+    v->status = GAME_STATUS_WAITING;
+    v->num_players = n_seats;
+    v->my_seat = 0;
+    v->has_flipped = false;
+    v->flipped = CARD_NONE;
+}
+
+static void test_client_plan_lobby_join(void) {
+    TableView alone, joined;
+    lobby_board(&alone, 1);
+    lobby_board(&joined, 2);
+    const ClientPlanStep st = { .type = ANIM_EVT_MAGIC_TRANSITION, .seat = ANIM_SEAT_NONE,
+                                .from = ANIM_LOC_NONE, .to = ANIM_LOC_NONE };
+
+    memset(&pa_ask, 0x5a, sizeof pa_ask);
+    CHECK(client_plan_step(&pa_ask, 0, &st, &joined) == ANIM_EOK, "the join's step, with its board of two, is taken");
+    CHECK(client_plan(&pa_ask, 1, &alone, &pa_asked) == ANIM_EOK,
+          "a join into a lobby of one plans, though the screen still holds the board of one");
+    CHECK(pa_ask.n_players == 2 && pa_asked.pre.n_players == 2,
+          "the table is the widest board the plan reads: the step's two seats, not the screen's one");
+    CHECK(pa_asked.n_steps == 1, "one transition, one step");
+
+    // The guest leaves: every board the plan reads now seats one.
+    CHECK(client_plan_step(&pa_ask, 0, &st, &alone) == ANIM_EOK
+          && client_plan(&pa_ask, 1, &alone, &pa_asked) == ANIM_EOK && pa_asked.pre.n_players == 1,
+          "a lobby of one is a table, and its pushes plan");
+}
+
 static void test_client_plan_order_and_caps(void) {
     cvr_board(&cb_view, 0);
     ClientPlanStep st = { .type = ANIM_EVT_OUT, .seat = ANIM_SEAT_NONE, .from = ANIM_LOC_NONE, .to = ANIM_LOC_NONE };
@@ -16533,6 +16668,7 @@ int main(void) {
     test_extras_never_writes_past_its_buffer();
     test_extras_struct_is_the_argument_blob_the_codec_takes();
     test_extras_struct_survives_the_codec();
+    test_extras_redact_renames_one_seat_and_nothing_else();
     test_extras_struct_refuses_what_it_cannot_hold();
     test_extras_link_is_the_code_and_what_the_roster_says();
     test_extras_link_short_buffer_answers_itself_twice();
@@ -16616,6 +16752,7 @@ int main(void) {
     test_client_conflict_verdicts();
     test_client_plan_reads_the_boards();
     test_client_plan_without_a_final_board();
+    test_client_plan_lobby_join();
     test_client_plan_order_and_caps();
     test_client_push_settle();
     test_client_play_is_the_engine();
