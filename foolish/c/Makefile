@@ -1882,7 +1882,7 @@ COV_BRANCH_MIN ?= 74
 # coverage climbs; never lower one to make a red build pass.
 COV_KERNEL     := game legal replay replay_steps replay_extras view awire evwire \
                   msg_wire msg_expand anim_plan table client_table roster card \
-                  hand_layout bot_drive bot_roster analyse ask
+                  hand_layout bot_drive bot_roster analyse ask table_wire netwire netclient
 # deal_rng and sha256 are in the SAME gate, from their new home. They left this
 # list's `src/` prefix behind when they moved to shared/, and a filter that no
 # longer matches does not fail - gcovr simply reports the file it cannot find as
@@ -1912,6 +1912,10 @@ coverage:
 	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/anim_plan_test.c  -o covbuild/anim_plan_test  -lm
 	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/msg_expand_test.c -o covbuild/msg_expand_test -lm
 	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/analyse_test.c    -o covbuild/analyse_test    -lm
+	# The backend's codec and client are kernel files whose suites live with
+	# their server (c_base/test, whose t.h needs nothing of c_base's own).
+	$(COV_CC) $(COV_FLAGS) -I../../c_base/test $(CORE_SRC) ../../c_base/test/unit_netwire.c   -o covbuild/unit_netwire   -lm
+	$(COV_CC) $(COV_FLAGS) -I../../c_base/test $(CORE_SRC) ../../c_base/test/unit_netclient.c -o covbuild/unit_netclient -lm
 	./covbuild/cnitro_tests
 	./covbuild/sim_difftest 4 100
 	./covbuild/apply_difftest 4 50
@@ -1923,6 +1927,8 @@ coverage:
 	./covbuild/anim_plan_test
 	./covbuild/msg_expand_test
 	./covbuild/analyse_test
+	./covbuild/unit_netwire
+	./covbuild/unit_netclient
 	# A NEW KERNEL FILE MUST NOT BE ABLE TO SLIP PAST THE GATE. COV_KERNEL is a
 	# hand-written list, and this repo has been bitten four times in one day by
 	# a check that named files while the files moved underneath it. Every source
