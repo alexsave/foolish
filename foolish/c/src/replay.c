@@ -18,8 +18,18 @@
 //   - geo() masks its shift count to 5 bits, like the JS `>>` operator: a
 //     player holding 32+ matching cards wraps the geometric decay.
 //
-// Single-threaded by design (like the wasm bridge): the coder, model and
-// bignum scratch are plain statics. Do not call from OMP arena workers.
+// PER THREAD, NOT PER PROCESS. A server finishes a game on one thread
+// (table_replay_code: encode, then decode it back) while another reads a link's
+// envelope (msg_decode + msg_replay, which decodes the v6 body), and the two
+// share every piece of scratch below. As process globals they wrote into each
+// other's coder, model and menu mid-call (tests/replay_threads_test.c: a NULL
+// reveal pointer in draw_for, and codes for the wrong game). So every mutable
+// static here is _Thread_local, and the two big ones - the choice log and the
+// bignum, 936 KB at the native caps - are a heap block per thread taken on the
+// first encode or decode (coder_scratch_ready, thread_heap.h) rather than
+// thread-local arrays every thread would carry. The wasm builds erase the
+// qualifier (-D_Thread_local=) and alias those two into their arenas, so the
+// shipped modules are unchanged.
 
 #include "replay.h"
 #include "wasm_overlay.h"
@@ -30,15 +40,18 @@
 #include "rules_overlay.h"
 #endif
 #include "../../../shared/c/le_bytes.h"
+#include "thread_heap.h"   // the coder's per-thread scratch (native builds)
 #include <stddef.h>   // offsetof (the re-deal's short-log Game slot)
 #include <string.h>
 
-static int g_err_detail = 0;
+// The last refusal is the calling thread's: a caller reads it right after the
+// call that failed, and another thread's call in between must not answer for it.
+static _Thread_local int g_err_detail = 0;
 int replay_last_error_detail(void) { return g_err_detail; }
 
 // The same refusal in named fields (replay.h ReplayError), set beside the
 // packed detail so the two cannot disagree.
-static ReplayError g_err;
+static _Thread_local ReplayError g_err;
 const ReplayError *replay_last_error(void) { return &g_err; }
 static void err_clear(void) { g_err_detail = 0; g_err.version = g_err.log_type = g_err.menu = 0; }
 
@@ -86,9 +99,9 @@ _Static_assert(_Alignof(Bn) <= 16, "Bn alignment exceeds the arena's 16");
 _Static_assert(RULES_OVL_BN_OFF % _Alignof(Bn) == 0, "g_bn offset misaligned");
 _Static_assert(sizeof(Bn) <= RULES_OVL_REPLAY_IO_OFF - RULES_OVL_BN_OFF, "g_bn overflows its overlay slot");
 #define g_bn (*(Bn *)(rules_overlay + RULES_OVL_BN_OFF))
-#else
-static Bn g_bn;
 #endif
+// The native g_bn is a field of the per-thread CoderScratch, defined beside
+// g_rec below.
 
 static void bn_zero(Bn *x) { x->n = 0; }
 static bool bn_is_zero(const Bn *x) { return x->n == 0; }
@@ -172,8 +185,30 @@ _Static_assert((size_t)REC_CAP * sizeof(RecChoice) <= CD_OVL_BN_OFF, "g_rec over
 _Static_assert(_Alignof(RecChoice) <= 16, "RecChoice alignment exceeds the arena's 16");
 _Static_assert((size_t)REC_CAP * sizeof(RecChoice) <= RULES_OVL_BN_OFF - RULES_OVL_REC_OFF, "g_rec overflows its overlay slot");
 #define g_rec ((RecChoice *)(rules_overlay + RULES_OVL_REC_OFF))
+#endif
+
+#if defined(CD_WASM_OVERLAY) || defined(CD_RULES_OVERLAY)
+// The arena is always there.
+static bool coder_scratch_ready(void) { return true; }
 #else
-static RecChoice g_rec[REC_CAP];
+// Native (and the threaded wasm oracle, which has neither arena): one block per
+// thread, from the heap on that thread's first encode or decode, freed when the
+// thread exits (thread_heap.h). REC_CAP x 12 + BN_CAP x 4 bytes is 936 KB at
+// replay.c's own default caps (the server's and the native tools') and 58 KB at
+// the iOS caps. Not a _Thread_local array: glibc carves static TLS out of every
+// thread's stack and zeroes it at pthread_create, so each thread a server starts
+// - an event loop, a bot worker - would carry the codec's scratch whether it
+// ever encodes or not.
+typedef struct { RecChoice rec[REC_CAP]; Bn bn; } CoderScratch;
+static _Thread_local CoderScratch *g_coder_scratch;
+#define g_rec (g_coder_scratch->rec)
+#define g_bn (g_coder_scratch->bn)
+// Every encode and decode asks first; false is out of memory, which the caller
+// reports as REPLAY_ECAP (the codec could not hold the game).
+static bool coder_scratch_ready(void) {
+    if (!g_coder_scratch) g_coder_scratch = thread_heap_calloc(1, sizeof *g_coder_scratch);
+    return g_coder_scratch != 0;
+}
 #endif
 
 typedef struct {
@@ -307,7 +342,7 @@ typedef struct {
     int rev_n, rev_pos;        // reveal stream length / cursor
 } RModel;
 
-static RModel g_model;
+static _Thread_local RModel g_model;
 
 static int id_value(int id) { return id % 13 + 1; }
 
@@ -325,8 +360,8 @@ static Card id_to_card(int id) {
 // from inside the deal/draw/apply_* points because those are where a move is
 // fully RESOLVED — the coder above them still holds only a menu index.
 
-static ReplayAtomSink g_atom_sink = 0;
-static void          *g_atom_ctx  = 0;
+static _Thread_local ReplayAtomSink g_atom_sink = 0;
+static _Thread_local void          *g_atom_ctx  = 0;
 
 static void atom_out(int kind, int seat, const int *ids, int n, int target_id) {
     if (!g_atom_sink) return;
@@ -1304,8 +1339,8 @@ static void model_init(RModel *m, int n, int trump_id, int first_attacker,
     emit(m, LOG_GAME_START, -1, -1, 0, 0);
 }
 
-static Opt g_opts[MENU_CAP];
-static uint32_t g_weights[MENU_CAP];
+static _Thread_local Opt g_opts[MENU_CAP];
+static _Thread_local uint32_t g_weights[MENU_CAP];
 
 // The driver. Deals every seat's real initial hand (coded reveals, emitted as
 // one LOG_DRAW per seat), then runs exactly `n_atoms` top-level decisions - so
@@ -1451,6 +1486,7 @@ static int encode_v6_run(int n, int trump_id, int fa, int n_actions,
                          int pass_allowed,
                          const unsigned char *reveals, int n_reveals,
                          Src *s, unsigned char *out, int out_cap) {
+    if (!coder_scratch_ready()) return -REPLAY_ECAP;
     Coder c;
     memset(&c, 0, sizeof c);
     c.encode = true;
@@ -1541,11 +1577,10 @@ int replay_encode_v6(const unsigned char *in, int in_len,
 // array: the same short-log trick cordite_sim.c plays for its sampled worlds
 // (WORLD_SLOT_BYTES). log_cap = 1 then makes log_alloc route every non-DISCARD
 // append — during a deal, all of them — to its own sink instead of the array.
-// Plain statics, like the coder and model above: this codec is single-threaded
-// by design.
+// Per thread, like the coder and model above.
 #define DEAL_SLOT_BYTES (offsetof(Game, logs) + sizeof(GameLog))
 typedef struct { _Alignas(16) unsigned char bytes[DEAL_SLOT_BYTES]; } DealSlot;
-static DealSlot g_deal_slot;
+static _Thread_local DealSlot g_deal_slot;
 
 // Re-derive a seeded game's deal: the true initial hands (seat-major) followed
 // by the whole remaining stock in draw order, which is the reveal stream v6
@@ -1573,12 +1608,13 @@ static int deal_reveals_from_seed(const unsigned char *seed, int seed_len, int n
     d->log_cap = 1;   // short-log slot: this deal's logs are never read
 
     // A deal fires the snapshot hook (ENGINE_HOOK_DEAL per seat, plus
-    // START_MAGIC and FLIPPED) and engine_snap_hook is GLOBAL, so a re-deal on
-    // a host that has one installed would splice a whole imaginary deal into
+    // START_MAGIC and FLIPPED) and engine_snap_hook is the whole thread's, so a
+    // re-deal on a host that has one installed would splice a whole imaginary deal into
     // the animation plan it is building — the exact bug the bot_drive harness
     // found in the choose path (bot_drive.c choose_move). And start_game
     // consumes the deal RNG and leaves wide mode set, which draw_index reads
-    // for every game in this thread. Both are global, so both get put back.
+    // for every game in this thread. Both outlive this call, so both get put
+    // back.
     unsigned char saved_rng[GAME_DEAL_RNG_STATE_MAX];
     void (*saved_hook)(const Game *, int, int) = engine_snap_hook;
     game_deal_rng_get(saved_rng);
@@ -1687,6 +1723,7 @@ static int decode_impl(const unsigned char *in, int in_len,
     err_clear();
     if (in_len < 0 || in_len > REPLAY_MAX_INT_BYTES) return -REPLAY_ECAP;
     if (out && out_cap < REPLAY_DEC_HDR) return -REPLAY_ECAP;
+    if (!coder_scratch_ready()) return -REPLAY_ECAP;
     if (!bn_from_bytes_be(&g_bn, in, in_len)) return -REPLAY_ECAP;
 
     Coder c;

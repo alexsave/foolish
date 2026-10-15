@@ -635,15 +635,13 @@ static void deal_initial(Game *g) {
 // have no trump at all. Those replays used to fail with "trump not in alphabet"
 // — REPLAY_EHEADER's message, which is about a different fault entirely.
 //
-// NOT thread-local (Stage 5 audit, SERVER_SCALING.md): game_force_first_attacker
-// is called only from replay_steps.c's replay rebuild, which the native server
-// never links or calls (foolish_server/persist.c serialize through view.c's
-// state_put/state_get, not replay_steps.c — confirmed by grep). So this global
-// is unreachable from bot_drive/awire_apply/game_seat_and_deal and never
-// mutated during concurrent play; it stays a plain global, matching the
-// single-threaded replay-tooling callers that do touch it (cnitro_replay,
-// replay_v6_test - none of which are multi-threaded).
-static int g_forced_first_attacker = -1;
+// Thread-local, like the two overrides below it. It is set and cleared around
+// one deal (replay_steps.c's replay_deal_start), and a deal on another thread in
+// between - a live game's, a rematch's - must not see it: it would open on the
+// replayed game's seat. The Stage 5 audit (SERVER_SCALING.md) left it a plain
+// global because the native server never rebuilt a replay; the analyser does,
+// on its world threads, and any host that replays and plays at once would.
+static _Thread_local int g_forced_first_attacker = -1;
 
 void game_force_first_attacker(int seat) { g_forced_first_attacker = seat; }
 
@@ -662,8 +660,14 @@ void game_force_first_attacker(int seat) { g_forced_first_attacker = seat; }
 //   * a v8 replay code records the derived seat so replay_steps can still
 //     prove the hands came back right - the check the override would
 //     otherwise cost us (see replay_steps.c).
-static int g_open_seat = -1;
-static int g_derived_opening = -1;
+//
+// Both are the calling thread's. msg_replay pins g_open_seat around its re-deal
+// of a rematch envelope, which a link unfurl runs on a request thread while the
+// server deals live games on others: as a process global, a deal that landed in
+// that window opened on the envelope's seat (tests/replay_threads_test.c). And
+// every deal writes g_derived_opening, which its own caller reads back.
+static _Thread_local int g_open_seat = -1;
+static _Thread_local int g_derived_opening = -1;
 
 void game_open_at_seat(int seat) { g_open_seat = seat; }
 int  game_derived_opening(void) { return g_derived_opening; }

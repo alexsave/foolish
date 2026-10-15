@@ -73,7 +73,9 @@ static int name_is_clean(const char *s, int len) {
 
 // 1.0(6) DIAGNOSTIC: the replay codec version (9 or 10) of the last body decoded
 // by msg_replay; -1 if the last message had no body (an empty lobby/handoff).
-int msg_last_body_version = -1;
+// The calling thread's: it is read right after that thread's msg_replay, and a
+// link unfurl on another thread must not write it in between.
+_Thread_local int msg_last_body_version = -1;
 
 // WHAT A FORMAT SAYS, in four predicates instead of a chain of == tests
 // repeated in decode, encode and validate. Five live formats is where the ==
