@@ -86,6 +86,13 @@ final class AppCoordinator: ObservableObject {
         }
     }
 
+    /// The session ended (sign-out, delete-account, a refused refresh). The
+    /// Dashboard and an online table need a user, so they give way to Home; an
+    /// offline table plays on.
+    func sessionEnded() {
+        if screen == .dashboard || screen == .onlineTable { goHome() }
+    }
+
     func goHome() {
         offlineGame = nil
         onlineGame = nil

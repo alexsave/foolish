@@ -55,6 +55,7 @@ struct RootView: View {
         } message: {
             Text(coordinator.onlineError ?? "")
         }
+        .onChange(of: auth.userId) { if $0 == nil { coordinator.sessionEnded() } }
         .onOpenURL { coordinator.handle(url: $0) }
         .sheet(item: $coordinator.pendingReplay) { pending in
             NavigationStack { ReplayPlayerView(replay: pending.replay) }
