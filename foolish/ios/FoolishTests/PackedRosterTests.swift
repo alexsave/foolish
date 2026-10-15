@@ -3,7 +3,7 @@
 // The server's packed game envelope carried its roster as a JSON island; it is
 // a packed TRAILER now, appended past the view blob and announced in flags
 // bit1, because merging a server change here deploys instantly while the app
-// ships through the App Store. These tests drive PackedGame.decode - the real
+// ships through the App Store. These tests drive EngineC.adoptEnvelope - the real
 // entry point OnlineGame uses - over an envelope assembled here byte by byte
 // around a REAL masked-state blob from the kernel (PackedEnvelope.swift).
 //
@@ -38,7 +38,7 @@ final class PackedRosterTests: XCTestCase {
                                        good: ["player-2"], ts: 1723456789012)
         let buf = PackedEnvelope.envelope(seat: 1, version: 42, island: nil, viewBlob: blob, trailer: t)
 
-        guard let dec = await PackedGame.decode(buf, engine: engine) else {
+        guard let dec = await engine.adoptEnvelope(buf) else {
             return XCTFail("an island-free envelope did not decode")
         }
         XCTAssertEqual(dec.gameId, "game-xyz")
@@ -59,7 +59,7 @@ final class PackedRosterTests: XCTestCase {
                                        names: ["A", "B"], ids: ["a", "b"], isAI: [false, true])
         let buf = PackedEnvelope.envelope(seat: 0, version: 1, island: nil, viewBlob: blob, trailer: t)
 
-        let dec = await PackedGame.decode(buf, engine: engine)
+        let dec = await engine.adoptEnvelope(buf)
         XCTAssertEqual(dec?.view.status, GameStatus.waiting.rawValue,
                        "the blob's status won over the roster's")
     }
@@ -81,7 +81,7 @@ final class PackedRosterTests: XCTestCase {
                                        names: ["Sveta", "Misha"], ids: ["p0", "p1"], isAI: [false, false])
         let buf = PackedEnvelope.envelope(seat: 0, version: 1, island: island, viewBlob: blob, trailer: t)
 
-        guard let dec = await PackedGame.decode(buf, engine: engine) else {
+        guard let dec = await engine.adoptEnvelope(buf) else {
             return XCTFail("the mixed envelope did not decode")
         }
         XCTAssertEqual(dec.gameId, "TRAILER", "the JSON island was read instead of the trailer")
@@ -106,7 +106,7 @@ final class PackedRosterTests: XCTestCase {
         """.utf8)
         let buf = PackedEnvelope.envelope(seat: 0, version: 9, island: island, viewBlob: blob, trailer: nil)
 
-        let dec = await PackedGame.decode(buf, engine: engine)
+        let dec = await engine.adoptEnvelope(buf)
         XCTAssertNil(dec, "a JSON island was read as a roster - the fallback is back")
     }
 
@@ -122,7 +122,7 @@ final class PackedRosterTests: XCTestCase {
         for cut in [1, 4, 11, t.count - 1] {
             let buf = PackedEnvelope.envelope(seat: 0, version: 1, island: nil, viewBlob: blob,
                                trailer: Array(t.prefix(cut)))
-            let dec = await PackedGame.decode(buf, engine: engine)
+            let dec = await engine.adoptEnvelope(buf)
             XCTAssertNil(dec, "a \(cut)-byte trailer was read as a whole roster")
         }
     }
@@ -143,7 +143,7 @@ final class PackedRosterTests: XCTestCase {
                                        isAI: [false, false, false, false])
         let buf = PackedEnvelope.envelope(seat: 0, version: 1, island: nil, viewBlob: blob, trailer: t)
 
-        let dec = await PackedGame.decode(buf, engine: engine)
+        let dec = await engine.adoptEnvelope(buf)
         XCTAssertEqual(dec?.view.players.map(\.name), names,
                        "a non-ASCII name did not survive the byte-length codec")
     }

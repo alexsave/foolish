@@ -7,7 +7,7 @@
 // were asserting that a dead encoder still spoke to a dead parser.
 //
 // A Move's real round-trip is covered where it happens: PackedActionTests over
-// PackedAction/awire, and HarnessTests/PlayRulesTests over MoveWire.
+// MoveWire against the kernel's awire goldens, and HarnessTests/PlayRulesTests.
 
 import XCTest
 @testable import FoolishKit

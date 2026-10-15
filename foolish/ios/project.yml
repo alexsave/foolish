@@ -72,12 +72,6 @@ packages:
   SnapshotTesting:
     url: https://github.com/pointfreeco/swift-snapshot-testing
     from: 1.17.0
-  # Online play (§16.D1). Linked by FoolishNet ONLY — never FoolishKit, or the
-  # iMessage extension picks up a network stack it never uses (scripts/
-  # lint_architecture.sh fails the build if it creeps back).
-  Supabase:
-    url: https://github.com/supabase/supabase-swift
-    from: 2.0.0
 
 targets:
   # ---- The app -----------------------------------------------------------
@@ -141,7 +135,7 @@ targets:
   # distributed alone, so shipping the iMessage game without the host app needs
   # this. No sources: a messages application never runs its own UI.
   #
-  # The whole point is what it does NOT link: FoolishKit only, so no Supabase,
+  # The whole point is what it does NOT link: FoolishKit only, so no network,
   # no accounts, no backend. That is what keeps it clear of 5.1.1(v) account
   # deletion, the auth rebuild, online privacy labels, and a staging backend.
   FoolishMessagesApp:
@@ -314,7 +308,7 @@ targets:
         GENERATE_INFOPLIST_FILE: "YES"
 
   # ---- Shared framework: Engine + DesignSystem + Boards + Messages + Entitlements
-  # Extension-safe by construction: no network stack, no Supabase, no app-only
+  # Extension-safe by construction: no network stack, no app-only
   # API. Both shipping products link this — it is the shared UI + engine layer.
   # Anything that talks to a server belongs in FoolishNet, not here.
   FoolishKit:
@@ -393,8 +387,10 @@ targets:
     # P's phase rule: shipped, tested, absent. The guard turned that silence
     # into a build failure naming the command. The build runs the command now -
     # FoolishKernel, at the bottom - so there is nothing left to refuse.)
-      # NOTE: no Supabase here. The network stack lives in FoolishNet, which the
-      # iMessage extension never links — see that target's comment.
+      # NOTE: no network stack here. URLSession lives in FoolishNet, which the
+      # iMessage extension never links — see that target's comment. The
+      # backend's client (c/src/netclient.c) is plain C in the kernel and opens
+      # no socket.
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.kit
@@ -412,7 +408,7 @@ targets:
         # app-only API creeping into FoolishKit becomes a build error, not a
         # runtime surprise in the extension.
         #
-        # The old note here said "FoolishKit still links the Supabase SDK, so the
+        # The old note here said "FoolishKit still links the backend SDK, so the
         # extension binary carries a network stack it never uses" and asked for a
         # FoolishKitCore/Net split. That is STALE and was removed rather than
         # left to be believed: the FoolishNet split already finished the job, and
@@ -420,9 +416,9 @@ targets:
         # FoolishMessagesApp.app:
         #   otool -L FoolishKit  -> Foundation/SwiftUI/UIKit/CoreGraphics/
         #                           CoreImage/CoreText/Combine/libswift* only.
-        #                           No Supabase, no Network.framework, no
+        #                           No backend SDK, no Network.framework, no
         #                           CFNetwork, not one URLSession stub.
-        #   nm  FoolishKit + the .appex, grepped for supabase|realtime|postgrest|
+        #   nm  FoolishKit + the .appex, grepped for realtime|postgrest|
         #                           gotrue|websocket|URLSession -> 0 hits each.
         # There is no network stack to remove. If you are here hunting bundle
         # bytes, the framework binary is 2.6MB of SwiftUI board code, ~460KB of
@@ -443,7 +439,7 @@ targets:
         # this is a dylib exporting 5,072 symbols of which the appex uses 43, and
         # 830 KB is the 25 language tables as Swift dictionaries.
 
-  # ---- Online-only framework: Supabase, auth, edge functions, realtime ----
+  # ---- Online-only framework: the backend's HTTP and WebSocket plumbing ----
   # Split out of FoolishKit so the iMessage extension stops linking a network
   # stack it never uses (§17.5's memory ceiling). The extension's memory limit
   # is undocumented by Apple and determined experimentally, so the cheapest
@@ -504,8 +500,6 @@ targets:
       - path: FoolishNet
     dependencies:
       - target: FoolishKit
-      # Online play (§16.D): auth, edge functions, realtime.
-      - package: Supabase
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.net

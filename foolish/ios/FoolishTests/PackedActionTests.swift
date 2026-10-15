@@ -13,13 +13,11 @@
 // The fixture carries the REFUSALS too - the moves the kernel writes no frame
 // for - because "this move has no bytes" is equally the kernel's answer.
 //
-// The request envelope at the bottom is NOT the kernel's: it is the `action`
-// endpoint's protocol, read by table_request_decode (c/src/table.c) and written
-// on the web by table_request_encode beside it. See the note in PackedAction.swift.
+// The request around the frame is the kernel's client's (c/src/netclient.c,
+// tested in c_base/test/unit_netclient.c), and so is reading the answer.
 
 import XCTest
 @testable import FoolishKit
-import FoolishNet
 
 final class PackedActionTests: XCTestCase {
 
@@ -114,19 +112,6 @@ final class PackedActionTests: XCTestCase {
         }
     }
 
-    /// The online encoder (OnlineGame's POST body) against the same C.
-    func testPackedActionMatchesKernelGoldens() throws {
-        for v in try loadVectors() {
-            if let wire = v.wire {
-                XCTAssertEqual(hex(try PackedAction.encode(move(v))), hex(wire), v.name)
-            } else {
-                XCTAssertThrowsError(try PackedAction.encode(move(v)), v.name) { err in
-                    XCTAssertEqual(err as? PackedAction.WireError, .unencodableMove, v.name)
-                }
-            }
-        }
-    }
-
     /// A move of more cards than a byte can count. The Swift encoder this
     /// replaced wrote `UInt8(move.cards.count)` and TRAPPED here; the kernel
     /// refuses it, well below its own 28-card cap. Not a fixture vector because
@@ -134,22 +119,5 @@ final class PackedActionTests: XCTestCase {
     func testOverLongMoveIsRefusedNotTrapped() {
         let many = (0..<300).map { Card(s: $0 % 4, v: ($0 % 13) + 1) }
         XCTAssertTrue(MoveWire.encodeAction(Move(type: .attack, cards: many)).isEmpty)
-        XCTAssertThrowsError(try PackedAction.encode(Move(type: .attack, cards: many)))
-    }
-
-    func testRequestEnvelopeV2() throws {
-        let body = try PackedAction.requestBody(gameId: "g1", intentVersion: 7,
-                                                move: Move(type: .attack, cards: [Card(s: 0, v: 6)]))
-        // [2]['g'll... ] : fmt=2, gidLen=2, 'g','1', intentVersion LE 07 00 00 00, then wire [0,1,5]
-        XCTAssertEqual([UInt8](body), [2, 2, 0x67, 0x31, 7, 0, 0, 0, 0, 1, 5])
-    }
-
-    func testResponseDecodeStaleRound() throws {
-        // [fmt=1][status=rejected=1][rejectCode=100][version=42 LE]
-        let data = Data([1, 1, 100, 42, 0, 0, 0])
-        let r = try PackedAction.decodeResponse(data)
-        XCTAssertEqual(r.status, .rejected)
-        XCTAssertTrue(r.isStaleRound)
-        XCTAssertEqual(r.version, 42)
     }
 }

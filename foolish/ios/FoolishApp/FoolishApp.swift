@@ -11,7 +11,7 @@ struct FoolishApp: App {
     // The billing-ready seam (§10). v1 injects only FreeEntitlements; the future
     // Oracle swaps in StoreKitEntitlements here with no other change.
     @StateObject private var entitlements = FreeEntitlements()
-    // Online auth (§9). Nil-backed when the build has no Supabase config; the
+    // Online auth (§9). Signed out for good when the build has no backend URL; the
     // app stays fully usable offline (guest-first, §2).
     @StateObject private var auth = AuthService()
 

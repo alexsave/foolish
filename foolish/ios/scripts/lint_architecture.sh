@@ -35,7 +35,7 @@ fi
 
 echo "[lint] the extension's frameworks carry no network stack…"
 # Source greps above catch `import FoolishNet`; this catches the LINK, which is
-# what actually decides whether the appex binary carries the Supabase SDK. The
+# what actually decides whether the appex binary carries the network stack. The
 # whole standalone-iMessage story depends on it (§17.5 memory ceiling, and a
 # no-account extension staying clear of the host app's compliance surface), and
 # a stray dependency line in project.yml would undo it silently — nothing on
@@ -53,8 +53,6 @@ for name in ('FoolishKit', 'FoolishMessages', 'FoolishMessagesApp'):
     if b is None:
         bad.append(f'{name}: target missing from project.yml')
         continue
-    if 'package: Supabase' in b:
-        bad.append(f'{name}: links the Supabase package')
     if 'target: FoolishNet' in b:
         bad.append(f'{name}: depends on FoolishNet')
 for line in bad:

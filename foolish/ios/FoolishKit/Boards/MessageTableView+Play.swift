@@ -40,7 +40,7 @@ extension MessageTableView {
     /// measure afterwards).
     ///
     /// A cover pairs its cards with its targets POSITIONALLY - `cards[i]`
-    /// answers `attackCards[i]` - which is the shape `PackedAction.encode`
+    /// answers `attackCards[i]` - which is the shape `MoveWire.encodeAction`
     /// writes to the wire and `calc_cover_moves_greedy` builds. So a three-card
     /// cover has three landing slots, one per attack it answers, and this walks
     /// that pairing rather than reusing the slot the gesture happened to name.

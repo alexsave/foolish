@@ -136,7 +136,7 @@ mirror.
 ### Privacy labels — this app collects literally nothing
 
 Unlike the host app, `cards.foolish.msg` links **`FoolishKit` only** — no
-`FoolishNet`, no Supabase SDK, no account system exists in this binary at all.
+`FoolishNet`, no network client, no account system exists in this binary at all.
 There is no "if you create an account" branch to answer:
 
 | Category | Answer |
@@ -206,8 +206,8 @@ Kept for when this is picked back up; not active work right now.
 - Bundle id: `cards.foolish.app` (no longer embeds the extension — see the
   2026-07-18 note above). App Group: `group.cards.foolish`.
 - In-app account deletion path: **Settings → Delete Account**, calling
-  `server/impls/supabase/functions/delete-account/` (confirmed on `main`,
-  wired to `AccountService.swift`). Deletion URL for App Store metadata:
+  c_base's `POST /v1/account/delete` (wired to `AccountService.swift`, proven
+  in a simulator against `cbase serve` on 2026-10-14). Deletion URL for App Store metadata:
   `https://foolish.cards/delete-account`. Still worth one live-DB check
   before relying on it in review (`IOS_APP_DESIGN.md` §17.6 step 6).
 - Privacy labels: Data Used to Track You — None. Data Linked to You —
@@ -221,5 +221,5 @@ Kept for when this is picked back up; not active work right now.
   Play → Offline → beat a bot; Replays → paste the demo code above; Settings →
   Delete account works. Fully usable without an account.
 - Demo account credentials: not needed — the app is usable without one.
-- Blocked on: staging Supabase credentials (online runtime never verified
-  against a live backend) — see `docs/IMESSAGE_SHIP_BLOCKERS.md` A2.
+- Blocked on: a run against the live backend (api.foolish.cards) from a
+  device — see `docs/IMESSAGE_SHIP_BLOCKERS.md` A2.

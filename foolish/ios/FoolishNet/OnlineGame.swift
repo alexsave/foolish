@@ -1,17 +1,17 @@
 // OnlineGame.swift — the online game session (§8, §16.D5). Conforms to the same
 // GameSession the board renders against, so ONE TableView drives online and
-// offline. Authoritative masked state arrives as `player_views` rows (GameFeed),
-// decoded through PackedGame (envelope → kernel). Moves POST the packed action
-// (PackedAction, byte-verified). Stage C1: no optimistic mutation — the played
-// cards go in-flight (dim + lock) and the authoritative row that follows
-// supersedes them; a reject clears them with a rigid haptic + toast (§8.2).
+// offline. Authoritative masked state arrives as the player's views on the push
+// stream (Stream), read by the kernel (EngineC.adoptEnvelope). A move is the
+// kernel's action wire, posted through the kernel's client (NetClient). Stage
+// C1: no optimistic mutation — the played cards go in-flight (dim + lock) and
+// the authoritative view that follows supersedes them; a reject clears them
+// with a rigid haptic + toast (§8.2).
 //
 // The local seat and game id are read from the decoded envelope (the web does
-// the same via decodePackedGame) — no seat/id is threaded through the UI.
+// the same) — no seat/id is threaded through the UI.
 
 import Foundation
 import Combine   // ObservableObject / @Published
-import Supabase
 import FoolishKit
 
 @MainActor
@@ -35,11 +35,10 @@ public final class OnlineGame: ObservableObject, GameSession {
     public var humanSeat: Int { seat }
 
     private let engine = EngineC()
-    private var feed: GameFeed?
     private var intentVersion: UInt32 = 0
 
     /// Quick-match seeds `initial` from the `create` response; join/spectate pass
-    /// nil and learn everything from the first `player_views` row.
+    /// nil and learn everything from the first view the stream delivers.
     public init(userId: UUID, gameId: String, spectator: Bool = false, initial: AdoptedEnvelope? = nil) {
         self.userId = userId
         self.gameId = gameId
@@ -50,19 +49,17 @@ public final class OnlineGame: ObservableObject, GameSession {
     }
 
     private func start() {
-        let feed = GameFeed(onRow: { [weak self] hex, _ in self?.ingest(hex: hex) })
-        self.feed = feed
-        Task {
-            if spectator { await feed.subscribePublic(gameId: gameId) }
-            else { await feed.subscribe(userId: userId) }
-        }
+        Stream.shared.watch(gameId, spectator: spectator,
+                            view: { [weak self] envelope in self?.ingest(envelope) },
+                            moved: { [weak self] in Task { await self?.resync() } })
+        if spectator { Task { await resync() } }
     }
 
     // MARK: - incoming state
 
-    private func ingest(hex: String) {
+    private func ingest(_ envelope: Data) {
         Task {
-            guard let decoded = await PackedGame.decodeHex(hex, engine: engine) else { return }
+            guard let decoded = await engine.adoptEnvelope(envelope) else { return }
             // The user's feed carries every game they're in — apply only ours.
             guard decoded.gameId == gameId else { return }
             apply(decoded)
@@ -88,7 +85,7 @@ public final class OnlineGame: ObservableObject, GameSession {
         actorMask = Self.actorMask(from: decoded.view)
         inFlight.removeAll()   // authoritative state supersedes any in-flight
         thinking = !spectator && !decoded.view.isOver && (actorMask & (1 << max(seat, 0))) == 0
-        // #24: player_views rows reach us over a fire-and-forget realtime push,
+        // #24: views reach us over a fire-and-forget push,
         // and the terminal (game-over) row is the worst to lose — the game ends
         // but this client is stranded on the table, WinView never shown. Every
         // authoritative update re-arms a watchdog; if the feed then goes silent
@@ -108,29 +105,25 @@ public final class OnlineGame: ObservableObject, GameSession {
     // MARK: - outgoing moves (Stage C1)
 
     public func play(_ move: Move) {
-        guard let client = Backend.shared.client, !spectator else { return }
+        guard Backend.shared.isConfigured, !spectator else { return }
+        let wire = MoveWire.encodeAction(move)
+        guard !wire.isEmpty else { lastReject = .badArg; return }
         for c in move.cards { inFlight.insert(c.identity) }
         Task {
-            do {
-                let body = try PackedAction.requestBody(gameId: gameId, intentVersion: intentVersion, move: move)
-                // Raw-bytes overload — the action response is a BINARY envelope,
-                // not JSON, so we must NOT let invoke run a JSONDecoder over it.
-                let data: Data = try await client.functions.invoke(
-                    "action", options: FunctionInvokeOptions(method: .post, body: body)
-                ) { data, _ in data }
-                let resp = try PackedAction.decodeResponse(data)
-                switch resp.status {
-                case .applied:
-                    intentVersion = resp.version   // the pv- row will animate + clear in-flight
-                case .rejected:
-                    clearInFlight(move)
-                    lastReject = .reject(code: Int(resp.rejectCode))
-                case .moot:
-                    clearInFlight(move)
-                }
-            } catch {
+            let answer = try? await Backend.shared.call { NetClient.action(gameId, wire, intent: Int64(intentVersion)) }
+            guard let answer, let resp = NetClient.action(answer.status, answer.body) else {
                 clearInFlight(move)
-                lastReject = (error as? EngineError) ?? .unknown(-1)
+                lastReject = .unknown(-1)
+                return
+            }
+            switch resp.status {
+            case TABLE_STATUS_APPLIED:
+                intentVersion = UInt32(resp.version)   // the view that follows animates + clears in-flight
+            case TABLE_STATUS_REJECTED:
+                clearInFlight(move)
+                lastReject = .reject(code: resp.rejectCode)
+            default:
+                clearInFlight(move)
             }
         }
     }
@@ -165,17 +158,12 @@ public final class OnlineGame: ObservableObject, GameSession {
     }
 
     /// Refetch authoritative state on foreground/reconnect (§16.D6): reset the
-    /// gate and re-read the player_views row.
+    /// gate and re-read this game's view (the spectators' for a spectator).
     public func resync() async {
-        feed?.resetVersionGate()
-        guard let client = Backend.shared.client, !spectator else { return }
-        struct Row: Decodable { let view: String }
-        let rows: [Row] = (try? await client.from("player_views")
-            .select("view")
-            .eq("game_id", value: gameId)
-            .eq("player_id", value: userId.uuidString.lowercased())
-            .execute().value) ?? []
-        if let hex = rows.first?.view { ingest(hex: hex) }
+        NetClient.gateReset(gameId)
+        guard let answer = try? await Backend.shared.call({ NetClient.game(gameId) }),
+              let envelope = NetClient.view(answer.status, answer.body) else { return }
+        ingest(envelope)
     }
 
     /// How long the feed may go silent before we refetch (#24). Long enough that
@@ -209,7 +197,7 @@ public final class OnlineGame: ObservableObject, GameSession {
 
     deinit {
         resyncWatchdog?.cancel()
-        let feed = self.feed
-        Task { await feed?.unsubscribe() }
+        let (gameId, spectator) = (self.gameId, self.spectator)
+        Task { @MainActor in Stream.shared.unwatch(gameId, spectator: spectator) }
     }
 }
