@@ -68,10 +68,6 @@ const ALLOWED: Allowed[] = [
         why: 'FORCED by the JWT format (RFC 7519): a token\'s header and claims are base64url JSON. Two parses verify a token, one reads the unverified `sub` for a parallel read. (The key set is not JSON: it is pinned as JWT_VERIFY_KEYS.)',
     },
     {
-        file: 'foolish/ios/FoolishNet/GameFeed.swift', count: 2,
-        why: 'FORCED by Supabase: Realtime delivers a postgres_changes ROW as JSON, and supabase-swift\'s decodeRecord takes a JSONDecoder. The row\'s `view` column is the kernel\'s bytes, as hex.',
-    },
-    {
         file: 'foolish/src/components/ErrorBoundary.tsx', count: 2,
         why: 'Throwaway debugging output: the last ten render errors, kept in this browser\'s localStorage for a developer to read. Nothing is sent and nothing reads it back.',
     },
