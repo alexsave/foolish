@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useRef, useCallback } from 'react';
 import { useServer, useServerActions } from './ServerContext';
 import { useAuth } from './AuthContext';
-import { useParams } from 'next/navigation';
+import { useUrlGameId } from '../utils/useUrlGameId';
 import supabase from '../common/Connector';
 import { validateActionWire } from '../utils/gameValidation';
 import { clientTable, encodeAction, type AwireMove } from '@sdk/ts/table/client_table.ts';
@@ -140,7 +140,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     const { updateGameState } = serverActions;
     const { views: games, game_id } = useServer();
     const { user_id } = useAuth();
-    const url_game_id = useParams<{ game_id: string }>().game_id?.toLowerCase();
+    const url_game_id = useUrlGameId()?.toLowerCase();
 
     // The animation state the page renders from comes from the frame loop
     // (useAnimationRun, below): the kernel holds the timing, so nothing about a

@@ -50,6 +50,7 @@
 #include "strategy.h"
 #include "card.h"
 #include "game.h"
+#include "thread_heap.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -570,8 +571,9 @@ static _Thread_local LegalMoves *cd_solver_mv = NULL;
 
 static bool cd_solver_ready(void) {
     if (!cd_solver_child) {
-        cd_solver_child = malloc(sizeof(Game) * CD_SOLVE_MAX_DEPTH);
-        cd_solver_mv    = malloc(sizeof(LegalMoves) * CD_SOLVE_MAX_DEPTH);
+        // Freed when this thread exits (thread_heap.h), like cordite_sim.c's table.
+        cd_solver_child = thread_heap_calloc(CD_SOLVE_MAX_DEPTH, sizeof(Game));
+        cd_solver_mv    = thread_heap_calloc(CD_SOLVE_MAX_DEPTH, sizeof(LegalMoves));
     }
     return cd_solver_child && cd_solver_mv;
 }

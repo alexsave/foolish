@@ -689,10 +689,11 @@ const void *wasm_replay_error_ptr(void) { return replay_last_error(); }
 // BORROWS the bytes it decoded from. Keeping it in the replay family's own
 // buffer keeps that invariant true.
 //
-// The web READS an envelope and never writes one: sealing, rebasing and Rule P
-// are the phone's, through ios_api_msg.c, and are tested natively
-// (tests/msg_wire_test.c). So decode is the one FMSG entry a shipped module
-// exports; wasm_msg_rematch below is the test build's.
+// No shipped module exports these. Sealing, rebasing, Rule P and the decode a
+// bubble opens with are the phone's, through ios_api_msg.c, tested natively
+// (tests/msg_wire_test.c); the web's /m/ unfurl decodes in C on the server
+// (c_base). wasm_msg_decode is exported only by msg.wasm, the extension-floor
+// measurement (see the Makefile), and wasm_msg_rematch only by the test build.
 //
 // A decode replays into the resident g_game.
 

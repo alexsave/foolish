@@ -97,6 +97,7 @@ const supabaseMock = {
 
 mock.module('next/navigation', { namedExports: {
     useParams: () => ({ game_id: page }),
+    usePathname: () => `/${page}`,
     useRouter: () => ({ push: () => {}, replace: () => {} }),
 } });
 mock.module('../src/contexts/AuthContext.tsx', { namedExports: { useAuth: () => ({ user_id: ME }) } });
