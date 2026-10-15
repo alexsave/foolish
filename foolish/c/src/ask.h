@@ -104,6 +104,8 @@ int ask_decode(const uint8_t *p, int len, TableAsk *out);
 #define ASK_WHY_NO_BOT    5   // add-bot: no bot is free to seat, or the one named is not
 #define ASK_WHY_INTERNAL  6   // the server failed; its log says how
 #define ASK_WHY_METHOD    7   // an HTTP method the endpoint does not take
+#define ASK_WHY_ACCOUNT   8   // an account refusal (netwire.h): `code` an NW_ACCOUNT_E_*
+#define ASK_WHY_FORBIDDEN 9   // a read or a subscription the caller may not make (not a member)
 
 typedef struct {
     uint8_t why;      // ASK_WHY_*

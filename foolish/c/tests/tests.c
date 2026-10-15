@@ -13789,7 +13789,7 @@ static void test_ask_round_trips(void) {
           && q.code == TABLE_E_ROSTER && q.detail == ROSTER_E_FULL, "and it reads back, negative codes whole");
     CHECK(ask_refusal_decode(w, ASK_REFUSAL_BYTES - 1, &q) == ASK_E_WIRE
           && ask_refusal_decode(w, ASK_REFUSAL_BYTES + 1, &q) == ASK_E_WIRE, "a refusal is exactly its bytes");
-    w[1] = ASK_WHY_METHOD + 1;
+    w[1] = ASK_WHY_FORBIDDEN + 1;
     CHECK(ask_refusal_decode(w, ASK_REFUSAL_BYTES, &q) == ASK_E_WIRE, "an unknown reason is refused");
     r.why = 0;
     CHECK(ask_refusal_encode(&r, w, sizeof(w)) == ASK_E_WIRE, "and not encoded");
