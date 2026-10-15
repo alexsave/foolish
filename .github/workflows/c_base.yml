@@ -136,7 +136,10 @@ jobs:
     needs: [check, asan, dynamo, ops, bootstrap]
     runs-on: ubuntu-24.04
     # One deploy at a time; a queued one waits rather than cancelling a stack
-    # update half way.
+    # update half way. GitHub keeps one waiting job per group and cancels an
+    # older waiting one when a newer arrives, so a superseded deploy either
+    # never starts or, if it started first, ends skipped (green, a notice, no
+    # AWS call) in lambda_deploy.sh's require_main.sh (SUPERSEDED).
     concurrency:
       group: cbase-lambda-deploy
       cancel-in-progress: false

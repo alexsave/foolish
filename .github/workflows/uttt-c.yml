@@ -1,7 +1,7 @@
 # Ultimate Tic-Tac-Toe's C kernel, tested (pickemup/docs/REUSE_AUDIT.md S3).
 #
-# Until this file, no workflow ran uttt's C tests: uttt-web.yml triggers on
-# uttt/c/** but only builds the replay site. So a change to shared/c - which
+# Until this file, no workflow ran uttt's C tests: uttt-web.yml (now
+# web_aws.yml's `uttt` job) triggered on uttt/c/** but only built the replay site. So a change to shared/c - which
 # uttt compiles sha256, b32 and mixrad out of - could break uttt and stay
 # green. This is that missing lane and nothing else; it builds no site and
 # touches no Xcode.

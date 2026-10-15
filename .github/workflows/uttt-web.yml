@@ -5,47 +5,21 @@ name: uttt-web
 # runs the uttt kernel as wasm (uttt/c `make wasm-web`), a build output that is
 # never committed, and Vercel's build image has no clang to make it.
 #
-#   build    on every pull request and push that touches the site or the
-#            kernel: the wasm (both modules, and the readers structgen writes
+#   build    the wasm (both modules, and the readers structgen writes
 #            for the 243 page - a libclang program, which ci_llvm.sh
 #            installs), a typecheck, the module tests and `next build`. No
 #            secrets.
-#   deploy   production, on a push to main only. Previews are not deployed:
-#            Vercel's free plan's 100 deployments a day are shared with the
-#            foolish site (web.yml's scope job has the story).
+#   deploy   production, from main only.
 #
 # The secrets: VERCEL_TOKEN and VERCEL_ORG_ID are the ones web.yml already
 # uses; UTTT_VERCEL_PROJECT_ID is the uttt project's own id (uttt/web/README.md).
 
+# Rollback only; delete after 2026-10-28. The uttt.live apex is on CloudFront
+# (web_aws.yml deploys it on every push, and its `uttt` job is the pull-request
+# gate this file's `build` job used to be). Actions > uttt-web > Run workflow,
+# on main, brings Vercel up to main's commit after a DNS rollback
+# (c_base/RUNBOOK.md, W7), as web.yml does for foolish.cards.
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'uttt/c/**'
-      - 'uttt/web/**'
-      - 'shared/c/b32.*'
-      - 'shared/c/mixrad.*'
-      - 'shared/c/i18n/**'
-      - 'shared/c/wasm/**'
-      - 'shared/tools/structgen/**'
-      - 'shared/tools/sgcommon/**'
-      - 'shared/tools/*.mk'
-      - 'shared/scripts/ci_llvm.sh'
-      - '.github/workflows/uttt-web.yml'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'uttt/c/**'
-      - 'uttt/web/**'
-      - 'shared/c/b32.*'
-      - 'shared/c/mixrad.*'
-      - 'shared/c/i18n/**'
-      - 'shared/c/wasm/**'
-      - 'shared/tools/structgen/**'
-      - 'shared/tools/sgcommon/**'
-      - 'shared/tools/*.mk'
-      - 'shared/scripts/ci_llvm.sh'
-      - '.github/workflows/uttt-web.yml'
   workflow_dispatch: {}
 
 concurrency:
@@ -79,7 +53,7 @@ jobs:
 
   deploy:
     needs: build
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
