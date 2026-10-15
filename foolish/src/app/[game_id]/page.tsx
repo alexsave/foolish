@@ -1,38 +1,18 @@
-'use client';
-
-import { useParams } from 'next/navigation';
-import { ErrorBoundary } from '../../components/ErrorBoundary';
 import { KernelGate } from '../../components/KernelGate';
-import { ProtectedRoute } from '../../components/ProtectedRoute';
-import { GameView } from '../../components/GameView';
-import { ReplayScreen } from '../../components/ReplayScreen';
-import { classifyPathSegment } from '@api/common/replay_codec.ts';
+import { GAME_SHELL_PARAM } from '../../utils/gameShell';
+import { GameRoute } from './GameRoute';
+
+// One prerendered page for every game id and replay code: the static export
+// writes out/_shell.html and CloudFront serves it for any unknown one-segment
+// path (src/utils/gameShell.ts). A server build still renders other ids on demand.
+export function generateStaticParams() {
+  return [{ game_id: GAME_SHELL_PARAM }];
+}
 
 export default function GamePage() {
-  const segment = useParams<{ game_id: string }>().game_id || '';
-
-  // Long path segments are self-contained replay payloads: the base32 string
-  // IS the whole game, so the viewer needs no auth and no database row.
-  // Short segments stay the legacy authenticated live-game codes.
-  // classifyPathSegment is a string-length test and touches no kernel, so it is
-  // safe to read the segment before the gate opens.
-  if (classifyPathSegment(segment) === 'replay') {
-    return (
-      <KernelGate>
-        <ErrorBoundary context="Replay Page">
-          <ReplayScreen code={segment} />
-        </ErrorBoundary>
-      </KernelGate>
-    );
-  }
-
   return (
     <KernelGate>
-      <ErrorBoundary context="Game Page">
-        <ProtectedRoute>
-          <GameView />
-        </ProtectedRoute>
-      </ErrorBoundary>
+      <GameRoute />
     </KernelGate>
   );
 }

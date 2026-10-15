@@ -1,5 +1,17 @@
 name: web
 
+# RETIRED AS A DEPLOY LANE ON 2026-10-14. foolish.cards is built and deployed
+# by web_aws.yml (S3 + CloudFront), whose `foolish` job is also the pull-request
+# compile gate this file's `build` job used to be. This file is kept only as
+# the Vercel rollback: Actions > web > Run workflow, on main, deploys production
+# to Vercel as it always did (DNS has to point back at Vercel for it to matter,
+# c_base/RUNBOOK.md "W7"). DELETE THIS FILE after 2026-10-28, two weeks after
+# the cutover, with the rest of c_base/RUNBOOK.md "W9".
+#
+# The scope job and scripts/web_deploy_scope.sh rationed Vercel's 100
+# deployments a day across pull-request previews. There are no previews any
+# more, so they are gone; what follows is the lane as it was otherwise.
+#
 # The web app is BUILT HERE and the output is uploaded, rather than built by
 # Vercel from the repository.
 #
@@ -51,29 +63,6 @@ name: web
 # here needs a checked-in .vercel/ link - and .vercel/ stays gitignored.
 
 on:
-  push:
-    branches: [main]
-    # What can change this site: foolish/, and shared/ under it. Not the sibling
-    # products, and not this repo's other lanes (this file is the one workflow
-    # that has to run when it changes).
-    paths:
-      - 'foolish/**'
-      - 'shared/**'
-      - '.github/workflows/web.yml'
-  pull_request:
-    branches: [main]
-    # What can change this site: foolish/, and shared/ under it. Not the sibling
-    # products, and not this repo's other lanes (this file is the one workflow
-    # that has to run when it changes).
-    paths:
-      - 'foolish/**'
-      - 'shared/**'
-      - '.github/workflows/web.yml'
-    # `labeled` is here so that adding the `preview` label is itself enough to
-    # get a URL. Without it the label would only take effect on the next push,
-    # which is a trap: you ask for a preview, nothing happens, and there is no
-    # message saying why.
-    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch: {}
 
 # Every step runs from foolish/, where these commands have always run. Only the
@@ -155,117 +144,8 @@ jobs:
         if: always()
         run: du -sh .next 2>/dev/null || true
 
-  # Is a preview deployment worth one of the day's hundred?
-  #
-  # Vercel's free plan allows 100 DEPLOYMENTS per day ACROSS THE ACCOUNT, and on
-  # 2026-09-18 this repo spent all of them before the evening:
-  #
-  #   ✗ Resource is limited - try again in 24 hours
-  #     (more than 100, code: "api-deployments-free-per-day")
-  #
-  # after which every deploy in the repo failed, production included. This is a
-  # SECOND quota, distinct from the 5000-uploads/24h one that `--archive=tgz`
-  # answers below, and the tarball does nothing for it: one deploy is one deploy
-  # however few files it uploads.
-  #
-  # It was spent rather than earned. `deploy` ran on EVERY push to EVERY pull
-  # request, so a day of C, docs and iOS work burned the same budget as web
-  # work, and a docs-only push was the one that finally hit the wall.
-  #
-  # So previews are scoped, by scripts/web_deploy_scope.sh. That list is an
-  # INVERSE list on purpose - a path is skippable only when it provably cannot
-  # reach the bundle, and anything unrecognised deploys - and
-  # e2e/validation/web_deploy_scope_validation.test.ts walks the web's real
-  # import graph to prove the skipped prefixes really are unreachable.
-  #
-  # Production is never scoped. A merge to main always deploys: a stale site
-  # costs more than a deployment, and main merges are a couple of dozen a day
-  # against a hundred.
-  scope:
-    runs-on: ubuntu-latest
-    outputs:
-      deploy: ${{ steps.decide.outputs.deploy }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Can this change reach the served site?
-        id: decide
-        run: |
-          if [ "${{ github.event_name }}" != "pull_request" ]; then
-            echo "deploy=true" >> "$GITHUB_OUTPUT"
-            echo "production deploys unconditionally"
-            exit 0
-          fi
-
-          # OPT-IN. A preview is only built when someone asks for one by
-          # labelling the pull request `preview`. Default is no deployment.
-          #
-          # The quotes here are load-bearing and were wrong once. `run: |` is a
-          # YAML BLOCK scalar, so nothing inside it is YAML-quoted and a doubled
-          # '' is two literal characters, not an escape. Written as ''preview''
-          # the expression reaches Actions as contains(..., ''preview'') , which
-          # it refuses - and it refuses the WHOLE FILE, so every job in this
-          # workflow disappears rather than one step failing. That is what
-          # "This run likely failed because of a workflow file issue" means, and
-          # a local YAML parse will not catch it: the file is valid YAML and an
-          # invalid expression. Single quotes inside, double quotes outside.
-          labelled="${{ contains(github.event.pull_request.labels.*.name, 'preview') }}"
-          if [ "$labelled" != "true" ]; then
-            echo "deploy=false" >> "$GITHUB_OUTPUT"
-            echo "no 'preview' label; not spending a deployment"
-            {
-              echo "### No preview deployment"
-              echo
-              echo "Previews are opt-in. Add the **\`preview\`** label to this pull request"
-              echo "and push (or re-run this workflow) to get a URL."
-              echo
-              echo "Why: Vercel's free plan allows **100 deployments per day across the"
-              echo "whole account**, and a preview on every push to every pull request"
-              echo "spends the budget that merges to \`main\` need. On 2026-09-18 it ran"
-              echo "out and production could not deploy for hours."
-              echo
-              echo "The \`build\` gate still ran and still had to pass, so this pull"
-              echo "request is still proven to compile."
-            } >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-
-          # Labelled, so someone wants a URL - but a preview of a bundle that
-          # cannot differ is still not worth a deployment.
-          base='${{ github.event.pull_request.base.sha }}'
-          git fetch --no-tags origin "$base" 2>/dev/null || true
-          changed=$(git diff --name-only "$base...HEAD" 2>/dev/null || git diff --name-only "$base" HEAD)
-          relevant=$(printf '%s\n' "$changed" | bash scripts/web_deploy_scope.sh)
-
-          if [ -z "$relevant" ]; then
-            echo "deploy=false" >> "$GITHUB_OUTPUT"
-            {
-              echo "### No preview deployment"
-              echo
-              echo "This pull request carries the \`preview\` label, but nothing in the"
-              echo "change can reach the served site, so the preview would be identical"
-              echo "to production."
-              echo
-              echo "The \`build\` gate still ran and still had to pass."
-              echo
-              echo '<details><summary>Files changed</summary>'
-              echo
-              echo '```'
-              printf '%s\n' "$changed"
-              echo '```'
-              echo '</details>'
-            } >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "deploy=true" >> "$GITHUB_OUTPUT"
-            echo "deploying; web-relevant files:"
-            printf '%s\n' "$relevant"
-          fi
-
   deploy:
-    needs: [build, scope]
-    if: needs.scope.outputs.deploy == 'true'
+    needs: [build]
     runs-on: ubuntu-latest
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
@@ -340,8 +220,8 @@ jobs:
         if: steps.creds.outputs.ready == 'true'
         run: bash ../shared/scripts/ci_llvm.sh
 
-      # Pinned, never floated, for the reason deploy.yml gives for pinning the
-      # Supabase CLI: a deploy tool that changes under us changes what ships.
+      # Pinned, never floated: a deploy tool that changes under us changes what
+      # ships.
       - name: Install the Vercel CLI
         if: steps.creds.outputs.ready == 'true'
         run: npm install --global vercel@59.23.1
@@ -357,6 +237,11 @@ jobs:
       # tree it is about to compile.
       - name: Vercel build
         if: steps.creds.outputs.ready == 'true'
+        # The SERVER build, with next.config.mjs's rewrites: without VERCEL=1
+        # the app builds as a static export for S3 (web_aws.yml). Vercel's CLI
+        # sets it too; it is stated here so this lane never depends on that.
+        env:
+          VERCEL: '1'
         run: |
           bash tools/structgen/gen.sh
           bash scripts/wasm_build.sh

@@ -58,7 +58,7 @@ const supabaseMock = {
     },
 };
 
-mock.module('next/navigation', { namedExports: { useParams: () => ({ game_id: GAME_ID }) } });
+mock.module('next/navigation', { namedExports: { useParams: () => ({ game_id: GAME_ID }), usePathname: () => `/${GAME_ID}` } });
 mock.module('../src/contexts/AuthContext.tsx', { namedExports: { useAuth: () => ({ user_id: USER_ID }) } });
 mock.module('../src/contexts/ServerContext.tsx', { namedExports: {
     // Seated: these tests are about a seat's join lifecycle, not who may join

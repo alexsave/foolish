@@ -294,8 +294,8 @@ VIEW=(--cwd "$root/c" $(spec view_layout))
 set +f
 "$SG" "${VIEW[@]}" --build "bots=$BOTS" --ts "$prod/view_layout.bots.ts"
 
-# The FMSG bridge's header (c/src/msg_wire.h MsgHeader): a snapshot reader, a
-# writer and the codec's constants (specs/msg_layout.args).
+# The share link's extras (c/src/replay_extras.h ReplayExtras): a snapshot
+# reader, a writer and the codec's constants (specs/msg_layout.args).
 set -f
 # shellcheck disable=SC2207
 MSG=(--cwd "$root/c" $(spec msg_layout))

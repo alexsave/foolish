@@ -15,7 +15,8 @@
 #include <string.h>
 #include <stddef.h>   // offsetof (solver clones skip the dead deck[] tail)
 #include <stdint.h>
-#include <stdlib.h>   // calloc/free for the solver transposition table
+#include <stdlib.h>
+#include "thread_heap.h"   // the solver transposition table, freed when its thread exits
 
 // ---------- card-id helpers --------------------------------------------
 
@@ -891,7 +892,7 @@ void cd_sim_set_leafbook(int on) { cd_leafbook_on = on ? 1 : 0; }
 long cd_sim_leafbook_hits(void) { return cd_leafbook_hit; }
 
 static CdTTEntry *cd_tt_get(void) {
-    if (!cd_tt) cd_tt = (CdTTEntry *)calloc(CD_TT_SIZE, sizeof(CdTTEntry));
+    if (!cd_tt) cd_tt = (CdTTEntry *)thread_heap_calloc(CD_TT_SIZE, sizeof(CdTTEntry));
     return cd_tt;
 }
 

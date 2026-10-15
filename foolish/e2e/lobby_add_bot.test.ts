@@ -81,7 +81,7 @@ const SERVER = {
 
 // Stub every module Lobby imports (paths resolve the same absolute files Lobby does).
 mock.module('../src/contexts/ServerContext.tsx', { namedExports: { useServer: () => SERVER } });
-mock.module('next/navigation', { namedExports: { useParams: () => ({ game_id: 'ABCDE' }), useRouter: () => ({ push: () => {} }) } });
+mock.module('next/navigation', { namedExports: { useParams: () => ({ game_id: 'ABCDE' }), usePathname: () => '/ABCDE', useRouter: () => ({ push: () => {} }) } });
 mock.module('../src/common/constants.ts', { namedExports: { WEBSITE_DOMAIN: 'example.com' } });
 mock.module('../src/contexts/AuthContext.tsx', { namedExports: { useAuth: () => ({ user_id: 'h1' }) } });
 mock.module('qrcode.react', { namedExports: { QRCodeSVG: () => null } });

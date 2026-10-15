@@ -102,9 +102,9 @@ function walk(dir: string, out: string[] = []): string[] {
 /**
  * The client entry of every route: `page.tsx` plus the `not-found.tsx` fallback.
  *
- * Deliberately NOT layouts. `src/app/m/[payload]/layout.tsx` runs the kernel in
- * `generateMetadata`, on the SERVER, so an unfurl carries a true description -
- * that is not a client render and no gate belongs anywhere near it.
+ * Deliberately NOT layouts: a layout is not a client render of its own, and
+ * the one that ran the kernel on the server (the /m unfurl) is now a c_base
+ * route (c_base/docs/VERCEL.md section 4a).
  */
 function routeEntries(): string[] {
     return walk(join(REPO, 'src/app'))
