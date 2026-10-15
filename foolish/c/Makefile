@@ -386,7 +386,7 @@ IOS_CAPS   := -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_MOVE_CARDS=28 \
 # into ANY of them is caught rather than hidden by the others.
 IOS_BRIDGE_SRC := ios/ios_api.c ios/ios_api_view.c ios/ios_api_play.c \
                   ios/ios_api_anim.c ios/ios_api_replay.c \
-                  ios/ios_api_identity.c ios/ios_api_msg.c
+                  ios/ios_api_identity.c ios/ios_api_msg.c ios/ios_api_net.c
 IOS_CORE_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c \
                 src/replay_steps.c src/replay_extras.c src/view.c src/awire.c \
                 src/evwire.c $(SHARED)/sha256.c src/msg_wire.c src/msg_expand.c \

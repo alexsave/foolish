@@ -72,6 +72,16 @@
 --root HandMetrics --root HandRows --root HandRect
 --snapshot HandMetrics --snapshot HandRows --snapshot HandRect --writer HandMetrics
 #
+# The backend's client (netclient.h): the request to send, the answers the app
+# reads, the session it shows, and the stream's events and outgoing frames.
+--header netclient.h
+--root NcRequest --root NcSessionInfo --root NcError --root NcGameRow --root NcAction --root NcEvent --root NcOut
+--snapshot NcRequest --snapshot NcSessionInfo --snapshot NcError --snapshot NcGameRow --snapshot NcAction --snapshot NcEvent --snapshot NcOut
+--count NcRequest.path=path_len --count NcRequest.auth=auth_len --count NcRequest.body=body_len
+--count NcSessionInfo.user_id=user_id_len --count NcSessionInfo.username=username_len
+--count NcEvent.gid=gid_len --count NcChatRow.id=id_len --count NcChatRow.user_id=user_id_len --count NcChatRow.message=message_len
+--count NcOut.text=len
+#
 # The constants a reader of these structs needs, and no others: every one is a
 # public symbol in FoolishKit.
 --const CLIENT_ --const ANIM_EVT_ --const ANIM_LOC_ --const ANIM_DEST_ --const ANIM_CONFLICT_
@@ -81,3 +91,4 @@
 --const BOT_STOP_ --const BOT_PACE_ --const MOVE_
 --const PLAY_ANSWER_ --const PLAY_HOST_ --const PLAY_PILL_
 --const GAME_STATUS_ --const PLAYER_STATUS_ --const ROSTER_E_ --const MSG_
+--const NC_ --const NW_ --const ASK_WHY_ --const TABLE_STATUS_
