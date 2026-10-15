@@ -1,20 +1,22 @@
 # The web on AWS (c_base/ops/web.yaml): foolish.cards and uttt.live built here
 # as static exports and uploaded to S3 behind CloudFront by
-# c_base/ops/web_deploy.sh. It is foolish.cards' only deploy lane; web.yml
-# (Vercel) is a workflow_dispatch-only rollback until it is deleted
-# (c_base/RUNBOOK.md, "W9"). uttt.live is deployed here AND by uttt-web.yml to
-# Vercel on every push: www.uttt.live is served from CloudFront, but the apex
-# stays on Vercel while its Squarespace DNSSEC blocks the move, so both hosts
-# are kept current.
+# c_base/ops/web_deploy.sh. It is the only deploy lane for both sites;
+# web.yml and uttt-web.yml (Vercel) are workflow_dispatch-only rollbacks until
+# they are deleted (c_base/RUNBOOK.md, "W9").
 #
 #   foolish   gen, wasm, `next build` (out/): the compile gate web.yml's
 #             `build` job used to be, on every pull request that touches the site
 #   uttt      the uttt wasm, typecheck, the 243 page's module tests, `next
-#             build` (out/), the same gate uttt-web.yml's `build` job runs
+#             build` (out/), the gate uttt-web.yml's `build` job used to be
 #   deploy    on a push to main, or a workflow_dispatch from main: both exports,
 #             foolish then uttt (each rewrites the cbase-web stack's page list,
 #             and two stack updates cannot overlap), each upload gated on the
-#             tree containing origin/main
+#             tree containing origin/main. One deploy runs at a time
+#             (the job's concurrency group, never cancelled mid-way: that
+#             would stop a stack update half done); a newer push's deploy
+#             waiting behind it replaces any older one still waiting, and a
+#             run whose commit main has since superseded ends skipped, green,
+#             before any AWS call (c_base/ops/require_main.sh, SUPERSEDED)
 #
 # The template and the router's tests are c_base.yml's (its ops job). A
 # template change is deployed by hand (web_deploy.sh stack): this lane only
@@ -170,6 +172,10 @@ jobs:
     needs: [foolish, uttt]
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    # Queue, never cancel the running one (a cancel can land mid-way through a
+    # CloudFormation update). GitHub keeps one waiting job per group and
+    # cancels an older waiting one when a newer arrives, so a superseded deploy
+    # either never starts or, if it started first, skips in require_main.sh.
     concurrency:
       group: web-aws-deploy
       cancel-in-progress: false

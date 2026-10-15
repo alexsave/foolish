@@ -23,10 +23,10 @@ open http://localhost:3000/AJG7NYNQG4RFXXGVPGD7QR2ETSOYTWMCREAQ
 
 `public/uttt.wasm` is a build output and is never committed. CI builds it
 with the repo's pinned clang, and every push to `main` that touches the site
-deploys it twice: `.github/workflows/uttt-web.yml` to the Vercel project,
-which serves the apex `uttt.live` (its Squarespace DNSSEC blocks moving it),
-and `.github/workflows/web_aws.yml` as a static export (`out/`) to S3 behind
-CloudFront (`c_base/ops/web.yaml`), which serves `www.uttt.live`. Vercel's
+deploys it with `.github/workflows/web_aws.yml`, as a static export (`out/`)
+to S3 behind CloudFront (`c_base/ops/web.yaml`), which serves `uttt.live` and
+`www.uttt.live`. `.github/workflows/uttt-web.yml` deploys to Vercel only when
+run by hand, as a rollback until 2026-10-28 (`c_base/RUNBOOK.md`, W9). Vercel's
 build sets `VERCEL=1` and gets the server build with `next.config.mjs`'s
 rewrites instead.
 
@@ -61,7 +61,7 @@ replays a named game move for move. The bots are their own wasm module
 2. **Add the secret**: GitHub, the repo, Settings, Secrets and variables,
    Actions, New repository secret: `UTTT_VERCEL_PROJECT_ID` = that projectId.
 
-3. **Deploy**: merge to `main`, or Actions, uttt-web, Run workflow on `main`.
+3. **Deploy**: Actions, uttt-web, Run workflow on `main` (it no longer runs on a push).
 
 4. **The domain, in Vercel**: the uttt project, Settings, Domains, add
    `uttt.live`, and add `www.uttt.live` set to redirect to `uttt.live`.
