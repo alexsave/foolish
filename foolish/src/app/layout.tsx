@@ -1,7 +1,6 @@
 import '../styles/index.css';
 import React from 'react';
 import type { Metadata, Viewport } from 'next';
-import { Analytics } from '@vercel/analytics/react';
 import Providers from './providers';
 
 export const metadata: Metadata = {
@@ -51,7 +50,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <noscript>You need to enable JavaScript to run this app.</noscript>
         <Providers>{children}</Providers>
-        <Analytics />
       </body>
     </html>
   );

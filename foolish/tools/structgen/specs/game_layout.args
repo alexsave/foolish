@@ -48,15 +48,6 @@
 # numbers (card.h), and the durable roster's length a sealed row carries.
 --const CARD_PARSE_E_ --const SUIT_ --const ROSTER_BYTES
 #
-# The iMessage envelope's header (msg_wire.h MsgHeader): the struct the FMSG
-# bridge reads after a decode and fills in before a seal. Its readers and writers
-# are generated into their own module (specs/msg_layout.args) because the browser
-# reaches them; the roots are here so the load-time layout hash covers them too.
-# The MsgEnvelope fields are everything but the BORROWED BODY (actions,
-# actions_len, n_actions), which no host holds.
---header msg_wire.h --root MsgHeader
---fields MsgEnvelope=format,flags,phase,game_id,turn,last_actor_seat,n_players,variant,round,parent8,seed,sent_at,n_new,opening,carry_key,carry_fool,n_joins,joins
-#
 # The replay code's extras (replay_extras.h ReplayExtras): the seat nicknames and
 # per-move timing a share link carries, as the struct the bridge crosses with.
 # Its reader and writer are generated into msg_layout.bots.ts (the browser reads

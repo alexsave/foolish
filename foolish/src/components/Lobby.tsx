@@ -1,5 +1,6 @@
 import { useServer } from "../contexts/ServerContext";
-import { useParams, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
+import { useUrlGameId } from '../utils/useUrlGameId';
 import { useEffect, useState, useRef, useMemo } from "react";
 import { WEBSITE_DOMAIN } from "../common/constants";
 import { QRCodeSVG } from "qrcode.react";
@@ -118,7 +119,7 @@ const RulesCheckbox: React.FC<RulesCheckboxProps> = ({ passing, enabled, onChang
 };
 
 export const Lobby = () => {
-    const game_id = useParams<{ game_id: string }>().game_id?.toLowerCase();
+    const game_id = useUrlGameId()?.toLowerCase();
     const { view: game, updateGameName, setRules, rearrangePlayer, addBot, exitGame, joinGame, startGame } = useServer();
     const router = useRouter();
     // The viewer's own seat, by its player id: the lobby list is the viewer's

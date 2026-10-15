@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import supabase from '../common/Connector';
-import { useParams } from 'next/navigation';
+import { useUrlGameId } from '../utils/useUrlGameId';
 import { useAuth } from './AuthContext';
 import { ANIM_TIME_MS } from '@sdk/ts/gen/anim.bots.ts';
 import { optimisticOverlay } from '../state/optimisticOverlay';
@@ -68,7 +68,7 @@ const ServerStateContext = createContext<ServerStateType | null>(null);
 
 export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     const { user_id } = useAuth();
-    const url_game_id = useParams<{ game_id: string }>().game_id?.toLowerCase();
+    const url_game_id = useUrlGameId()?.toLowerCase();
     // Every board this client holds, by game id: the kernel's TableView
     // snapshots (src/state/view.ts), as read or as changed optimistically.
     const [games, setGames] = useState<{ [key: string]: TableView }>({});

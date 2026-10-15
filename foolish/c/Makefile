@@ -88,7 +88,7 @@ CORE_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/replay_
 # "host" variant below (shared/tools/c_rules.mk).
 CORE_OBJ = $(call c_objs,build/obj/host,$(CORE_SRC))
 
-.PHONY: all clean tests print-core print-wasm-src
+.PHONY: all clean tests print-core print-wasm-src print-human-caps
 # Emit the core engine+strategy source list (used by tools/tt_divergence.sh to
 # build cnitro_eval at arbitrary -DCD_TT_BITS without duplicating the list).
 print-core:
@@ -102,6 +102,14 @@ print-core:
 # artifact.
 print-wasm-src:
 	@echo $(sort $(WASM_BOT_SRC) $(WASM_ORACLE_MT_SRC))
+# Emit the capacity flags the SHIPPED human-game build compiles the kernel
+# with (MAX_LOG_PAIRS=64, MAX_BATTLES=64 and the rest), for a host that links
+# the kernel natively and serves human games (c_base/Makefile). Read out of
+# WASM_FLAGS so no second copy exists: built with this file's compact arena
+# defaults instead, a pickup of more than 16 cards is logged short, and the
+# replay gate then refuses the finished game.
+print-human-caps:
+	@echo $(filter -DMAX_%,$(WASM_FLAGS))
 all: build/cnitro_eval build/cnitro_elo build/cnitro_replay build/cnitro_showcase build/cnitro_tests
 
 # ---- how a file becomes an object ---------------------------------------------
@@ -967,10 +975,12 @@ build/layout/oracle-mt.hash: $(STRUCTGEN) FORCE
 
 # FORCE itself is shared/tools/gen_tools.mk's.
 
-# bots.wasm exports the rules API above PLUS the bot bridge (wasm_bots_api.c),
-# and PLUS the FMSG decode (wasm_msg_decode and its header), which the web's
-# /m/ route reads a shared link with. Sealing, rebasing and Rule P are the
-# phone's and have no wasm entry: they are tested natively (tests/msg_wire_test.c).
+# bots.wasm exports the rules API above PLUS the bot bridge (wasm_bots_api.c).
+# It carries no FMSG decode: no browser or server TS reads an iMessage envelope
+# (the /m/ unfurl is C, in c_base), so the envelope codec ships only natively,
+# where the phone seals, rebases and decodes (tests/msg_wire_test.c). The one
+# wasm module that still exports wasm_msg_decode is msg.wasm below, the
+# extension-floor measurement, which nothing loads.
 # Two entry points live in wasm_api.c but are exported ONLY here: the
 # log-offset variants for the drive cycle, whose belief bots keep the session
 # log under the records the cycle writes (see wasm_export_logs_masked_from).
@@ -996,7 +1006,6 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_replay_b32_encode -Wl,--export=wasm_replay_b32_decode \
   -Wl,--export=wasm_replay_link_parse \
   -Wl,--export=wasm_unambiguous_cover \
-  -Wl,--export=wasm_msg_decode -Wl,--export=wasm_msg_header_ptr \
   -Wl,--export=wasm_msg_rematch \
   -Wl,--export=wasm_anim_should_drop_stale -Wl,--export=wasm_anim_stale_optimistic \
   -Wl,--export=wasm_anim_stale_ask_ptr -Wl,--export=wasm_anim_stale_release_ptr \
@@ -1588,7 +1597,6 @@ WASM_WEB_NAMES := \
   wasm_init wasm_io_ptr wasm_io_cap wasm_layout_hash wasm_can_cover \
   wasm_replay_io_ptr wasm_replay_io_cap wasm_replay_error_ptr \
   wasm_bot_roster_dump \
-  wasm_msg_decode wasm_msg_header_ptr \
   wasm_anim_set_transport \
   wasm_anim_should_drop_stale \
   wasm_anim_hand_ask_ptr wasm_anim_hand_laid_ptr \

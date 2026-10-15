@@ -381,6 +381,50 @@ int replay_extras_decode(const unsigned char *blob, int blob_len,
     return w;
 }
 
+// ---------- account deletion -------------------------------------------------
+
+int replay_extras_redact(const unsigned char *blob, int blob_len, int player_count, int seat,
+                         const unsigned char *name, int name_len,
+                         unsigned char *out, int cap) {
+    int p, w = 0;
+    if (!blob || !out || cap < 0 || (!name && name_len > 0)) return -REPLAY_EXTRAS_EINPUT;
+    if (blob_len < 2) return -REPLAY_EXTRAS_EHEADER;
+    if (blob[0] != REPLAY_EXTRAS_VERSION) return -REPLAY_EXTRAS_EVERSION;
+    if (!(blob[1] & REPLAY_EXTRAS_FLAG_NAMES)) {   // names nobody: the blob as it is
+        if (blob_len > cap) return -REPLAY_EXTRAS_ECAP;
+        memcpy(out, blob, (size_t)blob_len);
+        return blob_len;
+    }
+    if (player_count < 1 || player_count > 255 || seat < 0 || seat >= player_count)
+        return -REPLAY_EXTRAS_EINPUT;
+    if (cap < 2) return -REPLAY_EXTRAS_ECAP;
+    out[w++] = blob[0];
+    out[w++] = blob[1];
+    p = 2;
+    for (int i = 0; i < player_count; i++) {
+        const int start = p;
+        while (p < blob_len && blob[p] != 0) p++;
+        if (p >= blob_len) return -REPLAY_EXTRAS_ENAME;
+        if (i == seat) {
+            unsigned char nb[REPLAY_EXTRAS_MAX_NAME + 4];
+            const int nw = name_bytes(name, name_len, nb);
+            if (w + nw + 1 > cap) return -REPLAY_EXTRAS_ECAP;
+            memcpy(out + w, nb, (size_t)nw);
+            w += nw;
+        } else {
+            if (w + (p - start) + 1 > cap) return -REPLAY_EXTRAS_ECAP;
+            memcpy(out + w, blob + start, (size_t)(p - start));
+            w += p - start;
+        }
+        out[w++] = 0;
+        p++;                                       // step over the NUL
+    }
+    // The times section (and anything else past the names), byte for byte.
+    if (w + (blob_len - p) > cap) return -REPLAY_EXTRAS_ECAP;
+    if (blob_len > p) memcpy(out + w, blob + p, (size_t)(blob_len - p));
+    return w + (blob_len - p);
+}
+
 // ---------- the whole shareable link ----------------------------------------
 
 // The replay code out of a pasted link. See replay_extras.h for why stripping

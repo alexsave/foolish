@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useRouter } from 'next/navigation';
+import { useUrlGameId } from '../utils/useUrlGameId';
 import { useServer } from '../contexts/ServerContext';
 import { Lobby } from './Lobby';
 import { GameDisplay } from './GameDisplay';
@@ -9,7 +10,7 @@ import { GAME_STATUS } from '../state/view';
 
 export const GameView = () => {
     const { view: game, gameLoadError } = useServer();
-    const urlGameId = useParams<{ game_id: string }>().game_id?.toLowerCase() || null;
+    const urlGameId = useUrlGameId()?.toLowerCase() || null;
     const router = useRouter();
 
     // Handle game load errors - redirect to dashboard

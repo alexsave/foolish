@@ -109,7 +109,6 @@ msg_route.test.ts	0.3	0.2
 layout_hash.test.ts	0.3	0.2
 client.test.ts	0.3	0.4
 awire_card_bytes.test.ts	0.3	1.5
-msg_wire.test.ts	0.3	0.1
 anim_conflict_rule.test.ts	0.3	0.1
 msg_lobby_v2.test.ts	0.3	0.2
 bot_roster_parity.test.ts	0.3	0.2
