@@ -351,6 +351,30 @@ const NcRequest *nc_req_chat_send(const char *gid, int gid_len, const char *msg,
 
 const NcRequest *nc_req_stream(void) { return begin(NC_GET, "/v1/stream?proto=nw1"); }
 
+const NcRequest *nc_req(int which, const char *a, int a_len, const char *b, int b_len, int64_t n, int64_t now_ms) {
+    switch (which) {
+    case NC_REQ_SIGNUP: return nc_req_signup(a, a_len, b, b_len);
+    case NC_REQ_SIGNIN: return nc_req_signin(a, a_len, b, b_len);
+    case NC_REQ_REFRESH: return nc_req_refresh();
+    case NC_REQ_SIGNOUT: return nc_req_signout(n != 0, now_ms);
+    case NC_REQ_PASSWORD: return nc_req_password(a, a_len, now_ms);
+    case NC_REQ_DELETE: return nc_req_delete_account(now_ms);
+    case NC_REQ_CREATE: return nc_req_create(now_ms);
+    case NC_REQ_ACTION: return nc_req_action(a, a_len, (const uint8_t *)b, b_len, n, now_ms);
+    case NC_REQ_META: return nc_req_meta((const uint8_t *)a, a_len, now_ms);
+    case NC_REQ_GAMES: return nc_req_games(now_ms);
+    case NC_REQ_GAME: return nc_req_game(a, a_len, now_ms);
+    case NC_REQ_CHATS: return nc_req_chats(a, a_len, now_ms);
+    case NC_REQ_CHAT_SEND: return nc_req_chat_send(a, a_len, b, b_len, now_ms);
+    case NC_REQ_BOTS: return nc_req_bots(now_ms);
+    case NC_REQ_BOARD: return nc_req_board();
+    case NC_REQ_HISTORY: return nc_req_history(now_ms);
+    case NC_REQ_REPLAY: return nc_req_replay(a, a_len, now_ms);
+    case NC_REQ_STREAM: return nc_req_stream();
+    default: return NULL;
+    }
+}
+
 // ---- answers -------------------------------------------------------------------------
 
 int nc_status_read(int status, const uint8_t *body, int len) {
@@ -769,4 +793,15 @@ int nc_stream_due_ms(int64_t now_ms) {
     }
     int64_t d = due - now_ms;
     return d < 0 ? 0 : d > NC_PING_MS ? NC_PING_MS : (int)d;
+}
+
+const void *nc_row(int kind, const uint8_t *body, int len, int i) {
+    switch (kind) {
+    case NW_GAMES: return nc_game_row(body, len, i);
+    case NW_CHATS: return nc_chat_row(body, len, i);
+    case NW_BOTS: return nc_bot_row(body, len, i);
+    case NW_BOARD: return nc_board_row(body, len, i);
+    case NW_HISTORY: return nc_history_row(body, len, i);
+    default: return NULL;
+    }
 }

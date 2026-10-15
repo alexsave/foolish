@@ -204,6 +204,30 @@ const NcRequest *nc_req_replay(const char *gid, int gid_len, int64_t now_ms);
 // The stream's path (GET, upgraded to a WebSocket by the host).
 const NcRequest *nc_req_stream(void);
 
+// Every builder above through one door, for a host that crosses by number (the
+// wasm module): `a` and `b` are the strings or bytes each takes in order (the
+// name and the password, the game id and the wire or the message, the ask, the
+// new password), `n` the number (sign out: global; action: the intent).
+#define NC_REQ_SIGNUP    1
+#define NC_REQ_SIGNIN    2
+#define NC_REQ_REFRESH   3
+#define NC_REQ_SIGNOUT   4
+#define NC_REQ_PASSWORD  5
+#define NC_REQ_DELETE    6
+#define NC_REQ_CREATE    7
+#define NC_REQ_ACTION    8
+#define NC_REQ_META      9
+#define NC_REQ_GAMES     10
+#define NC_REQ_GAME      11
+#define NC_REQ_CHATS     12
+#define NC_REQ_CHAT_SEND 13
+#define NC_REQ_BOTS      14
+#define NC_REQ_BOARD     15
+#define NC_REQ_HISTORY   16
+#define NC_REQ_REPLAY    17
+#define NC_REQ_STREAM    18
+const NcRequest *nc_req(int which, const char *a, int a_len, const char *b, int b_len, int64_t n, int64_t now_ms);
+
 // ---- answers -----------------------------------------------------------------------
 //
 // Each takes the HTTP status and the body as received. On a refusal the answer
@@ -226,6 +250,8 @@ const NcBotRow *nc_bot_row(const uint8_t *body, int len, int i);
 const NcBoardRow *nc_board_row(const uint8_t *body, int len, int i);
 const NcHistoryRow *nc_history_row(const uint8_t *body, int len, int i);
 const NcHistoryHead *nc_history_head(const uint8_t *body, int len);
+// Row i of a list of `kind` through one door: the struct above for that kind.
+const void *nc_row(int kind, const uint8_t *body, int len, int i);
 
 // ---- the stream --------------------------------------------------------------------
 

@@ -1,0 +1,19 @@
+# structgen arguments for sdk/ts/gen/net_layout.bots.ts: the web's reader of
+# the backend's client (c/src/netclient.h, through c/wasm/wasm_net_api.c).
+# Snapshot readers only. Its own run, because view_layout's is at structgen's
+# per-run cap; the same roots are in game_layout.args, so the layout hash
+# bots.wasm and web.wasm are checked against at load covers these readers too.
+# Lines starting with # are dropped; everything else is split on whitespace.
+--header netclient.h
+--root NcRequest --root NcSessionInfo --root NcError --root NcGameRow --root NcAction --root NcEvent --root NcOut
+--root NcChatRow --root NcBotRow --root NcBoardRow --root NcHistoryRow --root NcHistoryHead --root NcReplay
+--snapshot NcRequest --snapshot NcSessionInfo --snapshot NcError --snapshot NcGameRow --snapshot NcAction --snapshot NcEvent --snapshot NcOut
+--snapshot NcChatRow --snapshot NcBotRow --snapshot NcBoardRow --snapshot NcHistoryRow --snapshot NcHistoryHead --snapshot NcReplay
+--count NcRequest.path=path_len --count NcRequest.auth=auth_len --count NcRequest.body=body_len
+--count NcSessionInfo.user_id=user_id_len --count NcSessionInfo.username=username_len
+--count NcEvent.gid=gid_len --count NcChatRow.id=id_len --count NcChatRow.user_id=user_id_len --count NcChatRow.message=message_len
+--count NcOut.text=len
+--count NcBotRow.id=id_len --count NcBotRow.nickname=nickname_len --count NcBotRow.key=key_len
+--count NcBoardRow.id=id_len --count NcBoardRow.name=name_len
+--count NcHistoryRow.id=id_len --count NcHistoryRow.players=n_players --count NcId.id=len
+--const NC_ --const NW_ --const ASK_WHY_
