@@ -34,7 +34,7 @@ final class OnlineSessionViewTests: XCTestCase {
                                        names: ["ME", "%Vienna 1"], ids: ["me", "bot-1"],
                                        isAI: [false, true])
         let buf = PackedEnvelope.envelope(seat: 0, version: version, island: nil, viewBlob: blob, trailer: t)
-        let decoded = await PackedGame.decode(buf, engine: engine)
+        let decoded = await engine.adoptEnvelope(buf)
         return try XCTUnwrap(decoded, "the \(status) row did not decode")
     }
 
