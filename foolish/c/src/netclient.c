@@ -504,12 +504,18 @@ const NcHistoryHead *nc_history_head(const uint8_t *body, int len) {
 
 // ---- version gates ---------------------------------------------------------------------
 
+// Two ids alike. An empty one may come as NULL (the games list has none), and
+// memcmp is not given a NULL even for no bytes.
+static int same_id(const char *a, int a_len, const char *b, int b_len) {
+    return a_len == b_len && (a_len == 0 || memcmp(a, b, (size_t)a_len) == 0);
+}
+
 static gate *gate_find(const char *gid, int gid_len, int make) {
     gate *free_slot = NULL, *oldest = NULL;
     for (int i = 0; i < NC_GATES_MAX; i++) {
         gate *g = &g_gates[i];
         if (!g->used) { if (!free_slot) free_slot = g; continue; }
-        if (g->gid_len == gid_len && memcmp(g->gid, gid, (size_t)gid_len) == 0) { g->touched = ++g_gate_clock; return g; }
+        if (same_id(g->gid, g->gid_len, gid, gid_len)) { g->touched = ++g_gate_clock; return g; }
         if (!oldest || g->touched < oldest->touched) oldest = g;
     }
     if (!make) return NULL;
@@ -543,7 +549,7 @@ static int gate_pass(gate *g, int cast, uint32_t version) {
 static sub *sub_find(int what, const char *gid, int gid_len) {
     for (int i = 0; i < NC_SUBS_MAX; i++) {
         sub *s = &g_subs[i];
-        if (s->state != SUB_FREE && s->what == what && s->gid_len == gid_len && memcmp(s->gid, gid, (size_t)gid_len) == 0)
+        if (s->state != SUB_FREE && s->what == what && same_id(s->gid, s->gid_len, gid, gid_len))
             return s;
     }
     return NULL;
@@ -573,7 +579,7 @@ int nc_stream_sub(int what, const char *gid, int gid_len) {
     s->backoff = NC_RETRY_FIRST_MS;
     // A pending unsubscribe of the same thing is moot.
     for (int i = 0; i < g_n_unsubs; i++)
-        if (g_unsubs[i].what == what && g_unsubs[i].gid_len == gid_len && memcmp(g_unsubs[i].gid, gid, (size_t)gid_len) == 0) {
+        if (g_unsubs[i].what == what && same_id(g_unsubs[i].gid, g_unsubs[i].gid_len, gid, gid_len)) {
             g_unsubs[i] = g_unsubs[--g_n_unsubs];
             break;
         }
