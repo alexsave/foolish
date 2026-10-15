@@ -52,10 +52,9 @@ npm run dev          # http://localhost:3000
 [`shared/tools/structgen`](../shared/tools/structgen) and [`shared/tools/datagen`](../shared/tools/datagen) read the C through libclang at build time and write it.
 A checkout without a working `clang` cannot build the website, which is why CI installs libclang and why [`shared/scripts/ci_llvm.sh`](../shared/scripts/ci_llvm.sh) exists.
 
-The dev server needs a Supabase backend, configured through two client-exposed variables:
+The dev server needs the backend (c_base, `cbase serve` locally), configured through one client-exposed variable:
 
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_KEY`
+- `NEXT_PUBLIC_BACKEND_URL` (for example `http://127.0.0.1:8080`)
 
 | Script | What it does |
 | --- | --- |

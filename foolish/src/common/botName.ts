@@ -3,8 +3,8 @@
 // Replay codes encode only the player NAME, not the is_ai flag, so to recover
 // "bot vs human" from a stored replay code alone the name itself must carry the
 // signal. Bots are named with a reserved leading prefix that humans are forbidden
-// from using (enforced client-side here and, authoritatively, by a BEFORE
-// INSERT/UPDATE trigger on auth.users; see server/impls/supabase/seed.sql). This reserves the
+// from using (enforced client-side here and, authoritatively, by the server's
+// sign-up, c_base/src/auth/auth.c). This reserves the
 // whole namespace, so future/unreleased bots are covered with no per-name list.
 //
 // The prefix is a single-byte ASCII char ('%') — names are stored UTF-8 in the

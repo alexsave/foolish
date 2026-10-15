@@ -458,8 +458,6 @@ export const Tutorial = () => {
     // (mySeat), and the page names its hand by the seat (state/view.ts seatKey).
     const tutorialAuth = {
         user_id: null, username: 'You', loading: false,
-        signIn: async () => ({} as any), signUp: async () => ({} as any),
-        signOut: async () => {}, updatePassword: async () => {},
         redirectAfterLogin: null, setRedirectAfterLogin: () => {}, clearRedirectAfterLogin: () => {},
     };
     const exit = () => router.push('/dashboard');

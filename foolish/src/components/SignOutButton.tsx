@@ -1,10 +1,9 @@
 import { useRouter } from 'next/navigation';
-import { useAuth } from '../contexts/AuthContext';
+import { signOut } from '../common/backend';
 import { TexturedSurface } from './TexturedSurface';
 
 export const SignOutButton = () => {
     const router = useRouter();
-    const { signOut } = useAuth();
 
     const handleSignOut = async () => {
         try {

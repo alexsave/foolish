@@ -1,6 +1,6 @@
 declare namespace NodeJS {
     interface ProcessEnv {
-      NEXT_PUBLIC_SUPABASE_URL: string;
-      NEXT_PUBLIC_SUPABASE_KEY: string;
+      /** c_base, the backend (its binary surface): blank for same-origin. */
+      NEXT_PUBLIC_BACKEND_URL: string;
     }
   }

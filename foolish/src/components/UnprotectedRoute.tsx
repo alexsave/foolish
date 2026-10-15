@@ -34,7 +34,7 @@ export const UnprotectedRoute = ({ children }: { children: React.ReactNode }) =>
         }
     }, [shouldRedirect, router]);
 
-    // Don't render anything until Supabase has determined the auth state.
+    // Don't render anything until the session has been restored.
     // Rendering Welcome prematurely causes iOS Safari to focus the username
     // input (popping the keyboard) before we redirect a signed-in user to the
     // dashboard, which is disorienting.

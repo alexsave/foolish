@@ -3,7 +3,7 @@
  * =============================================================================
  * Its own module and not part of Tutorial.tsx, because it is a pure function of
  * the replay and the component is not: importing the component to test this
- * pulls in the providers and, through them, a Supabase client that wants a URL.
+ * pulls in the providers and, through them, a backend client that wants a URL.
  * That is why it went untested, and untested is how the trump-cover beat came
  * to read a pair the way e2e/tutorial_game.test.ts warns against.
  * ========================================================================== */

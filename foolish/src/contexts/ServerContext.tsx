@@ -1,5 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import supabase from '../common/Connector';
+import * as backend from '../common/backend';
+import { stream } from '../common/backend';
+import type { NetChat } from '@sdk/ts/net/net_client.ts';
 import { useUrlGameId } from '../utils/useUrlGameId';
 import { useAuth } from './AuthContext';
 import { ANIM_TIME_MS } from '@sdk/ts/gen/anim.bots.ts';
@@ -7,7 +9,6 @@ import { optimisticOverlay } from '../state/optimisticOverlay';
 import { animationFeed } from '../state/animationFeed';
 import * as V from '@sdk/ts/gen/view_layout.bots.ts';
 import type { Ask } from '@sdk/ts/table/client_table.ts';
-import { holdPrivateChannel } from '../state/privateChannel';
 import { cardKey, mergeHandOrder, reconcileHandMemory, displayedHand } from '../state/clientReconcile';
 import { keepPending, lobbyBoard, rearrangedBoard } from '../state/clientBoards';
 import { TABLE_STATUS_APPLIED, TABLE_STATUS_REJECTED, TABLE_REJECT_STALE_ROUND } from '@sdk/ts/gen/view_layout.bots.ts';
@@ -20,21 +21,16 @@ import { EN, StringId, StringTable, isLanguage, loadLanguage, translate } from '
 
 type Card = ViewCard;
 
-// An envelope (a player_views / spectator_views row, a create or meta response)
-// read through the kernel's client slot: the board as this viewer sees it, or
-// null when it does not read whole.
+// An envelope (a view of a game, a create or meta response) read through the
+// kernel's client slot: the board as this viewer sees it, or null when it does
+// not read whole.
 const readEnvelope = (bytes: Uint8Array): TableView | null => clientTable().adoptEnvelope(bytes);
 
-// Decode the hex `view` blob stored in player_views. It is a BYTEA column, so a
-// PostgREST select gives it as '\x'-prefixed hex and a Realtime postgres_changes
-// payload as bare hex; the optional prefix is stripped either way. Tiny local
-// helper so the dashboard read doesn't pull the replay codec into the main bundle.
-const hexToBytes = (hex: string): Uint8Array => {
-    const h = hex.startsWith('\\x') ? hex.slice(2) : hex;
-    const out = new Uint8Array(h.length >> 1);
-    for (let i = 0; i < out.length; i++) out[i] = parseInt(h.slice(i * 2, i * 2 + 2), 16);
-    return out;
-};
+// A chat message as the chat panel reads it.
+const chatRow = (gameId: string, c: NetChat) => ({
+    id: c.id, game_id: gameId, user_id: c.userId, message: c.message,
+    is_system: c.isSystem === 1, created_at: new Date(Number(c.createdMs)).toISOString(),
+});
 
 // How long a refused move waits for the pushes it was refused over before
 // reconcileAfter loads the game: two of the kernel's flights, time for a late push.
@@ -136,8 +132,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     const activeGameIdRef = useRef<string | null>(null);
     const spectatorGamesRef = useRef(spectatorGames);
     // The game currently on screen (the ROUTE param), i.e. the one whose live
-    // updates RealtimeAnimationFeed owns via the gu- animation stream. The
-    // dashboard player_views subscription must NOT push snapshots into this game
+    // updates RealtimeAnimationFeed owns via the player's cast stream. The
+    // dashboard's stream of views must NOT push snapshots into this game
     // or it would snap past the in-flight animation to the final state.
     const urlGameIdRef = useRef<string | undefined>(url_game_id);
     useEffect(() => { gamesRef.current = games; }, [games]);
@@ -159,44 +155,33 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
     const getUserGamesPromise = useRef<Promise<void> | null>(null);
 
-    // The chat: channel held for a seated game (holdPrivateChannel), and how to
-    // leave it: on teardown, and when the seat is given up.
+    // The chat held for a seated game (backend.ts stream.hold), and how to leave
+    // it: on teardown, and when the seat is given up.
     const chatHoldRef = useRef<{ gameId: string; stop: () => void } | null>(null);
     const stopChat = () => {
         chatHoldRef.current?.stop();
         chatHoldRef.current = null;
     };
 
-    // The spectator's game-{id} stream, by game id: the channel object itself, never
-    // a lookup by topic (realtime-js names a channel 'realtime:game-{id}', so a
-    // lookup by the bare topic found nothing and a join left the stream behind).
-    const spectatorChannels = useRef<Map<string, ReturnType<typeof supabase.channel>>>(new Map());
+    // The spectator's stream of a game, by game id: what leaves it. Spectators
+    // get LIVE game updates too: the server sends the fully-masked (seat -1)
+    // cast, built by the same encoder the players' own streams use. Republish it
+    // into animationFeed exactly like RealtimeAnimationFeed does for players,
+    // with the game id attached so the consumer can pick the decode roster.
+    const spectatorHolds = useRef<Map<string, () => void>>(new Map());
     const watchGame = (gameId: string) => {
-        if (spectatorChannels.current.has(gameId)) return;
-        const gameChannel = supabase.channel(`game-${gameId}`, { config: { private: true } });
-        spectatorChannels.current.set(gameId, gameChannel);
-        // Spectators get LIVE game updates too: the server broadcasts the
-        // fully-masked (seat -1) animation stream to this game-<id> topic, built by
-        // the same encoder the players' gu-<id>-<user> streams use. Republish it into
-        // animationFeed exactly like RealtimeAnimationFeed does for players - the
-        // packed envelope carries no JS state, so attach the game id so the consumer
-        // can pick the decode roster.
-        supabase.realtime.setAuth().then(() => {
-            if (spectatorChannels.current.get(gameId) !== gameChannel) return;
-            gameChannel
-                .on('broadcast', { event: 'animation_events' }, (payload) => {
-                    animationFeed.publish({ b: payload.payload?.b, game_id: gameId });
-                })
-                .subscribe((status, err) => status === 'SUBSCRIBED'
-                    ? console.log('Connected to game channel:', `game-${gameId}`)
-                    : console.error('Game channel error:', err));
+        if (spectatorHolds.current.has(gameId)) return;
+        const unlisten = stream.listen({
+            cast: (gid, cast) => { if (gid === gameId) animationFeed.publish({ cast, game_id: gameId }); },
         });
+        const release = stream.game(gameId);
+        spectatorHolds.current.set(gameId, () => { unlisten(); release(); });
     };
     const unwatchGame = (gameId: string) => {
-        const gameChannel = spectatorChannels.current.get(gameId);
-        if (!gameChannel) return;
-        spectatorChannels.current.delete(gameId);
-        supabase.removeChannel(gameChannel);
+        const stop = spectatorHolds.current.get(gameId);
+        if (!stop) return;
+        spectatorHolds.current.delete(gameId);
+        stop();
     };
 
     useEffect(() => {
@@ -249,51 +234,30 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     // stream stayed subscribed and kept publishing into the feed.
     useEffect(() => {
         return () => {
-            // Leave the chat: channel and cancel its pending rejoin, so it doesn't
-            // re-subscribe to a game we're navigating away from.
+            // Leave the chat and this context's spectator streams. The player's
+            // own cast stream is RealtimeAnimationFeed's, and the stream of their
+            // views is user-scoped (its own effect below), so both survive
+            // game navigation.
             stopChat();
-            // Remove subscriptions one channel at a time instead of removeAllChannels().
-            // removeAllChannels() calls socket.disconnect() unconditionally, force-closing
-            // the websocket (close code 1005) on every game switch - that 1005 then fans
-            // out as a CHANNEL_ERROR to the channels being created for the next game.
-            // Per-channel removeChannel() instead routes through realtime-js's deferred
-            // disconnect (disconnectOnEmptyChannelsAfterMs), which is cancelled as soon as
-            // the next game subscribes, so the socket is never bounced during a fast switch.
-            // ONLY this context's spectator game-… channel (chat:… is left above): the
-            // gu-… animation channel is owned and torn down by RealtimeAnimationFeed -
-            // removing it here raced its own cleanup/reconnect handling. The pv-…
-            // dashboard-cache channel is user-scoped (not game-scoped) and owned by
-            // its own effect below, so it must survive game navigation too.
-            supabase.getChannels().forEach((channel) => {
-                if (channel.topic.includes('gu-') || channel.topic.includes('pv-') || channel.topic.includes('chat:')) return;
-                supabase.removeChannel(channel);
-            });
-            spectatorChannels.current.clear();
+            for (const stop of spectatorHolds.current.values()) stop();
+            spectatorHolds.current.clear();
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [user_id, url_game_id]);
 
 
-    // There is deliberately no gu-<game>-<user> subscription here: that channel
-    // is RealtimeAnimationFeed's, and a second one is duplicate socket load.
+    // There is deliberately no player's cast stream here: that is
+    // RealtimeAnimationFeed's.
 
-    // A seated player's chat stream. chat:{game} admits only a member of the
-    // game, so this is never asked for a spectator: a refused private join
-    // stalls every channel on the shared socket (src/state/privateChannel.ts).
+    // A seated player's chat stream. The server admits only a member of the
+    // game, so this is never asked for a spectator; a refusal (a membership the
+    // server does not see yet) is retried by the kernel's client.
     const subscribeToChatMessages = async (gameId: string) => {
         if (chatHoldRef.current?.gameId === gameId) return;
         stopChat();
-        const stop = holdPrivateChannel(`chat:${gameId}`, {
-            bind: (channel) => {
-                channel.on('broadcast', { event: 'INSERT' }, (payload) => {
-                    handleChatMessage(payload.payload);
-                });
-            },
-            onFailed: (status, err, retryInMs) => {
-                console.error(`Chat channel ${status}, retrying in ${retryInMs}ms:`, err);
-            },
-        });
-        chatHoldRef.current = { gameId, stop };
+        const unlisten = stream.listen({ chat: (gid, c) => { if (gid === gameId) handleChatMessage(chatRow(gid, c)); } });
+        const release = stream.chat(gameId);
+        chatHoldRef.current = { gameId, stop: () => { unlisten(); release(); } };
     };
 
     // Sticky: the arrangement memory keeps known slots and only grows with new
@@ -314,116 +278,61 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         return result;
     };
 
-    // Dashboard live updates (docs/PLAYER_VIEWS.md): subscribe to THIS user's own
-    // player_views rows (RLS-enforced) and push each committed masked snapshot
-    // straight into `games`. This is the list-level counterpart of
-    // RealtimeAnimationFeed's per-game animation stream - full snapshots instead
-    // of event deltas, with no bespoke server fan-out. User-scoped (keyed on
-    // user_id only), so it survives game navigation; the pv- channel is excluded
-    // from the per-navigation channel teardown above. Best-effort: if the
-    // subscription can't be established, the list still refreshes on the next
-    // getUserGames / navigation.
-    const playerViewsChannelRef = useRef<any>(null);
+    // Dashboard live updates: the stream of this user's own views, each the
+    // committed masked envelope of one of their games, pushed straight into
+    // `games`. The list-level counterpart of RealtimeAnimationFeed's per-game
+    // cast stream - full boards instead of event deltas. User-scoped (keyed on
+    // user_id only), so it survives game navigation. Best-effort: if it cannot
+    // be held, the list still refreshes on the next getUserGames / navigation.
     useEffect(() => {
         if (!user_id) return;
-        let cancelled = false;
-
-        const applyRow = (row: any) => {
-            if (!row?.view) return;
-            try {
-                const v = readEnvelope(hexToBytes(row.view));
-                if (!v) return;
-                // The on-screen game is animation-owned (RealtimeAnimationFeed):
-                // pushing its final snapshot here would jump past the in-flight
-                // animation. Let that pipeline apply the game being viewed; this
-                // subscription keeps every OTHER game in the dashboard live.
-                if (v.gameId === urlGameIdRef.current) return;
-                setGames(prev => ({ ...prev, [v.gameId]: mergeGameData(v.gameId, v, prev) }));
-            } catch { /* unreadable snapshot - ignore; the next fetch resyncs */ }
-        };
-
-        const pgChanges = { schema: 'public', table: 'player_views', filter: `player_id=eq.${user_id}` } as const;
-
-        // setAuth() hands Realtime the caller's JWT so postgres_changes applies
-        // player_views' RLS per row. NOT a `private` broadcast channel: for
-        // postgres_changes the source table's RLS is the gate (the row filter
-        // below is enforced server-side), not a realtime.messages topic policy -
-        // marking it private would make the channel demand a 'pv-…' broadcast
-        // policy that doesn't exist and fail to subscribe.
-        supabase.realtime.setAuth().then(() => {
-            if (cancelled) return;
-            const channel = supabase.channel(`pv-${user_id}`);
-            playerViewsChannelRef.current = channel;
-            channel
-                .on('postgres_changes', { event: 'INSERT', ...pgChanges }, (p: any) => applyRow(p.new))
-                .on('postgres_changes', { event: 'UPDATE', ...pgChanges }, (p: any) => applyRow(p.new))
-                .on('postgres_changes', { event: 'DELETE', ...pgChanges }, (p: any) => {
-                    // The old row carries only the replica-identity (PK) columns -
-                    // game_id + player_id - which is all we need to drop it.
-                    const gid = p.old?.game_id;
-                    if (!gid) return;
+        const unlisten = stream.listen({
+            view: (gid, envelope) => {
+                if (!envelope) {
+                    // My seat there is gone.
                     setGames(prev => {
                         if (!(gid in prev)) return prev;
                         const next = { ...prev };
                         delete next[gid];
                         return next;
                     });
-                })
-                .subscribe();
-        }).catch(err => console.error('player_views subscription failed:', err));
-
-        return () => {
-            cancelled = true;
-            if (playerViewsChannelRef.current) {
-                const ch = playerViewsChannelRef.current;
-                playerViewsChannelRef.current = null;
-                supabase.removeChannel(ch).catch(() => { /* already closed */ });
-            }
-        };
+                    return;
+                }
+                try {
+                    const v = readEnvelope(envelope);
+                    if (!v) return;
+                    // The on-screen game is animation-owned (RealtimeAnimationFeed):
+                    // pushing its final board here would jump past the in-flight
+                    // animation. This stream keeps every OTHER game live.
+                    if (v.gameId === urlGameIdRef.current) return;
+                    setGames(prev => ({ ...prev, [v.gameId]: mergeGameData(v.gameId, v, prev) }));
+                } catch { /* unreadable - ignore; the next fetch resyncs */ }
+            },
+        });
+        const release = stream.games();
+        return () => { unlisten(); release(); };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [user_id]);
 
-    const handleChatMessage = (message: any) => {
-        // Handle database changes for chat messages
-        const { record: newRecord, old_record: oldRecord, table, operation } = message;
-
-        if (table !== 'chat_messages') {
-            return;
-        }
-
-        const gameId = newRecord?.game_id || oldRecord?.game_id;
-
-        if (!gameId) {
-            return;
-        }
-
-        if (operation === 'INSERT') {
-            // Add new message with user info
-            const messageWithUserInfo = {
-                ...newRecord,
-                sender_name: userNamesRef.current[newRecord.user_id] || 'Unknown'
-            };
-
-            setChatMessages(prev => {
-                const existingMessages = prev[gameId] || [];
-                // Check if message already exists to avoid duplicates
-                const messageExists = existingMessages.some(msg => msg.id === newRecord.id);
-                if (!messageExists) {
-                    const newState = {
-                        ...prev,
-                        [gameId]: [...existingMessages, messageWithUserInfo]
-                    };
-                    return newState;
-                }
-                return prev;
-            });
-        }
+    const handleChatMessage = (newRecord: any) => {
+        const gameId = newRecord?.game_id;
+        if (!gameId) return;
+        const messageWithUserInfo = {
+            ...newRecord,
+            sender_name: userNamesRef.current[newRecord.user_id] || 'Unknown'
+        };
+        setChatMessages(prev => {
+            const existingMessages = prev[gameId] || [];
+            // Check if message already exists to avoid duplicates
+            if (existingMessages.some(msg => msg.id === newRecord.id)) return prev;
+            return { ...prev, [gameId]: [...existingMessages, messageWithUserInfo] };
+        });
     };
 
     const createGame = useCallback(async (): Promise<{ game_id: string }> => {
         // create takes no body (the token names the caller) and answers with the
-        // caller's envelope, like a player_views row.
-        const bytes = await invokeBytes('create', null);
+        // caller's envelope, like a view of a game.
+        const bytes = await backend.create();
         const view = bytes ? readEnvelope(bytes) : null;
         if (!view) throw new Error('create: unreadable packed response');
 
@@ -505,31 +414,16 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // The game screen's read (docs/PLAYER_VIEWS.md): one masked view straight
-    // from a view table - a plain indexed RLS SELECT, no edge round-trip - which
-    // is the same read whichever of the two tables it is asked of.
-    //
-    // 'player_views': a PLAYER reads their own already-masked view. RLS scopes
-    // it to the caller, and the (game_id, player_id) PK means at most one row.
-    // Null for a spectator (no row), a cache miss (game predating the cache),
-    // or any failure - the caller then falls back to spectator_views (the
-    // shared masked view). Not asked at all with nobody signed in.
-    //
-    // 'spectator_views': a NON-participant reads the shared, fully-masked
-    // (seat -1) view, replacing the get_game spectate path. Readable by any
-    // authenticated user (the row carries no hidden state), one row per game.
-    // Null on a miss/failure; the board's seat is always -1 (a spectator has
-    // none). Live updates arrive over the game-<id> broadcast.
-    const loadFromCache = async (table: 'player_views' | 'spectator_views', gameId: string): Promise<TableView | null> => {
+    // The game screen's read: the caller's own masked view of the game, or the
+    // spectators' fully-masked (seat -1) one for a non-participant - the server
+    // answers whichever the caller may see. Null when there is neither (or on
+    // any failure), and not asked at all with nobody signed in. Live updates
+    // arrive on the stream.
+    const loadView = async (gameId: string): Promise<TableView | null> => {
         try {
-            if (table === 'player_views' && !userIdRef.current) return null;
-            const { data, error } = await supabase
-                .from(table)
-                .select('view')
-                .eq('game_id', gameId)
-                .maybeSingle();
-            if (error || !(data as any)?.view) return null;
-            return readEnvelope(hexToBytes((data as any).view));
+            if (!userIdRef.current) return null;
+            const envelope = await backend.view(gameId);
+            return envelope ? readEnvelope(envelope) : null;
         } catch {
             return null;
         }
@@ -538,10 +432,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     const loadGameInternal = async (gameId: string): Promise<{ game_id: string }> => {
         // The caller's own masked view, or the shared spectator view for a
         // non-participant.
-        const view = await loadFromCache('player_views', gameId) ?? await loadFromCache('spectator_views', gameId);
+        const view = await loadView(gameId);
 
-        // Neither cache had a row (game predates the caches, or was pruned):
-        // there is no edge fallback, so this is a genuine not-found.
+        // Neither view: a genuine not-found.
         if (!view) throw new Error(`Game ${gameId} not found`);
 
         // Re-apply the local player's unconfirmed optimistic cards onto
@@ -556,7 +449,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // One shot on load: is there bot work at all (the server's needs_bots rule)?
         // AnimationContext's repeating poll asks "may a bot act this instant". Fire and forget.
         if (loaded.mySeat >= 0 && rulesOf(loaded).needsBots) {
-            invokeBytes('meta', clientTable().askBody({ kind: V.ASK_BUMP, gid: gameId })).catch(() => { });
+            metaBytes(clientTable().askBody({ kind: V.ASK_BUMP, gid: gameId })).catch(() => { });
         }
 
         return { game_id: gameId };
@@ -589,20 +482,10 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
     const loadChatHistory = async (gameId: string): Promise<void> => {
         try {
-            const { data, error } = await supabase
-                .from('chat_messages')
-                .select('*')
-                .eq('game_id', gameId)
-                .order('created_at', { ascending: true })
-                .limit(100); // Load last 100 messages
-
-            if (error) {
-                console.error('Error loading chat history:', error);
-                return;
-            }
+            const data = await backend.chats(gameId);
 
             // Transform messages to include sender names from userNamesRef
-            const messagesWithNames = data.map(msg => ({
+            const messagesWithNames = data.map(c => chatRow(gameId, c)).map(msg => ({
                 ...msg,
                 sender_name: userNamesRef.current[msg.user_id] || 'Unknown'
             }));
@@ -657,11 +540,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         if (!message || message.trim() === '') throw new Error('Message cannot be empty');
         if (message.length > 1000) throw new Error('Message is too long');
 
-        // Save message to database - the trigger will handle broadcasting
-        const { error } = await supabase
-            .from('chat_messages')
-            .insert({ game_id: gid, user_id: user_id, message: message.trim(), is_system: false });
-        if (error) throw error;
+        // The server stores it and pushes it to every member's chat stream.
+        await backend.sendChat(gid, message.trim());
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
@@ -733,27 +613,15 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             return;
         }
 
-        // The dashboard list is a plain indexed RLS SELECT straight from the
-        // player_views cache (docs/PLAYER_VIEWS.md) - no edge function, no cold
-        // start, no per-viewer masking on read (rows are masked at write time).
-        // Each row's `view` is the caller's packed single-game envelope, read
-        // here through the kernel's client slot (readEnvelope). player_views is
-        // kept complete by commit_game / create_game, so there is no fallback: an
-        // empty result simply means the user has no games.
+        // The dashboard list: every view of the caller, newest first, each the
+        // caller's packed single-game envelope read through the kernel's client
+        // slot (readEnvelope). An empty list simply means the user has no games.
         try {
-            const { data: rows, error } = await supabase
-                .from('player_views')
-                .select('view, status, version')
-                .eq('player_id', user_id)
-                .order('updated_at', { ascending: false });
-            if (error) {
-                console.error('Error fetching user games from player_views:', error);
-                return;
-            }
+            const rows = await backend.games();
             const games: { [key: string]: TableView } = {};
-            for (const row of rows ?? []) {
+            for (const envelope of rows) {
                 try {
-                    const v = readEnvelope(hexToBytes((row as any).view));
+                    const v = readEnvelope(envelope);
                     if (!v) continue;
                     games[v.gameId] = v;
                 } catch { /* skip an unreadable row */ }
@@ -791,20 +659,15 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // The one transport: bytes the kernel wrote out, the bytes the server
-    // answered with back. functions-js posts a body as application/octet-stream
-    // only when it is a Blob or an ArrayBuffer (a Uint8Array would be
-    // JSON.stringified), and hands a Blob back. `body` null: a request with
-    // nothing to say (create).
-    const invokeBytes = async (endpoint: string, body: Uint8Array | null): Promise<Uint8Array | null> => {
-        const { data, error } = await supabase.functions.invoke(endpoint, body ? { body: new Blob([body as BlobPart]) } : {});
-        if (error) throw error;
-        if (typeof Blob !== 'undefined' && data instanceof Blob) return new Uint8Array(await data.arrayBuffer());
-        return data instanceof ArrayBuffer ? new Uint8Array(data) : null;
+    // An ask out (the kernel's bytes), the caller's envelope back, or a throw
+    // with the refusal.
+    const metaBytes = async (ask: Uint8Array | null): Promise<Uint8Array> => {
+        if (ask === null) throw new Error('the kernel would not write this ask');
+        return backend.meta(ask);
     };
 
     // The lobby / meta transport: an ask (c/src/ask.h) out, the caller's envelope
-    // back - the same bytes `create` returns and player_views stores.
+    // back - the same bytes `create` returns and a view of the game carries.
     const askMeta = async (
         ask: Ask,
         options: {
@@ -813,7 +676,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         } = {}
     ): Promise<{ game_id: string }> => {
         try {
-            const bytes = await invokeBytes('meta', clientTable().askBody(ask));
+            const bytes = await metaBytes(clientTable().askBody(ask));
             const view = bytes ? readEnvelope(bytes) : null;
             if (!view || !view.gameId) throw new Error('Invalid response from meta: missing game ID');
             options.onSuccess?.(view);
@@ -851,9 +714,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // round-boundary guard can reject it if a round closed in the meantime
         // (docs/WEB_RACE_BUG_HANDOFF.md). undefined => the v1 envelope, unguarded
         // (no authoritative version seen yet).
-        const req = clientTable().actionRequest(gameId, wire, authoritativeVersion(gameId));
-        const bytes = await invokeBytes('action', req);
-        const resp = bytes ? clientTable().readActionResponse(bytes) : null;
+        const resp = await backend.action(gameId, wire, authoritativeVersion(gameId) ?? -1).catch(() => null);
         if (!resp) {
             throw new Error('Invalid response from action: unreadable packed response');
         }

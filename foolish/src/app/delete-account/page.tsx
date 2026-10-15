@@ -3,17 +3,25 @@
 // Standalone account-deletion page (docs/ORACLE_MONETIZATION_ENGINEERING.md §4).
 // Google Play requires a deletion path that works WITHOUT the app; Apple requires
 // an in-app path (that one lives in the native Settings screen). This page lets a
-// user sign in with their username + password and delete their account, calling
-// the same `delete-account` edge function the apps call.
+// user sign in with their username + password and delete their account, through
+// the same account delete the apps call (c_base POST /v1/account/delete).
 
 import { useState } from 'react';
-import supabase from '../../common/Connector';
+import { deleteAccount, signIn as backendSignIn } from '../../common/backend';
 import { useAuth } from '../../contexts/AuthContext';
+import { KernelGate } from '../../components/KernelGate';
 
 type Phase = 'idle' | 'working' | 'done' | 'error';
 
+// The account is the kernel's client's to sign in and delete, so the form waits
+// for the kernel (components/KernelGate.tsx).
 export default function DeleteAccountPage() {
-  const { user_id, username, signIn, signOut } = useAuth();
+  return <KernelGate><DeleteAccount /></KernelGate>;
+}
+
+function DeleteAccount() {
+  const { user_id, username } = useAuth();
+  const signIn = (n: string, p: string) => backendSignIn(false, n, p);
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState(false);
@@ -37,9 +45,7 @@ export default function DeleteAccountPage() {
     setPhase('working');
     setMessage('');
     try {
-      const { error } = await supabase.functions.invoke('delete-account', { method: 'POST' });
-      if (error) throw error;
-      await signOut();
+      await deleteAccount();
       setPhase('done');
     } catch (err) {
       setPhase('error');

@@ -86,8 +86,7 @@ function extraStagePaths(root) {
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 const BUILD_ENV = {
-    NEXT_PUBLIC_SUPABASE_URL: 'https://measure.supabase.co',
-    NEXT_PUBLIC_SUPABASE_KEY: 'measure-web-bundle',
+    NEXT_PUBLIC_BACKEND_URL: 'https://measure.invalid',
     NEXT_TELEMETRY_DISABLED: '1',
 };
 

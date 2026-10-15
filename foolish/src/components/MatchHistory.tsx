@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import supabase from '../common/Connector';
+import { history as fetchHistory } from '../common/backend';
 import { useAuth } from '../contexts/AuthContext';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 import { BackButton } from './BackButton';
@@ -13,17 +13,14 @@ import { ensureBotsAsync } from '@sdk/ts/wasm/bots.ts';
 import { decodeHistoryRow, type HistoryEntry } from './matchHistoryRow';
 
 /**
- * Match history: every finished game the signed-in user played, straight from
- * game_snapshots (RLS returns exactly the rows whose player_ids contain this
- * uid - no extra filter needed). Each row's binary snapshot IS the game, so
+ * Match history: every finished game the signed-in user played, newest first
+ * (the server answers only replays the caller played in). Each row's binary snapshot IS the game, so
  * everything shown - seats, names, who was the fool, your placement - is
  * read client-side by the kernel the replay screen uses, and the
  * "watch" link is the same self-contained base32 URL ReplayShare builds.
  * Before this screen, a replay was only reachable from the WinScreen moment;
  * lose the URL and the game was gone.
  */
-
-const PAGE_SIZE = 50;
 
 interface HistoryStats {
     games: number;
@@ -144,22 +141,8 @@ export const MatchHistory: React.FC = () => {
 
         const load = async () => {
             try {
-                const [snapshots, rating] = await Promise.all([
-                    supabase
-                        .from('game_snapshots')
-                        .select('id, player_ids, moves, extras, created_at')
-                        .order('created_at', { ascending: false })
-                        .limit(PAGE_SIZE),
-                    supabase
-                        .from('user_elo_ratings')
-                        .select('elo_rating')
-                        .eq('user_id', user_id)
-                        .limit(1),
-                ]);
-                if (snapshots.error) throw snapshots.error;
-                if (rating.error) console.error('Rating load failed:', rating.error);
-
-                const rows = snapshots.data ?? [];
+                const history = await fetchHistory();
+                const rows = history.rows;
                 // The extras blob is decoded by the kernel (decodeExtras ->
                 // wasm_replay_extras_decode), which is a synchronous call into
                 // a module that has to be warm first.
@@ -185,8 +168,7 @@ export const MatchHistory: React.FC = () => {
 
                 if (!cancelled) {
                     setEntries(decoded);
-                    const r = rating.data?.[0];
-                    if (r) setElo({ rating: r.elo_rating as number });
+                    if (history.rating !== null) setElo({ rating: history.rating });
                 }
             } catch (e) {
                 console.error('Match history load failed:', e);
