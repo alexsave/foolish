@@ -83,7 +83,7 @@ CORE_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/replay_
             $(SHARED)/sha256.c src/msg_wire.c src/msg_expand.c src/anim_plan.c \
             src/analyse.c src/roster.c src/table.c src/client_table.c src/card.c \
             src/strategy.c src/hand_layout.c \
-            src/ask.c
+            src/ask.c src/table_wire.c src/netwire.c src/netclient.c
 # Where each becomes an object: build/obj/host/<the source's own path>.o, the
 # "host" variant below (shared/tools/c_rules.mk).
 CORE_OBJ = $(call c_objs,build/obj/host,$(CORE_SRC))
@@ -381,7 +381,7 @@ IOS_CORE_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c \
                 src/evwire.c $(SHARED)/sha256.c src/msg_wire.c src/msg_expand.c \
                 src/anim_plan.c src/roster.c src/card.c src/client_table.c \
                 src/hand_layout.c $(IOS_BRIDGE_SRC) \
-                src/ask.c
+                src/ask.c src/table_wire.c src/netwire.c src/netclient.c
 IOS_BOTS_SRC := $(filter-out $(IOS_CORE_SRC),$(CORE_SRC)) ios/ios_bots_api.c
 
 # Everything, for the host-side smoke/golden binaries that want one link line.
@@ -1398,7 +1398,7 @@ WASM_BOT_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/rep
                 src/octogen_strategy.c \
                 src/bot_knobs.c src/bot_roster.c src/bot_drive.c src/roster.c src/table.c src/client_table.c src/card.c \
                 src/hand_layout.c \
-                src/ask.c \
+                src/ask.c src/table_wire.c \
                 $(SHARED)/wasm/libc.c $(SHARED)/wasm/bump_alloc.c \
                 wasm/wasm_api.c wasm/wasm_bots_api.c wasm/wasm_msg_api.c wasm/wasm_table_api.c
 
