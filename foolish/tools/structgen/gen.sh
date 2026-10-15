@@ -294,6 +294,14 @@ VIEW=(--cwd "$root/c" $(spec view_layout))
 set +f
 "$SG" "${VIEW[@]}" --build "bots=$BOTS" --ts "$prod/view_layout.bots.ts"
 
+# The backend's client (c/src/netclient.h): what the web sends c_base and how it
+# reads the answers and the push stream (specs/net_layout.args).
+set -f
+# shellcheck disable=SC2207
+NET=(--cwd "$root/c" $(spec net_layout))
+set +f
+"$SG" "${NET[@]}" --build "bots=$BOTS" --ts "$prod/net_layout.bots.ts"
+
 # The share link's extras (c/src/replay_extras.h ReplayExtras): a snapshot
 # reader, a writer and the codec's constants (specs/msg_layout.args).
 set -f

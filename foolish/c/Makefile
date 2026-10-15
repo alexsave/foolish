@@ -1068,6 +1068,19 @@ WASM_TABLE_EXPORTS := \
   -Wl,--export=wasm_table_ask -Wl,--export=wasm_ask_refusal_encode \
   -Wl,--export=wasm_table_cast
 
+# The backend's client (src/netclient.h, wasm/wasm_net_api.c): what the web asks
+# c_base and how it reads the answers and the push stream. In the browser's
+# module and in bots.wasm, where the Node tests drive the same client.
+WASM_NET_EXPORTS := \
+  -Wl,--export=wasm_net_inbox -Wl,--export=wasm_net_reset -Wl,--export=wasm_net_session_load -Wl,--export=wasm_net_session_save \
+  -Wl,--export=wasm_net_session_info -Wl,--export=wasm_net_session_read -Wl,--export=wasm_net_error \
+  -Wl,--export=wasm_net_req -Wl,--export=wasm_net_status_read -Wl,--export=wasm_net_action_read \
+  -Wl,--export=wasm_net_view_read -Wl,--export=wasm_net_replay_read -Wl,--export=wasm_net_list_read \
+  -Wl,--export=wasm_net_row -Wl,--export=wasm_net_history_head -Wl,--export=wasm_net_stream_sub \
+  -Wl,--export=wasm_net_stream_unsub -Wl,--export=wasm_net_stream_opened -Wl,--export=wasm_net_stream_closed \
+  -Wl,--export=wasm_net_stream_in -Wl,--export=wasm_net_event_payload -Wl,--export=wasm_net_stream_next \
+  -Wl,--export=wasm_net_stream_due_ms -Wl,--export=wasm_net_gate_reset
+
 # The web client's slot (src/client_table.h, wasm/wasm_table_api.c), bots.wasm
 # ONLY: the browser reads every envelope and push through these, and through the
 # generated snapshot readers in sdk/ts/gen/view_layout.bots.ts.
@@ -1409,9 +1422,10 @@ WASM_BOT_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/rep
                 src/octogen_strategy.c \
                 src/bot_knobs.c src/bot_roster.c src/bot_drive.c src/roster.c src/table.c src/client_table.c src/card.c \
                 src/hand_layout.c \
-                src/ask.c src/table_wire.c \
+                src/ask.c src/table_wire.c src/netwire.c src/netclient.c \
                 $(SHARED)/wasm/libc.c $(SHARED)/wasm/bump_alloc.c \
-                wasm/wasm_api.c wasm/wasm_bots_api.c wasm/wasm_msg_api.c wasm/wasm_table_api.c
+                wasm/wasm_api.c wasm/wasm_bots_api.c wasm/wasm_msg_api.c wasm/wasm_table_api.c \
+                wasm/wasm_net_api.c
 
 # PER-FILE opt (a mix one clang invocation can't express): the profiled hot MC
 # core is built at -O3, everything else at -Oz. -O3 on those five files cuts the
@@ -1486,7 +1500,7 @@ $(eval $(call C_VARIANT,build/botobj,WASM_CC,WASM_BOT_OBJ_FLAGS,build/layout/bot
 WASM_BOT_OBJ    := $(call c_objs,build/botobj,$(WASM_BOT_SRC))
 
 WASM_BOTS_SHIPPED_EXPORTS = $(filter-out $(WASM_BOTS_UNSHIPPED_API),$(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS)) \
-                            $(WASM_TABLE_EXPORTS) $(WASM_CLIENT_EXPORTS) $(WASM_REPLAY_WEB_EXPORTS)
+                            $(WASM_TABLE_EXPORTS) $(WASM_CLIENT_EXPORTS) $(WASM_NET_EXPORTS) $(WASM_REPLAY_WEB_EXPORTS)
 
 # AND THIS FILE, because the export list is IN this file. Every wasm link below
 # reads a WASM_*_EXPORTS list, and none of them named the Makefile, so a
@@ -1624,7 +1638,7 @@ WASM_WEB_NAMES := \
 # Picked OUT of the shipped list rather than spelled a second time, so a name
 # cannot be in the browser's module and not in the server's — that would be the
 # beginning of two export surfaces with two meanings.
-WASM_WEB_EXPORTS = $(WASM_CLIENT_EXPORTS) $(WASM_REPLAY_WEB_EXPORTS) \
+WASM_WEB_EXPORTS = $(WASM_CLIENT_EXPORTS) $(WASM_NET_EXPORTS) $(WASM_REPLAY_WEB_EXPORTS) \
                    $(filter $(addprefix -Wl$(comma)--export=,$(WASM_WEB_NAMES)),$(WASM_BOTS_SHIPPED_EXPORTS))
 
 # AND THE GATE ON THE FILTER ITSELF. $(filter) over a name the shipped list does
