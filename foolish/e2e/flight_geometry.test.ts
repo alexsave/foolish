@@ -26,6 +26,7 @@
 import { test, mock, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
+import { fakeBackend } from './helpers/fake_backend.ts';
 import { NO_CARD, type TableView, type ViewBattle, type ViewCard } from '../src/state/view.ts';
 import type { ClientAnimationEvent } from '../src/state/animationStep.ts';
 import type { AnimatedCard } from '../src/components/GameDisplay/FlightCard.tsx';
@@ -49,7 +50,7 @@ Object.defineProperty(dom.window, 'innerHeight', { value: 800, configurable: tru
 
 // The page's network door: nothing here uses it, but the grid's module (whose
 // cover angle and glide planFlights reads) reaches it through its contexts.
-mock.module('../src/common/Connector.ts', { defaultExport: {} });
+mock.module('../src/common/backend.ts', { namedExports: fakeBackend().module });
 
 // The overlay's own word that a place was missing (stockPlace). No case here
 // takes a place away, so none may be said.

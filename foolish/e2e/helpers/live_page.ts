@@ -35,6 +35,9 @@ import { broadcastLog, pgPool } from '../harness.ts';
 import { postBytes, postEmpty, tokenFor } from './edge.ts';
 import { askKindName } from './ask.ts';
 import { castParts } from './cast.ts';
+import { fakeBackend } from './fake_backend.ts';
+import { netClient } from '../../sdk/ts/net/net_client.ts';
+import { clientTable } from '../../sdk/ts/table/client_table.ts';
 // The modules the server loads lazily, loaded now: a lazy import resolves in REAL
 // time, and the virtual clock would otherwise move on while one is in flight.
 import '../../server/impls/supabase/functions/_shared/adapter/bot_actions.ts';
@@ -189,7 +192,6 @@ const latency: Latency = { invokeMs: 0, realtimeMs: 0 };
 
 let me = '';
 let myToken = '';
-const channels = new Map<string, { handlers: { event: string; cb: (p: unknown) => void }[] }>();
 
 /** Every request the page sent, and when it was answered (virtual ms). */
 export interface Sent { at: number; answeredAt: number; name: string; kind: string; status: number; body: unknown; bytes: Uint8Array | null }
@@ -197,14 +199,10 @@ export const sent: Sent[] = [];
 
 const later = (ms: number): Promise<void> => new Promise((r) => { g.setTimeout(r, ms); });
 
-async function invoke(name: string, opts: { body?: unknown }): Promise<{ data: unknown; error: unknown }> {
-    const body = opts?.body;
-    // Every body the page sends is bytes (functions-js posts a Blob as
-    // octet-stream): a move to `action`, an ask to `meta`. A request with no
-    // body (create) has nothing to post.
-    const bytes = body instanceof Blob ? new Uint8Array(await body.arrayBuffer()) : null;
+/** One request to the real edge entry point `name`: its answer's bytes, or a throw on a refusal. */
+async function invoke(name: 'create' | 'action' | 'meta', bytes: Uint8Array | null): Promise<Uint8Array> {
     const kind = !bytes ? '' : name === 'meta' ? askKindName(bytes) : 'packed';
-    const rec: Sent = { at: clock, answeredAt: -1, name, kind, status: 0, body, bytes };
+    const rec: Sent = { at: clock, answeredAt: -1, name, kind, status: 0, body: bytes, bytes };
     sent.push(rec);
     if (latency.invokeMs > 0) await later(latency.invokeMs);
     const res = bytes
@@ -213,67 +211,34 @@ async function invoke(name: string, opts: { body?: unknown }): Promise<{ data: u
     rec.status = res.status;
     if (latency.invokeMs > 0) await later(latency.invokeMs);
     rec.answeredAt = clock;
-    if (res.status !== 200) return { data: null, error: new Error(res.reason || `HTTP ${res.status}`) };
-    return { data: res.bytes.buffer.slice(res.bytes.byteOffset, res.bytes.byteOffset + res.bytes.byteLength), error: null };
+    if (res.status !== 200) throw new Error(res.reason || `HTTP ${res.status}`);
+    return res.bytes;
 }
 
-function query(table: string) {
-    const filters: Record<string, unknown> = {};
-    const answer = async (single: boolean) => {
-        const gid = filters.game_id as string | undefined;
-        if (table === 'player_views' && single && gid) {
-            const { rows } = await pgPool.query('SELECT view FROM player_views WHERE game_id = $1 AND player_id = $2', [gid, me]);
-            return { data: rows[0] ? { view: rows[0].view } : null, error: null };
-        }
-        // A page that holds no seat reads the shared masked row (ServerContext loadGame).
-        if (table === 'spectator_views' && single && gid) {
-            const { rows } = await pgPool.query('SELECT view FROM spectator_views WHERE game_id = $1', [gid]);
-            return { data: rows[0] ? { view: rows[0].view } : null, error: null };
-        }
-        if (table === 'player_views') {
-            const { rows } = await pgPool.query('SELECT view, status, version FROM player_views WHERE player_id = $1 ORDER BY updated_at DESC', [me]);
-            return { data: rows, error: null };
-        }
-        return { data: single ? null : [], error: null };
-    };
-    const chain: any = {
-        select: () => chain, order: () => chain, limit: () => chain, insert: () => chain,
-        eq: (k: string, v: unknown) => { filters[k] = v; return chain; },
-        in: () => chain,
-        maybeSingle: () => answer(true),
-        single: () => answer(true),
-        then: (ok: (r: unknown) => unknown, bad?: (e: unknown) => unknown) => answer(false).then(ok, bad),
-    };
-    return chain;
-}
+/** A BYTEA column as the pool hands it back. */
+const byteaOf = (v: unknown): Uint8Array =>
+    typeof v === 'string' ? Uint8Array.from(Buffer.from(v.replace(/^\\x/, ''), 'hex')) : new Uint8Array(v as Buffer);
 
-function channel(topic: string) {
-    const entry = { handlers: [] as { event: string; cb: (p: unknown) => void }[] };
-    channels.set(topic, entry);
-    const ch: any = {
-        topic,
-        on: (_type: string, filter: { event?: string }, cb: (p: unknown) => void) => { entry.handlers.push({ event: filter?.event ?? '', cb }); return ch; },
-        subscribe: (cb?: (status: string, err?: unknown) => void) => { cb?.('SUBSCRIBED'); return ch; },
-        unsubscribe: () => Promise.resolve(),
-    };
-    return ch;
-}
-
-const supabaseMock = {
-    from: query,
-    channel,
-    getChannels: () => [],
-    removeChannel: () => Promise.resolve(),
-    realtime: { setAuth: () => Promise.resolve() },
-    functions: { invoke },
-    auth: {
-        getSession: () => Promise.resolve({ data: { session: null } }),
-        onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }),
-    },
+// The page's backend seam (src/common/backend.ts), routed to the real server.
+const fb = fakeBackend();
+fb.module.create = () => invoke('create', null);
+fb.module.meta = (ask: Uint8Array) => invoke('meta', ask);
+fb.module.action = async (gid: string, wire: Uint8Array, intent = -1) =>
+    netClient().action(200, await invoke('action', clientTable().actionRequest(gid, wire, intent >= 0 ? intent : undefined)));
+fb.module.view = async (gid: string) => {
+    const mine = await pgPool.query('SELECT view FROM player_views WHERE game_id = $1 AND player_id = $2', [gid, me]);
+    if (mine.rows[0]) return byteaOf(mine.rows[0].view);
+    // A page that holds no seat reads the shared masked view.
+    const theirs = await pgPool.query('SELECT view FROM spectator_views WHERE game_id = $1', [gid]);
+    return theirs.rows[0] ? byteaOf(theirs.rows[0].view) : null;
+};
+fb.module.games = async () => {
+    const { rows } = await pgPool.query('SELECT view FROM player_views WHERE player_id = $1 ORDER BY updated_at DESC', [me]);
+    return rows.map((r: { view: unknown }) => byteaOf(r.view));
 };
 
 let routeGameId = '';
-mock.module(new URL('../../src/common/Connector.ts', import.meta.url).href, { defaultExport: supabaseMock });
+mock.module(new URL('../../src/common/backend.ts', import.meta.url).href, { namedExports: fb.module });
 mock.module('next/navigation', { namedExports: {
     useParams: () => (routeGameId ? { game_id: routeGameId } : {}),
     useRouter: () => ({ push() {}, replace() {}, back() {} }),
@@ -281,19 +246,21 @@ mock.module('next/navigation', { namedExports: {
 } });
 
 // Broadcasts: the adapter records each message the server's batched REST
-// broadcast carries into broadcastLog; the page's gu- channel is handed each one
-// addressed to it, `realtimeMs` later, exactly as realtime would.
+// broadcast carries into broadcastLog; the page's stream of the game is handed
+// each one addressed to it, `realtimeMs` later, exactly as the stream would.
 /** Every broadcast the server sent to this page, and when (virtual ms). */
 export interface Delivered { sentAt: number; deliveredAt: number; version: number; payload: any }
 export const delivered: Delivered[] = [];
 const logPush = broadcastLog.push.bind(broadcastLog);
 (broadcastLog as any).push = (...items: any[]) => {
     for (const m of items) {
-        const handlers = channels.get(m.channel)?.handlers.filter((h) => h.event === m.event) ?? [];
-        if (handlers.length === 0 || !me || m.channel.indexOf(me) < 0) continue;
+        // gu-<game>-<me>: my seat's casts of <game>, heard while the page holds the game.
+        if (!me || typeof m.channel !== 'string' || !m.channel.startsWith('gu-') || !m.channel.endsWith(`-${me}`)) continue;
+        const gid = m.channel.slice(3, m.channel.length - me.length - 1);
+        if (m.event !== 'animation_events' || !fb.held.get(`game:${gid}`)) continue;
         const rec: Delivered = { sentAt: clock, deliveredAt: -1, version: castParts(m.payload).version, payload: m.payload };
         delivered.push(rec);
-        g.setTimeout(() => { rec.deliveredAt = clock; for (const h of handlers) h.cb({ payload: m.payload }); }, latency.realtimeMs);
+        g.setTimeout(() => { rec.deliveredAt = clock; fb.push.cast(gid, Uint8Array.from(Buffer.from(m.payload.b, 'base64'))); }, latency.realtimeMs);
     }
     return logPush(...items);
 };
@@ -336,7 +303,7 @@ export class LivePage {
         myToken = await tokenFor(userId, 'Me');
         sent.length = 0;
         delivered.length = 0;
-        channels.clear();
+        fb.held.clear();
         installClock();
         const React = (await import('react')).default;
         const { act } = await import('react');

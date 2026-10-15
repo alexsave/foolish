@@ -25,7 +25,8 @@ process.env.TZ = 'America/New_York';
 
 before(async () => { await ensureBotsAsync(); });
 
-const hex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+const STAMP = Date.parse('2026-09-10T12:00:00Z');
+const NONE = new Uint8Array();
 const ids = (np: number) => Array.from({ length: np }, (_, s) => `u-${s}`);
 
 /** The row the server keeps for the frozen `np`:`seed` game, with `names` and a move every `gap` seconds. */
@@ -36,8 +37,8 @@ function row(np: number, seed: number, names: string[] | null, gap = 7): { row: 
     return {
         code,
         row: {
-            id: `snap-${np}-${seed}`, player_ids: ids(np), moves: `\\x${hex(code)}`,
-            extras: names ? `\\x${hex(encodeExtrasBytes(names, times))}` : null, created_at: '2026-09-10T12:00:00',
+            id: `snap-${np}-${seed}`, players: ids(np), moves: code,
+            extras: names ? encodeExtrasBytes(names, times) : NONE, createdMs: STAMP,
         },
     };
 }
@@ -70,17 +71,15 @@ test('a row with extras: the stored names, the game\'s length, and a code the re
     // The extras keep each gap to about a percent, not to the second.
     const played = replaySummary(code)!.moves * 9;
     assert.ok(entry.durationSec !== null && Math.abs(entry.durationSec - played) < played * 0.02, `the gaps between moves, summed (${entry.durationSec} of ${played} s)`);
-    assert.equal(entry.createdAt.toISOString(), '2026-09-10T12:00:00.000Z', 'a stamp with no zone is UTC');
+    assert.equal(entry.createdAt.toISOString(), '2026-09-10T12:00:00.000Z', 'the stored time, in ms since the epoch');
     const [moves, extras] = entry.code.split('-');
     assert.deepEqual(kernelB32Decode(moves), code, 'the moves half is the game');
     assert.deepEqual(kernelB32Decode(extras), encodeExtrasBytes(names, Array.from({ length: replaySummary(code)!.moves + 1 }, (_, k) => 1_780_000_000 + k * 9)), 'the extras half is the stored blob');
-    assert.deepEqual(decodeHistoryRow({ ...r, moves: hex(code) }, 'u-1'), entry, 'hex reads the same without the bytea prefix');
-    assert.equal(decodeHistoryRow({ ...r, created_at: '2026-09-10T12:00:00+02:00' }, 'u-1')!.createdAt.toISOString(), '2026-09-10T10:00:00.000Z', 'a stamp that names its zone keeps it');
 });
 
 test('a row without extras: seats are numbered, there is no length, and the code is the moves alone', () => {
     const { row: r, code } = row(4, 42, null);
-    for (const extras of [null, '', '\\x']) {
+    for (const extras of [NONE]) {
         const entry = decodeHistoryRow({ ...r, extras }, 'u-0')!;
         assert.deepEqual(entry.names, ['#1', '#2', '#3', '#4']);
         assert.equal(entry.durationSec, null);
@@ -92,7 +91,7 @@ test('a row without extras: seats are numbered, there is no length, and the code
 test('extras that do not decode cost the names and the length, and nothing else', () => {
     const { row: r, code } = row(2, 7, ['Boris', 'Me']);
     const whole = decodeHistoryRow(r, 'u-1')!;
-    const entry = decodeHistoryRow({ ...r, extras: '\\xffffffffffff' }, 'u-1')!;
+    const entry = decodeHistoryRow({ ...r, extras: new Uint8Array([255, 255, 255, 255, 255, 255]) }, 'u-1')!;
     assert.deepEqual(entry.names, ['#1', '#2']);
     assert.equal(entry.durationSec, null);
     assert.deepEqual([entry.mySeat, entry.myRank, entry.foolSeat, entry.playerCount], [whole.mySeat, whole.myRank, whole.foolSeat, whole.playerCount]);
@@ -102,11 +101,11 @@ test('extras that do not decode cost the names and the length, and nothing else'
 test('a row the player holds no seat in is no line, and is not decoded to find that out', () => {
     const { row: r } = row(2, 7, null);
     assert.equal(decodeHistoryRow(r, 'u-nobody'), null);
-    assert.equal(decodeHistoryRow({ ...r, moves: '\\xffff' }, 'u-nobody'), null, 'the moves are never read');
-    assert.equal(decodeHistoryRow({ ...r, player_ids: null }, 'u-0'), null, 'a row with no seats has nobody in it');
+    assert.equal(decodeHistoryRow({ ...r, moves: new Uint8Array([255, 255]) }, 'u-nobody'), null, 'the moves are never read');
+    assert.equal(decodeHistoryRow({ ...r, players: [] }, 'u-0'), null, 'a row with no seats has nobody in it');
 });
 
 test('a snapshot that does not decode throws, for the screen to skip', () => {
     const { row: r } = row(2, 7, null);
-    assert.throws(() => decodeHistoryRow({ ...r, moves: '\\xffff' }, 'u-0'), /the snapshot does not decode/);
+    assert.throws(() => decodeHistoryRow({ ...r, moves: new Uint8Array([255, 255]) }, 'u-0'), /the snapshot does not decode/);
 });

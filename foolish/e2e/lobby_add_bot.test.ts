@@ -1,6 +1,6 @@
 // E2E for the lobby bot picker (src/components/Lobby.tsx) rendered for real in
 // jsdom — the deployed component, its effects, and its click handlers, with only
-// the surrounding contexts / supabase client stubbed.
+// the surrounding contexts and the backend seam stubbed.
 //
 // Guards the "adds a random bot" regression: the bot roster loads over the network,
 // and until it lands the "Add Bot" button has no specific bot selected. A click in
@@ -22,6 +22,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { fixture } from './helpers/table_fixture.ts';
 import { fixtureView } from './helpers/table_mem.ts';
+import { fakeBackend } from './helpers/fake_backend.ts';
 
 // ---- jsdom DOM env the React client renders into ----
 const dom = new JSDOM('<!DOCTYPE html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
@@ -41,9 +42,9 @@ g.IS_REACT_ACT_ENVIRONMENT = true;
 // (src/common/botLadder.ts), so handwritten (tier 3) must come out ahead of
 // cordite (tier 9) whatever order the rows arrive in. Real bot ids on every row.
 const ROSTER = [
-    { id: 'bot-cordite-2', nickname: '%Cordite 2', strategy_key: 'cordite' },
-    { id: 'bot-handwritten-3', nickname: '%Handwritten 3', strategy_key: 'handwritten' },
-    { id: 'bot-handwritten-1', nickname: '%Handwritten 1', strategy_key: 'handwritten' },
+    { id: 'bot-cordite-2', nickname: '%Cordite 2', key: 'cordite' },
+    { id: 'bot-handwritten-3', nickname: '%Handwritten 3', key: 'handwritten' },
+    { id: 'bot-handwritten-1', nickname: '%Handwritten 1', key: 'handwritten' },
 ];
 
 // Controls WHEN the roster fetch resolves, so the test can click mid-load.
@@ -52,17 +53,9 @@ const rosterGate = new Promise<void>((r) => { releaseRoster = r; });
 
 const addBotCalls: Array<string | undefined> = [];
 
-// Minimal supabase whose bots query resolves only after `releaseRoster()`.
-const supabaseMock = {
-    from: () => ({
-        // No .order(): the ladder is the kernel's tier, not a column, so the
-        // query is a plain select and the component sorts what comes back.
-        select: () => ({
-            then: (cb: (r: { data: any; error: any }) => void) =>
-                rosterGate.then(() => cb({ data: ROSTER, error: null })),
-        }),
-    }),
-};
+// A backend whose bots answer arrives only after `releaseRoster()`.
+const fb = fakeBackend({ user: { id: 'h1', username: 'ME' } });
+fb.module.bots = () => rosterGate.then(() => ROSTER);
 
 // The board the lobby renders: one human seated, the viewer - the kernel's own
 // envelope for that seat, read the way the page reads one, so everything the
@@ -85,7 +78,7 @@ mock.module('next/navigation', { namedExports: { useParams: () => ({ game_id: 'A
 mock.module('../src/common/constants.ts', { namedExports: { WEBSITE_DOMAIN: 'example.com' } });
 mock.module('../src/contexts/AuthContext.tsx', { namedExports: { useAuth: () => ({ user_id: 'h1' }) } });
 mock.module('qrcode.react', { namedExports: { QRCodeSVG: () => null } });
-mock.module('../src/common/Connector.ts', { defaultExport: supabaseMock });
+mock.module('../src/common/backend.ts', { namedExports: fb.module });
 mock.module('../src/utils/usePreventScroll.ts', { namedExports: { usePreventScroll: () => {} } });
 mock.module('../src/components/TexturedSurface.tsx', { namedExports: {
     useTexture: () => ({ woodUrl: null, concreteUrl: null }),

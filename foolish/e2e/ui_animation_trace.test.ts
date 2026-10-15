@@ -50,6 +50,8 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { JSDOM } from 'jsdom';
+import { fakeBackend } from './helpers/fake_backend.ts';
+import { netClient } from '../sdk/ts/net/net_client.ts';
 import { fixture, fixtureTable, WAITING, PLAYING, GAME_OVER, IN, OUT, type FixtureSeat, type TableFixture } from './helpers/table_fixture.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import { clientTable, encodeAction } from '../sdk/ts/table/client_table.ts';
@@ -107,8 +109,6 @@ Object.defineProperty(dom.window, 'innerWidth', { value: 1280, configurable: tru
 Object.defineProperty(dom.window, 'innerHeight', { value: 800, configurable: true });
 
 // ---- the server: the C Table, answering when the case says so ---------------------
-const hex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
-const b64 = (b: Uint8Array) => Buffer.from(b).toString('base64');
 
 interface Push { gid: string; version: number; bytes: Uint8Array; seq: string }
 
@@ -162,7 +162,7 @@ class Server {
         const pushes: [string, Uint8Array][] = [];
         // THE ADAPTER'S GATE, and not `nEvents > 0` alone: a `good` flies no
         // card, so it emits no event, and that lone test threw its push away
-        // (server/impls/supabase/functions/_shared/adapter/table_io.ts). A
+        // (the server's fan-out, c_base/src/app/fanout.h). A
         // stale mirror here would leave the page's empty-stream path untested
         // by the one suite that reads what the page actually drew.
         if (p.nEvents > 0 || p.goodsChanged) {
@@ -197,81 +197,28 @@ class Server {
     }
 }
 
-// ---- the network ---------------------------------------------------------------------
-interface Pending { kind: 'action' | 'meta'; body: unknown; type?: string; idx?: number[]; resolve: (r: { data: unknown; error: unknown }) => void }
+// ---- the network: the backend seam (src/common/backend.ts) ------------------------------
+interface Pending { kind: 'action' | 'meta'; wire?: Uint8Array; type?: string; idx?: number[]; resolve: (r: any) => void }
 let server: Server | null = null;
 let pending: Pending[] = [];
-const channels = new Map<string, { handlers: { event: string; cb: (p: unknown) => void }[] }>();
 
-function query(table: string) {
-    const filters: Record<string, unknown> = {};
-    const answer = (single: boolean) => {
-        let data: unknown = null;
-        const gid = filters.game_id as string | undefined;
-        if (table === 'player_views') {
-            data = single ? (server && gid === server.gid && server.seatOf(ME) >= 0 ? { view: hex(server.envelope(ME)) } : null) : [];
-        } else if (table === 'spectator_views') data = null;
-        else if (table === 'chat_messages') data = [];
-        else if (table === 'user_elo_ratings' || table === 'bots') data = [];
-        return { data, error: null };
-    };
-    const chain: any = {
-        select: () => chain, order: () => chain, limit: () => chain, insert: () => chain,
-        eq: (k: string, v: unknown) => { filters[k] = v; return chain; },
-        in: () => chain,
-        maybeSingle: () => Promise.resolve(answer(true)),
-        single: () => Promise.resolve(answer(true)),
-        then: (ok: (r: unknown) => unknown, bad?: (e: unknown) => unknown) => Promise.resolve(answer(false)).then(ok, bad),
-    };
-    return chain;
-}
-
-function channel(topic: string) {
-    const entry = { handlers: [] as { event: string; cb: (p: unknown) => void }[] };
-    channels.set(topic, entry);
-    const ch: any = {
-        topic,
-        on: (_type: string, filter: { event?: string }, cb: (p: unknown) => void) => { entry.handlers.push({ event: filter?.event ?? '', cb }); return ch; },
-        subscribe: (cb?: (status: string, err?: unknown) => void) => { cb?.('SUBSCRIBED'); return ch; },
-        unsubscribe: () => Promise.resolve(),
-    };
-    return ch;
-}
-
-const supabaseMock = {
-    from: query,
-    channel,
-    getChannels: () => [],
-    removeChannel: () => Promise.resolve(),
-    realtime: { setAuth: () => Promise.resolve() },
-    functions: {
-        invoke: (name: string, opts: { body?: unknown }) => {
-            const body = opts?.body;
-            const hold = () => new Promise((resolve) => { pending.push({ kind: name === 'action' ? 'action' : 'meta', body, resolve }); });
-            // The bot bump is an ask to `meta` (ASK_BUMP): nothing to answer.
-            // Which ask a body holds is the kernel's to say, and a Blob reads
-            // asynchronously, so a meta request is held one turn later than a move.
-            if (name === 'meta' && body instanceof Blob) {
-                return body.arrayBuffer().then((buf) => {
-                    const bytes = new Uint8Array(buf), type = askKindName(bytes);
-                    if (type === 'bump') return { data: null, error: null };
-                    const ask = fixtureTable().askDecode(bytes);
-                    return new Promise((resolve) => {
-                        pending.push({ kind: 'meta', body, type, idx: typeof ask === 'number' ? [] : [...ask.idx], resolve });
-                    });
-                });
-            }
-            return hold();
-        },
-    },
-    auth: {
-        getSession: () => Promise.resolve({ data: { session: null } }),
-        onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }),
-    },
+const fb = fakeBackend();
+// The game page's read: my own view while I sit at the game.
+fb.module.view = async (gid: string) => (server && gid === server.gid && server.seatOf(ME) >= 0 ? server.envelope(ME) : null);
+// A move or an ask waits for the test to answer it.
+fb.onAction = (_gid, wire) => new Promise((resolve) => { pending.push({ kind: 'action', wire, resolve }); });
+fb.onMeta = (ask) => {
+    // The bot bump: nothing to answer. Which ask a body holds is the kernel's to say.
+    const type = askKindName(ask);
+    if (type === 'bump') return Promise.resolve(new Uint8Array());
+    const decoded = fixtureTable().askDecode(ask);
+    return new Promise((resolve) => { pending.push({ kind: 'meta', type, idx: typeof decoded === 'number' ? [] : [...decoded.idx], resolve }); });
 };
+/** The action answer the client reads, from the kernel's own response bytes. */
+const actionAnswer = (rc: number, reject: number, version: number) => netClient().action(200, fixtureTable().actionResponse(rc, reject, version));
 
 let routeGameId = '';
-mock.module('../src/common/Connector.ts', { defaultExport: supabaseMock });
+mock.module('../src/common/backend.ts', { namedExports: fb.module });
 mock.module('next/navigation', { namedExports: {
     useParams: () => (routeGameId ? { game_id: routeGameId } : {}),
     useRouter: () => ({ push() {}, replace() {}, back() {} }),
@@ -550,31 +497,23 @@ async function answer(stage: Stage, label: string): Promise<void> {
     assert.ok(req, `${label}: a request is waiting`);
     await stage.step(label, async () => {
         if (req.kind === 'action') {
-            const body = new Uint8Array(await (req.body as Blob).arrayBuffer());
-            const t = fixtureTable();
-            const decoded = t.requestDecode(body);
-            assert.ok(typeof decoded !== 'number', `${label}: the request decodes`);
-            const r = s.act(ME, decoded.wire);            const response = fixtureTable().actionResponse(r.rc, r.reject, s.version);
-            req.resolve({ data: response.buffer.slice(response.byteOffset, response.byteOffset + response.byteLength), error: null });
+            const r = s.act(ME, req.wire!);
+            req.resolve(actionAnswer(r.rc, r.reject, s.version));
         } else {
             if (req.type === 'continue') s.op(ME, (t) => t.continueGame(ME));
             else if (req.type === 'rearrange-hand') s.op(ME, (t) => t.rearrangeHand(ME, req.idx!));
             else assert.fail(`${label}: an unexpected meta ${req.type}`);
-            const env = s.envelope(ME);
-            req.resolve({ data: env.buffer.slice(env.byteOffset, env.byteOffset + env.byteLength), error: null });
+            req.resolve(s.envelope(ME));
         }
     });
 }
 
-/** Delivers the next push for me on my gu- channel, as realtime would. */
+/** Delivers the next push for me on the game's stream, as the server would. */
 async function deliver(stage: Stage, label: string, push?: Push): Promise<void> {
     const s = server!;
     const p = push ?? s.take(ME);
-    const ch = channels.get(`gu-${s.gid}-${ME}`);
-    assert.ok(ch, `${label}: the page joined its gu- channel`);
-    const handler = ch.handlers.find((x) => x.event === 'animation_events');
-    assert.ok(handler, `${label}: the page listens for animation events`);
-    await stage.step(label, () => handler.cb({ payload: { b: b64(p.bytes) } }));
+    assert.ok((fb.held.get(`game:${s.gid}`) ?? 0) > 0, `${label}: the page holds the game's stream`);
+    await stage.step(label, () => fb.push.cast(s.gid, p.bytes));
 }
 
 const traceText = (frames: Frame[]): string =>
@@ -611,7 +550,6 @@ async function play(name: string, seed: number, gid: string, board: TableFixture
     server = new Server(gid, board);
     overlayMisses.length = 0;
     pending = [];
-    channels.clear();
     seedRandom(seed);
     installClock();
     const stage = new Stage();
@@ -1412,12 +1350,9 @@ test('a refused card comes home unselected: the next pick is a pick of its own, 
         const req = pending.shift();
         assert.ok(req && req.kind === 'action', 'the attack was sent');
         await s.step('server refuses mine: stale round', async () => {
-            const decoded = fixtureTable().requestDecode(new Uint8Array(await (req!.body as Blob).arrayBuffer()));
-            assert.ok(typeof decoded !== 'number', 'the request decodes');
-            const r = srv.op(ME, (t) => t.act(ME, decoded.wire, 0, 1));
+            const r = srv.op(ME, (t) => t.act(ME, req!.wire!, 0, 1));
             assert.equal(r.rc, L.TABLE_STALE_ROUND, 'the server refuses it as stale');
-            const response = fixtureTable().actionResponse(r.rc, r.reject, srv.version);
-            req!.resolve({ data: response.buffer.slice(response.byteOffset, response.byteOffset + response.byteLength), error: null });
+            req!.resolve(actionAnswer(r.rc, r.reject, srv.version));
         });
         await s.advance(1500);
         assert.deepEqual(selectedInHand(s.host), [], 'the refused six came home unselected');
@@ -1512,7 +1447,7 @@ test('a push for another table plays nothing on this page', async () => {
         const push = there.take(ME);
         const { animationFeed } = await import('../src/state/animationFeed.ts');
         await s.step('push: Boris throws in 9d on the other table', () => {
-            animationFeed.publish({ b: b64(push.bytes), game_id: there.gid });
+            animationFeed.publish({ cast: push.bytes, game_id: there.gid });
         });
         await s.advance(150);
         assert.equal(flights(s.host).length, 0, 'nothing flies on this page');
@@ -1839,7 +1774,6 @@ async function openingDeal(name: string, gid: string, ids: FixtureSeat[], wantDe
     server = new Server(gid, board);
     overlayMisses.length = 0;
     pending = [];
-    channels.clear();
     seedRandom(301);
     installClock();
     /** `ledger` is what the role marks are WEARING (useRoleMotion's shown roles), the value the ring draws from. */
@@ -1869,8 +1803,7 @@ async function openingDeal(name: string, gid: string, ids: FixtureSeat[], wantDe
         assert.ok(req && req.kind === 'meta' && req.type === 'start', `${name}: Ready asks the server to start`);
         await stage.step('server starts the game', () => {
             server!.op(ME, (t) => t.ready(ME, seed));
-            const env = server!.envelope(ME);
-            req!.resolve({ data: env.buffer.slice(env.byteOffset, env.byteOffset + env.byteLength), error: null });
+            req!.resolve(server!.envelope(ME));
         });
         await stage.advance(50);
         await deliver(stage, 'push: the opening deal');

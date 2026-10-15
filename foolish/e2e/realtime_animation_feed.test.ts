@@ -1,16 +1,15 @@
-// E2E for the live game's animation channel producer
+// E2E for the live game's cast stream producer
 // (src/state/RealtimeAnimationFeed.tsx), rendered for real in jsdom with only the
-// supabase client, auth, route and server actions stubbed.
+// backend seam (e2e/helpers/fake_backend.ts), auth, route and server actions
+// stubbed.
 //
-// The web joins `gu-{game}-{user}` as a PRIVATE channel, and Realtime admits the
-// join only once the user is a member of the game (the player_hands EXISTS in the
-// channel policy, see e2e/realtime_channel_auth.test.ts). Opening a game you are
-// about to join, or one whose create is still persisting in the background, is
-// exactly that window: the first joins are refused and retried. Realtime has no
-// catch-up, so every broadcast sent while the join was refused - the joiner's own
-// join animation among them, and the join response does not apply state for the
-// joiner - is gone. The feed must refetch authoritative state once it is finally
-// admitted, the same as after a reconnect. When the very first join is admitted
+// The server admits a seat's own stream only once the user is a member of the
+// game. Opening a game you are about to join, or one whose create is still
+// persisting, is exactly that window: the first subscriptions are refused and
+// retried (by the kernel's client). Casts are not replayed, so every cast sent
+// while the stream was refused - the joiner's own join animation among them - is
+// gone. The feed must refetch authoritative state once it is finally admitted,
+// the same as after a reconnect. When the very first subscription is admitted
 // nothing was missed, and it must not spend a fetch.
 //
 // Needs --experimental-test-module-mocks (see the test:e2e script).
@@ -18,6 +17,7 @@
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
+import { fakeBackend } from './helpers/fake_backend.ts';
 
 const dom = new JSDOM('<!DOCTYPE html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
 const g = globalThis as any;
@@ -30,33 +30,8 @@ g.IS_REACT_ACT_ENVIRONMENT = true;
 const GAME_ID = 'ab12cd';
 const USER_ID = '60771e41-70e6-4e61-b077-000000000002';
 
-type Status = 'SUBSCRIBED' | 'CHANNEL_ERROR' | 'TIMED_OUT' | 'CLOSED';
-
-// Each join attempt consumes the next scripted outcome; a SUBSCRIBED channel can
-// later be dropped by the test through `drop`.
-let script: Status[] = [];
-const joins: { topic: string; private: boolean }[] = [];
-let live: { handlers: Map<string, (p: any) => void>; statusCb: (s: Status) => void } | null = null;
+const fb = fakeBackend({ user: { id: USER_ID, username: 'U' } });
 const loadGameCalls: string[] = [];
-
-const supabaseMock = {
-    realtime: { setAuth: async () => {} },
-    removeChannel: async () => 'ok',
-    channel: (topic: string, opts: any) => {
-        const handlers = new Map<string, (p: any) => void>();
-        const ch = {
-            on: (_type: string, filter: { event: string }, cb: (p: any) => void) => { handlers.set(filter.event, cb); return ch; },
-            subscribe: (statusCb: (s: Status) => void) => {
-                joins.push({ topic, private: opts?.config?.private === true });
-                const outcome = script.shift() ?? 'CHANNEL_ERROR';
-                live = { handlers, statusCb };
-                queueMicrotask(() => statusCb(outcome));
-                return ch;
-            },
-        };
-        return ch;
-    },
-};
 
 mock.module('next/navigation', { namedExports: { useParams: () => ({ game_id: GAME_ID }), usePathname: () => `/${GAME_ID}` } });
 mock.module('../src/contexts/AuthContext.tsx', { namedExports: { useAuth: () => ({ user_id: USER_ID }) } });
@@ -68,7 +43,7 @@ mock.module('../src/contexts/ServerContext.tsx', { namedExports: {
         views: { [GAME_ID]: { mySeat: 0 } },
     }),
 } });
-mock.module('../src/common/Connector.ts', { defaultExport: supabaseMock });
+mock.module('../src/common/backend.ts', { namedExports: fb.module });
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -88,52 +63,51 @@ async function mount() {
     return { unmount: () => act(async () => { root.unmount(); }) };
 }
 
-function reset(outcomes: Status[]) {
-    script = outcomes;
-    joins.length = 0;
+function reset() {
+    fb.holdLog.length = 0;
     loadGameCalls.length = 0;
-    live = null;
 }
 
-test('feed: admitted on the first join, it republishes broadcasts and spends no refetch', async () => {
-    reset(['SUBSCRIBED']);
+test('feed: admitted on the first subscription, it republishes casts and spends no refetch', async () => {
+    reset();
     const { animationFeed } = await import('../src/state/animationFeed.ts');
     const published: any[] = [];
     const off = animationFeed.subscribe((m) => published.push(m));
     const view = await mount();
-    await until(() => joins.length === 1 && live !== null, 'the first join');
-    await sleep(100);
-
-    assert.deepEqual(joins, [{ topic: `gu-${GAME_ID}-${USER_ID}`, private: true }], 'joins its own private gu- topic');
-    // A payload is { b }; anything beside it (here a retired key) is not carried on.
-    live!.handlers.get('animation_events')!({ payload: { b: 'Y2FzdA==', t: 'as3' } });
-    assert.deepEqual(published, [{ b: 'Y2FzdA==', game_id: GAME_ID }], 'the cast republished with its game id, and nothing else');
+    await until(() => fb.held.get(`game:${GAME_ID}`) === 1, 'the hold');
+    fb.push.joined(GAME_ID, true);
+    const cast = new Uint8Array([1, 2, 3]);
+    fb.push.cast(GAME_ID, cast);
+    fb.push.cast('other1', new Uint8Array([9]));
+    assert.deepEqual(published, [{ cast, game_id: GAME_ID }], 'its own game\'s cast republished with its game id, and nothing else');
+    await sleep(50);
     assert.deepEqual(loadGameCalls, [], 'nothing was missed, so nothing is refetched');
-
     off();
     await view.unmount();
+    assert.equal(fb.held.get(`game:${GAME_ID}`), undefined, 'let go on unmount');
 });
 
 test('feed: refused until the user is a member, it refetches once admitted', async () => {
-    reset(['CHANNEL_ERROR', 'CHANNEL_ERROR', 'SUBSCRIBED']);
+    reset();
     const view = await mount();
-    await until(() => joins.length === 3, 'two refused joins and a third that is admitted');
+    await until(() => fb.held.get(`game:${GAME_ID}`) === 1, 'the hold');
+    fb.push.refused(GAME_ID);
+    fb.push.refused(GAME_ID);
+    fb.push.joined(GAME_ID, true);
     await until(() => loadGameCalls.length > 0, 'the refetch after admission');
     await sleep(100);
-
     assert.deepEqual(loadGameCalls, [GAME_ID], 'exactly one refetch of this game after the refused window');
     await view.unmount();
 });
 
-test('feed: dropped after connecting, it refetches when re-admitted', async () => {
-    reset(['SUBSCRIBED', 'SUBSCRIBED']);
+test('feed: rejoined after a reconnect, it refetches', async () => {
+    reset();
     const view = await mount();
-    await until(() => joins.length === 1, 'the first join');
+    await until(() => fb.held.get(`game:${GAME_ID}`) === 1, 'the hold');
+    fb.push.joined(GAME_ID, true);
     await sleep(50);
     assert.deepEqual(loadGameCalls, [], 'no refetch on the first admission');
-
-    live!.statusCb('CHANNEL_ERROR');
-    await until(() => joins.length === 2, 'the rejoin');
+    fb.push.joined(GAME_ID, true);
     await until(() => loadGameCalls.length > 0, 'the refetch after the rejoin');
     assert.deepEqual(loadGameCalls, [GAME_ID]);
     await view.unmount();
