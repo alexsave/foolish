@@ -27,6 +27,7 @@
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
+import { fakeBackend } from './helpers/fake_backend.ts';
 import { fixture, fixtureTable, PLAYING, type FixtureSeat } from './helpers/table_fixture.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 
@@ -49,60 +50,27 @@ dom.window.matchMedia ??= ((q: string) => ({
 g.matchMedia = dom.window.matchMedia;
 (dom.window.HTMLCanvasElement.prototype as any).getContext = () => null;
 
-// ---- the network: supabase, answering from these rows, when the gate lets it ------
+// ---- the network: the backend seam, answering from these rows, when the gate lets it ----
 /** A door a request waits at until the test opens it. */
 class Gate {
     private open_!: () => void;
     readonly passed = new Promise<void>((r) => { this.open_ = r; });
     open(): void { this.open_(); }
 }
-let dashboard: string[] = [];                 // hex views the dashboard lists
-const playerViews = new Map<string, string>(); // game id -> hex view of the signed-in player
-let viewGate: Gate | null = null;              // holds the game page's read of its view
-let createGate: Gate | null = null;            // holds `create`'s answer
+let dashboard: Uint8Array[] = [];                  // the views the dashboard lists
+const playerViews = new Map<string, Uint8Array>(); // game id -> the signed-in player's view
+let viewGate: Gate | null = null;                  // holds the game page's read of its view
+let createGate: Gate | null = null;                // holds `create`'s answer
 let createAnswer: Uint8Array | null = null;
 
-function query(table: string) {
-    const filters: Record<string, unknown> = {};
-    const one = async () => {
-        const gid = filters.game_id as string | undefined;
-        if (table !== 'player_views' && table !== 'spectator_views') return { data: null, error: null };
-        await viewGate?.passed;
-        return { data: table === 'player_views' && gid && playerViews.has(gid) ? { view: playerViews.get(gid) } : null, error: null };
-    };
-    const many = async () => ({ data: table === 'player_views' ? dashboard.map((view) => ({ view })) : [], error: null });
-    const chain: any = {
-        select: () => chain, order: () => chain, limit: () => chain, insert: () => chain,
-        eq: (k: string, v: unknown) => { filters[k] = v; return chain; },
-        in: () => chain,
-        maybeSingle: one,
-        single: one,
-        then: (ok: (r: unknown) => unknown, bad?: (e: unknown) => unknown) => many().then(ok, bad),
-    };
-    return chain;
-}
-const channel: any = { on: () => channel, subscribe: () => channel, unsubscribe: () => Promise.resolve() };
-const supabaseMock = {
-    from: query,
-    channel: () => channel,
-    getChannels: () => [],
-    removeChannel: () => Promise.resolve(),
-    realtime: { setAuth: () => Promise.resolve() },
-    functions: { invoke: async (name: string) => {
-        if (name !== 'create') return { data: null, error: null };
-        await createGate?.passed;
-        const b = createAnswer!;
-        return { data: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength), error: null };
-    } },
-    auth: {
-        getSession: () => Promise.resolve({ data: { session: null } }),
-        onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }),
-    },
-};
+const fb = fakeBackend({ user: { id: 'u-me-0000', username: 'ME' } });
+fb.module.games = async () => dashboard;
+fb.module.view = async (gid: string) => { await viewGate?.passed; return playerViews.get(gid) ?? null; };
+fb.module.create = async () => { await createGate?.passed; return createAnswer!; };
 
 let routeGameId = '';
 const pushed: string[] = [];
-mock.module('../src/common/Connector.ts', { defaultExport: supabaseMock });
+mock.module('../src/common/backend.ts', { namedExports: fb.module });
 mock.module('next/navigation', { namedExports: {
     useParams: () => (routeGameId ? { game_id: routeGameId } : {}),
     useRouter: () => ({ push(to: string) { pushed.push(to); }, replace() {}, back() {} }),
@@ -120,7 +88,6 @@ function envelopeBytes(gameId: string, board: { state: Uint8Array; roster: Uint8
     assert.ok(env instanceof Uint8Array, `envelope: ${env}`);
     return env;
 }
-const hex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 const lobbyOf = (gameId: string, title: string) => envelopeBytes(gameId, fixture().title(title).seats(SEATS).build());
 const boutOf = (gameId: string, title: string) => envelopeBytes(gameId, fixture().title(title).seats(SEATS).status(PLAYING)
     .trump('Qh').deck('7s 8s 9s Ts').hand(0, '6c 7c').hand(1, '6d 7d').build());
@@ -193,8 +160,8 @@ function assertBare(screen: HTMLElement, where: string): void {
 
 test('from the dashboard into a lobby: the name alone while the view loads, and the lobby takes it over in place', async () => {
     const view = lobbyOf('kitchen1', 'Kitchen table');
-    dashboard = [hex(view)];
-    playerViews.set('kitchen1', hex(view));
+    dashboard = [view];
+    playerViews.set('kitchen1', view);
     const dash = await open('');
     assert.match(dash.host.textContent ?? '', /Kitchen table/, 'the dashboard lists the lobby');
     await dash.close();
@@ -213,7 +180,7 @@ test('from the dashboard into a lobby: the name alone while the view loads, and 
 });
 
 test('straight onto a game URL: nothing is known, so nothing is drawn', async () => {
-    playerViews.set('direct01', hex(lobbyOf('direct01', 'Never listed')));
+    playerViews.set('direct01', lobbyOf('direct01', 'Never listed'));
     viewGate = new Gate();
     const page = await open('direct01');
     try {
@@ -226,8 +193,8 @@ test('straight onto a game URL: nothing is known, so nothing is drawn', async ()
 
 test('from the dashboard into a game being played: no name, the board has no title for it to become', async () => {
     const view = boutOf('playing1', 'Mid game');
-    dashboard = [hex(view)];
-    playerViews.set('playing1', hex(view));
+    dashboard = [view];
+    playerViews.set('playing1', view);
     const dash = await open('');
     assert.match(dash.host.textContent ?? '', /Mid game/, 'the dashboard lists the game');
     await dash.close();
@@ -264,7 +231,7 @@ test('create new game: the overlay is bare until `create` answers, then it is th
     assert.equal(dom.window.document.querySelector('[aria-busy="true"].lobby'), null, 'the overlay leaves with the dashboard');
 
     // And the game page it lands on, a new provider, still has the name.
-    playerViews.set('fresh001', hex(createAnswer));
+    playerViews.set('fresh001', createAnswer);
     viewGate = new Gate();
     const page = await open('fresh001');
     try {

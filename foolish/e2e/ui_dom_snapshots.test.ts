@@ -13,7 +13,7 @@
  * The envelopes are the server's own bytes: a board composed in the kernel
  * (e2e/helpers/table_fixture.ts), loaded into the C Table, played on where the
  * screen needs a real move (a pickup), and written by table_envelope for the
- * viewer. Only the network (supabase) and the router are stubbed.
+ * viewer. Only the network (the backend seam, src/common/backend.ts) and the router are stubbed.
  *
  * What is normalized, and why: nothing in the markup. Math.random is seeded per
  * screen (card backs pick a random tilt), and timers of 300 ms or more never
@@ -28,6 +28,7 @@ import { test, mock, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
+import { fakeBackend } from './helpers/fake_backend.ts';
 import { fixture, fixtureTable, parseCardText, PLAYING, GAME_OVER, IN, OUT, READY, IDLE, type FixtureSeat } from './helpers/table_fixture.ts';
 import { encodeAction } from '../sdk/ts/table/client_table.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
@@ -69,64 +70,43 @@ g.matchMedia = dom.window.matchMedia;
 // jsdom has no canvas: texture generators see null contexts and fall back.
 (dom.window.HTMLCanvasElement.prototype as any).getContext = () => null;
 
-// ---- the network: supabase, answering from the screen's rows -----------------------
+// ---- the network: the backend seam, answering from the screen's rows ----------------
 interface Rows {
-    playerViews: Map<string, string>;    // game id -> hex view of the signed-in player
-    spectatorViews: Map<string, string>; // game id -> hex spectator view
-    dashboard: string[];                 // hex views, newest first
+    playerViews: Map<string, Uint8Array>;    // game id -> view of the signed-in player
+    spectatorViews: Map<string, Uint8Array>; // game id -> spectator view
+    dashboard: Uint8Array[];                 // views, newest first
     elo: { user_id: string; elo_rating: number; previous_elo: number }[];
     botElo: { id: string; elo_rating: number; previous_elo: number }[];
     bots: { id: string; nickname: string; strategy_key: string }[];
-    snapshots: { id: string; player_ids: string[]; moves: string; extras: string | null; created_at: string }[];
+    snapshots: { id: string; player_ids: string[]; moves: Uint8Array; extras: Uint8Array | null; created_at: string }[];
 }
 let rows: Rows = emptyRows();
 function emptyRows(): Rows {
     return { playerViews: new Map(), spectatorViews: new Map(), dashboard: [], elo: [], botElo: [], bots: [], snapshots: [] };
 }
 
-/** A PostgREST chain: every filter returns the chain; awaiting it (or a terminal) answers from `rows`. */
-function query(table: string) {
-    const filters: Record<string, unknown> = {};
-    const answer = (single: boolean) => {
-        let data: unknown = null;
-        const gid = filters.game_id as string | undefined;
-        if (table === 'player_views') data = single ? (gid && rows.playerViews.has(gid) ? { view: rows.playerViews.get(gid) } : null)
-            : rows.dashboard.map((view) => ({ view }));
-        else if (table === 'spectator_views') data = gid && rows.spectatorViews.has(gid) ? { view: rows.spectatorViews.get(gid) } : null;
-        else if (table === 'chat_messages') data = [];
-        else if (table === 'user_elo_ratings') data = rows.elo;
-        else if (table === 'bots') data = filters.in ? rows.botElo : rows.bots;
-        else if (table === 'game_snapshots') data = rows.snapshots;
-        return { data, error: null };
-    };
-    const chain: any = {
-        select: () => chain, order: () => chain, limit: () => chain, insert: () => chain,
-        eq: (k: string, v: unknown) => { filters[k] = v; return chain; },
-        in: (k: string, v: unknown) => { filters.in = [k, v]; return chain; },
-        maybeSingle: () => Promise.resolve(answer(true)),
-        single: () => Promise.resolve(answer(true)),
-        then: (ok: (r: unknown) => unknown, bad?: (e: unknown) => unknown) => Promise.resolve(answer(false)).then(ok, bad),
-    };
-    return chain;
-}
-const invoked: string[] = [];
-const channel: any = { on: () => channel, subscribe: () => channel, unsubscribe: () => Promise.resolve() };
-const supabaseMock = {
-    from: query,
-    channel: () => channel,
-    getChannels: () => [],
-    removeChannel: () => Promise.resolve(),
-    realtime: { setAuth: () => Promise.resolve() },
-    // Every edge function the page calls, by name, so a test can see a move sent.
-    functions: { invoke: (name: string) => { invoked.push(name); return Promise.resolve({ data: null, error: null }); } },
-    auth: {
-        getSession: () => Promise.resolve({ data: { session: null } }),
-        onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }),
-    },
+const fb = fakeBackend();
+// The server answers a game's view with the player's own when they sit there, else the spectators'.
+fb.module.view = async (gid: string) => rows.playerViews.get(gid) ?? rows.spectatorViews.get(gid) ?? null;
+fb.module.games = async () => rows.dashboard;
+fb.module.bots = async () => rows.bots.map((b) => ({ id: b.id, nickname: b.nickname, key: b.strategy_key }));
+fb.module.history = async () => ({
+    rating: rows.elo.find((r) => r.user_id === ME)?.elo_rating ?? null,
+    rows: rows.snapshots.map((x) => ({ id: x.id, createdMs: Date.parse(x.created_at + 'Z'), players: x.player_ids,
+        moves: x.moves, extras: x.extras ?? new Uint8Array() })),
+});
+// Every write the page sends, by name, so a test can see a move sent.
+const sent = new Set(['action', 'meta', 'create']);
+const invoked = {
+    get length() { return this.list().length; },
+    set length(_n: number) { fb.calls.length = 0; },
+    list: () => fb.calls.filter((c) => sent.has(c.fn)).map((c) => c.fn),
+    join(sep: string) { return this.list().join(sep); },
+    includes(fn: string) { return this.list().includes(fn); },
 };
 
 let routeGameId = '';
-mock.module('../src/common/Connector.ts', { defaultExport: supabaseMock });
+mock.module('../src/common/backend.ts', { namedExports: fb.module });
 mock.module('next/navigation', { namedExports: {
     useParams: () => (routeGameId ? { game_id: routeGameId } : {}),
     useRouter: () => ({ push() {}, replace() {}, back() {} }),
@@ -142,16 +122,15 @@ function seedRandom(seed: number): void {
 after(() => { Math.random = realRandom; });
 
 // ---- the server's bytes ---------------------------------------------------------------
-const hex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 
 function envelope(gameId: string, board: { state: Uint8Array; roster: Uint8Array }, viewer: number, version = 7,
-    after?: (t: ReturnType<typeof fixtureTable>) => void): string {
+    after?: (t: ReturnType<typeof fixtureTable>) => void): Uint8Array {
     const t = fixtureTable();
     assert.equal(t.load(board.state, board.roster), L.TABLE_OK, 'the fixture loads');
     after?.(t);
     const env = t.envelope(gameId, viewer, version);
     assert.ok(env instanceof Uint8Array, `envelope for viewer ${viewer}: ${env}`);
-    return hex(env);
+    return env;
 }
 
 // A bot seat is named as the server names it: `bots.nickname`, which carries the reserved
@@ -501,9 +480,9 @@ test('the match history', async () => {
         const summary = replaySummary(played!.code);
         assert.ok(summary, 'the code has a summary');
         const times = Array.from({ length: summary!.moves + 1 }, (_, k) => 1_780_000_000 + k * (7 + i));
-        const extras = x.names ? hex(encodeExtrasBytes(x.names, times)) : null;
+        const extras = x.names ? encodeExtrasBytes(x.names, times) : null;
         const ids = Array.from({ length: x.np }, (_, s) => (s === x.me ? ME : `u-other-${i}-${s}`));
-        snapshots.push({ id: `snap-${i}`, player_ids: ids, moves: hex(played!.code), extras, created_at: `2026-09-1${i}T12:00:00` });
+        snapshots.push({ id: `snap-${i}`, player_ids: ids, moves: played!.code, extras, created_at: `2026-09-1${i}T12:00:00` });
     }
     await screen('match_history', 72, () => {
         rows.snapshots = snapshots;

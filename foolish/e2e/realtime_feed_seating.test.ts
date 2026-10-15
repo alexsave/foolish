@@ -1,14 +1,15 @@
-// E2E for WHO joins the per-seat animation channel: the real ServerProvider and
-// the real RealtimeAnimationFeed rendered together in jsdom, with only the
-// supabase client, auth and route stubbed. The game bytes the stubs serve are
-// real envelopes the kernel writes (table_envelope) for C-built lobby rows.
+// E2E for WHO holds which cast stream: the real ServerProvider and the real
+// RealtimeAnimationFeed rendered together in jsdom, with only the backend seam
+// (src/common/backend.ts), auth and route stubbed. The game bytes the stub
+// serves are real envelopes the kernel writes (table_envelope) for C-built
+// lobby rows.
 //
-// `gu-{game}-{user}` is a private channel that Realtime admits only for a member
-// of the game. A spectator is not one, so a spectator's join is refused every
-// time, and the feed used to retry it every 500ms for as long as the game stayed
-// open. The feed now joins only while the user holds a seat, which also means a
-// user who takes a seat from the page (auto-join of an open lobby) must see that
-// seat land in client state from the join response, or they would never join.
+// A game's cast stream is one subscription the server answers by membership:
+// a member hears their own seat's casts, anyone else the spectators'. The
+// feed holds it only while the user holds a seat (a spectator's is
+// ServerContext's), so a user who takes a seat from the page (auto-join of an
+// open lobby) must see that seat land in client state from the join
+// response, or the feed would never hold their seat's stream.
 //
 // Needs --experimental-test-module-mocks (see the test:e2e script).
 
@@ -19,6 +20,7 @@ import { MAX_PLAYERS } from '../sdk/ts/gen/view_layout.bots.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import { fixture, fixtureTable, type FixtureSeat } from './helpers/table_fixture.ts';
 import { askKindName } from './helpers/ask.ts';
+import { fakeBackend } from './helpers/fake_backend.ts';
 
 const dom = new JSDOM('<!DOCTYPE html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
 const g = globalThis as any;
@@ -46,64 +48,16 @@ function lobbyEnvelope(id: string, seats: FixtureSeat[], viewer: number, version
     return env;
 }
 
-const hex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
-
 // What the stubbed backend holds, per test.
 let routeGame = FULL;
-let spectatorViews: Record<string, string> = {};
+const fb = fakeBackend({ user: { id: ME, username: 'ME' } });
 let joinResponse: Uint8Array | null = null;
-const joins: string[] = [];
-const invokes: { fn: string; type?: string }[] = [];
-
-// A PostgREST-ish chain: every filter returns the chain, and the terminal calls
-// resolve with the table's row for the game named in .eq('game_id', ...).
-function table(name: string) {
-    let gameId: string | null = null;
-    const result = () => {
-        if (name === 'spectator_views' && gameId && spectatorViews[gameId]) return { data: { view: spectatorViews[gameId] }, error: null };
-        if (name === 'chat_messages') return { data: [], error: null };
-        return { data: null, error: null };
-    };
-    const chain: any = {
-        select: () => chain, order: () => chain, limit: () => chain, in: () => chain, neq: () => chain,
-        eq: (col: string, v: string) => { if (col === 'game_id') gameId = v; return chain; },
-        maybeSingle: async () => result(),
-        single: async () => result(),
-        then: (ok: (r: any) => void, err?: (e: any) => void) => Promise.resolve(result()).then(ok, err),
-    };
-    return chain;
-}
-
-const supabaseMock = {
-    from: (name: string) => table(name),
-    rpc: async () => ({ data: null, error: null }),
-    realtime: { setAuth: async () => {} },
-    getChannels: () => [],
-    removeChannel: async () => 'ok',
-    functions: {
-        invoke: async (fn: string, opts: { body: any }) => {
-            // A request to meta is an ask, as bytes; which ask is the kernel's to say.
-            const type = opts?.body instanceof Blob ? askKindName(new Uint8Array(await opts.body.arrayBuffer())) : undefined;
-            invokes.push({ fn, type });
-            if (fn === 'meta' && type === 'join' && joinResponse) {
-                return { data: new Blob([joinResponse as Uint8Array<ArrayBuffer>]), error: null };
-            }
-            return { data: null, error: null };
-        },
-    },
-    channel: (topic: string) => {
-        const ch: any = {
-            topic,
-            on: () => ch,
-            subscribe: (cb?: (s: string) => void) => {
-                if (topic.startsWith('gu-')) joins.push(topic);
-                if (cb) queueMicrotask(() => cb('SUBSCRIBED'));
-                return ch;
-            },
-        };
-        return ch;
-    },
+fb.onMeta = async (ask) => {
+    if (askKindName(ask) === 'join' && joinResponse) return joinResponse;
+    throw new Error('refused');
 };
+const feedHolds = () => fb.holdLog.filter((h) => h.startsWith('game:'));
+const asked = (kind: string) => fb.calls.some((c) => c.fn === 'meta' && askKindName(c.arg as Uint8Array) === kind);
 
 mock.module('next/navigation', { namedExports: {
     useParams: () => ({ game_id: routeGame }),
@@ -111,7 +65,7 @@ mock.module('next/navigation', { namedExports: {
     useRouter: () => ({ push: () => {}, replace: () => {} }),
 } });
 mock.module('../src/contexts/AuthContext.tsx', { namedExports: { useAuth: () => ({ user_id: ME }) } });
-mock.module('../src/common/Connector.ts', { defaultExport: supabaseMock });
+mock.module('../src/common/backend.ts', { namedExports: fb.module });
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -128,33 +82,34 @@ async function render() {
     return async () => { await act(async () => { root.unmount(); }); };
 }
 
-test('a spectator never joins the per-seat gu- channel', async () => {
+test('a spectator holds the game\'s stream once, from the page, never from the feed', async () => {
     // A full lobby: the page loads it as a spectator and cannot auto-join.
     const full = [human(HOST, 'Host'), ...Array.from({ length: MAX_PLAYERS - 1 }, (_, i) => bot(i))];
     routeGame = FULL;
-    spectatorViews = { [FULL]: hex(lobbyEnvelope(FULL, full, -1, 3)) };
+    fb.views = { [FULL]: lobbyEnvelope(FULL, full, -1, 3) };
     joinResponse = null;
-    joins.length = 0; invokes.length = 0;
+    fb.calls.length = 0; fb.holdLog.length = 0;
 
     const unmount = await render();
-    // Long enough for several 500ms retries of a refused join.
-    await sleep(1600);
-    assert.ok(!invokes.some((i) => i.type === 'join'), 'the full lobby was not auto-joined (fixture sanity)');
-    assert.deepEqual(joins, [], 'no gu- join for a user without a seat');
+    await sleep(600);
+    assert.ok(!asked('join'), 'the full lobby was not auto-joined (fixture sanity)');
+    assert.deepEqual(feedHolds(), [`game:${FULL}`], 'one hold of the game: the spectator\'s, from ServerContext');
     await unmount();
+    assert.equal(fb.held.get(`game:${FULL}`), undefined, 'and it is let go on unmount');
 });
 
-test('taking a seat from the page joins the gu- channel for that seat', async () => {
+test('taking a seat from the page holds the seat\'s stream from the feed', async () => {
     // An open lobby: the page auto-joins it, and the join response is the
     // joiner's own seated view.
     routeGame = OPEN;
-    spectatorViews = { [OPEN]: hex(lobbyEnvelope(OPEN, [human(HOST, 'Host')], -1, 3)) };
+    fb.views = { [OPEN]: lobbyEnvelope(OPEN, [human(HOST, 'Host')], -1, 3) };
     joinResponse = lobbyEnvelope(OPEN, [human(HOST, 'Host'), human(ME, 'Me')], 1, 4);
-    joins.length = 0; invokes.length = 0;
+    fb.calls.length = 0; fb.holdLog.length = 0;
 
     const unmount = await render();
-    for (let i = 0; i < 40 && joins.length === 0; i++) await sleep(50);
-    assert.ok(invokes.some((i) => i.fn === 'meta' && i.type === 'join'), 'the open lobby was auto-joined');
-    assert.deepEqual(joins, [`gu-${OPEN}-${ME}`], 'joined exactly the seat\'s own gu- topic');
+    for (let i = 0; i < 40 && feedHolds().length === 0; i++) await sleep(50);
+    assert.ok(asked('join'), 'the open lobby was auto-joined');
+    assert.deepEqual(feedHolds(), [`game:${OPEN}`], 'the seat\'s own stream, held once');
+    assert.equal(fb.held.get(`game:${OPEN}`), 1, 'and still held');
     await unmount();
 });
