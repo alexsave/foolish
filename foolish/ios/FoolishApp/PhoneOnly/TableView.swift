@@ -170,7 +170,7 @@ public struct TableView<Session: GameSession>: View {
 
     /// Display name for an opponent seat. Offline views carry no names, so the
     /// session's `seatNames` map (localized bot names, §IOS_BOT_NAMING) wins;
-    /// online rows carry a raw `%`-nickname that gets localized; else `P<seat>`.
+    /// online rows carry a stored nickname, shown without its bot prefix; else `P<seat>`.
     private func seatName(_ p: PlayerView) -> String {
         if let mapped = game.seatNames[p.seat] { return mapped }
         if !p.name.isEmpty { return BotNames.displayNickname(p.name) }

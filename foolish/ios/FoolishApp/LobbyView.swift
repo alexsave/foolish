@@ -80,7 +80,7 @@ struct LobbyView: View {
         VStack(spacing: FSpace.s) {
             ForEach(view.players) { p in
                 HStack(spacing: FSpace.m) {
-                    if p.name.hasPrefix("%") {
+                    if BotNames.isBotName(p.name) {
                         Image(systemName: "gearshape.fill").font(.system(size: 13)).foregroundColor(FColor.textDim)
                     }
                     Text(displayName(p))

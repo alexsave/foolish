@@ -130,6 +130,9 @@ names must never be typed back into any server-bound field.
 
 ## 3. Implementation spec (one new file + five small touches)
 
+> **Superseded for stored names (2026-10).** Since the roster was renamed to cities where it is stored (2026-09-22), `BotNames.displayNickname` does what the web's `botDisplayName` does: it drops the `%` prefix and maps nothing.
+> The parser described below (Max tier, instance number, base table) is gone; `display(strategy:)` and `flavorLine` still serve the offline picker.
+
 **New file `ios/FoolishKit/DesignSystem/BotNames.swift`** with exactly three
 public entry points (every current and future surface calls these, never
 re-derives):

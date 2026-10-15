@@ -1,6 +1,7 @@
-// RootView.swift — switches between Home and the live Table, and floats the Win
-// screen over a finished game. Owns the "leave a live game" confirmation (the
-// only destructive confirm in the app, §5.5).
+// RootView.swift — switches between Home and a live game. The game's own
+// screens (lobby, table, the Win screen over a finished game, and the "leave a
+// live game" confirmation, the only destructive confirm in the app, §5.5) are
+// OfflineSessionView and OnlineSessionView below, which observe their game.
 
 import SwiftUI
 import FoolishKit
@@ -14,7 +15,6 @@ struct RootView: View {
     @StateObject private var coordinator = AppCoordinator()
     @EnvironmentObject private var auth: AuthService
     @State private var lastConfig: OfflineConfig?
-    @State private var confirmLeave = false
 
     var body: some View {
         ZStack {
@@ -37,11 +37,13 @@ struct RootView: View {
                 )
             case .table:
                 if let game = coordinator.offlineGame {
-                    tableStack(game)
+                    OfflineSessionView(game: game,
+                                       onRematch: { if let c = lastConfig { coordinator.rematch(c) } },
+                                       onHome: { coordinator.goHome() })
                 }
             case .onlineTable:
                 if let game = coordinator.onlineGame {
-                    onlineTableStack(game)
+                    OnlineSessionView(game: game, onHome: { coordinator.goHome() })
                 }
             }
         }
@@ -103,9 +105,25 @@ struct RootView: View {
         }
         #endif
     }
+}
 
-    @ViewBuilder
-    private func tableStack(_ game: LocalGame) -> some View {
+// THE SESSION VIEWS OBSERVE THEIR GAME. RootView observes only the coordinator,
+// and the coordinator does not change when a game does, so anything RootView
+// reads off a game (is it waiting, who is the fool) would be read once and never
+// again. That is how an online lobby stayed up for ever after Ready: the game
+// adopted the dealt board, LobbyView heard it (its own @ObservedObject) and
+// showed its "dealing" spinner, and the switch from lobby to table - which lived
+// here in RootView - never ran. Each screen below picks its branch from a game
+// it holds as @ObservedObject, the way LobbyView, TableView and WinView do.
+
+/// An offline game: the table, and the Win screen over it once there is a fool.
+struct OfflineSessionView: View {
+    @ObservedObject var game: LocalGame
+    let onRematch: () -> Void
+    let onHome: () -> Void
+    @State private var confirmLeave = false
+
+    var body: some View {
         ZStack(alignment: .topLeading) {
             TableView(game: game, onLeave: { confirmLeave = true })
 
@@ -126,39 +144,43 @@ struct RootView: View {
                     game: game,
                     foolSeat: fool,
                     humanSeat: game.humanSeat,
-                    onRematch: { if let c = lastConfig { coordinator.rematch(c) } },
-                    onHome: { coordinator.goHome() }
+                    onRematch: onRematch,
+                    onHome: onHome
                 )
                 .transition(.opacity)
             }
         }
         .animation(FMotion.chrome, value: game.foolSeat)
         .confirmationDialog(FStrings.t("leave_game_title"), isPresented: $confirmLeave, titleVisibility: .visible) {
-            Button(FStrings.t("leave"), role: .destructive) { coordinator.goHome() }
+            Button(FStrings.t("leave"), role: .destructive) { onHome() }
             Button(FStrings.t("cancel"), role: .cancel) {}
         } message: {
             Text(FStrings.t("leave_game_body"))
         }
     }
+}
 
-    // Online table: same board (§16.D5 — one TableView), no offline rematch
-    // config (rematch online is a fresh quick-match, wired when the create seam
-    // lands). Leave returns home and tears down the feed.
-    // The online session moves through lobby → table → win → (continue) lobby,
-    // all driven by the authoritative feed (§16.D5). We pick the screen from the
-    // game's status; Continue resets the same game back to its lobby.
-    @ViewBuilder
-    private func onlineTableStack(_ game: OnlineGame) -> some View {
+/// An online game: same board (§16.D5 - one TableView), no offline rematch
+/// config. The session moves through lobby -> table -> win -> (continue) lobby,
+/// all driven by the authoritative feed, so the screen is picked from the
+/// game's status; Continue resets the same game back to its lobby. Leave
+/// returns home and tears down the feed.
+struct OnlineSessionView: View {
+    @ObservedObject var game: OnlineGame
+    let onHome: () -> Void
+    @State private var confirmLeave = false
+
+    var body: some View {
         ZStack(alignment: .topLeading) {
             if let fool = game.foolSeat {
                 TableView(game: game, onLeave: { confirmLeave = true })
                 WinView(game: game, foolSeat: fool, humanSeat: game.humanSeat,
-                        onRematch: { game.continueGame() },                 // → back to lobby
-                        onHome: { game.leave(); coordinator.goHome() })
+                        onRematch: { game.continueGame() },                 // -> back to lobby
+                        onHome: { game.leave(); onHome() })
                     .transition(.opacity)
             } else if game.isWaiting {
-                LobbyView(game: game, onLeave: { game.leave(); coordinator.goHome() })
-                Button(action: { game.leave(); coordinator.goHome() }) {
+                LobbyView(game: game, onLeave: { game.leave(); onHome() })
+                Button(action: { game.leave(); onHome() }) {
                     Image(systemName: "xmark")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(FColor.textDim).padding(FSpace.m)
@@ -176,7 +198,7 @@ struct RootView: View {
         }
         .animation(FMotion.chrome, value: game.foolSeat)
         .confirmationDialog(FStrings.t("leave_game_title"), isPresented: $confirmLeave, titleVisibility: .visible) {
-            Button(FStrings.t("leave"), role: .destructive) { game.leave(); coordinator.goHome() }
+            Button(FStrings.t("leave"), role: .destructive) { game.leave(); onHome() }
             Button(FStrings.t("cancel"), role: .cancel) {}
         } message: {
             Text(FStrings.t("leave_game_body"))

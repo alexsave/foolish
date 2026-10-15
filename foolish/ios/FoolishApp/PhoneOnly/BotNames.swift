@@ -1,18 +1,18 @@
-// BotNames.swift - this app's reader of the "road to Moscow" display map
-// (docs/IOS_BOT_NAMING.md). The bot roster is named after explosives everywhere
-// it is STORED (C keys, DB nicknames, replay blobs, the wire) and renamed to
-// world cities only at RENDER time, so the App-Store age-rating questionnaire
-// stays boring and the strength ladder reads as a journey home (Miami → … →
-// Moscow).
+// BotNames.swift - this app's bot names (docs/IOS_BOT_NAMING.md). The brains
+// keep their explosive strategy keys (C keys, the offline roster); what a person
+// sees is a world city, so the App-Store age-rating questionnaire stays boring
+// and the strength ladder reads as a journey home (Miami -> ... -> Moscow).
 //
-// THE CITIES ARE NOT HERE. They are `bot.<strategy_key>` in c/i18n, which the
-// website reads through the same keys (src/common/botName.ts) - the map is the
-// product's, not this platform's, so neither host can drift from the other.
+// Online and in replays the city is already in the STORED name ('%Vienna 1'),
+// so displayNickname only drops the bot prefix. Offline seats are named from a
+// strategy key, and THOSE CITIES ARE NOT HERE: they are `bot.<strategy_key>` in
+// c/i18n, so the map is the product's, not this platform's.
 //
-// Three entry points; every surface (table, picker, win line, future watch /
-// iMessage) calls these and never re-derives a name. Strategy keys are treated
-// as opaque KEYS and localized through FStrings — nothing here may leak back
-// into a stored or server-bound field (§2 "never reverse-map").
+// Every surface (table, picker, win line, lobby) calls these and never
+// re-derives a name. Strategy keys are treated as opaque KEYS and localized
+// through FStrings; a STORED nickname is shown as stored, minus the bot prefix
+// (displayNickname). Nothing here may leak back into a stored or server-bound
+// field (§2 "never reverse-map").
 
 // MOVED OUT OF FoolishKit (bundle size). FoolishKit is a DYNAMIC framework that
 // ships inside FoolishMessagesApp, and every `public` symbol in a dylib is an
@@ -66,50 +66,27 @@ public enum BotNames {
         return FStrings.t("bot.km", ["km": n])
     }
 
-    /// Website / replay nicknames: `"% <Base> [Max] [<n>]"` → localized,
-    /// stripping the storage-only `%` and keeping any Max tier + instance number
-    /// ("% Octogen Max 2" → ru "Москва Макс 2"). Humans and the `% 0x…` easter
-    /// egg pass through unchanged. Never feed the result back to the server (§2).
+    /// The reserved first character of every bot's STORED name (bots.nickname,
+    /// a replay blob's seat name): '%Vienna 1'. Humans may not use it anywhere in
+    /// theirs (server/impls/supabase/seed.sql enforces it), which is what makes
+    /// "starts with it" a sound bot test. The web's twin is BOT_USERNAME_PREFIX
+    /// in src/common/botName.ts; the kernel has no rule for it.
+    static let botPrefix = "%"
+
+    /// A stored name belongs to a bot iff it carries the prefix.
+    public static func isBotName(_ name: String) -> Bool { name.hasPrefix(botPrefix) }
+
+    /// A stored seat name as a person reads it: a bot's loses the prefix (its
+    /// seat carries the bot icon instead), anyone else's is untouched. The web's
+    /// botDisplayName, rule for rule.
+    ///
+    /// NO MAPPING, by design (owner, 2026-09-22): the roster is named after
+    /// cities where it is STORED, so '%Vienna 1' shows as "Vienna 1", and an old
+    /// replay that says '%Octogen 1' shows "Octogen 1", because that is the bot
+    /// that played it. The cost is that a stored name is not localized. The
+    /// `bot.*` strings stay for the offline picker, which names a seat from its
+    /// strategy key (`display(strategy:)`), not from a stored row.
     public static func displayNickname(_ raw: String) -> String {
-        let trimmed = raw.trimmingCharacters(in: .whitespaces)
-        guard trimmed.hasPrefix("%") else { return raw }   // human name — untouched
-
-        var body = String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces)
-        // The hex easter egg is culture-neutral and beloved — leave it verbatim.
-        if body.lowercased().hasPrefix("0x") { return raw }
-
-        // Peel a trailing instance number, then a trailing "Max" tier.
-        var suffix = ""
-        var parts = body.split(separator: " ").map(String.init)
-        if let last = parts.last, Int(last) != nil {
-            suffix = " " + last
-            parts.removeLast()
-        }
-        var isMax = false
-        if let last = parts.last, last.caseInsensitiveCompare("Max") == .orderedSame {
-            isMax = true
-            parts.removeLast()
-        }
-        body = parts.joined(separator: " ")
-
-        guard let key = baseToKey[body.lowercased()] else { return raw }  // unknown base
-        var out = display(strategy: key)
-        if isMax { out += " " + FStrings.t("bot.max") }
-        return out + suffix
+        isBotName(raw) ? String(raw.dropFirst(botPrefix.count)) : raw
     }
-
-    /// Website base nickname (lowercased) → strategy key. Keeps the dropped
-    /// families (Espresso/Robusta/Gunpowder) for historical replay blobs (§2).
-    private static let baseToKey: [String: String] = [
-        "random": "random",
-        "simple heuristic": "simple_heuristic",
-        "handwritten": "handwritten",
-        "espresso": "espresso",
-        "robusta": "robusta",
-        "firecracker": "firecracker",
-        "gunpowder": "gunpowder",
-        "blackpowder": "blackpowder",
-        "cordite": "cordite",
-        "octogen": "octogen",
-    ]
 }

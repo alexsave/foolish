@@ -41,6 +41,16 @@
  * `--latency <ms>` makes every read and function call take that long, as a
  * network would, so a loading screen stays up long enough to see.
  *
+ * The iPhone app (ios/, scheme Foolish, Debug) can play against it too: give
+ * it an untracked ios/Config/Local.xcconfig with
+ *   SUPA_SLASH = /
+ *   SUPABASE_URL = http:$(SUPA_SLASH)/127.0.0.1:<port>
+ *   SUPABASE_KEY = fake
+ * (an xcconfig reads `//` as a comment, hence the slash variable), start this
+ * with `--port <port>`, and sign up with any name but ME, ANNA or BORIS - a
+ * newcomer gets a UUID id, which the app's auth client insists on. It hears
+ * boards as player_views postgres_changes (publishViews below), not broadcasts.
+ *
  * ---------------------------------------------------------------------------
  * DRIVE IT FROM A TEST OR A BROWSER SCRIPT
  * ---------------------------------------------------------------------------
@@ -225,6 +235,7 @@ export async function startFakeSupabase(opts: FakeOptions = {}): Promise<FakeBac
     // starts over deals the same game again.
     let pushN = 0;
     let gameN = 0;
+    let userN = 0;
     /** The broadcast envelope's `s`: distinct per push, identical across runs. */
     const pushSeq = (): string => derivedUuid('e2e/fake_supabase:push', pushN++);
     /** A game id in create/index.ts's shape - the first 6 of a UUID. */
@@ -311,6 +322,30 @@ export async function startFakeSupabase(opts: FakeOptions = {}): Promise<FakeBac
         if (p.logs) row.log = p.logs;
         if (dealSeed) row.seedHex = bytesToBareHex(dealSeed);
         views.set(row.id, { spectator: p.spectator, perSeat: p.views.map((v, i) => ({ seat: i, id: seats[i]?.id ?? '', bytes: v })) });
+        publishViews(row);
+    }
+
+    /**
+     * The player_views rows as postgres_changes, which is how the iPhone app
+     * hears a board (ios/FoolishNet/GameFeed.swift joins `pv-<uid>` with an
+     * INSERT and an UPDATE binding on player_views). The web never joins those
+     * channels, so this reaches nobody in a browser run; it is also not held by
+     * hold(), which is a broadcast-lane tool.
+     */
+    function publishViews(row: Row): void {
+        const v = views.get(row.id);
+        if (!v) return;
+        for (const s of v.perSeat) {
+            if (!s.bytes || !s.id) continue;
+            const record = { game_id: row.id, player_id: s.id, view: `\\x${bytesToBareHex(s.bytes)}`, status: 'playing', version: row.version, updated_at: new Date().toISOString() };
+            const data = {
+                schema: 'public', table: 'player_views', type: 'UPDATE', commit_timestamp: new Date().toISOString(),
+                columns: Object.keys(record).map((name) => ({ name, type: name === 'version' ? 'int4' : 'text' })),
+                record, old_record: { game_id: row.id, player_id: s.id }, errors: null,
+            };
+            const n = hub.postgresChanges(`pv-${s.id}`, [1, 2], data);
+            if (n > 0) note(`player_views v${row.version} -> pv-${s.id}`);
+        }
     }
 
     // The player_views / spectator_views caches, the two plain RLS SELECTs the
@@ -327,6 +362,7 @@ export async function startFakeSupabase(opts: FakeOptions = {}): Promise<FakeBac
             return { seat: i, id: s.id, bytes: typeof e === 'number' ? null : e };
         });
         views.set(row.id, { spectator: typeof spec === 'number' ? new Uint8Array(0) : spec, perSeat });
+        publishViews(row);
     }
 
     /** Send, or queue, every push an operation produced. */
@@ -486,8 +522,7 @@ export async function startFakeSupabase(opts: FakeOptions = {}): Promise<FakeBac
         if (path === 'signup') {
             const email = String(body.email ?? '');
             const name = String(body.data?.username ?? body.options?.data?.username ?? '') || 'PLAYER';
-            let u = byEmail.get(email);
-            if (!u) { u = register(name); byEmail.delete(u.email); u = { ...u, email }; users.set(u.id, u); byEmail.set(email, u); }
+            const u = byEmail.get(email) ?? newcomer(name.toUpperCase(), email);
             return json(res, 200, sessionFor(u));
         }
         if (path === 'logout') { res.writeHead(204, CORS); res.end(); return; }
@@ -507,7 +542,17 @@ export async function startFakeSupabase(opts: FakeOptions = {}): Promise<FakeBac
     /** An email nobody registered: give it a seat anyway, named after its own hash. */
     function registerByEmail(email: string): FakeUser {
         for (const name of ['ME', 'ANNA', 'BORIS']) if (emailFor(name) === email) return register(name);
-        const u: FakeUser = { id: `u-${email.slice(0, 6)}`, name: email.slice(0, 6).toUpperCase(), email };
+        return newcomer(email.slice(0, 6).toUpperCase(), email);
+    }
+
+    /**
+     * Somebody no scenario seats. Their id is a UUID, as GoTrue's is: the
+     * iPhone app decodes the user with supabase-swift, whose User.id IS a UUID,
+     * so a `u-name` id fails its sign-in before a single request is made. The
+     * scenario people keep `u-name`, because their seats are built with it.
+     */
+    function newcomer(name: string, email: string): FakeUser {
+        const u: FakeUser = { id: derivedUuid('e2e/fake_supabase:user', userN++), name, email };
         users.set(u.id, u);
         byEmail.set(email, u);
         return u;
@@ -729,10 +774,12 @@ export async function startFakeSupabase(opts: FakeOptions = {}): Promise<FakeBac
 
 // ---- the bots table -----------------------------------------------------------
 
+// Named as the real table names them (server/impls/supabase/seed.sql): a city
+// and an instance number, behind the bot prefix.
 const BOTS = [
-    { id: 'bot-cordite-1', nickname: '%Cordite', strategy_key: 'cordite', elo_rating: 1500 },
-    { id: 'bot-espresso-1', nickname: '%Espresso', strategy_key: 'espresso', elo_rating: 1200 },
-    { id: 'bot-random-1', nickname: '%Random', strategy_key: 'random', elo_rating: 900 },
+    { id: 'bot-cordite-1', nickname: '%St. Petersburg 1', strategy_key: 'cordite', elo_rating: 1500 },
+    { id: 'bot-blackpowder-1', nickname: '%Vienna 1', strategy_key: 'blackpowder', elo_rating: 1200 },
+    { id: 'bot-random-1', nickname: '%Miami 1', strategy_key: 'random', elo_rating: 900 },
 ];
 
 // ---- the scenarios ------------------------------------------------------------
