@@ -222,7 +222,6 @@ int main(int argc, char **argv) {
     bool want_tls = false;
     const char *cert_path = NULL, *key_path = NULL;
     int bench_fanout = 0;
-    bots_install_seed_hook();   // before any thread, and before the self-tests
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--self-test-bot-seeding")) return run_bot_seeding_self_test();
         if (!strncmp(argv[i], "--bench-fanout=", 15)) { bench_fanout = atoi(argv[i] + 15); continue; }

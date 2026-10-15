@@ -37,8 +37,9 @@ void bots_resolve_octogen_strat(void) {
 // decision and the game's own base, so a bot's move is a function of its game and
 // never of what this thread ran before (the Monte-Carlo rollouts of robusta,
 // firecracker and gunpowder, cordite's and octogen's worlds and the random bot all
-// read those streams). The hook is process-wide and installed once in main,
-// before any thread starts; the base is per thread, set by bot_cycle.
+// read those streams). The hook and the base are both per thread, so bot_cycle
+// installs the hook on the thread that drives, around the drive, the way table.c
+// and the wasm bridge do.
 static _Thread_local uint32_t t_bot_rng_base;
 static void bot_seed_hook(const Game *g, int seat, int phase) {
     (void)seat;
@@ -47,14 +48,13 @@ static void bot_seed_hook(const Game *g, int seat, int phase) {
     bot_drive_seed_decision(g, t_bot_rng_base, 0u, phase);
 }
 
-void bots_install_seed_hook(void) {
-    bot_drive_pre_action_hook = bot_seed_hook;
-}
-
 // One bot cycle of `g`: bot_drive under this host's per-decision seeding.
 static void bot_cycle(Game *g, uint32_t rng_base, BotDriveOut *drv) {
+    void (*const prev)(const Game *, int, int) = bot_drive_pre_action_hook;
     t_bot_rng_base = rng_base;
+    bot_drive_pre_action_hook = bot_seed_hook;
     bot_drive(g, game_human_mask(g), BOT_DRIVE_MAX_ACTIONS, 0, 0, drv);
+    bot_drive_pre_action_hook = prev;
 }
 
 // The bot game-loop, one thread per game - a TRAMPOLINE, not a blocking hook.

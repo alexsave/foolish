@@ -173,7 +173,12 @@ static int classify(int move_type, const BoardMark *before, const Game *after) {
 
 // ---------- the cycle ------------------------------------------------------
 
-void (*bot_drive_pre_action_hook)(const Game *g, int seat, int phase) = 0;
+// _Thread_local for the reason engine_snap_hook is (game.h): every host
+// installs this around one drive and puts the previous one back, and a native
+// host drives several games at once on several threads. Shared, one thread's
+// install would seed another thread's decisions from the wrong game's base.
+// wasm stays a plain global (c/Makefile's `-D_Thread_local=`, single-threaded).
+_Thread_local void (*bot_drive_pre_action_hook)(const Game *g, int seat, int phase) = 0;
 
 void bot_drive_seed_decision(const Game *g, uint32_t base, uint32_t log_offset, int phase) {
     // The progress term, folded into the secret base so it reaches every salt's
