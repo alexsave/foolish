@@ -206,8 +206,12 @@ uint32_t bot_drive_eligible_mask(const Game *g, uint32_t human_mask);
 // It is a hook rather than a bot_drive() argument because the derivation is
 // host property: g_rng_base is a server-only secret the phone and the native
 // arena do not have. They install nothing and keep their own seeding, which is
-// why this must default to NULL. Same shape as engine_snap_hook (game.h).
-extern void (*bot_drive_pre_action_hook)(const Game *g, int seat, int phase);
+// why this must default to NULL. Same shape as engine_snap_hook (game.h),
+// and per thread like it: a host installs it around its own drive, on the
+// thread that runs the drive, and two threads' drives never see each other's
+// (tests/bot_drive_threads_test.c). A hook installed on one thread is NOT
+// seen by a drive on another, so install it where the drive runs.
+extern _Thread_local void (*bot_drive_pre_action_hook)(const Game *g, int seat, int phase);
 
 // The per-decision seeding every server host installs through that hook, so the
 // policy has one definition: at CHOOSE the strategy stream and the draw stream
