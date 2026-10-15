@@ -26,6 +26,7 @@
 
 #include "ask.h"
 #include "netwire.h"
+#include "table.h"   // TABLE_STATUS_*, what NcAction.status says
 #include <stdint.h>
 
 #define NC_GET  1
