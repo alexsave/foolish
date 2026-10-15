@@ -124,18 +124,14 @@ jobs:
       - name: Shipped wasm modules
         run: bash scripts/wasm_build.sh
 
-      # PLACEHOLDER SUPABASE ENV, and the reason is worth stating: `next build`
-      # prerenders /_not-found and friends, and the module that creates the
-      # Supabase client throws `supabaseUrl is required` at module scope when the
-      # variables are absent. The real values live in the Vercel project and
-      # arrive through `vercel pull` in the deploy job; this job is a COMPILE
-      # gate, so it only needs something well-formed to prerender against. A
-      # value that looks real would be worse: it would suggest this job talks to
-      # a backend, and it must not.
+      # A PLACEHOLDER BACKEND URL: the real value lives in the Vercel project and
+      # arrives through `vercel pull` in the deploy job; this job is a COMPILE
+      # gate, so it only needs something well-formed to build against. A value
+      # that looks real would be worse: it would suggest this job talks to a
+      # backend, and it must not.
       - name: Build the web app
         env:
-          NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
-          NEXT_PUBLIC_SUPABASE_KEY: placeholder-anon-key-not-used-by-this-job
+          NEXT_PUBLIC_BACKEND_URL: https://placeholder.invalid
         run: npm run build
 
       # Printed, not gated - the same way wasm.yml prints module sizes so a
