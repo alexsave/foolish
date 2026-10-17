@@ -1,8 +1,8 @@
 // @ts-nocheck
 // Vendored from tiny-inflate@1.0.3 (MIT, Devon Govett) — a ~375-line DEFLATE
-// decoder. Vendored (not an npm dep) so it's a RELATIVE import that resolves on
-// the Deno edge, Node and the browser with no import map / npm plumbing. Used by
-// gunzip.ts to inflate the gzip+base64 rules/guards embeds synchronously.
+// decoder. Vendored (not an npm dep) so it's a RELATIVE import that resolves in
+// Node and the browser with no npm plumbing. Used by gunzip.ts to inflate the
+// kernel module's .gz synchronously.
 var TINF_OK = 0;
 var TINF_DATA_ERROR = -3;
 
