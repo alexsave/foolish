@@ -12,6 +12,7 @@
 #include <string.h>
 #include "wire_check.h"
 #include "../sha256.h"
+#include "../rng.h"
 
 static int fails, checks;
 #define OK(c, what) do { checks++; if (!(c)) { fails++; printf("FAIL %s\n", what); } } while (0)
@@ -88,7 +89,7 @@ int main(void)
      * 32 bytes. */
     static uint8_t msg[300];
     uint32_t x = 2463534242u;
-    for (size_t i = 0; i < sizeof msg; i++) { x ^= x << 13; x ^= x >> 17; x ^= x << 5; msg[i] = (uint8_t)x; }
+    for (size_t i = 0; i < sizeof msg; i++) msg[i] = (uint8_t)rng_xorshift32(&x);
     static const size_t sizes[] = { 0, 1, 2, 31, 55, 56, 57, 63, 64, 65, 119, 120, 128, 129, 200, 300 };
     int split_fails = 0, splits = 0;
     for (size_t s = 0; s < sizeof sizes / sizeof sizes[0]; s++)

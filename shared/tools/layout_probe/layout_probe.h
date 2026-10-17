@@ -24,19 +24,18 @@
 #define LAYOUT_PROBE_H
 
 #include <stdint.h>
+#include "../../c/rng.h"
 
 #define LP_STATES 3
 #define LP_GREY   1
 #define LP_COLOUR 0
 
-/* The state of cell i (row * n + column): 0, 1 or 2. splitmix64's finalizer
- * over the index, so neighbours are unrelated and every state is a third of
+/* The state of cell i (row * n + column): 0, 1 or 2. Draw i of a splitmix64
+ * stream (rng.h), so neighbours are unrelated and every state is a third of
  * the grid. */
 static inline int lp_state(uint32_t i)
 {
-    uint64_t x = (uint64_t)i * 0x9E3779B97F4A7C15ull + 0x1234567ull;
-    x ^= x >> 29; x *= 0xBF58476D1CE4E5B9ull; x ^= x >> 32;
-    return (int)(x % LP_STATES);
+    return (int)(rng_splitmix64_at(0x1234567ull + (uint64_t)i * RNG_GOLDEN) % LP_STATES);
 }
 
 /* What a state is painted as: r, g, b. */

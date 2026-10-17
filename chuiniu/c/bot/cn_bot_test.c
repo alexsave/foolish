@@ -340,7 +340,7 @@ static void test_games(void)
     uint64_t x = 42;
     for (int gi = 0; gi < 24; gi++) {
         uint8_t seed[32];
-        for (int i = 0; i < 32; i++) seed[i] = (uint8_t)cn_splitmix(&x);
+        for (int i = 0; i < 32; i++) seed[i] = (uint8_t)rng_splitmix64(&x);
         int n = 2 + gi % 5;
         cn_new(&g, seed, n);
         int calls = 0;
@@ -354,7 +354,7 @@ static void test_games(void)
                 CHECK(!memcmp(sn.my_dice, g.dice[s], g.dice_n[s]), "my own dice");
                 if (sn.nbids) CHECK(sn.bids[sn.nbids - 1].seat == g.bidder, "the last bid's seat");
                 if (calls) CHECK(!memcmp(sn.rounds[calls - 1].shown, g.shown, sizeof g.shown), "the shown hands");
-                m = cn_bot_choose(&sn, &cfg, cn_splitmix(&x));
+                m = cn_bot_choose(&sn, &cfg, rng_splitmix64(&x));
             } else {
                 m = cn_random_choose(&g, &x);
             }

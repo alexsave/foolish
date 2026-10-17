@@ -11,6 +11,7 @@
 #include "../../../shared/c/sha256.h"
 #include "../../../shared/c/deal_rng.h"
 #include "../../../shared/c/stats/seed_hash.h"
+#include "../../../shared/c/rng.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,8 +20,7 @@
 static uint64_t RS = 0x9e3779b97f4a7c15ull;
 static inline uint32_t rnd(uint32_t n)
 {
-    RS ^= RS >> 12; RS ^= RS << 25; RS ^= RS >> 27;
-    return n ? (uint32_t)(((RS * 2685821657736338717ull) >> 33) % n) : 0;
+    return n ? (uint32_t)((rng_xorshift64star(&RS) >> 33) % n) : 0;
 }
 
 /* All 32 bytes from splitmix64 of k (shared/c/stats/seed_hash.h). */

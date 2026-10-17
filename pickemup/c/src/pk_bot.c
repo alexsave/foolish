@@ -4,28 +4,21 @@
 #include "pk_bot.h"
 #include "pk_belief.h"
 #include <string.h>
+#include "../../../shared/c/rng.h"
 
 const char *const PK_BOT_NAME[PK_BOT_COUNT] = { "random", "greedy", "mc" };
 
+/* xorshift64* (rng.h); a state of 0, which xorshift cannot leave, starts at
+ * the golden constant, so a caller may hand in a zeroed state */
 uint64_t pk_bot_rand(uint64_t *rng)
 {
-    uint64_t x = *rng ? *rng : 0x9e3779b97f4a7c15ull;
-    x ^= x >> 12; x ^= x << 25; x ^= x >> 27;
-    *rng = x;
-    return x * 2685821657736338717ull;
+    if (!*rng) *rng = RNG_GOLDEN;
+    return rng_xorshift64star(rng);
 }
 
 static uint32_t below(uint64_t *rng, uint32_t n)
 {
     return n ? (uint32_t)((pk_bot_rand(rng) >> 33) % n) : 0;
-}
-
-static uint64_t mix64(uint64_t z)
-{
-    z += 0x9e3779b97f4a7c15ull;
-    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull;
-    z = (z ^ (z >> 27)) * 0x94d049bb133111ebull;
-    return z ^ (z >> 31);
 }
 
 /* THE DEFAULTS ARE MEASURED (docs/BOT_REPORT.md): at these budgets MC beats
@@ -209,12 +202,12 @@ static int mc_pick(const PkGame *g, int seat, const PkAct *m, int n,
         if (a.kind == PK_A_DRAW && any_play) tax[i] = (double)k->draw_keep / 1000.0;
     }
 
-    uint64_t base = mix64(pk_bot_rand(rng) ^ k->seed ^ ((uint64_t)seat * UINT64_C(0x9e3779b97f4a7c15)));
+    uint64_t base = rng_splitmix64_at(pk_bot_rand(rng) ^ k->seed ^ ((uint64_t)seat * RNG_GOLDEN));
     PkGame world, trial;
     int W[3] = { k->w1, k->w2, k->w3 }, w = 0;
     for (int stage = 0; stage < 3; stage++) {
         for (int wi = 0; wi < W[stage]; wi++, w++) {
-            uint64_t ws = mix64(base + (uint64_t)(w + 1) * UINT64_C(0xd1b54a32d192ed03));
+            uint64_t ws = rng_splitmix64_at(base + (uint64_t)(w + 1) * UINT64_C(0xd1b54a32d192ed03));
             int use_soft = k->soft_mod && (w % k->soft_mod) != k->soft_mod - 1;
             pk_belief_sample(&b, g, ws, use_soft, &world);
             for (int ci = 0; ci < nc; ci++) {

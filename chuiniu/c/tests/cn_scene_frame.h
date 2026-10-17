@@ -17,6 +17,7 @@
 
 #include "../src/cn_scene.h"
 #include <string.h>
+#include "../../../shared/c/rng.h"
 
 #define CNF_SEATS 6
 #define CNF_DICE 5
@@ -173,7 +174,7 @@ static inline void cnf_die(CnfOut *o, const CnfPose *P, float d, int atlas)
 
 /* xorshift32 noise for the textures, one draw a statement */
 static uint32_t cnf_rs = 2463534242u;
-static inline uint32_t cnf_rnd(void) { cnf_rs ^= cnf_rs << 13; cnf_rs ^= cnf_rs >> 17; cnf_rs ^= cnf_rs << 5; return cnf_rs; }
+static inline uint32_t cnf_rnd(void) { return rng_xorshift32(&cnf_rs); }
 /* a texture of noise with the study's statistics (measured from its uploads): the cup's green-black
  * verdigris (red about 55) whose normal map is flat but for one texel in twenty at +-1 or 2, or the die's
  * ivory (red about 178) whose map is flat at seven texels in ten, +-1 to 3 elsewhere and +-12 at one in a

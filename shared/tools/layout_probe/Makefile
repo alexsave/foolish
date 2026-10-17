@@ -7,11 +7,11 @@ CFLAGS ?= -O2 -std=c11 -Wall -Wextra -Werror
 all: test
 build:
 	mkdir -p build
-build/layout_probe_test: layout_probe_test.c layout_probe.h ../../c/test/check.h | build
+build/layout_probe_test: layout_probe_test.c layout_probe.h ../../c/rng.h ../../c/test/check.h | build
 	$(CC) $(CFLAGS) layout_probe_test.c -o $@
 test: build/layout_probe_test
 	./build/layout_probe_test
-build/sweep: sweep.c layout_probe.h | build
+build/sweep: sweep.c layout_probe.h ../../c/rng.h | build
 	$(CC) $(CFLAGS) sweep.c -o $@ -framework ImageIO -framework CoreGraphics -framework CoreFoundation
 sweep: build/sweep
 	./build/sweep

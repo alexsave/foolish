@@ -8,9 +8,10 @@
 #include <stdint.h>
 #include "test/check.h"
 #include "mixrad.h"
+#include "rng.h"
 
 static uint64_t rng = 0x9E3779B97F4A7C15ull;
-static uint32_t next(void) { rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17; return (uint32_t)rng; }
+static uint32_t next(void) { return (uint32_t)rng_xorshift64(&rng); }
 static uint32_t pick_base(void)
 {
     switch (next() % 6) {

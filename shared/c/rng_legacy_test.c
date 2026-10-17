@@ -131,7 +131,7 @@ static uint32_t new_uttt_f_rnd(uint64_t *s, uint32_t n)
 }
 static uint32_t new_big_below(uint64_t *s, uint32_t n) { return (uint32_t)(((rng_xorshift64star(s) >> 32) * (uint64_t)n) >> 32); }
 static uint64_t new_big_init(uint64_t seed) { uint64_t s = seed, r = rng_splitmix64(&s); return r ? r : RNG_GOLDEN; }
-static double   new_unit(uint64_t *s) { return (double)(rng_splitmix64(s) >> 11) * (1.0 / 9007199254740992.0); }
+static double   new_unit(uint64_t *s) { return rng_unit(rng_splitmix64(s)); }
 static void new_mkseed(long idx, uint8_t seed[32])
 {
     uint64_t x = (uint64_t)idx * RNG_GOLDEN + 0x1234567;

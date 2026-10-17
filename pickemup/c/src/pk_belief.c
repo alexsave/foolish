@@ -4,6 +4,7 @@
 #include "pk_belief.h"
 #include "pk_plan.h"
 #include <string.h>
+#include "../../../shared/c/rng.h"
 
 /* ---- the void predicate ------------------------------------------------------ */
 
@@ -193,14 +194,6 @@ int pk_belief_allows(const PkBelief *b, int s, int slot, uint8_t c, int use_soft
 
 /* ---- sampling ------------------------------------------------------------------- */
 
-static uint64_t mix64(uint64_t z)
-{
-    z += 0x9e3779b97f4a7c15ull;
-    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull;
-    z = (z ^ (z >> 27)) * 0x94d049bb133111ebull;
-    return z ^ (z >> 31);
-}
-
 /* Everything up to the history, the live history, and the seed: the unused
  * history tail is never read (pk.h), so a world copies ~1 KB, not 16. */
 static void lite_copy(PkGame *d, const PkGame *s)
@@ -215,7 +208,7 @@ int pk_belief_sample(const PkBelief *b, const PkGame *g, uint64_t seed, int use_
     lite_copy(w, g);
     uint64_t r = seed ^ 0x6a09e667f3bcc909ull;
     for (int i = 0; i < 32; i += 8) {
-        uint64_t z = mix64(r += 0x9e3779b97f4a7c15ull);
+        uint64_t z = rng_splitmix64_at(r += RNG_GOLDEN);
         for (int j = 0; j < 8; j++) w->seed[i + j] = (uint8_t)(z >> (8 * j));
     }
 
@@ -224,7 +217,7 @@ int pk_belief_sample(const PkBelief *b, const PkGame *g, uint64_t seed, int use_
     int m = b->pool_n;
     memcpy(pool, b->pool, (size_t)m);
     for (int i = m - 1; i > 0; i--) {
-        r = mix64(r);
+        r = rng_splitmix64_at(r);
         int j = (int)(r % (uint64_t)(i + 1));
         uint8_t t = pool[i]; pool[i] = pool[j]; pool[j] = t;
     }
