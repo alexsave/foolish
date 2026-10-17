@@ -70,6 +70,31 @@ jobs:
       - run: sudo apt-get update -q && sudo apt-get install -y -q build-essential libssl-dev libsqlite3-dev
       - name: unit tests and smoke under ASan + UBSan
         run: make -C c_base -j"$(getconf _NPROCESSORS_ONLN)" check-asan
+      # Every checked-in fuzz input (c_base/fuzz/corpus, the reproducers of
+      # every bug the fuzzers found among them) through its target once,
+      # under the same sanitizers, with gcc and no libFuzzer.
+      - name: the fuzz corpus as a regression test
+        run: make -C c_base -j"$(getconf _NPROCESSORS_ONLN)" fuzz-replay
+
+  fuzz:
+    name: make fuzz-smoke (libFuzzer, 30 s a target)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -q && sudo apt-get install -y -q build-essential clang libssl-dev libsqlite3-dev
+      - name: build every target
+        run: make -C c_base -j"$(getconf _NPROCESSORS_ONLN)" fuzz
+      - name: each target for 30 s from its corpus
+        run: make -C c_base fuzz-smoke FUZZ_TIME=30
+      - name: the inputs that crashed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes
+          path: c_base/build/fuzz-crashes
+          if-no-files-found: ignore
+          retention-days: 30
 
   # c_base/docs/COVERAGE.md: line and branch floors, and no function that no
   # test calls (tools/cov_floor.txt names the ones allowed, with a reason).
@@ -160,7 +185,7 @@ jobs:
   deploy:
     name: deploy to Lambda
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
-    needs: [check, asan, dynamo, ops, bootstrap]
+    needs: [check, asan, fuzz, dynamo, ops, bootstrap]
     runs-on: ubuntu-24.04
     # One deploy at a time; a queued one waits rather than cancelling a stack
     # update half way. GitHub keeps one waiting job per group and cancels an
