@@ -330,7 +330,10 @@ static const NcRequest *get(const char *a, const char *gid, int gid_len, int use
 const NcRequest *nc_req_games(int64_t now_ms) { return get("/v1/games", NULL, 0, 1, now_ms); }
 const NcRequest *nc_req_game(const char *gid, int gid_len, int64_t now_ms) { return get("/v1/games/", gid, gid_len, 1, now_ms); }
 const NcRequest *nc_req_chats(const char *gid, int gid_len, int64_t now_ms) { return get("/v1/chat/", gid, gid_len, 1, now_ms); }
-const NcRequest *nc_req_bots(int64_t now_ms) { return get("/v1/bots", NULL, 0, 1, now_ms); }
+// The bots and the leaderboard are public and the same for everyone: they carry
+// no token, so the edge caches one copy of each (c_base DESIGN.md "Edge cache").
+// now_ms is kept so no host changes its call.
+const NcRequest *nc_req_bots(int64_t now_ms) { (void)now_ms; return get("/v1/bots", NULL, 0, 0, 0); }
 const NcRequest *nc_req_board(void) { return get("/v1/leaderboard", NULL, 0, 0, 0); }
 const NcRequest *nc_req_history(int64_t now_ms) { return get("/v1/history", NULL, 0, 1, now_ms); }
 const NcRequest *nc_req_replay(const char *gid, int gid_len, int64_t now_ms) { return get("/v1/replay/", gid, gid_len, 1, now_ms); }
@@ -376,6 +379,13 @@ const NcRequest *nc_req(int which, const char *a, int a_len, const char *b, int 
 }
 
 // ---- answers -------------------------------------------------------------------------
+
+int nc_retry_ms(int method, int attempt, int status, const uint8_t *body, int len) {
+    AskRefusal r;
+    if (method != NC_GET || status != 503 || attempt < 0 || attempt >= NC_BUSY_TRIES) return 0;
+    if (!body || ask_refusal_decode(body, len, &r) != ASK_OK || r.why != ASK_WHY_BUSY) return 0;
+    return NC_BUSY_FIRST_MS << attempt;
+}
 
 int nc_status_read(int status, const uint8_t *body, int len) {
     if (!ok_status(status)) return refused(status, body, len);

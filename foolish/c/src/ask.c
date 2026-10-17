@@ -152,7 +152,7 @@ int ask_decode(const uint8_t *p, int len, TableAsk *out) {
 
 // ---------- the refusal -----------------------------------------------------------
 
-static int why_known(int why) { return why >= ASK_WHY_AUTH && why <= ASK_WHY_FORBIDDEN; }
+static int why_known(int why) { return why >= ASK_WHY_AUTH && why <= ASK_WHY_BUSY; }
 
 int ask_refusal_encode(const AskRefusal *r, uint8_t *out, int cap) {
     if (!r || !why_known(r->why)) return ASK_E_WIRE;

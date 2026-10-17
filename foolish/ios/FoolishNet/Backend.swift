@@ -28,11 +28,15 @@ public final class Backend {
     /// One request, built by `build` as many times as it takes: a refresh the
     /// client asks for first is sent and kept, then the request is built again.
     func call(_ build: () -> NcRequestSnap?) async throws -> (status: Int, body: Data) {
-        for _ in 0..<3 {
+        var refreshes = 0, busy = 0
+        while refreshes < 3 {
             guard let base = baseURL else { throw NetError.notConfigured }
             guard let r = build() else { throw NetError.notSignedIn }
             let answer = try await send(r, base)
+            let wait = NetClient.retryMs(Int(r.method), busy, answer.status, answer.body)
+            if wait > 0 { busy += 1; try await Task.sleep(nanoseconds: UInt64(wait) * 1_000_000); continue }
             guard r.isRefresh != 0 else { return answer }
+            refreshes += 1
             try keep(NetClient.readSession(answer.status, answer.body))
         }
         throw NetError.notSignedIn

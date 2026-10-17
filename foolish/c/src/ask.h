@@ -106,6 +106,8 @@ int ask_decode(const uint8_t *p, int len, TableAsk *out);
 #define ASK_WHY_METHOD    7   // an HTTP method the endpoint does not take
 #define ASK_WHY_ACCOUNT   8   // an account refusal (netwire.h): `code` an NW_ACCOUNT_E_*
 #define ASK_WHY_FORBIDDEN 9   // a read or a subscription the caller may not make (not a member)
+#define ASK_WHY_BUSY      10  // the server's store was over its capacity for a moment (HTTP 503,
+                              // Retry-After): a read is sent again (netclient.h nc_retry_ms)
 
 typedef struct {
     uint8_t why;      // ASK_WHY_*

@@ -1454,6 +1454,7 @@ int fio_net_session_save(uint8_t *out, int cap);
 const void *fio_net_session_info(void);
 int fio_net_session_read(int status, const uint8_t *body, int len);
 const void *fio_net_error(void);
+int fio_net_retry_ms(int method, int attempt, int status, const uint8_t *body, int len);
 int fio_net_status_read(int status, const uint8_t *body, int len);
 const void *fio_net_action_read(int status, const uint8_t *body, int len);
 const void *fio_net_view_read(int status, const uint8_t *body, int len);

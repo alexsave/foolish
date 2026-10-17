@@ -103,6 +103,12 @@ export class NetClient {
 
     // ---- answers ----
 
+    /** A busy server's answer to a read: the ms to wait before sending it again, or 0 (nc_retry_ms). */
+    retryMs(method: number, attempt: number, status: number, body: Uint8Array): number {
+        const n = this.put(body);
+        return this.ex.wasm_net_retry_ms(method, attempt, status, Math.max(n, 0));
+    }
+
     /** 0 for an accepted request, else the refusal's why (error() says more). */
     status(status: number, body: Uint8Array): number {
         const n = this.put(body);

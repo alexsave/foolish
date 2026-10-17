@@ -233,6 +233,17 @@ const NcRequest *nc_req(int which, const char *a, int a_len, const char *b, int 
 // Each takes the HTTP status and the body as received. On a refusal the answer
 // is NULL (or the why, for the ints) and nc_error says why.
 
+// A read the server was too busy to answer (503, ASK_WHY_BUSY: its store was
+// throttled): how long to wait before sending it again, or 0 when the answer
+// stands. `method` is the request's (NcRequest.method), `attempt` how many
+// times this request was sent again already (0 after the first send). Only a
+// GET is sent again (a POST may have been applied before the throttle), at most
+// NC_BUSY_TRIES times, after NC_BUSY_FIRST_MS doubling. The host waits, builds
+// the request again and sends it; the answer it finally reads says the rest.
+#define NC_BUSY_TRIES    3
+#define NC_BUSY_FIRST_MS 250
+int nc_retry_ms(int method, int attempt, int status, const uint8_t *body, int len);
+
 // A request answered with no body of its own (signout, password, delete,
 // chat send) or with the caller's envelope (create, meta): 0 when it was
 // accepted, else the why. A host signs itself out with nc_reset after a signout
