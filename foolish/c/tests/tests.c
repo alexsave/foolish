@@ -8006,6 +8006,57 @@ static void test_ask_reversal_order_is_the_plan(void) {
           && anim_reversal_order_ask(&q, NULL) == ANIM_EBADARG, "no question, or nowhere to answer");
 }
 
+// THE STEPS A REVERSAL FLIES, read as a host reads them: plan.order cut into
+// consecutive runs of plan.step_count. The test above holds every step to one
+// motion; these are the shapes where a step is wider than one, where three
+// steps have to come back in reverse, and where nothing reverts at all. They
+// were e2e/anim_ask_values.test.ts and e2e/anim_plan_frames.test.ts, which
+// asked the same entry through a test-only wasm door no shipped module exports.
+static int rv_steps(const AnimConflictPlan *p, int want_n, const int *want_counts, const int *want_order) {
+    if (p->n_steps != want_n) return 0;
+    int at = 0;
+    for (int s = 0; s < want_n; s++) {
+        if (p->step_count[s] != want_counts[s]) return 0;
+        for (int k = 0; k < want_counts[s]; k++, at++) if (p->order[at] != want_order[at]) return 0;
+    }
+    return p->n_order == at;
+}
+
+static void test_reversal_steps_are_whole_groups_last_first(void) {
+    static AnimReversalAsk q;
+    static AnimConflictPlan plan;
+    const unsigned char R = ANIM_CONFLICT_REVERT, K = ANIM_CONFLICT_KEEP, C = ANIM_CONFLICT_CLEAR;
+
+    // Three groups of two, the middle one kept whole: two steps of two, last
+    // group first, each holding its own motions and not the plan's first two.
+    memset(&q, 0, sizeof q);
+    const unsigned char v6[6] = { R, R, K, K, R, R };
+    memcpy(q.verdicts, v6, sizeof v6);
+    q.n_motions = 6; q.n_groups = 3;
+    q.group_sizes[0] = q.group_sizes[1] = q.group_sizes[2] = 2;
+    { const int counts[2] = { 2, 2 }, order[4] = { 4, 5, 0, 1 };
+      CHECK(anim_reversal_order_ask(&q, &plan) == 2 && rv_steps(&plan, 2, counts, order),
+            "reversal: two groups of two fly home as two steps of two, the last group first"); }
+
+    // A doomed sequence of three single motions travels back the way it came.
+    memset(&q, 0, sizeof q);
+    q.verdicts[0] = q.verdicts[1] = q.verdicts[2] = R;
+    q.n_motions = 3; q.n_groups = 3;
+    q.group_sizes[0] = q.group_sizes[1] = q.group_sizes[2] = 1;
+    { const int counts[3] = { 1, 1, 1 }, order[3] = { 2, 1, 0 };
+      CHECK(anim_reversal_order_ask(&q, &plan) == 3 && rv_steps(&plan, 3, counts, order),
+            "reversal: three steps come back in reverse, one motion each"); }
+
+    // Nothing doomed is no reversal at all: the common case plays no theatre.
+    memset(&q, 0, sizeof q);
+    q.verdicts[0] = K; q.verdicts[1] = C;
+    q.n_motions = 2; q.n_groups = 2;
+    q.group_sizes[0] = q.group_sizes[1] = 1;
+    plan.n_steps = 9;
+    CHECK(anim_reversal_order_ask(&q, &plan) == 0 && plan.n_steps == 0 && plan.n_order == 0,
+          "reversal: a KEEP and a CLEAR build no step");
+}
+
 static void test_ask_hand_laid_out_speaks_in_cards(void) {
     static AnimHandAsk q;
     AnimHandLaid out;
@@ -9203,6 +9254,245 @@ static void test_extras_link_short_buffer_answers_itself_twice(void) {
     const int t = replay_extras_link(moves, roster, rn, 3, tight, bare + 1);
     CHECK(t == bare && strcmp(tight, REPLAY_LINK_PREFIX "MZXW6YTB") == 0,
           "link: a buffer with room for the code but not the roster still gives the link");
+}
+
+// ---------- the codec over a seeded corpus ------------------------------------
+//
+// The cases above are written by hand; these walk a seeded corpus of rosters and
+// tempos, which is what e2e/replay_extras_kernel.test.ts did through a test-only
+// wasm door. Every property here is stated on its own terms - the name a seat
+// reads back is the name it was given, cut by a stated rule; a gap comes back
+// inside the curve; the blob's size is a function of the roster and the move
+// count - rather than as agreement with a frozen copy of the format.
+
+// xorshift64, seeded, so the corpus is the same corpus on every machine.
+static uint64_t ex_rng_state;
+static double ex_rnd(void) {
+    uint64_t s = ex_rng_state;
+    s ^= s << 13; s ^= s >> 7; s ^= s << 17;
+    ex_rng_state = s;
+    return (double)(s >> 11) / 9007199254740992.0;
+}
+static int ex_rndi(int k) { return (int)(ex_rnd() * k); }
+
+typedef struct { unsigned char b[96]; int n; } ExName;
+
+// Free-form user text: Latin, Cyrillic, kana, Hangul, an emoji with a skin-tone
+// modifier, a seat nobody named, a NUL inside a name, and four names over the
+// 48-byte budget in four different ways (4-byte, 2-byte and 1-byte code points,
+// and one where byte 48 falls inside a 4-byte modifier).
+static int ex_name_pool(ExName *pool) {
+    static const char *const fixed[] = {
+        "", "Sveta", "Misha",
+        "\xd0\x92\xd0\xbb\xd0\xb0\xd0\xb4\xd0\xb8\xd0\xbc\xd0\xb8\xd1\x80",
+        "\xe3\x81\x95\xe3\x81\x8f\xe3\x82\x89",
+        "\xc3\x9c\x6e\xc3\xaf\x63\x6f\x64\xc3\xa9",
+        "\xed\x95\x9c\xea\xb5\xad\xec\x9d\xb4\xeb\xa6\x84",
+        "\xd0\x92\xd0\x90\xd0\xa1\xd0\xaf \xf0\x9f\x83\x8f",
+        "\xf0\x9f\xa4\xa1", "A\xf0\x9f\x91\x8d\xf0\x9f\x8f\xbd\x42", "ab",
+    };
+    int n = 0;
+    for (int i = 0; i < (int)(sizeof fixed / sizeof fixed[0]); i++, n++) {
+        pool[n].n = (int)strlen(fixed[i]);
+        memcpy(pool[n].b, fixed[i], (size_t)pool[n].n);
+    }
+    pool[n].n = 0;
+    for (int i = 0; i < 16; i++) { memcpy(pool[n].b + pool[n].n, "\xf0\x9f\xa4\xa1", 4); pool[n].n += 4; }
+    n++;
+    pool[n].n = 1; pool[n].b[0] = 'A';
+    for (int i = 0; i < 7; i++) { memcpy(pool[n].b + pool[n].n, "\xf0\x9f\x91\x8d\xf0\x9f\x8f\xbd", 8); pool[n].n += 8; }
+    n++;
+    pool[n].n = 0;
+    for (int i = 0; i < 4; i++) { memcpy(pool[n].b + pool[n].n, fixed[3], 16); pool[n].n += 16; }
+    n++;
+    pool[n].n = 60; memset(pool[n].b, 'X', 60);
+    n++;
+    pool[n].n = 3; memcpy(pool[n].b, "a\0b", 3);
+    n++;
+    return n;
+}
+
+// The codec's packed argument blob (replay_extras.h) with explicit name lengths,
+// so a name may carry a NUL.
+static int ex_pack_raw(unsigned char *out, const ExName *names, int n_names,
+                       int has_times, double start, const double *gaps, int n_gaps) {
+    int w = 0;
+    out[w++] = (unsigned char)((n_names > 0 ? REPLAY_EXTRAS_FLAG_NAMES : 0) | (has_times ? REPLAY_EXTRAS_FLAG_TIMES : 0));
+    if (n_names > 0) {
+        out[w++] = (unsigned char)n_names;
+        for (int i = 0; i < n_names; i++) {
+            out[w++] = (unsigned char)(names[i].n & 0xff);
+            out[w++] = (unsigned char)(names[i].n >> 8);
+            memcpy(out + w, names[i].b, (size_t)names[i].n);
+            w += names[i].n;
+        }
+    }
+    if (has_times) {
+        memcpy(out + w, &start, 8); w += 8;
+        out[w++] = (unsigned char)(n_gaps & 0xff);
+        out[w++] = (unsigned char)(n_gaps >> 8);
+        memcpy(out + w, gaps, (size_t)n_gaps * 8); w += n_gaps * 8;
+    }
+    return w;
+}
+
+// What a seat reads back for a name: the name with its NULs stripped, cut to 48
+// bytes by whole code points. Stated as a property of the answer, not a copy of
+// the trim: a prefix, within budget, short of it by less than one code point,
+// and never ending inside a sequence.
+static int ex_name_cut_ok(const ExName *given, const ReplayExtrasName *got) {
+    unsigned char clean[96];
+    int n = 0;
+    for (int i = 0; i < given->n; i++) if (given->b[i]) clean[n++] = given->b[i];
+    if (got->len > REPLAY_EXTRAS_MAX_NAME || got->len > n) return 0;
+    if (memcmp(got->text, clean, got->len) != 0) return 0;
+    if (n <= REPLAY_EXTRAS_MAX_NAME) return got->len == n;
+    return got->len > REPLAY_EXTRAS_MAX_NAME - 4 && (clean[got->len] & 0xC0) != 0x80;
+}
+
+static void test_extras_corpus_round_trips(void) {
+    static ExName pool[24];
+    static unsigned char args[8192], blob[4096], answer[8192];
+    static char b32[8192];
+    static unsigned char back32[4096];
+    static ReplayExtras back;
+    const int n_pool = ex_name_pool(pool);
+    ex_rng_state = 88172645463325252ULL;
+    int with_names = 0, with_times = 0, trimmed = 0, bad_names = 0, bad_gaps = 0, bad_size = 0,
+        bad_codec = 0, bad_b32 = 0, bad_flags = 0;
+    for (int c = 0; c < 600; c++) {
+        ExName names[8];
+        const int n_names = ex_rndi(9);
+        for (int i = 0; i < n_names; i++) names[i] = pool[ex_rndi(n_pool)];
+        const int has_times = ex_rndi(2);
+        double start = 0, gaps[40];
+        int n_gaps = 0;
+        if (has_times) {
+            start = 1750000000.0 + ex_rndi(100000);
+            // 1e-9 s (a simulation step) to 1e3 s (a coffee break), same one byte.
+            const double scale = pow(10.0, ex_rndi(13) - 9);
+            n_gaps = ex_rndi(40);
+            for (int i = 0; i < n_gaps; i++) gaps[i] = ex_rndi(10) == 0 ? 0 : ex_rnd() * 100 * scale;
+        }
+        const int na = ex_pack_raw(args, names, n_names, has_times, start, gaps, n_gaps);
+        const int nb = replay_extras_encode(args, na, blob, (int)sizeof blob);
+        const int nc = nb > 0 ? replay_extras_decode(blob, nb, n_names, n_gaps, answer, (int)sizeof answer) : -1;
+        if (nb <= 0 || nc <= 0 || replay_extras_unpack(answer, nc, &back) != nc) { bad_codec++; continue; }
+
+        // Each section is claimed exactly when it was written: a names-only blob
+        // claims no timing, a timing-only blob claims no names.
+        const int want_flags = (n_names > 0 ? REPLAY_EXTRAS_FLAG_NAMES : 0) | (has_times ? REPLAY_EXTRAS_FLAG_TIMES : 0);
+        if (back.flags != want_flags || back.n_names != n_names || (has_times && back.n_gaps != n_gaps)
+            || (!has_times && back.n_gaps != 0)) bad_flags++;
+
+        int size = 2;
+        for (int i = 0; i < n_names; i++) {
+            if (!ex_name_cut_ok(&names[i], &back.names[i])) bad_names++;
+            int clean = 0;
+            for (int k = 0; k < names[i].n; k++) clean += names[i].b[k] != 0;
+            if (clean > REPLAY_EXTRAS_MAX_NAME) trimmed++;
+            size += back.names[i].len + 1;
+        }
+        if (has_times) {
+            // 1 scale byte, 5 start bytes, then one byte per move whatever the tempo.
+            size += 6 + n_gaps;
+            double max_gap = 0;
+            for (int i = 0; i < n_gaps; i++) if (gaps[i] > max_gap) max_gap = gaps[i];
+            if (back.start_time != start) bad_gaps++;
+            for (int i = 0; i < n_gaps && i < back.n_gaps; i++)
+                if (fabs(back.gaps[i] - gaps[i]) > gaps[i] * 0.08 + max_gap * 1e-8) bad_gaps++;
+        }
+        if (nb != size) bad_size++;
+
+        // The text half of the URL carries the blob unchanged.
+        const int nt = replay_b32_encode(blob, nb, b32, (int)sizeof b32);
+        if (nt <= 0 || replay_b32_decode(b32, back32, (int)sizeof back32) != nb || memcmp(back32, blob, (size_t)nb) != 0)
+            bad_b32++;
+
+        with_names += n_names > 0;
+        with_times += has_times;
+    }
+    CHECK(with_names > 100 && with_times > 100 && trimmed > 20, "extras corpus: both sections and the trim are exercised");
+    CHECK(bad_codec == 0, "extras corpus: every roster and tempo encodes, decodes and unpacks whole");
+    CHECK(bad_flags == 0, "extras corpus: a section is claimed exactly when it was written");
+    CHECK(bad_names == 0, "extras corpus: every seat reads back its own name, NULs stripped, cut by whole code points");
+    CHECK(bad_gaps == 0, "extras corpus: the start second is exact and every gap is inside the curve");
+    CHECK(bad_size == 0, "extras corpus: the blob is the roster plus one byte per move");
+    CHECK(bad_b32 == 0, "extras corpus: base32 is the identity on every blob");
+}
+
+static void test_extras_seat_count_comes_from_the_moves(void) {
+    // A roster is dense and seat-ordered and carries no count of its own, so the
+    // reader is told how wide the table is. Fewer seats stop the parse early;
+    // more run out of names and are refused, never padded with garbage.
+    const char *names[] = { "Ann", "Bob", "Cyd", "Dee" };
+    unsigned char in[128], blob[128], answer[1024];
+    static ReplayExtras back;
+    const int n = replay_extras_encode(in, extras_args(in, names, 4, 0, 0, 0), blob, (int)sizeof blob);
+    int m = replay_extras_decode(blob, n, 4, 0, answer, (int)sizeof answer);
+    CHECK(m > 0 && replay_extras_unpack(answer, m, &back) == m && back.n_names == 4
+          && ex_name_is(&back, 0, "Ann") && ex_name_is(&back, 3, "Dee"),
+          "extras: the table the roster was written for reads every seat");
+    m = replay_extras_decode(blob, n, 2, 0, answer, (int)sizeof answer);
+    CHECK(m > 0 && replay_extras_unpack(answer, m, &back) == m && back.n_names == 2
+          && ex_name_is(&back, 0, "Ann") && ex_name_is(&back, 1, "Bob"),
+          "extras: a narrower table reads the first seats and stops");
+    CHECK(replay_extras_decode(blob, n, 5, 0, answer, (int)sizeof answer) == -REPLAY_EXTRAS_ENAME,
+          "extras: a table wider than the roster is refused as an unterminated name");
+}
+
+static void test_extras_decode_answers_or_refuses_any_bytes(void) {
+    // Whatever arrives, the reader answers whole or refuses with one of its own
+    // codes: a malformed blob never takes the replay down with it. Each blob is
+    // its own allocation of exactly its length, so a read past it is a fault
+    // under tests-asan.
+    static unsigned char answer[8192];
+    static ReplayExtras back;
+    ex_rng_state = 424242ULL;
+    int answered = 0, refused = 0, bad = 0;
+    for (int i = 0; i < 2000; i++) {
+        const int n = ex_rndi(40);
+        unsigned char *junk = malloc(n > 0 ? (size_t)n : 1);
+        for (int k = 0; k < n; k++) junk[k] = (unsigned char)ex_rndi(256);
+        // Half of them start like a real blob, so the parse gets past the header.
+        if (n >= 2 && ex_rndi(2)) { junk[0] = REPLAY_EXTRAS_VERSION; junk[1] &= 3; }
+        const int players = ex_rndi(9), moves = ex_rndi(40);
+        const int rc = replay_extras_decode(junk, n, players, moves, answer, (int)sizeof answer);
+        if (rc > 0) {
+            answered++;
+            if (replay_extras_unpack(answer, rc, &back) != rc) bad++;
+            else for (int g = 0; g < back.n_gaps; g++) {
+                // By its bits: -ffast-math lets the compiler assume isfinite().
+                uint64_t bits;
+                memcpy(&bits, &back.gaps[g], 8);
+                if (((bits >> 52) & 0x7FF) == 0x7FF || (bits >> 63)) bad++;
+            }
+        } else if (rc < -REPLAY_EXTRAS_ECAP || rc >= 0) {
+            bad++;
+        } else {
+            refused++;
+        }
+        free(junk);
+    }
+    CHECK(answered > 0 && refused > 0, "extras fuzz: the junk both reads and refuses");
+    CHECK(bad == 0, "extras fuzz: every answer unpacks whole with finite gaps, every refusal is the codec's own");
+}
+
+static void test_extras_link_carries_a_long_code_whole(void) {
+    // A long game's code runs to tens of KB of base32; the link carries it
+    // whole rather than through some fixed buffer of its own.
+    static char code[19201], link[20000], want[20000];
+    for (int i = 0; i < 19200; i++) code[i] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"[i % 32];
+    code[19200] = 0;
+    snprintf(want, sizeof want, "%s%s", REPLAY_LINK_PREFIX, code);
+    const int bare = replay_extras_link(code, 0, 0, 0, link, (int)sizeof link);
+    CHECK(bare == (int)strlen(want) && strcmp(link, want) == 0, "link: a 19,200-character code is carried whole");
+    const char *named[] = { "Ann", "Bo" };
+    unsigned char roster[64];
+    const int rn = ex_roster(roster, named, 2);
+    const int n = replay_extras_link(code, roster, rn, 2, link, (int)sizeof link);
+    CHECK(n > bare + 1 && memcmp(link, want, (size_t)bare) == 0 && link[bare] == '-',
+          "link: and a roster rides behind it after the dash");
 }
 
 static void test_analyse_hypergeom(void) {
@@ -12877,6 +13167,29 @@ static void test_table_replay_code_and_extras(void) {
     CHECK(ew2 > 0 && eg2 == ew2 && memcmp(tb_code, tb_code2, (size_t)ew2) == 0 && !(args[0] & REPLAY_EXTRAS_FLAG_TIMES),
           "a session without timed records carries names only");
     CHECK(table_replay_extras(&tb, tb_log, tb_log_len, tb_code, 3) == TABLE_E_CAP, "a small buffer is refused");
+
+    // AN OVER-LONG GAME IS A REFUSAL, TOLD APART FROM A FAULT (was e2e/replay_codec.test.ts).
+    // The engine-game round trips skip a game whose session log outran MAX_LOGS;
+    // that skip is honest only while the refusal has a code no malformed input
+    // shares. The session log played over and over is a whole log of more
+    // records than the build keeps.
+    int records = 0;
+    for (int q = 0; q + 10 <= tb_log_len; q += 10 + 2 * tb_log[q + 9]) records++;
+    const int copies = MAX_LOGS / records + 2;
+    CHECK(copies * tb_log_len <= (int)sizeof(tb_log2), "the repeated log fits its buffer");
+    for (int i = 0; i < copies && (i + 1) * tb_log_len <= (int)sizeof(tb_log2); i++)
+        memcpy(tb_log2 + i * tb_log_len, tb_log, (size_t)tb_log_len);
+    tb_reload(0);
+    const int too_long = table_replay_code(&tb, tb_seed, 32, tb_log2, copies * tb_log_len, tb_code, sizeof(tb_code),
+                                       tb_scratch, sizeof(tb_scratch));
+    CHECK(too_long == -REPLAY_ETOOLONG, "a session log past MAX_LOGS is the documented too-long refusal");
+    tb_reload(0);
+    const int none = table_replay_code(&tb, tb_seed, 32, tb_log, 0, tb_code, sizeof(tb_code), tb_scratch, sizeof(tb_scratch));
+    CHECK(none < 0 && none != -REPLAY_ETOOLONG, "no log at all refuses, and not as too long");
+    tb_reload(0);
+    const int cut = table_replay_code(&tb, tb_seed, 32, tb_log, tb_log_len - 1, tb_code, sizeof(tb_code), tb_scratch,
+                                      sizeof(tb_scratch));
+    CHECK(cut < 0 && cut != -REPLAY_ETOOLONG, "a log cut mid-record refuses, and not as too long");
 }
 
 /* ------- bots-only rows at the e2e suites' volume (belief_logs, state_codec) ------- */
@@ -19276,6 +19589,12 @@ int main(void) {
     test_doors_survive_hostile_bytes();
     test_a_replay_code_that_never_ends_is_refused();
 
+    // Ported from the replay and animation e2e suites (bots_test.wasm doors).
+    test_reversal_steps_are_whole_groups_last_first();
+    test_extras_corpus_round_trips();
+    test_extras_seat_count_comes_from_the_moves();
+    test_extras_decode_answers_or_refuses_any_bytes();
+    test_extras_link_carries_a_long_code_whole();
     printf("\n%d passed, %d failed\n", n_pass, n_fail);
     return n_fail > 0 ? 1 : 0;
 }
