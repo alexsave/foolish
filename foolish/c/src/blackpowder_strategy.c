@@ -39,6 +39,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stddef.h>
+#include "../../../shared/c/rng.h"
 
 // ---------- small utils ------------------------------------------------
 
@@ -49,11 +50,6 @@ static inline int bp_card_score(Card c, int power) {
 static bool bp_set_contains(const Card *arr, int n, Card c) {
     for (int i = 0; i < n; i++) if (card_eq(arr[i], c)) return true;
     return false;
-}
-
-static uint32_t bp_xorshift(uint32_t s) {
-    s ^= s << 13; s ^= s >> 17; s ^= s << 5;
-    return s ? s : 0xB1A570u;
 }
 
 static uint32_t bp_mix(uint32_t a, uint32_t b) {
@@ -301,7 +297,7 @@ static void bp_sample_world(Game *g_out, const Game *g_in, int my_idx,
 
     uint32_t s = seed ? seed : 0xCAFEu;
     for (int i = hn - 1; i > 0; i--) {
-        s = bp_xorshift(s);
+        rng_xorshift32(&s);
         int j = (int)(s % (uint32_t)(i + 1));
         Card sw = hidden[i]; hidden[i] = hidden[j]; hidden[j] = sw;
     }

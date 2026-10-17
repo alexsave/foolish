@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../../../../shared/c/rng.h"
 
 enum { UNK=0, WIN=1, LOSS=2 };
 enum { N_TWIN=0, N_TLOSS=1, N_TDRAW=2, N_BASE=3 };
@@ -73,7 +74,7 @@ static int ab_value(uint64_t HA,uint64_t HD,int power,int*aborted){
 
 // deck: 36-card (ids where value 5..13, i.e. offset 4..12 within each suit)
 static int DECK[36], NDECK;
-static uint32_t rng=0x12345678u; static uint32_t rnd(){rng^=rng<<13;rng^=rng>>17;rng^=rng<<5;return rng;}
+static uint32_t rng=0x12345678u; static uint32_t rnd(void){return rng_xorshift32(&rng);}
 
 int main(int argc,char**argv){
     int NCASE=argc>1?atoi(argv[1]):20000;

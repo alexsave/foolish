@@ -4,6 +4,7 @@
 #include "game.h"
 #include "legal.h"
 #include "strategy.h"
+#include "retro_seed.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -45,7 +46,7 @@ static void movestr(char*o,const LegalMove*m){int w=0;const char*t=m->type==MOVE
 int main(int argc,char**argv){
     uint8_t seed[32];
     if(strlen(argv[1])>=64){for(int i=0;i<32;i++){int hi=hexnib(argv[1][2*i]),lo=hexnib(argv[1][2*i+1]);seed[i]=(uint8_t)((hi<<4)|lo);}}
-    else{uint64_t x=(uint64_t)atol(argv[1])*0x9E3779B97F4A7C15ull+0x1234567;for(int i=0;i<32;i++){x^=x<<13;x^=x>>7;x^=x<<17;seed[i]=(uint8_t)(x&0xff);}}
+    else retro_seed(atol(argv[1]),seed);
     int only=argc>2?atoi(argv[2]):-1;   // only trace this seat (winner)
     ensure_masks();
     used_slots=malloc(RCAP*2*sizeof(uint32_t));sST=malloc((size_t)RCAP*sizeof(SimState));sACT=malloc(RCAP);sVAL=malloc(RCAP);sCNT=malloc((size_t)RCAP*4);

@@ -12,6 +12,7 @@
 #include "cordite_sim.h"   // shared MC scratch (reused so wasm memory is unchanged)
 #include <string.h>
 #include <stdint.h>
+#include "../../../shared/c/rng.h"
 
 // The MC rollout puts a full Game (~67 KiB) and a LegalMoves (~232 KiB) in play
 // per sample. Natively that lives on an 8 MB stack, but bots.wasm ships a 22 KiB
@@ -124,12 +125,6 @@ static void build_unseen_pool(const Game *g, int bot_idx, UnseenPool *u) {
     }
 }
 
-// The shuffle's PRNG for sample_consistent_state.
-static uint32_t xorshift32(uint32_t s) {
-    s ^= s << 13; s ^= s >> 17; s ^= s << 5;
-    return s ? s : 1;
-}
-
 // ---------- Monte Carlo full-game evaluation -------------------------
 //
 // For each candidate move, sample a consistent fictional state (opp hands
@@ -178,7 +173,7 @@ static bool sample_consistent_state(Game *g_out, const Game *g_in, int my_idx,
     if (hn == 0) return true;
     uint32_t s = seed ? seed : 0xCAFEu;
     for (int i = hn - 1; i > 0; i--) {
-        s = xorshift32(s);
+        rng_xorshift32(&s);
         int j = (int)(s % (uint32_t)(i + 1));
         Card sw = hidden[i]; hidden[i] = hidden[j]; hidden[j] = sw;
     }

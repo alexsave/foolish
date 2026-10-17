@@ -30,6 +30,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include "../../../shared/c/rng.h"
 
 #define STARTING_ELO    1000.0
 #define MAX_COMPS       128
@@ -224,17 +225,15 @@ int main(int argc, char **argv) {
 
     setvbuf(stdout, NULL, _IOLBF, 0);
     double t_start = wall_secs();
-    int rng_state = (int)seed0 * 2654435761u;
+    uint32_t rng_state = (uint32_t)seed0 * 2654435761u;
 
     for (int gi = 1; gi <= games; gi++) {
         // Pick PC.
-        rng_state = rng_state * 1103515245 + 12345;
-        int pc = pcs[((unsigned)rng_state >> 16) % (unsigned)n_pcs];
+        int pc = pcs[(rng_lcg32(&rng_state) >> 16) % (unsigned)n_pcs];
         // Sample strategies for each seat (with replacement).
         int seat_strats[MAX_PLAYERS];
         for (int s = 0; s < pc; s++) {
-            rng_state = rng_state * 1103515245 + 12345;
-            seat_strats[s] = ((unsigned)rng_state >> 16) % (unsigned)N_COMPS;
+            seat_strats[s] = (int)((rng_lcg32(&rng_state) >> 16) % (unsigned)N_COMPS);
         }
         int rankings[MAX_PLAYERS];
         uint32_t game_seed = (uint32_t)(seed0 + (uint32_t)gi * 2654435761u);

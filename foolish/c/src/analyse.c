@@ -28,6 +28,7 @@
 #include <pthread.h>
 #include <time.h>
 #endif
+#include "../../../shared/c/rng.h"
 
 // ---------- limits ------------------------------------------------------------
 #define AN_MAX_NODES   512    // decisions per analysis (a 2p game has ~60 per seat; 8p ~400 in all)
@@ -37,10 +38,6 @@
 #define AN_PLAYOUT_CYCLES 4000
 
 // ---------- small helpers -----------------------------------------------------
-static uint32_t an_xorshift(uint32_t s) {
-    s ^= s << 13; s ^= s >> 17; s ^= s << 5;
-    return s ? s : 0x9E3779B9u;
-}
 static uint32_t an_mix(uint32_t a, uint32_t b) {
     uint32_t h = a ^ 0x9E3779B9u;
     h ^= b + 0x7F4A7C15u + (h << 6) + (h >> 2);
@@ -484,7 +481,7 @@ static void an_perm_from_labels(const AnalyseBelief *B, const AnWorldShape *S,
         if (gi == S->deck_group && future_seed && k - start > 1) {
             uint32_t s = future_seed;
             for (int i = k - start - 1; i > 0; i--) {
-                s = an_xorshift(s);
+                rng_xorshift32(&s);   // future_seed != 0, so s never is
                 int j = (int)(s % (uint32_t)(i + 1));
                 Card t = perm[start + i]; perm[start + i] = perm[start + j]; perm[start + j] = t;
             }
@@ -496,7 +493,9 @@ void analyse_sample_world(const AnalyseBelief *B, uint32_t seed, Card *perm) {
     for (int i = 0; i < B->n; i++) perm[i] = B->pool[i];
     uint32_t s = seed;
     for (int i = B->n - 1; i > 0; i--) {
-        s = an_xorshift(s);
+        // 0 is xorshift's one fixed point: a zero seed goes on from the golden
+        // constant, and any other state never reaches 0.
+        if (!rng_xorshift32(&s)) s = 0x9E3779B9u;
         int j = (int)(s % (uint32_t)(i + 1));
         Card t = perm[i]; perm[i] = perm[j]; perm[j] = t;
     }

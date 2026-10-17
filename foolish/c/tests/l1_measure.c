@@ -26,6 +26,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../../../shared/c/rng.h"
 
 #define MAX_ACTIONS 100000
 #define ENC_CAP (1 << 20)
@@ -53,10 +54,7 @@ static void count_snap(const Game *g, int tag, int aux) {
 #define MAXX(v, x) do { if ((x) > (v)) (v) = (x); } while (0)
 
 static uint32_t g_sh_seed = 1;
-static uint32_t sh_rand(void) {
-    g_sh_seed = g_sh_seed * 1664525u + 1013904223u;
-    return g_sh_seed;
-}
+static uint32_t sh_rand(void) { return rng_lcg32(&g_sh_seed); }
 
 static unsigned char wire_of(Card c) {
     if (c.suit < 0 || c.value < 1) return (unsigned char)REPLAY_CARD_HIDDEN;

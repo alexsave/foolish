@@ -5,6 +5,7 @@
 #include "bot_roster.h"
 #include "game.h"
 #include "legal.h"
+#include "../../../shared/c/rng.h"
 
 // ---------- pacing ---------------------------------------------------------
 
@@ -118,12 +119,6 @@ static uint32_t drive_seed(const Game *g) {
     for (int i = 0; i < g->num_players; i++) MIX(g->players[i].hand_count * 31 + i);
 #undef MIX
     return h ? h : 1;
-}
-
-static uint32_t xs32(uint32_t *s) {
-    uint32_t x = *s;
-    x ^= x << 13; x ^= x >> 17; x ^= x << 5;
-    return *s = x;
 }
 
 // The few scalars that tell a silent `good` from a round-transitioning one.
@@ -285,7 +280,7 @@ int bot_drive(Game *g, uint32_t human_mask, int max_actions,
 
     uint32_t rs = drive_seed(g);
     for (int i = n_order - 1; i > 0; i--) {
-        int j = (int)(xs32(&rs) % (uint32_t)(i + 1));
+        int j = (int)(rng_xorshift32(&rs) % (uint32_t)(i + 1));
         int t = order[i]; order[i] = order[j]; order[j] = t;
     }
 

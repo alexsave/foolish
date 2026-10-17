@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../../../shared/c/rng.h"
 
 #define MAX_ACTIONS 100000
 #define ENC_CAP (1 << 20)
@@ -34,10 +35,7 @@ static unsigned char g_enc2[ENC_CAP];
 static unsigned char g_dec[DEC_CAP];
 
 static uint32_t g_sh_seed = 1;
-static uint32_t sh_rand(void) {
-    g_sh_seed = g_sh_seed * 1664525u + 1013904223u;
-    return g_sh_seed;
-}
+static uint32_t sh_rand(void) { return rng_lcg32(&g_sh_seed); }
 
 static unsigned char wire_of(Card c) {
     if (c.suit < 0 || c.value < 1) return (unsigned char)REPLAY_CARD_HIDDEN;
@@ -375,8 +373,7 @@ static unsigned char g_enc3[ENC_CAP];
 static void make_seed(uint32_t s) {
     uint32_t x = s ? s : 1u;   // xorshift32: any spread of bytes will do
     for (int i = 0; i < FOOLISH_SEED_LEN; i++) {
-        x ^= x << 13; x ^= x >> 17; x ^= x << 5;
-        g_seed32[i] = (unsigned char)(x & 0xffu);
+        g_seed32[i] = (unsigned char)(rng_xorshift32(&x) & 0xffu);
     }
 }
 

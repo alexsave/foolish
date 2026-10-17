@@ -22,6 +22,13 @@ static uint32_t old_game_lcg(uint32_t *g_seed) { *g_seed = *g_seed * 1664525u + 
 /* foolish/c/src/{analyse,astrolite_strategy,blackpowder_strategy,
  * cordite_strategy,octogen_strategy,robusta_strategy}.c, value style */
 static uint32_t old_xorshift32(uint32_t s) { s ^= s << 13; s ^= s >> 17; s ^= s << 5; return s; }
+/* ... as those files spell it, with the step's zero guard (dead once the
+ * caller's seed is not 0: xorshift maps nonzero to nonzero) */
+static uint32_t old_cd_xorshift(uint32_t s) { s ^= s << 13; s ^= s >> 17; s ^= s << 5; return s ? s : 0xB1A570u; }
+/* foolish/c/src/analyse.c an_xorshift: there the guard is live for seed 0 */
+static uint32_t old_an_xorshift(uint32_t s) { s ^= s << 13; s ^= s >> 17; s ^= s << 5; return s ? s : 0x9E3779B9u; }
+/* foolish/c/tools/endgame_retro/{find_crawl,narrow_path,trace_path}.c mkseed */
+static void old_mkseed(long idx, uint8_t *seed) { uint64_t x=(uint64_t)idx*0x9E3779B97F4A7C15ull+0x1234567; for(int i=0;i<32;i++){x^=x<<13;x^=x>>7;x^=x<<17;seed[i]=(uint8_t)(x&0xff);} }
 /* foolish/c/src/bot_drive.c xs32, pointer style */
 static uint32_t old_xs32(uint32_t *s) { uint32_t x = *s; x ^= x << 13; x ^= x >> 17; x ^= x << 5; return *s = x; }
 
@@ -125,6 +132,12 @@ static uint32_t new_uttt_f_rnd(uint64_t *s, uint32_t n)
 static uint32_t new_big_below(uint64_t *s, uint32_t n) { return (uint32_t)(((rng_xorshift64star(s) >> 32) * (uint64_t)n) >> 32); }
 static uint64_t new_big_init(uint64_t seed) { uint64_t s = seed, r = rng_splitmix64(&s); return r ? r : RNG_GOLDEN; }
 static double   new_unit(uint64_t *s) { return (double)(rng_splitmix64(s) >> 11) * (1.0 / 9007199254740992.0); }
+static void new_mkseed(long idx, uint8_t seed[32])
+{
+    uint64_t x = (uint64_t)idx * RNG_GOLDEN + 0x1234567;
+    for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(rng_xorshift64(&x) & 0xff);
+}
+static uint32_t new_an_step(uint32_t *s) { if (!rng_xorshift32(s)) *s = 0x9E3779B9u; return *s; }
 static uint64_t new_uttt_mix(uint64_t x) { uint64_t z = rng_splitmix64_at(x); return z ? z : 1; }
 
 #define SEEDS 200000
@@ -150,6 +163,12 @@ int main(void)
         diffs += old_big_init(s64) != new_big_init(s64);
         diffs += old_mix64(s64) != rng_splitmix64_at(s64);
         diffs += old_uttt_mix(s64) != new_uttt_mix(s64);
+        {
+            uint8_t o[32], nw[32];
+            old_mkseed((long)s64, o); new_mkseed((long)s64, nw);
+            diffs += memcmp(o, nw, 32) != 0;
+        }
+        uint32_t cd_a = s32 ? s32 : 0xCAFEu, cd_b = cd_a, an_a = s32, an_b = s32;
         for (int j = 0; j < DRAWS; j++) {
             uint32_t n = 1u + (uint32_t)j * 7u;   /* bounds that are and are not powers of two */
             diffs += old_game_lcg(&a32) != rng_lcg32(&b32);
@@ -157,6 +176,10 @@ int main(void)
             diffs += ov != rng_xorshift32(&d32);
             diffs += old_xs32(&e32) != d32;
             diffs += old_splitmix(&a) != rng_splitmix64(&b);
+            cd_a = old_cd_xorshift(cd_a);
+            diffs += cd_a != rng_xorshift32(&cd_b);
+            an_a = old_an_xorshift(an_a);
+            diffs += an_a != new_an_step(&an_b);
             diffs += old_unit(&c) != new_unit(&d);
             diffs += old_pk_bot_rand(&e) != new_pk_bot_rand(&f);
             diffs += old_uttt_rnd(&g, n) != new_uttt_rnd(&h, n);
@@ -168,6 +191,6 @@ int main(void)
               "seed %d: the states agree after %d draws", i, DRAWS);
     }
     CHECK(diffs == 0, "%ld outputs differ", diffs);
-    printf("rng_legacy: %d seeds x %d draws, 14 generators: %ld differences\n", SEEDS, DRAWS, diffs);
+    printf("rng_legacy: %d seeds x %d draws, 19 generators: %ld differences\n", SEEDS, DRAWS, diffs);
     return report("rng_legacy");
 }
