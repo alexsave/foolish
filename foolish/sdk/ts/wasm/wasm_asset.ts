@@ -7,15 +7,13 @@
 //     `new URL('./web.wasm.gz', import.meta.url)` makes the bundler emit it as
 //     a real asset, so there is one file, built once, in its natural binary
 //     form. Deliberately NOT a base64 embed: a second carrier of the same bytes
-//     is exactly how rules_wasm.ts went stale.
+//     is how an embedded copy of the kernel once went stale beside the real one.
 //   * the same .gz read synchronously from disk, in Node (the e2e suites and
 //     tools), so a test runs the very bytes a visitor downloads.
 //
-// There is ONE module here and no choice between links. There used to be two:
-// bots.wasm, the whole kernel, which the Supabase edge functions read off disk,
-// and this one. The edge functions are gone (the server is c_base, which links
-// the kernel natively), and the whole-kernel link the Node suites still need
-// for the C Table and the bots is a test build they load themselves
+// There is ONE module here and no choice between links. The server links the
+// kernel natively (c_base), and the whole-kernel link the Node suites need for
+// the C Table and the bots is a test build they load themselves
 // (e2e/helpers/bots_test_wasm.ts).
 import { gunzip } from './gunzip.ts';
 
@@ -38,8 +36,7 @@ function wasmAssetUrl(): URL {
 // fails at runtime while every tsx-run test stays green, because tsx IS CJS.
 // That is exactly how /m/'s unfurl broke in production once already.
 function readAssetSync(): Uint8Array | null {
-    // deno-lint-ignore no-explicit-any
-    const g = globalThis as any;
+    const g = globalThis as { require?: (id: string) => { readFileSync(u: URL): ArrayBuffer } };
     const req = typeof g.require === 'function' ? g.require
         : typeof module !== 'undefined' ? eval('require') : null;
     if (!req) return null;                       // ESM: use readAssetAsync

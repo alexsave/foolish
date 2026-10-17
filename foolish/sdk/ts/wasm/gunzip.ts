@@ -1,7 +1,7 @@
-// Synchronous gunzip for the gzip+base64 wasm embeds (rules/guards). Uses the
+// Synchronous gunzip for the kernel module's .gz (wasm_asset.ts). Uses the
 // vendored tiny-inflate — pure JS, sync, and a relative import, so it works
-// identically in the browser, Node and the Deno edge with zero npm/import-map
-// plumbing (unlike fflate) and no async DecompressionStream.
+// identically in the browser and Node with zero npm plumbing (unlike fflate)
+// and no async DecompressionStream.
 // @ts-ignore — vendored plain-JS module, typed as (src, dest) => Uint8Array
 import tinf_uncompress from './tiny_inflate.mjs';
 
