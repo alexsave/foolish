@@ -3,8 +3,8 @@
 //
 // `create` answers with the creator's envelope, which the kernel reads for the
 // game id, the seat and the first view. Every lobby request is an ask
-// (c/src/ask.h) written by the kernel (AskWire) and posted to `meta`; its answer
-// is the caller's envelope, which the stream delivers anyway.
+// (c/src/ask.h) written by the kernel (AskWire); what it changed arrives on the
+// stream.
 
 import Foundation
 import FoolishKit
@@ -18,9 +18,8 @@ public final class OnlineService {
 
     /// Quick-match: create a game and return a session seeded from the response.
     public func quickMatch(userId: UUID) async throws -> OnlineGame {
-        let (status, body) = try await Backend.shared.call { NetClient.create() }
-        guard NetClient.status(status, body) == 0 else { throw NetError.refused(NetClient.error) }
-        guard let decoded = await engine.adoptEnvelope(body) else { throw NetError.unreadable }
+        let answer = try await Backend.shared.ask(NC_DO_CREATE)
+        guard let envelope = answer.envelope, let decoded = await engine.adoptEnvelope(envelope) else { throw NetError.unreadable }
         return OnlineGame(userId: userId, gameId: decoded.gameId, initial: decoded)
     }
 
@@ -51,7 +50,6 @@ public final class OnlineService {
 
     func ask(_ kind: AskWire.Kind, gameId: String, bot: String? = nil, player: String? = nil) async throws {
         guard let ask = AskWire.body(kind, gameId: gameId, bot: bot, player: player) else { throw NetError.unreadable }
-        let (status, body) = try await Backend.shared.call { NetClient.meta(ask) }
-        guard NetClient.status(status, body) == 0 else { throw NetError.refused(NetClient.error) }
+        _ = try await Backend.shared.ask(NC_DO_ASK, bytes: [UInt8](ask))
     }
 }

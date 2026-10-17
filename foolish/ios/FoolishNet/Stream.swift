@@ -1,10 +1,10 @@
 // Stream.swift - the one WebSocket to c_base's push stream.
 //
-// The kernel's client decides what goes on it (the token, the subscriptions,
-// their retries, the ping) and which pushes are stale; this file opens the
-// socket, passes every frame in, sends every frame the client asks for, wakes
-// when the client says something is due, and reopens the socket after the delay
-// the client names. A view is handed to the game it is of.
+// The kernel's client decides what goes on it (the subscriptions, their
+// retries, the ping) and which pushes are stale; this file opens the socket,
+// passes every frame in, sends every frame the client asks for (Backend's loop
+// wakes it), and reopens the socket after the delay the client names. A view is
+// handed to the game it is of.
 
 import Foundation
 import FoolishKit
@@ -16,7 +16,6 @@ final class Stream {
     /// Per game: what to do with its newest envelope, and with news that it moved.
     private var watchers: [String: (view: (Data) -> Void, moved: () -> Void)] = [:]
     private var task: URLSessionWebSocketTask?
-    private var wake: Task<Void, Never>?
 
     /// A player hears every view of theirs (one subscription for all their
     /// games); a spectator hears the game's casts and refetches on each.
@@ -24,26 +23,25 @@ final class Stream {
         watchers[gameId] = (view, moved)
         NetClient.subscribe(spectator ? NW_SUB_GAME : NW_SUB_GAMES, spectator ? gameId : nil)
         open()
-        flush()
+        Backend.shared.pump()
     }
 
     func unwatch(_ gameId: String, spectator: Bool) {
         watchers[gameId] = nil
-        if spectator { NetClient.unsubscribe(NW_SUB_GAME, gameId) }
-        flush()
+        NetClient.unsubscribe(spectator ? NW_SUB_GAME : NW_SUB_GAMES, spectator ? gameId : nil)
+        Backend.shared.pump()
     }
 
-    /// Sends whatever the client has due, and sleeps until the next thing is.
-    func flush() {
+    /// Sends every frame the client has for the socket.
+    func send() {
         guard let task else { return }
         while let text = NetClient.streamNext() { task.send(.string(text)) { _ in } }
-        wake?.cancel()
-        let ms = NetClient.streamDueMs()
-        guard ms >= 0 else { return }
-        wake = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(ms) * 1_000_000)
-            if !Task.isCancelled { self?.flush() }
-        }
+    }
+
+    /// What the client says changed, to the game it is of.
+    func deliver(_ ev: NcEventSnap, _ payload: Data) {
+        if ev.kind == NC_EV_VIEW, !payload.isEmpty { watchers[ev.gid]?.view(payload) }
+        if ev.kind == NC_EV_CAST { watchers[ev.gid]?.moved() }
     }
 
     private func open() {
@@ -77,28 +75,25 @@ final class Stream {
         case .string(let s): frame = (Data(s.utf8), true)
         @unknown default: return
         }
-        guard let (ev, payload) = NetClient.streamIn(frame.0, isText: frame.1) else { return }
-        if ev.kind == NC_EV_VIEW, !payload.isEmpty { watchers[ev.gid]?.view(payload) }
-        if ev.kind == NC_EV_CAST { watchers[ev.gid]?.moved() }
-        flush()
+        NetClient.streamIn(frame.0, isText: frame.1)
+        Backend.shared.changed()
+        Backend.shared.pump()
     }
 
     private func closed() {
         task = nil
-        wake?.cancel()
         let ms = NetClient.streamClosed()
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(ms) * 1_000_000)
             guard let self, !self.watchers.isEmpty else { return }
             self.open()
-            self.flush()
+            Backend.shared.pump()
         }
     }
 
     /// Signed out: the socket goes, and nothing reopens it.
     func stop() {
         watchers.removeAll()
-        wake?.cancel()
         task?.cancel(with: .goingAway, reason: nil)
         task = nil
     }

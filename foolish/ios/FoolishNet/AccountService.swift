@@ -12,8 +12,7 @@ public final class AccountService {
     public init(auth: AuthService) { self.auth = auth }
 
     public func deleteAccount() async throws {
-        let (status, body) = try await Backend.shared.call { NetClient.deleteAccount() }
-        guard NetClient.status(status, body) == 0 else { throw NetError.refused(NetClient.error) }
+        _ = try await Backend.shared.ask(NC_DO_DELETE_ACCOUNT)
         auth.signedOut()
     }
 }
