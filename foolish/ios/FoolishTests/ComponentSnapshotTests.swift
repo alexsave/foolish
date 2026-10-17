@@ -2,22 +2,40 @@
 // in light/dark, Dynamic Type, and ru/ko strings (§13, §16.A6). Uses
 // pointfreeco/swift-snapshot-testing.
 //
-// THE REFERENCES ARE LOCAL TO WHICHEVER MAC RECORDED THEM. `__Snapshots__/` is
-// gitignored (.gitignore:63) and the workflow's Xcode job is still commented
-// out (.github/workflows/ios.yml), so nothing but this machine has ever held
-// them and nothing but this machine has ever checked them. A fresh clone
-// records its own on the first run - which fails once, by design, and passes
-// after.
+// THE REFERENCES ARE COMMITTED, and a missing one is a FAILURE.
+// `__Snapshots__/ComponentSnapshotTests/*.png` is tracked in git. It used to be
+// gitignored and "recorded on first run", which made every fresh checkout's
+// first run red (seven "No reference was found on disk" failures) and passed on
+// the second - a gate that is red by construction teaches everyone to rerun it,
+// and a reference that vanished was silently re-recorded from whatever the code
+// drew that day, so it could never catch the change it exists for.
 //
-// ROUND 30 corrects what this header used to claim ("commit the __Snapshots__
-// folder ... the CI Mac job owns the reference images"). Neither half was true,
-// and believing it is how two of these sat red for six weeks: a picture nobody
-// else can reproduce, failing for a reason nobody read. When a deliberate
-// visual change lands, RE-RECORD - flip `record` (or just the affected case) to
-// true, look at the new image, and flip it back. That is not a workaround, it
-// is the whole maintenance model for a local reference.
+// WHAT THEY ARE A FUNCTION OF, measured when they were committed (2026-10-17):
+//   - not the run: re-recording gives the identical bytes;
+//   - not the phone: iPhone 17e and iPhone 18 Pro Max record bit-identical
+//     images (both iOS 27.0), once the scale is pinned (`picture`);
+//   - THE RUNTIME: iOS 26.3 draws the fern card back and the board's wool
+//     differently (25k and 62k pixels, deltas up to 100), so a reference is
+//     only meaningful on the runtime it was recorded on. `RUNTIME` beside the
+//     PNGs names it, the recording run writes it, and `setUp` fails on any
+//     other runtime with a message that says so, instead of a pixel diff that
+//     reads like a regression. ios_mac_tests.sh runs the newest runtime this
+//     Mac has, so after an Xcode update that brings a new one: re-record.
+//   (An iPad is not a target: every app here is TARGETED_DEVICE_FAMILY 1, so on
+//   an iPad the host runs in iPhone compatibility mode and draws its text
+//   differently. Measured, and deliberately not chased.)
 //
-// To record: set `record = true`, run, set it back.
+// RECORDING IS OFF unless asked for (`invokeTest`), so a missing reference fails
+// every run and writes nothing. To re-record after a deliberate visual change,
+// from foolish/:
+//
+//   TEST_RUNNER_SNAPSHOT_TESTING_RECORD=all xcodebuild test \
+//     -project ios/Foolish.xcodeproj -scheme Foolish -destination <sim> \
+//     -only-testing:FoolishTests/ComponentSnapshotTests
+//
+// then look at every changed PNG in the diff (and `RUNTIME`) and commit the
+// ones you meant.
+// (xcodebuild hands TEST_RUNNER_<NAME> to the test process as <NAME>.)
 
 import XCTest
 import SwiftUI
@@ -26,8 +44,38 @@ import SnapshotTesting
 
 final class ComponentSnapshotTests: XCTestCase {
 
-    // Flip to true on a Mac to (re)record references, then flip back and commit.
-    private let record = false
+    /// Never record, unless `SNAPSHOT_TESTING_RECORD=all` is in the test
+    /// process's environment (see the header). The library's own default is
+    /// `.missing`, which is exactly the record-on-first-run behaviour this class
+    /// must not have: it turns a deleted reference into a pass on the next run.
+    override func invokeTest() {
+        withSnapshotTesting(record: Self.recording ? .all : .never) {
+            super.invokeTest()
+        }
+    }
+
+    private static var recording: Bool {
+        ProcessInfo.processInfo.environment["SNAPSHOT_TESTING_RECORD"] == "all"
+    }
+
+    /// Every image in this class is drawn at 3x, whatever simulator runs it,
+    /// so a 2x device asserts the same pixels as the 3x phone the references
+    /// were recorded on instead of failing on a half-size image.
+    private static let picture: Snapshotting<UIViewController, UIImage> =
+        .image(precision: imagePrecision, perceptualPrecision: imagePerceptual,
+               traits: UITraitCollection(displayScale: 3))
+
+    /// The file naming the iOS runtime the committed references were recorded
+    /// on, e.g. "27.0" - see the header.
+    private static let runtimeFile = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .appendingPathComponent("__Snapshots__/ComponentSnapshotTests/RUNTIME")
+
+    /// "27.0" for iOS 27.0 and 27.0.1 alike: a point release does not redraw.
+    private static var thisRuntime: String {
+        let v = ProcessInfo.processInfo.operatingSystemVersion
+        return "\(v.majorVersion).\(v.minorVersion)"
+    }
 
     /// HOW EXACT A MATCH HAS TO BE, and the reason it is not "exactly".
     ///
@@ -57,11 +105,24 @@ final class ComponentSnapshotTests: XCTestCase {
     /// `tearDown`. nil until `setUp` has run.
     private var tableBefore: TableSurface?
 
-    override func setUp() {
-        super.setUp()
-        // isRecording is global to the library.
-        // SnapshotTesting.isRecording = record
-        //
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        // THE REFERENCES BELONG TO ONE RUNTIME (header). A recording run stamps
+        // it; every other run must be on it, and says so plainly when it is not.
+        if Self.recording {
+            try (Self.thisRuntime + "\n").write(to: Self.runtimeFile, atomically: true, encoding: .utf8)
+        } else {
+            let recorded = try String(contentsOf: Self.runtimeFile, encoding: .utf8)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            // A throw here FAILS the test (it is not a skip), with this message.
+            guard recorded == Self.thisRuntime else {
+                throw NSError(domain: "ComponentSnapshotTests", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "the snapshot references were recorded on iOS \(recorded) and this "
+                        + "simulator is iOS \(Self.thisRuntime): run on iOS \(recorded), or "
+                        + "re-record (see the header of ComponentSnapshotTests.swift)"])
+            }
+        }
         // PIN THE TABLE, for exactly the reason `host` pins the colour scheme.
         //
         // `TableBackground` reads `FPrefs.shared.table`, which is a PERSISTED
@@ -89,10 +150,8 @@ final class ComponentSnapshotTests: XCTestCase {
         // deliberate decision to re-record this class against felt is a separate
         // change, and it re-records every image here.
         //
-        // Worth knowing while reading this: `ios/FoolishTests/__Snapshots__` is
-        // git-ignored, so every machine records its own references on first run.
-        // That makes an unpinned ambient input worse than flaky - it is
-        // per-machine, and no two checkouts are asserting the same picture.
+        // The references are committed, so every checkout asserts the same
+        // picture - which only holds while every ambient input is pinned.
         // `FPrefs` is @MainActor and these overrides are not (the class is not,
         // unlike Round30NitTests). XCTest runs setUp/tearDown on the main thread
         // for a UI-rendering suite, which is also where every `host(_:)` below
@@ -137,16 +196,12 @@ final class ComponentSnapshotTests: XCTestCase {
 
     func testFCardFace() {
         assertSnapshot(of: host(FCard(card: Card(s: 1, v: 13), trump: true), width: 120, height: 140),
-                       as: .image(precision: Self.imagePrecision,
-                                  perceptualPrecision: Self.imagePerceptual),
-                       record: record)
+                       as: Self.picture)
     }
 
     func testFCardBack() {
         assertSnapshot(of: host(FCard(card: nil, backSeed: 42), width: 120, height: 140),
-                       as: .image(precision: Self.imagePrecision,
-                                  perceptualPrecision: Self.imagePerceptual),
-                       record: record)
+                       as: Self.picture)
     }
 
     func testFHandFan() {
@@ -154,20 +209,20 @@ final class ComponentSnapshotTests: XCTestCase {
         assertSnapshot(of: host(FHandFan(cards: cards, trumpSuit: .hearts,
                                          selection: .constant([]), onTap: { _ in }),
                                 width: 320, height: 140),
-                       as: .image(precision: Self.imagePrecision,
-                                  perceptualPrecision: Self.imagePerceptual),
-                       record: record)
+                       as: Self.picture)
     }
 
+    /// Tall enough for the whole column. FActionBar stacks its pills
+    /// VERTICALLY, and this used to be framed 340x80 - a horizontal bar's box -
+    /// so the reference held one pill ("Взять") between two sliced-off ones,
+    /// and two of the three Russian labels this test is for were never checked.
     func testFActionBarRu() {
         FStrings.override = .ru
         defer { FStrings.override = .en }   // no more .system; restore to English default
         assertSnapshot(of: host(FActionBar(canPass: true, canPickup: true, canDone: true,
                                            onPass: {}, onPickup: {}, onDone: {}),
-                                width: 340, height: 80),
-                       as: .image(precision: Self.imagePrecision,
-                                  perceptualPrecision: Self.imagePerceptual),
-                       record: record)
+                                width: 340, height: 200),
+                       as: Self.picture)
     }
 
     /// ROUND 12: the three role marks together, at the sizes the board draws
@@ -191,9 +246,7 @@ final class ComponentSnapshotTests: XCTestCase {
         .frame(height: FRoleMark.rowHeight)
         .padding(20)
         .background(TableBackground())
-        assertSnapshot(of: host(marks, width: 260, height: 100), as: .image(precision: Self.imagePrecision,
-                                  perceptualPrecision: Self.imagePerceptual),
-                       record: record)
+        assertSnapshot(of: host(marks, width: 260, height: 100), as: Self.picture)
     }
 
     /// ROUND 12: the bare trump glyph beside the same suit on a card face.
@@ -215,9 +268,7 @@ final class ComponentSnapshotTests: XCTestCase {
             FDeckWell(deckCount: 0, flipped: nil, hasFlipped: false, trumpSuit: .hearts)
             FCard(card: Card(s: 1, v: 13), size: CGSize(width: 80, height: 112))
         }
-        assertSnapshot(of: host(pair, width: 320, height: 140), as: .image(precision: Self.imagePrecision,
-                                  perceptualPrecision: Self.imagePerceptual),
-                       record: record)
+        assertSnapshot(of: host(pair, width: 320, height: 140), as: Self.picture)
     }
 
     // The iMessage expanded-bubble board (read-only public view). A mid-game 2p
@@ -237,9 +288,7 @@ final class ComponentSnapshotTests: XCTestCase {
             eliminationOrder: [], players: players)
         assertSnapshot(of: host(MessageBoardView(view: view, names: [0: "Sveta", 1: "Alex"]),
                                 width: 360, height: 260),
-                       as: .image(precision: Self.imagePrecision,
-                                  perceptualPrecision: Self.imagePerceptual),
-                       record: record)
+                       as: Self.picture)
     }
 
     /// The bubble image (§10/§11.3) actually renders headless — ImageRenderer over

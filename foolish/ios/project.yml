@@ -512,13 +512,10 @@ targets:
     platform: iOS
     sources:
       - path: FoolishTests
-        # The snapshot references are RECORDED, not authored: swift-snapshot-
-        # testing writes them next to the test on a first run, and .gitignore
-        # keeps them out of the repo because they are per-machine. Listing them
-        # as build inputs means the project only builds on a machine where a
-        # previous run happened to leave them - delete them to re-record and
-        # every build fails with "Build input file cannot be found" before a
-        # test can run.
+        # The snapshot references are committed PNGs that swift-snapshot-
+        # testing reads from beside the test source at run time (#filePath),
+        # never from the bundle - so they are not sources and not resources,
+        # and copying them into the test bundle would only bloat it.
         excludes:
           - __Snapshots__/**
       - path: Fixtures
