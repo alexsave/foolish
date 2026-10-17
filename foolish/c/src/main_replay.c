@@ -9,20 +9,20 @@
 #include "../src/legal.h"
 #include "../src/strategy.h"
 #include "../src/cli_util.h"
+#include "../cardtext/card_text.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
 #include <stdint.h>
 
+// The face of a card is card_text.h's, the table datagen hands the web: a card
+// value is a rank INDEX (1 is the two, ACE_VALUE the ace), not a face number.
 static const char *suit_name(int s) {
-    static const char *n[] = { "S","H","C","D" };
-    return s >= 0 && s < 4 ? n[s] : "?";
+    return s >= 0 && s < NUM_SUITS ? CARD_SUIT_FACE[s].glyph : "?";
 }
 static const char *value_name(int v) {
-    static const char *vs[] = {"-","A","2","3","4","5","6","7","8","9","10","J","Q","K","A"};
-    if (v >= 0 && v < (int)(sizeof(vs)/sizeof(vs[0]))) return vs[v];
-    return "?";
+    return v >= 1 && v <= ACE_VALUE ? CARD_RANK_LABEL[v] : "?";
 }
 static void print_card(Card c, int trump) {
     printf("%s%s", value_name(c.value), suit_name(c.suit));

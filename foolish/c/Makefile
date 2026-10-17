@@ -190,10 +190,11 @@ $(call host_prog,cnitro_distill,src/main_distill.c)
 # move is a lane that runs `make tests` at the flags the product ships, and then
 # leaving the experiment out of the coverage build - not one without the other,
 # since dropping it from coverage today would leave it running in no CI at all.
-tests: build/cnitro_tests build/bot_drive_threads_test build/replay_threads_test
+tests: build/cnitro_tests build/bot_drive_threads_test build/replay_threads_test build/cnitro_replay
 	./build/cnitro_tests
 	./build/bot_drive_threads_test
 	./build/replay_threads_test
+	./tests/replay_cli_labels.sh build/cnitro_replay
 
 # The same suite under AddressSanitizer + UBSan, at -O1, from its own objects
 # (build/obj/asan - not CORE_OBJ, whose objects are -O3 -flto and not
