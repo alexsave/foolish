@@ -63,7 +63,7 @@ The recommendation is: **do not rewrite the kernel in Rust.**
 
 2. **The C kernel is the single source of truth, and a rewrite forks it.**
    This is the reason that actually settles it.
-   `c/src` is roughly 39 KLOC compiled, unchanged, to every place the game runs: the wasm rules and bots modules the web and edge functions load, the `Foolish.xcframework` static libraries the iOS and iMessage apps link, and the native C server under `server/impls/native/`.
+   `c/src` is roughly 39 KLOC compiled, unchanged, to every place the game runs: the wasm rules and bots modules the web and edge functions load, the `Foolish.xcframework` static libraries the iOS and iMessage apps link, and the c_base backend (the native C server under `server/impls/native/` it once also reached was retired 2026-10-17).
    One implementation means one set of rules, one set of bugs, and one place to fix them.
    A Rust rewrite does not replace that on day one, it *duplicates* it, and the repo then owns two engines that must agree - across four deployment targets, a validation ladder, a replay format with live saved games in it, and a bot ELO table whose numbers only mean something if the engine underneath stays fixed.
    The repo has been through divergent-twin bugs before and the whole architectural direction has been to delete carriers, not add one.
@@ -141,4 +141,4 @@ rs/src/sim.rs     the ported SimState engine that playout and solve run on
 ## See also
 
 - `docs/RUST_VS_C_KERNEL.md` - the full examination, the bug ledger, the phased-migration proposal that was not adopted, and the reproduction appendix.
-- `docs/NATIVE_SERVER.md` - the native C server, and a short summary of this question.
+- `docs/NATIVE_SERVER.md` - the native C server (retired 2026-10-17, in git), and a short summary of this question.

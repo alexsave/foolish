@@ -24,7 +24,8 @@ int v = sim_solve_rec(S, child, alpha, beta, depth + 1);
 ```
 
 That `memcpy` showed as ~7.26% of solver time (`__memcpy_avx_unaligned_erms`)
-in the T2/T3 profiles (`server/impls/native/PROFILE_HOTPATH.md`). The
+in the T2/T3 profiles (`server/impls/native/PROFILE_HOTPATH.md`, in git history:
+the native server was retired 2026-10-17; the last tree is in git at 56ad0609). The
 prototype replaced copy-make with classic **make/unmake** behind a
 default-OFF flag: mutate the one caller-provided `SimState` in place
 (`sim_make_sol`), recurse on it, then reverse exactly the fields the move

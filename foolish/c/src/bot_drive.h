@@ -216,8 +216,7 @@ extern _Thread_local void (*bot_drive_pre_action_hook)(const Game *g, int seat, 
 // policy has one definition: at CHOOSE the strategy stream and the draw stream
 // (under its search salt), at APPLY the draw stream, each from game_state_seed of
 // the board in front of the decision, the host's secret `base` and the game's
-// PROGRESS. The Table (table.c), the native server (server/impls/native) and the
-// wasm bridge's resident drive all call it.
+// PROGRESS. The Table (table.c) and the wasm bridge's resident drive both call it.
 //
 // PROGRESS is the length of the game's session log at the decision: the records
 // the board already holds (g->num_logs) plus `log_offset`, the records the row's

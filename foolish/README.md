@@ -17,8 +17,8 @@ None of that is true any more.
 
 **There is exactly one implementation of Durak in this repository, it is written in C, and everything else is a way of reaching it.**
 
-The website, the iPhone app, the iMessage extension, the backend (c_base, in C), a native C server, a discrete-event network simulator and a set of frozen Rust benchmarks all run on [`c/src`](c/src).
-Five separate build trees compile those same files: `c/Makefile`, the iOS xcframework, `server/impls/native/`, `foolyard/` and `rust/`.
+The website, the iPhone app, the iMessage extension, the backend (c_base, in C), a discrete-event network simulator and a set of frozen Rust benchmarks all run on [`c/src`](c/src).
+Four separate build trees compile those same files: `c/Makefile`, the iOS xcframework, `foolyard/` and `rust/`.
 None of them contains a rule.
 A client that disagrees with the kernel is a bug in the client, and a good deal of the test suite exists only to say so out loud.
 
@@ -111,10 +111,7 @@ src/          The Next.js client. Routes: /, /:game_id, /about, /tutorial,
 server/       Host-neutral backend code. api/ is the contract the web still
               imports and is 306 lines, because the kernel does the work. The
               deployed backend is c_base/ at the repo root (C, on AWS Lambda).
-  impls/native/    a single long-lived C process holding every game in RAM,
-                   with its own epoll loop, WebSocket and WebTransport stacks,
-                   a load client and two fuzzers. Linux only. Not deployed.
-                   It exists to prove the server API is language-agnostic.
+              (The old native C server, impls/native/, was retired 2026-10-17; the last tree is in git at 56ad0609.)
 
 ios/          Ten Xcode targets, generated from project.yml by xcodegen.
   FoolishKit/      the shared UI framework, extension-safe by construction.
@@ -250,7 +247,6 @@ The Apple App Site Association must name the Team ID the Xcode project actually 
 Every one of those was written because the un-derived version of it had already failed green.
 
 On the C side, `c/tests/tests.c` is 9,972 lines and 200 tests in a hand-rolled single-binary harness, alongside three differential suites that check the bitboard rollout engine, the apply path and the solver against the struct engine.
-`server/impls/native/sem_fuzz.c` is a semantic anti-cheat fuzzer: it links the kernel directly, deals real games, plays them with the bot driver, and between moves fires well-formed-but-illegal frames at the apply path with full ground truth, asserting invariants including no-phantom-card.
 
 Nine GitHub Actions workflows: `web`, `wasm`, `memory`, `validate`, `coverage`, `foolyard`, `ios` and `metrics`.
 The Apple suite (847 Swift tests plus snapshot tests) runs on a Mac by hand via `ios/scripts/mac_tests.sh`, deliberately, because macOS Actions minutes bill at ten times Linux.

@@ -1,5 +1,9 @@
 # The native C server (`server/impls/native`)
 
+> **Retired 2026-10-17.** The server was deleted from the tree with Alex's approval; the deployed backend is c_base (C, on AWS Lambda), and c_base's net layer already carries the hardened lift of this server's HTTP and WebSocket parsers (`c_base/DESIGN.md`).
+> The last tree is in git at `56ad0609` (`git show 56ad0609:foolish/server/impls/native/README.md`).
+> What follows is kept as it was written, and every path in it is to that commit.
+
 **This is not the deployed path. Supabase is.**
 `server/impls/supabase` is what `.github/workflows/deploy.yml` ships and what the web, iOS and iMessage clients talk to.
 `server/impls/native` is a second, fully independent implementation of the same `server/api` contract, kept in the tree as a working proof that the contract is host-neutral and as the starting point if Foolish ever needs a backend that Postgres-plus-edge-functions cannot give it.

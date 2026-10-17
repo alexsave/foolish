@@ -130,7 +130,7 @@ int state_import(Game *g, const unsigned char *p, int len, int masked);
 // (table.h TABLE_STATE_FORMAT, table_seal/table_load/table_commit_products)
 // are both these functions, so a format bump cannot land on one side only.
 // A richer on-disk layout that WRAPS this blob is a different format with its
-// own version (server/impls/native/snapshot.c PERSIST_GAME_BLOB_VERSION).
+// own version.
 #define STATE_BLOB_FORMAT_V2 2   // [version][flag][state_put]
 #define STATE_BLOB_FORMAT_V3 3   // ... then the board's clock (BoardClock below)
 #define STATE_BLOB_FORMAT_V4 4   // v3, its flag byte the bits below

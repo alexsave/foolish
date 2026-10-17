@@ -1,1 +1,0 @@
-octogen_ceiling: decisions=1450 wall_s=49.0040 rate_per_s=29.59

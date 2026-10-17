@@ -635,8 +635,8 @@ footer li{font-size:.78rem; font-family:'JetBrains Mono',ui-monospace,monospace}
   schema built around a ~96-byte state blob, optimistic concurrency instead of locks, and Realtime fan-out
   of pre-masked byte streams.</p>
   <p>The deployable lives in <code>server/impls/supabase/</code>; platform-agnostic game logic sits above it
-  in <code>server/api/</code> (no Deno, no HTTP), and a proof-of-concept native C server
-  (<code>server/impls/native/</code>) demonstrates the API is host-agnostic. A machine-checked layering test
+  in <code>server/api/</code> (no Deno, no HTTP). (A proof-of-concept native C server,
+  <code>server/impls/native/</code>, was retired 2026-10-17; the last tree is in git at 56ad0609.) A machine-checked layering test
   enforces the one-way DAG <code>core → sdk → common → adapter</code> — the adapter is swappable because
   nothing below it may know the vendor exists.</p>
   <div class="tw"><table>

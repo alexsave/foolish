@@ -5,10 +5,11 @@
 // `deal_rng.h` moved to shared/c. `c/Makefile` grew `-I../shared/c` and every
 // target in it went green, so the move looked finished. It was not: FIVE build
 // systems compile these sources, and the other four had never heard of the flag.
+// (A fifth, server/impls/native/Makefile, has since gone with the native
+// server, retired 2026-10-17; the last tree is in git at 56ad0609.)
 //
 //   c/Makefile                      the kernel, wasm, iOS, coverage, difftests
 //   foolyard/Makefile               the discrete-event sim
-//   server/impls/native/Makefile    the native server
 //   rust/Makefile                   the C-side benches
 //   werewolf/c/Makefile             the other product
 //
@@ -259,8 +260,8 @@ test('every build system that compiles the kernel also compiles the shared sourc
     // The expected set is PER BUILD, and it is what that build's own sources
     // include today: uttt deals no cards, so it has no deal_rng.c; the card
     // kernel and the third product code nothing in base32 or mixed radix. (The
-    // sim and the native server take $(wildcard shared/c/*.c), so they compile
-    // b32.c and mixrad.c too; what they must not lose is the pair they link.)
+    // sim takes $(wildcard shared/c/*.c), so it compiles b32.c and mixrad.c too;
+    // what it must not lose is the pair it links.)
     // wire_check.c follows the message coders: the replay page's WEB_WASM_SRC
     // has no message coder in it, so it has no wire check either.
     // msg_seat_tag.c is the tag-and-record seat identity of the three newer
@@ -277,7 +278,6 @@ test('every build system that compiles the kernel also compiles the shared sourc
     const builds: Array<{ make: string; variable: string; shared: string[] }> = [
         { make: 'foolish/c', variable: 'CORE_SRC', shared: KERNEL },
         { make: 'foolish/foolyard', variable: 'KERNEL_SRC', shared: KERNEL },
-        { make: 'foolish/server/impls/native', variable: 'KERNEL_SRC', shared: KERNEL },
         { make: 'werewolf/c', variable: 'CORE_SRC', shared: KERNEL },
         { make: 'uttt/c', variable: 'SRC', shared: ['sha256.c', 'b32.c', 'mixrad.c', 'text_util.c', 'wire_check.c'] },
         { make: 'uttt/c', variable: 'WEB_WASM_SRC', shared: ['b32.c', 'mixrad.c', 'text_util.c'] },
