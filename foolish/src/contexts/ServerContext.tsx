@@ -26,10 +26,10 @@ type Card = ViewCard;
 // not read whole.
 const readEnvelope = (bytes: Uint8Array): TableView | null => clientTable().adoptEnvelope(bytes);
 
-// A chat message as the chat panel reads it.
-const chatRow = (gameId: string, c: NetChat) => ({
-    id: c.id, game_id: gameId, user_id: c.userId, message: c.message,
-    is_system: c.isSystem === 1, created_at: new Date(Number(c.createdMs)).toISOString(),
+// A chat message as the chat panel reads it: the client's row, its sender named.
+const chatRow = (c: NetChat, names: Record<string, string>) => ({
+    id: c.id, user_id: c.userId, message: c.message,
+    created_at: new Date(Number(c.createdMs)).toISOString(), sender_name: names[c.userId] || 'Unknown',
 });
 
 // How long a refused move waits for the pushes it was refused over before
@@ -255,7 +255,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     const subscribeToChatMessages = async (gameId: string) => {
         if (chatHoldRef.current?.gameId === gameId) return;
         stopChat();
-        const unlisten = stream.listen({ chat: (gid, c) => { if (gid === gameId) handleChatMessage(chatRow(gid, c)); } });
+        const unlisten = stream.listen({ chat: (gid, c) => { if (gid === gameId) handleChatMessage(gid, c); } });
         const release = stream.chat(gameId);
         chatHoldRef.current = { gameId, stop: () => { unlisten(); release(); } };
     };
@@ -314,18 +314,12 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [user_id]);
 
-    const handleChatMessage = (newRecord: any) => {
-        const gameId = newRecord?.game_id;
-        if (!gameId) return;
-        const messageWithUserInfo = {
-            ...newRecord,
-            sender_name: userNamesRef.current[newRecord.user_id] || 'Unknown'
-        };
+    const handleChatMessage = (gameId: string, c: NetChat) => {
         setChatMessages(prev => {
             const existingMessages = prev[gameId] || [];
-            // Check if message already exists to avoid duplicates
-            if (existingMessages.some(msg => msg.id === newRecord.id)) return prev;
-            return { ...prev, [gameId]: [...existingMessages, messageWithUserInfo] };
+            // A message the history already holds is not added twice.
+            if (existingMessages.some(msg => msg.id === c.id)) return prev;
+            return { ...prev, [gameId]: [...existingMessages, chatRow(c, userNamesRef.current)] };
         });
     };
 
@@ -483,17 +477,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     const loadChatHistory = async (gameId: string): Promise<void> => {
         try {
             const data = await backend.chats(gameId);
-
-            // Transform messages to include sender names from userNamesRef
-            const messagesWithNames = data.map(c => chatRow(gameId, c)).map(msg => ({
-                ...msg,
-                sender_name: userNamesRef.current[msg.user_id] || 'Unknown'
-            }));
-
-            setChatMessages(prev => ({
-                ...prev,
-                [gameId]: messagesWithNames
-            }));
+            setChatMessages(prev => ({ ...prev, [gameId]: data.map(c => chatRow(c, userNamesRef.current)) }));
         } catch (error) {
             console.error('Error in loadChatHistory:', error);
         }

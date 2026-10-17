@@ -23,7 +23,6 @@ import { clientTable, type Ask } from '../sdk/ts/table/client_table.ts';
 import { fixture, fixtureTable } from './helpers/table_fixture.ts';
 import { askBody, askOf } from './helpers/ask.ts';
 import { castParts } from './helpers/cast.ts';
-import { bytesToBase64 } from '../sdk/ts/wire/bytes.ts';
 
 const SEED = Uint8Array.from({ length: 32 }, (_, i) => (i * 13 + 5) & 0xff);
 const A = '11111111-1111-4111-8111-111111111111', B = '22222222-2222-4222-8222-222222222222';
@@ -165,15 +164,15 @@ test('a refusal: what the server writes, the client reads - a reason and the ker
     assert.equal(clientTable().readRefusal(new Uint8Array(0)), null);
 });
 
-test('a cast: the realtime message is { b }, and the client reads its version and boards from the bytes alone', () => {
+test('a cast: the client reads its version and boards from the bytes alone', () => {
     const table = lobby();
     assert.equal(table.ask(send({ kind: V.ASK_JOIN, gid: 'g-1' }), C, 'Cy', SEED), L.TABLE_OK);
     assert.ok(typeof table.commit('g-1', 42, 1000) !== 'number');
     const cast = table.cast('g-1', 0, 42), push = table.push('g-1', 0);
     assert.ok(cast instanceof Uint8Array && push instanceof Uint8Array);
 
-    // What table_io.ts broadcastPushes puts in Realtime's envelope.
-    const parts = castParts({ b: bytesToBase64(cast) });
+    // What the stream's NW_WS_CAST carries.
+    const parts = castParts(cast);
     assert.equal(parts.version, 42, 'the version is in the bytes');
     assert.deepEqual(parts.push, push, 'and behind the header is exactly the as3 push');
 
