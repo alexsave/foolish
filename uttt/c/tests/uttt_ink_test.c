@@ -16,6 +16,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include "../../../shared/c/rng.h"
 
 static int fails, checks;
 #define OK(c, what) do { checks++; if (!(c)) { fails++; \
@@ -209,12 +210,13 @@ int main(void)
     {
         UtttPt pts[4000]; UtttSpan sp[8];
         UtttPen base = uttt_pen_92();
-        int32_t seed = 1;
+        uint32_t ss = 1;   /* the stream the pen seeds are drawn from */
+        int32_t seed;
         /* marks: a cell's (8.9), a big mark's (28), the you-are mark's (88),
          * and the last mark's heavy pen */
         const float size[3] = { 8.9f, 28.f, 88.f };
         for (int it = 0; it < 600; it++) {
-            seed = (int32_t)((uint32_t)seed * 1103515245u + 12345u) & 0x7fffffff;
+            seed = (int32_t)(rng_lcg32(&ss) >> 1);
             int kind = it % 2 ? UTTT_O : UTTT_X;
             float s100 = size[it % 3];
             int ns = mark_pts(kind, s100, seed, pts, 4000, sp);
@@ -231,7 +233,7 @@ int main(void)
         /* long lines: the grid's and the win line's shapes, in a hundred-unit
          * board, at their widths */
         for (int it = 0; it < 600; it++) {
-            seed = (int32_t)((uint32_t)seed * 1103515245u + 12345u) & 0x7fffffff;
+            seed = (int32_t)(rng_lcg32(&ss) >> 1);
             UtttRough r = uttt_rough_default(seed);
             r.roughness = it % 2 ? 1.5f : 3.4f; r.bowing = it % 2 ? 2.f : 1.f;
             r.seg_line = it % 3 ? 18 : 24;
@@ -259,7 +261,7 @@ int main(void)
             uint8_t mv[81];
             while (!g.over) {
                 int n = uttt_legal(&g, mv);
-                r ^= r << 13; r ^= r >> 7; r ^= r << 17;
+                rng_xorshift64(&r);
                 uttt_play(&g, mv[r % (uint64_t)n]);
             }
             UtttDL d; uttt_dl_init(&d, PT, 400000, PO, 4000);

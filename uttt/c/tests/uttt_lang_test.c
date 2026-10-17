@@ -25,6 +25,7 @@
 #include "uttt_fixture.h"
 #include <stdio.h>
 #include <string.h>
+#include "../../../shared/c/rng.h"
 
 static int fails, checks;
 #define OK(c, ...) do { checks++; if (!(c)) { fails++; \
@@ -33,8 +34,7 @@ static int fails, checks;
 static uint64_t rs = 0x2545f4914f6cdd1dull;
 static uint32_t rnd(void)
 {
-    rs ^= rs << 13; rs ^= rs >> 7; rs ^= rs << 17;
-    return (uint32_t)(rs >> 11);
+    return (uint32_t)(rng_xorshift64(&rs) >> 11);
 }
 
 static int has_em_dash(const char *s) { return strstr(s, "\xe2\x80\x94") != 0; }

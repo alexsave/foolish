@@ -5,6 +5,7 @@
  * uttt_big.c alone and the search only reads what a play did. */
 #include "uttt_big_bot.h"
 #include <string.h>
+#include "../../../shared/c/rng.h"
 
 /* The node numbering uttt_big.h states as its contract: the level-L node
  * with prefix p is id (9^L - 1) / 8 + p. */
@@ -41,27 +42,11 @@ int utb_bot_threat_weight(const UtbGame *g, int id)
 
 /* ------------------------------------------------------------------ dice */
 
-static uint64_t splitmix(uint64_t *s)
-{
-    uint64_t z = (*s += 0x9e3779b97f4a7c15ull);
-    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull;
-    z = (z ^ (z >> 27)) * 0x94d049bb133111ebull;
-    return z ^ (z >> 31);
-}
-
-/* xorshift64*, one multiply a draw */
-static uint64_t next(uint64_t *s)
-{
-    uint64_t x = *s;
-    x ^= x >> 12; x ^= x << 25; x ^= x >> 27;
-    *s = x;
-    return x * 0x2545f4914f6cdd1dull;
-}
-
-/* 0..n-1, n >= 1: the high 32 bits scaled, so no modulo bias worth naming */
+/* 0..n-1, n >= 1: the high 32 bits of an xorshift64* draw scaled, so no
+ * modulo bias worth naming */
 static uint32_t below(uint64_t *s, uint32_t n)
 {
-    return (uint32_t)(((next(s) >> 32) * (uint64_t)n) >> 32);
+    return (uint32_t)(((rng_xorshift64star(s) >> 32) * (uint64_t)n) >> 32);
 }
 
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
@@ -97,9 +82,7 @@ void utb_bot_set(UtbBot *b, int plies, int budget)
 void utb_bot_init(UtbBot *b, uint64_t seed)
 {
     memset(b, 0, sizeof *b);
-    uint64_t s = seed;
-    b->rng = splitmix(&s);
-    if (!b->rng) b->rng = 0x9e3779b97f4a7c15ull;
+    b->rng = rng_seed64(seed);
     utb_bot_set(b, UTB_BOT_PLIES, UTB_BOT_BUDGET);
     b->threats = 1;
     b->extend  = 1;

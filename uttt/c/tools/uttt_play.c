@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include "../../../shared/c/rng.h"
 
 #define DIM   "\033[90m"
 #define BOLD  "\033[1m"
@@ -183,7 +184,7 @@ int main(int argc, char **argv)
     }
     if (getenv("NO_COLOR")) use_colour = 0;
 
-    uint64_t rs = (uint64_t)time(NULL) * 6364136223846793005ull + 1442695040888963407ull;
+    uint64_t rs = rng_seed64((uint64_t)time(NULL));
 
     UtttGame g;
     uttt_init(&g);
@@ -230,8 +231,7 @@ int main(int argc, char **argv)
             uint8_t mv;
             if (autoplay) {
                 int n = uttt_legal(&g, list);
-                mv = list[(int)(rs % (uint64_t)n)];
-                rs = rs * 6364136223846793005ull + 1442695040888963407ull;
+                mv = list[(int)(rng_xorshift64(&rs) % (uint64_t)n)];
                 printf("\n  you play row %d col %d\n",
                        (mv / 9 / 3) * 3 + (mv % 9) / 3 + 1,
                        (mv / 9 % 3) * 3 + (mv % 9) % 3 + 1);

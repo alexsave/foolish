@@ -30,6 +30,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include "../../../shared/c/rng.h"
 
 /* PIXELS A CELL: 3 is the kit's robust243, THE GEOMETRY THE BUBBLE USES, and
  * the default here. 1 is board243, and --px 1 is how it was found wanting
@@ -52,8 +53,7 @@ static double now(void) { return (double)clock() / (double)CLOCKS_PER_SEC; }
 static uint64_t rs = 0x9e3779b97f4a7c15ull;
 static uint32_t rnd(void)
 {
-    rs ^= rs << 13; rs ^= rs >> 7; rs ^= rs << 17;
-    return (uint32_t)(rs >> 11);
+    return (uint32_t)(rng_xorshift64(&rs) >> 11);
 }
 
 /* The kit's own image: sRGB, RGBX, no interpolation (BubbleData.image). */

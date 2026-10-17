@@ -20,6 +20,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include "../../../shared/c/rng.h"
 
 /* noise: percent of moves played uniformly at random instead - the only way
  * to get a tier between random and any bot that looks ahead at all. */
@@ -79,10 +80,10 @@ static uint8_t duel(const Entrant *x, const Entrant *o, uint64_t seed)
         uint8_t list[81];
         if (uttt_legal(&g, list) <= 0) break;
         const Entrant *m = g.turn == UTTT_X ? x : o;
-        rs ^= rs << 13; rs ^= rs >> 7; rs ^= rs << 17;
+        rng_xorshift64(&rs);
         if (m->noise && (int)(rs % 100) < m->noise) {
             int n = uttt_legal(&g, list);
-            rs ^= rs << 13; rs ^= rs >> 7; rs ^= rs << 17;
+            rng_xorshift64(&rs);
             uttt_play(&g, list[rs % (uint64_t)n]);
         } else {
             double t0 = now_cpu();

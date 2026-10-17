@@ -2,6 +2,7 @@
 #include "uttt_analyse.h"
 #include "uttt_bots.h"
 #include <string.h>
+#include "../../../shared/c/rng.h"
 
 const char *UTTT_LABEL_NAME[UA_LABELS] =
     { "best", "good", "inaccuracy", "mistake", "blunder", "only move" };
@@ -13,15 +14,6 @@ const char *UTTT_LABEL_NAME[UA_LABELS] =
 #define SOLVE_EMPTIES 30
 
 static const char *NAME[9] = { "NW", "N", "NE", "W", "C", "E", "SW", "S", "SE" };
-
-static uint64_t mix(uint64_t x)
-{
-    x += 0x9E3779B97F4A7C15ull;
-    x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ull;
-    x = (x ^ (x >> 27)) * 0x94D049BB133111EBull;
-    x ^= x >> 31;
-    return x ? x : 1;
-}
 
 static int n_empty(const UtttGame *g)
 {
@@ -66,7 +58,7 @@ static double move_value(const UtttGame *g, uint8_t mv, int had_mate,
         int s = uttt_solve(&c, 81);
         if (s != 2) return (1.0 - s) / 2.0;                 /* theirs, flipped */
     }
-    uint64_t rs = mix(((uint64_t)g->n_plies << 8 | mv) ^ 0xA11A15Eull);
+    uint64_t rs = rng_seed64(((uint64_t)g->n_plies << 8 | mv) ^ 0xA11A15Eull);
     int proof;
     double v = uttt_quill_value(&c, playouts, &rs, &proof);
     *proved = proof != 2;

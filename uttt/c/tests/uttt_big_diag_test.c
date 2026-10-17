@@ -29,6 +29,7 @@
 #include "../../../shared/swift/BubbleDataKit/Sources/CBubbleData/include/bubble_data.h"
 #include <math.h>
 #include <stdint.h>
+#include "../../../shared/c/rng.h"
 
 #ifndef FIXTURES
 #define FIXTURES "tests/fixtures/"
@@ -52,10 +53,7 @@ static uint8_t *slurp(const char *name, long *n)
 static uint32_t rng_state = 12345;
 static uint32_t rnd(void)
 {
-    rng_state ^= rng_state << 13;
-    rng_state ^= rng_state >> 17;
-    rng_state ^= rng_state << 5;
-    return rng_state;
+    return rng_xorshift32(&rng_state);
 }
 
 /* ------------------------------------------------------------- the JPEGs */
