@@ -1770,6 +1770,10 @@ static int decode_impl(const unsigned char *in, int in_len,
     uint32_t atoms = 0;
     code_varint(&c, &atoms);
     if (c.err) return -c.err;
+    // The count is the sender's number, and a code whose integer has run out
+    // decodes every later choice as the first option: a game that need never
+    // end. No game the encoder can code has more atoms than this.
+    if (atoms > REPLAY_MAX_ATOMS) return -REPLAY_EATOMS;
     run_replay_v6(m, &c, 0, atoms);
     if (m->err) return -m->err;
     if (!bn_is_zero(&g_bn)) return -REPLAY_ELEFTOVER;

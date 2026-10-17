@@ -30,6 +30,7 @@
 #include "../wasm/wire.h"
 #include <stdio.h>
 #include <sys/mman.h>
+#include <signal.h>
 #include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
@@ -17918,6 +17919,39 @@ static void test_doors_survive_hostile_bytes(void) {
     (void)opened;
 }
 
+// A replay code's atom count is the sender's number, and a code whose integer
+// runs out decodes every later choice as the first option: a game that never
+// ends. replay.h's REPLAY_MAX_ATOMS guard was declared for exactly this and
+// applied nowhere, so this 155-byte link (c_base's unfurl fuzzer found it, as
+// the /m/ payload of a link preview) decoded for ever, on the server and in
+// the iMessage extension alike. It must be refused at once.
+static void hang_guard(int sig) {
+    (void)sig;
+    static const char m[] = "FAIL test_a_replay_code_that_never_ends_is_refused: still decoding after 20 s\n";
+    (void)!write(2, m, sizeof m - 1);
+    _exit(1);
+}
+static void test_a_replay_code_that_never_ends_is_refused(void) {
+    static const char LINK[] =
+        "64BQAAXPZWVYSZ2FE0MAQYAAAAIAAEAAAAAAAAAAAAAPJTBXDSOQYNGC3ZeLGHGEMHRQH2T7CEZZAD43FF27HZCO3M7GFKNASAABAACGQQHILXUF22CYACCK2N7B2WIHQT6BY6DAADULZ36CMVMNO";
+    static unsigned char blob[8192];
+    const int n = replay_b32_decode(LINK, blob, (int)sizeof blob);
+    CHECK(n > 0, "the link's base32 decodes");
+    if (n <= 0) return;
+    MsgEnvelope e;
+    CHECK(msg_decode(blob, n, &e) == MSG_EOK, "the envelope decodes (only its body is hostile)");
+    signal(SIGALRM, hang_guard);
+    alarm(20);
+    ReplayHeader hdr;
+    CHECK(replay_decode_atoms_v6(e.actions, e.actions_len, &hdr, NULL, NULL) == -REPLAY_EATOMS,
+          "an atom count past REPLAY_MAX_ATOMS is refused");
+    Game *g = calloc(1, sizeof *g);
+    CHECK(msg_replay(&e, g) == MSG_EBODY, "and the envelope's body with it");
+    free(g);
+    alarm(0);
+    signal(SIGALRM, SIG_DFL);
+}
+
 int main(void) {
 #ifdef CD_PASS_PROBE
     test_masked_board_carries_the_rules();
@@ -18232,6 +18266,7 @@ int main(void) {
     test_action_request_door();
     test_ask_body_runs_for_the_caller();
     test_doors_survive_hostile_bytes();
+    test_a_replay_code_that_never_ends_is_refused();
 
     printf("\n%d passed, %d failed\n", n_pass, n_fail);
     return n_fail > 0 ? 1 : 0;
