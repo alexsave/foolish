@@ -26,6 +26,12 @@
 
 // Diagnostics the bots only emit under CD_VERIFY/CD_DIFFTEST-style flags;
 // referenced unconditionally, so they must link. No-ops in wasm.
+//
+// These and getenv below stand in for a libc the freestanding wasm build does
+// not have, so they exist only there: the native build of this file (the table
+// host, tests/table_host.c) has the real libc, and defining them beside it
+// would replace the host's own stderr, fprintf and getenv.
+#ifdef __wasm__
 struct FILE;
 struct FILE *stderr = 0;
 int fprintf(struct FILE *stream, const char *fmt, ...) {
@@ -33,6 +39,7 @@ int fprintf(struct FILE *stream, const char *fmt, ...) {
     return 0;
 }
 int atexit(void (*fn)(void)) { (void)fn; return 0; }
+#endif
 
 // ---------- getenv --------------------------------------------------------
 // Tiny key/value table the TS adapter fills through the IO buffer (e.g.
@@ -45,6 +52,7 @@ static char g_env_keys[ENV_SLOTS][ENV_KEY];
 static char g_env_vals[ENV_SLOTS][ENV_VAL];
 static int g_env_n = 0;
 
+#ifdef __wasm__
 char *getenv(const char *name) {
     for (int i = 0; i < g_env_n; i++) {
         const char *a = g_env_keys[i], *b = name;
@@ -53,6 +61,7 @@ char *getenv(const char *name) {
     }
     return 0;
 }
+#endif
 
 extern unsigned char *wasm_io_ptr(void);
 

@@ -12,7 +12,7 @@
 import * as L from '../../sdk/ts/gen/game_layout.bots.ts';
 import * as A from '../../sdk/ts/gen/anim.bots.ts';
 import { AWIRE_KIND, encodeAction, type AwireMove, clientTable } from '../../sdk/ts/table/client_table.ts';
-import { fixture, fixtureExports, fixtureTable, reasonOf } from './table_fixture.ts';
+import { fixture, fixtureHost, fixtureTable, reasonOf } from './table_fixture.ts';
 
 export interface PlayCard { suit: number; value: number }
 
@@ -76,10 +76,10 @@ export type BoardState = Omit<TableState, 'version' | 'roundEpoch' | 'statusColu
  * operation run on it in memory). `state`/`roster` are carried as given.
  */
 export function residentBoard(gameId: string, state: Uint8Array, roster: Uint8Array): BoardState {
-    const ex = fixtureExports();
-    const m = L.memOf(ex.memory.buffer);
-    const g = ex.wasm_game_ptr_internal();
-    const rp = ex.wasm_table_roster_ptr();
+    const host = fixtureHost();
+    const m = L.memOf(host.read(host.ex.wasm_game_ptr_internal(), host.ex.wasm_fixture_game_bytes()).buffer);
+    const g = 0;
+    const rm = L.memOf(host.read(host.ex.wasm_table_roster_ptr(), L.Roster_SIZE).buffer);
     const names = fixtureTable().seats();
     const seats: SeatState[] = names.map((s, i) => {
         const p = L.Game_players_at(g, i);
@@ -97,7 +97,7 @@ export function residentBoard(gameId: string, state: Uint8Array, roster: Uint8Ar
     return {
         gameId, state, roster,
         status: L.Game_get_status(m, g),
-        title: L.Roster_get_title_str(m, rp),
+        title: L.Roster_get_title_str(rm, 0),
         seats,
         defender: L.Game_get_defender(m, g),
         firstAttacker: L.Game_get_first_attacker(m, g),
@@ -131,13 +131,13 @@ const KIND_OF = Object.fromEntries(Object.entries(AWIRE_KIND).map(([k, v]) => [v
 /** Every legal move of every seat still IN (or only the seats `allow` admits), in seat order, as the kernel enumerates them. */
 export function legalMoves(t: BoardState, allow?:(seat: SeatState, index: number) => boolean): PlayMove[] {
     load(t.gameId, t.state, t.roster);
-    const ex = fixtureExports();
+    const host = fixtureHost();
     const out: PlayMove[] = [];
     t.seats.forEach((s, seat) => {
         if (s.status !== L.PLAYER_STATUS_IN || (allow && !allow(s, seat))) return;
-        const n = ex.wasm_legal_moves(seat);
-        const m = A.memOf(ex.memory.buffer);
-        const lm = ex.wasm_moves_ptr_internal();
+        const n = host.ex.wasm_legal_moves(seat);
+        const m = A.memOf(host.read(host.ex.wasm_moves_ptr_internal(), A.LegalMoves_moves_at(0, Math.max(n, 0))).buffer);
+        const lm = 0;
         for (let i = 0; i < n; i++) {
             const mv = A.LegalMoves_moves_at(lm, i);
             const kind = KIND_OF[A.LegalMove_get_type(m, mv)];

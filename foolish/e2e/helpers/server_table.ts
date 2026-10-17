@@ -1,5 +1,6 @@
 // server_table.ts - the C Table (c/src/table.h) as a server plays it, over the
-// test build of the kernel (bots_test.wasm, e2e/helpers/bots_test_wasm.ts).
+// native table host (c/tests/table_host.c, e2e/helpers/table_host.ts): the same
+// kernel c_base links, called entry by entry.
 //
 // A thin, synchronous call-and-copy wrapper. It knows the export names, the
 // generated accessor names in sdk/ts/gen/game_layout.bots.ts, and nothing else:
@@ -8,10 +9,10 @@
 // wire) or a UTF-8 string (an auth id, a game id); every output is bytes copied
 // out of the module or a number read through a generated accessor.
 //
-// ONE KERNEL SECTION PER OPERATION. The table's board is the module's resident
+// ONE KERNEL SECTION PER OPERATION. The table's board is the host's resident
 // Game. A caller runs load, then an operation, then copies every product out
 // (commit, push), all before its next await. Nothing returned here points into
-// wasm memory: products are copies, so they survive later kernel calls.
+// the host: products are copies, so they survive later kernel calls.
 //
 // Tests only. The browser must never reach this module: it hands out
 // the unmasked state blob (e2e/security_client_boundary.test.ts denies it).
@@ -19,11 +20,8 @@
 // (docs/C_GAME_SHAPE_MIGRATION.md) until stage 4 deleted that server; the tests
 // keep it as their driver of the C Table.
 
-import type { BotsTestExports } from '../../sdk/ts/gen/exports.bots_test.ts';
 import * as L from '../../sdk/ts/gen/game_layout.bots.ts';
-import { LAYOUT_HASH } from '../../sdk/ts/gen/layout_hash.bots.ts';
-import { assertLayoutHash } from '../../sdk/ts/wasm/layout_hash.ts';
-import { botsTestWasm } from './bots_test_wasm.ts';
+import { startTableHost, type HostEntries, type TableHost } from './table_host.ts';
 
 /** One recorded bot SEARCH, as the kernel saw it (c/src/bot_drive.h BeliefProbe). */
 interface BeliefProbeRecord {
@@ -108,36 +106,38 @@ export interface TableSeat {
 const enc = new TextEncoder();
 
 export class ServerTable {
-    private readonly ex: BotsTestExports;
-    private mem: L.Mem;
+    readonly host: TableHost;
+    private readonly ex: HostEntries;
+    private readonly ioAt: number;
+    private readonly ioCap: number;
 
-    constructor(ex: BotsTestExports) {
-        this.ex = ex;
-        this.mem = L.memOf(ex.memory.buffer);
+    constructor(host: TableHost) {
+        this.host = host;
+        this.ex = host.ex;
+        this.ioAt = this.ex.wasm_io_ptr();
+        this.ioCap = this.ex.wasm_io_cap();
     }
 
-    private m(): L.Mem {
-        if (this.mem.u8.buffer !== this.ex.memory.buffer) this.mem = L.memOf(this.ex.memory.buffer);
-        return this.mem;
-    }
+    /** `size` bytes of a kernel struct at host address `p`, copied, for the generated accessors to read at 0. */
+    private struct(p: number, size: number): L.Mem { return L.memOf(this.host.read(p, size).buffer); }
 
-    private io(): number { return this.ex.wasm_io_ptr(); }
+    private io(): number { return this.ioAt; }
 
     /** Writes byte strings (a string as its UTF-8) back to back at the IO buffer; returns their lengths. */
     private put<P extends (Uint8Array | string)[]>(...parts: P): { [K in keyof P]: number } {
         const bytes = parts.map((p) => (typeof p === 'string' ? enc.encode(p) : p));
-        const cap = this.ex.wasm_io_cap();
         const total = bytes.reduce((n, p) => n + p.length, 0);
-        if (total > cap) throw new RangeError(`table: ${total} input bytes exceed the IO buffer (${cap})`);
-        const u8 = this.m().u8;
-        let at = this.io();
-        return bytes.map((p) => { u8.set(p, at); at += p.length; return p.length; }) as { [K in keyof P]: number };
+        if (total > this.ioCap) throw new RangeError(`table: ${total} input bytes exceed the IO buffer (${this.ioCap})`);
+        const all = new Uint8Array(total);
+        let at = 0;
+        const lens = bytes.map((p) => { all.set(p, at); at += p.length; return p.length; });
+        if (total > 0) this.host.write(this.io(), all);
+        return lens as { [K in keyof P]: number };
     }
 
     /** The `n` bytes a door left at the IO buffer, copied out; a refusal (n < 0) passes through. */
     private out(n: number): Uint8Array | number {
-        const at = this.io();
-        return n < 0 ? n : this.m().u8.slice(at, at + n);
+        return n < 0 ? n : this.host.read(this.io(), n);
     }
 
     /** out() for a door that cannot refuse what this wrapper hands it. */
@@ -150,8 +150,8 @@ export class ServerTable {
     requestDecode(body: Uint8Array): TableActionRequest | number {
         const rc = this.ex.wasm_table_request_decode(...this.put(body));
         if (rc < 0) return rc;
-        const m = this.m();
-        const q = this.ex.wasm_table_request_ptr();
+        const m = this.struct(this.ex.wasm_table_request_ptr(), L.TableRequest_SIZE);
+        const q = 0;
         const gidOff = L.TableRequest_get_gid_off(m, q);
         const wireOff = L.TableRequest_get_wire_off(m, q);
         return {
@@ -251,8 +251,8 @@ export class ServerTable {
     botDrive(prefs: Uint8Array | null, maxActions = 0): TableDrive | number {
         const n = this.ex.wasm_table_bot_drive(...this.put(prefs ?? ''), maxActions);
         if (n < 0) return n;
-        const m = this.m();
-        const d = this.ex.wasm_table_drive_ptr();
+        const m = this.struct(this.ex.wasm_table_drive_ptr(), L.BotDriveOut_SIZE);
+        const d = 0;
         const count = L.BotDriveOut_get_n(m, d);
         return {
             n: count,
@@ -279,9 +279,6 @@ export class ServerTable {
         return this.out(this.ex.wasm_table_replay_extras(...this.put(log)));
     }
 
-    /** The module's linear memory, for the edge memory log line. */
-    memoryBytes(): number { return this.ex.memory.buffer.byteLength; }
-
     /**
      * Test observability: arm the belief probe of THIS instance.
      *
@@ -295,11 +292,11 @@ export class ServerTable {
 
     /** The searches recorded since the last reset, in order, read through the generated accessors. */
     __beliefProbeDump(): BeliefProbeRecord[] {
-        const m = this.m();
-        const base = this.ex.wasm_belief_probe_ptr();
+        const n = this.ex.wasm_belief_probe_dump();
+        const m = this.struct(this.ex.wasm_belief_probe_ptr(), n * L.BeliefProbe_SIZE);
         const out: BeliefProbeRecord[] = [];
-        for (let i = 0; i < this.ex.wasm_belief_probe_dump(); i++) {
-            const p = base + i * L.BeliefProbe_SIZE;
+        for (let i = 0; i < n; i++) {
+            const p = i * L.BeliefProbe_SIZE;
             const bits = L.BeliefProbe_get_cards(m, p);
             const cards = new Set<string>();
             // bit (suit * 16 + value) per real card the log showed.
@@ -313,8 +310,8 @@ export class ServerTable {
 
     /** The loaded roster's seats, in seat order. */
     seats(): TableSeat[] {
-        const m = this.m();
-        const r = this.ex.wasm_table_roster_ptr();
+        const m = this.struct(this.ex.wasm_table_roster_ptr(), L.Roster_SIZE);
+        const r = 0;
         const out: TableSeat[] = [];
         for (let s = 0; s < L.Roster_get_n(m, r); s++) {
             const p = L.Roster_seats_at(r, s);
@@ -327,11 +324,18 @@ export class ServerTable {
     commit(gameId: string, nextVersion: number, nowMs: number): TableProducts | number {
         const n = this.ex.wasm_table_commit_products(...this.put(gameId), nextVersion, nowMs);
         if (n < 0) return n;
-        const m = this.m();
-        const c = this.ex.wasm_table_commit_ptr();
+        const m = this.struct(this.ex.wasm_table_commit_ptr(), L.TableCommit_SIZE);
+        const c = 0;
+        // Every span is an offset into the IO buffer the commit wrote, and the
+        // furthest one's end is how much of it to fetch.
+        let end = 0;
+        const spans = [L.TableCommit_state_at(c), L.TableCommit_roster_at(c), L.TableCommit_logs_at(c), L.TableCommit_spectator_at(c)];
+        for (let s = 0; s < L.TableCommit_get_num_players(m, c); s++) spans.push(L.TableCommit_views_at(c, s));
+        for (const p of spans) end = Math.max(end, L.Span_get_off(m, p) + L.Span_get_len(m, p));
+        const io = this.host.read(this.io(), end);
         const bytes = (p: number): Uint8Array => {
-            const off = this.io() + L.Span_get_off(m, p);
-            return m.u8.slice(off, off + L.Span_get_len(m, p));
+            const off = L.Span_get_off(m, p);
+            return io.slice(off, off + L.Span_get_len(m, p));
         };
         const numPlayers = L.TableCommit_get_num_players(m, c);
         const views: (Uint8Array | null)[] = [];
@@ -385,7 +389,7 @@ export class ServerTable {
     askDecode(body: Uint8Array): TableAsk | number {
         if (body.length > this.ex.wasm_io_cap()) return L.TABLE_E_WIRE;
         const rc = this.ex.wasm_table_ask_decode(...this.put(body));
-        return rc < 0 ? rc : L.readTableAsk(this.m(), this.ex.wasm_table_ask_ptr());
+        return rc < 0 ? rc : L.readTableAsk(this.struct(this.ex.wasm_table_ask_ptr(), L.TableAsk_SIZE), 0);
     }
 
     /**
@@ -412,9 +416,8 @@ export class ServerTable {
     rankings(): number[] {
         const n = this.ex.wasm_table_rankings();
         if (n < 0) throw new Error(`table: rankings refused (${n})`);
-        const m = this.m();
-        const e = this.ex.wasm_table_elo_ptr();
-        return Array.from({ length: n }, (_, i) => L.TableElo_get_order(m, e, i));
+        const m = this.struct(this.ex.wasm_table_elo_ptr(), L.TableElo_SIZE);
+        return Array.from({ length: n }, (_, i) => L.TableElo_get_order(m, 0, i));
     }
 
     /**
@@ -424,10 +427,11 @@ export class ServerTable {
      * rate, or negative for a malformed call.
      */
     rate(ratingsBySeat: number[]): number {
-        const m = this.m();
         const e = this.ex.wasm_table_elo_ptr();
+        const m = this.struct(e, L.TableElo_SIZE);
         if (ratingsBySeat.length > L.TableElo_ratings_LEN) return L.TABLE_E_WIRE;
-        ratingsBySeat.forEach((r, s) => L.TableElo_set_ratings(m, e, s, r));
+        ratingsBySeat.forEach((r, s) => L.TableElo_set_ratings(m, 0, s, r));
+        this.host.write(e, m.u8);
         return this.ex.wasm_table_rate(ratingsBySeat.length);
     }
 }
@@ -460,18 +464,14 @@ export function gameStatusLabel(status: number): string {
 }
 let statusLabels: Map<number, string> | null = null;
 
-/** A table over a PRIVATE bots_test.wasm instance: nothing else shares its resident slot. */
+/** A table over a PRIVATE host process: nothing else shares its resident slot. */
 export function createServerTable(): ServerTable {
-    const inst = new WebAssembly.Instance(new WebAssembly.Module(botsTestWasm() as BufferSource), {});
-    const ex = inst.exports as unknown as BotsTestExports;
-    assertLayoutHash('bots_test.wasm', ex, LAYOUT_HASH, 'sdk/ts/gen/layout_hash.bots.ts');
-    ex.wasm_init();
-    return new ServerTable(ex);
+    return new ServerTable(startTableHost());
 }
 
 let shared: Promise<ServerTable> | null = null;
 
-/** The suites' one shared table: a private bots_test.wasm instance, made once per process. */
+/** The suites' one shared table: a private host, started once per process. */
 export function serverTable(): Promise<ServerTable> {
     return (shared ??= Promise.resolve().then(() => createServerTable()));
 }

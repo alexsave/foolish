@@ -8,7 +8,7 @@
 //   g.code    // the verified v6 replay code of the finished game
 //   g.state   // the final durable state blob, g.roster its roster, g.log its session log
 //
-// Every step is a C Table call over bots_test.wasm (e2e/helpers/server_table.ts):
+// Every step is a C Table call over the table host (e2e/helpers/server_table.ts):
 // the lobby is a kernel-sealed fixture, the deal is table_ready with the seed,
 // each cycle is exactly the server's bot cycle (bot_actions.ts runCycle: load,
 // set the deal seed, import the session log when a bot reads it, table_bot_drive,
@@ -16,12 +16,11 @@
 // own round-tripped encoder. Nothing here knows a byte layout or a game rule:
 // whose turn it is, what a bot plays and when the game is over are the kernel's.
 //
-// Pure kernel: no Postgres, so the memory, stack and performance harnesses can
-// import it too. Tests and harnesses only (it holds the unmasked state blob).
+// Pure kernel: no Postgres, so the performance harnesses can import it too. Tests and harnesses only (it holds the unmasked state blob).
 
 import * as L from '../../sdk/ts/gen/game_layout.bots.ts';
 import { tableCodeName, type ServerTable, type TableDrive } from './server_table.ts';
-import { fixture, fixtureExports, fixtureTable } from './table_fixture.ts';
+import { fixture, fixtureHost, fixtureTable } from './table_fixture.ts';
 
 /** The 32-byte deal seed of test game `s` at `np` seats (the seeds the frozen games in seeded_codes.ts were dealt on). */
 export const seedBytes = (np: number, s: number): Uint8Array =>
@@ -151,9 +150,9 @@ export interface DrivenMove {
  * table: another instance's drive lives in its own memory.
  */
 export function lastDriveMoves(): DrivenMove[] {
-    const ex = fixtureExports() as unknown as { memory: WebAssembly.Memory; wasm_table_drive_ptr(): number };
-    const m = L.memOf(ex.memory.buffer);
-    const d = ex.wasm_table_drive_ptr();
+    const host = fixtureHost();
+    const m = L.memOf(host.read(host.ex.wasm_table_drive_ptr(), L.BotDriveOut_SIZE).buffer);
+    const d = 0;
     const card = (p: number) => ({ suit: L.Card_get_suit(m, p), value: L.Card_get_value(m, p) });
     return Array.from({ length: L.BotDriveOut_get_n(m, d) }, (_, i) => {
         const a = L.BotDriveOut_actions_at(d, i);

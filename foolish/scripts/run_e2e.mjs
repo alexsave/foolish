@@ -18,7 +18,7 @@
  * The key is CPU time, not elapsed: see scripts/e2e_order_probe.mjs.
  * ========================================================================== */
 
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { availableParallelism, tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -76,6 +76,16 @@ const orderDir = writeOrder ? mkdtempSync(join(tmpdir(), 'e2e-order-')) : null;
 const orderOut = orderDir ? join(orderDir, 'times') : null;
 
 const probe = writeOrder ? ['--import', ORDER_PROBE] : [];
+
+// The native table host (c/tests/table_host.c), the server half of a game for
+// the files that hold shipped TypeScript: built once here, before any file
+// starts, and named to every child in TABLE_HOST, so no file pays for a make
+// and none races another to run one (e2e/helpers/table_host.ts builds it itself
+// only when a file is run on its own). An explicit TABLE_HOST is kept.
+const tableHost = process.env.TABLE_HOST ?? fileURLToPath(new URL('../c/build/table_host', import.meta.url));
+if (!process.env.TABLE_HOST) {
+    execFileSync('make', ['-s', '-C', fileURLToPath(new URL('../c', import.meta.url)), 'table-host'], { stdio: ['ignore', 'ignore', 'inherit'] });
+}
 // Printed rather than swallowed: it is how a reader finds out that
 // e2e/FILE_ORDER has drifted behind the tree.
 console.error(`[e2e] ${files.length} files x${width} | slowest first, ${unranked} file(s) unranked`);
@@ -84,7 +94,7 @@ const code = await new Promise((resolve) => spawn(process.execPath, [
     '--test', `--test-concurrency=${width}`,
     '--experimental-test-module-mocks', ...slowestFirst(files),
 ], {
-    env: { ...process.env, TSX_TSCONFIG_PATH: 'e2e/tsconfig.json', ...(orderOut ? { E2E_ORDER_OUT: orderOut } : {}) },
+    env: { ...process.env, TSX_TSCONFIG_PATH: 'e2e/tsconfig.json', TABLE_HOST: tableHost, ...(orderOut ? { E2E_ORDER_OUT: orderOut } : {}) },
     stdio: 'inherit',
 }).on('close', (c) => resolve(c ?? 1)));
 

@@ -13,22 +13,20 @@
 // reason code and its generated name.
 //
 // This file knows no byte layout. Fields are written through the generated
-// setters in sdk/ts/gen/game_layout.bots.ts onto the resident game of a PRIVATE
-// bots_test.wasm instance, card text is read by the kernel's card_list_parse
-// (c/src/card.h, whose grammar is the one documented there), and the bytes come
-// back from wasm_fixture_seal. fixtureTable() is the ServerTable over that same
-// instance, for a test that wants to load, act on or envelope what it built.
+// setters in sdk/ts/gen/game_layout.bots.ts onto a copy of the resident game of
+// a PRIVATE table host (e2e/helpers/table_host.ts), which goes back whole before
+// the seal; card text is read by the kernel's card_list_parse (c/src/card.h,
+// whose grammar is the one documented there), and the bytes come back from
+// wasm_fixture_seal. fixtureTable() is the ServerTable over that same host, for
+// a test that wants to load, act on or envelope what it built.
 //
 // Server and tests only: it writes and returns the unmasked state blob
 // (e2e/security_client_boundary.test.ts denies it to the browser).
 
 import * as L from '../../sdk/ts/gen/game_layout.bots.ts';
 import { WIRE_CARD_NONE } from '../../sdk/ts/gen/kernel_consts.bots.ts';
-import { LAYOUT_HASH } from '../../sdk/ts/gen/layout_hash.bots.ts';
-import type { BotsTestExports } from '../../sdk/ts/gen/exports.bots_test.ts';
 import { ServerTable } from './server_table.ts';
-import { assertLayoutHash } from '../../sdk/ts/wasm/layout_hash.ts';
-import { botsTestWasm } from './bots_test_wasm.ts';
+import { startTableHost, type HostEntries, type TableHost } from './table_host.ts';
 
 export const WAITING = L.GAME_STATUS_WAITING;
 export const PLAYING = L.GAME_STATUS_PLAYING;
@@ -44,24 +42,21 @@ export interface FixtureSeat { id: string; name: string; brain?: string }
 /** A row the kernel accepted: the games.state and games.roster bytes. */
 export interface TableFixture { state: Uint8Array; roster: Uint8Array }
 
-let kernel: { ex: BotsTestExports; table: ServerTable } | null = null;
-function k(): { ex: BotsTestExports; table: ServerTable } {
+let kernel: { host: TableHost; ex: HostEntries; table: ServerTable } | null = null;
+function k(): { host: TableHost; ex: HostEntries; table: ServerTable } {
     if (!kernel) {
-        const inst = new WebAssembly.Instance(new WebAssembly.Module(botsTestWasm() as BufferSource), {});
-        const ex = inst.exports as unknown as BotsTestExports;
-        assertLayoutHash('bots_test.wasm', ex, LAYOUT_HASH, 'sdk/ts/gen/layout_hash.bots.ts');
-        ex.wasm_init();
-        kernel = { ex, table: new ServerTable(ex) };
+        const host = startTableHost();
+        kernel = { host, ex: host.ex, table: new ServerTable(host) };
     }
     return kernel;
 }
 
-/** The C Table over the fixtures' own bots_test.wasm instance. */
+/** The C Table over the fixtures' own table host. */
 export function fixtureTable(): ServerTable { return k().table; }
 
-/** The raw exports of that instance, for a test helper that reads the loaded board through the generated accessors. */
-export function fixtureExports(): BotsTestExports {
-    return k().ex;
+/** That host itself, for a test helper that reads the loaded board through the generated accessors. */
+export function fixtureHost(): TableHost {
+    return k().host;
 }
 
 /** The generated name of a kernel result code, among the constant families `prefixes` name. */
@@ -160,21 +155,25 @@ class Builder {
 
     /** Composes the board in the kernel and seals it: bytes the C Table has loaded, or FixtureRefused. */
     build(): TableFixture {
-        const { ex } = k();
+        const { host, ex } = k();
         const hands = new Map<number, number[]>();
         for (const [seat, text] of this.hands) hands.set(seat, parseCards(`hand(${seat})`, text, L.Player_hand_LEN, false).cards);
         const table = parseCards('table', this.battles.join(' '), L.Game_table_battles_LEN, true);
         const deck = parseCards('deck', this.deckText, L.Game_deck_LEN, false).cards;
         const trump = this.trumpText === null ? null : parseOne('trump', this.trumpText);
 
-        const g = ex.wasm_fixture_begin();
+        const gAt = ex.wasm_fixture_begin();
         roster(`title`, ex.wasm_fixture_title(...put(enc.encode(this.titleText)) as [number]));
         this.seatList.forEach((s, i) => {
             const [a, b, c] = put(enc.encode(s.id), enc.encode(s.name), enc.encode(s.brain ?? ''));
             roster(`seat ${i}`, ex.wasm_fixture_seat(a, b, c));
         });
 
-        const m = L.memOf(ex.memory.buffer);
+        // The board is composed in a copy of the lobby wasm_fixture_begin made, at
+        // offset 0, and goes back whole before the seal.
+        const gameBytes = ex.wasm_fixture_game_bytes();
+        const m = L.memOf(host.read(gAt, gameBytes).buffer);
+        const g = 0;
         const np = this.playerCount ?? this.seatList.length;
         const dealt = this.gameStatus !== WAITING;
         const attacker = this.attackerSeat ?? 0;
@@ -220,13 +219,17 @@ class Builder {
         L.Game_set_good_players_mask(m, g, mask >>> 0);
         L.Game_set_has_good_timestamp(m, g, this.goodTs);
 
-        const stamp = ex.wasm_fixture_stamp_ptr();
+        host.write(gAt, m.u8);
+
+        const stampAt = ex.wasm_fixture_stamp_ptr();
         if (this.stamp.length > L.GameRatings_before_LEN) throw new RangeError(`table fixture: ratings for ${this.stamp.length} seats`);
-        L.GameRatings_set_n(m, stamp, this.stamp.length);
+        const sm = L.memOf(new ArrayBuffer(L.GameRatings_SIZE));
+        L.GameRatings_set_n(sm, 0, this.stamp.length);
         this.stamp.forEach((r, s) => {
-            L.GameRatings_set_before(m, stamp, s, r.before);
-            L.GameRatings_set_delta(m, stamp, s, r.delta);
+            L.GameRatings_set_before(sm, 0, s, r.before);
+            L.GameRatings_set_delta(sm, 0, s, r.delta);
         });
+        host.write(stampAt, sm.u8);
 
         const n = ex.wasm_fixture_seal();
         if (n < 0) {
@@ -234,9 +237,8 @@ class Builder {
             throw new FixtureRefused('seal', n, reasonOf(n, ['GAME_INVALID_', 'TABLE_E_']),
                 detail === null ? undefined : { code: detail, reason: reasonOf(detail, ['ROSTER_E_']) });
         }
-        const io = ex.wasm_io_ptr();
-        const u8 = L.memOf(ex.memory.buffer).u8;
-        return { state: u8.slice(io, io + n), roster: u8.slice(io + n, io + n + L.ROSTER_BYTES) };
+        const row = host.read(ex.wasm_io_ptr(), n + L.ROSTER_BYTES);
+        return { state: row.slice(0, n), roster: row.slice(n) };
     }
 }
 
@@ -257,11 +259,14 @@ export function parseCardText(text: string, cap = L.Game_deck_LEN): { suit: numb
 
 /** Writes byte strings back to back at the IO buffer; returns their lengths. */
 function put(...parts: Uint8Array[]): number[] {
-    const { ex } = k();
-    const u8 = L.memOf(ex.memory.buffer).u8;
-    let at = ex.wasm_io_ptr();
-    if (parts.reduce((s, p) => s + p.length, 0) > ex.wasm_io_cap()) throw new RangeError('table fixture: input exceeds the IO buffer');
-    return parts.map((p) => { u8.set(p, at); at += p.length; return p.length; });
+    const { host, ex } = k();
+    const total = parts.reduce((s, p) => s + p.length, 0);
+    if (total > ex.wasm_io_cap()) throw new RangeError('table fixture: input exceeds the IO buffer');
+    const all = new Uint8Array(total);
+    let at = 0;
+    const lens = parts.map((p) => { all.set(p, at); at += p.length; return p.length; });
+    if (total > 0) host.write(ex.wasm_io_ptr(), all);
+    return lens;
 }
 
 function roster(step: string, rc: number): void {
@@ -270,14 +275,13 @@ function roster(step: string, rc: number): void {
 
 /** Card text through the kernel's card_list_parse: raw Card bytes (and covers for a battle list). */
 function parseCards(step: string, text: string, cap: number, battles: boolean): { cards: number[]; covers: number[] } {
-    const { ex } = k();
+    const { host, ex } = k();
     const [len] = put(enc.encode(text));
     const n = ex.wasm_card_list_parse(len, cap, battles ? 1 : 0);
     if (n < 0) throw new FixtureRefused(step, n, reasonOf(n, ['CARD_PARSE_E_']));
-    const m = L.memOf(ex.memory.buffer);
-    const io = ex.wasm_io_ptr();
-    const cards = Array.from({ length: n }, (_, i) => L.Card_raw_get(m, io + i));
-    const covers = battles ? Array.from({ length: n }, (_, i) => L.Card_raw_get(m, io + n + i)) : [];
+    const m = L.memOf(host.read(ex.wasm_io_ptr(), battles ? 2 * n : n).buffer);
+    const cards = Array.from({ length: n }, (_, i) => L.Card_raw_get(m, i));
+    const covers = battles ? Array.from({ length: n }, (_, i) => L.Card_raw_get(m, n + i)) : [];
     return { cards, covers };
 }
 
@@ -292,10 +296,9 @@ function parseOne(step: string, text: string): number {
 // "Do these cover cards cover the uncovered attacks in exactly ONE way" - a
 // different question from the menu's, and one no shipped host asks any more: the
 // web's Cover button moved to client_play (client_table.h) and iOS never called
-// it. So wasm_unambiguous_cover is a TEST-BUILD export now (c/Makefile
-// bots_test.wasm), and this is the only thing that reaches it. The
-// packing lives here for the same reason the export does - it is a test's
-// business, not a product's.
+// it. So wasm_unambiguous_cover is reached only through the table host now, and
+// this is the only thing that reaches it. The packing lives here for the same
+// reason - it is a test's business, not a product's.
 
 /** The paired result: cover card i defends attackCards[i]. */
 export interface CoverCombination { coverCards: PlayCardLike[]; attackCards: PlayCardLike[] }
@@ -316,21 +319,19 @@ export function unambiguousCover(
     powerSuit: number,
 ): CoverCombination | null {
     if (coverCards.length === 0) return null;
-    const ex = fixtureExports() as unknown as BotsTestExports;
-    const buf = new Uint8Array(ex.memory.buffer);
-    const a = ex.wasm_cards_a_ptr();
-    coverCards.forEach((c, i) => { buf[a + i] = wireCard(c); });
-    const b = ex.wasm_cards_b_ptr();
+    const { host, ex } = k();
+    host.write(ex.wasm_cards_a_ptr(), Uint8Array.from(coverCards, wireCard));
+    const b = new Uint8Array(2 * battles.length);
     battles.forEach((t, i) => {
-        buf[b + 2 * i] = wireCard(t.attack);
+        b[2 * i] = wireCard(t.attack);
         const d = t.defense;
-        buf[b + 2 * i + 1] = !d || (d.suit === -2 && d.value === -2) ? WIRE_CARD_NONE : wireCard(d);
+        b[2 * i + 1] = !d || (d.suit === -2 && d.value === -2) ? WIRE_CARD_NONE : wireCard(d);
     });
+    host.write(ex.wasm_cards_b_ptr(), b);
     const n = ex.wasm_unambiguous_cover(coverCards.length, battles.length, powerSuit);
     if (n <= 0) return null;
-    // Re-fetch: a wasm call can grow (and detach) the buffer.
-    const out = new Uint8Array(ex.memory.buffer);
-    const io = ex.wasm_io_ptr();
+    const out = host.read(ex.wasm_io_ptr(), n);
+    const io = 0;
     const attackCards: PlayCardLike[] = [];
     for (let i = 0; i < n; i++) {
         const v = out[io + i];

@@ -1,8 +1,8 @@
 // roster_kernel.ts - the C Roster (c/src/roster.h) as tests drive it directly.
 //
-// A PRIVATE instance of the test build (e2e/helpers/bots_test_wasm.ts), so these
-// calls share no kernel slot with any other test in the same process, over the
-// test-only wasm_roster_* exports (c/wasm/wasm_bots_api.c). Used by the Swift half
+// A PRIVATE table host (e2e/helpers/table_host.ts), so these calls share no
+// kernel slot with any other test in the same process, over the wasm_roster_*
+// entries no shipped module exports (c/wasm/wasm_bots_api.c). Used by the Swift half
 // of e2e/packed_roster_wire.test.ts, the hidden-information scan and the expand
 // migration test.
 //
@@ -11,24 +11,16 @@
 // through the generated writer and reader (sdk/ts/gen/game_layout.bots.ts); the
 // durable roster and the trailer are opaque bytes this file only forwards.
 
-import type { BotsTestExports } from '../../sdk/ts/gen/exports.bots_test.ts';
 import * as L from '../../sdk/ts/gen/game_layout.bots.ts';
-import { botsTestWasm } from './bots_test_wasm.ts';
+import { startTableHost, type TableHost } from './table_host.ts';
 
-let cached: BotsTestExports | null = null;
-function kernel(): BotsTestExports {
-    if (!cached) {
-        const inst = new WebAssembly.Instance(new WebAssembly.Module(botsTestWasm() as BufferSource), {});
-        cached = inst.exports as unknown as BotsTestExports;
-    }
-    return cached;
-}
+let cached: TableHost | null = null;
+function host(): TableHost { return (cached ??= startTableHost()); }
+const kernel = () => host().ex;
 
 const enc = new TextEncoder();
-const mem = () => L.memOf(kernel().memory.buffer);
-const io = () => new Uint8Array(kernel().memory.buffer, kernel().wasm_io_ptr(), kernel().wasm_io_cap());
-const put = (b: Uint8Array) => { io().set(b, 0); };
-const get = (n: number) => io().slice(0, n);
+const put = (b: Uint8Array) => { host().write(kernel().wasm_io_ptr(), b); };
+const get = (n: number) => host().read(kernel().wasm_io_ptr(), n);
 
 export interface RosterSeatSpec { id: string; name: string; brain: string }
 export interface RosterTable {
@@ -39,10 +31,12 @@ export interface RosterTable {
 
 /** The table into the kernel's RosterSpec, through the generated writer. */
 function writeSpec(title: string, seats: RosterSeatSpec[]): void {
-    L.writeRosterSpec(mem(), kernel().wasm_roster_spec_ptr(), {
+    const m = L.memOf(new ArrayBuffer(L.RosterSpec_SIZE));
+    L.writeRosterSpec(m, 0, {
         title,
         seats: seats.map((s) => ({ id: s.id, name: s.name, brain: s.brain })),
     });
+    host().write(kernel().wasm_roster_spec_ptr(), m.u8);
 }
 
 /** roster_set_title + roster_seat_add per seat, then roster_encode: the durable bytes, or the refusal. */
@@ -71,6 +65,6 @@ export function cRosterTrailerRead(trailer: Uint8Array):
     put(trailer);
     const n = kernel().wasm_roster_trailer_read(trailer.length);
     if (n < 0) return n;
-    const r = L.readRosterTrailerRead(mem(), kernel().wasm_roster_trailer_ptr());
+    const r = L.readRosterTrailerRead(L.memOf(host().read(kernel().wasm_roster_trailer_ptr(), L.RosterTrailerRead_SIZE).buffer), 0);
     return { status: r.status, aiMask: r.aiMask, consumed: r.consumed, passing: r.passing, gid: r.gid, durable: get(n) };
 }
