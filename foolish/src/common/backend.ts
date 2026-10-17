@@ -174,47 +174,30 @@ export async function action(gameId: string, wire: Uint8Array, intent = -1): Pro
     if (!a) throw BackendError.last();
     return a;
 }
-/** The caller's view of every game they sit at, newest first. */
-export async function games(): Promise<Uint8Array[]> {
-    const { status, body } = await call(N.NC_REQ_GAMES);
-    const rows = nc().games(status, body);
-    if (!rows) throw BackendError.last();
-    return rows.map((r) => r.envelope);
+/** An answer read by `read` (null: refused, and the client says why). */
+async function answer<T>(which: number, read: (status: number, body: Uint8Array) => T | null, a?: string): Promise<T> {
+    const { status, body } = await call(which, a);
+    const out = read(status, body);
+    if (out === null) throw BackendError.last();
+    return out;
 }
+
+/** The caller's view of every game they sit at, newest first. */
+export const games = async (): Promise<Uint8Array[]> => (await answer(N.NC_REQ_GAMES, (s, b) => nc().games(s, b))).map((r) => r.envelope);
 /** One game: the caller's view, or the spectators' for a non-member; null for no such game. */
 export async function view(gameId: string): Promise<Uint8Array | null> {
     const { status, body } = await call(N.NC_REQ_GAME, gameId);
     return nc().view(status, body)?.envelope ?? null;
 }
 /** A game's chat, oldest first (members only). */
-export async function chats(gameId: string): Promise<NetChat[]> {
-    const { status, body } = await call(N.NC_REQ_CHATS, gameId);
-    const rows = nc().chats(status, body);
-    if (!rows) throw BackendError.last();
-    return rows;
-}
+export const chats = (gameId: string): Promise<NetChat[]> => answer(N.NC_REQ_CHATS, (s, b) => nc().chats(s, b), gameId);
 export const sendChat = (gameId: string, message: string): Promise<Uint8Array> => callOk(N.NC_REQ_CHAT_SEND, gameId, message);
 /** The bots, in the server's order. */
-export async function bots(): Promise<NetBot[]> {
-    const { status, body } = await call(N.NC_REQ_BOTS);
-    const rows = nc().bots(status, body);
-    if (!rows) throw BackendError.last();
-    return rows;
-}
+export const bots = (): Promise<NetBot[]> => answer(N.NC_REQ_BOTS, (s, b) => nc().bots(s, b));
 /** The leaderboard: the top humans and the top bots who have played. */
-export async function board(): Promise<NetBoardRow[]> {
-    const { status, body } = await call(N.NC_REQ_BOARD);
-    const rows = nc().board(status, body);
-    if (!rows) throw BackendError.last();
-    return rows;
-}
+export const board = (): Promise<NetBoardRow[]> => answer(N.NC_REQ_BOARD, (s, b) => nc().board(s, b));
 /** The caller's rating (null for none) and their replays, newest first. */
-export async function history(): Promise<{ rating: number | null; rows: NetHistoryRow[] }> {
-    const { status, body } = await call(N.NC_REQ_HISTORY);
-    const h = nc().history(status, body);
-    if (!h) throw BackendError.last();
-    return h;
-}
+export const history = (): Promise<{ rating: number | null; rows: NetHistoryRow[] }> => answer(N.NC_REQ_HISTORY, (s, b) => nc().history(s, b));
 /** The newest replay of a game the caller played in, or null. */
 export async function replay(gameId: string): Promise<NetReplay | null> {
     const { status, body } = await call(N.NC_REQ_REPLAY, gameId);
