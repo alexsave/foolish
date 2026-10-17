@@ -6,7 +6,7 @@ Each product that is built follows the same rule: one kernel written in C owns t
 
 | Folder | What it is |
 | --- | --- |
-| [`foolish/`](foolish) | Foolish, a Durak card game: the website at foolish.cards, the iMessage app, the native server, and the C kernel under all of them. Its backend is [`c_base/`](c_base), in C on AWS Lambda. Start at [`foolish/README.md`](foolish/README.md). |
+| [`foolish/`](foolish) | Foolish, a Durak card game: the website at foolish.cards, the iMessage app, and the C kernel under all of them. Its backend is [`c_base/`](c_base), in C on AWS Lambda. Start at [`foolish/README.md`](foolish/README.md). |
 | [`uttt/`](uttt) | Ultimate Tic-Tac-Toe: an iMessage app, and the replay site at uttt.live that plays back a finished game. See [`uttt/README.md`](uttt/README.md). |
 | [`werewolf/`](werewolf) | A social-deduction game that lives inside an iMessage thread. Paused. See [`werewolf/README.md`](werewolf/README.md). |
 | [`pickemup/`](pickemup) | Pick 'Em Up (a working title), a shedding card game for 2 to 8 in an iMessage thread: the C kernel, its wire and bridge are built and tested, the Messages extension is built and unit-tested but not yet seen inside Messages. See [`pickemup/README.md`](pickemup/README.md). |

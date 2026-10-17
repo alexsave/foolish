@@ -72,7 +72,7 @@ test('every directory the README map draws is a directory that exists', () => {
         const [, indent, p] = m;
         if (indent.length === 0) { parent = p; drawn.push(p); continue; }
         // Indented: under the current parent, unless it already resolves alone
-        // (the map writes a few, like `impls/native/`, as parent-relative and
+        // (the map writes a few, like `api/` under server/, as parent-relative and
         // a few, like `Tools/rig/`, the same way).
         drawn.push(existsSync(join(REPO, p)) ? p : join(parent, p));
     }

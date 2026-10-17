@@ -29,8 +29,8 @@ struct World;
 
 const char *inv_name(int kind);
 
-// True if the board is a partition of the dealt deck. Lifted from
-// server/impls/native/sem_fuzz.c (conservation_ok).
+// True if the board is a partition of the dealt deck. Lifted from the
+// native server's sem_fuzz.c (conservation_ok; that server is retired, see git).
 int inv_conservation(const Game *g, char *why, int whycap);
 
 // The O(seats) half: right NUMBER of cards, no tally. Catches creation and

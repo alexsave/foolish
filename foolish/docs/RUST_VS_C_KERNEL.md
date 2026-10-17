@@ -1,5 +1,7 @@
 # Should the kernel be written in Rust?
 
+> **Note, 2026-10-17:** the native C server examined below (`server/impls/native/`) has since been retired and deleted from the tree; it is in git at `56ad0609`. References to it are left as written.
+
 An examination of the C kernel (`c/`), its WASM/iOS/server deployments, and
 the native C server, with a Rust rewrite in mind. Treated as greenfield: zero
 daily users, so migration cost is at its lifetime minimum. Includes empirical

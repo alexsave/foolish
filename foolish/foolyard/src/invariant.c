@@ -90,7 +90,7 @@ void inv_report(World *w, int kind, const char *fmt, ...) {
     fputc('\n', stderr);
 }
 
-// Straight from server/impls/native/sem_fuzz.c's conservation_ok: hands, deck,
+// Straight from the retired native server's sem_fuzz.c conservation_ok: hands, deck,
 // trump and table must be a partition of the dealt pack, and what is left over
 // must be exactly the discard pile.
 // The cheap half: does the board still hold the right NUMBER of cards? O(seats)

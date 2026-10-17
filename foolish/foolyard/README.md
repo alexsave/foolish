@@ -19,7 +19,7 @@ make
 
 ## why
 
-[`sem_fuzz.c`](../server/impls/native/sem_fuzz.c) already proves the kernel
+`sem_fuzz.c` (in the native server, retired 2026-10-17; the last tree is in git at 56ad0609) proved the kernel
 cannot be cheated: it fires illegal moves at `awire_apply` with full ground
 truth. But it plays straight-line games - decide, apply, decide, apply - and
 so it can never reach the states that only exist when there is a *wire* and a
@@ -79,7 +79,7 @@ Two deliberate departures from tiltyard's `sch.c`:
 
 ### what the server models
 
-The native server ([`../server/impls/native`](../server/impls/native)), minus
+The native server (`server/impls/native`, retired 2026-10-17; the last tree is in git at 56ad0609), minus
 the sockets: per-game request queues serviced one at a time (the per-game
 lock), a version bumped on every board change, per-seat masked views cut with
 `state_put`, a push-only fanout, and the bot trampoline - one `bot_drive`
