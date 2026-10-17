@@ -200,6 +200,9 @@ mkdir -p "$prod" "$fixtures" "$swift" "$kotlin"
 EX_LINKS=()   # "run|INTERFACE|OUT.ts|MODULE.wasm|MAKE_VARIABLE..."
 EX_RUNS=()    # "BUILD|CFLAGS_VARIABLE|SRC_VARIABLE"
 ex_link() { # INTERFACE OUT.ts MODULE.wasm MAKE_VARIABLE...: one link of the run that the next ex_run closes
+  # MODULE '-' is a link that is no wasm module (the native table host): it has
+  # an interface to write and no module for --check-exports to hold it against.
+  [ "$check_exports" = 1 ] && [ "$3" = - ] && return 0
   local head="${#EX_RUNS[@]}|$1|$2|$3"; shift 3
   EX_LINKS+=("$head|$*")
 }
@@ -252,6 +255,9 @@ gen_exports() {
   # test build, which exports every entry the objects have.
   ex_link WebExports      exports.web.ts       web.wasm       WASM_BOT_LDFLAGS WASM_WEB_EXPORTS
   ex_link BotsTestExports exports.bots_test.ts bots_test.wasm WASM_BOT_LDFLAGS WASM_BOTS_ALL_EXPORTS
+  # The native table host (c/tests/table_host.c): the entries it offers the Node
+  # suites, typed from the same definitions under the same flags.
+  ex_link TableHostExports exports.table_host.ts - TABLE_HOST_EXPORTS
   ex_run bots WASM_BOT_CFLAGS WASM_BOT_SRC
   # The iMessage extension's module: its own sources, flags and export lists.
   ex_link MsgExports      exports.msg.ts       msg.wasm       WASM_MSG_LDFLAGS WASM_MSG_API_EXPORTS WASM_MSG_EXPORTS

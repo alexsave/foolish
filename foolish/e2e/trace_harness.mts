@@ -7,7 +7,7 @@
 // TRACE_AT=<n> also prints the board the n-th decision was made on.
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import { botCycle, dealBotTable, lastDriveMoves, seedBytes } from './helpers/bot_table.ts';
-import { fixtureExports, fixtureTable } from './helpers/table_fixture.ts';
+import { fixtureHost, fixtureTable } from './helpers/table_fixture.ts';
 
 const keys = (process.env.TRACE_KEYS ?? 'cordite,octogen').split(',');
 const gi = Number(process.env.TRACE_GI ?? '0');
@@ -19,9 +19,9 @@ const MOVE = Object.fromEntries(Object.entries(L).filter(([k]) => k.startsWith('
 
 /** The loaded board, read through the generated accessors. */
 function board() {
-    const ex = fixtureExports();
-    const m = L.memOf(ex.memory.buffer);
-    const g = ex.wasm_game_ptr_internal();
+    const host = fixtureHost();
+    const m = L.memOf(host.read(host.ex.wasm_game_ptr_internal(), host.ex.wasm_fixture_game_bytes()).buffer);
+    const g = 0;
     const cards = (at: (i: number) => number, n: number) => Array.from({ length: n }, (_, i) => ({
         suit: L.Card_get_suit(m, at(i)), value: L.Card_get_value(m, at(i)),
     }));

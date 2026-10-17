@@ -1430,6 +1430,10 @@ WASM_BOT_CFLAGS  := $(filter-out -Wl% $(WASM_OPT),$(WASM_FLAGS)) -DCD_WASM_OVERL
 # production. Net: -42 KiB stack takes bots' INITIAL linear memory 14 -> 13 pages
 # (893,664 -> 850,656 B; the module still grows a TT on top at runtime — see the
 # peak table in docs/WASM_L1_BUDGET.md). Trailing -z stack-size wins in wasm-ld.
+# Both canaries painted the stack of the whole-kernel test module
+# (bots_test.wasm) and went with it on 2026-10-17 - their last tree is 60f10e72.
+# web.wasm keeps this stack and enumerates moves in its client slot, so a change
+# that grows the cover enumeration's frame is the one to re-measure, from that tree.
 WASM_BOT_LDFLAGS := $(filter -Wl%,$(WASM_FLAGS)) -Wl,-z,stack-size=22528
 WASM_BOT_O3_SRC  := src/cordite_sim.c src/cordite_strategy.c \
                     src/octogen_strategy.c
@@ -1607,6 +1611,45 @@ build/bots_test.wasm: $(WASM_BOT_OBJ) Makefile
 wasm-bots-test: wasm-cc-check
 	@$(MAKE) --no-print-directory build/bots_test.wasm
 	@bash ../scripts/wasm_stamp.sh --hash > build/bots_test.stamp.tmp && mv build/bots_test.stamp.tmp build/bots_test.stamp
+
+# ---------------------------------------------------------------------------
+# table_host - THE KERNEL'S ENTRY SURFACE, NATIVELY, FOR THE NODE SUITES.
+#
+# The TypeScript tests that hold shipped TypeScript (the page in jsdom, the web's
+# move gates, its replay screen, the Oracle) need a server's half of a game: a
+# sealed board, the envelope a viewer reads, the push after a move, a bot game
+# played to its code. The server is c_base, which links the kernel natively, so
+# they get that half from the same native kernel: e2e/helpers/table_host.ts
+# starts this program and calls the wasm entry files' functions in it over two
+# FIFOs (tests/table_host.c says the wire). It replaced bots_test.wasm, a
+# whole-kernel wasm link that shipped nowhere.
+#
+# THE SAME OBJECTS AS web.wasm, FOR A NATIVE TARGET: the bots sources and
+# WASM_BOT_CFLAGS, less what only a freestanding wasm32 compile wants (the
+# target, the repo's libc and its headers, the bump allocator). Every cap and
+# every -D is the module's, so every struct is the module's struct, and that is
+# checked: build/layout/tablehost.hash is structgen's hash of the layouts under
+# THESE flags and the host's own triple, compiled in as SG_LAYOUT_HASH, and the
+# TypeScript end refuses a host whose hash is not the one the wasm32 accessors
+# were generated with (sdk/ts/gen/layout_hash.bots.ts). The wasm entry files are
+# not objects of their own here: tests/table_host.c includes them, so each entry
+# is called with its definition in view.
+TABLE_HOST_CFLAGS := -O2 -g $(filter-out --target=wasm32 -nostdlib -ffreestanding -mbulk-memory \
+                       -mno-nontrapping-fptoint -isystem wasm/include $(SHARED)/wasm/include,$(WASM_BOT_CFLAGS))
+TABLE_HOST_SRC := $(filter-out $(SHARED)/wasm/% wasm/%,$(WASM_BOT_SRC)) tests/table_host.c
+TABLE_HOST_OBJ_FLAGS = $(TABLE_HOST_CFLAGS) \
+                       $(if $(filter tests/table_host,$*),-DSG_LAYOUT_HASH=$$(cat build/layout/tablehost.hash))
+$(eval $(call C_VARIANT,build/obj/tablehost,CC,TABLE_HOST_OBJ_FLAGS,build/layout/tablehost.hash))
+build/layout/tablehost.hash: $(STRUCTGEN) FORCE
+	$(call sg_hash,tablehost,$(TABLE_HOST_CFLAGS),)
+build/table_host: $(call c_objs,build/obj/tablehost,$(TABLE_HOST_SRC))
+	$(CC) $(TABLE_HOST_CFLAGS) $^ -o $@ -lm
+.PHONY: table-host
+table-host: build/table_host
+# The entries the host offers, as a link line: tools/structgen/gen.sh types them
+# into sdk/ts/gen/exports.table_host.ts from this, so the list lives once, in
+# the host's own table.
+TABLE_HOST_EXPORTS := $(patsubst %,-Wl$(comma)--export=%,$(shell sed -n 's/^ *E.[A-Z], \(wasm_[a-z0-9_]*\),.*/\1/p' tests/table_host.c))
 
 # ---------------------------------------------------------------------------
 # oracle.wasm — the client-side "infinite oracle" replay analyzer

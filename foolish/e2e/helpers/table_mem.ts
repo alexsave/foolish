@@ -18,7 +18,7 @@ import * as L from '../../sdk/ts/gen/game_layout.bots.ts';
 import * as A from '../../sdk/ts/gen/anim.bots.ts';
 import { clientTable, type TableView, AWIRE_KIND, encodeAction, type AwireMove } from '../../sdk/ts/table/client_table.ts';
 import type { TableDrive, TableProducts } from './server_table.ts';
-import { fixture, fixtureExports, fixtureTable, reasonOf, READY, IDLE, type FixtureSeat, type TableFixture } from './table_fixture.ts';
+import { fixture, fixtureHost, fixtureTable, reasonOf, READY, IDLE, type FixtureSeat, type TableFixture } from './table_fixture.ts';
 
 export interface MemCard { suit: number; value: number }
 
@@ -82,9 +82,9 @@ function must(what: string, rc: number): void {
 
 /** The board the fixtures' table holds right now. */
 export function residentBoard(): MemBoard {
-    const ex = fixtureExports();
-    const m = L.memOf(ex.memory.buffer);
-    const g = ex.wasm_game_ptr_internal();
+    const host = fixtureHost();
+    const m = L.memOf(host.read(host.ex.wasm_game_ptr_internal(), host.ex.wasm_fixture_game_bytes()).buffer);
+    const g = 0;
     const seats: MemSeat[] = fixtureTable().seats().map((s, i) => {
         const p = L.Game_players_at(g, i);
         return {
@@ -115,10 +115,10 @@ export function residentBoard(): MemBoard {
 
 /** Every legal move `seat` has on the fixtures' loaded table, as the kernel enumerates them (a wait is no move). */
 export function residentMoves(seat: number): MemMove[] {
-    const ex = fixtureExports();
-    const n = ex.wasm_legal_moves(seat);
-    const m = A.memOf(ex.memory.buffer);
-    const lm = ex.wasm_moves_ptr_internal();
+    const host = fixtureHost();
+    const n = host.ex.wasm_legal_moves(seat);
+    const m = A.memOf(host.read(host.ex.wasm_moves_ptr_internal(), A.LegalMoves_moves_at(0, Math.max(n, 0))).buffer);
+    const lm = 0;
     const out: MemMove[] = [];
     for (let i = 0; i < n; i++) {
         const mv = A.LegalMoves_moves_at(lm, i);

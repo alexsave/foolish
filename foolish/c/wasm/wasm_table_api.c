@@ -296,6 +296,12 @@ Game *wasm_fixture_begin(void) {
     return g;
 }
 
+// How many bytes of the Game wasm_fixture_begin returned a fixture writes: the
+// board, up to the session log a fixture never holds. A host that composes the
+// board in a copy of its own (e2e/helpers/table_fixture.ts, over the table host)
+// reads and writes back exactly this much.
+int wasm_fixture_game_bytes(void) { return (int)offsetof(Game, num_logs); }
+
 // io = [title]. ROSTER_OK or ROSTER_E_*.
 int wasm_fixture_title(int len) {
     const unsigned char *io = inputs(len);
