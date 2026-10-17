@@ -4,11 +4,11 @@ name: coverage
 # regresses below a floor. Three scopes, each measured against the committed
 # test suites — deliberately EXCLUDING the bot-AI strategies (research code) and
 # the React UI components (no DOM test harness), so the gate tracks the logic
-# that must stay correct: the C rules engine, the server orchestration, and the
-# client move rules.
+# that must stay correct: the C rules engine and the client move rules. The
+# server orchestration is C now (c_base) and is tested there; its TypeScript
+# scope went with the TypeScript server in stage 4.
 #
 #   c-engine       game.c / legal.c / replay.c   (gcc --coverage + gcovr)
-#   server-ts      server/impls/supabase/functions/_shared/*  minus wasm
 #   client-rules   src/utils/gameValidation
 #
 # Floors live in c/Makefile (COV_LINE_MIN/COV_BRANCH_MIN) and package.json
@@ -80,36 +80,8 @@ jobs:
   server-client-ts:
     runs-on: ubuntu-latest
     outputs:
-      server_line: ${{ steps.covts.outputs.server_line }}
-      server_branch: ${{ steps.covts.outputs.server_branch }}
       client_line: ${{ steps.covts.outputs.client_line }}
       client_branch: ${{ steps.covts.outputs.client_branch }}
-
-    # The e2e suite runs the REAL server orchestration (executeWithGameLock, the
-    # CAS commit_game / bot-lease plpgsql, the meta endpoint) against a real
-    # Postgres. Same connection defaults as validate.yml (e2e/adapters/supabase.ts):
-    # host 127.0.0.1, user/password/db = stress/stress/foolish.
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: stress
-          POSTGRES_PASSWORD: stress
-          POSTGRES_DB: foolish
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U stress -d foolish"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-
-    env:
-      E2E_PGHOST: 127.0.0.1
-      E2E_PGPORT: 5432
-      E2E_PGUSER: stress
-      E2E_PGPASSWORD: stress
-      E2E_PGDATABASE: foolish
 
     steps:
       - uses: actions/checkout@v4
@@ -136,7 +108,7 @@ jobs:
       # coverage:e2e runs the full e2e suite EXCEPT lobby_add_bot.test.ts — a
       # jsdom React-render test with act()/microtask-flush timing that is flaky
       # headless in CI. It only exercises the un-gated Lobby.tsx (the gate scopes
-      # are the server _shared logic + the client move rules), so excluding it
+      # is the client move rules), so excluding it
       # keeps the gate stable without affecting the measured thresholds.
       # The TEST bots module (shipped bots.wasm + test-only exports) is never
       # committed: the fixture and roster helpers load c/build/bots_test.wasm.
@@ -146,7 +118,7 @@ jobs:
       - name: Run e2e suite under V8 coverage
         run: npm run coverage:e2e
 
-      - name: Server + client coverage gate
+      - name: Client coverage gate
         run: npm run coverage:check
 
       # Re-report the SAME .v8cov data as json-summary to pull the numbers.
@@ -155,15 +127,11 @@ jobs:
         id: covts
         if: always()
         run: |
-          npm run coverage:json:server || true
           npm run coverage:json:client || true
           node -e '
             const rd = (p) => { try { return require(p).total; } catch (e) { return null; } };
-            const s = rd("./.covjson/server/coverage-summary.json");
             const c = rd("./.covjson/client/coverage-summary.json");
             const lines = [
-              ["server_line", s?.lines?.pct ?? ""],
-              ["server_branch", s?.branches?.pct ?? ""],
               ["client_line", c?.lines?.pct ?? ""],
               ["client_branch", c?.branches?.pct ?? ""],
             ].map(([k, v]) => `${k}=${v}`).join("\n");
@@ -187,13 +155,11 @@ jobs:
             const { renderCoverage, spliceSlot, MARKER } = require(`${process.env.GITHUB_WORKSPACE}/foolish/scripts/render_metrics.cjs`);
             const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
             const ce = { line: num(`${{ needs.c-engine.outputs.line }}`), branch: num(`${{ needs.c-engine.outputs.branch }}`) };
-            const sv = { line: num(`${{ needs.server-client-ts.outputs.server_line }}`), branch: num(`${{ needs.server-client-ts.outputs.server_branch }}`) };
             const cl = { line: num(`${{ needs.server-client-ts.outputs.client_line }}`), branch: num(`${{ needs.server-client-ts.outputs.client_branch }}`) };
             const covTable = renderCoverage({
               cEngine: ce.line != null ? ce : null,
-              server: sv.line != null ? sv : null,
               client: cl.line != null ? cl : null,
-              floors: { cEngineLine: 90, cEngineBranch: 74, serverLine: 80, serverBranch: 78, clientLine: 90, clientBranch: 82 },
+              floors: { cEngineLine: 90, cEngineBranch: 74, clientLine: 90, clientBranch: 82 },
             });
             const { owner, repo } = context.repo;
             const issue_number = context.payload.pull_request.number;

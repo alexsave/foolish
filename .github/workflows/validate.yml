@@ -11,8 +11,6 @@ name: validate
 #   validation/client_validation      - reconcile gate+merge, rendered hand, optimistic dedup
 #   validation/client_rules_validation - next-defender rotation + keyboard pass parity (hand-rolled-logic fixes)
 #   validation/replay_validation      - replay codec round-trip (engine<->replay drift) + timing
-#   validation/db_validation          - CAS conservation + version monotonicity, lease, meta, isolation
-#   validation/platform_grants_validation - seed.sql under Supabase's default privileges leaves no client-callable definer RPC or client table write
 # The exhaustive fuzzers remain for local / on-demand deep runs via `npm run test:e2e`.
 
 on:
@@ -40,32 +38,6 @@ defaults:
 jobs:
   validate:
     runs-on: ubuntu-latest
-
-    # db_validation.test.ts exercises the real CAS commit / bot-lease plpgsql / meta
-    # endpoint. The harness connects with these defaults (e2e/adapters/supabase.ts):
-    # host 127.0.0.1, user/password/db = stress/stress/foolish. The postgres image's
-    # POSTGRES_USER is a superuser, which the schema/seed need.
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: stress
-          POSTGRES_PASSWORD: stress
-          POSTGRES_DB: foolish
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U stress -d foolish"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-
-    env:
-      E2E_PGHOST: 127.0.0.1
-      E2E_PGPORT: 5432
-      E2E_PGUSER: stress
-      E2E_PGPASSWORD: stress
-      E2E_PGDATABASE: foolish
 
     steps:
       - uses: actions/checkout@v4
@@ -95,13 +67,13 @@ jobs:
 
       # No Math.random() in e2e/, sdk/ or server/. The invariant it guards: one
       # crypto draw per game, at the deal; everything after it derives from that
-      # seed. Needs no database, so it runs first and fails in seconds.
+      # seed. It runs first and fails in seconds.
       - name: Determinism gate (no Math.random in the game path)
         run: npm run check:determinism
 
       # Both TypeScript projects: the web (tsconfig.json) and every e2e suite,
       # helper and script with the server and SDK modules they reach
-      # (e2e/tsconfig.json). Needs no database.
+      # (e2e/tsconfig.json).
       - name: Type-check (web and e2e)
         run: npm run typecheck
 
