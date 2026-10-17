@@ -85,10 +85,10 @@ void calculate_legal_moves_lite(const Game *g, int bot_idx, LegalMoves *out);
 // once, while the menu already has each pairing as its own entry.
 //
 // The web was the last caller, through wasm_unambiguous_cover, and it moved to
-// client_play (client_table.h) with the rest of its gesture rules. So the shipped
-// bots.wasm no longer exports this: the export moved to WASM_BOTS_UNSHIPPED_API
-// (c/Makefile), which keeps it on the oracle modules and the TEST build and takes
-// 1,191 raw / 533 gzip bytes back off a module whose gzip is capped at 80 KiB.
+// client_play (client_table.h) with the rest of its gesture rules. So no shipped
+// module exports this: it stays on the oracle modules and the TEST build
+// (c/Makefile), and it took 1,191 raw / 533 gzip bytes back off the server's old
+// module when it left.
 // The rule itself stays, proven by c/tests (the hand-picked shapes, and
 // test_unambiguous_cover_fuzz against a brute-force oracle); whether a future host wants the pairing question is a
 // decision nobody has had to make yet, and deleting it is not this file's to

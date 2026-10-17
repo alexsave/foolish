@@ -1,6 +1,5 @@
 // net_client.ts - the backend's client (c/src/netclient.h) as the web reaches it,
-// over the kernel link the runtime loads (web.wasm in a browser, bots.wasm on
-// Node).
+// over web.wasm, the kernel link the browser loads (and Node's suites with it).
 //
 // Every decision is the kernel's: which request an intent becomes, its token,
 // when the token is refreshed, what is sent again and when, what an answer

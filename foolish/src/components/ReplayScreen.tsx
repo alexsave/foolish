@@ -81,7 +81,7 @@ export const ReplayScreen = ({ code }: { code: string }) => {
     // is longer than a table's id may be: the kernel's board writer refuses it.
     const gameId = code.toLowerCase();
 
-    // Async: the replay runs in bots.wasm, which the browser must compile
+    // Async: the replay runs in web.wasm, which the browser must compile
     // asynchronously. undefined = still decoding, null = failed.
     const [result, setResult] = useState<Awaited<ReturnType<typeof buildReplayData>> | null | undefined>(undefined);
     useEffect(() => {

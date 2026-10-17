@@ -3,7 +3,7 @@
 # objects copied out of the module, no accessor over the struct - and the
 # constants a view is read with. Read by tools/structgen/gen.sh with --cwd c/
 # and the bots build's flags. The same roots are in game_layout.args, so the
-# layout hash bots.wasm is checked against at load covers these readers too.
+# layout hash web.wasm is checked against at load covers these readers too.
 # Lines starting with # are dropped; everything else is split on whitespace.
 --header client_table.h --header legal.h --header evwire.h --header anim_plan.h --header replay_steps.h --root TableView --root PushEvent --root ViewRules
 --root ReplaySummary --snapshot ReplaySummary --count ReplaySummary.elimination=num_eliminated

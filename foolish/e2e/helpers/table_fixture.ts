@@ -14,7 +14,7 @@
 //
 // This file knows no byte layout. Fields are written through the generated
 // setters in sdk/ts/gen/game_layout.bots.ts onto the resident game of a PRIVATE
-// bots.wasm instance, card text is read by the kernel's card_list_parse
+// bots_test.wasm instance, card text is read by the kernel's card_list_parse
 // (c/src/card.h, whose grammar is the one documented there), and the bytes come
 // back from wasm_fixture_seal. fixtureTable() is the ServerTable over that same
 // instance, for a test that wants to load, act on or envelope what it built.
@@ -56,7 +56,7 @@ function k(): { ex: BotsTestExports; table: ServerTable } {
     return kernel;
 }
 
-/** The C Table over the fixtures' own bots.wasm instance. */
+/** The C Table over the fixtures' own bots_test.wasm instance. */
 export function fixtureTable(): ServerTable { return k().table; }
 
 /**
@@ -304,7 +304,7 @@ function parseOne(step: string, text: string): number {
 // different question from the menu's, and one no shipped host asks any more: the
 // web's Cover button moved to client_play (client_table.h) and iOS never called
 // it. So wasm_unambiguous_cover is a TEST-BUILD export now (c/Makefile
-// WASM_BOTS_UNSHIPPED_API), and this is the only thing that reaches it. The
+// bots_test.wasm), and this is the only thing that reaches it. The
 // packing lives here for the same reason the export does - it is a test's
 // business, not a product's.
 

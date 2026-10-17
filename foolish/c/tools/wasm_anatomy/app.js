@@ -193,7 +193,7 @@
       if (m.attributed) {
         const facts = el('div'); facts.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin-top:6px';
         const F = [
-          ['Provenance', 'Compiled from the cnitro C sources with clang <code class="inl">-Oz</code>, stripped. This page’s bytes were verified <b>identical</b> to the shipped ' + (m.key === 'bots' ? 'bots.wasm.gz' : m.key + '_wasm.ts') + '.'],
+          ['Provenance', 'Compiled from the cnitro C sources with clang <code class="inl">-Oz</code>, stripped. This page’s bytes were verified <b>identical</b> to the shipped ' + (m.key + '.wasm.gz') + '.'],
           ['Optimization', 'Size-first (<code class="inl">-Oz</code>), <code class="inl">-mbulk-memory</code>, no LTO, no fast-math. Imports: <b>' + (m.numImports || 'none') + '</b> (freestanding, no libc).'],
           ['Shipping', m.key === 'bots' ? 'A gzip static asset (server-only; bots never run in the browser).' : 'Base64-embedded in a generated .ts, decoded at load — works unchanged in Deno edge, Node and browsers.'],
         ];

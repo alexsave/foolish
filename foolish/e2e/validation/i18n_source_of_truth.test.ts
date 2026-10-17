@@ -2,7 +2,7 @@
 // question worth a gate: does any of it reach the browser?
 //
 // It must not. Twenty-five languages of the app's text is around 150 KB raw,
-// and sdk/ts/wasm/bots.wasm.gz is downloaded by every visitor to the site
+// and sdk/ts/wasm/web.wasm.gz is downloaded by every visitor to the site
 // against an 80 KiB cap with a few hundred bytes of headroom
 // (e2e/mem/wasm_memory.test.ts). c/i18n is deliberately outside c/src and named
 // in no *_SRC list in c/Makefile, so nothing links it - but "nothing links it"
@@ -41,7 +41,7 @@ async function languages(): Promise<{ code: string; display: string; rtl: number
 }
 
 test('no translated string reaches the shipped wasm', async () => {
-    const wasm = gunzipSync(readFileSync(join(REPO, 'sdk/ts/wasm/bots.wasm.gz')));
+    const wasm = gunzipSync(readFileSync(join(REPO, 'sdk/ts/wasm/web.wasm.gz')));
     // Three scripts and two directions, so this cannot pass by an encoding
     // accident: whatever put one of these in the module would put them all in.
     const langs = await languages();
@@ -53,7 +53,7 @@ test('no translated string reaches the shipped wasm', async () => {
     }
     const found = samples.filter((s) => s && wasm.includes(Buffer.from(s, 'utf8')));
     assert.deepEqual(found, [],
-        'these app strings are inside sdk/ts/wasm/bots.wasm.gz, which every visitor downloads.\n'
+        'these app strings are inside sdk/ts/wasm/web.wasm.gz, which every visitor downloads.\n'
         + 'c/i18n is a build-time source of truth for tools/datagen and must be linked by nothing:\n'
         + `  ${found.join('\n  ')}\n`);
 });

@@ -391,7 +391,7 @@ test('the scan reports a break when there is one', () => {
     // A module that is there but no longer exports the name.
     const real = resolveSpec('../../sdk/ts/wasm/bots.ts', probe)!;
     assert.equal(existsSync(real), true, 'sdk/ts/wasm/bots.ts moved - repoint this probe');
-    assert.equal(exportsName(real, 'kernelReplayLinkParse'), true, 'the export check cannot see a real export');
+    assert.equal(exportsName(real, 'kernelReplayLink'), true, 'the export check cannot see a real export');
     assert.equal(exportsName(real, 'urlToGame'), false, 'the export check claims a departed name is exported');
 
     // A path literal that names nothing.

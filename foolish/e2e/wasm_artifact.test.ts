@@ -1,11 +1,11 @@
 /* =============================================================================
- * The shipped bots.wasm is the one the kernel sources build
+ * The shipped web.wasm is the one the kernel sources build
  * =============================================================================
- * bots.wasm reaches BOTH runtimes as one tracked binary: the server reads
- * ./bots.wasm.gz off disk, the browser fetches the same file as a bundler
+ * web.wasm reaches both runtimes that load it as one binary: Node's suites read
+ * ./web.wasm.gz off disk, the browser fetches the same file as a bundler
  * asset. One carrier, on purpose - a base64 embed would be a second copy of the
  * same bytes, and that is exactly how `rules_wasm.ts` went stale for weeks
- * while bots.wasm.gz kept being rebuilt. The tree held TWO different kernels,
+ * while the module beside it kept being rebuilt. The tree held TWO different kernels,
  * and a C codec change was invisible to every TS test that loaded the stale one
  * - `npm run test:validate` passed 39/39 against a kernel without the change.
  * The tell is a suite that passes when it cannot possibly pass.
@@ -30,8 +30,8 @@ import assert from 'node:assert/strict';
 import { loadWasmGz } from '../sdk/ts/wasm/wasm_asset.ts';
 import { calledExports } from './helpers/wasm_exports.ts';
 
-test('the shipped bots.wasm exports what the web calls', () => {
-    const mod = new WebAssembly.Module(loadWasmGz('bots') as BufferSource);
+test('the shipped web.wasm exports what the web calls', () => {
+    const mod = new WebAssembly.Module(loadWasmGz() as BufferSource);
     const names = new Set(WebAssembly.Module.exports(mod).map(e => e.name));
 
     const called = calledExports(new URL('../sdk/ts', import.meta.url).pathname);
@@ -41,5 +41,5 @@ test('the shipped bots.wasm exports what the web calls', () => {
 
     const missing = [...called].filter((n) => !names.has(n)).sort();
     assert.deepEqual(missing, [],
-        `bots.wasm is missing ${missing.join(', ')} - rebuild: cd c && make wasm-bots WASM_CC=/opt/homebrew/opt/llvm/bin/clang`);
+        `web.wasm is missing ${missing.join(', ')} - rebuild: npm run wasm:web`);
 });

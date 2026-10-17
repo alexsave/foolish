@@ -28,9 +28,10 @@ import { test } from 'node:test';
 import { bytesToBase64, base64ToBytes } from '../sdk/ts/wire/bytes.ts';
 import assert from 'node:assert/strict';
 import {
-  kernelB32Encode, kernelReplayLink, kernelB32Decode, kernelReplayLinkParse,
+  kernelB32Encode, kernelReplayLink, kernelB32Decode,
   replayPlaySteps, replaySummary,
 } from '../sdk/ts/wasm/bots.ts';
+import { kernelReplayLinkParse } from './helpers/test_kernel_doors.ts';
 import { REPLAY_ATOM_ATTACK, REPLAY_ATOM_COVER, REPLAY_ATOM_PASS, REPLAY_ATOM_PICKUP } from '../sdk/ts/gen/kernel_consts.bots.ts';
 import * as V from '../sdk/ts/gen/view_layout.bots.ts';
 import { REPLAY_ETOOLONG } from '../sdk/ts/gen/game_layout.bots.ts';

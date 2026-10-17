@@ -572,7 +572,7 @@ int wasm_replay_summary(int code_len) {
 }
 
 // replay_decode's log stream, one record at a time (replay.h ReplayDecodedLog),
-// for the generated reader. TEST build only (c/Makefile WASM_TEST_EXPORTS): tests
+// for the generated reader. TEST build only (c/Makefile bots_test.wasm): tests
 // and tools read a code's whole log stream; no shipped host does. open decodes
 // the code in the replay buffer in place and returns REPLAY_EOK or -REPLAY_E*;
 // next returns the record's address, 0 past the last, or -REPLAY_EINPUT.
@@ -596,7 +596,7 @@ int wasm_replay_decoded_next(void) {
 // ---------- the C Roster (src/roster.h), test-only exports ------------------
 //
 // Exported only from the test build (WASM_ROSTER_EXPORTS, part of
-// WASM_TEST_EXPORTS in the Makefile). They let e2e drive roster.c directly and
+// WASM_BOTS_ALL_EXPORTS in the Makefile). They let e2e drive roster.c directly and
 // feed the real Swift decoder C-written trailers (e2e/packed_roster_wire.test.ts);
 // production reaches the roster through the wasm_table_* exports.
 //

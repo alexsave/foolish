@@ -97,10 +97,10 @@ test('c/errtext is linked by nothing, and its sentences are not in the shipped m
     const mk = readFileSync(`${ROOT}c/Makefile`, 'utf8');
     assert.ok(!/\berrtext\b/.test(mk),
         'c/Makefile names errtext. The tables are read by tools/datagen and linked by nothing: a kernel that '
-        + 'returns a number has no use for the sentence, and every visitor downloads bots.wasm.gz.');
-    const wasm = gunzipSync(readFileSync(`${ROOT}sdk/ts/wasm/bots.wasm.gz`));
+        + 'returns a number has no use for the sentence, and every visitor downloads web.wasm.gz.');
+    const wasm = gunzipSync(readFileSync(`${ROOT}sdk/ts/wasm/web.wasm.gz`));
     const all = [...MoveRejectText, ...MsgErrorText, ...ReplayErrorText, ...ReplayExtrasErrorText];
     assert.ok(all.length > 50, `the tables were read (${all.length} rows)`);
     const found = all.filter((r) => wasm.includes(Buffer.from(r.text, 'utf8'))).map((r) => r.text);
-    assert.deepEqual(found, [], 'these sentences are inside sdk/ts/wasm/bots.wasm.gz');
+    assert.deepEqual(found, [], 'these sentences are inside sdk/ts/wasm/web.wasm.gz');
 });

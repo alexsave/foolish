@@ -2,7 +2,7 @@
 # the backend's client (c/src/netclient.h, through c/wasm/wasm_net_api.c).
 # Snapshot readers, and the writer of the intent the host submits. Its own
 # run, because view_layout's is at structgen's per-run cap; the same roots are in game_layout.args, so the layout hash
-# bots.wasm and web.wasm are checked against at load covers these readers too.
+# web.wasm and the test build are checked against at load covers these readers too.
 # Lines starting with # are dropped; everything else is split on whitespace.
 --header netclient.h
 --root NcRequest --root NcSessionInfo --root NcError --root NcGameRow --root NcDone --root NcEvent --root NcOut

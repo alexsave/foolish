@@ -5,10 +5,10 @@
 //   TSX_TSCONFIG_PATH=e2e/tsconfig.json node scripts/collect_metrics.mjs
 //
 // Metrics:
-//   size   — the kernel's two links (bots.wasm.gz, the server's; web.wasm.gz, the
-//            one the browser downloads), raw + gzip bytes, plus the replay
-//            oracle's two modules (public/oracle.wasm.gz, public/oracle-mt.wasm.gz).
-//            `web` is the download number: it is what a visitor pays.
+//   size   — the kernel the browser downloads (web.wasm.gz), raw + gzip bytes,
+//            plus the replay oracle's two modules (public/oracle.wasm.gz,
+//            public/oracle-mt.wasm.gz). `web` is the download number: it is
+//            what a visitor pays.
 //   webBundle — first-load JS of `/` and `/[game_id]`, gzip bytes, from a real
 //            `next build` (scripts/measure_web_bundle.mjs)
 //   linearMemory — each module's DECLARED linear memory (initial pages/bytes + pinned flag)
@@ -58,7 +58,6 @@ function linearMemOf(bytes) {
 function linearMemory() {
   try {
     return {
-      bots: linearMemOf(gunzipSync(readFileSync(`${WASM}/bots.wasm.gz`))),
       web: existsSync(`${WASM}/web.wasm.gz`)
         ? linearMemOf(gunzipSync(readFileSync(`${WASM}/web.wasm.gz`))) : null,
     };
@@ -68,7 +67,6 @@ function linearMemory() {
 function size() {
   try {
     return {
-      bots: gzFileSize(`${WASM}/bots.wasm.gz`),
       // The browser's link of the same objects - the number a visitor actually
       // downloads. A checkout that predates it reports null rather than failing.
       web: existsSync(`${WASM}/web.wasm.gz`) ? gzFileSize(`${WASM}/web.wasm.gz`) : null,

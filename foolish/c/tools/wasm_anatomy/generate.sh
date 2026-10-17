@@ -2,7 +2,7 @@
 # Regenerate docs/wasm-anatomy.html from the current cnitro WASM sources.
 #
 # Pipeline:
-#   1. build the three production modules (rules/guards/bots) with the real
+#   1. build the shipped module (web.wasm) with the real
 #      Makefile flags  (-Oz, --strip-all) — these are byte-identical to what
 #      ships in sdk/ts/wasm/
 #   2. build name-preserving companions (same flags minus --strip-all) so the
@@ -28,12 +28,12 @@ cd "$CNITRO"
 echo "[1/5] building stripped production modules"
 # Force-relink the wasm outputs from the (cached) objects: make is timestamp-
 # based and won't rebuild them when only a recipe VARIABLE changed (e.g. a prior
-# `make wasm-bots WASM_BOTS_POSTOPT=…` left a differently-optimized build/bots.wasm
+# `make wasm-web WASM_BOTS_POSTOPT=…` left a differently-optimized build/web.wasm
 # on disk). Removing the linked artifacts guarantees they reflect the DEFAULT
 # flags; the objects stay cached so this is cheap. The [2/5] guard would catch a
 # mismatch anyway, but this prevents the abort in the common stale-build case.
-rm -f build/bots.wasm build/named/bots.named.wasm build/web.wasm build/named/web.named.wasm
-make build/bots.wasm build/web.wasm >/dev/null
+rm -f build/web.wasm build/named/web.named.wasm
+make build/web.wasm >/dev/null
 
 echo "[2/5] building name-preserving companions"
 mkdir -p "$NAMED"
@@ -42,13 +42,13 @@ mkdir -p "$NAMED"
 # — the only difference is no -Wl,--strip-all and wasm-opt --debuginfo to keep the
 # function name section. (A hand-rolled relink would skip the wasm-opt pass and
 # its inlining/DCE would shift every name off the optimized bytes.)
-make build/named/bots.named.wasm build/named/web.named.wasm >/dev/null
+make build/named/web.named.wasm >/dev/null
 # Guard: for EACH module, every function body must be byte-identical to the
 # shipped module's function at the same index — that per-function identity is what
 # lets the name section map 1:1 onto the shipped bytes. (wasm-opt --debuginfo
 # leaves harmless framing differences in the CODE section as a whole, so compare
 # bodies by index, not the raw section.) Fail loudly on any drift.
-for m in bots web; do
+for m in web; do
   node -e '
     const fs=require("fs");
     const bodies=p=>{const b=fs.readFileSync(p);let i=8;const out=[];while(i<b.length){const id=b[i++];let sh=0,ln=0,by;do{by=b[i++];ln|=(by&127)<<sh;sh+=7}while(by&128);if(id===10){let j=i;let s2=0,cnt=0,c;do{c=b[j++];cnt|=(c&127)<<s2;s2+=7}while(c&128);for(let f=0;f<cnt;f++){let sz=0,ss=0,cc;do{cc=b[j++];sz|=(cc&127)<<ss;ss+=7}while(cc&128);out.push(b.slice(j,j+sz));j+=sz;}}i+=ln;}return out;};
@@ -80,9 +80,7 @@ console.log(JSON.stringify({
   symfile: `${W}/symfile.tsv`,
   modules: [
     { key:'web', human:'web.wasm', wasm:`${B}/web.wasm`, named:`${B}/named/web.named.wasm`,
-      blurb:'What a browser downloads. The same object files as bots.wasm under a smaller export allow-list, so wasm-ld drops everything no browser call site reaches: the client slot, the animation plan, the replay reader and the message decode stay; the C Table and every Monte-Carlo brain go. Compare the two pages below - the difference is the whole argument for linking per call site.' },
-    { key:'bots', human:'bots.wasm', wasm:`${B}/bots.wasm`, named:`${B}/named/bots.named.wasm`,
-      blurb:'The server-side link, read off disk by Node (the tests and tools): the rules, the C Table the tests drive, the web client slot, the replay and message codecs, and every algorithmic bot strategy.' },
+      blurb:'What a browser downloads: the kernel objects under an export allow-list, so wasm-ld drops everything no browser call site reaches. The client slot, the animation plan, the replay reader and the backend client stay; the C Table and every Monte-Carlo brain go.' },
   ],
 }));
 NODE

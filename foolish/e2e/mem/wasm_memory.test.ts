@@ -1,8 +1,11 @@
-// Memory regression suite for the wasm bot stack (`npm run test:mem`).
-// Guards the two production "Memory limit exceeded" outages of 2026-07-06,
-// which ordinary tests missed because Node has no per-worker memory budget
-// (edge functions get 150MB heap + 150MB external, and wasm memory counts
-// as external):
+// Memory regression suite for the wasm kernel (`npm run test:mem`).
+// Born of the two production "Memory limit exceeded" outages of 2026-07-06 on
+// the Supabase edge functions, which ran the bots in wasm (150MB heap + 150MB
+// external, and wasm memory counts as external). The edge functions are gone -
+// the server is c_base, native - so what is left here is the browser's module
+// (its size and its static memory) and the bots' bump-allocator discipline,
+// which still matters wherever the bots run in wasm (the Oracle's modules) and
+// is measured on the test build that links them:
 //
 //   1. Embed parse blowup. The wasm embeds were ~2300 base64 chunks joined
 //      with '+'; V8 folds the chain pairwise at parse time, allocating ~N
@@ -14,33 +17,27 @@
 //   2. Wasm memory growth. The MC families' endgame solvers malloc'd
 //      per-family scratch on the wasm bump allocator (free is a no-op), so
 //      memory grew per family exercised (46->87->127MB observed). Guarded by
-//      playing full games across all MC families and asserting the bots.wasm
+//      playing full games across all MC families and asserting the wasm
 //      memory is bounded AND exactly flat once the first game has warmed it.
-//
-// The gold-path repro (real edge runtime, real memory budget) is
-// e2e/edge_memtest/index.ts, run by .github/workflows/memory.yml.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
 import { gunzipSync } from 'node:zlib';
 import { resolve } from 'node:path';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
-// The kernel ships as gzip STATIC ASSETS - real binaries, so concern #1
-// (parse-time concat blowup) is gone by construction. There are TWO of them,
-// and they are two LINKS of one object set rather than two kernels
-// (c/Makefile, WASM_WEB_NAMES; e2e/wasm_web_link.test.ts holds them to one
-// layout hash, one export surface and one answer):
+// The kernel ships as a gzip STATIC ASSET - a real binary, so concern #1
+// (parse-time concat blowup) is gone by construction:
 //
-//   bots.wasm.gz   the server-side link. The edge functions and Node read it
-//                  off disk. Nobody downloads it.
-//   web.wasm.gz    the browser's link, fetched on first visit. The same objects
-//                  minus every export the browser does not call, so wasm-ld
-//                  drops the Monte-Carlo brains, cordite's solver working set
-//                  and the whole C Table.
+//   web.wasm.gz    the browser's link, fetched on first visit: the kernel's
+//                  objects under the exports the browser calls (c/Makefile,
+//                  WASM_WEB_NAMES), so wasm-ld drops the Monte-Carlo brains,
+//                  cordite's solver working set and the whole C Table.
+//
+// (There was a second, bots.wasm.gz, the server's whole-kernel link, until the
+// server became native. The measurements below that name it are its history.)
 //
 // WHAT THIS GATE MEASURES, AND WHY IT IS NOT THE GZIP SIZE ANY MORE.
 //
@@ -94,16 +91,13 @@ if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {};
 // it was red on any toolchain but the pinned one (this repo's own container,
 // clang 18, builds a 196,196 B bots.wasm), so the only machine that could answer
 // it was the one you were waiting on.
-const BOTS_RAW_MAX = 385_000;       // 192,668 B today (clang 22, CI); 2x that
-const BOTS_GZ_MAX = 165 * 1024;     // 82,043 B shipped today; 2x, same rule
-// The BROWSER's link, and the one the download budget is about. Same rule again:
+// The BROWSER's link, and the one the download budget is about. Same rule:
 // it had 702 B of raw room and 2,742 B of gz room, which is about one feature,
 // and 576 B of the gz figure is compressor spread rather than kernel.
 const WEB_RAW_MAX = 137_000;        // ~68,100 B today; 2x that
 const WEB_GZ_MAX = 61 * 1024;       // 31,050 B today; 2x
 test('the kernel ships as small gzip static assets (not base64 embeds)', () => {
     for (const [rel, rawMax, gzMax] of [
-        ['sdk/ts/wasm/bots.wasm.gz', BOTS_RAW_MAX, BOTS_GZ_MAX],
         ['sdk/ts/wasm/web.wasm.gz', WEB_RAW_MAX, WEB_GZ_MAX],
     ] as const) {
         const buf = readFileSync(resolve(rel));
@@ -135,20 +129,6 @@ test('the kernel ships as small gzip static assets (not base64 embeds)', () => {
     }
 });
 
-test('the browser downloads a fraction of the server-side kernel', () => {
-    // The point of the split, asserted rather than described. Not a tight
-    // ratio - it is here so that folding the server's surface back into the
-    // browser's link (a wasm_table_* export added to WASM_WEB_NAMES "just to
-    // try something") shows up as a failure rather than as a slower first paint
-    // nobody attributes.
-    const web = readFileSync(resolve('sdk/ts/wasm/web.wasm.gz')).length;
-    const bots = readFileSync(resolve('sdk/ts/wasm/bots.wasm.gz')).length;
-    assert.ok(web * 2 < bots,
-        `web.wasm.gz is ${web} B against bots.wasm.gz's ${bots} B - the browser's link has\n`
-        + 'stopped being a fraction of the server\'s. Something large was added to\n'
-        + 'c/Makefile WASM_WEB_NAMES, or the server\'s link lost most of its own surface.');
-});
-
 const PAGE = 65536;
 // Parse the memory section's (min, max) page limits straight from the binary —
 // the pin is a link-time fact, so assert on the module, not a live instance.
@@ -167,118 +147,7 @@ function memLimits(wasm: Uint8Array): { min: number; max: number | null } {
     throw new Error('no memory section');
 }
 
-test("bots.wasm declared INITIAL memory is 34 pages (static buffers, not the runtime TT)", () => {
-    // bots.wasm can't be pinned — it bump-allocates a per-family transposition
-    // table at runtime (see the flat-across-families test below). So we assert
-    // the INITIAL declared memory only: the static (data + bss) footprint the
-    // linker places below __heap_base. It is dominated by a handful of large,
-    // deliberate static buffers (llvm-nm on the objects):
-    //   - g_io               400 KiB  the WASM_IO_CAP=409600 log-import buffer
-    //   - solve_ws / rs_play  272 KiB  each, the cordite solver working set (the
-    //                                  CD_WASM_OVERLAY aliases them, so the pair
-    //                                  is one region, not two)
-    //   - g_scratch/g_moves   232 KiB  each, move enumeration at MAX_LEGAL_MOVES
-    //   - g_game / g_rs_game  136 KiB  each, the resident + replay Game structs
-    //   - msg_seal.scratch /  136 KiB  each, the FMSG seal + rebase scratch games
-    //     msg_rebase.probe              (iMessage is deliberately linked here for
-    //                                    the browser's base64 twin)
-    // Sum ~= 36 pages (2.36 MiB). The SOLVER's hot working set still stays in L1
-    // at runtime (32 KiB TT + book, docs/L1_SPEND_PLAN.md §6); this is the cold
-    // static image, and the edge runtime maps it lazily. A regression UP from 36
-    // (a new static buffer, or the stack creeping up) trips this. Read straight
-    // from the shipped gz artifact.
-    //
-    // 37, RAISED DELIBERATELY (Phase 8's generated structs). This budget was 37
-    // from 6d863b5 (the animation core moving to C), fell back to 36 at fccdb8f
-    // when dropping replay format v9 and the retrodiction machinery freed ~9 KiB
-    // of statics, and went back to 37 here. What crossed the line: the kernel entry
-    // points whose arguments and results used to be byte strings a host packed
-    // itself now cross as C STRUCTS, and a struct a host reads and writes has to
-    // live somewhere below __heap_base (e2e/no_ts_game_shape.test.ts). Sizes
-    // straight from the generated modules' _SIZE constants:
-    //
-    //   ReplayExtras       8,744 B   the share link's names and per-move gaps
-    //                               (8,192 of it gaps[MAX_LOGS]: a game cannot
-    //                                have more moves than log records, so the
-    //                                bound is the game's, not a new cap)
-    //   RosterSpec + read  3,528 B   the TEST entries' table and trailer answer
-    //                               (its slots are 2-4x the roster's budgets on
-    //                                purpose, so trimming a name stays the
-    //                                kernel's judgement - see roster.h)
-    //   ReplayFrameIndex   1,032 B   where one chunk of replay frames lies
-    //   MsgHeader            656 B   the FMSG envelope header
-    //   ReplayError           12 B   why the last replay call refused
-    //   ---------------------------
-    //   ~13,016 B of new static against 2,592 B of room under 36 pages.
-    //
-    // Measured with llvm-nm on the objects this build links:
-    //
-    //   named statics   2,347,192 B   (35.82 pages, 337 symbols)
-    //   shadow stack       22,528 B   (-Wl,-z,stack-size=22528, --stack-first)
-    //   ------------------------------
-    //   total           2,369,720 B   = 36.16 pages -> 37 declared
-    //
-    // which left 55,112 BYTES under the 37-page line at the time - room for a
-    // struct or two, not for another g_io. The alternative was to pay for them out of
-    // g_io (400 KiB, the biggest static here), and it was REJECTED: the
-    // Makefile sizes that buffer for ~3,072 raw log records so the kernel can
-    // filter the whole session itself, and narrowing a measured design target to
-    // dodge a page is how a buffer quietly stops meeting it. The runtime peak is
-    // unaffected - it is the solver's bump-allocated transposition table, which
-    // the flat-across-families test below pins.
-    //
-    // 38, RAISED DELIBERATELY (the round-robin opening deal). The deal now fires
-    // one engine hook per dealt card, 51 at eight seats (ENGINE_DEAL_HOOKS,
-    // game.h), and every snapshot store that captures a deal is sized by the one
-    // MAX_SNAPS = 64 - so the wasm build's -DMAX_SNAPS=16 override is gone. The
-    // only static that moved is the Table's store, measured from a link of the
-    // shipped objects with __heap_base exported and a -Map:
-    //
-    //   g_table_snaps       12,552 B -> 50,184 B   (16 -> 64 slots of 784 B)
-    //   __heap_base      2,416,720 B -> 2,454,352 B   (+37,632 B, 36.88 -> 37.45 pages)
-    //
-    // Before it, only 8,112 B were left under the 37-page line (the 55,112 above
-    // had long since been spent), so a store that holds a deal cannot fit in 37.
-    // That left 36,016 BYTES under the 38-page line.
-    //
-    // 34, LOWERED: the FMSG seal, rebase, Rule P and rematch entries left this
-    // link (no host of bots.wasm called them - the phone links that code
-    // natively and it is tested natively, c/tests/msg_wire_test.c), and the
-    // linker dropped the statics only they reached. Measured from two links of
-    // the shipped objects with a -Map, the commit before against the commit after:
-    //
-    //   msg_rebase_one.probe      135,944 B -> 0   (a scratch Game)
-    //   g_msg_scratch             135,944 B -> 0   (a scratch Game)
-    //   wasm_msg_rematch.finished  32,768 B -> 0
-    //   wasm_msg_seal.body            512 B -> 0
-    //   end of static data      2,470,168 B -> 2,165,824 B   (-304,344 B, 37.69 -> 33.05 pages)
-    //
-    // Everything else that moved between the two maps is a rename or a few
-    // hundred bytes of new ask structs. That leaves 62,400 BYTES under the
-    // 34-page line.
-    //
-    // Still 34 after wasm_msg_decode and wasm_msg_header_ptr left this link (no
-    // TS reads an iMessage envelope; the /m/ unfurl is C, in c_base). Measured
-    // from two links of the same objects with __heap_base exported, with and
-    // without those two exports: __heap_base 2,166,144 B -> 2,165,216 B
-    // (-928 B, g_msg_header's 656 B among it). That leaves 63,008 BYTES under
-    // the 34-page line.
-    //
-    // Still 34 with the backend's client in this link (stage 3 brought it, and
-    // the pump and its book of games after it: c/src/netclient.c). The pump
-    // first came to 11,120 B over the line, so its statics were cut to fit:
-    // the waiting intents' strings and bytes share one 2,560 B arena instead of
-    // a full NcIntent per slot (10,752 B -> 3,264 B), the rows of every list
-    // kind share one buffer, the stream's two NwFrames are one, and the
-    // envelope's Roster and the frame encoder's scratch moved to the stack.
-    // Measured with __heap_base exported: 2,228,016 B, which leaves 208 BYTES
-    // under the 34-page line.
-    const wasm = new Uint8Array(gunzipSync(readFileSync(resolve('sdk/ts/wasm/bots.wasm.gz'))));
-    const { min } = memLimits(wasm);
-    assert.equal(min, 34, `bots.wasm initial memory is ${min} pages (${min * PAGE}B); expected 34: the deliberate static buffers (g_io 400 KiB, the cordite solver working set, the move enumerators, the resident and replay Games, the Table's 64-slot snapshot store that holds one deal) plus the bridge's generated structs (ReplayExtras 8,744 B, RosterSpec 3,448 B, ReplayFrameIndex 1,032 B). Going UP is a regression: 208 B of static room are left under the 34-page line, so look for a new buffer below __heap_base. Going DOWN means something was freed - lower this pin and take the page back.`);
-});
-
-test("web.wasm declared INITIAL memory is 25 pages - 9 fewer than the server's link", () => {
+test("web.wasm declared INITIAL memory is 25 pages", () => {
     // A LINKER FACT, not a second budget. wasm-ld keeps a static only if
     // something an export reaches refers to it, so dropping the bot bridge and
     // the C Table from the browser's export list drops their buffers with their
@@ -289,7 +158,7 @@ test("web.wasm declared INITIAL memory is 25 pages - 9 fewer than the server's l
     // reserves, on top of the 51,241 B of download (83,111 - 31,870 gz) and the
     // 124,657 B of module (193,966 - 69,309 raw) it no longer compiles.
     //
-    // Pinned rather than merely reported for the reason the bots pin exists:
+    // Pinned rather than merely reported:
     // going UP means a browser call site pulled a server-sized buffer across,
     // which is the moment to ask whether the call belongs there at all. Going
     // DOWN is a win - re-pin it here and say what was freed.
@@ -315,25 +184,10 @@ test("web.wasm declared INITIAL memory is 25 pages - 9 fewer than the server's l
         + 'data its code reads. Down means something was freed: lower this pin in the same commit.');
 });
 
-test('loading the bot kernel (read + gunzip + instantiate) fits a 64MB-old-space node', () => {
-    // The old base64 embed needed ~300MB transient just to PARSE; the gz static
-    // asset is read, inflated and instantiated at runtime. Do exactly that (the
-    // real load cost) in a node capped far below the edge worker budget. Pure
-    // built-ins, no tsx — so it measures the wasm cost, not transpile/interop.
-    const gzPath = resolve('sdk/ts/wasm/bots.wasm.gz');
-    execFileSync(process.execPath, [
-        '--max-old-space-size=64',
-        '-e',
-        `const {readFileSync}=require('node:fs');const {gunzipSync}=require('node:zlib');`
-        + `const w=new Uint8Array(gunzipSync(readFileSync(${JSON.stringify(gzPath)})));`
-        + `new WebAssembly.Instance(new WebAssembly.Module(w),{});`,
-    ], { stdio: 'pipe' });
-});
-
-test('bots.wasm memory is bounded and flat across all MC bot families', async () => {
+test('the bots\' wasm memory is bounded and flat across all MC bot families', async () => {
     // Capture every wasm memory as modules instantiate. Node bills grown-but-
     // untouched pages as virtual memory (invisible in RSS), so the buffer
-    // sizes — what the edge external budget is charged for — are the metric.
+    // sizes — what a wasm host is charged for — are the metric.
     const memories: WebAssembly.Memory[] = [];
     const RealInstance = WebAssembly.Instance;
     (WebAssembly as unknown as { Instance: unknown }).Instance = function (mod: WebAssembly.Module, imports?: WebAssembly.Imports) {
@@ -346,8 +200,8 @@ test('bots.wasm memory is bounded and flat across all MC bot families', async ()
 
     // The production bot path: a table of bots dealt from a seed and driven by
     // the kernel's bot cycle (table_bot_drive), exactly as the server's loop runs
-    // it (e2e/helpers/bot_table.ts). Imported after the Instance hook, so the
-    // table's bots.wasm instance is captured.
+    // it (e2e/helpers/bot_table.ts), on the test build. Imported after the
+    // Instance hook, so the table's bots_test.wasm instance is captured.
     const { playBotTable, seedBytes } = await import('../helpers/bot_table.ts');
 
     const wasmTotal = () => memories.reduce((a, m) => a + m.buffer.byteLength, 0);
@@ -362,9 +216,9 @@ test('bots.wasm memory is bounded and flat across all MC bot families', async ()
     // they would fall back to random and not exercise the solver.
     playGame('mem1', ['octogen', 'cordite']);
     const afterFirst = wasmTotal();
-    assert.ok(memories.length > 0, 'the bots.wasm instance was captured');
-    // 150MB external is the edge budget; rules+bots plus scratch must sit
-    // far below it so JS buffers/fetch bodies have room.
+    assert.ok(memories.length > 0, 'the bots_test.wasm instance was captured');
+    // The kernel plus its scratch must stay small: a tab running the Oracle
+    // shares its memory with everything else on the page.
     assert.ok(afterFirst <= 16 * 1048576,
         `wasm memory after one game is ${(afterFirst / 1048576) | 0}MB; budget regression`);
 

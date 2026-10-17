@@ -1,5 +1,5 @@
 // client_table.ts - the web client's slot (c/src/client_table.h), over the
-// kernel link the runtime loads (web.wasm in a browser, bots.wasm on Node).
+// web.wasm, the kernel link the browser loads (and Node's suites with it).
 //
 // A thin, synchronous call-and-copy wrapper, like server_table.ts on the other
 // side of the wire. It knows the export names and the snapshot readers

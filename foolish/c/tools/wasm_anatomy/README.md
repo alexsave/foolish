@@ -1,20 +1,21 @@
 # WASM Anatomy
 
-An interactive, single-file HTML dissection of the WebAssembly modules the kernel
-ships to every host:
+An interactive, single-file HTML dissection of the kernel's shipped WebAssembly
+module:
 
 | module      | ships as                         | who loads it | contents |
 | ----------- | -------------------------------- | ------------ | -------- |
-| `web.wasm`  | gzip static asset `web.wasm.gz`  | the browser, by fetching it | the client slot, the animation plan, the replay reader, the message decode |
-| `bots.wasm` | gzip static asset `bots.wasm.gz` | Node (the tests and tools), off disk | all of the above plus the C Table and every algorithmic bot strategy |
+| `web.wasm`  | gzip static asset `web.wasm.gz`  | the browser, by fetching it | the client slot, the animation plan, the replay reader, the backend client |
 
-TWO LINKS OF ONE OBJECT SET, and comparing their two pages is the argument for
-building that way: same sources, same flags, same layout hash, different
-`-Wl,--export=` allow-list, 180 functions against 388 and 67,298 B against
-191,490 B. An export is a GC root, so the names the browser never calls were
-what kept the bots and the table in a module no bot ever ran in.
+It is one link of the kernel's objects under an `-Wl,--export=` allow-list. An
+export is a GC root, so the names the browser never calls are dropped with the
+code only they reach: the C Table and the bots.
 
-`rules.wasm` and `guards.wasm` were retired with the TS game shape (docs/C_GAME_SHAPE_MIGRATION.md Phase 8); a page rendered before that still shows them.
+A page rendered earlier also shows `bots.wasm`, the server's whole-kernel link
+of the same objects (180 functions against 388, 67,298 B against 191,490 B),
+which went when the server became native (c_base); and before that
+`rules.wasm` and `guards.wasm`, retired with the TS game shape
+(docs/C_GAME_SHAPE_MIGRATION.md Phase 8).
 
 The rendered page lives at [`docs/wasm-anatomy.html`](../../../docs/wasm-anatomy.html) —
 open it in any current browser (self-contained, ~0.9 MB, no network).
@@ -39,15 +40,15 @@ Per module, seven views:
 - **Imports · exports** — the export allow-list, with address getters resolved
   to their linear-memory constants; globals and the indirect-call table.
 - **Data segments** — an annotated hex+ASCII dump of the only bytes materialized
-  into memory at load (for `bots.wasm`, the bot env-flag key strings).
+  into memory at load.
 
 ## Accuracy
 
 The bytes analyzed are **byte-identical to the shipped artifact** — this tool
-builds `build/bots.wasm` and `build/web.wasm` itself, from the same make targets
-that produce `sdk/ts/wasm/{bots,web}.wasm.gz`, and those modules are build
-outputs rather than committed files (`scripts/wasm_build.sh`), so there is no
-second copy for them to agree or disagree with. Function *names* are recovered from a
+builds `build/web.wasm` itself, from the same make target that produces
+`sdk/ts/wasm/web.wasm.gz`, and that module is a build output rather than a
+committed file (`scripts/wasm_build.sh`), so there is no second copy for it to
+agree or disagree with. Function *names* are recovered from a
 name-preserving companion build (the same link, minus `-Wl,--strip-all`), whose
 CODE section is identical, so names map 1:1 onto the shipped bytes. The
 disassembler is self-contained (MVP + sign-extension + bulk-memory; the modules

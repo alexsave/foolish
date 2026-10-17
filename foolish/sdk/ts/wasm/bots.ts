@@ -1,17 +1,17 @@
-// TypeScript bridge to bots.wasm, the kernel every host runs (c/src plus every
-// bot strategy and the wasm entries in c/wasm/).
+// TypeScript bridge to web.wasm, the browser's link of the kernel (c/src and the
+// wasm entries in c/wasm/, under c/Makefile's WASM_WEB_NAMES allow-list).
 //
-// The game itself is never marshalled from here: servers and tests hold a game
-// as the C Table (e2e/helpers/server_table.ts) and the web as its client slot
-// (sdk/ts/table/client_table.ts), both over this module's instance. What is left
+// The game itself is never marshalled from here: the web holds a game as its
+// client slot (sdk/ts/table/client_table.ts), over this module's instance, and
+// the tests that play the C Table do it on a test build of their own
+// (e2e/helpers/server_table.ts). What is left
 // here are the doors that take a handful of bytes rather than a board: the bot
 // roster, the replay codec and its extras and links, the iMessage envelope and
 // the animation rules. Loaded lazily and cached.
 
-import { kernelModule, loadWasmGz, loadWasmGzAsync, type WasmModuleName } from './wasm_asset.ts';
+import { loadWasmGz, loadWasmGzAsync } from './wasm_asset.ts';
 import { LAYOUT_HASH as BOTS_LAYOUT_HASH } from '../gen/layout_hash.bots.ts';
 import { assertLayoutHash } from './layout_hash.ts';
-import type { BotsExports } from '../gen/exports.bots.ts';
 import type { WebExports } from '../gen/exports.web.ts';
 import * as V from '../gen/view_layout.bots.ts';
 import * as M from '../gen/msg_layout.bots.ts';
@@ -24,19 +24,17 @@ import { ReplayExtrasErrorText } from '../gen/errtext/replay_extras.ts';
 export type Card = V.Card_Snap;
 
 let exportsCache: WebExports | null = null;
-let linked: WasmModuleName = 'web';
 
 /**
  * Prepare the kernel where it cannot be read synchronously - i.e. the browser,
  * which has no filesystem and must FETCH the .gz. Await this once before any
- * bots() call; on the server it is a no-op fast path (fs is synchronous).
+ * bots() call; in Node it is a no-op fast path (fs is synchronous).
  *
- * WHICH module: kernelModule() answers, and in the browser the answer is
- * web.wasm - the same objects as bots.wasm under a smaller export allow-list,
- * so the browser gets the client slot, the animation plan and the replay
- * reader it calls, and none of the C Table or the Monte-Carlo
- * brains it does not. One source, one layout hash, two links (c/Makefile,
- * WASM_WEB_NAMES; the reach set is pinned by e2e/wasm_web_link.test.ts).
+ * The module is web.wasm: the client slot, the animation plan and the replay
+ * reader the browser calls, and none of the C Table or the Monte-Carlo brains
+ * it does not (c/Makefile, WASM_WEB_NAMES; the reach set is pinned by
+ * e2e/wasm_web_link.test.ts). Node's suites load the same bytes, so what they
+ * test is what a visitor runs.
  *
  * Deliberately a fetched ASSET rather than a base64 twin of the same bytes: a
  * second carrier of one kernel goes stale while the other is rebuilt, and 80 KB
@@ -45,7 +43,7 @@ let linked: WasmModuleName = 'web';
  */
 export async function ensureBotsAsync(): Promise<void> {
     if (exportsCache) return;
-    await loadWasmGzAsync(kernelModule());   // caches the inflated bytes for bots()
+    await loadWasmGzAsync();   // caches the inflated bytes for bots()
     bots();
 }
 
@@ -54,19 +52,16 @@ export function __clientKernelExports(): WebAssembly.Exports {
     return bots() as unknown as WebAssembly.Exports;
 }
 
-// The kernel as EVERY link exports it: web.wasm's generated interface, which
-// bots.wasm's contains (the browser's exports are picked out of the server's,
-// c/Makefile WASM_WEB_EXPORTS). A door typed against this runs in a browser.
+// The kernel as web.wasm exports it (its generated interface, c/Makefile
+// WASM_WEB_EXPORTS).
 function bots(): WebExports {
     if (exportsCache) return exportsCache;
-    linked = kernelModule();
-    const module = new WebAssembly.Module(loadWasmGz(linked) as BufferSource);
+    const module = new WebAssembly.Module(loadWasmGz() as BufferSource);
     const ex = new WebAssembly.Instance(module, {}).exports as unknown as WebExports;
-    // ONE hash for both links, because they are one compile: the constant is
-    // generated from the bots build's flags and web.wasm is those same objects.
-    // A mismatch here means the two came from different trees, which is the one
-    // way a per-call-site link could ever become a second kernel.
-    assertLayoutHash(`${linked}.wasm`, ex, BOTS_LAYOUT_HASH, 'sdk/ts/gen/layout_hash.bots.ts');
+    // The constant is generated from the bots objects' flags, and web.wasm is a
+    // link of those objects. A mismatch means module and readers came from
+    // different trees.
+    assertLayoutHash('web.wasm', ex, BOTS_LAYOUT_HASH, 'sdk/ts/gen/layout_hash.bots.ts');
     ex.wasm_init();
     // THE TRANSPORT, said once (anim_plan.h). Every host that reaches the
     // kernel through this module is the server shape: a card's confirmation is
@@ -77,16 +72,6 @@ function bots(): WebExports {
     ex.wasm_anim_set_transport(K.ANIM_TRANSPORT_SERVER);
     exportsCache = ex;
     return ex;
-}
-
-// The kernel as bots.wasm alone exports it, for the doors the browser's link
-// leaves out (reading a pasted link back, which only the server does). Where
-// web.wasm is the module loaded, such a door is refused here, by name, instead
-// of failing as "x is not a function".
-function serverBots(): BotsExports {
-    const ex = bots();
-    if (linked !== 'bots') throw new Error(`this kernel door is exported by bots.wasm only, and ${linked}.wasm is loaded`);
-    return ex as BotsExports;
 }
 
 // One cached view over the whole linear memory, in the shape every generated
@@ -224,17 +209,6 @@ export function kernelB32Decode(code: string): Uint8Array {
     return taken(ex, ok(ex.wasm_replay_b32_decode(text.length), tooBig('b32')));
 }
 
-// The replay code out of whatever a person pasted - the kernel's
-// replay_link_parse. Building a link and reading one back are two halves of the
-// same format, and this is the half that has to REFUSE: replay_b32_decode is
-// deliberately tolerant, so an unstripped "https" prefix would decode to a
-// different game rather than fail. Throws when the input is not a code.
-export function kernelReplayLinkParse(url: string): string {
-    const text = utf8(url);
-    const ex = replayIn(serverBots(), tooBig('link'), text, NUL);
-    return str(taken(ex, ok(ex.wasm_replay_link_parse(text.length), () => new Error(`not a replay code: "${url}"`))));
-}
-
 /**
  * THE WHOLE SHAREABLE LINK for a finished game: `https://foolish.cards/<moves>`
  * plus `-<base32 extras>` when the roster says anything, and the bare link when
@@ -367,8 +341,8 @@ export function replayStepLogs(code: Uint8Array, step: number): Uint8Array | nul
 // The bridge the web pure modules (src/state/*) delegate to, so the animation
 // policy the React glitch-fixing hardened lives in C once - the same "one kernel
 // behind every host" argument FMSG makes. The kernel is loaded at app boot
-// (providers.tsx awaits ensureBotsAsync), and bots() is synchronous on the
-// server, so these calls are safe synchronously in both.
+// (providers.tsx awaits ensureBotsAsync), and bots() is synchronous in Node, so
+// these calls are safe synchronously in both.
 
 // The pipeline's event-type and location NAMES against the kernel's codes: the
 // wire the web decodes from (src/state/pushSequence.ts) speaks strings, and they
@@ -390,15 +364,6 @@ export function animShouldDropStale(last: number | null, incoming: number | null
     return bots().wasm_anim_should_drop_stale(
         last === null ? 0 : 1, last ?? 0,
         incoming === null ? 0 : 1, incoming ?? 0) !== 0;
-}
-
-/** anim_plan.h anim_stale_optimistic_ask (the browser asks it inside client_push_settle). Returns the INDICES
- *  into `optCards` to release. */
-export function animStaleOptimisticOnTable(optCards: Card[], tableCards: Card[], namedCards: Card[]): number[] {
-    const ex = serverBots();
-    V.writeAnimStaleAsk(mem(ex), ex.wasm_anim_stale_ask_ptr(), { opt: optCards, table: tableCards, named: namedCards });
-    ok(ex.wasm_anim_stale_optimistic(), animError('anim_stale_optimistic'));
-    return [...V.readAnimStaleRelease(mem(ex), ex.wasm_anim_stale_release_ptr()).release];
 }
 
 // ---- the role beat (anim_plan.h "the role beat") -----------------------------
@@ -679,29 +644,4 @@ function readPlan(ex: WebExports): AnimPlanSnap {
             flipped: readAnimCard(m, A.AnimCounts_flipped_at(preAt)),
         },
     };
-}
-
-/**
- * THE ORDER A DOOMED SEQUENCE FLIES HOME IN (anim_plan.h anim_reversal_order),
- * for a caller that already holds its verdicts - which every server-transport
- * caller does, since anim_conflict_verdict is the only entry that asks the
- * AnimServerHope.
- *
- * `verdicts` are ANIM_CONFLICT_* per motion in the order the motions flew, and
- * `groupSizes` slices them into the parallel steps they flew as. The answer is
- * the steps to play, each a list of motion indices, in REVERSE group order: the
- * cards travel back the way they came, last group first, and a group nothing
- * reverts is dropped rather than played as a beat of silence.
- */
-export function animReversalOrder(
-    verdicts: readonly number[], groupSizes: readonly number[],
-): number[][] {
-    const ex = serverBots();
-    V.writeAnimReversalAsk(mem(ex), ex.wasm_anim_reversal_ask_ptr(), { verdicts, groupSizes });
-    ok(ex.wasm_anim_reversal_order(), animError('anim_reversal_order'));
-    const plan = V.readAnimConflictPlan(mem(ex), ex.wasm_anim_reversal_plan_ptr());
-    const steps: number[][] = [];
-    let at = 0;
-    for (const c of plan.stepCount) steps.push(plan.order.slice(at, at += c));
-    return steps;
 }

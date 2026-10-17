@@ -10,14 +10,14 @@
  *                                               (BINDER_MODULES): cast to the
  *                                               generated interface instead
  *   a listed binder drifts from its module   -> "declared with 3 parameter(s),
- *                                               bots.wasm takes 4"
- *   an export is added and never called      -> "bots.wasm exports ... that no
- *                                               TypeScript calls"; an export
- *                                               ROOTS its code, and this module
- *                                               is capped at 80 KiB gzip
- *                                               (e2e/mem/wasm_memory.test.ts)
+ *                                               web.wasm takes 4"
  *
- * Pure test - no Postgres, no network, no compiler: the modules are committed.
+ * An export nothing calls is web.wasm's question, and e2e/wasm_web_link.test.ts
+ * answers it both ways against the browser's measured reach set. (This file used
+ * to ask it of bots.wasm, the server's module, which is gone with the server.)
+ *
+ * Pure test - no Postgres, no network, no compiler: the modules are built by the
+ * pre-hook (npm run wasm).
  * ========================================================================== */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -26,14 +26,13 @@ import { gunzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 
 import {
-    BINDER_MODULES, binderMismatches, calledExports, wasmBinders, wasmExportSignatures, type WasmSig,
+    BINDER_MODULES, binderMismatches, wasmBinders, wasmExportSignatures, type WasmSig,
 } from '../helpers/wasm_exports.ts';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
 /** The committed modules a listed binder can bind, by the id BINDER_MODULES uses. */
 const COMMITTED: Record<string, string> = {
-    'bots': 'sdk/ts/wasm/bots.wasm.gz',
     'web': 'sdk/ts/wasm/web.wasm.gz',
     'oracle': 'public/oracle.wasm.gz',
     'oracle-mt': 'public/oracle-mt.wasm.gz',
@@ -62,19 +61,5 @@ test('each listed binder declares what its module exports', () => {
         return id ? binderMismatches(b, id, sigsOf(COMMITTED[id])) : [];
     });
     assert.deepEqual(problems, [],
-        `\n  ${problems.join('\n  ')}\n\nRebuild after a C change: cd c && make wasm-bots WASM_CC=/opt/homebrew/opt/llvm/bin/clang`);
-});
-
-test('the shipped bots.wasm exports nothing the TypeScript leaves uncalled', () => {
-    // An entry point is exported, the TS that would call it lands later or
-    // never, and the module carries the code in the meantime. Only bots.wasm is
-    // held to this - it is the module with a byte cap. The oracle modules
-    // deliberately export the whole kernel so the Oracle page can drive any of
-    // it, and the test build is checked in e2e/bots_test_build.test.ts.
-    const shipped = [...sigsOf(COMMITTED.bots).keys()];
-    assert.ok(shipped.length > 50, `bots.wasm should export a whole kernel, saw ${shipped.length} functions`);
-    const called = calledExports(ROOT);
-    const uncalled = shipped.filter((n) => !called.has(n)).sort();
-    assert.deepEqual(uncalled, [], `bots.wasm exports ${uncalled.join(', ')} that no TypeScript calls - `
-        + 'either call it, or add it to WASM_BOTS_UNSHIPPED_API in c/Makefile so the shipped link drops it');
+        `\n  ${problems.join('\n  ')}\n\nRebuild after a C change: npm run wasm`);
 });

@@ -2,14 +2,14 @@
  * web.wasm is the browser's LINK of the kernel, not a second kernel.
  * =============================================================================
  *
- * c/Makefile builds two modules out of one set of object files. `bots.wasm` is
- * the server-side link - the edge functions and Node read it off disk, and the
- * e2e suites drive it through every entry a binder declares. `web.wasm` is the
- * same objects under a smaller `-Wl,--export=` allow-list, and the browser
- * fetches that one: 31 KB gz against 82 KB, because an export is a GC root and
- * the names the browser never calls were keeping the four Monte-Carlo brains,
- * cordite's solver working set and the whole C Table alive in a module no bot
- * ever ran in.
+ * c/Makefile builds two modules out of one set of object files.
+ * `bots_test.wasm` is the whole kernel, every entry exported, which the e2e
+ * suites drive (it ships nowhere; the server is c_base, native). `web.wasm` is
+ * the same objects under a smaller `-Wl,--export=` allow-list, and the browser
+ * fetches that one: 31 KB gz against 82 KB for the whole kernel, because an
+ * export is a GC root and the names the browser never calls were keeping the
+ * four Monte-Carlo brains, cordite's solver working set and the whole C Table
+ * alive in a module no bot ever ran in.
  *
  * THIS FILE IS THE REASON THAT IS SAFE, and it is written against a specific
  * history. ../docs/ARCHITECTURE_AS_A_PATTERN.md Part 1 piece 1 records that
@@ -19,7 +19,7 @@
  * - but "are not that" is a claim, and a claim with no gate has a half-life, so
  * the claim is checked here in four ways:
  *
- *   1. SUBSET. Every name web.wasm exports, bots.wasm exports too, with the
+ *   1. SUBSET. Every name web.wasm exports, the test build exports too, with the
  *      same wasm signature. There is no entry point that exists only for the
  *      browser, which is where a second meaning would start.
  *   2. ONE LAYOUT. Both modules answer wasm_layout_hash() with the generated
@@ -42,8 +42,9 @@
  * not merely unreferenced by the bundle, they are ABSENT FROM THE MODULE. A
  * reader that is not in the binary is one nobody can reach by any route.
  *
- * Pure test - no Postgres, no network, no compiler. It reads the two built .gz
- * files, so it runs in any lane that has built the `bots` group.
+ * Pure test - no Postgres, no network. It reads web.wasm.gz (the `web` group of
+ * scripts/wasm_build.sh) and the test build, which e2e/helpers/bots_test_wasm.ts
+ * builds on demand.
  * ========================================================================== */
 
 import { test } from 'node:test';
@@ -57,12 +58,19 @@ import type { WebExports } from '../sdk/ts/gen/exports.web.ts';
 import { RS_PLAY_STRIDE } from '../sdk/ts/gen/kernel_consts.bots.ts';
 import { TUTORIAL_MOVES_CODE } from '../src/components/tutorialGame.ts';
 import { CLIENT_BOUNDARY, browserWasmReach } from './helpers/client_bundle.ts';
+import { botsTestWasm } from './helpers/bots_test_wasm.ts';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 
+/** The whole-kernel link, by the name the messages below use for it. */
+const TEST = 'bots_test.wasm';
+const WEB = 'sdk/ts/wasm/web.wasm.gz';
+/** A module's raw bytes: the test build from its helper, a shipped .gz inflated. */
+const moduleBytes = (rel: string): Uint8Array => rel === TEST ? botsTestWasm() : gunzipSync(readFileSync(ROOT + rel));
+
 /** The names c/Makefile's WASM_WEB_NAMES was written from - the two links' own tables. */
 function exportNames(rel: string): Set<string> {
-    const w = gunzipSync(readFileSync(ROOT + rel));
+    const w = moduleBytes(rel);
     const out = new Set<string>();
     let p = 8;
     const vu = () => { let r = 0, s = 0, b: number; do { b = w[p++]; r += (b & 0x7f) * 2 ** s; s += 7; } while (b & 0x80); return r; };
@@ -86,7 +94,7 @@ function exportNames(rel: string): Set<string> {
 
 /** A module's export table as {name -> "params->results"}, so a shared name cannot change shape. */
 function signatures(rel: string): Map<string, string> {
-    const w = gunzipSync(readFileSync(ROOT + rel));
+    const w = moduleBytes(rel);
     const types: string[] = [], ftypes: number[] = [], out = new Map<string, string>();
     let p = 8, nimp = 0;
     const vu = () => { let r = 0, s = 0, b: number; do { b = w[p++]; r += (b & 0x7f) * 2 ** s; s += 7; } while (b & 0x80); return r; };
@@ -130,8 +138,7 @@ function signatures(rel: string): Map<string, string> {
 // A raw instance of one link: no bridge, no wrapper, so the comparison below is
 // of the MODULES and not of the TypeScript that usually stands in front of them.
 function instantiate(rel: string): WebExports {
-    const bytes = gunzipSync(readFileSync(ROOT + rel));
-    const m = new WebAssembly.Module(bytes as BufferSource);
+    const m = new WebAssembly.Module(moduleBytes(rel) as BufferSource);
     const ex = new WebAssembly.Instance(m, {}).exports as unknown as WebExports;
     ex.wasm_init();
     return ex;
@@ -139,16 +146,16 @@ function instantiate(rel: string): WebExports {
 
 const bytesOf = (ex: WebExports) => new Uint8Array(ex.memory.buffer);
 
-test('web.wasm exports nothing bots.wasm does not, and nothing with a different shape', () => {
+test('web.wasm exports nothing the test build does not, and nothing with a different shape', () => {
     const web = signatures('sdk/ts/wasm/web.wasm.gz');
-    const bots = signatures('sdk/ts/wasm/bots.wasm.gz');
+    const bots = signatures(TEST);
     assert.ok(web.size > 40, `web.wasm exports ${web.size} functions - that is not a kernel`);
 
     const extra = [...web.keys()].filter((n) => !bots.has(n)).sort();
     assert.deepEqual(extra, [],
-        'web.wasm exports entry points bots.wasm does not have. The two links come out of ONE\n'
+        'web.wasm exports entry points the test build does not have. The two links come out of ONE\n'
         + 'object set and one export list (c/Makefile, WASM_WEB_NAMES picked out of\n'
-        + 'WASM_BOTS_SHIPPED_EXPORTS), so a browser-only entry point means the two surfaces have\n'
+        + 'WASM_BOTS_ALL_EXPORTS), so a browser-only entry point means the two surfaces have\n'
         + 'started to diverge - which is how guards.wasm and rules.wasm became three kernels.');
 
     const reshaped = [...web.entries()]
@@ -158,18 +165,18 @@ test('web.wasm exports nothing bots.wasm does not, and nothing with a different 
 });
 
 test('both links of the kernel carry the generated layout hash', () => {
-    for (const rel of ['sdk/ts/wasm/bots.wasm.gz', 'sdk/ts/wasm/web.wasm.gz']) {
+    for (const rel of [TEST, 'sdk/ts/wasm/web.wasm.gz']) {
         const ex = instantiate(rel);
         assert.equal(ex.wasm_layout_hash() >>> 0, LAYOUT_HASH >>> 0,
             `${rel} was built from a different tree than sdk/ts/gen/layout_hash.bots.ts.\n`
             + 'The two links share one compile and therefore one layout hash; a difference here is\n'
             + 'the one way a per-call-site link could become a second kernel. Rebuild the group:\n'
-            + '  scripts/wasm_build.sh bots');
+            + '  scripts/wasm_build.sh web');
     }
 });
 
 test('both links answer the same replay code identically, step by step', () => {
-    const bots = instantiate('sdk/ts/wasm/bots.wasm.gz');
+    const bots = instantiate(TEST);
     const web = instantiate('sdk/ts/wasm/web.wasm.gz');
 
     // The tutorial's real 3-player game (src/components/tutorialGame.ts), cut by
@@ -250,16 +257,16 @@ test('the unmasked-state entry points the client boundary denies are absent from
         + 'and putting one back into c/Makefile WASM_WEB_NAMES would give that up.');
     // And the same for the rest of the server's surface, which is the bulk of
     // the bytes the browser used to download.
-    const bots = exportNames('sdk/ts/wasm/bots.wasm.gz');
+    const bots = exportNames(TEST);
     const serverOnly = [...bots].filter((n) => n.startsWith('wasm_table_') || n === 'wasm_choose_move' || n === 'wasm_bot_drive');
-    assert.ok(serverOnly.length > 30, `expected bots.wasm to carry the C Table, found ${serverOnly.length} names`);
+    assert.ok(serverOnly.length > 30, `expected the test build to carry the C Table, found ${serverOnly.length} names`);
     assert.deepEqual(serverOnly.filter((n) => web.has(n)), [], 'the browser module carries server-side entry points');
 });
 
 test('web.wasm exports exactly the kernel entries the browser bundle reaches', async () => {
     const reach = await browserWasmReach();
     const web = exportNames('sdk/ts/wasm/web.wasm.gz');
-    const bots = exportNames('sdk/ts/wasm/bots.wasm.gz');
+    const bots = exportNames(TEST);
 
     // Names in the bundle that no kernel module exports (the Oracle's own
     // modules, `wasm_asset`) are not this test's business.

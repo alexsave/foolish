@@ -1,9 +1,8 @@
 /* =============================================================================
- * bots.wasm's loader must work in the runtime that ships, not just the one that tests
+ * web.wasm's loader must work in every runtime that loads it, not just the one that tests
  * =============================================================================
- * One tracked binary reaches three runtimes through three different doors:
+ * One binary reaches three runtimes through three different doors:
  *
- *   Deno edge  -> Deno.readFileSync
  *   Node CJS   -> require('node:fs')        <- what every test here runs under
  *   Node ESM   -> await import('node:fs/promises')
  *   browser    -> fetch()
@@ -31,8 +30,8 @@ import { loadWasmGz, loadWasmGzAsync } from '../sdk/ts/wasm/wasm_asset.ts';
 const ASSET = new URL('../sdk/ts/wasm/wasm_asset.ts', import.meta.url).pathname;
 
 test('the CJS door (what the suite itself runs on) reads the asset', async () => {
-    const sync = loadWasmGz('bots');
-    const async_ = await loadWasmGzAsync('bots');
+    const sync = loadWasmGz();
+    const async_ = await loadWasmGzAsync();
     assert.ok(sync.length > 0, 'sync read produced bytes');
     assert.deepEqual(Array.from(sync.slice(0, 4)), [0x00, 0x61, 0x73, 0x6d], 'is wasm');
     assert.equal(async_.length, sync.length, 'both doors agree');
@@ -43,7 +42,7 @@ test('the ESM door reads the asset — the runtime Next actually serves from', (
     const probe = join(tmpdir(), `foolish_esm_door_${process.pid}.mjs`);
     writeFileSync(probe, `
 const { loadWasmGzAsync } = await import(${JSON.stringify(ASSET)});
-const b = await loadWasmGzAsync('bots');
+const b = await loadWasmGzAsync();
 if (typeof require !== 'undefined') { console.log('NOT_ESM'); process.exit(1); }
 console.log('OK ' + b.length + ' ' + Array.from(b.slice(0, 4)).join(','));
 `);

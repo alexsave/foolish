@@ -11,7 +11,8 @@ import * as G from '../../sdk/ts/gen/game_layout.bots.ts';
 import { LAYOUT_HASH } from '../../sdk/ts/gen/layout_hash.bots.ts';
 import { CARD_NONE_SUIT, CARD_NONE_VALUE, memOf as viewMemOf, readReplaySummary, type ReplaySummary_Snap, type Card_Snap } from '../../sdk/ts/gen/view_layout.bots.ts';
 import { assertLayoutHash } from '../../sdk/ts/wasm/layout_hash.ts';
-import { kernelB32Decode, kernelReplayExtrasDecode, kernelReplayLinkParse } from '../../sdk/ts/wasm/bots.ts';
+import { kernelB32Decode, kernelReplayExtrasDecode } from '../../sdk/ts/wasm/bots.ts';
+import { kernelReplayLinkParse } from './test_kernel_doors.ts';
 import { botsTestWasm } from './bots_test_wasm.ts';
 
 let cached: BotsTestExports | null = null;

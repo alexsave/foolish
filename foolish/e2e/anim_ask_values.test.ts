@@ -38,7 +38,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { animHandLaidOut, animReversalOrder, animStaleOptimisticOnTable } from '../sdk/ts/wasm/bots.ts';
+import { animHandLaidOut } from '../sdk/ts/wasm/bots.ts';
+import { animReversalOrder, animStaleOptimisticOnTable } from './helpers/test_kernel_doors.ts';
 import { ANIM_CONFLICT_KEEP, ANIM_CONFLICT_REVERT } from '../sdk/ts/gen/anim.bots.ts';
 
 interface Card { suit: number; value: number }

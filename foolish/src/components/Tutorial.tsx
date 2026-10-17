@@ -437,7 +437,7 @@ export const Tutorial = () => {
     const [started, setStarted] = useState(false);
     useEffect(() => setMounted(true), []);
 
-    // Async: the replay runs in bots.wasm, which the browser must compile
+    // Async: the replay runs in web.wasm, which the browser must compile
     // asynchronously. undefined = still decoding, null = failed.
     const [data, setData] = useState<Awaited<ReturnType<typeof buildTutorialData>> | null | undefined>(undefined);
     useEffect(() => {

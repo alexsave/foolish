@@ -8,7 +8,7 @@
 //   g.code    // the verified v6 replay code of the finished game
 //   g.state   // the final durable state blob, g.roster its roster, g.log its session log
 //
-// Every step is a C Table call over bots.wasm (e2e/helpers/server_table.ts):
+// Every step is a C Table call over bots_test.wasm (e2e/helpers/server_table.ts):
 // the lobby is a kernel-sealed fixture, the deal is table_ready with the seed,
 // each cycle is exactly the server's bot cycle (bot_actions.ts runCycle: load,
 // set the deal seed, import the session log when a bot reads it, table_bot_drive,

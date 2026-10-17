@@ -6,7 +6,7 @@
 // runtime chunks every route loads (build-manifest.json rootMainFiles) plus the
 // route's own entry chunks, which include the root layout (the page's
 // client-reference manifest, entryJSFiles). Lazily imported chunks, the legacy
-// nomodule polyfill and bots.wasm.gz (a separately fetched asset, measured by
+// nomodule polyfill and web.wasm.gz (a separately fetched asset, measured by
 // collect_metrics.mjs) are not counted.
 //
 // Each file is gzipped at level 9 in memory and the sizes summed; a chunk shared

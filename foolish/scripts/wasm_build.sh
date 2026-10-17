@@ -2,19 +2,19 @@
 # Build the shipped wasm modules. THE ONE ENTRY POINT, and the one list of what
 # "the shipped modules" are.
 #
-#   bots    sdk/ts/wasm/bots.wasm.gz   the kernel, linked for NODE: the e2e
-#                                      suites and tools read it off disk (the
-#                                      Deno edge functions that also did are gone)
-#           sdk/ts/wasm/web.wasm.gz    the SAME OBJECTS linked for the BROWSER,
-#                                      which fetches it. One export allow-list
-#                                      smaller, so wasm-ld drops the bots and
-#                                      the C Table: 31 KB gz against 82 KB. Same
-#                                      group as bots because it is the same
-#                                      compile - only the link differs, and a
-#                                      lane that builds one must build both or
-#                                      the pair can come apart.
+#   web     sdk/ts/wasm/web.wasm.gz    the kernel as the BROWSER links it, which
+#                                      fetches it (and Node's suites read it off
+#                                      disk, so they test the bytes a visitor
+#                                      runs). An export allow-list, so wasm-ld
+#                                      drops the bots and the C Table.
 #   oracle  public/oracle.wasm.gz      the client-side replay analyser (Mode A)
 #           public/oracle-mt.wasm.gz   the same analyser's shared-memory Mode B
+#
+# There is no server module. There was one - sdk/ts/wasm/bots.wasm.gz, the same
+# objects as web.wasm under every export, which the Supabase edge functions
+# loaded as a static asset - until the server became c_base, which links the
+# kernel natively. The whole-kernel link that Node's suites drive is the test
+# build (c/Makefile bots_test.wasm), which ships nowhere and so is not here.
 #
 # NONE OF IT IS COMMITTED, and that is the point of this script. The argument is
 # one this repo has already made and already paid for twice.
@@ -35,7 +35,7 @@
 # produced the committed bytes is not the toolchain any given machine has, so a
 # byte gate would be red forever". That is true of the toolchain VERSION and
 # false of the MACHINE, and nobody had separated the two. From one tree,
-# c/build/bots.wasm is BYTE-IDENTICAL on all three of
+# c/build/bots.wasm (then the server's module, now gone) was BYTE-IDENTICAL on all three of
 #
 #   macOS arm64, Homebrew clang 22.1.8 + binaryen 130
 #   Linux arm64, apt.llvm.org clang 22.1.8 + binaryen 130
@@ -106,7 +106,7 @@
 #
 # Usage:
 #   scripts/wasm_build.sh                 build every group
-#   scripts/wasm_build.sh bots            just the kernel every host loads
+#   scripts/wasm_build.sh web             just the browser's kernel
 #   scripts/wasm_build.sh oracle          just the two replay-analyser modules
 #   scripts/wasm_build.sh --print-paths [group]
 #                                         the paths it writes, repo-relative.
@@ -143,15 +143,14 @@ cd "$(dirname "$0")/.."
 # the same list, now owned by the thing that builds them instead of the thing
 # that audited them.
 ARTIFACTS=(
-  "bots|sdk/ts/wasm/bots.wasm.gz|wasm-bots"
-  "bots|sdk/ts/wasm/web.wasm.gz|wasm-web"
+  "web|sdk/ts/wasm/web.wasm.gz|wasm-web"
   "oracle|public/oracle.wasm.gz|wasm-oracle"
   "oracle|public/oracle-mt.wasm.gz|wasm-oracle-mt"
 )
 # NOT `GROUPS`: that is a bash special variable holding the caller's unix
 # group ids, and assigning to it is silently IGNORED - every lookup below then
 # compared a group name against a list of gids and refused everything.
-WASM_GROUPS=(bots oracle)
+WASM_GROUPS=(web oracle)
 
 field() { printf '%s\n' "${ARTIFACTS[@]}" | cut -d'|' -f"$1"; }
 # rows of one group, or every row when the group is empty

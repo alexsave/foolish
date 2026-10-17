@@ -18,7 +18,7 @@
 //
 // Every gate takes the board the screen holds: the kernel's TableView snapshot
 // (src/state/view.ts), the viewer's seat its `mySeat`. The gates are synchronous:
-// bots.wasm is loaded before any board renders - every route that can show one
+// web.wasm is loaded before any board renders - every route that can show one
 // is wrapped in src/components/KernelGate.tsx, asserted from the import graph by
 // e2e/validation/kernel_gate_validation.test.ts.
 

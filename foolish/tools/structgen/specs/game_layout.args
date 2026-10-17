@@ -11,7 +11,7 @@
 --const GAME_STATUS_ --const PLAYER_STATUS_ --const GAME_RULE_
 --const FOOLISH_SEED_LEN
 #
-# The C Table (c/src/table.h): what the server reads back from bots.wasm - the
+# The C Table (c/src/table.h): what a table host reads back from the kernel (the Node suites, from bots_test.wasm) - the
 # loaded roster, a commit's spans and scalars, a decoded action request, the
 # finish order and rating changes - and the result codes it maps. Part of the
 # same hash, so a module and these readers cannot disagree about any of it.
@@ -57,10 +57,10 @@
 # bots.wasm is checked against covers HandMetrics and HandLayout too.
 --header hand_layout.h --root HandMetrics --root HandLayout
 # One step of the stream a plan is asked for (view_layout.args writes it), so the
-# layout hash bots.wasm is checked against covers ClientPlanStep too.
+# layout hash web.wasm is checked against covers ClientPlanStep too.
 --root ClientPlanStep
 # The animation core's four small questions (view_layout.args reads and writes
-# them), so the layout hash bots.wasm is checked against covers them too.
+# them), so the layout hash web.wasm is checked against covers them too.
 --header anim_plan.h --root AnimStaleAsk --root AnimStaleRelease --root AnimReversalAsk --root AnimConflictPlan
 --root AnimHandAsk --root AnimHandLaid --root AnimFinishAsk --root AnimFinish
 # The move a client sends (view_layout.args writes it), so the layout hash

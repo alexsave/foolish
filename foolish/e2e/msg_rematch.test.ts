@@ -11,8 +11,8 @@
 // kernel's and is tested there (test_rematch_same_chain, test_rematch_taps,
 // test_rematch_creator_gate).
 //
-// No shipped host of bots.wasm builds a rematch (the phone does), so the entry
-// is the TEST build's (c/Makefile WASM_BOTS_UNSHIPPED_API).
+// No shipped module builds a rematch (the phone does), so the entry is the
+// TEST build's (c/Makefile bots_test.wasm).
 //
 // How a shared rematch link unfurls is no longer the web's: /m/<payload> is a
 // c_base route (c_base/docs/VERCEL.md section 4a), golden-tested there.

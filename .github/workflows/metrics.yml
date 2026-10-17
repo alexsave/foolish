@@ -100,7 +100,7 @@ jobs:
 
       # THE SHIPPED WASM MODULES, both sides, for the same reason and with the
       # same caveat. collect_metrics.mjs reports each one's gzip size and reads
-      # bots.wasm's linear memory, so an unbuilt side measures nothing - and
+      # web.wasm's linear memory, so an unbuilt side measures nothing - and
       # since the gzip size is no longer asserted by a test (the compressor moves
       # it by up to 576 B on identical input, see e2e/mem/wasm_memory.test.ts),
       # THIS is now where a download-size regression gets noticed. It is the

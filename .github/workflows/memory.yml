@@ -2,11 +2,12 @@ name: memory
 
 # Guards the 2026-07-06 production outage class: workers dying with "Memory
 # limit exceeded" on bot turns.
-#   mem        — fast Node proxies (e2e/mem): embed parse cost under a capped
-#                old-space, and bots.wasm memory bounded + flat across all MC
-#                bot families.
+#   mem        — fast Node proxies (e2e/mem): web.wasm's size and static
+#                memory, and the bots' wasm memory (on the test build) bounded +
+#                flat across all MC bot families.
 # The edge-serve lane (the Supabase edge runtime driving the bots) went with
-# the TypeScript server in stage 4; c_base's bots run the kernel natively.
+# the TypeScript server in stage 4, and the server's wasm module after it;
+# c_base's bots run the kernel natively.
 
 on:
   push:

@@ -24,7 +24,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { animBuildPlan, animPlanAt, animReversalOrder, ANIM_EVT, ANIM_LOC, type AnimPlanEventIn } from '../sdk/ts/wasm/bots.ts';
+import { animBuildPlan, animPlanAt, ANIM_EVT, ANIM_LOC, type AnimPlanEventIn } from '../sdk/ts/wasm/bots.ts';
+import { animReversalOrder } from './helpers/test_kernel_doors.ts';
 import {
     ANIM_STEP_NONE, ANIM_NEVER, ANIM_TIME_MS, ANIM_BOUT_END_HOLD_MS,
     ANIM_CONFLICT_REVERT, ANIM_CONFLICT_KEEP, ANIM_CONFLICT_CLEAR,

@@ -43,7 +43,7 @@ yarn-error.log*
 
 
 # Local agent worktrees and local state - ignored, EXCEPT the shared
-# project hook below (installs binaryen so `make wasm-bots` can run wasm-opt).
+# project hook below (installs binaryen so `npm run wasm` can run wasm-opt).
 .claude/*
 !.claude/settings.json
 !.claude/hooks/
