@@ -103,9 +103,10 @@ ROOT="$PWD"
 #     the first instead of killing it. The lock is a kernel flock on an open
 #     file, so it dies with its holder: no stale lock after a crash or a kill;
 #   - the run boots it and waits for the boot to finish before xcodebuild sees
-#     it, and shuts it down again at exit if it found it shut down, so idle
-#     test simulators never pile up (a booted simulator is hundreds of
-#     processes, and too many of them exhaust the per-user process limit).
+#     it, and at the end hands it over still booted to a run that is waiting,
+#     or shuts it down when none is, so an idle test simulator never stays up
+#     (a booted simulator is hundreds of processes, and too many of them
+#     exhaust the per-user process limit).
 # A DEST you pass is used as given, and is locked the same way (by its text),
 # so two runs naming the same device also queue instead of colliding.
 SIM_NAME="${SIM_NAME:-ios-mac-tests}"
@@ -350,34 +351,53 @@ run_scheme() {   # $1 = scheme, $2 = build|build-for-testing|test-without-buildi
 # touches a simulator, and neither do the C build, xcodegen or the build-only
 # schemes.
 LOCK_DIR="$HOME/Library/Caches/ios_mac_tests"
-SIM_WAS_SHUTDOWN=0
+LOCK_FILE=""
+HOLDING=0
+
+# flock(2) on fd 9, taken by a child: the lock belongs to the open FILE, which
+# this shell (and every xcodebuild it starts) keeps open until it exits, so the
+# lock outlives the perl that took it. lockf(1) cannot do this - it only locks
+# around a command it runs itself. $1 = LOCK_NB for a try, LOCK_EX to wait.
+flock9() {
+  /usr/bin/perl -MFcntl=:flock -e 'open(my $f, ">&=", 9) or die "fd 9: $!";
+    exit(flock($f, $ARGV[0] eq "LOCK_NB" ? (LOCK_EX | LOCK_NB) : LOCK_EX) ? 0 : 1)' "$1"
+}
 
 acquire_simulator() {
   mkdir -p "$LOCK_DIR"
-  local lock
-  lock="$LOCK_DIR/$(printf '%s' "$DEST" | tr -c 'A-Za-z0-9.-' '_').lock"
-  exec 9>>"$lock"
-  # flock(2) on fd 9, taken by a child: the lock belongs to the open file, which
-  # this shell (and every xcodebuild it starts) holds until it exits. lockf(1)
-  # cannot do this - it only locks around a command it runs itself.
-  if ! /usr/bin/perl -MFcntl=:flock -e 'open(my $f, ">&=", 9) or die; exit(flock($f, LOCK_EX | LOCK_NB) ? 0 : 1)'; then
-    echo "  waiting for the simulator: another run is testing on it ($(cat "$lock.who" 2>/dev/null || echo unknown))"
-    /usr/bin/perl -MFcntl=:flock -e 'open(my $f, ">&=", 9) or die; flock($f, LOCK_EX) or die "flock: $!"'
+  LOCK_FILE="$LOCK_DIR/$(printf '%s' "$DEST" | tr -c 'A-Za-z0-9.-' '_').lock"
+  exec 9>>"$LOCK_FILE"
+  if ! flock9 LOCK_NB; then
+    echo "  waiting for the simulator: another run is testing on it ($(cat "$LOCK_FILE.who" 2>/dev/null || echo unknown))"
+    flock9 LOCK_EX || { echo "error: could not lock $LOCK_FILE" >&2; exit 1; }
   fi
-  printf 'pid %s in %s, since %s\n' "$$" "$ROOT" "$(date '+%H:%M:%S')" > "$lock.who"
+  HOLDING=1
+  printf 'pid %s in %s, since %s\n' "$$" "$ROOT" "$(date '+%H:%M:%S')" > "$LOCK_FILE.who"
   if [ -n "$SIM_UDID" ]; then
-    if xcrun simctl list devices | grep -q "($SIM_UDID) (Shutdown)"; then SIM_WAS_SHUTDOWN=1; fi
     xcrun simctl boot "$SIM_UDID" >/dev/null 2>&1 || true   # already booted is fine
     xcrun simctl bootstatus "$SIM_UDID" -b >/dev/null
   fi
 }
 
+# Hand the simulator over BOOTED when a run is already waiting for it, and shut
+# it down when nobody is. A boot is not free: a fresh boot sets off a minute of
+# first-boot daemons, and on a Mac already at a load average in the hundreds it
+# turned one run's test-runner launch into a 17-minute wait. So: let go, then
+# try to take it straight back. If that fails, a waiter got in first and is
+# using the booted device; if it succeeds, nobody wanted it, and it is shut down
+# while still held, so no run can start on a device that is going down. Only
+# this Mac's own simulator is ever shut down - never a DEST somebody passed in.
 release_simulator() {
-  if [ "$SIM_WAS_SHUTDOWN" -eq 1 ]; then
-    xcrun simctl shutdown "$SIM_UDID" >/dev/null 2>&1 || true
-    SIM_WAS_SHUTDOWN=0
-  fi
+  [ "$HOLDING" -eq 1 ] || return 0
+  HOLDING=0
   exec 9>&-
+  if [ -n "$SIM_UDID" ]; then
+    exec 9>>"$LOCK_FILE"
+    if flock9 LOCK_NB; then
+      xcrun simctl shutdown "$SIM_UDID" >/dev/null 2>&1 || true
+    fi
+    exec 9>&-
+  fi
 }
 
 any_test=0
