@@ -226,8 +226,9 @@ export async function replay(gameId: string): Promise<NetReplay | null> {
     const a = await ask({ kind: N.NC_DO_REPLAY, gid: gameId }).catch(() => null);
     return a ? { moves: span(a, a.done.aOff, a.done.aLen), extras: span(a, a.done.bOff, a.done.bLen) } : null;
 }
-export async function updatePassword(password: string): Promise<void> {
-    await ask({ kind: N.NC_DO_PASSWORD, password });
+/** A new password; the current one proves the caller owns the account. Every other session ends. */
+export async function updatePassword(current: string, password: string): Promise<void> {
+    await ask({ kind: N.NC_DO_PASSWORD, password, bytes: enc.encode(current) });
 }
 /** Delete the account; the session ends with it. */
 export async function deleteAccount(): Promise<void> {

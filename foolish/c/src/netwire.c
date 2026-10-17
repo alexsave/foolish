@@ -96,8 +96,9 @@ int nw_request_encode(const NwRequest *q, uint8_t *out, int cap) {
         w_u8(&w, q->scope);
         break;
     case NW_PASSWORD:
-        if (!fits8(q->password_len, NW_PASSWORD_MAX)) return NW_E_WIRE;
+        if (!fits8(q->password_len, NW_PASSWORD_MAX) || !fits8(q->new_password_len, NW_PASSWORD_MAX)) return NW_E_WIRE;
         w_str8(&w, q->password, q->password_len);
+        w_str8(&w, q->new_password, q->new_password_len);
         break;
     case NW_CHAT_SEND:
         if (q->message_len > NW_CHAT_MAX) return NW_E_WIRE;
@@ -126,7 +127,10 @@ int nw_request_decode(const uint8_t *p, int len, NwRequest *out) {
         out->scope = r_u8(&r);
         if (out->scope != NW_SCOPE_LOCAL && out->scope != NW_SCOPE_GLOBAL) r.bad = 1;
         break;
-    case NW_PASSWORD: r_str8(&r, out->password, NW_PASSWORD_MAX, &out->password_len); break;
+    case NW_PASSWORD:
+        r_str8(&r, out->password, NW_PASSWORD_MAX, &out->password_len);
+        r_str8(&r, out->new_password, NW_PASSWORD_MAX, &out->new_password_len);
+        break;
     case NW_CHAT_SEND: r_str16(&r, out->message, NW_CHAT_MAX, &out->message_len); break;
     default: r.bad = 1;
     }
