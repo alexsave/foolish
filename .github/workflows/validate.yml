@@ -78,7 +78,7 @@ jobs:
       - name: Type-check (web and e2e)
         run: npm run typecheck
 
-      # The TEST bots module (shipped bots.wasm + test-only exports) is never
+      # The TEST bots module (the whole kernel, every export; it ships nowhere) is never
       # committed, and the scenarios below load it through
       # e2e/helpers/bots_test_wasm.ts, which builds it on demand. That build runs
       # tools/structgen, so it needs libclang - which this lane did not install,
