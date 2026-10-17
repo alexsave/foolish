@@ -544,6 +544,7 @@ typedef struct {
     uint8_t  state;
     uint8_t  attempts;      // sends that never arrived
     uint8_t  reauthed;      // sent again once after a 401
+    uint8_t  busy;          // sent again after a 503 BUSY (nc_retry_ms)
     uint8_t  own;           // this file's own refetch: no ticket for the host, its view an event
     uint32_t min_version;   // own: not sent once something this new was applied (0: always)
     uint32_t ticket;
@@ -975,6 +976,14 @@ static const NcDone *answered(uint32_t id, int status, const uint8_t *body, int 
         sl->attempts++;
         sl->state = SLOT_QUEUED;
         sl->not_before = now_ms + backoff_ms(sl->attempts);
+        return NULL;
+    }
+    int wait = idempotent(sl->kind) ? nc_retry_ms(NC_GET, sl->busy, status, body, len) : 0;
+    if (wait > 0) {
+        // The server's store was throttled: a read goes again, a little later.
+        sl->busy++;
+        sl->state = SLOT_QUEUED;
+        sl->not_before = now_ms + wait;
         return NULL;
     }
     if (status == 401 && needs_user(sl->kind) && g_signed_in && !sl->reauthed) {
