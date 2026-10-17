@@ -13827,7 +13827,10 @@ static void test_table_ask_runs_every_kind(void) {
     CHECK(table_ask(&tb, RS("a"), RS("Alice"), &a, 0, tb_seed) == TABLE_E_NOT_LOADED, "no bump before a table is loaded");
     tb_lobby();
 
-    TB_REFUSED(table_ask(&tb, RS("stranger"), RS("S"), &a, 0, tb_seed), TABLE_MOOT, "a bump commits nothing, even from a stranger");
+    // A bump wakes the bots, which costs the server a run: a seated player's only.
+    TB_REFUSED(table_ask(&tb, RS("stranger"), RS("S"), &a, 0, tb_seed), TABLE_E_NOT_SEATED, "a stranger may not bump");
+    CHECK(tb_same_table(&tb, &tb_before, &tb_r_before), "and leaves the table as it was");
+    TB_REFUSED(table_ask(&tb, RS("a"), RS("Alice"), &a, 0, tb_seed), TABLE_MOOT, "a bump from a seat commits nothing");
     CHECK(tb_same_table(&tb, &tb_before, &tb_r_before), "and leaves the table as it was");
 
     a = ask_of(ASK_JOIN, "g");

@@ -122,9 +122,10 @@ public enum NetError: Error, LocalizedError {
             switch e.code {
             case NW_ACCOUNT_E_BAD_LOGIN: return "Invalid login credentials"
             case NW_ACCOUNT_E_EXISTS: return "User already registered"
-            case NW_ACCOUNT_E_WEAK_PASSWORD: return "Password should be at least 6 characters."
+            case NW_ACCOUNT_E_WEAK_PASSWORD: return "Password should be at least 8 characters, and not a common one."
             case NW_ACCOUNT_E_LONG_PASSWORD: return "Password cannot be longer than 72 characters"
             case NW_ACCOUNT_E_BAD_NAME: return "That username isn’t allowed."
+            case NW_ACCOUNT_E_TOO_MANY: return "Too many attempts. Wait a few minutes and try again."
             default: return "Please sign in again."
             }
         }

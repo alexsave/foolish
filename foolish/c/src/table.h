@@ -320,7 +320,8 @@ typedef struct {
 //   ASK_REARRANGE_PLAYERS  table_reseat
 //   ASK_UPDATE_NAME        table_retitle
 //   ASK_SET_RULES          table_set_rules
-//   ASK_BUMP               TABLE_MOOT, seated or not: nothing to commit
+//   ASK_BUMP               TABLE_MOOT for a seated actor (nothing to commit), else
+//                          TABLE_E_NOT_SEATED
 //
 // The result is the edit's own. `deal_seed` is FOOLISH_SEED_LEN bytes, used by
 // the edits that can deal. TABLE_E_WIRE for a kind that is not one.

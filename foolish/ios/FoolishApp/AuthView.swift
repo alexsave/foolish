@@ -59,7 +59,7 @@ struct AuthView: View {
         .preferredColorScheme(.dark)
     }
 
-    private var canSubmit: Bool { !name.isEmpty && password.count >= 6 && !working }
+    private var canSubmit: Bool { !name.isEmpty && password.count >= (mode == .signUp ? 8 : 1) && !working }
 
     private func submit() async {
         working = true
