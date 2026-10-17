@@ -15112,6 +15112,42 @@ static void test_needs_bots(void) {
     CHECK(nb_agree(0), "needs_bots: a lobby is no bot work, for the table or its view");
 }
 
+// A BOT CAN ACT (table_bots_due) is the row's needs_bots and TableCommit's:
+// the bots' eligibility on the board, not "a bot is in". Production, 2026-10-17:
+// with "a bot is in" stored there, every game whose human sat on a move was
+// driven once a minute for an hour by a heartbeat that found nothing to do
+// (1,037 of 1,149 bot cycles in a week).
+static void test_table_bots_due(void) {
+    tb_fixture(2, 1u << 1, 163);
+    table_init(&tb, &tb_game, &tb_snaps);
+    CHECK(!table_bots_due(&tb), "bots_due: an unloaded table has nothing to drive");
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK
+          && tb_game.status == GAME_STATUS_PLAYING && tb_game.num_battles == 0, "bots_due: a fresh deal, human and bot");
+    TableCommit c;
+    // The human opens: the bot is in, and can do nothing until the human moves.
+    tb_game.first_attacker = 0;
+    tb_game.defender = 1;
+    CHECK(table_needs_bots(&tb), "bots_due: the bot is in");
+    CHECK(!table_bots_due(&tb), "bots_due: a human's opening is no bot's move");
+    CHECK(table_commit_products(&tb, RS("g-1"), 2, 1000, &c, tb_arena, sizeof(tb_arena)) > 0 && !c.needs_bots,
+          "bots_due: so the row it commits needs no bots");
+    BotDriveOut drv;
+    CHECK(table_bot_drive(&tb, NULL, 0, 0, &drv) == 0 && drv.stop == BOT_STOP_NO_ELIGIBLE,
+          "bots_due: and a drive finds nothing, as it said");
+    // The bot opens: due.
+    tb_game.first_attacker = 1;
+    tb_game.defender = 0;
+    CHECK(table_bots_due(&tb), "bots_due: a bot's opening is due");
+    CHECK(table_commit_products(&tb, RS("g-1"), 2, 1000, &c, tb_arena, sizeof(tb_arena)) > 0 && c.needs_bots,
+          "bots_due: and the row it commits needs bots");
+    // Over, or no longer playing: nothing, whoever would open.
+    tb_game.status = GAME_STATUS_GAME_OVER;
+    CHECK(!table_bots_due(&tb), "bots_due: a finished game has nothing to drive");
+    tb_game.status = GAME_STATUS_PLAYING;
+    tb_game.players[1].status = PLAYER_STATUS_OUT;
+    CHECK(!table_bots_due(&tb), "bots_due: nor one whose only bot is out");
+}
+
 static void test_client_rearrange_hand(void) {
     cvr_board(&cb_view, 0);
     cb_view.my_hand_count = 3;
@@ -17282,6 +17318,7 @@ int main(void) {
     test_client_rearrange_hand();
     test_client_ask_apply();
     test_needs_bots();
+    test_table_bots_due();
     test_lobby_has_room();
     test_client_conflict_verdicts();
     test_client_plan_reads_the_boards();

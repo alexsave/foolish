@@ -658,11 +658,13 @@ uint32_t game_shown_good_mask(const Game *g);
 bool should_bot_act(const Game *g, int bot_idx);
 
 // IS THIS SEAT BOT WORK? A bot's seat, still in, in a game that is playing. The
-// one rule behind "does this table need its bots woken", over only the facts it
-// reads, so the server's table (table.h table_needs_bots, the row's needs_bots
-// column the heartbeat scans) and a client's board (client_table.h
-// ViewRules.needs_bots) are asked the same question. It asks whether there is
-// bot work AT ALL, not whether a bot may act this instant (turn_may_act below).
+// one rule behind "does this table have bots playing", over only the facts it
+// reads, so the server's table (table.h table_needs_bots) and a client's board
+// (client_table.h ViewRules.needs_bots) are asked the same question. It asks
+// whether there is bot work AT ALL, not whether a bot may act this instant
+// (turn_may_act below). The row's needs_bots column, which a server's heartbeat
+// scans, is the second question (table.h table_bots_due): asking this one there
+// kicked every game against a bot once a minute while its human sat on a move.
 static inline bool seat_needs_bot(int game_status, int seat_status, bool is_bot) {
     return is_bot && game_status == GAME_STATUS_PLAYING && seat_status == PLAYER_STATUS_IN;
 }

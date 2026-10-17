@@ -224,8 +224,19 @@ int table_act(Table *t, const char *actor_id, int id_len, const uint8_t *awire, 
 // when no table is loaded. A host picks the caller's response envelope with it.
 int table_seat_of(const Table *t, const char *id, int id_len);
 
-// Some seat is bot work (game.h seat_needs_bot): the row's needs_bots column.
+// Some seat is bot work (game.h seat_needs_bot): a bot is still in a game
+// being played. The question a client's board answers too (ViewRules.needs_bots),
+// so a host can say whether a table has bots at all. NOT the row's needs_bots
+// column: a bot that is in may be waiting on a human for the whole game.
 bool table_needs_bots(const Table *t);
+
+// A BOT CAN ACT on this board (bot_drive_eligible_mask over the seats the drive
+// would drive): what table_bot_drive would find to do, once its wait
+// (table_bot_wait_ms) has passed. The row's needs_bots column and
+// TableCommit.needs_bots: a host's heartbeat drives exactly these rows, and a
+// host wakes its bots on exactly these. Only an operation changes the answer
+// (the board has no clock in it), so a row keeps it from commit to commit.
+bool table_bots_due(const Table *t);
 
 // A bot that could act now uses the session log (a belief brain), so the host
 // must hydrate it before driving.
@@ -340,7 +351,7 @@ typedef struct {
     // Events each push carries. 0 USED TO MEAN "nothing to broadcast", and that
     // was wrong: see goods_changed below.
     uint8_t n_events;
-    bool    needs_bots;
+    bool    needs_bots;    // table_bots_due: a bot can act on the committed board (the row's needs_bots)
     bool    closed_round;  // the operation's records hold a PICKUP or DISCARD (and it dealt nothing)
     bool    logs_reset;    // the operation dealt: its records start a new session log
     bool    ended;

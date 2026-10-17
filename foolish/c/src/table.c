@@ -144,6 +144,11 @@ bool table_needs_bots(const Table *t) {
     return false;
 }
 
+bool table_bots_due(const Table *t) {
+    if (!t->loaded || t->g->status != GAME_STATUS_PLAYING) return false;
+    return bot_drive_eligible_mask(t->g, game_human_mask(t->g)) != 0;
+}
+
 bool table_bots_need_logs(const Table *t) {
     if (!t->loaded || t->g->status != GAME_STATUS_PLAYING) return false;
     const uint32_t bots = roster_bot_mask(&t->r);
@@ -329,7 +334,7 @@ int table_commit_products(const Table *t, const char *game_id, int gid_len, uint
     out->status = (int8_t)g->status;
     out->fool = (int8_t)(g->status == GAME_STATUS_GAME_OVER ? unnamed_seat(g) : -1);
     out->num_players = g->num_players;
-    out->needs_bots = table_needs_bots(t);
+    out->needs_bots = table_bots_due(t);
     out->ended = t->ended;
     // Only the operation that ended the game applies its changes (table.h).
     const GameRatings *rated = t->ended ? table_stamp(t) : 0;
