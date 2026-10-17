@@ -49,9 +49,7 @@ public final class OnlineGame: ObservableObject, GameSession {
     }
 
     private func start() {
-        Stream.shared.watch(gameId, spectator: spectator,
-                            view: { [weak self] envelope in self?.ingest(envelope) },
-                            moved: { [weak self] in Task { await self?.resync() } })
+        Stream.shared.watch(gameId, spectator: spectator) { [weak self] envelope in self?.ingest(envelope) }
         if spectator { Task { await resync() } }
     }
 

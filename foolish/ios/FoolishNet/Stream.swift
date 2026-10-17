@@ -13,14 +13,15 @@ import FoolishKit
 final class Stream {
     static let shared = Stream()
 
-    /// Per game: what to do with its newest envelope, and with news that it moved.
-    private var watchers: [String: (view: (Data) -> Void, moved: () -> Void)] = [:]
+    /// Per game: what to do with its newest envelope.
+    private var watchers: [String: (Data) -> Void] = [:]
     private var task: URLSessionWebSocketTask?
 
     /// A player hears every view of theirs (one subscription for all their
-    /// games); a spectator hears the game's casts and refetches on each.
-    func watch(_ gameId: String, spectator: Bool, view: @escaping (Data) -> Void, moved: @escaping () -> Void) {
-        watchers[gameId] = (view, moved)
+    /// games); a spectator hears the game's casts, each of which the client
+    /// turns into the game's board (NetClient.showBoards).
+    func watch(_ gameId: String, spectator: Bool, view: @escaping (Data) -> Void) {
+        watchers[gameId] = view
         NetClient.subscribe(spectator ? NW_SUB_GAME : NW_SUB_GAMES, spectator ? gameId : nil)
         open()
         Backend.shared.pump()
@@ -40,8 +41,7 @@ final class Stream {
 
     /// What the client says changed, to the game it is of.
     func deliver(_ ev: NcEventSnap, _ payload: Data) {
-        if ev.kind == NC_EV_VIEW, !payload.isEmpty { watchers[ev.gid]?.view(payload) }
-        if ev.kind == NC_EV_CAST { watchers[ev.gid]?.moved() }
+        if ev.kind == NC_EV_VIEW, !payload.isEmpty { watchers[ev.gid]?(payload) }
     }
 
     private func open() {

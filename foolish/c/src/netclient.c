@@ -62,6 +62,7 @@ static NcEvent  g_events[NC_EVENTS_MAX];
 static uint32_t g_event_at[NC_EVENTS_MAX];
 static int      g_n_events;
 static uint32_t g_session_told;         // the session generation the host was last told
+static uint8_t  g_boards;               // the host shows boards and never decodes a cast (nc_set_boards)
 static uint8_t  g_frame[NC_FRAME_MAX];
 static NwFrame  g_nwf;                  // the frame decoded or being encoded
 static NcOut    g_out;
@@ -801,7 +802,7 @@ static int refetch_queue(const char *gid, int gid_len, int64_t not_before, uint3
 static int caught_up(const slot *sl) {
     if (!sl->own || !sl->min_version) return 0;
     gate *g = gate_find(sl->gid, sl->gid_len, 0);
-    return g && any_top(g) >= sl->min_version && (g->has_cast || g->has_answer);
+    return g && (g->has_view || g->has_cast || g->has_answer) && any_top(g) >= sl->min_version;
 }
 
 const NcRequest *nc_next_request(int64_t now_ms) {
@@ -907,10 +908,10 @@ static void read_answer(NcDone *d, const NcIntent *in, int own, int status, cons
         answer_view(d, gid, gl, version, body, 0, (uint32_t)len, 0);
         // Which stream the game is heard on is the seat's to say: a create's
         // game is heard from now on, and a join or a leave asks again.
-        if (d->kind == NC_DO_CREATE) {
+        if (d->kind == NC_DO_CREATE && !g_boards) {
             sub *s = sub_make(NW_SUB_GAME, gid, gl);
             if (s) s->pinned = 1;
-        } else {
+        } else if (d->kind != NC_DO_CREATE) {
             sub_again(sub_find(NW_SUB_GAME, gid, gl));
         }
         break;
@@ -1176,6 +1177,8 @@ static int events_end(void) {
     return g_n_events;
 }
 
+void nc_set_boards(int on) { g_boards = on != 0; }
+
 const NcEvent *nc_event(int i) { return i >= 0 && i < g_n_events ? &g_events[i] : NULL; }
 
 const uint8_t *nc_event_payload(int i) {
@@ -1290,6 +1293,12 @@ int nc_stream_in(const uint8_t *frame, int len, int is_text, int64_t now_ms) {
             g->used = 1;
             g->gid_len = f->gid_len;
             memcpy(g->gid, f->gid, f->gid_len);
+        } else if (cast && g_boards) {
+            // A host that shows boards never decodes a cast: the game moved, so
+            // take it whole (caught_up lets the fetch go when its view at this
+            // version is here by the time it would be sent).
+            refetch_queue(f->gid, f->gid_len, now_ms, f->version);
+            break;
         } else if (cast) {
             int table = g->has_cast || g->has_answer;
             uint32_t top = table_top(g);
@@ -1305,7 +1314,7 @@ int nc_stream_in(const uint8_t *frame, int len, int is_text, int64_t now_ms) {
         } else {
             // A game held on its own stream is the casts' and the answers' to
             // move; a dashboard view of it would snap past what they animate.
-            if (sub_find(NW_SUB_GAME, f->gid, f->gid_len)) break;
+            if (!g_boards && sub_find(NW_SUB_GAME, f->gid, f->gid_len)) break;
             if (g->has_view && f->version <= g->view_v) break;   // stale
             g->has_view = 1;
             g->view_v = f->version;

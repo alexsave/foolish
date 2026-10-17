@@ -1449,6 +1449,8 @@ int fio_ask_encode(int kind,
 // next call; constants are the NC_*, NW_* and ASK_WHY_* there. Swift keeps the
 // sockets, nothing else (sdk/swift/NetClient.swift). Times are epoch ms.
 void fio_net_reset(void);
+// The app shows boards and never decodes a cast (netclient.h nc_set_boards).
+void fio_net_set_boards(int on);
 int fio_net_session_load(const uint8_t *p, int len);
 int fio_net_session_save(uint8_t *out, int cap);
 const void *fio_net_session_info(void);

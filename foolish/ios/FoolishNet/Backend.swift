@@ -27,6 +27,7 @@ public final class Backend {
     private init() {
         let s = (Bundle.main.object(forInfoDictionaryKey: "BackendURL") as? String) ?? ""
         baseURL = s.isEmpty ? nil : URL(string: s)
+        NetClient.showBoards()
     }
 
     /// True when online play is available. Home gates the PLAY button on it.
