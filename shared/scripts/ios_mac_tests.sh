@@ -349,7 +349,8 @@ SIM_WAS_SHUTDOWN=0
 
 acquire_simulator() {
   mkdir -p "$LOCK_DIR"
-  local lock="$LOCK_DIR/$(printf '%s' "$DEST" | tr -c 'A-Za-z0-9.-' '_').lock"
+  local lock
+  lock="$LOCK_DIR/$(printf '%s' "$DEST" | tr -c 'A-Za-z0-9.-' '_').lock"
   exec 9>>"$lock"
   # flock(2) on fd 9, taken by a child: the lock belongs to the open file, which
   # this shell (and every xcodebuild it starts) holds until it exits. lockf(1)

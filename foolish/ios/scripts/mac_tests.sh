@@ -37,13 +37,12 @@
 #   ios/scripts/mac_tests.sh app             # build the SHIPPING scheme only
 #   ios/scripts/mac_tests.sh --no-lib unit   # skip the ~2 min xcframework build
 #
-#   DEST='platform=iOS Simulator,id=<udid>' ios/scripts/mac_tests.sh   # default: newest iPhone sim
+#   DEST='platform=iOS Simulator,id=<udid>' ios/scripts/mac_tests.sh
+#     (default: this Mac's own ios-mac-tests simulator, locked per run - see
+#     "THE SIMULATOR" in shared/scripts/ios_mac_tests.sh)
 #
-# FIRST RUN IN A FRESH CHECKOUT FAILS, and that is not a regression: the
-# ComponentSnapshotTests references (ios/FoolishTests/__Snapshots__) are
-# git-ignored, so run one records them ("No reference was found on disk") and
-# run two compares against them. Re-run once before believing a snapshot
-# failure - and eyeball the recorded PNGs, since nothing else will.
+# The ComponentSnapshotTests references are committed, so a fresh checkout's
+# first run is green and a snapshot failure is a real difference.
 #
 # A note on schemes, because this has cost a release before: `Foolish` is the
 # standalone iOS app (bundle cards.foolish.app) and owns FoolishTests, but the

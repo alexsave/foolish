@@ -55,16 +55,22 @@ blanks** (see below), runs `FoolishTests` (scheme `Foolish`) and `HarnessTests`
 `ios/scripts/mac_tests.sh --help` lists the subsets (`unit`, `harness`, `app`,
 `--no-lib`) and the `DEST` simulator override.
 
-The first run in a fresh checkout **fails** on `ComponentSnapshotTests`: the
-snapshot references are git-ignored, so run one records them and run two
-compares. Re-run before believing a snapshot failure.
+The `ComponentSnapshotTests` references are committed under
+`FoolishTests/__Snapshots__/`, for the iOS runtime named in its `RUNTIME` file.
+A missing reference fails and records nothing; a snapshot failure is real.
+To re-record after a deliberate visual change, see the header of
+`FoolishTests/ComponentSnapshotTests.swift`.
+
+With no `DEST`, the tests run on this Mac's own `ios-mac-tests` simulator under
+a lock, so two runs at once (two worktrees, two agents) queue instead of one
+killing the other's test host.
 
 Underneath it is plain `xcodebuild`, if you want one scheme by hand:
 
 ```bash
 cd ios
 xcodebuild -project Foolish.xcodeproj -scheme Foolish \
-  -destination 'platform=iOS Simulator,name=iPhone 16' test
+  -destination 'platform=iOS Simulator,id=<udid of a simulator no other job is using>' test
 ```
 
 Simulator builds need **no code signing** (the project ships with signing off).
