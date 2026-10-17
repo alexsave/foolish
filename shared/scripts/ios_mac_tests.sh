@@ -311,11 +311,28 @@ run_scheme() {   # $1 = scheme, $2 = build|build-for-testing|test-without-buildi
   # runs to that timeout: a run whose tests had finished in 3 seconds sat for
   # ten more minutes before reporting one failed assertion (2026-10-17). The
   # failures, their messages and the .xcresult are all still there without it.
-  local extra=()
-  if [ "$action" = test-without-building ]; then extra=(-collect-test-diagnostics never); fi
+  #
+  # COMPILING NEEDS NO DEVICE, so it does not name one. Given a simulator id,
+  # xcodebuild first asks CoreSimulator for every device it knows, and on a Mac
+  # at a load average in the hundreds that query timed out: "Unable to find a
+  # device matching the provided destination specifier", with the device
+  # present, booted and listed by simctl the same minute - two runs in a row,
+  # before a single test (2026-10-17). A generic simulator build asks nobody.
+  # ARCHS pins the one architecture this Mac runs, which is what naming a
+  # device used to select; without it a generic build compiles x86_64 as well.
+  # Only running the tests names the device, and by then acquire_simulator
+  # has just had CoreSimulator boot it.
+  local dest="$DEST" extra=()
+  if [ "$action" = test-without-building ]; then
+    extra=(-collect-test-diagnostics never)
+  else
+    case "$DEST" in
+      *"platform=iOS Simulator"*) dest="generic/platform=iOS Simulator"; extra=("ARCHS=$(uname -m)") ;;
+    esac
+  fi
 
   set +e
-  xcodebuild -project "$PROJECT" -scheme "$scheme" -destination "$DEST" ${extra[@]+"${extra[@]}"} "$action" \
+  xcodebuild -project "$PROJECT" -scheme "$scheme" -destination "$dest" ${extra[@]+"${extra[@]}"} "$action" \
     2>&1 | tee "$log" | "${FMT[@]}"
   rc=${PIPESTATUS[0]}
   set -e
@@ -326,7 +343,7 @@ run_scheme() {   # $1 = scheme, $2 = build|build-for-testing|test-without-buildi
     echo "    problem, and not a change in your tree. Healing it, retrying once."
     if unpoison_derived_data "$log"; then
       set +e
-      xcodebuild -project "$PROJECT" -scheme "$scheme" -destination "$DEST" ${extra[@]+"${extra[@]}"} "$action" \
+      xcodebuild -project "$PROJECT" -scheme "$scheme" -destination "$dest" ${extra[@]+"${extra[@]}"} "$action" \
         2>&1 | tee "$log" | "${FMT[@]}"
       rc=${PIPESTATUS[0]}
       set -e
