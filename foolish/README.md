@@ -17,7 +17,7 @@ None of that is true any more.
 
 **There is exactly one implementation of Durak in this repository, it is written in C, and everything else is a way of reaching it.**
 
-The website, the iPhone app, the iMessage extension, the Supabase edge functions, a native C server, a discrete-event network simulator and a set of frozen Rust benchmarks all run on [`c/src`](c/src).
+The website, the iPhone app, the iMessage extension, the backend (c_base, in C), a native C server, a discrete-event network simulator and a set of frozen Rust benchmarks all run on [`c/src`](c/src).
 Five separate build trees compile those same files: `c/Makefile`, the iOS xcframework, `server/impls/native/`, `foolyard/` and `rust/`.
 None of them contains a rule.
 A client that disagrees with the kernel is a bug in the client, and a good deal of the test suite exists only to say so out loud.
@@ -108,9 +108,9 @@ src/          The Next.js client. Routes: /, /:game_id, /about, /tutorial,
               paused replay decision (docs/INFINITE_ORACLE_DESIGN.md).
   utils/      procedural texture generation: fractal, wool, wood, concrete.
 
-server/       Host-neutral backend. api/ is the contract and is 306 lines,
-              because the kernel does the work.
-  impls/supabase/  the deployed one: 5 edge functions, seed.sql, the bot loop.
+server/       Host-neutral backend code. api/ is the contract the web still
+              imports and is 306 lines, because the kernel does the work. The
+              deployed backend is c_base/ at the repo root (C, on AWS Lambda).
   impls/native/    a single long-lived C process holding every game in RAM,
                    with its own epoll loop, WebSocket and WebTransport stacks,
                    a load client and two fuzzers. Linux only. Not deployed.
@@ -119,8 +119,8 @@ server/       Host-neutral backend. api/ is the contract and is 306 lines,
 ios/          Ten Xcode targets, generated from project.yml by xcodegen.
   FoolishKit/      the shared UI framework, extension-safe by construction.
   FoolishMessages/ the iMessage extension - the shipping product.
-  FoolishNet/      the only module allowed to link Supabase, enforced by a
-                   lint script that fails the build.
+  FoolishNet/      the only module that talks to the backend (through the
+                   kernel's client), enforced by a lint script that fails the build.
   WatchUI/         a finished watchOS design, parked and deliberately not built.
   Tools/rig/       drives the real extension inside Apple's real Messages app
                    on a simulator, deterministically, for QA and store photos.
@@ -157,10 +157,10 @@ docs/         62 design documents.
 It ships as WebAssembly to the web and the edge, and as a static `xcframework` to Apple, both built from those same sources by a 1,411-line `c/Makefile` that is mostly prose.
 
 **A move is bytes the whole way.**
-It leaves the browser as a packed action wire, the exact bytes the client's own wasm validated, POSTed as a binary body to a single `action` edge function.
+It leaves the browser as a packed action wire, the exact bytes the client's own wasm validated, POSTed as a binary body to c_base's `/v1/action`.
 The server maps the caller to a seat and hands the bytes to the kernel, which in one synchronous section loads the persisted state blob, validates and applies the move, finalizes a win, and emits the new blob plus a per-recipient masked animation stream.
 "You only see your own hand" is computed in [`c/src/view.c`](c/src/view.c), not in TypeScript.
-The blob commits under an optimistic-concurrency compare-and-swap, then broadcasts over Supabase Realtime on per-player channels plus a public spectator channel.
+The blob commits under an optimistic-concurrency compare-and-swap, then pushes over c_base's binary stream to each player's own topic plus a public spectator topic.
 The client decodes back to JavaScript only at the React render boundary.
 
 **The strings are C too.**
@@ -215,7 +215,7 @@ The server verifies the round trip byte for byte before persisting.
 
 **The iMessage game has no server.**
 The entire game state rides the `MSMessage` URL and is replayed locally on each device, 2 to 8 players.
-The shipped extension links no network stack at all, and that is verified on the archive rather than asserted: `otool -L` shows no Supabase, CFNetwork or Network.framework, and a symbol grep for supabase, realtime, postgrest, gotrue, websocket and URLSession returns nothing.
+The shipped extension links no network stack at all, and that is verified on the archive rather than asserted: `otool -L` shows no CFNetwork or Network.framework, and a symbol grep for websocket and URLSession returns nothing.
 Keeping the bot ladder out of that bundle takes enforcement at two levels, C archive and Swift module, because either one alone can be undone by link order.
 
 **Procedural rendering.**
@@ -265,7 +265,7 @@ On a pull request the same job is the compile gate.
 The backend is c_base on AWS Lambda, deployed from `main` by [`.github/workflows/c_base.yml`](../.github/workflows/c_base.yml).
 Both assume one GitHub OIDC role ([`c_base/ops/github_oidc.yaml`](../c_base/ops/github_oidc.yaml)); [`c_base/RUNBOOK.md`](../c_base/RUNBOOK.md) has the rest.
 
-The Vercel lane ([`.github/workflows/web.yml`](../.github/workflows/web.yml)) runs only by hand now, as a rollback, until it is deleted. Nothing deploys to Supabase.
+The Vercel lane ([`.github/workflows/web.yml`](../.github/workflows/web.yml)) runs only by hand now, as a rollback, until it is deleted.
 
 The shipped wasm is a **build output**, like `sdk/ts/gen`: [`scripts/wasm_build.sh`](scripts/wasm_build.sh) is the one entry point, every lane that loads a module builds it, and nothing is committed.
 It used to be built by hand on a Mac and committed, which needed two gates to hold it up - a freshness check that compared commit *order* because it could not compare bytes, and a `WASM_STAMP` committed beside the artifacts to prove a human had run `make`.

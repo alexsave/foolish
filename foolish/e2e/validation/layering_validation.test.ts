@@ -1,6 +1,6 @@
 // A10 - the module layering is a machine-checked invariant, not a hope.
 //
-// The server is four tiers with a one-way dependency DAG:
+// The TypeScript the web shares is three tiers with a one-way dependency DAG:
 //
 //     gen    (0) - domain vocabulary, zero logic, zero host deps: the modules
 //                  generated from the kernel's own headers and tables
@@ -9,12 +9,11 @@
 //                  number a host reads is the one the C defines.
 //     sdk    (1) - the ONLY code that knows the C kernel's ABI (wasm/wire)
 //     common (2) - host-neutral game logic
-//     adapter(3) - the Supabase host: DB, realtime, lease, auth, waitUntil
 //
-// A file may import its own tier or any tier BENEATH it, never above. And
-// gen/sdk/common must carry NO vendor/host coupling - that is what makes the
-// adapter swappable "with no diff in the common part" (the A10 acceptance
-// test). This test fails the build the moment either rule is broken.
+// A file may import its own tier or any tier BENEATH it, never above. And no
+// tier may carry vendor/host coupling. The fourth tier, the Supabase adapter,
+// went with the TypeScript server in stage 4 (the server is c_base, in C).
+// This test fails the build the moment either rule is broken.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
@@ -22,13 +21,11 @@ import { join, resolve, dirname, relative } from 'node:path';
 
 const REPO = resolve(import.meta.dirname, '../..');
 // A10 homes: the kernel bindings at repo-root sdk/ with the generated vocabulary
-// in sdk/ts/gen, the host-neutral game code at server/api/common, the one
-// Supabase adapter under its impl.
+// in sdk/ts/gen, the host-neutral game code at server/api/common.
 const SDK = join(REPO, 'sdk');
 const GEN = join(SDK, 'ts/gen');
 const COMMON = join(REPO, 'server/api/common');
-const ADAPTER = join(REPO, 'server/impls/supabase/functions/_shared/adapter');
-const RANK: Record<string, number> = { gen: 0, sdk: 1, common: 2, adapter: 3 };
+const RANK: Record<string, number> = { gen: 0, sdk: 1, common: 2 };
 
 function under(root: string, p: string): boolean {
     return !relative(root, p).startsWith('..');
@@ -37,7 +34,6 @@ function under(root: string, p: string): boolean {
 function layerOf(absPath: string): string | null {
     if (under(GEN, absPath)) return 'gen';                // before sdk, which holds it
     if (under(COMMON, absPath)) return 'common';
-    if (under(ADAPTER, absPath)) return 'adapter';
     if (under(SDK, absPath)) return 'sdk';          // sdk/{ts,swift} bindings
     return null;                                    // host entrypoints, e2e, etc.
 }
@@ -55,9 +51,9 @@ function walk(dir: string): string[] {
 // every quoted specifier in from '...' / import('...') / new URL('...')
 const SPEC = /(?:from|import|URL)\s*\(?\s*['"]([^'"]+)['"]/g;
 
-const files = [...walk(COMMON), ...walk(ADAPTER), ...walk(SDK)];
+const files = [...walk(COMMON), ...walk(SDK)];
 
-test('the four tiers form a one-way DAG (no file imports a higher tier)', () => {
+test('the three tiers form a one-way DAG (no file imports a higher tier)', () => {
     const violations: string[] = [];
     for (const f of files) {
         const fromLayer = layerOf(f);
@@ -86,11 +82,11 @@ test('gen / sdk / common carry no vendor or host coupling', () => {
     const violations: string[] = [];
     for (const f of files) {
         const layer = layerOf(f);
-        if (!layer || layer === 'adapter') continue;   // the adapter is ALLOWED to couple
+        if (!layer) continue;
         const src = readFileSync(f, 'utf8');
         for (const pat of FORBIDDEN) {
             if (pat.test(src)) {
-                violations.push(`${relative(REPO, f)} (${layer}) contains ${pat} - host coupling above the adapter`);
+                violations.push(`${relative(REPO, f)} (${layer}) contains ${pat} - host coupling`);
             }
         }
     }
@@ -98,7 +94,7 @@ test('gen / sdk / common carry no vendor or host coupling', () => {
 });
 
 test('every tier is non-empty (the split actually happened)', () => {
-    const counts: Record<string, number> = { gen: 0, sdk: 0, common: 0, adapter: 0 };
+    const counts: Record<string, number> = { gen: 0, sdk: 0, common: 0 };
     for (const f of files) {
         const l = layerOf(f);
         if (l) counts[l]++;

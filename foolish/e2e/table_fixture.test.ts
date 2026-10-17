@@ -14,18 +14,14 @@
  *   - an accepted fixture round-trips: table_load takes its bytes, the commit
  *     writes them back unchanged, and table_envelope shows every field the
  *     builder set (read by the web's own client slot, as a TableView);
- *   - seedTable stores exactly those bytes, the kernel's status and needs_bots,
- *     and the membership rows, and the stored row loads again.
  * ========================================================================== */
 
-import { applySchema, pgPool, uuid } from './harness.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import { readEnvelopeView } from './helpers/client_read.ts';
 import { NO_CARD } from '../src/state/view.ts';
 import { fixture, fixtureTable, FixtureRefused, GAME_OVER, IDLE, IN, OUT, PLAYING, READY } from './helpers/table_fixture.ts';
-import { seedTable } from './helpers/table_db.ts';
 
 const refusedWith = (code: number, name: string, detail?: string) => (e: unknown) => {
     assert.ok(e instanceof FixtureRefused, `a FixtureRefused, got ${String(e)}`);
@@ -163,35 +159,4 @@ test('accepted: a lobby, a finished game, eliminations and seat defaults', () =>
     const seeded = fixture().seats(seats.slice(0, 2)).status(PLAYING).deck('9h Th').deterministic().build();
     assert.equal(seeded.state[1] & L.TABLE_STATE_FLAG_DETERMINISTIC, L.TABLE_STATE_FLAG_DETERMINISTIC, 'the durable blob carries the deterministic-deck flag');
     assert.equal(table.load(seeded.state, seeded.roster), L.TABLE_OK);
-});
-
-test('seedTable: the stored row is the fixture, with the kernel status, needs_bots and members', async () => {
-    await applySchema();
-    const human = uuid(), bot = uuid(), other = uuid(), gameId = `fx${uuid().slice(0, 6)}`;
-    const fx = fixture()
-        .seats([{ id: human, name: 'Hana' }, { id: bot, name: 'Bolt', brain: 'cordite' }, { id: other, name: 'Ivo' }])
-        .status(PLAYING).hand(0, '6h').hand(1, '7h 8h').hand(2, 'Qs').trump('9d').deck('Ad')
-        .build();
-    await seedTable(gameId, fx, { version: 5 });
-
-    const row = (await pgPool.query('SELECT status, state, roster, needs_bots, version FROM games WHERE id = $1', [gameId])).rows[0];
-    const hex = (b: Uint8Array) => `\\x${Buffer.from(b).toString('hex')}`;
-    assert.equal(row.status, 'playing');
-    assert.equal(row.state, hex(fx.state), 'games.state is the fixture blob');
-    assert.equal(row.roster, hex(fx.roster), 'games.roster is the fixture roster');
-    assert.equal(row.needs_bots, true, 'the kernel says a bot is IN');
-    assert.equal(Number(row.version), 5);
-
-    const humans = (await pgPool.query('SELECT player_id FROM player_hands WHERE game_id = $1 ORDER BY player_id', [gameId])).rows.map((r) => r.player_id);
-    assert.deepEqual(humans, [human, other].sort());
-    const bots = (await pgPool.query('SELECT h.bot_id, b.strategy_key, b.nickname FROM bot_hands h JOIN bots b ON b.id = h.bot_id WHERE h.game_id = $1', [gameId])).rows;
-    assert.deepEqual(bots, [{ bot_id: bot, strategy_key: 'cordite', nickname: 'Bolt' }]);
-
-    const bytes = (h: string) => Uint8Array.from(Buffer.from(h.slice(2), 'hex'));
-    assert.equal(fixtureTable().load(bytes(row.state), bytes(row.roster)), L.TABLE_OK, 'the stored row loads');
-
-    const lobbyId = `fx${uuid().slice(0, 6)}`;
-    await seedTable(lobbyId, fixture().seats([{ id: human, name: 'Hana' }, { id: bot, name: 'Bolt', brain: 'cordite' }]).build());
-    const lobby = (await pgPool.query('SELECT status, needs_bots FROM games WHERE id = $1', [lobbyId])).rows[0];
-    assert.deepEqual(lobby, { status: 'waiting', needs_bots: false });
 });

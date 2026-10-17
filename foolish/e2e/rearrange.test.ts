@@ -8,19 +8,15 @@
 // table_rearrange_hand). Owns the rearrange validation scenario (DB-free: the
 // fixtures' C Table in memory); the fast runner
 // (e2e/validation/handlers_validation.test.ts) imports
-// `registerRearrangeValidation`. The full e2e tests drive the REAL meta handler
-// through the REAL CAS commit (commit_table).
+// `registerRearrangeValidation`. The tests that drove the TypeScript server's meta
+// handler through Postgres went with it (stage 4); c_base serves the same kernel
+// call.
 
-import './harness.ts';
-import { test, before, beforeEach, after } from 'node:test';
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applySchema, resetDb, uuid, pgPool } from './harness.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import { fixture, fixtureTable, PLAYING } from './helpers/table_fixture.ts';
-import { cardText, checkCardConservation, mustReadTable, residentBoard, type PlayCard } from './helpers/table_play.ts';
-import { runMeta, seedLobby } from './helpers/table_server.ts';
-import { __setTableDealSeedOverride } from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
-import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
+import { cardText, residentBoard, type PlayCard } from './helpers/table_play.ts';
 
 const keys = (hand: PlayCard[]) => hand.map(cardText);
 
@@ -61,73 +57,7 @@ export function registerRearrangeValidation(): void {
 }
 
 // ---- full e2e: the REAL meta handler through the REAL CAS commit -------------
-if (!process.env.VALIDATION_ONLY) {
-    before(async () => {
-        await applySchema();
-        // A pinned deal, so a failure reproduces.
-        __setTableDealSeedOverride(new Uint8Array(32).fill(0x5a));
-    });
-    beforeEach(async () => { await resetDb(); __clearGameCache(); });
 
-    async function freshGame(): Promise<{ gameId: string; human: string }> {
-        const gameId = `rh${uuid().slice(0, 5)}`;
-        const human = uuid();
-        await seedLobby(gameId, [{ id: human, name: 'H', ready: false }, { id: uuid(), name: 'B', brain: 'random' }]);
-        await runMeta(gameId, human, { type: 'start' });
-        assert.equal((await mustReadTable(gameId)).status, L.GAME_STATUS_PLAYING, 'fixture: the game dealt');
-        return { gameId, human };
-    }
-    const seatOf = (t: { seats: { id: string }[] }, id: string) => t.seats.findIndex((s) => s.id === id);
+// The handpicked cases also run in the full e2e suite.
+if (!process.env.VALIDATION_ONLY) registerRearrangeValidation();
 
-    test('rearrange-hand: duplicate indices ([0,0,...]) are rejected - no card duplication', async () => {
-        const { gameId, human } = await freshGame();
-        const before = await mustReadTable(gameId);
-        const hand = before.seats[seatOf(before, human)].hand;
-        assert.ok(hand.length > 0, 'human has a hand');
-
-        const dupIndices = new Array(hand.length).fill(0);
-        await assert.rejects(runMeta(gameId, human, { type: 'rearrange-hand', card_indices: dupIndices }),
-            /malformed request/i, 'duplicate indices must be rejected');
-        const after = await mustReadTable(gameId);
-        assert.equal(after.version, before.version, 'the refusal committed nothing');
-        assert.deepEqual(keys(after.seats[seatOf(after, human)].hand), keys(hand), 'the hand is as it was');
-        const chk = await checkCardConservation(gameId);
-        assert.ok(chk.ok, `state intact after rejected exploit: ${chk.detail}`);
-
-        // What the guard stops: the unguarded map clones one card into every slot.
-        const naive = dupIndices.map((i) => hand[i]);
-        assert.equal(new Set(keys(naive)).size, 1, 'unguarded map yields copies of one card');
-    });
-
-    test('rearrange-hand: a real permutation reorders the hand and conserves cards', async () => {
-        const { gameId, human } = await freshGame();
-        const before = await mustReadTable(gameId);
-        const hand = before.seats[seatOf(before, human)].hand;
-        const reversed = hand.map((_, i) => hand.length - 1 - i);
-
-        await runMeta(gameId, human, { type: 'rearrange-hand', card_indices: reversed });
-
-        const after = await mustReadTable(gameId);
-        assert.equal(after.version, before.version + 1, 'committed');
-        assert.deepEqual(keys(after.seats[seatOf(after, human)].hand), keys([...hand].reverse()), 'hand reversed');
-        const chk = await checkCardConservation(gameId);
-        assert.ok(chk.ok, `conserved after legit rearrange: ${chk.detail}`);
-    });
-
-    test('rearrange-hand: out-of-range / wrong-length / non-array indices and a non-member are rejected', async () => {
-        const { gameId, human } = await freshGame();
-        const before = await mustReadTable(gameId);
-        const n = before.seats[seatOf(before, human)].hand.length;
-        const identity = Array.from({ length: n }, (_, i) => i);
-        await assert.rejects(runMeta(gameId, human, { type: 'rearrange-hand', card_indices: [n, 0, 1] }), /malformed request/i, 'out of range + wrong length');
-        await assert.rejects(runMeta(gameId, human, { type: 'rearrange-hand', card_indices: [n, ...identity.slice(1)] }), /malformed request/i, 'out of range');
-        // An ask's indices are a list; a request cannot be written with anything else there (helpers/ask.ts).
-        await assert.rejects(runMeta(gameId, human, { type: 'rearrange-hand', card_indices: 'nope' }), /not a list/i, 'non-array');
-        await assert.rejects(runMeta(gameId, uuid(), { type: 'rearrange-hand', card_indices: identity }), /not in game/i, 'non-member');
-        assert.equal((await mustReadTable(gameId)).version, before.version, 'no refusal committed');
-    });
-
-    registerRearrangeValidation();
-
-    after(async () => { __setTableDealSeedOverride(null); await pgPool.end(); });
-}

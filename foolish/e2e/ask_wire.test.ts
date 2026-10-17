@@ -13,8 +13,8 @@
 //
 // The C side of each layout is c/tests/tests.c (test_ask_round_trips,
 // test_table_ask_runs_every_kind, test_table_cast_carries_its_version). The
-// handlers over a real database are the suites e2e/meta.test.ts,
-// table_server_seat.test.ts, security_seat_from_auth.test.ts and wrap400_wire.test.ts.
+// handlers are c_base's, tested there (c_base/test/unit_app.c, the door's 415
+// included).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
@@ -23,7 +23,6 @@ import { clientTable, type Ask } from '../sdk/ts/table/client_table.ts';
 import { fixture, fixtureTable } from './helpers/table_fixture.ts';
 import { askBody, askOf } from './helpers/ask.ts';
 import { castParts } from './helpers/cast.ts';
-import { postJson, postBytes, tokenFor } from './helpers/edge.ts';
 import { bytesToBase64 } from '../sdk/ts/wire/bytes.ts';
 
 const SEED = Uint8Array.from({ length: 32 }, (_, i) => (i * 13 + 5) & 0xff);
@@ -194,26 +193,4 @@ test('a cast: the realtime message is { b }, and the client reads its version an
     const cut = parts.cast.subarray(0, parts.cast.length >> 1);
     assert.equal(clientTable().readCast(cut, { identity: 'none' }), null, 'a cast cut short does not read');
     assert.equal(clientTable().castVersion(cut), 42, 'but still says which version to fetch instead');
-});
-
-test('the door: a body that is not bytes gets a 415 and a refusal, before anything reads it', async () => {
-    const token = await tokenFor(A, 'Ana');
-    for (const name of ['meta', 'action'] as const) {
-        // What every client built before the requests left JSON sends.
-        const res = await postJson(name, token, { type: 'bump', game_id: 'g-1' });
-        assert.equal(res.status, 415, `${name}: unsupported media type`);
-        assert.equal(res.type, 'application/octet-stream', `${name}: the reply is bytes, never JSON`);
-        assert.deepEqual(res.refusal, { why: V.ASK_WHY_MALFORMED, code: 0, detail: 0 });
-    }
-    // No token: refused for the caller, with the same kind of body.
-    const anon = await postBytes('meta', null, askBody({ type: 'bump', game_id: 'g-1' }));
-    assert.equal(anon.status, 400);
-    assert.deepEqual(anon.refusal, { why: V.ASK_WHY_AUTH, code: 0, detail: 0 });
-    // Bytes that are not an ask, and bytes that are not a move: malformed, at the kernel.
-    const junk = await postBytes('meta', token, Uint8Array.of(1, 0xee, 1, 0x67));
-    assert.equal(junk.status, 400);
-    assert.deepEqual(junk.refusal, { why: V.ASK_WHY_MALFORMED, code: 0, detail: 0 });
-    const notMove = await postBytes('action', token, Uint8Array.of(9, 9));
-    assert.equal(notMove.status, 400);
-    assert.deepEqual(notMove.refusal, { why: V.ASK_WHY_MALFORMED, code: 0, detail: 0 });
 });
