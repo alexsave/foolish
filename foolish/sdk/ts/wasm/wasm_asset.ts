@@ -2,11 +2,8 @@
 //
 // TWO sources, chosen by what the runtime can actually do:
 //
-//   * a gzip STATIC ASSET next to this file, on the server. Deployed with
-//     `supabase functions deploy --use-api` (no Docker) via config.toml
-//     static_files: the .wasm.gz ships as a real binary and is never
-//     base64-expanded. Read synchronously (Deno edge: Deno.readFileSync; Node
-//     tests: node:fs).
+//   * a gzip STATIC ASSET next to this file, read synchronously from disk
+//     (Node tests and tools: node:fs; a Deno host: Deno.readFileSync).
 //   * a .gz FETCHED over the network, in the browser, which has no filesystem.
 //     `new URL('./<name>.wasm.gz', import.meta.url)` makes the bundler emit it
 //     as a real asset, so there is one file, tracked once, in its natural

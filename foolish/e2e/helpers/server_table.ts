@@ -14,8 +14,9 @@
 //
 // Server and tests only. The browser must never reach this module: it hands out
 // the unmasked state blob (e2e/security_client_boundary.test.ts denies it).
-// The Supabase server runs every game operation through it since Phase 4b
-// (docs/C_GAME_SHAPE_MIGRATION.md; server/impls/supabase/functions/_shared/adapter/table_io.ts).
+// The TypeScript server ran every game operation through it from Phase 4b
+// (docs/C_GAME_SHAPE_MIGRATION.md) until stage 4 deleted that server; the tests
+// keep it as their driver of the C Table.
 
 import type { BotsExports } from '../../sdk/ts/gen/exports.bots.ts';
 import * as L from '../../sdk/ts/gen/game_layout.bots.ts';

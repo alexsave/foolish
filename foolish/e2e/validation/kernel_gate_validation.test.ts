@@ -47,7 +47,6 @@ const PROVIDERS = join(REPO, 'src/app/providers.tsx');
 
 /** tsconfig.json `compilerOptions.paths`, as the bundler resolves them. */
 const ALIASES: Record<string, string> = {
-    '@shared/': 'server/impls/supabase/functions/_shared/',
     '@api/': 'server/api/',
     '@sdk/': 'sdk/',
 };

@@ -6,7 +6,7 @@ ships to every host:
 | module      | ships as                         | who loads it | contents |
 | ----------- | -------------------------------- | ------------ | -------- |
 | `web.wasm`  | gzip static asset `web.wasm.gz`  | the browser, by fetching it | the client slot, the animation plan, the replay reader, the message decode |
-| `bots.wasm` | gzip static asset `bots.wasm.gz` | the Supabase edge functions and Node, off disk | all of the above plus the C Table and every algorithmic bot strategy |
+| `bots.wasm` | gzip static asset `bots.wasm.gz` | Node (the tests and tools), off disk | all of the above plus the C Table and every algorithmic bot strategy |
 
 TWO LINKS OF ONE OBJECT SET, and comparing their two pages is the argument for
 building that way: same sources, same flags, same layout hash, different

@@ -1,9 +1,7 @@
 // The replay round-trip test covers the happy path of the rANS codec; these
 // exercise the pure codec/extras utilities around it that the round-trip never
-// reaches: hex (pg-bytea) conversion, the path-segment classifier, the URL
+// reaches: the path-segment classifier, the URL
 // wrapper, the names-only extras blob, and the corrupt-extras guard.
-//
-// Pure test — needs no Postgres.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -11,7 +9,7 @@ import { kernelB32Encode, kernelB32Decode, kernelReplayLink, kernelReplayLinkPar
 import { REPLAY_LINK_STYLE_URL, REPLAY_LINK_STYLE_QR } from '../sdk/ts/gen/msg_layout.bots.ts';
 
 import {
-  bytesToHex, hexToBytes, classifyPathSegment, bytesToBigint, bigintToBytes,
+  classifyPathSegment, bytesToBigint, bigintToBytes,
 } from '../server/api/common/replay_codec.ts';
 import { decodeExtras, splitReplayCode, joinReplayCode } from '../server/api/common/replay_extras.ts';
 import { encodeExtras } from './helpers/extras_encode.ts';
@@ -23,14 +21,6 @@ const urlToGame = (url: string): bigint =>
     bytesToBigint(kernelB32Decode(kernelReplayLinkParse(url)));
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
-
-test('bytesToHex / hexToBytes round-trip, with and without the pg \\x prefix', () => {
-  const bytes = new Uint8Array([0x00, 0x0a, 0xff, 0x42, 0x7f]);
-  const hex = bytesToHex(bytes);              // bytesToHex always emits the "\x" prefix
-  assert.ok(hex.startsWith('\\x'), 'bytesToHex emits a pg-bytea \\x prefix');
-  assert.deepEqual(hexToBytes(hex), bytes, 'a \\x-prefixed hex round-trips');
-  assert.deepEqual(hexToBytes(hex.slice(2)), bytes, 'a bare hex string decodes the same');
-});
 
 test('classifyPathSegment splits legacy shortcodes from long replay codes', () => {
   assert.equal(classifyPathSegment('abc123'), 'shortcode', 'short (<=7) is a legacy shortcode');

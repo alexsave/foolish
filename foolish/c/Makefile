@@ -1597,7 +1597,7 @@ wasm-bots: wasm-cc-check
 # browser was paying for and never ran: the four Monte-Carlo brains and cordite's
 # solver working set and leaf book (~92 KB of the 182 KB CODE section), plus the
 # whole C Table — wasm_table_bot_drive ALONE is 40,716 B of code, 22% of the old
-# module. The bot loop runs in the Supabase edge functions, and the in-browser
+# module. The bot loop runs in the server (c_base, native C), and the in-browser
 # Infinite Oracle is already its own module (oracle.wasm / oracle-mt.wasm), so
 # every one of those bytes was downloaded and never called.
 #

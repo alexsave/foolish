@@ -24,9 +24,9 @@
 // outside the project root, which is exactly what a git worktree has.
 // --in-place (the default when CI is set) builds in the checkout itself.
 //
-// The Supabase URL and key are inlined into the client bundle, so they are pinned
-// to fixed placeholders here: a measurement must not move because a machine has a
-// different project URL in its environment.
+// The backend URL is inlined into the client bundle, so it is pinned to a fixed
+// placeholder here: a measurement must not move because a machine has a
+// different backend URL in its environment.
 //
 // Exits non-zero when the build fails or a route is missing from the manifests.
 

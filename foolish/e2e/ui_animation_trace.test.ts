@@ -1195,7 +1195,7 @@ test('a pile makes room for itself while its card is in the air, and a pile whos
     //   - MY OWN pending 7d: on the board AND on the grid AND painted, right
     //     through somebody else's flight. A pile nothing is flying never loses
     //     its slot; that is the flicker the optimistic overlay exists to prevent.
-    // The same board e2e/fake_supabase.mts's `throw_in_race` scenario deals, so
+    // The same board the old browser harness's `throw_in_race` scenario dealt, so
     // the case below and the browser run are one experiment: everyone holds a
     // seven, and Anna's hand is long enough to be attacked three times.
     const board = threeMeFirst().deck('6s 8s 9s Ts')

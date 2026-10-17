@@ -1,6 +1,6 @@
 // See bot_roster.h. The table below is the single source of truth for what a
-// named bot IS; server/impls/supabase/seed.sql, bot_strategy.ts, ios_api.c and
-// wasm_bots_api.c are all consumers of it now.
+// named bot IS; c_base/sql/schema.sql's bot rows, ios_api.c and wasm_bots_api.c
+// are all consumers of it now.
 
 #include "bot_roster.h"
 

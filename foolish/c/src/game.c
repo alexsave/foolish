@@ -1,5 +1,5 @@
-// Game engine — direct port of server/impls/supabase/functions/_shared/{common_utils,
-// actions/*}. We keep the same semantics around defender rotation, draw
+// Game engine — direct port of the TypeScript server's common_utils and
+// actions/* (deleted since). We keep the same semantics around defender rotation, draw
 // order, elimination order, good_players reset, etc.
 //
 // Where TS does `Math.random()` we call game_random(); where the random

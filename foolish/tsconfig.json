@@ -18,9 +18,6 @@
     "allowImportingTsExtensions": true,
     "baseUrl": ".",
     "paths": {
-      "@shared/*": [
-        "./server/impls/supabase/functions/_shared/*"
-      ],
       "@api/*": [
         "./server/api/*"
       ],
@@ -49,7 +46,6 @@
     "node_modules",
     "offlinefun",
     "c",
-    "server/impls/supabase",
     "build"
   ]
 }

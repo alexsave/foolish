@@ -2,7 +2,7 @@
  * Seeded randomness for e2e suites
  * =============================================================================
  * The invariant the product runs on: the ONLY true nondeterministic draw is the
- * one crypto draw per game, at the deal (drawDealSeed, server/impls/supabase/functions/_shared/adapter/table_io.ts).
+ * one crypto draw per game, at the deal (cb_table_run, c_base/src/app/table_ops.c).
  * Mid-game engine randomness and bot decisions are both reseeded from it, so a
  * whole game replays from the deal seed.
  *

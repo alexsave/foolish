@@ -13,8 +13,8 @@ c/            the kernel — the ONE implementation (rules, bots, replay, solver
                 • Foolish.xcframework  → ios/vendor/                (Swift binding)
 sdk/
   ts/         the TypeScript binding — wasm/ (instances + FFI), wire/ (packed
-              byte layouts), packed marshalling. Loaded by the web app, the
-              Supabase edge functions, and the e2e harness.
+              byte layouts), packed marshalling, and the backend's client
+              (net/). Loaded by the web app and the e2e suite.
   swift/      the Swift binding — EngineC.swift (the fio_* FFI) + models/replay/
               session. Compiled into FoolishKit; loads Foolish.xcframework.
 ```
@@ -38,8 +38,8 @@ paths below are where a *build* puts them and not where git keeps them.
 ## How the server relates
 
 The server lives under [`server/`](../server): `server/api/` is the
-host-neutral surface (the shared `core`/`common` game logic), and
-`server/impls/supabase/` is the one concrete backend. Both depend on this
-`sdk/`; neither is depended on by it. The dependency direction
-`core ← sdk ← common ← adapter` and the "no vendor coupling above the adapter"
-rule are enforced by `e2e/validation/layering_validation.test.ts`.
+host-neutral surface (the shared `common` game logic the web still imports).
+The deployed backend is [`c_base/`](../../c_base), in C, which links the kernel
+directly. `server/api/` depends on this `sdk/`, never the reverse; the
+direction `gen ← sdk ← common` and the "no vendor coupling" rule are enforced by
+`e2e/validation/layering_validation.test.ts`.
