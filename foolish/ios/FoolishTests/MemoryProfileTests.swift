@@ -133,9 +133,22 @@ final class MemoryProfileTests: XCTestCase {
         _ = cost("warm-up 20 (not measured)") {
             for _ in 0..<20 { _ = BubbleSnapshot.render(publicView: view) }
         }
-        let twenty = cost("20 more renders, not retained") {
-            for _ in 0..<20 { _ = BubbleSnapshot.render(publicView: view) }
-        }
+        // THE BEST OF THREE, here and in `retained` and the plateau below.
+        //
+        // `phys_footprint` is the WHOLE PROCESS, and the process is the test
+        // host every earlier test ran in: a board one of them mounted, an
+        // animation it left running, a Task it did not await, can allocate
+        // while this measures. That is not a hypothetical either - this read
+        // 18 MB for 20 warmed renders that cost 0.0-0.1 in every quiet run,
+        // once, on a loaded Mac, and passed alone. Somebody else's allocation
+        // can land inside one trial; it cannot land inside all three, while a
+        // render that really keeps memory costs it in every trial. So the
+        // minimum is the render's own cost, and a real retention still fails.
+        let twenty = (1...3).map { trial in
+            cost("20 more renders, not retained (\(trial)/3)") {
+                for _ in 0..<20 { _ = BubbleSnapshot.render(publicView: view) }
+            }
+        }.min()!
 
         // What one snapshot costs if you KEEP it, with its pixels faulted in -
         // see `residentBytes`. The arithmetic is printed beside it because this
@@ -147,20 +160,23 @@ final class MemoryProfileTests: XCTestCase {
         // so the absolute cap below means the same thing on every simulator.
         let bitmapAt3xMB = Double(BubbleSnapshot.size.width * 3
                                   * BubbleSnapshot.size.height * 3) * 4 / 1_048_576
-        var heldImages: [UIImage] = []
-        var heldBytes: [Data] = []
-        let retained = cost("20 renders RETAINED + resident") {
-            for _ in 0..<20 {
-                guard let i = BubbleSnapshot.render(publicView: view) else { continue }
-                heldBytes.append(residentBytes(i))
-                heldImages.append(i)
+        let retained = (1...3).map { trial -> Double in
+            var heldImages: [UIImage] = []
+            var heldBytes: [Data] = []
+            let d = cost("20 renders RETAINED + resident (\(trial)/3)") {
+                for _ in 0..<20 {
+                    guard let i = BubbleSnapshot.render(publicView: view) else { continue }
+                    heldBytes.append(residentBytes(i))
+                    heldImages.append(i)
+                }
             }
-        }
-        XCTAssertEqual(heldImages.count, 20, "a snapshot failed to render")
+            XCTAssertEqual(heldImages.count, 20, "a snapshot failed to render")
+            heldBytes.removeAll()
+            heldImages.removeAll()
+            return d
+        }.min()!
         print(String(format: "  per retained snapshot:             %.2f MB  (arith %.2f)",
                      retained / 20, bitmapMB))
-        heldBytes.removeAll()
-        heldImages.removeAll()
 
         // DOES IT PLATEAU OR CLIMB? The extension re-renders this picture on
         // EVERY stage - every move, and again for every re-stage after a
@@ -169,7 +185,7 @@ final class MemoryProfileTests: XCTestCase {
         // levels off is merely a fixed cost. Only a long run tells them apart.
         print("\n-- snapshot growth over a long game (nothing retained) --")
         var marks: [Double] = [mb()]
-        for batch in 1...4 {
+        for batch in 1...6 {
             autoreleasepool {
                 for _ in 0..<50 { _ = BubbleSnapshot.render(publicView: view) }
             }
@@ -178,7 +194,9 @@ final class MemoryProfileTests: XCTestCase {
                          batch * 50, marks[batch], marks[batch] - marks[batch - 1]))
         }
         let firstBatch = marks[1] - marks[0]
-        let lastBatch = marks[4] - marks[3]
+        // The best of the last three batches (see `twenty`): a leak grows in
+        // all of them, a foreign allocation lands in one.
+        let lastBatch = (4...6).map { marks[$0] - marks[$0 - 1] }.min()!
 
         // WHICH PART of the snapshot is it? Three renders of the same size,
         // differing only in what is inside them, each run 100 times. A plain
@@ -218,7 +236,7 @@ final class MemoryProfileTests: XCTestCase {
         // tripwire for a render that starts allocating and not giving back, and
         // it is deliberately NOT the leak test: a per-render retention hides
         // inside the allocator's warm pages at this volume (verified - retaining
-        // all 20 moves this number not at all). The 200-render plateau below is
+        // all 20 moves this number not at all). The 300-render plateau below is
         // the assertion that catches that, and the one below it catches a
         // snapshot that grows.
         XCTAssertLessThan(twenty, 2,
@@ -272,9 +290,10 @@ final class MemoryProfileTests: XCTestCase {
         // to the extension's memory ceiling, and the bubble is re-rendered on
         // every stage. So the LAST batch of 50 must cost far less than the
         // first: levelling off is the property, not the absolute number.
+        // (Measured over 300 renders; the last three batches are 150-300.)
         XCTAssertLessThan(lastBatch, max(1.0, firstBatch * 0.5),
-                          "bubble snapshots are still growing after 200 renders "
-                          + "(first 50: \(firstBatch) MB, last 50: \(lastBatch) MB)")
+                          "bubble snapshots are still growing after 300 renders "
+                          + "(first 50: \(firstBatch) MB, best of the last three 50s: \(lastBatch) MB)")
     }
 
     /// The three contents the control run above renders, all at bubble size and

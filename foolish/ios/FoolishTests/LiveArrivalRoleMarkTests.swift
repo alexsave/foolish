@@ -43,9 +43,13 @@ final class LiveArrivalRoleMarkTests: XCTestCase {
         MessageTableView.resetDrawnMarks()
     }
 
-    /// Take the board down and let it go before the next test runs, so a
-    /// mounted board's teardown cannot land inside some later test's
-    /// measurement (MemoryProfileTests reads process-wide resident memory).
+    /// Take the board down and let it go before the next test runs, so the
+    /// next test does not start with this board's teardown still in flight
+    /// (the same pause LiveArrivalNothingBubbleTests takes). It is NOT what
+    /// keeps MemoryProfileTests honest any more: that test reads process-wide
+    /// memory, and a pause here only ever moved the stray allocation out of
+    /// its window on a quiet Mac. It now takes the best of three trials, which
+    /// a stray allocation cannot reach on any Mac.
     override func tearDown() async throws {
         window?.isHidden = true
         window?.rootViewController = nil
