@@ -59,8 +59,8 @@ static void bot_cycle(Game *g, uint32_t rng_base, BotDriveOut *drv) {
 
 // The bot game-loop, one thread per game - a TRAMPOLINE, not a blocking hook.
 // Each pass drives exactly ONE kernel cycle and RETURNS from the kernel; the
-// server then decides how to wait. Same split as supabase (which `await`s a
-// setTimeout) and the phone (Task.sleep): the KERNEL owns the cycle and the
+// server then decides how to wait. Same split as c_base (whose drive sleeps
+// between cycles) and the phone (Task.sleep): the KERNEL owns the cycle and the
 // delay value (bot_drive + bot_pacing_ms); the host owns how it waits. The
 // `Game` struct IS the continuation, so "resume" is just the next bot_drive.
 //
