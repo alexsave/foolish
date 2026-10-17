@@ -422,6 +422,41 @@ GET_ROW(nw_get_history, NW_HISTORY, NwHistoryRow, hist)
 
 static int sub_what(uint8_t w) { return w == NW_SUB_GAMES || w == NW_SUB_GAME || w == NW_SUB_CHAT; }
 
+// An entry may be any frame but a batch: a head, then its kind's bytes (which
+// the reader of the entry checks when it decodes it).
+static int entry_ok(const uint8_t *p, uint32_t len) { return len >= 2 && p[0] == NW_V1 && p[1] != NW_WS_BATCH; }
+
+int nw_batch_add(const uint8_t *frame, int len, uint8_t *out, int cap) {
+    if (!frame || len < 0 || !entry_ok(frame, (uint32_t)len)) return NW_E_WIRE;
+    wr w = { out, out ? cap : 0, 0, 0 };
+    w_blob(&w, (NwBlob){ frame, (uint32_t)len });
+    return w_done(&w);
+}
+
+int nw_batch_next(NwBlob entries, uint32_t *pos, NwBlob *one) {
+    one->p = NULL;
+    one->len = 0;
+    if (*pos == entries.len) return 0;
+    if (!entries.p || *pos > entries.len) return NW_E_WIRE;
+    rd r = { entries.p + *pos, (int)(entries.len - *pos), 0, 0 };
+    NwBlob b;
+    r_blob(&r, &b);
+    if (r.bad || !entry_ok(b.p, b.len)) return NW_E_WIRE;
+    *one = b;
+    *pos += (uint32_t)r.at;
+    return 1;
+}
+
+// A batch's entries: 1..NW_BATCH_MAX of them, each one, exactly filling it.
+static int batch_ok(NwBlob entries) {
+    uint32_t pos = 0;
+    NwBlob one;
+    int n = 0, rc;
+    while ((rc = nw_batch_next(entries, &pos, &one)) == 1)
+        if (++n > NW_BATCH_MAX) return 0;
+    return rc == 0 && n >= 1;
+}
+
 int nw_frame_encode(const NwFrame *f, uint8_t *out, int cap) {
     if (!f || !fits8(f->gid_len, NW_GID_MAX)) return NW_E_WIRE;
     wr w = { out, out ? cap : 0, 0, 0 };
@@ -467,6 +502,10 @@ int nw_frame_encode(const NwFrame *f, uint8_t *out, int cap) {
         if (!chat_ok(&f->chat)) return NW_E_WIRE;
         w_str8(&w, f->gid, f->gid_len);
         put_chat(&w, &f->chat);
+        break;
+    case NW_WS_BATCH:
+        if (!batch_ok(f->blob)) return NW_E_WIRE;
+        w_blob(&w, f->blob);
         break;
     default:
         return NW_E_WIRE;
@@ -516,6 +555,10 @@ int nw_frame_decode(const uint8_t *p, int len, NwFrame *out) {
     case NW_WS_CHAT:
         r_str8(&r, out->gid, NW_GID_MAX, &out->gid_len);
         get_chat(&r, &out->chat);
+        break;
+    case NW_WS_BATCH:
+        r_blob(&r, &out->blob);
+        if (!r.bad && !batch_ok(out->blob)) r.bad = 1;
         break;
     default: r.bad = 1;
     }

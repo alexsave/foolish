@@ -40,6 +40,13 @@
 //     NW_WS_SUB_AS str16 access token, then NW_WS_SUB's fields: a subscription
 //                  that says who asks, so it never waits on an AUTH frame
 //                  (API Gateway runs a connection's frames in no order)
+//     NW_WS_BATCH  (either direction) blob: 1..NW_BATCH_MAX entries, each a u32
+//                  length then one whole frame of any other kind, read in
+//                  order. A client's subscriptions of one moment ride in one
+//                  (behind API Gateway: one invocation and one stored write
+//                  instead of one each, all at once); the server answers a
+//                  batch's replies as one batch, and only a client that sent a
+//                  batch is ever sent one.
 //   stream, server to client
 //     NW_WS_ACK    u16 ref, u8 why (0, or an ASK_WHY_*), u8 seated
 //     NW_WS_VIEW   str8 game id, u32 version, blob envelope (empty: the seat is gone)
@@ -92,6 +99,9 @@
 #define NW_WS_CHAT   53
 #define NW_WS_PONG   54
 #define NW_WS_CATCHUP 55
+#define NW_WS_BATCH  56
+
+#define NW_BATCH_MAX 16   // frames in one NW_WS_BATCH
 
 #define NW_SCOPE_LOCAL  0   // sign out this session
 #define NW_SCOPE_GLOBAL 1   // sign out every session of the user
@@ -189,7 +199,7 @@ typedef struct {
     uint8_t  gid_len;       char gid[NW_GID_MAX];     // SUB, SUB_AS, UNSUB, VIEW, CAST, CHAT
     uint32_t version;                                 // SUB, SUB_AS (since), VIEW, CAST
     uint16_t token_len;     char token[NW_ACCESS_MAX];// AUTH, SUB_AS
-    NwBlob   blob;                                    // VIEW (envelope), CAST (cast)
+    NwBlob   blob;                                    // VIEW (envelope), CAST (cast), BATCH (its entries)
     NwChat   chat;                                    // CHAT
 } NwFrame;
 
@@ -238,6 +248,15 @@ int nw_get_history(const uint8_t *p, int len, int i, NwHistoryRow *out);
 
 int nw_frame_encode(const NwFrame *f, uint8_t *out, int cap);
 int nw_frame_decode(const uint8_t *p, int len, NwFrame *out);
+
+// A batch's entries (NwFrame.blob of an NW_WS_BATCH). nw_batch_add appends one
+// encoded frame to `out` as an entry: its bytes written, NW_E_WIRE for a frame
+// that cannot be an entry (shorter than a head, another batch), or NW_E_CAP.
+// nw_batch_next reads the entry at *pos and moves *pos past it: 1 with *one
+// pointing into `entries`, 0 at the end, NW_E_WIRE for a malformed list (the
+// frame decoder has already refused those for a decoded batch).
+int nw_batch_add(const uint8_t *frame, int len, uint8_t *out, int cap);
+int nw_batch_next(NwBlob entries, uint32_t *pos, NwBlob *one);
 
 // Base64 (RFC 4648, padded) both ways: a text frame's form of a message. The
 // encoder answers the text's length (no NUL), the decoder the bytes'.
