@@ -43,7 +43,6 @@ import {
   splitReplayCode,
   joinReplayCode,
 } from '../server/api/common/replay_extras.ts';
-import { encodeExtrasFromGaps } from './helpers/extras_encode.ts';
 import { buildReplayFrames } from '../src/replay/frames';
 import { fixtureTable } from './helpers/table_fixture.ts';
 import { recordBotTable } from './helpers/replay_play.ts';
@@ -250,72 +249,22 @@ export function registerReplayValidation(): void {
   // of its own - e2e/tutorial_game.test.ts, which replays it rather than just
   // decoding it - registered into this same fast runner by
   // e2e/validation/tutorial_validation.test.ts.
-  test('kernel decode rejects garbage and retired versions cleanly', () => {
+
+  // The bridge turns the kernel's refusal of a retired format into its
+  // sentence, naming the version. What the kernel refuses is c/tests/tests.c's
+  // (test_replay_refuses_every_retired_version walks the whole alphabet, and
+  // test_replay_answers_or_refuses_any_bytes feeds every reader junk); the
+  // over-long refusal is held apart from a malformed input in
+  // test_table_replay_code_and_extras, and the extras' time curve in
+  // test_extras_time_curve_is_scale_free and test_extras_corpus_round_trips.
+  test('a retired format is refused through the bridge by its number', () => {
     // The version is the first symbol, coded uniform over 16, so the integer 7
-    // IS a version-7 header. Seven is one of the retired formats (it predates
-    // the deal-order fix), and the kernel refuses it by number rather than
-    // trying to read it - c/tests/tests.c walks the whole alphabet.
+    // IS a version-7 header.
     assert.throws(
       () => replayPlaySteps(new Uint8Array([7]), null, null),
       /unsupported replay format version 7/,
     );
     assert.equal(replaySummary(new Uint8Array([7])), null, 'a retired code has no summary');
-    // random bytes: must terminate - either a clean throw or (by chance) a
-    // well-formed decode, never a hang or a malformed structure
-    const junk = new Uint8Array(64);
-    for (let i = 0; i < junk.length; i++) junk[i] = (i * 37 + 11) & 0xff;
-    try {
-      const steps = replayPlaySteps(junk, null, null);
-      assert.ok(Array.isArray(steps));
-    } catch {
-      // expected: a clean rejection
-    }
-  });
-  // Scale-free timing self-test: the same 1-byte/move curve must hold from
-  // nanosecond simulation steps to multi-week correspondence gaps.
-  test('replay extras: time scale holds from 1ns to 1 week units', () => {
-    for (const scale of [1e-9, 1e-6, 1e-3, 1, 3600, 86400 * 7]) {
-      const t0 = 1750000000;
-      const raw = [1, 2.5, 7, 0.3, 40, 12, 0.9, 100];
-      const gaps = raw.map((r) => r * scale);
-      const blob = encodeExtrasFromGaps(null, t0, gaps);
-      const back = decodeExtras(blob, 2, raw.length);
-      back.moveGaps!.forEach((g, i) => {
-        const want = raw[i] * scale;
-        assert.ok(Math.abs(g - want) <= want * 0.08, `time scale ${scale}: gap ${i} got ${g}, want ${want}`);
-      });
-    }
-  });
-
-  // The suite skips a game the kernel refuses as too long (roundTripGame ->
-  // false). That skip is only honest if the refusal is TOLD APART from a real
-  // fault, so pin both directions against the shipped kernel: an over-long
-  // session log is recognisable as the documented refusal, and a genuinely
-  // malformed encode input is NOT - it still refuses as something the suite
-  // fails on.
-  test('the kernel names an over-long game a refusal, not a malformed input', () => {
-    const game = playRandomGame(3, 'random');
-    // The real game encodes - so anything below is about the log alone.
-    const real = encodeGame(game);
-    assert.ok(typeof real !== 'number' && real.length > 0, `the real game encodes (${real})`);
-
-    // Past MAX_LOGS, whatever the kernel was built with: the session log played
-    // over and over is a whole log of far more records than any build keeps.
-    const copies = 64;
-    const tooLongLog = new Uint8Array(game.log.length * copies);
-    for (let i = 0; i < copies; i++) tooLongLog.set(game.log, i * game.log.length);
-    const over = encodeGame({ ...game, log: tooLongLog });
-    assert.ok(typeof over === 'number' && tooLong(over),
-      `an over-long session log must come back as the documented refusal (got ${over})`);
-
-    // A malformed input must NOT look like the refusal, or the skip would
-    // swallow real codec faults: no log at all (nothing to encode), and a log
-    // cut mid-record.
-    for (const [what, log] of [['no log', new Uint8Array(0)], ['a cut log', game.log.subarray(0, game.log.length - 1)]] as const) {
-      const rc = encodeGame({ ...game, log });
-      assert.ok(typeof rc === 'number' && !tooLong(rc),
-        `${what}: a malformed encode input must not be mistaken for the too-long refusal (got ${rc})`);
-    }
   });
 
   // A few short engine games round-trip byte-exact (engine<->replay drift guard).

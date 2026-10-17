@@ -16,6 +16,11 @@
  *
  * If those hold, a replay screen has no projection to keep in step with live
  * play, because it is not rendering a projection. It is rendering live play.
+ *
+ * (That every retired format is refused by its number is the kernel's, and
+ * c/tests/tests.c test_replay_refuses_every_retired_version walks the whole
+ * version alphabet through the decoder, the atom reader and the step rebuilder;
+ * the bridge's sentence for it is held in e2e/replay_codec.test.ts.)
  * ========================================================================== */
 
 import { test } from 'node:test';
@@ -70,25 +75,5 @@ test('a v6 replay decodes as LIVE evwire frames, and is the game that was played
             `${np}p: replay ends on the played discard count`);
         assert.equal(last!.deckCount, 0, `${np}p: a finished game drained its stock`);
         assert.equal(last!.seats.length, np, `${np}p: every seat came back`);
-    }
-});
-
-test('a replay refuses every retired format by number, and names it', () => {
-    // Nine formats came before the one that ships and none of them decodes: the
-    // deal order changed under 5..8, and 9 hid the deal, so its "hands" were
-    // retrodiction and there was no deck to rebuild. The kernel says which
-    // version it is looking at instead of guessing at the game (c/src/replay.h).
-    //
-    // THE CODE HAS TO REALLY CARRY THAT VERSION. The version is the first
-    // symbol, coded uniform over 16, so a decoder reads it as `x % 16` - which
-    // makes the single byte v the smallest code whose version IS v. This used to
-    // pass [0x05,0,0,0] and call it "a v5 code"; that integer is 0x05000000,
-    // whose version field is 0, so the assertion never once saw a 5.
-    for (const v of [5, 6, 7, 8, 9]) {
-        assert.throws(
-            () => replayPlaySteps(new Uint8Array([v]), null, null),
-            new RegExp(`unsupported replay format version ${v}\\b`),
-            `a version-${v} code must be refused by number`,
-        );
     }
 });

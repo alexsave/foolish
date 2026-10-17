@@ -1,22 +1,21 @@
 /* =============================================================================
- * FOUR QUESTIONS ASKED AS VALUES: the boundary, from the TypeScript side.
+ * THE HAND'S ORDER ASKED AS A VALUE: the boundary, from the TypeScript side.
  * =============================================================================
- * animStaleOptimisticOnTable, animReversalOrder, animHandLaidOut and
- * animFinishRows (sdk/ts/wasm/bots.ts) used to pack bytes into the kernel's io
- * buffer in a layout only a comment in c/wasm/wasm_api.c described. Each is now
- * a struct written through a generated writer and a struct read through a
- * generated reader (anim_plan.h AnimStaleAsk, AnimReversalAsk, AnimHandAsk,
- * AnimFinishAsk), with the converting in C.
+ * animHandLaidOut (sdk/ts/wasm/bots.ts) used to pack bytes into the kernel's io
+ * buffer in a layout only a comment in c/wasm/wasm_api.c described. It is now a
+ * struct written through a generated writer and a struct read through a
+ * generated reader (anim_plan.h AnimHandAsk, AnimHandLaid), with the converting
+ * in C.
  *
  * WHAT THE KERNEL ANSWERS is c/tests/tests.c's business (test_ask_*, which hold
- * all four to the byte entries over every value a card can take). This file
- * holds the part a native test cannot reach: that the values survive the
- * crossing - a null slot, the 64-bit deferred set as one bigint, a list at its
- * cap - and that the exported functions still answer in the shapes their
- * callers read. The reversal's and the finish order's rules have their own
- * suites (e2e/anim_plan_frames.test.ts, e2e/finish_order.test.ts and c/tests/tests.c
- * test_table_ranks_every_finished_game), and the
- * release rule has e2e/optimistic_animation.test.ts.
+ * the asks to the byte entries over every value a card can take, and
+ * test_reversal_steps_are_whole_groups_last_first for the reversal's steps).
+ * This file holds the part a native test cannot reach, on the module the
+ * browser loads (web.wasm): that the values survive the crossing - a null slot,
+ * the 64-bit deferred set as one bigint, a list at its cap - and that the
+ * exported function still answers in the shape its callers read. The stale and
+ * reversal asks were here too; the browser reaches that C through
+ * client_push_settle, never through a door of its own, so they live in C only.
  *
  * Pure kernel/wasm test - needs no Postgres.
  *
@@ -30,18 +29,12 @@
  *       -> "the deferred set crosses as one 64-bit value" fails
  *   animHandLaidOut writes `cards` as the order too
  *       -> all three hand tests fail
- *   animStaleOptimisticOnTable writes the table as the named list
- *       -> "the release indices..." fails
- *   animReversalOrder slices every step from 0
- *       -> "a reversal's steps..." fails
  * ========================================================================== */
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { animHandLaidOut } from '../sdk/ts/wasm/bots.ts';
-import { animReversalOrder, animStaleOptimisticOnTable } from './helpers/test_kernel_doors.ts';
-import { ANIM_CONFLICT_KEEP, ANIM_CONFLICT_REVERT } from '../sdk/ts/gen/anim.bots.ts';
 
 interface Card { suit: number; value: number }
 const c = (suit: number, value: number): Card => ({ suit, value });
@@ -81,34 +74,4 @@ test('a whole hand is answered, and one card more is refused by the writer', () 
     assert.deepEqual(animHandLaidOut(whole, reversed), reversed);
     assert.throws(() => animHandLaidOut([...whole, null], []), RangeError);
     assert.throws(() => animHandLaidOut([], [...whole, null]), RangeError);
-});
-
-test('the release indices come back as indices into the pending cards', () => {
-    const s7 = c(0, 7), h9 = c(1, 9), dA = c(3, 13), c5 = c(2, 5);
-    assert.deepEqual(animStaleOptimisticOnTable([s7, h9, dA], [dA, c5, s7], [dA]), [0],
-        'the 7 is on the table and unnamed; the ace is named; the 9 is not there');
-    assert.deepEqual(animStaleOptimisticOnTable([s7, h9, dA], [dA, c5, s7], []), [0, 2]);
-    assert.deepEqual(animStaleOptimisticOnTable([], [], []), []);
-    // The lists at their caps, the last index one a byte still holds.
-    const pending = Array.from({ length: 128 }, () => s7);
-    const table = Array.from({ length: 160 }, () => s7);
-    assert.equal(animStaleOptimisticOnTable(pending, table, table.map(() => h9)).at(-1), 127);
-    assert.throws(() => animStaleOptimisticOnTable([...pending, s7], [], []), RangeError);
-    assert.throws(() => animStaleOptimisticOnTable([], [...table, s7], []), RangeError);
-    assert.throws(() => animStaleOptimisticOnTable([], [], [...table, s7]), RangeError);
-});
-
-test("a reversal's steps are cut from the plan's order by its step counts", () => {
-    // Three groups of two, the middle one kept whole: two steps of two, last
-    // group first, each holding its own motions and not the plan's first two.
-    const R = ANIM_CONFLICT_REVERT, K = ANIM_CONFLICT_KEEP;
-    assert.deepEqual(animReversalOrder([R, R, K, K, R, R], [2, 2, 2]), [[4, 5], [0, 1]]);
-    // Every motion a plan can hold, flown as one step: 256 is a count, and a
-    // group size, the byte format wrapped to nothing.
-    const all = Array.from({ length: 256 }, () => R);
-    const steps = animReversalOrder(all, [256]);
-    assert.equal(steps.length, 1);
-    assert.deepEqual(steps[0], all.map((_, i) => i));
-    assert.throws(() => animReversalOrder([...all, R], [257]), RangeError);
-    assert.throws(() => animReversalOrder([R], [1, -1]), /anim_reversal_order error/);
 });

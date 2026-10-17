@@ -1404,8 +1404,9 @@ characters - a string that decodes to a DIFFERENT game and dies later under a
 codec error that was never the fault.
 
 Both halves are covered, and both were mutation-checked against the unfixed
-codec: `e2e/replay_codec_edges.test.ts` walks eleven pasted forms and six
-non-codes (2 of 8 failed on the old code, naming the exact defect), and the
+codec: the pasted forms and the non-codes (2 of 8 failed on the old code,
+naming the exact defect) are walked by `c/tests/tests.c` `test_link_parse` now
+that the stripping is the kernel's `replay_link_parse`, and the
 property test in `e2e/replay_codec.test.ts` re-reads every game it encodes
 through three pasted forms of that game's own link, so no replay code is frozen
 as a fixture anywhere.

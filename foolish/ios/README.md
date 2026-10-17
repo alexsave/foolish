@@ -148,8 +148,9 @@ The replay link's nicknames used to be gated there too, as a second
 Foundation-only codec. They are not Swift any more: #113 moved that format into
 the kernel (`c/src/replay_extras.c`), so `sdk/swift/ReplayExtras.swift` is a
 `CFoolish` wrapper like the rest of `sdk/swift/`, and what proves it is
-`e2e/replay_extras_kernel.test.ts` - which measures the kernel against the
-format as shipped rather than against a sibling implementation of it.
+`c/tests/tests.c` (`test_extras_blob_is_the_layout_it_claims` and
+`test_extras_corpus_round_trips`) - which hold the kernel to the format on its own
+terms rather than against a sibling implementation of it.
 `Base32.swift` stays Foundation-only; what keeps it there is the `/m/` bubble
 payload, not the parity job.
 

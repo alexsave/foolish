@@ -109,9 +109,9 @@ final class MessageReplayLinkTests: XCTestCase {
     ///
     /// THIS IS THE LIVE PATH, end to end: a finished chain, the controller
     /// the extension really runs, its own `replayURL`, the bytes a friend's
-    /// browser will read. The format's other half - that these bytes are the
-    /// bytes every earlier build wrote, so old links still decode - is
-    /// e2e/replay_extras_kernel.test.ts.
+    /// browser will read. The format's other half - the bytes themselves and
+    /// their round trip - is c/tests/tests.c (test_extras_blob_is_the_layout_it_claims,
+    /// test_extras_corpus_round_trips).
     func testTheLinkCarriesTheTableNicknames() async throws {
         let c = try await finishedController()
         let code = try XCTUnwrap(c.replayCode)
