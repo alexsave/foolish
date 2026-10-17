@@ -476,8 +476,15 @@ static void test_threads_agree(void) {
     AnalyseParams p;
     analyse_params_default(&p);
     p.seat = 0;
+#ifdef COVERAGE_CORPUS
+    // The coverage corpus (c/Makefile COVERAGE_CORPUS) needs the four threads,
+    // not robusta's playouts: a world a thread, of the cheapest brain.
+    p.roster_idx = bot_roster_find("handwritten");
+    p.worlds = 4;
+#else
     p.roster_idx = bot_roster_find("robusta");   // a real MC bot with scratch of its own
     p.worlds = 12;
+#endif
     p.exhaustive_cap = 0;
     p.solve_budget = 50000L;
     p.threads = 1;
@@ -539,6 +546,9 @@ static double now_s(void) {
 static void measure_cost(int all) {
     const char *engines[] = { "handwritten", "robusta", "blackpowder", "cordite", "octogen" };
     int n_engines = all ? (int)(sizeof engines / sizeof engines[0]) : 2;
+#ifdef COVERAGE_CORPUS
+    if (!all) n_engines = 1;   // the coverage corpus prices handwritten, not robusta's volume
+#endif
     printf("\ncost per playout (the game cut after 25 actions, Eva's decisions, 4 worlds each, one thread)%s:\n",
            all ? "" : " - pass --cost for every engine");
     for (int e = 0; e < n_engines; e++) {

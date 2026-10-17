@@ -77,6 +77,19 @@ jobs:
             require("fs").appendFileSync(process.env.GITHUB_OUTPUT, `line=${l}\nbranch=${b}\n`);
           '
 
+  # The volume the coverage corpus leaves out (c/Makefile COVERAGE_CORPUS):
+  # whole octogen and robusta games, thread agreement over Monte-Carlo worlds,
+  # twenty games a player count - every assertion the c-engine job no longer
+  # makes at volume, made here at the flags the product ships, uninstrumented.
+  # Before the split both ran in c-engine, instrumented, one after another.
+  c-native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: C kernel suites at volume (tests, msg_wire_test 20, analyse_test)
+        working-directory: foolish/c
+        run: make -j"$(nproc)" volume
+
   server-client-ts:
     runs-on: ubuntu-latest
     outputs:

@@ -8309,7 +8309,12 @@ static int tt_seat_step(Game *g) {
 
 static void test_solver_tt_value_carries_its_seat(void) {
     int compared = 0, zero_sum = 0, dirty_matches_clean = 0;
-    for (int gi = 0; gi < 12 && compared < 40; gi++) {
+#ifdef COVERAGE_CORPUS
+    enum { ENOUGH = 20 };   // the coverage corpus stops at the floor below (c/Makefile COVERAGE_CORPUS)
+#else
+    enum { ENOUGH = 40 };
+#endif
+    for (int gi = 0; gi < 12 && compared < ENOUGH; gi++) {
         game_set_seed((uint32_t)(gi + 1));
         Game g; memset(&g, 0, sizeof g);
         g.num_players = 2;
@@ -12429,7 +12434,12 @@ static void test_table_bot_drive_ignores_instance_history(void) {
         const char *brain = roster[e].key;
         tb_bot_table(brain, 40 + e);
         int drives = 0, same = 1, first_diff = -1;
-        for (int step = 0; step < 400 && drives < 40; step++) {
+#ifdef COVERAGE_CORPUS
+        enum { DRIVES = 10 };   // the coverage corpus stops at the floor below (c/Makefile COVERAGE_CORPUS)
+#else
+        enum { DRIVES = 40 };
+#endif
+        for (int step = 0; step < 400 && drives < DRIVES; step++) {
             TableCommit c;
             if (tb_reload(0) != 0 || tb_game.status != GAME_STATUS_PLAYING) break;
             if (bot_drive_eligible_mask(&tb_game, game_human_mask(&tb_game)) == 0) {
@@ -13028,10 +13038,17 @@ static void test_table_session_log_is_load_bearing_for_octogen(void) {
     static uint8_t before_state[8192], before_roster[ROSTER_BYTES], blank[10 * MAX_LOGS];
     TableCommit c;
     int compared = 0, changed = 0, refused = 0, widest_read = 0, widest_list = 0;
+    // Eighteen whole octogen games are volume, and the coverage corpus (c/Makefile
+    // COVERAGE_CORPUS) plays one, two-handed; the volume floors scale with it.
+#ifdef COVERAGE_CORPUS
+    enum { GAMES = 1, WIDEST = 2 };
+#else
+    enum { GAMES = 6, WIDEST = 4 };
+#endif
     tb_decisions = tb_blind_decisions = 0;
     table_choose_observer = tb_choose_observer;
-    for (int np = 2; np <= 4; np++) {
-        for (int gi = 0; gi < 6; gi++) {
+    for (int np = 2; np <= WIDEST; np++) {
+        for (int gi = 0; gi < GAMES; gi++) {
             tb_seed_bytes(np, 0xbe11 + gi);
             if (bl_bots_only_row(&bl_row, np, "octogen", tb_seed) != TABLE_OK) { refused++; continue; }
             for (int guard = 0; guard < 3000 && bl_row.status == GAME_STATUS_PLAYING; guard++) {
@@ -13077,11 +13094,11 @@ static void test_table_session_log_is_load_bearing_for_octogen(void) {
     fprintf(stderr, "  belief_logs: compared=%d changed=%d decisions=%d widest record octogen reads=%d pairs, pickup/discard=%d\n",
             compared, changed, tb_decisions, widest_read, widest_list);
     CHECK(refused == 0, "every octogen row dealt, loaded and drove");
-    CHECK(tb_decisions > 1000 && tb_blind_decisions == 0,
+    CHECK(tb_decisions > 1000 * GAMES * (WIDEST - 1) / 18 && tb_blind_decisions == 0,
           "every octogen decision was made over a board holding exactly the session-log records handed over");
     CHECK(widest_read < MAX_LOG_PAIRS,
           "every record octogen reads is below the native MAX_LOG_PAIRS, so the import read what bots.wasm reads");
-    CHECK(compared > 500, "more than 500 belief decisions were compared with and without the session log");
+    CHECK(compared > 500 * GAMES * (WIDEST - 1) / 18, "more than 500 belief decisions (27 a game) were compared with and without the session log");
     // If the log were ignored (the regression), this would be exactly 0.
     CHECK(changed > 0, "the session log changed octogen's move at least once (0 means the belief input is being ignored)");
 }
@@ -16987,7 +17004,11 @@ int main(void) {
     test_oracle_board_keeps_the_rules();
     test_podkidnoy_solver_and_book();
     test_podkidnoy_rollouts_never_transfer();
+    // Every brain playing podkidnoy whole is volume; the coverage corpus (c/Makefile
+    // COVERAGE_CORPUS) reaches its lines through the podkidnoy tests around it.
+#ifndef COVERAGE_CORPUS
     test_podkidnoy_every_brain();
+#endif
 #endif
     test_state_import_rejects_invalid_values();
     test_state_import_refuses_a_lobby_with_cards();
