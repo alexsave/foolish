@@ -12,7 +12,7 @@
  *      and bots, and continued - 2, 4 and 8 seats, every human seat and the
  *      spectator - the client reads the board the table holds, as that viewer
  *      may see it: the seat, the version, the names, the counts, the table, its
- *      own hand. The C Table writes the bytes (sdk/ts/table/server_table.ts on the
+ *      own hand. The C Table writes the bytes (e2e/helpers/server_table.ts on the
  *      fixtures' bots.wasm); the truth is the whole board the table loaded, read
  *      through the generated accessors (e2e/helpers/table_mem.ts), with every
  *      hand but the viewer's cut to its count. A push reads to the same board
@@ -35,7 +35,7 @@ import { clientTable, type TableView, encodeAction } from '../sdk/ts/table/clien
 import { pushToSequence } from '../src/state/pushSequence.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import * as V from '../sdk/ts/gen/view_layout.bots.ts';
-import type { ServerTable } from '../sdk/ts/table/server_table.ts';
+import type { ServerTable } from './helpers/server_table.ts';
 import { fixtureTable } from './helpers/table_fixture.ts';
 import { residentBoard, residentMoves, type MemCard } from './helpers/table_mem.ts';
 

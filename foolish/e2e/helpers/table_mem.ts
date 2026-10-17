@@ -17,7 +17,7 @@
 import * as L from '../../sdk/ts/gen/game_layout.bots.ts';
 import * as A from '../../sdk/ts/gen/anim.bots.ts';
 import { clientTable, type TableView, AWIRE_KIND, encodeAction, type AwireMove } from '../../sdk/ts/table/client_table.ts';
-import type { TableDrive, TableProducts } from '../../sdk/ts/table/server_table.ts';
+import type { TableDrive, TableProducts } from './server_table.ts';
 import { fixture, fixtureExports, fixtureTable, reasonOf, READY, IDLE, type FixtureSeat, type TableFixture } from './table_fixture.ts';
 
 export interface MemCard { suit: number; value: number }

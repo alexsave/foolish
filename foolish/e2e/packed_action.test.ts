@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 
 import { applySchema, resetDb, uuid, pgPool, broadcastLog } from './harness.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { gameStatusLabel } from '../sdk/ts/table/server_table.ts';
+import { gameStatusLabel } from './helpers/server_table.ts';
 import { fixture, PLAYING } from './helpers/table_fixture.ts';
 import { seedTable } from './helpers/table_db.ts';
 import { checkCardConservation, legalMoves, mustReadTable, type PlayMove } from './helpers/table_play.ts';

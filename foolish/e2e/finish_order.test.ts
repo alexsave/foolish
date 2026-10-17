@@ -6,7 +6,7 @@
  * two TS copies disagreed with C, because both laundered elimination_order
  * through a Set() "to handle backend bugs". The answer is now the kernel's:
  * anim_finish_rows (sdk/ts/wasm/bots.ts animFinishRows) for the end screen, and
- * table_rankings (sdk/ts/table/server_table.ts rankings) for the server's ELO.
+ * table_rankings (e2e/helpers/server_table.ts rankings) for the server's ELO.
  *
  * This drives real finished games (seeded bot tables played to completion by
  * the kernel's bot cycle, e2e/helpers/bot_table.ts) and asserts the ranking is a

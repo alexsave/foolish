@@ -18,7 +18,7 @@ import assert from 'node:assert/strict';
 
 import { AWIRE_KIND, AwireKindName, AwireMove, encodeAction, clientTable } from '../sdk/ts/table/client_table.ts';
 import { TABLE_STATUS_APPLIED, TABLE_STATUS_MOOT, TABLE_STATUS_REJECTED, TABLE_REJECT_STALE_ROUND, AWIRE_MAX_CARDS } from '../sdk/ts/gen/view_layout.bots.ts';
-import { createServerTable } from '../sdk/ts/table/server_table.ts';
+import { createServerTable } from './helpers/server_table.ts';
 import { TABLE_APPLIED, TABLE_MOOT, TABLE_REJECTED, TABLE_STALE_ROUND } from '../sdk/ts/gen/game_layout.bots.ts';
 
 type Card = NonNullable<AwireMove['cards']>[number];

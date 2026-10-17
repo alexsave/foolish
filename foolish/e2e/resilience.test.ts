@@ -29,7 +29,7 @@ import { seedTable } from './helpers/table_db.ts';
 import { legalMoves, mustReadTable } from './helpers/table_play.ts';
 import { runAction, runMeta, seedLobby } from './helpers/table_server.ts';
 import { __botCycle } from '../server/impls/supabase/functions/_shared/adapter/bot_actions.ts';
-import { serverTable } from '../sdk/ts/table/server_table.ts';
+import { serverTable } from './helpers/server_table.ts';
 import { AWIRE_KIND } from '../sdk/ts/table/client_table.ts';
 import { TABLE_STATUS_APPLIED, TABLE_STATUS_MOOT } from '../sdk/ts/gen/view_layout.bots.ts';
 import { suiteRng } from './helpers/rng.ts';

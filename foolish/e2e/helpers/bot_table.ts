@@ -8,7 +8,7 @@
 //   g.code    // the verified v6 replay code of the finished game
 //   g.state   // the final durable state blob, g.roster its roster, g.log its session log
 //
-// Every step is a C Table call over bots.wasm (sdk/ts/table/server_table.ts):
+// Every step is a C Table call over bots.wasm (e2e/helpers/server_table.ts):
 // the lobby is a kernel-sealed fixture, the deal is table_ready with the seed,
 // each cycle is exactly the server's bot cycle (bot_actions.ts runCycle: load,
 // set the deal seed, import the session log when a bot reads it, table_bot_drive,
@@ -20,7 +20,7 @@
 // import it too. Tests and harnesses only (it holds the unmasked state blob).
 
 import * as L from '../../sdk/ts/gen/game_layout.bots.ts';
-import { tableCodeName, type ServerTable, type TableDrive } from '../../sdk/ts/table/server_table.ts';
+import { tableCodeName, type ServerTable, type TableDrive } from './server_table.ts';
 import { fixture, fixtureExports, fixtureTable } from './table_fixture.ts';
 
 /** The 32-byte deal seed of test game `s` at `np` seats (the seeds the frozen games in seeded_codes.ts were dealt on). */

@@ -11,7 +11,7 @@
 // in C, so the cold figure is the server's own path.
 import { readFileSync } from 'node:fs';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { createServerTable, type ServerTable } from '../sdk/ts/table/server_table.ts';
+import { createServerTable, type ServerTable } from './helpers/server_table.ts';
 const __log = console.log.bind(console); console.log = () => {}; console.warn = () => {};
 
 const SEATS = 6;

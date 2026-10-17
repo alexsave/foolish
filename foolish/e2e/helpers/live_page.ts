@@ -43,7 +43,7 @@ import { clientTable } from '../../sdk/ts/table/client_table.ts';
 import '../../server/impls/supabase/functions/_shared/adapter/bot_actions.ts';
 import '../../server/impls/supabase/functions/_shared/adapter/finalize.ts';
 import '../../server/impls/supabase/functions/_shared/adapter/packed_action.ts';
-import { serverTable } from '../../sdk/ts/table/server_table.ts';
+import { serverTable } from './server_table.ts';
 
 // The page and the server both narrate; a failure is an assertion, not a log line.
 if (!process.env.E2E_VERBOSE) { console.error = () => {}; console.debug = () => {}; }

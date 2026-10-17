@@ -26,7 +26,7 @@ import * as L from '../../sdk/ts/gen/game_layout.bots.ts';
 import { WIRE_CARD_NONE } from '../../sdk/ts/gen/kernel_consts.bots.ts';
 import { LAYOUT_HASH } from '../../sdk/ts/gen/layout_hash.bots.ts';
 import type { BotsTestExports } from '../../sdk/ts/gen/exports.bots_test.ts';
-import { ServerTable } from '../../sdk/ts/table/server_table.ts';
+import { ServerTable } from './server_table.ts';
 import { assertLayoutHash } from '../../sdk/ts/wasm/layout_hash.ts';
 import { botsTestWasm } from './bots_test_wasm.ts';
 

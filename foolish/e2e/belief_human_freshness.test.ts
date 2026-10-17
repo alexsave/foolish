@@ -17,7 +17,7 @@
 // could only prove the loop HANDED the bytes over, never that the importer
 // spliced them into the board octogen actually read - which is precisely the gap
 // the stale-belief bugs lived in. The probe records the log as the strategy was
-// about to read it, on the server's table instance (sdk/ts/table/server_table.ts
+// about to read it, on the server's table instance (e2e/helpers/server_table.ts
 // serverTable), which is where the loop's drive (table_bot_drive) runs.
 
 import './harness.ts';
@@ -26,7 +26,7 @@ import assert from 'node:assert/strict';
 
 import { applySchema, resetDb, uuid } from './harness.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { serverTable } from '../sdk/ts/table/server_table.ts';
+import { serverTable } from './helpers/server_table.ts';
 import { __setTableDealSeedOverride } from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
 import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
 import { supabaseClient } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';

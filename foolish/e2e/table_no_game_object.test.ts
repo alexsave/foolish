@@ -117,7 +117,7 @@ test('no module the server loads resolves a seat from an id in TypeScript (the k
         }
     }
     assert.deepEqual(offenders, [], `\n${offenders.join('\n')}\n`);
-    const wrapper = readFileSync(join(REPO, 'sdk/ts/table/server_table.ts'), 'utf8');
+    const wrapper = readFileSync(join(REPO, 'e2e/helpers/server_table.ts'), 'utf8');
     assert.match(wrapper, /seatOf\([^)]*\)[^{]*\{[^}]*wasm_table_seat_of/, 'ServerTable.seatOf is the kernel call');
 });
 

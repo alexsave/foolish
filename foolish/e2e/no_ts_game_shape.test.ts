@@ -162,7 +162,7 @@ const ALLOWED: Record<string, string> = { ...INDEPENDENT_READERS, ...NOT_YET_GEN
 test('the walk reads the product tree (the checks are not vacuous)', () => {
     const files = sources();
     assert.ok(files.length > 250, `found ${files.length} files`);
-    for (const f of ['sdk/ts/wasm/bots.ts', 'sdk/ts/table/server_table.ts', 'src/app/providers.tsx', 'e2e/table_no_game_object.test.ts']) {
+    for (const f of ['sdk/ts/wasm/bots.ts', 'e2e/helpers/server_table.ts', 'src/app/providers.tsx', 'e2e/table_no_game_object.test.ts']) {
         assert.ok(files.includes(f), `the walk reaches ${f}`);
     }
     assert.ok(!files.some((f) => f.startsWith('sdk/ts/gen/') || f.startsWith('tools/structgen/') || f.startsWith('shared/tools/') || f.startsWith('offlinefun/') || f.startsWith('c/')), 'generated, structgen, kernel and offlinefun files are out');

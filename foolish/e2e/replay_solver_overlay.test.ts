@@ -20,7 +20,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { __clientKernelExports, replayPlaySteps, replaySummary } from '../sdk/ts/wasm/bots.ts';
-import { ServerTable } from '../sdk/ts/table/server_table.ts';
+import { ServerTable } from './helpers/server_table.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import type { BotsExports } from '../sdk/ts/gen/exports.bots.ts';
 import { botCycle, dealBotTable, playBotTable, replayCodeOf, seedBytes, type BotTableRow } from './helpers/bot_table.ts';

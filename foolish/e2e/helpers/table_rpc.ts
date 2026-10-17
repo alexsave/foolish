@@ -7,7 +7,7 @@
 // each migration) and call the writers directly on it rather than through the
 // server's supabase client.
 
-import type { TableProducts, TableSeat } from '../../sdk/ts/table/server_table.ts';
+import type { TableProducts, TableSeat } from './server_table.ts';
 import { pgPool } from '../harness.ts';
 
 type Db = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> };

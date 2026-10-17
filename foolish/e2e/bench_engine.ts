@@ -1,5 +1,5 @@
 // Microbench: raw rules-engine throughput - full bot games simulated in-process
-// on the C Table the server plays (sdk/ts/table/server_table.ts over bots.wasm),
+// on the C Table the server plays (e2e/helpers/server_table.ts over bots.wasm),
 // no DB, no broadcast:
 //
 //   BENCH_GAMES=400 BENCH_PLAYERS=4 BENCH_STRATEGY=random \

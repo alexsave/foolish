@@ -33,7 +33,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { createServerTable, type ServerTable } from '../sdk/ts/table/server_table.ts';
+import { createServerTable, type ServerTable } from './helpers/server_table.ts';
 import { fixtureTable, type TableFixture } from './helpers/table_fixture.ts';
 import { lcg, randomPlayingBoard, type Rnd } from './helpers/kernel_board.ts';
 

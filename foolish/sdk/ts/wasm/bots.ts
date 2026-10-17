@@ -2,7 +2,7 @@
 // bot strategy and the wasm entries in c/wasm/).
 //
 // The game itself is never marshalled from here: servers and tests hold a game
-// as the C Table (sdk/ts/table/server_table.ts) and the web as its client slot
+// as the C Table (e2e/helpers/server_table.ts) and the web as its client slot
 // (sdk/ts/table/client_table.ts), both over this module's instance. What is left
 // here are the doors that take a handful of bytes rather than a board: the bot
 // roster, the replay codec and its extras and links, the iMessage envelope and
@@ -176,7 +176,7 @@ export function kernelBotRoster(): readonly BotRosterEntry[] {
  * The nicknames and per-move timing behind the dash in a share link. The codec
  * is the kernel's, and what a host does with it here is READ a blob and build a
  * link around a roster; a finished game's blob is written by the C Table
- * (sdk/ts/table/server_table.ts). Synchronous, assuming a warm module, like
+ * (e2e/helpers/server_table.ts). Synchronous, assuming a warm module, like
  * every other reader here. Callers catch an extras failure and fall back to
  * "P1"/"P2".
  */

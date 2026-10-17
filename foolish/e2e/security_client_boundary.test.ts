@@ -72,11 +72,11 @@ test('canary: a client module importing the structgen Game accessors is caught b
 });
 
 test('canary: a client module importing the server table wrapper is caught by the module rule', async () => {
-    // sdk/ts/table/server_table.ts hands out the unmasked state blob (a commit's
+    // e2e/helpers/server_table.ts hands out the unmasked state blob (a commit's
     // products). It must be denied by name, not only because it happens to import
     // the Game accessors today.
-    const r = await scanClientBoundary({ stdin: `import { createServerTable } from './sdk/ts/table/server_table.ts'; console.log(createServerTable);` });
-    assert.ok(r.modules.includes('sdk/ts/table/server_table.ts'), `module rule saw server_table.ts:${explain(r)}`);
+    const r = await scanClientBoundary({ stdin: `import { createServerTable } from './e2e/helpers/server_table.ts'; console.log(createServerTable);` });
+    assert.ok(r.modules.includes('e2e/helpers/server_table.ts'), `module rule saw server_table.ts:${explain(r)}`);
     assert.ok(r.wasmExports.some(s => s.name === 'wasm_table_commit_products'), `and the unmasked commit export:${explain(r)}`);
 });
 
