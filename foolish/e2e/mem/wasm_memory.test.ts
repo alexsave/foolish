@@ -263,9 +263,19 @@ test("bots.wasm declared INITIAL memory is 34 pages (static buffers, not the run
     // without those two exports: __heap_base 2,166,144 B -> 2,165,216 B
     // (-928 B, g_msg_header's 656 B among it). That leaves 63,008 BYTES under
     // the 34-page line.
+    //
+    // Still 34 with the backend's client in this link (stage 3 brought it, and
+    // the pump and its book of games after it: c/src/netclient.c). The pump
+    // first came to 11,120 B over the line, so its statics were cut to fit:
+    // the waiting intents' strings and bytes share one 2,560 B arena instead of
+    // a full NcIntent per slot (10,752 B -> 3,264 B), the rows of every list
+    // kind share one buffer, the stream's two NwFrames are one, and the
+    // envelope's Roster and the frame encoder's scratch moved to the stack.
+    // Measured with __heap_base exported: 2,228,016 B, which leaves 208 BYTES
+    // under the 34-page line.
     const wasm = new Uint8Array(gunzipSync(readFileSync(resolve('sdk/ts/wasm/bots.wasm.gz'))));
     const { min } = memLimits(wasm);
-    assert.equal(min, 34, `bots.wasm initial memory is ${min} pages (${min * PAGE}B); expected 34: the deliberate static buffers (g_io 400 KiB, the cordite solver working set, the move enumerators, the resident and replay Games, the Table's 64-slot snapshot store that holds one deal) plus the bridge's generated structs (ReplayExtras 8,744 B, RosterSpec 3,448 B, ReplayFrameIndex 1,032 B). Going UP is a regression: 63,008 B of static room are left under the 34-page line, so look for a new buffer below __heap_base. Going DOWN means something was freed - lower this pin and take the page back.`);
+    assert.equal(min, 34, `bots.wasm initial memory is ${min} pages (${min * PAGE}B); expected 34: the deliberate static buffers (g_io 400 KiB, the cordite solver working set, the move enumerators, the resident and replay Games, the Table's 64-slot snapshot store that holds one deal) plus the bridge's generated structs (ReplayExtras 8,744 B, RosterSpec 3,448 B, ReplayFrameIndex 1,032 B). Going UP is a regression: 208 B of static room are left under the 34-page line, so look for a new buffer below __heap_base. Going DOWN means something was freed - lower this pin and take the page back.`);
 });
 
 test("web.wasm declared INITIAL memory is 25 pages - 9 fewer than the server's link", () => {

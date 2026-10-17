@@ -63,13 +63,18 @@ static uint32_t g_event_at[NC_EVENTS_MAX];
 static int      g_n_events;
 static uint32_t g_session_told;         // the session generation the host was last told
 static uint8_t  g_frame[NC_FRAME_MAX];
+static NwFrame  g_nwf;                  // the frame decoded or being encoded
 static NcOut    g_out;
 
-static NcGameRow     g_game_row;
-static NcChatRow     g_chat_row;
-static NcBotRow      g_bot_row;
-static NcBoardRow    g_board_row;
-static NcHistoryRow  g_hist_row;
+// One row is read at a time (what a reader answers is good until the next
+// call), so every kind shares one buffer.
+static union {
+    NcGameRow    game;
+    NcChatRow    chat;
+    NcBotRow     bot;
+    NcBoardRow   board;
+    NcHistoryRow hist;
+} g_row;
 static NcHistoryHead g_hist_head;
 static NcReplay      g_replay;
 static NcAction      g_action;
@@ -418,10 +423,10 @@ const NcGameRow *nc_view_read(int status, const uint8_t *body, int len) {
     NwBlob env;
     if (nw_view_decode(body, len, &v, &env) != NW_OK) { malformed(status); return NULL; }
     memset(&g_error, 0, sizeof g_error);
-    g_game_row.version = v;
-    g_game_row.env_off = off_in(body, env.p);
-    g_game_row.env_len = env.len;
-    return &g_game_row;
+    g_row.game.version = v;
+    g_row.game.env_off = off_in(body, env.p);
+    g_row.game.env_len = env.len;
+    return &g_row.game;
 }
 
 const NcReplay *nc_replay_read(int status, const uint8_t *body, int len) {
@@ -448,10 +453,10 @@ const NcGameRow *nc_game_row(const uint8_t *body, int len, int i) {
     uint32_t v;
     NwBlob env;
     if (nw_get_game(body, len, i, &v, &env) != NW_OK) return NULL;
-    g_game_row.version = v;
-    g_game_row.env_off = off_in(body, env.p);
-    g_game_row.env_len = env.len;
-    return &g_game_row;
+    g_row.game.version = v;
+    g_row.game.env_off = off_in(body, env.p);
+    g_row.game.env_len = env.len;
+    return &g_row.game;
 }
 
 static void chat_copy(NcChatRow *o, const NwChat *c) {
@@ -469,54 +474,54 @@ static void chat_copy(NcChatRow *o, const NwChat *c) {
 const NcChatRow *nc_chat_row(const uint8_t *body, int len, int i) {
     NwChat c;
     if (nw_get_chat(body, len, i, &c) != NW_OK) return NULL;
-    chat_copy(&g_chat_row, &c);
-    return &g_chat_row;
+    chat_copy(&g_row.chat, &c);
+    return &g_row.chat;
 }
 
 const NcBotRow *nc_bot_row(const uint8_t *body, int len, int i) {
     NwBot b;
     if (nw_get_bot(body, len, i, &b) != NW_OK) return NULL;
-    memset(&g_bot_row, 0, sizeof g_bot_row);
-    g_bot_row.id_len = b.id_len;
-    memcpy(g_bot_row.id, b.id, b.id_len);
-    g_bot_row.nickname_len = b.nickname_len;
-    memcpy(g_bot_row.nickname, b.nickname, b.nickname_len);
-    g_bot_row.key_len = b.key_len;
-    memcpy(g_bot_row.key, b.key, b.key_len);
-    return &g_bot_row;
+    memset(&g_row.bot, 0, sizeof g_row.bot);
+    g_row.bot.id_len = b.id_len;
+    memcpy(g_row.bot.id, b.id, b.id_len);
+    g_row.bot.nickname_len = b.nickname_len;
+    memcpy(g_row.bot.nickname, b.nickname, b.nickname_len);
+    g_row.bot.key_len = b.key_len;
+    memcpy(g_row.bot.key, b.key, b.key_len);
+    return &g_row.bot;
 }
 
 const NcBoardRow *nc_board_row(const uint8_t *body, int len, int i) {
     NwBoardRow b;
     if (nw_get_board(body, len, i, &b) != NW_OK) return NULL;
-    memset(&g_board_row, 0, sizeof g_board_row);
-    g_board_row.is_bot = b.is_bot;
-    g_board_row.id_len = b.id_len;
-    memcpy(g_board_row.id, b.id, b.id_len);
-    g_board_row.name_len = b.name_len;
-    memcpy(g_board_row.name, b.name, b.name_len);
-    g_board_row.rating = b.rating;
-    g_board_row.games = b.games;
-    return &g_board_row;
+    memset(&g_row.board, 0, sizeof g_row.board);
+    g_row.board.is_bot = b.is_bot;
+    g_row.board.id_len = b.id_len;
+    memcpy(g_row.board.id, b.id, b.id_len);
+    g_row.board.name_len = b.name_len;
+    memcpy(g_row.board.name, b.name, b.name_len);
+    g_row.board.rating = b.rating;
+    g_row.board.games = b.games;
+    return &g_row.board;
 }
 
 const NcHistoryRow *nc_history_row(const uint8_t *body, int len, int i) {
     NwHistoryRow h;
     if (nw_get_history(body, len, i, &h) != NW_OK) return NULL;
-    memset(&g_hist_row, 0, sizeof g_hist_row);
-    g_hist_row.id_len = h.id_len;
-    memcpy(g_hist_row.id, h.id, h.id_len);
-    g_hist_row.created_ms = h.created_ms;
-    g_hist_row.n_players = h.n_players;
+    memset(&g_row.hist, 0, sizeof g_row.hist);
+    g_row.hist.id_len = h.id_len;
+    memcpy(g_row.hist.id, h.id, h.id_len);
+    g_row.hist.created_ms = h.created_ms;
+    g_row.hist.n_players = h.n_players;
     for (int k = 0; k < h.n_players; k++) {
-        g_hist_row.players[k].len = h.player_len[k];
-        memcpy(g_hist_row.players[k].id, h.player[k], h.player_len[k]);
+        g_row.hist.players[k].len = h.player_len[k];
+        memcpy(g_row.hist.players[k].id, h.player[k], h.player_len[k]);
     }
-    g_hist_row.moves_off = off_in(body, h.moves.p);
-    g_hist_row.moves_len = h.moves.len;
-    g_hist_row.extras_off = off_in(body, h.extras.p);
-    g_hist_row.extras_len = h.extras.len;
-    return &g_hist_row;
+    g_row.hist.moves_off = off_in(body, h.moves.p);
+    g_row.hist.moves_len = h.moves.len;
+    g_row.hist.extras_off = off_in(body, h.extras.p);
+    g_row.hist.extras_len = h.extras.len;
+    return &g_row.hist;
 }
 
 const NcHistoryHead *nc_history_head(const uint8_t *body, int len) {
@@ -543,10 +548,21 @@ typedef struct {
     uint32_t ticket;
     uint32_t sent_id;
     int64_t  not_before;
-    NcIntent in;
+    // The intent, its strings and bytes in g_arena at `at`: name, password, bytes.
+    uint8_t  kind, flag;
+    uint8_t  gid_len;       char gid[NW_GID_MAX];
+    int64_t  intent;
+    uint16_t at;
+    uint8_t  name_len, password_len;
+    uint16_t bytes_len;
 } slot;
 
 static slot     g_slots[NC_PUMP_MAX];
+// What the waiting intents carry beyond a game id: most carry nothing, a move a
+// few bytes, a chat line or an ask up to NC_BODY_MAX. Shared rather than a full
+// NcIntent per slot, which was most of the pump's memory.
+#define NC_ARENA_BYTES 2560
+static uint8_t  g_arena[NC_ARENA_BYTES];
 static uint32_t g_ticket;
 static uint32_t g_req_id;
 static uint32_t g_refresh_id;           // the refresh in flight, 0 none
@@ -616,9 +632,45 @@ static const NcRequest *build(const NcIntent *in, int64_t now) {
 static void done_begin(NcDone *d, const slot *sl) {
     memset(d, 0, sizeof *d);
     d->ticket = sl->ticket;
-    d->kind = sl->in.kind;
-    d->gid_len = sl->in.gid_len;
-    memcpy(d->gid, sl->in.gid, sl->in.gid_len);
+    d->kind = sl->kind;
+    d->gid_len = sl->gid_len;
+    memcpy(d->gid, sl->gid, sl->gid_len);
+}
+
+static int slot_extra(const slot *sl) { return sl->name_len + sl->password_len + sl->bytes_len; }
+
+// The intent a slot holds, whole again.
+static void slot_intent(const slot *sl, NcIntent *in) {
+    memset(in, 0, sizeof *in);
+    in->kind = sl->kind;
+    in->flag = sl->flag;
+    in->gid_len = sl->gid_len;
+    memcpy(in->gid, sl->gid, sl->gid_len);
+    in->intent = sl->intent;
+    const uint8_t *p = g_arena + sl->at;
+    in->name_len = sl->name_len;
+    memcpy(in->name, p, sl->name_len);
+    in->password_len = sl->password_len;
+    memcpy(in->password, p + sl->name_len, sl->password_len);
+    in->bytes_len = sl->bytes_len;
+    memcpy(in->bytes, p + sl->name_len + sl->password_len, sl->bytes_len);
+}
+
+// The lowest offset in g_arena where `need` bytes overlap no waiting slot's, or -1.
+static int arena_find(int need) {
+    if (need == 0) return 0;
+    for (int c = -1; c < NC_PUMP_MAX; c++) {
+        int at = c < 0 ? 0 : g_slots[c].state != SLOT_FREE && slot_extra(&g_slots[c]) ? g_slots[c].at + slot_extra(&g_slots[c]) : -1;
+        if (at < 0 || at + need > NC_ARENA_BYTES) continue;
+        int clear = 1;
+        for (int i = 0; i < NC_PUMP_MAX && clear; i++) {
+            const slot *o = &g_slots[i];
+            int n = slot_extra(o);
+            if (o->state != SLOT_FREE && n && at < o->at + n && o->at < at + need) clear = 0;
+        }
+        if (clear) return at;
+    }
+    return -1;
 }
 
 static void done_error(NcDone *d) {
@@ -642,7 +694,7 @@ static void drop(slot *sl, uint8_t why, int status) {
 
 static void drop_user_slots(uint8_t why, int status) {
     for (int i = 0; i < NC_PUMP_MAX; i++)
-        if (g_slots[i].state != SLOT_FREE && needs_user(g_slots[i].in.kind)) drop(&g_slots[i], why, status);
+        if (g_slots[i].state != SLOT_FREE && needs_user(g_slots[i].kind)) drop(&g_slots[i], why, status);
 }
 
 // The session is over (signed out, deleted, its refresh refused): forget it and
@@ -678,11 +730,25 @@ static int32_t backoff_ms(int attempts) {
 }
 
 static slot *slot_take(const NcIntent *in) {
+    int need = in->name_len + in->password_len + in->bytes_len;
+    int at = arena_find(need);
+    if (at < 0) return NULL;
     for (int i = 0; i < NC_PUMP_MAX; i++) {
         slot *sl = &g_slots[i];
         if (sl->state != SLOT_FREE) continue;
         memset(sl, 0, sizeof *sl);
-        sl->in = *in;
+        sl->kind = in->kind;
+        sl->flag = in->flag;
+        sl->gid_len = in->gid_len;
+        memcpy(sl->gid, in->gid, in->gid_len);
+        sl->intent = in->intent;
+        sl->at = (uint16_t)at;
+        sl->name_len = in->name_len;
+        sl->password_len = in->password_len;
+        sl->bytes_len = in->bytes_len;
+        memcpy(g_arena + at, in->name, in->name_len);
+        memcpy(g_arena + at + in->name_len, in->password, in->password_len);
+        memcpy(g_arena + at + in->name_len + in->password_len, in->bytes, in->bytes_len);
         sl->state = SLOT_QUEUED;
         if (++g_ticket == 0) g_ticket = 1;
         sl->ticket = g_ticket;
@@ -702,7 +768,7 @@ uint32_t nc_do(const NcIntent *in, int64_t now_ms) {
     g_req = kept;
     if (!ok) { g_error.why = ASK_WHY_MALFORMED; return 0; }
     slot *sl = slot_take(in);
-    if (!sl) { g_error.why = ASK_WHY_INTERNAL; return 0; }   // NC_PUMP_MAX already waiting
+    if (!sl) { g_error.why = ASK_WHY_INTERNAL; return 0; }   // NC_PUMP_MAX (or NC_ARENA_BYTES) already waiting
     return sl->ticket;
 }
 
@@ -712,7 +778,7 @@ static int refetch_queue(const char *gid, int gid_len, int64_t not_before, uint3
     if (!g_signed_in || gid_len <= 0 || gid_len > NW_GID_MAX) return 0;
     for (int i = 0; i < NC_PUMP_MAX; i++) {
         slot *sl = &g_slots[i];
-        if (sl->state != SLOT_FREE && sl->own && same_id(sl->in.gid, sl->in.gid_len, gid, gid_len)) {
+        if (sl->state != SLOT_FREE && sl->own && same_id(sl->gid, sl->gid_len, gid, gid_len)) {
             if (sl->state == SLOT_QUEUED && not_before < sl->not_before) sl->not_before = not_before;
             if (min_version > sl->min_version) sl->min_version = min_version;
             return 1;
@@ -734,7 +800,7 @@ static int refetch_queue(const char *gid, int gid_len, int64_t not_before, uint3
 // An own refetch that something newer has made moot.
 static int caught_up(const slot *sl) {
     if (!sl->own || !sl->min_version) return 0;
-    gate *g = gate_find(sl->in.gid, sl->in.gid_len, 0);
+    gate *g = gate_find(sl->gid, sl->gid_len, 0);
     return g && any_top(g) >= sl->min_version && (g->has_cast || g->has_answer);
 }
 
@@ -744,13 +810,15 @@ const NcRequest *nc_next_request(int64_t now_ms) {
         for (int i = 0; i < NC_PUMP_MAX; i++) {
             slot *sl = &g_slots[i];
             if (sl->state != SLOT_QUEUED || sl->not_before > now_ms) continue;
-            if (needs_user(sl->in.kind) && (g_refresh_id || g_refresh_not_before > now_ms)) continue;
+            if (needs_user(sl->kind) && (g_refresh_id || g_refresh_not_before > now_ms)) continue;
             if (!pick || sl->ticket - pick->ticket > 0x7fffffffu) pick = sl;   // the oldest ticket first
         }
         if (!pick) return NULL;
         if (caught_up(pick)) { drop(pick, 0, 0); continue; }
-        if (needs_user(pick->in.kind) && !g_signed_in) { drop(pick, ASK_WHY_AUTH, 0); continue; }
-        const NcRequest *q = build(&pick->in, now_ms);
+        if (needs_user(pick->kind) && !g_signed_in) { drop(pick, ASK_WHY_AUTH, 0); continue; }
+        NcIntent in;
+        slot_intent(pick, &in);
+        const NcRequest *q = build(&in, now_ms);
         if (!q) { drop(pick, ASK_WHY_MALFORMED, 0); continue; }
         if (++g_req_id == 0) g_req_id = 1;
         g_req.id = g_req_id;
@@ -800,7 +868,7 @@ static int answer_view(NcDone *d, const char *gid, int gid_len, uint32_t version
     return 1;
 }
 
-static void read_answer(NcDone *d, const slot *sl, int status, const uint8_t *body, int len, int64_t now_ms) {
+static void read_answer(NcDone *d, const NcIntent *in, int own, int status, const uint8_t *body, int len, int64_t now_ms) {
     switch (d->kind) {
     case NC_DO_SIGN_UP:
     case NC_DO_SIGN_IN:
@@ -821,7 +889,7 @@ static void read_answer(NcDone *d, const slot *sl, int status, const uint8_t *bo
         uint32_t version = 0;
         int named = envelope_names(body, len, gid, &gl, &version);
         TableAsk ask;
-        int asked = d->kind == NC_DO_ASK && ask_decode(sl->in.bytes, sl->in.bytes_len, &ask) == ASK_OK;
+        int asked = d->kind == NC_DO_ASK && ask_decode(in->bytes, in->bytes_len, &ask) == ASK_OK;
         if (asked && ask.gid_len && ask.gid_len <= NW_GID_MAX) {
             memcpy(gid, ask.gid, ask.gid_len);
             gl = ask.gid_len;
@@ -856,15 +924,15 @@ static void read_answer(NcDone *d, const slot *sl, int status, const uint8_t *bo
         // Refused over a newer game than the one applied here: its pushes are late
         // or lost. Give them a moment, then take the game whole.
         if (a->status != TABLE_STATUS_APPLIED) {
-            gate *g = gate_find(sl->in.gid, sl->in.gid_len, 0);
+            gate *g = gate_find(in->gid, in->gid_len, 0);
             if (!g || any_top(g) < a->version)
-                refetch_queue(sl->in.gid, sl->in.gid_len, now_ms + NC_RECONCILE_MS, a->version);
+                refetch_queue(in->gid, in->gid_len, now_ms + NC_RECONCILE_MS, a->version);
         }
         break;
     }
     case NC_DO_OPEN_GAME: {
         const NcGameRow *r = nc_view_read(status, body, len);
-        if (r) answer_view(d, sl->in.gid, sl->in.gid_len, r->version, body, r->env_off, r->env_len, sl->own);
+        if (r) answer_view(d, in->gid, in->gid_len, r->version, body, r->env_off, r->env_len, own);
         break;
     }
     case NC_DO_REPLAY: {
@@ -901,14 +969,14 @@ static const NcDone *answered(uint32_t id, int status, const uint8_t *body, int 
     for (int i = 0; i < NC_PUMP_MAX; i++)
         if (g_slots[i].state == SLOT_SENT && g_slots[i].sent_id == id) { sl = &g_slots[i]; break; }
     if (!sl) return NULL;   // an answer for nothing waiting (it was dropped meanwhile)
-    if (status == 0 && idempotent(sl->in.kind) && sl->attempts + 1 < NC_PUMP_TRIES) {
+    if (status == 0 && idempotent(sl->kind) && sl->attempts + 1 < NC_PUMP_TRIES) {
         // It never arrived: a read goes again, later.
         sl->attempts++;
         sl->state = SLOT_QUEUED;
         sl->not_before = now_ms + backoff_ms(sl->attempts);
         return NULL;
     }
-    if (status == 401 && needs_user(sl->in.kind) && g_signed_in && !sl->reauthed) {
+    if (status == 401 && needs_user(sl->kind) && g_signed_in && !sl->reauthed) {
         // The token was not taken: refresh it, then send this once more.
         sl->reauthed = 1;
         sl->state = SLOT_QUEUED;
@@ -916,6 +984,8 @@ static const NcDone *answered(uint32_t id, int status, const uint8_t *body, int 
         return NULL;
     }
     slot done_slot = *sl;
+    NcIntent in;
+    slot_intent(sl, &in);   // before the slot (and its arena bytes) are let go
     memset(sl, 0, sizeof *sl);
     done_begin(&g_done, &done_slot);
     if (status == 0) {
@@ -923,7 +993,7 @@ static const NcDone *answered(uint32_t id, int status, const uint8_t *body, int 
         g_error.why = ASK_WHY_INTERNAL;
         done_error(&g_done);
     } else {
-        read_answer(&g_done, &done_slot, status, body, len, now_ms);
+        read_answer(&g_done, &in, done_slot.own, status, body, len, now_ms);
     }
     return done_slot.own ? NULL : &g_done;
 }
@@ -950,7 +1020,7 @@ int nc_pump_due_ms(int64_t now_ms) {
         const slot *sl = &g_slots[i];
         if (sl->state != SLOT_QUEUED) continue;
         int64_t at = sl->not_before;
-        if (needs_user(sl->in.kind)) {
+        if (needs_user(sl->kind)) {
             if (g_refresh_id) continue;   // the refresh's answer wakes it
             if (g_refresh_not_before > at) at = g_refresh_not_before;
         }
@@ -1145,7 +1215,7 @@ static int refetch_queue(const char *gid, int gid_len, int64_t not_before, uint3
 static int envelope_names(const uint8_t *p, int len, char *gid, uint8_t *gid_len, uint32_t *version) {
     EnvHeader h;
     if (!p || !env_header_read(p, len, &h) || h.trailer_at >= len) return 0;
-    static Roster r;
+    Roster r;   // on the stack: a static would cost every module that links this file
     char id[ROSTER_GAME_ID_MAX + 1];
     int n = 0, status = 0, passing = 0, used = 0;
     uint32_t ai = 0;
@@ -1175,25 +1245,25 @@ int nc_stream_in(const uint8_t *frame, int len, int is_text, int64_t now_ms) {
         event_add(NC_EV_BAD);
         return events_end();
     }
-    static NwFrame f;
-    if (nw_frame_decode(msg, n, &f) != NW_OK) { event_add(NC_EV_BAD); return events_end(); }
+    NwFrame *f = &g_nwf;   // one frame for both directions: never two at once
+    if (nw_frame_decode(msg, n, f) != NW_OK) { event_add(NC_EV_BAD); return events_end(); }
     g_reconnect_ms = 0;   // the socket works: a later close starts the schedule over
-    switch (f.kind) {
+    switch (f->kind) {
     case NW_WS_ACK: {
         sub *s = NULL;
         for (int i = 0; i < NC_SUBS_MAX && !s; i++)
-            if (g_subs[i].state == SUB_SENT && g_subs[i].ref == f.ref) s = &g_subs[i];
+            if (g_subs[i].state == SUB_SENT && g_subs[i].ref == f->ref) s = &g_subs[i];
         if (!s) break;   // a subscription since dropped or asked again
         NcEvent *e = event_add(NC_EV_NONE);
         e->what = s->what;
         e->gid_len = s->gid_len;
         memcpy(e->gid, s->gid, s->gid_len);
-        if (f.why == 0) {
+        if (f->why == 0) {
             s->state = SUB_LIVE;
             s->backoff = NC_RETRY_FIRST_MS;
             if (s->what == NW_SUB_GAME) {
                 e->kind = NC_EV_SEATED;
-                e->seated = f.seated;
+                e->seated = f->seated;
                 // Pushes sent while it was not held are not replayed: take the game whole.
                 if (s->lived || s->missed) refetch_queue(s->gid, s->gid_len, now_ms, 0);
             }
@@ -1206,55 +1276,55 @@ int nc_stream_in(const uint8_t *frame, int len, int is_text, int64_t now_ms) {
         s->retry_at = now_ms + s->backoff;
         s->backoff = s->backoff * 2 > NC_RETRY_MAX_MS ? NC_RETRY_MAX_MS : s->backoff * 2;
         e->kind = NC_EV_REFUSED;
-        e->why = f.why;
+        e->why = f->why;
         break;
     }
     case NW_WS_VIEW:
     case NW_WS_CAST: {
-        if (!f.gid_len) { event_add(NC_EV_BAD); break; }
-        int cast = f.kind == NW_WS_CAST;
-        gate *g = gate_find(f.gid, f.gid_len, 1);
-        if (!cast && f.blob.len == 0) {
+        if (!f->gid_len) { event_add(NC_EV_BAD); break; }
+        int cast = f->kind == NW_WS_CAST;
+        gate *g = gate_find(f->gid, f->gid_len, 1);
+        if (!cast && f->blob.len == 0) {
             // An empty view (the seat is gone) always applies and ends the game's gate.
             memset(g, 0, sizeof *g);
             g->used = 1;
-            g->gid_len = f.gid_len;
-            memcpy(g->gid, f.gid, f.gid_len);
+            g->gid_len = f->gid_len;
+            memcpy(g->gid, f->gid, f->gid_len);
         } else if (cast) {
             int table = g->has_cast || g->has_answer;
             uint32_t top = table_top(g);
-            if (table && f.version <= top) break;   // stale
-            if (table && f.version > top + 1) {
+            if (table && f->version <= top) break;   // stale
+            if (table && f->version > top + 1) {
                 // A version was skipped: this cast would land on a board it does not
                 // follow. Drop it and take the game whole instead.
-                refetch_queue(f.gid, f.gid_len, now_ms, f.version);
+                refetch_queue(f->gid, f->gid_len, now_ms, f->version);
                 break;
             }
             g->has_cast = 1;
-            g->cast_v = f.version;
+            g->cast_v = f->version;
         } else {
             // A game held on its own stream is the casts' and the answers' to
             // move; a dashboard view of it would snap past what they animate.
-            if (sub_find(NW_SUB_GAME, f.gid, f.gid_len)) break;
-            if (g->has_view && f.version <= g->view_v) break;   // stale
+            if (sub_find(NW_SUB_GAME, f->gid, f->gid_len)) break;
+            if (g->has_view && f->version <= g->view_v) break;   // stale
             g->has_view = 1;
-            g->view_v = f.version;
+            g->view_v = f->version;
         }
         NcEvent *e = event_add(cast ? NC_EV_CAST : NC_EV_VIEW);
         e->what = cast ? NW_SUB_GAME : NW_SUB_GAMES;
-        e->gid_len = f.gid_len;
-        memcpy(e->gid, f.gid, f.gid_len);
-        e->version = f.version;
-        e->payload_len = f.blob.len;
-        g_event_at[g_n_events - 1] = f.blob.len ? (uint32_t)(f.blob.p - g_frame) : 0;
+        e->gid_len = f->gid_len;
+        memcpy(e->gid, f->gid, f->gid_len);
+        e->version = f->version;
+        e->payload_len = f->blob.len;
+        g_event_at[g_n_events - 1] = f->blob.len ? (uint32_t)(f->blob.p - g_frame) : 0;
         break;
     }
     case NW_WS_CHAT: {
         NcEvent *e = event_add(NC_EV_CHAT);
         e->what = NW_SUB_CHAT;
-        e->gid_len = f.gid_len;
-        memcpy(e->gid, f.gid, f.gid_len);
-        chat_copy(&e->chat, &f.chat);
+        e->gid_len = f->gid_len;
+        memcpy(e->gid, f->gid, f->gid_len);
+        chat_copy(&e->chat, &f->chat);
         break;
     }
     case NW_WS_PONG:
@@ -1267,7 +1337,7 @@ int nc_stream_in(const uint8_t *frame, int len, int is_text, int64_t now_ms) {
 }
 
 static const NcOut *out_frame(const NwFrame *f) {
-    static uint8_t raw[NW_ACCESS_MAX + 128];
+    uint8_t raw[NW_ACCESS_MAX + 128];
     int n = nw_frame_encode(f, raw, (int)sizeof raw);
     if (n < 0) return NULL;
     int t = nw_text_encode(raw, n, g_out.text, NC_TEXT_MAX);
@@ -1278,15 +1348,15 @@ static const NcOut *out_frame(const NwFrame *f) {
 
 const NcOut *nc_stream_next(int64_t now_ms) {
     if (!g_open || !g_signed_in) return NULL;
-    static NwFrame f;
-    memset(&f, 0, sizeof f);
+    NwFrame *f = &g_nwf;   // one frame for both directions: never two at once
+    memset(f, 0, sizeof *f);
     if (g_n_unsubs) {
         unsub *u = &g_unsubs[--g_n_unsubs];
-        f.kind = NW_WS_UNSUB;
-        f.what = u->what;
-        f.gid_len = u->gid_len;
-        memcpy(f.gid, u->gid, u->gid_len);
-        return out_frame(&f);
+        f->kind = NW_WS_UNSUB;
+        f->what = u->what;
+        f->gid_len = u->gid_len;
+        memcpy(f->gid, u->gid, u->gid_len);
+        return out_frame(f);
     }
     for (int i = 0; i < NC_SUBS_MAX; i++) {
         sub *s = &g_subs[i];
@@ -1295,23 +1365,23 @@ const NcOut *nc_stream_next(int64_t now_ms) {
         s->ref = ++g_next_ref ? g_next_ref : ++g_next_ref;
         // The subscription says who asks: behind API Gateway a frame of its own
         // carrying the token could be stored after this one is read.
-        f.kind = NW_WS_SUB_AS;
-        f.token_len = g_session.access_len;
-        memcpy(f.token, g_session.access, g_session.access_len);
-        f.ref = s->ref;
-        f.what = s->what;
-        f.gid_len = s->gid_len;
-        memcpy(f.gid, s->gid, s->gid_len);
+        f->kind = NW_WS_SUB_AS;
+        f->token_len = g_session.access_len;
+        memcpy(f->token, g_session.access, g_session.access_len);
+        f->ref = s->ref;
+        f->what = s->what;
+        f->gid_len = s->gid_len;
+        memcpy(f->gid, s->gid, s->gid_len);
         // What this client already holds of the game, so the server sends
         // only a newer view (the catch-up).
         gate *g = s->gid_len ? gate_find(s->gid, s->gid_len, 0) : NULL;
-        if (g) f.version = any_top(g);
-        return out_frame(&f);
+        if (g) f->version = any_top(g);
+        return out_frame(f);
     }
     if (now_ms - g_last_ping >= NC_PING_MS) {
         g_last_ping = now_ms;
-        f.kind = NW_WS_PING;
-        return out_frame(&f);
+        f->kind = NW_WS_PING;
+        return out_frame(f);
     }
     return NULL;
 }
