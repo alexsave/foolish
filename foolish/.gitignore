@@ -64,10 +64,8 @@ c/tools/tt_divergence_viz/backup/
 c/tools/tt_divergence_viz/backup2/
 c/tools/tt_divergence_viz/data/W/
 
-# Local scratch that has snuck into commits before: a stray vim runtime file,
-# a dev server log and the iOS snapshot-test output dir. (Bare-name editor
-# spill is handled in the vim block above.)
-ios/FoolishTests/__Snapshots__/
+# (ios/FoolishTests/__Snapshots__/ is NOT ignored: those PNGs are the committed
+# references ComponentSnapshotTests asserts against, and a missing one fails.)
 
 # local dev overrides (shadows next.config.mjs if tracked!)
 next.config.js
