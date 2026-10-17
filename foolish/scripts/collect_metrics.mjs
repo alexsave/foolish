@@ -12,7 +12,8 @@
 //   webBundle — first-load JS of `/` and `/[game_id]`, gzip bytes, from a real
 //            `next build` (scripts/measure_web_bundle.mjs)
 //   linearMemory — each module's DECLARED linear memory (initial pages/bytes + pinned flag)
-//   speed  — engine throughput (games/sec, actions/sec) from e2e/bench_engine.ts
+//   speed  — engine throughput (games/sec, actions/sec) from c/tests/bench_engine.c,
+//            the native kernel the server plays
 //
 // The thinking-bot move latency against Postgres (and the bots' runtime memory
 // peak it measured) went with the TypeScript server in stage 4; the server's
@@ -23,10 +24,6 @@ import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 
 const WASM = 'sdk/ts/wasm';
-const tsxEnv = { ...process.env, TSX_TSCONFIG_PATH: 'e2e/tsconfig.json' };
-const runNode = (args, extraEnv = {}) =>
-  execFileSync('node', ['--import', 'tsx', ...args],
-    { encoding: 'utf8', env: { ...tsxEnv, ...extraEnv }, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
 
 // ---- size: committed wasm artifacts (no toolchain needed) ----
 function gzFileSize(path) {
@@ -98,8 +95,13 @@ function speed() {
   try {
     const reps = Number(process.env.SPEED_REPS || 5);
     const g = [], a = [], l = [];
+    // Built here: the collector runs on both sides of a PR, and each side's
+    // bench is that side's kernel. A base that predates the native bench has
+    // no speed to report, which the render shows as missing.
+    execFileSync('make', ['-s', '-C', 'c', 'build/bench_engine'], { stdio: ['ignore', 'ignore', 'inherit'] });
     for (let i = 0; i < reps; i++) {
-      const out = runNode(['e2e/bench_engine.ts'], { BENCH_GAMES: process.env.BENCH_GAMES || '300' });
+      const out = execFileSync('c/build/bench_engine', [],
+        { encoding: 'utf8', env: { ...process.env, BENCH_GAMES: process.env.BENCH_GAMES || '3000' }, stdio: ['ignore', 'pipe', 'ignore'] });
       const gm = out.match(/games\/sec:\s*([\d.]+)/); if (gm) g.push(+gm[1]);
       const am = out.match(/actions\/sec:\s*([\d.]+)/); if (am) a.push(+am[1]);
       const lm = out.match(/legal-evals\/sec:\s*([\d.]+)/); if (lm) l.push(+lm[1]);

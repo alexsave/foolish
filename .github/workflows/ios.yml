@@ -130,10 +130,13 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      # The TEST bots module (the whole kernel, every export; it ships nowhere) is never
-      # committed: the fixture and roster helpers load c/build/bots_test.wasm.
-      - name: Build the test bots module
-        run: bash scripts/ci_bots_test_wasm.sh
+      # The toolchain (libclang for tools/structgen, the pinned clang and
+      # binaryen for the wasm modules): every npm lane generates sdk/ts/gen in a
+      # pre-hook, and the suites start the native table host
+      # (e2e/helpers/table_host.ts), whose build computes its layout hash with
+      # structgen.
+      - name: Toolchain (libclang, clang, binaryen)
+        run: bash ../shared/scripts/ci_llvm.sh
 
       # Fail loudly if the image ever ships without a compiler, rather than
       # letting the test quietly skip its way to a green check.

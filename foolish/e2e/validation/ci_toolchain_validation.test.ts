@@ -1,31 +1,31 @@
-// Every CI job that can build the test wasm must prebuild it first.
+// Every CI job that can build the table host must install the toolchain first.
 //
-// c/build/bots_test.wasm is never committed, so e2e/helpers/bots_test_wasm.ts
-// builds it on demand the first time a suite loads it. That build runs
-// tools/structgen for the layout hash (c/Makefile, "Layout hash"), and
-// structgen is a libclang program whose Makefile finds LLVM with
+// c/build/table_host (c/tests/table_host.c, the native kernel the Node suites
+// get a server's half of a game from) is never committed, so
+// e2e/helpers/table_host.ts builds it on demand the first time a suite starts
+// one. That build runs tools/structgen for the layout hash (c/Makefile, "Layout
+// hash"), and structgen is a libclang program whose Makefile finds LLVM with
 //
 //     LLVM_PREFIX ?= $(shell llvm-config --prefix 2>/dev/null || echo /opt/homebrew/opt/llvm)
 //
 // so a Linux runner WITHOUT llvm-config silently falls back to the Mac's
 // Homebrew path and the build dies on `clang-c/Index.h: No such file or
-// directory`. The repo's answer is scripts/ci_bots_test_wasm.sh: it installs
-// the toolchain, builds the module once, and exports WASM_CC and LLVM_PREFIX
-// for the rest of the job.
+// directory`. The repo's answer is shared/scripts/ci_llvm.sh: it installs the
+// toolchain and exports WASM_CC and LLVM_PREFIX for the rest of the job.
 //
-// The lanes that run it were fitted one at a time, and validate.yml was missed.
-// It builds the same wasm through the same helper, so `make` ran on a runner
-// with no libclang and 26 validation scenarios went red at once - every one of
-// them reporting a test failure whose real cause was a missing apt package, and
-// nothing in the repo objected until CI did.
+// This gate was written for the whole-kernel wasm test module the host
+// replaced, whose lanes were fitted one at a time: validate.yml was missed, so
+// `make` ran on a runner with no libclang and 26 validation scenarios went red
+// at once - every one of them reporting a test failure whose real cause was a
+// missing apt package, and nothing in the repo objected until CI did.
 //
 // A hand-written list of "lanes that need the toolchain" would rot the same
 // way, so this derives the set: it walks the real import graph to find which
 // test files reach the helper that shells out to `make`, maps npm scripts to
 // the files they run, and maps workflow jobs to the scripts they run. Any job
-// that can reach the build has to run the prebuild script, and run it BEFORE
-// the suite - a step that comes afterwards installs the compiler for a build
-// that already failed.
+// that can reach the build has to install the toolchain, and do it BEFORE the
+// suite - a step that comes afterwards installs the compiler for a build that
+// already failed.
 //
 // Pure test - no Postgres, no network, no compiler.
 import { test } from 'node:test';
@@ -37,8 +37,8 @@ const REPO = resolve(import.meta.dirname, '../..');
 // Workflows live at the repository root, one level above the product.
 const WORKFLOWS = join(resolve(REPO, '..'), '.github/workflows');
 
-/** The helper that shells out to `make -C c ... wasm-bots-test`. */
-const BUILDER = join(REPO, 'e2e/helpers/bots_test_wasm.ts');
+/** The helper that shells out to `make -C c table-host`. */
+const BUILDER = join(REPO, 'e2e/helpers/table_host.ts');
 
 /** Every quoted specifier in `from '...'` / `import('...')`, as deploy_paths reads them. */
 const SPEC = /(?:from|import)\s*\(?\s*['"]([^'"]+)['"]/g;
@@ -81,7 +81,7 @@ function testFiles(dir: string): string[] {
 const scripts = JSON.parse(readFileSync(join(REPO, 'package.json'), 'utf8')).scripts as Record<string, string>;
 
 /**
- * The npm scripts that can end up building the wasm: the ones whose command
+ * The npm scripts that can end up building the host: the ones whose command
  * names a directory of test files where at least one file reaches BUILDER.
  * `run_e2e.mjs` runs the whole of e2e/, so it is treated as that directory.
  */
@@ -135,45 +135,43 @@ const jobs = readdirSync(WORKFLOWS)
 
 const wasmScripts = wasmBuildingScripts();
 
-/** The shared step that installs the toolchain and builds c/build/bots_test.wasm. */
-const PREBUILD = 'scripts/ci_bots_test_wasm.sh';
+/** The shared step that installs the toolchain (libclang, the pinned clang and binaryen). */
+const PREBUILD = 'shared/scripts/ci_llvm.sh';
 
 /**
- * Where a job first runs a suite that could build the wasm on demand, as an
- * offset into the job's text, or -1. A job may also build it outright with
- * `make ... wasm-...`, which needs the same toolchain.
+ * Where a job first runs a suite that could build the host on demand, as an
+ * offset into the job's text, or -1. A job may also build it, or a wasm module,
+ * outright with `make ... table-host` / `make ... wasm-...`, which need the same
+ * toolchain.
  */
 function firstWasmUse(job: Job): number {
-    const hits = [/\bmake\b[^\n]*\bwasm[\w-]*/, ...wasmScripts.map((s) => new RegExp(`npm run ${s.replace(/[:.]/g, '\\$&')}\\b`))]
+    const hits = [/\bmake\b[^\n]*\b(?:wasm[\w-]*|table-host)/, ...wasmScripts.map((s) => new RegExp(`npm run ${s.replace(/[:.]/g, '\\$&')}\\b`))]
         .map((rx) => job.text.search(rx))
         .filter((i) => i >= 0);
     return hits.length ? Math.min(...hits) : -1;
 }
 
-/**
- * A job is covered when it runs the prebuild script before that first use. The
- * script itself names the wasm target, so its own occurrence is not a "use".
- */
+/** A job is covered when it runs the toolchain script before that first use. */
 function prebuiltBefore(job: Job, use: number): boolean {
     const at = job.text.indexOf(PREBUILD);
     return at >= 0 && at < use;
 }
 
-test('the import graph really reaches the wasm builder (the gate has something to measure)', () => {
+test('the import graph really reaches the host builder (the gate has something to measure)', () => {
     // If this ever finds nothing, the two assertions below would pass vacuously
     // whatever CI looked like.
     assert.ok(existsSync(BUILDER), `${relative(REPO, BUILDER)} is gone - this gate needs rewriting`);
     const reaching = testFiles('e2e/validation').filter((f) => buildsWasm(f));
     assert.ok(reaching.length > 0,
-        'no validation test reaches bots_test_wasm.ts, so this gate would never fire');
-    assert.ok(wasmScripts.length > 0, 'no npm script was found to build the wasm');
+        'no validation test reaches table_host.ts, so this gate would never fire');
+    assert.ok(wasmScripts.length > 0, 'no npm script was found to build the host');
 });
 
-test('every CI job that can build the test wasm runs the prebuild script first', () => {
-    assert.ok(existsSync(join(REPO, PREBUILD)), `${PREBUILD} is gone - this gate needs rewriting`);
+test('every CI job that can build the table host installs the toolchain first', () => {
+    assert.ok(existsSync(join(resolve(REPO, '..'), PREBUILD)), `${PREBUILD} is gone - this gate needs rewriting`);
 
     const using = jobs.map((j) => ({ job: j, use: firstWasmUse(j) })).filter(({ use }) => use >= 0);
-    assert.ok(using.length > 0, 'no CI job appears to build a wasm target - did the workflows move?');
+    assert.ok(using.length > 0, 'no CI job appears to build the host or a wasm target - did the workflows move?');
 
     const broken = using
         .filter(({ job, use }) => !prebuiltBefore(job, use))
@@ -182,9 +180,9 @@ test('every CI job that can build the test wasm runs the prebuild script first',
         .sort();
 
     assert.deepEqual(broken, [],
-        `these jobs reach a wasm build without running ${PREBUILD} first, so \`make\`\n`
+        `these jobs reach a host or wasm build without running ${PREBUILD} first, so \`make\`\n`
         + 'runs on a runner with no libclang and every scenario in the lane fails on\n'
         + 'clang-c/Index.h rather than on anything it was written to test:\n'
         + `${broken.join('\n')}\n`
-        + `(npm scripts that can build the wasm: ${wasmScripts.join(', ')})`);
+        + `(npm scripts that can build the host: ${wasmScripts.join(', ')})`);
 });

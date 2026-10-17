@@ -33,9 +33,9 @@ paths below are where a *build* puts them and not where git keeps them.
 - `web.wasm.gz` sits in `sdk/ts/wasm/` next to `wasm_asset.ts`, found via
   `new URL('./web.wasm.gz', import.meta.url)` — the same co-located file the
   web bundler emits and Node's suites read (`npm run wasm:web`). There is no
-  server module: the backend links the kernel natively. The whole-kernel
-  module the e2e suites drive the C Table through is a test build
-  (`make -C c wasm-bots-test`), built on demand and never shipped.
+  server module: the backend links the kernel natively, and so does the table
+  host the e2e suites take a server's half of a game from
+  (`make -C c table-host`, `c/tests/table_host.c`).
 - `Foolish.xcframework` is staged into `ios/vendor/` for Xcode (`make ios-lib`).
 
 ## How the server relates

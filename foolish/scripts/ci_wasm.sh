@@ -6,8 +6,8 @@
 # scripts/wasm_build.sh. This is just the two, in order, for a lane to call in
 # one step.
 #
-# Idempotent, and safe to run after ci_llvm.sh or ci_bots_test_wasm.sh - they
-# install the same pinned toolchain, so running two of them costs nothing.
+# Idempotent, and safe to run after ci_llvm.sh - it installs the same pinned
+# toolchain, so running both costs nothing.
 #
 # Usage:
 #   bash scripts/ci_wasm.sh          # every group

@@ -7,7 +7,7 @@
  * defines each one. Both of those are sources, and a module is a third thing -
  * what a recipe actually linked - so an interface derived from the sources is a
  * claim about the module until something reads the module. This does, three
- * ways, against all five:
+ * ways, against all four:
  *
  *   1. BY THE GENERATOR ITSELF. `gen.sh --check-exports` re-derives every
  *      interface and holds it against the built module's own type, import,
@@ -27,11 +27,16 @@
  *      it, and a call with the wrong arity is a compile error rather than an
  *      `any`.
  *
- * WHAT IT NEEDS. The five modules under c/build. `npm run wasm` (the pre-hook of
- * every lane that runs this) builds three; the test build and the iMessage
- * extension's module are built here, on demand, the way every other suite that
- * loads the test build gets it. A module older than its sources fails case 1,
- * which is the right answer: it is not the module this tree's interfaces type.
+ * WHAT IT NEEDS. The four modules under c/build. `npm run wasm` (the pre-hook of
+ * every lane that runs this) builds three; the iMessage extension's module is
+ * built here, on demand. A module older than its sources fails case 1, which is
+ * the right answer: it is not the module this tree's interfaces type.
+ *
+ * gen.sh writes one more interface, exports.table_host.ts, for the native table
+ * host the Node suites call (c/tests/table_host.c). It is no wasm module, so
+ * there is nothing for case 1 or 2 to read; its entries are the wasm entry
+ * files' own functions, called with their definitions in view, and the
+ * interface and the host's table are one list (c/Makefile TABLE_HOST_EXPORTS).
  *
  * Pure test - no Postgres, no network.
  * ========================================================================== */
@@ -41,10 +46,8 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-import { botsTestWasm } from './helpers/bots_test_wasm.ts';
 import { bindersIn, binderMismatches, wasmExportSignatures, type ModuleId } from './helpers/wasm_exports.ts';
 import { LAYOUT_HASH } from '../sdk/ts/gen/layout_hash.bots.ts';
-import type { BotsTestExports } from '../sdk/ts/gen/exports.bots_test.ts';
 import type { MsgExports } from '../sdk/ts/gen/exports.msg.ts';
 import type { OracleExports } from '../sdk/ts/gen/exports.oracle.ts';
 import type { OracleMtExports } from '../sdk/ts/gen/exports.oracle_mt.ts';
@@ -55,7 +58,6 @@ const ROOT = fileURLToPath(new URL('../', import.meta.url));
 /** Each generated interface, the module its link builds, and the scanner's name for it. */
 const LINKS: readonly { iface: string; file: string; module: string; id: ModuleId }[] = [
     { iface: 'WebExports', file: 'exports.web.ts', module: 'web.wasm', id: 'web' },
-    { iface: 'BotsTestExports', file: 'exports.bots_test.ts', module: 'bots_test.wasm', id: 'bots-test' },
     { iface: 'MsgExports', file: 'exports.msg.ts', module: 'msg.wasm', id: 'msg' },
     { iface: 'OracleExports', file: 'exports.oracle.ts', module: 'oracle.wasm', id: 'oracle' },
     { iface: 'OracleMtExports', file: 'exports.oracle_mt.ts', module: 'oracle-mt.wasm', id: 'oracle-mt' },
@@ -67,13 +69,11 @@ const wasmCc = (): string => {
     return existsSync(brew) ? brew : 'clang';
 };
 
-// The two modules no pre-hook builds. make decides whether there is anything
-// to do: the test build under the helper's own lock and stamp, and msg.wasm in
-// its own object directory, which no other suite builds into.
+// The module no pre-hook builds. make decides whether there is anything to do,
+// in msg.wasm's own object directory, which no other suite builds into.
 let built = false;
 function modules(): void {
     if (built) return;
-    botsTestWasm();
     execFileSync('make', ['-C', `${ROOT}c`, `WASM_CC=${wasmCc()}`, 'wasm-msg'], { stdio: ['ignore', 'ignore', 'inherit'] });
     for (const l of LINKS) {
         assert.ok(existsSync(`${ROOT}c/build/${l.module}`),
@@ -87,7 +87,7 @@ test('every generated exports interface is the module its link built (structgen 
     const r = spawnSync('bash', [`${ROOT}tools/structgen/gen.sh`, '--check-exports'], { encoding: 'utf8' });
     assert.equal(r.status, 0, `gen.sh --check-exports refused:\n${r.stdout}${r.stderr}\n`
         + 'An interface and a module disagree. If the C or an export list changed, rebuild the modules '
-        + '(npm run wasm; make -C c wasm-msg wasm-bots-test); if a recipe stopped using the variables '
+        + '(npm run wasm; make -C c wasm-msg); if a recipe stopped using the variables '
         + 'tools/structgen/gen.sh names for its link, name the ones it uses now.');
     assert.match(r.stdout, /every exports interface is the module its link built/);
 });
@@ -121,12 +121,10 @@ test('an instance cast to its generated interface is called through it, and a wr
     const instance = (module: string) =>
         new WebAssembly.Instance(new WebAssembly.Module(readFileSync(`${ROOT}c/build/${module}`) as BufferSource), {}).exports;
     const web = instance('web.wasm') as unknown as WebExports;
-    const testBuild = instance('bots_test.wasm') as unknown as BotsTestExports;
-    // The same question of both links, each through its own interface: an i32
-    // result arrives signed, as the generated banner says.
-    for (const ex of [web, testBuild]) assert.equal(ex.wasm_layout_hash() >>> 0, LAYOUT_HASH >>> 0);
+    // An i32 result arrives signed, as the generated banner says.
+    assert.equal(web.wasm_layout_hash() >>> 0, LAYOUT_HASH >>> 0);
     assert.ok(web.memory.buffer.byteLength > 0, 'the memory is a member, typed as one');
-    // The other three, so all five are type-checked with this file. The
+    // The other three, so all four are type-checked with this file. The
     // extension's module and the Oracle's answer for their own layouts, and the
     // threaded Oracle imports its memory, so it is only named: what the linker
     // makes for it is typed too, and it has no `memory` to offer.
@@ -134,20 +132,18 @@ test('an instance cast to its generated interface is called through it, and a wr
     assert.equal(typeof (instance('oracle.wasm') as unknown as OracleExports).wasm_layout_hash(), 'number');
     const threaded: (keyof OracleMtExports)[] = ['__wasm_init_tls', '__stack_pointer', 'wasm_mt_thread_main'];
     assert.equal(threaded.length, 3);
-    // A function that takes arguments, called as typed, in both links that
-    // carry it: a seven beats a six of its own suit and a six does not beat a
-    // seven (suit 0, with suit 1 the power suit).
-    for (const ex of [testBuild, web]) {
-        assert.equal(ex.wasm_can_cover(0, 6, 0, 7, 1), 1);
-        assert.equal(ex.wasm_can_cover(0, 7, 0, 6, 1), 0);
-    }
+    // A function that takes arguments, called as typed: a seven beats a six of
+    // its own suit and a six does not beat a seven (suit 0, with suit 1 the
+    // power suit).
+    assert.equal(web.wasm_can_cover(0, 6, 0, 7, 1), 1);
+    assert.equal(web.wasm_can_cover(0, 7, 0, 6, 1), 0);
     // The interface is a real type, not `any`: these are refused by tsc (the
     // type-check of this file is the test), and never run.
     const never = (): void => {
         // @ts-expect-error wasm_layout_hash takes no argument
         web.wasm_layout_hash(1);
         // @ts-expect-error wasm_can_cover takes five
-        testBuild.wasm_can_cover(0, 6, 0, 7);
+        web.wasm_can_cover(0, 6, 0, 7);
         // @ts-expect-error the browser's link does not export the table
         web.wasm_table_act(0, 0, 0, 0);
         // @ts-expect-error a test-only door is not in the shipped interface
@@ -156,5 +152,4 @@ test('an instance cast to its generated interface is called through it, and a wr
         (null as unknown as OracleMtExports).memory;
     };
     assert.equal(typeof never, 'function');
-    assert.equal(typeof testBuild.wasm_fixture_seal, 'function');
 });

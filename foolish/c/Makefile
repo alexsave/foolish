@@ -88,20 +88,11 @@ CORE_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/replay_
 # "host" variant below (shared/tools/c_rules.mk).
 CORE_OBJ = $(call c_objs,build/obj/host,$(CORE_SRC))
 
-.PHONY: all clean tests print-core print-wasm-src print-human-caps
+.PHONY: all clean tests print-core print-human-caps
 # Emit the core engine+strategy source list (used by tools/tt_divergence.sh to
 # build cnitro_eval at arbitrary -DCD_TT_BITS without duplicating the list).
 print-core:
 	@echo $(CORE_SRC)
-# Emit every C source compiled into a SHIPPED wasm module, for
-# scripts/wasm_stamp.sh. Read out of the real WASM_*_SRC lists rather
-# than copied into the script: a second copy of this list is how the artifact
-# and the sources it is built from drift apart in the first place. Not the same
-# set as CORE_SRC - the native CLI mains (main_elo.c, main_showcase.c) are in
-# no wasm module, and a change to one of them must not be read as a stale
-# artifact.
-print-wasm-src:
-	@echo $(sort $(WASM_BOT_SRC) $(WASM_ORACLE_MT_SRC))
 # Emit the capacity flags the SHIPPED human-game build compiles the kernel
 # with (MAX_LOG_PAIRS=64, MAX_BATTLES=64 and the rest), for a host that links
 # the kernel natively and serves human games (c_base/Makefile). Read out of
@@ -171,6 +162,9 @@ $(call host_prog,cnitro_replay,src/main_replay.c)
 $(call host_prog,cnitro_showcase,src/main_showcase.c)
 $(call host_prog,cnitro_tests,tests/tests.c)
 $(call host_prog,cnitro_distill,src/main_distill.c)
+# Raw rules-engine throughput, whole bot games on the C Table (the speed line of
+# scripts/collect_metrics.mjs, which builds and runs it).
+$(call host_prog,bench_engine,tests/bench_engine.c)
 
 # 5,761 checks in 23.8s at -O3, and 23.5s of that is ONE of the 204 tests:
 # test_table_session_log_is_load_bearing_for_octogen, 3,430 octogen decisions at
@@ -1004,8 +998,6 @@ sg_hash = @mkdir -p build/layout && \
 
 build/layout/bots.hash: $(STRUCTGEN) FORCE
 	$(call sg_hash,bots,$(WASM_BOT_CFLAGS),bots)
-build/layout/bots-explain.hash: $(STRUCTGEN) FORCE
-	$(call sg_hash,bots_explain,$(WASM_BOT_CFLAGS) -DOG_EXPLAIN_BUILD,)
 build/layout/msg.hash: $(STRUCTGEN) FORCE
 	$(call sg_hash,msg,$(WASM_MSG_CFLAGS),)
 build/layout/oracle.hash: $(STRUCTGEN) FORCE
@@ -1061,46 +1053,9 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_anim_roles_pass_hand_off -Wl,--export=wasm_anim_shown_ledger_allows \
   -Wl,--export=wasm_belief_probe_reset -Wl,--export=wasm_belief_probe_dump -Wl,--export=wasm_belief_probe_ptr
 
-# The C Roster (src/roster.h), in the TEST build only (bots_test.wasm):
-# e2e/helpers/roster_kernel.ts drives the durable encoding and the envelope
-# trailer through these directly (e2e/packed_roster_wire.test.ts feeds the Swift
-# decoder C-written trailers). Production reaches the roster through the table
-# exports, never through these.
-WASM_ROSTER_EXPORTS := \
-  -Wl,--export=wasm_roster_encode -Wl,--export=wasm_roster_spec_ptr -Wl,--export=wasm_roster_trailer_ptr -Wl,--export=wasm_roster_decode \
-  -Wl,--export=wasm_roster_trailer_write -Wl,--export=wasm_roster_trailer_read
-
-# The C Table (src/table.h, wasm/wasm_table_api.c), bots_test.wasm ONLY, for the same
-# reason as the roster: the oracle modules link WASM_BOTS_API_EXPORTS and have no
-# use for a table, and an unexported table.o is dropped whole by the linker. The
-# server plays the table natively (c_base); the Node suites play it here, through
-# e2e/helpers/server_table.ts.
-WASM_TABLE_EXPORTS := \
-  -Wl,--export=wasm_table_roster_ptr -Wl,--export=wasm_table_commit_ptr \
-  -Wl,--export=wasm_table_request_ptr -Wl,--export=wasm_table_elo_ptr \
-  -Wl,--export=wasm_table_detail -Wl,--export=wasm_table_reject \
-  -Wl,--export=wasm_table_request_decode -Wl,--export=wasm_table_load \
-  -Wl,--export=wasm_table_act -Wl,--export=wasm_table_needs_bots \
-  -Wl,--export=wasm_table_bots_need_logs -Wl,--export=wasm_table_commit_products \
-  -Wl,--export=wasm_table_push -Wl,--export=wasm_table_envelope \
-  -Wl,--export=wasm_table_action_response -Wl,--export=wasm_table_rankings \
-  -Wl,--export=wasm_table_rate \
-  -Wl,--export=wasm_table_create -Wl,--export=wasm_table_join \
-  -Wl,--export=wasm_table_leave -Wl,--export=wasm_table_add_bot \
-  -Wl,--export=wasm_table_ready \
-  -Wl,--export=wasm_table_continue -Wl,--export=wasm_table_rearrange_hand \
-  -Wl,--export=wasm_table_redact -Wl,--export=wasm_table_seat_of \
-  -Wl,--export=wasm_table_set_deal_seed -Wl,--export=wasm_table_set_session_log \
-  -Wl,--export=wasm_table_bot_drive -Wl,--export=wasm_table_drive_ptr \
-  -Wl,--export=wasm_table_drive_prefs -Wl,--export=wasm_table_bot_wait_ms \
-  -Wl,--export=wasm_table_replay_code -Wl,--export=wasm_table_replay_extras \
-  -Wl,--export=wasm_table_ask_ptr -Wl,--export=wasm_table_ask_decode \
-  -Wl,--export=wasm_table_ask -Wl,--export=wasm_ask_refusal_encode \
-  -Wl,--export=wasm_table_cast
-
 # The backend's client (src/netclient.h, wasm/wasm_net_api.c): what the web asks
 # c_base and how it reads the answers and the push stream. In the browser's
-# module and in bots_test.wasm, where the Node tests drive the same client.
+# module.
 WASM_NET_EXPORTS := \
   -Wl,--export=wasm_net_inbox -Wl,--export=wasm_net_reset -Wl,--export=wasm_net_session_load -Wl,--export=wasm_net_session_save \
   -Wl,--export=wasm_net_session_info -Wl,--export=wasm_net_error \
@@ -1151,35 +1106,19 @@ WASM_REPLAY_WEB_EXPORTS := \
   -Wl,--export=wasm_replay_step_masked_state -Wl,--export=wasm_replay_step_logs \
   -Wl,--export=wasm_replay_summary
 
-# C-backed test fixtures (wasm/wasm_table_api.c, e2e/helpers/table_fixture.ts),
-# in the TEST build only, like WASM_ROSTER_EXPORTS: a test composes a board
-# through the generated setters and seals it with the roster into a row the
-# kernel has loaded; card text goes through card.h's parser.
-WASM_FIXTURE_EXPORTS := \
-  -Wl,--export=wasm_fixture_begin -Wl,--export=wasm_fixture_title \
-  -Wl,--export=wasm_fixture_seat -Wl,--export=wasm_fixture_seal -Wl,--export=wasm_fixture_stamp_ptr \
-  -Wl,--export=wasm_card_list_parse
-
-# A code's whole log stream, record by record (replay.h ReplayDecodedLog,
-# once read by e2e/helpers/replay_decode.ts, which cnitro_replay --code replaced
-# natively): no test, tool or shipped host reads it now.
-WASM_REPLAY_DECODE_EXPORTS := \
-  -Wl,--export=wasm_replay_decoded_open -Wl,--export=wasm_replay_decoded_next
-
-# EVERY entry the bots objects export, and the one list the two links of them
-# read: build/bots_test.wasm exports all of it, build/web.wasm picks the
-# browser's names out of it (WASM_WEB_NAMES).
+# EVERY entry a wasm link of the bots objects may export: build/web.wasm picks
+# the browser's names out of it (WASM_WEB_NAMES).
 #
-# There used to be a third link, bots.wasm, for the server: the Supabase edge
-# functions loaded it as a static asset, and a WASM_BOTS_UNSHIPPED_API list
-# carved the entries no server called out of it so they cost the edge nothing.
-# The edge functions are gone - the server is c_base, which links the kernel
-# natively - so nothing outside a test loads a whole-kernel module any more, and
-# the carve-out had nothing left to protect. The test build is what Node's
-# suites drive the C Table, the bots and the fixtures through.
-WASM_BOTS_ALL_EXPORTS = $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) $(WASM_TABLE_EXPORTS) \
-                        $(WASM_CLIENT_EXPORTS) $(WASM_NET_EXPORTS) $(WASM_REPLAY_WEB_EXPORTS) \
-                        $(WASM_ROSTER_EXPORTS) $(WASM_FIXTURE_EXPORTS) $(WASM_REPLAY_DECODE_EXPORTS)
+# There used to be two more links of these objects, each exporting all of it and
+# more. bots.wasm was the server's - the Supabase edge functions loaded it - and
+# went when the server became c_base, which links the kernel natively.
+# bots_test.wasm was the Node suites' whole kernel, with the C Table, the
+# roster codec, the fixture sealer and the record-by-record replay decoder
+# exported on top; it went when those suites moved to native C tests and to the
+# table host (tests/table_host.c), which calls the same entry files natively.
+# Nothing loads a whole-kernel wasm module any more.
+WASM_BOTS_ALL_EXPORTS = $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) \
+                        $(WASM_CLIENT_EXPORTS) $(WASM_NET_EXPORTS) $(WASM_REPLAY_WEB_EXPORTS)
 
 # The small-memory flag set the iMessage module (wasm-msg below) is built from.
 # It was rules.wasm's, which the web no longer loads: the browser reads web.wasm,
@@ -1448,32 +1387,10 @@ WASM_BOT_OBJ_FLAGS  = $(WASM_BOT_CFLAGS) $(if $(filter $(WASM_BOT_O3_STEMS),$*),
 $(eval $(call C_VARIANT,build/botobj,WASM_CC,WASM_BOT_OBJ_FLAGS,build/layout/bots.hash,O3: $(WASM_BOT_O3_SRC)))
 WASM_BOT_OBJ    := $(call c_objs,build/botobj,$(WASM_BOT_SRC))
 
-# bots-explain.wasm: byte-for-byte the SAME octogen as bots_test.wasm (same sources,
-# same per-file opt, same flags, same wasm-opt pass) PLUS -DOG_EXPLAIN_BUILD,
-# which is behavior-neutral (the deliberation's answer is #ifdef'd + gated and
-# resets the TT). Extra exports let a harness read each decision's answer
-# (src/oracle_answer.h OgAnswer). ANALYSIS ONLY - never shipped.
-.PHONY: bots-wasm-explain
-bots-wasm-explain: build/layout/bots-explain.hash
-	@mkdir -p build/botexplain
-	@for src in $(WASM_BOT_SRC); do \
-	  base=$$(basename $$src .c); opt=-Oz; \
-	  case " $(WASM_BOT_O3_SRC) " in *" $$src "*) opt=-O3;; esac; \
-	  echo "  CC(explain) $$src [$$opt]"; \
-	  $(WASM_CC) $(WASM_BOT_CFLAGS) -DOG_EXPLAIN_BUILD -DSG_LAYOUT_HASH=$$(cat build/layout/bots-explain.hash) $$opt -c $$src -o build/botexplain/$$base.o || exit 1; \
-	done
-	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_BOT_LDFLAGS) \
-	          $(WASM_BOTS_ALL_EXPORTS) \
-	          -Wl,--export=wasm_og_answer -Wl,--export=wasm_og_answer_reset \
-	          build/botexplain/*.o -o build/bots-explain.wasm
-	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),build/bots-explain.wasm)
-	gzip -9 -c build/bots-explain.wasm > build/bots-explain.wasm.gz
-	@echo "built build/bots-explain.wasm(.gz) — load via the harness"
-
 # ---------------------------------------------------------------------------
 # web.wasm — THE BROWSER'S LINK OF THE SAME KERNEL.
 #
-# Not a second kernel. Byte-for-byte the same OBJECTS as build/bots_test.wasm
+# Not a second kernel. Byte-for-byte the same OBJECTS as the Oracle's links
 # ($(WASM_BOT_OBJ)), the same compile flags, the same layout hash, the same
 # wasm-opt pass. The ONLY difference is which names are exported, and an export
 # is a GC root: wasm-ld drops every function no exported name reaches. That is
@@ -1513,8 +1430,8 @@ bots-wasm-explain: build/layout/bots-explain.hash
 # (wasm_export_state / wasm_state_serialize / wasm_state_deserialize, which
 # e2e/security_client_boundary.test.ts denies the browser — they are now absent
 # from the module rather than merely unreferenced by the bundle), and the
-# entries only tests call (wasm_replay_link_parse …), which Node reaches on
-# bots_test.wasm.
+# entries only tests call (wasm_replay_link_parse …), which Node reaches in the
+# native table host (tests/table_host.c).
 WASM_WEB_NAMES := \
   wasm_init wasm_io_ptr wasm_io_cap wasm_layout_hash wasm_can_cover \
   wasm_replay_io_ptr wasm_replay_io_cap wasm_replay_error_ptr \
@@ -1534,8 +1451,8 @@ WASM_WEB_NAMES := \
   wasm_replay_step_play
 
 # Picked OUT of the whole list rather than spelled a second time, so a name
-# cannot be in the browser's module and not in the test build the Node suites
-# drive - that would be the beginning of two export surfaces with two meanings.
+# the browser's module exports is one the bots objects define under that list's
+# meaning - never a second export surface with a second meaning.
 WASM_WEB_EXPORTS = $(WASM_CLIENT_EXPORTS) $(WASM_NET_EXPORTS) $(WASM_REPLAY_WEB_EXPORTS) \
                    $(filter $(addprefix -Wl$(comma)--export=,$(WASM_WEB_NAMES)),$(WASM_BOTS_ALL_EXPORTS))
 
@@ -1578,39 +1495,6 @@ build/named/web.named.wasm: $(WASM_BOT_OBJ) Makefile
 wasm-web-size: build/web.wasm
 	@printf 'web.wasm    raw %7d  gzip %7d\n' \
 	  $$(wc -c < build/web.wasm) $$(gzip -9 -c build/web.wasm | wc -c)
-
-# ---------------------------------------------------------------------------
-# bots_test.wasm - THE WHOLE KERNEL, FOR NODE. Never committed, never shipped.
-#
-# The same objects as web.wasm under every entry they have (WASM_BOTS_ALL_EXPORTS):
-# the C Table, the bots, the state doors, the fixture sealer and the durable
-# roster codec. The e2e suites play a table, drive bots and compose boards
-# through it; nothing a user runs loads it. Built on demand
-# (e2e/helpers/bots_test_wasm.ts runs `make -C c wasm-bots-test` when the build
-# is missing or older than the wasm sources; scripts/ci_bots_test_wasm.sh in CI).
-# Same objects, so the same layout hash: the helpers check it like any host.
-# AND THIS FILE, because the export list is IN this file. Every wasm link below
-# reads a WASM_*_EXPORTS list, and none of them named the Makefile, so a
-# changed list relinked nothing: measured on 2026-09-19, dropping an entry from
-# an export list and running the link target reported the module up to date and
-# re-gzipped the OLD bytes. The export table is as much an input to the link as
-# an object file is, and the only place it lives is here. A relink is seconds
-# and the output is reproducible (gzip -n over a deterministic link), so a
-# Makefile edit that changes nothing leaves the tree clean rather than dirty.
-#
-# build/bots_test.stamp records the wasm source hash it was built from
-# (scripts/wasm_stamp.sh --hash), which is how the e2e helper knows it is current.
-build/bots_test.wasm: $(WASM_BOT_OBJ) Makefile
-	@mkdir -p build
-	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_BOT_LDFLAGS) \
-	          $(WASM_BOTS_ALL_EXPORTS) $(WASM_BOT_OBJ) -o $@.tmp
-	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),$@.tmp)
-	mv $@.tmp $@
-
-.PHONY: wasm-bots-test
-wasm-bots-test: wasm-cc-check
-	@$(MAKE) --no-print-directory build/bots_test.wasm
-	@bash ../scripts/wasm_stamp.sh --hash > build/bots_test.stamp.tmp && mv build/bots_test.stamp.tmp build/bots_test.stamp
 
 # ---------------------------------------------------------------------------
 # table_host - THE KERNEL'S ENTRY SURFACE, NATIVELY, FOR THE NODE SUITES.
@@ -1723,8 +1607,8 @@ WASM_ORACLE_OBJ_FLAGS = $(WASM_ORACLE_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layo
 $(eval $(call C_VARIANT,build/botoracle,WASM_CC,WASM_ORACLE_OBJ_FLAGS,build/layout/oracle.hash,O3: $(WASM_BOT_O3_SRC)))
 WASM_ORACLE_OBJ    := $(call c_objs,build/botoracle,$(call wasm_sorted,$(WASM_BOT_SRC)))
 
-# Makefile is a prerequisite for the reason build/bots_test.wasm names it: the export
-# list IS this file, and the link had been .PHONY (so always run) until now.
+# Makefile is a prerequisite because the export list IS this file: a changed list
+# relinks, and the link had been .PHONY (so always run) until now.
 build/oracle.wasm: $(WASM_ORACLE_OBJ) Makefile
 	@mkdir -p build
 	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_ORACLE_LDFLAGS) \

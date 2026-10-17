@@ -4,8 +4,8 @@
 // external, and wasm memory counts as external). The edge functions are gone -
 // the server is c_base, native - so what is left here is the browser's module
 // (its size and its static memory) and the bots' bump-allocator discipline,
-// which still matters wherever the bots run in wasm (the Oracle's modules) and
-// is measured on the test build that links them:
+// which still matters wherever the bots run in wasm - the Oracle's module,
+// public/oracle.wasm.gz, where octogen deliberates in a visitor's tab:
 //
 //   1. Embed parse blowup. The wasm embeds were ~2300 base64 chunks joined
 //      with '+'; V8 folds the chain pairwise at parse time, allocating ~N
@@ -17,8 +17,11 @@
 //   2. Wasm memory growth. The MC families' endgame solvers malloc'd
 //      per-family scratch on the wasm bump allocator (free is a no-op), so
 //      memory grew per family exercised (46->87->127MB observed). Guarded by
-//      playing full games across all MC families and asserting the wasm
-//      memory is bounded AND exactly flat once the first game has warmed it.
+//      deliberating every decision of several games in the Oracle's module and
+//      asserting its memory is bounded AND exactly flat once the first game
+//      has warmed it. (It played every MC family in the whole-kernel wasm test
+//      module until that went: the Oracle runs octogen alone, and the other
+//      families run nowhere in wasm.)
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -184,54 +187,55 @@ test("web.wasm declared INITIAL memory is 25 pages", () => {
         + 'data its code reads. Down means something was freed: lower this pin in the same commit.');
 });
 
-test('the bots\' wasm memory is bounded and flat across all MC bot families', async () => {
-    // Capture every wasm memory as modules instantiate. Node bills grown-but-
-    // untouched pages as virtual memory (invisible in RSS), so the buffer
-    // sizes — what a wasm host is charged for — are the metric.
-    const memories: WebAssembly.Memory[] = [];
-    const RealInstance = WebAssembly.Instance;
-    (WebAssembly as unknown as { Instance: unknown }).Instance = function (mod: WebAssembly.Module, imports?: WebAssembly.Imports) {
-        const inst = new RealInstance(mod, imports);
-        const m = (inst.exports as { memory?: unknown }).memory;
-        if (m instanceof WebAssembly.Memory) memories.push(m);
-        return inst;
-    } as unknown as typeof WebAssembly.Instance;
-    (WebAssembly.Instance as unknown as { prototype: unknown }).prototype = RealInstance.prototype;
-
-    // The production bot path: a table of bots dealt from a seed and driven by
-    // the kernel's bot cycle (table_bot_drive), exactly as the server's loop runs
-    // it (e2e/helpers/bot_table.ts), on the test build. Imported after the
-    // Instance hook, so the table's bots_test.wasm instance is captured.
+test("the Oracle's wasm memory is bounded and flat across games", async () => {
+    // The Oracle's own module and its own bridge, as the replay screen runs
+    // them (src/oracle/oracleBridge.ts), deliberating every decision of a game.
+    // The games are played by the kernel the server runs (the native table
+    // host, e2e/helpers/bot_table.ts), cut to their replay codes and walked by
+    // the web's replay reader, exactly as e2e/oracle_replay.test.ts does.
+    const { OracleInstance } = await import('../../src/oracle/oracleBridge.ts');
+    const { ORACLE_KNOBS } = await import('../../src/oracle/types.ts');
+    const { buildOracleJob, findDecisionIndex } = await import('../../src/oracle/replayOracleInput.ts');
+    const { buildReplayFrames } = await import('../../src/replay/frames.ts');
+    const { gunzip } = await import('../../sdk/ts/wasm/gunzip.ts');
     const { playBotTable, seedBytes } = await import('../helpers/bot_table.ts');
 
-    const wasmTotal = () => memories.reduce((a, m) => a + m.buffer.byteLength, 0);
+    const inst = new OracleInstance();
+    await inst.init(gunzip(new Uint8Array(readFileSync(resolve('public/oracle.wasm.gz')))));
+    const bytes = () => inst.ex.memory.buffer.byteLength;
 
-    const playGame = (id: string, keys: string[]) => {
-        const g = playBotTable(keys, seedBytes(keys.length, id.charCodeAt(id.length - 1)), { gameId: id });
-        assert.ok(g.actions > 0 && g.fool >= 0, `${id} did not finish`);
+    let decisions = 0;
+    const deliberate = (id: string, brains: string[], seed: number) => {
+        const { code } = playBotTable(brains, seedBytes(brains.length, seed), { gameId: id });
+        const frames = buildReplayFrames(code, id, null);
+        const seen = new Set<number>();
+        for (let idx = 0; idx < frames.length; idx++) {
+            const j = findDecisionIndex(frames, idx);
+            if (j == null || seen.has(j)) continue;
+            seen.add(j);
+            const job = buildOracleJob(frames, code, idx, true, id);
+            assert.ok(job, `a job at step ${idx} of ${id}`);
+            inst.setKnobs({ ...ORACLE_KNOBS, w1: 4 });
+            assert.ok('record' in inst.analyzeOnce(job!, 0x51 + j), `answered at j=${j} (${id})`);
+            decisions++;
+        }
     };
 
-    // Game 1 warms the shared solver scratch. Uses the shipped MC ladder bots
-    // (octogen, cordite) — semtex/fulminate were dropped from the wasm build, so
-    // they would fall back to random and not exercise the solver.
-    playGame('mem1', ['octogen', 'cordite']);
-    const afterFirst = wasmTotal();
-    assert.ok(memories.length > 0, 'the bots_test.wasm instance was captured');
+    // Game 1 warms the solver's scratch and the transposition table.
+    deliberate('mem1', ['octogen', 'cordite'], 1);
+    const afterFirst = bytes();
     // The kernel plus its scratch must stay small: a tab running the Oracle
     // shares its memory with everything else on the page.
     assert.ok(afterFirst <= 16 * 1048576,
-        `wasm memory after one game is ${(afterFirst / 1048576) | 0}MB; budget regression`);
+        `the Oracle's wasm memory after one game is ${(afterFirst / 1048576) | 0}MB; budget regression`);
 
-    // Every further family and game must reuse the SAME scratch: exactly flat.
-    // firecracker (robusta MC + espresso rollout) and blackpowder (belief MC +
-    // exact endgame solver) are the other shipped MC ladder bots — they run on
-    // the SAME shared world/solver/rollout scratch, so exercising them here must
-    // not grow the module by a byte. This is the guard that would have caught the
-    // per-family malloc regression that first shipped them.
-    playGame('mem2', ['cordite', 'octogen']);
-    playGame('mem3', ['blackpowder', 'firecracker']);            // 2p: solver + handwritten rollout
-    playGame('mem4', ['firecracker', 'blackpowder', 'firecracker']); // 3p: espresso rollout, no solver
-    const afterAll = wasmTotal();
-    assert.equal(afterAll, afterFirst,
-        `wasm memory grew ${((afterAll - afterFirst) / 1048576) | 0}MB across families; per-family allocations are back`);
+    // Every further game - other seat counts, other boards - must reuse the
+    // SAME scratch: exactly flat. This is the guard that would have caught a
+    // per-call or per-shape allocation on the bump allocator, which never frees.
+    deliberate('mem2', ['cordite', 'octogen'], 2);
+    deliberate('mem3', ['blackpowder', 'firecracker', 'octogen'], 3);
+    deliberate('mem4', ['handwritten', 'random', 'octogen', 'firecracker'], 4);
+    assert.ok(decisions > 40, `only ${decisions} decisions were deliberated`);
+    assert.equal(bytes(), afterFirst,
+        `the Oracle's wasm memory grew ${((bytes() - afterFirst) / 1048576) | 0}MB across games; per-call allocations are back`);
 });
