@@ -82,8 +82,7 @@ int bot_pacing_ms(int pacing_class, int humans_present);
 // for no wait. A v2 blob has no clock at all and reads as a zero one.
 //
 // THE CEILING is one ask's, not the longest wait: a host's lease must outlive
-// any single wait (the Supabase bot lease is 25s, bot_actions.ts
-// BOT_LEASE_TTL_MS), and a host asks again after every wait, so a longer one is
+// any single wait (c_base's bot lease is 25s, app/bots.h CB_BOT_LEASE_MS), and a host asks again after every wait, so a longer one is
 // waited out in ceiling-long slices. One exists in play: an eight-seat opening
 // deal goes round the table a card at a time and plays about 20s
 // (anim_plan.h ANIM_DEAL_CARD_MS), so its wait is two asks.

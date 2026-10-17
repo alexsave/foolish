@@ -34,7 +34,7 @@ import { dealBotTable, botCycle, seedBytes, type BotTableRow } from './helpers/b
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
-// The seeded roster (c/src/bot_roster.c with seeded=1): what server/impls/supabase/seed.sql can seat.
+// The seeded roster (c/src/bot_roster.c with seeded=1): what c_base/sql/schema.sql seeds.
 const BRAINS = ['random', 'simple_heuristic', 'handwritten', 'robusta', 'firecracker', 'blackpowder', 'cordite', 'octogen'];
 const CYCLES = 24;
 

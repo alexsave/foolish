@@ -71,7 +71,7 @@ export const CLIENT_BOUNDARY = {
 };
 
 // Node built-ins the shared sdk modules reach only behind a runtime check.
-const EXTERNAL = ['next', 'next/*', 'react', 'react/*', 'react-dom', 'react-dom/*', '@supabase/*', '@vercel/*',
+const EXTERNAL = ['next', 'next/*', 'react', 'react/*', 'react-dom', 'react-dom/*', '@vercel/*',
     'qrcode.react', 'fs', 'path', 'zlib', 'url', 'module', 'crypto', 'worker_threads', 'node:*'];
 
 function workerEntries(): string[] {

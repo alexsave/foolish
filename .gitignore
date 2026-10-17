@@ -90,11 +90,6 @@ shared/tools/datagen/build/
 # And tighten's, which is one C file and a `make` away on any machine.
 shared/tools/tighten/build/
 
-# The supabase CLI's own version-check cache. Written by any `supabase` command,
-# so it appears as untracked the first time you touch the CLI in a session and
-# is exactly the shape of thing that rides along in a `git add -A`.
-**/supabase/.temp/
-
 # Local scratch that has snuck into commits before: a stray vim runtime file and a
 # dev server log. Bare names, so they are caught wherever they appear.
 .watchrealsizevim
