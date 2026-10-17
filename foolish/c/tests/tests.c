@@ -17034,6 +17034,890 @@ static void test_table_load_refuses_a_board_it_could_not_have_made(void) {
     CHECK(table_load(&tb, tb_state2, c.state.len, tb_roster, ROSTER_BYTES) == TABLE_OK, "the played-on row loads");
 }
 
+/* ---- wire formats, views and doors (were e2e test files over bots.wasm) ---- */
+//
+// These held the kernel's wire formats from Node: the durable state blob
+// (state_codec), the masked view and the envelope a client reads (view_codec,
+// client_envelope_decode), the per-viewer push (packed_wire_stream), the action
+// and ask bodies (awire_codec, ask_wire) and the doors under hostile bytes
+// (wasm_kernel_fuzz). Every assertion was a question to C asked across the wasm
+// boundary, so they live here, beside the tests of the same codecs above. The
+// TypeScript that wraps the client's halves (sdk/ts/table/client_table.ts) keeps
+// its own tests over web.wasm: e2e/awire_codec.test.ts and e2e/ask_wire.test.ts.
+
+static TbRow wv_row;
+
+// Commits the loaded table's last operation into `row` as the server's
+// commit_table does: the blobs, the next version, the operation's session-log
+// records appended (or a fresh log when it dealt). The products stay in
+// tb_arena / *c. Returns table_commit_products' answer, or TABLE_E_CAP.
+static int wv_commit(TbRow *row, const char *gid, TableCommit *c) {
+    const int64_t now = 1700000000000LL + (int64_t)row->version * 1000;
+    const int n = table_commit_products(&tb, gid, (int)strlen(gid), row->version + 1, now, c, tb_arena, sizeof(tb_arena));
+    if (n < 0) return n;
+    memcpy(row->state, tb_arena + c->state.off, (size_t)c->state.len);
+    row->state_len = c->state.len;
+    memcpy(row->roster, tb_arena + c->roster.off, ROSTER_BYTES);
+    if (c->logs_reset) row->log_len = 0;
+    if (row->log_len + c->logs.len > (int)sizeof(row->log)) return TABLE_E_CAP;
+    memcpy(row->log + row->log_len, tb_arena + c->logs.off, (size_t)c->logs.len);
+    row->log_len += c->logs.len;
+    row->version++;
+    row->status = c->status;
+    row->fool = c->fool;
+    return n;
+}
+
+// A lobby of `np` seats id-0.. ("random" bots at the `bots` seats, humans at the
+// rest), every seat ready, dealt by table_ready from tb_seed and committed as
+// version 1 of game "g" (e2e/helpers/kernel_board.ts dealTable). 1, or 0 when
+// the kernel refused a step.
+static int wv_deal(TbRow *row, int np, uint32_t bots) {
+    static Game lobby;
+    Roster r;
+    TableCommit c;
+    memset(&lobby, 0, sizeof(lobby));
+    lobby.num_players = (int8_t)np;
+    game_reset_to_lobby(&lobby, (1u << np) - 1u);   // every seat READY
+    tb_roster_for(np, bots, "random", tb_roster2);
+    if (roster_decode(&r, tb_roster2, ROSTER_BYTES) != ROSTER_OK) return 0;
+    table_init(&tb, &tb_game, &tb_snaps);
+    if (table_seal(&tb, &lobby, &r, tb_buf, (int)sizeof(tb_buf)) <= 0) return 0;
+    const int rc = table_ready(&tb, RS("id-0"), tb_seed);
+    game_set_seed(1);   // wide deal mode off again for whatever runs next
+    if (rc != TABLE_OK || !tb.dealt_now) return 0;
+    row->version = 0;
+    row->log_len = 0;
+    return wv_commit(row, "g", &c) >= 0 && row->status == GAME_STATUS_PLAYING;
+}
+
+// Humans at even seats, bots at odd ones, as the codec suites' mixed tables were.
+static uint32_t wv_odd_bots(int np) {
+    uint32_t m = 0;
+    for (int i = 1; i < np; i += 2) m |= 1u << i;
+    return m;
+}
+
+static int wv_load(const TbRow *row) {
+    return table_load(&tb, row->state, row->state_len, row->roster, ROSTER_BYTES);
+}
+
+static int wv_wire(const LegalMove *m, uint8_t *w, int cap) {
+    AwireAction a;
+    memset(&a, 0, sizeof(a));
+    a.kind = m->type;
+    a.n = m->n_cards;
+    for (int i = 0; i < m->n_cards; i++) { a.cards[i] = m->cards[i]; a.attacks[i] = m->attack_cards[i]; }
+    return awire_encode(&a, w, cap);
+}
+
+// A move a client could send (not a wait) by a seat still in, drawn with cb_rand
+// over every such move of every seat (e2e/helpers/table_play.ts legalMoves): the
+// actor's id into `id`, the wire into `w`. Its length, or 0 when nobody can move.
+static int wv_random_move(const Game *g, char *id, int id_cap, uint8_t *w, int cap) {
+    int counts[MAX_PLAYERS], total = 0;
+    for (int s = 0; s < g->num_players; s++) {
+        counts[s] = 0;
+        if (g->players[s].status != PLAYER_STATUS_IN) continue;
+        calculate_legal_moves(g, s, &tb_moves);
+        for (int i = 0; i < tb_moves.n; i++) counts[s] += tb_moves.moves[i].type <= MOVE_GOOD;
+        total += counts[s];
+    }
+    if (total == 0) return 0;
+    int r = cb_rand(total), s = 0;
+    while (r >= counts[s]) r -= counts[s++];
+    calculate_legal_moves(g, s, &tb_moves);
+    for (int i = 0; i < tb_moves.n; i++) {
+        if (tb_moves.moves[i].type > MOVE_GOOD) continue;
+        if (r-- == 0) {
+            snprintf(id, (size_t)id_cap, "id-%d", s);
+            return wv_wire(&tb_moves.moves[i], w, cap);
+        }
+    }
+    return 0;
+}
+
+// THE DURABLE STATE BLOB'S FORMATS (was e2e/state_codec.test.ts; its volume
+// half is test_table_state_blob_round_trips_every_reachable_state). This kernel
+// reads v2 to v5 and writes v5: the board, its clock behind it, its rules in the
+// flag byte, and the game's rating stamp behind the clock. A row of any other
+// format is refused rather than misread; a v3 row loads with its clock, and a
+// v3 or v4 row commits back as the same board, flags and clock at the current
+// format, unrated. (The file's last case, that the board read back through the
+// GENERATED TypeScript accessors rebuilds the blob, held only a test helper: no
+// shipped TypeScript reads the unmasked Game, which the browser is denied.)
+static void test_state_blob_formats_read_and_written(void) {
+    static uint8_t blob[8192], want[8192];
+    TableCommit c;
+    CHECK(TABLE_STATE_FORMAT == TABLE_STATE_FORMAT_V5, "state blob: the format this kernel writes is v5");
+    CHECK(TABLE_STATE_CLOCK_BYTES == TABLE_STATE_V3_CLOCK_BYTES
+          && TABLE_STATE_TAIL_BYTES == TABLE_STATE_V3_CLOCK_BYTES + TABLE_STATE_STAMP_BYTES,
+          "state blob: a written blob carries the clock, and the rating stamp behind it");
+
+    tb_seed_bytes(4, 1);
+    CHECK(bl_bots_only_row(&bl_row, 4, "random", tb_seed) == TABLE_OK, "state blob: a four-seat bots table deals");
+    const int sl = bl_row.state_len;
+    int zero = 1;
+    for (int i = sl - TABLE_STATE_STAMP_BYTES; i < sl; i++) zero &= bl_row.state[i] == 0;
+    CHECK(zero, "state blob: a game still being played leaves the stamp empty");
+    CHECK(bl_row.state[0] == TABLE_STATE_FORMAT, "state blob: the dealt blob leads with its format");
+    CHECK(bl_row.state[1] & TABLE_STATE_FLAG_PASSING, "state blob: a classic table says PASSING in its flag byte");
+
+    // Any other format is refused, not misread.
+    static const int other[] = { 0, 1, TABLE_STATE_FORMAT + 1, 0xff };
+    for (int k = 0; k < 4; k++) {
+        memcpy(blob, bl_row.state, (size_t)sl);
+        blob[0] = (uint8_t)other[k];
+        const int rc = table_load(&tb, blob, sl, bl_row.roster, ROSTER_BYTES);
+        if (rc != TABLE_E_STATE_VERSION) fprintf(stderr, "  format %d: table_load %d\n", other[k], rc);
+        CHECK(rc == TABLE_E_STATE_VERSION, "state blob: a blob of any other format is refused");
+    }
+    CHECK(table_load(&tb, bl_row.state, sl, bl_row.roster, ROSTER_BYTES) == TABLE_OK, "state blob: the blob as written loads");
+
+    // A v3 blob: the board, the v3 format byte, the v3 flag byte (the deck bit
+    // alone) and a clock: shown at T, done playing at T + 500.
+    const int64_t T = 1700000000000LL;
+    const BoardClock clk = { T, T + 500 };
+    const int board = sl - TABLE_STATE_TAIL_BYTES;
+    memcpy(blob, bl_row.state, (size_t)board);
+    tb_put_clock(blob + board, &clk);
+    const int n3 = board + TABLE_STATE_V3_CLOCK_BYTES;
+    blob[0] = TABLE_STATE_FORMAT_V3;
+    blob[1] = bl_row.state[1] & TABLE_STATE_FLAG_DETERMINISTIC;
+    CHECK(table_load(&tb, blob, n3, bl_row.roster, ROSTER_BYTES) == TABLE_OK, "state blob: a v3 blob loads");
+    const int wait = table_bot_wait_ms(&tb, T + 100);
+    CHECK(wait > 0, "state blob: a bot waits on the board the v3 clock says was just shown");
+    CHECK(table_bot_wait_ms(&tb, T + 150) == wait - 50, "state blob: less the time gone since the v3 clock");
+    CHECK(table_bot_wait_ms(&tb, T + 3600000) == 0, "state blob: and not at all an hour later");
+    // Written back at the current format: the same board and clock, the flag
+    // byte the v3 deck bit and PASSING, and no rating stamp.
+    memcpy(want, blob, (size_t)n3);
+    want[0] = TABLE_STATE_FORMAT;
+    want[1] |= TABLE_STATE_FLAG_PASSING;
+    memset(want + n3, 0, TABLE_STATE_STAMP_BYTES);
+    CHECK(table_commit_products(&tb, RS("g"), bl_row.version, 0, &c, tb_arena, sizeof(tb_arena)) >= 0
+          && c.state.len == n3 + TABLE_STATE_STAMP_BYTES && memcmp(tb_arena + c.state.off, want, (size_t)c.state.len) == 0,
+          "state blob: a v3 row commits back at the current format, the same board and clock, passing, unrated");
+
+    // v4 is v5 without the stamp, under its own format byte. A passing row and
+    // a podkidnoy row each commit back the board, flags and clock they loaded.
+    const int n4 = sl - TABLE_STATE_STAMP_BYTES;
+    const uint8_t deck = bl_row.state[1] & TABLE_STATE_FLAG_DETERMINISTIC;
+    for (int passing = 1; passing >= 0; passing--) {
+        memcpy(blob, bl_row.state, (size_t)n4);
+        blob[0] = TABLE_STATE_FORMAT_V4;
+        blob[1] = (uint8_t)(deck | (passing ? TABLE_STATE_FLAG_PASSING : 0));
+        memcpy(want, blob, (size_t)n4);
+        want[0] = TABLE_STATE_FORMAT;
+        memset(want + n4, 0, TABLE_STATE_STAMP_BYTES);
+        const int rc = table_load(&tb, blob, n4, bl_row.roster, ROSTER_BYTES);
+        CHECK(rc == TABLE_OK, passing ? "state blob: a passing v4 row loads" : "state blob: a podkidnoy v4 row loads");
+        CHECK(rc == TABLE_OK && table_commit_products(&tb, RS("g"), bl_row.version, 0, &c, tb_arena, sizeof(tb_arena)) >= 0
+              && c.state.len == sl && memcmp(tb_arena + c.state.off, want, (size_t)sl) == 0,
+              passing ? "state blob: a passing v4 row is written back the same bytes at the current format"
+                      : "state blob: a podkidnoy v4 row is written back the same, still podkidnoy");
+    }
+    blob[1] = (uint8_t)(deck | TABLE_STATE_FLAG_PASSING | 0x04);
+    CHECK(table_load(&tb, blob, n4, bl_row.roster, ROSTER_BYTES) == TABLE_E_STATE_VERSION,
+          "state blob: a v4 flag bit this kernel does not know is unreadable");
+}
+
+// A MASKED VIEW MUST NOT DEPEND ON WHAT IT IS MASKING (was e2e/view_codec.test.ts).
+// Move the hands a viewer cannot see - every hidden hand and the stock, rotated
+// by one, the counts kept - and the envelope it receives must be the same bytes.
+// Any leak, ordered, unordered or partial, changes them.
+static void test_masked_view_does_not_depend_on_hidden_hands(void) {
+    static uint8_t before[1 << 14], after[1 << 14];
+    static Game orig;
+    Card pool[MAX_DECK + MAX_PLAYERS * MAX_HAND_SIZE];
+    int compared = 0, same = 1, moved = 1, hidden_all = 1, sealed = 1;
+    for (int g = 0; g < 6; g++) {
+        const int np = 2 + g % 5;
+        tb_seed_bytes(np, 7919 * g + 3);
+        if (!wv_deal(&wv_row, np, wv_odd_bots(np))) { CHECK(0, "masked view: a mixed table deals"); return; }
+        for (int viewer = -1; viewer < np; viewer++) {
+            CHECK(wv_load(&wv_row) == TABLE_OK, "masked view: the row loads");
+            const int bn = table_envelope(&tb, RS("g"), viewer, 1, before, sizeof(before));
+            memcpy(&orig, &tb_game, sizeof(Game));
+            memcpy(&tb_src, &tb_game, sizeof(Game));
+            const Roster r = tb.r;
+            int n = 0, hidden = 0;
+            for (int s = 0; s < np; s++) {
+                if (s == viewer) continue;
+                for (int i = 0; i < tb_src.players[s].hand_count; i++) pool[n++] = tb_src.players[s].hand[i];
+                hidden += tb_src.players[s].hand_count;
+            }
+            for (int i = 0; i < tb_src.deck_count; i++) pool[n++] = tb_src.deck[i];
+            const Card first = pool[0];
+            memmove(pool, pool + 1, sizeof(Card) * (size_t)(n - 1));
+            pool[n - 1] = first;
+            int at = 0;
+            for (int s = 0; s < np; s++) {
+                if (s == viewer) continue;
+                for (int i = 0; i < tb_src.players[s].hand_count; i++) tb_src.players[s].hand[i] = pool[at++];
+            }
+            for (int i = 0; i < tb_src.deck_count; i++) tb_src.deck[i] = pool[at++];
+            moved &= !tb_same_board(&tb_src, &orig);
+            hidden_all &= hidden > 0;
+            if (table_seal(&tb, &tb_src, &r, tb_buf, (int)sizeof(tb_buf)) <= 0) {
+                if (sealed) fprintf(stderr, "  game %d viewer %d: the moved board does not seal (%d)\n", g, viewer, tb.detail);
+                sealed = 0;
+                continue;
+            }
+            const int an = table_envelope(&tb, RS("g"), viewer, 1, after, sizeof(after));
+            if (an != bn || memcmp(after, before, (size_t)an) != 0) {
+                if (same) fprintf(stderr, "  game %d viewer %d: the view changed when a hidden hand changed\n", g, viewer);
+                same = 0;
+            }
+            compared++;
+        }
+    }
+    CHECK(sealed, "masked view: every board with its hidden cards moved is one the kernel accepts");
+    CHECK(moved, "masked view: the hidden cards really moved");
+    CHECK(hidden_all, "masked view: every viewer had something masked");
+    CHECK(same, "masked view: no viewer's envelope changes when a hand it cannot see changes");
+    CHECK(compared >= 20, "masked view: a spread of viewers was compared");
+}
+
+// One committed row, read by every viewer through the client slot: the board
+// the table holds, masked for that viewer (ct_view_is), at the row's version
+// and game id. 1, or 0 with the first difference printed.
+static int wv_every_viewer_reads(const TbRow *row, int *checks) {
+    if (wv_load(row) != TABLE_OK) return 0;
+    for (int viewer = -1; viewer < tb_game.num_players; viewer++) {
+        const int n = table_envelope(&tb, RS("g"), viewer, row->version, ct_env, sizeof(ct_env));
+        const int rc = client_adopt_envelope(&ct, ct_env, n);
+        if (rc != CLIENT_OK || !ct_view_is(&ct.view, &tb_game, &tb.r, viewer) || ct.view.version != row->version
+            || ct.view.gid_len != 1 || ct.view.game_id[0] != 'g' || ct.view.has_good_timestamp != tb_game.has_good_timestamp) {
+            fprintf(stderr, "  viewer %d at version %u: adopt %d, the view is not the committed board\n", viewer, row->version, rc);
+            return 0;
+        }
+        (*checks)++;
+    }
+    return 1;
+}
+
+// EVERY VIEWER READS THE COMMITTED BOARD, MASKED (was e2e/view_codec.test.ts):
+// for games of 2 to 6 seats played by random legal moves through table_act, the
+// envelope of every seat and of the spectator reads, through the client slot,
+// as the committed board on every public field, with the viewer's own hand
+// exact and in order. GAME_OVER boards are among them.
+static void test_every_viewer_reads_the_committed_board(void) {
+    uint8_t w[128];
+    char id[16];
+    TableCommit c;
+    int checks = 0, ends = 0, ok = 1;
+    cb_rng = 0x5eed1e55u;
+    client_init(&ct, &ct_slot);
+    for (int g = 0; g < 10 && ok; g++) {
+        const int np = 2 + g % 5;
+        tb_seed_bytes(np, 6151 * g + 17);
+        if (!wv_deal(&wv_row, np, wv_odd_bots(np))) { ok = 0; break; }
+        ok = wv_every_viewer_reads(&wv_row, &checks);
+        for (int mv = 1; mv <= 250 && ok && wv_row.status == GAME_STATUS_PLAYING; mv++) {
+            if (wv_load(&wv_row) != TABLE_OK) { ok = 0; break; }
+            table_set_deal_seed(&tb, tb_seed_hex, 2 * FOOLISH_SEED_LEN);
+            const int wl = wv_random_move(&tb_game, id, sizeof(id), w, sizeof(w));
+            if (wl <= 0) break;
+            const int rc = table_act(&tb, id, (int)strlen(id), w, wl, -1, 0);
+            if (rc != TABLE_APPLIED || wv_commit(&wv_row, "g", &c) < 0) {
+                fprintf(stderr, "  game %d move %d: the kernel's own legal move did not apply (%d)\n", g, mv, rc);
+                ok = 0;
+                break;
+            }
+            if (wv_row.status == GAME_STATUS_GAME_OVER) ends++;
+            if (mv % 3 == 0 || wv_row.status != GAME_STATUS_PLAYING) ok = wv_every_viewer_reads(&wv_row, &checks);
+        }
+    }
+    CHECK(ok, "every viewer reads the committed board, masked, for every seat and the spectator");
+    CHECK(checks > 300, "enough view round-trips were read");
+    CHECK(ends >= 2, "enough games reached GAME_OVER under the view check");
+}
+
+// EVERY PER-VIEWER PUSH IS LEAK-FREE, DECODABLE, AND MIRRORS THE COMMITTED STATE
+// (was e2e/packed_wire_stream.test.ts). Through the client's reader, which shows
+// what a CLIENT can see: every step's view holds no hand but the viewer's own,
+// a DEAL or REFILL to another seat carries only backs, and a COVER's target is
+// the attack in the battle it names (the two adjacent optional bytes a reader
+// could take in either order). The final board is the committed one, the
+// session log the commits append reads back whole, a finished game's log
+// encodes a verified replay code, and an illegal wire is rejected.
+static void test_every_push_is_leak_free_and_mirrors_the_commit(void) {
+    uint8_t w[128];
+    char id[16];
+    TableCommit c;
+    static uint8_t pushes[MAX_PLAYERS + 1][1 << 14];
+    int push_len[MAX_PLAYERS + 1], viewers[MAX_PLAYERS + 1];
+    int moves = 0, covers = 0, codes = 0, ok = 1, leak_free = 1, covers_ok = 1, mirrors = 1, logs_ok = 1;
+    cb_rng = 0xbadc0de5u;
+    client_init(&ct, &ct_slot);
+    for (int g = 0; g < 24 && ok; g++) {
+        const int np = g % 7 == 6 ? 6 : 2 + g % 4;
+        tb_seed_bytes(np, g * 7919 + 13);
+        if (!wv_deal(&wv_row, np, wv_odd_bots(np))) { ok = 0; break; }
+        int nv = 0;
+        for (int s = 0; s < np; s += 2) viewers[nv++] = s;
+        viewers[nv++] = -1;
+        for (int mv = 0; mv < 600 && ok && wv_row.status == GAME_STATUS_PLAYING; mv++) {
+            if (wv_load(&wv_row) != TABLE_OK) { ok = 0; break; }
+            table_set_deal_seed(&tb, tb_seed_hex, 2 * FOOLISH_SEED_LEN);
+            const int wl = wv_random_move(&tb_game, id, sizeof(id), w, sizeof(w));
+            if (wl <= 0) break;
+            if (table_act(&tb, id, (int)strlen(id), w, wl, -1, 0) != TABLE_APPLIED || wv_commit(&wv_row, "g", &c) < 0) { ok = 0; break; }
+            for (int k = 0; k < nv; k++) {
+                push_len[k] = table_push(&tb, RS("g"), viewers[k], pushes[k], sizeof(pushes[k]));
+                if (push_len[k] <= 0) ok = 0;
+            }
+            // The session log the commits append is one the kernel reads back whole.
+            logs_ok &= wv_load(&wv_row) == TABLE_OK && table_set_session_log(&tb, wv_row.log, wv_row.log_len) > 0;
+            for (int k = 0; k < nv && ok; k++) {
+                const int viewer = viewers[k];
+                int rc = pushes[k][0] == 1 ? client_push_open(&ct, pushes[k], push_len[k], 1, 0, 0, wv_row.version) : -1, step;
+                if (rc != CLIENT_OK) { fprintf(stderr, "  game %d move %d viewer %d: the push does not read (%d)\n", g, mv, viewer, rc); ok = 0; break; }
+                while ((step = client_push_next(&ct)) == 1) {
+                    const PushEvent *e = &ct.event;
+                    const TableView *v = &ct.view;
+                    if ((e->type == EVW_T_DEAL || e->type == EVW_T_REFILL) && e->seat != viewer)
+                        for (int i = 0; i < e->n_cards; i++) leak_free &= e->cards[i].suit == -1 && e->cards[i].value == -1;
+                    leak_free &= v->my_seat == viewer && v->my_hand_count == (viewer < 0 ? 0 : v->seats[viewer].hand_count);
+                    if (e->type == EVW_T_COVER) {
+                        covers_ok &= e->has_target && e->battle >= 0 && e->battle < v->num_battles
+                                  && card_eq(v->battles[e->battle].attack, e->target);
+                        covers++;
+                    }
+                }
+                if (step != 0 || client_push_final(&ct) != CLIENT_OK) { ok = 0; break; }
+                const TableView *f = &ct.view;
+                leak_free &= f->my_seat == viewer && f->my_hand_count == (viewer < 0 ? 0 : f->seats[viewer].hand_count);
+                mirrors &= f->status == tb_game.status && f->deck_count == tb_game.deck_count
+                        && f->discard_pile_length == tb_game.discard_pile_length && f->good_mask == tb_game.good_players_mask;
+            }
+            moves++;
+            if (c.ended) {
+                const int cl = wv_load(&wv_row) == TABLE_OK
+                    ? table_replay_code(&tb, tb_seed, FOOLISH_SEED_LEN, wv_row.log, wv_row.log_len, tb_code, sizeof(tb_code), tb_scratch, sizeof(tb_scratch))
+                    : -1;
+                if (cl <= 0) fprintf(stderr, "  game %d: the finished game's log does not encode (%d)\n", g, cl);
+                codes += cl > 0;
+            }
+        }
+    }
+    CHECK(ok, "packed stream: every move applied and every push opened and read to its end");
+    CHECK(leak_free, "packed stream: no viewer's stream carries another seat's hand, and deals to other seats are backs");
+    CHECK(covers_ok, "packed stream: every cover names its battle and the attack it covered there");
+    CHECK(mirrors, "packed stream: the decoded final board mirrors the committed public state");
+    CHECK(logs_ok, "packed stream: the session log the commits append reads back");
+    CHECK(moves > 100 && covers > 100, "packed stream: enough moves and covers were exercised");
+    CHECK(codes > 0, "packed stream: finished games' session logs encode verified replay codes");
+
+    // An illegal wire is rejected: the defender may not attack.
+    tb_seed_bytes(3, 99);
+    CHECK(wv_deal(&wv_row, 3, wv_odd_bots(3)) && wv_load(&wv_row) == TABLE_OK, "packed stream: a three-seat table deals");
+    const int d = tb_game.defender;
+    w[0] = AWIRE_ATTACK; w[1] = 1; w[2] = wire_from_card(tb_game.players[d].hand[0]);
+    snprintf(id, sizeof(id), "id-%d", d);
+    CHECK(table_act(&tb, id, (int)strlen(id), w, 3, -1, 0) == TABLE_REJECTED, "packed stream: the defender attacking is rejected");
+}
+
+// EVERY ENVELOPE AND PUSH OF WHOLE GAMES READS AS THE BOARD THE TABLE HOLDS (was
+// e2e/client_envelope_decode.test.ts). Tables are created, joined, filled with
+// bots, dealt, played to their end by humans and bots and continued, at 2, 4
+// and 8 seats with names in several scripts; at every commit every human seat
+// and the spectator read their envelope through the client slot as the
+// committed board (ct_view_is), and every push - as3, as3 labelled as2, and the
+// bare as2 sequence of an operation that changed no roster - ends on the board
+// its envelope gives. The one difference is the point of the field: an
+// envelope's view has said whether the game was rated, a push's has not.
+typedef struct { int envelopes, pushes, games, ok; } WvCounts;
+static WvCounts wv_counts;
+static TableView wv_env_view[MAX_PLAYERS + 1];
+static uint8_t wv_ident[MAX_PLAYERS + 1][4096];
+static int wv_ident_len[MAX_PLAYERS + 1];
+
+static int wv_read_push(const uint8_t *p, int len, int as3, int v, uint32_t version, int *steps) {
+    int rc = client_push_open(&ct, p, len, as3, wv_ident[v], wv_ident_len[v], version), k;
+    *steps = 0;
+    if (rc != CLIENT_OK) return rc;
+    while ((k = client_push_next(&ct)) == 1) (*steps)++;
+    return k != 0 ? k : client_push_final(&ct);
+}
+
+static void wv_compare_products(const char *label, const TbRow *row, const char *gid, const TableCommit *c) {
+    if (!wv_counts.ok) return;
+    int viewers[MAX_PLAYERS + 1], nv = 0;
+    for (int s = 0; s < tb.r.n; s++) if (tb.r.seats[s].brain_len == 0) viewers[nv++] = s;
+    viewers[nv++] = -1;
+    const int gl = (int)strlen(gid);
+    for (int k = 0; k < nv; k++) {
+        const int viewer = viewers[k];
+        const Span env = viewer >= 0 ? c->views[viewer] : c->spectator;
+        const int rc = client_adopt_envelope(&ct, tb_arena + env.off, env.len);
+        if (rc != CLIENT_OK || !ct_view_is(&ct.view, &tb_game, &tb.r, viewer) || ct.view.version != row->version
+            || ct.view.gid_len != gl || memcmp(ct.view.game_id, gid, (size_t)gl) != 0
+            || ct.view.has_good_timestamp != tb_game.has_good_timestamp || !ct.view.rating_known) {
+            fprintf(stderr, "  %s: viewer %d's envelope (adopt %d) is not the table's board\n", label, viewer, rc);
+            wv_counts.ok = 0;
+            return;
+        }
+        wv_env_view[viewer + 1] = ct.view;
+        wv_ident_len[viewer + 1] = client_identity(&ct, wv_ident[viewer + 1], sizeof(wv_ident[0]));
+        wv_counts.envelopes++;
+    }
+    if (c->n_events == 0) return;
+    for (int k = 0; k < nv; k++) {
+        const int viewer = viewers[k], v = viewer + 1;
+        const int pl = table_push(&tb, gid, gl, viewer, ct_push, sizeof(ct_push));
+        int steps = 0;
+        int rc = pl > 0 ? wv_read_push(ct_push, pl, 1, v, row->version, &steps) : pl;
+        if (rc != CLIENT_OK || steps != c->n_events || ct.view.rating_known || ct.view.rated != wv_env_view[v].rated
+            || !ct_same_view(&ct.view, &wv_env_view[v])) {
+            fprintf(stderr, "  %s: viewer %d's push (%d, %d of %d steps) does not end on its envelope's board\n",
+                    label, viewer, rc, steps, c->n_events);
+            wv_counts.ok = 0;
+            return;
+        }
+        wv_counts.pushes++;
+        // What a server sent before Phase 5b: these very bytes, labelled as2.
+        rc = wv_read_push(ct_push, pl, 0, v, row->version, &steps);
+        if (rc != CLIENT_OK || steps != c->n_events || !ct_same_view(&ct.view, &wv_env_view[v])) {
+            fprintf(stderr, "  %s: viewer %d's as3 bytes labelled as2 do not read the same (%d)\n", label, viewer, rc);
+            wv_counts.ok = 0;
+            return;
+        }
+        wv_counts.pushes++;
+        // The as2 form of a move's push (the sequence alone) reads the same with
+        // the kept identity. A roster change's push carries its roster after the
+        // flags byte, so it has no such form.
+        if (c->roster_changed) continue;
+        rc = wv_read_push(ct_push, pl - 1, 0, v, row->version, &steps);
+        if (rc != CLIENT_OK || steps != c->n_events || !ct_same_view(&ct.view, &wv_env_view[v])) {
+            fprintf(stderr, "  %s: viewer %d's as2 push does not read the same (%d)\n", label, viewer, rc);
+            wv_counts.ok = 0;
+            return;
+        }
+        wv_counts.pushes++;
+    }
+}
+
+static void wv_op(const char *label, TbRow *row, const char *gid, int rc) {
+    TableCommit c;
+    if (!wv_counts.ok) return;
+    if (rc != TABLE_OK) { fprintf(stderr, "  %s: %d\n", label, rc); wv_counts.ok = 0; return; }
+    if (wv_commit(row, gid, &c) < 0) { fprintf(stderr, "  %s: the commit was refused\n", label); wv_counts.ok = 0; return; }
+    wv_compare_products(label, row, gid, &c);
+}
+
+static void wv_seed_k(uint8_t *s, int k) {
+    for (int i = 0; i < FOOLISH_SEED_LEN; i++) s[i] = (uint8_t)((i * 29 + k * 13 + 1) & 0xff);
+}
+
+static void wv_play(const char *gid, int humans, const char *const *bots, int n_bots, int k) {
+    static const char *const names[] = { "Дмитрий", "Zoë 🃏", "Ann" };
+    char ids[3][40], bot_id[40], bot_name[16];
+    uint8_t seed[FOOLISH_SEED_LEN], w[128];
+    TableCommit c;
+    memset(&wv_row, 0, sizeof(wv_row));
+    for (int i = 0; i < humans; i++) snprintf(ids[i], sizeof(ids[i]), "00000000-0000-4000-8000-%012d", k * 16 + i);
+    table_init(&tb, &tb_game, &tb_snaps);
+    wv_op("create", &wv_row, gid, table_create(&tb, ids[0], (int)strlen(ids[0]), names[0], (int)strlen(names[0])));
+    for (int i = 1; i < humans && wv_counts.ok; i++)
+        wv_op("join", &wv_row, gid, wv_load(&wv_row) == TABLE_OK
+              ? table_join(&tb, ids[i], (int)strlen(ids[i]), names[i], (int)strlen(names[i])) : -1);
+    for (int b = 0; b < n_bots && wv_counts.ok; b++) {
+        snprintf(bot_id, sizeof(bot_id), "b0000000-0000-4000-8000-%012d", k * 16 + b);
+        snprintf(bot_name, sizeof(bot_name), "Bot %d", b);
+        wv_seed_k(seed, k);
+        wv_op("add bot", &wv_row, gid, wv_load(&wv_row) == TABLE_OK
+              ? table_add_bot(&tb, ids[0], (int)strlen(ids[0]), bot_id, (int)strlen(bot_id), bot_name, (int)strlen(bot_name),
+                              bots[b], (int)strlen(bots[b]), seed) : -1);
+    }
+    for (int i = 0; i < humans && wv_counts.ok; i++) {
+        wv_seed_k(seed, k + i);
+        wv_op("ready", &wv_row, gid, wv_load(&wv_row) == TABLE_OK ? table_ready(&tb, ids[i], (int)strlen(ids[i]), seed) : -1);
+        game_set_seed(1);
+    }
+    char ab[2 * FOOLISH_SEED_LEN + 1];
+    for (int i = 0; i < FOOLISH_SEED_LEN; i++) memcpy(ab + 2 * i, "ab", 2);
+    for (int step = 0; step < 4000 && wv_counts.ok; step++) {
+        if (wv_load(&wv_row) != TABLE_OK) { wv_counts.ok = 0; break; }
+        if (tb_game.status != GAME_STATUS_PLAYING) break;
+        int drove = 0;
+        if (table_needs_bots(&tb)) {
+            table_set_deal_seed(&tb, ab, 2 * FOOLISH_SEED_LEN);
+            const int d = table_bot_drive(&tb, 0, 0, 0, &tb_drv);
+            if (d < 0) { fprintf(stderr, "  %s step %d: the bot cycle refused (%d)\n", gid, step, d); wv_counts.ok = 0; break; }
+            drove = d > 0;
+        }
+        if (!drove) {
+            // A bot seat still in may have no move yet: then a human moves.
+            int seat = -1, n = 0;
+            for (int s = 0; s < tb_game.num_players && seat < 0; s++) {
+                if (tb_game.players[s].status != PLAYER_STATUS_IN || tb.r.seats[s].brain_len) continue;
+                calculate_legal_moves(&tb_game, s, &tb_moves);
+                n = 0;
+                for (int i = 0; i < tb_moves.n; i++) n += tb_moves.moves[i].type <= MOVE_GOOD;
+                if (n > 0) seat = s;
+            }
+            if (seat < 0) { fprintf(stderr, "  %s step %d: no human has a move when no bot does\n", gid, step); wv_counts.ok = 0; break; }
+            int r = (step * 7) % n, wl = 0;
+            for (int i = 0; i < tb_moves.n && !wl; i++)
+                if (tb_moves.moves[i].type <= MOVE_GOOD && r-- == 0) wl = wv_wire(&tb_moves.moves[i], w, sizeof(w));
+            const RosterSeat *rs = &tb.r.seats[seat];
+            const int rc = table_act(&tb, rs->id, rs->id_len, w, wl, -1, 0);
+            if (rc != TABLE_APPLIED) { fprintf(stderr, "  %s step %d: the human move by %d was %d\n", gid, step, seat, rc); wv_counts.ok = 0; break; }
+        }
+        if (wv_commit(&wv_row, gid, &c) < 0) { wv_counts.ok = 0; break; }
+        wv_compare_products("move", &wv_row, gid, &c);
+    }
+    if (!wv_counts.ok) return;
+    if (wv_load(&wv_row) != TABLE_OK || tb_game.status != GAME_STATUS_GAME_OVER) {
+        fprintf(stderr, "  %s: not played to its end\n", gid);
+        wv_counts.ok = 0;
+        return;
+    }
+    wv_op("continue", &wv_row, gid, table_continue(&tb, ids[0], (int)strlen(ids[0])));
+    wv_counts.games++;
+}
+
+static void test_every_envelope_and_push_of_whole_games_reads_as_the_table(void) {
+    static const char *const four[] = { "random", "handwritten" };
+    static const char *const eight[] = { "random", "random", "handwritten", "random", "simple_heuristic" };
+    memset(&wv_counts, 0, sizeof(wv_counts));
+    wv_counts.ok = 1;
+    client_init(&ct, &ct_slot);
+    wv_play("g2", 2, 0, 0, 1);
+    wv_play("g4", 2, four, 2, 2);
+    wv_play("g8-0000-4000-8000-000000000008", 3, eight, 5, 3);
+    CHECK(wv_counts.ok, "whole games: every envelope reads as the table's board, and every push ends on it in every form");
+    CHECK(wv_counts.games == 3 && wv_counts.envelopes > 500 && wv_counts.pushes > 300, "whole games: enough was read");
+
+    // A trailer cut anywhere is refused, never clamped into a board nobody sent.
+    const int n = table_envelope(&tb, RS("g"), 0, 3, ct_env, sizeof(ct_env));
+    const int trailer_at = 11 + (ct_env[9] | (ct_env[10] << 8));
+    int refused = 0;
+    for (int cut = 1; cut <= n - trailer_at; cut++) refused += client_adopt_envelope(&ct, ct_env, n - cut) < 0;
+    CHECK(n > trailer_at && refused == n - trailer_at && client_adopt_envelope(&ct, ct_env, n) == CLIENT_OK,
+          "whole games: an envelope whose trailer is cut by any number of bytes is refused, and the whole one reads");
+}
+
+// THE ACTION REQUEST'S DOOR (was e2e/awire_codec.test.ts; the bytes are pinned
+// by test_table_request_encode_and_response_decode): what the client writes,
+// with and without an intent, the server reads back, and a body that is not a
+// request is refused without being partly read.
+static void test_action_request_door(void) {
+    TableRequest q;
+    TableResponse r;
+    uint8_t buf[600], w[64];
+    static const struct { const char *label; int len; uint8_t b[8]; } bad[] = {
+        { "an empty body", 0, { 0 } },
+        { "one byte", 1, { 1 } },
+        { "an unknown format byte", 4, { 9, 0, 3, 0 } },
+        { "v2 with a game id and an intent but no wire", 8, { 2, 2, 65, 66, 0, 0, 0, 0 } },
+        { "v2 cut inside its intent", 6, { 2, 1, 0x67, 1, 0, 0 } },
+        { "v1 with a game id but no wire", 4, { 1, 2, 65, 66 } },
+    };
+    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++)
+        CHECK(table_request_decode(bad[i].b, bad[i].len, &q) == TABLE_E_WIRE, bad[i].label);
+
+    cb_rng = 0xa11ce;
+    int round_trips = 0;
+    for (int it = 0; it < 500; it++) {
+        ClientMove m;
+        memset(&m, 0, sizeof(m));
+        m.kind = cb_rand(5);
+        const int k = (m.kind == AWIRE_PICKUP || m.kind == AWIRE_GOOD) ? 0 : 1 + cb_rand(AWIRE_MAX_CARDS);
+        for (int i = 0; i < k; i++) m.cards[m.n_cards++] = card_of_id(cb_rand(52));
+        if (m.kind == AWIRE_COVER) for (int i = 0; i < k; i++) m.attack_cards[m.n_attacks++] = card_of_id(cb_rand(52));
+        const int wl = client_move_wire(&m, w, sizeof(w));
+        const int gl = 1 + cb_rand(255);
+        for (int i = 0; i < gl; i++) buf[i] = (uint8_t)cb_rand(256);
+        uint8_t gid[255];
+        memcpy(gid, buf, (size_t)gl);
+        memcpy(buf + gl, w, (size_t)wl);
+        const int has_intent = it & 1;
+        const uint32_t intent = (uint32_t)cb_rand(0xffff) * 0x10001u;
+        const int n = table_request_encode(buf, sizeof(buf), gl, wl, has_intent, intent);
+        round_trips += n > 0 && table_request_decode(buf, n, &q) == 0 && q.gid_len == gl && memcmp(buf + q.gid_off, gid, (size_t)gl) == 0
+                    && q.wire_len == wl && memcmp(buf + q.wire_off, w, (size_t)wl) == 0
+                    && q.has_intent == (has_intent != 0) && q.intent == (has_intent ? intent : 0u);
+    }
+    CHECK(round_trips == 500, "action request: every game id, wire and intent the client writes, the server reads back");
+    buf[0] = 'g'; buf[1] = AWIRE_GOOD; buf[2] = 0;
+    const int n = table_request_encode(buf, sizeof(buf), 1, 2, true, 0);
+    CHECK(table_request_decode(buf, n, &q) == 0 && q.has_intent && q.intent == 0, "action request: intent 0 is a real value, not absent");
+
+    uint8_t resp[TABLE_RESP_BYTES];
+    CHECK(table_action_response(TABLE_APPLIED, 0, 7, resp, sizeof(resp)) == TABLE_RESP_BYTES, "action response: written");
+    resp[0] = 9;
+    CHECK(table_response_decode(resp, TABLE_RESP_BYTES, &r) == TABLE_E_WIRE, "action response: a body of another format is not a response");
+}
+
+// AN ASK RUNS ON THE TABLE FOR THE CALLER THE SERVER NAMES (was
+// e2e/ask_wire.test.ts; the kinds are test_table_ask_runs_every_kind): what the
+// client writes the server decodes and runs; a stranger's start is refused and
+// a bump is not; the caller's envelope after the deal reads retitled, with the
+// rules and the hand it dealt.
+static void test_ask_body_runs_for_the_caller(void) {
+    uint8_t w[ASK_BYTES_MAX];
+    TableAsk a, b;
+    TableCommit c;
+    tb_seed_fill(17);
+    client_init(&ct, &ct_slot);
+    table_init(&tb, &tb_game, &tb_snaps);
+    CHECK(table_create(&tb, RS("a"), RS("Ana")) == TABLE_OK && table_join(&tb, RS("b"), RS("Bo")) == TABLE_OK, "ask: a two-seat lobby");
+#define WV_ASK(actor, name, ask) (ask_decode(w, ask_encode(&(ask), w, sizeof(w)), &b) == ASK_OK \
+        ? table_ask(&tb, RS(actor), RS(name), &b, 0, tb_seed) : -999)
+    a = ask_of(ASK_START, "g-1");
+    CHECK(WV_ASK("stranger", "S", a) == TABLE_E_NOT_SEATED, "ask: a stranger's start is refused");
+    a = ask_of(ASK_BUMP, "g-1");
+    CHECK(WV_ASK("stranger", "S", a) == TABLE_MOOT, "ask: a stranger's bump is not (a spectator's client sends it)");
+    a = ask_of(ASK_UPDATE_NAME, "g-1");
+    a.title_len = 10;
+    memcpy(a.title, "  Friday  ", 10);
+    CHECK(WV_ASK("a", "Ana", a) == TABLE_OK, "ask: update-name");
+    a = ask_of(ASK_SET_RULES, "g-1");
+    a.passing = 0;
+    CHECK(WV_ASK("b", "Bo", a) == TABLE_OK, "ask: set-rules");
+    a = ask_of(ASK_START, "g-1");
+    CHECK(WV_ASK("a", "Ana", a) == TABLE_OK && WV_ASK("b", "Bo", a) == TABLE_OK && tb.dealt_now, "ask: the last start deals");
+#undef WV_ASK
+    CHECK(table_commit_products(&tb, RS("g-1"), 1, 1000, &c, tb_arena, sizeof(tb_arena)) >= 0 && c.dealt_now
+          && c.status == GAME_STATUS_PLAYING, "ask: the table dealt");
+    const int seat = roster_seat_of(&tb.r, RS("a"));
+    CHECK(seat >= 0 && client_adopt_envelope(&ct, tb_arena + c.views[seat].off, c.views[seat].len) == CLIENT_OK
+          && ct.view.title_len == 6 && memcmp(ct.view.title, "Friday", 6) == 0 && !ct.view.passing && ct.view.my_hand_count == 6,
+          "ask: the caller's envelope reads retitled (trimmed by the kernel), podkidnoy, dealt");
+}
+
+// THE DOORS UNDER HOSTILE BYTES (was e2e/wasm_kernel_fuzz.test.ts). The kernel
+// reads counts as loop bounds into fixed arrays, indexes value-keyed arrays and
+// shifts by card ids, so damaged bytes at any door - a stored state or roster
+// blob, an action wire, a request body, a session log under a bot cycle, an
+// envelope or push at the client slot - must be refused or survived, never read
+// out of bounds. A refusal is an acceptable answer; the asan lane (make
+// tests-asan) is what turns a stray read into a failure here.
+static uint8_t fz_junk_byte(void) {
+    static const uint8_t pick[] = { 0, 1, 2, 7, 13, 51, 52, 0x7f, 0x80, 0xfe, 0xff };
+    return (uint8_t)(pick[cb_rand(11)] ^ (cb_rand(10) < 3 ? cb_rand(256) : 0));
+}
+
+static int fz_junk(uint8_t *out, int n) {
+    for (int i = 0; i < n; i++) out[i] = fz_junk_byte();
+    return n;
+}
+
+// Byte-level damage to a real blob in `p` (len bytes, room for cap): flips,
+// truncation, extension. The new length.
+static int fz_damage(uint8_t *p, int len, int cap) {
+    for (int i = 1 + cb_rand(4); i > 0; i--) {
+        switch (cb_rand(4)) {
+            case 0: if (len) p[cb_rand(len)] = fz_junk_byte(); break;
+            case 1: if (len) p[cb_rand(len)] ^= (uint8_t)(1u << cb_rand(8)); break;
+            case 2: len = cb_rand(len + 1); break;
+            default: {
+                const int extra = 1 + cb_rand(64);
+                if (len + extra <= cap) len += fz_junk(p + len, extra);
+            }
+        }
+    }
+    return len;
+}
+
+// Everything a server does with a loaded table, on whatever did load.
+static int fz_exercise(void) {
+    static uint8_t junk[64];
+    const int np = tb.r.n;
+    int bounded = 1;
+    for (int s = 0; s < np + 2; s++) {
+        calculate_legal_moves(&tb_game, s, &tb_moves);
+        bounded &= tb_moves.n >= 0 && tb_moves.n <= 70000;
+    }
+    for (int s = 0; s < np; s++)
+        for (int k = 0; k < 3; k++) {
+            const int n = fz_junk(junk, cb_rand(24));
+            table_act(&tb, tb.r.seats[s].id, tb.r.seats[s].id_len, junk, n, -1, 0);
+        }
+    char ab[2 * FOOLISH_SEED_LEN + 1];
+    for (int i = 0; i < FOOLISH_SEED_LEN; i++) memcpy(ab + 2 * i, "ab", 2);
+    table_set_deal_seed(&tb, ab, 2 * FOOLISH_SEED_LEN);
+    const int d = table_bot_drive(&tb, 0, 0, 2, &tb_drv);
+    bounded &= d <= 2;
+    TableCommit c;
+    if (table_commit_products(&tb, RS("fuzz"), 1, 0, &c, tb_arena, sizeof(tb_arena)) >= 0) {
+        for (int v = -1; v < np; v++) {
+            table_push(&tb, RS("fuzz"), v, ct_push, sizeof(ct_push));
+            const int en = table_envelope(&tb, RS("fuzz"), v, 1, ct_env, sizeof(ct_env));
+            if (en > 0) client_adopt_envelope(&ct, ct_env, en);
+        }
+    }
+    return bounded;
+}
+
+// A random PLAYING board of 2 to 6 `brain` seats (e2e/helpers/kernel_board.ts
+// randomPlayingBoard): the first attacker leads onto a few attacks, some
+// covered by an arbitrary card; some seats are out; a random stock and maybe a
+// face-up trump; every card from one deck. Sealed into tb; 0 when the kernel
+// refuses the board.
+static int fz_random_board(const char *brain) {
+    Card deck[52];
+    Roster r;
+    const int np = 2 + cb_rand(5), lo = np >= 6 ? 1 : 5;
+    int nd = 0;
+    for (int suit = 0; suit < 4; suit++) for (int v = lo; v <= 13; v++) deck[nd++] = (Card){ (int8_t)suit, (int8_t)v };
+    for (int i = nd - 1; i > 0; i--) { const int j = cb_rand(i + 1); const Card t = deck[i]; deck[i] = deck[j]; deck[j] = t; }
+    memset(&tb_src, 0, sizeof(tb_src));
+    game_reset_to_lobby(&tb_src, 0);
+    tb_src.status = GAME_STATUS_PLAYING;
+    tb_src.num_players = (int8_t)np;
+    tb_src.deterministic_deck = true;
+    int k = 0, in[MAX_PLAYERS], n_in = 0;
+    for (int s = 0; s < np; s++) {
+        Player *p = &tb_src.players[s];
+        const int out = s > 0 && cb_rand(4) == 0;
+        p->status = out ? PLAYER_STATUS_OUT : PLAYER_STATUS_IN;
+        p->hand_count = (int8_t)(out ? 0 : 1 + cb_rand(6));
+        for (int i = 0; i < p->hand_count; i++) p->hand[i] = deck[k++];
+        if (out) tb_src.elimination_order[tb_src.num_eliminated++] = (int8_t)s;
+        else in[n_in++] = s;
+    }
+    if (n_in < 2) return 0;
+    if (cb_rand(2) == 0 && k < nd) {
+        tb_src.has_flipped = true;
+        tb_src.flipped = deck[k++];
+        tb_src.power_suit = tb_src.flipped.suit;
+    } else {
+        tb_src.power_suit = (int8_t)cb_rand(4);
+    }
+    for (int i = cb_rand(4); i > 0 && nd - k > 1; i--) {
+        Battle *bt = &tb_src.table_battles[tb_src.num_battles++];
+        bt->attack = deck[k++];
+        bt->defense = cb_rand(10) < 4 ? deck[k++] : CARD_NONE;
+    }
+    const int rest = nd - k, stock = cb_rand((rest < 8 ? rest : 8) + 1);
+    for (int i = 0; i < stock; i++) tb_src.deck[i] = deck[k++];
+    tb_src.deck_count = (int16_t)stock;
+    tb_src.discard_pile_length = (int16_t)(nd - k);
+    tb_src.first_attacker = (int8_t)in[0];
+    tb_src.defender = (int8_t)in[1];
+    tb_src.players[in[0]].awaiting_attack = true;
+    memset(&r, 0, sizeof(r));
+    roster_set_title(&r, RS("fuzz"));
+    for (int s = 0; s < np; s++) {
+        char id[16], name[16];
+        snprintf(id, sizeof(id), "seat-%d", s);
+        snprintf(name, sizeof(name), "P%d", s + 1);
+        roster_seat_add(&r, id, (int)strlen(id), name, (int)strlen(name), brain, (int)strlen(brain));
+    }
+    table_init(&tb, &tb_game, &tb_snaps);
+    const int n = table_seal(&tb, &tb_src, &r, tb_buf, (int)sizeof(tb_buf));
+    if (n <= 0) return 0;
+    memcpy(tb_state, tb_buf, (size_t)n);
+    tb_state_len = n;
+    memcpy(tb_roster, tb_buf + n, ROSTER_BYTES);
+    return 1;
+}
+
+// The case counts are the e2e file's, cut for the default suite: the asan lane
+// runs the same, and FUZZ_DOORS_SCALE in the environment multiplies them.
+static int fz_scale(void) {
+    const char *s = getenv("FUZZ_DOORS_SCALE");
+    const int k = s ? atoi(s) : 1;
+    return k > 0 ? k : 1;
+}
+
+static void test_doors_survive_hostile_bytes(void) {
+    static TbRow rows[5];
+    static uint8_t state[8192 + 512], roster[ROSTER_BYTES + 512], log[1 << 16], wire[80];
+    static const int widths[5] = { 2, 3, 4, 6, 8 };
+    const int scale = fz_scale();
+    cb_rng = 0xbadf00du;
+    client_init(&ct, &ct_slot);
+    for (int i = 0; i < 5; i++) {
+        tb_seed_bytes(widths[i], 31);
+        CHECK(tb_row_deal(&rows[i], &tb, widths[i], "random", tb_seed), "doors: a bots table deals");
+    }
+
+    // The load door: damaged state and roster blobs.
+    int loaded = 0, refused = 0, bounded = 1;
+    for (int it = 0; it < 600 * scale; it++) {
+        const TbRow *row = &rows[cb_rand(5)];
+        memcpy(state, row->state, (size_t)row->state_len);
+        memcpy(roster, row->roster, ROSTER_BYTES);
+        const int sl = cb_rand(10) < 8 ? fz_damage(state, row->state_len, sizeof(state)) : row->state_len;
+        const int rl = cb_rand(10) < 3 ? fz_damage(roster, ROSTER_BYTES, sizeof(roster)) : ROSTER_BYTES;
+        table_init(&tb, &tb_game, &tb_snaps);
+        if (table_load(&tb, state, sl, roster, rl) != TABLE_OK) { refused++; continue; }
+        loaded++;
+        bounded &= fz_exercise();
+    }
+    CHECK(refused > 200, "doors: the kernel refuses damaged blobs");
+    CHECK(loaded > 10, "doors: some damaged blobs still load and are played on");
+    CHECK(bounded, "doors: on whatever loads, every menu stays bounded and a drive within its cap");
+
+    // The bot cycle under hostile session logs, on sealed boards, for every
+    // kind of brain: framing mostly intact, cards, seats and types not.
+    tb_seed_bytes(3, 77);
+    CHECK(bl_bots_only_row(&bl_row, 3, "random", tb_seed) == TABLE_OK, "doors: a three-seat game deals");
+    for (int cycle = 0; cycle < 20000 && bl_row.status == GAME_STATUS_PLAYING; cycle++)
+        if (bl_row_cycle(&bl_row, bl_row.log, bl_row.log_len, 1, &(TableCommit){ 0 }) <= 0) break;
+    CHECK(bl_row.status == GAME_STATUS_GAME_OVER && bl_row.log_len > 0, "doors: and plays to its end, leaving a log");
+    static const char *const brains[] = { "random", "firecracker", "cordite", "octogen", "blackpowder" };
+    int drives = 0, imported = 0, boards = 0;
+    for (int it = 0; it < 30 * scale; it++) {
+        const char *brain = brains[it % 5];
+        if (!fz_random_board(brain)) continue;
+        boards++;
+        int ll;
+        if (cb_rand(10) < 2) ll = fz_junk(log, cb_rand(400));
+        else { memcpy(log, bl_row.log, (size_t)bl_row.log_len); ll = fz_damage(log, bl_row.log_len, sizeof(log)); }
+        if (table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) != TABLE_OK) { CHECK(0, "doors: a sealed board loads"); break; }
+        table_set_deal_seed(&tb, "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd", 64);
+        imported += table_set_session_log(&tb, log, ll) >= 0;
+        drives += table_bot_drive(&tb, 0, 0, 1, &tb_drv) >= 0;
+    }
+    CHECK(boards > 10 && drives == boards && imported > 0, "doors: the bots drive on hostile session logs");
+
+    // The action, request and client doors: random bytes.
+    const TbRow *row = &rows[2];
+    CHECK(table_load(&tb, row->state, row->state_len, row->roster, ROSTER_BYTES) == TABLE_OK, "doors: the four-seat row loads");
+    static uint8_t push[1 << 14], damaged[(1 << 14) + 512], ident[128];
+    const int pl = table_push(&tb, RS("fuzz"), -1, push, sizeof(push));
+    CHECK(pl > 0, "doors: the spectator's push");
+    int opened = 0;
+    for (int it = 0; it < 600 * scale; it++) {
+        table_load(&tb, row->state, row->state_len, row->roster, ROSTER_BYTES);
+        char id[16];
+        snprintf(id, sizeof(id), "id-%d", cb_rand(5));
+        table_act(&tb, id, (int)strlen(id), wire, fz_junk(wire, cb_rand(40)), cb_rand(2) ? -1 : cb_rand(5), cb_rand(5));
+        TableRequest q;
+        table_request_decode(wire, fz_junk(wire, cb_rand(80)), &q);
+        int dl;
+        if (cb_rand(2)) dl = fz_junk(damaged, cb_rand(300));
+        else { memcpy(damaged, push, (size_t)pl); dl = fz_damage(damaged, pl, sizeof(damaged)); }
+        client_adopt_envelope(&ct, damaged, dl);
+        memcpy(damaged, push, (size_t)pl);
+        dl = fz_damage(damaged, pl, sizeof(damaged));
+        const int il = cb_rand(2) ? 0 : fz_junk(ident, cb_rand(60));
+        if (client_push_open(&ct, damaged, dl, cb_rand(2), ident, il, 1) == CLIENT_OK) {
+            opened++;
+            while (client_push_next(&ct) == 1) { }
+            client_push_final(&ct);
+        }
+    }
+    // Nothing was corrupted: the row still loads as itself, its push (a loaded
+    // table's: no operation, so no step) still reads whole, and its envelope
+    // still reads as its board.
+    int steps = 0, k;
+    CHECK(table_load(&tb, row->state, row->state_len, row->roster, ROSTER_BYTES) == TABLE_OK
+          && client_push_open(&ct, push, pl, 1, 0, 0, 1) == CLIENT_OK, "doors: after the noise the row loads and its push opens");
+    while ((k = client_push_next(&ct)) == 1) steps++;
+    const int en = table_envelope(&tb, RS("fuzz"), 0, 1, ct_env, sizeof(ct_env));
+    CHECK(k == 0 && steps == 0 && client_push_final(&ct) == CLIENT_OK
+          && client_adopt_envelope(&ct, ct_env, en) == CLIENT_OK && ct_view_is(&ct.view, &tb_game, &tb.r, 0),
+          "doors: the action, request, envelope and push doors survive random bytes, and nothing they held was corrupted");
+    (void)opened;
+}
+
 int main(void) {
 #ifdef CD_PASS_PROBE
     test_masked_board_carries_the_rules();
@@ -17337,6 +18221,17 @@ int main(void) {
     test_hand_layout_rows_and_slots();
     test_hand_layout_refuses_what_it_cannot_answer();
     test_hand_layout_is_rows_and_slots_in_one_value();
+    // Wire formats, views and doors (were e2e/state_codec, view_codec,
+    // packed_wire_stream, client_envelope_decode, awire_codec, ask_wire and
+    // wasm_kernel_fuzz over bots.wasm).
+    test_state_blob_formats_read_and_written();
+    test_masked_view_does_not_depend_on_hidden_hands();
+    test_every_viewer_reads_the_committed_board();
+    test_every_push_is_leak_free_and_mirrors_the_commit();
+    test_every_envelope_and_push_of_whole_games_reads_as_the_table();
+    test_action_request_door();
+    test_ask_body_runs_for_the_caller();
+    test_doors_survive_hostile_bytes();
 
     printf("\n%d passed, %d failed\n", n_pass, n_fail);
     return n_fail > 0 ? 1 : 0;
