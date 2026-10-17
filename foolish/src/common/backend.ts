@@ -29,10 +29,11 @@ export class BackendError extends Error {
         switch (code) {
             case N.NW_ACCOUNT_E_BAD_LOGIN: return 'Invalid login credentials';
             case N.NW_ACCOUNT_E_EXISTS: return 'User already registered';
-            case N.NW_ACCOUNT_E_WEAK_PASSWORD: return 'Password should be at least 6 characters.';
+            case N.NW_ACCOUNT_E_WEAK_PASSWORD: return 'Password should be at least 8 characters, and not a common one.';
             case N.NW_ACCOUNT_E_LONG_PASSWORD: return 'Password cannot be longer than 72 characters';
             case N.NW_ACCOUNT_E_BAD_NAME: return 'USERNAME_RESERVED_PREFIX';
             case N.NW_ACCOUNT_E_SAME_PASSWORD: return 'New password should be different from the old password.';
+            case N.NW_ACCOUNT_E_TOO_MANY: return 'Too many attempts. Wait a few minutes and try again.';
             default: return 'Auth session missing';
         }
     }

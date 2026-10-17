@@ -712,7 +712,10 @@ int table_ask(Table *t, const char *actor_id, int id_len, const char *name, int 
         case ASK_SET_RULES:
             return table_set_rules(t, actor_id, id_len, a->passing);
         case ASK_BUMP:
-            return t->loaded ? TABLE_MOOT : TABLE_E_NOT_LOADED;
+            // Only a seated player: a bump wakes the bots, which costs the
+            // server a run (c_base security finding M8).
+            if (!t->loaded) return TABLE_E_NOT_LOADED;
+            return table_seat_of(t, actor_id, id_len) >= 0 ? TABLE_MOOT : TABLE_E_NOT_SEATED;
         default:
             return TABLE_E_WIRE;
     }

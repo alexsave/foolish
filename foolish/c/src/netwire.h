@@ -113,12 +113,13 @@
 // Account refusals (ASK_WHY_ACCOUNT's code). Append-only.
 #define NW_ACCOUNT_E_BAD_LOGIN     1   // wrong name or password
 #define NW_ACCOUNT_E_EXISTS        2   // the name is taken
-#define NW_ACCOUNT_E_WEAK_PASSWORD 3   // under 6 bytes
+#define NW_ACCOUNT_E_WEAK_PASSWORD 3   // under 8 characters, a common password, or the name
 #define NW_ACCOUNT_E_LONG_PASSWORD 4   // over 72 bytes
 #define NW_ACCOUNT_E_BAD_NAME      5   // empty, too long, or with '%'
 #define NW_ACCOUNT_E_BAD_REFRESH   6   // the refresh token is unknown, or its user is gone
 #define NW_ACCOUNT_E_REFRESH_USED  7   // a used or revoked refresh token: the session is over
 #define NW_ACCOUNT_E_SAME_PASSWORD 8   // the new password is the old one
+#define NW_ACCOUNT_E_TOO_MANY      9   // too many attempts (a locked account, a rate limit): wait (HTTP 429)
 
 #define NW_OK      0
 #define NW_E_WIRE  (-401)   // not a body or frame of this file, or a field past its bound
