@@ -2514,6 +2514,52 @@ static void test_replay_decoded_log_reads_the_stream(void) {
     CHECK(replay_decoded_log(bad, REPLAY_DEC_HDR + 6, &at, &l) == -REPLAY_EINPUT, "a cursor past the stream is refused");
 }
 
+// THE STREAM HAS THE GAME'S SHAPE (was e2e/replay_decode_helper.test.ts, over the
+// TS reader the decode script used; that reader and script are gone, and
+// cnitro_replay --code prints the stream instead): it opens with the game start
+// and one dealt hand of six real cards per seat, every cover names what it
+// covers, and the seats go out in the order the summary gives.
+static void test_replay_decoded_stream_has_the_games_shape(void) {
+    static unsigned char code[1 << 20], dec[1 << 20];
+    static const int nps[] = { 2, 3, 4, 8 };
+    int checked = 0, open_ok = 1, deal_ok = 1, cover_ok = 1, out_ok = 1, covers = 0;
+    for (int t = 0; t < 4; t++) {
+        const int np = nps[t];
+        Game g;
+        unsigned char seed[FOOLISH_SEED_LEN];
+        if (!rs_play_seeded(&g, np, 40 + np, seed)) continue;
+        const int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 20, code, (int)sizeof code);
+        const int dl = enc > 0 ? replay_decode(code, enc, dec, (int)sizeof dec) : -1;
+        ReplaySummary s;
+        if (dl < REPLAY_DEC_HDR || replay_summary_v6(code, enc, &s) != REPLAY_EOK) { CHECK(0, "a seeded game encodes and decodes"); continue; }
+        ReplayDecodedLog l;
+        int at = REPLAY_DEC_HDR, i = 0, n_out = 0;
+        while (replay_decoded_log(dec, dl, &at, &l) > 0) {
+            if (i == 0) open_ok &= l.log_type == LOG_GAME_START;
+            else if (i <= np) {
+                deal_ok &= l.log_type == LOG_DRAW && l.seat == i - 1 && l.n_pairs == CARDS_PER_PLAYER;
+                for (int k = 0; k < l.n_pairs; k++) deal_ok &= l.primary[k].suit >= 0 && card_is_none(l.target[k]);
+            }
+            if (l.log_type == LOG_COVER) {
+                covers++;
+                for (int k = 0; k < l.n_pairs; k++) cover_ok &= !card_is_none(l.target[k]);
+            }
+            if (l.log_type == LOG_PLAYER_OUT) {
+                if (n_out >= s.num_eliminated || s.elimination[n_out] != l.seat) out_ok = 0;
+                n_out++;
+            }
+            i++;
+        }
+        out_ok &= n_out == s.num_eliminated;
+        checked++;
+    }
+    CHECK(checked == 4 && covers > 0, "decoded stream: four seeded games at 2, 3, 4 and 8 seats");
+    CHECK(open_ok, "decoded stream: it opens with the game start");
+    CHECK(deal_ok, "decoded stream: then one dealt hand of six real cards per seat, in seat order");
+    CHECK(cover_ok, "decoded stream: every cover names the card it covers");
+    CHECK(out_ok, "decoded stream: the seats go out in the order the summary gives");
+}
+
 // The step index is what lets a scrubber say "Bot 2 passed" instead of "Bot 2
 // attacked": on the wire those are one event type, separated only by a
 // reconstructed English sentence, so the web asks the kernel instead of
@@ -4046,6 +4092,59 @@ static void test_replay_refuses_every_retired_version(void) {
     int dec = replay_decode(real, enc, out, (int)sizeof out);
     CHECK(dec > 0, "a v10 code still decodes");
     CHECK(dec > 0 && out[0] == REPLAY_FORMAT_VERSION_V10, "and says so");
+}
+
+// ANY BYTES, ANY READER: an answer or the codec's own refusal (was
+// e2e/replay_codec.test.ts, which fed one 64-byte junk code to the step player).
+// Small codes are the interesting ones: a version-10 header with an atom count
+// of zero is a whole (empty) game, so junk reaches past the header often enough
+// to exercise the readers behind it. Every answer must be a whole stream the
+// record reader walks to its end; every refusal must be a REPLAY_E* code. Each
+// code is its own allocation of exactly its length, so a read past it is a
+// fault under tests-asan.
+static int replay_refusal_ok(int rc) { return rc < 0 && rc >= -REPLAY_ETOOLONG; }
+
+static void test_replay_answers_or_refuses_any_bytes(void) {
+    static unsigned char dec[1 << 20], play[1 << 16];
+    uint64_t st = 0x5eed5eed5eedULL;
+    int answered = 0, refused = 0, played = 0, bad_decode = 0, bad_summary = 0, bad_play = 0;
+    for (int i = 0; i < 3000; i++) {
+        int n = 1 + (int)(rng_xorshift64(&st) % (i < 2000 ? 4 : 64));
+        unsigned char *code = malloc((size_t)n);
+        for (int k = 0; k < n; k++) code[k] = (unsigned char)rng_xorshift64(&st);
+        if (i == 0) { n = 64; free(code); code = malloc(64); for (int k = 0; k < 64; k++) code[k] = (unsigned char)((k * 37 + 11) & 0xff); }
+        const int d = replay_decode(code, n, dec, (int)sizeof dec);
+        if (d > 0) {
+            answered++;
+            ReplayDecodedLog l;
+            int at = REPLAY_DEC_HDR, rc;
+            while ((rc = replay_decoded_log(dec, d, &at, &l)) > 0) {}
+            if (d < REPLAY_DEC_HDR || rc != 0 || at != d) bad_decode++;
+        } else if (replay_refusal_ok(d)) {
+            refused++;
+        } else {
+            bad_decode++;
+        }
+        ReplaySummary s;
+        const int r = replay_summary_v6(code, n, &s);
+        if (r == REPLAY_EOK) {
+            if (d <= 0 || s.num_players < 2 || s.num_players > MAX_PLAYERS || s.fool < -1 || s.fool >= s.num_players
+                || s.num_eliminated < 0 || s.num_eliminated > s.num_players) bad_summary++;
+        } else if (!replay_refusal_ok(r) || d > 0) {
+            bad_summary++;
+        }
+        const int p = replay_steps_play_v6(code, n, 0, NULL, 0, play, (int)sizeof play);
+        // The step player rebuilds the deal the header names, so it also refuses
+        // a code whose header no deal agrees with (REPLAY_EHEADER) - but it never
+        // answers a code the decoder refuses.
+        if (!(p >= 0 || replay_refusal_ok(p)) || (p >= 0 && d <= 0)) bad_play++;
+        if (p >= 0) played++;
+        free(code);
+    }
+    CHECK(answered > 0 && refused > 0 && played > 0, "replay fuzz: the junk both reads and refuses, and some of it plays");
+    CHECK(bad_decode == 0, "replay fuzz: every decode is a whole record stream or a REPLAY_E* refusal");
+    CHECK(bad_summary == 0, "replay fuzz: a summary is given exactly for a code that decodes, and is in range");
+    CHECK(bad_play == 0, "replay fuzz: the step player answers only codes the decoder does, or refuses as the codec");
 }
 
 /* ---------------- A6: reset to lobby is one transform -------------------- */
@@ -8480,10 +8579,10 @@ static void test_board_every_card_of_the_deck_crosses_both_ways(void) {
 // The nicknames and per-move timing behind the dash in a share link. It used to
 // be encoded in TypeScript and again in Swift; it is one implementation here
 // now, and every host calls it. The cross-language half of the guard - that
-// these bytes are the bytes already on the wire, so old links still decode - is
-// e2e/replay_extras_kernel.test.ts, which measures the kernel against the
-// format frozen in e2e/helpers/extras_format_v2.ts. What is left for this file
-// is the layout itself and the refusals.
+// these bytes are the bytes already on the wire - was a TypeScript oracle of the
+// shipped format, retired with the test-only wasm doors; the layout is pinned
+// byte for byte below, and test_extras_corpus_round_trips holds the codec over a
+// seeded corpus of rosters and tempos.
 //
 // MUTATIONS RUN (each reverted, each failing at least one case below): version
 // 3 instead of 2 (36 failures); the name trim cutting at a flat 48 bytes
@@ -9265,14 +9364,9 @@ static void test_extras_link_short_buffer_answers_itself_twice(void) {
 // inside the curve; the blob's size is a function of the roster and the move
 // count - rather than as agreement with a frozen copy of the format.
 
-// xorshift64, seeded, so the corpus is the same corpus on every machine.
+// shared/c/rng.h's xorshift64, seeded, so the corpus is the same on every machine.
 static uint64_t ex_rng_state;
-static double ex_rnd(void) {
-    uint64_t s = ex_rng_state;
-    s ^= s << 13; s ^= s >> 7; s ^= s << 17;
-    ex_rng_state = s;
-    return (double)(s >> 11) / 9007199254740992.0;
-}
+static double ex_rnd(void) { return rng_unit(rng_xorshift64(&ex_rng_state)); }
 static int ex_rndi(int k) { return (int)(ex_rnd() * k); }
 
 typedef struct { unsigned char b[96]; int n; } ExName;
@@ -19595,6 +19689,8 @@ int main(void) {
     test_extras_seat_count_comes_from_the_moves();
     test_extras_decode_answers_or_refuses_any_bytes();
     test_extras_link_carries_a_long_code_whole();
+    test_replay_answers_or_refuses_any_bytes();
+    test_replay_decoded_stream_has_the_games_shape();
     printf("\n%d passed, %d failed\n", n_pass, n_fail);
     return n_fail > 0 ? 1 : 0;
 }

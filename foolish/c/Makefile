@@ -190,11 +190,25 @@ $(call host_prog,cnitro_distill,src/main_distill.c)
 # move is a lane that runs `make tests` at the flags the product ships, and then
 # leaving the experiment out of the coverage build - not one without the other,
 # since dropping it from coverage today would leave it running in no CI at all.
-tests: build/cnitro_tests build/bot_drive_threads_test build/replay_threads_test build/cnitro_replay
+tests: build/cnitro_tests build/bot_drive_threads_test build/replay_threads_test build/cnitro_replay \
+       build/replay_overlay_test
 	./build/cnitro_tests
 	./build/bot_drive_threads_test
 	./build/replay_threads_test
+	./build/replay_overlay_test
 	./tests/replay_cli_labels.sh build/cnitro_replay
+
+# M8's overlay (src/wasm_overlay.h): the replay codec's scratch aliased into the
+# solver arena, as the bots modules compile it. Its own objects, with the
+# shipped bots module's -D flags (the caps the overlay's offsets are asserted
+# against, and -DCD_WASM_OVERLAY itself) on the host compiler, single-threaded:
+# the arena is one static only while _Thread_local is compiled away, which the
+# bots flags do. tests/replay_overlay_test.c interleaves solver bursts and
+# replay encodes and holds the codec to the game it encodes.
+OVERLAY_CFLAGS = $(filter-out -fopenmp,$(CFLAGS)) $(filter -D%,$(WASM_BOT_CFLAGS))
+$(eval $(call C_VARIANT,build/obj/overlay,CC,OVERLAY_CFLAGS))
+build/replay_overlay_test: $(call c_objs,build/obj/overlay,$(CORE_SRC) tests/replay_overlay_test.c)
+	$(CC) $(OVERLAY_CFLAGS) $^ -o $@ $(LDFLAGS)
 
 # The same suite under AddressSanitizer + UBSan, at -O1, from its own objects
 # (build/obj/asan - not CORE_OBJ, whose objects are -O3 -flto and not
