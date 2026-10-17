@@ -37,6 +37,9 @@
 //     NW_WS_SUB    u16 ref, u8 what (NW_SUB_*), str8 game id, u32 since
 //     NW_WS_UNSUB  u8 what, str8 game id
 //     NW_WS_PING   nothing
+//     NW_WS_SUB_AS str16 access token, then NW_WS_SUB's fields: a subscription
+//                  that says who asks, so it never waits on an AUTH frame
+//                  (API Gateway runs a connection's frames in no order)
 //   stream, server to client
 //     NW_WS_ACK    u16 ref, u8 why (0, or an ASK_WHY_*), u8 seated
 //     NW_WS_VIEW   str8 game id, u32 version, blob envelope (empty: the seat is gone)
@@ -78,6 +81,7 @@
 #define NW_WS_SUB    41
 #define NW_WS_UNSUB  42
 #define NW_WS_PING   43
+#define NW_WS_SUB_AS 44
 #define NW_WS_ACK    50
 #define NW_WS_VIEW   51
 #define NW_WS_CAST   52
@@ -173,13 +177,13 @@ typedef struct {
 // written or read (the rest read zero).
 typedef struct {
     uint8_t  kind;                                    // NW_WS_*
-    uint16_t ref;                                     // SUB, ACK
-    uint8_t  what;                                    // SUB, UNSUB
+    uint16_t ref;                                     // SUB, SUB_AS, ACK
+    uint8_t  what;                                    // SUB, SUB_AS, UNSUB
     uint8_t  why;                                     // ACK
     uint8_t  seated;                                  // ACK
-    uint8_t  gid_len;       char gid[NW_GID_MAX];     // SUB, UNSUB, VIEW, CAST, CHAT
-    uint32_t version;                                 // SUB (since), VIEW, CAST
-    uint16_t token_len;     char token[NW_ACCESS_MAX];// AUTH
+    uint8_t  gid_len;       char gid[NW_GID_MAX];     // SUB, SUB_AS, UNSUB, VIEW, CAST, CHAT
+    uint32_t version;                                 // SUB, SUB_AS (since), VIEW, CAST
+    uint16_t token_len;     char token[NW_ACCESS_MAX];// AUTH, SUB_AS
     NwBlob   blob;                                    // VIEW (envelope), CAST (cast)
     NwChat   chat;                                    // CHAT
 } NwFrame;

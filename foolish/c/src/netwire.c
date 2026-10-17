@@ -432,6 +432,10 @@ int nw_frame_encode(const NwFrame *f, uint8_t *out, int cap) {
         if (f->token_len > NW_ACCESS_MAX) return NW_E_WIRE;
         w_str16(&w, f->token, f->token_len);
         break;
+    case NW_WS_SUB_AS:
+        if (f->token_len > NW_ACCESS_MAX) return NW_E_WIRE;
+        w_str16(&w, f->token, f->token_len);
+        /* fall through: then a SUB's fields */
     case NW_WS_SUB:
         if (!sub_what(f->what)) return NW_E_WIRE;
         w_u16(&w, f->ref);
@@ -477,6 +481,9 @@ int nw_frame_decode(const uint8_t *p, int len, NwFrame *out) {
     out->kind = p[1];
     switch (out->kind) {
     case NW_WS_AUTH: r_str16(&r, out->token, NW_ACCESS_MAX, &out->token_len); break;
+    case NW_WS_SUB_AS:
+        r_str16(&r, out->token, NW_ACCESS_MAX, &out->token_len);
+        /* fall through: then a SUB's fields */
     case NW_WS_SUB:
         out->ref = r_u16(&r);
         out->what = r_u8(&r);
