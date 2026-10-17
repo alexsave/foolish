@@ -291,7 +291,7 @@ test("web.wasm declared INITIAL memory is 25 pages - 9 fewer than the server's l
     //
     // 25, RAISED from 24 on purpose: the browser now carries the backend's client
     // (c/src/netclient.c, exported as wasm_net_*; stage 3 of c_base/DESIGN.md
-    // "Binary surface") in place of supabase-js. Its statics are the session,
+    // "Binary surface") in place of the third-party SDK. Its statics are the session,
     // the request it builds, one decoded stream message (g_frame, 32 KiB: a text
     // frame has to be decoded somewhere), the subscriptions and the per-game
     // version gates (NC_GATES_MAX 64, cut from 128 so bots.wasm keeps its
