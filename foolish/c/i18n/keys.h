@@ -9,7 +9,7 @@
 //
 // NOTHING HERE IS COMPILED INTO A SHIPPED MODULE. c/i18n is outside c/src and
 // appears in no *_SRC list in c/Makefile, on purpose: twenty-five languages of
-// translations is around 150 KB of string data, and bots.wasm.gz is downloaded
+// translations is around 150 KB of string data, and web.wasm.gz is downloaded
 // by every visitor to the site. The C is a source of truth for a generator, not
 // a translation unit anybody links. e2e/validation/i18n_source_of_truth.test.ts
 // is the gate: its first case gunzips the shipped module and searches it for

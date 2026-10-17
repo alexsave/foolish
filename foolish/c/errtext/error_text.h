@@ -6,7 +6,7 @@
 // reads the tables below at build time and writes sdk/ts/gen/errtext/*.ts
 // (tools/structgen/gen.sh); c/errtext is outside c/src and in no *_SRC list in
 // c/Makefile, for the reason c/i18n is: a kernel that returns a number has no
-// use for the sentence, and bots.wasm.gz is downloaded by every visitor.
+// use for the sentence, and web.wasm.gz is downloaded by every visitor.
 //
 // WHY IT IS C AND NOT A TABLE IN THE HOST. Each of these was a `switch` or a
 // `Record<number, string>` typed out in TypeScript beside a comment naming the

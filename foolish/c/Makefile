@@ -884,7 +884,7 @@ WASM_API_EXPORTS := \
 # build/layout/<build>.hash is regenerated on EVERY make that needs it (FORCE)
 # but rewritten only when its content changes, and the bots/rules rules also
 # refresh sdk/ts/gen/{game_layout,layout_hash}.<build>.ts the same way, so a header edit
-# followed by `make wasm-bots` leaves module and wasm in agreement.
+# followed by `make wasm-web` leaves module and wasm in agreement.
 #
 # The same-second trap: make compares whole-second mtimes, so a header edit
 # landing in the second of the last build rebuilds nothing, and a header whose
