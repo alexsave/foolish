@@ -108,8 +108,9 @@ typedef struct {
 // cannot drift. `pack` writes the blob `replay_extras_encode` takes; `unpack`
 // reads the blob `replay_extras_decode` writes. The two differ in ONE byte: the
 // answer always carries the name count, the argument only under its flag.
-// Both return 0, or -REPLAY_EXTRAS_E*: ECAP for a blob that does not fit, EINPUT
-// for one that is malformed or wider than the struct holds.
+// Both return the blob's length (the bytes `pack` wrote, the bytes `unpack`
+// read), or -REPLAY_EXTRAS_E*: ECAP for a blob that does not fit, EINPUT for one
+// that is malformed or wider than the struct holds.
 int replay_extras_pack(const ReplayExtras *x, unsigned char *out, int cap);
 int replay_extras_unpack(const unsigned char *in, int in_len, ReplayExtras *out);
 
