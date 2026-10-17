@@ -208,7 +208,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         // Start interval that checks every 5 seconds
         const intervalId = setInterval(() => {
             // Check if there have been bot moves in the last interval
-            if (!hasBotMovedRef.current) {
+            // A bump is a seated player's (the kernel refuses a spectator's): the
+            // server's heartbeat wakes a table nobody seated is watching.
+            if (!hasBotMovedRef.current && (currentGameRef.current?.mySeat ?? -1) >= 0) {
                 // Check if any bot can actually move in current state (use ref for fresh data)
                 const botCanMove = canBotMove(currentGameRef.current);
                 if (!botCanMove) {

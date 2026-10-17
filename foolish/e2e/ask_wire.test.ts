@@ -114,10 +114,12 @@ test('an ask runs on the table as the edit it names, for the caller the server n
     assert.equal(table.ask(send({ kind: V.ASK_SET_RULES, gid: 'g-1', passing: 0 }), B, 'Bo', SEED), L.TABLE_OK);
     assert.equal(table.ask(send({ kind: V.ASK_SET_RULES, gid: 'g-1', passing: 0 }), B, 'Bo', SEED), L.TABLE_MOOT, 'the rules it already has');
 
-    // A stranger: every edit is refused, a bump is not (a spectator's client sends it).
+    // A stranger: every edit is refused, a bump too (it wakes the bots, a
+    // server run; c_base security finding M8). A seated player's bump is moot.
     const stranger = '99999999-9999-4999-8999-999999999999';
     assert.equal(table.ask(send({ kind: V.ASK_START, gid: 'g-1' }), stranger, 'S', SEED), L.TABLE_E_NOT_SEATED);
-    assert.equal(table.ask(send({ kind: V.ASK_BUMP, gid: 'g-1' }), stranger, 'S', SEED), L.TABLE_MOOT);
+    assert.equal(table.ask(send({ kind: V.ASK_BUMP, gid: 'g-1' }), stranger, 'S', SEED), L.TABLE_E_NOT_SEATED);
+    assert.equal(table.ask(send({ kind: V.ASK_BUMP, gid: 'g-1' }), A, 'Ana', SEED), L.TABLE_MOOT);
 
     // start readies the caller; the last seat's start deals, from the seed the server drew.
     assert.equal(table.ask(send({ kind: V.ASK_START, gid: 'g-1' }), A, 'Ana', SEED), L.TABLE_OK);
