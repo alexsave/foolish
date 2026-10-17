@@ -457,6 +457,7 @@ int nw_frame_encode(const NwFrame *f, uint8_t *out, int cap) {
         w_u8(&w, f->seated ? 1 : 0);
         break;
     case NW_WS_VIEW:
+    case NW_WS_CATCHUP:
     case NW_WS_CAST:
         w_str8(&w, f->gid, f->gid_len);
         w_u32(&w, f->version);
@@ -506,6 +507,7 @@ int nw_frame_decode(const uint8_t *p, int len, NwFrame *out) {
         if (out->seated > 1) r.bad = 1;
         break;
     case NW_WS_VIEW:
+    case NW_WS_CATCHUP:
     case NW_WS_CAST:
         r_str8(&r, out->gid, NW_GID_MAX, &out->gid_len);
         out->version = r_u32(&r);
