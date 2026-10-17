@@ -46,6 +46,10 @@
 //     NW_WS_CAST   str8 game id, u32 version, blob cast
 //     NW_WS_CHAT   str8 game id, chat
 //     NW_WS_PONG   nothing
+//     NW_WS_CATCHUP str8 game id, u32 version, blob envelope: a NW_WS_VIEW sent
+//                  right after the ACK of a game subscription made with
+//                  NW_WS_SUB_AS, the caller's view of what it missed. Its own
+//                  kind so a client tells it from a dashboard push.
 //
 // A refusal of an HTTP request is the kernel's AskRefusal (ask.h), not a body
 // of this file. A body is read whole: a byte short or a byte over is NW_E_WIRE.
@@ -87,6 +91,7 @@
 #define NW_WS_CAST   52
 #define NW_WS_CHAT   53
 #define NW_WS_PONG   54
+#define NW_WS_CATCHUP 55
 
 #define NW_SCOPE_LOCAL  0   // sign out this session
 #define NW_SCOPE_GLOBAL 1   // sign out every session of the user
