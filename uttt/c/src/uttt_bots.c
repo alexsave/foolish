@@ -2,15 +2,14 @@
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
+#include "../../../shared/c/rng.h"
 
 const char *UTTT_BOT_NAME[BOT_COUNT] =
     { "random", "biro", "roller", "crn", "bias", "nib", "sniper", "quill", "fountain" };
 
 static uint32_t rnd(uint64_t *s, uint32_t n)
 {
-    uint64_t x = *s;
-    x ^= x >> 12; x ^= x << 25; x ^= x >> 27; *s = x;
-    uint32_t v = (uint32_t)((x * 2685821657736338717ull) >> 33);
+    uint32_t v = (uint32_t)(rng_xorshift64star(s) >> 33);
     /* A POWER OF TWO IS A MASK, and the commonest call here asks for four.
      * `% n` with a runtime n is a hardware divide - the only one left in
      * this binary - and it fired twice per playout step. */
@@ -1221,9 +1220,7 @@ static void f_tables(void)
 /* No divide: the top of a 32-bit draw scaled by n (Lemire). */
 static inline uint32_t f_rnd(uint64_t *s, uint32_t n)
 {
-    uint64_t x = *s;
-    x ^= x >> 12; x ^= x << 25; x ^= x >> 27; *s = x;
-    uint32_t v = (uint32_t)((x * 2685821657736338717ull) >> 32);
+    uint32_t v = (uint32_t)(rng_xorshift64star(s) >> 32);
     return (uint32_t)(((uint64_t)v * n) >> 32);
 }
 

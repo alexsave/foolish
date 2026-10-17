@@ -16,11 +16,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../../../shared/c/rng.h"
 
 static int fails;
 #define CHECK(c, ...) do { if (!(c)) { fails++; printf("FAIL: " __VA_ARGS__); printf("\n"); } } while (0)
-
-static uint64_t xs(uint64_t *s) { *s ^= *s << 13; *s ^= *s >> 7; *s ^= *s << 17; return *s; }
 
 /* One game, X against O, into `moves`; returns the result. */
 static uint8_t game(UtttBot x, int bx, UtttBot o, int bo, uint64_t seed, uint8_t *moves, int *n)
@@ -59,10 +58,10 @@ static void own_tree(UtttBot bot, int games)
     uint64_t s = 77;
     for (int i = 0; i < games; i++) {
         UtttGame g; uttt_init(&g);
-        int plies = 4 + (int)(xs(&s) % 12);
+        int plies = 4 + (int)(rng_xorshift64(&s) % 12);
         for (int p = 0; p < plies && !g.over; p++) {
             uint8_t l[81]; int n = uttt_legal(&g, l);
-            uttt_play(&g, l[xs(&s) % (uint64_t)n]);
+            uttt_play(&g, l[rng_xorshift64(&s) % (uint64_t)n]);
         }
         if (g.over) continue;
         uint64_t r1 = 5 + (uint64_t)i, r2 = r1, rb = 99;

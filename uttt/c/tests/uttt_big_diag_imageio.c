@@ -24,11 +24,12 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreGraphics/CoreGraphics.h>
 #include <ImageIO/ImageIO.h>
+#include "../../../shared/c/rng.h"
 
 static CGColorSpaceRef g_srgb;
 
 static uint32_t rs = 777;
-static uint32_t rnd(void) { rs ^= rs << 13; rs ^= rs >> 17; rs ^= rs << 5; return rs; }
+static uint32_t rnd(void) { return rng_xorshift32(&rs); }
 
 static CGImageRef image_of(uint8_t *rgba, int w, int h)
 {

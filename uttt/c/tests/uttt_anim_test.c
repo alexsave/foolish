@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../../../shared/c/rng.h"
 
 static int fails, checks;
 #define OK(c, what) do { checks++; if (!(c)) { fails++; \
@@ -912,7 +913,7 @@ static void test_win_line_drawn(void)
         uint8_t mv[81];
         while (!g.over) {
             int n = uttt_legal(&g, mv);
-            r ^= r << 13; r ^= r >> 7; r ^= r << 17;
+            rng_xorshift64(&r);
             uttt_play(&g, mv[r % (uint64_t)n]);
         }
         if (g.over != UTTT_X && g.over != UTTT_O) continue;

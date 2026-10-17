@@ -12,6 +12,7 @@
  * game. */
 #include "../src/uttt.h"
 #include <stdio.h>
+#include "../../../shared/c/rng.h"
 
 static const uint8_t LINES[8][3] = {
     {0,1,2},{3,4,5},{6,7,8},{0,3,6},{1,4,7},{2,5,8},{0,4,8},{2,4,6}
@@ -78,7 +79,7 @@ static long check_legality(long games, long *positions)
             UtttGame t = g;
             if (uttt_play(&t, 81) || uttt_play(&t, 255)) bad++;
             if (n <= 0) break;
-            rs ^= rs << 13; rs ^= rs >> 7; rs ^= rs << 17;
+            rng_xorshift64(&rs);
             uttt_play(&g, list[rs % (uint64_t)n]);
         }
     }

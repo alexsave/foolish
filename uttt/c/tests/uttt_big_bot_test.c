@@ -21,6 +21,7 @@
 #include "../../../shared/c/test/check.h"
 #include <math.h>
 #include <time.h>
+#include "../../../shared/c/rng.h"
 
 /* ------------------------------------------------------------ positions */
 
@@ -28,8 +29,6 @@ static int leaf4(int a, int b, int c, int d) { return ((a * 9 + b) * 9 + c) * 9 
 
 static uint8_t cells[UTB_LEAVES_MAX];
 static int32_t legal[UTB_LEAVES_MAX];
-
-static uint64_t xs(uint64_t *s) { *s ^= *s << 13; *s ^= *s >> 7; *s ^= *s << 17; return *s; }
 
 /* The material arithmetic alone: no threats, no extension. The first tests
  * hold the weights to exact values with it; the threat and extension tests
@@ -337,7 +336,7 @@ static void score_is_exact(void)
                 const int mover = g.turn;
                 const int before = utb_bot_eval(&g, mover);
                 for (int i = 0; i < n && i < 24; i++) {
-                    int mv = legal[n <= 24 ? i : (int)(xs(&rs) % (uint64_t)n)];
+                    int mv = legal[n <= 24 ? i : (int)(rng_xorshift64(&rs) % (uint64_t)n)];
                     int got = utb_bot_score(&g, mv);
                     UtbGame h = g;
                     utb_play(&h, mv);
@@ -348,7 +347,7 @@ static void score_is_exact(void)
                         CHECK(0, "depth %d seed %d ply %d move %d: scored %d, the board says %d",
                               depth, (int)seed, g.n_plies, mv, got, want);
                 }
-                utb_play(&g, legal[xs(&rs) % (uint64_t)n]);
+                utb_play(&g, legal[rng_xorshift64(&rs) % (uint64_t)n]);
             }
         }
     }
@@ -455,7 +454,7 @@ static void deepest_setting(void)
 static int random_move(UtbGame *g, uint64_t *rs)
 {
     int n = utb_legal(g, legal, UTB_LEAVES_MAX);
-    return n ? legal[xs(rs) % (uint64_t)n] : -1;
+    return n ? legal[rng_xorshift64(rs) % (uint64_t)n] : -1;
 }
 
 /* `bot_side` is the seat the bot plays (0: both seats bots). Returns the

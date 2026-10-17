@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include "../../../shared/c/rng.h"
 
 static int32_t LIST[UTB_LEAVES_MAX];
 
@@ -35,7 +36,7 @@ static void one(Sum *t, int rule, int bots, uint64_t seed, int n)
             mv = utb_bot_move(&b[g.turn - 1], &g);
         } else {
             int m = utb_legal(&g, LIST, UTB_LEAVES_MAX);
-            rs ^= rs << 13; rs ^= rs >> 7; rs ^= rs << 17;
+            rng_xorshift64(&rs);
             mv = LIST[rs % (uint64_t)m];
         }
         if (g.last >= 0 && mv / 6561 != g.last / 6561) jumps++;

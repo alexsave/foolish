@@ -23,10 +23,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../../../shared/c/rng.h"
 
 static uint64_t RS = 0x243F6A8885A308D3ull;
 static uint32_t rnd(uint32_t n)
-{ RS ^= RS << 13; RS ^= RS >> 7; RS ^= RS << 17; return (uint32_t)(RS % n); }
+{ return (uint32_t)(rng_xorshift64(&RS) % n); }
 
 /* An independent exact solver: +1 win for side to move, 0 draw, -1 loss. */
 static int solve(UtttGame *g)

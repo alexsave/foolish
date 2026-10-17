@@ -91,6 +91,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include "../../../shared/c/rng.h"
 
 static int fails, checks;
 #define OK(c, what) do { checks++; if (!(c)) { fails++; \
@@ -99,8 +100,7 @@ static int fails, checks;
 static uint64_t rs = 0x9e3779b97f4a7c15ull;
 static uint32_t rnd(void)
 {
-    rs ^= rs << 13; rs ^= rs >> 7; rs ^= rs << 17;
-    return (uint32_t)(rs >> 11);
+    return (uint32_t)(rng_xorshift64(&rs) >> 11);
 }
 
 static float frnd(void) { return (float)(rnd() & 0xffffff) / (float)0x1000000; }
