@@ -1441,42 +1441,39 @@ int fio_ask_encode(int kind,
 
 // ---------- the backend (src/netclient.h) ------------------------------------
 //
-// The online app's client of c_base's binary surface: the request to send, how
-// to read what came back, the session as a blob to keep in the Keychain, and
-// the push stream's frames and events. Every pointer returned is a struct of
-// netclient.h, read through the generated readers (sdk/swift/gen,
-// readNcRequest and the rest) before the next call; constants are the NC_*,
-// NW_* and ASK_WHY_* there. Swift keeps the sockets, nothing else
-// (sdk/swift/NetClient.swift). Times are epoch ms.
+// The online app's client of c_base's binary surface: what the user wants in,
+// the requests to send and the frames to send out, every answer and frame
+// back in, what changed, and the session as a blob to keep in the Keychain.
+// Every pointer returned is a struct of netclient.h, read through the
+// generated readers (sdk/swift/gen, readNcRequest and the rest) before the
+// next call; constants are the NC_*, NW_* and ASK_WHY_* there. Swift keeps the
+// sockets, nothing else (sdk/swift/NetClient.swift). Times are epoch ms.
 void fio_net_reset(void);
 int fio_net_session_load(const uint8_t *p, int len);
 int fio_net_session_save(uint8_t *out, int cap);
 const void *fio_net_session_info(void);
-int fio_net_session_read(int status, const uint8_t *body, int len);
 const void *fio_net_error(void);
-int fio_net_retry_ms(int method, int attempt, int status, const uint8_t *body, int len);
-int fio_net_status_read(int status, const uint8_t *body, int len);
-const void *fio_net_action_read(int status, const uint8_t *body, int len);
-const void *fio_net_view_read(int status, const uint8_t *body, int len);
-const void *fio_net_req_signup(const char *name, int name_len, const char *pw, int pw_len);
-const void *fio_net_req_signin(const char *name, int name_len, const char *pw, int pw_len);
-const void *fio_net_req_refresh(void);
-const void *fio_net_req_signout(int global, int64_t now_ms);
-const void *fio_net_req_delete_account(int64_t now_ms);
-const void *fio_net_req_create(int64_t now_ms);
-const void *fio_net_req_action(const char *gid, int gid_len, const uint8_t *wire, int wire_len, int64_t intent, int64_t now_ms);
-const void *fio_net_req_meta(const uint8_t *ask, int ask_len, int64_t now_ms);
-const void *fio_net_req_game(const char *gid, int gid_len, int64_t now_ms);
-const void *fio_net_req_stream(void);
+// The pump: an intent (an NcIntent the generated writer filled) in for a
+// ticket; every request it names out; every answer in, by the request's id,
+// with status 0 for one that never arrived; tickets finished with no answer of
+// their own; the events the last feed made; when to call again.
+uint32_t fio_net_do(const void *intent, int64_t now_ms);
+const void *fio_net_next_request(int64_t now_ms);
+const void *fio_net_on_response(uint32_t id, int status, const uint8_t *body, int len, int64_t now_ms);
+const void *fio_net_next_done(void);
+const void *fio_net_row(int kind, const uint8_t *body, int len, int i);
+int fio_net_due_ms(int64_t now_ms);
+// The stream: its address, the subscriptions held, the socket's life, every
+// frame in (how many events it made), every frame to send.
+const void *fio_net_stream_request(void);
 int fio_net_stream_sub(int what, const char *gid, int gid_len);
 int fio_net_stream_unsub(int what, const char *gid, int gid_len);
 void fio_net_stream_opened(int64_t now_ms);
 int fio_net_stream_closed(int64_t now_ms);
-const void *fio_net_stream_in(const uint8_t *frame, int len, int is_text, int64_t now_ms);
-const uint8_t *fio_net_event_payload(void);
+int fio_net_stream_in(const uint8_t *frame, int len, int is_text, int64_t now_ms);
+const void *fio_net_event(int i);
+const uint8_t *fio_net_event_payload(int i);
 const void *fio_net_stream_next(int64_t now_ms);
-int fio_net_stream_due_ms(int64_t now_ms);
-void fio_net_gate_reset(const char *gid, int gid_len);
 
 #ifdef __cplusplus
 }

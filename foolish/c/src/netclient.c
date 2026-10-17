@@ -1,6 +1,8 @@
 // netclient.c - the client of the backend's binary surface (netclient.h).
 #include "netclient.h"
+#include "roster.h"
 #include "table.h"
+#include "view.h"
 #include <string.h>
 
 // ---- state -------------------------------------------------------------------------
@@ -10,6 +12,10 @@ typedef struct {
     uint8_t  gid_len;
     char     gid[NW_GID_MAX];
     uint8_t  state;        // SUB_WANT, SUB_SENT, SUB_LIVE, SUB_REFUSED
+    uint16_t holds;        // the host's nc_stream_sub calls not yet let go
+    uint8_t  pinned;       // held by this file (a game just created) until the host lets go
+    uint8_t  lived;        // accepted once: accepted again means pushes were missed
+    uint8_t  missed;       // refused since it was last accepted
     uint16_t ref;
     int64_t  retry_at;
     int32_t  backoff;
@@ -20,8 +26,10 @@ typedef struct {
     uint8_t  used;
     uint8_t  gid_len;
     char     gid[NW_GID_MAX];
-    uint8_t  has_view, has_cast;
-    uint32_t view_v, cast_v;
+    uint8_t  has_view, has_cast, has_answer;
+    uint32_t view_v;       // the dashboard's: the newest view pushed
+    uint32_t cast_v;       // the table's: the newest cast applied
+    uint32_t answer_v;     // the table's: the newest view answered and applied
     uint32_t touched;      // LRU stamp
 } gate;
 
@@ -49,9 +57,13 @@ static int64_t  g_last_ping;
 static uint16_t g_next_ref;
 static int32_t  g_reconnect_ms;
 
-static NcEvent  g_event;
-static uint8_t  g_frame[NC_FRAME_MAX];  // the message decoded from a text frame
-static const uint8_t *g_payload;
+// What the last feed changed. A payload is in g_frame: the message a frame
+// decoded to, or the envelope an answer carried, copied there.
+static NcEvent  g_events[NC_EVENTS_MAX];
+static uint32_t g_event_at[NC_EVENTS_MAX];
+static int      g_n_events;
+static uint32_t g_session_told;         // the session generation the host was last told
+static uint8_t  g_frame[NC_FRAME_MAX];
 static NcOut    g_out;
 
 static NcGameRow     g_game_row;
@@ -80,7 +92,11 @@ static void signed_out(void) {
     info_refresh();
 }
 
+static void pump_reset(void);
+static void book_for(const NwSession *s);
+
 void nc_reset(void) {
+    pump_reset();
     signed_out();
     memset(&g_error, 0, sizeof g_error);
     memset(g_subs, 0, sizeof g_subs);
@@ -92,6 +108,8 @@ void nc_reset(void) {
     g_last_ping = 0;
     g_next_ref = 0;
     g_reconnect_ms = 0;
+    g_n_events = 0;
+    g_session_told = g_session_gen;
 }
 
 // ---- the session -------------------------------------------------------------------
@@ -108,6 +126,7 @@ int nc_session_load(const uint8_t *p, int len) {
         signed_out();
         return NW_E_WIRE;
     }
+    book_for(&s);
     g_session = s;
     g_signed_in = 1;
     g_session_gen++;
@@ -157,6 +176,7 @@ int nc_session_read(int status, const uint8_t *body, int len) {
         return ASK_WHY_MALFORMED;
     }
     memset(&g_error, 0, sizeof g_error);
+    book_for(&s);
     g_session = s;
     g_signed_in = 1;
     g_session_gen++;
@@ -354,30 +374,6 @@ const NcRequest *nc_req_chat_send(const char *gid, int gid_len, const char *msg,
 
 const NcRequest *nc_req_stream(void) { return begin(NC_GET, "/v1/stream?proto=nw1"); }
 
-const NcRequest *nc_req(int which, const char *a, int a_len, const char *b, int b_len, int64_t n, int64_t now_ms) {
-    switch (which) {
-    case NC_REQ_SIGNUP: return nc_req_signup(a, a_len, b, b_len);
-    case NC_REQ_SIGNIN: return nc_req_signin(a, a_len, b, b_len);
-    case NC_REQ_REFRESH: return nc_req_refresh();
-    case NC_REQ_SIGNOUT: return nc_req_signout(n != 0, now_ms);
-    case NC_REQ_PASSWORD: return nc_req_password(a, a_len, now_ms);
-    case NC_REQ_DELETE: return nc_req_delete_account(now_ms);
-    case NC_REQ_CREATE: return nc_req_create(now_ms);
-    case NC_REQ_ACTION: return nc_req_action(a, a_len, (const uint8_t *)b, b_len, n, now_ms);
-    case NC_REQ_META: return nc_req_meta((const uint8_t *)a, a_len, now_ms);
-    case NC_REQ_GAMES: return nc_req_games(now_ms);
-    case NC_REQ_GAME: return nc_req_game(a, a_len, now_ms);
-    case NC_REQ_CHATS: return nc_req_chats(a, a_len, now_ms);
-    case NC_REQ_CHAT_SEND: return nc_req_chat_send(a, a_len, b, b_len, now_ms);
-    case NC_REQ_BOTS: return nc_req_bots(now_ms);
-    case NC_REQ_BOARD: return nc_req_board();
-    case NC_REQ_HISTORY: return nc_req_history(now_ms);
-    case NC_REQ_REPLAY: return nc_req_replay(a, a_len, now_ms);
-    case NC_REQ_STREAM: return nc_req_stream();
-    default: return NULL;
-    }
-}
-
 // ---- answers -------------------------------------------------------------------------
 
 int nc_retry_ms(int method, int attempt, int status, const uint8_t *body, int len) {
@@ -536,6 +532,436 @@ const NcHistoryHead *nc_history_head(const uint8_t *body, int len) {
     return &g_hist_head;
 }
 
+// ---- the pump -------------------------------------------------------------------------
+
+enum { SLOT_FREE = 0, SLOT_QUEUED, SLOT_SENT };
+
+typedef struct {
+    uint8_t  state;
+    uint8_t  attempts;      // sends that never arrived
+    uint8_t  reauthed;      // sent again once after a 401
+    uint8_t  own;           // this file's own refetch: no ticket for the host, its view an event
+    uint32_t min_version;   // own: not sent once something this new was applied (0: always)
+    uint32_t ticket;
+    uint32_t sent_id;
+    int64_t  not_before;
+    NcIntent in;
+} slot;
+
+static slot     g_slots[NC_PUMP_MAX];
+static uint32_t g_ticket;
+static uint32_t g_req_id;
+static uint32_t g_refresh_id;           // the refresh in flight, 0 none
+static int64_t  g_refresh_not_before;
+static uint8_t  g_refresh_fails;
+static NcDone   g_done;                 // nc_on_response's
+static NcDone   g_dropped[NC_PUMP_MAX]; // finished with no answer, for nc_next_done
+static int      g_n_dropped;
+static NcDone   g_dropped_out;
+
+// The book of games and the stream, below.
+static gate *gate_find(const char *gid, int gid_len, int make);
+static uint32_t any_top(const gate *g);
+static int answer_pass(gate *g, uint32_t version);
+static int envelope_names(const uint8_t *p, int len, char *gid, uint8_t *gid_len, uint32_t *version);
+static void events_begin(void);
+static NcEvent *event_add(uint8_t kind);
+static int events_end(void);
+static sub *sub_make(int what, const char *gid, int gid_len);
+static sub *sub_find(int what, const char *gid, int gid_len);
+static int same_id(const char *a, int a_len, const char *b, int b_len);
+static void sub_again(sub *s);
+
+static void pump_reset(void) {
+    memset(g_slots, 0, sizeof g_slots);
+    g_refresh_id = 0;
+    g_refresh_not_before = 0;
+    g_refresh_fails = 0;
+    g_n_dropped = 0;
+}
+
+static int needs_user(uint8_t kind) {
+    return kind != NC_DO_SIGN_UP && kind != NC_DO_SIGN_IN && kind != NC_DO_LEADERBOARD;
+}
+
+// A read: sent again when it never arrived.
+static int idempotent(uint8_t kind) {
+    return kind == NC_DO_GAMES || kind == NC_DO_OPEN_GAME || kind == NC_DO_CHAT_HISTORY || kind == NC_DO_BOTS ||
+           kind == NC_DO_LEADERBOARD || kind == NC_DO_HISTORY || kind == NC_DO_REPLAY;
+}
+
+// The request an intent asks for now: the refresh first when the token is due.
+static const NcRequest *build(const NcIntent *in, int64_t now) {
+    const char *g = in->gid;
+    int gl = in->gid_len;
+    switch (in->kind) {
+    case NC_DO_SIGN_UP: return nc_req_signup(in->name, in->name_len, in->password, in->password_len);
+    case NC_DO_SIGN_IN: return nc_req_signin(in->name, in->name_len, in->password, in->password_len);
+    case NC_DO_SIGN_OUT: return nc_req_signout(in->flag != 0, now);
+    case NC_DO_PASSWORD: return nc_req_password(in->password, in->password_len, now);
+    case NC_DO_DELETE_ACCOUNT: return nc_req_delete_account(now);
+    case NC_DO_CREATE: return nc_req_create(now);
+    case NC_DO_PLAY: return nc_req_action(g, gl, in->bytes, in->bytes_len, in->intent, now);
+    case NC_DO_ASK: return nc_req_meta(in->bytes, in->bytes_len, now);
+    case NC_DO_GAMES: return nc_req_games(now);
+    case NC_DO_OPEN_GAME: return nc_req_game(g, gl, now);
+    case NC_DO_CHAT_HISTORY: return nc_req_chats(g, gl, now);
+    case NC_DO_SEND_CHAT: return nc_req_chat_send(g, gl, (const char *)in->bytes, in->bytes_len, now);
+    case NC_DO_BOTS: return nc_req_bots(now);
+    case NC_DO_LEADERBOARD: return nc_req_board();
+    case NC_DO_HISTORY: return nc_req_history(now);
+    case NC_DO_REPLAY: return nc_req_replay(g, gl, now);
+    default: return NULL;
+    }
+}
+
+static void done_begin(NcDone *d, const slot *sl) {
+    memset(d, 0, sizeof *d);
+    d->ticket = sl->ticket;
+    d->kind = sl->in.kind;
+    d->gid_len = sl->in.gid_len;
+    memcpy(d->gid, sl->in.gid, sl->in.gid_len);
+}
+
+static void done_error(NcDone *d) {
+    d->why = g_error.why;
+    d->code = g_error.code;
+    d->detail = g_error.detail;
+    d->status = g_error.status;
+}
+
+// Finishes a slot with no answer of its own (nc_next_done); this file's own
+// refetch is simply let go.
+static void drop(slot *sl, uint8_t why, int status) {
+    if (!sl->own && g_n_dropped < NC_PUMP_MAX) {
+        NcDone *d = &g_dropped[g_n_dropped++];
+        done_begin(d, sl);
+        d->why = why;
+        d->status = status;
+    }
+    memset(sl, 0, sizeof *sl);
+}
+
+static void drop_user_slots(uint8_t why, int status) {
+    for (int i = 0; i < NC_PUMP_MAX; i++)
+        if (g_slots[i].state != SLOT_FREE && needs_user(g_slots[i].in.kind)) drop(&g_slots[i], why, status);
+}
+
+// The session is over (signed out, deleted, its refresh refused): forget it and
+// what it was subscribed to, and finish whatever waited for it.
+static void session_over(void) {
+    signed_out();
+    memset(g_subs, 0, sizeof g_subs);
+    g_n_unsubs = 0;
+    memset(g_gates, 0, sizeof g_gates);
+    g_refresh_id = 0;
+    drop_user_slots(ASK_WHY_AUTH, 0);
+}
+
+// The book (versions applied, subscriptions, this file's own refetches) is one
+// user's: another user's session starts it over.
+static uint8_t g_book_user_len;
+static char    g_book_user[NW_ID_MAX];
+static void book_for(const NwSession *s) {
+    if (same_id(g_book_user, g_book_user_len, s->user_id, s->user_id_len)) return;
+    g_book_user_len = s->user_id_len;
+    memcpy(g_book_user, s->user_id, s->user_id_len);
+    memset(g_gates, 0, sizeof g_gates);
+    memset(g_subs, 0, sizeof g_subs);
+    g_n_unsubs = 0;
+    for (int i = 0; i < NC_PUMP_MAX; i++)
+        if (g_slots[i].own) memset(&g_slots[i], 0, sizeof g_slots[i]);
+}
+
+static int32_t backoff_ms(int attempts) {
+    int64_t ms = NC_RETRY_FIRST_MS;
+    for (int i = 1; i < attempts && ms < NC_RETRY_MAX_MS; i++) ms *= 2;
+    return (int32_t)(ms < NC_RETRY_MAX_MS ? ms : NC_RETRY_MAX_MS);
+}
+
+static slot *slot_take(const NcIntent *in) {
+    for (int i = 0; i < NC_PUMP_MAX; i++) {
+        slot *sl = &g_slots[i];
+        if (sl->state != SLOT_FREE) continue;
+        memset(sl, 0, sizeof *sl);
+        sl->in = *in;
+        sl->state = SLOT_QUEUED;
+        if (++g_ticket == 0) g_ticket = 1;
+        sl->ticket = g_ticket;
+        return sl;
+    }
+    return NULL;
+}
+
+uint32_t nc_do(const NcIntent *in, int64_t now_ms) {
+    memset(&g_error, 0, sizeof g_error);
+    if (!in) { g_error.why = ASK_WHY_MALFORMED; return 0; }
+    if (needs_user(in->kind) && !g_signed_in) { g_error.why = ASK_WHY_AUTH; return 0; }
+    // Whether the wire can carry it, now rather than when it is sent. The trial
+    // build must not disturb the request nc_next_request last handed out.
+    NcRequest kept = g_req;
+    int ok = build(in, now_ms) != NULL;
+    g_req = kept;
+    if (!ok) { g_error.why = ASK_WHY_MALFORMED; return 0; }
+    slot *sl = slot_take(in);
+    if (!sl) { g_error.why = ASK_WHY_INTERNAL; return 0; }   // NC_PUMP_MAX already waiting
+    return sl->ticket;
+}
+
+// This file's own read of a game, sent at `not_before`, unless something at
+// least `min_version` new has been applied by then. One per game at a time.
+static int refetch_queue(const char *gid, int gid_len, int64_t not_before, uint32_t min_version) {
+    if (!g_signed_in || gid_len <= 0 || gid_len > NW_GID_MAX) return 0;
+    for (int i = 0; i < NC_PUMP_MAX; i++) {
+        slot *sl = &g_slots[i];
+        if (sl->state != SLOT_FREE && sl->own && same_id(sl->in.gid, sl->in.gid_len, gid, gid_len)) {
+            if (sl->state == SLOT_QUEUED && not_before < sl->not_before) sl->not_before = not_before;
+            if (min_version > sl->min_version) sl->min_version = min_version;
+            return 1;
+        }
+    }
+    NcIntent in;
+    memset(&in, 0, sizeof in);
+    in.kind = NC_DO_OPEN_GAME;
+    in.gid_len = (uint8_t)gid_len;
+    memcpy(in.gid, gid, (size_t)gid_len);
+    slot *sl = slot_take(&in);
+    if (!sl) return 0;   // full: the next push that finds a gap asks again
+    sl->own = 1;
+    sl->not_before = not_before;
+    sl->min_version = min_version;
+    return 1;
+}
+
+// An own refetch that something newer has made moot.
+static int caught_up(const slot *sl) {
+    if (!sl->own || !sl->min_version) return 0;
+    gate *g = gate_find(sl->in.gid, sl->in.gid_len, 0);
+    return g && any_top(g) >= sl->min_version && (g->has_cast || g->has_answer);
+}
+
+const NcRequest *nc_next_request(int64_t now_ms) {
+    for (int pass = 0; pass < NC_PUMP_MAX; pass++) {
+        slot *pick = NULL;
+        for (int i = 0; i < NC_PUMP_MAX; i++) {
+            slot *sl = &g_slots[i];
+            if (sl->state != SLOT_QUEUED || sl->not_before > now_ms) continue;
+            if (needs_user(sl->in.kind) && (g_refresh_id || g_refresh_not_before > now_ms)) continue;
+            if (!pick || sl->ticket - pick->ticket > 0x7fffffffu) pick = sl;   // the oldest ticket first
+        }
+        if (!pick) return NULL;
+        if (caught_up(pick)) { drop(pick, 0, 0); continue; }
+        if (needs_user(pick->in.kind) && !g_signed_in) { drop(pick, ASK_WHY_AUTH, 0); continue; }
+        const NcRequest *q = build(&pick->in, now_ms);
+        if (!q) { drop(pick, ASK_WHY_MALFORMED, 0); continue; }
+        if (++g_req_id == 0) g_req_id = 1;
+        g_req.id = g_req_id;
+        if (q->is_refresh) {
+            g_refresh_id = g_req_id;
+            return &g_req;
+        }
+        pick->state = SLOT_SENT;
+        pick->sent_id = g_req_id;
+        return &g_req;
+    }
+    return NULL;
+}
+
+static void refresh_answered(int status, const uint8_t *body, int len, int64_t now_ms) {
+    g_refresh_id = 0;
+    int why = nc_session_read(status, body, len);
+    if (why == 0) { g_refresh_fails = 0; g_refresh_not_before = 0; return; }
+    if (!g_signed_in) { session_over(); return; }   // the token was refused: the session is over
+    // It never arrived, or the server failed: try again later, then give up on what waits.
+    if (++g_refresh_fails >= NC_PUMP_TRIES) {
+        g_refresh_fails = 0;
+        g_refresh_not_before = 0;
+        drop_user_slots(g_error.why, status);
+        return;
+    }
+    g_refresh_not_before = now_ms + backoff_ms(g_refresh_fails);
+}
+
+// An answered envelope of game `gid` through the book: applied, or stale.
+// `own`: this file's refetch, so it becomes an event (its payload copied to g_frame).
+static int answer_view(NcDone *d, const char *gid, int gid_len, uint32_t version,
+                       const uint8_t *body, uint32_t off, uint32_t len, int own) {
+    gate *g = gate_find(gid, gid_len, 1);
+    if (!answer_pass(g, version)) { d->stale = 1; return 0; }
+    d->version = version;
+    if (!own) { d->a_off = off; d->a_len = len; return 1; }
+    if (len > NC_FRAME_MAX) return 0;
+    NcEvent *e = event_add(NC_EV_VIEW);
+    if (!e) return 0;
+    memcpy(g_frame, body + off, len);
+    e->what = NW_SUB_GAME;
+    e->gid_len = (uint8_t)gid_len;
+    memcpy(e->gid, gid, (size_t)gid_len);
+    e->version = version;
+    e->payload_len = len;
+    return 1;
+}
+
+static void read_answer(NcDone *d, const slot *sl, int status, const uint8_t *body, int len, int64_t now_ms) {
+    switch (d->kind) {
+    case NC_DO_SIGN_UP:
+    case NC_DO_SIGN_IN:
+        nc_session_read(status, body, len);
+        break;
+    case NC_DO_SIGN_OUT:
+        nc_status_read(status, body, len);
+        session_over();   // signed out here whatever the server answered
+        break;
+    case NC_DO_DELETE_ACCOUNT:
+        if (nc_status_read(status, body, len) == 0) session_over();
+        break;
+    case NC_DO_CREATE:
+    case NC_DO_ASK: {
+        if (nc_status_read(status, body, len) != 0) break;
+        char gid[NW_GID_MAX];
+        uint8_t gl = 0;
+        uint32_t version = 0;
+        int named = envelope_names(body, len, gid, &gl, &version);
+        TableAsk ask;
+        int asked = d->kind == NC_DO_ASK && ask_decode(sl->in.bytes, sl->in.bytes_len, &ask) == ASK_OK;
+        if (asked && ask.gid_len && ask.gid_len <= NW_GID_MAX) {
+            memcpy(gid, ask.gid, ask.gid_len);
+            gl = ask.gid_len;
+        }
+        if (!gl) break;
+        d->gid_len = gl;
+        memcpy(d->gid, gid, gl);
+        // The answer is the asker's board only when it moved the asker: a create,
+        // a join, their own leave. Every other ask's change arrives as its cast,
+        // which animates, so its answer is not a board for the table to take.
+        int own_exit = asked && ask.kind == ASK_EXIT && ask.bot_len == 0 &&
+                       (ask.player_len == 0 || same_id(ask.player, ask.player_len, g_session.user_id, g_session.user_id_len));
+        int moved = d->kind == NC_DO_CREATE || (asked && ask.kind == ASK_JOIN) || own_exit;
+        if (!moved || !named) break;
+        answer_view(d, gid, gl, version, body, 0, (uint32_t)len, 0);
+        // Which stream the game is heard on is the seat's to say: a create's
+        // game is heard from now on, and a join or a leave asks again.
+        if (d->kind == NC_DO_CREATE) {
+            sub *s = sub_make(NW_SUB_GAME, gid, gl);
+            if (s) s->pinned = 1;
+        } else {
+            sub_again(sub_find(NW_SUB_GAME, gid, gl));
+        }
+        break;
+    }
+    case NC_DO_PLAY: {
+        const NcAction *a = nc_action_read(status, body, len);
+        if (!a) break;
+        d->action_status = a->status;
+        d->reject_code = a->reject_code;
+        d->version = a->version;
+        // Refused over a newer game than the one applied here: its pushes are late
+        // or lost. Give them a moment, then take the game whole.
+        if (a->status != TABLE_STATUS_APPLIED) {
+            gate *g = gate_find(sl->in.gid, sl->in.gid_len, 0);
+            if (!g || any_top(g) < a->version)
+                refetch_queue(sl->in.gid, sl->in.gid_len, now_ms + NC_RECONCILE_MS, a->version);
+        }
+        break;
+    }
+    case NC_DO_OPEN_GAME: {
+        const NcGameRow *r = nc_view_read(status, body, len);
+        if (r) answer_view(d, sl->in.gid, sl->in.gid_len, r->version, body, r->env_off, r->env_len, sl->own);
+        break;
+    }
+    case NC_DO_REPLAY: {
+        const NcReplay *r = nc_replay_read(status, body, len);
+        if (r) { d->a_off = r->moves_off; d->a_len = r->moves_len; d->b_off = r->extras_off; d->b_len = r->extras_len; }
+        break;
+    }
+    case NC_DO_GAMES: case NC_DO_CHAT_HISTORY: case NC_DO_BOTS: case NC_DO_LEADERBOARD: case NC_DO_HISTORY: {
+        uint8_t kind = d->kind == NC_DO_GAMES ? NW_GAMES : d->kind == NC_DO_CHAT_HISTORY ? NW_CHATS
+                     : d->kind == NC_DO_BOTS ? NW_BOTS : d->kind == NC_DO_LEADERBOARD ? NW_BOARD : NW_HISTORY;
+        int n = nc_list_read(status, body, len, kind);
+        if (n >= 0) {
+            d->n_rows = n;
+            d->list_kind = kind;
+            if (kind == NW_HISTORY) {
+                const NcHistoryHead *h = nc_history_head(body, len);
+                if (h) { d->has_rating = h->has_rating; d->rating = h->rating; }
+            }
+        }
+        break;
+    }
+    default:   // PASSWORD, SEND_CHAT: accepted or refused
+        nc_status_read(status, body, len);
+        break;
+    }
+    done_error(d);
+}
+
+static const NcDone *answered(uint32_t id, int status, const uint8_t *body, int len, int64_t now_ms) {
+    if (!id) return NULL;
+    if (len < 0 || (len > 0 && !body)) len = 0;
+    if (id == g_refresh_id) { refresh_answered(status, body, len, now_ms); return NULL; }
+    slot *sl = NULL;
+    for (int i = 0; i < NC_PUMP_MAX; i++)
+        if (g_slots[i].state == SLOT_SENT && g_slots[i].sent_id == id) { sl = &g_slots[i]; break; }
+    if (!sl) return NULL;   // an answer for nothing waiting (it was dropped meanwhile)
+    if (status == 0 && idempotent(sl->in.kind) && sl->attempts + 1 < NC_PUMP_TRIES) {
+        // It never arrived: a read goes again, later.
+        sl->attempts++;
+        sl->state = SLOT_QUEUED;
+        sl->not_before = now_ms + backoff_ms(sl->attempts);
+        return NULL;
+    }
+    if (status == 401 && needs_user(sl->in.kind) && g_signed_in && !sl->reauthed) {
+        // The token was not taken: refresh it, then send this once more.
+        sl->reauthed = 1;
+        sl->state = SLOT_QUEUED;
+        g_session.expires_at_ms = 0;
+        return NULL;
+    }
+    slot done_slot = *sl;
+    memset(sl, 0, sizeof *sl);
+    done_begin(&g_done, &done_slot);
+    if (status == 0) {
+        memset(&g_error, 0, sizeof g_error);
+        g_error.why = ASK_WHY_INTERNAL;
+        done_error(&g_done);
+    } else {
+        read_answer(&g_done, &done_slot, status, body, len, now_ms);
+    }
+    return done_slot.own ? NULL : &g_done;
+}
+
+const NcDone *nc_on_response(uint32_t id, int status, const uint8_t *body, int len, int64_t now_ms) {
+    events_begin();
+    const NcDone *d = answered(id, status, body, len, now_ms);
+    events_end();
+    return d;
+}
+
+const NcDone *nc_next_done(void) {
+    if (g_n_dropped == 0) return NULL;
+    g_dropped_out = g_dropped[0];
+    memmove(g_dropped, g_dropped + 1, (size_t)(g_n_dropped - 1) * sizeof g_dropped[0]);
+    g_n_dropped--;
+    return &g_dropped_out;
+}
+
+int nc_pump_due_ms(int64_t now_ms) {
+    if (g_n_dropped) return 0;
+    int64_t due = -1;
+    for (int i = 0; i < NC_PUMP_MAX; i++) {
+        const slot *sl = &g_slots[i];
+        if (sl->state != SLOT_QUEUED) continue;
+        int64_t at = sl->not_before;
+        if (needs_user(sl->in.kind)) {
+            if (g_refresh_id) continue;   // the refresh's answer wakes it
+            if (g_refresh_not_before > at) at = g_refresh_not_before;
+        }
+        int64_t ms = at > now_ms ? at - now_ms : 0;
+        if (due < 0 || ms < due) due = ms;
+    }
+    return due > INT32_MAX ? INT32_MAX : (int)due;
+}
+
 // ---- version gates ---------------------------------------------------------------------
 
 // Two ids alike. An empty one may come as NULL (the games list has none), and
@@ -568,16 +994,6 @@ void nc_gate_reset(const char *gid, int gid_len) {
     if (g) memset(g, 0, sizeof *g);
 }
 
-// 1 when a push of `version` is newer than any applied on this stream of the game.
-static int gate_pass(gate *g, int cast, uint32_t version) {
-    uint8_t *has = cast ? &g->has_cast : &g->has_view;
-    uint32_t *v = cast ? &g->cast_v : &g->view_v;
-    if (*has && version <= *v) return 0;
-    *has = 1;
-    *v = version;
-    return 1;
-}
-
 // ---- the stream --------------------------------------------------------------------------
 
 static sub *sub_find(int what, const char *gid, int gid_len) {
@@ -595,28 +1011,42 @@ static int sub_args_ok(int what, const char *gid, int gid_len) {
     return gid && gid_len > 0 && gid_len <= NW_GID_MAX;
 }
 
-int nc_stream_sub(int what, const char *gid, int gid_len) {
-    if (!sub_args_ok(what, gid, gid_len)) return NW_E_WIRE;
+static sub *sub_make(int what, const char *gid, int gid_len) {
     sub *s = sub_find(what, gid, gid_len);
-    if (!s) {
-        for (int i = 0; i < NC_SUBS_MAX && !s; i++)
-            if (g_subs[i].state == SUB_FREE) s = &g_subs[i];
-        if (!s) return NW_E_CAP;
+    if (s) return s;
+    for (int i = 0; i < NC_SUBS_MAX; i++) {
+        if (g_subs[i].state != SUB_FREE) continue;
+        s = &g_subs[i];
         memset(s, 0, sizeof *s);
         s->what = (uint8_t)what;
         s->gid_len = (uint8_t)gid_len;
         if (gid_len) memcpy(s->gid, gid, (size_t)gid_len);
+        s->state = SUB_WANT;
+        s->backoff = NC_RETRY_FIRST_MS;
+        // A pending unsubscribe of the same thing is moot.
+        for (int j = 0; j < g_n_unsubs; j++)
+            if (g_unsubs[j].what == what && same_id(g_unsubs[j].gid, g_unsubs[j].gid_len, gid, gid_len)) {
+                g_unsubs[j] = g_unsubs[--g_n_unsubs];
+                break;
+            }
+        return s;
     }
-    // Asked again: sent again, at once.
+    return NULL;
+}
+
+// Asked again, at once: which stream it hears may have changed.
+static void sub_again(sub *s) {
+    if (!s || s->state == SUB_FREE) return;
     s->state = SUB_WANT;
     s->retry_at = 0;
     s->backoff = NC_RETRY_FIRST_MS;
-    // A pending unsubscribe of the same thing is moot.
-    for (int i = 0; i < g_n_unsubs; i++)
-        if (g_unsubs[i].what == what && same_id(g_unsubs[i].gid, g_unsubs[i].gid_len, gid, gid_len)) {
-            g_unsubs[i] = g_unsubs[--g_n_unsubs];
-            break;
-        }
+}
+
+int nc_stream_sub(int what, const char *gid, int gid_len) {
+    if (!sub_args_ok(what, gid, gid_len)) return NW_E_WIRE;
+    sub *s = sub_make(what, gid, gid_len);
+    if (!s) return NW_E_CAP;
+    s->holds++;
     return NW_OK;
 }
 
@@ -624,6 +1054,8 @@ int nc_stream_unsub(int what, const char *gid, int gid_len) {
     if (!sub_args_ok(what, gid, gid_len)) return NW_E_WIRE;
     sub *s = sub_find(what, gid, gid_len);
     if (!s) return NW_OK;
+    if (s->holds > 1) { s->holds--; return NW_OK; }
+    // The last hold (a pin the host never held is let go with it).
     int told = s->state == SUB_SENT || s->state == SUB_LIVE;
     memset(s, 0, sizeof *s);
     if (told && g_open) {
@@ -655,87 +1087,189 @@ int nc_stream_closed(int64_t now_ms) {
     return wait;
 }
 
-const uint8_t *nc_event_payload(void) { return g_payload; }
+// ---- what changed ------------------------------------------------------------------
 
-static const NcEvent *event_none(uint8_t kind) {
-    memset(&g_event, 0, sizeof g_event);
-    g_payload = NULL;
-    g_event.kind = kind;
-    return &g_event;
+static void events_begin(void) { g_n_events = 0; }
+
+static NcEvent *event_add(uint8_t kind) {
+    if (g_n_events == NC_EVENTS_MAX) return NULL;
+    NcEvent *e = &g_events[g_n_events];
+    memset(e, 0, sizeof *e);
+    e->kind = kind;
+    g_event_at[g_n_events] = 0;
+    g_n_events++;
+    return e;
 }
 
-const NcEvent *nc_stream_in(const uint8_t *frame, int len, int is_text, int64_t now_ms) {
+// The feed's end: a session that changed during it is an event of its own.
+static int events_end(void) {
+    if (g_session_told != g_session_gen) {
+        g_session_told = g_session_gen;
+        event_add(NC_EV_SESSION);
+    }
+    return g_n_events;
+}
+
+const NcEvent *nc_event(int i) { return i >= 0 && i < g_n_events ? &g_events[i] : NULL; }
+
+const uint8_t *nc_event_payload(int i) {
+    if (i < 0 || i >= g_n_events || !g_events[i].payload_len) return NULL;
+    return g_frame + g_event_at[i];
+}
+
+static uint32_t table_top(const gate *g) {
+    uint32_t v = g->has_cast ? g->cast_v : 0;
+    return g->has_answer && g->answer_v > v ? g->answer_v : v;
+}
+
+static uint32_t any_top(const gate *g) {
+    uint32_t v = table_top(g);
+    return g->has_view && g->view_v > v ? g->view_v : v;
+}
+
+// 1 when an answered view of `version` applies (see netclient.h "what changed").
+static int answer_pass(gate *g, uint32_t version) {
+    int any = g->has_view || g->has_cast || g->has_answer;
+    if (any) {
+        uint32_t top = any_top(g);
+        if (version < top) return 0;
+        // At the top itself only when nothing the table took is there already
+        // (a dashboard push the table may not have shown is not).
+        if (version == top && ((g->has_cast && g->cast_v == top) || (g->has_answer && g->answer_v == top)))
+            return 0;
+    }
+    g->has_answer = 1;
+    if (!any || version > g->answer_v) g->answer_v = version;
+    return 1;
+}
+
+static int refetch_queue(const char *gid, int gid_len, int64_t not_before, uint32_t min_version);
+
+// The game's id and version an envelope names (its roster trailer carries the id).
+static int envelope_names(const uint8_t *p, int len, char *gid, uint8_t *gid_len, uint32_t *version) {
+    EnvHeader h;
+    if (!p || !env_header_read(p, len, &h) || h.trailer_at >= len) return 0;
+    static Roster r;
+    char id[ROSTER_GAME_ID_MAX + 1];
+    int n = 0, status = 0, passing = 0, used = 0;
+    uint32_t ai = 0;
+    if (roster_trailer_read(&r, id, &n, &status, &ai, &passing, p + h.trailer_at, len - h.trailer_at, &used) != ROSTER_OK ||
+        n <= 0 || n > NW_GID_MAX)
+        return 0;
+    memcpy(gid, id, (size_t)n);
+    *gid_len = (uint8_t)n;
+    *version = h.version;
+    return 1;
+}
+
+// ---- the stream: frames in ------------------------------------------------------------
+
+int nc_stream_in(const uint8_t *frame, int len, int is_text, int64_t now_ms) {
+    events_begin();
     const uint8_t *msg = frame;
     int n = len;
     if (is_text) {
         n = nw_text_decode((const char *)frame, len, g_frame, NC_FRAME_MAX);
-        if (n < 0) return event_none(NC_EV_BAD);
+        if (n < 0) { event_add(NC_EV_BAD); return events_end(); }
         msg = g_frame;
     } else if (frame && len > 0 && len <= NC_FRAME_MAX && frame != g_frame) {
         memcpy(g_frame, frame, (size_t)len);
         msg = g_frame;
     } else if (len > NC_FRAME_MAX) {
-        return event_none(NC_EV_BAD);
+        event_add(NC_EV_BAD);
+        return events_end();
     }
     static NwFrame f;
-    if (nw_frame_decode(msg, n, &f) != NW_OK) return event_none(NC_EV_BAD);
+    if (nw_frame_decode(msg, n, &f) != NW_OK) { event_add(NC_EV_BAD); return events_end(); }
     g_reconnect_ms = 0;   // the socket works: a later close starts the schedule over
-    event_none(NC_EV_NONE);
-    NcEvent *e = &g_event;
-    e->gid_len = f.gid_len;
-    memcpy(e->gid, f.gid, f.gid_len);
-    e->version = f.version;
     switch (f.kind) {
     case NW_WS_ACK: {
         sub *s = NULL;
         for (int i = 0; i < NC_SUBS_MAX && !s; i++)
             if (g_subs[i].state == SUB_SENT && g_subs[i].ref == f.ref) s = &g_subs[i];
-        if (!s) return e;   // a subscription since dropped or asked again
+        if (!s) break;   // a subscription since dropped or asked again
+        NcEvent *e = event_add(NC_EV_NONE);
         e->what = s->what;
         e->gid_len = s->gid_len;
         memcpy(e->gid, s->gid, s->gid_len);
         if (f.why == 0) {
             s->state = SUB_LIVE;
             s->backoff = NC_RETRY_FIRST_MS;
-            if (s->what == NW_SUB_GAME) { e->kind = NC_EV_SEATED; e->seated = f.seated; }
-            return e;
+            if (s->what == NW_SUB_GAME) {
+                e->kind = NC_EV_SEATED;
+                e->seated = f.seated;
+                // Pushes sent while it was not held are not replayed: take the game whole.
+                if (s->lived || s->missed) refetch_queue(s->gid, s->gid_len, now_ms, 0);
+            }
+            s->lived = 1;
+            s->missed = 0;
+            break;
         }
         s->state = SUB_REFUSED;
+        s->missed = 1;
         s->retry_at = now_ms + s->backoff;
         s->backoff = s->backoff * 2 > NC_RETRY_MAX_MS ? NC_RETRY_MAX_MS : s->backoff * 2;
         // A refused token is told again with whatever token the session holds then.
         if (f.why == ASK_WHY_AUTH) g_auth_sent_gen = 0;
         e->kind = NC_EV_REFUSED;
         e->why = f.why;
-        return e;
+        break;
     }
     case NW_WS_VIEW:
     case NW_WS_CAST: {
-        if (!f.gid_len) return event_none(NC_EV_BAD);
+        if (!f.gid_len) { event_add(NC_EV_BAD); break; }
         int cast = f.kind == NW_WS_CAST;
         gate *g = gate_find(f.gid, f.gid_len, 1);
-        // An empty view (the seat is gone) always applies and ends the game's gate.
         if (!cast && f.blob.len == 0) {
+            // An empty view (the seat is gone) always applies and ends the game's gate.
             memset(g, 0, sizeof *g);
-        } else if (!gate_pass(g, cast, f.version)) {
-            return e;   // stale: at or below what was applied
+            g->used = 1;
+            g->gid_len = f.gid_len;
+            memcpy(g->gid, f.gid, f.gid_len);
+        } else if (cast) {
+            int table = g->has_cast || g->has_answer;
+            uint32_t top = table_top(g);
+            if (table && f.version <= top) break;   // stale
+            if (table && f.version > top + 1) {
+                // A version was skipped: this cast would land on a board it does not
+                // follow. Drop it and take the game whole instead.
+                refetch_queue(f.gid, f.gid_len, now_ms, f.version);
+                break;
+            }
+            g->has_cast = 1;
+            g->cast_v = f.version;
+        } else {
+            // A game held on its own stream is the casts' and the answers' to
+            // move; a dashboard view of it would snap past what they animate.
+            if (sub_find(NW_SUB_GAME, f.gid, f.gid_len)) break;
+            if (g->has_view && f.version <= g->view_v) break;   // stale
+            g->has_view = 1;
+            g->view_v = f.version;
         }
-        e->kind = cast ? NC_EV_CAST : NC_EV_VIEW;
+        NcEvent *e = event_add(cast ? NC_EV_CAST : NC_EV_VIEW);
         e->what = cast ? NW_SUB_GAME : NW_SUB_GAMES;
+        e->gid_len = f.gid_len;
+        memcpy(e->gid, f.gid, f.gid_len);
+        e->version = f.version;
         e->payload_len = f.blob.len;
-        g_payload = f.blob.p;
-        return e;
+        g_event_at[g_n_events - 1] = f.blob.len ? (uint32_t)(f.blob.p - g_frame) : 0;
+        break;
     }
-    case NW_WS_CHAT:
-        e->kind = NC_EV_CHAT;
+    case NW_WS_CHAT: {
+        NcEvent *e = event_add(NC_EV_CHAT);
         e->what = NW_SUB_CHAT;
+        e->gid_len = f.gid_len;
+        memcpy(e->gid, f.gid, f.gid_len);
         chat_copy(&e->chat, &f.chat);
-        return e;
-    case NW_WS_PONG:
-        return e;
-    default:
-        return event_none(NC_EV_BAD);   // a client frame, or one this client does not take
+        break;
     }
+    case NW_WS_PONG:
+        break;
+    default:
+        event_add(NC_EV_BAD);   // a client frame, or one this client does not take
+        break;
+    }
+    return events_end();
 }
 
 static const NcOut *out_frame(const NwFrame *f) {
@@ -781,7 +1315,7 @@ const NcOut *nc_stream_next(int64_t now_ms) {
         // What this client already holds of the game, so the server sends
         // only a newer view (the catch-up).
         gate *g = s->gid_len ? gate_find(s->gid, s->gid_len, 0) : NULL;
-        if (g) f.version = g->view_v > g->cast_v ? g->view_v : g->cast_v;
+        if (g) f.version = any_top(g);
         return out_frame(&f);
     }
     if (now_ms - g_last_ping >= NC_PING_MS) {
@@ -803,6 +1337,13 @@ int nc_stream_due_ms(int64_t now_ms) {
     }
     int64_t d = due - now_ms;
     return d < 0 ? 0 : d > NC_PING_MS ? NC_PING_MS : (int)d;
+}
+
+int nc_due_ms(int64_t now_ms) {
+    int p = nc_pump_due_ms(now_ms), q = nc_stream_due_ms(now_ms);
+    if (p < 0) return q;
+    if (q < 0) return p;
+    return p < q ? p : q;
 }
 
 const void *nc_row(int kind, const uint8_t *body, int len, int i) {

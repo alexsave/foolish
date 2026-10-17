@@ -72,14 +72,18 @@
 --root HandMetrics --root HandRows --root HandRect
 --snapshot HandMetrics --snapshot HandRows --snapshot HandRect --writer HandMetrics
 #
-# The backend's client (netclient.h): the request to send, the answers the app
-# reads, the session it shows, and the stream's events and outgoing frames.
+# The backend's client (netclient.h): the intent the app submits, the request
+# to send, the ticket it finished, the session it shows, and the stream's
+# events and outgoing frames.
 --header netclient.h
---root NcRequest --root NcSessionInfo --root NcError --root NcGameRow --root NcAction --root NcEvent --root NcOut
---snapshot NcRequest --snapshot NcSessionInfo --snapshot NcError --snapshot NcGameRow --snapshot NcAction --snapshot NcEvent --snapshot NcOut
+--root NcIntent --root NcRequest --root NcSessionInfo --root NcError --root NcDone --root NcEvent --root NcOut
+--snapshot NcRequest --snapshot NcSessionInfo --snapshot NcError --snapshot NcDone --snapshot NcEvent --snapshot NcOut
+--snapshot NcIntent --writer NcIntent
+--count NcIntent.gid=gid_len --count NcIntent.name=name_len --count NcIntent.password=password_len --count NcIntent.bytes=bytes_len
 --count NcRequest.path=path_len --count NcRequest.auth=auth_len --count NcRequest.body=body_len
 --count NcSessionInfo.user_id=user_id_len --count NcSessionInfo.username=username_len
---count NcEvent.gid=gid_len --count NcChatRow.id=id_len --count NcChatRow.user_id=user_id_len --count NcChatRow.message=message_len
+--count NcEvent.gid=gid_len --count NcDone.gid=gid_len
+--count NcChatRow.id=id_len --count NcChatRow.user_id=user_id_len --count NcChatRow.message=message_len
 --count NcOut.text=len
 #
 # The constants a reader of these structs needs, and no others: every one is a
