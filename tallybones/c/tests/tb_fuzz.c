@@ -68,7 +68,7 @@ static void draft_of(const TbGame *g)
 int main(int argc, char **argv)
 {
     int games = argc > 1 ? atoi(argv[1]) : 700;
-    RS ^= (uint64_t)(argc > 2 ? atoi(argv[2]) : 0) * 0x2545F4914F6CDD1Dull;
+    RS ^= (uint64_t)(argc > 2 ? atoi(argv[2]) : 0) * RNG_GOLDEN;   /* as the other fuzzers spread theirs */
     long bubbles = 0, longest = 0, shouts = 0, bonuses = 0, leaves = 0, zeros = 0;
     for (int k = 0; k < games; k++) {
         uint8_t seed[32];
