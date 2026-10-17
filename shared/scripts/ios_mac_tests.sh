@@ -66,10 +66,9 @@
 #   PRE_LABEL       what that step prints (default: PRE_CMD)
 #   SUITE_NAME      prefix of the final line (optional)
 #   HELP_FILE       the product script, whose "# Usage:" block --help prints
-#   DEST            the xcodebuild destination (optional: unset, it is the
-#                   first available iPhone on the newest iOS runtime this Mac
-#                   has, by udid - a hard-coded model name goes stale with
-#                   every Xcode, and a name two runtimes share is ambiguous)
+#   DEST            the xcodebuild destination (optional: unset, it is this
+#                   Mac's own test simulator - see "THE SIMULATOR" below)
+#   SIM_NAME        that simulator's name (default: ios-mac-tests)
 #
 # Flags: --no-lib, --regen, -h/--help, and the scheme words.
 set -euo pipefail
@@ -77,18 +76,61 @@ set -euo pipefail
 ROOT="$PWD"
 
 : "${PROJECT:?PROJECT is not set - run ios/scripts/mac_tests.sh of the product instead}"
+# ---- THE SIMULATOR: one per Mac, used by nothing else, one run at a time ----
+#
+# Every run used to test on "the first iPhone on the newest runtime", which is
+# the one simulator every agent, every hand-run xcodebuild and every rig on this
+# Mac also reaches for first. Two runs on one simulator kill each other: the
+# second run's install of the same bundle SIGKILLs the first run's test host
+# mid-suite, and xcodebuild reports it as
+#
+#   Early unexpected exit, operation never finished bootstrapping - no restart
+#   will be attempted. (Underlying Error: Test crashed with signal kill ...)
+#
+# against whichever innocent test happened to be running ("Test crashed with
+# signal kill"). Reproduced 2026-10-17 by running two worktrees' suites at once
+# on one simulator: 2 of the first 3 overlapping runs died that way, and 10 of
+# 10 sequential runs on the same simulator were green. It "passes on rerun"
+# because the rerun usually does not overlap.
+#
+# So, when DEST is not given:
+#   - the run uses a simulator of its own NAME ($SIM_NAME, created on first use
+#     as the newest runtime's first iPhone model), which nothing else on the
+#     Mac picks by accident;
+#   - the test schemes run under an exclusive lock on that simulator, so a
+#     second run (another worktree, another agent, another product) WAITS for
+#     the first instead of killing it. The lock is a kernel flock on an open
+#     file, so it dies with its holder: no stale lock after a crash or a kill;
+#   - the run boots it and waits for the boot to finish before xcodebuild sees
+#     it, and shuts it down again at exit if it found it shut down, so idle
+#     test simulators never pile up (a booted simulator is hundreds of
+#     processes, and too many of them exhaust the per-user process limit).
+# A DEST you pass is used as given, and is locked the same way (by its text),
+# so two runs naming the same device also queue instead of colliding.
+SIM_NAME="${SIM_NAME:-ios-mac-tests}"
+SIM_UDID=""
 if [ -z "${DEST:-}" ]; then
-  # `simctl list` prints runtimes oldest first, so the last iOS section wins.
-  sim_udid="$(xcrun simctl list devices available | awk '
-    /^-- iOS /   { in_ios = 1; first = ""; next }
-    /^-- /       { in_ios = 0; next }
-    in_ios && first == "" && /iPhone/ && match($0, /\([0-9A-F-]{36}\)/) {
-      first = substr($0, RSTART + 1, RLENGTH - 2); pick = first
+  # `simctl list` prints runtimes oldest first, so the last iOS section that
+  # holds an iPhone wins. Prints "<runtime>|<model>|<udid of SIM_NAME or empty>".
+  pick="$(xcrun simctl list devices available | awk -v want="$SIM_NAME" '
+    /^-- iOS / { in_ios = 1; rt = $0; gsub(/^-- | --$/, "", rt); model = ""; mine = ""; next }
+    /^-- /     { in_ios = 0; next }
+    in_ios && match($0, /\([0-9A-F-]{36}\)/) {
+      udid = substr($0, RSTART + 1, RLENGTH - 2)
+      name = $0; sub(/^ +/, "", name); sub(/ \([0-9A-F-]{36}\).*$/, "", name)
+      if (name == want) mine = udid
+      else if (model == "" && name ~ /^iPhone/) model = name
+      if (model != "" || mine != "") best = rt "|" model "|" mine
     }
-    END { print pick }')"
-  [ -n "$sim_udid" ] || { echo "error: no available iPhone simulator; set DEST" >&2; exit 2; }
-  DEST="platform=iOS Simulator,id=$sim_udid"
-  echo "DEST not set - using $DEST"
+    END { print best }')"
+  [ -n "$pick" ] || { echo "error: no available iPhone simulator; set DEST" >&2; exit 2; }
+  IFS='|' read -r sim_runtime sim_model SIM_UDID <<<"$pick"
+  if [ -z "$SIM_UDID" ]; then
+    echo "creating this Mac's test simulator: $SIM_NAME ($sim_model, $sim_runtime)"
+    SIM_UDID="$(xcrun simctl create "$SIM_NAME" "$sim_model" "$sim_runtime")"
+  fi
+  DEST="platform=iOS Simulator,id=$SIM_UDID"
+  echo "DEST not set - using $SIM_NAME: $DEST"
 fi
 : "${LIB_CMD:?LIB_CMD is not set}"
 : "${XCFRAMEWORK:?XCFRAMEWORK is not set}"
@@ -262,8 +304,16 @@ run_scheme() {   # $1 = scheme, $2 = build|test
   log="$(mktemp -t ios_xcodebuild)"
   say "$action: scheme $scheme"
 
+  # NO SYSDIAGNOSE ON A FAILURE. xcodebuild's default (`on-failure`) runs
+  # `simctl diagnose --timeout=600` after any failing test, and on a busy Mac it
+  # runs to that timeout: a run whose tests had finished in 3 seconds sat for
+  # ten more minutes before reporting one failed assertion (2026-10-17). The
+  # failures, their messages and the .xcresult are all still there without it.
+  local extra=()
+  if [ "$action" = test ]; then extra=(-collect-test-diagnostics never); fi
+
   set +e
-  xcodebuild -project "$PROJECT" -scheme "$scheme" -destination "$DEST" "$action" \
+  xcodebuild -project "$PROJECT" -scheme "$scheme" -destination "$DEST" ${extra[@]+"${extra[@]}"} "$action" \
     2>&1 | tee "$log" | "${FMT[@]}"
   rc=${PIPESTATUS[0]}
   set -e
@@ -274,7 +324,7 @@ run_scheme() {   # $1 = scheme, $2 = build|test
     echo "    problem, and not a change in your tree. Healing it, retrying once."
     if unpoison_derived_data "$log"; then
       set +e
-      xcodebuild -project "$PROJECT" -scheme "$scheme" -destination "$DEST" "$action" \
+      xcodebuild -project "$PROJECT" -scheme "$scheme" -destination "$DEST" ${extra[@]+"${extra[@]}"} "$action" \
         2>&1 | tee "$log" | "${FMT[@]}"
       rc=${PIPESTATUS[0]}
       set -e
@@ -291,9 +341,51 @@ run_scheme() {   # $1 = scheme, $2 = build|test
   return "$rc"
 }
 
-for pair in $TEST_SCHEMES; do
-  if want "${pair%%=*}"; then run_scheme "${pair#*=}" test; fi
-done
+# The lock and the boot (see "THE SIMULATOR" at the top). Only the test schemes
+# hold the lock: the C build, xcodegen and the build-only schemes never touch a
+# simulator, so other runs keep compiling while one is testing.
+LOCK_DIR="$HOME/Library/Caches/ios_mac_tests"
+SIM_WAS_SHUTDOWN=0
+
+acquire_simulator() {
+  mkdir -p "$LOCK_DIR"
+  local lock="$LOCK_DIR/$(printf '%s' "$DEST" | tr -c 'A-Za-z0-9.-' '_').lock"
+  exec 9>>"$lock"
+  # flock(2) on fd 9, taken by a child: the lock belongs to the open file, which
+  # this shell (and every xcodebuild it starts) holds until it exits. lockf(1)
+  # cannot do this - it only locks around a command it runs itself.
+  if ! /usr/bin/perl -MFcntl=:flock -e 'open(my $f, ">&=", 9) or die; exit(flock($f, LOCK_EX | LOCK_NB) ? 0 : 1)'; then
+    echo "  waiting for the simulator: another run is testing on it ($(cat "$lock.who" 2>/dev/null || echo unknown))"
+    /usr/bin/perl -MFcntl=:flock -e 'open(my $f, ">&=", 9) or die; flock($f, LOCK_EX) or die "flock: $!"'
+  fi
+  printf 'pid %s in %s, since %s\n' "$$" "$ROOT" "$(date '+%H:%M:%S')" > "$lock.who"
+  if [ -n "$SIM_UDID" ]; then
+    if xcrun simctl list devices | grep -q "($SIM_UDID) (Shutdown)"; then SIM_WAS_SHUTDOWN=1; fi
+    xcrun simctl boot "$SIM_UDID" >/dev/null 2>&1 || true   # already booted is fine
+    xcrun simctl bootstatus "$SIM_UDID" -b >/dev/null
+  fi
+}
+
+release_simulator() {
+  if [ "$SIM_WAS_SHUTDOWN" -eq 1 ]; then
+    xcrun simctl shutdown "$SIM_UDID" >/dev/null 2>&1 || true
+    SIM_WAS_SHUTDOWN=0
+  fi
+  exec 9>&-
+}
+
+any_test=0
+for pair in $TEST_SCHEMES; do if want "${pair%%=*}"; then any_test=1; fi; done
+if [ "$any_test" -eq 1 ]; then
+  say "simulator (${SIM_UDID:+$SIM_NAME, }locked for this run)"
+  trap 'if [ -n "$BACKUP_DIR" ]; then restore_entitlements; fi; release_simulator' EXIT
+  acquire_simulator
+  for pair in $TEST_SCHEMES; do
+    if want "${pair%%=*}"; then run_scheme "${pair#*=}" test; fi
+  done
+  release_simulator
+  trap 'if [ -n "$BACKUP_DIR" ]; then restore_entitlements; fi' EXIT
+fi
 # A shipping product with no test target of its own: compiling it is the check.
 for pair in $BUILD_SCHEMES; do
   if want "${pair%%=*}"; then run_scheme "${pair#*=}" build; fi
