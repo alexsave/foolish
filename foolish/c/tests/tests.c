@@ -12919,10 +12919,18 @@ static BlRow bl_row;
 // one second on). Returns the products' length, the refusal, or -1000 when the
 // row's log would overflow: a silent cut here would hand a belief bot a shorter
 // memory than the server holds.
+static int bl_row_take(BlRow *row, const TableCommit *c);
 static int bl_row_commit(BlRow *row, TableCommit *c) {
     const int64_t now = 1700000000000LL + (int64_t)row->version * 1000;
     const int n = table_commit_products(&tb, RS("g"), row->version + 1, now, c, tb_arena, sizeof(tb_arena));
     if (n < 0) return n;
+    const int rc = bl_row_take(row, c);
+    return rc < 0 ? rc : n;
+}
+
+// Moves the row on by a commit's products, still in tb_arena: bl_row_commit's
+// second half, for a caller that committed (and pushed) itself.
+static int bl_row_take(BlRow *row, const TableCommit *c) {
     if (c->logs_reset) row->log_len = 0;
     if (row->log_len + c->logs.len > (int)sizeof(row->log)) return -1000;
     memcpy(row->state, tb_arena + c->state.off, (size_t)c->state.len);
@@ -12932,7 +12940,7 @@ static int bl_row_commit(BlRow *row, TableCommit *c) {
     row->log_len += c->logs.len;
     row->version++;
     row->status = c->status;
-    return n;
+    return 0;
 }
 
 // A lobby of `np` bots of `brain` in seats id-0.. (P1, P2, ...), every seat
@@ -13029,11 +13037,23 @@ static int bl_row_cycle(BlRow *row, const uint8_t *log, int log_len, int max_act
 // decisions themselves are not promised bit-identical across the builds (the
 // solver's transposition table is CD_TT_BITS=12 in wasm, WORLD_LOG_CAP is 40
 // there and 0 here), which is why one game of this still runs through the wasm.
-static int tb_expect_logs, tb_decisions, tb_blind_decisions;
+static int tb_expect_logs, tb_decisions, tb_blind_decisions, tb_carded_decisions, tb_with_memory, tb_memory_decisions;
 static void tb_choose_observer(const Game *g, int seat) {
     (void)seat;
     tb_decisions++;
     if (g->num_logs != tb_expect_logs) tb_blind_decisions++;
+    // A real card in the records the strategy is about to read (card backs, the
+    // hidden draws, cross as negative suits and are none), as the wasm bridge's
+    // belief probe counted them.
+    if (!tb_with_memory) return;   // the run with the memory taken away reads no cards by design
+    tb_memory_decisions++;
+    int carded = 0;
+    for (int i = 0; i < g->num_logs && i < MAX_LOGS && !carded; i++)
+        for (int j = 0; j < g->logs[i].num_pairs && !carded; j++) {
+            const Card a = g->logs[i].pairs[j].primary, b = g->logs[i].pairs[j].target;
+            carded = (a.suit >= 0 && a.value > 0) || (b.suit >= 0 && b.value > 0);
+        }
+    tb_carded_decisions += carded;
 }
 
 static void test_table_session_log_is_load_bearing_for_octogen(void) {
@@ -13047,7 +13067,7 @@ static void test_table_session_log_is_load_bearing_for_octogen(void) {
 #else
     enum { GAMES = 6, WIDEST = 4 };
 #endif
-    tb_decisions = tb_blind_decisions = 0;
+    tb_decisions = tb_blind_decisions = tb_carded_decisions = tb_memory_decisions = 0;
     table_choose_observer = tb_choose_observer;
     for (int np = 2; np <= WIDEST; np++) {
         for (int gi = 0; gi < GAMES; gi++) {
@@ -13065,7 +13085,9 @@ static void test_table_session_log_is_load_bearing_for_octogen(void) {
                 const int records = table_set_session_log(&tb, bl_row.log, before_log_len);
                 if (records < 0 || records > MAX_LOGS) { refused++; break; }
                 tb_expect_logs = belief ? records : 0;
+                tb_with_memory = 1;
                 const int n = bl_row_cycle(&bl_row, bl_row.log, before_log_len, 1, &c);
+                tb_with_memory = 0;
                 if (n < 0) { refused++; break; }
                 if (n == 0) break;
                 if (!belief) continue;
@@ -13093,11 +13115,14 @@ static void test_table_session_log_is_load_bearing_for_octogen(void) {
         }
     }
     table_choose_observer = 0;
-    fprintf(stderr, "  belief_logs: compared=%d changed=%d decisions=%d widest record octogen reads=%d pairs, pickup/discard=%d\n",
-            compared, changed, tb_decisions, widest_read, widest_list);
+    fprintf(stderr, "  belief_logs: compared=%d changed=%d decisions=%d (%d of %d with the log read real cards) widest record octogen reads=%d pairs, pickup/discard=%d\n",
+            compared, changed, tb_decisions, tb_carded_decisions, tb_memory_decisions, widest_read, widest_list);
     CHECK(refused == 0, "every octogen row dealt, loaded and drove");
     CHECK(tb_decisions > 1000 * GAMES * (WIDEST - 1) / 18 && tb_blind_decisions == 0,
           "every octogen decision was made over a board holding exactly the session-log records handed over");
+    // Not records of nothing: from the first attack on, what a search reads holds
+    // real cards (was e2e/belief_logs.test.ts's withCards, over one game in wasm).
+    CHECK(tb_carded_decisions > tb_memory_decisions / 2, "most octogen decisions read real cards out of the session log");
     CHECK(widest_read < MAX_LOG_PAIRS,
           "every record octogen reads is below the native MAX_LOG_PAIRS, so the import read what bots.wasm reads");
     CHECK(compared > 500 * GAMES * (WIDEST - 1) / 18, "more than 500 belief decisions (27 a game) were compared with and without the session log");
@@ -16538,6 +16563,18 @@ typedef struct {
     const char *hand[MAX_PLAYERS];   // card text, NULL for an empty hand
     const char *table;               // battle text, "7s" or "7s/9s"
     const char *deck, *trump;        // NULL for none
+    // Everything below defaults to nothing when left out.
+    const char *brain[MAX_PLAYERS];  // a bot_roster key, NULL for a human
+    const char *title;               // the roster's title, NULL for "Table"
+    uint32_t good_mask, awaiting;    // seats that said good; seats awaiting an attack
+    bool good_ts, deterministic;     // has_good_timestamp; deterministic_deck
+    int n_out;                       // the elimination order, first out first
+    int8_t out[MAX_PLAYERS];
+    // A seat's status where `status_set` has its bit; otherwise IN (OUT once
+    // eliminated) while PLAYING, and READY for a bot or IDLE for a human
+    // otherwise, as the kernel parks them (e2e/helpers/table_fixture.ts's rule).
+    uint32_t status_set;
+    int8_t seat_status[MAX_PLAYERS];
 } FxBoard;
 
 static int fx_list(const char *s, Card *out, Card *covers, int cap) {
@@ -16553,10 +16590,12 @@ static int fx_seal(const FxBoard *b) {
     Roster r;
     char id[8];
     memset(&r, 0, sizeof(r));
-    roster_set_title(&r, RS("Table"));
+    const char *title = b->title ? b->title : "Table";
+    roster_set_title(&r, title, (int)strlen(title));
     for (int i = 0; i < b->np; i++) {
+        const char *brain = b->brain[i] ? b->brain[i] : "";
         snprintf(id, sizeof(id), "id-%d", i);
-        roster_seat_add(&r, id, (int)strlen(id), id, (int)strlen(id), "", 0);
+        roster_seat_add(&r, id, (int)strlen(id), id, (int)strlen(id), brain, (int)strlen(brain));
     }
     memset(&tb_src, 0, sizeof(tb_src));
     game_reset_to_lobby(&tb_src, 0);
@@ -16584,9 +16623,19 @@ static int fx_seal(const FxBoard *b) {
     }
     for (int s = 0; s < b->np; s++) {
         Player *p = &tb_src.players[s];
-        p->status = b->status == GAME_STATUS_PLAYING ? PLAYER_STATUS_IN : PLAYER_STATUS_IDLE;
+        int out = 0;
+        for (int k = 0; k < b->n_out; k++) out |= b->out[k] == s;
+        p->status = b->status == GAME_STATUS_PLAYING ? (out ? PLAYER_STATUS_OUT : PLAYER_STATUS_IN)
+                  : b->brain[s] ? PLAYER_STATUS_READY : PLAYER_STATUS_IDLE;
+        if ((b->status_set >> s) & 1u) p->status = b->seat_status[s];
+        p->awaiting_attack = (b->awaiting >> s) & 1u;
         p->hand_count = (int8_t)fx_list(b->hand[s], p->hand, NULL, MAX_HAND_SIZE);
     }
+    for (int k = 0; k < b->n_out; k++) tb_src.elimination_order[k] = b->out[k];
+    tb_src.num_eliminated = (int8_t)b->n_out;
+    tb_src.good_players_mask = b->good_mask;
+    tb_src.has_good_timestamp = b->good_ts;
+    tb_src.deterministic_deck = b->deterministic;
     table_init(&tb, &tb_game, &tb_snaps);
     const int n = table_seal(&tb, &tb_src, &r, tb_buf, (int)sizeof(tb_buf));
     if (n > 0) {
@@ -17952,6 +18001,924 @@ static void test_a_replay_code_that_never_ends_is_refused(void) {
     signal(SIGALRM, SIG_DFL);
 }
 
+/* ---- the C Table and its bots, from the e2e suite --------------------------
+ *
+ * Each test below was a TypeScript file under e2e/ that drove the C Table and
+ * its brains through bots_test.wasm and asserted a property of the kernel
+ * alone: no database, server or client crossed. They live here now, beside the
+ * code they ask, on the helpers the tests above already play the server's
+ * cycle chain with (tb_row_*, bl_row_*, fx_seal). */
+
+// ---- an octogen game is its deal seed's (was e2e/deal_determinism.test.ts) ----
+//
+// octogen samples worlds from streams seeded by the board, the game's progress
+// and the SERVER-ONLY deal seed. So an octogen game must replay byte for byte
+// from that seed - it is a pure function of the reproducible state - and the
+// same deal driven by an adversary who knows the public board (and so the deck,
+// by pop order) but not the seed must play another game: if it did not,
+// octogen's RNG would be a function of public state and a source-code holder
+// could predict every move. The withheld run is the same deal, the deck
+// unchanged (deterministic_deck is already set), with the bots seeding from the
+// base of no seed at all; it stops at the first cycle that differs, because
+// that difference is the whole of what it asks.
+//
+// A game's first twelve cycles, not the whole game. A whole octogen game costs
+// seconds here (the TS file played six over wasm and was the e2e suite's
+// longest file), its opening decisions are its dearest, and a game is a chain
+// of cycles each of which is a function of the stored row and its seed alone:
+// octogen's are, at each of a game's first 40 cycles, in
+// test_table_bot_drive_ignores_instance_history. The deck's whole-game half -
+// every refill from the deterministic deck to the last card - is
+// test_table_bots_only_game_replays_from_its_seed on these same two seeds, with
+// simple_heuristic, which consumes no RNG, so a divergence there is the deck or
+// the commit and never the bot.
+static void test_table_octogen_game_is_its_deal_seeds(void) {
+    enum { CYCLES = 12 };
+#ifdef COVERAGE_CORPUS
+    enum { SEEDS = 1 };
+#else
+    enum { SEEDS = 2 };
+#endif
+    static TbRow row;
+    static uint32_t trace[CYCLES];
+    static const uint8_t reviewed[FOOLISH_SEED_LEN] = {
+        0xda,0x64,0x5f,0xf5,0x15,0x77,0x7b,0x2c,0x47,0xd1,0xc5,0x99,0x37,0xc7,0xdb,0xd6,
+        0x37,0x37,0x2e,0xf1,0xf2,0xe4,0x40,0xcf,0x98,0x67,0xea,0x9c,0xd2,0x32,0x7d,0x5f };
+    for (int k = 0; k < SEEDS; k++) {
+        uint8_t seed[FOOLISH_SEED_LEN];
+        char hex[2 * FOOLISH_SEED_LEN + 1], what[160];
+        for (int i = 0; i < FOOLISH_SEED_LEN; i++) seed[i] = k == 0 ? reviewed[i] : (uint8_t)(i + 1);
+        tb_seed_hex_of(seed, hex);
+
+        table_init(&tb, &tb_game, &tb_snaps);
+        CHECK(tb_row_deal(&row, &tb, 2, "octogen", seed), "an octogen lobby deals a deterministic-deck game");
+        uint32_t h = tb_fold(2166136261u, row.state, row.state_len);
+        int n = 0;
+        while (n < CYCLES && row.status == GAME_STATUS_PLAYING && tb_row_cycle(&row, &tb, hex, &h) > 0) trace[n++] = h;
+
+        // Again, on a table initialised afresh.
+        table_init(&tb, &tb_game, &tb_snaps);
+        tb_row_deal(&row, &tb, 2, "octogen", seed);
+        h = tb_fold(2166136261u, row.state, row.state_len);
+        int m = 0, same = 1;
+        while (m < CYCLES && row.status == GAME_STATUS_PLAYING && tb_row_cycle(&row, &tb, hex, &h) > 0) {
+            same &= m < n && trace[m] == h;
+            m++;
+        }
+        snprintf(what, sizeof(what), "octogen: deal seed %d replays cycle for cycle (%d cycles)", k, n);
+        CHECK(n == CYCLES && same && m == n, what);
+
+        // The same deal, its seed withheld from every cycle after it.
+        tb_row_deal(&row, &tb, 2, "octogen", seed);
+        h = tb_fold(2166136261u, row.state, row.state_len);
+        int i = 0, diverged = 0;
+        while (!diverged && i < n && row.status == GAME_STATUS_PLAYING && tb_row_cycle(&row, &tb, "", &h) > 0) {
+            diverged = trace[i] != h;
+            i++;
+        }
+        snprintf(what, sizeof(what), "octogen: deal seed %d withheld, the game is another (it differs at cycle %d)", k, i - 1);
+        CHECK(diverged, what);
+    }
+}
+
+// ---- the rows a game writes down are its seed's too (was e2e/replay_is_a_function.test.ts) ----
+//
+// The story that a game is a pure function of its deal seed was once quietly
+// false in the shape nobody looks at: not the cards, which were always right,
+// but the rows the game writes down, which drew a fresh id and a wall-clock
+// stamp each. So the same deal of random and handwritten bots is played twice,
+// from the same seed and the same commit clock, on two tables that share
+// nothing but the module, and the two runs must be the same all the way down:
+// the state blob after every cycle, the roster, the session-log rows
+// (games.logs_packed) and the replay code the finished game is cut into.
+
+// The brains of `row`'s seats, rewritten to `brains`: a stored row says who plays
+// each seat, and every load reads it.
+static void tb_row_rebrain(TbRow *row, const char *const *brains) {
+    Roster r;
+    roster_decode(&r, row->roster, ROSTER_BYTES);
+    for (int s = 0; s < r.n; s++) {
+        const int len = (int)strlen(brains[s]);
+        memcpy(r.seats[s].brain, brains[s], (size_t)len + 1);
+        r.seats[s].brain_len = (uint8_t)len;
+    }
+    roster_encode(&r, row->roster, ROSTER_BYTES);
+}
+
+// The four-seat game of tb_seed played to its end on `t`, a cycle at a time: the
+// hash of the state blob the deal and every cycle committed, in `states`.
+static int tb_row_play_mixed(TbRow *row, Table *t, uint32_t *states, int cap) {
+    static const char *const mix[4] = { "random", "handwritten", "random", "handwritten" };
+    uint32_t h = 0;
+    int n = 0;
+    if (!tb_row_deal(row, t, 4, "random", tb_seed)) return -1;
+    tb_row_rebrain(row, mix);
+    states[n++] = tb_fold(2166136261u, row->state, row->state_len);
+    while (n < cap && row->status == GAME_STATUS_PLAYING && tb_row_cycle(row, t, tb_seed_hex, &h) > 0)
+        states[n++] = tb_fold(2166136261u, row->state, row->state_len);
+    return n;
+}
+
+static void test_table_a_game_writes_the_same_rows_twice(void) {
+    enum { CAP = 4096 };
+    static TbRow a, b;
+    static uint32_t sa[CAP], sb[CAP];
+    static Game g2;
+    static TableSnaps snaps2;
+    Table t2;
+    tb_seed_bytes(4, 0x2e9);
+    table_init(&tb, &tb_game, &tb_snaps);
+    table_init(&t2, &g2, &snaps2);
+    const int na = tb_row_play_mixed(&a, &tb, sa, CAP);
+    const int nb = tb_row_play_mixed(&b, &t2, sb, CAP);
+    CHECK(na > 20 && a.status == GAME_STATUS_GAME_OVER && a.log_len > 0,
+          "the mixed game was played to its end and wrote a session log (else this proves nothing)");
+    // The cards first, cycle by cycle, so a failure reads as a rules problem and not a bookkeeping one.
+    CHECK(nb == na && memcmp(sa, sb, sizeof(uint32_t) * (size_t)(na > 0 ? na : 0)) == 0,
+          "two plays of one deal commit the same state blob at every cycle");
+    CHECK(memcmp(a.roster, b.roster, ROSTER_BYTES) == 0, "and the same roster");
+    CHECK(b.log_len == a.log_len && memcmp(a.log, b.log, (size_t)a.log_len) == 0,
+          "and the same session-log rows, record for record");
+    const int ca = table_load(&tb, a.state, a.state_len, a.roster, ROSTER_BYTES) == TABLE_OK
+        ? table_replay_code(&tb, tb_seed, FOOLISH_SEED_LEN, a.log, a.log_len, tb_code, sizeof(tb_code), tb_scratch, sizeof(tb_scratch)) : -1;
+    const int cb = table_load(&t2, b.state, b.state_len, b.roster, ROSTER_BYTES) == TABLE_OK
+        ? table_replay_code(&t2, tb_seed, FOOLISH_SEED_LEN, b.log, b.log_len, tb_code2, sizeof(tb_code2), tb_scratch, sizeof(tb_scratch)) : -1;
+    CHECK(ca > 0 && cb == ca && memcmp(tb_code, tb_code2, (size_t)ca) == 0, "and the same replay code");
+}
+
+// ---- an all-random table always ends (was e2e/table_bot_determinism.test.ts, its second half) ----
+//
+// A decision seeded from the board ALONE repeats itself on a board the game has
+// already played, so a table whose remaining players are all `random` bots could
+// return to an exact earlier board and loop there forever - about one game in 40
+// at 4 to 7 seats, holding needs_bots true for good. The seed folds in the game's
+// PROGRESS (the session log's length, bot_drive.h bot_drive_seed_decision), which
+// only grows. This plays the sweep those loops were found in, the server's cycle
+// chain over 40 seeds at each of 4 to 7 seats; seed (4, 5) is the game that
+// looped with a 12-cycle period from cycle 105. The ceiling is comfortably above
+// the longest of these games (858 cycles, rnd-7-24, when a good became a move and
+// a cycle became one action) and far below a loop, which never ends. The other
+// half of the policy - the same stored row still drives the same cycle anywhere -
+// is test_table_bot_drive_progress_seeds_the_decision; the first half of the TS
+// file (a stored row drives the same on a module with another history, every
+// brain) is test_table_bot_drive_ignores_instance_history.
+static void test_table_all_random_tables_always_end(void) {
+    enum { CEILING = 1400 };
+#ifdef COVERAGE_CORPUS
+    enum { WIDEST = 4, SEEDS = 8 };   // still reaches seed (4, 5)
+#else
+    enum { WIDEST = 7, SEEDS = 40 };
+#endif
+    TableCommit c;
+    int played = 0, unfinished = 0, refused = 0, longest = 0;
+    for (int np = 4; np <= WIDEST; np++) {
+        for (int s = 1; s <= SEEDS; s++) {
+            tb_seed_bytes(np, s);
+            if (bl_bots_only_row(&bl_row, np, "random", tb_seed) != TABLE_OK) { refused++; continue; }
+            int cycles = 0;
+            for (; cycles < CEILING && bl_row.status == GAME_STATUS_PLAYING; cycles++) {
+                const int n = bl_row_cycle(&bl_row, bl_row.log, bl_row.log_len, 0, &c);
+                if (n <= 0) {
+                    fprintf(stderr, "  rnd-%d-%d: cycle %d answered %d\n", np, s, cycles, n);
+                    refused++;
+                    break;
+                }
+            }
+            played++;
+            if (cycles > longest) longest = cycles;
+            if (bl_row.status == GAME_STATUS_PLAYING) {
+                fprintf(stderr, "  rnd-%d-%d is still playing after %d cycles\n", np, s, cycles);
+                unfinished++;
+            }
+        }
+    }
+    fprintf(stderr, "  [all-random] %d games, longest %d cycles\n", played, longest);
+    CHECK(refused == 0, "every all-random table dealt, and a playing one always had a bot move");
+    CHECK(unfinished == 0 && longest < CEILING, "every all-random table ends within the ceiling: no board repeats its own move forever");
+}
+
+// ---- bot cycles, CAS retries and the game end (was e2e/table_bot_parity.test.ts) ----
+//
+// Seeded deals of 2 to 5 seats, belief and non-belief brains, one human seat
+// whose moves go through table_act, and a bots-only table, each played to its
+// end as the server plays it:
+//
+//   - a retry that lost its CAS write is offered the lost attempt's moves
+//     (table_drive_prefs) and replays them exactly, every seventh cycle, under
+//     another deal seed where a re-search would differ, down to the wait it
+//     asked, the records and every push;
+//   - the finished game's session log cuts a verified replay code whose summary
+//     is the game the table played, and extras naming the roster's seats and
+//     timing every move; a log cut mid-record, or another deal seed, is refused.
+//
+// The TS file also played everything twice on a second module and compared the
+// transcripts; that a cycle is a function of the row and its deal seed alone is
+// test_table_bot_drive_ignores_instance_history and
+// test_table_bot_drive_ignores_other_tables. seat_of is test_table_seat_of.
+
+// A lobby of `np` seats "id-0".. named `names`, seat s a `brains[s]` bot or a
+// human where that is "", every seat ready, dealt from tb_seed by id-0's ready:
+// the committed row at version 1. TABLE_OK, or the refusal.
+static int bl_seats_row(BlRow *row, int np, const char *const *brains, const char *const *names) {
+    static Game lobby;
+    Roster r;
+    TableCommit c;
+    memset(&lobby, 0, sizeof(lobby));
+    lobby.status = GAME_STATUS_WAITING;
+    lobby.num_players = (int8_t)np;
+    for (int i = 0; i < np; i++) lobby.players[i].status = PLAYER_STATUS_READY;
+    memset(&r, 0, sizeof(r));
+    roster_set_title(&r, RS("g"));
+    for (int i = 0; i < np; i++) {
+        char id[16];
+        snprintf(id, sizeof(id), "id-%d", i);
+        roster_seat_add(&r, id, (int)strlen(id), names[i], (int)strlen(names[i]), brains[i], (int)strlen(brains[i]));
+    }
+    table_init(&tb, &tb_game, &tb_snaps);
+    int rc = table_seal(&tb, &lobby, &r, tb_buf, (int)sizeof(tb_buf));
+    if (rc < 0) return rc;
+    rc = table_ready(&tb, RS("id-0"), tb_seed);
+    game_set_seed(1);
+    if (rc != TABLE_OK) return rc;
+    if (!tb.dealt_now) return TABLE_E_NOT_WAITING;
+    row->version = 0;
+    row->log_len = 0;
+    rc = bl_row_commit(row, &c);
+    return rc < 0 ? rc : TABLE_OK;
+}
+
+#define TP_NOW0 1726600000000LL
+
+// One bot cycle on `row` as the server's runCycle makes it, under `seed_hex` and
+// offered `prefs`: the actions applied (0 when no bot had work) or a refusal.
+// Everything it produced is hashed into *h - the wait the row asked at the
+// cycle's time, the seats that acted, the stop, the committed state, the
+// cycle's records, ended, the event count and the push to every human seat and
+// the spectator - and the moves a retry would be offered go to `next`. The
+// products stay in tb_arena, described by *c, for bl_row_take.
+static int tp_cycle(const BlRow *row, const char *seed_hex, const uint8_t *prefs, int plen,
+                    uint32_t *h, uint8_t *next, int *next_len, TableCommit *c) {
+    if (table_load(&tb, row->state, row->state_len, row->roster, ROSTER_BYTES) != TABLE_OK) return -1;
+    table_set_deal_seed(&tb, seed_hex, (int)strlen(seed_hex));
+    if (table_set_session_log(&tb, row->log, row->log_len) < 0) return -1;
+    const int32_t delay = table_bot_wait_ms(&tb, TP_NOW0 + row->version);
+    const int n = table_bot_drive(&tb, prefs, plen, 0, &tb_drv);
+    if (n <= 0) return n;
+    *next_len = table_drive_prefs(&tb, &tb_drv, next, 4096);
+    if (*next_len < 0) return -1;
+    if (table_commit_products(&tb, RS("g"), row->version + 1, TP_NOW0 + row->version, c, tb_arena, sizeof(tb_arena)) < 0) return -1;
+    uint32_t x = tb_fold(2166136261u, (const uint8_t *)&delay, 4);
+    const uint8_t head[4] = { (uint8_t)tb_drv.stop, (uint8_t)c->ended, c->n_events, (uint8_t)n };
+    x = tb_fold(x, head, 4);
+    for (int i = 0; i < n; i++) { const uint8_t s = (uint8_t)tb_drv.actions[i].seat; x = tb_fold(x, &s, 1); }
+    x = tb_fold(x, tb_arena + c->state.off, c->state.len);
+    x = tb_fold(x, tb_arena + c->logs.off, c->logs.len);
+    for (int v = 0; v <= tb.r.n; v++) {
+        const int viewer = v < tb.r.n ? v : -1;
+        if (viewer >= 0 && tb.r.seats[viewer].brain_len > 0) continue;   // a bot seat is sent nothing
+        const int pl = table_push(&tb, RS("g"), viewer, tb_buf, sizeof(tb_buf));
+        if (pl < 0) return -1;
+        x = tb_fold(x, tb_buf, pl);
+    }
+    *h = x;
+    return n;
+}
+
+static void test_table_bot_cycles_retry_and_end_in_a_true_code(void) {
+    static const char *const games[][5] = {
+        { "", "blackpowder" },
+        { "", "cordite", "random" },
+        { "", "robusta", "handwritten", "firecracker" },
+        { "", "random", "firecracker", "blackpowder", "simple_heuristic" },
+        { "random", "robusta", "handwritten" },
+    };
+    static const int widths[] = { 2, 3, 4, 5, 3 };
+    static const char *const names[5] = { "Дмитрий", "Zoë 🃏", "B2", "田中花子", "B4" };
+    static uint8_t prefs[4096], prefs2[4096], extras[1 << 16];
+    static ReplayExtras x;
+    // Five whole games, three of them with Monte-Carlo brains, are volume; the
+    // coverage corpus plays the first two, which reach every path counted below.
+#ifdef COVERAGE_CORPUS
+    enum { GAMES = 2 };
+#else
+    enum { GAMES = 5 };
+#endif
+    int logged = 0, retries = 0, retry_diff = 0, humans = 0, codes = 0, stuck = 0;
+    for (int k = 0; k < GAMES; k++) {
+        const int np = widths[k];
+        char what[200];
+        for (int i = 0; i < FOOLISH_SEED_LEN; i++) tb_seed[i] = (uint8_t)((i * 37 + k * 11 + 5) & 0xff);
+        tb_seed_hex_of(tb_seed, tb_seed_hex);
+        snprintf(what, sizeof(what), "game %d: the lobby deals", k);
+        CHECK(bl_seats_row(&bl_row, np, games[k], names) == TABLE_OK, what);
+        int human = -1, fool = -1;
+        for (int s = 0; s < np; s++) if (!games[k][s][0]) human = s;
+        for (int step = 0; step < 3000 && bl_row.status == GAME_STATUS_PLAYING; step++) {
+            TableCommit c;
+            if (table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES) != TABLE_OK) { stuck++; break; }
+            logged += table_bots_need_logs(&tb);
+            if (table_needs_bots(&tb)) {
+                uint32_t h = 0, h2 = 0;
+                int plen = 0, plen2 = 0;
+                const int n = tp_cycle(&bl_row, tb_seed_hex, 0, 0, &h, prefs, &plen, &c);
+                if (n < 0) { stuck++; break; }
+                if (n > 0) {
+                    if (step % 7 == 3) {
+                        // This attempt lost its CAS: the retry is offered what it chose, under another seed.
+                        const int n2 = tp_cycle(&bl_row, "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                                                prefs, plen, &h2, prefs2, &plen2, &c);
+                        retries++;
+                        if (n2 != n || h2 != h) {
+                            if (!retry_diff) fprintf(stderr, "  game %d step %d: the retry drove %d, the attempt %d\n", k, step, n2, n);
+                            retry_diff++;
+                        }
+                    }
+                    if (bl_row_take(&bl_row, &c) < 0) { stuck++; break; }
+                    fool = c.fool;
+                    continue;
+                }
+            }
+            // No bot had work: the human seat moves - its first legal move, not a pickup when it has another.
+            if (human < 0 || table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES) != TABLE_OK) { stuck++; break; }
+            table_set_deal_seed(&tb, tb_seed_hex, 2 * FOOLISH_SEED_LEN);
+            calculate_legal_moves(&tb_game, human, &tb_moves);
+            if (tb_moves.n <= 0) { stuck++; break; }
+            const LegalMove *m = &tb_moves.moves[tb_moves.n > 1 && tb_moves.moves[0].type == MOVE_PICKUP ? 1 : 0];
+            AwireAction a;
+            memset(&a, 0, sizeof(a));
+            a.kind = m->type; a.n = m->n_cards;
+            for (int i = 0; i < m->n_cards; i++) { a.cards[i] = m->cards[i]; a.attacks[i] = m->attack_cards[i]; }
+            const int wl = awire_encode(&a, tb_buf, sizeof(tb_buf));
+            char id[8];
+            snprintf(id, sizeof(id), "id-%d", human);
+            if (table_act(&tb, id, (int)strlen(id), tb_buf, wl, -1, 0) != TABLE_APPLIED) { stuck++; break; }
+            if (table_commit_products(&tb, RS("g"), bl_row.version + 1, TP_NOW0 + bl_row.version, &c, tb_arena, sizeof(tb_arena)) < 0
+                || bl_row_take(&bl_row, &c) < 0) { stuck++; break; }
+            fool = c.fool;
+            humans++;
+        }
+        snprintf(what, sizeof(what), "game %d (%d seats): played to its end", k, np);
+        CHECK(bl_row.status == GAME_STATUS_GAME_OVER && fool >= 0, what);
+
+        // The game end: the verified v6 code and the extras blob.
+        ReplaySummary sum;
+        memset(&sum, 0, sizeof(sum));
+        table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES);
+        const int cl = table_replay_code(&tb, tb_seed, FOOLISH_SEED_LEN, bl_row.log, bl_row.log_len, tb_code, sizeof(tb_code), tb_scratch, sizeof(tb_scratch));
+        snprintf(what, sizeof(what), "game %d: the replay code verifies, and its summary is the table's seats and fool", k);
+        CHECK(cl > 0 && replay_summary_v6(tb_code, cl, &sum) == REPLAY_EOK && sum.num_players == np && sum.fool == fool, what);
+        table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES);
+        const int el = table_replay_extras(&tb, bl_row.log, bl_row.log_len, tb_code2, sizeof(tb_code2));
+        const int dl = el > 0 ? replay_extras_decode(tb_code2, el, np, sum.moves, extras, sizeof(extras)) : -1;
+        int named = dl > 0 && replay_extras_unpack(extras, dl, &x) == dl && x.n_names == np;
+        for (int s = 0; named && s < np; s++)
+            named = x.names[s].len == strlen(names[s]) && memcmp(x.names[s].text, names[s], x.names[s].len) == 0;
+        snprintf(what, sizeof(what), "game %d: the extras name the roster's seats and time every move", k);
+        CHECK(named && x.n_gaps == sum.moves && sum.moves > 0, what);
+        // A session log or a seed that is not this game's does not encode it. Cut
+        // mid-record, not at a halfway point: a whole prefix of a session encodes
+        // and verifies against itself.
+        table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES);
+        const int cut = table_replay_code(&tb, tb_seed, FOOLISH_SEED_LEN, bl_row.log, bl_row.log_len - 1, tb_code, sizeof(tb_code), tb_scratch, sizeof(tb_scratch));
+        snprintf(what, sizeof(what), "game %d: a log cut mid-record is refused (%d)", k, cut);
+        CHECK(cut < 0, what);
+        tb_seed[0] ^= 1;
+        table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES);
+        const int other = table_replay_code(&tb, tb_seed, FOOLISH_SEED_LEN, bl_row.log, bl_row.log_len, tb_code, sizeof(tb_code), tb_scratch, sizeof(tb_scratch));
+        snprintf(what, sizeof(what), "game %d: another deal seed is refused (%d)", k, other);
+        CHECK(other < 0, what);
+        codes++;
+    }
+    fprintf(stderr, "  [bot cycles] %d codes, %d human moves, %d retries, %d logged loads\n", codes, humans, retries, logged);
+    CHECK(stuck == 0, "every load, drive, move and commit of the games was accepted");
+    CHECK(logged > 0 && retries > 0 && humans > 0 && codes == GAMES, "every path was exercised: belief loads, retries, human moves, codes");
+    CHECK(retry_diff == 0, "a CAS retry offered the lost attempt's moves replays them byte for byte, under another seed");
+}
+
+// ---- a load leaves nothing of the last table (was e2e/marshal_resident.test.ts) ----
+//
+// The server's bot loop runs every cycle on ONE resident game: it loads a row,
+// drives, commits, and the next cycle - the same game after a CAS conflict, or
+// another game entirely - loads over whatever the last one left: its board, its
+// session log, its bots' memory, its draw streams. A TS bridge once skipped a
+// marshal on object identity and let a later decision read STALE state, most
+// damagingly a since-emptied deck still reading as alive, which gates off the
+// exact endgame solver and throws forced wins. The property is the kernel's
+// now: a random mid-game board driven right after ANOTHER random board on the
+// same table commits exactly what a table that did not just play it commits.
+// The boards are endgames (hands of one to six, a short deck), where cordite's
+// solver and its transposition table, which persist between decisions in the
+// module, do the deciding.
+//
+// The wasm build sizes what cordite keeps resident with defines only it sets
+// (WORLD_LOG_CAP=40 against 0 here, CD_TT_BITS=12 with CD_TT_2WAY and
+// CD_TT_PACK8 against 16 plain), so this proves the property of the native
+// configuration; the module's own is no longer driven by any test.
+// test_table_bot_drive_ignores_other_tables carries the whole-game volume for
+// the brains that keep no state, and test_table_bot_drive_ignores_instance_history
+// every roster brain against perturbed streams.
+static uint32_t mr_rng;
+static int mr_ri(int n) {
+    mr_rng = mr_rng * 1103515245u + 12345u;
+    return (int)((mr_rng >> 8) % (uint32_t)n);
+}
+
+// A random PLAYING board every seat of which is a `brain` bot, sealed into
+// tb_state / tb_roster (e2e/helpers/kernel_board.ts randomPlayingBoard): 2 to 6
+// seats, some of them out, hands of one to six, a face-up trump half the time
+// and a deck of up to eight, the first two seats still in leading and
+// defending. 0 when it has fewer than two seats in, or the kernel refused it.
+static int mr_board(const char *brain) {
+    Card cards[52];
+    Roster r;
+    const int np = 2 + mr_ri(5);
+    int nc = 0, k = 0, nin = 0, in[MAX_PLAYERS];
+    for (int suit = 0; suit < 4; suit++)
+        for (int value = np >= 6 ? 1 : 5; value <= 13; value++) cards[nc++] = (Card){ (int8_t)suit, (int8_t)value };
+    for (int i = nc - 1; i > 0; i--) { const int j = mr_ri(i + 1); const Card t = cards[i]; cards[i] = cards[j]; cards[j] = t; }
+    memset(&tb_src, 0, sizeof(tb_src));
+    game_reset_to_lobby(&tb_src, 0);
+    tb_src.status = GAME_STATUS_PLAYING;
+    tb_src.num_players = (int8_t)np;
+    tb_src.deterministic_deck = true;
+    for (int i = 0; i < np; i++) {
+        const int out = i > 0 && mr_ri(4) == 0;
+        Player *p = &tb_src.players[i];
+        p->hand_count = (int8_t)(out ? 0 : 1 + mr_ri(6));
+        for (int c = 0; c < p->hand_count; c++) p->hand[c] = cards[k++];
+        p->status = out ? PLAYER_STATUS_OUT : PLAYER_STATUS_IN;
+        if (out) tb_src.elimination_order[tb_src.num_eliminated++] = (int8_t)i;
+        else in[nin++] = i;
+    }
+    if (nin < 2) return 0;
+    if (mr_ri(2) == 0 && k < nc) {
+        tb_src.has_flipped = true;
+        tb_src.flipped = cards[k++];
+        tb_src.power_suit = tb_src.flipped.suit;
+    } else {
+        tb_src.power_suit = (int8_t)mr_ri(4);
+    }
+    const int rest = nc - k;
+    tb_src.deck_count = (int16_t)mr_ri((rest < 8 ? rest : 8) + 1);
+    for (int i = 0; i < tb_src.deck_count; i++) tb_src.deck[i] = cards[k + i];
+    tb_src.discard_pile_length = (int16_t)(rest - tb_src.deck_count);
+    tb_src.first_attacker = (int8_t)in[0];
+    tb_src.defender = (int8_t)in[1];
+    tb_src.players[in[0]].awaiting_attack = true;
+    memset(&r, 0, sizeof(r));
+    roster_set_title(&r, RS("fuzz"));
+    for (int i = 0; i < np; i++) {
+        char id[16], name[16];
+        snprintf(id, sizeof(id), "seat-%d", i);
+        snprintf(name, sizeof(name), "P%d", i + 1);
+        roster_seat_add(&r, id, (int)strlen(id), name, (int)strlen(name), brain, (int)strlen(brain));
+    }
+    table_init(&tb, &tb_game, &tb_snaps);
+    const int n = table_seal(&tb, &tb_src, &r, tb_buf, (int)sizeof(tb_buf));
+    if (n <= 0) return 0;
+    memcpy(tb_state, tb_buf, (size_t)n);
+    tb_state_len = n;
+    memcpy(tb_roster, tb_buf + n, ROSTER_BYTES);
+    return n;
+}
+
+// One bot cycle of a stored row on `t`, exactly as the server runs one with no
+// session log to hand over: what it commits (the seats, the stop, the state,
+// the records and the spectator's push), hashed. 0 when no bot moved, 1 when
+// the kernel refused a step.
+static uint32_t mr_drive(Table *t, const uint8_t *state, int len, const uint8_t *roster, const char *gid) {
+    TableCommit c;
+    if (table_load(t, state, len, roster, ROSTER_BYTES) != TABLE_OK) return 1;
+    table_set_deal_seed(t, "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a", 64);
+    const int n = table_bot_drive(t, 0, 0, 1, &tb_drv);
+    if (n <= 0) return 0;
+    if (table_commit_products(t, gid, (int)strlen(gid), 2, 1700000000000LL, &c, tb_arena, sizeof(tb_arena)) < 0) return 1;
+    uint32_t h = 2166136261u;
+    for (int i = 0; i < n; i++) { const uint8_t s = (uint8_t)tb_drv.actions[i].seat; h = tb_fold(h, &s, 1); }
+    const uint8_t stop = (uint8_t)tb_drv.stop;
+    h = tb_fold(h, &stop, 1);
+    h = tb_fold(h, tb_arena + c.state.off, c.state.len);
+    h = tb_fold(h, tb_arena + c.logs.off, c.logs.len);
+    h = tb_fold(h, tb_arena + c.spectator.off, c.spectator.len);
+    return h | 2u;
+}
+
+static void test_table_a_load_leaves_nothing_of_the_last_table(void) {
+    static uint8_t target[8192], prior[8192], target_roster[ROSTER_BYTES], prior_roster[ROSTER_BYTES];
+    static Game fresh_game;
+    static TableSnaps fresh_snaps;
+    static const char *const brains[] = { "handwritten", "cordite" };
+#ifdef COVERAGE_CORPUS
+    static const int boards[] = { 10, 10 };
+#else
+    static const int boards[] = { 40, 120 };
+#endif
+    Table fresh;
+    for (int b = 0; b < 2; b++) {
+        int checked = 0, differ = 0, refused = 0;
+        mr_rng = 12345u + 6789u * (uint32_t)b;
+        for (int i = 0; i < boards[b]; i++) {
+            while (!mr_board(brains[b])) { }
+            const int tl = tb_state_len;
+            memcpy(target, tb_state, (size_t)tl);
+            memcpy(target_roster, tb_roster, ROSTER_BYTES);
+            while (!mr_board(brains[b])) { }
+            const int pl = tb_state_len;
+            memcpy(prior, tb_state, (size_t)pl);
+            memcpy(prior_roster, tb_roster, ROSTER_BYTES);
+
+            table_init(&fresh, &fresh_game, &fresh_snaps);
+            const uint32_t want = mr_drive(&fresh, target, tl, target_roster, "g");
+            if (want == 0) continue;
+            // The hazard: the reused table just played another board, left its
+            // records and its bots' search state behind, then loads the target.
+            table_init(&tb, &tb_game, &tb_snaps);
+            const uint32_t before = mr_drive(&tb, prior, pl, prior_roster, "other");
+            const uint32_t got = mr_drive(&tb, target, tl, target_roster, "g");
+            refused += want == 1 || before == 1 || got == 1;
+            differ += got != want;
+            checked++;
+        }
+        char what[160];
+        snprintf(what, sizeof(what), "%s: enough comparable boards, every one driven (%d of %d)", brains[b], checked, boards[b]);
+        CHECK(checked > boards[b] / 2 && refused == 0, what);
+        snprintf(what, sizeof(what), "%s: a row loaded after another board decides as a table that did not play it (%d differ)", brains[b], differ);
+        CHECK(differ == 0, what);
+    }
+}
+
+// ---- a bot seat plays the brain asked for, or is refused (was e2e/bot_parity.test.ts) ----
+//
+// A key that resolved to `random` silently is how a CI gate measured `random`
+// under two culled bots' names for months (issue #111), and how a typo'd key
+// would become a random bot on the Elo ladder. There is no fallback: a brain the
+// build does not link is TABLE_E_UNKNOWN_BRAIN where a lobby adds a bot
+// (table_add_bot) and where a stored row is loaded (table_load, here through
+// table_seal).
+//
+// WHAT "LINKED" MEANS HERE. This suite links every brain in the roster
+// (bot_roster_linked is 1 for every entry); only bots.wasm, built with
+// -DFOOLISH_SEEDED_BOTS_ONLY, leaves the offline-only rungs (espresso,
+// gunpowder) out, and only there are they refused. So every roster key seats as
+// itself here, and the refusals are the keys no build has: culled bots (semtex
+// and fulminate were real once), a name that never existed, and a key in the
+// wrong case.
+static void test_table_every_brain_seats_as_itself(void) {
+    static const char *const dead[] = { "semtex", "fulminate", "totallyfakebot", "RANDOM", "Cordite", "" };
+    int n_roster = 0, linked = 1, seated = 1, stored = 1;
+    const BotRosterEntry *roster = bot_roster(&n_roster);
+    tb_seed_fill(3);
+    for (int e = 0; e < n_roster; e++) {
+        const char *key = roster[e].key;
+        const int len = (int)strlen(key);
+        linked &= bot_roster_linked(e) == 1;
+        table_init(&tb, &tb_game, &tb_snaps);
+        table_create(&tb, RS("host"), RS("Host"));
+        const int rc = table_add_bot(&tb, RS("host"), RS("bot-1"), RS("Bot"), key, len, tb_seed);
+        const int ok = rc == TABLE_OK && tb.r.n == 2 && tb.r.seats[1].brain_len == len
+                    && memcmp(tb.r.seats[1].brain, key, (size_t)len) == 0 && tb_game.players[1].strategy_key == roster[e].strat;
+        if (!ok) fprintf(stderr, "  %s: table_add_bot answered %d\n", key, rc);
+        seated &= ok;
+        FxBoard lobby = { .np = 2, .status = GAME_STATUS_WAITING };
+        lobby.brain[1] = key;
+        stored &= fx_seal(&lobby) > 0 && tb_game.players[1].strategy_key == roster[e].strat;
+    }
+    CHECK(n_roster >= 8 && linked, "this build links every brain in the roster");
+    CHECK(seated, "every brain added to a lobby seats as itself, not a neighbour or random");
+    CHECK(stored, "and a stored row seating it loads with that brain at the seat");
+    int refused = 1, nobody = 1, unloaded = 1;
+    for (size_t i = 0; i < sizeof(dead) / sizeof(dead[0]); i++) {
+        table_init(&tb, &tb_game, &tb_snaps);
+        table_create(&tb, RS("host"), RS("Host"));
+        const int rc = table_add_bot(&tb, RS("host"), RS("bot-1"), RS("Bot"), dead[i], (int)strlen(dead[i]), tb_seed);
+        if (rc != TABLE_E_UNKNOWN_BRAIN) fprintf(stderr, "  table_add_bot('%s') answered %d\n", dead[i], rc);
+        refused &= rc == TABLE_E_UNKNOWN_BRAIN;
+        nobody &= tb.r.n == 1;
+        if (!dead[i][0]) continue;   // a roster seat with no brain is a human, not a bot
+        FxBoard lobby = { .np = 2, .status = GAME_STATUS_WAITING };
+        lobby.brain[1] = dead[i];
+        unloaded &= fx_seal(&lobby) == TABLE_E_UNKNOWN_BRAIN;
+    }
+    CHECK(refused && nobody, "a culled, misspelt or never-existing brain is refused by table_add_bot, and nobody is seated");
+    CHECK(unloaded, "and a stored row seating one does not load");
+}
+
+// ---- the finish order of a finished game (was e2e/finish_order.test.ts) ----
+//
+// The end screen's ranking (anim_finish_rows) and the server's ELO pass
+// (table_rankings) are the kernel's one answer: a permutation of the seats,
+// first out first, the fool last at place == the seat count. Random bots'
+// games of 2 to 5 seats, played to their end through the server's cycle chain.
+// The input invariant - elimination_order holds each OUT seat once - is held
+// where it is produced (test_elimination_order_never_repeats_a_seat), so a
+// duplicate that did reach the ranking must show, not be laundered: the TS
+// rankers once ran it through a Set "to handle backend bugs" and hid the
+// producer bug for a year. A short list's fool at the seat count is
+// test_board_finish_rows_rank_first_out_to_the_fool; the web shim's marshalling
+// of the rows stays in e2e/finish_order.test.ts.
+static void test_table_ranks_every_finished_game(void) {
+#ifdef COVERAGE_CORPUS
+    enum { WIDEST = 3, ATTEMPTS = 2 };
+#else
+    enum { WIDEST = 5, ATTEMPTS = 6 };
+#endif
+    TableCommit c;
+    int played = 0, ok = 1;
+    for (int np = 2; np <= WIDEST; np++) {
+        for (int attempt = 0; attempt < ATTEMPTS; attempt++) {
+            tb_seed_bytes(np, attempt);
+            if (bl_bots_only_row(&bl_row, np, "random", tb_seed) != TABLE_OK) { ok = 0; continue; }
+            int fool = -1;
+            for (int cycle = 0; cycle < 2000 && bl_row.status == GAME_STATUS_PLAYING; cycle++) {
+                if (bl_row_cycle(&bl_row, bl_row.log, bl_row.log_len, 0, &c) <= 0) break;
+                fool = c.fool;
+            }
+            if (bl_row.status != GAME_STATUS_GAME_OVER) continue;   // random play can circle: skipped, as the TS file did
+            played++;
+            if (table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES) != TABLE_OK) { ok = 0; continue; }
+            unsigned char elim[MAX_PLAYERS];
+            const int ne = tb_game.num_eliminated;
+            for (int i = 0; i < ne; i++) elim[i] = (unsigned char)tb_game.elimination_order[i];
+            AnimFinishRow rows[MAX_PLAYERS];
+            int8_t order[MAX_PLAYERS];
+            const int n = anim_finish_rows(elim, ne, fool, np, -1, rows, MAX_PLAYERS);
+            const int k = table_rankings(&tb, order);
+            int seats = 0, places = 0, row_ok = n == np && k == np && fool >= 0;
+            for (int i = 0; row_ok && i < n; i++) {
+                seats |= 1 << rows[i].seat;
+                places |= 1 << (rows[i].place - 1);
+                row_ok &= order[i] == rows[i].seat && !rows[i].is_you;
+                if (i < ne) row_ok &= rows[i].seat == elim[i];
+            }
+            row_ok &= seats == (1 << np) - 1 && places == (1 << np) - 1;
+            row_ok &= n > 0 && rows[n - 1].seat == fool && rows[n - 1].place == np;
+            if (!row_ok) fprintf(stderr, "  %d seats, game %d: the ranking is not the game's\n", np, attempt);
+            ok &= row_ok;
+        }
+    }
+    CHECK(3 * played >= ATTEMPTS * (WIDEST - 1), "enough finished games (a third of them, as the TS file asked)");
+    CHECK(ok, "each is ranked a row per seat, places 1..n, first out first, the fool last at the seat count, and table_rankings is that order");
+    AnimFinishRow rows[MAX_PLAYERS];
+    const unsigned char twice[2] = { 1, 1 };
+    const int n = anim_finish_rows(twice, 2, 0, 3, -1, rows, MAX_PLAYERS);
+    CHECK(n == 3 && rows[0].seat == 1 && rows[1].seat == 1 && rows[2].seat == 0,
+          "a repeated seat is ranked as given, never deduped: a producer bug shows on the board");
+}
+
+// ---- a bot's good is a move (was e2e/good_is_a_move.test.ts) ----
+//
+// The owner, watching a bot check in: "if a bot just says 'good', we don't send
+// anything back to the client, right? ... goods are now animation-causing
+// moves." A good is the one action with no CARD, so it emits no animation event,
+// and the adapter gated every broadcast on n_events > 0: a good that did not
+// close the bout reached a screen only folded into whatever moved next. On a
+// board where a bot's ONLY move is a good that leaves the bout open over a fully
+// covered table:
+//
+//   - the commit reports the move it has no event for (goods_changed, n_events 0);
+//   - the cycle is paced like a move, not bundled away as a silent passive;
+//   - the push exists and a client reads it: no steps, and the board it settles
+//     on wears the new mask, which the opening beat turns into a role change;
+//   - the controls: a cover moves no goods, and a good that closes the bout nets
+//     the mask back where it started (set by handle_good, cleared by the round
+//     transition in the same operation) and is broadcast by its sweep's events.
+//
+// And THE SILENT GOOD: over an UNCOVERED attack a bot's good is a bot declining
+// to throw in, which no human can say, and the owner's rule is "I don't want to
+// see any sword->checkbox rotation animations unless all cards are covered": it
+// bundles, buys no beat, changes no shown goods, and the cover or pickup after it
+// carries no check on any board. The server's push gate (c_base table_ops.c asks
+// goods_changed) is c_base/test/unit_app.c a_goods_only_commit_is_broadcast.
+#define GM_NOW 1726600000000LL
+
+// Seat 0 the human attacking, seat 1 a bot defending, seat 2 a bot holding a card
+// that matches nothing on the table. The one battle is covered, so seat 2 can
+// neither throw in nor cover: `good` is its whole menu, and with seat 0 not
+// having said good it closes nothing.
+static FxBoard gm_open_bout(void) {
+    FxBoard b = { .np = 3, .status = GAME_STATUS_PLAYING, .attacker = 0, .defender = 1,
+                  .table = "7c/8c", .deck = "Ts Jd", .trump = "As", .good_ts = true };
+    b.hand[0] = "6h 7h"; b.hand[1] = "Qs"; b.hand[2] = "Kd";
+    b.brain[1] = b.brain[2] = "cordite";
+    return b;
+}
+
+// Seat 0 has attacked 7c and it is still UNCOVERED; seat 1 (a human) defends;
+// seats 2 and 3 are bots with no seven, so `good` is each one's whole menu.
+static FxBoard gm_uncovered_bout(void) {
+    FxBoard b = { .np = 4, .status = GAME_STATUS_PLAYING, .attacker = 0, .defender = 1,
+                  .table = "7c", .deck = "Ts Jd", .trump = "As" };
+    b.hand[0] = "6h 7h"; b.hand[1] = "Qs 9c"; b.hand[2] = "Kd"; b.hand[3] = "Ks";
+    b.brain[2] = b.brain[3] = "cordite";
+    return b;
+}
+
+static uint8_t gm_state[8192];
+static int gm_state_len;
+
+// One bot cycle of `b` sealed, committed as version 2 at GM_NOW as runCycle makes
+// it, and in *delay the wait the NEXT cycle asks of the row it committed at the
+// commit's own time: the beat this cycle bought. tb still holds the operation,
+// for its pushes; the committed blob is kept in gm_state.
+static int gm_cycle(const FxBoard *b, TableCommit *c, int *delay) {
+    static Game next_game;
+    static TableSnaps next_snaps;
+    Table next;
+    if (fx_seal(b) <= 0) return -1000;
+    fx_reload();
+    table_set_deal_seed(&tb, "00ff", 4);
+    const int n = table_bot_drive(&tb, 0, 0, 0, &tb_drv);
+    if (n < 0) return n;
+    if (table_commit_products(&tb, RS("goodmove"), 2, GM_NOW, c, tb_arena, sizeof(tb_arena)) < 0) return -1000;
+    memcpy(gm_state, tb_arena + c->state.off, (size_t)c->state.len);
+    gm_state_len = c->state.len;
+    table_init(&next, &next_game, &next_snaps);
+    *delay = table_load(&next, gm_state, gm_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK ? table_bot_wait_ms(&next, GM_NOW) : -1;
+    return n;
+}
+
+// The last operation's push to seat 0, read by the client slot the way a client
+// reads one: CLIENT_OK, each step's good mask in `masks` (the count in *steps),
+// and the board it settles on in ct.view.
+static int gm_read_push(uint32_t version, uint32_t *masks, int cap, int *steps) {
+    client_init(&ct, &ct_slot);
+    const int en = table_envelope(&tb, RS("goodmove"), 0, version, ct_env, sizeof(ct_env));
+    if (en < 0 || client_adopt_envelope(&ct, ct_env, en) != CLIENT_OK) return -1;
+    const int idn = client_identity(&ct, ct_id, sizeof(ct_id));
+    const int pl = table_push(&tb, RS("goodmove"), 0, ct_push, sizeof(ct_push));
+    int rc = pl > 0 ? client_push_open(&ct, ct_push, pl, 1, ct_id, idn, version) : -1, k = 0;
+    *steps = 0;
+    while (rc == CLIENT_OK && (k = client_push_next(&ct)) == 1)
+        if (*steps < cap) masks[(*steps)++] = ct.view.good_mask;
+    return rc != CLIENT_OK ? rc : k != 0 ? k : client_push_final(&ct);
+}
+
+static void test_table_a_bots_good_is_a_move(void) {
+    TableCommit c;
+    int delay = -1, steps = -1;
+    uint32_t masks[64];
+    AnimRoles out;
+    const AnimRoles none = { 1, 0, 0 };
+
+    // THE GOOD THAT LEAVES THE BOUT OPEN.
+    FxBoard open = gm_open_bout();
+    const int n = gm_cycle(&open, &c, &delay);
+    CHECK(n == 1 && tb_drv.actions[0].seat == 2 && tb_drv.actions[0].move.type == MOVE_GOOD,
+          "a good: the one action, by the seat whose only move it is");
+    CHECK(tb_drv.stop == BOT_STOP_EVENTS, "and the cycle ENDED on it: a good is not bundled away");
+    CHECK(c.n_events == 0 && c.goods_changed && c.status == GAME_STATUS_PLAYING,
+          "a good flies no card, and goods_changed alone says a push must go out; the bout is still open");
+    CHECK(delay == BOT_PACE_MS_WITH_HUMANS, "it earns the beat any visible move gets with a human at the table");
+    CHECK(gm_read_push(2, masks, 64, &steps) == CLIENT_OK && steps == 0,
+          "a push of no events is still a push a client reads, with no steps because no card flies");
+    CHECK(ct.view.my_seat == 0 && ct.view.good_mask == (1u << 2), "and the board it settles on is the human's, wearing the good");
+    CHECK(anim_goods_opening(none, (int)ct.view.good_mask, &out) == 1 && out.good_mask == (1 << 2),
+          "the kernel turns that mask into a role change: on screen a move, not a state update");
+
+    // NOTHING GOOD HAPPENED: the defender covers, a card and an event, no mask moves.
+    FxBoard covering = { .np = 2, .status = GAME_STATUS_PLAYING, .attacker = 0, .defender = 1,
+                         .table = "7c", .deck = "Ts Jd", .trump = "As" };
+    covering.hand[0] = "6h"; covering.hand[1] = "Kc"; covering.brain[1] = "cordite";
+    CHECK(gm_cycle(&covering, &c, &delay) == 1 && c.n_events > 0 && !c.goods_changed,
+          "a cover flies a card and moves no goods: goods_changed is not a second name for 'something happened'");
+
+    // A GOOD THAT CLOSES THE BOUT: set by handle_good and cleared by the round
+    // transition it runs, in one operation, so the shown mask is the same at
+    // both ends; the sweep speaks for it, as it always did.
+    FxBoard closing = { .np = 2, .status = GAME_STATUS_PLAYING, .attacker = 1, .defender = 0,
+                        .table = "7c/8c", .deck = "Ts Jd", .trump = "As", .good_ts = true };
+    closing.hand[0] = "6h"; closing.hand[1] = "Qs"; closing.brain[1] = "cordite";
+    CHECK(gm_cycle(&closing, &c, &delay) == 1 && c.n_events > 0 && c.closed_round && !c.goods_changed,
+          "a good that empties the table sweeps it: events, a closed bout, and the mask back where it started");
+
+    // THE SILENT GOOD over an uncovered attack.
+    FxBoard uncovered = gm_uncovered_bout();
+    const int ns = gm_cycle(&uncovered, &c, &delay);
+    const int seats = ns == 2 ? (1 << tb_drv.actions[0].seat) | (1 << tb_drv.actions[1].seat) : 0;
+    CHECK(ns == 2 && seats == ((1 << 2) | (1 << 3)) && tb_drv.stop == BOT_STOP_NO_ELIGIBLE,
+          "both bots said good in ONE cycle, which ran out of bots rather than stopping on a visible move");
+    CHECK(delay == 0 && c.n_events == 0 && !c.goods_changed && c.status == GAME_STATUS_PLAYING,
+          "no beat, no card, and the SHOWN goods did not change, so nothing is sent");
+
+    // The cover that follows the silent goods: handle_cover used to clear them
+    // only after its snapshot, so its first step wore both checks and the
+    // opening beat flipped both badges as the cover landed.
+    uint8_t w[64];
+    int wl;
+    memcpy(tb_state, gm_state, (size_t)gm_state_len);
+    tb_state_len = gm_state_len;
+    fx_reload();
+    table_set_deal_seed(&tb, "00ff", 4);
+    wl = fx_wire(AWIRE_COVER, "Qs", "7c", w);
+    CHECK(fx_act(1, w, wl) == TABLE_APPLIED && table_commit_products(&tb, RS("goodmove"), 3, GM_NOW, &c, tb_arena, sizeof(tb_arena)) > 0
+          && c.n_events > 0, "the human covers 7c with Qs after the silent goods: a card flies, so it is pushed");
+    CHECK(gm_read_push(3, masks, 64, &steps) == CLIENT_OK && steps > 0 && masks[0] == 0,
+          "the cover step's own board wears no check");
+    CHECK(anim_goods_opening(none, (int)masks[0], &out) == 0 && ct.view.good_mask == 0,
+          "so the opening beat has no badge to turn, and nor does the board it settles on");
+
+    // The pickup that follows them: its snapshot is taken with the table already
+    // swept into the defender's hand, and it used to carry the silent goods.
+    fx_reload();
+    table_set_deal_seed(&tb, "00ff", 4);
+    wl = fx_wire(AWIRE_PICKUP, NULL, NULL, w);
+    CHECK(fx_act(1, w, wl) == TABLE_APPLIED && table_commit_products(&tb, RS("goodmove"), 3, GM_NOW, &c, tb_arena, sizeof(tb_arena)) > 0,
+          "the human picks up after the silent goods");
+    int clean = gm_read_push(3, masks, 64, &steps) == CLIENT_OK && steps > 0;
+    for (int i = 0; clean && i < steps; i++) clean = masks[i] == 0;
+    CHECK(clean, "no step of the pickup wears a check");
+}
+
+// ---- composed boards round-trip (was e2e/table_fixture.test.ts) ----
+//
+// A board a test composes is a row the kernel accepted: table_seal refuses what
+// table_load would (one card in two places, under either spelling of ten; a
+// lobby holding a hand), and an accepted board loads, commits back unchanged,
+// and shows every field it was composed with through table_envelope, read by
+// the client slot as a client reads it. The rest of that file's refusals are
+// test_table_seal (a seat count the roster disagrees with, a brain this build
+// lacks), test_table_load and test_card_parse_invalid (every CARD_PARSE_E_*).
+static void test_table_composed_boards_round_trip(void) {
+    FxBoard dup = { .np = 2, .status = GAME_STATUS_PLAYING };
+    dup.hand[0] = "6h 7h"; dup.hand[1] = "7h";
+    CHECK(fx_seal(&dup) == GAME_INVALID_DUPLICATE_CARD, "one card in two hands is refused");
+    FxBoard ten = { .np = 2, .status = GAME_STATUS_PLAYING, .table = "Td" };
+    ten.hand[0] = "10d";
+    CHECK(fx_seal(&ten) == GAME_INVALID_DUPLICATE_CARD, "10 and T are one rank: the notation cannot hide a duplicate");
+    FxBoard held = { .np = 2, .status = GAME_STATUS_WAITING };
+    held.hand[0] = "6h";
+    CHECK(fx_seal(&held) == GAME_INVALID_LOBBY_CARDS, "a WAITING table holding a hand is refused");
+    Roster r;
+    memset(&r, 0, sizeof(r));
+    CHECK(roster_seat_add(&r, RS("ann"), RS("Ann"), "", 0) == 0 && roster_seat_add(&r, RS("ann"), RS("Ann again"), "", 0) == ROSTER_E_DUPLICATE,
+          "a roster refuses a second seat with one id, at that seat");
+
+    // A dealt game, every field set.
+    FxBoard b = { .np = 3, .status = GAME_STATUS_PLAYING, .title = "Round trip", .table = "7c/8c 9s",
+                  .deck = "Ts Jd", .trump = "As", .attacker = 1, .defender = 2, .discard = 4,
+                  .good_mask = 1u << 0, .good_ts = true, .awaiting = 1u << 0 };
+    b.hand[0] = "6h 7h Qs"; b.hand[1] = "8d, 9d"; b.hand[2] = "Ac";
+    b.brain[1] = "cordite";
+    CHECK(fx_seal(&b) > 0, "a dealt board seals");
+    fx_reload();
+    CHECK(tb.r.n == 3 && tb.r.seats[1].brain_len == 7 && memcmp(tb.r.seats[1].brain, "cordite", 7) == 0
+          && tb.r.seats[0].brain_len == 0 && tb.r.seats[2].brain_len == 0, "the roster is the one composed");
+    CHECK(table_needs_bots(&tb), "PLAYING with a bot seat IN needs bots");
+    TableCommit c;
+    CHECK(table_commit_products(&tb, RS("fixture-game"), 7, 0, &c, tb_arena, sizeof(tb_arena)) > 0
+          && c.state.len == tb_state_len && memcmp(tb_arena + c.state.off, tb_state, (size_t)tb_state_len) == 0
+          && memcmp(tb_arena + c.roster.off, tb_roster, ROSTER_BYTES) == 0 && c.status == GAME_STATUS_PLAYING,
+          "the loaded table writes the composed blob and roster back unchanged");
+    client_init(&ct, &ct_slot);
+    int en = table_envelope(&tb, RS("fixture-game"), 0, 7, ct_env, sizeof(ct_env));
+    CHECK(en > 0 && client_adopt_envelope(&ct, ct_env, en) == CLIENT_OK, "its envelope reads");
+    const TableView *v = &ct.view;
+    CHECK(v->my_seat == 0 && v->title_len == 10 && memcmp(v->title, "Round trip", 10) == 0 && v->status == GAME_STATUS_PLAYING,
+          "the viewer's seat, the title and the status");
+    CHECK(v->my_hand_count == 3 && card_is(v->my_hand[0], SUIT_HEARTS, 5) && card_is(v->my_hand[1], SUIT_HEARTS, 6)
+          && card_is(v->my_hand[2], SUIT_SPADES, 11), "seat 0's hand, in order");
+    CHECK(v->seats[0].awaiting_attack && v->seats[0].status == PLAYER_STATUS_IN && v->seats[0].hand_count == 3 && !v->seats[0].is_ai
+          && v->seats[1].is_ai && v->seats[1].status == PLAYER_STATUS_IN && v->seats[1].hand_count == 2
+          && !v->seats[2].is_ai && v->seats[2].status == PLAYER_STATUS_IN && v->seats[2].hand_count == 1,
+          "each seat's status, hand count and kind, and the viewer awaiting an attack");
+    CHECK(v->num_battles == 2 && card_is(v->battles[0].attack, SUIT_CLUBS, 6) && card_is(v->battles[0].defense, SUIT_CLUBS, 7)
+          && card_is(v->battles[1].attack, SUIT_SPADES, 8) && card_is_none(v->battles[1].defense), "the battles, one covered");
+    CHECK(v->deck_count == 2 && v->has_flipped && card_is(v->flipped, SUIT_SPADES, 13) && v->power_suit == SUIT_SPADES,
+          "the deck, and the face-up trump whose suit is the power suit");
+    CHECK(v->first_attacker == 1 && v->defender == 2 && v->discard_pile_length == 4 && v->good_mask == 1u && v->has_good_timestamp,
+          "the roles, the discard pile and the good");
+
+    // A lobby, a game with a seat out, a finished game: the statuses the kernel parks.
+    FxBoard lobby = { .np = 3, .status = GAME_STATUS_WAITING, .status_set = 1u << 2 };
+    lobby.brain[1] = "random";
+    lobby.seat_status[2] = PLAYER_STATUS_READY;
+    CHECK(fx_seal(&lobby) > 0 && !table_needs_bots(&tb), "a lobby seals and needs no bots");
+    en = table_envelope(&tb, RS("fixture-game"), -1, 0, ct_env, sizeof(ct_env));
+    CHECK(en > 0 && client_adopt_envelope(&ct, ct_env, en) == CLIENT_OK && v->status == GAME_STATUS_WAITING
+          && v->seats[0].status == PLAYER_STATUS_IDLE && v->seats[1].status == PLAYER_STATUS_READY && v->seats[2].status == PLAYER_STATUS_READY,
+          "a human IDLE and a bot READY in a lobby, as composed");
+    FxBoard playing = { .np = 3, .status = GAME_STATUS_PLAYING, .suit = SUIT_DIAMONDS, .attacker = 0, .defender = 1,
+                        .n_out = 1, .out = { 1 } };
+    playing.hand[0] = "6c"; playing.hand[2] = "7c"; playing.brain[1] = "random";
+    CHECK(fx_seal(&playing) > 0 && !table_needs_bots(&tb), "a game whose only bot is out needs none");
+    en = table_envelope(&tb, RS("fixture-game"), -1, 0, ct_env, sizeof(ct_env));
+    CHECK(en > 0 && client_adopt_envelope(&ct, ct_env, en) == CLIENT_OK && v->seats[0].status == PLAYER_STATUS_IN
+          && v->seats[1].status == PLAYER_STATUS_OUT && v->seats[2].status == PLAYER_STATUS_IN
+          && v->num_eliminated == 1 && v->elimination[0] == 1 && !v->has_flipped && v->power_suit == SUIT_DIAMONDS,
+          "an eliminated seat is OUT while PLAYING, in the elimination order, and the power suit stands with no trump up");
+    FxBoard over = { .np = 3, .status = GAME_STATUS_GAME_OVER, .defender = 1, .n_out = 2, .out = { 1, 0 } };
+    over.hand[2] = "Kh"; over.brain[1] = "random";
+    CHECK(fx_seal(&over) > 0, "a finished game seals");
+    en = table_envelope(&tb, RS("fixture-game"), -1, 0, ct_env, sizeof(ct_env));
+    CHECK(en > 0 && client_adopt_envelope(&ct, ct_env, en) == CLIENT_OK && v->status == GAME_STATUS_GAME_OVER
+          && v->seats[0].status == PLAYER_STATUS_IDLE && v->seats[1].status == PLAYER_STATUS_READY && v->seats[2].status == PLAYER_STATUS_IDLE
+          && v->num_eliminated == 2 && v->elimination[0] == 1 && v->elimination[1] == 0,
+          "a finished game parks bots READY and humans IDLE, its elimination order whole");
+    FxBoard seeded = { .np = 2, .status = GAME_STATUS_PLAYING, .deck = "9h Th", .deterministic = true };
+    CHECK(fx_seal(&seeded) > 0 && (tb_state[1] & STATE_BLOB_FLAG_DETERMINISTIC) && tb_game.deterministic_deck,
+          "the durable blob carries the deterministic-deck flag, and the load reads it");
+}
+
 int main(void) {
 #ifdef CD_PASS_PROBE
     test_masked_board_carries_the_rules();
@@ -18219,6 +19186,16 @@ int main(void) {
     test_table_replay_code_and_extras();
     test_table_session_log_is_load_bearing_for_octogen();
     test_table_state_blob_round_trips_every_reachable_state();
+    // Ported from the e2e suite's bots_test.wasm files (the C Table and the bots).
+    test_table_octogen_game_is_its_deal_seeds();
+    test_table_a_game_writes_the_same_rows_twice();
+    test_table_all_random_tables_always_end();
+    test_table_bot_cycles_retry_and_end_in_a_true_code();
+    test_table_a_load_leaves_nothing_of_the_last_table();
+    test_table_every_brain_seats_as_itself();
+    test_table_ranks_every_finished_game();
+    test_table_a_bots_good_is_a_move();
+    test_table_composed_boards_round_trip();
     test_client_adopts_envelopes();
     test_rating_stamp_rides_the_row_and_the_envelope();
     test_table_rates_the_game_it_ends();
