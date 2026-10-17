@@ -6,15 +6,15 @@
 # objects copied out of and back into the module, and the codec's constants, so
 # no bridge restates a cap or a number. Read by tools/structgen/gen.sh with
 # --cwd c/ and the bots build's flags. The root is in game_layout.args too, so
-# the layout hash bots.wasm is checked against at load covers these readers.
+# the layout hash web.wasm is checked against at load covers these readers.
 #
 # The browser reaches this module (it reads share links), which is why it is not
 # in game_layout.bots.ts - that one holds accessors over the unmasked Game and
 # e2e/security_client_boundary keeps it out of the bundle.
 #
 # The iMessage envelope's header (msg_wire.h MsgHeader) used to be here too. No
-# TS reads an envelope any more (the /m/ unfurl is C, in c_base), so bots.wasm
-# stopped exporting the decode and the reader went with it.
+# TS reads an envelope any more (the /m/ unfurl is C, in c_base), so the kernel's
+# links stopped exporting the decode and the reader went with it.
 --header replay_extras.h --root ReplayExtras --snapshot ReplayExtras --writer ReplayExtras
 --count ReplayExtras.names=n_names --count ReplayExtras.gaps=n_gaps --count ReplayExtrasName.text=len
 --const REPLAY_EXTRAS_ --const REPLAY_LINK_STYLE_

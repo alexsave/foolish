@@ -1,12 +1,12 @@
-// The TEST build of bots.wasm: the shipped module's objects and link plus the
-// exports only tests call (c/Makefile WASM_TEST_EXPORTS: the fixture sealer, the
-// card-list parser, the durable roster codec). It is never committed and never
-// shipped; this helper builds it on first use and whenever the wasm sources
+// The TEST build of the kernel: web.wasm's objects linked with every entry they
+// have (c/Makefile WASM_BOTS_ALL_EXPORTS: the C Table, the bots, the state doors,
+// the fixture sealer, the card-list parser, the durable roster codec). It is the
+// only whole-kernel wasm module, and it is never committed and never shipped; this helper builds it on first use and whenever the wasm sources
 // moved since (c/build/bots_test.stamp holds the source hash it was built from,
 // scripts/wasm_stamp.sh --hash). Concurrent test processes build it once: the
 // build runs under a lock directory, and a waiter re-checks the stamp after.
 //
-// Needs the wasm toolchain the committed module is built with: WASM_CC (on a Mac,
+// Needs the wasm toolchain the shipped modules are built with: WASM_CC (on a Mac,
 // /opt/homebrew/opt/llvm/bin/clang, picked automatically when present), wasm-ld,
 // wasm-opt and libclang for structgen. CI installs them before the suites run.
 import { execFileSync } from 'node:child_process';

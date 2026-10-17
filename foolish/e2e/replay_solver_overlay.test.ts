@@ -1,34 +1,58 @@
 // M8 overlay interleave gate (docs/BOTS_WASM_MEMORY_PLAN.md).
 //
-// bots.wasm aliases its replay-call scratch (g_rec / g_bn / g_replay_io,
+// The bots objects alias their replay-call scratch (g_rec / g_bn / g_replay_io,
 // 90.5 KiB) INTO the solver arena solve_ws - the two are never live at once
 // (a bot decision vs the replay encode/decode exports are non-nesting
 // top-level exports). This test is the one check that aliasing uniquely needs:
-// it drives BOTH families on the SAME bots.wasm instance, interleaved, and
+// it drives BOTH families on the SAME instance, interleaved, and
 // proves neither corrupts the other. If the overlay offsets ever collide with
 // live solver state - or a future edit makes replay read before it writes -
 // the encode after a solver burst diverges and this fails.
 //
-// Both families run on the one instance the web's replay reads use (bots.ts,
-// the module behind sdk/ts/table/client_table.ts): the solver through a C Table
-// over that instance's exports (the server's bot cycle), the encode through the
-// finalize path's table_replay_code, and the decode through the replay step
-// index and summary (replay_steps.c), which is what a replay screen decodes.
+// The modules that link both families are the test build (bots_test.wasm) and
+// the Oracle's, which keeps CD_WASM_OVERLAY; web.wasm links no solver. So both
+// run on the fixtures' bots_test.wasm instance: the solver through its C Table
+// (the bot cycle), the encode through the finalize path's table_replay_code, and
+// the decode through the replay step index and summary (replay_steps.c), which
+// is what a replay screen decodes.
 //
 // (The straight wire-format correctness of the overlaid codec is covered by
 // replay_codec.test.ts; this file adds only the interleave dimension.)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { __clientKernelExports, replayPlaySteps, replaySummary } from '../sdk/ts/wasm/bots.ts';
-import { ServerTable } from './helpers/server_table.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import type { BotsExports } from '../sdk/ts/gen/exports.bots.ts';
+import * as V from '../sdk/ts/gen/view_layout.bots.ts';
+import * as M from '../sdk/ts/gen/msg_layout.bots.ts';
+import * as K from '../sdk/ts/gen/kernel_consts.bots.ts';
+import { fixtureExports, fixtureTable } from './helpers/table_fixture.ts';
 import { botCycle, dealBotTable, playBotTable, replayCodeOf, seedBytes, type BotTableRow } from './helpers/bot_table.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; }
 
-// The shared bots.wasm instance, as a C Table: every call below lands on it.
-const table = new ServerTable(__clientKernelExports() as unknown as BotsExports);
+// The one instance, as a C Table and as raw exports: every call below lands on it.
+const table = fixtureTable();
+const ex = fixtureExports();
+
+/** The code into the instance's replay-io buffer, for the wasm_replay_* call that reads it. */
+function codeIn(code: Uint8Array): number {
+  assert.ok(code.length <= ex.wasm_replay_io_cap(), 'the code fits the replay-io buffer');
+  new Uint8Array(ex.memory.buffer).set(code, ex.wasm_replay_io_ptr());
+  return code.length;
+}
+/** replay_steps.h's summary of a code, on this instance. */
+function replaySummary(code: Uint8Array): V.ReplaySummary_Snap | null {
+  const at = ex.wasm_replay_summary(codeIn(code));
+  return at > 0 ? V.readReplaySummary(V.memOf(ex.memory.buffer), at) : null;
+}
+/** Every step of a code as a replay screen plays it, with no clock, on this instance. */
+function replayPlaySteps(code: Uint8Array): V.ReplayPlayStep_Snap[] {
+  const len = codeIn(code);
+  M.writeReplayExtras(V.memOf(ex.memory.buffer), ex.wasm_replay_extras_ptr(), { flags: 0, names: [], startTime: 0, gaps: [] });
+  const n = ex.wasm_replay_step_play(len);
+  assert.ok(n >= 0, `the kernel refused the code (${n})`);
+  const m = V.memOf(ex.memory.buffer), base = ex.wasm_io_ptr();
+  return Array.from({ length: n }, (_, i) => V.readReplayPlayStep(m, base + i * K.RS_PLAY_STRIDE));
+}
 
 /** Up to `cycles` bot cycles of a dealt row on the shared instance. */
 function drive(row: BotTableRow, cycles: number): BotTableRow {
@@ -43,7 +67,7 @@ function drive(row: BotTableRow, cycles: number): BotTableRow {
 // A burst of solver decisions on fresh games - this is what writes all over
 // solve_ws (and therefore all over the aliased replay scratch) between the two
 // encodes below. Use the heaviest MC families so the endgame solver actually
-// runs and fills the arena - every one of these must be a bot bots.wasm really
+// runs and fills the arena - every one of these must be a bot the module really
 // links, or the table refuses it (TABLE_E_UNKNOWN_BRAIN) rather than hammering
 // nothing.
 let burst = 0;
@@ -75,7 +99,7 @@ test('M8: replay encode is byte-identical before and after a solver burst on the
 
   // And the reverse direction: a decode sandwiched by solver work must be stable
   // (proves decode re-inits its scratch each call too).
-  const decode = () => ({ steps: replayPlaySteps(game.code, null, null), summary: replaySummary(game.code) });
+  const decode = () => ({ steps: replayPlaySteps(game.code), summary: replaySummary(game.code) });
   const d1 = decode();
   assert.ok(d1.steps.length > 1 && d1.summary, 'the code decodes to steps');
   hammerSolver();

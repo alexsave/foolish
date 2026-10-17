@@ -4,12 +4,10 @@ Self-contained C implementation of the Russian Durak engine and its
 heuristic / Monte-Carlo bots. Native code so we can simulate and evaluate
 millions of games without crossing a language boundary.
 
-**The kernel here IS the production rules engine.** `game.c` + `legal.c`
-compile to WebAssembly for the browser (`make wasm-bots`) and natively into
-c_base (`c_base/Makefile` reads this Makefile's source list), and run every
-live move. Every host
-is a thin bridge over this code: see `wasm/wasm_api.c`, and the web reaches it
-through `sdk/ts/table/`. The old TS rule
+**The kernel here IS the production rules engine.** The server (c_base, whose
+Makefile reads this Makefile's source list) and the phones link it natively; the
+browser runs it as WebAssembly (`make wasm-web`, `web.wasm`). Every host is a thin bridge over this code: see `wasm/wasm_api.c`,
+and the web reaches it through `sdk/ts/table/`. The old TS rule
 implementations were deleted after a differential harness proved the two
 engines byte-identical across ~100k mirrored actions. The deck rule is
 settled and hardcoded in `card.h`: 2..5 players → 36 cards, 6+ → 52,
@@ -19,12 +17,12 @@ no longer decode). Log/battle/move capacities remain build parameters
 production). The kernel fires `engine_snap_hook` at the exact points the old
 TS handlers captured animation snapshots — a NULL no-op for native builds.
 
-**The bots here are ALSO the production bots.** `make wasm-bots` compiles the
-kernel plus every `*_strategy.c` plus a choose-move bridge
-(`wasm/wasm_bots_api.c`) into `bots.wasm`
-(`sdk/ts/wasm/bots.wasm.gz`, which the e2e harness's C Table drives through
-`e2e/helpers/server_table.ts`); c_base links the same strategies natively and
-plays every live bot move with them. The production bot names began as exact C
+**The bots here are ALSO the production bots.** The server links them natively
+(c_base). In wasm they run in the Oracle's modules (`make wasm-oracle`) and in
+the test build (`make wasm-bots-test`, `build/bots_test.wasm`: the kernel plus
+every `*_strategy.c` plus a choose-move bridge, `wasm/wasm_bots_api.c`), where
+the e2e suites drive them through the C Table (`e2e/helpers/server_table.ts`).
+The production bot names began as exact C
 mirrors of TS strategies; the TS strategies and their move-for-move parity
 suite are retired (docs/C_GAME_SHAPE_MIGRATION.md Phase 8), and the C is the
 only implementation. Two bots exist in a `_prod` variant (`espresso_prod`,
@@ -96,18 +94,18 @@ The variable is `WASM_CC`, not `CC`, and it defaults to plain `clang` - which on
 macOS is Apple clang and cannot target wasm32 at all:
 
 ```
-make wasm-bots WASM_CC=/opt/homebrew/opt/llvm/bin/clang
+make wasm-web WASM_CC=/opt/homebrew/opt/llvm/bin/clang
 ```
 
-Builds are byte-reproducible for a pinned toolchain, and measurably so: the raw
-`build/bots.wasm` is byte-identical on macOS arm64, Linux arm64 and Linux x86_64
-with clang 22.1.8 + binaryen 130. So a different `build/bots.wasm` means your
+Builds are byte-reproducible for a pinned toolchain, and measurably so: a raw
+module is byte-identical on macOS arm64, Linux arm64 and Linux x86_64 with
+clang 22.1.8 + binaryen 130. So a different `build/web.wasm` means your
 change moved it, not the machine. `scripts/wasm_build.sh --check` is the gate,
 and `.gz` sizes are the one thing that does still vary by machine - the
 compressor moves them by up to 576 B on identical input, which is why
 `e2e/mem/wasm_memory.test.ts` pins the raw size instead.
 
-Nothing here is committed. `sdk/ts/wasm/bots.wasm.gz` and the two
+Nothing here is committed. `sdk/ts/wasm/web.wasm.gz` and the two
 `public/oracle*.wasm.gz` are gitignored build outputs, and CI builds them in the
 lane that ships them (`scripts/wasm_build.sh`, `shared/scripts/ci_llvm.sh`).
 

@@ -1,4 +1,5 @@
-// server_table.ts - the C Table (c/src/table.h) for a server, over bots.wasm.
+// server_table.ts - the C Table (c/src/table.h) as a server plays it, over the
+// test build of the kernel (bots_test.wasm, e2e/helpers/bots_test_wasm.ts).
 //
 // A thin, synchronous call-and-copy wrapper. It knows the export names, the
 // generated accessor names in sdk/ts/gen/game_layout.bots.ts, and nothing else:
@@ -12,17 +13,17 @@
 // (commit, push), all before its next await. Nothing returned here points into
 // wasm memory: products are copies, so they survive later kernel calls.
 //
-// Server and tests only. The browser must never reach this module: it hands out
+// Tests only. The browser must never reach this module: it hands out
 // the unmasked state blob (e2e/security_client_boundary.test.ts denies it).
 // The TypeScript server ran every game operation through it from Phase 4b
 // (docs/C_GAME_SHAPE_MIGRATION.md) until stage 4 deleted that server; the tests
 // keep it as their driver of the C Table.
 
-import type { BotsExports } from '../../sdk/ts/gen/exports.bots.ts';
+import type { BotsTestExports } from '../../sdk/ts/gen/exports.bots_test.ts';
 import * as L from '../../sdk/ts/gen/game_layout.bots.ts';
 import { LAYOUT_HASH } from '../../sdk/ts/gen/layout_hash.bots.ts';
 import { assertLayoutHash } from '../../sdk/ts/wasm/layout_hash.ts';
-import { loadWasmGz, loadWasmGzAsync } from '../../sdk/ts/wasm/wasm_asset.ts';
+import { botsTestWasm } from './bots_test_wasm.ts';
 
 /** One recorded bot SEARCH, as the kernel saw it (c/src/bot_drive.h BeliefProbe). */
 interface BeliefProbeRecord {
@@ -107,10 +108,10 @@ export interface TableSeat {
 const enc = new TextEncoder();
 
 export class ServerTable {
-    private readonly ex: BotsExports;
+    private readonly ex: BotsTestExports;
     private mem: L.Mem;
 
-    constructor(ex: BotsExports) {
+    constructor(ex: BotsTestExports) {
         this.ex = ex;
         this.mem = L.memOf(ex.memory.buffer);
     }
@@ -459,22 +460,18 @@ export function gameStatusLabel(status: number): string {
 }
 let statusLabels: Map<number, string> | null = null;
 
-/** A table over a PRIVATE bots.wasm instance: nothing else shares its resident slot. */
+/** A table over a PRIVATE bots_test.wasm instance: nothing else shares its resident slot. */
 export function createServerTable(): ServerTable {
-    const inst = new WebAssembly.Instance(new WebAssembly.Module(loadWasmGz('bots') as BufferSource), {});
-    const ex = inst.exports as unknown as BotsExports;
-    assertLayoutHash('bots.wasm', ex, LAYOUT_HASH, 'sdk/ts/gen/layout_hash.bots.ts');
+    const inst = new WebAssembly.Instance(new WebAssembly.Module(botsTestWasm() as BufferSource), {});
+    const ex = inst.exports as unknown as BotsTestExports;
+    assertLayoutHash('bots_test.wasm', ex, LAYOUT_HASH, 'sdk/ts/gen/layout_hash.bots.ts');
     ex.wasm_init();
     return new ServerTable(ex);
 }
 
 let shared: Promise<ServerTable> | null = null;
 
-/**
- * The server's one table: a private bots.wasm instance, loaded once per isolate.
- * The bytes are read asynchronously first (Deno must not read a file
- * synchronously inside a request handler), then the module is instantiated.
- */
+/** The suites' one shared table: a private bots_test.wasm instance, made once per process. */
 export function serverTable(): Promise<ServerTable> {
-    return (shared ??= loadWasmGzAsync('bots').then(() => createServerTable()));
+    return (shared ??= Promise.resolve().then(() => createServerTable()));
 }

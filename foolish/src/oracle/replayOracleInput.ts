@@ -3,7 +3,7 @@
  * =============================================================================
  * The position and the memory are the kernel's: the board the acting seat
  * decided on, masked as that seat saw it, and the public log before the move,
- * both written by bots.wasm from the replay code itself
+ * both written by web.wasm from the replay code itself
  * (c/src/replay_steps.h replay_steps_board_v6, replay_steps_memory_v6) and
  * handed to oracle.wasm unchanged. This file finds the decision under the
  * cursor and names the recorded move; it reads no byte of either.

@@ -190,7 +190,7 @@ if(arg3 && arg3.endsWith('.json') && fs.existsSync(arg3)){
 } else {
   const B=arg3||'/home/user/foolish/c/build';
   modules=[
-    {key:'bots',  stripped:`${B}/bots.wasm`,   named:`${B}/named/bots.named.wasm`},
+    {key:'web',  stripped:`${B}/web.wasm`,   named:`${B}/named/web.named.wasm`},
   ];
 }
 for(const m of modules){

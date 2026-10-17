@@ -135,7 +135,7 @@ typedef struct {
 // ---- the test entries' shapes ---------------------------------------------
 //
 // A table as a TEST states it, and what reading a trailer said. The test-only
-// wasm entries (c/wasm/wasm_bots_api.c, WASM_TEST_EXPORTS) cross with these
+// wasm entries (c/wasm/wasm_bots_api.c, the test build's WASM_ROSTER_EXPORTS) cross with these
 // structs rather than a packed seat list a harness would have to write byte by
 // byte. `RosterSpec` is an INPUT: the title and the seats to roster_set_title
 // and roster_seat_add, in order, so every refusal those make is still the

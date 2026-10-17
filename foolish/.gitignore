@@ -43,15 +43,17 @@ tools/structgen/gen/
 # exactly one raw byte on the day they were deleted.
 #
 # What changed is a measurement, not an opinion: with the toolchain pinned
-# (clang 22.1.8 + binaryen 130, scripts/ci_wasm.sh) c/build/bots.wasm is
+# (clang 22.1.8 + binaryen 130, scripts/ci_wasm.sh) a kernel module is
 # byte-identical on macOS arm64, Linux arm64 and Linux x86_64, so the lane that
 # ships a module can build it and there is nothing left to keep fresh.
 #
 # e2e/validation/wasm_outputs_validation.test.ts refuses a tracked one and reads
 # the path list out of scripts/wasm_build.sh rather than restating it here, so a
 # new module is covered the day it lands.
-sdk/ts/wasm/bots.wasm.gz
 sdk/ts/wasm/web.wasm.gz
+# The server's old module: no build writes it now, but a checkout that built it
+# before still has one, and it must not be committed by accident.
+sdk/ts/wasm/bots.wasm.gz
 public/oracle.wasm.gz
 public/oracle-mt.wasm.gz
 

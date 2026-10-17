@@ -5,7 +5,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { kernelB32Encode, kernelB32Decode, kernelReplayLink, kernelReplayLinkParse } from '../sdk/ts/wasm/bots.ts';
+import { kernelB32Encode, kernelB32Decode, kernelReplayLink } from '../sdk/ts/wasm/bots.ts';
+import { kernelReplayLinkParse } from './helpers/test_kernel_doors.ts';
 import { REPLAY_LINK_STYLE_URL, REPLAY_LINK_STYLE_QR } from '../sdk/ts/gen/msg_layout.bots.ts';
 
 import {

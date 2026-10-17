@@ -96,7 +96,7 @@ jobs:
         run: bash tools/structgen/gen.sh
 
       # AND THE WASM MODULES, which this lane did not have to build while they
-      # were committed. All three: the browser fetches bots.wasm.gz as a bundler
+      # were committed. All three: the browser fetches web.wasm.gz as a bundler
       # asset (sdk/ts/wasm/wasm_asset.ts resolves it with `new URL`, so it has to
       # exist on disk when next build runs), and public/oracle.wasm.gz and
       # public/oracle-mt.wasm.gz are served straight out of public/ - a missing

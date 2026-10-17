@@ -993,7 +993,7 @@ build/layout/oracle-mt.hash: $(STRUCTGEN) FORCE
 
 # FORCE itself is shared/tools/gen_tools.mk's.
 
-# bots.wasm exports the rules API above PLUS the bot bridge (wasm_bots_api.c).
+# The bots objects export the rules API above PLUS the bot bridge (wasm_bots_api.c).
 # It carries no FMSG decode: no browser or server TS reads an iMessage envelope
 # (the /m/ unfurl is C, in c_base), so the envelope codec ships only natively,
 # where the phone seals, rebases and decodes (tests/msg_wire_test.c). The one
@@ -1039,7 +1039,7 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_anim_roles_pass_hand_off -Wl,--export=wasm_anim_shown_ledger_allows \
   -Wl,--export=wasm_belief_probe_reset -Wl,--export=wasm_belief_probe_dump -Wl,--export=wasm_belief_probe_ptr
 
-# The C Roster (src/roster.h), in the TEST build only (WASM_TEST_EXPORTS below):
+# The C Roster (src/roster.h), in the TEST build only (bots_test.wasm):
 # e2e/helpers/roster_kernel.ts drives the durable encoding and the envelope
 # trailer through these directly (e2e/packed_roster_wire.test.ts feeds the Swift
 # decoder C-written trailers). Production reaches the roster through the table
@@ -1048,11 +1048,11 @@ WASM_ROSTER_EXPORTS := \
   -Wl,--export=wasm_roster_encode -Wl,--export=wasm_roster_spec_ptr -Wl,--export=wasm_roster_trailer_ptr -Wl,--export=wasm_roster_decode \
   -Wl,--export=wasm_roster_trailer_write -Wl,--export=wasm_roster_trailer_read
 
-# The C Table (src/table.h, wasm/wasm_table_api.c), bots.wasm ONLY, for the same
+# The C Table (src/table.h, wasm/wasm_table_api.c), bots_test.wasm ONLY, for the same
 # reason as the roster: the oracle modules link WASM_BOTS_API_EXPORTS and have no
-# use for a table, and an unexported table.o is dropped whole by the linker. No
-# production caller yet (docs/C_GAME_SHAPE_MIGRATION.md Phase 3); the server
-# switches to it in Phase 4b, through e2e/helpers/server_table.ts.
+# use for a table, and an unexported table.o is dropped whole by the linker. The
+# server plays the table natively (c_base); the Node suites play it here, through
+# e2e/helpers/server_table.ts.
 WASM_TABLE_EXPORTS := \
   -Wl,--export=wasm_table_roster_ptr -Wl,--export=wasm_table_commit_ptr \
   -Wl,--export=wasm_table_request_ptr -Wl,--export=wasm_table_elo_ptr \
@@ -1078,7 +1078,7 @@ WASM_TABLE_EXPORTS := \
 
 # The backend's client (src/netclient.h, wasm/wasm_net_api.c): what the web asks
 # c_base and how it reads the answers and the push stream. In the browser's
-# module and in bots.wasm, where the Node tests drive the same client.
+# module and in bots_test.wasm, where the Node tests drive the same client.
 WASM_NET_EXPORTS := \
   -Wl,--export=wasm_net_inbox -Wl,--export=wasm_net_reset -Wl,--export=wasm_net_session_load -Wl,--export=wasm_net_session_save \
   -Wl,--export=wasm_net_session_info -Wl,--export=wasm_net_error \
@@ -1089,8 +1089,8 @@ WASM_NET_EXPORTS := \
   -Wl,--export=wasm_net_stream_in -Wl,--export=wasm_net_event -Wl,--export=wasm_net_event_payload \
   -Wl,--export=wasm_net_stream_next
 
-# The web client's slot (src/client_table.h, wasm/wasm_table_api.c), bots.wasm
-# ONLY: the browser reads every envelope and push through these, and through the
+# The web client's slot (src/client_table.h, wasm/wasm_table_api.c), web.wasm
+# and the test build: the browser reads every envelope and push through these, and through the
 # generated snapshot readers in sdk/ts/gen/view_layout.bots.ts.
 WASM_CLIENT_EXPORTS := \
   -Wl,--export=wasm_client_view_ptr -Wl,--export=wasm_client_event_ptr \
@@ -1122,7 +1122,7 @@ WASM_CLIENT_EXPORTS := \
   -Wl,--export=wasm_client_plan_step_ptr -Wl,--export=wasm_client_plan_step -Wl,--export=wasm_client_plan
 
 # A replay's recorded decision as the Oracle imports it, and a code at a glance
-# (src/replay_steps.h, wasm/wasm_bots_api.c), bots.wasm ONLY: the web page builds
+# (src/replay_steps.h, wasm/wasm_bots_api.c), web.wasm and the test build: the web page builds
 # the Oracle's job and hands the bytes to oracle.wasm, which only imports them, so
 # the oracle modules do not link these and their unexported code is dropped there.
 WASM_REPLAY_WEB_EXPORTS := \
@@ -1138,115 +1138,29 @@ WASM_FIXTURE_EXPORTS := \
   -Wl,--export=wasm_fixture_seat -Wl,--export=wasm_fixture_seal -Wl,--export=wasm_fixture_stamp_ptr \
   -Wl,--export=wasm_card_list_parse
 
-# The exports only tests call. They are NOT in the shipped bots.wasm.gz: an
-# export roots its code, so each one kept roster.c's durable codec, the fixture
-# sealer and card.h's parser in every module the browser and the edge load.
-# build/bots_test.wasm is the shipped module's objects and link plus these, built
-# on demand (`make -C c wasm-bots-test`, which e2e/helpers/bots_test_wasm.ts runs
-# when the build is missing or older than the wasm sources) and never committed.
-# Same objects, so the same layout hash: the helpers check it like any host.
 # A code's whole log stream, record by record (replay.h ReplayDecodedLog,
 # e2e/helpers/replay_decode.ts): tests and tools read it, no shipped host does.
 WASM_REPLAY_DECODE_EXPORTS := \
   -Wl,--export=wasm_replay_decoded_open -Wl,--export=wasm_replay_decoded_next
 
-# The rules and bot bridge entries no shipped host of bots.wasm calls any more.
-# They served the TS game shape: engine.ts marshalled a TS Game into the resident
-# slot and drove it move by move (attack .. refill, the state and log codecs, the
-# snapshot ring, the replay codec), and bots.ts chose moves for it (the env
-# table, choose_move, the resident drive and its seeding). Phase 8 deleted both;
-# the server plays the C Table and the web its client slot. Checked before the
-# move, by name, across src/, server/, sdk/ts/ and scripts/: no caller. The oracle
-# modules keep them all (oracleBridge.ts imports states, logs and brains and calls
-# choose_move on oracle.wasm), and so does the test build, where the fixture and
-# probe suites (kernel_state_validation, security_hidden_info) still knock on the
-# state doors. Filtered out of bots.wasm's link only, so WASM_API_EXPORTS and
-# WASM_BOTS_API_EXPORTS stay the oracle modules' lists.
+# EVERY entry the bots objects export, and the one list the two links of them
+# read: build/bots_test.wasm exports all of it, build/web.wasm picks the
+# browser's names out of it (WASM_WEB_NAMES).
 #
-# wasm_unambiguous_cover joined them on 2026-09-18. legal.c's unambiguous_cover
-# was the web's one-tap cover resolver and the web's alone (its own header said
-# so); the web's gesture rules moved to client_play, which asks the menu's
-# question instead, and nothing shipped knocks on this door any more. Leaving it
-# exported cost 1,191 raw / 533 gzip bytes of a module whose gzip is capped at
-# 80 KiB (e2e/mem/wasm_memory.test.ts) - the rule and its fuzz stay, on the test
-# build, which is what this list is for.
-#
-# wasm_replay_error_detail joined them on 2026-09-19, found by the gate that
-# now asks the question continuously (e2e/validation/wasm_exports_validation.test.ts).
-# It is the PACKED-INT predecessor of wasm_replay_error_ptr: one int carrying
-# log_type << 16 | menu, which every host stopped unpacking when replay.h grew
-# a ReplayError struct and structgen started generating its reader
-# (sdk/ts/wasm/bots.ts replayRefused). No TypeScript has named it since.
-# The C entry stays for the oracle modules and the test build, and
-# replay_last_error_detail() itself is what the C suites print on a refusal.
-# It is a one-line accessor, so the shipped module moved by 39 raw / 14 gzip
-# bytes: the point here is not the bytes but that the export list and the
-# TypeScript that binds it agree, which is the only state a gate can tell apart
-# from drift.
-#
-# wasm_cards_a_ptr and wasm_cards_b_ptr joined them on 2026-10-10. They are the
-# addresses of the card buffers the move doors read (wasm_attack, wasm_cover,
-# wasm_pass, wasm_apply_action, wasm_rearrange_hand, wasm_unambiguous_cover),
-# every one of which is already on this list. The last shipped caller was
-# kernelMsgRebase, which now lays its awire frame in the replay-io buffer like
-# every other FMSG input, so the shipped module was exporting two pointers to
-# buffers nothing in it reads. The test build's fixture still fills them
-# (e2e/helpers/table_fixture.ts).
-#
-# Four more joined them on 2026-10-10, when the Node suites that tested kernel
-# rules through bots.wasm became native tests (tests/msg_wire_test.c) and the
-# TypeScript doors that existed for them left sdk/ts/wasm/bots.ts:
-#   wasm_legal_moves, wasm_legal_moves_ptr   the menu of the resident game. The
-#     server asks the C Table and the web its client slot; the e2e fixtures still
-#     enumerate a loaded board with it (e2e/helpers/table_mem.ts, table_play.ts).
-#   wasm_msg_rematch   the rematch lobby. The phone builds one natively; one
-#     test holds the wasm kernel to the same bytes (e2e/msg_rematch.test.ts).
-#   wasm_replay_extras_encode   names and timing into an extras blob. A finished
-#     game's is written by the C Table (wasm_table_replay_extras); tests encode
-#     one to have something to decode (e2e/helpers/extras_encode.ts).
-# The entries those suites had to themselves are gone from every link, with
-# their C: wasm_msg_seal, wasm_msg_rebase, wasm_msg_rule_p,
-# wasm_replay_encode_v6_from_game and wasm_client_adopt_resident.
-WASM_BOTS_UNSHIPPED_API := \
-  -Wl,--export=wasm_legal_moves -Wl,--export=wasm_legal_moves_ptr \
-  -Wl,--export=wasm_msg_rematch \
-  -Wl,--export=wasm_replay_extras_encode \
-  -Wl,--export=wasm_unambiguous_cover \
-  -Wl,--export=wasm_replay_error_detail \
-  -Wl,--export=wasm_cards_a_ptr -Wl,--export=wasm_cards_b_ptr \
-  -Wl,--export=wasm_game_ptr_internal -Wl,--export=wasm_moves_ptr_internal \
-  -Wl,--export=wasm_set_seed -Wl,--export=wasm_set_deal_seed_bytes -Wl,--export=wasm_reject_reason \
-  -Wl,--export=wasm_import_state -Wl,--export=wasm_export_state \
-  -Wl,--export=wasm_state_serialize -Wl,--export=wasm_state_deserialize \
-  -Wl,--export=wasm_state_format_version \
-  -Wl,--export=wasm_export_logs -Wl,--export=wasm_export_logs_masked \
-  -Wl,--export=wasm_snap_count -Wl,--export=wasm_snap_tag -Wl,--export=wasm_snap_aux \
-  -Wl,--export=wasm_export_snapshot \
-  -Wl,--export=wasm_start_game -Wl,--export=wasm_attack -Wl,--export=wasm_cover \
-  -Wl,--export=wasm_pass -Wl,--export=wasm_pickup -Wl,--export=wasm_good \
-  -Wl,--export=wasm_transition -Wl,--export=wasm_refill \
-  -Wl,--export=wasm_reset_to_lobby -Wl,--export=wasm_human_mask \
-  -Wl,--export=wasm_import_strategy_keys \
-  -Wl,--export=wasm_game_done -Wl,--export=wasm_should_act -Wl,--export=wasm_next_player \
-  -Wl,--export=wasm_replay_decode -Wl,--export=wasm_replay_encode_v6 \
-  -Wl,--export=wasm_apply_action -Wl,--export=wasm_finalize_win \
-  -Wl,--export=wasm_view_serialize -Wl,--export=wasm_events_serialize \
-  -Wl,--export=wasm_rearrange_hand -Wl,--export=wasm_set_deterministic_deck \
-  -Wl,--export=wasm_seed_rng_deterministic -Wl,--export=wasm_set_strategy_seed_deterministic \
-  -Wl,--export=wasm_strategy_seed_probe -Wl,--export=wasm_set_rng_base \
-  -Wl,--export=wasm_setenv_from_io -Wl,--export=wasm_clearenv \
-  -Wl,--export=wasm_import_logs -Wl,--export=wasm_clear_logs \
-  -Wl,--export=wasm_set_game_key -Wl,--export=wasm_set_strategy_seed -Wl,--export=wasm_reload_bot_flags \
-  -Wl,--export=wasm_choose_move \
-  -Wl,--export=wasm_bot_drive -Wl,--export=wasm_bot_eligible_mask \
-  -Wl,--export=wasm_bot_cycle_delay_ms -Wl,--export=wasm_bot_drive_log_start \
-  -Wl,--export=wasm_export_logs_masked_from -Wl,--export=wasm_events_serialize_from
-
-WASM_TEST_EXPORTS := $(WASM_ROSTER_EXPORTS) $(WASM_FIXTURE_EXPORTS) $(WASM_REPLAY_DECODE_EXPORTS) $(WASM_BOTS_UNSHIPPED_API)
+# There used to be a third link, bots.wasm, for the server: the Supabase edge
+# functions loaded it as a static asset, and a WASM_BOTS_UNSHIPPED_API list
+# carved the entries no server called out of it so they cost the edge nothing.
+# The edge functions are gone - the server is c_base, which links the kernel
+# natively - so nothing outside a test loads a whole-kernel module any more, and
+# the carve-out had nothing left to protect. The test build is what Node's
+# suites drive the C Table, the bots and the fixtures through.
+WASM_BOTS_ALL_EXPORTS = $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) $(WASM_TABLE_EXPORTS) \
+                        $(WASM_CLIENT_EXPORTS) $(WASM_NET_EXPORTS) $(WASM_REPLAY_WEB_EXPORTS) \
+                        $(WASM_ROSTER_EXPORTS) $(WASM_FIXTURE_EXPORTS) $(WASM_REPLAY_DECODE_EXPORTS)
 
 # The small-memory flag set the iMessage module (wasm-msg below) is built from.
-# It was rules.wasm's, which the web and the edge functions no longer load: every
-# host reads the ONE bots.wasm (docs/C_GAME_SHAPE_MIGRATION.md Phase 8). Its caps
+# It was rules.wasm's, which the web no longer loads: the browser reads web.wasm,
+# one link of the bots objects (docs/C_GAME_SHAPE_MIGRATION.md Phase 8). Its caps
 # and its pin are rules.wasm's measured ones (docs/RULES_GUARDS_WASM_MEMORY_PLAN.md
 # R0, R1, R4): a 1024-move menu, MAX_LOGS=128 (one action's logs), a 32 KiB stack,
 # CD_RULES_OVERLAY (the replay scratch aliased over the action buffers, see
@@ -1274,7 +1188,7 @@ WASM_RULES_FLAGS := $(filter-out -DMAX_LEGAL_MOVES=4096,$(WASM_FLAGS)) \
 #
 # Cut as a measurement of the floor: how small is the kernel when the host is a
 # chat extension rather than a server. Compare `make wasm-msg-size` against
-# bots.wasm, which is the same kernel plus every rung of the ladder.
+# web.wasm, the browser's link of the bots objects.
 # NOT replay_steps.c: that is the step WALKER, which replays a finished code
 # through the engine to feed a replay screen. The extension has no replay
 # screen.
@@ -1353,8 +1267,8 @@ wasm-msg: wasm-cc-check
 wasm-msg-size: build/msg.wasm
 	@printf 'msg.wasm    raw %7d  gzip %7d\n' \
 	  $$(wc -c < build/msg.wasm) $$(gzip -9 -c build/msg.wasm | wc -c)
-	@[ -f build/bots.wasm ] && printf 'bots.wasm   raw %7d  gzip %7d\n' \
-	  $$(wc -c < build/bots.wasm) $$(gzip -9 -c build/bots.wasm | wc -c) || true
+	@[ -f build/web.wasm ] && printf 'web.wasm    raw %7d  gzip %7d\n' \
+	  $$(wc -c < build/web.wasm) $$(gzip -9 -c build/web.wasm | wc -c) || true
 
 # Bot module: the rules kernel PLUS every algorithmic bot strategy and the
 # choose-move bridge. A superset of rules.wasm, loaded only where bots run
@@ -1391,13 +1305,13 @@ wasm-msg-size: build/msg.wasm
 #
 # What is left of A1 is the SWITCH, not the link: wasm_choose_move still
 # dispatches its own way, and the TS env blocks in bot_strategy.ts still set
-# the knobs the roster already specifies. Folding the two is one change,
-# because it rewrites bots.wasm.gz.
+# the knobs the roster already specifies. Folding the two is one change.
 #
 # There is NO toolchain skew in the RAW module, and it is measured rather than
-# asserted: with clang 22.1.8 + binaryen 130, build/bots.wasm comes out
-# byte-identical on macOS arm64 (Homebrew), Linux arm64 and Linux x86_64
-# (apt.llvm.org) - all md5 ac53b4dc5484aabad381d2d7bc451088, 191,485 B. A raw
+# asserted: with clang 22.1.8 + binaryen 130, the whole-kernel link of these
+# objects (then build/bots.wasm, the server's) came out byte-identical on macOS
+# arm64 (Homebrew), Linux arm64 and Linux x86_64 (apt.llvm.org) - all md5
+# ac53b4dc5484aabad381d2d7bc451088, 191,485 B. A raw
 # byte delta therefore means YOUR CHANGE, not the compiler, and
 # `scripts/wasm_build.sh --check` is the gate that keeps that true.
 #
@@ -1507,25 +1421,7 @@ WASM_BOT_OBJ_FLAGS  = $(WASM_BOT_CFLAGS) $(if $(filter $(WASM_BOT_O3_STEMS),$*),
 $(eval $(call C_VARIANT,build/botobj,WASM_CC,WASM_BOT_OBJ_FLAGS,build/layout/bots.hash,O3: $(WASM_BOT_O3_SRC)))
 WASM_BOT_OBJ    := $(call c_objs,build/botobj,$(WASM_BOT_SRC))
 
-WASM_BOTS_SHIPPED_EXPORTS = $(filter-out $(WASM_BOTS_UNSHIPPED_API),$(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS)) \
-                            $(WASM_TABLE_EXPORTS) $(WASM_CLIENT_EXPORTS) $(WASM_NET_EXPORTS) $(WASM_REPLAY_WEB_EXPORTS)
-
-# AND THIS FILE, because the export list is IN this file. Every wasm link below
-# reads a WASM_*_EXPORTS list, and none of them named the Makefile, so a
-# changed list relinked nothing: measured on 2026-09-19, dropping
-# wasm_replay_error_detail from WASM_BOTS_UNSHIPPED_API and running
-# `make wasm-bots` reported the module up to date and re-gzipped the OLD bytes.
-# The export table is as much an input to the link as an object file is, and
-# the only place it lives is here. A relink is seconds and the output is
-# reproducible (gzip -n over a deterministic link), so a Makefile edit that
-# changes nothing leaves the tree clean rather than dirty.
-build/bots.wasm: $(WASM_BOT_OBJ) Makefile
-	@mkdir -p build
-	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_BOT_LDFLAGS) \
-	          $(WASM_BOTS_SHIPPED_EXPORTS) $(WASM_BOT_OBJ) -o $@
-	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),$@)
-
-# bots-explain.wasm: byte-for-byte the SAME octogen as bots.wasm (same sources,
+# bots-explain.wasm: byte-for-byte the SAME octogen as bots_test.wasm (same sources,
 # same per-file opt, same flags, same wasm-opt pass) PLUS -DOG_EXPLAIN_BUILD,
 # which is behavior-neutral (the deliberation's answer is #ifdef'd + gated and
 # resets the TT). Extra exports let a harness read each decision's answer
@@ -1540,51 +1436,17 @@ bots-wasm-explain: build/layout/bots-explain.hash
 	  $(WASM_CC) $(WASM_BOT_CFLAGS) -DOG_EXPLAIN_BUILD -DSG_LAYOUT_HASH=$$(cat build/layout/bots-explain.hash) $$opt -c $$src -o build/botexplain/$$base.o || exit 1; \
 	done
 	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_BOT_LDFLAGS) \
-	          $(WASM_BOTS_SHIPPED_EXPORTS) \
+	          $(WASM_BOTS_ALL_EXPORTS) \
 	          -Wl,--export=wasm_og_answer -Wl,--export=wasm_og_answer_reset \
 	          build/botexplain/*.o -o build/bots-explain.wasm
 	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),build/bots-explain.wasm)
 	gzip -9 -c build/bots-explain.wasm > build/bots-explain.wasm.gz
 	@echo "built build/bots-explain.wasm(.gz) — load via the harness"
 
-# Name-preserving companion for the wasm-anatomy tool (tools/wasm_anatomy). It
-# must have a CODE section BYTE-IDENTICAL to build/bots.wasm but keep the
-# function name section, so the disassembler maps names 1:1 onto the shipped
-# (stripped) bytes. Same objects + same link + same wasm-opt pass as
-# build/bots.wasm, differing ONLY by: no -Wl,--strip-all, and wasm-opt keeps
-# names via --debuginfo. Because the wasm-opt pass now reshapes the module
-# (inlining removes functions), a companion WITHOUT the pass would have
-# different function indices and mis-map every name — hence this target runs the
-# identical pass. generate.sh re-strips this and asserts it equals build/bots.wasm.
-build/named/bots.named.wasm: $(WASM_BOT_OBJ) Makefile
-	@mkdir -p build/named
-	$(WASM_CC) --target=wasm32 -nostdlib $(filter-out -Wl$(comma)--strip-all,$(WASM_BOT_LDFLAGS)) \
-	          $(WASM_BOTS_SHIPPED_EXPORTS) $(WASM_BOT_OBJ) -o $@
-	$(if $(strip $(WASM_BOTS_POSTOPT)),$(WASM_OPT_BIN) $(WASM_OPT_FEATURES) $(WASM_BOTS_POSTOPT) --debuginfo $@ -o $@,:)
-
-# bots.wasm ships as ONE gzip STATIC ASSET (config.toml static_files + deploy
-# --use-api, no Docker) — a real binary, not a base64 .ts embed.
-#
-# It is the SERVER-SIDE link: the edge functions and Node read it off the
-# filesystem (fs/readFileSync — see sdk/ts/wasm/wasm_asset.ts), and the e2e
-# suites drive it through every entry a test binds. The browser reads
-# web.wasm.gz below instead, which is the same objects under a smaller export
-# allow-list; no host downloads THIS module over a network.
-#
-# There was briefly a base64 twin here for the browser. It is deliberately gone:
-# a second carrier of the same bytes is exactly how rules_wasm.ts went stale for
-# weeks while this .gz kept being rebuilt — two kernels in one tree, and a C
-# change invisible to every TS test that loaded the stale one. It also put 80 KB
-# of single-line base64, rewritten on every kernel build, into git. The price is
-# that the browser's door is async (ensureBotsAsync); that is the cheaper half.
-wasm-bots: wasm-cc-check
-	@$(MAKE) --no-print-directory build/bots.wasm
-	gzip -9 -n -c build/bots.wasm > ../sdk/ts/wasm/bots.wasm.gz
-
 # ---------------------------------------------------------------------------
 # web.wasm — THE BROWSER'S LINK OF THE SAME KERNEL.
 #
-# Not a second kernel. Byte-for-byte the same OBJECTS as build/bots.wasm
+# Not a second kernel. Byte-for-byte the same OBJECTS as build/bots_test.wasm
 # ($(WASM_BOT_OBJ)), the same compile flags, the same layout hash, the same
 # wasm-opt pass. The ONLY difference is which names are exported, and an export
 # is a GC root: wasm-ld drops every function no exported name reaches. That is
@@ -1595,10 +1457,11 @@ wasm-bots: wasm-cc-check
 # Two links of one object set cannot: any function present in both is the same
 # bytes, because it came out of the same .o.
 #
-# WHAT IT BUYS, measured on this Mac (clang 22.1.8 + binaryen 130, the pin):
+# WHAT IT BOUGHT, measured on this Mac (clang 22.1.8 + binaryen 130, the pin)
+# against the whole-kernel link the browser used to fetch:
 #
-#   bots.wasm   191,490 B raw   81,902 B gz   37 pages (2,424,832 B)
-#   web.wasm     67,311 B raw   31,219 B gz   26 pages (1,703,936 B)
+#   whole kernel  191,490 B raw   81,902 B gz   37 pages (2,424,832 B)
+#   web.wasm       67,311 B raw   31,219 B gz   26 pages (1,703,936 B)
 #
 # -50,683 B of download on every first visit (-62%), -124,179 B of module for
 # the browser to compile, and -720,896 B of linear memory in the tab. What the
@@ -1618,13 +1481,13 @@ wasm-bots: wasm-cc-check
 # reachable, so the list cannot rot upward either.
 #
 # Names deliberately absent, and why: every wasm_table_* (the server plays the
-# table), the bot bridge (wasm_choose_move and friends run on the edge, and the
-# Oracle's copies live in oracle.wasm), the durable state codec
+# table, natively, in c_base), the bot bridge (the server's bots are native too,
+# and the Oracle's copies live in oracle.wasm), the durable state codec
 # (wasm_export_state / wasm_state_serialize / wasm_state_deserialize, which
 # e2e/security_client_boundary.test.ts denies the browser — they are now absent
 # from the module rather than merely unreferenced by the bundle), and the
-# entries only the server calls (wasm_replay_link_parse …), which run on Node
-# against bots.wasm.
+# entries only tests call (wasm_replay_link_parse …), which Node reaches on
+# bots_test.wasm.
 WASM_WEB_NAMES := \
   wasm_init wasm_io_ptr wasm_io_cap wasm_layout_hash wasm_can_cover \
   wasm_replay_io_ptr wasm_replay_io_cap wasm_replay_error_ptr \
@@ -1643,26 +1506,25 @@ WASM_WEB_NAMES := \
   wasm_replay_step_count \
   wasm_replay_step_play
 
-# Picked OUT of the shipped list rather than spelled a second time, so a name
-# cannot be in the browser's module and not in the server's — that would be the
-# beginning of two export surfaces with two meanings.
+# Picked OUT of the whole list rather than spelled a second time, so a name
+# cannot be in the browser's module and not in the test build the Node suites
+# drive - that would be the beginning of two export surfaces with two meanings.
 WASM_WEB_EXPORTS = $(WASM_CLIENT_EXPORTS) $(WASM_NET_EXPORTS) $(WASM_REPLAY_WEB_EXPORTS) \
-                   $(filter $(addprefix -Wl$(comma)--export=,$(WASM_WEB_NAMES)),$(WASM_BOTS_SHIPPED_EXPORTS))
+                   $(filter $(addprefix -Wl$(comma)--export=,$(WASM_WEB_NAMES)),$(WASM_BOTS_ALL_EXPORTS))
 
-# AND THE GATE ON THE FILTER ITSELF. $(filter) over a name the shipped list does
+# AND THE GATE ON THE FILTER ITSELF. $(filter) over a name the whole list does
 # not have expands to NOTHING, which is the "matched nothing looks exactly like
 # found no problem" failure ../docs/ARCHITECTURE_AS_A_PATTERN.md Part 3 move 2
-# names three times over. A typo here, or a name retired into
-# WASM_BOTS_UNSHIPPED_API, would silently shrink the browser's module and the
-# first symptom would be a TypeError in someone's tab.
+# names three times over. A typo here would silently shrink the browser's module
+# and the first symptom would be a TypeError in someone's tab.
 WASM_WEB_MISSING = $(filter-out $(WASM_WEB_EXPORTS),$(addprefix -Wl$(comma)--export=,$(WASM_WEB_NAMES)))
 
 build/web.wasm: $(WASM_BOT_OBJ) Makefile
 	@mkdir -p build
 	@[ -z "$(WASM_WEB_MISSING)" ] || { \
-	  echo "c/Makefile: WASM_WEB_NAMES names exports the shipped link does not have:"; \
+	  echo "c/Makefile: WASM_WEB_NAMES names exports WASM_BOTS_ALL_EXPORTS does not have:"; \
 	  for n in $(WASM_WEB_MISSING); do echo "  $$n"; done; \
-	  echo "Either the name is misspelled, or it is in WASM_BOTS_UNSHIPPED_API."; exit 1; }
+	  echo "The name is misspelled, or its entry left the kernel."; exit 1; }
 	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_BOT_LDFLAGS) \
 	          $(WASM_WEB_EXPORTS) $(WASM_BOT_OBJ) -o $@
 	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),$@)
@@ -1672,12 +1534,13 @@ wasm-web: wasm-cc-check
 	@$(MAKE) --no-print-directory build/web.wasm
 	gzip -9 -n -c build/web.wasm > ../sdk/ts/wasm/web.wasm.gz
 
-# The name-preserving companion, same arrangement as bots' above: same objects,
-# same link, same wasm-opt pass, minus --strip-all, so tools/wasm_anatomy can
-# map names onto the shipped bytes. It is what makes "which .c file are these
-# 67 KB" an answerable question for the browser's link and not just the
-# server's - and answering it for both side by side is how WASM_WEB_NAMES was
-# arrived at.
+# Name-preserving companion for the wasm-anatomy tool (tools/wasm_anatomy): same
+# objects, same link, same wasm-opt pass, minus --strip-all and with wasm-opt
+# keeping names (--debuginfo), so its CODE section is byte-identical to
+# build/web.wasm and the disassembler maps names 1:1 onto the shipped
+# (stripped) bytes. The pass has to be the identical one: it inlines, so a
+# companion without it would number functions differently and mis-map every
+# name. generate.sh re-strips this and asserts it equals build/web.wasm.
 build/named/web.named.wasm: $(WASM_BOT_OBJ) Makefile
 	@mkdir -p build/named
 	$(WASM_CC) --target=wasm32 -nostdlib $(filter-out -Wl$(comma)--strip-all,$(WASM_BOT_LDFLAGS)) \
@@ -1688,16 +1551,32 @@ build/named/web.named.wasm: $(WASM_BOT_OBJ) Makefile
 wasm-web-size: build/web.wasm
 	@printf 'web.wasm    raw %7d  gzip %7d\n' \
 	  $$(wc -c < build/web.wasm) $$(gzip -9 -c build/web.wasm | wc -c)
-	@[ -f build/bots.wasm ] && printf 'bots.wasm   raw %7d  gzip %7d\n' \
-	  $$(wc -c < build/bots.wasm) $$(gzip -9 -c build/bots.wasm | wc -c) || true
 
-# The test build (WASM_TEST_EXPORTS above): never committed, never shipped.
+# ---------------------------------------------------------------------------
+# bots_test.wasm - THE WHOLE KERNEL, FOR NODE. Never committed, never shipped.
+#
+# The same objects as web.wasm under every entry they have (WASM_BOTS_ALL_EXPORTS):
+# the C Table, the bots, the state doors, the fixture sealer and the durable
+# roster codec. The e2e suites play a table, drive bots and compose boards
+# through it; nothing a user runs loads it. Built on demand
+# (e2e/helpers/bots_test_wasm.ts runs `make -C c wasm-bots-test` when the build
+# is missing or older than the wasm sources; scripts/ci_bots_test_wasm.sh in CI).
+# Same objects, so the same layout hash: the helpers check it like any host.
+# AND THIS FILE, because the export list is IN this file. Every wasm link below
+# reads a WASM_*_EXPORTS list, and none of them named the Makefile, so a
+# changed list relinked nothing: measured on 2026-09-19, dropping an entry from
+# an export list and running the link target reported the module up to date and
+# re-gzipped the OLD bytes. The export table is as much an input to the link as
+# an object file is, and the only place it lives is here. A relink is seconds
+# and the output is reproducible (gzip -n over a deterministic link), so a
+# Makefile edit that changes nothing leaves the tree clean rather than dirty.
+#
 # build/bots_test.stamp records the wasm source hash it was built from
 # (scripts/wasm_stamp.sh --hash), which is how the e2e helper knows it is current.
 build/bots_test.wasm: $(WASM_BOT_OBJ) Makefile
 	@mkdir -p build
 	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_BOT_LDFLAGS) \
-	          $(WASM_BOTS_SHIPPED_EXPORTS) $(WASM_TEST_EXPORTS) $(WASM_BOT_OBJ) -o $@.tmp
+	          $(WASM_BOTS_ALL_EXPORTS) $(WASM_BOT_OBJ) -o $@.tmp
 	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),$@.tmp)
 	mv $@.tmp $@
 
@@ -1778,7 +1657,7 @@ WASM_ORACLE_OBJ_FLAGS = $(WASM_ORACLE_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layo
 $(eval $(call C_VARIANT,build/botoracle,WASM_CC,WASM_ORACLE_OBJ_FLAGS,build/layout/oracle.hash,O3: $(WASM_BOT_O3_SRC)))
 WASM_ORACLE_OBJ    := $(call c_objs,build/botoracle,$(call wasm_sorted,$(WASM_BOT_SRC)))
 
-# Makefile is a prerequisite for the reason build/bots.wasm names it: the export
+# Makefile is a prerequisite for the reason build/bots_test.wasm names it: the export
 # list IS this file, and the link had been .PHONY (so always run) until now.
 build/oracle.wasm: $(WASM_ORACLE_OBJ) Makefile
 	@mkdir -p build

@@ -743,7 +743,7 @@ int wasm_msg_decode(int in_len) {
 // g_replay_io. Returns its length or a negative MSG_E*. Adopts nothing - the
 // resident game is untouched; decode the answer to put it on screen. The same
 // C the phone's fio_msg_rematch calls, exported from the TEST build only
-// (Makefile WASM_BOTS_UNSHIPPED_API) so e2e/msg_rematch.test.ts can hold the
+// (Makefile WASM_BOTS_ALL_EXPORTS) so e2e/msg_rematch.test.ts can hold the
 // wasm kernel to the bytes the native one is pinned to.
 // `tapped_at_ms` crosses as a double: a JS number holds every millisecond
 // timestamp exactly, and wasm32 has no 64-bit integer a JS caller can pass

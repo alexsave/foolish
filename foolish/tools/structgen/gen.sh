@@ -39,7 +39,7 @@
 #                          BUILT, and refuse any difference: a name on one side
 #                          only, or a function whose wasm signature is not its C
 #                          definition's. Writes nothing and needs the modules
-#                          (`make -C c wasm-msg wasm-bots wasm-web wasm-bots-test
+#                          (`make -C c wasm-msg wasm-web wasm-bots-test
 #                          wasm-oracle wasm-oracle-mt`), which is why it is not
 #                          part of plain gen.sh: generation comes BEFORE the
 #                          build it describes. e2e/wasm_exports.test.ts runs it.
@@ -72,7 +72,7 @@
 #
 # game_layout.<build>.ts and layout_hash.<build>.ts are ALSO written by the wasm make targets (c/Makefile,
 # "Layout hash"), from the same specs/game_layout.args and the same flags, so
-# `make -C c wasm-bots` after a header edit leaves the module and the wasm in
+# `make -C c wasm-web` after a header edit leaves the module and the wasm in
 # agreement. This script is the full regeneration and the CI check.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -180,9 +180,9 @@ mkdir -p "$prod" "$fixtures" "$swift" "$kotlin"
 # reads the `-Wl,--export=NAME` tokens out of their values, so adding an export
 # to a WASM_*_EXPORTS list is the whole change: the next gen types it, for
 # exactly the links whose lists carry it. That is also why there is one
-# interface PER LINK and no optional member: bots.wasm, the web.wasm a browser
-# downloads and the test build are three links of the same objects that export
-# three different sets, and each module's set is known here.
+# interface PER LINK and no optional member: the web.wasm a browser downloads
+# and the test build are two links of the same objects that export two
+# different sets, and each module's set is known here.
 #
 # What this cannot see is a recipe that stops using the variables named below.
 # `gen.sh --check-exports` closes that: it reads the BUILT module's own export
@@ -248,11 +248,10 @@ ex_go() {
   [ "$failed" = 0 ] || exit 1
 }
 gen_exports() {
-  # Three links of one set of objects, so one run: the server's module, the
-  # browser's, and the test build with the doors only a test opens.
-  ex_link BotsExports     exports.bots.ts      bots.wasm      WASM_BOT_LDFLAGS WASM_BOTS_SHIPPED_EXPORTS
+  # Two links of one set of objects, so one run: the browser's module, and the
+  # test build, which exports every entry the objects have.
   ex_link WebExports      exports.web.ts       web.wasm       WASM_BOT_LDFLAGS WASM_WEB_EXPORTS
-  ex_link BotsTestExports exports.bots_test.ts bots_test.wasm WASM_BOT_LDFLAGS WASM_BOTS_SHIPPED_EXPORTS WASM_TEST_EXPORTS
+  ex_link BotsTestExports exports.bots_test.ts bots_test.wasm WASM_BOT_LDFLAGS WASM_BOTS_ALL_EXPORTS
   ex_run bots WASM_BOT_CFLAGS WASM_BOT_SRC
   # The iMessage extension's module: its own sources, flags and export lists.
   ex_link MsgExports      exports.msg.ts       msg.wasm       WASM_MSG_LDFLAGS WASM_MSG_API_EXPORTS WASM_MSG_EXPORTS
@@ -376,7 +375,7 @@ set +f
 # The source is c/i18n: one keys.h, one registry, and one strings_<code>.c per
 # language. NONE OF IT IS COMPILED INTO ANYTHING SHIPPED - c/i18n is outside
 # c/src and appears in no *_SRC list, because twenty-five languages is around
-# 150 KB of string data and bots.wasm.gz is downloaded by every visitor.
+# 150 KB of string data and web.wasm.gz is downloaded by every visitor.
 # The gate is e2e/validation/i18n_source_of_truth.test.ts, whose first test
 # ('no translated string reaches the shipped wasm') gunzips the shipped module
 # and searches it rather than trusting this comment.

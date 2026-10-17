@@ -146,7 +146,7 @@ export interface Binder {
 }
 
 /** The kernel modules a binder can be bound to. */
-export type ModuleId = 'bots' | 'web' | 'bots-test' | 'oracle' | 'oracle-mt' | 'msg';
+export type ModuleId = 'web' | 'bots-test' | 'oracle' | 'oracle-mt' | 'msg';
 
 /**
  * The hand-typed interfaces that still declare a kernel entry point, and the

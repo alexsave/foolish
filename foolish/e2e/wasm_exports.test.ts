@@ -7,7 +7,7 @@
  * defines each one. Both of those are sources, and a module is a third thing -
  * what a recipe actually linked - so an interface derived from the sources is a
  * claim about the module until something reads the module. This does, three
- * ways, against all six:
+ * ways, against all five:
  *
  *   1. BY THE GENERATOR ITSELF. `gen.sh --check-exports` re-derives every
  *      interface and holds it against the built module's own type, import,
@@ -27,8 +27,8 @@
  *      it, and a call with the wrong arity is a compile error rather than an
  *      `any`.
  *
- * WHAT IT NEEDS. The six modules under c/build. `npm run wasm` (the pre-hook of
- * every lane that runs this) builds four; the test build and the iMessage
+ * WHAT IT NEEDS. The five modules under c/build. `npm run wasm` (the pre-hook of
+ * every lane that runs this) builds three; the test build and the iMessage
  * extension's module are built here, on demand, the way every other suite that
  * loads the test build gets it. A module older than its sources fails case 1,
  * which is the right answer: it is not the module this tree's interfaces type.
@@ -44,7 +44,6 @@ import { fileURLToPath } from 'node:url';
 import { botsTestWasm } from './helpers/bots_test_wasm.ts';
 import { bindersIn, binderMismatches, wasmExportSignatures, type ModuleId } from './helpers/wasm_exports.ts';
 import { LAYOUT_HASH } from '../sdk/ts/gen/layout_hash.bots.ts';
-import type { BotsExports } from '../sdk/ts/gen/exports.bots.ts';
 import type { BotsTestExports } from '../sdk/ts/gen/exports.bots_test.ts';
 import type { MsgExports } from '../sdk/ts/gen/exports.msg.ts';
 import type { OracleExports } from '../sdk/ts/gen/exports.oracle.ts';
@@ -55,7 +54,6 @@ const ROOT = fileURLToPath(new URL('../', import.meta.url));
 
 /** Each generated interface, the module its link builds, and the scanner's name for it. */
 const LINKS: readonly { iface: string; file: string; module: string; id: ModuleId }[] = [
-    { iface: 'BotsExports', file: 'exports.bots.ts', module: 'bots.wasm', id: 'bots' },
     { iface: 'WebExports', file: 'exports.web.ts', module: 'web.wasm', id: 'web' },
     { iface: 'BotsTestExports', file: 'exports.bots_test.ts', module: 'bots_test.wasm', id: 'bots-test' },
     { iface: 'MsgExports', file: 'exports.msg.ts', module: 'msg.wasm', id: 'msg' },
@@ -79,7 +77,7 @@ function modules(): void {
     execFileSync('make', ['-C', `${ROOT}c`, `WASM_CC=${wasmCc()}`, 'wasm-msg'], { stdio: ['ignore', 'ignore', 'inherit'] });
     for (const l of LINKS) {
         assert.ok(existsSync(`${ROOT}c/build/${l.module}`),
-            `c/build/${l.module} is not built - run \`npm run wasm\` (it builds bots, web and the Oracle pair)`);
+            `c/build/${l.module} is not built - run \`npm run wasm\` (it builds web and the Oracle pair)`);
     }
     built = true;
 }
@@ -122,14 +120,13 @@ test('an instance cast to its generated interface is called through it, and a wr
     modules();
     const instance = (module: string) =>
         new WebAssembly.Instance(new WebAssembly.Module(readFileSync(`${ROOT}c/build/${module}`) as BufferSource), {}).exports;
-    const bots = instance('bots.wasm') as unknown as BotsExports;
     const web = instance('web.wasm') as unknown as WebExports;
     const testBuild = instance('bots_test.wasm') as unknown as BotsTestExports;
-    // The same question of three links, each through its own interface: an i32
+    // The same question of both links, each through its own interface: an i32
     // result arrives signed, as the generated banner says.
-    for (const ex of [bots, web, testBuild]) assert.equal(ex.wasm_layout_hash() >>> 0, LAYOUT_HASH >>> 0);
-    assert.ok(bots.memory.buffer.byteLength > 0, 'the memory is a member, typed as one');
-    // The other three, so all six are type-checked with this file. The
+    for (const ex of [web, testBuild]) assert.equal(ex.wasm_layout_hash() >>> 0, LAYOUT_HASH >>> 0);
+    assert.ok(web.memory.buffer.byteLength > 0, 'the memory is a member, typed as one');
+    // The other three, so all five are type-checked with this file. The
     // extension's module and the Oracle's answer for their own layouts, and the
     // threaded Oracle imports its memory, so it is only named: what the linker
     // makes for it is typed too, and it has no `memory` to offer.
@@ -140,7 +137,7 @@ test('an instance cast to its generated interface is called through it, and a wr
     // A function that takes arguments, called as typed, in both links that
     // carry it: a seven beats a six of its own suit and a six does not beat a
     // seven (suit 0, with suit 1 the power suit).
-    for (const ex of [bots, web]) {
+    for (const ex of [testBuild, web]) {
         assert.equal(ex.wasm_can_cover(0, 6, 0, 7, 1), 1);
         assert.equal(ex.wasm_can_cover(0, 7, 0, 6, 1), 0);
     }
@@ -148,13 +145,13 @@ test('an instance cast to its generated interface is called through it, and a wr
     // type-check of this file is the test), and never run.
     const never = (): void => {
         // @ts-expect-error wasm_layout_hash takes no argument
-        bots.wasm_layout_hash(1);
+        web.wasm_layout_hash(1);
         // @ts-expect-error wasm_can_cover takes five
-        bots.wasm_can_cover(0, 6, 0, 7);
-        // @ts-expect-error the browser's link does not export the server's table
+        testBuild.wasm_can_cover(0, 6, 0, 7);
+        // @ts-expect-error the browser's link does not export the table
         web.wasm_table_act(0, 0, 0, 0);
         // @ts-expect-error a test-only door is not in the shipped interface
-        bots.wasm_fixture_seal();
+        web.wasm_fixture_seal();
         // @ts-expect-error a module that imports its memory does not export one
         (null as unknown as OracleMtExports).memory;
     };

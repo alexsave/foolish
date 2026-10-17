@@ -14,7 +14,7 @@
 import { covered, sameCard, seatKey, type TableView, type ViewBattle as Battle, type ViewCard as Card } from '../../state/view';
 import type { ClientAnimationEvent } from '../../state/animationStep';
 import type { AnimatedCard } from './FlightCard';
-// The kernel's can_cover: bots.wasm is loaded before any screen that reaches this
+// The kernel's can_cover: web.wasm is loaded before any screen that reaches this
 // renders - /, /[game_id], /dashboard, /history and /tutorial are each wrapped in
 // KernelGate (src/components/KernelGate.tsx), the replay and the tutorial included.
 import { canCoverPair } from '../../utils/gameValidation';

@@ -64,9 +64,9 @@ const spdRow = (label, b, h) => {
 
 
 function sizeRows(base, head) {
-  // `web` first: it is the link a visitor downloads, and so the only size row
-  // on this table that is a user-facing number rather than a deploy one.
-  return ['web', 'rules', 'guards', 'bots', 'oracle', 'oracle-mt'].map((m) => {
+  // `web` first: it is the kernel a visitor downloads on first visit; the
+  // Oracle's two are fetched on the first Oracle press.
+  return ['web', 'oracle', 'oracle-mt'].map((m) => {
     const b = base?.size?.[m], h = head?.size?.[m];
     return `| \`${m}.wasm\` | ${kb(b?.raw)} / ${kb(b?.gz)} | ${kb(h?.raw)} / ${kb(h?.gz)} | ${deltaCell(b?.gz, h?.gz, { fmt: kb })} |`;
   }).join('\n');
@@ -81,12 +81,11 @@ function webBundleRows(base, head) {
     `| ${label} | ${kb(bv?.raw)} / ${kb(bv?.gz)} | ${kb(hv?.raw)} / ${kb(hv?.gz)} | ${deltaCell(bv?.gz, hv?.gz, { fmt: kb })} |`).join('\n');
 }
 
-// DECLARED linear memory per module (pages · KB), from the committed artifacts.
-// bots.wasm is initial-only (it grows a TT at runtime — see the peak table); a
+// DECLARED linear memory per module (pages · KB), from the built artifacts. A
 // pinned module (--initial-memory == --max-memory) is flagged 📌.
 function declaredMemRows(base, head) {
   const pageStr = (lm) => lm == null ? 'n/a' : `${lm.pages} pg · ${kb(lm.bytes)}${lm.pinned ? ' 📌' : ''}`;
-  return ['web', 'rules', 'guards', 'bots'].map((m) => {
+  return ['web'].map((m) => {
     const b = base?.linearMemory?.[m], h = head?.linearMemory?.[m];
     return `| \`${m}.wasm\` | ${pageStr(b)} | ${pageStr(h)} | ${deltaCell(b?.bytes, h?.bytes, { fmt: kb })} |`;
   }).join('\n');

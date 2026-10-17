@@ -4,7 +4,7 @@
 // c/Makefile bakes tools/structgen's layout hash into every wasm module
 // (wasm_layout_hash); sdk/ts/gen/layout_hash.<build>.ts carries the same number
 // as LAYOUT_HASH; bots.ts, server_table.ts and client_table.ts compare the two
-// once per bots.wasm instance, before wasm_init (sdk/ts/wasm/layout_hash.ts).
+// once per instance, before wasm_init (sdk/ts/wasm/layout_hash.ts).
 //
 // A doctored LAYOUT_HASH stands in for "the headers moved and only one side was
 // rebuilt": the load must throw, name the module and the generated file, and
@@ -49,12 +49,12 @@ if (!process.env.E2E_VERBOSE) { console.log = () => {}; }
 const doctored = (h: number) => (h ^ 0x5a5a5a5a) >>> 0;
 const hex = (h: number) => `0x${(h >>> 0).toString(16).padStart(8, '0')}`;
 
-test('bots.wasm: a doctored LAYOUT_HASH refuses the module at load; the real one loads', () => {
+test('web.wasm: a doctored LAYOUT_HASH refuses the module at load; the real one loads', () => {
     __overrideLayoutHash(doctored(BOTS_LAYOUT_HASH));
     try {
         // The roster is the first thing a host asks, and asking loads the module.
         assert.throws(() => kernelBotRoster(), (e: Error) => {
-            assert.match(e.message, /bots\.wasm/);
+            assert.match(e.message, /web\.wasm/);
             assert.match(e.message, /sdk\/ts\/gen\/layout_hash\.bots\.ts/);
             assert.ok(e.message.includes(hex(BOTS_LAYOUT_HASH)), `names the module's hash: ${e.message}`);
             return true;
@@ -62,7 +62,7 @@ test('bots.wasm: a doctored LAYOUT_HASH refuses the module at load; the real one
     } finally {
         __overrideLayoutHash(null);
     }
-    assert.ok(kernelBotRoster().length > 0, 'the real hash loads a working bots.wasm');
+    assert.ok(kernelBotRoster().length > 0, 'the real hash loads a working web.wasm');
 });
 
 test('a module that exports no wasm_layout_hash (built before the handshake) is refused', () => {
@@ -81,7 +81,7 @@ test('every shipped module reports the layout of the generated module it is read
     const plain = (path: string) =>
         (new WebAssembly.Instance(new WebAssembly.Module(bytes(path) as BufferSource), {}).exports as
             unknown as { wasm_layout_hash(): number }).wasm_layout_hash() >>> 0;
-    assert.equal(hex(plain('sdk/ts/wasm/bots.wasm.gz')), hex(BOTS_LAYOUT_HASH), 'bots.wasm.gz');
+    assert.equal(hex(plain('sdk/ts/wasm/web.wasm.gz')), hex(BOTS_LAYOUT_HASH), 'web.wasm.gz');
     assert.equal(hex(plain('public/oracle.wasm.gz')), hex(BOTS_LAYOUT_HASH), 'oracle.wasm.gz');
     const mt = new WebAssembly.Module(bytes('public/oracle-mt.wasm.gz') as BufferSource);
     const memory = new WebAssembly.Memory({ initial: 64, maximum: 2048, shared: true });
