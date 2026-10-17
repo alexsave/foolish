@@ -44,6 +44,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdarg.h>
+#include "../../../shared/c/rng.h"
 
 #define MAXD 9
 #define MAXB 96
@@ -77,7 +78,7 @@ typedef struct {
 } Env;
 
 static uint32_t rng;
-static uint32_t rnd(void) { rng = rng * 1664525u + 1013904223u; return rng >> 8; }
+static uint32_t rnd(void) { return rng_lcg32(&rng) >> 8; }
 
 // The decode hands back the header WHERE IT LIES (msg_wire.h MsgHeader), so
 // this reads it by its fields.

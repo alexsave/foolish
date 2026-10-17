@@ -12,8 +12,13 @@
 #include <string.h>
 
 #include "../../../shared/c/deal_rng.h"
+#include "../../../shared/c/rng.h"
 
 // ---------- RNG (two independent LCGs, same recurrence as TS) ----------
+//
+// The recurrence is rng.h's rng_lcg32 (Numerical Recipes). It is not free to
+// change: the legacy deal is re-derived from a stored 32-bit seed, and
+// rng_test.c pins it by its published vectors.
 //
 // Both LCGs are _Thread_local so multiple worker threads can each run their
 // own game(s) without racing. Default seeds are non-zero so a thread that
@@ -131,8 +136,7 @@ void game_deal_rng_set(const unsigned char in[GAME_DEAL_RNG_STATE_MAX]) {
     memcpy(&g_deal_rng, in + 1, sizeof g_deal_rng);
 }
 uint32_t game_random_u32(void) {
-    g_seed = g_seed * 1664525u + 1013904223u;
-    return g_seed;
+    return rng_lcg32(&g_seed);
 }
 double game_random(void) {
     uint32_t v = game_random_u32();
@@ -173,8 +177,7 @@ uint32_t game_state_seed(const Game *g, uint32_t base, uint32_t salt) {
 // server (same game_seed -> same value), deterministic in native tests.
 uint32_t random_strategy_rng_get(void) { return g_rand_seed; }
 double random_strategy_random(void) {
-    g_rand_seed = g_rand_seed * 1664525u + 1013904223u;
-    return (double)g_rand_seed / 4294967296.0;
+    return (double)rng_lcg32(&g_rand_seed) / 4294967296.0;
 }
 
 // ---------- Helpers ----------------------------------------------------

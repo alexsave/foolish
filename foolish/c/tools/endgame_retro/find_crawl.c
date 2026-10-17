@@ -8,6 +8,7 @@
 #include "game.h"
 #include "legal.h"
 #include "strategy.h"
+#include "retro_seed.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -102,8 +103,7 @@ int main(int argc,char**argv){
     long hits=0, scanned=0;
     for(long sidx=seed0; sidx<seed0+ncount; sidx++){
         // derive a 32-byte seed from sidx (deterministic)
-        uint8_t seed[32]; uint64_t x=(uint64_t)sidx*0x9E3779B97F4A7C15ull+0x1234567;
-        for(int i=0;i<32;i++){ x^=x<<13;x^=x>>7;x^=x<<17; seed[i]=(uint8_t)(x&0xff); }
+        uint8_t seed[32]; retro_seed(sidx,seed);
         cd_sim_solve_reset(); game_set_seed(1); game_set_deal_seed_bytes(seed,32);
         Game g; memset(&g,0,sizeof g); g.num_players=2;
         for(int i=0;i<2;i++){ g.players[i].status=PLAYER_STATUS_READY; g.players[i].strategy_key=(int8_t)STRAT_OCTOGEN; }

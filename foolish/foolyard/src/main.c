@@ -63,7 +63,7 @@ static void world_init(World *w, u64 seed, u32 n_games, u32 n_clients) {
 
     sch_init(&w->sch);
     net_init(&w->net);
-    w->rng = rng_seed(seed);
+    w->rng = rng_seed64(seed);
 
     w->n_games = n_games;
     w->games = calloc(n_games, sizeof(GameSlot));
@@ -194,7 +194,7 @@ static void seat_tables(World *w, const SeatSpec *lineup, int n_seats) {
             cs->tier = spec->tier;
             cs->seat = (u8)seat;
             cs->game_id = (u16)g;
-            cs->rng = rng_seed(w->rng ^ ((u64)next_client << 32));
+            cs->rng = rng_seed64(w->rng ^ ((u64)next_client << 32));
             cs->think_us = spec->think_us;
             cs->think_jitter_us = spec->jitter_us;
 

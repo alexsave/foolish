@@ -37,6 +37,7 @@
 #include <stddef.h>
 #include <float.h>
 #include <math.h>   // fabs
+#include "../../../shared/c/rng.h"
 
 static int n_pass = 0;
 static int n_fail = 0;
@@ -14396,8 +14397,7 @@ static void cb_finalize(Game *g, uint32_t bots) {
 }
 
 static int cb_rand(int n) {
-    cb_rng = cb_rng * 1664525u + 1013904223u;
-    return (int)((cb_rng >> 8) % (uint32_t)n);
+    return (int)((rng_lcg32(&cb_rng) >> 8) % (uint32_t)n);
 }
 
 static void cb_deal(Game *g, int np, int seed) {
@@ -16077,15 +16077,13 @@ static void pk_endgame(Game *g, uint32_t *rng, int n0, int n1) {
     memset(g, 0, offsetof(Game, logs));
     g->status = GAME_STATUS_PLAYING;
     g->num_players = 2;
-    *rng = *rng * 1103515245u + 12345u;
-    g->power_suit = (int8_t)((*rng >> 16) % 4);
+    g->power_suit = (int8_t)((rng_lcg32(rng) >> 16) % 4);
     g->first_attacker = 0;
     g->defender = 1;
     int ids[36];
     for (int i = 0; i < 36; i++) ids[i] = i;
     for (int i = 0; i < n0 + n1; i++) {
-        *rng = *rng * 1103515245u + 12345u;
-        const int j = i + (int)((*rng >> 16) % (uint32_t)(36 - i));
+        const int j = i + (int)((rng_lcg32(rng) >> 16) % (uint32_t)(36 - i));
         const int t = ids[i]; ids[i] = ids[j]; ids[j] = t;
     }
     for (int s = 0; s < 2; s++) {
@@ -16123,8 +16121,7 @@ static void test_podkidnoy_solver_and_book(void) {
     long pk_hits = 0;
     static Game g;
     for (int trial = 0; trial < 3000; trial++) {
-        rng = rng * 1103515245u + 12345u;
-        const int total = 2 + (int)((rng >> 16) % 6);          // 2..7 cards
+        const int total = 2 + (int)((rng_lcg32(&rng) >> 16) % 6);          // 2..7 cards
         const int n0 = 1 + (int)((rng >> 8) % (uint32_t)(total - 1));
         pk_endgame(&g, &rng, n0, total - n0);
         const int classic = pk_solve(&g, 0, 0, 1);

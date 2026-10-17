@@ -45,6 +45,7 @@
 #include "legal.h"
 #include "awire.h"
 #include "bot_drive.h"
+#include "../../../../shared/c/rng.h"
 
 // ---- counters ----
 static long g_games = 0, g_moves = 0, g_probes = 0, g_accepted = 0, g_rejected = 0;
@@ -55,7 +56,7 @@ static int  g_reports = 0;   // cap the verbose dump
 #define REPORT(...) do { if (g_reports < 40) { fprintf(stderr, __VA_ARGS__); g_reports++; } } while (0)
 
 static uint32_t g_rng = 0x12345678u;
-static uint32_t rnd(void) { g_rng ^= g_rng << 13; g_rng ^= g_rng >> 17; g_rng ^= g_rng << 5; return g_rng; }
+static uint32_t rnd(void) { return rng_xorshift32(&g_rng); }
 static int rint_(int n) { return n <= 0 ? 0 : (int)(rnd() % (unsigned)n); }
 
 static int deck_size_of(const Game *g) { return g->num_players >= 6 ? 52 : 36; }

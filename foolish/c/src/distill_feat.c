@@ -21,6 +21,7 @@
 #include "distill_feat.h"
 #include "strategy.h"
 #include "card.h"
+#include "../../../shared/c/rng.h"
 
 // ---------- random_strategy LCG snapshot/restore -------------------------
 
@@ -31,8 +32,9 @@
 static uint32_t df_rs_state(void) {
     double r = random_strategy_random();
     uint32_t after = (uint32_t)(r * 4294967296.0);
-    return (after - 1013904223u) * 4276115653u;
+    return (after - RNG_LCG32_INC) * 4276115653u;
 }
+_Static_assert(RNG_LCG32_MUL * 4276115653u == 1u, "4276115653 is the LCG multiplier's inverse mod 2^32");
 
 static uint32_t df_mix(uint32_t a, uint32_t b) {
     uint32_t h = a * 0x9E3779B1u ^ (b + 0x7F4A7C15u);

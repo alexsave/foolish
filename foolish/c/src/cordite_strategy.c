@@ -38,6 +38,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stddef.h>
+#include "../../../shared/c/rng.h"
 
 // ---------- small utils ------------------------------------------------
 
@@ -48,11 +49,6 @@ static inline int cd_card_score(Card c, int power) {
 static bool cd_set_contains(const Card *arr, int n, Card c) {
     for (int i = 0; i < n; i++) if (card_eq(arr[i], c)) return true;
     return false;
-}
-
-static uint32_t cd_xorshift(uint32_t s) {
-    s ^= s << 13; s ^= s >> 17; s ^= s << 5;
-    return s ? s : 0xB1A570u;
 }
 
 static uint32_t cd_mix(uint32_t a, uint32_t b) {
@@ -408,7 +404,7 @@ static void cd_sample_world(Game *g_out, const Game *g_in, int my_idx,
 
     uint32_t s = seed ? seed : 0xCAFEu;
     for (int i = hn - 1; i > 0; i--) {
-        s = cd_xorshift(s);
+        rng_xorshift32(&s);
         int j = (int)(s % (uint32_t)(i + 1));
         Card sw = hidden[i]; hidden[i] = hidden[j]; hidden[j] = sw;
     }
@@ -659,8 +655,7 @@ static int cd_fm_sample_table(uint32_t seed, int n) {
     if (n > cd_seat_weights_n) n = cd_seat_weights_n;
     for (int p = 0; p < n; p++) {
         const double *w = cd_seat_weights[p];
-        s = s * 1664525u + 1013904223u;
-        double r = (double)s / 4294967296.0;
+        double r = (double)rng_lcg32(&s) / 4294967296.0;
         int k = 0;
         for (; k < CORDITE_NUM_POLICIES - 1; k++) {
             if (r < w[k]) break;

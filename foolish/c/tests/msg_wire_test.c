@@ -38,6 +38,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include "../../../shared/c/rng.h"
 
 #define ENV_CAP 8192
 
@@ -48,7 +49,7 @@ static int g_fails = 0;
 } while (0)
 
 static uint32_t g_rng = 1;
-static uint32_t rnd(void) { g_rng = g_rng * 1664525u + 1013904223u; return g_rng; }
+static uint32_t rnd(void) { return rng_lcg32(&g_rng); }
 
 // ---------- 1. SHA-256 known-answer tests --------------------------------
 

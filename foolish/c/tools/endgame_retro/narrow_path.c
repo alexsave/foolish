@@ -10,6 +10,7 @@
 #include "game.h"
 #include "legal.h"
 #include "strategy.h"
+#include "retro_seed.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -47,7 +48,6 @@ static void retro_clear(void){for(long i=0;i<n_used;i++)SV[used_slots[i]]=0;n_us
 static int child_value(const SimState*c){int loser=sim_done(c);if(loser>=0)return(loser==ME)?LOSS:WIN;if(sim_in_count(c)<2)return UNK;int a,b;two_in(c,&a,&b);uint64_t fp=sim_fingerprint(c,a,b);uint32_t i=(uint32_t)((fp*0x9E3779B97F4A7C15ull)>>(64-SHB))&(SHS-1);for(;;){if(SV[i]==0)return -1;if(SK[i]==fp)return sVAL[SV[i]-1];i=(i+1)&(SHS-1);}}
 
 static uint32_t seedx;
-static void mkseed(long idx,uint8_t*seed){uint64_t x=(uint64_t)idx*0x9E3779B97F4A7C15ull+0x1234567;for(int i=0;i<32;i++){x^=x<<13;x^=x>>7;x^=x<<17;seed[i]=(uint8_t)(x&0xff);}}
 
 int main(int argc,char**argv){
     long seed0=argc>1?atol(argv[1]):1, ncount=argc>2?atol(argv[2]):2000;
@@ -57,7 +57,7 @@ int main(int argc,char**argv){
     sEP=malloc((size_t)SECAP*4);sEC=malloc((size_t)SECAP*4);sstk=malloc((size_t)RCAP*4);
     long scanned=0,reported=0;
     for(long sidx=seed0;sidx<seed0+ncount;sidx++){
-        uint8_t seed[32];mkseed(sidx,seed);
+        uint8_t seed[32];retro_seed(sidx,seed);
         cd_sim_solve_reset();game_set_seed(1);game_set_deal_seed_bytes(seed,32);
         Game g;memset(&g,0,sizeof g);g.num_players=2;for(int i=0;i<2;i++){g.players[i].status=PLAYER_STATUS_READY;g.players[i].strategy_key=(int8_t)STRAT_OCTOGEN;}
         start_game(&g);scanned++;

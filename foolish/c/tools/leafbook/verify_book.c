@@ -18,9 +18,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../../../../shared/c/rng.h"
 
 static uint32_t rng = 0x1234567u;
-static inline uint32_t xr(void) { rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5; return rng; }
+static inline uint32_t xr(void) { return rng_xorshift32(&rng); }
 
 // CHD minimal-perfect-hash lookup (same as the engine probe). An unenumerated
 // (absent) form would land on some other key's slot and return a value that

@@ -13,6 +13,7 @@
 #include "legal.h"
 #include "strategy.h"   // STRATEGY_KEY_HUMAN - seat_is_bot's definition of "not a bot"
 #include "persist.h"
+#include "../../../../shared/c/rng.h"
 #include "snapshot.h"   // g_game_table / g_user_table: the durable side of these same rows
 #include "srvthread.h"
 
@@ -129,9 +130,16 @@ void game_mark_dirty(GameSlot *s) {
 
 void gen_id(char *out, int n) {
     static const char hex[] = "0123456789abcdef";
-    unsigned long v = (atomic_fetch_add_explicit(&g_seq, 1, memory_order_relaxed) + 1)
-                       ^ ((unsigned long)next_rand() << 8) ^ (unsigned long)time(NULL);
-    for (int i = 0; i < n; i++) { out[i] = hex[v & 0xf]; v = v * 6364136223846793005UL + 1442695040888963407UL; v >>= 3; }
+    uint64_t st = (uint64_t)(atomic_fetch_add_explicit(&g_seq, 1, memory_order_relaxed) + 1)
+                  ^ ((uint64_t)next_rand() << 8) ^ (uint64_t)time(NULL);
+    // Sixteen hex digits a splitmix64 output, from a stream seeded by
+    // the counter, the thread's draw and the clock.
+    uint64_t z = 0;
+    for (int i = 0; i < n; i++) {
+        if (i % 16 == 0) z = rng_splitmix64(&st);
+        out[i] = hex[z & 0xf];
+        z >>= 4;
+    }
     out[n] = 0;
 }
 
