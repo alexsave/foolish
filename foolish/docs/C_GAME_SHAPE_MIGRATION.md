@@ -8,6 +8,7 @@
 > and the Cleanup section's migration-collapse evidence.
 > The scope bullets, delete lists and deploy-order runbooks are spent, and
 > several of the files they name no longer exist.
+> Since 2026-10-17 the Supabase server this migration rebuilt is deleted too: the backend is c_base (C on AWS Lambda + DynamoDB, `c_base/DESIGN.md`), so every `server/impls/supabase/` path below is history.
 
 Status: plan, written 2026-09-17 on branch `worktree-c-game-shape` at `ff9ec2ed`.
 Every file:line below was read at that commit.

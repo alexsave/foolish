@@ -5,6 +5,7 @@
 > Read them as the state of the question when it was asked, not as the current balance.
 > The 2026-09-18 revision only re-pointed references to TypeScript modules the C-game-shape work deleted that day; no finding was re-measured.
 > L2 is done and says so inline; L1 and L3 to L7 are open as written.
+> Since 2026-10-17 the TypeScript Supabase host it counts is deleted and c_base (C, `c_base/DESIGN.md`) is the server, so re-read L1 and L3 to L7 against c_base before acting on any of them.
 
 *Investigation, July 2026 — a follow-on to `C_CORE_CONSOLIDATION.md`. That doc
 (F1–F9) traced the TS server and the iOS offline client and moved the game's

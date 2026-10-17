@@ -15,6 +15,7 @@
 > record for everything structural — App-Store bundling (§1), architecture &
 > connectivity (§6–§8), complications (§9), milestones & sequencing (§11:
 > after the phone app's Milestone F), and gotchas (§12).
+> Its networking sections assume Supabase (supabase-swift, Realtime, refresh-token rotation), which was deleted on 2026-10-17; a watch client would speak c_base's binary `/v1` through the kernel's client (`c/src/netclient.h`, `c_base/DESIGN.md`).
 
 *Fills out the original design study (branch `claude/ios-redesign`, commit
 `adb76a6`) into a buildable plan, incorporating the owner's real-size screen

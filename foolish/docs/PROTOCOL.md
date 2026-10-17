@@ -1,5 +1,11 @@
 # Foolish backend protocol (client contract)
 
+> **Since then (2026-10-17).** The Supabase backend (edge functions, Postgres, Realtime, supabase-js and supabase-swift) and the TypeScript server are deleted.
+> The backend is c_base: C on AWS Lambda, DynamoDB and an API Gateway WebSocket, with a binary `/v1` surface that the kernel's own client speaks.
+> The web is a static export on S3 + CloudFront.
+> So the "carry forward unchanged" below no longer holds: §1-§3 and §6 describe a transport and an auth that are gone, and the client contract is c_base's (`c_base/DESIGN.md` "Binary surface", `c/src/netwire.h`, `c/src/netclient.h`).
+> See [`c_base/DESIGN.md`](../../c_base/DESIGN.md); what follows is kept as it was written.
+
 > **Historical anchors, 2026-07-14.**
 > §3 (realtime channels), §6 (auth), §7 (meta semantics) and §8 are documented
 > nowhere else and carry forward unchanged.

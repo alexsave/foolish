@@ -139,6 +139,12 @@ footer li{font-size:.78rem; font-family:'JetBrains Mono',ui-monospace,monospace}
   </div>
 </header>
 
+<div class="note now"><strong>Since then (2026-10-17).</strong> This page is a snapshot of 2026-08-25 and is kept as it was written.
+The Supabase track it maps (edge functions, Postgres, Realtime, supabase-js and supabase-swift) and the TypeScript server are deleted.
+The backend is c_base: C on AWS Lambda, DynamoDB and an API Gateway WebSocket at api.foolish.cards, with a binary <code>/v1</code> surface that the kernel's own client (<code>c/src/netclient.h</code>) speaks.
+The web is a static export on S3 + CloudFront.
+The current design is <code>c_base/DESIGN.md</code> at the repository root.</div>
+
 <nav class="toc" aria-label="Contents">
   <ol>
     <li><a href="#doctrine">The doctrine — one kernel, four layers</a></li>

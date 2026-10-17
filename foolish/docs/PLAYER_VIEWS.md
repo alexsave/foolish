@@ -1,5 +1,11 @@
 # `player_views` — a server-written, client-read personalized view cache
 
+> **Since then (2026-10-17).** The Supabase backend (edge functions, Postgres, Realtime, supabase-js and supabase-swift) and the TypeScript server are deleted.
+> The backend is c_base: C on AWS Lambda, DynamoDB and an API Gateway WebSocket, with a binary `/v1` surface that the kernel's own client speaks.
+> The web is a static export on S3 + CloudFront.
+> The `player_views` table is gone with Postgres: c_base computes each seat's masked view from the stored row on demand and never stores one (`c_base/DESIGN.md`); the masking itself is still `c/src/view.c`.
+> See [`c_base/DESIGN.md`](../../c_base/DESIGN.md); what follows is kept as it was written.
+
 ## What this is
 
 `player_views` stores each player's **already-masked** view of each game,

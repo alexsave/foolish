@@ -8,6 +8,7 @@
 > Swift reads the packed wire, and `fio_anim_plan_json` is deleted.
 > The module map in §4/§16.A4 also names `FoolishKit/Engine/` and
 > `FoolishKit/Net/`, which are now `sdk/swift/` and `ios/FoolishNet/`.
+> Its backend sections (supabase-swift, edge functions, Realtime) describe a server deleted on 2026-10-17; the app now reaches c_base through the kernel's client (`c/src/netclient.h`, `c_base/DESIGN.md`).
 
 *A zero-context, implementation-ready design for a proper, App-Store-approved
 native iOS app: a port of foolish.cards with a cleaned-up, opinionated visual
