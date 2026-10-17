@@ -115,11 +115,14 @@ async function send(r: NetRequest): Promise<{ status: number; body: Uint8Array }
 async function call(which: number, a?: string | Uint8Array, b?: string | Uint8Array, n = 0): Promise<{ status: number; body: Uint8Array }> {
     await ready();
     sessionUser();
-    for (let i = 0; i < 3; i++) {
+    for (let refreshes = 0, busy = 0; refreshes < 3;) {
         const r = netClient().req(which, a, b, n);
         if (!r) throw new BackendError(N.ASK_WHY_AUTH, 0, 0);
         const answer = await send(r);
+        const wait = netClient().retryMs(r.method, busy, answer.status, answer.body);
+        if (wait > 0) { busy++; await new Promise((ok) => setTimeout(ok, wait)); continue; }
         if (!r.isRefresh) return answer;
+        refreshes++;
         const why = netClient().readSession(answer.status, answer.body);
         keepSession();
         if (why !== 0) throw BackendError.last();

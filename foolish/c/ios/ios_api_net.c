@@ -14,6 +14,7 @@ int fio_net_session_save(uint8_t *out, int cap) { return nc_session_save(out, ca
 const void *fio_net_session_info(void) { return nc_session_info(); }
 int fio_net_session_read(int status, const uint8_t *body, int len) { return nc_session_read(status, body, len); }
 const void *fio_net_error(void) { return nc_error(); }
+int fio_net_retry_ms(int method, int attempt, int status, const uint8_t *body, int len) { return nc_retry_ms(method, attempt, status, body, len); }
 int fio_net_status_read(int status, const uint8_t *body, int len) { return nc_status_read(status, body, len); }
 const void *fio_net_action_read(int status, const uint8_t *body, int len) { return nc_action_read(status, body, len); }
 const void *fio_net_view_read(int status, const uint8_t *body, int len) { return nc_view_read(status, body, len); }

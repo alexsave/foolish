@@ -1074,7 +1074,7 @@ WASM_TABLE_EXPORTS := \
 WASM_NET_EXPORTS := \
   -Wl,--export=wasm_net_inbox -Wl,--export=wasm_net_reset -Wl,--export=wasm_net_session_load -Wl,--export=wasm_net_session_save \
   -Wl,--export=wasm_net_session_info -Wl,--export=wasm_net_session_read -Wl,--export=wasm_net_error \
-  -Wl,--export=wasm_net_req -Wl,--export=wasm_net_status_read -Wl,--export=wasm_net_action_read \
+  -Wl,--export=wasm_net_req -Wl,--export=wasm_net_retry_ms -Wl,--export=wasm_net_status_read -Wl,--export=wasm_net_action_read \
   -Wl,--export=wasm_net_view_read -Wl,--export=wasm_net_replay_read -Wl,--export=wasm_net_list_read \
   -Wl,--export=wasm_net_row -Wl,--export=wasm_net_history_head -Wl,--export=wasm_net_stream_sub \
   -Wl,--export=wasm_net_stream_unsub -Wl,--export=wasm_net_stream_opened -Wl,--export=wasm_net_stream_closed \

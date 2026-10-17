@@ -77,6 +77,11 @@ public enum NetClient {
 
     // MARK: answers
 
+    /// A busy server's answer to a read: the ms to wait before sending it again, or 0 (nc_retry_ms).
+    public static func retryMs(_ method: Int, _ attempt: Int, _ status: Int, _ body: Data) -> Int {
+        Int(bytes(body) { fio_net_retry_ms(Int32(method), Int32(attempt), Int32(status), $0, $1) })
+    }
+
     /// 0 for an accepted request, else the refusal's why (error says more).
     public static func status(_ status: Int, _ body: Data) -> Int {
         Int(bytes(body) { fio_net_status_read(Int32(status), $0, $1) })

@@ -62,6 +62,7 @@ const NcRequest *wasm_net_req(int which, int a_len, int b_len, double n, double 
 }
 
 // inbox = [body] for each answer below.
+int wasm_net_retry_ms(int method, int attempt, int status, int len) { return nc_retry_ms(method, attempt, status, io_of(len), io_of(len) ? len : 0); }
 int wasm_net_status_read(int status, int len) { return nc_status_read(status, io_of(len), io_of(len) ? len : 0); }
 const NcAction *wasm_net_action_read(int status, int len) { return nc_action_read(status, io_of(len), io_of(len) ? len : 0); }
 const NcGameRow *wasm_net_view_read(int status, int len) { return nc_view_read(status, io_of(len), io_of(len) ? len : 0); }
