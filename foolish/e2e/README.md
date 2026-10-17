@@ -104,10 +104,17 @@ Seeding narrows nothing: the trial counts are what they were.
 
 | file | asserts |
 | --- | --- |
-| `wasm_engine.test.ts`, `wasm_kernel_fuzz.test.ts` | the C rules kernel: deck sizes, card conservation through full games, hostile inputs refused |
-| `cover.test.ts`, `rearrange.test.ts`, `fuzz.test.ts`, `pass_parity.test.ts` | handpicked table_act cases on kernel-built boards: covers, rearranges, forged and duplicate attacks, pass legality agreed by the kernel, the table and the client |
+| `wasm_kernel_fuzz.test.ts` | hostile bytes at the wasm module's doors: no trap, no hang, no corruption of the flat linear memory |
+| `pass_parity.test.ts` | pass legality agreed by the kernel, the table and the client's Pass button |
 | `client.test.ts`, `client_*.test.ts` | the client's reconciliation, gates and rendered hand |
 | `replay_*.test.ts` | the replay codec round-trips byte-exact, its extras, frames and links |
 | `realtime_*.test.ts`, `lobby_*.test.ts`, `ui_*.test.ts` | the real page in jsdom on the backend seam: feeds and seating, spectators, the lobby's bot picker and rules box, DOM snapshots and the animation trace |
 | `bot_roster_parity.test.ts` | the kernel's roster, the shipped module's dump and c_base's seeded bots agree |
 | `security_client_boundary.test.ts` | nothing the browser loads can reach an unmasked game |
+
+## What is not here, and where it went
+
+A test whose every assertion is a question to the kernel belongs beside the kernel.
+The table's moves on composed boards, the doors' refusals of impossible boards, the deck sizes and card conservation, and the cover resolver's fuzz were TypeScript files here that sealed a board over bots.wasm and asked `table_act` about it.
+They are `c/tests/tests.c` now (`test_table_act_each_kind_of_move`, `test_table_act_refuses_forged_and_duplicate_attacks`, `test_table_cover_double_tap`, `test_table_deals_the_deck_and_random_games_conserve_it`, `test_unambiguous_cover_fuzz`, `test_table_load_refuses_a_board_it_could_not_have_made`), where they cost a fraction of a second and run under ASan.
+What stays here is what C cannot see: the wasm crossing itself, a property of one wasm link (the shipped module's linked brains, its scratch overlays, its instance history), and the TypeScript and the page that read the kernel.

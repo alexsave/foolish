@@ -20,8 +20,9 @@
  * The other half this file held - that the Oracle's memory of a v6 replay
  * DRAW-masks, so a replay never leaks a drawn card a live game would hide - read
  * the memory's log wire byte by byte in TS. It lives where that wire is written
- * now: e2e/oracle_input.test.ts reads every memory the kernel builds for played
- * games and holds every draw in it hidden.
+ * now: c/tests/tests.c test_replay_step_memory_is_the_public_log_before_the_move
+ * reads every memory the kernel builds for played games and holds every draw in
+ * it hidden.
  * ========================================================================== */
 
 import { test } from 'node:test';

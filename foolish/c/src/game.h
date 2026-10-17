@@ -431,7 +431,8 @@ extern _Thread_local int engine_last_reject;
 // Returns GAME_VALID (0) or one negative GAME_INVALID_* reason. The numbers are
 // the wire to every host's message table (they reach these through the
 // generated constants, sdk/ts/gen/game_layout.bots.ts) - append, never
-// renumber. e2e/kernel_state_validation.test.ts pins one case per family.
+// renumber. c/tests/tests.c test_table_load_refuses_a_board_it_could_not_have_made
+// pins one case per family at both doors.
 #define GAME_VALID                     0
 #define GAME_INVALID_COUNT            (-1)  // a count on the wire exceeded its capacity
 #define GAME_INVALID_STATUS           (-2)  // Game.status is not a GAME_STATUS_*

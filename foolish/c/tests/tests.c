@@ -2867,7 +2867,7 @@ static void test_replay_step_index_refuses_a_small_buffer(void) {
 // whole input path: "the board this seat decided on" and "what it knew before
 // the move". They are exported through c/wasm/wasm_bots_api.c and consumed by
 // src/oracle/replayOracleInput.ts, and until this file they were driven ONLY
-// from TypeScript (e2e/oracle_input.test.ts) - so a kernel-side break in the
+// from TypeScript (e2e/oracle_input.test.ts, since deleted) - so a kernel-side break in the
 // Oracle's input reached the web suite three languages away before it reached
 // the suite that sits next to the code. Their sibling replay_steps_count_v6 has
 // eleven call sites here; these two had none.
@@ -16473,6 +16473,514 @@ static void test_hand_layout_is_rows_and_slots_in_one_value(void) {
     CHECK(hand_layout(&HAND_IOS, -1, 390, &l) == HAND_EBADARG, "hand_layout refuses a negative count");
 }
 
+// ---- composed boards: a board a test writes, sealed by the kernel ----
+//
+// The native side of e2e/helpers/table_fixture.ts. The cases below used to be
+// TypeScript files that composed a board through the generated setters, sealed
+// it over bots.wasm and asked table_act about it: every assertion was a
+// question to C, asked from a node process that paid a module load to ask it.
+// They live here now, beside the code they ask. Seats are "id-0", "id-1", ...
+// as everywhere else in this section.
+typedef struct {
+    int np, status, suit, attacker, defender, discard;
+    const char *hand[MAX_PLAYERS];   // card text, NULL for an empty hand
+    const char *table;               // battle text, "7s" or "7s/9s"
+    const char *deck, *trump;        // NULL for none
+} FxBoard;
+
+static int fx_list(const char *s, Card *out, Card *covers, int cap) {
+    if (!s) return 0;
+    const int n = card_list_parse(s, (int)strlen(s), out, covers, cap);
+    if (n < 0) { fprintf(stderr, "  fixture: '%s' is not card text (%d)\n", s, n); CHECK(0, "fixture card text parses"); return 0; }
+    return n;
+}
+
+// Composes `b` into tb_src, seals it into tb (loaded) and keeps the row in
+// tb_state / tb_roster. table_seal's answer: the state length, or its refusal.
+static int fx_seal(const FxBoard *b) {
+    Roster r;
+    char id[8];
+    memset(&r, 0, sizeof(r));
+    roster_set_title(&r, RS("Table"));
+    for (int i = 0; i < b->np; i++) {
+        snprintf(id, sizeof(id), "id-%d", i);
+        roster_seat_add(&r, id, (int)strlen(id), id, (int)strlen(id), "", 0);
+    }
+    memset(&tb_src, 0, sizeof(tb_src));
+    game_reset_to_lobby(&tb_src, 0);
+    tb_src.status = (int8_t)b->status;
+    tb_src.num_players = (int8_t)b->np;
+    tb_src.power_suit = (int8_t)b->suit;
+    if (b->trump) {
+        Card t;
+        CHECK(card_parse(b->trump, (int)strlen(b->trump), &t) == 0, "fixture trump parses");
+        tb_src.has_flipped = true;
+        tb_src.flipped = t;
+        tb_src.power_suit = t.suit;
+    }
+    if (b->status != GAME_STATUS_WAITING) {
+        tb_src.first_attacker = (int8_t)b->attacker;
+        tb_src.defender = (int8_t)b->defender;
+    }
+    tb_src.discard_pile_length = (int16_t)b->discard;
+    tb_src.deck_count = (int16_t)fx_list(b->deck, tb_src.deck, NULL, MAX_DECK);
+    Card atk[MAX_BATTLES], cov[MAX_BATTLES];
+    tb_src.num_battles = (int8_t)fx_list(b->table, atk, cov, MAX_BATTLES);
+    for (int i = 0; i < tb_src.num_battles; i++) {
+        tb_src.table_battles[i].attack = atk[i];
+        tb_src.table_battles[i].defense = cov[i];
+    }
+    for (int s = 0; s < b->np; s++) {
+        Player *p = &tb_src.players[s];
+        p->status = b->status == GAME_STATUS_PLAYING ? PLAYER_STATUS_IN : PLAYER_STATUS_IDLE;
+        p->hand_count = (int8_t)fx_list(b->hand[s], p->hand, NULL, MAX_HAND_SIZE);
+    }
+    table_init(&tb, &tb_game, &tb_snaps);
+    const int n = table_seal(&tb, &tb_src, &r, tb_buf, (int)sizeof(tb_buf));
+    if (n > 0) {
+        memcpy(tb_state, tb_buf, (size_t)n);
+        tb_state_len = n;
+        memcpy(tb_roster, tb_buf + n, ROSTER_BYTES);
+    }
+    return n;
+}
+
+// Reloads the sealed row: every case below asks about a fresh copy of it.
+static void fx_reload(void) {
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK, "the sealed row loads");
+}
+
+// A move as card text: `cards` and, for a cover, the attacks it pairs with.
+static int fx_wire(int kind, const char *cards, const char *attacks, uint8_t *w) {
+    AwireAction a;
+    memset(&a, 0, sizeof(a));
+    a.kind = kind;
+    a.n = fx_list(cards, a.cards, NULL, AWIRE_MAX_CARDS);
+    if (kind == AWIRE_COVER) CHECK(fx_list(attacks, a.attacks, NULL, AWIRE_MAX_CARDS) == a.n, "the cover pairs each card");
+    return awire_encode(&a, w, 64);
+}
+
+// table_act for seat `seat`'s id.
+static int fx_act(int seat, const uint8_t *w, int wl) {
+    char id[8];
+    snprintf(id, sizeof(id), "id-%d", seat);
+    return table_act(&tb, id, (int)strlen(id), w, wl, -1, 0);
+}
+
+static int fx_holds(int seat, const char *card) {
+    Card c;
+    if (card_parse(card, (int)strlen(card), &c) != 0) return 0;
+    for (int i = 0; i < tb_game.players[seat].hand_count; i++)
+        if (card_eq(tb_game.players[seat].hand[i], c)) return 1;
+    return 0;
+}
+
+static int fx_uncovered(void) {
+    int n = 0;
+    for (int i = 0; i < tb_game.num_battles; i++) n += card_is_none(tb_game.table_battles[i].defense);
+    return n;
+}
+
+// The move is refused with `rc` (and, for a rejection, the engine's `reject`),
+// and the loaded board is exactly as it was loaded.
+#define FX_REFUSED(seat_, w_, wl_, rc_want, why, msg) do { \
+        TB_SNAPSHOT(); const int rc_ = fx_act((seat_), (w_), (wl_)); \
+        if (rc_ != (rc_want)) fprintf(stderr, "  %s: got %d, want %d\n", msg, rc_, rc_want); \
+        CHECK(rc_ == (rc_want), msg); \
+        if ((why) >= 0) CHECK(tb.reject == (why), msg " (the engine's reason)"); \
+        CHECK(tb_same_table(&tb, &tb_before, &tb_r_before), msg " (nothing moved)"); } while (0)
+
+// Each kind of move on a composed two-seat board, diamonds trump, seat 0
+// attacking and seat 1 defending: what applies, what is refused and why, and
+// that every move on a finished game is moot. Was e2e/action_handlers.test.ts.
+static void test_table_act_each_kind_of_move(void) {
+    uint8_t w[64];
+    int wl;
+    FxBoard b = { .np = 2, .status = GAME_STATUS_PLAYING, .suit = SUIT_DIAMONDS, .attacker = 0, .defender = 1 };
+
+    // attack
+    b.hand[0] = "6s 7s 8h"; b.hand[1] = "9c Tc"; b.table = NULL;
+    CHECK(fx_seal(&b) > 0, "attack: the board seals");
+    wl = fx_wire(AWIRE_ATTACK, "6s", NULL, w);
+    CHECK(fx_act(0, w, wl) == TABLE_APPLIED && tb_game.num_battles == 1
+          && card_eq(tb_game.table_battles[0].attack, (Card){ SUIT_SPADES, 5 })
+          && tb_game.players[0].hand_count == 2 && !fx_holds(0, "6s"),
+          "attack: a legal opener lands the card it names, out of the hand");
+    fx_reload();
+    wl = fx_wire(AWIRE_ATTACK, "", NULL, w);
+    FX_REFUSED(0, w, wl, TABLE_REJECTED, ENGINE_REJECT_EMPTY, "attack: an empty attack");
+    const uint8_t truncated[3] = { AWIRE_ATTACK, 2, 7 };
+    FX_REFUSED(0, truncated, 3, TABLE_E_WIRE, -1, "attack: a truncated attack wire");
+    b.status = GAME_STATUS_GAME_OVER;
+    CHECK(fx_seal(&b) > 0, "attack: the finished board seals");
+    wl = fx_wire(AWIRE_ATTACK, "6s", NULL, w);
+    FX_REFUSED(0, w, wl, TABLE_MOOT, -1, "attack: on a finished game");
+    b.status = GAME_STATUS_PLAYING;
+
+    // cover: one uncovered 7 of spades; the defender holds the 9 of spades and a 7 of clubs
+    b.hand[0] = "6s 7s 9s Js Qs Ks"; b.hand[1] = "Ts 8c"; b.table = "8s";
+    CHECK(fx_seal(&b) > 0, "cover: the board seals");
+    wl = fx_wire(AWIRE_COVER, "Ts", "8s", w);
+    CHECK(fx_act(1, w, wl) == TABLE_APPLIED && fx_uncovered() == 0, "cover: a legal cover covers the attack");
+    fx_reload();
+    wl = fx_wire(AWIRE_COVER, "8c", "8s", w);
+    FX_REFUSED(1, w, wl, TABLE_REJECTED, ENGINE_REJECT_CANNOT_COVER, "cover: an off-suit card of the same rank");
+    b.status = GAME_STATUS_GAME_OVER;
+    CHECK(fx_seal(&b) > 0, "cover: the finished board seals");
+    wl = fx_wire(AWIRE_COVER, "Ts", "8s", w);
+    FX_REFUSED(1, w, wl, TABLE_MOOT, -1, "cover: on a finished game");
+    CHECK(fx_uncovered() == 1, "cover: the finished game is left uncovered");
+    b.status = GAME_STATUS_PLAYING;
+
+    // pass: the defender holds an 8 to pass; the next seat has room
+    b.hand[0] = "6s 7s 9s Ts Js Qs"; b.hand[1] = "8c"; b.table = "8s";
+    CHECK(fx_seal(&b) > 0, "pass: the board seals");
+    wl = fx_wire(AWIRE_PASS, "8c", NULL, w);
+    CHECK(fx_act(1, w, wl) == TABLE_APPLIED && tb_game.defender == 0, "pass: hands the defence to the next seat");
+    fx_reload();
+    wl = fx_wire(AWIRE_PASS, "", NULL, w);
+    FX_REFUSED(1, w, wl, TABLE_REJECTED, ENGINE_REJECT_EMPTY, "pass: an empty pass");
+    b.status = GAME_STATUS_GAME_OVER;
+    CHECK(fx_seal(&b) > 0, "pass: the finished board seals");
+    wl = fx_wire(AWIRE_PASS, "8c", NULL, w);
+    FX_REFUSED(1, w, wl, TABLE_MOOT, -1, "pass: on a finished game");
+    CHECK(tb_game.defender == 1, "pass: the finished game keeps its defender");
+    b.status = GAME_STATUS_PLAYING;
+
+    // pickup
+    b.hand[0] = "6s 7s 9s Js Qs Ks"; b.hand[1] = "8c"; b.table = "8s";
+    CHECK(fx_seal(&b) > 0, "pickup: the board seals");
+    wl = fx_wire(AWIRE_PICKUP, NULL, NULL, w);
+    FX_REFUSED(0, w, wl, TABLE_REJECTED, ENGINE_REJECT_NOT_DEFENDER, "pickup: by the attacker");
+    CHECK(fx_act(1, w, wl) == TABLE_APPLIED && tb_game.num_battles == 0 && fx_holds(1, "8s"),
+          "pickup: the defender takes the table into their hand");
+
+    // good: a covered table is discarded when the attacker says good
+    b.hand[0] = "6s 7s 9s Js Qs Ks"; b.hand[1] = "9c Tc Jc Qc Kc 6h"; b.table = "8s/Ts";
+    CHECK(fx_seal(&b) > 0, "good: the board seals");
+    wl = fx_wire(AWIRE_GOOD, NULL, NULL, w);
+    CHECK(fx_act(0, w, wl) == TABLE_APPLIED && tb_game.num_battles == 0 && tb_game.discard_pile_length == 2,
+          "good: both cards of the covered table go to the discard pile");
+    b.status = GAME_STATUS_GAME_OVER;
+    CHECK(fx_seal(&b) > 0, "good: the finished board seals");
+    FX_REFUSED(0, w, wl, TABLE_MOOT, -1, "good: on a finished game");
+    CHECK(tb_game.num_battles == 1, "good: the finished game keeps its table");
+}
+
+// The always-reject invariants of an attack, on a composed board and on a dealt
+// one: a forged card, an identical duplicate and a non-member are refused for
+// their reason and move nothing. Was e2e/fuzz.test.ts and the hostile-move case
+// of e2e/wasm_engine.test.ts.
+static void test_table_act_refuses_forged_and_duplicate_attacks(void) {
+    uint8_t w[64];
+    FxBoard b = { .np = 2, .status = GAME_STATUS_PLAYING, .suit = SUIT_SPADES, .attacker = 0, .defender = 1,
+                  .hand = { "6c 6d 8h", "Ks" }, .discard = 32 };
+    CHECK(fx_seal(&b) > 0, "the board seals");
+    int wl = fx_wire(AWIRE_ATTACK, "Th", NULL, w);
+    FX_REFUSED(0, w, wl, TABLE_REJECTED, ENGINE_REJECT_NOT_IN_HAND, "a card the attacker does not hold");
+    const uint8_t dup[4] = { AWIRE_ATTACK, 2, wire_from_card(tb_game.players[0].hand[0]), wire_from_card(tb_game.players[0].hand[0]) };
+    FX_REFUSED(0, dup, 4, TABLE_REJECTED, ENGINE_REJECT_DUPLICATES, "the same card twice");
+    CHECK(tb_game.players[0].hand_count == 3, "the hand is never duplicated into");
+    wl = fx_wire(AWIRE_ATTACK, "6c", NULL, w);
+    TB_REFUSED(table_act(&tb, RS("ghost"), w, wl, -1, 0), TABLE_E_NOT_SEATED, "a player who is not in the game");
+
+    // The same on a dealt board, where the refusal must also leave the row the
+    // commit writes exactly the row that was loaded.
+    tb_fixture(3, 0, 4242);
+    table_init(&tb, &tb_game, &tb_snaps);
+    TableCommit c;
+    fx_reload();
+    const int n0 = table_commit_products(&tb, RS("g"), 2, 0, &c, tb_arena, sizeof(tb_arena));
+    const int len0 = c.state.len;
+    CHECK(n0 > 0 && len0 > 0 && len0 <= (int)sizeof(tb_state2), "dealt: an untouched row commits");
+    memcpy(tb_state2, tb_arena + c.state.off, (size_t)len0);
+    fx_reload();
+    const int fa = tb_game.first_attacker;
+    const Card mine = tb_game.players[fa].hand[0];
+    const Card not_mine = tb_game.players[(fa + 2) % 3].hand[0];
+    const uint8_t forged[3] = { AWIRE_ATTACK, 1, wire_from_card(not_mine) };
+    const uint8_t twice[4] = { AWIRE_ATTACK, 2, wire_from_card(mine), wire_from_card(mine) };
+    const uint8_t honest[3] = { AWIRE_ATTACK, 1, wire_from_card(mine) };
+    const uint8_t bad[2] = { AWIRE_ATTACK, 0xee };
+    FX_REFUSED(fa, forged, 3, TABLE_REJECTED, ENGINE_REJECT_NOT_IN_HAND, "dealt: a forged card");
+    FX_REFUSED(fa, twice, 4, TABLE_REJECTED, ENGINE_REJECT_DUPLICATES, "dealt: a duplicate");
+    FX_REFUSED(fa, bad, 2, TABLE_E_WIRE, -1, "dealt: a malformed payload");
+    const int n = table_commit_products(&tb, RS("g"), 2, 0, &c, tb_arena, sizeof(tb_arena));
+    CHECK(n > 0 && c.state.len == len0 && memcmp(tb_arena + c.state.off, tb_state2, (size_t)len0) == 0,
+          "dealt: after the refusals the commit writes the row an untouched load writes");
+    CHECK(fx_act(fa, honest, 3) == TABLE_APPLIED, "dealt: and the honest attack applies");
+}
+
+// Double-tapping a cover: two uncovered sixes, spades trump; the second tap
+// names the six that is already covered and is a refusal the client can show,
+// never a server error. Was e2e/cover.test.ts.
+static void test_table_cover_double_tap(void) {
+    uint8_t w[64];
+    FxBoard b = { .np = 2, .status = GAME_STATUS_PLAYING, .suit = SUIT_SPADES, .attacker = 0, .defender = 1,
+                  .hand = { "6c 6d 7c 7d", "7s 8s" }, .table = "6s 6h" };
+    CHECK(fx_seal(&b) > 0, "the board seals");
+    int wl = fx_wire(AWIRE_COVER, "7s", "6s", w);
+    CHECK(fx_act(1, w, wl) == TABLE_APPLIED, "cover the 6 of spades");
+    wl = fx_wire(AWIRE_COVER, "8s", "6s", w);
+    FX_REFUSED(1, w, wl, TABLE_REJECTED, ENGINE_REJECT_ATTACK_NOT_ON_TABLE, "the covered 6 of spades again");
+    wl = fx_wire(AWIRE_COVER, "8s", "6h", w);
+    CHECK(fx_act(1, w, wl) == TABLE_APPLIED && fx_uncovered() == 0, "the still-uncovered 6 of hearts can be covered");
+}
+
+static int tb_cards_on_board(const Game *g) {
+    int n = g->deck_count + (g->has_flipped ? 1 : 0) + g->discard_pile_length;
+    for (int s = 0; s < g->num_players; s++) n += g->players[s].hand_count;
+    for (int i = 0; i < g->num_battles; i++) n += 1 + !card_is_none(g->table_battles[i].defense);
+    return n;
+}
+
+// The table deals the settled deck at every width (2..5 seats 36 cards, 6+ 52,
+// never an ace face up), and random bots-only games through the server's cycle
+// conserve every card at every commit and end with one fool. Random play can
+// reach a legal cycle that never ends, so a finishing game is drawn by retry,
+// not by a longer cap. Was e2e/wasm_engine.test.ts.
+static void test_table_deals_the_deck_and_random_games_conserve_it(void) {
+    static TbRow row;
+    uint8_t seed[FOOLISH_SEED_LEN];
+    char hex[2 * FOOLISH_SEED_LEN + 1];
+    table_init(&tb, &tb_game, &tb_snaps);
+    for (int np = 2; np <= 8; np++) {
+        const int want = np >= 6 ? 52 : 36;
+        for (int s = 0; s < 4; s++) {
+            for (int i = 0; i < FOOLISH_SEED_LEN; i++) seed[i] = (uint8_t)(np * 31 + (900 + s) * 7 + i);
+            CHECK(tb_row_deal(&row, &tb, np, "random", seed), "a seeded random table deals");
+            CHECK(table_load(&tb, row.state, row.state_len, row.roster, ROSTER_BYTES) == TABLE_OK, "the dealt row loads");
+            CHECK(tb_cards_on_board(&tb_game) == want, np >= 6 ? "6+ seats deal 52 cards" : "2..5 seats deal 36 cards");
+            CHECK(!tb_game.has_flipped || tb_game.flipped.value != ACE_VALUE, "the face-up trump is never an ace");
+        }
+        int finished = 0;
+        for (int attempt = 0; attempt < 12 && !finished; attempt++) {
+            for (int i = 0; i < FOOLISH_SEED_LEN; i++) seed[i] = (uint8_t)(np * 17 + attempt * 131 + 7 + i);
+            tb_seed_hex_of(seed, hex);
+            CHECK(tb_row_deal(&row, &tb, np, "random", seed), "a seeded random table deals");
+            int conserved = 1;
+            uint32_t h = 0;
+            for (int step = 0; step < 3000 && row.status == GAME_STATUS_PLAYING; step++) {
+                if (tb_row_cycle(&row, &tb, hex, &h) <= 0) { conserved = 0; break; }
+                if (table_load(&tb, row.state, row.state_len, row.roster, ROSTER_BYTES) != TABLE_OK
+                    || tb_cards_on_board(&tb_game) != want) { conserved = 0; break; }
+            }
+            CHECK(conserved, "a bot moves at every cycle of a playing game, and every commit holds every card");
+            if (row.status == GAME_STATUS_GAME_OVER) {
+                finished = 1;
+                CHECK(table_load(&tb, row.state, row.state_len, row.roster, ROSTER_BYTES) == TABLE_OK, "the finished row loads");
+                int fool_out = 0;
+                for (int i = 0; i < tb_game.num_eliminated; i++) fool_out |= tb_game.elimination_order[i] == row.fool;
+                CHECK(tb_game.num_eliminated == np - 1 && row.fool >= 0 && !fool_out, "everyone but the fool got out");
+            }
+        }
+        CHECK(finished, "a random game of every width finishes within 12 deals");
+    }
+}
+
+// Every cover unambiguous_cover accepts is legal and the only one: fuzzed
+// against a brute-force oracle written here, which counts the distinct sets of
+// attacks some full pairing of the selection could cover. One set is an accept,
+// anything else a refusal; an accepted pairing covers each attack it names with
+// its card, names only uncovered attacks and none twice. The tests above pin
+// hand-picked shapes; this is the fuzz. Was e2e/unambiguous_cover.test.ts.
+typedef struct { Card cover[3], unc[3]; int nc, nu, trump, sets; uint8_t seen[8]; } UcOracle;
+
+static void ucf_recurse(UcOracle *o, int depth, uint8_t used) {
+    if (depth == o->nc) {
+        for (int i = 0; i < o->sets; i++) if (o->seen[i] == used) return;
+        o->seen[o->sets++] = used;
+        return;
+    }
+    for (int j = 0; j < o->nu; j++) {
+        if (((used >> j) & 1u) || !can_cover(o->unc[j], o->cover[depth], o->trump)) continue;
+        ucf_recurse(o, depth + 1, (uint8_t)(used | (1u << j)));
+    }
+}
+
+static void test_unambiguous_cover_fuzz(void) {
+    uint32_t r = 0x1234abcdu;
+#define UC_RI(n) ((int)((r = r * 1664525u + 1013904223u) >> 8) % (n))
+    int accepts = 0, refusals = 0, wrong = 0, illegal = 0;
+    for (int it = 0; it < 4000; it++) {
+        // A narrow rank band so cards share ranks and suits and one card can
+        // often cover two attacks; distinct cards, as a real deck holds.
+        Card pool[24];
+        int np = 0;
+        for (int s = 0; s < 4; s++) for (int v = 6; v <= 11; v++) pool[np++] = (Card){ (int8_t)s, (int8_t)v };
+        for (int i = np - 1; i > 0; i--) { const int j = UC_RI(i + 1); const Card t = pool[i]; pool[i] = pool[j]; pool[j] = t; }
+        int p = 0;
+        UcOracle o;
+        memset(&o, 0, sizeof(o));
+        o.trump = UC_RI(4);
+        Battle battles[3];
+        const int nb = 1 + UC_RI(3);
+        for (int i = 0; i < nb; i++) {
+            battles[i].attack = pool[p++];
+            battles[i].defense = UC_RI(10) < 4 ? pool[p++] : CARD_NONE;
+            if (card_is_none(battles[i].defense)) o.unc[o.nu++] = battles[i].attack;
+        }
+        o.nc = 1 + UC_RI(3);
+        for (int i = 0; i < o.nc; i++) o.cover[i] = pool[p++];
+        if (o.nc <= o.nu) ucf_recurse(&o, 0, 0);
+
+        Card out[3];
+        const int k = unambiguous_cover(o.cover, o.nc, battles, nb, o.trump, out);
+        const int accepted = k > 0;
+        if (accepted != (o.sets == 1)) { wrong++; continue; }
+        if (!accepted) { refusals++; continue; }
+        accepts++;
+        uint8_t used = 0;
+        for (int j = 0; j < o.nc; j++) {
+            int at = -1;
+            for (int u = 0; u < o.nu; u++) if (card_eq(o.unc[u], out[j])) at = u;
+            if (at < 0 || ((used >> at) & 1u) || !can_cover(out[j], o.cover[j], o.trump)) illegal++;
+            if (at >= 0) used |= (uint8_t)(1u << at);
+        }
+    }
+#undef UC_RI
+    CHECK(wrong == 0, "the resolver accepts exactly the selections with one achievable covered set");
+    CHECK(illegal == 0, "every accepted pairing covers each named attack with its card, once");
+    CHECK(accepts > 100 && refusals > 100, "the fuzz exercises both outcomes");
+}
+
+// ---- the doors refuse a board the kernel could never have produced ----
+//
+// Every game enters the kernel as bytes: the server's table_load of a stored row,
+// and a client's or a probe's board through the masked importer (state_import
+// masked, wasm_import_state(1)). Each case takes a real dealt four-seat table,
+// writes ONE impossible value onto its board, has the kernel serialize that
+// board, and hands the bytes back through the door: refused for the named
+// reason, the refused table not played on, and the board resident before still
+// resident after. Was e2e/kernel_state_validation.test.ts; the value checks
+// themselves are game_validate's and test_state_import_rejects_invalid_values's.
+typedef void (*KsPoison)(Game *g);
+static void ks_def(Game *g)      { g->defender = 4; }
+static void ks_fa(Game *g)       { g->first_attacker = 9; }
+static void ks_elim(Game *g)     { g->elimination_order[0] = 6; g->num_eliminated = 1; }
+static void ks_good(Game *g)     { g->good_players_mask = 1u << 6; }
+static void ks_status(Game *g)   { g->status = 9; }
+static void ks_pstatus(Game *g)  { g->players[2].status = 77; }
+static void ks_card(Game *g)     { g->players[1].hand[0] = (Card){ 3, 15 }; }
+static void ks_deck(Game *g)     { g->deck[0] = (Card){ 2, 0 }; }
+static void ks_dup(Game *g)      { g->players[1].hand[0] = g->players[0].hand[1]; }
+static void ks_flipped(Game *g)  { g->power_suit = (int8_t)((g->power_suit + 1) % 4); }
+static void ks_lobby(Game *g)    { g->status = GAME_STATUS_WAITING; }
+static const struct { const char *name; int reason, masked; KsPoison poison; } KS_FAMILIES[] = {
+    { "a defender seat past the table",                 GAME_INVALID_SEAT,            1, ks_def },
+    { "a first attacker seat past the table",           GAME_INVALID_SEAT,            1, ks_fa },
+    { "an eliminated seat that is not seated",          GAME_INVALID_ELIMINATION,     1, ks_elim },
+    { "a good bit for a seat that does not exist",      GAME_INVALID_GOOD_MASK,       1, ks_good },
+    { "a game status outside the enum",                 GAME_INVALID_STATUS,          1, ks_status },
+    { "a player status outside the enum",               GAME_INVALID_PLAYER_STATUS,   1, ks_pstatus },
+    { "a card that is not a card",                      GAME_INVALID_CARD,            1, ks_card },
+    // A masked board carries the stock as a count, and hidden cards are not compared.
+    { "a deck card that is not a card",                 GAME_INVALID_CARD,            0, ks_deck },
+    { "one card in two hands",                          GAME_INVALID_DUPLICATE_CARD,  0, ks_dup },
+    { "a face-up trump of another suit than the power", GAME_INVALID_FLIPPED,         1, ks_flipped },
+    { "cards held under a WAITING status",              GAME_INVALID_LOBBY_CARDS,     1, ks_lobby },
+};
+
+// A dealt four-seat row (table_ready on a lobby of one human and three ready
+// seats) into tb_state / tb_roster, loaded on tb.
+static void ks_dealt(uint8_t seed_byte) {
+    static TbRow row;
+    uint8_t seed[FOOLISH_SEED_LEN];
+    memset(seed, seed_byte, sizeof(seed));
+    table_init(&tb, &tb_game, &tb_snaps);
+    CHECK(tb_row_deal(&row, &tb, 4, "random", seed), "a four-seat table deals");
+    memcpy(tb_state, row.state, (size_t)row.state_len);
+    tb_state_len = row.state_len;
+    memcpy(tb_roster, row.roster, ROSTER_BYTES);
+    fx_reload();
+}
+
+static void test_table_load_refuses_a_board_it_could_not_have_made(void) {
+    static uint8_t bad[8192], resident[8192], now[8192];
+    static Game held;
+    uint8_t w[8];
+    char fa_id[8];
+    for (size_t f = 0; f < sizeof(KS_FAMILIES) / sizeof(KS_FAMILIES[0]); f++) {
+        char what[160];
+        ks_dealt(7);
+        const int wl = tb_attack_wire(&tb_game, w);
+        snprintf(fa_id, sizeof(fa_id), "id-%d", tb_game.first_attacker);
+        KS_FAMILIES[f].poison(&tb_game);
+        const int bl = tb_blob(&tb_game, bad);
+
+        // The server's door.
+        table_init(&tb, &tb_game, &tb_snaps);
+        const int rc = table_load(&tb, bad, bl, tb_roster, ROSTER_BYTES);
+        snprintf(what, sizeof(what), "table_load refuses %s", KS_FAMILIES[f].name);
+        if (rc != KS_FAMILIES[f].reason) fprintf(stderr, "  %s: got %d, want %d\n", what, rc, KS_FAMILIES[f].reason);
+        CHECK(rc == KS_FAMILIES[f].reason, what);
+        snprintf(what, sizeof(what), "%s: the refused table is not played on", KS_FAMILIES[f].name);
+        CHECK(table_act(&tb, fa_id, (int)strlen(fa_id), w, wl, -1, 0) == TABLE_E_NOT_LOADED, what);
+
+        // The masked door: the same value on a client's board, imported over a
+        // resident real one, which must still be resident after.
+        if (!KS_FAMILIES[f].masked) continue;
+        ks_dealt(7);
+        memcpy(&held, &tb_game, sizeof(held));
+        KS_FAMILIES[f].poison(&held);
+        const int ml = state_put(&held, VIEW_UNMASKED, bad);
+        const int rl = tb_blob(&tb_game, resident);
+        snprintf(what, sizeof(what), "the masked importer refuses %s", KS_FAMILIES[f].name);
+        CHECK(state_import(&tb_game, bad, ml, 1) == KS_FAMILIES[f].reason, what);
+        snprintf(what, sizeof(what), "%s: the masked refusal adopted nothing", KS_FAMILIES[f].name);
+        CHECK(tb_blob(&tb_game, now) == rl && memcmp(now, resident, (size_t)rl) == 0, what);
+    }
+
+    // A refused blob leaves the board loaded before it resident.
+    ks_dealt(8);
+    tb_game.first_attacker = 0x7f;
+    const int bl = tb_blob(&tb_game, bad);
+    ks_dealt(7);
+    const int rl = tb_blob(&tb_game, resident);
+    CHECK(table_load(&tb, bad, bl, tb_roster, ROSTER_BYTES) == GAME_INVALID_SEAT, "a bad blob over a loaded one is refused");
+    CHECK(tb_blob(&tb_game, now) == rl && memcmp(now, resident, (size_t)rl) == 0, "and the loaded board is still the resident one");
+
+    // The masked door keeps a podkidnoy board podkidnoy, and refuses a rule it does not know.
+    FxBoard lobby = { .np = 4, .status = GAME_STATUS_WAITING };
+    CHECK(fx_seal(&lobby) > 0, "a lobby seals");
+    tb_game.rules = GAME_RULE_NO_PASS;
+    const int pl = state_put(&tb_game, VIEW_UNMASKED, bad);
+    ks_dealt(7);
+    CHECK(tb_game.rules == 0, "a classic table is resident");
+    CHECK(state_import(&tb_game, bad, pl, 1) == GAME_VALID && tb_game.rules == GAME_RULE_NO_PASS,
+          "a podkidnoy board imports as podkidnoy over a classic one");
+    ks_dealt(7);
+    memcpy(&held, &tb_game, sizeof(held));
+    held.rules = GAME_RULE_NO_PASS << 1;
+    const int ul = state_put(&held, VIEW_UNMASKED, bad);
+    const int rl2 = tb_blob(&tb_game, resident);
+    CHECK(state_import(&tb_game, bad, ul, 1) == GAME_INVALID_RULES, "a rule this kernel does not know is refused");
+    CHECK(tb_blob(&tb_game, now) == rl2 && memcmp(now, resident, (size_t)rl2) == 0, "and not adopted");
+
+    // Every truncation of a real row is refused at table_load for its length,
+    // and the whole row still loads after.
+    ks_dealt(7);
+    const int whole = tb_state_len;
+    int named = 0;
+    for (int cut = 0; cut < whole; cut++) {
+        const int want = cut < 4 ? TABLE_E_STATE_VERSION : GAME_INVALID_COUNT;
+        const int r = table_load(&tb, tb_state, cut, tb_roster, ROSTER_BYTES);
+        if (r == want) named++;
+        else fprintf(stderr, "  a row cut to %d of %d bytes answered %d, want %d\n", cut, whole, r, want);
+    }
+    CHECK(named == whole, "every cut of a stored row is refused for its length");
+    CHECK(table_load(&tb, tb_state, whole, tb_roster, ROSTER_BYTES) == TABLE_OK, "and the whole row still loads");
+
+    // A played-on row and a lobby still load: the refusals reach no real game.
+    const int wl = tb_attack_wire(&tb_game, w);
+    snprintf(fa_id, sizeof(fa_id), "id-%d", tb_game.first_attacker);
+    TableCommit c;
+    CHECK(table_act(&tb, fa_id, (int)strlen(fa_id), w, wl, -1, 0) == TABLE_APPLIED
+          && table_commit_products(&tb, RS("g"), 2, 0, &c, tb_arena, sizeof(tb_arena)) > 0, "the opening attack commits");
+    memcpy(tb_state2, tb_arena + c.state.off, (size_t)c.state.len);
+    CHECK(table_load(&tb, tb_state2, c.state.len, tb_roster, ROSTER_BYTES) == TABLE_OK, "the played-on row loads");
+}
+
 int main(void) {
 #ifdef CD_PASS_PROBE
     test_masked_board_carries_the_rules();
@@ -16717,6 +17225,12 @@ int main(void) {
     test_a_started_game_replays_its_deal();
     test_table_reseat_retitle_continue();
     test_table_rearrange_and_redact();
+    test_table_act_each_kind_of_move();
+    test_table_act_refuses_forged_and_duplicate_attacks();
+    test_table_cover_double_tap();
+    test_table_deals_the_deck_and_random_games_conserve_it();
+    test_unambiguous_cover_fuzz();
+    test_table_load_refuses_a_board_it_could_not_have_made();
     test_table_redact_default_title();
     test_table_seat_of();
     test_table_deal_seed_and_session_log();

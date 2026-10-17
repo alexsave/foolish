@@ -87,8 +87,8 @@ void calculate_legal_moves_lite(const Game *g, int bot_idx, LegalMoves *out);
 // bots.wasm no longer exports this: the export moved to WASM_BOTS_UNSHIPPED_API
 // (c/Makefile), which keeps it on the oracle modules and the TEST build and takes
 // 1,191 raw / 533 gzip bytes back off a module whose gzip is capped at 80 KiB.
-// The rule itself stays, proven by c/tests and by e2e/unambiguous_cover.test.ts
-// over the test build; whether a future host wants the pairing question is a
+// The rule itself stays, proven by c/tests (the hand-picked shapes, and
+// test_unambiguous_cover_fuzz against a brute-force oracle); whether a future host wants the pairing question is a
 // decision nobody has had to make yet, and deleting it is not this file's to
 // take.
 int unambiguous_cover(const Card *cover_cards, int n_cover,
