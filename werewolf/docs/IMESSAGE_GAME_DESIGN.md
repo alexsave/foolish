@@ -1,5 +1,9 @@
 # Correspondence Durak in iMessage — Full Design & Implementation Spec
 
+> **Note added 2026-10-17.** A copy inherited from foolish when werewolf forked (`689630eb`), kept as it was.
+> The foolish backend it describes (Supabase: Deno edge functions, Postgres, Realtime) has since been replaced by `c_base/` (C on AWS Lambda and DynamoDB), and werewolf has no server at all.
+> For foolish as it is now, read `../../foolish/docs/` and `../../c_base/DESIGN.md`.
+
 *A zero-context, implementation-ready design for turning Foolish into an iMessage
 game. Written so an engineer (or LLM) who has never seen this repository can
 build it end-to-end. Every claim about existing code carries a `file:line`-style
@@ -44,7 +48,7 @@ which is what makes asynchronous, message-at-a-time play possible.
 
 **The repo.** `foolish.cards` is a Next.js web client + Supabase backend, but
 the domain logic has exactly ONE implementation, in portable C, that runs
-everywhere (see `docs/ARCHITECTURE_AS_A_PATTERN.md`):
+everywhere (see `../docs/ARCHITECTURE_AS_A_PATTERN.md`):
 
 | Piece | Where | What it gives this project |
 | --- | --- | --- |

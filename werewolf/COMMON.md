@@ -54,7 +54,8 @@ inherited C that compiles into this product.
   the moment the lobby work started, which is its own argument for a core: it is
   not a Durak document, it is the write-up of a hole every serverless
   correspondence game in a thread can fall into.
-- `docs/ARCHITECTURE_AS_A_PATTERN.md`, `docs/SECURITY_WASM_BOUNDARY.md`,
+- `../docs/ARCHITECTURE_AS_A_PATTERN.md` (the repo-wide copy; this folder's
+  fork-time copy was deleted 2026-10-17), `docs/SECURITY_WASM_BOUNDARY.md`,
   `docs/PLAYER_VIEWS.md`, `docs/CODEGEN_ALTERNATIVES.md`,
   `docs/IMESSAGE_BODY_CODEC.md`, `docs/IMESSAGE_MAC_RUNBOOK.md`.
 

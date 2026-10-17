@@ -1,15 +1,17 @@
 name: uttt-web
 
-# uttt.live - Ultimate Tic-Tac-Toe's replay site (uttt/web). Built HERE and
-# uploaded, like the foolish site (web.yml) and for the same reason: the page
-# runs the uttt kernel as wasm (uttt/c `make wasm-web`), a build output that is
-# never committed, and Vercel's build image has no clang to make it.
+# uttt.live - Ultimate Tic-Tac-Toe's replay site (uttt/web), on Vercel: the
+# ROLLBACK lane only (web_aws.yml deploys the live site to S3 + CloudFront).
+# Built HERE and uploaded, like the foolish site's rollback (web.yml) and for
+# the same reason: the page runs the uttt kernel as wasm (uttt/c `make
+# wasm-web`), a build output that is never committed, and Vercel's build image
+# has no clang to make it.
 #
 #   build    the wasm (both modules, and the readers structgen writes
 #            for the 243 page - a libclang program, which ci_llvm.sh
 #            installs), a typecheck, the module tests and `next build`. No
 #            secrets.
-#   deploy   production, from main only.
+#   deploy   production, from main only, when run by hand.
 #
 # The secrets: VERCEL_TOKEN and VERCEL_ORG_ID are the ones web.yml already
 # uses; UTTT_VERCEL_PROJECT_ID is the uttt project's own id (uttt/web/README.md).

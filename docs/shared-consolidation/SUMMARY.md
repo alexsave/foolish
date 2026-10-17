@@ -1,5 +1,9 @@
 # Shared consolidation pass - summary
 
+> **Note added 2026-10-17.** This folder is a dated record of the 2026-09-27 pass and is kept as written.
+> Since then every small generator in every product moved into one header, `shared/c/rng.h`, pinned by `shared/c/rng_test.c` and held by `foolish/e2e/validation/one_rng_validation.test.ts`.
+> The native C server these documents count among the kernel's build trees (`foolish/server/impls/native`) is being retired (PR #332, in progress 2026-10-17); `shared/README.md` lists what `shared/` holds today.
+
 Branch `shared-consolidation`, worktree `.claude/worktrees/shared-consolidation`.
 The starting point was the three-way merge of `pickemup`, `chuiniu` and `tallybones` (`8863f0e4`), re-verified at the start of this pass: all three tips are ancestors, and every product suite was green on that tree.
 Every document in this folder is an investigation or a review; this one is the ledger of what was done with them.

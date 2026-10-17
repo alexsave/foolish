@@ -1,5 +1,9 @@
 # `player_views` — a server-written, client-read personalized view cache
 
+> **Note added 2026-10-17.** A copy inherited from foolish when werewolf forked (`689630eb`), kept as it was.
+> The foolish backend it describes (Supabase: Deno edge functions, Postgres, Realtime) has since been replaced by `c_base/` (C on AWS Lambda and DynamoDB), and werewolf has no server at all.
+> For foolish as it is now, read `../../foolish/docs/` and `../../c_base/DESIGN.md`.
+
 ## What this is
 
 `player_views` stores each player's **already-masked** view of each game,

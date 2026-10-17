@@ -43,34 +43,15 @@ replays a named game move for move. The bots are their own wasm module
 `llvm` on a Mac). Both are build outputs of `npm run wasm`. `npm test` loads
 `lib/arena.ts` against the built module.
 
-## One-time setup (the owner)
+## Hosting
 
-1. **Create the Vercel project**, from a checkout, not from the dashboard's
-   Git import (a Git-connected project would build on Vercel, which has no
-   clang):
+The site's AWS side (the `cbase-web` stack's bucket prefix `uttt/`, its own
+CloudFront distribution, the certificate and the Squarespace DNS records) is
+set up once by the owner, as `c_base/RUNBOOK.md` "Web hosting: foolish.cards
+and uttt.live off Vercel" records; after that a push to `main` is the deploy.
 
-   ```
-   cd uttt/web
-   npx vercel@latest link      # "Link to existing project?" No -> name it uttt, directory ./
-   cat .vercel/project.json    # the projectId
-   ```
-
-   Use the same team as the foolish project, so the existing `VERCEL_TOKEN`
-   and `VERCEL_ORG_ID` secrets cover it.
-
-2. **Add the secret**: GitHub, the repo, Settings, Secrets and variables,
-   Actions, New repository secret: `UTTT_VERCEL_PROJECT_ID` = that projectId.
-
-3. **Deploy**: Actions, uttt-web, Run workflow on `main` (it no longer runs on a push).
-
-4. **The domain, in Vercel**: the uttt project, Settings, Domains, add
-   `uttt.live`, and add `www.uttt.live` set to redirect to `uttt.live`.
-   Vercel then lists the DNS records it wants.
-
-5. **The domain, in Squarespace**: Domains, `uttt.live`, DNS (DNS Settings).
-   If the domain is connected to a Squarespace site, disconnect it first.
-   Delete the **Squarespace Defaults** records, then add the records Vercel
-   listed - usually an `A` record for `@` to `76.76.21.21` and a `CNAME` for
-   `www` to `cname.vercel-dns.com`, but use Vercel's values if they differ.
-   Vercel's Domains page turns green once DNS has propagated (minutes to a
-   few hours).
+The Vercel project, its `UTTT_VERCEL_PROJECT_ID` secret and
+`uttt-web.yml` exist only for the rollback: with DNS pointed back at Vercel
+(RUNBOOK, W7), Actions, uttt-web, Run workflow on `main` brings it up to
+main's commit. All of it goes at W9 (on or after 2026-10-28), with the
+`VERCEL` half of `next.config.mjs`.

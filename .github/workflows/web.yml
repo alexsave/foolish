@@ -25,38 +25,19 @@ name: web
 # toolchain and already proves it works on every pull request, and Vercel goes
 # back to being the thing that serves the output.
 #
-# Three jobs, split by what they need:
+# Two jobs, split by what they need:
 #
-#   build    `next build` over freshly generated modules. No secrets. This is
-#            the gate: it says the site compiles from THIS tree's headers, and
-#            it runs on every change whatever the other two decide.
-#   scope    on a pull request, can this change reach the served site at all?
-#            Vercel's free plan allows 100 deployments a day across the account
-#            and this repo has spent them; see the job for the whole story.
-#   deploy   `vercel build` + `vercel deploy --prebuilt`. A PREVIEW deployment
-#            on a pull request that `scope` says could change the site, the
-#            PRODUCTION one on every push to main. The preview is what makes
-#            this lane reviewable: a URL, from a real deploy, before the
-#            production path depends on it.
+#   build    `next build` over freshly generated modules. No secrets.
+#   deploy   `vercel build` + `vercel deploy --prebuilt`, the PRODUCTION
+#            deployment, from main, when run by hand.
 #
 # THE WASM MODULES ARE BUILT HERE TOO, for exactly the reason above: they stopped
 # being committed (scripts/wasm_build.sh), so the same argument that moved the
 # build off Vercel now covers three more artifacts. Vercel's image has no clang,
 # no wasm-ld and no binaryen, so it could not produce them at all.
 #
-# ONE THING THE OWNER STILL HAS TO DO, and it is not optional:
-#
-#   Turn OFF Vercel's automatic deployments for this project. The live setting
-#   today is gitProviderOptions.createDeployments = "enabled":
-#
-#     PATCH https://api.vercel.com/v9/projects/<projectId>?teamId=<orgId>
-#     {"gitProviderOptions": {"createDeployments": "disabled"}}
-#
-#   Until that is off, Vercel ALSO builds every push from source, in an image
-#   with no libclang. That is harmless while sdk/ts/gen is still committed and
-#   it takes the live site down the moment it is not - so it is flipped as part
-#   of the cutover, NOT before: while those modules are still committed, Vercel's
-#   source builds are the only thing deploying the site at all.
+# Vercel's Git integration is disconnected, so Vercel never builds a push from
+# source (c_base/docs/VERCEL.md); this lane is the only way anything reaches it.
 #
 # The three secrets (VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID) are set.
 # The org and project ids are read by the CLI from the environment, so nothing

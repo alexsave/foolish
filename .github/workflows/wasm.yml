@@ -1,8 +1,9 @@
 name: wasm
 
-# NOTHING IN CI BUILT WASM UNTIL NOW, and the modules are what actually ship:
-# the browser, the edge functions and the Oracle load the committed .wasm.gz /
-# *_wasm.ts bytes, not c/src. Two failures in one night made the gap concrete.
+# NOTHING IN CI BUILT WASM UNTIL THIS LANE, and the modules are what actually
+# ship: the browser and the Oracle (and, then, the edge functions, since
+# deleted) loaded the then-committed .wasm.gz / *_wasm.ts bytes, not c/src.
+# Two failures in one night made the gap concrete.
 #
 #   1. `make wasm-oracle-mt` was broken on main. #118 made `engine_snap_hook`
 #      `_Thread_local` in c/src/game.h; #119's c/wasm/wasm_oracle_mt.c
