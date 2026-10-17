@@ -1273,6 +1273,11 @@ int nc_stream_in(const uint8_t *frame, int len, int is_text, int64_t now_ms) {
     // g_frame, so an event's payload points into it as a lone frame's would).
     NwBlob all = f->blob, one;
     for (uint32_t pos = 0; nw_batch_next(all, &pos, &one) == 1;) {
+        // Each frame makes at most one event, and the session may need the
+        // last slot. A batch longer than this client asks for (NC_BATCH_OUT
+        // frames answered with an ACK and a catch-up each) loses its tail,
+        // which the unanswered subscriptions' NC_ACK_WAIT_MS asks for again.
+        if (g_n_events >= NC_EVENTS_MAX - 1) break;
         if (nw_frame_decode(one.p, (int)one.len, f) != NW_OK) { event_add(NC_EV_BAD); continue; }
         take_frame(f, now_ms);
     }
@@ -1443,7 +1448,7 @@ static uint16_t next_ref(void) {
 // unsubscriptions, then the subscriptions due, as one NW_WS_BATCH when there
 // are several (behind API Gateway: one invocation and one stored write for a
 // page's subscriptions, instead of one each, all at once, racing). What does
-// not fit NC_TEXT_MAX or NW_BATCH_MAX waits for the next call. A lone frame
+// not fit NC_TEXT_MAX or NC_BATCH_OUT waits for the next call. A lone frame
 // goes as itself.
 static uint8_t g_batch[(NC_TEXT_MAX / 4) * 3];   // the entries: never more than a message's text holds
 
@@ -1454,7 +1459,7 @@ const NcOut *nc_stream_next(int64_t now_ms) {
     // Room for the entries once the batch's head (6 bytes) and base64 are counted.
     const int room = (NC_TEXT_MAX / 4) * 3 - 6;
     int at = 0, count = 0;
-    for (int u = g_n_unsubs - 1; u >= 0 && count < NW_BATCH_MAX; u--) {
+    for (int u = g_n_unsubs - 1; u >= 0 && count < NC_BATCH_OUT; u--) {
         unsub_frame(&g_unsubs[u], f);
         int n = nw_frame_encode(f, raw, (int)sizeof raw);
         if (n < 0 || at + 4 + n > room) break;
@@ -1462,7 +1467,7 @@ const NcOut *nc_stream_next(int64_t now_ms) {
         g_n_unsubs--;
         count++;
     }
-    for (int i = 0; i < NC_SUBS_MAX && count < NW_BATCH_MAX; i++) {
+    for (int i = 0; i < NC_SUBS_MAX && count < NC_BATCH_OUT; i++) {
         sub *s = &g_subs[i];
         if (!sub_due(s, now_ms)) continue;
         uint16_t ref = next_ref();

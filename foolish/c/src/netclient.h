@@ -63,7 +63,8 @@
 #define NC_EV_SEATED  5   // a game subscription was accepted; ev->seated says which stream it hears
 #define NC_EV_BAD     6   // a frame that is not this protocol (the host may log it)
 #define NC_EV_SESSION 7   // the session changed: keep nc_session_save's blob, show nc_session_info
-#define NC_EVENTS_MAX (NW_BATCH_MAX + 1)   // what one feed can change at most: one thing per frame of a batch, and the session
+#define NC_BATCH_OUT  4   // frames in one batch this client sends (a page holds three subscriptions)
+#define NC_EVENTS_MAX (2 * NC_BATCH_OUT + 1)   // what one feed can change at most: a batch's replies (an ACK and a catch-up per frame it answers), and the session
 
 typedef struct {
     uint32_t id;                        // nc_next_request's: hand the answer back with it
