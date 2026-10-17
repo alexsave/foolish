@@ -369,6 +369,11 @@ void nc_gate_reset(const char *gid, int gid_len);
 // After each feed the host reads the events it made, nc_event(0) up to the
 // count, as often as it likes until the next feed; then it sends what
 // nc_next_request and nc_stream_next have for it.
+// A host that shows boards (envelopes) and never decodes a cast, as the iOS
+// app: every cast becomes this file's own refetch of the game, unless its view
+// at that version is here already; views of a game held on its own stream are
+// handed out, and a create does not subscribe the game's own stream.
+void nc_set_boards(int on);
 #define NC_RECONCILE_MS 1000
 const NcEvent *nc_event(int i);
 const uint8_t *nc_event_payload(int i);

@@ -9,6 +9,7 @@
 #include "netclient.h"
 
 void fio_net_reset(void) { nc_reset(); }
+void fio_net_set_boards(int on) { nc_set_boards(on); }
 int fio_net_session_load(const uint8_t *p, int len) { return nc_session_load(p, len); }
 int fio_net_session_save(uint8_t *out, int cap) { return nc_session_save(out, cap); }
 const void *fio_net_session_info(void) { return nc_session_info(); }

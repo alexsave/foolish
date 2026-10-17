@@ -25,6 +25,9 @@ public enum NetClient {
 
     public static func reset() { fio_net_reset() }
 
+    /// The app shows boards and never decodes a cast: the client turns each cast into a board.
+    public static func showBoards() { fio_net_set_boards(1) }
+
     /// The session as a blob to keep (nil when signed out).
     public static func sessionBlob() -> Data? {
         var out = [UInt8](repeating: 0, count: 2400)
