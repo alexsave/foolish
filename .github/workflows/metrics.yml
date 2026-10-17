@@ -1,9 +1,10 @@
 name: metrics
 
 # Surfaces the repo's health numbers ON THE PR, before vs after, instead of
-# leaving them buried in gate logs. The headline is thinking-bot end-to-end
-# latency (full move vs real Postgres - the number a human waits on and the 2s
-# CPU cap gates); size, engine speed, and wasm memory all feed into it.
+# leaving them buried in gate logs: engine speed, wasm size and declared memory,
+# and the web bundle. (The thinking-bot move latency against Postgres went with
+# the TypeScript server in stage 4; the server's latency is c_base's
+# `cbase-bench roundtrip`.)
 #
 # It runs scripts/collect_metrics.mjs on BOTH the PR head and its base (the new
 # measurement files are copied into the base checkout so only the SOURCE
@@ -33,48 +34,8 @@ jobs:
   metrics:
     runs-on: ubuntu-latest
 
-    # Same Postgres the e2e harness expects (e2e/adapters/supabase.ts).
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: stress
-          POSTGRES_PASSWORD: stress
-          POSTGRES_DB: foolish
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U stress -d foolish"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-
     env:
-      E2E_PGHOST: 127.0.0.1
-      E2E_PGPORT: 5432
-      E2E_PGUSER: stress
-      E2E_PGPASSWORD: stress
-      E2E_PGDATABASE: foolish
-      # Keep CI bounded; the E2E bench doubles (base + head).
-      # Every bot here must be one the wasm build actually dispatches
-      # (wasm_bots_api.c) - any other STRAT falls through to
-      # random_strategy_choose, so benching a non-shipped bot measures a
-      # trivial random move, not its search (that is why the ship-trim made
-      # semtex/fulminate report phantom -80%/-28% deltas). octogen is the
-      # headline (the MC bot the 2s CPU cap gates); cordite is the other
-      # shipped MC "thinking" bot; blackpowder and firecracker are the Hard/Medium
-      # ladder rungs (now ported to the wasm dispatch - both MC bots that run a
-      # rollout/solver, so they measure real search); handwritten (strategy_key ->
-      # id 16 = STRAT_HANDWRITTEN_PROD)/simple_heuristic/random are the shipped fast
-      # bots (sub-ms, they mostly measure the wasm + Postgres round-trip floor).
-      # Order = descending ladder strength.
-      BENCH_BOTS: octogen,cordite,blackpowder,firecracker,handwritten,simple_heuristic,random
-      BENCH_BOT_MOVES: '20'
       BENCH_GAMES: '300'
-      # E2E latency is wall-clock on a shared runner: one run's p50 swings too
-      # much to trust. Repeat the bench and report the MEDIAN p50 per bot (like
-      # SPEED_REPS does for engine speed) to squeeze out run-to-run variance.
-      E2E_REPS: '5'
 
     steps:
       - name: Checkout PR head
@@ -107,7 +68,6 @@ jobs:
           cp pr/foolish/scripts/collect_metrics.mjs "$BASE_DIR/scripts/collect_metrics.mjs"
           cp pr/foolish/scripts/render_metrics.cjs  "$BASE_DIR/scripts/render_metrics.cjs"
           cp pr/foolish/scripts/measure_web_bundle.mjs "$BASE_DIR/scripts/measure_web_bundle.mjs"
-          cp pr/foolish/e2e/bench_bot_e2e.ts        "$BASE_DIR/e2e/bench_bot_e2e.ts"
 
       - name: Install deps (head)
         working-directory: pr/foolish
