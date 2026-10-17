@@ -8,30 +8,23 @@
  * finaliser. A kernel's `new` takes 32 seed bytes, so four outputs fill them,
  * each written little-endian.
  *
+ * The generator is rng.h's rng_splitmix64; this file owns only how its
+ * outputs become 32 seed bytes.
+ *
  * Header only: two short pure functions used by arenas and by test helpers,
  * so nothing has to be added to a build list to reach them. */
 #ifndef SHARED_SEED_HASH_H
 #define SHARED_SEED_HASH_H
 
 #include <stdint.h>
-
-#define SEED_HASH_GOLDEN 0x9e3779b97f4a7c15ull
-
-/* One splitmix64 step: advance *state and return the mixed output. */
-static inline uint64_t seed_splitmix64(uint64_t *state)
-{
-    uint64_t z = (*state += SEED_HASH_GOLDEN);
-    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull;
-    z = (z ^ (z >> 27)) * 0x94d049bb133111ebull;
-    return z ^ (z >> 31);
-}
+#include "../rng.h"
 
 /* Four steps from *state into 32 bytes, little-endian. *state is left after
  * the fourth step, so a caller can keep drawing from the same stream. */
 static inline void seed_hash32_from(uint64_t *state, uint8_t out[32])
 {
     for (int k = 0; k < 32; k += 8) {
-        uint64_t z = seed_splitmix64(state);
+        uint64_t z = rng_splitmix64(state);
         for (int j = 0; j < 8; j++) out[k + j] = (uint8_t)(z >> (8 * j));
     }
 }
@@ -41,7 +34,7 @@ static inline void seed_hash32_from(uint64_t *state, uint8_t out[32])
  * index into the key however it likes. */
 static inline void seed_hash32(uint64_t key, uint8_t out[32])
 {
-    uint64_t x = SEED_HASH_GOLDEN * (key + 1);
+    uint64_t x = RNG_GOLDEN * (key + 1);
     seed_hash32_from(&x, out);
 }
 
