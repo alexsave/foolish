@@ -1,5 +1,9 @@
 # Adversarial review: the C/WASM kernel boundary
 
+> **Note added 2026-10-17.** A copy inherited from foolish when werewolf forked (`689630eb`), kept as it was.
+> The foolish backend it describes (Supabase: Deno edge functions, Postgres, Realtime) has since been replaced by `c_base/` (C on AWS Lambda and DynamoDB), and werewolf has no server at all.
+> For foolish as it is now, read `../../foolish/docs/` and `../../c_base/DESIGN.md`.
+
 > **Historical, July 2026. All findings fixed**, with the regression tests named
 > below. The pass/fail counts are of that date. `rules.wasm` was retired in C
 > game shape Phase 8 - the clamps it describes now ship inside `bots.wasm` and

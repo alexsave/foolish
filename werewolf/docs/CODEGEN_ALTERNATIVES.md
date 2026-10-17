@@ -1,5 +1,9 @@
 # Codegen alternatives: the Component Model, embind, and why this repo generates its own bindings
 
+> **Note added 2026-10-17.** A copy inherited from foolish when werewolf forked (`689630eb`), kept as it was.
+> The foolish backend it describes (Supabase: Deno edge functions, Postgres, Realtime) has since been replaced by `c_base/` (C on AWS Lambda and DynamoDB), and werewolf has no server at all.
+> For foolish as it is now, read `../../foolish/docs/` and `../../c_base/DESIGN.md`.
+
 This is the evidence behind one paragraph of `docs/ARCHITECTURE_AS_A_PATTERN.md` ("Why not an off-the-shelf binding generator") and of `docs/C_GAME_SHAPE_MIGRATION.md` Phase 11 item 2.
 Those documents claim that the WebAssembly Component Model with `jco`, and Emscripten's `embind`, were measured and refused.
 Until this document existed the numbers lived in a brief and could not be re-run, which is not a measurement, it is a memory.

@@ -40,7 +40,8 @@ Shared rules still leave the host holding a `Game` interface, a `Player` interfa
 Owning the shape means the host holds a pointer, a span, and values that a generator emitted from the kernel's own headers.
 
 In this repo the rules live once in C (`c/src/game.c`, `legal.c`, `view.c`, `replay.c`), the identity of who sits where lives once in C (`roster.c`), the composition of the two that a server operates on lives once in C (`table.c`), the client's masked copy lives once in C (`client_table.c`), and the animation model - what moves, in what order, for how long - lives once in C (`anim_plan.h`).
-That C compiles to WebAssembly for the browser, for Deno edge functions and for Node tests, and compiles natively for iOS and for a standalone server.
+That C compiles to WebAssembly for the browser and for Node tests, and compiles natively for iOS and for the backend, `c_base/`: one C program that runs on AWS Lambda against DynamoDB in production and as `cbase serve` on SQLite on a laptop.
+Clients reach the backend through the kernel too: the `/v1` HTTP surface and the `/v1/stream` WebSocket are binary, every byte written and read by `c/src/netwire.c`, and `c/src/netclient.c` is a request pump that each host only feeds, so a host is a transport loop plus the intents its user states.
 There is no TypeScript copy of the rules "for the client", no second server implementation, and no TypeScript or Swift declaration of what a game is.
 
 WebAssembly is what makes the shared core real rather than aspirational.
@@ -55,7 +56,7 @@ A rule this strong survives only if something fails when it is broken, and the s
   `NOT_YET_GENERATED` is the shrink-only allowlist - the hand-packed entry points it was willing to tolerate - and it is empty, with the test asserting that it is empty rather than asserting a ceiling.
   `INDEPENDENT_READERS` is two permanent entries for the security scan's deliberate second implementation, which is a different thing from a residue and is described under "What did NOT move" below.
   Adding a two-byte read to a host file turns it red and names the file and the offending token.
-- `e2e/table_no_game_object.test.ts` asserts three things: that the deleted modules stay deleted, that the bridges export no name which takes a `Game` or makes a `PersonalGame`, and that nowhere in the edge functions' module graph does TypeScript resolve a seat from a player id.
+- `e2e/table_no_game_object.test.ts` asserts three things: that the deleted modules stay deleted, that the bridges export no name which takes a `Game` or makes a `PersonalGame`, and that the TypeScript server stays deleted and the tests' C Table driver resolves a seat from a player id through the kernel.
   The shape cannot come back through a type alias, and it cannot come back through one helper either.
 
 Anything the team writes later that restates the domain in the host language is caught by a test that nobody has to remember to run.
@@ -75,7 +76,7 @@ The host knows column names, an RPC name, a topic format, and that a span is an 
 | **Contract** | the byte layouts for state, commands, events and views | the C headers themselves | one schema, and it is source code, not a sidecar IDL |
 | **Bindings** | host access to the contract, generated from the contract | `shared/tools/{structgen,datagen}` -> `sdk/{ts,swift,kotlin}/gen/` | generated, never hand-written |
 | **Projections** | `project(state, viewer) -> bytes`, the only serializer; redaction lives here | `view.c`, `client_table.c` | per-role and per-tenant views, masking |
-| **Shell** | HTTP, DB, sockets, auth, rendering, external APIs - all impure, all thin | edge functions, React, SwiftUI, the native server | per-environment plumbing |
+| **Shell** | HTTP, DB, sockets, auth, rendering, external APIs - all impure, all thin | c_base's Lambda handler and local server, React, SwiftUI | per-environment plumbing |
 
 The Bindings row is the one this migration added.
 Before it, the Contract was mirrored by hand into each host and policed by parity tests; after it, the Contract is parsed by a generator and the mirror does not exist.
@@ -100,7 +101,7 @@ What specialization survives is sharper than what it replaced:
   After `guards.wasm` and `rules.wasm` went, one module served everyone, and the browser was downloading the server's: 191,490 B raw, 81,902 B gzipped, 37 pages of linear memory.
   The anatomy tool says what was in it.
   Of 182,606 B of `CODE`, `wasm_table_bot_drive` alone is 40,716 B - 22 percent of the module - and the four Monte-Carlo brains with cordite's solver working set and leaf book are another 51 KB.
-  The bot loop runs in the edge functions and the in-browser analyser is already its own module, so none of it had ever executed in a tab.
+  The bot loop runs on the server (then in the edge functions, now natively in c_base) and the in-browser analyser is already its own module, so none of it had ever executed in a tab.
   The browser now fetches `web.wasm.gz`: 67,298 B raw, 31,050 B gzipped, 26 pages.
   That is 62 percent off every first visit, 124 KB less module to compile, and 720,896 B of linear memory a tab no longer reserves.
 
@@ -119,7 +120,7 @@ What specialization survives is sharper than what it replaced:
   Live alone is 31,439 B gz and replay alone is 32,408 B, against 36,312 B for both, because the two share the client slot, the masked view, the animation plan and the engine: the first paint saves 4,873 B and anyone who then opens a replay pays 32,408 B twice over.
   Folding the Infinite Oracle into a replay module is worse still, since its whole point is that a 177,835 B analyser is fetched only when someone asks it to think.
   The bytes said one browser module, so there is one.
-- **Per workload.** The replay analyser ships as its own modules (`oracle.wasm`, `oracle-mt.wasm`), built from the same sources with a much larger transposition table, because a browser tab asked to think hard has a different memory regime from an edge function answering a move.
+- **Per workload.** The replay analyser ships as its own modules (`oracle.wasm`, `oracle-mt.wasm`), built from the same sources with a much larger transposition table, because a browser tab asked to think hard has a different memory regime from a server answering a move.
 
 **2. Generated bindings as the replacement for hand-written marshalling.**
 
@@ -184,7 +185,7 @@ No host function, no clock, no allocator, no logger, no random source.
 
 What that buys:
 
-- **One instantiation shape across five hosts.** A browser, an edge function, Node, a native server and a phone all instantiate or link the same artifact the same way, with no import object to keep in step.
+- **One instantiation shape across every host.** A browser, Node, the backend on Lambda and a phone all instantiate or link the same sources the same way, with no import object to keep in step.
 - **No host can hand the kernel anything.** There is no seam through which a host's bug, a host's clock skew or a host's locale reaches a decision.
 - **Determinism is structural, not promised.** A decision is a function of its inputs because there is no other place an input could come from.
 - **Nothing to mock.** A test drives the kernel directly.
@@ -238,7 +239,8 @@ When the bytes are a **form something travels in** rather than a struct anybody 
 
 "You only see your own hand" is a C function, not a host-side filter.
 The server never materializes an unmasked object on the hot path: other players' hidden data leaves the kernel already redacted, with counts preserved.
-Combined with column-level database grants (row-level security cannot hide a column; grants can), the masked path is the only path.
+No client reads the store: DynamoDB is reached only by c_base, which answers only through the kernel's projections, so the masked path is the only path.
+(When the backend was Postgres, column-level grants did this job, because row-level security cannot hide a column and grants can.)
 Redaction is a property of the serializer, not a step someone must remember.
 
 **6. The packed-wire boundary.**
@@ -249,7 +251,10 @@ Historic measurement, from the port that introduced this: per-move server comput
 Current measurement, after the host-side decoder was deleted in favour of a kernel decode plus a generated snapshot: at or below the retired hand-written reader at every table size (2-seat 1,431 ns/op against 1,612, 8-seat 3,024 against 3,933).
 Generated access is not a tax you pay for safety here; it was faster than the hand-written code it replaced.
 
-**7. The durable store: the kernel's blobs, plus the scalars SQL filters on.**
+**7. The durable store: the kernel's blobs, plus the scalars a query filters on.**
+
+This piece was worked out on Postgres, and the shape carried over unchanged to DynamoDB when the backend became c_base (`c_base/DESIGN.md`, "Module: store"): a game item is the kernel's blobs plus a version, and a commit is one `TransactWriteItems` conditioned on that version.
+The expand / switch / contract story below is the Postgres one, kept because the method is the point.
 
 A row is the kernel's state blob, the kernel's roster blob, the few scalars a query actually filters or sorts by, and host bookkeeping (version, timestamps, leases).
 The database stopped interpreting the domain: no populating a record from JSON, no status special cases, no second copy of the roster as JSON.
@@ -297,7 +302,7 @@ Being explicit about this is what keeps the pattern from becoming a religion.
 - **Scheduling and network deadlines.** The frame loop, a toast's dwell time, a replay's speed dial and its clamps over recorded wall-clock gaps, the grace period before a resync.
   One caveat that turned out to matter: a deadline **derived** from an animation duration must be derived from the kernel's constant, not from a host copy of it, or the coupling silently breaks the first time the kernel's number changes.
 - **HTTP, auth, database access and process lifecycle.** The kernel never learns what a JWT is.
-- **Realtime topics and their policies.** Which topic a client may join is a database policy over a membership table, and it stays there.
+- **Realtime topics and their policies.** Which topic a client may join is the server's check against its membership rows (`c_base/DESIGN.md`, "Module: realtime"; it was a database policy while the backend was Postgres), and it stays in the host.
 - **The independent wire walks in the security scan.** The hidden-information test deliberately re-walks the view and push frames by their own length fields instead of asking the kernel's reader, so that a bug in the reader cannot hide a leak from the scan.
   This is the one place where a second implementation is the point.
 
@@ -306,6 +311,7 @@ Being explicit about this is what keeps the pattern from becoming a religion.
 This is the honest argument for the pattern, and it is not a list of elegant refactors.
 Rewriting the shape meant reading every seam, and every seam that was read produced something.
 Each item below names the test seam that found it or now holds it.
+Items 1, 2 and 6 were Postgres findings, and their suites (`e2e/db_platform_grants.test.ts`, `e2e/db_grants.test.ts`, `e2e/realtime_channel_auth.test.ts`) were deleted with the Supabase server in October 2026; c_base's equivalents are in `c_base/test/` and `c_base/docs/mutation_checks.md`.
 
 **Authorization and exposure**
 
@@ -321,7 +327,7 @@ Each item below names the test seam that found it or now holds it.
 3. **Non-members could edit a lobby.**
    The lobby endpoints removed whoever the request body named and never checked that the caller was seated, and the add-a-bot endpoint checked no caller at all.
    The web relied on the first as a shipped "remove player" feature, so it was a policy question and not a silent fix: the behaviour was written down as a decision in the plan, and then closed in C, where the seat is resolved from the authenticated id and a caller who is not seated is refused with a named code.
-   Held by **seat-from-auth** (`e2e/security_seat_from_auth.test.ts`, with `e2e/table_server_seat.test.ts`): the seat a request acts as comes from the token and only from the token, for the move endpoint and for every lobby operation, and a body-supplied id never selects the actor.
+   Held by **seat-from-auth** (once `e2e/security_seat_from_auth.test.ts` and `e2e/table_server_seat.test.ts`, now `a_stranger_changes_nothing` and its neighbours in `c_base/test/unit_app.c`): the seat a request acts as comes from the token and only from the token, for the move endpoint and for every lobby operation, and a body-supplied id never selects the actor.
 4. **15 full-state readers were reachable from the web bundle.**
    Found by the **static bundle boundary** test (`e2e/security_client_boundary.test.ts`), which bundles every browser entry with tree-shaking on and fails if any denied module, symbol or wasm export survives into it.
    The denied list is 15 named readers of an unmasked kernel game.
@@ -463,7 +469,7 @@ When two implementations genuinely still ship - a host writer and the kernel's w
 Half of one suite here was retired and half was kept, for exactly that reason.
 
 **Prefer one gate that cannot be forgotten over a convention.**
-Every durable rule in this repo is a gate: a layout hash the artifact carries, a regeneration check that fails on a diff, a freshness check over build artifacts, a static import boundary, a catalog-equality test between the schema file and the migration chain, an export-list test between the shipped module and the test build.
+Every durable rule in this repo is a gate: a layout hash the artifact carries, a regeneration check that fails on a diff, a freshness check over build artifacts, a static import boundary, an export-list test between the shipped module and the test build.
 A convention in a README is a gate with a human in the loop.
 
 **An artifact nothing compares is an artifact nothing keeps fresh.**
@@ -479,6 +485,7 @@ The lesson is sharper than "keep artifacts fresh": a gate that cannot ask the re
 
 The honest residual bottleneck of a serverless deployment is *"database round trips, not compute"*: stateless functions reload state per request.
 A stateful native server deletes that problem.
+This repo built one (`server/impls/native`), and it is being retired (PR #332, in progress 2026-10-17): the deployed backend is the stateless kind, c_base on Lambda and DynamoDB, so what follows is the variant and the lessons from running it, not what ships.
 One long-lived process holds hot entities in RAM as the struct, single-writer per entity:
 
 ```
@@ -537,7 +544,7 @@ This repo's migration was about a hundred commits across eleven phases, some of 
   A hunch would have produced a debate; twenty minutes of measurement produced a decision and a written record.
 
   **The collapse then happened anyway, some weeks later, and that is the part worth carrying.**
-  All 39 migrations are deleted, `seed.sql` is the whole schema, and a merge to `main` now runs no SQL at all because the deploy skips its schema step when no `.sql` file is present.
+  All 39 migrations were deleted, `seed.sql` became the whole schema, and a merge to `main` ran no SQL at all because the deploy skips its schema step when no `.sql` file is present.
   What made it safe was not a change of mind but the earlier measurement, promoted from a veto to an instruction: because the exact failure was known - the push refuses while a remote version has no local file - the collapse could ship with a one-time `migration repair` listing all 39 versions, written down for whoever adds the *first* new migration, and verified against a real database still carrying the 39 rows.
   The generalization: **a refusal backed by a measurement has a shelf life, and a refusal backed by a hunch does not.**
   The measured one told you precisely which obstacle stood in the way, so it converted into a procedure the moment someone wanted the change badly enough.
