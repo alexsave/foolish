@@ -7,10 +7,11 @@ name: validate
 # runners in e2e/validation/ import and execute them with VALIDATION_ONLY=1 so
 # importing a domain file does not register its heavy/fuzzer tests.
 #   validation/pass_parity_validation - client/server agreement on pass legality
-#   validation/handlers_validation    - cover / rearrange / adversarial-attack rejection
 #   validation/client_validation      - reconcile gate+merge, rendered hand, optimistic dedup
 #   validation/client_rules_validation - next-defender rotation + keyboard pass parity (hand-rolled-logic fixes)
 #   validation/replay_validation      - replay codec round-trip (engine<->replay drift) + timing
+# The cover / rearrange / adversarial-attack cases are C now (c/tests/tests.c,
+# run by coverage.yml's c-engine job).
 # The exhaustive fuzzers remain for local / on-demand deep runs via `npm run test:e2e`.
 
 on:
