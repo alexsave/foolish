@@ -52,7 +52,6 @@ static int      g_n_unsubs;
 static gate     g_gates[NC_GATES_MAX];
 static uint32_t g_gate_clock;
 static uint8_t  g_open;
-static uint32_t g_auth_sent_gen;        // the session generation the socket was told, 0 none
 static int64_t  g_last_ping;
 static uint16_t g_next_ref;
 static int32_t  g_reconnect_ms;
@@ -104,7 +103,6 @@ void nc_reset(void) {
     g_n_unsubs = 0;
     g_gate_clock = 0;
     g_open = 0;
-    g_auth_sent_gen = 0;
     g_last_ping = 0;
     g_next_ref = 0;
     g_reconnect_ms = 0;
@@ -1070,7 +1068,6 @@ int nc_stream_unsub(int what, const char *gid, int gid_len) {
 
 void nc_stream_opened(int64_t now_ms) {
     g_open = 1;
-    g_auth_sent_gen = 0;
     g_last_ping = now_ms;
     g_n_unsubs = 0;
     for (int i = 0; i < NC_SUBS_MAX; i++)
@@ -1080,7 +1077,6 @@ void nc_stream_opened(int64_t now_ms) {
 int nc_stream_closed(int64_t now_ms) {
     (void)now_ms;
     g_open = 0;
-    g_auth_sent_gen = 0;
     g_n_unsubs = 0;
     int wait = g_reconnect_ms ? g_reconnect_ms : NC_RETRY_FIRST_MS;
     g_reconnect_ms = wait * 2 > NC_RETRY_MAX_MS ? NC_RETRY_MAX_MS : wait * 2;
@@ -1209,8 +1205,6 @@ int nc_stream_in(const uint8_t *frame, int len, int is_text, int64_t now_ms) {
         s->missed = 1;
         s->retry_at = now_ms + s->backoff;
         s->backoff = s->backoff * 2 > NC_RETRY_MAX_MS ? NC_RETRY_MAX_MS : s->backoff * 2;
-        // A refused token is told again with whatever token the session holds then.
-        if (f.why == ASK_WHY_AUTH) g_auth_sent_gen = 0;
         e->kind = NC_EV_REFUSED;
         e->why = f.why;
         break;
@@ -1273,7 +1267,7 @@ int nc_stream_in(const uint8_t *frame, int len, int is_text, int64_t now_ms) {
 }
 
 static const NcOut *out_frame(const NwFrame *f) {
-    static uint8_t raw[NW_ACCESS_MAX + 16];
+    static uint8_t raw[NW_ACCESS_MAX + 128];
     int n = nw_frame_encode(f, raw, (int)sizeof raw);
     if (n < 0) return NULL;
     int t = nw_text_encode(raw, n, g_out.text, NC_TEXT_MAX);
@@ -1286,14 +1280,6 @@ const NcOut *nc_stream_next(int64_t now_ms) {
     if (!g_open || !g_signed_in) return NULL;
     static NwFrame f;
     memset(&f, 0, sizeof f);
-    // The token first, again whenever the session has changed since.
-    if (g_auth_sent_gen != g_session_gen) {
-        g_auth_sent_gen = g_session_gen;
-        f.kind = NW_WS_AUTH;
-        f.token_len = g_session.access_len;
-        memcpy(f.token, g_session.access, g_session.access_len);
-        return out_frame(&f);
-    }
     if (g_n_unsubs) {
         unsub *u = &g_unsubs[--g_n_unsubs];
         f.kind = NW_WS_UNSUB;
@@ -1307,7 +1293,11 @@ const NcOut *nc_stream_next(int64_t now_ms) {
         if (!(s->state == SUB_WANT || (s->state == SUB_REFUSED && s->retry_at <= now_ms))) continue;
         s->state = SUB_SENT;
         s->ref = ++g_next_ref ? g_next_ref : ++g_next_ref;
-        f.kind = NW_WS_SUB;
+        // The subscription says who asks: behind API Gateway a frame of its own
+        // carrying the token could be stored after this one is read.
+        f.kind = NW_WS_SUB_AS;
+        f.token_len = g_session.access_len;
+        memcpy(f.token, g_session.access, g_session.access_len);
         f.ref = s->ref;
         f.what = s->what;
         f.gid_len = s->gid_len;
@@ -1328,7 +1318,6 @@ const NcOut *nc_stream_next(int64_t now_ms) {
 
 int nc_stream_due_ms(int64_t now_ms) {
     if (!g_open) return -1;
-    if (g_signed_in && g_auth_sent_gen != g_session_gen) return 0;
     if (g_n_unsubs) return 0;
     int64_t due = g_last_ping + NC_PING_MS;
     for (int i = 0; i < NC_SUBS_MAX; i++) {
