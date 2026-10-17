@@ -37,7 +37,7 @@
 #define NC_PATH_MAX  160
 #define NC_AUTH_MAX  (7 + NW_ACCESS_MAX)      // "Bearer " and the token
 #define NC_BODY_MAX  1100                     // a chat message is the largest body
-#define NC_TEXT_MAX  2800                     // a stream frame as base64: the AUTH frame is the largest
+#define NC_TEXT_MAX  2900                     // a stream frame as base64: a SUB_AS (its token) is the largest
 #define NC_FRAME_MAX 32768                    // a stream message, decoded
 #define NC_SESSION_BLOB_MAX 2400              // what nc_session_save writes, at most
 
