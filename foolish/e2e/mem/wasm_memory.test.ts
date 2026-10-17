@@ -268,7 +268,7 @@ test("bots.wasm declared INITIAL memory is 34 pages (static buffers, not the run
     assert.equal(min, 34, `bots.wasm initial memory is ${min} pages (${min * PAGE}B); expected 34: the deliberate static buffers (g_io 400 KiB, the cordite solver working set, the move enumerators, the resident and replay Games, the Table's 64-slot snapshot store that holds one deal) plus the bridge's generated structs (ReplayExtras 8,744 B, RosterSpec 3,448 B, ReplayFrameIndex 1,032 B). Going UP is a regression: 63,008 B of static room are left under the 34-page line, so look for a new buffer below __heap_base. Going DOWN means something was freed - lower this pin and take the page back.`);
 });
 
-test("web.wasm declared INITIAL memory is 24 pages - 10 fewer than the server's link", () => {
+test("web.wasm declared INITIAL memory is 25 pages - 9 fewer than the server's link", () => {
     // A LINKER FACT, not a second budget. wasm-ld keeps a static only if
     // something an export reaches refers to it, so dropping the bot bridge and
     // the C Table from the browser's export list drops their buffers with their
@@ -288,10 +288,18 @@ test("web.wasm declared INITIAL memory is 24 pages - 10 fewer than the server's 
     // browser's export list when the web's /m/ route (their one caller) went
     // with the static export, and the linker dropped the 131,072 B of statics
     // only the FMSG decode reached.
+    //
+    // 25, RAISED from 24 on purpose: the browser now carries the backend's client
+    // (c/src/netclient.c, exported as wasm_net_*; stage 3 of c_base/DESIGN.md
+    // "Binary surface") in place of supabase-js. Its statics are the session,
+    // the request it builds, one decoded stream message (g_frame, 32 KiB: a text
+    // frame has to be decoded somewhere), the subscriptions and the per-game
+    // version gates (NC_GATES_MAX 64, cut from 128 so bots.wasm keeps its
+    // 34-page line), about 54 KiB in all.
     const wasm = new Uint8Array(gunzipSync(readFileSync(resolve('sdk/ts/wasm/web.wasm.gz'))));
     const { min } = memLimits(wasm);
-    assert.equal(min, 24,
-        `web.wasm initial memory is ${min} pages (${min * PAGE} B); expected 24. `
+    assert.equal(min, 25,
+        `web.wasm initial memory is ${min} pages (${min * PAGE} B); expected 25. `
         + 'Up means the browser\'s link started keeping a static it used to drop - look at what '
         + 'was added to c/Makefile WASM_WEB_NAMES, because an export is a GC root and roots the '
         + 'data its code reads. Down means something was freed: lower this pin in the same commit.');
