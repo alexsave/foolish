@@ -1,10 +1,11 @@
 // What a card's face says: the label of each rank, by card value, and the glyph
 // and ink of each suit, by suit (card.h's numbering for both).
 //
-// THIS FILE IS SOURCE FOR A GENERATOR AND IS LINKED BY NOTHING, like c/errtext:
-// tools/datagen reads the tables below at build time and writes
-// sdk/ts/gen/card_rank.ts and card_suit.ts (tools/structgen/gen.sh). A kernel that deals a value
-// has no use for the letter on it.
+// THIS FILE IS SOURCE FOR A GENERATOR, like c/errtext: tools/datagen reads the
+// tables below at build time and writes sdk/ts/gen/card_rank.ts and card_suit.ts
+// (tools/structgen/gen.sh). A kernel that deals a value has no use for the letter
+// on it, so no kernel object includes it; the host CLIs that print cards
+// (src/main_replay.c) include it instead of keeping a table of their own.
 //
 // WHY IT IS C. The web kept the rank labels as a table of its own beside a copy
 // of the suit numbers, and a card value is a rank INDEX, not a face number
