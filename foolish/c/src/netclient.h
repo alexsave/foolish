@@ -49,7 +49,7 @@
 #define NC_RETRY_MAX_MS   10000
 
 #define NC_SUBS_MAX  16
-#define NC_GATES_MAX 128
+#define NC_GATES_MAX 64
 
 // What an event asks the host to do.
 #define NC_EV_NONE    0   // nothing (a pong, a stale push, an accepted subscription)
