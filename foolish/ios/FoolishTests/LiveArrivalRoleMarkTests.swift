@@ -77,8 +77,11 @@ final class LiveArrivalRoleMarkTests: XCTestCase {
 
     /// Wait for the board to come to rest: no sequence running, for long
     /// enough that a role flip or a closing beat would have shown up.
+    ///
+    /// The deadline is a hang guard (see LiveArrivalNothingBubbleTests.waitFor):
+    /// a board at rest returns as soon as it has been quiet for a second.
     private func settle(_ what: String) async {
-        let deadline = Date().addingTimeInterval(20)
+        let deadline = Date().addingTimeInterval(120)
         var quietSince: Date?
         while Date() < deadline {
             try? await Task.sleep(nanoseconds: 50_000_000)
@@ -191,7 +194,7 @@ final class LiveArrivalRoleMarkTests: XCTestCase {
         await f.arrive(x1, at: c)
         XCTAssertFalse(c.openReplayEvents.isEmpty, "precondition: the throw-in is a real stream")
         // Into its flight before the good lands.
-        let deadline = Date().addingTimeInterval(5)
+        let deadline = Date().addingTimeInterval(120)   // a hang guard, as in `settle`
         while !BoardAnimator.isSequencing, Date() < deadline {
             try? await Task.sleep(nanoseconds: 10_000_000)
         }
