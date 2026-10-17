@@ -2368,9 +2368,9 @@ static int measure(int games, uint32_t seed0, int np, int bot, const char *label
 // A turn bubble is a mid-game cut, so this is the load-bearing question for
 // using v6 as the body. For each cut point: encode the partial game, decode,
 // replay the decoded actions, and compare state against the truth.
-static void probe_v6_midgame(uint32_t seed0, int np, int bot) {
+static void probe_v6_midgame(uint32_t seed0, int np, int bot, int games) {
     int cuts = 0, enc_fail = 0, dec_fail = 0, state_bad = 0, good_pending_bad = 0;
-    for (int gi = 0; gi < 40; gi++) {
+    for (int gi = 0; gi < games; gi++) {
         uint8_t seed[MSG_SEED_LEN];
         seed_fill(seed, seed0 + (uint32_t)gi * 7919 + (uint32_t)np);
         for (int cut = 1; cut <= 60; cut++) {
@@ -6755,8 +6755,15 @@ int main(int argc, char **argv) {
     test_chains();
     test_size_budget(games * 4, seed0);
     { const int rb = bot_roster_find("robusta");
-      probe_v6_midgame(seed0, 2, rb);
-      probe_v6_midgame(seed0, 4, rb); }
+      // Forty robusta games a width, re-played from the deal at every cut, are
+      // volume: the coverage corpus (c/Makefile COVERAGE_CORPUS) cuts two.
+#ifdef COVERAGE_CORPUS
+      const int probe_games = 2;
+#else
+      const int probe_games = 40;
+#endif
+      probe_v6_midgame(seed0, 2, rb, probe_games);
+      probe_v6_midgame(seed0, 4, rb, probe_games); }
 
     if (g_fails) { printf("msg_wire_test: %d FAILURES\n", g_fails); return 1; }
     printf("msg_wire_test: OK\n");

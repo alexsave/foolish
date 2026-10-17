@@ -289,6 +289,13 @@ build/analyse_test: $(ANALYSE_OBJ) $(call c_objs,build/obj/analyse,tests/analyse
 	$(CC) $(ANALYSE_CFLAGS) $^ -o $@ $(LDFLAGS)
 analyse-test: build/analyse_test
 	./build/analyse_test
+# THE VOLUME the coverage corpus leaves out (see `coverage` and COVERAGE_CORPUS
+# below): every suite at the flags the product ships, side by side under -j.
+# coverage.yml's c-native job runs it on every PR.
+.PHONY: volume volume-msg-wire
+volume: tests volume-msg-wire analyse-test
+volume-msg-wire: build/msg_wire_test
+	./build/msg_wire_test 20
 # Two bot drives on two threads under two pre-action hooks, each of which must
 # see only its own (tests/bot_drive_threads_test.c). Its objects are the
 # analyse variant's because the hook's per-thread storage is the thing under
@@ -1884,7 +1891,7 @@ wasm-alloc-test: wasm-cc-check build/bump_alloc_test.wasm build/bump_alloc_test_
 # runtime. Objects (and their .gcno/.gcda) land in covbuild/ where gcovr finds
 # them recursively. Tune the floors with COV_LINE_MIN / COV_BRANCH_MIN.
 COV_CC         ?= gcc
-COV_FLAGS      := -O0 -g --coverage -Isrc -Wno-unused-parameter -Wno-deprecated-declarations -DCD_PASS_PROBE
+COV_FLAGS      := -O0 -g --coverage -fprofile-update=atomic -Isrc -I../../c_base/test -Wno-unused-parameter -Wno-deprecated-declarations -DCD_PASS_PROBE -DCOVERAGE_CORPUS
 COV_LINE_MIN   ?= 90
 COV_BRANCH_MIN ?= 74
 # THE WHOLE SHIPPED KERNEL, not three files of it.
@@ -1918,42 +1925,95 @@ COV_SHARED     := deal_rng sha256
 COV_FILTERS    := $(foreach f,$(COV_KERNEL),--filter 'src/$(f)\.c') \
                   $(foreach f,$(COV_SHARED),--filter '.*shared/c/$(f)\.c')
 
-.PHONY: coverage
-coverage:
-	rm -rf covbuild && mkdir -p covbuild
-	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/tests.c          -o covbuild/cnitro_tests    -lm
-	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/sim_difftest.c   -o covbuild/sim_difftest    -lm
-	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/apply_difftest.c -o covbuild/apply_difftest  -lm
-	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/solver_difftest.c -o covbuild/solver_difftest -lm
-	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/replay_v6_test.c  -o covbuild/replay_v6_test  -lm
-	# THE SUITES `make difftests` RUNS AND THIS ONCE DID NOT. Coverage measured
-	# five of the eleven suites, so a file could read 0% while being thoroughly
-	# tested by a binary nobody built here. src/msg_wire.c - 644 lines, the FMSG
-	# envelope the whole iMessage product rides on - reported ZERO, with a
-	# 4,427-line test suite sitting beside it. Measuring a subset does not
-	# understate coverage, it MISDIRECTS it: the number points at the wrong
-	# files, and the gate protects whatever happens to be in the subset.
-	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/msg_wire_test.c   -o covbuild/msg_wire_test   -lm
-	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/anim_plan_test.c  -o covbuild/anim_plan_test  -lm
-	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/msg_expand_test.c -o covbuild/msg_expand_test -lm
-	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/analyse_test.c    -o covbuild/analyse_test    -lm
-	# The backend's codec and client are kernel files whose suites live with
-	# their server (c_base/test, whose t.h needs nothing of c_base's own).
-	$(COV_CC) $(COV_FLAGS) -I../../c_base/test $(CORE_SRC) ../../c_base/test/unit_netwire.c   -o covbuild/unit_netwire   -lm
-	$(COV_CC) $(COV_FLAGS) -I../../c_base/test $(CORE_SRC) ../../c_base/test/unit_netclient.c -o covbuild/unit_netclient -lm
+# THE COVERAGE BUILD IS OBJECTS, AND ITS SUITES RUN AT ONCE.
+#
+# This recipe compiled all of CORE_SRC from source once per suite - twelve
+# times - and then ran the suites one after another: 9m36s on the CI runner,
+# the slowest check on every PR. The objects are a variant now (covbuild/obj,
+# built once, -j), every suite links them, and the suites run side by side
+# (cov-runs, -j). They share the objects, so they share the .gcda counters:
+# libgcov merges a process's counts into the file under a lock when it exits,
+# so concurrent suites add up as sequential ones did.
+#
+# AND THE SUITES RUN THEIR COVERAGE CORPUS, NOT THEIR VOLUME. COV_FLAGS defines
+# COVERAGE_CORPUS, and under it the suites play one of what they play many of:
+# one octogen game where there were eighteen, two robusta games a width where
+# there were forty, msg_wire_test's three games a player count where there were
+# twenty, four handwritten worlds where twelve robusta ones proved the threads
+# agree. Volume is what made instrumented code slow - one octogen test was 105s
+# of cnitro_tests' 236 here - and it reaches no gated line or branch the corpus
+# does not: the covered set was diffed, line for line and branch for branch,
+# against this recipe's twelve-binary, full-volume run at the same flags, and
+# is identical (8932/9142 lines, 8148/9839 branches). The volume still runs on
+# every PR, uninstrumented, at the flags the product ships: `make volume`, in
+# coverage.yml's c-native job. If a change ever makes volume the only thing
+# that reaches a line, the floors below say so first; give the corpus a small
+# case of it rather than putting the volume back.
+#
+# -fprofile-update=atomic, because two suites run threads (analyse_test's
+# world loop, and the bot drives under it). Non-atomic counters raced there:
+# gcov derived negative branch counts ("Ignoring negative hits", the warnings
+# above the report on every run) and, worse, eleven branches of game.c and
+# legal.c read as COVERED that no test reaches - the same full suite, run
+# twice, did not even agree on which. With atomic counters it reports the same
+# set every run, and those eleven are gone from it: 8148 covered branches, not
+# 8159, and the floor below is far from either.
+$(eval $(call C_VARIANT,covbuild/obj,COV_CC,COV_FLAGS))
+COV_OBJ = $(call c_objs,covbuild/obj,$(CORE_SRC))
+define COV_PROG
+covbuild/$(1): $$(call c_objs,covbuild/obj,$(2)) $$(COV_OBJ)
+	$$(COV_CC) $$(COV_FLAGS) $$^ -o $$@ -lm
+endef
+$(eval $(call COV_PROG,cnitro_tests,tests/tests.c))
+$(eval $(call COV_PROG,sim_difftest,tests/sim_difftest.c))
+$(eval $(call COV_PROG,apply_difftest,tests/apply_difftest.c))
+$(eval $(call COV_PROG,solver_difftest,tests/solver_difftest.c))
+$(eval $(call COV_PROG,replay_v6_test,tests/replay_v6_test.c))
+# THE SUITES `make difftests` RUNS AND THIS ONCE DID NOT. Coverage measured
+# five of the eleven suites, so a file could read 0% while being thoroughly
+# tested by a binary nobody built here. src/msg_wire.c - 644 lines, the FMSG
+# envelope the whole iMessage product rides on - reported ZERO, with a
+# 4,427-line test suite sitting beside it. Measuring a subset does not
+# understate coverage, it MISDIRECTS it: the number points at the wrong
+# files, and the gate protects whatever happens to be in the subset.
+$(eval $(call COV_PROG,msg_wire_test,tests/msg_wire_test.c))
+$(eval $(call COV_PROG,anim_plan_test,tests/anim_plan_test.c))
+$(eval $(call COV_PROG,msg_expand_test,tests/msg_expand_test.c))
+$(eval $(call COV_PROG,analyse_test,tests/analyse_test.c))
+# The backend's codec and client are kernel files whose suites live with
+# their server (c_base/test, whose t.h needs nothing of c_base's own; the
+# -I../../c_base/test in COV_FLAGS is for them).
+$(eval $(call COV_PROG,unit_netwire,../../c_base/test/unit_netwire.c))
+$(eval $(call COV_PROG,unit_netclient,../../c_base/test/unit_netclient.c))
+
+COV_JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+COV_RUNS := cov-run-tests cov-run-difftests cov-run-msg-wire cov-run-analyse cov-run-small
+.PHONY: cov-runs $(COV_RUNS)
+cov-runs: $(COV_RUNS)
+cov-run-tests: covbuild/cnitro_tests
 	./covbuild/cnitro_tests
+cov-run-difftests: covbuild/sim_difftest covbuild/apply_difftest covbuild/solver_difftest
 	./covbuild/sim_difftest 4 100
 	./covbuild/apply_difftest 4 50
 	./covbuild/solver_difftest 2 40 "" 5000
 	./covbuild/solver_difftest 3 40 "" 5000
 	./covbuild/solver_difftest 4 40 "" 5000
+cov-run-msg-wire: covbuild/msg_wire_test
+	./covbuild/msg_wire_test $(COV_MSG_GAMES)
+cov-run-analyse: covbuild/analyse_test
+	./covbuild/analyse_test
+cov-run-small: covbuild/replay_v6_test covbuild/anim_plan_test covbuild/msg_expand_test covbuild/unit_netwire covbuild/unit_netclient
 	./covbuild/replay_v6_test 10
-	./covbuild/msg_wire_test 20
 	./covbuild/anim_plan_test
 	./covbuild/msg_expand_test
-	./covbuild/analyse_test
 	./covbuild/unit_netwire
 	./covbuild/unit_netclient
+COV_MSG_GAMES ?= 3
+
+.PHONY: coverage
+coverage:
+	@find covbuild -name '*.gcda' -delete 2>/dev/null || true
+	$(MAKE) -j$(COV_JOBS) cov-runs
 	# A NEW KERNEL FILE MUST NOT BE ABLE TO SLIP PAST THE GATE. COV_KERNEL is a
 	# hand-written list, and this repo has been bitten four times in one day by
 	# a check that named files while the files moved underneath it. Every source
