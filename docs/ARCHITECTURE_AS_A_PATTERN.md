@@ -485,7 +485,7 @@ The lesson is sharper than "keep artifacts fresh": a gate that cannot ask the re
 
 The honest residual bottleneck of a serverless deployment is *"database round trips, not compute"*: stateless functions reload state per request.
 A stateful native server deletes that problem.
-This repo built one (`server/impls/native`), and it is being retired (PR #332, in progress 2026-10-17): the deployed backend is the stateless kind, c_base on Lambda and DynamoDB, so what follows is the variant and the lessons from running it, not what ships.
+This repo built one (`server/impls/native`), and it was retired on 2026-10-17 (PR #332; the last tree is in git at `56ad0609`): the deployed backend is the stateless kind, c_base on Lambda and DynamoDB, so what follows is the variant and the lessons from running it, not what ships.
 One long-lived process holds hot entities in RAM as the struct, single-writer per entity:
 
 ```

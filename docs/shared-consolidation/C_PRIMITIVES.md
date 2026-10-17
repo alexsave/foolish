@@ -1,6 +1,6 @@
 # Low-level C primitives - consolidation pass over five products
 
-> **Note added 2026-10-17.** A dated investigation, kept as written; see the note at the top of `SUMMARY.md` for what has changed since (one `shared/c/rng.h` for every generator, the native server's Makefile on its way out with PR #332).
+> **Note added 2026-10-17.** A dated investigation, kept as written; see the note at the top of `SUMMARY.md` for what has changed since (one `shared/c/rng.h` for every generator, the native server and its Makefile retired by PR #332).
 
 Investigated in the `shared-consolidation` worktree, read-only.
 Products: foolish/c (the card game, shipped), uttt/c (near-shipped), pickemup/c, chuiniu/c, tallybones/c (three new products built in parallel).
