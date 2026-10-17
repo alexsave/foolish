@@ -4,14 +4,13 @@ import { stream } from '../common/backend';
 import type { NetChat } from '@sdk/ts/net/net_client.ts';
 import { useUrlGameId } from '../utils/useUrlGameId';
 import { useAuth } from './AuthContext';
-import { ANIM_TIME_MS } from '@sdk/ts/gen/anim.bots.ts';
 import { optimisticOverlay } from '../state/optimisticOverlay';
 import { animationFeed } from '../state/animationFeed';
 import * as V from '@sdk/ts/gen/view_layout.bots.ts';
 import type { Ask } from '@sdk/ts/table/client_table.ts';
 import { cardKey, mergeHandOrder, reconcileHandMemory, displayedHand } from '../state/clientReconcile';
 import { keepPending, lobbyBoard, rearrangedBoard } from '../state/clientBoards';
-import { TABLE_STATUS_APPLIED, TABLE_STATUS_REJECTED, TABLE_REJECT_STALE_ROUND } from '@sdk/ts/gen/view_layout.bots.ts';
+import { TABLE_STATUS_REJECTED, TABLE_REJECT_STALE_ROUND } from '@sdk/ts/gen/view_layout.bots.ts';
 import { clientTable, encodeAction } from '@sdk/ts/table/client_table.ts';
 import { GAME_STATUS, rulesOf, type TableView, type ViewCard } from '../state/view';
 import { rejectMessage } from '../wasm/rejectMessages';
@@ -31,10 +30,6 @@ const chatRow = (c: NetChat, names: Record<string, string>) => ({
     id: c.id, user_id: c.userId, message: c.message,
     created_at: new Date(Number(c.createdMs)).toISOString(), sender_name: names[c.userId] || 'Unknown',
 });
-
-// How long a refused move waits for the pushes it was refused over before
-// reconcileAfter loads the game: two of the kernel's flights, time for a late push.
-const RECONCILE_GRACE_MS = 2 * ANIM_TIME_MS;
 
 // Re-apply the local player's unconfirmed optimistic table cards onto an
 // authoritatively-loaded board (reconnect resync), so a just-played card doesn't
@@ -278,11 +273,12 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         return result;
     };
 
-    // Dashboard live updates: the stream of this user's own views, each the
-    // committed masked envelope of one of their games, pushed straight into
-    // `games`. The list-level counterpart of RealtimeAnimationFeed's per-game
-    // cast stream - full boards instead of event deltas. User-scoped (keyed on
-    // user_id only), so it survives game navigation. Best-effort: if it cannot
+    // Live boards: the stream of this user's own views, each the committed
+    // masked envelope of one of their games, pushed straight into `games`, and
+    // the client's own refetches of a game. The list-level counterpart of
+    // RealtimeAnimationFeed's per-game cast stream - full boards instead of
+    // event deltas. User-scoped (keyed on user_id only), so it survives game
+    // navigation. Best-effort: if it cannot
     // be held, the list still refreshes on the next getUserGames / navigation.
     useEffect(() => {
         if (!user_id) return;
@@ -301,11 +297,13 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 try {
                     const v = readEnvelope(envelope);
                     if (!v) return;
-                    // The on-screen game is animation-owned (RealtimeAnimationFeed):
-                    // pushing its final board here would jump past the in-flight
-                    // animation. This stream keeps every OTHER game live.
-                    if (v.gameId === urlGameIdRef.current) return;
-                    setGames(prev => ({ ...prev, [v.gameId]: mergeGameData(v.gameId, v, prev) }));
+                    // A game held on its own stream (the one on screen) is given no
+                    // dashboard views: its casts animate it (the kernel's client
+                    // holds them back). What comes for it here is the client's own
+                    // refetch, after a gap or a reconnect: the board taken whole,
+                    // my unconfirmed cards kept on it.
+                    const next = v.gameId === urlGameIdRef.current ? applyOptimisticOverlay(v) : v;
+                    setGames(prev => ({ ...prev, [v.gameId]: mergeGameData(v.gameId, next, prev) }));
                 } catch { /* unreadable - ignore; the next fetch resyncs */ }
             },
         });
@@ -417,6 +415,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         try {
             if (!userIdRef.current) return null;
             const envelope = await backend.view(gameId);
+            // Stale: what the page was handed meanwhile is newer, and it holds it.
+            if (envelope === 'stale') return gamesRef.current[gameId] ?? null;
             return envelope ? readEnvelope(envelope) : null;
         } catch {
             return null;
@@ -645,7 +645,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
     // An ask out (the kernel's bytes), the caller's envelope back, or a throw
     // with the refusal.
-    const metaBytes = async (ask: Uint8Array | null): Promise<Uint8Array> => {
+    const metaBytes = async (ask: Uint8Array | null): Promise<Uint8Array | null> => {
         if (ask === null) throw new Error('the kernel would not write this ask');
         return backend.meta(ask);
     };
@@ -660,36 +660,17 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         } = {}
     ): Promise<{ game_id: string }> => {
         try {
+            // The answer is the asker's board only when the ask moved them (a
+            // join, their own leave); every other ask's change arrives as its cast.
             const bytes = await metaBytes(clientTable().askBody(ask));
             const view = bytes ? readEnvelope(bytes) : null;
-            if (!view || !view.gameId) throw new Error('Invalid response from meta: missing game ID');
-            options.onSuccess?.(view);
-            return { game_id: view.gameId };
+            if (view) options.onSuccess?.(view);
+            return { game_id: ask.gid };
         } catch (error) {
             options.onError?.(error);
             throw error;
         }
     }
-
-    // After a refused (or moot) move whose answer names a newer version than the
-    // page has applied, the page is behind the server: the pushes that would have
-    // told it are late or lost. Give a late push RECONCILE_GRACE_MS to arrive and
-    // animate as usual; if the page is still behind then, load the game, so a lost
-    // push leaves the board stale for about a second instead of until the next move.
-    const reconcileTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-    const reconcileAfter = (gameId: string, serverVersion: number) => {
-        const seen = authoritativeVersion(gameId);
-        if (seen !== undefined && serverVersion <= seen) return;
-        const timers = reconcileTimers.current;
-        const prior = timers.get(gameId);
-        if (prior) clearTimeout(prior);
-        timers.set(gameId, setTimeout(() => {
-            timers.delete(gameId);
-            const now = authoritativeVersion(gameId);
-            if (now !== undefined && now >= serverVersion) return;
-            loadGame(gameId).catch(() => { /* the next push or resubscribe resync catches up */ });
-        }, RECONCILE_GRACE_MS));
-    };
 
     const invokePackedAction = async (gameId: string, wire: Uint8Array): Promise<{ game_id: string }> => {
         // The packed move transport (docs/PACKED_WIRE_CUTOVER.md): the awire bytes
@@ -703,9 +684,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             throw new Error('Invalid response from action: unreadable packed response');
         }
         // A move that did not apply was judged against a game newer than the one
-        // on screen: catch up with it (reconcileAfter), whether or not its pushes
-        // ever arrive.
-        if (resp.status !== TABLE_STATUS_APPLIED) reconcileAfter(gameId, resp.version);
+        // on screen: the kernel's client catches the page up with it (it refetches
+        // the game when no push has done so a moment later).
         if (resp.status === TABLE_STATUS_REJECTED) {
             // A stale-round reject is the one rejection the user should SEE: the
             // move was kernel-legal, just aimed at a round that closed first, so
