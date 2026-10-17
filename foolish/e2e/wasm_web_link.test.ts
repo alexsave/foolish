@@ -59,6 +59,7 @@ import { RS_PLAY_STRIDE } from '../sdk/ts/gen/kernel_consts.bots.ts';
 import { TUTORIAL_MOVES_CODE } from '../src/components/tutorialGame.ts';
 import { CLIENT_BOUNDARY, browserWasmReach } from './helpers/client_bundle.ts';
 import { botsTestWasm } from './helpers/bots_test_wasm.ts';
+import { calledExports } from './helpers/wasm_exports.ts';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 
@@ -266,11 +267,16 @@ test('the unmasked-state entry points the client boundary denies are absent from
 test('web.wasm exports exactly the kernel entries the browser bundle reaches', async () => {
     const reach = await browserWasmReach();
     const web = exportNames('sdk/ts/wasm/web.wasm.gz');
-    const bots = exportNames(TEST);
-
-    // Names in the bundle that no kernel module exports (the Oracle's own
-    // modules, `wasm_asset`) are not this test's business.
-    const wanted = [...reach].filter((n) => bots.has(n)).sort();
+    const kernel = exportNames(TEST);
+    // The scan is by name over the whole bundle, so it also sees what the
+    // Oracle's code (src/oracle) calls on the Oracle's own modules: choose_move,
+    // the state and log imports. Those names are the Oracle's business, not this
+    // link's, unless web.wasm exports them too. Read from the Oracle's source
+    // rather than from oracle.wasm's export table, which carries every anim and
+    // replay entry as well and would hide a missing one here.
+    const oracleCalls = calledExports(ROOT + 'src/oracle');
+    assert.ok(oracleCalls.has('wasm_choose_move'), 'the Oracle\'s calls were read');
+    const wanted = [...reach].filter((n) => kernel.has(n) && !(oracleCalls.has(n) && !web.has(n))).sort();
     assert.ok(wanted.length > 40, `the reach scan found only ${wanted.length} kernel entries - did the bundle build?`);
 
     const missing = wanted.filter((n) => !web.has(n));
