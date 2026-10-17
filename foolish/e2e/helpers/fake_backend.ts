@@ -23,8 +23,8 @@ export interface FakeBackend {
     board: NetBoardRow[];
     history: { rating: number | null; rows: NetHistoryRow[] };
     replays: Record<string, NetReplay>;
-    /** What meta answers an ask with (default: refused). */
-    onMeta: (ask: Uint8Array) => Promise<Uint8Array>;
+    /** What meta answers an ask with (default: refused): the asker's envelope, or null for an ask that did not move them. */
+    onMeta: (ask: Uint8Array) => Promise<Uint8Array | null>;
     onCreate: () => Promise<Uint8Array>;
     onAction: (gameId: string, wire: Uint8Array, intent: number) => Promise<NetAction>;
     /** Every call the page made, in order: its name and its first argument. */
@@ -38,8 +38,6 @@ export interface FakeBackend {
         view(gameId: string, envelope: Uint8Array | null): void;
         cast(gameId: string, cast: Uint8Array): void;
         chat(gameId: string, message: NetChat): void;
-        joined(gameId: string, seated: boolean): void;
-        refused(gameId: string): void;
     };
     /** The module's named exports, for mock.module. */
     module: Record<string, unknown>;
@@ -61,8 +59,6 @@ export function fakeBackend(init: Partial<Pick<FakeBackend, 'user'>> = {}): Fake
             view: (gid, env) => { for (const l of fb.listeners) l.view?.(gid, env); },
             cast: (gid, cast) => { for (const l of fb.listeners) l.cast?.(gid, cast); },
             chat: (gid, m) => { for (const l of fb.listeners) l.chat?.(gid, m); },
-            joined: (gid, seated) => { for (const l of fb.listeners) l.joined?.(gid, seated); },
-            refused: (gid) => { for (const l of fb.listeners) l.refused?.(gid); },
         },
         module: {},
     };
@@ -78,16 +74,13 @@ export function fakeBackend(init: Partial<Pick<FakeBackend, 'user'>> = {}): Fake
             if (n > 0) fb.held.set(key, n); else fb.held.delete(key);
         };
     };
-    const sessionListeners = new Set<() => void>();
     fb.module = {
         BackendError: FakeBackendError,
         ready: async () => {},
         sessionUser: () => fb.user,
-        onSessionChange: (l: () => void) => { sessionListeners.add(l); return () => sessionListeners.delete(l); },
         signIn: async (_up: boolean, name: string) => { log('signIn', name); },
-        signOut: async () => { log('signOut'); fb.user = null; for (const l of sessionListeners) l(); },
-        signedOut: () => { fb.user = null; for (const l of sessionListeners) l(); },
-        updatePassword: async () => { log('updatePassword'); return new Uint8Array(); },
+        signOut: async () => { log('signOut'); fb.user = null; },
+        updatePassword: async () => { log('updatePassword'); },
         deleteAccount: async () => { log('deleteAccount'); },
         create: async () => { log('create'); return fb.onCreate(); },
         meta: async (ask: Uint8Array) => { log('meta', ask); return fb.onMeta(ask); },
@@ -95,7 +88,7 @@ export function fakeBackend(init: Partial<Pick<FakeBackend, 'user'>> = {}): Fake
         games: async () => { log('games'); return fb.games; },
         view: async (gameId: string) => { log('view', gameId); return fb.views[gameId] ?? null; },
         chats: async (gameId: string) => { log('chats', gameId); return fb.chats[gameId] ?? []; },
-        sendChat: async (gameId: string, message: string) => { log('sendChat', { gameId, message }); return new Uint8Array(); },
+        sendChat: async (gameId: string, message: string) => { log('sendChat', { gameId, message }); },
         bots: async () => { log('bots'); return fb.bots; },
         board: async () => { log('board'); return fb.board; },
         history: async () => { log('history'); return fb.history; },
@@ -106,7 +99,7 @@ export function fakeBackend(init: Partial<Pick<FakeBackend, 'user'>> = {}): Fake
             games: () => hold('games'),
             game: (gameId: string) => hold(`game:${gameId}`),
             chat: (gameId: string) => hold(`chat:${gameId}`),
-            flush: () => {},
+            send: () => {},
             stop: () => { fb.held.clear(); },
         },
     };

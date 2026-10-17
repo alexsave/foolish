@@ -51,11 +51,11 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { JSDOM } from 'jsdom';
 import { fakeBackend } from './helpers/fake_backend.ts';
-import { netClient } from '../sdk/ts/net/net_client.ts';
 import { fixture, fixtureTable, WAITING, PLAYING, GAME_OVER, IN, OUT, type FixtureSeat, type TableFixture } from './helpers/table_fixture.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import { clientTable, encodeAction } from '../sdk/ts/table/client_table.ts';
 import * as V from '../sdk/ts/gen/view_layout.bots.ts';
+import { NC_RECONCILE_MS } from '../sdk/ts/gen/net_layout.bots.ts';
 import { askKindName } from './helpers/ask.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; console.debug = () => {}; }
@@ -121,12 +121,15 @@ class Server {
     lost = false;
 
     lose(userId: string): void { this.take(userId); this.lost = true; }
+    /** The newest version my page was handed: the board it loaded, then each push delivered. */
+    heard: number;
     private n = 0;
 
     constructor(readonly gid: string, board: TableFixture, version = 10) {
         this.state = board.state;
         this.roster = board.roster;
         this.version = version;
+        this.heard = version;
     }
 
     private load(): ReturnType<typeof fixtureTable> {
@@ -214,8 +217,8 @@ fb.onMeta = (ask) => {
     const decoded = fixtureTable().askDecode(ask);
     return new Promise((resolve) => { pending.push({ kind: 'meta', type, idx: typeof decoded === 'number' ? [] : [...decoded.idx], resolve }); });
 };
-/** The action answer the client reads, from the kernel's own response bytes. */
-const actionAnswer = (rc: number, reject: number, version: number) => netClient().action(200, fixtureTable().actionResponse(rc, reject, version));
+/** The action answer the page is handed, read from the kernel's own response bytes. */
+const actionAnswer = (rc: number, reject: number, version: number) => clientTable().readActionResponse(fixtureTable().actionResponse(rc, reject, version));
 
 let routeGameId = '';
 mock.module('../src/common/backend.ts', { namedExports: fb.module });
@@ -498,7 +501,7 @@ async function answer(stage: Stage, label: string): Promise<void> {
     await stage.step(label, async () => {
         if (req.kind === 'action') {
             const r = s.act(ME, req.wire!);
-            req.resolve(actionAnswer(r.rc, r.reject, s.version));
+            respond(req, s, r);
         } else {
             if (req.type === 'continue') s.op(ME, (t) => t.continueGame(ME));
             else if (req.type === 'rearrange-hand') s.op(ME, (t) => t.rearrangeHand(ME, req.idx!));
@@ -508,12 +511,26 @@ async function answer(stage: Stage, label: string): Promise<void> {
     });
 }
 
+/**
+ * Answers my move. A move refused over a game newer than the page was handed:
+ * the kernel's client refetches the game NC_RECONCILE_MS later unless a push
+ * has caught it up by then (c_base/test/unit_netclient.c
+ * a_refused_move_catches_up), and the board reaches the page as a view. This
+ * stands in for that client, rule for rule.
+ */
+function respond(req: Pending, s: Server, r: { rc: number; reject: number }): void {
+    req.resolve(actionAnswer(r.rc, r.reject, s.version));
+    const behind = s.version;
+    if (r.rc !== L.TABLE_APPLIED && s.heard < behind)
+        setTimeout(() => { if (s.heard < behind) fb.push.view(s.gid, s.envelope(ME)); }, NC_RECONCILE_MS);
+}
+
 /** Delivers the next push for me on the game's stream, as the server would. */
 async function deliver(stage: Stage, label: string, push?: Push): Promise<void> {
     const s = server!;
     const p = push ?? s.take(ME);
     assert.ok((fb.held.get(`game:${s.gid}`) ?? 0) > 0, `${label}: the page holds the game's stream`);
-    await stage.step(label, () => fb.push.cast(s.gid, p.bytes));
+    await stage.step(label, () => { s.heard = Math.max(s.heard, p.version); fb.push.cast(s.gid, p.bytes); });
 }
 
 const traceText = (frames: Frame[]): string =>
@@ -1352,7 +1369,7 @@ test('a refused card comes home unselected: the next pick is a pick of its own, 
         await s.step('server refuses mine: stale round', async () => {
             const r = srv.op(ME, (t) => t.act(ME, req!.wire!, 0, 1));
             assert.equal(r.rc, L.TABLE_STALE_ROUND, 'the server refuses it as stale');
-            req!.resolve(actionAnswer(r.rc, r.reject, srv.version));
+            respond(req!, srv, r);
         });
         await s.advance(1500);
         assert.deepEqual(selectedInHand(s.host), [], 'the refused six came home unselected');

@@ -37,6 +37,10 @@ export interface NetIntent {
 }
 /** A finished ticket, the body its answer came in (spans are into it), and a list's rows. */
 export interface NetAnswer { done: NetDone; body: Uint8Array; rows: unknown[] }
+/** A move's answer: TABLE_STATUS_*, the reject code, the version it was judged at. */
+export interface NetAction { status: number; rejectCode: number; version: number }
+/** One replay: the moves code's bytes and its extras (empty for none). */
+export interface NetReplay { moves: Uint8Array; extras: Uint8Array }
 /** A row of match history, its blobs sliced out. */
 export interface NetHistoryRow { id: string; createdMs: number; players: string[]; moves: Uint8Array; extras: Uint8Array }
 
@@ -44,7 +48,7 @@ const enc = new TextEncoder();
 const NONE = new Uint8Array(0);
 
 // Each list's rows, by the kind the answer names.
-const ROW_READERS: Record<number, (m: N.Mem, p: number) => unknown> = {
+const ROW_READERS: Partial<Record<number, (m: N.Mem, p: number) => unknown>> = {
     [N.NW_GAMES]: N.readNcGameRow, [N.NW_CHATS]: N.readNcChatRow, [N.NW_BOTS]: N.readNcBotRow,
     [N.NW_BOARD]: N.readNcBoardRow, [N.NW_HISTORY]: N.readNcHistoryRow,
 };
