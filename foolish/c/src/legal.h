@@ -53,12 +53,14 @@ void calculate_legal_moves(const Game *g, int bot_idx, LegalMoves *out);
 // owns the real game.
 bool legal_move_apply(Game *g, int seat, const LegalMove *m);
 
-// Scoped output cap: generation appends (and the combinatorial recursions
-// prune) at `cap` moves instead of MAX_LEGAL_MOVES, so callers may enumerate
-// into buffers with fewer than MAX_LEGAL_MOVES slots (the solver scratch).
-// 0 or out-of-range resets to MAX_LEGAL_MOVES. Thread-local; set immediately
-// around the calculate_legal_moves call and reset after.
-void legal_set_move_cap(int cap);
+// The same menu into any LegalMove array of `cap` slots (0 or out of range is
+// MAX_LEGAL_MOVES): generation appends, and the combinatorial recursions prune,
+// at `cap`. Returns the count. The endgame solvers enumerate into their compact
+// scratch (cordite_sim.h SolveMoves) this way, and a full count (n == cap) is
+// their signal that the menu did not fit. Pass the array, never a struct of
+// another type cast to LegalMoves *: see legal.c MoveOut for the miscompile
+// that cast produced.
+int legal_moves_into(const Game *g, int bot_idx, LegalMove *moves, int cap);
 
 // Faster variant for use inside Monte Carlo simulations where every player
 // plays a deterministic policy (handwritten). Skips the combinatorial cover

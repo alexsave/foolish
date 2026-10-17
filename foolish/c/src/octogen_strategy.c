@@ -684,9 +684,7 @@ static int og_solve(Solver *S, const Game *g, int alpha, int beta, int depth) {
     // Bounded generation into the compact scratch slot (see SOLVE_SCRATCH_MOVES
     // in cordite_sim.h): the cast is safe because SolveMoves shares LegalMoves'
     // leading layout and the cap keeps writes within its {n, moves[]} bounds.
-    legal_set_move_cap(SOLVE_SCRATCH_MOVES);
-    calculate_legal_moves(g, actor, (LegalMoves *)mv);
-    legal_set_move_cap(0);
+    mv->n = legal_moves_into(g, actor, mv->moves, SOLVE_SCRATCH_MOVES);
     if (mv->n == 0) return 0;
     if (mv->n > OG_SOLVE_MAX_MOVES) { S->aborted = true; return 0; }
 

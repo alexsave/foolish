@@ -404,7 +404,7 @@ typedef struct {
 
 // The endgame solver runs entirely on the SHARED cordite_sim solve scratch —
 // the same log-less child slots (solve_scratch_child), compact 100-move lists
-// (solve_scratch_mv, filled under legal_set_move_cap) and root slot that
+// (solve_scratch_mv, filled by legal_moves_into) and root slot that
 // octogen's solver already uses. That is what keeps this bot inside octogen's
 // memory envelope: the previous per-depth Game+LegalMoves malloc was ~14 MB at
 // the wasm MAX_LEGAL_MOVES=4096. The depth/move ceilings must fit the shared
@@ -439,9 +439,7 @@ static int bp_solve(Solver *S, const Game *g, int alpha, int beta, int depth) {
     // the cast is safe because SolveMoves shares LegalMoves' leading {n, moves[]}
     // layout and the cap keeps writes inside its 100-slot bound.
     SolveMoves *mv = &solve_scratch_mv()[depth];
-    legal_set_move_cap(SOLVE_SCRATCH_MOVES);
-    calculate_legal_moves(g, actor, (LegalMoves *)mv);
-    legal_set_move_cap(0);
+    mv->n = legal_moves_into(g, actor, mv->moves, SOLVE_SCRATCH_MOVES);
     if (mv->n == 0) return 0;
     if (mv->n > BP_SOLVE_MAX_MOVES) { S->aborted = true; return 0; }
 

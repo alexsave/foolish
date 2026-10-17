@@ -145,7 +145,7 @@ long cd_sim_leafbook_hits(void);   // probes that hit the book since last reset
 #define SOLVE_SCRATCH_DEPTH 48
 // Move-list slots hold 100 moves, not MAX_LEGAL_MOVES: all three families
 // abort any solve node whose move count exceeds 96 (*_SOLVE_MAX_MOVES), so
-// generation is capped just ABOVE that threshold (legal_set_move_cap) — a
+// generation is capped just ABOVE that threshold (legal_moves_into) — a
 // node with <= 96 moves enumerates identically, and one with more saturates
 // at 100, still > 96, so the abort fires exactly as it did with full-size
 // buffers. Full-size lists were 30MB of the 41MB wasm static footprint.
