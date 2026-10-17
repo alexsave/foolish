@@ -16814,7 +16814,7 @@ static void ucf_recurse(UcOracle *o, int depth, uint8_t used) {
 
 static void test_unambiguous_cover_fuzz(void) {
     uint32_t r = 0x1234abcdu;
-#define UC_RI(n) ((int)((r = r * 1664525u + 1013904223u) >> 8) % (n))
+#define UC_RI(n) ((int)(rng_lcg32(&r) >> 8) % (n))
     int accepts = 0, refusals = 0, wrong = 0, illegal = 0;
     for (int it = 0; it < 4000; it++) {
         // A narrow rank band so cards share ranks and suits and one card can
