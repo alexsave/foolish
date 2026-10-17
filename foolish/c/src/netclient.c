@@ -1291,6 +1291,21 @@ int nc_stream_in(const uint8_t *frame, int len, int is_text, int64_t now_ms) {
         e->why = f->why;
         break;
     }
+    case NW_WS_CATCHUP: {
+        // What a game subscription missed, sent behind its ACK: the table's,
+        // taken as an answer is (a dashboard view of a held game is not).
+        if (!f->gid_len || !f->blob.len) { event_add(NC_EV_BAD); break; }
+        gate *g = gate_find(f->gid, f->gid_len, 1);
+        if (!answer_pass(g, f->version)) break;   // stale
+        NcEvent *e = event_add(NC_EV_VIEW);
+        e->what = NW_SUB_GAME;
+        e->gid_len = f->gid_len;
+        memcpy(e->gid, f->gid, f->gid_len);
+        e->version = f->version;
+        e->payload_len = f->blob.len;
+        g_event_at[g_n_events - 1] = (uint32_t)(f->blob.p - g_frame);
+        break;
+    }
     case NW_WS_VIEW:
     case NW_WS_CAST: {
         if (!f->gid_len) { event_add(NC_EV_BAD); break; }
