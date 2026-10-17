@@ -71,6 +71,29 @@ jobs:
       - name: unit tests and smoke under ASan + UBSan
         run: make -C c_base -j"$(getconf _NPROCESSORS_ONLN)" check-asan
 
+  # c_base/docs/COVERAGE.md: line and branch floors, and no function that no
+  # test calls (tools/cov_floor.txt names the ones allowed, with a reason).
+  coverage:
+    name: make coverage (floors, no function at zero)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -q && sudo apt-get install -y -q build-essential libssl-dev libsqlite3-dev
+      - name: gcovr
+        run: pipx install gcovr==8.6 || pip install --break-system-packages gcovr==8.6
+      - name: the coverage build, every test, the gate
+        run: make -C c_base -j"$(nproc)" coverage
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cbase-coverage
+          path: |
+            c_base/build/cov/report.txt
+            c_base/build/cov/coverage.lcov
+          if-no-files-found: ignore
+          retention-days: 14
+
   dynamo:
     name: make check-dynamo (DynamoDB Local)
     runs-on: ubuntu-24.04
