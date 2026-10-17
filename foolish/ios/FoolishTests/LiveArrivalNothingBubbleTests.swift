@@ -46,7 +46,13 @@ final class LiveArrivalNothingBubbleTests: XCTestCase {
         return sends
     }
 
-    private func waitFor(_ what: String, seconds: Double = 10,
+    /// A HANG GUARD, not a speed claim: the wait returns the moment `ok`
+    /// holds, so the deadline only decides how long a broken board takes to
+    /// fail. It was 10 seconds and failed a correct board on a Mac at a load
+    /// average of ~450 (2026-10-17: the mount's first bubble took longer than
+    /// that to render, and the whole test took 98 seconds). Nothing here is
+    /// about how fast the board is.
+    private func waitFor(_ what: String, seconds: Double = 120,
                          _ ok: () -> Bool) async {
         let deadline = Date().addingTimeInterval(seconds)
         while Date() < deadline {
