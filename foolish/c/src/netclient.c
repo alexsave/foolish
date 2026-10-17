@@ -1242,8 +1242,13 @@ static int envelope_names(const uint8_t *p, int len, char *gid, uint8_t *gid_len
 
 // ---- the stream: frames in ------------------------------------------------------------
 
+static void take_frame(NwFrame *f, int64_t now_ms);
+
 int nc_stream_in(const uint8_t *frame, int len, int is_text, int64_t now_ms) {
     events_begin();
+    // An empty message is what API Gateway sends for a frame whose answer
+    // carried nothing (its route response): there is nothing in it.
+    if (len == 0) return events_end();
     const uint8_t *msg = frame;
     int n = len;
     if (is_text) {
@@ -1260,6 +1265,22 @@ int nc_stream_in(const uint8_t *frame, int len, int is_text, int64_t now_ms) {
     NwFrame *f = &g_nwf;   // one frame for both directions: never two at once
     if (nw_frame_decode(msg, n, f) != NW_OK) { event_add(NC_EV_BAD); return events_end(); }
     g_reconnect_ms = 0;   // the socket works: a later close starts the schedule over
+    if (f->kind != NW_WS_BATCH) {
+        take_frame(f, now_ms);
+        return events_end();
+    }
+    // A batch: each entry in order, as if it had come alone (its bytes stay in
+    // g_frame, so an event's payload points into it as a lone frame's would).
+    NwBlob all = f->blob, one;
+    for (uint32_t pos = 0; nw_batch_next(all, &pos, &one) == 1;) {
+        if (nw_frame_decode(one.p, (int)one.len, f) != NW_OK) { event_add(NC_EV_BAD); continue; }
+        take_frame(f, now_ms);
+    }
+    return events_end();
+}
+
+// One frame from the server (never a batch).
+static void take_frame(NwFrame *f, int64_t now_ms) {
     switch (f->kind) {
     case NW_WS_ACK: {
         sub *s = NULL;
@@ -1366,7 +1387,6 @@ int nc_stream_in(const uint8_t *frame, int len, int is_text, int64_t now_ms) {
         event_add(NC_EV_BAD);   // a client frame, or one this client does not take
         break;
     }
-    return events_end();
 }
 
 static const NcOut *out_frame(const NwFrame *f) {
@@ -1379,40 +1399,109 @@ static const NcOut *out_frame(const NwFrame *f) {
     return &g_out;
 }
 
+// The frame for unsubscription u.
+static void unsub_frame(const unsub *u, NwFrame *f) {
+    memset(f, 0, sizeof *f);
+    f->kind = NW_WS_UNSUB;
+    f->what = u->what;
+    f->gid_len = u->gid_len;
+    memcpy(f->gid, u->gid, u->gid_len);
+}
+
+// The frame for subscription s, asked with `ref`.
+static void sub_frame(const sub *s, uint16_t ref, NwFrame *f) {
+    memset(f, 0, sizeof *f);
+    // The subscription says who asks: behind API Gateway a frame of its own
+    // carrying the token could be stored after this one is read.
+    f->kind = NW_WS_SUB_AS;
+    f->token_len = g_session.access_len;
+    memcpy(f->token, g_session.access, g_session.access_len);
+    f->ref = ref;
+    f->what = s->what;
+    f->gid_len = s->gid_len;
+    memcpy(f->gid, s->gid, s->gid_len);
+    // What this client already holds of the game, so the server sends
+    // only a newer view (the catch-up).
+    const gate *g = s->gid_len ? gate_find(s->gid, s->gid_len, 0) : NULL;
+    if (g) f->version = any_top(g);
+}
+
+// Due: wanted, refused and its wait over, or sent and never answered (a frame
+// the server dropped: API Gateway's answers are not promised, and a frame that
+// lost its row's compare-and-set too often goes unanswered).
+static int sub_due(const sub *s, int64_t now_ms) {
+    return s->state == SUB_WANT || ((s->state == SUB_REFUSED || s->state == SUB_SENT) && s->retry_at <= now_ms);
+}
+
+// The ref after the last one sent, never 0.
+static uint16_t next_ref(void) {
+    uint16_t r = (uint16_t)(g_next_ref + 1);
+    return r ? r : 1;
+}
+
+// Everything the client has to say at this moment goes in one message: the
+// unsubscriptions, then the subscriptions due, as one NW_WS_BATCH when there
+// are several (behind API Gateway: one invocation and one stored write for a
+// page's subscriptions, instead of one each, all at once, racing). What does
+// not fit NC_TEXT_MAX or NW_BATCH_MAX waits for the next call. A lone frame
+// goes as itself.
+static uint8_t g_batch[(NC_TEXT_MAX / 4) * 3];   // the entries: never more than a message's text holds
+
 const NcOut *nc_stream_next(int64_t now_ms) {
     if (!g_open || !g_signed_in) return NULL;
     NwFrame *f = &g_nwf;   // one frame for both directions: never two at once
-    memset(f, 0, sizeof *f);
-    if (g_n_unsubs) {
-        unsub *u = &g_unsubs[--g_n_unsubs];
-        f->kind = NW_WS_UNSUB;
-        f->what = u->what;
-        f->gid_len = u->gid_len;
-        memcpy(f->gid, u->gid, u->gid_len);
-        return out_frame(f);
+    uint8_t raw[NW_ACCESS_MAX + 128];
+    // Room for the entries once the batch's head (6 bytes) and base64 are counted.
+    const int room = (NC_TEXT_MAX / 4) * 3 - 6;
+    int at = 0, count = 0;
+    for (int u = g_n_unsubs - 1; u >= 0 && count < NW_BATCH_MAX; u--) {
+        unsub_frame(&g_unsubs[u], f);
+        int n = nw_frame_encode(f, raw, (int)sizeof raw);
+        if (n < 0 || at + 4 + n > room) break;
+        at += nw_batch_add(raw, n, g_batch + at, (int)sizeof g_batch - at);
+        g_n_unsubs--;
+        count++;
     }
-    for (int i = 0; i < NC_SUBS_MAX; i++) {
+    for (int i = 0; i < NC_SUBS_MAX && count < NW_BATCH_MAX; i++) {
         sub *s = &g_subs[i];
-        if (!(s->state == SUB_WANT || (s->state == SUB_REFUSED && s->retry_at <= now_ms))) continue;
+        if (!sub_due(s, now_ms)) continue;
+        uint16_t ref = next_ref();
+        sub_frame(s, ref, f);
+        int n = nw_frame_encode(f, raw, (int)sizeof raw);
+        if (n < 0 || at + 4 + n > room) break;
+        at += nw_batch_add(raw, n, g_batch + at, (int)sizeof g_batch - at);
+        g_next_ref = ref;
+        // Asked again unanswered: what was pushed meanwhile may be lost, so the
+        // acceptance takes the game whole.
+        if (s->state == SUB_SENT) s->missed = 1;
         s->state = SUB_SENT;
-        s->ref = ++g_next_ref ? g_next_ref : ++g_next_ref;
-        // The subscription says who asks: behind API Gateway a frame of its own
-        // carrying the token could be stored after this one is read.
-        f->kind = NW_WS_SUB_AS;
-        f->token_len = g_session.access_len;
-        memcpy(f->token, g_session.access, g_session.access_len);
-        f->ref = s->ref;
-        f->what = s->what;
-        f->gid_len = s->gid_len;
-        memcpy(f->gid, s->gid, s->gid_len);
-        // What this client already holds of the game, so the server sends
-        // only a newer view (the catch-up).
-        gate *g = s->gid_len ? gate_find(s->gid, s->gid_len, 0) : NULL;
-        if (g) f->version = any_top(g);
-        return out_frame(f);
+        s->ref = ref;
+        s->retry_at = now_ms + NC_ACK_WAIT_MS;
+        count++;
+    }
+    if (count == 1) {
+        // A lone frame as itself: its bytes are the one entry's, past its length.
+        int n = (int)(at - 4);
+        int t = nw_text_encode(g_batch + 4, n, g_out.text, NC_TEXT_MAX);
+        if (t < 0) return NULL;
+        g_out.len = (uint16_t)t;
+        return &g_out;
+    }
+    if (count > 1) {
+        memset(f, 0, sizeof *f);
+        f->kind = NW_WS_BATCH;
+        f->blob.p = g_batch;
+        f->blob.len = (uint32_t)at;
+        uint8_t whole[sizeof g_batch + 8];
+        int n = nw_frame_encode(f, whole, (int)sizeof whole);
+        int t = n < 0 ? n : nw_text_encode(whole, n, g_out.text, NC_TEXT_MAX);
+        if (t < 0) return NULL;
+        g_out.len = (uint16_t)t;
+        return &g_out;
     }
     if (now_ms - g_last_ping >= NC_PING_MS) {
         g_last_ping = now_ms;
+        memset(f, 0, sizeof *f);
         f->kind = NW_WS_PING;
         return out_frame(f);
     }
@@ -1425,7 +1514,8 @@ int nc_stream_due_ms(int64_t now_ms) {
     int64_t due = g_last_ping + NC_PING_MS;
     for (int i = 0; i < NC_SUBS_MAX; i++) {
         if (g_subs[i].state == SUB_WANT) return 0;
-        if (g_subs[i].state == SUB_REFUSED && g_subs[i].retry_at < due) due = g_subs[i].retry_at;
+        if ((g_subs[i].state == SUB_REFUSED || g_subs[i].state == SUB_SENT) && g_subs[i].retry_at < due)
+            due = g_subs[i].retry_at;
     }
     int64_t d = due - now_ms;
     return d < 0 ? 0 : d > NC_PING_MS ? NC_PING_MS : (int)d;
