@@ -26,7 +26,7 @@ if command -v apt-get >/dev/null 2>&1; then
   if sudo apt-get install -y binaryen >/dev/null 2>&1 || apt-get install -y binaryen >/dev/null 2>&1; then
     echo "[session-start] binaryen installed: $(wasm-opt --version 2>/dev/null || echo unknown)"
   else
-    echo "[session-start] WARN: could not install binaryen; \`make wasm-bots\` will fail until it is on PATH" >&2
+    echo "[session-start] WARN: could not install binaryen; \`npm run wasm\` will fail until it is on PATH" >&2
   fi
 else
   echo "[session-start] WARN: no apt-get available; install binaryen manually for wasm rebuilds" >&2
