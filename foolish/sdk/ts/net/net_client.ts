@@ -2,40 +2,52 @@
 // over the kernel link the runtime loads (web.wasm in a browser, bots.wasm on
 // Node).
 //
-// Every decision is the kernel's: what a request says and which token it
-// carries, when the token is refreshed, what an answer means, which pushes are
-// stale, when a refused subscription is retried and when to ping. This is a
-// call-and-copy wrapper like client_table.ts: each method writes its input into
-// the module (c/wasm/wasm_net_api.c), has the client read it, and copies the
-// answer out through the generated readers (sdk/ts/gen/net_layout.bots.ts)
-// before it returns. A span in an answer is sliced out of the caller's own
-// bytes. The sockets are src/common/backend.ts's.
+// Every decision is the kernel's: which request an intent becomes, its token,
+// when the token is refreshed, what is sent again and when, what an answer
+// means, which pushes are stale, what is refetched and what the stream is
+// subscribed to. This is a call-and-copy wrapper like client_table.ts: each
+// method writes its input into the module (c/wasm/wasm_net_api.c), has the
+// client take it, and copies what came back out through the generated readers
+// (sdk/ts/gen/net_layout.bots.ts) before it returns. The sockets are
+// src/common/backend.ts's.
 
 import type { WebExports } from '../gen/exports.web.ts';
 import * as N from '../gen/net_layout.bots.ts';
 import { __clientKernelExports } from '../wasm/bots.ts';
 
 export type NetRequest = N.NcRequest_Snap;
-export type NetError = N.NcError_Snap;
+export type NetDone = N.NcDone_Snap;
 export type NetEvent = N.NcEvent_Snap;
 export type NetSession = N.NcSessionInfo_Snap;
-export type NetAction = N.NcAction_Snap;
 export type NetChat = N.NcChatRow_Snap;
 export type NetBot = N.NcBotRow_Snap;
 export type NetBoardRow = N.NcBoardRow_Snap;
 export { N as NetConst };
 
-/** One game's view: the envelope the kernel's client slot adopts, and its version. */
-export interface NetView { version: number; envelope: Uint8Array }
-/** One replay: the moves code's bytes and its extras (empty for none). */
-export interface NetReplay { moves: Uint8Array; extras: Uint8Array }
+/** What the user wants (netclient.h NcIntent): its NC_DO_* and what that one takes. */
+export interface NetIntent {
+    kind: number;
+    gid?: string;
+    name?: string;
+    password?: string;
+    bytes?: Uint8Array;
+    flag?: number;
+    /** NC_DO_PLAY: the version the move was composed against (-1: none). */
+    intent?: number;
+}
+/** A finished ticket, the body its answer came in (spans are into it), and a list's rows. */
+export interface NetAnswer { done: NetDone; body: Uint8Array; rows: unknown[] }
 /** A row of match history, its blobs sliced out. */
 export interface NetHistoryRow { id: string; createdMs: number; players: string[]; moves: Uint8Array; extras: Uint8Array }
 
 const enc = new TextEncoder();
 const NONE = new Uint8Array(0);
-const bytesOf = (v: string | Uint8Array | undefined): Uint8Array =>
-    v === undefined ? NONE : typeof v === 'string' ? enc.encode(v) : v;
+
+// Each list's rows, by the kind the answer names.
+const ROW_READERS: Record<number, (m: N.Mem, p: number) => unknown> = {
+    [N.NW_GAMES]: N.readNcGameRow, [N.NW_CHATS]: N.readNcChatRow, [N.NW_BOTS]: N.readNcBotRow,
+    [N.NW_BOARD]: N.readNcBoardRow, [N.NW_HISTORY]: N.readNcHistoryRow,
+};
 
 export class NetClient {
     private readonly ex: WebExports;
@@ -51,15 +63,12 @@ export class NetClient {
         return this.mem;
     }
 
-    /** Writes the parts back to back at the inbox; their total, or -1 when they cannot be held. */
-    private put(...parts: Uint8Array[]): number {
-        const total = parts.reduce((n, p) => n + p.length, 0);
-        const at = this.ex.wasm_net_inbox(total);
+    /** Writes `bytes` at the inbox; their length, or -1 when they cannot be held. */
+    private put(bytes: Uint8Array): number {
+        const at = this.ex.wasm_net_inbox(bytes.length);
         if (!at) return -1;
-        const u8 = this.m().u8;   // after the inbox call: it may have grown memory
-        let p = at;
-        for (const part of parts) { u8.set(part, p); p += part.length; }
-        return total;
+        this.m().u8.set(bytes, at);   // after the inbox call: it may have grown memory
+        return bytes.length;
     }
 
     // ---- the session ----
@@ -82,139 +91,84 @@ export class NetClient {
 
     session(): NetSession { return N.readNcSessionInfo(this.m(), this.ex.wasm_net_session_info()); }
 
-    /** An answer to sign-up, sign-in or refresh: 0 and the session is kept, or the refusal's why. */
-    readSession(status: number, body: Uint8Array): number {
-        const n = this.put(body);
-        return this.ex.wasm_net_session_read(status, Math.max(n, 0));
+    /** Why the last intent was refused at once. */
+    error(): N.NcError_Snap { return N.readNcError(this.m(), this.ex.wasm_net_error()); }
+
+    // ---- the pump ----
+
+    /** A ticket for what the user wants, or 0: refused at once (error() says why). */
+    do(i: NetIntent): number {
+        N.writeNcIntent(this.m(), this.ex.wasm_net_intent_ptr(), {
+            kind: i.kind, flag: i.flag ?? 0, gid: i.gid ?? '', name: i.name ?? '', password: i.password ?? '',
+            bytes: [...(i.bytes ?? NONE)], intent: BigInt(i.intent ?? -1),
+        });
+        return this.ex.wasm_net_do(Date.now()) >>> 0;
     }
 
-    /** Why the last answer read was refused. */
-    error(): NetError { return N.readNcError(this.m(), this.ex.wasm_net_error()); }
-
-    // ---- requests ----
-
-    /** The request `which` (NC_REQ_*) asks for, or null; a refresh comes first when the token is due. */
-    req(which: number, a?: string | Uint8Array, b?: string | Uint8Array, n = 0): NetRequest | null {
-        const x = bytesOf(a), y = bytesOf(b);
-        if (this.put(x, y) < 0) return null;
-        const p = this.ex.wasm_net_req(which, x.length, y.length, n, Date.now());
+    /** The next request to send, or null for none now. */
+    nextRequest(): NetRequest | null {
+        const p = this.ex.wasm_net_next_request(Date.now());
         return p ? N.readNcRequest(this.m(), p) : null;
     }
 
-    // ---- answers ----
-
-    /** A busy server's answer to a read: the ms to wait before sending it again, or 0 (nc_retry_ms). */
-    retryMs(method: number, attempt: number, status: number, body: Uint8Array): number {
-        const n = this.put(body);
-        return this.ex.wasm_net_retry_ms(method, attempt, status, Math.max(n, 0));
-    }
-
-    /** 0 for an accepted request, else the refusal's why (error() says more). */
-    status(status: number, body: Uint8Array): number {
-        const n = this.put(body);
-        return this.ex.wasm_net_status_read(status, Math.max(n, 0));
-    }
-
-    action(status: number, body: Uint8Array): NetAction | null {
-        const n = this.put(body);
-        const p = this.ex.wasm_net_action_read(status, Math.max(n, 0));
-        return p ? N.readNcAction(this.m(), p) : null;
-    }
-
-    view(status: number, body: Uint8Array): NetView | null {
-        const n = this.put(body);
-        const p = this.ex.wasm_net_view_read(status, Math.max(n, 0));
+    /** The answer to request `id` (status 0: it never arrived): the ticket it finished, if any. */
+    onResponse(id: number, status: number, body: Uint8Array): NetAnswer | null {
+        const len = Math.max(this.put(body), 0);
+        const p = this.ex.wasm_net_on_response(id, status, len, Date.now());
         if (!p) return null;
-        const r = N.readNcGameRow(this.m(), p);
-        return { version: r.version, envelope: body.slice(r.envOff, r.envOff + r.envLen) };
+        const done = N.readNcDone(this.m(), p);
+        const read = ROW_READERS[done.listKind];
+        const rows: unknown[] = [];
+        for (let i = 0; read && i < done.nRows; i++) {
+            const r = this.ex.wasm_net_row(done.listKind, len, i);
+            if (r) rows.push(read(this.m(), r));
+        }
+        return { done, body, rows };
     }
 
-    replay(status: number, body: Uint8Array): NetReplay | null {
-        const n = this.put(body);
-        const p = this.ex.wasm_net_replay_read(status, Math.max(n, 0));
-        if (!p) return null;
-        const r = N.readNcReplay(this.m(), p);
-        return { moves: body.slice(r.movesOff, r.movesOff + r.movesLen), extras: body.slice(r.extrasOff, r.extrasOff + r.extrasLen) };
+    /** A ticket finished with no answer of its own (the session ended under it), or null. */
+    nextDone(): NetDone | null {
+        const p = this.ex.wasm_net_next_done();
+        return p ? N.readNcDone(this.m(), p) : null;
     }
 
-    /** Every row of a list of `kind` (NW_GAMES ...), or null with error() set. */
-    private rows<T>(status: number, body: Uint8Array, kind: number, read: (m: N.Mem, p: number) => T): T[] | null {
-        const len = this.put(body);
-        const n = this.ex.wasm_net_list_read(status, Math.max(len, 0), kind);
-        if (n < 0) return null;
-        const out: T[] = [];
-        for (let i = 0; i < n; i++) {
-            const p = this.ex.wasm_net_row(kind, len, i);
-            if (!p) return null;
-            out.push(read(this.m(), p));
+    /** What the last answer or frame changed, each with its payload. */
+    events(): { event: NetEvent; payload: Uint8Array }[] {
+        const out: { event: NetEvent; payload: Uint8Array }[] = [];
+        for (let i = 0, p; (p = this.ex.wasm_net_event(i)); i++) {
+            const event = N.readNcEvent(this.m(), p);
+            const at = this.ex.wasm_net_event_payload(i);
+            out.push({ event, payload: at && event.payloadLen ? this.m().u8.slice(at, at + event.payloadLen) : NONE });
         }
         return out;
     }
 
-    games(status: number, body: Uint8Array): NetView[] | null {
-        return this.rows(status, body, N.NW_GAMES, N.readNcGameRow)
-            ?.map((r) => ({ version: r.version, envelope: body.slice(r.envOff, r.envOff + r.envLen) })) ?? null;
-    }
-    chats(status: number, body: Uint8Array): NetChat[] | null { return this.rows(status, body, N.NW_CHATS, N.readNcChatRow); }
-    bots(status: number, body: Uint8Array): NetBot[] | null { return this.rows(status, body, N.NW_BOTS, N.readNcBotRow); }
-    board(status: number, body: Uint8Array): NetBoardRow[] | null { return this.rows(status, body, N.NW_BOARD, N.readNcBoardRow); }
-
-    /** The caller's rating (null for none) and their replays, newest first. */
-    history(status: number, body: Uint8Array): { rating: number | null; rows: NetHistoryRow[] } | null {
-        const rows = this.rows(status, body, N.NW_HISTORY, N.readNcHistoryRow);
-        if (!rows) return null;
-        const len = this.put(body);
-        const hp = this.ex.wasm_net_history_head(len);
-        if (!hp) return null;
-        const h = N.readNcHistoryHead(this.m(), hp);
-        return {
-            rating: h.hasRating ? h.rating : null,
-            rows: rows.map((r) => ({
-                id: r.id, createdMs: Number(r.createdMs), players: r.players.map((p) => p.id),
-                moves: body.slice(r.movesOff, r.movesOff + r.movesLen),
-                extras: body.slice(r.extrasOff, r.extrasOff + r.extrasLen),
-            })),
-        };
-    }
+    /** When to call again, in ms (-1: nothing waits). */
+    dueMs(): number { return this.ex.wasm_net_due_ms(Date.now()); }
 
     // ---- the stream ----
 
+    streamPath(): string { return N.readNcRequest(this.m(), this.ex.wasm_net_stream_request()).path; }
     subscribe(what: number, gameId = ''): void {
-        const g = enc.encode(gameId);
-        if (this.put(g) >= 0) this.ex.wasm_net_stream_sub(what, g.length);
+        const n = this.put(enc.encode(gameId));
+        if (n >= 0) this.ex.wasm_net_stream_sub(what, n);
     }
     unsubscribe(what: number, gameId = ''): void {
-        const g = enc.encode(gameId);
-        if (this.put(g) >= 0) this.ex.wasm_net_stream_unsub(what, g.length);
+        const n = this.put(enc.encode(gameId));
+        if (n >= 0) this.ex.wasm_net_stream_unsub(what, n);
     }
     streamOpened(): void { this.ex.wasm_net_stream_opened(Date.now()); }
     /** The socket closed: how long to wait before reopening it, in ms. */
     streamClosed(): number { return this.ex.wasm_net_stream_closed(Date.now()); }
-
-    /** One frame as it arrived: what to do, and its payload (an envelope or a cast). */
-    streamIn(frame: Uint8Array | string): { event: NetEvent; payload: Uint8Array } | null {
-        const isText = typeof frame === 'string';
-        const n = this.put(bytesOf(frame));
-        if (n < 0) return null;
-        const p = this.ex.wasm_net_stream_in(n, isText ? 1 : 0, Date.now());
-        if (!p) return null;
-        const event = N.readNcEvent(this.m(), p);
-        const at = this.ex.wasm_net_event_payload();
-        const payload = at && event.payloadLen ? this.m().u8.slice(at, at + event.payloadLen) : NONE;
-        return { event, payload };
+    /** One frame as it arrived; then events() says what it changed. */
+    streamIn(frame: Uint8Array | string): void {
+        const n = this.put(typeof frame === 'string' ? enc.encode(frame) : frame);
+        this.ex.wasm_net_stream_in(Math.max(n, 0), typeof frame === 'string' ? 1 : 0, Date.now());   // too long: a bad frame
     }
-
     /** The next frame to send as text, or null for none now. */
     streamNext(): string | null {
         const p = this.ex.wasm_net_stream_next(Date.now());
         return p ? N.readNcOut(this.m(), p).text : null;
-    }
-    /** How long until there is one (-1: the socket is shut). */
-    streamDueMs(): number { return this.ex.wasm_net_stream_due_ms(Date.now()); }
-
-    gateReset(gameId: string): void {
-        const g = enc.encode(gameId);
-        if (this.put(g) >= 0) this.ex.wasm_net_gate_reset(g.length);
     }
 }
 
