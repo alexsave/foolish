@@ -18,10 +18,10 @@ production). The kernel fires `engine_snap_hook` at the exact points the old
 TS handlers captured animation snapshots — a NULL no-op for native builds.
 
 **The bots here are ALSO the production bots.** The server links them natively
-(c_base). In wasm they run in the Oracle's modules (`make wasm-oracle`) and in
-the test build (`make wasm-bots-test`, `build/bots_test.wasm`: the kernel plus
-every `*_strategy.c` plus a choose-move bridge, `wasm/wasm_bots_api.c`), where
-the e2e suites drive them through the C Table (`e2e/helpers/server_table.ts`).
+(c_base). In wasm they run only in the Oracle's modules (`make wasm-oracle`).
+The e2e suites that need a server's half of a game take it from the table host
+(`make table-host`, `tests/table_host.c`: the wasm entry files compiled
+natively), through the C Table (`e2e/helpers/server_table.ts`).
 The production bot names began as exact C
 mirrors of TS strategies; the TS strategies and their move-for-move parity
 suite are retired (docs/C_GAME_SHAPE_MIGRATION.md Phase 8), and the C is the

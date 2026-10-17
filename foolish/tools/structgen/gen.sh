@@ -39,8 +39,8 @@
 #                          BUILT, and refuse any difference: a name on one side
 #                          only, or a function whose wasm signature is not its C
 #                          definition's. Writes nothing and needs the modules
-#                          (`make -C c wasm-msg wasm-web wasm-bots-test
-#                          wasm-oracle wasm-oracle-mt`), which is why it is not
+#                          (`make -C c wasm-msg wasm-web wasm-oracle
+#                          wasm-oracle-mt`), which is why it is not
 #                          part of plain gen.sh: generation comes BEFORE the
 #                          build it describes. e2e/wasm_exports.test.ts runs it.
 #   gen.sh --print-dirs    the output directories, repo-relative. Needs no
@@ -252,12 +252,11 @@ ex_go() {
 }
 gen_exports() {
   # Two links of one set of objects, so one run: the browser's module, and the
-  # test build, which exports every entry the objects have.
-  ex_link WebExports      exports.web.ts       web.wasm       WASM_BOT_LDFLAGS WASM_WEB_EXPORTS
-  ex_link BotsTestExports exports.bots_test.ts bots_test.wasm WASM_BOT_LDFLAGS WASM_BOTS_ALL_EXPORTS
-  # The native table host (c/tests/table_host.c): the entries it offers the Node
-  # suites, typed from the same definitions under the same flags.
-  ex_link TableHostExports exports.table_host.ts - TABLE_HOST_EXPORTS
+  # native table host (c/tests/table_host.c), whose entries - the wasm entry
+  # files' own functions, called natively - are typed from the same definitions
+  # under the same flags.
+  ex_link WebExports       exports.web.ts        web.wasm WASM_BOT_LDFLAGS WASM_WEB_EXPORTS
+  ex_link TableHostExports exports.table_host.ts -        TABLE_HOST_EXPORTS
   ex_run bots WASM_BOT_CFLAGS WASM_BOT_SRC
   # The iMessage extension's module: its own sources, flags and export lists.
   ex_link MsgExports      exports.msg.ts       msg.wasm       WASM_MSG_LDFLAGS WASM_MSG_API_EXPORTS WASM_MSG_EXPORTS

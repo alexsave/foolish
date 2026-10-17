@@ -12,9 +12,8 @@
 //     tools), so a test runs the very bytes a visitor downloads.
 //
 // There is ONE module here and no choice between links. The server links the
-// kernel natively (c_base), and the whole-kernel link the Node suites need for
-// the C Table and the bots is a test build they load themselves
-// (e2e/helpers/bots_test_wasm.ts).
+// kernel natively (c_base), and so does the table host the Node suites take
+// the C Table and the bots from (e2e/helpers/table_host.ts).
 import { gunzip } from './gunzip.ts';
 
 // The bundler resolves this literal to the emitted asset; it must stay a

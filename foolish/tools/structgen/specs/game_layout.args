@@ -11,7 +11,7 @@
 --const GAME_STATUS_ --const PLAYER_STATUS_ --const GAME_RULE_
 --const FOOLISH_SEED_LEN
 #
-# The C Table (c/src/table.h): what a table host reads back from the kernel (the Node suites, from bots_test.wasm) - the
+# The C Table (c/src/table.h): what a table host reads back from the kernel (the Node suites, from the native table host, c/tests/table_host.c) - the
 # loaded roster, a commit's spans and scalars, a decoded action request, the
 # finish order and rating changes - and the result codes it maps. Part of the
 # same hash, so a module and these readers cannot disagree about any of it.

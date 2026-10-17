@@ -16,10 +16,10 @@ import { join } from 'node:path';
  * The names one of c/Makefile's `WASM_*_EXPORTS` lists declares, following the
  * `$(WASM_OTHER)` references it is built out of.
  *
- * The Makefile is the weaker source - it says what the link was ASKED for, not
- * what the module carries - so it is read for one thing only: the test build,
- * which is never committed and so cannot be read as a module in a lane without
- * a compiler.
+ * The Makefile is the weaker source - it says what a link was ASKED for, not
+ * what the module carries - so it is read for one thing only: the whole set of
+ * entries a link of the bots objects may export (WASM_BOTS_ALL_EXPORTS), which
+ * no single module carries.
  */
 export function makefileExportNames(makefile: string, variable: string): string[] {
     const text = readFileSync(makefile, 'utf8').replace(/\\\n/g, ' ');
@@ -146,7 +146,7 @@ export interface Binder {
 }
 
 /** The kernel modules a binder can be bound to. */
-export type ModuleId = 'web' | 'bots-test' | 'oracle' | 'oracle-mt' | 'msg';
+export type ModuleId = 'web' | 'oracle' | 'oracle-mt' | 'msg';
 
 /**
  * The hand-typed interfaces that still declare a kernel entry point, and the

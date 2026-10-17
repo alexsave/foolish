@@ -120,10 +120,9 @@ test('the gates that propped up a committed artifact stay retired', () => {
     // runs make itself does not need - so it would sail past a gate that only
     // asks "is this file a build output".
     //
-    // scripts/wasm_stamp.sh itself SURVIVES and must not be added here: --list
-    // and --hash are the repo's one derivation of what a wasm source is, and
-    // e2e/helpers/bots_test_wasm.ts and c/Makefile both read it. Only --write
-    // and the file it wrote are gone.
+    // scripts/wasm_stamp.sh outlived --write as the rebuild key of the
+    // uncommitted whole-kernel test module, and went with that module
+    // (2026-10-17): nothing is built from a source hash any more.
     const RETIRED = [
         'sdk/ts/wasm/WASM_STAMP',
         'scripts/check_wasm_freshness.sh',

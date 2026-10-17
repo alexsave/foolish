@@ -38,8 +38,7 @@ import { execFileSync } from 'node:child_process';
 import { join, resolve, dirname, relative, normalize } from 'node:path';
 
 // This gate spans the products, so it is rooted at the REPOSITORY, where foolish/,
-// werewolf/ and shared/ sit side by side; PRODUCT is foolish/ itself, which is
-// where scripts/wasm_stamp.sh runs and what its paths are relative to.
+// werewolf/ and shared/ sit side by side; PRODUCT is foolish/ itself.
 const PRODUCT = resolve(import.meta.dirname, '../..');
 const REPO = resolve(PRODUCT, '..');
 
@@ -316,38 +315,4 @@ test('every build system that compiles the kernel also compiles the shared sourc
         + 'Two of them use $(wildcard c/src/*.c), which does not fail when a file\n'
         + 'leaves it - it just compiles less, and dies at the link:\n  '
         + missing.join('\n  '));
-});
-
-// ---- the source list the freshness gate is built from ------------------------
-
-test('the wasm source list is the same list when make is the caller', () => {
-    // WHY THE ENVIRONMENT IS THE TEST. scripts/wasm_stamp.sh asks the Makefiles
-    // what the wasm sources are. `make -s` silences recipes but NOT "make[1]:
-    // Entering directory '...'", and make prints those whenever MAKELEVEL is set
-    // - which it is when c/Makefile calls the script FROM A RECIPE, and is not
-    // when a person runs it in a terminal.
-    //
-    // So the script produced a clean list every time I ran it and a list with
-    // five lines of English in it every time CI did. The hash skips a path that
-    // is not a file, so junk in this list is a source the hash has quietly
-    // stopped covering - and that hash is what decides whether the uncommitted
-    // test module gets rebuilt (e2e/helpers/bots_test_wasm.ts).
-    //
-    // Running it BOTH ways and demanding the same answer is the cheapest way to
-    // stop that being a CI-only discovery.
-    const run = (env: NodeJS.ProcessEnv) =>
-        execFileSync('bash', [join(PRODUCT, 'scripts/wasm_stamp.sh'), '--list'],
-            { cwd: PRODUCT, encoding: 'utf8', env }).trim().split('\n');
-
-    const plain = run({ ...process.env, MAKELEVEL: undefined, MAKEFLAGS: undefined });
-    const underMake = run({ ...process.env, MAKELEVEL: '1', MAKEFLAGS: 'w' });
-
-    assert.ok(plain.length > 50, `the source list came back with only ${plain.length} entries`);
-    assert.deepEqual(underMake, plain,
-        'scripts/wasm_stamp.sh lists different sources depending on whether make is\n'
-        + 'its caller. That is "make[1]: Entering directory" landing in the list -\n'
-        + 'add --no-print-directory to the make call that grew it.');
-
-    const missing = plain.filter((p) => !existsSync(join(PRODUCT, p)));
-    assert.deepEqual(missing, [], `these listed wasm sources do not exist:\n  ${missing.join('\n  ')}`);
 });

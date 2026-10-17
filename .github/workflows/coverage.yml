@@ -129,10 +129,13 @@ jobs:
       # headless in CI. It only exercises the un-gated Lobby.tsx (the gate scopes
       # is the client move rules), so excluding it
       # keeps the gate stable without affecting the measured thresholds.
-      # The TEST bots module (the whole kernel, every export; it ships nowhere) is never
-      # committed: the fixture and roster helpers load c/build/bots_test.wasm.
-      - name: Build the test bots module
-        run: bash scripts/ci_bots_test_wasm.sh
+      # The toolchain (libclang for tools/structgen, the pinned clang and
+      # binaryen for the wasm modules): every npm lane generates sdk/ts/gen in a
+      # pre-hook, and the suites start the native table host
+      # (e2e/helpers/table_host.ts), whose build computes its layout hash with
+      # structgen.
+      - name: Toolchain (libclang, clang, binaryen)
+        run: bash ../shared/scripts/ci_llvm.sh
 
       - name: Run e2e suite under V8 coverage
         run: npm run coverage:e2e

@@ -13,8 +13,8 @@
 # There is no server module. There was one - sdk/ts/wasm/bots.wasm.gz, the same
 # objects as web.wasm under every export, which the Supabase edge functions
 # loaded as a static asset - until the server became c_base, which links the
-# kernel natively. The whole-kernel link that Node's suites drive is the test
-# build (c/Makefile bots_test.wasm), which ships nowhere and so is not here.
+# kernel natively. Node's suites take the C Table from a native build too (the
+# table host, c/Makefile table-host), so no whole-kernel module is built at all.
 #
 # NONE OF IT IS COMMITTED, and that is the point of this script. The argument is
 # one this repo has already made and already paid for twice.

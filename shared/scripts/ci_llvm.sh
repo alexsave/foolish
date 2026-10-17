@@ -58,8 +58,7 @@
 # Explicit LLVM paths, not `clang`: the swift:6.2.4-noble image already has
 # Swift's own clang at /usr/bin/clang, and plain ubuntu-latest has gcc as cc.
 #
-# Idempotent: safe to run again in a job that has already run it, and safe to
-# run after scripts/ci_bots_test_wasm.sh.
+# Idempotent: safe to run again in a job that has already run it.
 #
 # EVERY DOWNLOAD IS PINNED BY SHA-256, because what this script fetches runs as
 # root in the job that builds the shipped wasm. llvm.sh comes from an immutable

@@ -98,7 +98,7 @@ jobs:
       - name: Build every wasm target the Makefile declares
         # Enumerated, never hardcoded: a target added later is covered the day it
         # lands. Every module's rule is a top-level `wasm…:` target in c/Makefile
-        # (wasm-msg, wasm-web, wasm-bots-test, wasm-oracle, wasm-oracle-mt today).
+        # (wasm-msg, wasm-web, wasm-oracle, wasm-oracle-mt today).
         run: |
           set -u
           targets=$(grep -oE '^wasm[A-Za-z0-9_-]*:' c/Makefile | tr -d ':' | sort -u)
