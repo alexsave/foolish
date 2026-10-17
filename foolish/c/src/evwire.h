@@ -268,7 +268,7 @@ int evwire_as3_split(const unsigned char *buf, int len, int *seq_len, int *flags
 // resend repeats the same bytes), so the game id and the version already name
 // the sequence: a receiver that drops a version it has applied has dropped
 // every duplicate. The id used to be a random UUID drawn per push, which was
-// one more draw than the product allows itself (sdk/ts/wire/detid.ts).
+// one more draw than the product allows itself (e2e/helpers/detid.ts).
 //
 // The format byte is deliberately NOT a value a bare push can open with (a push
 // opens with EVWIRE_FORMAT_VERSION): a receiver handed the old payload's `b`,

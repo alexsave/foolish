@@ -25,6 +25,7 @@
  * ========================================================================== */
 
 import { test } from 'node:test';
+import { bytesToBase64, base64ToBytes } from '../sdk/ts/wire/bytes.ts';
 import assert from 'node:assert/strict';
 import {
   kernelB32Encode, kernelReplayLink, kernelB32Decode, kernelReplayLinkParse,
@@ -34,7 +35,7 @@ import { REPLAY_ATOM_ATTACK, REPLAY_ATOM_COVER, REPLAY_ATOM_PASS, REPLAY_ATOM_PI
 import * as V from '../sdk/ts/gen/view_layout.bots.ts';
 import { REPLAY_ETOOLONG } from '../sdk/ts/gen/game_layout.bots.ts';
 import {
-  base64Decode, base64Encode, bytesToBigint,
+  bytesToBigint,
 } from '../server/api/common/replay_codec.ts';
 import {
   decodeExtras,
@@ -143,7 +144,7 @@ function roundTripGame(game: Played, np: number, where: string): boolean {
   const x = bytesToBigint(bytes);
   const enc = {
     x, bytes,
-    base32: kernelB32Encode(bytes), base64: base64Encode(bytes),
+    base32: kernelB32Encode(bytes), base64: bytesToBase64(bytes),
     url: kernelReplayLink(kernelB32Encode(bytes), []),
   };
 
@@ -163,7 +164,7 @@ function roundTripGame(game: Played, np: number, where: string): boolean {
     assert.equal(urlToGame(pasted), enc.x,
       `a pasted link named a different game (np=${np}, seed=${rng.seed}): ${pasted}`);
   }
-  const xB64 = bytesToBigint(base64Decode(enc.base64));
+  const xB64 = bytesToBigint(base64ToBytes(enc.base64));
   assert.equal(xUrl, enc.x, `serialization round-trip mismatch (url) (np=${np}, seed=${rng.seed})`);
   assert.equal(xB64, enc.x, `serialization round-trip mismatch (base64) (np=${np}, seed=${rng.seed})`);
 

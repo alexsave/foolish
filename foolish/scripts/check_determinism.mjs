@@ -78,7 +78,7 @@ export const RULES = [
         what: 'crypto.randomUUID()',
         scope: EVERYWHERE,
         patterns: [call('randomUUID')],
-        use: 'derivedUuid(namespace, seq) from sdk/ts/wire/detid.ts - a UUID shape that is '
+        use: 'derivedUuid(namespace, seq) from e2e/helpers/detid.ts - a UUID shape that is '
             + 'a function of its inputs. Real entropy only for something unguessable '
             + '(a join code, a lease token), and that needs an allowlist entry saying so.',
     },

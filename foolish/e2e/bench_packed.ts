@@ -1,11 +1,11 @@
-// Microbench: per-move SERVER COMPUTE on the C Table - what one human move costs
-// the isolate between reading the row and the commit_table round trip.
+// Microbench: per-move SERVER COMPUTE on the C Table, through the wasm the
+// tests drive (c_base runs the same kernel natively; its own numbers are
+// cbase-bench cpu's kernel_action).
 //
-//   server : one kernel section as table_io.ts runTableOp runs it - load the row,
-//            set its deal seed, table_act, table_commit_products (the durable
-//            state, the session-log records, every seat's envelope and the
-//            spectator's), the as3 push for every viewer, and the hex the
-//            commit_table call and the view rows carry.
+//   server : one kernel section - load the row, set its deal seed, table_act,
+//            table_commit_products (the durable state, the session-log records,
+//            every seat's envelope and the spectator's) and the as3 push for
+//            every viewer.
 //   floor  : load, set the deal seed and table_act alone - approximately the
 //            raw C apply cost.
 //
@@ -17,7 +17,6 @@
 // the timer. Phase 8 (docs/C_GAME_SHAPE_MIGRATION.md) moved this off the
 // TypeScript Game and the retired legacy and packed pipelines it compared.
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { bytesToBareHex } from '../sdk/ts/wire/bytes.ts';
 import { fixtureTable } from './helpers/table_fixture.ts';
 import { MemTable, residentBoard, residentMoves } from './helpers/table_mem.ts';
 
@@ -54,10 +53,6 @@ function run(mode: Mode, target: number): { moves: number; ns: bigint } {
         p = table.commit(GID, t.version + 1, 1_700_000_000_000);
         if (typeof p === 'number') throw new Error(`commit products refused (${p})`);
         for (let viewer = -1; viewer < PLAYERS; viewer++) table.push(GID, viewer);
-        bytesToBareHex(p.state);
-        if (p.logs) bytesToBareHex(p.logs);
-        for (const v of p.views) if (v) bytesToBareHex(v);
-        bytesToBareHex(p.spectator);
       }
       const dt = process.hrtime.bigint() - t0;
       if (rc !== L.TABLE_APPLIED) continue; // a refused pick: skip, don't count

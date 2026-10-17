@@ -28,17 +28,9 @@
  * coder now.
  *
  * What is left is genuinely host-shaped and has no C twin: turning bytes into
- * a hex column value, a base32 URL segment, or a base64 blob.
+ * a base32 URL segment (the kernel's) and the bigint view of a code.
  * ------------------------------------------------------------------------- */
 
-
-const B64 =
-  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-const B64_INV: Record<string, number> = (() => {
-  const m: Record<string, number> = {};
-  for (let i = 0; i < B64.length; i++) m[B64[i]] = i;
-  return m;
-})();
 
 export function bigintToBytes(x: bigint): Uint8Array {
   if (x < 0n) throw new Error("negative");
@@ -60,38 +52,8 @@ export function bytesToBigint(b: Uint8Array): bigint {
 // base32 lived here, with its alphabet. It is the kernel's
 // (replay.c replay_b32_encode/decode, reached through bots.ts kernelB32Encode /
 // kernelB32Decode) - replay.h had always described the C one as "the web's
-// codec.ts alphabet", which is a mirror naming its original.
-//
-export function base64Encode(bytes: Uint8Array): string {
-  let out = "";
-  for (let i = 0; i < bytes.length; i += 3) {
-    const b0 = bytes[i];
-    const b1 = i + 1 < bytes.length ? bytes[i + 1] : 0;
-    const b2 = i + 2 < bytes.length ? bytes[i + 2] : 0;
-    out += B64[b0 >> 2];
-    out += B64[((b0 & 3) << 4) | (b1 >> 4)];
-    if (i + 1 < bytes.length) out += B64[((b1 & 15) << 2) | (b2 >> 6)];
-    if (i + 2 < bytes.length) out += B64[b2 & 63];
-  }
-  return out;
-}
-
-export function base64Decode(s: string): Uint8Array {
-  const out: number[] = [];
-  let value = 0,
-    bits = 0;
-  for (const ch of s) {
-    const idx = B64_INV[ch];
-    if (idx === undefined) continue; // ignore padding / stray chars
-    value = (value << 6) | idx;
-    bits += 6;
-    if (bits >= 8) {
-      out.push((value >>> (bits - 8)) & 0xff);
-      bits -= 8;
-    }
-  }
-  return Uint8Array.from(out);
-}
+// codec.ts alphabet", which is a mirror naming its original. The base64 pair
+// that sat beside it went too: sdk/ts/wire/bytes.ts has the one the web uses.
 
 /* Keep the whole URL uppercase: lower-casing the prefix would force the QR out
  * of alphanumeric mode into byte mode and grow the symbol. The HTTP route can
