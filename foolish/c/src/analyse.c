@@ -275,9 +275,7 @@ static int an_exact_rec(Game *g, int me, long *budget, int depth) {
     if (actor < 0) return 0;
 
     SolveMoves *mv = &solve_scratch_mv()[depth];
-    legal_set_move_cap(SOLVE_SCRATCH_MOVES);
-    calculate_legal_moves(g, actor, (LegalMoves *)mv);
-    legal_set_move_cap(0);
+    mv->n = legal_moves_into(g, actor, mv->moves, SOLVE_SCRATCH_MOVES);
     if (mv->n == 0 || mv->n >= SOLVE_SCRATCH_MOVES) return 0;
 
     bool maximizing = (actor == me);

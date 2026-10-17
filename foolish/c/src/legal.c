@@ -6,29 +6,39 @@
 #include "../../../shared/c/le_bytes.h"
 #include <string.h>
 
-// Output cap (see legal_set_move_cap in legal.h): defaults to the full
-// MAX_LEGAL_MOVES; the endgame solvers lower it around their movegen calls
-// so they can enumerate into compact scratch buffers.
-static _Thread_local int g_move_cap = MAX_LEGAL_MOVES;
-
-void legal_set_move_cap(int cap) {
-    g_move_cap = (cap > 0 && cap <= MAX_LEGAL_MOVES) ? cap : MAX_LEGAL_MOVES;
-}
+// WHERE THE MOVES GO. Every enumerator below appends to a MoveOut: a pointer to
+// the caller's LegalMove array, its capacity, and the count so far, held here.
+// The callers' storage is a LegalMoves (the full menu, MAX_LEGAL_MOVES) or the
+// endgame solvers' compact SolveMoves scratch (SOLVE_SCRATCH_MOVES), and those
+// are two different struct types. The solvers used to hand theirs in cast to
+// LegalMoves *, with the cap lowered through a thread-local around the call
+// (legal_set_move_cap): writing `n` through one struct type and reading it
+// through the other is a strict-aliasing violation, and gcc -O3 -flto acted on
+// it - analyse_test's endgame proof came back unresolved on Linux (the count
+// the solver read was not the count the enumerator wrote) while -O2, -O0 and
+// -fno-strict-aliasing all passed. Now no caller's struct is ever written
+// through another type: the moves are written as LegalMoves' elements, and
+// the count goes back by value (legal_moves_into).
+typedef struct {
+    LegalMove *moves;
+    int        n;
+    int        cap;
+} MoveOut;
 
 // LEGAL_STATS (measurement-only, compiled out of every production build): record
 // the widest FULL-cap enumeration - i.e. the exported move MENU (the g_moves
-// buffer sized MAX_LEGAL_MOVES), NOT the solver's compact scratch, which lowers
-// g_move_cap. Sizes the M2 decision (docs/BOTS_WASM_MEMORY_PLAN.md). Prints each
+// buffer sized MAX_LEGAL_MOVES), NOT the solver's compact scratch, whose cap is
+// lower. Sizes the M2 decision (docs/BOTS_WASM_MEMORY_PLAN.md). Prints each
 // new high-water to stderr so a sweep can `grep LEGALMAX | sort -n | tail -1`.
 #ifdef LEGAL_STATS
 #include <stdio.h>
 static int legal_stat_max_n = 0;
-static void legal_stat_note(const LegalMoves *out, const Game *g, int bot_idx) {
+static void legal_stat_note(const MoveOut *out, const Game *g, int bot_idx) {
     // Emit each new high-water with the state that drove it (player count,
     // uncovered battles, actor hand size) so a sweep can identify WHICH states
     // are wide: `... 2>&1 | grep LEGALMAX | sort -n | tail`. The wide ones are
     // large-hand 8-player defenders - cover-combination blow-up (M2 finding).
-    if (g_move_cap >= MAX_LEGAL_MOVES && out->n > legal_stat_max_n) {
+    if (out->cap >= MAX_LEGAL_MOVES && out->n > legal_stat_max_n) {
         legal_stat_max_n = out->n;
         fprintf(stderr, "LEGALMAX %d np=%d nb=%d hand=%d\n",
                 out->n, g->num_players, g->num_battles, g->players[bot_idx].hand_count);
@@ -38,12 +48,12 @@ static void legal_stat_note(const LegalMoves *out, const Game *g, int bot_idx) {
 #define legal_stat_note(out, g, bot_idx) ((void)0)
 #endif
 
-// Append a move; silently drops past the cap (MAX_LEGAL_MOVES by default).
+// Append a move; silently drops past the cap.
 // The slot is NOT zeroed: every consumer reads cards[]/attack_cards[] bounded
 // by n_cards (set by the caller), and clearing the full struct was a
 // measurable cost at tens of thousands of moves per enumeration.
-static LegalMove *push_move(LegalMoves *out) {
-    if (out->n >= g_move_cap) return NULL;
+static LegalMove *push_move(MoveOut *out) {
+    if (out->n >= out->cap) return NULL;
     LegalMove *m = &out->moves[out->n++];
     m->n_cards = 0;
     return m;
@@ -51,7 +61,7 @@ static LegalMove *push_move(LegalMoves *out) {
 
 // ---------- combinations -----------------------------------------------
 
-static void emit_attack(LegalMoves *out, const Card *combo, int k,
+static void emit_attack(MoveOut *out, const Card *combo, int k,
                         int defender_cards, int uncovered) {
     if (defender_cards < uncovered + k) return;
     LegalMove *m = push_move(out);
@@ -65,13 +75,13 @@ static void emit_attack(LegalMoves *out, const Card *combo, int k,
 // chosen items.
 static void combinations_attack(const Card *arr, int n, int start, int k,
                                 Card *buf, int depth,
-                                LegalMoves *out, int defender_cards, int uncovered) {
+                                MoveOut *out, int defender_cards, int uncovered) {
     // Prune once the cap is hit - otherwise a hand carrying many same-value
     // cards (only reachable via a malformed/corrupt state, since a real hand
     // holds no duplicates) drives ~2^n recursion while push_move silently
     // drops past the cap: an unbounded hang. Mirrors emit_cover_combo's
     // guard. One compare per node; real hands recurse a handful of levels.
-    if (out->n >= g_move_cap) return;
+    if (out->n >= out->cap) return;
     if (depth == k) {
         emit_attack(out, buf, k, defender_cards, uncovered);
         return;
@@ -83,7 +93,7 @@ static void combinations_attack(const Card *arr, int n, int start, int k,
     }
 }
 
-static void emit_pass(LegalMoves *out, const Card *combo, int k,
+static void emit_pass(MoveOut *out, const Card *combo, int k,
                       int next_player_cards, int n_battles) {
     if (next_player_cards < k + n_battles) return;
     LegalMove *m = push_move(out);
@@ -95,8 +105,8 @@ static void emit_pass(LegalMoves *out, const Card *combo, int k,
 
 static void combinations_pass(const Card *arr, int n, int start, int k,
                               Card *buf, int depth,
-                              LegalMoves *out, int next_player_cards, int n_battles) {
-    if (out->n >= g_move_cap) return;   // same anti-blowup guard as attack
+                              MoveOut *out, int next_player_cards, int n_battles) {
+    if (out->n >= out->cap) return;   // same anti-blowup guard as attack
     if (depth == k) {
         emit_pass(out, buf, k, next_player_cards, n_battles);
         return;
@@ -110,7 +120,7 @@ static void combinations_pass(const Card *arr, int n, int start, int k,
 
 // ---------- attack moves ----------------------------------------------
 
-static void calc_first_attack_moves(const Game *g, const Player *p, LegalMoves *out) {
+static void calc_first_attack_moves(const Game *g, const Player *p, MoveOut *out) {
     // Group cards by value, preserving original order within each group
     // (which matches TS Map iteration: insertion order).
     int defender_cards = g->players[g->defender].hand_count;
@@ -143,7 +153,7 @@ static void calc_first_attack_moves(const Game *g, const Player *p, LegalMoves *
     }
 }
 
-static void calc_regular_attack_moves(const Game *g, const Player *p, LegalMoves *out) {
+static void calc_regular_attack_moves(const Game *g, const Player *p, MoveOut *out) {
     // Bound every table_values[] index by the card value: a malformed state
     // can carry out-of-range values that would otherwise index this
     // 16-entry stack array out of bounds. Real values are 1..ACE_VALUE.
@@ -195,10 +205,10 @@ typedef struct {
     Card attack_card;      // the actual card on the table
 } CoverOption;
 
-static void emit_cover_combo(LegalMoves *out,
+static void emit_cover_combo(MoveOut *out,
                              const CoverOption *const *opts, int n_opts,
                              int *chosen_idx, int depth, bool *used) {
-    if (out->n >= g_move_cap) return;  // early-exit; combinatorial blowup otherwise
+    if (out->n >= out->cap) return;  // early-exit; combinatorial blowup otherwise
     if (depth == n_opts) {
         LegalMove *m = push_move(out);
         if (!m) return;
@@ -228,7 +238,7 @@ static void choose_attack_subset(const Game *g, const Player *defender,
                                  const CoverOption *all_opts,
                                  int start, int k_left,
                                  int *picked, int picked_n,
-                                 LegalMoves *out) {
+                                 MoveOut *out) {
     if (k_left == 0) {
         // Reference the picked options by pointer - copying each CoverOption
         // (a couple hundred bytes) per enumerated subset was pure overhead.
@@ -248,7 +258,7 @@ static void choose_attack_subset(const Game *g, const Player *defender,
     }
 }
 
-static void calc_cover_moves(const Game *g, const Player *defender, LegalMoves *out) {
+static void calc_cover_moves(const Game *g, const Player *defender, MoveOut *out) {
     int uncovered_battles[MAX_BATTLES];
     int n_uncovered = 0;
     for (int i = 0; i < g->num_battles; i++) {
@@ -280,7 +290,7 @@ static void calc_cover_moves(const Game *g, const Player *defender, LegalMoves *
 
 // ---------- pass moves ------------------------------------------------
 
-static void calc_pass_moves(const Game *g, const Player *defender, LegalMoves *out) {
+static void calc_pass_moves(const Game *g, const Player *defender, MoveOut *out) {
     // PODKIDNOY: this table has no transfer, so the defender's menu is covers
     // and pickup and nothing else. The gate is HERE rather than at the two call
     // sites (calculate_legal_moves and its lite twin) so that the enumerator a
@@ -325,7 +335,7 @@ static void calc_pass_moves(const Game *g, const Player *defender, LegalMoves *o
 // attack, the lowest-score covering card not already used (preferring non-
 // trump). Adds at most one MOVE_COVER move to `out`. Skipped entirely if the
 // defender can't fully cover.
-static void calc_cover_moves_greedy(const Game *g, const Player *defender, LegalMoves *out) {
+static void calc_cover_moves_greedy(const Game *g, const Player *defender, MoveOut *out) {
     Card uncovered[MAX_BATTLES];
     int n_uncovered = 0;
     for (int i = 0; i < g->num_battles; i++) {
@@ -384,8 +394,8 @@ bool legal_move_apply(Game *g, int seat, const LegalMove *m) {
 // what every rollout deliberates over, so a rule that held in one and not the
 // other would mean the bots searched a different game than the one production
 // runs.
-static void calc_moves(const Game *g, int bot_idx, LegalMoves *out,
-                       void (*cover)(const Game *, const Player *, LegalMoves *)) {
+static void calc_moves(const Game *g, int bot_idx, MoveOut *out,
+                       void (*cover)(const Game *, const Player *, MoveOut *)) {
     out->n = 0;
     if (g->status != GAME_STATUS_PLAYING) return;
     const Player *p = &g->players[bot_idx];
@@ -434,8 +444,19 @@ static void calc_moves(const Game *g, int bot_idx, LegalMoves *out,
     legal_stat_note(out, g, bot_idx);
 }
 
+static int moves_into(const Game *g, int bot_idx, LegalMove *moves, int cap,
+                      void (*cover)(const Game *, const Player *, MoveOut *)) {
+    MoveOut out = { moves, 0, (cap > 0 && cap <= MAX_LEGAL_MOVES) ? cap : MAX_LEGAL_MOVES };
+    calc_moves(g, bot_idx, &out, cover);
+    return out.n;
+}
+
 void calculate_legal_moves(const Game *g, int bot_idx, LegalMoves *out) {
-    calc_moves(g, bot_idx, out, calc_cover_moves);
+    out->n = moves_into(g, bot_idx, out->moves, MAX_LEGAL_MOVES, calc_cover_moves);
+}
+
+int legal_moves_into(const Game *g, int bot_idx, LegalMove *moves, int cap) {
+    return moves_into(g, bot_idx, moves, cap, calc_cover_moves);
 }
 
 // Lite variant - identical to calculate_legal_moves except cover enumeration
@@ -444,7 +465,7 @@ void calculate_legal_moves(const Game *g, int bot_idx, LegalMoves *out) {
 // 99%+ of cases (greedy can rarely deviate from product-optimal, but the
 // difference is small and dominated by MC sampling variance).
 void calculate_legal_moves_lite(const Game *g, int bot_idx, LegalMoves *out) {
-    calc_moves(g, bot_idx, out, calc_cover_moves_greedy);
+    out->n = moves_into(g, bot_idx, out->moves, MAX_LEGAL_MOVES, calc_cover_moves_greedy);
 }
 
 // ---------- one-tap cover resolution (F9) ----------------------------------
