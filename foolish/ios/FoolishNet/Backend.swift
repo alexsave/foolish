@@ -46,10 +46,7 @@ public final class Backend {
         guard isConfigured else { throw NetError.notConfigured }
         let t = NetClient.do(kind, gameId: gameId, name: name, password: password, bytes: bytes, flag: flag, intent: intent)
         guard t != 0 else { throw NetError.refused(NetClient.error) }
-        let a = await withCheckedContinuation { (c: CheckedContinuation<Answer, Never>) in
-            waiting[t] = c
-            pump()
-        }
+        let a = await withCheckedContinuation { waiting[t] = $0; pump() }
         let d = a.done
         guard d.why == 0 else { throw NetError.refused(NcErrorSnap(why: d.why, code: d.code, detail: d.detail, status: d.status)) }
         return a
@@ -63,8 +60,7 @@ public final class Backend {
         Stream.shared.send()
         wake?.cancel()
         let ms = NetClient.dueMs()
-        guard ms >= 0 else { return }
-        wake = Task { [weak self] in
+        wake = ms < 0 ? nil : Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(ms) * 1_000_000)
             if !Task.isCancelled { self?.pump() }
         }
@@ -73,12 +69,9 @@ public final class Backend {
     /// What the last answer or frame changed, to whoever it is for.
     func changed() {
         for (ev, payload) in NetClient.events() {
-            if ev.kind == NC_EV_SESSION {
-                Session.save(NetClient.sessionBlob())
-                onSession?()
-            } else {
-                Stream.shared.deliver(ev, payload)
-            }
+            if ev.kind != NC_EV_SESSION { Stream.shared.deliver(ev, payload); continue }
+            Session.save(NetClient.sessionBlob())
+            onSession?()
         }
     }
 
