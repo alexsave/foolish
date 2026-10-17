@@ -1,3 +1,5 @@
+import { PHASE_PRODUCTION_BUILD } from 'next/constants.js';
+
 /** @type {import('next').NextConfig} */
 
 // Cross-origin isolation, for the Infinite Oracle's Mode B (shared-memory wasm
@@ -43,11 +45,16 @@ const CROSS_ORIGIN_ISOLATED = process.env.FOOLISH_CROSS_ORIGIN_ISOLATION === '1'
 // viewer-request Function and the headers in the stack (c_base/ops/web.yaml),
 // because an export has no server. Vercel's build (VERCEL=1, which Vercel sets
 // and web.yml also sets explicitly) keeps the server build and this routing, so
-// both hosts serve the same site while both are live. Delete the Vercel half
-// with the Vercel project.
+// both hosts serve the same site while both are live.
+//
+// `next dev` is a server too, and it takes the same routing: an export's
+// [game_id] page has one prerendered id, so `output: 'export'` under the dev
+// server answers every real game id with a 500 ("missing param ... in
+// generateStaticParams()"). So the export is a property of `next build`
+// alone, and when the Vercel project goes, only the VERCEL test goes with it.
 const VERCEL = process.env.VERCEL === '1';
 
-const vercelRouting = {
+const serverRouting = {
   async rewrites() {
     return [
       // The iMessage app's App Store privacy policy URL. A static file rather
@@ -63,8 +70,9 @@ const vercelRouting = {
       // reviewer's `curl` of the React route returned only the noscript line.
       { source: '/support', destination: '/support.html' },
       // The link unfurl is a c_base route now (c_base/docs/VERCEL.md section
-      // 4a); on CloudFront /m/* goes to the API's Lambda directly.
-      { source: '/m/:payload', destination: 'https://api.foolish.cards/m/:payload' },
+      // 4a); on CloudFront /m/* goes to the API's Lambda directly. Under
+      // `next dev` it goes to whichever backend .env.local names.
+      { source: '/m/:payload', destination: `${process.env.NEXT_PUBLIC_BACKEND_URL || 'https://api.foolish.cards'}/m/:payload` },
     ];
   },
   async headers() {
@@ -81,9 +89,10 @@ const vercelRouting = {
   },
 };
 
-const nextConfig = {
-  reactStrictMode: true,
-  ...(VERCEL ? vercelRouting : { output: 'export' }),
-};
-
-export default nextConfig;
+export default function nextConfig(phase) {
+  const staticExport = phase === PHASE_PRODUCTION_BUILD && !VERCEL;
+  return {
+    reactStrictMode: true,
+    ...(staticExport ? { output: 'export' } : serverRouting),
+  };
+}
