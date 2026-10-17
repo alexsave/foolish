@@ -221,8 +221,8 @@ const NcRequest *nc_req_stream(void);
 // stands. `method` is the request's (NcRequest.method), `attempt` how many
 // times this request was sent again already (0 after the first send). Only a
 // GET is sent again (a POST may have been applied before the throttle), at most
-// NC_BUSY_TRIES times, after NC_BUSY_FIRST_MS doubling. The host waits, builds
-// the request again and sends it; the answer it finally reads says the rest.
+// NC_BUSY_TRIES times, after NC_BUSY_FIRST_MS doubling. The pump applies it to
+// every read it sends (no host calls it); the answer it finally reads says the rest.
 #define NC_BUSY_TRIES    3
 #define NC_BUSY_FIRST_MS 250
 int nc_retry_ms(int method, int attempt, int status, const uint8_t *body, int len);
