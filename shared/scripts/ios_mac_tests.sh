@@ -19,7 +19,8 @@
 #      damage lands in your diff looking intentional, and everything builds and
 #      tests fine without it - the loss surfaces in production and nowhere
 #      earlier (each product's script says what its entitlements carry);
-#   4. test every TEST_SCHEMES scheme and build every BUILD_SCHEMES one.
+#   4. test every TEST_SCHEMES scheme (compiled first, then run on a locked
+#      simulator - see "THE SIMULATOR") and build every BUILD_SCHEMES one.
 #
 # WHY THE RESTORE COPIES THE TIMESTAMP TOO, which is the whole reason the first
 # of these scripts was unrunnable for a while. Restoring the bytes with
@@ -299,7 +300,7 @@ unpoison_derived_data() {   # $1 = the failed build's log
   rm -rf "$dd"
 }
 
-run_scheme() {   # $1 = scheme, $2 = build|test
+run_scheme() {   # $1 = scheme, $2 = build|build-for-testing|test-without-building
   local scheme="$1" action="$2" log rc
   log="$(mktemp -t ios_xcodebuild)"
   say "$action: scheme $scheme"
@@ -310,7 +311,7 @@ run_scheme() {   # $1 = scheme, $2 = build|test
   # ten more minutes before reporting one failed assertion (2026-10-17). The
   # failures, their messages and the .xcresult are all still there without it.
   local extra=()
-  if [ "$action" = test ]; then extra=(-collect-test-diagnostics never); fi
+  if [ "$action" = test-without-building ]; then extra=(-collect-test-diagnostics never); fi
 
   set +e
   xcodebuild -project "$PROJECT" -scheme "$scheme" -destination "$DEST" ${extra[@]+"${extra[@]}"} "$action" \
@@ -332,7 +333,7 @@ run_scheme() {   # $1 = scheme, $2 = build|test
   fi
 
   # A green run that executed nothing proves nothing.
-  if [ "$action" = test ] && [ "$rc" -eq 0 ] && ! grep -Eq 'Executed [1-9][0-9]* tests?' "$log"; then
+  if [ "$action" = test-without-building ] && [ "$rc" -eq 0 ] && ! grep -Eq 'Executed [1-9][0-9]* tests?' "$log"; then
     echo "error: $scheme reported success after executing zero tests" >&2
     rc=1
   fi
@@ -341,9 +342,13 @@ run_scheme() {   # $1 = scheme, $2 = build|test
   return "$rc"
 }
 
-# The lock and the boot (see "THE SIMULATOR" at the top). Only the test schemes
-# hold the lock: the C build, xcodegen and the build-only schemes never touch a
-# simulator, so other runs keep compiling while one is testing.
+# The lock and the boot (see "THE SIMULATOR" at the top). Only RUNNING the tests
+# holds the lock: every test scheme is compiled first, unlocked, with
+# build-for-testing, and then run with test-without-building under the lock.
+# Holding it through the compile made a second run wait out the first one's
+# cold build (8 minutes in a fresh worktree) for no reason - compiling never
+# touches a simulator, and neither do the C build, xcodegen or the build-only
+# schemes.
 LOCK_DIR="$HOME/Library/Caches/ios_mac_tests"
 SIM_WAS_SHUTDOWN=0
 
@@ -378,11 +383,14 @@ release_simulator() {
 any_test=0
 for pair in $TEST_SCHEMES; do if want "${pair%%=*}"; then any_test=1; fi; done
 if [ "$any_test" -eq 1 ]; then
+  for pair in $TEST_SCHEMES; do
+    if want "${pair%%=*}"; then run_scheme "${pair#*=}" build-for-testing; fi
+  done
   say "simulator (${SIM_UDID:+$SIM_NAME, }locked for this run)"
   trap 'if [ -n "$BACKUP_DIR" ]; then restore_entitlements; fi; release_simulator' EXIT
   acquire_simulator
   for pair in $TEST_SCHEMES; do
-    if want "${pair%%=*}"; then run_scheme "${pair#*=}" test; fi
+    if want "${pair%%=*}"; then run_scheme "${pair#*=}" test-without-building; fi
   done
   release_simulator
   trap 'if [ -n "$BACKUP_DIR" ]; then restore_entitlements; fi' EXIT
