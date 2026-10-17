@@ -39,15 +39,12 @@
  *     covered": it bundles, costs no beat, is never pushed, and the cover or
  *     pickup that follows it carries no check on any of its boards.
  *
- * The last test is the TypeScript-ism itself. Both server gates and the browser
- * harness that mirrors them are read as source and held to asking goods_changed,
- * because "every broadcast site asks" is the property, and a fourth site added
- * later with the old test would be the same bug wearing a new file name.
+ * The server's push gate (c_base's table_ops.c asks goods_changed) is held by
+ * c_base/test/unit_app.c a_goods_only_commit_is_broadcast.
  * ========================================================================== */
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import { clientTable, encodeAction } from '../sdk/ts/table/client_table.ts';
 import { createServerTable, type ServerTable } from './helpers/server_table.ts';
@@ -263,22 +260,4 @@ test('a pickup that follows silent goods turns no badge either', () => {
     assert.ok(read && read.steps.length > 0, 'a client reads the pickup as a stream of steps');
     assert.equal(read.steps[0].view.goodMask, 0, 'the pickup step\'s own board wears no check');
     for (const step of read.steps) assert.equal(step.view.goodMask, 0, 'nor does any later step');
-});
-
-test('every broadcast site asks goods_changed, not nEvents alone', () => {
-    const sites = [
-        'server/impls/supabase/functions/_shared/adapter/table_io.ts',
-        'server/impls/supabase/functions/_shared/adapter/bot_actions.ts',
-        // The browser harness mirrors the adapter on purpose, so a stale mirror
-        // here would hide the fix from every browser run.
-        'e2e/fake_supabase.mts',
-    ];
-    for (const site of sites) {
-        const src = readFileSync(new URL(`../${site}`, import.meta.url), 'utf8');
-        const gates = [...src.matchAll(/^\s*if \((?:p|products)\.nEvents[^\n]*$/gm)].map((m) => m[0].trim());
-        assert.ok(gates.length > 0, `${site}: no push gate found - has it moved? this test must move with it`);
-        for (const gate of gates) {
-            assert.match(gate, /goodsChanged/, `${site}: a broadcast gated on nEvents alone drops every good: ${gate}`);
-        }
-    }
 });

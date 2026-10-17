@@ -14,26 +14,20 @@
 //   - the kernel bridges (sdk/ts/wasm/bots.ts) and the web-reader helper for
 //     tests (e2e/helpers/client_read.ts) export none of the Game-taking or
 //     PersonalGame-making names they used to;
-//   - over the module graph every edge function loads (its entry points and
-//     everything they reach through a static import, a re-export or a dynamic
-//     import(), with the import map's aliases resolved as Deno resolves them),
-//     no module resolves a seat from a player id in TypeScript.
+//   - the TypeScript server stays deleted (stage 4 of c_base/DESIGN.md "Binary
+//     surface": the server is C, and its seat lookup is the kernel's
+//     table_seat_of there), and the tests' C Table driver resolves a seat
+//     through the kernel too.
 //
 // e2e/no_ts_game_shape.test.ts holds the rest: no TS declares the game's shape,
 // and no TS lays out a kernel buffer by hand.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 
 const REPO = resolve(import.meta.dirname, '..');
-const FUNCTIONS = join(REPO, 'server/impls/supabase/functions');
-const ALIASES: Record<string, string> = {
-    '@shared/': join(FUNCTIONS, '_shared/'),
-    '@api/': join(REPO, 'server/api/'),
-    '@sdk/': join(REPO, 'sdk/'),
-};
 // Deleted in Phase 8. A path here that exists again is a TS game model coming back.
 const DELETED = [
     'server/api/core/types.ts',
@@ -55,68 +49,11 @@ const DELETED = [
     'sdk/ts/wire/logwire.ts',
     'e2e/helpers/seeded_game.ts',
     'e2e/helpers/view_game.ts',
+    // Stage 4: the TypeScript server, with its edge functions and its adapter.
+    'server/impls/supabase',
 ];
 
-const entries = readdirSync(FUNCTIONS)
-    .map((d) => join(FUNCTIONS, d, 'index.ts'))
-    .filter((p) => existsSync(p));
-
-// Every specifier: static imports and re-exports, and dynamic import('...').
-const SPEC = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)['"]([^'"]+)['"]/g;
-
-function resolveSpec(from: string, spec: string): string | null {
-    let target: string | null = null;
-    for (const [alias, dir] of Object.entries(ALIASES)) {
-        if (spec.startsWith(alias)) target = join(dir, spec.slice(alias.length));
-    }
-    if (!target && spec.startsWith('.')) target = resolve(dirname(from), spec);
-    if (!target) return null;   // jsr:, npm:, https: - not the repo's code
-    for (const candidate of [target, `${target}.ts`, join(target, 'index.ts')]) {
-        if (existsSync(candidate) && statSync(candidate).isFile()) return candidate;
-    }
-    return null;
-}
-
-function graph(): Map<string, string> {
-    const seen = new Map<string, string>();   // module -> who reached it first
-    const stack: [string, string][] = entries.map((e) => [e, 'entry']);
-    while (stack.length > 0) {
-        const [file, via] = stack.pop()!;
-        if (seen.has(file)) continue;
-        seen.set(file, via);
-        if (!/\.(ts|mts|tsx)$/.test(file)) continue;
-        const src = readFileSync(file, 'utf8');
-        for (const m of src.matchAll(SPEC)) {
-            const target = resolveSpec(file, m[1]);
-            if (target && !seen.has(target)) stack.push([target, relative(REPO, file)]);
-        }
-    }
-    return seen;
-}
-
-test('the edge entry points exist (the graph is not vacuously empty)', () => {
-    const names = entries.map((e) => relative(FUNCTIONS, e)).sort();
-    for (const fn of ['action/index.ts', 'meta/index.ts', 'create/index.ts', 'bot-heartbeat/index.ts', 'delete-account/index.ts']) {
-        assert.ok(names.includes(fn), `entry point ${fn}`);
-    }
-    assert.ok(graph().size > entries.length, 'the entry points import something');
-});
-
-test('no module the server loads resolves a seat from an id in TypeScript (the kernel\'s table_seat_of does)', () => {
-    // A seat lookup is a scan of a roster's ids for a match: findIndex / indexOf
-    // / find over something compared to an id. The kernel answers it
-    // (roster_seat_of through ServerTable.seatOf); a TS copy is the rule twice.
-    const LOOKUP = /\.(findIndex|indexOf|find)\s*\(\s*\(?\s*(\w+)[^)]*\)?\s*=>\s*\w*\.?\b(id|player_id|user_id)\s*===|\.(findIndex|indexOf)\s*\([^)]*\b(id|player_id|user_id)\b/g;
-    const offenders: string[] = [];
-    for (const [file] of graph()) {
-        if (!/\.(ts|mts|tsx)$/.test(file)) continue;
-        const src = readFileSync(file, 'utf8');
-        for (const m of src.matchAll(LOOKUP)) {
-            const line = src.slice(0, m.index).split('\n').length;
-            offenders.push(`${relative(REPO, file)}:${line}: ${m[0]}`);
-        }
-    }
-    assert.deepEqual(offenders, [], `\n${offenders.join('\n')}\n`);
+test('the tests\' C Table driver resolves a seat through the kernel (table_seat_of)', () => {
     const wrapper = readFileSync(join(REPO, 'e2e/helpers/server_table.ts'), 'utf8');
     assert.match(wrapper, /seatOf\([^)]*\)[^{]*\{[^}]*wasm_table_seat_of/, 'ServerTable.seatOf is the kernel call');
 });
