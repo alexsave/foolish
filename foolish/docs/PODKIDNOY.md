@@ -201,12 +201,12 @@ which a flag would not.
 
 ## The web lobby
 
-Online (supabase) games choose the rules too, in the website's lobby: a wooden box under the player list, labelled with the same string the iMessage box wears (`ios.lobby.passing`), ticked for the passing game and ticked by default.
+Online games (on c_base) choose the rules too, in the website's lobby: a wooden box under the player list, labelled with the same string the iMessage box wears (`ios.lobby.passing`), ticked for the passing game and ticked by default.
 The tick is the said-good check (`RoleMark` `Check`), as the iMessage box borrows the seat badges' check.
 Everybody sees it, joiners and spectators included, and only a seated player in a WAITING lobby can move it.
 That is the kernel's rule (`game_lobby_can_set_rules`), which the page reads as `ViewRules.canSetRules` and the server enforces in `table_set_rules`; the page restates none of it.
 
-Ticking it sends the `set-rules` meta action (`{ passing: boolean }`), shown at once and put back if the server refuses, as a retitle is.
+Ticking it sends the lobby edit `ASK_SET_RULES` (`passing` 0 or 1), shown at once and put back if the server refuses, as a retitle is.
 The table's rules ride the roster trailer (format 2), so the other seats and the spectators read the change from their next push or their stored view before anyone readies.
 
 **The web's rule is not the iMessage one, on purpose.**

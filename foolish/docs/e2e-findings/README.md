@@ -3,6 +3,7 @@
 > Preserved from the `claude/supabase-local-stress-test-e6snsa` branch (June 2026)
 > before it was deleted. The code and tests it produced live in main; these are
 > the investigation notes that would otherwise have been lost with the branch.
+> The harness these notes ran on (the TypeScript Supabase server against a real Postgres, `e2e/adapters/`, `fuzz.test.ts`) is gone; as of 2026-10-17 the backend is c_base, in C, and the e2e suite no longer has a server (`e2e/README.md`).
 
 These are the write-ups behind the e2e suite: how each bug was found, reproduced,
 and fixed (broadcast reordering, client cross-bout reconciliation, the cover

@@ -1,5 +1,11 @@
 # From MAU to concurrent tables
 
+> **Since then (2026-10-17).** The Supabase backend (edge functions, Postgres, Realtime, supabase-js and supabase-swift) and the TypeScript server are deleted.
+> The backend is c_base: C on AWS Lambda, DynamoDB and an API Gateway WebSocket, with a binary `/v1` surface that the kernel's own client speaks.
+> The web is a static export on S3 + CloudFront.
+> Wall 1, the Supabase free tier's Realtime cap, belongs to a backend that is gone; the DAU-to-concurrency arithmetic still holds.
+> See [`c_base/DESIGN.md`](../../c_base/DESIGN.md); what follows is kept as it was written.
+
 The two business documents state targets in DAU and MAU
 ([`../docs/MONETIZATION_ROADMAP.md`](../docs/MONETIZATION_ROADMAP.md): 40-78k
 DAU; [`../docs/ORACLE_MONETIZATION_ENGINEERING.md`](../docs/ORACLE_MONETIZATION_ENGINEERING.md):

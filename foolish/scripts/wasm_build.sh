@@ -2,9 +2,9 @@
 # Build the shipped wasm modules. THE ONE ENTRY POINT, and the one list of what
 # "the shipped modules" are.
 #
-#   bots    sdk/ts/wasm/bots.wasm.gz   the kernel, linked for the SERVER: the
-#                                      edge functions as a static asset, Node's
-#                                      suites off disk
+#   bots    sdk/ts/wasm/bots.wasm.gz   the kernel, linked for NODE: the e2e
+#                                      suites and tools read it off disk (the
+#                                      Deno edge functions that also did are gone)
 #           sdk/ts/wasm/web.wasm.gz    the SAME OBJECTS linked for the BROWSER,
 #                                      which fetches it. One export allow-list
 #                                      smaller, so wasm-ld drops the bots and

@@ -153,11 +153,10 @@ It stays 0 across the suite.
 A build-time flag rather than a code change, because the headers apply to the whole origin and rolling them back should not need a revert and a review:
 
 - **Google Fonts.** `src/app/layout.tsx` loads a stylesheet from `fonts.googleapis.com` and its faces from `fonts.gstatic.com`. §8b.2's audit says this app has "no CDN fonts". That is no longer true. `credentialless` loads no-credential cross-origin subresources without CORP, and Google serves both with permissive CORS, so it should hold - but it is the live site's typography and it deserves a real check on a real deployment.
-- **Supabase** REST and realtime are CORS fetches and websockets, which COEP permits.
+- **c_base**'s `/v1` requests and its `/v1/stream` push stream are CORS fetches and a websocket, which COEP permits.
 - **COOP: same-origin severs `window.opener`.** Redirect-based auth is unaffected; any popup flow is not.
-- `@vercel/analytics` is served same-origin.
 
-To turn it on: set `FOOLISH_CROSS_ORIGIN_ISOLATION=1` in the deployment environment, redeploy, then open a replay and confirm `crossOriginIsolated === true` and `window.__oracleMode === 'B'`, and that fonts, sign-in and a live game are all unharmed.
+To turn it on: set `FOOLISH_CROSS_ORIGIN_ISOLATION=1` in the build environment, or on CloudFront the web stack's `CrossOriginIsolation=yes` (`c_base/ops/web.yaml`), since a static export sends no headers of its own; redeploy, then open a replay and confirm `crossOriginIsolated === true` and `window.__oracleMode === 'B'`, and that fonts, sign-in and a live game are all unharmed.
 To turn it off: unset it and redeploy.
 
 ## MT3 static audit, as found today

@@ -1,5 +1,11 @@
 # Roadmap — project analysis & feature report
 
+> **Since then (2026-10-17).** The Supabase backend (edge functions, Postgres, Realtime, supabase-js and supabase-swift) and the TypeScript server are deleted.
+> The backend is c_base: C on AWS Lambda, DynamoDB and an API Gateway WebSocket, with a binary `/v1` surface that the kernel's own client speaks.
+> The web is a static export on S3 + CloudFront.
+> The "Where the project stands" section's server, Postgres and Realtime claims describe that backend.
+> See [`c_base/DESIGN.md`](../c_base/DESIGN.md); what follows is kept as it was written.
+
 *Analysis date: July 2026. This is a feature-gap review of the whole repo —
 client (`src/`), Supabase backend (`supabase/`), the C engine (`c/`), the
 offline/ML layer (`offlinefun/`), and the e2e suite — with a prioritized list

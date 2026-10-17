@@ -8,6 +8,7 @@
 > §16's legal watchlist before spending against any of them.
 > §15's ordering is also overtaken - the iOS app and the iMessage extension both
 > shipped without any of this stack.
+> Its cost and capacity numbers assume the Supabase backend, which was deleted on 2026-10-17; the backend is c_base on AWS Lambda + DynamoDB (`c_base/DESIGN.md`, `c_base/REPORT.md`).
 
 *How to take the shipped, client-side Infinite Oracle (`docs/INFINITE_ORACLE_DESIGN.md`)
 to paid, across Web/Stripe, iOS, Google Play, and Telegram — with auth, entitlements,

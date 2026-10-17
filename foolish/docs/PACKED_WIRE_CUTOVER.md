@@ -10,6 +10,7 @@
 > argument are the durable parts.
 > For byte layouts read the C headers (`c/src/awire.h`, `c/src/evwire.h`,
 > `c/src/view.h`), never this file.
+> Since 2026-10-17 `commit_table`, `games.state` and `_shared/` went with the Supabase server; c_base commits the same blob to DynamoDB or SQLite (`c_base/DESIGN.md`).
 
 ## What the blob replaced
 

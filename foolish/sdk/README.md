@@ -25,14 +25,16 @@ The compiled kernel is *staged* into each host's deploy tree, because each
 vendor's packager insists on it — the source lives in `c/` once, and `c/`'s
 Makefile writes the built artifact where each host reads it.
 
-**None of these artifacts is committed.** `bots.wasm.gz` and the two
+**None of these artifacts is committed.** `bots.wasm.gz`, `web.wasm.gz` and the two
 `public/oracle*.wasm.gz` are gitignored build outputs written by
 `scripts/wasm_build.sh`, which every lane that loads one runs first, so the
 paths below are where a *build* puts them and not where git keeps them.
 
-- `bots.wasm.gz` sits in `sdk/ts/wasm/` next to `wasm_asset.ts`, found via
-  `new URL('./bots.wasm.gz', import.meta.url)` — the same co-located file the
-  web bundler emits and the edge runtime reads (`make wasm-bots`).
+- `bots.wasm.gz` and `web.wasm.gz` sit in `sdk/ts/wasm/` next to
+  `wasm_asset.ts`, found via `new URL('./<name>.wasm.gz', import.meta.url)`.
+  They are one compile linked twice (`make wasm-bots`): Node's suites and tools
+  read `bots.wasm.gz` off disk, and the web bundler emits `web.wasm.gz`, the
+  smaller link without the bots and the C Table, for the browser to fetch.
 - `Foolish.xcframework` is staged into `ios/vendor/` for Xcode (`make ios-lib`).
 
 ## How the server relates

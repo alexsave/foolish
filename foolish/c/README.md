@@ -2,10 +2,12 @@
 
 Self-contained C implementation of the Russian Durak engine and its
 heuristic / Monte-Carlo bots. Native code so we can simulate and evaluate
-millions of games without crossing the language boundary into the TS server.
+millions of games without crossing a language boundary.
 
 **The kernel here IS the production rules engine.** `game.c` + `legal.c`
-compile to WebAssembly (`make wasm-bots`) and run every live move. Every host
+compile to WebAssembly for the browser (`make wasm-bots`) and natively into
+c_base (`c_base/Makefile` reads this Makefile's source list), and run every
+live move. Every host
 is a thin bridge over this code: see `wasm/wasm_api.c`, and the web reaches it
 through `sdk/ts/table/`. The old TS rule
 implementations were deleted after a differential harness proved the two
@@ -20,8 +22,9 @@ TS handlers captured animation snapshots — a NULL no-op for native builds.
 **The bots here are ALSO the production bots.** `make wasm-bots` compiles the
 kernel plus every `*_strategy.c` plus a choose-move bridge
 (`wasm/wasm_bots_api.c`) into `bots.wasm`
-(`sdk/ts/wasm/bots.wasm.gz`; the server's C Table drives them through
-`e2e/helpers/server_table.ts`). The production bot names began as exact C
+(`sdk/ts/wasm/bots.wasm.gz`, which the e2e harness's C Table drives through
+`e2e/helpers/server_table.ts`); c_base links the same strategies natively and
+plays every live bot move with them. The production bot names began as exact C
 mirrors of TS strategies; the TS strategies and their move-for-move parity
 suite are retired (docs/C_GAME_SHAPE_MIGRATION.md Phase 8), and the C is the
 only implementation. Two bots exist in a `_prod` variant (`espresso_prod`,

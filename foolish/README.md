@@ -60,7 +60,7 @@ The dev server needs the backend (c_base, `cbase serve` locally), configured thr
 | --- | --- |
 | `npm run gen` | Regenerate the TS and Swift modules from the C. Ten other scripts run it first. |
 | `npm run dev` / `build` / `start` | The website. |
-| `npm run test:e2e` | Full-stack tests against a real Postgres (see [`e2e/README.md`](e2e/README.md)). |
+| `npm run test:e2e` | The kernel through the shipped wasm, the client and the page in jsdom; no server, no database (see [`e2e/README.md`](e2e/README.md)). |
 | `npm run test:validate` | The 17 derived gates in `e2e/validation/`. No database, no network, no compiler. |
 | `npm run typecheck` | The app and the e2e suite, separately. |
 | `npm run bot:game` | Headless bot-vs-bot games through the C kernel. |
@@ -94,8 +94,8 @@ c/            THE KERNEL, codename cnitro. 39,417 lines in c/src alone.
               solver, a wasm section analyser, transposition-table dataviz.
 
 sdk/          One thin binding per language. No game logic lives here, ever.
-  ts/         wasm instances, FFI, packed wire layouts. Loaded by the website,
-              the edge functions and the e2e harness.
+  ts/         wasm instances, FFI, packed wire layouts. Loaded by the website
+              and the e2e harness.
   swift/      EngineC.swift plus the codecs. Compiled into FoolishKit.
 
 tools/        structgen reads struct LAYOUT and never a value; datagen reads
@@ -109,7 +109,7 @@ src/          The Next.js client. Routes: /, /:game_id, /about, /tutorial,
   utils/      procedural texture generation: fractal, wool, wood, concrete.
 
 server/       Host-neutral backend code. api/ is the contract the web still
-              imports and is 306 lines, because the kernel does the work. The
+              imports and is 157 lines, because the kernel does the work. The
               deployed backend is c_base/ at the repo root (C, on AWS Lambda).
               (The old native C server, impls/native/, was retired 2026-10-17; the last tree is in git at 56ad0609.)
 
@@ -122,7 +122,8 @@ ios/          Ten Xcode targets, generated from project.yml by xcodegen.
   Tools/rig/       drives the real extension inside Apple's real Messages app
                    on a simulator, deterministically, for QA and store photos.
 
-e2e/          217 files against real server code and a real Postgres.
+e2e/          198 files: the kernel through the shipped wasm, the client and
+              the page in jsdom. No server and no database.
   validation/ derived gates: tests that walk the repo and assert about it.
 
 foolyard/     a discrete-event simulation of the whole table: simulated server,
@@ -151,7 +152,7 @@ docs/         62 design documents.
 | post-game analyser | 1,504 |
 | 21 bot strategies and their infrastructure | 18,796 |
 
-It ships as WebAssembly to the web and the edge, and as a static `xcframework` to Apple, both built from those same sources by a 1,411-line `c/Makefile` that is mostly prose.
+It ships as WebAssembly to the web and as a static `xcframework` to Apple, both built from those same sources by a 1,411-line `c/Makefile` that is mostly prose, and it is linked natively into c_base, which compiles the same files with its own source list.
 
 **A move is bytes the whole way.**
 It leaves the browser as a packed action wire, the exact bytes the client's own wasm validated, POSTed as a binary body to c_base's `/v1/action`.
@@ -168,7 +169,7 @@ None of it is linked into anything, because 25 languages is about 150 KB of stri
 That is not a comment you have to trust: a test gunzips the shipped module and searches it.
 
 **The bot roster is C.**
-[`c/src/bot_roster.c`](c/src/bot_roster.c) is the single source of truth for what a named bot *is*, read by the database seed, the edge functions, the iOS bridge and the wasm.
+[`c/src/bot_roster.c`](c/src/bot_roster.c) is the single source of truth for what a named bot *is*, read by c_base's bot seeding (`c_base/src/store/store.c`), the iOS bridge and the wasm.
 The ladder players meet runs `random` → `simple_heuristic` → `handwritten` → `espresso` → `robusta` → `firecracker` → `gunpowder` → `blackpowder` → `cordite` → `octogen`.
 Ten more brains exist for the arena only ([`c/src/strategy.h`](c/src/strategy.h)), and none of them has a roster row.
 Three research bots - `semtex`, `torpex` and the cheating-ceiling probe `novichok` - were retired and their code removed; their strategy ids stay retired rather than being handed out again.
@@ -235,12 +236,12 @@ The answer the experiment produced was "do not do the rewrite", and its README o
 
 ## Tests
 
-`npm run test:e2e` runs the **actually deployed** server modules, the real `commit_game` plpgsql, the real broadcast path and the real client reconciliation against a real Postgres.
-Only PostgREST and Realtime are shimmed.
-Nothing about gameplay is mocked, and the fuzz and rearrange suites have found real card-duplication exploits.
+`npm run test:e2e` runs the **actually shipped** kernel through the same wasm the browser loads, the real client reconciliation, and the real page tree in jsdom.
+Only the page's one seam to the backend, `src/common/backend.ts`, is stood in for, and what stands in serves real kernel-made envelopes and pushes.
+There is no server and no database in it: the server is c_base, and its own tests (`c_base/test`) cover the routes, both stores, the push stream and a smoke that plays whole games against `cbase serve`.
+Nothing about gameplay is mocked, and the fuzz and rearrange suites have found real card-duplication exploits; the ones whose every question was for the kernel now live in `c/tests/tests.c`.
 
 `e2e/validation/` is a different animal: gates that **derive** their answer by walking the repo, because a hand-written list rots silently and several already did.
-Nothing the web bundle imports may live under a path the deploy filter skips.
 The generated modules must match what the C currently says.
 The i18n source of truth must stay in C.
 The Apple App Site Association must name the Team ID the Xcode project actually signs with.
@@ -248,7 +249,7 @@ Every one of those was written because the un-derived version of it had already 
 
 On the C side, `c/tests/tests.c` is 9,972 lines and 200 tests in a hand-rolled single-binary harness, alongside three differential suites that check the bitboard rollout engine, the apply path and the solver against the struct engine.
 
-Nine GitHub Actions workflows: `web`, `wasm`, `memory`, `validate`, `coverage`, `foolyard`, `ios` and `metrics`.
+Ten GitHub Actions workflows build Foolish: `web_aws` (the site's compile gate and deploy), `c_base` (the backend's tests and deploy), `wasm`, `memory`, `validate`, `coverage`, `foolyard`, `ios`, `metrics`, and `web`, the hand-run Vercel rollback kept until 2026-10-28.
 The Apple suite (847 Swift tests plus snapshot tests) runs on a Mac by hand via `ios/scripts/mac_tests.sh`, deliberately, because macOS Actions minutes bill at ten times Linux.
 
 ---
@@ -276,6 +277,6 @@ What made the change safe is a measurement - with the toolchain pinned (clang 22
 - [`sdk/README.md`](sdk/README.md) for why the bindings are thin.
 - [`ios/README.md`](ios/README.md) for the Apple targets and the bootstrap.
 - [`e2e/README.md`](e2e/README.md) for the test matrix.
-- [`docs/ARCHITECTURE_REVIEW.md`](docs/ARCHITECTURE_REVIEW.md) for the last full audit.
-- [`docs/PROTOCOL.md`](docs/PROTOCOL.md) for the wire.
+- [`docs/ARCHITECTURE_REVIEW.md`](docs/ARCHITECTURE_REVIEW.md) for the July 2026 audit, which predates c_base and is kept as history.
+- [`docs/PROTOCOL.md`](docs/PROTOCOL.md) for the wire, and [`c_base/DESIGN.md`](../c_base/DESIGN.md) for the server.
 - [`ROADMAP.md`](ROADMAP.md) for the feature-gap review, which is dated July 2026 and predates the C consolidation.

@@ -1,5 +1,11 @@
 # Supabase implementation — security audit
 
+> **Since then (2026-10-17).** The Supabase backend (edge functions, Postgres, Realtime, supabase-js and supabase-swift) and the TypeScript server are deleted.
+> The backend is c_base: C on AWS Lambda, DynamoDB and an API Gateway WebSocket, with a binary `/v1` surface that the kernel's own client speaks.
+> The web is a static export on S3 + CloudFront.
+> Every finding below is about code that no longer exists; c_base's own security review is tracked in `c_base/DESIGN.md` and `c_base/RUNBOOK.md` (hardening in progress, 2026-10-17).
+> See [`c_base/DESIGN.md`](../../c_base/DESIGN.md); what follows is kept as it was written.
+
 **Scope:** `server/impls/supabase/` (edge functions, migrations, RLS policies,
 realtime authorization), with the web client (`src/`) consulted where it feeds
 those endpoints.
