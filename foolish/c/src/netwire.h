@@ -17,7 +17,9 @@
 //     NW_SIGNUP, NW_SIGNIN   str8 name (upper-cased by the host), str8 password
 //     NW_REFRESH             str8 refresh token
 //     NW_SIGNOUT             u8 scope (NW_SCOPE_*)
-//     NW_PASSWORD            str8 password
+//     NW_PASSWORD            str8 current password, str8 new password (the current
+//                            one proves the caller is the account's owner, not
+//                            just a holder of its access token)
 //     NW_CHAT_SEND           str16 message
 //   responses (server to client, HTTP bodies)
 //     NW_SESSION   str16 access token, str8 refresh token, u48 expires_at,
@@ -111,7 +113,7 @@
 #define NW_SUB_CHAT  3      // one game's chat (members only)
 
 // Account refusals (ASK_WHY_ACCOUNT's code). Append-only.
-#define NW_ACCOUNT_E_BAD_LOGIN     1   // wrong name or password
+#define NW_ACCOUNT_E_BAD_LOGIN     1   // wrong name or password (and a password change's wrong current one)
 #define NW_ACCOUNT_E_EXISTS        2   // the name is taken
 #define NW_ACCOUNT_E_WEAK_PASSWORD 3   // under 8 characters, a common password, or the name
 #define NW_ACCOUNT_E_LONG_PASSWORD 4   // over 72 bytes
@@ -145,7 +147,8 @@ typedef struct {
     uint8_t  kind;                                    // NW_SIGNUP .. NW_CHAT_SEND
     uint8_t  scope;                                   // NW_SIGNOUT
     uint8_t  name_len;      char name[NW_NAME_MAX];
-    uint8_t  password_len;  char password[NW_PASSWORD_MAX];
+    uint8_t  password_len;  char password[NW_PASSWORD_MAX];      // SIGNUP, SIGNIN; PASSWORD: the current one
+    uint8_t  new_password_len; char new_password[NW_PASSWORD_MAX]; // PASSWORD
     uint8_t  refresh_len;   char refresh[NW_REFRESH_MAX];
     uint16_t message_len;   char message[NW_CHAT_MAX];
 } NwRequest;

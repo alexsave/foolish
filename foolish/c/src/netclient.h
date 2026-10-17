@@ -193,7 +193,8 @@ const NcRequest *nc_req_signup(const char *name, int name_len, const char *pw, i
 const NcRequest *nc_req_signin(const char *name, int name_len, const char *pw, int pw_len);
 const NcRequest *nc_req_refresh(void);
 const NcRequest *nc_req_signout(int global, int64_t now_ms);
-const NcRequest *nc_req_password(const char *pw, int pw_len, int64_t now_ms);
+// The current password (which the server checks) and the new one.
+const NcRequest *nc_req_password(const char *current, int current_len, const char *pw, int pw_len, int64_t now_ms);
 const NcRequest *nc_req_delete_account(int64_t now_ms);
 const NcRequest *nc_req_create(int64_t now_ms);
 // A move: the kernel's action wire for game `gid`, composed against `intent`
@@ -273,7 +274,7 @@ const void *nc_row(int kind, const uint8_t *body, int len, int i);
 #define NC_DO_SIGN_UP        1   // name (as typed: upper-cased by the host), password
 #define NC_DO_SIGN_IN        2   // name, password
 #define NC_DO_SIGN_OUT       3   // flag: 1 every session of the user, 0 this one
-#define NC_DO_PASSWORD       4   // password
+#define NC_DO_PASSWORD       4   // password: the new one; bytes: the current one
 #define NC_DO_DELETE_ACCOUNT 5
 #define NC_DO_CREATE         6   // -> the creator's envelope (a_off, a_len)
 #define NC_DO_PLAY           7   // gid, bytes: the kernel's action wire, intent: the version (-1 none)

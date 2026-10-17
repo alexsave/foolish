@@ -287,16 +287,18 @@ const NcRequest *nc_req_signout(int global, int64_t now_ms) {
     return body_of(&w);
 }
 
-const NcRequest *nc_req_password(const char *pw, int pw_len, int64_t now_ms) {
-    if (!pw || pw_len < 0 || pw_len > NW_PASSWORD_MAX) return NULL;
+const NcRequest *nc_req_password(const char *current, int current_len, const char *pw, int pw_len, int64_t now_ms) {
+    if (!current || !pw || current_len < 0 || pw_len < 0 || current_len > NW_PASSWORD_MAX || pw_len > NW_PASSWORD_MAX) return NULL;
     int r;
     const NcRequest *q = authed(NC_POST, "/v1/auth/password", now_ms, &r);
     if (!q || r) return q;
     NwRequest w;
     memset(&w, 0, sizeof w);
     w.kind = NW_PASSWORD;
-    w.password_len = (uint8_t)pw_len;
-    memcpy(w.password, pw, (size_t)pw_len);
+    w.password_len = (uint8_t)current_len;
+    memcpy(w.password, current, (size_t)current_len);
+    w.new_password_len = (uint8_t)pw_len;
+    memcpy(w.new_password, pw, (size_t)pw_len);
     return body_of(&w);
 }
 
@@ -614,7 +616,9 @@ static const NcRequest *build(const NcIntent *in, int64_t now) {
     case NC_DO_SIGN_UP: return nc_req_signup(in->name, in->name_len, in->password, in->password_len);
     case NC_DO_SIGN_IN: return nc_req_signin(in->name, in->name_len, in->password, in->password_len);
     case NC_DO_SIGN_OUT: return nc_req_signout(in->flag != 0, now);
-    case NC_DO_PASSWORD: return nc_req_password(in->password, in->password_len, now);
+    case NC_DO_PASSWORD:
+        return in->bytes_len > NW_PASSWORD_MAX ? NULL
+                                               : nc_req_password((const char *)in->bytes, in->bytes_len, in->password, in->password_len, now);
     case NC_DO_DELETE_ACCOUNT: return nc_req_delete_account(now);
     case NC_DO_CREATE: return nc_req_create(now);
     case NC_DO_PLAY: return nc_req_action(g, gl, in->bytes, in->bytes_len, in->intent, now);
