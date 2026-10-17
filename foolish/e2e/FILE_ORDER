@@ -40,7 +40,6 @@ replay_v6.test.ts	0.9	3.0
 replay_frames_web.test.ts	0.7	2.4
 kernel_wire_decode.test.ts	0.6	2.5
 finish_order.test.ts	0.5	2.4
-replay_extras_kernel.test.ts	0.5	2.1
 client_move_gates.test.ts	0.5	2.4
 pass_parity.test.ts	0.5	2.5
 replay_steps_frames.test.ts	0.4	2.3

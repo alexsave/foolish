@@ -2309,8 +2309,9 @@ static int nine_player_cap_check(void) {
 }
 
 // The whole share link (#113): the phone's path through fio_replay_share_link,
-// run wherever clang runs. The FORMAT is proved against the shipped bytes in
-// e2e/replay_extras_kernel.test.ts; what this adds is that the bridge builds
+// run wherever clang runs. The FORMAT is proved in c/tests/tests.c
+// (test_extras_blob_is_the_layout_it_claims, test_extras_corpus_round_trips);
+// what this adds is that the bridge builds
 // the link the extension puts in a bubble - prefix, moves untouched, one dash,
 // base32 after it, and nothing at all when the table is anonymous.
 static int extras_link_check(void) {

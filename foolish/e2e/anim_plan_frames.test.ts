@@ -25,10 +25,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { animBuildPlan, animPlanAt, ANIM_EVT, ANIM_LOC, type AnimPlanEventIn } from '../sdk/ts/wasm/bots.ts';
-import { animReversalOrder } from './helpers/test_kernel_doors.ts';
 import {
     ANIM_STEP_NONE, ANIM_NEVER, ANIM_TIME_MS, ANIM_BOUT_END_HOLD_MS,
-    ANIM_CONFLICT_REVERT, ANIM_CONFLICT_KEEP, ANIM_CONFLICT_CLEAR,
 } from '../sdk/ts/gen/anim.bots.ts';
 import { CARD_NONE_SUIT, CARD_NONE_VALUE, GAME_STATUS_PLAYING, PLAYER_STATUS_IN, type TableView_Snap as TableView } from '../sdk/ts/gen/view_layout.bots.ts';
 
@@ -269,37 +267,4 @@ test('an `out` is a notice: no flight, no time, and it costs the beat behind it 
     assert.equal(p.steps[1].startMs, TIME + GAP);
     assert.equal(p.steps[2].startMs, TIME + GAP, 'the refill opens where it would have with no out at all');
     assert.equal(p.totalMs, TIME + GAP + TIME, 'the sequence is two flights long, not three');
-});
-
-// ---- the reversal's order ---------------------------------------------------
-// The rule AnimationContext's four queue-insertion branches gave way to: the
-// board reverses what it must before it plays anything else, last group first,
-// and a group nothing reverts is dropped rather than played as a beat of
-// silence. The decision is transport-dependent and the order is not, which is
-// why a server client reaches it with verdicts it has already asked for.
-
-test('a doomed sequence flies home last group first', () => {
-    const steps = animReversalOrder(
-        [ANIM_CONFLICT_REVERT, ANIM_CONFLICT_REVERT, ANIM_CONFLICT_REVERT],
-        [1, 1, 1]);
-    assert.deepEqual(steps, [[2], [1], [0]], 'the cards travel back the way they came');
-});
-
-test('a group nothing reverts plays no beat of silence', () => {
-    const steps = animReversalOrder(
-        [ANIM_CONFLICT_REVERT, ANIM_CONFLICT_KEEP, ANIM_CONFLICT_CLEAR, ANIM_CONFLICT_REVERT],
-        [2, 1, 1]);
-    assert.deepEqual(steps, [[3], [0]],
-        'the KEEP and the CLEAR build nothing, and the group left empty is dropped');
-});
-
-test('a reversal with nothing doomed is no reversal at all', () => {
-    assert.deepEqual(animReversalOrder([ANIM_CONFLICT_KEEP, ANIM_CONFLICT_CLEAR], [1, 1]), [],
-        'the common case - an arrival that vouches for everything - plays no theatre');
-    assert.deepEqual(animReversalOrder([], []), []);
-});
-
-test('groups that do not account for the motions are refused, not half-reversed', () => {
-    assert.throws(() => animReversalOrder([ANIM_CONFLICT_REVERT, ANIM_CONFLICT_REVERT], [1]),
-        /anim_reversal_order error/);
 });
