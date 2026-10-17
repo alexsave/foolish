@@ -30,6 +30,7 @@
 
 #include "../src/cn.h"
 #include <stdint.h>
+#include "../../../shared/c/rng.h"
 
 /* ---- what a seat saw ------------------------------------------------------ */
 
@@ -189,13 +190,7 @@ CnMove cn_random_choose(const CnGame *g, uint64_t *rng);
 
 /* ---- small shared helpers --------------------------------------------------------- */
 
-static inline uint64_t cn_splitmix(uint64_t *x)
-{
-    uint64_t z = (*x += 0x9E3779B97F4A7C15ull);
-    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
-    z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
-    return z ^ (z >> 31);
-}
-static inline double cn_unit(uint64_t *x) { return (double)(cn_splitmix(x) >> 11) * (1.0 / 9007199254740992.0); }
+/* a splitmix64 draw in [0, 1) (rng.h) */
+static inline double cn_unit(uint64_t *x) { return rng_unit(rng_splitmix64(x)); }
 
 #endif

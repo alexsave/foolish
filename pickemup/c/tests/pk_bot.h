@@ -9,13 +9,13 @@
 #include "../src/pk.h"
 #include "../../../shared/c/stats/seed_hash.h"
 #include <string.h>
+#include "../../../shared/c/rng.h"
 
 /* xorshift64*, the tests' own randomness (never the game's) */
 static uint64_t RS = 0x9e3779b97f4a7c15ull;
 static inline uint32_t rnd(uint32_t n)
 {
-    RS ^= RS >> 12; RS ^= RS << 25; RS ^= RS >> 27;
-    return n ? (uint32_t)(((RS * 2685821657736338717ull) >> 33) % n) : 0;
+    return n ? (uint32_t)((rng_xorshift64star(&RS) >> 33) % n) : 0;
 }
 
 /* Many different deals (pk_check.h's seed_of has only 256): all 32 bytes

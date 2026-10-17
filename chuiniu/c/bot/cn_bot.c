@@ -551,8 +551,8 @@ static void eval_worlds(const CnSeen *s, const CnBotCfg *cfg, uint64_t seed, con
     for (int w = 0; w < cfg->worlds; w++) {
         /* COMMON RANDOM NUMBERS: one world and one rollout stream per w, the
          * same for every candidate, so candidates are compared paired */
-        uint64_t world_rng = cn_splitmix(&wseed);
-        uint64_t ro_rng = cn_splitmix(&wseed);
+        uint64_t world_rng = rng_splitmix64(&wseed);
+        uint64_t ro_rng = rng_splitmix64(&wseed);
         uint8_t k[CN_MAX_SEATS][CN_FACES + 1];
         memset(k, 0, sizeof k);
         for (int st = 0; st < s->n; st++) {

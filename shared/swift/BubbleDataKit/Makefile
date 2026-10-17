@@ -18,7 +18,7 @@ all: test
 build:
 	mkdir -p build
 
-build/bubble_data_test: Tests/c/bubble_data_test.c $(SRC) $(HDR) ../../c/test/check.h | build
+build/bubble_data_test: Tests/c/bubble_data_test.c $(SRC) $(HDR) ../../c/rng.h ../../c/test/check.h | build
 	$(CC) $(CFLAGS) Tests/c/bubble_data_test.c $(SRC) -o $@
 
 build/bubble_data_asan: Tests/c/bubble_data_test.c $(SRC) $(HDR) ../../c/test/check.h | build

@@ -10,5 +10,5 @@ CnMove cn_random_choose(const CnGame *g, uint64_t *rng)
     CnMove m[CN_MAX_DICE * CN_BID_FACES + 1];
     int n = cn_legal(g, m, (int)(sizeof m / sizeof m[0]));
     if (n <= 0) return (CnMove){ 0, 0 };
-    return m[cn_splitmix(rng) % (uint64_t)n];
+    return m[rng_splitmix64(rng) % (uint64_t)n];
 }

@@ -18,6 +18,7 @@
  * the result. tests/cn_roll_test.c holds a pinned golden. */
 #include "cn_roll.h"
 #include <string.h>
+#include "../../../shared/c/rng.h"
 
 /* ---- the kernel's own maths ------------------------------------------------ */
 
@@ -118,17 +119,11 @@ static void toQuat(const M3 *R, float q[4])
     q[0] = (float)x; q[1] = (float)y; q[2] = (float)z; q[3] = (float)w;
 }
 
-/* ---- the seed's numbers: splitmix64 ------------------------------------------------ */
+/* ---- the seed's numbers: splitmix64 (rng.h) ---------------------------------------- */
 
-static uint64_t mix(uint64_t *s)
-{
-    uint64_t z = (*s += 0x9e3779b97f4a7c15ull);
-    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull;
-    z = (z ^ (z >> 27)) * 0x94d049bb133111ebull;
-    return z ^ (z >> 31);
-}
-/* in [0, 1), the top 53 bits */
-static double unit(uint64_t *s) { return (double)(mix(s) >> 11) * (1.0 / 9007199254740992.0); }
+/* A throw is re-derived from the game's seed on every phone, so this stream is
+ * part of what a seed means: rng_splitmix64 is pinned by its published vectors. */
+static double unit(uint64_t *s) { return rng_unit(rng_splitmix64(s)); }
 
 /* ---- the rigid cube ------------------------------------------------------------- */
 

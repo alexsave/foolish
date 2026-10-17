@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include "../../../../c/test/check.h"
 #include "../../Sources/CBubbleData/include/bubble_data.h"
+#include "../../../../c/rng.h"
 
 #define NMAX 243
 #define CELLS_MAX (NMAX * (NMAX + 1))
@@ -21,7 +22,7 @@ static uint8_t g_bytes[NMAX * NMAX], g_bytes_back[NMAX * NMAX];
 static uint8_t g_rgba[PIX_MAX], g_rgba2[PIX_MAX];
 
 static uint64_t rng = 0x9E3779B97F4A7C15ull;
-static uint32_t next(void) { rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17; return (uint32_t)(rng >> 16); }
+static uint32_t next(void) { return (uint32_t)(rng_xorshift64(&rng) >> 16); }
 
 static void random_symbols(uint8_t *s, int k) { for (int i = 0; i < k; i++) s[i] = (uint8_t)(next() % 3); }
 static void random_bytes(uint8_t *b, int k) { for (int i = 0; i < k; i++) b[i] = (uint8_t)next(); }

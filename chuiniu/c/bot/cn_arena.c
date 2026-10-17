@@ -58,7 +58,7 @@ static void play(int gi, CnSeen *seen)
     cn_new(&g, seed, A_seats);
     Result *r = &A_res[gi];
     for (int s = 0; s < A_seats; s++) r->pol[s] = (uint8_t)A_mix[(s + gi) % A_seats];
-    uint64_t rrng = cn_splitmix(&x);
+    uint64_t rrng = rng_splitmix64(&x);
     while (g.phase != CN_PH_OVER) {
         int seat = g.turn;
         int pol = r->pol[seat];
@@ -67,7 +67,7 @@ static void play(int gi, CnSeen *seen)
         else {
             if (!cn_seen(&g, seat, seen)) { fprintf(stderr, "game %d: seen failed\n", gi); exit(2); }
             uint64_t ds = x ^ ((uint64_t)g.hist_n << 20) ^ (uint64_t)seat;
-            m = cn_bot_choose(seen, &A_cfg[pol], cn_splitmix(&ds));
+            m = cn_bot_choose(seen, &A_cfg[pol], rng_splitmix64(&ds));
         }
         if (!cn_apply(&g, seat, m)) {
             fprintf(stderr, "game %d: %s at seat %d played an illegal move (%d, %d)\n", gi, P_NAME[pol], seat, m.q, m.f);
