@@ -84,13 +84,10 @@ public enum NetClient {
     // MARK: the stream
 
     public static var streamPath: String? { fio_net_stream_request().flatMap { try? readNcRequest($0).path } }
-    public static func subscribe(_ what: Int, _ gameId: String?) {
+    /// Hold `what` (NW_SUB_*) for a game, or let one hold go: the client counts them.
+    public static func subscribe(_ what: Int, _ gameId: String?, _ held: Bool = true) {
         let g = chars(gameId ?? "")
-        _ = g.withUnsafeBufferPointer { fio_net_stream_sub(Int32(what), $0.baseAddress, Int32(g.count - 1)) }
-    }
-    public static func unsubscribe(_ what: Int, _ gameId: String?) {
-        let g = chars(gameId ?? "")
-        _ = g.withUnsafeBufferPointer { fio_net_stream_unsub(Int32(what), $0.baseAddress, Int32(g.count - 1)) }
+        _ = g.withUnsafeBufferPointer { (held ? fio_net_stream_sub : fio_net_stream_unsub)(Int32(what), $0.baseAddress, Int32(g.count - 1)) }
     }
     public static func streamOpened() { fio_net_stream_opened(now) }
     /// The socket closed: how long to wait before reopening it, in ms.

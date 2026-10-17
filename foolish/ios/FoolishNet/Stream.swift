@@ -28,7 +28,7 @@ final class Stream {
 
     func unwatch(_ gameId: String, spectator: Bool) {
         watchers[gameId] = nil
-        NetClient.unsubscribe(spectator ? NW_SUB_GAME : NW_SUB_GAMES, spectator ? gameId : nil)
+        NetClient.subscribe(spectator ? NW_SUB_GAME : NW_SUB_GAMES, spectator ? gameId : nil, false)
         Backend.shared.pump()
     }
 
