@@ -12,8 +12,6 @@ import CFoolish
 /// and the /m/ route use (codec.ts). QR-alphanumeric-safe and URL-safe, which is
 /// why the payload is base32 and not base64.
 public enum Base32 {
-    private static let A = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567")
-
     /// Bytes as base32 text. THE KERNEL WRITES IT (`fio_b32_encode` ->
     /// replay.c), which is where the alphabet and the 5-bit packing already
     /// lived: the server reaches the same function through the wasm, so a Swift
@@ -36,14 +34,16 @@ public enum Base32 {
         return String(decoding: out.prefix(Int(n)).map { UInt8(bitPattern: $0) }, as: UTF8.self)
     }
 
+    /// Base32 text as bytes, read by THE KERNEL (`fio_b32_decode` ->
+    /// replay_b32_decode, the decoder the web calls through the wasm): lower
+    /// case reads as upper, stray characters are skipped, and '-' ENDS the
+    /// payload, since a link hangs its suffix there.
     public static func decode(_ s: String) -> Data? {
-        var bits = 0, value = 0
-        var out = Data()
-        for ch in s.uppercased() {
-            guard let idx = A.firstIndex(of: ch) else { continue }  // ignore stray chars
-            value = (value << 5) | idx; bits += 5
-            if bits >= 8 { out.append(UInt8((value >> (bits - 8)) & 0xff)); bits -= 8 }
-        }
-        return out
+        // Five bits a character, so ceil(5n/8) bytes holds any input.
+        let cap = (s.utf8.count * 5 + 7) / 8
+        var out = [UInt8](repeating: 0, count: max(cap, 1))
+        let n = fio_b32_decode(s, &out, Int32(cap))
+        guard n >= 0 else { return nil }
+        return Data(out.prefix(Int(n)))
     }
 }

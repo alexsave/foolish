@@ -40,6 +40,17 @@ int fio_b32_encode(const uint8_t *in, int n, char *out, int cap) {
     return w < 0 ? FIO_ECAP : w;
 }
 
+// ...and its inverse, the same replay_b32_decode the web's kernelB32Decode calls
+// through the wasm: lower case reads as upper, a character outside the alphabet
+// is skipped, and '-' ENDS the payload (a link hangs its suffix there). Swift
+// once decoded with a loop of its own that skipped the '-' too, folding a
+// suffix's bits into the bytes it returned.
+int fio_b32_decode(const char *s, uint8_t *out, int cap) {
+    if (!s || cap < 0 || (cap > 0 && !out)) return FIO_EBADARG;
+    const int n = replay_b32_decode(s, out, cap);
+    return n < 0 ? FIO_ECAP : n;
+}
+
 // The exact game, hidden state and all. One kernel call - the deal seed was kept
 // at fio_new_game, the actions are this game's own logs, and the reveal stream
 // is re-derived inside the kernel, so the app assembles nothing. This is the

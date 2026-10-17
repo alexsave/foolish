@@ -765,10 +765,16 @@ int fio_shown_ledger_allows(int claim, int sequencing);
 // own bit-packing loop - and a Swift test that encodes and then decodes cannot
 // notice if both halves move together.
 //
-// No inverse door on purpose: reading a format the kernel writes is a host's
-// own business (ios_api.h's preamble), and the /m/ reader also has to tolerate
-// a URL's stray characters. Writing one is not.
 int fio_b32_encode(const uint8_t *in, int n, char *out, int cap);
+
+// The inverse: base32 text (NUL-terminated) as bytes into `out`. Lower case
+// reads as upper, characters outside the alphabet (a URL's stray '.', '/') are
+// skipped, and '-' ENDS the payload, because a link hangs its suffix there.
+// Those rules are replay_b32_decode's, which the web calls through the wasm, so
+// every host reads a link the same way. Returns the byte count, FIO_ECAP when
+// `cap` is too small, FIO_EBADARG for a NULL input. ceil(5 * strlen / 8) bytes
+// is always enough.
+int fio_b32_decode(const char *s, uint8_t *out, int cap);
 
 // Encode the CURRENT game's history into a replay integer, base32-ish encoded
 // into `out` as the short shareable code (foolish.cards/<code>). Bytes written
