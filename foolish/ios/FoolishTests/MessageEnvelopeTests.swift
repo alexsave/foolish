@@ -219,6 +219,23 @@ final class MessageEnvelopeTests: XCTestCase {
         XCTAssertLessThan(link.absoluteString.count, 1000)
     }
 
+    /// Base32 reads the way every other decoder of the format does (the kernel's
+    /// replay_b32_decode, which the web calls through the wasm): lower case is
+    /// the same letter, characters outside the alphabet are skipped, and '-'
+    /// ENDS the payload, because that is where a link hangs its suffix. A
+    /// decoder that skipped the '-' too would fold the suffix's bits into the
+    /// payload and hand back bytes nobody encoded.
+    func testBase32StopsAtTheSuffixDash() throws {
+        let raw = bytes(fixtures[0].hex)
+        let text = Base32.encode(raw)
+        XCTAssertEqual(Base32.decode(text), raw)
+        XCTAssertEqual(Base32.decode(text.lowercased()), raw, "lower case is the same letter")
+        XCTAssertEqual(Base32.decode(text + "-AEBAGBAF"), raw, "the suffix after '-' is not payload")
+        let link = URL(string: "https://foolish.cards/m/1\(text)-AEBAGBAF")!
+        XCTAssertEqual(try MessageEnvelope.payloadBytes(url: link), raw)
+        XCTAssertEqual(Base32.decode(""), Data())
+    }
+
     /// `link` is the composer's URL builder and the exact inverse of
     /// `payloadBytes` — what the extension stages must decode back to the bytes.
     func testLinkIsTheInverseOfPayloadBytes() throws {
