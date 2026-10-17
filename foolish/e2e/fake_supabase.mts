@@ -9,7 +9,7 @@
  * push over a websocket is the only way another player's move reaches a client.
  *
  * NOTHING ABOUT GAMEPLAY IS MOCKED. The server is the C Table itself: the same
- * kernel the real edge functions run (sdk/ts/table/server_table.ts over
+ * kernel the real edge functions run (e2e/helpers/server_table.ts over
  * bots.wasm), driven exactly as server/impls/supabase/functions/_shared/adapter/
  * does it - load the row, one synchronous kernel section, copy the products out,
  * bump the version, push one masked envelope per human seat. Boards are built by
@@ -82,7 +82,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import { bytesToBase64, bytesToBareHex } from '../sdk/ts/wire/bytes.ts';
 import { derivedUuid } from '../sdk/ts/wire/detid.ts';
-import { type TableProducts, type TableSeat } from '../sdk/ts/table/server_table.ts';
+import { type TableProducts, type TableSeat } from './helpers/server_table.ts';
 import { clientTable, encodeAction, type AwireMove } from '../sdk/ts/table/client_table.ts';
 import { fixture, fixtureTable, parseCardText, PLAYING, type FixtureSeat, type TableFixture } from './helpers/table_fixture.ts';
 import { attachPhoenix, type PhxHub } from './helpers/ws_phoenix.ts';

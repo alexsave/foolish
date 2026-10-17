@@ -33,7 +33,7 @@ import assert from 'node:assert/strict';
 import { applySchema, resetDb, uuid } from './harness.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import { bytesToBareHex } from '../sdk/ts/wire/bytes.ts';
-import { ServerTable, serverTable } from '../sdk/ts/table/server_table.ts';
+import { ServerTable, serverTable } from './helpers/server_table.ts';
 import { mustReadTable } from './helpers/table_play.ts';
 import { fixture } from './helpers/table_fixture.ts';
 import { seedTable } from './helpers/table_db.ts';

@@ -6,7 +6,7 @@
 // pass|pickup|good.ts: validateX, executeX, executeRoundTransition) on a
 // TypeScript Game. Those were thin wrappers over the kernel and are gone with the
 // TS game shape (docs/C_GAME_SHAPE_MIGRATION.md Phase 8); the move path the
-// server runs is table_act on the loaded row (sdk/ts/table/server_table.ts), so
+// server runs is table_act on the loaded row (e2e/helpers/server_table.ts), so
 // the same cases are asked of it here, on boards the kernel built and sealed
 // (e2e/helpers/table_fixture.ts). The per-viewer streams are held by
 // e2e/push_as3.test.ts and S1 (e2e/helpers/hidden_info.ts).

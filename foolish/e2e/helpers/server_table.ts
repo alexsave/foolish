@@ -17,11 +17,11 @@
 // The Supabase server runs every game operation through it since Phase 4b
 // (docs/C_GAME_SHAPE_MIGRATION.md; server/impls/supabase/functions/_shared/adapter/table_io.ts).
 
-import type { BotsExports } from '../gen/exports.bots.ts';
-import * as L from '../gen/game_layout.bots.ts';
-import { LAYOUT_HASH } from '../gen/layout_hash.bots.ts';
-import { assertLayoutHash } from '../wasm/layout_hash.ts';
-import { loadWasmGz, loadWasmGzAsync } from '../wasm/wasm_asset.ts';
+import type { BotsExports } from '../../sdk/ts/gen/exports.bots.ts';
+import * as L from '../../sdk/ts/gen/game_layout.bots.ts';
+import { LAYOUT_HASH } from '../../sdk/ts/gen/layout_hash.bots.ts';
+import { assertLayoutHash } from '../../sdk/ts/wasm/layout_hash.ts';
+import { loadWasmGz, loadWasmGzAsync } from '../../sdk/ts/wasm/wasm_asset.ts';
 
 /** One recorded bot SEARCH, as the kernel saw it (c/src/bot_drive.h BeliefProbe). */
 interface BeliefProbeRecord {

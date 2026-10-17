@@ -13,7 +13,7 @@
 // kernel's (table_act, legal.c through table_play.ts legalMoves).
 
 import * as L from '../../sdk/ts/gen/game_layout.bots.ts';
-import { tableCodeName, type ServerTable } from '../../sdk/ts/table/server_table.ts';
+import { tableCodeName, type ServerTable } from './server_table.ts';
 import { fixture, fixtureTable, FixtureRefused, IN, OUT, READY, type FixtureSeat, type TableFixture } from './table_fixture.ts';
 import { cardText, type PlayCard } from './table_play.ts';
 import type { BotTableRow } from './bot_table.ts';

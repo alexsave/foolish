@@ -21,7 +21,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { createServerTable, type ServerTable } from '../sdk/ts/table/server_table.ts';
+import { createServerTable, type ServerTable } from './helpers/server_table.ts';
 import { kernelReplayExtrasDecode, replaySummary } from '../sdk/ts/wasm/bots.ts';
 import { fixtureTable } from './helpers/table_fixture.ts';
 import { legalMoves, residentBoard } from './helpers/table_play.ts';

@@ -4,7 +4,7 @@
 // curl "http://127.0.0.1:54321/functions/v1/memtest?keys=cordite,octogen&maxmoves=8".
 // Lives OUTSIDE the functions tree so deploys can never ship it.
 // LOCAL-ONLY diagnostic (never deploy): loads the server's C Table
-// (sdk/ts/table/server_table.ts over bots.wasm) and plays bot-vs-bot games in
+// (e2e/helpers/server_table.ts over bots.wasm) and plays bot-vs-bot games in
 // memory - no DB - through exactly the cycle the bot loop runs (load the row, set
 // its deal seed, import the session log when a belief bot is about to choose,
 // table_bot_drive, commit the products), to reproduce the production "Memory
@@ -38,7 +38,7 @@ import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import '../../../../../sdk/ts/gen/game_layout.bots.ts';
 // server_table's entry in the list above, as a NAMED import: same staging
 // effect, and the games below need the bindings.
-import { serverTable, type ServerTable, type TableProducts } from '../../../../../sdk/ts/table/server_table.ts';
+import { serverTable, type ServerTable, type TableProducts } from '../helpers/server_table.ts';
 import * as L from '../../../../../sdk/ts/gen/game_layout.bots.ts';
 
 const refusal = (what: string, rc: number) => new Error(`[memtest] ${what} refused (${rc})`);
@@ -88,7 +88,7 @@ serve(async (req: Request) => {
     const steps = (url.searchParams.get('steps') ?? 'game_layout,server_table').split(',');
     const MODS: Record<string, string> = {
         game_layout: '../../../../../sdk/ts/gen/game_layout.bots.ts',
-        server_table: '../../../../../sdk/ts/table/server_table.ts',
+        server_table: '../helpers/server_table.ts',
     };
     console.log(`[memtest] start ${mem()}`);
     for (const s of steps) {

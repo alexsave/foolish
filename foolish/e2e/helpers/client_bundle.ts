@@ -26,9 +26,9 @@ export const CLIENT_BOUNDARY = {
     deniedModules: [
         // tools/structgen output: raw accessors over the kernel's Game struct.
         /(^|\/)game_layout\.[^/]*$/,
-        // The server's C Table wrapper: loads a durable blob and hands out a
-        // commit's products, the unmasked state blob among them.
-        /(^|\/)sdk\/ts\/table\/server_table\.ts$/,
+        // The tests' C Table driver (the TypeScript server's wrapper once): loads a
+        // durable blob and hands out a commit's products, the unmasked state blob among them.
+        /(^|\/)e2e\/helpers\/server_table\.ts$/,
         // C-backed test fixtures: compose and seal unmasked boards, write rows.
         /(^|\/)e2e\/helpers\/table_(fixture|db)\.ts$/,
     ],

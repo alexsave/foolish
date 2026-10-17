@@ -18,7 +18,7 @@
 // layout. Pure kernel: no Postgres.
 
 import { clientTable, type PushEvent, type TableView } from '../../sdk/ts/table/client_table.ts';
-import type { ServerTable } from '../../sdk/ts/table/server_table.ts';
+import type { ServerTable } from './server_table.ts';
 import * as V from '../../sdk/ts/gen/view_layout.bots.ts';
 import { botCycle, dealBotTable, replayCodeOf, type BotTableOptions, type BotTableRow, type PlayedBotTable } from './bot_table.ts';
 import { fixtureTable } from './table_fixture.ts';

@@ -21,7 +21,7 @@ TS handlers captured animation snapshots — a NULL no-op for native builds.
 kernel plus every `*_strategy.c` plus a choose-move bridge
 (`wasm/wasm_bots_api.c`) into `bots.wasm`
 (`sdk/ts/wasm/bots.wasm.gz`; the server's C Table drives them through
-`sdk/ts/table/server_table.ts`). The production bot names began as exact C
+`e2e/helpers/server_table.ts`). The production bot names began as exact C
 mirrors of TS strategies; the TS strategies and their move-for-move parity
 suite are retired (docs/C_GAME_SHAPE_MIGRATION.md Phase 8), and the C is the
 only implementation. Two bots exist in a `_prod` variant (`espresso_prod`,

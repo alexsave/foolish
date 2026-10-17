@@ -1044,7 +1044,7 @@ WASM_ROSTER_EXPORTS := \
 # reason as the roster: the oracle modules link WASM_BOTS_API_EXPORTS and have no
 # use for a table, and an unexported table.o is dropped whole by the linker. No
 # production caller yet (docs/C_GAME_SHAPE_MIGRATION.md Phase 3); the server
-# switches to it in Phase 4b, through sdk/ts/table/server_table.ts.
+# switches to it in Phase 4b, through e2e/helpers/server_table.ts.
 WASM_TABLE_EXPORTS := \
   -Wl,--export=wasm_table_roster_ptr -Wl,--export=wasm_table_commit_ptr \
   -Wl,--export=wasm_table_request_ptr -Wl,--export=wasm_table_elo_ptr \

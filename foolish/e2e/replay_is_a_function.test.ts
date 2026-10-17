@@ -22,7 +22,7 @@
 // It needs no database. The kernel is the whole subject.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createServerTable, type ServerTable } from '../sdk/ts/table/server_table.ts';
+import { createServerTable, type ServerTable } from './helpers/server_table.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import { botCycle, dealBotTable, replayCodeOf, type BotTableRow } from './helpers/bot_table.ts';
 import { fixtureTable } from './helpers/table_fixture.ts';

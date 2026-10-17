@@ -21,7 +21,7 @@ import { runMeta, seedLobby } from './helpers/table_server.ts';
 import { mustReadTable } from './helpers/table_play.ts';
 import { __setTableDealSeedOverride } from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
 import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
-import { serverTable } from '../sdk/ts/table/server_table.ts';
+import { serverTable } from './helpers/server_table.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 
 before(async () => { await applySchema(); });
