@@ -105,16 +105,16 @@ static void test_seed_hash(void)
     uint64_t x = 1ull * 0x100000001B3ull + 0;
     seed_hash32_from(&x, s);
     OK(hex_is(s, "a8132d59893bee7fa40100948fc6ec706b8c0817de03ee5d63abaaf9d780de65"), "state (1, 0)");
-    uint64_t r = seed_splitmix64(&x);
+    uint64_t r = rng_splitmix64(&x);
     OK((r ^ x) == 0xebb9962540942d15ull, "state (1, 0): the fifth draw");
     x = 2ull * 0x100000001B3ull + 999;
     seed_hash32_from(&x, s);
     OK(hex_is(s, "c09b0e8876ece21a70e34b5693981c66b9dfa32e42a1fabbc1238b02e4b374a6"), "state (2, 999)");
-    r = seed_splitmix64(&x);
+    r = rng_splitmix64(&x);
     OK((r ^ x) == 0xa71d47a0b17ea375ull, "state (2, 999): the fifth draw");
     /* splitmix64 from state 0, the published first output */
     x = 0;
-    OK(seed_splitmix64(&x) == 0xe220a8397b1dcdafull, "splitmix64(0) first output");
+    OK(rng_splitmix64(&x) == 0xe220a8397b1dcdafull, "splitmix64(0) first output");
 }
 
 int main(void)
