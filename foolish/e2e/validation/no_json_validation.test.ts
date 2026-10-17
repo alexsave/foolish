@@ -57,16 +57,7 @@ interface Allowed {
     leaving?: boolean;
 }
 
-const ADAPTER = 'foolish/server/impls/supabase/functions/_shared/adapter';
 const ALLOWED: Allowed[] = [
-    {
-        file: `${ADAPTER}/utils.ts`, count: 1,
-        why: 'FORCED by Supabase: the Realtime broadcast REST endpoint takes a JSON envelope { messages: [{ topic, event, payload, private }] } and a payload must be an object. Ours is { b }, one base64 string holding the kernel\'s cast.',
-    },
-    {
-        file: `${ADAPTER}/auth.ts`, count: 3,
-        why: 'FORCED by the JWT format (RFC 7519): a token\'s header and claims are base64url JSON. Two parses verify a token, one reads the unverified `sub` for a parallel read. (The key set is not JSON: it is pinned as JWT_VERIFY_KEYS.)',
-    },
     {
         file: 'foolish/src/components/ErrorBoundary.tsx', count: 2,
         why: 'Throwaway debugging output: the last ten render errors, kept in this browser\'s localStorage for a developer to read. Nothing is sent and nothing reads it back.',
@@ -136,8 +127,7 @@ test('the scan covers the shipped code of every product', () => {
         'foolish/src/contexts/ServerContext.tsx',
         'foolish/sdk/ts/table/client_table.ts',
         'foolish/sdk/swift/AskWire.swift',
-        `${ADAPTER}/utils.ts`,
-        'foolish/server/impls/supabase/functions/bot-heartbeat/index.ts',
+        'foolish/src/common/backend.ts',
         'foolish/ios/FoolishNet/OnlineService.swift',
         'foolish/offlinefun/sw.js',
     ]) assert.ok(files.includes(must), `${must} is scanned`);
