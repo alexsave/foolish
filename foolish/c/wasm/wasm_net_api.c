@@ -3,7 +3,7 @@
 // Nothing here decides anything. Inputs (a body, a frame, a game id, a name and
 // a password back to back) are written at wasm_net_inbox(len) with their lengths
 // as call arguments; answers are netclient.h's structs, read through
-// sdk/ts/gen/view_layout.bots.ts. A span in an answer (an envelope, a replay's
+// sdk/ts/gen/net_layout.bots.ts. A span in an answer (an envelope, a replay's
 // moves) is an offset into the body as it was written, so the host slices its
 // own copy. Times and the action's intent cross as doubles.
 //
@@ -50,38 +50,38 @@ int wasm_net_session_load(int len) {
 // -> io = the blob; its length, 0 signed out.
 int wasm_net_session_save(void) { g_in = 0; return nc_session_save(wasm_io_ptr(), wasm_io_cap()); }
 const NcSessionInfo *wasm_net_session_info(void) { return nc_session_info(); }
-// inbox = [body]
-int wasm_net_session_read(int status, int len) { return nc_session_read(status, io_of(len), io_of(len) ? len : 0); }
 const NcError *wasm_net_error(void) { return nc_error(); }
 
-// inbox = [a][b]
-const NcRequest *wasm_net_req(int which, int a_len, int b_len, double n, double now_ms) {
-    const unsigned char *io = io_of(a_len < 0 || b_len < 0 ? -1 : a_len + b_len);
-    if (!io) return 0;
-    return nc_req(which, (const char *)io, a_len, (const char *)io + a_len, b_len, i64(n), i64(now_ms));
+// ---- the pump: an intent in, requests out, answers in, tickets done ----
+static NcIntent g_intent;
+// Where the host writes the intent (the generated NcIntent writer) before wasm_net_do.
+NcIntent *wasm_net_intent_ptr(void) { return &g_intent; }
+unsigned wasm_net_do(double now_ms) { return nc_do(&g_intent, i64(now_ms)); }
+const NcRequest *wasm_net_next_request(double now_ms) { return nc_next_request(i64(now_ms)); }
+// inbox = [body]
+const NcDone *wasm_net_on_response(unsigned id, int status, int len, double now_ms) {
+    const unsigned char *io = io_of(len);
+    return nc_on_response(id, status, io, io ? len : 0, i64(now_ms));
 }
-
-// inbox = [body] for each answer below.
-int wasm_net_retry_ms(int method, int attempt, int status, int len) { return nc_retry_ms(method, attempt, status, io_of(len), io_of(len) ? len : 0); }
-int wasm_net_status_read(int status, int len) { return nc_status_read(status, io_of(len), io_of(len) ? len : 0); }
-const NcAction *wasm_net_action_read(int status, int len) { return nc_action_read(status, io_of(len), io_of(len) ? len : 0); }
-const NcGameRow *wasm_net_view_read(int status, int len) { return nc_view_read(status, io_of(len), io_of(len) ? len : 0); }
-const NcReplay *wasm_net_replay_read(int status, int len) { return nc_replay_read(status, io_of(len), io_of(len) ? len : 0); }
-int wasm_net_list_read(int status, int len, int kind) { return nc_list_read(status, io_of(len), io_of(len) ? len : 0, kind); }
+const NcDone *wasm_net_next_done(void) { return nc_next_done(); }
+// inbox = [body]: row i of a finished list.
 const void *wasm_net_row(int kind, int len, int i) { return io_of(len) ? nc_row(kind, g_in, len, i) : 0; }
-const NcHistoryHead *wasm_net_history_head(int len) { return io_of(len) ? nc_history_head(g_in, len) : 0; }
+// The stream's address (GET, upgraded to a WebSocket).
+const NcRequest *wasm_net_stream_request(void) { return nc_req_stream(); }
 
 // inbox = [game id]
 int wasm_net_stream_sub(int what, int gid_len) { return io_of(gid_len) ? nc_stream_sub(what, (const char *)g_in, gid_len) : NW_E_WIRE; }
 int wasm_net_stream_unsub(int what, int gid_len) { return io_of(gid_len) ? nc_stream_unsub(what, (const char *)g_in, gid_len) : NW_E_WIRE; }
 void wasm_net_stream_opened(double now_ms) { nc_stream_opened(i64(now_ms)); }
 int wasm_net_stream_closed(double now_ms) { return nc_stream_closed(i64(now_ms)); }
-// inbox = [frame]
-const NcEvent *wasm_net_stream_in(int len, int is_text, double now_ms) {
+// inbox = [frame]: how many events it made.
+int wasm_net_stream_in(int len, int is_text, double now_ms) {
     const unsigned char *io = io_of(len);
     return nc_stream_in(io, io ? len : 0, is_text, i64(now_ms));
 }
-const uint8_t *wasm_net_event_payload(void) { return nc_event_payload(); }
+// What the last feed (a frame, an answer) changed: event i, NULL past the last.
+const NcEvent *wasm_net_event(int i) { return nc_event(i); }
+const uint8_t *wasm_net_event_payload(int i) { return nc_event_payload(i); }
 const NcOut *wasm_net_stream_next(double now_ms) { return nc_stream_next(i64(now_ms)); }
-int wasm_net_stream_due_ms(double now_ms) { return nc_stream_due_ms(i64(now_ms)); }
-void wasm_net_gate_reset(int gid_len) { if (io_of(gid_len)) nc_gate_reset((const char *)g_in, gid_len); }
+// When to call again: the sooner of the pump's and the stream's, -1 for neither.
+int wasm_net_due_ms(double now_ms) { return nc_due_ms(i64(now_ms)); }

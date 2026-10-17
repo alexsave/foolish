@@ -1073,13 +1073,13 @@ WASM_TABLE_EXPORTS := \
 # module and in bots.wasm, where the Node tests drive the same client.
 WASM_NET_EXPORTS := \
   -Wl,--export=wasm_net_inbox -Wl,--export=wasm_net_reset -Wl,--export=wasm_net_session_load -Wl,--export=wasm_net_session_save \
-  -Wl,--export=wasm_net_session_info -Wl,--export=wasm_net_session_read -Wl,--export=wasm_net_error \
-  -Wl,--export=wasm_net_req -Wl,--export=wasm_net_retry_ms -Wl,--export=wasm_net_status_read -Wl,--export=wasm_net_action_read \
-  -Wl,--export=wasm_net_view_read -Wl,--export=wasm_net_replay_read -Wl,--export=wasm_net_list_read \
-  -Wl,--export=wasm_net_row -Wl,--export=wasm_net_history_head -Wl,--export=wasm_net_stream_sub \
+  -Wl,--export=wasm_net_session_info -Wl,--export=wasm_net_error \
+  -Wl,--export=wasm_net_intent_ptr -Wl,--export=wasm_net_do -Wl,--export=wasm_net_next_request \
+  -Wl,--export=wasm_net_on_response -Wl,--export=wasm_net_next_done -Wl,--export=wasm_net_due_ms \
+  -Wl,--export=wasm_net_row -Wl,--export=wasm_net_stream_request -Wl,--export=wasm_net_stream_sub \
   -Wl,--export=wasm_net_stream_unsub -Wl,--export=wasm_net_stream_opened -Wl,--export=wasm_net_stream_closed \
-  -Wl,--export=wasm_net_stream_in -Wl,--export=wasm_net_event_payload -Wl,--export=wasm_net_stream_next \
-  -Wl,--export=wasm_net_stream_due_ms -Wl,--export=wasm_net_gate_reset
+  -Wl,--export=wasm_net_stream_in -Wl,--export=wasm_net_event -Wl,--export=wasm_net_event_payload \
+  -Wl,--export=wasm_net_stream_next
 
 # The web client's slot (src/client_table.h, wasm/wasm_table_api.c), bots.wasm
 # ONLY: the browser reads every envelope and push through these, and through the

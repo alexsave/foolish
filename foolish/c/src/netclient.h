@@ -1,10 +1,12 @@
 // netclient.h - the client of the backend's binary surface, for every host.
 //
-// A host keeps the sockets and nothing else: it asks this file for a request,
-// sends it (URLSession, fetch), and hands back the status and the bytes; it
-// opens the stream this file names, passes every frame in, sends every frame
-// this file asks it to, and calls it on a timer; it persists the session as an
-// opaque blob. What a request says, which token it carries and when that token
+// A host keeps the sockets and nothing else. It says what the user wants (an
+// NcIntent: sign in, open the dashboard, play this move) and gets a ticket; it
+// runs ONE transport loop - send every request nc_next_request names, hand each
+// answer to nc_on_response, wake when nc_pump_due_ms says - and resolves a
+// ticket when an NcDone names it; it opens the stream this file names, passes
+// every frame in, sends every frame this file asks it to, and calls it on a
+// timer; it persists the session as an opaque blob. What a request says, which token it carries and when that token
 // is refreshed, what an answer means, which pushes are stale, when a refused
 // subscription is retried and when to ping are all decided here, once, for the
 // iOS app and the web alike. The bytes are netwire.h's.
@@ -59,11 +61,15 @@
 #define NC_EV_REFUSED 4   // a subscription was refused (ev->why); it is retried by itself
 #define NC_EV_SEATED  5   // a game subscription was accepted; ev->seated says which stream it hears
 #define NC_EV_BAD     6   // a frame that is not this protocol (the host may log it)
+#define NC_EV_SESSION 7   // the session changed: keep nc_session_save's blob, show nc_session_info
+#define NC_EVENTS_MAX 4   // what one feed can change at most
 
 typedef struct {
+    uint32_t id;                        // nc_next_request's: hand the answer back with it
     uint8_t  method;                    // NC_GET, NC_POST
-    uint8_t  is_refresh;                // the session's refresh, asked for first: send it, hand the
-                                        // answer to nc_session_read, then build the request again
+    uint8_t  is_refresh;                // the builders below only: the session's refresh, asked for
+                                        // first; send it, hand the answer to nc_session_read, then
+                                        // build the request again (the pump does all of this itself)
     uint8_t  path_len;    char path[NC_PATH_MAX];      // after the backend's base URL
     uint16_t auth_len;    char auth[NC_AUTH_MAX];      // the Authorization value, empty for none
     uint16_t body_len;    uint8_t body[NC_BODY_MAX];   // empty: send no body
@@ -142,12 +148,13 @@ typedef struct {
 
 typedef struct {
     uint8_t  kind;         // NC_EV_*
-    uint8_t  what;         // NW_SUB_* the push or refusal belongs to
+    uint8_t  what;         // NW_SUB_* the push or refusal belongs to; a VIEW of NW_SUB_GAME is
+                           // this client's own refetch of the game (the table takes it whole)
     uint8_t  why;          // NC_EV_REFUSED: ASK_WHY_*
     uint8_t  seated;       // NC_EV_SEATED: 1 the caller's own seat's casts, 0 the spectators'
     uint8_t  gid_len;      char gid[NW_GID_MAX];
     uint32_t version;
-    uint32_t payload_len;  // NC_EV_VIEW, NC_EV_CAST: nc_event_payload()
+    uint32_t payload_len;  // NC_EV_VIEW, NC_EV_CAST: nc_event_payload(i)
     NcChatRow chat;        // NC_EV_CHAT
 } NcEvent;
 
@@ -204,30 +211,6 @@ const NcRequest *nc_req_replay(const char *gid, int gid_len, int64_t now_ms);
 // The stream's path (GET, upgraded to a WebSocket by the host).
 const NcRequest *nc_req_stream(void);
 
-// Every builder above through one door, for a host that crosses by number (the
-// wasm module): `a` and `b` are the strings or bytes each takes in order (the
-// name and the password, the game id and the wire or the message, the ask, the
-// new password), `n` the number (sign out: global; action: the intent).
-#define NC_REQ_SIGNUP    1
-#define NC_REQ_SIGNIN    2
-#define NC_REQ_REFRESH   3
-#define NC_REQ_SIGNOUT   4
-#define NC_REQ_PASSWORD  5
-#define NC_REQ_DELETE    6
-#define NC_REQ_CREATE    7
-#define NC_REQ_ACTION    8
-#define NC_REQ_META      9
-#define NC_REQ_GAMES     10
-#define NC_REQ_GAME      11
-#define NC_REQ_CHATS     12
-#define NC_REQ_CHAT_SEND 13
-#define NC_REQ_BOTS      14
-#define NC_REQ_BOARD     15
-#define NC_REQ_HISTORY   16
-#define NC_REQ_REPLAY    17
-#define NC_REQ_STREAM    18
-const NcRequest *nc_req(int which, const char *a, int a_len, const char *b, int b_len, int64_t n, int64_t now_ms);
-
 // ---- answers -----------------------------------------------------------------------
 //
 // Each takes the HTTP status and the body as received. On a refusal the answer
@@ -264,28 +247,133 @@ const NcHistoryHead *nc_history_head(const uint8_t *body, int len);
 // Row i of a list of `kind` through one door: the struct above for that kind.
 const void *nc_row(int kind, const uint8_t *body, int len, int i);
 
+// ---- the pump ----------------------------------------------------------------------
+//
+// What the user wants, as the host says it. Every endpoint, token, refresh,
+// retry and reading of an answer is this file's: the host submits an intent,
+// sends what nc_next_request names, and hands every answer to nc_on_response.
+//
+// THE LOOP, whole:
+//   ticket = nc_do(&intent, now)                 // 0: refused at once (nc_error)
+//   while ((r = nc_next_request(now))) send r, then later:
+//       done = nc_on_response(r->id, status, body, now)   // status 0: it never arrived
+//       if (done) resolve done->ticket with (done, body)
+//   while ((done = nc_next_done())) resolve done->ticket   // finished with no answer of its own
+//   wake again in nc_pump_due_ms(now) ms (-1: nothing waits)
+//
+// A request that needs the user waits for a refresh this file sends first when
+// the token is within NC_REFRESH_EARLY_MS of expiring, and is sent again after
+// one when it is answered 401. A read that never arrives (status 0) is sent
+// again after NC_RETRY_FIRST_MS doubling to NC_RETRY_MAX_MS, NC_PUMP_TRIES
+// times in all; a write is not (it may have landed). Signing out, deleting the
+// account, or a refused refresh ends the session here and finishes every
+// ticket still waiting for the user with ASK_WHY_AUTH.
+#define NC_DO_SIGN_UP        1   // name (as typed: upper-cased by the host), password
+#define NC_DO_SIGN_IN        2   // name, password
+#define NC_DO_SIGN_OUT       3   // flag: 1 every session of the user, 0 this one
+#define NC_DO_PASSWORD       4   // password
+#define NC_DO_DELETE_ACCOUNT 5
+#define NC_DO_CREATE         6   // -> the creator's envelope (a_off, a_len)
+#define NC_DO_PLAY           7   // gid, bytes: the kernel's action wire, intent: the version (-1 none)
+#define NC_DO_ASK            8   // bytes: the kernel's ask -> the asker's envelope
+#define NC_DO_GAMES          9   // -> a list: every view of the user
+#define NC_DO_OPEN_GAME      10  // gid -> the view (version, a_off, a_len); NOT_FOUND for none
+#define NC_DO_CHAT_HISTORY   11  // gid -> a list
+#define NC_DO_SEND_CHAT      12  // gid, bytes: the message
+#define NC_DO_BOTS           13  // -> a list
+#define NC_DO_LEADERBOARD    14  // -> a list
+#define NC_DO_HISTORY        15  // -> a list, with the user's rating
+#define NC_DO_REPLAY         16  // gid -> moves (a_off, a_len) and extras (b_off, b_len)
+
+#define NC_PUMP_MAX   8          // tickets waiting at once
+#define NC_PUMP_TRIES 4
+
+typedef struct {
+    uint8_t  kind;                                     // NC_DO_*
+    uint8_t  flag;                                     // SIGN_OUT
+    uint8_t  gid_len;       char gid[NW_GID_MAX];
+    uint8_t  name_len;      char name[NW_NAME_MAX];
+    uint8_t  password_len;  char password[NW_PASSWORD_MAX];
+    uint16_t bytes_len;     uint8_t bytes[NC_BODY_MAX];
+    int64_t  intent;                                   // PLAY
+} NcIntent;
+
+// A ticket finished. Spans are into the body handed to the nc_on_response that
+// returned this (none for nc_next_done's).
+typedef struct {
+    uint32_t ticket;
+    uint8_t  kind;          // the intent's NC_DO_*
+    uint8_t  why;           // 0: done; else ASK_WHY_* (code, detail, status as NcError's)
+    int32_t  code, detail, status;
+    uint8_t  action_status; // PLAY: TABLE_STATUS_*
+    uint8_t  reject_code;   // PLAY
+    uint32_t version;       // PLAY, OPEN_GAME
+    uint32_t a_off, a_len;  // an envelope (CREATE, ASK, OPEN_GAME), a replay's moves
+    uint32_t b_off, b_len;  // a replay's extras
+    uint8_t  stale;         // OPEN_GAME, CREATE, ASK: answered, but older than what was applied (no envelope)
+    uint8_t  gid_len;       char gid[NW_GID_MAX];   // the game it was about (CREATE: the new one)
+    int32_t  n_rows;        // a list: read row i with nc_row(list_kind, body, len, i)
+    uint8_t  list_kind;     // NW_GAMES, NW_CHATS, NW_BOTS, NW_BOARD, NW_HISTORY
+    uint8_t  has_rating;    // HISTORY
+    uint32_t rating;
+} NcDone;
+
+uint32_t nc_do(const NcIntent *in, int64_t now_ms);
+const NcRequest *nc_next_request(int64_t now_ms);
+const NcDone *nc_on_response(uint32_t id, int status, const uint8_t *body, int len, int64_t now_ms);
+const NcDone *nc_next_done(void);
+int nc_pump_due_ms(int64_t now_ms);
+
 // ---- the stream --------------------------------------------------------------------
 
-// The subscriptions the host wants; each is (re)sent whenever the socket opens.
-// A second nc_stream_sub of the same (what, gid) asks again (a spectator who
-// took a seat hears their own seat's casts from then on). NW_OK, or NW_E_CAP /
-// NW_E_WIRE.
+// The subscriptions the host holds; each is (re)sent whenever the socket opens.
+// They are counted: the last nc_stream_unsub of a (what, gid) lets it go. Which
+// stream a game subscription hears (the seat's or the spectators') is the
+// server's to say, and this file asks again when a join or a leave changes it.
+// NW_OK, or NW_E_CAP / NW_E_WIRE.
 int nc_stream_sub(int what, const char *gid, int gid_len);
 int nc_stream_unsub(int what, const char *gid, int gid_len);
 // The socket opened; it closed (the answer is how long to wait before
 // reopening it, in ms).
 void nc_stream_opened(int64_t now_ms);
 int nc_stream_closed(int64_t now_ms);
-// One frame as it arrived (is_text: a text frame, base64 of the message).
-const NcEvent *nc_stream_in(const uint8_t *frame, int len, int is_text, int64_t now_ms);
-const uint8_t *nc_event_payload(void);
+// One frame as it arrived (is_text: a text frame, base64 of the message): how
+// many events it made, read with nc_event.
+int nc_stream_in(const uint8_t *frame, int len, int is_text, int64_t now_ms);
 // The next frame to send, or NULL for none now; call until NULL. Then
 // nc_stream_due_ms says how long until there is one (a retry, a ping), -1 for
 // none while the socket is shut.
 const NcOut *nc_stream_next(int64_t now_ms);
 int nc_stream_due_ms(int64_t now_ms);
 // Forget the newest versions seen for a game, so the next push or fetched view
-// of it applies whatever its version (the host's resync).
+// of it applies whatever its version.
 void nc_gate_reset(const char *gid, int gid_len);
+
+// ---- what changed ------------------------------------------------------------------
+//
+// ONE STATE, TWO FEEDS. The stream (nc_stream_in) and the answers
+// (nc_on_response) feed the same book of games, so every version rule is here:
+//   - a cast applies when it is newer than the table's (casts and answered
+//     views); one that skips a version is dropped and the game refetched;
+//   - a view pushed for the dashboard applies when newer than the last one,
+//     and is not handed out at all for a game held on its own stream (casts
+//     animate that one; an empty view, the seat gone, always is);
+//   - an answered view (OPEN_GAME, CREATE, ASK, and this file's own refetches)
+//     applies unless something newer was applied, or an answer or cast at its
+//     very version was (a ticket's NcDone says stale, with no envelope);
+//   - a move refused over a newer version refetches the game when no push has
+//     caught up NC_RECONCILE_MS later;
+//   - a game subscription accepted again (the socket reopened, a seat changed)
+//     or accepted after a refusal refetches the game;
+//   - a join, a leave or a create moves the game's subscription itself.
+// After each feed the host reads the events it made, nc_event(0) up to the
+// count, as often as it likes until the next feed; then it sends what
+// nc_next_request and nc_stream_next have for it.
+#define NC_RECONCILE_MS 1000
+const NcEvent *nc_event(int i);
+const uint8_t *nc_event_payload(int i);
+// When to call again (nc_next_request, nc_next_done, nc_stream_next): the
+// sooner of nc_pump_due_ms and nc_stream_due_ms, -1 when neither waits.
+int nc_due_ms(int64_t now_ms);
 
 #endif

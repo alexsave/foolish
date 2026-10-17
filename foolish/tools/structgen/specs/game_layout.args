@@ -83,5 +83,5 @@
 --root ReplayPlayStep
 --header anim_plan.h --root AnimRoles
 # The backend's client (netclient.h): what net_layout.bots.ts reads.
---header netclient.h --root NcRequest --root NcSessionInfo --root NcError --root NcGameRow --root NcAction --root NcEvent --root NcOut
---root NcChatRow --root NcBotRow --root NcBoardRow --root NcHistoryRow --root NcHistoryHead --root NcReplay
+--header netclient.h --root NcRequest --root NcSessionInfo --root NcError --root NcGameRow --root NcDone --root NcEvent --root NcOut
+--root NcChatRow --root NcBotRow --root NcBoardRow --root NcHistoryRow --root NcIntent
