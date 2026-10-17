@@ -110,13 +110,13 @@ public final class OnlineGame: ObservableObject, GameSession {
         guard !wire.isEmpty else { lastReject = .badArg; return }
         for c in move.cards { inFlight.insert(c.identity) }
         Task {
-            let answer = try? await Backend.shared.call { NetClient.action(gameId, wire, intent: Int64(intentVersion)) }
-            guard let answer, let resp = NetClient.action(answer.status, answer.body) else {
+            guard let resp = try? await Backend.shared.ask(NC_DO_PLAY, gameId: gameId, bytes: [UInt8](wire),
+                                                           intent: Int64(intentVersion)).done else {
                 clearInFlight(move)
                 lastReject = .unknown(-1)
                 return
             }
-            switch resp.status {
+            switch resp.actionStatus {
             case TABLE_STATUS_APPLIED:
                 intentVersion = UInt32(resp.version)   // the view that follows animates + clears in-flight
             case TABLE_STATUS_REJECTED:
@@ -157,12 +157,11 @@ public final class OnlineGame: ObservableObject, GameSession {
         Task { try? await OnlineService.shared.ask(.bump, gameId: gameId) }
     }
 
-    /// Refetch authoritative state on foreground/reconnect (§16.D6): reset the
-    /// gate and re-read this game's view (the spectators' for a spectator).
+    /// Refetch authoritative state on foreground/reconnect (§16.D6): this game's
+    /// view (the spectators' for a spectator). No envelope when it is stale: a
+    /// newer one was applied meanwhile (the kernel's client keeps the order).
     public func resync() async {
-        NetClient.gateReset(gameId)
-        guard let answer = try? await Backend.shared.call({ NetClient.game(gameId) }),
-              let envelope = NetClient.view(answer.status, answer.body) else { return }
+        guard let envelope = try? await Backend.shared.ask(NC_DO_OPEN_GAME, gameId: gameId).envelope else { return }
         ingest(envelope)
     }
 

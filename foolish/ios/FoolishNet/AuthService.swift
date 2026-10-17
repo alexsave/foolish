@@ -16,7 +16,9 @@ public final class AuthService: ObservableObject {
     @Published public private(set) var userId: UUID?
     @Published public private(set) var username: String?
 
-    public init() {}
+    public init() {
+        Backend.shared.onSession = { [weak self] in self?.apply() }
+    }
 
     public var isSignedIn: Bool { userId != nil }
 
@@ -26,22 +28,16 @@ public final class AuthService: ObservableObject {
     }
 
     public func signIn(username name: String, password: String) async throws {
-        try await sign { NetClient.signIn(name.uppercased(), password) }
+        _ = try await Backend.shared.ask(NC_DO_SIGN_IN, name: name.uppercased(), password: password)
     }
 
     public func signUp(username name: String, password: String) async throws {
-        try await sign { NetClient.signUp(name.uppercased(), password) }
-    }
-
-    private func sign(_ build: () -> NcRequestSnap?) async throws {
-        let (status, body) = try await Backend.shared.call(build)
-        try Backend.shared.keep(NetClient.readSession(status, body))
-        apply()
+        _ = try await Backend.shared.ask(NC_DO_SIGN_UP, name: name.uppercased(), password: password)
     }
 
     /// Sign out everywhere; locally whatever the server answered.
     public func signOut() async {
-        _ = try? await Backend.shared.call { NetClient.signOut() }
+        _ = try? await Backend.shared.ask(NC_DO_SIGN_OUT, flag: 1)
         signedOut()
     }
 
@@ -54,8 +50,12 @@ public final class AuthService: ObservableObject {
         username = nil
     }
 
+    /// Shows who the client holds as signed in (nobody, once its session ended).
     private func apply() {
-        guard let s = NetClient.session, s.signedIn != 0 else { return }
+        guard let s = NetClient.session, s.signedIn != 0 else {
+            if userId != nil { signedOut() }
+            return
+        }
         userId = UUID(uuidString: s.userId)
         username = s.username
     }
